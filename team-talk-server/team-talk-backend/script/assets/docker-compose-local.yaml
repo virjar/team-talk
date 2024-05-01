@@ -1,0 +1,15 @@
+## 本地测试的时候，通过本文件拉起一个mysql服务器，这样可以快速启动和测试服务
+version: '3'
+services:
+  team-talk-mysql-local:
+    #8.0才支持AArch64，即mac m1芯片
+    image: mysql:8.0
+    restart: always
+    container_name: team-talk-mysql-local
+    ports:
+      - "4416:3306"
+    volumes:
+      - ./ddl.sql:/docker-entrypoint-initdb.d/ddl.sql
+    environment:
+      MYSQL_ROOT_PASSWORD: "teamTalk"
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci

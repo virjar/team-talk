@@ -1,0 +1,50 @@
+#目标输出文件夹
+target:~/git/team-talk
+
+# 包名替换规则
+pkg:com.virjar.tk.server->com.virjar.tk.server
+
+# 关键字替换规则
+key:TeamTalk->TeamTalk
+key:team-talk-->team-talk-
+key:team-talk->teamTalk
+
+
+# 忽略文件
+ignore:.idea
+ignore:.gradle
+ignore:local.properties
+ignore:.DS_Store
+ignore:build/
+ignore:.git/
+ignore:.gitmodules/
+ignore:node_modules
+ignore:target/
+ignore:.vuepress/dist/
+
+
+# 如果存在，则不执行替换规则，团队定制化的配置文件
+notOverwrite:/xxx-module/build.gradle.kts
+
+# keep文件
+keep:*.jar
+keep:*.aar
+keep:*.png
+keep:*.jpg
+keep:*.ico
+keep:*.otf
+keep:*.woff2
+keep:*.ttf
+keep:*.woff
+keep:*.p12
+keep:*.eot
+
+# 文件内容keep,这是是暂时不方便替换的内容
+keepContent:Atomic
+keepContent:atomic
+
+# 生成文件之后执行的命令
+#cmd:chmod +x gradlew
+#cmd:chmod +x script/startup.sh
+cmd:chmod +x team-talk-backend/mvnw
+cmd:chmod +x team-talk-backend/script/build.py

@@ -1,0 +1,20 @@
+{
+  "name": "team-talk-doc",
+  "version": "1.0",
+  "description": "teamTalk document",
+  "main": "index.js",
+  "author": "iinti",
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev": "vuepress dev src",
+    "build": "vuepress build src"
+  },
+  "packageManager": "yarn@4.0.2",
+  "devDependencies": {
+    "@vuepress/bundler-vite": "2.0.0-rc.9",
+    "@vuepress/helper": "2.0.0-rc.23",
+    "vue": "^3.4.21",
+    "vuepress": "2.0.0-rc.9",
+    "vuepress-theme-hope": "2.0.0-rc.33"
+  }
+}

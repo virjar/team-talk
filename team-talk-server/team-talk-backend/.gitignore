@@ -1,0 +1,6 @@
+.idea/
+target/
+node_modules/
+_book/
+*.DS_Store
+.logs/
