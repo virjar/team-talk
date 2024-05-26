@@ -3,6 +3,7 @@ package com.virjar.tk.server.common;
 import com.virjar.tk.server.utils.CommonUtils;
 import lombok.AllArgsConstructor;
 import lombok.Data;
+import reactor.core.publisher.Mono;
 
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
@@ -53,6 +54,16 @@ public class CommonRes<T> {
     public boolean isOk() {
         return status == statusOK;
     }
+
+    public static <T> Mono<CommonRes<T>> fromMono(Mono<T> mono) {
+        return mono.map(CommonRes::success).onErrorResume((e) -> {
+            if (e instanceof BusinessException businessException) {
+                return Mono.just(CommonRes.failed(businessException.getCode(), businessException.getMsg()));
+            }
+            return Mono.just(CommonRes.failed(e));
+        });
+    }
+
 
     public <TN> CommonRes<TN> errorTransfer() {
         return CommonRes.failed(status, message);

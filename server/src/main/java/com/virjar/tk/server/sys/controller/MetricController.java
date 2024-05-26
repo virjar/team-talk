@@ -21,6 +21,7 @@ import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Mono;
 
 import java.util.List;
 import java.util.Map;
@@ -54,21 +55,21 @@ public class MetricController {
     @Operation(summary = "查询指标,可以指定tag")
     @PostMapping("/queryMetric")
     @LoginRequired
-    public CommonRes<List<MetricVo>> queryMetric(@RequestBody @Validated MetricQueryRequest metricQueryRequest) {
+    public Mono<CommonRes<List<MetricVo>>> queryMetric(@RequestBody @Validated MetricQueryRequest metricQueryRequest) {
         return CommonRes.success(metricService.queryMetric(metricQueryRequest.name, metricQueryRequest.query, metricQueryRequest.accuracy));
     }
 
     @Operation(summary = "查询指标,使用mql语言查询")
     @RequestMapping(value = "/mqlQuery", method = {RequestMethod.GET, RequestMethod.POST})
     @LoginRequired
-    public CommonRes<EChart4MQL> mqlQuery(@NotBlank String mqlScript, @NotNull MetricEnums.MetricAccuracy accuracy) {
+    public Mono<CommonRes<EChart4MQL>> mqlQuery(@NotBlank String mqlScript, @NotNull MetricEnums.MetricAccuracy accuracy) {
         return CommonRes.call(() -> EChart4MQL.fromMQLResult(MQL.compile(mqlScript).run(accuracy, metricService)));
     }
 
     @Operation(summary = "指标列表")
     @GetMapping("/metricNames")
     @LoginRequired
-    public CommonRes<List<String>> metricNames() {
+    public Mono<CommonRes<List<String>>> metricNames() {
         return CommonRes.success(metricTagService.metricNames());
     }
 
@@ -76,21 +77,21 @@ public class MetricController {
     @Operation(summary = "指标Tag详情")
     @GetMapping("/metricTag")
     @LoginRequired
-    public CommonRes<SysMetricTag> queryMetricTag(@NotBlank String metricName) {
+    public Mono<CommonRes<SysMetricTag>> queryMetricTag(@NotBlank String metricName) {
         return CommonRes.ofPresent(metricTagService.fromKey(metricName));
     }
 
     @Operation(summary = "所有的指标详情")
     @GetMapping("/allMetricConfig")
     @LoginRequired
-    public CommonRes<List<SysMetricTag>> allMetricConfig() {
+    public Mono<CommonRes<List<SysMetricTag>>> allMetricConfig() {
         return CommonRes.success(metricTagService.tagList());
     }
 
     @Operation(summary = "删除一个指标")
     @GetMapping("/deleteMetric")
     @LoginRequired
-    public CommonRes<String> deleteMetric(@NotBlank String metricName) {
+    public Mono<CommonRes<String>> deleteMetric(@NotBlank String metricName) {
         TeamTalkMain.getShardThread().post(() -> {
             metricService.eachDao(mapper -> mapper.delete(new QueryWrapper<SysMetric>().eq(SysMetricDay.NAME, metricName)));
             metricTagMapper.delete(new QueryWrapper<SysMetricTag>().eq(SysMetricTag.NAME, metricName));

@@ -1,7 +1,8 @@
 package com.virjar.tk.server.im.mapper;
 
 import com.virjar.tk.server.im.entity.ImUserInfo;
-import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import org.springframework.data.r2dbc.repository.R2dbcRepository;
+import reactor.core.publisher.Mono;
 
 /**
  * <p>
@@ -11,6 +12,12 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
  * @author virjar
  * @since 2024-05-06
  */
-public interface ImUserInfoMapper extends BaseMapper<ImUserInfo> {
+public interface ImUserInfoMapper extends R2dbcRepository<ImUserInfo, Long> {
+    Mono<ImUserInfo> findByUserNameAndPassword(String userName, String password);
 
+    Mono<ImUserInfo> findByUserName(String userName);
+
+    Mono<Integer> countByUserName(String userName);
+
+    Mono<Integer> countBySysAdmin(Boolean sysAdmin);
 }

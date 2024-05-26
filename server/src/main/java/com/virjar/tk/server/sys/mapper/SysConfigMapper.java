@@ -1,7 +1,8 @@
 package com.virjar.tk.server.sys.mapper;
 
 import com.virjar.tk.server.sys.entity.SysConfig;
-import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import org.springframework.data.r2dbc.repository.R2dbcRepository;
+import reactor.core.publisher.Flux;
 
 /**
  * <p>
@@ -11,6 +12,6 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
  * @author virjar
  * @since 2024-05-07
  */
-public interface SysConfigMapper extends BaseMapper<SysConfig> {
-
+public interface SysConfigMapper extends R2dbcRepository<SysConfig, Long> {
+    Flux<SysConfig> findAllByConfigComment(String configComment);
 }

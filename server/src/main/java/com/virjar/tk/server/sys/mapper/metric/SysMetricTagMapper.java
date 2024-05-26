@@ -1,7 +1,7 @@
 package com.virjar.tk.server.sys.mapper.metric;
 
 import com.virjar.tk.server.sys.entity.metric.SysMetricTag;
-import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import org.springframework.data.r2dbc.repository.R2dbcRepository;
 
 /**
  * <p>
@@ -11,6 +11,6 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
  * @author virjar
  * @since 2024-05-07
  */
-public interface SysMetricTagMapper extends BaseMapper<SysMetricTag> {
+public interface SysMetricTagMapper extends R2dbcRepository<SysMetricTag, Long> {
 
 }

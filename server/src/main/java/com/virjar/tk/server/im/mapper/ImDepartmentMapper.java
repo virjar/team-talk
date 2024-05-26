@@ -1,7 +1,7 @@
 package com.virjar.tk.server.im.mapper;
 
 import com.virjar.tk.server.im.entity.ImDepartment;
-import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import org.springframework.data.r2dbc.repository.R2dbcRepository;
 
 /**
  * <p>
@@ -11,6 +11,6 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
  * @author virjar
  * @since 2024-05-06
  */
-public interface ImDepartmentMapper extends BaseMapper<ImDepartment> {
+public interface ImDepartmentMapper extends R2dbcRepository<ImDepartment, Long> {
 
 }

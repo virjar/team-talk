@@ -3,11 +3,14 @@ package com.virjar.tk.server.im.entity;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+
 import java.io.Serializable;
 import java.time.LocalDateTime;
+
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Getter;
 import lombok.Setter;
+import org.springframework.data.relational.core.mapping.Table;
 
 /**
  * <p>
@@ -19,7 +22,7 @@ import lombok.Setter;
  */
 @Getter
 @Setter
-@TableName("im_user_info")
+@Table("im_user_info")
 @Schema(name = "ImUserInfo", description = "用户信息")
 public class ImUserInfo implements Serializable {
 

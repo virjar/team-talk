@@ -1,14 +1,22 @@
 package com.virjar.tk.server.sys.service.config;
 
-import com.virjar.tk.server.common.CommonRes;
+import com.virjar.tk.server.common.BusinessException;
 import com.virjar.tk.server.sys.entity.SysConfig;
 import com.virjar.tk.server.sys.mapper.SysConfigMapper;
 import com.virjar.tk.server.sys.service.BroadcastService;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.virjar.tk.server.sys.service.env.Environment;
 import jakarta.annotation.Resource;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
+import org.springframework.web.bind.annotation.RequestBody;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+
+import static com.virjar.tk.server.common.BusinessException.SYSTEM.CANNOT_CHANGE_SETTING_FOR_DEMO_SITE;
 
 @Service
 public class ConfigService {
@@ -17,39 +25,55 @@ public class ConfigService {
     private SysConfigMapper sysConfigMapper;
 
 
-
-    public CommonRes<List<SysConfig>> allConfig() {
-        return CommonRes.success(
-                sysConfigMapper.selectList(new QueryWrapper<SysConfig>().eq(SysConfig.CONFIG_COMMENT, SYSTEM_SETTINGS))
-        );
+    public Mono<List<SysConfig>> allConfig() {
+        return sysConfigMapper
+                .findAllByConfigComment(SYSTEM_SETTINGS)
+                .collectList();
     }
 
-    public CommonRes<SysConfig> setConfig(String key, String value) {
+    public Mono<List<SysConfig>> setConfigs(@RequestBody Map<String, String> configs) {
+        if (Environment.isDemoSite) {
+            return CANNOT_CHANGE_SETTING_FOR_DEMO_SITE.m();
+        }
+        String errorMsg = null;
+        for (Map.Entry<String, String> entry : configs.entrySet()) {
+            String msg = SettingsValidate.doValidate(entry.getKey(), entry.getValue());
+            if (msg != null) {
+                errorMsg = "error config: " + entry.getKey() + " " + msg;
+                break;
+            }
+        }
+        if (StringUtils.isNotBlank(errorMsg)) {
+            return BusinessException.errorM(errorMsg);
+        }
+
+        if (configs.isEmpty()) {
+            return BusinessException.errorM("no config passed");
+        }
+
+        return Flux.fromIterable(configs.entrySet())
+                .parallel()
+                .flatMap((entry) -> setConfig(entry.getKey(), entry.getValue()))
+                .collectSortedList(Comparator.comparing(SysConfig::getConfigKey));
+    }
+
+    public Mono<SysConfig> setConfig(String key, String value) {
         if (key.startsWith("__")) {
-            return CommonRes.failed("can not setup system internal properties :" + key);
+            return BusinessException.errorM("can not setup system internal properties :" + key);
         }
-        SysConfig sysConfig = sysConfigMapper.selectOne(
-                new QueryWrapper<SysConfig>()
-                        .eq(SysConfig.CONFIG_KEY, key)
-        );
-        if (sysConfig == null) {
-            sysConfig = new SysConfig();
-        }
+
+        SysConfig sysConfig = new SysConfig();
         sysConfig.setConfigKey(key);
         sysConfig.setConfigValue(value);
         sysConfig.setConfigComment(SYSTEM_SETTINGS);
-        if (sysConfig.getId() == null) {
-            sysConfigMapper.insert(sysConfig);
-        } else {
-            sysConfigMapper.updateById(sysConfig);
-        }
-        BroadcastService.triggerEvent(BroadcastService.Topic.CONFIG);
-        return CommonRes.success(sysConfig);
+
+        return sysConfigMapper.save(sysConfig)
+                .doOnSuccess((it) -> BroadcastService.triggerEvent(BroadcastService.Topic.CONFIG));
     }
 
     public void reloadConfig() {
-        Configs.refreshConfig(sysConfigMapper.selectList(new QueryWrapper<SysConfig>()
-                .eq(SysConfig.CONFIG_COMMENT, SYSTEM_SETTINGS))
-        );
+        sysConfigMapper.findAllByConfigComment(SYSTEM_SETTINGS)
+                .collectList()
+                .subscribe(Configs::refreshConfig);
     }
 }

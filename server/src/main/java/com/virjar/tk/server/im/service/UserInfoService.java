@@ -1,21 +1,20 @@
 package com.virjar.tk.server.im.service;
 
 
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.virjar.tk.server.common.CommonRes;
 import com.virjar.tk.server.im.entity.ImUserInfo;
 import com.virjar.tk.server.im.mapper.ImUserInfoMapper;
-import com.virjar.tk.server.sys.AppContext;
 import com.virjar.tk.server.sys.service.config.Settings;
 import com.virjar.tk.server.sys.service.env.Constants;
 import com.virjar.tk.server.utils.Md5Utils;
 import jakarta.annotation.Resource;
 import lombok.SneakyThrows;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.data.domain.Example;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -24,6 +23,8 @@ import java.time.LocalDateTime;
 import java.time.temporal.ChronoField;
 import java.util.List;
 import java.util.UUID;
+
+import static com.virjar.tk.server.common.BusinessException.USER.*;
 
 /**
  * <p>
@@ -43,38 +44,22 @@ public class UserInfoService {
     private final Cache<String, ImUserInfo> apiTokenCache = CacheBuilder.newBuilder().expireAfterAccess(Duration.ofMinutes(10)).build();
     private final Cache<Long, ImUserInfo> userIdCache = CacheBuilder.newBuilder().expireAfterAccess(Duration.ofMinutes(10)).build();
 
-    public CommonRes<ImUserInfo> login(String account, String password) {
-        ImUserInfo userInfo = userMapper
-                .selectOne(new QueryWrapper<ImUserInfo>().eq(ImUserInfo.USER_NAME, account).last("limit 1"));
-        if (userInfo == null) {
-            return CommonRes.failed("请检查用户名或密码");
-        }
-        if (!StringUtils.equals(userInfo.getPassword(), password)) {
-            return CommonRes.failed("请检查用户名或密码");
-        }
-
-        userInfo.setWebLoginToken(genLoginToken(userInfo, LocalDateTime.now()));
-        userMapper.update(null, new UpdateWrapper<ImUserInfo>()
-                .eq(ImUserInfo.USER_NAME, userInfo.getUserName())
-                .set(ImUserInfo.WEB_LOGIN_TOKEN, userInfo.getWebLoginToken()));
-        return CommonRes.success(userInfo);
+    public Mono<ImUserInfo> login(String account, String password) {
+        return userMapper.findByUserNameAndPassword(account, password)
+                .switchIfEmpty(Mono.error(new Exception("请检查用户名或密码")))
+                .doOnNext(it -> it.setWebLoginToken(genLoginToken(it, LocalDateTime.now())))
+                .flatMap(userMapper::save);
     }
 
-    public CommonRes<ImUserInfo> resetUserPassword(Long userId, String password) {
+    public Mono<ImUserInfo> resetUserPassword(Long userId, String password) {
         if (StringUtils.isBlank(password)) {
-            return CommonRes.failed("密码格式不正确。");
+            return Mono.error(new Exception("密码格式不正确。"));
         }
-        ImUserInfo userInfo = userMapper
-                .selectOne(new QueryWrapper<ImUserInfo>().eq(ImUserInfo.ID, userId).last("limit 1"));
-        if (userInfo == null) {
-            return CommonRes.failed("用户不存在");
-        }
-        userInfo.setPassword(password);
-        userMapper.update(null, new UpdateWrapper<ImUserInfo>()
-                .eq(ImUserInfo.USER_NAME, userInfo.getUserName())
-                .set(ImUserInfo.PASSWORD, password));
-        resetCache(userInfo);
-        return CommonRes.success(userInfo);
+        return userMapper.findById(userId)
+                .switchIfEmpty(Mono.error(new Exception("用户不存在")))
+                .doOnNext(it -> it.setPassword(password))
+                .flatMap(userMapper::save)
+                .doOnNext(this::resetCache);
     }
 
     public String refreshToken(String oldToken) {
@@ -98,6 +83,10 @@ public class UserInfoService {
             }
         }
         return false;
+    }
+
+    public void fillLoginToken(ImUserInfo userInfo, LocalDateTime date) {
+        userInfo.setWebLoginToken(genLoginToken(userInfo, date));
     }
 
     public String genLoginToken(ImUserInfo userInfo, LocalDateTime date) {
@@ -171,46 +160,49 @@ public class UserInfoService {
     private static final char[] illegalUserNameChs = " -/\t\n*\\".toCharArray();
     private boolean hasAdminUser = false;
 
-    public CommonRes<ImUserInfo> register(String account, String password) {
+    public Mono<ImUserInfo> register(String account, String password, boolean fromAdminCall) {
         if (StringUtils.isAnyBlank(account, password)) {
-            return CommonRes.failed("用户或者密码不能为空");
+            return REGISTER_USER_PASS_EMPTY.m();
         }
         if (StringUtils.containsAny(account, illegalUserNameChs)) {
-            return CommonRes.failed("userName contain illegal character");
-        }
-        ImUserInfo userInfo = userMapper
-                .selectOne(new QueryWrapper<ImUserInfo>().eq(ImUserInfo.USER_NAME, account).last("limit 1"));
-
-        if (userInfo != null) {
-            return CommonRes.failed("用户已存在");
+            return REGISTER_ILLEGAL_USER_NAME.m();
         }
 
-        if (!hasAdminUser) {
-            hasAdminUser = userMapper.selectCount(new QueryWrapper<ImUserInfo>().eq(ImUserInfo.SYS_ADMIN, true)) > 0;
-        }
-
-        boolean isCallFromAdmin = AppContext.getUser() != null && AppContext.getUser().getSysAdmin();
-        if (!isCallFromAdmin && hasAdminUser && !Settings.allowRegisterUser.value) {
-            return CommonRes.failed("当前系统不允许注册新用户，详情请联系管理员");
-        }
-
-        userInfo = new ImUserInfo();
-        userInfo.setUserName(account);
-        userInfo.setPassword(password);
-        userInfo.setApiToken(UUID.randomUUID().toString());
-        // 第一个注册用户，认为是管理员
-        userInfo.setSysAdmin(!hasAdminUser);
-
-        int result = userMapper.insert(userInfo);
-        if (result == 1) {
-            userInfo.setWebLoginToken(genLoginToken(userInfo, LocalDateTime.now()));
-            userMapper.update(null, new UpdateWrapper<ImUserInfo>()
-                    .eq(ImUserInfo.USER_NAME, userInfo.getUserName())
-                    .set(ImUserInfo.WEB_LOGIN_TOKEN, userInfo.getWebLoginToken()));
-            return CommonRes.success(userInfo);
-        }
-
-        return CommonRes.failed("注册失败，请稍后再试");
+        return userMapper// check duplicate
+                .countByUserName(account)
+                .flatMap((num) -> {
+                    if (num > 0) {
+                        return REGISTER_DUPLICATE_USER.m();
+                    }
+                    return Mono.empty();
+                })
+                // check first admin
+                .flatMap((it) -> {
+                    if (hasAdminUser) {
+                        return Mono.just(true);
+                    }
+                    return userMapper.countBySysAdmin(true)
+                            .map(count -> count > 0);
+                })
+                // check register condition
+                .doOnNext((b) -> hasAdminUser = b)
+                .flatMap(hasAdminUser -> {
+                    if (!fromAdminCall && hasAdminUser && !Settings.allowRegisterUser.value) {
+                        return REGISTER_CANNOT_REGISTER.m();
+                    }
+                    return Mono.empty();
+                })
+                // now we can register
+                .flatMap((it) -> {
+                    ImUserInfo userInfo = new ImUserInfo();
+                    userInfo.setUserName(account);
+                    userInfo.setPassword(password);
+                    userInfo.setApiToken(UUID.randomUUID().toString());
+                    userInfo.setWebLoginToken(genLoginToken(userInfo, LocalDateTime.now()));
+                    // 第一个注册用户，认为是管理员
+                    userInfo.setSysAdmin(!hasAdminUser);
+                    return userMapper.save(userInfo);
+                });
     }
 
 
@@ -299,19 +291,13 @@ public class UserInfoService {
         return userIdCache.get(userId, () -> userMapper.selectById(userId));
     }
 
-    public CommonRes<String> grantAdmin(String userName, boolean isAdmin) {
-        ImUserInfo userInfo = userMapper.selectOne(new QueryWrapper<ImUserInfo>().eq(ImUserInfo.USER_NAME, userName));
-        if (userInfo == null) {
-            return CommonRes.failed("user not exist");
-        }
-        if (userInfo.getId().equals(AppContext.getUser().getId())) {
-            return CommonRes.failed("you can not operate yourself");
-        }
-        userInfo.setSysAdmin(isAdmin);
-        userMapper.update(null, new UpdateWrapper<ImUserInfo>().eq(ImUserInfo.USER_NAME, userInfo.getUserName())
-                .set(ImUserInfo.SYS_ADMIN, isAdmin));
-        resetCache(userInfo);
-        return CommonRes.success("ok");
+    public Mono<ImUserInfo> grantAdmin(String userName, boolean isAdmin) {
+        return userMapper.findByUserName(userName)
+                .switchIfEmpty(USER_NOT_EXIST.m())
+                .flatMap((user) -> {
+                    user.setSysAdmin(isAdmin);
+                    return userMapper.save(user);
+                }).doOnSuccess(this::resetCache);
     }
 
     private void resetCache(ImUserInfo userInfo) {

@@ -1,7 +1,7 @@
 package com.virjar.tk.server.im.mapper;
 
 import com.virjar.tk.server.im.entity.ImRobotMsgQueue;
-import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import org.springframework.data.r2dbc.repository.R2dbcRepository;
 
 /**
  * <p>
@@ -11,6 +11,6 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
  * @author virjar
  * @since 2024-05-06
  */
-public interface ImRobotMsgQueueMapper extends BaseMapper<ImRobotMsgQueue> {
+public interface ImRobotMsgQueueMapper extends R2dbcRepository<ImRobotMsgQueue, Long> {
 
 }

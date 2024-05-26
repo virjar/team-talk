@@ -2,6 +2,7 @@ package com.virjar.tk.server.im.controller;
 
 
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
+import com.virjar.tk.server.common.CommMono;
 import com.virjar.tk.server.common.CommonRes;
 import com.virjar.tk.server.im.entity.ImUserInfo;
 import com.virjar.tk.server.im.mapper.ImUserInfoMapper;
@@ -17,6 +18,7 @@ import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.SneakyThrows;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Mono;
 
 import java.util.UUID;
 
@@ -39,13 +41,13 @@ public class UserInfoController {
 
     @Operation(summary = "登陆")
     @RequestMapping(value = "/login", method = RequestMethod.POST)
-    public CommonRes<ImUserInfo> login(String userName, String password) {
+    public Mono<ImUserInfo> login(String userName, String password) {
         return userInfoService.login(userName, password);
     }
 
     @Operation(summary = "登陆")
     @RequestMapping(value = "/getLogin", method = RequestMethod.GET)
-    public CommonRes<ImUserInfo> getLogin(String userName, String password) {
+    public Mono<ImUserInfo> getLogin(String userName, String password) {
         return userInfoService.login(userName, password);
     }
 
@@ -67,26 +69,26 @@ public class UserInfoController {
 
     @Operation(summary = "注册")
     @RequestMapping(value = "/register", method = RequestMethod.POST)
-    public CommonRes<ImUserInfo> register(String userName, String password) {
-        return userInfoService.register(userName, password);
+    public Mono<ImUserInfo> register(String userName, String password) {
+        return userInfoService.register(userName, password, false);
     }
 
     @LoginRequired(apiToken = true)
     @Operation(summary = "当前用户信息")
     @RequestMapping(value = "/userInfo", method = RequestMethod.GET)
-    public CommonRes<ImUserInfo> userInfo() {
+    public Mono<ImUserInfo> userInfo() {
         ImUserInfo user = AppContext.getUser();
         if (AppContext.isApiUser()) {
             // api方式无法获取到用户密码，我们认为API是用在代码中，他是低优账户体系。后台账户将会对他保密
             user.setPassword(null);
         }
-        return CommonRes.success(user);
+        return Mono.just(user);
     }
 
     @LoginRequired
     @Operation(summary = "刷新当前用户token")
     @GetMapping(value = "/refreshToken")
-    public CommonRes<String> refreshToken() {
+    public Mono<String> refreshToken() {
         String newToken = userInfoService.refreshToken(AppContext.getUser().getWebLoginToken());
         if (newToken == null) {
             return CommonRes.failed(CommonRes.statusLoginExpire, "请重新登陆");
@@ -97,7 +99,7 @@ public class UserInfoController {
     @LoginRequired
     @Operation(summary = "重置密码")
     @PostMapping(value = "/resetPassword")
-    public CommonRes<ImUserInfo> resetPassword(String newPassword) {
+    public Mono<ImUserInfo> resetPassword(String newPassword) {
         ImUserInfo mUser = AppContext.getUser();
         if (mUser.getSysAdmin() && Environment.isDemoSite) {
             return CommonRes.failed("测试demo网站不允许修改管理员密码");
@@ -108,7 +110,7 @@ public class UserInfoController {
     @LoginRequired
     @Operation(summary = "重新生产api访问的token")
     @GetMapping("/regenerateAPIToken")
-    public CommonRes<ImUserInfo> regenerateAPIToken() {
+    public Mono<ImUserInfo> regenerateAPIToken() {
         ImUserInfo mUser = AppContext.getUser();
         mUser.setApiToken(UUID.randomUUID().toString());
         userInfoMapper.update(null, new UpdateWrapper<ImUserInfo>()

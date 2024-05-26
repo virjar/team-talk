@@ -1,7 +1,7 @@
 package com.virjar.tk.server.sys.mapper;
 
 import com.virjar.tk.server.sys.entity.SysFileAsset;
-import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import org.springframework.data.r2dbc.repository.R2dbcRepository;
 
 /**
  * <p>
@@ -11,6 +11,6 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
  * @author virjar
  * @since 2024-05-07
  */
-public interface SysFileAssetMapper extends BaseMapper<SysFileAsset> {
+public interface SysFileAssetMapper extends R2dbcRepository<SysFileAsset,Long> {
 
 }
