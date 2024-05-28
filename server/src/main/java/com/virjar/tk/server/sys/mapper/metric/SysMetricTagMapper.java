@@ -14,5 +14,7 @@ import reactor.core.publisher.Mono;
  */
 public interface SysMetricTagMapper extends R2dbcRepository<SysMetricTag, Long> {
 
-    Mono<SysMetricTag> findBySysMetricName(String sysMetricName);
+    Mono<SysMetricTag> findByName(String name);
+
+    Mono<Long> deleteByName(String name);
 }

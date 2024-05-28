@@ -21,7 +21,7 @@ public class FuncTopN extends MQLFunction {
 
     public FuncTopN(List<String> params) {
         super(params);
-        if (params.size() < 1) {
+        if (params.isEmpty()) {
             throw new IllegalStateException("must has one param");
         }
         varName = params.get(0);

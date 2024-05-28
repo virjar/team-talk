@@ -1,7 +1,6 @@
 package com.virjar.tk.server.sys.mapper.metric;
 
 import com.virjar.tk.server.sys.entity.metric.SysMetricMinute;
-import org.springframework.data.r2dbc.repository.R2dbcRepository;
 
 /**
  * <p>
@@ -11,6 +10,6 @@ import org.springframework.data.r2dbc.repository.R2dbcRepository;
  * @author virjar
  * @since 2024-05-07
  */
-public interface SysMetricMinuteMapper extends R2dbcRepository<SysMetricMinute, Long> {
+public interface SysMetricMinuteMapper extends SysMetricBaseMapper<SysMetricMinute> {
 
 }

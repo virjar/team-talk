@@ -46,7 +46,10 @@ public class FuncMetric extends MQLFunction {
 
     @Override
     public Context.MQLVar call(Context context) {
-        List<MetricVo> metrics = context.getMetricService().queryMetric(metricName, filters, context.getMetricAccuracy());
+        List<MetricVo> metrics = context.getMetricService()
+                .queryMetric(metricName, filters, context.getMetricAccuracy())
+                .collectList().block();
+        assert metrics != null;
         Map<String, List<MetricVo>> metricWithTime = metrics.stream().collect(Collectors.groupingBy(MetricVo::getTimeKey));
         return Context.MQLVar.newVar(new TreeMap<>(metricWithTime));
     }

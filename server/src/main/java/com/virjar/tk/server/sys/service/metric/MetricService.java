@@ -3,30 +3,34 @@ package com.virjar.tk.server.sys.service.metric;
 import com.alibaba.fastjson.JSONObject;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import com.virjar.tk.server.sys.service.env.Environment;
-import com.virjar.tk.server.sys.service.safethread.Looper;
 import com.virjar.tk.server.sys.entity.metric.SysMetric;
 import com.virjar.tk.server.sys.entity.metric.SysMetricDay;
 import com.virjar.tk.server.sys.entity.metric.SysMetricTag;
+import com.virjar.tk.server.sys.mapper.metric.SysMetricBaseMapper;
 import com.virjar.tk.server.sys.mapper.metric.SysMetricDayMapper;
 import com.virjar.tk.server.sys.mapper.metric.SysMetricHourMapper;
 import com.virjar.tk.server.sys.mapper.metric.SysMetricMinuteMapper;
+import com.virjar.tk.server.sys.service.env.Environment;
+import com.virjar.tk.server.sys.service.safethread.Looper;
 import io.micrometer.core.instrument.*;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.reactivestreams.Publisher;
 import org.springframework.beans.BeanUtils;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.r2dbc.core.R2dbcEntityTemplate;
+import org.springframework.data.relational.core.query.Criteria;
+import org.springframework.data.relational.core.query.Query;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.FluxSink;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.MonoSink;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDateTime;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -34,7 +38,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 @Service
 @Slf4j
@@ -52,6 +55,9 @@ public class MetricService {
 
     @Resource
     private MetricTagService metricTagService;
+
+    @Resource
+    private R2dbcEntityTemplate r2dbcEntityTemplate;
 
 
     @PostConstruct
@@ -132,35 +138,23 @@ public class MetricService {
      * @return 指标集合，请注意这里不会对数据做过滤。同时因为我们对指标有提前聚合，所以返回结果集是可控的，大约在千以内
      */
     public Flux<MetricVo> queryMetric(String name, Map<String, String> query, MetricEnums.MetricAccuracy accuracy) {
+        return metricTagService.fromKey(name)
+                .flatMapMany((tag) -> {
+                    Criteria criteria = Criteria.empty()
+                            .and(SysMetricDay.NAME).is(name);
+                    criteria = metricTagService.wrapQueryWithTags(criteria, query, tag);
+                    Query queryWrapper = Query.query(criteria).sort(Sort.by(SysMetric.TIME_KEY));
 
-         metricTagService.fromKey(name).flatMap((tag)->{
-             return // todo
-         }).switchIfEmpty(Flux.empty())
-
-        return Flux.create(new Consumer<FluxSink<MetricVo>>() {
-            @Override
-            public void accept(FluxSink<MetricVo> objectFluxSink) {
-                Mono<SysMetricTag> metricTag = metricTagService.fromKey(name);
-                metricTag.
-            }
-        })
-
-        QueryWrapper<SysMetric> queryWrapper = metricTagService
-                .wrapQueryWithTags(new QueryWrapper<SysMetric>().eq(SysMetricDay.NAME, name),
-                        query, metricTag);
+                    return r2dbcEntityTemplate.select(queryWrapper, accuracy.handleClazz)
+                            .map((Function<SysMetric, MetricVo>) sysMetric -> mapMetric(sysMetric, tag))
+                            .doOnNext(metricVo -> {
+                                // remove tag field after
+                                Map<String, String> tags = metricVo.getTags();
+                                query.keySet().forEach(tags::remove);
+                            });
 
 
-        Stream<MetricVo> metricRet = chooseDao(accuracy).selectList(queryWrapper.orderByAsc(SysMetricDay.TIME_KEY))
-                .stream()
-                .map(metric -> mapMetric(metric, metricTag));
-
-        metricRet = metricRet.peek(metricVo -> {
-            // remove tag field after
-            Map<String, String> tags = metricVo.getTags();
-            query.keySet().forEach(tags::remove);
-        });
-
-        return metricRet.collect(Collectors.toList());
+                });
     }
 
 
@@ -472,20 +466,18 @@ public class MetricService {
     }
 
     @SuppressWarnings("unchecked")
-    public <T extends SysMetric> BaseMapper<T> chooseDao(MetricEnums.MetricAccuracy accuracy) {
-        switch (accuracy) {
-            case days:
-                return (BaseMapper<T>) metricDayMapper;
-            case hours:
-                return (BaseMapper<T>) metricHourMapper;
-            default:
-                return (BaseMapper<T>) metricMinuteMapper;
-        }
+    public <T extends SysMetric> SysMetricBaseMapper<T> chooseDao(MetricEnums.MetricAccuracy accuracy) {
+        return switch (accuracy) {
+            case days -> (SysMetricBaseMapper<T>) metricDayMapper;
+            case hours -> (SysMetricBaseMapper<T>) metricHourMapper;
+            default -> (SysMetricBaseMapper<T>) metricMinuteMapper;
+        };
     }
 
-    public void eachDao(Consumer<BaseMapper<SysMetric>> consumer) {
-        consumer.accept(chooseDao(MetricEnums.MetricAccuracy.days));
-        consumer.accept(chooseDao(MetricEnums.MetricAccuracy.hours));
-        consumer.accept(chooseDao(MetricEnums.MetricAccuracy.minutes));
+    public <R> Flux<R> eachDao(Function<SysMetricBaseMapper<SysMetric>, Mono<R>> func) {
+        return Flux.just(chooseDao(MetricEnums.MetricAccuracy.days),
+                        chooseDao(MetricEnums.MetricAccuracy.hours),
+                        chooseDao(MetricEnums.MetricAccuracy.minutes))
+                .flatMap(func);
     }
 }

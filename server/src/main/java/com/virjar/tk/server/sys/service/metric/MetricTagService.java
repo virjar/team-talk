@@ -1,25 +1,25 @@
 package com.virjar.tk.server.sys.service.metric;
 
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.virjar.tk.server.sys.entity.metric.SysMetric;
 import com.virjar.tk.server.sys.entity.metric.SysMetricDay;
 import com.virjar.tk.server.sys.entity.metric.SysMetricTag;
-import com.virjar.tk.server.utils.Md5Utils;
-import com.virjar.tk.server.utils.ServerIdentifier;
 import com.virjar.tk.server.sys.mapper.metric.SysMetricTagMapper;
 import com.virjar.tk.server.sys.service.BroadcastService;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
+import com.virjar.tk.server.utils.Md5Utils;
+import com.virjar.tk.server.utils.ServerIdentifier;
 import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.Tag;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.data.relational.core.query.Criteria;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
 import java.util.*;
-import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 @Service
@@ -66,7 +66,7 @@ public class MetricTagService {
         if (tagMap.containsKey(metricName)) {
             return Mono.just(tagMap.get(metricName));
         }
-        return sysMetricTagMapper.findBySysMetricName(metricName);
+        return sysMetricTagMapper.findByName(metricName);
     }
 
     public SysMetricTag fromMeter(Meter meter, MetricEnums.TimeSubType timerType) {
@@ -95,40 +95,40 @@ public class MetricTagService {
         return ret;
     }
 
-    public <T extends SysMetric> QueryWrapper<T> wrapQueryWithTags(QueryWrapper<T> queryWrapper,
-                                                                   Map<String, String> tags,
-                                                                   SysMetricTag SysMetricTag) {
+    public Criteria wrapQueryWithTags(Criteria queryWrapper,
+                                      Map<String, String> tags,
+                                      SysMetricTag SysMetricTag) {
         if (tags == null || tags.isEmpty()) {
             return queryWrapper;
         }
         String tag1Name = SysMetricTag.getTag1Name();
         String s = tags.get(tag1Name);
         if (s != null) {
-            queryWrapper.eq(SysMetricDay.TAG1, s);
+            queryWrapper = queryWrapper.and(SysMetricDay.TAG1).is(s);
         }
 
         String tag2Name = SysMetricTag.getTag2Name();
         s = tags.get(tag2Name);
         if (s != null) {
-            queryWrapper.eq(SysMetricDay.TAG2, s);
+            queryWrapper = queryWrapper.and(SysMetricDay.TAG2).is(s);
         }
 
         String tag3Name = SysMetricTag.getTag3Name();
         s = tags.get(tag3Name);
         if (s != null) {
-            queryWrapper.eq(SysMetricDay.TAG3, s);
+            queryWrapper = queryWrapper.and(SysMetricDay.TAG3).is(s);
         }
 
         String tag4Name = SysMetricTag.getTag4Name();
         s = tags.get(tag4Name);
         if (s != null) {
-            queryWrapper.eq(SysMetricDay.TAG4, s);
+            queryWrapper = queryWrapper.and(SysMetricDay.TAG4).is(s);
         }
 
         String tag5Name = SysMetricTag.getTag5Name();
         s = tags.get(tag5Name);
         if (s != null) {
-            queryWrapper.eq(SysMetricDay.TAG5, s);
+            queryWrapper = queryWrapper.and(SysMetricDay.TAG5).is(s);
         }
         return queryWrapper;
     }
