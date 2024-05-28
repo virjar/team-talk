@@ -312,7 +312,7 @@ public class ReflectUtil {
 
         HashMap<String, Method> classLoaderMethodCache = getOrCreateMethodCache(clazz.getClassLoader());
 
-        if (getOrCreateFieldCache(clazz.getClassLoader()).containsKey(fullMethodName)) {
+        if (getOrCreateMethodCache(clazz.getClassLoader()).containsKey(fullMethodName)) {
             Method method = classLoaderMethodCache.get(fullMethodName);
             if (method == null)
                 throw new NoSuchMethodError(fullMethodName);
@@ -964,5 +964,143 @@ public class ReflectUtil {
             return false;
         }
         return toClass.isAssignableFrom(cls);
+    }
+
+    /**
+     * Look up a constructor in a class and set it to accessible.
+     *
+     * <p>See {@link #findMethodBestMatch(Class, String, Class...)} for details.
+     */
+    public static Constructor<?> findConstructorBestMatch(Class<?> clazz, Class<?>... parameterTypes) {
+        String fullMethodName = clazz.getName() + getParametersString(parameterTypes) + "#bestmatch";
+
+        HashMap<String, Constructor<?>> classLoaderMethodCache = getOrCreateConstructorCache(clazz.getClassLoader());
+
+        if (getOrCreateConstructorCache(clazz.getClassLoader()).containsKey(fullMethodName)) {
+            Constructor<?> method = classLoaderMethodCache.get(fullMethodName);
+            if (method == null)
+                throw new NoSuchMethodError(fullMethodName);
+            return method;
+        }
+
+        try {
+            Constructor<?> method = findConstructorExact(clazz, parameterTypes);
+            classLoaderMethodCache.put(fullMethodName, method);
+            return method;
+        } catch (NoSuchMethodError ignored) {
+        }
+
+        Constructor<?> bestMatch = null;
+        Class<?> clz = clazz;
+        boolean considerPrivateMethods = true;
+        do {
+            for (Constructor<?> method : clz.getDeclaredConstructors()) {
+                // don't consider private methods of superclasses
+                if (!considerPrivateMethods && Modifier.isPrivate(method.getModifiers()))
+                    continue;
+
+                // compare name and parameters
+                if (isAssignable(parameterTypes, method.getParameterTypes(), true)) {
+                    // get accessible version of method
+                    if (bestMatch == null || MemberUtils.compareParameterTypes(
+                            method.getParameterTypes(),
+                            bestMatch.getParameterTypes(),
+                            parameterTypes) < 0) {
+                        bestMatch = method;
+                    }
+                }
+            }
+            considerPrivateMethods = false;
+        } while ((clz = clz.getSuperclass()) != null);
+
+        if (bestMatch != null) {
+            bestMatch.setAccessible(true);
+            classLoaderMethodCache.put(fullMethodName, bestMatch);
+            return bestMatch;
+        } else {
+            NoSuchMethodError e = new NoSuchMethodError(fullMethodName);
+            classLoaderMethodCache.put(fullMethodName, null);
+            throw e;
+        }
+    }
+
+    /**
+     * Look up a constructor in a class and set it to accessible.
+     *
+     * <p>See {@link #findMethodBestMatch(Class, String, Class...)} for details. This variant
+     * determines the parameter types from the classes of the given objects.
+     */
+    public static Constructor<?> findConstructorBestMatch(Class<?> clazz, Object... args) {
+        return findConstructorBestMatch(clazz, getParameterTypes(args));
+    }
+
+    /**
+     * Look up a constructor in a class and set it to accessible.
+     *
+     * <p>See {@link #findMethodBestMatch(Class, String, Class...)} for details. This variant
+     * determines the parameter types from the classes of the given objects. For any item that is
+     * {@code null}, the type is taken from {@code parameterTypes} instead.
+     */
+    public static Constructor<?> findConstructorBestMatch(Class<?> clazz, Class<?>[] parameterTypes, Object[] args) {
+        Class<?>[] argsClasses = null;
+        for (int i = 0; i < parameterTypes.length; i++) {
+            if (parameterTypes[i] != null)
+                continue;
+            if (argsClasses == null)
+                argsClasses = getParameterTypes(args);
+            parameterTypes[i] = argsClasses[i];
+        }
+        return findConstructorBestMatch(clazz, parameterTypes);
+    }
+
+    //#################################################################################################
+
+    /**
+     * Creates a new instance of the given class.
+     * The constructor is resolved using {@link #findConstructorBestMatch(Class, Object...)}.
+     *
+     * @param clazz The class reference.
+     * @param args  The arguments for the constructor call.
+     * @throws NoSuchMethodError     In case no suitable constructor was found.
+     * @throws InvocationTargetError In case an exception was thrown by the invoked method.
+     * @throws InstantiationError    In case the class cannot be instantiated.
+     */
+    public static Object newInstance(Class<?> clazz, Object... args) {
+        try {
+            return findConstructorBestMatch(clazz, args).newInstance(args);
+        } catch (IllegalAccessException e) {
+            // should not happen
+            HtianBridge.log(e);
+            throw new IllegalAccessError(e.getMessage());
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (InvocationTargetException e) {
+            throw new InvocationTargetError(e.getCause());
+        } catch (InstantiationException e) {
+            throw new InstantiationError(e.getMessage());
+        }
+    }
+
+    /**
+     * Creates a new instance of the given class.
+     * See {@link #newInstance(Class, Object...)}.
+     *
+     * <p>This variant allows you to specify parameter types, which can help in case there are multiple
+     * constructors with the same name, especially if you call it with {@code null} parameters.
+     */
+    public static Object newInstance(Class<?> clazz, Class<?>[] parameterTypes, Object... args) {
+        try {
+            return findConstructorBestMatch(clazz, parameterTypes, args).newInstance(args);
+        } catch (IllegalAccessException e) {
+            // should not happen
+            HtianBridge.log(e);
+            throw new IllegalAccessError(e.getMessage());
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (InvocationTargetException e) {
+            throw new InvocationTargetError(e.getCause());
+        } catch (InstantiationException e) {
+            throw new InstantiationError(e.getMessage());
+        }
     }
 }

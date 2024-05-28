@@ -2,6 +2,7 @@ package com.virjar.tk.server.sys.mapper;
 
 import com.virjar.tk.server.sys.entity.SysServerNode;
 import org.springframework.data.r2dbc.repository.R2dbcRepository;
+import reactor.core.publisher.Mono;
 
 /**
  * <p>
@@ -11,6 +12,7 @@ import org.springframework.data.r2dbc.repository.R2dbcRepository;
  * @author virjar
  * @since 2024-05-07
  */
-public interface SysServerNodeMapper extends R2dbcRepository<SysServerNode,Long> {
+public interface SysServerNodeMapper extends R2dbcRepository<SysServerNode, Long> {
 
+    public Mono<SysServerNode> findByServerId(String serverId);
 }

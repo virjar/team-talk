@@ -12,7 +12,6 @@ import com.virjar.tk.server.utils.ServerIdentifier;
 import com.virjar.tk.server.utils.net.SimpleHttpInvoker;
 import com.alibaba.fastjson.JSONException;
 import com.alibaba.fastjson.JSONObject;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
@@ -20,14 +19,25 @@ import com.google.common.collect.Sets;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.reactivestreams.Publisher;
 import org.springframework.boot.web.context.WebServerInitializedEvent;
 import org.springframework.context.ApplicationListener;
+import org.springframework.data.r2dbc.core.R2dbcEntityTemplate;
+import org.springframework.data.relational.core.query.Criteria;
+import org.springframework.data.relational.core.query.Query;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+import reactor.core.publisher.MonoSink;
+import reactor.util.function.Tuple2;
 
 import java.net.SocketException;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.Callable;
+import java.util.function.Consumer;
+import java.util.function.Function;
 
 @Service
 @Slf4j
@@ -42,6 +52,9 @@ public class BroadcastService implements ApplicationListener<WebServerInitialize
 
     @Resource
     private SysServerNodeMapper serverNodeMapper;
+
+    @Resource
+    private R2dbcEntityTemplate r2dbcEntityTemplate;
 
     private final Set<String> resolvedNodes = Sets.newConcurrentHashSet();
 
@@ -58,41 +71,54 @@ public class BroadcastService implements ApplicationListener<WebServerInitialize
         }
 
         String serverId = ServerIdentifier.id();
-        SysServerNode one = serverNodeMapper.selectOne(new QueryWrapper<SysServerNode>()
-                .eq(SysServerNode.SERVER_ID, serverId));
+        serverNodeMapper.findByServerId(serverId)
+                .flatMap((Function<SysServerNode, Mono<SysServerNode>>) sysServerNode -> {
+                    sysServerNode.setPort(mPort);
+                    sysServerNode.setLastActiveTime(LocalDateTime.now());
+                    return serverNodeMapper.save(sysServerNode);
+                })
+                .switchIfEmpty(createServerNode(serverId))
+                .zipWith(Mono.create((Consumer<MonoSink<Boolean>>) monoSink -> {
+                    boolean force = false;
+                    if (lastForResolveLocal < 1000 || System.currentTimeMillis() - lastForResolveLocal >
+                            5 * 60 * 60 * 1000) {
+                        lastForResolveLocal = System.currentTimeMillis();
+                        force = true;
+                    }
+                    monoSink.success(false);
+                }))
+                .flatMap((Function<Tuple2<SysServerNode, Boolean>, Mono<SysServerNode>>)
+                        tuple2 -> resolveLocalNode(tuple2.getT1(), tuple2.getT2())
+                )
+                .flatMapMany((Function<SysServerNode, Flux<?>>) sysServerNode -> {
+                    Criteria criteria = Criteria.where(SysServerNode.SERVER_ID).not(serverId)
+                            .and(SysServerNode.LAST_ACTIVE_TIME).greaterThan(
+                                    LocalDateTime.now().minusMinutes(4)
+                            );
+                    if (!resolvedNodes.isEmpty()) {
+                        criteria = criteria.and(SysServerNode.SERVER_ID).notIn(resolvedNodes);
+                    }
 
-        if (one == null) {
-            one = new SysServerNode();
-            one.setServerId(serverId);
-            one.setPort(mPort);
-            one.setLastActiveTime(LocalDateTime.now());
-            serverNodeMapper.insert(one);
-            return;
-        }
+                    return r2dbcEntityTemplate.select(Query.query(criteria), SysServerNode.class)
+                            .flatMap(new Function<>() {
+                                @Override
+                                public Publisher<?> apply(SysServerNode sysServerNode) {
+                                    return resolveOtherNode(sysServerNode);
+                                }
+                            });
+                }).subscribe();
+    }
 
+    private Mono<SysServerNode> createServerNode(String serverId) {
+        SysServerNode one = new SysServerNode();
+        one.setServerId(serverId);
         one.setPort(mPort);
         one.setLastActiveTime(LocalDateTime.now());
-        serverNodeMapper.updateById(one);
-
-        boolean force = false;
-        if (lastForResolveLocal < 1000 || System.currentTimeMillis() - lastForResolveLocal >
-                5 * 60 * 60 * 1000) {
-            lastForResolveLocal = System.currentTimeMillis();
-            force = true;
-        }
-
-        resolveLocalNode(one, force);
-
-        QueryWrapper<SysServerNode> queryWrapper = new QueryWrapper<>();
-        if (!resolvedNodes.isEmpty()) {
-            queryWrapper.notIn(SysServerNode.SERVER_ID, resolvedNodes);
-        }
-        queryWrapper.ne(SysServerNode.SERVER_ID, serverId).ge(SysServerNode.LAST_ACTIVE_TIME, LocalDateTime.now().minusMinutes(5));
-        serverNodeMapper.selectList(queryWrapper).forEach(this::resolveOtherNode);
+        return serverNodeMapper.save(one);
     }
 
 
-    private void resolveLocalNode(SysServerNode serverNode, boolean force) {
+    private Mono<SysServerNode> resolveLocalNode(SysServerNode serverNode, boolean force) {
         boolean update = false;
         if (force || StringUtils.isBlank(serverNode.getLocalIp())) {
             try {
@@ -113,8 +139,9 @@ public class BroadcastService implements ApplicationListener<WebServerInitialize
         }
 
         if (update) {
-            serverNodeMapper.updateById(serverNode);
+            return serverNodeMapper.save(serverNode);
         }
+        return Mono.just(serverNode);
     }
 
     private void resolveOtherNode(SysServerNode serverNode) {

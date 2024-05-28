@@ -12,28 +12,31 @@ import com.virjar.tk.server.sys.mapper.metric.SysMetricHourMapper;
 import com.virjar.tk.server.sys.mapper.metric.SysMetricMinuteMapper;
 import com.virjar.tk.server.sys.service.env.Environment;
 import com.virjar.tk.server.sys.service.safethread.Looper;
+import com.virjar.tk.server.utils.ReflectUtil;
 import io.micrometer.core.instrument.*;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
-import org.reactivestreams.Publisher;
 import org.springframework.beans.BeanUtils;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.r2dbc.core.R2dbcEntityTemplate;
+import org.springframework.data.relational.core.mapping.RelationalMappingContext;
 import org.springframework.data.relational.core.query.Criteria;
 import org.springframework.data.relational.core.query.Query;
+import org.springframework.data.relational.core.query.Update;
+import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -59,6 +62,11 @@ public class MetricService {
     @Resource
     private R2dbcEntityTemplate r2dbcEntityTemplate;
 
+    @Resource
+    private DatabaseClient databaseClient;
+
+    @Resource
+    private RelationalMappingContext relationalMappingContext;
 
     @PostConstruct
     public void registerShutdownHook() {
@@ -93,6 +101,7 @@ public class MetricService {
         if (Environment.isLocalDebug) {
             return;
         }
+        // todo 定时任务没有异步化，后面在看怎么处理
         log.info("schedule mergeHoursMetric");
         metricHandleLooper.execute(() ->
                 performMerge(
@@ -124,10 +133,12 @@ public class MetricService {
 
     @Scheduled(cron = "0 4 4 14 * ?")
     public void scheduleCleanDays() {
-        // 最多保留3年的指标数据，超过3年的直接删除
-        chooseDao(MetricEnums.MetricAccuracy.days).delete(new QueryWrapper<SysMetric>()
-                .le(SysMetric.CREATE_TIME, LocalDateTime.now().minusDays(1000))
+        Criteria criteria = Criteria.empty().and(SysMetric.CREATE_TIME).lessThanOrEquals(
+                LocalDateTime.now().minusDays(1000)
         );
+        // 最多保留3年的指标数据，超过3年的直接删除
+        r2dbcEntityTemplate.delete(Query.query(criteria), SysMetricDay.class)
+                .subscribe();
     }
 
     /**
@@ -186,35 +197,46 @@ public class MetricService {
                               LocalDateTime cleanBefore, LocalDateTime scanStart,
                               Function<LocalDateTime, LocalDateTime> stepFun,
                               Function<LocalDateTime, LocalDateTime> stepStartFun) {
-        metricTagService.metricNames().forEach(metricName -> {
-            LocalDateTime scanStart_;
-            if (scanStart == null) {
-                SysMetric first = chooseDao(fromAccuracy).selectOne(new QueryWrapper<SysMetric>()
-                        .eq(SysMetric.NAME, metricName)
-                        .orderByAsc(SysMetric.TIME_KEY)
-                        .last("limit 1"));
-                if (first == null) {
-                    return;
-                }
-                scanStart_ = first.getCreateTime();
-            } else {
-                scanStart_ = scanStart;
-            }
-            LocalDateTime now = LocalDateTime.now();
-            while (scanStart_.isBefore(now)) {
-                LocalDateTime start = stepStartFun.apply(scanStart_);
-                LocalDateTime end = stepFun.apply(start);
-                mergeTimesSpace(start, end, fromAccuracy, toAccuracy, metricName, cleanBefore);
-                scanStart_ = end.plusMinutes(30);
-            }
-            // clean metric data which has been merged and produced for a long time
-            chooseDao(fromAccuracy).delete(new QueryWrapper<SysMetric>()
-                    .eq(SysMetric.NAME, metricName)
-                    .lt(SysMetric.CREATE_TIME, cleanBefore)
-            );
-        });
+        metricTagService.metricNames()
+                .forEach(metricName ->
+                        mergeOneMetric(metricName, fromAccuracy, toAccuracy, cleanBefore, scanStart, stepFun, stepStartFun)
+                );
     }
 
+    private Mono<LocalDateTime> findScanStart(LocalDateTime input, String metricName, MetricEnums.MetricAccuracy fromAccuracy) {
+        if (input != null) {
+            return Mono.just(input);
+        }
+        Query query = Query.query(Criteria.where(SysMetric.NAME).is(metricName))
+                .sort(Sort.by(SysMetric.TIME_KEY))
+                .limit(1);
+        return r2dbcEntityTemplate.selectOne(query, fromAccuracy.handleClazz)
+                .map((Function<SysMetric, LocalDateTime>) SysMetric::getCreateTime);
+    }
+
+    private void mergeOneMetric(String metricName, MetricEnums.MetricAccuracy fromAccuracy,
+                                MetricEnums.MetricAccuracy toAccuracy,
+                                LocalDateTime cleanBefore, LocalDateTime scanStart,
+                                Function<LocalDateTime, LocalDateTime> stepFun,
+                                Function<LocalDateTime, LocalDateTime> stepStartFun) {
+        findScanStart(scanStart, metricName, fromAccuracy)
+                .doOnSuccess(scanStart_ -> {
+                    LocalDateTime now = LocalDateTime.now();
+                    while (scanStart_.isBefore(now)) {
+                        LocalDateTime start = stepStartFun.apply(scanStart_);
+                        LocalDateTime end = stepFun.apply(start);
+                        mergeTimesSpace(start, end, fromAccuracy, toAccuracy, metricName, cleanBefore);
+                        scanStart_ = end.plusMinutes(30);
+                    }
+                }).flatMap((Function<LocalDateTime, Mono<Long>>) localDateTime -> {
+                    // clean metric data which has been merged and produced for a long time
+                    return r2dbcEntityTemplate.delete(Query.query(
+                            Criteria.where(SysMetric.NAME).is(metricName)
+                                    .and(SysMetric.CREATE_TIME).lessThan(cleanBefore)
+                    ), fromAccuracy.handleClazz);
+                })
+                .subscribe();
+    }
 
     private void mergeTimesSpace(LocalDateTime startTime, LocalDateTime endTime,
                                  MetricEnums.MetricAccuracy from, MetricEnums.MetricAccuracy to,
@@ -226,18 +248,16 @@ public class MetricService {
 
         // 一个指标，可能存在很多tag，tag分维如果有上千之后，再加上时间维度，数据量级就可能非常大，所以我们在数据库中先根据tag分组一下
         // 这样驻留在内存中的数据就没有tag维度，避免内存中数据量过大
-        List<String> tags = chooseDao(from).selectObjs(new QueryWrapper<SysMetric>()
-                .select(SysMetric.TAGS_MD5)
-                .eq(SysMetric.NAME, metricName)
-                .ge(SysMetric.CREATE_TIME, startTime)
-                .lt(SysMetric.CREATE_TIME, endTime)
-                .groupBy(SysMetric.TAGS_MD5)
-        ).stream().map(o -> (String) o).toList();
+        String sql = "select tags_md5 from :table where name=:name and create_time >= :startTime and create_time <= :endTime group by tags_md5";
+        List<String> tags = databaseClient.sql(sql)
+                .bind("table", Objects.requireNonNull(relationalMappingContext.getPersistentEntity(from.handleClazz)).getTableName())
+                .bind("name", metricName)
+                .bind("startTime", startTime)
+                .bind("endTime", endTime)
+                .map((row) -> row.get("tags_md5", String.class)).all()
+                .collectList().block();
 
-        if (tags.isEmpty()) {
-            return;
-        }
-
+        assert tags != null;
         tags.forEach(tagsMd5 -> mergeTimesSpaceWithTag(
                 startTime, endTime, from, to, metricName, tagsMd5, timeKey, cleanBefore
         ));
@@ -246,100 +266,104 @@ public class MetricService {
     private void mergeTimesSpaceWithTag(LocalDateTime startTime, LocalDateTime endTime,
                                         MetricEnums.MetricAccuracy from, MetricEnums.MetricAccuracy to,
                                         String metricName, String tagsMd5, String timeKey, LocalDateTime cleanBefore) {
-        List<SysMetric> metrics = chooseDao(from).selectList(new QueryWrapper<SysMetric>()
-                .eq(SysMetric.NAME, metricName)
-                .eq(SysMetric.TAGS_MD5, tagsMd5)
-                .ge(SysMetric.CREATE_TIME, startTime)
-                .lt(SysMetric.CREATE_TIME, endTime)
-                .orderByAsc(SysMetric.TIME_KEY)
-        );
 
-        if (metrics.isEmpty()) {
-            return;
-        }
-        SysMetric first = metrics.get(0);
+        Criteria criteria = Criteria.where(SysMetric.NAME).is(metricName)
+                .and(SysMetric.TAGS_MD5).is(tagsMd5)
+                .and(SysMetric.CREATE_TIME).greaterThan(startTime)
+                .and(SysMetric.CREATE_TIME).lessThan(endTime);
 
-        List<SysMetric> mergedList = Lists.newArrayList();
+        r2dbcEntityTemplate.select(Query.query(criteria).sort(Sort.by(SysMetric.TIME_KEY)), from.handleClazz)
+                .collectList()
+                .doOnNext((Consumer<List<? extends SysMetric>>) metrics -> {
+                    SysMetric first = metrics.get(0);
 
-        if (first.getType() == Meter.Type.TIMER) {
-            metrics.sort(Comparator.comparing(SysMetric::getTimeKey));
-            // for timer , need group by
-            List<SysMetric> countList = Lists.newArrayList();
-            List<SysMetric> totalTimeList = Lists.newArrayList();
-            List<SysMetric> maxList = Lists.newArrayList();
-            SysMetricTag metricTag = metricTagService.fromKey(metricName);
-            metrics.forEach(metric -> {
-                String subtype = mapMetric(metric, metricTag).getTags().get(MetricEnums.TimeSubType.timer_type);
-                if (MetricEnums.TimeSubType.COUNT.metricKey.equals(subtype)) {
-                    countList.add(metric);
-                } else if (MetricEnums.TimeSubType.TIME.metricKey.equals(subtype)) {
-                    totalTimeList.add(metric);
-                } else if (MetricEnums.TimeSubType.MAX.metricKey.equals(subtype)) {
-                    maxList.add(metric);
-                }
-            });
-            if (!countList.isEmpty()) {
-                mergedList.add(mergeMetrics(countList, countList.get(0), SUM));
-            }
-            if (!totalTimeList.isEmpty()) {
-                mergedList.add(mergeMetrics(totalTimeList, totalTimeList.get(0), SUM));
-            }
-            if (!maxList.isEmpty()) {
-                mergedList.add(mergeMetrics(maxList, maxList.get(0), MAX));
-            }
-        } else {
-            mergedList.add(mergeMetrics(metrics, first, first.getType() == Meter.Type.COUNTER ? SUM : AVG));
-        }
+                    List<SysMetric> mergedList = Lists.newArrayList();
 
-        mergedList.forEach(mergedMetric -> {
-            mergedMetric.setTimeKey(timeKey);
-            mergedMetric.setCreateTime(first.getCreateTime());
-            log.info("merged metric: {}", JSONObject.toJSONString(mergedMetric));
-            try {
-                chooseDao(to).insert(mergedMetric);
-            } catch (DuplicateKeyException ignore) {
-                // update on duplicate
-                // for newer data, I will merge many times
-                SysMetric old = chooseDao(to).selectOne(new QueryWrapper<SysMetric>()
-                        .eq(SysMetric.NAME, mergedMetric.getName())
-                        .eq(SysMetric.TAGS_MD5, mergedMetric.getTagsMd5())
-                        .eq(SysMetric.TIME_KEY, mergedMetric.getTimeKey())
-                );
-                mergedMetric.setId(old.getId());
-                chooseDao(to).updateById(mergedMetric);
-            }
-        });
+                    if (first.getType() == Meter.Type.TIMER) {
+                        metrics.sort(Comparator.comparing(SysMetric::getTimeKey));
+                        // for timer , need group by
+                        List<SysMetric> countList = Lists.newArrayList();
+                        List<SysMetric> totalTimeList = Lists.newArrayList();
+                        List<SysMetric> maxList = Lists.newArrayList();
+                        SysMetricTag metricTag = metricTagService.fromKey(metricName).block();
+                        metrics.forEach(metric -> {
+                            String subtype = mapMetric(metric, metricTag).getTags().get(MetricEnums.TimeSubType.timer_type);
+                            if (MetricEnums.TimeSubType.COUNT.metricKey.equals(subtype)) {
+                                countList.add(metric);
+                            } else if (MetricEnums.TimeSubType.TIME.metricKey.equals(subtype)) {
+                                totalTimeList.add(metric);
+                            } else if (MetricEnums.TimeSubType.MAX.metricKey.equals(subtype)) {
+                                maxList.add(metric);
+                            }
+                        });
+                        if (!countList.isEmpty()) {
+                            mergedList.add(mergeMetrics(countList, countList.get(0), SUM, to.handleClazz));
+                        }
+                        if (!totalTimeList.isEmpty()) {
+                            mergedList.add(mergeMetrics(totalTimeList, totalTimeList.get(0), SUM, to.handleClazz));
+                        }
+                        if (!maxList.isEmpty()) {
+                            mergedList.add(mergeMetrics(maxList, maxList.get(0), MAX, to.handleClazz));
+                        }
+                    } else {
+                        mergedList.add(mergeMetrics(metrics, first, first.getType() == Meter.Type.COUNTER ? SUM : AVG, to.handleClazz));
+                    }
 
-        List<Long> needRemoveIds = metrics.stream()
-                .filter(metric -> metric.getCreateTime().isBefore(cleanBefore))
-                .map(SysMetric::getId)
-                .collect(Collectors.toList());
+                    mergedList.forEach(mergedMetric -> {
+                        mergedMetric.setTimeKey(timeKey);
+                        mergedMetric.setCreateTime(first.getCreateTime());
+                        log.info("merged metric: {}", JSONObject.toJSONString(mergedMetric));
 
-        if (!needRemoveIds.isEmpty()) {
-            chooseDao(from).deleteBatchIds(needRemoveIds);
-        }
+                        r2dbcEntityTemplate.insert(mergedMetric)
+                                .map(sysMetric -> 0L)
+                                .onErrorResume(DuplicateKeyException.class, ex -> {
+                                    // update on duplicate
+                                    // for newer data, I will merge many times
+                                    Criteria duplicateCriteria = Criteria.where(SysMetric.NAME).is(mergedMetric.getName())
+                                            .and(SysMetric.TAGS_MD5).is(mergedMetric.getTagsMd5())
+                                            .and(SysMetric.TIME_KEY).is(mergedMetric.getTimeKey());
+                                    return r2dbcEntityTemplate.update(Query.query(duplicateCriteria), Update.update(
+                                            SysMetric.VALUE, mergedMetric.getValue()
+                                    ), to.handleClazz);
+                                }).subscribe();
+
+                    });
+
+                    List<Long> needRemoveIds = metrics.stream()
+                            .filter(metric -> metric.getCreateTime().isBefore(cleanBefore))
+                            .map(SysMetric::getId)
+                            .collect(Collectors.toList());
+
+                    if (!needRemoveIds.isEmpty()) {
+                        r2dbcEntityTemplate.delete(from.handleClazz)
+                                .matching(Query.query(Criteria.where(SysMetric.ID).in(needRemoveIds)))
+                                .all().subscribe();
+                    }
+                }).subscribe();
 
 
     }
 
-    private SysMetric mergeMetrics(List<SysMetric> metrics, SysMetric first, Function<List<SysMetric>, Double> mergeFunc) {
-        SysMetric container = new SysMetric();
+    private SysMetric mergeMetrics(List<? extends SysMetric> metrics,
+                                   SysMetric first, Function<List<? extends SysMetric>, Double> mergeFunc,
+                                   Class<? extends SysMetric> toType) {
+        SysMetric container = (SysMetric) ReflectUtil.newInstance(toType);
         BeanUtils.copyProperties(first, container);
         container.setValue(mergeFunc.apply(metrics));
         return container;
     }
 
-    private static final Function<List<SysMetric>, Double> AVG = metrics ->
+    private static final Function<List<? extends SysMetric>, Double> AVG = metrics ->
             metrics.stream()
                     .map(SysMetric::getValue)
                     .reduce(0D, Double::sum) / metrics.size();
 
-    private static final Function<List<SysMetric>, Double> SUM = metrics ->
+    private static final Function<List<? extends SysMetric>, Double> SUM = metrics ->
             metrics.stream()
                     .map(SysMetric::getValue)
                     .reduce(0D, Double::sum);
 
-    private static final Function<List<SysMetric>, Double> MAX = metrics ->
+    private static final Function<List<? extends SysMetric>, Double> MAX = metrics ->
             metrics.stream()
                     .map(SysMetric::getValue)
                     .reduce(0D, Double::max);
@@ -350,11 +374,11 @@ public class MetricService {
         Meter.Type type = meter.getId().getType();
 
         if (type == Meter.Type.GAUGE) {
-            SysMetricTag metricTag = metricTagService.fromMeter(meter, null);
+            SysMetricTag metricTag = metricTagService.fromMeter(meter, null).block();
             SysMetric metric = makeMetric(timeKey, time, meter, metricTag, null);
             saveGauge(metric, (Gauge) meter);
         } else if (type == Meter.Type.COUNTER) {
-            SysMetricTag metricTag = metricTagService.fromMeter(meter, null);
+            SysMetricTag metricTag = metricTagService.fromMeter(meter, null).block();
             SysMetric metric = makeMetric(timeKey, time, meter, metricTag, null);
             double count;
             if (meter instanceof Counter) {
@@ -373,15 +397,15 @@ public class MetricService {
             double totalTime = timer.totalTime(TimeUnit.MILLISECONDS);
             double max = timer.max(TimeUnit.MILLISECONDS);
 
-            SysMetricTag metricTagTime = metricTagService.fromMeter(meter, MetricEnums.TimeSubType.TIME);
+            SysMetricTag metricTagTime = metricTagService.fromMeter(meter, MetricEnums.TimeSubType.TIME).block();
             SysMetric metricTime = makeMetric(timeKey, time, meter, metricTagTime, MetricEnums.TimeSubType.TIME);
             saveCounter(metricTime, metricTime.getTagsMd5(), totalTime);
 
-            SysMetricTag metricTagCount = metricTagService.fromMeter(meter, MetricEnums.TimeSubType.COUNT);
+            SysMetricTag metricTagCount = metricTagService.fromMeter(meter, MetricEnums.TimeSubType.COUNT).block();
             SysMetric metricCount = makeMetric(timeKey, time, meter, metricTagCount, MetricEnums.TimeSubType.COUNT);
             saveCounter(metricCount, metricCount.getTagsMd5(), (double) count);
 
-            SysMetricTag metricTagMax = metricTagService.fromMeter(meter, MetricEnums.TimeSubType.MAX);
+            SysMetricTag metricTagMax = metricTagService.fromMeter(meter, MetricEnums.TimeSubType.MAX).block();
             SysMetric metricMax = makeMetric(timeKey, time, meter, metricTagMax, MetricEnums.TimeSubType.MAX);
             metricMax.setValue(max);
             saveMetric(metricMax);
@@ -420,14 +444,13 @@ public class MetricService {
     }
 
     private void saveMetric(SysMetric metric) {
-        try {
-            metric.setCreateTime(LocalDateTime.now());
-            chooseDao(MetricEnums.MetricAccuracy.minutes).insert(metric);
-        } catch (DuplicateKeyException ignore) {
-        }
+        metric.setCreateTime(LocalDateTime.now());
+        chooseDao(MetricEnums.MetricAccuracy.minutes).save(metric)
+                .subscribe();
     }
 
-    private SysMetric makeMetric(String timeKey, LocalDateTime time, Meter meter, SysMetricTag metricTag, MetricEnums.TimeSubType timerType) {
+    private SysMetric makeMetric(String timeKey, LocalDateTime time, Meter meter,
+                                 SysMetricTag metricTag, MetricEnums.TimeSubType timerType) {
         Meter.Id id = meter.getId();
         SysMetric metric = new SysMetric();
         metric.setName(id.getName());

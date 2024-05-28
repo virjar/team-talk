@@ -69,20 +69,16 @@ public class MetricTagService {
         return sysMetricTagMapper.findByName(metricName);
     }
 
-    public SysMetricTag fromMeter(Meter meter, MetricEnums.TimeSubType timerType) {
+    public Mono<SysMetricTag> fromMeter(Meter meter, MetricEnums.TimeSubType timerType) {
         Meter.Id meterId = meter.getId();
         String key = meterId.getName();
         if (tagMap.containsKey(key)) {
-            return tagMap.get(key);
+            return Mono.just(tagMap.get(key));
         }
 
-        SysMetricTag sysMetricTag = sysMetricTagMapper.selectOne(new QueryWrapper<SysMetricTag>()
-                .eq(SysMetricTag.NAME, key));
-        if (sysMetricTag == null) {
-            sysMetricTag = createTag(key, wrapTagList(meterId.getTags(), timerType));
-        }
-        tagMap.put(key, sysMetricTag);
-        return sysMetricTag;
+        return sysMetricTagMapper.findByName(key)
+                .switchIfEmpty(createTag(key, wrapTagList(meterId.getTags(), timerType)))
+                .doOnNext(metricTag -> tagMap.put(metricTag.getName(), metricTag));
     }
 
     private List<Tag> wrapTagList(List<Tag> list, MetricEnums.TimeSubType timerType) {
@@ -157,7 +153,7 @@ public class MetricTagService {
         metric.setTagsMd5(Md5Utils.md5Hex(uniformKey.toString()));
     }
 
-    private SysMetricTag createTag(String key, List<Tag> tags) {
+    private Mono<SysMetricTag> createTag(String key, List<Tag> tags) {
         if (tags.size() > TAG_SLOT_COUNT) {
             throw new IllegalStateException("tags size must less than :" + TAG_SLOT_COUNT);
         }
@@ -185,10 +181,8 @@ public class MetricTagService {
                     break;
             }
         }
-        try {
-            sysMetricTagMapper.insert(sysMetricTag);
-        } catch (DuplicateKeyException ignore) {
-        }
-        return sysMetricTagMapper.selectOne(new QueryWrapper<SysMetricTag>().eq(SysMetricTag.NAME, key));
+
+        return sysMetricTagMapper.save(sysMetricTag)
+                .onErrorResume(DuplicateKeyException.class, (e) -> sysMetricTagMapper.findByName(key));
     }
 }
