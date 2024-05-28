@@ -61,19 +61,21 @@ public class ConfigService {
         if (key.startsWith("__")) {
             return BusinessException.errorM("can not setup system internal properties :" + key);
         }
-
         SysConfig sysConfig = new SysConfig();
         sysConfig.setConfigKey(key);
         sysConfig.setConfigValue(value);
         sysConfig.setConfigComment(SYSTEM_SETTINGS);
-
         return sysConfigMapper.save(sysConfig)
                 .doOnSuccess((it) -> BroadcastService.triggerEvent(BroadcastService.Topic.CONFIG));
     }
 
     public void reloadConfig() {
-        sysConfigMapper.findAllByConfigComment(SYSTEM_SETTINGS)
+        List<SysConfig> configs = sysConfigMapper.findAllByConfigComment(SYSTEM_SETTINGS)
                 .collectList()
-                .subscribe(Configs::refreshConfig);
+                .block();
+        if (configs == null) {
+            throw new IllegalStateException("query configs failed, null result");
+        }
+        Configs.refreshConfig(configs);
     }
 }

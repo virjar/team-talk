@@ -36,6 +36,7 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-r2dbc")
     implementation("org.springframework.boot:spring-boot-starter-rsocket")
     implementation("org.springframework.boot:spring-boot-starter-webflux")
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
 
     developmentOnly("org.springframework.boot:spring-boot-docker-compose")
 
@@ -46,7 +47,7 @@ dependencies {
     implementation("ch.qos.logback:logback-classic:1.4.12")
     implementation("org.slf4j:jcl-over-slf4j:1.7.30")
     implementation("org.slf4j:log4j-over-slf4j:1.7.30")
-    implementation("com.google.guava:guava:31.1-jre")
+    implementation("com.google.guava:guava:33.2.0-jre")
     implementation("org.apache.commons:commons-lang3:3.12.0")
     implementation("commons-io:commons-io:2.10.0")
     implementation("com.alibaba:fastjson:1.2.79")

@@ -1,12 +1,12 @@
 package com.virjar.tk.server.sys.service.metric;
 
+import com.google.common.collect.Sets;
 import com.virjar.tk.server.sys.entity.metric.SysMetric;
 import com.virjar.tk.server.sys.entity.metric.SysMetricDay;
 import com.virjar.tk.server.sys.entity.metric.SysMetricTag;
 import com.virjar.tk.server.utils.Md5Utils;
 import com.virjar.tk.server.utils.ServerIdentifier;
 import com.virjar.tk.server.sys.mapper.metric.SysMetricTagMapper;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.virjar.tk.server.sys.service.BroadcastService;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -16,8 +16,10 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
 
 import java.util.*;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 @Service
@@ -35,11 +37,18 @@ public class MetricTagService {
 
     @PostConstruct
     public void loadAll() {
-        sysMetricTagMapper.selectList(new QueryWrapper<>()).forEach(SysMetricTag -> tagMap.put(SysMetricTag.getName(), SysMetricTag));
+        Objects.requireNonNull(sysMetricTagMapper.findAll().collectList()
+                .block()).forEach(SysMetricTag -> tagMap.put(SysMetricTag.getName(), SysMetricTag));
 
         BroadcastService.register(BroadcastService.Topic.METRIC_TAG, () -> {
-            tagMap.clear();
-            sysMetricTagMapper.selectList(new QueryWrapper<>()).forEach(SysMetricTag -> tagMap.put(SysMetricTag.getName(), SysMetricTag));
+            Set<String> needRemove = Sets.newConcurrentHashSet(tagMap.keySet());
+            sysMetricTagMapper.findAll()
+                    .doOnNext(sysMetricTag -> {
+                        needRemove.remove(sysMetricTag.getName());
+                        tagMap.put(sysMetricTag.getName(), sysMetricTag);
+                    })
+                    .doOnComplete(() -> needRemove.forEach(tagMap::remove))
+                    .subscribe();
         });
     }
 
@@ -53,11 +62,11 @@ public class MetricTagService {
         return SysMetricTags;
     }
 
-    public SysMetricTag fromKey(String metricName) {
+    public Mono<SysMetricTag> fromKey(String metricName) {
         if (tagMap.containsKey(metricName)) {
-            return tagMap.get(metricName);
+            return Mono.just(tagMap.get(metricName));
         }
-        return sysMetricTagMapper.selectOne(new QueryWrapper<SysMetricTag>().eq(SysMetricTag.NAME, metricName));
+        return sysMetricTagMapper.findBySysMetricName(metricName);
     }
 
     public SysMetricTag fromMeter(Meter meter, MetricEnums.TimeSubType timerType) {

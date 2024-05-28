@@ -57,6 +57,7 @@ public class BusinessException extends RuntimeException {
 
     public interface SYSTEM {
         BusinessException CANNOT_CHANGE_SETTING_FOR_DEMO_SITE = new BusinessException("can not change setting for demo site");
+        BusinessException RECORD_NOT_FOUND = new BusinessException("record not found");
     }
 
 }

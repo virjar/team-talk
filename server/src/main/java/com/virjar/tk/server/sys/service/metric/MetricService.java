@@ -1,8 +1,6 @@
 package com.virjar.tk.server.sys.service.metric;
 
 import com.alibaba.fastjson.JSONObject;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.virjar.tk.server.sys.service.env.Environment;
@@ -22,6 +20,10 @@ import org.springframework.beans.BeanUtils;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.FluxSink;
+import reactor.core.publisher.Mono;
+import reactor.core.publisher.MonoSink;
 
 import java.time.LocalDateTime;
 import java.util.Collections;
@@ -129,11 +131,20 @@ public class MetricService {
      * @param accuracy 精度，包括分钟、小时、天，三个维度
      * @return 指标集合，请注意这里不会对数据做过滤。同时因为我们对指标有提前聚合，所以返回结果集是可控的，大约在千以内
      */
-    public List<MetricVo> queryMetric(String name, Map<String, String> query, MetricEnums.MetricAccuracy accuracy) {
-        SysMetricTag metricTag = metricTagService.fromKey(name);
-        if (metricTag == null) {
-            return Collections.emptyList();
-        }
+    public Flux<MetricVo> queryMetric(String name, Map<String, String> query, MetricEnums.MetricAccuracy accuracy) {
+
+         metricTagService.fromKey(name).flatMap((tag)->{
+             return // todo
+         }).switchIfEmpty(Flux.empty())
+
+        return Flux.create(new Consumer<FluxSink<MetricVo>>() {
+            @Override
+            public void accept(FluxSink<MetricVo> objectFluxSink) {
+                Mono<SysMetricTag> metricTag = metricTagService.fromKey(name);
+                metricTag.
+            }
+        })
+
         QueryWrapper<SysMetric> queryWrapper = metricTagService
                 .wrapQueryWithTags(new QueryWrapper<SysMetric>().eq(SysMetricDay.NAME, name),
                         query, metricTag);

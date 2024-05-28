@@ -3,13 +3,11 @@ package com.virjar.tk.server;
 import com.google.common.base.CharMatcher;
 import com.google.common.base.Splitter;
 import com.google.common.collect.Lists;
-import com.virjar.tk.server.common.JSONTypeHandler;
 import com.virjar.tk.server.sys.service.BroadcastService;
 import com.virjar.tk.server.sys.service.config.ConfigService;
 import com.virjar.tk.server.sys.service.env.Constants;
 import com.virjar.tk.server.sys.service.env.Environment;
 import com.virjar.tk.server.sys.service.safethread.Looper;
-import io.micrometer.core.instrument.util.IOUtils;
 import io.swagger.v3.oas.models.ExternalDocumentation;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
@@ -17,9 +15,8 @@ import io.swagger.v3.oas.models.info.License;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
 import lombok.Getter;
+import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.ibatis.type.EnumOrdinalTypeHandler;
-import org.mybatis.spring.annotation.MapperScan;
 import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springdoc.core.models.GroupedOpenApi;
 import org.springframework.boot.SpringApplication;
@@ -35,6 +32,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import javax.annotation.Nonnull;
 import javax.sql.DataSource;
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -42,7 +40,6 @@ import java.util.List;
 
 @SpringBootApplication
 @EnableAspectJAutoProxy
-@MapperScan("com.virjar.tk.server.sys.mapper")
 @EnableScheduling
 @Configuration
 public class TeamTalkMain implements ApplicationListener<WebServerInitializedEvent> {
@@ -110,7 +107,7 @@ public class TeamTalkMain implements ApplicationListener<WebServerInitializedEve
         Environment.setupApp(event);
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
         List<String> argList = Lists.newArrayList(args);
         argList.add("--env.versionCode=" + Environment.versionCode);
         argList.add("--env.versionName=" + Environment.versionName);
@@ -165,9 +162,6 @@ public class TeamTalkMain implements ApplicationListener<WebServerInitializedEve
         checkAddPram(argList, "management.endpoints.web.base-path", Constants.RESTFULL_API_PREFIX + "/actuator");
         checkAddPram(argList, "management.metrics.tags.application", Constants.appName);
 
-        // setup mbp
-        checkAddPram(argList, "mybatis-plus.configuration.default-enum-type-handler", EnumOrdinalTypeHandler.class.getName());
-        checkAddPram(argList, "mybatis-plus.type-handlers-package", JSONTypeHandler.class.getPackageName());
 
         // setup compression
         checkAddPram(argList, "server.compression.enabled", "true");

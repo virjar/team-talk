@@ -2,6 +2,7 @@ package com.virjar.tk.server.sys.mapper.metric;
 
 import com.virjar.tk.server.sys.entity.metric.SysMetricTag;
 import org.springframework.data.r2dbc.repository.R2dbcRepository;
+import reactor.core.publisher.Mono;
 
 /**
  * <p>
@@ -13,4 +14,5 @@ import org.springframework.data.r2dbc.repository.R2dbcRepository;
  */
 public interface SysMetricTagMapper extends R2dbcRepository<SysMetricTag, Long> {
 
+    Mono<SysMetricTag> findBySysMetricName(String sysMetricName);
 }

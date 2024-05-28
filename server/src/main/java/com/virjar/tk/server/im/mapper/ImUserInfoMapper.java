@@ -2,6 +2,7 @@ package com.virjar.tk.server.im.mapper;
 
 import com.virjar.tk.server.im.entity.ImUserInfo;
 import org.springframework.data.r2dbc.repository.R2dbcRepository;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /**
@@ -20,4 +21,5 @@ public interface ImUserInfoMapper extends R2dbcRepository<ImUserInfo, Long> {
     Mono<Integer> countByUserName(String userName);
 
     Mono<Integer> countBySysAdmin(Boolean sysAdmin);
+
 }
