@@ -1,25 +1,24 @@
 package com.virjar.tk.server.sys.service;
 
 
-import com.virjar.tk.server.sys.service.config.Configs;
-import com.virjar.tk.server.sys.service.env.Constants;
-import com.virjar.tk.server.sys.service.env.Environment;
-import com.virjar.tk.server.sys.service.safethread.Looper;
-import com.virjar.tk.server.sys.entity.SysServerNode;
-import com.virjar.tk.server.sys.mapper.SysServerNodeMapper;
-import com.virjar.tk.server.utils.IpUtil;
-import com.virjar.tk.server.utils.ServerIdentifier;
-import com.virjar.tk.server.utils.net.SimpleHttpInvoker;
 import com.alibaba.fastjson.JSONException;
 import com.alibaba.fastjson.JSONObject;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Sets;
+import com.virjar.tk.server.sys.entity.SysServerNode;
+import com.virjar.tk.server.sys.mapper.SysServerNodeMapper;
+import com.virjar.tk.server.sys.service.config.Configs;
+import com.virjar.tk.server.sys.service.env.Constants;
+import com.virjar.tk.server.sys.service.env.Environment;
+import com.virjar.tk.server.sys.service.safethread.Looper;
+import com.virjar.tk.server.utils.IpUtil;
+import com.virjar.tk.server.utils.ServerIdentifier;
+import com.virjar.tk.server.utils.net.SimpleHttpInvoker;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
-import org.reactivestreams.Publisher;
 import org.springframework.boot.web.context.WebServerInitializedEvent;
 import org.springframework.context.ApplicationListener;
 import org.springframework.data.r2dbc.core.R2dbcEntityTemplate;
@@ -35,7 +34,6 @@ import reactor.util.function.Tuple2;
 import java.net.SocketException;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -85,12 +83,12 @@ public class BroadcastService implements ApplicationListener<WebServerInitialize
                         lastForResolveLocal = System.currentTimeMillis();
                         force = true;
                     }
-                    monoSink.success(false);
+                    monoSink.success(force);
                 }))
                 .flatMap((Function<Tuple2<SysServerNode, Boolean>, Mono<SysServerNode>>)
                         tuple2 -> resolveLocalNode(tuple2.getT1(), tuple2.getT2())
                 )
-                .flatMapMany((Function<SysServerNode, Flux<?>>) sysServerNode -> {
+                .flatMapMany((Function<SysServerNode, Flux<SysServerNode>>) sysServerNode -> {
                     Criteria criteria = Criteria.where(SysServerNode.SERVER_ID).not(serverId)
                             .and(SysServerNode.LAST_ACTIVE_TIME).greaterThan(
                                     LocalDateTime.now().minusMinutes(4)
@@ -100,12 +98,7 @@ public class BroadcastService implements ApplicationListener<WebServerInitialize
                     }
 
                     return r2dbcEntityTemplate.select(Query.query(criteria), SysServerNode.class)
-                            .flatMap(new Function<>() {
-                                @Override
-                                public Publisher<?> apply(SysServerNode sysServerNode) {
-                                    return resolveOtherNode(sysServerNode);
-                                }
-                            });
+                            .flatMap(this::resolveOtherNode);
                 }).subscribe();
     }
 
@@ -144,9 +137,9 @@ public class BroadcastService implements ApplicationListener<WebServerInitialize
         return Mono.just(serverNode);
     }
 
-    private void resolveOtherNode(SysServerNode serverNode) {
+    private Flux<SysServerNode> resolveOtherNode(final SysServerNode serverNode) {
         if (serverNode.getPort() == null) {
-            return;
+            return Flux.empty();
         }
 
         List<String> testIp = Lists.newArrayListWithExpectedSize(3);
@@ -161,19 +154,26 @@ public class BroadcastService implements ApplicationListener<WebServerInitialize
             testIp.add(serverNode.getOutIp());
         }
 
-        for (String task : testIp) {
-            if (checkNodeServer(task, serverNode)) {
-                serverNode = serverNodeMapper.selectById(serverNode.getId());
-                serverNode.setIp(task);
-                serverNodeMapper.updateById(serverNode);
-                resolvedNodes.add(serverNode.getServerId());
-                return;
-            }
-        }
-
         // 所有IP都无法解析，那么执行端口扫描？？？
+        return Flux.fromIterable(testIp)
+                .flatMap((Function<String, Mono<SysServerNode>>) task -> {
+                    // todo 这个要异步化
+                    if (!checkNodeServer(task, serverNode)) {
+                        return Mono.empty();
+                    }
+                    return serverNodeMapper.findById(serverNode.getId())
+                            .flatMap((Function<SysServerNode, Mono<SysServerNode>>) sysServerNode -> {
+                                sysServerNode.setIp(task);
+                                return serverNodeMapper.save(sysServerNode);
+                            })
+                            .doOnNext(sysServerNode -> resolvedNodes.add(serverNode.getServerId()));
+
+                });
+
+
     }
 
+    // todo 这个要异步化
     private static boolean checkNodeServer(String ip, SysServerNode serverNode) {
         String url = buildOtherNodeURL(ip, serverNode.getPort(), "exchangeClientId");
         String response = SimpleHttpInvoker.get(url);
@@ -253,16 +253,13 @@ public class BroadcastService implements ApplicationListener<WebServerInitialize
                 return;
             }
             callListener(topic);
-            List<SysServerNode> ServerNodes = instance
-                    .serverNodeMapper.selectList(new QueryWrapper<SysServerNode>()
-                            .eq(SysServerNode.ENABLE, true));
-            for (SysServerNode node : ServerNodes) {
-                if (ServerIdentifier.id().equals(node.getServerId())) {
-                    //当前机器本身不用广播通知，直接调用即可
-                    continue;
-                }
-                sendToOtherThread(topic, node);
-            }
+            instance.serverNodeMapper.findByEnabled(true)
+                    .filter(sysServerNode -> {
+                        //当前机器本身不用广播通知，直接调用即可
+                        return !ServerIdentifier.id().equals(sysServerNode.getServerId());
+                    })
+                    .doOnNext(sysServerNode -> sendToOtherThread(topic, sysServerNode))
+                    .subscribe();
         });
 
     }

@@ -105,13 +105,13 @@ public class MetricController {
     public Mono<CommonRes<Long>> deleteMetric(@NotBlank String metricName) {
         Mono<Long> longMono = metricTagMapper.deleteByName(metricName)
                 .flatMap((Function<Long, Mono<Long>>) unused ->
-                        metricService.eachDao(mapper -> mapper.deleteByName(metricName))
-                                .doOnComplete(() ->
-                                        BroadcastService.triggerEvent(BroadcastService.Topic.METRIC_TAG))
-                                .count()
+                        metricService.deleteMetric(metricName)
+                                .doOnNext((count) -> BroadcastService.triggerEvent(BroadcastService.Topic.METRIC_TAG))
                                 .delayElement(Duration.ofSeconds(2))
-                                .flatMap((Function<Long, Mono<Long>>) aLong ->
-                                        metricService.eachDao(mapper -> mapper.deleteByName(metricName)).count())
+                                .flatMap((Function<Long, Mono<Long>>) firstDelete ->
+                                        metricService.deleteMetric(metricName)
+                                                .map(secondDelete -> firstDelete + secondDelete)
+                                )
                 );
         return CommonRes.fromMono(longMono);
     }

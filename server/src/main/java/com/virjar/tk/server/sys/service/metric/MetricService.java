@@ -3,9 +3,7 @@ package com.virjar.tk.server.sys.service.metric;
 import com.alibaba.fastjson.JSONObject;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import com.virjar.tk.server.sys.entity.metric.SysMetric;
-import com.virjar.tk.server.sys.entity.metric.SysMetricDay;
-import com.virjar.tk.server.sys.entity.metric.SysMetricTag;
+import com.virjar.tk.server.sys.entity.metric.*;
 import com.virjar.tk.server.sys.mapper.metric.SysMetricBaseMapper;
 import com.virjar.tk.server.sys.mapper.metric.SysMetricDayMapper;
 import com.virjar.tk.server.sys.mapper.metric.SysMetricHourMapper;
@@ -19,6 +17,7 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.r2dbc.core.R2dbcEntityTemplate;
@@ -67,6 +66,8 @@ public class MetricService {
 
     @Resource
     private RelationalMappingContext relationalMappingContext;
+    @Autowired
+    private SysMetricMinuteMapper sysMetricMinuteMapper;
 
     @PostConstruct
     public void registerShutdownHook() {
@@ -248,7 +249,7 @@ public class MetricService {
 
         // 一个指标，可能存在很多tag，tag分维如果有上千之后，再加上时间维度，数据量级就可能非常大，所以我们在数据库中先根据tag分组一下
         // 这样驻留在内存中的数据就没有tag维度，避免内存中数据量过大
-        String sql = "select tags_md5 from :table where name=:name and create_time >= :startTime and create_time <= :endTime group by tags_md5";
+        String sql = "select tags_md5 from :table where name= :name and create_time >= :startTime and create_time <= :endTime group by tags_md5";
         List<String> tags = databaseClient.sql(sql)
                 .bind("table", Objects.requireNonNull(relationalMappingContext.getPersistentEntity(from.handleClazz)).getTableName())
                 .bind("name", metricName)
@@ -375,11 +376,11 @@ public class MetricService {
 
         if (type == Meter.Type.GAUGE) {
             SysMetricTag metricTag = metricTagService.fromMeter(meter, null).block();
-            SysMetric metric = makeMetric(timeKey, time, meter, metricTag, null);
+            SysMetricMinute metric = makeMetric(timeKey, time, meter, metricTag, null);
             saveGauge(metric, (Gauge) meter);
         } else if (type == Meter.Type.COUNTER) {
             SysMetricTag metricTag = metricTagService.fromMeter(meter, null).block();
-            SysMetric metric = makeMetric(timeKey, time, meter, metricTag, null);
+            SysMetricMinute metric = makeMetric(timeKey, time, meter, metricTag, null);
             double count;
             if (meter instanceof Counter) {
                 count = ((Counter) meter).count();
@@ -398,15 +399,15 @@ public class MetricService {
             double max = timer.max(TimeUnit.MILLISECONDS);
 
             SysMetricTag metricTagTime = metricTagService.fromMeter(meter, MetricEnums.TimeSubType.TIME).block();
-            SysMetric metricTime = makeMetric(timeKey, time, meter, metricTagTime, MetricEnums.TimeSubType.TIME);
+            SysMetricMinute metricTime = makeMetric(timeKey, time, meter, metricTagTime, MetricEnums.TimeSubType.TIME);
             saveCounter(metricTime, metricTime.getTagsMd5(), totalTime);
 
             SysMetricTag metricTagCount = metricTagService.fromMeter(meter, MetricEnums.TimeSubType.COUNT).block();
-            SysMetric metricCount = makeMetric(timeKey, time, meter, metricTagCount, MetricEnums.TimeSubType.COUNT);
+            SysMetricMinute metricCount = makeMetric(timeKey, time, meter, metricTagCount, MetricEnums.TimeSubType.COUNT);
             saveCounter(metricCount, metricCount.getTagsMd5(), (double) count);
 
             SysMetricTag metricTagMax = metricTagService.fromMeter(meter, MetricEnums.TimeSubType.MAX).block();
-            SysMetric metricMax = makeMetric(timeKey, time, meter, metricTagMax, MetricEnums.TimeSubType.MAX);
+            SysMetricMinute metricMax = makeMetric(timeKey, time, meter, metricTagMax, MetricEnums.TimeSubType.MAX);
             metricMax.setValue(max);
             saveMetric(metricMax);
         }
@@ -414,7 +415,7 @@ public class MetricService {
     }
 
 
-    private void saveGauge(SysMetric metric, Gauge gauge) {
+    private void saveGauge(SysMetricMinute metric, Gauge gauge) {
         double value = gauge.value();
         if (Double.isNaN(value)) {
             // 暂时还不确认为啥有NaN出现
@@ -427,7 +428,7 @@ public class MetricService {
 
     private final Map<String, Double> lastValues = Maps.newConcurrentMap();
 
-    private void saveCounter(SysMetric metric, String uniKey, Double nowCount) {
+    private void saveCounter(SysMetricMinute metric, String uniKey, Double nowCount) {
         Double history = lastValues.get(uniKey);
         if (history == null) {
             history = 0D;
@@ -443,16 +444,15 @@ public class MetricService {
         saveMetric(metric);
     }
 
-    private void saveMetric(SysMetric metric) {
+    private void saveMetric(SysMetricMinute metric) {
         metric.setCreateTime(LocalDateTime.now());
-        chooseDao(MetricEnums.MetricAccuracy.minutes).save(metric)
-                .subscribe();
+        sysMetricMinuteMapper.save(metric).subscribe();
     }
 
-    private SysMetric makeMetric(String timeKey, LocalDateTime time, Meter meter,
-                                 SysMetricTag metricTag, MetricEnums.TimeSubType timerType) {
+    private SysMetricMinute makeMetric(String timeKey, LocalDateTime time, Meter meter,
+                                       SysMetricTag metricTag, MetricEnums.TimeSubType timerType) {
         Meter.Id id = meter.getId();
-        SysMetric metric = new SysMetric();
+        SysMetricMinute metric = new SysMetricMinute();
         metric.setName(id.getName());
         metric.setCreateTime(time);
 
@@ -487,6 +487,15 @@ public class MetricService {
             return null;
         }
     }
+
+    public Mono<Long> deleteMetric(String name) {
+        return Flux.just(SysMetricDay.class, SysMetricHour.class, SysMetricMinute.class)
+                .flatMap((clazz) -> r2dbcEntityTemplate.delete(
+                        Query.query(Criteria.where(SysMetric.NAME).is(name)),
+                        clazz
+                )).reduce(Long::sum);
+    }
+
 
     @SuppressWarnings("unchecked")
     public <T extends SysMetric> SysMetricBaseMapper<T> chooseDao(MetricEnums.MetricAccuracy accuracy) {
