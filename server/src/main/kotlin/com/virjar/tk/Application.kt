@@ -152,6 +152,31 @@ fun Application.module() {
             }
         }
 
+        // 通用静态文件（images/css/js 等），排除 index.html（由 "/" 处理）和 downloads（由下方处理）
+        get("/static/{path...}") {
+            val path = call.parameters["path"] ?: return@get call.respond(HttpStatusCode.NotFound)
+            val file = File(staticDir, path)
+            if (file.exists() && file.isFile && file.canonicalPath.startsWith(staticDir.canonicalPath)) {
+                call.respondFile(file)
+            } else {
+                call.respond(HttpStatusCode.NotFound)
+            }
+        }
+
+        // 首页引用的资源文件（css/js/images 等），直接从 static/ 根目录提供
+        get("/{filename}.{ext}") {
+            val filename = call.parameters["filename"] ?: return@get call.respond(HttpStatusCode.NotFound)
+            val ext = call.parameters["ext"] ?: return@get call.respond(HttpStatusCode.NotFound)
+            val allowedExts = setOf("css", "js", "png", "jpg", "jpeg", "gif", "svg", "ico", "webp", "woff", "woff2", "ttf", "txt", "json", "xml")
+            if (ext !in allowedExts) return@get call.respond(HttpStatusCode.NotFound)
+            val file = File(staticDir, "$filename.$ext")
+            if (file.exists() && file.isFile && file.canonicalPath.startsWith(staticDir.canonicalPath)) {
+                call.respondFile(file)
+            } else {
+                call.respond(HttpStatusCode.NotFound)
+            }
+        }
+
         get("/downloads/{filename}") {
             val filename = call.parameters["filename"] ?: return@get call.respond(HttpStatusCode.BadRequest)
             val file = File(downloadsDir, filename)
