@@ -244,10 +244,11 @@ setup_ssl() {
     remote "chmod 600 $ssl_dir/teamtalk.p12"
 
     # 写入 SSL 配置到 env.sh（追加）
+    # 不设置 KTOR_PORT — HOCON ${?KTOR_PORT} 未定义时保留默认值 8080
+    # HTTP(8080) 用于内部健康检查，HTTPS(443) 用于外部访问
     remote "cat >> $DEPLOY_PATH/env.sh <<'SSLEOF'
 
 # SSL 配置
-KTOR_PORT=
 KTOR_SSL_PORT=$SSL_PORT
 SSL_KEYSTORE=$ssl_dir/teamtalk.p12
 SSL_KEYSTORE_PASSWORD=$p12_password
@@ -468,13 +469,11 @@ After=network.target docker.service
 Requires=docker.service
 
 [Service]
-Type=forking
+Type=simple
 WorkingDirectory=$DEPLOY_PATH
-EnvironmentFile=$DEPLOY_PATH/env.sh
 ExecStartPre=/bin/bash -c 'source $DEPLOY_PATH/env.sh && cd $DEPLOY_PATH && export DB_PASSWORD=\"\${DATABASE_PASSWORD}\" && export MINIO_ACCESS_KEY=\"\${MINIO_ACCESS_KEY}\" && export MINIO_SECRET_KEY=\"\${MINIO_SECRET_KEY}\" && docker compose up -d'
 ExecStart=$DEPLOY_PATH/bin/teamtalk.sh
-ExecStop=$DEPLOY_PATH/bin/teamtalk-stop.sh
-PIDFile=$DEPLOY_PATH/logs/teamtalk.pid
+ExecStop=/bin/kill \$MAINPID
 Restart=on-failure
 RestartSec=10
 
