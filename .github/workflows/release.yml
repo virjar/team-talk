@@ -10,9 +10,11 @@ on:
       server_url:
         description: 'Server HTTP URL (e.g. https://im.example.com)'
         required: true
+        default: 'https://im.virjar.com'
       tcp_host:
         description: 'TCP host (e.g. im.example.com)'
         required: true
+        default: 'im.virjar.com'
       tcp_port:
         description: 'TCP port'
         required: false
@@ -20,7 +22,7 @@ on:
       upload_host:
         description: 'Upload to server (leave empty to skip)'
         required: false
-        default: ''
+        default: 'im.virjar.com'
 
 env:
   PACKAGE_VERSION: ${{ github.event.inputs.version }}
@@ -103,6 +105,8 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build Desktop package
+        id: desktop-build
+        continue-on-error: true
         shell: bash
         run: |
           ./gradlew :desktop:packageDistributionForCurrentOS \
@@ -111,14 +115,30 @@ jobs:
             "-Pdeploy.tcpHost=$TCP_HOST" \
             --info
 
-      - name: Print jpackage logs on failure
-        if: ${{ failure() }}
+      - name: Print jpackage logs
+        if: always()
         shell: bash
         run: |
           echo "=== jpackage error logs ==="
-          find desktop/build/compose/logs -name "*-err.txt" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null || true
+          for f in desktop/build/compose/logs/packageMsi/*-err.txt; do
+            [ -f "$f" ] && { echo "--- $f ---"; cat "$f"; }
+          done || true
           echo "=== jpackage output logs ==="
-          find desktop/build/compose/logs -name "*-out.txt" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null || true
+          for f in desktop/build/compose/logs/packageMsi/*-out.txt; do
+            [ -f "$f" ] && { echo "--- $f ---"; cat "$f"; }
+          done || true
+
+      - name: Upload jpackage logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jpackage-logs-windows
+          path: desktop/build/compose/logs/
+          retention-days: 7
+
+      - name: Fail if build failed
+        if: steps.desktop-build.outcome == 'failure'
+        run: exit 1
 
       - name: Upload msi artifact
         uses: actions/upload-artifact@v4
@@ -175,11 +195,12 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Write release keystore
-        if: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
         env:
           KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > teamtalk-release.jks
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > teamtalk-release.jks
+          fi
 
       - name: Write local.properties
         env:
