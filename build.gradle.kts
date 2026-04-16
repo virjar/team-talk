@@ -26,3 +26,14 @@ extra.apply {
     set("androidTargetSdk", 35)
     set("androidCompileSdk", 36)
 }
+
+// 强制统一 Kotlin 依赖版本，防止 AGP 或其他插件引入低版本导致 metadata 冲突
+subprojects {
+    configurations.all {
+        resolutionStrategy.eachDependency {
+            if (requested.group == "org.jetbrains.kotlin") {
+                useVersion(rootProject.extra["kotlinVersion"] as String)
+            }
+        }
+    }
+}

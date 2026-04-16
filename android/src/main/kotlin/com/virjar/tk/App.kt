@@ -2,6 +2,7 @@ package com.virjar.tk
 
 import androidx.compose.runtime.*
 import com.virjar.tk.client.*
+import com.virjar.tk.dto.UserDto
 import com.virjar.tk.navigation.*
 import com.virjar.tk.ui.screen.*
 import com.virjar.tk.ui.theme.TeamTalkTheme

@@ -10,6 +10,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.client.*
+import com.virjar.tk.dto.DeviceDto
 import com.virjar.tk.protocol.ChannelType
 import com.virjar.tk.navigation.*
 import com.virjar.tk.ui.screen.*

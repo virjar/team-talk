@@ -109,7 +109,16 @@ jobs:
             -PpackageVersion=$PACKAGE_VERSION \
             "-Pdeploy.url=$SERVER_URL" \
             "-Pdeploy.tcpHost=$TCP_HOST" \
-            --quiet
+            --info
+
+      - name: Print jpackage logs on failure
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          echo "=== jpackage error logs ==="
+          find desktop/build/compose/logs -name "*-err.txt" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null || true
+          echo "=== jpackage output logs ==="
+          find desktop/build/compose/logs -name "*-out.txt" -exec echo "--- {} ---" \; -exec cat {} \; 2>/dev/null || true
 
       - name: Upload msi artifact
         uses: actions/upload-artifact@v4
@@ -166,7 +175,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Write release keystore
-        if: ${{ env.KEYSTORE_BASE64 != '' }}
+        if: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
         env:
           KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
         run: |
