@@ -4,10 +4,14 @@ APP_HOME="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$APP_HOME/logs"
 mkdir -p "$APP_HOME/data"
 
-# 通过 JAVA_OPTS 传递 JVM 系统属性（必须放在主类之前才能被 System.getProperty 识别）
+# 加载环境变量（systemd EnvironmentFile 或手动部署）
+if [ -f "$APP_HOME/env.sh" ]; then
+    set -a
+    source "$APP_HOME/env.sh"
+    set +a
+fi
+
+# 直接设置 JAVA_OPTS（Gradle 生成的 bin/server 脚本会读取）
 export JAVA_OPTS="-Dconfig.file=$APP_HOME/conf/application.conf -Dlogback.configurationFile=$APP_HOME/conf/logback.xml"
 
-nohup "$APP_HOME/bin/server" \
-    "$@" > /dev/null 2>&1 &
-echo $! > "$APP_HOME/logs/teamtalk.pid"
-echo "TeamTalk started (PID: $!)"
+exec "$APP_HOME/bin/server" "$@"
