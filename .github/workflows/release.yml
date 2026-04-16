@@ -1,0 +1,264 @@
+name: Build & Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g. 1.0.0)'
+        required: true
+        default: '1.0.0'
+      server_url:
+        description: 'Server HTTP URL (e.g. https://im.example.com)'
+        required: true
+      tcp_host:
+        description: 'TCP host (e.g. im.example.com)'
+        required: true
+      tcp_port:
+        description: 'TCP port'
+        required: false
+        default: '5100'
+      upload_host:
+        description: 'Upload to server (leave empty to skip)'
+        required: false
+        default: ''
+
+env:
+  PACKAGE_VERSION: ${{ github.event.inputs.version }}
+  SERVER_URL: ${{ github.event.inputs.server_url }}
+  TCP_HOST: ${{ github.event.inputs.tcp_host }}
+  TCP_PORT: ${{ github.event.inputs.tcp_port }}
+
+jobs:
+  # ── Server distribution ─────────────────────────────
+  server:
+    name: Server Distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build server distribution
+        run: ./gradlew :server:buildServerDist --quiet
+
+      - name: Upload server artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: teamtalk-server
+          path: server/build/install/teamtalk-server/
+          retention-days: 7
+
+  # ── Desktop Linux (deb) ─────────────────────────────
+  desktop-linux:
+    name: Desktop (Linux deb)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Desktop package
+        run: |
+          ./gradlew :desktop:packageDistributionForCurrentOS \
+            -PpackageVersion=$PACKAGE_VERSION \
+            -Pdeploy.url=$SERVER_URL \
+            -Pdeploy.tcpHost=$TCP_HOST \
+            --quiet
+
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: teamtalk-desktop-linux
+          path: desktop/build/compose/binaries/main/deb/*.deb
+          retention-days: 7
+
+  # ── Desktop Windows (msi) ───────────────────────────
+  desktop-windows:
+    name: Desktop (Windows msi)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Desktop package
+        shell: bash
+        run: |
+          ./gradlew :desktop:packageDistributionForCurrentOS \
+            -PpackageVersion=$PACKAGE_VERSION \
+            "-Pdeploy.url=$SERVER_URL" \
+            "-Pdeploy.tcpHost=$TCP_HOST" \
+            --quiet
+
+      - name: Upload msi artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: teamtalk-desktop-windows
+          path: desktop/build/compose/binaries/main/msi/*.msi
+          retention-days: 7
+
+  # ── Desktop macOS (dmg) ────────────────────────────
+  desktop-macos:
+    name: Desktop (macOS dmg)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Desktop package
+        run: |
+          ./gradlew :desktop:packageDistributionForCurrentOS \
+            -PpackageVersion=$PACKAGE_VERSION \
+            -Pdeploy.url=$SERVER_URL \
+            -Pdeploy.tcpHost=$TCP_HOST \
+            --quiet
+
+      - name: Upload dmg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: teamtalk-desktop-macos
+          path: desktop/build/compose/binaries/main/dmg/*.dmg
+          retention-days: 7
+
+  # ── Android APK ────────────────────────────────────
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Write release keystore
+        if: ${{ env.KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > teamtalk-release.jks
+
+      - name: Write local.properties
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          echo "release.storeFile=teamtalk-release.jks" >> local.properties
+          echo "release.storePassword=$KEYSTORE_PASSWORD" >> local.properties
+          echo "release.keyAlias=$KEY_ALIAS" >> local.properties
+          echo "release.keyPassword=$KEY_PASSWORD" >> local.properties
+
+      - name: Build Android APK
+        run: |
+          ./gradlew :android:assembleRelease \
+            -PpackageVersion=$PACKAGE_VERSION \
+            -PSERVER_BASE_URL=$SERVER_URL \
+            -PTCP_HOST=$TCP_HOST \
+            -PTCP_PORT=$TCP_PORT \
+            --quiet
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: teamtalk-android
+          path: android/build/outputs/apk/release/*.apk
+          retention-days: 7
+
+  # ── Create GitHub Release ──────────────────────────
+  release:
+    name: Create Release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    needs: [server, desktop-linux, desktop-windows, desktop-macos, android]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f | head -30
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.event.inputs.version }}
+          name: TeamTalk v${{ github.event.inputs.version }}
+          draft: true
+          files: |
+            artifacts/teamtalk-server/**
+            artifacts/teamtalk-desktop-linux/*.deb
+            artifacts/teamtalk-desktop-windows/*.msi
+            artifacts/teamtalk-desktop-macos/*.dmg
+            artifacts/teamtalk-android/*.apk
+
+  # ── Upload to server ───────────────────────────────
+  upload:
+    name: Upload to Server
+    if: github.event.inputs.upload_host != ''
+    runs-on: ubuntu-latest
+    needs: [desktop-linux, desktop-windows, desktop-macos, android]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ github.event.inputs.upload_host }} >> ~/.ssh/known_hosts
+
+      - name: Create downloads directory
+        run: ssh root@${{ github.event.inputs.upload_host }} "mkdir -p /opt/teamtalk/static/downloads"
+
+      - name: Upload Desktop Linux
+        run: scp artifacts/teamtalk-desktop-linux/*.deb "root@${{ github.event.inputs.upload_host }}:/opt/teamtalk/static/downloads/"
+
+      - name: Upload Desktop Windows
+        run: scp artifacts/teamtalk-desktop-windows/*.msi "root@${{ github.event.inputs.upload_host }}:/opt/teamtalk/static/downloads/"
+
+      - name: Upload Desktop macOS
+        run: scp artifacts/teamtalk-desktop-macos/*.dmg "root@${{ github.event.inputs.upload_host }}:/opt/teamtalk/static/downloads/"
+
+      - name: Upload Android APK
+        run: |
+          APK=$(find artifacts/teamtalk-android -name "*-release.apk" | head -1)
+          scp "$APK" "root@${{ github.event.inputs.upload_host }}:/opt/teamtalk/static/downloads/TeamTalk-android.apk"

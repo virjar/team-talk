@@ -1,0 +1,11 @@
+build/
+.gradle/
+local.properties
+.env
+dev-data/
+data/
+logs/
+.idea/
+.kotlin/
+*.jks
+*.keystore

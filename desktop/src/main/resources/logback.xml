@@ -1,0 +1,26 @@
+<configuration>
+    <property name="LOG_DIR" value="${teamtalk.data.dir:-${user.home}/.tk/app_default}/logs" />
+
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/app.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/app.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <maxFileSize>10MB</maxFileSize>
+            <maxHistory>5</maxHistory>
+            <totalSizeCap>50MB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level %-20logger{20} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Suppress noisy libraries -->
+    <logger name="io.netty" level="WARN" />
+    <logger name="io.ktor" level="INFO" />
+    <logger name="org.jetbrains" level="WARN" />
+    <logger name="com.zaxxer.hikari" level="WARN" />
+
+    <root level="DEBUG">
+        <appender-ref ref="FILE" />
+    </root>
+</configuration>

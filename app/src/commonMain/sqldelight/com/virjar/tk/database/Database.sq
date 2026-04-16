@@ -1,0 +1,185 @@
+-- 消息表
+CREATE TABLE messages (
+    channel_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    message_id TEXT NOT NULL UNIQUE,
+    sender_uid TEXT NOT NULL,
+    sender_name TEXT NOT NULL DEFAULT '',
+    packet_type INTEGER NOT NULL,
+    body TEXT NOT NULL,
+    flags INTEGER NOT NULL DEFAULT 0,
+    is_local_deleted INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (channel_id, seq)
+);
+
+CREATE INDEX idx_messages_channel_created ON messages(channel_id, created_at);
+CREATE INDEX idx_messages_message_id ON messages(message_id);
+
+-- 会话表
+CREATE TABLE conversations (
+    channel_id TEXT NOT NULL PRIMARY KEY,
+    channel_type INTEGER NOT NULL,
+    channel_name TEXT NOT NULL DEFAULT '',
+    avatar_url TEXT NOT NULL DEFAULT '',
+    last_message TEXT NOT NULL DEFAULT '',
+    last_message_time INTEGER NOT NULL DEFAULT 0,
+    last_seq INTEGER NOT NULL DEFAULT 0,
+    last_message_type INTEGER NOT NULL DEFAULT 0,
+    unread_count INTEGER NOT NULL DEFAULT 0,
+    is_pinned INTEGER NOT NULL DEFAULT 0,
+    is_muted INTEGER NOT NULL DEFAULT 0,
+    draft_text TEXT NOT NULL DEFAULT '',
+    draft_updated_at INTEGER NOT NULL DEFAULT 0,
+    version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX idx_conversations_pinned_time ON conversations(is_pinned DESC, last_message_time DESC);
+
+-- 联系人表
+CREATE TABLE contacts (
+    uid TEXT NOT NULL PRIMARY KEY,
+    name TEXT NOT NULL,
+    avatar_url TEXT NOT NULL DEFAULT '',
+    remark TEXT NOT NULL DEFAULT '',
+    is_friend INTEGER NOT NULL DEFAULT 1,
+    is_blacklisted INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX idx_contacts_name ON contacts(name);
+CREATE INDEX idx_contacts_blacklisted ON contacts(is_blacklisted);
+
+-- 频道表
+CREATE TABLE channels (
+    channel_id TEXT NOT NULL PRIMARY KEY,
+    channel_type INTEGER NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    avatar_url TEXT NOT NULL DEFAULT '',
+    owner_uid TEXT NOT NULL DEFAULT '',
+    member_count INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+-- 已读位置表
+CREATE TABLE read_positions (
+    channel_id TEXT NOT NULL PRIMARY KEY,
+    read_seq INTEGER NOT NULL DEFAULT 0
+);
+
+-- ── messages 查询 ──
+
+selectAllMessages:
+SELECT * FROM messages WHERE channel_id = ? AND is_local_deleted = 0 ORDER BY seq ASC LIMIT ?;
+
+selectMessagesAfterSeq:
+SELECT * FROM messages WHERE channel_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?;
+
+selectMessagesBeforeSeq:
+SELECT * FROM messages WHERE channel_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?;
+
+insertMessage:
+INSERT OR REPLACE INTO messages(channel_id, seq, message_id, sender_uid, sender_name, packet_type, body, flags, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+updateMessageId:
+UPDATE messages SET message_id = ?, seq = ? WHERE message_id = ?;
+
+deleteMessageByMessageId:
+DELETE FROM messages WHERE message_id = ?;
+
+markLocalDeleted:
+UPDATE messages SET is_local_deleted = 1 WHERE message_id = ?;
+
+updateMessagePayload:
+UPDATE messages SET body = ? WHERE message_id = ?;
+
+selectMaxSeq:
+SELECT MAX(seq) FROM messages WHERE channel_id = ?;
+
+-- ── conversations 查询 ──
+
+selectAllConversations:
+SELECT * FROM conversations ORDER BY is_pinned DESC, CASE WHEN draft_text != '' THEN 1 ELSE 0 END DESC, last_message_time DESC;
+
+selectConversation:
+SELECT * FROM conversations WHERE channel_id = ?;
+
+insertConversation:
+INSERT OR REPLACE INTO conversations(channel_id, channel_type, channel_name, avatar_url, last_message, last_message_time, last_seq, last_message_type, unread_count, is_pinned, is_muted, draft_text, draft_updated_at, version)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+updateLastMessage:
+UPDATE conversations SET last_message = ?, last_message_time = ?, last_seq = ? WHERE channel_id = ?;
+
+updateUnreadCount:
+UPDATE conversations SET unread_count = ? WHERE channel_id = ?;
+
+updatePin:
+UPDATE conversations SET is_pinned = ? WHERE channel_id = ?;
+
+updateMute:
+UPDATE conversations SET is_muted = ? WHERE channel_id = ?;
+
+updateDraft:
+UPDATE conversations SET draft_text = ?, draft_updated_at = ? WHERE channel_id = ?;
+
+incrementUnread:
+UPDATE conversations SET unread_count = unread_count + 1 WHERE channel_id = ?;
+
+deleteConversation:
+DELETE FROM conversations WHERE channel_id = ?;
+
+-- ── contacts 查询 ──
+
+selectAllContacts:
+SELECT * FROM contacts WHERE is_friend = 1 ORDER BY name ASC;
+
+selectContact:
+SELECT * FROM contacts WHERE uid = ?;
+
+insertContact:
+INSERT OR REPLACE INTO contacts(uid, name, avatar_url, remark, is_friend, is_blacklisted, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?);
+
+deleteContact:
+DELETE FROM contacts WHERE uid = ?;
+
+-- ── channels 查询 ──
+
+selectAllChannels:
+SELECT * FROM channels ORDER BY updated_at DESC;
+
+selectChannel:
+SELECT * FROM channels WHERE channel_id = ?;
+
+insertChannel:
+INSERT OR REPLACE INTO channels(channel_id, channel_type, name, avatar_url, owner_uid, member_count, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteChannel:
+DELETE FROM channels WHERE channel_id = ?;
+
+-- ── read_positions 查询 ──
+
+selectReadPosition:
+SELECT * FROM read_positions WHERE channel_id = ?;
+
+insertReadPosition:
+INSERT OR REPLACE INTO read_positions(channel_id, read_seq) VALUES (?, ?);
+
+updateReadSeq:
+UPDATE read_positions SET read_seq = ? WHERE channel_id = ?;
+
+-- ── 数据清理 ──
+
+deleteExpiredMessages:
+DELETE FROM messages
+WHERE created_at < ?
+  AND channel_id NOT IN (SELECT channel_id FROM conversations WHERE is_pinned = 1);
+
+-- ── 草稿清理 ──
+
+clearExpiredDrafts:
+DELETE FROM conversations WHERE draft_text != '' AND draft_updated_at > 0 AND draft_updated_at < ?;

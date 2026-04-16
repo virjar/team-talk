@@ -1,6 +1,0 @@
-node_modules/
-.cache/
-.temp/
-yarn.lock
-src/.vuepress/dist/
-.yarn/
