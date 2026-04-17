@@ -107,26 +107,36 @@ jobs:
       - name: Build Desktop package
         id: desktop-build
         continue-on-error: true
-        shell: bash
+        shell: pwsh
         run: |
-          ./gradlew :desktop:packageDistributionForCurrentOS \
-            -PpackageVersion=$PACKAGE_VERSION \
-            "-Pdeploy.url=$SERVER_URL" \
-            "-Pdeploy.tcpHost=$TCP_HOST" \
-            --info
+          cmd /c ".\gradlew.bat :desktop:packageDistributionForCurrentOS -PpackageVersion=$env:PACKAGE_VERSION -Pdeploy.url=$env:SERVER_URL -Pdeploy.tcpHost=$env:TCP_HOST --info"
 
       - name: Print jpackage logs
         if: always()
-        shell: bash
+        shell: pwsh
         run: |
-          echo "=== jpackage error logs ==="
-          for f in desktop/build/compose/logs/packageMsi/*-err.txt; do
-            [ -f "$f" ] && { echo "--- $f ---"; cat "$f"; }
-          done || true
-          echo "=== jpackage output logs ==="
-          for f in desktop/build/compose/logs/packageMsi/*-out.txt; do
-            [ -f "$f" ] && { echo "--- $f ---"; cat "$f"; }
-          done || true
+          Write-Host "=== packageMsi args ==="
+          if (Test-Path "desktop/build/compose/tmp/packageMsi.args.txt") {
+            Get-Content "desktop/build/compose/tmp/packageMsi.args.txt"
+          } else {
+            Write-Host "packageMsi.args.txt not found"
+          }
+          Write-Host "=== jpackage log files ==="
+          if (Test-Path "desktop/build/compose/logs/packageMsi") {
+            Get-ChildItem "desktop/build/compose/logs/packageMsi" | Format-Table Name, Length, LastWriteTime -AutoSize
+            Write-Host "=== jpackage error logs ==="
+            Get-ChildItem "desktop/build/compose/logs/packageMsi/*-err.txt" -ErrorAction SilentlyContinue | ForEach-Object {
+              Write-Host "--- $($_.FullName) ---"
+              Get-Content $_.FullName
+            }
+            Write-Host "=== jpackage output logs ==="
+            Get-ChildItem "desktop/build/compose/logs/packageMsi/*-out.txt" -ErrorAction SilentlyContinue | ForEach-Object {
+              Write-Host "--- $($_.FullName) ---"
+              Get-Content $_.FullName
+            }
+          } else {
+            Write-Host "packageMsi log directory not found"
+          }
 
       - name: Upload jpackage logs
         if: always()

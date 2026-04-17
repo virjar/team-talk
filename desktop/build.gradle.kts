@@ -58,7 +58,11 @@ compose.desktop {
 
             packageName = "TeamTalk"
             packageVersion = project.findProperty("packageVersion")?.toString() ?: "1.0.0"
-            description = "TeamTalk - 即时通讯与办公协作"
+            description = if (OperatingSystem.current().isWindows) {
+                "TeamTalk - Instant messaging and collaboration"
+            } else {
+                "TeamTalk - 即时通讯与办公协作"
+            }
             vendor = "TeamTalk"
 
             // 固化生产环境服务端地址（可通过 -D 参数运行时覆盖）
