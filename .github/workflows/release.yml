@@ -252,13 +252,19 @@ jobs:
         run: ssh root@${{ github.event.inputs.upload_host }} "mkdir -p /opt/teamtalk/static/downloads"
 
       - name: Upload Desktop Linux
-        run: scp artifacts/teamtalk-desktop-linux/*.deb "root@${{ github.event.inputs.upload_host }}:/opt/teamtalk/static/downloads/"
+        run: |
+          DEB=$(find artifacts/teamtalk-desktop-linux -name "*.deb" | head -1)
+          scp "$DEB" "root@${{ github.event.inputs.upload_host }}:/opt/teamtalk/static/downloads/TeamTalk-linux.deb"
 
       - name: Upload Desktop Windows
-        run: scp artifacts/teamtalk-desktop-windows/*.msi "root@${{ github.event.inputs.upload_host }}:/opt/teamtalk/static/downloads/"
+        run: |
+          MSI=$(find artifacts/teamtalk-desktop-windows -name "*.msi" | head -1)
+          scp "$MSI" "root@${{ github.event.inputs.upload_host }}:/opt/teamtalk/static/downloads/TeamTalk-windows.msi"
 
       - name: Upload Desktop macOS
-        run: scp artifacts/teamtalk-desktop-macos/*.dmg "root@${{ github.event.inputs.upload_host }}:/opt/teamtalk/static/downloads/"
+        run: |
+          DMG=$(find artifacts/teamtalk-desktop-macos -name "*.dmg" | head -1)
+          scp "$DMG" "root@${{ github.event.inputs.upload_host }}:/opt/teamtalk/static/downloads/TeamTalk-macos.dmg"
 
       - name: Upload Android APK
         run: |
