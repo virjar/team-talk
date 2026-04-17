@@ -198,12 +198,8 @@ check_remote_env() {
 build_local() {
     PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
     DIST_DIR="$PROJECT_DIR/server/build/install/teamtalk-server"
-    if [[ ! -d "$DIST_DIR" ]]; then
-        info "本地构建 Server 产物..."
-        (cd "$PROJECT_DIR" && ./gradlew :server:buildServerDist --quiet)
-    else
-        info "使用已构建的 Server 产物"
-    fi
+    info "构建 Server 产物..."
+    (cd "$PROJECT_DIR" && ./gradlew :server:buildServerDist --quiet)
     if [[ ! -d "$DIST_DIR" ]]; then
         fail "构建产物不存在: $DIST_DIR"
     fi
@@ -414,12 +410,16 @@ DCEOF"
 deploy_upgrade() {
     info "========== 升级部署 =========="
 
+    # 停止 systemd 服务
     if remote "systemctl is-active --quiet teamtalk 2>/dev/null"; then
         info "停止 TeamTalk Server ..."
         remote "systemctl stop teamtalk" || true
-    else
-        remote "test -f $DEPLOY_PATH/bin/teamtalk-stop.sh && $DEPLOY_PATH/bin/teamtalk-stop.sh || true"
     fi
+
+    # 杀掉可能的孤儿 Java 进程（旧版 nohup 启动，systemd 管不到）
+    info "清理残留进程..."
+    remote "pkill -f 'com.virjar.tk.ApplicationKt' 2>/dev/null" || true
+    sleep 1
 
     info "备份当前版本..."
     remote "rm -rf ${DEPLOY_PATH}.bak && cp -r $DEPLOY_PATH ${DEPLOY_PATH}.bak" || warn "备份失败"
@@ -442,13 +442,11 @@ deploy_upgrade() {
         setup_ssl
     fi
 
+    # 始终重新注册 systemd 服务，确保配置正确
+    register_systemd
+
     info "启动 TeamTalk Server..."
-    if remote "test -f /etc/systemd/system/teamtalk.service"; then
-        remote "systemctl start teamtalk"
-    else
-        register_systemd
-        remote "systemctl daemon-reload && systemctl enable teamtalk && systemctl start teamtalk"
-    fi
+    remote "systemctl daemon-reload && systemctl enable teamtalk && systemctl start teamtalk"
 
     echo ""
     echo -e "${GREEN}========================================${NC}"
@@ -471,7 +469,8 @@ Requires=docker.service
 [Service]
 Type=simple
 WorkingDirectory=$DEPLOY_PATH
-ExecStartPre=/bin/bash -c 'source $DEPLOY_PATH/env.sh && cd $DEPLOY_PATH && export DB_PASSWORD=\"\${DATABASE_PASSWORD}\" && export MINIO_ACCESS_KEY=\"\${MINIO_ACCESS_KEY}\" && export MINIO_SECRET_KEY=\"\${MINIO_SECRET_KEY}\" && docker compose up -d'
+EnvironmentFile=-$DEPLOY_PATH/env.sh
+ExecStartPre=/bin/bash -c 'cd $DEPLOY_PATH && export DB_PASSWORD=\"\${DATABASE_PASSWORD}\" && export MINIO_ACCESS_KEY=\"\${MINIO_ACCESS_KEY}\" && export MINIO_SECRET_KEY=\"\${MINIO_SECRET_KEY}\" && docker compose up -d'
 ExecStart=$DEPLOY_PATH/bin/teamtalk.sh
 ExecStop=/bin/kill \$MAINPID
 Restart=on-failure
