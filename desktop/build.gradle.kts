@@ -5,8 +5,17 @@ plugins {
     kotlin("plugin.serialization")
 }
 
+import org.gradle.internal.os.OperatingSystem
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+
 val logbackVersion: String by rootProject.extra
 val kotlinxSerializationVersion: String by rootProject.extra
+val currentTargetFormats = when {
+    OperatingSystem.current().isWindows -> listOf(TargetFormat.Msi)
+    OperatingSystem.current().isLinux -> listOf(TargetFormat.Deb)
+    OperatingSystem.current().isMacOsX -> listOf(TargetFormat.Dmg)
+    else -> listOf(TargetFormat.Deb, TargetFormat.Msi, TargetFormat.Dmg)
+}
 
 configurations.all {
     exclude(group = "org.slf4j", module = "slf4j-simple")
@@ -45,11 +54,7 @@ compose.desktop {
         }
 
         nativeDistributions {
-            targetFormats(
-                org.jetbrains.compose.desktop.application.dsl.TargetFormat.Deb,
-                org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi,
-                org.jetbrains.compose.desktop.application.dsl.TargetFormat.Dmg,
-            )
+            targetFormats(*currentTargetFormats.toTypedArray())
 
             packageName = "TeamTalk"
             packageVersion = project.findProperty("packageVersion")?.toString() ?: "1.0.0"

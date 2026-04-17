@@ -1,4 +1,6 @@
 build/
+desktop/bin/
+server/bin/
 .gradle/
 local.properties
 .env
