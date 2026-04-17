@@ -104,6 +104,7 @@
         <div class="nav-links">
             <a href="#features">功能</a>
             <a href="#download">下载</a>
+            <a href="https://github.com/virjar/team-talk" target="_blank">GitHub</a>
         </div>
     </div>
 </nav>
@@ -186,7 +187,7 @@
 
 <footer>
     <div class="container">
-        <p>&copy; 2026 TeamTalk. Powered by Kotlin Multiplatform.</p>
+        <p>&copy; 2026 TeamTalk. Powered by Kotlin Multiplatform. | <a href="https://github.com/virjar/team-talk" target="_blank">GitHub</a></p>
     </div>
 </footer>
 
@@ -199,14 +200,18 @@
     img.alt = 'Android Download QR';
     document.getElementById('android-qrcode').appendChild(img);
 
-    // 检测下载文件可用性
+    // 检测下载文件可用性（不灰化按钮，仅标记不可用提示）
     document.querySelectorAll('.dl-card').forEach(function(card) {
         var href = card.getAttribute('href');
         if (!href) return;
         fetch(href, { method: 'HEAD' }).then(function(r) {
-            if (!r.ok) card.classList.add('unavailable');
+            if (!r.ok) {
+                var desc = card.querySelector('.plat-desc');
+                if (desc) desc.textContent = '即将上线';
+            }
         }).catch(function() {
-            card.classList.add('unavailable');
+            var desc = card.querySelector('.plat-desc');
+            if (desc) desc.textContent = '即将上线';
         });
     });
 })();

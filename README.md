@@ -1,5 +1,7 @@
 # TeamTalk
 
+> **官网**: [https://im.virjar.com](https://im.virjar.com) | **GitHub**: [https://github.com/virjar/team-talk](https://github.com/virjar/team-talk)
+
 基于 Kotlin Multiplatform (KMP) + Jetpack Compose 的跨平台即时通讯与办公协作应用，包含完整的**自研服务端**（Ktor + Netty）和**跨平台客户端**（Android + Desktop），采用自定义二进制协议实现实时消息推送。
 
 基于 KMP 技术将前后端开发语言收敛到 Kotlin 单一语言，开发者只需掌握一门语言即可维护整个项目。
@@ -7,6 +9,11 @@
 ## 项目定位
 
 TeamTalk 的最终目标是实现一个对标钉钉、飞书的办公软件，面向中小型组织（用户规模一般不超过 1 万）。采用单体架构，几乎所有功能都可以用单机+内存的模型收敛到一个简单服务器上。无需考虑海量用户带来的系统复杂性，架构简单，对开发和运维友好。
+
+### 项目优势
+
+- **AI 原生项目**：本项目约 99% 的代码由 AI 编写，代码风格统一、结构清晰，天然适配 AI 辅助开发和维护。无论是部署、调试还是二次开发，都可以借助 AI 快速上手。
+- **全栈 Kotlin**：前后端统一使用 Kotlin，配合详细的 `CLAUDE.md` 工程规范文件，AI 能够精准理解项目上下文并生成高质量代码。
 
 ## 功能特性
 
@@ -188,7 +195,8 @@ docker compose up -d
 
 ## 致谢
 
-TeamTalk 早期深度参考了 [TangSengDaoDao](https://github.com/TangSengDaoDao)（唐僧叨叨）进行移植开发，在设计模式和业务模型（用户、频道、消息、会话、好友关系）上有一脉相承的关系，但技术栈和协议层已完全独立实现。
+- **[GLM](https://github.com/THUDM/GLM-4)（智谱大模型）**：本项目约 99% 的代码由 GLM-5.1 编写，从协议设计、服务端架构到跨平台客户端 UI，GLM 贯穿了整个开发流程。
+- [TangSengDaoDao](https://github.com/TangSengDaoDao)（唐僧叨叨）：TeamTalk 早期深度参考了唐僧叨叨进行移植开发，在设计模式和业务模型（用户、频道、消息、会话、好友关系）上有一脉相承的关系，但技术栈和协议层已完全独立实现。
 
 ## License
 
