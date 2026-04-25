@@ -18,7 +18,26 @@ private val appJson = Json { ignoreUnknownKeys = true }
  */
 @Composable
 fun App() {
-    val apiClient = remember { ApiClient() }
+    // Build ApiClient with saved server config override (if any)
+    val apiClient = remember {
+        val defaultConfig = ServerConfig()
+        val storage = com.virjar.tk.storage.TokenStorage()
+        val savedUrl = storage.loadSavedServerBaseUrl()
+        val savedHost = storage.loadSavedTcpHost()
+        val savedPort = storage.loadSavedTcpPort()
+        val config = if (savedUrl != null && savedHost != null) {
+            ServerConfig(
+                baseUrl = savedUrl,
+                tcpHost = savedHost,
+                tcpPort = savedPort ?: defaultConfig.tcpPort,
+            )
+        } else {
+            defaultConfig
+        }
+        ApiClient(config)
+    }
+
+    val showAdvanced = remember { isShowAdvancedSettings() }
 
     // Navigation state
     var navDestination by remember { mutableStateOf<NavDestination>(NavDestination.Login) }
@@ -84,6 +103,13 @@ fun App() {
                         }
                         userContext = ctx
                         true
+                    },
+                    showServerSettings = showAdvanced,
+                    currentServerUrl = apiClient.baseUrl,
+                    currentTcpHost = apiClient.tcpHost,
+                    onServerConfigChange = { baseUrl, host ->
+                        apiClient.updateConfig(baseUrl, host)
+                        apiClient.getTokenStorage().saveServerConfig(baseUrl, host, apiClient.tcpPort)
                     },
                 )
 

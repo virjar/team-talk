@@ -102,6 +102,12 @@ class ApiClient(
         }
     }
 
+    fun updateConfig(baseUrl: String, tcpHost: String, tcpPort: Int = this.tcpPort) {
+        this.baseUrl = baseUrl
+        this.tcpHost = tcpHost
+        this.tcpPort = tcpPort
+    }
+
     fun close() {
         client.close()
     }

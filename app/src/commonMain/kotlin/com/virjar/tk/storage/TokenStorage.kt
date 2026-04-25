@@ -11,4 +11,9 @@ expect class TokenStorage() {
     fun loadUid(): String?
     fun loadUserJson(): String?
     fun clear()
+
+    fun saveServerConfig(baseUrl: String, tcpHost: String, tcpPort: Int)
+    fun loadSavedServerBaseUrl(): String?
+    fun loadSavedTcpHost(): String?
+    fun loadSavedTcpPort(): Int?
 }

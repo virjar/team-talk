@@ -1,3 +1,6 @@
+import java.net.DatagramSocket
+import java.net.InetAddress
+
 plugins {
     kotlin("multiplatform")
     kotlin("plugin.serialization")
@@ -12,54 +15,50 @@ val kotlinxSerializationVersion: String by rootProject.extra
 val kotlinxCoroutinesVersion: String by rootProject.extra
 val sqldelightVersion: String by rootProject.extra
 
-// --- Server config injection for Android BuildConfig ---
+// --- Profile config (keys match gradle/profiles/*.properties) ---
+val serverUrl: String by rootProject.extra
+val tcpHost: String by rootProject.extra
+val tcpPort: String by rootProject.extra
+val buildProfile: String by rootProject.extra
+val showAdvancedSettings: String by rootProject.extra
 
-fun readLocalProperty(key: String, default: String): String {
-    val localPropsFile = rootProject.file("local.properties")
-    if (localPropsFile.exists()) {
-        val lines = localPropsFile.readLines()
-        for (line in lines) {
-            val parts = line.split("=", limit = 2)
-            if (parts.size == 2 && parts[0].trim() == key) {
-                return parts[1].trim()
-            }
-        }
-    }
-    return default
-}
-
+/**
+ * Detect local LAN IP via UDP connect trick.
+ * Used when profile has localhost — Android devices need the actual LAN IP to reach the host.
+ * Throws on failure so the build fails loud instead of silently using a wrong address.
+ */
 fun detectLocalIp(): String {
+    val socket = DatagramSocket()
     return try {
-        val inetAddressClass = Class.forName("java.net.InetAddress")
-        val datagramSocketClass = Class.forName("java.net.DatagramSocket")
-        val getAddress = inetAddressClass.getMethod("getByName", String::class.java)
-        val address = getAddress.invoke(null, "8.8.8.8")
-        val socket = datagramSocketClass.getConstructor().newInstance()
-        val connect = datagramSocketClass.getMethod("connect", inetAddressClass, Int::class.javaPrimitiveType)
-        connect.invoke(socket, address, 10002)
-        val getLocalAddress = datagramSocketClass.getMethod("getLocalAddress")
-        val localAddr = getLocalAddress.invoke(socket)
-        val getHostAddress = inetAddressClass.getMethod("getHostAddress")
-        val ip = getHostAddress.invoke(localAddr) as? String ?: "10.0.2.2"
-        val close = datagramSocketClass.getMethod("close")
-        close.invoke(socket)
-        ip
-    } catch (_: Exception) {
-        "10.0.2.2"
+        socket.connect(InetAddress.getByName("8.8.8.8"), 10002)
+        socket.localAddress.hostAddress
+            ?: throw GradleException("Failed to detect local LAN IP: hostAddress is null")
+    } catch (e: Exception) {
+        throw GradleException(
+            "Failed to detect local LAN IP for Android build. " +
+                "Profile uses localhost/127.0.0.1, which cannot be reached from Android devices. " +
+                "Please set serverUrl and tcpHost to your actual LAN IP in the profile, " +
+                "or ensure network connectivity. Original error: ${e.message}"
+        )
+    } finally {
+        socket.close()
     }
 }
 
-val serverBaseUrl: String by lazy {
-    project.findProperty("SERVER_BASE_URL")?.toString()
-        ?: readLocalProperty("server.baseUrl", "http://${detectLocalIp()}:8080")
+// Android BuildConfig: auto-rewrite localhost to LAN IP for real-device dev
+val androidServerUrl by lazy {
+    if (serverUrl.contains("localhost") || serverUrl.contains("127.0.0.1")) {
+        "http://${detectLocalIp()}:8080"
+    } else {
+        serverUrl
+    }
 }
-val tcpHost: String by lazy {
-    project.findProperty("TCP_HOST")?.toString()
-        ?: readLocalProperty("server.tcpHost", detectLocalIp())
-}
-val tcpPort: Int by lazy {
-    project.findProperty("TCP_PORT")?.toString()?.toIntOrNull()
-        ?: readLocalProperty("server.tcpPort", "5100").toInt()
+val androidTcpHost by lazy {
+    if (tcpHost == "localhost" || tcpHost == "127.0.0.1") {
+        detectLocalIp()
+    } else {
+        tcpHost
+    }
 }
 
 kotlin {
@@ -130,9 +129,11 @@ android {
     }
 
     defaultConfig {
-        buildConfigField("String", "SERVER_BASE_URL", "\"$serverBaseUrl\"")
-        buildConfigField("String", "TCP_HOST", "\"$tcpHost\"")
-        buildConfigField("int", "TCP_PORT", tcpPort.toString())
+        buildConfigField("String", "SERVER_BASE_URL", "\"$androidServerUrl\"")
+        buildConfigField("String", "TCP_HOST", "\"$androidTcpHost\"")
+        buildConfigField("int", "TCP_PORT", tcpPort)
+        buildConfigField("String", "BUILD_PROFILE", "\"$buildProfile\"")
+        buildConfigField("boolean", "SHOW_ADVANCED_SETTINGS", showAdvancedSettings)
     }
 }
 

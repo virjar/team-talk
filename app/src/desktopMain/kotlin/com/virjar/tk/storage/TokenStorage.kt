@@ -9,7 +9,7 @@ actual class TokenStorage actual constructor() {
 
     actual fun save(token: String, uid: String, userJson: String) {
         dataDir.mkdirs()
-        val props = Properties()
+        val props = loadProps() ?: Properties()
         props["token"] = token
         props["uid"] = uid
         props["user"] = userJson
@@ -23,6 +23,19 @@ actual class TokenStorage actual constructor() {
     actual fun clear() {
         file.delete()
     }
+
+    actual fun saveServerConfig(baseUrl: String, tcpHost: String, tcpPort: Int) {
+        dataDir.mkdirs()
+        val props = loadProps() ?: Properties()
+        props["serverUrl"] = baseUrl
+        props["tcpHost"] = tcpHost
+        props["tcpPort"] = tcpPort.toString()
+        file.outputStream().use { props.store(it, "TeamTalk session") }
+    }
+
+    actual fun loadSavedServerBaseUrl(): String? = loadProps()?.getProperty("serverUrl")
+    actual fun loadSavedTcpHost(): String? = loadProps()?.getProperty("tcpHost")
+    actual fun loadSavedTcpPort(): Int? = loadProps()?.getProperty("tcpPort")?.toIntOrNull()
 
     private fun loadProps(): Properties? {
         if (!file.exists()) return null

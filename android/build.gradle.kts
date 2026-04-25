@@ -31,6 +31,14 @@ android {
                 storePassword = localProps.getProperty("release.storePassword") ?: ""
                 keyAlias = localProps.getProperty("release.keyAlias") ?: ""
                 keyPassword = localProps.getProperty("release.keyPassword") ?: ""
+            } else {
+                val devKeystore = rootProject.file("android/teamtalk-dev.jks")
+                if (devKeystore.exists()) {
+                    storeFile = devKeystore
+                    storePassword = "teamtalk"
+                    keyAlias = "teamtalk"
+                    keyPassword = "teamtalk"
+                }
             }
         }
     }
@@ -46,8 +54,9 @@ android {
 
     buildTypes {
         release {
-            if (localProps.containsKey("release.storeFile")) {
-                signingConfig = signingConfigs.getByName("release")
+            val releaseConfig = signingConfigs.findByName("release")
+            if (releaseConfig?.storeFile != null) {
+                signingConfig = releaseConfig
             }
             isMinifyEnabled = false
         }

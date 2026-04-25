@@ -1,5 +1,7 @@
 package com.virjar.tk.ui.screen
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
@@ -17,11 +19,18 @@ fun LoginScreen(
     onLoginSuccess: () -> Unit,
     onNavigateToRegister: () -> Unit,
     onLogin: suspend (String, String) -> Boolean,
+    showServerSettings: Boolean = false,
+    currentServerUrl: String = "",
+    currentTcpHost: String = "",
+    onServerConfigChange: ((baseUrl: String, tcpHost: String) -> Unit)? = null,
 ) {
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
+    var showAdvanced by remember { mutableStateOf(false) }
+    var serverUrl by remember(currentServerUrl) { mutableStateOf(currentServerUrl) }
+    var tcpHostField by remember(currentTcpHost) { mutableStateOf(currentTcpHost) }
     val scope = rememberCoroutineScope()
 
     Column(
@@ -65,6 +74,15 @@ fun LoginScreen(
                 error = ""
                 scope.launch {
                     try {
+                        if (onServerConfigChange != null && showServerSettings) {
+                            if (serverUrl.isNotBlank() && serverUrl != currentServerUrl ||
+                                tcpHostField.isNotBlank() && tcpHostField != currentTcpHost
+                            ) {
+                                val baseUrl = serverUrl.ifBlank { currentServerUrl }
+                                val host = tcpHostField.ifBlank { currentTcpHost }
+                                onServerConfigChange(baseUrl, host)
+                            }
+                        }
                         val success = onLogin(username, password)
                         if (success) onLoginSuccess() else error = "Login failed"
                     } catch (e: Exception) {
@@ -85,6 +103,35 @@ fun LoginScreen(
 
         TextButton(onClick = onNavigateToRegister) {
             Text("No account? Register")
+        }
+
+        if (showServerSettings) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                "Advanced Settings",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clickable { showAdvanced = !showAdvanced },
+            )
+            AnimatedVisibility(visible = showAdvanced) {
+                Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    OutlinedTextField(
+                        value = serverUrl,
+                        onValueChange = { serverUrl = it },
+                        label = { Text("Server URL") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = tcpHostField,
+                        onValueChange = { tcpHostField = it },
+                        label = { Text("TCP Host") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                }
+            }
         }
     }
 }

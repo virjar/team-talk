@@ -10,6 +10,13 @@ import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 
 val logbackVersion: String by rootProject.extra
 val kotlinxSerializationVersion: String by rootProject.extra
+val packageVersion: String by rootProject.extra
+val serverUrl: String by rootProject.extra
+val tcpHost: String by rootProject.extra
+val tcpPort: String by rootProject.extra
+val buildProfile: String by rootProject.extra
+val showAdvancedSettings: String by rootProject.extra
+
 val currentTargetFormats = when {
     OperatingSystem.current().isWindows -> listOf(TargetFormat.Msi)
     OperatingSystem.current().isLinux -> listOf(TargetFormat.Deb)
@@ -39,16 +46,12 @@ compose.desktop {
     application {
         mainClass = "com.virjar.tk.MainKt"
 
-        // 开发模式 jvmArgs
-        project.findProperty("SERVER_BASE_URL")?.let {
-            jvmArgs.add("-Dteamtalk.server.url=$it")
-        }
-        project.findProperty("TCP_HOST")?.let {
-            jvmArgs.add("-Dteamtalk.tcp.host=$it")
-        }
-        project.findProperty("TCP_PORT")?.let {
-            jvmArgs.add("-Dteamtalk.tcp.port=$it")
-        }
+        // 开发模式 jvmArgs — 从 profile 注入
+        jvmArgs.add("-Dteamtalk.server.url=$serverUrl")
+        jvmArgs.add("-Dteamtalk.tcp.host=$tcpHost")
+        jvmArgs.add("-Dteamtalk.tcp.port=$tcpPort")
+        jvmArgs.add("-Dteamtalk.build.profile=$buildProfile")
+        jvmArgs.add("-Dteamtalk.show.advanced.settings=$showAdvancedSettings")
         project.findProperty("DATA_DIR")?.let {
             jvmArgs.add("-Dteamtalk.data.dir=$it")
         }
@@ -57,7 +60,7 @@ compose.desktop {
             targetFormats(*currentTargetFormats.toTypedArray())
 
             packageName = "TeamTalk"
-            packageVersion = project.findProperty("packageVersion")?.toString() ?: "1.0.0"
+            packageVersion = packageVersion
             description = if (OperatingSystem.current().isWindows) {
                 "TeamTalk - Instant messaging and collaboration"
             } else {
@@ -65,11 +68,12 @@ compose.desktop {
             }
             vendor = "TeamTalk"
 
-            // 固化生产环境服务端地址（可通过 -D 参数运行时覆盖）
-            val deployUrl = project.findProperty("deploy.url")?.toString()
-            val deployTcpHost = project.findProperty("deploy.tcpHost")?.toString()
-            if (deployUrl != null) jvmArgs.add("-Dteamtalk.server.url=$deployUrl")
-            if (deployTcpHost != null) jvmArgs.add("-Dteamtalk.tcp.host=$deployTcpHost")
+            // 固化生产环境服务端地址（从 profile 注入）
+            jvmArgs.add("-Dteamtalk.server.url=$serverUrl")
+            jvmArgs.add("-Dteamtalk.tcp.host=$tcpHost")
+            jvmArgs.add("-Dteamtalk.tcp.port=$tcpPort")
+            jvmArgs.add("-Dteamtalk.build.profile=$buildProfile")
+            jvmArgs.add("-Dteamtalk.show.advanced.settings=$showAdvancedSettings")
 
             jvmArgs.add("-Xms256m")
             jvmArgs.add("-Xmx512m")

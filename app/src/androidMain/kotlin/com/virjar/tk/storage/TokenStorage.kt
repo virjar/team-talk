@@ -21,6 +21,18 @@ actual class TokenStorage actual constructor() {
         prefs.edit().clear().apply()
     }
 
+    actual fun saveServerConfig(baseUrl: String, tcpHost: String, tcpPort: Int) {
+        prefs.edit()
+            .putString("serverUrl", baseUrl)
+            .putString("tcpHost", tcpHost)
+            .putInt("tcpPort", tcpPort)
+            .apply()
+    }
+
+    actual fun loadSavedServerBaseUrl(): String? = prefs.getString("serverUrl", null)
+    actual fun loadSavedTcpHost(): String? = prefs.getString("tcpHost", null)
+    actual fun loadSavedTcpPort(): Int? = if (prefs.contains("tcpPort")) prefs.getInt("tcpPort", 5100) else null
+
     companion object {
         private lateinit var appContext: Context
 

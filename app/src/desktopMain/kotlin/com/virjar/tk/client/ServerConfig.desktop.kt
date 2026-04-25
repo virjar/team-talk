@@ -14,3 +14,9 @@ actual fun getDefaultTcpPort(): Int {
     System.getProperty("teamtalk.tcp.port")?.toIntOrNull()?.let { return it }
     return 5100
 }
+
+actual fun getBuildProfile(): String =
+    System.getProperty("teamtalk.build.profile") ?: "dev"
+
+actual fun isShowAdvancedSettings(): Boolean =
+    System.getProperty("teamtalk.show.advanced.settings")?.toBoolean() ?: true

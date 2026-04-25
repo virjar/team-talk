@@ -9,5 +9,6 @@ data/
 logs/
 .idea/
 .kotlin/
-*.jks
+teamtalk-release.jks
 *.keystore
+gradle/profiles/*.secrets

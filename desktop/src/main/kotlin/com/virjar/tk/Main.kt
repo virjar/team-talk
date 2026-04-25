@@ -18,7 +18,10 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.virjar.tk.client.ApiClient
+import com.virjar.tk.client.ServerConfig
 import com.virjar.tk.client.UserContext
+import com.virjar.tk.client.getBuildProfile
+import com.virjar.tk.client.isShowAdvancedSettings
 import com.virjar.tk.dto.UserDto
 import com.virjar.tk.ThemeMode
 import com.virjar.tk.storage.resolveDataDir
@@ -178,10 +181,29 @@ fun main() {
  * Main Compose application, extracted so that one-time init stays outside `application {}`.
  */
 private fun teamTalkApplication(dataDir: File, locker: FileLocker) = application {
-    val apiClient = remember { ApiClient() }
+    // Build ServerConfig from profile defaults, overridden by saved config
+    val apiClient = remember {
+        val defaultConfig = ServerConfig()
+        val storage = com.virjar.tk.storage.TokenStorage()
+        val savedUrl = storage.loadSavedServerBaseUrl()
+        val savedHost = storage.loadSavedTcpHost()
+        val savedPort = storage.loadSavedTcpPort()
+        val config = if (savedUrl != null && savedHost != null) {
+            ServerConfig(
+                baseUrl = savedUrl,
+                tcpHost = savedHost,
+                tcpPort = savedPort ?: defaultConfig.tcpPort,
+            )
+        } else {
+            defaultConfig
+        }
+        ApiClient(config)
+    }
     var userContext by remember { mutableStateOf<UserContext?>(null) }
     var themeMode by remember { mutableStateOf(ThemeMode.SYSTEM) }
     var totalUnread by remember { mutableIntStateOf(0) }
+
+    val showAdvanced = remember { isShowAdvancedSettings() }
 
     // Session restore
     LaunchedEffect(Unit) {
@@ -252,6 +274,13 @@ private fun teamTalkApplication(dataDir: File, locker: FileLocker) = application
                             ctx.connectTcp()
                             userContext = ctx
                             true
+                        },
+                        showServerSettings = showAdvanced,
+                        currentServerUrl = apiClient.baseUrl,
+                        currentTcpHost = apiClient.tcpHost,
+                        onServerConfigChange = { baseUrl, host ->
+                            apiClient.updateConfig(baseUrl, host)
+                            apiClient.getTokenStorage().saveServerConfig(baseUrl, host, apiClient.tcpPort)
                         },
                     )
                 } else {
