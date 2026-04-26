@@ -1,5 +1,6 @@
 package com.virjar.tk.navigation
 
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
@@ -43,6 +44,7 @@ fun MainScreen(
     val connectionState by appState.userContext.connectionState.collectAsState()
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0),
         bottomBar = {
             NavigationBar {
                 MainTab.entries.forEachIndexed { index, tab ->
@@ -81,8 +83,6 @@ fun MainScreen(
                 onToggleMute = { channelId, muted ->
                     scope.launch { appState.conversationVm.toggleMute(channelId, muted) }
                 },
-                onRefresh = { scope.launch { appState.conversationVm.refresh() } },
-                onLogout = onLogout,
                 onSearchMessages = { appState.navigateTo(NavDestination.SearchMessages()) },
                 modifier = Modifier.padding(padding),
             )

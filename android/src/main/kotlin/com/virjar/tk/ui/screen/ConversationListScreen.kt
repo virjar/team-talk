@@ -25,8 +25,6 @@ fun ConversationListScreen(
     onDeleteConversation: (channelId: String) -> Unit,
     onTogglePin: (channelId: String, pinned: Boolean) -> Unit,
     onToggleMute: (channelId: String, muted: Boolean) -> Unit,
-    onRefresh: () -> Unit,
-    onLogout: (() -> Unit)? = null,
     onSearchMessages: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -67,19 +65,6 @@ fun ConversationListScreen(
                             Icon(Icons.Default.Search, contentDescription = "Search Messages", tint = Color(0xFF999999))
                         }
                     }
-                    IconButton(
-                        onClick = onRefresh,
-                        enabled = !state.isLoading,
-                    ) {
-                        if (state.isLoading) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = Color(0xFF999999))
-                        }
-                    }
-                    if (onLogout != null) {
-                        TextButton(onClick = onLogout) { Text("Logout") }
-                    }
                 },
             )
         }
@@ -96,10 +81,6 @@ fun ConversationListScreen(
                         Text("No conversations yet", style = MaterialTheme.typography.bodyLarge)
                         Spacer(modifier = Modifier.height(8.dp))
                         Text("Add a friend to start chatting", style = MaterialTheme.typography.bodySmall)
-                        Spacer(modifier = Modifier.height(16.dp))
-                        FilledTonalButton(onClick = onRefresh) {
-                            Text("Refresh")
-                        }
                     }
                 }
             }

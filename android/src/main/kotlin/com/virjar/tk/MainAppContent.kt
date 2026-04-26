@@ -1,5 +1,6 @@
 package com.virjar.tk
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -67,6 +68,10 @@ fun MainAppContent(
             LocalUserContext provides userContext,
             LocalAppState provides appState,
         ) {
+            BackHandler(enabled = appState.navDestination !is NavDestination.Main) {
+                appState.navigateBack()
+            }
+
             when (val dest = appState.navDestination) {
                 is NavDestination.Main -> MainScreen(
                     onLogout = onLogout,

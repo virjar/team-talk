@@ -11,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.protocol.ChannelType
 import com.virjar.tk.protocol.payload.Message
@@ -136,22 +137,24 @@ fun ChatScreen(
         }
     }
 
+    val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
+
     // Scroll to target message (from search result) or to bottom on new messages
     // 加载历史后保持滚动位置不变（通过 historyLoadedCount 判断）
-    LaunchedEffect(state.messages.size, state.scrollToSeq) {
+    // 键盘弹出时即时滚到底部（用 scrollToItem 避免 imePadding 动画冲突）
+    LaunchedEffect(state.messages.size, state.scrollToSeq, imeBottom) {
         if (state.messages.isNotEmpty()) {
             if (state.scrollToSeq > 0) {
-                // Scroll to target message from search result
                 val targetIndex = state.messages.indexOfFirst { it.serverSeq == state.scrollToSeq }
                 if (targetIndex >= 0) {
                     listState.animateScrollToItem(targetIndex)
                     onClearScrollTarget()
                 }
             } else if (state.historyLoadedCount > 0) {
-                // 加载历史消息：保持当前可见项位置不变，补偿偏移量
                 listState.scrollToItem(state.historyLoadedCount)
+            } else if (imeBottom > 0) {
+                listState.scrollToItem(state.messages.size - 1)
             } else {
-                // 新消息到达或首次加载：滚到底部
                 listState.animateScrollToItem(state.messages.size - 1)
             }
         }
@@ -192,7 +195,57 @@ fun ChatScreen(
                 },
             )
         },
-        bottomBar = {
+    ) { padding ->
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding).imePadding()
+        ) {
+            if (state.isLoading && state.messages.isEmpty()) {
+                Box(
+                    Modifier.weight(1f).fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator()
+                }
+            } else {
+                val messageMap = remember(state.messages) { state.messages.associateBy { it.messageId ?: it.clientMsgNo } }
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    items(state.messages, key = { it.messageId ?: it.clientMsgNo }) { msg ->
+                        val prevIndex = state.messages.indexOf(msg)
+                        val showTimeSep = prevIndex == 0 ||
+                            (prevIndex > 0 && shouldShowTimeSeparator(
+                                state.messages[prevIndex - 1].timestamp, msg.timestamp
+                            ))
+
+                        if (showTimeSep) {
+                            TimeSeparator(timestamp = msg.timestamp)
+                        }
+
+                        MessageBubble(
+                            msg = msg,
+                            senderName = "",
+                            isMe = msg.senderUid == myUid,
+                            isGroup = channelType == ChannelType.GROUP,
+                            readSeq = state.readSeq,
+                            imageBaseUrl = imageBaseUrl,
+                            onRevoke = { onRevokeMessage(msg.serverSeq) },
+                            onDelete = { onDeleteMessage(msg.messageId ?: "", msg.serverSeq) },
+                            onReply = { onSetReply(msg) },
+                            onForward = { onForward(msg) },
+                            onEdit = { onSetEdit(msg) },
+                            onImageClick = { url -> fullScreenImageUrl = url },
+                            onFileDownload = { onFileDownload(msg) },
+                            onVideoPlay = { url -> playingVideoUrl = url },
+                            voicePlayer = voicePlayer,
+                            replyLookup = { id -> messageMap[id] },
+                        )
+                    }
+                }
+            }
+
             ChatInputBar(
                 inputText = inputText,
                 onInputTextChange = { inputText = it },
@@ -230,53 +283,6 @@ fun ChatScreen(
                 onSendRecording = onStopAndSendRecording,
                 onCancelRecording = onCancelRecording,
             )
-        }
-    ) { padding ->
-        if (state.isLoading && state.messages.isEmpty()) {
-            Box(
-                Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator()
-            }
-        } else {
-            val messageMap = remember(state.messages) { state.messages.associateBy { it.messageId ?: it.clientMsgNo } }
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                items(state.messages, key = { it.messageId ?: it.clientMsgNo }) { msg ->
-                    val prevIndex = state.messages.indexOf(msg)
-                    val showTimeSep = prevIndex == 0 ||
-                        (prevIndex > 0 && shouldShowTimeSeparator(
-                            state.messages[prevIndex - 1].timestamp, msg.timestamp
-                        ))
-
-                    if (showTimeSep) {
-                        TimeSeparator(timestamp = msg.timestamp)
-                    }
-
-                    MessageBubble(
-                        msg = msg,
-                        senderName = "",
-                        isMe = msg.senderUid == myUid,
-                        isGroup = channelType == ChannelType.GROUP,
-                        readSeq = state.readSeq,
-                        imageBaseUrl = imageBaseUrl,
-                        onRevoke = { onRevokeMessage(msg.serverSeq) },
-                        onDelete = { onDeleteMessage(msg.messageId ?: "", msg.serverSeq) },
-                        onReply = { onSetReply(msg) },
-                        onForward = { onForward(msg) },
-                        onEdit = { onSetEdit(msg) },
-                        onImageClick = { url -> fullScreenImageUrl = url },
-                        onFileDownload = { onFileDownload(msg) },
-                        onVideoPlay = { url -> playingVideoUrl = url },
-                        voicePlayer = voicePlayer,
-                        replyLookup = { id -> messageMap[id] },
-                    )
-                }
-            }
         }
     }
 
