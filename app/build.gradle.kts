@@ -109,6 +109,7 @@ kotlin {
             dependencies {
                 implementation("io.ktor:ktor-client-okhttp:3.4.3")
                 implementation("app.cash.sqldelight:android-driver:$sqldelightVersion")
+                implementation("androidx.activity:activity-compose:1.10.1")
             }
         }
     }

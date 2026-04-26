@@ -62,13 +62,20 @@ object ImageCache {
     }
 
     suspend fun loadOrFetch(url: String): ImageBitmap? {
-        get(url)?.let { return it }
+        get(url)?.let {
+            com.virjar.tk.util.AppLog.i("ImageCache", "Cache HIT: $url")
+            return it
+        }
         return try {
+            com.virjar.tk.util.AppLog.i("ImageCache", "Fetching: $url")
             val bytes = java.net.URL(url).readBytes()
+            com.virjar.tk.util.AppLog.i("ImageCache", "Fetched ${bytes.size} bytes from: $url")
             val bitmap = bytes.decodeToImageBitmap()
             put(url, bitmap, bytes)
+            com.virjar.tk.util.AppLog.i("ImageCache", "Decoded bitmap OK: ${bitmap.width}x${bitmap.height}")
             bitmap
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            com.virjar.tk.util.AppLog.e("ImageCache", "Failed to load image: $url", e)
             null
         }
     }

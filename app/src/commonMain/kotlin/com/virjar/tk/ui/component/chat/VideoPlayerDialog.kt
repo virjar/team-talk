@@ -19,8 +19,6 @@ import com.virjar.tk.util.AppLog
 import io.github.kdroidfilter.composemediaplayer.VideoPlayerError
 import io.github.kdroidfilter.composemediaplayer.VideoPlayerSurface
 import io.github.kdroidfilter.composemediaplayer.rememberVideoPlayerState
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 
 @Composable
 fun VideoPlayerDialog(videoUrl: String, onDismiss: () -> Unit) {
@@ -50,15 +48,13 @@ fun VideoPlayerDialog(videoUrl: String, onDismiss: () -> Unit) {
         return
     }
 
-    // Run openUri on IO dispatcher to avoid deadlock in library's setPlayerError()
-    // which uses runBlocking { withContext(Dispatchers.Main) } internally
+    // openUri must run on Main thread — ExoPlayer (Android) requires main thread access.
+    // Desktop uses VLC which is also main-thread-safe for this call.
     LaunchedEffect(videoUrl) {
-        withContext(Dispatchers.IO) {
-            try {
-                playerState.openUri(videoUrl)
-            } catch (e: Exception) {
-                AppLog.e("VideoPlayer", "openUri failed: ${e.message}", e)
-            }
+        try {
+            playerState.openUri(videoUrl)
+        } catch (e: Exception) {
+            AppLog.e("VideoPlayer", "openUri failed: ${e.message}", e)
         }
     }
 

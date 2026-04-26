@@ -10,6 +10,8 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.utils.io.copyTo
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
 
 private val ALLOWED_CONTENT_PREFIXES = listOf(
@@ -29,7 +31,10 @@ fun Routing.fileRoutes(fileService: FileService, maxFileSizeBytes: Long = 50 * 1
             val path = call.parameters.getAll("path")?.joinToString("/") ?: return@get call.respond(HttpStatusCode.BadRequest)
             val rangeHeader = call.request.header(HttpHeaders.Range)
 
-            val fileStream = fileService.streamFileWithRange(path, rangeHeader)
+            // S3 client uses Netty Promise + .get() which blocks — must run off the Ktor EventLoop
+            val fileStream = withContext(Dispatchers.IO) {
+                fileService.streamFileWithRange(path, rangeHeader)
+            }
             if (fileStream != null) {
                 // Validate Range request against actual file size
                 if (rangeHeader != null && fileStream.rangeStart >= fileStream.totalSize) {
