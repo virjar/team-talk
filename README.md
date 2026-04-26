@@ -60,6 +60,7 @@ TeamTalk/
 │   ├── architecture.md    # 架构设计理念与技术决策
 │   ├── develop.md         # 开发环境搭建指南
 │   └── deploy.md          # 生产环境部署指南
+├── gradle/profiles/       # 构建环境配置（dev/demo/production）+ secrets（不入 Git）
 └── docker-compose.yml     # PostgreSQL + MinIO 开发环境
 ```
 
@@ -153,14 +154,23 @@ docker compose up -d
 
 ## 部署
 
-提供一键部署脚本，自动安装 Docker、JDK、配置并启动服务：
+所有部署通过 Gradle Profile 系统完成，Profile 是唯一配置入口：
 
 ```bash
-# 首次部署
-./deploy.sh user@your-server
+# 首次部署（HTTP 模式）
+./gradlew deployServer -PbuildProfile=demo
 
-# 升级部署（自动检测已有部署，备份 → 上传 → 重启）
-./deploy.sh user@your-server
+# 首次部署（HTTPS 模式，提供 SSL 证书）
+./gradlew deployServer -PbuildProfile=demo -PsslCert=cert.pem -PsslKey=key.pem
+
+# 升级（自动检测已有部署，保留数据和配置）
+./gradlew deployServer -PbuildProfile=demo
+
+# 构建并上传客户端安装包到服务器
+./gradlew uploadRelease -PbuildProfile=demo
+
+# 部署服务端 + 上传客户端
+./gradlew deployServer uploadRelease -PbuildProfile=demo
 ```
 
 生产环境目录结构：
@@ -169,8 +179,9 @@ docker compose up -d
 /opt/teamtalk/
 ├── bin/      # 可执行文件
 ├── data/     # 数据（rocksdb/ lucene-index/ logs/）
-├── conf/     # 配置文件
-└── env.sh    # 环境变量（含数据库密码和 JWT 密钥）
+├── conf/     # 配置文件（env.sh 含敏感密码，权限 600）
+├── static/   # 产品首页 + 客户端下载文件
+└── docker-compose.yml
 ```
 
 详细的部署指南请阅读 [doc/deploy.md](doc/deploy.md)。
@@ -195,7 +206,7 @@ docker compose up -d
 
 ## 致谢
 
-- **[GLM](https://github.com/THUDM/GLM-4)（智谱大模型）**：本项目约 99% 的代码由 GLM-5.1 编写，从协议设计、服务端架构到跨平台客户端 UI，GLM 贯穿了整个开发流程。
+- **[GLM](https://www.bigmodel.cn/glm-coding)（智谱大模型）**：本项目约 99% 的代码由 GLM-5.1 编写，从协议设计、服务端架构到跨平台客户端 UI，GLM 贯穿了整个开发流程。
 - [TangSengDaoDao](https://github.com/TangSengDaoDao)（唐僧叨叨）：TeamTalk 早期深度参考了唐僧叨叨进行移植开发，在设计模式和业务模型（用户、频道、消息、会话、好友关系）上有一脉相承的关系，但技术栈和协议层已完全独立实现。
 
 ## License

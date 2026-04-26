@@ -64,9 +64,7 @@ MinIO Console: http://localhost:9001 （默认账号 `minioadmin` / `minioadmin`
 ### 连接远程服务器
 
 ```bash
-./gradlew :desktop:run \
-  -PSERVER_BASE_URL=https://im.virjar.com \
-  -PTCP_HOST=im.virjar.com
+./gradlew :desktop:run -PbuildProfile=demo
 ```
 
 ### 多实例运行
@@ -111,15 +109,14 @@ MinIO Console: http://localhost:9001 （默认账号 `minioadmin` / `minioadmin`
 
 ### 手动指定连接地址
 
-```bash
-# 方式一：Gradle 参数（一次性）
-./gradlew :android:assembleDebug \
-  -PSERVER_BASE_URL=http://192.168.1.100:8080 \
-  -PTCP_HOST=192.168.1.100
+通过 Gradle Profile 系统管理不同环境的服务器地址，详见 [Gradle Profile 系统](#gradle-profile-系统)。默认 `dev` profile 连接 `localhost`，切换到 `demo` profile 连接演示站：
 
-# 方式二：local.properties（gitignored，持久化）
-echo "server.baseUrl=http://192.168.1.100:8080" >> local.properties
-echo "server.tcpHost=192.168.1.100" >> local.properties
+```bash
+# 连接演示站
+./gradlew :android:assembleDebug -PbuildProfile=demo
+
+# 自定义环境：创建 gradle/profiles/my-server.properties 后
+./gradlew :android:assembleDebug -PbuildProfile=my-server
 ```
 
 配置优先级（从高到低）：
@@ -172,15 +169,38 @@ RocksDB 和 Lucene 的数据目录由 `Environment` 类管理，路径为 `$data
 
 详见 [deploy.md](deploy.md)。
 
-## 客户端多环境配置
+## Gradle Profile 系统
 
-`ApiClient` 通过 `ServerConfig` 数据类获取服务端地址，采用 `expect/actual` 模式：
+所有环境差异（服务器地址、TCP 主机、部署配置等）通过 Profile 文件管理，位于 `gradle/profiles/` 目录：
+
+```bash
+gradle/profiles/
+├── dev.properties           # 本地开发（默认）
+├── demo.properties          # 官方演示站（im.virjar.com）
+├── production.properties    # 生产模板（用户复制后修改）
+└── *.secrets                # 敏感密码（自动生成，不入 Git）
+```
+
+服务端地址通过 Profile 在构建时注入到客户端，`ServerConfig` 采用 `expect/actual` 模式：
 
 | 平台 | 实现文件 | 策略 |
 |------|----------|------|
 | commonMain | `ServerConfig.kt` | expect 声明 + 数据类 |
-| Desktop | `ServerConfig.desktop.kt` | JVM `-D` 系统属性，默认 `localhost:8080` |
-| Android | `ServerConfig.android.kt` | BuildConfig 注入 + 模拟器自动检测 `10.0.2.2` |
+| Desktop | `ServerConfig.desktop.kt` | 构建时从 Profile 注入，默认 `localhost:8080` |
+| Android | `ServerConfig.android.kt` | 构建时从 Profile 注入 BuildConfig + 模拟器自动检测 `10.0.2.2` |
+
+```bash
+# 默认 dev profile（连接 localhost）
+./gradlew :desktop:run
+
+# 指定 demo profile（连接演示站）
+./gradlew :desktop:run -PbuildProfile=demo
+
+# 自定义环境
+cp gradle/profiles/production.properties gradle/profiles/my-company.properties
+# 编辑 my-company.properties 后：
+./gradlew :desktop:run -PbuildProfile=my-company
+```
 
 ## 常见问题
 
