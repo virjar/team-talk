@@ -14,7 +14,7 @@ extra.apply {
     set("kotlinVersion", "2.3.20")
     set("composeVersion", "1.10.0")
     set("agpVersion", "8.9.2")
-    set("ktorVersion", "3.1.3")
+    set("ktorVersion", "3.4.3")
     set("exposedVersion", "0.61.0")
     set("kotlinxSerializationVersion", "1.8.1")
     set("kotlinxCoroutinesVersion", "1.10.2")
@@ -615,14 +615,16 @@ tasks.register("uploadRelease") {
 
         remoteExec(host, user, "mkdir -p $remoteDir")
 
-        // Upload desktop packages
+        // Upload desktop packages（重命名为固定文件名，与首页链接一致）
+        val desktopRename = mapOf("deb" to "TeamTalk-linux.deb", "msi" to "TeamTalk-windows.msi", "dmg" to "TeamTalk-macos.dmg")
         val desktopDir = file("desktop/build/compose/binaries/main")
         if (desktopDir.exists()) {
             desktopDir.walkTopDown()
-                .filter { it.isFile && (it.extension in listOf("deb", "msi", "dmg")) }
+                .filter { it.isFile && (it.extension in desktopRename.keys) }
                 .forEach { pkg ->
-                    println("  Uploading ${pkg.name} ...")
-                    localExecSilent("scp", pkg.absolutePath, "$user@$host:$remoteDir/${pkg.name}")
+                    val remoteName = desktopRename[pkg.extension] ?: pkg.name
+                    println("  Uploading ${pkg.name} as $remoteName ...")
+                    localExecSilent("scp", pkg.absolutePath, "$user@$host:$remoteDir/$remoteName")
                 }
         }
 

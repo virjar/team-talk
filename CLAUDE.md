@@ -226,7 +226,7 @@ TeamTalk/
 | Kotlin | 2.3.20 | 全栈语言 |
 | Compose Multiplatform | 1.10.0 | 跨平台 UI |
 | AGP | 8.9.2 | Android 构建 |
-| Ktor | 3.1.3 | HTTP 客户端 + 服务端 |
+| Ktor | 3.4.3 | HTTP 客户端 + 服务端 |
 | Netty | 4.1.119 | TCP 长连接（shared + server） |
 | Exposed | 0.61.0 | 数据库 ORM（服务端） |
 | SQLDelight | 2.3.2 | 本地数据库（客户端） |

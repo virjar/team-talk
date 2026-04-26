@@ -83,6 +83,7 @@
         .android-qr .qr-label { color: var(--text-secondary); font-size: 14px; margin-bottom: 12px; }
         #android-qrcode img { width: 180px; height: 180px; border-radius: 8px; }
         .android-qr .apk-link { margin-top: 10px; font-size: 14px; }
+        .android-qr.unavailable { opacity: .4; pointer-events: none; }
 
         /* Footer */
         footer { border-top: 1px solid var(--border); padding: 24px 0; text-align: center; }
@@ -191,29 +192,56 @@
     </div>
 </footer>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 <script>
 (function() {
-    // Android QR Code
-    var link = window.location.origin + '/downloads/TeamTalk-android.apk';
-    var img = document.createElement('img');
-    img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent(link);
-    img.alt = 'Android Download QR';
-    document.getElementById('android-qrcode').appendChild(img);
+    // 下载卡片可用性检测
+    function markUnavailable(card) {
+        card.classList.add('unavailable');
+        var desc = card.querySelector('.plat-desc');
+        if (desc) desc.textContent = '即将上线';
+    }
 
-    // 检测下载文件可用性（不灰化按钮，仅标记不可用提示）
     document.querySelectorAll('.dl-card').forEach(function(card) {
         var href = card.getAttribute('href');
         if (!href) return;
         fetch(href, { method: 'HEAD' }).then(function(r) {
-            if (!r.ok) {
-                var desc = card.querySelector('.plat-desc');
-                if (desc) desc.textContent = '即将上线';
-            }
+            if (!r.ok) markUnavailable(card);
         }).catch(function() {
-            var desc = card.querySelector('.plat-desc');
-            if (desc) desc.textContent = '即将上线';
+            markUnavailable(card);
         });
     });
+
+    // 检测 Android APK 可用性
+    var apkLink = window.location.origin + '/downloads/TeamTalk-android.apk';
+    var apkAvailable = false;
+    fetch('/downloads/TeamTalk-android.apk', { method: 'HEAD' }).then(function(r) {
+        apkAvailable = r.ok;
+        updateAndroidSection();
+    }).catch(function() {
+        updateAndroidSection();
+    });
+
+    function updateAndroidSection() {
+        var section = document.querySelector('.android-qr');
+        if (!section) return;
+        if (apkAvailable) {
+            // APK 存在：生成二维码
+            var qr = qrcode(0, 'M');
+            qr.addData(apkLink);
+            qr.make();
+            document.getElementById('android-qrcode').innerHTML = qr.createImgTag(4, 8);
+        } else {
+            // APK 不存在：显示即将上线
+            section.classList.add('unavailable');
+            var label = section.querySelector('.qr-label');
+            if (label) label.textContent = 'Android 版本即将上线';
+            var link = section.querySelector('.apk-link');
+            if (link) link.style.display = 'none';
+            var qrcodeEl = document.getElementById('android-qrcode');
+            if (qrcodeEl) qrcodeEl.style.display = 'none';
+        }
+    }
 })();
 </script>
 

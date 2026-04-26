@@ -7,6 +7,8 @@ import com.virjar.tk.db.DatabaseFactory
 import com.virjar.tk.db.MessageStore
 import com.virjar.tk.dto.ApiError
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.virjar.tk.env.ClassPreloader
 import com.virjar.tk.env.Environment
 import com.virjar.tk.service.*
@@ -18,10 +20,13 @@ import com.virjar.tk.tcp.agent.MessageDispatcher
 import com.virjar.tk.tcp.agent.SubscribeDispatcher
 import com.virjar.tk.tcp.agent.TypingDispatcher
 import io.ktor.http.*
+import io.ktor.http.content.*
+import io.ktor.utils.io.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
 import io.ktor.server.auth.*
 import io.ktor.server.auth.jwt.*
+import io.ktor.server.http.*
 import io.ktor.server.http.content.*
 import io.ktor.server.netty.*
 import io.ktor.server.plugins.calllogging.*
@@ -30,6 +35,7 @@ import io.ktor.server.plugins.cors.routing.*
 import io.ktor.server.plugins.statuspages.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
+import io.ktor.utils.io.*
 import io.ktor.server.routing.*
 
 // 这个一定是第一行，保证Environment首先执行
@@ -117,9 +123,18 @@ fun Application.module() {
         exception<IllegalArgumentException> { call, cause ->
             call.respond(HttpStatusCode.BadRequest, ApiError(message = cause.message ?: "bad request"))
         }
+        exception<kotlinx.coroutines.CancellationException> { _, _ ->
+            // 客户端断开时 HttpRequestLifecycle 取消协程，这是正常行为，不需要处理
+        }
         exception<Exception> { call, cause ->
-            call.application.environment.log.error("Unhandled exception", cause)
-            call.respond(HttpStatusCode.InternalServerError, ApiError(message = "internal server error"))
+            // 客户端断开（如取消大文件下载）会触发 ClosedChannelException，
+            // 此时不要再写响应，避免二次异常污染 HTTP/2 连接状态
+            if (!call.response.isSent) {
+                call.application.environment.log.error("Unhandled exception", cause)
+                call.respond(HttpStatusCode.InternalServerError, ApiError(message = "internal server error"))
+            } else {
+                call.application.environment.log.debug("Client disconnected: ${cause.message}")
+            }
         }
     }
 
@@ -139,6 +154,10 @@ fun Application.module() {
     tcpServer.start()
 
     routing {
+        // 检测客户端断开（HTTP/2 RST_STREAM 等），自动取消请求协程
+        // 需要 Ktor 3.2+ (PR #5181)
+        install(HttpRequestLifecycle) { cancelCallOnClose = true }
+
         // ===== 首页和下载路由 =====
         val staticDir = resolveStaticDir()
         val downloadsDir = File(staticDir, "downloads")
@@ -152,21 +171,47 @@ fun Application.module() {
             }
         }
 
-        // 通用静态文件服务（从 static/ 目录提供 css/js/images/txt 等）
-        staticFiles("/", staticDir) {
-            exclude { it == File(staticDir, "index.html") }
-        }
-
+        // 下载路由（必须在 staticFiles 之前，避免被静态文件路由拦截）
+        // 客户端取消下载时，HttpRequestLifecycle 会取消协程，writeTo 抛出 CancellationException
         get("/downloads/{filename}") {
             val filename = call.parameters["filename"] ?: return@get call.respond(HttpStatusCode.BadRequest)
             val file = File(downloadsDir, filename)
+            if (!file.exists()) {
+                call.respond(HttpStatusCode.NotFound)
+                return@get
+            }
+            call.response.header(HttpHeaders.ContentDisposition, "attachment; filename=\"$filename\"")
+            call.respond(object : OutgoingContent.WriteChannelContent() {
+                override val contentLength = file.length()
+                override val contentType = ContentType.Application.OctetStream
+                override suspend fun writeTo(channel: ByteWriteChannel) {
+                    withContext(Dispatchers.IO) {
+                        file.inputStream().use { input ->
+                            val buf = ByteArray(64 * 1024)
+                            while (!channel.isClosedForWrite) {
+                                val read = input.read(buf)
+                                if (read == -1) break
+                                channel.writeFully(buf, 0, read)
+                                channel.flush()
+                            }
+                        }
+                    }
+                }
+            })
+        }
+        head("/downloads/{filename}") {
+            val filename = call.parameters["filename"] ?: return@head call.respond(HttpStatusCode.BadRequest)
+            val file = File(downloadsDir, filename)
             if (file.exists()) {
                 call.response.header(HttpHeaders.ContentDisposition, "attachment; filename=\"$filename\"")
-                call.respondFile(file)
+                call.respond(HttpStatusCode.OK)
             } else {
                 call.respond(HttpStatusCode.NotFound)
             }
         }
+
+        // 通用静态文件服务（从 static/ 目录提供其他资源）
+        staticFiles("/static", staticDir)
 
         // ===== API 路由 =====
         get("/ping") { call.respondText("pong", ContentType.Text.Plain) }

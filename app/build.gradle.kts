@@ -80,9 +80,9 @@ kotlin {
             implementation(compose.components.resources)
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:$kotlinxSerializationVersion")
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$kotlinxCoroutinesVersion")
-            implementation("io.ktor:ktor-client-core:3.1.3")
-            implementation("io.ktor:ktor-client-content-negotiation:3.1.3")
-            implementation("io.ktor:ktor-serialization-kotlinx-json:3.1.3")
+            implementation("io.ktor:ktor-client-core:3.4.3")
+            implementation("io.ktor:ktor-client-content-negotiation:3.4.3")
+            implementation("io.ktor:ktor-serialization-kotlinx-json:3.4.3")
             implementation("io.netty:netty-handler:4.1.119.Final")
             implementation("io.netty:netty-transport:4.1.119.Final")
             implementation("io.netty:netty-buffer:4.1.119.Final")
@@ -101,13 +101,13 @@ kotlin {
             dependencies {
                 implementation(compose.preview)
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:$kotlinxCoroutinesVersion")
-                implementation("io.ktor:ktor-client-java:3.1.3")
+                implementation("io.ktor:ktor-client-java:3.4.3")
                 implementation("app.cash.sqldelight:sqlite-driver:$sqldelightVersion")
             }
         }
         val androidMain by getting {
             dependencies {
-                implementation("io.ktor:ktor-client-okhttp:3.1.3")
+                implementation("io.ktor:ktor-client-okhttp:3.4.3")
                 implementation("app.cash.sqldelight:android-driver:$sqldelightVersion")
             }
         }
