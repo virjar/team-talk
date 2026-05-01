@@ -252,6 +252,72 @@ journalctl -u teamtalk -f
 
 ## 客户端发布
 
+### 方式一：GitHub Actions 多平台构建（推荐）
+
+由于 Kotlin Multiplatform 不支持交叉编译（例如无法在 macOS 上构建 Windows/msi 或 Linux/deb），通过 GitHub Actions 在各平台原生 runner 上构建是获取全平台客户端的最简单方式。
+
+项目已提供完整的 GitHub Actions workflow（`.github/workflows/release.yml`），包含以下构建任务：
+
+| Job | Runner | 产物 |
+|-----|--------|------|
+| Server | `ubuntu-latest` | 服务端分发包 |
+| Desktop (Linux) | `ubuntu-latest` | `.deb` |
+| Desktop (Windows) | `windows-latest` | `.msi` |
+| Desktop (macOS) | `macos-latest` | `.dmg` |
+| Android | `ubuntu-latest` | `.apk` |
+
+#### 触发构建
+
+1. 进入 GitHub 仓库 → **Actions** → **Build & Release**
+2. 点击 **Run workflow**
+3. 填写 `build_profile`（对应 `gradle/profiles/` 下的 profile 名称，如 `demo`）
+4. 等待构建完成，在 workflow run 页面下载 **Artifacts**
+
+所有产物以 artifact 形式提供，保留 7 天。
+
+#### 启用自动部署（可选）
+
+构建完成后可自动将客户端安装包上传到服务器。需要在仓库中配置 SSH 密钥：
+
+**1. 生成专用 SSH 密钥：**
+
+```bash
+ssh-keygen -t ed25519 -C "github-actions@teamtalk" -f teamtalk-deploy-key -N ""
+```
+
+**2. 将公钥添加到服务器：**
+
+```bash
+ssh root@your-server "mkdir -p ~/.ssh && echo '$(cat teamtalk-deploy-key.pub)' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+```
+
+**3. 配置 GitHub Secret：**
+
+进入仓库 **Settings → Secrets and variables → Actions**，添加 **Repository secret**：
+
+| 名称 | 值 |
+|------|-----|
+| `DEPLOY_SSH_KEY` | 上一步生成的私钥完整内容（包含 BEGIN/END 行） |
+
+**4. 触发 workflow 时自动部署：**
+
+当通过 **Run workflow** 手动触发时，构建完成后会自动通过 SSH 将客户端安装包上传到 profile 中 `deploy.host` / `deploy.path` 对应的 `/static/downloads/` 目录。
+
+> deploy job 的目标服务器从 profile 中读取 `deploy.host`、`deploy.user`、`deploy.path`，如果 profile 未定义 `deploy.host` 则从 `serverUrl` 中提取主机名作为回退。无需修改 workflow 文件即可适配不同环境。
+
+#### Fork 仓库使用
+
+Fork 仓库可以直接复用上游的 workflow，只需：
+
+1. 确保 fork 仓库的 **Actions** 页面已启用（GitHub 默认禁用 fork 的 Actions）
+2. 创建自己的 profile 文件（如 `gradle/profiles/my-company.properties`）
+3. 如需自动部署，按上述步骤配置 `DEPLOY_SSH_KEY` secret
+4. 触发 **Build & Release** workflow，填入自己的 profile 名称
+
+### 方式二：本地构建并上传
+
+在本地开发机上直接构建当前平台的产物，然后上传到服务器：
+
 ```bash
 # 构建所有产物并上传到服务器
 ./gradlew uploadRelease -PbuildProfile=demo
@@ -262,6 +328,8 @@ journalctl -u teamtalk -f
 # 部署服务端 + 上传客户端
 ./gradlew deployServer uploadRelease -PbuildProfile=demo
 ```
+
+> **注意**：`uploadRelease` 只能构建当前平台的 desktop 产物（macOS 上只能构建 .dmg，Linux 上只能构建 .deb）。如需全平台客户端，请使用方式一。
 
 构建产物上传到服务器后，用户可通过首页 `https://im.example.com/` 下载。
 
