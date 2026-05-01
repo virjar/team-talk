@@ -45,7 +45,20 @@ class ContactsViewModel(
     val appliesState: StateFlow<FriendAppliesState> = _appliesState.asStateFlow()
 
     suspend fun loadFriends() {
-        _contactsState.value = _contactsState.value.copy(isLoading = true)
+        // Phase 1: 先从本地 DB 读取缓存数据并立即展示
+        val cached = try {
+            contactRepo.getCachedFriends()
+        } catch (e: Exception) {
+            AppLog.w("ContactsVM", "getCachedFriends failed", e)
+            emptyList()
+        }
+        if (cached.isNotEmpty()) {
+            _contactsState.value = _contactsState.value.copy(friends = cached, isLoading = true, error = "")
+        } else {
+            _contactsState.value = _contactsState.value.copy(isLoading = true, error = "")
+        }
+
+        // Phase 2: 后台网络同步
         try {
             val friends = contactRepo.getFriends()
             val uids = friends.map { it.friendUid }
@@ -74,7 +87,11 @@ class ContactsViewModel(
             )
         } catch (e: Exception) {
             AppLog.e("ContactsVM", "loadFriends failed", e)
-            _contactsState.value = _contactsState.value.copy(isLoading = false, error = e.toUserMessage())
+            if (cached.isNotEmpty()) {
+                _contactsState.value = _contactsState.value.copy(isLoading = false)
+            } else {
+                _contactsState.value = _contactsState.value.copy(isLoading = false, error = e.toUserMessage())
+            }
         }
     }
 

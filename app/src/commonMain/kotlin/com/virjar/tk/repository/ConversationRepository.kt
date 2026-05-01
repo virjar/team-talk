@@ -15,6 +15,11 @@ class ConversationRepository(private val ctx: UserContext) {
 
     private val localCache: LocalCache get() = ctx.localCache
 
+    /** 从本地 DB 读取会话列表，不进行网络调用。 */
+    suspend fun getCachedConversations(): List<ConversationDto> {
+        return withContext(Dispatchers.IO) { localCache.getAllConversations() }
+    }
+
     /**
      * 先网络后缓存策略：HTTP 获取后写入 localCache，返回服务端结果。
      * 网络失败时回退到本地缓存。

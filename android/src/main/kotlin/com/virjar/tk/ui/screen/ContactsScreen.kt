@@ -42,7 +42,7 @@ fun ContactsScreen(
         }
     ) { padding ->
         when {
-            state.isLoading -> {
+            state.isLoading && state.friends.isEmpty() -> {
                 Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }

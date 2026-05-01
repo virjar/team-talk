@@ -44,7 +44,20 @@ class ConversationViewModel(
     }
 
     suspend fun refresh() {
-        _state.value = _state.value.copy(isLoading = true, error = "")
+        // Phase 1: 先从本地 DB 读取缓存数据并立即展示
+        val cached = try {
+            conversationRepo.getCachedConversations()
+        } catch (e: Exception) {
+            AppLog.w("ConvVM", "getCachedConversations failed", e)
+            emptyList()
+        }
+        if (cached.isNotEmpty()) {
+            _state.value = _state.value.copy(conversations = cached, isLoading = true, error = "")
+        } else {
+            _state.value = _state.value.copy(isLoading = true, error = "")
+        }
+
+        // Phase 2: 后台网络同步
         try {
             conversationRepo.clearExpiredDrafts()  // 清理 >30 天的过期草稿
             val conversations = conversationRepo.syncConversations()
@@ -113,7 +126,11 @@ class ConversationViewModel(
             ctx.mergeOnlineStatus(onlineStatus)
         } catch (e: Exception) {
             AppLog.e("ConvVM", "refresh failed", e)
-            _state.value = _state.value.copy(isLoading = false, error = e.message ?: "Failed to load")
+            if (cached.isNotEmpty()) {
+                _state.value = _state.value.copy(isLoading = false)
+            } else {
+                _state.value = _state.value.copy(isLoading = false, error = e.message ?: "Failed to load")
+            }
         }
     }
 

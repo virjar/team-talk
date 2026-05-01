@@ -15,6 +15,11 @@ class ContactRepository(private val ctx: UserContext) {
 
     private val localCache: LocalCache get() = ctx.localCache
 
+    /** 从本地 DB 读取联系人列表，不进行网络调用。 */
+    suspend fun getCachedFriends(): List<FriendDto> {
+        return withContext(Dispatchers.IO) { localCache.getAllContacts() }
+    }
+
     /**
      * 先网络后缓存策略：HTTP 获取后写入 localCache，返回服务端结果。
      * 网络失败时回退到本地缓存。
