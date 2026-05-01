@@ -5,14 +5,14 @@
 ## 前置依赖
 
 - JDK 17+
-- Docker & Docker Compose（用于 PostgreSQL 和 MinIO）
+- Docker & Docker Compose（用于 PostgreSQL）
 - Android Studio / IntelliJ IDEA（推荐）
 - Android SDK（构建 Android 客户端时需要）
 
 ## 一键启动
 
 ```bash
-# 1. 启动基础设施（PostgreSQL 16 + MinIO）
+# 1. 启动基础设施（PostgreSQL 16）
 docker compose up -d
 
 # 2. 启动服务端（前台运行，端口 8080/5100）
@@ -40,9 +40,6 @@ docker compose up -d
 | 服务 | 端口 | 数据卷 | 用途 |
 |------|------|--------|------|
 | PostgreSQL 16 | 5432 | `~/.tk/pgdata` | 关系型数据（用户/频道/好友/会话） |
-| MinIO | 9000 (API) / 9001 (Console) | `~/.tk/miniodata` | 对象存储（文件/图片） |
-
-MinIO Console: http://localhost:9001 （默认账号 `minioadmin` / `minioadmin`）
 
 ### 数据库
 
@@ -151,10 +148,6 @@ MinIO Console: http://localhost:9001 （默认账号 `minioadmin` / `minioadmin`
 | 数据库用户 | `postgres` | `DATABASE_USER` |
 | 数据库密码 | `postgres` | `DATABASE_PASSWORD` |
 | JWT 密钥 | 内置默认值 | `JWT_SECRET` |
-| MinIO 端点 | `http://127.0.0.1:9000` | `MINIO_ENDPOINT` |
-| MinIO AccessKey | `minioadmin` | `MINIO_ACCESS_KEY` |
-| MinIO SecretKey | `minioadmin` | `MINIO_SECRET_KEY` |
-| MinIO Bucket | `teamtalk` | `MINIO_BUCKET` |
 | 文件大小上限 | `52428800`（50MB） | `FILE_MAX_SIZE_BYTES` |
 
 RocksDB 和 Lucene 的数据目录由 `Environment` 类管理，路径为 `$dataRoot/rocksdb/` 和 `$dataRoot/lucene-index/`，不通过配置文件设置。
@@ -215,16 +208,6 @@ docker compose logs postgres
 
 # 重启
 docker compose restart postgres
-```
-
-### MinIO 连接失败
-
-```bash
-# 检查容器和健康状态
-docker compose ps minio
-
-# 访问 Console 确认
-open http://localhost:9001
 ```
 
 ### Desktop 编译报错
