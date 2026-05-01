@@ -52,6 +52,25 @@ android {
         versionName = pkgVersion
     }
 
+    flavorDimensions += "profile"
+
+    val allProfiles: Map<String, Map<String, String>> by rootProject.extra
+
+    productFlavors {
+        allProfiles.keys.forEach { profileName ->
+            create(profileName) {
+                dimension = "profile"
+            }
+        }
+    }
+
+    variantFilter {
+        val names = flavors.map { it.name }
+        if (names.contains("production") && buildType.name == "debug") {
+            ignore = true
+        }
+    }
+
     buildTypes {
         release {
             val releaseConfig = signingConfigs.findByName("release")

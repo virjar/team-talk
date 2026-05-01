@@ -28,35 +28,46 @@ extra.apply {
     set("packageVersion", "1.0.0")
 }
 
-// ── Profile 加载与校验 ──
+// ── Profile 全量发现 ──
 
+// 扫描所有 profile 文件
+val allProfiles: Map<String, Map<String, String>> = file("gradle/profiles").listFiles()
+    ?.filter { it.name.endsWith(".properties") }
+    ?.associate { profileFile ->
+        val name = profileFile.name.removeSuffix(".properties")
+        val props = java.util.Properties().apply {
+            profileFile.inputStream().use { load(it) }
+        }
+        name to props.map { it.key.toString() to it.value.toString() }.toMap()
+    } ?: emptyMap()
+
+if (allProfiles.isEmpty()) {
+    throw GradleException("No profiles found in gradle/profiles/. Expected *.properties files.")
+}
+
+// 注册到 extra 供子模块消费
+extra.set("allProfiles", allProfiles)
+extra.set("profileNames", allProfiles.keys.toList())
+
+// 活跃 profile（向后兼容 -PbuildProfile=xxx）
 val profileName = findProperty("buildProfile")?.toString() ?: "dev"
-val profileFile = file("gradle/profiles/${profileName}.properties")
-
-if (!profileFile.exists()) {
-    val available = file("gradle/profiles").listFiles()
-        ?.filter { it.name.endsWith(".properties") }
-        ?.joinToString(", ") { it.name.removeSuffix(".properties") }
-        ?: "none"
-    throw GradleException("Profile '$profileName' not found. Available: $available")
+if (!allProfiles.containsKey(profileName)) {
+    throw GradleException(
+        "Profile '$profileName' not found. Available: ${allProfiles.keys.joinToString(", ")}"
+    )
 }
+extra.set("activeProfileName", profileName)
 
-val profileProps = java.util.Properties().apply {
-    profileFile.inputStream().use { load(it) }
-}
-
-// 必填字段校验
-val serverUrl = profileProps.getProperty("serverUrl")
+// 验证活跃 profile 必填字段
+val activeProps = allProfiles[profileName]!!
+val serverUrl = activeProps["serverUrl"]
     ?: throw GradleException("Profile '$profileName' must define 'serverUrl'")
 if (!serverUrl.startsWith("http://") && !serverUrl.startsWith("https://")) {
     throw GradleException("Profile '$profileName': serverUrl must start with http:// or https://")
 }
-profileProps.getProperty("tcpHost")
-    ?: throw GradleException("Profile '$profileName' must define 'tcpHost'")
-profileProps.getProperty("tcpPort")
-    ?: throw GradleException("Profile '$profileName' must define 'tcpPort'")
-profileProps.getProperty("buildProfile")
-    ?: throw GradleException("Profile '$profileName' must define 'buildProfile'")
+activeProps["tcpHost"] ?: throw GradleException("Profile '$profileName' must define 'tcpHost'")
+activeProps["tcpPort"] ?: throw GradleException("Profile '$profileName' must define 'tcpPort'")
+activeProps["buildProfile"] ?: throw GradleException("Profile '$profileName' must define 'buildProfile'")
 
 // 从 serverUrl 提取 HTTP 端口（默认 80/443），用于服务端 KTOR_PORT 配置
 val serverHttpPort = try {
@@ -66,8 +77,8 @@ val serverHttpPort = try {
 } catch (_: Exception) { 8080 }
 val defaultHttpPort = if (serverUrl.startsWith("https://")) 443 else 8080
 
-// 注入到 extra（子模块通过 rootProject.extra 读取）
-profileProps.forEach { (k, v) -> extra.set(k.toString(), v) }
+// 注入活跃 profile 到 extra（向后兼容：子模块通过 rootProject.extra 读取）
+activeProps.forEach { (k, v) -> extra.set(k, v) }
 
 // 强制统一 Kotlin 依赖版本，防止 AGP 或其他插件引入低版本导致 metadata 冲突
 subprojects {
@@ -218,7 +229,8 @@ fun generateEnvShContent(
     sslPort: String,
     deployPath: String,
     httpPort: Int = defaultHttpPort,
-    tcpPort: String? = null
+    tcpPort: String? = null,
+    effectiveDefaultHttpPort: Int = defaultHttpPort
 ): String {
     val lines = mutableListOf<String>()
     val now = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
@@ -234,7 +246,7 @@ fun generateEnvShContent(
     lines.add("")
 
     lines.add("# ── 服务端口 ──")
-    if (httpPort != defaultHttpPort) {
+    if (httpPort != effectiveDefaultHttpPort) {
         lines.add("KTOR_PORT=$httpPort")
     }
     if (tcpPort != null && tcpPort != "5100") {
@@ -471,7 +483,8 @@ fun deployNew(
     host: String, user: String, deployPath: String,
     secrets: java.util.Properties, sslEnabled: Boolean, sslPort: String,
     sslCert: String?, sslKey: String?,
-    httpPort: Int = defaultHttpPort, tcpPort: String? = null
+    httpPort: Int = defaultHttpPort, tcpPort: String? = null,
+    effectiveDefaultHttpPort: Int = defaultHttpPort
 ) {
     // Create directory structure
     remoteExec(host, user,
@@ -490,7 +503,7 @@ fun deployNew(
 
     // Generate and upload env.sh
     println("  Generating env.sh ...")
-    val envShContent = generateEnvShContent(secrets, sslEnabled, sslPort, deployPath, httpPort, tcpPort)
+    val envShContent = generateEnvShContent(secrets, sslEnabled, sslPort, deployPath, httpPort, tcpPort, effectiveDefaultHttpPort)
     uploadEnvSh(envShContent, host, user, deployPath)
 
     // SSL certificate
@@ -583,7 +596,8 @@ fun deployUpgrade(
     host: String, user: String, deployPath: String,
     secrets: java.util.Properties, sslEnabled: Boolean, sslPort: String,
     sslCert: String?, sslKey: String?,
-    httpPort: Int = defaultHttpPort, tcpPort: String? = null
+    httpPort: Int = defaultHttpPort, tcpPort: String? = null,
+    effectiveDefaultHttpPort: Int = defaultHttpPort
 ) {
     // Stop server
     if (remoteCheck(host, user, "systemctl is-active --quiet teamtalk 2>/dev/null")) {
@@ -623,7 +637,7 @@ fun deployUpgrade(
 
     // 升级部署：secrets 从远程 env.sh 提取（不变），端口配置从 profile 同步
     println("  Syncing port configuration from profile ...")
-    val envShContent = generateEnvShContent(secrets, sslEnabled, sslPort, deployPath, httpPort, tcpPort)
+    val envShContent = generateEnvShContent(secrets, sslEnabled, sslPort, deployPath, httpPort, tcpPort, effectiveDefaultHttpPort)
     uploadEnvSh(envShContent, host, user, deployPath)
 
     // Ensure database user exists with correct password
@@ -652,117 +666,168 @@ fun deployUpgrade(
     println("")
 }
 
-// ── 发布聚合任务 ──
+// ── 辅助函数：按 profile 首字母大写 ──
 
+fun capitalize(s: String) = s.replaceFirstChar { it.uppercase() }
+
+// ── 发布聚合任务（按 profile 注册） ──
+
+allProfiles.forEach { (pn, _) ->
+    val cap = capitalize(pn)
+
+    tasks.register("build${cap}Release") {
+        group = "release"
+        description = "Build all release artifacts for profile: $pn"
+        dependsOn(":server:buildServerDist", ":desktop:package${cap}DistributionForCurrentOS", ":android:assemble${cap}Release")
+    }
+}
+
+// buildRelease 作为活跃 profile 的别名
 tasks.register("buildRelease") {
     group = "release"
-    description = "Build all release artifacts using the current profile"
-    dependsOn(":server:buildServerDist", ":desktop:packageDistributionForCurrentOS", ":android:assembleRelease")
+    description = "Build all release artifacts (alias for build${capitalize(profileName)}Release)"
+    dependsOn("build${capitalize(profileName)}Release")
 }
 
+// ── 上传任务（按 profile 注册） ──
+
+fun registerUploadTask(taskName: String, pn: String) {
+    tasks.register(taskName) {
+        group = "release"
+        description = "Build and upload release artifacts for profile: $pn"
+        dependsOn("build${capitalize(pn)}Release")
+
+        doLast {
+            val props = allProfiles[pn]!!
+            val host = props["deploy.host"]
+                ?: throw GradleException(
+                    "$taskName: profile '$pn' does not define 'deploy.host'. " +
+                        "Add deploy.host, deploy.user, deploy.path to your profile."
+                )
+            val user = props["deploy.user"] ?: "root"
+            val path = props["deploy.path"] ?: "/opt/teamtalk"
+
+            val remoteDir = "$path/static/downloads"
+            println("Uploading to $user@$host:$remoteDir ...")
+
+            remoteExec(host, user, "mkdir -p $remoteDir")
+
+            // Upload desktop packages
+            val desktopRename = mapOf("deb" to "TeamTalk-linux.deb", "msi" to "TeamTalk-windows.msi", "dmg" to "TeamTalk-macos.dmg")
+            val desktopDir = file("desktop/build/compose/binaries/$pn")
+            if (desktopDir.exists()) {
+                desktopDir.walkTopDown()
+                    .filter { it.isFile && (it.extension in desktopRename.keys) }
+                    .forEach { pkg ->
+                        val remoteName = desktopRename[pkg.extension] ?: pkg.name
+                        println("  Uploading ${pkg.name} as $remoteName ...")
+                        localExecSilent("scp", pkg.absolutePath, "$user@$host:$remoteDir/$remoteName")
+                    }
+            }
+
+            // Upload Android APK
+            val apkDir = file("android/build/outputs/apk/$pn/release")
+            if (apkDir.exists()) {
+                val apk = apkDir.walkTopDown()
+                    .filter { it.isFile && it.name.endsWith("-release.apk") }
+                    .firstOrNull()
+                if (apk != null) {
+                    println("  Uploading ${apk.name} ...")
+                    localExecSilent("scp", apk.absolutePath, "$user@$host:$remoteDir/TeamTalk-android.apk")
+                }
+            }
+
+            println("Upload complete. Download page: https://$host/")
+        }
+    }
+}
+
+allProfiles.keys.forEach { pn ->
+    val cap = capitalize(pn)
+    registerUploadTask("upload${cap}Release", pn)
+}
+
+// uploadRelease 作为活跃 profile 的别名
 tasks.register("uploadRelease") {
     group = "release"
-    description = "Build and upload release artifacts to the deploy server via SSH/SCP"
-    dependsOn("buildRelease")
+    description = "Upload release artifacts (alias for upload${capitalize(profileName)}Release)"
+    dependsOn("upload${capitalize(profileName)}Release")
+}
 
-    doLast {
-        val host = getExtra("deploy.host")
-            ?: throw GradleException(
-                "uploadRelease: profile '$profileName' does not define 'deploy.host'. " +
-                    "Add deploy.host, deploy.user, deploy.path to your profile."
-            )
-        val user = getExtra("deploy.user") ?: "root"
-        val path = getExtra("deploy.path") ?: "/opt/teamtalk"
+// ── 部署任务（按 profile 注册） ──
 
-        val remoteDir = "$path/static/downloads"
-        println("Uploading to $user@$host:$remoteDir ...")
+fun registerDeployTask(taskName: String, pn: String) {
+    tasks.register(taskName) {
+        group = "release"
+        description = "Build and deploy server with profile: $pn"
+        dependsOn(":server:buildServerDist")
 
-        remoteExec(host, user, "mkdir -p $remoteDir")
+        doLast {
+            val props = allProfiles[pn]!!
+            val host = props["deploy.host"]
+                ?: throw GradleException(
+                    "$taskName: profile '$pn' does not define 'deploy.host'. " +
+                        "Add deploy.host, deploy.user, deploy.path to your profile."
+                )
+            val user = props["deploy.user"] ?: "root"
+            val deployPath = props["deploy.path"] ?: "/opt/teamtalk"
+            val sslEnabled = props["server.ssl.enabled"]?.toBoolean() ?: false
+            val sslPort = props["server.ssl.port"] ?: "443"
+            val sslCert = findProperty("sslCert")?.toString()
+            val sslKey = findProperty("sslKey")?.toString()
+            val tcpPort = props["tcpPort"]
 
-        // Upload desktop packages（重命名为固定文件名，与首页链接一致）
-        val desktopRename = mapOf("deb" to "TeamTalk-linux.deb", "msi" to "TeamTalk-windows.msi", "dmg" to "TeamTalk-macos.dmg")
-        val desktopDir = file("desktop/build/compose/binaries/main")
-        if (desktopDir.exists()) {
-            desktopDir.walkTopDown()
-                .filter { it.isFile && (it.extension in desktopRename.keys) }
-                .forEach { pkg ->
-                    val remoteName = desktopRename[pkg.extension] ?: pkg.name
-                    println("  Uploading ${pkg.name} as $remoteName ...")
-                    localExecSilent("scp", pkg.absolutePath, "$user@$host:$remoteDir/$remoteName")
-                }
-        }
+            val url = props["serverUrl"]!!
+            val port = try {
+                val uri = java.net.URI(url)
+                val explicit = uri.port
+                if (explicit != -1) explicit else if (uri.scheme == "https") 443 else 80
+            } catch (_: Exception) { 8080 }
+            val effectiveDefaultHttpPort = if (url.startsWith("https://")) 443 else 8080
 
-        // Upload Android APK
-        val apkDir = file("android/build/outputs/apk/release")
-        if (apkDir.exists()) {
-            val apk = apkDir.walkTopDown()
-                .filter { it.isFile && it.name.endsWith("-release.apk") }
-                .firstOrNull()
-            if (apk != null) {
-                println("  Uploading ${apk.name} ...")
-                localExecSilent("scp", apk.absolutePath, "$user@$host:$remoteDir/TeamTalk-android.apk")
+            println("")
+            println("=== TeamTalk Deploy (profile: $pn) ===")
+            println("  Target: $user@$host")
+            println("  Path:   $deployPath")
+            println("  HTTP:   port $port")
+            println("  TCP:    port ${tcpPort ?: 5100}")
+            println("  SSL:    ${if (sslEnabled) "enabled (port $sslPort)" else "disabled"}")
+            println("")
+
+            val isFirstDeploy = !remoteCheck(host, user, "test -d $deployPath/bin")
+
+            val secretsFile = file("gradle/profiles/${pn}.secrets")
+            val secrets = if (isFirstDeploy) {
+                loadOrGenerateSecrets(secretsFile, host, user, deployPath)
+            } else {
+                extractSecretsFromRemote(secretsFile, host, user, deployPath)
+                    ?: throw GradleException(
+                        "Cannot extract secrets from remote env.sh. " +
+                        "Check if $deployPath/conf/env.sh exists on the server."
+                    )
             }
-        }
 
-        println("Upload complete. Download page: https://$host/")
+            if (isFirstDeploy) {
+                println("=== First Deploy ===")
+                deployNew(host, user, deployPath, secrets, sslEnabled, sslPort, sslCert, sslKey, port, tcpPort, effectiveDefaultHttpPort)
+            } else {
+                println("=== Upgrade ===")
+                deployUpgrade(host, user, deployPath, secrets, sslEnabled, sslPort, sslCert, sslKey, port, tcpPort, effectiveDefaultHttpPort)
+            }
+
+            healthCheck(host, user, deployPath, sslEnabled, port)
+        }
     }
 }
 
-// ── 部署任务 ──
+allProfiles.keys.forEach { pn ->
+    val cap = capitalize(pn)
+    registerDeployTask("deployServer$cap", pn)
+}
 
+// deployServer 作为活跃 profile 的别名
 tasks.register("deployServer") {
     group = "release"
-    description = "Build and deploy server to remote host via SSH"
-    dependsOn(":server:buildServerDist")
-
-    doLast {
-        val host = getExtra("deploy.host")
-            ?: throw GradleException(
-                "deployServer: profile '$profileName' does not define 'deploy.host'. " +
-                    "Add deploy.host, deploy.user, deploy.path to your profile."
-            )
-        val user = getExtra("deploy.user") ?: "root"
-        val deployPath = getExtra("deploy.path") ?: "/opt/teamtalk"
-        val sslEnabled = getExtra("server.ssl.enabled")?.toBoolean() ?: false
-        val sslPort = getExtra("server.ssl.port") ?: "443"
-        val sslCert = findProperty("sslCert")?.toString()
-        val sslKey = findProperty("sslKey")?.toString()
-        val tcpPort = getExtra("tcpPort")
-
-        println("")
-        println("=== TeamTalk Deploy (profile: $profileName) ===")
-        println("  Target: $user@$host")
-        println("  Path:   $deployPath")
-        println("  HTTP:   port $serverHttpPort")
-        println("  TCP:    port ${tcpPort ?: 5100}")
-        println("  SSL:    ${if (sslEnabled) "enabled (port $sslPort)" else "disabled"}")
-        println("")
-
-        // 1. Detect first deploy vs upgrade
-        val isFirstDeploy = !remoteCheck(host, user, "test -d $deployPath/bin")
-
-        // 2. Load secrets (策略不同：首次部署从本地/生成，升级从远程提取)
-        val secretsFile = file("gradle/profiles/${profileName}.secrets")
-        val secrets = if (isFirstDeploy) {
-            loadOrGenerateSecrets(secretsFile, host, user, deployPath)
-        } else {
-            // 升级部署：远程 env.sh 是 source of truth，不从本地加载
-            extractSecretsFromRemote(secretsFile, host, user, deployPath)
-                ?: throw GradleException(
-                    "Cannot extract secrets from remote env.sh. " +
-                    "Check if $deployPath/conf/env.sh exists on the server."
-                )
-        }
-
-        if (isFirstDeploy) {
-            println("=== First Deploy ===")
-            deployNew(host, user, deployPath, secrets, sslEnabled, sslPort, sslCert, sslKey, serverHttpPort, tcpPort)
-        } else {
-            println("=== Upgrade ===")
-            deployUpgrade(host, user, deployPath, secrets, sslEnabled, sslPort, sslCert, sslKey, serverHttpPort, tcpPort)
-        }
-
-        // 3. Health check
-        healthCheck(host, user, deployPath, sslEnabled, serverHttpPort)
-    }
+    description = "Deploy server (alias for deployServer${capitalize(profileName)})"
+    dependsOn("deployServer${capitalize(profileName)}")
 }

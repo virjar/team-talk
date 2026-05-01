@@ -133,13 +133,13 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build Android APK
-        run: ./gradlew :android:assembleRelease -PbuildProfile=${{ env.BUILD_PROFILE }} --quiet
+        run: ./gradlew :android:assemble${{ env.BUILD_PROFILE }}Release -PbuildProfile=${{ env.BUILD_PROFILE }} --quiet
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: teamtalk-android
-          path: android/build/outputs/apk/release/*-release.apk
+          path: android/build/outputs/apk/${{ env.BUILD_PROFILE }}/release/*-release.apk
           retention-days: 7
 
   # ── Create GitHub Release ──────────────────────────

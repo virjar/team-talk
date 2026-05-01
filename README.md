@@ -94,7 +94,8 @@ docker compose up -d
 ```bash
 ./gradlew :desktop:compileKotlin    # 编译检查（最快验证）
 ./gradlew :server:run               # 启动服务端
-./gradlew :desktop:run              # 启动 Desktop 客户端
+./gradlew :desktop:runDev           # 启动 Desktop 客户端（dev profile）
+./gradlew :desktop:runDemo          # 启动 Desktop 客户端（demo profile）
 ./gradlew :server:test              # 运行集成测试
 ```
 
@@ -153,23 +154,23 @@ docker compose up -d
 
 ## 部署
 
-所有部署通过 Gradle Profile 系统完成，Profile 是唯一配置入口：
+所有部署通过 Gradle 多渠道构建系统完成，Profile 是唯一配置入口：
 
 ```bash
 # 首次部署（HTTP 模式）
-./gradlew deployServer -PbuildProfile=demo
+./gradlew deployServerDemo
 
 # 首次部署（HTTPS 模式，提供 SSL 证书）
-./gradlew deployServer -PbuildProfile=demo -PsslCert=cert.pem -PsslKey=key.pem
+./gradlew deployServerDemo -PsslCert=cert.pem -PsslKey=key.pem
 
 # 升级（自动检测已有部署，保留数据和配置）
-./gradlew deployServer -PbuildProfile=demo
+./gradlew deployServerDemo
 
 # 构建并上传客户端安装包到服务器
-./gradlew uploadRelease -PbuildProfile=demo
+./gradlew uploadDemoRelease
 
 # 部署服务端 + 上传客户端
-./gradlew deployServer uploadRelease -PbuildProfile=demo
+./gradlew deployServerDemo uploadDemoRelease
 ```
 
 生产环境目录结构：

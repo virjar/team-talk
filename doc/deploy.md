@@ -23,23 +23,23 @@ TeamTalk 采用单体架构，所有组件运行在一台服务器上：
 
 ## 一键部署
 
-所有部署操作通过 Gradle Profile 系统完成，Profile 是唯一配置入口：
+所有部署操作通过 Gradle 多渠道构建系统完成，Profile 是唯一配置入口：
 
 ```bash
 # 首次部署（HTTP 模式）
-./gradlew deployServer -PbuildProfile=demo
+./gradlew deployServerDemo
 
 # 首次部署（HTTPS 模式，提供 SSL 证书）
-./gradlew deployServer -PbuildProfile=demo -PsslCert=cert.pem -PsslKey=key.pem
+./gradlew deployServerDemo -PsslCert=cert.pem -PsslKey=key.pem
 
 # 升级（自动检测已有部署，保留数据和配置）
-./gradlew deployServer -PbuildProfile=demo
+./gradlew deployServerDemo
 
 # 升级时更新 SSL 证书
-./gradlew deployServer -PbuildProfile=demo -PsslCert=new-cert.pem -PsslKey=new-cert.key
+./gradlew deployServerDemo -PsslCert=new-cert.pem -PsslKey=new-cert.key
 
 # 部署服务端 + 上传客户端安装包
-./gradlew deployServer uploadRelease -PbuildProfile=demo
+./gradlew deployServerDemo uploadDemoRelease
 ```
 
 ### 配置分层
@@ -55,11 +55,12 @@ application.conf        →  合理的默认值，生产环境多数项无需覆
 
 | 任务 | 说明 |
 |------|------|
-| `deployServer` | 构建并部署服务端到远程主机（首次/升级自动检测） |
-| `uploadRelease` | 构建并上传客户端安装包到服务器的 `static/downloads/` |
-| `buildRelease` | 构建所有产物（server + desktop + android） |
+| `deployServer{Profile}` | 构建并部署服务端到远程主机（如 `deployServerDemo`） |
+| `upload{Profile}Release` | 构建并上传客户端安装包（如 `uploadDemoRelease`） |
+| `build{Profile}Release` | 构建所有产物（如 `buildDemoRelease`） |
+| `deployServer` / `uploadRelease` / `buildRelease` | 活跃 profile 的别名（默认 dev） |
 
-典型组合：`./gradlew deployServer uploadRelease -PbuildProfile=demo`
+典型组合：`./gradlew deployServerDemo uploadDemoRelease`
 
 ### 功能
 
@@ -83,7 +84,7 @@ application.conf        →  合理的默认值，生产环境多数项无需覆
 通过 `-PsslCert` 和 `-PsslKey` 参数提供 PEM 格式的证书和私钥：
 
 ```bash
-./gradlew deployServer -PbuildProfile=demo -PsslCert=server.pem -PsslKey=server.key
+./gradlew deployServerDemo -PsslCert=server.pem -PsslKey=server.key
 ```
 
 自动完成：
@@ -119,7 +120,7 @@ server.ssl.port=443
 ```bash
 cp gradle/profiles/production.properties gradle/profiles/my-company.properties
 # 编辑 my-company.properties 后：
-./gradlew deployServer -PbuildProfile=my-company
+./gradlew deployServerMy-company
 ```
 
 ## 构建分发产物
@@ -311,13 +312,13 @@ Fork 仓库可以直接复用上游的 workflow，只需：
 
 ```bash
 # 构建所有产物并上传到服务器
-./gradlew uploadRelease -PbuildProfile=demo
+./gradlew uploadDemoRelease
 
 # 仅部署服务端
-./gradlew deployServer -PbuildProfile=demo
+./gradlew deployServerDemo
 
 # 部署服务端 + 上传客户端
-./gradlew deployServer uploadRelease -PbuildProfile=demo
+./gradlew deployServerDemo uploadDemoRelease
 ```
 
 > **注意**：`uploadRelease` 只能构建当前平台的 desktop 产物（macOS 上只能构建 .dmg，Linux 上只能构建 .deb）。如需全平台客户端，请使用方式一。
@@ -333,7 +334,7 @@ Android APK 签名采用**开发/生产二级回退**机制：
 
 ```bash
 # 开发环境 — 零配置，直接构建
-./gradlew :android:assembleRelease -PbuildProfile=demo
+./gradlew :android:assembleDemoRelease
 
 # 生产环境 — 生成自己的签名密钥
 keytool -genkey -v -keystore teamtalk-release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias teamtalk
@@ -373,13 +374,13 @@ tar czf rocksdb_$(date +%Y%m%d).tar.gz /opt/teamtalk/data/rocksdb/
 
 ```bash
 # 一键升级（保留数据和配置）
-./gradlew deployServer -PbuildProfile=demo
+./gradlew deployServerDemo
 
 # 升级并更新 SSL 证书
-./gradlew deployServer -PbuildProfile=demo -PsslCert=new-cert.pem -PsslKey=new-cert.key
+./gradlew deployServerDemo -PsslCert=new-cert.pem -PsslKey=new-cert.key
 
 # 升级并上传新客户端安装包
-./gradlew deployServer uploadRelease -PbuildProfile=demo
+./gradlew deployServerDemo uploadDemoRelease
 ```
 
 ## Secret 管理

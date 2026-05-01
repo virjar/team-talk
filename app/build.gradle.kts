@@ -15,7 +15,11 @@ val kotlinxSerializationVersion: String by rootProject.extra
 val kotlinxCoroutinesVersion: String by rootProject.extra
 val sqldelightVersion: String by rootProject.extra
 
-// --- Profile config (keys match gradle/profiles/*.properties) ---
+// --- Profile 全量数据（多渠道构建） ---
+val allProfiles: Map<String, Map<String, String>> by rootProject.extra
+val activeProfileName: String by rootProject.extra
+
+// 活跃 profile 属性（向后兼容）
 val serverUrl: String by rootProject.extra
 val tcpHost: String by rootProject.extra
 val tcpPort: String by rootProject.extra
@@ -42,22 +46,6 @@ fun detectLocalIp(): String {
         )
     } finally {
         socket.close()
-    }
-}
-
-// Android BuildConfig: auto-rewrite localhost to LAN IP for real-device dev
-val androidServerUrl by lazy {
-    if (serverUrl.contains("localhost") || serverUrl.contains("127.0.0.1")) {
-        "http://${detectLocalIp()}:8080"
-    } else {
-        serverUrl
-    }
-}
-val androidTcpHost by lazy {
-    if (tcpHost == "localhost" || tcpHost == "127.0.0.1") {
-        detectLocalIp()
-    } else {
-        tcpHost
     }
 }
 
@@ -129,12 +117,37 @@ android {
         buildConfig = true
     }
 
-    defaultConfig {
-        buildConfigField("String", "SERVER_BASE_URL", "\"$androidServerUrl\"")
-        buildConfigField("String", "TCP_HOST", "\"$androidTcpHost\"")
-        buildConfigField("int", "TCP_PORT", tcpPort)
-        buildConfigField("String", "BUILD_PROFILE", "\"$buildProfile\"")
-        buildConfigField("boolean", "SHOW_ADVANCED_SETTINGS", showAdvancedSettings)
+    flavorDimensions += "profile"
+
+    productFlavors {
+        allProfiles.forEach { (profileName, props) ->
+            create(profileName) {
+                dimension = "profile"
+                val pServerUrl = props["serverUrl"]!!
+                val pTcpHost = props["tcpHost"]!!
+                val pTcpPort = props["tcpPort"]!!
+                val pShowAdvanced = props["showAdvancedSettings"] ?: "false"
+
+                // Android 自动替换 localhost 为局域网 IP
+                val resolvedUrl = if (pServerUrl.contains("localhost") || pServerUrl.contains("127.0.0.1"))
+                    "http://${detectLocalIp()}:8080" else pServerUrl
+                val resolvedHost = if (pTcpHost == "localhost" || pTcpHost == "127.0.0.1")
+                    detectLocalIp() else pTcpHost
+
+                buildConfigField("String", "SERVER_BASE_URL", "\"$resolvedUrl\"")
+                buildConfigField("String", "TCP_HOST", "\"$resolvedHost\"")
+                buildConfigField("int", "TCP_PORT", pTcpPort)
+                buildConfigField("String", "BUILD_PROFILE", "\"$profileName\"")
+                buildConfigField("boolean", "SHOW_ADVANCED_SETTINGS", pShowAdvanced)
+            }
+        }
+    }
+
+    variantFilter {
+        val names = flavors.map { it.name }
+        if (names.contains("production") && buildType.name == "debug") {
+            ignore = true
+        }
     }
 }
 

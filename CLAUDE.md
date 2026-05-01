@@ -436,9 +436,9 @@ Application.kt (Ktor)
 
 详细的开发环境搭建指南见 [doc/develop.md](doc/develop.md)。
 
-### Gradle Profile 系统
+### Gradle 多渠道构建系统
 
-所有环境差异（服务器地址、TCP 主机、部署配置等）通过 Profile 文件管理，位于 `gradle/profiles/` 目录：
+项目采用 Gradle 多渠道（Multi-Profile）构建体系，自动扫描 `gradle/profiles/*.properties` 为每个 Profile 注册独立的构建任务，确保构建缓存正确隔离。
 
 ```bash
 gradle/profiles/
@@ -449,32 +449,35 @@ gradle/profiles/
 ```
 
 ```bash
-# 默认 dev profile
-./gradlew :desktop:run
+# ── 运行客户端 ──
+./gradlew :desktop:runDev                # Desktop（dev profile，默认）
+./gradlew :desktop:runDemo               # Desktop（demo profile）
 
-# 指定 profile
-./gradlew :desktop:run -PbuildProfile=demo
+# ── 构建 Android ──
+./gradlew :android:assembleDevRelease    # Android APK（dev profile）
+./gradlew :android:assembleDemoRelease   # Android APK（demo profile）
 
-# 构建所有产物
-./gradlew buildRelease -PbuildProfile=demo
+# ── 构建全部产物 ──
+./gradlew buildDevRelease                # Server + Desktop + Android（dev）
+./gradlew buildDemoRelease               # Server + Desktop + Android（demo）
 
-# 构建 + 上传到服务器
-./gradlew uploadRelease -PbuildProfile=demo
+# ── 部署服务端 ──
+./gradlew deployServerDemo               # 部署 demo 服务端
+./gradlew deployServerDemo -PsslCert=cert.pem -PsslKey=key.pem  # 带 SSL
 
-# 部署服务端（首次/升级自动检测）
-./gradlew deployServer -PbuildProfile=demo
+# ── 上传客户端 ──
+./gradlew uploadDemoRelease              # 构建并上传 demo 产物到服务器
 
-# 部署服务端 + SSL 证书
-./gradlew deployServer -PbuildProfile=demo -PsslCert=cert.pem -PsslKey=key.pem
+# ── 部署 + 上传 ──
+./gradlew deployServerDemo uploadDemoRelease
 
-# 部署 + 上传客户端
-./gradlew deployServer uploadRelease -PbuildProfile=demo
-
-# 用户自定义生产环境
+# ── 自定义 Profile ──
 cp gradle/profiles/production.properties gradle/profiles/my-company.properties
 # 编辑 my-company.properties 后：
-./gradlew deployServer uploadRelease -PbuildProfile=my-company
+./gradlew buildMy-companyRelease deployServerMy-company
 ```
+
+**向后兼容**：`./gradlew :desktop:run`、`buildRelease`、`deployServer`、`uploadRelease` 仍可用，作为活跃 profile（默认 dev）的别名。通过 `-PbuildProfile=xxx` 切换活跃 profile 也仍然有效。
 
 版本号在 `build.gradle.kts` 的 `extra["packageVersion"]` 中管理。
 
@@ -483,8 +486,8 @@ cp gradle/profiles/production.properties gradle/profiles/my-company.properties
 ```bash
 docker compose up -d                                    # PostgreSQL
 ./gradlew :server:run                                   # 服务端 (8080/5100)
-./gradlew :desktop:run                                  # Desktop 客户端（dev profile）
-./gradlew :desktop:run -PbuildProfile=demo              # Desktop 客户端（demo profile）
+./gradlew :desktop:runDev                               # Desktop 客户端（dev profile）
+./gradlew :desktop:runDemo                              # Desktop 客户端（demo profile）
 ./gradlew :desktop:compileKotlin                        # 仅编译检查（最快验证）
 ./gradlew :server:test                                  # 集成测试
 ```
@@ -528,20 +531,20 @@ tail -f ~/.tk/app_default/logs/app.log
 
 ## 部署
 
-详细的部署指南见 [doc/deploy.md](doc/deploy.md)。所有部署通过 Gradle Profile 系统完成。
+详细的部署指南见 [doc/deploy.md](doc/deploy.md)。所有部署通过 Gradle 多渠道构建系统完成。
 
 ```bash
 # 首次部署（HTTP 模式）
-./gradlew deployServer -PbuildProfile=demo
+./gradlew deployServerDemo
 
 # 首次部署（HTTPS 模式，提供 SSL 证书）
-./gradlew deployServer -PbuildProfile=demo -PsslCert=server.pem -PsslKey=server.key
+./gradlew deployServerDemo -PsslCert=server.pem -PsslKey=server.key
 
 # 升级（自动检测已有部署，备份 → 上传 → 重启）
-./gradlew deployServer -PbuildProfile=demo
+./gradlew deployServerDemo
 
 # 部署 + 上传客户端
-./gradlew deployServer uploadRelease -PbuildProfile=demo
+./gradlew deployServerDemo uploadDemoRelease
 ```
 
 生产环境目录结构：
