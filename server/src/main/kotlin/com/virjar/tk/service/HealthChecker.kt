@@ -4,6 +4,7 @@ import com.virjar.tk.db.MessageStore
 import com.virjar.tk.storage.FileStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.net.InetSocketAddress
@@ -33,8 +34,10 @@ class HealthChecker(
         return HealthResponse(overallStatus, components)
     }
 
-    private fun checkDatabase(): ComponentHealth = try {
-        transaction { exec("SELECT 1") { it.next() } }
+    private suspend fun checkDatabase(): ComponentHealth = try {
+        withTimeout(5000L) {
+            transaction { exec("SELECT 1") { it.next() } }
+        }
         ComponentHealth("UP")
     } catch (e: Exception) {
         ComponentHealth("DOWN", e.message)

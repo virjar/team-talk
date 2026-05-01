@@ -125,6 +125,37 @@ fun genPassword(): String {
 
 // ── Secret 管理 ──
 
+/**
+ * 从远程 env.sh 提取 secrets（升级部署使用，远程 env.sh 是 source of truth）
+ */
+fun extractSecretsFromRemote(
+    secretsFile: File,
+    host: String,
+    user: String,
+    deployPath: String
+): java.util.Properties? {
+    val envContent = remoteOutput(host, user, "cat $deployPath/conf/env.sh 2>/dev/null")
+        ?: remoteOutput(host, user, "cat $deployPath/env.sh 2>/dev/null")
+
+    if (envContent != null) {
+        val secrets = java.util.Properties()
+        val keyPattern = Regex("""^(DATABASE_PASSWORD|JWT_SECRET|SSL_KEYSTORE_PASSWORD|SSL_PRIVATE_KEY_PASSWORD)="?([^"]*)"?\s*$""")
+        for (line in envContent.lines()) {
+            val match = keyPattern.find(line) ?: continue
+            secrets.setProperty(match.groupValues[1], match.groupValues[2])
+        }
+        if (secrets.isNotEmpty()) {
+            saveSecrets(secretsFile, secrets)
+            println("  Extracted secrets from remote env.sh, saved to ${secretsFile.name}")
+            return secrets
+        }
+    }
+    return null
+}
+
+/**
+ * 加载或生成 secrets（首次部署使用）
+ */
 fun loadOrGenerateSecrets(
     secretsFile: File,
     host: String,
@@ -140,23 +171,9 @@ fun loadOrGenerateSecrets(
         return secrets
     }
 
-    // 2. 尝试从远程 conf/env.sh 提取（升级场景）
-    val envContent = remoteOutput(host, user, "cat $deployPath/conf/env.sh 2>/dev/null")
-        ?: remoteOutput(host, user, "cat $deployPath/env.sh 2>/dev/null")
-
-    if (envContent != null) {
-        println("  Extracting secrets from remote env.sh ...")
-        val keyPattern = Regex("""^(DATABASE_PASSWORD|JWT_SECRET|SSL_KEYSTORE_PASSWORD|SSL_PRIVATE_KEY_PASSWORD)="?([^"]*)"?\s*$""")
-        for (line in envContent.lines()) {
-            val match = keyPattern.find(line) ?: continue
-            secrets.setProperty(match.groupValues[1], match.groupValues[2])
-        }
-        if (secrets.isNotEmpty()) {
-            saveSecrets(secretsFile, secrets)
-            println("  Saved extracted secrets to ${secretsFile.name}")
-            return secrets
-        }
-    }
+    // 2. 尝试从远程 conf/env.sh 提取（首次部署但服务器已有配置的场景）
+    val remote = extractSecretsFromRemote(secretsFile, host, user, deployPath)
+    if (remote != null) return remote
 
     // 3. 全新部署：生成随机密码
     println("  Generating new secrets ...")
@@ -318,19 +335,16 @@ fun healthCheck(host: String, user: String, deployPath: String, sslEnabled: Bool
     }
     if (retries == 15) {
         println(" TIMEOUT")
-        println("  >>> SERVICE FAILED TO START <<<")
-        println("  Check logs: ssh $host 'journalctl -u teamtalk -n 50'")
-        return
+        throw GradleException("SERVICE FAILED TO START - check logs: ssh $host 'journalctl -u teamtalk -n 50'")
     }
 
-    // 调用增强 /health 端点获取组件级状态
+    // 调用增强 /health 端点获取组件级状态（加超时保护，避免 DB 连不上时 /health 卡住）
     val healthOutput = remoteOutput(host, user,
-        "curl $healthFlag -o- -w '\\n%{http_code}' $healthProtocol/health 2>/dev/null"
+        "curl $healthFlag --max-time 15 -o- -w '\\n%{http_code}' $healthProtocol/health 2>/dev/null"
     )
 
     if (healthOutput == null) {
-        println("  WARNING: Failed to get health response")
-        return
+        throw GradleException("HEALTH CHECK FAILED - cannot reach /health endpoint")
     }
 
     // 分离 HTTP 状态码和 body
@@ -351,6 +365,7 @@ fun healthCheck(host: String, user: String, deployPath: String, sslEnabled: Bool
         println("")
     }
 
+    val failedComponents = mutableListOf<String>()
     for (component in componentNames) {
         val statusPattern = Regex(""""$component"\s*:\s*\{"status"\s*:\s*"(\w+)"(?:,"detail"\s*:\s*"((?:[^"\\]|\\.)*)")?""")
         val match = statusPattern.find(body)
@@ -361,20 +376,61 @@ fun healthCheck(host: String, user: String, deployPath: String, sslEnabled: Bool
                 println("    $component: UP")
             } else {
                 println("    >>> $component: DOWN <<<")
+                failedComponents.add(component)
                 if (detail != null && detail.isNotEmpty()) {
                     println("        Error: $detail")
                 }
             }
         } else {
             println("    $component: UNKNOWN")
+            failedComponents.add(component)
         }
     }
 
     if (!allUp) {
         println("")
         println("  Check logs: ssh $host 'journalctl -u teamtalk -n 50'")
+        throw GradleException("HEALTH CHECK FAILED - components DOWN: ${failedComponents.joinToString(", ")}")
     }
     println("")
+}
+
+// ── 确保数据库用户存在 ──
+
+fun ensureDbUser(host: String, user: String, deployPath: String, dbPassword: String) {
+    println("  Ensuring database user 'teamtalk' exists ...")
+    // 先尝试找到 postgres 容器名称
+    val containerName = remoteOutput(host, user,
+        "cd $deployPath && docker compose ps -q postgres 2>/dev/null | head -1"
+    )?.trim()
+
+    if (containerName.isNullOrBlank()) {
+        println("  WARNING: Cannot find postgres container, skipping DB user setup")
+        return
+    }
+
+    val fullContainerName = remoteOutput(host, user,
+        "docker inspect --format '{{.Name}}' $containerName 2>/dev/null"
+    )?.trim()?.removePrefix("/") ?: containerName
+
+    // 创建用户（如果不存在）并设置密码，授予所有权限
+    remoteExec(host, user,
+        "docker exec $fullContainerName psql -U postgres -d teamtalk -c " +
+        "\"DO \\\$\\\$ BEGIN " +
+        "IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'teamtalk') THEN " +
+        "CREATE ROLE teamtalk WITH LOGIN PASSWORD '$dbPassword'; " +
+        "ELSE " +
+        "ALTER ROLE teamtalk WITH LOGIN PASSWORD '$dbPassword'; " +
+        "END IF; " +
+        "END; \\\$\\\$ ;\" && " +
+        "docker exec $fullContainerName psql -U postgres -d teamtalk -c " +
+        "\"GRANT ALL ON SCHEMA public TO teamtalk; " +
+        "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO teamtalk; " +
+        "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO teamtalk; " +
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO teamtalk; " +
+        "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO teamtalk;\""
+    )
+    println("  Database user 'teamtalk' ready")
 }
 
 // ── 上传 env.sh 到远程 ──
@@ -475,6 +531,9 @@ services:
     }
     if (retries == 30) throw GradleException("PostgreSQL startup timeout")
 
+    // Ensure database user exists with correct password
+    ensureDbUser(host, user, deployPath, secrets.getProperty("DATABASE_PASSWORD"))
+
     // Register systemd service
     println("  Registering systemd service ...")
     registerSystemd(host, user, deployPath)
@@ -541,9 +600,12 @@ fun deployUpgrade(
         remoteExec(host, user, "cp $deployPath/env.sh $deployPath/conf/env.sh && chmod 600 $deployPath/conf/env.sh")
     }
 
-    // Regenerate env.sh with proper format
-    val envShContent = generateEnvShContent(secrets, sslEnabled, sslPort, deployPath)
-    uploadEnvSh(envShContent, host, user, deployPath)
+    // 升级部署不重新生成 env.sh，远程 env.sh 是 source of truth
+    // secrets 已经从远程 env.sh 提取（见调用方），仅用于 ensureDbUser
+    println("  Keeping remote env.sh unchanged (upgrade)")
+
+    // Ensure database user exists with correct password
+    ensureDbUser(host, user, deployPath, secrets.getProperty("DATABASE_PASSWORD"))
 
     // Update SSL certificate if provided
     if (sslEnabled && sslCert != null && sslKey != null) {
@@ -651,12 +713,21 @@ tasks.register("deployServer") {
         println("  SSL:    ${if (sslEnabled) "enabled (port $sslPort)" else "disabled"}")
         println("")
 
-        // 1. Load or generate secrets
-        val secretsFile = file("gradle/profiles/${profileName}.secrets")
-        val secrets = loadOrGenerateSecrets(secretsFile, host, user, deployPath)
-
-        // 2. Detect first deploy vs upgrade
+        // 1. Detect first deploy vs upgrade
         val isFirstDeploy = !remoteCheck(host, user, "test -d $deployPath/bin")
+
+        // 2. Load secrets (策略不同：首次部署从本地/生成，升级从远程提取)
+        val secretsFile = file("gradle/profiles/${profileName}.secrets")
+        val secrets = if (isFirstDeploy) {
+            loadOrGenerateSecrets(secretsFile, host, user, deployPath)
+        } else {
+            // 升级部署：远程 env.sh 是 source of truth，不从本地加载
+            extractSecretsFromRemote(secretsFile, host, user, deployPath)
+                ?: throw GradleException(
+                    "Cannot extract secrets from remote env.sh. " +
+                    "Check if $deployPath/conf/env.sh exists on the server."
+                )
+        }
 
         if (isFirstDeploy) {
             println("=== First Deploy ===")
