@@ -58,6 +58,14 @@ profileProps.getProperty("tcpPort")
 profileProps.getProperty("buildProfile")
     ?: throw GradleException("Profile '$profileName' must define 'buildProfile'")
 
+// 从 serverUrl 提取 HTTP 端口（默认 80/443），用于服务端 KTOR_PORT 配置
+val serverHttpPort = try {
+    val uri = java.net.URI(serverUrl)
+    val explicit = uri.port
+    if (explicit != -1) explicit else if (uri.scheme == "https") 443 else 80
+} catch (_: Exception) { 8080 }
+val defaultHttpPort = if (serverUrl.startsWith("https://")) 443 else 8080
+
 // 注入到 extra（子模块通过 rootProject.extra 读取）
 profileProps.forEach { (k, v) -> extra.set(k.toString(), v) }
 
@@ -208,7 +216,9 @@ fun generateEnvShContent(
     secrets: java.util.Properties,
     sslEnabled: Boolean,
     sslPort: String,
-    deployPath: String
+    deployPath: String,
+    httpPort: Int = defaultHttpPort,
+    tcpPort: String? = null
 ): String {
     val lines = mutableListOf<String>()
     val now = java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"))
@@ -221,6 +231,15 @@ fun generateEnvShContent(
     lines.add("# 仅包含与 application.conf 默认值不同的项目和敏感密码")
     lines.add("# 未列出的配置使用 application.conf 默认值:")
     lines.add("#   httpPort=8080, tcpPort=5100, database=127.0.0.1:5432/teamtalk")
+    lines.add("")
+
+    lines.add("# ── 服务端口 ──")
+    if (httpPort != defaultHttpPort) {
+        lines.add("KTOR_PORT=$httpPort")
+    }
+    if (tcpPort != null && tcpPort != "5100") {
+        lines.add("TCP_PORT=$tcpPort")
+    }
     lines.add("")
 
     lines.add("# ── 数据库 ──")
@@ -314,11 +333,11 @@ WantedBy=multi-user.target
 
 // ── 健康检查 ──
 
-fun healthCheck(host: String, user: String, deployPath: String, sslEnabled: Boolean) {
+fun healthCheck(host: String, user: String, deployPath: String, sslEnabled: Boolean, httpPort: Int = defaultHttpPort) {
     println("")
     println("=== Health Check ===")
 
-    val healthProtocol = if (sslEnabled) "https://127.0.0.1:443" else "http://127.0.0.1:8080"
+    val healthProtocol = if (sslEnabled) "https://127.0.0.1:443" else "http://127.0.0.1:$httpPort"
     val healthFlag = if (sslEnabled) "-skf" else "-sf"
 
     // 等待 HTTP 服务启动
@@ -451,7 +470,8 @@ fun uploadEnvSh(envShContent: String, host: String, user: String, deployPath: St
 fun deployNew(
     host: String, user: String, deployPath: String,
     secrets: java.util.Properties, sslEnabled: Boolean, sslPort: String,
-    sslCert: String?, sslKey: String?
+    sslCert: String?, sslKey: String?,
+    httpPort: Int = defaultHttpPort, tcpPort: String? = null
 ) {
     // Create directory structure
     remoteExec(host, user,
@@ -470,7 +490,7 @@ fun deployNew(
 
     // Generate and upload env.sh
     println("  Generating env.sh ...")
-    val envShContent = generateEnvShContent(secrets, sslEnabled, sslPort, deployPath)
+    val envShContent = generateEnvShContent(secrets, sslEnabled, sslPort, deployPath, httpPort, tcpPort)
     uploadEnvSh(envShContent, host, user, deployPath)
 
     // SSL certificate
@@ -562,7 +582,8 @@ services:
 fun deployUpgrade(
     host: String, user: String, deployPath: String,
     secrets: java.util.Properties, sslEnabled: Boolean, sslPort: String,
-    sslCert: String?, sslKey: String?
+    sslCert: String?, sslKey: String?,
+    httpPort: Int = defaultHttpPort, tcpPort: String? = null
 ) {
     // Stop server
     if (remoteCheck(host, user, "systemctl is-active --quiet teamtalk 2>/dev/null")) {
@@ -600,9 +621,10 @@ fun deployUpgrade(
         remoteExec(host, user, "cp $deployPath/env.sh $deployPath/conf/env.sh && chmod 600 $deployPath/conf/env.sh")
     }
 
-    // 升级部署不重新生成 env.sh，远程 env.sh 是 source of truth
-    // secrets 已经从远程 env.sh 提取（见调用方），仅用于 ensureDbUser
-    println("  Keeping remote env.sh unchanged (upgrade)")
+    // 升级部署：secrets 从远程 env.sh 提取（不变），端口配置从 profile 同步
+    println("  Syncing port configuration from profile ...")
+    val envShContent = generateEnvShContent(secrets, sslEnabled, sslPort, deployPath, httpPort, tcpPort)
+    uploadEnvSh(envShContent, host, user, deployPath)
 
     // Ensure database user exists with correct password
     ensureDbUser(host, user, deployPath, secrets.getProperty("DATABASE_PASSWORD"))
@@ -705,11 +727,14 @@ tasks.register("deployServer") {
         val sslPort = getExtra("server.ssl.port") ?: "443"
         val sslCert = findProperty("sslCert")?.toString()
         val sslKey = findProperty("sslKey")?.toString()
+        val tcpPort = getExtra("tcpPort")
 
         println("")
         println("=== TeamTalk Deploy (profile: $profileName) ===")
         println("  Target: $user@$host")
         println("  Path:   $deployPath")
+        println("  HTTP:   port $serverHttpPort")
+        println("  TCP:    port ${tcpPort ?: 5100}")
         println("  SSL:    ${if (sslEnabled) "enabled (port $sslPort)" else "disabled"}")
         println("")
 
@@ -731,13 +756,13 @@ tasks.register("deployServer") {
 
         if (isFirstDeploy) {
             println("=== First Deploy ===")
-            deployNew(host, user, deployPath, secrets, sslEnabled, sslPort, sslCert, sslKey)
+            deployNew(host, user, deployPath, secrets, sslEnabled, sslPort, sslCert, sslKey, serverHttpPort, tcpPort)
         } else {
             println("=== Upgrade ===")
-            deployUpgrade(host, user, deployPath, secrets, sslEnabled, sslPort, sslCert, sslKey)
+            deployUpgrade(host, user, deployPath, secrets, sslEnabled, sslPort, sslCert, sslKey, serverHttpPort, tcpPort)
         }
 
         // 3. Health check
-        healthCheck(host, user, deployPath, sslEnabled)
+        healthCheck(host, user, deployPath, sslEnabled, serverHttpPort)
     }
 }
