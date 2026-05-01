@@ -39,6 +39,15 @@ object Environment {
     /** Lucene 全文索引目录 */
     val luceneIndexDir: File = ensureDir(File(dataRoot, "lucene-index"))
 
+    /** 文件存储 RocksDB 目录 */
+    val fileStoreRocksdbDir: File = ensureDir(File(dataRoot, "file-store/rocksdb"))
+
+    /** 文件存储文件系统目录（大文件） */
+    val fileStoreFsDir: File = ensureDir(File(dataRoot, "file-store/files"))
+
+    /** 文件存储临时目录 */
+    val fileStoreTmpDir: File = ensureDir(File(dataRoot, "file-store/tmp"))
+
     /** 日志目录 */
     val logsDir: File = ensureDir(File(dataRoot, "logs"))
 

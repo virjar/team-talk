@@ -49,6 +49,8 @@ class SearchIndex(private val indexDir: File) {
         logger.info("Lucene search index opened at: {}", indexDir.absolutePath)
     }
 
+    val isRunning: Boolean get() = writer != null
+
     fun stop() {
         try { writer?.commit() } catch (_: Exception) {}
         runCatching { writer?.close() }

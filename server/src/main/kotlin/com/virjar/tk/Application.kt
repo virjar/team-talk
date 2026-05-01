@@ -100,12 +100,7 @@ fun Application.module() {
     val conversationService =
         ConversationService(messageStore, channelStore, userStore, conversationStore)
 
-    val fileService = FileService(
-        endpoint = environment.config.propertyOrNull("minio.endpoint")?.getString() ?: "http://127.0.0.1:9000",
-        accessKey = environment.config.propertyOrNull("minio.accessKey")?.getString() ?: "minioadmin",
-        secretKey = environment.config.propertyOrNull("minio.secretKey")?.getString() ?: "minioadmin",
-        bucketName = environment.config.propertyOrNull("minio.bucket")?.getString() ?: "teamtalk",
-    )
+    com.virjar.tk.storage.FileStore.start()
 
     install(ContentNegotiation) { json() }
     install(CallLogging)
@@ -152,6 +147,8 @@ fun Application.module() {
     val tcpPort = environment.config.propertyOrNull("ktor.tcp.port")?.getString()?.toInt() ?: 5100
     val tcpServer = TcpServer(tcpPort)
     tcpServer.start()
+
+    val healthChecker = HealthChecker(messageStore, searchIndex, tcpPort)
 
     routing {
         // 检测客户端断开（HTTP/2 RST_STREAM 等），自动取消请求协程
@@ -215,7 +212,11 @@ fun Application.module() {
 
         // ===== API 路由 =====
         get("/ping") { call.respondText("pong", ContentType.Text.Plain) }
-        get("/health") { call.respondText("ok", ContentType.Text.Plain) }
+        get("/health") {
+            val result = healthChecker.check()
+            val status = if (result.status == "UP") HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable
+            call.respond(status, result)
+        }
         get("/stats/online") {
             call.respondText(
                 """{"users":${ClientRegistry.getOnlineUserCount()},"connections":${ClientRegistry.getOnlineConnectionCount()}}""",
@@ -229,7 +230,7 @@ fun Application.module() {
         messageRoutes(messageService, searchIndex, MessageDeliveryService)
         val maxFileSizeBytes =
             environment.config.propertyOrNull("file.max-size-bytes")?.getString()?.toLong() ?: (50 * 1024 * 1024)
-        fileRoutes(fileService, maxFileSizeBytes)
+        fileRoutes(maxFileSizeBytes)
         deviceRoutes(DeviceService)
 
         // Online status API
@@ -251,7 +252,7 @@ fun Application.module() {
     monitor.subscribe(ApplicationStopping) {
         tcpServer.stop()
         IOExecutor.shutdown()
-        fileService.close()
+        com.virjar.tk.storage.FileStore.close()
         searchIndex.stop()
         messageStore.stop()
     }

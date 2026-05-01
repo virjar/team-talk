@@ -70,6 +70,8 @@ class MessageStore(private val dbPath: String) {
         loadSeqCounters()
     }
 
+    val isRunning: Boolean get() = db != null
+
     fun stop() {
         headerCf?.close()
         bodyCf?.close()

@@ -146,7 +146,7 @@ fun loadOrGenerateSecrets(
 
     if (envContent != null) {
         println("  Extracting secrets from remote env.sh ...")
-        val keyPattern = Regex("""^(DATABASE_PASSWORD|JWT_SECRET|MINIO_ACCESS_KEY|MINIO_SECRET_KEY|SSL_KEYSTORE_PASSWORD|SSL_PRIVATE_KEY_PASSWORD)="?([^"]*)"?\s*$""")
+        val keyPattern = Regex("""^(DATABASE_PASSWORD|JWT_SECRET|SSL_KEYSTORE_PASSWORD|SSL_PRIVATE_KEY_PASSWORD)="?([^"]*)"?\s*$""")
         for (line in envContent.lines()) {
             val match = keyPattern.find(line) ?: continue
             secrets.setProperty(match.groupValues[1], match.groupValues[2])
@@ -162,8 +162,6 @@ fun loadOrGenerateSecrets(
     println("  Generating new secrets ...")
     secrets.setProperty("DATABASE_PASSWORD", genPassword())
     secrets.setProperty("JWT_SECRET", genPassword() + genPassword())
-    secrets.setProperty("MINIO_ACCESS_KEY", "teamtalk-" + genPassword().take(8))
-    secrets.setProperty("MINIO_SECRET_KEY", genPassword())
     secrets.setProperty("SSL_KEYSTORE_PASSWORD", genPassword())
     secrets.setProperty("SSL_PRIVATE_KEY_PASSWORD", genPassword())
 
@@ -181,9 +179,6 @@ fun saveSecrets(secretsFile: File, secrets: java.util.Properties) {
         w.write("DATABASE_PASSWORD=${secrets.getProperty("DATABASE_PASSWORD")}\n\n")
         w.write("# Auth\n")
         w.write("JWT_SECRET=${secrets.getProperty("JWT_SECRET")}\n\n")
-        w.write("# MinIO\n")
-        w.write("MINIO_ACCESS_KEY=${secrets.getProperty("MINIO_ACCESS_KEY")}\n")
-        w.write("MINIO_SECRET_KEY=${secrets.getProperty("MINIO_SECRET_KEY")}\n\n")
         w.write("# SSL\n")
         w.write("SSL_KEYSTORE_PASSWORD=${secrets.getProperty("SSL_KEYSTORE_PASSWORD")}\n")
         w.write("SSL_PRIVATE_KEY_PASSWORD=${secrets.getProperty("SSL_PRIVATE_KEY_PASSWORD")}\n")
@@ -209,7 +204,6 @@ fun generateEnvShContent(
     lines.add("# 仅包含与 application.conf 默认值不同的项目和敏感密码")
     lines.add("# 未列出的配置使用 application.conf 默认值:")
     lines.add("#   httpPort=8080, tcpPort=5100, database=127.0.0.1:5432/teamtalk")
-    lines.add("#   minio=127.0.0.1:9000, minio.bucket=teamtalk")
     lines.add("")
 
     lines.add("# ── 数据库 ──")
@@ -219,11 +213,6 @@ fun generateEnvShContent(
 
     lines.add("# ── 认证 ──")
     lines.add("JWT_SECRET=\"${secrets.getProperty("JWT_SECRET")}\"")
-    lines.add("")
-
-    lines.add("# ── MinIO ──")
-    lines.add("MINIO_ACCESS_KEY=\"${secrets.getProperty("MINIO_ACCESS_KEY")}\"")
-    lines.add("MINIO_SECRET_KEY=\"${secrets.getProperty("MINIO_SECRET_KEY")}\"")
     lines.add("")
 
     if (sslEnabled) {
@@ -285,7 +274,7 @@ Requires=docker.service
 Type=simple
 WorkingDirectory=$deployPath
 EnvironmentFile=$deployPath/conf/env.sh
-ExecStartPre=/bin/bash -c 'cd $deployPath && export DB_PASSWORD="$${'$'}{DATABASE_PASSWORD}" && export MINIO_ACCESS_KEY="$${'$'}{MINIO_ACCESS_KEY}" && export MINIO_SECRET_KEY="$${'$'}{MINIO_SECRET_KEY}" && docker compose up -d'
+ExecStartPre=/bin/bash -c 'cd $deployPath && export DB_PASSWORD="$${'$'}{DATABASE_PASSWORD}" && docker compose up -d'
 ExecStart=$deployPath/bin/teamtalk.sh
 ExecStop=/bin/kill $${'$'}MAINPID
 Restart=on-failure
@@ -315,42 +304,75 @@ fun healthCheck(host: String, user: String, deployPath: String, sslEnabled: Bool
     val healthProtocol = if (sslEnabled) "https://127.0.0.1:443" else "http://127.0.0.1:8080"
     val healthFlag = if (sslEnabled) "-skf" else "-sf"
 
+    // 等待 HTTP 服务启动
     print("  Waiting for TeamTalk Server ...")
     var retries = 0
     while (retries < 15) {
         if (remoteCheck(host, user, "curl $healthFlag $healthProtocol/ping &>/dev/null")) {
-            println(" OK ($healthProtocol)")
+            println(" OK")
             break
         }
         print(".")
         Thread.sleep(2000)
         retries++
     }
-    if (retries == 15) println(" TIMEOUT")
-
-    // TCP check
-    if (remoteCheck(host, user, "nc -zv 127.0.0.1 5100 &>/dev/null")) {
-        println("  TCP 5100: OK")
-    } else {
-        println("  TCP 5100: NOT READY")
+    if (retries == 15) {
+        println(" TIMEOUT")
+        println("  >>> SERVICE FAILED TO START <<<")
+        println("  Check logs: ssh $host 'journalctl -u teamtalk -n 50'")
+        return
     }
 
-    // PostgreSQL check
-    val pgContainer = deployPath.substringAfterLast("/")
-    if (remoteCheck(host, user,
-        "docker exec ${pgContainer}-postgres-1 pg_isready -U teamtalk &>/dev/null || " +
-        "docker exec teamtalk-postgres-1 pg_isready -U teamtalk &>/dev/null"
-    )) {
-        println("  PostgreSQL: OK")
-    } else {
-        println("  PostgreSQL: NOT READY")
+    // 调用增强 /health 端点获取组件级状态
+    val healthOutput = remoteOutput(host, user,
+        "curl $healthFlag -o- -w '\\n%{http_code}' $healthProtocol/health 2>/dev/null"
+    )
+
+    if (healthOutput == null) {
+        println("  WARNING: Failed to get health response")
+        return
     }
 
-    // MinIO check
-    if (remoteCheck(host, user, "curl -sf http://127.0.0.1:9000/minio/health/live &>/dev/null")) {
-        println("  MinIO: OK")
+    // 分离 HTTP 状态码和 body
+    val lines = healthOutput.lines()
+    val httpStatus = lines.lastOrNull()?.toIntOrNull()
+    val body = if (lines.size > 1) lines.dropLast(1).joinToString("\n") else healthOutput
+
+    val componentNames = listOf("postgres", "file-storage", "rocksdb", "lucene", "tcp")
+    val allUp = httpStatus == 200
+
+    if (allUp) {
+        println("  All components healthy:")
     } else {
-        println("  MinIO: NOT READY")
+        println("")
+        println("  ╔══════════════════════════════════════════════════╗")
+        println("  ║        !! COMPONENT HEALTH CHECK FAILED !!       ║")
+        println("  ╚══════════════════════════════════════════════════╝")
+        println("")
+    }
+
+    for (component in componentNames) {
+        val statusPattern = Regex(""""$component"\s*:\s*\{"status"\s*:\s*"(\w+)"(?:,"detail"\s*:\s*"((?:[^"\\]|\\.)*)")?""")
+        val match = statusPattern.find(body)
+        if (match != null) {
+            val componentStatus = match.groupValues[1]
+            val detail = match.groupValues.getOrNull(2)
+            if (componentStatus == "UP") {
+                println("    $component: UP")
+            } else {
+                println("    >>> $component: DOWN <<<")
+                if (detail != null && detail.isNotEmpty()) {
+                    println("        Error: $detail")
+                }
+            }
+        } else {
+            println("    $component: UNKNOWN")
+        }
+    }
+
+    if (!allUp) {
+        println("")
+        println("  Check logs: ssh $host 'journalctl -u teamtalk -n 50'")
     }
     println("")
 }
@@ -377,7 +399,7 @@ fun deployNew(
 ) {
     // Create directory structure
     remoteExec(host, user,
-        "mkdir -p $deployPath/{data/pgdata,data/minio,data/rocksdb,data/lucene-index,data/logs,conf/ssl,conf,static/downloads}")
+        "mkdir -p $deployPath/{data/pgdata,data/rocksdb,data/lucene-index,data/file-store/rocksdb,data/file-store/files,data/file-store/tmp,data/logs,conf/ssl,conf,static/downloads}")
 
     // Upload server distribution
     println("  Uploading server distribution ...")
@@ -420,24 +442,6 @@ services:
       POSTGRES_DB: teamtalk
     volumes:
       - $deployPath/data/pgdata:/var/lib/postgresql/data
-
-  minio:
-    image: minio/minio
-    command: server /data --console-address ":9001"
-    restart: always
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    ports:
-      - "127.0.0.1:9000:9000"
-      - "0.0.0.0:9001:9001"
-    environment:
-      MINIO_ROOT_USER: $${'$'}{MINIO_ACCESS_KEY}
-      MINIO_ROOT_PASSWORD: $${'$'}{MINIO_SECRET_KEY}
-    volumes:
-      - $deployPath/data/minio:/data
 """.trimIndent()
     val tmpDc = File.createTempFile("teamtalk-dc-", ".yml")
     tmpDc.deleteOnExit()
@@ -446,13 +450,11 @@ services:
     tmpDc.delete()
 
     // Start Docker infrastructure
-    println("  Starting PostgreSQL + MinIO ...")
+    println("  Starting PostgreSQL ...")
     remoteExec(host, user,
         "cd $deployPath && " +
         "set -a && source conf/env.sh && set +a && " +
         "export DB_PASSWORD=\"\$DATABASE_PASSWORD\" && " +
-        "export MINIO_ACCESS_KEY=\"\$MINIO_ACCESS_KEY\" && " +
-        "export MINIO_SECRET_KEY=\"\$MINIO_SECRET_KEY\" && " +
         "docker compose up -d")
 
     // Wait for PostgreSQL
@@ -472,28 +474,6 @@ services:
         retries++
     }
     if (retries == 30) throw GradleException("PostgreSQL startup timeout")
-
-    // Wait for MinIO
-    print("  Waiting for MinIO ...")
-    retries = 0
-    while (retries < 15) {
-        if (remoteCheck(host, user, "curl -sf http://127.0.0.1:9000/minio/health/live &>/dev/null")) {
-            println(" OK")
-            break
-        }
-        print(".")
-        Thread.sleep(2000)
-        retries++
-    }
-    if (retries == 15) println(" TIMEOUT")
-
-    // Create MinIO bucket
-    println("  Initializing MinIO bucket ...")
-    remoteExec(host, user,
-        "set -a && source $deployPath/conf/env.sh && set +a && " +
-        "docker run --rm --network host --entrypoint='' minio/mc " +
-        "sh -c \"mc alias set local http://127.0.0.1:9000 \$MINIO_ACCESS_KEY \$MINIO_SECRET_KEY && " +
-        "mc mb --ignore-existing local/teamtalk\" 2>/dev/null || true")
 
     // Register systemd service
     println("  Registering systemd service ...")
