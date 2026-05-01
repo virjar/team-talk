@@ -9,9 +9,11 @@ class PacketTypeTest {
 
     @Test
     fun `fromCode returns correct PacketType for all defined codes`() {
-        assertEquals(PacketType.DISCONNECT, PacketType.fromCode(1))
-        assertEquals(PacketType.PING, PacketType.fromCode(2))
-        assertEquals(PacketType.PONG, PacketType.fromCode(3))
+        assertEquals(PacketType.AUTH, PacketType.fromCode(1))
+        assertEquals(PacketType.AUTH_RESP, PacketType.fromCode(2))
+        assertEquals(PacketType.DISCONNECT, PacketType.fromCode(3))
+        assertEquals(PacketType.PING, PacketType.fromCode(4))
+        assertEquals(PacketType.PONG, PacketType.fromCode(5))
         assertEquals(PacketType.SUBSCRIBE, PacketType.fromCode(10))
         assertEquals(PacketType.UNSUBSCRIBE, PacketType.fromCode(11))
         assertEquals(PacketType.TEXT, PacketType.fromCode(20))

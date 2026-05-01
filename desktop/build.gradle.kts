@@ -96,6 +96,11 @@ compose.desktop {
                 bundleID = "com.virjar.tk.teamtalk"
             }
 
+            // 打包精简 JRE 缺少以下模块，需要显式声明：
+            // - java.naming: logback 配置需要 javax.naming
+            // - java.net.http: Ktor Java HTTP engine 需要 java.net.http.HttpClient
+            modules("java.naming", "java.net.http", "java.sql")
+
             buildTypes {
                 release {
                     proguard {

@@ -5,6 +5,7 @@ import io.netty.buffer.Unpooled
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import com.virjar.tk.protocol.ChannelType
 
 /**
  * Message round-trip 测试：验证 Message(header + body) 的 writeTo → Message.readFrom round-trip。
@@ -19,7 +20,7 @@ class PayloadRoundTripTest {
     fun `TextBody round-trip`() {
         val header = MessageHeader(
             channelId = "ch-1", clientMsgNo = "msg-1", clientSeq = 1L,
-            messageId = "mid-1", senderUid = "u1", channelType = 1,
+            messageId = "mid-1", senderUid = "u1", channelType = ChannelType.PERSONAL,
             serverSeq = 100L, timestamp = 1700000000L, flags = 5,
         )
         val body = TextBody(text = "hello world", mentionUids = listOf("u2", "u3"))
@@ -34,7 +35,7 @@ class PayloadRoundTripTest {
         assertEquals(1L, decoded.clientSeq)
         assertEquals("mid-1", decoded.messageId)
         assertEquals("u1", decoded.senderUid)
-        assertEquals(1, decoded.channelType)
+        assertEquals(ChannelType.PERSONAL, decoded.channelType)
         assertEquals(100L, decoded.serverSeq)
         assertEquals(1700000000L, decoded.timestamp)
         assertEquals(5, decoded.flags)
@@ -47,7 +48,7 @@ class PayloadRoundTripTest {
 
     @Test
     fun `ImageBody round-trip`() {
-        val header = MessageHeader(channelId = "ch-2", channelType = 2, flags = 3)
+        val header = MessageHeader(channelId = "ch-2", channelType = ChannelType.GROUP, flags = 3)
         val body = ImageBody(url = "https://img.example.com/1.jpg", width = 800, height = 600,
             size = 102400L, thumbnailUrl = "https://thumb.example.com/1.jpg", caption = "a photo")
         val message = Message(header, body)
@@ -114,7 +115,7 @@ class PayloadRoundTripTest {
     fun `ReplyBody round-trip`() {
         val header = MessageHeader(
             channelId = "ch-r", clientMsgNo = "msg-r", clientSeq = 10L,
-            messageId = "mid-r", senderUid = "u-r", channelType = 1,
+            messageId = "mid-r", senderUid = "u-r", channelType = ChannelType.PERSONAL,
             serverSeq = 50L, timestamp = 1000L, flags = 1,
         )
         val body = ReplyBody(replyToMessageId = "orig-msg", replyToSenderUid = "orig-u",
@@ -141,7 +142,7 @@ class PayloadRoundTripTest {
     fun `EditBody round-trip`() {
         val header = MessageHeader(
             channelId = "ch-e", clientMsgNo = "msg-e", clientSeq = 20L,
-            messageId = "mid-e", senderUid = "u-e", channelType = 1,
+            messageId = "mid-e", senderUid = "u-e", channelType = ChannelType.PERSONAL,
             serverSeq = 200L, timestamp = 2000L,
         )
         val body = EditBody(targetMessageId = "target-msg", newContent = "edited text", editedAt = 3000L)
@@ -167,7 +168,7 @@ class PayloadRoundTripTest {
     fun `Message JSON round-trip`() {
         val header = MessageHeader(
             channelId = "ch-1", clientMsgNo = "msg-1", clientSeq = 1L,
-            messageId = "mid-1", senderUid = "u1", channelType = 1,
+            messageId = "mid-1", senderUid = "u1", channelType = ChannelType.PERSONAL,
             serverSeq = 100L, timestamp = 1700000000L, flags = 1,
         )
         val body = TextBody("hello", listOf("a"))
