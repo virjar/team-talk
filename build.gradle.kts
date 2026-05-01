@@ -494,7 +494,7 @@ services:
       - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: teamtalk
-      POSTGRES_PASSWORD: $${'$'}{DB_PASSWORD}
+      POSTGRES_PASSWORD: ${'$'}{DB_PASSWORD}
       POSTGRES_DB: teamtalk
     volumes:
       - $deployPath/data/pgdata:/var/lib/postgresql/data
