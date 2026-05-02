@@ -21,13 +21,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.virjar.tk.protocol.payload.Message
 import com.virjar.tk.protocol.payload.TextBody
+import com.virjar.tk.ui.theme.extendedColors
 
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
-
-/** Consistent muted icon color matching sidebar style. */
-private val InputIconColor = Color(0xFF999999)
-private val InputBorderColor = Color(0xFFDDDDDD)
 
 /** Common emoji categories for the picker */
 private val EMOJI_LIST = listOf(
@@ -223,8 +220,8 @@ fun ChatInputBar(
                     placeholder = { Text("Message...") },
                     maxLines = 3,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = InputBorderColor,
-                        unfocusedBorderColor = InputBorderColor,
+                        focusedBorderColor = MaterialTheme.extendedColors.inputBorder,
+                        unfocusedBorderColor = MaterialTheme.extendedColors.inputBorder,
                     ),
                 )
                 Spacer(modifier = Modifier.width(4.dp))
@@ -232,7 +229,7 @@ fun ChatInputBar(
                     Icon(
                         Icons.Default.Face,
                         contentDescription = "Emoji",
-                        tint = if (showEmojiPicker) MaterialTheme.colorScheme.primary else InputIconColor,
+                        tint = if (showEmojiPicker) MaterialTheme.colorScheme.primary else MaterialTheme.extendedColors.mutedIcon,
                     )
                 }
                 // Send button / Mic button
@@ -247,7 +244,7 @@ fun ChatInputBar(
                             Icon(
                                 Icons.AutoMirrored.Filled.Send,
                                 contentDescription = "Send",
-                                tint = InputIconColor,
+                                tint = MaterialTheme.extendedColors.mutedIcon,
                             )
                         }
                     }
@@ -260,7 +257,7 @@ fun ChatInputBar(
                         Icon(
                             Icons.Default.Mic,
                             contentDescription = "Record voice",
-                            tint = InputIconColor,
+                            tint = MaterialTheme.extendedColors.mutedIcon,
                         )
                     }
                 }

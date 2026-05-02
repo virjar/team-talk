@@ -52,7 +52,7 @@ class ReplyBody(
     companion object : MessageBodyCreator<ReplyBody> {
         override fun create(buf: ByteBuf) = ReplyBody(buf)
 
-        fun fromJson(json: JsonObject): ReplyBody {
+        override fun fromJson(json: JsonObject): ReplyBody {
             return ReplyBody(
                 replyToMessageId = json["replyToMessageId"]?.jsonPrimitive?.content ?: "",
                 replyToSenderUid = json["replyToSenderUid"]?.jsonPrimitive?.content ?: "",
@@ -109,7 +109,7 @@ class ForwardBody(
     companion object : MessageBodyCreator<ForwardBody> {
         override fun create(buf: ByteBuf) = ForwardBody(buf)
 
-        fun fromJson(json: JsonObject): ForwardBody {
+        override fun fromJson(json: JsonObject): ForwardBody {
             return ForwardBody(
                 forwardFromChannelId = json["forwardFromChannelId"]?.jsonPrimitive?.contentOrNull,
                 forwardFromMessageId = json["forwardFromMessageId"]?.jsonPrimitive?.content ?: "",
@@ -190,7 +190,7 @@ class MergeForwardBody(
     companion object : MessageBodyCreator<MergeForwardBody> {
         override fun create(buf: ByteBuf) = MergeForwardBody(buf)
 
-        fun fromJson(json: JsonObject): MergeForwardBody {
+        override fun fromJson(json: JsonObject): MergeForwardBody {
             return MergeForwardBody(
                 title = json["title"]?.jsonPrimitive?.contentOrNull,
                 messages = json["messages"]?.jsonArray?.map { msg ->
@@ -253,7 +253,7 @@ class RevokeBody(
     companion object : MessageBodyCreator<RevokeBody> {
         override fun create(buf: ByteBuf) = RevokeBody(buf)
 
-        fun fromJson(json: JsonObject): RevokeBody {
+        override fun fromJson(json: JsonObject): RevokeBody {
             return RevokeBody(
                 targetMessageId = json["targetMessageId"]?.jsonPrimitive?.content ?: "",
             )
@@ -292,7 +292,7 @@ class EditBody(
     companion object : MessageBodyCreator<EditBody> {
         override fun create(buf: ByteBuf) = EditBody(buf)
 
-        fun fromJson(json: JsonObject): EditBody {
+        override fun fromJson(json: JsonObject): EditBody {
             return EditBody(
                 targetMessageId = json["targetMessageId"]?.jsonPrimitive?.content ?: "",
                 newContent = json["newContent"]?.jsonPrimitive?.content ?: "",
@@ -325,7 +325,7 @@ class TypingBody(
     companion object : MessageBodyCreator<TypingBody> {
         override fun create(buf: ByteBuf) = TypingBody(buf)
 
-        fun fromJson(json: JsonObject): TypingBody {
+        override fun fromJson(json: JsonObject): TypingBody {
             return TypingBody(
                 action = json["action"]?.jsonPrimitive?.intOrNull?.toByte() ?: 0,
             )
@@ -364,7 +364,7 @@ class ReactionBody(
     companion object : MessageBodyCreator<ReactionBody> {
         override fun create(buf: ByteBuf) = ReactionBody(buf)
 
-        fun fromJson(json: JsonObject): ReactionBody {
+        override fun fromJson(json: JsonObject): ReactionBody {
             return ReactionBody(
                 targetMessageId = json["targetMessageId"]?.jsonPrimitive?.content ?: "",
                 emoji = json["emoji"]?.jsonPrimitive?.content ?: "",

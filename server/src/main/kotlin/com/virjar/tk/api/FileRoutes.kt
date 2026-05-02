@@ -1,13 +1,11 @@
 package com.virjar.tk.api
 
-import com.virjar.tk.dto.ApiError
 import com.virjar.tk.env.Environment
 import com.virjar.tk.storage.FileStore
 import com.virjar.tk.storage.ReadRange
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.server.auth.*
-import io.ktor.server.auth.jwt.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -36,7 +34,7 @@ fun Routing.fileRoutes(maxFileSizeBytes: Long = 50 * 1024 * 1024) {
 
             val meta = withContext(Dispatchers.IO) { FileStore.getMeta(path) }
             if (meta == null) {
-                call.respond(HttpStatusCode.NotFound, ApiError(message = "file not found"))
+                throw BusinessException(404, "file not found", HttpStatusCode.NotFound)
                 return@get
             }
 
@@ -71,7 +69,7 @@ fun Routing.fileRoutes(maxFileSizeBytes: Long = 50 * 1024 * 1024) {
 
         authenticate("auth-jwt") {
             post("/upload") {
-                val uid = call.principal<JWTPrincipal>()!!.payload.subject
+                val uid = call.requireUid()
                 when (val upload = upload2Temp(call.receiveMultipart(), maxFileSizeBytes)) {
                     // 先写临时文件，再存储，在底层存在两种存储后端
                     //  若是小文件，则存储到RocksDb，避免os文件碎片（绝大部分场景）
@@ -84,7 +82,7 @@ fun Routing.fileRoutes(maxFileSizeBytes: Long = 50 * 1024 * 1024) {
                     }
 
                     is UploadResult.Error -> {
-                        call.respond(upload.status, ApiError(message = upload.message))
+                        throw BusinessException(0, upload.message, upload.status)
                     }
                 }
             }

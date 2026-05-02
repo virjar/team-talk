@@ -6,12 +6,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.virjar.tk.ui.theme.extendedColors
 
-/**
- * A small green dot indicating online status, overlaid on avatars.
- */
 @Composable
 fun OnlineIndicator(modifier: Modifier = Modifier) {
     Surface(
@@ -22,7 +19,7 @@ fun OnlineIndicator(modifier: Modifier = Modifier) {
         Surface(
             modifier = Modifier.size(10.dp).padding(1.dp),
             shape = MaterialTheme.shapes.extraSmall,
-            color = Color(0xFF4CAF50),
+            color = MaterialTheme.extendedColors.onlineIndicator,
         ) {}
     }
 }

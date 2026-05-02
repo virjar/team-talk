@@ -34,6 +34,7 @@ import com.virjar.tk.util.ImageCache
 import com.virjar.tk.util.buildFileUrl
 import com.virjar.tk.util.formatDuration
 import com.virjar.tk.util.formatFileSize
+import com.virjar.tk.ui.theme.extendedColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -219,7 +220,7 @@ fun ReplyMessageContent(
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             payload.text,
-            color = if (isMe) MaterialTheme.colorScheme.onPrimary else Color(0xFF666666),
+            color = if (isMe) MaterialTheme.colorScheme.onPrimary else MaterialTheme.extendedColors.bubbleOtherText,
             style = MaterialTheme.typography.bodyMedium,
         )
     }

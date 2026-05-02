@@ -39,25 +39,6 @@ class Message(
         body.writeTo(buf)
     }
 
-    /** 将完整消息转为 JSON（header + body），用于 HTTP 响应 */
-    fun toJson(senderName: String = ""): JsonObject {
-        val bodyJson = body.toJson()
-        return buildJsonObject {
-            put("messageId", messageId ?: "")
-            put("channelId", channelId)
-            put("channelType", channelType.code)
-            put("senderUid", senderUid ?: "")
-            put("senderName", senderName)
-            put("messageType", packetType.code.toInt())
-            put("seq", serverSeq)
-            put("clientSeq", clientSeq)
-            put("clientMsgNo", clientMsgNo)
-            put("timestamp", timestamp)
-            put("flags", flags)
-            put("body", bodyJson)
-        }
-    }
-
     companion object {
         /** 从 ByteBuf 反序列化（wire format: [headerLen(2)][header bytes][body bytes]） */
         fun readFrom(buf: ByteBuf, packetType: PacketType): Message {
@@ -75,39 +56,9 @@ class Message(
             }
         }
 
-        /** 从 HTTP JSON 反序列化为 Message 对象 */
-        fun fromJson(json: JsonObject): Message? {
-            val messageType = json["messageType"]?.jsonPrimitive?.int ?: return null
-            val packetType = PacketType.fromCode(messageType.toByte()) ?: return null
-            val bodyJson = json["body"]?.jsonObject ?: return null
-
-            val header = MessageHeader.fromJson(json)
-            val body = bodyFromJson(packetType, bodyJson) ?: return null
-            return Message(header, body)
-        }
-
         /** 根据 PacketType 和 body JSON 创建 MessageBody */
         fun bodyFromJson(packetType: PacketType, json: JsonObject): MessageBody? {
-            return when (packetType) {
-                PacketType.TEXT -> TextBody.fromJson(json)
-                PacketType.IMAGE -> ImageBody.fromJson(json)
-                PacketType.VOICE -> VoiceBody.fromJson(json)
-                PacketType.VIDEO -> VideoBody.fromJson(json)
-                PacketType.FILE -> FileBody.fromJson(json)
-                PacketType.LOCATION -> LocationBody.fromJson(json)
-                PacketType.CARD -> CardBody.fromJson(json)
-                PacketType.REPLY -> ReplyBody.fromJson(json)
-                PacketType.FORWARD -> ForwardBody.fromJson(json)
-                PacketType.MERGE_FORWARD -> MergeForwardBody.fromJson(json)
-                PacketType.REVOKE -> RevokeBody.fromJson(json)
-                PacketType.EDIT -> EditBody.fromJson(json)
-                PacketType.TYPING -> TypingBody.fromJson(json)
-                PacketType.STICKER -> StickerBody.fromJson(json)
-                PacketType.REACTION -> ReactionBody.fromJson(json)
-                PacketType.INTERACTIVE -> InteractiveBody.fromJson(json)
-                PacketType.RICH -> RichBody.fromJson(json)
-                else -> null
-            }
+            return PacketType.bodyCreatorFor<MessageBody>(packetType)?.fromJson(json)
         }
 
         /** 从 MessageBody 对象提取预览文本 */
@@ -127,19 +78,6 @@ class Message(
                 is InteractiveBody -> "[Card Message]"
                 is RichBody -> "[Rich Text]"
                 else -> ""
-            }
-        }
-
-        /** 从 bodyJson 字符串提取预览文本（服务端存储格式） */
-        fun extractPreviewText(bodyJson: String, messageType: Int): String {
-            if (bodyJson.isBlank()) return ""
-            val packetType = PacketType.fromCode(messageType.toByte()) ?: return bodyJson.take(50)
-            return try {
-                val json = Json.parseToJsonElement(bodyJson).jsonObject
-                val body = bodyFromJson(packetType, json) ?: return bodyJson.take(50)
-                extractPreviewText(body)
-            } catch (_: Exception) {
-                bodyJson.take(50)
             }
         }
 

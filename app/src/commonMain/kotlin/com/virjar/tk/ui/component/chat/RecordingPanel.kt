@@ -16,11 +16,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.virjar.tk.ui.theme.extendedColors
 import com.virjar.tk.util.formatDuration
-
-private val RecColor = Color(0xFFE53935)
 
 @Composable
 fun RecordingPanel(
@@ -30,7 +28,8 @@ fun RecordingPanel(
     onCancel: () -> Unit,
     onSend: () -> Unit,
 ) {
-    // Blinking animation for the recording dot
+    val recColor = MaterialTheme.extendedColors.recordingActive
+
     val infiniteTransition = rememberInfiniteTransition()
     val blinkAlpha by infiniteTransition.animateFloat(
         initialValue = 1f,
@@ -49,39 +48,34 @@ fun RecordingPanel(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Blinking red dot
             Box(
                 modifier = Modifier.size(10.dp).alpha(blinkAlpha)
-                    .background(RecColor, CircleShape),
+                    .background(recColor, CircleShape),
             )
             Spacer(modifier = Modifier.width(8.dp))
 
-            // Duration
             Text(
                 text = formatDuration(duration),
                 style = MaterialTheme.typography.titleMedium,
-                color = RecColor,
+                color = recColor,
             )
             Spacer(modifier = Modifier.width(12.dp))
 
-            // Progress bar
             LinearProgressIndicator(
                 progress = { (duration.toFloat() / maxDuration).coerceIn(0f, 1f) },
                 modifier = Modifier.weight(1f).height(4.dp),
             )
             Spacer(modifier = Modifier.width(12.dp))
 
-            // Cancel button
             IconButton(onClick = onCancel) {
-                Icon(Icons.Default.Close, contentDescription = "Cancel", tint = Color(0xFF999999))
+                Icon(Icons.Default.Close, contentDescription = "Cancel", tint = MaterialTheme.extendedColors.mutedIcon)
             }
 
-            // Send button
             IconButton(onClick = onSend, enabled = duration >= 1) {
                 Icon(
                     Icons.AutoMirrored.Filled.Send,
                     contentDescription = "Send",
-                    tint = if (duration >= 1) MaterialTheme.colorScheme.primary else Color(0xFFCCCCCC),
+                    tint = if (duration >= 1) MaterialTheme.colorScheme.primary else MaterialTheme.extendedColors.disabledControl,
                 )
             }
         }

@@ -24,4 +24,5 @@ interface MessageBody {
  */
 interface MessageBodyCreator<T : MessageBody> {
     fun create(buf: ByteBuf): T
+    fun fromJson(json: JsonObject): T
 }

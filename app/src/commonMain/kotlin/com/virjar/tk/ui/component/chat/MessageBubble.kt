@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.sp
 import com.virjar.tk.util.isSecondaryButtonPressed
 import com.virjar.tk.audio.VoicePlayer
 import com.virjar.tk.protocol.payload.Message
+import com.virjar.tk.ui.theme.extendedColors
 import com.virjar.tk.protocol.payload.TextBody
 import com.virjar.tk.protocol.payload.FileBody
 import com.virjar.tk.util.copyToClipboard
@@ -71,7 +72,7 @@ fun MessageBubble(
             Text(
                 text = senderName,
                 style = MaterialTheme.typography.labelSmall,
-                color = Color(0xFF000000),
+                color = MaterialTheme.extendedColors.messageTimestamp,
                 modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
             )
         }
@@ -205,7 +206,7 @@ private fun MessageStatusIcon(seq: Long, readSeq: Long) {
     val checkColor = when {
         seq <= 0 -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
         seq > readSeq -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-        else -> Color(0xFF4FC3F7)
+        else -> MaterialTheme.extendedColors.messageLink
     }
 
     when {

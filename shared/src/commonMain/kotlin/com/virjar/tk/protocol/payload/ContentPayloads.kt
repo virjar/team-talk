@@ -36,7 +36,7 @@ class TextBody(
     companion object : MessageBodyCreator<TextBody> {
         override fun create(buf: ByteBuf) = TextBody(buf)
 
-        fun fromJson(json: JsonObject): TextBody {
+        override fun fromJson(json: JsonObject): TextBody {
             return TextBody(
                 text = json["text"]?.jsonPrimitive?.content ?: "",
                 mentionUids = json["mentionUids"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList(),
@@ -88,7 +88,7 @@ class ImageBody(
     companion object : MessageBodyCreator<ImageBody> {
         override fun create(buf: ByteBuf) = ImageBody(buf)
 
-        fun fromJson(json: JsonObject): ImageBody {
+        override fun fromJson(json: JsonObject): ImageBody {
             return ImageBody(
                 url = json["url"]?.jsonPrimitive?.content ?: "",
                 width = json["width"]?.jsonPrimitive?.intOrNull ?: 0,
@@ -136,7 +136,7 @@ class VoiceBody(
     companion object : MessageBodyCreator<VoiceBody> {
         override fun create(buf: ByteBuf) = VoiceBody(buf)
 
-        fun fromJson(json: JsonObject): VoiceBody {
+        override fun fromJson(json: JsonObject): VoiceBody {
             return VoiceBody(
                 url = json["url"]?.jsonPrimitive?.content ?: "",
                 duration = json["duration"]?.jsonPrimitive?.intOrNull ?: 0,
@@ -190,7 +190,7 @@ class VideoBody(
     companion object : MessageBodyCreator<VideoBody> {
         override fun create(buf: ByteBuf) = VideoBody(buf)
 
-        fun fromJson(json: JsonObject): VideoBody {
+        override fun fromJson(json: JsonObject): VideoBody {
             return VideoBody(
                 url = json["url"]?.jsonPrimitive?.content ?: "",
                 width = json["width"]?.jsonPrimitive?.intOrNull ?: 0,
@@ -242,7 +242,7 @@ class FileBody(
     companion object : MessageBodyCreator<FileBody> {
         override fun create(buf: ByteBuf) = FileBody(buf)
 
-        fun fromJson(json: JsonObject): FileBody {
+        override fun fromJson(json: JsonObject): FileBody {
             return FileBody(
                 url = json["url"]?.jsonPrimitive?.content ?: "",
                 fileName = json["fileName"]?.jsonPrimitive?.content ?: "",
@@ -289,7 +289,7 @@ class LocationBody(
     companion object : MessageBodyCreator<LocationBody> {
         override fun create(buf: ByteBuf) = LocationBody(buf)
 
-        fun fromJson(json: JsonObject): LocationBody {
+        override fun fromJson(json: JsonObject): LocationBody {
             return LocationBody(
                 latitude = json["latitude"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
                 longitude = json["longitude"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
@@ -335,7 +335,7 @@ class CardBody(
     companion object : MessageBodyCreator<CardBody> {
         override fun create(buf: ByteBuf) = CardBody(buf)
 
-        fun fromJson(json: JsonObject): CardBody {
+        override fun fromJson(json: JsonObject): CardBody {
             return CardBody(
                 uid = json["uid"]?.jsonPrimitive?.content ?: "",
                 name = json["name"]?.jsonPrimitive?.content ?: "",
@@ -389,7 +389,7 @@ class StickerBody(
     companion object : MessageBodyCreator<StickerBody> {
         override fun create(buf: ByteBuf) = StickerBody(buf)
 
-        fun fromJson(json: JsonObject): StickerBody {
+        override fun fromJson(json: JsonObject): StickerBody {
             return StickerBody(
                 stickerId = json["stickerId"]?.jsonPrimitive?.content ?: "",
                 packId = json["packId"]?.jsonPrimitive?.contentOrNull,
@@ -460,7 +460,7 @@ class InteractiveBody(
     companion object : MessageBodyCreator<InteractiveBody> {
         override fun create(buf: ByteBuf) = InteractiveBody(buf)
 
-        fun fromJson(json: JsonObject): InteractiveBody {
+        override fun fromJson(json: JsonObject): InteractiveBody {
             return InteractiveBody(
                 botId = json["botId"]?.jsonPrimitive?.content ?: "",
                 templateType = json["templateType"]?.jsonPrimitive?.intOrNull?.toByte() ?: 0,
@@ -528,7 +528,7 @@ class RichBody(
     companion object : MessageBodyCreator<RichBody> {
         override fun create(buf: ByteBuf) = RichBody(buf)
 
-        fun fromJson(json: JsonObject): RichBody {
+        override fun fromJson(json: JsonObject): RichBody {
             return RichBody(
                 segments = json["segments"]?.jsonArray?.map { seg ->
                     val obj = seg.jsonObject

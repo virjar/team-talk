@@ -160,7 +160,7 @@ class UserContext(
 
     override fun onConnectionStateChanged(state: ImClient.State) {
         _connectionState.value = when (state) {
-            ImClient.State.DISCONNECTED -> ConnectionState.DISCONNECTED
+            ImClient.State.DISCONNECTED, ImClient.State.DESTROYED -> ConnectionState.DISCONNECTED
             ImClient.State.CONNECTING -> ConnectionState.CONNECTING
             ImClient.State.CONNECTED -> ConnectionState.CONNECTED
         }

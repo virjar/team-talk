@@ -6,7 +6,6 @@ import com.virjar.tk.service.MessageService
 import com.virjar.tk.service.SearchIndex
 import io.ktor.http.*
 import io.ktor.server.auth.*
-import io.ktor.server.auth.jwt.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -15,7 +14,7 @@ fun Routing.messageRoutes(messageService: MessageService, searchIndex: SearchInd
     route("/api/v1/channels/{id}/messages") {
         authenticate("auth-jwt") {
             delete("/{seq}/revoke") {
-                val uid = call.principal<JWTPrincipal>()!!.payload.subject
+                val uid = call.requireUid()
                 val channelId = call.parameters["id"] ?: return@delete call.respond(HttpStatusCode.BadRequest)
                 val seq = call.parameters["seq"]?.toLongOrNull() ?: return@delete call.respond(HttpStatusCode.BadRequest)
                 messageService.revokeMessage(channelId, seq, uid)
@@ -23,7 +22,7 @@ fun Routing.messageRoutes(messageService: MessageService, searchIndex: SearchInd
             }
 
             put("/{seq}/edit") {
-                val uid = call.principal<JWTPrincipal>()!!.payload.subject
+                val uid = call.requireUid()
                 val channelId = call.parameters["id"] ?: return@put call.respond(HttpStatusCode.BadRequest)
                 val seq = call.parameters["seq"]?.toLongOrNull() ?: return@put call.respond(HttpStatusCode.BadRequest)
                 val body = call.receive<EditMessageRequest>()
@@ -38,9 +37,9 @@ fun Routing.messageRoutes(messageService: MessageService, searchIndex: SearchInd
     route("/api/v1/messages/search") {
         authenticate("auth-jwt") {
             get {
-                val uid = call.principal<JWTPrincipal>()!!.payload.subject
+                val uid = call.requireUid()
                 val q = call.request.queryParameters["q"]
-                    ?: return@get call.respond(HttpStatusCode.BadRequest, ApiError(message = "q parameter required"))
+                    ?: throw BusinessException(400, "q parameter required")
 
                 val channelId = call.request.queryParameters["channelId"]
                 val senderUid = call.request.queryParameters["senderUid"]

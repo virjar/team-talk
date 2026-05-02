@@ -53,7 +53,7 @@ class ImClient(
     private val stateListener: ImStateListener,
 ) : ConnectionListener {
 
-    enum class State { DISCONNECTED, CONNECTING, CONNECTED }
+    enum class State { DISCONNECTED, CONNECTING, CONNECTED, DESTROYED }
 
     // 单线程 EventLoop
     private val workerGroup = NioEventLoopGroup(1)
@@ -64,8 +64,6 @@ class ImClient(
 
     private var currentConnection: TcpConnection? = null
     private var retryCount = 0
-    private var destroyed = false
-    private var connecting = false
     private var reconnectSchedule: ScheduledFuture<*>? = null
 
     // 发送队列（所有操作在 EventLoop 上，无需并发容器）
@@ -78,8 +76,7 @@ class ImClient(
 
     fun connect() {
         doOnMainThread {
-            if (destroyed || connecting) return@doOnMainThread
-            connecting = true
+            if (state == State.DESTROYED || state == State.CONNECTING) return@doOnMainThread
             setState(State.CONNECTING)
             createAndConnect()
         }
@@ -87,7 +84,7 @@ class ImClient(
 
     fun disconnect() {
         doOnMainThread {
-            destroyed = true
+            setState(State.DESTROYED)
             reconnectSchedule?.cancel(false)
             reconnectSchedule = null
             currentConnection?.close()
@@ -96,7 +93,6 @@ class ImClient(
             pendingAcks.forEach { (_, cb) -> cb.invoke(Result.failure(RuntimeException("Disconnected"))) }
             pendingAcks.clear()
             sendQueue.clear()
-            setState(State.DISCONNECTED)
             workerGroup.shutdownGracefully(0, 2, TimeUnit.SECONDS)
         }
     }
@@ -165,7 +161,6 @@ class ImClient(
     // ── ConnectionListener 实现 ──
 
     override fun onConnected(conn: TcpConnection) {
-        connecting = false
         retryCount = 0
         currentConnection = conn
         setState(State.CONNECTED)
@@ -173,22 +168,19 @@ class ImClient(
     }
 
     override fun onDisconnected(conn: TcpConnection) {
-        connecting = false
         if (currentConnection === conn) currentConnection = null
-        if (!destroyed) {
+        if (state != State.DESTROYED) {
             setState(State.CONNECTING)
             scheduleReconnect()
         }
     }
 
     override fun onAuthFailed(conn: TcpConnection, code: Byte, reason: String) {
-        connecting = false
         if (currentConnection === conn) currentConnection = null
         AppLog.e("ImClient", "Auth failed: code=$code reason=$reason")
-        if (!destroyed) {
+        if (state != State.DESTROYED) {
             setState(State.DISCONNECTED)
             stateListener.onAuthFailed(code, reason)
-            // 不再 scheduleReconnect() — token 失效重连无意义
         }
     }
 

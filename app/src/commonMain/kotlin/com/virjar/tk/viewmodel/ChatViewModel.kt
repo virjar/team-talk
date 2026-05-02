@@ -9,8 +9,6 @@ import com.virjar.tk.util.AppLog
 import com.virjar.tk.util.saveFileToDisk
 import com.virjar.tk.repository.HistoryResult
 import com.virjar.tk.util.toUserMessage
-import com.virjar.tk.audio.RecordingState
-import com.virjar.tk.audio.VoiceRecorder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -56,13 +54,17 @@ class ChatViewModel(
     private val _state = MutableStateFlow(ChatState(readSeq = initialReadSeq, scrollToSeq = initialScrollToSeq))
     val state: StateFlow<ChatState> = _state.asStateFlow()
 
+    // ── 录音 ──
+    private val recordingController = RecordingController()
+
+    // ── 消息加载 ──
+
     suspend fun loadMessages() {
         _state.value = _state.value.copy(isLoading = true)
         try {
             val messages = chatRepo.getMessages(channelId)
             AppLog.i("ChatVM", "loadMessages: channelId=$channelId got ${messages.size} msgs from local DB")
             _state.value = ChatState(messages = messages, readSeq = _state.value.readSeq, scrollToSeq = _state.value.scrollToSeq)
-            // SUBSCRIBE 触发离线补拉，消息通过 onNewMessage 异步到达
             val maxSeq = messages.maxOfOrNull { it.serverSeq } ?: 0L
             ctx.subscribeChannel(channelId, maxSeq)
         } catch (e: Exception) {
@@ -95,16 +97,12 @@ class ChatViewModel(
         }
     }
 
-    /** Clear scrollToSeq after scrolling is done */
     fun clearScrollToSeq() {
         _state.value = _state.value.copy(scrollToSeq = 0)
     }
 
-    /**
-     * Helper for optimistic message sending.
-     * Adds optimistic message to state, executes the action.
-     * On failure, removes the optimistic message and sets error.
-     */
+    // ── 乐观更新 ──
+
     private suspend fun withOptimisticUpdate(
         optimisticMsg: Message,
         clearInput: Boolean = false,
@@ -146,6 +144,24 @@ class ChatViewModel(
         timestamp = System.currentTimeMillis(),
     )
 
+    // ── 带上传进度的文件上传 ──
+
+    private suspend fun <T> uploadWithProgress(
+        upload: suspend ((Float) -> Unit) -> T,
+    ): T {
+        _state.value = _state.value.copy(uploadProgress = 0f)
+        return try {
+            upload { progress -> _state.value = _state.value.copy(uploadProgress = progress) }
+        } catch (e: Exception) {
+            _state.value = _state.value.copy(uploadProgress = null)
+            throw e
+        } finally {
+            _state.value = _state.value.copy(uploadProgress = null)
+        }
+    }
+
+    // ── 消息发送 ──
+
     suspend fun sendMessage(text: String): Boolean {
         val optimisticMsg = Message(optimisticHeader("local_"), TextBody(text, emptyList()))
         return withOptimisticUpdate(optimisticMsg, clearInput = true) {
@@ -154,17 +170,8 @@ class ChatViewModel(
     }
 
     suspend fun sendImageMessage(bytes: ByteArray, width: Int, height: Int): Boolean {
-        // Upload with progress tracking
-        _state.value = _state.value.copy(uploadProgress = 0f)
-        val result = try {
-            fileRepo.uploadImage(bytes) { progress ->
-                _state.value = _state.value.copy(uploadProgress = progress)
-            }
-        } catch (e: Exception) {
-            _state.value = _state.value.copy(uploadProgress = null)
-            throw e
-        } finally {
-            _state.value = _state.value.copy(uploadProgress = null)
+        val result = uploadWithProgress { onProgress ->
+            fileRepo.uploadImage(bytes, onProgress = onProgress)
         }
         val optimisticMsg = Message(
             optimisticHeader("local_img_"),
@@ -206,16 +213,8 @@ class ChatViewModel(
     }
 
     suspend fun sendFileMessage(bytes: ByteArray, fileName: String): Boolean {
-        _state.value = _state.value.copy(uploadProgress = 0f)
-        val result = try {
-            fileRepo.uploadFile(bytes, fileName) { progress ->
-                _state.value = _state.value.copy(uploadProgress = progress)
-            }
-        } catch (e: Exception) {
-            _state.value = _state.value.copy(uploadProgress = null)
-            throw e
-        } finally {
-            _state.value = _state.value.copy(uploadProgress = null)
+        val result = uploadWithProgress { onProgress ->
+            fileRepo.uploadFile(bytes, fileName, onProgress = onProgress)
         }
         val optimisticMsg = Message(
             optimisticHeader("local_file_"),
@@ -230,26 +229,9 @@ class ChatViewModel(
     }
 
     suspend fun sendVideoMessage(bytes: ByteArray, fileName: String): Boolean {
-        val ext = fileName.substringAfterLast('.', "mp4").lowercase()
-        val contentType = when (ext) {
-            "avi" -> "video/avi"
-            "mkv" -> "video/x-matroska"
-            "mov" -> "video/quicktime"
-            "webm" -> "video/webm"
-            "wmv" -> "video/x-ms-wmv"
-            "flv" -> "video/x-flv"
-            else -> "video/mp4"
-        }
-        _state.value = _state.value.copy(uploadProgress = 0f)
-        val result = try {
-            fileRepo.uploadFile(bytes, fileName, contentType) { progress ->
-                _state.value = _state.value.copy(uploadProgress = progress)
-            }
-        } catch (e: Exception) {
-            _state.value = _state.value.copy(uploadProgress = null)
-            throw e
-        } finally {
-            _state.value = _state.value.copy(uploadProgress = null)
+        val contentType = videoContentType(fileName)
+        val result = uploadWithProgress { onProgress ->
+            fileRepo.uploadFile(bytes, fileName, contentType, onProgress)
         }
         val optimisticMsg = Message(
             optimisticHeader("local_video_"),
@@ -262,6 +244,21 @@ class ChatViewModel(
             chatRepo.sendVideoMessage(channelId, channelType, result.path, 0, 0, bytes.size.toLong(), 0, "")
         }
     }
+
+    suspend fun sendVoiceMessage(bytes: ByteArray, durationSeconds: Int): Boolean {
+        val result = uploadWithProgress { onProgress ->
+            fileRepo.uploadFile(bytes, "voice_${System.currentTimeMillis()}.wav", "audio/wav", onProgress)
+        }
+        val optimisticMsg = Message(
+            optimisticHeader("local_voice_"),
+            VoiceBody(url = result.path, duration = durationSeconds, size = bytes.size.toLong(), waveform = null),
+        )
+        return withOptimisticUpdate(optimisticMsg) {
+            chatRepo.sendVoiceMessage(channelId, channelType, result.path, durationSeconds, bytes.size.toLong())
+        }
+    }
+
+    // ── 消息操作 ──
 
     suspend fun revokeMessage(seq: Long): Boolean {
         return try {
@@ -346,7 +343,6 @@ class ChatViewModel(
     private val typingScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var typingJob: Job? = null
 
-    /** 收到 TYPING 包时调用，5 秒后自动清除 */
     fun onTypingReceived(channelId: String, senderUid: String, senderName: String? = null) {
         if (channelId != this.channelId) return
         if (senderUid == myUid) return
@@ -358,7 +354,6 @@ class ChatViewModel(
         }
     }
 
-    /** Called when a real-time message is received via TCP */
     fun onNewMessage(payload: Message) {
         if (payload.channelId == channelId) {
             val exists = _state.value.messages.any { it.messageId == payload.messageId }
@@ -370,7 +365,6 @@ class ChatViewModel(
         }
     }
 
-    /** Download a file message's payload and save to disk. */
     suspend fun downloadFile(msg: Message): Boolean {
         val fileBody = msg.body as? FileBody ?: return false
         return try {
@@ -382,93 +376,57 @@ class ChatViewModel(
         }
     }
 
-    // ── 录音功能 ──
-    private val voiceRecorder = VoiceRecorder()
-    private var recordingDurationJob: Job? = null
+    // ── 录音 ──
 
     fun startRecording() {
-        voiceRecorder.start()
-        recordingDurationJob = recordingScope.launch {
-            while (true) {
-                delay(1000)
-                val current = _state.value.recordingDuration + 1
-                _state.value = _state.value.copy(recordingDuration = current)
-                // 60 seconds auto stop and send
-                if (current >= 60) {
-                    stopAndSendRecording()
-                    break
-                }
+        recordingController.start { controller ->
+            val result = controller.stop()
+            if (result != null) {
+                scope.launch { sendVoiceMessage(result.bytes, result.durationSeconds) }
             }
         }
-        // Observe recording state
-        recordingScope.launch {
-            voiceRecorder.state.collect { rs ->
-                _state.value = _state.value.copy(
-                    isRecording = rs == RecordingState.RECORDING,
-                )
-            }
-        }
-        recordingScope.launch {
-            voiceRecorder.amplitude.collect { amp ->
-                _state.value = _state.value.copy(recordingAmplitude = amp)
-            }
-        }
+        observeRecordingState()
     }
 
-    private val recordingScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-
     fun stopAndSendRecording() {
-        recordingDurationJob?.cancel()
-        recordingDurationJob = null
-        val duration = _state.value.recordingDuration
-        _state.value = _state.value.copy(
-            isRecording = false,
-            recordingDuration = 0,
-            recordingAmplitude = 0f,
-        )
-        val result = voiceRecorder.stop()
+        val result = recordingController.stop()
         if (result != null) {
-            recordingScope.launch {
-                sendVoiceMessage(result.bytes, result.durationSeconds)
-            }
+            scope.launch { sendVoiceMessage(result.bytes, result.durationSeconds) }
         }
     }
 
     fun cancelRecording() {
-        recordingDurationJob?.cancel()
-        recordingDurationJob = null
-        voiceRecorder.cancel()
-        _state.value = _state.value.copy(
-            isRecording = false,
-            recordingDuration = 0,
-            recordingAmplitude = 0f,
-        )
+        recordingController.cancel()
     }
 
-    suspend fun sendVoiceMessage(bytes: ByteArray, durationSeconds: Int): Boolean {
-        _state.value = _state.value.copy(uploadProgress = 0f)
-        val result = try {
-            fileRepo.uploadFile(bytes, "voice_${System.currentTimeMillis()}.wav", "audio/wav") { progress ->
-                _state.value = _state.value.copy(uploadProgress = progress)
+    private fun observeRecordingState() {
+        scope.launch {
+            recordingController.state.collect { info ->
+                _state.value = _state.value.copy(
+                    isRecording = info.isRecording,
+                    recordingDuration = info.duration,
+                    recordingAmplitude = info.amplitude,
+                )
             }
-        } catch (e: Exception) {
-            _state.value = _state.value.copy(uploadProgress = null)
-            throw e
-        } finally {
-            _state.value = _state.value.copy(uploadProgress = null)
-        }
-        val optimisticMsg = Message(
-            optimisticHeader("local_voice_"),
-            VoiceBody(url = result.path, duration = durationSeconds, size = bytes.size.toLong(), waveform = null),
-        )
-        return withOptimisticUpdate(optimisticMsg) {
-            chatRepo.sendVoiceMessage(channelId, channelType, result.path, durationSeconds, bytes.size.toLong())
         }
     }
 
     override fun cleanup() {
         typingScope.cancel()
-        recordingScope.cancel()
+        recordingController.destroy()
         super.cleanup()
+    }
+}
+
+private fun videoContentType(fileName: String): String {
+    val ext = fileName.substringAfterLast('.', "mp4").lowercase()
+    return when (ext) {
+        "avi" -> "video/avi"
+        "mkv" -> "video/x-matroska"
+        "mov" -> "video/quicktime"
+        "webm" -> "video/webm"
+        "wmv" -> "video/x-ms-wmv"
+        "flv" -> "video/x-flv"
+        else -> "video/mp4"
     }
 }

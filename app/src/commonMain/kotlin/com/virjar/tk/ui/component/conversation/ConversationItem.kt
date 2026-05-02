@@ -21,6 +21,7 @@ import com.virjar.tk.ui.component.Avatar
 import com.virjar.tk.ui.component.OnlineIndicator
 import com.virjar.tk.ui.component.buildAvatarUrl
 import com.virjar.tk.util.formatRelativeTime
+import com.virjar.tk.ui.theme.extendedColors
 
 @Composable
 fun ConversationItemWithMenu(
@@ -136,7 +137,7 @@ fun ConversationItem(
                     color = if (conv.draft.isNotEmpty())
                         MaterialTheme.colorScheme.error
                     else
-                        Color(0xFF999999),
+                        MaterialTheme.extendedColors.mutedIcon,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),

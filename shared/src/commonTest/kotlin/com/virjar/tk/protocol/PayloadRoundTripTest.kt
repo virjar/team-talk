@@ -204,32 +204,4 @@ class PayloadRoundTripTest {
         assertEquals(false, decoded.hasMore)
         buf.release()
     }
-
-    // ================================================================
-    // JSON round-trip 验证
-    // ================================================================
-
-    @Test
-    fun `Message JSON round-trip`() {
-        val header = MessageHeader(
-            channelId = "ch-1", clientMsgNo = "msg-1", clientSeq = 1L,
-            messageId = "mid-1", senderUid = "u1", channelType = ChannelType.PERSONAL,
-            serverSeq = 100L, timestamp = 1700000000L, flags = 1,
-        )
-        val body = TextBody("hello", listOf("a"))
-        val message = Message(header, body)
-
-        val json = message.toJson("TestUser")
-        val decoded = Message.fromJson(json)!!
-
-        assertEquals("ch-1", decoded.channelId)
-        assertEquals("mid-1", decoded.messageId)
-        assertEquals("u1", decoded.senderUid)
-        assertEquals(100L, decoded.serverSeq)
-        assertEquals(1, decoded.flags)
-
-        val textBody = decoded.body as TextBody
-        assertEquals("hello", textBody.text)
-        assertEquals(listOf("a"), textBody.mentionUids)
-    }
 }

@@ -4,7 +4,6 @@ import com.virjar.tk.dto.*
 import com.virjar.tk.service.*
 import io.ktor.http.*
 import io.ktor.server.auth.*
-import io.ktor.server.auth.jwt.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -31,7 +30,7 @@ fun Routing.authRoutes(userService: UserService, tokenService: TokenService) {
 
         authenticate("auth-jwt") {
             delete("/logout") {
-                val uid = call.principal<JWTPrincipal>()!!.payload.subject
+                val uid = call.requireUid()
                 val body = runCatching { call.receive<RefreshRequest>() }.getOrNull()
                 userService.logout(uid, body?.refreshToken)
                 call.respond(HttpStatusCode.NoContent)
@@ -42,13 +41,13 @@ fun Routing.authRoutes(userService: UserService, tokenService: TokenService) {
     route("/api/v1/users") {
         authenticate("auth-jwt") {
             get("/me") {
-                val uid = call.principal<JWTPrincipal>()!!.payload.subject
+                val uid = call.requireUid()
                 val user = userService.getUser(uid)
                 call.respond(user)
             }
 
             put("/me") {
-                val uid = call.principal<JWTPrincipal>()!!.payload.subject
+                val uid = call.requireUid()
                 val req = call.receive<UpdateProfileRequest>()
                 val user = userService.updateUser(uid, req.name, req.avatar, req.sex)
                 call.respond(user)

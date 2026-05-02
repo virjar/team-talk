@@ -3,14 +3,11 @@ package com.virjar.tk.database
 import com.virjar.tk.protocol.ChannelType
 import com.virjar.tk.dto.*
 import com.virjar.tk.protocol.PacketType
-import com.virjar.tk.protocol.payload.Message
-import com.virjar.tk.protocol.payload.MessageHeader
+import com.virjar.tk.protocol.payload.*
+import io.netty.buffer.ByteBuf
+import io.netty.buffer.Unpooled
 import kotlinx.serialization.json.*
 
-/**
- * 本地缓存封装层：隐藏 SQLDelight 生成的类型，对外暴露 Payload/DTO 类型。
- * 所有读写操作都是同步的（SQLDelight 的 blocking API），由调用方在协程中调度。
- */
 class LocalCache(private val queries: DatabaseQueries) {
 
     // ── Messages ──
@@ -34,9 +31,8 @@ class LocalCache(private val queries: DatabaseQueries) {
         return queries.selectMaxSeq(channelId).executeAsOneOrNull()?.MAX ?: 0L
     }
 
-    /** 从 Message 对象插入消息 */
     fun insertMessage(msg: Message) {
-        val bodyJson = Json.encodeToString(msg.body.toJson())
+        val bodyBytes = bodyToBytes(msg.body)
         queries.insertMessage(
             channel_id = msg.channelId,
             seq = msg.serverSeq,
@@ -44,7 +40,7 @@ class LocalCache(private val queries: DatabaseQueries) {
             sender_uid = msg.senderUid ?: "",
             sender_name = "",
             packet_type = msg.packetType.code.toLong(),
-            body = bodyJson,
+            body = bodyBytes,
             flags = msg.flags.toLong(),
             created_at = msg.timestamp,
         )
@@ -62,13 +58,9 @@ class LocalCache(private val queries: DatabaseQueries) {
         queries.markLocalDeleted(messageId)
     }
 
-    fun updateMessagePayload(messageId: String, newPayload: String) {
-        // newPayload 是纯文本内容（编辑场景），构造新的 body JSON（不含 flags）
-        val bodyJson = buildJsonObject {
-            put("text", newPayload)
-            put("mentionUids", JsonArray(emptyList()))
-        }.toString()
-        queries.updateMessagePayload(bodyJson, messageId)
+    fun updateMessagePayload(messageId: String, newText: String) {
+        val newBody = TextBody(newText, emptyList())
+        queries.updateMessagePayload(bodyToBytes(newBody), messageId)
     }
 
     // ── Conversations ──
@@ -205,11 +197,7 @@ class LocalCache(private val queries: DatabaseQueries) {
 
     private fun Messages.toMessage(): Message? {
         val packetType = PacketType.fromCode(packet_type.toInt().toByte()) ?: return null
-        val bodyJson = try {
-            Json.parseToJsonElement(body).jsonObject
-        } catch (_: Exception) {
-            return null
-        }
+        val bodyBytes = body
         val header = MessageHeader(
             channelId = channel_id,
             clientMsgNo = "",
@@ -221,7 +209,7 @@ class LocalCache(private val queries: DatabaseQueries) {
             timestamp = created_at,
             flags = flags.toInt(),
         )
-        val body = Message.bodyFromJson(packetType, bodyJson) ?: return null
+        val body = bytesToBody(bodyBytes, packetType) ?: return null
         return Message(header, body)
     }
 
@@ -267,5 +255,29 @@ class LocalCache(private val queries: DatabaseQueries) {
             is_blacklisted = 0L,
             updated_at = System.currentTimeMillis(),
         )
+    }
+
+    companion object {
+        fun bodyToBytes(body: MessageBody): ByteArray {
+            val buf: ByteBuf = Unpooled.buffer()
+            try {
+                body.writeTo(buf)
+                val bytes = ByteArray(buf.readableBytes())
+                buf.readBytes(bytes)
+                return bytes
+            } finally {
+                buf.release()
+            }
+        }
+
+        fun bytesToBody(bytes: ByteArray, packetType: PacketType): MessageBody? {
+            val creator = PacketType.bodyCreatorFor<MessageBody>(packetType) ?: return null
+            val buf: ByteBuf = Unpooled.wrappedBuffer(bytes)
+            try {
+                return creator.create(buf)
+            } finally {
+                buf.release()
+            }
+        }
     }
 }
