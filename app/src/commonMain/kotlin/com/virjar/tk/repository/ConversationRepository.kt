@@ -21,7 +21,7 @@ class ConversationRepository(private val ctx: UserContext) {
     }
 
     /**
-     * 先网络后缓存策略：HTTP 获取后写入 localCache，返回服务端结果。
+     * 网络同步后从 DB 重读，确保 UI 始终看到一致的 DB 数据（格式、排序统一）。
      * 网络失败时回退到本地缓存。
      */
     suspend fun syncConversations(version: Long = 0): List<ConversationDto> {
@@ -29,12 +29,10 @@ class ConversationRepository(private val ctx: UserContext) {
             val conversations = ctx.httpClient.get("${ctx.baseUrl}/api/v1/conversations/sync?version=$version") {
                 header("Authorization", ctx.authHeader())
             }.body<List<ConversationDto>>()
-            // 写入本地 DB
             withContext(Dispatchers.IO) { localCache.insertConversations(conversations) }
-            conversations
+            withContext(Dispatchers.IO) { localCache.getAllConversations() }
         } catch (e: Exception) {
             AppLog.e("ConvRepo", "syncConversations failed", e)
-            // 网络失败时，返回本地缓存
             val local = withContext(Dispatchers.IO) { localCache.getAllConversations() }
             if (local.isNotEmpty()) local else throw e
         }

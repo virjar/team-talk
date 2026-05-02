@@ -21,7 +21,7 @@ class ContactRepository(private val ctx: UserContext) {
     }
 
     /**
-     * 先网络后缓存策略：HTTP 获取后写入 localCache，返回服务端结果。
+     * 网络同步后从 DB 重读，确保 UI 始终看到一致的 DB 数据（格式、排序统一）。
      * 网络失败时回退到本地缓存。
      */
     suspend fun getFriends(): List<FriendDto> {
@@ -30,7 +30,7 @@ class ContactRepository(private val ctx: UserContext) {
                 header("Authorization", ctx.authHeader())
             }.body<List<FriendDto>>()
             withContext(Dispatchers.IO) { localCache.insertContacts(friends) }
-            friends
+            withContext(Dispatchers.IO) { localCache.getAllContacts() }
         } catch (e: Exception) {
             AppLog.e("ContactRepo", "getFriends failed", e)
             val local = withContext(Dispatchers.IO) { localCache.getAllContacts() }

@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.*
 
 data class HistoryLoadResult(val hasMore: Boolean)
+data class SendResult(val messageId: String, val serverSeq: Long)
 
 class UserContext(
     val token: String,
@@ -184,7 +185,7 @@ class UserContext(
     override fun onSendAck(clientMsgNo: String, messageId: String, serverSeq: Long) {
         AppLog.i("UserContext", "SENDACK: clientMsgNo=$clientMsgNo messageId=$messageId serverSeq=$serverSeq")
         synchronized(sendAckWaiters) {
-            sendAckWaiters.remove(clientMsgNo)?.complete(messageId)
+            sendAckWaiters.remove(clientMsgNo)?.complete(SendResult(messageId, serverSeq))
         }
     }
 
@@ -263,16 +264,16 @@ class UserContext(
 
     // ── 消息发送 ──
 
-    private val sendAckWaiters = mutableMapOf<String, CompletableDeferred<String>>()
+    private val sendAckWaiters = mutableMapOf<String, CompletableDeferred<SendResult>>()
     private val historyLoadWaiters = mutableMapOf<String, CompletableDeferred<HistoryLoadResult>>()
 
     /** 发送文本消息 */
-    suspend fun sendMessage(channelId: String, channelType: ChannelType, text: String): String {
+    suspend fun sendMessage(channelId: String, channelType: ChannelType, text: String): SendResult {
         return enqueueAndWaitAck(channelId, channelType, TextBody(text, emptyList()))
     }
 
     /** 发送任意类型的消息 */
-    suspend fun sendMessage(channelId: String, channelType: ChannelType, body: MessageBody): String {
+    suspend fun sendMessage(channelId: String, channelType: ChannelType, body: MessageBody): SendResult {
         return enqueueAndWaitAck(channelId, channelType, body)
     }
 
@@ -280,9 +281,9 @@ class UserContext(
         channelId: String,
         channelType: ChannelType,
         body: MessageBody,
-    ): String {
+    ): SendResult {
         val im = imClient ?: throw RuntimeException("IM not connected")
-        val deferred = CompletableDeferred<String>()
+        val deferred = CompletableDeferred<SendResult>()
 
         val clientMsgNo = im.enqueueMessage(channelId, channelType, body)
 

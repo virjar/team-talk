@@ -1,6 +1,7 @@
 package com.virjar.tk.viewmodel
 
 import com.virjar.tk.protocol.ChannelType
+import com.virjar.tk.client.SendResult
 import com.virjar.tk.client.UserContext
 import com.virjar.tk.protocol.PacketType
 import com.virjar.tk.protocol.payload.*
@@ -107,7 +108,7 @@ class ChatViewModel(
     private suspend fun withOptimisticUpdate(
         optimisticMsg: Message,
         clearInput: Boolean = false,
-        action: suspend () -> Unit,
+        action: suspend () -> SendResult,
     ): Boolean {
         _state.value = _state.value.copy(
             messages = _state.value.messages + optimisticMsg,
@@ -115,13 +116,20 @@ class ChatViewModel(
             inputText = if (clearInput) "" else _state.value.inputText,
         )
         return try {
-            action()
-            _state.value = _state.value.copy(isSending = false)
+            val result = action()
+            val updatedMessages = _state.value.messages.map { msg ->
+                if (msg.clientMsgNo == optimisticMsg.clientMsgNo) {
+                    Message(msg.header.copy(serverSeq = result.serverSeq, messageId = result.messageId), msg.body)
+                } else msg
+            }
+            val confirmedMsg = updatedMessages.first { it.clientMsgNo == optimisticMsg.clientMsgNo }
+            try { ctx.localCache.insertMessage(confirmedMsg) } catch (_: Exception) {}
+            _state.value = _state.value.copy(messages = updatedMessages, isSending = false)
             true
         } catch (e: Exception) {
             AppLog.e("ChatVM", "[OptUpdate] FAILED: channelId=$channelId error=${e.message}", e)
             _state.value = _state.value.copy(
-                messages = _state.value.messages.filter { it.messageId != optimisticMsg.messageId },
+                messages = _state.value.messages.filter { it.clientMsgNo != optimisticMsg.clientMsgNo },
                 isSending = false,
                 error = e.toUserMessage(),
             )

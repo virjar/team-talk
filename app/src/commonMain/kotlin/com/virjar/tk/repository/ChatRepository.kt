@@ -1,5 +1,6 @@
 package com.virjar.tk.repository
 
+import com.virjar.tk.client.SendResult
 import com.virjar.tk.client.UserContext
 import com.virjar.tk.database.LocalCache
 import com.virjar.tk.dto.MessageSearchResponse
@@ -30,11 +31,11 @@ class ChatRepository(private val ctx: UserContext) {
     }
 
     /** Send text message via TCP, returns server-assigned messageId */
-    suspend fun sendTextMessage(channelId: String, channelType: ChannelType, text: String): String =
+    suspend fun sendTextMessage(channelId: String, channelType: ChannelType, text: String): SendResult =
         ctx.sendMessage(channelId, channelType, text)
 
     /** Send image message via TCP, returns server-assigned messageId */
-    suspend fun sendImageMessage(channelId: String, channelType: ChannelType, url: String, width: Int, height: Int, size: Long): String {
+    suspend fun sendImageMessage(channelId: String, channelType: ChannelType, url: String, width: Int, height: Int, size: Long): SendResult {
         return ctx.sendMessage(channelId, channelType, ImageBody(url, width, height, size, null, null))
     }
 
@@ -47,7 +48,7 @@ class ChatRepository(private val ctx: UserContext) {
         replyToSenderUid: String,
         replyToSenderName: String,
         replyToMessageType: Int,
-    ): String {
+    ): SendResult {
         val body = ReplyBody(
             replyToMessageId, replyToSenderUid, replyToSenderName,
             replyToMessageType.toByte(), text, emptyList())
@@ -55,12 +56,12 @@ class ChatRepository(private val ctx: UserContext) {
     }
 
     /** Send file message via TCP */
-    suspend fun sendFileMessage(channelId: String, channelType: ChannelType, url: String, fileName: String, fileSize: Long): String {
+    suspend fun sendFileMessage(channelId: String, channelType: ChannelType, url: String, fileName: String, fileSize: Long): SendResult {
         return ctx.sendMessage(channelId, channelType, FileBody(url, fileName, fileSize, null, null))
     }
 
     /** Send video message via TCP */
-    suspend fun sendVideoMessage(channelId: String, channelType: ChannelType, url: String, width: Int, height: Int, size: Long, duration: Int, coverUrl: String): String {
+    suspend fun sendVideoMessage(channelId: String, channelType: ChannelType, url: String, width: Int, height: Int, size: Long, duration: Int, coverUrl: String): SendResult {
         return ctx.sendMessage(channelId, channelType, VideoBody(url, width, height, size, duration, coverUrl))
     }
 
@@ -79,7 +80,7 @@ class ChatRepository(private val ctx: UserContext) {
     }
 
     /** Send voice message via TCP */
-    suspend fun sendVoiceMessage(channelId: String, channelType: ChannelType, url: String, duration: Int, size: Long): String {
+    suspend fun sendVoiceMessage(channelId: String, channelType: ChannelType, url: String, duration: Int, size: Long): SendResult {
         return ctx.sendMessage(channelId, channelType, VoiceBody(url, duration, size, null))
     }
 
@@ -93,7 +94,7 @@ class ChatRepository(private val ctx: UserContext) {
         forwardFromSenderName: String?,
         forwardPacketType: Byte,
         forwardPayload: String?,
-    ): String {
+    ): SendResult {
         val body = ForwardBody(forwardFromChannelId, forwardFromMessageId, forwardFromSenderUid,
             forwardFromSenderName, forwardPacketType, forwardPayload)
         return ctx.sendMessage(channelId, channelType, body)
