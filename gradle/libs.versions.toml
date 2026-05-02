@@ -1,0 +1,104 @@
+[versions]
+kotlin = "2.3.20"
+compose = "1.10.0"
+agp = "8.9.2"
+ktor = "3.4.3"
+exposed = "0.61.0"
+kotlinx-serialization = "1.8.1"
+kotlinx-coroutines = "1.10.2"
+sqldelight = "2.3.2"
+rocksdb = "9.10.0"
+logback = "1.5.18"
+jna = "5.15.0"
+lucene = "9.12.0"
+netty = "4.1.119.Final"
+slf4j = "2.0.16"
+postgresql = "42.7.5"
+hikaricp = "6.3.0"
+jbcrypt = "0.4"
+java-jwt = "0.12.6"
+ik-analyzer = "9.0.0"
+nucleus = "1.6.3"
+composenativetray = "1.1.0"
+activity-compose = "1.10.1"
+compose-media-player = "0.8.7"
+
+[libraries]
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
+kotlinx-coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "kotlinx-coroutines" }
+netty-handler = { module = "io.netty:netty-handler", version.ref = "netty" }
+netty-transport = { module = "io.netty:netty-transport", version.ref = "netty" }
+netty-buffer = { module = "io.netty:netty-buffer", version.ref = "netty" }
+slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+
+# Ktor Server
+ktor-server-core = { module = "io.ktor:ktor-server-core-jvm", version.ref = "ktor" }
+ktor-server-netty = { module = "io.ktor:ktor-server-netty-jvm", version.ref = "ktor" }
+ktor-server-content-negotiation = { module = "io.ktor:ktor-server-content-negotiation-jvm", version.ref = "ktor" }
+ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json-jvm", version.ref = "ktor" }
+ktor-server-call-logging = { module = "io.ktor:ktor-server-call-logging-jvm", version.ref = "ktor" }
+ktor-server-status-pages = { module = "io.ktor:ktor-server-status-pages-jvm", version.ref = "ktor" }
+ktor-server-auth = { module = "io.ktor:ktor-server-auth-jvm", version.ref = "ktor" }
+ktor-server-auth-jwt = { module = "io.ktor:ktor-server-auth-jwt-jvm", version.ref = "ktor" }
+ktor-server-cors = { module = "io.ktor:ktor-server-cors-jvm", version.ref = "ktor" }
+
+# Ktor Client
+ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
+ktor-client-java = { module = "io.ktor:ktor-client-java", version.ref = "ktor" }
+ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
+
+# Exposed
+exposed-core = { module = "org.jetbrains.exposed:exposed-core", version.ref = "exposed" }
+exposed-dao = { module = "org.jetbrains.exposed:exposed-dao", version.ref = "exposed" }
+exposed-jdbc = { module = "org.jetbrains.exposed:exposed-jdbc", version.ref = "exposed" }
+
+# Database
+postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
+hikaricp = { module = "com.zaxxer:HikariCP", version.ref = "hikaricp" }
+rocksdb = { module = "org.rocksdb:rocksdbjni", version.ref = "rocksdb" }
+
+# Auth
+jbcrypt = { module = "org.mindrot:jbcrypt", version.ref = "jbcrypt" }
+java-jwt = { module = "com.auth0:java-jwt", version.ref = "java-jwt" }
+
+# Lucene
+lucene-core = { module = "org.apache.lucene:lucene-core", version.ref = "lucene" }
+lucene-queryparser = { module = "org.apache.lucene:lucene-queryparser", version.ref = "lucene" }
+lucene-highlighter = { module = "org.apache.lucene:lucene-highlighter", version.ref = "lucene" }
+ik-analyzer = { module = "cn.shenyanchao.ik-analyzer:ik-analyzer", version.ref = "ik-analyzer" }
+
+# SQLDelight
+sqldelight-coroutines = { module = "app.cash.sqldelight:coroutines-extensions", version.ref = "sqldelight" }
+sqldelight-sqlite-driver = { module = "app.cash.sqldelight:sqlite-driver", version.ref = "sqldelight" }
+sqldelight-android-driver = { module = "app.cash.sqldelight:android-driver", version.ref = "sqldelight" }
+
+# Desktop UI
+nucleus-decorated-window-jni = { module = "io.github.kdroidfilter:nucleus.decorated-window-jni", version.ref = "nucleus" }
+nucleus-decorated-window-material3 = { module = "io.github.kdroidfilter:nucleus.decorated-window-material3", version.ref = "nucleus" }
+nucleus-core-runtime = { module = "io.github.kdroidfilter:nucleus.core-runtime", version.ref = "nucleus" }
+composenativetray = { module = "io.github.kdroidfilter:composenativetray", version.ref = "composenativetray" }
+jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
+compose-media-player = { module = "io.github.kdroidfilter:composemediaplayer", version.ref = "compose-media-player" }
+activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
+
+[bundles]
+ktor-server = ["ktor-server-core", "ktor-server-netty", "ktor-server-content-negotiation", "ktor-serialization-kotlinx-json", "ktor-server-call-logging", "ktor-server-status-pages", "ktor-server-auth", "ktor-server-auth-jwt", "ktor-server-cors"]
+ktor-client = ["ktor-client-core", "ktor-client-content-negotiation"]
+netty = ["netty-handler", "netty-transport", "netty-buffer"]
+exposed = ["exposed-core", "exposed-dao", "exposed-jdbc"]
+lucene = ["lucene-core", "lucene-queryparser", "lucene-highlighter"]
+nucleus = ["nucleus-decorated-window-jni", "nucleus-decorated-window-material3", "nucleus-core-runtime"]
+
+[plugins]
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+compose = { id = "org.jetbrains.compose", version.ref = "compose" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+sqldelight = { id = "app.cash.sqldelight", version.ref = "sqldelight" }

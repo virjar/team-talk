@@ -3,6 +3,7 @@ package com.virjar.tk.keepawake
 import com.sun.jna.Native
 import com.sun.jna.win32.StdCallLibrary
 import com.virjar.tk.util.AppLog
+import com.virjar.tk.util.DesktopPlatform
 
 /**
  * Prevents OS power management from throttling or suspending the app,
@@ -13,13 +14,10 @@ interface KeepAwake {
     fun allowSleep()
 }
 
-fun createKeepAwake(): KeepAwake {
-    val os = System.getProperty("os.name").lowercase()
-    return when {
-        os.contains("mac") -> MacKeepAwake()
-        os.contains("win") -> WindowsKeepAwake()
-        else -> NoOpKeepAwake()
-    }
+fun createKeepAwake(): KeepAwake = when (DesktopPlatform.current) {
+    DesktopPlatform.MACOS -> MacKeepAwake()
+    DesktopPlatform.WINDOWS -> WindowsKeepAwake()
+    else -> NoOpKeepAwake()
 }
 
 /**

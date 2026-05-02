@@ -2,18 +2,13 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 
 plugins {
-    kotlin("multiplatform")
-    kotlin("plugin.serialization")
-    id("com.android.library")
-    id("org.jetbrains.compose")
-    id("org.jetbrains.kotlin.plugin.compose")
-    id("app.cash.sqldelight")
+    alias(libs.plugins.kotlin.multiplatform)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.android.library)
+    alias(libs.plugins.compose)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.sqldelight)
 }
-
-val composeVersion: String by rootProject.extra
-val kotlinxSerializationVersion: String by rootProject.extra
-val kotlinxCoroutinesVersion: String by rootProject.extra
-val sqldelightVersion: String by rootProject.extra
 
 // --- Profile 全量数据（多渠道构建） ---
 val allProfiles: Map<String, Map<String, String>> by rootProject.extra
@@ -66,38 +61,36 @@ kotlin {
             implementation(compose.materialIconsExtended)
             implementation(compose.ui)
             implementation(compose.components.resources)
-            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:$kotlinxSerializationVersion")
-            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$kotlinxCoroutinesVersion")
-            implementation("io.ktor:ktor-client-core:3.4.3")
-            implementation("io.ktor:ktor-client-content-negotiation:3.4.3")
-            implementation("io.ktor:ktor-serialization-kotlinx-json:3.4.3")
-            implementation("io.netty:netty-handler:4.1.119.Final")
-            implementation("io.netty:netty-transport:4.1.119.Final")
-            implementation("io.netty:netty-buffer:4.1.119.Final")
-            implementation("io.github.kdroidfilter:composemediaplayer:0.8.7")
-            implementation("app.cash.sqldelight:coroutines-extensions:$sqldelightVersion")
+            implementation(libs.kotlinx.serialization.json)
+            implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.ktor.client.core)
+            implementation(libs.ktor.client.content.negotiation)
+            implementation(libs.ktor.serialization.kotlinx.json)
+            implementation(libs.bundles.netty)
+            implementation(libs.compose.media.player)
+            implementation(libs.sqldelight.coroutines)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
         }
         val desktopTest by getting {
             dependencies {
-                implementation("app.cash.sqldelight:sqlite-driver:$sqldelightVersion")
+                implementation(libs.sqldelight.sqlite.driver)
             }
         }
         val desktopMain by getting {
             dependencies {
                 implementation(compose.preview)
-                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:$kotlinxCoroutinesVersion")
-                implementation("io.ktor:ktor-client-java:3.4.3")
-                implementation("app.cash.sqldelight:sqlite-driver:$sqldelightVersion")
+                implementation(libs.kotlinx.coroutines.swing)
+                implementation(libs.ktor.client.java)
+                implementation(libs.sqldelight.sqlite.driver)
             }
         }
         val androidMain by getting {
             dependencies {
-                implementation("io.ktor:ktor-client-okhttp:3.4.3")
-                implementation("app.cash.sqldelight:android-driver:$sqldelightVersion")
-                implementation("androidx.activity:activity-compose:1.10.1")
+                implementation(libs.ktor.client.okhttp)
+                implementation(libs.sqldelight.android.driver)
+                implementation(libs.activity.compose)
             }
         }
     }

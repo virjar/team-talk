@@ -1,6 +1,7 @@
 package com.virjar.tk.tray
 
 import com.virjar.tk.util.AppLog
+import com.virjar.tk.util.DesktopPlatform
 import java.awt.Toolkit
 
 class DesktopNotificationManager {
@@ -44,9 +45,8 @@ class DesktopNotificationManager {
     }
 
     private fun showNotification(title: String, body: String) {
-        val osName = System.getProperty("os.name").lowercase()
-        when {
-            osName.contains("linux") -> showLinuxNotification(title, body)
+        when (DesktopPlatform.current) {
+            DesktopPlatform.LINUX -> showLinuxNotification(title, body)
             else -> showFallbackNotification()
         }
     }

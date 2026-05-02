@@ -1,16 +1,15 @@
 import java.util.Properties
 
 plugins {
-    id("com.android.application")
-    kotlin("android")
-    kotlin("plugin.serialization")
-    id("org.jetbrains.kotlin.plugin.compose")
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.kotlin.compose)
 }
 
 val androidMinSdk: Int by rootProject.extra
 val androidTargetSdk: Int by rootProject.extra
 val androidCompileSdk: Int by rootProject.extra
-val kotlinxSerializationVersion: String by rootProject.extra
 
 android {
     namespace = "com.virjar.tk"
@@ -107,10 +106,10 @@ android {
 dependencies {
     implementation(project(":shared"))
     implementation(project(":app"))
-    implementation("androidx.activity:activity-compose:1.10.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:$kotlinxSerializationVersion")
+    implementation(libs.activity.compose)
+    implementation(libs.kotlinx.serialization.json)
 
-    // Compose — versions resolved via :app transitive dependencies (Compose Multiplatform 1.10.0)
+    // Compose — versions resolved via :app transitive dependencies (Compose Multiplatform)
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material:material-icons-extended")

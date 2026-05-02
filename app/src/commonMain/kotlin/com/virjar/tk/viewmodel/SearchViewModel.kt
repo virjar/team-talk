@@ -20,7 +20,7 @@ data class MessageSearchState(
     val endTimestamp: Long? = null,
 )
 
-class SearchViewModel(private val ctx: UserContext) {
+class SearchViewModel(private val ctx: UserContext) : BaseViewModel() {
     private val chatRepo = ctx.chatRepo
 
     private val _state = MutableStateFlow(MessageSearchState())

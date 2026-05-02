@@ -1,11 +1,8 @@
 plugins {
-    kotlin("multiplatform")
-    kotlin("plugin.serialization")
-    id("com.android.library")
+    alias(libs.plugins.kotlin.multiplatform)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.android.library)
 }
-
-val kotlinxSerializationVersion: String by rootProject.extra
-val kotlinxCoroutinesVersion: String by rootProject.extra
 
 kotlin {
     jvm()
@@ -13,10 +10,10 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:$kotlinxSerializationVersion")
-            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$kotlinxCoroutinesVersion")
-            implementation("io.netty:netty-handler:4.1.119.Final")
-            implementation("org.slf4j:slf4j-api:2.0.16")
+            implementation(libs.kotlinx.serialization.json)
+            implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.netty.handler)
+            implementation(libs.slf4j.api)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))

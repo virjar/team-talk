@@ -31,7 +31,7 @@ data class FriendAppliesState(
 
 class ContactsViewModel(
     private val ctx: UserContext,
-) {
+) : BaseViewModel() {
     private val contactRepo = ctx.contactRepo
     private val userRepo = ctx.userRepo
 

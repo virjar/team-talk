@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -46,7 +47,7 @@ class ChatViewModel(
     private val channelType: ChannelType,
     initialReadSeq: Long = 0,
     initialScrollToSeq: Long = 0,
-) {
+) : BaseViewModel() {
     private val chatRepo = ctx.chatRepo
     private val fileRepo = ctx.fileRepo
     private val myUid = ctx.uid
@@ -455,5 +456,11 @@ class ChatViewModel(
         return withOptimisticUpdate(optimisticMsg) {
             chatRepo.sendVoiceMessage(channelId, channelType, result.path, durationSeconds, bytes.size.toLong())
         }
+    }
+
+    override fun cleanup() {
+        typingScope.cancel()
+        recordingScope.cancel()
+        super.cleanup()
     }
 }

@@ -4,9 +4,6 @@ import com.virjar.tk.protocol.ChannelType
 import com.virjar.tk.client.UserContext
 import com.virjar.tk.dto.ConversationDto
 import com.virjar.tk.util.AppLog
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,12 +21,11 @@ data class ConversationListState(
 
 class ConversationViewModel(
     private val ctx: UserContext,
-) {
+) : BaseViewModel() {
     private val conversationRepo = ctx.conversationRepo
     private val userRepo = ctx.userRepo
     private val channelRepo = ctx.channelRepo
     private val myUid = ctx.uid
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val _state = MutableStateFlow(ConversationListState())
     val state: StateFlow<ConversationListState> = _state.asStateFlow()

@@ -1,28 +1,16 @@
 plugins {
-    kotlin("multiplatform") version "2.3.20" apply false
-    kotlin("jvm") version "2.3.20" apply false
-    kotlin("plugin.serialization") version "2.3.20" apply false
-    id("org.jetbrains.kotlin.android") version "2.3.20" apply false
-    id("org.jetbrains.compose") version "1.10.0" apply false
-    id("org.jetbrains.kotlin.plugin.compose") version "2.3.20" apply false
-    id("com.android.application") version "8.9.2" apply false
-    id("com.android.library") version "8.9.2" apply false
-    id("app.cash.sqldelight") version "2.3.2" apply false
+    alias(libs.plugins.kotlin.multiplatform) apply false
+    alias(libs.plugins.kotlin.jvm) apply false
+    alias(libs.plugins.kotlin.serialization) apply false
+    alias(libs.plugins.kotlin.android) apply false
+    alias(libs.plugins.compose) apply false
+    alias(libs.plugins.kotlin.compose) apply false
+    alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.android.library) apply false
+    alias(libs.plugins.sqldelight) apply false
 }
 
 extra.apply {
-    set("kotlinVersion", "2.3.20")
-    set("composeVersion", "1.10.0")
-    set("agpVersion", "8.9.2")
-    set("ktorVersion", "3.4.3")
-    set("exposedVersion", "0.61.0")
-    set("kotlinxSerializationVersion", "1.8.1")
-    set("kotlinxCoroutinesVersion", "1.10.2")
-    set("sqldelightVersion", "2.3.2")
-    set("rocksdbVersion", "9.10.0")
-    set("logbackVersion", "1.5.18")
-    set("jnaVersion", "5.15.0")
-    set("luceneVersion", "9.12.0")
     set("androidMinSdk", 26)
     set("androidTargetSdk", 35)
     set("androidCompileSdk", 36)
@@ -86,7 +74,7 @@ subprojects {
     configurations.all {
         resolutionStrategy.eachDependency {
             if (requested.group == "org.jetbrains.kotlin") {
-                useVersion(rootProject.extra["kotlinVersion"] as String)
+                useVersion(libs.versions.kotlin.get())
             }
         }
     }

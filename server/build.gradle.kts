@@ -1,16 +1,8 @@
 plugins {
-    kotlin("jvm")
-    kotlin("plugin.serialization")
+    alias(libs.plugins.kotlin.jvm)
+    alias(libs.plugins.kotlin.serialization)
     application
 }
-
-val ktorVersion: String by rootProject.extra
-val exposedVersion: String by rootProject.extra
-val kotlinxSerializationVersion: String by rootProject.extra
-val kotlinxCoroutinesVersion: String by rootProject.extra
-val rocksdbVersion: String by rootProject.extra
-val logbackVersion: String by rootProject.extra
-val luceneVersion: String by rootProject.extra
 
 application {
     mainClass.set("com.virjar.tk.ApplicationKt")
@@ -43,47 +35,21 @@ tasks.register("buildServerDist") {
 dependencies {
     implementation(project(":shared"))
 
-    // Ktor
-    implementation("io.ktor:ktor-server-core-jvm:$ktorVersion")
-    implementation("io.ktor:ktor-server-netty-jvm:$ktorVersion")
-    implementation("io.ktor:ktor-server-content-negotiation-jvm:$ktorVersion")
-    implementation("io.ktor:ktor-serialization-kotlinx-json-jvm:$ktorVersion")
-    implementation("io.ktor:ktor-server-call-logging-jvm:$ktorVersion")
-    implementation("io.ktor:ktor-server-status-pages-jvm:$ktorVersion")
-    implementation("io.ktor:ktor-server-auth-jvm:$ktorVersion")
-    implementation("io.ktor:ktor-server-auth-jwt-jvm:$ktorVersion")
-    implementation("io.ktor:ktor-server-cors-jvm:$ktorVersion")
+    implementation(libs.bundles.ktor.server)
+    implementation(libs.bundles.exposed)
+    implementation(libs.postgresql)
+    implementation(libs.hikaricp)
+    implementation(libs.jbcrypt)
+    implementation(libs.java.jwt)
+    implementation(libs.rocksdb)
+    implementation(libs.bundles.lucene)
+    implementation(libs.ik.analyzer)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.logback.classic)
 
-    // Exposed + PostgreSQL
-    implementation("org.jetbrains.exposed:exposed-core:$exposedVersion")
-    implementation("org.jetbrains.exposed:exposed-dao:$exposedVersion")
-    implementation("org.jetbrains.exposed:exposed-jdbc:$exposedVersion")
-    implementation("org.postgresql:postgresql:42.7.5")
-    implementation("com.zaxxer:HikariCP:6.3.0")
-    implementation("org.mindrot:jbcrypt:0.4")
-    implementation("com.auth0:java-jwt:0.12.6")
-
-    // RocksDB
-    implementation("org.rocksdb:rocksdbjni:$rocksdbVersion")
-
-    // Lucene full-text search
-    implementation("org.apache.lucene:lucene-core:$luceneVersion")
-    implementation("org.apache.lucene:lucene-queryparser:$luceneVersion")
-    implementation("org.apache.lucene:lucene-highlighter:$luceneVersion")
-    implementation("cn.shenyanchao.ik-analyzer:ik-analyzer:9.0.0")
-
-    // Serialization
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:$kotlinxSerializationVersion")
-
-    // Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$kotlinxCoroutinesVersion")
-
-    // Logging
-    implementation("ch.qos.logback:logback-classic:$logbackVersion")
-
-    // Testing
     testImplementation(kotlin("test"))
-    testImplementation("io.ktor:ktor-server-test-host-jvm:$ktorVersion")
+    testImplementation("io.ktor:ktor-server-test-host-jvm:${libs.versions.ktor.get()}")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
 }
 
