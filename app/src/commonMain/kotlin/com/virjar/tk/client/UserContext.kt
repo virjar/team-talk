@@ -12,6 +12,8 @@ import com.virjar.tk.protocol.payload.TextBody
 import com.virjar.tk.repository.*
 import com.virjar.tk.storage.TokenStorage
 import com.virjar.tk.util.AppLog
+import com.virjar.tk.util.ImageCache
+import com.virjar.tk.util.resolveUserCacheDir
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.request.*
@@ -45,8 +47,11 @@ class UserContext(
     private var imClient: ImClient? = null
 
     // ── 本地数据库 ──
-    private val appDatabase = AppDatabase()
+    private val appDatabase = AppDatabase(uid)
     val localCache = LocalCache(appDatabase.queries)
+
+    // ── 用户级图片缓存 ──
+    val imageCache = ImageCache(resolveUserCacheDir(uid))
 
     // ── 消息监听器 ──
     private val messageListeners = mutableListOf<(Message) -> Unit>()

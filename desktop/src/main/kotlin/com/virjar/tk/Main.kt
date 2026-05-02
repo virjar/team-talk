@@ -32,7 +32,6 @@ import com.virjar.tk.ui.screen.LoginScreen
 import com.virjar.tk.ui.screen.RegisterScreen
 import com.virjar.tk.ui.theme.TeamTalkTheme
 import com.virjar.tk.util.AppLog
-import com.virjar.tk.util.ImageCache
 import io.github.kdroidfilter.nucleus.window.material.MaterialDecoratedWindow
 import io.github.kdroidfilter.nucleus.window.material.MaterialTitleBar
 import kotlinx.serialization.json.Json
@@ -131,9 +130,6 @@ fun main() {
     // 在 logback 初始化前设置数据目录系统属性，使日志写入对应数据目录
     val dataDir = resolveDataDir()
     System.setProperty("teamtalk.data.dir", dataDir.absolutePath)
-
-    // Initialize image cache
-    ImageCache.init(File(dataDir, "cache"))
 
     Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
         AppLog.e("Uncaught", "Uncaught exception in thread: ${thread.name}", throwable)

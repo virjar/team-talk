@@ -30,7 +30,7 @@ import com.virjar.tk.protocol.payload.FileBody
 import com.virjar.tk.protocol.payload.VideoBody
 import com.virjar.tk.protocol.payload.ReplyBody
 import com.virjar.tk.protocol.payload.Message
-import com.virjar.tk.util.ImageCache
+import com.virjar.tk.client.LocalUserContext
 import com.virjar.tk.util.buildFileUrl
 import com.virjar.tk.util.formatDuration
 import com.virjar.tk.util.formatFileSize
@@ -79,6 +79,7 @@ fun FileMessageContent(payload: FileBody, onDownload: (() -> Unit)? = null) {
 
 @Composable
 fun VideoMessageContent(payload: VideoBody, imageBaseUrl: String, onDownload: (() -> Unit)? = null, onPlay: (() -> Unit)? = null) {
+    val imageCache = LocalUserContext.current!!.imageCache
     Column(modifier = Modifier.width(220.dp)) {
         // Thumbnail area with play button overlay
         Box(
@@ -96,7 +97,7 @@ fun VideoMessageContent(payload: VideoBody, imageBaseUrl: String, onDownload: ((
                 var coverBitmap by remember(coverUrl) { mutableStateOf<ImageBitmap?>(null) }
                 LaunchedEffect(coverUrl) {
                     withContext(Dispatchers.IO) {
-                        coverBitmap = ImageCache.loadOrFetch(coverUrl)
+                        coverBitmap = imageCache.loadOrFetch(coverUrl)
                     }
                 }
                 coverBitmap?.let {

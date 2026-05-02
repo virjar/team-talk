@@ -24,12 +24,12 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.virjar.tk.client.LocalUserContext
 import com.virjar.tk.audio.PlaybackState
 import com.virjar.tk.audio.VoicePlayer
 import com.virjar.tk.protocol.payload.TextBody
 import com.virjar.tk.protocol.payload.ImageBody
 import com.virjar.tk.protocol.payload.VoiceBody
-import com.virjar.tk.util.ImageCache
 import com.virjar.tk.util.buildFileUrl
 import com.virjar.tk.util.decodeToImageBitmap
 import com.virjar.tk.util.formatDuration
@@ -54,6 +54,7 @@ fun ImageMessageContent(payload: ImageBody, imageBaseUrl: String, onImageClick: 
     val fullUrl = buildFileUrl(imageBaseUrl, payload.url)
     val thumbnailUrl = payload.thumbnailUrl
     val thumbnailFullUrl = if (!thumbnailUrl.isNullOrEmpty()) buildFileUrl(imageBaseUrl, thumbnailUrl) else ""
+    val imageCache = LocalUserContext.current!!.imageCache
 
     // Load thumbnail first (if available), then full image
     var imageBitmap by remember(fullUrl) { mutableStateOf<ImageBitmap?>(null) }
@@ -62,13 +63,13 @@ fun ImageMessageContent(payload: ImageBody, imageBaseUrl: String, onImageClick: 
         withContext(Dispatchers.IO) {
             // Try thumbnail first
             if (thumbnailFullUrl.isNotEmpty()) {
-                val thumb = ImageCache.loadOrFetch(thumbnailFullUrl)
+                val thumb = imageCache.loadOrFetch(thumbnailFullUrl)
                 if (thumb != null && imageBitmap == null) {
                     imageBitmap = thumb
                 }
             }
             // Then load full image
-            val full = ImageCache.loadOrFetch(fullUrl)
+            val full = imageCache.loadOrFetch(fullUrl)
             if (full != null) {
                 imageBitmap = full
             }

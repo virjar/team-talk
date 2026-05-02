@@ -12,17 +12,18 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import com.virjar.tk.util.ImageCache
+import com.virjar.tk.client.LocalUserContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 @Composable
 fun ImageViewerDialog(imageUrl: String, onDismiss: () -> Unit) {
+    val imageCache = LocalUserContext.current!!.imageCache
     var imageBitmap by remember(imageUrl) { mutableStateOf<ImageBitmap?>(null) }
 
     LaunchedEffect(imageUrl) {
         withContext(Dispatchers.IO) {
-            imageBitmap = ImageCache.loadOrFetch(imageUrl)
+            imageBitmap = imageCache.loadOrFetch(imageUrl)
         }
     }
 

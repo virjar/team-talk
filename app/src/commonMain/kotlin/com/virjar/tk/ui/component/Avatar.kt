@@ -19,7 +19,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.virjar.tk.util.ImageCache
+import com.virjar.tk.client.LocalUserContext
 import com.virjar.tk.util.buildFileUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -39,11 +39,12 @@ fun Avatar(
     size: Dp = 48.dp,
 ) {
     var imageBitmap by remember(url) { mutableStateOf<ImageBitmap?>(null) }
+    val imageCache = LocalUserContext.current?.imageCache
 
     LaunchedEffect(url) {
-        if (url.isNotEmpty()) {
+        if (url.isNotEmpty() && imageCache != null) {
             withContext(Dispatchers.IO) {
-                imageBitmap = ImageCache.loadOrFetch(url)
+                imageBitmap = imageCache.loadOrFetch(url)
             }
         }
     }

@@ -175,7 +175,10 @@ fun DesktopMainAppContent(
     val sideBg = sidebarBgColor(darkTheme)
     val panelBg = panelBgColor(darkTheme)
 
-    CompositionLocalProvider(LocalDesktopState provides appState) {
+    CompositionLocalProvider(
+        LocalUserContext provides userContext,
+        LocalDesktopState provides appState,
+    ) {
         // ── Three-column content (no title bar — handled by DecoratedWindow) ──
         Row(
             modifier = Modifier

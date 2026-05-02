@@ -8,7 +8,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
 import com.virjar.tk.database.AppDatabase
 import com.virjar.tk.storage.TokenStorage
-import com.virjar.tk.util.ImageCache
 import com.virjar.tk.util.initClipboardHelper
 
 class MainActivity : ComponentActivity() {
@@ -17,7 +16,6 @@ class MainActivity : ComponentActivity() {
         AppDatabase.init(this)
         TokenStorage.init(this)
         initClipboardHelper(this)
-        ImageCache.init(cacheDir)
         super.onCreate(savedInstanceState)
         setContent {
             App()
