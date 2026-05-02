@@ -17,6 +17,7 @@ import com.kdroid.composetray.tray.api.Tray
 fun ApplicationScope.AppTray(
     isConnected: Boolean,
     unreadCount: Int,
+    onRestore: () -> Unit,
     onExit: () -> Unit,
 ) {
     val statusIcon: ImageVector = if (isConnected) Icons.Default.CheckCircle else Icons.Default.Close
@@ -28,11 +29,11 @@ fun ApplicationScope.AppTray(
         tint = null,
         tooltip = tooltipText,
         primaryAction = {
-            // Left-click: placeholder (window restore can be added later)
+            onRestore()
         },
     ) {
         Item("打开 TeamTalk", onClick = {
-            // Placeholder (window restore can be added later)
+            onRestore()
         })
 
         Divider()

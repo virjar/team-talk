@@ -21,6 +21,7 @@ extra.apply {
     set("sqldelightVersion", "2.3.2")
     set("rocksdbVersion", "9.10.0")
     set("logbackVersion", "1.5.18")
+    set("jnaVersion", "5.15.0")
     set("luceneVersion", "9.12.0")
     set("androidMinSdk", 26)
     set("androidTargetSdk", 35)

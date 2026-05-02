@@ -11,6 +11,7 @@ plugins {
 
 val logbackVersion: String by rootProject.extra
 val kotlinxSerializationVersion: String by rootProject.extra
+val jnaVersion: String by rootProject.extra
 val packageVersion: String by rootProject.extra
 
 // --- Profile 全量数据（多渠道构建） ---
@@ -46,6 +47,7 @@ dependencies {
     implementation("io.github.kdroidfilter:nucleus.decorated-window-material3:1.6.3")
     implementation("io.github.kdroidfilter:nucleus.core-runtime:1.6.3")
     implementation("io.github.kdroidfilter:composenativetray:1.1.0")
+    implementation("net.java.dev.jna:jna:$jnaVersion")
     runtimeOnly("ch.qos.logback:logback-classic:$logbackVersion")
 }
 

@@ -14,6 +14,7 @@ import io.netty.buffer.Unpooled
 import io.netty.channel.*
 import io.netty.channel.socket.SocketChannel
 import io.netty.channel.socket.nio.NioSocketChannel
+import io.netty.handler.timeout.IdleState
 import io.netty.handler.timeout.IdleStateEvent
 import io.netty.handler.timeout.IdleStateHandler
 import java.util.concurrent.TimeUnit
@@ -52,6 +53,9 @@ class TcpConnection(
 ) {
     enum class State { CONNECTING, CONNECTED, CLOSED }
 
+    /** 读空闲超时（秒）。超过此时间未收到任何数据将主动关闭连接并触发重连。 */
+    private val readIdleTimeoutSeconds = (Handshake.CLIENT_PING_INTERVAL_SECONDS * 3).toLong()
+
     private var channel: Channel? = null
     var state: State = State.CONNECTING
         private set
@@ -85,7 +89,7 @@ class TcpConnection(
                 .handler(object : ChannelInitializer<SocketChannel>() {
                     override fun initChannel(ch: SocketChannel) {
                         ch.pipeline().apply {
-                            addLast("idle", IdleStateHandler(0, Handshake.CLIENT_PING_INTERVAL_SECONDS.toLong(), 0, TimeUnit.SECONDS))
+                            addLast("idle", IdleStateHandler(readIdleTimeoutSeconds, Handshake.CLIENT_PING_INTERVAL_SECONDS.toLong(), 0, TimeUnit.SECONDS))
                             addLast("handshake", ClientHandshakeHandler(this@TcpConnection, listener))
                         }
                     }
@@ -207,7 +211,14 @@ class TcpConnection(
 
         override fun userEventTriggered(ctx: ChannelHandlerContext, evt: Any) {
             if (evt is IdleStateEvent) {
-                sendProto(PingSignal)
+                when (evt.state()) {
+                    IdleState.WRITER_IDLE -> sendProto(PingSignal)
+                    IdleState.READER_IDLE -> {
+                        AppLog.w("TcpConnection", "No data received for ${readIdleTimeoutSeconds}s, closing connection")
+                        ctx.close()
+                    }
+                    else -> {}
+                }
             } else {
                 super.userEventTriggered(ctx, evt)
             }

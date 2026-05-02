@@ -6,6 +6,7 @@ import com.virjar.tk.dto.UserDto
 import com.virjar.tk.navigation.*
 import com.virjar.tk.ui.screen.*
 import com.virjar.tk.ui.theme.TeamTalkTheme
+import androidx.compose.ui.platform.LocalContext
 import com.virjar.tk.util.AppLog
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
@@ -18,6 +19,8 @@ private val appJson = Json { ignoreUnknownKeys = true }
  */
 @Composable
 fun App() {
+    val context = LocalContext.current
+
     // Build ApiClient with saved server config override (if any)
     val apiClient = remember {
         val defaultConfig = ServerConfig()
@@ -68,6 +71,9 @@ fun App() {
     }
 
     if (userContext != null) {
+        // Request battery optimization whitelist once after login
+        LaunchedEffect(Unit) { requestBatteryOptimizationWhitelist(context) }
+
         MainAppContent(
             userContext = userContext!!,
             onLogout = {

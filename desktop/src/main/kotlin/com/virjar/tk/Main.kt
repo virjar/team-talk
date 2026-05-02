@@ -24,6 +24,8 @@ import com.virjar.tk.client.getBuildProfile
 import com.virjar.tk.client.isShowAdvancedSettings
 import com.virjar.tk.dto.UserDto
 import com.virjar.tk.ThemeMode
+import com.virjar.tk.keepawake.KeepAwake
+import com.virjar.tk.keepawake.createKeepAwake
 import com.virjar.tk.storage.resolveDataDir
 import com.virjar.tk.tray.AppTray
 import com.virjar.tk.ui.screen.LoginScreen
@@ -35,6 +37,8 @@ import io.github.kdroidfilter.nucleus.window.material.MaterialDecoratedWindow
 import io.github.kdroidfilter.nucleus.window.material.MaterialTitleBar
 import kotlinx.serialization.json.Json
 import java.awt.Dimension
+import java.awt.Frame
+import java.awt.Window as AwtWindow
 import java.io.File
 import java.util.jar.JarFile
 
@@ -181,6 +185,8 @@ fun main() {
  * Main Compose application, extracted so that one-time init stays outside `application {}`.
  */
 private fun teamTalkApplication(dataDir: File, locker: FileLocker) = application {
+    val keepAwake = remember { createKeepAwake() }
+
     // Build ServerConfig from profile defaults, overridden by saved config
     val apiClient = remember {
         val defaultConfig = ServerConfig()
@@ -202,6 +208,7 @@ private fun teamTalkApplication(dataDir: File, locker: FileLocker) = application
     var userContext by remember { mutableStateOf<UserContext?>(null) }
     var themeMode by remember { mutableStateOf(ThemeMode.SYSTEM) }
     var totalUnread by remember { mutableIntStateOf(0) }
+    var mainWindow by remember { mutableStateOf<AwtWindow?>(null) }
 
     val showAdvanced = remember { isShowAdvancedSettings() }
 
@@ -214,6 +221,7 @@ private fun teamTalkApplication(dataDir: File, locker: FileLocker) = application
             setupForceLogout(ctx) {
                 userContext?.destroy()
                 userContext = null
+                mainWindow = null
             }
             ctx.persistSession()
             ctx.connectTcp()
@@ -223,6 +231,11 @@ private fun teamTalkApplication(dataDir: File, locker: FileLocker) = application
             AppLog.e("Main", "Failed to restore session", e)
             apiClient.getTokenStorage().clear()
         }
+    }
+
+    // Keep OS awake while user is logged in (protects TCP PING from being delayed)
+    LaunchedEffect(userContext) {
+        if (userContext != null) keepAwake.keepAwake() else keepAwake.allowSleep()
     }
 
     val darkTheme = when (themeMode) {
@@ -237,6 +250,7 @@ private fun teamTalkApplication(dataDir: File, locker: FileLocker) = application
             val loginWindowState = rememberWindowState(width = 400.dp, height = 520.dp)
             MaterialDecoratedWindow(
                 onCloseRequest = {
+                    keepAwake.allowSleep()
                     locker.release()
                     exitApplication()
                 },
@@ -269,6 +283,7 @@ private fun teamTalkApplication(dataDir: File, locker: FileLocker) = application
                             setupForceLogout(ctx) {
                                 userContext?.destroy()
                                 userContext = null
+                                mainWindow = null
                             }
                             ctx.persistSession()
                             ctx.connectTcp()
@@ -296,6 +311,7 @@ private fun teamTalkApplication(dataDir: File, locker: FileLocker) = application
                             setupForceLogout(ctx) {
                                 userContext?.destroy()
                                 userContext = null
+                                mainWindow = null
                             }
                             ctx.persistSession()
                             ctx.connectTcp()
@@ -317,14 +333,14 @@ private fun teamTalkApplication(dataDir: File, locker: FileLocker) = application
             val mainWindowState = rememberWindowState(width = 1000.dp, height = 700.dp)
             MaterialDecoratedWindow(
                 onCloseRequest = {
-                    locker.release()
-                    exitApplication()
+                    mainWindow?.isVisible = false
                 },
                 title = "TeamTalk",
                 state = mainWindowState,
             ) {
                 LaunchedEffect(Unit) {
                     window.minimumSize = Dimension(800, 600)
+                    mainWindow = window
                 }
 
                 DesktopMainAppContent(
@@ -332,6 +348,7 @@ private fun teamTalkApplication(dataDir: File, locker: FileLocker) = application
                     onLogout = {
                         ctx.destroy()
                         userContext = null
+                        mainWindow = null
                     },
                     themeMode = themeMode,
                     onToggleTheme = { themeMode = it },
@@ -344,7 +361,18 @@ private fun teamTalkApplication(dataDir: File, locker: FileLocker) = application
         AppTray(
             isConnected = connectionState == UserContext.ConnectionState.CONNECTED,
             unreadCount = totalUnread,
+            onRestore = {
+                val w = mainWindow ?: return@AppTray
+                (w as? Frame)?.let { frame ->
+                    if (frame.extendedState == Frame.ICONIFIED) {
+                        frame.extendedState = Frame.NORMAL
+                    }
+                }
+                w.isVisible = true
+                w.toFront()
+            },
             onExit = {
+                keepAwake.allowSleep()
                 locker.release()
                 exitApplication()
             },
