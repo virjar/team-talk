@@ -204,6 +204,14 @@ docker compose up -d
 | [doc/architecture.md](doc/architecture.md) | 架构设计理念与技术决策记录 |
 | [doc/deploy.md](doc/deploy.md) | 生产环境部署指南 |
 
+## ⚠️ 项目状态
+
+当前项目处于早期开发阶段，尚未正式发布。**代码结构和数据结构可能随时发生重大变化，不保证向后兼容。**
+
+- 请勿将项目直接用于生产环境
+- 如确实用于生产，请自行评估风险，并**谨慎升级版本**
+- 升级前务必检查变更日志，数据库和协议可能有不兼容改动
+
 ## 致谢
 
 - **[GLM](https://www.bigmodel.cn/glm-coding)（智谱大模型）**：本项目约 99% 的代码由 GLM-5.1 编写，从协议设计、服务端架构到跨平台客户端 UI，GLM 贯穿了整个开发流程。
@@ -211,4 +219,4 @@ docker compose up -d
 
 ## License
 
-本项目仅供学习交流使用。
+[MIT License](LICENSE)
