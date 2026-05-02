@@ -34,3 +34,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 }
+
+// 禁用 KMP 为库模块自动生成的虚假 run 任务
+tasks.configureEach {
+    if (name == "jvmRun") enabled = false
+}

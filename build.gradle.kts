@@ -693,7 +693,7 @@ tasks.register("buildRelease") {
 
 fun registerUploadTask(taskName: String, pn: String) {
     tasks.register(taskName) {
-        group = "release"
+        group = "deploy"
         description = "Build and upload release artifacts for profile: $pn"
         dependsOn("build${capitalize(pn)}Release")
 
@@ -749,7 +749,7 @@ allProfiles.keys.forEach { pn ->
 
 // uploadRelease 作为活跃 profile 的别名
 tasks.register("uploadRelease") {
-    group = "release"
+    group = "deploy"
     description = "Upload release artifacts (alias for upload${capitalize(profileName)}Release)"
     dependsOn("upload${capitalize(profileName)}Release")
 }
@@ -758,7 +758,7 @@ tasks.register("uploadRelease") {
 
 fun registerDeployTask(taskName: String, pn: String) {
     tasks.register(taskName) {
-        group = "release"
+        group = "deploy"
         description = "Build and deploy server with profile: $pn"
         dependsOn(":server:buildServerDist")
 
@@ -827,7 +827,7 @@ allProfiles.keys.forEach { pn ->
 
 // deployServer 作为活跃 profile 的别名
 tasks.register("deployServer") {
-    group = "release"
+    group = "deploy"
     description = "Deploy server (alias for deployServer${capitalize(profileName)})"
     dependsOn("deployServer${capitalize(profileName)}")
 }

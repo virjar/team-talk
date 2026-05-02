@@ -88,8 +88,15 @@ dependencies {
 }
 
 tasks.register<JavaExec>("runServer") {
+    group = "run"
+    description = "Run the TeamTalk server"
     mainClass.set("com.virjar.tk.ApplicationKt")
     classpath = sourceSets["main"].runtimeClasspath
+}
+
+// 将 application 插件自带的 run 任务归入 "run" group
+tasks.named("run") {
+    group = "run"
 }
 
 tasks.test {
