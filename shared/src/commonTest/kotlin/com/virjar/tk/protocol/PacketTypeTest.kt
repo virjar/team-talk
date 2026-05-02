@@ -16,6 +16,8 @@ class PacketTypeTest {
         assertEquals(PacketType.PONG, PacketType.fromCode(5))
         assertEquals(PacketType.SUBSCRIBE, PacketType.fromCode(10))
         assertEquals(PacketType.UNSUBSCRIBE, PacketType.fromCode(11))
+        assertEquals(PacketType.HISTORY_LOAD, PacketType.fromCode(12))
+        assertEquals(PacketType.HISTORY_LOAD_END, PacketType.fromCode(13))
         assertEquals(PacketType.TEXT, PacketType.fromCode(20))
         assertEquals(PacketType.IMAGE, PacketType.fromCode(21))
         assertEquals(PacketType.VOICE, PacketType.fromCode(22))

@@ -2,7 +2,6 @@ package com.virjar.tk.service
 
 import com.virjar.tk.api.BusinessException
 import com.virjar.tk.db.MessageStore
-import com.virjar.tk.dto.SyncMessagesRequest
 import com.virjar.tk.protocol.MessageErrorCode
 import com.virjar.tk.protocol.PacketType
 import com.virjar.tk.protocol.payload.Message
@@ -12,9 +11,7 @@ import com.virjar.tk.store.ChannelStore
 import com.virjar.tk.store.ConversationStore
 import com.virjar.tk.store.UserStore
 import io.ktor.http.*
-import kotlinx.serialization.json.*
 import org.slf4j.LoggerFactory
-import java.util.UUID
 
 class MessageService(
     private val messageStore: MessageStore,
@@ -53,30 +50,16 @@ class MessageService(
         return stored
     }
 
-    fun syncMessages(channelId: String, req: SyncMessagesRequest): List<JsonObject> {
-        val messages = if (req.pullMode == 0) {
-            messageStore.getLatestMessages(channelId, req.limit)
-        } else {
-            messageStore.getMessagesAfterSeq(channelId, req.lastSeq, req.limit)
-        }
-        return messages.map { it.toResponse() }
-    }
-
-    fun getMessages(channelId: String, afterSeq: Long = 0, beforeSeq: Long = 0, limit: Int = 50): List<JsonObject> {
-        val messages = when {
-            beforeSeq > 0 -> messageStore.getMessagesBeforeSeq(channelId, beforeSeq, limit)
-            afterSeq > 0 -> messageStore.getMessagesAfterSeq(channelId, afterSeq, limit)
-            else -> messageStore.getLatestMessages(channelId, limit)
-        }
-        return messages.map { it.toResponse() }
-    }
-
     fun getMessagesAfterSeq(channelId: String, afterSeq: Long, limit: Int): List<Message> {
         return messageStore.getMessagesAfterSeq(channelId, afterSeq, limit)
     }
 
     fun getLatestMessages(channelId: String, limit: Int): List<Message> {
         return messageStore.getLatestMessages(channelId, limit)
+    }
+
+    fun getMessagesBeforeSeq(channelId: String, beforeSeq: Long, limit: Int = 50): List<Message> {
+        return messageStore.getMessagesBeforeSeq(channelId, beforeSeq, limit)
     }
 
     suspend fun revokeMessage(channelId: String, seq: Long, operatorUid: String) {
@@ -145,11 +128,5 @@ class MessageService(
 
     fun getUserName(uid: String): String {
         return userStore.findByUid(uid)?.name ?: ""
-    }
-
-    /** 将 Message 转为 JSON 响应 */
-    private fun Message.toResponse(): JsonObject {
-        val senderName = userStore.findByUid(senderUid ?: "")?.name ?: ""
-        return toJson(senderName)
     }
 }

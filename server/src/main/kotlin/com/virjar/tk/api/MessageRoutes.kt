@@ -10,27 +10,10 @@ import io.ktor.server.auth.jwt.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
-import kotlinx.serialization.json.*
 
 fun Routing.messageRoutes(messageService: MessageService, searchIndex: SearchIndex, deliveryService: MessageDeliveryService) {
     route("/api/v1/channels/{id}/messages") {
         authenticate("auth-jwt") {
-            post("/sync") {
-                val channelId = call.parameters["id"] ?: return@post call.respond(HttpStatusCode.BadRequest)
-                val req = call.receive<SyncMessagesRequest>()
-                val messages = messageService.syncMessages(channelId, req)
-                call.respond(messages)
-            }
-
-            get {
-                val channelId = call.parameters["id"] ?: return@get call.respond(HttpStatusCode.BadRequest)
-                val afterSeq = call.request.queryParameters["afterSeq"]?.toLongOrNull() ?: 0L
-                val beforeSeq = call.request.queryParameters["beforeSeq"]?.toLongOrNull() ?: 0L
-                val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 50
-                val messages = messageService.getMessages(channelId, afterSeq, beforeSeq, limit)
-                call.respond(messages)
-            }
-
             delete("/{seq}/revoke") {
                 val uid = call.principal<JWTPrincipal>()!!.payload.subject
                 val channelId = call.parameters["id"] ?: return@delete call.respond(HttpStatusCode.BadRequest)
@@ -102,8 +85,7 @@ fun Routing.messageRoutes(messageService: MessageService, searchIndex: SearchInd
                     }
                 }
 
-                val items = results.mapNotNull { sr ->
-                    val message = messageService.getMessageBySeq(sr.channelId, sr.seq) ?: return@mapNotNull null
+                val items = results.map { sr ->
                     val senderName = messageService.getUserName(sr.senderUid)
                     MessageSearchResult(
                         messageId = sr.messageId,
@@ -116,7 +98,6 @@ fun Routing.messageRoutes(messageService: MessageService, searchIndex: SearchInd
                         seq = sr.seq,
                         timestamp = sr.timestamp,
                         highlight = sr.highlight,
-                        body = message.body.toJson().toString(),
                     )
                 }
 

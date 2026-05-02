@@ -3,6 +3,7 @@ package com.virjar.tk.tcp
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.payload.*
 import com.virjar.tk.tcp.agent.AuthProcessor
+import com.virjar.tk.tcp.agent.HistoryDispatcher
 import com.virjar.tk.tcp.agent.MessageDispatcher
 import com.virjar.tk.tcp.agent.SubscribeDispatcher
 import com.virjar.tk.tcp.agent.TypingDispatcher
@@ -72,6 +73,7 @@ class ImAgent(
 
             is SubscribePayload -> IOExecutor.execute { SubscribeDispatcher.handleSubscribe(this, msg) }
             is UnsubscribePayload -> Unit
+            is HistoryLoadPayload -> IOExecutor.execute { HistoryDispatcher.handleHistoryLoad(this, msg) }
             else -> recorder.record { "unknown packet: ${msg.packetType}" }
         }
     }

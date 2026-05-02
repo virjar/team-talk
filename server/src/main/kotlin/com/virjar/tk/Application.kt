@@ -16,6 +16,7 @@ import com.virjar.tk.store.*
 import com.virjar.tk.tcp.ClientRegistry
 import com.virjar.tk.tcp.IOExecutor
 import com.virjar.tk.tcp.TcpServer
+import com.virjar.tk.tcp.agent.HistoryDispatcher
 import com.virjar.tk.tcp.agent.MessageDispatcher
 import com.virjar.tk.tcp.agent.SubscribeDispatcher
 import com.virjar.tk.tcp.agent.TypingDispatcher
@@ -91,6 +92,7 @@ fun Application.module() {
     MessageDispatcher.init(messageService, channelStore)
     TypingDispatcher.init(channelStore)
     SubscribeDispatcher.init(messageService)
+    HistoryDispatcher.init(messageService, channelStore)
 
     // 注册下线回调
     ClientRegistry.onLastDeviceOffline = { uid ->

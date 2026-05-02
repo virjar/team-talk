@@ -32,5 +32,4 @@ data class MessageSearchResult(
     val seq: Long,
     val timestamp: Long,
     val highlight: String,
-    val body: String,  // JSON 字符串 (body object)
 )

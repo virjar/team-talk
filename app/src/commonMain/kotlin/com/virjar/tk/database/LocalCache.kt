@@ -34,22 +34,6 @@ class LocalCache(private val queries: DatabaseQueries) {
         return queries.selectMaxSeq(channelId).executeAsOneOrNull()?.MAX ?: 0L
     }
 
-    /** 从 HTTP JSON 响应插入消息 */
-    fun insertMessageFromJson(json: JsonObject) {
-        val msg = Message.fromJson(json) ?: return
-        insertMessage(msg)
-    }
-
-    /** 批量从 HTTP JSON 响应插入消息 */
-    fun insertMessagesFromJson(jsonList: List<JsonObject>) {
-        queries.transaction {
-            jsonList.forEach { json ->
-                val msg = Message.fromJson(json) ?: return@forEach
-                insertMessage(msg)
-            }
-        }
-    }
-
     /** 从 Message 对象插入消息 */
     fun insertMessage(msg: Message) {
         val bodyJson = Json.encodeToString(msg.body.toJson())

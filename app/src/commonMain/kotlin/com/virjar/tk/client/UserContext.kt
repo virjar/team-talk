@@ -21,6 +21,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.*
 
+data class HistoryLoadResult(val hasMore: Boolean)
+
 class UserContext(
     val token: String,
     val uid: String,
@@ -138,6 +140,21 @@ class UserContext(
         imClient?.unsubscribe(channelId)
     }
 
+    suspend fun loadHistory(channelId: String, beforeSeq: Long, limit: Int = 50): HistoryLoadResult {
+        val im = imClient ?: throw RuntimeException("IM not connected")
+        val deferred = CompletableDeferred<HistoryLoadResult>()
+        synchronized(historyLoadWaiters) {
+            historyLoadWaiters[channelId] = deferred
+        }
+        im.loadHistory(channelId, beforeSeq, limit)
+        return withTimeoutOrNull(10_000L) {
+            deferred.await()
+        } ?: run {
+            synchronized(historyLoadWaiters) { historyLoadWaiters.remove(channelId) }
+            throw RuntimeException("History load timeout for channel $channelId")
+        }
+    }
+
     // ── ImStateListener 实现 ──
 
     override fun onConnectionStateChanged(state: ImClient.State) {
@@ -232,6 +249,13 @@ class UserContext(
         dispatchChannelEvent(channelId, "member_role_changed")
     }
 
+    override fun onHistoryLoadEnd(channelId: String, beforeSeq: Long, hasMore: Boolean) {
+        AppLog.i("UserContext", "HISTORY_LOAD_END: channelId=$channelId beforeSeq=$beforeSeq hasMore=$hasMore")
+        synchronized(historyLoadWaiters) {
+            historyLoadWaiters.remove(channelId)?.complete(HistoryLoadResult(hasMore))
+        }
+    }
+
     override fun onAuthFailed(code: Byte, reason: String) {
         AppLog.w("UserContext", "TCP auth failed, forcing logout: code=$code reason=$reason")
         onForceLogout?.invoke()
@@ -240,6 +264,7 @@ class UserContext(
     // ── 消息发送 ──
 
     private val sendAckWaiters = mutableMapOf<String, CompletableDeferred<String>>()
+    private val historyLoadWaiters = mutableMapOf<String, CompletableDeferred<HistoryLoadResult>>()
 
     /** 发送文本消息 */
     suspend fun sendMessage(channelId: String, channelType: ChannelType, text: String): String {
@@ -312,6 +337,7 @@ class UserContext(
         editListeners.clear()
         channelEventListeners.clear()
         sendAckWaiters.clear()
+        historyLoadWaiters.clear()
         try {
             appDatabase.close()
         } catch (_: Exception) {

@@ -161,6 +161,51 @@ class PayloadRoundTripTest {
     }
 
     // ================================================================
+    // HistoryPayload round-trip 验证
+    // ================================================================
+
+    @Test
+    fun `HistoryLoadPayload round-trip`() {
+        val payload = HistoryLoadPayload(channelId = "ch-hist", beforeSeq = 100L, limit = 50)
+        val buf = Unpooled.buffer()
+        payload.writeTo(buf)
+
+        val decoded = HistoryLoadPayload.create(buf)
+        assertEquals("ch-hist", decoded.channelId)
+        assertEquals(100L, decoded.beforeSeq)
+        assertEquals(50, decoded.limit)
+        assertEquals(PacketType.HISTORY_LOAD, decoded.packetType)
+        buf.release()
+    }
+
+    @Test
+    fun `HistoryLoadEndPayload round-trip with hasMore=true`() {
+        val payload = HistoryLoadEndPayload(channelId = "ch-hist", beforeSeq = 200L, hasMore = true)
+        val buf = Unpooled.buffer()
+        payload.writeTo(buf)
+
+        val decoded = HistoryLoadEndPayload.create(buf)
+        assertEquals("ch-hist", decoded.channelId)
+        assertEquals(200L, decoded.beforeSeq)
+        assertEquals(true, decoded.hasMore)
+        assertEquals(PacketType.HISTORY_LOAD_END, decoded.packetType)
+        buf.release()
+    }
+
+    @Test
+    fun `HistoryLoadEndPayload round-trip with hasMore=false`() {
+        val payload = HistoryLoadEndPayload(channelId = "ch-end", beforeSeq = 50L, hasMore = false)
+        val buf = Unpooled.buffer()
+        payload.writeTo(buf)
+
+        val decoded = HistoryLoadEndPayload.create(buf)
+        assertEquals("ch-end", decoded.channelId)
+        assertEquals(50L, decoded.beforeSeq)
+        assertEquals(false, decoded.hasMore)
+        buf.release()
+    }
+
+    // ================================================================
     // JSON round-trip 验证
     // ================================================================
 

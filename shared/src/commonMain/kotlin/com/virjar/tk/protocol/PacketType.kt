@@ -31,6 +31,8 @@ enum class PacketType(val code: Byte) {
     // 10-19 会话管理
     SUBSCRIBE(10),
     UNSUBSCRIBE(11),
+    HISTORY_LOAD(12),
+    HISTORY_LOAD_END(13),
 
     // 20-36 消息（双向统一）
     TEXT(20),
@@ -97,6 +99,8 @@ enum class PacketType(val code: Byte) {
                 PONG to PongSignal.CREATOR,
                 SUBSCRIBE to SubscribePayload,
                 UNSUBSCRIBE to UnsubscribePayload,
+                HISTORY_LOAD to HistoryLoadPayload,
+                HISTORY_LOAD_END to HistoryLoadEndPayload,
                 SENDACK to SendAckPayload,
                 RECVACK to RecvAckPayload,
                 CHANNEL_CREATED to ChannelCreatedPayload,

@@ -6,6 +6,7 @@ import com.virjar.tk.protocol.PacketType
 import com.virjar.tk.protocol.payload.*
 import com.virjar.tk.util.AppLog
 import com.virjar.tk.util.saveFileToDisk
+import com.virjar.tk.repository.HistoryResult
 import com.virjar.tk.util.toUserMessage
 import com.virjar.tk.audio.RecordingState
 import com.virjar.tk.audio.VoiceRecorder
@@ -57,9 +58,9 @@ class ChatViewModel(
         _state.value = _state.value.copy(isLoading = true)
         try {
             val messages = chatRepo.getMessages(channelId)
-            AppLog.i("ChatVM", "loadMessages: channelId=$channelId got ${messages.size} msgs, seqs=${messages.map { it.serverSeq }}")
+            AppLog.i("ChatVM", "loadMessages: channelId=$channelId got ${messages.size} msgs from local DB")
             _state.value = ChatState(messages = messages, readSeq = _state.value.readSeq, scrollToSeq = _state.value.scrollToSeq)
-            // SUBSCRIBE 触发离线补拉
+            // SUBSCRIBE 触发离线补拉，消息通过 onNewMessage 异步到达
             val maxSeq = messages.maxOfOrNull { it.serverSeq } ?: 0L
             ctx.subscribeChannel(channelId, maxSeq)
         } catch (e: Exception) {
@@ -72,23 +73,20 @@ class ChatViewModel(
         val currentMessages = _state.value.messages
         if (currentMessages.isEmpty()) return
         val oldestSeq = currentMessages.minOfOrNull { it.serverSeq } ?: return
-        if (oldestSeq <= 1) {
-            _state.value = _state.value.copy(hasMoreHistory = false)
-            return
-        }
         try {
-            val olderMessages = chatRepo.getMessagesBefore(channelId, oldestSeq, limit = 50)
-            if (olderMessages.isEmpty()) {
+            val result = chatRepo.getMessagesBefore(channelId, oldestSeq, limit = 50)
+            if (result.messages.isEmpty()) {
                 _state.value = _state.value.copy(hasMoreHistory = false)
             } else {
-                val merged = (olderMessages + currentMessages)
+                val merged = (result.messages + currentMessages)
                     .distinctBy { it.messageId }
                     .sortedBy { it.serverSeq }
                 _state.value = _state.value.copy(
                     messages = merged,
-                    historyLoadedCount = olderMessages.size,
+                    hasMoreHistory = result.hasMore,
+                    historyLoadedCount = result.messages.size,
                 )
-                AppLog.i("ChatVM", "loadMoreHistory: loaded ${olderMessages.size} older messages, oldestSeq=${olderMessages.firstOrNull()?.serverSeq}")
+                AppLog.i("ChatVM", "loadMoreHistory: loaded ${result.messages.size} older messages, hasMore=${result.hasMore}")
             }
         } catch (e: Exception) {
             AppLog.e("ChatVM", "loadMoreHistory failed", e)
@@ -102,7 +100,7 @@ class ChatViewModel(
 
     /**
      * Helper for optimistic message sending.
-     * Adds optimistic message to state, executes the action, then refreshes from server.
+     * Adds optimistic message to state, executes the action.
      * On failure, removes the optimistic message and sets error.
      */
     private suspend fun withOptimisticUpdate(
@@ -110,22 +108,14 @@ class ChatViewModel(
         clearInput: Boolean = false,
         action: suspend () -> Unit,
     ): Boolean {
-        val prevCount = _state.value.messages.size
         _state.value = _state.value.copy(
             messages = _state.value.messages + optimisticMsg,
             isSending = true,
             inputText = if (clearInput) "" else _state.value.inputText,
         )
-        AppLog.i("ChatVM", "[OptUpdate] Added optimistic msg: channelId=$channelId prevCount=$prevCount newCount=${_state.value.messages.size}")
         return try {
             action()
-            AppLog.i("ChatVM", "[OptUpdate] action() completed, reloading messages from server...")
-            val messages = chatRepo.getMessages(channelId)
-            AppLog.i("ChatVM", "[OptUpdate] HTTP reload returned ${messages.size} messages (channelId=$channelId)")
-            if (messages.isNotEmpty()) {
-                AppLog.i("ChatVM", "[OptUpdate] Latest msg seq=${messages.last().serverSeq} id=${messages.last().messageId}")
-            }
-            _state.value = _state.value.copy(messages = messages, isSending = false)
+            _state.value = _state.value.copy(isSending = false)
             true
         } catch (e: Exception) {
             AppLog.e("ChatVM", "[OptUpdate] FAILED: channelId=$channelId error=${e.message}", e)

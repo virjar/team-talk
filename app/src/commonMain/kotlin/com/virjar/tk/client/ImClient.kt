@@ -2,6 +2,8 @@ package com.virjar.tk.client
 
 import com.virjar.tk.protocol.ChannelType
 import com.virjar.tk.protocol.IProto
+import com.virjar.tk.protocol.payload.HistoryLoadEndPayload
+import com.virjar.tk.protocol.payload.HistoryLoadPayload
 import com.virjar.tk.protocol.payload.*
 import com.virjar.tk.util.AppLog
 import io.netty.channel.EventLoop
@@ -24,6 +26,7 @@ interface ImStateListener {
     fun onMemberMuted(channelId: String, memberUid: String, operatorUid: String, duration: Long) {}
     fun onMemberUnmuted(channelId: String, memberUid: String, operatorUid: String) {}
     fun onMemberRoleChanged(channelId: String, memberUid: String, operatorUid: String, oldRole: Byte, newRole: Byte) {}
+    fun onHistoryLoadEnd(channelId: String, beforeSeq: Long, hasMore: Boolean) {}
     fun onAuthFailed(code: Byte, reason: String) {}
 }
 
@@ -130,6 +133,14 @@ class ImClient(
         }
     }
 
+    fun loadHistory(channelId: String, beforeSeq: Long, limit: Int = 50) {
+        doOnMainThread {
+            val conn = currentConnection ?: return@doOnMainThread
+            if (!conn.isActive()) return@doOnMainThread
+            conn.sendProto(HistoryLoadPayload(channelId, beforeSeq, limit))
+        }
+    }
+
     fun sendTyping(channelId: String, channelType: ChannelType, action: Byte = 0) {
         doOnMainThread {
             val conn = currentConnection ?: return@doOnMainThread
@@ -216,6 +227,9 @@ class ImClient(
                 stateListener.onCmdReceived(proto.cmdType, proto.payload)
             }
             is AckPayload -> Unit
+            is HistoryLoadEndPayload -> {
+                stateListener.onHistoryLoadEnd(proto.channelId, proto.beforeSeq, proto.hasMore)
+            }
             is PresencePayload -> {
                 stateListener.onPresenceReceived(proto.uid, proto.status == 1.toByte(), proto.lastSeenAt)
             }
