@@ -3,7 +3,6 @@ package com.virjar.tk.storage
 import com.virjar.tk.env.Environment
 import com.virjar.tk.env.ThreadIOGuard
 import io.ktor.utils.io.ByteWriteChannel
-import io.ktor.utils.io.writeFully
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.rocksdb.*
@@ -41,11 +40,10 @@ object FileStore {
     private var db: RocksDB? = null
     private var metaCf: ColumnFamilyHandle? = null
     private var dataCf: ColumnFamilyHandle? = null
+    private var rocksDbTier: RocksDbTier? = null
     private var fsTier: FileSystemTier? = null
 
     fun start(dbPath: String = Environment.fileStoreRocksdbDir.absolutePath, fsRoot: String = Environment.fileStoreFsDir.absolutePath) {
-        fsTier = FileSystemTier(File(fsRoot))
-
         val metaOptions = ColumnFamilyOptions()
             .setWriteBufferSize(64 * 1024 * 1024)
 
@@ -79,6 +77,10 @@ object FileStore {
         db = RocksDB.open(dbOptions, dbPath, cfDescriptors, cfHandles)
         metaCf = cfHandles[1]
         dataCf = cfHandles[2]
+
+        rocksDbTier = RocksDbTier(db!!, dataCf!!)
+        fsTier = FileSystemTier(db!!, dataCf!!, File(fsRoot))
+
         logger.info("FileStore opened at: {}", dbPath)
     }
 
@@ -119,11 +121,10 @@ object FileStore {
         )
         val dbInst = db ?: error("FileStore not started")
         val mCf = metaCf ?: error("FileStore not started")
-        val dCf = dataCf ?: error("FileStore not started")
         val pathBytes = path.toByteArray(StandardCharsets.UTF_8)
         WriteBatch().use { batch ->
             batch.put(mCf, pathBytes, json.encodeToString(FileMetadata.serializer(), meta).toByteArray(StandardCharsets.UTF_8))
-            batch.put(dCf, pathBytes, data)
+            rocksDbTier!!.addToBatch(batch, meta, data)
             dbInst.write(WriteOptions(), batch)
         }
         return path
@@ -141,25 +142,12 @@ object FileStore {
 
     /**
      * 流式写入到 channel。meta 存在则文件必须存在，否则抛 IllegalStateException（5xx）。
-     * RocksDB 后端：一次性读取 ByteArray 后写入（≤32MB，内存可控）。
-     * 文件系统后端：逐块流式写入，无全量缓冲。
      */
     suspend fun streamTo(meta: FileMetadata, channel: ByteWriteChannel, range: ReadRange? = null) {
         ThreadIOGuard.check("FileStore")
         when (meta.tier) {
-            StorageTier.ROCKSDB -> {
-                val data = db!!.get(dataCf!!, meta.path.toByteArray(StandardCharsets.UTF_8))
-                    ?: throw IllegalStateException("File data missing: $meta.path")
-                if (range != null) {
-                    val start = range.start.toInt().coerceIn(0, data.size)
-                    val end = (range.end + 1).toInt().coerceAtMost(data.size)
-                    channel.writeFully(data, start, end)
-                } else {
-                    channel.writeFully(data)
-                }
-                channel.flush()
-            }
-            StorageTier.FILESYSTEM -> fsTier!!.streamTo(meta.storageKey, channel, range)
+            StorageTier.ROCKSDB -> rocksDbTier!!.streamTo(meta, channel, range)
+            StorageTier.FILESYSTEM -> fsTier!!.streamTo(meta, channel, range)
         }
     }
 
@@ -172,12 +160,19 @@ object FileStore {
         val pathBytes = path.toByteArray(StandardCharsets.UTF_8)
         val metaBytes = dbInst.get(mCf, pathBytes) ?: return false
         val meta = json.decodeFromString(FileMetadata.serializer(), String(metaBytes, StandardCharsets.UTF_8))
-        if (meta.tier == StorageTier.FILESYSTEM) fsTier!!.delete(meta.storageKey)
-        val dCf = dataCf ?: return false
-        WriteBatch().use { batch ->
-            batch.delete(mCf, pathBytes)
-            batch.delete(dCf, pathBytes)
-            dbInst.write(WriteOptions(), batch)
+
+        when (meta.tier) {
+            StorageTier.ROCKSDB -> {
+                WriteBatch().use { batch ->
+                    batch.delete(mCf, pathBytes)
+                    rocksDbTier!!.addDeleteToBatch(batch, meta)
+                    dbInst.write(WriteOptions(), batch)
+                }
+            }
+            StorageTier.FILESYSTEM -> {
+                fsTier!!.deleteData(meta)
+                dbInst.delete(mCf, pathBytes)
+            }
         }
         return true
     }
@@ -227,12 +222,15 @@ object FileStore {
     val isHealthy: Boolean get() = db != null
 
     fun close() {
+        rocksDbTier?.clearCache()
         metaCf?.close()
         dataCf?.close()
         db?.close()
         db = null
         metaCf = null
         dataCf = null
+        rocksDbTier = null
+        fsTier = null
         logger.info("FileStore closed")
     }
 
@@ -249,10 +247,9 @@ object FileStore {
             dbInst.put(mCf, pathBytes, metaJson)
         } else {
             val data = tempFile.readBytes()
-            val dCf = dataCf ?: error("FileStore not started")
             WriteBatch().use { batch ->
                 batch.put(mCf, pathBytes, metaJson)
-                batch.put(dCf, pathBytes, data)
+                rocksDbTier!!.addToBatch(batch, meta, data)
                 dbInst.write(WriteOptions(), batch)
             }
             tempFile.delete()

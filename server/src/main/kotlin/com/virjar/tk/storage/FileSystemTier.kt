@@ -3,36 +3,24 @@ package com.virjar.tk.storage
 import io.ktor.utils.io.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.rocksdb.ColumnFamilyHandle
+import org.rocksdb.RocksDB
 import java.io.File
 import java.io.RandomAccessFile
 
-class FileSystemTier(private val dataRoot: File) {
+class FileSystemTier(
+    db: RocksDB,
+    dataCf: ColumnFamilyHandle,
+    private val dataRoot: File,
+) : StorageTierBackend(db, dataCf) {
 
     init {
         dataRoot.mkdirs()
     }
 
-    fun moveFrom(storageKey: String, sourceFile: File) {
-        val target = resolveFile(storageKey)
-        target.parentFile.mkdirs()
-        if (!sourceFile.renameTo(target)) {
-            sourceFile.inputStream().buffered().use { input ->
-                target.outputStream().buffered().use { output ->
-                    val buf = ByteArray(64 * 1024)
-                    while (true) {
-                        val read = input.read(buf)
-                        if (read == -1) break
-                        output.write(buf, 0, read)
-                    }
-                }
-            }
-            sourceFile.delete()
-        }
-    }
-
-    suspend fun streamTo(storageKey: String, channel: ByteWriteChannel, range: ReadRange? = null) {
-        val file = resolveFile(storageKey)
-        if (!file.exists()) throw IllegalStateException("File data missing for key: $storageKey")
+    override suspend fun streamTo(meta: FileMetadata, channel: ByteWriteChannel, range: ReadRange?) {
+        val file = resolveFile(meta.storageKey)
+        if (!file.exists()) throw IllegalStateException("File data missing for key: ${meta.storageKey}")
         val buf = ByteArray(64 * 1024)
         if (range != null) {
             withContext(Dispatchers.IO) {
@@ -61,12 +49,29 @@ class FileSystemTier(private val dataRoot: File) {
         }
     }
 
-    fun delete(storageKey: String): Boolean {
-        val file = resolveFile(storageKey)
-        return file.delete()
+    override fun deleteData(meta: FileMetadata) {
+        resolveFile(meta.storageKey).delete()
     }
 
-    fun resolveFile(storageKey: String): File {
+    fun moveFrom(storageKey: String, sourceFile: File) {
+        val target = resolveFile(storageKey)
+        target.parentFile.mkdirs()
+        if (!sourceFile.renameTo(target)) {
+            sourceFile.inputStream().buffered().use { input ->
+                target.outputStream().buffered().use { output ->
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        val read = input.read(buf)
+                        if (read == -1) break
+                        output.write(buf, 0, read)
+                    }
+                }
+            }
+            sourceFile.delete()
+        }
+    }
+
+    private fun resolveFile(storageKey: String): File {
         val level1: String
         val level2: String
         if (storageKey.length >= 4) {
