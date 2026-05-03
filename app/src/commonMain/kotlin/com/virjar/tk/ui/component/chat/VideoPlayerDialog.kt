@@ -24,8 +24,6 @@ import io.github.kdroidfilter.composemediaplayer.rememberVideoPlayerState
 fun VideoPlayerDialog(videoUrl: String, onDismiss: () -> Unit) {
     val playerState = rememberVideoPlayerState()
 
-    AppLog.d("VideoPlayer", "Opening video URL: $videoUrl")
-
     if (videoUrl.isBlank()) {
         AppLog.e("VideoPlayer", "videoUrl is blank, cannot play")
         Dialog(onDismissRequest = onDismiss) {
@@ -49,7 +47,7 @@ fun VideoPlayerDialog(videoUrl: String, onDismiss: () -> Unit) {
     }
 
     // openUri must run on Main thread — ExoPlayer (Android) requires main thread access.
-    // Desktop uses VLC which is also main-thread-safe for this call.
+    // Desktop uses AVPlayer (macOS native) which is also main-thread-safe for this call.
     LaunchedEffect(videoUrl) {
         try {
             playerState.openUri(videoUrl)

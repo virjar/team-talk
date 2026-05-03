@@ -12,7 +12,10 @@ import io.ktor.server.routing.*
 import io.ktor.utils.io.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.slf4j.LoggerFactory
 import java.io.File
+
+private val fileLogger = LoggerFactory.getLogger("com.virjar.tk.api.FileDownload")
 
 private val ALLOWED_CONTENT_PREFIXES = listOf(
     "image/", "video/", "audio/",
@@ -34,6 +37,7 @@ fun Routing.fileRoutes(maxFileSizeBytes: Long = 150 * 1024 * 1024) {
 
             val meta = withContext(Dispatchers.IO) { FileStore.getMeta(path) }
             if (meta == null) {
+                fileLogger.warn("file not found: {}", path)
                 throw BusinessException(404, "file not found", HttpStatusCode.NotFound)
                 return@get
             }
@@ -54,15 +58,26 @@ fun Routing.fileRoutes(maxFileSizeBytes: Long = 150 * 1024 * 1024) {
             if (range != null) {
                 call.response.header(HttpHeaders.ContentRange, "bytes ${range.first}-${range.second}/${meta.size}")
             }
-            call.response.header(HttpHeaders.ContentLength, contentLength)
+            // Content-Length 由 OutgoingContent.contentLength 统一设置，避免 HTTP/2 下双重写入导致 PROTOCOL_ERROR
+
+            val status = if (range != null) HttpStatusCode.PartialContent else HttpStatusCode.OK
 
             val readRange = range?.let { ReadRange(it.first, it.second) }
             call.respond(object : OutgoingContent.WriteChannelContent() {
                 override val contentLength = contentLength
                 override val contentType = ContentType.parse(meta.contentType)
-                override val status = if (range != null) HttpStatusCode.PartialContent else HttpStatusCode.OK
+                override val status = status
                 override suspend fun writeTo(channel: ByteWriteChannel) {
-                    FileStore.streamTo(meta, channel, readRange)
+                    val startMs = System.currentTimeMillis()
+                    try {
+                        FileStore.streamTo(meta, channel, readRange)
+                        val elapsed = System.currentTimeMillis() - startMs
+                        fileLogger.debug("streamed {} bytes in {}ms: {}", contentLength, elapsed, path)
+                    } catch (e: Exception) {
+                        val elapsed = System.currentTimeMillis() - startMs
+                        fileLogger.error("stream failed after {}ms: {}", elapsed, path, e)
+                        throw e
+                    }
                 }
             })
         }
