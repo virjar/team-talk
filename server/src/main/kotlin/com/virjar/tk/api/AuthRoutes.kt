@@ -3,7 +3,6 @@ package com.virjar.tk.api
 import com.virjar.tk.dto.*
 import com.virjar.tk.service.*
 import io.ktor.http.*
-import io.ktor.server.auth.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -28,7 +27,7 @@ fun Routing.authRoutes(userService: UserService, tokenService: TokenService) {
             call.respond(resp)
         }
 
-        authenticate("auth-jwt") {
+        requireAuth {
             delete("/logout") {
                 val uid = call.requireUid()
                 val body = runCatching { call.receive<RefreshRequest>() }.getOrNull()
@@ -39,7 +38,7 @@ fun Routing.authRoutes(userService: UserService, tokenService: TokenService) {
     }
 
     route("/api/v1/users") {
-        authenticate("auth-jwt") {
+        requireAuth {
             get("/me") {
                 val uid = call.requireUid()
                 val user = userService.getUser(uid)

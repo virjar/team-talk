@@ -2,13 +2,12 @@ package com.virjar.tk.api
 
 import com.virjar.tk.service.DeviceService
 import io.ktor.http.*
-import io.ktor.server.auth.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 
 fun Routing.deviceRoutes(deviceService: DeviceService) {
     route("/api/v1/devices") {
-        authenticate("auth-jwt") {
+        requireAuth {
             // 获取当前用户所有设备
             get {
                 val uid = call.requireUid()

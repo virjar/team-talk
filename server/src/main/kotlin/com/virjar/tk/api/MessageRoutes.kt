@@ -5,14 +5,13 @@ import com.virjar.tk.service.MessageDeliveryService
 import com.virjar.tk.service.MessageService
 import com.virjar.tk.service.SearchIndex
 import io.ktor.http.*
-import io.ktor.server.auth.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 
 fun Routing.messageRoutes(messageService: MessageService, searchIndex: SearchIndex, deliveryService: MessageDeliveryService) {
     route("/api/v1/channels/{id}/messages") {
-        authenticate("auth-jwt") {
+        requireAuth {
             delete("/{seq}/revoke") {
                 val uid = call.requireUid()
                 val channelId = call.parameters["id"] ?: return@delete call.respond(HttpStatusCode.BadRequest)
@@ -35,7 +34,7 @@ fun Routing.messageRoutes(messageService: MessageService, searchIndex: SearchInd
 
     // 全局消息搜索
     route("/api/v1/messages/search") {
-        authenticate("auth-jwt") {
+        requireAuth {
             get {
                 val uid = call.requireUid()
                 val q = call.request.queryParameters["q"]

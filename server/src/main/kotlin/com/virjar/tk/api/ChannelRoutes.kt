@@ -3,14 +3,13 @@ package com.virjar.tk.api
 import com.virjar.tk.dto.*
 import com.virjar.tk.service.*
 import io.ktor.http.*
-import io.ktor.server.auth.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 
 fun Routing.channelRoutes(channelService: ChannelService) {
     route("/api/v1/channels") {
-        authenticate("auth-jwt") {
+        requireAuth {
             post("/personal") {
                 val uid = call.requireUid()
                 val body = call.receive<Map<String, String>>()
@@ -191,7 +190,7 @@ fun Routing.channelRoutes(channelService: ChannelService) {
         }
 
         // ── 通过邀请链接加入（需登录） ──
-        authenticate("auth-jwt") {
+        requireAuth {
             post("/invite/{token}/join") {
                 val uid = call.requireUid()
                 val token = call.parameters["token"] ?: return@post call.respond(HttpStatusCode.BadRequest)

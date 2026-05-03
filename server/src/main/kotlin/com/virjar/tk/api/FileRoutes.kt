@@ -5,7 +5,6 @@ import com.virjar.tk.storage.FileStore
 import com.virjar.tk.storage.ReadRange
 import io.ktor.http.*
 import io.ktor.http.content.*
-import io.ktor.server.auth.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -82,7 +81,7 @@ fun Routing.fileRoutes(maxFileSizeBytes: Long = 150 * 1024 * 1024) {
             })
         }
 
-        authenticate("auth-jwt") {
+        requireAuth {
             post("/upload") {
                 val uid = call.requireUid()
                 when (val upload = upload2Temp(call.receiveMultipart(), maxFileSizeBytes)) {

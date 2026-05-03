@@ -237,7 +237,7 @@ fun Application.module() {
 
         // Online status API
         route("/api/v1/users") {
-            authenticate("auth-jwt") {
+            requireAuth {
                 post("/online-status") {
                     val body = call.receive<Map<String, List<String>>>()
                     val uids = body["uids"] ?: return@post call.respond(

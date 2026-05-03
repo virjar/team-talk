@@ -3,14 +3,13 @@ package com.virjar.tk.api
 import com.virjar.tk.dto.*
 import com.virjar.tk.service.*
 import io.ktor.http.*
-import io.ktor.server.auth.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 
 fun Routing.contactRoutes(friendService: FriendService) {
     route("/api/v1/contacts") {
-        authenticate("auth-jwt") {
+        requireAuth {
             get {
                 val uid = call.requireUid()
                 val version = call.request.queryParameters["version"]?.toLongOrNull() ?: 0L
@@ -59,7 +58,7 @@ fun Routing.contactRoutes(friendService: FriendService) {
 
     // ── Blacklist ──
     route("/api/v1/blacklist") {
-        authenticate("auth-jwt") {
+        requireAuth {
             get {
                 val uid = call.requireUid()
                 val blacklist = friendService.getBlacklist(uid)
