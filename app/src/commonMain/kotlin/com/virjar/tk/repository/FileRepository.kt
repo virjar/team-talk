@@ -48,13 +48,13 @@ class FileRepository(private val ctx: UserContext) {
                 }
             }
         }
-        val body = response.bodyAsText()
-        return try {
-            val parsed = json.decodeFromString<UploadResponse>(body)
-            UploadResult(parsed.path, parsed.thumbnailPath)
-        } catch (_: Exception) {
-            UploadResult(body.removeSurrounding("\""))
+        if (!response.status.isSuccess()) {
+            val body = response.bodyAsText()
+            throw IllegalStateException("文件上传失败: ${response.status.value} $body")
         }
+        val body = response.bodyAsText()
+        val parsed = json.decodeFromString<UploadResponse>(body)
+        return UploadResult(parsed.path, parsed.thumbnailPath)
     }
 
     /** Upload an image file. Convenience method. */

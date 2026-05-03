@@ -24,7 +24,7 @@ private val ALLOWED_CONTENT_PREFIXES = listOf(
     "application/msword",
 )
 
-fun Routing.fileRoutes(maxFileSizeBytes: Long = 50 * 1024 * 1024) {
+fun Routing.fileRoutes(maxFileSizeBytes: Long = 150 * 1024 * 1024) {
     route("/api/v1/files") {
 
         get("/{path...}") {

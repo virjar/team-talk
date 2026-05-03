@@ -231,7 +231,7 @@ fun Application.module() {
         conversationRoutes(conversationService)
         messageRoutes(messageService, searchIndex, MessageDeliveryService)
         val maxFileSizeBytes =
-            environment.config.propertyOrNull("file.max-size-bytes")?.getString()?.toLong() ?: (50 * 1024 * 1024)
+            environment.config.propertyOrNull("file.max-size-bytes")?.getString()?.toLong() ?: (150 * 1024 * 1024)
         fileRoutes(maxFileSizeBytes)
         deviceRoutes(DeviceService)
 
