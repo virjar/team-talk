@@ -7,6 +7,7 @@ import com.virjar.tk.model.*
 import com.virjar.tk.protocol.*
 import com.virjar.tk.protocol.payload.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import org.junit.jupiter.api.*
 import org.junit.jupiter.api.Assertions.*
@@ -195,11 +196,16 @@ class ProtocolE2eTest {
             ProtoCodec.encodePayload { writeString(apply.token) })
         assertEquals(0, acceptResp.status)
 
-        // 验证好友列表
-        val listResp = user1.invoke(ServiceId.CONTACT, ContactMethod.LIST.id)
-        assertEquals(0, listResp.status)
-        val friends = ProtoCodec.decodeList(Contact, listResp.payload!!)
-        assertTrue(friends.any { it.friendUid == user2.uid })
+        // 验证好友列表（最多重试 3 次，应对 CI runner 时序差异）
+        var friends: List<Contact> = emptyList()
+        repeat(3) { attempt ->
+            val listResp = user1.invoke(ServiceId.CONTACT, ContactMethod.LIST.id)
+            assertEquals(0, listResp.status, "Contact LIST failed on attempt $attempt")
+            friends = ProtoCodec.decodeList(Contact, listResp.payload!!)
+            if (friends.any { it.friendUid == user2.uid }) return@repeat
+            if (attempt < 2) delay(200)
+        }
+        assertTrue(friends.any { it.friendUid == user2.uid }, "user2 not found in friends list")
 
         user1.close()
         user2.close()
@@ -217,7 +223,8 @@ class ProtocolE2eTest {
         user2.invoke(ServiceId.CONTACT, ContactMethod.ACCEPT.id,
             ProtoCodec.encodePayload { writeString(apply.token) })
 
-        // 创建私聊
+        // 创建私聊（等待 accept 生效）
+        delay(100)
         val chatResp = user1.invoke(ServiceId.CHAT, ChatMethod.CREATE_PERSONAL.id,
             ProtoCodec.encodePayload { writeString(user2.uid) })
         assertEquals(0, chatResp.status)

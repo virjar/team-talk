@@ -8,7 +8,7 @@ on:
         required: true
         default: 'demo'
       profile_json:
-        description: 'External profile JSON (for private deployment, e.g. {"name":"mycompany","serverUrl":"https://...","tcpAddress":"..."}). Leave empty for built-in profiles.'
+        description: 'External profile JSON. Leave empty to read from PROFILE_JSON secret (recommended for private deployments).'
         required: false
         default: ''
 
@@ -24,10 +24,14 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Inject external profile (if provided)
-        if: ${{ github.event.inputs.profile_json != '' }}
+        if: ${{ github.event.inputs.profile_json != '' || vars.PROFILE_JSON != '' }}
         run: |
           mkdir -p gradle/profiles
-          echo '${{ github.event.inputs.profile_json }}' > gradle/profiles/external.json
+          PROFILE_JSON='${{ github.event.inputs.profile_json }}'
+          if [ -z "$PROFILE_JSON" ]; then
+            PROFILE_JSON='${{ vars.PROFILE_JSON }}'
+          fi
+          echo "$PROFILE_JSON" > gradle/profiles/external.json
           cat gradle/profiles/external.json
 
       - name: Set up JDK 17
@@ -56,11 +60,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Inject external profile (if provided)
-        if: ${{ github.event.inputs.profile_json != '' }}
+      - name: Inject external profile
+        shell: bash
         run: |
-          mkdir -p gradle/profiles
-          echo '${{ github.event.inputs.profile_json }}' > gradle/profiles/external.json
+          P='${{ github.event.inputs.profile_json }}'
+          [ -z "$P" ] && P='${{ secrets.PROFILE_JSON }}'
+          if [ -n "$P" ]; then
+            mkdir -p gradle/profiles
+            echo "$P" > gradle/profiles/external.json
+            echo "External profile injected"
+          else
+            echo "No external profile (using built-in)"
+          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -88,11 +99,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Inject external profile (if provided)
-        if: ${{ github.event.inputs.profile_json != '' }}
+      - name: Inject external profile
+        shell: bash
         run: |
-          mkdir -p gradle/profiles
-          echo '${{ github.event.inputs.profile_json }}' > gradle/profiles/external.json
+          P='${{ github.event.inputs.profile_json }}'
+          [ -z "$P" ] && P='${{ secrets.PROFILE_JSON }}'
+          if [ -n "$P" ]; then
+            mkdir -p gradle/profiles
+            echo "$P" > gradle/profiles/external.json
+            echo "External profile injected"
+          else
+            echo "No external profile (using built-in)"
+          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -120,11 +138,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Inject external profile (if provided)
-        if: ${{ github.event.inputs.profile_json != '' }}
+      - name: Inject external profile
+        shell: bash
         run: |
-          mkdir -p gradle/profiles
-          echo '${{ github.event.inputs.profile_json }}' > gradle/profiles/external.json
+          P='${{ github.event.inputs.profile_json }}'
+          [ -z "$P" ] && P='${{ secrets.PROFILE_JSON }}'
+          if [ -n "$P" ]; then
+            mkdir -p gradle/profiles
+            echo "$P" > gradle/profiles/external.json
+            echo "External profile injected"
+          else
+            echo "No external profile (using built-in)"
+          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -151,11 +176,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Inject external profile (if provided)
-        if: ${{ github.event.inputs.profile_json != '' }}
+      - name: Inject external profile
+        shell: bash
         run: |
-          mkdir -p gradle/profiles
-          echo '${{ github.event.inputs.profile_json }}' > gradle/profiles/external.json
+          P='${{ github.event.inputs.profile_json }}'
+          [ -z "$P" ] && P='${{ secrets.PROFILE_JSON }}'
+          if [ -n "$P" ]; then
+            mkdir -p gradle/profiles
+            echo "$P" > gradle/profiles/external.json
+            echo "External profile injected"
+          else
+            echo "No external profile (using built-in)"
+          fi
 
       - name: Set up JDK 17 (x86_64 via Rosetta)
         uses: actions/setup-java@v4
@@ -184,11 +216,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Inject external profile (if provided)
-        if: ${{ github.event.inputs.profile_json != '' }}
+      - name: Inject external profile
+        shell: bash
         run: |
-          mkdir -p gradle/profiles
-          echo '${{ github.event.inputs.profile_json }}' > gradle/profiles/external.json
+          P='${{ github.event.inputs.profile_json }}'
+          [ -z "$P" ] && P='${{ secrets.PROFILE_JSON }}'
+          if [ -n "$P" ]; then
+            mkdir -p gradle/profiles
+            echo "$P" > gradle/profiles/external.json
+            echo "External profile injected"
+          else
+            echo "No external profile (using built-in)"
+          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -200,7 +239,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build Android APK
-        run: ./gradlew :android:assemble${{ env.BUILD_PROFILE }}Release --quiet
+        run: |
+          CAP='${{ env.BUILD_PROFILE }}'
+          ./gradlew ":android:assemble${CAP^}Release" --quiet
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -256,6 +297,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Inject external profile
+        shell: bash
+        run: |
+          P='${{ github.event.inputs.profile_json }}'
+          [ -z "$P" ] && P='${{ secrets.PROFILE_JSON }}'
+          if [ -n "$P" ]; then
+            mkdir -p gradle/profiles
+            echo "$P" > gradle/profiles/external.json
+            echo "External profile injected"
+          else
+            echo "No external profile (using built-in)"
+          fi
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -272,8 +326,12 @@ jobs:
 
       - name: Deploy server
         run: |
+          echo "Profiles on disk:"
+          ls -la gradle/profiles/
+          cat gradle/profiles/external.json 2>/dev/null || echo "(no external profile)"
           PROFILE="${{ env.BUILD_PROFILE }}"
           CAP_PROFILE=$(echo "$PROFILE" | sed 's/\b\(.\)/\u\1/')
+          echo "Deploying profile=$PROFILE cap=$CAP_PROFILE"
           ./gradlew "deployServer${CAP_PROFILE}"
 
       - name: Download client artifacts

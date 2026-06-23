@@ -1,3 +1,5 @@
+import profiles.BuildProfile
+
 plugins {
     alias(libs.plugins.kotlin.multiplatform) apply false
     alias(libs.plugins.kotlin.jvm) apply false
@@ -11,7 +13,7 @@ plugins {
     alias(libs.plugins.buildconfig) apply false
 }
 
-import profiles.BuildProfile
+
 
 extra.apply {
     set("androidMinSdk", 26)

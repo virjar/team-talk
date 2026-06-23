@@ -56,7 +56,7 @@ Requires=docker.service
 Type=simple
 WorkingDirectory=$deployPath
 EnvironmentFile=$deployPath/conf/env.sh
-ExecStartPre=/bin/bash -c 'cd $deployPath && export DB_PASSWORD="$${'$'}{DATABASE_PASSWORD}" && docker compose up -d'
+ExecStartPre=/bin/bash -c 'cd $deployPath && export DB_PASSWORD="$${'$'}{DATABASE_PASSWORD}" && ${dockerComposeCmd(systemdContext = true)} up -d'
 ExecStart=$deployPath/bin/teamtalk.sh
 ExecStop=/bin/kill $${'$'}MAINPID
 Restart=on-failure
@@ -139,7 +139,7 @@ fun ensureDbUser(host: String, user: String, deployPath: String, dbPassword: Str
     println("  Ensuring database user 'teamtalk' is ready ...")
     val containerName = remoteOutput(
         host, user,
-        "cd $deployPath && docker compose ps -q postgres 2>/dev/null | head -1"
+        "cd $deployPath && ${dockerComposeCmd()} ps -q postgres 2>/dev/null | head -1"
     )?.trim()
 
     if (containerName.isNullOrBlank()) {

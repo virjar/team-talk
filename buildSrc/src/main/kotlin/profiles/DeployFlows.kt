@@ -87,7 +87,7 @@ services:
         "cd $deployPath && " +
                 "set -a && source conf/env.sh && set +a && " +
                 "export DB_PASSWORD=\"\$DATABASE_PASSWORD\" && " +
-                "docker compose up -d"
+                "${dockerComposeCmd()} up -d"
     )
 
     print("  Waiting for PostgreSQL ...")

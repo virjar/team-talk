@@ -55,6 +55,17 @@ fun localExecSilent(vararg args: String): Int {
     return proc.waitFor()
 }
 
+/**
+ * 返回远程主机上可用的 docker compose 检测命令。
+ * 优先使用 v2 (`docker compose`)，不可用时回退到 v1 (`docker-compose`)。
+ *
+ * @param systemdContext 如果为 true，输出中的 `$` 会转义为 `$$` 以适配 systemd unit 文件。
+ */
+fun dockerComposeCmd(systemdContext: Boolean = false): String {
+    val esc = if (systemdContext) "\$\$" else "\$"
+    return "${esc}(docker compose version &>/dev/null && echo docker compose || echo docker-compose)"
+}
+
 /** 生成 32 字符随机密码。 */
 fun genPassword(): String {
     val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
