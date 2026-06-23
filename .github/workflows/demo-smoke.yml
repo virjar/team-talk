@@ -1,0 +1,49 @@
+name: Demo Smoke Test
+
+# 连真实 demo 服务器（im.virjar.com）跑协议级 E2E 冒烟测试。
+# 仅手动触发（workflow_dispatch）—— 不挂 push/PR，避免每次 CI 都依赖外部 demo 可用性。
+# 对应测试：RemoteDemoE2eTest（默认 @EnabledIfSystemProperty 关闭，需 -Dtk.e2e.remote=true 启用）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      host:
+        description: 'demo 服务器主机（默认 im.virjar.com）'
+        required: false
+        default: 'im.virjar.com'
+      port:
+        description: 'demo 服务器 TCP 端口（默认 5100）'
+        required: false
+        default: '5100'
+
+jobs:
+  demo-e2e:
+    name: Remote Demo E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run RemoteDemoE2eTest against demo
+        run: |
+          ./gradlew :server:test \
+            --tests "com.virjar.tk.e2e.RemoteDemoE2eTest" \
+            -Dtk.e2e.remote=true \
+            -Dtk.e2e.host=${{ inputs.host }} \
+            -Dtk.e2e.port=${{ inputs.port }}
+
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-smoke-test-report
+          path: server/build/reports/tests/test/
+          retention-days: 7

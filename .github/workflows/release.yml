@@ -1,0 +1,288 @@
+name: Build & Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_profile:
+        description: 'Profile name (e.g. demo, production, mycompany)'
+        required: true
+        default: 'demo'
+      profile_json:
+        description: 'External profile JSON (for private deployment, e.g. {"name":"mycompany","serverUrl":"https://...","tcpAddress":"..."}). Leave empty for built-in profiles.'
+        required: false
+        default: ''
+
+env:
+  BUILD_PROFILE: ${{ github.event.inputs.build_profile }}
+
+jobs:
+  # ── Server distribution ─────────────────────────────
+  server:
+    name: Server Distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inject external profile (if provided)
+        if: ${{ github.event.inputs.profile_json != '' }}
+        run: |
+          mkdir -p gradle/profiles
+          echo '${{ github.event.inputs.profile_json }}' > gradle/profiles/external.json
+          cat gradle/profiles/external.json
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build server distribution
+        run: ./gradlew :server:installDist --quiet
+
+      - name: Upload server artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: teamtalk-server
+          path: server/build/install/server/
+          retention-days: 7
+
+  # ── Desktop Linux (deb) ─────────────────────────────
+  desktop-linux:
+    name: Desktop (Linux deb)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inject external profile (if provided)
+        if: ${{ github.event.inputs.profile_json != '' }}
+        run: |
+          mkdir -p gradle/profiles
+          echo '${{ github.event.inputs.profile_json }}' > gradle/profiles/external.json
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Desktop package
+        run: ./gradlew :desktop:packageReleaseDistributionForCurrentOS -Pprofile=${{ env.BUILD_PROFILE }} --quiet
+
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: teamtalk-desktop-linux
+          path: desktop/build/compose/binaries/main-release/deb/*.deb
+          retention-days: 7
+
+  # ── Desktop Windows (msi) ───────────────────────────
+  desktop-windows:
+    name: Desktop (Windows msi)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inject external profile (if provided)
+        if: ${{ github.event.inputs.profile_json != '' }}
+        run: |
+          mkdir -p gradle/profiles
+          echo '${{ github.event.inputs.profile_json }}' > gradle/profiles/external.json
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Desktop package
+        run: .\gradlew.bat :desktop:packageReleaseDistributionForCurrentOS -Pprofile=${{ env.BUILD_PROFILE }} --quiet
+
+      - name: Upload msi artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: teamtalk-desktop-windows
+          path: desktop/build/compose/binaries/main-release/msi/*.msi
+          retention-days: 7
+
+  # ── Desktop macOS (dmg) ────────────────────────────
+  desktop-macos-arm64:
+    name: Desktop (macOS dmg - Apple Silicon)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inject external profile (if provided)
+        if: ${{ github.event.inputs.profile_json != '' }}
+        run: |
+          mkdir -p gradle/profiles
+          echo '${{ github.event.inputs.profile_json }}' > gradle/profiles/external.json
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Desktop package
+        run: ./gradlew :desktop:packageReleaseDistributionForCurrentOS -Pprofile=${{ env.BUILD_PROFILE }} --quiet
+
+      - name: Upload dmg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: teamtalk-desktop-macos-arm64
+          path: desktop/build/compose/binaries/main-release/dmg/*.dmg
+          retention-days: 7
+
+  desktop-macos-x86_64:
+    name: Desktop (macOS dmg - Intel)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inject external profile (if provided)
+        if: ${{ github.event.inputs.profile_json != '' }}
+        run: |
+          mkdir -p gradle/profiles
+          echo '${{ github.event.inputs.profile_json }}' > gradle/profiles/external.json
+
+      - name: Set up JDK 17 (x86_64 via Rosetta)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          architecture: 'x64'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Desktop package
+        run: ./gradlew :desktop:packageReleaseDistributionForCurrentOS -Pprofile=${{ env.BUILD_PROFILE }} --quiet
+
+      - name: Upload dmg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: teamtalk-desktop-macos-x86_64
+          path: desktop/build/compose/binaries/main-release/dmg/*.dmg
+          retention-days: 7
+
+  # ── Android APK ────────────────────────────────────
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inject external profile (if provided)
+        if: ${{ github.event.inputs.profile_json != '' }}
+        run: |
+          mkdir -p gradle/profiles
+          echo '${{ github.event.inputs.profile_json }}' > gradle/profiles/external.json
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Android APK
+        run: ./gradlew :android:assemble${{ env.BUILD_PROFILE }}Release --quiet
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: teamtalk-android
+          path: android/build/outputs/apk/${{ env.BUILD_PROFILE }}/release/*-release.apk
+          retention-days: 7
+
+  # ── Create GitHub Release ──────────────────────────
+  release:
+    name: Create Release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    needs: [server, desktop-linux, desktop-windows, desktop-macos-arm64, desktop-macos-x86_64, android]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from Gradle
+        id: version
+        run: |
+          VERSION=$(grep 'packageVersion' build.gradle.kts | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List artifacts
+        run: find artifacts -type f | head -30
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: TeamTalk v${{ steps.version.outputs.version }}
+          draft: true
+          files: |
+            artifacts/teamtalk-server/**
+            artifacts/teamtalk-desktop-linux/*.deb
+            artifacts/teamtalk-desktop-windows/*.msi
+            artifacts/teamtalk-desktop-macos-arm64/*.dmg
+            artifacts/teamtalk-desktop-macos-x86_64/*.dmg
+            artifacts/teamtalk-android/*.apk
+
+  # ── Deploy to server ───────────────────────────────
+  deploy:
+    name: Deploy to Server
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    needs: [server, desktop-linux, desktop-windows, desktop-macos-arm64, desktop-macos-x86_64, android]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Setup SSH agent
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Deploy server
+        run: |
+          PROFILE="${{ env.BUILD_PROFILE }}"
+          CAP_PROFILE=$(echo "$PROFILE" | sed 's/\b\(.\)/\u\1/')
+          ./gradlew "deployServer${CAP_PROFILE}"
+
+      - name: Download client artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: client-artifacts
+
+      - name: Upload client artifacts to server
+        run: |
+          PROFILE="${{ env.BUILD_PROFILE }}"
+          CAP_PROFILE=$(echo "$PROFILE" | sed 's/\b\(.\)/\u\1/')
+          ./gradlew "upload${CAP_PROFILE}ClientArtifacts" -PARTIFACT_STAGING_DIR="$GITHUB_WORKSPACE/client-artifacts"

@@ -81,7 +81,12 @@ class EventProcessor(
             NotifyType.CONTACT_APPLY,
             NotifyType.CONTACT_ACCEPTED,
             NotifyType.CONTACT_DELETED -> {
-                val contact = ProtoCodec.decode(Contact, payload)
+                // 服务端发送 ContactApply（含 fromUid/toUid），转换为 Contact
+                val apply = ProtoCodec.decode(ContactApply, payload)
+                val contact = Contact(
+                    uid = apply.toUid, friendUid = apply.fromUid,
+                    remark = apply.remark, status = 1, user = apply.fromUser,
+                )
                 localCache.upsertContact(contact)
                 onContactChanged?.invoke()
             }
@@ -103,8 +108,8 @@ class EventProcessor(
             NotifyType.MEMBER_MUTED,
             NotifyType.MEMBER_UNMUTED,
             NotifyType.MEMBER_ROLE_CHANGED -> {
-                val member = ProtoCodec.decode(Member, payload)
-                localCache.upsertMember(member)
+                val chat = ProtoCodec.decode(Chat, payload)
+                localCache.upsertChat(chat)
             }
 
             NotifyType.MESSAGE_RECV -> {
