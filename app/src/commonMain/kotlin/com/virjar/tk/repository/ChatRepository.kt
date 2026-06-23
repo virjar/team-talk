@@ -1,219 +1,146 @@
 package com.virjar.tk.repository
 
-import com.virjar.tk.client.UserContext
-import com.virjar.tk.database.LocalCache
-import com.virjar.tk.dto.MessageSearchResponse
-import com.virjar.tk.protocol.ChannelType
-import com.virjar.tk.protocol.PacketType
-import com.virjar.tk.protocol.payload.*
-import com.virjar.tk.util.AppLog
-import io.ktor.client.call.*
-import io.ktor.client.request.*
-import io.ktor.http.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.*
+import com.virjar.tk.Outcome
+import com.virjar.tk.client.LocalCache
+import com.virjar.tk.client.RpcInvoker
+import com.virjar.tk.client.ensureSuccess
+import com.virjar.tk.model.Chat
+import com.virjar.tk.model.InviteLink
+import com.virjar.tk.model.Member
+import com.virjar.tk.outcome
+import com.virjar.tk.protocol.ChatMethod
+import com.virjar.tk.protocol.ProtoCodec
+import com.virjar.tk.protocol.ServiceId
 
-class ChatRepository(private val ctx: UserContext) {
+class ChatRepository(
+    private val rpcClient: RpcInvoker,
+    private val localCache: LocalCache,
+) {
+    suspend fun createPersonalChat(targetUid: String): Outcome<Chat> = outcome {
+        val payload = ProtoCodec.encodePayload { writeString(targetUid) }
+        val response = rpcClient.invoke(ServiceId.CHAT, ChatMethod.CREATE_PERSONAL.id, payload)
+        response.ensureSuccess()
+        val data = response.payload ?: error("createPersonalChat: empty payload")
+        ProtoCodec.decode(Chat, data)
+    }
 
-    private val localCache: LocalCache get() = ctx.localCache
-
-    /**
-     * 先本地后网络策略：
-     * 1. 从本地 DB 获取缓存消息
-     * 2. 发起 HTTP 请求获取增量消息
-     * 3. 增量消息写入本地 DB
-     * 4. 返回合并后的完整消息列表
-     */
-    suspend fun getMessages(channelId: String, afterSeq: Long = 0, limit: Int = 50): List<Message> {
-        return try {
-            // 从本地 DB 获取当前最大 seq
-            val localMaxSeq = withContext(Dispatchers.IO) { localCache.getMaxSeq(channelId) }
-
-            // 如果本地无数据或显式指定 afterSeq=0（首次加载），走 HTTP 全量拉取
-            if (localMaxSeq == 0L || afterSeq == 0L) {
-                AppLog.i("ChatRepo", "getMessages HTTP GET: channelId=$channelId fullFetch")
-                val response = ctx.httpClient.get("${ctx.baseUrl}/api/v1/channels/$channelId/messages?afterSeq=$afterSeq&limit=$limit") {
-                    header("Authorization", ctx.authHeader())
-                }
-                val jsonList = response.body<List<JsonObject>>()
-                AppLog.i("ChatRepo", "getMessages HTTP response: count=${jsonList.size} channelId=$channelId")
-                val messages = jsonList.mapNotNull { Message.fromJson(it) }
-                // 写入本地 DB
-                withContext(Dispatchers.IO) { localCache.insertMessagesFromJson(jsonList) }
-                messages
-            } else {
-                // 本地有数据，获取增量
-                AppLog.i("ChatRepo", "getMessages incremental: channelId=$channelId localMaxSeq=$localMaxSeq")
-                val response = ctx.httpClient.get("${ctx.baseUrl}/api/v1/channels/$channelId/messages?afterSeq=$localMaxSeq&limit=$limit") {
-                    header("Authorization", ctx.authHeader())
-                }
-                val jsonList = response.body<List<JsonObject>>()
-                val incremental = jsonList.mapNotNull { Message.fromJson(it) }
-                AppLog.i("ChatRepo", "getMessages incremental HTTP: count=${incremental.size} channelId=$channelId")
-                // 增量写入 DB
-                withContext(Dispatchers.IO) { localCache.insertMessagesFromJson(jsonList) }
-                // 读取完整的本地消息（包含已合并的增量）
-                withContext(Dispatchers.IO) { localCache.getMessages(channelId, limit) }
-            }
-        } catch (e: Exception) {
-            AppLog.e("ChatRepo", "getMessages failed: channelId=$channelId", e)
-            // 网络失败时，尝试返回本地缓存
-            val local = withContext(Dispatchers.IO) { localCache.getMessages(channelId, limit) }
-            if (local.isNotEmpty()) local else throw e
+    suspend fun createGroup(name: String, avatar: String? = null, memberUids: List<String>): Outcome<Chat> = outcome {
+        val payload = ProtoCodec.encodePayload {
+            writeString(name)
+            writeString(avatar)
+            writeVarInt(memberUids.size)
+            for (uid in memberUids) writeString(uid)
         }
+        val response = rpcClient.invoke(ServiceId.CHAT, ChatMethod.CREATE_GROUP.id, payload)
+        response.ensureSuccess()
+        val data = response.payload ?: error("createGroup: empty payload")
+        ProtoCodec.decode(Chat, data)
     }
 
-    /** Send text message via TCP, returns server-assigned messageId */
-    suspend fun sendTextMessage(channelId: String, channelType: ChannelType, text: String): String =
-        ctx.sendMessage(channelId, channelType, text)
-
-    /** Send image message via TCP, returns server-assigned messageId */
-    suspend fun sendImageMessage(channelId: String, channelType: ChannelType, url: String, width: Int, height: Int, size: Long): String {
-        return ctx.sendMessage(channelId, channelType, ImageBody(url, width, height, size, null, null))
+    /** 拉取 chat 信息。失败时调用方可 `.recover { localCache.getChat(chatId) }` 降级。 */
+    suspend fun getChat(chatId: String): Outcome<Chat?> = outcome {
+        val payload = ProtoCodec.encodePayload { writeString(chatId) }
+        val response = rpcClient.invoke(ServiceId.CHAT, ChatMethod.GET.id, payload)
+        response.ensureSuccess()
+        val data = response.payload ?: return@outcome null
+        ProtoCodec.decode(Chat, data)
     }
 
-    /** Send reply message via TCP */
-    suspend fun sendReplyMessage(
-        channelId: String,
-        channelType: ChannelType,
-        text: String,
-        replyToMessageId: String,
-        replyToSenderUid: String,
-        replyToSenderName: String,
-        replyToMessageType: Int,
-    ): String {
-        val body = ReplyBody(
-            replyToMessageId, replyToSenderUid, replyToSenderName,
-            replyToMessageType.toByte(), text, emptyList())
-        return ctx.sendMessage(channelId, channelType, body)
+    /** 拉取群成员。失败时调用方可 `.recover { localCache.getMembers(chatId) }` 降级。 */
+    suspend fun getMembers(chatId: String): Outcome<List<Member>> = outcome {
+        val payload = ProtoCodec.encodePayload { writeString(chatId) }
+        val response = rpcClient.invoke(ServiceId.CHAT, ChatMethod.GET_MEMBERS.id, payload)
+        response.ensureSuccess()
+        val data = response.payload ?: return@outcome emptyList()
+        ProtoCodec.decodeList(Member, data)
     }
 
-    /** Send file message via TCP */
-    suspend fun sendFileMessage(channelId: String, channelType: ChannelType, url: String, fileName: String, fileSize: Long): String {
-        return ctx.sendMessage(channelId, channelType, FileBody(url, fileName, fileSize, null, null))
+    suspend fun deleteChat(chatId: String): Outcome<Unit> = outcome {
+        val payload = ProtoCodec.encodePayload { writeString(chatId) }
+        rpcClient.invoke(ServiceId.CHAT, ChatMethod.DELETE.id, payload).ensureSuccess()
+        localCache.deleteChat(chatId)
     }
 
-    /** Send video message via TCP */
-    suspend fun sendVideoMessage(channelId: String, channelType: ChannelType, url: String, width: Int, height: Int, size: Long, duration: Int, coverUrl: String): String {
-        return ctx.sendMessage(channelId, channelType, VideoBody(url, width, height, size, duration, coverUrl))
-    }
-
-    suspend fun revokeMessage(channelId: String, seq: Long) {
-        ctx.httpClient.delete("${ctx.baseUrl}/api/v1/channels/$channelId/messages/$seq/revoke") {
-            header("Authorization", ctx.authHeader())
+    suspend fun addMembers(chatId: String, uids: List<String>): Outcome<Unit> = outcome {
+        val payload = ProtoCodec.encodePayload {
+            writeString(chatId)
+            writeVarInt(uids.size)
+            for (uid in uids) writeString(uid)
         }
+        rpcClient.invoke(ServiceId.CHAT, ChatMethod.ADD_MEMBERS.id, payload).ensureSuccess()
     }
 
-    suspend fun editMessage(channelId: String, seq: Long, newText: String) {
-        ctx.httpClient.put("${ctx.baseUrl}/api/v1/channels/$channelId/messages/$seq/edit") {
-            header("Authorization", ctx.authHeader())
-            contentType(ContentType.Application.Json)
-            setBody(mapOf("newText" to newText))
+    suspend fun createInviteLink(chatId: String, name: String = "", maxUses: Int = 0, expiresAt: Long = 0): Outcome<String> = outcome {
+        val payload = ProtoCodec.encodePayload {
+            writeString(chatId)
+            writeString(name)
+            writeVarInt(maxUses)
+            writeVarLong(expiresAt)
         }
+        val response = rpcClient.invoke(ServiceId.CHAT, ChatMethod.CREATE_INVITE_LINK.id, payload)
+        response.ensureSuccess()
+        response.payload?.decodeToString() ?: error("createInviteLink: empty payload")
     }
 
-    /** Send voice message via TCP */
-    suspend fun sendVoiceMessage(channelId: String, channelType: ChannelType, url: String, duration: Int, size: Long): String {
-        return ctx.sendMessage(channelId, channelType, VoiceBody(url, duration, size, null))
+    suspend fun listInviteLinks(chatId: String): Outcome<List<InviteLink>> = outcome {
+        val payload = ProtoCodec.encodePayload { writeString(chatId) }
+        val response = rpcClient.invoke(ServiceId.CHAT, ChatMethod.LIST_INVITE_LINKS.id, payload)
+        response.ensureSuccess()
+        val data = response.payload ?: return@outcome emptyList()
+        ProtoCodec.decodeList(InviteLink, data)
     }
 
-    /** Send forward message via TCP */
-    suspend fun sendForwardMessage(
-        channelId: String,
-        channelType: ChannelType,
-        forwardFromChannelId: String?,
-        forwardFromMessageId: String,
-        forwardFromSenderUid: String?,
-        forwardFromSenderName: String?,
-        forwardPacketType: Byte,
-        forwardPayload: String?,
-    ): String {
-        val body = ForwardBody(forwardFromChannelId, forwardFromMessageId, forwardFromSenderUid,
-            forwardFromSenderName, forwardPacketType, forwardPayload)
-        return ctx.sendMessage(channelId, channelType, body)
+    suspend fun revokeInviteLink(token: String): Outcome<Unit> = outcome {
+        val payload = ProtoCodec.encodePayload { writeString(token) }
+        rpcClient.invoke(ServiceId.CHAT, ChatMethod.REVOKE_INVITE_LINK.id, payload).ensureSuccess()
     }
 
-    /** Delete a single message (local delete) */
-    suspend fun deleteMessage(messageId: String, channelId: String, channelType: ChannelType, seq: Long) {
-        ctx.httpClient.delete("${ctx.baseUrl}/api/v1/message") {
-            header("Authorization", ctx.authHeader())
-            contentType(ContentType.Application.Json)
-            setBody(listOf(mapOf(
-                "messageId" to messageId,
-                "messageSeq" to seq,
-                "channelId" to channelId,
-                "channelType" to channelType.code,
-            )))
+    suspend fun updateGroup(chatId: String, name: String? = null, avatar: String? = null, notice: String? = null): Outcome<Unit> = outcome {
+        val payload = ProtoCodec.encodePayload {
+            writeString(chatId)
+            writeString(name)
+            writeString(avatar)
+            writeString(notice)
         }
-        // 同步删除本地缓存
-        withContext(Dispatchers.IO) { localCache.deleteMessage(messageId) }
+        rpcClient.invoke(ServiceId.CHAT, ChatMethod.UPDATE.id, payload).ensureSuccess()
     }
 
-    /** Mark a message as locally deleted (client-side only, no server API call). */
-    suspend fun deleteMessageLocal(messageId: String) {
-        withContext(Dispatchers.IO) { localCache.markLocalDeleted(messageId) }
-    }
-
-    /**
-     * 向前加载历史消息：获取 channelId 中 seq < beforeSeq 的消息。
-     * 策略：先从本地 DB 取，如果本地不足再走 HTTP API 补充。
-     * 返回结果按 seq 升序排列（旧 → 新）。
-     */
-    suspend fun getMessagesBefore(channelId: String, beforeSeq: Long, limit: Int = 50): List<Message> {
-        return try {
-            // 先从本地 DB 获取
-            val localMessages = withContext(Dispatchers.IO) {
-                localCache.getMessagesBeforeSeq(channelId, beforeSeq, limit)
-            }
-            AppLog.i("ChatRepo", "getMessagesBefore local: channelId=$channelId beforeSeq=$beforeSeq count=${localMessages.size}")
-
-            if (localMessages.size >= limit) {
-                // 本地数据充足，直接返回
-                localMessages
-            } else {
-                // 本地不足，从服务端拉取补充
-                val response = ctx.httpClient.get("${ctx.baseUrl}/api/v1/channels/$channelId/messages?beforeSeq=$beforeSeq&limit=$limit") {
-                    header("Authorization", ctx.authHeader())
-                }
-                val jsonList = response.body<List<JsonObject>>()
-                val serverMessages = jsonList.mapNotNull { Message.fromJson(it) }
-                AppLog.i("ChatRepo", "getMessagesBefore HTTP: channelId=$channelId beforeSeq=$beforeSeq count=${serverMessages.size}")
-
-                // 写入本地 DB
-                if (jsonList.isNotEmpty()) {
-                    withContext(Dispatchers.IO) { localCache.insertMessagesFromJson(jsonList) }
-                }
-                serverMessages
-            }
-        } catch (e: Exception) {
-            AppLog.e("ChatRepo", "getMessagesBefore failed: channelId=$channelId beforeSeq=$beforeSeq", e)
-            // 网络失败时，尝试返回本地缓存
-            withContext(Dispatchers.IO) { localCache.getMessagesBeforeSeq(channelId, beforeSeq, limit) }
+    /** 移出群成员（踢人）。成功时同步移除本地缓存。 */
+    suspend fun removeMember(chatId: String, memberUid: String): Outcome<Unit> = outcome {
+        val payload = ProtoCodec.encodePayload {
+            writeString(chatId)
+            writeString(memberUid)
         }
+        rpcClient.invoke(ServiceId.CHAT, ChatMethod.REMOVE_MEMBERS.id, payload).ensureSuccess()
+        localCache.removeMember(chatId, memberUid)
     }
 
-    /** Search messages via server full-text search API */
-    suspend fun searchMessages(
-        query: String,
-        channelId: String? = null,
-        senderUid: String? = null,
-        startTimestamp: Long? = null,
-        endTimestamp: Long? = null,
-        limit: Int = 20,
-        offset: Int = 0,
-    ): MessageSearchResponse {
-        val response = ctx.httpClient.get("${ctx.baseUrl}/api/v1/messages/search") {
-            header("Authorization", ctx.authHeader())
-            parameter("q", query)
-            if (channelId != null) parameter("channelId", channelId)
-            if (senderUid != null) parameter("senderUid", senderUid)
-            if (startTimestamp != null) parameter("startTimestamp", startTimestamp)
-            if (endTimestamp != null) parameter("endTimestamp", endTimestamp)
-            parameter("limit", limit)
-            parameter("offset", offset)
+    /** 禁言成员，durationSeconds 秒。 */
+    suspend fun muteMember(chatId: String, memberUid: String, durationSeconds: Int): Outcome<Unit> = outcome {
+        val payload = ProtoCodec.encodePayload {
+            writeString(chatId)
+            writeString(memberUid)
+            writeVarInt(durationSeconds)
         }
-        return response.body<MessageSearchResponse>()
+        rpcClient.invoke(ServiceId.CHAT, ChatMethod.MUTE_MEMBER.id, payload).ensureSuccess()
+    }
+
+    /** 解除成员禁言。 */
+    suspend fun unmuteMember(chatId: String, memberUid: String): Outcome<Unit> = outcome {
+        val payload = ProtoCodec.encodePayload {
+            writeString(chatId)
+            writeString(memberUid)
+        }
+        rpcClient.invoke(ServiceId.CHAT, ChatMethod.UNMUTE_MEMBER.id, payload).ensureSuccess()
+    }
+
+    /** 设置成员角色（2=群主, 1=管理员, 0=普通成员）。 */
+    suspend fun setMemberRole(chatId: String, memberUid: String, role: Int): Outcome<Unit> = outcome {
+        val payload = ProtoCodec.encodePayload {
+            writeString(chatId)
+            writeString(memberUid)
+            writeVarInt(role)
+        }
+        rpcClient.invoke(ServiceId.CHAT, ChatMethod.SET_ROLE.id, payload).ensureSuccess()
     }
 }

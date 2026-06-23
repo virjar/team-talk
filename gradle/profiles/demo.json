@@ -1,0 +1,8 @@
+{
+  "name": "demo",
+  "serverUrl": "https://im.virjar.com",
+  "tcpAddress": "im.virjar.com:5100",
+  "allowCustomServer": true,
+  "deploy": { "host": "im.virjar.com" },
+  "ssl": { "port": 443 }
+}

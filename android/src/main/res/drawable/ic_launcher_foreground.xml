@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 由 svg_to_vector.py 从 design/logo/svg/logo-mono-white.svg 自动生成。请勿手改，改 SVG 后重跑脚本。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M 33.94,37.72 L 74.06,37.72"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.25"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 54.00,37.72 L 54.00,72.12"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.25"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M 28.00,37.72 a 5.94,5.94 0 1 0 11.87,0.00 a 5.94,5.94 0 1 0 -11.87,0.00"
+        android:fillColor="#FFFFFF" />
+    <path
+        android:pathData="M 68.13,37.72 a 5.94,5.94 0 1 0 11.87,0.00 a 5.94,5.94 0 1 0 -11.87,0.00"
+        android:fillColor="#FFFFFF" />
+    <path
+        android:pathData="M 48.06,72.12 a 5.94,5.94 0 1 0 11.87,0.00 a 5.94,5.94 0 1 0 -11.87,0.00"
+        android:fillColor="#FFFFFF" />
+    <path
+        android:pathData="M 46.22,37.72 a 7.78,7.78 0 1 0 15.56,0.00 a 7.78,7.78 0 1 0 -15.56,0.00"
+        android:fillColor="#FFFFFF" />
+</vector>

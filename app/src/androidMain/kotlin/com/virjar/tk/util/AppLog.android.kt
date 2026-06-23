@@ -1,19 +1,12 @@
 package com.virjar.tk.util
 
-import android.util.Log
-
-internal actual fun platformLogDebug(tag: String, msg: String) {
-    Log.d(tag, msg)
-}
-
-internal actual fun platformLogInfo(tag: String, msg: String) {
-    Log.i(tag, msg)
-}
-
-internal actual fun platformLogWarn(tag: String, msg: String, t: Throwable?) {
-    if (t != null) Log.w(tag, msg, t) else Log.w(tag, msg)
-}
-
-internal actual fun platformLogError(tag: String, msg: String, t: Throwable?) {
-    if (t != null) Log.e(tag, msg, t) else Log.e(tag, msg)
+internal actual fun platformLog(level: String, tag: String, msg: String, throwable: Throwable?) {
+    when (level) {
+        "trace" -> android.util.Log.i(tag, msg)
+        "fault" -> {
+            if (throwable != null) android.util.Log.e(tag, msg, throwable)
+            else android.util.Log.e(tag, msg)
+        }
+        "snapshot" -> android.util.Log.i(tag, "[snapshot] $msg")
+    }
 }

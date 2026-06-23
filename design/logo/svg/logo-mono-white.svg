@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TeamTalk 品牌 Logo · 单色白版（无背景）
+  用途：深色/品牌蓝背景上的 logo（如登录页顶部、启动屏）。
+  透明背景，纯白色节点网络，可叠加在任何深色上。
+  规格：1024x1024，仅含 logo 图形部分（带安全边距）。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <g stroke="#FFFFFF" stroke-width="22" stroke-linecap="round" fill="none">
+    <line x1="316" y1="372" x2="708" y2="372"/>
+    <line x1="512" y1="372" x2="512" y2="708"/>
+  </g>
+  <g fill="#FFFFFF">
+    <circle cx="316" cy="372" r="58"/>
+    <circle cx="708" cy="372" r="58"/>
+    <circle cx="512" cy="708" r="58"/>
+  </g>
+  <circle cx="512" cy="372" r="76" fill="#FFFFFF"/>
+</svg>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive Icon（Android 8.0+）。
+  前景：白色节点网络 logo（居中，留出安全区供系统裁剪）。
+  背景：品牌蓝渐变。系统按启动器形状（圆/方/泪滴）自动裁剪外层。
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>

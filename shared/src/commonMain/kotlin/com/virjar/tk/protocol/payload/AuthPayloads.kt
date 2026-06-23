@@ -1,88 +1,88 @@
 package com.virjar.tk.protocol.payload
 
 import com.virjar.tk.protocol.IProto
-import com.virjar.tk.protocol.IProtoCreator
-import com.virjar.tk.protocol.PacketType
-import io.netty.buffer.ByteBuf
+import com.virjar.tk.protocol.IProtoReader
+import com.virjar.tk.protocol.PacketBuffer
 
+// ── 认证请求 ──
 
 data class AuthRequestPayload(
-    val token: String,
-    val uid: String,
+    val authType: Int,      // 0=login, 1=register, 2=refresh
+    val username: String? = null,
+    val password: String? = null,
+    val name: String? = null,
+    val refreshToken: String? = null,
     val deviceId: String,
-    val deviceName: String,
-    val deviceModel: String,
-    val clientVersion: String,
-    val flags: Byte
+    val deviceName: String? = null,
+    val deviceModel: String? = null,
+    val deviceFlag: Int = 0,
+    val protocolVersion: Int = 1,
+    val lastEventId: Long = 0,
 ) : IProto {
-    override val packetType = PacketType.AUTH
-    override fun writeTo(buf: ByteBuf) {
-        IProto.writeString(buf, token)
-        IProto.writeString(buf, uid)
-        IProto.writeString(buf, deviceId)
-        IProto.writeString(buf, deviceName)
-        IProto.writeString(buf, deviceModel)
-        IProto.writeString(buf, clientVersion)
-        buf.writeByte(flags.toInt())
+    override fun writeTo(buf: PacketBuffer) {
+        buf.writeVarInt(authType)
+        buf.writeString(username)
+        buf.writeString(password)
+        buf.writeString(name)
+        buf.writeString(refreshToken)
+        buf.writeString(deviceId)
+        buf.writeString(deviceName)
+        buf.writeString(deviceModel)
+        buf.writeVarInt(deviceFlag)
+        buf.writeVarInt(protocolVersion)
+        buf.writeVarLong(lastEventId)
     }
 
-    constructor(buf: ByteBuf) : this(
-        token = IProto.readString(buf)!!,
-        uid = IProto.readString(buf)!!,
-        deviceId = IProto.readString(buf)!!,
-        deviceName = IProto.readString(buf)!!,
-        deviceModel = IProto.readString(buf)!!,
-        clientVersion = IProto.readString(buf)!!,
-        flags = buf.readByte(),
-    )
-
-    companion object {
-        val CREATOR = object : IProtoCreator<AuthRequestPayload> {
-            override fun create(buf: ByteBuf) = AuthRequestPayload(buf)
-        }
-        const val ENABLE_TRACE = 0x01
+    companion object : IProtoReader<AuthRequestPayload> {
+        override fun readFrom(buf: PacketBuffer) = AuthRequestPayload(
+            authType = buf.readVarInt(),
+            username = buf.readString(),
+            password = buf.readString(),
+            name = buf.readString(),
+            refreshToken = buf.readString(),
+            deviceId = buf.readString()!!,
+            deviceName = buf.readString(),
+            deviceModel = buf.readString(),
+            deviceFlag = buf.readVarInt(),
+            protocolVersion = buf.readVarInt(),
+            lastEventId = buf.readVarLong(),
+        )
     }
-
-    fun enableTrace(): Boolean {
-        return ENABLE_TRACE and flags.toInt() != 0
-    }
-
 }
 
+// ── 认证响应 ──
 
 data class AuthResponsePayload(
-    val code: Byte,
-    val reason: String
+    val code: Int,          // 0=OK, 1=auth_failed, 2=version_unsupported, 3=server_maintenance, 4=device_banned, 5=too_many_connections
+    val reason: String? = null,
+    val uid: String? = null,
+    val username: String? = null,
+    val name: String? = null,
+    val accessToken: String? = null,
+    val refreshToken: String? = null,
+    val expiresIn: Long = 0,
 ) : IProto {
-
-    override val packetType = PacketType.AUTH_RESP
-    override fun writeTo(buf: ByteBuf) {
-        buf.writeByte(code.toInt())
-        IProto.writeString(buf, reason)
+    override fun writeTo(buf: PacketBuffer) {
+        buf.writeVarInt(code)
+        buf.writeString(reason)
+        buf.writeString(uid)
+        buf.writeString(username)
+        buf.writeString(name)
+        buf.writeString(accessToken)
+        buf.writeString(refreshToken)
+        buf.writeVarLong(expiresIn)
     }
 
-    constructor(buf: ByteBuf) : this(
-        code = buf.readByte(),
-        reason = IProto.readString(buf)!!
-    )
-
-    companion object : IProtoCreator<AuthResponsePayload> {
-        override fun create(buf: ByteBuf) = AuthResponsePayload(buf)
-
-        // 认证 状态码
-        // 成功
-        const val CODE_OK: Byte = 0
-
-        // 失败（未分类，具体看reason）
-        const val CODE_AUTH_FAILED: Byte = 1
-
-        // 服务器已经不支持当前版本协议，请升级客户端
-        const val CODE_VERSION_UNSUPPORTED: Byte = 2
-
-        // 服务器短期维护，请稍等重试
-        const val CODE_SERVER_MAINTENANCE: Byte = 3
-
-        // 当前设备被封禁
-        const val CODE_DEVICE_BANNED: Byte = 4
+    companion object : IProtoReader<AuthResponsePayload> {
+        override fun readFrom(buf: PacketBuffer) = AuthResponsePayload(
+            code = buf.readVarInt(),
+            reason = buf.readString(),
+            uid = buf.readString(),
+            username = buf.readString(),
+            name = buf.readString(),
+            accessToken = buf.readString(),
+            refreshToken = buf.readString(),
+            expiresIn = buf.readVarLong(),
+        )
     }
 }

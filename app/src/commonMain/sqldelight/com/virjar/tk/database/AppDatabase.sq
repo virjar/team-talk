@@ -1,0 +1,178 @@
+-- 用户
+CREATE TABLE IF NOT EXISTS user (
+    uid TEXT PRIMARY KEY NOT NULL,
+    username TEXT NOT NULL,
+    name TEXT NOT NULL,
+    avatar TEXT,
+    phone TEXT,
+    sex INTEGER DEFAULT 0,
+    role INTEGER DEFAULT 0,
+    status INTEGER DEFAULT 1
+);
+
+-- 联系人
+CREATE TABLE IF NOT EXISTS contact (
+    uid TEXT NOT NULL,
+    friend_uid TEXT NOT NULL,
+    remark TEXT,
+    status INTEGER DEFAULT 1,
+    PRIMARY KEY (uid, friend_uid)
+);
+
+-- 聊天
+CREATE TABLE IF NOT EXISTS chat (
+    chat_id TEXT PRIMARY KEY NOT NULL,
+    chat_type INTEGER NOT NULL,
+    name TEXT,
+    avatar TEXT,
+    creator TEXT,
+    member_count INTEGER DEFAULT 0,
+    max_seq INTEGER DEFAULT 0,
+    notice TEXT,
+    muted_all INTEGER DEFAULT 0
+);
+
+-- 群成员
+CREATE TABLE IF NOT EXISTS member (
+    chat_id TEXT NOT NULL,
+    uid TEXT NOT NULL,
+    role INTEGER DEFAULT 0,
+    nickname TEXT,
+    joined_at INTEGER DEFAULT 0,
+    PRIMARY KEY (chat_id, uid)
+);
+
+-- 消息
+CREATE TABLE IF NOT EXISTS message (
+    chat_id TEXT NOT NULL,
+    client_msg_id TEXT NOT NULL,
+    server_seq INTEGER DEFAULT 0,
+    sender_uid TEXT NOT NULL,
+    message_type INTEGER NOT NULL,
+    timestamp INTEGER NOT NULL,
+    flags INTEGER DEFAULT 0,
+    body BLOB,
+    send_status INTEGER DEFAULT 0,
+    PRIMARY KEY (chat_id, client_msg_id)
+);
+CREATE INDEX IF NOT EXISTS idx_message_chat_seq ON message(chat_id, server_seq);
+
+-- 会话
+CREATE TABLE IF NOT EXISTS conversation (
+    chat_id TEXT PRIMARY KEY NOT NULL,
+    chat_type INTEGER NOT NULL,
+    chat_name TEXT,
+    chat_avatar TEXT,
+    last_seq INTEGER DEFAULT 0,
+    read_seq INTEGER DEFAULT 0,
+    unread_count INTEGER DEFAULT 0,
+    is_pinned INTEGER DEFAULT 0,
+    is_muted INTEGER DEFAULT 0,
+    draft TEXT,
+    last_msg_timestamp INTEGER DEFAULT 0
+);
+
+-- 同步游标
+CREATE TABLE IF NOT EXISTS sync_cursor (
+    key TEXT PRIMARY KEY NOT NULL,
+    value INTEGER NOT NULL
+);
+
+-- 查询
+selectAllUsers:
+SELECT * FROM user;
+
+selectUserByUid:
+SELECT * FROM user WHERE uid = ?;
+
+upsertUser:
+INSERT OR REPLACE INTO user(uid, username, name, avatar, phone, sex, role, status)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+selectAllContacts:
+SELECT * FROM contact WHERE status = 1;
+
+upsertContact:
+INSERT OR REPLACE INTO contact(uid, friend_uid, remark, status)
+VALUES (?, ?, ?, ?);
+
+deleteContact:
+DELETE FROM contact WHERE friend_uid = ?;
+
+selectChatById:
+SELECT * FROM chat WHERE chat_id = ?;
+
+selectAllChats:
+SELECT * FROM chat;
+
+upsertChat:
+INSERT OR REPLACE INTO chat(chat_id, chat_type, name, avatar, creator, member_count, max_seq, notice, muted_all)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteChat:
+DELETE FROM chat WHERE chat_id = ?;
+
+selectMembersByChat:
+SELECT * FROM member WHERE chat_id = ?;
+
+upsertMember:
+INSERT OR REPLACE INTO member(chat_id, uid, role, nickname, joined_at)
+VALUES (?, ?, ?, ?, ?);
+
+removeMember:
+DELETE FROM member WHERE chat_id = ? AND uid = ?;
+
+selectMessagesByChat:
+SELECT * FROM message WHERE chat_id = ? ORDER BY server_seq DESC LIMIT ?;
+
+-- 向上翻页：加载某个 seq 之前的更老消息（利用 idx_message_chat_seq 索引）
+-- server_seq > 0 排除正在发送的消息（serverSeq=0 表示尚未服务端确认）
+selectMessagesByChatBefore:
+SELECT * FROM message
+WHERE chat_id = ? AND server_seq < ? AND server_seq > 0
+ORDER BY server_seq DESC
+LIMIT ?;
+
+-- 查当前会话的媒体消息（图片+视频），用于全屏滑动浏览器
+selectMediaMessagesByChat:
+SELECT * FROM message
+WHERE chat_id = ? AND (message_type = 2 OR message_type = 4)
+ORDER BY server_seq ASC;
+
+-- 统计某 chat 的消息总数（用于 hasMore 判断和内存治理阈值）
+countMessagesByChat:
+SELECT COUNT(*) FROM message WHERE chat_id = ?;
+
+insertMessage:
+INSERT OR REPLACE INTO message(chat_id, client_msg_id, server_seq, sender_uid, message_type, timestamp, flags, body, send_status)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+updateMessageSeqStatus:
+UPDATE message SET server_seq = ?, send_status = 0
+WHERE chat_id = ? AND client_msg_id = ?;
+
+updateMessageSendStatus:
+UPDATE message SET send_status = ?
+WHERE chat_id = ? AND client_msg_id = ?;
+
+deleteMessage:
+DELETE FROM message WHERE chat_id = ? AND client_msg_id = ?;
+
+selectAllConversations:
+SELECT * FROM conversation ORDER BY is_pinned DESC, last_msg_timestamp DESC;
+
+upsertConversation:
+INSERT OR REPLACE INTO conversation(chat_id, chat_type, chat_name, chat_avatar, last_seq, read_seq, unread_count, is_pinned, is_muted, draft, last_msg_timestamp)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteConversation:
+DELETE FROM conversation WHERE chat_id = ?;
+
+markConversationRead:
+UPDATE conversation SET unread_count = 0, read_seq = ? WHERE chat_id = ?;
+
+getSyncCursor:
+SELECT value FROM sync_cursor WHERE key = ?;
+
+setSyncCursor:
+INSERT OR REPLACE INTO sync_cursor(key, value) VALUES (?, ?);

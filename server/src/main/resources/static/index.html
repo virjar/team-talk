@@ -66,7 +66,7 @@
         .download { padding: 64px 0; }
         .download h2 { text-align: center; font-size: 28px; margin-bottom: 12px; font-weight: 700; }
         .download .sub { text-align: center; color: var(--text-secondary); margin-bottom: 40px; font-size: 16px; }
-        .dl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; max-width: 640px; margin: 0 auto 32px; }
+        .dl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 20px; max-width: 800px; margin: 0 auto 32px; }
         .dl-card {
             display: flex; flex-direction: column; align-items: center;
             border: 1px solid var(--border); border-radius: var(--radius); padding: 24px 16px;
@@ -83,6 +83,7 @@
         .android-qr .qr-label { color: var(--text-secondary); font-size: 14px; margin-bottom: 12px; }
         #android-qrcode img { width: 180px; height: 180px; border-radius: 8px; }
         .android-qr .apk-link { margin-top: 10px; font-size: 14px; }
+        .android-qr.unavailable { opacity: .4; pointer-events: none; }
 
         /* Footer */
         footer { border-top: 1px solid var(--border); padding: 24px 0; text-align: center; }
@@ -104,6 +105,7 @@
         <div class="nav-links">
             <a href="#features">功能</a>
             <a href="#download">下载</a>
+            <a href="https://github.com/virjar/team-talk-v2" target="_blank">GitHub</a>
         </div>
     </div>
 </nav>
@@ -164,10 +166,15 @@
                 <div class="plat-name">Windows</div>
                 <div class="plat-desc">Windows 10/11 (.msi)</div>
             </a>
-            <a class="dl-card" href="/downloads/TeamTalk-macos.dmg">
+            <a class="dl-card" href="/downloads/TeamTalk-macos-arm64.dmg">
                 <div class="plat-icon">&#63743;</div>
-                <div class="plat-name">macOS</div>
-                <div class="plat-desc">macOS 12+ (.dmg)</div>
+                <div class="plat-name">macOS (Apple)</div>
+                <div class="plat-desc">M1/M2/M3/M4 芯片 (.dmg)</div>
+            </a>
+            <a class="dl-card" href="/downloads/TeamTalk-macos-x86_64.dmg">
+                <div class="plat-icon">&#63743;</div>
+                <div class="plat-name">macOS (Intel)</div>
+                <div class="plat-desc">Intel 芯片 (.dmg)</div>
             </a>
             <a class="dl-card" href="/downloads/TeamTalk-linux.deb">
                 <div class="plat-icon">&#128039;</div>
@@ -186,29 +193,56 @@
 
 <footer>
     <div class="container">
-        <p>&copy; 2026 TeamTalk. Powered by Kotlin Multiplatform.</p>
+        <p>&copy; 2026 TeamTalk. Powered by Kotlin Multiplatform. | <a href="https://github.com/virjar/team-talk-v2" target="_blank">GitHub</a></p>
     </div>
 </footer>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 <script>
 (function() {
-    // Android QR Code
-    var link = window.location.origin + '/downloads/TeamTalk-android.apk';
-    var img = document.createElement('img');
-    img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent(link);
-    img.alt = 'Android Download QR';
-    document.getElementById('android-qrcode').appendChild(img);
+    function markUnavailable(card) {
+        card.classList.add('unavailable');
+        var desc = card.querySelector('.plat-desc');
+        if (desc) desc.textContent = '即将上线';
+    }
 
-    // 检测下载文件可用性
     document.querySelectorAll('.dl-card').forEach(function(card) {
         var href = card.getAttribute('href');
         if (!href) return;
         fetch(href, { method: 'HEAD' }).then(function(r) {
-            if (!r.ok) card.classList.add('unavailable');
+            if (!r.ok) markUnavailable(card);
         }).catch(function() {
-            card.classList.add('unavailable');
+            markUnavailable(card);
         });
     });
+
+    var apkLink = window.location.origin + '/downloads/TeamTalk-android.apk';
+    var apkAvailable = false;
+    fetch('/downloads/TeamTalk-android.apk', { method: 'HEAD' }).then(function(r) {
+        apkAvailable = r.ok;
+        updateAndroidSection();
+    }).catch(function() {
+        updateAndroidSection();
+    });
+
+    function updateAndroidSection() {
+        var section = document.querySelector('.android-qr');
+        if (!section) return;
+        if (apkAvailable) {
+            var qr = qrcode(0, 'M');
+            qr.addData(apkLink);
+            qr.make();
+            document.getElementById('android-qrcode').innerHTML = qr.createImgTag(4, 8);
+        } else {
+            section.classList.add('unavailable');
+            var label = section.querySelector('.qr-label');
+            if (label) label.textContent = 'Android 版本即将上线';
+            var link = section.querySelector('.apk-link');
+            if (link) link.style.display = 'none';
+            var qrcodeEl = document.getElementById('android-qrcode');
+            if (qrcodeEl) qrcodeEl.style.display = 'none';
+        }
+    }
 })();
 </script>
 

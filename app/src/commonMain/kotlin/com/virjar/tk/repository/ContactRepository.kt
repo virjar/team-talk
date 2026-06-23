@@ -1,103 +1,84 @@
 package com.virjar.tk.repository
 
-import com.virjar.tk.client.UserContext
-import com.virjar.tk.database.LocalCache
-import com.virjar.tk.dto.*
-import com.virjar.tk.util.AppLog
-import io.ktor.client.call.*
-import io.ktor.client.request.*
-import io.ktor.http.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.IO
-import kotlinx.coroutines.withContext
+import com.virjar.tk.Outcome
+import com.virjar.tk.client.LocalCache
+import com.virjar.tk.client.RpcInvoker
+import com.virjar.tk.client.ensureSuccess
+import com.virjar.tk.model.Contact
+import com.virjar.tk.model.ContactApply
+import com.virjar.tk.outcome
+import com.virjar.tk.protocol.ContactMethod
+import com.virjar.tk.protocol.ProtoCodec
+import com.virjar.tk.protocol.ServiceId
 
-class ContactRepository(private val ctx: UserContext) {
-
-    private val localCache: LocalCache get() = ctx.localCache
-
-    /**
-     * 先网络后缓存策略：HTTP 获取后写入 localCache，返回服务端结果。
-     * 网络失败时回退到本地缓存。
-     */
-    suspend fun getFriends(): List<FriendDto> {
-        return try {
-            val friends = ctx.httpClient.get("${ctx.baseUrl}/api/v1/contacts") {
-                header("Authorization", ctx.authHeader())
-            }.body<List<FriendDto>>()
-            withContext(Dispatchers.IO) { localCache.insertContacts(friends) }
-            friends
-        } catch (e: Exception) {
-            AppLog.e("ContactRepo", "getFriends failed", e)
-            val local = withContext(Dispatchers.IO) { localCache.getAllContacts() }
-            if (local.isNotEmpty()) local else throw e
-        }
+class ContactRepository(
+    private val rpcClient: RpcInvoker,
+    private val localCache: LocalCache,
+) {
+    /** 拉取好友列表。成功时写入 LocalCache。失败时调用方可 `.recover { localCache.getContacts() }` 降级。 */
+    suspend fun listFriends(): Outcome<List<Contact>> = outcome {
+        val response = rpcClient.invoke(ServiceId.CONTACT, ContactMethod.LIST.id)
+        response.ensureSuccess()
+        val data = response.payload ?: return@outcome emptyList()
+        val contacts = ProtoCodec.decodeList(Contact, data)
+        // 写入 LocalCache，让 ContactViewModel 的 observeContacts 能更新
+        contacts.forEach { localCache.upsertContact(it) }
+        contacts
     }
 
-    suspend fun searchUsers(query: String): List<UserDto> {
-        return try {
-            ctx.httpClient.get("${ctx.baseUrl}/api/v1/users/search?q=$query") {
-                header("Authorization", ctx.authHeader())
-            }.body()
-        } catch (e: Exception) {
-            AppLog.e("ContactRepo", "searchUsers failed: q=$query", e)
-            throw e
-        }
+    suspend fun apply(toUid: String, remark: String? = null): Outcome<ContactApply> = outcome {
+        val payload = ProtoCodec.encodePayload { writeString(toUid); writeString(remark) }
+        val response = rpcClient.invoke(ServiceId.CONTACT, ContactMethod.APPLY.id, payload)
+        response.ensureSuccess()
+        val data = response.payload ?: error("apply: empty payload")
+        ProtoCodec.decode(ContactApply, data)
     }
 
-    suspend fun applyFriend(toUid: String, remark: String = "") {
-        ctx.httpClient.post("${ctx.baseUrl}/api/v1/contacts/apply") {
-            header("Authorization", ctx.authHeader())
-            contentType(ContentType.Application.Json)
-            setBody(mapOf("toUid" to toUid, "remark" to remark))
-        }
+    suspend fun accept(token: String): Outcome<ContactApply> = outcome {
+        val payload = ProtoCodec.encodePayload { writeString(token) }
+        val response = rpcClient.invoke(ServiceId.CONTACT, ContactMethod.ACCEPT.id, payload)
+        response.ensureSuccess()
+        val data = response.payload ?: error("accept: empty payload")
+        ProtoCodec.decode(ContactApply, data)
     }
 
-    suspend fun acceptApply(token: String) {
-        ctx.httpClient.post("${ctx.baseUrl}/api/v1/contacts/accept") {
-            header("Authorization", ctx.authHeader())
-            contentType(ContentType.Application.Json)
-            setBody(mapOf("token" to token))
-        }
+    suspend fun reject(token: String): Outcome<Unit> = outcome {
+        val payload = ProtoCodec.encodePayload { writeString(token) }
+        rpcClient.invoke(ServiceId.CONTACT, ContactMethod.REJECT.id, payload).ensureSuccess()
     }
 
-    suspend fun getApplies(page: Int = 1): List<FriendApplyDto> {
-        return ctx.httpClient.get("${ctx.baseUrl}/api/v1/contacts/applies?page=$page") {
-            header("Authorization", ctx.authHeader())
-        }.body<List<FriendApplyDto>>()
+    suspend fun deleteFriend(friendUid: String): Outcome<Unit> = outcome {
+        val payload = ProtoCodec.encodePayload { writeString(friendUid) }
+        rpcClient.invoke(ServiceId.CONTACT, ContactMethod.DELETE.id, payload).ensureSuccess()
+        localCache.deleteContact(friendUid)
     }
 
-    suspend fun deleteFriend(friendUid: String) {
-        ctx.httpClient.delete("${ctx.baseUrl}/api/v1/contacts/$friendUid") {
-            header("Authorization", ctx.authHeader())
-        }
-        withContext(Dispatchers.IO) { localCache.deleteContact(friendUid) }
+    suspend fun setRemark(friendUid: String, remark: String?): Outcome<Unit> = outcome {
+        val payload = ProtoCodec.encodePayload { writeString(friendUid); writeString(remark) }
+        rpcClient.invoke(ServiceId.CONTACT, ContactMethod.SET_REMARK.id, payload).ensureSuccess()
     }
 
-    suspend fun updateRemark(friendUid: String, remark: String) {
-        ctx.httpClient.put("${ctx.baseUrl}/api/v1/contacts/$friendUid/remark") {
-            header("Authorization", ctx.authHeader())
-            contentType(ContentType.Application.Json)
-            setBody(mapOf("remark" to remark))
-        }
+    suspend fun blacklist(targetUid: String): Outcome<Unit> = outcome {
+        val payload = ProtoCodec.encodePayload { writeString(targetUid) }
+        rpcClient.invoke(ServiceId.CONTACT, ContactMethod.BLACKLIST.id, payload).ensureSuccess()
     }
 
-    // ── Blacklist ──
-
-    suspend fun getBlacklist(): List<BlacklistDto> {
-        return ctx.httpClient.get("${ctx.baseUrl}/api/v1/blacklist") {
-            header("Authorization", ctx.authHeader())
-        }.body<List<BlacklistDto>>()
+    suspend fun removeFromBlacklist(targetUid: String): Outcome<Unit> = outcome {
+        val payload = ProtoCodec.encodePayload { writeString(targetUid) }
+        rpcClient.invoke(ServiceId.CONTACT, ContactMethod.BLACKLIST_REMOVE.id, payload).ensureSuccess()
     }
 
-    suspend fun addBlacklist(uid: String) {
-        ctx.httpClient.post("${ctx.baseUrl}/api/v1/blacklist/$uid") {
-            header("Authorization", ctx.authHeader())
-        }
+    suspend fun listBlacklist(): Outcome<List<Contact>> = outcome {
+        val response = rpcClient.invoke(ServiceId.CONTACT, ContactMethod.LIST_BLACKLIST.id)
+        response.ensureSuccess()
+        val data = response.payload ?: return@outcome emptyList()
+        ProtoCodec.decodeList(Contact, data)
     }
 
-    suspend fun removeBlacklist(uid: String) {
-        ctx.httpClient.delete("${ctx.baseUrl}/api/v1/blacklist/$uid") {
-            header("Authorization", ctx.authHeader())
-        }
+    suspend fun listApplies(): Outcome<List<ContactApply>> = outcome {
+        val response = rpcClient.invoke(ServiceId.CONTACT, ContactMethod.LIST_APPLIES.id)
+        response.ensureSuccess()
+        val data = response.payload ?: return@outcome emptyList()
+        ProtoCodec.decodeList(ContactApply, data)
     }
 }

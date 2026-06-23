@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标背景：品牌蓝渐变（#3370FF → #245BDB，与 AppTheme 一致）。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:type="linear"
+        android:angle="45"
+        android:startColor="#3370FF"
+        android:endColor="#245BDB" />
+</shape>

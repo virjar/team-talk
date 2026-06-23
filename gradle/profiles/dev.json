@@ -1,0 +1,6 @@
+{
+  "name": "dev",
+  "serverUrl": "http://localhost:8080",
+  "tcpAddress": "localhost:5100",
+  "allowCustomServer": true
+}

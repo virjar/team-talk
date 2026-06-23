@@ -1,220 +1,202 @@
 package com.virjar.tk
 
-import com.auth0.jwt.JWT
-import com.auth0.jwt.algorithms.Algorithm
-import com.virjar.tk.api.*
-import com.virjar.tk.db.DatabaseFactory
-import com.virjar.tk.db.MessageStore
-import com.virjar.tk.dto.ApiError
-import java.io.File
-import com.virjar.tk.env.ClassPreloader
-import com.virjar.tk.env.Environment
-import com.virjar.tk.service.*
-import com.virjar.tk.store.*
-import com.virjar.tk.tcp.ClientRegistry
-import com.virjar.tk.tcp.IOExecutor
-import com.virjar.tk.tcp.TcpServer
-import com.virjar.tk.tcp.agent.MessageDispatcher
-import com.virjar.tk.tcp.agent.SubscribeDispatcher
-import com.virjar.tk.tcp.agent.TypingDispatcher
+import com.virjar.tk.api.clientLogRoutes
+import com.virjar.tk.api.fileRoutes
+import com.virjar.tk.di.serverModule
+import com.virjar.tk.log.Slf4jTkLogger
+import com.virjar.tk.log.TkLoggerFactory
+import com.virjar.tk.domain.auth.AuthService
+import com.virjar.tk.domain.chat.ChatStore
+import com.virjar.tk.domain.health.HealthChecker
+import com.virjar.tk.domain.message.MessageService
+import com.virjar.tk.domain.presence.PresenceService
+import com.virjar.tk.infra.db.DatabaseFactory
+import com.virjar.tk.infra.search.SearchIndex
+import com.virjar.tk.infra.storage.FileStore
+import com.virjar.tk.infra.storage.MessageStore
+import com.virjar.tk.infra.sync.ClientRegistry
+import com.virjar.tk.infra.sync.SyncEventService
+import com.virjar.tk.protocol.TcpServer
+import com.virjar.tk.protocol.codec.ImAgent
+import com.virjar.tk.protocol.dispatcher.RpcDispatcher
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
-import io.ktor.server.auth.*
-import io.ktor.server.auth.jwt.*
-import io.ktor.server.http.content.*
+import io.ktor.server.engine.*
 import io.ktor.server.netty.*
-import io.ktor.server.plugins.calllogging.*
 import io.ktor.server.plugins.contentnegotiation.*
-import io.ktor.server.plugins.cors.routing.*
-import io.ktor.server.plugins.statuspages.*
-import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import kotlinx.serialization.json.Json
+import org.koin.ktor.plugin.Koin
+import org.slf4j.LoggerFactory
+import java.io.File
+import java.security.KeyStore
 
-// 这个一定是第一行，保证Environment首先执行
-val logDir: String = Environment.logsDir.absolutePath
+fun main() {
+    // 0. Environment 必须先于 logback 初始化，确保 LOG_DIR 系统属性已设置
+    val env = com.virjar.tk.env.Environment
+    System.setProperty("LOG_DIR", env.logsDir.absolutePath)
+    val logger = LoggerFactory.getLogger("Application")
 
-fun main(args: Array<String>) {
-    // 开发环境设置日志目录到 ~/.tk/logs
-    System.setProperty("TK_LOG_DIR", logDir)
-    // 开发模式下预加载所有类，防止 gradle clean 导致 NoClassDefFoundError
-    ClassPreloader.preloadDevClasses()
-    EngineMain.main(args)
+    // 0.5 注入 TkLogger 实现：shared 模块的日志通过 SLF4J 输出
+    TkLoggerFactory.install { name -> Slf4jTkLogger(LoggerFactory.getLogger(name)) }
+
+    logger.info("TeamTalk Server starting...")
+    // 显式记录关键路径解析结果，便于排查「日志丢失/数据目录错误」类问题
+    logger.info("Environment resolved: isDevelopment={}, dataRoot={}, logsDir={}, classPathDir={}",
+        env.isDevelopment, env.dataRoot.absolutePath, env.logsDir.absolutePath, env.runtimeClassPathDir.absolutePath)
+    startServer()
+}
+
+/**
+ * 启动 Ktor Netty 引擎，同时绑定 HTTP 和 HTTPS。
+ *
+ * 显式配置 connectors（而非依赖 EngineMain 解析 application.conf）：
+ * V2 重构曾用 `embeddedServer(Netty, module=...)` 单参重载，它不读 conf、不支持 SSL，
+ * 导致 HTTPS 443 永远起不来。这里通过环境变量配置（与部署 env.sh 中的变量名一致）：
+ *   - KTOR_PORT / KTOR_SSL_PORT / SSL_KEYSTORE / SSL_KEYSTORE_PASSWORD / SSL_PRIVATE_KEY_PASSWORD
+ *
+ * 仅当 SSL_KEYSTORE 配置时才启用 HTTPS；否则只起 HTTP（开发模式典型场景）。
+ */
+private fun startServer() {
+    val logger = LoggerFactory.getLogger("Application")
+    val httpPort = (System.getenv("KTOR_PORT") ?: "8080").toInt()
+    val sslPort = System.getenv("KTOR_SSL_PORT")?.toIntOrNull()
+    val keystorePath = System.getenv("SSL_KEYSTORE")
+    val keystorePassword = System.getenv("SSL_KEYSTORE_PASSWORD")
+    val privateKeyPassword = System.getenv("SSL_PRIVATE_KEY_PASSWORD")
+
+    // 预构造 HTTPS connector（若配置），避免在 configure lambda 内做带日志的复杂逻辑
+    val sslConnectorConfig: EngineSSLConnectorBuilder? = if (sslPort != null && !keystorePath.isNullOrBlank()) {
+        val keyStore = KeyStore.getInstance("PKCS12").apply {
+            File(keystorePath).inputStream().use { load(it, keystorePassword?.toCharArray()) }
+        }
+        val alias = keyStore.aliases().nextElement()
+        logger.info("HTTPS enabled on port $sslPort (keystore=$keystorePath, alias=$alias)")
+        EngineSSLConnectorBuilder(
+            keyStore,
+            alias,
+            { keystorePassword?.toCharArray() ?: CharArray(0) },
+            { privateKeyPassword?.toCharArray() ?: CharArray(0) },
+        ).apply { port = sslPort }
+    } else {
+        logger.warn("HTTPS disabled: SSL_KEYSTORE or KTOR_SSL_PORT not configured")
+        null
+    }
+
+    embeddedServer(
+        factory = Netty,
+        environment = applicationEnvironment { log = logger },
+        configure = {
+            connector { port = httpPort }
+            sslConnectorConfig?.let { connectors.add(it) }
+        },
+    ) {
+        module()
+    }.start(wait = true)
 }
 
 fun Application.module() {
-    val jdbcUrl = environment.config.property("database.jdbcUrl").getString()
-    val dbUser = environment.config.property("database.user").getString()
-    val dbPassword = environment.config.property("database.password").getString()
-    val jwtSecret = environment.config.property("jwt.secret").getString()
+    val logger = LoggerFactory.getLogger("Application")
 
-    DatabaseFactory.init(jdbcUrl, dbUser, dbPassword)
+    // 1. DI
+    install(Koin) {
+        modules(serverModule)
+    }
 
-    // 单例 Service 初始化
-    TokenService.init(jwtSecret)
+    // 2. JSON
+    install(ContentNegotiation) {
+        json(Json { prettyPrint = false })
+    }
 
-    // 创建 Store 并全量加载
-    val userStore = UserStore()
-    val channelStore = ChannelStore()
-    val contactStore = ContactStore()
-    val conversationStore = ConversationStore()
-    val deviceStore = DeviceStore()
-    val inviteLinkStore = InviteLinkStore()
+    // 3. Database
+    DatabaseFactory.create()
 
-    userStore.loadAll()
-    channelStore.loadAll()
-    contactStore.loadAll()
-    conversationStore.loadAll()
+    // 4. Storage
+    val koin = org.koin.java.KoinJavaComponent.getKoin()
+    val messageStore = koin.get<MessageStore>()
+    messageStore.init()
+    val fileStore = koin.get<FileStore>()
+    val clientLogStore = koin.get<com.virjar.tk.infra.storage.ClientLogStore>()
+    fileStore.init()
 
-    val userService = UserService(TokenService, userStore)
-    val channelService = ChannelService(channelStore, conversationStore, inviteLinkStore)
-    val friendService = FriendService(contactStore, userStore)
-    val messageStore = MessageStore(Environment.rocksdbDir.absolutePath)
-    messageStore.start()
-
-    val searchIndex = SearchIndex(Environment.luceneIndexDir)
+    // 5. Search Index (Lucene + IK)
+    val searchIndex = koin.get<SearchIndex>()
     searchIndex.start()
 
-    val messageService = MessageService(messageStore, searchIndex, channelStore, userStore, conversationStore)
-    MessageDeliveryService.init(channelStore)
-    DeviceService.init(deviceStore)
-    PresenceService.init(contactStore)
-
-    // Dispatcher 初始化
-    MessageDispatcher.init(messageService, channelStore)
-    TypingDispatcher.init(channelStore)
-    SubscribeDispatcher.init(messageService)
-
-    // 注册下线回调
-    ClientRegistry.onLastDeviceOffline = { uid ->
-        PresenceService.postBroadcastOffline(uid)
+    // 6. TCP Server
+    val tcpServer = koin.get<TcpServer>()
+    val authService = koin.get<AuthService>()
+    val clientRegistry = koin.get<ClientRegistry>()
+    val rpcDispatcher = koin.get<RpcDispatcher>()
+    val msgService = koin.get<MessageService>()
+    val chatStore = koin.get<ChatStore>()
+    val syncEventService = koin.get<SyncEventService>()
+    val presenceService = koin.get<PresenceService>()
+    tcpServer.start { channel, recorder, ioExecutor ->
+        ImAgent(channel, recorder, authService, clientRegistry, rpcDispatcher, msgService, chatStore, messageStore, syncEventService, presenceService, ioExecutor)
     }
 
-    val conversationService =
-        ConversationService(messageStore, channelStore, userStore, conversationStore)
+    // 7. Health Checker
+    val healthChecker = koin.get<HealthChecker>()
 
-    val fileService = FileService(
-        endpoint = environment.config.propertyOrNull("minio.endpoint")?.getString() ?: "http://127.0.0.1:9000",
-        accessKey = environment.config.propertyOrNull("minio.accessKey")?.getString() ?: "minioadmin",
-        secretKey = environment.config.propertyOrNull("minio.secretKey")?.getString() ?: "minioadmin",
-        bucketName = environment.config.propertyOrNull("minio.bucket")?.getString() ?: "teamtalk",
-    )
-
-    install(ContentNegotiation) { json() }
-    install(CallLogging)
-    install(CORS) {
-        anyHost()
-        allowHeader("Content-Type")
-        allowHeader("Authorization")
-        allowMethod(HttpMethod.Put)
-        allowMethod(HttpMethod.Delete)
-    }
-    install(StatusPages) {
-        exception<BusinessException> { call, cause ->
-            call.respond(cause.httpStatus, ApiError(cause.errorCode, cause.message))
-        }
-        exception<IllegalArgumentException> { call, cause ->
-            call.respond(HttpStatusCode.BadRequest, ApiError(message = cause.message ?: "bad request"))
-        }
-        exception<Exception> { call, cause ->
-            call.application.environment.log.error("Unhandled exception", cause)
-            call.respond(HttpStatusCode.InternalServerError, ApiError(message = "internal server error"))
-        }
-    }
-
-    val hmacAlgorithm = Algorithm.HMAC256(jwtSecret)
-    val verifier = JWT.require(hmacAlgorithm).build()
-    install(Authentication) {
-        jwt("auth-jwt") {
-            verifier(verifier)
-            validate { credential ->
-                if (credential.payload.subject != null) JWTPrincipal(credential.payload) else null
-            }
-        }
-    }
-
-    val tcpPort = environment.config.propertyOrNull("ktor.tcp.port")?.getString()?.toInt() ?: 5100
-    val tcpServer = TcpServer(tcpPort)
-    tcpServer.start()
-
+    // 8. HTTP Routes
     routing {
-        // ===== 首页和下载路由 =====
-        val staticDir = resolveStaticDir()
-        val downloadsDir = File(staticDir, "downloads")
+        get("/health") {
+            val health = healthChecker.check()
+            val status = if (health.status == "UP") HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable
+            call.respond(status, health)
+        }
+        fileRoutes(fileStore)
+        clientLogRoutes(clientLogStore)
 
+        // 首页
+        val staticDir = resolveStaticDir()
+        val downloadsDir = java.io.File(staticDir, "downloads")
         get("/") {
-            val indexFile = File(staticDir, "index.html")
+            val indexFile = java.io.File(staticDir, "index.html")
             if (indexFile.exists()) {
                 call.respondFile(indexFile)
             } else {
-                call.respondText("TeamTalk Server is running", ContentType.Text.Plain)
+                call.respondText("TeamTalk Server", ContentType.Text.Plain)
             }
         }
 
+        // 客户端下载
         get("/downloads/{filename}") {
             val filename = call.parameters["filename"] ?: return@get call.respond(HttpStatusCode.BadRequest)
-            val file = File(downloadsDir, filename)
-            if (file.exists()) {
-                call.response.header(HttpHeaders.ContentDisposition, "attachment; filename=\"$filename\"")
-                call.respondFile(file)
-            } else {
-                call.respond(HttpStatusCode.NotFound)
-            }
+            val file = java.io.File(downloadsDir, filename)
+            if (file.exists()) call.respondFile(file) else call.respond(HttpStatusCode.NotFound)
         }
-
-        // ===== API 路由 =====
-        get("/ping") { call.respondText("pong", ContentType.Text.Plain) }
-        get("/health") { call.respondText("ok", ContentType.Text.Plain) }
-        get("/stats/online") {
-            call.respondText(
-                """{"users":${ClientRegistry.getOnlineUserCount()},"connections":${ClientRegistry.getOnlineConnectionCount()}}""",
-                ContentType.Application.Json
-            )
-        }
-        authRoutes(userService, TokenService)
-        channelRoutes(channelService)
-        contactRoutes(friendService)
-        conversationRoutes(conversationService)
-        messageRoutes(messageService, searchIndex, MessageDeliveryService)
-        val maxFileSizeBytes =
-            environment.config.propertyOrNull("file.max-size-bytes")?.getString()?.toLong() ?: (50 * 1024 * 1024)
-        fileRoutes(fileService, maxFileSizeBytes)
-        deviceRoutes(DeviceService)
-
-        // Online status API
-        route("/api/v1/users") {
-            authenticate("auth-jwt") {
-                post("/online-status") {
-                    val body = call.receive<Map<String, List<String>>>()
-                    val uids = body["uids"] ?: return@post call.respond(
-                        HttpStatusCode.BadRequest, ApiError(message = "uids required")
-                    )
-                    val statusMap = uids.associateWith { ClientRegistry.isUserOnline(it) }
-                    call.respond(mapOf("status" to statusMap))
-                }
-            }
+        head("/downloads/{filename}") {
+            val filename = call.parameters["filename"] ?: return@head call.respond(HttpStatusCode.BadRequest)
+            val file = java.io.File(downloadsDir, filename)
+            if (file.exists()) call.respond(HttpStatusCode.OK) else call.respond(HttpStatusCode.NotFound)
         }
     }
 
-
-    monitor.subscribe(ApplicationStopping) {
-        tcpServer.stop()
-        IOExecutor.shutdown()
-        fileService.close()
+    // 9. Graceful shutdown
+    environment.monitor.subscribe(ApplicationStopping) {
+        clientRegistry.stop()
         searchIndex.stop()
-        messageStore.stop()
+        tcpServer.stop()
+        messageStore.close()
+        logger.info("TeamTalk Server stopped")
     }
+
+    logger.info("TeamTalk Server initialized")
 }
 
-private fun resolveStaticDir(): File {
+private fun resolveStaticDir(): java.io.File {
+    val env = com.virjar.tk.env.Environment
     // 开发环境：resources/static/
-    if (Environment.isDevelopment) {
-        val devStaticDir = File(Environment.runtimeClassPathDir, "static")
+    if (env.isDevelopment) {
+        val devStaticDir = java.io.File(env.runtimeClassPathDir, "static")
         if (devStaticDir.isDirectory) return devStaticDir
     }
     // 生产环境：安装根目录/static/（与 conf/ lib/ data/ 同级）
-    val prodStaticDir = File(Environment.runtimeClassPathDir.parent, "static")
+    val prodStaticDir = java.io.File(env.runtimeClassPathDir.parent, "static")
     if (prodStaticDir.isDirectory) return prodStaticDir
-    return Environment.dataRoot
+    return env.dataRoot
 }

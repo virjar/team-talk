@@ -1,69 +1,49 @@
 package com.virjar.tk.repository
 
-import com.virjar.tk.client.UserContext
-import com.virjar.tk.dto.UserDto
-import io.ktor.client.call.*
-import io.ktor.client.request.*
-import io.ktor.http.*
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
+import com.virjar.tk.Outcome
+import com.virjar.tk.client.LocalCache
+import com.virjar.tk.client.RpcInvoker
+import com.virjar.tk.client.ensureSuccess
+import com.virjar.tk.model.User
+import com.virjar.tk.outcome
+import com.virjar.tk.protocol.AuthMethod
+import com.virjar.tk.protocol.ProtoCodec
+import com.virjar.tk.protocol.ServiceId
+import com.virjar.tk.protocol.UserMethod
 
-class UserRepository(private val ctx: UserContext) {
-
-    suspend fun getMe(): UserDto {
-        return try {
-            ctx.httpClient.get("${ctx.baseUrl}/api/v1/users/me") {
-                header("Authorization", ctx.authHeader())
-            }.body()
-        } catch (e: Exception) {
-            com.virjar.tk.util.AppLog.e("UserRepo", "getMe failed", e)
-            throw e
-        }
+class UserRepository(
+    private val rpcClient: RpcInvoker,
+    private val localCache: LocalCache,
+) {
+    /** 拉取用户资料。失败时调用方可 `.recover { localCache.getUser(uid) }` 降级。 */
+    suspend fun getProfile(uid: String): Outcome<User?> = outcome {
+        val payload = ProtoCodec.encodePayload { writeString(if (uid.isNotEmpty()) uid else null) }
+        val response = rpcClient.invoke(ServiceId.USER, UserMethod.GET_PROFILE.id, payload)
+        response.ensureSuccess()
+        val data = response.payload ?: return@outcome null
+        val user = ProtoCodec.decode(User, data)
+        localCache.upsertUser(user)
+        user
     }
 
-    suspend fun getUser(uid: String): UserDto {
-        val response = ctx.httpClient.get("${ctx.baseUrl}/api/v1/users/$uid") {
-            header("Authorization", ctx.authHeader())
-        }
-        if (!response.status.isSuccess()) {
-            throw RuntimeException("getUser failed: HTTP ${response.status.value} for uid=$uid")
-        }
-        return response.body<UserDto>()
+    suspend fun updateProfile(name: String? = null, avatar: String? = null, sex: Int? = null, phone: String? = null): Outcome<Unit> = outcome {
+        val user = User(uid = "", username = "", name = name ?: "", avatar = avatar, sex = sex ?: 0, phone = phone)
+        val payload = ProtoCodec.encode(user)
+        rpcClient.invoke(ServiceId.USER, UserMethod.UPDATE_PROFILE.id, payload).ensureSuccess()
     }
 
-    suspend fun updateProfile(name: String? = null, avatar: String? = null, sex: Int? = null): UserDto {
-        val body = buildJsonObject {
-            name?.let { put("name", it) }
-            avatar?.let { put("avatar", it) }
-            sex?.let { put("sex", it) }
-        }
-        return ctx.httpClient.put("${ctx.baseUrl}/api/v1/users/me") {
-            header("Authorization", ctx.authHeader())
-            contentType(ContentType.Application.Json)
-            setBody(body)
-        }.body<UserDto>()
+    suspend fun search(keyword: String): Outcome<List<User>> = outcome {
+        val payload = ProtoCodec.encodePayload { writeString(keyword) }
+        val response = rpcClient.invoke(ServiceId.USER, UserMethod.SEARCH.id, payload)
+        response.ensureSuccess()
+        val data = response.payload ?: return@outcome emptyList()
+        ProtoCodec.decodeList(User, data)
     }
 
-    suspend fun getOnlineStatus(uids: List<String>): Map<String, Boolean> {
-        if (uids.isEmpty()) return emptyMap()
-        return try {
-            val response: Map<String, Map<String, Boolean>> = ctx.httpClient.post("${ctx.baseUrl}/api/v1/users/online-status") {
-                header("Authorization", ctx.authHeader())
-                contentType(ContentType.Application.Json)
-                setBody(mapOf("uids" to uids))
-            }.body()
-            response["status"] ?: emptyMap()
-        } catch (e: Exception) {
-            com.virjar.tk.util.AppLog.e("UserRepo", "getOnlineStatus failed", e)
-            throw e
-        }
-    }
-
-    suspend fun changePassword(oldPassword: String, newPassword: String) {
-        ctx.httpClient.put("${ctx.baseUrl}/api/v1/user/updatepassword") {
-            header("Authorization", ctx.authHeader())
-            contentType(ContentType.Application.Json)
-            setBody(mapOf("password" to oldPassword, "new_password" to newPassword))
-        }
+    /** 返回 true=成功，false=旧密码错误；其他错误走 Failure。 */
+    suspend fun changePassword(oldPassword: String, newPassword: String): Outcome<Boolean> = outcome {
+        val payload = ProtoCodec.encodePayload { writeString(oldPassword); writeString(newPassword) }
+        val response = rpcClient.invoke(ServiceId.AUTH, AuthMethod.UPDATE_PASSWORD.id, payload)
+        response.status == 0
     }
 }

@@ -1,58 +1,50 @@
 <configuration>
-    <property name="LOG_DIR" value="${TK_LOG_DIR:-logs}" />
 
-    <appender name="EventTrace" class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <File>${LOG_DIR}/traces/trice.log</File>
+    <property name="LOG_DIR" value="${LOG_DIR:-${user.home}/.tk/logs}" />
+
+    <!-- Console -->
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>[%d] %m%n</pattern>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
+    </appender>
+
+    <!-- Trace 日志：独立文件，简化格式 -->
+    <appender name="EVENT_TRACE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/traces/trace.log</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-            <fileNamePattern>${LOG_DIR}/trices/trice.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
+            <fileNamePattern>${LOG_DIR}/traces/trace.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
             <maxFileSize>50MB</maxFileSize>
             <maxHistory>7</maxHistory>
             <totalSizeCap>1GB</totalSizeCap>
         </rollingPolicy>
+        <encoder>
+            <pattern>[%d] %m%n</pattern>
+        </encoder>
     </appender>
 
+    <!-- 主日志 -->
     <appender name="TEAM_TALK" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${LOG_DIR}/teamtalk.log</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>${LOG_DIR}/teamtalk.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
             <maxFileSize>50MB</maxFileSize>
             <maxHistory>30</maxHistory>
-            <totalSizeCap>1GB</totalSizeCap>
+            <totalSizeCap>5GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{40} - %msg%n</pattern>
         </encoder>
     </appender>
 
-    <appender name="ERROR" class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <filter class="ch.qos.logback.classic.filter.LevelFilter">
-            <level>ERROR</level>
-            <onMatch>ACCEPT</onMatch>
-            <onMismatch>DENY</onMismatch>
-        </filter>
-        <file>${LOG_DIR}/error.log</file>
-        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
-            <fileNamePattern>${LOG_DIR}/error.%d{yyyy-MM-dd}.%i.log</fileNamePattern>
-            <maxFileSize>50MB</maxFileSize>
-            <maxHistory>30</maxHistory>
-            <totalSizeCap>1GB</totalSizeCap>
-        </rollingPolicy>
-        <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
-        </encoder>
-    </appender>
-
+    <!-- Trace logger：独立输出，不传播到 root -->
     <logger name="EventTrace" level="INFO" additivity="false">
-        <appender-ref ref="EventTrace"/>
+        <appender-ref ref="EVENT_TRACE" />
     </logger>
 
     <root level="INFO">
+        <appender-ref ref="STDOUT" />
         <appender-ref ref="TEAM_TALK" />
-        <appender-ref ref="ERROR"/>
     </root>
 
-    <logger name="io.ktor" level="INFO" />
 </configuration>

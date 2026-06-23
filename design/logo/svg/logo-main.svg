@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TeamTalk 品牌 Logo · 主版（app 图标）
+  概念：团队节点网络 —— 4 个节点用线连接排成 T 字形，表达「团队互联」。
+  用途：Android launcher 图标 / Desktop 任务栏图标 / 启动页
+  规格：1024x1024，圆角方形（rx=225，约 22%，符合现代 app 图标）
+  色彩：品牌蓝渐变 #3370FF → #245BDB（LarkBlue，与 AppTheme 一致）
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="ttBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3370FF"/>
+      <stop offset="1" stop-color="#245BDB"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角方形背景 -->
+  <rect width="1024" height="1024" rx="225" ry="225" fill="url(#ttBg)"/>
+
+  <!-- 节点连接线：构成 T 字形骨架 -->
+  <g stroke="#FFFFFF" stroke-width="22" stroke-linecap="round" fill="none">
+    <!-- 横臂：左 — 中 — 右 -->
+    <line x1="316" y1="372" x2="708" y2="372"/>
+    <!-- 竖臂：中 — 下 -->
+    <line x1="512" y1="372" x2="512" y2="708"/>
+  </g>
+
+  <!-- 4 个节点：构成 T 形（左上、中上焦点、右上、中下） -->
+  <g fill="#FFFFFF">
+    <circle cx="316" cy="372" r="58"/>
+    <circle cx="708" cy="372" r="58"/>
+    <circle cx="512" cy="708" r="58"/>
+  </g>
+  <!-- 中央焦点节点（最大，内嵌品牌蓝小圆形成「目标/连接核心」感） -->
+  <circle cx="512" cy="372" r="76" fill="#FFFFFF"/>
+  <circle cx="512" cy="372" r="30" fill="#3370FF"/>
+</svg>

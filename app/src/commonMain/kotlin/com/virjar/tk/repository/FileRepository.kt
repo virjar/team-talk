@@ -1,88 +1,21 @@
 package com.virjar.tk.repository
 
-import com.virjar.tk.client.UserContext
-import com.virjar.tk.util.buildFileUrl
-import io.ktor.client.plugins.onUpload
-import io.ktor.client.request.*
-import io.ktor.client.request.forms.*
-import io.ktor.client.statement.*
-import io.ktor.http.*
-import io.ktor.http.content.*
-import kotlinx.serialization.Serializable
+import com.virjar.tk.Outcome
 
-@Serializable
-data class UploadResult(val path: String, val thumbnailPath: String = "")
+/**
+ * 文件操作仓库（跨平台 expect）。
+ *
+ * 封装 HTTP 文件上传/下载，平台各自实现 HTTP 客户端。
+ * 构造函数接受 serverUrl（从 [com.virjar.tk.client.defaultServerConfig] 获取）。
+ */
+expect class FileRepository(serverUrl: String) {
 
-@Serializable
-private data class UploadResponse(val path: String = "", val thumbnailPath: String = "")
+    /** 上传文件，返回相对 path（形如 "{uid}/{uuid}.ext"）。 */
+    suspend fun upload(bytes: ByteArray, fileName: String, contentType: String): Outcome<String>
 
-class FileRepository(private val ctx: UserContext) {
+    /** 下载文件，返回原始字节。 */
+    suspend fun download(path: String): Outcome<ByteArray>
 
-    private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
-
-    // Download deduplication cache: path -> bytes
-    private val downloadedFiles = mutableMapOf<String, ByteArray>()
-
-    /**
-     * Upload a file via multipart POST. Returns the server-assigned path and optional thumbnail path.
-     */
-    suspend fun uploadFile(
-        bytes: ByteArray,
-        fileName: String,
-        contentType: String = "image/jpeg",
-        onProgress: ((Float) -> Unit)? = null,
-    ): UploadResult {
-        val response: HttpResponse = ctx.httpClient.post("${ctx.baseUrl}/api/v1/files/upload") {
-            header("Authorization", ctx.authHeader())
-            setBody(MultiPartFormDataContent(
-                formData {
-                    append("file", bytes, Headers.build {
-                        append(HttpHeaders.ContentDisposition, "filename=\"$fileName\"")
-                        append(HttpHeaders.ContentType, contentType)
-                    })
-                }
-            ))
-            onUpload { bytesSentTotal, contentLength ->
-                if (contentLength != null && contentLength > 0 && onProgress != null) {
-                    onProgress(bytesSentTotal.toFloat() / contentLength)
-                }
-            }
-        }
-        val body = response.bodyAsText()
-        return try {
-            val parsed = json.decodeFromString<UploadResponse>(body)
-            UploadResult(parsed.path, parsed.thumbnailPath)
-        } catch (_: Exception) {
-            UploadResult(body.removeSurrounding("\""))
-        }
-    }
-
-    /** Upload an image file. Convenience method. */
-    suspend fun uploadImage(bytes: ByteArray, fileName: String = "image.jpg", onProgress: ((Float) -> Unit)? = null): UploadResult {
-        val ext = fileName.substringAfterLast('.', "jpg").lowercase()
-        val contentType = when (ext) {
-            "png" -> "image/png"
-            "gif" -> "image/gif"
-            "webp" -> "image/webp"
-            "bmp" -> "image/bmp"
-            else -> "image/jpeg"
-        }
-        return uploadFile(bytes, fileName, contentType, onProgress)
-    }
-
-    /** Build the full download URL from a server-assigned file path. */
-    fun buildDownloadUrl(path: String): String = buildFileUrl(ctx.baseUrl, path)
-
-    /** Download a file from the server. Returns the raw bytes. Uses in-memory cache for deduplication. */
-    suspend fun downloadFile(path: String): ByteArray {
-        synchronized(downloadedFiles) {
-            downloadedFiles[path]?.let { return it }
-        }
-        val url = buildDownloadUrl(path)
-        val bytes = java.net.URL(url).readBytes()
-        synchronized(downloadedFiles) {
-            downloadedFiles[path] = bytes
-        }
-        return bytes
-    }
+    /** 根据相对 path 拼装完整下载 URL。 */
+    fun resolveUrl(path: String): String
 }
