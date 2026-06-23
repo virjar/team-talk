@@ -360,7 +360,10 @@ class ImClient(
 
                     // 设置连接级状态（在 pipeline 升级前设置 channel 引用）
                     channel = ctx.channel()
-                    scope = CoroutineScope(eventLoop.asCoroutineDispatcher() + SupervisorJob())
+                    scope = CoroutineScope(eventLoop.asCoroutineDispatcher() + SupervisorJob() +
+                        CoroutineExceptionHandler { _, throwable ->
+                            logger.fault("ImClient scope unhandled exception", throwable)
+                        })
                     _state.value = ConnectionState.CONNECTED
 
                     // 升级 pipeline：移除握手 handler，添加 PacketCodec + PacketHandler

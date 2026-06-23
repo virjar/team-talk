@@ -23,19 +23,24 @@ class RpcClient(
             return
         }
         listenJob = scope.launch {
-            launch {
-                imClient.packets.collect { proto ->
-                    if (proto is ResponsePayload) {
-                        pendingRequests.remove(proto.requestId)?.complete(proto)
+            try {
+                launch {
+                    imClient.packets.collect { proto ->
+                        if (proto is ResponsePayload) {
+                            pendingRequests.remove(proto.requestId)?.complete(proto)
+                        }
                     }
                 }
+                // 监听断连，清理残留请求
+                imClient.state.first { it == ConnectionState.DISCONNECTED }
+                pendingRequests.forEach { (_, d) ->
+                    d.completeExceptionally(CancellationException("Connection closed"))
+                }
+                pendingRequests.clear()
+            } catch (e: Exception) {
+                logger.fault("RpcClient listen loop crashed", e)
+                throw e // rethrow to CoroutineExceptionHandler for crash dump
             }
-            // 监听断连，清理残留请求
-            imClient.state.first { it == ConnectionState.DISCONNECTED }
-            pendingRequests.forEach { (_, d) ->
-                d.completeExceptionally(CancellationException("Connection closed"))
-            }
-            pendingRequests.clear()
         }
     }
 

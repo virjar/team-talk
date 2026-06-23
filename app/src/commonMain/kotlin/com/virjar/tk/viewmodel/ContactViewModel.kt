@@ -3,6 +3,7 @@ package com.virjar.tk.viewmodel
 import com.virjar.tk.client.LocalCache
 import com.virjar.tk.model.Contact
 import com.virjar.tk.repository.ContactRepository
+import com.virjar.tk.util.AppLog
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -47,7 +48,9 @@ class ContactViewModel(
             try {
                 val applies = contactRepo.listApplies().getOrThrow()
                 _pendingApplyCount.value = applies.size
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                AppLog.trace("ContactVM", "Failed to refresh pending apply count: ${e.message}")
+            }
         }
     }
 

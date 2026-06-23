@@ -20,10 +20,14 @@ class TeamTalkApp : Application() {
     override fun onCreate() {
         super.onCreate()
 
+        // 0. 初始化 AndroidContext（供 platformDataDir() 使用）
+        com.virjar.tk.client.AndroidContext.appContext = this
+
         // 1. 日志注入：shared 模块的 TkLogger → AppLog
         TkLoggerFactory.install { name -> AppLogTkLogger(name) }
 
         // 2. 全局未捕获异常 → fault 日志 + crash 持久化
+        val oldHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             Log.e("Crash", "Uncaught exception in thread: ${thread.name}", throwable)
             // crash 持久化：写入 pending 文件，下次启动上传
@@ -32,10 +36,12 @@ class TeamTalkApp : Application() {
                 val dataDir = getDir("teamtalk", MODE_PRIVATE)
                 val crashDumper = com.virjar.tk.client.CrashDumper(dataDir)
                 crashDumper.flushPending("Crash in ${thread.name}: ${throwable.stackTraceToString()}")
-            } catch (_: Exception) {
-                // 即使持久化失败也不能阻止默认行为
+            } catch (e: Exception) {
+                // 即使持久化失败也不能阻止默认行为，但要打印到 logcat
+                Log.e("Crash", "Failed to persist crash log", e)
             }
-            // 不调用默认 handler，让进程正常死亡
+            // 委托给默认 handler 让进程正常死亡
+            oldHandler?.uncaughtException(thread, throwable)
         }
 
         // 3. ServerConfig 初始化（从 BuildConfig 注入）

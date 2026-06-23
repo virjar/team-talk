@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
 import android.os.Build
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -81,7 +82,7 @@ fun AndroidChatScreen(
                 val path = MediaHelper.uploadFile(bytes, fileName, mimeType, serverUrl)
                 val fileUrl = "$serverUrl/api/v1/files/$path"
                 viewModel.sendMessage(buildBody(fileUrl, bytes.size.toLong()))
-            } catch (_: Exception) {}
+            } catch (e: Exception) { Log.e("Chat", "Operation failed", e) }
             isUploading = false
         }
     }
@@ -131,7 +132,7 @@ fun AndroidChatScreen(
                             }
                         }
                     viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.VIDEO.code, System.currentTimeMillis(), body = VideoBody(fileUrl, meta?.first ?: 0, meta?.second ?: 0, meta?.third ?: 0, bytes.size.toLong(), thumbUrl)))
-                } catch (_: Exception) {}
+                } catch (e: Exception) { Log.e("Chat", "Operation failed", e) }
                 isUploading = false
             }
         }
@@ -152,11 +153,11 @@ fun AndroidChatScreen(
             setOutputFile(file.absolutePath)
         }
         try { rec.prepare(); rec.start(); voiceRecorder = rec; voiceRecordStartTime = System.currentTimeMillis() }
-        catch (_: Exception) { rec.release() }
+        catch (e: Exception) { Log.e("Chat", "Voice recorder prepare failed", e); rec.release() }
     }
 
     fun stopVoice() {
-        voiceRecorder?.apply { try { stop() } catch (_: Exception) {}; try { release() } catch (_: Exception) {} }
+        voiceRecorder?.apply { try { stop() } catch (e: Exception) { Log.w("Chat", "Voice recorder stop failed", e) }; try { release() } catch (e: Exception) { Log.w("Chat", "Voice recorder release failed", e) } }
         voiceRecorder = null
         val file = voiceOutputFile; voiceOutputFile = null
         if (file == null || file.length() == 0L) return
@@ -167,7 +168,7 @@ fun AndroidChatScreen(
                 val dur = ((System.currentTimeMillis() - voiceRecordStartTime) / 1000).toInt()
                 viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.VOICE.code, System.currentTimeMillis(), body = VoiceBody("$serverUrl/api/v1/files/$path", dur, size = file.length())))
                 file.delete()
-            } catch (_: Exception) {}
+            } catch (e: Exception) { Log.e("Chat", "Operation failed", e) }
             isUploading = false
         }
     }
@@ -213,7 +214,7 @@ fun AndroidChatScreen(
                                         f.parentFile?.mkdirs()
                                         f.writeBytes(java.net.URL(url).readBytes())
                                         MediaHelper.openFile(context, f, "application/octet-stream")
-                                    } catch (_: Exception) {}
+                                    } catch (e: Exception) { Log.e("Chat", "Operation failed", e) }
                                 }
                             }
                             override fun showGallery(items: List<GalleryItem>, index: Int) {

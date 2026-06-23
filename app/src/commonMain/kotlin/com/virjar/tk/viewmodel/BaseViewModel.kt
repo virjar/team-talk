@@ -1,5 +1,7 @@
 package com.virjar.tk.viewmodel
 
+import com.virjar.tk.client.logUnhandledError
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -12,7 +14,11 @@ import kotlinx.coroutines.cancel
  * ViewModel 基类。提供共享的协程作用域和错误状态管理。
  */
 abstract class BaseViewModel {
-    protected val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    protected val scope = CoroutineScope(Dispatchers.Main + SupervisorJob() +
+        CoroutineExceptionHandler { _, throwable ->
+            setError("Unhandled error: ${throwable.message}")
+            logUnhandledError("ViewModel", throwable)
+        })
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()

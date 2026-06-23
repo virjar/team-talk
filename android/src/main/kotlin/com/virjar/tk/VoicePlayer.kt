@@ -1,6 +1,7 @@
 package com.virjar.tk
 
 import android.media.MediaPlayer
+import android.util.Log
 import kotlinx.coroutines.*
 import java.io.File
 
@@ -20,7 +21,10 @@ object VoicePlayer {
     val error: String? get() = _error
     val playingUrl: String? get() = currentUrl
 
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob() +
+        CoroutineExceptionHandler { _, throwable ->
+            Log.e("VoicePlayer", "Scope unhandled exception", throwable)
+        })
 
     fun play(context: android.content.Context, url: String) {
         // 如果已经在播放同一个，则暂停/继续
@@ -60,6 +64,7 @@ object VoicePlayer {
                 _isLoading = false
                 _isPlaying = true
             } catch (e: Exception) {
+                Log.e("VoicePlayer", "Failed to play voice: $url", e)
                 _isLoading = false
                 _error = e.message
                 currentUrl = null
@@ -69,8 +74,8 @@ object VoicePlayer {
 
     fun stop() {
         currentPlayer?.apply {
-            try { stop() } catch (_: Exception) {}
-            try { release() } catch (_: Exception) {}
+            try { stop() } catch (e: Exception) { Log.w("VoicePlayer", "Stop failed", e) }
+            try { release() } catch (e: Exception) { Log.w("VoicePlayer", "Release failed", e) }
         }
         currentPlayer = null
         currentUrl = null

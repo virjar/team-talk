@@ -58,7 +58,7 @@ fun createSession(
 
     // HTTP 日志上传器 + crash 持久化
     val serverUrl = defaultServerConfig().serverUrl
-    val dataDir = java.io.File(System.getProperty("teamtalk.data.dir", System.getProperty("user.home") + "/.teamtalk"))
+    val dataDir = platformDataDir()
     val crashDumper = CrashDumper(dataDir)
     val httpLogUploader = HttpLogUploader(traceBuffer, faultBuffer, serverUrl, deviceId, crashDumper)
     httpLogUploader.start()

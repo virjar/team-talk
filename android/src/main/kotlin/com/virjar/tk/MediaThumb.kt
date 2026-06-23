@@ -3,6 +3,7 @@ package com.virjar.tk
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
 import android.widget.ImageView
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -34,7 +35,8 @@ fun rememberAsyncThumb(
             val bm = withContext(Dispatchers.IO) { BitmapFactory.decodeFile(file.absolutePath) }
             bitmap = bm
             isLoading = false
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.e("MediaThumb", "Failed to load thumbnail: $url", e)
             isLoading = false
         }
     }

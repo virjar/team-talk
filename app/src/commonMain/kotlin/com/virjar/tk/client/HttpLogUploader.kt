@@ -26,7 +26,10 @@ class HttpLogUploader(
     private val crashDumper: CrashDumper,
     private val intervalMs: Long = 5 * 60 * 1000L,
 ) {
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob() +
+        CoroutineExceptionHandler { _, throwable ->
+            logUnhandledError("HttpLogUploader", throwable)
+        })
     private var timerJob: Job? = null
     private var faultDebounceJob: Job? = null
 
@@ -66,7 +69,7 @@ class HttpLogUploader(
         scope.launch { uploadAll() }
     }
 
-    private suspend fun uploadAll() {
+    private fun uploadAll() {
         val traceText = traceBuffer.drain() ?: ""
         val faultText = faultBuffer.drain() ?: ""
         val combined = buildString {
@@ -79,7 +82,9 @@ class HttpLogUploader(
             val compressed = gzip(combined)
             upload(compressed)
         } catch (e: Exception) {
-            // 上传失败，落 pending 文件
+            // 先打印原始异常到控制台，确保 logcat 可见，再落盘
+            System.err.println("[Crash] Upload failed, saving to pending: ${e.message}")
+            e.printStackTrace()
             crashDumper.flushPending(combined)
             AppLog.trace("HttpLogUploader", "Upload failed, saved to pending: ${e.message}")
         }

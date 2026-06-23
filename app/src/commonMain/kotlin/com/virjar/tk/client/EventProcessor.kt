@@ -42,10 +42,15 @@ class EventProcessor(
             return
         }
         listenJob = scope.launch {
-            imClient.packets.collect { proto ->
-                if (proto is NotifyPayload) {
-                    withContext(Dispatchers.IO) { processNotify(proto) }
+            try {
+                imClient.packets.collect { proto ->
+                    if (proto is NotifyPayload) {
+                        withContext(Dispatchers.IO) { processNotify(proto) }
+                    }
                 }
+            } catch (e: Exception) {
+                logger.fault("EventProcessor listen loop crashed, events lost until reconnect", e)
+                throw e // rethrow to CoroutineExceptionHandler for crash dump
             }
         }
     }

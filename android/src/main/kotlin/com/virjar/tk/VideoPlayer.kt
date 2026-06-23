@@ -1,5 +1,6 @@
 package com.virjar.tk
 
+import android.util.Log
 import android.widget.FrameLayout
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -33,7 +34,8 @@ fun rememberVideoPlayer(
             val cacheDir = File(context.cacheDir, "media")
             val file = MediaHelper.downloadToCache(url, cacheDir)
             localPath = file.absolutePath
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.e("VideoPlayer", "Failed to download video: $url", e)
         }
     }
 

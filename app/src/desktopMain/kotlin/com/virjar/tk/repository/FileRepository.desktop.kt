@@ -37,7 +37,7 @@ actual class FileRepository actual constructor(private val serverUrl: String) {
         if (code != 200) {
             val errorBody = try {
                 conn.errorStream?.bufferedReader()?.readText() ?: ""
-            } catch (_: Exception) { "" }
+            } catch (e: Exception) { System.err.println("[FileRepo] Failed to read error body: ${e.message}"); "" }
             throw AppError.Business(code, "Upload failed HTTP $code: $errorBody")
         }
 

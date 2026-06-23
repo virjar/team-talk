@@ -32,8 +32,16 @@ fun main() {
     TkLoggerFactory.install { name -> AppLogTkLogger(name) }
 
     // ── 3. 未捕获异常 ──
+    val oldHandler = Thread.getDefaultUncaughtExceptionHandler()
     Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
         AppLog.fault("Uncaught", "Uncaught exception in thread: ${thread.name}", throwable)
+        try {
+            com.virjar.tk.client.CrashDumper(com.virjar.tk.client.platformDataDir())
+                .flushPending("Desktop crash in ${thread.name}: ${throwable.stackTraceToString()}")
+        } catch (_: Exception) {
+            // crash dump 本身失败不掩盖原始异常
+        }
+        oldHandler?.uncaughtException(thread, throwable)
     }
 
     AppLog.trace("Main", "TeamTalk starting, dataDir=${dataDir.absolutePath}")

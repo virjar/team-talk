@@ -1,6 +1,7 @@
 package com.virjar.tk
 
 import android.os.Bundle
+import android.util.Log
 import com.virjar.tk.android.BuildConfig
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -224,7 +225,7 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             GroupDetailScreen(chat = dataState.groupDetailChat, members = dataState.groupMembers, isOwner = dataState.groupMembers.any { it.uid == dataState.userSession.uid && it.role == 2 },
                 myUid = dataState.userSession.uid,
                 onMemberClick = { uid -> navController.navigate(Routes.userProfile(uid)) }, onInviteMembers = { navController.navigate(Routes.inviteMembers(chatId)) }, onViewInviteLinks = { navController.navigate(Routes.inviteLinks(chatId)) },
-                onLeaveGroup = { scope.launch { try { dataState.chatRepo.deleteChat(chatId) } catch (_: Exception) {}; navController.popBackStack(Routes.HOME, inclusive = false) } },
+                onLeaveGroup = { scope.launch { try { dataState.chatRepo.deleteChat(chatId) } catch (e: Exception) { Log.w("MainActivity", "Failed to delete chat on leave group", e) }; navController.popBackStack(Routes.HOME, inclusive = false) } },
                 onEditNotice = { notice -> scope.launch { dataState.chatRepo.updateGroup(chatId, notice = notice); dataState.loadScreenDataByKey(ScreenDataKey.GroupDetail(chatId)) } },
                 onBack = { navController.popBackStack() },
                 onSetAdmin = { uid -> scope.launch { dataState.chatRepo.setMemberRole(chatId, uid, 1) } },

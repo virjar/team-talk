@@ -307,7 +307,7 @@ private fun com.virjar.tk.database.Message.toModel(): Message {
             val byteBuf = Unpooled.wrappedBuffer(bodyBytes)
             val buf = PacketBuffer(byteBuf)
             MessageBodyRegistry.decode(msgType, buf)
-        } catch (_: Exception) { null }
+        } catch (e: Exception) { com.virjar.tk.util.AppLog.fault("LocalCache", "Failed to decode message body chatId=$chat_id msgId=$client_msg_id", e); null }
     } else null
     return Message(
         chatId = chat_id, clientMsgId = client_msg_id, serverSeq = server_seq ?: 0L,

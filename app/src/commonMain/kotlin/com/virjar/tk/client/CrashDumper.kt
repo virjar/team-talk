@@ -24,13 +24,19 @@ class CrashDumper(
     fun hasPending(): Boolean = pendingFile.exists() && pendingFile.length() > 0
 
     /**
-     * 原子写入 pending 文件。
+     * 原子写入 pending 文件，内部容错。
      * 进程随时可能死亡，必须先写 .tmp 再 rename（同文件系统内 rename 是原子的）。
+     * 如果目录不存在则自动创建；写入失败不抛出异常，避免掩盖原始异常。
      */
     fun flushPending(content: String) {
         synchronized(this) {
-            tmpFile.writeText(content)
-            tmpFile.renameTo(pendingFile)
+            try {
+                dataDir.mkdirs()
+                tmpFile.writeText(content)
+                tmpFile.renameTo(pendingFile)
+            } catch (_: Exception) {
+                // 即使持久化失败也不能让 crash dump 本身变成二次崩溃
+            }
         }
     }
 
