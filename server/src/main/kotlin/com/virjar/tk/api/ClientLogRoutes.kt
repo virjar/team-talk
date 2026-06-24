@@ -25,7 +25,7 @@ fun Route.clientLogRoutes(clientLogStore: ClientLogStore) {
         // TODO: 鉴权 — 从 header 提取设备签名或 token
         val deviceId = call.request.header("X-Device-Id") ?: "anonymous"
 
-        val raw = call.receiveStream().readBytes()
+        val raw = call.receive<ByteArray>()
         // 尝试 GZIP 解压，如果不是 GZIP 则当明文处理
         val text = try {
             GZIPInputStream(ByteArrayInputStream(raw)).bufferedReader().readText()
