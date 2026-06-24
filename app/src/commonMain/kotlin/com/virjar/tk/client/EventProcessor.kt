@@ -48,9 +48,12 @@ class EventProcessor(
                         withContext(Dispatchers.IO) { processNotify(proto) }
                     }
                 }
+            } catch (e: CancellationException) {
+                // 正常的协作式取消（断连/重连时 SupervisorJob 被 cancel），不是 crash
+                throw e
             } catch (e: Exception) {
+                // 根监听循环：记好日志后兜住，不让单次错误搞垮整个监听
                 logger.fault("EventProcessor listen loop crashed, events lost until reconnect", e)
-                throw e // rethrow to CoroutineExceptionHandler for crash dump
             }
         }
     }
@@ -60,10 +63,9 @@ class EventProcessor(
     }
 
     private suspend fun processNotify(notify: NotifyPayload) {
-        val notifyType = NotifyType.fromCode(notify.notifyType)
-        val payload = notify.payload
-
         try {
+            val notifyType = NotifyType.fromCode(notify.notifyType)
+            val payload = notify.payload
             // payload 为空的事件（如部分 PRESENCE）直接视为已处理
             if (payload != null) {
                 handleNotifyPayload(notifyType, payload)

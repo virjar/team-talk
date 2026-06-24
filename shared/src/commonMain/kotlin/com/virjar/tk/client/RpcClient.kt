@@ -37,9 +37,12 @@ class RpcClient(
                     d.completeExceptionally(CancellationException("Connection closed"))
                 }
                 pendingRequests.clear()
+            } catch (e: CancellationException) {
+                // 正常的协作式取消（断连/重连时 SupervisorJob 被 cancel），不是 crash
+                throw e
             } catch (e: Exception) {
+                // 根监听循环：记好日志后兜住，不让单次错误搞垮整个监听
                 logger.fault("RpcClient listen loop crashed", e)
-                throw e // rethrow to CoroutineExceptionHandler for crash dump
             }
         }
     }
