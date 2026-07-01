@@ -25,7 +25,7 @@ class ChatViewModel(
     private val chatId: String,
     private val localCache: LocalCache,
     private val messageRepo: MessageRepository,
-    eventProcessor: EventProcessor? = null,
+    eventProcessor: EventProcessor,
     private val myUid: String = "",
 ) : BaseViewModel() {
     private val logger = LoggerFactory.getLogger("ChatViewModel")
@@ -56,17 +56,15 @@ class ChatViewModel(
         loadHistory(markReadAfter = true)
 
         // 监听 typing 事件
-        if (eventProcessor != null) {
-            scope.launch {
-                eventProcessor.typingEvents.collect { (cid, uid) ->
-                    if (cid == chatId && uid != myUid) {
-                        _typingUid.value = uid
-                        // 3 秒后自动清除
-                        typingJob?.cancel()
-                        typingJob = scope.launch {
-                            delay(3000)
-                            _typingUid.value = null
-                        }
+        scope.launch {
+            eventProcessor.typingEvents.collect { (cid, uid) ->
+                if (cid == chatId && uid != myUid) {
+                    _typingUid.value = uid
+                    // 3 秒后自动清除
+                    typingJob?.cancel()
+                    typingJob = scope.launch {
+                        delay(3000)
+                        _typingUid.value = null
                     }
                 }
             }

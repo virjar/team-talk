@@ -17,13 +17,8 @@ import com.virjar.tk.viewmodel.ConversationViewModel
 // ── 类型安全导航目标 ──
 
 sealed class SubScreen {
-    // 平台级屏幕
-    object Main : SubScreen()
-    object Chat : SubScreen()
-    object Contacts : SubScreen()
-    object Settings : SubScreen()
-
-    // 共享子屏幕
+    // 共享子屏幕（平台级屏幕 Main/Chat/Contacts/Settings 由各平台独立管理，
+    // currentScreen=null 表示主布局，不进入 SubScreenRouter）
     object Devices : SubScreen()
     object Blacklist : SubScreen()
     object EditProfile : SubScreen()
@@ -75,8 +70,8 @@ class AppState(session: ClientSession) : AppDataState(session) {
         prepareChat(chatId, chatName, chatType)
     }
 
-    /** 是否为共享子屏幕（非平台级屏幕）—— Desktop 导航用 */
-    val isSubScreen: Boolean get() = currentScreen != null && currentScreen !in PLATFORM_SCREENS
+    /** 是否在共享子屏幕（非主布局）—— Desktop 导航用 */
+    val isSubScreen: Boolean get() = currentScreen != null
 
     /** Desktop 专用的按 SubScreen 加载数据（桥接到 AppDataState.loadScreenDataByKey）。 */
     suspend fun loadScreenData(screen: SubScreen?) {
@@ -89,10 +84,6 @@ class AppState(session: ClientSession) : AppDataState(session) {
             is SubScreen.InviteLinks -> selectedGroupChatId?.let { loadScreenDataByKey(ScreenDataKey.InviteLinks(it)) }
             else -> {}
         }
-    }
-
-    companion object {
-        private val PLATFORM_SCREENS = setOf(SubScreen.Main, SubScreen.Chat, SubScreen.Contacts, SubScreen.Settings)
     }
 }
 

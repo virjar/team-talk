@@ -137,13 +137,8 @@ class EventProcessor(
             }
 
             NotifyType.PRESENCE -> {
-                // PresencePayload: uid(string) + status(byte) + lastSeenAt(varLong)
-                // User 模型暂无在线状态字段，仅记录日志
-                val buf = com.virjar.tk.protocol.PacketBuffer(io.netty.buffer.Unpooled.wrappedBuffer(payload))
-                val uid = buf.readString()
-                val status = buf.readByte()
-                val lastSeenAt = buf.readVarLong()
-                logger.trace("PRESENCE: uid=$uid status=$status lastSeenAt=$lastSeenAt")
+                // User 模型暂无在线状态字段，仅记录日志（收到即视为已处理，推进游标）
+                logger.trace("PRESENCE notify received (${payload.size} bytes), no UI consumer yet")
             }
             NotifyType.TYPING -> {
                 val msg = ProtoCodec.decode(Message, payload)
@@ -161,9 +156,9 @@ class EventProcessor(
             }
 
             NotifyType.GENERIC -> {
-                // 通用扩展推送：解析 GenericPayload，按 extensionType 分发
-                val generic = ProtoCodec.decode(com.virjar.tk.protocol.payload.GenericPayload, payload)
-                GenericDispatcher.dispatchNotify(generic.extensionType, generic.data)
+                // 通用扩展推送：当前无注册处理器，静默忽略（前向兼容）。
+                // 需要时再实现分发机制（避免过早实现，见 CLAUDE.md）。
+                logger.trace("GENERIC notify ignored (no handler registered)")
             }
         }
     }

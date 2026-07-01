@@ -189,6 +189,6 @@ fun SubScreenRouter(
             onBack = backOrNull(screen),
         )
 
-        null, is SubScreen.Main, is SubScreen.Chat, is SubScreen.Contacts, is SubScreen.Settings -> { /* 平台级屏幕，不由 SubScreenRouter 处理 */ }
+        null -> { /* 主布局，不由 SubScreenRouter 处理 */ }
     }
 }

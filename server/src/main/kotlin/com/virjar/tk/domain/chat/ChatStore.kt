@@ -223,10 +223,6 @@ class ChatStore(
 
     fun incrementInviteUseCount(token: String) = inviteRepo.incrementInviteUseCount(token)
 
-    fun findPersonalChatId(uid1: String, uid2: String) = repo.findPersonalChatId(uid1, uid2)
-
-    fun listUserChats(uid: String) = repo.listUserChats(uid)
-
     // ══════════════════════════════════════
     // 内部方法
     // ══════════════════════════════════════

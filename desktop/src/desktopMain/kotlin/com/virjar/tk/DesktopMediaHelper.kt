@@ -80,9 +80,6 @@ object DesktopMediaHelper {
         }
     }
 
-    /** 下载图片文件到缓存。 */
-    fun downloadImage(url: String): File = downloadToCache(url)
-
     /** 下载并播放音频（阻塞当前线程，调用方需切到后台线程）。 */
     fun playAudio(url: String) {
         try {
@@ -106,15 +103,6 @@ object DesktopMediaHelper {
 
     /** 下载并打开文件（用系统默认应用）。 */
     fun openFile(url: String) {
-        try {
-            Desktop.getDesktop().open(downloadToCache(url))
-        } catch (_: Exception) {
-            try { Desktop.getDesktop().browse(URI(url)) } catch (_: Exception) {}
-        }
-    }
-
-    /** 用系统播放器打开视频。 */
-    fun openVideo(url: String) {
         try {
             Desktop.getDesktop().open(downloadToCache(url))
         } catch (_: Exception) {
