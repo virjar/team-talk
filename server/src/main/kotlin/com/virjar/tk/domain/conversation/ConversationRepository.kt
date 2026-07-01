@@ -71,16 +71,56 @@ class ConversationRepository(
 
     fun markRead(uid: String, chatId: String, readSeq: Long) {
         transaction {
-            val current = Conversations.selectAll()
+            val existing = Conversations.selectAll()
                 .where { (Conversations.uid eq uid) and (Conversations.chatId eq chatId) }
-                .singleOrNull() ?: return@transaction
+                .singleOrNull()
 
-            Conversations.update({
-                (Conversations.uid eq uid) and (Conversations.chatId eq chatId)
-            }) {
-                it[Conversations.readSeq] = readSeq
-                it[Conversations.version] = current[Conversations.version] + 1
-                it[Conversations.updatedAt] = System.currentTimeMillis()
+            if (existing != null) {
+                // 只增不减（readSeq 是单调递增的水位线，天然可合并）
+                val currentReadSeq = existing[Conversations.readSeq]
+                if (readSeq <= currentReadSeq) return@transaction
+                Conversations.update({
+                    (Conversations.uid eq uid) and (Conversations.chatId eq chatId)
+                }) {
+                    it[Conversations.readSeq] = readSeq
+                    it[Conversations.version] = existing[Conversations.version] + 1
+                    it[Conversations.updatedAt] = System.currentTimeMillis()
+                }
+            } else {
+                // 会话行不存在（如建群后未收到消息就 markRead）→ 创建行持久化 readSeq。
+                // 之前这里静默 no-op 导致 readSeq 丢失，换设备登录后全未读。
+                Conversations.insert {
+                    it[Conversations.uid] = uid
+                    it[Conversations.chatId] = chatId
+                    it[Conversations.chatType] = 1 // 未知 chatType 时默认 personal，listConversations 会用 chat 表覆盖
+                    it[Conversations.lastMsgSeq] = 0
+                    it[Conversations.readSeq] = readSeq
+                    it[Conversations.version] = 1
+                    it[Conversations.updatedAt] = System.currentTimeMillis()
+                }
+            }
+        }
+    }
+
+    /**
+     * 确保会话行存在（如已存在则跳过）。建群/建私聊时为所有成员预创建，
+     * 保证 markRead 有行可更新，readSeq 可靠持久化。
+     */
+    fun ensureConversation(uid: String, chatId: String, chatType: Int) {
+        transaction {
+            val exists = Conversations.selectAll()
+                .where { (Conversations.uid eq uid) and (Conversations.chatId eq chatId) }
+                .count() > 0
+            if (!exists) {
+                Conversations.insert {
+                    it[Conversations.uid] = uid
+                    it[Conversations.chatId] = chatId
+                    it[Conversations.chatType] = chatType
+                    it[Conversations.lastMsgSeq] = 0
+                    it[Conversations.readSeq] = 0
+                    it[Conversations.version] = 1
+                    it[Conversations.updatedAt] = System.currentTimeMillis()
+                }
             }
         }
     }

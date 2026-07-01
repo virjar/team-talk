@@ -1,5 +1,6 @@
 package com.virjar.tk.domain.chat
 
+import com.virjar.tk.domain.conversation.ConversationService
 import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.infra.sync.SyncEventService
 import com.virjar.tk.model.Chat
@@ -10,6 +11,7 @@ class ChatService(
     private val chatStore: ChatStore,
     private val userStore: UserStore,
     private val syncEventService: SyncEventService,
+    private val conversationService: ConversationService,
 ) {
 
     // ── 创建聊天 ──
@@ -17,6 +19,8 @@ class ChatService(
     suspend fun createPersonalChat(uid: String, targetUid: String): Chat {
         require(uid != targetUid) { "不能和自己创建私聊" }
         val chat = chatStore.createPersonalChat(uid, targetUid)
+        // 预创建会话行，确保 markRead 有行可更新（readSeq 多设备同步基础）
+        conversationService.ensureConversations(chat.chatId, chat.chatType, listOf(uid, targetUid))
         notifyChatCreated(chat, listOf(uid, targetUid))
         return chat
     }
@@ -26,6 +30,7 @@ class ChatService(
         require(memberUids.isNotEmpty()) { "至少需要一个成员" }
         val chat = chatStore.createGroupChat(name, avatar, creatorUid, memberUids)
         val allUids = memberUids + creatorUid
+        conversationService.ensureConversations(chat.chatId, chat.chatType, allUids)
         notifyChatCreated(chat, allUids)
         return chat
     }
@@ -59,6 +64,8 @@ class ChatService(
         requireGroupAdmin(operatorUid, chatId)
         chatStore.addMembers(chatId, uids)
         val chat = chatStore.getChat(chatId) ?: return
+        // 新成员预创建会话行
+        conversationService.ensureConversations(chatId, chat.chatType, uids)
         val allMemberUids = chatStore.getMemberUids(chatId)
         for (uid in uids) {
             syncEventService.emitEvent(uid, NotifyType.CHAT_CREATED, chat)
@@ -171,6 +178,8 @@ class ChatService(
         chatStore.incrementInviteUseCount(token)
 
         val updatedChat = chatStore.getChat(link.chatId) ?: chat
+        // 新成员预创建会话行
+        conversationService.ensureConversations(link.chatId, updatedChat.chatType, listOf(uid))
         val memberUids = chatStore.getMemberUids(link.chatId)
         notifyChatCreated(updatedChat, memberUids)
         return updatedChat

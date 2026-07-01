@@ -71,4 +71,14 @@ class ConversationService(
             syncEventService.emitEvent(uid, NotifyType.CONVERSATION_UPDATED, conv)
         }
     }
+
+    /**
+     * 为所有成员预创建会话行（建群/建私聊时调用）。
+     * 确保 markRead 有行可更新，readSeq 可靠持久化（多设备同步基础）。
+     */
+    fun ensureConversations(chatId: String, chatType: Int, memberUids: List<String>) {
+        for (uid in memberUids) {
+            conversationRepo.ensureConversation(uid, chatId, chatType)
+        }
+    }
 }
