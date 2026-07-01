@@ -41,6 +41,8 @@ class EventProcessor(
             logger.fault("Cannot start: ImClient not connected")
             return
         }
+        // 幂等：重复 start 先取消旧监听协程，避免泄漏（CLAUDE.md: 销毁操作幂等）
+        listenJob?.cancel()
         listenJob = scope.launch {
             try {
                 imClient.packets.collect { proto ->

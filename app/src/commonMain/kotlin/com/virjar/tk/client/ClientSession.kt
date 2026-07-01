@@ -27,7 +27,14 @@ class ClientSession(
         httpLogUploader.stop()
         rpcClient.stop()
         eventProcessor.stop()
+        eventProcessor.onContactChanged = null
         imClient.disconnect()
+        // 重置 AppLog 全局引用——createSession 注入了 traceBuffer/faultBuffer/onFault，
+        // 不重置则登出后这些引用仍指向已销毁的 buffer/uploader，stale onFault 会
+        // 调用已 stop 的 HttpLogUploader（违反 owner-driven：全局单例逃逸会话所有权）
+        AppLog.traceBuffer = null
+        AppLog.faultBuffer = null
+        AppLog.onFault = null
     }
 }
 

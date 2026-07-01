@@ -22,6 +22,8 @@ class RpcClient(
             logger.trace("Cannot start: ImClient not connected")
             return
         }
+        // 幂等：重复 start 先取消旧监听协程
+        listenJob?.cancel()
         listenJob = scope.launch {
             try {
                 launch {

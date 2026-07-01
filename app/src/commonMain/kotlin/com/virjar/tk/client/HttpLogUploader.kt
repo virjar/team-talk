@@ -34,6 +34,9 @@ class HttpLogUploader(
     private var faultDebounceJob: Job? = null
 
     fun start() {
+        // 幂等：重复 start 先取消旧定时任务
+        timerJob?.cancel()
+        faultDebounceJob?.cancel()
         // 启动时优先上传上次崩溃日志
         scope.launch { crashDumper.uploadPending(serverUrl, deviceId) }
 

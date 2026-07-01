@@ -87,6 +87,8 @@ open class AppDataState(val session: ClientSession) {
         contactViewModel.destroy()
         chatViewModel?.destroy()
         actionScope.cancel()
+        // 清除注册到 EventProcessor 的回调引用，避免泄漏（session.close 也会清，双保险）
+        session.eventProcessor.onContactChanged = null
     }
 
     /**
