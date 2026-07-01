@@ -3,10 +3,17 @@ package com.virjar.tk.navigation
 import androidx.compose.runtime.*
 import com.virjar.tk.AppError
 import com.virjar.tk.client.ClientSession
+import com.virjar.tk.client.logUnhandledError
 import com.virjar.tk.model.*
 import com.virjar.tk.viewmodel.ChatViewModel
 import com.virjar.tk.viewmodel.ContactViewModel
 import com.virjar.tk.viewmodel.ConversationViewModel
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /**
  * 纯数据/业务状态持有者（不含导航逻辑）。
@@ -30,6 +37,13 @@ open class AppDataState(val session: ClientSession) {
     val deviceRepo get() = session.deviceRepo
     val userRepo get() = session.userRepo
     val conversationRepo get() = session.conversationRepo
+
+    /**
+     * 子页面 action 专用协程作用域。与 ViewModels 的 scope 分离，
+     * 便于统一管理 action 的错误兜底；[destroy] 时取消。
+     */
+    private val actionScope = CoroutineScope(Dispatchers.Main + SupervisorJob() +
+        CoroutineExceptionHandler { _, t -> logUnhandledError("AppDataState", t) })
 
     // ViewModels
     val conversationViewModel = ConversationViewModel(localCache, conversationRepo)
@@ -72,6 +86,7 @@ open class AppDataState(val session: ClientSession) {
         conversationViewModel.destroy()
         contactViewModel.destroy()
         chatViewModel?.destroy()
+        actionScope.cancel()
     }
 
     /**
@@ -133,6 +148,144 @@ open class AppDataState(val session: ClientSession) {
                 try { inviteLinks = chatRepo.listInviteLinks(chatId).getOrThrow() } catch (e: AppError) { handleError(e, "加载邀请链接失败") }
             }
         }
+    }
+
+    // ── 子页面 action（统一封装 repo 调用 + 错误处理 + 数据刷新） ──
+    // UI 层（Android NavHost / Desktop SubScreenRouter）只需调用这些方法 + 处理导航，
+    // 不再各自重复 try { repo.x().getOrThrow() } catch (e: AppError) { handleError(...) }。
+    //
+    // 两类约定：
+    // - 需要 UI 同步/suspend 拿结果的方法声明为 suspend，由 Screen 的 suspend 回调直接调用；
+    // - 纯副作用（fire-and-forget，UI 不关心返回值）用 launch 启动。
+
+    /** 设备管理：踢出设备，成功后刷新设备列表。 */
+    fun kickDevice(deviceId: String) = actionScope.launch {
+        try { deviceRepo.kickDevice(deviceId).getOrThrow(); devices = deviceRepo.listDevices().getOrThrow() }
+        catch (e: AppError) { handleError(e, "踢出设备失败") }
+    }
+
+    /** 黑名单：移出黑名单，成功后刷新黑名单列表。 */
+    fun unblockContact(uid: String) = actionScope.launch {
+        try { contactRepo.removeFromBlacklist(uid).getOrThrow(); blockedContacts = contactRepo.listBlacklist().getOrThrow() }
+        catch (e: AppError) { handleError(e, "移出黑名单失败") }
+    }
+
+    /** 编辑资料：保存昵称/手机号。返回是否成功（UI 据此决定是否返回）。 */
+    suspend fun saveProfile(name: String, phone: String?): Boolean = try {
+        userRepo.updateProfile(name = name, phone = phone).getOrThrow(); true
+    } catch (e: AppError) { handleError(e, "保存失败"); false }
+
+    /** 修改密码。返回是否成功。 */
+    suspend fun changePassword(old: String, new: String): Boolean = try {
+        userRepo.changePassword(old, new).getOrThrow(); true
+    } catch (e: AppError) { handleError(e, "修改密码失败"); false }
+
+    /** 好友申请：接受，成功后刷新申请列表。 */
+    fun acceptFriendApply(token: String) = actionScope.launch {
+        try { contactRepo.accept(token).getOrThrow(); applies = contactRepo.listApplies().getOrThrow() }
+        catch (e: AppError) { handleError(e, "接受申请失败") }
+    }
+
+    /** 好友申请：拒绝，成功后刷新申请列表。 */
+    fun rejectFriendApply(token: String) = actionScope.launch {
+        try { contactRepo.reject(token).getOrThrow(); applies = contactRepo.listApplies().getOrThrow() }
+        catch (e: AppError) { handleError(e, "拒绝申请失败") }
+    }
+
+    /** 创建群组。返回 chatId 或 null（UI 据此决定是否打开聊天）。 */
+    suspend fun createGroup(name: String, memberUids: List<String>): String? = try {
+        val chat = chatRepo.createGroup(name, memberUids = memberUids).getOrThrow()
+        conversationRepo.listConversations()
+        chat.chatId
+    } catch (e: AppError) { handleError(e, "创建群组失败"); null }
+
+    /** 群详情：修改成员角色（设为/取消管理员）。成功后刷新群详情。 */
+    fun setMemberRole(chatId: String, uid: String, role: Int) = actionScope.launch {
+        try { chatRepo.setMemberRole(chatId, uid, role).getOrThrow(); refreshGroupDetail(chatId) }
+        catch (e: AppError) { handleError(e, "修改角色失败") }
+    }
+
+    /** 群详情：禁言成员。成功后刷新群详情。 */
+    fun muteMember(chatId: String, uid: String, duration: Int = 3600) = actionScope.launch {
+        try { chatRepo.muteMember(chatId, uid, duration).getOrThrow(); refreshGroupDetail(chatId) }
+        catch (e: AppError) { handleError(e, "禁言失败") }
+    }
+
+    /** 群详情：解除禁言。成功后刷新群详情。 */
+    fun unmuteMember(chatId: String, uid: String) = actionScope.launch {
+        try { chatRepo.unmuteMember(chatId, uid).getOrThrow(); refreshGroupDetail(chatId) }
+        catch (e: AppError) { handleError(e, "解除禁言失败") }
+    }
+
+    /** 群详情：移除成员。成功后刷新群详情。 */
+    fun removeMember(chatId: String, uid: String) = actionScope.launch {
+        try { chatRepo.removeMember(chatId, uid).getOrThrow(); refreshGroupDetail(chatId) }
+        catch (e: AppError) { handleError(e, "移除成员失败") }
+    }
+
+    /** 群详情：更新群公告。成功后刷新群详情。 */
+    fun updateGroupNotice(chatId: String, notice: String) = actionScope.launch {
+        try { chatRepo.updateGroup(chatId, notice = notice).getOrThrow(); refreshGroupDetail(chatId) }
+        catch (e: AppError) { handleError(e, "更新群公告失败") }
+    }
+
+    /** 群详情：离开/删除群。成功后由 UI 负责导航回首页。 */
+    fun leaveGroup(chatId: String, onLeft: () -> Unit) = actionScope.launch {
+        try { chatRepo.deleteChat(chatId).getOrThrow(); onLeft() }
+        catch (e: Exception) { handleError(e, "离开群组失败") }
+    }
+
+    /** 邀请成员入群。返回是否成功。 */
+    suspend fun inviteMembers(chatId: String, uids: List<String>): Boolean = try {
+        chatRepo.addMembers(chatId, uids).getOrThrow(); true
+    } catch (e: AppError) { handleError(e, "邀请成员失败"); false }
+
+    /** 邀请链接：创建链接，成功后刷新链接列表。返回新 token 或 null。 */
+    suspend fun createInviteLink(chatId: String): String? = try {
+        val token = chatRepo.createInviteLink(chatId).getOrThrow()
+        inviteLinks = chatRepo.listInviteLinks(chatId).getOrThrow()
+        token
+    } catch (e: AppError) { handleError(e, "创建链接失败"); null }
+
+    /** 邀请链接：撤销链接，成功后刷新链接列表。 */
+    fun revokeInviteLink(chatId: String, token: String) = actionScope.launch {
+        try { chatRepo.revokeInviteLink(token).getOrThrow(); inviteLinks = chatRepo.listInviteLinks(chatId).getOrThrow() }
+        catch (e: AppError) { handleError(e, "撤销链接失败") }
+    }
+
+    /** 用户资料页：创建私聊。返回 chatId 或 null。 */
+    suspend fun startPersonalChat(uid: String): String? = try {
+        chatRepo.createPersonalChat(uid).getOrThrow().chatId
+    } catch (e: AppError) { handleError(e, "创建聊天失败"); null }
+
+    /** 转发消息。返回是否成功。 */
+    suspend fun forwardMessage(srcChatId: String, srcSeq: Long, targetChatId: String): Boolean = try {
+        messageRepo.forwardMessage(srcChatId, srcSeq, targetChatId).getOrThrow(); true
+    } catch (e: AppError) { handleError(e, "转发失败"); false }
+
+    /** 搜索用户。返回结果列表（失败返回空列表）。 */
+    suspend fun searchUsers(query: String): List<User> = try {
+        userRepo.search(query).getOrThrow()
+    } catch (e: AppError) { handleError(e, "搜索失败"); emptyList() }
+
+    /** 搜索消息。返回结果列表（失败返回空列表）。 */
+    suspend fun searchMessages(query: String): List<Message> = try {
+        messageRepo.searchMessages("", query).getOrThrow()
+    } catch (e: AppError) { handleError(e, "搜索失败"); emptyList() }
+
+    /** 保存草稿（fire-and-forget，不阻塞调用线程）。 */
+    fun saveDraft(chatId: String, draft: String?) = actionScope.launch {
+        if (draft.isNullOrEmpty()) return@launch
+        try { conversationRepo.setDraft(chatId, draft) }
+        catch (e: Exception) { /* 草稿保存失败不打扰用户 */ }
+    }
+
+    /** 刷新群详情数据（群信息 + 成员列表）。 */
+    private suspend fun refreshGroupDetail(chatId: String) {
+        try {
+            groupDetailChat = chatRepo.getChat(chatId).getOrThrow()
+            groupMembers = chatRepo.getMembers(chatId).getOrThrow()
+        } catch (e: AppError) { handleError(e, "刷新群详情失败") }
     }
 }
 

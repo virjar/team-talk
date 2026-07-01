@@ -18,15 +18,12 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.navigation.navArgument
-import com.virjar.tk.AppError
 import com.virjar.tk.client.*
-import com.virjar.tk.model.Message
 import com.virjar.tk.model.User
 import com.virjar.tk.navigation.AppDataState
 import com.virjar.tk.navigation.ScreenDataKey
 import com.virjar.tk.ui.AppTheme
 import com.virjar.tk.ui.screen.*
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -143,13 +140,9 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             val conversations by dataState.conversationViewModel.conversations.collectAsState()
             val draft = remember(chatId) { conversations.find { it.chatId == chatId }?.draft }
             var currentDraft by remember { mutableStateOf(draft) }
-            // Save draft on dispose (covers back button, back gesture, and navigation away)
+            // 离开聊天页时保存草稿（fire-and-forget，不再阻塞主线程）
             DisposableEffect(chatId) {
-                onDispose {
-                    if (currentDraft != null && currentDraft != "") {
-                        kotlinx.coroutines.runBlocking { dataState.conversationRepo.setDraft(chatId, currentDraft) }
-                    }
-                }
+                onDispose { dataState.saveDraft(chatId, currentDraft) }
             }
             if (vm != null) { AndroidChatScreen(chatId, chatName, chatType, vm, dataState.userSession.uid,
                 serverUrl = defaultServerConfig().serverUrl,
@@ -163,26 +156,30 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
         }
         composable(Routes.SEARCH_MESSAGES) {
             val conversations by dataState.conversationViewModel.conversations.collectAsState()
-            SearchMessagesScreen(searchMessages = { q -> try { dataState.messageRepo.searchMessages("", q).getOrThrow() } catch (e: AppError) { dataState.handleError(e, "搜索失败"); emptyList() } },
+            SearchMessagesScreen(searchMessages = { q -> dataState.searchMessages(q) },
                 onMessageClick = { cid, _ -> val c = conversations.find { it.chatId == cid }; dataState.prepareChat(cid, c?.chatName ?: cid.take(16)); navController.navigate(Routes.chat(cid, c?.chatName ?: cid.take(16))) { popUpTo(Routes.HOME) } },
                 onBack = { navController.popBackStack() })
         }
         composable(Routes.SEARCH_USERS) {
-            SearchUsersScreen(searchUsers = { q -> try { dataState.userRepo.search(q).getOrThrow() } catch (e: AppError) { dataState.handleError(e, "搜索失败"); emptyList() } },
+            SearchUsersScreen(searchUsers = { q -> dataState.searchUsers(q) },
                 onUserClick = { uid -> navController.navigate(Routes.userProfile(uid)) }, onBack = { navController.popBackStack() })
         }
         composable(Routes.CREATE_GROUP) {
             val contacts by dataState.contactViewModel.contacts.collectAsState()
             CreateGroupScreen(contacts = contacts, onCreateGroup = { name, uids ->
-                try { val chat = dataState.chatRepo.createGroup(name, memberUids = uids).getOrThrow(); dataState.prepareChat(chat.chatId, name, 2); scope.launch { dataState.conversationRepo.listConversations() }; navController.navigate(Routes.chat(chat.chatId, name, 2)) { popUpTo(Routes.CREATE_GROUP) { inclusive = true } }; Result.success(chat.chatId) }
-                catch (e: AppError) { dataState.handleError(e, "创建群组失败"); Result.failure(e) }
+                val chatId = dataState.createGroup(name, uids)
+                if (chatId != null) {
+                    dataState.prepareChat(chatId, name, 2)
+                    navController.navigate(Routes.chat(chatId, name, 2)) { popUpTo(Routes.CREATE_GROUP) { inclusive = true } }
+                    Result.success(chatId)
+                } else Result.failure(Exception("创建失败"))
             }, onBack = { navController.popBackStack() })
         }
         composable(Routes.FRIEND_APPLIES) {
             LaunchedEffect(Unit) { dataState.loadScreenDataByKey(ScreenDataKey.FriendApplies) }
             FriendAppliesScreen(applies = dataState.applies,
-                onAccept = { t -> try { dataState.contactRepo.accept(t).getOrThrow() } catch (e: AppError) { dataState.handleError(e, "接受申请失败") }; scope.launch { dataState.loadScreenDataByKey(ScreenDataKey.FriendApplies) } },
-                onReject = { t -> try { dataState.contactRepo.reject(t).getOrThrow() } catch (e: AppError) { dataState.handleError(e, "拒绝申请失败") }; scope.launch { dataState.loadScreenDataByKey(ScreenDataKey.FriendApplies) } },
+                onAccept = { t -> dataState.acceptFriendApply(t) },
+                onReject = { t -> dataState.rejectFriendApply(t) },
                 onBack = { navController.popBackStack() })
         }
         composable(Routes.USER_PROFILE, arguments = listOf(navArgument("uid"){type=NavType.StringType})) { entry ->
@@ -193,30 +190,34 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                 onAddFriend = {
                     dataState.contactViewModel.apply(uid)
                     hasPendingApply = true
-                    // 添加好友是临时操作，完成后自动返回主界面并清理搜索导航栈
                     scope.launch {
                         kotlinx.coroutines.delay(800)
-                        navController.navigate(Routes.HOME) {
-                            popUpTo(Routes.HOME) { inclusive = true }
-                        }
+                        navController.navigate(Routes.HOME) { popUpTo(Routes.HOME) { inclusive = true } }
                     }
                 },
-                onSendMessage = { scope.launch { try { val chat = dataState.chatRepo.createPersonalChat(uid).getOrThrow(); dataState.prepareChat(chat.chatId, dataState.profileUser?.name ?: uid.take(12)); navController.navigate(Routes.chat(chat.chatId, dataState.profileUser?.name ?: uid.take(12))) { popUpTo(Routes.HOME) } } catch (e: AppError) { dataState.handleError(e, "创建聊天失败") } } },
+                onSendMessage = { scope.launch {
+                    val chatId = dataState.startPersonalChat(uid)
+                    if (chatId != null) {
+                        val n = dataState.profileUser?.name ?: uid.take(12)
+                        dataState.prepareChat(chatId, n)
+                        navController.navigate(Routes.chat(chatId, n)) { popUpTo(Routes.HOME) }
+                    }
+                }},
                 onDeleteFriend = { dataState.contactViewModel.deleteFriend(uid); navController.popBackStack() },
                 onBack = { navController.popBackStack() })
         }
-        composable(Routes.EDIT_PROFILE) { EditProfileScreen(currentUser = dataState.currentUser, onSave = { n, p -> try { dataState.userRepo.updateProfile(name = n, phone = p).getOrThrow(); true } catch (e: AppError) { dataState.handleError(e, "保存失败"); false } }, onBack = { navController.popBackStack() }) }
-        composable(Routes.CHANGE_PASSWORD) { ChangePasswordScreen(onChangePassword = { o, n -> try { dataState.userRepo.changePassword(o, n).getOrThrow() } catch (e: AppError) { dataState.handleError(e, "修改密码失败"); false } }, onBack = { navController.popBackStack() }) }
+        composable(Routes.EDIT_PROFILE) { EditProfileScreen(currentUser = dataState.currentUser, onSave = { n, p -> dataState.saveProfile(n, p) }, onBack = { navController.popBackStack() }) }
+        composable(Routes.CHANGE_PASSWORD) { ChangePasswordScreen(onChangePassword = { o, n -> dataState.changePassword(o, n) }, onBack = { navController.popBackStack() }) }
         composable(Routes.DEVICES) {
             LaunchedEffect(Unit) { dataState.loadScreenDataByKey(ScreenDataKey.Devices) }
             DeviceManagementScreen(devices = dataState.devices.map { DeviceInfo(it.deviceId, it.deviceName ?: "", it.deviceModel ?: "", it.lastLogin) },
-                onKick = { d -> scope.launch { try { dataState.deviceRepo.kickDevice(d).getOrThrow() } catch (e: AppError) { dataState.handleError(e, "踢出设备失败") }; dataState.loadScreenDataByKey(ScreenDataKey.Devices) } },
+                onKick = { d -> dataState.kickDevice(d) },
                 onBack = { navController.popBackStack() })
         }
         composable(Routes.BLACKLIST) {
             LaunchedEffect(Unit) { dataState.loadScreenDataByKey(ScreenDataKey.Blacklist) }
             BlacklistScreen(blockedUsers = dataState.blockedContacts.map { BlockedUser(it.friendUid, it.user?.name ?: it.friendUid) },
-                onUnblock = { u -> scope.launch { try { dataState.contactRepo.removeFromBlacklist(u).getOrThrow() } catch (e: AppError) { dataState.handleError(e, "移出黑名单失败") }; dataState.loadScreenDataByKey(ScreenDataKey.Blacklist) } },
+                onUnblock = { u -> dataState.unblockContact(u) },
                 onBack = { navController.popBackStack() })
         }
         composable(Routes.GROUP_DETAIL, arguments = listOf(navArgument("chatId"){type=NavType.StringType})) { entry ->
@@ -225,36 +226,36 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             GroupDetailScreen(chat = dataState.groupDetailChat, members = dataState.groupMembers, isOwner = dataState.groupMembers.any { it.uid == dataState.userSession.uid && it.role == 2 },
                 myUid = dataState.userSession.uid,
                 onMemberClick = { uid -> navController.navigate(Routes.userProfile(uid)) }, onInviteMembers = { navController.navigate(Routes.inviteMembers(chatId)) }, onViewInviteLinks = { navController.navigate(Routes.inviteLinks(chatId)) },
-                onLeaveGroup = { scope.launch { try { dataState.chatRepo.deleteChat(chatId) } catch (e: Exception) { Log.w("MainActivity", "Failed to delete chat on leave group", e) }; navController.popBackStack(Routes.HOME, inclusive = false) } },
-                onEditNotice = { notice -> scope.launch { dataState.chatRepo.updateGroup(chatId, notice = notice); dataState.loadScreenDataByKey(ScreenDataKey.GroupDetail(chatId)) } },
+                onLeaveGroup = { dataState.leaveGroup(chatId) { navController.popBackStack(Routes.HOME, inclusive = false) } },
+                onEditNotice = { notice -> dataState.updateGroupNotice(chatId, notice) },
                 onBack = { navController.popBackStack() },
-                onSetAdmin = { uid -> scope.launch { dataState.chatRepo.setMemberRole(chatId, uid, 1) } },
-                onRemoveAdmin = { uid -> scope.launch { dataState.chatRepo.setMemberRole(chatId, uid, 0) } },
-                onMuteMember = { uid -> scope.launch { dataState.chatRepo.muteMember(chatId, uid, 3600) } },
-                onUnmuteMember = { uid -> scope.launch { dataState.chatRepo.unmuteMember(chatId, uid) } },
-                onRemoveMember = { uid -> scope.launch { dataState.chatRepo.removeMember(chatId, uid) } },
+                onSetAdmin = { uid -> dataState.setMemberRole(chatId, uid, 1) },
+                onRemoveAdmin = { uid -> dataState.setMemberRole(chatId, uid, 0) },
+                onMuteMember = { uid -> dataState.muteMember(chatId, uid) },
+                onUnmuteMember = { uid -> dataState.unmuteMember(chatId, uid) },
+                onRemoveMember = { uid -> dataState.removeMember(chatId, uid) },
             )
         }
         composable(Routes.INVITE_MEMBERS, arguments = listOf(navArgument("chatId"){type=NavType.StringType})) { entry ->
             val chatId = entry.arguments?.getString("chatId") ?: return@composable
             val contacts by dataState.contactViewModel.contacts.collectAsState()
             InviteMembersScreen(friendUids = contacts.map { it.friendUid }, friendNames = contacts.associate { it.friendUid to (it.remark ?: it.user?.name ?: it.friendUid) },
-                onInvite = { uids -> try { dataState.chatRepo.addMembers(chatId, uids).getOrThrow(); true } catch (e: AppError) { dataState.handleError(e, "邀请成员失败"); false } },
+                onInvite = { uids -> dataState.inviteMembers(chatId, uids) },
                 onBack = { navController.popBackStack() })
         }
         composable(Routes.INVITE_LINKS, arguments = listOf(navArgument("chatId"){type=NavType.StringType})) { entry ->
             val chatId = entry.arguments?.getString("chatId") ?: return@composable
             LaunchedEffect(chatId) { dataState.loadScreenDataByKey(ScreenDataKey.InviteLinks(chatId)) }
             InviteLinksScreen(links = dataState.inviteLinks.map { InviteLink(it.token, it.maxUses, it.useCount, it.revokedAt > 0) },
-                onCreateLink = { try { val t = dataState.chatRepo.createInviteLink(chatId).getOrThrow(); scope.launch { dataState.loadScreenDataByKey(ScreenDataKey.InviteLinks(chatId)) }; t } catch (e: AppError) { dataState.handleError(e, "创建链接失败"); null } },
-                onRevokeLink = { t -> scope.launch { try { dataState.chatRepo.revokeInviteLink(t).getOrThrow() } catch (e: AppError) { dataState.handleError(e, "撤销链接失败") }; dataState.loadScreenDataByKey(ScreenDataKey.InviteLinks(chatId)) } },
+                onCreateLink = { dataState.createInviteLink(chatId) },
+                onRevokeLink = { t -> dataState.revokeInviteLink(chatId, t) },
                 onBack = { navController.popBackStack() })
         }
         composable(Routes.FORWARD, arguments = listOf(navArgument("chatId"){type=NavType.StringType}, navArgument("serverSeq"){type=NavType.LongType})) { entry ->
             val chatId = entry.arguments?.getString("chatId") ?: return@composable
             val serverSeq = entry.arguments?.getLong("serverSeq") ?: return@composable
             val conversations by dataState.conversationViewModel.conversations.collectAsState()
-            ForwardScreen(conversations = conversations, onForward = { tc -> try { dataState.messageRepo.forwardMessage(chatId, serverSeq, tc).getOrThrow(); true } catch (e: AppError) { dataState.handleError(e, "转发失败"); false } }, onBack = { navController.popBackStack() })
+            ForwardScreen(conversations = conversations, onForward = { tc -> dataState.forwardMessage(chatId, serverSeq, tc) }, onBack = { navController.popBackStack() })
         }
     }
 }

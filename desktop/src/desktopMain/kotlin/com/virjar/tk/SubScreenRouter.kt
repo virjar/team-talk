@@ -1,7 +1,6 @@
 package com.virjar.tk
 
 import androidx.compose.runtime.*
-import com.virjar.tk.AppError
 import com.virjar.tk.ui.screen.*
 import kotlinx.coroutines.launch
 
@@ -51,52 +50,36 @@ fun SubScreenRouter(
     when (val screen = appState.currentScreen) {
         is SubScreen.Devices -> DeviceManagementScreen(
             devices = appState.devices.map { DeviceInfo(it.deviceId, it.deviceName ?: "", it.deviceModel ?: "", it.lastLogin) },
-            onKick = { deviceId ->
-                scope.launch {
-                    try { appState.deviceRepo.kickDevice(deviceId).getOrThrow(); appState.devices = appState.deviceRepo.listDevices().getOrThrow() } catch (e: AppError) { appState.handleError(e, "踢出设备失败") }
-                }
-            },
+            onKick = { deviceId -> appState.kickDevice(deviceId) },
             onBack = backOrNull(screen),
         )
 
         is SubScreen.Blacklist -> BlacklistScreen(
             blockedUsers = appState.blockedContacts.map { BlockedUser(it.friendUid, it.user?.name ?: it.friendUid) },
-            onUnblock = { uid ->
-                scope.launch {
-                    try { appState.contactRepo.removeFromBlacklist(uid).getOrThrow(); appState.blockedContacts = appState.contactRepo.listBlacklist().getOrThrow() } catch (e: AppError) { appState.handleError(e, "移出黑名单失败") }
-                }
-            },
+            onUnblock = { uid -> appState.unblockContact(uid) },
             onBack = backOrNull(screen),
         )
 
         is SubScreen.EditProfile -> EditProfileScreen(
             currentUser = appState.currentUser,
-            onSave = { name, _ ->
-                try { appState.userRepo.updateProfile(name = name).getOrThrow(); true } catch (e: AppError) { appState.handleError(e, "保存失败"); false }
-            },
+            onSave = { name, _ -> appState.saveProfile(name, null) },
             onBack = backOrNull(screen),
         )
 
         is SubScreen.ChangePassword -> ChangePasswordScreen(
-            onChangePassword = { old, new ->
-                try { appState.userRepo.changePassword(old, new).getOrThrow() } catch (e: AppError) { appState.handleError(e, "修改密码失败"); false }
-            },
+            onChangePassword = { old, new -> appState.changePassword(old, new) },
             onBack = backOrNull(screen),
         )
 
         is SubScreen.FriendApplies -> FriendAppliesScreen(
             applies = appState.applies,
-            onAccept = { token ->
-                try { appState.contactRepo.accept(token).getOrThrow(); appState.applies = appState.contactRepo.listApplies().getOrThrow() } catch (e: AppError) { appState.handleError(e, "接受申请失败") }
-            },
-            onReject = { token ->
-                try { appState.contactRepo.reject(token).getOrThrow(); appState.applies = appState.contactRepo.listApplies().getOrThrow() } catch (e: AppError) { appState.handleError(e, "拒绝申请失败") }
-            },
+            onAccept = { token -> appState.acceptFriendApply(token) },
+            onReject = { token -> appState.rejectFriendApply(token) },
             onBack = backOrNull(screen),
         )
 
         is SubScreen.SearchUsers -> SearchUsersScreen(
-            searchUsers = { query -> try { appState.userRepo.search(query).getOrThrow() } catch (e: AppError) { appState.handleError(e, "搜索失败"); emptyList() } },
+            searchUsers = { query -> appState.searchUsers(query) },
             onUserClick = { uid -> appState.selectedProfileUid = uid; appState.currentScreen = SubScreen.UserProfile },
             onBack = backOrNull(screen),
         )
@@ -104,40 +87,43 @@ fun SubScreenRouter(
         is SubScreen.CreateGroup -> CreateGroupScreen(
             contacts = contacts,
             onCreateGroup = { name, uids ->
-                try {
-                    val chat = appState.chatRepo.createGroup(name, memberUids = uids).getOrThrow()
-                    appState.openChat(chat.chatId, name, 2)
+                val chatId = appState.createGroup(name, uids)
+                if (chatId != null) {
+                    appState.openChat(chatId, name, 2)
                     onOpenChatAndDismiss()
-                    Result.success(chat.chatId)
-                } catch (e: AppError) { appState.handleError(e, "创建群组失败"); Result.failure(e) }
+                    Result.success(chatId)
+                } else Result.failure(Exception("创建失败"))
             },
             onBack = backOrNull(screen),
         )
 
-        is SubScreen.GroupDetail -> GroupDetailScreen(
-            chat = appState.groupDetailChat,
-            members = appState.groupMembers,
-            isOwner = appState.groupMembers.any { it.uid == appState.userSession.uid && it.role == 2 },
-            myUid = appState.userSession.uid,
-            onMemberClick = { uid -> appState.selectedProfileUid = uid; appState.currentScreen = SubScreen.UserProfile },
-            onInviteMembers = { appState.currentScreen = SubScreen.InviteMembers },
-            onViewInviteLinks = { appState.currentScreen = SubScreen.InviteLinks },
-            onLeaveGroup = onLeaveGroup,
-            onEditNotice = { notice -> scope.launch { appState.chatRepo.updateGroup(appState.selectedGroupChatId ?: "", notice = notice); appState.loadScreenData(SubScreen.GroupDetail) } },
-            onBack = backOrNull(screen),
-            onSetAdmin = { uid -> scope.launch { appState.chatRepo.setMemberRole(appState.selectedGroupChatId ?: "", uid, 1); appState.loadScreenData(SubScreen.GroupDetail) } },
-            onRemoveAdmin = { uid -> scope.launch { appState.chatRepo.setMemberRole(appState.selectedGroupChatId ?: "", uid, 0); appState.loadScreenData(SubScreen.GroupDetail) } },
-            onMuteMember = { uid -> scope.launch { appState.chatRepo.muteMember(appState.selectedGroupChatId ?: "", uid, 3600); appState.loadScreenData(SubScreen.GroupDetail) } },
-            onUnmuteMember = { uid -> scope.launch { appState.chatRepo.unmuteMember(appState.selectedGroupChatId ?: "", uid); appState.loadScreenData(SubScreen.GroupDetail) } },
-            onRemoveMember = { uid -> scope.launch { appState.chatRepo.removeMember(appState.selectedGroupChatId ?: "", uid); appState.loadScreenData(SubScreen.GroupDetail) } },
-        )
+        is SubScreen.GroupDetail -> {
+            val groupChatId = appState.selectedGroupChatId ?: ""
+            GroupDetailScreen(
+                chat = appState.groupDetailChat,
+                members = appState.groupMembers,
+                isOwner = appState.groupMembers.any { it.uid == appState.userSession.uid && it.role == 2 },
+                myUid = appState.userSession.uid,
+                onMemberClick = { uid -> appState.selectedProfileUid = uid; appState.currentScreen = SubScreen.UserProfile },
+                onInviteMembers = { appState.currentScreen = SubScreen.InviteMembers },
+                onViewInviteLinks = { appState.currentScreen = SubScreen.InviteLinks },
+                onLeaveGroup = onLeaveGroup,
+                onEditNotice = { notice -> appState.updateGroupNotice(groupChatId, notice) },
+                onBack = backOrNull(screen),
+                onSetAdmin = { uid -> appState.setMemberRole(groupChatId, uid, 1) },
+                onRemoveAdmin = { uid -> appState.setMemberRole(groupChatId, uid, 0) },
+                onMuteMember = { uid -> appState.muteMember(groupChatId, uid) },
+                onUnmuteMember = { uid -> appState.unmuteMember(groupChatId, uid) },
+                onRemoveMember = { uid -> appState.removeMember(groupChatId, uid) },
+            )
+        }
 
         is SubScreen.InviteMembers -> InviteMembersScreen(
             friendUids = contacts.map { it.friendUid },
             friendNames = contacts.associate { it.friendUid to (it.remark ?: it.user?.name ?: it.friendUid) },
             onInvite = { uids ->
                 val chatId = appState.selectedGroupChatId ?: return@InviteMembersScreen false
-                try { appState.chatRepo.addMembers(chatId, uids).getOrThrow(); true } catch (e: AppError) { appState.handleError(e, "邀请成员失败"); false }
+                appState.inviteMembers(chatId, uids)
             },
             onBack = backOrNull(screen) ?: { appState.currentScreen = SubScreen.GroupDetail },
         )
@@ -146,17 +132,11 @@ fun SubScreenRouter(
             links = appState.inviteLinks.map { InviteLink(it.token, it.maxUses, it.useCount, it.revokedAt > 0) },
             onCreateLink = {
                 val chatId = appState.selectedGroupChatId ?: return@InviteLinksScreen null
-                try {
-                    val token = appState.chatRepo.createInviteLink(chatId).getOrThrow()
-                    appState.inviteLinks = appState.chatRepo.listInviteLinks(chatId).getOrThrow()
-                    token
-                } catch (e: AppError) { appState.handleError(e, "创建链接失败"); null }
+                appState.createInviteLink(chatId)
             },
             onRevokeLink = { token ->
-                scope.launch {
-                    val chatId = appState.selectedGroupChatId ?: return@launch
-                    try { appState.chatRepo.revokeInviteLink(token).getOrThrow(); appState.inviteLinks = appState.chatRepo.listInviteLinks(chatId).getOrThrow() } catch (e: AppError) { appState.handleError(e, "撤销链接失败") }
-                }
+                val chatId = appState.selectedGroupChatId ?: return@InviteLinksScreen
+                appState.revokeInviteLink(chatId, token)
             },
             onBack = backOrNull(screen) ?: { appState.currentScreen = SubScreen.GroupDetail },
         )
@@ -173,16 +153,14 @@ fun SubScreenRouter(
                     appState.contactViewModel.apply(appState.selectedProfileUid ?: return@UserProfileScreen)
                     hasPendingApply = true
                 },
-                onSendMessage = {
-                    scope.launch {
-                        try {
-                            val uid = appState.selectedProfileUid ?: return@launch
-                            val chat = appState.chatRepo.createPersonalChat(uid).getOrThrow()
-                            appState.openChat(chat.chatId, appState.profileUser?.name ?: uid.take(12))
-                            onOpenChatAndDismiss()
-                        } catch (e: AppError) { appState.handleError(e, "创建聊天失败") }
+                onSendMessage = { scope.launch {
+                    val uid = appState.selectedProfileUid ?: return@launch
+                    val chatId = appState.startPersonalChat(uid)
+                    if (chatId != null) {
+                        appState.openChat(chatId, appState.profileUser?.name ?: uid.take(12))
+                        onOpenChatAndDismiss()
                     }
-                },
+                }},
                 onDeleteFriend = {
                     val uid = appState.selectedProfileUid ?: return@UserProfileScreen
                     appState.contactViewModel.deleteFriend(uid)
@@ -195,17 +173,14 @@ fun SubScreenRouter(
         is SubScreen.Forward -> ForwardScreen(
             conversations = conversations,
             onForward = { targetChatId ->
-                try {
-                    val msg = appState.forwardMessage ?: return@ForwardScreen false
-                    appState.messageRepo.forwardMessage(msg.chatId, msg.serverSeq, targetChatId).getOrThrow()
-                    true
-                } catch (e: AppError) { appState.handleError(e, "转发失败"); false }
+                val msg = appState.forwardMessage ?: return@ForwardScreen false
+                appState.forwardMessage(msg.chatId, msg.serverSeq, targetChatId)
             },
             onBack = backOrNull(screen) ?: { appState.forwardMessage = null; navBack(screen) },
         )
 
         is SubScreen.SearchMessages -> SearchMessagesScreen(
-            searchMessages = { query -> try { appState.messageRepo.searchMessages("", query).getOrThrow() } catch (e: AppError) { appState.handleError(e, "搜索失败"); emptyList() } },
+            searchMessages = { query -> appState.searchMessages(query) },
             onMessageClick = { chatId, _ ->
                 val conv = conversations.find { it.chatId == chatId }
                 appState.openChat(chatId, conv?.chatName ?: chatId.take(16))
