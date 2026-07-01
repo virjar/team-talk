@@ -1,10 +1,7 @@
 package com.virjar.tk.client
 
+import com.virjar.tk.util.HttpUtil
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
-import java.util.zip.GZIPOutputStream
-import java.io.ByteArrayOutputStream
 
 /**
  * Crash 日志持久化 + 重启上传。
@@ -49,29 +46,18 @@ class CrashDumper(
         synchronized(this) {
             val text = pendingFile.readText()
             try {
-                val compressed = gzip(text)
-                val conn = (URL("$serverUrl/api/client-logs").openConnection() as HttpURLConnection).apply {
-                    requestMethod = "POST"
-                    doOutput = true
-                    connectTimeout = 10_000
-                    readTimeout = 15_000
-                    setRequestProperty("Content-Type", "application/gzip")
-                    setRequestProperty("X-Device-Id", deviceId)
-                }
-                conn.outputStream.use { it.write(compressed) }
-                if (conn.responseCode == 200) {
+                val compressed = HttpUtil.gzip(text)
+                val code = HttpUtil.postGzip(
+                    "$serverUrl/api/client-logs",
+                    compressed,
+                    mapOf("X-Device-Id" to deviceId),
+                )
+                if (code == 200) {
                     pendingFile.delete()
-                    conn.disconnect()
                 }
             } catch (_: Exception) {
                 // 上传失败，保留 pending 文件，下次启动再试
             }
         }
-    }
-
-    private fun gzip(text: String): ByteArray {
-        val bos = ByteArrayOutputStream()
-        GZIPOutputStream(bos).use { it.write(text.encodeToByteArray()) }
-        return bos.toByteArray()
     }
 }

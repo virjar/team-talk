@@ -1,12 +1,9 @@
 package com.virjar.tk.client
 
 import com.virjar.tk.util.AppLog
+import com.virjar.tk.util.HttpUtil
 import com.virjar.tk.util.LogBuffer
 import kotlinx.coroutines.*
-import java.io.ByteArrayOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
-import java.util.zip.GZIPOutputStream
 
 /**
  * HTTP 日志上传器。替代 TCP LogUploader，解决 TCP 断连时无法上传日志的悖论。
@@ -82,8 +79,13 @@ class HttpLogUploader(
         if (combined.isBlank()) return
 
         try {
-            val compressed = gzip(combined)
-            upload(compressed)
+            val compressed = HttpUtil.gzip(combined)
+            val code = HttpUtil.postGzip(
+                "$serverUrl/api/client-logs",
+                compressed,
+                mapOf("X-Device-Id" to deviceId),
+            )
+            if (code != 200) throw RuntimeException("HTTP $code")
         } catch (e: Exception) {
             // 先打印原始异常到控制台，确保 logcat 可见，再落盘
             System.err.println("[Crash] Upload failed, saving to pending: ${e.message}")
@@ -91,27 +93,5 @@ class HttpLogUploader(
             crashDumper.flushPending(combined)
             AppLog.trace("HttpLogUploader", "Upload failed, saved to pending: ${e.message}")
         }
-    }
-
-    private fun upload(gzipData: ByteArray) {
-        val conn = (URL("$serverUrl/api/client-logs").openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            doOutput = true
-            connectTimeout = 10_000
-            readTimeout = 15_000
-            setRequestProperty("Content-Type", "application/gzip")
-            setRequestProperty("X-Device-Id", deviceId)
-        }
-        conn.outputStream.use { it.write(gzipData) }
-        if (conn.responseCode != 200) {
-            throw RuntimeException("HTTP ${conn.responseCode}")
-        }
-        conn.disconnect()
-    }
-
-    private fun gzip(text: String): ByteArray {
-        val bos = ByteArrayOutputStream()
-        GZIPOutputStream(bos).use { it.write(text.encodeToByteArray()) }
-        return bos.toByteArray()
     }
 }
