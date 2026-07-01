@@ -27,6 +27,10 @@ class LocalCacheImpl(driver: SqlDriver) : LocalCache {
     private val queries = db.appDatabaseQueries
 
     // 内存中的 StateFlow（非消息数据，全量加载）
+    // 所有 StateFlow 的读-改-写复合操作必须在 stateLock 下进行——
+    // MutableStateFlow.value 的 set 虽然线程安全，但 "value = value.filter{}" 这类
+    // 读改写期间会被其他线程(EventProcessor 在 IO)的写插入，导致 last-write-wins 丢更新。
+    private val stateLock = Any()
     private val contactsFlow = MutableStateFlow<List<Contact>>(emptyList())
     private val chatsFlow = MutableStateFlow<List<Chat>>(emptyList())
     private val membersFlow = MutableStateFlow<Map<String, List<Member>>>(emptyMap())
@@ -101,7 +105,7 @@ class LocalCacheImpl(driver: SqlDriver) : LocalCache {
     }
     override fun deleteContact(friendUid: String) {
         queries.deleteContact(friendUid)
-        contactsFlow.value = contactsFlow.value.filter { it.friendUid != friendUid }
+        updateFlow(contactsFlow) { it.filter { c -> c.friendUid != friendUid } }
     }
 
     // ── 聊天 ──
@@ -127,18 +131,22 @@ class LocalCacheImpl(driver: SqlDriver) : LocalCache {
     override fun observeMembers(chatId: String): Flow<List<Member>> = membersFlow.map { it[chatId] ?: emptyList() }
     override fun upsertMember(member: Member) {
         queries.upsertMember(member.chatId, member.uid, member.role.toLong(), member.nickname, member.joinedAt)
-        val current = membersFlow.value.toMutableMap()
-        val list = (current[member.chatId] ?: emptyList()).toMutableList()
-        val idx = list.indexOfFirst { it.uid == member.uid }
-        if (idx >= 0) list[idx] = member else list.add(member)
-        current[member.chatId] = list
-        membersFlow.value = current
+        synchronized(stateLock) {
+            val current = membersFlow.value.toMutableMap()
+            val list = (current[member.chatId] ?: emptyList()).toMutableList()
+            val idx = list.indexOfFirst { it.uid == member.uid }
+            if (idx >= 0) list[idx] = member else list.add(member)
+            current[member.chatId] = list
+            membersFlow.value = current
+        }
     }
     override fun removeMember(chatId: String, uid: String) {
         queries.removeMember(chatId, uid)
-        val current = membersFlow.value.toMutableMap()
-        current[chatId] = (current[chatId] ?: emptyList()).filter { it.uid != uid }
-        membersFlow.value = current
+        synchronized(stateLock) {
+            val current = membersFlow.value.toMutableMap()
+            current[chatId] = (current[chatId] ?: emptyList()).filter { it.uid != uid }
+            membersFlow.value = current
+        }
     }
 
     // ── 消息（LRU 窗口 + 持久化） ──
@@ -210,17 +218,7 @@ class LocalCacheImpl(driver: SqlDriver) : LocalCache {
     override fun observeConversations(): Flow<List<Conversation>> = conversationsFlow
     override fun upsertConversation(conv: Conversation) {
         queries.upsertConversation(conv.chatId, conv.chatType.toLong(), conv.chatName, conv.chatAvatar, conv.lastSeq, conv.readSeq, conv.unreadCount.toLong(), if (conv.isPinned) 1L else 0L, if (conv.isMuted) 1L else 0L, conv.draft, conv.lastMsgTimestamp ?: 0L)
-        updateFlow(conversationsFlow) { current ->
-            val list = current.toMutableList()
-            val idx = list.indexOfFirst { it.chatId == conv.chatId }
-            if (idx >= 0) {
-                list[idx] = mergeConversation(list[idx], conv)
-            } else {
-                list.add(conv)
-            }
-            list.sortWith(compareByDescending<Conversation> { it.isPinned }.thenByDescending { it.lastMsgTimestamp ?: 0L })
-            list
-        }
+        updateFlow(conversationsFlow) { mergeSorted(it, conv) }
     }
 
     /**
@@ -246,7 +244,7 @@ class LocalCacheImpl(driver: SqlDriver) : LocalCache {
 
     override fun deleteConversation(chatId: String) {
         queries.deleteConversation(chatId)
-        conversationsFlow.value = conversationsFlow.value.filter { it.chatId != chatId }
+        updateFlow(conversationsFlow) { it.filter { c -> c.chatId != chatId } }
     }
 
     override fun markConversationRead(chatId: String, readSeq: Long) {
@@ -263,15 +261,35 @@ class LocalCacheImpl(driver: SqlDriver) : LocalCache {
     }
 
     override fun toggleConversationPin(chatId: String, pinned: Boolean): Conversation? {
-        val existing = conversationsFlow.value.find { it.chatId == chatId } ?: return null
-        val updated = existing.copy(isPinned = pinned)
-        upsertConversation(updated)
-        return updated
+        return synchronized(stateLock) {
+            val existing = conversationsFlow.value.find { it.chatId == chatId } ?: return@synchronized null
+            val updated = existing.copy(isPinned = pinned)
+            // 直接在锁内更新 DB + flow（不递归 updateFlow 的锁）
+            queries.upsertConversation(updated.chatId, updated.chatType.toLong(), updated.chatName, updated.chatAvatar, updated.lastSeq, updated.readSeq, updated.unreadCount.toLong(), if (updated.isPinned) 1L else 0L, if (updated.isMuted) 1L else 0L, updated.draft, updated.lastMsgTimestamp ?: 0L)
+            conversationsFlow.value = mergeSorted(conversationsFlow.value, updated)
+            updated
+        }
+    }
+
+    /** 在已排序列表中 upsert 一条会话（保持 置顶+时间 排序）。调用方持 stateLock。 */
+    private fun mergeSorted(current: List<Conversation>, conv: Conversation): List<Conversation> {
+        val list = current.toMutableList()
+        val idx = list.indexOfFirst { it.chatId == conv.chatId }
+        val merged = if (idx >= 0) mergeConversation(list[idx], conv) else conv
+        if (idx >= 0) list[idx] = merged else list.add(merged)
+        list.sortWith(compareByDescending<Conversation> { it.isPinned }.thenByDescending { it.lastMsgTimestamp ?: 0L })
+        return list
     }
 
     // ── helpers ──
+    /**
+     * 加锁的 StateFlow 读-改-写。所有非消息数据的列表更新必须走此方法，
+     * 避免多线程(EventProcessor IO / UI Main)并发 upsert 时丢更新。
+     */
     private fun <T> updateFlow(flow: MutableStateFlow<List<T>>, update: (List<T>) -> List<T>) {
-        flow.value = update(flow.value)
+        synchronized(stateLock) {
+            flow.value = update(flow.value)
+        }
     }
 }
 
