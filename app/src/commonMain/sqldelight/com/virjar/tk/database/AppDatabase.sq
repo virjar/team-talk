@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS conversation (
     chat_avatar TEXT,
     last_seq INTEGER DEFAULT 0,
     read_seq INTEGER DEFAULT 0,
+    peer_read_seq INTEGER DEFAULT 0,
     unread_count INTEGER DEFAULT 0,
     is_pinned INTEGER DEFAULT 0,
     is_muted INTEGER DEFAULT 0,
@@ -162,14 +163,17 @@ selectAllConversations:
 SELECT * FROM conversation ORDER BY is_pinned DESC, last_msg_timestamp DESC;
 
 upsertConversation:
-INSERT OR REPLACE INTO conversation(chat_id, chat_type, chat_name, chat_avatar, last_seq, read_seq, unread_count, is_pinned, is_muted, draft, last_msg_timestamp)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT OR REPLACE INTO conversation(chat_id, chat_type, chat_name, chat_avatar, last_seq, read_seq, peer_read_seq, unread_count, is_pinned, is_muted, draft, last_msg_timestamp)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 deleteConversation:
 DELETE FROM conversation WHERE chat_id = ?;
 
 markConversationRead:
 UPDATE conversation SET unread_count = 0, read_seq = ? WHERE chat_id = ?;
+
+updatePeerReadSeq:
+UPDATE conversation SET peer_read_seq = ? WHERE chat_id = ?;
 
 getSyncCursor:
 SELECT value FROM sync_cursor WHERE key = ?;

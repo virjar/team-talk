@@ -103,6 +103,25 @@ class ConversationRepository(
     }
 
     /**
+     * 更新某用户在某会话中观察到的"对方已读位置"（peerReadSeq）。
+     * 用于已读回执（✓✓）：A markRead 后，同会话其他成员的 peerReadSeq 应推进到 A 的 readSeq。
+     * peerReadSeq 只增不减（取 max）。
+     */
+    fun updatePeerReadSeq(uid: String, chatId: String, peerReadSeq: Long) {
+        transaction {
+            val existing = Conversations.selectAll()
+                .where { (Conversations.uid eq uid) and (Conversations.chatId eq chatId) }
+                .singleOrNull() ?: return@transaction
+            if (peerReadSeq <= existing[Conversations.peerReadSeq]) return@transaction
+            Conversations.update({
+                (Conversations.uid eq uid) and (Conversations.chatId eq chatId)
+            }) {
+                it[Conversations.peerReadSeq] = peerReadSeq
+            }
+        }
+    }
+
+    /**
      * 确保会话行存在（如已存在则跳过）。建群/建私聊时为所有成员预创建，
      * 保证 markRead 有行可更新，readSeq 可靠持久化。
      */
@@ -211,6 +230,7 @@ class ConversationRepository(
             unreadCount = unreadCount,
             isPinned = row.isPinned,
             isMuted = row.isMuted,
+            peerReadSeq = row.peerReadSeq,
             draft = row.draft,
         )
     }
@@ -223,6 +243,7 @@ private data class ConversationRow(
     val lastMessage: String?,
     val lastMessageType: Int,
     val readSeq: Long,
+    val peerReadSeq: Long,
     val isPinned: Boolean,
     val isMuted: Boolean,
     val draft: String?,
@@ -236,6 +257,7 @@ private fun ResultRow.toConversationRow() = ConversationRow(
     lastMessage = this[Conversations.lastMessage],
     lastMessageType = this[Conversations.lastMessageType],
     readSeq = this[Conversations.readSeq],
+    peerReadSeq = this[Conversations.peerReadSeq],
     isPinned = this[Conversations.isPinned],
     isMuted = this[Conversations.isMuted],
     draft = this[Conversations.draft],

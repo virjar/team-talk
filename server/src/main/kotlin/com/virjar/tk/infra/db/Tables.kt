@@ -84,6 +84,7 @@ object Conversations : LongIdTable("conversations") {
     val lastMessage = varchar("last_message", 500).nullable()
     val lastMessageType = integer("last_message_type").default(0)
     val readSeq = long("read_seq").default(0)
+    val peerReadSeq = long("peer_read_seq").default(0)
     val isMuted = bool("is_muted").default(false)
     val isPinned = bool("is_pinned").default(false)
     val draft = varchar("draft", 500).nullable()

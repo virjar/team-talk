@@ -217,7 +217,7 @@ class LocalCacheImpl(driver: SqlDriver) : LocalCache {
     override fun getConversations(): List<Conversation> = conversationsFlow.value
     override fun observeConversations(): Flow<List<Conversation>> = conversationsFlow
     override fun upsertConversation(conv: Conversation) {
-        queries.upsertConversation(conv.chatId, conv.chatType.toLong(), conv.chatName, conv.chatAvatar, conv.lastSeq, conv.readSeq, conv.unreadCount.toLong(), if (conv.isPinned) 1L else 0L, if (conv.isMuted) 1L else 0L, conv.draft, conv.lastMsgTimestamp ?: 0L)
+        queries.upsertConversation(conv.chatId, conv.chatType.toLong(), conv.chatName, conv.chatAvatar, conv.lastSeq, conv.readSeq, conv.peerReadSeq, conv.unreadCount.toLong(), if (conv.isPinned) 1L else 0L, if (conv.isMuted) 1L else 0L, conv.draft, conv.lastMsgTimestamp ?: 0L)
         updateFlow(conversationsFlow) { mergeSorted(it, conv) }
     }
 
@@ -255,6 +255,7 @@ class LocalCacheImpl(driver: SqlDriver) : LocalCache {
     }
 
     override fun updatePeerReadSeq(chatId: String, peerReadSeq: Long) {
+        queries.updatePeerReadSeq(peerReadSeq, chatId)
         updateFlow(conversationsFlow) { current ->
             current.map { if (it.chatId == chatId) it.copy(peerReadSeq = peerReadSeq) else it }
         }
@@ -265,7 +266,7 @@ class LocalCacheImpl(driver: SqlDriver) : LocalCache {
             val existing = conversationsFlow.value.find { it.chatId == chatId } ?: return@synchronized null
             val updated = existing.copy(isPinned = pinned)
             // 直接在锁内更新 DB + flow（不递归 updateFlow 的锁）
-            queries.upsertConversation(updated.chatId, updated.chatType.toLong(), updated.chatName, updated.chatAvatar, updated.lastSeq, updated.readSeq, updated.unreadCount.toLong(), if (updated.isPinned) 1L else 0L, if (updated.isMuted) 1L else 0L, updated.draft, updated.lastMsgTimestamp ?: 0L)
+            queries.upsertConversation(updated.chatId, updated.chatType.toLong(), updated.chatName, updated.chatAvatar, updated.lastSeq, updated.readSeq, updated.peerReadSeq, updated.unreadCount.toLong(), if (updated.isPinned) 1L else 0L, if (updated.isMuted) 1L else 0L, updated.draft, updated.lastMsgTimestamp ?: 0L)
             conversationsFlow.value = mergeSorted(conversationsFlow.value, updated)
             updated
         }
@@ -338,6 +339,7 @@ private fun com.virjar.tk.database.Message.toModel(): Message {
 private fun com.virjar.tk.database.Conversation.toModel() = Conversation(
     chatId = chat_id, chatType = chat_type.toInt(), chatName = chat_name,
     chatAvatar = chat_avatar, lastSeq = last_seq ?: 0L, readSeq = read_seq ?: 0L,
+    peerReadSeq = peer_read_seq ?: 0L,
     unreadCount = unread_count?.toInt() ?: 0, isPinned = is_pinned == 1L,
     isMuted = is_muted == 1L, draft = draft, lastMsgTimestamp = last_msg_timestamp,
 )

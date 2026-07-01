@@ -56,6 +56,8 @@ class ConversationService(
         val members = chatRepo.getMemberUids(chatId)
         for (memberUid in members) {
             if (memberUid == uid) continue
+            // 持久化对方已读位置（peerReadSeq），让换设备登录后 ✓✓ 不丢
+            conversationRepo.updatePeerReadSeq(memberUid, chatId, readSeq)
             syncEventService.emitEvent(memberUid, NotifyType.READ_SYNC,
                 ReadSyncPayload(uid, chatId, readSeq))
         }
