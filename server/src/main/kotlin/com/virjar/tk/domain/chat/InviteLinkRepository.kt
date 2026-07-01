@@ -49,12 +49,16 @@ class InviteLinkRepository {
         }
     }
 
+    /**
+     * 原子自增使用次数（UPDATE ... SET useCount = useCount + 1）。
+     * 避免读-改-写竞态导致并发邀请时丢失计数 / 超出 maxUses。
+     */
     fun incrementInviteUseCount(token: String) {
         transaction {
-            val current = GroupInviteLinks.selectAll().where { GroupInviteLinks.token eq token }
-                .singleOrNull()?.get(GroupInviteLinks.useCount) ?: return@transaction
             GroupInviteLinks.update({ GroupInviteLinks.token eq token }) {
-                it[GroupInviteLinks.useCount] = current + 1
+                with(org.jetbrains.exposed.sql.SqlExpressionBuilder) {
+                    it[GroupInviteLinks.useCount] = GroupInviteLinks.useCount + 1
+                }
             }
         }
     }

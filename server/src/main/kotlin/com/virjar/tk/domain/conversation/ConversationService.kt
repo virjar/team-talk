@@ -41,6 +41,8 @@ class ConversationService(
 
     suspend fun deleteConversation(uid: String, chatId: String) {
         conversationRepo.deleteConversation(uid, chatId)
+        // 哨兵 Conversation：CONVERSATION_DELETED 通知客户端只用 chatId 定位删除目标，
+        // chatType=0 是占位值（合法值为 1=PERSONAL/2=GROUP），客户端不应读取它。
         val conv = Conversation(chatId = chatId, chatType = 0)
         syncEventService.emitEvent(uid, NotifyType.CONVERSATION_DELETED, conv)
     }

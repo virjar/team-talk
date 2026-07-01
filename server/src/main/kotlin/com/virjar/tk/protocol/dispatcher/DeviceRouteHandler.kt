@@ -9,7 +9,7 @@ class DeviceRouteHandler(
     private val deviceRepo: DeviceRepository,
     private val authService: AuthService,
 ) {
-    fun route(uid: String, methodId: Int, payload: ByteArray?): ByteArray {
+    suspend fun route(uid: String, methodId: Int, payload: ByteArray?): ByteArray {
         return when (DeviceMethod.fromId(methodId)) {
             DeviceMethod.LIST -> {
                 ProtoCodec.encodeList(deviceRepo.getDevices(uid).map { it.toModel() })
