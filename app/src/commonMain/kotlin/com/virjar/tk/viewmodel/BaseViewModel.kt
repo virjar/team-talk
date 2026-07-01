@@ -23,6 +23,19 @@ abstract class BaseViewModel {
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    /**
+     * 认证失效回调。子类在捕获 [AppError.AuthExpired] 时调用，
+     * 由外部（AppDataState）统一订阅并执行 session.close()——
+     * ViewModel 自身不直接断连（owner-driven：连接层由会话所有者管理）。
+     */
+    var onAuthExpired: (() -> Unit)? = null
+
+    /** 认证失效统一出口：提示 + 上抛给 [onAuthExpired]。 */
+    protected fun handleAuthExpired() {
+        setError("认证失效，请重新登录")
+        onAuthExpired?.invoke()
+    }
+
     fun clearError() { _error.value = null }
     protected fun setError(msg: String) { _error.value = msg }
 

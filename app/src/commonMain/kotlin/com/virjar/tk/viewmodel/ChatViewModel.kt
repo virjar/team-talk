@@ -2,7 +2,6 @@ package com.virjar.tk.viewmodel
 
 import com.virjar.tk.AppError
 import com.virjar.tk.client.EventProcessor
-import com.virjar.tk.client.ImClient
 import com.virjar.tk.client.LocalCache
 import com.virjar.tk.client.MessagePager
 import com.virjar.tk.model.Message
@@ -24,7 +23,6 @@ import org.slf4j.LoggerFactory
  */
 class ChatViewModel(
     private val chatId: String,
-    private val imClient: ImClient,
     private val localCache: LocalCache,
     private val messageRepo: MessageRepository,
     eventProcessor: EventProcessor? = null,
@@ -98,7 +96,7 @@ class ChatViewModel(
         localCache.insertMessage(sending)
         scope.launch {
             try {
-                val ack = imClient.sendAndWaitAck(sending)
+                val ack = messageRepo.send(sending).getOrThrow()
                 if (ack.code == 0) {
                     localCache.updateMessage(sending.chatId, sending.clientMsgId, ack.serverSeq)
                     // 自己发的消息是最新的，推进 readSeq 到它 + 本地清零未读
@@ -108,6 +106,8 @@ class ChatViewModel(
                     localCache.updateMessageStatus(sending.chatId, sending.clientMsgId, Message.SEND_STATUS_FAILED)
                     setError("发送失败: ${ack.reason}")
                 }
+            } catch (e: AppError.AuthExpired) {
+                handleAuthExpired()
             } catch (e: Exception) {
                 localCache.updateMessageStatus(sending.chatId, sending.clientMsgId, Message.SEND_STATUS_FAILED)
                 setError("发送失败: ${e.message}")
@@ -167,14 +167,6 @@ class ChatViewModel(
                 setError("编辑失败: ${e.message}")
             }
         }
-    }
-
-    /**
-     * 认证失效：断开连接触发 UI 回到登录页（停而非重试）。
-     */
-    private fun handleAuthExpired() {
-        setError("认证失效，请重新登录")
-        imClient.disconnect()
     }
 
     /** 释放内存窗口（Phase C LRU 治理）。 */

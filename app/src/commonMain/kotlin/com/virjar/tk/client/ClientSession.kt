@@ -46,6 +46,7 @@ fun createSession(
     val rpcClient = RpcClient(imClient)
     val conversationRepo = ConversationRepository(rpcClient, cache)
     val ep = EventProcessor(imClient, cache, onConversationsDirty = { conversationRepo.listConversations() })
+    val messageSender = MessageSender { msg -> imClient.sendAndWaitAck(msg) }
 
     // 日志缓冲区（分级：trace + fault）
     val traceBuffer = LogBuffer(capacity = 2000)
@@ -73,7 +74,7 @@ fun createSession(
         httpLogUploader = httpLogUploader,
         conversationRepo = conversationRepo,
         contactRepo = ContactRepository(rpcClient, cache),
-        messageRepo = MessageRepository(rpcClient, cache),
+        messageRepo = MessageRepository(rpcClient, cache, messageSender),
         chatRepo = ChatRepository(rpcClient, cache),
         deviceRepo = DeviceRepository(rpcClient),
         userRepo = UserRepository(rpcClient, cache),

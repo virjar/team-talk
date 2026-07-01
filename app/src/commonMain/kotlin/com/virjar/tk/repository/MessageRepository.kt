@@ -3,6 +3,7 @@ package com.virjar.tk.repository
 import com.virjar.tk.AppError
 import com.virjar.tk.Outcome
 import com.virjar.tk.client.LocalCache
+import com.virjar.tk.client.MessageSender
 import com.virjar.tk.client.RpcInvoker
 import com.virjar.tk.client.ensureSuccess
 import com.virjar.tk.model.Message
@@ -10,11 +11,21 @@ import com.virjar.tk.outcome
 import com.virjar.tk.protocol.MessageMethod
 import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.ServiceId
+import com.virjar.tk.protocol.payload.MessageAckPayload
 
 class MessageRepository(
     private val rpcClient: RpcInvoker,
     private val localCache: LocalCache,
+    private val messageSender: MessageSender,
 ) {
+    /**
+     * 发送消息（直达连接层，等待服务端 ACK）。
+     * 这是唯一不走 RPC invoke 的写操作——消息发送有独立的 ACK 协议。
+     */
+    suspend fun send(message: Message): Outcome<MessageAckPayload> = outcome {
+        messageSender.sendAndWaitAck(message)
+    }
+
     /**
      * 拉取历史消息。成功时把服务端数据写入 LocalCache。
      * 失败时返回 Failure，调用方可 `.recover { localCache.getMessages(chatId, limit) }` 降级。

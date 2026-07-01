@@ -37,7 +37,7 @@ class MessageRepositoryTest {
     fun `getHistory success returns messages and writes to cache`() {
         val rpc = FakeRpcInvoker()
         val cache = FakeLocalCache()
-        val repo = MessageRepository(rpc, cache)
+        val repo = MessageRepository(rpc, cache, com.virjar.tk.client.MessageSender { throw IllegalStateException("not used") })
 
         val encoded = ProtoCodec.encodeList(listOf(sampleMsg))
         rpc.enqueueOk(encoded)
@@ -61,7 +61,7 @@ class MessageRepositoryTest {
     fun `getHistory business error does NOT silently fallback to cache`() {
         val rpc = FakeRpcInvoker()
         val cache = FakeLocalCache().apply { insertMessage(sampleMsg) } // 预置缓存
-        val repo = MessageRepository(rpc, cache)
+        val repo = MessageRepository(rpc, cache, com.virjar.tk.client.MessageSender { throw IllegalStateException("not used") })
 
         rpc.enqueueError(500, "Internal error")
 
@@ -82,7 +82,7 @@ class MessageRepositoryTest {
     fun `getHistory auth expired returns AuthExpired failure`() {
         val rpc = FakeRpcInvoker()
         val cache = FakeLocalCache()
-        val repo = MessageRepository(rpc, cache)
+        val repo = MessageRepository(rpc, cache, com.virjar.tk.client.MessageSender { throw IllegalStateException("not used") })
 
         rpc.enqueueError(401, "token expired")
 
@@ -100,7 +100,7 @@ class MessageRepositoryTest {
             throwOnInvoke = IllegalStateException("Not connected")
         }
         val cache = FakeLocalCache()
-        val repo = MessageRepository(rpc, cache)
+        val repo = MessageRepository(rpc, cache, com.virjar.tk.client.MessageSender { throw IllegalStateException("not used") })
 
         val outcome = kotlinx.coroutines.runBlocking {
             repo.getHistory(chatId)
@@ -114,7 +114,7 @@ class MessageRepositoryTest {
     fun `getHistory timeout status returns Timeout failure`() {
         val rpc = FakeRpcInvoker()
         val cache = FakeLocalCache()
-        val repo = MessageRepository(rpc, cache)
+        val repo = MessageRepository(rpc, cache, com.virjar.tk.client.MessageSender { throw IllegalStateException("not used") })
 
         rpc.enqueueError(504, "Request timeout")
 
@@ -130,7 +130,7 @@ class MessageRepositoryTest {
     fun `revokeMessage success returns Success Unit`() {
         val rpc = FakeRpcInvoker()
         val cache = FakeLocalCache()
-        val repo = MessageRepository(rpc, cache)
+        val repo = MessageRepository(rpc, cache, com.virjar.tk.client.MessageSender { throw IllegalStateException("not used") })
 
         rpc.enqueueOk()
 
@@ -149,7 +149,7 @@ class MessageRepositoryTest {
             throwOnInvoke = IllegalStateException("Not connected")
         }
         val cache = FakeLocalCache().apply { insertMessage(sampleMsg) }
-        val repo = MessageRepository(rpc, cache)
+        val repo = MessageRepository(rpc, cache, com.virjar.tk.client.MessageSender { throw IllegalStateException("not used") })
 
         val result = kotlinx.coroutines.runBlocking {
             repo.getHistory(chatId).recover { cache.getMessages(chatId) }

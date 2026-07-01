@@ -79,7 +79,11 @@ open class AppDataState(val session: ClientSession) {
      * 导航由调用方（Android NavController / Desktop currentScreen）负责。
      */
     fun prepareChat(chatId: String, chatName: String, chatType: Int = ChatType.PERSONAL.code) {
-        chatViewModel = ChatViewModel(chatId, imClient, localCache, messageRepo, session.eventProcessor, userSession.uid)
+        chatViewModel?.destroy()
+        chatViewModel = ChatViewModel(chatId, localCache, messageRepo, session.eventProcessor, userSession.uid).apply {
+            // 认证失效：ViewModel 不自断连接，统一上抛给会话所有者（owner-driven）
+            onAuthExpired = { session.close() }
+        }
     }
 
     fun clearError() { error = null }
