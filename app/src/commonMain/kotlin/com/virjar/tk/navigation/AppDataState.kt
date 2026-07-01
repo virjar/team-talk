@@ -182,16 +182,22 @@ open class AppDataState(val session: ClientSession) {
         userRepo.changePassword(old, new).getOrThrow(); true
     } catch (e: AppError) { handleError(e, "修改密码失败"); false }
 
-    /** 好友申请：接受，成功后刷新申请列表。 */
+    /** 好友申请：接受，成功后刷新申请列表 + 红点计数。 */
     fun acceptFriendApply(token: String) = actionScope.launch {
-        try { contactRepo.accept(token).getOrThrow(); applies = contactRepo.listApplies().getOrThrow() }
-        catch (e: AppError) { handleError(e, "接受申请失败") }
+        try {
+            contactRepo.accept(token).getOrThrow()
+            applies = contactRepo.listApplies().getOrThrow()
+            contactViewModel.refreshPendingApplyCount()
+        } catch (e: AppError) { handleError(e, "接受申请失败") }
     }
 
-    /** 好友申请：拒绝，成功后刷新申请列表。 */
+    /** 好友申请：拒绝，成功后刷新申请列表 + 红点计数。 */
     fun rejectFriendApply(token: String) = actionScope.launch {
-        try { contactRepo.reject(token).getOrThrow(); applies = contactRepo.listApplies().getOrThrow() }
-        catch (e: AppError) { handleError(e, "拒绝申请失败") }
+        try {
+            contactRepo.reject(token).getOrThrow()
+            applies = contactRepo.listApplies().getOrThrow()
+            contactViewModel.refreshPendingApplyCount()
+        } catch (e: AppError) { handleError(e, "拒绝申请失败") }
     }
 
     /** 创建群组。返回 chatId 或 null（UI 据此决定是否打开聊天）。 */
