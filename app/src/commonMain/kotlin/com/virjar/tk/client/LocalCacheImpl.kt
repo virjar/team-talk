@@ -222,23 +222,21 @@ class LocalCacheImpl(driver: SqlDriver) : LocalCache {
     }
 
     /**
-     * 本地与服务端 Conversation 合并策略（解决状态覆盖类 bug）。
+     * 本地与服务端 Conversation 合并策略。
      *
-     * 规则：
-     * - unreadCount: 本地 readSeq ≥ 服务端 readSeq 且本地已清零 → 不被服务端旧值覆盖
-     * - draft: 本地有草稿时不被服务端覆盖（草稿是纯客户端状态，服务端只是镜像）
-     * - readSeq: 取较大值（已读位置只前进不后退）
+     * readSeq 服务端权威持久化（Commit 7f91d58 修复 markRead 不再 no-op + 会话行预创建），
+     * unreadCount = lastSeq - readSeq 由服务端权威计算，客户端直接信任。
+     *
+     * 仍需本地合并的两项（纯客户端状态/水位线）：
+     * - readSeq: 取 max（本地 markRead 可能比服务端通知先到，水位线只增不减）
+     * - peerReadSeq: 取 max（同理）
+     * - draft: 本地优先（草稿是纯客户端状态，服务端只是镜像）
      */
     private fun mergeConversation(local: Conversation, remote: Conversation): Conversation {
-        val mergedReadSeq = maxOf(local.readSeq, remote.readSeq)
-        // 已读状态保护：本地已标记已读，服务端通知滞后
-        val mergedUnread = if (local.readSeq >= remote.readSeq && local.unreadCount == 0) 0 else remote.unreadCount
-        // 草稿保护：本地非空草稿优先
-        val mergedDraft = local.draft ?: remote.draft
         return remote.copy(
-            readSeq = mergedReadSeq,
-            unreadCount = mergedUnread,
-            draft = mergedDraft,
+            readSeq = maxOf(local.readSeq, remote.readSeq),
+            peerReadSeq = maxOf(local.peerReadSeq, remote.peerReadSeq),
+            draft = local.draft ?: remote.draft,
         )
     }
 
