@@ -75,6 +75,19 @@ class TokenStore(dbPath: String) {
         return generateTokens(info.uid, info.deviceId, info.deviceFlag)
     }
 
+    /**
+     * 吊销 refresh token（仅删除，不换发新 token）。
+     * 用于登出场景——区别于 [refreshAccessToken]，后者会"删旧+发新"，在登出时
+     * 会产生游离的有效凭证。
+     * @return true 若 token 存在且已删除；false 若 token 不存在。
+     */
+    fun revokeRefreshToken(refreshToken: String): Boolean {
+        val key = "refresh:$refreshToken"
+        if (get(key) == null) return false
+        delete(key)
+        return true
+    }
+
     fun revokeAllDeviceTokens(uid: String, deviceId: String) {
         // 扫描并删除该 uid+deviceId 的所有 token
         val toDelete = mutableListOf<String>()
@@ -84,22 +97,6 @@ class TokenStore(dbPath: String) {
             val key = String(iter.key(), Charsets.UTF_8)
             val value = decodeValue(iter.value())
             if (value != null && value.uid == uid && value.deviceId == deviceId) {
-                toDelete.add(key)
-            }
-            iter.next()
-        }
-        iter.close()
-        toDelete.forEach { delete(it) }
-    }
-
-    fun revokeAllUserTokens(uid: String) {
-        val toDelete = mutableListOf<String>()
-        val iter = db.newIterator(cfHandle)
-        iter.seekToFirst()
-        while (iter.isValid) {
-            val key = String(iter.key(), Charsets.UTF_8)
-            val value = decodeValue(iter.value())
-            if (value != null && value.uid == uid) {
                 toDelete.add(key)
             }
             iter.next()

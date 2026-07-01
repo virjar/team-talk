@@ -104,9 +104,9 @@ class AuthService(
     }
 
     fun logout(uid: String, refreshToken: String?, deviceId: String? = null) {
-        // 废弃 refreshToken
+        // 吊销 refreshToken（仅删除，不换发——refreshAccessToken 会生成新凭证造成泄露）
         if (refreshToken != null) {
-            tokenStore.refreshAccessToken(refreshToken)
+            tokenStore.revokeRefreshToken(refreshToken)
         }
         // 仅清除当前设备的 token，不影响其他设备
         if (deviceId != null) {
