@@ -13,7 +13,6 @@ import io.ktor.client.statement.*
 import io.ktor.http.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.*
 import java.io.File
 import java.net.URLEncoder
 import java.security.MessageDigest
@@ -56,10 +55,7 @@ object MediaHelper {
         if (response.status != HttpStatusCode.OK) {
             throw RuntimeException("Upload failed: ${response.status}")
         }
-        val body = response.bodyAsText()
-        return Json.parseToJsonElement(body)
-            .jsonObject["path"]?.jsonPrimitive?.content
-            ?: throw RuntimeException("Invalid upload response: $body")
+        return com.virjar.tk.repository.FileOps.parseUploadPath(response.bodyAsText())
     }
 
     /**
