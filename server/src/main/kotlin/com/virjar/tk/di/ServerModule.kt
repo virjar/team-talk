@@ -19,6 +19,13 @@ import com.virjar.tk.domain.presence.PresenceService
 import com.virjar.tk.domain.user.UserRepository
 import com.virjar.tk.domain.user.UserService
 import com.virjar.tk.protocol.rpc.RpcStubRegistry
+import com.virjar.tk.rpc.gen.UserRpcContract
+import com.virjar.tk.rpc.gen.AuthRpcContract
+import com.virjar.tk.rpc.gen.ContactRpcContract
+import com.virjar.tk.rpc.gen.ChatRpcContract
+import com.virjar.tk.rpc.gen.MessageRpcContract
+import com.virjar.tk.rpc.gen.ConversationRpcContract
+import com.virjar.tk.rpc.gen.DeviceRpcContract
 import com.virjar.tk.protocol.rpc.UserRpcImpl
 import com.virjar.tk.protocol.rpc.AuthRpcImpl
 import com.virjar.tk.protocol.rpc.ContactRpcImpl
@@ -82,13 +89,13 @@ fun createServerModule(
     // RPC 注册表（IDL 生成 Stub + 薄壳 Impl；serviceId 字符串注册）
     single {
         RpcStubRegistry().apply {
-            register("user") { uid -> UserRpcImpl(uid, get()) }
-            register("auth") { uid -> AuthRpcImpl(uid, get(), get()) }
-            register("contact") { uid -> ContactRpcImpl(uid, get()) }
-            register("chat") { uid -> ChatRpcImpl(uid, get()) }
-            register("message") { uid -> MessageRpcImpl(uid, get(), get()) }
-            register("conversation") { uid -> ConversationRpcImpl(uid, get()) }
-            register("device") { uid -> DeviceRpcImpl(uid, get(), get()) }
+            register(UserRpcContract.SERVICE) { uid -> UserRpcImpl(uid, get()) }
+            register(AuthRpcContract.SERVICE) { uid -> AuthRpcImpl(uid, get(), get()) }
+            register(ContactRpcContract.SERVICE) { uid -> ContactRpcImpl(uid, get()) }
+            register(ChatRpcContract.SERVICE) { uid -> ChatRpcImpl(uid, get()) }
+            register(MessageRpcContract.SERVICE) { uid -> MessageRpcImpl(uid, get(), get()) }
+            register(ConversationRpcContract.SERVICE) { uid -> ConversationRpcImpl(uid, get()) }
+            register(DeviceRpcContract.SERVICE) { uid -> DeviceRpcImpl(uid, get(), get()) }
         }
     }
     single { RpcDispatcher(get()) }
