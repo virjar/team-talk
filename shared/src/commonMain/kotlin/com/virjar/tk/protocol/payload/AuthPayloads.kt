@@ -18,7 +18,6 @@ data class AuthRequestPayload(
     val deviceName: String? = null,
     val deviceModel: String? = null,
     val deviceFlag: Int = 0,
-    val protocolVersion: Int = Frame.PROTOCOL_VERSION.toInt(),
     val lastEventId: Long = 0,
 ) : IProto {
 
@@ -43,7 +42,6 @@ data class AuthRequestPayload(
         buf.writeString(deviceName)
         buf.writeString(deviceModel)
         buf.writeVarInt(deviceFlag)
-        buf.writeVarInt(protocolVersion)
         buf.writeVarLong(lastEventId)
     }
 
@@ -76,7 +74,6 @@ data class AuthRequestPayload(
             deviceName = buf.readString(),
             deviceModel = buf.readString(),
             deviceFlag = buf.readVarInt(),
-            protocolVersion = buf.readVarInt(),
             lastEventId = buf.readVarLong(),
         )
     }

@@ -20,7 +20,7 @@
 |----|----|------|
 | 帧头大小 | 5 字节 | `Frame.HEADER_SIZE`（v3：magic/version 移出帧头，握手思维残留清除） |
 | TYPE 合法性 | PacketType 枚举 | 未知 TYPE → CorruptedFrameException 断连（错位/污染/跨版本的唯一信号） |
-| VERSION | `0x03` | 连接级不变量：首帧 AUTH.payload.protocolVersion 校验，帧内不重复 |
+| VERSION | `0x03` | 连接级不变量：AUTH 序言魔第 3 字节校验（payload/帧内均不重复） |
 | LENGTH 上限 | 16,777,216（16MB） | `Frame.MAX_PAYLOAD_SIZE`；超限断连 |
 | 字节序 | **大端**（固定宽度整数、LENGTH） | Netty ByteBuf 默认 |
 
@@ -93,8 +93,9 @@
 
 ## 5. 协议控制 payload 布局
 
-### AuthRequestPayload（AUTH，C→S）
+### AuthRequestPayload（AUTH，C→S，连接首帧）
 ```
+byte×4  序言魔          // 0x54 0x4B 'TK' + PROTOCOL_VERSION + 0x01（识别/版本协商/错位锚点，payload 内无 protocolVersion 字段）
 varInt  authType        // 0=login, 1=register, 2=refresh-token
 string  username?
 string  password?
@@ -104,7 +105,6 @@ string  deviceId        // 必填
 string  deviceName?
 string  deviceModel?
 varInt  deviceFlag
-varInt  protocolVersion // 必须等于 PROTOCOL_VERSION(1)
 varLong lastEventId     // >0 时服务端补发离线事件
 ```
 

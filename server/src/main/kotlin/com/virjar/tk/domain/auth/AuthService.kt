@@ -19,11 +19,8 @@ class AuthService(
     }
 
     fun handleAuth(payload: AuthRequestPayload): AuthResponsePayload {
-        // 版本检查
-        if (payload.protocolVersion != com.virjar.tk.protocol.Frame.PROTOCOL_VERSION.toInt()) {
-            return AuthResponsePayload(code = CODE_VERSION_UNSUPPORTED, reason = "Unsupported protocol version")
-        }
-
+        // 版本检查由 AUTH 序言魔承担（readFrom 校验，不匹配断连）——
+        // payload 内 protocolVersion 字段已删（曾与之重复且恒真）
         return when (payload.authType) {
             0 -> handleLogin(payload)      // login
             1 -> handleRegister(payload)   // register
