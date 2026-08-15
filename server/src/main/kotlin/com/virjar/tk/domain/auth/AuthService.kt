@@ -70,6 +70,13 @@ class AuthService(
         val info = tokenStore.validateAccessToken(newTokens.first)
             ?: return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = "Token validation failed")
 
+        // 封禁复查：refresh 路径只验 token 不查用户状态——ban 后已发 token 仍可续期（曾可绕过）
+        try {
+            userService.requireActive(info.uid)
+        } catch (e: IllegalArgumentException) {
+            return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = e.message)
+        }
+
         return AuthResponsePayload(
             code = CODE_OK,
             uid = info.uid,

@@ -175,8 +175,8 @@ class ImAgent(
                 deviceId = payload.deviceId
                 unauthedCount.decrementAndGet()  // 已认证：退出未认证围栏
                 // 认证后放开帧限（未认证期间 4KB——慢速攻击的最小权限防御）
-                channel.pipeline().get(com.virjar.tk.protocol.PacketCodec::class.java)
-                    ?.maxPayloadLimit = com.virjar.tk.protocol.PacketCodec.AUTHED_LIMIT
+                channel.pipeline().get(PacketCodec::class.java)
+                    ?.maxPayloadLimit = PacketCodec.AUTHED_LIMIT
                 _state.set(State.AUTHENTICATED)
                 recorder.upgrade(uid, deviceId)
                 clientRegistry.register(this@ImAgent)

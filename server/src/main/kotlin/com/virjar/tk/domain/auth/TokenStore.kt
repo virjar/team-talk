@@ -105,6 +105,26 @@ class TokenStore(dbPath: String) {
         toDelete.forEach { delete(it) }
     }
 
+    /**
+     * 吊销某用户的全部 token（封禁/重置密码用）。
+     * 注：曾在 4c3a97e 以"零调用"删除——管理后台上线后恢复。
+     */
+    fun revokeAllUserTokens(uid: String) {
+        val toDelete = mutableListOf<String>()
+        val iter = db.newIterator(cfHandle)
+        iter.seekToFirst()
+        while (iter.isValid) {
+            val key = String(iter.key(), Charsets.UTF_8)
+            val value = decodeValue(iter.value())
+            if (value != null && value.uid == uid) {
+                toDelete.add(key)
+            }
+            iter.next()
+        }
+        iter.close()
+        toDelete.forEach { delete(it) }
+    }
+
     fun close() {
         cfHandle.close()
         db.close()

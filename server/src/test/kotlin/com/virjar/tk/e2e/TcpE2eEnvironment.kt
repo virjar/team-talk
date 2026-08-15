@@ -87,6 +87,22 @@ class TcpE2eEnvironment : AutoCloseable {
         tcpPort = tcpServer.actualPort
     }
 
+    /** 测试辅助：用户名 → uid。 */
+    fun uidOf(username: String): String {
+        return java.sql.DriverManager.getConnection(pgJdbc).use { conn ->
+            conn.createStatement().executeQuery("SELECT uid FROM users WHERE username = '$username'").use {
+                it.next(); it.getString(1)
+            }
+        }
+    }
+
+    /** 测试辅助：直接执行 SQL（造状态用）。 */
+    fun jdbcExec(sql: String) {
+        java.sql.DriverManager.getConnection(pgJdbc).use { conn ->
+            conn.createStatement().execute(sql)
+        }
+    }
+
     override fun close() {
         tcpServer.stop()
         koin.get<SearchIndex>().stop()

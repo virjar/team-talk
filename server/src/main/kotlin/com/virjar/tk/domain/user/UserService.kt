@@ -49,7 +49,17 @@ class UserService(
         if (!BCrypt.checkpw(password, internal.passwordHash)) {
             throw IllegalArgumentException("用户名或密码错误")
         }
+        // 封禁 enforcement（管理后台 ban 后 status=2；此前该字段无人检查）
+        if (internal.user.status == 2) {
+            throw IllegalArgumentException("账号已被封禁")
+        }
         return internal.user
+    }
+
+    /** 认证续期路径的封禁复查（refresh 只验 token，不查用户状态——曾可绕过封禁）。 */
+    fun requireActive(uid: String) {
+        val user = userStore.findByUid(uid) ?: throw IllegalArgumentException("用户不存在")
+        if (user.status == 2) throw IllegalArgumentException("账号已被封禁")
     }
 
     fun getProfile(uid: String): User {

@@ -60,6 +60,14 @@ class ClientRegistry {
         }
     }
 
+    /** 踢掉某用户全部在线设备（封禁/重置密码联动）。 */
+    suspend fun kickUser(uid: String) {
+        workThread.suspendAwait {
+            val devices = userAgents[uid] ?: return@suspendAwait
+            devices.values.toList().forEach { it.kick() }
+        }
+    }
+
     suspend fun onlineUids(): Set<String> {
         return workThread.suspendAwait {
             userAgents.keys.toSet()
