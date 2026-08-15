@@ -40,6 +40,10 @@ class EventProcessor(
     private val _typingEvents = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 8)
     val typingEvents: SharedFlow<Pair<String, String>> = _typingEvents.asSharedFlow()
 
+    /** 入站消息事件流（无头客户端/AI bot 的消息入口，UI 客户端走 LocalCache 观察也可）。 */
+    private val _messageEvents = MutableSharedFlow<Message>(extraBufferCapacity = 64)
+    val messageEvents: SharedFlow<Message> = _messageEvents.asSharedFlow()
+
     fun start() {
         val scope = imClient.coroutineScope ?: run {
             logger.fault("Cannot start: ImClient not connected")
@@ -145,6 +149,7 @@ class EventProcessor(
             NotifyType.MESSAGE_RECV -> {
                 val message = decodePayload<Message>(notifyType, payload)
                 localCache.insertMessage(message)
+                _messageEvents.emit(message)
             }
 
             NotifyType.CONVERSATION_UPDATED -> {
