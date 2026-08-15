@@ -17,7 +17,6 @@ import com.virjar.tk.infra.db.DatabaseFactory
 import com.virjar.tk.infra.search.SearchIndex
 import com.virjar.tk.infra.storage.MessageStore
 import com.virjar.tk.infra.sync.ClientRegistry
-import io.zonky.test.db.postgres.embedded.EmbeddedPostgres
 import org.junit.jupiter.api.extension.AfterAllCallback
 import org.junit.jupiter.api.extension.BeforeAllCallback
 import org.junit.jupiter.api.extension.ExtendWith
@@ -44,8 +43,9 @@ class TestEnvironment : AutoCloseable {
     private val searchDir = File(testRoot, "search")
     private val fileStoreDir = File(testRoot, "file-store")
 
-    // Embedded PG（随机端口，完全隔离）
-    private val embeddedPg = EmbeddedPostgres.builder().start()
+    // 真实 PG（本地 teamtalk 库，与 local profile 同环境；init 时 TRUNCATE 清场）
+    private val pgUser = System.getenv("TK_E2E_PG_USER") ?: System.getProperty("user.name")
+    private val pgJdbc = "jdbc:postgresql://localhost:5432/teamtalk?user=$pgUser"
 
     // Koin 容器（独立实例，不污染全局）
     private val koinApp = koinApplication {
@@ -61,11 +61,16 @@ class TestEnvironment : AutoCloseable {
 
     init {
         testRoot.mkdirs()
-        DatabaseFactory.create(
-            jdbcUrl = embeddedPg.getJdbcUrl("postgres", "postgres"),
-            user = "postgres",
-            password = "postgres",
-        )
+        java.sql.DriverManager.getConnection(pgJdbc).use { conn ->
+            val tables = conn.createStatement().executeQuery(
+                "SELECT tablename FROM pg_tables WHERE schemaname='public'").let { rs ->
+                buildList { while (rs.next()) add(rs.getString(1)) }
+            }
+            if (tables.isNotEmpty()) {
+                conn.createStatement().execute("TRUNCATE ${tables.joinToString(", ")} RESTART IDENTITY CASCADE")
+            }
+        }
+        DatabaseFactory.create(jdbcUrl = pgJdbc, user = pgUser, password = "", maxPoolSize = 4)
         koin.get<MessageStore>().init()
         koin.get<SearchIndex>().start()
         koin.get<com.virjar.tk.infra.storage.FileStore>().init()
@@ -99,8 +104,7 @@ class TestEnvironment : AutoCloseable {
         koin.get<TokenStore>().close()
         koin.get<ClientRegistry>().stop()
         koinApp.close()
-        embeddedPg.close()
-        testRoot.deleteRecursively()
+                testRoot.deleteRecursively()
     }
 }
 

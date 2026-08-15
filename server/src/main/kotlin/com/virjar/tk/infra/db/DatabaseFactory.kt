@@ -10,6 +10,13 @@ private val logger = LoggerFactory.getLogger("DatabaseFactory")
 
 object DatabaseFactory {
 
+    @Volatile
+    private var current: HikariDataSource? = null
+
+    /**
+     * 幂等初始化：重复 create 先关闭旧池（测试环境每用例重建；同一 JDBC 复用连接）。
+     * 池上限可注入——测试进程内多环境共存时必须压小，防打爆 PG max_connections。
+     */
     fun create(
         jdbcUrl: String = System.getenv("DATABASE_JDBC_URL")
             ?: "jdbc:postgresql://localhost:5432/teamtalk",
@@ -17,15 +24,21 @@ object DatabaseFactory {
             ?: "teamtalk",
         password: String = System.getenv("DATABASE_PASSWORD")
             ?: "postgres",
+        maxPoolSize: Int = 10,
     ) {
+        current?.let { old ->
+            if (old.jdbcUrl == jdbcUrl) return  // 同库已连接，幂等复用
+            old.close()
+        }
         val ds = HikariDataSource().apply {
             this.jdbcUrl = jdbcUrl
             this.username = user
             this.password = password
-            maximumPoolSize = 10
+            maximumPoolSize = maxPoolSize
             driverClassName = "org.postgresql.Driver"
             validate()
         }
+        current = ds
 
         org.jetbrains.exposed.sql.Database.connect(ds)
 

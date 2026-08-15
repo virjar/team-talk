@@ -58,7 +58,6 @@ dependencies {
     // 跨端编解码一致性测试需要客户端 Repository（:app 的 JVM target）
     testImplementation(project(":app"))
     testImplementation(libs.ktor.server.core)
-    testImplementation(libs.embedded.postgres)
     testImplementation(libs.koin.core)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

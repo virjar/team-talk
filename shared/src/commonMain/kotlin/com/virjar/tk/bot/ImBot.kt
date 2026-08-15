@@ -9,14 +9,23 @@ import com.virjar.tk.client.MessageSender
 import com.virjar.tk.client.UserSession
 import com.virjar.tk.client.createSession
 import com.virjar.tk.client.defaultServerConfig
+import com.virjar.tk.body.FileBody
+import com.virjar.tk.body.ImageBody
+import com.virjar.tk.body.TextBody
+import com.virjar.tk.body.VideoBody
+import com.virjar.tk.body.VoiceBody
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Contact
 import com.virjar.tk.model.Conversation
+import com.virjar.tk.model.Member
 import com.virjar.tk.model.Message
-import com.virjar.tk.body.TextBody
 import com.virjar.tk.model.MessageBody
+import com.virjar.tk.model.User
 import com.virjar.tk.protocol.MessageType
+import com.virjar.tk.protocol.NotifyType
+import com.virjar.tk.protocol.PresencePayload
 import com.virjar.tk.protocol.payload.MessageAckPayload
+import com.virjar.tk.repository.FileRepository
 import com.virjar.tk.testing.FakeLocalCache
 import com.virjar.tk.util.AppLog
 import kotlinx.coroutines.CompletableDeferred
@@ -57,8 +66,18 @@ class ImBot private constructor(
     /** 当前用户 uid（认证成功后有效）。 */
     val uid: String get() = userSession.uid
 
-    /** 入站消息流（所有会话）。由 EventProcessor 按契约解码后转发。 */
+    // ── 事件流（EventProcessor 契约解码后转发；next* 为带缓冲的便捷取用） ──
+
+    /** 入站消息流（所有会话）。 */
     val messages: SharedFlow<Message> get() = session.eventProcessor.messageEvents
+    /** 联系人关系变更流（申请/接受/删除）。 */
+    val contactEvents get() = session.eventProcessor.contactEvents
+    /** 群/成员变更流：(变更类型, Chat)。 */
+    val chatEvents get() = session.eventProcessor.chatEvents
+    /** 好友在线状态流。 */
+    val presenceEvents get() = session.eventProcessor.presenceEvents
+    /** typing 流：(chatId, senderUid)。 */
+    val typingEvents get() = session.eventProcessor.typingEvents
 
     /**
      * 消息缓冲：ImBot 创建即订阅 [messages] 转入 Channel（UNLIMITED），
@@ -67,16 +86,92 @@ class ImBot private constructor(
      */
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private val messageChannel = Channel<Message>(Channel.UNLIMITED)
+    private val contactChannel = Channel<Unit>(Channel.UNLIMITED)
+    private val chatChannel = Channel<Pair<NotifyType, Chat>>(Channel.UNLIMITED)
+    private val presenceChannel = Channel<PresencePayload>(Channel.UNLIMITED)
 
     init {
+        // 各流启动即缓冲（SharedFlow 无 replay，晚订阅会错过 emit——见 lessons C2）
         scope.launch { messages.collect { messageChannel.send(it) } }
+        scope.launch { contactEvents.collect { contactChannel.send(it) } }
+        scope.launch { chatEvents.collect { chatChannel.send(it) } }
+        scope.launch { presenceEvents.collect { presenceChannel.send(it) } }
     }
+
+    /** 等待下一个联系人事件（好友申请/接受/删除）。 */
+    suspend fun nextContactEvent(timeoutMs: Long = 10_000) = withTimeout(timeoutMs) { contactChannel.receive() }
+
+    /** 等待下一个群/成员变更事件。 */
+    suspend fun nextChatEvent(timeoutMs: Long = 10_000) = withTimeout(timeoutMs) { chatChannel.receive() }
+
+    /** 等待下一个在线状态事件。 */
+    suspend fun nextPresenceEvent(timeoutMs: Long = 10_000) = withTimeout(timeoutMs) { presenceChannel.receive() }
 
     // ── 消息 ──
 
     /** 发送文本消息并等待服务端 ACK。 */
     suspend fun sendText(chatId: String, text: String): MessageAckPayload =
         send(chatId, TextBody(text))
+
+    // ── 媒体消息（URL 模式：调用方先行 uploadFile 上传） ──
+
+    suspend fun sendImage(chatId: String, url: String, width: Int, height: Int, size: Long): MessageAckPayload =
+        send(chatId, ImageBody(url, width, height, size), MessageType.IMAGE)
+
+    suspend fun sendFile(chatId: String, url: String, fileName: String, size: Long): MessageAckPayload =
+        send(chatId, FileBody(url, fileName, size), MessageType.FILE)
+
+    suspend fun sendVoice(chatId: String, url: String, duration: Int, size: Long): MessageAckPayload =
+        send(chatId, VoiceBody(url, duration, size), MessageType.VOICE)
+
+    suspend fun sendVideo(chatId: String, url: String, duration: Int, width: Int, height: Int, size: Long, thumbnailUrl: String? = null): MessageAckPayload =
+        send(chatId, VideoBody(url, duration, width, height, size, thumbnailUrl), MessageType.VIDEO)
+
+    /** 上传文件到服务器（HTTP），返回相对 path。 */
+    suspend fun uploadFile(serverUrl: String, bytes: ByteArray, fileName: String, contentType: String): String =
+        FileRepository(serverUrl).upload(bytes, fileName, contentType).getOrThrow()
+
+    /** 上传并发送一步到位。 */
+    suspend fun uploadAndSendFile(serverUrl: String, chatId: String, bytes: ByteArray, fileName: String, contentType: String): MessageAckPayload {
+        val path = uploadFile(serverUrl, bytes, fileName, contentType)
+        return sendFile(chatId, path, fileName, bytes.size.toLong())
+    }
+
+    /** 发送 typing 指示（不等 ACK——服务端对 TYPING 消息只广播不回执）。 */
+    fun sendTyping(chatId: String) {
+        imClient.send(
+            Message(
+                chatId = chatId,
+                clientMsgId = UUID.randomUUID().toString(),
+                senderUid = uid,
+                messageType = MessageType.TYPING.code,
+                timestamp = System.currentTimeMillis(),
+            )
+        )
+    }
+
+    // ── 消息操作 ──
+
+    suspend fun revoke(chatId: String, serverSeq: Long) = session.messageRepo.revokeMessage(chatId, serverSeq).getOrThrow()
+    suspend fun forward(srcChatId: String, srcSeq: Long, targetChatId: String): Message =
+        session.messageRepo.forwardMessage(srcChatId, srcSeq, targetChatId).getOrThrow()
+    suspend fun markRead(chatId: String, readSeq: Long) = session.messageRepo.markRead(chatId, readSeq).getOrThrow()
+    suspend fun getHistory(chatId: String, fromSeq: Long = 0, limit: Int = 50): List<Message> =
+        session.messageRepo.getHistory(chatId, fromSeq, limit).getOrThrow()
+
+    // ── 群组 ──
+
+    suspend fun createGroup(name: String, memberUids: List<String>): Chat =
+        session.chatRepo.createGroup(name, memberUids = memberUids).getOrThrow()
+
+    suspend fun inviteMembers(chatId: String, uids: List<String>) = session.chatRepo.addMembers(chatId, uids).getOrThrow()
+    suspend fun groupMembers(chatId: String): List<Member> = session.chatRepo.getMembers(chatId).getOrThrow()
+
+    // ── 社交 ──
+
+    suspend fun applyFriend(targetUid: String, remark: String? = null) = session.contactRepo.apply(targetUid, remark).getOrThrow()
+    suspend fun deleteFriend(friendUid: String) = session.contactRepo.deleteFriend(friendUid).getOrThrow()
+    suspend fun searchUsers(keyword: String): List<User> = session.userRepo.search(keyword).getOrThrow()
 
     /** 发送任意 body 消息并等待服务端 ACK。 */
     suspend fun send(chatId: String, body: MessageBody, messageType: MessageType = MessageType.TEXT): MessageAckPayload {

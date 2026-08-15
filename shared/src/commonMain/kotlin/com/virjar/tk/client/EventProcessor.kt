@@ -4,6 +4,7 @@ import com.virjar.tk.model.*
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.IProtoReader
 import com.virjar.tk.protocol.NotifyContracts
+import com.virjar.tk.protocol.PresencePayload
 import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.ReadSyncPayload
@@ -44,13 +45,50 @@ class EventProcessor(
     private val _messageEvents = MutableSharedFlow<Message>(extraBufferCapacity = 64)
     val messageEvents: SharedFlow<Message> = _messageEvents.asSharedFlow()
 
+    /** 联系人关系事件（好友申请/接受/删除后触发；详情查 LocalCache contacts）。 */
+    private val _contactEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+    val contactEvents: SharedFlow<Unit> = _contactEvents.asSharedFlow()
+
+    /** 群/成员变更事件（创建/更新/成员增删/禁言/角色变更后触发；详情查 LocalCache chats/members）。 */
+    private val _chatEvents = MutableSharedFlow<Pair<NotifyType, Chat>>(extraBufferCapacity = 32)
+    val chatEvents: SharedFlow<Pair<NotifyType, Chat>> = _chatEvents.asSharedFlow()
+
+    /** 好友在线状态事件（上下线广播，服务端直写不持久化）。 */
+    private val _presenceEvents = MutableSharedFlow<PresencePayload>(extraBufferCapacity = 32)
+    val presenceEvents: SharedFlow<PresencePayload> = _presenceEvents.asSharedFlow()
+
+    /**
+     * 自治重连 watcher：断线时监听协程随连接 scope 消亡；
+     * 重连成功（新 scope 就绪）时自动重启。与 RpcClient 同模式。
+     * （历史 bug：监听只启动一次，断线重连后 NOTIFY 全部静默丢失。）
+     */
+    private val lifecycleScope = CoroutineScope(SupervisorJob() + CoroutineExceptionHandler { _, t ->
+        logger.fault("EventProcessor lifecycle watcher crashed", t)
+    })
+    private var watcherJob: Job? = null
+    @Volatile
+    private var started = false
+
     fun start() {
+        started = true
+        ensureListening()
+        if (watcherJob?.isActive == true) return
+        watcherJob = lifecycleScope.launch {
+            imClient.state.collect { state ->
+                if (state == ConnectionState.CONNECTED && listenJob?.isActive != true) {
+                    logger.trace("Connection restored, restarting event listener")
+                    ensureListening()
+                }
+            }
+        }
+    }
+
+    private fun ensureListening() {
         val scope = imClient.coroutineScope ?: run {
-            logger.fault("Cannot start: ImClient not connected")
+            logger.fault("Cannot listen: ImClient not connected")
             return
         }
-        // 幂等：重复 start 先取消旧监听协程，避免泄漏（CLAUDE.md: 销毁操作幂等）
-        listenJob?.cancel()
+        if (!started || listenJob?.isActive == true) return
         listenJob = scope.launch {
             try {
                 imClient.packets.collect { proto ->
@@ -69,6 +107,8 @@ class EventProcessor(
     }
 
     fun stop() {
+        started = false
+        watcherJob?.cancel()
         listenJob?.cancel()
     }
 
@@ -104,7 +144,8 @@ class EventProcessor(
         return ProtoCodec.decode(reader as IProtoReader<T>, payload)
     }
 
-    private suspend fun handleNotifyPayload(notifyType: NotifyType, payload: ByteArray) {
+    /** 按 NOTIFY 类型分发处理。internal 供单测直调（绕过监听协程）。 */
+    internal suspend fun handleNotifyPayload(notifyType: NotifyType, payload: ByteArray) {
         when (notifyType) {
             NotifyType.CONTACT_APPLY -> {
                 // 契约：CONTACT_APPLY 发 ContactApply（含 fromUid/toUid/fromUser），转换为本地 Contact
@@ -115,6 +156,7 @@ class EventProcessor(
                 )
                 localCache.upsertContact(contact)
                 onContactChanged?.invoke()
+                _contactEvents.emit(Unit)
             }
 
             NotifyType.CONTACT_ACCEPTED,
@@ -123,6 +165,7 @@ class EventProcessor(
                 val contact = decodePayload<Contact>(notifyType, payload)
                 localCache.upsertContact(contact)
                 onContactChanged?.invoke()
+                _contactEvents.emit(Unit)
             }
 
             NotifyType.CHAT_CREATED,
@@ -135,6 +178,7 @@ class EventProcessor(
                 if (notifyType == NotifyType.CHAT_CREATED) {
                     onConversationsDirty?.invoke()
                 }
+                _chatEvents.emit(notifyType to chat)
             }
 
             NotifyType.MEMBER_ADDED,
@@ -144,6 +188,7 @@ class EventProcessor(
             NotifyType.MEMBER_ROLE_CHANGED -> {
                 val chat = decodePayload<Chat>(notifyType, payload)
                 localCache.upsertChat(chat)
+                _chatEvents.emit(notifyType to chat)
             }
 
             NotifyType.MESSAGE_RECV -> {
@@ -163,8 +208,9 @@ class EventProcessor(
             }
 
             NotifyType.PRESENCE -> {
-                // User 模型暂无在线状态字段，仅记录日志（收到即视为已处理，推进游标）
-                logger.trace("PRESENCE notify received (${payload.size} bytes), no UI consumer yet")
+                // 在线状态广播（服务端直写不持久化）；无头端消费 presenceEvents
+                val presence = decodePayload<PresencePayload>(notifyType, payload)
+                _presenceEvents.emit(presence)
             }
             NotifyType.TYPING -> {
                 val msg = decodePayload<Message>(notifyType, payload)

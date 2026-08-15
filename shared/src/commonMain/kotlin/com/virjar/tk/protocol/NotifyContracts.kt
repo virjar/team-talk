@@ -60,12 +60,13 @@ object NotifyContracts {
 
         // 通用扩展
         NotifyType.GENERIC to GenericPayload,
+
+        // 在线状态（服务端直写不持久化，但类型契约仍需锁定）
+        NotifyType.PRESENCE to PresencePayload,
     )
 
-    /** 无 payload 契约的豁免类型（需在此注明原因）。 */
-    val exempt: Set<NotifyType> = setOf(
-        NotifyType.PRESENCE, // 服务端未 emit；客户端仅记录日志
-    )
+    /** 无 payload 契约的豁免类型（需在此注明原因）。当前无豁免。 */
+    val exempt: Set<NotifyType> = emptySet()
 
     /**
      * 契约校验：reader 是 IProto data class 的 companion object，

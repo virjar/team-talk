@@ -17,13 +17,41 @@ class RpcClient(
     private val pendingRequests = mutableMapOf<Int, CompletableDeferred<ResponsePayload>>()
     private var listenJob: Job? = null
 
+    /**
+     * 自治重连 watcher：监听协程挂在连接 scope 上，断线时随 scope 消亡；
+     * 重连成功（新 scope 就绪）时自动在新 scope 重启监听。
+     * （历史 bug：监听只在 createSession 启动一次，断线重连后 RPC 应答无人处理 → 全部超时。）
+     */
+    private val lifecycleScope = CoroutineScope(SupervisorJob() + CoroutineExceptionHandler { _, t ->
+        logger.fault("RpcClient lifecycle watcher crashed", t)
+    })
+    private var watcherJob: Job? = null
+    @Volatile
+    private var started = false
+
     fun start() {
+        started = true
+        ensureListening()
+        if (watcherJob?.isActive == true) return
+        watcherJob = lifecycleScope.launch {
+            imClient.state.collect { state ->
+                if (state == ConnectionState.CONNECTED) {
+                    // 新连接 scope 就绪；监听若已死（随旧 scope cancel）则重启
+                    if (listenJob?.isActive != true) {
+                        logger.trace("Connection restored, restarting RPC listener")
+                        ensureListening()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun ensureListening() {
         val scope = imClient.coroutineScope ?: run {
-            logger.trace("Cannot start: ImClient not connected")
+            logger.trace("Cannot listen: ImClient not connected")
             return
         }
-        // 幂等：重复 start 先取消旧监听协程
-        listenJob?.cancel()
+        if (listenJob?.isActive == true) return  // 已在当前/存活 scope 上监听
         listenJob = scope.launch {
             try {
                 launch {
@@ -66,6 +94,8 @@ class RpcClient(
     }
 
     fun stop() {
+        started = false
+        watcherJob?.cancel()
         listenJob?.cancel()
     }
 }

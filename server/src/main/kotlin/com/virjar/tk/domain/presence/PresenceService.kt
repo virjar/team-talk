@@ -3,6 +3,7 @@ package com.virjar.tk.domain.presence
 import com.virjar.tk.domain.contact.ContactStore
 import com.virjar.tk.infra.sync.ClientRegistry
 import com.virjar.tk.protocol.NotifyType
+import com.virjar.tk.protocol.PresencePayload
 import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.payload.NotifyPayload
 import org.slf4j.LoggerFactory
@@ -47,18 +48,5 @@ class PresenceService(
     companion object {
         const val STATUS_OFFLINE: Byte = 0
         const val STATUS_ONLINE: Byte = 1
-    }
-}
-
-/** Presence 通知载荷 */
-class PresencePayload(
-    val uid: String,
-    val status: Byte,
-    val lastSeenAt: Long,
-) : com.virjar.tk.protocol.IProto {
-    override fun writeTo(buf: com.virjar.tk.protocol.PacketBuffer) {
-        buf.writeString(uid)
-        buf.writeByte(status.toInt())
-        buf.writeVarLong(lastSeenAt)
     }
 }

@@ -34,11 +34,16 @@ bot.shutdown()   // 级联：scope → channel → session.close → imClient.de
 
 | 类别 | 方法 |
 |------|------|
-| 生命周期 | `register(host, port, prefix)` / `login(host, port, user, pass)` / `awaitState()` / `shutdown()` |
-| 消息 | `messages: SharedFlow<Message>` / `sendText(chatId, text)` / `send(chatId, body)` / `nextMessage(timeout, predicate)` |
-| 社交 | `createPersonalChat(uid)` / `listFriends()` / `acceptFriendApply(token)` / `pendingApplies()` |
-| 会话 | `listConversations()` |
-| 透传 | `session`（ClientSession，可直达全部 Repository） |
+| 生命周期 | `register(host, port, prefix)` / `login(...)` / `awaitState()` / `shutdown()` |
+| 事件流 | `messages` / `contactEvents` / `chatEvents` / `presenceEvents` / `typingEvents`（皆有 `next*Event` 缓冲取用） |
+| 文本消息 | `sendText` / `send(body)` / `nextMessage(timeout, predicate)`（过滤发送者回环） |
+| 媒体消息 | `sendImage/sendFile/sendVoice/sendVideo`（URL 模式）/ `uploadFile` / `uploadAndSendFile` |
+| typing | `sendTyping(chatId)`（不等 ACK） |
+| 消息操作 | `revoke` / `forward` / `markRead` / `getHistory` |
+| 群组 | `createGroup` / `inviteMembers` / `groupMembers` |
+| 社交 | `applyFriend` / `deleteFriend` / `searchUsers` / `listFriends` / `acceptFriendApply` / `pendingApplies` |
+| 会话 | `listConversations` / `createPersonalChat` |
+| 透传 | `session`（ClientSession，直达全部 Repository 与 LocalCache 流） |
 
 ## 4. 三个内建设计（都踩过坑）
 
@@ -58,10 +63,16 @@ register/login 同时等 `onAuthResult 回调(deferred)` 和 `state.first { AUTH
 ./gradlew :shared:jvmTest -Dtk.botTest.host=im.virjar.com -Dtk.botTest.port=5100
 ```
 
-三个用例构成 SDK 回归防线（真实服务器全链路）：
-1. **注册即认证**：三级状态就位（uid 写入 UserSession + state=AUTHENTICATED）
-2. **bot 对 bot 消息全链路**：建会话 → 发送(ACK code=0) → 对端契约解码接收 → 双向回复 → 会话列表同步
-3. **已读回执链路**：markRead → READ_SYNC 推送 → 对端 peerReadSeq 推进（轮询 LocalCache 断言）
+九个用例构成 SDK 回归防线（真实服务器全链路）：
+1. **注册即认证**：三级状态就位
+2. **bot 对 bot 消息全链路**：建会话→发送→契约解码接收→双向→会话列表
+3. **已读回执**：markRead → READ_SYNC → 对端 peerReadSeq 推进
+4. **断线重连恢复**：simulateNetworkDrop → 断线期间消息 → 重连(refresh 认证) → **离线补发全达**（锁定 B10/B11/B12）
+5. **好友全流程**：apply → 对端事件+pending → accept → 双方列表同步
+6. **群组全流程**：createGroup → CHAT_CREATED 事件 → 群消息 → 成员列表
+7. **typing 双向**
+8. **撤回**：对端收到 FLAG_REVOKED 标记
+9. **presence**：好友上线广播到达
 
 SDK 层任何回归（协议/时序/编解码）在此暴露——**这是"UI 集成不发现 SDK bug"承诺的验收测试**。
 

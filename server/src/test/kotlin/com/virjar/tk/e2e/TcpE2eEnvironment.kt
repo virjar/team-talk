@@ -9,18 +9,20 @@ import com.virjar.tk.infra.storage.MessageStore
 import com.virjar.tk.infra.sync.ClientRegistry
 import com.virjar.tk.protocol.TcpServer
 import com.virjar.tk.protocol.codec.ImAgent
-import com.virjar.tk.protocol.dispatcher.RpcDispatcher
-import io.zonky.test.db.postgres.embedded.EmbeddedPostgres
 import org.koin.dsl.koinApplication
 import java.io.File
+import java.sql.DriverManager
 import java.util.UUID
 
 /**
- * E2E 协议测试环境。
- * 启动完整的 PG + Koin + TcpServer，客户端通过真实 TCP 连接测试。
+ * E2E 协议测试环境：进程内 Koin + TcpServer + 真实 PostgreSQL。
+ *
+ * 数据库直接使用本地 PG 的 teamtalk 库（与 local profile 的 `:server:run` 同一环境，
+ * 不另建测试库/不做环境编排），每个测试开始时 TRUNCATE 全部业务表清场。
+ * 前置：本机 5432 运行 PostgreSQL（brew services start postgresql@16）。
  */
 class TcpE2eEnvironment : AutoCloseable {
-    private val testId = UUID.randomUUID().toString()
+    private val testId = UUID.randomUUID().toString().replace("-", "").take(12)
     private val testRoot = File("/tmp/tk-e2e-${testId}")
 
     private val tokensDir = File(testRoot, "tokens")
@@ -28,7 +30,8 @@ class TcpE2eEnvironment : AutoCloseable {
     private val searchDir = File(testRoot, "search")
     private val fileStoreDir = File(testRoot, "file-store")
 
-    private val embeddedPg = EmbeddedPostgres.builder().start()
+    private val pgUser = System.getenv("TK_E2E_PG_USER") ?: System.getProperty("user.name")
+    private val pgJdbc = "jdbc:postgresql://localhost:5432/teamtalk?user=$pgUser"
 
     private val koinApp = koinApplication {
         modules(createServerModule(
@@ -46,11 +49,22 @@ class TcpE2eEnvironment : AutoCloseable {
 
     init {
         testRoot.mkdirs()
-        DatabaseFactory.create(
-            jdbcUrl = embeddedPg.getJdbcUrl("postgres", "postgres"),
-            user = "postgres",
-            password = "postgres",
-        )
+        // 团队库存在性保证（与 local profile 共用；首次运行自动创建）
+        DriverManager.getConnection("jdbc:postgresql://localhost:5432/postgres?user=$pgUser").use { conn ->
+            val rs = conn.createStatement().executeQuery("SELECT 1 FROM pg_database WHERE datname='teamtalk'")
+            if (!rs.next()) conn.createStatement().execute("CREATE DATABASE teamtalk")
+        }
+        // 清场：TRUNCATE 全部业务表（自增序列重置）
+        DriverManager.getConnection(pgJdbc).use { conn ->
+            val tables = conn.createStatement().executeQuery(
+                "SELECT tablename FROM pg_tables WHERE schemaname='public'").let { rs ->
+                buildList { while (rs.next()) add(rs.getString(1)) }
+            }
+            if (tables.isNotEmpty()) {
+                conn.createStatement().execute("TRUNCATE ${tables.joinToString(", ")} RESTART IDENTITY CASCADE")
+            }
+        }
+        DatabaseFactory.create(jdbcUrl = pgJdbc, user = pgUser, password = "", maxPoolSize = 4)
         koin.get<MessageStore>().init()
         koin.get<FileStore>().init()
         koin.get<SearchIndex>().start()
@@ -80,7 +94,6 @@ class TcpE2eEnvironment : AutoCloseable {
         koin.get<TokenStore>().close()
         koin.get<ClientRegistry>().stop()
         koinApp.close()
-        embeddedPg.close()
         testRoot.deleteRecursively()
     }
 }

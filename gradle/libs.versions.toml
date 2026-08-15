@@ -19,7 +19,6 @@ jbcrypt = "0.4"
 koin = "4.0.4"
 koin-ktor = "4.0.4"
 ik-analyzer = "9.0.0"
-embedded-postgres = "2.0.7"
 composenativetray = "1.1.0"
 turbine = "1.2.1"
 jna = "5.15.0"
@@ -81,7 +80,6 @@ lucene-core = { module = "org.apache.lucene:lucene-core", version.ref = "lucene"
 lucene-queryparser = { module = "org.apache.lucene:lucene-queryparser", version.ref = "lucene" }
 lucene-highlighter = { module = "org.apache.lucene:lucene-highlighter", version.ref = "lucene" }
 ik-analyzer = { module = "cn.shenyanchao.ik-analyzer:ik-analyzer", version.ref = "ik-analyzer" }
-embedded-postgres = { module = "io.zonky.test:embedded-postgres", version.ref = "embedded-postgres" }
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
 
 # SQLDelight

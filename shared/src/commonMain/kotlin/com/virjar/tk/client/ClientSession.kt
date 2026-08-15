@@ -61,6 +61,9 @@ fun createSession(
     AppLog.traceBuffer = traceBuffer
     AppLog.faultBuffer = faultBuffer
 
+    // 离线补发接线：重连认证时携带事件游标，服务端补发断线期间事件
+    imClient.lastEventIdProvider = { ep.lastEventId.value }
+
     rpcClient.start()
     ep.start()
 

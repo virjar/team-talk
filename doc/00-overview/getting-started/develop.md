@@ -2,6 +2,17 @@
 
 > 面向开发者的完整本地开发环境搭建文档。
 
+## 测试环境前置（服务端集成/e2e 测试需要）
+
+测试使用**本机真实 PostgreSQL**（与 local profile 同环境，不使用 embedded 实现）：
+
+```bash
+brew install postgresql@16 && brew services start postgresql@16
+```
+
+- 测试库 = 本地 `teamtalk` 库，每个测试开始时 TRUNCATE 业务表清场
+- 可选环境变量：`TK_E2E_PG_USER`（默认当前系统用户）
+
 ## 前置依赖
 
 - JDK 17+

@@ -28,6 +28,9 @@
 | B7 | 登出签发新凭证（安全） | 登出反而留下有效 token | logout 误用 refreshAccessToken（删旧+发新） | logout 走 revokeRefreshToken（只删不发） |
 | B8 | 客户端认证失效卡死 | UI 不回登录页 | ViewModel 自调 disconnect()（不产生 AUTH_FAILED 信号） | BaseViewModel.onAuthExpired 上抛 → session.close() 统一处理 |
 | B9 | 自动登录 UI 卡未认证态 | 无法操作 | token 失效但不清除 | AuthController：AUTH_FAILED → tokenStore.clear() + 回登录页 |
+| B10 | 重连重放注册包 | 掉线后 AUTH FAILED"用户名已存在"永久掉线 | pendingAuth 原样重放 register/login | 认证成功即升级 pendingAuth 为 refresh-token（authType=2，清用户名密码） |
+| B11 | 重连后监听断链 | 断网恢复后 RPC 全超时/NOTIFY 全丢（app 假活） | 监听协程挂连接 scope，断线随 scope 消亡且无人重启 | RpcClient/EventProcessor 自治 watcher：state==CONNECTED 且监听死 → 新 scope 重启 |
+| B12 | 离线补发游标快照过期 | 认证后增长的事件漏补发 | pendingAuth.lastEventId 是认证成功瞬间快照 | 握手重发认证包时现取 provider 最新游标 |
 
 ## C. 并发与状态（"线程安全"的错觉）
 

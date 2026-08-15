@@ -77,6 +77,13 @@ class ImClient(
     /** 暴露 scope 供 RpcClient / EventProcessor 复用。 */
     val coroutineScope: CoroutineScope? get() = scope
 
+    /**
+     * 离线事件游标提供者（由 ClientSession 注入 EventProcessor.lastEventId）。
+     * 认证/重连时携带该游标，服务端补发断线期间的事件（离线补发链路）。
+     */
+    @Volatile
+    var lastEventIdProvider: (() -> Long)? = null
+
     // ── 公共 API ──
 
     /**
@@ -97,7 +104,8 @@ class ImClient(
             reconnectFuture?.cancel(false)
             reconnectFuture = null
             destroyed = false
-            pendingAuth = auth           // 先设 pendingAuth
+            // 离线补发：认证包携带最新事件游标（服务端按 lastEventId 补发断线期间事件）
+            pendingAuth = auth.copy(lastEventId = lastEventIdProvider?.invoke() ?: auth.lastEventId)
             connectHost = host
             connectPort = port
             createAndConnect()            // 再启动连接（TCP 回调排在 pendingAuth 设置之后）
@@ -237,6 +245,14 @@ class ImClient(
         }
     }
 
+    /**
+     * 模拟网络断开（测试钩子，SDK 集成测试用）：关闭底层 channel 但不置 destroyed，
+     * 触发 channelInactive → 自动重连路径（区别于主动 disconnect）。
+     */
+    fun simulateNetworkDrop() {
+        doOnEventLoop { channel?.close() }
+    }
+
     // ── 连接管理（EventLoop 上执行） ──
 
     private fun createAndConnect() {
@@ -292,10 +308,18 @@ class ImClient(
         if (response.code == 0) {
             retryCount = 0
             _state.value = ConnectionState.AUTHENTICATED
-            // 认证成功 → 更新 pendingAuth 中的 refreshToken（服务端令牌一次一换，
-            // 旧的已被消费，不更新会导致下次重连时 AUTH_FAILED → 掉登录）
+            // 认证成功 → pendingAuth 升级为 refresh-token 认证（authType=2）。
+            // 历史bug：重连曾重放 register/login 原包——register 撞"用户名已存在"永久掉线；
+            // login 则重复传密码。token 一次一换，重连必须带最新 refreshToken。
             response.refreshToken?.let { newToken ->
-                pendingAuth = pendingAuth?.copy(refreshToken = newToken)
+                pendingAuth = pendingAuth?.copy(
+                    authType = 2,
+                    refreshToken = newToken,
+                    username = null,
+                    password = null,
+                    name = null,
+                    lastEventId = lastEventIdProvider?.invoke() ?: pendingAuth?.lastEventId ?: 0L,
+                )
             }
             // 认证结果通过回调传给 UserSession（三级状态隔离：ImClient 不持有用户身份）
             onAuthResult?.invoke(true, response.uid, response.username, response.name, response.refreshToken, null)
@@ -374,10 +398,14 @@ class ImClient(
                     logger.trace("Pipeline upgraded, state=CONNECTED, hasPendingAuth=${pendingAuth != null}")
 
                     // 通过 channel 发送认证包（不能用 ctx，因为 HandshakeHandler 已从 pipeline 移除）
-                    // channel.writeAndFlush 从 pipeline 尾部开始出站，会经过 PacketCodec 编码
+                    // channel.writeAndFlush 从 pipeline 尾部开始出站，会经过 PacketCodec 编码。
+                    // lastEventId 现取最新游标（认证成功时的快照会落后于其后处理的事件 → 漏补发）
                     pendingAuth?.let {
-                        logger.trace("Sending auth: type=${it.authType} username=${it.username}")
-                        channel?.writeAndFlush(it)
+                        val auth = lastEventIdProvider?.invoke()
+                            ?.takeIf { id -> id > 0L }
+                            ?.let { id -> it.copy(lastEventId = id) } ?: it
+                        logger.trace("Sending auth: type=${auth.authType} lastEventId=${auth.lastEventId}")
+                        channel?.writeAndFlush(auth)
                     }
                     return
                 }
