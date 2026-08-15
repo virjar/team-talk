@@ -4,19 +4,19 @@ plugins {
     alias(libs.plugins.compose)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.android.library)
-    alias(libs.plugins.sqldelight)
 }
 
+/**
+ * UI 模块。只消费 :shared（IM SDK）的公开 API，
+ * 不持有任何 SDK 内部实现（连接/缓存/协议细节）。
+ */
 kotlin {
     jvm("desktop")
     androidTarget()
 
     sourceSets {
         commonMain.dependencies {
-            implementation(project(":shared"))
-            api(libs.kotlinx.coroutines.core)
-            api(libs.kotlinx.serialization.json)
-            implementation(libs.netty.handler)
+            api(project(":shared"))
             api(compose.runtime)
             api(compose.foundation)
             api(compose.material3)
@@ -28,29 +28,12 @@ kotlin {
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.turbine)
         }
-        val desktopMain by getting {
-            dependencies {
-                implementation(libs.ktor.client.core)
-                implementation(libs.ktor.client.java)
-                implementation(libs.sqldelight.sqlite.driver)
-            }
-        }
         val androidMain by getting {
             dependencies {
-                implementation(libs.ktor.client.okhttp)
-                implementation(libs.sqldelight.android.driver)
                 implementation(libs.activity.compose)
                 implementation(libs.media3.exoplayer)
                 implementation(libs.media3.ui)
             }
-        }
-    }
-}
-
-sqldelight {
-    databases {
-        create("AppDatabase") {
-            packageName.set("com.virjar.tk.database")
         }
     }
 }

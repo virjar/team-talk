@@ -10,7 +10,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import org.slf4j.LoggerFactory
 
 /**
  * 聊天 ViewModel。
@@ -28,7 +27,6 @@ class ChatViewModel(
     eventProcessor: EventProcessor,
     private val myUid: String = "",
 ) : BaseViewModel() {
-    private val logger = LoggerFactory.getLogger("ChatViewModel")
 
     // 消息分页器（LocalCache 内部 LRU 管理，超出 MAX_ACTIVE_CHATS 自动 evict）
     private val pager: MessagePager = localCache.pager(chatId)
@@ -135,7 +133,7 @@ class ChatViewModel(
             } catch (e: AppError.AuthExpired) {
                 handleAuthExpired()
             } catch (e: Exception) {
-                logger.warn("markRead failed", e)
+                com.virjar.tk.util.AppLog.trace("ChatViewModel", "markRead failed: ${e.message}")
             }
         }
     }

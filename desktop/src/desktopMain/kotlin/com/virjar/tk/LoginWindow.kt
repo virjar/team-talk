@@ -76,7 +76,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
         tcpPort = config.tcpPort,
         deviceId = "desktop-device",
         deviceName = "Desktop",
-        createCache = { uid -> createDesktopLocalCache(uid) },
+        createCache = { uid -> createDesktopLocalCache(uid, dataDir) },
     )
 
     // ════════════════════════════════════════════════════════════

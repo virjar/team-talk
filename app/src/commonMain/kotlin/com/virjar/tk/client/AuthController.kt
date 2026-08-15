@@ -26,7 +26,13 @@ class AuthState(
 )
 
 /**
- * 跨平台认证控制器。封装 Android/Desktop 重复的认证状态机 + 三级状态管理：
+ * 跨平台认证控制器（UI 层 Compose 包装）。
+ *
+ * 分层说明：本文件是 app/UI 层唯一的 Compose 认证入口；认证的底层能力
+ * （ImClient 连接、createSession、UserSession 三级状态）在 shared（IM SDK）。
+ * 包名保持 `com.virjar.tk.client` 以兼容既有 import。
+ *
+ * 封装 Android/Desktop 重复的认证状态机 + 三级状态管理：
  *
  * 1. 创建 [UserSession]（用户层）+ [ImClient]（连接层，注入认证回调）
  * 2. 启动时检查 token → 自动登录（connect → authenticate）
