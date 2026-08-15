@@ -1,6 +1,5 @@
 package com.virjar.tk.protocol
 
-import com.virjar.tk.protocol.codec.HandshakeHandler
 import com.virjar.tk.protocol.codec.ImAgent
 import com.virjar.tk.protocol.executor.IOExecutor
 import com.virjar.tk.protocol.trace.Recorder
@@ -40,7 +39,8 @@ class TcpServer(
                         .addLast(IdleStateHandler(
                             com.virjar.tk.protocol.Frame.READ_IDLE_TIMEOUT_SECONDS,
                             0, 0, TimeUnit.SECONDS))
-                        .addLast(HandshakeHandler())
+                        // 协议 v3：无握手层——客户端首帧 AUTH 即连接序言
+                        //（帧头 MAGIC+VERSION 由 PacketCodec 首帧校验，误连/版本不符即断）
                         .addLast(PacketCodec())
                         .addLast(agent)
                 }

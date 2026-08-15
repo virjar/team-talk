@@ -266,12 +266,14 @@ class ImClient(
             .option(ChannelOption.SO_KEEPALIVE, true)
             .handler(object : ChannelInitializer<SocketChannel>() {
                 override fun initChannel(ch: SocketChannel) {
+                    // 协议 v3：无握手层——首帧 AUTH 即连接序言
                     ch.pipeline()
                         .addLast(IdleStateHandler(
                             Frame.READ_IDLE_TIMEOUT_SECONDS,
                             Frame.PING_INTERVAL_SECONDS,
                             0, TimeUnit.SECONDS))
-                        .addLast(HandshakeHandler())
+                        .addLast(PacketCodec())
+                        .addLast(PacketHandler())
                 }
             })
 
@@ -281,8 +283,33 @@ class ImClient(
                 _state.value = ConnectionState.DISCONNECTED
                 if (!destroyed) scheduleReconnect()
             } else {
-                logger.trace("TCP connected, waiting for handshake")
+                // TCP 就绪 = 数据阶段就绪（v3 无握手）：建 scope、置 CONNECTED、发认证
+                onTcpReady((future as io.netty.channel.ChannelFuture).channel())
             }
+        }
+    }
+
+    /**
+     * TCP 连接就绪（EventLoop 上）：创建会话 scope、置 CONNECTED、发送认证包。
+     * v2 之前这里要等服务端 3 字节握手回显（HandshakeHandler 状态机 + pipeline 手术，
+     * 且是 FFAC6B1 认证竞态的温床）——v3 客户端首帧即序言，握手层整体移除。
+     */
+    private fun onTcpReady(ch: Channel) {
+        channel = ch
+        scope = CoroutineScope(eventLoop.asCoroutineDispatcher() + SupervisorJob() +
+            CoroutineExceptionHandler { _, throwable ->
+                logger.fault("ImClient scope unhandled exception", throwable)
+            })
+        _state.value = ConnectionState.CONNECTED
+
+        // 认证包（连接序言）：lastEventId 现取最新游标（离线补发）。
+        // 连上即发——v3 无"握手完成"事件，从根上消除 FFAC6B1 类竞态。
+        pendingAuth?.let {
+            val auth = lastEventIdProvider?.invoke()
+                ?.takeIf { id -> id > 0L }
+                ?.let { id -> it.copy(lastEventId = id) } ?: it
+            logger.trace("Sending auth: type=${auth.authType} lastEventId=${auth.lastEventId}")
+            channel?.writeAndFlush(auth)
         }
     }
 
@@ -362,62 +389,6 @@ class ImClient(
     }
 
     // ── Netty Handlers ──
-
-    /**
-     * 握手 Handler：等待服务端 MAGIC(2B)+VERSION(1B)，回复后升级 pipeline。
-     */
-    private inner class HandshakeHandler : ChannelInboundHandlerAdapter() {
-        override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
-            if (msg is io.netty.buffer.ByteBuf && msg.readableBytes() >= 3) {
-                val magicHigh = msg.readByte()
-                val magicLow = msg.readByte()
-                val version = msg.readByte()
-                if (magicHigh == Frame.MAGIC_HIGH && magicLow == Frame.MAGIC_LOW) {
-                    logger.trace("Handshake received: version=$version")
-
-                    val reply = Unpooled.buffer(3)
-                    reply.writeByte(Frame.MAGIC_HIGH.toInt())
-                    reply.writeByte(Frame.MAGIC_LOW.toInt())
-                    reply.writeByte(Frame.PROTOCOL_VERSION.toInt())
-                    ctx.writeAndFlush(reply)
-                    msg.release()
-
-                    // 设置连接级状态（在 pipeline 升级前设置 channel 引用）
-                    channel = ctx.channel()
-                    scope = CoroutineScope(eventLoop.asCoroutineDispatcher() + SupervisorJob() +
-                        CoroutineExceptionHandler { _, throwable ->
-                            logger.fault("ImClient scope unhandled exception", throwable)
-                        })
-                    _state.value = ConnectionState.CONNECTED
-
-                    // 升级 pipeline：移除握手 handler，添加 PacketCodec + PacketHandler
-                    ctx.pipeline().remove(this)
-                    ctx.pipeline().addLast(PacketCodec())
-                    ctx.pipeline().addLast(PacketHandler())
-
-                    logger.trace("Pipeline upgraded, state=CONNECTED, hasPendingAuth=${pendingAuth != null}")
-
-                    // 通过 channel 发送认证包（不能用 ctx，因为 HandshakeHandler 已从 pipeline 移除）
-                    // channel.writeAndFlush 从 pipeline 尾部开始出站，会经过 PacketCodec 编码。
-                    // lastEventId 现取最新游标（认证成功时的快照会落后于其后处理的事件 → 漏补发）
-                    pendingAuth?.let {
-                        val auth = lastEventIdProvider?.invoke()
-                            ?.takeIf { id -> id > 0L }
-                            ?.let { id -> it.copy(lastEventId = id) } ?: it
-                        logger.trace("Sending auth: type=${auth.authType} lastEventId=${auth.lastEventId}")
-                        channel?.writeAndFlush(auth)
-                    }
-                    return
-                }
-            }
-            ctx.fireChannelRead(msg)
-        }
-
-        override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
-            logger.fault("Handshake error", cause)
-            ctx.close()
-        }
-    }
 
     /**
      * 数据阶段 Handler：处理业务包、心跳、断连。

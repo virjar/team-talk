@@ -20,11 +20,11 @@
 |----|----|------|
 | 帧头大小 | 8 字节 | `Frame.HEADER_SIZE` |
 | MAGIC | `54 4B`（"TK"） | 不匹配 → CorruptedFrameException 断连 |
-| VERSION | `0x02` | `PROTOCOL_VERSION`（当前 2）；不兼容变更必须递增 |
+| VERSION | `0x03` | `PROTOCOL_VERSION`（当前 3）；不兼容变更必须递增 |
 | LENGTH 上限 | 16,777,216（16MB） | `Frame.MAX_PAYLOAD_SIZE`；超限断连 |
 | 字节序 | **大端**（固定宽度整数、LENGTH） | Netty ByteBuf 默认 |
 
-**握手**：TCP 建立后**服务端先发** 3 字节 `MAGIC_H MAGIC_L VERSION`；客户端校验后回同样的 3 字节，随后双方升级 pipeline 进入数据阶段。
+**握手（v3 起移除）**：v2 及之前 TCP 建立后服务端先发 3 字节 `MAGIC_H MAGIC_L VERSION`、客户端回显，双方各经 HandshakeHandler 升级 pipeline。v3 起握手层整体删除——**客户端首帧 AUTH 即连接序言**：首帧帧头已含 MAGIC+VERSION（PacketCodec 首帧即完成误连检测与版本校验），语义上与 MQTT 的 CONNECT/CONNACK 同构。该层曾引入的复杂度：双端握手状态机 + pipeline 动态手术 + "认证包须等握手完成"竞态（FFAC6B1 温床）。
 
 **解码器行为**（PacketCodec）：
 - 半帧等待（header/payload 不齐 → reset 重读）

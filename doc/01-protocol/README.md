@@ -272,7 +272,7 @@ notifyType 是路由键，payload bytes 按 notifyType 解码。这让服务端�
 
 ### 版本控制
 
-握手阶段交换 `PROTOCOL_VERSION`。不兼容则拒绝连接。版本变更只在大版本间发生。
+版本在首帧帧头 + AUTH 包 protocolVersion 双重携带（v3 起无独立握手段），不兼容则拒绝连接。版本变更只在大版本间发生。
 
 ### 兼容性策略
 
