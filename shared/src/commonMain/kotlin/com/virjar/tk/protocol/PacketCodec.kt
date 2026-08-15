@@ -13,7 +13,17 @@ import io.netty.handler.codec.ByteToMessageCodec
  *
  * 解码产出 IProto 对象，编码接收 IProto 对象写入 ByteBuf。
  */
-class PacketCodec : ByteToMessageCodec<IProto>() {
+class PacketCodec(
+    /** 帧长度上限（可变：未认证连接收紧为 [UNAUTHED_LIMIT]，认证成功后调至 16MB）。
+     * 慢速攻击防御：防止未认证连接声明大 LENGTH 诱发累积缓冲放大。 */
+    @Volatile var maxPayloadLimit: Int = UNAUTHED_LIMIT,
+) : ByteToMessageCodec<IProto>() {
+    companion object {
+        /** 未认证连接的帧上限：AUTH 包远小于此值，认证前无任何合法大帧 */
+        const val UNAUTHED_LIMIT = 4 * 1024
+        /** 认证后上限 */
+        const val AUTHED_LIMIT = Frame.MAX_PAYLOAD_SIZE
+    }
 
     override fun decode(ctx: ChannelHandlerContext, buf: ByteBuf, out: MutableList<Any>) {
         // 至少需要帧头
@@ -24,8 +34,8 @@ class PacketCodec : ByteToMessageCodec<IProto>() {
         val typeCode = buf.readByte().toInt() and 0xFF
         val length = buf.readInt()
 
-        if (length < 0 || length > Frame.MAX_PAYLOAD_SIZE) {
-            throw io.netty.handler.codec.CorruptedFrameException("Invalid payload length: $length")
+        if (length < 0 || length > maxPayloadLimit) {
+            throw io.netty.handler.codec.CorruptedFrameException("Invalid payload length: $length (limit=$maxPayloadLimit)")
         }
 
         if (buf.readableBytes() < length) {

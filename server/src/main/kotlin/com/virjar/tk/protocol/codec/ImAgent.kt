@@ -44,6 +44,14 @@ class ImAgent(
 ) : ChannelInboundHandlerAdapter() {
     enum class State { CONNECTED, AUTHENTICATED, DISCONNECTED }
 
+    companion object {
+        /** 未认证连接全局上限：端口扫描/慢速攻击的资源围栏（超限新连接即拒） */
+        private val unauthedCount = java.util.concurrent.atomic.AtomicInteger(0)
+        private const val MAX_UNAUTHED_CONNECTIONS = 1024
+        /** 认证超时：未认证连接最长存活（慢滴保活攻击窗口） */
+        private const val AUTH_TIMEOUT_SECONDS = 10L
+    }
+
     private val _state = AtomicReference(State.CONNECTED)
     val state: State get() = _state.get()
     @Volatile
@@ -56,6 +64,23 @@ class ImAgent(
 
     /** 短 channel ID，用于日志 */
     val channelId: String = channel.id().asShortText()
+
+    override fun handlerAdded(ctx: ChannelHandlerContext) {
+        // 未认证资源围栏：超限直接拒（不给扫描流量任何握手机会）
+        if (unauthedCount.incrementAndGet() > MAX_UNAUTHED_CONNECTIONS) {
+            unauthedCount.decrementAndGet()
+            recorder.record { "[REJECT] unauthed limit reached" }
+            ctx.close()
+            return
+        }
+        // 认证超时：慢滴保活绕不过（与读空闲独立——每44s滴1字节可无限续命 readerIdle）
+        ctx.channel().eventLoop().schedule({
+            if (_state.get() == State.CONNECTED) {
+                recorder.record { "[AUTH_TIMEOUT] closing after ${AUTH_TIMEOUT_SECONDS}s" }
+                ctx.close()
+            }
+        }, AUTH_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
+    }
 
     override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
         when (msg) {
@@ -81,7 +106,19 @@ class ImAgent(
         }
     }
 
+    override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
+        // Netty 坑：异常传播到 pipeline tail 默认只打日志不关连接——
+        // CorruptedFrameException（垃圾流量/错位）抛了也白抛，连接继续挂着。
+        // 此处统一兜底断连（编解码错误的既定策略：连接不可信即断）。
+        recorder.record({ "[FATAL] pipeline exception, closing" }, cause)
+        ctx.close()
+    }
+
     override fun channelInactive(ctx: ChannelHandlerContext) {
+        // CONNECTED 状态断开（未完成认证）：回收围栏计数（AUTHENTICATED 已在认证时迁移）
+        if (_state.getAndSet(State.DISCONNECTED) == State.CONNECTED) {
+            unauthedCount.decrementAndGet()
+        }
         if (state == State.AUTHENTICATED && uid.isNotEmpty()) {
             // 下线广播由 ClientRegistry.onLastDeviceOffline 钩子触发（仅最后一台设备）
             clientRegistry.unregister(this)
@@ -136,6 +173,10 @@ class ImAgent(
             if (response.code == AuthService.CODE_OK) {
                 uid = response.uid!!
                 deviceId = payload.deviceId
+                unauthedCount.decrementAndGet()  // 已认证：退出未认证围栏
+                // 认证后放开帧限（未认证期间 4KB——慢速攻击的最小权限防御）
+                channel.pipeline().get(com.virjar.tk.protocol.PacketCodec::class.java)
+                    ?.maxPayloadLimit = com.virjar.tk.protocol.PacketCodec.AUTHED_LIMIT
                 _state.set(State.AUTHENTICATED)
                 recorder.upgrade(uid, deviceId)
                 clientRegistry.register(this@ImAgent)

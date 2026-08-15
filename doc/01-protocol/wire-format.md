@@ -24,9 +24,19 @@
 | LENGTH 上限 | 16,777,216（16MB） | `Frame.MAX_PAYLOAD_SIZE`；超限断连 |
 | 字节序 | **大端**（固定宽度整数、LENGTH） | Netty ByteBuf 默认 |
 
-误连检测（如 HTTP 探测 5100 端口）：首帧 TYPE 字节几乎必然非法 → 断连，
-等价替代旧帧头 magic 的作用。错位自检靠 LENGTH 上限 + TYPE 合法性 +
-解码异常三层兜底（HTTP/2/MQTT/WebSocket 同层帧头均无 magic）。
+**连接序言魔**：AUTH payload 首字段 4B = `0x54 0x4B`（"TK"）+ PROTOCOL_VERSION + 0x01。
+首帧 AUTH 是连接必经包——端口扫描/误连流量在 payload 首字节即被拒（复刻 HTTP/2
+连接序言思路），并保留错位自检锚点。
+
+### 抗扫描与慢速攻击（未认证最小权限）
+
+| 防线 | 值 | 作用 |
+|------|----|------|
+| 序言魔 | AUTH 首字段 4B | 误连流量首字节即拒（实测 HTTP 探测 0.05s 断） |
+| 未认证帧上限 | 4KB（认证后 16MB） | 防"声明大 LENGTH 慢滴"放大缓冲（实测 2GB 声明 0.04s 断） |
+| 认证超时 | 10s | 慢滴保活绕不过 readerIdle（每 44s 滴 1B 可续命），独立计时（实测 10.1s 断） |
+| 未认证连接上限 | 1024 全局 | 扫描并发围栏，超限新连接即拒 |
+| pipeline 异常兜底 | ImAgent.exceptionCaught → close | Netty 坑：异常到 tail 默认只打日志不关连接——曾致上述防线全部失效 |
 
 **握手（v3 起移除）**：v2 及之前 TCP 建立后服务端先发 3 字节 `MAGIC_H MAGIC_L VERSION`、客户端回显，双方各经 HandshakeHandler 升级 pipeline。v3 起握手层整体删除——**客户端首帧 AUTH 即连接序言**（语义与 MQTT 的 CONNECT/CONNACK 同构），版本由 AUTH.payload 携带校验。该层曾引入的复杂度：双端握手状态机 + pipeline 动态手术 + "认证包须等握手完成"竞态（FFAC6B1 温床）。
 

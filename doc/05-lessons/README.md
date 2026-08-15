@@ -77,6 +77,7 @@
 | F5 | SetText 返回 200 但未生效 | 必须 readBack editableText 验证（已知 Compose Desktop 问题） |
 | F6 | 固定脚本测试必败 | 每步 dump 状态再决策；异步 recomposition 加等待重试 |
 | F7 | 主线程 runBlocking | 存草稿等操作改 fire-and-forget scope |
+| F10 | Netty pipeline 无 exceptionCaught：CorruptedFrame 抛了白抛，连接继续挂 | ImAgent 统一兜底 close；抗扫描防线（序言魔/帧限/认证超时）实证依赖此项 |
 | F9 | 握手层三字节交换从未校验版本且是认证竞态温床 | v3 删除：首帧 AUTH 即序言（帧头 magic+version 首帧校验），FFAC6B1 竞态类别根除 |
 | F8 | "文档与代码矛盾"错误裁决为删代码 | 2026-08 误删 GENERIC(99)：它是协议演进策略（01-protocol §9）的 wire 级预留入口，空枚举是刻意候选区；删除破坏前向兼容（fromCode 抛异常→游标卡死）。遇到矛盾先判断哪边是设计意图——wire 协议的空位预留 ≠ 应用层过早实现 |
 
