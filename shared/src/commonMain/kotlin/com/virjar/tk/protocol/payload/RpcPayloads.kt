@@ -3,19 +3,19 @@ package com.virjar.tk.protocol.payload
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.IProtoReader
 import com.virjar.tk.protocol.PacketBuffer
-import com.virjar.tk.protocol.ServiceId
 
 // ── INVOKE payload ──
 
 data class InvokePayload(
     val requestId: Int,
-    val serviceId: ServiceId,
+    /** serviceId：字符串（协议 v2 起，@RpcService name） */
+    val serviceId: String,
     val methodId: Int,
     val payload: ByteArray?,
 ) : IProto {
     override fun writeTo(buf: PacketBuffer) {
         buf.writeVarInt(requestId)
-        buf.writeVarInt(serviceId.id)
+        buf.writeString(serviceId)
         buf.writeVarInt(methodId)
         buf.writeBytes(payload)
     }
@@ -23,7 +23,7 @@ data class InvokePayload(
     companion object : IProtoReader<InvokePayload> {
         override fun readFrom(buf: PacketBuffer) = InvokePayload(
             requestId = buf.readVarInt(),
-            serviceId = ServiceId.fromId(buf.readVarInt()),
+            serviceId = buf.readString()!!,
             methodId = buf.readVarInt(),
             payload = buf.readBytes(),
         )

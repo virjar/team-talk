@@ -114,7 +114,7 @@ class ProtoRoundTripTest {
 
     @Test
     fun testInvokePayloadRoundTrip() {
-        val invoke = InvokePayload(requestId = 42, serviceId = ServiceId.USER, methodId = 2, payload = "test-data".encodeToByteArray())
+        val invoke = InvokePayload(requestId = 42, serviceId = "user", methodId = 2, payload = "test-data".encodeToByteArray())
         val decoded = roundTrip(invoke, InvokePayload)
         assertEquals(invoke.requestId, decoded.requestId)
         assertEquals(invoke.serviceId, decoded.serviceId)

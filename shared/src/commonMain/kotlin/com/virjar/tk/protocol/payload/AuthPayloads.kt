@@ -1,5 +1,7 @@
 package com.virjar.tk.protocol.payload
 
+import com.virjar.tk.protocol.Frame
+
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.IProtoReader
 import com.virjar.tk.protocol.PacketBuffer
@@ -16,7 +18,7 @@ data class AuthRequestPayload(
     val deviceName: String? = null,
     val deviceModel: String? = null,
     val deviceFlag: Int = 0,
-    val protocolVersion: Int = 1,
+    val protocolVersion: Int = Frame.PROTOCOL_VERSION.toInt(),
     val lastEventId: Long = 0,
 ) : IProto {
     override fun writeTo(buf: PacketBuffer) {

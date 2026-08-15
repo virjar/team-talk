@@ -1,12 +1,13 @@
 [versions]
 kotlin = "2.3.20"
 compose = "1.10.3"
-agp = "8.9.2"
+agp = "8.10.0"
 ktor = "3.4.3"
 exposed = "0.61.0"
 kotlinx-serialization = "1.8.1"
 kotlinx-coroutines = "1.10.2"
 sqldelight = "2.3.2"
+ksp = "2.3.9"
 rocksdb = "9.10.0"
 logback = "1.5.18"
 lucene = "9.12.0"
@@ -115,3 +116,4 @@ android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
 sqldelight = { id = "app.cash.sqldelight", version.ref = "sqldelight" }
 buildconfig = { id = "com.github.gmazzo.buildconfig", version.ref = "buildconfig" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

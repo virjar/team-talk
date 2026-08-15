@@ -2,8 +2,7 @@ package com.virjar.tk.viewmodel
 
 import app.cash.turbine.test
 import com.virjar.tk.model.Conversation
-import com.virjar.tk.protocol.ServiceId
-import com.virjar.tk.protocol.ConversationMethod
+import com.virjar.tk.rpc.gen.ConversationRpcContract
 import com.virjar.tk.repository.ConversationRepository
 import com.virjar.tk.testing.FakeLocalCache
 import com.virjar.tk.testing.FakeRpcInvoker
@@ -59,8 +58,8 @@ class ConversationViewModelTest {
 
         // 验证 init 时调用了 LIST RPC
         assertEquals(1, rpc.calls.size)
-        assertEquals(ServiceId.CONVERSATION, rpc.calls[0].first)
-        assertEquals(ConversationMethod.LIST.id, rpc.calls[0].second)
+        assertEquals("conversation", rpc.calls[0].first)
+        assertEquals(ConversationRpcContract.M_LIST, rpc.calls[0].second)
     }
 
     @Test

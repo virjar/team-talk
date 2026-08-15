@@ -49,13 +49,13 @@ class RpcClient(
         }
     }
 
-    override suspend fun invoke(serviceId: ServiceId, methodId: Int, payload: ByteArray?): ResponsePayload {
+    override suspend fun invoke(service: String, methodId: Int, payload: ByteArray?): ResponsePayload {
         val scope = imClient.coroutineScope ?: throw IllegalStateException("Not connected")
         return withContext(scope.coroutineContext) {
             val requestId = nextRequestId++
             val deferred = CompletableDeferred<ResponsePayload>()
             pendingRequests[requestId] = deferred
-            imClient.send(InvokePayload(requestId, serviceId, methodId, payload))
+            imClient.send(InvokePayload(requestId, service, methodId, payload))
             withTimeoutOrNull(10_000L) {
                 deferred.await()
             } ?: run {

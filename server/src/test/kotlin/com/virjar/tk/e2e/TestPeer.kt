@@ -1,5 +1,8 @@
 package com.virjar.tk.e2e
 
+import com.virjar.tk.rpc.gen.ChatRpcContract
+import com.virjar.tk.rpc.gen.ContactRpcContract
+import com.virjar.tk.rpc.gen.ConversationRpcContract
 import com.virjar.tk.body.FileBody
 import com.virjar.tk.body.ImageBody
 import com.virjar.tk.body.TextBody
@@ -8,11 +11,9 @@ import com.virjar.tk.body.VoiceBody
 import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Message
-import com.virjar.tk.protocol.ChatMethod
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.ProtoCodec
-import com.virjar.tk.protocol.ServiceId
 import com.virjar.tk.protocol.payload.MessageAckPayload
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -110,7 +111,7 @@ class TestPeer {
             println("[TestPeer] accept 缺少 token"); return@runBlocking
         }
         val session = RemoteDemoSupport.loginUser(username, "password123")
-        val resp = session.invoke(ServiceId.CONTACT, com.virjar.tk.protocol.ContactMethod.ACCEPT.id,
+        val resp = session.invoke("contact", ContactRpcContract.M_ACCEPT,
             ProtoCodec.encodePayload { writeString(token) })
         println("===ACCEPT ${if (resp.status == 0) "SUCCESS" else "FAILED"}=== status=${resp.status}")
         session.close()
@@ -131,7 +132,7 @@ class TestPeer {
             println("[TestPeer] acceptLatest 缺少 username"); return@runBlocking
         }
         val session = RemoteDemoSupport.loginUser(username, "password123")
-        val listResp = session.invoke(ServiceId.CONTACT, com.virjar.tk.protocol.ContactMethod.LIST_APPLIES.id)
+        val listResp = session.invoke("contact", ContactRpcContract.M_LIST_APPLIES)
         val listPayload = listResp.payload
         if (listResp.status != 0 || listPayload == null) {
             println("===ACCEPT FAILED=== 无法获取申请列表 status=${listResp.status}")
@@ -144,7 +145,7 @@ class TestPeer {
             session.close(); return@runBlocking
         }
         println("[TestPeer] 待处理申请 from=${pending.fromUser?.name ?: pending.fromUid} token=${pending.token}")
-        val resp = session.invoke(ServiceId.CONTACT, com.virjar.tk.protocol.ContactMethod.ACCEPT.id,
+        val resp = session.invoke("contact", ContactRpcContract.M_ACCEPT,
             ProtoCodec.encodePayload { writeString(pending.token) })
         println("===ACCEPT ${if (resp.status == 0) "SUCCESS" else "FAILED"}=== status=${resp.status} fromUid=${pending.fromUid}")
         session.close()
@@ -159,7 +160,7 @@ class TestPeer {
         val username = System.getProperty("peer.username") ?: return@runBlocking
         val targetUid = System.getProperty("peer.arg") ?: return@runBlocking
         val session = RemoteDemoSupport.loginUser(username, "password123")
-        val resp = session.invoke(ServiceId.CHAT, com.virjar.tk.protocol.ChatMethod.CREATE_PERSONAL.id,
+        val resp = session.invoke("chat", ChatRpcContract.M_CREATE_PERSONAL,
             ProtoCodec.encodePayload { writeString(targetUid) })
         val payload = resp.payload
         val chatId = if (resp.status == 0 && payload != null) {
@@ -190,7 +191,7 @@ class TestPeer {
         val session = RemoteDemoSupport.loginUser(username, "password123")
 
         // 1. B 建群拉 A
-        val groupResp = session.invoke(ServiceId.CHAT, com.virjar.tk.protocol.ChatMethod.CREATE_GROUP.id,
+        val groupResp = session.invoke("chat", ChatRpcContract.M_CREATE_GROUP,
             ProtoCodec.encodePayload {
                 writeString(groupName)
                 writeString(null)
@@ -204,7 +205,7 @@ class TestPeer {
         println("===CREATE_GROUP ${if (groupResp.status == 0) "SUCCESS" else "FAILED"}=== chatId=$groupChatId")
 
         // 2. B 发起私聊（CREATE_PERSONAL 与 A），再发一条消息
-        val pcResp = session.invoke(ServiceId.CHAT, com.virjar.tk.protocol.ChatMethod.CREATE_PERSONAL.id,
+        val pcResp = session.invoke("chat", ChatRpcContract.M_CREATE_PERSONAL,
             ProtoCodec.encodePayload { writeString(aUid) })
         val pcPayload = pcResp.payload
         val pcChatId = if (pcResp.status == 0 && pcPayload != null) {
@@ -276,7 +277,7 @@ class TestPeer {
         }
         val session = RemoteDemoSupport.loginUser(username, "password123")
         // 列出会话（ConversationService.LIST，非 ChatMethod）
-        val listResp = session.invoke(ServiceId.CONVERSATION, com.virjar.tk.protocol.ConversationMethod.LIST.id)
+        val listResp = session.invoke("conversation", ConversationRpcContract.M_LIST)
         val listPayload = listResp.payload
         if (listResp.status != 0 || listPayload == null) {
             println("===RECV_CHECK FAILED=== listConversations status=${listResp.status}")
@@ -311,7 +312,7 @@ class TestPeer {
         val session = RemoteDemoSupport.loginUser(username, "password123")
 
         // 创建私聊
-        val pcResp = session.invoke(ServiceId.CHAT, com.virjar.tk.protocol.ChatMethod.CREATE_PERSONAL.id,
+        val pcResp = session.invoke("chat", ChatRpcContract.M_CREATE_PERSONAL,
             ProtoCodec.encodePayload { writeString(targetUid) })
         val pcPayload = pcResp.payload
         val chatId = if (pcResp.status == 0 && pcPayload != null) {

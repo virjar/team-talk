@@ -1,7 +1,6 @@
 package com.virjar.tk.testing
 
 import com.virjar.tk.client.RpcInvoker
-import com.virjar.tk.protocol.ServiceId
 import com.virjar.tk.protocol.payload.ResponsePayload
 
 /**
@@ -21,8 +20,8 @@ class FakeRpcInvoker : RpcInvoker {
     /** 非空时，invoke 抛出此异常（模拟网络断开等）。 */
     var throwOnInvoke: Throwable? = null
 
-    /** 记录所有 invoke 调用（serviceId, methodId, payload），用于断言。 */
-    val calls = mutableListOf<Triple<ServiceId, Int, ByteArray?>>()
+    /** 记录所有 invoke 调用（service, methodId, payload），用于断言。 */
+    val calls = mutableListOf<Triple<String, Int, ByteArray?>>()
 
     fun enqueue(response: ResponsePayload) {
         responses.addLast(response)
@@ -36,10 +35,10 @@ class FakeRpcInvoker : RpcInvoker {
         enqueue(ResponsePayload(requestId = calls.size + 1, status = status, payload = msg.encodeToByteArray()))
     }
 
-    override suspend fun invoke(serviceId: ServiceId, methodId: Int, payload: ByteArray?): ResponsePayload {
-        calls += Triple(serviceId, methodId, payload)
+    override suspend fun invoke(service: String, methodId: Int, payload: ByteArray?): ResponsePayload {
+        calls += Triple(service, methodId, payload)
         throwOnInvoke?.let { throw it }
         return responses.removeFirstOrNull()
-            ?: error("FakeRpcInvoker: no more preset responses for $serviceId/$methodId")
+            ?: error("FakeRpcInvoker: no more preset responses for $service/$methodId")
     }
 }

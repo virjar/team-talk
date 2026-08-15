@@ -1,13 +1,12 @@
 package com.virjar.tk.client
 
-import com.virjar.tk.protocol.ServiceId
 import com.virjar.tk.protocol.payload.ResponsePayload
 
 /**
- * RPC 调用抽象。RpcClient 实现此接口。
+ * RPC 调用抽象。RpcClient 实现此接口；生成的 XxxRpcProxy 通过它发起调用。
  *
- * Repository 依赖此接口而非具体 [RpcClient]，便于测试时注入 Fake。
+ * service 参数为字符串 serviceId（@RpcService name，协议 v2 起 wire 直传字符串）。
  */
 interface RpcInvoker {
-    suspend fun invoke(serviceId: ServiceId, methodId: Int, payload: ByteArray? = null): ResponsePayload
+    suspend fun invoke(service: String, methodId: Int, payload: ByteArray? = null): ResponsePayload
 }

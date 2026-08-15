@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
+    alias(libs.plugins.ksp)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.android.library)
     alias(libs.plugins.sqldelight)
@@ -19,6 +20,9 @@ kotlin {
     androidTarget()
 
     sourceSets {
+        val commonMain by getting {
+            kotlin.srcDir("build/generated/ksp/metadata/commonMain/kotlin")
+        }
         commonMain.dependencies {
             api(libs.kotlinx.serialization.json)
             api(libs.kotlinx.coroutines.core)
@@ -60,6 +64,17 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+}
+
+// RPC IDL 处理器：扫描 @RpcService interface 生成 Contract/Stub/Proxy。
+// 只跑 metadata 编译（生成物为 common 源码），目录注册进 commonMain 供全部 target 编译。
+dependencies {
+    add("kspCommonMainMetadata", project(":rpc-processor"))
+}
+
+// 各 target 编译依赖 KSP 生成（srcDir 注册了生成目录，但 Gradle 不知道目录内容何时产生）
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    dependsOn("kspCommonMainKotlinMetadata")
 }
 
 tasks.configureEach {

@@ -3,46 +3,25 @@ package com.virjar.tk.repository
 import com.virjar.tk.Outcome
 import com.virjar.tk.client.LocalCache
 import com.virjar.tk.client.RpcInvoker
-import com.virjar.tk.client.ensureSuccess
 import com.virjar.tk.model.Conversation
 import com.virjar.tk.outcome
-import com.virjar.tk.protocol.ConversationMethod
-import com.virjar.tk.protocol.ProtoCodec
-import com.virjar.tk.protocol.ServiceId
+import com.virjar.tk.rpc.gen.ConversationRpcProxy
 
 class ConversationRepository(
-    private val rpcClient: RpcInvoker,
+    rpcClient: RpcInvoker,
     private val localCache: LocalCache,
 ) {
-    /** 拉取会话列表，成功时写入 LocalCache。 */
+    private val rpc = ConversationRpcProxy(rpcClient)
+
     suspend fun listConversations(): Outcome<List<Conversation>> = outcome {
-        val payload = ProtoCodec.encodePayload {}
-        val response = rpcClient.invoke(ServiceId.CONVERSATION, ConversationMethod.LIST.id, payload)
-        response.ensureSuccess()
-        val data = response.payload ?: return@outcome emptyList()
-        val conversations = ProtoCodec.decodeList(Conversation, data)
-        conversations.forEach { localCache.upsertConversation(it) }
-        conversations
+        rpc.list().also { list -> list.forEach { localCache.upsertConversation(it) } }
     }
 
-    suspend fun setDraft(chatId: String, draft: String?): Outcome<Unit> = outcome {
-        val payload = ProtoCodec.encodePayload { writeString(chatId); writeString(draft) }
-        rpcClient.invoke(ServiceId.CONVERSATION, ConversationMethod.SET_DRAFT.id, payload).ensureSuccess()
-    }
-
-    suspend fun setPin(chatId: String, pinned: Boolean): Outcome<Unit> = outcome {
-        val payload = ProtoCodec.encodePayload { writeString(chatId); writeVarInt(if (pinned) 1 else 0) }
-        rpcClient.invoke(ServiceId.CONVERSATION, ConversationMethod.SET_PIN.id, payload).ensureSuccess()
-    }
-
-    suspend fun setMute(chatId: String, muted: Boolean): Outcome<Unit> = outcome {
-        val payload = ProtoCodec.encodePayload { writeString(chatId); writeVarInt(if (muted) 1 else 0) }
-        rpcClient.invoke(ServiceId.CONVERSATION, ConversationMethod.SET_MUTE.id, payload).ensureSuccess()
-    }
-
+    suspend fun setDraft(chatId: String, draft: String?): Outcome<Unit> = outcome { rpc.setDraft(chatId, draft) }
+    suspend fun setPin(chatId: String, pinned: Boolean): Outcome<Unit> = outcome { rpc.setPin(chatId, pinned) }
+    suspend fun setMute(chatId: String, muted: Boolean): Outcome<Unit> = outcome { rpc.setMute(chatId, muted) }
     suspend fun deleteConversation(chatId: String): Outcome<Unit> = outcome {
-        val payload = ProtoCodec.encodePayload { writeString(chatId) }
-        rpcClient.invoke(ServiceId.CONVERSATION, ConversationMethod.DELETE.id, payload).ensureSuccess()
+        rpc.delete(chatId)
         localCache.deleteConversation(chatId)
     }
 }

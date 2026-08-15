@@ -20,7 +20,7 @@
 |----|----|------|
 | 帧头大小 | 8 字节 | `Frame.HEADER_SIZE` |
 | MAGIC | `54 4B`（"TK"） | 不匹配 → CorruptedFrameException 断连 |
-| VERSION | `0x01` | `PROTOCOL_VERSION`；不兼容变更必须递增 |
+| VERSION | `0x02` | `PROTOCOL_VERSION`（当前 2）；不兼容变更必须递增 |
 | LENGTH 上限 | 16,777,216（16MB） | `Frame.MAX_PAYLOAD_SIZE`；超限断连 |
 | 字节序 | **大端**（固定宽度整数、LENGTH） | Netty ByteBuf 默认 |
 
@@ -109,7 +109,7 @@ varLong expiresIn       // 秒（30 天）
 ### InvokePayload（INVOKE，C→S）/ ResponsePayload（RESPONSE，S→C）
 ```
 varInt  requestId       // 客户端自增，从 1 开始
-varInt  serviceId       // ServiceId.id
+string serviceId       // 字符串服务名（@RpcService name，协议 v2 起）
 varInt  methodId        // 方法枚举 id
 bytes   payload?        // 方法特定参数
 ---
@@ -243,6 +243,12 @@ varInt maxUses(0=无限), varInt useCount, varLong expiresAt, varLong revokedAt
 | | 504 | RPC 10s 超时（客户端合成） | Timeout |
 | | 500 | 服务端内部错 | Business(500) |
 | 解码异常 | — | IndexOutOfBoundsException | **FatalCodec + 断连**（协议漂移=开发者 bug，双端代码错误，醒目上报） |
+
+## 8.5 RPC IDL 代码生成（协议 v2 起）
+
+serviceId 为字符串（`@RpcService(name)`），methodId 由 IDL interface 声明顺序分配（`@RpcMethod` 覆盖）。
+双端代码由 rpc-processor（KSP2）从 Kotlin interface IDL 生成——参数编码/解码/路由表收敛于生成物，
+**手写 encodePayload/withPayload 已全部移除**。IDL 规范见 [rpc-methods.md](rpc-methods.md)。
 
 ## 9. 设计决策：为什么 NOTIFY/RPC payload 是 [len][bytes] 而非字段内联
 

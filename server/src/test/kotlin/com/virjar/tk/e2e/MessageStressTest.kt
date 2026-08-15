@@ -1,5 +1,7 @@
 package com.virjar.tk.e2e
 
+import com.virjar.tk.rpc.gen.ChatRpcContract
+import com.virjar.tk.rpc.gen.ContactRpcContract
 import com.virjar.tk.body.TextBody
 import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.model.Message
@@ -43,19 +45,19 @@ class MessageStressTest {
         try {
             // 建好友 + 私聊
             val applyResp = user1.invoke(
-                com.virjar.tk.protocol.ServiceId.CONTACT,
-                com.virjar.tk.protocol.ContactMethod.APPLY.id,
+                "contact",
+                ContactRpcContract.M_APPLY,
                 ProtoCodec.encodePayload { writeString(user2.uid); writeString("hi") }
             )
             val apply = ProtoCodec.decode(com.virjar.tk.model.ContactApply, applyResp.payload!!)
             user2.invoke(
-                com.virjar.tk.protocol.ServiceId.CONTACT,
-                com.virjar.tk.protocol.ContactMethod.ACCEPT.id,
+                "contact",
+                ContactRpcContract.M_ACCEPT,
                 ProtoCodec.encodePayload { writeString(apply.token) }
             )
             val chatResp = user1.invoke(
-                com.virjar.tk.protocol.ServiceId.CHAT,
-                com.virjar.tk.protocol.ChatMethod.CREATE_PERSONAL.id,
+                "chat",
+                ChatRpcContract.M_CREATE_PERSONAL,
                 ProtoCodec.encodePayload { writeString(user2.uid) }
             )
             val chatId = ProtoCodec.decode(com.virjar.tk.model.Chat, chatResp.payload!!).chatId

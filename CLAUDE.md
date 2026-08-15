@@ -206,6 +206,7 @@ team-talk/
 │       │   ├── body/          # 消息体（TextBody, FileBody...）
 │       │   ├── protocol/      # PacketType + MessageType + NotifyType + NotifyContracts
 │       │   │                  #   + RpcMethod + IProto + ProtoCodec（编解码）
+│       │   ├── rpc/           # RPC IDL（@RpcService interface，KSP 生成 Contract/Stub/Proxy）
 │       │   ├── client/        # ImClient + RpcClient + EventProcessor + LocalCache
 │       │   │                  #   + ClientSession + UserSession + ServerConfig
 │       │   ├── repository/    # Repository 层（RPC 封装 + 本地缓存写入）
@@ -242,7 +243,7 @@ team-talk/
 
 | 需求 | 文件 |
 |------|------|
-| 添加新 RPC 方法 | `shared/.../protocol/RpcMethod.kt`（加枚举）+ 服务端 Handler + 客户端 RpcClient |
+| 添加新 RPC 方法 | `shared/.../rpc/def/XxxRpc.kt` IDL 加方法（**只追加末尾**，中间插入须 @RpcMethod 锁 id）→ 服务端 `RpcImpls.kt` override → 客户端 Repository 调生成 Proxy。KSP 编译期生成 Contract/Stub/Proxy，双端自动对齐 |
 | 添加新消息类型 | `shared/.../protocol/MessageType.kt`（加枚举）+ `shared/.../body/`（加 Body 类）|
 | 添加新通知类型 | `shared/.../protocol/NotifyType.kt`（加枚举）+ **`NotifyContracts` 登记 payload 契约** + 客户端 EventProcessor + NotifyContractTest 补样例 |
 | 添加新传输模型 | `shared/.../model/`（加 data class 实现 IProto）|

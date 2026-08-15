@@ -1,5 +1,11 @@
 package com.virjar.tk.e2e
 
+import com.virjar.tk.rpc.gen.ChatRpcContract
+import com.virjar.tk.rpc.gen.ContactRpcContract
+import com.virjar.tk.rpc.gen.ConversationRpcContract
+import com.virjar.tk.rpc.gen.DeviceRpcContract
+import com.virjar.tk.rpc.gen.MessageRpcContract
+import com.virjar.tk.rpc.gen.UserRpcContract
 import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.model.*
 import com.virjar.tk.protocol.*
@@ -97,7 +103,7 @@ class RemoteDemoE2eTest {
     @Test
     fun `get own profile via RPC`() = runBlocking {
         val session = RemoteDemoSupport.registerUser("profile")
-        val resp = session.invoke(ServiceId.USER, UserMethod.GET_PROFILE.id,
+        val resp = session.invoke("user", UserRpcContract.M_GET_PROFILE,
             ProtoCodec.encodePayload { writeString(null) })
         assertEquals(0, resp.status, "GET_PROFILE 应成功")
         val user = ProtoCodec.decode(User, resp.payload!!)
@@ -108,7 +114,7 @@ class RemoteDemoE2eTest {
     @Test
     fun `list conversations via RPC`() = runBlocking {
         val session = RemoteDemoSupport.registerUser("conv")
-        val resp = session.invoke(ServiceId.CONVERSATION, ConversationMethod.LIST.id)
+        val resp = session.invoke("conversation", ConversationRpcContract.M_LIST)
         assertEquals(0, resp.status, "会话列表 RPC 应成功")
         session.close()
     }
@@ -116,7 +122,7 @@ class RemoteDemoE2eTest {
     @Test
     fun `list devices via RPC`() = runBlocking {
         val session = RemoteDemoSupport.registerUser("device")
-        val resp = session.invoke(ServiceId.DEVICE, DeviceMethod.LIST.id)
+        val resp = session.invoke("device", DeviceRpcContract.M_LIST_DEVICES)
         assertEquals(0, resp.status, "设备列表 RPC 应成功")
         session.close()
     }
@@ -129,19 +135,19 @@ class RemoteDemoE2eTest {
         val user2 = RemoteDemoSupport.registerUser("contact2")
 
         // user1 申请加 user2
-        val applyResp = user1.invoke(ServiceId.CONTACT, ContactMethod.APPLY.id,
+        val applyResp = user1.invoke("contact", ContactRpcContract.M_APPLY,
             ProtoCodec.encodePayload { writeString(user2.uid); writeString("hello") })
         assertEquals(0, applyResp.status)
         val apply = ProtoCodec.decode(ContactApply, applyResp.payload!!)
         assertNotNull(apply.token)
 
         // user2 接受
-        val acceptResp = user2.invoke(ServiceId.CONTACT, ContactMethod.ACCEPT.id,
+        val acceptResp = user2.invoke("contact", ContactRpcContract.M_ACCEPT,
             ProtoCodec.encodePayload { writeString(apply.token) })
         assertEquals(0, acceptResp.status)
 
         // 验证好友列表
-        val listResp = user1.invoke(ServiceId.CONTACT, ContactMethod.LIST.id)
+        val listResp = user1.invoke("contact", ContactRpcContract.M_LIST)
         assertEquals(0, listResp.status)
         val friends = ProtoCodec.decodeList(Contact, listResp.payload!!)
         assertTrue(friends.any { it.friendUid == user2.uid }, "user2 应出现在 user1 好友列表")
@@ -155,7 +161,7 @@ class RemoteDemoE2eTest {
         val user1 = RemoteDemoSupport.registerUser("grp1")
         val user2 = RemoteDemoSupport.registerUser("grp2")
 
-        val chatResp = user1.invoke(ServiceId.CHAT, ChatMethod.CREATE_GROUP.id,
+        val chatResp = user1.invoke("chat", ChatRpcContract.M_CREATE_GROUP,
             ProtoCodec.encodePayload {
                 writeString("DemoGroup")
                 writeString(null) // avatar
@@ -334,7 +340,7 @@ class RemoteDemoE2eTest {
             assertEquals(0, ack.code)
 
             // FORWARD RPC: srcChatId, srcSeq, targetChatId（转发回同一会话）
-            val fwdResp = user1.invoke(ServiceId.MESSAGE, MessageMethod.FORWARD.id,
+            val fwdResp = user1.invoke("message", MessageRpcContract.M_FORWARD,
                 ProtoCodec.encodePayload {
                     writeString(chat.chatId); writeVarLong(ack.serverSeq); writeString(chat.chatId)
                 })
@@ -362,7 +368,7 @@ class RemoteDemoE2eTest {
             assertEquals(0, ack.code)
 
             // REVOKE RPC: chatId, serverSeq
-            val revokeResp = user1.invoke(ServiceId.MESSAGE, MessageMethod.REVOKE.id,
+            val revokeResp = user1.invoke("message", MessageRpcContract.M_REVOKE,
                 ProtoCodec.encodePayload { writeString(chat.chatId); writeVarLong(ack.serverSeq) })
             assertEquals(0, revokeResp.status, "撤回 RPC 应成功: status=${revokeResp.status}")
 
@@ -391,7 +397,7 @@ class RemoteDemoE2eTest {
 
             // EDIT RPC: 完整 Message 编码（含 serverSeq + 新 body）
             val edited = msg.copy(serverSeq = ack.serverSeq, body = TextBody("edited content"))
-            val editResp = user1.invoke(ServiceId.MESSAGE, MessageMethod.EDIT.id, ProtoCodec.encode(edited))
+            val editResp = user1.invoke("message", MessageRpcContract.M_EDIT, ProtoCodec.encode(edited))
             assertEquals(0, editResp.status, "编辑 RPC 应成功: status=${editResp.status}")
 
             // 先消费掉原始消息投递，再取编辑后的重新投递
@@ -414,7 +420,7 @@ class RemoteDemoE2eTest {
         val session = RemoteDemoSupport.registerUser("prof-up")
         try {
             // GET_PROFILE
-            val getResp = session.invoke(ServiceId.USER, UserMethod.GET_PROFILE.id,
+            val getResp = session.invoke("user", UserRpcContract.M_GET_PROFILE,
                 ProtoCodec.encodePayload { writeString(null) })
             assertEquals(0, getResp.status)
             val user = ProtoCodec.decode(User, getResp.payload!!)
@@ -422,11 +428,11 @@ class RemoteDemoE2eTest {
 
             // UPDATE_PROFILE: 修改昵称（payload = User 编码，只取 name/avatar/sex）
             val updated = user.copy(name = "NewName-${UUID.randomUUID().toString().take(4)}")
-            val updResp = session.invoke(ServiceId.USER, UserMethod.UPDATE_PROFILE.id, ProtoCodec.encode(updated))
+            val updResp = session.invoke("user", UserRpcContract.M_UPDATE_PROFILE, ProtoCodec.encode(updated))
             assertEquals(0, updResp.status, "更新 profile 应成功")
 
             // 再查确认
-            val getResp2 = session.invoke(ServiceId.USER, UserMethod.GET_PROFILE.id,
+            val getResp2 = session.invoke("user", UserRpcContract.M_GET_PROFILE,
                 ProtoCodec.encodePayload { writeString(null) })
             val user2 = ProtoCodec.decode(User, getResp2.payload!!)
             assertEquals(updated.name, user2.name, "昵称应已更新")
@@ -444,7 +450,7 @@ class RemoteDemoE2eTest {
         val user3 = RemoteDemoSupport.registerUser("grpbc-3")
         try {
             // 建 3 人群（user1 建群，加 user2 + user3）
-            val chatResp = user1.invoke(ServiceId.CHAT, ChatMethod.CREATE_GROUP.id,
+            val chatResp = user1.invoke("chat", ChatRpcContract.M_CREATE_GROUP,
                 ProtoCodec.encodePayload {
                     writeString("BroadcastGroup")
                     writeString(null)
@@ -489,7 +495,7 @@ class RemoteDemoE2eTest {
             }
 
             // GET_HISTORY: chatId + fromSeq + limit（3 字段，之前客户端漏了 limit 导致 500）
-            val resp = user1.invoke(ServiceId.MESSAGE, MessageMethod.GET_HISTORY.id,
+            val resp = user1.invoke("message", MessageRpcContract.M_GET_HISTORY,
                 ProtoCodec.encodePayload { writeString(chat.chatId); writeVarLong(0); writeVarInt(50) })
             assertEquals(0, resp.status, "GET_HISTORY 应成功: status=${resp.status}")
             val messages = ProtoCodec.decodeList(Message, resp.payload!!)
@@ -534,14 +540,14 @@ class RemoteDemoE2eTest {
         val user2 = RemoteDemoSupport.registerUser("$tag-2")
 
         // 申请 + 接受好友
-        val applyResp = user1.invoke(ServiceId.CONTACT, ContactMethod.APPLY.id,
+        val applyResp = user1.invoke("contact", ContactRpcContract.M_APPLY,
             ProtoCodec.encodePayload { writeString(user2.uid); writeString("hi") })
         val apply = ProtoCodec.decode(ContactApply, applyResp.payload!!)
-        user2.invoke(ServiceId.CONTACT, ContactMethod.ACCEPT.id,
+        user2.invoke("contact", ContactRpcContract.M_ACCEPT,
             ProtoCodec.encodePayload { writeString(apply.token) })
 
         // 创建私聊
-        val chatResp = user1.invoke(ServiceId.CHAT, ChatMethod.CREATE_PERSONAL.id,
+        val chatResp = user1.invoke("chat", ChatRpcContract.M_CREATE_PERSONAL,
             ProtoCodec.encodePayload { writeString(user2.uid) })
         assertEquals(0, chatResp.status, "创建私聊应成功")
         val chat = ProtoCodec.decode(Chat, chatResp.payload!!)

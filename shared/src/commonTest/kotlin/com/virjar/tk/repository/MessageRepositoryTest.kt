@@ -3,9 +3,8 @@ package com.virjar.tk.repository
 import com.virjar.tk.AppError
 import com.virjar.tk.Outcome
 import com.virjar.tk.model.Message
-import com.virjar.tk.protocol.MessageMethod
+import com.virjar.tk.rpc.gen.MessageRpcContract
 import com.virjar.tk.protocol.ProtoCodec
-import com.virjar.tk.protocol.ServiceId
 import com.virjar.tk.testing.FakeLocalCache
 import com.virjar.tk.testing.FakeRpcInvoker
 import kotlin.test.Test
@@ -53,8 +52,8 @@ class MessageRepositoryTest {
         assertEquals(1, cache.getMessages(chatId).size)
         // 验证调用了正确的 RPC 方法
         assertEquals(1, rpc.calls.size)
-        assertEquals(ServiceId.MESSAGE, rpc.calls[0].first)
-        assertEquals(MessageMethod.GET_HISTORY.id, rpc.calls[0].second)
+        assertEquals("message", rpc.calls[0].first)
+        assertEquals(MessageRpcContract.M_GET_HISTORY, rpc.calls[0].second)
     }
 
     @Test
@@ -139,7 +138,7 @@ class MessageRepositoryTest {
         }
 
         assertIs<Outcome.Success<Unit>>(outcome)
-        assertEquals(MessageMethod.REVOKE.id, rpc.calls[0].second)
+        assertEquals(MessageRpcContract.M_REVOKE, rpc.calls[0].second)
     }
 
     @Test

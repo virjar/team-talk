@@ -3,7 +3,6 @@ package com.virjar.tk.e2e
 import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.client.ImClient
 import com.virjar.tk.client.RpcClient
-import com.virjar.tk.protocol.ServiceId
 import com.virjar.tk.protocol.payload.NotifyPayload
 import com.virjar.tk.protocol.payload.ResponsePayload
 import com.virjar.tk.protocol.payload.SubscribePayload
@@ -62,7 +61,7 @@ object RemoteDemoSupport {
             }
         }
 
-        suspend fun invoke(serviceId: ServiceId, methodId: Int, payload: ByteArray? = null): ResponsePayload =
+        suspend fun invoke(serviceId: String, methodId: Int, payload: ByteArray? = null): ResponsePayload =
             rpc.invoke(serviceId, methodId, payload)
 
         fun subscribe(chatId: String, lastSeq: Long = 0) {

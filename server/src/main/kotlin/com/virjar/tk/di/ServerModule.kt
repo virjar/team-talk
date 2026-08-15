@@ -18,6 +18,14 @@ import com.virjar.tk.domain.message.MessageService
 import com.virjar.tk.domain.presence.PresenceService
 import com.virjar.tk.domain.user.UserRepository
 import com.virjar.tk.domain.user.UserService
+import com.virjar.tk.protocol.rpc.RpcStubRegistry
+import com.virjar.tk.protocol.rpc.UserRpcImpl
+import com.virjar.tk.protocol.rpc.AuthRpcImpl
+import com.virjar.tk.protocol.rpc.ContactRpcImpl
+import com.virjar.tk.protocol.rpc.ChatRpcImpl
+import com.virjar.tk.protocol.rpc.MessageRpcImpl
+import com.virjar.tk.protocol.rpc.ConversationRpcImpl
+import com.virjar.tk.protocol.rpc.DeviceRpcImpl
 import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.env.Environment
 import com.virjar.tk.infra.search.SearchIndex
@@ -71,16 +79,19 @@ fun createServerModule(
     single { PresenceService(get(), get()) }
     single { HealthChecker(get(), get(), get()) }
 
-    // RPC Route Handlers
-    single { UserRouteHandler(get()) }
-    single { ContactRouteHandler(get()) }
-    single { ChatRouteHandler(get()) }
-    single { MessageRouteHandler(get(), get()) }
-    single { ConversationRouteHandler(get()) }
-    single { DeviceRouteHandler(get(), get()) }
-    single { AuthRouteHandler(get(), get()) }
-    single { GenericRouteHandler() }
-    single { RpcDispatcher(get(), get(), get(), get(), get(), get(), get(), get()) }
+    // RPC 注册表（IDL 生成 Stub + 薄壳 Impl；serviceId 字符串注册）
+    single {
+        RpcStubRegistry().apply {
+            register("user") { uid -> UserRpcImpl(uid, get()) }
+            register("auth") { uid -> AuthRpcImpl(uid, get(), get()) }
+            register("contact") { uid -> ContactRpcImpl(uid, get()) }
+            register("chat") { uid -> ChatRpcImpl(uid, get()) }
+            register("message") { uid -> MessageRpcImpl(uid, get(), get()) }
+            register("conversation") { uid -> ConversationRpcImpl(uid, get()) }
+            register("device") { uid -> DeviceRpcImpl(uid, get(), get()) }
+        }
+    }
+    single { RpcDispatcher(get()) }
 
     // TCP Server
     single { TcpServer() }

@@ -7,7 +7,7 @@ object Frame {
     const val MAGIC_HIGH: Byte = 0x54  // 'T'
     const val MAGIC_LOW: Byte = 0x4B   // 'K'
     const val HEADER_SIZE = 8  // magic(2) + version(1) + type(1) + length(4)
-    const val PROTOCOL_VERSION: Byte = 1
+    const val PROTOCOL_VERSION: Byte = 2
     const val MAX_PAYLOAD_SIZE = 16 * 1024 * 1024  // 16MB
 
     /** 客户端发送 PING 间隔（秒） */

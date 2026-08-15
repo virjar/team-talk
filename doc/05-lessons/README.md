@@ -11,7 +11,7 @@
 |---|----|----|------|------|
 | A1 | NOTIFY payload 类型两端漂移 | 客户端数据错乱/解析异常，UI 表现诡异 | emit 侧与 decode 侧各自手写 when，无编译期约束 | [NotifyContracts 契约表](../01-protocol/notify-contracts.md)：唯一事实源 + 服务端 emit 校验 + 完备性测试 |
 | A2 | CONTACT_ACCEPTED/DELETED 视角反转 | 接收方好友列表 friendUid 错位 | 服务端把申请方视角的同一个 Contact 发给双方 | 每接收者构造各自视角（uid=自己, friendUid=对方） |
-| A3 | 编解码字段错位 | IndexOutOfBounds → 断连 | encodePayload/withPayload 字段序不配对 | 规则：简单 payload 注释标注字段序；复杂用 IProto+ProtoCodec；新方法必须加 RoundTrip 测试 |
+| A3 | 编解码字段错位 | IndexOutOfBounds → 断连 | encodePayload/withPayload 字段序不配对 | **根治（RPC IDL 化）**：手写 encodePayload/withPayload 已全部移除，双端编解码由 KSP 从 @RpcService interface 生成（Contract 单点定义+round-trip 自检）；NOTIFY 侧由契约表防线覆盖 |
 | A4 | ByteArray 的 data class equals | 内容相同的 GenericPayload 判不等 | 默认 equals 比引用 | GenericPayload 重写内容 equals（所有含 ByteArray 的模型注意） |
 | A5 | varint 负数截断 | 解码错乱 | LEB128 无符号约定，写负数截断成 1 字节 | 契约：varint 只传非负；有符号语义字段用位标记/拆字段 |
 

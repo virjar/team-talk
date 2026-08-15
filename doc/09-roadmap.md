@@ -25,6 +25,14 @@
 | Webhook/HTTP 桥 | bot 收发消息映射为 HTTP 回调（接入外部系统） | 💡 |
 | 群机器人管理 | bot 入群/踢出/权限的 API 化 | 💡 |
 
+## P1.5 — RPC IDL 化（已完成 2026-08）
+
+- ✅ Kotlin interface = IDL + KSP2 生成 Contract/Stub/Proxy（精简版 gRPC）
+- ✅ serviceId 数字→字符串（协议 v2，一刀切）
+- ✅ 手写 encodePayload/withPayload 全部移除（A3 坑根治）
+- ✅ uid 收敛到服务端 Stub 成员（AIDL 风格）
+- 后续演进：domain Service 直接实现 RpcStub（删除薄壳 Impl 层）
+
 ## P2 — SDK 完善
 
 | 项 | 说明 | 状态 |

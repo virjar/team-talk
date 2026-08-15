@@ -1,36 +1,58 @@
-# RPC 方法矩阵 — ServiceId / MethodId / payload 布局
+# RPC 方法矩阵 — IDL 生成体系（协议 v2）
 
-> 全部 RPC 方法的路由枚举与请求/响应 payload 布局。
-> 源码：`shared/.../protocol/RpcMethod.kt`（枚举唯一事实源）+ `server/.../protocol/dispatcher/*RouteHandler.kt`（服务端解码顺序）+ `shared/.../repository/*.kt`（客户端编码）。
-> 编码原语见 [wire-format](wire-format.md#3-packetbuffer-原语表)。
+> **Kotlin interface = IDL**（精简版 gRPC）：`@RpcService(name)` interface 定义服务契约，
+> rpc-processor（KSP2）编译期生成 Contract/Stub/Proxy——参数编码解码路由全部生成物锁定，
+> 手写对齐已从代码库根除。
+>
+> IDL：`shared/.../rpc/def/*.kt` · 生成器：`rpc-processor/` · 生成物：`shared/build/generated/ksp/.../rpc/gen/`
 
 ---
 
-## 1. 路由机制
+## 0. IDL 规范
+
+```kotlin
+@RpcService("message")                    // serviceId = 字符串（wire 直传）
+interface MessageRpc {
+    suspend fun getHistory(chatId: String, fromSeq: Long, limit: Int): List<Message>
+    @RpcMethod(5)                         // 可省略：按声明顺序 1,2,3... 分配
+    suspend fun forward(...): Message
+}
+```
+
+**规则（违反 → 编译失败）**：方法必须 suspend；参数白名单 String/Int/Long/Boolean/String?/List\<String\>/IProto 子类，禁止默认值；返回同上 + Unit/List。**methodId 稳定性：新方法只追加末尾；中间插入必须 @RpcMethod 锁定**（生成 Contract 常量即 golden 文件，git diff 可见漂移）。
+
+**生成物（每 service 一个文件）**：
+- `XxxRpcContract`：SERVICE/M_* 常量 + 参数 encode + verifyRoundTrip 自检
+- `XxxRpcStub(uid)`：服务端 abstract（uid 成员，dispatch 解码→调用→编码；实现类见 server `protocol/rpc/RpcImpls.kt` 薄壳或 domain 直接实现）
+- `XxxRpcProxy(rpc)`：客户端实现（encode→invoke→ensureSuccess→decode；Repository 内部使用）
+- `RpcServiceRegistry`：全量注册表 + verifyAll
+
+**新增 RPC 方法 = 三步**：IDL 加方法（末尾）→ 服务端 Impl override → 客户端 Repository 调 Proxy。编译器保证双端对齐。
+
+## 1. 路由机制（生成物驱动）
 
 ```
-客户端 InvokePayload(requestId, serviceId, methodId, payload)
- → 服务端 RpcDispatcher.dispatch
-    → route(serviceId) → <X>RouteHandler.route(uid, methodId, payload)
-    → ResponsePayload(requestId, status, result)
+客户端 XxxRpcProxy → RpcInvoker.invoke("服务名", M_常量, 编码参数)
+ → 服务端 ImAgent → RpcDispatcher → RpcStubRegistry（字符串 serviceId → Stub 工厂(uid)）
+ → XxxRpcStub.dispatch（解码→调用 Impl→编码返回）
+ → ResponsePayload(requestId, status, result)
 ```
 
-- 枚举 `when` 分派，无巨型 when 块；加方法 = 枚举 + handler 分支
-- **认证前置**：dispatch 仅在 ImAgent AUTHENTICATED 后可达；uid 由连接层注入，handler 不再验 token
-- 客户端前置校验（AuthRules）：username 3-50 字符、password ≥6——与服务端规则镜像，避免无效请求出门
+- **认证前置**：dispatch 仅在 AUTHENTICATED 后可达；uid 注入 Stub 成员
+- 客户端前置校验（AuthRules）：username 3-50 字符、password ≥6——服务端规则镜像
 
-## 2. ServiceId
+## 2. ServiceId（字符串，IDL name）
 
-| id | 服务 | handler |
+| serviceId | IDL | 服务端实现 |
 |----|------|---------|
-| 1 | AUTH | AuthRouteHandler |
-| 2 | USER | UserRouteHandler |
-| 3 | CONTACT | ContactRouteHandler |
-| 4 | CHAT | ChatRouteHandler |
-| 5 | MESSAGE | MessageRouteHandler |
-| 6 | CONVERSATION | ConversationRouteHandler |
-| 7 | DEVICE | DeviceRouteHandler |
-| 99 | GENERIC | GenericRouteHandler（methodId=ExtensionType.code；当前无注册扩展） |
+| "auth" | AuthRpc | AuthRpcImpl |
+| "user" | UserRpc | UserRpcImpl |
+| "contact" | ContactRpc | ContactRpcImpl |
+| "chat" | ChatRpc | ChatRpcImpl |
+| "message" | MessageRpc | MessageRpcImpl |
+| "conversation" | ConversationRpc | ConversationRpcImpl |
+| "device" | DeviceRpc | DeviceRpcImpl |
+| ~~99 GENERIC~~ | 已删除（零使用，防过早实现） |
 
 ## 3. AUTH（认证走 TCP 握手包，此处仅会话管理）
 
