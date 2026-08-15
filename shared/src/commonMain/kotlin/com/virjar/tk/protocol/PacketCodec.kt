@@ -9,7 +9,7 @@ import io.netty.handler.codec.ByteToMessageCodec
 /**
  * TCP 帧编解码器。
  *
- * 帧格式：[MAGIC(2B)][VERSION(1B)][TYPE(1B)][LENGTH(4B)][PAYLOAD(LENGTH bytes)]
+ * 帧格式（v3）：[TYPE(1B)][LENGTH(4B)][PAYLOAD(LENGTH bytes)]
  *
  * 解码产出 IProto 对象，编码接收 IProto 对象写入 ByteBuf。
  */
@@ -20,19 +20,6 @@ class PacketCodec : ByteToMessageCodec<IProto>() {
         if (buf.readableBytes() < Frame.HEADER_SIZE) return
 
         buf.markReaderIndex()
-
-        val magicHigh = buf.readByte()
-        val magicLow = buf.readByte()
-        if (magicHigh != Frame.MAGIC_HIGH || magicLow != Frame.MAGIC_LOW) {
-            throw io.netty.handler.codec.CorruptedFrameException("Invalid magic bytes")
-        }
-
-        val version = buf.readByte()
-        if (version != Frame.PROTOCOL_VERSION) {
-            throw io.netty.handler.codec.CorruptedFrameException(
-                "Unsupported protocol version: $version"
-            )
-        }
 
         val typeCode = buf.readByte().toInt() and 0xFF
         val length = buf.readInt()
@@ -49,9 +36,9 @@ class PacketCodec : ByteToMessageCodec<IProto>() {
         val packetType = try {
             PacketType.fromCode(typeCode)
         } catch (e: IllegalArgumentException) {
-            // 跳过未知类型的 payload（网络边界，可能是恶意数据）
-            if (length > 0) buf.skipBytes(length)
-            return
+            // 帧级类型集随 PROTOCOL_VERSION 固定：未知 TYPE = 错位/污染/跨版本，
+            // 断连（v2 及之前带帧头 magic 时曾静默丢帧——掩盖协议异常）
+            throw io.netty.handler.codec.CorruptedFrameException("Unknown packet type: $typeCode")
         }
 
         val proto = if (length == 0) {
@@ -89,9 +76,6 @@ class PacketCodec : ByteToMessageCodec<IProto>() {
     override fun encode(ctx: ChannelHandlerContext, msg: IProto, out: ByteBuf) {
         val (typeCode, payloadWriter: (PacketBuffer) -> Unit) = resolveTypeAndWriter(msg)
 
-        out.writeByte(Frame.MAGIC_HIGH.toInt())
-        out.writeByte(Frame.MAGIC_LOW.toInt())
-        out.writeByte(Frame.PROTOCOL_VERSION.toInt())
         out.writeByte(typeCode)
 
         // 零载荷信号
