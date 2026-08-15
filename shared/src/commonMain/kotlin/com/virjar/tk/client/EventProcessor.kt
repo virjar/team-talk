@@ -232,11 +232,7 @@ class EventProcessor(
                 localCache.upsertUser(user)
             }
 
-            NotifyType.GENERIC -> {
-                // 通用扩展推送：当前无注册处理器，静默忽略（前向兼容）。
-                // 需要时再实现分发机制（避免过早实现，见 CLAUDE.md）。
-                logger.trace("GENERIC notify ignored (no handler registered)")
-            }
+
         }
     }
 }

@@ -97,6 +97,10 @@ private fun startServer() {
     }.start(wait = true)
 }
 
+private val cleanupExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+    Thread(r, "sync-events-cleanup").apply { isDaemon = true }
+}
+
 fun Application.module() {
     val logger = LoggerFactory.getLogger("Application")
 
@@ -140,6 +144,12 @@ fun Application.module() {
 
     // 7. Health Checker
     val healthChecker = koin.get<HealthChecker>()
+
+    // 7.5 sync_events 过期清理（7 天 TTL）：启动即清 + 每日一轮（防表无限增长）
+    cleanupExecutor.scheduleAtFixedRate({
+        runCatching { syncEventService.cleanupExpiredEvents() }
+            .onFailure { LoggerFactory.getLogger("Application").warn("sync_events cleanup failed", it) }
+    }, 0, 1, java.util.concurrent.TimeUnit.DAYS)
 
     // 8. HTTP Routes
     routing {

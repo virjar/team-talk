@@ -17,6 +17,13 @@ class RpcProcessorProvider : SymbolProcessorProvider {
         RpcProcessor(environment.codeGenerator, environment.logger)
 }
 
+/** 判断类型（含继承链）是否实现 com.virjar.tk.protocol.IProto。 */
+private fun com.google.devtools.ksp.symbol.KSType.isIProto(): Boolean {
+    val decl = declaration as? com.google.devtools.ksp.symbol.KSClassDeclaration ?: return false
+    if (decl.qualifiedName?.asString() == "com.virjar.tk.protocol.IProto") return true
+    return decl.superTypes.any { it.resolve().isIProto() }
+}
+
 class RpcProcessor(
     private val codeGenerator: CodeGenerator,
     private val logger: KSPLogger,
@@ -56,6 +63,15 @@ class RpcProcessor(
             .mapIndexed { idx, fn -> fn.toMethodModel(idx + 1) }
             .toList()
         if (methods.isEmpty()) logger.error("@RpcService $serviceName 无方法", this)
+        // methodId 完整性：重复/非法 id 编译期报错（否则生成 when 静默错乱 wire）
+        methods.groupBy { it.id }.filter { it.value.size > 1 }.forEach { (id, dup) ->
+            logger.error(
+                "service [$serviceName] methodId=$id 重复分配: ${dup.joinToString { it.name }}" +
+                    "（中间插入新方法必须 @RpcMethod 显式锁定 id）", this)
+        }
+        methods.filter { it.id <= 0 }.forEach {
+            logger.error("service [$serviceName] 方法 ${it.name} 的 @RpcMethod id 必须 > 0", this)
+        }
         return ServiceModel(serviceName, packageName.asString(), simpleName.asString(), methods)
     }
 
@@ -85,6 +101,15 @@ class RpcProcessor(
                 if (resolved.isMarkedNullable) {
                     logger.error("List 参数禁止 nullable", p)
                 }
+            } else if (typeName?.startsWith("com.virjar.tk.") == true) {
+                if (!resolved.isIProto()) {
+                    logger.error("参数 ${p.name?.asString()}: $typeName 不是 IProto 实现", p)
+                }
+                if (resolved.isMarkedNullable) {
+                    logger.error("IProto 参数禁止 nullable（wire 布局无 present 位）", p)
+                }
+            } else if (typeName in TypeCodec.PRIMITIVES && resolved.isMarkedNullable && typeName != "kotlin.String") {
+                logger.error("参数 ${p.name?.asString()}: $typeName? 禁止（仅 String 允许 nullable）", p)
             }
             if (typeName != null && typeName !in TypeCodec.PRIMITIVES && typeName != "kotlin.collections.List" && !typeName.startsWith("com.virjar.tk.")) {
                 logger.error("参数 ${p.name?.asString()}: $typeName 不在白名单（String/Int/Long/Boolean/List<String>/IProto 子类）", p)

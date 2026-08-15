@@ -36,9 +36,7 @@ enum class NotifyType(val code: Int) {
 
     // 用户
     USER_UPDATED(60),
-
-    // 通用扩展入口：payload = GenericPayload(extensionType + data)
-    GENERIC(99);
+;
 
     companion object {
         private val codeMap = entries.associateBy { it.code }

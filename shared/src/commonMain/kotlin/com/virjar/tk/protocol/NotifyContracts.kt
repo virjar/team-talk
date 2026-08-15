@@ -6,7 +6,6 @@ import com.virjar.tk.model.ContactApply
 import com.virjar.tk.model.Conversation
 import com.virjar.tk.model.Message
 import com.virjar.tk.model.User
-import com.virjar.tk.protocol.payload.GenericPayload
 
 /**
  * NOTIFY 契约表：NotifyType → payload 类型的**唯一事实源**。
@@ -57,9 +56,6 @@ object NotifyContracts {
 
         // 用户
         NotifyType.USER_UPDATED to User,
-
-        // 通用扩展
-        NotifyType.GENERIC to GenericPayload,
 
         // 在线状态（服务端直写不持久化，但类型契约仍需锁定）
         NotifyType.PRESENCE to PresencePayload,

@@ -8,6 +8,7 @@ import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.payload.NotifyPayload
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.insert
+import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory
@@ -59,11 +60,13 @@ class SyncEventService(
 
     /**
      * 查询用户在某个 eventId 之后的所有事件（离线补发）。
+     * 过期事件（> [EVENT_TTL_MS]）不补发——毒事件逃生舱与表增长控制。
      */
     fun getEventsAfter(uid: String, afterEventId: Long, limit: Int = 100): List<NotifyPayload> {
+        val ttlBoundary = System.currentTimeMillis() - EVENT_TTL_MS
         return transaction {
             SyncEvents.selectAll()
-                .where { (SyncEvents.uid eq uid) and (SyncEvents.id greater afterEventId) }
+                .where { (SyncEvents.uid eq uid) and (SyncEvents.id greater afterEventId) and (SyncEvents.createdAt greater ttlBoundary) }
                 .orderBy(SyncEvents.id)
                 .limit(limit)
                 .map { row ->
@@ -74,6 +77,22 @@ class SyncEventService(
                     )
                 }
         }
+    }
+
+    /**
+     * 清理过期事件（防表无限增长）。定期调用（如每日）；幂等。
+     * @return 删除行数
+     */
+    fun cleanupExpiredEvents(): Int {
+        val ttlBoundary = System.currentTimeMillis() - EVENT_TTL_MS
+        return transaction {
+            SyncEvents.deleteWhere { org.jetbrains.exposed.sql.SqlExpressionBuilder.run { SyncEvents.createdAt lessEq ttlBoundary } }
+        }
+    }
+
+    companion object {
+        /** 事件保留期：7 天（客户端注释/文档承诺的 TTL——本方法前从未被执行，纯文档虚构） */
+        const val EVENT_TTL_MS: Long = 7L * 24 * 60 * 60 * 1000
     }
 
     private fun persistEvent(uid: String, notifyType: NotifyType, payload: IProto): Long {

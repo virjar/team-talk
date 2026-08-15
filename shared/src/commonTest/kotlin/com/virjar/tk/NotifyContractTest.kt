@@ -12,7 +12,6 @@ import com.virjar.tk.protocol.NotifyContracts
 import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.ReadSyncPayload
-import com.virjar.tk.protocol.payload.GenericPayload
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -88,7 +87,6 @@ class NotifyContractTest {
         )
         NotifyType.READ_SYNC -> ReadSyncPayload(peerUid = "u2", chatId = "c1", peerReadSeq = 7L)
         NotifyType.USER_UPDATED -> sampleUser
-        NotifyType.GENERIC -> GenericPayload(extensionType = 1, data = byteArrayOf(1, 2))
         NotifyType.PRESENCE -> com.virjar.tk.protocol.PresencePayload("u1", 1, 123L)
     }
 
