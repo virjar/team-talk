@@ -244,7 +244,17 @@ varInt maxUses(0=无限), varInt useCount, varLong expiresAt, varLong revokedAt
 | | 500 | 服务端内部错 | Business(500) |
 | 解码异常 | — | IndexOutOfBoundsException | **FatalCodec + 断连**（协议漂移=开发者 bug，双端代码错误，醒目上报） |
 
-## 9. 大小/时序常量速查
+## 9. 设计决策：为什么 NOTIFY/RPC payload 是 [len][bytes] 而非字段内联
+
+曾讨论过消除 payload 的 ByteArray 中转（Message 子类直写帧）。结论：**保留不透明块设计**，三个硬约束：
+
+1. **持久化必需字节形态**——每个 NOTIFY 写 sync_events BLOB（离线补发源），emit 侧 encode→字节无法消除
+2. **批量编码共享**——emitEvents 编码 1 次 N 个接收者共享；内联（持 IProto 逐帧 writeTo）回退为 N 次编码
+3. **补发路径统一**——离线补发从 DB 读 BLOB 直包 NotifyPayload；内联会造成 payload 的字节/IProto 双轨表示
+
+对齐 protobuf 的 length-delimited 嵌套消息语义：前向兼容（跳过未知 payload）+ 批量/持久化/生命周期隔离四个能力，代价是 envelope/payload 分层的固有一次小拷贝（<1KB 纳秒级）。RPC 同理保留方法参数直传风格（encodePayload/withPayload + 字段序注释），不做 Request wrapper 类型化（与方法签名风格冲突）。
+
+## 10. 大小/时序常量速查
 
 | 常量 | 值 |
 |------|----|
