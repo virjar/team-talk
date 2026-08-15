@@ -37,7 +37,7 @@ class TcpServer(
                         // readerIdle=3倍心跳间隔(45s)，与客户端一致。
                         // 僵死连接最多45s被发现（此前60s太久）。
                         .addLast(IdleStateHandler(
-                            com.virjar.tk.protocol.Frame.READ_IDLE_TIMEOUT_SECONDS,
+                            com.virjar.tk.protocol.PacketCodec.READ_IDLE_TIMEOUT_SECONDS,
                             0, 0, TimeUnit.SECONDS))
                         // 协议 v3：无握手层——客户端首帧 AUTH 即连接序言
                         //（帧头 MAGIC+VERSION 由 PacketCodec 首帧校验，误连/版本不符即断）

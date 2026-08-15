@@ -269,8 +269,8 @@ class ImClient(
                     // 协议 v3：无握手层——首帧 AUTH 即连接序言
                     ch.pipeline()
                         .addLast(IdleStateHandler(
-                            Frame.READ_IDLE_TIMEOUT_SECONDS,
-                            Frame.PING_INTERVAL_SECONDS,
+                            PacketCodec.READ_IDLE_TIMEOUT_SECONDS,
+                            PacketCodec.PING_INTERVAL_SECONDS,
                             0, TimeUnit.SECONDS))
                         .addLast(PacketCodec())
                         .addLast(PacketHandler())
@@ -418,7 +418,7 @@ class ImClient(
                         send(PingSignal)
                     }
                     IdleState.READER_IDLE -> {
-                        logger.trace("No data received for ${Frame.READ_IDLE_TIMEOUT_SECONDS}s, closing connection")
+                        logger.trace("No data received for ${PacketCodec.READ_IDLE_TIMEOUT_SECONDS}s, closing connection")
                         ctx.close()
                     }
                     else -> {}

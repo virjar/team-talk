@@ -1,8 +1,8 @@
 package com.virjar.tk.protocol.payload
 
-import com.virjar.tk.protocol.Frame
 
 import com.virjar.tk.protocol.IProto
+import com.virjar.tk.protocol.PacketCodec
 import com.virjar.tk.protocol.IProtoReader
 import com.virjar.tk.protocol.PacketBuffer
 
@@ -31,7 +31,7 @@ data class AuthRequestPayload(
     override fun writeTo(buf: PacketBuffer) {
         buf.writeByte(PREAMBLE_HIGH)
         buf.writeByte(PREAMBLE_LOW)
-        buf.writeByte(Frame.PROTOCOL_VERSION.toInt())
+        buf.writeByte(PacketCodec.PROTOCOL_VERSION.toInt())
         buf.writeByte(PREAMBLE_TAIL)
         buf.writeVarInt(authType)
         buf.writeString(username)
@@ -57,7 +57,7 @@ data class AuthRequestPayload(
             val b1 = buf.readByte()
             val b2 = buf.readByte()
             val b3 = buf.readByte()
-            if (b0 != PREAMBLE_HIGH || b1 != PREAMBLE_LOW || b2 != Frame.PROTOCOL_VERSION.toInt() || b3 != PREAMBLE_TAIL) {
+            if (b0 != PREAMBLE_HIGH || b1 != PREAMBLE_LOW || b2 != PacketCodec.PROTOCOL_VERSION.toInt() || b3 != PREAMBLE_TAIL) {
                 throw IllegalStateException(
                     "Bad auth preamble: ${b0.toInt() and 0xFF} ${b1.toInt() and 0xFF} ${b2.toInt() and 0xFF} ${b3.toInt() and 0xFF}")
             }

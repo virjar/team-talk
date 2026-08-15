@@ -19,15 +19,31 @@ class PacketCodec(
     @Volatile var maxPayloadLimit: Int = UNAUTHED_LIMIT,
 ) : ByteToMessageCodec<IProto>() {
     companion object {
+        /** 帧头大小：TYPE(1B) + LENGTH(4B) */
+        const val HEADER_SIZE = 5
+
+        /** 协议版本（连接级不变量；AUTH 序言魔第 3 字节协商） */
+        const val PROTOCOL_VERSION: Byte = 3
+
+        /** 单帧 payload 上限（认证后） */
+        const val MAX_PAYLOAD_SIZE = 16 * 1024 * 1024  // 16MB
+
         /** 未认证连接的帧上限：AUTH 包远小于此值，认证前无任何合法大帧 */
         const val UNAUTHED_LIMIT = 4 * 1024
+
         /** 认证后上限 */
-        const val AUTHED_LIMIT = Frame.MAX_PAYLOAD_SIZE
+        const val AUTHED_LIMIT = MAX_PAYLOAD_SIZE
+
+        /** 客户端发送 PING 间隔（秒） */
+        const val PING_INTERVAL_SECONDS: Long = 15
+
+        /** 读空闲超时（秒），3 倍心跳间隔。超时后主动关闭触发重连 */
+        const val READ_IDLE_TIMEOUT_SECONDS: Long = PING_INTERVAL_SECONDS * 3
     }
 
     override fun decode(ctx: ChannelHandlerContext, buf: ByteBuf, out: MutableList<Any>) {
         // 至少需要帧头
-        if (buf.readableBytes() < Frame.HEADER_SIZE) return
+        if (buf.readableBytes() < HEADER_SIZE) return
 
         buf.markReaderIndex()
 

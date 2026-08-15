@@ -18,10 +18,10 @@
 
 | 项 | 值 | 说明 |
 |----|----|------|
-| 帧头大小 | 5 字节 | `Frame.HEADER_SIZE`（v3：magic/version 移出帧头，握手思维残留清除） |
+| 帧头大小 | 5 字节 | `PacketCodec.HEADER_SIZE`（v3：magic/version 移出帧头，握手思维残留清除） |
 | TYPE 合法性 | PacketType 枚举 | 未知 TYPE → CorruptedFrameException 断连（错位/污染/跨版本的唯一信号） |
 | VERSION | `0x03` | 连接级不变量：AUTH 序言魔第 3 字节校验（payload/帧内均不重复） |
-| LENGTH 上限 | 16,777,216（16MB） | `Frame.MAX_PAYLOAD_SIZE`；超限断连 |
+| LENGTH 上限 | 16,777,216（16MB） | `PacketCodec.MAX_PAYLOAD_SIZE`；超限断连 |
 | 字节序 | **大端**（固定宽度整数、LENGTH） | Netty ByteBuf 默认 |
 
 **连接序言魔**：AUTH payload 首字段 4B = `0x54 0x4B`（"TK"）+ PROTOCOL_VERSION + 0x01。
