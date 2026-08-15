@@ -5,30 +5,34 @@
 
 ---
 
-## 1. 帧布局（Frame）
+## 1. 帧布局（Frame，v3）
 
 ```
-┌─────────┬─────────┬─────────┬─────────┬──────────────┬────────────┐
-│ MAGIC_H │ MAGIC_L │ VERSION │  TYPE   │    LENGTH    │   PAYLOAD  │
-│  0x54   │  0x4B   │  0x01   │ 1 byte  │ 4B big-endian│  N bytes   │
-│  'T'    │  'K'    │         │ 无符号   │  有符号 int   │  N=LENGTH  │
-└─────────┴─────────┴─────────┴─────────┴──────────────┴────────────┘
- 0         1         2         3         4              8
+┌─────────┬──────────────┬────────────┐
+│  TYPE   │    LENGTH    │   PAYLOAD  │
+│ 1 byte  │ 4B big-endian│  N bytes   │
+│ 无符号   │  有符号 int   │  N=LENGTH  │
+└─────────┴──────────────┴────────────┘
+ 0         1              5
 ```
 
 | 项 | 值 | 说明 |
 |----|----|------|
-| 帧头大小 | 8 字节 | `Frame.HEADER_SIZE` |
-| MAGIC | `54 4B`（"TK"） | 不匹配 → CorruptedFrameException 断连 |
-| VERSION | `0x03` | `PROTOCOL_VERSION`（当前 3）；不兼容变更必须递增 |
+| 帧头大小 | 5 字节 | `Frame.HEADER_SIZE`（v3：magic/version 移出帧头，握手思维残留清除） |
+| TYPE 合法性 | PacketType 枚举 | 未知 TYPE → CorruptedFrameException 断连（错位/污染/跨版本的唯一信号） |
+| VERSION | `0x03` | 连接级不变量：首帧 AUTH.payload.protocolVersion 校验，帧内不重复 |
 | LENGTH 上限 | 16,777,216（16MB） | `Frame.MAX_PAYLOAD_SIZE`；超限断连 |
 | 字节序 | **大端**（固定宽度整数、LENGTH） | Netty ByteBuf 默认 |
 
-**握手（v3 起移除）**：v2 及之前 TCP 建立后服务端先发 3 字节 `MAGIC_H MAGIC_L VERSION`、客户端回显，双方各经 HandshakeHandler 升级 pipeline。v3 起握手层整体删除——**客户端首帧 AUTH 即连接序言**：首帧帧头已含 MAGIC+VERSION（PacketCodec 首帧即完成误连检测与版本校验），语义上与 MQTT 的 CONNECT/CONNACK 同构。该层曾引入的复杂度：双端握手状态机 + pipeline 动态手术 + "认证包须等握手完成"竞态（FFAC6B1 温床）。
+误连检测（如 HTTP 探测 5100 端口）：首帧 TYPE 字节几乎必然非法 → 断连，
+等价替代旧帧头 magic 的作用。错位自检靠 LENGTH 上限 + TYPE 合法性 +
+解码异常三层兜底（HTTP/2/MQTT/WebSocket 同层帧头均无 magic）。
+
+**握手（v3 起移除）**：v2 及之前 TCP 建立后服务端先发 3 字节 `MAGIC_H MAGIC_L VERSION`、客户端回显，双方各经 HandshakeHandler 升级 pipeline。v3 起握手层整体删除——**客户端首帧 AUTH 即连接序言**（语义与 MQTT 的 CONNECT/CONNACK 同构），版本由 AUTH.payload 携带校验。该层曾引入的复杂度：双端握手状态机 + pipeline 动态手术 + "认证包须等握手完成"竞态（FFAC6B1 温床）。
 
 **解码器行为**（PacketCodec）：
 - 半帧等待（header/payload 不齐 → reset 重读）
-- 未知 TYPE → 跳过 payload 静默丢帧（前向兼容）
+- 未知 TYPE → 断连（v2 及之前带帧头 magic 时曾静默丢帧——掩盖协议异常；帧级类型集随 PROTOCOL_VERSION 固定，未知 = 错位/污染/跨版本。GENERIC 前向兼容在 extensionType 层，与此无关）
 - 零长 payload 仅对 PING/PONG/DISCONNECT 合法（解码为空信号对象）
 
 **编码器行为**：LENGTH 先写 0 占位，写完 payload 后 `setInt` 回填。
