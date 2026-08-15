@@ -5,6 +5,7 @@ import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.client.EventProcessor
 import com.virjar.tk.client.ImClient
 import com.virjar.tk.client.LocalCache
+import com.virjar.tk.client.SessionContext
 import com.virjar.tk.client.MessageSender
 import com.virjar.tk.client.UserSession
 import com.virjar.tk.client.createSession
@@ -129,7 +130,7 @@ class ImBot private constructor(
 
     /** 上传文件到服务器（HTTP），返回相对 path。 */
     suspend fun uploadFile(serverUrl: String, bytes: ByteArray, fileName: String, contentType: String): String =
-        FileRepository(serverUrl).upload(bytes, fileName, contentType).getOrThrow()
+        FileRepository(serverUrl, userSession.accessToken ?: SessionContext.accessToken).upload(bytes, fileName, contentType).getOrThrow()
 
     /** 上传并发送一步到位。 */
     suspend fun uploadAndSendFile(serverUrl: String, chatId: String, bytes: ByteArray, fileName: String, contentType: String): MessageAckPayload {
@@ -229,6 +230,7 @@ class ImBot private constructor(
 
     /** 级联销毁会话（owner-driven：bot 是 session 所有者）。 */
     fun shutdown() {
+        SessionContext.accessToken = null
         scope.cancel()
         messageChannel.close()
         session.close()
@@ -268,9 +270,9 @@ class ImBot private constructor(
             val authResult = CompletableDeferred<Boolean>()
             val userSession = UserSession()
             val imClient = ImClient(
-                onAuthResult = { success, uid, uname, dispName, refreshToken, failureReason ->
+                onAuthResult = { success, uid, uname, dispName, refreshToken, access, failureReason ->
                     if (success) {
-                        userSession.onAuthSuccess(uid ?: "", uname, dispName, refreshToken)
+                        userSession.onAuthSuccess(uid ?: "", uname, dispName, refreshToken, access)
                         authResult.complete(true)
                     } else {
                         userSession.onAuthFailed(failureReason)
@@ -290,6 +292,7 @@ class ImBot private constructor(
 
             val session = createSession(imClient, userSession, createCache = { FakeLocalCache() }, deviceId)
             val sender = MessageSender { msg -> imClient.sendAndWaitAck(msg) }
+            SessionContext.accessToken = userSession.accessToken
             AppLog.trace("ImBot", "session ready uid=${userSession.uid}")
             return ImBot(imClient, session, userSession, sender)
         }

@@ -40,7 +40,7 @@ import java.util.concurrent.TimeUnit
 class ImClient(
     private val host: String = "",
     private val port: Int = 0,
-    private val onAuthResult: ((success: Boolean, uid: String?, username: String?, name: String?, refreshToken: String?, failureReason: String?) -> Unit)? = null,
+    private val onAuthResult: ((success: Boolean, uid: String?, username: String?, name: String?, refreshToken: String?, accessToken: String?, failureReason: String?) -> Unit)? = null,
 ) {
     private val logger = TkLoggerFactory.get("ImClient")
 
@@ -322,12 +322,12 @@ class ImClient(
                 )
             }
             // 认证结果通过回调传给 UserSession（三级状态隔离：ImClient 不持有用户身份）
-            onAuthResult?.invoke(true, response.uid, response.username, response.name, response.refreshToken, null)
+            onAuthResult?.invoke(true, response.uid, response.username, response.name, response.refreshToken, response.accessToken, null)
             logger.trace("Authenticated: uid=${response.uid}, username=${response.username}")
         } else {
             val reason = response.reason ?: "认证失败(code=${response.code})"
             _state.value = ConnectionState.AUTH_FAILED
-            onAuthResult?.invoke(false, null, null, null, null, reason)
+            onAuthResult?.invoke(false, null, null, null, null, null, reason)
             logger.trace("Auth failed: code=${response.code}, reason=${response.reason}")
         }
         scope?.launch { incomingPackets.emit(response) }

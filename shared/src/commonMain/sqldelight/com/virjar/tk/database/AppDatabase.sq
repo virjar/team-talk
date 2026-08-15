@@ -1,3 +1,4 @@
+-- 当前 schema 版本 2（v2: conversation 加 peer_read_seq）。迁移历史见同目录 .sqm 文件
 -- 用户
 CREATE TABLE IF NOT EXISTS user (
     uid TEXT PRIMARY KEY NOT NULL,

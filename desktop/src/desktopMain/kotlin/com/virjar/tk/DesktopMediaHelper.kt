@@ -112,18 +112,24 @@ object DesktopMediaHelper {
 
     // ── 上传 ──
 
-    private val fileRepo by lazy { FileRepository(defaultServerConfig().serverUrl) }
+    /** 当前会话 accessToken（HTTP 上传鉴权）；由登录流程注入，登出置空。 */
+    @Volatile
+    var accessToken: String? = null
+
+
 
     /**
      * 上传文件到服务端，返回相对 path（如 "uid/uuid.ext"）。
      * 调用方拼完整 URL：`fileRepo.resolveUrl(path)`
      */
+    private fun fileRepo() = FileRepository(defaultServerConfig().serverUrl, accessToken)
+
     fun uploadFile(bytes: ByteArray, fileName: String, contentType: String): String {
-        return runBlocking { fileRepo.upload(bytes, fileName, contentType).getOrThrow() }
+        return runBlocking { fileRepo().upload(bytes, fileName, contentType).getOrThrow() }
     }
 
     /** 根据相对 path 拼装完整下载 URL。 */
-    fun fileUrl(path: String): String = fileRepo.resolveUrl(path)
+    fun fileUrl(path: String): String = fileRepo().resolveUrl(path)
 
     // ── 文件/图片选择并发送 ──
 

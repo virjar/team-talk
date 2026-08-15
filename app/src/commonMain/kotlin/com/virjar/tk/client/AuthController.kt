@@ -67,9 +67,9 @@ fun rememberAuthController(
     // 连接层（认证结果回调写入 userSession）
     val imClient = remember {
         ImClient(
-            onAuthResult = { success, uid, username, name, refreshToken, failureReason ->
+            onAuthResult = { success, uid, username, name, refreshToken, accessToken, failureReason ->
                 if (success) {
-                    userSession.onAuthSuccess(uid ?: "", username, name, refreshToken)
+                    userSession.onAuthSuccess(uid ?: "", username, name, refreshToken, accessToken)
                 } else {
                     userSession.onAuthFailed(failureReason)
                 }
@@ -96,6 +96,7 @@ fun rememberAuthController(
         when (connectionState) {
             ConnectionState.AUTHENTICATED -> {
                 session = createSession(imClient, userSession, createCache, deviceId)
+                SessionContext.accessToken = userSession.accessToken
                 onAuthenticated?.invoke(session!!)
                 isLoggedIn = true
                 authError = null
@@ -110,6 +111,7 @@ fun rememberAuthController(
                 isLoggedIn = false
                 session = null
                 tokenStore.clear()
+                SessionContext.accessToken = null
             }
             else -> {}
         }
@@ -133,6 +135,7 @@ fun rememberAuthController(
         },
         onLogout = {
             isLoggedIn = false
+            SessionContext.accessToken = null
             session?.close()
             session = null
             authError = null

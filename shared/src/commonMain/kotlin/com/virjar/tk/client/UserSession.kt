@@ -31,6 +31,10 @@ class UserSession {
     @Volatile
     var refreshToken: String? = null; private set
 
+    /** 当前 access token（HTTP 通道鉴权用，如文件上传 Bearer）。会话期有效。 */
+    @Volatile
+    var accessToken: String? = null; private set
+
     /** 最近一次认证失败的原因（服务端返回）。仅 AUTH_FAILED 时有意义。 */
     @Volatile
     var authFailureReason: String? = null; private set
@@ -39,10 +43,11 @@ class UserSession {
      * 认证成功回调（由 [ImClient] 的 onAuthResult 触发）。
      * 填充用户身份 + 清失败原因。
      */
-    fun onAuthSuccess(uid: String, username: String?, name: String?, refreshToken: String?) {
+    fun onAuthSuccess(uid: String, username: String?, name: String?, refreshToken: String?, accessToken: String? = null) {
         this.uid = uid
         this.username = username
         this.name = name
+        this.accessToken = accessToken
         this.refreshToken = refreshToken
         this.authFailureReason = null
     }

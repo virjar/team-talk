@@ -9,7 +9,9 @@ import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import io.ktor.client.*
 import io.ktor.client.request.forms.*
+import io.ktor.client.request.forms.MultiPartFormDataContent
 import io.ktor.client.statement.*
+import io.ktor.client.request.headers
 import io.ktor.http.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -39,15 +41,18 @@ object MediaHelper {
         contentType: String,
         serverUrl: String,
     ): String = withContext(Dispatchers.IO) {
+        val token = com.virjar.tk.client.SessionContext.accessToken
         val response = httpClient.submitFormWithBinaryData(
-            url = "$serverUrl/api/v1/files/upload",
-            formData = formData {
+            "$serverUrl/api/v1/files/upload",
+            formData {
                 append("file", bytes, Headers.build {
                     append(HttpHeaders.ContentType, contentType)
                     append(HttpHeaders.ContentDisposition, "filename=\"$fileName\"")
                 })
             },
-        )
+        ) {
+            token?.let { headers { append(HttpHeaders.Authorization, "Bearer $it") } }
+        }
         parseUploadResponse(response)
     }
 

@@ -11,7 +11,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 
-fun Route.fileRoutes(fileStore: FileStore) {
+fun Route.fileRoutes(fileStore: FileStore, tokenStore: com.virjar.tk.domain.auth.TokenStore) {
     route("/api/v1/files") {
         get("/{path...}") {
             val path = call.parameters.getAll("path")?.joinToString("/") ?: return@get call.respond(HttpStatusCode.NotFound)
@@ -34,8 +34,12 @@ fun Route.fileRoutes(fileStore: FileStore) {
         }
 
         post("/upload") {
-            // TODO: 从 token 中获取 uid，当前先用匿名
-            val uid = call.request.header("X-Uid") ?: "anonymous"
+            // 鉴权：Bearer accessToken（TCP 认证时下发，TokenStore 校验）。上传必须已认证。
+            val token = call.request.header("Authorization")
+                ?.removePrefix("Bearer ")?.takeIf { it.isNotBlank() }
+            val info = token?.let { tokenStore.validateAccessToken(it) }
+            if (info == null) return@post call.respond(HttpStatusCode.Unauthorized, "invalid or missing token")
+            val uid = info.uid
 
             val multipart = call.receiveMultipart()
             var filePath: String? = null

@@ -1,0 +1,2 @@
+-- v1 → v2: conversation 表新增 peer_read_seq（已读回执多设备同步）
+ALTER TABLE conversation ADD COLUMN peer_read_seq INTEGER DEFAULT 0;

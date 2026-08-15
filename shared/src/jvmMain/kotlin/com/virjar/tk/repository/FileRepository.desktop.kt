@@ -8,7 +8,10 @@ import com.virjar.tk.outcome
  * Desktop 端 [FileRepository] 实现 —— 上传用 [java.net.HttpURLConnection] 手搓 multipart，
  * 下载与 URL 拼装复用 [FileOps]（两端逻辑一致）。
  */
-actual class FileRepository actual constructor(private val serverUrl: String) {
+actual class FileRepository actual constructor(
+    private val serverUrl: String,
+    private val accessToken: String?,
+) {
 
     actual suspend fun upload(
         bytes: ByteArray,
@@ -22,6 +25,7 @@ actual class FileRepository actual constructor(private val serverUrl: String) {
             connectTimeout = 15_000
             readTimeout = 120_000
             setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+            accessToken?.let { setRequestProperty("Authorization", "Bearer $it") }
         }
 
         conn.outputStream.use { os ->

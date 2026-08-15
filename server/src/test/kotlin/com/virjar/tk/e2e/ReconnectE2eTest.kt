@@ -20,7 +20,7 @@ class ReconnectE2eTest {
             runBlocking {
                 var authFailReason: String? = null
                 val imClient = ImClient(
-                    onAuthResult = { success, _, _, _, _, reason ->
+                    onAuthResult = { success, _, _, _, _, _, reason ->
                         if (!success) authFailReason = reason
                     },
                 )

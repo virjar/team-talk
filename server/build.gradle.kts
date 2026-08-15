@@ -55,6 +55,8 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation("io.ktor:ktor-server-test-host:${libs.versions.ktor.get()}")
+    testImplementation("io.ktor:ktor-client-mock:${libs.versions.ktor.get()}")
     // 跨端编解码一致性测试需要客户端 Repository（:app 的 JVM target）
     testImplementation(project(":app"))
     testImplementation(libs.ktor.server.core)

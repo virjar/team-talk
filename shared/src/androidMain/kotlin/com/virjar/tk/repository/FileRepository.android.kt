@@ -5,7 +5,9 @@ import com.virjar.tk.Outcome
 import com.virjar.tk.outcome
 import io.ktor.client.*
 import io.ktor.client.request.forms.*
+import io.ktor.client.request.forms.MultiPartFormDataContent
 import io.ktor.client.statement.*
+import io.ktor.client.request.headers
 import io.ktor.http.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -14,7 +16,10 @@ import kotlinx.coroutines.withContext
  * Android 端 [FileRepository] 实现 —— 上传用 Ktor [HttpClient]，
  * 下载与 URL 拼装复用 [FileOps]（两端逻辑一致）。
  */
-actual class FileRepository actual constructor(private val serverUrl: String) {
+actual class FileRepository actual constructor(
+    private val serverUrl: String,
+    private val accessToken: String?,
+) {
 
     private val httpClient = HttpClient()
 
@@ -25,14 +30,16 @@ actual class FileRepository actual constructor(private val serverUrl: String) {
     ): Outcome<String> = withContext(Dispatchers.IO) {
         outcome {
             val response = httpClient.submitFormWithBinaryData(
-                url = "$serverUrl/api/v1/files/upload",
-                formData = formData {
+                "$serverUrl/api/v1/files/upload",
+                formData {
                     append("file", bytes, Headers.build {
                         append(HttpHeaders.ContentType, contentType)
                         append(HttpHeaders.ContentDisposition, "filename=\"$fileName\"")
                     })
                 },
-            )
+            ) {
+                accessToken?.let { headers { append(HttpHeaders.Authorization, "Bearer $it") } }
+            }
             if (response.status != HttpStatusCode.OK) {
                 throw AppError.Business(response.status.value, "Upload failed: ${response.status}")
             }

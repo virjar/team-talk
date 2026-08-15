@@ -16,7 +16,7 @@ import kotlinx.serialization.json.jsonPrimitive
  * 下载与 URL 拼装两端逻辑相同，由 [FileOps] 共享。
  * 构造函数接受 serverUrl（从 [com.virjar.tk.client.defaultServerConfig] 获取）。
  */
-expect class FileRepository(serverUrl: String) {
+expect class FileRepository(serverUrl: String, accessToken: String? /* HTTP 上传鉴权 Bearer，下载无需 */) {
 
     /** 上传文件，返回相对 path（形如 "{uid}/{uuid}.ext"）。 */
     suspend fun upload(bytes: ByteArray, fileName: String, contentType: String): Outcome<String>

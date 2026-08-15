@@ -112,7 +112,7 @@ object RemoteDemoSupport {
     /** 仅建立 TCP 连接（不认证），用于测试登录失败等场景。 */
     suspend fun createSession(): Session {
         val userSession = com.virjar.tk.client.UserSession()
-        val imClient = ImClient(onAuthResult = { success, uid, username, name, refreshToken, failureReason ->
+        val imClient = ImClient(onAuthResult = { success, uid, username, name, refreshToken, accessToken, failureReason ->
             if (success) userSession.onAuthSuccess(uid ?: "", username, name, refreshToken)
             else userSession.onAuthFailed(failureReason)
         })
