@@ -81,11 +81,21 @@ class MessageService(
                 ?: throw IllegalArgumentException("不是聊天成员")
             if (member.role < 1) throw IllegalArgumentException("需要管理员权限")
         }
+        doRevoke(message)
+    }
 
+    /** 管理员撤回：免权限检查，广播链路复用。 */
+    suspend fun adminRevoke(chatId: String, serverSeq: Long) {
+        val message = messageStore.getMessage(chatId, serverSeq)
+            ?: throw IllegalArgumentException("消息不存在")
+        doRevoke(message)
+    }
+
+    private suspend fun doRevoke(message: Message) {
         val revoked = message.copy(flags = message.flags or 1)
-        messageStore.updateMessage(chatId, serverSeq, revoked)
+        messageStore.updateMessage(message.chatId, message.serverSeq, revoked)
 
-        val memberUids = chatStore.getMemberUids(chatId)
+        val memberUids = chatStore.getMemberUids(message.chatId)
         syncEventService.emitEvents(memberUids, NotifyType.MESSAGE_RECV, revoked)
     }
 

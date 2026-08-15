@@ -189,6 +189,28 @@ class ChatService(
         return chatStore.getInviteLink(token) ?: throw IllegalArgumentException("邀请链接不存在")
     }
 
+    // ── 管理端操作（免权限检查，广播链路复用）──
+
+    suspend fun adminDissolve(chatId: String) {
+        val memberUids = chatStore.getMemberUids(chatId)
+        chatStore.deleteChat(chatId)
+        syncEventService.emitEvents(memberUids, NotifyType.CHAT_DELETED, chatStore.getChat(chatId) ?: return)
+    }
+
+    suspend fun adminMuteAll(chatId: String) {
+        chatStore.setMuteAll(chatId, true)
+        val memberUids = chatStore.getMemberUids(chatId)
+        val chat = chatStore.getChat(chatId) ?: return
+        syncEventService.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
+    }
+
+    suspend fun adminUnmuteAll(chatId: String) {
+        chatStore.setMuteAll(chatId, false)
+        val memberUids = chatStore.getMemberUids(chatId)
+        val chat = chatStore.getChat(chatId) ?: return
+        syncEventService.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
+    }
+
     // ── 权限检查 ──
 
     private fun requireGroupAdmin(uid: String, chatId: String) {

@@ -6,7 +6,9 @@ import com.virjar.tk.infra.db.Conversations
 import com.virjar.tk.infra.db.GroupMembers
 import com.virjar.tk.model.Chat
 import org.jetbrains.exposed.sql.*
+import org.jetbrains.exposed.sql.Op
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.like
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.util.UUID
 
@@ -166,6 +168,35 @@ class ChatRepository {
         return transaction { findPersonalChatIdInternal(uid1, uid2) }
     }
 
+    // ── 管理端查询（全局视图/分页）──
+
+    fun getChatById(chatId: String): Chat? = transaction {
+        Chats.selectAll().where { Chats.chatId eq chatId }
+            .map { buildChatFromRow(it) }.singleOrNull()
+    }
+
+    fun listGroups(query: String?, page: Int, size: Int): AdminPage<Chat> = transaction {
+        val condition = if (query.isNullOrBlank()) {
+            Op.TRUE and (Chats.chatType eq 2)
+        } else {
+            (Chats.chatType eq 2) and (GroupChats.name like "%$query%")
+        }
+        val filtered = (Chats innerJoin GroupChats).selectAll().where { condition }
+        val total = filtered.count()
+        val items = filtered.orderBy(Chats.createdAt, org.jetbrains.exposed.sql.SortOrder.DESC)
+            .limit(size).offset(((page - 1) * size).toLong())
+            .map { buildChatFromRow(it) }
+        AdminPage(total, items)
+    }
+
+    fun countGroups(): Long = transaction {
+        Chats.selectAll().where { Chats.chatType eq 2 }.count()
+    }
+
+    fun countEventsSince(since: Long): Long = transaction {
+        com.virjar.tk.infra.db.SyncEvents.selectAll().where { com.virjar.tk.infra.db.SyncEvents.createdAt greater since }.count()
+    }
+
     fun listUserChats(uid: String): List<Chat> {
         return transaction {
             val chatIds = GroupMembers.selectAll()
@@ -221,3 +252,6 @@ class ChatRepository {
         )
     }
 }
+
+/** 管理端分页结果。 */
+data class AdminPage<T>(val total: Long, val items: List<T>)

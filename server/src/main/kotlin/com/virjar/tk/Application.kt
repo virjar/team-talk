@@ -109,6 +109,16 @@ fun Application.module() {
         modules(serverModule)
     }
 
+    // 1.5 CORS：管理后台 SPA 开发态（vite :5173）跨域；生产同源不受影响
+    install(io.ktor.server.plugins.cors.routing.CORS) {
+        allowHeader(io.ktor.http.HttpHeaders.Authorization)
+        allowHeader(io.ktor.http.HttpHeaders.ContentType)
+        allowMethod(io.ktor.http.HttpMethod.Post)
+        allowMethod(io.ktor.http.HttpMethod.Get)
+        allowMethod(io.ktor.http.HttpMethod.Options)
+        hosts.addAll(listOf("localhost:5173", "127.0.0.1:5173"))
+    }
+
     // 2. JSON
     install(ContentNegotiation) {
         json(Json { prettyPrint = false })

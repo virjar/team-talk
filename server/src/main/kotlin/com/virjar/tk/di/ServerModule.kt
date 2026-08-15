@@ -97,6 +97,23 @@ fun createServerModule(
         }
     }
     single { RpcDispatcher(get()) }
+    single {
+        com.virjar.tk.domain.admin.AdminService(
+            userRepository = get(),
+            userService = get(),
+            deviceRepository = get(),
+            contactRepository = get(),
+            chatRepository = get(),
+            chatService = get(),
+            messageService = get(),
+            messageStore = get(),
+            searchIndex = get(),
+            tokenStore = get(),
+            clientRegistry = get(),
+            logsDir = Environment.logsDir,
+            clientLogsDir = java.io.File(Environment.dataRoot, "client-logs"),
+        )
+    }
 
     // TCP Server
     single { TcpServer() }
