@@ -95,7 +95,7 @@ fun createServerModule(
             register(ChatRpcContract.SERVICE) { uid -> ChatRpcImpl(uid, get()) }
             register(MessageRpcContract.SERVICE) { uid -> MessageRpcImpl(uid, get(), get()) }
             register(ConversationRpcContract.SERVICE) { uid -> ConversationRpcImpl(uid, get()) }
-            register(DeviceRpcContract.SERVICE) { uid -> DeviceRpcImpl(uid, get(), get()) }
+            register(DeviceRpcContract.SERVICE) { uid -> DeviceRpcImpl(uid, get(), get(), get()) }
         }
     }
     single { RpcDispatcher(get()) }

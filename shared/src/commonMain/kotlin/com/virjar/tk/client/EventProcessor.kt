@@ -122,9 +122,14 @@ class EventProcessor(
             }
             // 处理成功才推进游标：失败时不推进，下次重连/上线时服务端按
             // lastEventId 补发会重新拿到该事件，天然重试。
-            // 不会死循环：消息类事件有独立的 seq 兜底（进聊天页按 seq 拉历史），
-            // 且服务端 sync_events 有 7 天 TTL，过期后补发自然跳过。
-            _lastEventId.value = notify.eventId
+            // 不会死循环：消息类事件有独立的 seq 兜底（进聊天页按 seq 拉历史）。
+            //
+            // eventId=0 是非持久事件（PRESENCE 直写 / SUBSCRIBE 历史回放），
+            // 不参与游标——推进它会把游标砸回 0，重连时 lastEventId>0 不成立，
+            // 离线补发被整体跳过（历史 bug：好友上线广播即可触发）。
+            if (notify.eventId > 0) {
+                _lastEventId.value = notify.eventId
+            }
         } catch (e: Exception) {
             // 处理失败：游标不推进，记录错误。下次补发自会重试该事件。
             // 若为永久性错误（如协议不兼容），事件会在 7 天 TTL 后自然过期，

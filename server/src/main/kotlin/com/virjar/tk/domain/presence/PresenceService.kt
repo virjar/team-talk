@@ -15,6 +15,13 @@ class PresenceService(
     private val contactStore: ContactStore,
     private val clientRegistry: ClientRegistry,
 ) {
+    init {
+        // 多设备下线误报修复：仅当该用户最后一台设备离线时广播下线。
+        // （此前 ImAgent.channelInactive 无条件广播——手机断网桌面在线也会告知好友"已下线"）
+        clientRegistry.onLastDeviceOffline = { uid ->
+            kotlinx.coroutines.runBlocking { broadcastOffline(uid) }
+        }
+    }
     private val logger = LoggerFactory.getLogger("PresenceService")
 
     suspend fun broadcastOnline(uid: String) {

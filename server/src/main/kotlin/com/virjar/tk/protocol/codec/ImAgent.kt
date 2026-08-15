@@ -83,11 +83,8 @@ class ImAgent(
 
     override fun channelInactive(ctx: ChannelHandlerContext) {
         if (state == State.AUTHENTICATED && uid.isNotEmpty()) {
+            // 下线广播由 ClientRegistry.onLastDeviceOffline 钩子触发（仅最后一台设备）
             clientRegistry.unregister(this)
-            // 广播下线
-            ioExecutor.launchWithAgent(this) { facade ->
-                presenceService.broadcastOffline(facade.uid)
-            }
         }
         _state.set(State.DISCONNECTED)
         recorder.record { "[CLOSE] uid=$uid" }

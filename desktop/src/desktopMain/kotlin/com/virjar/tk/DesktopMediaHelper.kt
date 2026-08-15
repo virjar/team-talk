@@ -112,9 +112,6 @@ object DesktopMediaHelper {
 
     // ── 上传 ──
 
-    /** 当前会话 accessToken（HTTP 上传鉴权）；由登录流程注入，登出置空。 */
-    @Volatile
-    var accessToken: String? = null
 
 
 
@@ -122,7 +119,7 @@ object DesktopMediaHelper {
      * 上传文件到服务端，返回相对 path（如 "uid/uuid.ext"）。
      * 调用方拼完整 URL：`fileRepo.resolveUrl(path)`
      */
-    private fun fileRepo() = FileRepository(defaultServerConfig().serverUrl, accessToken)
+    private fun fileRepo() = FileRepository(defaultServerConfig().serverUrl, com.virjar.tk.client.SessionContext.accessToken)
 
     fun uploadFile(bytes: ByteArray, fileName: String, contentType: String): String {
         return runBlocking { fileRepo().upload(bytes, fileName, contentType).getOrThrow() }

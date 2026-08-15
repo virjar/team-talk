@@ -111,9 +111,11 @@ class DeviceRpcImpl(
     uid: String,
     private val deviceRepo: com.virjar.tk.domain.device.DeviceRepository,
     private val authService: AuthService,
+    private val clientRegistry: com.virjar.tk.infra.sync.ClientRegistry,
 ) : DeviceRpcStub(uid) {
     override suspend fun listDevices() = deviceRepo.getDevices(uid).map { it.toModel() }
     override suspend fun kickDevice(deviceId: String) {
+        clientRegistry.kickDevice(uid, deviceId)  // 关闭被踢设备的活连接（曾遗漏：只删记录不踢线）
         deviceRepo.kickDevice(uid, deviceId)
         authService.kickDevice(uid, deviceId)
     }

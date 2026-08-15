@@ -95,20 +95,25 @@ fun rememberAuthController(
     LaunchedEffect(connectionState) {
         when (connectionState) {
             ConnectionState.AUTHENTICATED -> {
-                session = createSession(imClient, userSession, createCache, deviceId)
+                // 重连不重建 session：组件（RpcClient/EventProcessor）自治重启监听，
+                // 这里重复 createSession 会泄漏旧 session + 重复打开同一 SQLite。
+                if (session == null) {
+                    session = createSession(imClient, userSession, createCache, deviceId)
+                    onAuthenticated?.invoke(session!!)
+                    isLoggedIn = true
+                    autoLoggingIn = false
+                    // token 持久化从 userSession 读（三级状态：用户层持有 refreshToken）
+                    userSession.refreshToken?.let { tokenStore.save(userSession.uid, it) }
+                }
                 SessionContext.accessToken = userSession.accessToken
-                onAuthenticated?.invoke(session!!)
-                isLoggedIn = true
                 authError = null
-                autoLoggingIn = false
-                // token 持久化从 userSession 读（三级状态：用户层持有 refreshToken）
-                userSession.refreshToken?.let { tokenStore.save(userSession.uid, it) }
             }
             ConnectionState.AUTH_FAILED -> {
                 authError = userSession.authFailureReason ?: "认证失败"
                 autoLoggingIn = false
-                // token 失效必须回到登录页，否则用户卡在未认证状态无法操作（发消息报未认证）
+                // token 失效必须回到登录页；级联关闭会话（uploader/watcher/AppLog 全局引用）
                 isLoggedIn = false
+                session?.close()
                 session = null
                 tokenStore.clear()
                 SessionContext.accessToken = null
