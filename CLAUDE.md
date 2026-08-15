@@ -189,38 +189,50 @@ IM 基本体验：**除非被踢/token 失效，重启 app 直达主界面，不
 
 ---
 
-## 目录结构
+## 目录结构（SDK/UI 严格分层）
+
+> **分层铁律**：`shared(SDK) ← app(UI) ← android/desktop(shell)`，单向依赖。
+> shared 是 IM SDK 完整体（协议+连接+数据层+无头入口），**禁止 import 任何 Compose/UI**；
+> app 是纯 UI，只消费 SDK 公开 API，禁止摸 SDK 内部实现；
+> SDK 层 bug 必须在 SDK 层测试内闭环，不允许漏到 UI 集成时才暴露。
+> 无头客户端（AI bot/CLI）直接依赖 shared 运行，不需要 UI。
 
 ```
 team-talk/
-├── shared/                    # 共享协议层（客户端和服务端共用）
-│   └── src/commonMain/
-│       ├── model/             # 传输模型（User, Chat, Message, Contact...）
-│       └── protocol/          # PacketType + MessageType + NotifyType + RpcMethod + IProto + 编解码
+├── shared/                    # IM SDK（= 完整 SDK，不新增模块）
+│   └── src/
+│       ├── commonMain/
+│       │   ├── model/         # 传输模型（User, Chat, Message, Contact...）
+│       │   ├── body/          # 消息体（TextBody, FileBody...）
+│       │   ├── protocol/      # PacketType + MessageType + NotifyType + NotifyContracts
+│       │   │                  #   + RpcMethod + IProto + ProtoCodec（编解码）
+│       │   ├── client/        # ImClient + RpcClient + EventProcessor + LocalCache
+│       │   │                  #   + ClientSession + UserSession + ServerConfig
+│       │   ├── repository/    # Repository 层（RPC 封装 + 本地缓存写入）
+│       │   ├── bot/           # ImBot 无头客户端（AI bot/CLI 入口）
+│       │   ├── testing/       # FakeLocalCache + FakeRpcInvoker（公开测试工具）
+│       │   └── util/          # AppLog + LogBuffer + HttpUtil
+│       ├── androidMain/       # Android actuals（Platform/AppLog/FileRepository/LocalCache）
+│       ├── jvmMain/           # JVM actuals（同上）
+│       └── commonTest/        # SDK 测试（契约/编解码/Repository，纯 JVM 不编译 UI）
 │
-├── server/                    # 服务端（Ktor + Netty）
+├── server/                    # 服务端（Ktor + Netty，依赖 shared 协议定义）
 │   └── src/main/kotlin/
 │       ├── Application.kt     # Ktor 启动 + Koin 配置
 │       ├── domain/            # 领域层（user/ contact/ chat/ message/ conversation/ auth/）
-│       │   ├── XxxService.kt  # 业务逻辑
-│       │   └── XxxRepository.kt # 数据访问
-│       ├── protocol/          # 协议处理（TcpServer, ImAgent, RpcDispatcher, Recorder 采样日志）
-│       ├── infra/             # 基础设施（db/, cache/, storage/, search/）
+│       ├── protocol/          # 协议处理（TcpServer, ImAgent, RpcDispatcher）
+│       ├── infra/             # 基础设施（db/, sync/(SyncEventService 含契约校验), storage/, search/）
 │       └── di/                # Koin 模块定义
 │
-├── app/                       # 客户端共享基础设施
-│   └── src/
-│       ├── commonMain/
-│       │   ├── client/        # ImClient + RpcClient + EventProcessor + LogUploader + ClientSession
-│       │   ├── util/          # AppLog + LogBuffer
-│       │   ├── repository/    # Repository 层
-│       │   ├── viewmodel/     # ViewModel（StateFlow + 增量更新）
-│       │   └── database/      # SQLDelight 本地数据库
-│       ├── androidMain/
-│       └── desktopMain/
+├── app/                       # 纯 UI 层（Compose）
+│   └── src/commonMain/
+│       ├── ui/                # screens + components（AppTheme）
+│       ├── viewmodel/         # ViewModel（StateFlow + 增量更新）
+│       ├── navigation/        # AppDataState（UI 状态 + 子页面 action）
+│       └── client/            # AuthController（唯一的 Compose 认证包装）
 │
-├── android/                   # Android 应用（屏幕 + 导航）
-├── desktop/                   # Desktop 应用（屏幕 + 导航）
+├── android/                   # Android 应用 shell（屏幕 + 导航）
+├── desktop/                   # Desktop 应用 shell（窗口 + 导航）
 └── doc/                       # 架构文档
 ```
 
@@ -232,14 +244,16 @@ team-talk/
 |------|------|
 | 添加新 RPC 方法 | `shared/.../protocol/RpcMethod.kt`（加枚举）+ 服务端 Handler + 客户端 RpcClient |
 | 添加新消息类型 | `shared/.../protocol/MessageType.kt`（加枚举）+ `shared/.../body/`（加 Body 类）|
-| 添加新通知类型 | `shared/.../protocol/NotifyType.kt`（加枚举）+ 客户端 EventProcessor |
+| 添加新通知类型 | `shared/.../protocol/NotifyType.kt`（加枚举）+ **`NotifyContracts` 登记 payload 契约** + 客户端 EventProcessor + NotifyContractTest 补样例 |
 | 添加新传输模型 | `shared/.../model/`（加 data class 实现 IProto）|
 | 修改服务端业务 | `server/.../domain/` 对应领域的 Service |
 | 修改客户端展示 | `app/.../viewmodel/` + 对应平台 `ui/screen/` |
 | 修改服务端 TCP 日志 | `server/.../protocol/trace/Recorder.kt` + `ImAgent` 中的 `recorder.record` |
-| 修改客户端日志 | `app/.../util/AppLog.kt` + `app/.../client/LogUploader.kt` |
+| 修改客户端日志 | `shared/.../util/AppLog.kt` + `shared/.../client/HttpLogUploader.kt` |
 | 不兼容变更 | 递增 `shared/.../protocol/Frame.kt` 中的 `PROTOCOL_VERSION` |
-| 添加集成测试 | `server/src/test/` |
+| 添加 SDK 集成测试 | `shared/src/commonTest/`（bot 对 bot，`-Dtk.botTest.host=...` 对真实服务器）|
+| 添加服务端 e2e | `server/src/test/`（TestPeer，`-Dtk.e2e.remote=true` 对真实服务器）|
+| 无头 bot 开发 | `shared/.../bot/ImBot.kt`（register/login → messages 流 → sendText）|
 
 ---
 
