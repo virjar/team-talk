@@ -290,7 +290,10 @@ class ImBot private constructor(
             withTimeout(15_000) { authResult.await() }
             imClient.awaitAuthenticated()
 
-            val session = createSession(imClient, userSession, createCache = { FakeLocalCache() }, deviceId)
+            val session = createSession(
+                imClient, userSession, createCache = { FakeLocalCache() }, deviceId,
+                logUploadEnabled = false,  // 无头场景 serverUrl 未知；日志本地 buffer 照常
+            )
             val sender = MessageSender { msg -> imClient.sendAndWaitAck(msg) }
             SessionContext.accessToken = userSession.accessToken
             AppLog.trace("ImBot", "session ready uid=${userSession.uid}")

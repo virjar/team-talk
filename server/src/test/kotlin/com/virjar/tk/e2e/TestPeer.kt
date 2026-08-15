@@ -284,9 +284,16 @@ class TestPeer {
             session.close(); return@runBlocking
         }
         val conversations = ProtoCodec.decodeList(com.virjar.tk.model.Conversation, listPayload)
-        // 找与目标 uid 的私聊（chatType=1）。Conversation 无 members 字段，
-        // 用 chatId 约定（私聊 chatId 含双方 uid）或 chatName 兜底匹配。
-        val conv = conversations.firstOrNull { it.chatType == 1 && it.chatId.contains(targetUid.take(8)) }
+        // 找与目标 uid 的私聊：按成员精确定位（chatId 是 UUID，不含 uid——旧"chatId 含 uid"
+        // 约定从未成立，此处改为 GET_MEMBERS 对比成员集）
+        val conv = conversations.firstOrNull { c ->
+            if (c.chatType != 1) return@firstOrNull false
+            val membersResp = session.invoke("chat", ChatRpcContract.M_GET_MEMBERS,
+                ProtoCodec.encodePayload { writeString(c.chatId) })
+            membersResp.status == 0 && membersResp.payload?.let { pl ->
+                ProtoCodec.decodeList(com.virjar.tk.model.Member, pl).map { it.uid }.toSet() == setOf(targetUid, session.uid)
+            } ?: false
+        }
         if (conv == null) {
             println("===RECV_CHECK FAILED=== 未找到 ${targetUid.take(12)} 的会话")
             session.close(); return@runBlocking

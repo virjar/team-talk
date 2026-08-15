@@ -15,7 +15,8 @@ class ClientSession(
     val localCache: LocalCache,
     val rpcClient: RpcClient,
     val eventProcessor: EventProcessor,
-    val httpLogUploader: HttpLogUploader,
+    /** 日志上传器（无头场景禁用为 null，close 判空）。 */
+    val httpLogUploader: HttpLogUploader?,
     val conversationRepo: ConversationRepository,
     val contactRepo: ContactRepository,
     val messageRepo: MessageRepository,
@@ -24,7 +25,7 @@ class ClientSession(
     val userRepo: UserRepository,
 ) {
     fun close() {
-        httpLogUploader.stop()
+        httpLogUploader?.stop()
         rpcClient.stop()
         eventProcessor.stop()
         eventProcessor.onContactChanged = null
@@ -48,6 +49,7 @@ fun createSession(
     userSession: UserSession,
     createCache: (String) -> LocalCache,
     deviceId: String,
+    logUploadEnabled: Boolean = true,  // 无头场景（serverUrl 未知）传 false 免噪音
 ): ClientSession {
     val cache = createCache(userSession.uid)
     val rpcClient = RpcClient(imClient)
@@ -70,10 +72,12 @@ fun createSession(
     // HTTP 日志上传器 + crash 持久化
     val serverUrl = defaultServerConfig().serverUrl
     val dataDir = platformDataDir()
-    val crashDumper = CrashDumper(dataDir)
-    val httpLogUploader = HttpLogUploader(traceBuffer, faultBuffer, serverUrl, deviceId, crashDumper)
-    httpLogUploader.start()
-    AppLog.onFault = { httpLogUploader.trigger() }
+    val uploader: HttpLogUploader? = if (logUploadEnabled) {
+        HttpLogUploader(traceBuffer, faultBuffer, serverUrl, deviceId, CrashDumper(dataDir)).also {
+            it.start()
+            AppLog.onFault = { it.trigger() }
+        }
+    } else null
 
     return ClientSession(
         imClient = imClient,
@@ -81,7 +85,7 @@ fun createSession(
         localCache = cache,
         rpcClient = rpcClient,
         eventProcessor = ep,
-        httpLogUploader = httpLogUploader,
+        httpLogUploader = uploader,
         conversationRepo = conversationRepo,
         contactRepo = ContactRepository(rpcClient, cache),
         messageRepo = MessageRepository(rpcClient, cache, messageSender),

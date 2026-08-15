@@ -77,6 +77,34 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
     dependsOn("kspCommonMainKotlinMetadata")
 }
 
+// ── ImBot CLI 分发包（headless）──
+// application 插件与 android library 冲突，此处手写等价 installDist：
+// jvmJar 带 Main-Class + runtimeClasspath 全量 lib + bin 启动脚本。
+val jvmJar by tasks.existing(org.gradle.jvm.tasks.Jar::class) {
+    manifest { attributes["Main-Class"] = "com.virjar.tk.bot.HeadlessMainKt" }
+}
+tasks.register<Copy>("headlessDist") {
+    group = "distribution"
+    description = "ImBot 无头 CLI 分发（build/headless/）"
+    into(layout.buildDirectory.dir("headless"))
+    into("lib") {
+        from(jvmJar)
+        from(configurations.getByName("jvmRuntimeClasspath"))
+    }
+    doLast {
+        val bin = layout.buildDirectory.dir("headless/bin").get().asFile
+        bin.mkdirs()
+        File(bin, "headless").apply {
+            writeText(
+                "#!/usr/bin/env bash\n" +
+                "cd \"\$(dirname \"\$0\")/..\"\n" +
+                "exec java -cp \"lib/*\" com.virjar.tk.bot.HeadlessMainKt \"\$@\"\n"
+            )
+            setExecutable(true)
+        }
+    }
+}
+
 tasks.configureEach {
     if (name == "jvmRun") enabled = false
 }

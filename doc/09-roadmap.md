@@ -4,19 +4,11 @@
 
 ---
 
-## P0 — 正确性收尾
-
-| 项 | 说明 | 状态 |
-|----|------|------|
-| 好友红点初始加载时序 | ContactViewModel.init 即调 refreshPendingApplyCount，可能在认证完成前执行被 send 门禁拦截返回空。修法：延迟到 AUTHENTICATED 后刷新（`app/.../viewmodel/ContactViewModel.kt:35`） | 📋 |
-| 客户端 DB schema 迁移 | SQLDelight `.sq` 加列 = 清库重建（开发期可接受）；正式版需 migration 文件 | 📋 |
-| 上传接口鉴权 | `/api/v1/files/upload` 的 `X-Uid` 可伪造（`FileRoutes.kt:37` TODO）——HTTP 通道与 TCP 认证态打通（短期 token/签名 URL） | 📋 |
-
 ## P1 — 无头 IM 与 AI 接入（战略方向）
 
 | 项 | 说明 | 状态 |
 |----|------|------|
-| CLI 可执行入口 | `headless` main：环境变量/配置文件账号 → 消息桥 stdout/stdin/管道；`installDist` 产物常驻服务器。重连自愈已具备（B10-B12 修复），本项是纯入口工程 | 📋 |
+| ~~CLI 可执行入口~~ | ✅ 已完成（2026-08）：`headlessDist` 产物（register/login/selftest 三模式 + stdin/stdout 行协议），见里程碑 | ✅ |
 | AI 员工对话框架 | ImBot 之上：消息→LLM→回复循环抽象（限速/会话白名单/人格配置/多 bot 编排）。AI 员工经 IM 与人和其他 AI 跨域协作 | 💡 |
 | Webhook/HTTP 桥 | bot 收发消息映射 HTTP 回调（接外部系统） | 💡 |
 | 群机器人管理 | bot 入群/踢出/权限 API 化 | 💡 |
@@ -49,6 +41,7 @@
 
 ## 已完成里程碑（倒序）
 
+- **P0/P1 收尾**（2026-08）：上传接口 Bearer accessToken 鉴权（X-Uid 伪造通道封死）+ 本地库 schema 迁移（.sqm + v1 遗库识别坑修复）+ CLI 入口（headlessDist：register/login/selftest + MSG 行协议，端到端实跑验证）。好友红点时序项核实后关闭（问题不成立，真相是当年 SQL 直插无事件推送）
 - **SDK 完整性收官**（2026-08）：重连三 bug 根治（B10 重放注册掉线 / B11 监听断链假活 / B12 补发游标快照）+ Presence 收敛 shared（契约登记）+ 事件流全家桶（contact/chat/presence）+ ImBot API 全量化（媒体/typing/撤回/群组/搜索）+ 测试体系（LocalCache/EventProcessor 单测 14 用例、bot 集成 9 用例、server 测试真实 PG 化去 embedded）
 - **RPC IDL 化**（2026-08）：Kotlin interface = IDL + KSP2 生成 Contract/Stub/Proxy（精简版 gRPC）；serviceId 字符串化（协议 v2 一刀切）；手写 encodePayload/withPayload 根除（A3 坑根治）；uid 收敛 Stub 成员。演进方向：domain Service 直接实现 RpcStub 删薄壳层
 - **文档体系深度重写**（2026-08）：wire 级协议规格 / 踩坑经验 40+ 条 / 设计理念 10 条，达到"凭文档可重写项目"标准
