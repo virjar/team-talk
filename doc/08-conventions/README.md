@@ -82,7 +82,7 @@ ProtoCodec.withPayload(payload) {
 
 ### 为什么
 
-5 次状态覆盖类 bug 的根因都是"整体替换"而非"字段级合并"。详见 [03-client/README.md 第六章](../03-client/README.md#6-状态合并策略)。
+5 次状态覆盖类 bug 的根因都是"整体替换"而非"字段级合并"。详见 [03-sdk/local-cache.md 合并策略](../03-sdk/local-cache.md#4-conversation-合并策略多设备同步的客户端半边)。
 
 ---
 

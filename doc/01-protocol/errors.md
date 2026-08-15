@@ -24,4 +24,4 @@
 
 **认证失效停而非重试**：401/AuthExpired 不在 Repository 层重试，向上传播触发 `ClientSession.close()` → 回到登录页。不在 token 过期时自动重试业务请求——避免无限重试循环。
 
-**相关代码**：`app/.../AppError.kt`、`shared/.../client/RpcClient.kt`
+**相关代码**：`shared/.../Outcome.kt`（AppError 定义）、`shared/.../client/RpcClient.kt`

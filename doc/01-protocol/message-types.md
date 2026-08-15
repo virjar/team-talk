@@ -148,4 +148,4 @@ object MessageBodyRegistry {
 
 此前用 200×200 正方形盒子，对竖图不友好。参考 Signal 后改为长方形盒子。
 
-**相关代码**：`shared/.../model/Message.kt`（flags 定义 + wire format）、`shared/.../body/MessageBodyRegistry.kt`（注册表）、`shared/.../body/*Body.kt`（各 Body 类）、`app/.../ui/component/MessageBodyRenderer.kt`（渲染）、`app/.../ui/screen/ChatScreen.kt`（长按菜单）
+**相关代码**：`shared/.../model/Message.kt`（flags 定义 + wire format）、`shared/.../body/MessageBodyRegistry.kt`（注册表）、`shared/.../body/*Body.kt`（各 Body 类）、`app/src/commonMain/.../ui/component/MessageBodyRenderer.kt`（渲染）、`app/src/commonMain/.../ui/screen/ChatScreen.kt`（长按菜单）

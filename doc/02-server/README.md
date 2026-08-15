@@ -1,225 +1,170 @@
 # 服务端架构
 
-> TeamTalk 服务端是单进程应用（Ktor HTTP + Netty TCP），面向万级用户。
-> 本文记录架构决策：为什么 DDD、为什么 Koin、为什么采样日志不用 SLF4J。
-
-## 目录
-
-- [1. 为什么单体架构](#1-为什么单体架构)
-- [2. 领域驱动设计（DDD）](#2-领域驱动设计ddd)
-- [3. 依赖注入：为什么 Koin 不用 Hilt/Guice](#3-依赖注入为什么-koin-不用-hiltguice)
-- [4. 协议层：连接状态机与线程模型](#4-协议层连接状态机与线程模型)
-- [5. 采样日志体系：为什么不用 SLF4J](#5-采样日志体系为什么不用-slf4j)
-- [6. 事件同步机制](#6-事件同步机制)
-- [7. 存储架构概览](#7-存储架构概览)
-- [8. 启动流程](#8-启动流程)
+> 单体服务（Ktor HTTP + Netty TCP），DDD 分层：RouteHandler（协议适配）→ Service（业务）→ Store（内存缓存）→ Repository（DB）。
+> 深入：[database.md](database.md) · [threading.md](threading.md) · [file-storage.md](file-storage.md) · [fulltext-search.md](fulltext-search.md)
 
 ---
 
-## 1. 为什么单体架构
-
-### 决策理由
-
-1. **万级用户不需要分布式**：Netty 单线程 EventLoop 可处理 10 万+ 连接，单体在 1 万并发下完全够用。
-2. **运维简单**：一个 jar + 一个 PostgreSQL + 一个 RocksDB + 一个 Lucene 索引。部署 = 复制文件 + 启动。不需要 K8s/Docker Swarm。
-3. **开发效率**：跨 domain 调用是函数调用，不需要 RPC 序列化。调试时单进程断点即可。
-
-### 与业界对比
-
-大型 IM（Telegram/微信）用微服务拆分（接入层/逻辑层/存储层）。但它们的用户量是亿级，微服务的拆分成本（服务发现、分布式事务、链路追踪）在万级用户下远超收益。**单体是规模匹配的选择，不是能力限制。**
-
-### 代价
-
-- 单点故障：进程挂了全部不可用。但 IM 不是金融系统，短暂宕机可接受。
-- 扩展上限：超过 10 万用户时需要重构。
-
----
-
-## 2. 领域驱动设计（DDD）
-
-### 模块划分
+## 1. 启动序列（Application.kt）
 
 ```
-server/src/main/kotlin/com/virjar/tk/domain/
-├── user/           # 用户：注册/登录/搜索/资料
-├── auth/           # 认证：token 管理/设备认证
-├── contact/        # 联系人：好友申请/接受/删除
-├── chat/           # 聊天：创建群/群公告/成员管理
-├── message/        # 消息：发送/撤回/编辑/搜索
-├── conversation/   # 会话：未读数/置顶/草稿
-├── device/         # 设备：多设备管理
-├── presence/       # 在线状态：上线/下线/多端同步
-└── health/         # 健康检查
+main()
+ 1. Environment 解析 + 设 LOG_DIR（必须在 logback 初始化前）
+ 2. 注入 Slf4jTkLogger（shared 模块日志 → SLF4J）
+ 3. Ktor Netty 启动（HTTP :8080 / 可选 HTTPS :443 + PKCS12）
+ 4. Application.module()：
+    ① Koin 安装（serverModule 全部单例）
+    ② DatabaseFactory（PostgreSQL/HikariCP/Exposed + createMissingTablesAndColumns 自动建表加列）
+    ③ MessageStore.init()（RocksDB）/ FileStore.init() / ClientLogStore
+    ④ SearchIndex.start()（Lucene + IK）
+    ⑤ TcpServer.start（:5100）→ 每连接 new ImAgent（非单例，10 依赖手工注入）
+    ⑥ HealthChecker / HTTP routes
+ 5. ApplicationStopping → clientRegistry.stop → searchIndex.stop → tcpServer.stop → messageStore.close
 ```
 
-### 每个领域的三层结构
+## 2. TCP 连接处理管线
 
 ```
-domain/user/
-├── UserService.kt       # 业务逻辑：编排 Repository + 业务规则
-├── UserRepository.kt    # 数据访问：SQL 查询（Exposed）
-└── UserStore.kt         # 热缓存（可选）：内存缓存高频数据
+TcpServer（boss + NioEventLoopGroup workers）
+ └─ pipeline: IdleStateHandler(45s读超时) → HandshakeHandler → PacketCodec → ImAgent
 ```
 
-**为什么分三层而非两层（Service + Repository）**：
-- `Store` 是可选的热缓存层（ConcurrentHashMap），针对高频读取数据（在线用户列表、群成员）。
-- 不是每个领域都有 Store——只有访问频率高、变更频率低的数据才值得缓存。
-- Store 不持久化，进程重启后从 Repository 重建。
+**ImAgent**（每连接一个，连接生命周期）：
+- 状态：CONNECTED → AUTHENTICATED → DISCONNECTED（AtomicReference）
+- 路由：PING/DISCONNECT/UNSUBSCRIBE 在 **EventLoop 内联**处理；AUTH/INVOKE/MESSAGE/SUBSCRIBE 切 **IOExecutor 线程池**（`max(4, cores)` 守护线程）
+- 认证成功：注册 ClientRegistry → 上线广播 → **若 lastEventId>0 补发离线事件** → 回 AuthResponse
+- 断开：注销 → 异步下线广播
+- ImAgentFacade（WeakReference 包装）防 Netty channel/direct buffer 被 GC 根泄漏
 
-### 为什么用 DDD 而非 MVC 分层
+**错误三层**（ImAgent + RpcDispatcher 共用）：
+| 异常 | 处理 | 理由 |
+|------|------|------|
+| IllegalArgumentException | ACK/RESPONSE code=400 + message | 业务拒绝（用户可见） |
+| IndexOutOfBoundsException | **断连**（FatalCodec） | 编解码越位 = 协议漂移，连接已不可信 |
+| 其他 Exception | code=500 + ERROR 日志 | 内部错误，连接保持 |
 
-- MVC 的 Controller/Service/DAO 是技术分层（按调用方向），DDD 是业务分层（按领域边界）。
-- DDD 让新增业务领域时（如未来加"频道"功能），只需新建 `domain/channel/` 目录，不触碰其他领域。
-- 每个 domain 是一个内聚单元：修改用户逻辑不会意外影响消息逻辑。
+## 3. 领域服务速览（规则 + 事件）
 
----
+### AuthService（认证）
+- TCP 握手包处理：版本检查（≠1 → version_unsupported）→ authType 0/1/2
+- token 对一次性轮换：refreshAccessToken = 删旧 + 发新对；**logout 只删不发**（曾经误用 refreshAccessToken 导致登出反而签发新凭证——已修）
+- Token TTL：access 30 天 / refresh 90 天
 
-## 3. 依赖注入：为什么 Koin 不用 Hilt/Guice
+### UserService
+- 注册：username/phone 唯一性预检 → uid = 8 位 base62 短码（SecureRandom，20 次重试防碰撞，兜底 UUID）→ BCrypt
+- 登录：未知用户与错误密码**同文案**（防枚举）
+- updateProfile → USER_UPDATED → 自己
 
-### 选型
+### ContactService
+- apply：非自己、非好友；CONTACT_APPLY(ContactApply) → 对方
+- accept：CONTACT_ACCEPTED(**各自视角 Contact**) → 双方
+- deleteFriend：CONTACT_DELETED（各自视角）→ 双方
 
-| 方案 | 否决理由 |
-|------|---------|
-| Hilt/Dagger | 需要注解处理器（KAPT/KSP），增加编译时间；Android 生态绑定，服务端不自然 |
-| Guice | 运行时反射，启动慢；重量级（Guice core ~1MB） |
-| Spring DI | 引入整个 Spring 生态，违背极简原则 |
-| **Koin** | ✅ 纯 Kotlin DSL，零反射，零注解处理器，轻量（~200KB） |
+### ChatService（群组生命周期）
+- 全部入口在创建 chat 后 **ensureConversations 预创建会话行**（否则 markRead 无行可写 → readSeq 丢失 → 换设备全未读——已修的历史断裂）
+- 权限矩阵见 [rpc-methods §6](../01-protocol/rpc-methods.md#6-chat群组生命周期)
+- 踢人：群主不可退/被踢；仅群主可踢管理员
 
-### Koin 配置
+### MessageService
+- sendMessage：clientMsgId 幂等 → `chatStore.incrementMaxSeq`（内存原子 + 异步落库）→ RocksDB → Lucene → MESSAGE_RECV **全体成员含发送者** → CONVERSATION_UPDATED 逐成员
+- revoke：发送者或管理员（flags|=1）；edit：仅发送者（flags|=2）；forward：双会话成员（新消息 flags|=4）
 
-```kotlin
-val serverModule = module {
-    single { UserService(get(), get()) }           // 构造器注入
-    single { ChatService(get(), get(), get()) }
-    single { FileStore(get(), get()) }
-    single { RpcDispatcher(get(), get(), ...) }    // 8 个 RouteHandler 注入
-}
+### ConversationService
+- unreadCount = lastSeq − readSeq **服务端权威计算**下发
+- markRead 级联：自己 readSeq（只增不减）→ CONVERSATION_UPDATED 自己 → 其他成员 peerReadSeq（取 max）+ READ_SYNC
+- ensureConversations：建群/加人/邀请时为成员 INSERT OR IGNORE 会话行
+
+### PresenceService
+- 上下线广播给好友；**直写 agent 不经 SyncEventService**（不持久化，PRESENCE 契约豁免）
+
+## 4. 事件发射矩阵（谁发什么给谁）
+
+| 发射方 | NotifyType | payload | 接收者 |
+|--------|-----------|---------|--------|
+| UserService.updateProfile | USER_UPDATED | User | 自己 |
+| ContactService.apply | CONTACT_APPLY | ContactApply | 申请接收者 |
+| ContactService.accept | CONTACT_ACCEPTED | Contact（各自视角） | 双方 |
+| ContactService.deleteFriend | CONTACT_DELETED | Contact（各自视角） | 双方 |
+| ChatService.createPersonalChat/createGroup | CHAT_CREATED | Chat | 相关成员 |
+| ChatService.addMembers | CHAT_CREATED + MEMBER_ADDED | Chat | 新成员 / 全员 |
+| ChatService.joinByInvite | CHAT_CREATED | Chat | 全员 |
+| ChatService.updateGroup / muteAll | CHAT_UPDATED | Chat | 全员 |
+| ChatService.deleteChat | CHAT_DELETED | Chat | 全员（删除前快照） |
+| ChatService.removeMember | MEMBER_REMOVED | Chat | 全员+被移除者 |
+| ChatService.transferOwner/setRole | MEMBER_ROLE_CHANGED | Chat | 全员 |
+| ChatService.muteMember/unmute | MEMBER_MUTED/UNMUTED | Chat | 全员 |
+| MessageService.send/revoke/edit/forward | MESSAGE_RECV | Message（含 flags 变更） | 目标会话全体成员（**含发送者**） |
+| ImAgent.handleTyping | TYPING | Message（chatId+senderUid） | 成员−发送者 |
+| ConversationService.onMessageReceived | CONVERSATION_UPDATED | Conversation | 逐成员 |
+| ConversationService.setDraft/Pin/Mute/markRead | CONVERSATION_UPDATED | Conversation | 自己 |
+| ConversationService.deleteConversation | CONVERSATION_DELETED | Conversation（哨兵） | 自己 |
+| ConversationService.markRead | READ_SYNC | ReadSyncPayload | 其他成员 |
+| PresenceService（直写） | PRESENCE | PresencePayload | 好友（不持久化） |
+| ImAgent.handleSubscribe（直写 eventId=0） | MESSAGE_RECV | Message | 仅请求连接（历史回放） |
+
+## 5. 事件同步（SyncEventService + sync_events 表）
+
+```
+emitEvent(uid, type, payload):
+  ① assertContract(type, payload)          // 契约校验，错配当场抛
+  ② INSERT sync_events(uid, event_type, payload_bytes) → eventId
+  ③ pushToUser: ClientRegistry.getAgents(uid) 逐个 agent.write(NotifyPayload)
+离线补发（认证时 lastEventId>0）:
+  SELECT ... WHERE uid=? AND id > lastEventId ORDER BY id LIMIT 100 → 逐条推送
 ```
 
-**为什么 Koin 适合这个项目**：
-- 纯 Kotlin，与全栈 Kotlin 理念一致
-- 零编译时开销（无 KAPT/KSP）
-- DSL 声明式配置，直观可读
-- 服务端是单进程，不需要分布式 DI 特性
+- at-least-once：客户端**处理成功才推进游标**，失败事件下次补发重试
+- 防死循环：消息类有 seq 兜底（按 seq 拉历史）；事件 7 天 TTL
+- ClientRegistry：`uid → (deviceId → ImAgent)`，单线程 Looper 串行化；同设备重复登录旧连接延迟 30s 踢出
 
----
+## 6. 存储分工
 
-## 4. 协议层：连接状态机与线程模型
-
-### 状态机
-
-```
-CONNECTED → AUTHENTICATED → DISCONNECTED
-```
-
-只有 3 个状态。详见 [01-protocol/README.md §4](../01-protocol/README.md#4-包类型与连接状态机)。
-
-### 线程模型：EventLoop vs IOExecutor
-
-```
-EventLoop (Netty NioEventLoop)
-  ├── PING/PONG 处理（纳秒级）
-  ├── 数据提取 + 协程启动
-  └── 非阻塞操作
-
-IOExecutor (协程调度器)
-  ├── AUTH 认证（DB 查询）
-  ├── INVOKE 业务处理（DB + RocksDB）
-  └── MESSAGE 消息处理（存储 + 推送）
-```
-
-**为什么必须分线程**：Netty 的契约是"永远不要阻塞 EventLoop"。EventLoop 被 N 个连接共享，一个 DB 写阻塞 EventLoop 就会卡住所有连接。
-
-**ImAgentFacade（WeakReference 门面）**：协程通过 WeakReference 访问 ImAgent。连接断开后 ImAgent 可被 GC 回收，协程恢复时检测到 null 抛 `AgentDisposedException` 静默吞掉。解决"异步工作比连接活得更久"的问题，不需要显式取消管道。
-
-详细线程模型文档见 [threading.md](threading.md)。
-
----
-
-## 5. 采样日志体系：为什么不用 SLF4J
-
-### 问题背景
-
-TCP 层有三个特殊挑战，传统 SLF4J 无法应对：
-
-1. **Netty 线程上下文丢失**：Netty EventLoop 为多个连接服务，传统基于线程变量的日志上下文（MDC）失去意义。一个 EventLoop 片段推动某个业务流程的一小步，频繁切换线程。
-2. **海量流量**：一个线程可能处理上百万连接，完整打印日志数量巨大。但随机采样会丢失完整上下文——某个流程没有完整 trace。
-3. **日志写入阻塞**：EventLoop 处理大量连接时，即使写日志的时间也会被放大为百万级影响。
-
-### 解决方案：Recorder + SamplingManager
-
-**Recorder**：每个 TCP 连接绑定一个 Recorder（通过 Netty Channel AttributeKey）。
-
-- **认证前**：缓存最近 30 条日志（内存），不写文件。如果连接在认证前断开，这些日志用于排查握手/认证问题。
-- **认证后**：升级到采样 Writer（`RealWriter`）。被采样的连接获得完整 trace；未被采样的连接用 `NopWriter`（零开销）。
-
-**SamplingManager**：全局采样控制。
-
-- 最多 100 个同时采样的连接（`MAX_SAMPLE = 100`）。
-- 专用 trace Looper 线程写日志，不阻塞 EventLoop。
-- 懒加载 `record(Supplier<String>)` + `enable()` 短路：未采样时日志消息不拼接、不产生字符串碎片。
-
-**为什么不用 SLF4J**：
-- SLF4J 的 MDC 基于线程变量，Netty 多连接共享 EventLoop 时 MDC 串台。
-- SLF4J 没有"按用户采样"的天然能力——需要大量自定义。
-- SLF4J 写日志在调用线程同步执行，可能阻塞 EventLoop。
-- Recorder 的懒加载 Supplier 在未采样时零开销（不拼接字符串），SLF4J 即使 `isDebugEnabled` 为 false 也会评估参数。
-
----
-
-## 6. 事件同步机制
-
-### 服务端事件发射
-
-数据变更时通过 `SyncEventService` 发射事件：
-
-1. 写入 `sync_events` 表（持久化，7 天过期）
-2. 通过 TCP NOTIFY 实时推送给在线客户端
-3. 离线客户端下次上线时补发
-
-### 事件快照原则
-
-NOTIFY 推送**完整当前快照**而非增量变更。客户端直接 upsert，天然幂等。
-
-### 双层同步
-
-| 层 | 序列号 | 覆盖 | 补发方式 |
-|----|--------|------|---------|
-| 事件层 | 全局 `eventId` | 所有事件 | AUTH 时 `lastEventId` 补发 |
-| 消息层 | per-chat `serverSeq` | 消息历史 | `SUBSCRIBE(lastSeq)` 按会话补拉 |
-
-详见 [01-protocol/README.md §7](../01-protocol/README.md#7-事件推送notify与离线补发)。
-
----
-
-## 7. 存储架构概览
-
-| 存储 | 用途 | 设计文档 |
+| 数据 | 存储 | key/布局 |
 |------|------|---------|
-| PostgreSQL | 关系数据（用户/群组/好友/会话/设备） | 本文档 |
-| RocksDB (MessageStore) | 消息存储（chatId+seq key） | [file-storage.md](file-storage.md) |
-| RocksDB (FileStore) | 文件存储（BlobDB + 文件系统三层） | [file-storage.md](file-storage.md) |
-| Lucene | 全文搜索（IK 中文分词） | [fulltext-search.md](fulltext-search.md) |
+| 用户/关系/群/会话/申请/邀请/事件 | PostgreSQL | [database.md](database.md) |
+| 消息体 | RocksDB | `[chatId utf8][seq 8B大端]` → Message 编码；`[0x01][clientMsgId]` → chatId+seq（幂等索引） |
+| token | RocksDB CF `tokens` | access=原串；refresh=`"refresh:"+token`；value=5 字段 `\0` 分隔 |
+| 文件 | 分层存储 | >32MB → 文件系统（2 级分片）；≤32MB → RocksDB（LZ4+ZSTD） |
+| 全文索引 | Lucene FSDirectory | IK 分词；clientMsgId 为更新 Term |
 
-文件存储的完整设计决策（为什么不用 MinIO、三层架构、RocksDB 调优）见 [file-storage.md](file-storage.md)。
+## 7. HTTP API
 
----
+| 路由 | 方法 | 说明 |
+|------|------|------|
+| `/health` | GET | 组件健康（PG/RocksDB/Lucene/FileStore/TCP:5100），全 UP 才 200 |
+| `/api/v1/files/upload` | POST multipart | `X-Uid` 头（暂匿名 TODO 鉴权）；返回 `{path, url}` |
+| `/api/v1/files/{path...}` | GET | 元数据定位 → FS respondFile / RocksDB 流式 |
+| `/api/client-logs` | POST | gzip 日志 ingestion，按 uid/deviceId/日期落盘，7 天保留 |
+| `/` · `/downloads/{f}` | GET | 静态主页 / 客户端安装包 |
 
-## 8. 启动流程
+## 8. DI 图（Koin 单例，serverModule.kt）
 
-```kotlin
-fun main() {
-    // 0. Environment 先于 logback（LOG_DIR 依赖 Environment）
-    System.setProperty("LOG_DIR", Environment.logsDir.absolutePath)
-
-    // 0.5 注入 TkLogger（shared 模块日志通过 SLF4J 输出）
-    TkLoggerFactory.install { name -> Slf4jTkLogger(LoggerFactory.getLogger(name)) }
-
-    // 1. 启动 Ktor（HTTP + TCP）
-    startServer()
-}
 ```
+TokenStore(path)   ClientRegistry   MessageStore(path)   FileStore(db,fs)
+SearchIndex(dir)   ClientLogStore
+UserRepository   ContactRepository(UserRepo)   ChatRepository
+ChatMemberRepository   InviteLinkRepository
+ConversationRepository(ChatRepo, MemberRepo, UserRepo)   DeviceRepository
+UserStore(UserRepo)   ContactStore(ContactRepo)
+ChatStore(ChatRepo, MemberRepo, InviteRepo)
+UserService(UserStore, Sync)   AuthService(UserService, TokenStore)
+ContactService(ContactStore, Sync)   SyncEventService(ClientRegistry)
+ChatService(ChatStore, UserStore, Sync, ConversationService)
+ConversationService(ConvRepo, ChatRepo, Sync)
+MessageService(MessageStore, ChatStore, Sync, ConversationService, SearchIndex)
+PresenceService(ContactStore, ClientRegistry)   HealthChecker
+8×RouteHandler → RpcDispatcher    TcpServer
+```
+（ImAgent 非单例，每连接工厂构造）
 
-**关键约束**：Environment 必须先于 logback 初始化（logback 的 LOG_DIR 依赖 Environment 设置的系统属性）。Environment 内部用 `System.err.println` 而非 SLF4J，避免循环依赖。
+## 9. 数据目录
 
-**相关代码**：`server/.../Application.kt`、`server/.../env/Environment.kt`、`server/.../di/ServerModule.kt`
+```
+$dataRoot/            # -Dteamtalk.data.root 或 <install>/data
+├── rocksdb/          # 消息
+├── tokenstore/       # token
+├── lucene-index/
+├── file-store/{rocksdb, files, tmp}
+├── client-logs/{uid}/{deviceId}/{date}.log
+└── logs/
+```

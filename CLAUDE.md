@@ -152,7 +152,7 @@ IM 基本体验：**除非被踢/token 失效，重启 app 直达主界面，不
 - **重集成测试，轻单元测试**：每个 RPC 方法都有集成测试覆盖
 - 单元测试仅用于不依赖基础设施的纯计算逻辑
 - **不要为测试写代码**：只被单元测试使用的生产代码应该删除
-- **E2E 测试文档**：[doc/06-testing/](doc/06-testing/)（Android + Desktop）
+- **E2E 测试文档**：[doc/07-testing/](doc/07-testing/)（Android + Desktop）
 
 ### 依赖注入
 

@@ -1,55 +1,84 @@
 # TeamTalk 文档
 
-> TeamTalk — 面向中小组织的全栈 Kotlin IM 系统（Android + Desktop + Server）。
+> 面向中小组织的全栈 Kotlin IM：Android + Desktop + Server + **IM SDK + 无头 bot**。
+> 文档目标：**据此可完全重写项目达到当前状态**——架构、wire 级协议规格、边界约束、踩坑经验全部结构化沉淀。
 
-## 文档索引
+---
 
-### 模块文档（多级目录，详细设计）
+## 阅读路径
 
-| 文档 | 内容 | 适合谁读 |
-|------|------|---------|
-| [**01-protocol/**](01-protocol/) | 协议设计：帧格式、RPC、NOTIFY、心跳、编解码、认证、错误码、消息类型 | 理解通信机制 |
-| ├ [README.md](01-protocol/README.md) | 协议总览（为什么不用Protobuf / 帧格式 / 包类型 / RPC / 心跳 / ProtoCodec） | |
-| ├ [authentication.md](01-protocol/authentication.md) | 认证体系（Token方案 / AUTH流程 / 三级状态） | |
-| ├ [errors.md](01-protocol/errors.md) | RPC 错误码体系（400/401/500/504 + AppError映射） | |
-| └ [message-types.md](01-protocol/message-types.md) | 消息类型与消息体（15种类型 / MessageBody多态 / flags位标记 / 渲染策略） | |
-| [**02-server/**](02-server/) | 服务端架构：领域层、协议层、存储、搜索、事件同步 | 后端开发 |
-| ├ [README.md](02-server/README.md) | 服务端总览（DDD领域层 / 协议层状态机 / 基础设施 / 启动流程） | |
-| ├ [threading.md](02-server/threading.md) | 线程模型（EventLoop/IOExecutor / ImAgentFacade GC安全 / 采样日志） | |
-| ├ [file-storage.md](02-server/file-storage.md) | 文件存储与传输（双层存储 / HTTP接口 / 拖拽文件 / 本地缓存优先） | |
-| └ [fulltext-search.md](02-server/fulltext-search.md) | 全文搜索（Lucene + IK中文分词 / 索引设计 / 搜索范围） | |
-| [**03-client/**](03-client/) | 客户端架构：本地优先、连接管理、状态合并、导航、草稿未读 | 前端/跨平台 |
-| ├ [README.md](03-client/README.md) | 客户端总览（本地优先 / ImClient / LocalCache / 状态合并 / 导航 / 消息渲染） | |
-| ├ [module-structure.md](03-client/module-structure.md) | 完整文件树（commonMain/Android/Desktop 各目录文件清单） | |
-| └ [draft-and-unread.md](03-client/draft-and-unread.md) | 草稿与未读管理（草稿持久化 / 未读计数合并 / 多设备同步 / Badge显示） | |
-| [**04-shared/**](04-shared/) | 共享 SDK：数据模型、协议枚举、ImClient、日志抽象 | 所有开发者 |
-| └ [README.md](04-shared/README.md) | 共享模块（数据模型 / 消息体 / 协议枚举 / ImClient / TkLogger注入） | |
-| [**05-logging/**](05-logging/) | 日志体系：trace/fault/snapshot 分级、HTTP 上传、Crash 持久化 | 排查问题 |
-| └ [README.md](05-logging/README.md) | 日志全貌（分级策略 / LocalLogFile / HttpLogUploader / CrashDumper / 移除logback） | |
-| [**06-testing/**](06-testing/) | E2E 测试：AI 驱动方法、TestHttpServer、testTag 参考 | QA / 测试 |
-| ├ [README.md](06-testing/README.md) | 测试理念 + TestHttpServer + TestPeer + 6条约束 | |
-| ├ [test-tags.md](06-testing/test-tags.md) | testTag 完整参考表（按页面分组） | |
-| ├ [test-cases.md](06-testing/test-cases.md) | T01-T34 测试用例清单 + 结果 | |
-| └ [ai-workflow.md](06-testing/ai-workflow.md) | AI驱动工作流（Desktop/Android/TestPeer 操作方法） | |
-| [**07-conventions/**](07-conventions/) | 编码规范：println 禁令、RPC 配对、状态管理 | 所有贡献者 |
-| └ [README.md](07-conventions/README.md) | 6大约束（println / RPC / 状态合并 / Compose状态 / 共享边界 / 文件大小） | |
+| 你是谁 | 路径 |
+|--------|------|
+| 新成员 | [架构总览](00-overview/architecture.md) → [设计理念](00-overview/design-philosophy.md) → **[踩坑经验](05-lessons/README.md)** → [开发上手](00-overview/getting-started/develop.md) |
+| 改协议 | [wire-format](01-protocol/wire-format.md) → [rpc-methods](01-protocol/rpc-methods.md) → [notify-contracts](01-protocol/notify-contracts.md) |
+| 改服务端 | [server README](02-server/README.md) → [database](02-server/database.md) → [threading](02-server/threading.md) |
+| 改 SDK | [sdk README](03-sdk/README.md) → [imclient](03-sdk/imclient.md) → [local-cache](03-sdk/local-cache.md) |
+| 写 bot / AI 接入 | [imbot](03-sdk/imbot.md) → [roadmap P1](09-roadmap.md) |
+| 排查线上问题 | [日志体系](06-logging/README.md) → [测试与 E2E](07-testing/README.md) |
+| 构建/部署 | [build-system](00-overview/build-system.md) → [deploy](00-overview/getting-started/deploy.md) |
 
-### 总览文档
+## 目录
 
-| 文档 | 内容 | 适合谁读 |
-|------|------|---------|
-| [**00-overview/**](00-overview/) | 总览性文档 | 所有人 |
-| ├ [architecture.md](00-overview/architecture.md) | 架构总览（原则总表 + 系统图 + 模块索引） | 新人入门 |
-| ├ [build-system.md](00-overview/build-system.md) | 构建系统与 Profile 体系（JSON Profile + 私有化部署 + CI/CD） | 运维/构建 |
-| ├ [architecture-comparison.md](00-overview/architecture-comparison.md) | 与 Signal/Telegram/WuKongIM/OpenIM 横向对比 | 架构决策 |
-| ├ [ROADMAP.md](00-overview/ROADMAP.md) | 功能路线图与完成状态 | 所有人 |
-| ├ [getting-started/develop.md](00-overview/getting-started/develop.md) | 开发环境搭建 | 新人入门 |
-| └ [getting-started/deploy.md](00-overview/getting-started/deploy.md) | 部署指南 | 运维 |
+### 00-overview — 总览与理念
+| 文档 | 内容 |
+|------|------|
+| [architecture.md](00-overview/architecture.md) | 系统组成/三条数据通道/发消息全链路/三级状态/依赖图 |
+| [design-philosophy.md](00-overview/design-philosophy.md) | 10 条设计决策及其"为什么"（模型确定性/Owner-Driven/本地优先/水位线/契约优先…） |
+| [build-system.md](00-overview/build-system.md) | Profile 构建体系/多渠道/CI |
+| [getting-started/develop.md](00-overview/getting-started/develop.md) | 开发环境 |
+| [getting-started/deploy.md](00-overview/getting-started/deploy.md) | 部署指南（deployServerDemo 一键） |
+| [architecture-comparison.md](00-overview/architecture-comparison.md) | vs Signal/Telegram/开源 IM |
 
-## 快速入门
+### 01-protocol — 协议规格（wire 级）
+| 文档 | 内容 |
+|------|------|
+| [wire-format.md](01-protocol/wire-format.md) | **帧布局/PacketBuffer 原语表/全部 payload+模型字段布局/心跳/错误分层** |
+| [rpc-methods.md](01-protocol/rpc-methods.md) | 全部 RPC 方法矩阵（请求布局/权限/事件）+ Repository 映射 |
+| [notify-contracts.md](01-protocol/notify-contracts.md) | **契约表机制**（唯一事实源/三层防线/视角规则）+ 18 契约清单 |
+| [authentication.md](01-protocol/authentication.md) | 认证体系（token 一次一换/三级状态） |
+| [errors.md](01-protocol/errors.md) | 错误码体系 |
+| [message-types.md](01-protocol/message-types.md) | 消息类型与渲染策略 |
 
-1. **新人**：先读 [00-overview/architecture.md](00-overview/architecture.md) 了解全貌 → [getting-started/develop.md](00-overview/getting-started/develop.md) 搭建环境
-2. **贡献代码**：必读 [07-conventions/](07-conventions/) 编码规范
-3. **排查问题**：读 [05-logging/](05-logging/) 理解日志体系
-4. **理解通信**：读 [01-protocol/](01-protocol/) 协议设计
-5. **跑测试**：读 [06-testing/](06-testing/) 测试方法 + testTag 参考
+### 02-server — 服务端
+| 文档 | 内容 |
+|------|------|
+| [README.md](02-server/README.md) | 启动序列/TCP 管线/领域服务规则/**事件发射矩阵**/存储分工/DI 图 |
+| [database.md](02-server/database.md) | 11 张表全 schema + 不变量（水位线/事件双索引模型） |
+| [threading.md](02-server/threading.md) | 线程模型（EventLoop/IOExecutor/Looper） |
+| [file-storage.md](02-server/file-storage.md) | 分层文件存储 |
+| [fulltext-search.md](02-server/fulltext-search.md) | Lucene + IK 搜索 |
+
+### 03-sdk — IM SDK（shared）
+| 文档 | 内容 |
+|------|------|
+| [README.md](03-sdk/README.md) | SDK 组装/级联销毁/EventProcessor/Repository 模式/测试闭环 |
+| [imclient.md](03-sdk/imclient.md) | 连接状态机/重连/心跳/**防御设计↔历史 bug 对照表** |
+| [local-cache.md](03-sdk/local-cache.md) | stateLock 纪律/消息窗口 LRU/会话合并策略 |
+| [imbot.md](03-sdk/imbot.md) | 无头客户端（AI bot/CLI 入口）+ 集成测试 |
+
+### 05-lessons — 踩坑经验
+| 文档 | 内容 |
+|------|------|
+| [README.md](05-lessons/README.md) | **40+ 条真实坑**分 6 类（协议契约/认证连接/并发/数据一致性/服务端/UI-E2E），每条含症状→根因→固化 |
+
+### 06~08 — 工程体系
+| 文档 | 内容 |
+|------|------|
+| [06-logging/README.md](06-logging/README.md) | trace/fault/snapshot 分级 + HTTP 上传 + Crash 持久化 |
+| [07-testing/README.md](07-testing/README.md) | 测试金字塔（单测/契约/SDK 集成/服务端 e2e/UI E2E） |
+| [07-testing/ai-workflow.md](07-testing/ai-workflow.md) | AI 驱动 E2E 操作手册（Desktop TestHttpServer/Android uiautomator2/TestPeer） |
+| [07-testing/test-cases.md](07-testing/test-cases.md) | T01-T34 用例清单 |
+| [08-conventions/README.md](08-conventions/README.md) | 编码规范（println 禁令/RPC 配对/Compose 状态） |
+
+### 09-roadmap — 未来
+| 文档 | 内容 |
+|------|------|
+| [09-roadmap.md](09-roadmap.md) | P0 正确性收尾 / **P1 无头 IM 与 AI 员工** / P2 SDK / P3 服务端 / P4 UI |
+
+---
+
+## 三份最重要的文档
+
+1. **[踩坑经验](05-lessons/README.md)** —— 项目的隐性知识，防止重蹈覆辙
+2. **[wire-format](01-protocol/wire-format.md)** —— 协议从零重写的完整依据
+3. **[设计理念](00-overview/design-philosophy.md)** —— 所有边界约束的"为什么"

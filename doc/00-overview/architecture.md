@@ -1,90 +1,154 @@
-# TeamTalk — 架构总览
+# 架构总览
 
-> 快速了解全貌的入口文档。详细设计见各模块子文档。
-
----
-
-## 设计原则
-
-| 原则 | 说明 |
-|------|------|
-| **模型确定性 > 灵活性** | 二进制协议字段增删只在大版本间变更，编译器保障引用 |
-| **单一模型消除映射层** | 同一个 data class 既是传输模型又是领域模型 |
-| **状态一致性优先** | 服务端是唯一真相源，客户端本地缓存以服务端 seq 为准 |
-| **本地优先** | 客户端所有页面从本地 SQLite 渲染，网络仅用于写操作和同步 |
-| **单体架构** | 单进程面向万级用户，不拆微服务 |
-| **全栈 Kotlin** | KMP + Compose Multiplatform，一门语言维护整个项目 |
-| **事件快照** | NOTIFY 推送携带完整快照，客户端 upsert 天然幂等 |
-| **离线补发** | AUTH 时携带 lastEventId，服务端补发缺失事件 |
-| **不可变数据** | data class 全用 val，copy() 更新 |
-| **乐观更新** | 消息发送 optimistic update |
-| **认证失效停而非重试** | token 过期停止重连，向上传播让用户重新登录 |
+> 系统全貌：模块分层、三级状态、数据流。详细规格见各分册。
+> 设计理念见 [design-philosophy.md](design-philosophy.md)。
 
 ---
 
-## 系统架构
+## 1. 系统组成
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                      TeamTalk 系统                        │
-│                                                           │
-│  ┌──────────────┐        ┌───────────────────────────┐  │
-│  │   Android    │        │        Desktop            │  │
-│  │  Compose MP  │        │    Compose MP             │  │
-│  └──────┬───────┘        └───────────┬───────────────┘  │
-│         │        共享 app/commonMain    │                  │
-│         │     (UI + VM + Repo + Cache) │                  │
-│         └───────────┬─────────────────┘                  │
-│                     │ TCP 二进制协议                      │
-│         ┌───────────▼─────────────────┐                  │
-│         │       shared 模块            │                  │
-│         │  (协议 + 模型 + ImClient)    │                  │
-│         └───────────┬─────────────────┘                  │
-│                     │                                    │
-│  ┌──────────────────▼────────────────────────────────┐  │
-│  │              TeamTalk Server                       │  │
-│  │  Ktor(HTTP) + Netty(TCP)                          │  │
-│  │  domain: user/auth/contact/chat/message/...       │  │
-│  │  storage: PostgreSQL + RocksDB + Lucene           │  │
-│  └───────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                        客户端（两端一壳）                         │
+│                                                                 │
+│  ┌───────────────────────────────┐  ┌────────────────────────┐ │
+│  │  android/ (Android shell)     │  │ desktop/ (Desktop shell)│ │
+│  │  NavHost 导航/媒体/平台能力     │  │  多窗口/托盘/keepawake   │ │
+│  └──────────────┬────────────────┘  └───────────┬────────────┘ │
+│                 │                                │              │
+│  ┌──────────────┴────────────────────────────────┴────────────┐ │
+│  │  app/ — 纯 UI 层（Compose）                                  │ │
+│  │  ui/screens + components / viewmodel / navigation          │ │
+│  │  AuthController（唯一 Compose 认证包装）                     │ │
+│  └──────────────┬──────────────────────────────────────────────┘ │
+│                 │ 只消费 SDK 公开 API                             │
+│  ┌──────────────┴──────────────────────────────────────────────┐ │
+│  │  shared/ — IM SDK（完整闭环，无 UI 依赖）                     │ │
+│  │                                                            │ │
+│  │  protocol/    帧编解码 + PacketBuffer + 契约表 + RPC 枚举     │ │
+│  │  client/      ImClient(TCP) RpcClient(RPC) EventProcessor   │ │
+│  │               LocalCache(SQLite) ClientSession UserSession  │ │
+│  │  repository/  7 个 Repository（RPC 封装 + 本地缓存写入）      │ │
+│  │  bot/         ImBot 无头客户端（AI/CLI 入口）                 │ │
+│  │  model/body/  传输模型 + 15 种消息体                          │ │
+│  │  testing/     FakeLocalCache + FakeRpcInvoker               │ │
+│  └────────────────────────────────────────────────────────────┘ │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ TCP 5100（IM 全量）/ HTTPS 443（文件）
+┌──────────────────────────┴──────────────────────────────────────┐
+│  server/ — 服务端单体（Ktor HTTP + Netty TCP）                    │
+│                                                                 │
+│  protocol/   TcpServer → Handshake → PacketCodec → ImAgent      │
+│              → RpcDispatcher → 8 个 RouteHandler                │
+│  domain/     7 个领域 Service（auth/user/contact/chat/message/  │
+│              conversation/presence）+ Store 缓存 + Repository   │
+│  infra/      PostgreSQL(Exposed) / RocksDB(消息+token+文件)      │
+│              Lucene(全文搜索) / SyncEventService(事件同步)       │
+│  api/        HTTP（文件上传下载/客户端日志/健康检查）              │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
----
+## 2. 三条数据通道
 
-## 技术栈
+| 通道 | 端口/协议 | 用途 | 规格 |
+|------|----------|------|------|
+| **TCP 二进制** | 5100 | IM 全量：认证、RPC（INVOKE/RESPONSE）、消息（MESSAGE/ACK）、事件（NOTIFY）、心跳 | [wire-format](../01-protocol/wire-format.md) |
+| **HTTP(S)** | 443/8080 | 文件上传/下载、客户端日志上报、健康检查 | [服务端 README](../02-server/README.md#http-api) |
+| **本地 SQLite** | 客户端 | 本地优先的渲染数据源（按 uid 分库） | [local-cache](../03-sdk/local-cache.md) |
 
-| 层级 | 技术 |
-|------|------|
-| 客户端 UI | Compose Multiplatform（Android + Desktop） |
-| 客户端存储 | SQLDelight（SQLite） |
-| 共享协议 | 自研 TCP 二进制（ProtoCodec） |
-| 服务端 HTTP | Ktor |
-| 服务端 TCP | Netty |
-| 服务端存储 | PostgreSQL (Exposed) + RocksDB + Lucene |
-| 语言 | 全栈 Kotlin |
+## 3. 一次写操作的完整数据流（以发消息为例）
 
----
+```
+UI 输入
+ → ChatViewModel.sendMessage
+    ① 乐观更新：localCache.insertMessage(status=SENDING) → UI 立即显示
+    ② messageRepo.send → messageSender.sendAndWaitAck（直连层，10s 超时）
+ → [TCP] Message 帧
+ → 服务端 ImAgent.handleMessage（IO 线程池）
+ → MessageService.sendMessage
+    ③ 幂等检查（clientMsgId）→ 原子分配 serverSeq → RocksDB 存储 → Lucene 索引
+    ④ 事件扩散：MESSAGE_RECV → 全体成员（含发送者）
+    ⑤ 会话扩散：CONVERSATION_UPDATED → 全体成员（lastMessage/unreadCount）
+ → [TCP] MessageAck 返回发送端
+    ⑥ 客户端 updateMessage(serverSeq, SENT) → markRead(自己的水位线)
+ → 接收端 EventProcessor（IO 线程，契约解码）
+    ⑦ MESSAGE_RECV → localCache.insertMessage → 会话列表红点+1
+    ⑧ 无头端：messageEvents 流 → bot 回调
+```
 
-## 模块文档索引
+关键点：**发送者也会收到自己消息的 MESSAGE_RECV**（服务端广播全体成员），UI 客户端靠 LocalCache 按 clientMsgId 幂等覆盖消化；无头 bot 需显式过滤（`nextMessage { it.senderUid != uid }`）。
 
-深入每个模块的详细设计：
+## 4. 三级状态与生命周期
 
-| 模块 | 文档 | 核心内容 |
-|------|------|---------|
-| 协议 | [01-protocol/](01-protocol/) | 帧格式、RPC、NOTIFY、心跳、编解码、认证、错误码 |
-| 服务端 | [02-server/](02-server/) | 领域层 DDD、协议层状态机、线程模型、存储设计 |
-| 客户端 | [03-client/](03-client/) | 本地优先、连接管理、状态合并、导航、消息渲染 |
-| 共享 SDK | [04-shared/](04-shared/) | 数据模型、协议枚举、ImClient、TkLogger |
-| 日志 | [05-logging/](05-logging/) | trace/fault/snapshot 分级、HTTP 上传、Crash 持久化 |
-| 测试 | [06-testing/](06-testing/) | AI 驱动测试、TestHttpServer、testTag 参考、测试用例 |
-| 规范 | [07-conventions/](07-conventions/) | 编码约束、RPC 配对、状态管理规则 |
+```
+进程 ──────────────────────────────────────────────────────►
+  App全局: ServerConfig / TokenStore / 登录窗口
 
-## 其他文档
+  ┌─ 登录会话 A ─────────────────┐   ┌─ 登录会话 B ─────┐
+  │ UserSession: uid/token       │   │ （重登后新建）     │
+  │ ClientSession:               │   │                  │
+  │   repos + eventProcessor     │   │                  │
+  │   ┌─ TCP连接1 ─┐ ┌─ TCP连接2 ─┐ │                  │
+│   │ ImClient  │ │ (重连新建)  │ │                  │
+│   │ pendingAck│ │            │ │                  │
+│   └───────────┘ └────────────┘ │                  │
+  └───────────────────────────────┘   └─────────────────┘
+        session.close() 级联销毁          ▲ AUTH_FAILED
+                                          └─ tokenStore.clear()
+```
 
-| 文档 | 内容 |
-|------|------|
-| [architecture-comparison.md](architecture-comparison.md) | 与 Signal/Telegram/WuKongIM/OpenIM 横向对比 |
-| [develop.md](develop.md) | 开发环境搭建 |
-| [deploy.md](deploy.md) | 部署指南 |
-| [ROADMAP.md](ROADMAP.md) | 功能路线图 |
+- TCP 断开：只销毁连接层（自动重连 + pendingAuth 自动重认证），用户层不动
+- 登出/AUTH_FAILED：`session.close()` 级联（uploader→rpc→eventProcessor→disconnect→AppLog 全局引用置空）+ token 清除
+- 详见 [SDK README](../03-sdk/README.md)
+
+## 5. 事件同步（离线补发）
+
+每个 NOTIFY 持久化到 `sync_events` 表（自增 id = eventId）并推送给在线设备。重连认证时客户端上报 `lastEventId`，服务端补发其后所有事件（7 天 TTL）。客户端游标**处理成功才推进**——失败事件下次补发重试（at-least-once）。
+
+详见 [服务端事件矩阵](../02-server/README.md#事件发射矩阵) 与 [SDK README 的 EventProcessor 节](../03-sdk/README.md)。
+
+> 现状说明：客户端已维护 lastEventId 游标（StateFlow），但尚未把它回填进 AuthRequestPayload.lastEventId（当前恒为 0），离线补发链路处于"服务端就绪、客户端未接线"状态——见 [ROADMAP](../09-roadmap.md)。
+
+## 6. 模块依赖图（单向，无环）
+
+```
+shared ◄──── server（只用协议+模型定义）
+  ▲
+  │
+app ◄──── android
+  ▲
+  │
+desktop
+```
+
+- shared 是**唯一下沉层**：SDK 全部能力，测试可纯 JVM 跑（不编译 Compose）
+- app 依赖 shared，禁止反向；shell 依赖 app + shared（显式声明）
+- 修改 shared = 改 SDK 契约，必须过 [契约测试](../01-protocol/notify-contracts.md)
+
+## 7. 技术栈版本
+
+| 组件 | 技术 | 版本 |
+|------|------|------|
+| 语言/构建 | Kotlin / Gradle | 2.3.20 / 8.14 |
+| UI | Compose Multiplatform + Material3 | 1.10.3 |
+| 网络 | Netty（TCP 双端）/ Ktor（HTTP） | 4.1.119 / 3.4.3 |
+| 序列化 | 手写二进制（PacketBuffer）/ kotlinx-json（边缘） | — |
+| 服务端 DB | PostgreSQL (Exposed) + RocksDB | 42.7.5 / 9.10 |
+| 客户端 DB | SQLDelight (SQLite) | 2.3.2 |
+| 搜索 | Lucene + IK 中文分词 | 9.12.0 |
+| DI（服务端） | Koin | 4.0.4 |
+| 平台 | Android 26+ / macOS(Desktop JVM) | — |
+
+## 8. 各分册导航
+
+| 想了解 | 读 |
+|--------|-----|
+| 协议怎么编码 | [01-protocol/wire-format](../01-protocol/wire-format.md) |
+| 有哪些 RPC/通知 | [01-protocol/rpc-methods](../01-protocol/rpc-methods.md) · [notify-contracts](../01-protocol/notify-contracts.md) |
+| 服务端怎么实现 | [02-server/README](../02-server/README.md) · [database](../02-server/database.md) |
+| SDK 怎么工作 | [03-sdk/README](../03-sdk/README.md) · [imclient](../03-sdk/imclient.md) · [local-cache](../03-sdk/local-cache.md) |
+| 无头 bot | [03-sdk/imbot](../03-sdk/imbot.md) |
+| 历史踩坑 | [05-lessons](../05-lessons/README.md)（**新成员必读**） |
+| 怎么测试 | [06-testing](../07-testing/README.md) |
+| 构建部署 | [build-system](build-system.md) · [deploy](getting-started/deploy.md) |
+| 未来方向 | [ROADMAP](../09-roadmap.md) |
