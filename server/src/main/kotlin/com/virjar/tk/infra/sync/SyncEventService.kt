@@ -2,6 +2,7 @@ package com.virjar.tk.infra.sync
 
 import com.virjar.tk.infra.db.SyncEvents
 import com.virjar.tk.protocol.IProto
+import com.virjar.tk.protocol.NotifyContracts
 import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.payload.NotifyPayload
@@ -24,6 +25,7 @@ class SyncEventService(
      * 向单个用户推送通知。
      */
     suspend fun emitEvent(uid: String, notifyType: NotifyType, payload: IProto) {
+        assertContract(notifyType, payload)
         val eventId = persistEvent(uid, notifyType, payload)
         pushToUser(uid, NotifyPayload(eventId, notifyType.code, ProtoCodec.encode(payload)))
     }
@@ -32,10 +34,26 @@ class SyncEventService(
      * 向多个用户推送同一通知。
      */
     suspend fun emitEvents(uids: List<String>, notifyType: NotifyType, payload: IProto) {
+        assertContract(notifyType, payload)
         val encoded = ProtoCodec.encode(payload)
         for (uid in uids) {
             val eventId = persistEvent(uid, notifyType, encoded)
             pushToUser(uid, NotifyPayload(eventId, notifyType.code, encoded))
+        }
+    }
+
+    /**
+     * 契约校验：emit 的 payload 实际类型必须与 [NotifyContracts] 登记一致。
+     * 错配在服务端当场抛异常（测试期即失败），不再漏到客户端集成时才以
+     * "UI 数据错乱/解析异常"的形式爆发。
+     */
+    private fun assertContract(notifyType: NotifyType, payload: IProto) {
+        val reader = NotifyContracts.payloads[notifyType] ?: return // 豁免类型不校验
+        val expected = NotifyContracts.expectedPayloadClassName(notifyType, reader::class.java.name)
+        val actual = payload::class.java.name
+        require(expected == actual) {
+            "Notify contract violation: $notifyType expects payload $expected but got $actual. " +
+                "Fix the emit site or update NotifyContracts."
         }
     }
 

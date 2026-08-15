@@ -1,8 +1,12 @@
 package com.virjar.tk.client
 
 import com.virjar.tk.model.*
+import com.virjar.tk.protocol.IProto
+import com.virjar.tk.protocol.IProtoReader
+import com.virjar.tk.protocol.NotifyContracts
 import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.ProtoCodec
+import com.virjar.tk.protocol.ReadSyncPayload
 import com.virjar.tk.protocol.payload.NotifyPayload
 import com.virjar.tk.log.TkLoggerFactory
 import kotlinx.coroutines.*
@@ -85,13 +89,22 @@ class EventProcessor(
         }
     }
 
+    /**
+     * 契约 decode：reader 统一取自 [NotifyContracts]（唯一事实源），
+     * 与服务端 emit 侧共享同一张表，类型错配在两侧任一改动时即暴露。
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun <T : IProto> decodePayload(type: NotifyType, payload: ByteArray): T {
+        val reader = NotifyContracts.payloads[type]
+            ?: throw IllegalStateException("No payload contract for $type")
+        return ProtoCodec.decode(reader as IProtoReader<T>, payload)
+    }
+
     private suspend fun handleNotifyPayload(notifyType: NotifyType, payload: ByteArray) {
         when (notifyType) {
-            NotifyType.CONTACT_APPLY,
-            NotifyType.CONTACT_ACCEPTED,
-            NotifyType.CONTACT_DELETED -> {
-                // 服务端发送 ContactApply（含 fromUid/toUid），转换为 Contact
-                val apply = ProtoCodec.decode(ContactApply, payload)
+            NotifyType.CONTACT_APPLY -> {
+                // 契约：CONTACT_APPLY 发 ContactApply（含 fromUid/toUid/fromUser），转换为本地 Contact
+                val apply = decodePayload<ContactApply>(notifyType, payload)
                 val contact = Contact(
                     uid = apply.toUid, friendUid = apply.fromUid,
                     remark = apply.remark, status = 1, user = apply.fromUser,
@@ -100,10 +113,18 @@ class EventProcessor(
                 onContactChanged?.invoke()
             }
 
+            NotifyType.CONTACT_ACCEPTED,
+            NotifyType.CONTACT_DELETED -> {
+                // 契约：ACCEPTED/DELETED 发各自视角的 Contact（服务端已按接收者构造）
+                val contact = decodePayload<Contact>(notifyType, payload)
+                localCache.upsertContact(contact)
+                onContactChanged?.invoke()
+            }
+
             NotifyType.CHAT_CREATED,
             NotifyType.CHAT_UPDATED,
             NotifyType.CHAT_DELETED -> {
-                val chat = ProtoCodec.decode(Chat, payload)
+                val chat = decodePayload<Chat>(notifyType, payload)
                 localCache.upsertChat(chat)
                 // 新会话（如被拉入群）需要刷新本地会话列表，
                 // 否则 Conversation 表无对应记录，群会话不显示。
@@ -117,22 +138,22 @@ class EventProcessor(
             NotifyType.MEMBER_MUTED,
             NotifyType.MEMBER_UNMUTED,
             NotifyType.MEMBER_ROLE_CHANGED -> {
-                val chat = ProtoCodec.decode(Chat, payload)
+                val chat = decodePayload<Chat>(notifyType, payload)
                 localCache.upsertChat(chat)
             }
 
             NotifyType.MESSAGE_RECV -> {
-                val message = ProtoCodec.decode(Message, payload)
+                val message = decodePayload<Message>(notifyType, payload)
                 localCache.insertMessage(message)
             }
 
             NotifyType.CONVERSATION_UPDATED -> {
-                val conv = ProtoCodec.decode(Conversation, payload)
+                val conv = decodePayload<Conversation>(notifyType, payload)
                 localCache.upsertConversation(conv)
             }
 
             NotifyType.CONVERSATION_DELETED -> {
-                val conv = ProtoCodec.decode(Conversation, payload)
+                val conv = decodePayload<Conversation>(notifyType, payload)
                 localCache.deleteConversation(conv.chatId)
             }
 
@@ -141,17 +162,17 @@ class EventProcessor(
                 logger.trace("PRESENCE notify received (${payload.size} bytes), no UI consumer yet")
             }
             NotifyType.TYPING -> {
-                val msg = ProtoCodec.decode(Message, payload)
+                val msg = decodePayload<Message>(notifyType, payload)
                 _typingEvents.emit(msg.chatId to msg.senderUid)
             }
             NotifyType.READ_SYNC -> {
-                val sync = ProtoCodec.decode(com.virjar.tk.protocol.ReadSyncPayload, payload)
+                val sync = decodePayload<ReadSyncPayload>(notifyType, payload)
                 // 对方已读到 sync.peerReadSeq，更新该会话中对方已读状态
                 localCache.updatePeerReadSeq(sync.chatId, sync.peerReadSeq)
             }
 
             NotifyType.USER_UPDATED -> {
-                val user = ProtoCodec.decode(User, payload)
+                val user = decodePayload<User>(notifyType, payload)
                 localCache.upsertUser(user)
             }
 

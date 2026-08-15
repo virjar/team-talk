@@ -19,6 +19,21 @@ data class GenericPayload(
     val extensionType: Int,
     val data: ByteArray?,
 ) : IProto {
+    // ByteArray 字段的 data class 默认 equals 比较引用，
+    // 任何内容判等（幂等/去重/测试）都会踩坑，此处按内容比较
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other == null || this::class != other::class) return false
+        other as GenericPayload
+        return extensionType == other.extensionType && data.contentEquals(other.data)
+    }
+
+    override fun hashCode(): Int {
+        var result = extensionType
+        result = 31 * result + (data?.contentHashCode() ?: 0)
+        return result
+    }
+
     override fun writeTo(buf: PacketBuffer) {
         buf.writeVarInt(extensionType)
         buf.writeBytes(data)
