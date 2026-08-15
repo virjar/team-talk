@@ -52,7 +52,7 @@ interface MessageRpc {
 | "message" | MessageRpc | MessageRpcImpl |
 | "conversation" | ConversationRpc | ConversationRpcImpl |
 | "device" | DeviceRpc | DeviceRpcImpl |
-| ~~99 GENERIC~~ | 已删除（零使用，防过早实现） |
+| 99 generic | （预留）RPC 扩展入口——协议演进策略 §9；IDL 体系接入待首个扩展需求 |
 
 ## 3. AUTH（认证走 TCP 握手包，此处仅会话管理）
 

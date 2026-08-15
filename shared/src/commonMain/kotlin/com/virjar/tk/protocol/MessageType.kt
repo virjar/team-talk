@@ -19,7 +19,10 @@ enum class MessageType(val code: Int) {
     EDIT(12),
     STICKER(13),
     REACTION(14),
-    TYPING(15);
+    TYPING(15),
+
+    // 通用扩展入口（协议演进策略 §9）：body = GenericPayload(extensionType + data)
+    GENERIC(99);
 
     companion object {
         private val codeMap = entries.associateBy { it.code }

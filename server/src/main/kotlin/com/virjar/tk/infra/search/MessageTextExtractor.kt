@@ -40,7 +40,7 @@ object MessageTextExtractor {
             MessageType.STICKER -> null
             MessageType.REACTION -> null
             MessageType.TYPING -> null
-            null -> null
+            MessageType.GENERIC, null -> null
         }
     }
 }

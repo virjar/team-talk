@@ -88,6 +88,7 @@ class NotifyContractTest {
         NotifyType.READ_SYNC -> ReadSyncPayload(peerUid = "u2", chatId = "c1", peerReadSeq = 7L)
         NotifyType.USER_UPDATED -> sampleUser
         NotifyType.PRESENCE -> com.virjar.tk.protocol.PresencePayload("u1", 1, 123L)
+        NotifyType.GENERIC -> com.virjar.tk.protocol.payload.GenericPayload(extensionType = 1, data = byteArrayOf(1, 2))
     }
 
     private val sampleUser = User(uid = "u1", username = "alice", name = "Alice")

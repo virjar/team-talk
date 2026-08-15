@@ -217,6 +217,12 @@ class EventProcessor(
                 val presence = decodePayload<PresencePayload>(notifyType, payload)
                 _presenceEvents.emit(presence)
             }
+
+            NotifyType.GENERIC -> {
+                // 通用扩展入口（协议演进策略 §9）：未注册扩展静默忽略（前向兼容），
+                // 游标照常推进。分发机制（GenericDispatcher）待首个扩展需求落地时实现。
+                logger.trace("GENERIC notify ignored (no extension registered)")
+            }
             NotifyType.TYPING -> {
                 val msg = decodePayload<Message>(notifyType, payload)
                 _typingEvents.emit(msg.chatId to msg.senderUid)
