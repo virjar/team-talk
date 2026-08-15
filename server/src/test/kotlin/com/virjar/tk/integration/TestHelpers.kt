@@ -79,7 +79,8 @@ class TestEnvironment : AutoCloseable {
     // 便捷属性 — 与旧 TestContext 保持相同接口
     val userService: UserService get() = koin.get()
     val authService: AuthService get() = koin.get()
-    val contactService: ContactService get() = koin.get()
+    /** ContactService 已迁移 per-request Stub（uid 绑定），此处工厂构造 */
+    fun contactService(uid: String): ContactService = ContactService(uid, koin.get(), koin.get())
     val chatService: ChatService get() = koin.get()
     val messageService: MessageService get() = koin.get()
     val conversationService: ConversationService get() = koin.get()

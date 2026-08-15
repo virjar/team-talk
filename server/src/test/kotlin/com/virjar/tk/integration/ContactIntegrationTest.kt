@@ -21,10 +21,10 @@ class ContactIntegrationTest {
     fun `apply and accept friend request`() = runTest {
         val uid1 = ctx.registerUser()
         val uid2 = ctx.registerUser()
-        val apply = ctx.contactService.apply(uid1, uid2, "Hi")
+        val apply = ctx.contactService(uid1).apply(uid2, "Hi")
         assertNotNull(apply)
         assertEquals(0, apply.status)
-        val accepted = ctx.contactService.accept(apply.token!!)
+        val accepted = ctx.contactService("token-op").accept(apply.token!!)
         assertEquals(1, accepted.status)
     }
 
@@ -32,8 +32,8 @@ class ContactIntegrationTest {
     fun `reject friend request`() = runTest {
         val uid1 = ctx.registerUser()
         val uid2 = ctx.registerUser()
-        val apply = ctx.contactService.apply(uid1, uid2, "Hi")
-        val rejected = ctx.contactService.reject(apply.token!!)
+        val apply = ctx.contactService(uid1).apply(uid2, "Hi")
+        val rejected = ctx.contactService("token-op").reject(apply.token!!)
         assertEquals(2, rejected.status)
     }
 
@@ -41,11 +41,11 @@ class ContactIntegrationTest {
     fun `list friends after accept`() = runTest {
         val uid1 = ctx.registerUser()
         val uid2 = ctx.registerUser()
-        val apply = ctx.contactService.apply(uid1, uid2, null)
-        ctx.contactService.accept(apply.token!!)
-        val friends = ctx.contactService.listFriends(uid1)
+        val apply = ctx.contactService(uid1).apply(uid2, null)
+        ctx.contactService("token-op").accept(apply.token!!)
+        val friends = ctx.contactService(uid1).list()
         assertTrue(friends.any { it.friendUid == uid2 })
-        val friendsOf2 = ctx.contactService.listFriends(uid2)
+        val friendsOf2 = ctx.contactService(uid2).list()
         assertTrue(friendsOf2.any { it.friendUid == uid1 })
     }
 
@@ -53,10 +53,10 @@ class ContactIntegrationTest {
     fun `delete friend`() = runTest {
         val uid1 = ctx.registerUser()
         val uid2 = ctx.registerUser()
-        val apply = ctx.contactService.apply(uid1, uid2, null)
-        ctx.contactService.accept(apply.token!!)
-        ctx.contactService.deleteFriend(uid1, uid2)
-        val friends = ctx.contactService.listFriends(uid1)
+        val apply = ctx.contactService(uid1).apply(uid2, null)
+        ctx.contactService("token-op").accept(apply.token!!)
+        ctx.contactService(uid1).delete(uid2)
+        val friends = ctx.contactService(uid1).list()
         assertTrue(friends.none { it.friendUid == uid2 })
     }
 
@@ -64,10 +64,10 @@ class ContactIntegrationTest {
     fun `set friend remark`() = runTest {
         val uid1 = ctx.registerUser()
         val uid2 = ctx.registerUser()
-        val apply = ctx.contactService.apply(uid1, uid2, null)
-        ctx.contactService.accept(apply.token!!)
-        ctx.contactService.setRemark(uid1, uid2, "Buddy")
-        val friends = ctx.contactService.listFriends(uid1)
+        val apply = ctx.contactService(uid1).apply(uid2, null)
+        ctx.contactService("token-op").accept(apply.token!!)
+        ctx.contactService(uid1).setRemark(uid2, "Buddy")
+        val friends = ctx.contactService(uid1).list()
         val friend = friends.first { it.friendUid == uid2 }
         assertEquals("Buddy", friend.remark)
     }
@@ -76,8 +76,8 @@ class ContactIntegrationTest {
     fun `blacklist user`() = runTest {
         val uid1 = ctx.registerUser()
         val uid2 = ctx.registerUser()
-        ctx.contactService.blacklist(uid1, uid2)
-        val blacklist = ctx.contactService.listBlacklist(uid1)
+        ctx.contactService(uid1).blacklist(uid2)
+        val blacklist = ctx.contactService(uid1).listBlacklist()
         assertTrue(blacklist.any { it.friendUid == uid2 })
     }
 
@@ -85,9 +85,9 @@ class ContactIntegrationTest {
     fun `remove from blacklist`() = runTest {
         val uid1 = ctx.registerUser()
         val uid2 = ctx.registerUser()
-        ctx.contactService.blacklist(uid1, uid2)
-        ctx.contactService.removeFromBlacklist(uid1, uid2)
-        val blacklist = ctx.contactService.listBlacklist(uid1)
+        ctx.contactService(uid1).blacklist(uid2)
+        ctx.contactService(uid1).removeFromBlacklist(uid2)
+        val blacklist = ctx.contactService(uid1).listBlacklist()
         assertTrue(blacklist.none { it.friendUid == uid2 })
     }
 
@@ -95,8 +95,8 @@ class ContactIntegrationTest {
     fun `list pending applies`() = runTest {
         val uid1 = ctx.registerUser()
         val uid2 = ctx.registerUser()
-        ctx.contactService.apply(uid1, uid2, "Hello")
-        val pending = ctx.contactService.listPendingApplies(uid2)
+        ctx.contactService(uid1).apply(uid2, "Hello")
+        val pending = ctx.contactService(uid2).listApplies()
         assertTrue(pending.any { it.fromUid == uid1 })
     }
 }

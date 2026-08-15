@@ -105,10 +105,6 @@ tasks.register<Copy>("headlessDist") {
     }
 }
 
-tasks.configureEach {
-    if (name == "jvmRun") enabled = false
-}
-
 // bot 集成测试开关透传：默认跳过，仅 -Dtk.botTest.host=... 时启用（见 ImBotIntegrationTest）。
 // Gradle 默认不把命令行 -D 转发给测试 JVM，需显式桥接（与 server 的 tk.e2e.* 同模式）。
 tasks.named<Test>("jvmTest") {

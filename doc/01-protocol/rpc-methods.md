@@ -58,9 +58,12 @@ interface MessageRpc {
 
 | id | 方法 | 请求布局 | 响应 | 规则 |
 |----|------|---------|------|------|
-| 3 | LOGOUT | `string refreshToken?` | 空 | 吊销 refresh（只删不发）+ 可选吊销整设备 token |
-| 5 | UPDATE_PASSWORD | `string old, string new` | 空 | 旧密码错 → 400 |
-| 1/2/4 | REGISTER/LOGIN/REFRESH_TOKEN | — | **400 "Use TCP handshake for auth"** | 故意拒绝（防误调静默成功） |
+| 1 | logout | `string? refreshToken` | 空 | 吊销 refresh（只删不发） |
+| 2 | updatePassword | `string old, string new` | 空 | 旧密码错 → 400 |
+
+（REGISTER/LOGIN/REFRESH 仅走 TCP 握手；未知 methodId → 400 "Unknown method"）
+
+**methodId 稳定性**：由 `RpcMethodIdGoldenTest` 字面锁定（48 个常量），任何重排须显式改测试 + bump 协议版本；processor 编译期拦截重复 id。
 
 ## 4. USER
 

@@ -64,7 +64,7 @@ session.close()  // 级联顺序（owner-driven）
 
 ```kotlin
 suspend fun getHistory(chatId, fromSeq, limit): Outcome<List<Message>> = outcome {
-    val response = rpcClient.invoke(ServiceId.MESSAGE, MessageMethod.GET_HISTORY.id, payload)
+    val response = rpc.invoke(MessageRpcContract.SERVICE, MessageRpcContract.M_GET_HISTORY, payload)
     response.ensureSuccess()          // 0=OK / 401→AuthExpired / 504→Timeout / 其他→Business
     ProtoCodec.decodeList(Message, data).also { it.forEach(localCache::insertMessage) }  // 写缓存
 }

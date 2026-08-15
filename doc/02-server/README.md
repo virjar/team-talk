@@ -1,6 +1,6 @@
 # 服务端架构
 
-> 单体服务（Ktor HTTP + Netty TCP），DDD 分层：RouteHandler（协议适配）→ Service（业务）→ Store（内存缓存）→ Repository（DB）。
+> 单体服务（Ktor HTTP + Netty TCP），DDD 分层：RpcStub（IDL 生成，uid 绑定）→ Service（业务）→ Store（内存缓存）→ Repository（DB）。
 > 深入：[database.md](database.md) · [threading.md](threading.md) · [file-storage.md](file-storage.md) · [fulltext-search.md](fulltext-search.md)
 
 ---
@@ -88,7 +88,7 @@ TcpServer（boss + NioEventLoopGroup workers）
 | ChatService.createPersonalChat/createGroup | CHAT_CREATED | Chat | 相关成员 |
 | ChatService.addMembers | CHAT_CREATED + MEMBER_ADDED | Chat | 新成员 / 全员 |
 | ChatService.joinByInvite | CHAT_CREATED | Chat | 全员 |
-| ChatService.updateGroup / muteAll | CHAT_UPDATED | Chat | 全员 |
+| ChatService.updateGroup / muteAll / unmuteAll | CHAT_UPDATED | Chat | 全员 |
 | ChatService.deleteChat | CHAT_DELETED | Chat | 全员（删除前快照） |
 | ChatService.removeMember | MEMBER_REMOVED | Chat | 全员+被移除者 |
 | ChatService.transferOwner/setRole | MEMBER_ROLE_CHANGED | Chat | 全员 |
@@ -99,7 +99,7 @@ TcpServer（boss + NioEventLoopGroup workers）
 | ConversationService.setDraft/Pin/Mute/markRead | CONVERSATION_UPDATED | Conversation | 自己 |
 | ConversationService.deleteConversation | CONVERSATION_DELETED | Conversation（哨兵） | 自己 |
 | ConversationService.markRead | READ_SYNC | ReadSyncPayload | 其他成员 |
-| PresenceService（直写） | PRESENCE | PresencePayload | 好友（不持久化） |
+| PresenceService（直写，仅最后一台设备下线时广播） | PRESENCE | PresencePayload | 好友（不持久化，契约已登记但 emit 不经 assertContract） |
 | ImAgent.handleSubscribe（直写 eventId=0） | MESSAGE_RECV | Message | 仅请求连接（历史回放） |
 
 ## 5. 事件同步（SyncEventService + sync_events 表）

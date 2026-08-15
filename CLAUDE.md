@@ -80,7 +80,7 @@ TeamTalk 是基于 Kotlin Multiplatform (KMP) + Jetpack Compose 的跨平台即�
 - **客户端 `encodePayload { }` 和服务端 `withPayload { }` 必须严格配对**：字段数量、顺序、类型完全一致。这是最易出 wire format 错位 bug 的地方
 - **优先用已有 IProto data class**（如 `Chat`、`Message`）作为 payload，用 `ProtoCodec.encode()` / `decode()` 自动处理编解码，而非手写 `writeString()` 序列
 - **新增 RPC 方法时必须加 ProtoRoundTripTest**：参考 `shared/src/commonTest/.../ProtoRoundTripTest.kt` 的 `testPayloadXxx` 测试，覆盖客户端编码→服务端解码的完整往返
-- **简单 payload（1-3 个基本类型字段）**：可以用 `encodePayload { writeString(a); writeInt(b) }`，但必须在 RouteHandler 的 when 分支注释中标注字段顺序
+- **简单 payload（1-3 个基本类型字段）**：可以用 `encodePayload { writeString(a); writeInt(b) }`，但IDL 方法参数即字段顺序（Contract 生成物为唯一事实源），无需手写注释
 
 ### 所有者驱动（Owner-Driven Model）
 

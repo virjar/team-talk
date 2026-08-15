@@ -42,19 +42,6 @@ class AuthRpcImpl(
     }
 }
 
-class ContactRpcImpl(uid: String, private val service: ContactService) : ContactRpcStub(uid) {
-    override suspend fun list() = service.listFriends(uid)
-    override suspend fun apply(targetUid: String, remark: String?) = service.apply(uid, targetUid, remark)
-    override suspend fun accept(token: String) = service.accept(token)
-    override suspend fun reject(token: String) = service.reject(token)
-    override suspend fun delete(friendUid: String) = service.deleteFriend(uid, friendUid)
-    override suspend fun setRemark(friendUid: String, remark: String?) = service.setRemark(uid, friendUid, remark)
-    override suspend fun blacklist(targetUid: String) = service.blacklist(uid, targetUid)
-    override suspend fun removeFromBlacklist(targetUid: String) = service.removeFromBlacklist(uid, targetUid)
-    override suspend fun listApplies() = service.listPendingApplies(uid)
-    override suspend fun listBlacklist() = service.listBlacklist(uid)
-}
-
 class ChatRpcImpl(uid: String, private val service: ChatService) : ChatRpcStub(uid) {
     override suspend fun createPersonal(targetUid: String) = service.createPersonalChat(uid, targetUid)
     override suspend fun createGroup(name: String, avatar: String?, memberUids: List<String>) =

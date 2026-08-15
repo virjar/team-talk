@@ -39,7 +39,7 @@
 │  server/ — 服务端单体（Ktor HTTP + Netty TCP）                    │
 │                                                                 │
 │  protocol/   TcpServer → Handshake → PacketCodec → ImAgent      │
-│              → RpcDispatcher → 8 个 RouteHandler                │
+│              → RpcDispatcher → RpcStubRegistry（IDL 生成 Stub）                │
 │  domain/     7 个领域 Service（auth/user/contact/chat/message/  │
 │              conversation/presence）+ Store 缓存 + Repository   │
 │  infra/      PostgreSQL(Exposed) / RocksDB(消息+token+文件)      │

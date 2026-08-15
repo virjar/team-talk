@@ -28,7 +28,6 @@ import com.virjar.tk.rpc.gen.ConversationRpcContract
 import com.virjar.tk.rpc.gen.DeviceRpcContract
 import com.virjar.tk.protocol.rpc.UserRpcImpl
 import com.virjar.tk.protocol.rpc.AuthRpcImpl
-import com.virjar.tk.protocol.rpc.ContactRpcImpl
 import com.virjar.tk.protocol.rpc.ChatRpcImpl
 import com.virjar.tk.protocol.rpc.MessageRpcImpl
 import com.virjar.tk.protocol.rpc.ConversationRpcImpl
@@ -78,7 +77,6 @@ fun createServerModule(
     // Domain Service
     single { UserService(get(), get()) }
     single { AuthService(get(), get()) }
-    single { ContactService(get(), get()) }
     single { SyncEventService(get()) }
     single { ChatService(get(), get(), get(), get()) }
     single { ConversationService(get(), get(), get()) }
@@ -91,7 +89,7 @@ fun createServerModule(
         RpcStubRegistry().apply {
             register(UserRpcContract.SERVICE) { uid -> UserRpcImpl(uid, get()) }
             register(AuthRpcContract.SERVICE) { uid -> AuthRpcImpl(uid, get(), get()) }
-            register(ContactRpcContract.SERVICE) { uid -> ContactRpcImpl(uid, get()) }
+            register(ContactRpcContract.SERVICE) { uid -> ContactService(uid, get(), get()) }
             register(ChatRpcContract.SERVICE) { uid -> ChatRpcImpl(uid, get()) }
             register(MessageRpcContract.SERVICE) { uid -> MessageRpcImpl(uid, get(), get()) }
             register(ConversationRpcContract.SERVICE) { uid -> ConversationRpcImpl(uid, get()) }

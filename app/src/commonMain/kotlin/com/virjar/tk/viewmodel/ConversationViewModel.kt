@@ -32,27 +32,6 @@ class ConversationViewModel(
         }
     }
 
-    fun setPin(chatId: String, pinned: Boolean) {
-        scope.launch {
-            try { conversationRepo.setPin(chatId, pinned) }
-            catch (e: Exception) { setError("设置置顶失败: ${e.message}") }
-        }
-    }
-
-    fun setDraft(chatId: String, draft: String?) {
-        scope.launch {
-            try { conversationRepo.setDraft(chatId, draft) }
-            catch (e: Exception) { setError("保存草稿失败: ${e.message}") }
-        }
-    }
-
-    fun setMute(chatId: String, muted: Boolean) {
-        scope.launch {
-            try { conversationRepo.setMute(chatId, muted) }
-            catch (e: Exception) { setError("设置静音失败: ${e.message}") }
-        }
-    }
-
     fun deleteConversation(chatId: String) {
         scope.launch {
             try { conversationRepo.deleteConversation(chatId) }

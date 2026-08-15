@@ -59,6 +59,7 @@ class UserSession {
     fun onAuthFailed(reason: String?) {
         this.authFailureReason = reason
         this.uid = ""
+        this.accessToken = null
         this.username = null
         this.name = null
         this.refreshToken = null
