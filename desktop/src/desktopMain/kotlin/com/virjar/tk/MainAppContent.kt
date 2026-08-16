@@ -586,6 +586,11 @@ private fun ChatPanelWrapper(
                 onPickFile = { DesktopMediaHelper.pickAndSendFile(chatId, myUid, viewModel) },
                 onPickVideo = { DesktopMediaHelper.pickAndSendVideo(chatId, myUid, viewModel) },
                 onMentionClick = onMentionClick,
+                onUrlClick = { url ->
+                    kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+                        try { java.awt.Desktop.getDesktop().browse(java.net.URI(url)) } catch (_: Exception) {}
+                    }
+                },
                 onVoiceRecord = { start ->
                     if (start) DesktopMediaHelper.startRecording()
                     else DesktopMediaHelper.stopAndSendVoice(chatId, myUid, viewModel)

@@ -89,6 +89,7 @@ object TestHttpServer {
         s.createContext("/semantics", safe(::handleSemantics))
         s.createContext("/click", safe(::handleClick))
         s.createContext("/longclick", safe(::handleLongClick))
+        s.createContext("/rightclick", safe(::handleRightClick))
         s.createContext("/input", safe(::handleInput))
         s.createContext("/screenshot", safe(::handleScreenshot))
         s.createContext("/find", safe(::handleFind))
@@ -263,6 +264,35 @@ object TestHttpServer {
         } else {
             exchange.send(200, """{"longclicked":false,"method":"none","testTag":"${params["testTag"] ?: params["text"] ?: ""}"}""")
         }
+    }
+
+    /** 右键点击：Robot BUTTON3（桌面上下文菜单手势，e2e 用；macOS 需辅助功能权限）。 */
+    private fun handleRightClick(exchange: HttpExchange) {
+        val params = exchange.queryParams()
+        val x = params["x"]?.toFloatOrNull()
+        val y = params["y"]?.toFloatOrNull()
+        if (x == null || y == null) {
+            exchange.send(400, """{"error":"need x,y"}""")
+            return
+        }
+        val window = window(exchange) ?: run {
+            exchange.send(404, """{"error":"no window"}""")
+            return
+        }
+        if (!window.isActive) {
+            window.toFront(); window.requestFocus(); Thread.sleep(150)
+        }
+        // 语义 bounds 单位 dp；macOS AWT 坐标为逻辑 pt，1dp=1pt（Retina 无需换算——
+        // 曾误乘 scale 导致点击出屏）
+        val loc = window.locationOnScreen
+        robot.mouseMove(loc.x + x.toInt(), loc.y + y.toInt())
+        Thread.sleep(50)
+        robot.mousePress(java.awt.event.InputEvent.BUTTON3_DOWN_MASK)
+        Thread.sleep(20)
+        robot.mouseRelease(java.awt.event.InputEvent.BUTTON3_DOWN_MASK)
+        robot.waitForIdle()
+        Thread.sleep(150)
+        exchange.send(200, """{"rightclicked":[$x,$y]}""")
     }
 
     private fun handleInput(exchange: HttpExchange) {

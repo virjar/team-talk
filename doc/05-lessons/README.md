@@ -85,6 +85,7 @@
 | F16 | TestHttpServer /screenshot 截到被遮挡窗口后的内容 | Robot.createScreenCapture 按窗口 bounds 截屏区域而非窗口内容；截前必须 toFront+requestFocus。曾导致视觉验收拿别应用的画面当 UI 反馈 |
 | F14 | 视觉改动不截图验收，"代码看起来对" | UI 迭代必须走截图闭环（runDemo + TestHttpServer + TestPeer 造数据），设计规格先写进 doc/04-ui-design 再实现 |
 | F17 | 三方 Compose 库 JVM 字节码版本绑架运行时（mikepenz markdown 0.40.x 用 Java 21 编译，class 65） | **编译通过 ≠ 运行兼容**：依赖变更必须 runDemo 实跑首屏。对策：渲染层只用 JetBrains 官方纯 Kotlin parser 自研（org.jetbrains:markdown 零传递依赖），UI 库引入前先查 class file version |
+| F19 | 桌面右键上下文菜单三连坑：①combinedClickable.onLongClick 桌面只由按住左键触发（右键无效，曾误写入设计文档）②手写 pointerInput 在 CMP 1.10 桌面收不到鼠标事件③Robot 右键 e2e 注入依赖辅助功能权限且熄屏后失效 | secondaryClick expect/actual（桌面 onPointerEvent Press 记录次键 + Release 触发——Release 时刻按钮已释放不能直接判断）；文档断言 API 行为前必须实测 |
 | F18 | Kotlin 块注释内的 `*/` 序列提前闭合注释（第 4 次踩） | 注释里写代码符号序列（如"星号/波浪线"列举）必须转义措辞，严禁出现 `*/` 字面量；CI 侧可加 grep 检查 |
 
 ---

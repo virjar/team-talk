@@ -57,6 +57,7 @@ import com.virjar.tk.model.User
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.ui.component.AvatarPlaceholder
 import com.virjar.tk.ui.component.isEdgeToEdgeMedia
+import com.virjar.tk.ui.platform.secondaryClick
 import com.virjar.tk.ui.theme.Tk
 import com.virjar.tk.viewmodel.ChatViewModel
 import java.util.UUID
@@ -113,6 +114,7 @@ fun ChatPanel(
     val effectiveImageContent = media?.imageContent ?: imageContent
     val effectiveVideoContent = media?.videoContent ?: videoContent
     val effectiveMentionClick = media?.onMentionClick
+    val effectiveUrlClick = media?.onUrlClick
     val messages by viewModel.messages.collectAsState()
     val loading by viewModel.loading.collectAsState()
     val error by viewModel.error.collectAsState()
@@ -311,6 +313,7 @@ fun ChatPanel(
                                     resolveSender = resolveSender,
                                     voicePlayback = voicePlayback,
                                     onMentionClick = effectiveMentionClick,
+                                    onUrlClick = effectiveUrlClick,
                                     onLongClick = { menuMessage = msg },
                                     onMediaClick = effectiveMediaClick,
                                     imageContent = effectiveImageContent,
@@ -676,6 +679,7 @@ private fun MessageBubble(
     resolveSender: ((uid: String) -> User?)?,
     voicePlayback: com.virjar.tk.ui.component.VoicePlaybackController? = null,
     onMentionClick: ((uid: String) -> Unit)? = null,
+    onUrlClick: ((String) -> Unit)? = null,
     onLongClick: () -> Unit,
     onMediaClick: ((Message) -> Unit)?,
     imageContent: (@Composable (String, Modifier) -> Unit)?,
@@ -729,15 +733,18 @@ private fun MessageBubble(
                     bottomStart = if (isMe) 8.dp else if (isContinuation) 8.dp else 4.dp,
                     bottomEnd = if (isMe) if (isContinuation) 8.dp else 4.dp else 8.dp,
                 ),
-                modifier = Modifier.combinedClickable(
-                    onClick = {},
-                    onLongClick = onLongClick,
-                ),
+                modifier = Modifier
+                    .combinedClickable(
+                        onClick = {},
+                        onLongClick = onLongClick,
+                    )
+                    // 桌面右键弹上下文菜单（长按仅移动端手势）
+                    .secondaryClick(onLongClick),
             ) {
                 if (msg.body.isEdgeToEdgeMedia()) {
                     // 贴边媒体（图片/视频/贴纸）：无气泡内边距，媒体自身即气泡面（微信/飞书范式）
                     Box(modifier = Modifier.widthIn(max = Tk.dimens.bubbleMaxWidth)) {
-                        com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback, onMentionClick)
+                        com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback, onMentionClick, onUrlClick)
                     }
                 } else {
                     Column(
@@ -745,7 +752,7 @@ private fun MessageBubble(
                             .padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.sm)
                             .widthIn(max = Tk.dimens.bubbleMaxWidth - (Tk.spacing.md * 2))
                     ) {
-                        com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback, onMentionClick)
+                        com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback, onMentionClick, onUrlClick)
                     }
                 }
             }

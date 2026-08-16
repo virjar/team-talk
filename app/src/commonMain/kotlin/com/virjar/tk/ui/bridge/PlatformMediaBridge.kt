@@ -42,6 +42,8 @@ data class ChatMediaConfig(
     val onMediaClick: ((message: Message) -> Unit)? = null,
     /** 富文本 @提及 点击（打开用户资料）。 */
     val onMentionClick: ((uid: String) -> Unit)? = null,
+    /** 富文本超链接点击（桌面开浏览器/Android ACTION_VIEW）。 */
+    val onUrlClick: ((String) -> Unit)? = null,
 ) {
     /** 是否有任何媒体发送能力（决定附件工具栏是否显示）。 */
     val hasSendCapability: Boolean

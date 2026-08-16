@@ -49,6 +49,7 @@
 | 服务端视频缩略图生成（VideoBody.thumbnailUrl 字段已在 wire，客户端渲染已支持，缺服务端 ffmpeg 抽帧） | 📋 |
 | 视频画廊/语音引擎上游缺陷跟踪（compose-media-player 0.9 对音频-only 不上报 duration、不触发 onPlaybackEnded、isPlaying 不回落——已用墙钟兜底，上游修复后可移除） | 📋 |
 | currentUser 非响应式（@Volatile userSession + StateFlow.value 直读，首帧后不刷新；需 AppDataState 暴露 Compose State） | 📋 |
+| 桌面右键菜单人工验证（secondaryClick 代码就位；Robot 注入受辅助功能权限/熄屏限制无法自动化，需人工右键确认回复/转发菜单） | 📋 |
 
 ## P2 — SDK 补充
 

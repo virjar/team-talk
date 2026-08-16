@@ -49,11 +49,12 @@ fun MessageBodyRenderer(
     videoContent: (@Composable (String, Modifier) -> Unit)? = null,
     voicePlayback: VoicePlaybackController? = null,
     onMentionClick: ((uid: String) -> Unit)? = null,
+    onUrlClick: ((String) -> Unit)? = null,
 ) {
     when (val body = message.body) {
         // TextBody 整体按 markdown 渲染（Discord 语义；普通文本视觉不变），选型见 doc/10-rich-messaging
-        is TextBody -> RichMessageText(body.text)
-        is RichTextBody -> RichMessageText(body.markdown, onMentionClick = onMentionClick)
+        is TextBody -> RichMessageText(body.text, onUrlClick = onUrlClick)
+        is RichTextBody -> RichMessageText(body.markdown, onUrlClick = onUrlClick, onMentionClick = onMentionClick)
         is InteractiveCardBody -> body.toCard()?.let { card ->
             com.virjar.tk.ui.component.rich.InteractiveCardView(card)
         } ?: MediaIconCard(title = "卡片", subtitle = "")

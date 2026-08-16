@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -295,7 +296,11 @@ private fun List<MdSpan>.toAnnotated(
     onUrlClick: ((String) -> Unit)?,
     onMentionClick: ((String) -> Unit)?,
 ): AnnotatedString {
-    val linkColor = MaterialTheme.colorScheme.primary
+    // 彩色气泡（自己蓝气泡=白字）上 primary 蓝不可辨：亮色文字时链接/提及改用白色系（F20）
+    val onColoredBubble = LocalContentColor.current.luminance() > 0.5f
+    val linkColor = if (onColoredBubble) Color.White else MaterialTheme.colorScheme.primary
+    val mentionBg = if (onColoredBubble) Color.White.copy(alpha = 0.2f)
+    else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
     val inlineCodeBg = LocalContentColor.current.copy(alpha = 0.12f)
     return buildAnnotatedString {
         forEach { span ->
@@ -332,7 +337,7 @@ private fun List<MdSpan>.toAnnotated(
                     pushStyle(
                         SpanStyle(
                             color = if (onMentionClick != null) linkColor else LocalContentColor.current,
-                            background = linkColor.copy(alpha = 0.15f),
+                            background = mentionBg,
                         )
                     )
                     append("@${span.name}")
