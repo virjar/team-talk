@@ -152,8 +152,14 @@ class SearchIndex(private val indexDir: File) {
         val analyzerInstance = analyzer!!
         val builder = BooleanQuery.Builder()
 
-        val textQuery = QueryParser("text", analyzerInstance).parse(q)
-        builder.add(textQuery, BooleanClause.Occur.MUST)
+        // 空关键词/裸 "*" = 浏览模式（match-all）：经典 QueryParser 拒绝首字符通配，
+        // 且 Highlighter 的 QueryScorer 对 MatchAll 无片段——管理员"空条件浏览最近消息"场景
+        if (q.isBlank() || q.trim() == "*") {
+            builder.add(org.apache.lucene.search.MatchAllDocsQuery(), BooleanClause.Occur.MUST)
+        } else {
+            val textQuery = QueryParser("text", analyzerInstance).parse(q)
+            builder.add(textQuery, BooleanClause.Occur.MUST)
+        }
 
         if (chatIds.isNotEmpty()) {
             val channelBuilder = BooleanQuery.Builder()

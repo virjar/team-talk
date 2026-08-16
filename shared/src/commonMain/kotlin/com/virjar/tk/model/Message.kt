@@ -20,6 +20,9 @@ data class Message(
     val messageType: Int,
     val timestamp: Long,
     val flags: Int = 0,
+    // JSON 序列化跳过多态 body（15 种 Body 子类未标 @Serializable；admin 高亮走 Lucene，
+    // wire 编解码走 IProto.writeTo 不受影响）
+    @kotlinx.serialization.Transient
     val body: MessageBody? = null,
     /** 发送状态：0=sent, 1=sending, 2=failed。纯客户端字段，不参与协议传输。 */
     val sendStatus: Int = SEND_STATUS_SENT,

@@ -133,7 +133,7 @@ class AdminService(
     ): MessageSearchResult {
         val chatIds = chatId?.takeIf { it.isNotBlank() }?.let { setOf(it) } ?: emptySet()
         val (total, results) = searchIndex.search(
-            query = keyword ?: "*",
+            query = keyword ?: "",  // 空=浏览模式（SearchIndex match-all）
             chatIds = chatIds,
             senderUid = senderUid?.takeIf { it.isNotBlank() },
             startTimestamp = start?.takeIf { it > 0 },
