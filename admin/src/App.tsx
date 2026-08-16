@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Layout, Menu, Button, Space, Typography } from 'antd'
 import {
   DashboardOutlined, UserOutlined, MessageOutlined, FileTextOutlined, TeamOutlined, LogoutOutlined,
@@ -15,7 +15,9 @@ const { Header, Sider, Content } = Layout
 
 function Shell() {
   const loc = useLocation()
-  const selected = '/' + (loc.pathname.split('/')[2] ?? 'dashboard')
+  const navigate = useNavigate()
+  // BrowserRouter(basename=/admin) 的 useLocation 已剥 basename：pathname 即 '/users' 等
+  const selected = loc.pathname === '/' ? '/dashboard' : loc.pathname
   const logout = () => { localStorage.removeItem(TOKEN_KEY); window.location.href = '/admin/' }
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -27,7 +29,7 @@ function Shell() {
           { key: '/messages', icon: <MessageOutlined />, label: '消息' },
           { key: '/logs', icon: <FileTextOutlined />, label: '日志' },
           { key: '/groups', icon: <TeamOutlined />, label: '群组' },
-        ]} onClick={({ key }) => { window.location.hash = ''; window.location.href = '/admin#' + key }} />
+        ]} onClick={({ key }) => navigate(key)} />
       </Sider>
       <Layout>
         <Header style={{ background: '#fff', display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
@@ -38,6 +40,7 @@ function Shell() {
         </Header>
         <Content style={{ margin: 16 }}>
           <Routes>
+            <Route path="/" element={<Navigate to="dashboard" replace />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="users" element={<Users />} />
             <Route path="messages" element={<Messages />} />
