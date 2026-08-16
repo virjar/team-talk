@@ -195,6 +195,7 @@ fun AndroidChatScreen(
                 chatId = chatId, chatName = chatName, viewModel = viewModel, myUid = myUid,
                 chatType = chatType, resolveSender = resolveSender,
                 onForward = onForward, initialDraft = draft, onDraftChange = onDraftChange,
+                voicePlayback = rememberAndroidVoicePlayback(context),
                 media = com.virjar.tk.ui.bridge.ChatMediaConfig(
                     onAttachClick = { showAttachSheet = true },
                     onPickImage = { imagePicker.launch(PickVisualMediaRequest.Builder().setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly).build()) },
@@ -257,4 +258,34 @@ fun AndroidChatScreen(
             confirmButton = { TextButton(onClick = { showAttachSheet = false }) { Text("取消") } },
         )
     }
+}
+
+/**
+ * Android 语音应用内播放控制器：包装全局 [VoicePlayer]（MediaPlayer 单例），
+ * 轮询其非 Compose 状态转为可订阅状态，驱动气泡波形着色。
+ */
+@Composable
+private fun rememberAndroidVoicePlayback(context: android.content.Context): com.virjar.tk.ui.component.VoicePlaybackController {
+    val urlState = remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    val progressState = remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    val controller = remember {
+        object : com.virjar.tk.ui.component.VoicePlaybackController {
+            override val playingUrl: String? by urlState
+            override val progress: Float by progressState
+            override fun toggle(url: String, durationSec: Int) {
+                // Android MediaPlayer 上报真实进度，durationSec hint 不需要
+                urlState.value = url
+                VoicePlayer.play(context, url)
+            }
+        }
+    }
+    LaunchedEffect(controller) {
+        while (true) {
+            // VoicePlayer 暂停时保留 playingUrl（气泡维持暂停态），播完/停止时为 null
+            urlState.value = VoicePlayer.playingUrl
+            progressState.floatValue = VoicePlayer.progress
+            kotlinx.coroutines.delay(200)
+        }
+    }
+    return controller
 }

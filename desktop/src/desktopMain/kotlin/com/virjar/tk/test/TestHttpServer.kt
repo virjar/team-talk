@@ -554,6 +554,10 @@ object TestHttpServer {
         val text: String? = if (cfg.contains(SemanticsProperties.Text)) {
             (cfg[SemanticsProperties.Text] as? List<*>)?.joinToString("") { it.toString() }
         } else null
+        // contentDescription：图标按钮等无文字节点的定位依据（e2e 依赖）
+        val cd: String? = if (cfg.contains(SemanticsProperties.ContentDescription)) {
+            (cfg[SemanticsProperties.ContentDescription] as? List<*>)?.joinToString("") { it.toString() }
+        } else null
         val editableText: String? = if (cfg.contains(SemanticsProperties.EditableText)) {
             cfg[SemanticsProperties.EditableText].toString()
         } else null
@@ -564,6 +568,7 @@ object TestHttpServer {
         sb.append("\"id\":${node.id}")
         tag?.let { sb.append(",\"testTag\":\"${it.escape()}\"") }
         text?.let { sb.append(",\"text\":\"${it.escape()}\"") }
+        cd?.let { sb.append(",\"cd\":\"${it.escape()}\"") }
         editableText?.let { sb.append(",\"editableText\":\"${it.escape()}\"") }
         sb.append(",\"clickable\":$clickable")
         sb.append(",\"bounds\":[${b.left},${b.top},${b.right},${b.bottom}]")

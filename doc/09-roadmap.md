@@ -46,8 +46,8 @@
 | F13 长按消息弹系统文本菜单（MessageBodyRenderer Text 被系统选择拦截 onLongClick） | 📋 |
 | F15 Desktop Profile 源码级隔离 | 📋 |
 | Android E2E 全流程 T01-T34 剩余用例 | 📋 |
-| 视频消息缩略图渲染接入（desktop 未注入 videoContent，当前走图标 fallback；服务端缩略图生成也缺） | 📋 |
-| 语音播放态动画（波形进度着色，待媒体播放器状态接入） | 📋 |
+| 服务端视频缩略图生成（VideoBody.thumbnailUrl 字段已在 wire，客户端渲染已支持，缺服务端 ffmpeg 抽帧） | 📋 |
+| 视频画廊/语音引擎上游缺陷跟踪（compose-media-player 0.9 对音频-only 不上报 duration、不触发 onPlaybackEnded、isPlaying 不回落——已用墙钟兜底，上游修复后可移除） | 📋 |
 | currentUser 非响应式（@Volatile userSession + StateFlow.value 直读，首帧后不刷新；需 AppDataState 暴露 Compose State） | 📋 |
 
 ## P2 — SDK 补充

@@ -80,27 +80,6 @@ object DesktopMediaHelper {
         }
     }
 
-    /** 下载并播放音频（阻塞当前线程，调用方需切到后台线程）。 */
-    fun playAudio(url: String) {
-        try {
-            val file = downloadToCache(url)
-            val stream = AudioSystem.getAudioInputStream(file)
-            val clip = AudioSystem.getClip()
-            clip.open(stream)
-            clip.start()
-            // 等待播放完毕
-            clip.addLineListener { event ->
-                if (event.type == LineEvent.Type.STOP) {
-                    clip.close()
-                    stream.close()
-                }
-            }
-        } catch (_: Exception) {
-            // 回退：用系统播放器
-            try { Desktop.getDesktop().open(downloadToCache(url)) } catch (_: Exception) {}
-        }
-    }
-
     /** 下载并打开文件（用系统默认应用）。 */
     fun openFile(url: String) {
         try {

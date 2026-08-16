@@ -21,6 +21,13 @@ object VoicePlayer {
     val error: String? get() = _error
     val playingUrl: String? get() = currentUrl
 
+    /** 播放进度 0..1（供 UI 波形着色轮询；无播放时 0） */
+    val progress: Float
+        get() = currentPlayer?.let { mp ->
+            val d = try { mp.duration } catch (_: IllegalStateException) { 0 }
+            if (d > 0) mp.currentPosition.toFloat() / d else 0f
+        } ?: 0f
+
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob() +
         CoroutineExceptionHandler { _, throwable ->
             Log.e("VoicePlayer", "Scope unhandled exception", throwable)

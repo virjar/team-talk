@@ -81,6 +81,8 @@ fun ChatPanel(
     imageContent: (@Composable (String, Modifier) -> Unit)? = null,
     videoContent: (@Composable (String, Modifier) -> Unit)? = null,
     peerReadSeq: Long = 0,
+    /** 语音应用内播放控制器（null 时语音点击回退 onMediaClick 链路） */
+    voicePlayback: com.virjar.tk.ui.component.VoicePlaybackController? = null,
 ) {
     // 统一入口：media 优先，回退到独立 lambda
     val effectiveAttachClick = media?.onAttachClick ?: onAttachClick
@@ -237,6 +239,7 @@ fun ChatPanel(
                                     showReadIndicator = isPersonal && isMyLastMsg,
                                     peerReadSeq = peerReadSeq,
                                     resolveSender = resolveSender,
+                                    voicePlayback = voicePlayback,
                                     onLongClick = { menuMessage = msg },
                                     onMediaClick = effectiveMediaClick,
                                     imageContent = effectiveImageContent,
@@ -487,6 +490,7 @@ private fun MessageBubble(
     showReadIndicator: Boolean,
     peerReadSeq: Long = 0,
     resolveSender: ((uid: String) -> User?)?,
+    voicePlayback: com.virjar.tk.ui.component.VoicePlaybackController? = null,
     onLongClick: () -> Unit,
     onMediaClick: ((Message) -> Unit)?,
     imageContent: (@Composable (String, Modifier) -> Unit)?,
@@ -548,7 +552,7 @@ private fun MessageBubble(
                 if (msg.body.isEdgeToEdgeMedia()) {
                     // 贴边媒体（图片/视频/贴纸）：无气泡内边距，媒体自身即气泡面（微信/飞书范式）
                     Box(modifier = Modifier.widthIn(max = Tk.dimens.bubbleMaxWidth)) {
-                        com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent)
+                        com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback)
                     }
                 } else {
                     Column(
@@ -556,7 +560,7 @@ private fun MessageBubble(
                             .padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.sm)
                             .widthIn(max = Tk.dimens.bubbleMaxWidth - (Tk.spacing.md * 2))
                     ) {
-                        com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent)
+                        com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback)
                     }
                 }
             }

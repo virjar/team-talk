@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -34,9 +35,10 @@ import kotlin.math.abs
  * 媒体类（图片/视频/贴纸）走「贴边气泡」——由 [com.virjar.tk.ui.screen] 的 MessageBubble
  * 判定 [isEdgeToEdgeMedia] 后去掉气泡内边距，媒体自身即气泡面。
  *
- * @param onMediaClick 媒体卡片点击回调（文件/语音/图片/视频）
+ * @param onMediaClick 媒体卡片点击回调（文件/图片/视频；语音走 [voicePlayback] 应用内播放）
  * @param imageContent 平台注入的图片缩略图渲染（null 时 fallback 到图标卡片）
- * @param videoContent 平台注入的视频缩略图渲染（null 时 fallback 到图标卡片）
+ * @param videoContent 平台注入的视频缩略图渲染（保留参数兼容；视频卡当前走 thumbnailUrl/深色占位）
+ * @param voicePlayback 语音应用内播放控制器（null 时语音点击回退 onMediaClick，如 Android 旧路径）
  */
 @Composable
 fun MessageBodyRenderer(
@@ -45,6 +47,7 @@ fun MessageBodyRenderer(
     onMediaClick: ((Message) -> Unit)? = null,
     imageContent: (@Composable (String, Modifier) -> Unit)? = null,
     videoContent: (@Composable (String, Modifier) -> Unit)? = null,
+    voicePlayback: VoicePlaybackController? = null,
 ) {
     when (val body = message.body) {
         is TextBody -> Text(body.text, style = MaterialTheme.typography.bodyMedium)
@@ -56,9 +59,15 @@ fun MessageBodyRenderer(
         )
 
         is VoiceBody -> VoiceCard(
+            url = body.url,
             durationSec = body.duration,
             waveSeed = abs(body.url.hashCode()),
-            onClick = onMediaClick?.let { cb -> { cb(message) } },
+            playing = voicePlayback?.playingUrl == body.url,
+            progress = if (voicePlayback?.playingUrl == body.url) voicePlayback.progress else 0f,
+            // 已播高亮：自己气泡（蓝底）用纯白，对方气泡（灰底）用主色
+            playedColor = if (isMe) Color.White else MaterialTheme.colorScheme.primary,
+            onTogglePlay = voicePlayback?.let { vb -> { vb.toggle(body.url, body.duration) } }
+                ?: onMediaClick?.let { cb -> { cb(message) } },
         )
 
         is ImageBody -> {
@@ -78,24 +87,16 @@ fun MessageBodyRenderer(
 
         is VideoBody -> {
             val clickAction = onMediaClick?.let { cb -> { cb(message) } }
-            if (videoContent != null) {
-                VideoThumbCard(
-                    videoUrl = body.url,
-                    thumbnailUrl = body.thumbnailUrl,
-                    videoContent = videoContent,
-                    imgWidth = body.width,
-                    imgHeight = body.height,
-                    duration = body.duration,
-                    onClick = clickAction,
-                )
-            } else {
-                val sub = when {
-                    body.duration > 0 -> "${body.duration}″"
-                    body.size > 0 -> formatFileSize(body.size)
-                    else -> ""
-                }
-                MediaIconCard(title = "视频", subtitle = sub, onClick = clickAction)
-            }
+            VideoThumbCard(
+                videoUrl = body.url,
+                thumbnailUrl = body.thumbnailUrl,
+                videoContent = videoContent,
+                imageContent = imageContent,
+                imgWidth = body.width,
+                imgHeight = body.height,
+                duration = body.duration,
+                onClick = clickAction,
+            )
         }
 
         is LocationBody -> MediaIconCard(title = body.title ?: "位置", subtitle = body.address ?: "")
@@ -174,13 +175,18 @@ private fun ImageThumbCard(
     }
 }
 
-// ── 视频缩略图（贴边 + 黑底播放按钮 + 时长角标） ──
+// ── 视频缩略图（真缩略图优先，否则深色 16:9 占位卡 + 播放键 + 时长角标） ──
 
+/**
+ * 视频卡：贴边 16:9（宽高已知时等比）。有服务端缩略图（thumbnailUrl）时显示真缩略图，
+ * 无则深色底 + 居中播放键。点击进画廊窗口内嵌播放器（应用内渲染，非系统播放器）。
+ */
 @Composable
 private fun VideoThumbCard(
     videoUrl: String,
     thumbnailUrl: String?,
-    videoContent: @Composable (String, Modifier) -> Unit,
+    videoContent: (@Composable (String, Modifier) -> Unit)?, // 保留参数兼容；当前不使用
+    imageContent: (@Composable (String, Modifier) -> Unit)?,
     imgWidth: Int,
     imgHeight: Int,
     duration: Int,
@@ -198,17 +204,19 @@ private fun VideoThumbCard(
         h = minOf(h, maxH.value)
         androidx.compose.ui.unit.Dp(w) to androidx.compose.ui.unit.Dp(h)
     } else {
-        200.dp to 150.dp
+        240.dp to 135.dp  // 无元数据时按 16:9
     }
 
     Box(
         modifier = Modifier
             .size(displaySize.first, displaySize.second)
-            .background(Tk.colors.bubbleIncoming)
+            .background(Color(0xFF20242C))  // 视频区固定深色（明暗主题一致的"屏幕"隐喻）
             .then(onClick?.let { Modifier.clickable(onClick = it) } ?: Modifier),
     ) {
-        val displayUrl = thumbnailUrl ?: videoUrl
-        videoContent(displayUrl, Modifier.fillMaxSize())
+        // 真缩略图（服务端生成后自动生效；当前链路无缩略图）
+        if (thumbnailUrl != null && imageContent != null) {
+            imageContent(thumbnailUrl, Modifier.fillMaxSize())
+        }
 
         // 播放按钮：半透明黑底 + 白色三角（微信/飞书范式）
         Box(
@@ -244,17 +252,21 @@ private fun VideoThumbCard(
     }
 }
 
-// ── 语音：确定性波形 + 时长（微信/飞书范式） ──
+// ── 语音：应用内播放卡片（波形进度着色 + 播放/暂停态，微信/飞书范式） ──
 
 /**
- * 语音卡片：竖条波形 + 时长。波形高度由 url 哈希确定性生成（同一条消息每次渲染一致，
- * 不做动画占位——播放态动画待媒体播放器打通后补）。
+ * 语音卡片：播放键 + 竖条波形 + 时长。波形高度由 url 哈希确定性生成；
+ * 播放中已播部分条形高亮（progress 比例），时长切换为「当前/总长」。
  */
 @Composable
 private fun VoiceCard(
+    url: String,
     durationSec: Int,
     waveSeed: Int,
-    onClick: (() -> Unit)?,
+    playing: Boolean,
+    progress: Float,
+    playedColor: Color,
+    onTogglePlay: (() -> Unit)?,
 ) {
     val barCount = 14
     val duration = if (durationSec > 0) durationSec else 1
@@ -266,39 +278,56 @@ private fun VoiceCard(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .widthIn(min = cardWidth, max = cardWidth)
-            .then(onClick?.let { Modifier.clickable(onClick = it) } ?: Modifier),
+            .then(onTogglePlay?.let { Modifier.clickable(onClick = it) } ?: Modifier),
     ) {
+        Icon(
+            imageVector = if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+            contentDescription = if (playing) "暂停" else "播放",
+            tint = barColor,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(Tk.spacing.sm))
         VoiceWave(
             seed = waveSeed,
             barCount = barCount,
             color = barColor,
+            playedColor = playedColor,
+            progress = progress,
             modifier = Modifier.weight(1f).height(20.dp),
         )
         Spacer(Modifier.width(Tk.spacing.sm))
         Text(
-            "${duration}″",
+            if (playing && progress > 0f) "${(duration * progress).toInt()}/${duration}″" else "${duration}″",
             style = MaterialTheme.typography.labelMedium,
-            color = LocalContentColor.current,
+            color = barColor,
         )
     }
 }
 
-/** 波形：确定性伪随机高度竖条（seed → 线性同余序列，免依赖 Random 的平台差异）。 */
+/** 波形：确定性伪随机高度竖条（seed → 线性同余序列）；播放中按进度两段着色。 */
 @Composable
-private fun VoiceWave(seed: Int, barCount: Int, color: Color, modifier: Modifier = Modifier) {
+private fun VoiceWave(
+    seed: Int,
+    barCount: Int,
+    color: Color,
+    playedColor: Color,
+    progress: Float,
+    modifier: Modifier = Modifier,
+) {
     val barWidthPx = with(LocalDensity.current) { 3.dp.toPx() }
     val gapPx = with(LocalDensity.current) { 2.dp.toPx() }
     Canvas(modifier = modifier) {
         val contentW = barCount * barWidthPx + (barCount - 1) * gapPx
         var x = (size.width - contentW) / 2f
+        val playedBars = (progress * barCount).toInt()
         var s = seed.toLong() and 0x7FFFFFFFL
-        repeat(barCount) {
+        repeat(barCount) { i ->
             // LCG：确定性伪随机 0.25..1.0
             s = (s * 48271) % 0x7FFFFFFFL
             val level = 0.25f + (s % 100) / 100f * 0.75f
             val h = size.height * level
             drawRoundRect(
-                color = color,
+                color = if (i < playedBars && progress > 0f) playedColor else color,
                 topLeft = Offset(x, (size.height - h) / 2f),
                 size = Size(barWidthPx, h),
                 cornerRadius = CornerRadius(barWidthPx / 2f),

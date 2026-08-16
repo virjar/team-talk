@@ -116,6 +116,9 @@ internal fun MainAppContent(
         }
     }
 
+    // 语音应用内播放（native 引擎，聊天面板级共享：切会话即静音）
+    val voicePlayback = rememberDesktopVoicePlayback()
+
     // ── 三栏常驻布局 ──
     Row(modifier = Modifier.fillMaxSize().testTag("main.home")) {
         // ── 左栏：细导航栏（56dp 图标式，规格 §1.5）──
@@ -294,6 +297,7 @@ internal fun MainAppContent(
                         conversationRepo = appState.conversationRepo,
                         initialDraft = conv?.draft,
                         resolveSender = resolveUser,
+                        voicePlayback = voicePlayback,
                         onForward = { msg -> appState.forwardMessage = msg; appState.currentScreen = SubScreen.Forward },
                         onGroupDetail = { appState.selectedGroupChatId = appState.selectedChatId; appState.currentScreen = SubScreen.GroupDetail },
                     )
@@ -486,6 +490,7 @@ private fun ChatPanelWrapper(
     onForward: (Message) -> Unit,
     onGroupDetail: () -> Unit,
     resolveSender: ((uid: String) -> User?)? = null,
+    voicePlayback: com.virjar.tk.ui.component.VoicePlaybackController? = null,
 ) {
     val messagesState = viewModel.messages.collectAsState()
 
@@ -500,9 +505,8 @@ private fun ChatPanelWrapper(
     val onMediaClick = rememberMediaClickHandler(
         messages = messagesState,
         actions = object : PlatformMediaActions {
-            override fun playVoice(url: String) {
-                kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch { DesktopMediaHelper.playAudio(url) }
-            }
+            // 语音已走 voicePlayback 应用内播放（ChatPanel.voicePlayback），此链路不再触达
+            override fun playVoice(url: String) {}
             override fun openFile(url: String) {
                 kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch { DesktopMediaHelper.openFile(url) }
             }
@@ -550,6 +554,7 @@ private fun ChatPanelWrapper(
             resolveSender = resolveSender,
             onForward = onForward,
             initialDraft = initialDraft,
+            voicePlayback = voicePlayback,
             onDraftChange = { draft ->
                 // 空草稿传 null，避免 [草稿] 标签残留
                 kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
