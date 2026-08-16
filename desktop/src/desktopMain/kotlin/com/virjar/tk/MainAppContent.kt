@@ -119,6 +119,21 @@ internal fun MainAppContent(
     // 语音应用内播放（native 引擎，聊天面板级共享：切会话即静音）
     val voicePlayback = rememberDesktopVoicePlayback()
 
+    // @ 补全候选：群聊拉成员列表；私聊用好友列表（chatId 不含对方 uid，好友即候选）
+    var mentionCandidates by remember { mutableStateOf<List<User>>(emptyList()) }
+    LaunchedEffect(appState.selectedChatId, appState.selectedChatType, contacts.size) {
+        val chatId = appState.selectedChatId
+        mentionCandidates = if (chatId == null) {
+            emptyList()
+        } else if (appState.selectedChatType == ChatType.GROUP.code) {
+            try {
+                appState.chatRepo.getMembers(chatId).getOrNull()?.mapNotNull { it.user } ?: emptyList()
+            } catch (_: Exception) { emptyList() }
+        } else {
+            contacts.mapNotNull { it.user }
+        }
+    }
+
     // ── 三栏常驻布局 ──
     Row(modifier = Modifier.fillMaxSize().testTag("main.home")) {
         // ── 左栏：细导航栏（56dp 图标式，规格 §1.5）──
@@ -302,6 +317,7 @@ internal fun MainAppContent(
                             appState.selectedProfileUid = uid
                             appState.currentScreen = SubScreen.UserProfile
                         },
+                        mentionCandidates = mentionCandidates,
                         onForward = { msg -> appState.forwardMessage = msg; appState.currentScreen = SubScreen.Forward },
                         onGroupDetail = { appState.selectedGroupChatId = appState.selectedChatId; appState.currentScreen = SubScreen.GroupDetail },
                     )
@@ -496,6 +512,7 @@ private fun ChatPanelWrapper(
     resolveSender: ((uid: String) -> User?)? = null,
     voicePlayback: com.virjar.tk.ui.component.VoicePlaybackController? = null,
     onMentionClick: ((uid: String) -> Unit)? = null,
+    mentionCandidates: List<User> = emptyList(),
 ) {
     val messagesState = viewModel.messages.collectAsState()
 
@@ -557,6 +574,7 @@ private fun ChatPanelWrapper(
             onForward = onForward,
             initialDraft = initialDraft,
             voicePlayback = voicePlayback,
+            mentionCandidates = mentionCandidates,
             onDraftChange = { draft ->
                 // 空草稿传 null，避免 [草稿] 标签残留
                 kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {

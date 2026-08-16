@@ -23,6 +23,11 @@ object MessageTextExtractor {
         return when (MessageType.fromCode(messageType)) {
             MessageType.TEXT -> (body as? TextBody)?.text
             MessageType.RICH_TEXT -> (body as? RichTextBody)?.plainText
+            MessageType.INTERACTIVE_CARD -> {
+                val card = (body as? InteractiveCardBody)?.toCard()
+                listOfNotNull(card?.title, card?.blocks?.filterIsInstance<CardBlock.Text>()?.joinToString(" ") { it.text })
+                    .filter { it.isNotEmpty() }.joinToString(" ").ifEmpty { null }
+            }
             MessageType.IMAGE -> null
             MessageType.VOICE -> null
             MessageType.VIDEO -> null

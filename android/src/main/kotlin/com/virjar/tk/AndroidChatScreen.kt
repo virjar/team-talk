@@ -54,6 +54,7 @@ fun AndroidChatScreen(
     onBack: () -> Unit,
     serverUrl: String = "",
     resolveSender: ((uid: String) -> User?)? = null,
+    mentionCandidates: List<User> = emptyList(),
     scope: kotlinx.coroutines.CoroutineScope = rememberCoroutineScope(),
 ) {
     val context = LocalContext.current
@@ -195,6 +196,7 @@ fun AndroidChatScreen(
                 chatType = chatType, resolveSender = resolveSender,
                 onForward = onForward, initialDraft = draft, onDraftChange = onDraftChange,
                 voicePlayback = rememberAndroidVoicePlayback(context),
+                mentionCandidates = mentionCandidates,
                 media = com.virjar.tk.ui.bridge.ChatMediaConfig(
                     onPickImage = { imagePicker.launch(PickVisualMediaRequest.Builder().setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly).build()) },
                     onPickFile = { filePicker.launch(arrayOf("*/*")) },

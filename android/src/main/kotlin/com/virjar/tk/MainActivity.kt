@@ -140,6 +140,17 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             val conversations by dataState.conversationViewModel.conversations.collectAsState()
             val draft = remember(chatId) { conversations.find { it.chatId == chatId }?.draft }
             var currentDraft by remember { mutableStateOf(draft) }
+            // @ 补全候选：群聊拉成员，私聊用好友
+            var mentionCandidates by remember { mutableStateOf<List<com.virjar.tk.model.User>>(emptyList()) }
+            LaunchedEffect(chatId, chatType) {
+                mentionCandidates = try {
+                    if (chatType == com.virjar.tk.model.ChatType.GROUP.code) {
+                        dataState.chatRepo.getMembers(chatId).getOrNull()?.mapNotNull { it.user } ?: emptyList()
+                    } else {
+                        dataState.contactViewModel.contacts.value.mapNotNull { it.user }
+                    }
+                } catch (_: Exception) { emptyList() }
+            }
             // 离开聊天页时保存草稿（fire-and-forget，不再阻塞主线程）
             DisposableEffect(chatId) {
                 onDispose { dataState.saveDraft(chatId, currentDraft) }
@@ -147,6 +158,7 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             if (vm != null) { AndroidChatScreen(chatId, chatName, chatType, vm, dataState.userSession.uid,
                 serverUrl = defaultServerConfig().serverUrl,
                 resolveSender = { uid -> dataState.localCache.getUser(uid) },
+                mentionCandidates = mentionCandidates,
                 draft = currentDraft,
                 onDraftChange = { currentDraft = it },
                 onForward = { msg -> navController.navigate(Routes.forward(msg.chatId, msg.serverSeq)) },

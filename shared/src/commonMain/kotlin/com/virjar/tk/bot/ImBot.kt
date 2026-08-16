@@ -13,6 +13,7 @@ import com.virjar.tk.client.defaultServerConfig
 import com.virjar.tk.body.FileBody
 import com.virjar.tk.body.ImageBody
 import com.virjar.tk.body.TextBody
+import com.virjar.tk.body.buildRichTextBody
 import com.virjar.tk.body.VideoBody
 import com.virjar.tk.body.VoiceBody
 import com.virjar.tk.model.Chat
@@ -113,6 +114,14 @@ class ImBot private constructor(
     /** 发送文本消息并等待服务端 ACK。 */
     suspend fun sendText(chatId: String, text: String): MessageAckPayload =
         send(chatId, TextBody(text))
+
+    /** 发送富文本（markdown/mention）消息。 */
+    suspend fun sendRichText(chatId: String, markdown: String): MessageAckPayload =
+        send(chatId, buildRichTextBody(markdown), MessageType.RICH_TEXT)
+
+    /** 发送交互卡片（一期静态展示；二期按钮回调）。 */
+    suspend fun sendCard(chatId: String, card: com.virjar.tk.body.CardPayload): MessageAckPayload =
+        send(chatId, com.virjar.tk.body.InteractiveCardBody.of(card), MessageType.INTERACTIVE_CARD)
 
     // ── 媒体消息（URL 模式：调用方先行 uploadFile 上传） ──
 

@@ -66,3 +66,31 @@ class RichTextBodyTest {
         assertTrue(looksRichMarkdown("# 标题"))
     }
 }
+
+
+/** 交互卡片 wire 契约 + payload JSON 稳定性 */
+class InteractiveCardBodyTest {
+
+    @Test
+    fun `card wire round-trip 与 payload 还原`() {
+        val card = CardPayload(
+            title = "构建通知",
+            blocks = listOf(CardBlock.Text("构建通过"), CardBlock.Text("耗时 3m")),
+        )
+        val body = InteractiveCardBody.of(card)
+
+        val byteBuf = io.netty.buffer.Unpooled.buffer()
+        body.writeTo(PacketBuffer(byteBuf))
+        val decoded = InteractiveCardBody.readFrom(PacketBuffer(byteBuf))
+
+        assertEquals(body, decoded)
+        val decodedCard = decoded.toCard()
+        assertEquals(card, decodedCard)
+    }
+
+    @Test
+    fun `非法 payload 降级 null 而非崩溃`() {
+        val body = InteractiveCardBody(payloadJson = "{not-json")
+        assertEquals(null, body.toCard())
+    }
+}

@@ -43,6 +43,13 @@ import com.virjar.tk.body.RichTextBody
 import com.virjar.tk.body.buildRichTextBody
 import com.virjar.tk.body.looksRichMarkdown
 import com.virjar.tk.ui.component.input.AttachmentPanel
+import com.virjar.tk.ui.component.input.AutoCompleteItem
+import com.virjar.tk.ui.component.input.AutoCompleteOverlay
+import com.virjar.tk.ui.component.input.MentionVisualTransformation
+import com.virjar.tk.ui.component.input.SlashCommands
+import com.virjar.tk.ui.component.input.detectMentionQuery
+import com.virjar.tk.ui.component.input.detectSlashQuery
+import com.virjar.tk.ui.component.input.expandSlashCommand
 import com.virjar.tk.ui.component.input.EmojiPanel
 import com.virjar.tk.model.ChatType
 import com.virjar.tk.model.Message
@@ -94,6 +101,8 @@ fun ChatPanel(
     peerReadSeq: Long = 0,
     /** 语音应用内播放控制器（null 时语音点击回退 onMediaClick 链路） */
     voicePlayback: com.virjar.tk.ui.component.VoicePlaybackController? = null,
+    /** @ 补全候选（群成员/私聊对方）；null=禁用 @ 补全 */
+    mentionCandidates: List<com.virjar.tk.model.User>? = null,
 ) {
     // 统一入口：media 优先，回退到独立 lambda
     val effectiveAttachClick = media?.onAttachClick ?: onAttachClick
@@ -119,6 +128,36 @@ fun ChatPanel(
     var showEmoji by remember { mutableStateOf(false) }
     var showAttach by remember { mutableStateOf(false) }
     val inputFocus = remember { FocusRequester() }
+
+    // @ / / 补全查询（从光标上下文推导；emoji/attach 面板打开时抑制）
+    val mentionQuery = if (!showEmoji && !showAttach) detectMentionQuery(inputField) else null
+    val slashQuery = if (!showEmoji && !showAttach && mentionQuery == null) detectSlashQuery(inputField) else null
+
+    /** 选中 mention 候选：替换 @query 为完整链接语法（视觉由 transformation 折叠显示） */
+    fun pickMention(user: com.virjar.tk.model.User) {
+        val q = mentionQuery ?: return
+        val pos = inputField.selection.min
+        val syntax = "@[${user.name.ifBlank { user.username ?: user.uid }}](mention://${user.uid}) "
+        inputField = TextFieldValue(
+            inputField.text.substring(0, q.atIndex) + syntax + inputField.text.substring(pos),
+            TextRange(q.atIndex + syntax.length),
+        )
+        inputFocus.requestFocus()
+    }
+
+    /** 选中 / 指令候选：把行首不完整 token（如 /s）回填为完整命令 + 空格，正文留待用户续输；发送时再展开 */
+    fun pickSlash(cmd: String) {
+        val text = inputField.text
+        val pos = inputField.selection.min
+        val lineStart = text.lastIndexOf('\n', (pos - 1).coerceAtLeast(0)).let { if (pos == 0) 0 else it + 1 }
+        val tokenEnd = text.indexOf(' ', lineStart).let { if (it < 0) text.length else it }
+        val replacement = "$cmd "
+        inputField = TextFieldValue(
+            text.substring(0, lineStart) + replacement + text.substring(tokenEnd),
+            TextRange(lineStart + replacement.length),
+        )
+        inputFocus.requestFocus()
+    }
     var voiceMode by rememberSaveable { mutableStateOf(false) }
 
     val isPersonal = ChatType.fromCode(chatType) == ChatType.PERSONAL
@@ -143,9 +182,17 @@ fun ChatPanel(
         }
     }
 
+    // mention 视觉折叠（@[名](mention://uid) → @名 高亮块）；主题色变化时重建
+    val mentionColor = MaterialTheme.colorScheme.primary
+    val mentionTransformation = androidx.compose.runtime.remember(mentionColor) {
+        MentionVisualTransformation(mentionColor, mentionColor.copy(alpha = 0.15f))
+    }
+
     // ── 发送动作（按钮与 Enter 共用）──
     val sendAction: () -> Unit = {
-        val inputText = inputField.text
+        // / 指令展开（/shrug 等）；未注册指令原样透传（服务端/bot 二期解析）
+        val rawText = inputField.text
+        val inputText = if (rawText.startsWith("/")) expandSlashCommand(rawText) ?: rawText else rawText
         if (inputText.isNotBlank()) {
             if (editingMessage != null) {
                 val edited = editingMessage!!.copy(body = TextBody(inputText))
@@ -316,6 +363,41 @@ fun ChatPanel(
             // ── 输入区（白底 + 顶部分隔线，规格 §1.4）──
             Column {
                 HorizontalDivider(color = Tk.colors.divider)
+
+                // @ 补全层（内嵌展开于输入行上方）：按名字/uid 过滤候选，排除自己
+                mentionQuery?.let { q ->
+                    val candidates = (mentionCandidates ?: emptyList())
+                        .filter { it.uid != myUid }
+                        .filter { u ->
+                            val name = u.name.ifBlank { u.username ?: "" }
+                            q.text.isEmpty() || name.contains(q.text, ignoreCase = true) || u.uid.contains(q.text)
+                        }
+                    if (candidates.isNotEmpty()) {
+                        AutoCompleteOverlay(
+                            title = "提及成员",
+                            items = candidates.take(5).map { u ->
+                                AutoCompleteItem(
+                                    label = u.name.ifBlank { u.username ?: u.uid },
+                                    hint = "@" + (u.username ?: u.uid),
+                                    payload = u.uid,
+                                )
+                            },
+                            onPick = { item -> candidates.find { it.uid == item.payload }?.let { pickMention(it) } },
+                        )
+                    }
+                }
+
+                // / 指令补全层
+                slashQuery?.let { q ->
+                    val matched = SlashCommands.filter { it.command.startsWith(q.text) }
+                    if (matched.isNotEmpty() && q.text.length <= "/shrug".length) {
+                        AutoCompleteOverlay(
+                            title = "指令",
+                            items = matched.map { AutoCompleteItem(it.command, it.desc, it.command) },
+                            onPick = { item -> pickSlash(item.payload) },
+                        )
+                    }
+                }
 
                 // 回复/编辑上下文条
                 replyingTo?.let { msg ->
@@ -506,6 +588,7 @@ fun ChatPanel(
                             },
                             maxLines = 6,
                             shape = MaterialTheme.shapes.small,
+                            visualTransformation = mentionTransformation,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                             keyboardActions = KeyboardActions(onSend = { sendAction() }),
                         )

@@ -14,6 +14,7 @@ object MessageBodyRegistry {
     private val readers: Map<MessageType, IProtoReader<out MessageBody>> = mapOf(
         MessageType.TEXT to TextBody,
         MessageType.RICH_TEXT to RichTextBody,
+        MessageType.INTERACTIVE_CARD to InteractiveCardBody,
         MessageType.IMAGE to ImageBody,
         MessageType.VOICE to VoiceBody,
         MessageType.VIDEO to VideoBody,

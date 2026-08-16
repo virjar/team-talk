@@ -468,6 +468,30 @@ class TestPeer {
     }
 
     /**
+     * 发交互卡片消息。用法：
+     *   -Dpeer.username=<B> -Dpeer.arg=<chatId>
+     */
+    @org.junit.jupiter.api.Test
+    fun sendCardAsB() = runBlocking {
+        val username = System.getProperty("peer.username") ?: return@runBlocking
+        val chatId = System.getProperty("peer.arg") ?: return@runBlocking
+        val session = RemoteDemoSupport.loginUser(username, "password123")
+        val card = com.virjar.tk.body.CardPayload(
+            title = "构建通知",
+            blocks = listOf(
+                com.virjar.tk.body.CardBlock.Text("分支 main 构建通过，耗时 3m12s"),
+                com.virjar.tk.body.CardBlock.Text("提交：飞书风格设计系统落地"),
+            ),
+        )
+        val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
+            messageType = MessageType.INTERACTIVE_CARD.code, timestamp = System.currentTimeMillis(),
+            senderUid = session.uid, body = com.virjar.tk.body.InteractiveCardBody.of(card))
+        val ack = session.imClient.sendAndWaitAck(msg)
+        println("===SEND_CARD ${if (ack.code == 0) "SUCCESS" else "FAILED"}=== ack=${ack.code}")
+        session.close()
+    }
+
+    /**
      * 发语音消息。用法：
      *   -Dpeer.username=<B> -Dpeer.arg=<chatId> -Dpeer.file=<本地音频路径>
      */
