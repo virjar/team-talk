@@ -13,15 +13,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 /**
- * 会话头像。
+ * 会话头像：圆角方形占位 + 群聊右下角多人角标。
  *
- * 当前未实现真实头像图片加载，统一使用「首字母 + 哈希随机色」占位
- * （由 [AvatarPlaceholder] 提供）。群聊（[ChatType.GROUP]）在右下角叠加多人图标角标，
- * 用于和私聊区分。[ChatType.PERSONAL] 维持原样。
+ * 群聊（[ChatType.GROUP]）角标用于和私聊区分；[ChatType.PERSONAL] 维持原样。
+ * 真实头像 [url] 预留（后端 updateProfile 支持 avatar 后启用）。
  */
 @Composable
 fun ChatAvatar(
@@ -29,11 +27,12 @@ fun ChatAvatar(
     chatName: String?,
     modifier: Modifier = Modifier,
     size: Int = 48,
+    url: String? = null,
 ) {
     val isGroup = ChatType.fromCode(chatType) == ChatType.GROUP
 
     Box(modifier = modifier.size(size.dp)) {
-        AvatarPlaceholder(name = chatName, size = size)
+        AvatarPlaceholder(name = chatName, size = size, url = url)
 
         // 群聊角标：右下角多人图标
         if (isGroup) {
@@ -43,13 +42,13 @@ fun ChatAvatar(
                     .align(Alignment.BottomEnd)
                     .size(badgeSize)
                     .clip(CircleShape)
-                    .background(Color.White),
+                    .background(MaterialTheme.colorScheme.surface),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Filled.Groups,
                     contentDescription = "群聊",
-                    tint = Color(0xFF3370FF),
+                    tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size((badgeSize.value * 0.7f).dp),
                 )
             }

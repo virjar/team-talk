@@ -1,9 +1,14 @@
 package com.virjar.tk
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Contacts
@@ -21,6 +26,7 @@ import androidx.compose.ui.draganddrop.DragAndDropEvent
 import androidx.compose.ui.draganddrop.DragAndDropTarget
 import androidx.compose.ui.draganddrop.DragData
 import androidx.compose.ui.draganddrop.dragData
+import androidx.compose.ui.draw.clip
 
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -28,20 +34,23 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.client.ClientSession
 import com.virjar.tk.model.ChatType
 import com.virjar.tk.model.Message
 import com.virjar.tk.model.User
 import com.virjar.tk.navigation.MainTab
+import com.virjar.tk.ui.component.AvatarPlaceholder
 import com.virjar.tk.ui.component.GalleryItem
 import com.virjar.tk.ui.component.PlatformMediaActions
+import com.virjar.tk.ui.component.TeamTalkLogo
+import com.virjar.tk.ui.component.UnreadBadge
 import com.virjar.tk.ui.component.rememberMediaClickHandler
 import com.virjar.tk.ui.screen.ChatPanel
 import com.virjar.tk.ui.screen.ConversationListScreen
 import com.virjar.tk.ui.screen.MeHeaderStyle
 import com.virjar.tk.ui.screen.MeScreen
+import com.virjar.tk.ui.theme.Tk
 import com.virjar.tk.viewmodel.ChatViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -52,6 +61,7 @@ import kotlinx.coroutines.withContext
  *
  * 三栏常驻，子页面（搜索/群详情/编辑资料等）渲染为右栏面板，而非全屏覆盖。
  * 这是桌面 IM 的标准范式（飞书/Slack），区别于 Android 的全屏页面导航。
+ * 视觉规格：doc/04-ui-design/components.md §1.5/§2.1。
  */
 @Composable
 internal fun MainAppContent(
@@ -80,6 +90,21 @@ internal fun MainAppContent(
     // 关闭右栏面板（ESC / 返回箭头 / 关闭按钮通用）
     val closePanel: () -> Unit = { appState.currentScreen = null }
 
+    // uid → User 解析链：本地缓存 → currentUser → userSession 终极兜底。
+    // 自动登录路径 localCache/currentUser 可能为空，没有兜底时自己消息头像退化为 uid 首字母。
+    val userSession = appState.userSession
+    val resolveUser: (String) -> User? = { uid ->
+        appState.localCache.getUser(uid)
+            ?: appState.currentUser?.takeIf { it.uid == uid }
+            ?: if (uid == userSession.uid) {
+                User(
+                    uid = uid,
+                    username = userSession.username ?: uid,
+                    name = userSession.name?.ifBlank { null } ?: userSession.username ?: uid,
+                )
+            } else null
+    }
+
     // ── 新窗口类子页面（独立任务，临时窗口，关了销毁）──
     // 与右栏面板互斥：currentScreen 非 null 且不在 panelScreens 时，弹新窗口
     val windowScreen = if (appState.currentScreen != null && !isPanelScreen) appState.currentScreen else null
@@ -93,39 +118,22 @@ internal fun MainAppContent(
 
     // ── 三栏常驻布局 ──
     Row(modifier = Modifier.fillMaxSize().testTag("main.home")) {
-        // ── 左栏：导航栏 ──
-        NavigationRail(modifier = Modifier.fillMaxHeight()) {
-            MainTab.entries.forEachIndexed { index, tab ->
-                NavigationRailItem(
-                    selected = appState.selectedTab == index,
-                    onClick = {
-                        appState.selectedTab = index
-                        if (tab != MainTab.CONVERSATIONS) appState.selectedChatId = null
-                    },
-                    icon = {
-                        val imageVector = when (tab) {
-                            MainTab.CONVERSATIONS -> Icons.AutoMirrored.Filled.Chat
-                            MainTab.CONTACTS -> Icons.Filled.Contacts
-                            MainTab.SETTINGS -> Icons.Filled.Settings
-                        }
-                        // 通讯录有待处理好友申请时显示红点（对齐 Android HomeScreen.kt:95-101）
-                        if (tab == MainTab.CONTACTS && pendingApplyCount > 0) {
-                            BadgedBox(badge = { Badge { Text("$pendingApplyCount") } }) {
-                                Icon(imageVector, contentDescription = tab.label)
-                            }
-                        } else {
-                            Icon(imageVector, contentDescription = tab.label)
-                        }
-                    },
-                    label = { Text(tab.label, style = MaterialTheme.typography.labelSmall) },
-                )
-            }
-        }
+        // ── 左栏：细导航栏（56dp 图标式，规格 §1.5）──
+        SlimNavRail(
+            selectedTab = appState.selectedTab,
+            onSelectTab = { index ->
+                appState.selectedTab = index
+                if (MainTab.entries[index] != MainTab.CONVERSATIONS) appState.selectedChatId = null
+            },
+            pendingApplyCount = pendingApplyCount,
+            currentUserName = resolveUser(userSession.uid)?.name,
+        )
 
-        // ── 中栏：列表区（会话/通讯录/设置，固定 300dp）──
+        // ── 中栏：列表区（会话/通讯录/设置，300dp）──
+        // 三级层次：rail(surfaceVariant 深灰) → 列表(background 浅灰) → 内容(白)
         Surface(
-            modifier = Modifier.width(300.dp).fillMaxHeight(),
-            color = MaterialTheme.colorScheme.surfaceVariant,
+            modifier = Modifier.width(Tk.dimens.listPaneWidth).fillMaxHeight(),
+            color = MaterialTheme.colorScheme.background,
         ) {
             when (MainTab.entries[appState.selectedTab]) {
                 MainTab.CONVERSATIONS -> {
@@ -136,25 +144,29 @@ internal fun MainAppContent(
                                 // 对齐 Android HomeScreen TopAppBar：搜索/发起群聊/添加好友 三图标
                                 IconButton(onClick = { appState.currentScreen = SubScreen.SearchMessages },
                                     modifier = Modifier.testTag("action.search")) {
-                                    Icon(Icons.Filled.Search, contentDescription = "搜索消息")
+                                    Icon(Icons.Filled.Search, contentDescription = "搜索消息", tint = Tk.colors.secondaryText)
                                 }
                                 IconButton(onClick = { appState.currentScreen = SubScreen.CreateGroup },
                                     modifier = Modifier.testTag("action.createGroup")) {
-                                    Icon(Icons.Filled.GroupAdd, contentDescription = "发起群聊")
+                                    Icon(Icons.Filled.GroupAdd, contentDescription = "发起群聊", tint = Tk.colors.secondaryText)
                                 }
                                 IconButton(onClick = { appState.currentScreen = SubScreen.SearchUsers },
                                     modifier = Modifier.testTag("action.addFriend")) {
-                                    Icon(Icons.Filled.PersonAdd, contentDescription = "添加好友")
+                                    Icon(Icons.Filled.PersonAdd, contentDescription = "添加好友", tint = Tk.colors.secondaryText)
                                 }
                             },
                         )
                         ConversationListScreen(
                             conversations = conversations,
+                            selectedChatId = appState.selectedChatId,
                             onConversationClick = { chatId ->
                                 val conv = conversations.find { it.chatId == chatId }
                                 appState.openChat(chatId, conv?.chatName ?: chatId.take(16), conv?.chatType ?: 1)
                             },
                             onPinClick = { chatId, pinned -> appState.session.localCache.toggleConversationPin(chatId, pinned) },
+                            onMarkRead = { chatId, lastSeq ->
+                                appState.session.localCache.markConversationRead(chatId, lastSeq)
+                            },
                         )
                     }
                 }
@@ -166,20 +178,20 @@ internal fun MainAppContent(
                             actions = {
                                 IconButton(onClick = { appState.currentScreen = SubScreen.SearchUsers },
                                     modifier = Modifier.testTag("action.addFriend")) {
-                                    Icon(Icons.Filled.Search, contentDescription = "搜索用户")
+                                    Icon(Icons.Filled.Search, contentDescription = "搜索用户", tint = Tk.colors.secondaryText)
                                 }
                                 IconButton(onClick = { appState.currentScreen = SubScreen.CreateGroup },
                                     modifier = Modifier.testTag("action.createGroup")) {
-                                    Icon(Icons.Filled.GroupAdd, contentDescription = "创建群组")
+                                    Icon(Icons.Filled.GroupAdd, contentDescription = "创建群组", tint = Tk.colors.secondaryText)
                                 }
                                 IconButton(onClick = { appState.currentScreen = SubScreen.FriendApplies },
                                     modifier = Modifier.testTag("action.friendApplies")) {
                                     if (pendingApplyCount > 0) {
-                                        BadgedBox(badge = { Badge { Text("$pendingApplyCount") } }) {
-                                            Icon(Icons.Filled.PersonAdd, contentDescription = "好友申请")
+                                        BadgedBox(badge = { UnreadBadge(pendingApplyCount) }) {
+                                            Icon(Icons.Filled.PersonAdd, contentDescription = "好友申请", tint = Tk.colors.secondaryText)
                                         }
                                     } else {
-                                        Icon(Icons.Filled.PersonAdd, contentDescription = "好友申请")
+                                        Icon(Icons.Filled.PersonAdd, contentDescription = "好友申请", tint = Tk.colors.secondaryText)
                                     }
                                 }
                             },
@@ -187,20 +199,31 @@ internal fun MainAppContent(
                         LazyColumn(modifier = Modifier.weight(1f)) {
                             items(contacts, key = { it.friendUid }) { contact ->
                                 val displayName = contact.remark ?: contact.user?.name ?: contact.friendUid
-                                ListItem(
-                                    headlineContent = { Text(displayName) },
-                                    supportingContent = {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = Tk.dimens.listItemHeight)
+                                        .clickable {
+                                            appState.selectedProfileUid = contact.friendUid
+                                            appState.currentScreen = SubScreen.UserProfile
+                                        }
+                                        .padding(horizontal = Tk.spacing.md),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    AvatarPlaceholder(
+                                        name = contact.user?.name ?: displayName,
+                                        size = Tk.dimens.listAvatar.value.toInt(),
+                                    )
+                                    Spacer(Modifier.width(Tk.spacing.md))
+                                    Column {
+                                        Text(displayName, style = MaterialTheme.typography.titleSmall)
                                         val remark = contact.remark
                                         val userName = contact.user?.name
-                                        if (remark != null && userName != null) {
-                                            Text(userName, style = MaterialTheme.typography.bodySmall)
+                                        if (remark != null && userName != null && remark != userName) {
+                                            Text(userName, style = MaterialTheme.typography.bodySmall, color = Tk.colors.secondaryText)
                                         }
-                                    },
-                                    modifier = Modifier.clickable {
-                                        appState.selectedProfileUid = contact.friendUid
-                                        appState.currentScreen = SubScreen.UserProfile
-                                    },
-                                )
+                                    }
+                                }
                             }
                         }
                     }
@@ -270,15 +293,23 @@ internal fun MainAppContent(
                         myUid = appState.userSession.uid,
                         conversationRepo = appState.conversationRepo,
                         initialDraft = conv?.draft,
-                        resolveSender = { uid -> appState.localCache.getUser(uid) },
+                        resolveSender = resolveUser,
                         onForward = { msg -> appState.forwardMessage = msg; appState.currentScreen = SubScreen.Forward },
                         onGroupDetail = { appState.selectedGroupChatId = appState.selectedChatId; appState.currentScreen = SubScreen.GroupDetail },
                     )
                 }
-                // 空态
+                // 空态（规格 §2.1：Logo + 主提示 + 次提示）
                 else -> {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("选择一个会话开始聊天", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        TeamTalkLogo(size = 72.dp, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.height(Tk.spacing.lg))
+                        Text("选择一个会话开始聊天", style = MaterialTheme.typography.titleSmall, color = Tk.colors.secondaryText)
+                        Spacer(Modifier.height(Tk.spacing.xs))
+                        Text("或从左侧通讯录发起对话", style = MaterialTheme.typography.bodySmall, color = Tk.colors.metaText)
                     }
                 }
             }
@@ -287,7 +318,128 @@ internal fun MainAppContent(
 }
 
 /**
- * 列表/面板头 —— 飞书/Slack 桌面范式：抬升 Surface + 标题 + 右侧操作槽 + 底部分隔线。
+ * 细导航栏（56dp，图标式，飞书范式）。规格：doc/04-ui-design/components.md §1.5。
+ *
+ * 顶部：用户头像（点击进设置）；中部：会话/通讯录；底部：设置。
+ * 选中项：图标主色 + 左侧 3dp 蓝色竖条。
+ */
+@Composable
+private fun SlimNavRail(
+    selectedTab: Int,
+    onSelectTab: (Int) -> Unit,
+    pendingApplyCount: Int,
+    currentUserName: String?,
+) {
+    Surface(
+        modifier = Modifier.width(Tk.dimens.railWidth).fillMaxHeight(),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        tonalElevation = 0.dp,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(vertical = Tk.spacing.sm),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            // 用户头像 → 设置（兼作头像入口）
+            Box {
+                IconButton(onClick = { onSelectTab(MainTab.SETTINGS.ordinal) }) {
+                    AvatarPlaceholder(
+                        name = currentUserName,
+                        size = 32,
+                        modifier = Modifier.testTag("nav.avatar"),
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(Tk.spacing.sm))
+
+            // 会话
+            RailItem(
+                icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = MainTab.CONVERSATIONS.label) },
+                label = MainTab.CONVERSATIONS.label,
+                selected = selectedTab == MainTab.CONVERSATIONS.ordinal,
+                onClick = { onSelectTab(MainTab.CONVERSATIONS.ordinal) },
+            )
+
+            // 通讯录（好友申请红点）
+            RailItem(
+                icon = {
+                    if (pendingApplyCount > 0) {
+                        BadgedBox(badge = { UnreadBadge(pendingApplyCount) }) {
+                            Icon(Icons.Filled.Contacts, contentDescription = MainTab.CONTACTS.label)
+                        }
+                    } else {
+                        Icon(Icons.Filled.Contacts, contentDescription = MainTab.CONTACTS.label)
+                    }
+                },
+                label = MainTab.CONTACTS.label,
+                selected = selectedTab == MainTab.CONTACTS.ordinal,
+                onClick = { onSelectTab(MainTab.CONTACTS.ordinal) },
+            )
+
+            Spacer(Modifier.weight(1f))
+
+            // 设置（底部对齐）
+            RailItem(
+                icon = { Icon(Icons.Filled.Settings, contentDescription = MainTab.SETTINGS.label) },
+                label = MainTab.SETTINGS.label,
+                selected = selectedTab == MainTab.SETTINGS.ordinal,
+                onClick = { onSelectTab(MainTab.SETTINGS.ordinal) },
+            )
+        }
+    }
+}
+
+/** 导航栏单项：48dp 高，选中 = 主色图标 + 左侧 3dp 竖条；hover = 灰底圆角。 */
+@Composable
+private fun RailItem(
+    icon: @Composable () -> Unit,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val hoverInteraction = remember { MutableInteractionSource() }
+    val hovered by hoverInteraction.collectIsHoveredAsState()
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .hoverable(hoverInteraction)
+            .clickable(onClick = onClick)
+            .testTag("nav.tab.$label"),
+        contentAlignment = Alignment.Center,
+    ) {
+        // hover 底
+        if (hovered && !selected) {
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = Tk.spacing.sm)
+                    .fillMaxSize()
+                    .clip(MaterialTheme.shapes.small)
+                    .background(Tk.colors.hover),
+            )
+        }
+        // 选中态：左侧 3dp 竖条
+        if (selected) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .width(3.dp)
+                    .height(20.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(MaterialTheme.colorScheme.primary),
+            )
+        }
+        CompositionLocalProvider(
+            LocalContentColor provides if (selected) MaterialTheme.colorScheme.primary else Tk.colors.secondaryText,
+        ) {
+            icon()
+        }
+    }
+}
+
+/**
+ * 列表/面板头 —— 飞书/Slack 桌面范式：标题 + 右侧操作槽 + 底部分隔线。
  * 中栏列表头和聊天面板头共用此组件（消除两段近乎重复的 Surface+Row+Divider 模板）。
  *
  * @param title 标题文字
@@ -300,24 +452,25 @@ private fun ListHeader(
     onTitleClick: (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
-    Surface(tonalElevation = 2.dp) {
-        Column {
-            Row(
-                modifier = Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier
-                        .weight(1f)
-                        .then(if (onTitleClick != null) Modifier.clickable(onClick = onTitleClick) else Modifier),
-                )
-                actions()
-            }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(Tk.dimens.headerHeight)
+                .padding(horizontal = Tk.spacing.lg),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier
+                    .weight(1f)
+                    .then(if (onTitleClick != null) Modifier.clickable(onClick = onTitleClick) else Modifier),
+            )
+            actions()
         }
+        HorizontalDivider(color = Tk.colors.divider)
     }
 }
 

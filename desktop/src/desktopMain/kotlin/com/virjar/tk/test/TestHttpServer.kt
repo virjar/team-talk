@@ -399,7 +399,11 @@ object TestHttpServer {
             return
         }
         val img = try {
-            // 截取窗口内容
+            // 置前窗口再截屏：createScreenCapture 按窗口 bounds 截屏区域，
+            // 窗口被遮挡时会截到别的应用内容（截图验证闭环曾因此失效）
+            window.toFront()
+            window.requestFocus()
+            Thread.sleep(200)
             val bounds = window.bounds
             java.awt.Robot().createScreenCapture(bounds)
         } catch (e: Exception) {

@@ -4,8 +4,11 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Image
@@ -16,9 +19,17 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.*
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.body.ReplyBody
 import com.virjar.tk.body.TextBody
@@ -27,6 +38,7 @@ import com.virjar.tk.model.Message
 import com.virjar.tk.model.User
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.ui.component.AvatarPlaceholder
+import com.virjar.tk.ui.theme.Tk
 import com.virjar.tk.viewmodel.ChatViewModel
 import java.util.UUID
 import java.text.SimpleDateFormat
@@ -35,8 +47,9 @@ import java.util.Locale
 
 /**
  * 共享聊天面板。包含消息列表和输入栏，不含 Scaffold/TopAppBar。
+ * 视觉规格：doc/04-ui-design/components.md §1.3/§1.4。
  *
- * @param chatType 1=私聊 2=群聊（私聊不显示对方昵称行）
+ * @param chatType 1=私聊 2=群聊（私聊不显示对方昵称行；已读回执仅私聊）
  * @param resolveSender 通过 uid 解析发送者 User（取昵称/头像），平台注入 LocalCache.getUser
  */
 @OptIn(ExperimentalFoundationApi::class)
@@ -87,6 +100,8 @@ fun ChatPanel(
     var inputText by rememberSaveable { mutableStateOf(initialDraft ?: "") }
     var voiceMode by rememberSaveable { mutableStateOf(false) }
 
+    val isPersonal = ChatType.fromCode(chatType) == ChatType.PERSONAL
+
     // Save draft on dispose
     DisposableEffect(chatId) {
         onDispose { onDraftChange?.invoke(inputText) }
@@ -106,6 +121,52 @@ fun ChatPanel(
         }
     }
 
+    // ── 发送动作（按钮与 Enter 共用）──
+    val sendAction: () -> Unit = {
+        if (inputText.isNotBlank()) {
+            if (editingMessage != null) {
+                val edited = editingMessage!!.copy(body = TextBody(inputText))
+                viewModel.editMessage(edited)
+                editingMessage = null
+                inputText = ""
+            } else {
+                val target = replyingTo
+                val message = if (target != null) {
+                    // 回复消息：ReplyBody = 引用卡片信息 + 回复正文
+                    val replyToMsgId = if (target.serverSeq != 0L) target.serverSeq.toString() else target.clientMsgId
+                    val replySenderName = resolveSender?.invoke(target.senderUid)?.name ?: target.senderUid
+                    val snippet = com.virjar.tk.util.MessagePreview.preview(target).take(50)
+                    Message(
+                        chatId = chatId,
+                        clientMsgId = UUID.randomUUID().toString(),
+                        senderUid = myUid,
+                        messageType = MessageType.REPLY.code,
+                        timestamp = System.currentTimeMillis(),
+                        body = ReplyBody(
+                            replyToMsgId = replyToMsgId,
+                            replyToSenderUid = target.senderUid,
+                            replyToSenderName = replySenderName,
+                            replySnippet = snippet,
+                            content = inputText,
+                        ),
+                    )
+                } else {
+                    Message(
+                        chatId = chatId,
+                        clientMsgId = UUID.randomUUID().toString(),
+                        senderUid = myUid,
+                        messageType = MessageType.TEXT.code,
+                        timestamp = System.currentTimeMillis(),
+                        body = TextBody(inputText),
+                    )
+                }
+                viewModel.sendMessage(message)
+                inputText = ""
+                replyingTo = null
+            }
+        }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             // ── 消息列表 ──
@@ -115,7 +176,7 @@ fun ChatPanel(
                 }
             } else {
                 LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
+                    modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = Tk.spacing.md),
                     reverseLayout = true,
                 ) {
                     items(messages.size) { index ->
@@ -134,32 +195,36 @@ fun ChatPanel(
                         val showTimeSeparator = nextMsg == null
                             || (nextMsg.timestamp - msg.timestamp) > TIME_SEPARATOR_THRESHOLD_MS
 
-                        // 撤回消息走系统提示（居中），不走气泡
+                        // 是否是我最后一条已送达消息（已读水位线指示只挂在这里，飞书范式）
+                        val isMyLastMsg = isMe
+                            && msg.serverSeq > 0
+                            && (nextMsg == null || nextMsg.senderUid != myUid)
+
+                        // 撤回消息走系统提示（居中裸文字），不走气泡
                         if (msg.flags and Message.FLAG_REVOKED != 0) {
                             Row(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                modifier = Modifier.fillMaxWidth().padding(vertical = Tk.spacing.xs),
                                 horizontalArrangement = Arrangement.Center,
                             ) {
-                                Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.extraSmall) {
-                                    Text("消息已撤回", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
-                                }
+                                Text(
+                                    "${if (isMe) "你" else resolveDisplayName(msg.senderUid, resolveSender)} 撤回了一条消息",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Tk.colors.metaText,
+                                )
                             }
                         } else {
                             Column {
-                                // 时间分隔标签
+                                // 时间分隔：裸文字（飞书范式，无胶囊底）
                                 if (showTimeSeparator) {
                                     Row(
-                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = Tk.spacing.sm),
                                         horizontalArrangement = Arrangement.Center,
                                     ) {
-                                        Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.extraSmall) {
-                                            Text(
-                                                formatChatTime(msg.timestamp),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                                            )
-                                        }
+                                        Text(
+                                            formatChatTime(msg.timestamp),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Tk.colors.metaText,
+                                        )
                                     }
                                 }
 
@@ -167,7 +232,8 @@ fun ChatPanel(
                                     msg = msg,
                                     isMe = isMe,
                                     isContinuation = isContinuation,
-                                    showSenderName = ChatType.fromCode(chatType) == ChatType.GROUP && !isMe,
+                                    showSenderName = !isPersonal && !isMe,
+                                    showReadIndicator = isPersonal && isMyLastMsg,
                                     peerReadSeq = peerReadSeq,
                                     resolveSender = resolveSender,
                                     onLongClick = { menuMessage = msg },
@@ -219,159 +285,143 @@ fun ChatPanel(
                 }
             }
 
-            // ── 输入栏 ──
-            Surface(tonalElevation = 2.dp) {
-                Column(modifier = Modifier.padding(bottom = 4.dp)) {
-                    // 回复/编辑上下文栏
-                    replyingTo?.let { msg ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                "回复 ${com.virjar.tk.util.MessagePreview.preview(msg).take(20)}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.weight(1f),
-                            )
-                            TextButton(onClick = { replyingTo = null }) { Text("取消") }
-                        }
-                    }
-                    editingMessage?.let {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("编辑消息", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
-                            TextButton(onClick = { editingMessage = null; inputText = "" }) { Text("取消") }
-                        }
-                    }
-                    // 文本/语音输入行
+            // ── 输入区（白底 + 顶部分隔线，规格 §1.4）──
+            Column {
+                HorizontalDivider(color = Tk.colors.divider)
+
+                // 回复/编辑上下文条
+                replyingTo?.let { msg ->
                     Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.xs),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        if (voiceMode) {
-                            // 语音模式：按住说话
-                            var isRecording by remember { mutableStateOf(false) }
-                            Surface(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
-                                    .pointerInput(Unit) {
-                                        awaitPointerEventScope {
-                                            while (true) {
-                                                val event = awaitPointerEvent()
-                                                val pressed = event.changes.any { it.pressed }
-                                                if (pressed && !isRecording) {
-                                                    isRecording = true
-                                                    effectiveVoiceRecord?.invoke(true)
-                                                } else if (!pressed && isRecording) {
-                                                    isRecording = false
-                                                    effectiveVoiceRecord?.invoke(false)
-                                                }
-                                            }
-                                        }
-                                    },
-                                shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(
-                                        if (isRecording) "松开发送" else "按住说话",
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.width(8.dp))
-                            // 切换回键盘
-                            IconButton(onClick = { voiceMode = false }) {
-                                Icon(Icons.Filled.Keyboard, contentDescription = "键盘", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        } else {
-                            OutlinedTextField(
-                                value = inputText,
-                                onValueChange = { inputText = it },
-                                modifier = Modifier.weight(1f).testTag("chat.input"),
-                                placeholder = { if (editingMessage != null) Text("编辑消息...") else Text("输入消息...") },
-                                maxLines = 3,
-                                shape = RoundedCornerShape(12.dp),
+                        Text(
+                            "回复 ${com.virjar.tk.util.MessagePreview.preview(msg).take(20)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { replyingTo = null }) { Text("取消") }
+                    }
+                }
+                editingMessage?.let {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.xs),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("编辑消息", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+                        TextButton(onClick = { editingMessage = null; inputText = "" }) { Text("取消") }
+                    }
+                }
+
+                // 工具行：左对齐（替代原 SpaceEvenly 分散布局）
+                if (effectiveAttachClick != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = Tk.spacing.xs),
+                    ) {
+                        IconButton(onClick = { voiceMode = !voiceMode }, modifier = Modifier.testTag("chat.voiceMode")) {
+                            Icon(
+                                if (voiceMode) Icons.Filled.Keyboard else Icons.Filled.KeyboardVoice,
+                                contentDescription = if (voiceMode) "键盘" else "语音",
+                                tint = Tk.colors.secondaryText,
                             )
-                            Spacer(Modifier.width(8.dp))
-                            Button(
-                            onClick = {
-                                if (inputText.isNotBlank()) {
-                                    if (editingMessage != null) {
-                                        val edited = editingMessage!!.copy(body = TextBody(inputText))
-                                        viewModel.editMessage(edited)
-                                        editingMessage = null
-                                        inputText = ""
-                                    } else {
-                                        val target = replyingTo
-                                        val message = if (target != null) {
-                                            // 回复消息：ReplyBody = 引用卡片信息 + 回复正文
-                                            val replyToMsgId = if (target.serverSeq != 0L) target.serverSeq.toString() else target.clientMsgId
-                                            val replySenderName = resolveSender?.invoke(target.senderUid)?.name ?: target.senderUid
-                                            val snippet = com.virjar.tk.util.MessagePreview.preview(target).take(50)
-                                            Message(
-                                                chatId = chatId,
-                                                clientMsgId = UUID.randomUUID().toString(),
-                                                senderUid = myUid,
-                                                messageType = MessageType.REPLY.code,
-                                                timestamp = System.currentTimeMillis(),
-                                                body = ReplyBody(
-                                                    replyToMsgId = replyToMsgId,
-                                                    replyToSenderUid = target.senderUid,
-                                                    replyToSenderName = replySenderName,
-                                                    replySnippet = snippet,
-                                                    content = inputText,
-                                                ),
-                                            )
-                                        } else {
-                                            Message(
-                                                chatId = chatId,
-                                                clientMsgId = UUID.randomUUID().toString(),
-                                                senderUid = myUid,
-                                                messageType = MessageType.TEXT.code,
-                                                timestamp = System.currentTimeMillis(),
-                                                body = TextBody(inputText),
-                                            )
-                                        }
-                                        viewModel.sendMessage(message)
-                                        inputText = ""
-                                        replyingTo = null
-                                    }
-                                }
-                            },
-                            modifier = Modifier.testTag("chat.send"),
-                            enabled = inputText.isNotBlank(),
-                        ) { Text(if (editingMessage != null) "保存" else "发送") }
+                        }
+                        IconButton(onClick = { effectivePickImage?.invoke() }, modifier = Modifier.testTag("chat.pickImage")) {
+                            Icon(Icons.Filled.Image, contentDescription = "图片", tint = Tk.colors.secondaryText)
+                        }
+                        IconButton(onClick = { effectivePickFile?.invoke() }, modifier = Modifier.testTag("chat.pickFile")) {
+                            Icon(Icons.Filled.AttachFile, contentDescription = "文件", tint = Tk.colors.secondaryText)
+                        }
+                        IconButton(onClick = effectiveAttachClick) {
+                            Icon(Icons.Filled.Add, contentDescription = "更多", tint = Tk.colors.secondaryText)
                         }
                     }
+                }
 
-                    // ── 功能工具栏（Material Icons，替代 emoji）──
-                    if (effectiveAttachClick != null) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
+                // 输入行：文本/语音 + 发送按钮
+                Row(
+                    modifier = Modifier.padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.sm),
+                    verticalAlignment = Alignment.Bottom,
+                ) {
+                    if (voiceMode) {
+                        // 语音模式：按住说话
+                        var isRecording by remember { mutableStateOf(false) }
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .pointerInput(Unit) {
+                                    awaitPointerEventScope {
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            val pressed = event.changes.any { it.pressed }
+                                            if (pressed && !isRecording) {
+                                                isRecording = true
+                                                effectiveVoiceRecord?.invoke(true)
+                                            } else if (!pressed && isRecording) {
+                                                isRecording = false
+                                                effectiveVoiceRecord?.invoke(false)
+                                            }
+                                        }
+                                    }
+                                },
+                            shape = MaterialTheme.shapes.small,
+                            color = Tk.colors.bubbleIncoming,
                         ) {
-                            IconButton(onClick = { voiceMode = !voiceMode }, modifier = Modifier.testTag("chat.voiceMode")) {
-                                Icon(
-                                    if (voiceMode) Icons.Filled.Keyboard else Icons.Filled.KeyboardVoice,
-                                    contentDescription = if (voiceMode) "键盘" else "语音",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(
+                                    if (isRecording) "松开发送" else "按住说话",
+                                    color = MaterialTheme.colorScheme.onSurface,
                                 )
                             }
-                            IconButton(onClick = { effectivePickImage?.invoke() }, modifier = Modifier.testTag("chat.pickImage")) {
-                                Icon(Icons.Filled.Image, contentDescription = "图片", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            IconButton(onClick = { effectivePickFile?.invoke() }, modifier = Modifier.testTag("chat.pickFile")) {
-                                Icon(Icons.Filled.AttachFile, contentDescription = "文件", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            IconButton(onClick = effectiveAttachClick) {
-                                Icon(Icons.Filled.Add, contentDescription = "更多", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
                         }
+                    } else {
+                        OutlinedTextField(
+                            value = inputText,
+                            onValueChange = { inputText = it },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("chat.input")
+                                .onPreviewKeyEvent { event ->
+                                    // Enter 发送 / Shift+Enter 换行（桌面硬件键盘；Android 走 IME Send）
+                                    if (event.type == KeyEventType.KeyDown &&
+                                        event.key == Key.Enter && !event.isShiftPressed
+                                    ) {
+                                        sendAction()
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                },
+                            placeholder = {
+                                Text(
+                                    if (editingMessage != null) "编辑消息…" else "输入消息…",
+                                    color = Tk.colors.metaText,
+                                )
+                            },
+                            maxLines = 6,
+                            shape = MaterialTheme.shapes.small,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = { sendAction() }),
+                        )
+                    }
+                    Spacer(Modifier.width(Tk.spacing.sm))
+                    Button(
+                        onClick = sendAction,
+                        modifier = Modifier
+                            .testTag("chat.send")
+                            .height(Tk.dimens.inputMinHeight),
+                        enabled = inputText.isNotBlank(),
+                        shape = MaterialTheme.shapes.small,
+                        contentPadding = PaddingValues(horizontal = Tk.spacing.lg),
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Send,
+                            contentDescription = null,
+                            modifier = Modifier.size(Tk.dimens.iconSize - 2.dp),
+                        )
+                        Spacer(Modifier.width(Tk.spacing.xs))
+                        Text(if (editingMessage != null) "保存" else "发送")
                     }
                 }
             }
@@ -417,10 +467,14 @@ private fun resolveDisplayName(uid: String, resolveSender: ((uid: String) -> Use
 }
 
 /**
- * 单条消息气泡（含头像、昵称、气泡内容）。
+ * 单条消息气泡（含头像、昵称、气泡内容）。规格：doc/04-ui-design/components.md §1.3。
+ *
+ * 双方都显示头像（自己右侧）；飞书扁平气泡：对方灰底无阴影、自己蓝底白字；
+ * 指向角（靠头像一侧）4dp，其余 8dp，替代气泡尾巴。
  *
  * @param isContinuation 是否是连续消息（同一人短时间多次发送）——隐藏头像和昵称
- * @param showSenderName 是否显示发送者昵称（群聊对方显示，私聊对方不显示）
+ * @param showSenderName 是否显示发送者昵称行（群聊对方显示，私聊对方不显示）
+ * @param showReadIndicator 是否显示已读水位线指示（仅私聊、我方最后一条已送达消息）
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -429,6 +483,7 @@ private fun MessageBubble(
     isMe: Boolean,
     isContinuation: Boolean,
     showSenderName: Boolean,
+    showReadIndicator: Boolean,
     peerReadSeq: Long = 0,
     resolveSender: ((uid: String) -> User?)?,
     onLongClick: () -> Unit,
@@ -441,77 +496,92 @@ private fun MessageBubble(
     modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = if (isContinuation) 1.dp else 2.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = if (isContinuation) 1.dp else 2.dp),
         horizontalArrangement = if (isMe) Arrangement.End else Arrangement.Start,
         verticalAlignment = Alignment.Top,
     ) {
-        // 对方头像（我的消息无头像；连续消息留空占位保持对齐）
+        // 对方头像（左）
         if (!isMe) {
             if (isContinuation) {
-                Spacer(Modifier.width(36.dp))
+                Spacer(Modifier.width(Tk.dimens.chatAvatar))
             } else {
                 val user = resolveSender?.invoke(msg.senderUid)
                 AvatarPlaceholder(
                     name = user?.name ?: user?.username ?: msg.senderUid,
-                    modifier = Modifier.padding(end = 8.dp),
-                    size = 36,
+                    modifier = Modifier.padding(end = Tk.spacing.sm),
+                    size = Tk.dimens.chatAvatar.value.toInt(),
                 )
             }
         }
 
         Column(
             horizontalAlignment = if (isMe) Alignment.End else Alignment.Start,
-            modifier = Modifier.widthIn(max = 320.dp),
+            modifier = Modifier.widthIn(max = Tk.dimens.bubbleMaxWidth),
         ) {
-            // 昵称行（群聊对方、非连续消息才显示）
+            // 昵称行（群聊对方、非连续消息才显示）：「张三 14:32」
             if (!isMe && showSenderName && !isContinuation) {
                 Text(
-                    resolveDisplayName(msg.senderUid, resolveSender),
+                    "${resolveDisplayName(msg.senderUid, resolveSender)}  ${formatChatTime(msg.timestamp)}",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 2.dp),
+                    color = Tk.colors.metaText,
+                    modifier = Modifier.padding(bottom = 2.dp, start = Tk.spacing.xs),
                 )
             }
             Surface(
-                color = if (isMe) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.surface,
-                tonalElevation = if (isMe) 0.dp else 1.dp,
-                shadowElevation = if (isMe) 0.dp else 1.dp,
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(
-                    topStart = 12.dp, topEnd = 12.dp,
-                    bottomStart = if (isMe) 12.dp else 4.dp,
-                    bottomEnd = if (isMe) 4.dp else 12.dp,
+                color = if (isMe) Tk.colors.bubbleOutgoing else Tk.colors.bubbleIncoming,
+                contentColor = if (isMe) Color.White else MaterialTheme.colorScheme.onSurface,
+                // 飞书扁平气泡：无阴影无 tonalElevation
+                shape = RoundedCornerShape(
+                    topStart = if (!isMe && !isContinuation) 4.dp else 8.dp,
+                    topEnd = if (isMe && !isContinuation) 4.dp else 8.dp,
+                    bottomStart = if (isMe) 8.dp else if (isContinuation) 8.dp else 4.dp,
+                    bottomEnd = if (isMe) if (isContinuation) 8.dp else 4.dp else 8.dp,
                 ),
                 modifier = Modifier.combinedClickable(
                     onClick = {},
                     onLongClick = onLongClick,
                 ),
             ) {
-                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp).widthIn(max = 300.dp)) {
+                Column(
+                    modifier = Modifier
+                        .padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.sm)
+                        .widthIn(max = Tk.dimens.bubbleMaxWidth - (Tk.spacing.md * 2))
+                ) {
                     com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent)
-                    // 已读回执：自己的消息显示发送/已读状态
-                    if (isMe && msg.serverSeq > 0) {
-                        Row(
-                            modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            val isRead = peerReadSeq > 0 && msg.serverSeq <= peerReadSeq
-                            Text(
-                                text = if (isRead) "✓✓" else "✓",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (isRead) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
                 }
             }
-            // 长按菜单：挂在气泡同级（Column 内），Compose 自动以气泡为锚点定位
+            // 已读水位线指示：私聊中我方最后一条消息下方（飞书「已读/未读」文字范式）
+            if (showReadIndicator) {
+                val isRead = peerReadSeq > 0 && msg.serverSeq <= peerReadSeq
+                Text(
+                    text = if (isRead) "已读" else "未读",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (isRead) Tk.colors.secondaryText else Tk.colors.metaText,
+                    modifier = Modifier.padding(top = 1.dp, end = Tk.spacing.xs),
+                )
+            }
+            // 长按/右键菜单：挂在气泡同级（Column 内），Compose 自动以气泡为锚点定位
             DropdownMenu(
                 expanded = menuExpanded,
                 onDismissRequest = onMenuDismiss,
                 content = menuItems,
             )
+        }
+
+        // 自己头像（右）
+        if (isMe) {
+            if (isContinuation) {
+                Spacer(Modifier.width(Tk.dimens.chatAvatar))
+            } else {
+                val user = resolveSender?.invoke(msg.senderUid)
+                AvatarPlaceholder(
+                    name = user?.name ?: user?.username ?: msg.senderUid,
+                    modifier = Modifier.padding(start = Tk.spacing.sm),
+                    size = Tk.dimens.chatAvatar.value.toInt(),
+                )
+            }
         }
     }
 }

@@ -32,7 +32,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // 全局初始化（日志注入、ServerConfig、异常拦截）已在 TeamTalkApp.onCreate 完成
         setContent {
-            AppTheme {
+            AppTheme(touchDensity = true) {
                 TestTagEnabler {
                 val config = remember { defaultServerConfig() }
                 val tokenStore = remember { TokenStore(applicationContext) }

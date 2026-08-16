@@ -19,12 +19,16 @@ class ReconnectE2eTest {
         TcpE2eEnvironment().use { env ->
             runBlocking {
                 var authFailReason: String? = null
+                var authCount = 0
+                var lastUsername: String? = null
                 val imClient = ImClient(
-                    onAuthResult = { success, _, _, _, _, _, reason ->
-                        if (!success) authFailReason = reason
+                    onAuthResult = { success, _, username, _, _, _, reason ->
+                        if (success) { authCount++; lastUsername = username }
+                        else authFailReason = reason
                     },
                 )
-                imClient.register("recon-${System.nanoTime()}", "password123", "R", "dev-1", "Test", "127.0.0.1", env.tcpPort)
+                val username = "recon-${System.nanoTime()}"
+                imClient.register(username, "password123", "R", "dev-1", "Test", "127.0.0.1", env.tcpPort)
                 withTimeout(10_000) { imClient.state.first { it == ConnectionState.AUTHENTICATED } }
 
                 imClient.simulateNetworkDrop()
@@ -33,6 +37,10 @@ class ReconnectE2eTest {
                 // 重连退避 1s 起 + 握手 + refresh 认证
                 withTimeout(20_000) { imClient.state.first { it == ConnectionState.AUTHENTICATED } }
                 assertEquals(null, authFailReason, "重连认证不应失败: $authFailReason")
+                // 第二次认证是 refresh 路径：响应必须携带 username/name（曾漏发，
+                // 客户端自动登录后 UserSession 身份为空，头像/昵称退化为 uid）
+                assertEquals(2, authCount, "应恰好认证两次（注册 + refresh 重连）")
+                assertEquals(username, lastUsername, "refresh 认证响应必须携带 username")
                 imClient.destroy()
             }
         }

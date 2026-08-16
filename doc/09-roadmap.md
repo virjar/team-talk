@@ -38,14 +38,26 @@
 
 | 项 | 状态 |
 |----|------|
+| 登录窗口/注册/二级子窗口按设计规范重排（doc/04-ui-design §2.3/2.6） | 📋 |
+| 暗色模式全页面走查（令牌已双套，未截图验收） | 📋 |
+| Android 端专项打磨（通讯录字母索引/搜索框/触控细节，当前仅被动受益） | 📋 |
 | 桌面端导航独立重构（替换手搓 currentScreen 枚举，AppState 遗留清理） | 📋 |
 | Desktop 子窗口 ESC 关闭不可靠 / TestHttpServer 窗口语义 owner 泄漏 | 📋 |
 | F13 长按消息弹系统文本菜单（MessageBodyRenderer Text 被系统选择拦截 onLongClick） | 📋 |
 | F15 Desktop Profile 源码级隔离 | 📋 |
 | Android E2E 全流程 T01-T34 剩余用例 | 📋 |
+| ReplyBody 引用卡片富显示（当前为纯文本两行，升级为左侧竖线引用卡） | 📋 |
+| currentUser 非响应式（@Volatile userSession + StateFlow.value 直读，首帧后不刷新；需 AppDataState 暴露 Compose State） | 📋 |
+
+## P2 — SDK 补充
+
+| 项 | 状态 |
+|----|------|
+| AUTH_FAILED 后 ImClient 无限重试失效 token（retry=28+ 循环，曾反复踢翻登录窗注册页；应转终态停止自动重连） | 📋 |
 
 ## 已完成里程碑（倒序）
 
+- **飞书风格设计系统落地**（2026-08）：doc/04-ui-design 设计事实源（令牌/组件/交互/占位清单）+ `Tk` 令牌体系（spacing/dimens/扩展色板，双端密度）+ 核心组件重造（squircle 头像/会话项时间戳+静音+选中态/气泡双方头像+指向角/输入区工具行左对齐+Enter 发送+已读水位线指示）+ 桌面细导航栏（56dp 图标式）+ TestHttpServer 截图遮挡修复（toFront）。顺带根治服务端 refresh 认证响应漏 username/name（自动登录后客户端身份为空 → '?' 头像，ReconnectE2eTest 加断言锁定）。截图迭代闭环跑通（UI 自动化造数据 → 目视验收）
 - **P0/P1 收尾**（2026-08）：上传接口 Bearer accessToken 鉴权（X-Uid 伪造通道封死）+ 本地库 schema 迁移（.sqm + v1 遗库识别坑修复）+ CLI 入口（headlessDist：register/login/selftest + MSG 行协议，端到端实跑验证）。好友红点时序项核实后关闭（问题不成立，真相是当年 SQL 直插无事件推送）
 - **SDK 完整性收官**（2026-08）：重连三 bug 根治（B10 重放注册掉线 / B11 监听断链假活 / B12 补发游标快照）+ Presence 收敛 shared（契约登记）+ 事件流全家桶（contact/chat/presence）+ ImBot API 全量化（媒体/typing/撤回/群组/搜索）+ 测试体系（LocalCache/EventProcessor 单测 14 用例、bot 集成 9 用例、server 测试真实 PG 化去 embedded）
 - **RPC IDL 化**（2026-08）：Kotlin interface = IDL + KSP2 生成 Contract/Stub/Proxy（精简版 gRPC）；serviceId 字符串化（协议 v2 一刀切）；手写 encodePayload/withPayload 根除（A3 坑根治）；uid 收敛 Stub 成员。演进方向：domain Service 直接实现 RpcStub 删薄壳层

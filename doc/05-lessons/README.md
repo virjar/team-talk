@@ -81,6 +81,9 @@
 | F10 | Netty pipeline 无 exceptionCaught：CorruptedFrame 抛了白抛，连接继续挂 | ImAgent 统一兜底 close；抗扫描防线（序言魔/帧限/认证超时）实证依赖此项 |
 | F9 | 握手层三字节交换从未校验版本且是认证竞态温床 | v3 删除：首帧 AUTH 即序言（帧头 magic+version 首帧校验），FFAC6B1 竞态类别根除 |
 | F8 | "文档与代码矛盾"错误裁决为删代码 | 2026-08 误删 GENERIC(99)：它是协议演进策略（01-protocol §9）的 wire 级预留入口，空枚举是刻意候选区；删除破坏前向兼容（fromCode 抛异常→游标卡死）。遇到矛盾先判断哪边是设计意图——wire 协议的空位预留 ≠ 应用层过早实现 |
+| F12 | refresh 认证响应漏 username/name（login/register 走 issueTokens 有带，handleRefresh 手写响应漏字段）| 客户端自动登录后 UserSession 身份为空，头像/昵称全退化为 uid/'?'。服务端补齐 + ReconnectE2eTest 断言"第二次认证必须携带 username"锁定。教训：**同一响应结构多处构造时，一个字段增删要 grep 全部构造点** |
+| F16 | TestHttpServer /screenshot 截到被遮挡窗口后的内容 | Robot.createScreenCapture 按窗口 bounds 截屏区域而非窗口内容；截前必须 toFront+requestFocus。曾导致视觉验收拿别应用的画面当 UI 反馈 |
+| F14 | 视觉改动不截图验收，"代码看起来对" | UI 迭代必须走截图闭环（runDemo + TestHttpServer + TestPeer 造数据），设计规格先写进 doc/04-ui-design 再实现 |
 
 ---
 

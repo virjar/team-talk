@@ -13,6 +13,7 @@
 | 改协议 | [wire-format](01-protocol/wire-format.md) → [rpc-methods](01-protocol/rpc-methods.md) → [notify-contracts](01-protocol/notify-contracts.md) |
 | 改服务端 | [server README](02-server/README.md) → [database](02-server/database.md) → [threading](02-server/threading.md) |
 | 改 SDK | [sdk README](03-sdk/README.md) → [imclient](03-sdk/imclient.md) → [local-cache](03-sdk/local-cache.md) |
+| 改 UI | [设计系统](04-ui-design/README.md) → [令牌](04-ui-design/design-tokens.md) → [组件规格](04-ui-design/components.md) → [占位清单](04-ui-design/placeholders.md) |
 | 写 bot / AI 接入 | [imbot](03-sdk/imbot.md) → [roadmap P1](09-roadmap.md) |
 | 排查线上问题 | [日志体系](06-logging/README.md) → [测试与 E2E](07-testing/README.md) |
 | 构建/部署 | [build-system](00-overview/build-system.md) → [deploy](00-overview/getting-started/deploy.md) |
@@ -55,6 +56,14 @@
 | [imclient.md](03-sdk/imclient.md) | 连接状态机/重连/心跳/**防御设计↔历史 bug 对照表** |
 | [local-cache.md](03-sdk/local-cache.md) | stateLock 纪律/消息窗口 LRU/会话合并策略 |
 | [imbot.md](03-sdk/imbot.md) | 无头客户端（AI bot/CLI 入口）+ 集成测试 |
+
+### 04-ui-design — UI 设计系统（飞书风格）
+| 文档 | 内容 |
+|------|------|
+| [README.md](04-ui-design/README.md) | 为什么选飞书/设计原则/截图迭代闭环 |
+| [design-tokens.md](04-ui-design/design-tokens.md) | **令牌总表**（颜色/字阶/间距/圆角/尺寸，代码 `Tk` 对象对照） |
+| [components.md](04-ui-design/components.md) | 组件规格（头像/会话项/气泡/输入区/导航栏）+ 页面布局 + 交互规范 |
+| [placeholders.md](04-ui-design/placeholders.md) | 后端缺失占位清单（✅可接/🟡半接/🔴缺口 + 补齐顺序） |
 
 ### 05-lessons — 踩坑经验
 | 文档 | 内容 |

@@ -3,7 +3,6 @@ package com.virjar.tk.ui.component
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -13,29 +12,26 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.virjar.tk.ui.theme.Tk
 
-/** 头像配色（与 ChatAvatar 一致），按名称哈希稳定取色。 */
+/** 头像配色（与设计令牌一致的家族色），按名称哈希稳定取色。 */
 private val AvatarColors = listOf(
-    0xFF3370FF, 0xFF00B89A, 0xFFFF7D00, 0xFFF53F3F,
-    0xFF7B61FF, 0xFF00C73C, 0xFFE6294A, 0xFF3491FA,
+    0xFF3370FF, 0xFF00B89A, 0xFFFF7D00, 0xFFF54A45,
+    0xFF7B61FF, 0xFF00A870, 0xFFE6294A, 0xFF3491FA,
 )
 
 /**
- * 通用头像占位：圆形 + 首字母 + 哈希随机色。
- *
- * 当前未实现真实头像图片加载，统一用占位。会话头像 [ChatAvatar] 和
- * 群成员头像都基于它——会话头像在其上叠加群聊角标。
- *
- * 首字母提取跳过 emoji（emoji 的 UTF-16 代理项单独 take 会乱码），
- * 优先取第一个字母/数字/中文字符；全是 emoji/符号时 fallback 到 "?"。
+ * 通用头像：圆角方形（squircle，飞书特征）+ 首字母 + 哈希配色。
  *
  * @param name 用于取首字母和哈希配色的名称（建议传显示名）
+ * @param url 真实头像地址（预留：后端 updateProfile 支持 avatar 后启用，当前忽略）
  */
 @Composable
 fun AvatarPlaceholder(
     name: String?,
     modifier: Modifier = Modifier,
     size: Int = 48,
+    url: String? = null,
 ) {
     val initial = firstDisplayChar(name)
     val colorIdx = (name?.hashCode() ?: 0).let { Math.floorMod(it, AvatarColors.size) }
@@ -44,7 +40,7 @@ fun AvatarPlaceholder(
     Box(
         modifier = modifier
             .size(size.dp)
-            .clip(CircleShape)
+            .clip(Tk.avatarShape(size.dp))
             .background(avatarColor),
         contentAlignment = Alignment.Center,
     ) {

@@ -71,15 +71,22 @@ class AuthService(
             ?: return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = "Token validation failed")
 
         // 封禁复查：refresh 路径只验 token 不查用户状态——ban 后已发 token 仍可续期（曾可绕过）
-        try {
-            userService.requireActive(info.uid)
+        // 顺带取回 user：refresh 响应必须带 username/name（与 login/register 的 issueTokens 对齐），
+        // 否则客户端自动登录后 UserSession 身份为空，头像/昵称退化为 uid（曾现 '?' 头像）
+        val user = try {
+            userService.getProfile(info.uid)
         } catch (e: IllegalArgumentException) {
             return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = e.message)
+        }
+        if (user.status == 2) {
+            return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = "账号已被封禁")
         }
 
         return AuthResponsePayload(
             code = CODE_OK,
             uid = info.uid,
+            username = user.username,
+            name = user.name,
             accessToken = newTokens.first,
             refreshToken = newTokens.second,
             expiresIn = 30 * 24 * 3600L,

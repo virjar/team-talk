@@ -3,15 +3,21 @@ package com.virjar.tk.ui
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.virjar.tk.ui.theme.DarkTkColors
+import com.virjar.tk.ui.theme.LightTkColors
+import com.virjar.tk.ui.theme.LocalTkColors
+import com.virjar.tk.ui.theme.LocalTkDimens
 
 // ── 飞书/钉钉风格配色 ──
 // 主色：靛蓝（Lark Blue #3370FF）
 // 辅色：青绿（Teal #00B89A）
+// 完整令牌表：doc/04-ui-design/design-tokens.md
 
 private val LarkBlue = Color(0xFF3370FF)
 private val LarkBlueDark = Color(0xFF245BDB)
@@ -39,7 +45,7 @@ private val LightColorScheme = lightColorScheme(
     surfaceContainerHighest = Color(0xFFE8E9ED),
     outline = Color(0xFFC9CDD4),
     outlineVariant = Color(0xFFE5E6EB),
-    error = Color(0xFFF53F3F),
+    error = Color(0xFFF54A45),
     onError = Color.White,
     errorContainer = Color(0xFFFFECE8),
     onErrorContainer = Color(0xFFCB2626),
@@ -72,7 +78,7 @@ private val DarkColorScheme = darkColorScheme(
     scrim = Color(0xCC000000),
 )
 
-// ── 自定义排版（飞书风格）──
+// ── 自定义排版（飞书桌面：14px 正文基线）──
 
 private val AppTypography = Typography(
     headlineLarge = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.sp, lineHeight = 36.sp),
@@ -82,10 +88,11 @@ private val AppTypography = Typography(
     titleSmall = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, lineHeight = 20.sp),
     bodyLarge = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Normal, lineHeight = 24.sp),
     bodyMedium = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Normal, lineHeight = 20.sp),
-    bodySmall = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Normal, lineHeight = 16.sp),
+    // bodySmall/labelSmall 是对 M3 默认（12/10sp）的飞书校正：13sp 预览行、11sp 时间戳
+    bodySmall = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.Normal, lineHeight = 18.sp),
     labelLarge = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, lineHeight = 20.sp),
     labelMedium = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Medium, lineHeight = 16.sp),
-    labelSmall = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Medium, lineHeight = 14.sp),
+    labelSmall = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.Normal, lineHeight = 14.sp),
 )
 
 // ── 自定义圆角（飞书风格：中等圆角，不过分圆润）──
@@ -101,12 +108,20 @@ private val AppShapes = Shapes(
 @Composable
 fun AppTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
+    /** 触控密度（Android：72dp 列表项/48dp 头像）；默认桌面紧凑档 */
+    touchDensity: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    MaterialTheme(
-        colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme,
-        typography = AppTypography,
-        shapes = AppShapes,
-        content = content,
-    )
+    CompositionLocalProvider(
+        LocalTkColors provides if (darkTheme) DarkTkColors else LightTkColors,
+        LocalTkDimens provides if (touchDensity) com.virjar.tk.ui.theme.TouchDimens
+        else com.virjar.tk.ui.theme.DesktopDimens,
+    ) {
+        MaterialTheme(
+            colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme,
+            typography = AppTypography,
+            shapes = AppShapes,
+            content = content,
+        )
+    }
 }

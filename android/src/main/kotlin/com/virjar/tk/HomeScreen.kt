@@ -120,6 +120,9 @@ fun HomeScreen(
                         onConversationClick(chatId, conv?.chatName ?: chatId.take(16), conv?.chatType ?: 1)
                     },
                     onPinClick = { chatId, pinned -> dataState.session.localCache.toggleConversationPin(chatId, pinned) },
+                    onMarkRead = { chatId, lastSeq ->
+                        dataState.session.localCache.markConversationRead(chatId, lastSeq)
+                    },
                 )
                 MainTab.CONTACTS -> LazyColumn(modifier = Modifier.fillMaxSize()) {
                     // 待处理好友申请入口（有申请时展示在列表顶部）
