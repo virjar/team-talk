@@ -38,6 +38,7 @@ import com.virjar.tk.model.Message
 import com.virjar.tk.model.User
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.ui.component.AvatarPlaceholder
+import com.virjar.tk.ui.component.isEdgeToEdgeMedia
 import com.virjar.tk.ui.theme.Tk
 import com.virjar.tk.viewmodel.ChatViewModel
 import java.util.UUID
@@ -544,12 +545,19 @@ private fun MessageBubble(
                     onLongClick = onLongClick,
                 ),
             ) {
-                Column(
-                    modifier = Modifier
-                        .padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.sm)
-                        .widthIn(max = Tk.dimens.bubbleMaxWidth - (Tk.spacing.md * 2))
-                ) {
-                    com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent)
+                if (msg.body.isEdgeToEdgeMedia()) {
+                    // 贴边媒体（图片/视频/贴纸）：无气泡内边距，媒体自身即气泡面（微信/飞书范式）
+                    Box(modifier = Modifier.widthIn(max = Tk.dimens.bubbleMaxWidth)) {
+                        com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent)
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.sm)
+                            .widthIn(max = Tk.dimens.bubbleMaxWidth - (Tk.spacing.md * 2))
+                    ) {
+                        com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent)
+                    }
                 }
             }
             // 已读水位线指示：私聊中我方最后一条消息下方（飞书「已读/未读」文字范式）

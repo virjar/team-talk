@@ -91,7 +91,7 @@ class ProtocolE2eTest {
     private suspend fun createSession(): E2eSession {
         val userSession = com.virjar.tk.client.UserSession()
         val imClient = ImClient(onAuthResult = { success, uid, username, name, refreshToken, accessToken, failureReason ->
-            if (success) userSession.onAuthSuccess(uid ?: "", username, name, refreshToken)
+            if (success) userSession.onAuthSuccess(uid ?: "", username, name, refreshToken, accessToken)
             else userSession.onAuthFailed(failureReason)
         })
         imClient.connect("127.0.0.1", env.tcpPort)

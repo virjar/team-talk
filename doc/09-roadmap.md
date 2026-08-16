@@ -46,7 +46,8 @@
 | F13 长按消息弹系统文本菜单（MessageBodyRenderer Text 被系统选择拦截 onLongClick） | 📋 |
 | F15 Desktop Profile 源码级隔离 | 📋 |
 | Android E2E 全流程 T01-T34 剩余用例 | 📋 |
-| ReplyBody 引用卡片富显示（当前为纯文本两行，升级为左侧竖线引用卡） | 📋 |
+| 视频消息缩略图渲染接入（desktop 未注入 videoContent，当前走图标 fallback；服务端缩略图生成也缺） | 📋 |
+| 语音播放态动画（波形进度着色，待媒体播放器状态接入） | 📋 |
 | currentUser 非响应式（@Volatile userSession + StateFlow.value 直读，首帧后不刷新；需 AppDataState 暴露 Compose State） | 📋 |
 
 ## P2 — SDK 补充

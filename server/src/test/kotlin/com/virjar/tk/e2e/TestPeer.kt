@@ -45,13 +45,15 @@ class TestPeer {
 
     /**
      * 上传本地文件到服务器，返回完整下载 URL。
+     * 文件上传接口走 Bearer accessToken 鉴权（FileRoutes），必须带认证头。
      */
-    private fun uploadFile(file: File, mimeType: String = "application/octet-stream"): String {
+    private fun uploadFile(file: File, accessToken: String?, mimeType: String = "application/octet-stream"): String {
         val boundary = "----TestPeer${UUID.randomUUID()}"
         val conn = URL("$serverUrl/api/v1/files/upload").openConnection() as HttpURLConnection
         conn.doOutput = true
         conn.requestMethod = "POST"
         conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+        accessToken?.let { conn.setRequestProperty("Authorization", "Bearer $it") }
 
         val fileName = file.name
         conn.outputStream.use { os ->
@@ -253,7 +255,7 @@ class TestPeer {
         if (!file.exists()) { println("[TestPeer] file not found: ${file.absolutePath}"); return@runBlocking }
 
         val session = RemoteDemoSupport.loginUser(username, "password123")
-        val url = uploadFile(file)
+        val url = uploadFile(file, session.userSession.accessToken)
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
             messageType = MessageType.FILE.code, timestamp = System.currentTimeMillis(),
             senderUid = session.uid, body = FileBody(url, file.name, file.length()))
@@ -456,7 +458,7 @@ class TestPeer {
         if (!file.exists()) { println("[TestPeer] file not found: ${file.absolutePath}"); return@runBlocking }
 
         val session = RemoteDemoSupport.loginUser(username, "password123")
-        val url = uploadFile(file, "image/png")
+        val url = uploadFile(file, session.userSession.accessToken, "image/png")
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
             messageType = MessageType.IMAGE.code, timestamp = System.currentTimeMillis(),
             senderUid = session.uid, body = ImageBody(url, size = file.length()))
@@ -477,7 +479,7 @@ class TestPeer {
         if (!file.exists()) { println("[TestPeer] file not found: ${file.absolutePath}"); return@runBlocking }
 
         val session = RemoteDemoSupport.loginUser(username, "password123")
-        val url = uploadFile(file, "audio/aac")
+        val url = uploadFile(file, session.userSession.accessToken, "audio/aac")
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
             messageType = MessageType.VOICE.code, timestamp = System.currentTimeMillis(),
             senderUid = session.uid, body = VoiceBody(url, duration = 12, size = file.length()))
@@ -498,7 +500,7 @@ class TestPeer {
         if (!file.exists()) { println("[TestPeer] file not found: ${file.absolutePath}"); return@runBlocking }
 
         val session = RemoteDemoSupport.loginUser(username, "password123")
-        val url = uploadFile(file, "video/mp4")
+        val url = uploadFile(file, session.userSession.accessToken, "video/mp4")
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
             messageType = MessageType.VIDEO.code, timestamp = System.currentTimeMillis(),
             senderUid = session.uid, body = VideoBody(url, size = file.length()))

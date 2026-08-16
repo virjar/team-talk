@@ -113,7 +113,7 @@ object RemoteDemoSupport {
     suspend fun createSession(): Session {
         val userSession = com.virjar.tk.client.UserSession()
         val imClient = ImClient(onAuthResult = { success, uid, username, name, refreshToken, accessToken, failureReason ->
-            if (success) userSession.onAuthSuccess(uid ?: "", username, name, refreshToken)
+            if (success) userSession.onAuthSuccess(uid ?: "", username, name, refreshToken, accessToken)
             else userSession.onAuthFailed(failureReason)
         })
         imClient.connect(host, port)

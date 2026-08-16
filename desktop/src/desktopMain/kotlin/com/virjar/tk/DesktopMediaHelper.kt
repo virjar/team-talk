@@ -393,7 +393,7 @@ fun DesktopImageContent(url: String, modifier: Modifier = Modifier) {
         )
     } else {
         Box(
-            modifier = modifier.background(androidx.compose.ui.graphics.Color(0xFFE0E0E0)),
+            modifier = modifier.background(com.virjar.tk.ui.theme.Tk.colors.bubbleIncoming),
             contentAlignment = Alignment.Center,
         ) {
             CircularProgressIndicator(modifier = Modifier.height(24.dp))
