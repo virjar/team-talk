@@ -20,6 +20,7 @@ enum class MessageType(val code: Int) {
     STICKER(13),
     REACTION(14),
     TYPING(15),
+    RICH_TEXT(16),
 
     // 通用扩展入口（协议演进策略 §9）：body = GenericPayload(extensionType + data)
     GENERIC(99);

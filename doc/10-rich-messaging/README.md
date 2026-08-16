@@ -89,8 +89,8 @@ bot/AI 员工发卡片 = `ImBot.sendCard(chatId, CardPayload)`（无头 IM 战�
 | 期 | 内容 | 协议影响 | 状态 |
 |----|------|---------|------|
 | 一期 | 渲染集成：TextBody 直接按 markdown 渲染（自研渲染层）；输入工具栏+语法高亮 | **零**（纯客户端） | ✅ 渲染完成（工具栏/高亮待做） |
-| 二期 | RICH_TEXT wire 类型 + mentions + @ 补全 + plainText 搜索/预览链路 + 契约测试 | 新消息类型（非破坏） | 📋 |
-| 三期 | / 指令补全 + 静态卡片 + ImBot.sendCard | 新消息类型 | 📋 |
+| 二期 | RICH_TEXT wire 类型 + mentions 侧信道 + plainText 搜索/预览链路 + 契约测试 + 输入区重构（表情/附件宫格/格式键） | 新消息类型（非破坏） | ✅（@ 补全弹层三期做） |
+| 三期 | @ 补全弹层 + / 指令补全 + 静态卡片 + ImBot.sendCard | 新消息类型 | 📋 |
 | 四期 | 交互回调 RPC + AI 员工卡片区 | 新 RPC（契约表登记） | 📋 |
 
 ## 6. 风险

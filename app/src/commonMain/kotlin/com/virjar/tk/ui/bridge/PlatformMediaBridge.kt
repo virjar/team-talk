@@ -30,6 +30,8 @@ data class ChatMediaConfig(
     val onPickImage: (() -> Unit)? = null,
     /** 选择文件发送。 */
     val onPickFile: (() -> Unit)? = null,
+    /** 选择视频发送。null=附件面板不显示视频项。 */
+    val onPickVideo: (() -> Unit)? = null,
     /** 语音录制：true=开始，false=停止发送。 */
     val onVoiceRecord: ((Boolean) -> Unit)? = null,
     /** 图片消息内容渲染器。null=回退到 MediaCard。 */
@@ -38,8 +40,10 @@ data class ChatMediaConfig(
     val videoContent: @Composable ((url: String, modifier: Modifier) -> Unit)? = null,
     /** 媒体点击处理。null=不可点击。 */
     val onMediaClick: ((message: Message) -> Unit)? = null,
+    /** 富文本 @提及 点击（打开用户资料）。 */
+    val onMentionClick: ((uid: String) -> Unit)? = null,
 ) {
     /** 是否有任何媒体发送能力（决定附件工具栏是否显示）。 */
     val hasSendCapability: Boolean
-        get() = onAttachClick != null || onPickImage != null || onPickFile != null || onVoiceRecord != null
+        get() = onAttachClick != null || onPickImage != null || onPickFile != null || onPickVideo != null || onVoiceRecord != null
 }

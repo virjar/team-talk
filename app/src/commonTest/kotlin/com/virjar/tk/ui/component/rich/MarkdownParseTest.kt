@@ -120,7 +120,6 @@ class MarkdownParseTest {
         val blocks = MdParser.parse("第一段\n\n第二段")
         assertEquals(2, blocks.filterIsInstance<MdBlock.Paragraph>().size)
     }
-}
 
     @Test
     fun `列表项不泄漏列表标记`() {
@@ -135,3 +134,5 @@ class MarkdownParseTest {
             assertTrue(!text.contains("- "), "列表标记泄漏: $text")
         }
     }
+}
+

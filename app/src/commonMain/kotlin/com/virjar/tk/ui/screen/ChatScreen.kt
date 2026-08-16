@@ -14,6 +14,8 @@ import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.KeyboardVoice
+import androidx.compose.material.icons.filled.AddCircle
+import androidx.compose.material.icons.filled.SentimentSatisfied
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -30,9 +32,18 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.body.ReplyBody
 import com.virjar.tk.body.TextBody
+import com.virjar.tk.body.RichTextBody
+import com.virjar.tk.body.buildRichTextBody
+import com.virjar.tk.body.looksRichMarkdown
+import com.virjar.tk.ui.component.input.AttachmentPanel
+import com.virjar.tk.ui.component.input.EmojiPanel
 import com.virjar.tk.model.ChatType
 import com.virjar.tk.model.Message
 import com.virjar.tk.model.User
@@ -92,6 +103,7 @@ fun ChatPanel(
     val effectiveMediaClick = media?.onMediaClick ?: onMediaClick
     val effectiveImageContent = media?.imageContent ?: imageContent
     val effectiveVideoContent = media?.videoContent ?: videoContent
+    val effectiveMentionClick = media?.onMentionClick
     val messages by viewModel.messages.collectAsState()
     val loading by viewModel.loading.collectAsState()
     val error by viewModel.error.collectAsState()
@@ -100,14 +112,20 @@ fun ChatPanel(
     var menuMessage by remember { mutableStateOf<Message?>(null) }
     var replyingTo by remember { mutableStateOf<Message?>(null) }
     var editingMessage by remember { mutableStateOf<Message?>(null) }
-    var inputText by rememberSaveable { mutableStateOf(initialDraft ?: "") }
+    // TextFieldValue（而非 String）：光标/选区状态是格式键包裹与表情插入的前提
+    var inputField by rememberSaveable(stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(initialDraft ?: ""))
+    }
+    var showEmoji by remember { mutableStateOf(false) }
+    var showAttach by remember { mutableStateOf(false) }
+    val inputFocus = remember { FocusRequester() }
     var voiceMode by rememberSaveable { mutableStateOf(false) }
 
     val isPersonal = ChatType.fromCode(chatType) == ChatType.PERSONAL
 
     // Save draft on dispose
     DisposableEffect(chatId) {
-        onDispose { onDraftChange?.invoke(inputText) }
+        onDispose { onDraftChange?.invoke(inputField.text) }
     }
 
     LaunchedEffect(error) {
@@ -120,18 +138,20 @@ fun ChatPanel(
     // 编辑时预填输入
     LaunchedEffect(editingMessage) {
         editingMessage?.let { msg ->
-            inputText = (msg.body as? TextBody)?.text ?: ""
+            val t = (msg.body as? TextBody)?.text ?: (msg.body as? RichTextBody)?.markdown ?: ""
+            inputField = TextFieldValue(t)
         }
     }
 
     // ── 发送动作（按钮与 Enter 共用）──
     val sendAction: () -> Unit = {
+        val inputText = inputField.text
         if (inputText.isNotBlank()) {
             if (editingMessage != null) {
                 val edited = editingMessage!!.copy(body = TextBody(inputText))
                 viewModel.editMessage(edited)
                 editingMessage = null
-                inputText = ""
+                inputField = TextFieldValue("")
             } else {
                 val target = replyingTo
                 val message = if (target != null) {
@@ -154,17 +174,20 @@ fun ChatPanel(
                         ),
                     )
                 } else {
+                    // markdown 特征 → RICH_TEXT（mentions 侧信道 + plainText）；
+                    // 纯文本仍发 TEXT（老端直读，不做无谓类型升级）
+                    val rich = looksRichMarkdown(inputText)
                     Message(
                         chatId = chatId,
                         clientMsgId = UUID.randomUUID().toString(),
                         senderUid = myUid,
-                        messageType = MessageType.TEXT.code,
+                        messageType = if (rich) MessageType.RICH_TEXT.code else MessageType.TEXT.code,
                         timestamp = System.currentTimeMillis(),
-                        body = TextBody(inputText),
+                        body = if (rich) buildRichTextBody(inputText) else TextBody(inputText),
                     )
                 }
                 viewModel.sendMessage(message)
-                inputText = ""
+                inputField = TextFieldValue("")
                 replyingTo = null
             }
         }
@@ -240,6 +263,7 @@ fun ChatPanel(
                                     peerReadSeq = peerReadSeq,
                                     resolveSender = resolveSender,
                                     voicePlayback = voicePlayback,
+                                    onMentionClick = effectiveMentionClick,
                                     onLongClick = { menuMessage = msg },
                                     onMediaClick = effectiveMediaClick,
                                     imageContent = effectiveImageContent,
@@ -257,7 +281,7 @@ fun ChatPanel(
                                                 text = { Text("编辑") },
                                                 onClick = {
                                                     editingMessage = msg
-                                                    inputText = (msg.body as TextBody).text
+                                                    inputField = TextFieldValue((msg.body as? TextBody)?.text ?: (msg.body as? RichTextBody)?.markdown ?: "")
                                                     menuMessage = null
                                                 },
                                             )
@@ -314,15 +338,78 @@ fun ChatPanel(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text("编辑消息", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
-                        TextButton(onClick = { editingMessage = null; inputText = "" }) { Text("取消") }
+                        TextButton(onClick = { editingMessage = null; inputField = TextFieldValue("") }) { Text("取消") }
                     }
                 }
 
-                // 工具行：左对齐（替代原 SpaceEvenly 分散布局）
-                if (effectiveAttachClick != null) {
+                // 工具行（输入框下方，飞书范式）：表情/格式键/语音 居左；＋附件 居右。
+                // 替代旧的"图标平铺+AlertDialog 文字菜单"（曾是最丑的一层）。
+                val effectivePickVideo = media?.onPickVideo
+                val hasAttachment = effectivePickImage != null || effectivePickFile != null || effectivePickVideo != null
+                if (effectiveAttachClick != null || hasAttachment || effectiveVoiceRecord != null) {
+                    val inputHasSelection = inputField.selection.collapsed.not()
+
+                    // 格式键：选中文本包裹语法；无选中插入空语法光标居中
+                    val applyFormat: (String) -> Unit = { marker ->
+                        val v = inputField
+                        val sel = v.selection
+                        if (sel.collapsed) {
+                            val pos = sel.min
+                            inputField = TextFieldValue(
+                                v.text.substring(0, pos) + marker + marker + v.text.substring(pos),
+                                TextRange(pos + marker.length),
+                            )
+                        } else {
+                            val start = sel.min
+                            val end = sel.max
+                            inputField = TextFieldValue(
+                                v.text.substring(0, start) + marker + v.text.substring(start, end) + marker + v.text.substring(end),
+                                TextRange(start + marker.length, end + marker.length),
+                            )
+                        }
+                    }
+                    val insertEmoji: (String) -> Unit = { emoji ->
+                        val pos = inputField.selection.min
+                        inputField = TextFieldValue(
+                            inputField.text.substring(0, pos) + emoji + inputField.text.substring(pos),
+                            TextRange(pos + emoji.length),
+                        )
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = Tk.spacing.xs),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        // 表情面板（锚定按钮上方弹出）
+                        Box {
+                            IconButton(
+                                onClick = { showEmoji = !showEmoji },
+                                modifier = Modifier.testTag("chat.emoji"),
+                            ) {
+                                Icon(
+                                    Icons.Filled.SentimentSatisfied,
+                                    contentDescription = "表情",
+                                    tint = if (showEmoji) MaterialTheme.colorScheme.primary else Tk.colors.secondaryText,
+                                )
+                            }
+                            if (showEmoji) {
+                                EmojiPanel(
+                                    onPick = {
+                                        insertEmoji(it)
+                                        inputFocus.requestFocus()
+                                    },
+                                    onDismiss = { showEmoji = false },
+                                )
+                            }
+                        }
+
+                        // markdown 格式键（B/I/S/代码），选中时包裹
+                        FormatKey("B", "**", inputHasSelection, applyFormat, "chat.fmt.bold")
+                        FormatKey("I", "*", inputHasSelection, applyFormat, "chat.fmt.italic")
+                        FormatKey("S", "~~", inputHasSelection, applyFormat, "chat.fmt.strike")
+                        FormatKey("</>", "`", inputHasSelection, applyFormat, "chat.fmt.code")
+
+                        // 语音/键盘切换
                         IconButton(onClick = { voiceMode = !voiceMode }, modifier = Modifier.testTag("chat.voiceMode")) {
                             Icon(
                                 if (voiceMode) Icons.Filled.Keyboard else Icons.Filled.KeyboardVoice,
@@ -330,14 +417,27 @@ fun ChatPanel(
                                 tint = Tk.colors.secondaryText,
                             )
                         }
-                        IconButton(onClick = { effectivePickImage?.invoke() }, modifier = Modifier.testTag("chat.pickImage")) {
-                            Icon(Icons.Filled.Image, contentDescription = "图片", tint = Tk.colors.secondaryText)
-                        }
-                        IconButton(onClick = { effectivePickFile?.invoke() }, modifier = Modifier.testTag("chat.pickFile")) {
-                            Icon(Icons.Filled.AttachFile, contentDescription = "文件", tint = Tk.colors.secondaryText)
-                        }
-                        IconButton(onClick = effectiveAttachClick) {
-                            Icon(Icons.Filled.Add, contentDescription = "更多", tint = Tk.colors.secondaryText)
+
+                        Spacer(Modifier.weight(1f))
+
+                        // ＋附件宫格弹层（图片/视频/文件）
+                        if (hasAttachment) {
+                            Box {
+                                IconButton(
+                                    onClick = { showAttach = true },
+                                    modifier = Modifier.testTag("chat.attach"),
+                                ) {
+                                    Icon(Icons.Filled.AddCircle, contentDescription = "附件", tint = Tk.colors.secondaryText)
+                                }
+                                if (showAttach) {
+                                    AttachmentPanel(
+                                        onPickImage = { showAttach = false; effectivePickImage?.invoke() },
+                                        onPickVideo = effectivePickVideo?.let { pick -> { showAttach = false; pick() } },
+                                        onPickFile = { showAttach = false; effectivePickFile?.invoke() },
+                                        onDismiss = { showAttach = false },
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -381,11 +481,12 @@ fun ChatPanel(
                         }
                     } else {
                         OutlinedTextField(
-                            value = inputText,
-                            onValueChange = { inputText = it },
+                            value = inputField,
+                            onValueChange = { inputField = it },
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("chat.input")
+                                .focusRequester(inputFocus)
                                 .onPreviewKeyEvent { event ->
                                     // Enter 发送 / Shift+Enter 换行（桌面硬件键盘；Android 走 IME Send）
                                     if (event.type == KeyEventType.KeyDown &&
@@ -415,7 +516,7 @@ fun ChatPanel(
                         modifier = Modifier
                             .testTag("chat.send")
                             .height(Tk.dimens.inputMinHeight),
-                        enabled = inputText.isNotBlank(),
+                        enabled = inputField.text.isNotBlank(),
                         shape = MaterialTheme.shapes.small,
                         contentPadding = PaddingValues(horizontal = Tk.spacing.lg),
                     ) {
@@ -491,6 +592,7 @@ private fun MessageBubble(
     peerReadSeq: Long = 0,
     resolveSender: ((uid: String) -> User?)?,
     voicePlayback: com.virjar.tk.ui.component.VoicePlaybackController? = null,
+    onMentionClick: ((uid: String) -> Unit)? = null,
     onLongClick: () -> Unit,
     onMediaClick: ((Message) -> Unit)?,
     imageContent: (@Composable (String, Modifier) -> Unit)?,
@@ -552,7 +654,7 @@ private fun MessageBubble(
                 if (msg.body.isEdgeToEdgeMedia()) {
                     // 贴边媒体（图片/视频/贴纸）：无气泡内边距，媒体自身即气泡面（微信/飞书范式）
                     Box(modifier = Modifier.widthIn(max = Tk.dimens.bubbleMaxWidth)) {
-                        com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback)
+                        com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback, onMentionClick)
                     }
                 } else {
                     Column(
@@ -560,7 +662,7 @@ private fun MessageBubble(
                             .padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.sm)
                             .widthIn(max = Tk.dimens.bubbleMaxWidth - (Tk.spacing.md * 2))
                     ) {
-                        com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback)
+                        com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback, onMentionClick)
                     }
                 }
             }
@@ -595,5 +697,31 @@ private fun MessageBubble(
                 )
             }
         }
+    }
+}
+
+
+/**
+ * markdown 格式键（B/I/S/代码）。选中文本时按钮高亮提示可包裹。
+ */
+@Composable
+private fun FormatKey(
+    label: String,
+    marker: String,
+    selectionActive: Boolean,
+    onApply: (String) -> Unit,
+    testTag: String,
+) {
+    TextButton(
+        onClick = { onApply(marker) },
+        modifier = Modifier.height(32.dp).width(40.dp).testTag(testTag),
+        contentPadding = PaddingValues(horizontal = Tk.spacing.sm),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+            color = if (selectionActive) MaterialTheme.colorScheme.primary else Tk.colors.secondaryText,
+        )
     }
 }

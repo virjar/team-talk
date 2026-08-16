@@ -34,6 +34,7 @@ object MessagePreview {
     /** 仅按 body 生成预览（不考虑 flags）。 */
     fun previewBody(body: MessageBody?, messageType: Int = MessageType.TEXT.code): String = when (body) {
         is TextBody -> body.text
+        is RichTextBody -> body.plainText
         is FileBody -> "[文件] ${body.fileName}"
         is VoiceBody -> "[语音] ${body.duration}″"
         is ImageBody -> "[图片]"

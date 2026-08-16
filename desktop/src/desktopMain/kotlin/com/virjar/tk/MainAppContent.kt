@@ -298,6 +298,10 @@ internal fun MainAppContent(
                         initialDraft = conv?.draft,
                         resolveSender = resolveUser,
                         voicePlayback = voicePlayback,
+                        onMentionClick = { uid ->
+                            appState.selectedProfileUid = uid
+                            appState.currentScreen = SubScreen.UserProfile
+                        },
                         onForward = { msg -> appState.forwardMessage = msg; appState.currentScreen = SubScreen.Forward },
                         onGroupDetail = { appState.selectedGroupChatId = appState.selectedChatId; appState.currentScreen = SubScreen.GroupDetail },
                     )
@@ -491,6 +495,7 @@ private fun ChatPanelWrapper(
     onGroupDetail: () -> Unit,
     resolveSender: ((uid: String) -> User?)? = null,
     voicePlayback: com.virjar.tk.ui.component.VoicePlaybackController? = null,
+    onMentionClick: ((uid: String) -> Unit)? = null,
 ) {
     val messagesState = viewModel.messages.collectAsState()
 
@@ -498,9 +503,6 @@ private fun ChatPanelWrapper(
     var showGallery by remember { mutableStateOf(false) }
     var galleryItems by remember { mutableStateOf<List<GalleryItem>>(emptyList()) }
     var galleryIndex by remember { mutableIntStateOf(0) }
-
-    // 附件菜单状态
-    var showAttachSheet by remember { mutableStateOf(false) }
 
     val onMediaClick = rememberMediaClickHandler(
         messages = messagesState,
@@ -562,9 +564,10 @@ private fun ChatPanelWrapper(
                 }
             },
             media = com.virjar.tk.ui.bridge.ChatMediaConfig(
-                onAttachClick = { showAttachSheet = true },
                 onPickImage = { DesktopMediaHelper.pickAndSendImage(chatId, myUid, viewModel) },
                 onPickFile = { DesktopMediaHelper.pickAndSendFile(chatId, myUid, viewModel) },
+                onPickVideo = { DesktopMediaHelper.pickAndSendVideo(chatId, myUid, viewModel) },
+                onMentionClick = onMentionClick,
                 onVoiceRecord = { start ->
                     if (start) DesktopMediaHelper.startRecording()
                     else DesktopMediaHelper.stopAndSendVoice(chatId, myUid, viewModel)
@@ -572,31 +575,6 @@ private fun ChatPanelWrapper(
                 imageContent = { url, modifier -> DesktopImageContent(url, modifier) },
                 onMediaClick = onMediaClick,
             ),
-        )
-    }
-
-    // 附件菜单
-    if (showAttachSheet) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showAttachSheet = false },
-            confirmButton = {},
-            title = { Text("发送附件") },
-            text = {
-                Column {
-                    androidx.compose.material3.TextButton(onClick = {
-                        showAttachSheet = false
-                        DesktopMediaHelper.pickAndSendImage(chatId, myUid, viewModel)
-                    }) { Text("图片") }
-                    androidx.compose.material3.TextButton(onClick = {
-                        showAttachSheet = false
-                        DesktopMediaHelper.pickAndSendVideo(chatId, myUid, viewModel)
-                    }) { Text("视频") }
-                    androidx.compose.material3.TextButton(onClick = {
-                        showAttachSheet = false
-                        DesktopMediaHelper.pickAndSendFile(chatId, myUid, viewModel)
-                    }) { Text("文件") }
-                }
-            },
         )
     }
 

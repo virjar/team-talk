@@ -57,7 +57,6 @@ fun AndroidChatScreen(
     scope: kotlinx.coroutines.CoroutineScope = rememberCoroutineScope(),
 ) {
     val context = LocalContext.current
-    var showAttachSheet by remember { mutableStateOf(false) }
     var isUploading by remember { mutableStateOf(false) }
 
     // 全屏画廊 overlay 状态
@@ -197,9 +196,9 @@ fun AndroidChatScreen(
                 onForward = onForward, initialDraft = draft, onDraftChange = onDraftChange,
                 voicePlayback = rememberAndroidVoicePlayback(context),
                 media = com.virjar.tk.ui.bridge.ChatMediaConfig(
-                    onAttachClick = { showAttachSheet = true },
                     onPickImage = { imagePicker.launch(PickVisualMediaRequest.Builder().setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly).build()) },
                     onPickFile = { filePicker.launch(arrayOf("*/*")) },
+                    onPickVideo = { videoPicker.launch(PickVisualMediaRequest.Builder().setMediaType(ActivityResultContracts.PickVisualMedia.VideoOnly).build()) },
                     onVoiceRecord = { if (it) startVoice() else stopVoice() },
                     imageContent = { url, mod -> rememberAsyncThumb(url, mod, android.graphics.Color.LTGRAY) },
                     videoContent = { url, mod -> rememberAsyncThumb(url, mod, android.graphics.Color.DKGRAY) },
@@ -243,21 +242,6 @@ fun AndroidChatScreen(
         )
     }
 
-    // ── 附件菜单 ──
-    if (showAttachSheet) {
-        AlertDialog(
-            onDismissRequest = { showAttachSheet = false },
-            title = { Text("发送") },
-            text = {
-                Column {
-                    TextButton(onClick = { showAttachSheet = false; filePicker.launch(arrayOf("*/*")) }) { Text("📄 文件") }
-                    TextButton(onClick = { showAttachSheet = false; imagePicker.launch(PickVisualMediaRequest.Builder().setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly).build()) }) { Text("🖼 图片") }
-                    TextButton(onClick = { showAttachSheet = false; videoPicker.launch(PickVisualMediaRequest.Builder().setMediaType(ActivityResultContracts.PickVisualMedia.VideoOnly).build()) }) { Text("🎬 视频") }
-                }
-            },
-            confirmButton = { TextButton(onClick = { showAttachSheet = false }) { Text("取消") } },
-        )
-    }
 }
 
 /**

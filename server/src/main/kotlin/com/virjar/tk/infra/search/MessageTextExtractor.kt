@@ -22,6 +22,7 @@ object MessageTextExtractor {
     private fun extractFromBody(messageType: Int, body: MessageBody): String? {
         return when (MessageType.fromCode(messageType)) {
             MessageType.TEXT -> (body as? TextBody)?.text
+            MessageType.RICH_TEXT -> (body as? RichTextBody)?.plainText
             MessageType.IMAGE -> null
             MessageType.VOICE -> null
             MessageType.VIDEO -> null
