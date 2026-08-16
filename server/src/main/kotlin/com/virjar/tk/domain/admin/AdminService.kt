@@ -163,9 +163,12 @@ class AdminService(
 
     fun listGroups(query: String?, page: Int, size: Int): AdminPage<Chat> = chatRepository.listGroups(query, page, size)
 
-    fun groupDetail(chatId: String): Pair<Chat, List<Member>> {
+    @Serializable
+    data class GroupDetail(val chat: Chat, val members: List<Member>)
+
+    fun groupDetail(chatId: String): GroupDetail {
         val chat = chatRepository.getChatById(chatId) ?: throw IllegalArgumentException("群不存在: $chatId")
-        return chat to chatService.getMembers(chatId)
+        return GroupDetail(chat, chatService.getMembers(chatId))
     }
 
     suspend fun dissolveGroup(chatId: String) = chatService.adminDissolve(chatId)

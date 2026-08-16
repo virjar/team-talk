@@ -170,8 +170,7 @@ fun Route.adminRoutes(adminService: AdminService) {
             call.respond(adminService.listGroups(query, page, size))
         }
         get("/groups/{chatId}") {
-            val (chat, members) = adminService.groupDetail(call.parameters["chatId"]!!)
-            call.respond(mapOf("chat" to chat, "members" to members))
+            call.respond(adminService.groupDetail(call.parameters["chatId"]!!))
         }
         post("/groups/{chatId}/dissolve") {
             adminService.dissolveGroup(call.parameters["chatId"]!!)
