@@ -22,6 +22,7 @@ kotlin {
             api(compose.material3)
             api(compose.materialIconsExtended)
             api(compose.components.resources)
+            api(libs.jetbrains.markdown)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))

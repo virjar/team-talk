@@ -50,7 +50,8 @@ fun MessageBodyRenderer(
     voicePlayback: VoicePlaybackController? = null,
 ) {
     when (val body = message.body) {
-        is TextBody -> Text(body.text, style = MaterialTheme.typography.bodyMedium)
+        // TextBody 整体按 markdown 渲染（Discord 语义；普通文本视觉不变），选型见 doc/10-rich-messaging
+        is TextBody -> RichMessageText(body.text)
 
         is FileBody -> FileCard(
             fileName = body.fileName,

@@ -84,6 +84,11 @@
 |------|------|
 | [09-roadmap.md](09-roadmap.md) | P0 正确性收尾 / **P1 无头 IM 与 AI 员工** / P2 SDK / P3 服务端 / P4 UI |
 
+### 10-rich-messaging — 富消息课题（调研与分期）
+| 文档 | 内容 |
+|------|------|
+| [README.md](10-rich-messaging/README.md) | **markdown 录入/渲染选型**（mikepenz renderer + Slack 式输入）、RICH_TEXT 协议设计（mentions 侧信道）、卡片/指令分期 |
+
 ---
 
 ## 三份最重要的文档

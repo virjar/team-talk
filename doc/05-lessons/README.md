@@ -84,6 +84,8 @@
 | F12 | refresh 认证响应漏 username/name（login/register 走 issueTokens 有带，handleRefresh 手写响应漏字段）| 客户端自动登录后 UserSession 身份为空，头像/昵称全退化为 uid/'?'。服务端补齐 + ReconnectE2eTest 断言"第二次认证必须携带 username"锁定。教训：**同一响应结构多处构造时，一个字段增删要 grep 全部构造点** |
 | F16 | TestHttpServer /screenshot 截到被遮挡窗口后的内容 | Robot.createScreenCapture 按窗口 bounds 截屏区域而非窗口内容；截前必须 toFront+requestFocus。曾导致视觉验收拿别应用的画面当 UI 反馈 |
 | F14 | 视觉改动不截图验收，"代码看起来对" | UI 迭代必须走截图闭环（runDemo + TestHttpServer + TestPeer 造数据），设计规格先写进 doc/04-ui-design 再实现 |
+| F17 | 三方 Compose 库 JVM 字节码版本绑架运行时（mikepenz markdown 0.40.x 用 Java 21 编译，class 65） | **编译通过 ≠ 运行兼容**：依赖变更必须 runDemo 实跑首屏。对策：渲染层只用 JetBrains 官方纯 Kotlin parser 自研（org.jetbrains:markdown 零传递依赖），UI 库引入前先查 class file version |
+| F18 | Kotlin 块注释内的 `*/` 序列提前闭合注释（第 4 次踩） | 注释里写代码符号序列（如"星号/波浪线"列举）必须转义措辞，严禁出现 `*/` 字面量；CI 侧可加 grep 检查 |
 
 ---
 
