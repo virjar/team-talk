@@ -1,6 +1,7 @@
 package com.virjar.tk
 
 import com.virjar.tk.api.clientLogRoutes
+import com.virjar.tk.api.adminRoutes
 import com.virjar.tk.api.fileRoutes
 import com.virjar.tk.di.serverModule
 import com.virjar.tk.log.Slf4jTkLogger
@@ -26,6 +27,7 @@ import io.ktor.server.engine.*
 import io.ktor.server.netty.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.response.*
+import io.ktor.server.http.content.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.json.Json
 import org.koin.ktor.plugin.Koin
@@ -163,12 +165,18 @@ fun Application.module() {
 
     // 8. HTTP Routes
     routing {
+        // 管理后台 SPA（/admin）：静态资源 + 前端路由 fallback 到 index.html
+        staticResources("/admin", "static/admin") {
+            default("index.html")
+        }
+
         get("/health") {
             val health = healthChecker.check()
             val status = if (health.status == "UP") HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable
             call.respond(status, health)
         }
         fileRoutes(fileStore, koin.get())
+        adminRoutes(koin.get())
         clientLogRoutes(clientLogStore)
 
         // 首页

@@ -1,8 +1,11 @@
 package com.virjar.tk.model
 
+import kotlinx.serialization.Serializable
+
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.PacketBuffer
 
+@Serializable
 data class Chat(
     val chatId: String,
     val chatType: Int,       // 1=personal, 2=group

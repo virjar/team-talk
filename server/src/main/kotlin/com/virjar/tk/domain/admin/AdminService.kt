@@ -26,6 +26,7 @@ import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.mindrot.jbcrypt.BCrypt
+import kotlinx.serialization.Serializable
 import java.io.File
 
 /**
@@ -62,6 +63,7 @@ class AdminService(
         AdminPage(total, items)
     }
 
+    @Serializable
     data class UserDetail(
         val user: User,
         val devices: List<Device>,
@@ -113,6 +115,7 @@ class AdminService(
 
     // ── 消息 ──
 
+    @Serializable
     data class MessageSearchResult(
         val total: Int,
         val items: List<Message>,
@@ -173,6 +176,7 @@ class AdminService(
 
     // ── 统计 ──
 
+    @Serializable
     data class Overview(
         val onlineCount: Int,
         val userCount: Long,
@@ -199,6 +203,7 @@ class AdminService(
 
     // ── 日志 ──
 
+    @Serializable
     data class LogFileInfo(val name: String, val sizeBytes: Long, val lastModified: Long)
 
     fun listServerLogs(): List<LogFileInfo> {

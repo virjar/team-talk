@@ -1,8 +1,11 @@
 package com.virjar.tk.model
 
+import kotlinx.serialization.Serializable
+
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.PacketBuffer
 
+@Serializable
 data class ContactApply(
     val id: Long,
     val fromUid: String,

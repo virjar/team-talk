@@ -1,5 +1,7 @@
 package com.virjar.tk.model
 
+import kotlinx.serialization.Serializable
+
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.PacketBuffer
@@ -9,6 +11,7 @@ import com.virjar.tk.body.MessageBodyRegistry
  * 消息传输模型。
  * wire format: [chatId][clientMsgId][serverSeq][senderUid][messageType][timestamp][flags][body bytes]
  */
+@Serializable
 data class Message(
     val chatId: String,
     val clientMsgId: String,

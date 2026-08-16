@@ -254,4 +254,5 @@ class ChatRepository {
 }
 
 /** 管理端分页结果。 */
+@kotlinx.serialization.Serializable
 data class AdminPage<T>(val total: Long, val items: List<T>)

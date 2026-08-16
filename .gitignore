@@ -9,4 +9,5 @@ local.properties
 data/
 logs/
 tools/e2e/__pycache__/
-buildSrc/.gradle/
+buildSrc/.gradle/admin/dist/
+server/src/main/resources/static/admin/

@@ -64,6 +64,14 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
+// 管理后台 SPA：npm run build 产物拷入 resources（手动触发——前端低频变更）
+val copyAdminDist by tasks.registering(Copy::class) {
+    group = "build"
+    description = "拷贝 admin/dist 到 server 静态资源（先 cd admin && npm run build）"
+    from(rootProject.file("admin/dist"))
+    into(layout.projectDirectory.dir("src/main/resources/static/admin"))
+}
+
 tasks.test {
     // 默认运行集成测试（基于 Embedded PostgreSQL，无需外部 DB）
     // 本地快速跳过：./gradlew :server:test -PskipTests
