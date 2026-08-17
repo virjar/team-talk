@@ -97,7 +97,7 @@ open class AppDataState(val session: ClientSession) {
      */
     fun prepareChat(chatId: String, chatName: String, chatType: Int = ChatType.PERSONAL.code) {
         chatViewModel?.destroy()
-        chatViewModel = ChatViewModel(chatId, localCache, messageRepo, session.eventProcessor, userSession.uid).apply {
+        chatViewModel = ChatViewModel(chatId, localCache, messageRepo, session.eventProcessor, userSession.uid, session.sendQueue).apply {
             // 认证失效：ViewModel 不自断连接，统一上抛给会话所有者（owner-driven）
             onAuthExpired = { session.close() }
         }

@@ -26,6 +26,8 @@ class ChatViewModel(
     private val messageRepo: MessageRepository,
     eventProcessor: EventProcessor,
     private val myUid: String = "",
+    /** 发送队列（断线排队重连补发）；null=回退旧直发路径（测试桩） */
+    private val sendQueue: com.virjar.tk.client.SendQueue? = null,
 ) : BaseViewModel() {
 
     // 消息分页器（LocalCache 内部 LRU 管理，超出 MAX_ACTIVE_CHATS 自动 evict）
@@ -103,6 +105,12 @@ class ChatViewModel(
         // 乐观更新：立即显示为 sending
         val sending = message.copy(sendStatus = Message.SEND_STATUS_SENDING)
         localCache.insertMessage(sending)
+        // 发送队列路径：断线排队（QUEUED）→ 重连补发，状态机由队列回调推进
+        val queue = sendQueue
+        if (queue != null) {
+            queue.enqueue(sending)
+            return
+        }
         scope.launch {
             try {
                 val ack = messageRepo.send(sending).getOrThrow()

@@ -1,6 +1,10 @@
 package com.virjar.tk.client
 
 import com.virjar.tk.repository.*
+import com.virjar.tk.model.Message
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import com.virjar.tk.util.AppLog
 import com.virjar.tk.util.LogBuffer
 /**
@@ -23,8 +27,11 @@ class ClientSession(
     val chatRepo: ChatRepository,
     val deviceRepo: DeviceRepository,
     val userRepo: UserRepository,
+    /** 发送队列（断线排队重连补发，状态机回写 localCache） */
+    val sendQueue: SendQueue,
 ) {
     fun close() {
+        sendQueue.close()
         httpLogUploader?.stop()
         rpcClient.stop()
         eventProcessor.stop()
@@ -56,6 +63,16 @@ fun createSession(
     val conversationRepo = ConversationRepository(rpcClient, cache)
     val ep = EventProcessor(imClient, cache, onConversationsDirty = { conversationRepo.listConversations() })
     val messageSender = MessageSender { msg -> imClient.sendAndWaitAck(msg) }
+
+    // 发送队列：断线排队 → AUTHENTICATED 唤醒补发；状态机回写本地缓存驱动 UI
+    val sendQueue = SendQueue(
+        connectionState = imClient.state,
+        sender = messageSender,
+        scope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
+        onQueued = { msg -> cache.updateMessageStatus(msg.chatId, msg.clientMsgId, Message.SEND_STATUS_QUEUED) },
+        onSent = { msg, ack -> cache.updateMessage(msg.chatId, msg.clientMsgId, ack.serverSeq) },
+        onFailed = { msg, _ -> cache.updateMessageStatus(msg.chatId, msg.clientMsgId, Message.SEND_STATUS_FAILED) },
+    )
 
     // 日志缓冲区（分级：trace + fault）
     val traceBuffer = LogBuffer(capacity = 2000)
@@ -92,5 +109,6 @@ fun createSession(
         chatRepo = ChatRepository(rpcClient, cache),
         deviceRepo = DeviceRepository(rpcClient),
         userRepo = UserRepository(rpcClient, cache),
+        sendQueue = sendQueue,
     )
 }

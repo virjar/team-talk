@@ -22,7 +22,7 @@
 
 | 项 | 说明 | 状态 |
 |----|------|------|
-| 发送队列与重试 | 断线期间发送当前立即失败（合成 ack code=-1）；排队重连后补发 + 状态机（sending→queued→sent） | 📋 |
+| ~~发送队列与重试~~ | ✅ 2026-08：SendQueue（串行 worker + Channel 唤醒，FIFO 保序，QUEUED 状态机回写本地缓存，毒丸 30s 隔离）——SendQueueE2eTest：断线发送→QUEUED→重连补发→对端收达 | ✅ |
 | 离线补发分页 | 服务端 `getEventsAfter` 单次 limit=100：长时间离线需多轮重连逐批补全（游标推进天然支持）；或协议升级分页游标 | 📋（低优先，已知限制） |
 | 消息本地全文搜索 | 客户端 SQLite FTS（当前搜索纯服务端 Lucene，离线不可用） | 💡 |
 | ~~AUTH_FAILED 无限重试失效 token~~ | ✅ 2026-08：authTerminal 终态（认证失败后停止自动重连，用户主动 login/register/authenticate 时重置；AuthTerminalE2eTest 锁定恰好失败一次） | ✅ |
@@ -58,6 +58,7 @@
 
 ## 已完成里程碑（倒序）
 
+- **发送队列与断线重试**（2026-08）：SendQueue 落地——断线发送不再立即失败，QUEUED 态排队（气泡显示「排队中」），重连自动按序补发；queue 生命周期随 ClientSession（close 级联）；e2e 全链路锁定
 - **SDK 稳定性+服务端优化**（2026-08）：AUTH_FAILED 终态化（失效 token 不再重连风暴，AuthTerminalE2eTest）+ ContactRepository.getFriend 单行直查（accept 通知去全表扫）；语音时长/气泡布局/草稿泄漏/媒体上传动画系列修复（F26-F30）
 - **飞书风格设计系统落地**（2026-08）：doc/04-ui-design 设计事实源（令牌/组件/交互/占位清单）+ `Tk` 令牌体系（spacing/dimens/扩展色板，双端密度）+ 核心组件重造（squircle 头像/会话项时间戳+静音+选中态/气泡双方头像+指向角/输入区工具行左对齐+Enter 发送+已读水位线指示）+ 桌面细导航栏（56dp 图标式）+ TestHttpServer 截图遮挡修复（toFront）。顺带根治服务端 refresh 认证响应漏 username/name（自动登录后客户端身份为空 → '?' 头像，ReconnectE2eTest 加断言锁定）。截图迭代闭环跑通（UI 自动化造数据 → 目视验收）
 - **P0/P1 收尾**（2026-08）：上传接口 Bearer accessToken 鉴权（X-Uid 伪造通道封死）+ 本地库 schema 迁移（.sqm + v1 遗库识别坑修复）+ CLI 入口（headlessDist：register/login/selftest + MSG 行协议，端到端实跑验证）。好友红点时序项核实后关闭（问题不成立，真相是当年 SQL 直插无事件推送）

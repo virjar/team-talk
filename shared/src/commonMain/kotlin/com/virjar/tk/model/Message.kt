@@ -52,6 +52,7 @@ data class Message(
         const val SEND_STATUS_SENDING = 1
         const val SEND_STATUS_FAILED = 2
         const val SEND_STATUS_UPLOADING = 3
+        const val SEND_STATUS_QUEUED = 4 // 断线排队（SendQueue；重连后自动补发）
 
         /** flags 位定义（服务端 MessageService 设置，客户端用于渲染撤回/编辑/转发状态） */
         const val FLAG_REVOKED = 1   // bit0：消息已被撤回
