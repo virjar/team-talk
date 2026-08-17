@@ -14,7 +14,9 @@ import kotlinx.coroutines.cancel
  * ViewModel 基类。提供共享的协程作用域和错误状态管理。
  */
 abstract class BaseViewModel {
-    protected val scope = CoroutineScope(Dispatchers.Main + SupervisorJob() +
+    // F27：Main dispatcher 从后台线程 launch 曾静默丢失（媒体上传线程发起的发送
+    // 永不执行，消息卡 SENDING）。VM 状态走 StateFlow（线程安全），不依赖 Main。
+    protected val scope = CoroutineScope(Dispatchers.Default + SupervisorJob() +
         CoroutineExceptionHandler { _, throwable ->
             setError("Unhandled error: ${throwable.message}")
             logUnhandledError("ViewModel", throwable)
