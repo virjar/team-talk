@@ -278,8 +278,10 @@ private fun VoiceCard(
 ) {
     val barCount = 14
     val duration = if (durationSec > 0) durationSec else 1
-    // 宽度随时长增长（微信范式）：60″ 约满 220dp
-    val cardWidth = (64 + duration * 2.6f).coerceIn(64f, 220f).dp
+    // 宽度随时长增长（微信范式）：下限必须容纳固定内容（播放钮18+间距8+波形68+间距8+时长文字约44 = 146dp），
+    // 旧公式 64dp 起步小于内容宽度导致遮挡
+    val contentMin = 146f
+    val cardWidth = (contentMin + duration * 2.0f).coerceIn(contentMin, 260f).dp
     val barColor = LocalContentColor.current
 
     Row(
