@@ -2,9 +2,16 @@ package com.virjar.tk.ui.platform
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalTextToolbar
 
-/** Android：触屏无右键，长按弹上下文菜单。 */
+/**
+ * Android：长按弹上下文菜单（触屏无右键）。
+ *
+ * 微信范式：长按同时全选气泡内文字（SelectionContainer 的默认长按行为）+
+ * 弹 App 菜单。全选由 SelectionContainer 内建提供，此处只挂菜单。
+ */
 @OptIn(ExperimentalFoundationApi::class)
 actual fun Modifier.contextLongPress(onLongPress: () -> Unit): Modifier =
     this.combinedClickable(onClick = {}, onLongClick = onLongPress)

@@ -311,6 +311,7 @@ fun ChatPanel(
                                     onMentionClick = effectiveMentionClick,
                                     onUrlClick = effectiveUrlClick,
                                     selectableText = selectableText,
+                                    menuEpoch = if (menuMessage?.clientMsgId == msg.clientMsgId) msg.hashCode() else 0,
                                     onLongClick = { menuMessage = msg },
                                     onMediaClick = effectiveMediaClick,
                                     imageContent = effectiveImageContent,
@@ -683,6 +684,8 @@ private fun MessageBubble(
     onMentionClick: ((uid: String) -> Unit)? = null,
     onUrlClick: ((String) -> Unit)? = null,
     selectableText: Boolean = false,
+    /** 桌面右键菜单会话 ID（非 null=菜单正开，SelectionContainer 以此为 key 重建清空选区——微信右键不选词） */
+    menuEpoch: Int = 0,
     onLongClick: () -> Unit,
     onMediaClick: ((Message) -> Unit)?,
     imageContent: (@Composable (String, Modifier) -> Unit)?,
@@ -758,7 +761,13 @@ private fun MessageBubble(
                         }
                     }
                     if (selectableText) {
-                        androidx.compose.foundation.text.selection.SelectionContainer { bubbleContent() }
+                        // key(menuEpoch)：右键菜单打开瞬间重建容器，清空右键产生的选词
+                        // （微信范式：右键只弹菜单不选词；拖选选区随菜单打开一并清空）
+                        key(menuEpoch) {
+                            androidx.compose.foundation.text.selection.SelectionContainer {
+                                bubbleContent()
+                            }
+                        }
                     } else {
                         bubbleContent()
                     }
