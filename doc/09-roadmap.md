@@ -13,10 +13,11 @@
 
 | 项 | 说明 | 状态 |
 |----|------|------|
-| ~~CLI 可执行入口~~ | ✅ 已完成（2026-08）：`headlessDist` 产物（register/login/selftest 三模式 + stdin/stdout 行协议），见里程碑 | ✅ |
-| AI 员工对话框架 | ImBot 之上：消息→LLM→回复循环抽象（限速/会话白名单/人格配置/多 bot 编排）。AI 员工经 IM 与人和其他 AI 跨域协作 | 💡 |
-| Webhook/HTTP 桥 | bot 收发消息映射 HTTP 回调（接外部系统） | 💡 |
-| 群机器人管理 | bot 入群/踢出/权限 API 化 | 💡 |
+| ~~CLI/AI 员工基础设施~~ | ✅ 2026-08 四期收官（doc/11-cli-agent）：tt-agent 守护进程（REST 22 端点+凭据持久化+环形缓冲）/ tt-cli 24 命令 / systemd 服务化（demo 部署实测）/ tt-mcp（12 工具 MCP server）/ CliPeer e2e（测试路径=产品路径） | ✅ |
+| AI 员工对话框架 | ImBot/agent 之上：消息→LLM→回复循环抽象（限速/会话白名单/人格配置/多 bot 编排）。基础设施已就绪，LLM 接入即可 | 💡 |
+| Webhook/HTTP 桥 | agent REST 已覆盖收发（外部系统直接调 REST 即为 HTTP 桥）；缺 webhook 推送订阅 | 💡 |
+| 群机器人管理 | bot 入群/踢出/权限 API 化（group-create/invite 已有，缺踢出/角色） | 💡 |
+| agent TCP 半开窗口 | 长跑 agent 跨服务端重启存在 send 等超时窗口（read-idle 探测后自治重连自愈）；可缩短 PING 周期或发送侧快速失败 | 📋 |
 
 ## P2 — SDK 完善
 
