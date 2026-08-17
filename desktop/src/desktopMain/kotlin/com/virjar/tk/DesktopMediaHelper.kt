@@ -344,13 +344,20 @@ object DesktopMediaHelper {
         val line = targetLine
         targetLine = null
         recordingFile = null
+        val thread0 = recordingThread
         recordingThread = null
 
         try { line?.stop(); line?.close() } catch (_: Exception) {}
         // 等录音线程写完
-        recordingThread?.join(2000)
+        thread0?.join(2000)
 
         val durSec = getWavDurationSeconds(file)
+        // 单击误触（<1s 或音频系统未就绪）：提示太短并取消——不发送、不报"找不到语音文件"
+        if (durSec < 1 || !file.exists() || file.length() == 0L) {
+            viewModel.onError("录音时间太短")
+            file.delete()
+            return
+        }
         thread {
             try {
                 val bytes = file.readBytes()

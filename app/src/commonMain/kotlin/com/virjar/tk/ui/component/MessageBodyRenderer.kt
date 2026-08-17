@@ -286,6 +286,7 @@ private fun VoiceCard(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .widthIn(min = cardWidth, max = cardWidth)
+            .fillMaxWidth()
             .then(onTogglePlay?.let { Modifier.clickable(onClick = it) } ?: Modifier),
     ) {
         Icon(

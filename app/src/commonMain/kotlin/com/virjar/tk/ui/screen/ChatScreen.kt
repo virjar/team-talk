@@ -197,6 +197,7 @@ fun ChatPanel(
                 viewModel.editMessage(edited)
                 editingMessage = null
                 richState.clear()
+                onDraftChange?.invoke("")
             } else {
                 val target = replyingTo
                 val message = if (target != null) {
@@ -233,6 +234,7 @@ fun ChatPanel(
                 }
                 viewModel.sendMessage(message)
                 richState.clear()
+                onDraftChange?.invoke("") // 发送即清草稿（泄漏：发送后列表仍显示草稿并回填）
                 replyingTo = null
             }
         }
