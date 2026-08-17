@@ -492,3 +492,20 @@ private fun ForwardView(body: ForwardBody) {
 private fun SystemHintText(text: String) {
     Text(text, style = MaterialTheme.typography.labelSmall, color = Tk.colors.metaText)
 }
+
+
+/** 上传中指示器：进度条 + 百分比（占位消息气泡内容）。 */
+@Composable
+private fun UploadingIndicator(progress: Float) {
+    Column(
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+        modifier = Modifier.width(200.dp),
+    ) {
+        Text("上传中 ${(progress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium, color = androidx.compose.material3.LocalContentColor.current)
+        Spacer(Modifier.height(Tk.spacing.xs))
+        androidx.compose.material3.LinearProgressIndicator(
+            progress = { progress },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}

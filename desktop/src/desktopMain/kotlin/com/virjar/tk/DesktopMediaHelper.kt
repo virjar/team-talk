@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.body.FileBody
+import com.virjar.tk.model.MessageBody
 import com.virjar.tk.body.ImageBody
 import com.virjar.tk.body.VideoBody
 import com.virjar.tk.body.VoiceBody
@@ -122,6 +123,48 @@ object DesktopMediaHelper {
     /** 根据相对 path 拼装完整下载 URL。 */
     fun fileUrl(path: String): String = fileRepo().resolveUrl(path)
 
+
+    /**
+     * 媒体发送统一流程（上传动画）：先本地插入 UPLOADING 占位消息（气泡立即渲染），
+     * 上传（进度驱动动画）完成后以同 clientMsgId 发送真实消息（upsert 覆盖）。
+     */
+    private fun uploadAndSendWithPlaceholder(
+        chatId: String,
+        myUid: String,
+        viewModel: ChatViewModel,
+        fileName: String,
+        contentType: String,
+        bytes: ByteArray,
+        buildBody: (url: String, meta: com.virjar.tk.repository.UploadResult, size: Long) -> MessageBody,
+        messageType: Int,
+    ) {
+        val clientMsgId = UUID.randomUUID().toString()
+        // 占位：url 为空（渲染层按 UPLOADING 状态显示进度）
+        val placeholder = Message(
+            chatId, clientMsgId, 0L, myUid, messageType, System.currentTimeMillis(),
+            body = buildBody("", com.virjar.tk.repository.UploadResult("", ""), bytes.size.toLong()),
+            sendStatus = Message.SEND_STATUS_UPLOADING,
+        )
+        viewModel.insertUploadingPlaceholder(placeholder)
+        thread {
+            try {
+                val meta = runBlocking {
+                    fileRepo().uploadWithMeta(bytes, fileName, contentType) { p ->
+                        viewModel.updateUploadProgress(chatId, clientMsgId, p)
+                    }.getOrThrow()
+                }
+                val url = if (meta.url.startsWith("http")) meta.url else fileUrl(meta.path)
+                val thumbUrl = meta.thumbUrl?.let { if (it.startsWith("http")) it else fileUrl(meta.thumbPath!!) }
+                val fixedMeta = meta.copy(url = url, thumbUrl = thumbUrl)
+                val realBody = buildBody(url, fixedMeta, bytes.size.toLong())
+                viewModel.sendMessage(placeholder.copy(body = realBody, sendStatus = Message.SEND_STATUS_SENDING, uploadProgress = 0f))
+            } catch (e: Exception) {
+                viewModel.onError("上传失败: ${e.message}")
+                viewModel.markUploadFailed(chatId, clientMsgId)
+            }
+        }
+    }
+
     // ── 文件/图片选择并发送 ──
 
     /** 弹文件选择框，选择图片 → 上传 → 发送 ImageBody 消息。 */
@@ -135,21 +178,11 @@ object DesktopMediaHelper {
             try {
                 val bytes = file.readBytes()
                 val ct = guessContentType(file.name)
-                val meta = uploadWithMeta(bytes, file.name, ct)
-                val url = fileUrl(meta.path)
-                // 宽高：服务端（ffprobe/ImageIO，准确）优先，本地解码兜底
-                val (w, h) = if (meta.width > 0 && meta.height > 0) meta.width to meta.height else decodeImageSize(bytes)
-                val thumbUrl = meta.thumbUrl
-                val msg = Message(
-                    chatId = chatId,
-                    clientMsgId = UUID.randomUUID().toString(),
-                    serverSeq = 0L,
-                    senderUid = myUid,
-                    messageType = MessageType.IMAGE.code,
-                    timestamp = System.currentTimeMillis(),
-                    body = ImageBody(url, width = w, height = h, size = bytes.size.toLong(), thumbnailUrl = thumbUrl),
-                )
-                viewModel.sendMessage(msg)
+                uploadAndSendWithPlaceholder(chatId, myUid, viewModel, file.name, ct, bytes,
+                    { url, meta, size ->
+                        val (w, h) = if (meta.width > 0 && meta.height > 0) meta.width to meta.height else decodeImageSize(bytes)
+                        ImageBody(url, width = w, height = h, size = size, thumbnailUrl = meta.thumbUrl)
+                    }, MessageType.IMAGE.code)
             } catch (e: Exception) {
                 viewModel.onError("图片发送失败: ${e.message}")
             }
@@ -164,18 +197,8 @@ object DesktopMediaHelper {
             try {
                 val bytes = file.readBytes()
                 val ct = guessContentType(file.name)
-                val path = uploadFile(bytes, file.name, ct)
-                val url = fileUrl(path)
-                val msg = Message(
-                    chatId = chatId,
-                    clientMsgId = UUID.randomUUID().toString(),
-                    serverSeq = 0L,
-                    senderUid = myUid,
-                    messageType = MessageType.FILE.code,
-                    timestamp = System.currentTimeMillis(),
-                    body = FileBody(url, fileName = file.name, size = bytes.size.toLong()),
-                )
-                viewModel.sendMessage(msg)
+                uploadAndSendWithPlaceholder(chatId, myUid, viewModel, file.name, ct, bytes,
+                    { url, _, size -> FileBody(url, fileName = file.name, size = size) }, MessageType.FILE.code)
             } catch (e: Exception) {
                 viewModel.onError("文件发送失败: ${e.message}")
             }
@@ -192,26 +215,18 @@ object DesktopMediaHelper {
         thread {
             try {
                 val bytes = file.readBytes()
-                val meta = uploadWithMeta(bytes, file.name, "video/mp4")
-                val url = fileUrl(meta.path)
-                val msg = Message(
-                    chatId = chatId,
-                    clientMsgId = UUID.randomUUID().toString(),
-                    serverSeq = 0L,
-                    senderUid = myUid,
-                    messageType = MessageType.VIDEO.code,
-                    timestamp = System.currentTimeMillis(),
-                    // 服务端 ffprobe 元数据 + javacv 抽帧缩略图（native 缺失时降级为空）
-                    body = VideoBody(
-                        url,
-                        duration = meta.durationSec ?: 0,
-                        width = meta.width,
-                        height = meta.height,
-                        size = bytes.size.toLong(),
-                        thumbnailUrl = meta.thumbUrl,
-                    ),
-                )
-                viewModel.sendMessage(msg)
+                uploadAndSendWithPlaceholder(chatId, myUid, viewModel, file.name, "video/mp4", bytes,
+                    { url, meta, size ->
+                        // 服务端 ffprobe 元数据 + javacv 抽帧缩略图（native 缺失时降级为空）
+                        VideoBody(
+                            url,
+                            duration = meta.durationSec ?: 0,
+                            width = meta.width,
+                            height = meta.height,
+                            size = size,
+                            thumbnailUrl = meta.thumbUrl,
+                        )
+                    }, MessageType.VIDEO.code)
             } catch (e: Exception) {
                 viewModel.onError("视频发送失败: ${e.message}")
             }
@@ -225,29 +240,20 @@ object DesktopMediaHelper {
     fun sendDroppedFile(chatId: String, myUid: String, file: File, viewModel: ChatViewModel) {
         val ext = file.extension.lowercase()
         thread {
-            try {
-                val bytes = file.readBytes()
-                val ct = guessContentType(file.name)
-                val meta = uploadWithMeta(bytes, file.name, ct)
-                val url = fileUrl(meta.path)
-                val msg = when {
-                    ext in IMAGE_EXTS -> {
+            val bytes = file.readBytes()
+            val ct = guessContentType(file.name)
+            when {
+                ext in IMAGE_EXTS -> uploadAndSendWithPlaceholder(chatId, myUid, viewModel, file.name, ct, bytes,
+                    { url, meta, size ->
                         val (w, h) = if (meta.width > 0 && meta.height > 0) meta.width to meta.height else decodeImageSize(bytes)
-                        Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.IMAGE.code,
-                            System.currentTimeMillis(), body = ImageBody(url, width = w, height = h, size = bytes.size.toLong(), thumbnailUrl = meta.thumbUrl))
-                    }
-                    ext in VIDEO_EXTS -> {
-                        Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.VIDEO.code,
-                            System.currentTimeMillis(), body = VideoBody(url, duration = meta.durationSec ?: 0, width = meta.width, height = meta.height, size = bytes.size.toLong(), thumbnailUrl = meta.thumbUrl))
-                    }
-                    else -> {
-                        Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.FILE.code,
-                            System.currentTimeMillis(), body = FileBody(url, fileName = file.name, size = bytes.size.toLong()))
-                    }
-                }
-                viewModel.sendMessage(msg)
-            } catch (e: Exception) {
-                viewModel.onError("发送失败: ${e.message}")
+                        ImageBody(url, width = w, height = h, size = size, thumbnailUrl = meta.thumbUrl)
+                    }, MessageType.IMAGE.code)
+                ext in VIDEO_EXTS -> uploadAndSendWithPlaceholder(chatId, myUid, viewModel, file.name, ct, bytes,
+                    { url, meta, size ->
+                        VideoBody(url, duration = meta.durationSec ?: 0, width = meta.width, height = meta.height, size = size, thumbnailUrl = meta.thumbUrl)
+                    }, MessageType.VIDEO.code)
+                else -> uploadAndSendWithPlaceholder(chatId, myUid, viewModel, file.name, ct, bytes,
+                    { url, _, size -> FileBody(url, fileName = file.name, size = size) }, MessageType.FILE.code)
             }
         }
     }

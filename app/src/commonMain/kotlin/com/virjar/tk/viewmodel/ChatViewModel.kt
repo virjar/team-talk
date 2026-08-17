@@ -86,6 +86,19 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * 媒体上传占位：先本地插入 UPLOADING 消息（气泡立即渲染上传动画），
+     * 上传完成后调 [sendMessage] 以同 clientMsgId 覆盖（upsert）为真实消息。
+     */
+    fun insertUploadingPlaceholder(message: Message) {
+        localCache.insertMessage(message)
+    }
+
+    /** 更新上传进度（驱动气泡进度动画；纯 UI 状态不落库）。 */
+    fun updateUploadProgress(chatId: String, clientMsgId: String, progress: Float) {
+        localCache.updateMessageInMemory(chatId, clientMsgId) { it.copy(uploadProgress = progress) }
+    }
+
     fun sendMessage(message: Message) {
         // 乐观更新：立即显示为 sending
         val sending = message.copy(sendStatus = Message.SEND_STATUS_SENDING)
@@ -115,6 +128,11 @@ class ChatViewModel(
      * 供平台媒体工具（DesktopMediaHelper 等）调用，设置错误提示。
      */
     fun onError(msg: String) = setError(msg)
+
+    /** 上传失败的占位消息标记为 FAILED（气泡显示失败态）。 */
+    fun markUploadFailed(chatId: String, clientMsgId: String) {
+        localCache.updateMessageStatus(chatId, clientMsgId, Message.SEND_STATUS_FAILED)
+    }
 
     /**
      * 标记已读。

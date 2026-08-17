@@ -164,6 +164,10 @@ class FakeLocalCache : LocalCache {
         }
         return result
     }
+    override fun updateMessageInMemory(chatId: String, clientMsgId: String, transform: (Message) -> Message) {
+        // 测试桩：无窗口概念，直接忽略（进度动画不影响测试语义）
+    }
+
     override fun markConversationRead(chatId: String, readSeq: Long) {
         conversationsFlow.value = conversationsFlow.value.map {
             if (it.chatId == chatId) it.copy(unreadCount = 0, readSeq = readSeq) else it

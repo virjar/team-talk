@@ -43,6 +43,13 @@ actual class FileRepository actual constructor(
         }
     }
 
+    actual suspend fun uploadWithMeta(
+        bytes: ByteArray,
+        fileName: String,
+        contentType: String,
+        onProgress: (Float) -> Unit,
+    ): Outcome<UploadResult> = uploadWithMeta(bytes, fileName, contentType)
+
     private suspend fun uploadRaw(
         bytes: ByteArray,
         fileName: String,

@@ -26,6 +26,14 @@ expect class FileRepository(serverUrl: String, accessToken: String? /* HTTP 上�
     /** 上传并返回完整元数据（含服务端生成的缩略图/宽高/时长）。 */
     suspend fun uploadWithMeta(bytes: ByteArray, fileName: String, contentType: String): Outcome<UploadResult>
 
+    /** 带进度回调的上传（大文件上传动画）。 */
+    suspend fun uploadWithMeta(
+        bytes: ByteArray,
+        fileName: String,
+        contentType: String,
+        onProgress: (Float) -> Unit,
+    ): Outcome<UploadResult>
+
     /** 下载文件，返回原始字节。 */
     suspend fun download(path: String): Outcome<ByteArray>
 

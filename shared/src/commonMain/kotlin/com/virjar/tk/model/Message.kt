@@ -24,8 +24,11 @@ data class Message(
     // wire 编解码走 IProto.writeTo 不受影响）
     @kotlinx.serialization.Transient
     val body: MessageBody? = null,
-    /** 发送状态：0=sent, 1=sending, 2=failed。纯客户端字段，不参与协议传输。 */
+    /** 发送状态：0=sent, 1=sending, 2=failed, 3=uploading。纯客户端字段，不参与协议传输。 */
     val sendStatus: Int = SEND_STATUS_SENT,
+    /** 上传进度 0..1（媒体上传中动画）。纯 UI 状态，不持久化不传输。 */
+    @kotlinx.serialization.Transient
+    val uploadProgress: Float = 0f,
 ) : IProto {
 
     override fun writeTo(buf: PacketBuffer) {
@@ -48,6 +51,7 @@ data class Message(
         const val SEND_STATUS_SENT = 0
         const val SEND_STATUS_SENDING = 1
         const val SEND_STATUS_FAILED = 2
+        const val SEND_STATUS_UPLOADING = 3
 
         /** flags 位定义（服务端 MessageService 设置，客户端用于渲染撤回/编辑/转发状态） */
         const val FLAG_REVOKED = 1   // bit0：消息已被撤回

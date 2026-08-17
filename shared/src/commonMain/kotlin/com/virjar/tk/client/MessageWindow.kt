@@ -81,17 +81,23 @@ internal class MessageWindow(
     }
 
     /**
-     * 更新消息状态（serverSeq / sendStatus）。
+     * 更新消息状态（serverSeq / sendStatus / 任意变换，如上传进度）。
      */
-    fun updateMessage(clientMsgId: String, serverSeq: Long? = null, sendStatus: Int? = null) {
+    fun updateMessage(
+        clientMsgId: String,
+        serverSeq: Long? = null,
+        sendStatus: Int? = null,
+        transform: (Message.() -> Message)? = null,
+    ) {
         val current = _messages.value.toMutableList()
         val idx = current.indexOfFirst { it.clientMsgId == clientMsgId }
         if (idx < 0) return
-        val msg = current[idx]
-        current[idx] = msg.copy(
-            serverSeq = serverSeq ?: msg.serverSeq,
-            sendStatus = sendStatus ?: msg.sendStatus,
-        )
+        current[idx] = current[idx].let {
+            transform?.invoke(it) ?: it.copy(
+                serverSeq = serverSeq ?: it.serverSeq,
+                sendStatus = sendStatus ?: it.sendStatus,
+            )
+        }
         _messages.value = current
     }
 

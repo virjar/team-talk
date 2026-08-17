@@ -40,6 +40,8 @@ interface LocalCache {
     fun insertMessage(message: Message)
     fun updateMessage(chatId: String, clientMsgId: String, serverSeq: Long)
     fun updateMessageStatus(chatId: String, clientMsgId: String, sendStatus: Int)
+    /** 变换更新（上传进度等纯 UI 状态，只更新驻留窗口不落库）。 */
+    fun updateMessageInMemory(chatId: String, clientMsgId: String, transform: (Message) -> Message)
 
     /**
      * 创建消息分页器。首次返回最近 [windowSize] 条消息，

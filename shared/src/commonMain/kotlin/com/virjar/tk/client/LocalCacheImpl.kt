@@ -174,6 +174,10 @@ class LocalCacheImpl(driver: SqlDriver) : LocalCache {
         chatWindows[chatId]?.updateMessage(clientMsgId, sendStatus = sendStatus)
     }
 
+    override fun updateMessageInMemory(chatId: String, clientMsgId: String, transform: (Message) -> Message) {
+        chatWindows[chatId]?.updateMessage(clientMsgId, transform = transform)
+    }
+
     // ── Phase C：内存治理 API ──
 
     override fun pager(chatId: String, windowSize: Int): MessagePager = getOrCreateWindow(chatId, windowSize)

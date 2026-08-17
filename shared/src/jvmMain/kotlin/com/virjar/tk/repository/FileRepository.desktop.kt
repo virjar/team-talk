@@ -25,14 +25,22 @@ actual class FileRepository actual constructor(
         bytes: ByteArray,
         fileName: String,
         contentType: String,
+    ): Outcome<UploadResult> = uploadWithMeta(bytes, fileName, contentType) { }
+
+    actual suspend fun uploadWithMeta(
+        bytes: ByteArray,
+        fileName: String,
+        contentType: String,
+        onProgress: (Float) -> Unit,
     ): Outcome<UploadResult> = outcome {
-        uploadRaw(bytes, fileName, contentType)
+        uploadRaw(bytes, fileName, contentType, onProgress)
     }
 
     private suspend fun uploadRaw(
         bytes: ByteArray,
         fileName: String,
         contentType: String,
+        onProgress: (Float) -> Unit = {},
     ): UploadResult = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val boundary = "----TeamTalkBoundary${System.currentTimeMillis()}"
         val conn = (java.net.URL("$serverUrl/api/v1/files/upload").openConnection() as java.net.HttpURLConnection).apply {
@@ -48,7 +56,22 @@ actual class FileRepository actual constructor(
             os.write("--$boundary\r\n".toByteArray())
             os.write("Content-Disposition: form-data; name=\"file\"; filename=\"$fileName\"\r\n".toByteArray())
             os.write("Content-Type: $contentType\r\n\r\n".toByteArray())
-            os.write(bytes)
+            // 分块写 + 进度回调（大文件上传动画数据源；128KB 粒度节流）
+            val head = bytes.size
+            val bufSize = 128 * 1024
+            var sent = 0L
+            var lastReport = 0L
+            var off = 0
+            while (off < head) {
+                val n = minOf(bufSize, head - off)
+                os.write(bytes, off, n)
+                off += n
+                sent += n
+                if (sent - lastReport >= 128 * 1024 || off >= head) {
+                    lastReport = sent
+                    onProgress(sent.toFloat() / head)
+                }
+            }
             os.write("\r\n".toByteArray())
             os.write("--$boundary--\r\n".toByteArray())
         }
