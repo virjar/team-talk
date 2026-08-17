@@ -102,9 +102,11 @@ fun rememberAuthController(
                     onAuthenticated?.invoke(session!!)
                     isLoggedIn = true
                     autoLoggingIn = false
-                    // token 持久化从 userSession 读（三级状态：用户层持有 refreshToken）
-                    userSession.refreshToken?.let { tokenStore.save(userSession.uid, it) }
                 }
+                // token 持久化在【每次】认证成功后执行（F26）：refresh token 一次一换，
+                // 曾只在首认证（session==null）时保存——重连后再认证（token 已轮换）不落盘，
+                // 进程随后退出时磁盘上是已作废的旧 token，下次启动静默登录失败
+                userSession.refreshToken?.let { tokenStore.save(userSession.uid, it) }
                 SessionContext.accessToken = userSession.accessToken
                 authError = null
             }
