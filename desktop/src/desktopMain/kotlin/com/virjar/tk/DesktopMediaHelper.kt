@@ -354,17 +354,17 @@ object DesktopMediaHelper {
         // 等录音线程写完
         thread0?.join(2000)
 
-        // 按压真实时长（文件头解析在写入竞态下可能失败返回 0，曾致 10s 录制被误判太短）
+        // 时长唯一来源=按压真实时间：WAV 头在写入完成前解析会读到错值
+        // （实测 2.5s 音频解出 134217s——frameLength 竞态），文件解析不可信
         val heldSec = if (recordStartedAt > 0) ((System.currentTimeMillis() - recordStartedAt) / 1000).toInt() else 0
         recordStartedAt = 0L
-        var durSec = getWavDurationSeconds(file)
-        if (durSec <= 0) durSec = heldSec
         // 单击误触（<1s 或音频系统未就绪）：提示太短并取消
         if (heldSec < 1 || !file.exists() || file.length() == 0L) {
             viewModel.onError("录音时间太短")
             file.delete()
             return
         }
+        val durSec = heldSec
         thread {
             try {
                 val bytes = file.readBytes()

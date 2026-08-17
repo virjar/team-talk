@@ -285,8 +285,7 @@ private fun VoiceCard(
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .widthIn(min = cardWidth, max = cardWidth)
-            .fillMaxWidth()
+            .width(cardWidth)
             .then(onTogglePlay?.let { Modifier.clickable(onClick = it) } ?: Modifier),
     ) {
         Icon(
@@ -302,7 +301,8 @@ private fun VoiceCard(
             color = barColor,
             playedColor = playedColor,
             progress = progress,
-            modifier = Modifier.weight(1f).height(20.dp),
+            // 固定宽（14 根×3dp+13 间×2dp=68dp）：weight 在气泡无界约束下塌缩（曾两次重叠/折叠）
+            modifier = Modifier.width(68.dp).height(20.dp),
         )
         Spacer(Modifier.width(Tk.spacing.sm))
         Text(
