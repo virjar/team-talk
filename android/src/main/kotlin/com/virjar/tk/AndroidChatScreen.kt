@@ -100,14 +100,19 @@ fun AndroidChatScreen(
         }
     }
 
-    // ── 图片选择器 ──
+    // ── 图片选择器 ──（服务端缩略图/宽高：uploadWithMeta，准确度优于本地解码）
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) {
-            uploadAndSend(
-                MediaHelper.readBytes(context, uri),
-                MediaHelper.getFileName(context, uri),
-                MediaHelper.getMimeType(context, uri),
-            ) { url, size -> Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.IMAGE.code, System.currentTimeMillis(), body = ImageBody(url, size = size)) }
+            scope.launch {
+                isUploading = true
+                try {
+                    val bytes = MediaHelper.readBytes(context, uri)
+                    val meta = MediaHelper.uploadWithMeta(bytes, MediaHelper.getFileName(context, uri), MediaHelper.getMimeType(context, uri), serverUrl)
+                    viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.IMAGE.code, System.currentTimeMillis(),
+                        body = ImageBody(meta.url, width = meta.width, height = meta.height, size = bytes.size.toLong(), thumbnailUrl = meta.thumbUrl)))
+                } catch (e: Exception) { Log.e("Chat", "Operation failed", e) }
+                isUploading = false
+            }
         }
     }
 
@@ -120,18 +125,32 @@ fun AndroidChatScreen(
                     val bytes = MediaHelper.readBytes(context, uri)
                     val fileName = MediaHelper.getFileName(context, uri)
                     val mimeType = MediaHelper.getMimeType(context, uri)
-                    val meta = MediaHelper.getVideoMetadata(context, uri)
-                    val path = MediaHelper.uploadFile(bytes, fileName, mimeType, serverUrl)
-                    val fileUrl = "$serverUrl/api/v1/files/$path"
-                    var thumbUrl: String? = null
-                    kotlin.runCatching { MediaHelper.extractVideoThumbnail(context, uri) }
-                        .getOrNull()?.let { tf ->
-                            kotlin.runCatching {
-                                val tp = MediaHelper.uploadFile(tf.readBytes(), "thumb.jpg", "image/jpeg", serverUrl)
-                                thumbUrl = "$serverUrl/api/v1/files/$tp"; tf.delete()
-                            }
+                    // 服务端 javacv 生成缩略图+元数据（准确）；失败回退本地 MediaMetadataRetriever 抽帧
+                    val up = kotlin.runCatching {
+                        MediaHelper.uploadWithMeta(bytes, fileName, mimeType, serverUrl)
+                    }.getOrNull()
+                    val fileUrl = up?.url ?: run {
+                        val path = MediaHelper.uploadFile(bytes, fileName, mimeType, serverUrl)
+                        "$serverUrl/api/v1/files/$path"
+                    }
+                    var w = up?.width ?: 0
+                    var h = up?.height ?: 0
+                    var duration = up?.durationSec ?: 0
+                    var thumbUrl = up?.thumbUrl
+                    if (w == 0 || thumbUrl == null) {
+                        val local = MediaHelper.getVideoMetadata(context, uri)
+                        w = local?.first ?: w; h = local?.second ?: h; duration = local?.third ?: duration
+                        if (thumbUrl == null) {
+                            kotlin.runCatching { MediaHelper.extractVideoThumbnail(context, uri) }
+                                .getOrNull()?.let { tf ->
+                                    kotlin.runCatching {
+                                        val tp = MediaHelper.uploadFile(tf.readBytes(), "thumb.jpg", "image/jpeg", serverUrl)
+                                        thumbUrl = "$serverUrl/api/v1/files/$tp"; tf.delete()
+                                    }
+                                }
                         }
-                    viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.VIDEO.code, System.currentTimeMillis(), body = VideoBody(fileUrl, meta?.first ?: 0, meta?.second ?: 0, meta?.third ?: 0, bytes.size.toLong(), thumbUrl)))
+                    }
+                    viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.VIDEO.code, System.currentTimeMillis(), body = VideoBody(fileUrl, duration, w, h, bytes.size.toLong(), thumbUrl)))
                 } catch (e: Exception) { Log.e("Chat", "Operation failed", e) }
                 isUploading = false
             }

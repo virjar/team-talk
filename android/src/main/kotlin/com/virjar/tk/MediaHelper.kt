@@ -63,6 +63,35 @@ object MediaHelper {
         return com.virjar.tk.repository.FileOps.parseUploadPath(response.bodyAsText())
     }
 
+    /** 上传并返回服务端媒体元数据（缩略图/宽高/时长，url 已绝对化）。 */
+    suspend fun uploadWithMeta(
+        bytes: ByteArray,
+        fileName: String,
+        contentType: String,
+        serverUrl: String,
+    ): com.virjar.tk.repository.UploadResult = withContext(Dispatchers.IO) {
+        val token = com.virjar.tk.client.SessionContext.accessToken
+        val response = httpClient.submitFormWithBinaryData(
+            "$serverUrl/api/v1/files/upload",
+            formData {
+                append("file", bytes, Headers.build {
+                    append(HttpHeaders.ContentType, contentType)
+                    append(HttpHeaders.ContentDisposition, "filename=\"$fileName\"")
+                })
+            },
+        ) {
+            token?.let { headers { append(HttpHeaders.Authorization, "Bearer $it") } }
+        }
+        if (response.status != HttpStatusCode.OK) {
+            throw RuntimeException("Upload failed: ${response.status}")
+        }
+        val r = com.virjar.tk.repository.FileOps.parseUploadResult(response.bodyAsText())
+        r.copy(
+            url = if (r.url.startsWith("http")) r.url else "$serverUrl${r.url}",
+            thumbUrl = r.thumbUrl?.let { if (it.startsWith("http")) it else "$serverUrl$it" },
+        )
+    }
+
     /**
      * 下载视频到本地缓存目录。
      * 以 URL 的 MD5 为缓存键，避免重复下载。

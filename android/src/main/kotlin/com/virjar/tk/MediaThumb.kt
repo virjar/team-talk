@@ -24,37 +24,12 @@ fun rememberAsyncThumb(
     modifier: Modifier = Modifier,
     placeholderColor: Int = android.graphics.Color.LTGRAY,
 ) {
-    val context = LocalContext.current
-    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var isLoading by remember { mutableStateOf(true) }
-
-    LaunchedEffect(url) {
-        try {
-            val cacheDir = File(context.cacheDir, "media")
-            val file = MediaHelper.downloadToCache(url, cacheDir)
-            val bm = withContext(Dispatchers.IO) { BitmapFactory.decodeFile(file.absolutePath) }
-            bitmap = bm
-            isLoading = false
-        } catch (e: Exception) {
-            Log.e("MediaThumb", "Failed to load thumbnail: $url", e)
-            isLoading = false
-        }
-    }
-
-    AndroidView(
-        factory = { ctx ->
-            ImageView(ctx).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
-        },
+    // 媒体缓存体系（Android 端）：Coil 全局磁盘 LRU 缓存（TeamTalkApp.newImageLoader 配置），
+    // 命中零网络；未命中下载后落盘。替代手写 cacheDir 下载（无配额管理，曾无爆炸防护）。
+    coil3.compose.AsyncImage(
+        model = url,
+        contentDescription = "媒体缩略图",
         modifier = modifier,
-        update = { iv ->
-            val bm = bitmap
-            if (bm != null) {
-                iv.setImageBitmap(bm)
-                iv.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-            } else {
-                iv.setImageBitmap(null)
-                iv.setBackgroundColor(if (isLoading) placeholderColor else 0xFF333333.toInt())
-            }
-        },
+        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
     )
 }

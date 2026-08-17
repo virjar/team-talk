@@ -1,6 +1,7 @@
 package com.virjar.tk
 
 import android.app.Application
+import okio.Path.Companion.toPath
 import android.util.Log
 import com.virjar.tk.android.BuildConfig
 import com.virjar.tk.client.ServerConfig
@@ -16,7 +17,22 @@ import com.virjar.tk.util.AppLogTkLogger
  * - 配置变更（旋转屏幕）重建 Activity 时不会重复初始化
  * - 日志注入、ServerConfig 等是进程级单次初始化
  */
-class TeamTalkApp : Application() {
+class TeamTalkApp : Application(), coil3.SingletonImageLoader.Factory {
+
+    /**
+     * Coil 全局图片加载器：媒体缓存体系（Android 端实现）——
+     * 内存 LRU + 磁盘 LRU（250MB 配额，磁盘爆炸防护），磁盘键含日期（Coil journal 自管理淘汰）。
+     */
+    override fun newImageLoader(context: android.content.Context): coil3.ImageLoader =
+        coil3.ImageLoader.Builder(context)
+            .diskCache {
+                coil3.disk.DiskCache.Builder()
+                    .directory(context.cacheDir.resolve("media_coil").absolutePath.toPath())
+                    .maxSizeBytes(250L * 1024 * 1024)
+                    .build()
+            }
+            .build()
+
     override fun onCreate() {
         super.onCreate()
 
