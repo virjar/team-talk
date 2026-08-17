@@ -22,7 +22,8 @@ class ConversationService(
     }
 
     suspend fun setDraft(uid: String, chatId: String, draft: String?) {
-        conversationRepo.setDraft(uid, chatId, draft)
+        // 草稿列 varchar(500)，超限截断（富文本长草稿曾致 code=400）
+        conversationRepo.setDraft(uid, chatId, draft?.take(400))
         val conv = conversationRepo.getConversation(uid, chatId) ?: return
         syncEventService.emitEvent(uid, NotifyType.CONVERSATION_UPDATED, conv)
     }

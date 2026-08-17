@@ -10,10 +10,13 @@ import com.virjar.tk.protocol.MessageType
  */
 object MessageTextExtractor {
 
+    /** 会话预览列宽（Conversations.lastMessage varchar(500)——超限会整条消息入库失败，曾 code=400） */
+    private const val PREVIEW_MAX_CHARS = 400
+
     fun extract(message: Message, body: MessageBody?): String? {
         if (body == null) return null
         return try {
-            extractFromBody(message.messageType, body)
+            extractFromBody(message.messageType, body)?.take(PREVIEW_MAX_CHARS)
         } catch (_: Exception) {
             null
         }

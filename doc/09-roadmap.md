@@ -52,7 +52,7 @@
 | 视频画廊/语音引擎上游缺陷跟踪（compose-media-player 0.9 对音频-only 不上报 duration、不触发 onPlaybackEnded、isPlaying 不回落——已用墙钟兜底，上游修复后可移除） | 📋 |
 | currentUser 非响应式（@Volatile userSession + StateFlow.value 直读，首帧后不刷新；需 AppDataState 暴露 Compose State） | 📋 |
 | 桌面右键菜单人工验证（secondaryClick 代码就位；Robot 注入受辅助功能权限/熄屏限制无法自动化，需人工右键确认回复/转发菜单） | 📋 |
-| 消息正文列长度上限 500（messages 表 text/预览列 varchar）：长富文本/长转发被服务端拒（code=400 "exceeds length"），需评估扩容为 text 类型 + 协议层长度约束对齐 | 📋 |
+| ~~消息正文列长度上限 500~~ ✅（2026-08：根因是 Conversations.lastMessage/draft varchar(500)，预览与草稿写入口截断 400 字符；消息体本体在 RocksDB 无限制。LongMessageE2eTest 锁定 2400 字符收发） | ✅ |
 
 ## P2 — SDK 补充
 
