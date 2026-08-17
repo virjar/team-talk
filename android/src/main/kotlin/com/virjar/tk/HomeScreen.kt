@@ -2,8 +2,6 @@ package com.virjar.tk
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -13,12 +11,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.navigation.AppDataState
 import com.virjar.tk.navigation.MainTab
-import com.virjar.tk.ui.component.AvatarPlaceholder
+import com.virjar.tk.ui.screen.ContactsListScreen
 import com.virjar.tk.ui.screen.ConversationListScreen
 import com.virjar.tk.ui.screen.MeScreen
 
@@ -124,69 +120,34 @@ fun HomeScreen(
                         dataState.session.localCache.markConversationRead(chatId, lastSeq)
                     },
                 )
-                MainTab.CONTACTS -> LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    // 待处理好友申请入口（有申请时展示在列表顶部）
+                MainTab.CONTACTS -> Column(modifier = Modifier.fillMaxSize()) {
+                    // 待处理好友申请入口（有申请时展示在搜索框上方）
                     if (pendingApplyCount > 0) {
-                        item(key = "pending_applies_header") {
-                            Surface(
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                                modifier = Modifier.fillMaxWidth().clickable { onFriendApplies() },
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Badge(containerColor = MaterialTheme.colorScheme.error) {
-                                        Text("$pendingApplyCount")
-                                    }
-                                    Spacer(Modifier.width(12.dp))
-                                    Text(
-                                        "$pendingApplyCount 条好友申请",
-                                        style = MaterialTheme.typography.bodyLarge,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    items(contacts, key = { it.friendUid }) { contact ->
-                        val user = contact.user
-                        val remark = contact.remark
-                        val displayName = remark ?: user?.name ?: user?.username ?: contact.friendUid
-                        val subName = if (remark != null && user?.name != null) user.name else user?.username
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onUserProfile(contact.friendUid) }
-                                .testTag("contact.${contact.friendUid.take(8)}")
-                                .padding(horizontal = 16.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.fillMaxWidth().clickable { onFriendApplies() }.testTag("contacts.pendingApplies"),
                         ) {
-                            AvatarPlaceholder(name = displayName, size = 44)
-                            Spacer(Modifier.width(12.dp))
-                            Column {
-                                Text(
-                                    displayName,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    fontWeight = FontWeight.Medium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                if (subName != null) {
-                                    Text(
-                                        subName,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Badge(containerColor = MaterialTheme.colorScheme.error) {
+                                    Text("$pendingApplyCount")
                                 }
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    "$pendingApplyCount 条好友申请",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                )
                             }
                         }
-                        HorizontalDivider(
-                            modifier = Modifier.padding(start = 72.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant,
-                        )
                     }
+                    // 搜索 + 拼音首字母分组 + 索引条（双端共享组件）
+                    ContactsListScreen(
+                        contacts = contacts,
+                        onContactClick = onUserProfile,
+                        modifier = Modifier.weight(1f),
+                    )
                 }
                 MainTab.SETTINGS -> MeScreen(
                     currentUser = dataState.currentUser,

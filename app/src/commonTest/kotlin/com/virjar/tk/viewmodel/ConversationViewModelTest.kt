@@ -40,7 +40,7 @@ class ConversationViewModelTest {
         val rpc = FakeRpcInvoker().apply { enqueueOk() } // init 中 refresh 的响应
         val repo = ConversationRepository(rpc, cache)
 
-        val vm = ConversationViewModel(cache, repo)
+        val vm = ConversationViewModel(cache, repo, testDispatcher)
         advanceUntilIdle()
 
         assertEquals(1, vm.conversations.value.size)
@@ -53,7 +53,7 @@ class ConversationViewModelTest {
         val rpc = FakeRpcInvoker().apply { enqueueOk() }
         val repo = ConversationRepository(rpc, cache)
 
-        ConversationViewModel(cache, repo)
+        ConversationViewModel(cache, repo, testDispatcher)
         advanceUntilIdle()
 
         // 验证 init 时调用了 LIST RPC
@@ -68,7 +68,7 @@ class ConversationViewModelTest {
         val rpc = FakeRpcInvoker().apply { enqueueOk() }
         val repo = ConversationRepository(rpc, cache)
 
-        val vm = ConversationViewModel(cache, repo)
+        val vm = ConversationViewModel(cache, repo, testDispatcher)
         advanceUntilIdle()
 
         vm.conversations.test {

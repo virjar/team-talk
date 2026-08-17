@@ -12,7 +12,8 @@ import kotlinx.coroutines.launch
 class ConversationViewModel(
     private val localCache: LocalCache,
     private val conversationRepo: ConversationRepository,
-) : BaseViewModel() {
+    dispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.Default,
+) : BaseViewModel(dispatcher) {
 
     private val _conversations = MutableStateFlow<List<Conversation>>(emptyList())
     val conversations: StateFlow<List<Conversation>> = _conversations.asStateFlow()

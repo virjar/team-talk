@@ -1,6 +1,7 @@
 package com.virjar.tk.viewmodel
 
 import com.virjar.tk.client.logUnhandledError
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -12,11 +13,15 @@ import kotlinx.coroutines.cancel
 
 /**
  * ViewModel 基类。提供共享的协程作用域和错误状态管理。
+ *
+ * @param dispatcher 作用域调度器。生产默认 [Dispatchers.Default]（F27：Main
+ *   dispatcher 从后台线程 launch 曾静默丢失）；测试注入 StandardTestDispatcher
+ *   才能用 advanceUntilIdle 确定性推进（否则真实线程池上竞态）。
  */
-abstract class BaseViewModel {
-    // F27：Main dispatcher 从后台线程 launch 曾静默丢失（媒体上传线程发起的发送
-    // 永不执行，消息卡 SENDING）。VM 状态走 StateFlow（线程安全），不依赖 Main。
-    protected val scope = CoroutineScope(Dispatchers.Default + SupervisorJob() +
+abstract class BaseViewModel(
+    protected val dispatcher: CoroutineDispatcher = Dispatchers.Default,
+) {
+    protected val scope = CoroutineScope(dispatcher + SupervisorJob() +
         CoroutineExceptionHandler { _, throwable ->
             setError("Unhandled error: ${throwable.message}")
             logUnhandledError("ViewModel", throwable)

@@ -42,6 +42,7 @@ import com.virjar.tk.ui.component.TeamTalkLogo
 import com.virjar.tk.ui.component.UnreadBadge
 import com.virjar.tk.ui.component.rememberMediaClickHandler
 import com.virjar.tk.ui.screen.ChatPanel
+import com.virjar.tk.ui.screen.ContactsListScreen
 import com.virjar.tk.ui.screen.ConversationListScreen
 import com.virjar.tk.ui.screen.MeHeaderStyle
 import com.virjar.tk.ui.screen.MeScreen
@@ -205,33 +206,12 @@ internal fun MainAppContent(
                                     }
                                 },
                             )
-                            LazyColumn(modifier = Modifier.weight(1f)) {
-                                items(contacts, key = { it.friendUid }) { contact ->
-                                    val displayName = contact.remark ?: contact.user?.name ?: contact.friendUid
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .heightIn(min = Tk.dimens.listItemHeight)
-                                            .clickable { nav.openScreen(SubScreen.UserProfile(contact.friendUid)) }
-                                            .padding(horizontal = Tk.spacing.md),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        AvatarPlaceholder(
-                                            name = contact.user?.name ?: displayName,
-                                            size = Tk.dimens.listAvatar.value.toInt(),
-                                        )
-                                        Spacer(Modifier.width(Tk.spacing.md))
-                                        Column {
-                                            Text(displayName, style = MaterialTheme.typography.titleSmall)
-                                            val remark = contact.remark
-                                            val userName = contact.user?.name
-                                            if (remark != null && userName != null && remark != userName) {
-                                                Text(userName, style = MaterialTheme.typography.bodySmall, color = Tk.colors.secondaryText)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            // 搜索 + 拼音首字母分组 + 索引条（§2.4，双端共享组件）
+                            ContactsListScreen(
+                                contacts = contacts,
+                                onContactClick = { uid -> nav.openScreen(SubScreen.UserProfile(uid)) },
+                                modifier = Modifier.weight(1f),
+                            )
                         }
                     }
 
