@@ -348,13 +348,15 @@ private fun List<MdSpan>.toAnnotated(
                     pop()
                 }
                 is MdSpan.Link -> {
+                    // LinkAnnotation 自带默认链接样式（蓝），会覆盖外层色——pushLink 后必须
+                    // 再显式 pushStyle（自适应色 + 下划线），否则蓝气泡上链接不可见（F22）
                     if (onUrlClick != null) {
                         pushLink(LinkAnnotation.Clickable(tag = span.url) { onUrlClick(span.url) })
-                    } else {
-                        pushStyle(SpanStyle(color = linkColor))
                     }
+                    pushStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline))
                     append(span.label)
                     pop()
+                    if (onUrlClick != null) pop()
                 }
                 is MdSpan.Mention -> {
                     // mention 胶囊：主色文字 + 半透明底（点击进资料）

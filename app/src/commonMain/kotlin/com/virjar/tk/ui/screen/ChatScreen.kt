@@ -106,6 +106,8 @@ fun ChatPanel(
     voicePlayback: com.virjar.tk.ui.component.VoicePlaybackController? = null,
     /** @ 补全候选（群成员/私聊对方）；null=禁用 @ 补全 */
     mentionCandidates: List<com.virjar.tk.model.User>? = null,
+    /** 文本气泡可鼠标拖选复制（桌面 true；Android 走长按菜单「复制」，避免选择拦截长按菜单） */
+    selectableText: Boolean = false,
 ) {
     // 统一入口：media 优先，回退到独立 lambda
     val effectiveAttachClick = media?.onAttachClick ?: onAttachClick
@@ -307,6 +309,7 @@ fun ChatPanel(
                                     voicePlayback = voicePlayback,
                                     onMentionClick = effectiveMentionClick,
                                     onUrlClick = effectiveUrlClick,
+                                    selectableText = selectableText,
                                     onLongClick = { menuMessage = msg },
                                     onMediaClick = effectiveMediaClick,
                                     imageContent = effectiveImageContent,
@@ -315,6 +318,22 @@ fun ChatPanel(
                                     menuExpanded = menuMessage?.clientMsgId == msg.clientMsgId,
                                     onMenuDismiss = { menuMessage = null },
                                     menuItems = {
+                                        val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+                                        DropdownMenuItem(
+                                            text = { Text("复制") },
+                                            onClick = {
+                                                clipboard.setText(
+                                                    androidx.compose.ui.text.AnnotatedString(
+                                                        when (val b = msg.body) {
+                                                            is TextBody -> b.text
+                                                            is RichTextBody -> b.plainText
+                                                            else -> com.virjar.tk.util.MessagePreview.preview(msg, flagsAware = false)
+                                                        }
+                                                    )
+                                                )
+                                                menuMessage = null
+                                            },
+                                        )
                                         DropdownMenuItem(
                                             text = { Text("回复") },
                                             onClick = { replyingTo = msg; menuMessage = null },
@@ -662,6 +681,7 @@ private fun MessageBubble(
     voicePlayback: com.virjar.tk.ui.component.VoicePlaybackController? = null,
     onMentionClick: ((uid: String) -> Unit)? = null,
     onUrlClick: ((String) -> Unit)? = null,
+    selectableText: Boolean = false,
     onLongClick: () -> Unit,
     onMediaClick: ((Message) -> Unit)?,
     imageContent: (@Composable (String, Modifier) -> Unit)?,
@@ -729,12 +749,19 @@ private fun MessageBubble(
                         com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback, onMentionClick, onUrlClick)
                     }
                 } else {
-                    Column(
-                        modifier = Modifier
-                            .padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.sm)
-                            .widthIn(max = Tk.dimens.bubbleMaxWidth - (Tk.spacing.md * 2))
-                    ) {
-                        com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback, onMentionClick, onUrlClick)
+                    val bubbleContent: @Composable () -> Unit = {
+                        Column(
+                            modifier = Modifier
+                                .padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.sm)
+                                .widthIn(max = Tk.dimens.bubbleMaxWidth - (Tk.spacing.md * 2))
+                        ) {
+                            com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback, onMentionClick, onUrlClick)
+                        }
+                    }
+                    if (selectableText) {
+                        androidx.compose.foundation.text.selection.SelectionContainer { bubbleContent() }
+                    } else {
+                        bubbleContent()
                     }
                 }
             }

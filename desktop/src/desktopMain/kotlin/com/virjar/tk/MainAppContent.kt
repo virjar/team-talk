@@ -575,6 +575,7 @@ private fun ChatPanelWrapper(
             initialDraft = initialDraft,
             voicePlayback = voicePlayback,
             mentionCandidates = mentionCandidates,
+            selectableText = true,
             onDraftChange = { draft ->
                 // 空草稿传 null，避免 [草稿] 标签残留
                 kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
