@@ -38,6 +38,13 @@ tasks.register("buildServerDist") {
 }
 
 dependencies {
+    // 媒体缩略图：图片纯 Java2D；视频 javacv JNI（native 内嵌 jar，平台裁剪：服务器 linux + 开发 mac 双架构）
+    implementation(libs.javacv)
+    // 平台 classifier 依赖（version catalog 不支持 classifier，全坐标直写）
+    implementation("org.bytedeco:ffmpeg:${libs.versions.ffmpeg.natives.get()}")
+    implementation("org.bytedeco:ffmpeg:${libs.versions.ffmpeg.natives.get()}:linux-x86_64")
+    implementation("org.bytedeco:ffmpeg:${libs.versions.ffmpeg.natives.get()}:macosx-x86_64")
+    implementation("org.bytedeco:ffmpeg:${libs.versions.ffmpeg.natives.get()}:macosx-arm64")
     implementation(project(":shared"))
     implementation(libs.bundles.ktor.server)
     implementation(libs.bundles.netty)

@@ -596,7 +596,7 @@ private fun ChatPanelWrapper(
                     if (start) DesktopMediaHelper.startRecording()
                     else DesktopMediaHelper.stopAndSendVoice(chatId, myUid, viewModel)
                 },
-                imageContent = { url, modifier -> DesktopImageContent(url, modifier) },
+                imageContent = { url, modifier -> com.virjar.tk.media.CachedImageContent(url, modifier) },
                 onMediaClick = onMediaClick,
             ),
         )

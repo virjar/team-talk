@@ -94,3 +94,45 @@ class InteractiveCardBodyTest {
         assertEquals(null, body.toCard())
     }
 }
+
+
+/** ImageBody 尾部可选 thumbnailUrl 的新旧互操作契约 */
+class ImageBodyCompatTest {
+
+    private fun encode(body: com.virjar.tk.body.ImageBody): io.netty.buffer.ByteBuf {
+        val buf = io.netty.buffer.Unpooled.buffer()
+        body.writeTo(com.virjar.tk.protocol.PacketBuffer(buf))
+        return buf
+    }
+
+    @Test
+    fun `新编码带缩略图 round-trip`() {
+        val body = com.virjar.tk.body.ImageBody(
+            "https://x/im.png", width = 800, height = 600, size = 12345,
+            thumbnailUrl = "https://x/im.png.thumb",
+        )
+        val decoded = com.virjar.tk.body.ImageBody.readFrom(com.virjar.tk.protocol.PacketBuffer(encode(body)))
+        assertEquals(body, decoded)
+    }
+
+    @Test
+    fun `旧消息（无剩余字节）读出 null 缩略图`() {
+        // 手工构造旧布局：url + w + h + size，无尾部
+        val buf = io.netty.buffer.Unpooled.buffer()
+        val pb = com.virjar.tk.protocol.PacketBuffer(buf)
+        pb.writeString("https://x/old.png")
+        pb.writeVarInt(100)
+        pb.writeVarInt(50)
+        pb.writeVarLong(999L)
+        val decoded = com.virjar.tk.body.ImageBody.readFrom(pb)
+        assertEquals("https://x/old.png", decoded.url)
+        assertEquals(null, decoded.thumbnailUrl)
+    }
+
+    @Test
+    fun `新消息写入 null 缩略图（占位字节）读回 null`() {
+        val body = com.virjar.tk.body.ImageBody("u", 1, 1, 1L, thumbnailUrl = null)
+        val decoded = com.virjar.tk.body.ImageBody.readFrom(com.virjar.tk.protocol.PacketBuffer(encode(body)))
+        assertEquals(null, decoded.thumbnailUrl)
+    }
+}

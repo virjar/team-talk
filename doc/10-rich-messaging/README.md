@@ -31,6 +31,29 @@
 - 支持：段落/粗体/斜体/删除线/行内代码/链接/`mention://` 胶囊/代码块/标题/列表/引用
 - 颜色全部取气泡 LocalContentColor（蓝/灰气泡自适应），代码块底色 contentColor 12% 叠层
 
+## 0.2 媒体消息体系（2026-08-17 落地）
+
+**服务端缩略图管线**（上传时生成，用户确认的技术路线）：
+- 图片：纯 Java2D（ImageIO 读头尺寸 + Graphics2D 等比缩放 max 边 480 输出 jpg）——零依赖零进程
+- 视频：bytedeco javacv JNI（FFmpegFrameGrabber 抓首帧 + lengthInTime/imageWidth 元数据），
+  native 内嵌 jar 平台裁剪（linux-x86_64 + macosx 双架构），版本锁定；
+  对比否决的 ProcessBuilder 方案：无部署耦合/无版本漂移/无进程输出解析暗坑（用户挑战后修正）
+- 接入点 FileRoutes.upload：源临时文件在 store 之前消费（F24：store 会 move 临时文件）
+- 响应 UploadResponse 扩展 thumbPath/thumbUrl/width/height/durationSec（encodeDefaults 显式输出）
+
+**协议**：ImageBody 尾部可选 thumbnailUrl（旧端读到旧布局即止；新端读剩余字节——新旧互操作
+契约测试锁定 ×3）；VideoBody 原生已有 thumbnailUrl/duration 字段。
+
+**客户端媒体缓存体系（桌面）**：
+- DesktopMediaCache（SQLite media-cache.db）：url→local_path/kind/size/downloaded_at，
+  500MB 配额按日期 LRU 清理（启动执行），并发下载同 url 去重
+- 渲染链：气泡以缩略图为数据源（CachedImageContent 缓存感知：命中本地解码/未命中默认下载）；
+  画廊原图按需加载（大进度覆盖层）；视频画廊 ensureDownloaded 后播本地文件
+- 发送端 uploadWithMeta：body 带服务端宽高/时长/缩略图（准确度优于本地解码）
+
+**实测（demo linux）**：图片 800×600→thumbUrl+尺寸 ✓；视频 960×540/5s/首帧缩略图 ✓（JNI）；
+桌面收图→气泡缩略图默认下载→SQLite 落库 ✓（视觉验证留人工）。
+
 ## 1. 生态调研
 
 ### 1.1 渲染库（初选 mikepenz，实测弃用 → 自研，见 §0）

@@ -57,7 +57,8 @@ fun MediaGalleryWindow(
             initialIndex = initialIndex,
             onDismiss = onDismiss,
             imageRenderer = { url, modifier ->
-                DesktopImagePage(url, modifier)
+                // 原图按需：缓存命中直接渲染；未命中画廊内进度覆盖层，下载完成才展示
+                com.virjar.tk.media.CachedImageContent(url, modifier, progressOverlay = true)
             },
             videoRenderer = { url, modifier ->
                 DesktopVideoPage(url, modifier)
@@ -108,17 +109,17 @@ private fun DesktopImagePage(url: String, modifier: Modifier = Modifier) {
 @Composable
 private fun DesktopVideoPage(url: String, modifier: Modifier = Modifier) {
     val playerState = rememberVideoPlayerState()
-    var state by remember { mutableStateOf<VideoLoadState>(VideoLoadState.Loading) }
+    var state by remember { mutableStateOf<VideoLoadState>(VideoLoadState.Downloading(0f)) }
 
     LaunchedEffect(url) {
-        state = VideoLoadState.Loading
+        state = VideoLoadState.Downloading(0f)
         try {
-            // 先下载到本地缓存（本地优先策略，和图片/文件一致）
-            val localFile = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                com.virjar.tk.DesktopMediaHelper.downloadToCache(url)
+            // 媒体缓存体系：按需下载原图到本地（播放器始终播本地文件）
+            val localPath = com.virjar.tk.media.DesktopMediaCache.ensureDownloaded(url) { p ->
+                state = VideoLoadState.Downloading(p)
             }
             playerState.apply {
-                openUri(localFile.absolutePath)
+                openUri(localPath)
             }
             state = VideoLoadState.Ready
         } catch (e: Exception) {
@@ -132,7 +133,11 @@ private fun DesktopVideoPage(url: String, modifier: Modifier = Modifier) {
 
     Box(modifier = modifier.background(Color.Black), contentAlignment = Alignment.Center) {
         when (val s = state) {
-            is VideoLoadState.Loading -> CircularProgressIndicator(color = Color.White)
+            is VideoLoadState.Downloading -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = Color.White)
+                Spacer(Modifier.height(8.dp))
+                Text("视频下载中 ${(s.progress * 100).toInt()}%", color = Color.White)
+            }
             is VideoLoadState.Error -> {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("视频加载失败", color = Color.White)
@@ -149,7 +154,7 @@ private fun DesktopVideoPage(url: String, modifier: Modifier = Modifier) {
 }
 
 private sealed interface VideoLoadState {
-    data object Loading : VideoLoadState
+    data class Downloading(val progress: Float) : VideoLoadState
     data object Ready : VideoLoadState
     data class Error(val message: String) : VideoLoadState
 }

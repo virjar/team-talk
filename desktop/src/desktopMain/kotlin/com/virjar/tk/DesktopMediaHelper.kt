@@ -104,6 +104,11 @@ object DesktopMediaHelper {
         return runBlocking { fileRepo().upload(bytes, fileName, contentType).getOrThrow() }
     }
 
+    /** 上传并返回服务端媒体元数据（缩略图/宽高/时长）。 */
+    fun uploadWithMeta(bytes: ByteArray, fileName: String, contentType: String): com.virjar.tk.repository.UploadResult {
+        return runBlocking { fileRepo().uploadWithMeta(bytes, fileName, contentType).getOrThrow() }
+    }
+
     /** 根据相对 path 拼装完整下载 URL。 */
     fun fileUrl(path: String): String = fileRepo().resolveUrl(path)
 
@@ -120,10 +125,11 @@ object DesktopMediaHelper {
             try {
                 val bytes = file.readBytes()
                 val ct = guessContentType(file.name)
-                val path = uploadFile(bytes, file.name, ct)
-                val url = fileUrl(path)
-                // 读取图片宽高
-                val (w, h) = decodeImageSize(bytes)
+                val meta = uploadWithMeta(bytes, file.name, ct)
+                val url = fileUrl(meta.path)
+                // 宽高：服务端（ffprobe/ImageIO，准确）优先，本地解码兜底
+                val (w, h) = if (meta.width > 0 && meta.height > 0) meta.width to meta.height else decodeImageSize(bytes)
+                val thumbUrl = meta.thumbUrl
                 val msg = Message(
                     chatId = chatId,
                     clientMsgId = UUID.randomUUID().toString(),
@@ -131,7 +137,7 @@ object DesktopMediaHelper {
                     senderUid = myUid,
                     messageType = MessageType.IMAGE.code,
                     timestamp = System.currentTimeMillis(),
-                    body = ImageBody(url, width = w, height = h, size = bytes.size.toLong()),
+                    body = ImageBody(url, width = w, height = h, size = bytes.size.toLong(), thumbnailUrl = thumbUrl),
                 )
                 viewModel.sendMessage(msg)
             } catch (e: Exception) {
@@ -176,8 +182,8 @@ object DesktopMediaHelper {
         thread {
             try {
                 val bytes = file.readBytes()
-                val path = uploadFile(bytes, file.name, "video/mp4")
-                val url = fileUrl(path)
+                val meta = uploadWithMeta(bytes, file.name, "video/mp4")
+                val url = fileUrl(meta.path)
                 val msg = Message(
                     chatId = chatId,
                     clientMsgId = UUID.randomUUID().toString(),
@@ -185,7 +191,15 @@ object DesktopMediaHelper {
                     senderUid = myUid,
                     messageType = MessageType.VIDEO.code,
                     timestamp = System.currentTimeMillis(),
-                    body = VideoBody(url, size = bytes.size.toLong()),
+                    // 服务端 ffprobe 元数据 + javacv 抽帧缩略图（native 缺失时降级为空）
+                    body = VideoBody(
+                        url,
+                        duration = meta.durationSec ?: 0,
+                        width = meta.width,
+                        height = meta.height,
+                        size = bytes.size.toLong(),
+                        thumbnailUrl = meta.thumbUrl,
+                    ),
                 )
                 viewModel.sendMessage(msg)
             } catch (e: Exception) {
@@ -204,17 +218,17 @@ object DesktopMediaHelper {
             try {
                 val bytes = file.readBytes()
                 val ct = guessContentType(file.name)
-                val path = uploadFile(bytes, file.name, ct)
-                val url = fileUrl(path)
+                val meta = uploadWithMeta(bytes, file.name, ct)
+                val url = fileUrl(meta.path)
                 val msg = when {
                     ext in IMAGE_EXTS -> {
-                        val (w, h) = decodeImageSize(bytes)
+                        val (w, h) = if (meta.width > 0 && meta.height > 0) meta.width to meta.height else decodeImageSize(bytes)
                         Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.IMAGE.code,
-                            System.currentTimeMillis(), body = ImageBody(url, width = w, height = h, size = bytes.size.toLong()))
+                            System.currentTimeMillis(), body = ImageBody(url, width = w, height = h, size = bytes.size.toLong(), thumbnailUrl = meta.thumbUrl))
                     }
                     ext in VIDEO_EXTS -> {
                         Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.VIDEO.code,
-                            System.currentTimeMillis(), body = VideoBody(url, size = bytes.size.toLong()))
+                            System.currentTimeMillis(), body = VideoBody(url, duration = meta.durationSec ?: 0, width = meta.width, height = meta.height, size = bytes.size.toLong(), thumbnailUrl = meta.thumbUrl))
                     }
                     else -> {
                         Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.FILE.code,

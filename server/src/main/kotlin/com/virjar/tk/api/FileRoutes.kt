@@ -11,7 +11,15 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 
-fun Route.fileRoutes(fileStore: FileStore, tokenStore: com.virjar.tk.domain.auth.TokenStore) {
+private val responseJson = Json {
+    encodeDefaults = true // 上传响应显式输出全字段（缩略图缺失时 thumbUrl:null 可见）
+}
+
+fun Route.fileRoutes(
+    fileStore: FileStore,
+    tokenStore: com.virjar.tk.domain.auth.TokenStore,
+    thumbnailService: com.virjar.tk.infra.media.ThumbnailService = com.virjar.tk.infra.media.ThumbnailService(),
+) {
     route("/api/v1/files") {
         get("/{path...}") {
             val path = call.parameters.getAll("path")?.joinToString("/") ?: return@get call.respond(HttpStatusCode.NotFound)
@@ -43,6 +51,8 @@ fun Route.fileRoutes(fileStore: FileStore, tokenStore: com.virjar.tk.domain.auth
 
             val multipart = call.receiveMultipart()
             var filePath: String? = null
+            var mediaInfo: com.virjar.tk.infra.media.ThumbnailService.MediaInfo? = null
+            var thumbPath: String? = null
 
             multipart.forEachPart { part ->
                 when (part) {
@@ -60,6 +70,19 @@ fun Route.fileRoutes(fileStore: FileStore, tokenStore: com.virjar.tk.domain.auth
                                 out.write(buffer, 0, read)
                             }
                         }
+                        // 缩略图/元数据必须在 store 之前生成：FileStore.store 会消费（move）临时文件，
+                        // 之后再访问 tempFile 会 FileNotFoundException（曾现 bug，F24）
+                        val isImage = contentType.startsWith("image/")
+                        val isVideo = contentType.startsWith("video/")
+                        if (isImage || isVideo) {
+                            mediaInfo = if (isImage) thumbnailService.processImage(tempFile)
+                            else thumbnailService.processVideo(tempFile)
+                            mediaInfo?.thumbFile?.let { tf ->
+                                thumbPath = fileStore.store(uid, "thumb_${originalName}.jpg", "image/jpeg", tf)
+                                tf.delete()
+                            }
+                        }
+
                         filePath = fileStore.store(uid, originalName, contentType, tempFile)
                         tempFile.delete()
                     }
@@ -69,8 +92,19 @@ fun Route.fileRoutes(fileStore: FileStore, tokenStore: com.virjar.tk.domain.auth
             }
 
             if (filePath != null) {
+                val mi = mediaInfo
                 call.respondText(
-                    Json.encodeToString(UploadResponse(filePath!!, fileStore.resolveUrl(filePath!!))),
+                    responseJson.encodeToString(
+                        UploadResponse(
+                            path = filePath!!,
+                            url = fileStore.resolveUrl(filePath!!),
+                            thumbPath = thumbPath,
+                            thumbUrl = thumbPath?.let { fileStore.resolveUrl(it) },
+                            width = mi?.width ?: 0,
+                            height = mi?.height ?: 0,
+                            durationSec = mi?.durationSec,
+                        ),
+                    ),
                     ContentType.Application.Json,
                 )
             } else {
@@ -81,4 +115,12 @@ fun Route.fileRoutes(fileStore: FileStore, tokenStore: com.virjar.tk.domain.auth
 }
 
 @Serializable
-private data class UploadResponse(val path: String, val url: String)
+private data class UploadResponse(
+    val path: String,
+    val url: String,
+    val thumbPath: String? = null,
+    val thumbUrl: String? = null,
+    val width: Int = 0,
+    val height: Int = 0,
+    val durationSec: Int? = null,
+)

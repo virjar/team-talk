@@ -7,6 +7,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
@@ -20,6 +22,9 @@ expect class FileRepository(serverUrl: String, accessToken: String? /* HTTP 上�
 
     /** 上传文件，返回相对 path（形如 "{uid}/{uuid}.ext"）。 */
     suspend fun upload(bytes: ByteArray, fileName: String, contentType: String): Outcome<String>
+
+    /** 上传并返回完整元数据（含服务端生成的缩略图/宽高/时长）。 */
+    suspend fun uploadWithMeta(bytes: ByteArray, fileName: String, contentType: String): Outcome<UploadResult>
 
     /** 下载文件，返回原始字节。 */
     suspend fun download(path: String): Outcome<ByteArray>
@@ -56,4 +61,31 @@ object FileOps {
     fun parseUploadPath(body: String): String =
         Json.parseToJsonElement(body).jsonObject["path"]?.jsonPrimitive?.content
             ?: throw AppError.Business(-1, "Invalid upload response: $body")
+
+    /** 解析上传响应全字段（缩略图/宽高/时长，服务端 ThumbnailService 产物）。 */
+    fun parseUploadResult(body: String): UploadResult {
+        val o = Json.parseToJsonElement(body).jsonObject
+        fun str(k: String) = o[k]?.jsonPrimitive?.contentOrNull
+        fun int(k: String) = o[k]?.jsonPrimitive?.intOrNull ?: 0
+        return UploadResult(
+            path = str("path") ?: throw AppError.Business(-1, "Invalid upload response: $body"),
+            url = str("url").orEmpty(),
+            thumbPath = str("thumbPath"),
+            thumbUrl = str("thumbUrl"),
+            width = int("width"),
+            height = int("height"),
+            durationSec = o["durationSec"]?.jsonPrimitive?.intOrNull,
+        )
+    }
 }
+
+/** 上传响应元数据（服务端生成：缩略图路径与媒体宽高/时长）。 */
+data class UploadResult(
+    val path: String,
+    val url: String,
+    val thumbPath: String? = null,
+    val thumbUrl: String? = null,
+    val width: Int = 0,
+    val height: Int = 0,
+    val durationSec: Int? = null,
+)

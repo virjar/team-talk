@@ -43,6 +43,31 @@ class TestPeer {
 
     // ──────────────── 工具方法 ────────────────
 
+    /** 上传并解析媒体元数据（缩略图 URL 绝对化，供 ImageBody/VideoBody 构造）。 */
+    private fun uploadFileMeta(file: File, accessToken: String?, mimeType: String): Pair<String, String?> {
+        val boundary = "----TestPeer${UUID.randomUUID()}"
+        val conn = URL("$serverUrl/api/v1/files/upload").openConnection() as HttpURLConnection
+        conn.doOutput = true
+        conn.requestMethod = "POST"
+        conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+        accessToken?.let { conn.setRequestProperty("Authorization", "Bearer $it") }
+        conn.outputStream.use { os ->
+            val w = PrintWriter(os, true)
+            w.append("--$boundary\r\n")
+            w.append("Content-Disposition: form-data; name=\"file\"; filename=\"${file.name}\"\r\n")
+            w.append("Content-Type: $mimeType\r\n\r\n")
+            w.flush()
+            file.inputStream().use { it.copyTo(os) }
+            os.flush()
+            w.append("\r\n--$boundary--\r\n")
+            w.flush()
+        }
+        val body = conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+        val thumb = Regex("\"thumbUrl\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
+        val url = Regex("\"url\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1) ?: error("upload failed: $body")
+        return "$serverUrl$url" to thumb?.let { "$serverUrl$it" }
+    }
+
     /**
      * 上传本地文件到服务器，返回完整下载 URL。
      * 文件上传接口走 Bearer accessToken 鉴权（FileRoutes），必须带认证头。
@@ -95,6 +120,15 @@ class TestPeer {
      * 登录任意账号打印其 uid。用法：
      *   -Dpeer.username=<user> (-Dpeer.password=<pass>，默认 password123)
      */
+    @org.junit.jupiter.api.Test
+    fun printToken() = runBlocking {
+        val username = System.getProperty("peer.username") ?: return@runBlocking
+        val password = System.getProperty("peer.password") ?: "password123"
+        val session = RemoteDemoSupport.loginUser(username, password)
+        println("===TOKEN=== ${session.userSession.accessToken}")
+        session.close()
+    }
+
     @org.junit.jupiter.api.Test
     fun whoami() = runBlocking {
         val username = System.getProperty("peer.username") ?: run {
@@ -458,12 +492,12 @@ class TestPeer {
         if (!file.exists()) { println("[TestPeer] file not found: ${file.absolutePath}"); return@runBlocking }
 
         val session = RemoteDemoSupport.loginUser(username, "password123")
-        val url = uploadFile(file, session.userSession.accessToken, "image/png")
+        val (url, thumbUrl) = uploadFileMeta(file, session.userSession.accessToken, "image/png")
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
             messageType = MessageType.IMAGE.code, timestamp = System.currentTimeMillis(),
-            senderUid = session.uid, body = ImageBody(url, size = file.length()))
+            senderUid = session.uid, body = ImageBody(url, size = file.length(), thumbnailUrl = thumbUrl))
         val ack = session.imClient.sendAndWaitAck(msg)
-        println("===SEND_IMAGE ${if (ack.code == 0) "SUCCESS" else "FAILED"}=== ack=${ack.code}")
+        println("===SEND_IMAGE ${if (ack.code == 0) "SUCCESS" else "FAILED"}=== ack=${ack.code} thumb=${thumbUrl != null}")
         session.close()
     }
 
@@ -524,12 +558,13 @@ class TestPeer {
         if (!file.exists()) { println("[TestPeer] file not found: ${file.absolutePath}"); return@runBlocking }
 
         val session = RemoteDemoSupport.loginUser(username, "password123")
-        val url = uploadFile(file, session.userSession.accessToken, "video/mp4")
+        val (url, thumbUrl) = uploadFileMeta(file, session.userSession.accessToken, "video/mp4")
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
             messageType = MessageType.VIDEO.code, timestamp = System.currentTimeMillis(),
-            senderUid = session.uid, body = VideoBody(url, size = file.length()))
+            senderUid = session.uid,
+            body = VideoBody(url, duration = 5, width = 960, height = 540, size = file.length(), thumbnailUrl = thumbUrl))
         val ack = session.imClient.sendAndWaitAck(msg)
-        println("===SEND_VIDEO ${if (ack.code == 0) "SUCCESS" else "FAILED"}=== ack=${ack.code}")
+        println("===SEND_VIDEO ${if (ack.code == 0) "SUCCESS" else "FAILED"}=== ack=${ack.code} thumb=${thumbUrl != null}")
         session.close()
     }
 }

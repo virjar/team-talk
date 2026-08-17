@@ -18,6 +18,22 @@ actual class FileRepository actual constructor(
         fileName: String,
         contentType: String,
     ): Outcome<String> = outcome {
+        uploadRaw(bytes, fileName, contentType).path
+    }
+
+    actual suspend fun uploadWithMeta(
+        bytes: ByteArray,
+        fileName: String,
+        contentType: String,
+    ): Outcome<UploadResult> = outcome {
+        uploadRaw(bytes, fileName, contentType)
+    }
+
+    private suspend fun uploadRaw(
+        bytes: ByteArray,
+        fileName: String,
+        contentType: String,
+    ): UploadResult = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val boundary = "----TeamTalkBoundary${System.currentTimeMillis()}"
         val conn = (java.net.URL("$serverUrl/api/v1/files/upload").openConnection() as java.net.HttpURLConnection).apply {
             requestMethod = "POST"
@@ -45,7 +61,7 @@ actual class FileRepository actual constructor(
             throw AppError.Business(code, "Upload failed HTTP $code: $errorBody")
         }
 
-        FileOps.parseUploadPath(conn.inputStream.bufferedReader().readText())
+        FileOps.parseUploadResult(conn.inputStream.bufferedReader().readText())
     }
 
     actual suspend fun download(path: String): Outcome<ByteArray> = FileOps.download(serverUrl, path)

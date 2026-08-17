@@ -80,8 +80,9 @@ fun MessageBodyRenderer(
         is ImageBody -> {
             val clickAction = onMediaClick?.let { cb -> { cb(message) } }
             if (imageContent != null) {
+                // 缩略图数据源（服务端生成；旧消息无缩略图回退原图 URL，由平台缓存层统一处理）
                 ImageThumbCard(
-                    imageUrl = body.url,
+                    imageUrl = body.thumbnailUrl ?: body.url,
                     imageContent = imageContent,
                     imgWidth = body.width,
                     imgHeight = body.height,
