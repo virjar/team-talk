@@ -8,6 +8,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -17,6 +21,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.testTag
 import com.virjar.tk.model.User
+import com.virjar.tk.ui.theme.TkTheme
+import com.virjar.tk.ui.theme.ThemeMode
 
 /**
  * 设置页 Header 样式。
@@ -50,12 +56,15 @@ fun MeScreen(
         }
 
         // ── 设置菜单组（内容两端一致，容器样式按 style 切换）──
-        val menuItems = listOf(
-            "编辑资料" to onEditProfile,
-            "修改密码" to onChangePassword,
-            "设备管理" to onDeviceManagement,
-            "黑名单" to onBlacklist,
-        )
+        // 外观（主题模式）内联处理，不走平台回调
+        var showThemeDialog by remember { mutableStateOf(false) }
+        val menuItems = buildList {
+            add("编辑资料" to onEditProfile)
+            add("修改密码" to onChangePassword)
+            add("设备管理" to onDeviceManagement)
+            add("黑名单" to onBlacklist)
+            add(THEME_ROW to { showThemeDialog = true })
+        }
         when (headerStyle) {
             MeHeaderStyle.Mobile -> {
                 Spacer(Modifier.height(8.dp))
@@ -67,7 +76,12 @@ fun MeScreen(
                 ) {
                     Column {
                         menuItems.forEachIndexed { index, (title, onClick) ->
-                            SettingsRow(title, onClick, showChevron = true, showDivider = index < menuItems.size - 1)
+                            SettingsRow(
+                                title, onClick,
+                                showChevron = title != THEME_ROW,
+                                showDivider = index < menuItems.size - 1,
+                                trailing = themeTrailing(title),
+                            )
                         }
                     }
                 }
@@ -89,7 +103,12 @@ fun MeScreen(
             MeHeaderStyle.Compact -> {
                 // 扁平列表 + HorizontalDivider 分隔
                 menuItems.forEachIndexed { index, (title, onClick) ->
-                    SettingsRow(title, onClick, showChevron = false, showDivider = true)
+                    SettingsRow(
+                        title, onClick,
+                        showChevron = false,
+                        showDivider = true,
+                        trailing = themeTrailing(title),
+                    )
                 }
                 HorizontalDivider()
                 // 退出登录（扁平行 + 左对齐）
@@ -116,8 +135,56 @@ fun MeScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = if (headerStyle == MeHeaderStyle.Compact) 12.dp else 0.dp),
             )
         }
+
+        // ── 主题模式选择对话框 ──
+        if (showThemeDialog) {
+            AlertDialog(
+                onDismissRequest = { showThemeDialog = false },
+                title = { Text("外观") },
+                text = {
+                    Column {
+                        ThemeMode.entries.forEach { mode ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { TkTheme.set(mode); showThemeDialog = false }
+                                    .padding(vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                RadioButton(
+                                    selected = TkTheme.mode == mode,
+                                    onClick = { TkTheme.set(mode); showThemeDialog = false },
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(mode.label, style = MaterialTheme.typography.bodyLarge)
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showThemeDialog = false }) { Text("取消") }
+                },
+            )
+        }
     }
 }
+
+private const val THEME_ROW = "外观"
+
+/** 外观行的右侧当前值标签（其余菜单行无 trailing）。 */
+@Composable
+private fun themeTrailing(title: String): @Composable RowScope.() -> Unit =
+    if (title == THEME_ROW) {
+        {
+            Text(
+                TkTheme.mode.label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+    } else {
+        {}
+    }
 
 /** 移动端 Header：渐变背景 + 64dp 白色半透头像 + 白字 + UID。 */
 @Composable
@@ -192,9 +259,16 @@ private fun CompactProfileHeader(currentUser: User?) {
  * 设置菜单行（两端共用）。
  * @param showChevron 是否显示右侧 › 箭头（Mobile 风格）
  * @param showDivider 是否显示底部分隔线
+ * @param trailing 右侧槽（外观行显示当前主题）
  */
 @Composable
-private fun SettingsRow(title: String, onClick: () -> Unit, showChevron: Boolean = true, showDivider: Boolean = true) {
+private fun SettingsRow(
+    title: String,
+    onClick: () -> Unit,
+    showChevron: Boolean = true,
+    showDivider: Boolean = true,
+    trailing: @Composable RowScope.() -> Unit = {},
+) {
     Column {
         Row(
             modifier = Modifier.fillMaxWidth()
@@ -204,6 +278,7 @@ private fun SettingsRow(title: String, onClick: () -> Unit, showChevron: Boolean
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(title, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            trailing()
             if (showChevron) {
                 Text("›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.outline)
             }

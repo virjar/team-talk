@@ -24,6 +24,7 @@ import com.virjar.tk.navigation.AppDataState
 import com.virjar.tk.navigation.ScreenDataKey
 import com.virjar.tk.ui.AppTheme
 import com.virjar.tk.ui.screen.*
+import com.virjar.tk.ui.theme.initThemeStore
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -31,6 +32,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 全局初始化（日志注入、ServerConfig、异常拦截）已在 TeamTalkApp.onCreate 完成
+        // 主题持久化：需在首次组合（TkTheme 读取）前就绪
+        initThemeStore(applicationContext)
         setContent {
             AppTheme(touchDensity = true) {
                 TestTagEnabler {

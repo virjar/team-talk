@@ -352,6 +352,7 @@ allProfiles.forEach { (pn, profile) ->
             "-Dteamtalk.allow.custom.server=${profile.allowCustomServer}",
             "-Dteamtalk.data.dir=${rootProject.file("data/desktop").absolutePath}",
             "-Dteamtalk.is.dev=true",
-        )
+            // dev 透传：强制主题（暗色走查截图用），如 -Dteamtalk.theme=dark
+        ) + System.getProperty("teamtalk.theme")?.let { listOf("-Dteamtalk.theme=$it") }.orEmpty()
     }
 }

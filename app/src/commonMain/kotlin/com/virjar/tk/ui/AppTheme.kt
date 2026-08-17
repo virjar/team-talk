@@ -107,7 +107,8 @@ private val AppShapes = Shapes(
 
 @Composable
 fun AppTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    /** 暗色判定事实源：TkTheme（应用内可切，默认跟随系统）。 */
+    darkTheme: Boolean = com.virjar.tk.ui.theme.TkTheme.isDark(),
     /** 触控密度（Android：72dp 列表项/48dp 头像）；默认桌面紧凑档 */
     touchDensity: Boolean = false,
     content: @Composable () -> Unit,
