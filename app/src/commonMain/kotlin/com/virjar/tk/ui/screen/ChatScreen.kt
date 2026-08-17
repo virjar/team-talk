@@ -57,6 +57,7 @@ import com.virjar.tk.model.User
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.ui.component.AvatarPlaceholder
 import com.virjar.tk.ui.component.isEdgeToEdgeMedia
+import com.virjar.tk.ui.platform.contextLongPress
 import com.virjar.tk.ui.platform.secondaryClick
 import com.mohamedrejeb.richeditor.model.rememberRichTextState
 import com.mohamedrejeb.richeditor.ui.BasicRichTextEditor
@@ -735,12 +736,10 @@ private fun MessageBubble(
                     bottomStart = if (isMe) 8.dp else if (isContinuation) 8.dp else 4.dp,
                     bottomEnd = if (isMe) if (isContinuation) 8.dp else 4.dp else 8.dp,
                 ),
+                // 长按弹菜单平台分流（F29）：Android 长按；桌面无长按（拖选文字不被误判），
+                // 菜单只走右键 secondaryClick
                 modifier = Modifier
-                    .combinedClickable(
-                        onClick = {},
-                        onLongClick = onLongClick,
-                    )
-                    // 桌面右键弹上下文菜单（长按仅移动端手势）
+                    .contextLongPress(onLongClick)
                     .secondaryClick(onLongClick),
             ) {
                 if (msg.body.isEdgeToEdgeMedia()) {

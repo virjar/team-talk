@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import com.virjar.tk.model.Conversation
 import com.virjar.tk.ui.component.ChatAvatar
 import com.virjar.tk.ui.component.UnreadBadge
+import com.virjar.tk.ui.platform.contextLongPress
 import com.virjar.tk.ui.platform.secondaryClick
 import com.virjar.tk.ui.theme.Tk
 import java.text.SimpleDateFormat
@@ -109,11 +110,9 @@ private fun ConversationItem(
             .clip(MaterialTheme.shapes.small)
             .background(bg)
             .hoverable(hoverInteraction)
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = { menuExpanded = true },
-            )
-            // 桌面右键弹上下文菜单（长按仅移动端手势）
+            .clickable(onClick = onClick)
+            // 长按弹菜单平台分流（F29）：Android 长按；桌面右键
+            .contextLongPress { menuExpanded = true }
             .secondaryClick { menuExpanded = true }
             .testTag("conv.item.${conversation.chatId.take(12)}"),
     ) {
