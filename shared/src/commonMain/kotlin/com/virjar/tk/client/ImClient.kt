@@ -335,6 +335,11 @@ class ImClient(
         if (response.code == 0) {
             retryCount = 0
             _state.value = ConnectionState.AUTHENTICATED
+            // 认证后放开帧限（镜像服务端 ImAgent 的围栏设计）：客户端收包也会超 4KB——
+            // 离线事件补发（sync_events 批量 NOTIFY）实测可达 100KB+，曾因未放开被
+            // CorruptedFrameException 断连并重连风暴（F23）
+            channel?.pipeline()?.get(PacketCodec::class.java)
+                ?.maxPayloadLimit = PacketCodec.AUTHED_LIMIT
             // 认证成功 → pendingAuth 升级为 refresh-token 认证（authType=2）。
             // 历史bug：重连曾重放 register/login 原包——register 撞"用户名已存在"永久掉线；
             // login 则重复传密码。token 一次一换，重连必须带最新 refreshToken。
