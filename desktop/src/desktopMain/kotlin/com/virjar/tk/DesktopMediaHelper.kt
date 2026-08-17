@@ -319,8 +319,11 @@ object DesktopMediaHelper {
     private val audioFormat = AudioFormat(16000f, 16, 1, true, false)
 
     /** 开始录音（非阻塞，后台线程录制 WAV 到临时文件）。 */
+    private var recordStartedAt = 0L
+
     fun startRecording() {
         if (recordingThread != null) return
+        recordStartedAt = System.currentTimeMillis()
         val outFile = File(cacheDir, "voice_${System.currentTimeMillis()}.wav")
         recordingFile = outFile
         recordingThread = thread {
@@ -351,9 +354,13 @@ object DesktopMediaHelper {
         // 等录音线程写完
         thread0?.join(2000)
 
-        val durSec = getWavDurationSeconds(file)
-        // 单击误触（<1s 或音频系统未就绪）：提示太短并取消——不发送、不报"找不到语音文件"
-        if (durSec < 1 || !file.exists() || file.length() == 0L) {
+        // 按压真实时长（文件头解析在写入竞态下可能失败返回 0，曾致 10s 录制被误判太短）
+        val heldSec = if (recordStartedAt > 0) ((System.currentTimeMillis() - recordStartedAt) / 1000).toInt() else 0
+        recordStartedAt = 0L
+        var durSec = getWavDurationSeconds(file)
+        if (durSec <= 0) durSec = heldSec
+        // 单击误触（<1s 或音频系统未就绪）：提示太短并取消
+        if (heldSec < 1 || !file.exists() || file.length() == 0L) {
             viewModel.onError("录音时间太短")
             file.delete()
             return
