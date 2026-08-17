@@ -81,6 +81,14 @@ object DesktopMediaHelper {
         }
     }
 
+    /** 解码本地文件（媒体缓存体系渲染入口；loadImageBitmap 是按 URL 下载版，曾混用致解码 null）。 */
+    fun decodeLocalImage(file: File): ImageBitmap? = try {
+        SkiaImage.makeFromEncoded(file.readBytes()).toComposeImageBitmap()
+    } catch (e: Throwable) {
+        com.virjar.tk.util.AppLog.fault("Decode", "local decode failed: ${file.name} ${file.length()}B ${e::class.simpleName}: ${e.message}")
+        null
+    }
+
     /** 下载并打开文件（用系统默认应用）。 */
     fun openFile(url: String) {
         try {

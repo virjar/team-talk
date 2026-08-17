@@ -31,15 +31,19 @@ import java.io.File
 @Composable
 fun CachedImageContent(url: String, modifier: Modifier = Modifier, progressOverlay: Boolean = false) {
     val state = produceState<CachedImageState>(CachedImageState.Loading(0f), url) {
-        value = DesktopMediaCache.cachedPath(url)?.let { CachedImageState.Ready(it) }
+        val cached = DesktopMediaCache.cachedPath(url)
+        value = cached?.let { CachedImageState.Ready(it) }
             ?: try {
                 DesktopMediaCache.ensureDownloaded(url) { p ->
                     value = CachedImageState.Loading(p)
-                }.let { CachedImageState.Ready(it) }
+                }.let {
+                    CachedImageState.Ready(it)
+                }
             } catch (e: Exception) {
                 CachedImageState.Failed(e.message ?: "download failed")
             }
     }
+
 
     when (val s = state.value) {
         is CachedImageState.Loading -> Box(modifier, contentAlignment = Alignment.Center) {
@@ -72,7 +76,7 @@ private sealed interface CachedImageState {
 @Composable
 private fun CachedBitmapImage(file: File, modifier: Modifier = Modifier) {
     val bitmap = produceState<ImageBitmap?>(null, file) {
-        value = withContext(Dispatchers.IO) { DesktopMediaHelper.loadImageBitmap(file.absolutePath) }
+        value = withContext(Dispatchers.IO) { DesktopMediaHelper.decodeLocalImage(file) }
     }
     bitmap.value?.let { bmp ->
         Image(bitmap = bmp, contentDescription = "图片", modifier = modifier, contentScale = ContentScale.Crop)

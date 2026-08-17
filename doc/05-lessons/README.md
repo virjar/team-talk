@@ -88,6 +88,7 @@
 | F23 | 客户端 PacketCodec 装配后从未放开 4KB 未认证帧限：认证后收到的合法大包（离线事件补发 sync_events 批量 NOTIFY，实测 105KB）被 CorruptedFrameException 当攻击帧拒绝，断连→重连→再收→死循环（重连风暴）。围栏设计只做了服务端（ImAgent 放开），客户端镜像漏掉 | 围栏类防御必须两端对称实现；ImClient.handleAuthResponse 认证成功后调大 maxPayloadLimit=AUTHED_LIMIT；LargePayloadE2eTest 锁定（断线累积→重连→大包补发→连接稳定） |
 | F24 | FileRoutes 缩略图生成放在 fileStore.store 之后：store 会消费（move）上传临时文件，随后 processImage 抛 FileNotFoundException 且被静默 catch 吞掉——表现为"响应永远无缩略图"且零日志 | 依赖"临时文件生命周期"的加工必须发生在消费它的调用之前；诊断期 catch 块禁止静默（至少 warn 日志）——本例靠打开 catch 日志 5 分钟定位 |
 | F26 | refresh token 一次一换，但客户端只在首认证（session==null）时持久化新 token：重连后再认证（token 已轮换）不落盘，进程退出时磁盘上是已作废的旧 token——表现为「每次启动都 invalid 或 expired refresh token」，而服务端 TokenStore（RocksDB）与 TTL（90 天）都无辜 | 一次一换（rotation）语义下，持久化必须在【每次】换发处执行，与「只做一次」的初始化逻辑严格分离 |
+| F28 | 渲染管线静默失败两连：①CachedImageContent 把本地缓存文件路径传给按 URL 下载的 loadImageBitmap（本地路径当 URL 下载必失败，catch 吞掉后永远 loading）②修复补丁的字符串替换静默 no-op（补丁未生效却报告 fixed，用户复测打脸）| 文件/URL 两类入参必须有类型区分的独立 API（decodeLocalImage vs loadImageBitmap）；**补丁必须验证落盘效果**（grep 编译产物/源码），替换类补丁失败是 no-op 不是 error |
 | F19 | 桌面右键上下文菜单三连坑：①combinedClickable.onLongClick 桌面只由按住左键触发（右键无效，曾误写入设计文档）②手写 pointerInput 在 CMP 1.10 桌面收不到鼠标事件③Robot 右键 e2e 注入依赖辅助功能权限且熄屏后失效 | secondaryClick expect/actual（桌面 onPointerEvent Press 记录次键 + Release 触发——Release 时刻按钮已释放不能直接判断）；文档断言 API 行为前必须实测 |
 | F18 | Kotlin 块注释内的 `*/` 序列提前闭合注释（第 4 次踩） | 注释里写代码符号序列（如"星号/波浪线"列举）必须转义措辞，严禁出现 `*/` 字面量；CI 侧可加 grep 检查 |
 
