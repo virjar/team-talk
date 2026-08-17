@@ -43,6 +43,9 @@ class ContactStore(private val repo: ContactRepository) {
 
     fun listFriends(uid: String): List<Contact> = repo.listFriends(uid)
 
+    /** 按 (uid, friendUid) 直查好友行（accept 通知用；替代 listFriends 全表扫 + find）。 */
+    fun getFriend(uid: String, friendUid: String): Contact? = repo.getFriend(uid, friendUid)
+
     fun addFriend(uid: String, friendUid: String, remark: String? = null) {
         repo.addFriend(uid, friendUid, remark)
         addFriendPair(uid, friendUid)

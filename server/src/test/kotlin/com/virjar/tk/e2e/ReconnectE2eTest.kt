@@ -2,11 +2,13 @@ package com.virjar.tk.e2e
 
 import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.client.ImClient
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * SDK 断线重连回归（真实 PG + embedded TcpServer）。
@@ -42,6 +44,28 @@ class ReconnectE2eTest {
                 assertEquals(2, authCount, "应恰好认证两次（注册 + refresh 重连）")
                 assertEquals(username, lastUsername, "refresh 认证响应必须携带 username")
                 imClient.destroy()
+            }
+        }
+    }
+}
+
+
+/** AUTH_FAILED 终态：失效 token 认证失败后不再自动重连（F30 风暴根治）。 */
+class AuthTerminalE2eTest {
+
+    @Test
+    fun `失效 token 认证失败后停止自动重连`() {
+        TcpE2eEnvironment().use { env ->
+            runBlocking {
+                var failCount = 0
+                val client = ImClient(onAuthResult = { ok, _, _, _, _, _, _ -> if (!ok) failCount++ })
+                client.authenticate("nonexistent-uid", "invalid-token", "dev-t", "Test", "127.0.0.1", env.tcpPort)
+                withTimeout(5_000) { client.state.first { it == ConnectionState.AUTH_FAILED } }
+                // 风暴期表现：断连→自动重连→再 AUTH_FAILED 循环；终态后应稳定无新失败
+                delay(5_000)
+                assertEquals(1, failCount, "认证失败应恰好一次（曾循环失败踢翻登录窗）")
+                assertEquals(ConnectionState.AUTH_FAILED, client.state.value, "应保持终态")
+                client.destroy()
             }
         }
     }

@@ -25,8 +25,8 @@ class ContactService(
     override suspend fun accept(token: String): ContactApply {
         val apply = contactStore.acceptApply(token) ?: throw IllegalArgumentException("申请不存在或已处理")
         // 通知双方：好友关系已建立（各自视角的 Contact，契约：CONTACT_ACCEPTED 发 Contact）
-        val fromSide = contactStore.listFriends(apply.fromUid).find { it.friendUid == apply.toUid }
-        val toSide = contactStore.listFriends(apply.toUid).find { it.friendUid == apply.fromUid }
+        val fromSide = contactStore.getFriend(apply.fromUid, apply.toUid)
+        val toSide = contactStore.getFriend(apply.toUid, apply.fromUid)
         fromSide?.let { syncEventService.emitEvent(apply.fromUid, NotifyType.CONTACT_ACCEPTED, it) }
         toSide?.let { syncEventService.emitEvent(apply.toUid, NotifyType.CONTACT_ACCEPTED, it) }
         return apply

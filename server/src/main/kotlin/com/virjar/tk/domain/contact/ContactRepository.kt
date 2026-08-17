@@ -11,6 +11,18 @@ import java.util.UUID
 
 class ContactRepository(private val userRepo: UserRepository) {
 
+    /** 按 (uid, friendUid) 单行直查（accept 通知两行查询，替代两次全列表扫）。 */
+    fun getFriend(uid: String, friendUid: String): Contact? {
+        val row = transaction {
+            Friends.selectAll()
+                .where { (Friends.uid eq uid) and (Friends.friendUid eq friendUid) and (Friends.status eq 1) }
+                .limit(1)
+                .firstOrNull()
+        } ?: return null
+        val friendUser = userRepo.findByUid(friendUid) ?: return null
+        return Contact(uid = uid, friendUid = friendUid, remark = row[Friends.remark], status = 1, user = friendUser)
+    }
+
     fun listFriends(uid: String): List<Contact> {
         val friendRows = transaction {
             Friends.selectAll().where { (Friends.uid eq uid) and (Friends.status eq 1) }

@@ -25,12 +25,13 @@
 | 发送队列与重试 | 断线期间发送当前立即失败（合成 ack code=-1）；排队重连后补发 + 状态机（sending→queued→sent） | 📋 |
 | 离线补发分页 | 服务端 `getEventsAfter` 单次 limit=100：长时间离线需多轮重连逐批补全（游标推进天然支持）；或协议升级分页游标 | 📋（低优先，已知限制） |
 | 消息本地全文搜索 | 客户端 SQLite FTS（当前搜索纯服务端 Lucene，离线不可用） | 💡 |
+| ~~AUTH_FAILED 无限重试失效 token~~ | ✅ 2026-08：authTerminal 终态（认证失败后停止自动重连，用户主动 login/register/authenticate 时重置；AuthTerminalE2eTest 锁定恰好失败一次） | ✅ |
 
 ## P3 — 服务端
 
 | 项 | 说明 | 状态 |
 |----|------|------|
-| ContactService.accept 全表扫 | `listFriends(fromUid).find{}` 优化为直查（两好友行 INSERT 后按 (uid,friendUid) 查） | 📋 |
+| ~~ContactService.accept 全表扫~~ | ✅ 2026-08：Repository.getFriend(uid, friendUid) 单行直查，accept 通知两次查询各扫一次全列表的历史 | ✅ |
 | 错误码国际化 | wire 错误已是分层码（400/401/500/504），剩余：message 中文串 → code 枚举 + 客户端本地化文案表 | 📋 |
 | ChatStore.maxSeq 崩溃窗口 | 内存自增异步落库，崩溃丢增量致重启 seq 回退（updateMaxSeq 带 `< seq` 保护兜底）。WAL/同步刷盘权衡 | 💡 |
 
@@ -47,21 +48,17 @@
 | F15 Desktop Profile 源码级隔离 | 📋 |
 | Android E2E 全流程 T01-T34 剩余用例 | 📋 |
 | ~~服务端视频缩略图生成~~ ✅（2026-08：javacv JNI 抽帧+元数据，图片 Java2D；客户端缓存体系+气泡缩略图数据源+画廊按需加载落地） | ✅ |
-| 拖拽发送人工验证（代码已支持任意文件三分支，DragAndDrop 注入无法自动化） | 📋 |
+| ~~拖拽发送~~ ✅（用户实测通过：拖图即占位+进度+送达；语音/文件同链路） | ✅ |
 | ~~Android 端媒体缓存体系接入~~ ✅（Coil 全局磁盘 LRU 250MB；发送端 uploadWithMeta 服务端元数据，视频本地抽帧兜底） | ✅ |
 | 视频画廊/语音引擎上游缺陷跟踪（compose-media-player 0.9 对音频-only 不上报 duration、不触发 onPlaybackEnded、isPlaying 不回落——已用墙钟兜底，上游修复后可移除） | 📋 |
 | currentUser 非响应式（@Volatile userSession + StateFlow.value 直读，首帧后不刷新；需 AppDataState 暴露 Compose State） | 📋 |
-| 桌面右键菜单人工验证（secondaryClick 代码就位；Robot 注入受辅助功能权限/熄屏限制无法自动化，需人工右键确认回复/转发菜单） | 📋 |
+| ~~桌面右键菜单~~ ✅（用户实测通过：右键弹菜单 + 拖选文字不受干扰） | ✅ |
+| 桌面右键菜单选词闪烁（menuEpoch 重建清选区的视觉闪烁，需事件拦截级方案） | 📋 |
 | ~~消息正文列长度上限 500~~ ✅（2026-08：根因是 Conversations.lastMessage/draft varchar(500)，预览与草稿写入口截断 400 字符；消息体本体在 RocksDB 无限制。LongMessageE2eTest 锁定 2400 字符收发） | ✅ |
-
-## P2 — SDK 补充
-
-| 项 | 状态 |
-|----|------|
-| AUTH_FAILED 后 ImClient 无限重试失效 token（retry=28+ 循环，曾反复踢翻登录窗注册页；应转终态停止自动重连） | 📋 |
 
 ## 已完成里程碑（倒序）
 
+- **SDK 稳定性+服务端优化**（2026-08）：AUTH_FAILED 终态化（失效 token 不再重连风暴，AuthTerminalE2eTest）+ ContactRepository.getFriend 单行直查（accept 通知去全表扫）；语音时长/气泡布局/草稿泄漏/媒体上传动画系列修复（F26-F30）
 - **飞书风格设计系统落地**（2026-08）：doc/04-ui-design 设计事实源（令牌/组件/交互/占位清单）+ `Tk` 令牌体系（spacing/dimens/扩展色板，双端密度）+ 核心组件重造（squircle 头像/会话项时间戳+静音+选中态/气泡双方头像+指向角/输入区工具行左对齐+Enter 发送+已读水位线指示）+ 桌面细导航栏（56dp 图标式）+ TestHttpServer 截图遮挡修复（toFront）。顺带根治服务端 refresh 认证响应漏 username/name（自动登录后客户端身份为空 → '?' 头像，ReconnectE2eTest 加断言锁定）。截图迭代闭环跑通（UI 自动化造数据 → 目视验收）
 - **P0/P1 收尾**（2026-08）：上传接口 Bearer accessToken 鉴权（X-Uid 伪造通道封死）+ 本地库 schema 迁移（.sqm + v1 遗库识别坑修复）+ CLI 入口（headlessDist：register/login/selftest + MSG 行协议，端到端实跑验证）。好友红点时序项核实后关闭（问题不成立，真相是当年 SQL 直插无事件推送）
 - **SDK 完整性收官**（2026-08）：重连三 bug 根治（B10 重放注册掉线 / B11 监听断链假活 / B12 补发游标快照）+ Presence 收敛 shared（契约登记）+ 事件流全家桶（contact/chat/presence）+ ImBot API 全量化（媒体/typing/撤回/群组/搜索）+ 测试体系（LocalCache/EventProcessor 单测 14 用例、bot 集成 9 用例、server 测试真实 PG 化去 embedded）

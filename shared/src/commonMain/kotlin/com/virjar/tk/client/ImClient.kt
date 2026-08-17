@@ -52,6 +52,11 @@ class ImClient(
 
     // 连接级状态（EventLoop 独占）
     private var channel: Channel? = null
+
+    /** 认证终态（AUTH_FAILED 后置位）：停止自动重连——失效 token 重试永远失败，
+     *  曾致 retry=28+ 风暴反复踢翻登录窗（F30）。用户主动 login/register 时重置。 */
+    @Volatile
+    private var authTerminal = false
     private var scope: CoroutineScope? = null
     private val pendingAcks = mutableMapOf<String, CompletableDeferred<MessageAckPayload>>()
 
@@ -132,6 +137,7 @@ class ImClient(
         AuthRules.validateLogin(username, password)
         val auth = AuthRequestPayload(authType = 0, username = username, password = password,
             deviceId = deviceId, deviceName = deviceName)
+        authTerminal = false // 用户主动重登：清除终态
         logger.trace("login requested: username=$username")
         // pendingAuth + connect 原子化，消除协程/EventLoop 竞态
         connectAndAuth(auth, host, port)
@@ -141,6 +147,7 @@ class ImClient(
         AuthRules.validateRegister(username, password)
         val auth = AuthRequestPayload(authType = 1, username = username, password = password,
             name = name, deviceId = deviceId, deviceName = deviceName)
+        authTerminal = false
         logger.trace("register requested: username=$username")
         connectAndAuth(auth, host, port)
     }
@@ -148,6 +155,7 @@ class ImClient(
     fun authenticate(uid: String, token: String, deviceId: String, deviceName: String, host: String = connectHost, port: Int = connectPort) {
         val auth = AuthRequestPayload(authType = 2, refreshToken = token,
             deviceId = deviceId, deviceName = deviceName)
+        authTerminal = false
         logger.trace("authenticate requested: uid=$uid")
         connectAndAuth(auth, host, port)
     }
@@ -358,9 +366,10 @@ class ImClient(
             logger.trace("Authenticated: uid=${response.uid}, username=${response.username}")
         } else {
             val reason = response.reason ?: "认证失败(code=${response.code})"
+            authTerminal = true // 终态：channelInactive 不再自动重连
             _state.value = ConnectionState.AUTH_FAILED
             onAuthResult?.invoke(false, null, null, null, null, null, reason)
-            logger.trace("Auth failed: code=${response.code}, reason=${response.reason}")
+            logger.trace("Auth failed (terminal): code=${response.code}, reason=${response.reason}")
         }
         scope?.launch { incomingPackets.emit(response) }
     }
@@ -439,6 +448,11 @@ class ImClient(
             scope?.cancel()
             scope = null
             channel = null
+            if (authTerminal) {
+                // 认证终态：保持 AUTH_FAILED，不再自动重连（F30：失效 token 风暴）
+                _state.value = ConnectionState.AUTH_FAILED
+                return
+            }
             _state.value = ConnectionState.DISCONNECTED
             scheduleReconnect()
         }
