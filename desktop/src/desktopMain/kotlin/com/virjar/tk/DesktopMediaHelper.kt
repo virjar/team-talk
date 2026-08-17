@@ -104,9 +104,19 @@ object DesktopMediaHelper {
         return runBlocking { fileRepo().upload(bytes, fileName, contentType).getOrThrow() }
     }
 
-    /** 上传并返回服务端媒体元数据（缩略图/宽高/时长）。 */
+    /** 上传并返回服务端媒体元数据（缩略图/宽高/时长；url 绝对化——body 直用，曾现相对路径致渲染 MalformedURLException）。 */
     fun uploadWithMeta(bytes: ByteArray, fileName: String, contentType: String): com.virjar.tk.repository.UploadResult {
-        return runBlocking { fileRepo().uploadWithMeta(bytes, fileName, contentType).getOrThrow() }
+        val r = runBlocking { fileRepo().uploadWithMeta(bytes, fileName, contentType).getOrThrow() }
+        val base = serverUrlBase()
+        return r.copy(
+            url = if (r.url.startsWith("http")) r.url else "$base${r.url}",
+            thumbUrl = r.thumbUrl?.let { if (it.startsWith("http")) it else "$base$it" },
+        )
+    }
+
+    private fun serverUrlBase(): String {
+        val u = fileUrl("")  // resolveUrl 拼装出的完整前缀
+        return u.substringBefore("/api/v1/files")
     }
 
     /** 根据相对 path 拼装完整下载 URL。 */
