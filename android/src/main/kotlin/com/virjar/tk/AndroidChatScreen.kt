@@ -230,12 +230,16 @@ fun AndroidChatScreen(
                             override fun openFile(url: String) {
                                 scope.launch {
                                     try {
+                                        // 兼容存量消息的相对 path（agent 旧链路曾直塞相对 path）
+                                        val full = if (url.startsWith("http")) url
+                                        else com.virjar.tk.repository.FileOps.resolveUrl(
+                                            com.virjar.tk.client.defaultServerConfig().serverUrl, url)
                                         val fileName = url.substringAfterLast("/")
                                         val f = File(context.cacheDir, "downloads/$fileName")
                                         f.parentFile?.mkdirs()
-                                        f.writeBytes(java.net.URL(url).readBytes())
+                                        f.writeBytes(java.net.URL(full).readBytes())
                                         MediaHelper.openFile(context, f, "application/octet-stream")
-                                    } catch (e: Exception) { Log.e("Chat", "Operation failed", e) }
+                                    } catch (e: Exception) { Log.e("Chat", "openFile failed url=$url", e) }
                                 }
                             }
                             override fun showGallery(items: List<GalleryItem>, index: Int) {

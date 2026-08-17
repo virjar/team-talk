@@ -57,7 +57,11 @@ object DesktopMediaHelper {
 
     /** 下载文件到本地缓存，返回缓存文件。 */
     fun downloadToCache(url: String): File {
-        val decoded = URLDecoder.decode(url, "UTF-8")
+        // 兼容存量消息的相对 path（agent/bot 旧链路 uploadAndSendFile 曾直塞相对
+        // path，对端点击 URL() 抛 MalformedURLException 被 openFile 静默吞掉）
+        val full = if (url.startsWith("http")) url
+        else com.virjar.tk.repository.FileOps.resolveUrl(defaultServerConfig().serverUrl, url)
+        val decoded = URLDecoder.decode(full, "UTF-8")
         val name = decoded.substringAfterLast("/").substringBefore("?")
         val cached = File(cacheDir, if (name.isNotBlank()) name else "file_${decoded.hashCode()}")
         if (cached.exists()) return cached
@@ -93,8 +97,11 @@ object DesktopMediaHelper {
     fun openFile(url: String) {
         try {
             Desktop.getDesktop().open(downloadToCache(url))
-        } catch (_: Exception) {
-            try { Desktop.getDesktop().browse(URI(url)) } catch (_: Exception) {}
+        } catch (e: Exception) {
+            // F24 教训：诊断期 catch 禁止静默——至少留下线索
+            System.err.println("[openFile] 打开失败 url=$url: ${e.message}")
+            try { Desktop.getDesktop().browse(URI(url)) }
+            catch (e2: Exception) { System.err.println("[openFile] browse 兜底也失败: ${e2.message}") }
         }
     }
 

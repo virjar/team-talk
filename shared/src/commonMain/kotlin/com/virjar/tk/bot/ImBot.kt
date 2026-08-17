@@ -27,6 +27,7 @@ import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.PresencePayload
 import com.virjar.tk.protocol.payload.MessageAckPayload
+import com.virjar.tk.repository.FileOps
 import com.virjar.tk.repository.FileRepository
 import com.virjar.tk.testing.FakeLocalCache
 import com.virjar.tk.util.AppLog
@@ -141,10 +142,10 @@ class ImBot private constructor(
     suspend fun uploadFile(serverUrl: String, bytes: ByteArray, fileName: String, contentType: String): String =
         FileRepository(serverUrl, userSession.accessToken ?: SessionContext.accessToken).upload(bytes, fileName, contentType).getOrThrow()
 
-    /** 上传并发送一步到位。 */
+    /** 上传并发送一步到位。body.url 绝对化（相对 path 直塞曾致对端点击文件无反应）。 */
     suspend fun uploadAndSendFile(serverUrl: String, chatId: String, bytes: ByteArray, fileName: String, contentType: String): MessageAckPayload {
         val path = uploadFile(serverUrl, bytes, fileName, contentType)
-        return sendFile(chatId, path, fileName, bytes.size.toLong())
+        return sendFile(chatId, FileOps.resolveUrl(serverUrl, path), fileName, bytes.size.toLong())
     }
 
     /** 发送 typing 指示（不等 ACK——服务端对 TYPING 消息只广播不回执）。 */
