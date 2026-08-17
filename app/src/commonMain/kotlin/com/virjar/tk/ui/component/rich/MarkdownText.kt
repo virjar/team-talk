@@ -154,8 +154,12 @@ internal object MdParser {
                         ?.joinToString("") { it.getTextInNode(src).toString() }
                         .orEmpty()
                     when {
-                        dest != null && dest.startsWith("mention://") ->
-                            out += MdSpan.Mention(uid = dest.removePrefix("mention://"), name = label.ifBlank { dest })
+                        dest != null && dest.startsWith("mention://") -> {
+                            // 全角标点后 parser 会把 @ 并进 LINK_TEXT（半角空格后则是独立叶子），
+                            // 统一去前导 @ 防止渲染 @@（后处理只覆盖独立叶子场景）
+                            val name = label.ifBlank { dest }.removePrefix("@")
+                            out += MdSpan.Mention(uid = dest.removePrefix("mention://"), name = name)
+                        }
                         dest != null -> out += MdSpan.Link(label = label.ifBlank { dest }, url = dest)
                         else -> out += MdSpan.Styled(label.ifBlank { node.getTextInNode(src).toString() }, style.bold, style.italic, style.strike, style.code)
                     }
@@ -185,7 +189,30 @@ internal object MdParser {
             }
         }
         children.forEach { walk(it, MdSpan.Styled(""), inStructure = !literalMarkers) }
-        return out
+
+        // `@[名](mention://uid)` 的 `@` 会被 parser 并进前置文本（"完成！@" 或独立 "@" 叶子），
+        // Mention 渲染再补 "@" 会输出 "@@名"（曾现连续双 @）——剥离紧邻前节点尾部的一个 "@"
+        val result = out.toMutableList()
+        var i = 1
+        while (i < result.size) {
+            if (result[i] is MdSpan.Mention) {
+                when (val prev = result[i - 1]) {
+                    is MdSpan.Text -> if (prev.text.endsWith("@")) {
+                        result[i - 1] = prev.copy(text = prev.text.dropLast(1))
+                    }
+                    is MdSpan.Styled -> if (prev.text.endsWith("@")) {
+                        result[i - 1] = prev.copy(text = prev.text.dropLast(1))
+                    }
+                    else -> {}
+                }
+                val stripped = result[i - 1]
+                val empty = (stripped is MdSpan.Text && stripped.text.isEmpty()) ||
+                    (stripped is MdSpan.Styled && stripped.text.isEmpty())
+                if (empty) result.removeAt(i - 1)
+            }
+            i++
+        }
+        return result
     }
 }
 

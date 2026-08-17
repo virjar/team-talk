@@ -122,6 +122,31 @@ class MarkdownParseTest {
     }
 
     @Test
+    fun `mention 不重复渲染 @ 符号`() {
+        // `@[名](mention://uid)` 的 @ 是链接前置文本叶子，Mention 再补 @ 会得到 "@@名"（曾现 bug）
+        val p = MdParser.parse("你好 @[张三](mention://uid1) 看看")[0] as MdBlock.Paragraph
+        val mentionIdx = p.spans.indexOfFirst { it is MdSpan.Mention }
+        assertTrue(mentionIdx > 0)
+        val before = p.spans[mentionIdx - 1]
+        val beforeText = when (before) { is MdSpan.Text -> before.text; is MdSpan.Styled -> before.text; else -> "" }
+        assertTrue(beforeText != "@", "Mention 前不应残留独立 @ 节点: $before")
+        assertEquals(MdSpan.Mention("uid1", "张三"), p.spans[mentionIdx])
+    }
+
+    @Test
+    fun `全角标点后的 mention 不双 @`() {
+        // 真实消息场景：全角标点后 parser 把 @ 并进前段文本（"完成！@"），非独立叶子
+        val p = MdParser.parse("**富文本二期**完成！@[DemoUser uidesign2](mention://dQ3KUFf7) 请验收")[0] as MdBlock.Paragraph
+        val mentionIdx = p.spans.indexOfFirst { it is MdSpan.Mention }
+        val joined = p.spans.joinToString("") {
+            when (it) { is MdSpan.Text -> it.text; is MdSpan.Styled -> it.text; else -> "@NAME" }
+        }
+        // 拼接结果只允许出现一个 @（mention 位以占位符计）
+        val rendered = joined.replace("@NAME", "@DemoUser uidesign2")
+        assertEquals(1, rendered.count { it == '@' }, "渲染拼接: $rendered")
+    }
+
+    @Test
     fun `列表项不泄漏列表标记`() {
         // `- ` 是结构不是内容，不得出现在 spans 文本里（曾泄漏为 "• - 第一项"）
         val blocks = MdParser.parse("- 第一项\n- 第二项")
