@@ -30,6 +30,15 @@ import java.util.concurrent.TimeUnit
  * ```
  */
 fun main(args: Array<String>) {
+    // 子命令：install（systemd 服务化，Linux）/ uninstall
+    if (args.firstOrNull() == "install") {
+        AgentService.install(args.drop(1))
+        return
+    }
+    if (args.firstOrNull() == "uninstall") {
+        AgentService.uninstall()
+        return
+    }
     val opts = AgentCli.parse(args)
     val env = System.getenv()
     val host = opts["host"] ?: env["TK_HOST"] ?: "im.virjar.com"

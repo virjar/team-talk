@@ -14,7 +14,7 @@ import java.net.URLEncoder
  * tt-cli：无状态薄客户端（doc/11-cli-agent 二期）。
  * 所有命令经本地 REST 转发给常驻 tt-agent；`--json` 输出机器可读（e2e 断言用）。
  *
- * 配置：~/.tt-cli（内容为 agent api token）；或 --token / TT_TOKEN env；--api 默认 127.0.0.1:8601
+ * 配置：~/.tt-cli（内容为 agent api token）；或 --token / TT_TOKEN env；--api 默认 127.0.0.1:8600
  *
  * 用法示例：
  * ```
@@ -50,9 +50,9 @@ fun main(args: Array<String>) {
         } else i++
     }
 
-    val api = flagValues["api"] ?: System.getenv("TT_API") ?: "127.0.0.1:8601"
-    val token = flagValues["token"] ?: System.getenv("TT_TOKEN")
-        ?: File(System.getenv("TT_CLI_CONFIG") ?: "${System.getProperty("user.home")}/.tt-cli")
+    val api = flagValues["api"] ?: System.getenv("TT_API") ?: "127.0.0.1:8600"
+    val token = (flagValues["token"] ?: System.getenv("TT_TOKEN")?.takeIf { it.isNotBlank() })
+        ?: File(System.getenv("TT_CLI_CONFIG")?.takeIf { it.isNotBlank() } ?: "${System.getProperty("user.home")}/.tt-cli")
             .takeIf { it.exists() }?.readText()?.trim()
 
     if (token == null) {
