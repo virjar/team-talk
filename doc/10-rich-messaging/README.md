@@ -3,6 +3,19 @@
 > 2026-08 调研。目标：消息录入升级为富文本，支持 @、控制指令，并为未来卡片交互铺路。
 > 结论先行：**渲染自研（JetBrains parser `org.jetbrains:markdown` + AnnotatedString 渲染层，`ui/component/rich/MarkdownText.kt`）；录入走 Slack/Discord 模式（语法高亮输入 + 补全，不做 WYSIWYG 编辑器）；wire 新增 RICH_TEXT 消息类型（markdown + mentions 侧信道 + plainText）；卡片走独立消息类型不塞 markdown。**
 
+## 0.1 录入方案升级：fork 源码 WYSIWYG（2026-08-17）
+
+一期定的"Slack 式源码+语法高亮"输入升级为**真 WYSIWYG**：fork `compose-rich-editor`
+（MohamedRejeb，Apache 2.0）源码进主仓库 `richeditor/` 模块（治理规范见其 FORK.md：
+`// [TT]` 标注 + 改动登记表 + 上游同步策略；基线 commit 与主项目同 CMP 1.10.3 线）。
+
+- 输入区：`BasicRichTextEditor`（minLines=3 所见即所得，粗体实时渲染）
+- 工具栏 B/I/S/代码 → `toggleSpanStyle` 直改样式（不再是语法符号包裹）
+- 发送 `toMarkdown()` → RICH_TEXT（实测全选+B 键发送，消息 type=16 含 `**` 语法）
+- 草稿双向 `setMarkdown/toMarkdown`；表情 `insertAtCaret`（[TT] 定制）
+- 待做（[TT] 后续定制）：mention 富 span（编辑器内显示 @名 胶囊替代链接语法原文）、
+  代码样式 span 的 markdown 序列化
+
 ## 0. 选型变更记录（一期实施后）
 
 **放弃 mikepenz/multiplatform-markdown-renderer**（2026-08 实测，F17）：

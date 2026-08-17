@@ -482,24 +482,36 @@ object TestHttpServer {
     }
 
     /**
-     * /keypress?key=ESCAPE  注入键盘事件（ESC 等，用于关闭面板/对话框）
-     * 支持：ESCAPE / ENTER / TAB / BACKSPACE
+     * /keypress?key=ESCAPE          注入键盘事件
+     * /keypress?key=A&meta=true     带 Cmd（macOS）/Ctrl 修饰键（全选等组合）
+     * 支持：ESCAPE / ENTER / TAB / BACKSPACE / A..Z / 0..9
      */
     private fun handleKeypress(exchange: HttpExchange) {
         val params = exchange.queryParams()
         val keyName = params["key"]?.uppercase() ?: "ESCAPE"
+        val meta = params["meta"]?.toBoolean() == true
         val keyCode = when (keyName) {
             "ESCAPE" -> KeyEvent.VK_ESCAPE
             "ENTER" -> KeyEvent.VK_ENTER
             "TAB" -> KeyEvent.VK_TAB
             "BACKSPACE" -> KeyEvent.VK_BACK_SPACE
-            else -> KeyEvent.VK_ESCAPE
+            else -> KeyEvent.getExtendedKeyCodeForChar(keyName.firstOrNull()?.code ?: ' '.code)
         }
-        robot.keyPress(keyCode)
-        robot.keyRelease(keyCode)
+        if (meta) {
+            val mod = if (System.getProperty("os.name").lowercase().contains("mac")) KeyEvent.VK_META else KeyEvent.VK_CONTROL
+            robot.keyPress(mod)
+            Thread.sleep(30)
+            robot.keyPress(keyCode)
+            robot.keyRelease(keyCode)
+            Thread.sleep(30)
+            robot.keyRelease(mod)
+        } else {
+            robot.keyPress(keyCode)
+            robot.keyRelease(keyCode)
+        }
         robot.waitForIdle()
         Thread.sleep(50)
-        exchange.send(200, """{"key":"$keyName","code":$keyCode}""")
+        exchange.send(200, """{"key":"$keyName","meta":$meta,"code":$keyCode}""")
     }
 
     // ───────── 语义树访问 ─────────

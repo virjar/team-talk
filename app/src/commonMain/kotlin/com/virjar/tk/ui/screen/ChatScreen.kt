@@ -58,6 +58,8 @@ import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.ui.component.AvatarPlaceholder
 import com.virjar.tk.ui.component.isEdgeToEdgeMedia
 import com.virjar.tk.ui.platform.secondaryClick
+import com.mohamedrejeb.richeditor.model.rememberRichTextState
+import com.mohamedrejeb.richeditor.ui.BasicRichTextEditor
 import com.virjar.tk.ui.theme.Tk
 import com.virjar.tk.viewmodel.ChatViewModel
 import java.util.UUID
@@ -123,41 +125,37 @@ fun ChatPanel(
     var menuMessage by remember { mutableStateOf<Message?>(null) }
     var replyingTo by remember { mutableStateOf<Message?>(null) }
     var editingMessage by remember { mutableStateOf<Message?>(null) }
-    // TextFieldValue（而非 String）：光标/选区状态是格式键包裹与表情插入的前提
-    var inputField by rememberSaveable(stateSaver = TextFieldValue.Saver) {
-        mutableStateOf(TextFieldValue(initialDraft ?: ""))
-    }
+    // WYSIWYG 富文本编辑状态（fork 源码引入，见 richeditor/FORK.md）
+    val richState = rememberRichTextState()
     var showEmoji by remember { mutableStateOf(false) }
     var showAttach by remember { mutableStateOf(false) }
     val inputFocus = remember { FocusRequester() }
 
-    // @ / / 补全查询（从光标上下文推导；emoji/attach 面板打开时抑制）
-    val mentionQuery = if (!showEmoji && !showAttach) detectMentionQuery(inputField) else null
-    val slashQuery = if (!showEmoji && !showAttach && mentionQuery == null) detectSlashQuery(inputField) else null
+    // 会话切换：恢复草稿（markdown 双向：setMarkdown/toMarkdown）
+    LaunchedEffect(chatId, initialDraft) {
+        richState.setMarkdown(initialDraft.orEmpty())
+    }
 
-    /** 选中 mention 候选：替换 @query 为完整链接语法（视觉由 transformation 折叠显示） */
+    // @ / / 补全查询（从光标上下文推导；emoji/attach 面板打开时抑制）
+    val inputView = TextFieldValue(richState.annotatedString.text, richState.selection)
+    val mentionQuery = if (!showEmoji && !showAttach) detectMentionQuery(inputView) else null
+    val slashQuery = if (!showEmoji && !showAttach && mentionQuery == null) detectSlashQuery(inputView) else null
+
+    /** 选中 mention 候选：替换 @query 为完整链接语法（编辑器内以 markdown 链接样式呈现） */
     fun pickMention(user: com.virjar.tk.model.User) {
         val q = mentionQuery ?: return
-        val pos = inputField.selection.min
         val syntax = "@[${user.name.ifBlank { user.username ?: user.uid }}](mention://${user.uid}) "
-        inputField = TextFieldValue(
-            inputField.text.substring(0, q.atIndex) + syntax + inputField.text.substring(pos),
-            TextRange(q.atIndex + syntax.length),
-        )
+        richState.replaceRange(q.atIndex, inputView.selection.min, syntax)
         inputFocus.requestFocus()
     }
 
-    /** 选中 / 指令候选：把行首不完整 token（如 /s）回填为完整命令 + 空格，正文留待用户续输；发送时再展开 */
+    /** 选中 / 指令候选：把行首不完整 token（如 /s）回填为完整命令 + 空格；发送时再展开 */
     fun pickSlash(cmd: String) {
-        val text = inputField.text
-        val pos = inputField.selection.min
+        val text = inputView.text
+        val pos = inputView.selection.min
         val lineStart = text.lastIndexOf('\n', (pos - 1).coerceAtLeast(0)).let { if (pos == 0) 0 else it + 1 }
         val tokenEnd = text.indexOf(' ', lineStart).let { if (it < 0) text.length else it }
-        val replacement = "$cmd "
-        inputField = TextFieldValue(
-            text.substring(0, lineStart) + replacement + text.substring(tokenEnd),
-            TextRange(lineStart + replacement.length),
-        )
+        richState.replaceRange(lineStart, tokenEnd, "$cmd ")
         inputFocus.requestFocus()
     }
     var voiceMode by rememberSaveable { mutableStateOf(false) }
@@ -166,7 +164,7 @@ fun ChatPanel(
 
     // Save draft on dispose
     DisposableEffect(chatId) {
-        onDispose { onDraftChange?.invoke(inputField.text) }
+        onDispose { onDraftChange?.invoke(richState.toMarkdown()) }
     }
 
     LaunchedEffect(error) {
@@ -180,27 +178,22 @@ fun ChatPanel(
     LaunchedEffect(editingMessage) {
         editingMessage?.let { msg ->
             val t = (msg.body as? TextBody)?.text ?: (msg.body as? RichTextBody)?.markdown ?: ""
-            inputField = TextFieldValue(t)
+            richState.setMarkdown(t)
         }
-    }
-
-    // mention 视觉折叠（@[名](mention://uid) → @名 高亮块）；主题色变化时重建
-    val mentionColor = MaterialTheme.colorScheme.primary
-    val mentionTransformation = androidx.compose.runtime.remember(mentionColor) {
-        MentionVisualTransformation(mentionColor, mentionColor.copy(alpha = 0.15f))
     }
 
     // ── 发送动作（按钮与 Enter 共用）──
     val sendAction: () -> Unit = {
+        // WYSIWYG 编辑器导出 markdown（粗体等样式已编码为 **xx** 语法）
+        val rawText = richState.toMarkdown().trim()
         // / 指令展开（/shrug 等）；未注册指令原样透传（服务端/bot 二期解析）
-        val rawText = inputField.text
         val inputText = if (rawText.startsWith("/")) expandSlashCommand(rawText) ?: rawText else rawText
         if (inputText.isNotBlank()) {
             if (editingMessage != null) {
                 val edited = editingMessage!!.copy(body = TextBody(inputText))
                 viewModel.editMessage(edited)
                 editingMessage = null
-                inputField = TextFieldValue("")
+                richState.clear()
             } else {
                 val target = replyingTo
                 val message = if (target != null) {
@@ -236,7 +229,7 @@ fun ChatPanel(
                     )
                 }
                 viewModel.sendMessage(message)
-                inputField = TextFieldValue("")
+                richState.clear()
                 replyingTo = null
             }
         }
@@ -331,7 +324,6 @@ fun ChatPanel(
                                                 text = { Text("编辑") },
                                                 onClick = {
                                                     editingMessage = msg
-                                                    inputField = TextFieldValue((msg.body as? TextBody)?.text ?: (msg.body as? RichTextBody)?.markdown ?: "")
                                                     menuMessage = null
                                                 },
                                             )
@@ -423,7 +415,7 @@ fun ChatPanel(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text("编辑消息", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
-                        TextButton(onClick = { editingMessage = null; inputField = TextFieldValue("") }) { Text("取消") }
+                        TextButton(onClick = { editingMessage = null; richState.clear() }) { Text("取消") }
                     }
                 }
 
@@ -432,33 +424,14 @@ fun ChatPanel(
                 val effectivePickVideo = media?.onPickVideo
                 val hasAttachment = effectivePickImage != null || effectivePickFile != null || effectivePickVideo != null
                 if (effectiveAttachClick != null || hasAttachment || effectiveVoiceRecord != null) {
-                    val inputHasSelection = inputField.selection.collapsed.not()
 
-                    // 格式键：选中文本包裹语法；无选中插入空语法光标居中
-                    val applyFormat: (String) -> Unit = { marker ->
-                        val v = inputField
-                        val sel = v.selection
-                        if (sel.collapsed) {
-                            val pos = sel.min
-                            inputField = TextFieldValue(
-                                v.text.substring(0, pos) + marker + marker + v.text.substring(pos),
-                                TextRange(pos + marker.length),
-                            )
-                        } else {
-                            val start = sel.min
-                            val end = sel.max
-                            inputField = TextFieldValue(
-                                v.text.substring(0, start) + marker + v.text.substring(start, end) + marker + v.text.substring(end),
-                                TextRange(start + marker.length, end + marker.length),
-                            )
-                        }
+                    // WYSIWYG 格式键：样式直改（选中文本立即变粗体/斜体…，toMarkdown 时编码为语法）
+                    val applyFormat: (androidx.compose.ui.text.SpanStyle) -> Unit = { style ->
+                        richState.toggleSpanStyle(style)
+                        inputFocus.requestFocus()
                     }
                     val insertEmoji: (String) -> Unit = { emoji ->
-                        val pos = inputField.selection.min
-                        inputField = TextFieldValue(
-                            inputField.text.substring(0, pos) + emoji + inputField.text.substring(pos),
-                            TextRange(pos + emoji.length),
-                        )
+                        richState.insertAtCaret(emoji)
                     }
 
                     Row(
@@ -488,11 +461,11 @@ fun ChatPanel(
                             }
                         }
 
-                        // markdown 格式键（B/I/S/代码），选中时包裹
-                        FormatKey("B", "**", inputHasSelection, applyFormat, "chat.fmt.bold")
-                        FormatKey("I", "*", inputHasSelection, applyFormat, "chat.fmt.italic")
-                        FormatKey("S", "~~", inputHasSelection, applyFormat, "chat.fmt.strike")
-                        FormatKey("</>", "`", inputHasSelection, applyFormat, "chat.fmt.code")
+                        // WYSIWYG 格式键（B/I/S/代码）：直改样式
+                        FormatKey("B", androidx.compose.ui.text.SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), applyFormat, "chat.fmt.bold")
+                        FormatKey("I", androidx.compose.ui.text.SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic), applyFormat, "chat.fmt.italic")
+                        FormatKey("S", androidx.compose.ui.text.SpanStyle(textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough), applyFormat, "chat.fmt.strike")
+                        FormatKey("</>", androidx.compose.ui.text.SpanStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace), applyFormat, "chat.fmt.code")
 
                         // 语音/键盘切换
                         IconButton(onClick = { voiceMode = !voiceMode }, modifier = Modifier.testTag("chat.voiceMode")) {
@@ -565,36 +538,45 @@ fun ChatPanel(
                             }
                         }
                     } else {
-                        OutlinedTextField(
-                            value = inputField,
-                            onValueChange = { inputField = it },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("chat.input")
-                                .focusRequester(inputFocus)
-                                .onPreviewKeyEvent { event ->
-                                    // Enter 发送 / Shift+Enter 换行（桌面硬件键盘；Android 走 IME Send）
-                                    if (event.type == KeyEventType.KeyDown &&
-                                        event.key == Key.Enter && !event.isShiftPressed
-                                    ) {
-                                        sendAction()
-                                        true
-                                    } else {
-                                        false
-                                    }
-                                },
-                            placeholder = {
+                        // WYSIWYG 富文本编辑区：所见即所得（粗体实时渲染），导出走 toMarkdown
+                        Box(modifier = Modifier.weight(1f)) {
+                            BasicRichTextEditor(
+                                state = richState,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 72.dp, max = 200.dp)
+                                    .testTag("chat.input")
+                                    .focusRequester(inputFocus)
+                                    .onPreviewKeyEvent { event ->
+                                        // Enter 发送 / Shift+Enter 换行（桌面；Android 走 IME Send）
+                                        if (event.type == KeyEventType.KeyDown &&
+                                            event.key == Key.Enter && !event.isShiftPressed
+                                        ) {
+                                            sendAction()
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    },
+                                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                    color = androidx.compose.material3.LocalContentColor.current,
+                                ),
+                                minLines = 3,
+                                maxLines = 8,
+                                cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                                keyboardActions = KeyboardActions(onSend = { sendAction() }),
+                            )
+                            // 占位符（编辑器空态时）
+                            if (richState.annotatedString.text.isEmpty()) {
                                 Text(
                                     if (editingMessage != null) "编辑消息…" else "输入消息…",
+                                    style = MaterialTheme.typography.bodyMedium,
                                     color = Tk.colors.metaText,
+                                    modifier = Modifier.align(Alignment.CenterStart).testTag("chat.input.hint"),
                                 )
-                            },
-                            maxLines = 6,
-                            shape = MaterialTheme.shapes.small,
-                            visualTransformation = mentionTransformation,
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                            keyboardActions = KeyboardActions(onSend = { sendAction() }),
-                        )
+                            }
+                        }
                     }
                     Spacer(Modifier.width(Tk.spacing.sm))
                     Button(
@@ -602,7 +584,7 @@ fun ChatPanel(
                         modifier = Modifier
                             .testTag("chat.send")
                             .height(Tk.dimens.inputMinHeight),
-                        enabled = inputField.text.isNotBlank(),
+                        enabled = richState.annotatedString.text.isNotBlank(),
                         shape = MaterialTheme.shapes.small,
                         contentPadding = PaddingValues(horizontal = Tk.spacing.lg),
                     ) {
@@ -792,18 +774,17 @@ private fun MessageBubble(
 
 
 /**
- * markdown 格式键（B/I/S/代码）。选中文本时按钮高亮提示可包裹。
+ * WYSIWYG 格式键（B/I/S/代码）：对选区直改 SpanStyle（发送时编码为 markdown 语法）。
  */
 @Composable
 private fun FormatKey(
     label: String,
-    marker: String,
-    selectionActive: Boolean,
-    onApply: (String) -> Unit,
+    style: androidx.compose.ui.text.SpanStyle,
+    onApply: (androidx.compose.ui.text.SpanStyle) -> Unit,
     testTag: String,
 ) {
     TextButton(
-        onClick = { onApply(marker) },
+        onClick = { onApply(style) },
         modifier = Modifier.height(32.dp).width(40.dp).testTag(testTag),
         contentPadding = PaddingValues(horizontal = Tk.spacing.sm),
     ) {
@@ -811,7 +792,7 @@ private fun FormatKey(
             label,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-            color = if (selectionActive) MaterialTheme.colorScheme.primary else Tk.colors.secondaryText,
+            color = Tk.colors.secondaryText,
         )
     }
 }

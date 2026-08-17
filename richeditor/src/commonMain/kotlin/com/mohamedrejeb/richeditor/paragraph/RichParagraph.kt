@@ -1,0 +1,436 @@
+package com.mohamedrejeb.richeditor.paragraph
+
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.ParagraphStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.util.fastForEach
+import androidx.compose.ui.util.fastForEachIndexed
+import androidx.compose.ui.util.fastForEachReversed
+import com.mohamedrejeb.richeditor.annotation.ExperimentalRichTextApi
+import com.mohamedrejeb.richeditor.model.HeadingStyle
+import com.mohamedrejeb.richeditor.model.RichSpan
+import com.mohamedrejeb.richeditor.model.RichSpanStyle
+import com.mohamedrejeb.richeditor.paragraph.type.DefaultParagraph
+import com.mohamedrejeb.richeditor.paragraph.type.ListMarkerStyleBehavior
+import com.mohamedrejeb.richeditor.paragraph.type.ParagraphType
+import com.mohamedrejeb.richeditor.paragraph.type.ParagraphType.Companion.startText
+import com.mohamedrejeb.richeditor.ui.test.getRichTextStyleTreeRepresentation
+import com.mohamedrejeb.richeditor.utils.customMerge
+import com.mohamedrejeb.richeditor.utils.unmerge
+
+internal class RichParagraph(
+    val key: Int = 0,
+    val children: MutableList<RichSpan> = mutableListOf(),
+    var paragraphStyle: ParagraphStyle = DefaultParagraphStyle,
+    var type: ParagraphType = DefaultParagraph(),
+    /**
+     * When true, this paragraph was created from a `<br>` tag during HTML parsing
+     * and should be joined with the previous paragraph using `<br>` in HTML output
+     * rather than being wrapped in its own `<p>` tag.
+     */
+    var isFromLineBreak: Boolean = false,
+    headingStyle: HeadingStyle = HeadingStyle.Normal,
+) {
+
+    /**
+     * Heading level applied to this paragraph (Normal | H1..H6).
+     *
+     * Heading is paragraph-level, so we store it directly on the paragraph rather than detecting
+     * it back from span fingerprints. Public assignment goes through [setHeadingStyle] which
+     * keeps children's [SpanStyle] and the paragraph's [ParagraphStyle] in sync with the chosen
+     * level. Direct field mutation (parsers seeding state from HTML/Markdown) bypasses the
+     * side effects and is intentional for code paths that already apply the visual styles
+     * via the parser's tag-style maps.
+     */
+    var headingStyle: HeadingStyle = headingStyle
+
+    @OptIn(ExperimentalRichTextApi::class)
+    fun getRichSpanByTextIndex(
+        paragraphIndex: Int,
+        textIndex: Int,
+        offset: Int = 0,
+        ignoreCustomFiltering: Boolean = false,
+    ): Pair<Int, RichSpan?> {
+        var index = offset
+
+        // If the paragraph is not the first one, we add 1 to the index which stands for the line break
+        if (paragraphIndex > 0)
+            index++
+
+        // Set the startRichSpan paragraph and textRange to ensure that it has the correct and latest values
+        type.startRichSpan.paragraph = this
+        type.startRichSpan.textRange = TextRange(index, index + type.startText.length)
+
+        // Add the startText length to the index
+        index += type.startText.length
+
+        // If the paragraph is empty, we add a RichSpan to avoid skipping the paragraph when searching
+        if (children.isEmpty())
+            children.add(
+                RichSpan(
+                    paragraph = this,
+                    textRange = TextRange(index),
+                )
+            )
+
+        // Check if the textIndex is in the startRichSpan current paragraph
+        if (index > textIndex)
+            return index to getFirstNonEmptyChild(offset = index)
+
+        children.fastForEach { richSpan ->
+            val result = richSpan.getRichSpanByTextIndex(
+                textIndex = textIndex,
+                offset = index,
+                ignoreCustomFiltering = ignoreCustomFiltering,
+            )
+            if (result.second != null)
+                return result
+            else
+                index = result.first
+        }
+
+        return index to null
+    }
+
+    @OptIn(ExperimentalRichTextApi::class)
+    fun getRichSpanListByTextRange(
+        paragraphIndex: Int,
+        searchTextRange: TextRange,
+        offset: Int = 0,
+    ): Pair<Int, List<RichSpan>> {
+        var index = offset
+
+        // If the paragraph is not the first one, we add 1 to the index which stands for the line break
+        if (paragraphIndex > 0) index++
+
+        // Set the startRichSpan paragraph and textRange to ensure that it has the correct and latest values
+        type.startRichSpan.paragraph = this
+        type.startRichSpan.textRange = TextRange(index, index + type.startText.length)
+
+        // Add the startText length to the index
+        index += type.startText.length
+
+        // If the paragraph is empty, we add a RichSpan to avoid skipping the paragraph when searching
+        if (children.isEmpty()) children.add(
+            RichSpan(
+                paragraph = this,
+                textRange = TextRange(index),
+            )
+        )
+
+        val richSpanList = mutableListOf<RichSpan>()
+        children.fastForEach { richSpan ->
+            val result = richSpan.getRichSpanListByTextRange(
+                searchTextRange = searchTextRange,
+                offset = index,
+            )
+            richSpanList.addAll(result.second)
+            index = result.first
+        }
+        return index to richSpanList
+    }
+
+    fun removeTextRange(
+        textRange: TextRange,
+        offset: Int,
+    ): RichParagraph? {
+        var index = offset
+        val toRemoveIndices = mutableListOf<Int>()
+
+        for (i in 0..children.lastIndex) {
+            val child = children[i]
+            val result = child.removeTextRange(textRange, index)
+            val newRichSpan = result.second
+
+            if (newRichSpan != null)
+                children[i] = newRichSpan
+            else
+                toRemoveIndices.add(i)
+
+            index = result.first
+        }
+
+        for (i in toRemoveIndices.lastIndex downTo 0) {
+            children.removeAt(toRemoveIndices[i])
+        }
+
+        if (children.isEmpty())
+            return null
+
+        return this
+    }
+
+    fun getTextRange(): TextRange {
+        var start = type.startRichSpan.textRange.min
+        var end = 0
+
+        if (type.startRichSpan.text.isNotEmpty())
+            end += type.startRichSpan.text.length
+
+        children.lastOrNull()?.let { richSpan ->
+            end = richSpan.fullTextRange.end
+        }
+
+        return TextRange(start, end)
+    }
+
+    fun isEmpty(ignoreStartRichSpan: Boolean = true): Boolean {
+        if (!ignoreStartRichSpan && !type.startRichSpan.isEmpty()) return false
+
+        if (children.isEmpty()) return true
+        children.fastForEach { richSpan ->
+            if (!richSpan.isEmpty()) return false
+        }
+        return true
+    }
+
+    fun isNotEmpty(ignoreStartRichSpan: Boolean = true): Boolean = !isEmpty(ignoreStartRichSpan)
+
+    fun isBlank(ignoreStartRichSpan: Boolean = true): Boolean {
+        if (!ignoreStartRichSpan && !type.startRichSpan.isBlank()) return false
+
+        if (children.isEmpty()) return true
+        children.fastForEach { richSpan ->
+            if (!richSpan.isBlank()) return false
+        }
+        return true
+    }
+
+    fun isNotBlank(ignoreStartRichSpan: Boolean = true): Boolean = !isBlank(ignoreStartRichSpan)
+
+    /**
+     * Compute the [SpanStyle] used for the list marker (the "•", "1.", etc.
+     * prefix appended by [ParagraphType.startText]) based on the chosen
+     * [behavior] and the paragraph's content.
+     *
+     * See [ListMarkerStyleBehavior] for what is kept versus stripped.
+     */
+    @OptIn(ExperimentalRichTextApi::class)
+    fun getListMarkerSpanStyle(behavior: ListMarkerStyleBehavior): SpanStyle =
+        when (behavior) {
+            ListMarkerStyleBehavior.InheritFromText ->
+                getStartTextSpanStyle()?.copy(
+                    textDecoration = null,
+                    background = Color.Unspecified,
+                    baselineShift = null,
+                    shadow = null,
+                    textGeometricTransform = null,
+                ) ?: RichSpanStyle.DefaultSpanStyle
+            ListMarkerStyleBehavior.AlwaysDefault ->
+                RichSpanStyle.DefaultSpanStyle
+        }
+
+    @OptIn(ExperimentalRichTextApi::class)
+    fun getStartTextSpanStyle(): SpanStyle? {
+        children.fastForEach { richSpan ->
+            if (richSpan.text.isNotEmpty()) {
+                return richSpan.spanStyle
+            } else {
+                val result = richSpan.getStartTextSpanStyle(SpanStyle())
+
+                if (result != null)
+                    return result
+            }
+        }
+
+        var deepFirstChild = children.firstOrNull() ?: return null
+        var childChildren = deepFirstChild.children
+
+        while (childChildren.isNotEmpty()) {
+            deepFirstChild = childChildren.firstOrNull() ?: break
+            childChildren = deepFirstChild.children
+        }
+
+        deepFirstChild.spanStyle = deepFirstChild.fullSpanStyle
+        deepFirstChild.richSpanStyle = deepFirstChild.fullStyle
+        deepFirstChild.children.clear()
+        deepFirstChild.parent = null
+
+        children.clear()
+        children.add(deepFirstChild)
+
+        return deepFirstChild.spanStyle
+    }
+
+    /**
+     * Apply [newHeadingStyle] to this paragraph idempotently. The previous heading's visual
+     * [SpanStyle] / [ParagraphStyle] are stripped from children before the new ones are applied,
+     * so toggling H1 -> H2 -> H1 does not stack font sizes. Passing [HeadingStyle.Normal] clears
+     * the visual style entirely.
+     *
+     * Direct assignment to [headingStyle] is reserved for parsers that already applied the visual
+     * style via tag-style maps; user-facing mutations should go through this function.
+     */
+    fun applyHeadingStyle(newHeadingStyle: HeadingStyle) {
+        if (newHeadingStyle == headingStyle) return
+
+        // Strip the previously applied heading visuals (no-op if Normal).
+        if (headingStyle != HeadingStyle.Normal) {
+            removeHeadingVisuals(headingStyle.defaultSpanStyle, headingStyle.defaultParagraphStyle)
+        }
+
+        headingStyle = newHeadingStyle
+
+        // Apply the new heading visuals (no-op if Normal).
+        if (newHeadingStyle != HeadingStyle.Normal) {
+            addHeadingVisuals(newHeadingStyle.defaultSpanStyle, newHeadingStyle.defaultParagraphStyle)
+        }
+    }
+
+    private fun addHeadingVisuals(spanStyle: SpanStyle, paragraphStyle: ParagraphStyle) {
+        children.fastForEach { richSpan ->
+            richSpan.spanStyle = richSpan.spanStyle.customMerge(spanStyle)
+        }
+        this.paragraphStyle = this.paragraphStyle.merge(paragraphStyle)
+    }
+
+    private fun removeHeadingVisuals(spanStyle: SpanStyle, paragraphStyle: ParagraphStyle) {
+        children.fastForEach { richSpan ->
+            richSpan.spanStyle = richSpan.spanStyle.unmerge(spanStyle)
+        }
+        this.paragraphStyle = this.paragraphStyle.unmerge(paragraphStyle)
+    }
+
+
+    fun getFirstNonEmptyChild(offset: Int = -1): RichSpan? {
+        children.fastForEach { richSpan ->
+            if (richSpan.text.isNotEmpty()) {
+                if (offset != -1)
+                    richSpan.textRange = TextRange(offset, offset + richSpan.text.length)
+
+                return richSpan
+            } else {
+                val result = richSpan.getFirstNonEmptyChild(offset)
+
+                if (result != null)
+                    return result
+            }
+        }
+
+        val firstChild = children.firstOrNull()
+
+        children.clear()
+
+        if (firstChild != null) {
+            firstChild.children.clear()
+
+            if (offset != -1)
+                firstChild.textRange = TextRange(offset, offset + firstChild.text.length)
+
+            children.add(firstChild)
+        }
+
+        return firstChild
+    }
+
+    fun getLastNonEmptyChild(): RichSpan? {
+        for (i in children.lastIndex downTo 0) {
+            val richSpan = children[i]
+            if (richSpan.text.isNotEmpty())
+                return richSpan
+
+            val result = richSpan.getLastNonEmptyChild()
+            if (result != null)
+                return result
+        }
+
+        return null
+    }
+
+    /**
+     * Trim the rich paragraph
+     */
+    fun trim() {
+        val isEmpty = trimStart()
+        if (!isEmpty)
+            trimEnd()
+    }
+
+    /**
+     * Trim the start of the rich paragraph
+     *
+     * @return True if the rich paragraph is empty after trimming, false otherwise
+     */
+    fun trimStart(): Boolean {
+        children.fastForEach { richSpan ->
+            val isEmpty = richSpan.trimStart()
+
+            if (!isEmpty)
+                return false
+        }
+
+        return true
+    }
+
+    /**
+     * Trim the end of the rich paragraph
+     *
+     * @return True if the rich paragraph is empty after trimming, false otherwise
+     */
+    fun trimEnd(): Boolean {
+        children.fastForEachReversed { richSpan ->
+            val isEmpty = richSpan.trimEnd()
+
+            if (!isEmpty)
+                return false
+        }
+
+        return true
+    }
+
+    /**
+     * Update the paragraph of the children recursively
+     *
+     * @param newParagraph The new paragraph
+     */
+    fun updateChildrenParagraph(newParagraph: RichParagraph) {
+        children.fastForEach { childRichSpan ->
+            childRichSpan.paragraph = newParagraph
+            childRichSpan.updateChildrenParagraph(newParagraph)
+        }
+    }
+
+    fun removeEmptyChildren() {
+        val toRemoveIndices = mutableListOf<Int>()
+
+        children.fastForEachIndexed { index, richSpan ->
+            if (richSpan.isEmpty())
+                toRemoveIndices.add(index)
+            else
+                richSpan.removeEmptyChildren()
+        }
+
+        toRemoveIndices.fastForEachReversed {
+            children.removeAt(it)
+        }
+    }
+
+    fun copy(): RichParagraph {
+        val newParagraph = RichParagraph(
+            paragraphStyle = paragraphStyle.copy(),
+            type = type.copy(),
+            headingStyle = headingStyle,
+        )
+        children.fastForEach { childRichSpan ->
+            val newRichSpan = childRichSpan.copy(newParagraph)
+            newRichSpan.paragraph = newParagraph
+            newParagraph.children.add(newRichSpan)
+        }
+        return newParagraph
+    }
+
+    override fun toString(): String {
+        val stringBuilder = StringBuilder()
+        stringBuilder.append(" - Start Text: ${type.startRichSpan}")
+        stringBuilder.appendLine()
+        children.fastForEachIndexed { index, richTextStyle ->
+            getRichTextStyleTreeRepresentation(stringBuilder, index, richTextStyle, " -")
+        }
+        return stringBuilder.toString()
+    }
+
+    companion object {
+        val DefaultParagraphStyle = ParagraphStyle()
+    }
+}

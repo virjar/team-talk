@@ -23,6 +23,7 @@ kotlin {
             api(compose.materialIconsExtended)
             api(compose.components.resources)
             api(libs.jetbrains.markdown)
+            api(project(":richeditor"))
         }
         commonTest.dependencies {
             implementation(kotlin("test"))

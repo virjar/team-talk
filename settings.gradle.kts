@@ -23,6 +23,7 @@ dependencyResolutionManagement {
 }
 
 include(":shared")
+include(":richeditor")
 include(":rpc-processor")
 include(":server")
 include(":app")

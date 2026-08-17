@@ -25,6 +25,7 @@ jna = "5.15.0"
 activity-compose = "1.10.1"
 compose-media-player = "0.9.0"
 jetbrains-markdown = "0.7.3"
+ksoup = "0.6.0"
 navigation-compose = "2.8.5"
 uiautomator = "2.3.0"
 buildconfig = "6.0.9"
@@ -93,6 +94,8 @@ composenativetray = { module = "io.github.kdroidfilter:composenativetray", versi
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 compose-media-player = { module = "io.github.kdroidfilter:composemediaplayer", version.ref = "compose-media-player" }
 jetbrains-markdown = { module = "org.jetbrains:markdown", version.ref = "jetbrains-markdown" }
+ksoup-html = { module = "com.mohamedrejeb.ksoup:ksoup-html", version.ref = "ksoup" }
+ksoup-entities = { module = "com.mohamedrejeb.ksoup:ksoup-entities", version.ref = "ksoup" }
 activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
 media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }

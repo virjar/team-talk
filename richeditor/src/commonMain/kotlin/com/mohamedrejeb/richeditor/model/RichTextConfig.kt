@@ -1,0 +1,171 @@
+package com.mohamedrejeb.richeditor.model
+
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.TextUnit
+import com.mohamedrejeb.richeditor.annotation.ExperimentalRichTextApi
+import com.mohamedrejeb.richeditor.paragraph.type.ListMarkerStyleBehavior
+import com.mohamedrejeb.richeditor.paragraph.type.ListPrefixAlignment
+import com.mohamedrejeb.richeditor.paragraph.type.OrderedListStyleType
+import com.mohamedrejeb.richeditor.paragraph.type.UnorderedListStyleType
+
+public class RichTextConfig internal constructor(
+    private val updateText: () -> Unit,
+) {
+    public var linkColor: Color = Color.Blue
+        set(value) {
+            field = value
+            updateText()
+        }
+
+    public var linkTextDecoration: TextDecoration = TextDecoration.Underline
+        set(value) {
+            field = value
+            updateText()
+        }
+
+    public var codeSpanColor: Color = Color.Unspecified
+        set(value) {
+            field = value
+            updateText()
+        }
+
+    public var codeSpanBackgroundColor: Color = Color.Transparent
+        set(value) {
+            field = value
+            updateText()
+        }
+
+    public var codeSpanStrokeColor: Color = Color.LightGray
+        set(value) {
+            field = value
+            updateText()
+        }
+
+    /**
+     * The indent for ordered lists.
+     */
+    public var orderedListIndent: Int = DefaultListIndent
+        set(value) {
+            field = value
+            updateText()
+        }
+
+    /**
+     * The indent for unordered lists.
+     */
+    public var unorderedListIndent: Int = DefaultListIndent
+        set(value) {
+            field = value
+            updateText()
+        }
+
+    /**
+     * The indent for both ordered and unordered lists.
+     *
+     * This property is a shortcut for setting both [orderedListIndent] and [unorderedListIndent].
+     */
+    public var listIndent: Int = DefaultListIndent
+        get() {
+            if (orderedListIndent == unorderedListIndent)
+                field = orderedListIndent
+
+            return field
+        }
+        set(value) {
+            field = value
+            orderedListIndent = value
+            unorderedListIndent = value
+        }
+
+    /**
+     * The prefixes for unordered lists items.
+     *
+     * The prefixes are used in order if the list is nested.
+     *
+     * For example, if the list is nested twice, the first prefix is used for the first level,
+     * the second prefix is used for the second level, and so on.
+     *
+     * If the list is nested more than the number of prefixes, the last prefix is used.
+     *
+     * The default prefixes are `•`, `◦`, and `▪`.
+     */
+    public var unorderedListStyleType: UnorderedListStyleType = DefaultUnorderedListStyleType
+        set(value) {
+            field = value
+            updateText()
+        }
+
+    public var orderedListStyleType: OrderedListStyleType = DefaultOrderedListStyleType
+        set(value) {
+            field = value
+            updateText()
+        }
+
+    /**
+     * Controls how list markers ("•", "1.", etc.) inherit span styles from the
+     * list item's text.
+     *
+     * Default is [ListMarkerStyleBehavior.InheritFromText], which keeps bold /
+     * italic / color / font size on the marker but drops underline, strikethrough,
+     * background, baseline shift, shadow, and geometric transforms. Matches
+     * Google Docs.
+     *
+     * Set to [ListMarkerStyleBehavior.AlwaysDefault] to render every marker with
+     * the default span style regardless of the item's content.
+     */
+    @ExperimentalRichTextApi
+    public var listMarkerStyleBehavior: ListMarkerStyleBehavior = ListMarkerStyleBehavior.InheritFromText
+        set(value) {
+            field = value
+            updateText()
+        }
+
+    /**
+     * Controls where list markers ("1.", "10.", "•", ...) sit relative to the
+     * indent gutter in ordered and unordered lists.
+     *
+     * Default is [ListPrefixAlignment.End], which matches HTML: the marker sits
+     * inside the gutter and ends at the content start, so "1." and "10." have
+     * their dots aligned vertically.
+     *
+     * Set to [ListPrefixAlignment.Start] to make every item's marker start at
+     * the same left edge instead.
+     */
+    @ExperimentalRichTextApi
+    public var listPrefixAlignment: ListPrefixAlignment = ListPrefixAlignment.End
+        set(value) {
+            field = value
+            updateText()
+        }
+
+    /**
+     * Whether to preserve the style when the line is empty.
+     * The line can be empty when the user deletes all the characters
+     * or when the user presses `enter` to create a new line.
+     *
+     * Default is `true`.
+     */
+    public var preserveStyleOnEmptyLine: Boolean = true
+
+    /**
+     * Whether to exit the list when pressing Enter on an empty list item.
+     * When true, pressing Enter on an empty list item will convert it to a normal paragraph.
+     * When false, pressing Enter on an empty list item will create a new list item.
+     *
+     * Default is `true`.
+     */
+    public var exitListOnEmptyItem: Boolean = true
+}
+
+internal const val DefaultListIndent = 38
+
+internal val DefaultUnorderedListStyleType =
+    UnorderedListStyleType.from("•", "◦", "▪")
+
+internal val DefaultOrderedListStyleType: OrderedListStyleType =
+    OrderedListStyleType.Multiple(
+        OrderedListStyleType.Decimal,
+        OrderedListStyleType.LowerRoman,
+        OrderedListStyleType.LowerAlpha,
+    )

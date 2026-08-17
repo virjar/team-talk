@@ -1,0 +1,28 @@
+package com.mohamedrejeb.richeditor.parser.utils
+
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.BaselineShift
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.em
+import com.mohamedrejeb.richeditor.model.HeadingStyle
+
+internal val MarkBackgroundColor = Color.Yellow
+internal val SmallFontSize = 0.8f.em
+
+internal val BoldSpanStyle = SpanStyle(fontWeight = FontWeight.Bold)
+internal val ItalicSpanStyle = SpanStyle(fontStyle = FontStyle.Italic)
+internal val UnderlineSpanStyle = SpanStyle(textDecoration = TextDecoration.Underline)
+internal val StrikethroughSpanStyle = SpanStyle(textDecoration = TextDecoration.LineThrough)
+internal val SubscriptSpanStyle = SpanStyle(baselineShift = BaselineShift.Subscript)
+internal val SuperscriptSpanStyle = SpanStyle(baselineShift = BaselineShift.Superscript)
+internal val MarkSpanStyle = SpanStyle(background = MarkBackgroundColor)
+internal val SmallSpanStyle = SpanStyle(fontSize = SmallFontSize)
+internal val H1SpanStyle = HeadingStyle.H1.getSpanStyle()
+internal val H2SpanStyle = HeadingStyle.H2.getSpanStyle()
+internal val H3SpanStyle = HeadingStyle.H3.getSpanStyle()
+internal val H4SpanStyle = HeadingStyle.H4.getSpanStyle()
+internal val H5SpanStyle = HeadingStyle.H5.getSpanStyle()
+internal val H6SpanStyle = HeadingStyle.H6.getSpanStyle()
