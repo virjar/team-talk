@@ -173,6 +173,9 @@ DELETE FROM conversation WHERE chat_id = ?;
 markConversationRead:
 UPDATE conversation SET unread_count = 0, read_seq = ? WHERE chat_id = ?;
 
+setConversationDraft:
+UPDATE conversation SET draft = ? WHERE chat_id = ?;
+
 updatePeerReadSeq:
 UPDATE conversation SET peer_read_seq = ? WHERE chat_id = ?;
 

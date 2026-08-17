@@ -274,6 +274,15 @@ class LocalCacheImpl(driver: SqlDriver) : LocalCache {
         }
     }
 
+    override fun setConversationDraft(chatId: String, draft: String?) {
+        synchronized(stateLock) {
+            queries.setConversationDraft(draft, chatId)
+            conversationsFlow.value = conversationsFlow.value.map {
+                if (it.chatId == chatId) it.copy(draft = draft) else it
+            }
+        }
+    }
+
     /** 在已排序列表中 upsert 一条会话（保持 置顶+时间 排序）。调用方持 stateLock。 */
     private fun mergeSorted(current: List<Conversation>, conv: Conversation): List<Conversation> {
         val list = current.toMutableList()

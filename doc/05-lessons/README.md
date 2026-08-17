@@ -93,6 +93,7 @@
 | F18 | Kotlin 块注释内的 `*/` 序列提前闭合注释（第 4 次踩） | 注释里写代码符号序列（如"星号/波浪线"列举）必须转义措辞，严禁出现 `*/` 字面量；CI 侧可加 grep 检查 |
 | F31 | Compose Desktop `onPreviewKeyEvent` 只在焦点路径（root→焦点节点）上触发：无焦点节点时（刚点完非 focusable 的列表行）按键事件不派发进场景，挂右栏/挂根节点都失灵——「面板/子窗口 ESC 关闭不可靠」的根因，且和「焦点恰好在输入框里」时表现不一致，极难复现定位 | 窗口级快捷键走 AWT `KeyEventDispatcher`（KeyboardFocusManager 层，先于焦点派发），按事件源窗口归属分流（`SwingUtilities.getWindowAncestor(source) === owner`），弹层/对话框是独立 Window 天然不受影响；桌面实测时还要注意 macOS 前台焦点在别处时 Robot 送键根本不进 app（先 toFront/点入窗口再送键） |
 | F32 | 网上复制的 GB2312 拼音首字母分区表整表错位：初版 23 个段起始值全错（张/王/李/陈全标错字母），且肉眼审查表格发现不了——只有拿真实汉字验算才暴露 | 常量映射表抄自网络必须逐锚点实证（啊B0A1/芭B0C5/…/匝D4D1 共 23 字 encode 校准），锚点字写进代码注释，常用姓氏单测锁定（PinyinInitialsTest） |
+| F34 | 草稿清除残留：发送后输入框已清、会话列表仍显示 [草稿]，重进会话旧草稿回填。根因是组合漏洞——本地缓存合并策略「draft 本地非空优先」（保护刚保存未同步的草稿不被旧事件覆盖）+ 清除动作只走 setDraft(null) RPC 等服务端 CONVERSATION_UPDATED 事件回环：回环事件 draft=null 被 `local.draft ?: remote.draft` 永远挡住，本地残值无法被清除（服务端 DB 其实已是 NULL，重启重载即消失，纯内存残留） | 客户端自有状态的**清除必须本地直接生效**，服务端只是跨设备镜像——setDraft 在 RPC 后立即 `setConversationDraft`（精确列更新，不整行 upsert）；同理审视所有「本地优先」合并字段：每个都要有绕过合并的本地直写出口（LocalCacheImplTest 锁定回环不清+直清+落库三断言） |
 | F33 | VM 协程 scope 从 Main 换 Dispatchers.Default（F27）后，`runTest + advanceUntilIdle` 不再推进 VM 内协程：测试调度器只管自己的队列，VM 协程在真实线程池上跑，断言竞态——ConversationViewModelTest 偶红偶绿，「上次全绿」不代表非 flaky | VM 基类构造注入 dispatcher（生产默认 Default，测试传 StandardTestDispatcher 同源推进）；凡依赖异步副作用的断言，先确认协程与测试调度器同域 |
 
 ---

@@ -153,4 +153,31 @@ class LocalCacheImplTest {
         val list = cache.getMessages("c1", 10)
         assertEquals(1, list.size, "同一 clientMsgId 必须覆盖（服务端 MESSAGE_RECV 含发送者回环）")
     }
+
+    @Test
+    fun `草稿清除 - 远端事件回环挡不住本地直清`() {
+        val cache = newCache()
+        cache.upsertConversation(conv("c1", draft = "z"))
+
+        // 回环事件（draft=null）：合并策略本地非空优先，不会清（设计如此，
+        // 保护刚保存未同步的草稿不被旧事件覆盖）
+        cache.upsertConversation(conv("c1", draft = null, unread = 3))
+        assertEquals("z", cache.getConversations().first { it.chatId == "c1" }.draft, "远端 null 不清本地草稿（本地优先）")
+
+        // 清除必须走本地直清（发送后 setDraft(null) 链路）
+        cache.setConversationDraft("c1", null)
+        assertEquals(null, cache.getConversations().first { it.chatId == "c1" }.draft, "本地直清后草稿为 null")
+    }
+
+    @Test
+    fun `草稿清除落库 - setConversationDraft 持久化到 SQLite`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        AppDatabase.Schema.create(driver)
+        val cache = LocalCacheImpl(driver)
+        cache.upsertConversation(conv("c1", draft = "z"))
+        cache.setConversationDraft("c1", null)
+        // 同一 driver 上的新实例（模拟重启后重读 DB）：草稿不复活
+        val reloaded = LocalCacheImpl(driver)
+        assertEquals(null, reloaded.getConversations().first { it.chatId == "c1" }.draft)
+    }
 }

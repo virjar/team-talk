@@ -277,10 +277,9 @@ open class AppDataState(val session: ClientSession) {
         messageRepo.searchMessages("", query).getOrThrow()
     } catch (e: AppError) { handleError(e, "搜索失败"); emptyList() }
 
-    /** 保存草稿（fire-and-forget，不阻塞调用线程）。 */
+    /** 保存/清除草稿（null/空 = 清除，fire-and-forget）。 */
     fun saveDraft(chatId: String, draft: String?) = actionScope.launch {
-        if (draft.isNullOrEmpty()) return@launch
-        try { conversationRepo.setDraft(chatId, draft) }
+        try { conversationRepo.setDraft(chatId, draft?.takeIf { it.isNotBlank() }) }
         catch (e: Exception) { /* 草稿保存失败不打扰用户 */ }
     }
 

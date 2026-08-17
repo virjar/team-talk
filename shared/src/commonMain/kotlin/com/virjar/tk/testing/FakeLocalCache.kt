@@ -147,6 +147,11 @@ class FakeLocalCache : LocalCache {
         }
         conversationsFlow.value = list
     }
+    override fun setConversationDraft(chatId: String, draft: String?) {
+        conversationsFlow.value = conversationsFlow.value.map {
+            if (it.chatId == chatId) it.copy(draft = draft) else it
+        }
+    }
     override fun deleteConversation(chatId: String) {
         conversationsFlow.value = conversationsFlow.value.filter { it.chatId != chatId }
     }

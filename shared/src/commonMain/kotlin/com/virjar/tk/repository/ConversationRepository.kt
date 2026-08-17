@@ -17,7 +17,17 @@ class ConversationRepository(
         rpc.list().also { list -> list.forEach { localCache.upsertConversation(it) } }
     }
 
-    suspend fun setDraft(chatId: String, draft: String?): Outcome<Unit> = outcome { rpc.setDraft(chatId, draft) }
+    /**
+     * 保存/清除草稿（null = 清除）。
+     *
+     * 本地立即生效（草稿是纯客户端状态，服务端只是跨设备镜像）：清除若只等
+     * CONVERSATION_UPDATED 回环，会被本地缓存「draft 非空优先」合并策略挡回，
+     * 表现为发送后列表仍显示 [草稿] 且重进会话回填旧草稿。
+     */
+    suspend fun setDraft(chatId: String, draft: String?): Outcome<Unit> = outcome {
+        rpc.setDraft(chatId, draft)
+        localCache.setConversationDraft(chatId, draft)
+    }
     suspend fun setPin(chatId: String, pinned: Boolean): Outcome<Unit> = outcome { rpc.setPin(chatId, pinned) }
     suspend fun setMute(chatId: String, muted: Boolean): Outcome<Unit> = outcome { rpc.setMute(chatId, muted) }
     suspend fun deleteConversation(chatId: String): Outcome<Unit> = outcome {

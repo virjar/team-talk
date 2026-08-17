@@ -79,6 +79,15 @@ interface LocalCache {
     /** 置顶/取消置顶会话。返回更新后的 Conversation。 */
     fun toggleConversationPin(chatId: String, pinned: Boolean): Conversation?
 
+    /**
+     * 精确更新单条会话的草稿（null = 清除）。
+     *
+     * 草稿清除不能依赖服务端 CONVERSATION_UPDATED 事件回环：事件合并策略是
+     * 「draft 本地非空优先」（见 LocalCacheImpl.mergeConversation），远端 null
+     * 永远覆盖不了本地残值——清除必须本地直接落库。
+     */
+    fun setConversationDraft(chatId: String, draft: String?)
+
     companion object {
         /** 单聊消息内存窗口大小（最近 N 条） */
         const val DEFAULT_MESSAGE_WINDOW = 100
