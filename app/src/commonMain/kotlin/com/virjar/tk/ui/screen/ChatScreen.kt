@@ -3,6 +3,7 @@ package com.virjar.tk.ui.screen
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -51,6 +52,7 @@ import com.virjar.tk.ui.component.input.detectMentionQuery
 import com.virjar.tk.ui.component.input.detectSlashQuery
 import com.virjar.tk.ui.component.input.expandSlashCommand
 import com.virjar.tk.ui.component.input.EmojiPanel
+import com.virjar.tk.ui.component.input.FormatKey
 import com.virjar.tk.model.ChatType
 import com.virjar.tk.model.Message
 import com.virjar.tk.model.User
@@ -639,7 +641,7 @@ private const val TIME_SEPARATOR_THRESHOLD_MS = 5 * 60 * 1000L
 /**
  * 格式化聊天时间：当天显示 HH:mm，非当天显示 MM-dd HH:mm。
  */
-private fun formatChatTime(timestamp: Long): String {
+internal fun formatChatTime(timestamp: Long): String {
     val now = Date()
     val msg = Date(timestamp)
     val dayFmt = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
@@ -655,181 +657,9 @@ private fun formatChatTime(timestamp: Long): String {
  * 解析发送者显示名。
  * fallback 链：User.name → User.username → uid.take(8)
  */
-private fun resolveDisplayName(uid: String, resolveSender: ((uid: String) -> User?)?): String {
+internal fun resolveDisplayName(uid: String, resolveSender: ((uid: String) -> User?)?): String {
     val user = resolveSender?.invoke(uid)
     return user?.name?.ifBlank { null }
         ?: user?.username?.ifBlank { null }
         ?: uid.take(8)
-}
-
-/**
- * 单条消息气泡（含头像、昵称、气泡内容）。规格：doc/04-ui-design/components.md §1.3。
- *
- * 双方都显示头像（自己右侧）；飞书扁平气泡：对方灰底无阴影、自己蓝底白字；
- * 指向角（靠头像一侧）4dp，其余 8dp，替代气泡尾巴。
- *
- * @param isContinuation 是否是连续消息（同一人短时间多次发送）——隐藏头像和昵称
- * @param showSenderName 是否显示发送者昵称行（群聊对方显示，私聊对方不显示）
- * @param showReadIndicator 是否显示已读水位线指示（仅私聊、我方最后一条已送达消息）
- */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun MessageBubble(
-    msg: Message,
-    isMe: Boolean,
-    isContinuation: Boolean,
-    showSenderName: Boolean,
-    showReadIndicator: Boolean,
-    peerReadSeq: Long = 0,
-    resolveSender: ((uid: String) -> User?)?,
-    voicePlayback: com.virjar.tk.ui.component.VoicePlaybackController? = null,
-    onMentionClick: ((uid: String) -> Unit)? = null,
-    onUrlClick: ((String) -> Unit)? = null,
-    selectableText: Boolean = false,
-    /** 桌面右键菜单会话 ID（非 null=菜单正开，SelectionContainer 以此为 key 重建清空选区——微信右键不选词） */
-    menuEpoch: Int = 0,
-    onLongClick: () -> Unit,
-    onMediaClick: ((Message) -> Unit)?,
-    imageContent: (@Composable (String, Modifier) -> Unit)?,
-    videoContent: (@Composable (String, Modifier) -> Unit)?,
-    menuExpanded: Boolean = false,
-    onMenuDismiss: () -> Unit = {},
-    menuItems: @Composable ColumnScope.() -> Unit = {},
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(vertical = if (isContinuation) 1.dp else 2.dp),
-        horizontalArrangement = if (isMe) Arrangement.End else Arrangement.Start,
-        verticalAlignment = Alignment.Top,
-    ) {
-        // 对方头像（左）
-        if (!isMe) {
-            if (isContinuation) {
-                Spacer(Modifier.width(Tk.dimens.chatAvatar))
-            } else {
-                val user = resolveSender?.invoke(msg.senderUid)
-                AvatarPlaceholder(
-                    name = user?.name ?: user?.username ?: msg.senderUid,
-                    modifier = Modifier.padding(end = Tk.spacing.sm),
-                    size = Tk.dimens.chatAvatar.value.toInt(),
-                )
-            }
-        }
-
-        Column(
-            horizontalAlignment = if (isMe) Alignment.End else Alignment.Start,
-            modifier = Modifier.widthIn(max = Tk.dimens.bubbleMaxWidth),
-        ) {
-            // 昵称行（群聊对方、非连续消息才显示）：「张三 14:32」
-            if (!isMe && showSenderName && !isContinuation) {
-                Text(
-                    "${resolveDisplayName(msg.senderUid, resolveSender)}  ${formatChatTime(msg.timestamp)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Tk.colors.metaText,
-                    modifier = Modifier.padding(bottom = 2.dp, start = Tk.spacing.xs),
-                )
-            }
-            Surface(
-                color = if (isMe) Tk.colors.bubbleOutgoing else Tk.colors.bubbleIncoming,
-                contentColor = if (isMe) Color.White else MaterialTheme.colorScheme.onSurface,
-                // 飞书扁平气泡：无阴影无 tonalElevation
-                shape = RoundedCornerShape(
-                    topStart = if (!isMe && !isContinuation) 4.dp else 8.dp,
-                    topEnd = if (isMe && !isContinuation) 4.dp else 8.dp,
-                    bottomStart = if (isMe) 8.dp else if (isContinuation) 8.dp else 4.dp,
-                    bottomEnd = if (isMe) if (isContinuation) 8.dp else 4.dp else 8.dp,
-                ),
-                // 长按弹菜单平台分流（F29）：Android 长按；桌面无长按（拖选文字不被误判），
-                // 菜单只走右键 secondaryClick
-                modifier = Modifier
-                    .contextLongPress(onLongClick)
-                    .secondaryClick(onLongClick),
-            ) {
-                if (msg.body.isEdgeToEdgeMedia()) {
-                    // 贴边媒体（图片/视频/贴纸）：无气泡内边距，媒体自身即气泡面（微信/飞书范式）
-                    Box(modifier = Modifier.widthIn(max = Tk.dimens.bubbleMaxWidth)) {
-                        com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback, onMentionClick, onUrlClick)
-                    }
-                } else {
-                    val bubbleContent: @Composable () -> Unit = {
-                        Column(
-                            modifier = Modifier
-                                .padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.sm)
-                                .widthIn(max = Tk.dimens.bubbleMaxWidth - (Tk.spacing.md * 2))
-                        ) {
-                            com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback, onMentionClick, onUrlClick)
-                        }
-                    }
-                    if (selectableText) {
-                        // key(menuEpoch)：右键菜单打开瞬间重建容器，清空右键产生的选词
-                        // （微信范式：右键只弹菜单不选词；拖选选区随菜单打开一并清空）
-                        key(menuEpoch) {
-                            androidx.compose.foundation.text.selection.SelectionContainer {
-                                bubbleContent()
-                            }
-                        }
-                    } else {
-                        bubbleContent()
-                    }
-                }
-            }
-            // 已读水位线指示：私聊中我方最后一条消息下方（飞书「已读/未读」文字范式）
-            if (showReadIndicator) {
-                val isRead = peerReadSeq > 0 && msg.serverSeq <= peerReadSeq
-                Text(
-                    text = if (isRead) "已读" else "未读",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (isRead) Tk.colors.secondaryText else Tk.colors.metaText,
-                    modifier = Modifier.padding(top = 1.dp, end = Tk.spacing.xs),
-                )
-            }
-            // 长按/右键菜单：挂在气泡同级（Column 内），Compose 自动以气泡为锚点定位
-            DropdownMenu(
-                expanded = menuExpanded,
-                onDismissRequest = onMenuDismiss,
-                content = menuItems,
-            )
-        }
-
-        // 自己头像（右）
-        if (isMe) {
-            if (isContinuation) {
-                Spacer(Modifier.width(Tk.dimens.chatAvatar))
-            } else {
-                val user = resolveSender?.invoke(msg.senderUid)
-                AvatarPlaceholder(
-                    name = user?.name ?: user?.username ?: msg.senderUid,
-                    modifier = Modifier.padding(start = Tk.spacing.sm),
-                    size = Tk.dimens.chatAvatar.value.toInt(),
-                )
-            }
-        }
-    }
-}
-
-
-/**
- * WYSIWYG 格式键（B/I/S/代码）：对选区直改 SpanStyle（发送时编码为 markdown 语法）。
- */
-@Composable
-private fun FormatKey(
-    label: String,
-    style: androidx.compose.ui.text.SpanStyle,
-    onApply: (androidx.compose.ui.text.SpanStyle) -> Unit,
-    testTag: String,
-) {
-    TextButton(
-        onClick = { onApply(style) },
-        modifier = Modifier.height(32.dp).width(40.dp).testTag(testTag),
-        contentPadding = PaddingValues(horizontal = Tk.spacing.sm),
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-            color = Tk.colors.secondaryText,
-        )
-    }
 }
