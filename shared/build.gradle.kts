@@ -102,6 +102,16 @@ tasks.register<Copy>("headlessDist") {
             )
             setExecutable(true)
         }
+        // tt-agent：同一 jar，守护进程 Main-Class（doc/11-cli-agent 一期）
+        File(bin, "tt-agent").apply {
+            val script = buildString {
+                appendLine("#!/usr/bin/env bash")
+                appendLine("cd \"\$(dirname \"\$0\")/..\"")
+                appendLine("exec java -cp \"lib/*\" com.virjar.tk.agent.AgentMainKt \"\$@\"")
+            }
+            writeText(script)
+            setExecutable(true)
+        }
     }
 }
 
