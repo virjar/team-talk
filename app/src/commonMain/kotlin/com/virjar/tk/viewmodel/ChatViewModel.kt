@@ -103,9 +103,7 @@ class ChatViewModel(
         // 乐观更新：立即显示为 sending
         val sending = message.copy(sendStatus = Message.SEND_STATUS_SENDING)
         localCache.insertMessage(sending)
-        com.virjar.tk.util.AppLog.trace("ChatVM", "sendMessage: type=${message.messageType} id=${message.clientMsgId.take(8)}")
         scope.launch {
-            com.virjar.tk.util.AppLog.trace("ChatVM", "send coroutine entered: ${message.clientMsgId.take(8)}")
             try {
                 val ack = messageRepo.send(sending).getOrThrow()
                 if (ack.code == 0) {
