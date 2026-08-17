@@ -1,10 +1,15 @@
 package com.virjar.tk
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.window.WindowDraggableArea
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
@@ -82,10 +87,11 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
     // ════════════════════════════════════════════════════════════
     // 窗口1：登录窗口（app 全局层）
     // 未登录时可见，登录成功后隐藏。登出后重新显示。
+    // §2.3：420×480 无装饰（窗口即卡片），注册态多一字段拉高到 560。
     // ════════════════════════════════════════════════════════════
     val loginWindowState = rememberWindowState(
-        width = 400.dp,
-        height = 600.dp,
+        width = 420.dp,
+        height = 480.dp,
         position = WindowPosition(Alignment.Center),
     )
 
@@ -97,49 +103,82 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
         },
         title = "TeamTalk",
         state = loginWindowState,
+        undecorated = true,
+        resizable = false,
     ) {
         TestServiceBridge.registerWindowIfEnabled(window)
         setTeamTalkIcon()
-        AppTheme {
-            var showRegister by remember { mutableStateOf(false) }
-            var loginLoading by remember { mutableStateOf(false) }
-            var registerLoading by remember { mutableStateOf(false) }
 
-            // DISCONNECTED 时清 loading 和注册页状态
-            val connectionState by auth.imClient.state.collectAsState()
-            LaunchedEffect(connectionState) {
-                if (connectionState == ConnectionState.DISCONNECTED || connectionState == ConnectionState.AUTH_FAILED) {
-                    loginLoading = false; registerLoading = false; showRegister = false
-                }
+        var showRegister by remember { mutableStateOf(false) }
+        var loginLoading by remember { mutableStateOf(false) }
+        var registerLoading by remember { mutableStateOf(false) }
+
+        // 注册模式多一个输入字段：无装饰窗口不可拉伸，按模式切高度
+        val density = LocalDensity.current
+        LaunchedEffect(showRegister) {
+            val height = if (showRegister) 560.dp else 480.dp
+            with(density) {
+                window.setSize(420.dp.roundToPx(), height.roundToPx())
             }
+        }
 
-            if (auth.autoLoggingIn && !auth.isLoggedIn) {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
+        // DISCONNECTED 时清 loading 和注册页状态
+        val connectionState by auth.imClient.state.collectAsState()
+        LaunchedEffect(connectionState) {
+            if (connectionState == ConnectionState.DISCONNECTED || connectionState == ConnectionState.AUTH_FAILED) {
+                loginLoading = false; registerLoading = false; showRegister = false
+            }
+        }
+
+        AppTheme {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // 无装饰窗口顶栏：拖拽区 + 关闭按钮
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(36.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    WindowDraggableArea(modifier = Modifier.weight(1f).fillMaxHeight())
+                    IconButton(
+                        onClick = {
+                            locker.release()
+                            exitApplication()
+                        },
+                        modifier = Modifier.size(36.dp).testTag("login.close"),
+                    ) {
+                        Icon(Icons.Filled.Close, contentDescription = "关闭", modifier = Modifier.size(16.dp))
                     }
                 }
-            } else if (showRegister) {
-                RegisterScreen(
-                    onRegister = { username, password, name ->
-                        registerLoading = true; auth.clearError()
-                        auth.onRegister(username, password, name)
-                    },
-                    onNavigateBack = { showRegister = false; auth.clearError() },
-                    error = auth.authError,
-                    loading = registerLoading,
-                )
-            } else {
-                LoginScreen(
-                    onLogin = { username, password ->
-                        loginLoading = true; auth.clearError()
-                        auth.onLogin(username, password)
-                    },
-                    onNavigateToRegister = { showRegister = true; auth.clearError() },
-                    error = auth.authError,
-                    loading = loginLoading,
-                    allowCustomServer = false,
-                )
+
+                Box(modifier = Modifier.weight(1f)) {
+                    if (auth.autoLoggingIn && !auth.isLoggedIn) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    } else if (showRegister) {
+                        RegisterScreen(
+                            onRegister = { username, password, name ->
+                                registerLoading = true; auth.clearError()
+                                auth.onRegister(username, password, name)
+                            },
+                            onNavigateBack = { showRegister = false; auth.clearError() },
+                            error = auth.authError,
+                            loading = registerLoading,
+                            windowStyle = true,
+                        )
+                    } else {
+                        LoginScreen(
+                            onLogin = { username, password ->
+                                loginLoading = true; auth.clearError()
+                                auth.onLogin(username, password)
+                            },
+                            onNavigateToRegister = { showRegister = true; auth.clearError() },
+                            error = auth.authError,
+                            loading = loginLoading,
+                            allowCustomServer = false,
+                            windowStyle = true,
+                        )
+                    }
+                }
             }
         }
     }

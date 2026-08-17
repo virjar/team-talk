@@ -9,6 +9,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
@@ -16,6 +18,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
@@ -31,6 +34,7 @@ import androidx.compose.ui.unit.dp
 fun AuthHeader(
     title: String,
     modifier: Modifier = Modifier,
+    titleColor: Color = Color.White,
 ) {
     Column(
         modifier = modifier,
@@ -45,7 +49,7 @@ fun AuthHeader(
             TeamTalkLogo(size = 72.dp)
         }
         Spacer(Modifier.height(12.dp))
-        Text(title, style = MaterialTheme.typography.headlineMedium, color = Color.White, fontWeight = FontWeight.Bold)
+        Text(title, style = MaterialTheme.typography.headlineMedium, color = titleColor, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -65,7 +69,7 @@ fun AuthCard(
     }
 }
 
-/** 认证表单输入字段（圆角 + testTag 语义标记）。 */
+/** 认证表单输入字段（圆角 8 + testTag 语义标记）。 */
 @Composable
 fun AuthField(
     label: String,
@@ -73,20 +77,24 @@ fun AuthField(
     onValueChange: (String) -> Unit,
     testTag: String,
     isPassword: Boolean = false,
+    focusRequester: FocusRequester? = null,
 ) {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
         label = { Text(label) },
-        modifier = Modifier.fillMaxWidth().testTag(testTag),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(testTag)
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),
         visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
         keyboardOptions = if (isPassword) KeyboardOptions(keyboardType = KeyboardType.Password) else KeyboardOptions.Default,
         singleLine = true,
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(8.dp),
     )
 }
 
-/** 认证表单提交按钮（48dp + 圆角 + loading spinner）。 */
+/** 认证表单提交按钮（圆角 + loading spinner；窗口式高 40，移动端高 48 触控）。 */
 @Composable
 fun AuthSubmitButton(
     text: String,
@@ -94,12 +102,13 @@ fun AuthSubmitButton(
     enabled: Boolean,
     loading: Boolean,
     testTag: String,
+    height: Dp = 48.dp,
 ) {
     Button(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().height(48.dp).testTag(testTag),
+        modifier = Modifier.fillMaxWidth().height(height).testTag(testTag),
         enabled = enabled,
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(8.dp),
     ) {
         if (loading) {
             CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
