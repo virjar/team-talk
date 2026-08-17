@@ -36,8 +36,11 @@ fun main(args: Array<String>) {
     val port = (opts["port"] ?: env["TK_PORT"] ?: "5100").toInt()
     val apiBind = opts["api"] ?: "127.0.0.1:8600"
     val dataDir = File(opts["data-dir"] ?: env["TK_AGENT_DIR"] ?: "${System.getProperty("user.home")}/.tt-agent")
+    // 上传/下载走 HTTP 文件服务的 serverUrl（与 TCP host 区分——HTTPS 域名），
+    // 不设则 defaultServerConfig 回退 localhost（曾致 upload 挂死无超时）
+    val serverUrl = opts["server-url"] ?: env["TK_SERVER_URL"] ?: "https://$host"
 
-    AgentRuntime(host, port, dataDir).use { agent ->
+    AgentRuntime(host, port, dataDir, serverUrl).use { agent ->
         // 凭据：dataDir/credentials.properties 持久化，重启静默重连
         val cred = AgentCredentials.load(dataDir)
         val username = opts["user"] ?: env["TK_USER"] ?: cred?.first
@@ -78,6 +81,7 @@ class AgentRuntime(
     private val host: String,
     private val port: Int,
     private val dataDir: File,
+    val serverUrl: String,
 ) : AutoCloseable {
 
     lateinit var bot: ImBot
