@@ -1,133 +1,93 @@
 package com.virjar.tk
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.rememberWindowState
-import com.virjar.tk.client.ClientSession
 import com.virjar.tk.ui.AppTheme
-import com.virjar.tk.ui.screen.SearchUsersScreen
-import com.virjar.tk.ui.screen.SearchMessagesScreen
-import com.virjar.tk.ui.screen.UserProfileScreen
-import kotlinx.coroutines.launch
-import java.util.UUID
 
 /**
- * 子窗口宿主。新窗口类子页面（独立临时任务）的窗口创建与销毁。
- * 从 MainAppContent 拆出以控制文件规模。
+ * 子窗口宿主（§2.6）：宽统一 460、ESC 逐级返回（局部栈>1 弹栈，初始屏关窗）。
+ *
+ * 窗口内维护独立导航栈（SearchUsers→UserProfile 局部跳转可返回），
+ * 不触碰 nav.windowScreen/panelStack；测试窗口注册用 onDispose 兜底注销
+ * （入口切换时 key() 重建窗口不走 onCloseRequest，旧实现会泄漏注册项）。
  */
 @Composable
 internal fun SubWindow(
     screen: SubScreen,
-    appState: AppState,
+    nav: DesktopNav,
     onClose: () -> Unit,
 ) {
-    val (title, width, height) = when (screen) {
-        SubScreen.EditProfile -> Triple("编辑资料", 400.dp, 360.dp)
-        SubScreen.ChangePassword -> Triple("修改密码", 400.dp, 380.dp)
-        SubScreen.Devices -> Triple("设备管理", 500.dp, 500.dp)
-        SubScreen.Blacklist -> Triple("黑名单", 450.dp, 500.dp)
-        SubScreen.FriendApplies -> Triple("好友申请", 450.dp, 500.dp)
-        SubScreen.SearchUsers -> Triple("搜索用户", 500.dp, 560.dp)
-        SubScreen.CreateGroup -> Triple("创建群组", 450.dp, 560.dp)
-        SubScreen.SearchMessages -> Triple("搜索消息", 500.dp, 560.dp)
-        SubScreen.Forward -> Triple("转发到", 400.dp, 500.dp)
-        else -> Triple("TeamTalk", 450.dp, 500.dp)
-    }
-    val shortId = screen::class.simpleName ?: "subwindow"
+    val shortId = "sub-" + (screen::class.simpleName ?: "window")
     Window(
-        onCloseRequest = {
-            TestServiceBridge.unregisterWindow(shortId)
-            onClose()
-        },
-        title = title,
-        state = rememberWindowState(width = width, height = height),
+        onCloseRequest = onClose,
+        title = screen.title,
+        state = rememberWindowState(width = 460.dp, height = screen.windowHeight),
     ) {
         TestServiceBridge.registerWindowWithId(shortId, window)
+        DisposableEffect(shortId) {
+            onDispose { TestServiceBridge.unregisterWindow(shortId) }
+        }
         // 子窗口也带 TeamTalk 图标（与主窗口一致）
         setTeamTalkIcon()
         AppTheme {
             Surface(modifier = Modifier.fillMaxSize()) {
-                SubWindowContent(screen, appState, onClose)
+                SubWindowBody(screen, nav, window, onClose)
             }
         }
     }
 }
 
-/**
- * 新窗口内容：独立局部导航，不碰 appState.currentScreen。
- */
 @Composable
-private fun SubWindowContent(
-    initialScreen: SubScreen,
-    appState: AppState,
+private fun SubWindowBody(
+    initial: SubScreen,
+    nav: DesktopNav,
+    window: java.awt.Window,
     onClose: () -> Unit,
 ) {
-    var localScreen by remember { mutableStateOf<SubScreen>(initialScreen) }
-    val scope = rememberCoroutineScope()
-    val contacts by appState.contactViewModel.contacts.collectAsState()
-    val conversations by appState.conversationViewModel.conversations.collectAsState()
-
-    LaunchedEffect(localScreen) {
-        appState.loadScreenData(localScreen)
+    var stack by remember(initial) { mutableStateOf(listOf(initial)) }
+    val current = stack.last()
+    val back: () -> Unit = {
+        if (stack.size > 1) stack = stack.dropLast(1) else onClose()
     }
 
-    when (localScreen) {
-        is SubScreen.SearchUsers -> SearchUsersScreen(
-            searchUsers = { query -> try { appState.userRepo.search(query).getOrThrow() } catch (e: Exception) { appState.handleError(e, "搜索失败"); emptyList() } },
-            onUserClick = { uid -> appState.selectedProfileUid = uid; localScreen = SubScreen.UserProfile },
-            onBack = null,
-        )
+    // ESC 逐级返回：AWT 层拦截（Compose 无焦点时按键不派发，见 AwtEscapeInterceptor）
+    DisposableEffect(window) {
+        val unregister = registerEscapeInterceptor(window) { back(); true }
+        onDispose { unregister() }
+    }
 
-        is SubScreen.UserProfile -> {
-            var hasPendingApply by remember { mutableStateOf(false) }
-            LaunchedEffect(appState.selectedProfileUid) { hasPendingApply = false }
-            UserProfileScreen(
-                user = appState.profileUser,
-                isFriend = appState.isFriend,
-                hasPendingApply = hasPendingApply,
-                onAddFriend = {
-                    appState.contactViewModel.apply(appState.selectedProfileUid ?: return@UserProfileScreen)
-                    hasPendingApply = true
-                },
-                onSendMessage = {
-                    scope.launch {
-                        try {
-                            val uid = appState.selectedProfileUid ?: return@launch
-                            val chat = appState.chatRepo.createPersonalChat(uid).getOrThrow()
-                            appState.openChat(chat.chatId, appState.profileUser?.name ?: uid.take(12))
-                            onClose()
-                        } catch (e: Exception) { appState.handleError(e, "创建聊天失败") }
-                    }
-                },
-                onDeleteFriend = {
-                    val uid = appState.selectedProfileUid ?: return@UserProfileScreen
-                    appState.contactViewModel.deleteFriend(uid)
-                    onClose()
-                },
-                onBack = null,
-            )
-        }
+    // action 失败提示（此前子窗口内错误完全静默）
+    val snackbarHostState = remember { SnackbarHostState() }
+    val error = nav.error
+    LaunchedEffect(error) {
+        val msg = error ?: return@LaunchedEffect
+        nav.clearError()
+        snackbarHostState.showSnackbar(msg)
+    }
 
-        is SubScreen.SearchMessages -> SearchMessagesScreen(
-            searchMessages = { query -> try { appState.messageRepo.searchMessages("", query).getOrThrow() } catch (e: Exception) { appState.handleError(e, "搜索失败"); emptyList() } },
-            onMessageClick = { chatId, _ ->
-                val conv = conversations.find { it.chatId == chatId }
-                appState.openChat(chatId, conv?.chatName ?: chatId.take(16))
+    Box(modifier = Modifier.fillMaxSize()) {
+        SubScreenContent(
+            screen = current,
+            data = nav,
+            navigate = { stack = stack + it },
+            back = back,
+            openChatAndClose = { chatId, name, chatType ->
+                nav.openChat(chatId, name, chatType)
                 onClose()
             },
-            onBack = null,
+            // 群详情是面板类屏幕，窗口内不会触达离开群组
+            onLeaveGroup = {},
+            showBack = true,
         )
-
-        else -> SubScreenRouter(
-            appState = appState,
-            backTarget = { _ -> null },
-            onOpenChatAndDismiss = onClose,
-            onLeaveGroup = onClose,
-            desktopPanelMode = true,
-        )
+        SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
     }
 }

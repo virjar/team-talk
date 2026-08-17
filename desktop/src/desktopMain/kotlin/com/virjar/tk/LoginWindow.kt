@@ -236,6 +236,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
             AppTheme {
                 MainAppContent(
                     session = session,
+                    mainWindow = window,
                     onLogout = { auth.onLogout() },
                 )
             }

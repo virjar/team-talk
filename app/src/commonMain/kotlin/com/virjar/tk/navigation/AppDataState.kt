@@ -18,14 +18,10 @@ import kotlinx.coroutines.launch
 /**
  * 纯数据/业务状态持有者（不含导航逻辑）。
  *
- * 从 [AppState] 拆出，供 Android（用 Navigation Compose 自行管理导航）和
- * Desktop（用 [AppState] 含导航字段）共享同一套数据层。
+ * 供 Android（Navigation Compose + NavHost）和 Desktop（[com.virjar.tk.DesktopNav]，
+ * 面板栈/子窗口入口）共享同一套数据层。
  *
- * 导航（页面流转、currentScreen 等）由各平台独立实现：
- * - Android：NavController + NavHost
- * - Desktop：[AppState] 的 currentScreen 枚举（暂保留）
- *
- * @see AppState
+ * @see com.virjar.tk.DesktopNav
  */
 open class AppDataState(val session: ClientSession) {
     val imClient get() = session.imClient
@@ -298,8 +294,8 @@ open class AppDataState(val session: ClientSession) {
 }
 
 /**
- * 屏幕数据加载键（类型安全）。Android NavHost 各 composable{} 用它触发数据加载。
- * 替代旧的 [SubScreen] 枚举驱动的 [AppState.loadScreenData]。
+ * 屏幕数据加载键（类型安全）。各平台导航层用它触发数据加载
+ * （Android NavHost 各 composable{} / Desktop SubScreen.dataKey()）。
  */
 sealed class ScreenDataKey {
     object Devices : ScreenDataKey()

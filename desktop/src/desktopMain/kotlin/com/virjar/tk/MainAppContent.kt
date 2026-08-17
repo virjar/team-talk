@@ -28,11 +28,6 @@ import androidx.compose.ui.draganddrop.DragData
 import androidx.compose.ui.draganddrop.dragData
 import androidx.compose.ui.draw.clip
 
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.client.ClientSession
@@ -54,48 +49,46 @@ import com.virjar.tk.ui.theme.Tk
 import com.virjar.tk.viewmodel.ChatViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * 主内容区（三栏布局：导航栏 + 列表栏 + 内容栏）。
  *
- * 三栏常驻，子页面（搜索/群详情/编辑资料等）渲染为右栏面板，而非全屏覆盖。
- * 这是桌面 IM 的标准范式（飞书/Slack），区别于 Android 的全屏页面导航。
- * 视觉规格：doc/04-ui-design/components.md §1.5/§2.1。
+ * 三栏常驻，子页面按 §2.1 分流：群详情/成员/资料/邀请渲染为右栏面板（ESC 逐级返回），
+ * 其余弹独立子窗口（§2.6）。这是桌面 IM 的标准范式（飞书/Slack），
+ * 区别于 Android 的全屏页面导航。视觉规格：doc/04-ui-design/components.md §1.5/§2.1。
  */
 @Composable
 internal fun MainAppContent(
     session: ClientSession,
+    mainWindow: java.awt.Window,
     onLogout: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    val appState = rememberAppState(session)
-    val conversations by appState.conversationViewModel.conversations.collectAsState()
-    val contacts by appState.contactViewModel.contacts.collectAsState()
-    val pendingApplyCount by appState.contactViewModel.pendingApplyCount.collectAsState()
+    val nav = rememberDesktopNav(session)
+    val conversations by nav.conversationViewModel.conversations.collectAsState()
+    val contacts by nav.contactViewModel.contacts.collectAsState()
+    val pendingApplyCount by nav.contactViewModel.pendingApplyCount.collectAsState()
 
     DisposableEffect(Unit) {
-        onDispose { appState.destroy() }
+        onDispose { nav.destroy() }
     }
 
-    // 右栏面板类型：与聊天上下文相关，渲染在右栏（飞书群详情范式）
-    val panelScreens = setOf(
-        SubScreen.GroupDetail, SubScreen.UserProfile,
-        SubScreen.InviteMembers, SubScreen.InviteLinks,
-    )
-
-    // 当前子页面是否走右栏面板（其余走新窗口）
-    val isPanelScreen = appState.currentScreen != null && appState.currentScreen in panelScreens
-
-    // 关闭右栏面板（ESC / 返回箭头 / 关闭按钮通用）
-    val closePanel: () -> Unit = { appState.currentScreen = null }
+    // ESC 关闭面板：AWT KeyEventDispatcher 层拦截（Compose onPreviewKeyEvent 依赖
+    // 焦点节点存在，无焦点时（点完非 focusable 的列表行）按键不派发——旧版
+    // 「ESC 不可靠」的根因）。按窗口归属分流，弹层/对话框是独立 Window 不受影响。
+    DisposableEffect(mainWindow) {
+        val unregister = registerEscapeInterceptor(mainWindow) {
+            if (nav.panelStack.isNotEmpty()) { nav.popPanel(); true } else false
+        }
+        onDispose { unregister() }
+    }
 
     // uid → User 解析链：本地缓存 → currentUser → userSession 终极兜底。
     // 自动登录路径 localCache/currentUser 可能为空，没有兜底时自己消息头像退化为 uid 首字母。
-    val userSession = appState.userSession
+    val userSession = nav.userSession
     val resolveUser: (String) -> User? = { uid ->
-        appState.localCache.getUser(uid)
-            ?: appState.currentUser?.takeIf { it.uid == uid }
+        nav.localCache.getUser(uid)
+            ?: nav.currentUser?.takeIf { it.uid == uid }
             ?: if (uid == userSession.uid) {
                 User(
                     uid = uid,
@@ -105,14 +98,11 @@ internal fun MainAppContent(
             } else null
     }
 
-    // ── 新窗口类子页面（独立任务，临时窗口，关了销毁）──
-    // 与右栏面板互斥：currentScreen 非 null 且不在 panelScreens 时，弹新窗口
-    val windowScreen = if (appState.currentScreen != null && !isPanelScreen) appState.currentScreen else null
-    // key(windowScreen)：screen 切换时强制重建 SubWindow，避免 remember 残留旧 localScreen
-    // （否则 SearchMessages→CreateGroup 切换时窗口内容不更新）
-    if (windowScreen != null) {
+    // ── 独立子窗口（§2.6，与右栏面板互斥）──
+    // key(windowScreen)：入口切换时强制重建 SubWindow，清空窗口内局部导航栈
+    nav.windowScreen?.let { windowScreen ->
         key(windowScreen) {
-            SubWindow(screen = windowScreen, appState = appState, onClose = closePanel)
+            SubWindow(screen = windowScreen, nav = nav, onClose = { nav.windowScreen = null })
         }
     }
 
@@ -121,13 +111,13 @@ internal fun MainAppContent(
 
     // @ 补全候选：群聊拉成员列表；私聊用好友列表（chatId 不含对方 uid，好友即候选）
     var mentionCandidates by remember { mutableStateOf<List<User>>(emptyList()) }
-    LaunchedEffect(appState.selectedChatId, appState.selectedChatType, contacts.size) {
-        val chatId = appState.selectedChatId
+    LaunchedEffect(nav.chatId, nav.chatType, contacts.size) {
+        val chatId = nav.chatId
         mentionCandidates = if (chatId == null) {
             emptyList()
-        } else if (appState.selectedChatType == ChatType.GROUP.code) {
+        } else if (nav.chatType == ChatType.GROUP.code) {
             try {
-                appState.chatRepo.getMembers(chatId).getOrNull()?.mapNotNull { it.user } ?: emptyList()
+                nav.chatRepo.getMembers(chatId).getOrNull()?.mapNotNull { it.user } ?: emptyList()
             } catch (_: Exception) { emptyList() }
         } else {
             contacts.mapNotNull { it.user }
@@ -135,210 +125,209 @@ internal fun MainAppContent(
     }
 
     // ── 三栏常驻布局 ──
-    Row(modifier = Modifier.fillMaxSize().testTag("main.home")) {
-        // ── 左栏：细导航栏（56dp 图标式，规格 §1.5）──
-        SlimNavRail(
-            selectedTab = appState.selectedTab,
-            onSelectTab = { index ->
-                appState.selectedTab = index
-                if (MainTab.entries[index] != MainTab.CONVERSATIONS) appState.selectedChatId = null
-            },
-            pendingApplyCount = pendingApplyCount,
-            currentUserName = resolveUser(userSession.uid)?.name,
-        )
+    Box(modifier = Modifier.fillMaxSize().testTag("main.home")) {
+        Row(modifier = Modifier.fillMaxSize()) {
+            // ── 左栏：细导航栏（56dp 图标式，规格 §1.5）──
+            SlimNavRail(
+                selectedTab = nav.selectedTab,
+                onSelectTab = { index ->
+                    nav.selectedTab = index
+                    if (MainTab.entries[index] != MainTab.CONVERSATIONS) nav.chatId = null
+                },
+                pendingApplyCount = pendingApplyCount,
+                currentUserName = resolveUser(userSession.uid)?.name,
+            )
 
-        // ── 中栏：列表区（会话/通讯录/设置，300dp）──
-        // 三级层次：rail(surfaceVariant 深灰) → 列表(background 浅灰) → 内容(白)
-        Surface(
-            modifier = Modifier.width(Tk.dimens.listPaneWidth).fillMaxHeight(),
-            color = MaterialTheme.colorScheme.background,
-        ) {
-            when (MainTab.entries[appState.selectedTab]) {
-                MainTab.CONVERSATIONS -> {
-                    Column {
-                        ListHeader(
-                            title = "会话",
-                            actions = {
-                                // 对齐 Android HomeScreen TopAppBar：搜索/发起群聊/添加好友 三图标
-                                IconButton(onClick = { appState.currentScreen = SubScreen.SearchMessages },
-                                    modifier = Modifier.testTag("action.search")) {
-                                    Icon(Icons.Filled.Search, contentDescription = "搜索消息", tint = Tk.colors.secondaryText)
-                                }
-                                IconButton(onClick = { appState.currentScreen = SubScreen.CreateGroup },
-                                    modifier = Modifier.testTag("action.createGroup")) {
-                                    Icon(Icons.Filled.GroupAdd, contentDescription = "发起群聊", tint = Tk.colors.secondaryText)
-                                }
-                                IconButton(onClick = { appState.currentScreen = SubScreen.SearchUsers },
-                                    modifier = Modifier.testTag("action.addFriend")) {
-                                    Icon(Icons.Filled.PersonAdd, contentDescription = "添加好友", tint = Tk.colors.secondaryText)
-                                }
-                            },
-                        )
-                        ConversationListScreen(
-                            conversations = conversations,
-                            selectedChatId = appState.selectedChatId,
-                            onConversationClick = { chatId ->
-                                val conv = conversations.find { it.chatId == chatId }
-                                appState.openChat(chatId, conv?.chatName ?: chatId.take(16), conv?.chatType ?: 1)
-                            },
-                            onPinClick = { chatId, pinned -> appState.session.localCache.toggleConversationPin(chatId, pinned) },
-                            onMarkRead = { chatId, lastSeq ->
-                                appState.session.localCache.markConversationRead(chatId, lastSeq)
-                            },
-                        )
+            // ── 中栏：列表区（会话/通讯录/设置，300dp）──
+            // 三级层次：rail(surfaceVariant 深灰) → 列表(background 浅灰) → 内容(白)
+            Surface(
+                modifier = Modifier.width(Tk.dimens.listPaneWidth).fillMaxHeight(),
+                color = MaterialTheme.colorScheme.background,
+            ) {
+                when (MainTab.entries[nav.selectedTab]) {
+                    MainTab.CONVERSATIONS -> {
+                        Column {
+                            ListHeader(
+                                title = "会话",
+                                actions = {
+                                    // 对齐 Android HomeScreen TopAppBar：搜索/发起群聊/添加好友 三图标
+                                    IconButton(onClick = { nav.openScreen(SubScreen.SearchMessages) },
+                                        modifier = Modifier.testTag("action.search")) {
+                                        Icon(Icons.Filled.Search, contentDescription = "搜索消息", tint = Tk.colors.secondaryText)
+                                    }
+                                    IconButton(onClick = { nav.openScreen(SubScreen.CreateGroup) },
+                                        modifier = Modifier.testTag("action.createGroup")) {
+                                        Icon(Icons.Filled.GroupAdd, contentDescription = "发起群聊", tint = Tk.colors.secondaryText)
+                                    }
+                                    IconButton(onClick = { nav.openScreen(SubScreen.SearchUsers) },
+                                        modifier = Modifier.testTag("action.addFriend")) {
+                                        Icon(Icons.Filled.PersonAdd, contentDescription = "添加好友", tint = Tk.colors.secondaryText)
+                                    }
+                                },
+                            )
+                            ConversationListScreen(
+                                conversations = conversations,
+                                selectedChatId = nav.chatId,
+                                onConversationClick = { chatId ->
+                                    val conv = conversations.find { it.chatId == chatId }
+                                    nav.openChat(chatId, conv?.chatName ?: chatId.take(16), conv?.chatType ?: 1)
+                                },
+                                onPinClick = { chatId, pinned -> nav.session.localCache.toggleConversationPin(chatId, pinned) },
+                                onMarkRead = { chatId, lastSeq ->
+                                    nav.session.localCache.markConversationRead(chatId, lastSeq)
+                                },
+                            )
+                        }
                     }
-                }
 
-                MainTab.CONTACTS -> {
-                    Column {
-                        ListHeader(
-                            title = "通讯录",
-                            actions = {
-                                IconButton(onClick = { appState.currentScreen = SubScreen.SearchUsers },
-                                    modifier = Modifier.testTag("action.addFriend")) {
-                                    Icon(Icons.Filled.Search, contentDescription = "搜索用户", tint = Tk.colors.secondaryText)
-                                }
-                                IconButton(onClick = { appState.currentScreen = SubScreen.CreateGroup },
-                                    modifier = Modifier.testTag("action.createGroup")) {
-                                    Icon(Icons.Filled.GroupAdd, contentDescription = "创建群组", tint = Tk.colors.secondaryText)
-                                }
-                                IconButton(onClick = { appState.currentScreen = SubScreen.FriendApplies },
-                                    modifier = Modifier.testTag("action.friendApplies")) {
-                                    if (pendingApplyCount > 0) {
-                                        BadgedBox(badge = { UnreadBadge(pendingApplyCount) }) {
+                    MainTab.CONTACTS -> {
+                        Column {
+                            ListHeader(
+                                title = "通讯录",
+                                actions = {
+                                    IconButton(onClick = { nav.openScreen(SubScreen.SearchUsers) },
+                                        modifier = Modifier.testTag("action.addFriend")) {
+                                        Icon(Icons.Filled.Search, contentDescription = "搜索用户", tint = Tk.colors.secondaryText)
+                                    }
+                                    IconButton(onClick = { nav.openScreen(SubScreen.CreateGroup) },
+                                        modifier = Modifier.testTag("action.createGroup")) {
+                                        Icon(Icons.Filled.GroupAdd, contentDescription = "创建群组", tint = Tk.colors.secondaryText)
+                                    }
+                                    IconButton(onClick = { nav.openScreen(SubScreen.FriendApplies) },
+                                        modifier = Modifier.testTag("action.friendApplies")) {
+                                        if (pendingApplyCount > 0) {
+                                            BadgedBox(badge = { UnreadBadge(pendingApplyCount) }) {
+                                                Icon(Icons.Filled.PersonAdd, contentDescription = "好友申请", tint = Tk.colors.secondaryText)
+                                            }
+                                        } else {
                                             Icon(Icons.Filled.PersonAdd, contentDescription = "好友申请", tint = Tk.colors.secondaryText)
                                         }
-                                    } else {
-                                        Icon(Icons.Filled.PersonAdd, contentDescription = "好友申请", tint = Tk.colors.secondaryText)
                                     }
-                                }
-                            },
-                        )
-                        LazyColumn(modifier = Modifier.weight(1f)) {
-                            items(contacts, key = { it.friendUid }) { contact ->
-                                val displayName = contact.remark ?: contact.user?.name ?: contact.friendUid
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(min = Tk.dimens.listItemHeight)
-                                        .clickable {
-                                            appState.selectedProfileUid = contact.friendUid
-                                            appState.currentScreen = SubScreen.UserProfile
-                                        }
-                                        .padding(horizontal = Tk.spacing.md),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    AvatarPlaceholder(
-                                        name = contact.user?.name ?: displayName,
-                                        size = Tk.dimens.listAvatar.value.toInt(),
-                                    )
-                                    Spacer(Modifier.width(Tk.spacing.md))
-                                    Column {
-                                        Text(displayName, style = MaterialTheme.typography.titleSmall)
-                                        val remark = contact.remark
-                                        val userName = contact.user?.name
-                                        if (remark != null && userName != null && remark != userName) {
-                                            Text(userName, style = MaterialTheme.typography.bodySmall, color = Tk.colors.secondaryText)
+                                },
+                            )
+                            LazyColumn(modifier = Modifier.weight(1f)) {
+                                items(contacts, key = { it.friendUid }) { contact ->
+                                    val displayName = contact.remark ?: contact.user?.name ?: contact.friendUid
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = Tk.dimens.listItemHeight)
+                                            .clickable { nav.openScreen(SubScreen.UserProfile(contact.friendUid)) }
+                                            .padding(horizontal = Tk.spacing.md),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        AvatarPlaceholder(
+                                            name = contact.user?.name ?: displayName,
+                                            size = Tk.dimens.listAvatar.value.toInt(),
+                                        )
+                                        Spacer(Modifier.width(Tk.spacing.md))
+                                        Column {
+                                            Text(displayName, style = MaterialTheme.typography.titleSmall)
+                                            val remark = contact.remark
+                                            val userName = contact.user?.name
+                                            if (remark != null && userName != null && remark != userName) {
+                                                Text(userName, style = MaterialTheme.typography.bodySmall, color = Tk.colors.secondaryText)
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                }
 
-                MainTab.SETTINGS -> {
-                    MeScreen(
-                        currentUser = appState.currentUser,
-                        onLogout = onLogout,
-                        onEditProfile = { appState.currentScreen = SubScreen.EditProfile },
-                        onChangePassword = { appState.currentScreen = SubScreen.ChangePassword },
-                        onDeviceManagement = { appState.currentScreen = SubScreen.Devices },
-                        onBlacklist = { appState.currentScreen = SubScreen.Blacklist },
-                        buildInfoText = "Git: ${BuildConfig.GIT_COMMIT_ID.take(8)}  |  Build: ${BuildConfig.BUILD_TIME}",
-                        headerStyle = MeHeaderStyle.Compact,
-                    )
+                    MainTab.SETTINGS -> {
+                        MeScreen(
+                            currentUser = nav.currentUser,
+                            onLogout = onLogout,
+                            onEditProfile = { nav.openScreen(SubScreen.EditProfile) },
+                            onChangePassword = { nav.openScreen(SubScreen.ChangePassword) },
+                            onDeviceManagement = { nav.openScreen(SubScreen.Devices) },
+                            onBlacklist = { nav.openScreen(SubScreen.Blacklist) },
+                            buildInfoText = "Git: ${BuildConfig.GIT_COMMIT_ID.take(8)}  |  Build: ${BuildConfig.BUILD_TIME}",
+                            headerStyle = MeHeaderStyle.Compact,
+                        )
+                    }
                 }
             }
-        }
 
-        // ── 右栏：内容区（聊天面板 / 子页面面板 / 空态）──
-        // 子页面渲染为右栏面板（叠加在聊天区），ESC 或 ArrowBack 关闭回聊天。
-        // onPreviewKeyEvent 监听 ESC 关闭当前面板。
-        Surface(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .onPreviewKeyEvent { event ->
-                    // ESC 关闭当前子页面面板
-                    if (event.type == KeyEventType.KeyUp && event.key == Key.Escape && appState.currentScreen != null) {
-                        closePanel()
-                        true
-                    } else {
-                        false
-                    }
-                },
-            color = MaterialTheme.colorScheme.surface,
-        ) {
-            when {
-                // 右栏面板：与聊天上下文相关的子页面（群详情/成员/资料/邀请）
-                isPanelScreen -> {
-                    SubScreenRouter(
-                        appState = appState,
-                        // 子页面的 onBack = 关闭面板回聊天（桌面范式）
-                        backTarget = { _ -> null },
-                        onOpenChatAndDismiss = closePanel,
-                        onLeaveGroup = {
-                            scope.launch {
-                                try { appState.chatRepo.deleteChat(appState.selectedGroupChatId!!) } catch (_: Exception) {}
-                                appState.currentScreen = null
-                                appState.selectedChatId = null
+            // ── 右栏：内容区（聊天面板 / 子页面面板 / 空态）──
+            // 面板渲染在聊天区之上，ESC 逐级弹栈（处理在根节点）。
+            Surface(
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                color = MaterialTheme.colorScheme.surface,
+            ) {
+                val panelScreen = nav.panelStack.lastOrNull()
+                when {
+                    // 右栏面板：与聊天上下文相关的子页面（群详情/成员/资料/邀请）
+                    panelScreen != null -> SubScreenContent(
+                        screen = panelScreen,
+                        data = nav,
+                        navigate = { nav.panelStack = nav.panelStack + it },
+                        back = { nav.popPanel() },
+                        openChatAndClose = { chatId, name, chatType -> nav.openChat(chatId, name, chatType) },
+                        onLeaveGroup = { chatId ->
+                            nav.leaveGroup(chatId) {
+                                nav.panelStack = emptyList()
+                                if (nav.chatId == chatId) nav.chatId = null
                             }
                         },
-                        // 桌面面板模式：子页面不渲染返回按钮，靠 ESC 关闭
-                        desktopPanelMode = true,
+                        // 面板初始屏无返回键（ESC 关）；容器内跳转后（群详情→邀请成员）可返回
+                        showBack = nav.panelStack.size > 1,
                     )
-                }
-                // 聊天面板
-                appState.selectedChatId != null && appState.chatViewModel != null -> {
-                    // 从会话列表读取当前会话的草稿作为初始值
-                    val conv = conversations.find { it.chatId == appState.selectedChatId }
-                    ChatPanelWrapper(
-                        chatId = appState.selectedChatId!!,
-                        chatName = appState.selectedChatName,
-                        chatType = appState.selectedChatType,
-                        viewModel = appState.chatViewModel!!,
-                        myUid = appState.userSession.uid,
-                        conversationRepo = appState.conversationRepo,
-                        initialDraft = conv?.draft,
-                        resolveSender = resolveUser,
-                        voicePlayback = voicePlayback,
-                        onMentionClick = { uid ->
-                            appState.selectedProfileUid = uid
-                            appState.currentScreen = SubScreen.UserProfile
-                        },
-                        mentionCandidates = mentionCandidates,
-                        onForward = { msg -> appState.forwardMessage = msg; appState.currentScreen = SubScreen.Forward },
-                        onGroupDetail = { appState.selectedGroupChatId = appState.selectedChatId; appState.currentScreen = SubScreen.GroupDetail },
-                    )
-                }
-                // 空态（规格 §2.1：Logo + 主提示 + 次提示）
-                else -> {
-                    Column(
-                        modifier = Modifier.fillMaxSize(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        TeamTalkLogo(size = 72.dp, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.height(Tk.spacing.lg))
-                        Text("选择一个会话开始聊天", style = MaterialTheme.typography.titleSmall, color = Tk.colors.secondaryText)
-                        Spacer(Modifier.height(Tk.spacing.xs))
-                        Text("或从左侧通讯录发起对话", style = MaterialTheme.typography.bodySmall, color = Tk.colors.metaText)
+                    // 聊天面板
+                    nav.chatId != null && nav.chatViewModel != null -> {
+                        // 从会话列表读取当前会话的草稿作为初始值
+                        val conv = conversations.find { it.chatId == nav.chatId }
+                        ChatPanelWrapper(
+                            chatId = nav.chatId!!,
+                            chatName = nav.chatName,
+                            chatType = nav.chatType,
+                            viewModel = nav.chatViewModel!!,
+                            myUid = nav.userSession.uid,
+                            conversationRepo = nav.conversationRepo,
+                            initialDraft = conv?.draft,
+                            resolveSender = resolveUser,
+                            voicePlayback = voicePlayback,
+                            onMentionClick = { uid -> nav.openScreen(SubScreen.UserProfile(uid)) },
+                            mentionCandidates = mentionCandidates,
+                            onForward = { msg -> nav.openScreen(SubScreen.Forward(msg)) },
+                            onGroupDetail = { nav.openScreen(SubScreen.GroupDetail(nav.chatId!!)) },
+                        )
+                    }
+                    // 空态（规格 §2.1：Logo + 主提示 + 次提示）
+                    else -> {
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            TeamTalkLogo(size = 72.dp, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.height(Tk.spacing.lg))
+                            Text("选择一个会话开始聊天", style = MaterialTheme.typography.titleSmall, color = Tk.colors.secondaryText)
+                            Spacer(Modifier.height(Tk.spacing.xs))
+                            Text("或从左侧通讯录发起对话", style = MaterialTheme.typography.bodySmall, color = Tk.colors.metaText)
+                        }
                     }
                 }
             }
         }
+
+        // action 失败提示（此前面板/中栏 action 的错误完全静默）
+        ErrorSnackbar(nav)
     }
+}
+
+/** 全局错误 Snackbar：消费 [AppDataState.error] 并显示（3s 自动消失）。 */
+@Composable
+private fun BoxScope.ErrorSnackbar(data: com.virjar.tk.navigation.AppDataState) {
+    val snackbarHostState = remember { SnackbarHostState() }
+    val error = data.error
+    LaunchedEffect(error) {
+        val msg = error ?: return@LaunchedEffect
+        data.clearError()
+        snackbarHostState.showSnackbar(msg)
+    }
+    SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
 }
 
 @Composable
