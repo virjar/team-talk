@@ -153,7 +153,7 @@ pill（高 16dp，min 宽 16dp），`unreadBadge` 底白字 `labelMedium`，`99+
 
 ### 2.4 通讯录
 
-中栏列表：搜索框（顶部，高 36 圆角 8 全宽，取代图标）+ 分组字母索引（预留，见 placeholders.md §7）+ 联系人项（头像 40 + 名 + 备注）。右栏 = 点击联系人的 UserProfile 面板。
+中栏列表：搜索框（顶部，高 36 圆角 8 全宽）+ 拼音首字母分组 sticky 头 + 右侧索引条（点击跳组，GBK 分区表取首字母）+ 联系人项（头像 + 名 + 次行）。右栏 = 点击联系人的 UserProfile 面板。Android 通讯录同构（ContactsListScreen 双端共享）。
 
 ### 2.5 设置（Me）
 

@@ -32,10 +32,28 @@
 
 | 截图 | 内容 |
 |------|------|
-| `screenshots/light-login.png` | 登录窗（本轮未重排，见 ROADMAP P4） |
+| `screenshots/light-login.png` | 登录窗（已被 §2.3 重排版取代，见 P4 轮） |
 | `screenshots/light-main-empty.png` | 三栏空态：细导航栏 + 会话列表 + Logo 空态 |
 | `screenshots/light-conversation-list.png` | 会话列表：未读徽标/时间戳/群角标/置顶区 |
 | `screenshots/light-chat.png` | 聊天面板：双方头像/指向角气泡/已读水位线/工具行/Enter 发送 |
+| `screenshots/light-contacts-grouped.png` | 通讯录：搜索框 + 拼音首字母分组 sticky 头 + 右侧索引条（P4 轮） |
+
+## 验收基线（2026-08 P4 轮，暗色）
+
+主题体系：设置「外观」三态（跟随系统/浅色/深色，`TkTheme` 单一事实源，双端持久化）；
+走查强制参数 `-Dteamtalk.theme=dark|light`（run 任务透传）。
+
+| 截图 | 内容 |
+|------|------|
+| `screenshots/dark-login.png` | 登录窗（§2.3 无装饰 420×480，纯底卡片） |
+| `screenshots/dark-main-conversations.png` | 三栏：rail #272A31 / 列表 #16181D / 右栏 #1D2026 |
+| `screenshots/dark-chat.png` | 聊天：暗气泡/白字/媒体卡（视频卡恒深底，明暗一致） |
+| `screenshots/dark-contacts.png` | 通讯录 |
+| `screenshots/dark-settings.png` | 设置（含「外观」行） |
+| `screenshots/dark-group-detail.png` | 群详情右栏面板 |
+| `screenshots/dark-subwindow-creategroup.png` | 子窗口（§2.6 统一 460 宽 + 返回键头） |
+
+注：dark-* 截图顶部白色条带为 macOS 原生标题栏（走查机器系统为浅色；系统暗色用户标题栏随系统）。
 
 ## 设计原则（约束所有组件）
 

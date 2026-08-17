@@ -42,11 +42,11 @@
 
 | 项 | 状态 |
 |----|------|
-| 登录窗口/注册/二级子窗口按设计规范重排（doc/04-ui-design §2.3/2.6） | 📋 |
-| 暗色模式全页面走查（令牌已双套，未截图验收） | 📋 |
-| Android 端专项打磨（通讯录字母索引/搜索框/触控细节，当前仅被动受益） | 📋 |
-| 桌面端导航独立重构（替换手搓 currentScreen 枚举，AppState 遗留清理） | 📋 |
-| Desktop 子窗口 ESC 关闭不可靠 / TestHttpServer 窗口语义 owner 泄漏 | 📋 |
+| ~~登录窗口/注册/二级子窗口按设计规范重排（doc/04-ui-design §2.3/2.6）~~ | ✅ 2026-08：登录窗口无装饰化（420×480/注册 560，窗口即卡片，windowStyle 变体）；子窗口统一宽 460 + 返回键 + ESC 逐级返回 |
+| ~~暗色模式全页面走查~~ | ✅ 2026-08：应用内「外观」三态切换（跟随系统/浅色/深色，双端持久化）+ dark-* 七页截图走查 + `-Dteamtalk.theme` dev 强制参数 |
+| Android 端专项打磨 | 📋 通讯录搜索/拼音分组/字母索引 ✅（双端共享 ContactsListScreen）；剩余：触控细节长尾、Android E2E T01-T34 |
+| ~~桌面端导航独立重构（替换手搓 currentScreen 枚举，AppState 遗留清理）~~ | ✅ 2026-08：SubScreen 参数化 + DesktopNav（面板栈/子窗口局部栈）+ SubScreenContent 单渲染器；平行参数字段与死字段清除 |
+| ~~Desktop 子窗口 ESC 关闭不可靠 / TestHttpServer 窗口语义 owner 泄漏~~ | ✅ 2026-08：AWT KeyEventDispatcher 层拦截（F31 根因）+ 窗口注册 onDispose 兜底注销 |
 | F13 长按消息弹系统文本菜单（MessageBodyRenderer Text 被系统选择拦截 onLongClick） | 📋 |
 | F15 Desktop Profile 源码级隔离 | 📋 |
 | Android E2E 全流程 T01-T34 剩余用例 | 📋 |

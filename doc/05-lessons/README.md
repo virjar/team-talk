@@ -91,6 +91,9 @@
 | F28 | 渲染管线静默失败两连：①CachedImageContent 把本地缓存文件路径传给按 URL 下载的 loadImageBitmap（本地路径当 URL 下载必失败，catch 吞掉后永远 loading）②修复补丁的字符串替换静默 no-op（补丁未生效却报告 fixed，用户复测打脸）| 文件/URL 两类入参必须有类型区分的独立 API（decodeLocalImage vs loadImageBitmap）；**补丁必须验证落盘效果**（grep 编译产物/源码），替换类补丁失败是 no-op 不是 error |
 | F19 | 桌面右键上下文菜单三连坑：①combinedClickable.onLongClick 桌面只由按住左键触发（右键无效，曾误写入设计文档）②手写 pointerInput 在 CMP 1.10 桌面收不到鼠标事件③Robot 右键 e2e 注入依赖辅助功能权限且熄屏后失效 | secondaryClick expect/actual（桌面 onPointerEvent Press 记录次键 + Release 触发——Release 时刻按钮已释放不能直接判断）；文档断言 API 行为前必须实测 |
 | F18 | Kotlin 块注释内的 `*/` 序列提前闭合注释（第 4 次踩） | 注释里写代码符号序列（如"星号/波浪线"列举）必须转义措辞，严禁出现 `*/` 字面量；CI 侧可加 grep 检查 |
+| F31 | Compose Desktop `onPreviewKeyEvent` 只在焦点路径（root→焦点节点）上触发：无焦点节点时（刚点完非 focusable 的列表行）按键事件不派发进场景，挂右栏/挂根节点都失灵——「面板/子窗口 ESC 关闭不可靠」的根因，且和「焦点恰好在输入框里」时表现不一致，极难复现定位 | 窗口级快捷键走 AWT `KeyEventDispatcher`（KeyboardFocusManager 层，先于焦点派发），按事件源窗口归属分流（`SwingUtilities.getWindowAncestor(source) === owner`），弹层/对话框是独立 Window 天然不受影响；桌面实测时还要注意 macOS 前台焦点在别处时 Robot 送键根本不进 app（先 toFront/点入窗口再送键） |
+| F32 | 网上复制的 GB2312 拼音首字母分区表整表错位：初版 23 个段起始值全错（张/王/李/陈全标错字母），且肉眼审查表格发现不了——只有拿真实汉字验算才暴露 | 常量映射表抄自网络必须逐锚点实证（啊B0A1/芭B0C5/…/匝D4D1 共 23 字 encode 校准），锚点字写进代码注释，常用姓氏单测锁定（PinyinInitialsTest） |
+| F33 | VM 协程 scope 从 Main 换 Dispatchers.Default（F27）后，`runTest + advanceUntilIdle` 不再推进 VM 内协程：测试调度器只管自己的队列，VM 协程在真实线程池上跑，断言竞态——ConversationViewModelTest 偶红偶绿，「上次全绿」不代表非 flaky | VM 基类构造注入 dispatcher（生产默认 Default，测试传 StandardTestDispatcher 同源推进）；凡依赖异步副作用的断言，先确认协程与测试调度器同域 |
 
 ---
 
