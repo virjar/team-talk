@@ -75,12 +75,17 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
-// 管理后台 SPA：npm run build 产物拷入 resources（手动触发——前端低频变更）
-val copyAdminDist by tasks.registering(Copy::class) {
+// 管理后台 SPA：发布产物以 admin/dist 为事实源。Sync 会移除旧 hash 资源，processResources
+// 强制依赖它，避免前端已经构建但 server dist 仍静默携带旧页面。
+val copyAdminDist by tasks.registering(Sync::class) {
     group = "build"
-    description = "拷贝 admin/dist 到 server 静态资源（先 cd admin && npm run build）"
+    description = "同步 admin/dist 到 server 静态资源（先 cd admin && npm run build）"
     from(rootProject.file("admin/dist"))
     into(layout.projectDirectory.dir("src/main/resources/static/admin"))
+}
+
+tasks.named("processResources") {
+    dependsOn(copyAdminDist)
 }
 
 tasks.test {
