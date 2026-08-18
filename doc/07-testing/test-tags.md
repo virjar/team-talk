@@ -22,13 +22,18 @@
 | testTag | 类型 | 说明 |
 |---------|------|------|
 | `main.home` | Scaffold | 主界面容器（用于判断状态）|
+| `app.titleBar` | Row | Desktop 应用级顶栏 |
 | `nav.会话` | NavigationBarItem | 会话 Tab |
 | `nav.通讯录` | NavigationBarItem | 通讯录 Tab |
 | `nav.设置` | NavigationBarItem | 设置 Tab |
-| `action.search` | IconButton | 搜索消息 |
-| `action.createGroup` | IconButton | 发起群聊 |
-| `action.addFriend` | IconButton | 添加好友/搜索用户 |
-| `action.friendApplies` | IconButton | 好友申请入口 |
+| `action.search` | IconButton | Android 全局搜索入口 |
+| `global.search.input` | TextField | 全局搜索输入（Desktop 顶栏 / Android 搜索页） |
+| `global.search.clear` | Icon | 清空全局搜索 |
+| `global.search.scope.{all/messages/people/files/services}` | FilterChip | 搜索分类 |
+| `global.search.conversation.{chatId前12}` | ListItem | 会话搜索结果 |
+| `global.search.user.{uid前8}` | ListItem | 用户搜索结果 |
+| `global.search.message.{chatId前10}.{serverSeq}` | ListItem | 消息搜索结果 |
+| `contacts.friendApplies` | Row | 通讯录“新的朋友”固定入口 |
 | `conv.item.{chatId前12}` | Row | 会话列表项 |
 | `conv.pin.{chatId前12}` | IconButton | 置顶/取消置顶按钮 |
 | `contact.{uid前8}` | Row | 通讯录联系人项 |
@@ -60,6 +65,7 @@
 | `search.msg.submit` | IconButton | 搜索消息提交 |
 | `profile.addFriend` | Button | 添加好友 |
 | `profile.sendMessage` | Button | 发消息 |
+| `profile.createGroup` | Button | 从好友资料发起群聊 |
 | `profile.deleteFriend` | Button | 删除好友（isFriend时）|
 | `profile.applied` | Button | 已申请（disabled状态）|
 

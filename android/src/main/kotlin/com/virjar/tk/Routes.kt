@@ -16,7 +16,12 @@ object Routes {
         "chat/$chatId?name=${URLEncoder.encode(name, "UTF-8")}&type=$type"
     const val SEARCH_MESSAGES = "search_messages"
     const val SEARCH_USERS = "search_users"
-    const val CREATE_GROUP = "create_group"
+    const val CREATE_GROUP = "create_group?seedUid={seedUid}"
+    fun createGroup(seedUid: String? = null) = if (seedUid.isNullOrBlank()) {
+        "create_group"
+    } else {
+        "create_group?seedUid=${URLEncoder.encode(seedUid, "UTF-8")}"
+    }
     const val FRIEND_APPLIES = "friend_applies"
     const val USER_PROFILE = "user_profile/{uid}"
     fun userProfile(uid: String) = "user_profile/$uid"

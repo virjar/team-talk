@@ -12,7 +12,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -42,6 +44,8 @@ fun ContactsListScreen(
     contacts: List<Contact>,
     onContactClick: (friendUid: String) -> Unit,
     modifier: Modifier = Modifier,
+    pendingApplyCount: Int = 0,
+    onFriendApplies: (() -> Unit)? = null,
 ) {
     var query by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -73,6 +77,10 @@ fun ContactsListScreen(
     }
 
     Column(modifier = modifier.fillMaxSize()) {
+        if (onFriendApplies != null) {
+            NewFriendsRow(pendingApplyCount = pendingApplyCount, onClick = onFriendApplies)
+            HorizontalDivider(color = Tk.colors.divider)
+        }
         ContactSearchField(query, { query = it })
 
         Row(modifier = Modifier.weight(1f)) {
@@ -149,6 +157,49 @@ fun ContactsListScreen(
                 letterIndexMap = letterIndexMap,
                 listState = listState,
                 onJump = { index -> scope.launch { listState.scrollToItem(index) } },
+            )
+        }
+    }
+}
+
+/**
+ * 好友申请是通讯录内容的一部分，而不是标题栏里的全局动作。
+ * 即使没有未处理申请也保留稳定入口，避免用户只能靠红点发现功能。
+ */
+@Composable
+private fun NewFriendsRow(pendingApplyCount: Int, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 60.dp)
+            .clickable(onClick = onClick)
+            .testTag("contacts.friendApplies")
+            .padding(horizontal = Tk.spacing.lg, vertical = Tk.spacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Surface(
+            modifier = Modifier.size(40.dp),
+            shape = RoundedCornerShape(11.dp),
+            color = MaterialTheme.colorScheme.primaryContainer,
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    Icons.Filled.PersonAdd,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            }
+        }
+        Spacer(Modifier.width(Tk.spacing.md))
+        Column(modifier = Modifier.weight(1f)) {
+            Text("新的朋友", style = MaterialTheme.typography.titleSmall)
+            Text("好友申请与验证", style = MaterialTheme.typography.bodySmall, color = Tk.colors.secondaryText)
+        }
+        if (pendingApplyCount > 0) {
+            Text(
+                "$pendingApplyCount 条待处理",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
             )
         }
     }

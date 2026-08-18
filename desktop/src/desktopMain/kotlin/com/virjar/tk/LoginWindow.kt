@@ -259,10 +259,21 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                 // 关闭 → 隐藏到托盘而不是登出
                 windowVisible = false
             },
-            title = "TeamTalk",
+            title = "",
             state = mainWindowState,
         ) {
             TestServiceBridge.registerWindowIfEnabled(window)
+            // macOS：保留原生红黄绿窗口按钮，但让应用 Surface 延伸进标题栏，
+            // 消除“系统灰标题栏 + 应用内容”两套视觉语言的拼接感。
+            DisposableEffect(window) {
+                if (System.getProperty("os.name").contains("Mac", ignoreCase = true)) {
+                    window.rootPane.putClientProperty("apple.awt.fullWindowContent", true)
+                    window.rootPane.putClientProperty("apple.awt.transparentTitleBar", true)
+                    window.rootPane.putClientProperty("apple.awt.windowTitleVisible", false)
+                }
+                window.minimumSize = java.awt.Dimension(880, 600)
+                onDispose { }
+            }
             // 同步 AWT window focus 状态到 AppState
             LaunchedEffect(Unit) {
                 window.isVisible = windowVisible
@@ -273,6 +284,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                 MainAppContent(
                     session = session,
                     mainWindow = window,
+                    connectionState = connectionState,
                     onLogout = { auth.onLogout() },
                 )
             }

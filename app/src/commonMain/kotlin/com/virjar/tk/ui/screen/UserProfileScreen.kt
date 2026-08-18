@@ -17,6 +17,7 @@ fun UserProfileScreen(
     hasPendingApply: Boolean,
     onAddFriend: () -> Unit,
     onSendMessage: () -> Unit,
+    onCreateGroup: (() -> Unit)? = null,
     onDeleteFriend: (() -> Unit)? = null,
     onBack: (() -> Unit)? = null,
 ) {
@@ -70,16 +71,24 @@ fun UserProfileScreen(
             Column(modifier = Modifier.padding(16.dp)) {
                 when {
                     isFriend -> {
-                        FilledTonalButton(
-                            onClick = onSendMessage,
-                            modifier = Modifier.fillMaxWidth().testTag("profile.sendMessage"),
-                        ) { Text("发消息") }
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Button(
+                                onClick = onSendMessage,
+                                modifier = Modifier.weight(1f).testTag("profile.sendMessage"),
+                            ) { Text("发消息") }
+                            if (onCreateGroup != null) {
+                                OutlinedButton(
+                                    onClick = onCreateGroup,
+                                    modifier = Modifier.weight(1f).testTag("profile.createGroup"),
+                                ) { Text("发起群聊") }
+                            }
+                        }
                         if (onDeleteFriend != null) {
                             Spacer(Modifier.height(12.dp))
-                            OutlinedButton(
+                            TextButton(
                                 onClick = { showDeleteConfirm = true },
                                 modifier = Modifier.fillMaxWidth().testTag("profile.deleteFriend"),
-                                colors = ButtonDefaults.outlinedButtonColors(
+                                colors = ButtonDefaults.textButtonColors(
                                     contentColor = MaterialTheme.colorScheme.error,
                                 ),
                             ) { Text("删除好友") }

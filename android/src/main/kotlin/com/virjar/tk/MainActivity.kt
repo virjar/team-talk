@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavType
@@ -112,9 +113,7 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
         composable(Routes.HOME) {
             HomeScreen(dataState = dataState, onLogout = onLogout,
                 onConversationClick = { cid, n, t -> dataState.prepareChat(cid, n, t); navController.navigate(Routes.chat(cid, n, t)) },
-                onSearchMessages = { navController.navigate(Routes.SEARCH_MESSAGES) },
-                onSearchUsers = { navController.navigate(Routes.SEARCH_USERS) },
-                onCreateGroup = { navController.navigate(Routes.CREATE_GROUP) },
+                onGlobalSearch = { navController.navigate(Routes.SEARCH_MESSAGES) },
                 onFriendApplies = { navController.navigate(Routes.FRIEND_APPLIES) },
                 onUserProfile = { uid -> navController.navigate(Routes.userProfile(uid)) },
                 onEditProfile = { navController.navigate(Routes.EDIT_PROFILE) },
@@ -159,16 +158,43 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
         }
         composable(Routes.SEARCH_MESSAGES) {
             val conversations by dataState.conversationViewModel.conversations.collectAsState()
-            SearchMessagesScreen(searchMessages = { q -> dataState.searchMessages(q) },
-                onMessageClick = { cid, _ -> val c = conversations.find { it.chatId == cid }; dataState.prepareChat(cid, c?.chatName ?: cid.take(16)); navController.navigate(Routes.chat(cid, c?.chatName ?: cid.take(16))) { popUpTo(Routes.HOME) } },
-                onBack = { navController.popBackStack() })
+            val contacts by dataState.contactViewModel.contacts.collectAsState()
+            var query by rememberSaveable { mutableStateOf("") }
+            GlobalSearchScreen(
+                query = query,
+                onQueryChange = { query = it },
+                conversations = conversations,
+                contacts = contacts,
+                searchMessages = { q -> dataState.searchMessages(q) },
+                searchUsers = { q -> dataState.searchUsers(q) },
+                onConversationClick = { conversation ->
+                    dataState.prepareChat(conversation.chatId, conversation.chatName ?: conversation.chatId.take(16), conversation.chatType)
+                    navController.navigate(Routes.chat(conversation.chatId, conversation.chatName ?: conversation.chatId.take(16), conversation.chatType)) {
+                        popUpTo(Routes.HOME)
+                    }
+                },
+                onMessageClick = { message ->
+                    val conversation = conversations.find { it.chatId == message.chatId }
+                    val name = conversation?.chatName ?: message.chatId.take(16)
+                    val type = conversation?.chatType ?: 1
+                    dataState.prepareChat(message.chatId, name, type)
+                    navController.navigate(Routes.chat(message.chatId, name, type)) { popUpTo(Routes.HOME) }
+                },
+                onUserClick = { user -> navController.navigate(Routes.userProfile(user.uid)) },
+                excludedUserUid = dataState.userSession.uid,
+                onBack = { navController.popBackStack() },
+            )
         }
         composable(Routes.SEARCH_USERS) {
             SearchUsersScreen(searchUsers = { q -> dataState.searchUsers(q) },
                 onUserClick = { uid -> navController.navigate(Routes.userProfile(uid)) }, onBack = { navController.popBackStack() })
         }
-        composable(Routes.CREATE_GROUP) {
+        composable(
+            Routes.CREATE_GROUP,
+            arguments = listOf(navArgument("seedUid") { type = NavType.StringType; defaultValue = "" }),
+        ) { entry ->
             val contacts by dataState.contactViewModel.contacts.collectAsState()
+            val seedUid = entry.arguments?.getString("seedUid").orEmpty()
             CreateGroupScreen(contacts = contacts, onCreateGroup = { name, uids ->
                 val chatId = dataState.createGroup(name, uids)
                 if (chatId != null) {
@@ -176,7 +202,7 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                     navController.navigate(Routes.chat(chatId, name, 2)) { popUpTo(Routes.CREATE_GROUP) { inclusive = true } }
                     Result.success(chatId)
                 } else Result.failure(Exception("创建失败"))
-            }, onBack = { navController.popBackStack() })
+            }, onBack = { navController.popBackStack() }, initialSelectedUids = setOfNotNull(seedUid.takeIf { it.isNotBlank() }))
         }
         composable(Routes.FRIEND_APPLIES) {
             LaunchedEffect(Unit) { dataState.loadScreenDataByKey(ScreenDataKey.FriendApplies) }
@@ -206,6 +232,9 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                         navController.navigate(Routes.chat(chatId, n)) { popUpTo(Routes.HOME) }
                     }
                 }},
+                onCreateGroup = if (dataState.isFriend) {
+                    { navController.navigate(Routes.createGroup(uid)) }
+                } else null,
                 onDeleteFriend = { dataState.contactViewModel.deleteFriend(uid); navController.popBackStack() },
                 onBack = { navController.popBackStack() })
         }

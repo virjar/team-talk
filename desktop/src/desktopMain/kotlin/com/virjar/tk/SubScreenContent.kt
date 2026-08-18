@@ -25,6 +25,8 @@ fun SubScreenContent(
     openChatAndClose: (chatId: String, chatName: String, chatType: Int) -> Unit,
     onLeaveGroup: (chatId: String) -> Unit,
     showBack: Boolean,
+    globalSearchQuery: String = "",
+    onGlobalSearchQueryChange: (String) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val contacts by data.contactViewModel.contacts.collectAsState()
@@ -82,6 +84,7 @@ fun SubScreenContent(
                 Result.success(chatId)
             },
             onBack = onBack,
+            initialSelectedUids = screen.preselectedUids,
         )
 
         is SubScreen.GroupDetail -> GroupDetailScreen(
@@ -132,6 +135,9 @@ fun SubScreenContent(
                     val chatId = data.startPersonalChat(screen.uid) ?: return@launch
                     openChatAndClose(chatId, data.profileUser?.name ?: screen.uid.take(12), 1)
                 }},
+                onCreateGroup = if (data.isFriend) {
+                    { navigate(SubScreen.CreateGroup(setOf(screen.uid))) }
+                } else null,
                 onDeleteFriend = {
                     data.contactViewModel.deleteFriend(screen.uid)
                     back()
@@ -153,6 +159,34 @@ fun SubScreenContent(
                 openChatAndClose(chatId, conv?.chatName ?: chatId.take(16), conv?.chatType ?: 1)
             },
             onBack = onBack,
+        )
+
+        is SubScreen.GlobalSearch -> GlobalSearchScreen(
+            query = globalSearchQuery,
+            onQueryChange = onGlobalSearchQueryChange,
+            conversations = conversations,
+            contacts = contacts,
+            searchMessages = { query -> data.searchMessages(query) },
+            searchUsers = { query -> data.searchUsers(query) },
+            onConversationClick = { conversation ->
+                openChatAndClose(
+                    conversation.chatId,
+                    conversation.chatName ?: conversation.chatId.take(16),
+                    conversation.chatType,
+                )
+            },
+            onMessageClick = { message ->
+                val conversation = conversations.find { it.chatId == message.chatId }
+                openChatAndClose(
+                    message.chatId,
+                    conversation?.chatName ?: message.chatId.take(16),
+                    conversation?.chatType ?: 1,
+                )
+            },
+            onUserClick = { user -> navigate(SubScreen.UserProfile(user.uid)) },
+            excludedUserUid = data.userSession.uid,
+            onBack = onBack,
+            showSearchField = false,
         )
     }
 }

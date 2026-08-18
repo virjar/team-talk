@@ -1,10 +1,8 @@
 package com.virjar.tk.ui.screen
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -14,20 +12,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.testTag
 import com.virjar.tk.model.User
+import com.virjar.tk.ui.component.AvatarPlaceholder
+import com.virjar.tk.ui.theme.Tk
 import com.virjar.tk.ui.theme.TkTheme
 import com.virjar.tk.ui.theme.ThemeMode
 
 /**
  * 设置页 Header 样式。
- * - [Mobile]：渐变背景 + 64dp 头像 + 白字 + UID（适合移动端全宽展示）
- * - [Compact]：抬升 Surface + 48dp 头像 + 普通字色 + 无 UID（适合桌面窄中栏）
+ * - [Mobile]：中性资料表面 + 64dp 头像 + UID（移动端全宽）
+ * - [Compact]：扁平 Surface + 48dp 头像 + 无 UID（桌面窄中栏）
  */
 enum class MeHeaderStyle { Mobile, Compact }
 
@@ -186,61 +183,47 @@ private fun themeTrailing(title: String): @Composable RowScope.() -> Unit =
         {}
     }
 
-/** 移动端 Header：渐变背景 + 64dp 白色半透头像 + 白字 + UID。 */
+/** 移动端 Header：中性资料表面 + 统一圆角方形头像，避免设置页成为孤立的蓝色大色块。 */
 @Composable
 private fun MobileProfileHeader(currentUser: User?) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                Brush.verticalGradient(
-                    listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
-                )
+    Surface(color = MaterialTheme.colorScheme.surface) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(24.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AvatarPlaceholder(
+                name = currentUser?.name?.ifBlank { null } ?: currentUser?.username,
+                size = 64,
             )
-            .padding(24.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier.size(64.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.25f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    currentUser?.name?.take(1) ?: currentUser?.username?.take(1) ?: "?",
-                    style = MaterialTheme.typography.headlineMedium, color = Color.White, fontWeight = FontWeight.Bold,
-                )
-            }
             Spacer(Modifier.width(16.dp))
             Column {
                 Text(
                     currentUser?.name?.ifBlank { null } ?: currentUser?.username ?: "未知",
-                    style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.SemiBold,
                 )
                 if (currentUser?.username != null) {
-                    Text("@${currentUser.username}", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.8f))
+                    Text("@${currentUser.username}", style = MaterialTheme.typography.bodySmall, color = Tk.colors.secondaryText)
                 }
-                Text("UID: ${currentUser?.uid?.take(12) ?: ""}", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f))
+                Text("UID: ${currentUser?.uid?.take(12) ?: ""}", style = MaterialTheme.typography.bodySmall, color = Tk.colors.metaText)
             }
         }
     }
 }
 
-/** 桌面端 Header：抬升 Surface + 48dp primaryContainer 头像 + 普通字色 + 无 UID。 */
+/** 桌面端 Header：扁平 Surface + 与其他列表一致的圆角方形头像。 */
 @Composable
 private fun CompactProfileHeader(currentUser: User?) {
-    Surface(modifier = Modifier.fillMaxWidth(), tonalElevation = 1.dp) {
+    Surface(modifier = Modifier.fillMaxWidth(), tonalElevation = 0.dp) {
         Row(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier.size(48.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    currentUser?.name?.take(1) ?: currentUser?.username?.take(1) ?: "?",
-                    style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold,
-                )
-            }
+            AvatarPlaceholder(
+                name = currentUser?.name?.ifBlank { null } ?: currentUser?.username,
+                size = 48,
+            )
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(

@@ -51,3 +51,21 @@ fun registerEscapeInterceptor(owner: Window, onEscape: () -> Boolean): () -> Uni
         }
     }
 }
+
+/** 注册应用级搜索快捷键（macOS Cmd+K，其他平台 Ctrl+K）。 */
+fun registerGlobalSearchShortcut(owner: Window, onSearch: () -> Unit): () -> Unit {
+    val dispatcher = KeyEventDispatcher { event ->
+        if (event.id != KeyEvent.KEY_PRESSED || event.keyCode != KeyEvent.VK_K) {
+            return@KeyEventDispatcher false
+        }
+        val source = event.source as? Component ?: return@KeyEventDispatcher false
+        if (SwingUtilities.getWindowAncestor(source) !== owner) return@KeyEventDispatcher false
+        if (!event.isMetaDown && !event.isControlDown) return@KeyEventDispatcher false
+        onSearch()
+        true
+    }
+    KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(dispatcher)
+    return {
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(dispatcher)
+    }
+}

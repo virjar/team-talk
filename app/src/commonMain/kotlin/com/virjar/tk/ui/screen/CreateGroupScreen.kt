@@ -21,8 +21,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -34,17 +32,18 @@ import kotlinx.coroutines.launch
 /**
  * 创建群组页面。
  *
- * 设计语言对齐登录/设置页：顶部渐变头部承载群头像+群名输入，
- * 中部已选成员预览条（头像横滑，可点删除），底部联系人列表（选中态主题色高亮）。
+ * 使用中性信息表面承载群头像与名称，品牌色只用于焦点和选中状态；
+ * 中部是已选成员预览条，底部是联系人列表。可从用户资料页预选发起人。
  */
 @Composable
 fun CreateGroupScreen(
     contacts: List<Contact>,
     onCreateGroup: suspend (name: String, memberUids: List<String>) -> Result<String>,
     onBack: (() -> Unit)? = null,
+    initialSelectedUids: Set<String> = emptySet(),
 ) {
     var groupName by remember { mutableStateOf("") }
-    var selectedUids by remember { mutableStateOf(setOf<String>()) }
+    var selectedUids by remember(initialSelectedUids) { mutableStateOf(initialSelectedUids) }
     var isCreating by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -77,60 +76,41 @@ fun CreateGroupScreen(
             },
         )
 
-        // ── 渐变头部：群头像 + 群名输入 ──
-        Box(
+        // ── 建群上下文：使用中性表面，品牌蓝只承担图标与焦点等小面积交互 ──
+        Surface(
             modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            MaterialTheme.colorScheme.primary,
-                            MaterialTheme.colorScheme.primaryContainer,
-                        )
-                    )
-                )
-                .padding(bottom = 20.dp),
-            contentAlignment = Alignment.Center,
+                .fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
         ) {
             Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                // 群头像（渐变底 + Group 图标）
-                Box(
+                Surface(
                     modifier = Modifier
-                        .size(76.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(Color.White.copy(alpha = 0.2f)),
-                    contentAlignment = Alignment.Center,
+                        .size(64.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
                 ) {
-                    Icon(
-                        Icons.Filled.Group,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(38.dp),
-                    )
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Filled.Group,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(32.dp),
+                        )
+                    }
                 }
                 Spacer(Modifier.height(12.dp))
-                // 群名输入框（透明背景，融入渐变）
                 OutlinedTextField(
                     value = groupName,
                     onValueChange = { groupName = it },
-                    placeholder = { Text("群聊名称", color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.6f)) },
+                    placeholder = { Text("群聊名称") },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 32.dp)
                         .testTag("group.name"),
                     singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = Color.White.copy(alpha = 0.15f),
-                        unfocusedContainerColor = Color.White.copy(alpha = 0.1f),
-                        focusedBorderColor = Color.Transparent,
-                        unfocusedBorderColor = Color.Transparent,
-                        focusedTextColor = MaterialTheme.colorScheme.onPrimary,
-                        unfocusedTextColor = MaterialTheme.colorScheme.onPrimary,
-                        cursorColor = MaterialTheme.colorScheme.onPrimary,
-                    ),
+                    shape = RoundedCornerShape(10.dp),
                 )
             }
         }

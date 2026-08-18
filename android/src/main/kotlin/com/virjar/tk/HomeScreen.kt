@@ -1,17 +1,14 @@
 package com.virjar.tk
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.unit.dp
 import com.virjar.tk.navigation.AppDataState
 import com.virjar.tk.navigation.MainTab
 import com.virjar.tk.ui.screen.ContactsListScreen
@@ -24,9 +21,7 @@ fun HomeScreen(
     dataState: AppDataState,
     onLogout: () -> Unit,
     onConversationClick: (String, String, Int) -> Unit,
-    onSearchMessages: () -> Unit,
-    onSearchUsers: () -> Unit,
-    onCreateGroup: () -> Unit,
+    onGlobalSearch: () -> Unit,
     onFriendApplies: () -> Unit,
     onUserProfile: (String) -> Unit,
     onEditProfile: () -> Unit,
@@ -58,29 +53,8 @@ fun HomeScreen(
             TopAppBar(
                 title = { Text(tabIcons[selectedTab].second) },
                 actions = {
-                    when (MainTab.entries[selectedTab]) {
-                        MainTab.CONVERSATIONS -> {
-                            IconButton(onClick = onSearchMessages, modifier = Modifier.testTag("action.search")) { Icon(Icons.Filled.Search, contentDescription = "搜索") }
-                            IconButton(onClick = onCreateGroup, modifier = Modifier.testTag("action.createGroup")) { Icon(Icons.Filled.GroupAdd, contentDescription = "发起群聊") }
-                            IconButton(onClick = onSearchUsers, modifier = Modifier.testTag("action.addFriend")) { Icon(Icons.Filled.PersonAdd, contentDescription = "添加好友") }
-                        }
-                        MainTab.CONTACTS -> {
-                            if (pendingApplyCount > 0) {
-                                BadgedBox(
-                                    badge = { Badge { Text("$pendingApplyCount") } },
-                                    modifier = Modifier.testTag("action.friendApplies"),
-                                ) {
-                                    IconButton(onClick = onFriendApplies) {
-                                        Icon(Icons.Filled.PersonAdd, contentDescription = "好友申请")
-                                    }
-                                }
-                            } else {
-                                IconButton(onClick = onFriendApplies, modifier = Modifier.testTag("action.friendApplies")) {
-                                    Icon(Icons.Filled.PersonAdd, contentDescription = "好友申请")
-                                }
-                            }
-                        }
-                        MainTab.SETTINGS -> {}
+                    IconButton(onClick = onGlobalSearch, modifier = Modifier.testTag("action.search")) {
+                        Icon(Icons.Filled.Search, contentDescription = "全局搜索")
                     }
                 },
             )
@@ -121,32 +95,12 @@ fun HomeScreen(
                     },
                 )
                 MainTab.CONTACTS -> Column(modifier = Modifier.fillMaxSize()) {
-                    // 待处理好友申请入口（有申请时展示在搜索框上方）
-                    if (pendingApplyCount > 0) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier.fillMaxWidth().clickable { onFriendApplies() }.testTag("contacts.pendingApplies"),
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Badge(containerColor = MaterialTheme.colorScheme.error) {
-                                    Text("$pendingApplyCount")
-                                }
-                                Spacer(Modifier.width(12.dp))
-                                Text(
-                                    "$pendingApplyCount 条好友申请",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                )
-                            }
-                        }
-                    }
-                    // 搜索 + 拼音首字母分组 + 索引条（双端共享组件）
                     ContactsListScreen(
                         contacts = contacts,
                         onContactClick = onUserProfile,
                         modifier = Modifier.weight(1f),
+                        pendingApplyCount = pendingApplyCount,
+                        onFriendApplies = onFriendApplies,
                     )
                 }
                 MainTab.SETTINGS -> MeScreen(

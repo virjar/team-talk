@@ -24,7 +24,7 @@ sealed class SubScreen {
     data object ChangePassword : SubScreen()
     data object FriendApplies : SubScreen()
     data object SearchUsers : SubScreen()
-    data object CreateGroup : SubScreen()
+    data class CreateGroup(val preselectedUids: Set<String> = emptySet()) : SubScreen()
     data object SearchMessages : SubScreen()
     data class Forward(val message: Message) : SubScreen()
 
@@ -33,10 +33,12 @@ sealed class SubScreen {
     data class InviteMembers(val chatId: String) : SubScreen()
     data class InviteLinks(val chatId: String) : SubScreen()
     data class UserProfile(val uid: String) : SubScreen()
+    data object GlobalSearch : SubScreen()
 
     /** 是否渲染为右栏面板（其余为独立子窗口）。仅约束顶层入口；容器内局部跳转不受限。 */
     val isPanel: Boolean
-        get() = this is GroupDetail || this is InviteMembers || this is InviteLinks || this is UserProfile
+        get() = this is GroupDetail || this is InviteMembers || this is InviteLinks ||
+            this is UserProfile || this is GlobalSearch
 
     /** 子屏幕标题（子窗口标题栏/面板头部共用）。 */
     val title: String
@@ -47,13 +49,14 @@ sealed class SubScreen {
             ChangePassword -> "修改密码"
             FriendApplies -> "好友申请"
             SearchUsers -> "搜索用户"
-            CreateGroup -> "创建群组"
+            is CreateGroup -> "创建群组"
             SearchMessages -> "搜索消息"
             is Forward -> "转发到"
             is GroupDetail -> "群详情"
             is InviteMembers -> "邀请成员"
             is InviteLinks -> "邀请链接"
             is UserProfile -> "用户资料"
+            GlobalSearch -> "搜索"
         }
 
     /** 子窗口高度（宽统一 460，§2.6；高按内容）。 */
@@ -65,9 +68,10 @@ sealed class SubScreen {
             Blacklist -> 500.dp
             FriendApplies -> 500.dp
             SearchUsers -> 560.dp
-            CreateGroup -> 560.dp
+            is CreateGroup -> 560.dp
             SearchMessages -> 560.dp
             is Forward -> 500.dp
+            GlobalSearch -> 560.dp
             else -> 500.dp
         }
 
@@ -79,6 +83,7 @@ sealed class SubScreen {
         is GroupDetail -> ScreenDataKey.GroupDetail(chatId)
         is UserProfile -> ScreenDataKey.UserProfile(uid)
         is InviteLinks -> ScreenDataKey.InviteLinks(chatId)
+        GlobalSearch -> null
         else -> null
     }
 }
@@ -107,6 +112,16 @@ class DesktopNav(session: ClientSession) : AppDataState(session) {
     /** 右栏面板导航栈（空 = 无面板）。入口重置为单元素，容器内跳转 push。 */
     var panelStack by mutableStateOf(emptyList<SubScreen>())
 
+    /** 应用级搜索状态由顶栏和结果面板共享；不隶属于会话或通讯录 tab。 */
+    var globalSearchQuery by mutableStateOf("")
+    var searchFocusNonce by mutableIntStateOf(0)
+
+    fun openGlobalSearch(requestFocus: Boolean = false) {
+        windowScreen = null
+        panelStack = listOf(SubScreen.GlobalSearch)
+        if (requestFocus) searchFocusNonce++
+    }
+
     /** 打开子屏幕：面板类进右栏面板栈，其余弹独立子窗口（§2.1 容器分流）。 */
     fun openScreen(screen: SubScreen) {
         if (screen.isPanel) {
@@ -123,6 +138,7 @@ class DesktopNav(session: ClientSession) : AppDataState(session) {
         this.chatId = chatId
         this.chatName = chatName
         this.chatType = chatType
+        globalSearchQuery = ""
         panelStack = emptyList()
         windowScreen = null
         prepareChat(chatId, chatName, chatType)
@@ -130,6 +146,7 @@ class DesktopNav(session: ClientSession) : AppDataState(session) {
 
     /** 面板返回：栈>1 弹一级，否则清空（右栏 ESC / 返回键共用）。 */
     fun popPanel() {
+        if (panelStack.lastOrNull() is SubScreen.GlobalSearch) globalSearchQuery = ""
         panelStack = if (panelStack.size > 1) panelStack.dropLast(1) else emptyList()
     }
 }

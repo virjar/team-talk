@@ -98,6 +98,8 @@
 | `inputMinHeight` | 36 | 44 | 输入框最小高 |
 | `bubbleMaxWidth` | 420 | 300 | 气泡最大宽（含媒体） |
 | `iconSize` | 20 | 22 | 工具栏图标 |
+| `appBarHeight` | 46 | 56 | Desktop 应用级顶栏 / Android TopAppBar |
+| `globalSearchHeight` | 32 | 44 | 全局搜索输入框 |
 
 ## 6. 动效
 

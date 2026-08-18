@@ -16,6 +16,7 @@
 |------|------|
 | [design-tokens.md](design-tokens.md) | **令牌总表**：颜色（明/暗）、字阶、间距、圆角、尺寸——代码中 `Tk` 对象的对照表 |
 | [components.md](components.md) | 组件规格（头像/会话项/气泡/输入区/导航栏）+ 全部页面布局规格 + 交互规范 |
+| [product-information-architecture.md](product-information-architecture.md) | **产品信息架构**：全局壳层、搜索分类、动作归属与缺失能力呈现规则 |
 | [placeholders.md](placeholders.md) | **后端缺失占位清单**：UI 已设计、等后端能力补齐的功能位（课题：视觉先行、接口后补） |
 
 ## 工作流（截图迭代闭环）
@@ -33,10 +34,12 @@
 | 截图 | 内容 |
 |------|------|
 | `screenshots/light-login.png` | 登录窗（已被 §2.3 重排版取代，见 P4 轮） |
-| `screenshots/light-main-empty.png` | 三栏空态：细导航栏 + 会话列表 + Logo 空态 |
+| `screenshots/light-main-empty.png` | 融合式 macOS 顶栏 + 三栏主框架 + 会话语义空态 |
+| `screenshots/light-global-search.png` | 应用级搜索：会话/消息/联系人聚合结果 + 文件/服务分类 |
 | `screenshots/light-conversation-list.png` | 会话列表：未读徽标/时间戳/群角标/置顶区 |
 | `screenshots/light-chat.png` | 聊天面板：双方头像/内容自适应气泡/已读水位线/多行富文本输入 |
 | `screenshots/light-contacts-grouped.png` | 通讯录：搜索框 + 拼音首字母分组 sticky 头 + 右侧索引条（P4 轮） |
+| `screenshots/light-settings.png` | 设置：中性资料头 + 扁平设置项 + 分栏语义空态 |
 
 ## 验收基线（2026-08 P4 轮，暗色）
 
@@ -47,13 +50,14 @@
 |------|------|
 | `screenshots/dark-login.png` | 登录窗（§2.3 无装饰 420×480，纯底卡片） |
 | `screenshots/dark-main-conversations.png` | 三栏：rail #272A31 / 列表 #16181D / 右栏 #1D2026 |
+| `screenshots/dark-global-search.png` | 暗色全局搜索与分类结果 |
 | `screenshots/dark-chat.png` | 聊天：暗色语义气泡/高对比正文/富文本输入容器 |
 | `screenshots/dark-contacts.png` | 通讯录 |
 | `screenshots/dark-settings.png` | 设置（含「外观」行） |
 | `screenshots/dark-group-detail.png` | 群详情右栏面板 |
 | `screenshots/dark-subwindow-creategroup.png` | 子窗口（§2.6 统一 460 宽 + 返回键头） |
 
-注：dark-* 截图顶部白色条带为 macOS 原生标题栏（走查机器系统为浅色；系统暗色用户标题栏随系统）。
+主窗口已启用 macOS 全内容标题栏：保留原生红黄绿按钮，应用顶栏颜色延伸到窗口顶部。
 
 ## 设计原则（约束所有组件）
 

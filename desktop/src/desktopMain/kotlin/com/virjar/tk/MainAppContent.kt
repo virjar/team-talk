@@ -1,20 +1,12 @@
 package com.virjar.tk
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.hoverable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.window.WindowDraggableArea
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Contacts
-import androidx.compose.material.icons.filled.GroupAdd
-import androidx.compose.material.icons.filled.PersonAdd
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -27,10 +19,13 @@ import androidx.compose.ui.draganddrop.DragAndDropTarget
 import androidx.compose.ui.draganddrop.DragData
 import androidx.compose.ui.draganddrop.dragData
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.WindowScope
 import com.virjar.tk.client.ClientSession
+import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.model.ChatType
 import com.virjar.tk.model.Message
 import com.virjar.tk.model.User
@@ -38,12 +33,11 @@ import com.virjar.tk.navigation.MainTab
 import com.virjar.tk.ui.component.AvatarPlaceholder
 import com.virjar.tk.ui.component.GalleryItem
 import com.virjar.tk.ui.component.PlatformMediaActions
-import com.virjar.tk.ui.component.TeamTalkLogo
-import com.virjar.tk.ui.component.UnreadBadge
 import com.virjar.tk.ui.component.rememberMediaClickHandler
 import com.virjar.tk.ui.screen.ChatPanel
 import com.virjar.tk.ui.screen.ContactsListScreen
 import com.virjar.tk.ui.screen.ConversationListScreen
+import com.virjar.tk.ui.screen.GlobalSearchField
 import com.virjar.tk.ui.screen.MeHeaderStyle
 import com.virjar.tk.ui.screen.MeScreen
 import com.virjar.tk.ui.theme.Tk
@@ -59,12 +53,12 @@ import kotlinx.coroutines.launch
  * 区别于 Android 的全屏页面导航。视觉规格：doc/04-ui-design/components.md §1.5/§2.1。
  */
 @Composable
-internal fun MainAppContent(
+internal fun WindowScope.MainAppContent(
     session: ClientSession,
     mainWindow: java.awt.Window,
+    connectionState: ConnectionState,
     onLogout: () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
     val nav = rememberDesktopNav(session)
     val conversations by nav.conversationViewModel.conversations.collectAsState()
     val contacts by nav.contactViewModel.contacts.collectAsState()
@@ -78,10 +72,16 @@ internal fun MainAppContent(
     // 焦点节点存在，无焦点时（点完非 focusable 的列表行）按键不派发——旧版
     // 「ESC 不可靠」的根因）。按窗口归属分流，弹层/对话框是独立 Window 不受影响。
     DisposableEffect(mainWindow) {
-        val unregister = registerEscapeInterceptor(mainWindow) {
+        val unregisterEscape = registerEscapeInterceptor(mainWindow) {
             if (nav.panelStack.isNotEmpty()) { nav.popPanel(); true } else false
         }
-        onDispose { unregister() }
+        val unregisterSearch = registerGlobalSearchShortcut(mainWindow) {
+            nav.openGlobalSearch(requestFocus = true)
+        }
+        onDispose {
+            unregisterEscape()
+            unregisterSearch()
+        }
     }
 
     // uid → User 解析链：本地缓存 → currentUser → userSession 终极兜底。
@@ -125,14 +125,27 @@ internal fun MainAppContent(
         }
     }
 
-    // ── 三栏常驻布局 ──
+    // ── 应用壳层 + 三栏常驻布局 ──
     Box(modifier = Modifier.fillMaxSize().testTag("main.home")) {
-        Row(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            DesktopTitleBar(
+                query = nav.globalSearchQuery,
+                onQueryChange = { query ->
+                    nav.globalSearchQuery = query
+                    nav.openGlobalSearch()
+                },
+                onSearchFocus = { nav.openGlobalSearch() },
+                focusNonce = nav.searchFocusNonce,
+                connectionState = connectionState,
+            )
+            Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
             // ── 左栏：细导航栏（56dp 图标式，规格 §1.5）──
             SlimNavRail(
                 selectedTab = nav.selectedTab,
                 onSelectTab = { index ->
                     nav.selectedTab = index
+                    nav.panelStack = emptyList()
+                    nav.globalSearchQuery = ""
                     if (MainTab.entries[index] != MainTab.CONVERSATIONS) nav.chatId = null
                 },
                 pendingApplyCount = pendingApplyCount,
@@ -148,24 +161,7 @@ internal fun MainAppContent(
                 when (MainTab.entries[nav.selectedTab]) {
                     MainTab.CONVERSATIONS -> {
                         Column {
-                            ListHeader(
-                                title = "会话",
-                                actions = {
-                                    // 对齐 Android HomeScreen TopAppBar：搜索/发起群聊/添加好友 三图标
-                                    IconButton(onClick = { nav.openScreen(SubScreen.SearchMessages) },
-                                        modifier = Modifier.testTag("action.search")) {
-                                        Icon(Icons.Filled.Search, contentDescription = "搜索消息", tint = Tk.colors.secondaryText)
-                                    }
-                                    IconButton(onClick = { nav.openScreen(SubScreen.CreateGroup) },
-                                        modifier = Modifier.testTag("action.createGroup")) {
-                                        Icon(Icons.Filled.GroupAdd, contentDescription = "发起群聊", tint = Tk.colors.secondaryText)
-                                    }
-                                    IconButton(onClick = { nav.openScreen(SubScreen.SearchUsers) },
-                                        modifier = Modifier.testTag("action.addFriend")) {
-                                        Icon(Icons.Filled.PersonAdd, contentDescription = "添加好友", tint = Tk.colors.secondaryText)
-                                    }
-                                },
-                            )
+                            ListHeader(title = "会话")
                             ConversationListScreen(
                                 conversations = conversations,
                                 selectedChatId = nav.chatId,
@@ -183,34 +179,14 @@ internal fun MainAppContent(
 
                     MainTab.CONTACTS -> {
                         Column {
-                            ListHeader(
-                                title = "通讯录",
-                                actions = {
-                                    IconButton(onClick = { nav.openScreen(SubScreen.SearchUsers) },
-                                        modifier = Modifier.testTag("action.addFriend")) {
-                                        Icon(Icons.Filled.Search, contentDescription = "搜索用户", tint = Tk.colors.secondaryText)
-                                    }
-                                    IconButton(onClick = { nav.openScreen(SubScreen.CreateGroup) },
-                                        modifier = Modifier.testTag("action.createGroup")) {
-                                        Icon(Icons.Filled.GroupAdd, contentDescription = "创建群组", tint = Tk.colors.secondaryText)
-                                    }
-                                    IconButton(onClick = { nav.openScreen(SubScreen.FriendApplies) },
-                                        modifier = Modifier.testTag("action.friendApplies")) {
-                                        if (pendingApplyCount > 0) {
-                                            BadgedBox(badge = { UnreadBadge(pendingApplyCount) }) {
-                                                Icon(Icons.Filled.PersonAdd, contentDescription = "好友申请", tint = Tk.colors.secondaryText)
-                                            }
-                                        } else {
-                                            Icon(Icons.Filled.PersonAdd, contentDescription = "好友申请", tint = Tk.colors.secondaryText)
-                                        }
-                                    }
-                                },
-                            )
+                            ListHeader(title = "通讯录")
                             // 搜索 + 拼音首字母分组 + 索引条（§2.4，双端共享组件）
                             ContactsListScreen(
                                 contacts = contacts,
                                 onContactClick = { uid -> nav.openScreen(SubScreen.UserProfile(uid)) },
                                 modifier = Modifier.weight(1f),
+                                pendingApplyCount = pendingApplyCount,
+                                onFriendApplies = { nav.openScreen(SubScreen.FriendApplies) },
                             )
                         }
                     }
@@ -253,6 +229,8 @@ internal fun MainAppContent(
                         },
                         // 面板初始屏无返回键（ESC 关）；容器内跳转后（群详情→邀请成员）可返回
                         showBack = nav.panelStack.size > 1,
+                        globalSearchQuery = nav.globalSearchQuery,
+                        onGlobalSearchQueryChange = { nav.globalSearchQuery = it },
                     )
                     // 聊天面板
                     nav.chatId != null && nav.chatViewModel != null -> {
@@ -275,25 +253,127 @@ internal fun MainAppContent(
                         )
                     }
                     // 空态（规格 §2.1：Logo + 主提示 + 次提示）
-                    else -> {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center,
-                        ) {
-                            TeamTalkLogo(size = 72.dp, tint = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.height(Tk.spacing.lg))
-                            Text("选择一个会话开始聊天", style = MaterialTheme.typography.titleSmall, color = Tk.colors.secondaryText)
-                            Spacer(Modifier.height(Tk.spacing.xs))
-                            Text("或从左侧通讯录发起对话", style = MaterialTheme.typography.bodySmall, color = Tk.colors.metaText)
-                        }
-                    }
+                    else -> MainPaneEmptyState(MainTab.entries[nav.selectedTab])
                 }
             }
+        }
         }
 
         // action 失败提示（此前面板/中栏 action 的错误完全静默）
         ErrorSnackbar(nav)
+    }
+}
+
+/**
+ * Desktop 应用级顶栏。macOS 原生窗口按钮浮在左侧，应用内容延伸到标题区；
+ * 搜索位于全局壳层，而不是任何业务栏目的局部标题中。
+ */
+@Composable
+private fun WindowScope.DesktopTitleBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onSearchFocus: () -> Unit,
+    focusNonce: Int,
+    connectionState: ConnectionState,
+) {
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(focusNonce) {
+        if (focusNonce > 0) focusRequester.requestFocus()
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth().height(Tk.dimens.appBarHeight).testTag("app.titleBar"),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        tonalElevation = 0.dp,
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    WindowDraggableArea(modifier = Modifier.fillMaxSize())
+                    Row(
+                        modifier = Modifier.fillMaxHeight().padding(start = 76.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("TeamTalk", style = MaterialTheme.typography.titleSmall, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                    }
+                }
+
+                GlobalSearchField(
+                    query = query,
+                    onQueryChange = onQueryChange,
+                    onFocused = onSearchFocus,
+                    focusRequester = focusRequester,
+                    shortcutLabel = "⌘ K",
+                    height = Tk.dimens.globalSearchHeight,
+                    modifier = Modifier
+                        .widthIn(min = 320.dp, max = 460.dp)
+                        .weight(1.35f)
+                        .testTag("action.search"),
+                )
+
+                Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    WindowDraggableArea(modifier = Modifier.fillMaxSize())
+                    val statusLabel = when (connectionState) {
+                        ConnectionState.AUTHENTICATED -> "在线"
+                        ConnectionState.CONNECTING -> "连接中"
+                        ConnectionState.CONNECTED -> "验证中"
+                        ConnectionState.AUTH_FAILED -> "认证失效"
+                        ConnectionState.DISCONNECTED -> "离线"
+                    }
+                    val statusColor = when (connectionState) {
+                        ConnectionState.AUTHENTICATED -> Tk.colors.online
+                        ConnectionState.CONNECTING, ConnectionState.CONNECTED -> MaterialTheme.colorScheme.primary
+                        else -> Tk.colors.metaText
+                    }
+                    Row(
+                        modifier = Modifier.align(Alignment.CenterEnd).padding(end = Tk.spacing.lg),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(statusColor),
+                        )
+                        Spacer(Modifier.width(Tk.spacing.xs))
+                        Text(statusLabel, style = MaterialTheme.typography.labelSmall, color = Tk.colors.secondaryText)
+                    }
+                }
+            }
+            HorizontalDivider(color = Tk.colors.divider)
+        }
+    }
+}
+
+/** 不同主 tab 使用各自语义空态，避免设置页仍提示“选择会话”。 */
+@Composable
+private fun MainPaneEmptyState(tab: MainTab) {
+    val (icon, title, detail) = when (tab) {
+        MainTab.CONVERSATIONS -> Triple(Icons.AutoMirrored.Filled.Chat, "选择一个会话", "从会话列表继续沟通，或使用顶部搜索查找内容")
+        MainTab.CONTACTS -> Triple(Icons.Filled.Contacts, "选择一个联系人", "查看资料、发送消息或从资料页发起群聊")
+        MainTab.SETTINGS -> Triple(Icons.Filled.Settings, "账号与设置", "在左侧管理个人资料、安全、设备和外观")
+    }
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Surface(
+            modifier = Modifier.size(64.dp),
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, tint = Tk.colors.secondaryText, modifier = Modifier.size(30.dp))
+            }
+        }
+        Spacer(Modifier.height(Tk.spacing.lg))
+        Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+        Spacer(Modifier.height(Tk.spacing.xs))
+        Text(detail, style = MaterialTheme.typography.bodySmall, color = Tk.colors.metaText)
     }
 }
 

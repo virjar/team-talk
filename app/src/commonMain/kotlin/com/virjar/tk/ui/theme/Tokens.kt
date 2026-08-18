@@ -37,6 +37,8 @@ data class TkDimens(
     val inputMinHeight: Dp,
     val bubbleMaxWidth: Dp,
     val iconSize: Dp,
+    val appBarHeight: Dp,
+    val globalSearchHeight: Dp,
 )
 
 val DesktopDimens = TkDimens(
@@ -49,6 +51,8 @@ val DesktopDimens = TkDimens(
     inputMinHeight = 36.dp,
     bubbleMaxWidth = 420.dp,
     iconSize = 20.dp,
+    appBarHeight = 46.dp,
+    globalSearchHeight = 32.dp,
 )
 
 val TouchDimens = TkDimens(
@@ -61,6 +65,8 @@ val TouchDimens = TkDimens(
     inputMinHeight = 44.dp,
     bubbleMaxWidth = 300.dp,
     iconSize = 22.dp,
+    appBarHeight = 56.dp,
+    globalSearchHeight = 44.dp,
 )
 
 val LocalTkDimens = staticCompositionLocalOf { DesktopDimens }
