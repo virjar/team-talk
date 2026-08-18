@@ -1,6 +1,6 @@
 package com.virjar.tk.bot
 
-import com.virjar.tk.body.TextBody
+import com.virjar.tk.body.markdownContentOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -74,7 +74,7 @@ private fun serve(host: String, port: Int, connect: suspend () -> ImBot) {
         // 收 → stdout 行协议
         scope.launch {
             bot.messages.collect { m ->
-                val text = (m.body as? TextBody)?.text ?: m.body?.let { it::class.simpleName } ?: ""
+                val text = m.body.markdownContentOrNull() ?: m.body?.let { it::class.simpleName } ?: ""
                 println("MSG\t${m.chatId}\t${m.senderUid}\t${m.serverSeq}\t$text")
             }
         }
@@ -107,8 +107,8 @@ private fun selftest(host: String, port: Int) = runBlocking {
         val ack = a.sendText(chatId, text)
         check(ack.code == 0) { "send failed: ${ack.reason}" }
         val received = b.nextMessage { it.senderUid == a.uid }
-        val body = received.body as? TextBody
-        check(body?.text == text) { "received mismatch: $body" }
+        val receivedText = received.body.markdownContentOrNull()
+        check(receivedText == text) { "received mismatch: ${received.body}" }
         println("[selftest] PASS  a=${a.uid} b=${b.uid} chat=$chatId")
     } finally {
         a.shutdown(); b.shutdown()

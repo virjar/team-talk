@@ -24,8 +24,7 @@ object MessageTextExtractor {
 
     private fun extractFromBody(messageType: Int, body: MessageBody): String? {
         return when (MessageType.fromCode(messageType)) {
-            MessageType.TEXT -> (body as? TextBody)?.text
-            MessageType.RICH_TEXT -> (body as? RichTextBody)?.plainText
+            MessageType.TEXT, MessageType.RICH_TEXT -> body.plainTextContentOrNull()
             MessageType.INTERACTIVE_CARD -> {
                 val card = (body as? InteractiveCardBody)?.toCard()
                 listOfNotNull(card?.title, card?.blocks?.filterIsInstance<CardBlock.Text>()?.joinToString(" ") { it.text })
@@ -41,7 +40,10 @@ object MessageTextExtractor {
                     .joinToString(" ").ifEmpty { null }
             }
             MessageType.CARD -> (body as? CardBody)?.targetName
-            MessageType.REPLY -> (body as? ReplyBody)?.replySnippet
+            MessageType.REPLY -> (body as? ReplyBody)?.let {
+                it.content.takeIf(String::isNotBlank)?.let { markdown -> buildRichTextBody(markdown).plainText }
+                    ?: it.replySnippet
+            }
             MessageType.FORWARD -> (body as? ForwardBody)?.forwardNote
             MessageType.MERGE_FORWARD -> (body as? MergeForwardBody)?.title
             MessageType.REVOKE -> null

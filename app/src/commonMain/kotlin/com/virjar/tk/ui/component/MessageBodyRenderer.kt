@@ -51,8 +51,9 @@ fun MessageBodyRenderer(
     onMentionClick: ((uid: String) -> Unit)? = null,
     onUrlClick: ((String) -> Unit)? = null,
 ) {
+    @Suppress("DEPRECATION")
     when (val body = message.body) {
-        // TextBody 整体按 markdown 渲染（Discord 语义；普通文本视觉不变），选型见 doc/10-rich-messaging
+        // TextBody 只保留历史消息兼容；新文字统一是 RichTextBody。
         is TextBody -> RichMessageText(body.text, onUrlClick = onUrlClick)
         is RichTextBody -> RichMessageText(body.markdown, onUrlClick = onUrlClick, onMentionClick = onMentionClick)
         is InteractiveCardBody -> body.toCard()?.let { card ->
@@ -194,7 +195,7 @@ private fun ReplyView(body: ReplyBody) {
         // 回复正文
         if (body.content.isNotBlank()) {
             Spacer(Modifier.height(Tk.spacing.xs))
-            Text(body.content, style = MaterialTheme.typography.bodyMedium)
+            RichMessageText(body.content)
         }
     }
 }

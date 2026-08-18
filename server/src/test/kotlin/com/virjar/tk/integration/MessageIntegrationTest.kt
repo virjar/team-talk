@@ -1,7 +1,9 @@
 package com.virjar.tk.integration
 
-import com.virjar.tk.body.TextBody
+import com.virjar.tk.body.RichTextBody
+import com.virjar.tk.body.buildRichTextBody
 import com.virjar.tk.model.Message
+import com.virjar.tk.protocol.MessageType
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -25,9 +27,9 @@ class MessageIntegrationTest {
             chatId = chatId,
             clientMsgId = UUID.randomUUID().toString(),
             senderUid = senderUid,
-            messageType = 1,
+            messageType = MessageType.RICH_TEXT.code,
             timestamp = System.currentTimeMillis(),
-            body = TextBody(text),
+            body = buildRichTextBody(text),
         )
         return ctx.messageService.sendMessage(senderUid, msg)
     }
@@ -120,7 +122,7 @@ class MessageIntegrationTest {
         assertNotNull(forwarded)
         assertEquals(chat2.chatId, forwarded.chatId)
         assertEquals(4, forwarded.serverSeq)
-        assertEquals("Forward me", (forwarded.body as TextBody).text)
+        assertEquals("Forward me", (forwarded.body as RichTextBody).markdown)
 
         val targetHistory = restartedService.getHistory(uid1, chat2.chatId, 0, 10)
         assertEquals(listOf(4L, 3L, 2L, 1L), targetHistory.map { it.serverSeq })
@@ -148,12 +150,44 @@ class MessageIntegrationTest {
             chatId = chat.chatId,
             clientMsgId = clientMsgId,
             senderUid = uid1,
-            messageType = 1,
+            messageType = MessageType.RICH_TEXT.code,
             timestamp = System.currentTimeMillis(),
-            body = TextBody("Dedup"),
+            body = buildRichTextBody("Dedup"),
         )
         val seq1 = ctx.messageService.sendMessage(uid1, msg)
         val seq2 = ctx.messageService.sendMessage(uid1, msg)
         assertEquals(seq1, seq2)
+    }
+
+    @Test
+    fun `server rebuilds rich text derived fields from markdown`() = runTest {
+        val uid1 = ctx.registerUser()
+        val uid2 = ctx.registerUser()
+        val chat = ctx.chatService.createPersonalChat(uid1, uid2)
+        val msg = Message(
+            chatId = chat.chatId,
+            clientMsgId = UUID.randomUUID().toString(),
+            senderUid = uid1,
+            messageType = MessageType.RICH_TEXT.code,
+            timestamp = System.currentTimeMillis(),
+            body = RichTextBody(
+                markdown = "**真实正文**",
+                mentions = emptyList(),
+                plainText = "客户端伪造字段",
+            ),
+        )
+
+        val seq = ctx.messageService.sendMessage(uid1, msg)
+        val stored = ctx.messageService.getHistory(uid1, chat.chatId, 0, 10)
+            .first { it.serverSeq == seq }
+        val storedBody = stored.body as RichTextBody
+        assertEquals("**真实正文**", storedBody.markdown)
+        assertEquals("真实正文", storedBody.plainText)
+        assertTrue(ctx.messageService.searchMessages(uid1, chat.chatId, "客户端伪造字段", 10).isEmpty())
+        assertEquals(seq, ctx.messageService.searchMessages(uid1, chat.chatId, "真实正文", 10).single().serverSeq)
+        assertEquals(
+            "真实正文",
+            ctx.conversationService.listConversations(uid2).first { it.chatId == chat.chatId }.lastMessage,
+        )
     }
 }

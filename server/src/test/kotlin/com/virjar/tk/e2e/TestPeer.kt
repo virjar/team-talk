@@ -6,7 +6,7 @@ import com.virjar.tk.rpc.gen.ConversationRpcContract
 import com.virjar.tk.rpc.gen.MessageRpcContract
 import com.virjar.tk.body.FileBody
 import com.virjar.tk.body.ImageBody
-import com.virjar.tk.body.TextBody
+import com.virjar.tk.body.buildRichTextBody
 import com.virjar.tk.body.VideoBody
 import com.virjar.tk.body.VoiceBody
 import com.virjar.tk.client.ConnectionState
@@ -209,8 +209,8 @@ class TestPeer {
         } else ""
         if (pcChatId.isNotEmpty()) {
             val msg = Message(chatId = pcChatId, clientMsgId = UUID.randomUUID().toString(),
-                messageType = MessageType.TEXT.code, timestamp = System.currentTimeMillis(),
-                senderUid = session.uid, body = TextBody("你好，这是私聊消息"))
+                messageType = MessageType.RICH_TEXT.code, timestamp = System.currentTimeMillis(),
+                senderUid = session.uid, body = buildRichTextBody("你好，这是私聊消息"))
             session.imClient.sendAndWaitAck(msg)
         }
         println("===CREATE_PERSONAL ${if (pcResp.status == 0) "SUCCESS" else "FAILED"}=== chatId=$pcChatId")
@@ -229,8 +229,8 @@ class TestPeer {
         val (chatId, text) = arg.split(":", limit = 2).let { it[0] to it.getOrElse(1) { "hello from B" } }
         val session = RemoteAcceptanceSupport.loginUser(username, "password123")
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
-            messageType = MessageType.TEXT.code, timestamp = System.currentTimeMillis(),
-            senderUid = session.uid, body = TextBody(text))
+            messageType = MessageType.RICH_TEXT.code, timestamp = System.currentTimeMillis(),
+            senderUid = session.uid, body = buildRichTextBody(text))
         val ack = session.imClient.sendAndWaitAck(msg)
         println("===SEND_MSG ${if (ack.code == 0) "SUCCESS" else "FAILED"}=== ack=${ack.code} seq=${ack.serverSeq}")
         session.close()
@@ -366,8 +366,8 @@ class TestPeer {
 
         // 发消息
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
-            messageType = MessageType.TEXT.code, timestamp = System.currentTimeMillis(),
-            senderUid = session.uid, body = TextBody(text))
+            messageType = MessageType.RICH_TEXT.code, timestamp = System.currentTimeMillis(),
+            senderUid = session.uid, body = buildRichTextBody(text))
         val ack = session.imClient.sendAndWaitAck(msg)
         println("===SEND_TO ${if (ack.code == 0) "SUCCESS" else "FAILED"}=== chatId=$chatId ack=${ack.code}")
         session.close()

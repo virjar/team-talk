@@ -53,17 +53,33 @@ class RichTextBodyTest {
     }
 
     @Test
-    fun `空与普通文本`() {
+    fun `普通文本也是合法 Markdown 消息`() {
         val plain = buildRichTextBody("普通消息 user_avatar.png")
         assertEquals(0, plain.mentions.size)
         assertEquals("普通消息 user_avatar.png", plain.plainText)
+        assertEquals("普通消息 user_avatar.png", plain.markdown)
+    }
 
-        // 纯文本不该被升级为 RICH_TEXT（发送判定）
-        assertTrue(!looksRichMarkdown("普通消息 user_avatar.png 价格 100 元"))
-        assertTrue(looksRichMarkdown("**加粗**"))
-        assertTrue(looksRichMarkdown("@[名字](mention://uid)"))
-        assertTrue(looksRichMarkdown("见 [文档](https://im.virjar.com)"))
-        assertTrue(looksRichMarkdown("# 标题"))
+    @Test
+    fun `消息策略重建派生字段并拒绝类型错配`() {
+        val declared = RichTextBody(
+            markdown = "**可信源** @[张三](mention://u1)",
+            mentions = emptyList(),
+            plainText = "伪造的搜索文本",
+        )
+        val message = com.virjar.tk.model.Message(
+            chatId = "chat", clientMsgId = "client", senderUid = "sender",
+            messageType = com.virjar.tk.protocol.MessageType.RICH_TEXT.code,
+            timestamp = 1L, body = declared,
+        )
+
+        val canonical = MessageBodyPolicy.canonicalize(message).body as RichTextBody
+        assertEquals("可信源 @张三", canonical.plainText)
+        assertEquals("u1", canonical.mentions.single().uid)
+
+        kotlin.test.assertFailsWith<IllegalArgumentException> {
+            MessageBodyPolicy.canonicalize(message.copy(messageType = com.virjar.tk.protocol.MessageType.FILE.code))
+        }
     }
 }
 

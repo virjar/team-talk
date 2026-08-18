@@ -2,6 +2,7 @@ package com.virjar.tk.domain.attachment
 
 import com.virjar.tk.body.AttachmentBody
 import com.virjar.tk.body.AttachmentPolicy
+import com.virjar.tk.body.MessageBodyPolicy
 import com.virjar.tk.infra.storage.FileStore
 import com.virjar.tk.model.Attachment
 import com.virjar.tk.model.Message
@@ -17,7 +18,9 @@ class AttachmentService(
     private val fileStore: FileStore,
 ) {
     fun resolve(message: Message): Message {
-        val canonical = AttachmentPolicy.canonicalize(message)
+        // 所有消息先做通用 body/type 校验；Markdown 的派生字段也在此重建。
+        // 附件消息随后再做路径格式与 FileStore 存在性校验。
+        val canonical = AttachmentPolicy.canonicalize(MessageBodyPolicy.canonicalize(message))
         val body = canonical.body as? AttachmentBody ?: return canonical
         val attachment = resolve(body.attachment)
         val thumbnail = body.thumbnail?.let(::resolve)

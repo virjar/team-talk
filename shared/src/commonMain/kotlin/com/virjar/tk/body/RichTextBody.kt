@@ -96,15 +96,3 @@ fun buildRichTextBody(markdown: String): RichTextBody {
 
     return RichTextBody(markdown = markdown, mentions = mentions, plainText = text)
 }
-
-/**
- * 是否按富文本消息发送：文本包含 markdown 语法特征（客户端与 bot 共用的发送判定）。
- * 无特征时仍发 TEXT（老端直接可读，避免无谓的类型升级）。
- */
-fun looksRichMarkdown(text: String): Boolean {
-    if ("mention://" in text) return true
-    if ("**" in text || "~~" in text || '`' in text) return true
-    if (LINK_SYNTAX.containsMatchIn(text)) return true
-    if (text.startsWith("#") || text.startsWith("> ")) return true
-    return false
-}

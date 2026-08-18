@@ -1,7 +1,8 @@
 package com.virjar.tk.ui.component
 
 import com.virjar.tk.body.ImageBody
-import com.virjar.tk.body.TextBody
+import com.virjar.tk.body.buildRichTextBody
+import com.virjar.tk.body.MessageBodyPolicy
 import com.virjar.tk.body.VideoBody
 import com.virjar.tk.model.Message
 import com.virjar.tk.body.MessageBody
@@ -15,16 +16,16 @@ class BuildMediaListTest {
 
     private fun msg(body: MessageBody) = Message(
         chatId = "c1", clientMsgId = "m1", senderUid = "u1",
-        messageType = 1, timestamp = 0, body = body,
+        messageType = MessageBodyPolicy.typeOf(body).code, timestamp = 0, body = body,
     )
 
     @Test
     fun filters_to_image_and_video_only() {
         val messages = listOf(
-            msg(TextBody("hello")),
+            msg(buildRichTextBody("hello")),
             msg(ImageBody(attachment("image/one.png"))),
             msg(VideoBody(attachment("video/one.mp4"))),
-            msg(TextBody("world")),
+            msg(buildRichTextBody("world")),
         )
         val result = buildMediaList(messages)
         assertEquals(2, result.size)
@@ -50,7 +51,7 @@ class BuildMediaListTest {
 
     @Test
     fun text_only_messages_returns_empty_list() {
-        val messages = listOf(msg(TextBody("hello")))
+        val messages = listOf(msg(buildRichTextBody("hello")))
         assertTrue(buildMediaList(messages).isEmpty())
     }
 

@@ -25,7 +25,7 @@ class LongMessageE2eTest {
                         val ack = a.sendText(chatId, longText)
                         assertEquals(0, ack.code, "长消息发送应成功: ${ack.reason}")
                         val received = withTimeout(10_000) { b.nextMessage { it.senderUid == a.uid } }
-                        assertEquals(longText.length, received.body?.let { (it as? com.virjar.tk.body.TextBody)?.text?.length })
+                        assertEquals(longText.length, received.body?.let { (it as? com.virjar.tk.body.RichTextBody)?.markdown?.length })
                     } finally { a.shutdown() }
                 } finally { b.shutdown() }
             }

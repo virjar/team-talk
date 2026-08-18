@@ -10,6 +10,7 @@ import com.virjar.tk.protocol.PacketBuffer
  */
 object MessageBodyRegistry {
 
+    @Suppress("DEPRECATION")
     private val readers: Map<MessageType, IProtoReader<out MessageBody>> = mapOf(
         MessageType.TEXT to TextBody,
         MessageType.RICH_TEXT to RichTextBody,

@@ -7,7 +7,7 @@
 
 | Code | 类型 | 说明 | Body 类 |
 |------|------|------|---------|
-| 1 | TEXT | 纯文本消息 | `TextBody(text)` |
+| 1 | TEXT | 旧版纯文本（只读兼容，禁止新发） | `TextBody(text)` |
 | 2 | IMAGE | 图片消息 | `ImageBody(attachment, width, height, thumbnail)` |
 | 3 | VOICE | 语音消息 | `VoiceBody(attachment, duration)` |
 | 4 | VIDEO | 视频消息 | `VideoBody(attachment, duration, width, height, thumbnail)` |
@@ -22,12 +22,16 @@
 | 13 | STICKER | 贴纸 | `StickerBody(attachment, width, height)` |
 | 14 | REACTION | 表情回应 | `ReactionBody(...)` |
 | 15 | TYPING | 输入状态（非持久化） | 无 body |
-| 16 | RICH_TEXT | 富文本 | `RichTextBody(...)` |
+| 16 | RICH_TEXT | 默认文字消息（Markdown；普通文本是其子集） | `RichTextBody(...)` |
 | 17 | INTERACTIVE_CARD | 交互卡片 | `InteractiveCardBody(...)` |
 | 99 | GENERIC | 扩展保留 | 尚未注册 body |
 
 媒体附件的强类型模型、校验边界和 v4 迁移规则见
 [附件契约](attachment-contract.md)。
+
+文字消息契约：所有新文字统一发送 `RICH_TEXT`，Markdown 是唯一事实源；
+`mentions/plainText` 是派生字段，SDK 和服务端都会从 Markdown 重建。
+`TEXT/TextBody` 仅用于读取历史数据，不再作为发送 API。
 
 ---
 
@@ -78,7 +82,7 @@ val flags: Int = 0
 ### 为什么用位标记而不是独立 Boolean 字段
 
 1. **协议不膨胀**：3 个状态共享 1 个 VarInt 字段（通常 1 字节），而非 3 个 Boolean（3 字节）。未来追加 flag 不增加协议字段。
-2. **不改 messageType**：撤回/编辑是消息**状态变更**，不是消息**类型变更**。一条文本消息编辑后还是 TEXT 类型，只是多了 FLAG_EDITED。用独立 messageType 表示"已编辑的文本"会导致类型组合爆炸。
+2. **不改 messageType**：撤回/编辑是消息**状态变更**，不是消息**类型变更**。一条 Markdown 文本消息编辑后仍是 RICH_TEXT，只是多了 FLAG_EDITED。用独立 messageType 表示"已编辑的文本"会导致类型组合爆炸。
 3. **原子更新**：服务端 `message.flags = flags or FLAG_REVOKED` 一行代码改状态，客户端收到 NOTIFY 后检查 flags 决定渲染。
 
 ### 渲染时检查

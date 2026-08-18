@@ -3,7 +3,6 @@ package com.virjar.tk.e2e
 import com.virjar.tk.body.FileBody
 import com.virjar.tk.body.ImageBody
 import com.virjar.tk.bot.ImBot
-import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.model.Attachment
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -28,7 +27,7 @@ class FileValidationE2eTest {
                 try {
                     val chatId = a.createPersonalChat(b.uid)
                     val attachment = env.storeFile("hello".toByteArray(), "a.txt")
-                    val ack = a.send(chatId, FileBody(attachment), MessageType.FILE)
+                    val ack = a.send(chatId, FileBody(attachment))
                     assertEquals(0, ack.code, "真实附件应发送成功: ${ack.reason}")
                 } finally { a.shutdown(); b.shutdown() }
             }
@@ -46,7 +45,7 @@ class FileValidationE2eTest {
                     val attachment = env.storeFile("hello".toByteArray(), "b.txt")
                     // 对接形态：完整 URL（base 随意，校验只认 /api/v1/files/ 前缀后的 path）
                     val fullUrl = "https://some-host.example/api/v1/files/${attachment.path}"
-                    val ack = a.send(chatId, FileBody(attachment.copy(path = fullUrl)), MessageType.FILE)
+                    val ack = a.send(chatId, FileBody(attachment.copy(path = fullUrl)))
                     assertEquals(0, ack.code, "完整 URL 指向真实文件应成功: ${ack.reason}")
                     val received = withTimeout(10_000) { b.nextMessage { it.senderUid == a.uid } }
                     assertEquals(attachment, (received.body as FileBody).attachment, "服务端必须下发权威相对路径描述符")
@@ -64,7 +63,7 @@ class FileValidationE2eTest {
                 try {
                     val chatId = a.createPersonalChat(b.uid)
                     val missing = Attachment("no-such-uid/ghost.txt", "ghost.txt", "text/plain", 5)
-                    val ack = a.send(chatId, FileBody(missing), MessageType.FILE)
+                    val ack = a.send(chatId, FileBody(missing))
                     assertTrue(ack.code != 0, "断链附件必须被服务端拒绝")
                     assertTrue(ack.reason.orEmpty().contains("附件"), "拒绝理由应指向附件: ${ack.reason}")
                 } finally { a.shutdown(); b.shutdown() }
@@ -81,7 +80,7 @@ class FileValidationE2eTest {
                 try {
                     val chatId = a.createPersonalChat(b.uid)
                     val attachment = env.storeFile(ByteArray(2048), "large.bin")
-                    val ack = a.send(chatId, FileBody(attachment.copy(size = 1)), MessageType.FILE)
+                    val ack = a.send(chatId, FileBody(attachment.copy(size = 1)))
                     assertTrue(ack.code != 0, "不能用虚假的小文件大小绕过静默下载阈值")
                     assertTrue(ack.reason.orEmpty().contains("元数据不匹配"), "拒绝理由应指出元数据不匹配: ${ack.reason}")
                 } finally { a.shutdown(); b.shutdown() }
@@ -101,7 +100,7 @@ class FileValidationE2eTest {
                     val ack = a.send(chatId, ImageBody(
                         Attachment("https://third-party.example/api/v1/files/no-such/image.png", "image.png", "image/png", 1),
                         width = 1, height = 1,
-                    ), MessageType.IMAGE)
+                    ))
                     assertTrue(ack.code != 0, "三方/断链图片 URL 必须被拒绝（文件只走服务端本身）")
                 } finally { a.shutdown(); b.shutdown() }
             }
@@ -120,7 +119,7 @@ class FileValidationE2eTest {
                     val ack = a.send(chatId, ImageBody(
                         attachment, width = 1, height = 1,
                         thumbnail = Attachment("no-such/thumb.jpg", "thumb.jpg", "image/jpeg", 1),
-                    ), MessageType.IMAGE)
+                    ))
                     assertTrue(ack.code != 0, "任一引用附件不存在都不能发送成功")
                 } finally { a.shutdown(); b.shutdown() }
             }

@@ -32,7 +32,8 @@ object MessagePreview {
     }
 
     /** 仅按 body 生成预览（不考虑 flags）。 */
-    fun previewBody(body: MessageBody?, messageType: Int = MessageType.TEXT.code): String = when (body) {
+    @Suppress("DEPRECATION")
+    fun previewBody(body: MessageBody?, messageType: Int = MessageType.RICH_TEXT.code): String = when (body) {
         is TextBody -> body.text
         is RichTextBody -> body.plainText
         is InteractiveCardBody -> "[卡片] " + (body.toCard()?.title ?: "")
@@ -43,7 +44,10 @@ object MessagePreview {
         is LocationBody -> body.title ?: body.address ?: "[位置]"
         is CardBody -> "[名片] ${body.targetName}"
         is StickerBody -> "[表情]"
-        is ReplyBody -> body.content.ifBlank { body.replySnippet ?: "[回复]" }
+        is ReplyBody -> body.content.takeIf(String::isNotBlank)
+            ?.let { buildRichTextBody(it).plainText }
+            ?: body.replySnippet
+            ?: "[回复]"
         is ForwardBody -> body.forwardNote?.let { "[转发] $it" } ?: "[转发消息]"
         is MergeForwardBody -> body.title ?: "[合并转发]"
         is RevokeBody -> "撤回了一条消息"

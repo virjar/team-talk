@@ -228,7 +228,7 @@ varInt maxUses(0=无限), varInt useCount, varLong expiresAt, varLong revokedAt
 
 | type | Body | 布局（顺序） |
 |------|------|-------------|
-| 1 TEXT | TextBody | string text |
+| 1 TEXT | TextBody | string text（旧数据只读兼容，新消息禁止使用） |
 | 2 IMAGE | ImageBody | string url, varInt w, varInt h, varLong size |
 | 3 VOICE | VoiceBody | string url, varInt duration, varLong size |
 | 4 VIDEO | VideoBody | string url, varInt duration, varInt w, varInt h, varLong size, string? thumbnailUrl |
@@ -243,6 +243,7 @@ varInt maxUses(0=无限), varInt useCount, varLong expiresAt, varLong revokedAt
 | 13 STICKER | StickerBody | string url, varInt w, varInt h |
 | 14 REACTION | ReactionBody | string targetMsgId, string emoji, varInt action(1=add 0=remove) |
 | 15 TYPING | —（未注册 body，解出 null） | |
+| 16 RICH_TEXT | RichTextBody | string markdown, varInt mentionCount, Mention[], string plainText（后两者由 markdown 派生） |
 | 99 GENERIC | GenericPayload（varInt extensionType, bytes? data） | |
 
 兼容注记：ReplyBody.content 为后加字段，解码时 `readableBytes()>0` 才读（旧数据缺省 ""）；LocationBody 的 Double 走十进制字符串避免浮点精度漂移。

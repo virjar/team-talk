@@ -2,6 +2,7 @@ package com.virjar.tk.agent
 
 import com.sun.net.httpserver.HttpExchange
 import com.virjar.tk.client.ConnectionState
+import com.virjar.tk.body.markdownContentOrNull
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -108,7 +109,7 @@ class AgentApi(private val agent: AgentRuntime) {
                     put("messages", buildJsonArray {
                         list.forEach { m -> add(buildJsonObject {
                             put("seq", m.serverSeq); put("sender", m.senderUid)
-                            put("text", (m.body as? com.virjar.tk.body.TextBody)?.text ?: "")
+                            put("text", m.body.markdownContentOrNull() ?: "")
                             put("ts", m.timestamp)
                         }) }
                     })
@@ -217,7 +218,7 @@ class AgentApi(private val agent: AgentRuntime) {
 
     private fun com.virjar.tk.model.Message.toJson() = buildJsonObject {
         put("chatId", chatId); put("seq", serverSeq); put("sender", senderUid)
-        put("text", (body as? com.virjar.tk.body.TextBody)?.text ?: ""); put("ts", timestamp)
+        put("text", body.markdownContentOrNull() ?: ""); put("ts", timestamp)
     }
 
     private fun parse(body: String): Map<String, String> =

@@ -5,7 +5,6 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
@@ -28,7 +27,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.*
@@ -40,10 +40,10 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.body.ReplyBody
 import com.virjar.tk.body.FileBody
-import com.virjar.tk.body.TextBody
-import com.virjar.tk.body.RichTextBody
 import com.virjar.tk.body.buildRichTextBody
-import com.virjar.tk.body.looksRichMarkdown
+import com.virjar.tk.body.isMarkdownTextBody
+import com.virjar.tk.body.markdownContentOrNull
+import com.virjar.tk.body.plainTextContentOrNull
 import com.virjar.tk.ui.component.input.AttachmentPanel
 import com.virjar.tk.ui.component.input.AutoCompleteItem
 import com.virjar.tk.ui.component.input.AutoCompleteOverlay
@@ -203,20 +203,23 @@ fun ChatPanel(
     // 编辑时预填输入
     LaunchedEffect(editingMessage) {
         editingMessage?.let { msg ->
-            val t = (msg.body as? TextBody)?.text ?: (msg.body as? RichTextBody)?.markdown ?: ""
-            richState.setMarkdown(t)
+            richState.setMarkdown(msg.body.markdownContentOrNull().orEmpty())
         }
     }
 
-    // ── 发送动作（按钮与 Enter 共用）──
+    // ── 发送动作（按钮与 Cmd/Ctrl+Enter 共用）──
     val sendAction: () -> Unit = {
         // WYSIWYG 编辑器导出 markdown（粗体等样式已编码为 **xx** 语法）
-        val rawText = richState.toMarkdown().trim()
+        // Markdown 是权威源。不能 trim：开头缩进、空行和结尾换行都可能有语义。
+        val rawText = richState.toMarkdown()
         // / 指令展开（/shrug 等）；未注册指令原样透传（服务端/bot 二期解析）
         val inputText = if (rawText.startsWith("/")) expandSlashCommand(rawText) ?: rawText else rawText
         if (inputText.isNotBlank()) {
             if (editingMessage != null) {
-                val edited = editingMessage!!.copy(body = TextBody(inputText))
+                val edited = editingMessage!!.copy(
+                    messageType = MessageType.RICH_TEXT.code,
+                    body = buildRichTextBody(inputText),
+                )
                 viewModel.editMessage(edited)
                 editingMessage = null
                 richState.clear()
@@ -243,16 +246,15 @@ fun ChatPanel(
                         ),
                     )
                 } else {
-                    // markdown 特征 → RICH_TEXT（mentions 侧信道 + plainText）；
-                    // 纯文本仍发 TEXT（老端直读，不做无谓类型升级）
-                    val rich = looksRichMarkdown(inputText)
+                    // 普通文本是 Markdown 的自然子集；所有新文本统一走 RICH_TEXT，
+                    // 彻底消除发送/编辑/SDK 在 TEXT 与 RICH_TEXT 之间的行为分叉。
                     Message(
                         chatId = chatId,
                         clientMsgId = UUID.randomUUID().toString(),
                         senderUid = myUid,
-                        messageType = if (rich) MessageType.RICH_TEXT.code else MessageType.TEXT.code,
+                        messageType = MessageType.RICH_TEXT.code,
                         timestamp = System.currentTimeMillis(),
-                        body = if (rich) buildRichTextBody(inputText) else TextBody(inputText),
+                        body = buildRichTextBody(inputText),
                     )
                 }
                 viewModel.sendMessage(message)
@@ -261,6 +263,31 @@ fun ChatPanel(
                 replyingTo = null
             }
         }
+    }
+
+    val boldStyle = remember { androidx.compose.ui.text.SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) }
+    val italicStyle = remember { androidx.compose.ui.text.SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic) }
+    val strikeStyle = remember { androidx.compose.ui.text.SpanStyle(textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough) }
+    val toggleBold: () -> Unit = {
+        richState.toggleSpanStyle(boldStyle)
+        inputFocus.requestFocus()
+        Unit
+    }
+    val toggleItalic: () -> Unit = {
+        richState.toggleSpanStyle(italicStyle)
+        inputFocus.requestFocus()
+        Unit
+    }
+    val toggleStrike: () -> Unit = {
+        richState.toggleSpanStyle(strikeStyle)
+        inputFocus.requestFocus()
+        Unit
+    }
+    val toggleCode: () -> Unit = {
+        // Code 是 RichSpanStyle，不能用 fontFamily=Monospace 冒充；后者不会序列化为反引号。
+        richState.toggleCodeSpan()
+        inputFocus.requestFocus()
+        Unit
     }
 
     // 文件下载控制器注入（FileCard 消费；null = 回退旧 onMediaClick 路径）
@@ -355,11 +382,8 @@ fun ChatPanel(
                                             onClick = {
                                                 clipboard.setText(
                                                     androidx.compose.ui.text.AnnotatedString(
-                                                        when (val b = msg.body) {
-                                                            is TextBody -> b.text
-                                                            is RichTextBody -> b.plainText
-                                                            else -> com.virjar.tk.util.MessagePreview.preview(msg, flagsAware = false)
-                                                        }
+                                                        msg.body.plainTextContentOrNull()
+                                                            ?: com.virjar.tk.util.MessagePreview.preview(msg, flagsAware = false)
                                                     )
                                                 )
                                                 menuMessage = null
@@ -369,7 +393,7 @@ fun ChatPanel(
                                             text = { Text("回复") },
                                             onClick = { replyingTo = msg; menuMessage = null },
                                         )
-                                        if (isMe && msg.body is TextBody) {
+                                        if (isMe && msg.body.isMarkdownTextBody()) {
                                             DropdownMenuItem(
                                                 text = { Text("编辑") },
                                                 onClick = {
@@ -473,13 +497,7 @@ fun ChatPanel(
                 // 替代旧的"图标平铺+AlertDialog 文字菜单"（曾是最丑的一层）。
                 val effectivePickVideo = media?.onPickVideo
                 val hasAttachment = effectivePickImage != null || effectivePickFile != null || effectivePickVideo != null
-                if (effectiveAttachClick != null || hasAttachment || effectiveVoiceRecord != null) {
-
-                    // WYSIWYG 格式键：样式直改（选中文本立即变粗体/斜体…，toMarkdown 时编码为语法）
-                    val applyFormat: (androidx.compose.ui.text.SpanStyle) -> Unit = { style ->
-                        richState.toggleSpanStyle(style)
-                        inputFocus.requestFocus()
-                    }
+                run {
                     val insertEmoji: (String) -> Unit = { emoji ->
                         richState.insertAtCaret(emoji)
                     }
@@ -512,18 +530,20 @@ fun ChatPanel(
                         }
 
                         // WYSIWYG 格式键（B/I/S/代码）：直改样式
-                        FormatKey("B", androidx.compose.ui.text.SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), applyFormat, "chat.fmt.bold")
-                        FormatKey("I", androidx.compose.ui.text.SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic), applyFormat, "chat.fmt.italic")
-                        FormatKey("S", androidx.compose.ui.text.SpanStyle(textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough), applyFormat, "chat.fmt.strike")
-                        FormatKey("</>", androidx.compose.ui.text.SpanStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace), applyFormat, "chat.fmt.code")
+                        FormatKey("B", (richState.currentSpanStyle.fontWeight?.weight ?: 400) > 400, toggleBold, "chat.fmt.bold")
+                        FormatKey("I", richState.currentSpanStyle.fontStyle == androidx.compose.ui.text.font.FontStyle.Italic, toggleItalic, "chat.fmt.italic")
+                        FormatKey("S", richState.currentSpanStyle.textDecoration?.contains(androidx.compose.ui.text.style.TextDecoration.LineThrough) == true, toggleStrike, "chat.fmt.strike")
+                        FormatKey("</>", richState.isCodeSpan, toggleCode, "chat.fmt.code")
 
                         // 语音/键盘切换
-                        IconButton(onClick = { voiceMode = !voiceMode }, modifier = Modifier.testTag("chat.voiceMode")) {
-                            Icon(
-                                if (voiceMode) Icons.Filled.Keyboard else Icons.Filled.KeyboardVoice,
-                                contentDescription = if (voiceMode) "键盘" else "语音",
-                                tint = Tk.colors.secondaryText,
-                            )
+                        if (effectiveVoiceRecord != null) {
+                            IconButton(onClick = { voiceMode = !voiceMode }, modifier = Modifier.testTag("chat.voiceMode")) {
+                                Icon(
+                                    if (voiceMode) Icons.Filled.Keyboard else Icons.Filled.KeyboardVoice,
+                                    contentDescription = if (voiceMode) "键盘" else "语音",
+                                    tint = Tk.colors.secondaryText,
+                                )
+                            }
                         }
 
                         Spacer(Modifier.weight(1f))
@@ -598,14 +618,23 @@ fun ChatPanel(
                                     .testTag("chat.input")
                                     .focusRequester(inputFocus)
                                     .onPreviewKeyEvent { event ->
-                                        // Enter 发送 / Shift+Enter 换行（桌面；Android 走 IME Send）
-                                        if (event.type == KeyEventType.KeyDown &&
-                                            event.key == Key.Enter && !event.isShiftPressed
-                                        ) {
-                                            sendAction()
-                                            true
-                                        } else {
-                                            false
+                                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                        val command = event.isMetaPressed || event.isCtrlPressed
+                                        when {
+                                            // 富文本编辑器默认 Enter 换行；显式快捷键才发送。
+                                            event.key == Key.Enter && command -> {
+                                                sendAction()
+                                                true
+                                            }
+                                            event.key == Key.B && command -> {
+                                                toggleBold()
+                                                true
+                                            }
+                                            event.key == Key.I && command -> {
+                                                toggleItalic()
+                                                true
+                                            }
+                                            else -> false
                                         }
                                     },
                                 textStyle = MaterialTheme.typography.bodyMedium.copy(
@@ -614,8 +643,7 @@ fun ChatPanel(
                                 minLines = 3,
                                 maxLines = 8,
                                 cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
-                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                                keyboardActions = KeyboardActions(onSend = { sendAction() }),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                             )
                             // 占位符（编辑器空态时）
                             if (richState.annotatedString.text.isEmpty()) {

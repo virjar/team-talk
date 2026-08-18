@@ -12,8 +12,8 @@ import com.virjar.tk.client.createSession
 import com.virjar.tk.client.defaultServerConfig
 import com.virjar.tk.body.FileBody
 import com.virjar.tk.body.ImageBody
-import com.virjar.tk.body.TextBody
 import com.virjar.tk.body.buildRichTextBody
+import com.virjar.tk.body.MessageBodyPolicy
 import com.virjar.tk.body.VideoBody
 import com.virjar.tk.body.VoiceBody
 import com.virjar.tk.model.Chat
@@ -112,28 +112,28 @@ class ImBot private constructor(
 
     // ── 消息 ──
 
-    /** 发送文本消息并等待服务端 ACK。 */
+    /** 发送 Markdown 文本消息并等待服务端 ACK（普通文本是 Markdown 的自然子集）。 */
     suspend fun sendText(chatId: String, text: String): MessageAckPayload =
-        send(chatId, TextBody(text))
+        send(chatId, buildRichTextBody(text))
 
     /** 发送富文本（markdown/mention）消息。 */
     suspend fun sendRichText(chatId: String, markdown: String): MessageAckPayload =
-        send(chatId, buildRichTextBody(markdown), MessageType.RICH_TEXT)
+        sendText(chatId, markdown)
 
     /** 发送交互卡片（一期静态展示；二期按钮回调）。 */
     suspend fun sendCard(chatId: String, card: com.virjar.tk.body.CardPayload): MessageAckPayload =
-        send(chatId, com.virjar.tk.body.InteractiveCardBody.of(card), MessageType.INTERACTIVE_CARD)
+        send(chatId, com.virjar.tk.body.InteractiveCardBody.of(card))
 
     // ── 媒体消息（调用方先 uploadFile；相对 path/文件端点 URL 均可，SDK 统一归一化） ──
 
     suspend fun sendImage(chatId: String, attachment: Attachment, width: Int, height: Int): MessageAckPayload =
-        send(chatId, ImageBody(attachment, width, height), MessageType.IMAGE)
+        send(chatId, ImageBody(attachment, width, height))
 
     suspend fun sendFile(chatId: String, attachment: Attachment): MessageAckPayload =
-        send(chatId, FileBody(attachment), MessageType.FILE)
+        send(chatId, FileBody(attachment))
 
     suspend fun sendVoice(chatId: String, attachment: Attachment, duration: Int): MessageAckPayload =
-        send(chatId, VoiceBody(attachment, duration), MessageType.VOICE)
+        send(chatId, VoiceBody(attachment, duration))
 
     suspend fun sendVideo(
         chatId: String,
@@ -145,7 +145,6 @@ class ImBot private constructor(
     ): MessageAckPayload = send(
         chatId,
         VideoBody(attachment, duration, width, height, thumbnail),
-        MessageType.VIDEO,
     )
 
     /** 上传文件到服务器（HTTP），返回服务端权威附件描述符。 */
@@ -197,17 +196,27 @@ class ImBot private constructor(
     suspend fun deleteFriend(friendUid: String) = session.contactRepo.deleteFriend(friendUid).getOrThrow()
     suspend fun searchUsers(keyword: String): List<User> = session.userRepo.search(keyword).getOrThrow()
 
-    /** 发送任意 body 消息并等待服务端 ACK。 */
-    suspend fun send(chatId: String, body: MessageBody, messageType: MessageType = MessageType.TEXT): MessageAckPayload {
-        val message = Message(
+    /** 发送任意 body 消息并等待服务端 ACK；消息类型由 body 唯一推导，调用方不能错配。 */
+    suspend fun send(chatId: String, body: MessageBody): MessageAckPayload {
+        val messageType = MessageBodyPolicy.typeOf(body)
+        val message = MessageBodyPolicy.canonicalize(Message(
             chatId = chatId,
             clientMsgId = UUID.randomUUID().toString(),
             senderUid = uid,
             messageType = messageType.code,
             timestamp = System.currentTimeMillis(),
             body = body,
-        )
+        ))
         return messageSender.sendAndWaitAck(message)
+    }
+
+    /** 兼容旧 SDK 调用；显式类型只用于校验，不再允许覆盖 body 的真实类型。 */
+    @Deprecated("messageType 由 body 自动推导，请调用 send(chatId, body)")
+    suspend fun send(chatId: String, body: MessageBody, messageType: MessageType): MessageAckPayload {
+        require(MessageBodyPolicy.typeOf(body) == messageType) {
+            "消息类型与消息体不匹配: body=${body::class.simpleName}, messageType=$messageType"
+        }
+        return send(chatId, body)
     }
 
     /**

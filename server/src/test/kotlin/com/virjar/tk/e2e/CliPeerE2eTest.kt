@@ -71,7 +71,7 @@ class CliPeerE2eTest {
                     assertEquals(0, code)
                     assertTrue(seq > 0, "CLI 发送应拿到服务端 seq")
                     val aReceived = a.nextMessage { it.senderUid == bUid }
-                    assertEquals("reply from cli", (aReceived.body as com.virjar.tk.body.TextBody).text)
+                    assertEquals("reply from cli", (aReceived.body as com.virjar.tk.body.RichTextBody).markdown)
                 } finally {
                     a.shutdown()
                 }

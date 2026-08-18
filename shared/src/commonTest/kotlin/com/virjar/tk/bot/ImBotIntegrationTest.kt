@@ -75,14 +75,14 @@ class ImBotIntegrationTest {
             val received = bob.nextMessage { it.senderUid == alice.uid }
             assertEquals(chatId, received.chatId)
             val body = received.body
-            assertTrue(body is com.virjar.tk.body.TextBody && body.text == text,
+            assertTrue(body is com.virjar.tk.body.RichTextBody && body.markdown == text,
                 "收到 body 应为文本[$text]，实际 ${body?.let { it::class.simpleName }}")
 
             val reply = "ack-${UUID.randomUUID()}"
             assertEquals(0, bob.sendText(chatId, reply).code)
             val received2 = alice.nextMessage { it.senderUid == bob.uid }
-            assertTrue(received2.body is com.virjar.tk.body.TextBody &&
-                (received2.body as com.virjar.tk.body.TextBody).text == reply)
+            assertTrue(received2.body is com.virjar.tk.body.RichTextBody &&
+                (received2.body as com.virjar.tk.body.RichTextBody).markdown == reply)
 
             assertTrue(bob.listConversations().any { it.chatId == chatId })
         }
@@ -125,7 +125,7 @@ class ImBotIntegrationTest {
             val chatId = befriend(a, b)
             // 清空双方缓冲里建交期间的杂音，记录当前水位
             a.sendText(chatId, "warmup")
-            b.nextMessage { it.senderUid == a.uid && it.body is com.virjar.tk.body.TextBody }
+            b.nextMessage { it.senderUid == a.uid && it.body is com.virjar.tk.body.RichTextBody }
 
             // A 模拟网络断（不置 destroyed → 自动重连路径）
             a.imClient.simulateNetworkDrop()
@@ -145,12 +145,12 @@ class ImBotIntegrationTest {
                     while (true) {
                         msg = a.nextMessage(15_000) { it.senderUid == b.uid }
                         val body = msg.body
-                        if (body is com.virjar.tk.body.TextBody && body.text.startsWith("offline-")) break
+                        if (body is com.virjar.tk.body.RichTextBody && body.markdown.startsWith("offline-")) break
                     }
                     msg
                 }
-                val body = m.body as com.virjar.tk.body.TextBody
-                received += body.text
+                val body = m.body as com.virjar.tk.body.RichTextBody
+                received += body.markdown
             }
             assertEquals(texts.toSet(), received.toSet(),
                 "断线期间的 3 条消息必须经离线补发全部送达（A1 重连重启 + A2 游标接线）")
@@ -203,7 +203,7 @@ class ImBotIntegrationTest {
                     while (true) {
                         val m = b.nextMessage(10_000) { it.senderUid == a.uid && it.chatId == group.chatId }
                         val body = m.body
-                        if (body is com.virjar.tk.body.TextBody && body.text.startsWith("group-msg")) break
+                        if (body is com.virjar.tk.body.RichTextBody && body.markdown.startsWith("group-msg")) break
                     }
                 }
             }
