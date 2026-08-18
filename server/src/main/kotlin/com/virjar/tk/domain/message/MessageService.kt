@@ -50,7 +50,7 @@ class MessageService(
         // 消息契约：发送成功 = 引用的附件真实存在（文件只走本服务端文件存储，
         // 不存在三方文件服务；完整 http URL 只是客户端/外部 SDK 对接形态）。
         // 断链消息在服务端拒绝，不能等对端点击才发现打不开。
-        val canonicalMessage = attachmentService.resolve(message)
+        val canonicalMessage = attachmentService.resolve(message, senderUid)
 
         // 非阻塞递增 maxSeq
         val serverSeq = chatStore.incrementMaxSeq(chatId)
@@ -116,7 +116,7 @@ class MessageService(
             throw IllegalArgumentException("只能编辑自己的消息")
         }
 
-        val canonicalNewMessage = attachmentService.resolve(newMessage)
+        val canonicalNewMessage = attachmentService.resolve(newMessage, uid)
         val edited = canonicalNewMessage.copy(
             serverSeq = serverSeq,
             senderUid = uid,
@@ -138,7 +138,7 @@ class MessageService(
 
         val srcMsg = messages.getMessage(srcChatId, srcSeq)
             ?: throw IllegalArgumentException("原消息不存在")
-        val canonicalSource = attachmentService.resolve(srcMsg)
+        val canonicalSource = attachmentService.resolve(srcMsg, uid)
 
         val serverSeq = chatStore.incrementMaxSeq(targetChatId)
 

@@ -1,6 +1,8 @@
 package com.virjar.tk.infra.storage
 
+import com.virjar.tk.body.FileBody
 import com.virjar.tk.body.buildRichTextBody
+import com.virjar.tk.model.Attachment
 import com.virjar.tk.model.Message
 import com.virjar.tk.protocol.MessageType
 import java.nio.file.Files
@@ -43,6 +45,40 @@ class MessageStoreTest {
             assertEquals(3, store.storeMessage(first))
             assertEquals(3, store.storeMessage(racingDuplicate))
             assertEquals(listOf(first), store.getPendingProjections())
+        } finally {
+            store.close()
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `attachment reverse index follows message store and edit atomically`() {
+        val root = Files.createTempDirectory("tk-message-attachments-").toFile()
+        val store = MessageStore(root.absolutePath)
+        try {
+            store.init()
+            val firstAttachment = Attachment("owner/first.pdf", "first.pdf", "application/pdf", 7)
+            val secondAttachment = Attachment("owner/second.pdf", "second.pdf", "application/pdf", 9)
+            val message = Message(
+                chatId = "chat-files",
+                clientMsgId = "client-files",
+                serverSeq = 11,
+                senderUid = "owner",
+                messageType = MessageType.FILE.code,
+                timestamp = 1_700_000_000_000,
+                body = FileBody(firstAttachment),
+            )
+
+            store.storeMessage(message)
+            assertEquals(setOf("chat-files"), store.getAttachmentChatIds(firstAttachment.path))
+
+            store.updateMessage(
+                message.chatId,
+                message.serverSeq,
+                message.copy(body = FileBody(secondAttachment)),
+            )
+            assertTrue(store.getAttachmentChatIds(firstAttachment.path).isEmpty())
+            assertEquals(setOf("chat-files"), store.getAttachmentChatIds(secondAttachment.path))
         } finally {
             store.close()
             root.deleteRecursively()

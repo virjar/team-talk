@@ -3,9 +3,12 @@ package com.virjar.tk.di
 import com.virjar.tk.application.admin.AdminService
 import com.virjar.tk.application.presence.PresenceCoordinator
 import com.virjar.tk.domain.attachment.AttachmentCatalog
+import com.virjar.tk.domain.attachment.AttachmentAccess
+import com.virjar.tk.domain.attachment.AttachmentAccessService
 import com.virjar.tk.domain.auth.AuthService
 import com.virjar.tk.domain.auth.TokenRepository
 import com.virjar.tk.domain.chat.ChatMemberRepository
+import com.virjar.tk.domain.chat.ActiveChatMembership
 import com.virjar.tk.domain.chat.ChatRepository
 import com.virjar.tk.domain.chat.ChatService
 import com.virjar.tk.domain.chat.ChatStore
@@ -95,6 +98,7 @@ fun createServerModule(
     single { UserStore(get()) }
     single { ContactStore(get()) }
     single { ChatStore(get(), get(), get()) }
+    single<ActiveChatMembership> { get<ChatStore>() }
 
     // Domain Service
     single { SyncEventService(get()) }
@@ -105,7 +109,8 @@ fun createServerModule(
     single { ContactService(get(), get()) }
     single { ChatService(get(), get(), get(), get()) }
     single { ConversationService(get(), get(), get()) }
-    single { com.virjar.tk.domain.attachment.AttachmentService(get()) }
+    single { com.virjar.tk.domain.attachment.AttachmentService(get(), get()) }
+    single<AttachmentAccess> { AttachmentAccessService(get(), get(), get()) }
     single { MessageService(get(), get(), get(), get(), get(), get()) }
     single { PresenceService(get(), get()) }
     single { PresenceCoordinator(get(), get()) }

@@ -78,12 +78,15 @@ HTTP upload
   → client 构造 Attachment
   → MESSAGE send
   → server 按 path 查询元数据并校验
+  → message 与 attachment→chat 反向索引原子写入
   → message 只保存 relative path
-  → receiver 用 serverUrl + path 下载
+  → receiver 用 access token + serverUrl + path 下载
 ```
 
 上传成功但尚未发送消息的文件可能暂时成为孤儿；清理策略属于运维生命周期，不应通过允许任意 URL
-来规避。附件完整契约见[消息与附件](../04-protocol/messages-and-attachments.md)。
+来规避。上传者在消息发送前可以读取自己的对象；发送后，当前会话成员经反向索引获得读取权限。
+退出或被移除后，服务端按实时成员资格拒绝新的下载。附件完整契约见
+[消息与附件](../04-protocol/messages-and-attachments.md)。
 
 ## 7. 故障语义
 

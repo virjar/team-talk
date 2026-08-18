@@ -17,7 +17,7 @@ import kotlinx.serialization.json.Json
  * 下载与 URL 拼装两端逻辑相同，由 [FileOps] 共享。
  * 构造函数接受 serverUrl（从 [com.virjar.tk.client.defaultServerConfig] 获取）。
  */
-expect class FileRepository(serverUrl: String, accessToken: String? /* HTTP 上传鉴权 Bearer，下载无需 */) {
+expect class FileRepository(serverUrl: String, accessToken: String? /* HTTP 上传与下载鉴权 Bearer */) {
 
     /** 上传文件，返回服务端权威附件描述符。 */
     suspend fun upload(bytes: ByteArray, fileName: String, contentType: String): Outcome<Attachment>
@@ -58,12 +58,17 @@ object FileOps {
         resolveUrl(serverUrl, attachment.path)
 
     /** 下载文件字节（HttpURLConnection，两端通用）。 */
-    suspend fun download(serverUrl: String, attachment: Attachment): Outcome<ByteArray> =
+    suspend fun download(
+        serverUrl: String,
+        attachment: Attachment,
+        accessToken: String?,
+    ): Outcome<ByteArray> =
         withContext(Dispatchers.IO) {
             outcome {
                 val conn = (java.net.URL(resolveUrl(serverUrl, attachment)).openConnection() as java.net.HttpURLConnection).apply {
                     connectTimeout = 10_000
                     readTimeout = 120_000
+                    accessToken?.let { setRequestProperty("Authorization", "Bearer $it") }
                 }
                 val code = conn.responseCode
                 if (code != 200) {

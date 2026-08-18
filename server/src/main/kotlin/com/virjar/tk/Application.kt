@@ -189,7 +189,7 @@ fun Application.module() {
             val status = if (health.status == "UP") HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable
             call.respond(status, health)
         }
-        fileRoutes(fileStore, koin.get())
+        fileRoutes(fileStore, koin.get(), koin.get())
         adminRoutes(koin.get())
         clientLogRoutes(clientLogStore)
 

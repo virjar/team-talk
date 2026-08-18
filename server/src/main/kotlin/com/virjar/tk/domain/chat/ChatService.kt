@@ -45,14 +45,19 @@ class ChatService(
         events.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
     }
 
-    suspend fun deleteChat(operatorUid: String, chatId: String) {
+    suspend fun dissolveGroup(operatorUid: String, chatId: String) {
         val chat = chatStore.getChat(chatId) ?: throw IllegalArgumentException("聊天不存在")
-        if (chat.chatType == 2) {
-            requireOwner(operatorUid, chatId)
-        }
+        require(chat.chatType == 2) { "单聊不能解散，请删除自己的会话视图" }
+        requireOwner(operatorUid, chatId)
         val memberUids = chatStore.getMemberUids(chatId)
-        chatStore.deleteChat(chatId)
+        chatStore.deactivateChat(chatId)
         events.emitEvents(memberUids, NotifyType.CHAT_DELETED, chat)
+    }
+
+    suspend fun leaveGroup(uid: String, chatId: String) {
+        val chat = chatStore.getChat(chatId) ?: throw IllegalArgumentException("聊天不存在")
+        require(chat.chatType == 2) { "单聊不能退出，请删除自己的会话视图" }
+        removeMember(uid, chatId, uid)
     }
 
     // ── 成员管理 ──
@@ -194,7 +199,7 @@ class ChatService(
     suspend fun adminDissolve(chatId: String) {
         val chat = chatStore.getChat(chatId) ?: throw IllegalArgumentException("聊天不存在")
         val memberUids = chatStore.getMemberUids(chatId)
-        chatStore.deleteChat(chatId)
+        chatStore.deactivateChat(chatId)
         events.emitEvents(memberUids, NotifyType.CHAT_DELETED, chat)
     }
 

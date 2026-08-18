@@ -27,4 +27,5 @@ interface ChatRpc {
     suspend fun revokeInviteLink(token: String)
     suspend fun joinByInvite(token: String): Chat
     suspend fun getInviteInfo(token: String): InviteLink
+    suspend fun leaveGroup(chatId: String)
 }

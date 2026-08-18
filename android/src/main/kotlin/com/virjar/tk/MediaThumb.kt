@@ -24,12 +24,23 @@ fun rememberAsyncThumb(
     modifier: Modifier = Modifier,
     placeholderColor: Int = android.graphics.Color.LTGRAY,
 ) {
-    // 媒体缓存体系（Android 端）：Coil 全局磁盘 LRU 缓存（TeamTalkApp.newImageLoader 配置），
-    // 命中零网络；未命中下载后落盘。替代手写 cacheDir 下载（无配额管理，曾无爆炸防护）。
-    coil3.compose.AsyncImage(
-        model = url,
-        contentDescription = "媒体缩略图",
+    val context = LocalContext.current
+    val bitmap by produceState<Bitmap?>(null, url) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                val file = MediaHelper.downloadToCache(url, File(context.cacheDir, "media"))
+                BitmapFactory.decodeFile(file.absolutePath)
+            }.onFailure { Log.e("MediaThumb", "加载失败: $url", it) }.getOrNull()
+        }
+    }
+    AndroidView(
         modifier = modifier,
-        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+        factory = { ctx ->
+            ImageView(ctx).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                setBackgroundColor(placeholderColor)
+            }
+        },
+        update = { view -> view.setImageBitmap(bitmap) },
     )
 }

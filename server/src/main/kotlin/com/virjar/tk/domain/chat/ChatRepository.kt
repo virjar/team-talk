@@ -9,7 +9,7 @@ interface ChatRepository {
     fun createGroupChat(name: String, avatar: String?, creatorUid: String, memberUids: List<String>): Chat
     fun getChat(chatId: String): Chat?
     fun updateGroup(chatId: String, name: String? = null, avatar: String? = null, notice: String? = null)
-    fun deleteChat(chatId: String)
+    fun deactivateChat(chatId: String)
     fun getMemberUids(chatId: String): List<String>
     fun updateMaxSeq(chatId: String, seq: Long)
     fun findPersonalChatId(uid1: String, uid2: String): String?

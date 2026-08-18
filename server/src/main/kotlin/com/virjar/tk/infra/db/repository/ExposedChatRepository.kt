@@ -143,7 +143,7 @@ class ExposedChatRepository : ChatRepository {
         }
     }
 
-    override fun deleteChat(chatId: String) {
+    override fun deactivateChat(chatId: String) {
         transaction { Chats.update({ Chats.chatId eq chatId }) { it[Chats.status] = 0 } }
     }
 
@@ -214,16 +214,22 @@ class ExposedChatRepository : ChatRepository {
     // ── 内部辅助（在 transaction 内调用） ──
 
     private fun findPersonalChatIdInternal(uid1: String, uid2: String): String? {
-        val chatIds = GroupMembers.selectAll()
+        val memberChatIds = GroupMembers.selectAll()
             .where { (GroupMembers.uid eq uid1) and (GroupMembers.chatType eq 1) and (GroupMembers.status eq 1) }
             .map { it[GroupMembers.chatId] }
+        if (memberChatIds.isEmpty()) return null
+        val chatIds = Chats.selectAll()
+            .where { (Chats.chatId inList memberChatIds) and (Chats.status eq 1) }
+            .map { it[Chats.chatId] }
         return GroupMembers.selectAll()
             .where { (GroupMembers.uid eq uid2) and (GroupMembers.chatId inList chatIds) and (GroupMembers.status eq 1) }
             .map { it[GroupMembers.chatId] }.firstOrNull()
     }
 
     private fun getChatByIdInternal(chatId: String): Chat? {
-        val row = Chats.selectAll().where { Chats.chatId eq chatId }.singleOrNull() ?: return null
+        val row = Chats.selectAll()
+            .where { (Chats.chatId eq chatId) and (Chats.status eq 1) }
+            .singleOrNull() ?: return null
         return buildChatFromRow(row)
     }
 

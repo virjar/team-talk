@@ -53,14 +53,15 @@ fun AndroidChatScreen(
     onGroupDetail: () -> Unit,
     onBack: () -> Unit,
     serverUrl: String = "",
+    accessToken: String? = null,
     resolveSender: ((uid: String) -> User?)? = null,
     mentionCandidates: List<User> = emptyList(),
     scope: kotlinx.coroutines.CoroutineScope = rememberCoroutineScope(),
 ) {
     val context = LocalContext.current
     val attachmentServerUrl = serverUrl.ifBlank { com.virjar.tk.client.defaultServerConfig().serverUrl }
-    val fileDownloads = remember(context, attachmentServerUrl) {
-        AndroidFileDownloadController(context, attachmentServerUrl)
+    val fileDownloads = remember(context, attachmentServerUrl, accessToken) {
+        AndroidFileDownloadController(context, attachmentServerUrl, accessToken)
     }
     DisposableEffect(fileDownloads) {
         onDispose { fileDownloads.close() }
@@ -251,7 +252,16 @@ fun AndroidChatScreen(
                                         val full = com.virjar.tk.repository.FileOps.resolveUrl(attachmentServerUrl, attachment)
                                         val f = File(context.cacheDir, "downloads/${attachment.name}")
                                         f.parentFile?.mkdirs()
-                                        f.writeBytes(java.net.URL(full).readBytes())
+                                        val connection = java.net.URL(full).openConnection() as java.net.HttpURLConnection
+                                        accessToken?.let { connection.setRequestProperty("Authorization", "Bearer $it") }
+                                        try {
+                                            if (connection.responseCode !in 200..299) {
+                                                error("下载失败 HTTP ${connection.responseCode}")
+                                            }
+                                            f.writeBytes(connection.inputStream.readBytes())
+                                        } finally {
+                                            connection.disconnect()
+                                        }
                                         MediaHelper.openFile(context, f, attachment.contentType)
                                     } catch (e: Exception) { Log.e("Chat", "openFile failed path=${attachment.path}", e) }
                                 }

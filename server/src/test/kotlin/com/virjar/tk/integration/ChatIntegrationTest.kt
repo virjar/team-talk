@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ChatIntegrationTest {
@@ -178,11 +179,24 @@ class ChatIntegrationTest {
     }
 
     @Test
-    fun `delete chat`() = runTest {
+    fun `dissolved chat is no longer active`() = runTest {
         val creator = ctx.registerUser()
         val group = ctx.chatService.createGroup("ToDelete", null, creator, listOf(creator))
-        ctx.chatService.deleteChat(creator, group.chatId)
-        // deleteChat 可能是软删除，getChat 仍能返回记录
-        // 验证不抛异常即表示成功
+        ctx.chatService.dissolveGroup(creator, group.chatId)
+        assertNull(ctx.chatService.getChat(group.chatId))
+        assertTrue(ctx.chatRepo.listUserChats(creator).none { it.chatId == group.chatId })
+    }
+
+    @Test
+    fun `member can leave without dissolving group`() = runTest {
+        val creator = ctx.registerUser()
+        val member = ctx.registerUser()
+        val group = ctx.chatService.createGroup("LeaveGroup", null, creator, listOf(member))
+
+        ctx.chatService.leaveGroup(member, group.chatId)
+
+        assertNotNull(ctx.chatService.getChat(group.chatId))
+        assertTrue(ctx.chatService.getMembers(group.chatId).none { it.uid == member })
+        assertTrue(ctx.chatService.getMembers(group.chatId).any { it.uid == creator })
     }
 }

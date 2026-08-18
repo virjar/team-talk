@@ -147,6 +147,7 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             }
             if (vm != null) { AndroidChatScreen(chatId, chatName, chatType, vm, dataState.userSession.uid,
                 serverUrl = defaultServerConfig().serverUrl,
+                accessToken = dataState.userSession.accessToken,
                 resolveSender = { uid -> dataState.localCache.getUser(uid) },
                 mentionCandidates = mentionCandidates,
                 draft = currentDraft,
@@ -258,7 +259,14 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             GroupDetailScreen(chat = dataState.groups.detailChat, members = dataState.groups.members, isOwner = dataState.groups.members.any { it.uid == dataState.userSession.uid && it.role == 2 },
                 myUid = dataState.userSession.uid,
                 onMemberClick = { uid -> navController.navigate(Routes.userProfile(uid)) }, onInviteMembers = { navController.navigate(Routes.inviteMembers(chatId)) }, onViewInviteLinks = { navController.navigate(Routes.inviteLinks(chatId)) },
-                onLeaveGroup = { dataState.groups.leave(chatId) { navController.popBackStack(Routes.HOME, inclusive = false) } },
+                onLeaveGroup = {
+                    val isOwner = dataState.groups.members.any {
+                        it.uid == dataState.userSession.uid && it.role == 2
+                    }
+                    dataState.groups.exit(chatId, dissolve = isOwner) {
+                        navController.popBackStack(Routes.HOME, inclusive = false)
+                    }
+                },
                 onEditNotice = { notice -> dataState.groups.updateNotice(chatId, notice) },
                 onBack = { navController.popBackStack() },
                 onSetAdmin = { uid -> dataState.groups.setMemberRole(chatId, uid, 1) },

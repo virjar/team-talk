@@ -20,6 +20,7 @@ import java.net.URL
 /** Desktop 文件附件下载控制器：本地缓存 + 气泡进度动画数据源。 */
 class DesktopFileDownloadController(
     private val serverUrl: String,
+    private val accessToken: String?,
     private val cacheDir: File,
     private val onDownloaded: (File) -> Unit,
 ) : FileDownloadController {
@@ -68,6 +69,7 @@ class DesktopFileDownloadController(
             val conn = URL(FileOps.resolveUrl(serverUrl, attachment)).openConnection() as HttpURLConnection
             conn.connectTimeout = 10_000
             conn.readTimeout = 120_000
+            accessToken?.let { conn.setRequestProperty("Authorization", "Bearer $it") }
             try {
                 val code = conn.responseCode
                 if (code !in 200..299) throw IllegalStateException("下载失败 HTTP $code")

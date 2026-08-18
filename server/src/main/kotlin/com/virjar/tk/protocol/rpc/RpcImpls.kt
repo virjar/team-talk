@@ -64,7 +64,7 @@ class ChatRpcImpl(uid: String, private val service: ChatService) : ChatRpcStub(u
         ?: throw IllegalArgumentException("聊天不存在")
     override suspend fun update(chatId: String, name: String?, avatar: String?, notice: String?) =
         service.updateGroup(uid, chatId, name, avatar, notice)
-    override suspend fun delete(chatId: String) = service.deleteChat(uid, chatId)
+    override suspend fun delete(chatId: String) = service.dissolveGroup(uid, chatId)
     override suspend fun addMembers(chatId: String, uids: List<String>) = service.addMembers(uid, chatId, uids)
     override suspend fun removeMembers(chatId: String, targetUid: String) = service.removeMember(uid, chatId, targetUid)
     override suspend fun getMembers(chatId: String) = service.getMembers(chatId)
@@ -81,6 +81,7 @@ class ChatRpcImpl(uid: String, private val service: ChatService) : ChatRpcStub(u
     override suspend fun revokeInviteLink(token: String) = service.revokeInviteLink(uid, token)
     override suspend fun joinByInvite(token: String) = service.joinByInvite(uid, token)
     override suspend fun getInviteInfo(token: String) = service.getInviteInfo(token).inviteLinkToModel()
+    override suspend fun leaveGroup(chatId: String) = service.leaveGroup(uid, chatId)
 }
 
 class MessageRpcImpl(

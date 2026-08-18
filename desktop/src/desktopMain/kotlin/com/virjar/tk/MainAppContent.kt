@@ -254,6 +254,7 @@ internal fun WindowScope.MainAppContent(
                                     chatType = nav.chatType,
                                     viewModel = nav.chatViewModel!!,
                                     myUid = nav.userSession.uid,
+                                    accessToken = nav.userSession.accessToken,
                                     conversationRepo = nav.conversationRepo,
                                     initialDraft = conv?.draft,
                                     resolveSender = resolveUser,
@@ -345,7 +346,10 @@ private fun BoxScope.ChatInspectorHost(nav: DesktopNav) {
                     openChatAndClose = { chatId, name, chatType -> nav.openChat(chatId, name, chatType) },
                     openUserProfile = nav::openProfile,
                     onLeaveGroup = { chatId ->
-                        nav.groups.leave(chatId) {
+                        val isOwner = nav.groups.members.any {
+                            it.uid == nav.userSession.uid && it.role == 2
+                        }
+                        nav.groups.exit(chatId, dissolve = isOwner) {
                             nav.closeInspector()
                             if (nav.chatId == chatId) nav.chatId = null
                         }
@@ -491,6 +495,7 @@ private fun ChatPanelWrapper(
     chatType: Int,
     viewModel: ChatViewModel,
     myUid: String,
+    accessToken: String?,
     conversationRepo: com.virjar.tk.repository.ConversationRepository,
     initialDraft: String?,
     onForward: (Message) -> Unit,
@@ -506,6 +511,7 @@ private fun ChatPanelWrapper(
     val fileDownloads = remember {
         DesktopFileDownloadController(
             serverUrl = com.virjar.tk.client.defaultServerConfig().serverUrl,
+            accessToken = accessToken,
             cacheDir = java.io.File(System.getProperty("teamtalk.data.dir"), "media"),
             onDownloaded = { f -> runCatching { java.awt.Desktop.getDesktop().open(f) } },
         )

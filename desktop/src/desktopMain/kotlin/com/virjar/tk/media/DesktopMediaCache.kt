@@ -97,6 +97,9 @@ object DesktopMediaCache {
             val connection = (URL(resolvedUrl).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 10_000
                 readTimeout = 60_000
+                com.virjar.tk.client.SessionContext.accessToken?.let {
+                    setRequestProperty("Authorization", "Bearer $it")
+                }
             }
             val code = connection.responseCode
             if (code != 200) throw RuntimeException("download HTTP $code: $resolvedUrl")

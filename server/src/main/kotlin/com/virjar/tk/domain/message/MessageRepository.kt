@@ -12,4 +12,5 @@ interface MessageRepository {
     fun isProjectionPending(chatId: String, seq: Long): Boolean
     fun getPendingProjections(limit: Int = 100): List<Message>
     fun markProjectionComplete(chatId: String, seq: Long)
+    fun getAttachmentChatIds(path: String): Set<String>
 }

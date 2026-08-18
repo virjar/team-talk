@@ -42,8 +42,9 @@
 2. 上传端返回 FileStore path 和需要的媒体元数据。
 3. body 实现 AttachmentBody 并声明匹配 MessageType。
 4. SDK canonicalize；服务端 ACK 前查询 AttachmentService/FileStore。
-5. Desktop/Android 分别设计缓存、进度、打开/播放。
-6. 覆盖不存在路径、伪造 size/type 和大文件失败；附件 ACL 落地时再增加跨用户引用与匿名下载。
+5. 下载器携带 access token；新附件 body 必须进入 MessageStore 的 attachment→chat 索引。
+6. Desktop/Android 分别设计缓存、进度、打开/播放。
+7. 覆盖不存在路径、伪造 size/type、大文件失败、跨用户引用和匿名下载。
 
 ## 5. 增加领域字段
 

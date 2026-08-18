@@ -24,8 +24,13 @@ class ChatRepository(
     suspend fun getChat(chatId: String): Outcome<Chat?> = outcome { rpc.get(chatId) }
     suspend fun getMembers(chatId: String): Outcome<List<Member>> = outcome { rpc.getMembers(chatId) }
 
-    suspend fun deleteChat(chatId: String): Outcome<Unit> = outcome {
+    suspend fun dissolveGroup(chatId: String): Outcome<Unit> = outcome {
         rpc.delete(chatId)
+        localCache.deleteChat(chatId)
+    }
+
+    suspend fun leaveGroup(chatId: String): Outcome<Unit> = outcome {
+        rpc.leaveGroup(chatId)
         localCache.deleteChat(chatId)
     }
 

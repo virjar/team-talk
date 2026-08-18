@@ -32,7 +32,8 @@
 - RPC methodId、NotifyType、MessageType 和 wire 字段是兼容性契约；修改时遵循
   [协议规则](doc/04-protocol/README.md)并补 round-trip 测试。
 - 文件消息只保存 TeamTalk FileStore 相对路径。服务器必须在分配序号和成功 ACK 前确认附件及
-  元数据真实存在；ImBot 和图形客户端不得绕过同一校验链。
+  元数据真实存在；下载必须携带 access token，并由上传者或当前会话成员权限放行；ImBot 和图形
+  客户端不得绕过同一校验链。
 - Desktop 与 Android 共享产品语义和设计令牌，不强行共享导航、窗口和平台交互。
 - 私有化部署参数必须可配置；秘密不得提交，临时需求不得演化为大量 profile、flavor 或开关。
 

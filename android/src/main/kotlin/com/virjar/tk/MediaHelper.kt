@@ -73,21 +73,33 @@ object MediaHelper {
         val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
         conn.connectTimeout = 10_000
         conn.readTimeout = 60_000
+        com.virjar.tk.client.SessionContext.accessToken?.let {
+            conn.setRequestProperty("Authorization", "Bearer $it")
+        }
+        val responseCode = conn.responseCode
+        if (responseCode !in 200..299) {
+            conn.disconnect()
+            error("下载失败 HTTP $responseCode")
+        }
         val total = conn.contentLengthLong
         var downloaded = 0L
 
-        conn.inputStream.use { input ->
-            file.outputStream().use { output ->
-                val buffer = ByteArray(8192)
-                var bytesRead: Int
-                while (input.read(buffer).also { bytesRead = it } != -1) {
-                    output.write(buffer, 0, bytesRead)
-                    downloaded += bytesRead
-                    if (total > 0) {
-                        onProgress?.invoke(downloaded.toFloat() / total)
+        try {
+            conn.inputStream.use { input ->
+                file.outputStream().use { output ->
+                    val buffer = ByteArray(8192)
+                    var bytesRead: Int
+                    while (input.read(buffer).also { bytesRead = it } != -1) {
+                        output.write(buffer, 0, bytesRead)
+                        downloaded += bytesRead
+                        if (total > 0) {
+                            onProgress?.invoke(downloaded.toFloat() / total)
+                        }
                     }
                 }
             }
+        } finally {
+            conn.disconnect()
         }
         onProgress?.invoke(1f)
         file

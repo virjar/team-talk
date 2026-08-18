@@ -1,5 +1,6 @@
 package com.virjar.tk.infra.storage
 
+import com.virjar.tk.body.AttachmentPolicy
 import com.virjar.tk.model.Message
 import com.virjar.tk.domain.message.MessageRepository
 import com.virjar.tk.protocol.IProto
@@ -14,6 +15,7 @@ import org.slf4j.LoggerFactory
  * - chatSeqIndex: [chatId bytes][8B seq BE] → message bytes（按 chat+seq 有序扫描）
  * - clientMsgIdIndex: [0x01][clientMsgId bytes] → chatId + seq（去重）
  * - projectionOutbox: [0x02][chatId bytes][8B seq BE] → message bytes
+ * - attachmentChatIndex: [0x03][path][0x00][chatId][0x00][8B seq] → empty
  *
  * 注意：seq 由 ChatStore 统一分配，本类不自增 seq。
  */
@@ -69,6 +71,9 @@ class MessageStore(
             batch.put(chatSeqKey, msgBytes)
             batch.put(clientMsgIdKey, message.chatId.encodeToByteArray() + encodeSeq(seq))
             batch.put(projectionKey, msgBytes)
+            AttachmentPolicy.attachments(message).forEach { attachment ->
+                batch.put(buildAttachmentIndexKey(attachment.path, message.chatId, seq), EMPTY_VALUE)
+            }
             WriteOptions().use { options -> database.write(options, batch) }
         }
 
@@ -131,7 +136,19 @@ class MessageStore(
     override fun updateMessage(chatId: String, seq: Long, message: Message) {
         val database = db ?: return
         val key = buildChatSeqKey(chatId, seq)
-        database.put(key, encodeMessage(message))
+        val previous = database.get(key)?.let(::decodeMessage)
+        WriteBatch().use { batch ->
+            batch.put(key, encodeMessage(message))
+            previous?.let { old ->
+                AttachmentPolicy.attachments(old).forEach { attachment ->
+                    batch.delete(buildAttachmentIndexKey(attachment.path, chatId, seq))
+                }
+            }
+            AttachmentPolicy.attachments(message).forEach { attachment ->
+                batch.put(buildAttachmentIndexKey(attachment.path, chatId, seq), EMPTY_VALUE)
+            }
+            WriteOptions().use { options -> database.write(options, batch) }
+        }
     }
 
     override fun isProjectionPending(chatId: String, seq: Long): Boolean {
@@ -154,6 +171,25 @@ class MessageStore(
 
     override fun markProjectionComplete(chatId: String, seq: Long) {
         db?.delete(buildProjectionKey(chatId, seq))
+    }
+
+    override fun getAttachmentChatIds(path: String): Set<String> {
+        val database = db ?: return emptySet()
+        val prefix = buildAttachmentPathPrefix(path)
+        val chatIds = linkedSetOf<String>()
+        database.newIterator().use { iterator ->
+            iterator.seek(prefix)
+            while (iterator.isValid && iterator.key().startsWith(prefix)) {
+                val key = iterator.key()
+                // trailing delimiter + 8-byte seq are outside the chat id
+                val chatEnd = key.size - 9
+                if (chatEnd >= prefix.size) {
+                    chatIds += key.copyOfRange(prefix.size, chatEnd).decodeToString()
+                }
+                iterator.next()
+            }
+        }
+        return chatIds
     }
 
     private fun buildChatSeqKey(chatId: String, seq: Long): ByteArray {
@@ -180,6 +216,12 @@ class MessageStore(
 
     private fun buildProjectionKey(chatId: String, seq: Long): ByteArray =
         PROJECTION_PREFIX + buildChatSeqKey(chatId, seq)
+
+    private fun buildAttachmentPathPrefix(path: String): ByteArray =
+        ATTACHMENT_PREFIX + path.encodeToByteArray() + KEY_SEPARATOR
+
+    private fun buildAttachmentIndexKey(path: String, chatId: String, seq: Long): ByteArray =
+        buildAttachmentPathPrefix(path) + chatId.encodeToByteArray() + KEY_SEPARATOR + encodeSeq(seq)
 
     private fun decodeSeqFromKey(key: ByteArray, offset: Int): Long {
         return ((key[offset].toLong() and 0xFF) shl 56) or
@@ -234,5 +276,8 @@ class MessageStore(
 
     companion object {
         private val PROJECTION_PREFIX = byteArrayOf(0x02)
+        private val ATTACHMENT_PREFIX = byteArrayOf(0x03)
+        private val KEY_SEPARATOR = byteArrayOf(0x00)
+        private val EMPTY_VALUE = byteArrayOf()
     }
 }

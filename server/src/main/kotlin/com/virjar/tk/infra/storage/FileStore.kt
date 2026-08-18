@@ -157,6 +157,8 @@ class FileStore(
         )
     }
 
+    override fun getOwnerUid(path: String): String? = getMeta(path)?.uid
+
     suspend fun streamTo(meta: FileMetadata, channel: ByteWriteChannel, range: ReadRange? = null) {
         when (meta.tier) {
             StorageTier.ROCKSDB -> rocksDbTier!!.streamTo(meta, channel, range)

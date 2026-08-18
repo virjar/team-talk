@@ -21,8 +21,8 @@ class ImageThumbE2eTest {
                     try {
                         val chatId = a.createPersonalChat(b.uid)
                         // 主 url 必须指向文件存储中的真实文件（附件存在性校验）
-                        val attachment = env.storeFile(ByteArray(64) { it.toByte() }, "im.png", "image/png")
-                        val thumbnail = env.storeFile(ByteArray(32) { (it + 1).toByte() }, "im-thumb.jpg", "image/jpeg")
+                        val attachment = env.storeFile(a.uid, ByteArray(64) { it.toByte() }, "im.png", "image/png")
+                        val thumbnail = env.storeFile(a.uid, ByteArray(32) { (it + 1).toByte() }, "im-thumb.jpg", "image/jpeg")
                         val ack = a.send(
                             chatId,
                             ImageBody(

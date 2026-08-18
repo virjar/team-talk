@@ -23,6 +23,7 @@ import java.net.URL
 class AndroidFileDownloadController(
     context: Context,
     private val serverUrl: String,
+    private val accessToken: String?,
 ) : FileDownloadController {
 
     private val appContext = context.applicationContext
@@ -71,6 +72,7 @@ class AndroidFileDownloadController(
             val conn = URL(FileOps.resolveUrl(serverUrl, attachment)).openConnection() as HttpURLConnection
             conn.connectTimeout = 10_000
             conn.readTimeout = 120_000
+            accessToken?.let { conn.setRequestProperty("Authorization", "Bearer $it") }
             try {
                 val code = conn.responseCode
                 if (code !in 200..299) throw IllegalStateException("下载失败 HTTP $code")

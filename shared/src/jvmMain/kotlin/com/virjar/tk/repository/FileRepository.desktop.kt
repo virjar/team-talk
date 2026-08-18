@@ -89,7 +89,8 @@ actual class FileRepository actual constructor(
         FileOps.parseUploadResult(conn.inputStream.bufferedReader().readText())
     }
 
-    actual suspend fun download(attachment: Attachment): Outcome<ByteArray> = FileOps.download(serverUrl, attachment)
+    actual suspend fun download(attachment: Attachment): Outcome<ByteArray> =
+        FileOps.download(serverUrl, attachment, accessToken)
 
     actual fun resolveUrl(attachment: Attachment): String = FileOps.resolveUrl(serverUrl, attachment)
 }

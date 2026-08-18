@@ -20,7 +20,7 @@ class ChatStore(
     private val repo: ChatRepository,
     private val memberRepo: ChatMemberRepository,
     private val inviteRepo: InviteLinkRepository,
-) {
+) : ActiveChatMembership {
     // ── 基础信息 ──
     private val chats = ConcurrentHashMap<String, Chat>()
 
@@ -72,6 +72,7 @@ class ChatStore(
     // ── 成员读 ──
 
     fun getMemberUids(chatId: String): List<String> {
+        if (getChat(chatId) == null) return emptyList()
         if (membersLoaded[chatId] == true) {
             return memberUids[chatId]?.toList() ?: emptyList()
         }
@@ -80,24 +81,27 @@ class ChatStore(
     }
 
     fun isMember(chatId: String, uid: String): Boolean {
+        if (getChat(chatId) == null) return false
         ensureMembersLoaded(chatId)
         return memberRoles[chatId]?.containsKey(uid) == true
     }
 
     fun getMember(chatId: String, uid: String): Member? {
+        if (getChat(chatId) == null) return null
         ensureMembersLoaded(chatId)
         val role = memberRoles[chatId]?.get(uid) ?: return null
         return Member(uid = uid, chatId = chatId, role = role)
     }
 
     fun getMembers(chatId: String): List<Member> {
+        if (getChat(chatId) == null) return emptyList()
         ensureMembersLoaded(chatId)
         val roles = memberRoles[chatId] ?: return emptyList()
         return roles.entries.map { (uid, role) -> Member(uid = uid, chatId = chatId, role = role) }
     }
 
     /** 用户当前仍有效的全部会话 ID，用于跨会话搜索等需要权限集合的读操作。 */
-    fun listUserChatIds(uid: String): Set<String> =
+    override fun listUserChatIds(uid: String): Set<String> =
         repo.listUserChats(uid).mapTo(linkedSetOf()) { it.chatId }
 
     // ── 禁言读 ──
@@ -149,8 +153,8 @@ class ChatStore(
         }
     }
 
-    fun deleteChat(chatId: String) {
-        repo.deleteChat(chatId)
+    fun deactivateChat(chatId: String) {
+        repo.deactivateChat(chatId)
         chats.remove(chatId)
         memberUids.remove(chatId)
         memberRoles.remove(chatId)

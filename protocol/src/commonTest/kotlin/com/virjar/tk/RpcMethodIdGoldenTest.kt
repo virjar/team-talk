@@ -67,6 +67,7 @@ class RpcMethodIdGoldenTest {
         assertEquals(17, ChatRpcContract.M_REVOKE_INVITE_LINK)
         assertEquals(18, ChatRpcContract.M_JOIN_BY_INVITE)
         assertEquals(19, ChatRpcContract.M_GET_INVITE_INFO)
+        assertEquals(20, ChatRpcContract.M_LEAVE_GROUP)
     }
 
     @Test

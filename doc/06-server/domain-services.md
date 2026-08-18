@@ -52,6 +52,7 @@ CHAT_CREATED。
 | 退出群 | 先转让/解散 | 是 | 是 |
 
 最终矩阵以 ChatService 当前实现和 RPC 验收为准。权限变化必须在一个操作内更新存储并发完整群快照。
+退出只失效当前成员关系，解散才把 Chat 标记为非活跃；两者不能共享一个含糊的“删除群”用例。
 
 ## 4. Message
 
@@ -62,7 +63,7 @@ CHAT_CREATED。
 3. 校验群禁言、消息类型和业务限制。
 4. 在 FileStore 验证全部附件。
 5. 按 clientMsgId 查询幂等结果。
-6. 分配 serverSeq，原子写入 MessageStore、幂等索引和待投影 outbox。
+6. 分配 serverSeq，原子写入 MessageStore、幂等索引、附件到会话反向索引和待投影 outbox。
 7. 幂等投影到 Lucene、Conversation 和持久化同步事件。
 8. 投影全部成功后清除 outbox，再返回 ACK。
 

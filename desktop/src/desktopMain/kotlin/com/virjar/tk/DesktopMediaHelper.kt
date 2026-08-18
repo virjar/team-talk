@@ -64,10 +64,19 @@ object DesktopMediaHelper {
         val cached = File(cacheDir, if (name.isNotBlank()) name else "file_${full.hashCode()}")
         if (cached.exists()) return cached
 
-        java.net.URL(full).openStream().use { input ->
-            cached.outputStream().use { output ->
-                input.copyTo(output)
+        val connection = java.net.URL(full).openConnection() as java.net.HttpURLConnection
+        com.virjar.tk.client.SessionContext.accessToken?.let {
+            connection.setRequestProperty("Authorization", "Bearer $it")
+        }
+        try {
+            if (connection.responseCode !in 200..299) error("下载失败 HTTP ${connection.responseCode}")
+            connection.inputStream.use { input ->
+                cached.outputStream().use { output ->
+                    input.copyTo(output)
+                }
             }
+        } finally {
+            connection.disconnect()
         }
         return cached
     }

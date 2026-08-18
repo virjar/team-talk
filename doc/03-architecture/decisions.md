@@ -63,8 +63,9 @@
 **决定**：文件消息保存规范化相对路径；上传下载只走 TeamTalk HTTP 端点；发送前服务端确认附件
 存在。
 
-**结果**：SDK 成功语义可靠，fork 能完整拥有数据；部署方若接入外部对象存储，应在 FileStore
-实现层适配，不能改变消息契约为任意 URL。
+**结果**：SDK 成功语义可靠，fork 能完整拥有数据；MessageStore 随消息原子维护附件到会话的反向
+索引，下载端点同时校验 access token 与当前成员资格。部署方若接入外部对象存储，应在 FileStore
+实现层适配，不能改变消息契约为任意 URL 或公开对象地址。
 
 ## D8 · PostgreSQL、RocksDB 与 Lucene 分工
 

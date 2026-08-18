@@ -1,6 +1,7 @@
 package com.virjar.tk.api
 
 import com.virjar.tk.infra.storage.FileStore
+import com.virjar.tk.domain.attachment.AttachmentAccess
 import com.virjar.tk.domain.auth.TokenRepository
 import com.virjar.tk.http.UploadResult
 import io.ktor.http.*
@@ -17,11 +18,18 @@ private val responseJson = Json { encodeDefaults = true }
 fun Route.fileRoutes(
     fileStore: FileStore,
     tokenStore: TokenRepository,
+    attachmentAccess: AttachmentAccess,
     thumbnailService: com.virjar.tk.infra.media.ThumbnailService = com.virjar.tk.infra.media.ThumbnailService(),
 ) {
     route("/api/v1/files") {
         get("/{path...}") {
             val path = call.parameters.getAll("path")?.joinToString("/") ?: return@get call.respond(HttpStatusCode.NotFound)
+            val token = call.bearerToken()
+            val info = token?.let { tokenStore.validateAccessToken(it) }
+                ?: return@get call.respond(HttpStatusCode.Unauthorized, "invalid or missing token")
+            if (!attachmentAccess.canRead(info.uid, path)) {
+                return@get call.respond(HttpStatusCode.Forbidden, "attachment access denied")
+            }
             val meta = fileStore.getMeta(path) ?: return@get call.respond(HttpStatusCode.NotFound)
 
             // 尝试从文件系统层获取（大文件）
@@ -42,8 +50,7 @@ fun Route.fileRoutes(
 
         post("/upload") {
             // 鉴权：Bearer accessToken（TCP 认证时下发，TokenStore 校验）。上传必须已认证。
-            val token = call.request.header("Authorization")
-                ?.removePrefix("Bearer ")?.takeIf { it.isNotBlank() }
+            val token = call.bearerToken()
             val info = token?.let { tokenStore.validateAccessToken(it) }
             if (info == null) return@post call.respond(HttpStatusCode.Unauthorized, "invalid or missing token")
             val uid = info.uid
@@ -115,3 +122,8 @@ fun Route.fileRoutes(
         }
     }
 }
+
+private fun io.ktor.server.application.ApplicationCall.bearerToken(): String? =
+    request.header(HttpHeaders.Authorization)
+        ?.removePrefix("Bearer ")
+        ?.takeIf { it.isNotBlank() }

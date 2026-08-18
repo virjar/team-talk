@@ -19,6 +19,28 @@ import kotlin.test.assertTrue
 class FileValidationE2eTest {
 
     @Test
+    fun `other users cannot claim an unattached upload but chat members may reuse a referenced file`() {
+        TcpE2eEnvironment().use { env ->
+            runBlocking {
+                val owner = ImBot.register("127.0.0.1", env.tcpPort, "file-owner")
+                val member = ImBot.register("127.0.0.1", env.tcpPort, "file-member")
+                try {
+                    val chatId = owner.createPersonalChat(member.uid)
+                    val attachment = env.storeFile(owner.uid, "private".toByteArray(), "private.txt")
+
+                    val forged = member.send(chatId, FileBody(attachment))
+                    assertTrue(forged.code != 0, "未被消息引用的他人上传不能被抢先挂载")
+
+                    val ownerAck = owner.send(chatId, FileBody(attachment))
+                    assertEquals(0, ownerAck.code, "上传者应能发送自己的附件")
+                    val memberAck = member.send(chatId, FileBody(attachment))
+                    assertEquals(0, memberAck.code, "文件进入共同会话后，成员应能转发或再次引用")
+                } finally { owner.shutdown(); member.shutdown() }
+            }
+        }
+    }
+
+    @Test
     fun `相对 path 引用真实文件 - 发送成功`() {
         TcpE2eEnvironment().use { env ->
             runBlocking {
@@ -26,7 +48,7 @@ class FileValidationE2eTest {
                 val a = ImBot.register("127.0.0.1", env.tcpPort, "fileval-a")
                 try {
                     val chatId = a.createPersonalChat(b.uid)
-                    val attachment = env.storeFile("hello".toByteArray(), "a.txt")
+                    val attachment = env.storeFile(a.uid, "hello".toByteArray(), "a.txt")
                     val ack = a.send(chatId, FileBody(attachment))
                     assertEquals(0, ack.code, "真实附件应发送成功: ${ack.reason}")
                 } finally { a.shutdown(); b.shutdown() }
@@ -42,7 +64,7 @@ class FileValidationE2eTest {
                 val a = ImBot.register("127.0.0.1", env.tcpPort, "fileval2-a")
                 try {
                     val chatId = a.createPersonalChat(b.uid)
-                    val attachment = env.storeFile("hello".toByteArray(), "b.txt")
+                    val attachment = env.storeFile(a.uid, "hello".toByteArray(), "b.txt")
                     // 对接形态：完整 URL（base 随意，校验只认 /api/v1/files/ 前缀后的 path）
                     val fullUrl = "https://some-host.example/api/v1/files/${attachment.path}"
                     val ack = a.send(chatId, FileBody(attachment.copy(path = fullUrl)))
@@ -79,7 +101,7 @@ class FileValidationE2eTest {
                 val a = ImBot.register("127.0.0.1", env.tcpPort, "fileval-size-a")
                 try {
                     val chatId = a.createPersonalChat(b.uid)
-                    val attachment = env.storeFile(ByteArray(2048), "large.bin")
+                    val attachment = env.storeFile(a.uid, ByteArray(2048), "large.bin")
                     val ack = a.send(chatId, FileBody(attachment.copy(size = 1)))
                     assertTrue(ack.code != 0, "不能用虚假的小文件大小绕过静默下载阈值")
                     assertTrue(ack.reason.orEmpty().contains("元数据不匹配"), "拒绝理由应指出元数据不匹配: ${ack.reason}")
@@ -115,7 +137,7 @@ class FileValidationE2eTest {
                 val a = ImBot.register("127.0.0.1", env.tcpPort, "fileval5-a")
                 try {
                     val chatId = a.createPersonalChat(b.uid)
-                    val attachment = env.storeFile(byteArrayOf(1, 2, 3), "real.png", "image/png")
+                    val attachment = env.storeFile(a.uid, byteArrayOf(1, 2, 3), "real.png", "image/png")
                     val ack = a.send(chatId, ImageBody(
                         attachment, width = 1, height = 1,
                         thumbnail = Attachment("no-such/thumb.jpg", "thumb.jpg", "image/jpeg", 1),

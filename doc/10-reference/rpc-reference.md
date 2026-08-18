@@ -53,7 +53,7 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 | 2 | `createGroup` | `name`, `avatar?`, `memberUids` | `Chat` |
 | 3 | `get` | `chatId` | `Chat` |
 | 4 | `update` | `chatId`, `name?`, `avatar?`, `notice?` | `Unit` |
-| 5 | `delete` | `chatId` | `Unit` |
+| 5 | `delete` | `chatId` | `Unit`（仅群主解散；保留的旧方法名） |
 | 6 | `addMembers` | `chatId`, `uids` | `Unit` |
 | 7 | `removeMembers` | `chatId`, `targetUid` | `Unit` |
 | 8 | `getMembers` | `chatId` | `List<Member>` |
@@ -68,8 +68,10 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 | 17 | `revokeInviteLink` | `token` | `Unit` |
 | 18 | `joinByInvite` | `token` | `Chat` |
 | 19 | `getInviteInfo` | `token` | `InviteLink` |
+| 20 | `leaveGroup` | `chatId` | `Unit` |
 
-群权限以服务端 Member role 为准：成员不能执行管理操作；管理员不能越过群主管理群主或同级规则；群主退出前必须转让或解散。
+群权限以服务端 Member role 为准：成员不能执行管理操作；管理员不能越过群主管理群主或同级规则；
+普通成员/管理员使用 `leaveGroup`，群主使用 `delete` 解散，单聊只允许删除自己的 Conversation 视图。
 
 ## message
 

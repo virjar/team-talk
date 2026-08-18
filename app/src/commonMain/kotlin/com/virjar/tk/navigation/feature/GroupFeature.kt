@@ -70,12 +70,13 @@ class GroupFeature internal constructor(
         runAndRefresh(chatId, "更新群公告失败") { session.chatRepo.updateGroup(chatId, notice = notice).getOrThrow() }
     }
 
-    fun leave(chatId: String, onLeft: () -> Unit) = scope.launch {
+    fun exit(chatId: String, dissolve: Boolean, onExited: () -> Unit) = scope.launch {
         try {
-            session.chatRepo.deleteChat(chatId).getOrThrow()
-            onLeft()
+            if (dissolve) session.chatRepo.dissolveGroup(chatId).getOrThrow()
+            else session.chatRepo.leaveGroup(chatId).getOrThrow()
+            onExited()
         } catch (e: Exception) {
-            reportError(e, "离开群组失败")
+            reportError(e, if (dissolve) "解散群组失败" else "退出群组失败")
         }
     }
 

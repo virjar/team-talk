@@ -1,5 +1,6 @@
 package com.virjar.tk.api
 
+import com.virjar.tk.domain.attachment.AttachmentAccess
 import com.virjar.tk.infra.storage.FileStore
 import com.virjar.tk.infra.storage.TokenStore
 import com.virjar.tk.repository.FileOps
@@ -27,12 +28,16 @@ class FileUploadAuthTest {
         File("/tmp/tk-upload-auth-${System.nanoTime()}/files").absolutePath,
     ).also { it.init() }
 
-    private fun Application.installTestFileRoutes(fileStore: FileStore, tokenStore: TokenStore) {
+    private fun Application.installTestFileRoutes(
+        fileStore: FileStore,
+        tokenStore: TokenStore,
+        access: AttachmentAccess = AttachmentAccess { _, _ -> true },
+    ) {
         monitor.subscribe(ApplicationStopped) {
             fileStore.close()
             tokenStore.close()
         }
-        routing { fileRoutes(fileStore, tokenStore) }
+        routing { fileRoutes(fileStore, tokenStore, access) }
     }
 
     @Test
@@ -89,5 +94,44 @@ class FileUploadAuthTest {
             header(HttpHeaders.Authorization, "Bearer forged-token")
         }
         assertEquals(HttpStatusCode.Unauthorized, resp.status)
+    }
+
+    @Test
+    fun `下载必须携带有效 token 且通过附件授权`() = testApplication {
+        val tokenStore = TokenStore(File("/tmp/tk-download-auth-tokens-${System.nanoTime()}").absolutePath)
+        val (accessToken, _) = tokenStore.generateTokens("reader", "dev-1", 0)
+        val fileStore = testFileStore()
+        val source = File.createTempFile("tk-download-auth", ".txt").apply { writeText("secret") }
+        val path = fileStore.store("owner", "secret.txt", "text/plain", source)
+        application {
+            installTestFileRoutes(
+                fileStore,
+                tokenStore,
+                AttachmentAccess { uid, requestedPath -> uid == "reader" && requestedPath == path },
+            )
+        }
+
+        assertEquals(HttpStatusCode.Unauthorized, client.get("/api/v1/files/$path").status)
+        assertEquals(
+            HttpStatusCode.OK,
+            client.get("/api/v1/files/$path") {
+                header(HttpHeaders.Authorization, "Bearer $accessToken")
+            }.status,
+        )
+    }
+
+    @Test
+    fun `已认证但无附件权限返回 403`() = testApplication {
+        val tokenStore = TokenStore(File("/tmp/tk-download-denied-tokens-${System.nanoTime()}").absolutePath)
+        val (accessToken, _) = tokenStore.generateTokens("reader", "dev-1", 0)
+        val fileStore = testFileStore()
+        val source = File.createTempFile("tk-download-denied", ".txt").apply { writeText("secret") }
+        val path = fileStore.store("owner", "secret.txt", "text/plain", source)
+        application { installTestFileRoutes(fileStore, tokenStore, AttachmentAccess { _, _ -> false }) }
+
+        val response = client.get("/api/v1/files/$path") {
+            header(HttpHeaders.Authorization, "Bearer $accessToken")
+        }
+        assertEquals(HttpStatusCode.Forbidden, response.status)
     }
 }

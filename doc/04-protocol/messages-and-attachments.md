@@ -89,8 +89,8 @@ ACK 前按 path 查询 FileStore，校验文件存在、元数据与调用者使
 
 ## 8. 上传与下载
 
-上传是 HTTP multipart，认证使用当前 access token。响应包含 `path` 和用于客户端即时使用的 URL；
-构造消息时保存 path。
+上传是 HTTP multipart，认证使用当前 access token。响应包含权威 Attachment 和媒体元数据；构造
+消息时只保存 path。
 
 下载 URL 由：
 
@@ -98,7 +98,9 @@ ACK 前按 path 查询 FileStore，校验文件存在、元数据与调用者使
 serverUrl + "/api/v1/files/" + canonicalPath
 ```
 
-客户端缓存可以改变何时访问网络，但不能改变 URL 所属端点。小文件可静默下载；大文件由用户触发，
-并在消息气泡中展示等待、进度、成功或失败状态。
+每次网络下载都必须使用 `Authorization: Bearer <accessToken>`。服务端只允许上传者或当前仍属于某个
+引用该附件的会话成员读取；知道随机 path 本身不构成权限。客户端缓存可以改变何时访问网络，但不
+能改变 URL 所属端点。小文件可静默下载；大文件由用户触发，并在消息气泡中展示等待、进度、成功
+或失败状态。
 
 服务端存储分层见[文件存储](../06-server/file-storage.md)。
