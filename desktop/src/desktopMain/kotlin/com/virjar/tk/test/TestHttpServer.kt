@@ -431,17 +431,31 @@ object TestHttpServer {
             exchange.send(404, """{"error":"no window"}""")
             return
         }
+        val wasAlwaysOnTop = window.isAlwaysOnTop
         val img = try {
-            // 置前窗口再截屏：createScreenCapture 按窗口 bounds 截屏区域，
-            // 窗口被遮挡时会截到别的应用内容（截图验证闭环曾因此失效）
-            window.toFront()
-            window.requestFocus()
-            Thread.sleep(200)
-            val bounds = window.bounds
-            java.awt.Robot().createScreenCapture(bounds)
+            // Robot 捕获的是屏幕像素。窗口最小化或应用在后台时，即使 Compose
+            // 语义树仍可操作，也只会截到桌面/其他应用，产生“假通过”截图。
+            // 在 AWT 线程恢复窗口，并临时置顶，保证 HTTP 截图就是待测窗口。
+            EventQueue.invokeAndWait {
+                if ((window.extendedState and java.awt.Frame.ICONIFIED) != 0) {
+                    window.extendedState = window.extendedState and java.awt.Frame.ICONIFIED.inv()
+                }
+                window.isVisible = true
+                window.isAlwaysOnTop = true
+                window.toFront()
+                window.requestFocus()
+            }
+            Thread.sleep(350)
+            val location = window.locationOnScreen
+            val size = window.size
+            java.awt.Robot().createScreenCapture(
+                java.awt.Rectangle(location.x, location.y, size.width, size.height),
+            )
         } catch (e: Exception) {
             exchange.send(500, """{"error":"${e.message?.escape()}"}""")
             return
+        } finally {
+            EventQueue.invokeLater { window.isAlwaysOnTop = wasAlwaysOnTop }
         }
         val baos = java.io.ByteArrayOutputStream()
         ImageIO.write(img, "png", baos)
