@@ -24,10 +24,7 @@ import com.virjar.tk.protocol.payload.GenericPayload
  */
 object NotifyContracts {
 
-    /**
-     * 有 payload 契约的通知类型。
-     * PRESENCE 豁免：服务端未实现 emit（客户端仅记日志，无 payload 消费）。
-     */
+    /** 有 payload 契约的通知类型；持久化与瞬时事件都必须登记。 */
     val payloads: Map<NotifyType, IProtoReader<out IProto>> = mapOf(
         // 联系人：APPLY 发 ContactApply；ACCEPTED/DELETED 发各自视角的 Contact
         NotifyType.CONTACT_APPLY to ContactApply,

@@ -1,7 +1,7 @@
 package com.virjar.tk.domain.user
 
 import com.virjar.tk.auth.AuthRules
-import com.virjar.tk.infra.sync.SyncEventService
+import com.virjar.tk.domain.event.EventPublisher
 import com.virjar.tk.model.User
 import com.virjar.tk.protocol.NotifyType
 import org.mindrot.jbcrypt.BCrypt
@@ -10,7 +10,7 @@ import java.security.SecureRandom
 
 class UserService(
     private val userStore: UserStore,
-    private val syncEventService: SyncEventService,
+    private val events: EventPublisher,
 ) {
     private val logger = LoggerFactory.getLogger(UserService::class.java)
     fun register(username: String, password: String, name: String, phone: String? = null): User {
@@ -69,7 +69,7 @@ class UserService(
     suspend fun updateProfile(uid: String, name: String? = null, avatar: String? = null, sex: Int? = null, phone: String? = null) {
         userStore.updateProfile(uid, name, avatar, sex, phone)
         val updatedUser = userStore.findByUid(uid) ?: return
-        syncEventService.emitEvent(uid, NotifyType.USER_UPDATED, updatedUser)
+        events.emitEvent(uid, NotifyType.USER_UPDATED, updatedUser)
     }
 
     fun search(keyword: String, limit: Int = 20): List<User> {

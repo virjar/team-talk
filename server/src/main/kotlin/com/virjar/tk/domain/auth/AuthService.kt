@@ -7,7 +7,7 @@ import com.virjar.tk.protocol.payload.AuthResponsePayload
 
 class AuthService(
     private val userService: UserService,
-    private val tokenStore: TokenStore,
+    private val tokenStore: TokenRepository,
 ) {
     companion object {
         const val CODE_OK = 0
@@ -106,7 +106,7 @@ class AuthService(
         )
     }
 
-    fun validateToken(token: String): TokenStore.TokenInfo? {
+    fun validateToken(token: String): TokenInfo? {
         return tokenStore.validateAccessToken(token)
     }
 

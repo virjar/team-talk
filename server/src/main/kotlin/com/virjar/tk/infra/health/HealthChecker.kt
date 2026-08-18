@@ -1,4 +1,4 @@
-package com.virjar.tk.domain.health
+package com.virjar.tk.infra.health
 
 import com.virjar.tk.infra.search.SearchIndex
 import com.virjar.tk.infra.storage.FileStore

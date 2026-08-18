@@ -19,6 +19,7 @@ resolve Environment/dataRoot
   → connect PostgreSQL and create/migrate tables
   → open RocksDB stores and Lucene index
   → build Koin domain graph
+  → recover pending message projections
   → start TCP server
   → start HTTP(S) server
   → expose health status
@@ -58,12 +59,13 @@ EventLoop 不执行数据库和慢业务。ImAgent 把工作提交到协议执�
 
 ## 5. 领域与基础设施边界
 
-领域服务负责业务不变量和事件目标；Repository/Store 负责数据库细节。典型写操作顺序：
+领域服务负责业务不变量和事件目标，只依赖领域端口；`infra` 中的 Exposed/RocksDB/Lucene/
+连接注册表适配器实现这些端口。典型写操作顺序：
 
 1. 校验调用者、成员和参数。
-2. 在权威存储提交状态。
-3. 构造完整事件快照。
-4. SyncEventService 持久化并推送。
+2. 在权威存储提交状态；消息同时提交投影 outbox。
+3. 幂等更新派生视图并构造完整事件快照。
+4. 事件适配器持久化并推送，然后清除 outbox。
 5. 返回 RPC 或消息 ACK。
 
 不能先向客户端报告成功再异步做关键校验。例如文件消息必须在 ACK 前确认附件存在；群消息必须在
@@ -75,7 +77,7 @@ EventLoop 不执行数据库和慢业务。ImAgent 把工作提交到协议执�
 - 阻塞 JDBC、RocksDB、Lucene 和文件 IO 必须离开 EventLoop。
 - 连接 trace 使用专用 Looper/Writer，未采样连接不构造昂贵日志字符串。
 - 领域协程发生异常时必须映射为协议错误并完成 pending request，不能静默挂起。
-- Presence 是短暂状态，可直接推送；业务实体事件必须进入持久化同步队列。
+- Presence/Typing 是短暂状态，只走瞬时事件；业务实体事件必须进入持久化同步队列。
 
 ## 7. 单体边界
 

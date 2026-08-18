@@ -1,5 +1,7 @@
-package com.virjar.tk.domain.auth
+package com.virjar.tk.infra.storage
 
+import com.virjar.tk.domain.auth.TokenInfo
+import com.virjar.tk.domain.auth.TokenRepository
 import org.rocksdb.*
 import org.slf4j.LoggerFactory
 import java.security.SecureRandom
@@ -12,7 +14,7 @@ private val logger = LoggerFactory.getLogger("TokenStore")
  * Key: accessToken (String)
  * Value: { uid, deviceId, deviceFlag, createdAt, expiresAt }
  */
-class TokenStore(dbPath: String) {
+class TokenStore(dbPath: String) : TokenRepository {
 
     private val db: RocksDB
     private val cfHandle: ColumnFamilyHandle
@@ -30,19 +32,11 @@ class TokenStore(dbPath: String) {
         logger.info("TokenStore initialized at $dbPath")
     }
 
-    data class TokenInfo(
-        val uid: String,
-        val deviceId: String,
-        val deviceFlag: Int,
-        val createdAt: Long,
-        val expiresAt: Long,
-    )
-
     /**
      * 生成新的 access token 和 refresh token。
      * Returns (accessToken, refreshToken)
      */
-    fun generateTokens(uid: String, deviceId: String, deviceFlag: Int): Pair<String, String> {
+    override fun generateTokens(uid: String, deviceId: String, deviceFlag: Int): Pair<String, String> {
         val accessToken = generateRandomToken()
         val refreshToken = generateRandomToken()
         val now = System.currentTimeMillis()
@@ -53,7 +47,7 @@ class TokenStore(dbPath: String) {
         return accessToken to refreshToken
     }
 
-    fun validateAccessToken(token: String): TokenInfo? {
+    override fun validateAccessToken(token: String): TokenInfo? {
         val info = get(token) ?: return null
         if (System.currentTimeMillis() > info.expiresAt) {
             delete(token)
@@ -62,7 +56,7 @@ class TokenStore(dbPath: String) {
         return info
     }
 
-    fun refreshAccessToken(refreshToken: String): Pair<String, String>? {
+    override fun refreshAccessToken(refreshToken: String): Pair<String, String>? {
         val key = "refresh:$refreshToken"
         val info = get(key) ?: return null
         if (System.currentTimeMillis() > info.expiresAt) {
@@ -81,14 +75,14 @@ class TokenStore(dbPath: String) {
      * 会产生游离的有效凭证。
      * @return true 若 token 存在且已删除；false 若 token 不存在。
      */
-    fun revokeRefreshToken(refreshToken: String): Boolean {
+    override fun revokeRefreshToken(refreshToken: String): Boolean {
         val key = "refresh:$refreshToken"
         if (get(key) == null) return false
         delete(key)
         return true
     }
 
-    fun revokeAllDeviceTokens(uid: String, deviceId: String) {
+    override fun revokeAllDeviceTokens(uid: String, deviceId: String) {
         // 扫描并删除该 uid+deviceId 的所有 token
         val toDelete = mutableListOf<String>()
         val iter = db.newIterator(cfHandle)
@@ -109,7 +103,7 @@ class TokenStore(dbPath: String) {
      * 吊销某用户的全部 token（封禁/重置密码用）。
      * 注：曾在 4c3a97e 以"零调用"删除——管理后台上线后恢复。
      */
-    fun revokeAllUserTokens(uid: String) {
+    override fun revokeAllUserTokens(uid: String) {
         val toDelete = mutableListOf<String>()
         val iter = db.newIterator(cfHandle)
         iter.seekToFirst()

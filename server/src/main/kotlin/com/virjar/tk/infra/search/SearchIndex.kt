@@ -1,5 +1,8 @@
 package com.virjar.tk.infra.search
 
+import com.virjar.tk.domain.message.MessageSearch
+import com.virjar.tk.domain.message.MessageSearchHit
+import com.virjar.tk.domain.message.MessageSearchPage
 import com.virjar.tk.model.Message
 import org.apache.lucene.analysis.Analyzer
 import org.apache.lucene.document.*
@@ -20,7 +23,7 @@ import java.io.File
 /**
  * 基于 Lucene + IK 中文分词的消息全文搜索索引。
  */
-class SearchIndex(private val indexDir: File) {
+class SearchIndex(private val indexDir: File) : MessageSearch {
 
     private val logger = LoggerFactory.getLogger(SearchIndex::class.java)
 
@@ -54,7 +57,7 @@ class SearchIndex(private val indexDir: File) {
     /**
      * 索引一条消息。
      */
-    fun indexMessage(message: Message, text: String?) {
+    override fun indexMessage(message: Message, text: String?) {
         if (text.isNullOrBlank()) return
         val w = writer ?: return
 
@@ -75,34 +78,24 @@ class SearchIndex(private val indexDir: File) {
         w.updateDocument(Term("clientMsgId", message.clientMsgId), doc)
     }
 
-    fun deleteMessage(clientMsgId: String) {
+    override fun deleteMessage(clientMsgId: String) {
         val w = writer ?: return
         w.deleteDocuments(Term("clientMsgId", clientMsgId))
     }
 
-    data class SearchResult(
-        val clientMsgId: String,
-        val chatId: String,
-        val senderUid: String,
-        val messageType: Int,
-        val seq: Long,
-        val timestamp: Long,
-        val highlight: String,
-    )
-
-    fun search(
+    override fun search(
         query: String,
         chatIds: Set<String>,
-        senderUid: String? = null,
-        startTimestamp: Long? = null,
-        endTimestamp: Long? = null,
-        limit: Int = 20,
-        offset: Int = 0,
-    ): Pair<Int, List<SearchResult>> {
-        val w = writer ?: return Pair(0, emptyList())
+        senderUid: String?,
+        startTimestamp: Long?,
+        endTimestamp: Long?,
+        limit: Int,
+        offset: Int,
+    ): MessageSearchPage {
+        val w = writer ?: return MessageSearchPage(0, emptyList())
         w.commit()
 
-        val dir = directory ?: return Pair(0, emptyList())
+        val dir = directory ?: return MessageSearchPage(0, emptyList())
         val reader = DirectoryReader.open(dir)
         return reader.use { reader ->
             val searcher = IndexSearcher(reader)
@@ -127,7 +120,7 @@ class SearchIndex(private val indexDir: File) {
                         text.take(200)
                     }
 
-                    SearchResult(
+                    MessageSearchHit(
                         clientMsgId = doc.get("clientMsgId") ?: "",
                         chatId = doc.get("chatId") ?: "",
                         senderUid = doc.get("senderUid") ?: "",
@@ -138,7 +131,7 @@ class SearchIndex(private val indexDir: File) {
                     )
                 }
 
-            Pair(topDocs.totalHits.value.toInt(), results)
+            MessageSearchPage(topDocs.totalHits.value.toInt(), results)
         }
     }
 

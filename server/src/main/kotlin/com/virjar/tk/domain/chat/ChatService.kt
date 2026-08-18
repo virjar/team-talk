@@ -1,8 +1,8 @@
 package com.virjar.tk.domain.chat
 
 import com.virjar.tk.domain.conversation.ConversationService
+import com.virjar.tk.domain.event.EventPublisher
 import com.virjar.tk.domain.user.UserStore
-import com.virjar.tk.infra.sync.SyncEventService
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Member
 import com.virjar.tk.protocol.NotifyType
@@ -10,7 +10,7 @@ import com.virjar.tk.protocol.NotifyType
 class ChatService(
     private val chatStore: ChatStore,
     private val userStore: UserStore,
-    private val syncEventService: SyncEventService,
+    private val events: EventPublisher,
     private val conversationService: ConversationService,
 ) {
 
@@ -42,7 +42,7 @@ class ChatService(
         chatStore.updateGroup(chatId, name, avatar, notice)
         val chat = chatStore.getChat(chatId) ?: return
         val memberUids = chatStore.getMemberUids(chatId)
-        syncEventService.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
+        events.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
     }
 
     suspend fun deleteChat(operatorUid: String, chatId: String) {
@@ -52,7 +52,7 @@ class ChatService(
         }
         val memberUids = chatStore.getMemberUids(chatId)
         chatStore.deleteChat(chatId)
-        syncEventService.emitEvents(memberUids, NotifyType.CHAT_DELETED, chat)
+        events.emitEvents(memberUids, NotifyType.CHAT_DELETED, chat)
     }
 
     // ── 成员管理 ──
@@ -68,9 +68,9 @@ class ChatService(
         conversationService.ensureConversations(chatId, chat.chatType, uids)
         val allMemberUids = chatStore.getMemberUids(chatId)
         for (uid in uids) {
-            syncEventService.emitEvent(uid, NotifyType.CHAT_CREATED, chat)
+            events.emitEvent(uid, NotifyType.CHAT_CREATED, chat)
         }
-        syncEventService.emitEvents(allMemberUids, NotifyType.MEMBER_ADDED, chat)
+        events.emitEvents(allMemberUids, NotifyType.MEMBER_ADDED, chat)
     }
 
     suspend fun removeMember(operatorUid: String, chatId: String, targetUid: String) {
@@ -91,7 +91,7 @@ class ChatService(
 
         val memberUids = chatStore.getMemberUids(chatId) + targetUid
         val chat = chatStore.getChat(chatId) ?: return
-        syncEventService.emitEvents(memberUids, NotifyType.MEMBER_REMOVED, chat)
+        events.emitEvents(memberUids, NotifyType.MEMBER_REMOVED, chat)
     }
 
     suspend fun transferOwner(operatorUid: String, chatId: String, newOwnerUid: String) {
@@ -100,7 +100,7 @@ class ChatService(
         chatStore.transferOwner(chatId, operatorUid, newOwnerUid)
         val chat = chatStore.getChat(chatId) ?: return
         val memberUids = chatStore.getMemberUids(chatId)
-        syncEventService.emitEvents(memberUids, NotifyType.MEMBER_ROLE_CHANGED, chat)
+        events.emitEvents(memberUids, NotifyType.MEMBER_ROLE_CHANGED, chat)
     }
 
     suspend fun setRole(operatorUid: String, chatId: String, targetUid: String, role: Int) {
@@ -109,7 +109,7 @@ class ChatService(
         chatStore.setRole(chatId, targetUid, role)
         val chat = chatStore.getChat(chatId) ?: return
         val memberUids = chatStore.getMemberUids(chatId)
-        syncEventService.emitEvents(memberUids, NotifyType.MEMBER_ROLE_CHANGED, chat)
+        events.emitEvents(memberUids, NotifyType.MEMBER_ROLE_CHANGED, chat)
     }
 
     // ── 禁言 ──
@@ -120,7 +120,7 @@ class ChatService(
         chatStore.muteMember(chatId, targetUid, operatorUid, expiresAt)
         val chat = chatStore.getChat(chatId) ?: return
         val memberUids = chatStore.getMemberUids(chatId)
-        syncEventService.emitEvents(memberUids, NotifyType.MEMBER_MUTED, chat)
+        events.emitEvents(memberUids, NotifyType.MEMBER_MUTED, chat)
     }
 
     suspend fun unmuteMember(operatorUid: String, chatId: String, targetUid: String) {
@@ -128,7 +128,7 @@ class ChatService(
         chatStore.unmuteMember(chatId, targetUid)
         val chat = chatStore.getChat(chatId) ?: return
         val memberUids = chatStore.getMemberUids(chatId)
-        syncEventService.emitEvents(memberUids, NotifyType.MEMBER_UNMUTED, chat)
+        events.emitEvents(memberUids, NotifyType.MEMBER_UNMUTED, chat)
     }
 
     suspend fun muteAll(operatorUid: String, chatId: String) {
@@ -136,7 +136,7 @@ class ChatService(
         chatStore.setMuteAll(chatId, true)
         val chat = chatStore.getChat(chatId) ?: return
         val memberUids = chatStore.getMemberUids(chatId)
-        syncEventService.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
+        events.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
     }
 
     suspend fun unmuteAll(operatorUid: String, chatId: String) {
@@ -144,7 +144,7 @@ class ChatService(
         chatStore.setMuteAll(chatId, false)
         val chat = chatStore.getChat(chatId) ?: return
         val memberUids = chatStore.getMemberUids(chatId)
-        syncEventService.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
+        events.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
     }
 
     // ── 邀请链接 ──
@@ -192,23 +192,24 @@ class ChatService(
     // ── 管理端操作（免权限检查，广播链路复用）──
 
     suspend fun adminDissolve(chatId: String) {
+        val chat = chatStore.getChat(chatId) ?: throw IllegalArgumentException("聊天不存在")
         val memberUids = chatStore.getMemberUids(chatId)
         chatStore.deleteChat(chatId)
-        syncEventService.emitEvents(memberUids, NotifyType.CHAT_DELETED, chatStore.getChat(chatId) ?: return)
+        events.emitEvents(memberUids, NotifyType.CHAT_DELETED, chat)
     }
 
     suspend fun adminMuteAll(chatId: String) {
         chatStore.setMuteAll(chatId, true)
         val memberUids = chatStore.getMemberUids(chatId)
         val chat = chatStore.getChat(chatId) ?: return
-        syncEventService.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
+        events.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
     }
 
     suspend fun adminUnmuteAll(chatId: String) {
         chatStore.setMuteAll(chatId, false)
         val memberUids = chatStore.getMemberUids(chatId)
         val chat = chatStore.getChat(chatId) ?: return
-        syncEventService.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
+        events.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
     }
 
     // ── 权限检查 ──
@@ -226,6 +227,6 @@ class ChatService(
     }
 
     private suspend fun notifyChatCreated(chat: Chat, uids: List<String>) {
-        syncEventService.emitEvents(uids, NotifyType.CHAT_CREATED, chat)
+        events.emitEvents(uids, NotifyType.CHAT_CREATED, chat)
     }
 }

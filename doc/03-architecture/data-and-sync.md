@@ -12,10 +12,10 @@ Server
   5. 校验认证、成员、消息类型与附件存在性
   6. 按 clientMsgId 幂等查询
   7. 为 chat 分配 serverSeq
-  8. 写 RocksDB，更新 Lucene 与 Conversation
-  9. 持久化 MESSAGE_RECV / CONVERSATION_UPDATED 事件
- 10. 向发送者和接收者所有在线设备推送
- 11. 返回 MESSAGE_ACK
+  8. RocksDB 原子写消息、幂等索引和投影 outbox
+  9. 幂等更新 Lucene 与 Conversation
+ 10. 持久化 MESSAGE_RECV / CONVERSATION_UPDATED 事件并推送
+ 11. 清除 outbox，返回 MESSAGE_ACK
 Client
  12. ACK 更新本地发送状态
  13. 回环 NOTIFY upsert 权威 Message 和 Conversation
@@ -27,7 +27,7 @@ Client
 ## 2. 幂等与顺序
 
 `clientMsgId` 防止超时重试产生重复消息。服务端保存它到 `(chatId, serverSeq)` 的索引；重复发送
-返回原结果，不再分配序列。
+不再分配序列。如原请求留有未完成 outbox，重试会先补齐投影再返回原结果。
 
 `serverSeq` 在单个 Chat 内单调递增，是历史分页、消息排序、缺口恢复和已读水位的共同坐标。跨 Chat
 不提供全局消息顺序。
@@ -104,4 +104,5 @@ TeamTalk 不提供跨 PostgreSQL、RocksDB 与 Lucene 的分布式事务。写�
 - PostgreSQL/RocksDB 权威数据先于通知成功。
 - Lucene 是可重建派生索引。
 - Conversation 与事件允许通过幂等更新修复。
+- MessageStore 以持久化 outbox 记录未完成的跨存储投影，启动和幂等重试都会恢复。
 - 客户端不因短暂派生数据缺失伪造权威成功。

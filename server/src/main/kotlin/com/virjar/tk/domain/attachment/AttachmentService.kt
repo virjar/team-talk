@@ -3,7 +3,6 @@ package com.virjar.tk.domain.attachment
 import com.virjar.tk.body.AttachmentBody
 import com.virjar.tk.body.AttachmentPolicy
 import com.virjar.tk.body.MessageBodyPolicy
-import com.virjar.tk.infra.storage.FileStore
 import com.virjar.tk.model.Attachment
 import com.virjar.tk.model.Message
 
@@ -15,7 +14,7 @@ import com.virjar.tk.model.Message
  * 描述符，避免客户端声明字段进入消息历史。
  */
 class AttachmentService(
-    private val fileStore: FileStore,
+    private val attachmentCatalog: AttachmentCatalog,
 ) {
     fun resolve(message: Message): Message {
         // 所有消息先做通用 body/type 校验；Markdown 的派生字段也在此重建。
@@ -28,7 +27,7 @@ class AttachmentService(
     }
 
     private fun resolve(declared: Attachment): Attachment {
-        val actual = fileStore.getAttachment(declared.path)
+        val actual = attachmentCatalog.getAttachment(declared.path)
             ?: throw IllegalArgumentException("附件不存在或已失效: ${declared.path}")
         require(actual == declared) {
             "附件元数据不匹配: path=${declared.path}"

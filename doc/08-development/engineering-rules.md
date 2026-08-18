@@ -7,6 +7,7 @@
 
 - `protocol ← shared ← app ← android/desktop` 单向依赖。
 - `server → protocol` 只复用契约；服务端生产代码禁止依赖客户端 SDK `shared`。
+- 服务端 `domain` 不 import `infra`、RPC 生成 Stub 或 transport adapter；外部能力由领域端口注入。
 - 每个长期对象有唯一所有者，owner 销毁时级联销毁。
 - `close/destroy` 幂等。
 - 网络断开只清连接层；AUTH_FAILED 清用户层。
@@ -34,6 +35,7 @@
 - EventLoop 不做阻塞 IO。
 - 权限和附件校验在成功响应前完成。
 - 领域状态写入后才持久化/推送事件。
+- 消息、幂等索引和待投影 outbox 原子写入；跨存储投影失败必须可重试和启动恢复。
 - 服务端禁止 `println`；初始化前必要信息使用受控 stderr，其余走 SLF4J/Recorder。
 - 不吞异常；CancellationException 保持取消语义。
 

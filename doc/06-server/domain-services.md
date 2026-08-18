@@ -62,10 +62,11 @@ CHAT_CREATED。
 3. 校验群禁言、消息类型和业务限制。
 4. 在 FileStore 验证全部附件。
 5. 按 clientMsgId 查询幂等结果。
-6. 分配 serverSeq 并写 MessageStore。
-7. 更新索引与各成员 Conversation。
-8. 推送 MESSAGE_RECV 与 CONVERSATION_UPDATED。
-9. 返回 ACK。
+6. 分配 serverSeq，原子写入 MessageStore、幂等索引和待投影 outbox。
+7. 幂等投影到 Lucene、Conversation 和持久化同步事件。
+8. 投影全部成功后清除 outbox，再返回 ACK。
+
+若第 7 步中断，相同 `clientMsgId` 重试或服务端重启会继续补齐投影，不能只返回旧 seq。
 
 编辑只允许原发送者修改可编辑的文字消息；撤回允许发送者或有权限的管理员；转发产生新消息并
 重新走目标会话权限和附件校验。

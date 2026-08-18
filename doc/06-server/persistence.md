@@ -5,7 +5,7 @@
 | 数据 | 存储 | 原因 |
 |---|---|---|
 | 用户、设备、好友、群、成员、会话、申请、邀请、同步事件 | PostgreSQL | 关系、约束、事务和查询 |
-| 消息正文与幂等索引 | RocksDB | 按 chat/seq 顺序读写、高吞吐 KV |
+| 消息正文、幂等索引与投影 outbox | RocksDB | 按 chat/seq 顺序读写、单批原子 KV |
 | token | 独立 RocksDB | 随机 token 快速查询和删除 |
 | 文件小对象与元数据 | RocksDB | 本地嵌入、低运维成本 |
 | 大文件 | 文件系统 | 避免 KV 大 blob 放大 |
@@ -49,6 +49,15 @@ friends 以有向双行表达双方视角，备注属于各自记录。friend_ap
 另有 clientMsgId 幂等索引指向 chatId/serverSeq。分配 seq、写消息和写幂等索引需要保持可恢复顺序；
 重复请求必须返回已存在消息。
 
+MessageStore 在同一 RocksDB `WriteBatch` 中写入消息、clientMsgId 索引和待投影记录：
+
+```text
+[0x02][chatId bytes][serverSeq 8B BE] → Message bytes
+```
+
+Lucene、Conversation 和 `sync_events` 都完成后删除该记录。幂等重试和服务启动会扫描并补偿未完成项；
+重放可以产生重复 Notify，客户端按 at-least-once 契约 upsert。
+
 ## 4. 派生数据
 
 Lucene 索引、会话预览、缩略图和部分计数都是派生数据：
@@ -62,12 +71,13 @@ Lucene 索引、会话预览、缩略图和部分计数都是派生数据：
 
 PostgreSQL 事务只覆盖关系表；它不能原子覆盖 RocksDB/Lucene。跨存储流程必须用业务顺序保证：
 
-1. 权威数据写成功。
-2. 可重建派生数据更新。
-3. 同步事件持久化。
-4. 对外返回成功。
+1. 权威消息与 outbox 原子写成功。
+2. 幂等更新可重建索引和会话投影。
+3. 持久化同步事件并推送在线设备。
+4. 清除 outbox 并对外返回成功。
 
-如果第 2 或第 3 步失败，必须留下可识别故障并有补偿路径。不能在权威写入前推送事件。
+如果第 2 或第 3 步失败，outbox 保留并由重试/重启补偿。不能在权威写入前推送事件，也不能在
+补偿未完成时把重复 `clientMsgId` 直接解释为完整成功。
 
 ## 6. 生命周期
 

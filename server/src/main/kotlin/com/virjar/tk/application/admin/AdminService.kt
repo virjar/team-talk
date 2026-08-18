@@ -1,18 +1,18 @@
-package com.virjar.tk.domain.admin
+package com.virjar.tk.application.admin
 
-import com.virjar.tk.domain.auth.TokenStore
+import com.virjar.tk.domain.auth.TokenRepository
 import com.virjar.tk.domain.chat.AdminPage
 import com.virjar.tk.domain.chat.ChatRepository
 import com.virjar.tk.domain.chat.ChatService
 import com.virjar.tk.domain.contact.ContactRepository
 import com.virjar.tk.domain.device.DeviceRepository
 import com.virjar.tk.domain.message.MessageService
+import com.virjar.tk.domain.message.MessageRepository
+import com.virjar.tk.domain.message.MessageSearch
+import com.virjar.tk.domain.session.OnlineSessions
 import com.virjar.tk.domain.user.UserRepository
 import com.virjar.tk.domain.user.UserService
 import com.virjar.tk.infra.db.Users
-import com.virjar.tk.infra.search.SearchIndex
-import com.virjar.tk.infra.storage.MessageStore
-import com.virjar.tk.infra.sync.ClientRegistry
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Device
 import com.virjar.tk.model.Member
@@ -41,10 +41,10 @@ class AdminService(
     private val chatRepository: ChatRepository,
     private val chatService: ChatService,
     private val messageService: MessageService,
-    private val messageStore: MessageStore,
-    private val searchIndex: SearchIndex,
-    private val tokenStore: TokenStore,
-    private val clientRegistry: ClientRegistry,
+    private val messages: MessageRepository,
+    private val search: MessageSearch,
+    private val tokens: TokenRepository,
+    private val onlineSessions: OnlineSessions,
     private val logsDir: File,
     private val clientLogsDir: File,
 ) {
@@ -79,7 +79,7 @@ class AdminService(
             devices = deviceRepository.getDevices(uid).map { it.toModel() },
             friends = contactRepository.listFriends(uid),
             groups = chatRepository.listUserChats(uid).filter { it.chatType == 2 },
-            online = clientRegistry.isOnline(uid),
+            online = onlineSessions.isOnline(uid),
         )
     }
 
@@ -90,8 +90,8 @@ class AdminService(
                 ?: throw IllegalArgumentException("用户不存在: $uid")
             Users.update({ Users.uid eq uid }) { it[status] = 2 }
         }
-        tokenStore.revokeAllUserTokens(uid)
-        clientRegistry.kickUser(uid)
+        tokens.revokeAllUserTokens(uid)
+        onlineSessions.kickUser(uid)
     }
 
     suspend fun unbanUser(uid: String) {
@@ -100,7 +100,7 @@ class AdminService(
         }
     }
 
-    suspend fun kickAll(uid: String) = clientRegistry.kickUser(uid)
+    suspend fun kickAll(uid: String) = onlineSessions.kickUser(uid)
 
     /** 重置密码：新 BCrypt + 全设备踢线（强制重新登录）。 */
     suspend fun resetPassword(uid: String, newPassword: String) {
@@ -109,8 +109,8 @@ class AdminService(
         transaction {
             Users.update({ Users.uid eq uid }) { it[passwordHash] = hash }
         }
-        tokenStore.revokeAllUserTokens(uid)
-        clientRegistry.kickUser(uid)
+        tokens.revokeAllUserTokens(uid)
+        onlineSessions.kickUser(uid)
     }
 
     // ── 消息 ──
@@ -132,7 +132,7 @@ class AdminService(
         size: Int,
     ): MessageSearchResult {
         val chatIds = chatId?.takeIf { it.isNotBlank() }?.let { setOf(it) } ?: emptySet()
-        val (total, results) = searchIndex.search(
+        val resultPage = search.search(
             query = keyword ?: "",  // 空=浏览模式（SearchIndex match-all）
             chatIds = chatIds,
             senderUid = senderUid?.takeIf { it.isNotBlank() },
@@ -141,16 +141,16 @@ class AdminService(
             limit = size,
             offset = (page - 1) * size,
         )
-        val messages = results.mapNotNull { messageStore.getMessage(it.chatId, it.seq) }
-        val highlights = results.associate { it.clientMsgId to it.highlight }
-        return MessageSearchResult(total, messages, highlights)
+        val resultMessages = resultPage.hits.mapNotNull { messages.getMessage(it.chatId, it.seq) }
+        val highlights = resultPage.hits.associate { it.clientMsgId to it.highlight }
+        return MessageSearchResult(resultPage.total, resultMessages, highlights)
     }
 
     /** 消息上下文（围绕 seq 前后各 contextSize/2 条）。 */
     fun messageContext(chatId: String, seq: Long, contextSize: Int = 20): List<Message> {
         val half = contextSize / 2
-        val before = messageStore.getHistory(chatId, seq, half, forward = false).asReversed()
-        val after = messageStore.getHistory(chatId, seq + 1, half, forward = true)
+        val before = messages.getHistory(chatId, seq, half, forward = false).asReversed()
+        val after = messages.getHistory(chatId, seq + 1, half, forward = true)
         return before + after
     }
 
@@ -192,7 +192,7 @@ class AdminService(
     suspend fun overview(): Overview {
         val dayStart = System.currentTimeMillis() - System.currentTimeMillis() % (24 * 3600 * 1000L)
         return Overview(
-            onlineCount = clientRegistry.onlineUids().size,
+            onlineCount = onlineSessions.onlineUids().size,
             userCount = transaction { Users.selectAll().count() },
             groupCount = chatRepository.countGroups(),
             todayEvents = chatRepository.countEventsSince(dayStart),

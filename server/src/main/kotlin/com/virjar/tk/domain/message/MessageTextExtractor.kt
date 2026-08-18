@@ -1,4 +1,4 @@
-package com.virjar.tk.infra.search
+package com.virjar.tk.domain.message
 
 import com.virjar.tk.body.*
 import com.virjar.tk.model.Message

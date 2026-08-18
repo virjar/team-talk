@@ -1,6 +1,6 @@
 package com.virjar.tk.api
 
-import com.virjar.tk.domain.admin.AdminService
+import com.virjar.tk.application.admin.AdminService
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.request.*

@@ -1,11 +1,11 @@
 package com.virjar.tk.e2e
 
-import com.virjar.tk.domain.auth.TokenStore
 import com.virjar.tk.di.createServerModule
 import com.virjar.tk.infra.db.DatabaseFactory
 import com.virjar.tk.infra.search.SearchIndex
 import com.virjar.tk.infra.storage.FileStore
 import com.virjar.tk.infra.storage.MessageStore
+import com.virjar.tk.infra.storage.TokenStore
 import com.virjar.tk.infra.sync.ClientRegistry
 import com.virjar.tk.protocol.TcpServer
 import com.virjar.tk.protocol.codec.ImAgent
@@ -71,17 +71,18 @@ class TcpE2eEnvironment : AutoCloseable {
 
         tcpServer.start { channel, recorder, ioExecutor ->
             ImAgent(
-                channel,
-                recorder,
-                koin.get(),
-                koin.get(),
-                koin.get(),
-                koin.get(),
-                koin.get(),
-                koin.get(),
-                koin.get(),
-                koin.get(),
-                ioExecutor,
+                channel = channel,
+                recorder = recorder,
+                authService = koin.get(),
+                clientRegistry = koin.get(),
+                rpcDispatcher = koin.get(),
+                messageService = koin.get(),
+                chatStore = koin.get(),
+                messageStore = koin.get(),
+                syncEvents = koin.get(),
+                events = koin.get(),
+                presenceService = koin.get(),
+                ioExecutor = ioExecutor,
             )
         }
         tcpPort = tcpServer.actualPort
@@ -114,6 +115,7 @@ class TcpE2eEnvironment : AutoCloseable {
         tcpServer.stop()
         koin.get<SearchIndex>().stop()
         koin.get<MessageStore>().close()
+        koin.get<FileStore>().close()
         koin.get<TokenStore>().close()
         koin.get<ClientRegistry>().stop()
         koinApp.close()

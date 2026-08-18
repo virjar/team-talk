@@ -1,5 +1,6 @@
 package com.virjar.tk.infra.sync
 
+import com.virjar.tk.domain.session.OnlineSessions
 import com.virjar.tk.protocol.codec.ImAgent
 import com.virjar.tk.protocol.executor.Looper
 import org.slf4j.LoggerFactory
@@ -10,7 +11,7 @@ import org.slf4j.LoggerFactory
  * 所有状态操作通过 Looper 线程序列化执行，无需 ConcurrentHashMap。
  * 对外提供 suspend 方法供协程安全调用。
  */
-class ClientRegistry {
+class ClientRegistry : OnlineSessions {
     private val logger = LoggerFactory.getLogger("ClientRegistry")
     private val workThread = Looper("client-registry").apply { start() }
 
@@ -53,7 +54,7 @@ class ClientRegistry {
         }
     }
 
-    suspend fun isOnline(uid: String): Boolean {
+    override suspend fun isOnline(uid: String): Boolean {
         return workThread.suspendAwait {
             val devices = userAgents[uid]
             devices != null && devices.isNotEmpty()
@@ -61,20 +62,20 @@ class ClientRegistry {
     }
 
     /** 踢掉某用户全部在线设备（封禁/重置密码联动）。 */
-    suspend fun kickUser(uid: String) {
+    override suspend fun kickUser(uid: String) {
         workThread.suspendAwait {
             val devices = userAgents[uid] ?: return@suspendAwait
             devices.values.toList().forEach { it.kick() }
         }
     }
 
-    suspend fun onlineUids(): Set<String> {
+    override suspend fun onlineUids(): Set<String> {
         return workThread.suspendAwait {
             userAgents.keys.toSet()
         }
     }
 
-    suspend fun kickDevice(uid: String, deviceId: String) {
+    override suspend fun kickDevice(uid: String, deviceId: String) {
         workThread.suspendAwait {
             val devices = userAgents[uid] ?: return@suspendAwait
             val agent = devices.remove(deviceId)

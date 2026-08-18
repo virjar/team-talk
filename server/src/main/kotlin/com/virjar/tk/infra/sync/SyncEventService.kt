@@ -1,5 +1,7 @@
 package com.virjar.tk.infra.sync
 
+import com.virjar.tk.domain.event.EventPublisher
+import com.virjar.tk.domain.event.SyncEventReader
 import com.virjar.tk.infra.db.SyncEvents
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.NotifyContracts
@@ -19,13 +21,13 @@ import org.slf4j.LoggerFactory
  */
 class SyncEventService(
     private val clientRegistry: ClientRegistry,
-) {
+) : EventPublisher, SyncEventReader {
     private val logger = LoggerFactory.getLogger("SyncEventService")
 
     /**
      * 向单个用户推送通知。
      */
-    suspend fun emitEvent(uid: String, notifyType: NotifyType, payload: IProto) {
+    override suspend fun emitEvent(uid: String, notifyType: NotifyType, payload: IProto) {
         assertContract(notifyType, payload)
         val eventId = persistEvent(uid, notifyType, payload)
         pushToUser(uid, NotifyPayload(eventId, notifyType.code, ProtoCodec.encode(payload)))
@@ -34,7 +36,7 @@ class SyncEventService(
     /**
      * 向多个用户推送同一通知。
      */
-    suspend fun emitEvents(uids: List<String>, notifyType: NotifyType, payload: IProto) {
+    override suspend fun emitEvents(uids: List<String>, notifyType: NotifyType, payload: IProto) {
         assertContract(notifyType, payload)
         val encoded = ProtoCodec.encode(payload)
         for (uid in uids) {
@@ -58,11 +60,16 @@ class SyncEventService(
         }
     }
 
+    override suspend fun emitTransient(uid: String, notifyType: NotifyType, payload: IProto) {
+        assertContract(notifyType, payload)
+        pushToUser(uid, NotifyPayload(0, notifyType.code, ProtoCodec.encode(payload)))
+    }
+
     /**
      * 查询用户在某个 eventId 之后的所有事件（离线补发）。
      * 过期事件（> [EVENT_TTL_MS]）不补发——毒事件逃生舱与表增长控制。
      */
-    fun getEventsAfter(uid: String, afterEventId: Long, limit: Int = 100): List<NotifyPayload> {
+    override fun getEventsAfter(uid: String, afterEventId: Long, limit: Int): List<NotifyPayload> {
         val ttlBoundary = System.currentTimeMillis() - EVENT_TTL_MS
         return transaction {
             SyncEvents.selectAll()

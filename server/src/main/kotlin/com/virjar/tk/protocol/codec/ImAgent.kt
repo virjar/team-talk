@@ -2,11 +2,12 @@ package com.virjar.tk.protocol.codec
 
 import com.virjar.tk.domain.auth.AuthService
 import com.virjar.tk.domain.chat.ChatStore
+import com.virjar.tk.domain.event.EventPublisher
+import com.virjar.tk.domain.event.SyncEventReader
+import com.virjar.tk.domain.message.MessageRepository
 import com.virjar.tk.domain.message.MessageService
 import com.virjar.tk.domain.presence.PresenceService
-import com.virjar.tk.infra.storage.MessageStore
 import com.virjar.tk.infra.sync.ClientRegistry
-import com.virjar.tk.infra.sync.SyncEventService
 import com.virjar.tk.model.Message
 import com.virjar.tk.protocol.*
 import com.virjar.tk.protocol.dispatcher.RpcDispatcher
@@ -37,8 +38,9 @@ class ImAgent(
     private val rpcDispatcher: RpcDispatcher,
     private val messageService: MessageService,
     private val chatStore: ChatStore,
-    private val messageStore: MessageStore,
-    private val syncEventService: SyncEventService,
+    private val messageStore: MessageRepository,
+    private val syncEvents: SyncEventReader,
+    private val events: EventPublisher,
     private val presenceService: PresenceService,
     private val ioExecutor: IOExecutor,
 ) : ChannelInboundHandlerAdapter() {
@@ -116,14 +118,14 @@ class ImAgent(
 
     override fun channelInactive(ctx: ChannelHandlerContext) {
         // CONNECTED 状态断开（未完成认证）：回收围栏计数（AUTHENTICATED 已在认证时迁移）
-        if (_state.getAndSet(State.DISCONNECTED) == State.CONNECTED) {
+        val previousState = _state.getAndSet(State.DISCONNECTED)
+        if (previousState == State.CONNECTED) {
             unauthedCount.decrementAndGet()
         }
-        if (state == State.AUTHENTICATED && uid.isNotEmpty()) {
+        if (previousState == State.AUTHENTICATED && uid.isNotEmpty()) {
             // 下线广播由 ClientRegistry.onLastDeviceOffline 钩子触发（仅最后一台设备）
             clientRegistry.unregister(this)
         }
-        _state.set(State.DISCONNECTED)
         recorder.record { "[CLOSE] uid=$uid" }
     }
 
@@ -185,7 +187,7 @@ class ImAgent(
                 presenceService.broadcastOnline(uid)
 
                 if (payload.lastEventId > 0) {
-                    val missedEvents = syncEventService.getEventsAfter(uid, payload.lastEventId)
+                    val missedEvents = syncEvents.getEventsAfter(uid, payload.lastEventId)
                     for (event in missedEvents) {
                         facade.send(event)
                     }
@@ -251,11 +253,11 @@ class ImAgent(
         recorder.record { "[TYPING] chatId=${msg.chatId}" }
         ioExecutor.launchWithAgent(this) { facade ->
             val memberUids = chatStore.getMemberUids(msg.chatId)
-            syncEventService.emitEvents(
-                memberUids.filter { it != facade.uid },
-                NotifyType.TYPING,
-                msg,
-            )
+            for (memberUid in memberUids) {
+                if (memberUid != facade.uid) {
+                    events.emitTransient(memberUid, NotifyType.TYPING, msg)
+                }
+            }
         }
     }
 

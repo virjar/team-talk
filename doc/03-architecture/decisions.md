@@ -112,3 +112,16 @@ HTTP DTO。`shared` 作为客户端 SDK 依赖它；服务端生产代码只依�
 
 **结果**：服务端与客户端实现之间的越界由编译器阻止，协议可以单独测试和发布，未来其他语言 SDK
 也有清晰入口。代价是增加一个模块，并要求共享规则先判断属于“线上契约”还是“客户端策略”。
+
+## D13 · 领域端口与持久化消息投影
+
+**上下文**：早期领域服务直接依赖 Exposed、RocksDB、Lucene、ClientRegistry 和 RPC Stub；消息写入
+三种存储时也没有可恢复中间状态。任一投影失败后，幂等重试只返回旧 seq，会留下搜索、会话或
+同步事件缺口。
+
+**决定**：领域层定义 Repository、MessageSearch、EventPublisher、AttachmentCatalog 和 OnlineSessions 端口，
+基础设施实现它们。消息本体、clientMsgId 索引与待投影 outbox 在 RocksDB 中原子提交；所有
+跨存储投影成功后才清除 outbox。
+
+**结果**：领域规则可以用内存适配器单测，基础设施不再渗入业务 API；进程重启和幂等重试能补齐投影。
+代价是 at-least-once 补偿可能重复事件，下游必须保持 upsert 幂等。

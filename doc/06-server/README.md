@@ -22,17 +22,17 @@ TCP 负责实时和确定性业务；HTTP 负责文件、大 payload、管理和
 ```text
 protocol/api adapters
         ↓
-domain services
-        ↓
-repositories/stores + SyncEventService
-        ↓
-PostgreSQL / RocksDB / Lucene / file system
+application coordinators → domain services → domain ports
+                                             ↑
+                              infrastructure adapters
+                                             ↓
+                         PostgreSQL / RocksDB / Lucene
 ```
 
 - adapter 负责认证上下文、编解码和错误映射。
-- domain service 负责权限、状态转换与事件目标。
-- repository/store 负责持久化和查询。
-- SyncEventService 负责契约校验、离线事件与实时推送。
+- application 组合连接生命周期、管理视图等跨域流程。
+- domain service 负责权限、状态转换与事件目标，只面向领域端口。
+- infra adapter 实现 Repository、消息存储、搜索、事件和在线会话端口。
 
 ## 3. 关键不变量
 
@@ -41,8 +41,9 @@ PostgreSQL / RocksDB / Lucene / file system
 3. 消息 ACK 前完成消息体、附件、权限、幂等和权威落库校验。
 4. 每个成员加入 Chat 时创建其 Conversation。
 5. `readSeq`、消息序列和关键版本只增不减。
-6. 业务状态提交后才发持久化事件。
-7. Lucene 与缩略图等派生数据可重建，不取代权威存储。
+6. 消息与待投影 outbox 原子提交；搜索、会话和事件投影失败后可恢复。
+7. 业务状态提交后才发持久化事件；Presence/Typing 只走瞬时事件。
+8. Lucene 与缩略图等派生数据可重建，不取代权威存储。
 
 ## 4. 分册
 

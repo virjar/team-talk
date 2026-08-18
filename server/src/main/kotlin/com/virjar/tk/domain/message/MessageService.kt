@@ -3,20 +3,17 @@ package com.virjar.tk.domain.message
 import com.virjar.tk.domain.attachment.AttachmentService
 import com.virjar.tk.domain.chat.ChatStore
 import com.virjar.tk.domain.conversation.ConversationService
-import com.virjar.tk.infra.search.MessageTextExtractor
-import com.virjar.tk.infra.search.SearchIndex
-import com.virjar.tk.infra.storage.MessageStore
-import com.virjar.tk.infra.sync.SyncEventService
+import com.virjar.tk.domain.event.EventPublisher
 import com.virjar.tk.model.Message
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.NotifyType
 
 class MessageService(
-    private val messageStore: MessageStore,
+    private val messages: MessageRepository,
     private val chatStore: ChatStore,
-    private val syncEventService: SyncEventService,
+    private val events: EventPublisher,
     private val conversationService: ConversationService,
-    private val searchIndex: SearchIndex,
+    private val search: MessageSearch,
     private val attachmentService: AttachmentService,
 ) {
 
@@ -39,9 +36,14 @@ class MessageService(
             }
         }
 
-        // 幂等：如果 clientMsgId 已存在，直接返回已有 seq
-        val existingSeq = messageStore.getSeqByClientMsgId(message.clientMsgId)
+        // 幂等重试不只返回 seq；如果上次在跨库投影中途失败，先补齐搜索、
+        // 离线事件和会话投影，才能满足“发送成功即可用”的契约。
+        val existingSeq = messages.getSeqByClientMsgId(message.clientMsgId)
         if (existingSeq != null) {
+            val existing = messages.getMessage(chatId, existingSeq)
+            if (existing != null && messages.isProjectionPending(chatId, existingSeq)) {
+                projectNewMessage(existing)
+            }
             return existingSeq
         }
 
@@ -54,23 +56,15 @@ class MessageService(
         val serverSeq = chatStore.incrementMaxSeq(chatId)
 
         val storedMessage = canonicalMessage.copy(serverSeq = serverSeq, senderUid = senderUid)
-        messageStore.storeMessage(storedMessage)
-
-        // 索引到 Lucene
-        val text = MessageTextExtractor.extract(storedMessage, storedMessage.body)
-        searchIndex.indexMessage(storedMessage, text)
-
-        val memberUids = chatStore.getMemberUids(chatId)
-        syncEventService.emitEvents(memberUids, NotifyType.MESSAGE_RECV, storedMessage)
-
-        val chat = chatStore.getChat(chatId)
-        if (chat != null) {
-            // 传入消息预览文本和类型，让会话列表能显示 lastMessage
-            val previewText = MessageTextExtractor.extract(storedMessage, storedMessage.body)
-            conversationService.onMessageReceived(
-                chatId, chat.chatType, serverSeq, storedMessage.messageType, previewText, memberUids, senderUid
-            )
+        val committedSeq = messages.storeMessage(storedMessage)
+        if (committedSeq != serverSeq) {
+            // 并发的同 clientMsgId 已先行提交，当前分配的 seq 保留为合法空洞。
+            messages.getMessage(chatId, committedSeq)?.let { committed ->
+                if (messages.isProjectionPending(chatId, committedSeq)) projectNewMessage(committed)
+            }
+            return committedSeq
         }
+        projectNewMessage(storedMessage)
 
         return serverSeq
     }
@@ -79,11 +73,11 @@ class MessageService(
         if (!chatStore.isMember(chatId, uid)) {
             throw IllegalArgumentException("不是聊天成员")
         }
-        return messageStore.getHistory(chatId, fromSeq, limit, forward = false)
+        return messages.getHistory(chatId, fromSeq, limit, forward = false)
     }
 
     suspend fun revokeMessage(uid: String, chatId: String, serverSeq: Long) {
-        val message = messageStore.getMessage(chatId, serverSeq)
+        val message = messages.getMessage(chatId, serverSeq)
             ?: throw IllegalArgumentException("消息不存在")
 
         if (message.senderUid != uid) {
@@ -96,17 +90,17 @@ class MessageService(
 
     /** 管理员撤回：免权限检查，广播链路复用。 */
     suspend fun adminRevoke(chatId: String, serverSeq: Long) {
-        val message = messageStore.getMessage(chatId, serverSeq)
+        val message = messages.getMessage(chatId, serverSeq)
             ?: throw IllegalArgumentException("消息不存在")
         doRevoke(message)
     }
 
     private suspend fun doRevoke(message: Message) {
         val revoked = message.copy(flags = message.flags or 1)
-        messageStore.updateMessage(message.chatId, message.serverSeq, revoked)
+        messages.updateMessage(message.chatId, message.serverSeq, revoked)
 
         val memberUids = chatStore.getMemberUids(message.chatId)
-        syncEventService.emitEvents(memberUids, NotifyType.MESSAGE_RECV, revoked)
+        events.emitEvents(memberUids, NotifyType.MESSAGE_RECV, revoked)
         conversationService.onMessageChanged(
             // ConversationList 以 lastMessage 非 null 作为是否渲染摘要的开关；
             // REVOKE 类型不读取正文，但仍需非 null 占位才能显示“撤回了一条消息”。
@@ -115,7 +109,7 @@ class MessageService(
     }
 
     suspend fun editMessage(uid: String, chatId: String, serverSeq: Long, newMessage: Message) {
-        val message = messageStore.getMessage(chatId, serverSeq)
+        val message = messages.getMessage(chatId, serverSeq)
             ?: throw IllegalArgumentException("消息不存在")
 
         if (message.senderUid != uid) {
@@ -128,13 +122,13 @@ class MessageService(
             senderUid = uid,
             flags = message.flags or 2,
         )
-        messageStore.updateMessage(chatId, serverSeq, edited)
+        messages.updateMessage(chatId, serverSeq, edited)
 
         val text = MessageTextExtractor.extract(edited, edited.body)
-        searchIndex.indexMessage(edited, text)
+        search.indexMessage(edited, text)
 
         val memberUids = chatStore.getMemberUids(chatId)
-        syncEventService.emitEvents(memberUids, NotifyType.MESSAGE_RECV, edited)
+        events.emitEvents(memberUids, NotifyType.MESSAGE_RECV, edited)
         conversationService.onMessageChanged(chatId, serverSeq, edited.messageType, text, memberUids)
     }
 
@@ -142,7 +136,7 @@ class MessageService(
         if (!chatStore.isMember(srcChatId, uid)) throw IllegalArgumentException("不是源聊天成员")
         if (!chatStore.isMember(targetChatId, uid)) throw IllegalArgumentException("不是目标聊天成员")
 
-        val srcMsg = messageStore.getMessage(srcChatId, srcSeq)
+        val srcMsg = messages.getMessage(srcChatId, srcSeq)
             ?: throw IllegalArgumentException("原消息不存在")
         val canonicalSource = attachmentService.resolve(srcMsg)
 
@@ -157,21 +151,8 @@ class MessageService(
             timestamp = System.currentTimeMillis(),
         )
 
-        messageStore.storeMessage(forwardMsg)
-
-        val text = MessageTextExtractor.extract(forwardMsg, forwardMsg.body)
-        searchIndex.indexMessage(forwardMsg, text)
-
-        val memberUids = chatStore.getMemberUids(targetChatId)
-        syncEventService.emitEvents(memberUids, NotifyType.MESSAGE_RECV, forwardMsg)
-
-        val chat = chatStore.getChat(targetChatId)
-        if (chat != null) {
-            val fwdPreviewText = MessageTextExtractor.extract(forwardMsg, forwardMsg.body)
-            conversationService.onMessageReceived(
-                targetChatId, chat.chatType, serverSeq, forwardMsg.messageType, fwdPreviewText, memberUids, uid
-            )
-        }
+        messages.storeMessage(forwardMsg)
+        projectNewMessage(forwardMsg)
 
         return forwardMsg
     }
@@ -186,7 +167,35 @@ class MessageService(
             setOf(chatId)
         }
         if (allowedChatIds.isEmpty()) return emptyList()
-        val (_, results) = searchIndex.search(keyword, chatIds = allowedChatIds, limit = limit)
-        return results.mapNotNull { messageStore.getMessage(it.chatId, it.seq) }
+        val results = search.search(keyword, chatIds = allowedChatIds, limit = limit)
+        return results.hits.mapNotNull { messages.getMessage(it.chatId, it.seq) }
+    }
+
+    /** Replays durable projection outbox entries left by an interrupted process. */
+    suspend fun recoverPendingProjections(limit: Int = 1_000): Int {
+        val pending = messages.getPendingProjections(limit)
+        for (message in pending) projectNewMessage(message)
+        return pending.size
+    }
+
+    private suspend fun projectNewMessage(message: Message) {
+        val text = MessageTextExtractor.extract(message, message.body)
+        search.indexMessage(message, text)
+
+        val memberUids = chatStore.getMemberUids(message.chatId)
+        events.emitEvents(memberUids, NotifyType.MESSAGE_RECV, message)
+
+        chatStore.getChat(message.chatId)?.let { chat ->
+            conversationService.onMessageReceived(
+                message.chatId,
+                chat.chatType,
+                message.serverSeq,
+                message.messageType,
+                text,
+                memberUids,
+                message.senderUid,
+            )
+        }
+        messages.markProjectionComplete(message.chatId, message.serverSeq)
     }
 }

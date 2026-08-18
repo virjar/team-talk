@@ -1,7 +1,7 @@
 package com.virjar.tk.api
 
-import com.virjar.tk.domain.auth.TokenStore
 import com.virjar.tk.infra.storage.FileStore
+import com.virjar.tk.infra.storage.TokenStore
 import com.virjar.tk.repository.FileOps
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationStopped

@@ -57,8 +57,10 @@ server/src/main/kotlin/com/virjar/tk/
 ├── Application.kt
 ├── api/                 HTTP routes
 ├── protocol/            TCP、codec adapter、dispatcher、trace
-├── domain/              user/auth/contact/chat/message/conversation/device/...
-├── infra/db/            PostgreSQL schema/repository support
+├── application/         跨域编排与连接生命周期协调
+├── domain/              业务规则、Store 与持久化/事件/搜索端口
+├── infra/db/            PostgreSQL schema
+├── infra/db/repository/ Exposed 端口实现
 ├── infra/storage/       Message/File/Token/ClientLog stores
 ├── infra/search/        Lucene
 ├── infra/sync/          ClientRegistry/SyncEventService
@@ -66,7 +68,8 @@ server/src/main/kotlin/com/virjar/tk/
 └── di/                  Koin module
 ```
 
-业务规则进 domain；协议 adapter 只做上下文和错误映射；存储细节进 infra。
+业务规则和外部能力端口进 domain；协议 adapter 只做上下文和错误映射；跨域协调进 application；
+存储与连接实现进 infra。`LayerBoundaryTest` 会阻止 domain 反向依赖 infra 或 RPC Stub。
 
 ## 6. app
 

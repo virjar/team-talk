@@ -1,6 +1,7 @@
 package com.virjar.tk.api
 
 import com.virjar.tk.infra.storage.FileStore
+import com.virjar.tk.domain.auth.TokenRepository
 import com.virjar.tk.http.UploadResult
 import io.ktor.http.*
 import io.ktor.http.content.*
@@ -15,7 +16,7 @@ private val responseJson = Json { encodeDefaults = true }
 
 fun Route.fileRoutes(
     fileStore: FileStore,
-    tokenStore: com.virjar.tk.domain.auth.TokenStore,
+    tokenStore: TokenRepository,
     thumbnailService: com.virjar.tk.infra.media.ThumbnailService = com.virjar.tk.infra.media.ThumbnailService(),
 ) {
     route("/api/v1/files") {

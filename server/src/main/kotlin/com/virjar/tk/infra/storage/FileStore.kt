@@ -1,6 +1,7 @@
 package com.virjar.tk.infra.storage
 
 import com.virjar.tk.model.Attachment
+import com.virjar.tk.domain.attachment.AttachmentCatalog
 import io.ktor.utils.io.ByteWriteChannel
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -35,7 +36,7 @@ class FileStore(
     private val dbPath: String,
     private val fsRoot: String,
     private val largeFileThreshold: Long = 32L * 1024 * 1024,
-) {
+) : AttachmentCatalog {
     private val logger = LoggerFactory.getLogger("FileStore")
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -143,7 +144,7 @@ class FileStore(
      * RocksDB tier 的 meta/data 在同一 WriteBatch 中原子提交；文件系统 tier 还需
      * 核对实体文件及长度，避免只剩孤儿元数据的附件被消息服务判定为可发送。
      */
-    fun getAttachment(path: String): Attachment? = getMeta(path)?.let { meta ->
+    override fun getAttachment(path: String): Attachment? = getMeta(path)?.let { meta ->
         if (meta.tier == StorageTier.FILESYSTEM) {
             val file = getFile(meta)
             if (file == null || file.length() != meta.size) return null

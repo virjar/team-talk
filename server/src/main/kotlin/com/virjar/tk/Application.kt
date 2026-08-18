@@ -3,16 +3,18 @@ package com.virjar.tk
 import com.virjar.tk.api.clientLogRoutes
 import com.virjar.tk.api.adminRoutes
 import com.virjar.tk.api.fileRoutes
+import com.virjar.tk.application.presence.PresenceCoordinator
 import com.virjar.tk.di.serverModule
 import com.virjar.tk.domain.auth.AuthService
 import com.virjar.tk.domain.chat.ChatStore
-import com.virjar.tk.domain.health.HealthChecker
+import com.virjar.tk.infra.health.HealthChecker
 import com.virjar.tk.domain.message.MessageService
 import com.virjar.tk.domain.presence.PresenceService
 import com.virjar.tk.infra.db.DatabaseFactory
 import com.virjar.tk.infra.search.SearchIndex
 import com.virjar.tk.infra.storage.FileStore
 import com.virjar.tk.infra.storage.MessageStore
+import com.virjar.tk.infra.storage.TokenStore
 import com.virjar.tk.infra.sync.ClientRegistry
 import com.virjar.tk.infra.sync.SyncEventService
 import com.virjar.tk.protocol.TcpServer
@@ -28,6 +30,14 @@ import io.ktor.server.response.*
 import io.ktor.server.http.content.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.koin.ktor.plugin.Koin
 import org.slf4j.LoggerFactory
 import java.io.File
@@ -94,10 +104,6 @@ private fun startServer() {
     }.start(wait = true)
 }
 
-private val cleanupExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
-    Thread(r, "sync-events-cleanup").apply { isDaemon = true }
-}
-
 fun Application.module() {
     val logger = LoggerFactory.getLogger("Application")
 
@@ -128,6 +134,7 @@ fun Application.module() {
     val koin = org.koin.java.KoinJavaComponent.getKoin()
     val messageStore = koin.get<MessageStore>()
     messageStore.init()
+    val tokenStore = koin.get<TokenStore>()
     val fileStore = koin.get<FileStore>()
     val clientLogStore = koin.get<com.virjar.tk.infra.storage.ClientLogStore>()
     fileStore.init()
@@ -145,18 +152,30 @@ fun Application.module() {
     val chatStore = koin.get<ChatStore>()
     val syncEventService = koin.get<SyncEventService>()
     val presenceService = koin.get<PresenceService>()
+    val presenceCoordinator = koin.get<PresenceCoordinator>().also { it.start() }
+    val recoveredProjections = runBlocking(Dispatchers.IO) { msgService.recoverPendingProjections() }
+    if (recoveredProjections > 0) {
+        logger.info("Recovered {} pending message projections", recoveredProjections)
+    }
     tcpServer.start { channel, recorder, ioExecutor ->
-        ImAgent(channel, recorder, authService, clientRegistry, rpcDispatcher, msgService, chatStore, messageStore, syncEventService, presenceService, ioExecutor)
+        ImAgent(
+            channel, recorder, authService, clientRegistry, rpcDispatcher, msgService,
+            chatStore, messageStore, syncEventService, syncEventService, presenceService, ioExecutor,
+        )
     }
 
     // 7. Health Checker
     val healthChecker = koin.get<HealthChecker>()
 
     // 7.5 sync_events 过期清理（7 天 TTL）：启动即清 + 每日一轮（防表无限增长）
-    cleanupExecutor.scheduleAtFixedRate({
-        runCatching { syncEventService.cleanupExpiredEvents() }
-            .onFailure { LoggerFactory.getLogger("Application").warn("sync_events cleanup failed", it) }
-    }, 0, 1, java.util.concurrent.TimeUnit.DAYS)
+    val maintenanceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    maintenanceScope.launch {
+        while (isActive) {
+            runCatching { syncEventService.cleanupExpiredEvents() }
+                .onFailure { logger.warn("sync_events cleanup failed", it) }
+            delay(24 * 60 * 60 * 1000L)
+        }
+    }
 
     // 8. HTTP Routes
     routing {
@@ -201,10 +220,14 @@ fun Application.module() {
 
     // 9. Graceful shutdown
     environment.monitor.subscribe(ApplicationStopping) {
+        maintenanceScope.cancel()
+        presenceCoordinator.close()
         clientRegistry.stop()
         searchIndex.stop()
         tcpServer.stop()
         messageStore.close()
+        fileStore.close()
+        tokenStore.close()
         logger.info("TeamTalk Server stopped")
     }
 

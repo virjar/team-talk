@@ -5,6 +5,7 @@ import com.virjar.tk.domain.chat.ChatService
 import com.virjar.tk.domain.contact.ContactService
 import com.virjar.tk.domain.conversation.ConversationService
 import com.virjar.tk.domain.message.MessageService
+import com.virjar.tk.domain.session.OnlineSessions
 import com.virjar.tk.domain.user.UserService
 import com.virjar.tk.domain.chat.toModel as inviteLinkToModel
 import com.virjar.tk.domain.device.toModel
@@ -40,6 +41,19 @@ class AuthRpcImpl(
     override suspend fun updatePassword(oldPassword: String, newPassword: String) {
         userService.changePassword(uid, oldPassword, newPassword)
     }
+}
+
+class ContactRpcImpl(uid: String, private val service: ContactService) : ContactRpcStub(uid) {
+    override suspend fun list() = service.list(uid)
+    override suspend fun apply(targetUid: String, remark: String?) = service.apply(uid, targetUid, remark)
+    override suspend fun accept(token: String) = service.accept(token)
+    override suspend fun reject(token: String) = service.reject(token)
+    override suspend fun delete(friendUid: String) = service.delete(uid, friendUid)
+    override suspend fun setRemark(friendUid: String, remark: String?) = service.setRemark(uid, friendUid, remark)
+    override suspend fun blacklist(targetUid: String) = service.blacklist(uid, targetUid)
+    override suspend fun removeFromBlacklist(targetUid: String) = service.removeFromBlacklist(uid, targetUid)
+    override suspend fun listBlacklist() = service.listBlacklist(uid)
+    override suspend fun listApplies() = service.listApplies(uid)
 }
 
 class ChatRpcImpl(uid: String, private val service: ChatService) : ChatRpcStub(uid) {
@@ -98,11 +112,11 @@ class DeviceRpcImpl(
     uid: String,
     private val deviceRepo: com.virjar.tk.domain.device.DeviceRepository,
     private val authService: AuthService,
-    private val clientRegistry: com.virjar.tk.infra.sync.ClientRegistry,
+    private val onlineSessions: OnlineSessions,
 ) : DeviceRpcStub(uid) {
     override suspend fun listDevices() = deviceRepo.getDevices(uid).map { it.toModel() }
     override suspend fun kickDevice(deviceId: String) {
-        clientRegistry.kickDevice(uid, deviceId)  // 关闭被踢设备的活连接（曾遗漏：只删记录不踢线）
+        onlineSessions.kickDevice(uid, deviceId)  // 关闭被踢设备的活连接（曾遗漏：只删记录不踢线）
         deviceRepo.kickDevice(uid, deviceId)
         authService.kickDevice(uid, deviceId)
     }

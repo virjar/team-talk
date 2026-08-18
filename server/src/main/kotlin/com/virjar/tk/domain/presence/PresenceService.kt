@@ -1,29 +1,17 @@
 package com.virjar.tk.domain.presence
 
 import com.virjar.tk.domain.contact.ContactStore
-import com.virjar.tk.infra.sync.ClientRegistry
+import com.virjar.tk.domain.event.EventPublisher
 import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.PresencePayload
-import com.virjar.tk.protocol.ProtoCodec
-import com.virjar.tk.protocol.payload.NotifyPayload
-import org.slf4j.LoggerFactory
 
 /**
  * 在线状态推送服务：用户上线/下线时广播给其所有好友。
  */
 class PresenceService(
     private val contactStore: ContactStore,
-    private val clientRegistry: ClientRegistry,
+    private val events: EventPublisher,
 ) {
-    init {
-        // 多设备下线误报修复：仅当该用户最后一台设备离线时广播下线。
-        // （此前 ImAgent.channelInactive 无条件广播——手机断网桌面在线也会告知好友"已下线"）
-        clientRegistry.onLastDeviceOffline = { uid ->
-            kotlinx.coroutines.runBlocking { broadcastOffline(uid) }
-        }
-    }
-    private val logger = LoggerFactory.getLogger("PresenceService")
-
     suspend fun broadcastOnline(uid: String) {
         val friendUids = contactStore.getFriendUids(uid)
         for (friendUid in friendUids) {
@@ -40,16 +28,11 @@ class PresenceService(
     }
 
     private suspend fun sendPresence(targetUid: String, presenceUid: String, status: Byte, lastSeenAt: Long) {
-        val agents = clientRegistry.getAgents(targetUid)
-        for (agent in agents) {
-            try {
-                val payload = PresencePayload(presenceUid, status, lastSeenAt)
-                val notify = NotifyPayload(0, NotifyType.PRESENCE.code, ProtoCodec.encode(payload))
-                agent.write(notify)
-            } catch (e: Exception) {
-                logger.debug("Failed to send presence to {}: {}", targetUid, e.message)
-            }
-        }
+        events.emitTransient(
+            targetUid,
+            NotifyType.PRESENCE,
+            PresencePayload(presenceUid, status, lastSeenAt),
+        )
     }
 
     companion object {

@@ -1,7 +1,6 @@
 package com.virjar.tk.integration
 
 import com.virjar.tk.domain.auth.AuthService
-import com.virjar.tk.domain.auth.TokenStore
 import com.virjar.tk.domain.chat.ChatRepository
 import com.virjar.tk.domain.chat.ChatService
 import com.virjar.tk.domain.chat.ChatStore
@@ -17,7 +16,9 @@ import com.virjar.tk.di.createServerModule
 import com.virjar.tk.infra.db.DatabaseFactory
 import com.virjar.tk.infra.search.SearchIndex
 import com.virjar.tk.infra.storage.MessageStore
+import com.virjar.tk.infra.storage.TokenStore
 import com.virjar.tk.infra.sync.ClientRegistry
+import com.virjar.tk.protocol.rpc.ContactRpcImpl
 import org.junit.jupiter.api.extension.AfterAllCallback
 import org.junit.jupiter.api.extension.BeforeAllCallback
 import org.junit.jupiter.api.extension.ExtendWith
@@ -80,8 +81,8 @@ class TestEnvironment : AutoCloseable {
     // 便捷属性 — 与旧 TestContext 保持相同接口
     val userService: UserService get() = koin.get()
     val authService: AuthService get() = koin.get()
-    /** ContactService 已迁移 per-request Stub（uid 绑定），此处工厂构造 */
-    fun contactService(uid: String): ContactService = ContactService(uid, koin.get(), koin.get())
+    /** RPC adapter binds the caller uid; the domain service remains transport-neutral. */
+    fun contactService(uid: String): ContactRpcImpl = ContactRpcImpl(uid, koin.get())
     val chatService: ChatService get() = koin.get()
     val messageService: MessageService get() = koin.get()
     val conversationService: ConversationService get() = koin.get()
@@ -91,16 +92,16 @@ class TestEnvironment : AutoCloseable {
     val chatRepo: ChatRepository get() = koin.get()
     val conversationRepo: ConversationRepository get() = koin.get()
     val searchIndex: SearchIndex get() = koin.get()
-    val healthChecker: com.virjar.tk.domain.health.HealthChecker get() = koin.get()
+    val healthChecker: com.virjar.tk.infra.health.HealthChecker get() = koin.get()
     val fileStore: com.virjar.tk.infra.storage.FileStore get() = koin.get()
 
     /** 模拟服务进程重启后的冷缓存，但复用同一套持久化数据。 */
     fun freshMessageService(): MessageService = MessageService(
-        messageStore = koin.get(),
+        messages = koin.get(),
         chatStore = ChatStore(koin.get(), koin.get(), koin.get()),
-        syncEventService = koin.get(),
+        events = koin.get(),
         conversationService = koin.get(),
-        searchIndex = koin.get(),
+        search = koin.get(),
         attachmentService = koin.get(),
     )
 
@@ -113,6 +114,7 @@ class TestEnvironment : AutoCloseable {
     override fun close() {
         koin.get<SearchIndex>().stop()
         koin.get<MessageStore>().close()
+        koin.get<com.virjar.tk.infra.storage.FileStore>().close()
         koin.get<TokenStore>().close()
         koin.get<ClientRegistry>().stop()
         koinApp.close()

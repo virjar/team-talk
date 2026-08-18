@@ -1,6 +1,7 @@
 package com.virjar.tk.infra.storage
 
 import com.virjar.tk.model.Message
+import com.virjar.tk.domain.message.MessageRepository
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.PacketBuffer
 import io.netty.buffer.Unpooled
@@ -12,12 +13,13 @@ import org.slf4j.LoggerFactory
  * Key 设计：
  * - chatSeqIndex: [chatId bytes][8B seq BE] → message bytes（按 chat+seq 有序扫描）
  * - clientMsgIdIndex: [0x01][clientMsgId bytes] → chatId + seq（去重）
+ * - projectionOutbox: [0x02][chatId bytes][8B seq BE] → message bytes
  *
  * 注意：seq 由 ChatStore 统一分配，本类不自增 seq。
  */
 class MessageStore(
     private val dbPath: String,
-) {
+) : MessageRepository {
     private val logger = LoggerFactory.getLogger("MessageStore")
 
     private fun ByteArray.startsWith(prefix: ByteArray): Boolean {
@@ -46,7 +48,7 @@ class MessageStore(
      * 存储消息。使用 message 中已有的 serverSeq（由 ChatStore 分配）。
      * 返回存储的 serverSeq。如果 clientMsgId 已存在则返回已有 seq（幂等）。
      */
-    fun storeMessage(message: Message): Long {
+    override fun storeMessage(message: Message): Long {
         val database = db ?: throw IllegalStateException("MessageStore not initialized")
         val seq = message.serverSeq
 
@@ -57,18 +59,23 @@ class MessageStore(
             return decodeSeq(existingValue.copyOfRange(existingValue.size - 8, existingValue.size))
         }
 
-        // 写入 chatSeqIndex
         val msgBytes = encodeMessage(message)
         val chatSeqKey = buildChatSeqKey(message.chatId, seq)
-        database.put(chatSeqKey, msgBytes)
+        val projectionKey = buildProjectionKey(message.chatId, seq)
 
-        // 写入 clientMsgId 索引：chatId bytes + seq
-        database.put(clientMsgIdKey, message.chatId.encodeToByteArray() + encodeSeq(seq))
+        // 消息、幂等索引与待投影标记必须同批原子提交。跨库投影完成前
+        // outbox 始终保留，进程重启或客户端幂等重试都能继续补偿。
+        WriteBatch().use { batch ->
+            batch.put(chatSeqKey, msgBytes)
+            batch.put(clientMsgIdKey, message.chatId.encodeToByteArray() + encodeSeq(seq))
+            batch.put(projectionKey, msgBytes)
+            WriteOptions().use { options -> database.write(options, batch) }
+        }
 
         return seq
     }
 
-    fun getMessage(chatId: String, seq: Long): Message? {
+    override fun getMessage(chatId: String, seq: Long): Message? {
         val database = db ?: return null
         val key = buildChatSeqKey(chatId, seq)
         val bytes = database.get(key) ?: return null
@@ -78,14 +85,14 @@ class MessageStore(
     /**
      * 通过 clientMsgId 获取 seq（用于快速去重判断，无需反序列化消息）。
      */
-    fun getSeqByClientMsgId(clientMsgId: String): Long? {
+    override fun getSeqByClientMsgId(clientMsgId: String): Long? {
         val database = db ?: return null
         val key = buildClientMsgIdKey(clientMsgId)
         val indexValue = database.get(key) ?: return null
         return decodeSeq(indexValue.copyOfRange(indexValue.size - 8, indexValue.size))
     }
 
-    fun getHistory(chatId: String, fromSeq: Long, limit: Int, forward: Boolean = false): List<Message> {
+    override fun getHistory(chatId: String, fromSeq: Long, limit: Int, forward: Boolean): List<Message> {
         val database = db ?: return emptyList()
         val messages = mutableListOf<Message>()
         val chatIdBytes = chatId.encodeToByteArray()
@@ -121,10 +128,32 @@ class MessageStore(
         return messages
     }
 
-    fun updateMessage(chatId: String, seq: Long, message: Message) {
+    override fun updateMessage(chatId: String, seq: Long, message: Message) {
         val database = db ?: return
         val key = buildChatSeqKey(chatId, seq)
         database.put(key, encodeMessage(message))
+    }
+
+    override fun isProjectionPending(chatId: String, seq: Long): Boolean {
+        val database = db ?: return false
+        return database.get(buildProjectionKey(chatId, seq)) != null
+    }
+
+    override fun getPendingProjections(limit: Int): List<Message> {
+        val database = db ?: return emptyList()
+        val pending = mutableListOf<Message>()
+        database.newIterator().use { iterator ->
+            iterator.seek(PROJECTION_PREFIX)
+            while (iterator.isValid && pending.size < limit && iterator.key().startsWith(PROJECTION_PREFIX)) {
+                pending += decodeMessage(iterator.value())
+                iterator.next()
+            }
+        }
+        return pending
+    }
+
+    override fun markProjectionComplete(chatId: String, seq: Long) {
+        db?.delete(buildProjectionKey(chatId, seq))
     }
 
     private fun buildChatSeqKey(chatId: String, seq: Long): ByteArray {
@@ -148,6 +177,9 @@ class MessageStore(
         val idBytes = clientMsgId.encodeToByteArray()
         return prefix + idBytes
     }
+
+    private fun buildProjectionKey(chatId: String, seq: Long): ByteArray =
+        PROJECTION_PREFIX + buildChatSeqKey(chatId, seq)
 
     private fun decodeSeqFromKey(key: ByteArray, offset: Int): Long {
         return ((key[offset].toLong() and 0xFF) shl 56) or
@@ -198,5 +230,9 @@ class MessageStore(
         val byteBuf = Unpooled.wrappedBuffer(bytes)
         val buf = PacketBuffer(byteBuf)
         return Message.readFrom(buf)
+    }
+
+    companion object {
+        private val PROJECTION_PREFIX = byteArrayOf(0x02)
     }
 }
