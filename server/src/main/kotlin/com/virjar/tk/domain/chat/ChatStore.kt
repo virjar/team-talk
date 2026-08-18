@@ -2,11 +2,6 @@ package com.virjar.tk.domain.chat
 
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Member
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
-import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
@@ -18,16 +13,14 @@ import java.util.concurrent.atomic.AtomicLong
  * 读操作 cache miss 时从 Repository 加载并填充缓存。
  * 写操作先 Repository 后内存。
  *
- * [incrementMaxSeq] 非阻塞：原子内存递增 + 异步 DB 持久化。
+ * [incrementMaxSeq] 在内存中原子递增，并在返回前持久化到 DB。
+ * DB 先于消息落库允许出现序号空洞，但绝不能在进程重启后复用旧序号覆盖消息。
  */
 class ChatStore(
     private val repo: ChatRepository,
     private val memberRepo: ChatMemberRepository,
     private val inviteRepo: InviteLinkRepository,
 ) {
-    private val logger = LoggerFactory.getLogger("ChatStore")
-    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
     // ── 基础信息 ──
     private val chats = ConcurrentHashMap<String, Chat>()
 
@@ -50,7 +43,7 @@ class ChatStore(
 
     fun getChat(chatId: String): Chat? {
         chats[chatId]?.let { return it }
-        return repo.getChat(chatId)?.also { chats[chatId] = it }
+        return repo.getChat(chatId)?.also(::indexChat)
     }
 
     fun getMaxSeq(chatId: String): Long {
@@ -61,19 +54,18 @@ class ChatStore(
     }
 
     /**
-     * 原子递增 maxSeq：先内存递增，异步持久化到 DB。
-     * 非 suspend，可在任何上下文安全调用（包括 EventLoop）。
+     * 原子递增 maxSeq，并在返回前持久化到 DB。
+     *
+     * 成员缓存和会话缓存相互独立。转发等路径可能只加载了成员，因此这里必须
+     * 主动从 Repository 初始化 maxSeq，不能把“会话尚未进入热缓存”误判为 seq=0。
      */
     fun incrementMaxSeq(chatId: String): Long {
-        val seq = chatMaxSeq.getOrPut(chatId) { AtomicLong(getCachedMaxSeq(chatId)) }
+        val seq = maxSeqCounter(chatId)
         val newSeq = seq.incrementAndGet()
-        ioScope.launch {
-            try {
-                repo.updateMaxSeq(chatId, newSeq)
-            } catch (e: Exception) {
-                logger.warn("Failed to persist maxSeq for {}: {}", chatId, e.message)
-            }
+        chats.computeIfPresent(chatId) { _, chat ->
+            if (chat.maxSeq < newSeq) chat.copy(maxSeq = newSeq) else chat
         }
+        repo.updateMaxSeq(chatId, newSeq)
         return newSeq
     }
 
@@ -266,6 +258,9 @@ class ChatStore(
         mutesLoaded[chatId] = true
     }
 
-    private fun getCachedMaxSeq(chatId: String): Long =
-        chats[chatId]?.maxSeq ?: 0L
+    private fun maxSeqCounter(chatId: String): AtomicLong {
+        chatMaxSeq[chatId]?.let { return it }
+        val chat = getChat(chatId) ?: throw IllegalArgumentException("聊天不存在")
+        return chatMaxSeq.computeIfAbsent(chatId) { AtomicLong(chat.maxSeq) }
+    }
 }

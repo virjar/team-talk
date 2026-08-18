@@ -3,6 +3,7 @@ package com.virjar.tk.e2e
 import com.virjar.tk.rpc.gen.ChatRpcContract
 import com.virjar.tk.rpc.gen.ContactRpcContract
 import com.virjar.tk.rpc.gen.ConversationRpcContract
+import com.virjar.tk.rpc.gen.MessageRpcContract
 import com.virjar.tk.body.FileBody
 import com.virjar.tk.body.ImageBody
 import com.virjar.tk.body.TextBody
@@ -294,6 +295,44 @@ class TestPeer {
             session.close(); return@runBlocking
         }
         println("===RECV_CHECK=== text=${conv.lastMessage ?: "(empty)"} unread=${conv.unreadCount} chatId=${conv.chatId.take(12)}")
+        session.close()
+    }
+
+    /**
+     * 通过真实 RPC 转发一条已存在的消息，并打印服务端返回的目标会话和序号。
+     * 用法：-Dpeer.username=<user> -Dpeer.arg=<srcChatId>:<srcSeq>:<targetChatId>
+     */
+    @org.junit.jupiter.api.Test
+    fun forwardMessage() = runBlocking {
+        val username = System.getProperty("peer.username") ?: run {
+            println("[TestPeer] forwardMessage 缺少 username"); return@runBlocking
+        }
+        val arg = System.getProperty("peer.arg") ?: run {
+            println("[TestPeer] forwardMessage 缺少 arg (srcChatId:srcSeq:targetChatId)"); return@runBlocking
+        }
+        val parts = arg.split(":", limit = 3)
+        if (parts.size != 3) {
+            println("===FORWARD FAILED=== 参数格式错误")
+            return@runBlocking
+        }
+        val (srcChatId, srcSeqText, targetChatId) = parts
+        val srcSeq = srcSeqText.toLongOrNull() ?: run {
+            println("===FORWARD FAILED=== srcSeq 不是数字")
+            return@runBlocking
+        }
+        val password = System.getProperty("peer.password") ?: "password123"
+        val session = RemoteAcceptanceSupport.loginUser(username, password)
+        val resp = session.invoke(
+            "message",
+            MessageRpcContract.M_FORWARD,
+            MessageRpcContract.encodeForward(srcChatId, srcSeq, targetChatId),
+        )
+        val forwarded = resp.payload?.takeIf { resp.status == 0 }?.let { ProtoCodec.decode(Message, it) }
+        println(
+            "===FORWARD ${if (resp.status == 0) "SUCCESS" else "FAILED"}=== " +
+                "status=${resp.status} chatId=${forwarded?.chatId.orEmpty()} " +
+                "seq=${forwarded?.serverSeq ?: 0} clientMsgId=${forwarded?.clientMsgId.orEmpty()}",
+        )
         session.close()
     }
 

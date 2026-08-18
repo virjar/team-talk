@@ -103,16 +103,39 @@ class MessageIntegrationTest {
     }
 
     @Test
-    fun `forward message`() = runTest {
+    fun `forward message after restart preserves target sequence and conversation`() = runTest {
         val uid1 = ctx.registerUser()
         val uid2 = ctx.registerUser()
         val uid3 = ctx.registerUser()
         val chat1 = ctx.chatService.createPersonalChat(uid1, uid2)
         val chat2 = ctx.chatService.createPersonalChat(uid1, uid3)
         val seq = sendText(uid1, chat1.chatId, "Forward me")
-        val forwarded = ctx.messageService.forwardMessage(uid1, chat1.chatId, seq, chat2.chatId)
+        sendText(uid1, chat2.chatId, "Target 1")
+        sendText(uid3, chat2.chatId, "Target 2")
+        sendText(uid1, chat2.chatId, "Target 3")
+
+        // 新 ChatStore 没有任何会话/maxSeq 热缓存，等价于服务进程重启。
+        val restartedService = ctx.freshMessageService()
+        val forwarded = restartedService.forwardMessage(uid1, chat1.chatId, seq, chat2.chatId)
         assertNotNull(forwarded)
         assertEquals(chat2.chatId, forwarded.chatId)
+        assertEquals(4, forwarded.serverSeq)
+        assertEquals("Forward me", (forwarded.body as TextBody).text)
+
+        val targetHistory = restartedService.getHistory(uid1, chat2.chatId, 0, 10)
+        assertEquals(listOf(4L, 3L, 2L, 1L), targetHistory.map { it.serverSeq })
+        assertEquals(forwarded.clientMsgId, targetHistory.first().clientMsgId)
+
+        val senderConversation = ctx.conversationService.listConversations(uid1)
+            .first { it.chatId == chat2.chatId }
+        val recipientConversation = ctx.conversationService.listConversations(uid3)
+            .first { it.chatId == chat2.chatId }
+        assertEquals(4, senderConversation.lastSeq)
+        assertEquals(4, senderConversation.readSeq)
+        assertEquals(0, senderConversation.unreadCount)
+        assertEquals("Forward me", senderConversation.lastMessage)
+        assertEquals(4, recipientConversation.lastSeq)
+        assertEquals(2, recipientConversation.unreadCount)
     }
 
     @Test

@@ -4,6 +4,7 @@ import com.virjar.tk.domain.auth.AuthService
 import com.virjar.tk.domain.auth.TokenStore
 import com.virjar.tk.domain.chat.ChatRepository
 import com.virjar.tk.domain.chat.ChatService
+import com.virjar.tk.domain.chat.ChatStore
 import com.virjar.tk.domain.contact.ContactRepository
 import com.virjar.tk.domain.contact.ContactService
 import com.virjar.tk.domain.conversation.ConversationRepository
@@ -92,6 +93,16 @@ class TestEnvironment : AutoCloseable {
     val searchIndex: SearchIndex get() = koin.get()
     val healthChecker: com.virjar.tk.domain.health.HealthChecker get() = koin.get()
     val fileStore: com.virjar.tk.infra.storage.FileStore get() = koin.get()
+
+    /** 模拟服务进程重启后的冷缓存，但复用同一套持久化数据。 */
+    fun freshMessageService(): MessageService = MessageService(
+        messageStore = koin.get(),
+        chatStore = ChatStore(koin.get(), koin.get(), koin.get()),
+        syncEventService = koin.get(),
+        conversationService = koin.get(),
+        searchIndex = koin.get(),
+        attachmentService = koin.get(),
+    )
 
     /** 注册用户，返回 uid */
     suspend fun registerUser(username: String = uniqueUsername("user"), password: String = "pass123"): String {

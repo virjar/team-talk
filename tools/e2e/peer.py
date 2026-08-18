@@ -221,6 +221,22 @@ class TestPeer:
         unread = self._extract(out, r"unread=(\d+)")
         return {"text": text, "from": None, "unread": int(unread) if unread else 0}
 
+    def forward_message(self, username, src_chat_id, src_seq, target_chat_id,
+                        password=DEFAULT_PASSWORD):
+        """通过真实 RPC 转发消息，返回服务端确认的目标 chatId/seq/clientMsgId。"""
+        out = self._run("forwardMessage", {
+            "peer.username": username,
+            "peer.password": password,
+            "peer.arg": f"{src_chat_id}:{src_seq}:{target_chat_id}",
+        })
+        if "===FORWARD SUCCESS===" not in out:
+            return None
+        return {
+            "chat_id": self._extract(out, r"chatId=(\S+)"),
+            "seq": int(self._extract(out, r"seq=(\d+)") or 0),
+            "client_msg_id": self._extract(out, r"clientMsgId=(\S+)"),
+        }
+
     def send_msg_to(self, username, target_uid, text="hello from B"):
         """B 一键给 targetUid(A) 发送消息（自动创建私聊+发送）。
 
