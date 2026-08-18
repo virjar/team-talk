@@ -2,7 +2,7 @@
 
 AI 驱动的交互式 E2E 测试辅助模块。固化测试客户端代码，避免每次测试重写、踩语法坑。
 
-完整测试流程与约束见 [`doc/06-testing/`](../../doc/06-testing/)。
+完整测试流程与约束见 [`doc/07-testing/`](../../doc/07-testing/)。
 
 ## 文件说明
 
@@ -85,5 +85,5 @@ peer.send_msg(info.username, chat_id, 'hello from B')
 
 ## 与测试指南的关系
 
-`doc/06-testing/` 定义测试哲学（AI 交互式驱动、禁用固定脚本）和 check list。
+`doc/07-testing/` 定义 Demo 业务验收、AI 交互式驱动与 check list。
 本模块是执行工具——AI 用这些客户端做决策式操作，而非跑死脚本。

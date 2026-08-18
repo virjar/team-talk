@@ -2,8 +2,6 @@ package com.virjar.tk.ui.screen
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,15 +28,11 @@ fun LoginScreen(
     onNavigateToRegister: () -> Unit,
     error: String? = null,
     loading: Boolean = false,
-    allowCustomServer: Boolean = false,
-    serverUrl: String = "",
-    onServerUrlChange: ((String) -> Unit)? = null,
     windowStyle: Boolean = false,
 ) {
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var localError by remember { mutableStateOf<String?>(null) }
-    var showServerDialog by remember { mutableStateOf(false) }
     val displayError = localError ?: error
 
     // 窗口式启动焦点：用户名输入框（§3 交互规范；移动端不抢焦点避免弹键盘）
@@ -60,16 +54,6 @@ fun LoginScreen(
                 )
             )
     ) {
-        // 右上角服务器设置入口（仅移动端全屏样式；桌面窗口无装饰，服务器由构建 profile 决定）
-        if (allowCustomServer && !windowStyle) {
-            IconButton(
-                onClick = { showServerDialog = true },
-                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
-            ) {
-                Icon(Icons.Filled.Settings, contentDescription = "服务器设置", tint = Color.White)
-            }
-        }
-
         Column(
             modifier = Modifier.fillMaxSize().padding(horizontal = if (windowStyle) 30.dp else 32.dp),
             verticalArrangement = Arrangement.Center,
@@ -79,9 +63,6 @@ fun LoginScreen(
                 title = "TeamTalk",
                 titleColor = if (windowStyle) MaterialTheme.colorScheme.onBackground else Color.White,
             )
-            if (allowCustomServer && serverUrl.isNotEmpty()) {
-                Text(serverUrl, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.6f))
-            }
             Spacer(Modifier.height(if (windowStyle) 28.dp else 36.dp))
 
             val form: @Composable ColumnScope.() -> Unit = {
@@ -113,36 +94,5 @@ fun LoginScreen(
             Spacer(Modifier.height(16.dp))
             AuthSwitchLink("没有账号？注册", onNavigateToRegister, "login.gotoRegister")
         }
-    }
-
-    // 服务器地址编辑对话框
-    if (showServerDialog) {
-        var editUrl by remember { mutableStateOf(serverUrl) }
-        AlertDialog(
-            onDismissRequest = { showServerDialog = false },
-            title = { Text("服务器设置") },
-            text = {
-                Column {
-                    Text("HTTP 地址（含 https://）", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(4.dp))
-                    OutlinedTextField(
-                        value = editUrl,
-                        onValueChange = { editUrl = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        placeholder = { Text("https://your-server.com") },
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    onServerUrlChange?.invoke(editUrl.trim())
-                    showServerDialog = false
-                }) { Text("确定") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showServerDialog = false }) { Text("取消") }
-            },
-        )
     }
 }

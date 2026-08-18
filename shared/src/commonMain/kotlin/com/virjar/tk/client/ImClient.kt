@@ -283,7 +283,7 @@ class ImClient(
             .option(ChannelOption.SO_KEEPALIVE, true)
             .handler(object : ChannelInitializer<SocketChannel>() {
                 override fun initChannel(ch: SocketChannel) {
-                    // 协议 v3：无握手层——首帧 AUTH 即连接序言
+                    // 当前协议无独立握手层：首帧 AUTH 即连接序言
                     ch.pipeline()
                         .addLast(IdleStateHandler(
                             PacketCodec.READ_IDLE_TIMEOUT_SECONDS,
@@ -300,7 +300,7 @@ class ImClient(
                 _state.value = ConnectionState.DISCONNECTED
                 if (!destroyed) scheduleReconnect()
             } else {
-                // TCP 就绪 = 数据阶段就绪（v3 无握手）：建 scope、置 CONNECTED、发认证
+                // TCP 就绪 = 数据阶段就绪（无独立握手）：建 scope、置 CONNECTED、发认证
                 onTcpReady((future as io.netty.channel.ChannelFuture).channel())
             }
         }
@@ -320,7 +320,7 @@ class ImClient(
         _state.value = ConnectionState.CONNECTED
 
         // 认证包（连接序言）：lastEventId 现取最新游标（离线补发）。
-        // 连上即发——v3 无"握手完成"事件，从根上消除 FFAC6B1 类竞态。
+        // 连上即发——无"握手完成"事件，从根上消除 FFAC6B1 类竞态。
         pendingAuth?.let {
             val auth = lastEventIdProvider?.invoke()
                 ?.takeIf { id -> id > 0L }

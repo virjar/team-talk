@@ -102,8 +102,8 @@ TeamTalk/
 ├── desktop/       # Desktop 应用 — ComposeWindow 入口、三栏布局、测试服务
 ├── doc/           # 详细文档（7大模块多级目录）
 ├── tools/e2e/     # E2E 测试工具（TestHttpServer 客户端、TestPeer 对端脚本）
-├── buildSrc/      # Gradle 构建渠道定义（BuildProfile）
-├── gradle/        # secrets 文件（*.secrets，不入 Git）
+├── buildSrc/      # Demo 配置解析与部署逻辑
+├── gradle/profiles/ # 唯一 Demo 配置；secrets 不入 Git
 └── docker-compose.yml  # PostgreSQL 开发环境
 ```
 
@@ -118,17 +118,14 @@ TeamTalk/
 ### 启动开发环境
 
 ```bash
-# 1. 启动基础设施
-docker compose up -d
+# 客户端始终连接 Demo，并开启语义测试端口
+./gradlew :desktop:runDemo
 
-# 2. 启动服务端（HTTP 8080 / TCP 5100）
-./gradlew :server:run
+# 编译检查
+./gradlew :desktop:compileKotlinDesktop
 
-# 3. 启动 Desktop 客户端
-./gradlew :desktop:run
-
-# 4. 编译检查（最快验证）
-./gradlew :desktop:compileKotlin
+# 真实业务验收
+./gradlew :server:demoTest
 ```
 
 详细的开发环境搭建请阅读 [doc/00-overview/getting-started/develop.md](doc/00-overview/getting-started/develop.md)。
@@ -137,20 +134,11 @@ docker compose up -d
 
 ```bash
 ./gradlew :desktop:compileKotlinDesktop  # 编译检查（最快）
-./gradlew :server:run                     # 启动服务端
-./gradlew :desktop:runDev                 # Desktop（dev profile）
-./gradlew :desktop:runDemo                # Desktop（demo profile，含测试HTTP服务）
-./gradlew :server:test                    # 运行集成测试
-./gradlew deployServerDemo                # 部署服务端到 demo 服务器
-```
-
-### Desktop 多实例运行
-
-通过自定义数据目录运行多个客户端实例：
-
-```bash
-./gradlew :desktop:run -PDATA_DIR=$HOME/.tk/user1
-./gradlew :desktop:run -PDATA_DIR=$HOME/.tk/user2
+./gradlew :server:run                     # 本地服务端调试
+./gradlew :desktop:runDemo                # Desktop 连接 Demo，含测试 HTTP 服务
+./gradlew :server:test                    # 本地确定性回归
+./gradlew :server:demoTest                # Demo 真实业务 E2E
+./gradlew deployServerDemo                # 部署服务端到 Demo
 ```
 
 ## 架构概览
@@ -207,20 +195,17 @@ docker compose up -d
 
 ## 部署
 
-所有部署通过 Gradle 多渠道构建系统完成，Profile 是唯一配置入口：
+所有客户端、部署与远程验收共享唯一 Demo 配置：
 
 ```bash
-# 首次部署（HTTP 模式）
-./gradlew deployServerDemo
-
-# 首次部署（HTTPS 模式）
-./gradlew deployServerDemo -PsslCert=cert.pem -PsslKey=key.pem
-
 # 升级（自动检测已有部署，保留数据和配置）
 ./gradlew deployServerDemo
 
-# 构建并上传客户端安装包
-./gradlew uploadDemoRelease
+# 部署后的真实业务验收
+./gradlew :server:demoTest
+
+# 构建并上传 Demo 客户端安装包
+./gradlew uploadRelease
 ```
 
 生产环境目录结构：
@@ -259,7 +244,7 @@ docker compose up -d
 | [doc/03-client/](doc/03-client/) | 客户端架构（本地优先/状态合并/文件树） |
 | [doc/04-shared/](doc/04-shared/) | 共享 SDK（模型/协议/TkLogger） |
 | [doc/05-logging/](doc/05-logging/) | 日志体系（trace/fault/HTTP上传/Crash） |
-| [doc/06-testing/](doc/06-testing/) | E2E 测试（TestHttpServer/testTag/用例） |
+| [doc/07-testing/](doc/07-testing/) | E2E 测试（Demo/TestHttpServer/testTag/用例） |
 | [doc/07-conventions/](doc/07-conventions/) | 编码规范（6大约束） |
 | [doc/00-overview/architecture-comparison.md](doc/00-overview/architecture-comparison.md) | 与 Signal/Telegram 等横向对比 |
 | [doc/00-overview/getting-started/develop.md](doc/00-overview/getting-started/develop.md) | 开发环境搭建 |

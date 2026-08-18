@@ -1,7 +1,23 @@
 # E2E 测试基础设施
 
-> TeamTalk 的端到端测试采用 AI 驱动模式，通过 TestHttpServer 语义 Action 操作 UI，
-> TestPeer 模拟对端用户。不写固定脚本，每步先 dump 状态再决策。
+> 真实 Demo 是业务功能的主验收环境。协议级 E2E 由 `:server:demoTest` 执行；
+> 客户端 E2E 由 AI 通过 TestHttpServer / Android 语义操作执行，每步先读状态再决策。
+
+## 0. 测试分层与发布门禁
+
+| 层级 | 目的 | 标准入口 | 适合覆盖 |
+|---|---|---|---|
+| 本地安全网 | 快速、确定、可定位 | `:shared:jvmTest` / `:app:desktopTest` / `:server:test` | 协议编解码、算法边界、存储机制、组件回归 |
+| Demo 协议 E2E | 验证真实部署、数据库、文件端点与多会话 | `:server:demoTest` | 认证、好友、群聊、消息、文件/图片/语音、编辑/撤回/转发 |
+| 真实客户端 | 验证用户可见行为 | `:desktop:runDemo` / Android Debug APK | UI 状态、动画、下载、窗口、截图证据 |
+
+新增业务功能不应只在本地 fake/embedded 环境中完成验收。标准顺序是：
+
+```text
+本地安全网 → 部署 Demo → :server:demoTest → 真实客户端语义操作 → 截图/语义树证据
+```
+
+本地已存在的重集成测试作为回归资产保留，但新的跨服务业务用例应优先写入 `RemoteDemoE2eTest`。
 
 ## 目录
 

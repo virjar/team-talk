@@ -1,16 +1,11 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.gradle.internal.os.OperatingSystem
-import profiles.BuildProfile
+import profiles.DemoConfig
 import java.util.jar.JarFile
 import java.util.jar.JarOutputStream
 import java.util.zip.ZipEntry
 
-@Suppress("UNCHECKED_CAST")
-val allProfiles = rootProject.extra.get("allProfiles") as Map<String, BuildProfile>
-// 活跃 profile：由根 build.gradle.kts 从 -Pprofile 参数解析。
-// 打包时把它的服务端地址固化进产物 JVM 启动参数（对齐 V1 机制）。
-val activeProfile = rootProject.extra.get("activeProfile") as BuildProfile
-val activeProfileName = rootProject.extra.get("activeProfileName") as String
+val demoConfig = rootProject.extra.get("demoConfig") as DemoConfig
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
@@ -76,15 +71,12 @@ compose.desktop {
             packageName = "TeamTalk"
             packageVersion = rootProject.extra.get("packageVersion") as String
 
-            // ── Profile 固化：把 activeProfile 的服务端地址编译进产物 JVM 启动参数 ──
-            // 对齐 V1 机制。由 -Pprofile 参数选定 profile（默认 dev）。
+            // Demo 地址固化进安装包 JVM 启动参数。
             // 运行时 ServerConfig.defaultServerConfig() 读取这些 JVM 属性拿到正确服务端地址，
-            // 否则打包产物会 fallback 到 localhost:5100（连不上任何真实服务器）。
-            // 注意：是 nativeDistributions 层（打包专用），不影响 run<Profile> 开发运行任务。
-            jvmArgs.add("-Dteamtalk.server.url=${activeProfile.serverUrl}")
-            jvmArgs.add("-Dteamtalk.tcp.host=${activeProfile.tcpHost}")
-            jvmArgs.add("-Dteamtalk.tcp.port=${activeProfile.tcpPort}")
-            jvmArgs.add("-Dteamtalk.allow.custom.server=${activeProfile.allowCustomServer}")
+            // 注意：是 nativeDistributions 层（打包专用），不影响 runDemo 开发运行任务。
+            jvmArgs.add("-Dteamtalk.server.url=${demoConfig.serverUrl}")
+            jvmArgs.add("-Dteamtalk.tcp.host=${demoConfig.tcpHost}")
+            jvmArgs.add("-Dteamtalk.tcp.port=${demoConfig.tcpPort}")
 
             // 打包前从编译产物移除测试 HTTP 服务相关 class（生产构建不含测试代码）。
             // compileKotlinDesktop 产出后在 runtimeClasspath 里，打包时排除 test 包。
@@ -337,22 +329,16 @@ tasks.register("stripRuntimeFonts") {
     }
 }
 
-// 为每个 profile 动态注册 run<Profile> 任务
-allProfiles.forEach { (pn, profile) ->
-    val cap = pn.replaceFirstChar { it.uppercase() }
-    tasks.register<JavaExec>("run$cap") {
-        group = "application"
-        description = "Run desktop client with profile: $pn (dev/demo 含测试 HTTP 服务)"
-        mainClass.set("com.virjar.tk.MainKt")
-        classpath = configurations["desktopRuntimeClasspath"] + kotlin.targets["desktop"].compilations["main"].output.allOutputs
-        jvmArgs = listOf(
-            "-Dteamtalk.server.url=${profile.serverUrl}",
-            "-Dteamtalk.tcp.host=${profile.tcpHost}",
-            "-Dteamtalk.tcp.port=${profile.tcpPort}",
-            "-Dteamtalk.allow.custom.server=${profile.allowCustomServer}",
-            "-Dteamtalk.data.dir=${rootProject.file("data/desktop").absolutePath}",
-            "-Dteamtalk.is.dev=true",
-            // dev 透传：强制主题（暗色走查截图用），如 -Dteamtalk.theme=dark
-        ) + System.getProperty("teamtalk.theme")?.let { listOf("-Dteamtalk.theme=$it") }.orEmpty()
-    }
+tasks.register<JavaExec>("runDemo") {
+    group = "application"
+    description = "Run Desktop against Demo with the test HTTP service"
+    mainClass.set("com.virjar.tk.MainKt")
+    classpath = configurations["desktopRuntimeClasspath"] + kotlin.targets["desktop"].compilations["main"].output.allOutputs
+    jvmArgs = listOf(
+        "-Dteamtalk.server.url=${demoConfig.serverUrl}",
+        "-Dteamtalk.tcp.host=${demoConfig.tcpHost}",
+        "-Dteamtalk.tcp.port=${demoConfig.tcpPort}",
+        "-Dteamtalk.data.dir=${rootProject.file("data/desktop").absolutePath}",
+        "-Dteamtalk.is.dev=true",
+    ) + System.getProperty("teamtalk.theme")?.let { listOf("-Dteamtalk.theme=$it") }.orEmpty()
 }

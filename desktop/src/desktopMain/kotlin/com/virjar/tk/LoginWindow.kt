@@ -174,7 +174,6 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                             onNavigateToRegister = { showRegister = true; auth.clearError() },
                             error = auth.authError,
                             loading = loginLoading,
-                            allowCustomServer = false,
                             windowStyle = true,
                         )
                     }

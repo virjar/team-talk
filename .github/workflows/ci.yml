@@ -35,7 +35,9 @@ jobs:
         run: ./gradlew :app:compileKotlinDesktop :desktop:compileKotlinDesktop
 
   test:
-    name: Tests
+    # 本地 CI 只做确定性的协议、算法、存储边界回归。
+    # 跨客户端业务验收由 demo-smoke.yml 在真实 Demo 上执行。
+    name: Local Safety Tests
     runs-on: ubuntu-latest
     needs: compile
     steps:

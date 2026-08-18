@@ -28,7 +28,8 @@ import java.util.UUID
 /**
  * 远程 demo 服务器协议级 E2E 冒烟测试。
  *
- * **默认不执行**：仅当 `-Dtk.e2e.remote=true` 时启用（避免 CI 每次都连外部 demo）。
+ * 通过 `./gradlew :server:demoTest` 执行；该任务会注入唯一 Demo 配置。
+ * 普通 `:server:test` 不启用本类，避免本地安全网依赖外部站点。
  * 用真实 [com.virjar.tk.client.ImClient] + [com.virjar.tk.client.RpcClient] 直连
  * `im.virjar.com:5100`（明文 TCP，无需 TLS），覆盖核心 IM 流程：
  * 注册 / 登录 / RPC / 好友 / 建群 / 发消息 / 订阅投递。
@@ -36,11 +37,9 @@ import java.util.UUID
  * 与 [ProtocolE2eTest] 互补：后者连 in-process 服务端（CI 常规 job），
  * 本类连真实部署的 demo（验证端到端可达性，含真实 PG/RocksDB/SSL 部署）。
  *
- * 本地运行：
+ * 标准运行：
  * ```
- * ./gradlew :server:test -Dtk.e2e.remote=true
- * # 指向其他 host（可选）
- * ./gradlew :server:test -Dtk.e2e.remote=true -Dtk.e2e.host=im.virjar.com -Dtk.e2e.port=5100
+ * ./gradlew :server:demoTest
  * ```
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -55,9 +54,22 @@ class RemoteDemoE2eTest {
     }
 
     @BeforeAll
-    fun setup() {
-        // 连通性前置检查：连不上直接失败，给出清晰提示而非一堆超时
+    fun setup() = runBlocking {
         println("[RemoteDemoE2e] target = ${RemoteDemoSupport.host}:${RemoteDemoSupport.port}")
+        // 发布门禁先做一次真实认证。若 Demo 不可达或协议版本落后，
+        // 在所有业务 case 前立即终止，避免产生数十个没有诊断价值的超时。
+        try {
+            withTimeout(8_000) {
+                RemoteDemoSupport.registerUser("readiness").close()
+            }
+        } catch (cause: Exception) {
+            throw AssertionError(
+                "Demo readiness failed: ${RemoteDemoSupport.host}:${RemoteDemoSupport.port}, " +
+                    "client protocol=${PacketCodec.PROTOCOL_VERSION}. " +
+                    "Deploy the matching server before running business acceptance.",
+                cause,
+            )
+        }
     }
 
     @AfterAll

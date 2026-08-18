@@ -15,16 +15,12 @@ import kotlin.collections.iterator
  */
 fun uploadArtifacts(
     rootDir: File,
-    profile: BuildProfile,
+    demo: DemoConfig,
     stagingDir: File? = null
 ) {
-    val deploy = profile.deploy
-        ?: throw GradleException(
-            "uploadRelease: profile '${profile.name}' does not define deploy config."
-        )
-    val host = deploy.host
-    val user = deploy.user
-    val path = deploy.path
+    val host = demo.deployHost
+    val user = demo.deployUser
+    val path = demo.deployPath
 
     val remoteDir = "$path/static/downloads"
     println("Uploading to $user@$host:$remoteDir ...")
@@ -34,7 +30,7 @@ fun uploadArtifacts(
     if (stagingDir != null && stagingDir.exists()) {
         uploadFromStaging(stagingDir, host, user, remoteDir)
     } else {
-        uploadFromBuildDir(rootDir, profile, host, user, remoteDir)
+        uploadFromBuildDir(rootDir, host, user, remoteDir)
     }
 
     println("Upload complete. Download page: https://$host/")
@@ -77,7 +73,6 @@ private fun uploadFromStaging(
 
 private fun uploadFromBuildDir(
     rootDir: File,
-    profile: BuildProfile,
     host: String,
     user: String,
     remoteDir: String
@@ -86,7 +81,7 @@ private fun uploadFromBuildDir(
         "deb" to "TeamTalk-linux.deb",
         "msi" to "TeamTalk-windows.msi"
     )
-    val desktopDir = File(rootDir, "desktop/build/compose/binaries/${profile.name}")
+    val desktopDir = File(rootDir, "desktop/build/compose/binaries/main-release")
     if (desktopDir.exists()) {
         desktopDir.walkTopDown()
             .filter { it.isFile && (it.extension in desktopRename.keys) }
@@ -108,7 +103,7 @@ private fun uploadFromBuildDir(
         }
     }
 
-    val apkDir = File(rootDir, "android/build/outputs/apk/${profile.name}/release")
+    val apkDir = File(rootDir, "android/build/outputs/apk/release")
     if (apkDir.exists()) {
         val apk = apkDir.walkTopDown()
             .filter { it.isFile && it.name.endsWith("-release.apk") }
@@ -125,27 +120,23 @@ private fun uploadFromBuildDir(
  */
 fun deployServer(
     rootDir: File,
-    profile: BuildProfile,
+    demo: DemoConfig,
     sslCert: String?,
     sslKey: String?
 ) {
-    val deploy = profile.deploy
-        ?: throw GradleException(
-            "deployServer: profile '${profile.name}' does not define deploy config."
-        )
-    val host = deploy.host
-    val user = deploy.user
-    val deployPath = deploy.path
-    val sslEnabled = profile.ssl != null
-    val sslPort = profile.ssl?.port?.toString() ?: "443"
-    val tcpPort = profile.tcpPort.toString()
+    val host = demo.deployHost
+    val user = demo.deployUser
+    val deployPath = demo.deployPath
+    val sslEnabled = true
+    val sslPort = demo.sslPort.toString()
+    val tcpPort = demo.tcpPort.toString()
 
-    val url = profile.serverUrl
+    val url = demo.serverUrl
     val port = extractHttpPort(url)
     val effectiveDefault = effectiveDefaultHttpPort(url)
 
     println("")
-    println("=== TeamTalk Deploy (profile: ${profile.name}) ===")
+    println("=== TeamTalk Demo Deploy ===")
     println("  Target: $user@$host")
     println("  Path:   $deployPath")
     println("  HTTP:   port $port")
@@ -155,11 +146,11 @@ fun deployServer(
 
     val isFirstDeploy = !remoteCheck(host, user, "test -d $deployPath/bin")
 
-    val secretsFile = File(rootDir, "gradle/profiles/${profile.name}.secrets")
+    val secretsFile = File(rootDir, "gradle/profiles/demo.secrets")
     val secrets = if (isFirstDeploy) {
-        loadOrGenerateSecrets(secretsFile, host, user, deployPath, profile.name)
+        loadOrGenerateSecrets(secretsFile, host, user, deployPath, "demo")
     } else {
-        extractSecretsFromRemote(secretsFile, host, user, deployPath, profile.name)
+        extractSecretsFromRemote(secretsFile, host, user, deployPath, "demo")
             ?: throw GradleException(
                 "Cannot extract secrets from remote env.sh. " +
                     "Check if $deployPath/conf/env.sh exists on the server."
@@ -178,7 +169,7 @@ fun deployServer(
             sslPort,
             sslCert,
             sslKey,
-            profile.name,
+            "demo",
             port,
             tcpPort,
             effectiveDefault
@@ -195,7 +186,7 @@ fun deployServer(
             sslPort,
             sslCert,
             sslKey,
-            profile.name,
+            "demo",
             port,
             tcpPort,
             effectiveDefault

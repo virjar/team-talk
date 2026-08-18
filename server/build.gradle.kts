@@ -1,3 +1,5 @@
+import profiles.DemoConfig
+
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.serialization)
@@ -94,6 +96,26 @@ tasks.test {
     listOf("tk.e2e.remote", "tk.e2e.host", "tk.e2e.port", "tk.e2e.server", "peer.action", "peer.arg", "peer.username", "peer.password", "peer.file", "peer.url", "peer.server").forEach { key ->
         System.getProperty(key)?.let { systemProperty(key, it) }
     }
+}
+
+/**
+ * 真实业务验收的唯一入口：始终对接 gradle/profiles/demo.json 指定的 Demo 站点。
+ * 本地 test 保留为快速的协议、存储与算法回归，不代替该任务。
+ */
+val demoConfig = rootProject.extra.get("demoConfig") as DemoConfig
+tasks.register<Test>("demoTest") {
+    group = "verification"
+    description = "Run business E2E tests against the deployed Demo site"
+    dependsOn("testClasses")
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform()
+    filter { includeTestsMatching("com.virjar.tk.e2e.RemoteDemoE2eTest") }
+    systemProperty("tk.e2e.remote", "true")
+    systemProperty("tk.e2e.host", demoConfig.tcpHost)
+    systemProperty("tk.e2e.port", demoConfig.tcpPort)
+    systemProperty("tk.e2e.server", demoConfig.serverUrl)
+    outputs.upToDateWhen { false }
 }
 
 // 开发模式运行服务端，数据目录指向项目根/data

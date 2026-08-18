@@ -7,6 +7,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 
 /**
@@ -91,6 +92,19 @@ fun rememberAuthController(
         }
     }
 
+    // Demo 不可达或协议版本不匹配时，服务端可能在 AUTH 响应前直接断开。
+    // 自动登录不能因此永久占据 loading 页：给连接一个有界等待，然后回到
+    // 可操作的登录页。保留 token，避免短暂网络故障破坏持久化登录态。
+    LaunchedEffect(autoLoggingIn) {
+        if (!autoLoggingIn) return@LaunchedEffect
+        delay(AUTO_LOGIN_TIMEOUT_MS)
+        if (autoLoggingIn && !isLoggedIn) {
+            imClient.disconnect()
+            autoLoggingIn = false
+            authError = "Demo 暂时无法连接，请检查网络或稍后重试"
+        }
+    }
+
     val connectionState by imClient.state.collectAsState()
     LaunchedEffect(connectionState) {
         when (connectionState) {
@@ -151,3 +165,5 @@ fun rememberAuthController(
         clearError = { authError = null },
     )
 }
+
+private const val AUTO_LOGIN_TIMEOUT_MS = 12_000L

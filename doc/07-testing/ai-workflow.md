@@ -4,6 +4,16 @@
 
 ## 环境准备
 
+完整业务验收的固定顺序：
+
+```bash
+./gradlew deployServerDemo      # 服务端有变更时
+./gradlew :server:demoTest      # 真实 Demo 协议/业务闭环
+./gradlew :desktop:runDemo      # 再做用户可见行为验收
+```
+
+每一次 UI 操作都要遵循“读取语义树 → 单步操作 → 重新读取 → 截图”，不把一串假定状态的操作固化为脚本。
+
 ### 服务端
 
 - demo 站点 `im.virjar.com` 在线
@@ -30,8 +40,8 @@ python3 -m uiautomator2 init -s <serial>
 
 **APK**：
 ```bash
-./gradlew :android:assembleDemoDebug       # 自动配置 im.virjar.com
-adb install -r android/build/outputs/apk/demo/debug/android-demo-debug.apk
+./gradlew :android:assembleDebug           # 固定连接 im.virjar.com
+adb install -r android/build/outputs/apk/debug/android-debug.apk
 ```
 
 ### Desktop

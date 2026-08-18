@@ -65,7 +65,6 @@ class TeamTalkApp : Application(), coil3.SingletonImageLoader.Factory {
             serverUrl = BuildConfig.SERVER_BASE_URL,
             tcpHost = BuildConfig.TCP_HOST,
             tcpPort = BuildConfig.TCP_PORT,
-            allowCustomServer = BuildConfig.ALLOW_CUSTOM_SERVER,
         ))
     }
 }

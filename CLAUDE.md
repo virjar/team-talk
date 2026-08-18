@@ -45,7 +45,7 @@ TeamTalk 是基于 Kotlin Multiplatform (KMP) + Jetpack Compose 的跨平台即�
 
 ### 克制参数化（配置约束）
 
-> 反例教训：Desktop 测试服务隔离曾尝试用 `-P` 参数 / per-profile BuildConfig 动态值等方案，
+> 反例教训：Desktop 测试服务隔离曾尝试用 `-P` 参数 / 动态 Profile 等方案，
 > 绕了一大圈。根因是「遇到问题就想加开关」的惯性思维。
 
 **可配置参数的组合爆炸是后期灾难**：N 个布尔开关意味着 2^N 种未测组合。这些组合分散在各处
@@ -54,9 +54,9 @@ TeamTalk 是基于 Kotlin Multiplatform (KMP) + Jetpack Compose 的跨平台即�
 
 约束：
 
-- **遇到「要不要加个开关/参数」的决策时，默认不加**。优先用固定模板（profile）和确定性逻辑
-- **新参数必须纳入 profile 模板体系**，不引入游离的 `-P` / `-D` 参数。固定模板保持条件分支数量少、可枚举
-- **构建产物必须可溯源**：每个产物内嵌 git commit + build time + profile 名（见 Android 的 BuildConfig 已实现），
+- **遇到「要不要加个开关/参数」的决策时，默认不加**。优先用唯一 Demo 配置和确定性逻辑
+- **不引入动态 Profile / flavor / 服务器切换 UI**。客户端、部署和远程验收统一读取 `gradle/profiles/demo.json`
+- **构建产物必须可溯源**：每个产物内嵌 git commit + build time（见 Android 的 BuildConfig 已实现），
   Desktop 同步补齐。排查问题时不靠「回忆用了什么参数」，靠产物自带的构建信息
 - **AI/脚本调参要留痕**：自动化脚本动态拼接构建参数时，实际参数组合必须能从产物或日志追溯
 - 定期梳理存量参数开关，收敛不必要的可配置项（专项任务，待启动）
@@ -149,8 +149,8 @@ IM 基本体验：**除非被踢/token 失效，重启 app 直达主界面，不
 
 ### 测试策略
 
-- **重集成测试，轻单元测试**：每个 RPC 方法都有集成测试覆盖
-- 单元测试仅用于不依赖基础设施的纯计算逻辑
+- **业务验收以 Demo 为主**：新增跨客户端/RPC 业务场景优先加入 `RemoteDemoE2eTest`，通过 `:server:demoTest` 执行
+- 本地测试是快速安全网，主要覆盖协议编解码、算法边界、存储机制与确定性回归
 - **不要为测试写代码**：只被单元测试使用的生产代码应该删除
 - **E2E 测试文档**：[doc/07-testing/](doc/07-testing/)（Android + Desktop）
 
@@ -253,7 +253,7 @@ team-talk/
 | 修改客户端日志 | `shared/.../util/AppLog.kt` + `shared/.../client/HttpLogUploader.kt` |
 | 不兼容变更 | 递增 `shared/.../protocol/Frame.kt` 中的 `PROTOCOL_VERSION` |
 | 添加 SDK 集成测试 | `shared/src/commonTest/`（bot 对 bot，`-Dtk.botTest.host=...` 对真实服务器）|
-| 添加服务端 e2e | `server/src/test/`（TestPeer，`-Dtk.e2e.remote=true` 对真实服务器）|
+| 添加服务端 e2e | `server/src/test/.../RemoteDemoE2eTest.kt`，由 `:server:demoTest` 对真实 Demo 执行 |
 | 无头 bot 开发 | `shared/.../bot/ImBot.kt`（register/login → messages 流 → sendText）|
 
 ---
@@ -277,13 +277,13 @@ team-talk/
 ```bash
 docker compose up -d                                    # PostgreSQL
 ./gradlew :server:run                                   # 服务端
-./gradlew :desktop:run                                  # Desktop 客户端
-./gradlew :desktop:compileKotlin                        # 仅编译检查（最快验证）
-./gradlew :server:test                                  # 集成测试（默认运行，使用 Embedded PostgreSQL）
+./gradlew :desktop:runDemo                              # Desktop 连接真实 Demo
+./gradlew :desktop:compileKotlinDesktop                 # 仅编译检查（最快验证）
+./gradlew :server:test                                  # 本地确定性回归
 ./gradlew :server:test -PskipTests                      # 本地快速跳过测试
-./gradlew :server:test -Dtk.e2e.remote=true             # 远程 demo E2E（连真实 im.virjar.com，默认关闭）
+./gradlew :server:demoTest                              # Demo 真实业务 E2E
 ./gradlew :shared:jvmTest                               # shared 模块单测（协议编解码 round-trip）
-./gradlew :android:assembleDemoDebug                     # Android demo APK（连 im.virjar.com）
+./gradlew :android:assembleDebug                         # Android Demo APK
 ./gradlew :desktop:packageReleaseDistributionForCurrentOS # Desktop release 产物（含 ProGuard 压缩，体积 -36%）
 ```
 
@@ -291,12 +291,13 @@ docker compose up -d                                    # PostgreSQL
 
 - **`teamtalk.sh` 必须在构建产物中**：`server/src/main/resources/bin/teamtalk.sh` 通过 `distributions` 打包到 `bin/`，systemd 通过它启动（加载 env.sh + 设 JAVA_OPTS）。手动 rsync 部署时**必须排除运行态文件**（`--exclude data/ logs/ docker-compose.yml conf/env.sh conf/ssl/`），否则 `--delete` 会误删这些
 - **服务端启动入口**：`Application.kt` 用 `embeddedServer(Netty, environment, configure, module)` 显式配置 HTTP(8080) + HTTPS(443, sslConnector) connectors，**从环境变量读取**（KTOR_PORT/KTOR_SSL_PORT/SSL_KEYSTORE/SSL_KEYSTORE_PASSWORD/SSL_PRIVATE_KEY_PASSWORD，与 env.sh 一致）。不要用 `embeddedServer(Netty, module=...)` 单参重载——它不读 conf、不支持 SSL
-- **demo E2E 测试**：`RemoteDemoE2eTest` 连真实 demo 服务器（`@EnabledIfSystemProperty("tk.e2e.remote")` 默认关闭），`./gradlew :server:test -Dtk.e2e.remote=true` 启用。测试账号用户名前缀 `zd-`（≤50 字符，避开 UserService 长度校验）
+- **Demo E2E 测试**：`RemoteDemoE2eTest` 连接唯一 Demo，只通过 `./gradlew :server:demoTest` 作为公开入口。测试账号用户名前缀 `zd-`（≤50 字符）
 
 ## CI/CD
 
-- **CI**（`.github/workflows/ci.yml`）：push/PR 自动编译 + 服务端测试
-- **Release**（`.github/workflows/release.yml`）：手动触发，多平台并行构建（Server/Windows/Linux/macOS/Android）
+- **CI**（`.github/workflows/ci.yml`）：push/PR 自动编译 + 本地确定性测试
+- **Demo 验收**（`.github/workflows/demo-smoke.yml`）：对已部署站点执行业务 E2E
+- **Release**（`.github/workflows/release.yml`）：多平台并行构建；手动部署后先验收再上传客户端
 - Desktop 交叉编译：Windows(msi) 在 windows-latest，Linux(deb) 在 ubuntu-latest，macOS(dmg) 在 macos-latest（arm64 + x86_64）
 
 ## Git 工作流

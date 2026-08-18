@@ -76,14 +76,10 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AuthFlow(imClient: ImClient, config: ServerConfig, scope: kotlinx.coroutines.CoroutineScope, authError: String?, onAuthErrorChange: (String?) -> Unit) {
     var showRegister by remember { mutableStateOf(false) }
-    var customServerUrl by remember { mutableStateOf(config.serverUrl) }
-    var customTcpHost by remember { mutableStateOf(config.tcpHost) }
-    var customTcpPort by remember { mutableIntStateOf(config.tcpPort) }
-
     if (showRegister) {
         RegisterScreen(
             onRegister = { u, p, n -> onAuthErrorChange(null); scope.launch {
-                try { imClient.register(u, p, n, "android-${UUID.randomUUID()}", "Android", customTcpHost, customTcpPort) }
+                try { imClient.register(u, p, n, "android-${UUID.randomUUID()}", "Android", config.tcpHost, config.tcpPort) }
                 catch (e: IllegalArgumentException) { onAuthErrorChange(e.message) }
             }},
             onNavigateBack = { showRegister = false; onAuthErrorChange(null) }, error = authError,
@@ -91,18 +87,10 @@ private fun AuthFlow(imClient: ImClient, config: ServerConfig, scope: kotlinx.co
     } else {
         LoginScreen(
             onLogin = { u, p -> onAuthErrorChange(null); scope.launch {
-                try { imClient.login(u, p, "android-${UUID.randomUUID()}", "Android", customTcpHost, customTcpPort) }
+                try { imClient.login(u, p, "android-${UUID.randomUUID()}", "Android", config.tcpHost, config.tcpPort) }
                 catch (e: IllegalArgumentException) { onAuthErrorChange(e.message) }
             }},
             onNavigateToRegister = { showRegister = true; onAuthErrorChange(null) }, error = authError,
-            allowCustomServer = BuildConfig.ALLOW_CUSTOM_SERVER,  // 编译时常量，false 时 R8 删除整个分支
-            serverUrl = customServerUrl,
-            onServerUrlChange = { newUrl ->
-                customServerUrl = newUrl
-                val host = newUrl.removePrefix("https://").removePrefix("http://").substringBefore("/")
-                customTcpHost = host
-                configureServerConfig(ServerConfig(newUrl, host, customTcpPort, BuildConfig.ALLOW_CUSTOM_SERVER))
-            },
         )
     }
 }
