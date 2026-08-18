@@ -20,6 +20,7 @@ TestPeer 是 Kotlin 测试（server 模块），扮演账号 B 与 UI 操作的�
 
 前置：gradle/deployment.json 指定的服务器在线，TCP 端点可达。
 """
+import base64
 import os
 import re
 import subprocess
@@ -217,9 +218,21 @@ class TestPeer:
         })
         if "FAILED" in out:
             return None
-        text = self._extract(out, r"text=(.*?) unread=")
+        # 会话摘要保留换行；`.` 默认不跨行，会把多行消息误解析为 None。
+        text = self._extract(out, r"text=([\s\S]*?) unread=")
         unread = self._extract(out, r"unread=(\d+)")
-        return {"text": text, "from": None, "unread": int(unread) if unread else 0}
+        message_type = self._extract(out, r"===RECV_MESSAGE=== type=(-?\d+)")
+        markdown_base64 = self._extract(out, r"markdownBase64=([^\s<]*)")
+        markdown = None
+        if markdown_base64:
+            markdown = base64.b64decode(markdown_base64).decode("utf-8")
+        return {
+            "text": text,
+            "from": None,
+            "unread": int(unread) if unread else 0,
+            "message_type": int(message_type) if message_type else None,
+            "markdown": markdown,
+        }
 
     def forward_message(self, username, src_chat_id, src_seq, target_chat_id,
                         password=DEFAULT_PASSWORD):

@@ -177,9 +177,11 @@ class DesktopClient:
                 return node.get("editableText")
         return None
 
-    def keypress(self, key, window=None):
-        """发送按键（如 ESCAPE）。用于关闭子窗口/面板。"""
+    def keypress(self, key, window=None, meta=False):
+        """发送按键（如 ENTER）；meta=True 表示 Cmd/Ctrl 组合键。"""
         params = {"key": key}
+        if meta:
+            params["meta"] = "true"
         if window:
             params["window"] = window
         code, body = self._req("/keypress", params, method="POST")

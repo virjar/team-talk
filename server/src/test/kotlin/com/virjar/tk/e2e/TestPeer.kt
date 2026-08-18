@@ -7,6 +7,7 @@ import com.virjar.tk.rpc.gen.MessageRpcContract
 import com.virjar.tk.body.FileBody
 import com.virjar.tk.body.ImageBody
 import com.virjar.tk.body.buildRichTextBody
+import com.virjar.tk.body.markdownContentOrNull
 import com.virjar.tk.body.VideoBody
 import com.virjar.tk.body.VoiceBody
 import com.virjar.tk.client.ConnectionState
@@ -295,6 +296,22 @@ class TestPeer {
             session.close(); return@runBlocking
         }
         println("===RECV_CHECK=== text=${conv.lastMessage ?: "(empty)"} unread=${conv.unreadCount} chatId=${conv.chatId.take(12)}")
+        val historyResp = session.invoke(
+            "message",
+            MessageRpcContract.M_GET_HISTORY,
+            ProtoCodec.encodePayload {
+                writeString(conv.chatId)
+                writeVarLong(0)
+                writeVarInt(1)
+            },
+        )
+        val latest = historyResp.payload
+            ?.takeIf { historyResp.status == 0 }
+            ?.let { ProtoCodec.decodeList(Message, it).firstOrNull() }
+        val markdownBase64 = latest?.body?.markdownContentOrNull()
+            ?.let { java.util.Base64.getEncoder().encodeToString(it.toByteArray(Charsets.UTF_8)) }
+            .orEmpty()
+        println("===RECV_MESSAGE=== type=${latest?.messageType ?: -1} markdownBase64=$markdownBase64")
         session.close()
     }
 

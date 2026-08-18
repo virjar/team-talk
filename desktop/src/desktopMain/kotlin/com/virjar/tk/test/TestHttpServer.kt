@@ -231,6 +231,19 @@ object TestHttpServer {
             exchange.send(200, """{"clicked":true,"method":"action","testTag":"${params["testTag"] ?: params["text"] ?: ""}"}""")
             return
         }
+        // BasicTextField/RichTextEditor 本身没有 OnClick，但会暴露 RequestFocus。
+        // 直接调用语义动作，保持整条自动化链路在进程内，不依赖 Robot。
+        val targetWindow = windows[wid] ?: windows["main"]
+        if (targetWindow != null) {
+            EventQueue.invokeAndWait {
+                targetWindow.toFront()
+                targetWindow.requestFocus()
+            }
+        }
+        if (invokeRequestFocus(node)) {
+            exchange.send(200, """{"clicked":true,"method":"focus-action","testTag":"${params["testTag"] ?: params["text"] ?: ""}"}""")
+            return
+        }
         // fallback：坐标点击（需系统辅助功能权限）
         val b = node.boundsInWindow
         val cx = (b.left + b.right) / 2
@@ -390,6 +403,24 @@ object TestHttpServer {
         }
     }
 
+    /** 聚焦可编辑节点（TextField 通常没有 OnClick 语义）。 */
+    @Suppress("UNCHECKED_CAST")
+    private fun invokeRequestFocus(node: SemanticsNode): Boolean {
+        val target = findNodeWithAction(node, SemanticsActions.RequestFocus) ?: return false
+        val action = safeGet(target.config, SemanticsActions.RequestFocus) ?: return false
+        val lambda = action.action ?: return false
+        var requested = false
+        return try {
+            val request = {
+                requested = (lambda as kotlin.Function0<*>).invoke() as? Boolean ?: true
+            }
+            if (EventQueue.isDispatchThread()) request() else EventQueue.invokeAndWait(request)
+            requested
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     /** 调用节点的 OnLongClick 语义 action（用于 combinedClickable 的长按菜单）。 */
     private fun invokeLongClickAction(node: SemanticsNode): Boolean {
         var current: SemanticsNode? = node
@@ -518,6 +549,7 @@ object TestHttpServer {
             "ENTER" -> KeyEvent.VK_ENTER
             "TAB" -> KeyEvent.VK_TAB
             "BACKSPACE" -> KeyEvent.VK_BACK_SPACE
+            "SPACE" -> KeyEvent.VK_SPACE
             else -> KeyEvent.getExtendedKeyCodeForChar(keyName.firstOrNull()?.code ?: ' '.code)
         }
         val modifiers = if (meta) {
@@ -543,6 +575,27 @@ object TestHttpServer {
                 handled = manager.dispatchKeyEvent(
                     KeyEvent(source, KeyEvent.KEY_PRESSED, now, modifiers, keyCode, KeyEvent.CHAR_UNDEFINED)
                 )
+                // AWT 文本输入依赖 KEY_TYPED；只派发 pressed/released 可以触发
+                // Compose 快捷键，却不会真正向编辑器写入换行。组合键不产生字符事件。
+                val typedChar = when {
+                    meta -> null
+                    keyName == "ENTER" -> '\n'
+                    keyName == "SPACE" -> ' '
+                    keyName.length == 1 && keyName[0].isLetterOrDigit() -> keyName.lowercase()[0]
+                    else -> null
+                }
+                if (typedChar != null) {
+                    handled = manager.dispatchKeyEvent(
+                        KeyEvent(
+                            source,
+                            KeyEvent.KEY_TYPED,
+                            now,
+                            0,
+                            KeyEvent.VK_UNDEFINED,
+                            typedChar,
+                        ),
+                    ) || handled
+                }
                 manager.dispatchKeyEvent(
                     KeyEvent(source, KeyEvent.KEY_RELEASED, now, modifiers, keyCode, KeyEvent.CHAR_UNDEFINED)
                 )
