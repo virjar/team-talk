@@ -21,7 +21,7 @@ import com.virjar.tk.protocol.payload.MessageAckPayload
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import com.virjar.tk.repository.FileRepository
-import com.virjar.tk.repository.UploadResult
+import com.virjar.tk.http.UploadResult
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty
 import java.io.*
 import java.util.UUID

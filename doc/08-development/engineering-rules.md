@@ -5,8 +5,8 @@
 
 ## 1. 依赖与所有权
 
-- `shared ← app ← android/desktop` 单向依赖。
-- `server → shared` 复用契约，不反向被客户端引用。
+- `protocol ← shared ← app ← android/desktop` 单向依赖。
+- `server → protocol` 只复用契约；服务端生产代码禁止依赖客户端 SDK `shared`。
 - 每个长期对象有唯一所有者，owner 销毁时级联销毁。
 - `close/destroy` 幂等。
 - 网络断开只清连接层；AUTH_FAILED 清用户层。

@@ -1,6 +1,5 @@
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
-    alias(libs.plugins.ksp)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.android.library)
     alias(libs.plugins.sqldelight)
@@ -9,21 +8,21 @@ plugins {
 /**
  * IM SDK 模块（= shared）。
  *
- * 完整 SDK 闭环：协议 + 模型 + ImClient/RpcClient（连接层）
+ * 完整客户端 SDK 闭环：ImClient/RpcClient（连接层）
  * + Repository + LocalCache + EventProcessor（数据层）+ 无头入口。
+ * wire、模型和 RPC IDL 由独立 :protocol 模块提供。
  * UI（:app）只消费本模块公开 API；无头客户端/AI bot 可直接依赖本模块运行。
  *
- * 分层（单向依赖）：shared(SDK) ← app(UI) ← android/desktop(shell)；server 依赖协议定义。
+ * 分层（单向依赖）：protocol ← shared(SDK) ← app(UI) ← android/desktop(shell)。
  */
 kotlin {
     jvm()
     androidTarget()
 
     sourceSets {
-        val commonMain by getting {
-            kotlin.srcDir("build/generated/ksp/metadata/commonMain/kotlin")
-        }
+        val commonMain by getting
         commonMain.dependencies {
+            api(project(":protocol"))
             api(libs.kotlinx.serialization.json)
             api(libs.kotlinx.coroutines.core)
             implementation(libs.netty.handler)
@@ -64,17 +63,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-}
-
-// RPC IDL 处理器：扫描 @RpcService interface 生成 Contract/Stub/Proxy。
-// 只跑 metadata 编译（生成物为 common 源码），目录注册进 commonMain 供全部 target 编译。
-dependencies {
-    add("kspCommonMainMetadata", project(":rpc-processor"))
-}
-
-// 各 target 编译依赖 KSP 生成（srcDir 注册了生成目录，但 Gradle 不知道目录内容何时产生）
-tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-    dependsOn("kspCommonMainKotlinMetadata")
 }
 
 // ── ImBot CLI 分发包（headless）──

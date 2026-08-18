@@ -2,7 +2,7 @@ package com.virjar.tk.repository
 
 import com.virjar.tk.Outcome
 import com.virjar.tk.client.LocalCache
-import com.virjar.tk.client.RpcInvoker
+import com.virjar.tk.rpc.RpcInvoker
 import com.virjar.tk.model.Contact
 import com.virjar.tk.model.ContactApply
 import com.virjar.tk.outcome

@@ -15,7 +15,7 @@
 
 当文档与代码不一致时，按以下方式处理：
 
-1. wire、RPC、Notify 和消息体的最终事实源是 `shared` 中的契约与生成测试；
+1. wire、RPC、Notify 和消息体的最终事实源是 `protocol` 中的契约与生成测试；
 2. 服务端权限和持久化语义以领域服务及其测试为准；
 3. UI 选择器以源码中的 `testTag` 为准；
 4. 部署参数以 `gradle/deployment.json` 的 schema 和运行时代码为准；

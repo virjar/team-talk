@@ -22,9 +22,9 @@ TCP stream
 
 ## 规范与代码的关系
 
-- 帧和原语：`shared/.../protocol/PacketCodec.kt`、`PacketBuffer.kt`。
+- 帧和原语：`protocol/.../protocol/PacketCodec.kt`、`PacketBuffer.kt`。
 - 顶层类型：`PacketType.kt`。
-- RPC：`shared/.../rpc/def/*Rpc.kt` 及 KSP 生成 Contract/Stub/Proxy。
+- RPC：`protocol/.../rpc/def/*Rpc.kt` 及 KSP 生成 Contract/Stub/Proxy。
 - 模型：实现 `IProto` 的 `model/`、`body/` 和 `protocol/payload/`。
 - 通知：`NotifyType.kt` 与 `NotifyContracts.kt`。
 

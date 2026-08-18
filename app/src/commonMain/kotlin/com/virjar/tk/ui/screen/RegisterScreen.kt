@@ -9,7 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import com.virjar.tk.client.AuthRules
+import com.virjar.tk.auth.AuthRules
 import com.virjar.tk.ui.component.AuthCard
 import com.virjar.tk.ui.component.AuthError
 import com.virjar.tk.ui.component.AuthField

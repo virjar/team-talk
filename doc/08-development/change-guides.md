@@ -2,7 +2,7 @@
 
 ## 1. 新增 RPC
 
-1. 在 `shared/.../rpc/def/XxxRpc.kt` 末尾增加方法。
+1. 在 `protocol/.../rpc/def/XxxRpc.kt` 末尾增加方法。
 2. 使用已有 IProto 模型；必要时新增模型和 round-trip。
 3. 编译生成 Contract/Proxy/Stub。
 4. 在服务端实现对应 Stub 接口，调用领域服务。

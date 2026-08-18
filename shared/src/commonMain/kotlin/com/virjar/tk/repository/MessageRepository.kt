@@ -3,7 +3,7 @@ package com.virjar.tk.repository
 import com.virjar.tk.Outcome
 import com.virjar.tk.client.LocalCache
 import com.virjar.tk.client.MessageSender
-import com.virjar.tk.client.RpcInvoker
+import com.virjar.tk.rpc.RpcInvoker
 import com.virjar.tk.model.Message
 import com.virjar.tk.outcome
 import com.virjar.tk.protocol.payload.MessageAckPayload

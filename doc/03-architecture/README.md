@@ -7,21 +7,26 @@ TeamTalk 是全栈 Kotlin 的模块化单体：服务端部署为一个进程，
 ## 1. 系统上下文
 
 ```text
-┌──────────────┐       ┌──────────────┐       ┌──────────────┐
-│ Android      │       │ Desktop      │       │ ImBot/Agent  │
-│ Nav + UI     │       │ Windows + UI │       │ headless SDK │
-└──────┬───────┘       └──────┬───────┘       └──────┬───────┘
-       └──────────────┬────────┴───────────────┬──────┘
-                      │ shared IM SDK          │
-                      ├── TCP binary protocol  │
-                      └── HTTP files/logs      │
-                              ▼
-┌───────────────────────────────────────────────────────────────┐
-│ TeamTalk server：Ktor HTTP + Netty TCP + domain services      │
-└──────────────┬──────────────────┬──────────────────┬──────────┘
-               ▼                  ▼                  ▼
-          PostgreSQL           RocksDB             Lucene
-          relation data       messages/files      full-text
+┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│ Android      │   │ Desktop      │   │ ImBot/Agent  │
+└──────┬───────┘   └──────┬───────┘   └──────┬───────┘
+       └─────────────┬────────┴─────────────┬──────┘
+                     ▼                         ▼
+            ┌──────────────────┐
+            │ shared client SDK│
+            │ connection/cache │
+            │ repository/bot   │
+            └────────┬─────────┘
+                     │
+                     ▼
+            ┌──────────────────┐       ┌──────────────────┐
+            │ protocol contract│ ◀──── │ TeamTalk server  │ ◀── Admin HTTP
+            └──────────────────┘       │ Ktor/Netty/domain│
+                                       └────────┬─────────┘
+                                                │
+                           ┌───────────────────┼───────────────────┐
+                           ▼                   ▼                   ▼
+                      PostgreSQL             RocksDB               Lucene
 ```
 
 管理后台通过 HTTP 调用服务端管理接口；它不参与实时消息链路。
@@ -30,7 +35,8 @@ TeamTalk 是全栈 Kotlin 的模块化单体：服务端部署为一个进程，
 
 | 模块 | 负责 | 不负责 |
 |---|---|---|
-| `shared` | 协议、模型、连接、认证会话、事件、缓存接口、Repository、ImBot | Compose UI、平台导航 |
+| `protocol` | wire、传输模型、消息体、RPC IDL/生成物和跨端纯规则 | 连接、缓存、UI、服务端存储 |
+| `shared` | 客户端连接、认证会话、事件、缓存、Repository、ImBot | Compose UI、服务端实现 |
 | `rpc-processor` | 从 RPC IDL 生成 Contract/Stub/Proxy | 运行时业务 |
 | `app` | 共享 Compose 内容、ViewModel、业务 UI 状态 | TCP 细节、平台窗口 |
 | `android` | Activity、NavHost、系统权限、Android 媒体和通知 | Desktop 交互 |
@@ -40,7 +46,8 @@ TeamTalk 是全栈 Kotlin 的模块化单体：服务端部署为一个进程，
 | `admin` | 管理员操作界面 | IM 实时客户端 |
 | `buildSrc` | 部署配置、上传和部署任务 | 运行时 profile |
 
-依赖必须单向，`shared` 不能依赖 Compose，服务端与客户端也不能跨过共享契约直接引用对方实现。
+依赖必须单向：客户端 SDK 和服务端都依赖 `protocol`，服务端生产代码不依赖 `shared`；`shared` 不依赖
+Compose。这个边界由 Gradle 模块而不是包命名约定保证。
 
 ## 3. 三条数据通道
 

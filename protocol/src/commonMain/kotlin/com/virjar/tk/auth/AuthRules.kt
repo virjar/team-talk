@@ -1,11 +1,9 @@
-package com.virjar.tk.client
+package com.virjar.tk.auth
 
 /**
  * 认证参数校验规则（客户端与服务端共用，避免规则不一致导致请求到服务端才失败）。
  *
- * 规则来源：`server/.../domain/user/UserService.register`。
- * 客户端 [ImClient.register] / [ImClient.login] 在发送前用 [validateRegister] /
- * [validateLogin] 提前校验，把错误拦截在本地，给出清晰异常而非服务端静默拒绝。
+ * 规则属于客户端与服务端共同执行的契约，不属于任一端实现。
  */
 object AuthRules {
 

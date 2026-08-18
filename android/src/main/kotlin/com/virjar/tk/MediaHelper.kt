@@ -36,7 +36,7 @@ object MediaHelper {
         fileName: String,
         contentType: String,
         serverUrl: String,
-    ): com.virjar.tk.repository.UploadResult = fileRepository(serverUrl)
+    ): com.virjar.tk.http.UploadResult = fileRepository(serverUrl)
         .uploadWithMeta(bytes, fileName, contentType)
         .getOrThrow()
 

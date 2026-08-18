@@ -2,6 +2,7 @@ package com.virjar.tk.client
 
 import com.virjar.tk.protocol.*
 import com.virjar.tk.protocol.payload.*
+import com.virjar.tk.rpc.RpcInvoker
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import com.virjar.tk.log.TkLoggerFactory

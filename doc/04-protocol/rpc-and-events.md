@@ -27,7 +27,7 @@ RESPONSE。
 
 ## 2. IDL 代码生成
 
-RPC 定义位于 `shared/src/commonMain/.../rpc/def/`：
+RPC 定义位于 `protocol/src/commonMain/.../rpc/def/`：
 
 ```kotlin
 @RpcService("message")

@@ -36,7 +36,8 @@ TeamTalk 选择的是“可理解、可部署、可演进”的单体架构，�
 
 ```text
 team-talk/
-├── shared/        IM SDK：协议、模型、连接、事件、缓存、Repository、ImBot
+├── protocol/      跨端契约：wire、模型、消息体、RPC IDL 与生成代码
+├── shared/        客户端 SDK：连接、事件、缓存、Repository、ImBot
 ├── rpc-processor/ RPC IDL 的 KSP 代码生成器
 ├── app/           Compose 共享 UI、ViewModel 与平台无关业务状态
 ├── android/       Android 应用壳、导航与平台能力
@@ -51,9 +52,9 @@ team-talk/
 依赖方向保持单向：
 
 ```text
-android / desktop ──▶ app ──▶ shared
-                         server ──▶ shared
-                    rpc-processor ──▶ 编译期生成 RPC 代码
+android / desktop ──▶ app ──▶ shared ──▶ protocol
+                         server ────────────▶ protocol
+                    rpc-processor ──▶ 为 protocol 生成 RPC 代码
 ```
 
 ## 快速开始
@@ -84,7 +85,7 @@ docker compose up -d
 ### 常用验证
 
 ```bash
-./gradlew :shared:jvmTest
+./gradlew :protocol:jvmTest :shared:jvmTest
 ./gradlew :server:test
 ./gradlew :app:desktopTest :desktop:desktopTest
 ./gradlew :desktop:compileKotlinDesktop

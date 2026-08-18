@@ -69,7 +69,7 @@ docker compose up -d
 ./gradlew :desktop:compileKotlinDesktop
 
 # 协议、模型、Repository 与 SDK 测试
-./gradlew :shared:jvmTest
+./gradlew :protocol:jvmTest :shared:jvmTest
 
 # 服务端确定性测试
 ./gradlew :server:test
@@ -110,7 +110,8 @@ Desktop 的 SQLite、token 和日志位于平台应用数据目录。具体路�
 ## 6. 修改后的验证顺序
 
 1. 运行受影响模块的编译或单元测试。
-2. 如果改了协议、Repository、领域服务或同步逻辑，运行 `:shared:jvmTest` 和 `:server:test`。
+2. 如果改了协议、Repository、领域服务或同步逻辑，运行 `:protocol:jvmTest`、`:shared:jvmTest` 和
+   `:server:test`。
 3. 如果改了业务流程，运行 `:server:acceptanceTest`。
 4. 如果改了 Desktop UI，启动应用并通过内置 HTTP 测试服务操作和截图。
 5. 检查 `git diff --check`，确认文档与代码一起更新。

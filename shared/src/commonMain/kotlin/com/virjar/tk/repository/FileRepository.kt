@@ -3,11 +3,11 @@ package com.virjar.tk.repository
 import com.virjar.tk.AppError
 import com.virjar.tk.Outcome
 import com.virjar.tk.body.AttachmentPolicy
+import com.virjar.tk.http.UploadResult
 import com.virjar.tk.model.Attachment
 import com.virjar.tk.outcome
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
@@ -78,13 +78,3 @@ object FileOps {
         uploadJson.decodeFromString<UploadResult>(body)
     }.getOrElse { throw AppError.Business(-1, "Invalid upload response: $body") }
 }
-
-/** 上传响应元数据（服务端生成：缩略图路径与媒体宽高/时长）。 */
-@Serializable
-data class UploadResult(
-    val file: Attachment,
-    val thumbnail: Attachment? = null,
-    val width: Int = 0,
-    val height: Int = 0,
-    val durationSec: Int? = null,
-)

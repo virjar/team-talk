@@ -1,4 +1,4 @@
-package com.virjar.tk.client
+package com.virjar.tk.auth
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

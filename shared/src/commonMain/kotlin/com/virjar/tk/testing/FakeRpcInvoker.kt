@@ -1,6 +1,6 @@
 package com.virjar.tk.testing
 
-import com.virjar.tk.client.RpcInvoker
+import com.virjar.tk.rpc.RpcInvoker
 import com.virjar.tk.protocol.payload.ResponsePayload
 
 /**

@@ -4,8 +4,6 @@ import com.virjar.tk.api.clientLogRoutes
 import com.virjar.tk.api.adminRoutes
 import com.virjar.tk.api.fileRoutes
 import com.virjar.tk.di.serverModule
-import com.virjar.tk.log.Slf4jTkLogger
-import com.virjar.tk.log.TkLoggerFactory
 import com.virjar.tk.domain.auth.AuthService
 import com.virjar.tk.domain.chat.ChatStore
 import com.virjar.tk.domain.health.HealthChecker
@@ -40,9 +38,6 @@ fun main() {
     val env = com.virjar.tk.env.Environment
     System.setProperty("LOG_DIR", env.logsDir.absolutePath)
     val logger = LoggerFactory.getLogger("Application")
-
-    // 0.5 注入 TkLogger 实现：shared 模块的日志通过 SLF4J 输出
-    TkLoggerFactory.install { name -> Slf4jTkLogger(LoggerFactory.getLogger(name)) }
 
     logger.info("TeamTalk Server starting...")
     // 显式记录关键路径解析结果，便于排查「日志丢失/数据目录错误」类问题

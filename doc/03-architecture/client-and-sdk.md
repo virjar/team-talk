@@ -5,11 +5,13 @@
 ```text
 Platform shell（android / desktop）
     └── app：Compose screens、ViewModel、AppDataState
-          └── shared：ClientSession、Repository、LocalCache、protocol
+          └── shared：ClientSession、Repository、LocalCache、ImBot
+                 └── protocol：wire、模型、消息体、RPC 契约
                 └── TCP/HTTP
 ```
 
-`shared` 是完整的无 UI SDK。`app` 只消费其公开能力；平台壳决定窗口、导航、权限和系统集成。
+`shared` 是完整的无 UI 客户端 SDK，并通过 `protocol` 使用跨端契约。`app` 只消费 SDK 公开能力；
+平台壳决定窗口、导航、权限和系统集成。
 ImBot/Agent 可以直接依赖 `shared`，不加载 Compose。
 
 ## 2. 会话组装

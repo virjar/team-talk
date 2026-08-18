@@ -127,7 +127,7 @@
 |---|---|
 | 产品定位、能力边界 | `02-product/` |
 | 模块职责、所有权与数据流 | `03-architecture/` |
-| 线上帧、字段顺序、认证和事件语义 | `04-protocol/` + `shared` 中的协议/IDL 代码 |
+| 线上帧、字段顺序、认证和事件语义 | `04-protocol/` + `protocol` 模块中的协议/IDL 代码 |
 | Desktop/Android 交互和视觉规则 | `05-clients/` |
 | 服务端领域与存储实现 | `06-server/` |
 | 环境变量、目录、部署和排障 | `07-operations/` |
@@ -135,7 +135,7 @@
 | 测试分层和验收流程 | `09-testing/` |
 | 当前完成度、缺口和计划 | `10-reference/` |
 
-代码与文档冲突时：协议字段和 ID 以 `shared` 中的枚举、模型和生成 Contract 为准；构建任务以
+代码与文档冲突时：协议字段和 ID 以 `protocol` 中的枚举、模型和生成 Contract 为准；构建任务以
 Gradle 为准；运行配置以 `buildSrc`、`gradle/deployment.json` 和服务端环境读取代码为准。
 发现冲突必须同时修正文档，不能用“以后再更新”作为长期状态。
 

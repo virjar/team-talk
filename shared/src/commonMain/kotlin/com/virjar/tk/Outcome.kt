@@ -1,5 +1,7 @@
 package com.virjar.tk
 
+import com.virjar.tk.rpc.RpcStatusException
+
 /**
  * 类型化的操作结果，替代散落各处的 try-catch。
  *
@@ -92,6 +94,14 @@ suspend inline fun <T> outcome(crossinline block: suspend () -> T): Outcome<T> =
     Outcome.Success(block())
 } catch (e: AppError) {
     Outcome.Failure(e)
+} catch (e: RpcStatusException) {
+    Outcome.Failure(
+        when (e.status) {
+            401 -> AppError.AuthExpired
+            504 -> AppError.Timeout
+            else -> AppError.Business(e.status, e.message)
+        },
+    )
 } catch (e: IndexOutOfBoundsException) {
     // 客户端 decode 越界 = 编解码紊乱（与服务端字段不一致），FATAL 级别
     Outcome.Failure(AppError.FatalCodec("数据解析错误（客户端与服务端编解码不一致）：${e.message}"))

@@ -1,4 +1,4 @@
-package com.virjar.tk.client
+package com.virjar.tk.rpc
 
 import com.virjar.tk.protocol.payload.ResponsePayload
 

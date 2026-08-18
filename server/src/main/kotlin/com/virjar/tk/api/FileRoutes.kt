@@ -1,7 +1,7 @@
 package com.virjar.tk.api
 
 import com.virjar.tk.infra.storage.FileStore
-import com.virjar.tk.repository.UploadResult
+import com.virjar.tk.http.UploadResult
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.server.request.*

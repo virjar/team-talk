@@ -1,6 +1,6 @@
 package com.virjar.tk.domain.user
 
-import com.virjar.tk.client.AuthRules
+import com.virjar.tk.auth.AuthRules
 import com.virjar.tk.infra.sync.SyncEventService
 import com.virjar.tk.model.User
 import com.virjar.tk.protocol.NotifyType

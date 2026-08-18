@@ -11,7 +11,7 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 5. 注册、登录和 refresh 属于 TCP AUTH 握手，不属于下列 RPC。
 6. 普通消息发送使用 MESSAGE / MESSAGE_ACK，不通过 `message` RPC。
 
-源文件位于 `shared/src/commonMain/kotlin/com/virjar/tk/rpc/def/`。
+源文件位于 `protocol/src/commonMain/kotlin/com/virjar/tk/rpc/def/`。
 
 ## auth
 

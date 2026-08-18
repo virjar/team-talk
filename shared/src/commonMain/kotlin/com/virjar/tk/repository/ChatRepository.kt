@@ -2,7 +2,7 @@ package com.virjar.tk.repository
 
 import com.virjar.tk.Outcome
 import com.virjar.tk.client.LocalCache
-import com.virjar.tk.client.RpcInvoker
+import com.virjar.tk.rpc.RpcInvoker
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.InviteLink
 import com.virjar.tk.model.Member

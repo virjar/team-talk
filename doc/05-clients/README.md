@@ -7,7 +7,8 @@ Android 是单屏触控应用；把其中一端的页面结构直接复制到另
 
 | 层 | 内容 |
 |---|---|
-| `shared` | 会话、Repository、LocalCache、消息模型与协议 |
+| `protocol` | 消息模型、wire 与 RPC 契约 |
+| `shared` | 会话、Repository、LocalCache、连接与事件处理 |
 | `app/commonMain` | 可复用 Screen/Component、ViewModel、主题、富文本与消息渲染 |
 | `desktop` | Window、三栏壳、弹窗/抽屉/任务窗口、托盘、桌面媒体、测试服务 |
 | `android` | Activity、NavHost、权限、系统返回、通知和 Android 媒体 |

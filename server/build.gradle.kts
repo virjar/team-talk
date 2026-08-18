@@ -47,7 +47,7 @@ dependencies {
     implementation("org.bytedeco:ffmpeg:${libs.versions.ffmpeg.natives.get()}:linux-x86_64")
     implementation("org.bytedeco:ffmpeg:${libs.versions.ffmpeg.natives.get()}:macosx-x86_64")
     implementation("org.bytedeco:ffmpeg:${libs.versions.ffmpeg.natives.get()}:macosx-arm64")
-    implementation(project(":shared"))
+    implementation(project(":protocol"))
     implementation(libs.bundles.ktor.server)
     implementation(libs.bundles.netty)
     implementation(libs.bundles.exposed)
@@ -63,6 +63,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
 
     testImplementation(kotlin("test"))
+    // E2E 对端使用产品客户端 SDK；生产服务端不依赖 :shared。
+    testImplementation(project(":shared"))
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation("io.ktor:ktor-server-test-host:${libs.versions.ktor.get()}")
     testImplementation("io.ktor:ktor-client-mock:${libs.versions.ktor.get()}")

@@ -8,8 +8,8 @@ class ServiceFileGenerator(private val svc: ServiceModel, private val codeGenera
 
     fun generate() {
         val imports = linkedSetOf(
-            "com.virjar.tk.client.RpcInvoker",
-            "com.virjar.tk.client.ensureSuccess",
+            "com.virjar.tk.rpc.RpcInvoker",
+            "com.virjar.tk.rpc.ensureSuccess",
             "com.virjar.tk.protocol.PacketBuffer",
             "com.virjar.tk.protocol.ProtoCodec",
             "com.virjar.tk.rpc.RpcStub",
@@ -205,7 +205,7 @@ class RegistryGenerator(private val services: List<ServiceModel>, private val co
                 appendLine("// ⚠️ 由 rpc-processor 生成，勿手改。")
                 appendLine("package com.virjar.tk.rpc.gen")
                 appendLine()
-                appendLine("import com.virjar.tk.client.RpcInvoker")
+                appendLine("import com.virjar.tk.rpc.RpcInvoker")
                 appendLine()
                 appendLine("/** 全部 RPC service 的注册表（编译期从 IDL 扫描生成）。 */")
                 appendLine("object RpcServiceRegistry {")

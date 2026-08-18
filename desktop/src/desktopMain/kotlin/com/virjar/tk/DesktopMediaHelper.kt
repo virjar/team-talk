@@ -116,7 +116,7 @@ object DesktopMediaHelper {
     }
 
     /** 上传并返回服务端媒体元数据。 */
-    fun uploadWithMeta(bytes: ByteArray, fileName: String, contentType: String): com.virjar.tk.repository.UploadResult {
+    fun uploadWithMeta(bytes: ByteArray, fileName: String, contentType: String): com.virjar.tk.http.UploadResult {
         return runBlocking { fileRepo().uploadWithMeta(bytes, fileName, contentType).getOrThrow() }
     }
 
@@ -131,7 +131,7 @@ object DesktopMediaHelper {
         fileName: String,
         contentType: String,
         bytes: ByteArray,
-        buildBody: (com.virjar.tk.repository.UploadResult) -> MessageBody,
+        buildBody: (com.virjar.tk.http.UploadResult) -> MessageBody,
         messageType: Int,
     ) {
         val clientMsgId = UUID.randomUUID().toString()
@@ -139,7 +139,7 @@ object DesktopMediaHelper {
         val pendingFile = Attachment("", fileName, contentType, bytes.size.toLong())
         val placeholder = Message(
             chatId, clientMsgId, 0L, myUid, messageType, System.currentTimeMillis(),
-            body = buildBody(com.virjar.tk.repository.UploadResult(file = pendingFile)),
+            body = buildBody(com.virjar.tk.http.UploadResult(file = pendingFile)),
             sendStatus = Message.SEND_STATUS_UPLOADING,
         )
         viewModel.insertUploadingPlaceholder(placeholder)

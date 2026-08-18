@@ -1,5 +1,6 @@
 package com.virjar.tk.repository
 
+import com.virjar.tk.http.UploadResult
 import com.virjar.tk.AppError
 import com.virjar.tk.Outcome
 import com.virjar.tk.outcome
