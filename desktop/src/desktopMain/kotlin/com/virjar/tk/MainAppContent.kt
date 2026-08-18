@@ -7,6 +7,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.window.WindowDraggableArea
@@ -50,6 +52,8 @@ import com.virjar.tk.ui.theme.Tk
 import com.virjar.tk.viewmodel.ChatViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+
+private val ChatInspectorWidth = 400.dp
 
 /**
  * 主内容区（三栏布局：导航栏 + 列表栏 + 内容栏）。
@@ -283,7 +287,8 @@ internal fun WindowScope.MainAppContent(
 
 /**
  * 与聊天上下文绑定的非模态检查器。抽屉覆盖聊天右侧，不参与 Row 测量，因此打开时
- * 消息区和输入框不会重新布局；关闭后仍停留在原会话和滚动位置。
+ * 消息区和输入框不会重新布局；关闭后仍停留在原会话和滚动位置。抽屉外部由透明点击层
+ * 阻断：第一次点击只关闭抽屉，不会穿透触发聊天操作。
  */
 @Composable
 private fun BoxScope.ChatInspectorHost(nav: DesktopNav) {
@@ -296,6 +301,24 @@ private fun BoxScope.ChatInspectorHost(nav: DesktopNav) {
         visibility.targetState = requestedScreen != null
     }
 
+    if (requestedScreen != null) {
+        val outsideInteraction = remember { MutableInteractionSource() }
+        Row(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .testTag("chat.inspector.dismissArea")
+                    .clickable(
+                        interactionSource = outsideInteraction,
+                        indication = null,
+                        onClick = nav::closeInspector,
+                    ),
+            )
+            Spacer(modifier = Modifier.width(ChatInspectorWidth))
+        }
+    }
+
     AnimatedVisibility(
         visibleState = visibility,
         modifier = Modifier.align(Alignment.CenterEnd),
@@ -305,7 +328,7 @@ private fun BoxScope.ChatInspectorHost(nav: DesktopNav) {
         val screen = renderedScreen ?: return@AnimatedVisibility
         Surface(
             modifier = Modifier
-                .width(400.dp)
+                .width(ChatInspectorWidth)
                 .fillMaxHeight()
                 .testTag("chat.inspector"),
             color = MaterialTheme.colorScheme.surface,
