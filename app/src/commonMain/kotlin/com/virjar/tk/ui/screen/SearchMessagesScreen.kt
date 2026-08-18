@@ -68,7 +68,9 @@ fun SearchMessagesScreen(
                     ListItem(
                         headlineContent = { Text(preview.take(100), maxLines = 2) },
                         supportingContent = { Text(msg.senderUid.take(8), style = MaterialTheme.typography.bodySmall) },
-                        modifier = Modifier.clickable { onMessageClick(msg.chatId, msg.serverSeq) },
+                        modifier = Modifier
+                            .clickable { onMessageClick(msg.chatId, msg.serverSeq) }
+                            .testTag("search.msg.result.${msg.chatId.take(12)}.${msg.serverSeq}"),
                     )
                 }
             }
