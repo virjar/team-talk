@@ -61,6 +61,12 @@ class RichTextBodyTest {
     }
 
     @Test
+    fun `plainText 剥离单标记斜体但保留普通下划线`() {
+        val body = buildRichTextBody("*star italic* _underscore italic_ user_avatar.png")
+        assertEquals("star italic underscore italic user_avatar.png", body.plainText)
+    }
+
+    @Test
     fun `消息策略重建派生字段并拒绝类型错配`() {
         val declared = RichTextBody(
             markdown = "**可信源** @[张三](mention://u1)",

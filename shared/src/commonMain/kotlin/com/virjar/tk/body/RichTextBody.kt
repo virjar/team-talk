@@ -86,8 +86,10 @@ fun buildRichTextBody(markdown: String): RichTextBody {
     text = text.replace(IMAGE_SYNTAX) { "[图片]" }
     text = text.replace(MENTION_SYNTAX) { "@${it.groupValues[1]}" }
     text = text.replace(LINK_SYNTAX) { it.groupValues[1] }
-    // 行内标记：粗体/斜体/删除线/行内代码的包裹符号
+    // 行内标记：先处理双字符标记，再处理单字符斜体，避免把 ** 拆成两组 *。
     text = text.replace(Regex("""(\*\*|__|~~|`)(.+?)\1""")) { it.groupValues[2] }
+    text = text.replace(Regex("""(?<!\*)\*([^*\n]+)\*(?!\*)""")) { it.groupValues[1] }
+    text = text.replace(Regex("""(?<!_)_([^_\n]+)_(?!_)""")) { it.groupValues[1] }
     // 块级：代码块栅栏/标题井号/引用符/列表标记（行首）
     text = text.replace(Regex("""^#{1,6}\s+""", RegexOption.MULTILINE), "")
     text = text.replace(Regex("""^>\s?""", RegexOption.MULTILINE), "")
