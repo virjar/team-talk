@@ -108,7 +108,9 @@ class MessageService(
         val memberUids = chatStore.getMemberUids(message.chatId)
         syncEventService.emitEvents(memberUids, NotifyType.MESSAGE_RECV, revoked)
         conversationService.onMessageChanged(
-            message.chatId, message.serverSeq, MessageType.REVOKE.code, null, memberUids
+            // ConversationList 以 lastMessage 非 null 作为是否渲染摘要的开关；
+            // REVOKE 类型不读取正文，但仍需非 null 占位才能显示“撤回了一条消息”。
+            message.chatId, message.serverSeq, MessageType.REVOKE.code, "", memberUids
         )
     }
 

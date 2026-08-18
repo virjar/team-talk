@@ -72,6 +72,7 @@ class ConversationIntegrationTest {
         ctx.messageService.revokeMessage(sender, chat.chatId, seq)
         val revokedConv = ctx.conversationService.listConversations(recipient).first { it.chatId == chat.chatId }
         assertEquals(com.virjar.tk.protocol.MessageType.REVOKE.code, revokedConv.lastMessageType)
+        assertEquals("", revokedConv.lastMessage)
     }
 
     @Test
