@@ -43,7 +43,7 @@ import com.virjar.tk.ui.component.GalleryItem
 import com.virjar.tk.ui.component.PlatformMediaActions
 import com.virjar.tk.ui.component.rememberMediaClickHandler
 import com.virjar.tk.ui.screen.ChatPanel
-import com.virjar.tk.ui.screen.ContactsListScreen
+import com.virjar.tk.ui.screen.DirectoryScreen
 import com.virjar.tk.ui.screen.ConversationListScreen
 import com.virjar.tk.ui.screen.GlobalSearchField
 import com.virjar.tk.ui.screen.MeHeaderStyle
@@ -73,6 +73,14 @@ internal fun WindowScope.MainAppContent(
     val conversations by nav.conversationViewModel.conversations.collectAsState()
     val contacts by nav.contactViewModel.contacts.collectAsState()
     val pendingApplyCount by nav.contactViewModel.pendingApplyCount.collectAsState()
+    val directoryScope = rememberCoroutineScope()
+
+    LaunchedEffect(nav.selectedTab) {
+        if (MainTab.entries[nav.selectedTab] == MainTab.CONTACTS) {
+            nav.contactViewModel.refreshPendingApplyCount()
+            nav.organization.refresh()
+        }
+    }
 
     DisposableEffect(Unit) {
         onDispose { nav.destroy() }
@@ -196,9 +204,14 @@ internal fun WindowScope.MainAppContent(
                         Column {
                             ListHeader(title = "通讯录")
                             // 桌面使用搜索 + 鼠标滚动；移动端字母索引条不占用中栏右侧空间。
-                            ContactsListScreen(
+                            DirectoryScreen(
                                 contacts = contacts,
-                                onContactClick = nav::openProfile,
+                                units = nav.organization.units,
+                                members = nav.organization.members,
+                                selectedUnitId = nav.organization.selectedUnitId,
+                                organizationLoading = nav.organization.loading,
+                                onUnitClick = { unitId -> directoryScope.launch { nav.organization.selectUnit(unitId) } },
+                                onUserClick = nav::openProfile,
                                 modifier = Modifier.weight(1f),
                                 pendingApplyCount = pendingApplyCount,
                                 onFriendApplies = { nav.openScreen(SubScreen.FriendApplies) },

@@ -28,7 +28,19 @@ USER_UPDATED。
 
 Contact 事件的 payload 视角必须明确；服务端不能把 A→B 的 Contact 原样发给 B。
 
-## 3. Chat / Member
+## 3. Organization
+
+OrganizationService 维护单根无环目录、用户多部门归属和唯一主部门。负责人必须是有效用户，并在
+启用部门群时自动成为直属成员。删除负责人归属前必须先变更负责人。
+
+部门群以 OrganizationUnit.groupChatId 是否存在为启用状态。收敛算法计算当前节点及全部后代成员，
+再合并 RequiredChatParticipants（当前为获授权机器人），调用 ChatService 的受管群管理入口补齐成员、
+移除多余成员并维护 Conversation。普通群 RPC 遇到受管群时拒绝成员或生命周期变更。
+
+跨表流程采用“先组织事实、后幂等投影”：节点移动和成员变更提交后立即收敛，应用启动再重放全部
+启用节点。单个失败会记录 unitId，不阻止其他部门恢复。
+
+## 4. Chat / Member
 
 ### 私聊
 
@@ -54,7 +66,7 @@ CHAT_CREATED。
 最终矩阵以 ChatService 当前实现和 RPC 验收为准。权限变化必须在一个操作内更新存储并发完整群快照。
 退出只失效当前成员关系，解散才把 Chat 标记为非活跃；两者不能共享一个含糊的“删除群”用例。
 
-## 4. Message
+## 5. Message
 
 发送顺序：
 
@@ -72,7 +84,7 @@ CHAT_CREATED。
 编辑只允许原发送者修改可编辑的文字消息；撤回允许发送者或有权限的管理员；转发产生新消息并
 重新走目标会话权限和附件校验。
 
-## 5. Conversation
+## 6. Conversation
 
 ConversationService 维护用户视角状态：
 
@@ -83,7 +95,16 @@ ConversationService 维护用户视角状态：
 
 `ensureConversations` 是建群、加人和邀请加入的强制步骤，不是可选修复。
 
-## 6. Device / Presence
+## 7. Bot
+
+BotService 为每个通知应用创建 UserRole.BOT 服务账户。该账户的随机密码不返回，UserService 登录路径
+也显式拒绝 BOT/SYSTEM。应用 token 使用 256-bit 随机值，数据库只保存 SHA-256。
+
+授权是 `(botId, chatId)` 白名单事实。grant 只接受群聊，并把服务身份加入群；revoke/disable 先撤销
+发送权，再移出群。发送使用由 `botId + chatId + idempotencyKey` 派生的 clientMsgId，随后进入正常
+MessageService，因此重试、历史、搜索、同步和部门群保留规则都与普通消息一致。
+
+## 8. Device / Presence
 
 DeviceService 列出当前用户设备并踢除指定 deviceId。不能踢其他用户设备，当前设备自踢应有明确
 连接关闭语义。
@@ -91,7 +112,7 @@ DeviceService 列出当前用户设备并踢除指定 deviceId。不能踢其他
 Presence 由 ClientRegistry 的连接计数派生：首个设备上线广播 online，最后一个设备下线广播
 offline。它是瞬时状态，不进入长期离线事件。
 
-## 7. Admin
+## 9. Admin
 
 管理员能力与普通用户领域调用分开认证。封禁用户需要同时影响后续登录和现有连接；不能只更新
 管理表而让活动 token 继续无限使用。

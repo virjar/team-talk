@@ -16,6 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.model.Member
+import com.virjar.tk.model.UserRole
 import com.virjar.tk.ui.component.AvatarPlaceholder
 
 /** 群成员角色：0=普通, 1=管理员, 2=群主。 */
@@ -58,6 +59,10 @@ internal fun MemberRow(member: Member, modifier: Modifier = Modifier) {
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
+                if (member.user?.role == UserRole.BOT) {
+                    Spacer(Modifier.width(6.dp))
+                    RoleChip("机器人")
+                }
                 // 角色标签
                 member.roleName()?.let { role ->
                     Spacer(Modifier.width(6.dp))

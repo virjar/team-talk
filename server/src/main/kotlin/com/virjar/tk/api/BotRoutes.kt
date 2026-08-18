@@ -1,6 +1,9 @@
 package com.virjar.tk.api
 
 import com.virjar.tk.domain.bot.BotAuthenticationException
+import com.virjar.tk.domain.bot.BotAuthorizationException
+import com.virjar.tk.domain.bot.BotRateLimitException
+import com.virjar.tk.domain.bot.BotRequestException
 import com.virjar.tk.domain.bot.BotService
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -32,8 +35,14 @@ fun Route.botRoutes(service: BotService) {
                 call.respond(service.deliver(botId, token, request.chatId, request.markdown, request.idempotencyKey))
             } catch (_: BotAuthenticationException) {
                 call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "invalid bot credentials"))
-            } catch (e: IllegalArgumentException) {
+            } catch (e: BotAuthorizationException) {
                 call.respond(HttpStatusCode.Forbidden, mapOf("error" to (e.message ?: "request rejected")))
+            } catch (e: BotRateLimitException) {
+                call.respond(HttpStatusCode.TooManyRequests, mapOf("error" to (e.message ?: "rate limited")))
+            } catch (e: BotRequestException) {
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "invalid request")))
+            } catch (e: IllegalArgumentException) {
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "invalid request")))
             }
         }
     }

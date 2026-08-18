@@ -12,8 +12,12 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 class BotAuthenticationException : IllegalArgumentException("机器人凭据无效")
+class BotAuthorizationException(message: String) : IllegalArgumentException(message)
+class BotRequestException(message: String) : IllegalArgumentException(message)
+class BotRateLimitException : IllegalArgumentException("机器人调用过于频繁")
 
 @Serializable
 data class CreatedAutomationBot(val bot: AutomationBot, val webhookToken: String)
@@ -28,8 +32,10 @@ class BotService(
     private val chatStore: ChatStore,
     private val chats: ChatService,
     private val messages: MessageService,
+    private val rateLimitPerMinute: Int = DEFAULT_RATE_LIMIT_PER_MINUTE,
 ) {
     private val random = SecureRandom()
+    private val deliveryWindows = ConcurrentHashMap<String, DeliveryWindow>()
 
     fun list(): List<AutomationBot> = repository.list()
 
@@ -94,23 +100,31 @@ class BotService(
         idempotencyKey: String,
     ): BotDeliveryResult {
         val bot = authenticate(botId, token)
-        require(markdown.isNotBlank()) { "markdown 不能为空" }
-        require(markdown.length <= MAX_MARKDOWN_LENGTH) { "markdown 不能超过 $MAX_MARKDOWN_LENGTH 个字符" }
-        require(idempotencyKey.length in 1..MAX_IDEMPOTENCY_KEY_LENGTH) { "idempotencyKey 长度必须为 1-$MAX_IDEMPOTENCY_KEY_LENGTH" }
-        require(repository.isGranted(botId, chatId)) { "机器人未获该群授权" }
+        if (markdown.isBlank()) throw BotRequestException("markdown 不能为空")
+        if (markdown.length > MAX_MARKDOWN_LENGTH) throw BotRequestException("markdown 不能超过 $MAX_MARKDOWN_LENGTH 个字符")
+        if (idempotencyKey.length !in 1..MAX_IDEMPOTENCY_KEY_LENGTH) {
+            throw BotRequestException("idempotencyKey 长度必须为 1-$MAX_IDEMPOTENCY_KEY_LENGTH")
+        }
+        if (!repository.isGranted(botId, chatId)) throw BotAuthorizationException("机器人未获该群授权")
+        enforceRateLimit(botId)
 
         val clientMsgId = "bot-${botId.take(8)}-${hashText("$chatId:$idempotencyKey").take(32)}"
-        val seq = messages.sendMessage(
-            bot.userUid,
-            Message(
-                chatId = chatId,
-                clientMsgId = clientMsgId,
-                senderUid = bot.userUid,
-                messageType = MessageType.RICH_TEXT.code,
-                timestamp = System.currentTimeMillis(),
-                body = buildRichTextBody(markdown),
-            ),
-        )
+        val seq = try {
+            messages.sendMessage(
+                bot.userUid,
+                Message(
+                    chatId = chatId,
+                    clientMsgId = clientMsgId,
+                    senderUid = bot.userUid,
+                    messageType = MessageType.RICH_TEXT.code,
+                    timestamp = System.currentTimeMillis(),
+                    body = buildRichTextBody(markdown),
+                ),
+            )
+        } catch (e: IllegalArgumentException) {
+            // 通知入口只有富文本，没有附件参数；此处的 MessageService 拒绝来自成员/禁言等群权限。
+            throw BotAuthorizationException(e.message ?: "机器人当前不能向该群发送")
+        }
         repository.touch(botId, System.currentTimeMillis())
         return BotDeliveryResult(chatId, seq, clientMsgId)
     }
@@ -137,6 +151,19 @@ class BotService(
     private fun requireBot(botId: String): AutomationBot =
         repository.find(botId) ?: throw IllegalArgumentException("机器人不存在: $botId")
 
+    private fun enforceRateLimit(botId: String) {
+        if (rateLimitPerMinute <= 0) return
+        val now = System.currentTimeMillis()
+        val window = deliveryWindows.compute(botId) { _, current ->
+            if (current == null || now - current.startedAt >= RATE_WINDOW_MILLIS) {
+                DeliveryWindow(now, 1)
+            } else {
+                current.copy(count = current.count + 1)
+            }
+        } ?: return
+        if (window.count > rateLimitPerMinute) throw BotRateLimitException()
+    }
+
     private fun newToken(): String =
         "ttb_" + Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32).also(random::nextBytes))
 
@@ -148,5 +175,9 @@ class BotService(
     companion object {
         const val MAX_MARKDOWN_LENGTH = 20_000
         const val MAX_IDEMPOTENCY_KEY_LENGTH = 120
+        const val DEFAULT_RATE_LIMIT_PER_MINUTE = 120
+        private const val RATE_WINDOW_MILLIS = 60_000L
     }
+
+    private data class DeliveryWindow(val startedAt: Long, val count: Int)
 }

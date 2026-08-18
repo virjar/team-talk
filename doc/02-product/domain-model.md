@@ -10,6 +10,9 @@
 用户是组织内的长期身份，包含 `uid`、用户名、显示名、手机号、头像和简介等资料。`uid` 是所有
 关系和消息引用的稳定键；显示名和备注是展示信息，不能用于权限判断。
 
+用户身份分为人类用户、机器人服务身份和系统身份。只有人类用户可以使用客户端密码登录。机器人
+虽然复用 User/Member/Message 的展示与发送链路，但只能通过独立应用凭据调用受控入口。
+
 ### Device
 
 一次登录发生在具体设备上。每个设备拥有独立 token 和 TCP 连接。用户可以多设备同时在线，也可
@@ -20,7 +23,25 @@
 TeamTalk 使用服务端保存的随机 token，不使用 JWT。access token 用于当前访问，refresh token
 一次性轮换。删除 token 可以立即让设备失效。
 
-## 2. 社交关系
+## 2. 组织目录
+
+### OrganizationUnit
+
+OrganizationUnit 是单组织内的层级节点。一个实例只有一个根节点，其他节点通过 `parentId` 组成树；
+`leaderUid` 表示负责人，`sortOrder` 只影响同级展示顺序。节点移动必须阻止自引用和循环。
+
+### OrganizationMember
+
+OrganizationMember 表示用户在一个组织节点中的直接归属，附带职位与是否主部门。用户可以兼任多个
+部门，但最多只有一个主部门。组织归属与好友关系互不替代：前者由管理员治理，后者是用户社交关系。
+
+### DepartmentGroup
+
+节点启用部门群后，`unitId` 同时作为稳定 `chatId`。该群成员来自节点及全部后代的组织成员，再并入
+获得显式授权的机器人。组织目录是成员事实源，普通群管理接口不能退群、加人、踢人、解散或改名；
+服务启动和组织变更都会幂等收敛群成员。
+
+## 3. 社交关系
 
 ### ContactApply
 
@@ -32,7 +53,7 @@ TeamTalk 使用服务端保存的随机 token，不使用 JWT。access token 用
 联系人关系按用户视角保存。`uid` 表示关系所有者，`friendUid` 表示对方，备注也属于所有者。
 删除好友必须更新双方关系并向双方发送各自视角的事件。
 
-## 3. 会话与成员
+## 4. 会话与成员
 
 ### Chat
 
@@ -58,7 +79,7 @@ Conversation 是“某个用户对某个 Chat 的收件箱视图”，不是 Cha
 每个用户每个 Chat 有一条 Conversation。建群或加人时必须先确保这些行存在，否则已读和未读
 无法跨设备同步。
 
-## 4. 消息与内容
+## 5. 消息与内容
 
 ### Message
 
@@ -79,7 +100,18 @@ Markdown 权威源的富文本消息；旧 `TextBody` 仅作为兼容概念，�
 Attachment 只描述 TeamTalk 服务端中的文件：规范化相对路径、名称、媒体类型、大小和可选摘要。
 它不是任意 HTTP URL。客户端需要展示或下载时，用部署的 `serverUrl` 解析成自身端点 URL。
 
-## 5. 事件与本地状态
+## 6. 自动化应用
+
+### AutomationBot
+
+AutomationBot 是管理员创建的单向通知应用，关联一个不可密码登录的机器人 User。应用 token 仅在
+创建或轮换时显示一次，服务端只保存 SHA-256；每个可发送群必须有独立 grant。`idempotencyKey`
+与 bot/chat 共同决定稳定 `clientMsgId`，调用重试不会产生第二条消息。
+
+AutomationBot 与 ImBot 不同：前者适合构建、监控、审批等外部系统主动通知，最小权限且无需常驻
+TCP；后者是完整无头客户端，适合需要接收消息和参与双向交互的自动化。
+
+## 7. 事件与本地状态
 
 ### Notify
 
@@ -91,16 +123,21 @@ Attachment 只描述 TeamTalk 服务端中的文件：规范化相对路径、�
 客户端本地缓存是 UI 的读取源，不是远端权限事实。事件处理成功后先更新本地数据，再推进事件
 游标；失败时保留游标以便重试。
 
-## 6. 关系图
+## 8. 关系图
 
 ```text
 User 1 ──* Device
+OrganizationUnit 1 ──* OrganizationUnit(child)
+User * ──* OrganizationUnit  通过 OrganizationMember
+OrganizationUnit 0..1 ──1 Chat(department group)
 User 1 ──* Contact(owner) *──1 User(friend)
 User * ──* Chat      通过 Member
 User 1 ──* Conversation *──1 Chat
 Chat 1 ──* Message
 Message 0 ──* Attachment
 User 1 ──* Notify
+AutomationBot 1 ──1 User(service identity)
+AutomationBot * ──* Chat  通过 explicit grant
 ```
 
 理解这些边界是修改业务的前提：Chat 与 Conversation、远端事实与本地缓存、附件路径与 HTTP URL

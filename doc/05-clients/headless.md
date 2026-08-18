@@ -171,3 +171,30 @@ MCP 是适配层，不是新的权限边界。模型能做什么取决于 agent 
 - agent 的环形缓冲和长轮询不是 Webhook；进程重启会丢失缓冲，可靠外部订阅仍需单独设计。
 
 无头能力的产品化计划见[路线图](../10-reference/roadmap.md)，当前成熟度见[功能状态](../10-reference/feature-status.md)。
+
+## 8. 受控通知机器人
+
+只需要由 CI、监控或审批系统主动向群发通知时，不应创建持有普通用户密码的 ImBot。管理员在管理
+后台创建 AutomationBot、保存一次性 token，并明确授权目标群：
+
+```http
+POST /api/v1/bots/<botId>/messages
+Authorization: Bearer <bot-token>
+Content-Type: application/json
+
+{
+  "chatId": "<granted-group-chat-id>",
+  "markdown": "## 构建完成\n\n版本 `1.2.3` 已发布。",
+  "idempotencyKey": "deploy-1.2.3"
+}
+```
+
+同一个 bot、chatId 和 idempotencyKey 重试返回同一消息 seq。未授权群、停用机器人、错误 token、
+空内容或超长内容都会在消息写入前拒绝。该端点不接收文件 URL；需要附件时应继续走 TeamTalk 上传
+与消息附件契约，不能绕过 FileStore。
+
+单节点默认对每个 bot 限制 120 次/分钟，超出返回 HTTP 429。该限制用于保护通知入口，不替代外部
+系统的退避和幂等重试；多节点共享配额属于后续开放平台能力。
+
+AutomationBot 是单向、最小权限通知身份；ImBot/tt-agent 是可以接收事件和执行双向业务的完整客户
+端。二者不能因为都叫“机器人”而共享密码或权限模型。

@@ -10,6 +10,7 @@ import com.virjar.tk.model.ChatType
 import com.virjar.tk.navigation.feature.AccountFeature
 import com.virjar.tk.navigation.feature.DiscoveryFeature
 import com.virjar.tk.navigation.feature.GroupFeature
+import com.virjar.tk.navigation.feature.OrganizationFeature
 import com.virjar.tk.viewmodel.ChatViewModel
 import com.virjar.tk.viewmodel.ContactViewModel
 import com.virjar.tk.viewmodel.ConversationViewModel
@@ -37,6 +38,7 @@ open class AppDataState(val session: ClientSession) {
     val deviceRepo get() = session.deviceRepo
     val userRepo get() = session.userRepo
     val conversationRepo get() = session.conversationRepo
+    val organizationRepo get() = session.organizationRepo
 
     private val actionScope = CoroutineScope(
         Dispatchers.Main + SupervisorJob() +
@@ -53,6 +55,7 @@ open class AppDataState(val session: ClientSession) {
     val account = AccountFeature(session, contactViewModel, actionScope, ::handleError)
     val groups = GroupFeature(session, actionScope, ::handleError)
     val discovery = DiscoveryFeature(session, ::handleError)
+    val organization = OrganizationFeature(session, ::handleError)
 
     var error by mutableStateOf<String?>(null)
         private set

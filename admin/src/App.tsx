@@ -1,7 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Layout, Menu, Button, Space, Typography } from 'antd'
 import {
-  DashboardOutlined, UserOutlined, MessageOutlined, FileTextOutlined, TeamOutlined, LogoutOutlined,
+  ApartmentOutlined, DashboardOutlined, UserOutlined, MessageOutlined, FileTextOutlined,
+  TeamOutlined, LogoutOutlined, RobotOutlined,
 } from '@ant-design/icons'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -9,6 +10,8 @@ import Users from './pages/Users'
 import Messages from './pages/Messages'
 import Logs from './pages/Logs'
 import Groups from './pages/Groups'
+import Organization from './pages/Organization'
+import Bots from './pages/Bots'
 import { TOKEN_KEY } from './api/client'
 
 const { Header, Sider, Content } = Layout
@@ -26,6 +29,8 @@ function Shell() {
         <Menu theme="dark" selectedKeys={[selected]} items={[
           { key: '/dashboard', icon: <DashboardOutlined />, label: 'Dashboard' },
           { key: '/users', icon: <UserOutlined />, label: '用户' },
+          { key: '/organization', icon: <ApartmentOutlined />, label: '组织架构' },
+          { key: '/bots', icon: <RobotOutlined />, label: '通知机器人' },
           { key: '/messages', icon: <MessageOutlined />, label: '消息' },
           { key: '/logs', icon: <FileTextOutlined />, label: '日志' },
           { key: '/groups', icon: <TeamOutlined />, label: '群组' },
@@ -43,6 +48,8 @@ function Shell() {
             <Route path="/" element={<Navigate to="dashboard" replace />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="users" element={<Users />} />
+            <Route path="organization" element={<Organization />} />
+            <Route path="bots" element={<Bots />} />
             <Route path="messages" element={<Messages />} />
             <Route path="logs" element={<Logs />} />
             <Route path="groups" element={<Groups />} />

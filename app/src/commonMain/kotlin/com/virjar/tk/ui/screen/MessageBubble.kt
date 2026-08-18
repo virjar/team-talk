@@ -27,6 +27,7 @@ import com.virjar.tk.ui.platform.secondaryClick
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.model.Message
 import com.virjar.tk.model.User
+import com.virjar.tk.model.UserRole
 import androidx.compose.runtime.key
 import com.virjar.tk.ui.component.AvatarPlaceholder
 import com.virjar.tk.ui.component.isEdgeToEdgeMedia
@@ -84,12 +85,20 @@ internal fun MessageBubble(
         ) {
             // 昵称行（群聊对方、非连续消息才显示）：「张三 14:32」
             if (!isMe && showSenderName && !isContinuation) {
-                Text(
-                    "${resolveDisplayName(msg.senderUid, resolveSender)}  ${formatChatTime(msg.timestamp)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Tk.colors.metaText,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.padding(bottom = 2.dp, start = Tk.spacing.xs),
-                )
+                ) {
+                    Text(
+                        "${resolveDisplayName(msg.senderUid, resolveSender)}  ${formatChatTime(msg.timestamp)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Tk.colors.metaText,
+                    )
+                    if (resolveSender?.invoke(msg.senderUid)?.role == UserRole.BOT) {
+                        Spacer(Modifier.width(5.dp))
+                        RoleChip("机器人")
+                    }
+                }
             }
             Surface(
                 color = if (isMe) Tk.colors.bubbleOutgoing else Tk.colors.bubbleIncoming,

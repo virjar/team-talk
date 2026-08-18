@@ -11,9 +11,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.virjar.tk.navigation.AppDataState
 import com.virjar.tk.navigation.MainTab
-import com.virjar.tk.ui.screen.ContactsListScreen
+import com.virjar.tk.ui.screen.DirectoryScreen
 import com.virjar.tk.ui.screen.ConversationListScreen
 import com.virjar.tk.ui.screen.MeScreen
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -33,11 +34,13 @@ fun HomeScreen(
     val conversations by dataState.conversationViewModel.conversations.collectAsState()
     val contacts by dataState.contactViewModel.contacts.collectAsState()
     val pendingApplyCount by dataState.contactViewModel.pendingApplyCount.collectAsState()
+    val directoryScope = rememberCoroutineScope()
 
     // 切换标签时刷新待处理申请数
     LaunchedEffect(selectedTab) {
         if (selectedTab == 1) { // 通讯录
             dataState.contactViewModel.refreshPendingApplyCount()
+            dataState.organization.refresh()
         }
     }
 
@@ -95,9 +98,14 @@ fun HomeScreen(
                     },
                 )
                 MainTab.CONTACTS -> Column(modifier = Modifier.fillMaxSize()) {
-                    ContactsListScreen(
+                    DirectoryScreen(
                         contacts = contacts,
-                        onContactClick = onUserProfile,
+                        units = dataState.organization.units,
+                        members = dataState.organization.members,
+                        selectedUnitId = dataState.organization.selectedUnitId,
+                        organizationLoading = dataState.organization.loading,
+                        onUnitClick = { unitId -> directoryScope.launch { dataState.organization.selectUnit(unitId) } },
+                        onUserClick = onUserProfile,
                         modifier = Modifier.weight(1f),
                         pendingApplyCount = pendingApplyCount,
                         onFriendApplies = onFriendApplies,

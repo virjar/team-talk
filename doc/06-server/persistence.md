@@ -4,7 +4,7 @@
 
 | 数据 | 存储 | 原因 |
 |---|---|---|
-| 用户、设备、好友、群、成员、会话、申请、邀请、同步事件 | PostgreSQL | 关系、约束、事务和查询 |
+| 用户、组织、机器人授权、设备、好友、群、成员、会话、申请、邀请、同步事件 | PostgreSQL | 关系、约束、事务和查询 |
 | 消息正文、幂等索引与投影 outbox | RocksDB | 按 chat/seq 顺序读写、单批原子 KV |
 | token | 独立 RocksDB | 随机 token 快速查询和删除 |
 | 文件小对象与元数据 | RocksDB | 本地嵌入、低运维成本 |
@@ -37,6 +37,18 @@ friends 以有向双行表达双方视角，备注属于各自记录。friend_ap
 
 按 uid 和自增 event ID 保存 NotifyType 与 payload bytes。认证按 `id > lastEventId` 升序分页。事件
 保留期和清理必须大于客户端合理离线窗口，并与 seq 缺口恢复配合。
+
+### organization_units / organization_memberships
+
+organization_units 保存单根层级、负责人和可选稳定部门群 ID；organization_memberships 保存直接部门
+归属、职位与主部门标记。同一用户的唯一主部门由 Repository 写入事务收敛。群成员表只是组织事实的
+投影，不能反向编辑组织关系。
+
+### automation_bots / automation_bot_grants
+
+automation_bots 关联服务 User，只保存 webhook token 哈希、状态和最后调用时间；明文 token 不落库。
+automation_bot_grants 以 `(botId, chatId)` 唯一，作为可发送群的权限事实。group_members 中的机器人行
+是可修复投影，服务启动按 grant 重放。
 
 ## 3. MessageStore
 

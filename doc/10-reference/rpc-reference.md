@@ -108,6 +108,15 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 
 `kickDevice` 显式使用 `@RpcMethod(2)`。踢出设备同时吊销该设备凭证并关闭活跃连接。
 
+## organization
+
+| ID | 方法 | 参数 | 返回 | 说明 |
+|---:|---|---|---|---|
+| 1 | `listUnits` | — | `List<OrganizationUnit>` | 返回当前单组织的活动节点 |
+| 2 | `listMembers` | `unitId`, `recursive` | `List<OrganizationMember>` | 直属或包含子树的成员 |
+
+普通客户端只有读取能力；组织结构、成员归属和部门群启停通过独立管理 HTTP API 执行。
+
 ## 状态与错误
 
 | status | 语义 | 客户端处理 |

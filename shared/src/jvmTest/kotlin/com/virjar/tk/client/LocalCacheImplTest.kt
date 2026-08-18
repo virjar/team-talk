@@ -17,7 +17,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * LocalCacheImpl 内存治理与并发正确性（JVM 内存 SQLite）。
+ * LocalCacheImpl 内存治理与并发正确性（JVM 专属内存 SQLite 测试）。
  * 锁定 lessons C1（StateFlow 读改写竞态）/D4（水位线合并）/窗口 LRU 语义。
  */
 class LocalCacheImplTest {
