@@ -609,50 +609,60 @@ fun ChatPanel(
                         }
                     } else {
                         // WYSIWYG 富文本编辑区：所见即所得（粗体实时渲染），导出走 toMarkdown
-                        Box(modifier = Modifier.weight(1f)) {
-                            BasicRichTextEditor(
-                                state = richState,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(min = 72.dp, max = 200.dp)
-                                    .testTag("chat.input")
-                                    .focusRequester(inputFocus)
-                                    .onPreviewKeyEvent { event ->
-                                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                                        val command = event.isMetaPressed || event.isCtrlPressed
-                                        when {
-                                            // 富文本编辑器默认 Enter 换行；显式快捷键才发送。
-                                            event.key == Key.Enter && command -> {
-                                                sendAction()
-                                                true
+                        Surface(
+                            modifier = Modifier.weight(1f),
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                        ) {
+                            Box {
+                                BasicRichTextEditor(
+                                    state = richState,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 72.dp, max = 200.dp)
+                                        .testTag("chat.input")
+                                        .focusRequester(inputFocus)
+                                        .onPreviewKeyEvent { event ->
+                                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                            val command = event.isMetaPressed || event.isCtrlPressed
+                                            when {
+                                                // 富文本编辑器默认 Enter 换行；显式快捷键才发送。
+                                                event.key == Key.Enter && command -> {
+                                                    sendAction()
+                                                    true
+                                                }
+                                                event.key == Key.B && command -> {
+                                                    toggleBold()
+                                                    true
+                                                }
+                                                event.key == Key.I && command -> {
+                                                    toggleItalic()
+                                                    true
+                                                }
+                                                else -> false
                                             }
-                                            event.key == Key.B && command -> {
-                                                toggleBold()
-                                                true
-                                            }
-                                            event.key == Key.I && command -> {
-                                                toggleItalic()
-                                                true
-                                            }
-                                            else -> false
                                         }
-                                    },
-                                textStyle = MaterialTheme.typography.bodyMedium.copy(
-                                    color = androidx.compose.material3.LocalContentColor.current,
-                                ),
-                                minLines = 3,
-                                maxLines = 8,
-                                cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
-                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
-                            )
-                            // 占位符（编辑器空态时）
-                            if (richState.annotatedString.text.isEmpty()) {
-                                Text(
-                                    if (editingMessage != null) "编辑消息…" else "输入消息…",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = Tk.colors.metaText,
-                                    modifier = Modifier.align(Alignment.CenterStart).testTag("chat.input.hint"),
+                                        .padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.sm),
+                                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                        color = androidx.compose.material3.LocalContentColor.current,
+                                    ),
+                                    minLines = 3,
+                                    maxLines = 8,
+                                    cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                                 )
+                                // 占位符（编辑器空态时）
+                                if (richState.annotatedString.text.isEmpty()) {
+                                    Text(
+                                        if (editingMessage != null) "编辑消息…" else "输入消息…",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = Tk.colors.metaText,
+                                        modifier = Modifier
+                                            .align(Alignment.TopStart)
+                                            .padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.sm)
+                                            .testTag("chat.input.hint"),
+                                    )
+                                }
                             }
                         }
                     }

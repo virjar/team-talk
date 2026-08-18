@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import com.virjar.tk.ui.platform.contextLongPress
 import com.virjar.tk.ui.platform.secondaryClick
 import androidx.compose.ui.unit.dp
@@ -61,7 +60,7 @@ internal fun MessageBubble(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = if (isContinuation) 1.dp else 2.dp),
+            .padding(vertical = if (isContinuation) Tk.spacing.xs / 2f else Tk.spacing.xs),
         horizontalArrangement = if (isMe) Arrangement.End else Arrangement.Start,
         verticalAlignment = Alignment.Top,
     ) {
@@ -94,7 +93,7 @@ internal fun MessageBubble(
             }
             Surface(
                 color = if (isMe) Tk.colors.bubbleOutgoing else Tk.colors.bubbleIncoming,
-                contentColor = if (isMe) Color.White else MaterialTheme.colorScheme.onSurface,
+                contentColor = if (isMe) Tk.colors.bubbleOutgoingContent else MaterialTheme.colorScheme.onSurface,
                 // 飞书扁平气泡：无阴影无 tonalElevation
                 shape = RoundedCornerShape(
                     topStart = if (!isMe && !isContinuation) 4.dp else 8.dp,

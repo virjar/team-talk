@@ -80,8 +80,9 @@ fun MessageBodyRenderer(
             waveSeed = abs(body.attachment.path.hashCode()),
             playing = voicePlayback?.playingUrl == body.attachment.path,
             progress = if (voicePlayback?.playingUrl == body.attachment.path) voicePlayback.progress else 0f,
-            // 已播高亮：自己气泡（蓝底）用纯白，对方气泡（灰底）用主色
-            playedColor = if (isMe) Color.White else MaterialTheme.colorScheme.primary,
+            // 已播高亮：自己气泡用容器前景色，对方气泡用主色。
+            playedColor = if (isMe) MaterialTheme.colorScheme.onPrimaryContainer
+            else MaterialTheme.colorScheme.primary,
             onTogglePlay = voicePlayback?.let { vb -> { vb.toggle(body.attachment.path, body.duration) } }
                 ?: onMediaClick?.let { cb -> { cb(message) } },
         )

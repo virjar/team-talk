@@ -240,7 +240,7 @@ fun MarkdownText(
                     text = block.spans.toAnnotated(onUrlClick, onMentionClick),
                     style = MaterialTheme.typography.bodyMedium,
                     color = contentColor,
-                    modifier = Modifier.padding(top = topPadding).fillMaxWidth(),
+                    modifier = Modifier.padding(top = topPadding),
                 )
                 is MdBlock.Heading -> Text(
                     text = block.spans.toAnnotated(onUrlClick, onMentionClick),
@@ -250,7 +250,7 @@ fun MarkdownText(
                         else -> MaterialTheme.typography.titleSmall
                     },
                     color = contentColor,
-                    modifier = Modifier.padding(top = topPadding.coerceAtLeast(Tk.spacing.sm)).fillMaxWidth(),
+                    modifier = Modifier.padding(top = topPadding.coerceAtLeast(Tk.spacing.sm)),
                 )
                 is MdBlock.CodeFence -> Row(Modifier.padding(top = topPadding)) {
                     CodeFenceBox(block, contentColor)
@@ -271,7 +271,7 @@ fun MarkdownText(
                                     text = sub.spans.toAnnotated(onUrlClick, onMentionClick),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = contentColor.copy(alpha = 0.85f),
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier,
                                 )
                             }
                         }
@@ -323,10 +323,10 @@ private fun List<MdSpan>.toAnnotated(
     onUrlClick: ((String) -> Unit)?,
     onMentionClick: ((String) -> Unit)?,
 ): AnnotatedString {
-    // 彩色气泡（自己蓝气泡=白字）上 primary 蓝不可辨：亮色文字时链接/提及改用白色系（F20）
-    val onColoredBubble = LocalContentColor.current.luminance() > 0.5f
-    val linkColor = if (onColoredBubble) Color.White else MaterialTheme.colorScheme.primary
-    val mentionBg = if (onColoredBubble) Color.White.copy(alpha = 0.2f)
+    // 深色表面上的浅色正文不能继续使用 primary 蓝；链接/提及改用白色系（F20）。
+    val onDarkSurface = LocalContentColor.current.luminance() > 0.5f
+    val linkColor = if (onDarkSurface) Color.White else MaterialTheme.colorScheme.onPrimaryContainer
+    val mentionBg = if (onDarkSurface) Color.White.copy(alpha = 0.2f)
     else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
     val inlineCodeBg = LocalContentColor.current.copy(alpha = 0.12f)
     return buildAnnotatedString {

@@ -6,8 +6,8 @@
 ## 为什么选飞书
 
 1. **信息密度优先**：IM 是生产力工具，飞书的紧凑布局（13-14px 正文、64dp 会话项）在同等窗口面积下比 Material 默认样式（大触控目标、大留白）多显示约 40% 的会话/消息。
-2. **克制的中性色**：灰阶体系（#F5F6F7/#F2F3F5/#E5E6EB 分层）让内容本身成为视觉主角，品牌蓝只用于交互态和身份标识。项目主题从第一天就是 LarkBlue #3370FF，方向一致。
-3. **桌面优先的交互模型**：三栏布局、hover 态、右键菜单、Enter 发送——正是 Desktop 端当前最缺的。
+2. **克制的中性色**：灰阶体系（#F5F6F7/#F2F3F5/#E5E6EB 分层）让内容本身成为视觉主角。品牌蓝 #3370FF 只用于按钮、焦点和选中等小面积交互态；大面积自己消息改用浅蓝语义表面，避免连续消息形成“蓝墙”。
+3. **桌面优先的交互模型**：三栏布局、hover 态、右键菜单、多行编辑和显式快捷键发送——正是 Desktop 端当前最缺的。
 4. **圆角方形头像**是飞书的强识别特征，与微信/QQ 的圆形头像形成差异。
 
 ## 文档
@@ -35,7 +35,7 @@
 | `screenshots/light-login.png` | 登录窗（已被 §2.3 重排版取代，见 P4 轮） |
 | `screenshots/light-main-empty.png` | 三栏空态：细导航栏 + 会话列表 + Logo 空态 |
 | `screenshots/light-conversation-list.png` | 会话列表：未读徽标/时间戳/群角标/置顶区 |
-| `screenshots/light-chat.png` | 聊天面板：双方头像/指向角气泡/已读水位线/工具行/Enter 发送 |
+| `screenshots/light-chat.png` | 聊天面板：双方头像/内容自适应气泡/已读水位线/多行富文本输入 |
 | `screenshots/light-contacts-grouped.png` | 通讯录：搜索框 + 拼音首字母分组 sticky 头 + 右侧索引条（P4 轮） |
 
 ## 验收基线（2026-08 P4 轮，暗色）
@@ -47,7 +47,7 @@
 |------|------|
 | `screenshots/dark-login.png` | 登录窗（§2.3 无装饰 420×480，纯底卡片） |
 | `screenshots/dark-main-conversations.png` | 三栏：rail #272A31 / 列表 #16181D / 右栏 #1D2026 |
-| `screenshots/dark-chat.png` | 聊天：暗气泡/白字/媒体卡（视频卡恒深底，明暗一致） |
+| `screenshots/dark-chat.png` | 聊天：暗色语义气泡/高对比正文/富文本输入容器 |
 | `screenshots/dark-contacts.png` | 通讯录 |
 | `screenshots/dark-settings.png` | 设置（含「外观」行） |
 | `screenshots/dark-group-detail.png` | 群详情右栏面板 |
