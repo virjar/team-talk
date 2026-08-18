@@ -142,7 +142,8 @@ TeamTalk 有三条用途不同的数据通道：
 
 提交变更前请先阅读[仓库导览](doc/08-development/repository-guide.md)、
 [工程约束](doc/08-development/engineering-rules.md)和
-[变更指南](doc/08-development/change-guides.md)。文档应描述稳定的产品或系统事实；开发过程、
+[变更指南](doc/08-development/change-guides.md)。使用 AI 参与开发时还应遵守
+[AI 协作约定](AGENTS.md)。文档应描述稳定的产品或系统事实；开发过程、
 临时结论和待办必须进入提交记录、任务系统或路线图，不能继续堆进架构正文。
 
 ## 开源许可
