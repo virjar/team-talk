@@ -199,11 +199,19 @@ object TestHttpServer {
 
     private fun handleClick(exchange: HttpExchange) {
         val params = exchange.queryParams()
+        val wid = params["window"] ?: "main"
+        val targetWindow = windows[wid] ?: windows["main"]
+        if (targetWindow != null && !targetWindow.isActive) {
+            EventQueue.invokeAndWait {
+                targetWindow.toFront()
+                targetWindow.requestFocus()
+            }
+            Thread.sleep(50)
+        }
         val x = params["x"]?.toFloatOrNull()
         val y = params["y"]?.toFloatOrNull()
         if (x != null && y != null) {
             // 坐标点击：优先按坐标找 clickable 节点走语义 action（绕过 Robot/系统权限）
-            val wid = params["window"] ?: "main"
             val node = findNodeAt(x, y, wid)
             val target = if (node != null) findClickableAncestor(node) else null
             val invoked = target != null && invokeClickAction(target)
@@ -217,7 +225,6 @@ object TestHttpServer {
             return
         }
         // 按 testTag 或 text 查找节点点击
-        val wid = params["window"] ?: "main"
         val node = findNode(params["testTag"], params["text"], wid)
         if (node == null) {
             exchange.send(404, """{"error":"node not found"}""")
@@ -233,13 +240,6 @@ object TestHttpServer {
         }
         // BasicTextField/RichTextEditor 本身没有 OnClick，但会暴露 RequestFocus。
         // 直接调用语义动作，保持整条自动化链路在进程内，不依赖 Robot。
-        val targetWindow = windows[wid] ?: windows["main"]
-        if (targetWindow != null) {
-            EventQueue.invokeAndWait {
-                targetWindow.toFront()
-                targetWindow.requestFocus()
-            }
-        }
         if (invokeRequestFocus(node)) {
             exchange.send(200, """{"clicked":true,"method":"focus-action","testTag":"${params["testTag"] ?: params["text"] ?: ""}"}""")
             return
@@ -354,8 +354,9 @@ object TestHttpServer {
         return try {
             // SetText 是 (AnnotatedString) -> Boolean
             val annotated = androidx.compose.ui.text.AnnotatedString(text)
-            (lambda as kotlin.Function1<Any?, *>).invoke(annotated)
-            true
+            runActionOnEventQueue {
+                (lambda as kotlin.Function1<Any?, *>).invoke(annotated) as? Boolean ?: true
+            }
         } catch (e: Exception) {
             println("[TestHttpServer] SetText action failed: ${e.message}")
             false
@@ -388,13 +389,15 @@ object TestHttpServer {
         val lambda = action.action ?: return false
         return try {
             // OnClick action 是 () -> Boolean，统一作为 Function0 调用
-            (lambda as kotlin.Function0<*>).invoke()
-            true
+            runActionOnEventQueue {
+                (lambda as kotlin.Function0<*>).invoke() as? Boolean ?: true
+            }
         } catch (e: ClassCastException) {
             // 类型转换失败，尝试反射兜底
             try {
-                lambda.javaClass.getMethod("invoke").invoke(lambda)
-                true
+                runActionOnEventQueue {
+                    lambda.javaClass.getMethod("invoke").invoke(lambda) as? Boolean ?: true
+                }
             } catch (e2: Exception) {
                 false
             }
@@ -431,8 +434,9 @@ object TestHttpServer {
                 val action = safeGet(cfg, SemanticsActions.OnLongClick) ?: return false
                 val lambda = action.action ?: return false
                 return try {
-                    (lambda as kotlin.Function0<*>).invoke()
-                    true
+                    runActionOnEventQueue {
+                        (lambda as kotlin.Function0<*>).invoke() as? Boolean ?: true
+                    }
                 } catch (e: Exception) {
                     false
                 }
@@ -440,6 +444,14 @@ object TestHttpServer {
             current = current.parent
         }
         return false
+    }
+
+    /** Compose 语义动作会更新 UI/焦点，必须在 AWT 事件线程执行。 */
+    private fun runActionOnEventQueue(action: () -> Boolean): Boolean {
+        if (EventQueue.isDispatchThread()) return action()
+        var result = false
+        EventQueue.invokeAndWait { result = action() }
+        return result
     }
 
     /** 通过剪贴板粘贴文本（支持中文，绕过 IME 和逐字符限制）。 */

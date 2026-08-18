@@ -64,7 +64,8 @@ class TestPeer:
         cmd = [
             os.path.join(self.project_root, "gradlew"), ":server:test",
             "--tests", f"com.virjar.tk.e2e.TestPeer.{method}",
-            "--no-watch-fs", "--no-daemon", "--max-workers=2", "-q",
+            # TestPeer 操作的是实时外部系统，绝不能复用上一次的测试 XML。
+            "--rerun-tasks", "--no-watch-fs", "--no-daemon", "--max-workers=2", "-q",
         ]
         if self.remote:
             cmd.append("-Dtk.e2e.remote=true")
