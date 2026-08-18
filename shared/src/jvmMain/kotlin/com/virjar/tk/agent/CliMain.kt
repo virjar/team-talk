@@ -11,7 +11,7 @@ import java.net.URL
 import java.net.URLEncoder
 
 /**
- * tt-cli：无状态薄客户端（doc/11-cli-agent 二期）。
+ * tt-cli：无状态薄客户端（doc/05-clients/headless.md）。
  * 所有命令经本地 REST 转发给常驻 tt-agent；`--json` 输出机器可读（e2e 断言用）。
  *
  * 配置：~/.tt-cli（内容为 agent api token）；或 --token / TT_TOKEN env；--api 默认 127.0.0.1:8600
@@ -182,7 +182,7 @@ private fun abs(p: String): String = File(p).absolutePath
 private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
 
 private val USAGE = """
-tt — TeamTalk CLI（经本地 tt-agent，doc/11-cli-agent 二期）
+tt — TeamTalk CLI（经本地 tt-agent，见 doc/05-clients/headless.md）
 
 命令：
   status                              连接状态/uid

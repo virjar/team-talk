@@ -25,7 +25,7 @@ import com.virjar.tk.ui.component.UnreadBadge
 import com.virjar.tk.ui.theme.Tk
 
 /**
- * 细导航栏（56dp，图标式，飞书范式）。规格：doc/04-ui-design/components.md §1.5。
+ * 细导航栏（56dp，图标式）。规格：doc/05-clients/desktop.md。
  *
  * 顶部：用户头像（点击进设置）；中部：会话/通讯录；底部：设置。
  * 选中项：图标主色 + 左侧 3dp 蓝色竖条。

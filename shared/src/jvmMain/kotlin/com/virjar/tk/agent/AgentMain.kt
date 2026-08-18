@@ -18,7 +18,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * tt-agent：AI 员工守护进程（doc/11-cli-agent 一期）。
+ * tt-agent：无头客户端守护进程（doc/05-clients/headless.md）。
  *
  * 常驻 ImBot 会话（自动重连/凭据持久化），本地 REST（127.0.0.1）供 tt-cli / MCP 调用。
  * 设计文档是实施事实源；本文件是 agent 核心 + HTTP 分发。

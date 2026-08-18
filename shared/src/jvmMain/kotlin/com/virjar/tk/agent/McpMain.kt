@@ -15,7 +15,7 @@ import java.io.InputStreamReader
 import java.io.PrintWriter
 
 /**
- * tt-mcp：MCP server（doc/11-cli-agent 四期）。
+ * tt-mcp：MCP server（doc/05-clients/headless.md）。
  * stdio JSON-RPC 2.0（MCP 传输层），工具面 = agent REST 的收发核心子集。
  * 大模型（Claude 等）配置 stdio command 后即可作为 IM 用户协作。
  *

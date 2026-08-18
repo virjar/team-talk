@@ -6,7 +6,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * RichTextBody wire 契约 + 工厂一致性（doc/10-rich-messaging §3）。
+ * RichTextBody wire 契约 + 工厂一致性（doc/05-clients/rich-content.md）。
  */
 class RichTextBodyTest {
 

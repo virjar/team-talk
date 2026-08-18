@@ -14,7 +14,7 @@ import kotlinx.serialization.json.put
 import java.io.File
 
 /**
- * agent REST API（doc/11-cli-agent 一期端点表）。仅 127.0.0.1 + Bearer apiToken。
+ * agent REST API（doc/05-clients/headless.md）。仅 127.0.0.1 + Bearer apiToken。
  * 统一 `{ok, data|error}`；JSON 手工构建（body 多态结构不适合序列化器推断）。
  */
 class AgentApi(private val agent: AgentRuntime) {

@@ -3,7 +3,7 @@ package com.virjar.tk.agent
 import java.io.File
 
 /**
- * tt-agent systemd 服务化（doc/11-cli-agent 三期，Linux）。
+ * tt-agent systemd 服务化（doc/05-clients/headless.md，Linux）。
  *
  * `tt-agent install [--user xx --pass yy | --register] [--host h] [--port p] [--api a] [--data-dir d]`
  *   → 写 /etc/systemd/system/tt-agent.service + 提示 start/enable

@@ -11,7 +11,7 @@ import java.util.concurrent.CountDownLatch
 
 /**
  * 无头 IM CLI 入口（保留的最小常驻管道：stdin/stdout 行协议，供最简场景）。
- * **产品级 AI 员工基础设施已演进为 tt-agent/tt-cli/tt-mcp**（doc/11-cli-agent）——
+ * **产品级自动化入口已演进为 tt-agent/tt-cli/tt-mcp**（doc/05-clients/headless.md）——
  * 守护进程 + REST + systemd + MCP。新场景请用 agent 体系；本入口保留兼容。
  *
  * 启动：

@@ -1,269 +1,151 @@
 # TeamTalk
 
-> **官网**: [https://im.virjar.com](https://im.virjar.com) | **GitHub**: [https://github.com/virjar/team-talk](https://github.com/virjar/team-talk)
+TeamTalk 是一个面向中小型组织的开源即时通讯与办公协作系统。项目使用 Kotlin
+Multiplatform 与 Compose Multiplatform 构建 Android、Desktop 和无头 SDK 客户端，服务端
+采用 Kotlin、Ktor 与 Netty。客户端、服务端、协议和部署工具位于同一个仓库，适合私有化部署和
+二次开发。
 
-基于 Kotlin Multiplatform (KMP) + Jetpack Compose 的跨平台即时通讯与办公协作应用，包含完整的**自研服务端**（Ktor + Netty）和**跨平台客户端**（Android + Desktop），采用自定义二进制协议实现实时消息推送。
+> 官网：[im.virjar.com](https://im.virjar.com) ·
+> 仓库：[github.com/virjar/team-talk](https://github.com/virjar/team-talk)
 
-基于 KMP 技术将前后端开发语言收敛到 Kotlin 单一语言，开发者只需掌握一门语言即可维护整个项目。
+## 项目边界
 
-## 项目定位
+TeamTalk 选择的是“可理解、可部署、可演进”的单体架构，目标规模是单组织万级用户，而不是
+互联网级公共聊天平台。这个边界带来三项明确取舍：
 
-TeamTalk 的最终目标是实现一个对标钉钉、飞书的办公软件，面向中小型组织（用户规模一般不超过 1 万）。采用单体架构，几乎所有功能都可以用单机+内存的模型收敛到一个简单服务器上。无需考虑海量用户带来的系统复杂性，架构简单，对开发和运维友好。
+- 服务端以单进程为主，避免把业务拆成需要复杂协调的微服务。
+- PostgreSQL 保存关系数据，RocksDB 保存消息和文件，Lucene 提供全文搜索。
+- 客户端采用本地优先模型：页面观察本地 SQLite，网络写入通过事件同步收敛到本地状态。
 
-### 项目优势
+项目仍处于正式发布前的快速演进阶段。协议、数据库和客户端缓存可能发生不兼容调整；当前版本
+适合开发、测试和私有化评估，不建议未经评审直接用于生产环境。
 
-- **AI 原生项目**：本项目约 99% 的代码由 AI 编写，代码风格统一、结构清晰，天然适配 AI 辅助开发和维护。无论是部署、调试还是二次开发，都可以借助 AI 快速上手。
-- **全栈 Kotlin**：前后端统一使用 Kotlin，配合详细的 `CLAUDE.md` 工程规范文件，AI 能够精准理解项目上下文并生成高质量代码。
+## 核心能力
 
-## 功能特性
+- 私聊与群聊，支持富文本、图片、语音、视频和文件消息。
+- 回复、转发、编辑、撤回、已读水位和多设备会话同步。
+- 联系人、好友申请、群成员、邀请链接、设备与在线状态管理。
+- 服务端全文搜索与客户端全局搜索入口。
+- 内嵌文件服务；附件始终由 TeamTalk 服务端管理，不依赖第三方对象存储。
+- Android、macOS、Windows、Linux Desktop 客户端，以及可用于自动化和 AI 接入的无头 SDK。
+- 可配置的私有化部署、管理后台、健康检查、客户端日志和真实部署验收。
 
-### 即时通讯
+能力的实现状态与已知缺口见[功能状态](doc/10-reference/feature-status.md)。
 
-- 单聊 / 群聊（文本、图片、语音、视频、文件）
-- 消息回复、转发、撤回、编辑（含「已编辑」标记）
-- 富媒体消息：图片画廊、语音条、文件卡片、视频播放
-- 消息已读回执、发送状态（发送中/已发送/已送达）
-- 消息长按菜单（回复/编辑/撤回/转发/复制）
+## 五分钟了解仓库
 
-### 联系人与社交
-
-- 好友管理：搜索用户、申请/接受/删除好友
-- 用户资料：头像、显示名、手机号、个人简介
-- 好友申请列表与红点提醒
-
-### 群组管理
-
-- 创建群组、邀请成员
-- 群公告编辑与展示
-- 群成员列表、角色管理（群主/管理员/成员）
-- 群详情面板、退出/解散群组
-
-### 会话管理
-
-- 会话列表（按最后消息时间排序，置顶优先）
-- 未读计数 Badge（会话级 + 应用图标级）
-- 会话置顶/取消置顶
-- 消息草稿（输入未发送 → 切换会话自动保存 → 显示[草稿]标记）
-- 会话消息预览（最后一条消息摘要）
-
-### 搜索
-
-- 用户搜索（按用户名/显示名模糊匹配）
-- 消息全文搜索（Lucene + IK 中文分词，服务端索引）
-
-### 多设备与在线状态
-
-- 多设备同时在线（每设备独立 token + TCP 连接）
-- 设备管理（查看在线设备、踢下线）
-- 在线状态实时推送（上线/下线通知）
-
-### 文件存储
-
-- 内嵌文件服务（RocksDB 小文件 + 文件系统大文件双层存储）
-- HTTP 上传/下载（不走 TCP 协议，独立通道）
-- Desktop 支持拖拽文件到聊天区自动发送（识别图片/视频/文件类型）
-
-### 其他
-
-- 亮色 / 暗色主题
-- Desktop 系统托盘与桌面通知
-- 本地优先架构（离线可查看历史消息/联系人/会话）
-- 客户端日志体系（trace/fault/snapshot 分级 + HTTP 上传 + Crash 持久化）
-
-## 技术栈
-
-| 组件 | 版本 | 用途 |
-|------|------|------|
-| Kotlin | 2.3.20 | 全栈语言 |
-| Compose Multiplatform | 1.10.3 | 跨平台 UI |
-| Ktor | 3.4.3 | HTTP 服务端 |
-| Netty | 4.1.119 | TCP 长连接 |
-| Exposed | 0.61.0 | 数据库 ORM（服务端） |
-| SQLDelight | 2.3.2 | 本地数据库（客户端） |
-| PostgreSQL | 16 | 关系型数据 |
-| RocksDB | 9.10.0 | 消息存储 + 文件存储（服务端） |
-| Lucene | 9.12.0 | 全文搜索索引 |
-| kotlinx.serialization | 1.8.1 | JSON 序列化 |
-| kotlinx.coroutines | 1.10.2 | 异步编程 |
-
-Android SDK：minSdk 26 / targetSdk 35 / compileSdk 36，JVM target 17。
-
-## 项目结构
-
+```text
+team-talk/
+├── shared/        IM SDK：协议、模型、连接、事件、缓存、Repository、ImBot
+├── rpc-processor/ RPC IDL 的 KSP 代码生成器
+├── app/           Compose 共享 UI、ViewModel 与平台无关业务状态
+├── android/       Android 应用壳、导航与平台能力
+├── desktop/       Desktop 窗口、导航、系统集成与内置测试服务
+├── richeditor/    项目内维护的 Compose 富文本编辑器 fork
+├── server/        Ktor + Netty 单体服务端
+├── admin/         管理后台前端
+├── buildSrc/      部署配置解析、构建与发布任务
+└── doc/           产品、架构、协议、运维、开发和测试文档
 ```
-TeamTalk/
-├── shared/        # 共享协议层 — 二进制协议定义、DTO、消息编解码、ImClient
-├── server/        # 服务端 — Ktor HTTP + Netty TCP，业务逻辑与数据存储
-├── app/           # 共享客户端 — ViewModel、Repository、通信层、UI 屏幕（commonMain）
-│   ├── commonMain/  # Android/Desktop 共享代码（70%+）
-│   ├── androidMain/ # Android 平台实现
-│   └── desktopMain/ # Desktop 平台实现
-├── android/       # Android 应用 — Activity 入口、Application、导航
-├── desktop/       # Desktop 应用 — ComposeWindow 入口、三栏布局、测试服务
-├── doc/           # 详细文档（7大模块多级目录）
-├── tools/e2e/     # E2E 测试工具（TestHttpServer 客户端、TestPeer 对端脚本）
-├── buildSrc/      # 单一部署配置解析与部署逻辑
-├── gradle/deployment.json # 客户端、验收和部署共享的非敏感坐标
-└── docker-compose.yml  # PostgreSQL 开发环境
+
+依赖方向保持单向：
+
+```text
+android / desktop ──▶ app ──▶ shared
+                         server ──▶ shared
+                    rpc-processor ──▶ 编译期生成 RPC 代码
 ```
 
 ## 快速开始
 
-### 前置要求
+### 前置条件
 
-- JDK 17+
-- Docker（用于 PostgreSQL）
-- Android Studio（Android 开发）
+- JDK 17
+- Docker（本地 PostgreSQL）
+- Android Studio（仅 Android 开发需要）
 
-### 启动开发环境
+### 启动 Desktop 客户端
+
+客户端默认读取 [`gradle/deployment.json`](gradle/deployment.json) 中的公开服务器坐标：
 
 ```bash
-# 客户端连接 deployment.json 指定的服务器，并开启语义测试端口
 ./gradlew :desktop:run
+```
 
-# 编译检查
+### 启动本地服务端
+
+```bash
+docker compose up -d
+./gradlew :server:run
+```
+
+本地服务端和客户端的完整配置、数据目录与调试方法见[开发环境](doc/01-getting-started/development.md)。
+
+### 常用验证
+
+```bash
+./gradlew :shared:jvmTest
+./gradlew :server:test
+./gradlew :app:desktopTest :desktop:desktopTest
 ./gradlew :desktop:compileKotlinDesktop
-
-# 真实业务验收
 ./gradlew :server:acceptanceTest
 ```
 
-详细的开发环境搭建请阅读 [doc/00-overview/getting-started/develop.md](doc/00-overview/getting-started/develop.md)。
+本地测试负责协议、算法和确定性边界；跨客户端业务流程以配置服务器上的真实验收为准。测试分层
+见[测试策略](doc/09-testing/README.md)。
 
-### 常用命令
+## 私有化部署
 
-```bash
-./gradlew :desktop:compileKotlinDesktop  # 编译检查（最快）
-./gradlew :server:run                     # 本地服务端调试
-./gradlew :desktop:run                    # Desktop 连接已配置服务器，含测试 HTTP 服务
-./gradlew :server:test                    # 本地确定性回归
-./gradlew :server:acceptanceTest            # 真实部署业务 E2E
-./gradlew deployServer                      # 部署服务端
-```
-
-## 架构概览
-
-```
-┌─ Android (Activity) ─┐   ┌─ Desktop (ComposeWindow) ─┐
-│  TeamTalkApp          │   │  Main.kt (入口)            │
-│  MainActivity         │   │  三栏布局 + 系统托盘        │
-│  NavHost 导航         │   │  子窗口模式                │
-└──────────┬────────────┘   └──────────┬─────────────────┘
-           └──────────┬────────────────┘
-                      ▼
-           :app/commonMain（共享 70%+ 代码）
-    ┌─────────────┼──────────────┐
-    ViewModel  Repository   Client 层
-    (StateFlow)            ┌────┴────┐
-                  HttpLogUploader  ImClient
-                  (HTTP 日志)      (TCP 长连接)
-                                      │
-              ┌───────────────────────┘
-              ▼
-    :shared（协议层 — 二进制编解码、DTO、ImClient、TkLogger）
-              │
-              ▼
-    :server（Ktor + Netty 单体）
-    ├── HTTP API（文件上传/下载、客户端日志接收）
-    ├── TCP 长连接（自定义二进制协议）
-    ├── Domain 层（user/auth/contact/chat/message/conversation/device/presence）
-    └── PostgreSQL + RocksDB + Lucene
-```
-
-**核心设计**：
-- **本地优先**：客户端所有页面从本地 SQLite 渲染，网络仅用于写操作和事件同步
-- **事件快照**：NOTIFY 推送携带完整快照，客户端 upsert 天然幂等
-- **离线补发**：AUTH 时携带 lastEventId，服务端补发缺失事件
-- **单体架构**：单进程面向万级用户，不拆微服务
-
-更多架构细节请阅读 [doc/00-overview/architecture.md](doc/00-overview/architecture.md)。
-
-## 通信协议
-
-采用自定义 TCP 二进制协议（不使用 Protobuf/JSON）：
-
-- **帧格式**：`Magic(2B) + Length(4B) + PacketType(1B) + Payload`
-- **包类型**：HANDSHAKE / AUTH / INVOKE / RESPONSE / MESSAGE / MESSAGE_ACK / NOTIFY / PING / PONG
-- **RPC**：INVOKE(requestId, serviceId, methodId, payload) → RESPONSE(requestId, status, payload)
-- **消息**：MESSAGE 发送 → MESSAGE_ACK 确认（clientMsgId 幂等去重 + serverSeq 分配）
-- **推送**：NOTIFY 携带完整事件快照，客户端直接 upsert
-- **心跳**：客户端 15s PING，45s 无数据断开重连
-
-支持 15 种消息类型（文本/图片/语音/视频/文件/回复/转发/撤回/编辑等）。
-
-详见 [doc/01-protocol/](doc/01-protocol/)。
-
-## 部署
-
-所有客户端、部署与远程验收共享 `gradle/deployment.json`。主仓库提供公开实例默认值；开源 fork 修改该文件即可构建并部署自己的私有化版本，HTTP、TCP 与 SSH 主机可以分别配置：
+fork 项目后修改 [`gradle/deployment.json`](gradle/deployment.json) 中的 HTTP、TCP 和 SSH
+坐标，并在本地或 CI 中提供不入库的 `gradle/deployment.secrets`。标准部署流程为：
 
 ```bash
-# 升级（自动检测已有部署，保留数据和配置）
 ./gradlew deployServer
-
-# 部署后的真实业务验收
 ./gradlew :server:acceptanceTest
-
-# 构建并上传客户端安装包
 ./gradlew uploadRelease
 ```
 
-生产环境目录结构：
+配置字段、安全边界、首次安装与升级流程见[私有化部署](doc/01-getting-started/private-deployment.md)。
 
-```
-/opt/teamtalk/
-├── bin/      # 可执行文件
-├── data/     # 数据（rocksdb/ lucene-index/ logs/ client-logs/）
-├── conf/     # 配置文件（env.sh 含敏感密码，权限 600）
-├── static/   # 产品首页 + 客户端下载文件
-└── docker-compose.yml
-```
+## 架构摘要
 
-详细的部署指南请阅读 [doc/00-overview/getting-started/deploy.md](doc/00-overview/getting-started/deploy.md)。
+TeamTalk 有三条用途不同的数据通道：
 
-## 数据存储
+| 通道 | 传输 | 用途 |
+|---|---|---|
+| 实时命令 | TCP `INVOKE/RESPONSE` | 用户、联系人、群、会话等 RPC |
+| 消息与事件 | TCP `MESSAGE/ACK/NOTIFY` | 消息发送、实时推送和离线补发 |
+| 大数据与运维 | HTTP(S) | 文件上传下载、健康检查、管理后台和日志上传 |
 
-| 存储引擎 | 用途 | 位置 |
-|---------|------|------|
-| PostgreSQL | 用户、群组、好友、会话、设备等关系数据 | 服务端 |
-| RocksDB | 消息存储（键格式: chatId + serverSeq） | 服务端 |
-| RocksDB | 文件存储（小文件 BlobDB + 大文件文件系统） | 服务端 |
-| Lucene | 消息全文搜索索引（IK 中文分词） | 服务端 |
-| SQLite | 客户端本地数据库（SQLDelight） | 客户端 |
+一次消息写入会经过 SDK 校验、TCP 认证门禁、服务端成员与附件校验、幂等落库、事件持久化、
+多端推送和客户端本地缓存更新。完整链路见[系统架构](doc/03-architecture/README.md)与
+[消息生命周期](doc/03-architecture/data-and-sync.md)。
 
-## 文档
+## 文档入口
 
-完整文档位于 [doc/](doc/) 目录，按模块组织为 7 大主题：
+完整文档从 [`doc/README.md`](doc/README.md) 开始。常用入口：
 
-| 文档 | 内容 |
-|------|------|
-| [doc/README.md](doc/README.md) | 文档总索引 |
-| [doc/00-overview/architecture.md](doc/00-overview/architecture.md) | 架构总览（原则 + 系统图） |
-| [doc/01-protocol/](doc/01-protocol/) | 协议设计（帧格式/RPC/认证/错误码） |
-| [doc/02-server/](doc/02-server/) | 服务端架构（领域层/线程模型） |
-| [doc/03-client/](doc/03-client/) | 客户端架构（本地优先/状态合并/文件树） |
-| [doc/04-shared/](doc/04-shared/) | 共享 SDK（模型/协议/TkLogger） |
-| [doc/05-logging/](doc/05-logging/) | 日志体系（trace/fault/HTTP上传/Crash） |
-| [doc/07-testing/](doc/07-testing/) | E2E 测试（真实部署/TestHttpServer/testTag/用例） |
-| [doc/07-conventions/](doc/07-conventions/) | 编码规范（6大约束） |
-| [doc/00-overview/architecture-comparison.md](doc/00-overview/architecture-comparison.md) | 与 Signal/Telegram 等横向对比 |
-| [doc/00-overview/getting-started/develop.md](doc/00-overview/getting-started/develop.md) | 开发环境搭建 |
-| [doc/00-overview/getting-started/deploy.md](doc/00-overview/getting-started/deploy.md) | 部署指南 |
+| 你要做什么 | 从这里开始 |
+|---|---|
+| 第一次运行项目 | [快速上手](doc/01-getting-started/README.md) |
+| 了解产品概念与能力边界 | [产品与领域](doc/02-product/README.md) |
+| 理解模块、数据流和可靠性 | [系统架构](doc/03-architecture/README.md) |
+| 对接 SDK 或实现其他语言客户端 | [协议与契约](doc/04-protocol/README.md) |
+| 修改 Desktop、Android 或富文本体验 | [客户端](doc/05-clients/README.md) |
+| 修改领域服务或存储 | [服务端](doc/06-server/README.md) |
+| 部署、监控和排障 | [运维](doc/07-operations/README.md) |
+| 增加 RPC、消息类型或业务能力 | [开发与扩展](doc/08-development/README.md) |
+| 运行本地或真实部署测试 | [测试与验收](doc/09-testing/README.md) |
+| 查状态、术语和路线图 | [参考资料](doc/10-reference/README.md) |
 
-## ⚠️ 项目状态
+## 参与开发
 
-当前项目处于早期开发阶段，尚未正式发布。**代码结构和数据结构可能随时发生重大变化，不保证向后兼容。**
+提交变更前请先阅读[仓库导览](doc/08-development/repository-guide.md)、
+[工程约束](doc/08-development/engineering-rules.md)和
+[变更指南](doc/08-development/change-guides.md)。文档应描述稳定的产品或系统事实；开发过程、
+临时结论和待办必须进入提交记录、任务系统或路线图，不能继续堆进架构正文。
 
-- 请勿将项目直接用于生产环境
-- 如确实用于生产，请自行评估风险，并**谨慎升级版本**
-- 升级前务必检查变更日志，数据库和协议可能有不兼容改动
+## 开源许可
 
-## 致谢
-
-- **[GLM](https://www.bigmodel.cn/glm-coding)（智谱大模型）**：本项目约 99% 的代码由 GLM 编写，从协议设计、服务端架构到跨平台客户端 UI。
-- [TangSengDaoDao](https://github.com/TangSengDaoDao)（唐僧叨叨）：TeamTalk 早期深度参考了唐僧叨叨进行移植开发，在设计模式和业务模型上有一脉相承的关系，但技术栈和协议层已完全独立实现。
-- [Signal](https://github.com/signalapp/Signal-Android) / [Telegram](https://github.com/DrKLO/Telegram)：图片气泡尺寸策略、消息同步模型等参考了这两个世界级 IM 的设计。
-
-## License
-
-[MIT License](LICENSE)
+仓库尚未提交正式许可证文件。对外发布或接受外部贡献前，需要先确定许可条款并加入根目录
+`LICENSE`；在此之前不要把代码默认视为 MIT 或其他开源许可证授权。

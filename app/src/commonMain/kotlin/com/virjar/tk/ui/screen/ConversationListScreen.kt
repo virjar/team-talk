@@ -34,7 +34,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * 会话列表（共享组件，规格见 doc/04-ui-design/components.md §1.2）。
+ * 会话列表（共享组件，规格见 doc/05-clients/design-system.md）。
  *
  * @param selectedChatId 当前打开的会话（选中态高亮）
  * @param onMarkRead 右键菜单「标记已读」：本地水位线置顶（chatId, lastSeq）

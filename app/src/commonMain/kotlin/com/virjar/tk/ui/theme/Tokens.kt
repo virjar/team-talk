@@ -9,7 +9,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
- * UI 设计令牌。事实源：doc/04-ui-design/design-tokens.md（代码与表不一致视为代码 bug）。
+ * UI 设计令牌。规范：doc/05-clients/design-system.md（实现与规范不一致时必须收敛）。
  *
  * 用法：`Tk.colors.hover` / `Tk.spacing.md` / `Tk.dimens.listAvatar` / `Tk.avatarShape(size)`。
  * 组件内禁止裸 dp / 裸 Color(0xFF...)，一律走令牌。

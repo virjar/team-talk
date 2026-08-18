@@ -15,7 +15,7 @@ import java.sql.DriverManager
 import java.util.UUID
 
 /**
- * 桌面媒体缓存体系（doc/10-rich-messaging 媒体域）。
+ * 桌面媒体缓存体系（doc/05-clients/rich-content.md）。
  *
  * SQLite 管理（media-cache.db，与消息 cache.db 分离）：
  * - 表 media_cache(url PK, local_path, kind, size, downloaded_at)——downloaded_at 支撑

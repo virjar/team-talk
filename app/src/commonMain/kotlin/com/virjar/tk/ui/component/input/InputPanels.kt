@@ -30,7 +30,7 @@ import com.virjar.tk.ui.theme.Tk
 
 /**
  * 表情面板（输入区弹层）。常用 emoji 网格，点击插入光标处。
- * 一期内置常用集；自定义表情包/商店走 doc/10-rich-messaging 三期卡片域。
+ * 内置常用集；自定义表情包与卡片扩展见 doc/05-clients/rich-content.md。
  */
 @Composable
 fun EmojiPanel(

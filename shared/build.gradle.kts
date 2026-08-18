@@ -102,7 +102,7 @@ tasks.register<Copy>("headlessDist") {
             )
             setExecutable(true)
         }
-        // tt-agent：同一 jar，守护进程 Main-Class（doc/11-cli-agent 一期）
+        // tt-agent：同一 jar，守护进程 Main-Class（doc/05-clients/headless.md）
         File(bin, "tt-mcp").apply {
             val script = buildString {
                 appendLine("#!/usr/bin/env bash")

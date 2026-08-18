@@ -5,7 +5,7 @@ import com.virjar.tk.protocol.IProtoReader
 import com.virjar.tk.protocol.PacketBuffer
 
 /**
- * 富文本消息体（wire 协议，doc/10-rich-messaging §3）。
+ * 富文本消息体（wire 协议，doc/05-clients/rich-content.md）。
  *
  * markdown 为唯一事实源；mentions 是侧信道（供 UI 直取/通知语义/免二次解析）；
  * plainText 是剥离语法的纯文本（服务端搜索索引、会话预览、旧端 fallback 均用它，

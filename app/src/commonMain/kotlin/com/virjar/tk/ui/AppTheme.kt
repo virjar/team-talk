@@ -17,7 +17,7 @@ import com.virjar.tk.ui.theme.LocalTkDimens
 // ── 飞书/钉钉风格配色 ──
 // 主色：靛蓝（Lark Blue #3370FF）
 // 辅色：青绿（Teal #00B89A）
-// 完整令牌表：doc/04-ui-design/design-tokens.md
+// 完整令牌规范：doc/05-clients/design-system.md
 
 private val LarkBlue = Color(0xFF3370FF)
 private val LarkBlueDark = Color(0xFF245BDB)

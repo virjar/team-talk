@@ -19,7 +19,7 @@ import com.virjar.tk.ui.component.AuthSubmitButton
 import com.virjar.tk.ui.component.AuthSwitchLink
 
 /**
- * @param windowStyle 桌面登录窗口样式（doc/04-ui-design §2.3）：窗口即卡片——
+ * @param windowStyle 桌面登录窗口样式（doc/05-clients/desktop.md）：窗口即卡片——
  * 无渐变背景、无内嵌卡片，内容宽 360、按钮高 40；false = 移动端全屏（渐变+卡片）。
  */
 @Composable

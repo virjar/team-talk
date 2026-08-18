@@ -60,7 +60,7 @@ private val ChatInspectorWidth = 400.dp
  *
  * 三栏常驻，子页面按 §2.1 分流：群详情/成员/邀请渲染为聊天右侧覆盖式检查器，
  * 用户资料显示为紧凑模态弹窗，其余流程弹独立任务窗口（§2.6）。
- * 区别于 Android 的全屏页面导航。视觉规格：doc/04-ui-design/components.md §1.5/§2.1。
+ * 区别于 Android 的全屏页面导航。交互规格：doc/05-clients/desktop.md。
  */
 @Composable
 internal fun WindowScope.MainAppContent(

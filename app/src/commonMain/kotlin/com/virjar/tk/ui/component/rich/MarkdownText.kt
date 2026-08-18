@@ -45,7 +45,7 @@ import org.intellij.markdown.parser.MarkdownParser
 /**
  * 富文本消息渲染（markdown）——自研渲染层。
  *
- * 选型（doc/10-rich-messaging/README.md）：只用 JetBrains 官方 parser（`org.jetbrains:markdown`，
+ * 选型（doc/05-clients/rich-content.md）：只用 JetBrains 官方 parser（`org.jetbrains:markdown`，
  * 纯 Kotlin 无传递依赖），AST → 块模型 → AnnotatedString/Compose 组件自行渲染。
  * 放弃 mikepenz 渲染器：其 JVM 字节码为 Java 21（class 65），本项目运行时 JBR 17 只认 61，
  * 运行期 UnsupportedClassVersionError（F17）；且纯 Text 方案没有 inlineContent（mention 胶囊/卡片受限）。

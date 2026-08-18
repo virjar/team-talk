@@ -73,7 +73,7 @@ import java.util.Locale
 
 /**
  * 共享聊天面板。包含消息列表和输入栏，不含 Scaffold/TopAppBar。
- * 视觉规格：doc/04-ui-design/components.md §1.3/§1.4。
+ * 视觉与内容规格：doc/05-clients/design-system.md、doc/05-clients/rich-content.md。
  *
  * @param chatType 1=私聊 2=群聊（私聊不显示对方昵称行；已读回执仅私聊）
  * @param resolveSender 通过 uid 解析发送者 User（取昵称/头像），平台注入 LocalCache.getUser

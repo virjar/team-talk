@@ -21,7 +21,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * 缓存感知图片渲染（doc/10-rich-messaging 媒体域）：
+ * 缓存感知图片渲染（doc/05-clients/rich-content.md）：
  * 1. 本地缓存命中 → 直接解码渲染（零网络）
  * 2. 未命中 → 下载（进度 UI）→ 渲染；缩略图气泡默认走此路径（小文件秒下）
  * 3. 画廊原图按需：同一组件，进度条为大覆盖层样式

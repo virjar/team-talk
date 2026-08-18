@@ -12,7 +12,7 @@ import com.virjar.tk.navigation.ScreenDataKey
  * 子屏幕目标（Desktop）。参数内联在目标里（对齐 Android Routes(chatId=…) 模式），
  * 取代旧的空枚举 + selectedGroupChatId/selectedProfileUid/forwardMessage 平行字段。
  *
- * 三类页面容器（doc/04-ui-design/components.md §2.1）：
+ * 三类页面容器（doc/05-clients/desktop.md）：
  * - 聊天检查器：群详情/成员/邀请（覆盖在聊天右侧，不替换聊天上下文）；
  * - 主内容页：全局搜索（替换右栏主内容）；
  * - 独立任务窗口：其余需要连续输入或选择的流程（宽 460、ESC 逐级返回）。

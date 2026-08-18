@@ -7,7 +7,7 @@ import com.virjar.tk.ui.component.rich.MarkdownText
 /**
  * 富文本消息渲染——markdown 渲染的**单点封装**（自研渲染层，见 [rich.MarkdownText]）。
  * 普通文本无 markdown 语法时视觉等同纯文本；含语法时按 markdown 渲染（Discord 语义）。
- * 选型与协议演进：doc/10-rich-messaging/README.md。
+ * 选型与协议演进：doc/05-clients/rich-content.md。
  */
 @Composable
 fun RichMessageText(

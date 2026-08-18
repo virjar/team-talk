@@ -1,0 +1,82 @@
+# 持久化
+
+## 1. 存储分工
+
+| 数据 | 存储 | 原因 |
+|---|---|---|
+| 用户、设备、好友、群、成员、会话、申请、邀请、同步事件 | PostgreSQL | 关系、约束、事务和查询 |
+| 消息正文与幂等索引 | RocksDB | 按 chat/seq 顺序读写、高吞吐 KV |
+| token | 独立 RocksDB | 随机 token 快速查询和删除 |
+| 文件小对象与元数据 | RocksDB | 本地嵌入、低运维成本 |
+| 大文件 | 文件系统 | 避免 KV 大 blob 放大 |
+| 消息全文索引 | Lucene | 分词、相关性和高亮 |
+| 客户端本地数据 | SQLite/SQLDelight | 离线和 StateFlow 观察 |
+
+## 2. PostgreSQL 关系
+
+### users / devices
+
+users 保存身份和资料；devices 保存用户设备、状态与最后活动。token 本体不应直接作为普通关系表
+字段输出到管理查询。
+
+### chats / group_chats / group_members
+
+chats 保存共同身份与类型；group_chats 保存群扩展；group_members 保存成员角色和加入状态。禁言
+可以使用成员字段或独立表，但权限查询必须得到单一结果。
+
+### friends / friend_applies
+
+friends 以有向双行表达双方视角，备注属于各自记录。friend_applies 保存申请方向、token 和状态。
+
+### conversations
+
+主键概念是 `(uid, chatId)`。保存 lastSeq、readSeq、peerReadSeq、draft、pin、mute 和版本。单调字段
+更新使用 max/条件写，避免乱序事件倒退。
+
+### sync_events
+
+按 uid 和自增 event ID 保存 NotifyType 与 payload bytes。认证按 `id > lastEventId` 升序分页。事件
+保留期和清理必须大于客户端合理离线窗口，并与 seq 缺口恢复配合。
+
+## 3. MessageStore
+
+消息主键按 chatId 前缀和 big-endian serverSeq 编码，使 RocksDB 范围扫描天然按序：
+
+```text
+[chatId bytes][serverSeq 8B BE] → Message bytes
+```
+
+另有 clientMsgId 幂等索引指向 chatId/serverSeq。分配 seq、写消息和写幂等索引需要保持可恢复顺序；
+重复请求必须返回已存在消息。
+
+## 4. 派生数据
+
+Lucene 索引、会话预览、缩略图和部分计数都是派生数据：
+
+- 派生写失败需要 fault 日志和重建/补偿方式。
+- 搜索结果不能反向成为消息权威。
+- 重建工具读取 MessageStore，不从客户端缓存回灌。
+- 健康检查应区分“索引不可用”和“消息已丢失”。
+
+## 5. 一致性与事务
+
+PostgreSQL 事务只覆盖关系表；它不能原子覆盖 RocksDB/Lucene。跨存储流程必须用业务顺序保证：
+
+1. 权威数据写成功。
+2. 可重建派生数据更新。
+3. 同步事件持久化。
+4. 对外返回成功。
+
+如果第 2 或第 3 步失败，必须留下可识别故障并有补偿路径。不能在权威写入前推送事件。
+
+## 6. 生命周期
+
+当前正式发布前允许清空测试数据处理不兼容结构。生产化前必须补齐：
+
+- 明确的数据库迁移版本。
+- RocksDB key/version 迁移策略。
+- sync_events 与孤儿文件清理策略。
+- 备份、恢复和一致性校验工具。
+
+这些未完成项集中维护在[功能状态](../10-reference/feature-status.md)和
+[路线图](../10-reference/roadmap.md)，不混入当前 schema 描述。

@@ -1,98 +1,161 @@
-# TeamTalk 文档
+# TeamTalk 文档中心
 
-> 面向中小组织的全栈 Kotlin IM：Android + Desktop + Server + **IM SDK + 无头 bot**。
-> 文档目标：**据此可完全重写项目达到当前状态**——架构、wire 级协议规格、边界约束、踩坑经验全部结构化沉淀。
+这里是 TeamTalk 产品与工程知识的统一入口。文档面向四类读者：准备私有化部署的使用者、
+参与客户端或服务端开发的贡献者、对接 SDK/协议的集成方，以及负责测试和运维的维护者。
 
----
+文档按稳定的知识边界组织，不按某次需求、某轮 UI 修改或某个历史问题建立顶级章节。
 
-## 阅读路径
+## 从你的目标开始
 
-| 你是谁 | 路径 |
-|--------|------|
-| 新成员 | [架构总览](00-overview/architecture.md) → [设计理念](00-overview/design-philosophy.md) → **[踩坑经验](05-lessons/README.md)** → [开发上手](00-overview/getting-started/develop.md) |
-| 改协议 | [wire-format](01-protocol/wire-format.md) → [rpc-methods](01-protocol/rpc-methods.md) → [notify-contracts](01-protocol/notify-contracts.md) |
-| 改服务端 | [server README](02-server/README.md) → [database](02-server/database.md) → [threading](02-server/threading.md) |
-| 改 SDK | [sdk README](03-sdk/README.md) → [imclient](03-sdk/imclient.md) → [local-cache](03-sdk/local-cache.md) |
-| 改 UI | [设计系统](04-ui-design/README.md) → [令牌](04-ui-design/design-tokens.md) → [组件规格](04-ui-design/components.md) → [占位清单](04-ui-design/placeholders.md) |
-| 写 bot / AI 接入 | [imbot](03-sdk/imbot.md) → [roadmap P1](09-roadmap.md) |
-| 排查线上问题 | [日志体系](06-logging/README.md) → [测试与 E2E](07-testing/README.md) |
-| 构建/部署 | [build-system](00-overview/build-system.md) → [deploy](00-overview/getting-started/deploy.md) |
+| 目标 | 推荐阅读路径 |
+|---|---|
+| 先把项目运行起来 | [快速上手](01-getting-started/README.md) → [开发环境](01-getting-started/development.md) |
+| fork 后部署自己的服务器 | [私有化部署](01-getting-started/private-deployment.md) → [运行配置](07-operations/configuration.md) → [部署与升级](07-operations/deployment.md) |
+| 判断项目是否适合业务 | [产品定位](02-product/README.md) → [能力模型](02-product/capabilities.md) → [功能状态](10-reference/feature-status.md) |
+| 理解一次消息如何流转 | [系统架构](03-architecture/README.md) → [数据与同步](03-architecture/data-and-sync.md) → [消息与附件](04-protocol/messages-and-attachments.md) |
+| 编写另一个客户端或 SDK | [协议总览](04-protocol/README.md) → [Wire Format](04-protocol/wire-format.md) → [RPC 与事件](04-protocol/rpc-and-events.md) |
+| 修改 Desktop 或 Android | [客户端架构](05-clients/README.md) → 对应平台文档 → [设计系统](05-clients/design-system.md) |
+| 增加一个业务能力 | [仓库导览](08-development/repository-guide.md) → [变更指南](08-development/change-guides.md) → [测试策略](09-testing/README.md) |
+| 排查线上问题 | [可观测性](07-operations/observability.md) → [故障排查](07-operations/troubleshooting.md) |
 
-## 目录
+## 文档地图
 
-### 00-overview — 总览与理念
-| 文档 | 内容 |
-|------|------|
-| [architecture.md](00-overview/architecture.md) | 系统组成/三条数据通道/发消息全链路/三级状态/依赖图 |
-| [design-philosophy.md](00-overview/design-philosophy.md) | 10 条设计决策及其"为什么"（模型确定性/Owner-Driven/本地优先/水位线/契约优先…） |
-| [build-system.md](00-overview/build-system.md) | 单一部署配置/私有化 fork/CI |
-| [getting-started/develop.md](00-overview/getting-started/develop.md) | 开发环境 |
-| [getting-started/deploy.md](00-overview/getting-started/deploy.md) | 部署指南（deployServer 一键） |
-| [architecture-comparison.md](00-overview/architecture-comparison.md) | vs Signal/Telegram/开源 IM |
+### 01 · 上手与部署
 
-### 01-protocol — 协议规格（wire 级）
-| 文档 | 内容 |
-|------|------|
-| [wire-format.md](01-protocol/wire-format.md) | **帧布局/PacketBuffer 原语表/全部 payload+模型字段布局/心跳/错误分层** |
-| [rpc-methods.md](01-protocol/rpc-methods.md) | 全部 RPC 方法矩阵（请求布局/权限/事件）+ Repository 映射 |
-| [notify-contracts.md](01-protocol/notify-contracts.md) | **契约表机制**（唯一事实源/三层防线/视角规则）+ 18 契约清单 |
-| [authentication.md](01-protocol/authentication.md) | 认证体系（token 一次一换/三级状态） |
-| [errors.md](01-protocol/errors.md) | 错误码体系 |
-| [message-types.md](01-protocol/message-types.md) | 消息类型与渲染策略 |
+从零开始运行、开发和私有化部署，不解释所有内部实现。
 
-### 02-server — 服务端
-| 文档 | 内容 |
-|------|------|
-| [README.md](02-server/README.md) | 启动序列/TCP 管线/领域服务规则/**事件发射矩阵**/存储分工/DI 图 |
-| [database.md](02-server/database.md) | 11 张表全 schema + 不变量（水位线/事件双索引模型） |
-| [threading.md](02-server/threading.md) | 线程模型（EventLoop/IOExecutor/Looper） |
-| [file-storage.md](02-server/file-storage.md) | 分层文件存储 |
-| [fulltext-search.md](02-server/fulltext-search.md) | Lucene + IK 搜索 |
+- [章节导览](01-getting-started/README.md)
+- [开发环境](01-getting-started/development.md)
+- [私有化部署](01-getting-started/private-deployment.md)
 
-### 03-sdk — IM SDK（shared）
-| 文档 | 内容 |
-|------|------|
-| [README.md](03-sdk/README.md) | SDK 组装/级联销毁/EventProcessor/Repository 模式/测试闭环 |
-| [imclient.md](03-sdk/imclient.md) | 连接状态机/重连/心跳/**防御设计↔历史 bug 对照表** |
-| [local-cache.md](03-sdk/local-cache.md) | stateLock 纪律/消息窗口 LRU/会话合并策略 |
-| [imbot.md](03-sdk/imbot.md) | 无头客户端（AI bot/CLI 入口）+ 集成测试 |
+### 02 · 产品与领域
 
-### 04-ui-design — UI 设计系统（飞书风格）
-| 文档 | 内容 |
-|------|------|
-| [README.md](04-ui-design/README.md) | 为什么选飞书/设计原则/截图迭代闭环 |
-| [design-tokens.md](04-ui-design/design-tokens.md) | **令牌总表**（颜色/字阶/间距/圆角/尺寸，代码 `Tk` 对象对照） |
-| [components.md](04-ui-design/components.md) | 组件规格（头像/会话项/气泡/输入区/导航栏）+ 页面布局 + 交互规范 |
-| [placeholders.md](04-ui-design/placeholders.md) | 后端缺失占位清单（✅可接/🟡半接/🔴缺口 + 补齐顺序） |
+说明 TeamTalk 解决什么问题、核心对象是什么、各能力如何组合，以及明确不解决什么。
 
-### 05-lessons — 踩坑经验
-| 文档 | 内容 |
-|------|------|
-| [README.md](05-lessons/README.md) | **40+ 条真实坑**分 6 类（协议契约/认证连接/并发/数据一致性/服务端/UI-E2E），每条含症状→根因→固化 |
+- [产品定位](02-product/README.md)
+- [领域模型](02-product/domain-model.md)
+- [能力模型](02-product/capabilities.md)
 
-### 06~08 — 工程体系
-| 文档 | 内容 |
-|------|------|
-| [06-logging/README.md](06-logging/README.md) | trace/fault/snapshot 分级 + HTTP 上传 + Crash 持久化 |
-| [07-testing/README.md](07-testing/README.md) | 测试金字塔（单测/契约/SDK 集成/服务端 e2e/UI E2E） |
-| [07-testing/ai-workflow.md](07-testing/ai-workflow.md) | AI 驱动 E2E 操作手册（Desktop TestHttpServer/Android uiautomator2/TestPeer） |
-| [07-testing/test-cases.md](07-testing/test-cases.md) | T01-T34 用例清单 |
-| [08-conventions/README.md](08-conventions/README.md) | 编码规范（println 禁令/RPC 配对/Compose 状态） |
+### 03 · 系统架构
 
-### 09-roadmap — 未来
-| 文档 | 内容 |
-|------|------|
-| [09-roadmap.md](09-roadmap.md) | P0 正确性收尾 / **P1 无头 IM 与 AI 员工** / P2 SDK / P3 服务端 / P4 UI |
+解释模块边界、所有权、数据流、同步语义、可靠性模型和关键取舍。
 
-### 10-rich-messaging — 富消息课题（调研与分期）
-| 文档 | 内容 |
-|------|------|
-| [README.md](10-rich-messaging/README.md) | **markdown 录入/渲染选型**（mikepenz renderer + Slack 式输入）、RICH_TEXT 协议设计（mentions 侧信道）、卡片/指令分期 |
+- [架构总览](03-architecture/README.md)
+- [客户端与 SDK](03-architecture/client-and-sdk.md)
+- [服务端运行时](03-architecture/server-runtime.md)
+- [数据与同步](03-architecture/data-and-sync.md)
+- [架构决策](03-architecture/decisions.md)
 
----
+### 04 · 协议与契约
 
-## 三份最重要的文档
+面向 SDK 开发者的规范。这里描述“线上字节和行为必须是什么”，代码生成物与共享模型是实现侧
+事实源。
 
-1. **[踩坑经验](05-lessons/README.md)** —— 项目的隐性知识，防止重蹈覆辙
-2. **[wire-format](01-protocol/wire-format.md)** —— 协议从零重写的完整依据
-3. **[设计理念](00-overview/design-philosophy.md)** —— 所有边界约束的"为什么"
+- [协议总览](04-protocol/README.md)
+- [Wire Format](04-protocol/wire-format.md)
+- [RPC 与事件](04-protocol/rpc-and-events.md)
+- [消息与附件](04-protocol/messages-and-attachments.md)
+- [认证与错误](04-protocol/authentication-and-errors.md)
+
+### 05 · 客户端
+
+解释共享 UI 与平台壳的边界、Desktop/Android 交互模型、设计语言和富文本体系。
+
+- [客户端总览](05-clients/README.md)
+- [Desktop](05-clients/desktop.md)
+- [Android](05-clients/android.md)
+- [无头客户端](05-clients/headless.md)
+- [设计系统](05-clients/design-system.md)
+- [富文本与媒体](05-clients/rich-content.md)
+
+### 06 · 服务端
+
+解释领域服务、持久化、文件、搜索和管理后台，不与部署操作混写。
+
+- [服务端总览](06-server/README.md)
+- [领域服务](06-server/domain-services.md)
+- [持久化](06-server/persistence.md)
+- [文件存储](06-server/file-storage.md)
+- [搜索与管理](06-server/search-and-admin.md)
+
+### 07 · 运维
+
+面向部署维护者的配置、发布、日志、健康检查和排障手册。
+
+- [运维总览](07-operations/README.md)
+- [运行配置](07-operations/configuration.md)
+- [部署与升级](07-operations/deployment.md)
+- [可观测性](07-operations/observability.md)
+- [故障排查](07-operations/troubleshooting.md)
+
+### 08 · 开发与扩展
+
+面向贡献者的仓库导航、强约束和常见扩展流程。
+
+- [开发总览](08-development/README.md)
+- [仓库导览](08-development/repository-guide.md)
+- [工程约束](08-development/engineering-rules.md)
+- [变更指南](08-development/change-guides.md)
+
+### 09 · 测试与验收
+
+区分本地确定性测试、SDK 集成测试、真实部署业务验收和客户端交互验证。
+
+- [测试策略](09-testing/README.md)
+- [本地测试](09-testing/local-tests.md)
+- [真实部署验收](09-testing/deployment-acceptance.md)
+- [Desktop 自动化](09-testing/desktop-automation.md)
+- [业务场景目录](09-testing/scenario-catalog.md)
+
+### 10 · 参考资料
+
+存放需要快速查询或会随版本变化的内容，避免污染稳定的设计正文。
+
+- [参考入口](10-reference/README.md)
+- [功能状态](10-reference/feature-status.md)
+- [RPC 参考](10-reference/rpc-reference.md)
+- [事件参考](10-reference/event-reference.md)
+- [测试选择器](10-reference/test-selectors.md)
+- [术语表](10-reference/glossary.md)
+- [路线图](10-reference/roadmap.md)
+
+## 权威边界
+
+同一个事实只能有一个权威来源。其他文档应链接，不应复制维护。
+
+| 事实 | 权威来源 |
+|---|---|
+| 产品定位、能力边界 | `02-product/` |
+| 模块职责、所有权与数据流 | `03-architecture/` |
+| 线上帧、字段顺序、认证和事件语义 | `04-protocol/` + `shared` 中的协议/IDL 代码 |
+| Desktop/Android 交互和视觉规则 | `05-clients/` |
+| 服务端领域与存储实现 | `06-server/` |
+| 环境变量、目录、部署和排障 | `07-operations/` |
+| 编码约束与扩展步骤 | `08-development/` |
+| 测试分层和验收流程 | `09-testing/` |
+| 当前完成度、缺口和计划 | `10-reference/` |
+
+代码与文档冲突时：协议字段和 ID 以 `shared` 中的枚举、模型和生成 Contract 为准；构建任务以
+Gradle 为准；运行配置以 `buildSrc`、`gradle/deployment.json` 和服务端环境读取代码为准。
+发现冲突必须同时修正文档，不能用“以后再更新”作为长期状态。
+
+## 文档写作规则
+
+1. **按知识归属写，不按需求归属写。** “新增群设置抽屉”应更新 Desktop 交互文档，不新建一个
+   顶级课题目录。
+2. **设计、操作、参考、状态分开。** 架构正文解释为什么和如何工作；操作手册给步骤；参考表供
+   查询；路线图只记录未完成事项。
+3. **正文使用现在时。** “本轮改了”“曾经出过问题”属于提交记录；只有理解取舍确实必要时，
+   才在架构决策中保留背景。
+4. **链接到权威来源。** 不在 README、CLAUDE.md 和分册中复制同一张完整表。
+5. **状态必须可验证。** 功能状态使用“已实现/部分实现/未实现”，并给出代码或测试入口。
+6. **示例不包含秘密。** 公开坐标可引用 `deployment.json`，口令、私钥和真实 token 只能写成占位符。
+7. **结构变更要校验链接。** 移动文档后必须扫描仓库内 Markdown 链接和旧路径引用。
+
+## 生命周期
+
+- 稳定设计变化时，修改对应权威文档。
+- 新功能未完成前写入[路线图](10-reference/roadmap.md)，完成后迁入产品/架构正文并更新
+  [功能状态](10-reference/feature-status.md)。
+- 重大且难以从代码推断的取舍写入[架构决策](03-architecture/decisions.md)。
+- 临时调查、截图批次、故障现场和 AI 工作记录不进入主文档；它们应留在任务、提交或外部知识库。

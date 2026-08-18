@@ -10,7 +10,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * CLI 路径 e2e（doc/11-cli-agent「e2e 迁移」验证）：A（内嵌）↔ B（常驻 agent CLI）。
+ * CLI 路径 e2e（doc/05-clients/headless.md）：A（内嵌）↔ B（常驻 agent CLI）。
  * 前置：本机/CI 起 tt-agent（-Dcli.api/-Dcli.token 指向它）。
  */
 class CliPeerE2eTest {

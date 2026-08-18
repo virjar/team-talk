@@ -30,7 +30,7 @@ import com.virjar.tk.util.formatFileSize
 import kotlin.math.abs
 
 /**
- * 按消息 body 类型渲染消息内容。视觉规格：doc/04-ui-design/components.md §1.3。
+ * 按消息 body 类型渲染消息内容。规格：doc/05-clients/rich-content.md。
  *
  * 媒体类（图片/视频/贴纸）走「贴边气泡」——由 [com.virjar.tk.ui.screen] 的 MessageBubble
  * 判定 [isEdgeToEdgeMedia] 后去掉气泡内边距，媒体自身即气泡面。

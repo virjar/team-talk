@@ -9,7 +9,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * CLI 对等账号操作器（doc/11-cli-agent「e2e 迁移」）。
+ * CLI 对等账号操作器（doc/05-clients/headless.md）。
  *
  * 与 [TestPeer] 的区别：TestPeer 每用例内嵌 ImClient 建连；CliPeer 经
  * 常驻 tt-agent 的 REST 操作——**测试路径=产品路径**（CLI/agent 的 bug 在测试期暴露），

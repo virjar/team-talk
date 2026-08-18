@@ -25,7 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import com.virjar.tk.ui.theme.Tk
 
 /**
- * @ 补全（三期，doc/10-rich-messaging §2）。
+ * @ 补全（doc/05-clients/rich-content.md）。
  *
  * 选中候选后向输入框写入完整链接语法 `@[名](mention://uid) `；输入框用
  * [MentionVisualTransformation] 把语法**视觉折叠**为 `@名` 高亮块——显示干净，

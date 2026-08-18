@@ -7,7 +7,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 /**
- * 交互卡片消息体（wire）。doc/10-rich-messaging §4：卡片走独立消息类型，
+ * 交互卡片消息体（wire）。doc/05-clients/rich-content.md：卡片走独立消息类型，
  * 结构化 JSON 而非 markdown 字符串（schema 校验 + 交互事件回传的前提，Slack Block Kit 同构）。
  *
  * wire 层单字段 JSON（payload 结构演进不受 wire 布局约束）；[CardPayload] 是 payload 的
