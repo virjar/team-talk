@@ -8,8 +8,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
@@ -114,12 +114,10 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
         var registerLoading by remember { mutableStateOf(false) }
 
         // 注册模式多一个输入字段：无装饰窗口不可拉伸，按模式切高度
-        val density = LocalDensity.current
         LaunchedEffect(showRegister) {
             val height = if (showRegister) 560.dp else 480.dp
-            with(density) {
-                window.setSize(420.dp.roundToPx(), height.roundToPx())
-            }
+            // WindowState 使用 dp；AWT setSize 使用逻辑像素。先 roundToPx 会在 Retina 屏上再放大一倍。
+            loginWindowState.size = DpSize(width = 420.dp, height = height)
         }
 
         // DISCONNECTED 时清 loading 和注册页状态
