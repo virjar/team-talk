@@ -150,7 +150,7 @@ private fun RailItem(
  * 中栏列表头和聊天面板头共用此组件（消除两段近乎重复的 Surface+Row+Divider 模板）。
  *
  * @param title 标题文字
- * @param onTitleClick 标题点击回调（群聊标题可点击进群详情），null 不可点击
+ * @param onTitleClick 可选标题点击回调；业务动作优先放在 [actions]，避免隐藏入口
  * @param actions 右侧操作槽（图标按钮等）
  */
 @Composable

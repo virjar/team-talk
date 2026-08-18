@@ -19,7 +19,7 @@ import com.virjar.tk.ui.component.LocalScreenHeaderLeadingInset
  * 子窗口宿主（§2.6）：宽统一 460、ESC 逐级返回（局部栈>1 弹栈，初始屏关窗）。
  *
  * 窗口内维护独立导航栈；用户资料不进入该栈，关闭任务窗口后由主窗口显示资料弹窗。
- * 不触碰 nav.windowScreen/panelStack；测试窗口注册用 onDispose 兜底注销
+ * 不触碰 nav.windowScreen/mainPaneScreen/inspectorStack；测试窗口注册用 onDispose 兜底注销
  * （入口切换时 key() 重建窗口不走 onCloseRequest，旧实现会泄漏注册项）。
  */
 @Composable

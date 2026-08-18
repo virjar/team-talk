@@ -1,5 +1,11 @@
 package com.virjar.tk
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,7 +54,7 @@ import kotlinx.coroutines.launch
 /**
  * 主内容区（三栏布局：导航栏 + 列表栏 + 内容栏）。
  *
- * 三栏常驻，子页面按 §2.1 分流：群详情/成员/邀请渲染为右栏检查器，
+ * 三栏常驻，子页面按 §2.1 分流：群详情/成员/邀请渲染为聊天右侧覆盖式检查器，
  * 用户资料显示为紧凑模态弹窗，其余流程弹独立任务窗口（§2.6）。
  * 区别于 Android 的全屏页面导航。视觉规格：doc/04-ui-design/components.md §1.5/§2.1。
  */
@@ -75,7 +81,8 @@ internal fun WindowScope.MainAppContent(
         val unregisterEscape = registerEscapeInterceptor(mainWindow) {
             when {
                 nav.profileUid != null -> { nav.closeProfile(); true }
-                nav.panelStack.isNotEmpty() -> { nav.popPanel(); true }
+                nav.inspectorStack.isNotEmpty() -> { nav.popInspector(); true }
+                nav.mainPaneScreen != null -> { nav.closeMainPane(); true }
                 else -> false
             }
         }
@@ -103,7 +110,7 @@ internal fun WindowScope.MainAppContent(
             } else null
     }
 
-    // ── 独立子窗口（§2.6，与右栏面板互斥）──
+    // ── 独立子窗口（§2.6，与主内容页/聊天检查器互斥）──
     // key(windowScreen)：入口切换时强制重建 SubWindow，清空窗口内局部导航栈
     nav.windowScreen?.let { windowScreen ->
         key(windowScreen) {
@@ -148,8 +155,8 @@ internal fun WindowScope.MainAppContent(
                 selectedTab = nav.selectedTab,
                 onSelectTab = { index ->
                     nav.selectedTab = index
-                    nav.panelStack = emptyList()
-                    nav.globalSearchQuery = ""
+                    nav.closeInspector()
+                    nav.closeMainPane()
                     if (MainTab.entries[index] != MainTab.CONVERSATIONS) nav.chatId = null
                 },
                 pendingApplyCount = pendingApplyCount,
@@ -210,55 +217,54 @@ internal fun WindowScope.MainAppContent(
                 }
             }
 
-            // ── 右栏：内容区（聊天面板 / 子页面面板 / 空态）──
-            // 面板渲染在聊天区之上，ESC 逐级弹栈（处理在根节点）。
+            // ── 右栏：主内容 + 聊天检查器 ──
+            // 全局搜索替换主内容；群设置覆盖在聊天右侧，不再把聊天页替换掉。
             Surface(
                 modifier = Modifier.weight(1f).fillMaxHeight(),
                 color = MaterialTheme.colorScheme.surface,
             ) {
-                val panelScreen = nav.panelStack.lastOrNull()
-                when {
-                    // 右栏检查器：与聊天上下文相关的子页面（群详情/成员/邀请）
-                    panelScreen != null -> SubScreenContent(
-                        screen = panelScreen,
+                val mainPaneScreen = nav.mainPaneScreen
+                if (mainPaneScreen != null) {
+                    SubScreenContent(
+                        screen = mainPaneScreen,
                         data = nav,
-                        navigate = { nav.panelStack = nav.panelStack + it },
-                        back = { nav.popPanel() },
+                        navigate = nav::openScreen,
+                        back = nav::closeMainPane,
                         openChatAndClose = { chatId, name, chatType -> nav.openChat(chatId, name, chatType) },
                         openUserProfile = nav::openProfile,
-                        onLeaveGroup = { chatId ->
-                            nav.leaveGroup(chatId) {
-                                nav.panelStack = emptyList()
-                                if (nav.chatId == chatId) nav.chatId = null
-                            }
-                        },
-                        // 面板初始屏无返回键（ESC 关）；容器内跳转后（群详情→邀请成员）可返回
-                        showBack = nav.panelStack.size > 1,
+                        onLeaveGroup = {},
+                        showBack = false,
                         globalSearchQuery = nav.globalSearchQuery,
                         onGlobalSearchQueryChange = { nav.globalSearchQuery = it },
                     )
-                    // 聊天面板
-                    nav.chatId != null && nav.chatViewModel != null -> {
-                        // 从会话列表读取当前会话的草稿作为初始值
-                        val conv = conversations.find { it.chatId == nav.chatId }
-                        ChatPanelWrapper(
-                            chatId = nav.chatId!!,
-                            chatName = nav.chatName,
-                            chatType = nav.chatType,
-                            viewModel = nav.chatViewModel!!,
-                            myUid = nav.userSession.uid,
-                            conversationRepo = nav.conversationRepo,
-                            initialDraft = conv?.draft,
-                            resolveSender = resolveUser,
-                            voicePlayback = voicePlayback,
-                            onMentionClick = nav::openProfile,
-                            mentionCandidates = mentionCandidates,
-                            onForward = { msg -> nav.openScreen(SubScreen.Forward(msg)) },
-                            onGroupDetail = { nav.openScreen(SubScreen.GroupDetail(nav.chatId!!)) },
-                        )
+                } else {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        when {
+                            nav.chatId != null && nav.chatViewModel != null -> {
+                                // 从会话列表读取当前会话的草稿作为初始值
+                                val conv = conversations.find { it.chatId == nav.chatId }
+                                ChatPanelWrapper(
+                                    chatId = nav.chatId!!,
+                                    chatName = nav.chatName,
+                                    chatType = nav.chatType,
+                                    viewModel = nav.chatViewModel!!,
+                                    myUid = nav.userSession.uid,
+                                    conversationRepo = nav.conversationRepo,
+                                    initialDraft = conv?.draft,
+                                    resolveSender = resolveUser,
+                                    voicePlayback = voicePlayback,
+                                    onMentionClick = nav::openProfile,
+                                    mentionCandidates = mentionCandidates,
+                                    onForward = { msg -> nav.openScreen(SubScreen.Forward(msg)) },
+                                    onGroupSettings = { nav.openScreen(SubScreen.GroupDetail(nav.chatId!!)) },
+                                )
+                            }
+                            // 空态（规格 §2.1：Logo + 主提示 + 次提示）
+                            else -> MainPaneEmptyState(MainTab.entries[nav.selectedTab])
+                        }
+
+                        ChatInspectorHost(nav)
                     }
-                    // 空态（规格 §2.1：Logo + 主提示 + 次提示）
-                    else -> MainPaneEmptyState(MainTab.entries[nav.selectedTab])
                 }
             }
         }
@@ -272,6 +278,59 @@ internal fun WindowScope.MainAppContent(
 
         // action 失败提示（此前面板/中栏 action 的错误完全静默）
         ErrorSnackbar(nav)
+    }
+}
+
+/**
+ * 与聊天上下文绑定的非模态检查器。抽屉覆盖聊天右侧，不参与 Row 测量，因此打开时
+ * 消息区和输入框不会重新布局；关闭后仍停留在原会话和滚动位置。
+ */
+@Composable
+private fun BoxScope.ChatInspectorHost(nav: DesktopNav) {
+    val requestedScreen = nav.inspectorStack.lastOrNull()
+    var renderedScreen by remember { mutableStateOf<SubScreen?>(null) }
+    val visibility = remember { MutableTransitionState(false) }
+
+    LaunchedEffect(requestedScreen) {
+        if (requestedScreen != null) renderedScreen = requestedScreen
+        visibility.targetState = requestedScreen != null
+    }
+
+    AnimatedVisibility(
+        visibleState = visibility,
+        modifier = Modifier.align(Alignment.CenterEnd),
+        enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(),
+        exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(),
+    ) {
+        val screen = renderedScreen ?: return@AnimatedVisibility
+        Surface(
+            modifier = Modifier
+                .width(400.dp)
+                .fillMaxHeight()
+                .testTag("chat.inspector"),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 12.dp,
+        ) {
+            Row {
+                VerticalDivider(color = Tk.colors.divider)
+                SubScreenContent(
+                    screen = screen,
+                    data = nav,
+                    navigate = nav::pushInspector,
+                    back = nav::popInspector,
+                    openChatAndClose = { chatId, name, chatType -> nav.openChat(chatId, name, chatType) },
+                    openUserProfile = nav::openProfile,
+                    onLeaveGroup = { chatId ->
+                        nav.leaveGroup(chatId) {
+                            nav.closeInspector()
+                            if (nav.chatId == chatId) nav.chatId = null
+                        }
+                    },
+                    showBack = nav.inspectorStack.size > 1,
+                    onClose = nav::closeInspector,
+                )
+            }
+        }
     }
 }
 
@@ -411,7 +470,7 @@ private fun ChatPanelWrapper(
     conversationRepo: com.virjar.tk.repository.ConversationRepository,
     initialDraft: String?,
     onForward: (Message) -> Unit,
-    onGroupDetail: () -> Unit,
+    onGroupSettings: () -> Unit,
     resolveSender: ((uid: String) -> User?)? = null,
     voicePlayback: com.virjar.tk.ui.component.VoicePlaybackController? = null,
     onMentionClick: ((uid: String) -> Unit)? = null,
@@ -477,10 +536,25 @@ private fun ChatPanelWrapper(
                 },
             ),
     ) {
-        // 聊天面板头：复用 ListHeader（群聊标题可点击进群详情）
+        // 群名称保持纯标题；设置使用明确的齿轮入口，打开聊天右侧检查器。
+        val isGroup = ChatType.fromCode(chatType) == ChatType.GROUP
         ListHeader(
             title = chatName.ifEmpty { chatId.take(16) },
-            onTitleClick = if (ChatType.fromCode(chatType) == ChatType.GROUP) onGroupDetail else null,
+            actions = {
+                if (isGroup) {
+                    IconButton(
+                        onClick = onGroupSettings,
+                        modifier = Modifier.size(40.dp).testTag("chat.settings"),
+                    ) {
+                        Icon(
+                            Icons.Filled.Settings,
+                            contentDescription = "群设置",
+                            tint = Tk.colors.secondaryText,
+                            modifier = Modifier.size(Tk.dimens.iconSize),
+                        )
+                    }
+                }
+            },
         )
         ChatPanel(
             chatId, chatName, viewModel, myUid,

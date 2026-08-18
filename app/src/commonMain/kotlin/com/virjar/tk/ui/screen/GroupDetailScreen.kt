@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -43,13 +44,27 @@ fun GroupDetailScreen(
     onMuteMember: ((memberUid: String) -> Unit)? = null,
     onUnmuteMember: ((memberUid: String) -> Unit)? = null,
     onRemoveMember: ((memberUid: String) -> Unit)? = null,
+    onClose: (() -> Unit)? = null,
 ) {
     var showNoticeEdit by remember { mutableStateOf(false) }
     var noticeText by remember(chat?.notice) { mutableStateOf(chat?.notice ?: "") }
     val compactDesktop = Tk.dimens.headerHeight < 56.dp
 
     Column(modifier = Modifier.fillMaxSize()) {
-        ScreenHeader(title = "群组详情", onBack = onBack)
+        ScreenHeader(
+            title = "群设置",
+            onBack = onBack,
+            trailing = {
+                if (onBack == null && onClose != null) {
+                    IconButton(
+                        onClick = onClose,
+                        modifier = Modifier.size(40.dp).testTag("chat.inspector.close"),
+                    ) {
+                        Icon(Icons.Filled.Close, contentDescription = "关闭群设置")
+                    }
+                }
+            },
+        )
 
         // 群公告编辑弹窗
         if (showNoticeEdit) {

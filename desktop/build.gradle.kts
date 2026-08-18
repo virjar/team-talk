@@ -29,6 +29,11 @@ kotlin {
                 implementation(libs.compose.media.player)
             }
         }
+        val desktopTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+            }
+        }
     }
 }
 

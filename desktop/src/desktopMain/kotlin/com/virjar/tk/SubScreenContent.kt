@@ -15,6 +15,7 @@ import com.virjar.tk.ui.screen.*
  * @param openUserProfile 用 Desktop 模态弹窗打开用户资料，不进入页面栈
  * @param onLeaveGroup 离开群组后的清理（关闭面板 + 会话失效处理，容器定义）
  * @param showBack 是否提供返回能力（任务窗口根页仍需用于完成后关闭；箭头显示由宿主控制）
+ * @param onClose 检查器根页面的关闭动作；任务窗口和主内容页不提供
  */
 @Composable
 fun SubScreenContent(
@@ -26,6 +27,7 @@ fun SubScreenContent(
     openUserProfile: (uid: String) -> Unit,
     onLeaveGroup: (chatId: String) -> Unit,
     showBack: Boolean,
+    onClose: (() -> Unit)? = null,
     globalSearchQuery: String = "",
     onGlobalSearchQueryChange: (String) -> Unit = {},
 ) {
@@ -103,6 +105,7 @@ fun SubScreenContent(
             onMuteMember = { uid -> data.muteMember(screen.chatId, uid) },
             onUnmuteMember = { uid -> data.unmuteMember(screen.chatId, uid) },
             onRemoveMember = { uid -> data.removeMember(screen.chatId, uid) },
+            onClose = onClose,
         )
 
         is SubScreen.InviteMembers -> InviteMembersScreen(

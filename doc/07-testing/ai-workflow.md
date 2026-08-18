@@ -97,7 +97,7 @@ Desktop 使用**子窗口模式**渲染编辑资料/修改密码/搜索用户/�
 
 **独立子窗口名称** = `sub-` + 入口 `SubScreen` 名：`sub-Devices` / `sub-Blacklist` / `sub-EditProfile` / `sub-ChangePassword` / `sub-FriendApplies` / `sub-SearchUsers` / `sub-CreateGroup` / `sub-SearchMessages` / `sub-Forward`。
 
-`GroupDetail` / `InviteMembers` / `InviteLinks` 是主窗口右栏检查器。`UserProfile` 是主窗口模态弹窗（`profile.dialog`）；从 `SearchUsers` 点击用户会先关闭任务窗口，再回到主窗口显示资料弹窗。两者都使用默认 `window='main'`。
+`GroupDetail` / `InviteMembers` / `InviteLinks` 是主窗口聊天右侧覆盖式检查器（入口 `chat.settings`、容器 `chat.inspector`、关闭 `chat.inspector.close`）。打开后聊天语义仍应存在，用于防止回归为“替换聊天页”。`UserProfile` 是主窗口模态弹窗（`profile.dialog`）；从 `SearchUsers` 点击用户会先关闭任务窗口，再回到主窗口显示资料弹窗。两者都使用默认 `window='main'`。
 
 **关键规则**：
 1. 点击主窗口的元素（如「编辑资料」）前 → 先确认主窗口内容：`d.screen_texts()`
