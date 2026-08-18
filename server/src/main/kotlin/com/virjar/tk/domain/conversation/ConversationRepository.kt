@@ -69,6 +69,30 @@ class ConversationRepository(
         }
     }
 
+    /** 编辑/撤回仅在目标仍是会话最后一条消息时更新摘要。 */
+    fun updateLastMessageIfCurrent(
+        uid: String,
+        chatId: String,
+        serverSeq: Long,
+        lastMsgType: Int,
+        lastMsgPreview: String?,
+    ): Boolean = transaction {
+        val existing = Conversations.selectAll()
+            .where { (Conversations.uid eq uid) and (Conversations.chatId eq chatId) }
+            .singleOrNull() ?: return@transaction false
+        if (existing[Conversations.lastMsgSeq] != serverSeq) return@transaction false
+
+        Conversations.update({
+            (Conversations.uid eq uid) and (Conversations.chatId eq chatId)
+        }) {
+            it[Conversations.lastMessage] = lastMsgPreview
+            it[Conversations.lastMessageType] = lastMsgType
+            it[Conversations.version] = existing[Conversations.version] + 1
+            it[Conversations.updatedAt] = System.currentTimeMillis()
+        }
+        true
+    }
+
     fun markRead(uid: String, chatId: String, readSeq: Long) {
         transaction {
             val existing = Conversations.selectAll()

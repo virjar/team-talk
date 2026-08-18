@@ -67,9 +67,35 @@ class ConversationService(
     /**
      * 消息到达时更新会话（由 MessageService 调用）。
      */
-    suspend fun onMessageReceived(chatId: String, chatType: Int, lastMsgSeq: Long, lastMsgType: Int, lastMsgPreview: String?, memberUids: List<String>) {
+    suspend fun onMessageReceived(
+        chatId: String,
+        chatType: Int,
+        lastMsgSeq: Long,
+        lastMsgType: Int,
+        lastMsgPreview: String?,
+        memberUids: List<String>,
+        senderUid: String,
+    ) {
         for (uid in memberUids) {
             conversationRepo.upsertConversation(uid, chatId, chatType, lastMsgSeq, lastMsgType, lastMsgPreview)
+            // 自己发送的消息不能形成自己的未读数。单水位模型下推进到本次 seq，
+            // 也符合“能发言即已进入并阅读当前会话”的客户端语义。
+            if (uid == senderUid) conversationRepo.markRead(uid, chatId, lastMsgSeq)
+            val conv = conversationRepo.getConversation(uid, chatId) ?: continue
+            syncEventService.emitEvent(uid, NotifyType.CONVERSATION_UPDATED, conv)
+        }
+    }
+
+    /** 编辑/撤回最后一条消息后刷新会话摘要；非最后一条不改变列表预览。 */
+    suspend fun onMessageChanged(
+        chatId: String,
+        serverSeq: Long,
+        lastMsgType: Int,
+        lastMsgPreview: String?,
+        memberUids: List<String>,
+    ) {
+        for (uid in memberUids) {
+            if (!conversationRepo.updateLastMessageIfCurrent(uid, chatId, serverSeq, lastMsgType, lastMsgPreview)) continue
             val conv = conversationRepo.getConversation(uid, chatId) ?: continue
             syncEventService.emitEvent(uid, NotifyType.CONVERSATION_UPDATED, conv)
         }

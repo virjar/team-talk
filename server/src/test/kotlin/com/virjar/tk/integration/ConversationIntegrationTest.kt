@@ -35,6 +35,46 @@ class ConversationIntegrationTest {
     }
 
     @Test
+    fun `sender does not receive own unread badge`() = runTest {
+        val sender = ctx.registerUser()
+        val recipient = ctx.registerUser()
+        val chat = ctx.chatService.createPersonalChat(sender, recipient)
+        val seq = sendMessage(sender, chat.chatId, "Hello unread")
+
+        val senderConv = ctx.conversationService.listConversations(sender).first { it.chatId == chat.chatId }
+        val recipientConv = ctx.conversationService.listConversations(recipient).first { it.chatId == chat.chatId }
+        assertEquals(seq, senderConv.readSeq)
+        assertEquals(0, senderConv.unreadCount)
+        assertEquals(1, recipientConv.unreadCount)
+    }
+
+    @Test
+    fun `edit and revoke latest message refresh conversation preview`() = runTest {
+        val sender = ctx.registerUser()
+        val recipient = ctx.registerUser()
+        val chat = ctx.chatService.createPersonalChat(sender, recipient)
+        val seq = sendMessage(sender, chat.chatId, "Before edit")
+        val edited = com.virjar.tk.model.Message(
+            chatId = chat.chatId,
+            clientMsgId = java.util.UUID.randomUUID().toString(),
+            serverSeq = seq,
+            senderUid = sender,
+            messageType = com.virjar.tk.protocol.MessageType.TEXT.code,
+            timestamp = System.currentTimeMillis(),
+            body = com.virjar.tk.body.TextBody("After edit"),
+        )
+
+        ctx.messageService.editMessage(sender, chat.chatId, seq, edited)
+        val editedConv = ctx.conversationService.listConversations(recipient).first { it.chatId == chat.chatId }
+        assertEquals("After edit", editedConv.lastMessage)
+        assertEquals(com.virjar.tk.protocol.MessageType.TEXT.code, editedConv.lastMessageType)
+
+        ctx.messageService.revokeMessage(sender, chat.chatId, seq)
+        val revokedConv = ctx.conversationService.listConversations(recipient).first { it.chatId == chat.chatId }
+        assertEquals(com.virjar.tk.protocol.MessageType.REVOKE.code, revokedConv.lastMessageType)
+    }
+
+    @Test
     fun `set draft`() = runTest {
         val uid1 = ctx.registerUser()
         val uid2 = ctx.registerUser()

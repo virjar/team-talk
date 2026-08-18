@@ -8,6 +8,7 @@ import com.virjar.tk.infra.search.SearchIndex
 import com.virjar.tk.infra.storage.MessageStore
 import com.virjar.tk.infra.sync.SyncEventService
 import com.virjar.tk.model.Message
+import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.NotifyType
 
 class MessageService(
@@ -66,7 +67,9 @@ class MessageService(
         if (chat != null) {
             // 传入消息预览文本和类型，让会话列表能显示 lastMessage
             val previewText = MessageTextExtractor.extract(storedMessage, storedMessage.body)
-            conversationService.onMessageReceived(chatId, chat.chatType, serverSeq, storedMessage.messageType, previewText, memberUids)
+            conversationService.onMessageReceived(
+                chatId, chat.chatType, serverSeq, storedMessage.messageType, previewText, memberUids, senderUid
+            )
         }
 
         return serverSeq
@@ -104,6 +107,9 @@ class MessageService(
 
         val memberUids = chatStore.getMemberUids(message.chatId)
         syncEventService.emitEvents(memberUids, NotifyType.MESSAGE_RECV, revoked)
+        conversationService.onMessageChanged(
+            message.chatId, message.serverSeq, MessageType.REVOKE.code, null, memberUids
+        )
     }
 
     suspend fun editMessage(uid: String, chatId: String, serverSeq: Long, newMessage: Message) {
@@ -127,6 +133,7 @@ class MessageService(
 
         val memberUids = chatStore.getMemberUids(chatId)
         syncEventService.emitEvents(memberUids, NotifyType.MESSAGE_RECV, edited)
+        conversationService.onMessageChanged(chatId, serverSeq, edited.messageType, text, memberUids)
     }
 
     suspend fun forwardMessage(uid: String, srcChatId: String, srcSeq: Long, targetChatId: String): Message {
@@ -159,7 +166,9 @@ class MessageService(
         val chat = chatStore.getChat(targetChatId)
         if (chat != null) {
             val fwdPreviewText = MessageTextExtractor.extract(forwardMsg, forwardMsg.body)
-            conversationService.onMessageReceived(targetChatId, chat.chatType, serverSeq, forwardMsg.messageType, fwdPreviewText, memberUids)
+            conversationService.onMessageReceived(
+                targetChatId, chat.chatType, serverSeq, forwardMsg.messageType, fwdPreviewText, memberUids, uid
+            )
         }
 
         return forwardMsg
