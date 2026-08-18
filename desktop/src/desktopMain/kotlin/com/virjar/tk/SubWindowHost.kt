@@ -12,11 +12,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.rememberWindowState
 import com.virjar.tk.ui.AppTheme
+import com.virjar.tk.ui.component.LocalScreenHeaderBackButtonVisible
+import com.virjar.tk.ui.component.LocalScreenHeaderLeadingInset
 
 /**
  * 子窗口宿主（§2.6）：宽统一 460、ESC 逐级返回（局部栈>1 弹栈，初始屏关窗）。
  *
- * 窗口内维护独立导航栈（SearchUsers→UserProfile 局部跳转可返回），
+ * 窗口内维护独立导航栈；用户资料不进入该栈，关闭任务窗口后由主窗口显示资料弹窗。
  * 不触碰 nav.windowScreen/panelStack；测试窗口注册用 onDispose 兜底注销
  * （入口切换时 key() 重建窗口不走 onCloseRequest，旧实现会泄漏注册项）。
  */
@@ -27,9 +29,12 @@ internal fun SubWindow(
     onClose: () -> Unit,
 ) {
     val shortId = "sub-" + (screen::class.simpleName ?: "window")
+    val integratedMacTitleBar = remember {
+        System.getProperty("os.name").contains("Mac", ignoreCase = true)
+    }
     Window(
         onCloseRequest = onClose,
-        title = screen.title,
+        title = if (integratedMacTitleBar) "" else "TeamTalk",
         state = rememberWindowState(width = 460.dp, height = screen.windowHeight),
     ) {
         TestServiceBridge.registerWindowWithId(shortId, window)
@@ -38,6 +43,14 @@ internal fun SubWindow(
         }
         // 子窗口也带 TeamTalk 图标（与主窗口一致）
         setTeamTalkIcon()
+        DisposableEffect(window, integratedMacTitleBar) {
+            if (integratedMacTitleBar) {
+                window.rootPane.putClientProperty("apple.awt.fullWindowContent", true)
+                window.rootPane.putClientProperty("apple.awt.transparentTitleBar", true)
+                window.rootPane.putClientProperty("apple.awt.windowTitleVisible", false)
+            }
+            onDispose { }
+        }
         AppTheme {
             Surface(modifier = Modifier.fillMaxSize()) {
                 SubWindowBody(screen, nav, window, onClose)
@@ -75,19 +88,31 @@ private fun SubWindowBody(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        SubScreenContent(
-            screen = current,
-            data = nav,
-            navigate = { stack = stack + it },
-            back = back,
-            openChatAndClose = { chatId, name, chatType ->
-                nav.openChat(chatId, name, chatType)
-                onClose()
-            },
-            // 群详情是面板类屏幕，窗口内不会触达离开群组
-            onLeaveGroup = {},
-            showBack = true,
-        )
+        CompositionLocalProvider(
+            LocalScreenHeaderBackButtonVisible provides (stack.size > 1),
+            LocalScreenHeaderLeadingInset provides if (
+                System.getProperty("os.name").contains("Mac", ignoreCase = true)
+            ) 72.dp else 0.dp,
+        ) {
+            SubScreenContent(
+                screen = current,
+                data = nav,
+                navigate = { stack = stack + it },
+                back = back,
+                openChatAndClose = { chatId, name, chatType ->
+                    nav.openChat(chatId, name, chatType)
+                    onClose()
+                },
+                openUserProfile = { uid ->
+                    onClose()
+                    nav.openProfile(uid)
+                },
+                // 群详情是面板类屏幕，窗口内不会触达离开群组
+                onLeaveGroup = {},
+                // 保留功能性 back 回调（保存成功/ESC 关窗）；根页面只隐藏移动端返回图标。
+                showBack = true,
+            )
+        }
         SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
     }
 }

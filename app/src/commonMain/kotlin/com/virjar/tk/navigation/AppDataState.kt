@@ -138,8 +138,10 @@ open class AppDataState(val session: ClientSession) {
             }
             is ScreenDataKey.UserProfile -> {
                 val uid = key.uid
-                try { profileUser = userRepo.getProfile(uid).getOrThrow() } catch (e: AppError) { handleError(e, "加载用户信息失败") }
+                // 切换不同用户时先清掉上一份资料，避免网络返回前短暂显示错误对象。
+                profileUser = null
                 isFriend = contactViewModel.contacts.value.any { it.friendUid == uid }
+                try { profileUser = userRepo.getProfile(uid).getOrThrow() } catch (e: AppError) { handleError(e, "加载用户信息失败") }
             }
             is ScreenDataKey.InviteLinks -> {
                 val chatId = key.chatId

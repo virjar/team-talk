@@ -48,8 +48,8 @@ import kotlinx.coroutines.launch
 /**
  * 主内容区（三栏布局：导航栏 + 列表栏 + 内容栏）。
  *
- * 三栏常驻，子页面按 §2.1 分流：群详情/成员/资料/邀请渲染为右栏面板（ESC 逐级返回），
- * 其余弹独立子窗口（§2.6）。这是桌面 IM 的标准范式（飞书/Slack），
+ * 三栏常驻，子页面按 §2.1 分流：群详情/成员/邀请渲染为右栏检查器，
+ * 用户资料显示为紧凑模态弹窗，其余流程弹独立任务窗口（§2.6）。
  * 区别于 Android 的全屏页面导航。视觉规格：doc/04-ui-design/components.md §1.5/§2.1。
  */
 @Composable
@@ -68,12 +68,16 @@ internal fun WindowScope.MainAppContent(
         onDispose { nav.destroy() }
     }
 
-    // ESC 关闭面板：AWT KeyEventDispatcher 层拦截（Compose onPreviewKeyEvent 依赖
+    // ESC 优先关闭资料弹窗，再关闭检查器：AWT KeyEventDispatcher 层拦截（Compose onPreviewKeyEvent 依赖
     // 焦点节点存在，无焦点时（点完非 focusable 的列表行）按键不派发——旧版
     // 「ESC 不可靠」的根因）。按窗口归属分流，弹层/对话框是独立 Window 不受影响。
     DisposableEffect(mainWindow) {
         val unregisterEscape = registerEscapeInterceptor(mainWindow) {
-            if (nav.panelStack.isNotEmpty()) { nav.popPanel(); true } else false
+            when {
+                nav.profileUid != null -> { nav.closeProfile(); true }
+                nav.panelStack.isNotEmpty() -> { nav.popPanel(); true }
+                else -> false
+            }
         }
         val unregisterSearch = registerGlobalSearchShortcut(mainWindow) {
             nav.openGlobalSearch(requestFocus = true)
@@ -183,7 +187,7 @@ internal fun WindowScope.MainAppContent(
                             // 搜索 + 拼音首字母分组 + 索引条（§2.4，双端共享组件）
                             ContactsListScreen(
                                 contacts = contacts,
-                                onContactClick = { uid -> nav.openScreen(SubScreen.UserProfile(uid)) },
+                                onContactClick = nav::openProfile,
                                 modifier = Modifier.weight(1f),
                                 pendingApplyCount = pendingApplyCount,
                                 onFriendApplies = { nav.openScreen(SubScreen.FriendApplies) },
@@ -214,13 +218,14 @@ internal fun WindowScope.MainAppContent(
             ) {
                 val panelScreen = nav.panelStack.lastOrNull()
                 when {
-                    // 右栏面板：与聊天上下文相关的子页面（群详情/成员/资料/邀请）
+                    // 右栏检查器：与聊天上下文相关的子页面（群详情/成员/邀请）
                     panelScreen != null -> SubScreenContent(
                         screen = panelScreen,
                         data = nav,
                         navigate = { nav.panelStack = nav.panelStack + it },
                         back = { nav.popPanel() },
                         openChatAndClose = { chatId, name, chatType -> nav.openChat(chatId, name, chatType) },
+                        openUserProfile = nav::openProfile,
                         onLeaveGroup = { chatId ->
                             nav.leaveGroup(chatId) {
                                 nav.panelStack = emptyList()
@@ -246,7 +251,7 @@ internal fun WindowScope.MainAppContent(
                             initialDraft = conv?.draft,
                             resolveSender = resolveUser,
                             voicePlayback = voicePlayback,
-                            onMentionClick = { uid -> nav.openScreen(SubScreen.UserProfile(uid)) },
+                            onMentionClick = nav::openProfile,
                             mentionCandidates = mentionCandidates,
                             onForward = { msg -> nav.openScreen(SubScreen.Forward(msg)) },
                             onGroupDetail = { nav.openScreen(SubScreen.GroupDetail(nav.chatId!!)) },
@@ -257,6 +262,12 @@ internal fun WindowScope.MainAppContent(
                 }
             }
         }
+        }
+
+        nav.profileUid?.let { uid ->
+            key(uid) {
+                DesktopUserProfileDialog(uid = uid, nav = nav, onDismiss = nav::closeProfile)
+            }
         }
 
         // action 失败提示（此前面板/中栏 action 的错误完全静默）

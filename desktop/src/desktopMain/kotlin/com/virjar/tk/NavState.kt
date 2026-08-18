@@ -12,9 +12,11 @@ import com.virjar.tk.navigation.ScreenDataKey
  * 子屏幕目标（Desktop）。参数内联在目标里（对齐 Android Routes(chatId=…) 模式），
  * 取代旧的空枚举 + selectedGroupChatId/selectedProfileUid/forwardMessage 平行字段。
  *
- * 两类容器（doc/04-ui-design/components.md §2.1）：
- * - 右栏面板：群详情/成员/用户资料/邀请（与聊天上下文相关，原地替换聊天区，ESC 关）；
- * - 独立子窗口：其余全部（§2.6：统一头部返回键+标题、宽 460、ESC 逐级返回）。
+ * 两类页面容器（doc/04-ui-design/components.md §2.1）：
+ * - 右栏检查器：群详情/成员/邀请（与当前聊天上下文相关，原地替换聊天区，ESC 关）；
+ * - 独立任务窗口：其余需要连续输入或选择的流程（宽 460、ESC 逐级返回）。
+ *
+ * 用户资料是轻量对象预览，不属于页面导航，单独由 [DesktopNav.profileUid] 驱动模态弹窗。
  */
 sealed class SubScreen {
     // ── 独立子窗口类 ──
@@ -32,32 +34,12 @@ sealed class SubScreen {
     data class GroupDetail(val chatId: String) : SubScreen()
     data class InviteMembers(val chatId: String) : SubScreen()
     data class InviteLinks(val chatId: String) : SubScreen()
-    data class UserProfile(val uid: String) : SubScreen()
     data object GlobalSearch : SubScreen()
 
     /** 是否渲染为右栏面板（其余为独立子窗口）。仅约束顶层入口；容器内局部跳转不受限。 */
     val isPanel: Boolean
         get() = this is GroupDetail || this is InviteMembers || this is InviteLinks ||
-            this is UserProfile || this is GlobalSearch
-
-    /** 子屏幕标题（子窗口标题栏/面板头部共用）。 */
-    val title: String
-        get() = when (this) {
-            Devices -> "设备管理"
-            Blacklist -> "黑名单"
-            EditProfile -> "编辑资料"
-            ChangePassword -> "修改密码"
-            FriendApplies -> "好友申请"
-            SearchUsers -> "搜索用户"
-            is CreateGroup -> "创建群组"
-            SearchMessages -> "搜索消息"
-            is Forward -> "转发到"
-            is GroupDetail -> "群详情"
-            is InviteMembers -> "邀请成员"
-            is InviteLinks -> "邀请链接"
-            is UserProfile -> "用户资料"
-            GlobalSearch -> "搜索"
-        }
+            this is GlobalSearch
 
     /** 子窗口高度（宽统一 460，§2.6；高按内容）。 */
     val windowHeight: Dp
@@ -81,7 +63,6 @@ sealed class SubScreen {
         Blacklist -> ScreenDataKey.Blacklist
         FriendApplies -> ScreenDataKey.FriendApplies
         is GroupDetail -> ScreenDataKey.GroupDetail(chatId)
-        is UserProfile -> ScreenDataKey.UserProfile(uid)
         is InviteLinks -> ScreenDataKey.InviteLinks(chatId)
         GlobalSearch -> null
         else -> null
@@ -112,18 +93,31 @@ class DesktopNav(session: ClientSession) : AppDataState(session) {
     /** 右栏面板导航栈（空 = 无面板）。入口重置为单元素，容器内跳转 push。 */
     var panelStack by mutableStateOf(emptyList<SubScreen>())
 
+    /** Desktop 用户资料采用紧凑模态弹窗；null 表示未打开。 */
+    var profileUid by mutableStateOf<String?>(null)
+
     /** 应用级搜索状态由顶栏和结果面板共享；不隶属于会话或通讯录 tab。 */
     var globalSearchQuery by mutableStateOf("")
     var searchFocusNonce by mutableIntStateOf(0)
 
     fun openGlobalSearch(requestFocus: Boolean = false) {
+        profileUid = null
         windowScreen = null
         panelStack = listOf(SubScreen.GlobalSearch)
         if (requestFocus) searchFocusNonce++
     }
 
+    fun openProfile(uid: String) {
+        if (uid.isNotBlank()) profileUid = uid
+    }
+
+    fun closeProfile() {
+        profileUid = null
+    }
+
     /** 打开子屏幕：面板类进右栏面板栈，其余弹独立子窗口（§2.1 容器分流）。 */
     fun openScreen(screen: SubScreen) {
+        profileUid = null
         if (screen.isPanel) {
             windowScreen = null
             panelStack = listOf(screen)
@@ -139,6 +133,7 @@ class DesktopNav(session: ClientSession) : AppDataState(session) {
         this.chatName = chatName
         this.chatType = chatType
         globalSearchQuery = ""
+        profileUid = null
         panelStack = emptyList()
         windowScreen = null
         prepareChat(chatId, chatName, chatType)

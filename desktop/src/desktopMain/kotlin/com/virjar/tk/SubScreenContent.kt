@@ -3,7 +3,6 @@ package com.virjar.tk
 import androidx.compose.runtime.*
 import com.virjar.tk.navigation.AppDataState
 import com.virjar.tk.ui.screen.*
-import kotlinx.coroutines.launch
 
 /**
  * 单个子屏幕的渲染器（参数驱动，不读写全局导航状态）。
@@ -13,8 +12,9 @@ import kotlinx.coroutines.launch
  * @param navigate 容器内跳转（面板：push 面板栈；窗口：push 局部栈）
  * @param back 返回上一级（栈>1 弹栈；初始屏=关闭容器，由容器定义）
  * @param openChatAndClose 打开会话并关闭当前容器
+ * @param openUserProfile 用 Desktop 模态弹窗打开用户资料，不进入页面栈
  * @param onLeaveGroup 离开群组后的清理（关闭面板 + 会话失效处理，容器定义）
- * @param showBack 是否渲染返回键（窗口恒真 §2.6；面板仅栈>1 时，初始屏靠 ESC 关）
+ * @param showBack 是否提供返回能力（任务窗口根页仍需用于完成后关闭；箭头显示由宿主控制）
  */
 @Composable
 fun SubScreenContent(
@@ -23,12 +23,12 @@ fun SubScreenContent(
     navigate: (SubScreen) -> Unit,
     back: () -> Unit,
     openChatAndClose: (chatId: String, chatName: String, chatType: Int) -> Unit,
+    openUserProfile: (uid: String) -> Unit,
     onLeaveGroup: (chatId: String) -> Unit,
     showBack: Boolean,
     globalSearchQuery: String = "",
     onGlobalSearchQueryChange: (String) -> Unit = {},
 ) {
-    val scope = rememberCoroutineScope()
     val contacts by data.contactViewModel.contacts.collectAsState()
     val conversations by data.conversationViewModel.conversations.collectAsState()
 
@@ -71,7 +71,7 @@ fun SubScreenContent(
 
         is SubScreen.SearchUsers -> SearchUsersScreen(
             searchUsers = { query -> data.searchUsers(query) },
-            onUserClick = { uid -> navigate(SubScreen.UserProfile(uid)) },
+            onUserClick = openUserProfile,
             onBack = onBack,
         )
 
@@ -92,7 +92,7 @@ fun SubScreenContent(
             members = data.groupMembers,
             isOwner = data.groupMembers.any { it.uid == data.userSession.uid && it.role == 2 },
             myUid = data.userSession.uid,
-            onMemberClick = { uid -> navigate(SubScreen.UserProfile(uid)) },
+            onMemberClick = openUserProfile,
             onInviteMembers = { navigate(SubScreen.InviteMembers(screen.chatId)) },
             onViewInviteLinks = { navigate(SubScreen.InviteLinks(screen.chatId)) },
             onLeaveGroup = { onLeaveGroup(screen.chatId) },
@@ -118,33 +118,6 @@ fun SubScreenContent(
             onRevokeLink = { token -> data.revokeInviteLink(screen.chatId, token) },
             onBack = onBack,
         )
-
-        is SubScreen.UserProfile -> {
-            // 局部状态：apply 后即时反馈「已申请」，避免硬编码 false
-            var hasPendingApply by remember { mutableStateOf(false) }
-            LaunchedEffect(screen.uid) { hasPendingApply = false }
-            UserProfileScreen(
-                user = data.profileUser,
-                isFriend = data.isFriend,
-                hasPendingApply = hasPendingApply,
-                onAddFriend = {
-                    data.contactViewModel.apply(screen.uid)
-                    hasPendingApply = true
-                },
-                onSendMessage = { scope.launch {
-                    val chatId = data.startPersonalChat(screen.uid) ?: return@launch
-                    openChatAndClose(chatId, data.profileUser?.name ?: screen.uid.take(12), 1)
-                }},
-                onCreateGroup = if (data.isFriend) {
-                    { navigate(SubScreen.CreateGroup(setOf(screen.uid))) }
-                } else null,
-                onDeleteFriend = {
-                    data.contactViewModel.deleteFriend(screen.uid)
-                    back()
-                },
-                onBack = onBack,
-            )
-        }
 
         is SubScreen.Forward -> ForwardScreen(
             conversations = conversations,
@@ -183,7 +156,7 @@ fun SubScreenContent(
                     conversation?.chatType ?: 1,
                 )
             },
-            onUserClick = { user -> navigate(SubScreen.UserProfile(user.uid)) },
+            onUserClick = { user -> openUserProfile(user.uid) },
             excludedUserUid = data.userSession.uid,
             onBack = onBack,
             showSearchField = false,

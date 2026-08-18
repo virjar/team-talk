@@ -40,6 +40,7 @@
 | `screenshots/light-chat.png` | 聊天面板：双方头像/内容自适应气泡/已读水位线/多行富文本输入 |
 | `screenshots/light-contacts-grouped.png` | 通讯录：搜索框 + 拼音首字母分组 sticky 头 + 右侧索引条（P4 轮） |
 | `screenshots/light-settings.png` | 设置：中性资料头 + 扁平设置项 + 分栏语义空态 |
+| `screenshots/light-profile-dialog.png` | Desktop 用户资料：紧凑模态对象预览，不替换右栏上下文 |
 
 ## 验收基线（2026-08 P4 轮，暗色）
 
@@ -55,7 +56,8 @@
 | `screenshots/dark-contacts.png` | 通讯录 |
 | `screenshots/dark-settings.png` | 设置（含「外观」行） |
 | `screenshots/dark-group-detail.png` | 群详情右栏面板 |
-| `screenshots/dark-subwindow-creategroup.png` | 子窗口（§2.6 统一 460 宽 + 返回键头） |
+| `screenshots/dark-subwindow-creategroup.png` | 建群任务窗口（§2.6 统一 460 宽 + macOS 融合标题栏） |
+| `screenshots/dark-profile-dialog.png` | 暗色用户资料模态弹窗 |
 
 主窗口已启用 macOS 全内容标题栏：保留原生红黄绿按钮，应用顶栏颜色延伸到窗口顶部。
 

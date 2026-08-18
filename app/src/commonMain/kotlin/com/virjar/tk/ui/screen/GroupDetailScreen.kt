@@ -19,8 +19,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.ui.component.ScreenHeader
+import com.virjar.tk.ui.component.AvatarPlaceholder
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Member
+import com.virjar.tk.ui.theme.Tk
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -44,6 +46,7 @@ fun GroupDetailScreen(
 ) {
     var showNoticeEdit by remember { mutableStateOf(false) }
     var noticeText by remember(chat?.notice) { mutableStateOf(chat?.notice ?: "") }
+    val compactDesktop = Tk.dimens.headerHeight < 56.dp
 
     Column(modifier = Modifier.fillMaxSize()) {
         ScreenHeader(title = "群组详情", onBack = onBack)
@@ -74,27 +77,42 @@ fun GroupDetailScreen(
         }
 
         if (chat != null) {
-            // 群头部：头像 + 群名 + 成员数
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Surface(
-                    modifier = Modifier.size(64.dp),
-                    shape = MaterialTheme.shapes.large,
-                    color = MaterialTheme.colorScheme.primaryContainer,
+            // Desktop 检查器使用横向对象摘要；Android 全屏页保留纵向触控布局。
+            if (compactDesktop) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
+                    AvatarPlaceholder(name = chat.name ?: chat.chatId, size = 52)
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            chat.name?.take(1) ?: "#",
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            chat.name ?: chat.chatId.take(16),
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            "成员 ${chat.memberCount} 人",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
-                Spacer(Modifier.height(8.dp))
-                Text(chat.name ?: chat.chatId.take(16), style = MaterialTheme.typography.titleMedium)
-                Text("成员 ${chat.memberCount} 人", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    AvatarPlaceholder(name = chat.name ?: chat.chatId, size = 64)
+                    Spacer(Modifier.height(8.dp))
+                    Text(chat.name ?: chat.chatId.take(16), style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "成员 ${chat.memberCount} 人",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
             HorizontalDivider()
@@ -138,7 +156,9 @@ fun GroupDetailScreen(
                     Box {
                         MemberRow(
                             member = member,
-                            modifier = Modifier.combinedClickable(
+                            modifier = Modifier
+                                .testTag("group.member.${member.uid.take(8)}")
+                                .combinedClickable(
                                 onClick = { onMemberClick(member.uid) },
                                 onLongClick = { if (canManage) showMenu = true },
                             ),
@@ -161,12 +181,24 @@ fun GroupDetailScreen(
             }
 
             HorizontalDivider()
-            OutlinedButton(
-                onClick = onLeaveGroup,
-                modifier = Modifier.fillMaxWidth().padding(16.dp).testTag("group.detail.leave"),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-            ) {
-                Text(if (isOwner) "解散群组" else "退出群组")
+            if (compactDesktop) {
+                Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+                    TextButton(
+                        onClick = onLeaveGroup,
+                        modifier = Modifier.testTag("group.detail.leave"),
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    ) {
+                        Text(if (isOwner) "解散群组" else "退出群组")
+                    }
+                }
+            } else {
+                OutlinedButton(
+                    onClick = onLeaveGroup,
+                    modifier = Modifier.fillMaxWidth().padding(16.dp).testTag("group.detail.leave"),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                ) {
+                    Text(if (isOwner) "解散群组" else "退出群组")
+                }
             }
         }
     }

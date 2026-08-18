@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import com.virjar.tk.model.Contact
 import com.virjar.tk.ui.component.AvatarPlaceholder
 import com.virjar.tk.ui.component.ScreenHeader
+import com.virjar.tk.ui.theme.Tk
 import kotlinx.coroutines.launch
 
 /**
@@ -47,6 +48,7 @@ fun CreateGroupScreen(
     var isCreating by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val compactDesktop = Tk.dimens.headerHeight < 56.dp
 
     // 已选联系人（保持选择顺序，用于预览条）
     val selectedContacts = remember(contacts, selectedUids) {
@@ -76,42 +78,43 @@ fun CreateGroupScreen(
             },
         )
 
-        // ── 建群上下文：使用中性表面，品牌蓝只承担图标与焦点等小面积交互 ──
+        // ── 建群上下文：Desktop 使用横向任务表单；Android 保留触控端纵向引导 ──
         Surface(
-            modifier = Modifier
-                .fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth(),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
         ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Surface(
-                    modifier = Modifier
-                        .size(64.dp),
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer,
+            if (compactDesktop) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            Icons.Filled.Group,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.size(32.dp),
-                        )
-                    }
+                    GroupDraftAvatar(size = 48.dp, iconSize = 24.dp)
+                    Spacer(Modifier.width(12.dp))
+                    OutlinedTextField(
+                        value = groupName,
+                        onValueChange = { groupName = it },
+                        placeholder = { Text("群聊名称") },
+                        modifier = Modifier.weight(1f).testTag("group.name"),
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                    )
                 }
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = groupName,
-                    onValueChange = { groupName = it },
-                    placeholder = { Text("群聊名称") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("group.name"),
-                    singleLine = true,
-                    shape = RoundedCornerShape(10.dp),
-                )
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    GroupDraftAvatar(size = 64.dp, iconSize = 32.dp)
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = groupName,
+                        onValueChange = { groupName = it },
+                        placeholder = { Text("群聊名称") },
+                        modifier = Modifier.fillMaxWidth().testTag("group.name"),
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                    )
+                }
             }
         }
 
@@ -290,6 +293,24 @@ fun CreateGroupScreen(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun GroupDraftAvatar(size: androidx.compose.ui.unit.Dp, iconSize: androidx.compose.ui.unit.Dp) {
+    Surface(
+        modifier = Modifier.size(size),
+        shape = RoundedCornerShape(size * 0.28f),
+        color = MaterialTheme.colorScheme.primaryContainer,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                Icons.Filled.Group,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.size(iconSize),
+            )
         }
     }
 }

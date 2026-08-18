@@ -91,13 +91,13 @@ d.screenshot("/tmp/screen.png")
 
 ### Desktop 多窗口约束（最重要）
 
-Desktop 使用**子窗口模式**渲染编辑资料/修改密码/搜索用户/用户资料/建群/群详情等页面。
+Desktop 使用**子窗口模式**渲染编辑资料/修改密码/搜索用户/建群等任务页面。
 每个子窗口是独立的 Compose 窗口，有自己的语义树。**所有交互必须指定正确的 `window` 参数**，
 否则操作会落到主窗口（无效或误操作）。
 
 **独立子窗口名称** = `sub-` + 入口 `SubScreen` 名：`sub-Devices` / `sub-Blacklist` / `sub-EditProfile` / `sub-ChangePassword` / `sub-FriendApplies` / `sub-SearchUsers` / `sub-CreateGroup` / `sub-SearchMessages` / `sub-Forward`。
 
-`GroupDetail` / `InviteMembers` / `InviteLinks` / 顶层 `UserProfile` 是主窗口右栏面板，操作时使用默认 `window='main'`；若 `SearchUsers` 子窗口内部跳到 `UserProfile`，窗口 ID 仍保持入口 ID `sub-SearchUsers`。
+`GroupDetail` / `InviteMembers` / `InviteLinks` 是主窗口右栏检查器。`UserProfile` 是主窗口模态弹窗（`profile.dialog`）；从 `SearchUsers` 点击用户会先关闭任务窗口，再回到主窗口显示资料弹窗。两者都使用默认 `window='main'`。
 
 **关键规则**：
 1. 点击主窗口的元素（如「编辑资料」）前 → 先确认主窗口内容：`d.screen_texts()`

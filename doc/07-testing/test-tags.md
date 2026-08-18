@@ -68,6 +68,8 @@
 | `profile.createGroup` | Button | 从好友资料发起群聊 |
 | `profile.deleteFriend` | Button | 删除好友（isFriend时）|
 | `profile.applied` | Button | 已申请（disabled状态）|
+| `profile.dialog` | Surface | Desktop 用户资料模态弹窗 |
+| `profile.close` | IconButton | 关闭 Desktop 用户资料弹窗 |
 
 ## 聊天页
 
@@ -87,6 +89,7 @@
 | `group.name` | TextField | 群名输入 |
 | `group.member.{uid前8}` | Row | 群成员勾选项 |
 | `group.detail.leave` | Button | 退出/解散群组 |
+| `group.member.{uid8}` | Row | 群详情成员 / 建群候选成员（按所在容器区分） |
 | `group.detail.invite` | ListItem | 邀请成员 |
 | `group.detail.inviteLinks` | ListItem | 邀请链接 |
 | `member.{uid前8}` | ListItem | 成员列表项 |
