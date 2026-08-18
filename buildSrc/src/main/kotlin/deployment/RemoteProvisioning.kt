@@ -5,6 +5,7 @@ package deployment
  */
 
 import java.io.File
+import java.util.Base64
 import java.util.Properties
 import org.gradle.api.GradleException
 
@@ -163,24 +164,23 @@ fun ensureDbUser(host: String, user: String, port: Int, deployPath: String, dbPa
         port
     )?.trim()?.removePrefix("/") ?: containerName
 
-    // POSTGRES_USER=teamtalk 已创建超级用户，只需确保密码正确
-    remoteExec(
+    // docker-compose 以 POSTGRES_USER=teamtalk 初始化管理员账号。
+    // 使用同一个账号修改密码和授权，避免依赖默认并不存在的 postgres 角色。
+    val encodedPassword = Base64.getEncoder().encodeToString(dbPassword.toByteArray())
+    val result = remoteExec(
         host, user,
         "docker exec $fullContainerName psql -U teamtalk -d teamtalk -c " +
-                "\"ALTER ROLE teamtalk WITH LOGIN PASSWORD '$dbPassword';\" 2>/dev/null || " +
-                "docker exec $fullContainerName psql -U postgres -d teamtalk -c " +
                 "\"DO \\\$\\\$ BEGIN " +
-                "IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'teamtalk') THEN " +
-                "CREATE ROLE teamtalk WITH LOGIN PASSWORD '$dbPassword'; " +
-                "ELSE " +
-                "ALTER ROLE teamtalk WITH LOGIN PASSWORD '$dbPassword'; " +
-                "END IF; " +
-                "END; \\\$\\\$ ;\" && " +
-                "docker exec $fullContainerName psql -U postgres -d teamtalk -c " +
-                "\"GRANT ALL ON SCHEMA public TO teamtalk; " +
+                "EXECUTE format('ALTER ROLE teamtalk WITH LOGIN PASSWORD %L', " +
+                "convert_from(decode('$encodedPassword', 'base64'), 'UTF8')); " +
+                "END \\\$\\\$; " +
+                "GRANT ALL ON SCHEMA public TO teamtalk; " +
                 "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO teamtalk; " +
                 "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO teamtalk; \"",
         port
     )
+    if (result != 0) {
+        throw GradleException("Failed to configure database user 'teamtalk'")
+    }
     println("  Database user 'teamtalk' ready")
 }
