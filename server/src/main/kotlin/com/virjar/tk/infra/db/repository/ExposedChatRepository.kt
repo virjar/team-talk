@@ -73,10 +73,38 @@ class ExposedChatRepository : ChatRepository {
         }
     }
 
-    override fun createGroupChat(name: String, avatar: String?, creatorUid: String, memberUids: List<String>): Chat {
+    override fun createGroupChat(
+        name: String,
+        avatar: String?,
+        creatorUid: String,
+        memberUids: List<String>,
+        requestedChatId: String?,
+    ): Chat {
         return transaction {
-            val chatId = UUID.randomUUID().toString()
+            val chatId = requestedChatId ?: UUID.randomUUID().toString()
             val now = System.currentTimeMillis()
+            val existing = Chats.selectAll().where { Chats.chatId eq chatId }.singleOrNull()
+            if (existing != null) {
+                require(existing[Chats.chatType] == 2) { "受管群 ID 与非群聊冲突: $chatId" }
+                Chats.update({ Chats.chatId eq chatId }) {
+                    it[status] = 1
+                    it[updatedAt] = now
+                }
+                GroupChats.update({ GroupChats.chatId eq chatId }) {
+                    it[GroupChats.name] = name
+                    it[GroupChats.avatar] = avatar
+                    it[GroupChats.creator] = creatorUid
+                    it[GroupChats.updatedAt] = now
+                }
+                GroupMembers.update({ GroupMembers.chatId eq chatId }) {
+                    it[role] = 0
+                }
+                ensureActiveGroupMember(chatId, creatorUid, role = 2, now = now)
+                memberUids.filter { it != creatorUid }.forEach {
+                    ensureActiveGroupMember(chatId, it, role = 0, now = now)
+                }
+                return@transaction getChatByIdInternal(chatId)!!
+            }
             Chats.insert {
                 it[Chats.chatId] = chatId
                 it[Chats.chatType] = 2
@@ -126,6 +154,29 @@ class ExposedChatRepository : ChatRepository {
                 chatId = chatId, chatType = 2, name = name, avatar = avatar,
                 creator = creatorUid, memberCount = memberUids.size + 1,
             )
+        }
+    }
+
+    private fun ensureActiveGroupMember(chatId: String, uid: String, role: Int, now: Long) {
+        val existing = GroupMembers.selectAll().where {
+            (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid)
+        }.singleOrNull()
+        if (existing == null) {
+            GroupMembers.insert {
+                it[GroupMembers.chatId] = chatId
+                it[chatType] = 2
+                it[GroupMembers.uid] = uid
+                it[GroupMembers.role] = role
+                it[status] = 1
+                it[joinedAt] = now
+            }
+        } else {
+            GroupMembers.update({
+                (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid)
+            }) {
+                it[GroupMembers.role] = role
+                it[status] = 1
+            }
         }
     }
 

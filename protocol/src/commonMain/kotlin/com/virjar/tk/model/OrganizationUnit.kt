@@ -1,0 +1,48 @@
+package com.virjar.tk.model
+
+import com.virjar.tk.protocol.IProto
+import com.virjar.tk.protocol.IProtoReader
+import com.virjar.tk.protocol.PacketBuffer
+import kotlinx.serialization.Serializable
+
+/**
+ * 单组织目录中的一个结构节点。
+ *
+ * [groupChatId] 非空表示该节点启用了由组织目录维护的部门群。部门群成员来自当前节点及其
+ * 全部后代节点，不能由普通群成员手工修改。
+ */
+@Serializable
+data class OrganizationUnit(
+    val unitId: String,
+    val parentId: String? = null,
+    val name: String,
+    val leaderUid: String? = null,
+    val sortOrder: Int = 0,
+    val groupChatId: String? = null,
+    val status: Int = STATUS_ACTIVE,
+) : IProto {
+    override fun writeTo(buf: PacketBuffer) {
+        buf.writeString(unitId)
+        buf.writeString(parentId)
+        buf.writeString(name)
+        buf.writeString(leaderUid)
+        buf.writeVarInt(sortOrder)
+        buf.writeString(groupChatId)
+        buf.writeVarInt(status)
+    }
+
+    companion object : IProtoReader<OrganizationUnit> {
+        const val STATUS_ARCHIVED = 0
+        const val STATUS_ACTIVE = 1
+
+        override fun readFrom(buf: PacketBuffer): OrganizationUnit = OrganizationUnit(
+            unitId = buf.readString()!!,
+            parentId = buf.readString(),
+            name = buf.readString()!!,
+            leaderUid = buf.readString(),
+            sortOrder = buf.readVarInt(),
+            groupChatId = buf.readString(),
+            status = buf.readVarInt(),
+        )
+    }
+}

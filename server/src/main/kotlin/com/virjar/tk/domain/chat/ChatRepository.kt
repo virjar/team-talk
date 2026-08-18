@@ -6,7 +6,13 @@ import kotlinx.serialization.Serializable
 /** Persistence port for chat metadata and administrative chat queries. */
 interface ChatRepository {
     fun createPersonalChat(uid1: String, uid2: String): Chat
-    fun createGroupChat(name: String, avatar: String?, creatorUid: String, memberUids: List<String>): Chat
+    fun createGroupChat(
+        name: String,
+        avatar: String?,
+        creatorUid: String,
+        memberUids: List<String>,
+        requestedChatId: String? = null,
+    ): Chat
     fun getChat(chatId: String): Chat?
     fun updateGroup(chatId: String, name: String? = null, avatar: String? = null, notice: String? = null)
     fun deactivateChat(chatId: String)

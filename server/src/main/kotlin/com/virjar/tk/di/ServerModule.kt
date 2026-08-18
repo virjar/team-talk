@@ -7,12 +7,16 @@ import com.virjar.tk.domain.attachment.AttachmentAccess
 import com.virjar.tk.domain.attachment.AttachmentAccessService
 import com.virjar.tk.domain.auth.AuthService
 import com.virjar.tk.domain.auth.TokenRepository
+import com.virjar.tk.domain.bot.BotRepository
+import com.virjar.tk.domain.bot.BotService
 import com.virjar.tk.domain.chat.ChatMemberRepository
 import com.virjar.tk.domain.chat.ActiveChatMembership
 import com.virjar.tk.domain.chat.ChatRepository
 import com.virjar.tk.domain.chat.ChatService
 import com.virjar.tk.domain.chat.ChatStore
 import com.virjar.tk.domain.chat.InviteLinkRepository
+import com.virjar.tk.domain.chat.ManagedChatPolicy
+import com.virjar.tk.domain.chat.RequiredChatParticipants
 import com.virjar.tk.domain.contact.ContactRepository
 import com.virjar.tk.domain.contact.ContactService
 import com.virjar.tk.domain.contact.ContactStore
@@ -24,6 +28,8 @@ import com.virjar.tk.domain.event.SyncEventReader
 import com.virjar.tk.domain.message.MessageRepository
 import com.virjar.tk.domain.message.MessageSearch
 import com.virjar.tk.domain.message.MessageService
+import com.virjar.tk.domain.organization.OrganizationRepository
+import com.virjar.tk.domain.organization.OrganizationService
 import com.virjar.tk.domain.presence.PresenceService
 import com.virjar.tk.domain.session.OnlineSessions
 import com.virjar.tk.domain.user.UserRepository
@@ -34,12 +40,14 @@ import com.virjar.tk.rpc.gen.AuthRpcContract
 import com.virjar.tk.rpc.gen.ContactRpcContract
 import com.virjar.tk.rpc.gen.ChatRpcContract
 import com.virjar.tk.rpc.gen.MessageRpcContract
+import com.virjar.tk.rpc.gen.OrganizationRpcContract
 import com.virjar.tk.rpc.gen.ConversationRpcContract
 import com.virjar.tk.rpc.gen.DeviceRpcContract
 import com.virjar.tk.protocol.rpc.UserRpcImpl
 import com.virjar.tk.protocol.rpc.AuthRpcImpl
 import com.virjar.tk.protocol.rpc.ChatRpcImpl
 import com.virjar.tk.protocol.rpc.MessageRpcImpl
+import com.virjar.tk.protocol.rpc.OrganizationRpcImpl
 import com.virjar.tk.protocol.rpc.ConversationRpcImpl
 import com.virjar.tk.protocol.rpc.DeviceRpcImpl
 import com.virjar.tk.protocol.rpc.ContactRpcImpl
@@ -47,11 +55,13 @@ import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.env.Environment
 import com.virjar.tk.infra.search.SearchIndex
 import com.virjar.tk.infra.db.repository.ExposedChatMemberRepository
+import com.virjar.tk.infra.db.repository.ExposedBotRepository
 import com.virjar.tk.infra.db.repository.ExposedChatRepository
 import com.virjar.tk.infra.db.repository.ExposedContactRepository
 import com.virjar.tk.infra.db.repository.ExposedConversationRepository
 import com.virjar.tk.infra.db.repository.ExposedDeviceRepository
 import com.virjar.tk.infra.db.repository.ExposedInviteLinkRepository
+import com.virjar.tk.infra.db.repository.ExposedOrganizationRepository
 import com.virjar.tk.infra.db.repository.ExposedUserRepository
 import com.virjar.tk.infra.health.HealthChecker
 import com.virjar.tk.infra.storage.ClientLogStore
@@ -93,6 +103,10 @@ fun createServerModule(
     single<InviteLinkRepository> { ExposedInviteLinkRepository() }
     single<ConversationRepository> { ExposedConversationRepository(get(), get(), get()) }
     single<DeviceRepository> { ExposedDeviceRepository() }
+    single<OrganizationRepository> { ExposedOrganizationRepository() }
+    single<ManagedChatPolicy> { get<OrganizationRepository>() }
+    single<BotRepository> { ExposedBotRepository() }
+    single<RequiredChatParticipants> { get<BotRepository>() }
 
     // Store（热缓存 + 异步写入，包装 Repository）
     single { UserStore(get()) }
@@ -107,11 +121,13 @@ fun createServerModule(
     single { UserService(get(), get()) }
     single { AuthService(get(), get()) }
     single { ContactService(get(), get()) }
-    single { ChatService(get(), get(), get(), get()) }
+    single { ChatService(get(), get(), get(), get(), get()) }
+    single { OrganizationService(get(), get(), get(), get()) }
     single { ConversationService(get(), get(), get()) }
     single { com.virjar.tk.domain.attachment.AttachmentService(get(), get()) }
     single<AttachmentAccess> { AttachmentAccessService(get(), get(), get()) }
     single { MessageService(get(), get(), get(), get(), get(), get()) }
+    single { BotService(get(), get(), get(), get(), get()) }
     single { PresenceService(get(), get()) }
     single { PresenceCoordinator(get(), get()) }
     single { HealthChecker(get(), get(), get()) }
@@ -126,6 +142,7 @@ fun createServerModule(
             register(MessageRpcContract.SERVICE) { uid -> MessageRpcImpl(uid, get(), get()) }
             register(ConversationRpcContract.SERVICE) { uid -> ConversationRpcImpl(uid, get()) }
             register(DeviceRpcContract.SERVICE) { uid -> DeviceRpcImpl(uid, get(), get(), get()) }
+            register(OrganizationRpcContract.SERVICE) { uid -> OrganizationRpcImpl(uid, get()) }
         }
     }
     single { RpcDispatcher(get()) }
@@ -142,6 +159,8 @@ fun createServerModule(
             search = get(),
             tokens = get(),
             onlineSessions = get(),
+            organizationService = get(),
+            botService = get(),
             logsDir = Environment.logsDir,
             clientLogsDir = java.io.File(Environment.dataRoot, "client-logs"),
         )

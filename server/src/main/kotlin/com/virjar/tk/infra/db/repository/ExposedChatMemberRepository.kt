@@ -57,13 +57,25 @@ class ExposedChatMemberRepository : ChatMemberRepository {
         val now = System.currentTimeMillis()
         transaction {
             for (uid in uids) {
-                GroupMembers.insertIgnore {
-                    it[GroupMembers.chatId] = chatId
-                    it[GroupMembers.chatType] = 2
-                    it[GroupMembers.uid] = uid
-                    it[GroupMembers.role] = 0
-                    it[GroupMembers.status] = 1
-                    it[GroupMembers.joinedAt] = now
+                val existing = GroupMembers.selectAll().where {
+                    (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid)
+                }.singleOrNull()
+                if (existing == null) {
+                    GroupMembers.insert {
+                        it[GroupMembers.chatId] = chatId
+                        it[GroupMembers.chatType] = 2
+                        it[GroupMembers.uid] = uid
+                        it[GroupMembers.role] = 0
+                        it[GroupMembers.status] = 1
+                        it[GroupMembers.joinedAt] = now
+                    }
+                } else {
+                    GroupMembers.update({
+                        (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid)
+                    }) {
+                        it[GroupMembers.status] = 1
+                        it[GroupMembers.joinedAt] = now
+                    }
                 }
             }
         }

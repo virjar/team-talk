@@ -1,6 +1,7 @@
 package com.virjar.tk.application.admin
 
 import com.virjar.tk.domain.auth.TokenRepository
+import com.virjar.tk.domain.bot.BotService
 import com.virjar.tk.domain.chat.AdminPage
 import com.virjar.tk.domain.chat.ChatRepository
 import com.virjar.tk.domain.chat.ChatService
@@ -9,6 +10,7 @@ import com.virjar.tk.domain.device.DeviceRepository
 import com.virjar.tk.domain.message.MessageService
 import com.virjar.tk.domain.message.MessageRepository
 import com.virjar.tk.domain.message.MessageSearch
+import com.virjar.tk.domain.organization.OrganizationService
 import com.virjar.tk.domain.session.OnlineSessions
 import com.virjar.tk.domain.user.UserRepository
 import com.virjar.tk.domain.user.UserService
@@ -45,9 +47,57 @@ class AdminService(
     private val search: MessageSearch,
     private val tokens: TokenRepository,
     private val onlineSessions: OnlineSessions,
+    private val organizationService: OrganizationService,
+    private val botService: BotService,
     private val logsDir: File,
     private val clientLogsDir: File,
 ) {
+
+    // ── 组织架构 ──
+
+    fun listOrganizationUnits() = organizationService.listUnits()
+
+    fun listOrganizationMembers(unitId: String, recursive: Boolean) =
+        organizationService.listMembers(unitId, recursive)
+
+    suspend fun createOrganizationUnit(
+        parentId: String?,
+        name: String,
+        leaderUid: String?,
+        sortOrder: Int,
+        enableGroup: Boolean,
+    ) = organizationService.createUnit(parentId, name, leaderUid, sortOrder, enableGroup)
+
+    suspend fun updateOrganizationUnit(
+        unitId: String,
+        parentId: String?,
+        name: String,
+        leaderUid: String?,
+        sortOrder: Int,
+    ) = organizationService.updateUnit(unitId, parentId, name, leaderUid, sortOrder)
+
+    suspend fun archiveOrganizationUnit(unitId: String) = organizationService.archiveUnit(unitId)
+
+    suspend fun assignOrganizationMember(unitId: String, uid: String, title: String?, primary: Boolean) =
+        organizationService.assignMember(unitId, uid, title, primary)
+
+    suspend fun removeOrganizationMember(unitId: String, uid: String) =
+        organizationService.removeMember(unitId, uid)
+
+    suspend fun enableDepartmentGroup(unitId: String) = organizationService.enableDepartmentGroup(unitId)
+
+    suspend fun disableDepartmentGroup(unitId: String) = organizationService.disableDepartmentGroup(unitId)
+
+    suspend fun reconcileDepartmentGroups() = organizationService.reconcileAllManagedGroups()
+
+    // ── 通知机器人 ──
+
+    fun listBots() = botService.list()
+    fun createBot(name: String) = botService.create(name)
+    fun rotateBotToken(botId: String) = botService.rotateToken(botId)
+    suspend fun disableBot(botId: String) = botService.disable(botId)
+    suspend fun grantBot(botId: String, chatId: String) = botService.grant(botId, chatId)
+    suspend fun revokeBotGrant(botId: String, chatId: String) = botService.revokeGrant(botId, chatId)
 
     // ── 用户 ──
 

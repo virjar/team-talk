@@ -41,7 +41,7 @@ class ExposedUserRepository : UserRepository {
         }
     }
 
-    override fun create(uid: String, username: String, name: String, passwordHash: String, phone: String?): User {
+    override fun create(uid: String, username: String, name: String, passwordHash: String, phone: String?, role: Int): User {
         val now = System.currentTimeMillis()
         return transaction {
             Users.insert {
@@ -50,10 +50,11 @@ class ExposedUserRepository : UserRepository {
                 it[Users.name] = name
                 it[Users.passwordHash] = passwordHash
                 it[Users.phone] = phone
+                it[Users.role] = role
                 it[Users.createdAt] = now
                 it[Users.updatedAt] = now
             }
-            User(uid = uid, username = username, name = name, phone = phone)
+            User(uid = uid, username = username, name = name, phone = phone, role = role)
         }
     }
 

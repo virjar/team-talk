@@ -9,7 +9,14 @@ interface UserRepository {
     fun findInternalByUid(uid: String): UserInternal?
     fun findByUsername(username: String): User?
     fun findByPhone(phone: String): User?
-    fun create(uid: String, username: String, name: String, passwordHash: String, phone: String? = null): User
+    fun create(
+        uid: String,
+        username: String,
+        name: String,
+        passwordHash: String,
+        phone: String? = null,
+        role: Int = 0,
+    ): User
     fun updateProfile(uid: String, name: String? = null, avatar: String? = null, sex: Int? = null, phone: String? = null)
     fun updatePassword(uid: String, passwordHash: String)
     fun searchUsers(keyword: String, limit: Int = 20): List<User>

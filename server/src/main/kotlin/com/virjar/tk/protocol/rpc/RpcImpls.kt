@@ -5,6 +5,7 @@ import com.virjar.tk.domain.chat.ChatService
 import com.virjar.tk.domain.contact.ContactService
 import com.virjar.tk.domain.conversation.ConversationService
 import com.virjar.tk.domain.message.MessageService
+import com.virjar.tk.domain.organization.OrganizationService
 import com.virjar.tk.domain.session.OnlineSessions
 import com.virjar.tk.domain.user.UserService
 import com.virjar.tk.domain.chat.toModel as inviteLinkToModel
@@ -17,6 +18,7 @@ import com.virjar.tk.rpc.gen.ContactRpcStub
 import com.virjar.tk.rpc.gen.ConversationRpcStub
 import com.virjar.tk.rpc.gen.DeviceRpcStub
 import com.virjar.tk.rpc.gen.MessageRpcStub
+import com.virjar.tk.rpc.gen.OrganizationRpcStub
 import com.virjar.tk.rpc.gen.UserRpcStub
 
 /**
@@ -121,6 +123,11 @@ class DeviceRpcImpl(
         deviceRepo.kickDevice(uid, deviceId)
         authService.kickDevice(uid, deviceId)
     }
+}
+
+class OrganizationRpcImpl(uid: String, private val service: OrganizationService) : OrganizationRpcStub(uid) {
+    override suspend fun listUnits() = service.listUnits()
+    override suspend fun listMembers(unitId: String, recursive: Boolean) = service.listMembers(unitId, recursive)
 }
 
 /** 服务注册表：serviceId → 每请求 Stub 工厂（uid 注入）。由 Koin 装配。 */

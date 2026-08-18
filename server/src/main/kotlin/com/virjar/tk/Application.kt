@@ -3,12 +3,15 @@ package com.virjar.tk
 import com.virjar.tk.api.clientLogRoutes
 import com.virjar.tk.api.adminRoutes
 import com.virjar.tk.api.fileRoutes
+import com.virjar.tk.api.botRoutes
 import com.virjar.tk.application.presence.PresenceCoordinator
 import com.virjar.tk.di.serverModule
 import com.virjar.tk.domain.auth.AuthService
+import com.virjar.tk.domain.bot.BotService
 import com.virjar.tk.domain.chat.ChatStore
 import com.virjar.tk.infra.health.HealthChecker
 import com.virjar.tk.domain.message.MessageService
+import com.virjar.tk.domain.organization.OrganizationService
 import com.virjar.tk.domain.presence.PresenceService
 import com.virjar.tk.infra.db.DatabaseFactory
 import com.virjar.tk.infra.search.SearchIndex
@@ -117,6 +120,8 @@ fun Application.module() {
         allowHeader(io.ktor.http.HttpHeaders.Authorization)
         allowHeader(io.ktor.http.HttpHeaders.ContentType)
         allowMethod(io.ktor.http.HttpMethod.Post)
+        allowMethod(io.ktor.http.HttpMethod.Put)
+        allowMethod(io.ktor.http.HttpMethod.Delete)
         allowMethod(io.ktor.http.HttpMethod.Get)
         allowMethod(io.ktor.http.HttpMethod.Options)
         hosts.addAll(listOf("localhost:5173", "127.0.0.1:5173"))
@@ -157,6 +162,16 @@ fun Application.module() {
     if (recoveredProjections > 0) {
         logger.info("Recovered {} pending message projections", recoveredProjections)
     }
+    val organizationFailures = runBlocking(Dispatchers.IO) {
+        koin.get<OrganizationService>().reconcileAllManagedGroups()
+    }
+    if (organizationFailures.isNotEmpty()) {
+        logger.error("Managed department group reconciliation failed for units={}", organizationFailures)
+    }
+    val botGrantFailures = runBlocking(Dispatchers.IO) { koin.get<BotService>().reconcileGrants() }
+    if (botGrantFailures.isNotEmpty()) {
+        logger.error("Bot grant reconciliation failed for grants={}", botGrantFailures)
+    }
     tcpServer.start { channel, recorder, ioExecutor ->
         ImAgent(
             channel, recorder, authService, clientRegistry, rpcDispatcher, msgService,
@@ -190,6 +205,7 @@ fun Application.module() {
             call.respond(status, health)
         }
         fileRoutes(fileStore, koin.get(), koin.get())
+        botRoutes(koin.get())
         adminRoutes(koin.get())
         clientLogRoutes(clientLogStore)
 

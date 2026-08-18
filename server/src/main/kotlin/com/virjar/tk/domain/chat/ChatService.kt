@@ -12,6 +12,7 @@ class ChatService(
     private val userStore: UserStore,
     private val events: EventPublisher,
     private val conversationService: ConversationService,
+    private val managedChats: ManagedChatPolicy,
 ) {
 
     // ── 创建聊天 ──
@@ -27,7 +28,6 @@ class ChatService(
 
     suspend fun createGroup(name: String, avatar: String?, creatorUid: String, memberUids: List<String>): Chat {
         require(name.isNotBlank()) { "群名不能为空" }
-        require(memberUids.isNotEmpty()) { "至少需要一个成员" }
         val chat = chatStore.createGroupChat(name, avatar, creatorUid, memberUids)
         val allUids = memberUids + creatorUid
         conversationService.ensureConversations(chat.chatId, chat.chatType, allUids)
@@ -38,6 +38,9 @@ class ChatService(
     fun getChat(chatId: String): Chat? = chatStore.getChat(chatId)
 
     suspend fun updateGroup(operatorUid: String, chatId: String, name: String? = null, avatar: String? = null, notice: String? = null) {
+        if ((name != null || avatar != null) && managedChats.managedBy(chatId) != null) {
+            throw IllegalArgumentException("受管部门群名称和头像由组织架构维护")
+        }
         requireGroupAdmin(operatorUid, chatId)
         chatStore.updateGroup(chatId, name, avatar, notice)
         val chat = chatStore.getChat(chatId) ?: return
@@ -46,6 +49,7 @@ class ChatService(
     }
 
     suspend fun dissolveGroup(operatorUid: String, chatId: String) {
+        requireUserManaged(chatId)
         val chat = chatStore.getChat(chatId) ?: throw IllegalArgumentException("聊天不存在")
         require(chat.chatType == 2) { "单聊不能解散，请删除自己的会话视图" }
         requireOwner(operatorUid, chatId)
@@ -55,6 +59,7 @@ class ChatService(
     }
 
     suspend fun leaveGroup(uid: String, chatId: String) {
+        requireUserManaged(chatId)
         val chat = chatStore.getChat(chatId) ?: throw IllegalArgumentException("聊天不存在")
         require(chat.chatType == 2) { "单聊不能退出，请删除自己的会话视图" }
         removeMember(uid, chatId, uid)
@@ -66,6 +71,7 @@ class ChatService(
         chatStore.getMembers(chatId).map { it.copy(user = userStore.findByUid(it.uid)) }
 
     suspend fun addMembers(operatorUid: String, chatId: String, uids: List<String>) {
+        requireUserManaged(chatId)
         requireGroupAdmin(operatorUid, chatId)
         chatStore.addMembers(chatId, uids)
         val chat = chatStore.getChat(chatId) ?: return
@@ -79,6 +85,7 @@ class ChatService(
     }
 
     suspend fun removeMember(operatorUid: String, chatId: String, targetUid: String) {
+        requireUserManaged(chatId)
         val member = chatStore.getMember(chatId, operatorUid)
             ?: throw IllegalArgumentException("操作者不是群成员")
 
@@ -96,10 +103,12 @@ class ChatService(
 
         val memberUids = chatStore.getMemberUids(chatId) + targetUid
         val chat = chatStore.getChat(chatId) ?: return
+        conversationService.deleteConversation(targetUid, chatId)
         events.emitEvents(memberUids, NotifyType.MEMBER_REMOVED, chat)
     }
 
     suspend fun transferOwner(operatorUid: String, chatId: String, newOwnerUid: String) {
+        requireUserManaged(chatId)
         requireOwner(operatorUid, chatId)
         chatStore.getMember(chatId, newOwnerUid) ?: throw IllegalArgumentException("目标不是群成员")
         chatStore.transferOwner(chatId, operatorUid, newOwnerUid)
@@ -109,6 +118,7 @@ class ChatService(
     }
 
     suspend fun setRole(operatorUid: String, chatId: String, targetUid: String, role: Int) {
+        requireUserManaged(chatId)
         requireOwner(operatorUid, chatId)
         if (role !in 0..1) throw IllegalArgumentException("角色只能是 0(member) 或 1(admin)")
         chatStore.setRole(chatId, targetUid, role)
@@ -155,6 +165,7 @@ class ChatService(
     // ── 邀请链接 ──
 
     fun createInviteLink(operatorUid: String, chatId: String, name: String, maxUses: Int, expiresAt: Long): String {
+        requireUserManaged(chatId)
         requireGroupAdmin(operatorUid, chatId)
         return chatStore.createInviteLink(chatId, operatorUid, name, maxUses, expiresAt)
     }
@@ -177,6 +188,7 @@ class ChatService(
         if (link.expiresAt > 0 && link.expiresAt < System.currentTimeMillis()) throw IllegalArgumentException("邀请链接已过期")
 
         val chat = chatStore.getChat(link.chatId) ?: throw IllegalArgumentException("聊天不存在")
+        requireUserManaged(chat.chatId)
         if (chatStore.isMember(link.chatId, uid)) return chat
 
         chatStore.addMembers(link.chatId, listOf(uid))
@@ -217,6 +229,92 @@ class ChatService(
         events.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
     }
 
+    /** 创建或重新激活稳定 ID 的受管群；用于组织领域的可恢复 reconciliation。 */
+    suspend fun adminEnsureManagedGroup(
+        chatId: String,
+        name: String,
+        ownerUid: String,
+        memberUids: List<String>,
+    ): Chat {
+        val chat = chatStore.createGroupChat(
+            name = name,
+            avatar = null,
+            creatorUid = ownerUid,
+            memberUids = memberUids.filter { it != ownerUid },
+            requestedChatId = chatId,
+        )
+        val allUids = (memberUids + ownerUid).distinct()
+        conversationService.ensureConversations(chat.chatId, chat.chatType, allUids)
+        notifyChatCreated(chat, allUids)
+        return chat
+    }
+
+    /**
+     * 以外部领域的成员集合为唯一事实源收敛受管群。该操作幂等，服务启动时可以安全重放。
+     */
+    suspend fun adminReconcileManagedGroup(chatId: String, name: String, ownerUid: String, desiredUids: Set<String>) {
+        val desired = desiredUids + ownerUid
+        var chat = chatStore.getChat(chatId)
+            ?: adminEnsureManagedGroup(chatId, name, ownerUid, desired.toList())
+
+        chatStore.updateGroup(chatId, name, null, null)
+
+        val before = chatStore.getMembers(chatId)
+        val currentOwner = before.firstOrNull { it.role == 2 }?.uid
+        if (!chatStore.isMember(chatId, ownerUid)) {
+            chatStore.addMembers(chatId, listOf(ownerUid))
+            conversationService.ensureConversations(chatId, chat.chatType, listOf(ownerUid))
+        }
+        if (currentOwner != null && currentOwner != ownerUid) {
+            chatStore.transferOwner(chatId, currentOwner, ownerUid)
+        } else if (currentOwner == null) {
+            chatStore.setRole(chatId, ownerUid, 2)
+        }
+
+        val current = chatStore.getMemberUids(chatId).toSet()
+        val added = desired - current
+        if (added.isNotEmpty()) {
+            chatStore.addMembers(chatId, added.toList())
+            conversationService.ensureConversations(chatId, chat.chatType, added.toList())
+            chat = chatStore.getChat(chatId) ?: chat
+            for (uid in added) events.emitEvent(uid, NotifyType.CHAT_CREATED, chat)
+        }
+
+        val removed = current - desired
+        for (uid in removed) {
+            chatStore.removeMember(chatId, uid)
+            conversationService.deleteConversation(uid, chatId)
+            events.emitEvent(uid, NotifyType.CHAT_DELETED, chat)
+        }
+
+        val updated = chatStore.getChat(chatId) ?: chat
+        events.emitEvents(desired.toList(), NotifyType.CHAT_UPDATED, updated)
+    }
+
+    suspend fun adminDisableManagedGroup(chatId: String) {
+        adminDissolve(chatId)
+    }
+
+    /** 将受治理的服务身份加入群；允许普通群和受管群，调用者必须自行持有应用授权事实。 */
+    suspend fun adminAddServiceMember(chatId: String, uid: String) {
+        val chat = chatStore.getChat(chatId) ?: throw IllegalArgumentException("聊天不存在")
+        require(chat.chatType == 2) { "机器人只能授权到群聊" }
+        if (chatStore.isMember(chatId, uid)) return
+        chatStore.addMembers(chatId, listOf(uid))
+        conversationService.ensureConversations(chatId, chat.chatType, listOf(uid))
+        events.emitEvent(uid, NotifyType.CHAT_CREATED, chatStore.getChat(chatId) ?: chat)
+        events.emitEvents(chatStore.getMemberUids(chatId), NotifyType.MEMBER_ADDED, chatStore.getChat(chatId) ?: chat)
+    }
+
+    suspend fun adminRemoveServiceMember(chatId: String, uid: String) {
+        val chat = chatStore.getChat(chatId) ?: return
+        if (!chatStore.isMember(chatId, uid)) return
+        chatStore.removeMember(chatId, uid)
+        conversationService.deleteConversation(uid, chatId)
+        events.emitEvent(uid, NotifyType.CHAT_DELETED, chat)
+        events.emitEvents(chatStore.getMemberUids(chatId), NotifyType.MEMBER_REMOVED, chat)
+    }
+
     // ── 权限检查 ──
 
     private fun requireGroupAdmin(uid: String, chatId: String) {
@@ -229,6 +327,12 @@ class ChatService(
         val member = chatStore.getMember(chatId, uid)
             ?: throw IllegalArgumentException("不是群成员")
         if (member.role != 2) throw IllegalArgumentException("需要群主权限")
+    }
+
+    private fun requireUserManaged(chatId: String) {
+        managedChats.managedBy(chatId)?.let { owner ->
+            throw IllegalArgumentException("该群由${owner}维护，不能手工修改成员或生命周期")
+        }
     }
 
     private suspend fun notifyChatCreated(chat: Chat, uids: List<String>) {

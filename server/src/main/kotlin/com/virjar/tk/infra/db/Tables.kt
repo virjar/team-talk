@@ -137,3 +137,56 @@ object SyncEvents : LongIdTable("sync_events") {
     val payload = binary("payload")
     val createdAt = long("created_at")
 }
+
+/** 单组织目录节点。groupChatId 非空时，该群的成员由组织领域维护。 */
+object OrganizationUnits : Table("organization_units") {
+    val unitId = varchar("unit_id", 36)
+    val parentId = varchar("parent_id", 36).nullable().index()
+    val name = varchar("name", 120)
+    val leaderUid = varchar("leader_uid", 36).nullable().index()
+    val sortOrder = integer("sort_order").default(0)
+    val groupChatId = varchar("group_chat_id", 36).nullable().uniqueIndex()
+    val status = integer("status").default(1)
+    val createdAt = long("created_at")
+    val updatedAt = long("updated_at")
+
+    override val primaryKey = PrimaryKey(unitId)
+}
+
+/** 用户可以属于多个部门，但同一用户最多有一个 primary 归属（Repository 写入时收敛）。 */
+object OrganizationMemberships : LongIdTable("organization_memberships") {
+    val unitId = varchar("unit_id", 36).index()
+    val uid = varchar("uid", 36).index()
+    val title = varchar("title", 120).nullable()
+    val primary = bool("is_primary").default(false)
+    val joinedAt = long("joined_at")
+    val updatedAt = long("updated_at")
+
+    init {
+        uniqueIndex("idx_org_member_unit_uid", unitId, uid)
+    }
+}
+
+/** 通知机器人应用。只保存高熵 webhook token 的 SHA-256，不保存可恢复密钥。 */
+object AutomationBots : Table("automation_bots") {
+    val botId = varchar("bot_id", 36)
+    val userUid = varchar("user_uid", 36).uniqueIndex()
+    val name = varchar("name", 100)
+    val tokenHash = varchar("token_hash", 64).uniqueIndex()
+    val status = integer("status").default(1)
+    val lastUsedAt = long("last_used_at").nullable()
+    val createdAt = long("created_at")
+    val updatedAt = long("updated_at")
+
+    override val primaryKey = PrimaryKey(botId)
+}
+
+object AutomationBotGrants : LongIdTable("automation_bot_grants") {
+    val botId = varchar("bot_id", 36).index()
+    val chatId = varchar("chat_id", 36).index()
+    val createdAt = long("created_at")
+
+    init {
+        uniqueIndex("idx_bot_grant_bot_chat", botId, chatId)
+    }
+}

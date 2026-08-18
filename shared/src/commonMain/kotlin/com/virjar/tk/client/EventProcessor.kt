@@ -174,8 +174,7 @@ class EventProcessor(
             }
 
             NotifyType.CHAT_CREATED,
-            NotifyType.CHAT_UPDATED,
-            NotifyType.CHAT_DELETED -> {
+            NotifyType.CHAT_UPDATED -> {
                 val chat = decodePayload<Chat>(notifyType, payload)
                 localCache.upsertChat(chat)
                 // 新会话（如被拉入群）需要刷新本地会话列表，
@@ -183,6 +182,13 @@ class EventProcessor(
                 if (notifyType == NotifyType.CHAT_CREATED) {
                     onConversationsDirty?.invoke()
                 }
+                _chatEvents.emit(notifyType to chat)
+            }
+
+            NotifyType.CHAT_DELETED -> {
+                val chat = decodePayload<Chat>(notifyType, payload)
+                localCache.deleteConversation(chat.chatId)
+                localCache.deleteChat(chat.chatId)
                 _chatEvents.emit(notifyType to chat)
             }
 

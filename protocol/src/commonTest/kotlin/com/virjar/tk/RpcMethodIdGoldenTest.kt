@@ -6,6 +6,7 @@ import com.virjar.tk.rpc.gen.ContactRpcContract
 import com.virjar.tk.rpc.gen.ConversationRpcContract
 import com.virjar.tk.rpc.gen.DeviceRpcContract
 import com.virjar.tk.rpc.gen.MessageRpcContract
+import com.virjar.tk.rpc.gen.OrganizationRpcContract
 import com.virjar.tk.rpc.gen.UserRpcContract
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -97,6 +98,12 @@ class RpcMethodIdGoldenTest {
     }
 
     @Test
+    fun `organization methodId 稳定`() {
+        assertEquals(1, OrganizationRpcContract.M_LIST_UNITS)
+        assertEquals(2, OrganizationRpcContract.M_LIST_MEMBERS)
+    }
+
+    @Test
     fun `serviceId 字符串稳定`() {
         assertEquals("auth", AuthRpcContract.SERVICE)
         assertEquals("user", UserRpcContract.SERVICE)
@@ -105,6 +112,7 @@ class RpcMethodIdGoldenTest {
         assertEquals("message", MessageRpcContract.SERVICE)
         assertEquals("conversation", ConversationRpcContract.SERVICE)
         assertEquals("device", DeviceRpcContract.SERVICE)
+        assertEquals("organization", OrganizationRpcContract.SERVICE)
     }
 
     // 占位 map 防误用（golden 以字面断言为准）

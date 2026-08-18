@@ -132,8 +132,14 @@ class ChatStore(
         return chat
     }
 
-    fun createGroupChat(name: String, avatar: String?, creatorUid: String, memberUids: List<String>): Chat {
-        val chat = repo.createGroupChat(name, avatar, creatorUid, memberUids)
+    fun createGroupChat(
+        name: String,
+        avatar: String?,
+        creatorUid: String,
+        memberUids: List<String>,
+        requestedChatId: String? = null,
+    ): Chat {
+        val chat = repo.createGroupChat(name, avatar, creatorUid, memberUids, requestedChatId)
         indexChat(chat)
         addMemberToCache(chat.chatId, creatorUid, 2)
         for (uid in memberUids) {

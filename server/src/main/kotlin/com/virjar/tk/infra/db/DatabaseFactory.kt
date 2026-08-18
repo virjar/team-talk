@@ -45,7 +45,9 @@ object DatabaseFactory {
         transaction(Connection.TRANSACTION_SERIALIZABLE) {
             SchemaUtils.createMissingTablesAndColumns(
                 Users, Devices, Chats, GroupChats, GroupMembers, GroupMemberMutes,
-                Conversations, Friends, FriendApplies, GroupInviteLinks, SyncEvents
+                Conversations, Friends, FriendApplies, GroupInviteLinks, SyncEvents,
+                OrganizationUnits, OrganizationMemberships,
+                AutomationBots, AutomationBotGrants,
             )
         }
 

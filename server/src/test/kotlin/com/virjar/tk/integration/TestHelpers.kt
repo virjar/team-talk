@@ -1,6 +1,7 @@
 package com.virjar.tk.integration
 
 import com.virjar.tk.domain.auth.AuthService
+import com.virjar.tk.domain.bot.BotService
 import com.virjar.tk.domain.chat.ChatRepository
 import com.virjar.tk.domain.chat.ChatService
 import com.virjar.tk.domain.chat.ChatStore
@@ -10,6 +11,8 @@ import com.virjar.tk.domain.conversation.ConversationRepository
 import com.virjar.tk.domain.conversation.ConversationService
 import com.virjar.tk.domain.device.DeviceRepository
 import com.virjar.tk.domain.message.MessageService
+import com.virjar.tk.domain.organization.OrganizationRepository
+import com.virjar.tk.domain.organization.OrganizationService
 import com.virjar.tk.domain.user.UserRepository
 import com.virjar.tk.domain.user.UserService
 import com.virjar.tk.di.createServerModule
@@ -86,6 +89,9 @@ class TestEnvironment : AutoCloseable {
     val chatService: ChatService get() = koin.get()
     val messageService: MessageService get() = koin.get()
     val conversationService: ConversationService get() = koin.get()
+    val organizationService: OrganizationService get() = koin.get()
+    val botService: BotService get() = koin.get()
+    val organizationRepo: OrganizationRepository get() = koin.get()
     val deviceRepo: DeviceRepository get() = koin.get()
     val userRepo: UserRepository get() = koin.get()
     val contactRepo: ContactRepository get() = koin.get()

@@ -27,6 +27,28 @@ data class AdminTokenResponse(val token: String, val expiresInSeconds: Long)
 @Serializable
 data class AdminMessageRequest(val password: String? = null)
 
+@Serializable
+data class OrganizationUnitRequest(
+    val parentId: String? = null,
+    val name: String,
+    val leaderUid: String? = null,
+    val sortOrder: Int = 0,
+    val enableGroup: Boolean = false,
+)
+
+@Serializable
+data class OrganizationMemberRequest(
+    val uid: String,
+    val title: String? = null,
+    val primary: Boolean = false,
+)
+
+@Serializable
+data class CreateBotRequest(val name: String)
+
+@Serializable
+data class BotGrantRequest(val chatId: String)
+
 /** 鉴权器（独立可单元测试）：固定凭据 + 内存 token（12h）。 */
 internal class AdminAuthConfig {
     val username: String = System.getenv("ADMIN_USER") ?: "admin"
@@ -107,6 +129,73 @@ fun Route.adminRoutes(adminService: AdminService) {
             val req = call.receive<AdminMessageRequest>()
             adminService.resetPassword(call.parameters["uid"]!!, req.password ?: throw IllegalArgumentException("password required"))
             call.respond(mapOf("ok" to true))
+        }
+
+        // ── 组织架构 ──
+        get("/organization/units") {
+            call.respond(adminService.listOrganizationUnits())
+        }
+        post("/organization/units") {
+            val req = call.receive<OrganizationUnitRequest>()
+            call.respond(adminService.createOrganizationUnit(
+                req.parentId, req.name, req.leaderUid, req.sortOrder, req.enableGroup,
+            ))
+        }
+        put("/organization/units/{unitId}") {
+            val req = call.receive<OrganizationUnitRequest>()
+            call.respond(adminService.updateOrganizationUnit(
+                call.parameters["unitId"]!!, req.parentId, req.name, req.leaderUid, req.sortOrder,
+            ))
+        }
+        delete("/organization/units/{unitId}") {
+            adminService.archiveOrganizationUnit(call.parameters["unitId"]!!)
+            call.respond(mapOf("ok" to true))
+        }
+        get("/organization/units/{unitId}/members") {
+            val recursive = call.request.queryParameters["recursive"]?.toBooleanStrictOrNull() ?: false
+            call.respond(adminService.listOrganizationMembers(call.parameters["unitId"]!!, recursive))
+        }
+        post("/organization/units/{unitId}/members") {
+            val req = call.receive<OrganizationMemberRequest>()
+            call.respond(adminService.assignOrganizationMember(
+                call.parameters["unitId"]!!, req.uid, req.title, req.primary,
+            ))
+        }
+        delete("/organization/units/{unitId}/members/{uid}") {
+            adminService.removeOrganizationMember(call.parameters["unitId"]!!, call.parameters["uid"]!!)
+            call.respond(mapOf("ok" to true))
+        }
+        post("/organization/units/{unitId}/group/enable") {
+            call.respond(adminService.enableDepartmentGroup(call.parameters["unitId"]!!))
+        }
+        post("/organization/units/{unitId}/group/disable") {
+            call.respond(adminService.disableDepartmentGroup(call.parameters["unitId"]!!))
+        }
+        post("/organization/reconcile") {
+            val failures = adminService.reconcileDepartmentGroups()
+            call.respond(mapOf("ok" to failures.isEmpty(), "failedUnitIds" to failures))
+        }
+
+        // ── 通知机器人 ──
+        get("/bots") {
+            call.respond(adminService.listBots())
+        }
+        post("/bots") {
+            call.respond(adminService.createBot(call.receive<CreateBotRequest>().name))
+        }
+        post("/bots/{botId}/rotate-token") {
+            call.respond(adminService.rotateBotToken(call.parameters["botId"]!!))
+        }
+        post("/bots/{botId}/disable") {
+            adminService.disableBot(call.parameters["botId"]!!)
+            call.respond(mapOf("ok" to true))
+        }
+        post("/bots/{botId}/grants") {
+            val req = call.receive<BotGrantRequest>()
+            call.respond(adminService.grantBot(call.parameters["botId"]!!, req.chatId))
+        }
+        delete("/bots/{botId}/grants/{chatId}") {
+            call.respond(adminService.revokeBotGrant(call.parameters["botId"]!!, call.parameters["chatId"]!!))
         }
 
         // ── 消息 ──

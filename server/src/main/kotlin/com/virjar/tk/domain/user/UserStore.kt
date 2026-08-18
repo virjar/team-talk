@@ -42,8 +42,15 @@ class UserStore(private val repo: UserRepository) {
 
     // ── 写操作（Repository + 缓存更新） ──
 
-    fun create(uid: String, username: String, name: String, passwordHash: String, phone: String? = null): User {
-        return repo.create(uid, username, name, passwordHash, phone).also { indexUser(it) }
+    fun create(
+        uid: String,
+        username: String,
+        name: String,
+        passwordHash: String,
+        phone: String? = null,
+        role: Int = 0,
+    ): User {
+        return repo.create(uid, username, name, passwordHash, phone, role).also { indexUser(it) }
     }
 
     fun updateProfile(uid: String, name: String? = null, avatar: String? = null, sex: Int? = null, phone: String? = null) {

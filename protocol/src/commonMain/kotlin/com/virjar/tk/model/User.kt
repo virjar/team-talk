@@ -41,3 +41,10 @@ data class User(
         )
     }
 }
+
+/** 用户全局身份类型。群内 Member.role 是另一条独立维度。 */
+object UserRole {
+    const val HUMAN = 0
+    const val BOT = 10
+    const val SYSTEM = 20
+}
