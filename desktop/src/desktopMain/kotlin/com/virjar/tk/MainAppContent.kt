@@ -104,7 +104,7 @@ internal fun WindowScope.MainAppContent(
     val userSession = nav.userSession
     val resolveUser: (String) -> User? = { uid ->
         nav.localCache.getUser(uid)
-            ?: nav.currentUser?.takeIf { it.uid == uid }
+            ?: nav.account.currentUser?.takeIf { it.uid == uid }
             ?: if (uid == userSession.uid) {
                 User(
                     uid = uid,
@@ -209,7 +209,7 @@ internal fun WindowScope.MainAppContent(
 
                     MainTab.SETTINGS -> {
                         MeScreen(
-                            currentUser = nav.currentUser,
+                            currentUser = nav.account.currentUser,
                             onLogout = onLogout,
                             onEditProfile = { nav.openScreen(SubScreen.EditProfile) },
                             onChangePassword = { nav.openScreen(SubScreen.ChangePassword) },
@@ -345,7 +345,7 @@ private fun BoxScope.ChatInspectorHost(nav: DesktopNav) {
                     openChatAndClose = { chatId, name, chatType -> nav.openChat(chatId, name, chatType) },
                     openUserProfile = nav::openProfile,
                     onLeaveGroup = { chatId ->
-                        nav.leaveGroup(chatId) {
+                        nav.groups.leave(chatId) {
                             nav.closeInspector()
                             if (nav.chatId == chatId) nav.chatId = null
                         }

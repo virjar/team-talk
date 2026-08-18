@@ -79,11 +79,13 @@ app/src/commonMain/kotlin/com/virjar/tk/
 ├── ui/component/        头像、气泡、输入、富文本等
 ├── ui/theme/            Tokens/AppTheme
 ├── viewmodel/           StateFlow 与业务动作
-├── navigation/          平台无关数据状态，不拥有平台导航栈
+├── navigation/          会话组合根与页面数据分发，不拥有平台导航栈
+├── navigation/feature/  按账户、群组、发现等业务能力组织的状态与用例
 └── client/              Compose 认证包装
 ```
 
-UI 不直接引用服务端实现，不自己解码 wire，不绕过 Repository 维护远端事实。
+UI 不直接引用服务端实现，不自己解码 wire，不绕过 Repository 维护远端事实。新增页面动作进入对应
+feature controller；`AppDataState` 只做组装、生命周期和分发，不作为所有客户端业务的默认容器。
 
 ## 7. platform shells
 

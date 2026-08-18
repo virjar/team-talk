@@ -104,7 +104,7 @@ fun HomeScreen(
                     )
                 }
                 MainTab.SETTINGS -> MeScreen(
-                    currentUser = dataState.currentUser,
+                    currentUser = dataState.account.currentUser,
                     onLogout = onLogout,
                     onEditProfile = onEditProfile,
                     onChangePassword = onChangePassword,

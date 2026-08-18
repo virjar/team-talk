@@ -26,6 +26,8 @@
 - 服务端 `domain` 只依赖领域端口和 `protocol` 契约；PostgreSQL、RocksDB、Lucene、连接注册表和
   RPC Stub 都是外层适配器，禁止反向 import 进 `domain`。
 - UI 观察 LocalCache，RPC 与 Notify 负责使缓存收敛；服务端是权限和共享数据的权威来源。
+- `AppDataState` 只负责会话级组装、生命周期和页面数据分发；账户、群组、发现等业务状态与动作进入
+  `navigation/feature`，不得继续堆入应用级状态对象。
 - 状态和资源遵循单一所有者；短暂断线不能清除用户身份，认证终态失败必须停止重连。
 - RPC methodId、NotifyType、MessageType 和 wire 字段是兼容性契约；修改时遵循
   [协议规则](doc/04-protocol/README.md)并补 round-trip 测试。

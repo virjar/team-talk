@@ -1,10 +1,15 @@
 package com.virjar.tk.navigation
 
-import androidx.compose.runtime.*
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.virjar.tk.AppError
 import com.virjar.tk.client.ClientSession
 import com.virjar.tk.client.logUnhandledError
-import com.virjar.tk.model.*
+import com.virjar.tk.model.ChatType
+import com.virjar.tk.navigation.feature.AccountFeature
+import com.virjar.tk.navigation.feature.DiscoveryFeature
+import com.virjar.tk.navigation.feature.GroupFeature
 import com.virjar.tk.viewmodel.ChatViewModel
 import com.virjar.tk.viewmodel.ContactViewModel
 import com.virjar.tk.viewmodel.ConversationViewModel
@@ -16,12 +21,11 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
- * 纯数据/业务状态持有者（不含导航逻辑）。
+ * Session-scoped client composition root.
  *
- * 供 Android（Navigation Compose + NavHost）和 Desktop（[com.virjar.tk.DesktopNav]，
- * 面板栈/子窗口入口）共享同一套数据层。
- *
- * @see com.virjar.tk.DesktopNav
+ * This object owns shared ViewModels, feature controllers and their coroutine
+ * lifetime. Platform navigation remains in Android/Desktop shells; feature
+ * state and actions live in [account], [groups] and [discovery].
  */
 open class AppDataState(val session: ClientSession) {
     val imClient get() = session.imClient
@@ -34,274 +38,91 @@ open class AppDataState(val session: ClientSession) {
     val userRepo get() = session.userRepo
     val conversationRepo get() = session.conversationRepo
 
-    /**
-     * 子页面 action 专用协程作用域。与 ViewModels 的 scope 分离，
-     * 便于统一管理 action 的错误兜底；[destroy] 时取消。
-     */
-    private val actionScope = CoroutineScope(Dispatchers.Main + SupervisorJob() +
-        CoroutineExceptionHandler { _, t -> logUnhandledError("AppDataState", t) })
+    private val actionScope = CoroutineScope(
+        Dispatchers.Main + SupervisorJob() +
+            CoroutineExceptionHandler { _, throwable -> logUnhandledError("AppDataState", throwable) },
+    )
 
-    // ViewModels
     val conversationViewModel = ConversationViewModel(localCache, conversationRepo)
-    val contactViewModel = ContactViewModel(localCache, contactRepo, userSession.uid).also {
-        // 收到好友申请/接受/删除通知时刷新红点数
-        session.eventProcessor.onContactChanged = { it.refreshPendingApplyCount() }
+    val contactViewModel = ContactViewModel(localCache, contactRepo, userSession.uid).also { viewModel ->
+        session.eventProcessor.onContactChanged = { viewModel.refreshPendingApplyCount() }
     }
     var chatViewModel by mutableStateOf<ChatViewModel?>(null)
+        private set
 
-    // 屏幕数据（各二级页面加载后缓存）
-    var devices by mutableStateOf(emptyList<Device>())
-    var blockedContacts by mutableStateOf(emptyList<Contact>())
-    var applies by mutableStateOf(emptyList<ContactApply>())
-    var groupDetailChat by mutableStateOf<Chat?>(null)
-    var groupMembers by mutableStateOf(emptyList<Member>())
-    var profileUser by mutableStateOf<User?>(null)
-    var isFriend by mutableStateOf(false)
-    var inviteLinks by mutableStateOf(emptyList<InviteLink>())
+    val account = AccountFeature(session, contactViewModel, actionScope, ::handleError)
+    val groups = GroupFeature(session, actionScope, ::handleError)
+    val discovery = DiscoveryFeature(session, ::handleError)
 
-    // Error state
     var error by mutableStateOf<String?>(null)
-        internal set
+        private set
 
-    // Derived
-    val currentUser: User? get() {
-        val uid = userSession.uid
-        if (uid.isBlank()) return null
-        // 优先从 localCache 取（USER_UPDATED 事件会 upsert），
-        // 注册/登录后缓存可能还没写入，回退用 UserSession 内存字段构建。
-        return localCache.getUser(uid)
-            ?: User(
-                uid = uid,
-                username = userSession.username ?: "",
-                name = userSession.name ?: "",
-            )
-    }
-
-    /** 释放 ViewModel 协程作用域。在登出或会话结束时调用。 */
     fun destroy() {
         conversationViewModel.destroy()
         contactViewModel.destroy()
         chatViewModel?.destroy()
         actionScope.cancel()
-        // 清除注册到 EventProcessor 的回调引用，避免泄漏（session.close 也会清，双保险）
         session.eventProcessor.onContactChanged = null
     }
 
-    /**
-     * 准备聊天 ViewModel（纯数据操作，不含导航）。
-     * 导航由调用方（Android NavController / Desktop currentScreen）负责。
-     */
     fun prepareChat(chatId: String, chatName: String, chatType: Int = ChatType.PERSONAL.code) {
         chatViewModel?.destroy()
-        chatViewModel = ChatViewModel(chatId, localCache, messageRepo, session.eventProcessor, userSession.uid, session.sendQueue).apply {
-            // 认证失效：ViewModel 不自断连接，统一上抛给会话所有者（owner-driven）
+        chatViewModel = ChatViewModel(
+            chatId,
+            localCache,
+            messageRepo,
+            session.eventProcessor,
+            userSession.uid,
+            session.sendQueue,
+        ).apply {
             onAuthExpired = { session.close() }
         }
     }
 
-    fun clearError() { error = null }
+    fun clearError() {
+        error = null
+    }
 
-    /**
-     * 统一处理 Repository 抛出的错误。
-     * 认证失效：停而非重试 → session.close()。
-     */
-    fun handleError(e: Throwable, fallbackMsg: String) {
-        when (e) {
+    suspend fun loadScreenDataByKey(key: ScreenDataKey) {
+        when (key) {
+            ScreenDataKey.Devices -> account.loadDevices()
+            ScreenDataKey.Blacklist -> account.loadBlacklist()
+            ScreenDataKey.FriendApplies -> account.loadFriendApplies()
+            is ScreenDataKey.GroupDetail -> groups.loadDetail(key.chatId)
+            is ScreenDataKey.UserProfile -> account.loadProfile(key.uid)
+            is ScreenDataKey.InviteLinks -> groups.loadInviteLinks(key.chatId)
+        }
+    }
+
+    fun saveDraft(chatId: String, draft: String?) = actionScope.launch {
+        try {
+            conversationRepo.setDraft(chatId, draft?.takeIf { it.isNotBlank() })
+        } catch (_: Exception) {
+            // Draft persistence is best-effort and must not interrupt conversation flow.
+        }
+    }
+
+    private fun handleError(throwable: Throwable, fallbackMessage: String) {
+        when (throwable) {
             is AppError.AuthExpired -> {
                 error = "认证失效，请重新登录"
                 session.close()
             }
+
             is AppError.FatalCodec -> {
-                // 编解码错误是 FATAL 级别（客户端与服务端协议不一致），醒目提示用户上报
-                error = "⚠️ 数据协议错误，请联系开发者：${e.message}"
+                error = "⚠️ 数据协议错误，请联系开发者：${throwable.message}"
             }
-            is AppError -> error = e.message ?: fallbackMsg
-            else -> error = fallbackMsg
+
+            is AppError -> error = throwable.message ?: fallbackMessage
+            else -> error = fallbackMessage
         }
-    }
-
-    /**
-     * 按屏幕类型加载对应数据。Android 端可在 NavHost 的各 composable{} 内用
-     * LaunchedEffect 调用对应的加载逻辑（见 [loadScreenDataByKey]）。
-     */
-    suspend fun loadScreenDataByKey(key: ScreenDataKey) {
-        when (key) {
-            is ScreenDataKey.Devices -> try { devices = deviceRepo.listDevices().getOrThrow() } catch (e: AppError) { handleError(e, "加载设备列表失败") }
-            is ScreenDataKey.Blacklist -> try { blockedContacts = contactRepo.listBlacklist().getOrThrow() } catch (e: AppError) { handleError(e, "加载黑名单失败") }
-            is ScreenDataKey.FriendApplies -> try { applies = contactRepo.listApplies().getOrThrow() } catch (e: AppError) { handleError(e, "加载好友申请失败") }
-            is ScreenDataKey.GroupDetail -> {
-                val chatId = key.chatId
-                try {
-                    groupDetailChat = chatRepo.getChat(chatId).getOrThrow()
-                    groupMembers = chatRepo.getMembers(chatId).getOrThrow()
-                } catch (e: AppError) { handleError(e, "加载群详情失败") }
-            }
-            is ScreenDataKey.UserProfile -> {
-                val uid = key.uid
-                // 切换不同用户时先清掉上一份资料，避免网络返回前短暂显示错误对象。
-                profileUser = null
-                isFriend = contactViewModel.contacts.value.any { it.friendUid == uid }
-                try { profileUser = userRepo.getProfile(uid).getOrThrow() } catch (e: AppError) { handleError(e, "加载用户信息失败") }
-            }
-            is ScreenDataKey.InviteLinks -> {
-                val chatId = key.chatId
-                try { inviteLinks = chatRepo.listInviteLinks(chatId).getOrThrow() } catch (e: AppError) { handleError(e, "加载邀请链接失败") }
-            }
-        }
-    }
-
-    // ── 子页面 action（统一封装 repo 调用 + 错误处理 + 数据刷新） ──
-    // UI 层（Android NavHost / Desktop SubScreenRouter）只需调用这些方法 + 处理导航，
-    // 不再各自重复 try { repo.x().getOrThrow() } catch (e: AppError) { handleError(...) }。
-    //
-    // 两类约定：
-    // - 需要 UI 同步/suspend 拿结果的方法声明为 suspend，由 Screen 的 suspend 回调直接调用；
-    // - 纯副作用（fire-and-forget，UI 不关心返回值）用 launch 启动。
-
-    /** 设备管理：踢出设备，成功后刷新设备列表。 */
-    fun kickDevice(deviceId: String) = actionScope.launch {
-        try { deviceRepo.kickDevice(deviceId).getOrThrow(); devices = deviceRepo.listDevices().getOrThrow() }
-        catch (e: AppError) { handleError(e, "踢出设备失败") }
-    }
-
-    /** 黑名单：移出黑名单，成功后刷新黑名单列表。 */
-    fun unblockContact(uid: String) = actionScope.launch {
-        try { contactRepo.removeFromBlacklist(uid).getOrThrow(); blockedContacts = contactRepo.listBlacklist().getOrThrow() }
-        catch (e: AppError) { handleError(e, "移出黑名单失败") }
-    }
-
-    /** 编辑资料：保存昵称/手机号。返回是否成功（UI 据此决定是否返回）。 */
-    suspend fun saveProfile(name: String, phone: String?): Boolean = try {
-        userRepo.updateProfile(name = name, phone = phone).getOrThrow(); true
-    } catch (e: AppError) { handleError(e, "保存失败"); false }
-
-    /** 修改密码。返回是否成功。 */
-    suspend fun changePassword(old: String, new: String): Boolean = try {
-        userRepo.changePassword(old, new).getOrThrow(); true
-    } catch (e: AppError) { handleError(e, "修改密码失败"); false }
-
-    /** 好友申请：接受，成功后刷新申请列表 + 红点计数。 */
-    fun acceptFriendApply(token: String) = actionScope.launch {
-        try {
-            contactRepo.accept(token).getOrThrow()
-            applies = contactRepo.listApplies().getOrThrow()
-            contactViewModel.refreshPendingApplyCount()
-        } catch (e: AppError) { handleError(e, "接受申请失败") }
-    }
-
-    /** 好友申请：拒绝，成功后刷新申请列表 + 红点计数。 */
-    fun rejectFriendApply(token: String) = actionScope.launch {
-        try {
-            contactRepo.reject(token).getOrThrow()
-            applies = contactRepo.listApplies().getOrThrow()
-            contactViewModel.refreshPendingApplyCount()
-        } catch (e: AppError) { handleError(e, "拒绝申请失败") }
-    }
-
-    /** 创建群组。返回 chatId 或 null（UI 据此决定是否打开聊天）。 */
-    suspend fun createGroup(name: String, memberUids: List<String>): String? = try {
-        val chat = chatRepo.createGroup(name, memberUids = memberUids).getOrThrow()
-        conversationRepo.listConversations()
-        chat.chatId
-    } catch (e: AppError) { handleError(e, "创建群组失败"); null }
-
-    /** 群详情：修改成员角色（设为/取消管理员）。成功后刷新群详情。 */
-    fun setMemberRole(chatId: String, uid: String, role: Int) = actionScope.launch {
-        try { chatRepo.setMemberRole(chatId, uid, role).getOrThrow(); refreshGroupDetail(chatId) }
-        catch (e: AppError) { handleError(e, "修改角色失败") }
-    }
-
-    /** 群详情：禁言成员。成功后刷新群详情。 */
-    fun muteMember(chatId: String, uid: String, duration: Int = 3600) = actionScope.launch {
-        try { chatRepo.muteMember(chatId, uid, duration).getOrThrow(); refreshGroupDetail(chatId) }
-        catch (e: AppError) { handleError(e, "禁言失败") }
-    }
-
-    /** 群详情：解除禁言。成功后刷新群详情。 */
-    fun unmuteMember(chatId: String, uid: String) = actionScope.launch {
-        try { chatRepo.unmuteMember(chatId, uid).getOrThrow(); refreshGroupDetail(chatId) }
-        catch (e: AppError) { handleError(e, "解除禁言失败") }
-    }
-
-    /** 群详情：移除成员。成功后刷新群详情。 */
-    fun removeMember(chatId: String, uid: String) = actionScope.launch {
-        try { chatRepo.removeMember(chatId, uid).getOrThrow(); refreshGroupDetail(chatId) }
-        catch (e: AppError) { handleError(e, "移除成员失败") }
-    }
-
-    /** 群详情：更新群公告。成功后刷新群详情。 */
-    fun updateGroupNotice(chatId: String, notice: String) = actionScope.launch {
-        try { chatRepo.updateGroup(chatId, notice = notice).getOrThrow(); refreshGroupDetail(chatId) }
-        catch (e: AppError) { handleError(e, "更新群公告失败") }
-    }
-
-    /** 群详情：离开/删除群。成功后由 UI 负责导航回首页。 */
-    fun leaveGroup(chatId: String, onLeft: () -> Unit) = actionScope.launch {
-        try { chatRepo.deleteChat(chatId).getOrThrow(); onLeft() }
-        catch (e: Exception) { handleError(e, "离开群组失败") }
-    }
-
-    /** 邀请成员入群。返回是否成功。 */
-    suspend fun inviteMembers(chatId: String, uids: List<String>): Boolean = try {
-        chatRepo.addMembers(chatId, uids).getOrThrow(); true
-    } catch (e: AppError) { handleError(e, "邀请成员失败"); false }
-
-    /** 邀请链接：创建链接，成功后刷新链接列表。返回新 token 或 null。 */
-    suspend fun createInviteLink(chatId: String): String? = try {
-        val token = chatRepo.createInviteLink(chatId).getOrThrow()
-        inviteLinks = chatRepo.listInviteLinks(chatId).getOrThrow()
-        token
-    } catch (e: AppError) { handleError(e, "创建链接失败"); null }
-
-    /** 邀请链接：撤销链接，成功后刷新链接列表。 */
-    fun revokeInviteLink(chatId: String, token: String) = actionScope.launch {
-        try { chatRepo.revokeInviteLink(token).getOrThrow(); inviteLinks = chatRepo.listInviteLinks(chatId).getOrThrow() }
-        catch (e: AppError) { handleError(e, "撤销链接失败") }
-    }
-
-    /** 用户资料页：创建私聊。返回 chatId 或 null。 */
-    suspend fun startPersonalChat(uid: String): String? = try {
-        chatRepo.createPersonalChat(uid).getOrThrow().chatId
-    } catch (e: AppError) { handleError(e, "创建聊天失败"); null }
-
-    /** 转发消息。返回是否成功。 */
-    suspend fun forwardMessage(srcChatId: String, srcSeq: Long, targetChatId: String): Boolean = try {
-        messageRepo.forwardMessage(srcChatId, srcSeq, targetChatId).getOrThrow(); true
-    } catch (e: AppError) { handleError(e, "转发失败"); false }
-
-    /** 搜索用户。返回结果列表（失败返回空列表）。 */
-    suspend fun searchUsers(query: String): List<User> = try {
-        userRepo.search(query).getOrThrow()
-    } catch (e: AppError) { handleError(e, "搜索失败"); emptyList() }
-
-    /** 搜索消息。返回结果列表（失败返回空列表）。 */
-    suspend fun searchMessages(query: String): List<Message> = try {
-        messageRepo.searchMessages("", query).getOrThrow()
-    } catch (e: AppError) { handleError(e, "搜索失败"); emptyList() }
-
-    /** 保存/清除草稿（null/空 = 清除，fire-and-forget）。 */
-    fun saveDraft(chatId: String, draft: String?) = actionScope.launch {
-        try { conversationRepo.setDraft(chatId, draft?.takeIf { it.isNotBlank() }) }
-        catch (e: Exception) { /* 草稿保存失败不打扰用户 */ }
-    }
-
-    /** 刷新群详情数据（群信息 + 成员列表）。 */
-    private suspend fun refreshGroupDetail(chatId: String) {
-        try {
-            groupDetailChat = chatRepo.getChat(chatId).getOrThrow()
-            groupMembers = chatRepo.getMembers(chatId).getOrThrow()
-        } catch (e: AppError) { handleError(e, "刷新群详情失败") }
     }
 }
 
-/**
- * 屏幕数据加载键（类型安全）。各平台导航层用它触发数据加载
- * （Android NavHost 各 composable{} / Desktop SubScreen.dataKey()）。
- */
 sealed class ScreenDataKey {
-    object Devices : ScreenDataKey()
-    object Blacklist : ScreenDataKey()
-    object FriendApplies : ScreenDataKey()
+    data object Devices : ScreenDataKey()
+    data object Blacklist : ScreenDataKey()
+    data object FriendApplies : ScreenDataKey()
     data class GroupDetail(val chatId: String) : ScreenDataKey()
     data class UserProfile(val uid: String) : ScreenDataKey()
     data class InviteLinks(val chatId: String) : ScreenDataKey()

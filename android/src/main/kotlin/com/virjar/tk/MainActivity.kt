@@ -165,8 +165,8 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                 onQueryChange = { query = it },
                 conversations = conversations,
                 contacts = contacts,
-                searchMessages = { q -> dataState.searchMessages(q) },
-                searchUsers = { q -> dataState.searchUsers(q) },
+                searchMessages = { q -> dataState.discovery.searchMessages(q) },
+                searchUsers = { q -> dataState.discovery.searchUsers(q) },
                 onConversationClick = { conversation ->
                     dataState.prepareChat(conversation.chatId, conversation.chatName ?: conversation.chatId.take(16), conversation.chatType)
                     navController.navigate(Routes.chat(conversation.chatId, conversation.chatName ?: conversation.chatId.take(16), conversation.chatType)) {
@@ -186,7 +186,7 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             )
         }
         composable(Routes.SEARCH_USERS) {
-            SearchUsersScreen(searchUsers = { q -> dataState.searchUsers(q) },
+            SearchUsersScreen(searchUsers = { q -> dataState.discovery.searchUsers(q) },
                 onUserClick = { uid -> navController.navigate(Routes.userProfile(uid)) }, onBack = { navController.popBackStack() })
         }
         composable(
@@ -196,7 +196,7 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             val contacts by dataState.contactViewModel.contacts.collectAsState()
             val seedUid = entry.arguments?.getString("seedUid").orEmpty()
             CreateGroupScreen(contacts = contacts, onCreateGroup = { name, uids ->
-                val chatId = dataState.createGroup(name, uids)
+                val chatId = dataState.groups.create(name, uids)
                 if (chatId != null) {
                     dataState.prepareChat(chatId, name, 2)
                     navController.navigate(Routes.chat(chatId, name, 2)) { popUpTo(Routes.CREATE_GROUP) { inclusive = true } }
@@ -206,16 +206,16 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
         }
         composable(Routes.FRIEND_APPLIES) {
             LaunchedEffect(Unit) { dataState.loadScreenDataByKey(ScreenDataKey.FriendApplies) }
-            FriendAppliesScreen(applies = dataState.applies,
-                onAccept = { t -> dataState.acceptFriendApply(t) },
-                onReject = { t -> dataState.rejectFriendApply(t) },
+            FriendAppliesScreen(applies = dataState.account.applies,
+                onAccept = { t -> dataState.account.acceptFriendApply(t) },
+                onReject = { t -> dataState.account.rejectFriendApply(t) },
                 onBack = { navController.popBackStack() })
         }
         composable(Routes.USER_PROFILE, arguments = listOf(navArgument("uid"){type=NavType.StringType})) { entry ->
             val uid = entry.arguments?.getString("uid") ?: return@composable
             var hasPendingApply by remember { mutableStateOf(false) }
             LaunchedEffect(uid) { dataState.loadScreenDataByKey(ScreenDataKey.UserProfile(uid)); hasPendingApply = false }
-            UserProfileScreen(user = dataState.profileUser, isFriend = dataState.isFriend, hasPendingApply = hasPendingApply,
+            UserProfileScreen(user = dataState.account.profileUser, isFriend = dataState.account.isFriend, hasPendingApply = hasPendingApply,
                 onAddFriend = {
                     dataState.contactViewModel.apply(uid)
                     hasPendingApply = true
@@ -225,69 +225,69 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                     }
                 },
                 onSendMessage = { scope.launch {
-                    val chatId = dataState.startPersonalChat(uid)
+                    val chatId = dataState.discovery.startPersonalChat(uid)
                     if (chatId != null) {
-                        val n = dataState.profileUser?.name ?: uid.take(12)
+                        val n = dataState.account.profileUser?.name ?: uid.take(12)
                         dataState.prepareChat(chatId, n)
                         navController.navigate(Routes.chat(chatId, n)) { popUpTo(Routes.HOME) }
                     }
                 }},
-                onCreateGroup = if (dataState.isFriend) {
+                onCreateGroup = if (dataState.account.isFriend) {
                     { navController.navigate(Routes.createGroup(uid)) }
                 } else null,
                 onDeleteFriend = { dataState.contactViewModel.deleteFriend(uid); navController.popBackStack() },
                 onBack = { navController.popBackStack() })
         }
-        composable(Routes.EDIT_PROFILE) { EditProfileScreen(currentUser = dataState.currentUser, onSave = { n, p -> dataState.saveProfile(n, p) }, onBack = { navController.popBackStack() }) }
-        composable(Routes.CHANGE_PASSWORD) { ChangePasswordScreen(onChangePassword = { o, n -> dataState.changePassword(o, n) }, onBack = { navController.popBackStack() }) }
+        composable(Routes.EDIT_PROFILE) { EditProfileScreen(currentUser = dataState.account.currentUser, onSave = { n, p -> dataState.account.saveProfile(n, p) }, onBack = { navController.popBackStack() }) }
+        composable(Routes.CHANGE_PASSWORD) { ChangePasswordScreen(onChangePassword = { o, n -> dataState.account.changePassword(o, n) }, onBack = { navController.popBackStack() }) }
         composable(Routes.DEVICES) {
             LaunchedEffect(Unit) { dataState.loadScreenDataByKey(ScreenDataKey.Devices) }
-            DeviceManagementScreen(devices = dataState.devices.map { DeviceInfo(it.deviceId, it.deviceName ?: "", it.deviceModel ?: "", it.lastLogin) },
-                onKick = { d -> dataState.kickDevice(d) },
+            DeviceManagementScreen(devices = dataState.account.devices.map { DeviceInfo(it.deviceId, it.deviceName ?: "", it.deviceModel ?: "", it.lastLogin) },
+                onKick = { d -> dataState.account.kickDevice(d) },
                 onBack = { navController.popBackStack() })
         }
         composable(Routes.BLACKLIST) {
             LaunchedEffect(Unit) { dataState.loadScreenDataByKey(ScreenDataKey.Blacklist) }
-            BlacklistScreen(blockedUsers = dataState.blockedContacts.map { BlockedUser(it.friendUid, it.user?.name ?: it.friendUid) },
-                onUnblock = { u -> dataState.unblockContact(u) },
+            BlacklistScreen(blockedUsers = dataState.account.blockedContacts.map { BlockedUser(it.friendUid, it.user?.name ?: it.friendUid) },
+                onUnblock = { u -> dataState.account.unblockContact(u) },
                 onBack = { navController.popBackStack() })
         }
         composable(Routes.GROUP_DETAIL, arguments = listOf(navArgument("chatId"){type=NavType.StringType})) { entry ->
             val chatId = entry.arguments?.getString("chatId") ?: return@composable
             LaunchedEffect(chatId) { dataState.loadScreenDataByKey(ScreenDataKey.GroupDetail(chatId)) }
-            GroupDetailScreen(chat = dataState.groupDetailChat, members = dataState.groupMembers, isOwner = dataState.groupMembers.any { it.uid == dataState.userSession.uid && it.role == 2 },
+            GroupDetailScreen(chat = dataState.groups.detailChat, members = dataState.groups.members, isOwner = dataState.groups.members.any { it.uid == dataState.userSession.uid && it.role == 2 },
                 myUid = dataState.userSession.uid,
                 onMemberClick = { uid -> navController.navigate(Routes.userProfile(uid)) }, onInviteMembers = { navController.navigate(Routes.inviteMembers(chatId)) }, onViewInviteLinks = { navController.navigate(Routes.inviteLinks(chatId)) },
-                onLeaveGroup = { dataState.leaveGroup(chatId) { navController.popBackStack(Routes.HOME, inclusive = false) } },
-                onEditNotice = { notice -> dataState.updateGroupNotice(chatId, notice) },
+                onLeaveGroup = { dataState.groups.leave(chatId) { navController.popBackStack(Routes.HOME, inclusive = false) } },
+                onEditNotice = { notice -> dataState.groups.updateNotice(chatId, notice) },
                 onBack = { navController.popBackStack() },
-                onSetAdmin = { uid -> dataState.setMemberRole(chatId, uid, 1) },
-                onRemoveAdmin = { uid -> dataState.setMemberRole(chatId, uid, 0) },
-                onMuteMember = { uid -> dataState.muteMember(chatId, uid) },
-                onUnmuteMember = { uid -> dataState.unmuteMember(chatId, uid) },
-                onRemoveMember = { uid -> dataState.removeMember(chatId, uid) },
+                onSetAdmin = { uid -> dataState.groups.setMemberRole(chatId, uid, 1) },
+                onRemoveAdmin = { uid -> dataState.groups.setMemberRole(chatId, uid, 0) },
+                onMuteMember = { uid -> dataState.groups.muteMember(chatId, uid) },
+                onUnmuteMember = { uid -> dataState.groups.unmuteMember(chatId, uid) },
+                onRemoveMember = { uid -> dataState.groups.removeMember(chatId, uid) },
             )
         }
         composable(Routes.INVITE_MEMBERS, arguments = listOf(navArgument("chatId"){type=NavType.StringType})) { entry ->
             val chatId = entry.arguments?.getString("chatId") ?: return@composable
             val contacts by dataState.contactViewModel.contacts.collectAsState()
             InviteMembersScreen(friendUids = contacts.map { it.friendUid }, friendNames = contacts.associate { it.friendUid to (it.remark ?: it.user?.name ?: it.friendUid) },
-                onInvite = { uids -> dataState.inviteMembers(chatId, uids) },
+                onInvite = { uids -> dataState.groups.inviteMembers(chatId, uids) },
                 onBack = { navController.popBackStack() })
         }
         composable(Routes.INVITE_LINKS, arguments = listOf(navArgument("chatId"){type=NavType.StringType})) { entry ->
             val chatId = entry.arguments?.getString("chatId") ?: return@composable
             LaunchedEffect(chatId) { dataState.loadScreenDataByKey(ScreenDataKey.InviteLinks(chatId)) }
-            InviteLinksScreen(links = dataState.inviteLinks.map { InviteLink(it.token, it.maxUses, it.useCount, it.revokedAt > 0) },
-                onCreateLink = { dataState.createInviteLink(chatId) },
-                onRevokeLink = { t -> dataState.revokeInviteLink(chatId, t) },
+            InviteLinksScreen(links = dataState.groups.inviteLinks.map { InviteLink(it.token, it.maxUses, it.useCount, it.revokedAt > 0) },
+                onCreateLink = { dataState.groups.createInviteLink(chatId) },
+                onRevokeLink = { t -> dataState.groups.revokeInviteLink(chatId, t) },
                 onBack = { navController.popBackStack() })
         }
         composable(Routes.FORWARD, arguments = listOf(navArgument("chatId"){type=NavType.StringType}, navArgument("serverSeq"){type=NavType.LongType})) { entry ->
             val chatId = entry.arguments?.getString("chatId") ?: return@composable
             val serverSeq = entry.arguments?.getLong("serverSeq") ?: return@composable
             val conversations by dataState.conversationViewModel.conversations.collectAsState()
-            ForwardScreen(conversations = conversations, onForward = { tc -> dataState.forwardMessage(chatId, serverSeq, tc) }, onBack = { navController.popBackStack() })
+            ForwardScreen(conversations = conversations, onForward = { tc -> dataState.discovery.forwardMessage(chatId, serverSeq, tc) }, onBack = { navController.popBackStack() })
         }
     }
 }

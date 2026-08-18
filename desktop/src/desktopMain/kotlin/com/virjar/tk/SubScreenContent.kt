@@ -42,37 +42,37 @@ fun SubScreenContent(
 
     when (screen) {
         is SubScreen.Devices -> DeviceManagementScreen(
-            devices = data.devices.map { DeviceInfo(it.deviceId, it.deviceName ?: "", it.deviceModel ?: "", it.lastLogin) },
-            onKick = { deviceId -> data.kickDevice(deviceId) },
+            devices = data.account.devices.map { DeviceInfo(it.deviceId, it.deviceName ?: "", it.deviceModel ?: "", it.lastLogin) },
+            onKick = { deviceId -> data.account.kickDevice(deviceId) },
             onBack = onBack,
         )
 
         is SubScreen.Blacklist -> BlacklistScreen(
-            blockedUsers = data.blockedContacts.map { BlockedUser(it.friendUid, it.user?.name ?: it.friendUid) },
-            onUnblock = { uid -> data.unblockContact(uid) },
+            blockedUsers = data.account.blockedContacts.map { BlockedUser(it.friendUid, it.user?.name ?: it.friendUid) },
+            onUnblock = { uid -> data.account.unblockContact(uid) },
             onBack = onBack,
         )
 
         is SubScreen.EditProfile -> EditProfileScreen(
-            currentUser = data.currentUser,
-            onSave = { name, _ -> data.saveProfile(name, null) },
+            currentUser = data.account.currentUser,
+            onSave = { name, _ -> data.account.saveProfile(name, null) },
             onBack = onBack,
         )
 
         is SubScreen.ChangePassword -> ChangePasswordScreen(
-            onChangePassword = { old, new -> data.changePassword(old, new) },
+            onChangePassword = { old, new -> data.account.changePassword(old, new) },
             onBack = onBack,
         )
 
         is SubScreen.FriendApplies -> FriendAppliesScreen(
-            applies = data.applies,
-            onAccept = { token -> data.acceptFriendApply(token) },
-            onReject = { token -> data.rejectFriendApply(token) },
+            applies = data.account.applies,
+            onAccept = { token -> data.account.acceptFriendApply(token) },
+            onReject = { token -> data.account.rejectFriendApply(token) },
             onBack = onBack,
         )
 
         is SubScreen.SearchUsers -> SearchUsersScreen(
-            searchUsers = { query -> data.searchUsers(query) },
+            searchUsers = { query -> data.discovery.searchUsers(query) },
             onUserClick = openUserProfile,
             onBack = onBack,
         )
@@ -80,7 +80,7 @@ fun SubScreenContent(
         is SubScreen.CreateGroup -> CreateGroupScreen(
             contacts = contacts,
             onCreateGroup = { name, uids ->
-                val chatId = data.createGroup(name, uids)
+                val chatId = data.groups.create(name, uids)
                     ?: return@CreateGroupScreen Result.failure(Exception("创建失败"))
                 openChatAndClose(chatId, name, 2)
                 Result.success(chatId)
@@ -90,46 +90,46 @@ fun SubScreenContent(
         )
 
         is SubScreen.GroupDetail -> GroupDetailScreen(
-            chat = data.groupDetailChat,
-            members = data.groupMembers,
-            isOwner = data.groupMembers.any { it.uid == data.userSession.uid && it.role == 2 },
+            chat = data.groups.detailChat,
+            members = data.groups.members,
+            isOwner = data.groups.members.any { it.uid == data.userSession.uid && it.role == 2 },
             myUid = data.userSession.uid,
             onMemberClick = openUserProfile,
             onInviteMembers = { navigate(SubScreen.InviteMembers(screen.chatId)) },
             onViewInviteLinks = { navigate(SubScreen.InviteLinks(screen.chatId)) },
             onLeaveGroup = { onLeaveGroup(screen.chatId) },
-            onEditNotice = { notice -> data.updateGroupNotice(screen.chatId, notice) },
+            onEditNotice = { notice -> data.groups.updateNotice(screen.chatId, notice) },
             onBack = onBack,
-            onSetAdmin = { uid -> data.setMemberRole(screen.chatId, uid, 1) },
-            onRemoveAdmin = { uid -> data.setMemberRole(screen.chatId, uid, 0) },
-            onMuteMember = { uid -> data.muteMember(screen.chatId, uid) },
-            onUnmuteMember = { uid -> data.unmuteMember(screen.chatId, uid) },
-            onRemoveMember = { uid -> data.removeMember(screen.chatId, uid) },
+            onSetAdmin = { uid -> data.groups.setMemberRole(screen.chatId, uid, 1) },
+            onRemoveAdmin = { uid -> data.groups.setMemberRole(screen.chatId, uid, 0) },
+            onMuteMember = { uid -> data.groups.muteMember(screen.chatId, uid) },
+            onUnmuteMember = { uid -> data.groups.unmuteMember(screen.chatId, uid) },
+            onRemoveMember = { uid -> data.groups.removeMember(screen.chatId, uid) },
             onClose = onClose,
         )
 
         is SubScreen.InviteMembers -> InviteMembersScreen(
             friendUids = contacts.map { it.friendUid },
             friendNames = contacts.associate { it.friendUid to (it.remark ?: it.user?.name ?: it.friendUid) },
-            onInvite = { uids -> data.inviteMembers(screen.chatId, uids) },
+            onInvite = { uids -> data.groups.inviteMembers(screen.chatId, uids) },
             onBack = onBack,
         )
 
         is SubScreen.InviteLinks -> InviteLinksScreen(
-            links = data.inviteLinks.map { InviteLink(it.token, it.maxUses, it.useCount, it.revokedAt > 0) },
-            onCreateLink = { data.createInviteLink(screen.chatId) },
-            onRevokeLink = { token -> data.revokeInviteLink(screen.chatId, token) },
+            links = data.groups.inviteLinks.map { InviteLink(it.token, it.maxUses, it.useCount, it.revokedAt > 0) },
+            onCreateLink = { data.groups.createInviteLink(screen.chatId) },
+            onRevokeLink = { token -> data.groups.revokeInviteLink(screen.chatId, token) },
             onBack = onBack,
         )
 
         is SubScreen.Forward -> ForwardScreen(
             conversations = conversations,
-            onForward = { targetChatId -> data.forwardMessage(screen.message.chatId, screen.message.serverSeq, targetChatId) },
+            onForward = { targetChatId -> data.discovery.forwardMessage(screen.message.chatId, screen.message.serverSeq, targetChatId) },
             onBack = onBack,
         )
 
         is SubScreen.SearchMessages -> SearchMessagesScreen(
-            searchMessages = { query -> data.searchMessages(query) },
+            searchMessages = { query -> data.discovery.searchMessages(query) },
             onMessageClick = { chatId, _ ->
                 val conv = conversations.find { it.chatId == chatId }
                 openChatAndClose(chatId, conv?.chatName ?: chatId.take(16), conv?.chatType ?: 1)
@@ -142,8 +142,8 @@ fun SubScreenContent(
             onQueryChange = onGlobalSearchQueryChange,
             conversations = conversations,
             contacts = contacts,
-            searchMessages = { query -> data.searchMessages(query) },
-            searchUsers = { query -> data.searchUsers(query) },
+            searchMessages = { query -> data.discovery.searchMessages(query) },
+            searchUsers = { query -> data.discovery.searchUsers(query) },
             onConversationClick = { conversation ->
                 openChatAndClose(
                     conversation.chatId,

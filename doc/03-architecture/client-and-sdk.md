@@ -32,6 +32,22 @@ UserSession（uid/token）
 销毁顺序先停止日志上传、RPC 和事件消费，再断开 TCP，最后解除全局日志回调。`close()` 必须幂等，
 防止登出、认证失败和窗口销毁同时触发时产生二次清理问题。
 
+`app` 在 `ClientSession` 之上建立一个会话级组合根，而不是再造一个包含全部业务的“超级
+ViewModel”：
+
+```text
+AppDataState（组合、生命周期、页面数据分发）
+ ├── ConversationViewModel / ContactViewModel / ChatViewModel
+ ├── AccountFeature（资料、好友申请、黑名单、设备）
+ ├── GroupFeature（群设置、成员、邀请链接）
+ └── DiscoveryFeature（搜索、发起单聊、转发）
+```
+
+Feature controller 组织跨 Repository 的页面用例与短期 UI 状态，但不拥有连接、数据库和平台导航。
+Android/Desktop 壳消费同一业务动作，各自决定全屏、弹窗、抽屉和返回逻辑。新增功能先选择已有
+feature；只有形成独立业务能力和状态生命周期时才新增 feature，不能把动作重新堆回
+`AppDataState`。
+
 ## 3. ImClient 状态机
 
 `ImClient` 只拥有连接级状态：channel、pending ACK 和重连任务。它不拥有 uid 或 refresh token。
@@ -68,6 +84,10 @@ UI action
 
 消息发送允许局部乐观状态：先插入 `SENDING`，收到 ACK 后变为 `SENT`；服务端回环事件再提供权威
 快照。发送失败必须保留可重试状态，不能把 RPC 调用成功与业务消息成功混为一谈。
+
+职责边界如下：ViewModel 负责连续、可观察的数据流；feature controller 负责编排有明确起止的用户
+用例；Repository 负责远端调用与本地收敛策略。Composable 只接收状态和回调，不直接编排多个
+Repository。
 
 ## 5. EventProcessor
 

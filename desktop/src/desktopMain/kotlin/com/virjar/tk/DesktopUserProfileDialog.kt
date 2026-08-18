@@ -65,8 +65,8 @@ internal fun DesktopUserProfileDialog(
                 }
 
                 UserProfileContent(
-                    user = nav.profileUser?.takeIf { it.uid == uid },
-                    isFriend = nav.isFriend,
+                    user = nav.account.profileUser?.takeIf { it.uid == uid },
+                    isFriend = nav.account.isFriend,
                     hasPendingApply = hasPendingApply,
                     onAddFriend = {
                         nav.contactViewModel.apply(uid)
@@ -74,11 +74,11 @@ internal fun DesktopUserProfileDialog(
                     },
                     onSendMessage = {
                         scope.launch {
-                            val chatId = nav.startPersonalChat(uid) ?: return@launch
-                            nav.openChat(chatId, nav.profileUser?.name ?: uid.take(12), 1)
+                            val chatId = nav.discovery.startPersonalChat(uid) ?: return@launch
+                            nav.openChat(chatId, nav.account.profileUser?.name ?: uid.take(12), 1)
                         }
                     },
-                    onCreateGroup = if (nav.isFriend) {
+                    onCreateGroup = if (nav.account.isFriend) {
                         {
                             onDismiss()
                             nav.openScreen(SubScreen.CreateGroup(setOf(uid)))
