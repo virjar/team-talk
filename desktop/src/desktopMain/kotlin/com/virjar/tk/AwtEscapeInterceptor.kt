@@ -5,7 +5,16 @@ import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
 import java.awt.Window
 import java.awt.event.KeyEvent
+import java.util.WeakHashMap
 import javax.swing.SwingUtilities
+
+private val escapeHandlers = WeakHashMap<Window, () -> Boolean>()
+
+/** 供进程内测试控制服务按窗口确定性触发 ESC，不依赖系统焦点或 Robot。 */
+internal fun dispatchWindowEscape(owner: Window): Boolean {
+    val handler = synchronized(escapeHandlers) { escapeHandlers[owner] }
+    return handler?.invoke() ?: false
+}
 
 /**
  * 窗口级 ESC 拦截器（AWT KeyboardFocusManager 层）。
@@ -33,6 +42,12 @@ class AwtEscapeInterceptor(
 /** 注册窗口级 ESC 拦截器，返回注销函数（调用方在 onDispose 中执行）。 */
 fun registerEscapeInterceptor(owner: Window, onEscape: () -> Boolean): () -> Unit {
     val dispatcher = AwtEscapeInterceptor(owner, onEscape)
+    synchronized(escapeHandlers) { escapeHandlers[owner] = onEscape }
     KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(dispatcher)
-    return { KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(dispatcher) }
+    return {
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(dispatcher)
+        synchronized(escapeHandlers) {
+            if (escapeHandlers[owner] === onEscape) escapeHandlers.remove(owner)
+        }
+    }
 }

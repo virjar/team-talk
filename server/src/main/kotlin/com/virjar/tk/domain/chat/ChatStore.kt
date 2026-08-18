@@ -104,6 +104,10 @@ class ChatStore(
         return roles.entries.map { (uid, role) -> Member(uid = uid, chatId = chatId, role = role) }
     }
 
+    /** 用户当前仍有效的全部会话 ID，用于跨会话搜索等需要权限集合的读操作。 */
+    fun listUserChatIds(uid: String): Set<String> =
+        repo.listUserChats(uid).mapTo(linkedSetOf()) { it.chatId }
+
     // ── 禁言读 ──
 
     fun isMuted(chatId: String, uid: String): Boolean {

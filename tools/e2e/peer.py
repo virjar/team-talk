@@ -63,7 +63,7 @@ class TestPeer:
         cmd = [
             os.path.join(self.project_root, "gradlew"), ":server:test",
             "--tests", f"com.virjar.tk.e2e.TestPeer.{method}",
-            "-q",
+            "--no-watch-fs", "--no-daemon", "--max-workers=2", "-q",
         ]
         if self.remote:
             cmd.append("-Dtk.e2e.remote=true")
@@ -151,7 +151,7 @@ class TestPeer:
         out = self._run("sendImageAsB", {
             "peer.username": username,
             "peer.arg": chat_id,
-            "peer.file": file_path,
+            "peer.file": self._resolve_file_path(file_path),
         })
         return "SUCCESS" in out
 
@@ -160,7 +160,7 @@ class TestPeer:
         out = self._run("sendVoiceAsB", {
             "peer.username": username,
             "peer.arg": chat_id,
-            "peer.file": file_path,
+            "peer.file": self._resolve_file_path(file_path),
         })
         return "SUCCESS" in out
 
@@ -169,7 +169,7 @@ class TestPeer:
         out = self._run("sendVideoAsB", {
             "peer.username": username,
             "peer.arg": chat_id,
-            "peer.file": file_path,
+            "peer.file": self._resolve_file_path(file_path),
         })
         return "SUCCESS" in out
 
@@ -178,9 +178,23 @@ class TestPeer:
         out = self._run("sendFile", {
             "peer.username": username,
             "peer.arg": chat_id,
-            "peer.file": file_path,
+            "peer.file": self._resolve_file_path(file_path),
         })
         return "SUCCESS" in out
+
+    def send_card(self, username, chat_id):
+        """B 在 chat_id 发送 TestPeer 内置的交互卡片。"""
+        out = self._run("sendCardAsB", {
+            "peer.username": username,
+            "peer.arg": chat_id,
+        })
+        return "SUCCESS" in out
+
+    def _resolve_file_path(self, file_path):
+        """将相对 team-talk 根目录的测试素材路径转为绝对路径。"""
+        if os.path.isabs(file_path):
+            return file_path
+        return os.path.abspath(os.path.join(self.project_root, file_path))
 
     @staticmethod
     def _extract(text, pattern):
@@ -193,7 +207,8 @@ class TestPeer:
     def recv_check(self, username, target_uid):
         """B 检查与 targetUid(A) 私聊的最后一条消息。
 
-        返回 dict: {"text": <最后消息>, "from": <senderUid前缀>, "unread": <int>}
+        返回 dict: {"text": <最后消息>, "from": None, "unread": <int>}。
+        当前 TestPeer 输出不含 senderUid，保留 from 字段仅为兼容已有调用。
         返回 None 表示未找到会话。
         """
         out = self._run("recvCheck", {
@@ -202,10 +217,9 @@ class TestPeer:
         })
         if "FAILED" in out:
             return None
-        text = self._extract(out, r"text=([^\n]+)")
-        sender = self._extract(out, r"from=(\S+)")
+        text = self._extract(out, r"text=(.*?) unread=")
         unread = self._extract(out, r"unread=(\d+)")
-        return {"text": text, "from": sender, "unread": int(unread) if unread else 0}
+        return {"text": text, "from": None, "unread": int(unread) if unread else 0}
 
     def send_msg_to(self, username, target_uid, text="hello from B"):
         """B 一键给 targetUid(A) 发送消息（自动创建私聊+发送）。

@@ -333,17 +333,18 @@ tasks.withType<JavaExec>().configureEach {
     if (name == "run") {
         description = "Run Desktop against the configured server with the test HTTP service"
         // Compose Desktop 1.10 的 run 默认从 desktopJar 启动，而生产 jar 会物理排除 test 包。
-        // 将未裁剪的主编译输出置于 classpath 最前，仅开发 run 可加载 TestHttpServer。
+        // Compose 插件会在配置后期重写 classpath 和 JVM 参数，因此必须在执行前最后注入。
         doFirst {
-            // Compose 插件会在配置后期重写 run.classpath，因此在执行前最后插入。
+            // 将未裁剪的主编译输出置于 classpath 最前，仅开发 run 可加载 TestHttpServer。
             classpath = files(layout.buildDirectory.dir("classes/kotlin/desktop/main")) + classpath
+
+            jvmArgs = listOf(
+                "-Dteamtalk.server.url=${deploymentConfig.serverUrl}",
+                "-Dteamtalk.tcp.host=${deploymentConfig.tcpHost}",
+                "-Dteamtalk.tcp.port=${deploymentConfig.tcpPort}",
+                "-Dteamtalk.data.dir=${System.getProperty("teamtalk.data.dir") ?: rootProject.file("data/desktop").absolutePath}",
+                "-Dteamtalk.is.dev=true",
+            ) + System.getProperty("teamtalk.theme")?.let { listOf("-Dteamtalk.theme=$it") }.orEmpty()
         }
-        jvmArgs = listOf(
-            "-Dteamtalk.server.url=${deploymentConfig.serverUrl}",
-            "-Dteamtalk.tcp.host=${deploymentConfig.tcpHost}",
-            "-Dteamtalk.tcp.port=${deploymentConfig.tcpPort}",
-            "-Dteamtalk.data.dir=${rootProject.file("data/desktop").absolutePath}",
-            "-Dteamtalk.is.dev=true",
-        ) + System.getProperty("teamtalk.theme")?.let { listOf("-Dteamtalk.theme=$it") }.orEmpty()
     }
 }

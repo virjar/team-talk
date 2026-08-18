@@ -76,8 +76,10 @@ class PacketCodec(
                 else -> null
             }
         } else {
-            val payloadBuf = PacketBuffer(buf.retainedSlice(buf.readerIndex(), length))
-            buf.skipBytes(length)
+            // decodePayload 在当前调用内同步读完，slice 无需独立引用计数。
+            // retainedSlice 会把父 ByteBuf 的 refCnt +1，而 PacketBuffer 没有释放语义，
+            // 导致每个非空 TCP 帧泄漏一份 Netty 堆外缓冲区。
+            val payloadBuf = PacketBuffer(buf.readSlice(length))
             decodePayload(packetType, payloadBuf)
         }
 

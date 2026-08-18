@@ -166,8 +166,16 @@ class MessageService(
     }
 
     fun searchMessages(uid: String, chatId: String, keyword: String, limit: Int): List<Message> {
-        if (!chatStore.isMember(chatId, uid)) throw IllegalArgumentException("不是聊天成员")
-        val (_, results) = searchIndex.search(keyword, chatIds = setOf(chatId), limit = limit)
+        val allowedChatIds = if (chatId.isBlank()) {
+            // 空 chatId 是客户端“搜索全部消息”的明确契约。权限集合必须由服务端
+            // 根据当前用户会话计算，不能信任客户端上传任意 chatId 列表。
+            chatStore.listUserChatIds(uid)
+        } else {
+            if (!chatStore.isMember(chatId, uid)) throw IllegalArgumentException("不是聊天成员")
+            setOf(chatId)
+        }
+        if (allowedChatIds.isEmpty()) return emptyList()
+        val (_, results) = searchIndex.search(keyword, chatIds = allowedChatIds, limit = limit)
         return results.mapNotNull { messageStore.getMessage(it.chatId, it.seq) }
     }
 }

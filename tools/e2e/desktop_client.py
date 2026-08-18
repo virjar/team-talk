@@ -28,7 +28,7 @@ class DesktopClient:
     """Desktop TestHttpServer 客户端。
 
     封装语义 Action（OnClick/SetText）+ 语义树查询 + 截图。
-    所有方法对 window 参数透明：None=主窗口，字符串=子窗口 ID（如 SearchUsers）。
+    所有方法对 window 参数透明：None=主窗口，字符串=子窗口 ID（如 sub-SearchUsers）。
     """
 
     def __init__(self, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=15):

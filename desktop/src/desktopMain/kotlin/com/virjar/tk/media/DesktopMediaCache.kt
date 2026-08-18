@@ -1,5 +1,7 @@
 package com.virjar.tk.media
 
+import com.virjar.tk.client.defaultServerConfig
+import com.virjar.tk.repository.FileOps
 import com.virjar.tk.util.AppLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -85,16 +87,19 @@ object DesktopMediaCache {
     private fun download(url: String, onProgress: (Float) -> Unit): String {
         val dir = mediaDir ?: error("MediaCache not initialized")
         val c = conn ?: error("MediaCache not initialized")
+        // 消息只保存服务端权威相对路径。即使收到旧版完整 URL，也必须重新绑定
+        // 当前部署服务器，禁止客户端跟随消息访问第三方文件主机。
+        val resolvedUrl = FileOps.resolveUrl(defaultServerConfig().serverUrl, url)
         val ext = url.substringBefore('?').substringAfterLast('.', "bin").take(8)
         val final = File(dir, "${UUID.randomUUID()}.$ext")
 
         try {
-            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            val connection = (URL(resolvedUrl).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 10_000
                 readTimeout = 60_000
             }
             val code = connection.responseCode
-            if (code != 200) throw RuntimeException("download HTTP $code: $url")
+            if (code != 200) throw RuntimeException("download HTTP $code: $resolvedUrl")
 
             val total = connection.contentLengthLong
             var read = 0L
@@ -127,7 +132,7 @@ object DesktopMediaCache {
                 ps.setLong(5, System.currentTimeMillis())
                 ps.executeUpdate()
             }
-            AppLog.trace("MediaCache", "downloaded $url -> ${final.name} (${final.length()}B)")
+            AppLog.trace("MediaCache", "downloaded $resolvedUrl -> ${final.name} (${final.length()}B)")
             return final.absolutePath
         } catch (e: Exception) {
             final.delete()

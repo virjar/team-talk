@@ -66,6 +66,24 @@ class SearchIntegrationTest {
         }
     }
 
+    @Test
+    fun `blank chat id searches all member chats only`() = runTest {
+        val uid = ctx.registerUser()
+        val otherUid = ctx.registerUser()
+        val chat1 = ctx.chatService.createGroup("GlobalSearch1", null, uid, listOf(uid))
+        val chat2 = ctx.chatService.createGroup("GlobalSearch2", null, uid, listOf(uid))
+        val foreignChat = ctx.chatService.createGroup("ForeignSearch", null, otherUid, listOf(otherUid))
+        val keyword = "globalneedle${java.util.UUID.randomUUID().toString().replace("-", "")}"
+
+        ctx.messageService.sendMessage(uid, makeMessage(chat1.chatId, "$keyword first"))
+        ctx.messageService.sendMessage(uid, makeMessage(chat2.chatId, "$keyword second"))
+        ctx.messageService.sendMessage(otherUid, makeMessage(foreignChat.chatId, "$keyword private"))
+        ctx.searchIndex.commit()
+
+        val results = ctx.messageService.searchMessages(uid, "", keyword, 10)
+        assertEquals(setOf(chat1.chatId, chat2.chatId), results.map { it.chatId }.toSet())
+    }
+
     private fun makeMessage(chatId: String, text: String): Message {
         return Message(
             chatId = chatId,

@@ -95,22 +95,24 @@ Desktop 使用**子窗口模式**渲染编辑资料/修改密码/搜索用户/�
 每个子窗口是独立的 Compose 窗口，有自己的语义树。**所有交互必须指定正确的 `window` 参数**，
 否则操作会落到主窗口（无效或误操作）。
 
-**子窗口名称** = `SubScreen` 枚举名：`EditProfile` / `ChangePassword` / `SearchUsers` / `UserProfile` / `CreateGroup` / `GroupDetail` / `InviteMembers` / `InviteLinks`
+**独立子窗口名称** = `sub-` + 入口 `SubScreen` 名：`sub-Devices` / `sub-Blacklist` / `sub-EditProfile` / `sub-ChangePassword` / `sub-FriendApplies` / `sub-SearchUsers` / `sub-CreateGroup` / `sub-SearchMessages` / `sub-Forward`。
+
+`GroupDetail` / `InviteMembers` / `InviteLinks` / 顶层 `UserProfile` 是主窗口右栏面板，操作时使用默认 `window='main'`；若 `SearchUsers` 子窗口内部跳到 `UserProfile`，窗口 ID 仍保持入口 ID `sub-SearchUsers`。
 
 **关键规则**：
 1. 点击主窗口的元素（如「编辑资料」）前 → 先确认主窗口内容：`d.screen_texts()`
-2. 点击后子窗口打开 → **立即切到子窗口语义树**：`d.screen_texts(window='EditProfile')`
-3. 所有子窗口内的操作 → 全部带 `window='EditProfile'`
-4. 操作完成后必须**关闭子窗口**：`d.keypress('ESCAPE', window='EditProfile')`
-5. 验证子窗口已关闭：`d.screen_texts(window='EditProfile')` 应返回空或主窗口内容
+2. 点击后子窗口打开 → **立即切到子窗口语义树**：`d.screen_texts(window='sub-EditProfile')`
+3. 所有子窗口内的操作 → 全部带 `window='sub-EditProfile'`
+4. 操作完成后必须**关闭子窗口**：`d.keypress('ESCAPE', window='sub-EditProfile')`
+5. 验证子窗口已关闭：`d.screen_texts(window='sub-EditProfile')` 应返回空或主窗口内容
 
 ```python
 # 正确流程：编辑资料
 d.click_text('编辑资料')                       # 主窗口点击
 time.sleep(0.5)
-d.input_test_tag('profile.name', '新名字', window='EditProfile')  # 子窗口输入
-d.click_test_tag('profile.save', window='EditProfile')            # 子窗口点击
-d.keypress('ESCAPE', window='EditProfile')             # 关闭子窗口
+d.input_test_tag('profile.name', '新名字', window='sub-EditProfile')  # 子窗口输入
+d.click_test_tag('profile.save', window='sub-EditProfile')            # 子窗口点击
+d.keypress('ESCAPE', window='sub-EditProfile')             # 关闭子窗口
 
 # 错误：不带 window 参数 → 操作落到主窗口，什么都不发生
 d.click_text('保存')  # ❌ 主窗口没有「保存」按钮，点了无效

@@ -6,8 +6,11 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsOwner
 import androidx.compose.ui.semantics.SemanticsProperties
+import com.virjar.tk.dispatchWindowEscape
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import java.awt.EventQueue
+import java.awt.KeyboardFocusManager
 import java.awt.Robot
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
@@ -488,6 +491,12 @@ object TestHttpServer {
      */
     private fun handleKeypress(exchange: HttpExchange) {
         val params = exchange.queryParams()
+        val windowId = params["window"] ?: "main"
+        val targetWindow = windows[windowId] ?: windows["main"]
+        if (targetWindow == null) {
+            exchange.send(404, """{"error":"window not found"}""")
+            return
+        }
         val keyName = params["key"]?.uppercase() ?: "ESCAPE"
         val meta = params["meta"]?.toBoolean() == true
         val keyCode = when (keyName) {
@@ -497,21 +506,35 @@ object TestHttpServer {
             "BACKSPACE" -> KeyEvent.VK_BACK_SPACE
             else -> KeyEvent.getExtendedKeyCodeForChar(keyName.firstOrNull()?.code ?: ' '.code)
         }
-        if (meta) {
-            val mod = if (System.getProperty("os.name").lowercase().contains("mac")) KeyEvent.VK_META else KeyEvent.VK_CONTROL
-            robot.keyPress(mod)
-            Thread.sleep(30)
-            robot.keyPress(keyCode)
-            robot.keyRelease(keyCode)
-            Thread.sleep(30)
-            robot.keyRelease(mod)
+        val modifiers = if (meta) {
+            if (System.getProperty("os.name").lowercase().contains("mac")) {
+                InputEvent.META_DOWN_MASK
+            } else {
+                InputEvent.CTRL_DOWN_MASK
+            }
         } else {
-            robot.keyPress(keyCode)
-            robot.keyRelease(keyCode)
+            0
         }
-        robot.waitForIdle()
-        Thread.sleep(50)
-        exchange.send(200, """{"key":"$keyName","meta":$meta,"code":$keyCode}""")
+
+        // 直接在进程内分发到指定 AWT 窗口。Robot 会把按键交给当前系统焦点，
+        // 遇到 macOS 权限弹窗或多个子窗口时会发错目标，也违背内嵌服务的确定性。
+        var handled = false
+        EventQueue.invokeAndWait {
+            if (keyCode == KeyEvent.VK_ESCAPE && !meta) {
+                handled = dispatchWindowEscape(targetWindow)
+            } else {
+                val source = targetWindow.focusOwner ?: targetWindow.contentPane
+                val manager = KeyboardFocusManager.getCurrentKeyboardFocusManager()
+                val now = System.currentTimeMillis()
+                handled = manager.dispatchKeyEvent(
+                    KeyEvent(source, KeyEvent.KEY_PRESSED, now, modifiers, keyCode, KeyEvent.CHAR_UNDEFINED)
+                )
+                manager.dispatchKeyEvent(
+                    KeyEvent(source, KeyEvent.KEY_RELEASED, now, modifiers, keyCode, KeyEvent.CHAR_UNDEFINED)
+                )
+            }
+        }
+        exchange.send(200, """{"key":"$keyName","meta":$meta,"code":$keyCode,"method":"dispatch","window":"$windowId","handled":$handled}""")
     }
 
     // ───────── 语义树访问 ─────────
