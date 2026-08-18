@@ -195,13 +195,14 @@ internal fun WindowScope.MainAppContent(
                     MainTab.CONTACTS -> {
                         Column {
                             ListHeader(title = "通讯录")
-                            // 搜索 + 拼音首字母分组 + 索引条（§2.4，双端共享组件）
+                            // 桌面使用搜索 + 鼠标滚动；移动端字母索引条不占用中栏右侧空间。
                             ContactsListScreen(
                                 contacts = contacts,
                                 onContactClick = nav::openProfile,
                                 modifier = Modifier.weight(1f),
                                 pendingApplyCount = pendingApplyCount,
                                 onFriendApplies = { nav.openScreen(SubScreen.FriendApplies) },
+                                showAlphabetIndex = false,
                             )
                         }
                     }

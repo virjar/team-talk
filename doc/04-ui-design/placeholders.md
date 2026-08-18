@@ -17,7 +17,7 @@
 | 7 | 群公告 | 🔴 | 无字段无 RPC | 群详情页顶部卡片位预留（"暂无公告"灰字） |
 | 8 | @提及 | ✅ | RICH_TEXT 使用 `mention://uid`，输入补全与消息点击链路已接通 | 已实现；服务端重建 mentions/plainText 派生字段 |
 | 9 | 群成员数（聊天头部） | 🟡 | 群详情 RPC 有成员列表，但会话级轻量 count 无缓存 | 头部先只显群名；打开过详情后可本地缓存 count 回填（后续） |
-| 10 | 通讯录字母索引/分组 | ✅ | 本地 contacts 全量在缓存 | 已实现（2026-08 P4）：搜索框 + GBK 首字母分组 sticky 头 + 右侧索引条（ContactsListScreen 双端共享，PinyinInitials 纯 JVM） |
+| 10 | 通讯录字母索引/分组 | ✅ | 本地 contacts 全量在缓存 | 已实现（2026-08 P4）：搜索框 + GBK 首字母分组 sticky 头；Android 保留右侧字母索引，Desktop 使用搜索和鼠标滚动（ContactsListScreen 双端共享，PinyinInitials 纯 JVM） |
 | 11 | 消息搜索 | 🟡 | 全局消息搜索已接入；**缺**：点击结果后精确滚动到 serverSeq、会话内过滤入口 | 全局搜索可打开所属会话；精确定位后补 |
 | 12 | 消息撤回窗口 | ✅ | UI 硬编码 2 分钟；服务端校验规则需对齐（查 `MessageService.revoke`） | 无需 UI 位；对齐常量即可 |
 | 13 | 多端消息状态同步（发送中/失败重试） | 🔴 | sendStatus 本地字段有；**缺**：跨端同步 | 气泡左下 ⏰ 重试按钮位（本地已可做单端，跨端后补） |

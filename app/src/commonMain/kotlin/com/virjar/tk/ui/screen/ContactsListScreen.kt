@@ -46,6 +46,7 @@ fun ContactsListScreen(
     modifier: Modifier = Modifier,
     pendingApplyCount: Int = 0,
     onFriendApplies: (() -> Unit)? = null,
+    showAlphabetIndex: Boolean = true,
 ) {
     var query by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -152,12 +153,14 @@ fun ContactsListScreen(
                 }
             }
 
-            LettersIndexBar(
-                letters = groups.keys.toList(),
-                letterIndexMap = letterIndexMap,
-                listState = listState,
-                onJump = { index -> scope.launch { listState.scrollToItem(index) } },
-            )
+            if (showAlphabetIndex) {
+                LettersIndexBar(
+                    letters = groups.keys.toList(),
+                    letterIndexMap = letterIndexMap,
+                    listState = listState,
+                    onJump = { index -> scope.launch { listState.scrollToItem(index) } },
+                )
+            }
         }
     }
 }
