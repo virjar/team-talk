@@ -39,6 +39,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.body.ReplyBody
+import com.virjar.tk.body.FileBody
 import com.virjar.tk.body.TextBody
 import com.virjar.tk.body.RichTextBody
 import com.virjar.tk.body.buildRichTextBody
@@ -179,6 +180,26 @@ fun ChatPanel(
         }
     }
 
+    // 当前会话收到的小文件即使尚未滚动到可见区域，也要静默下载。
+    // 大文件只初始化状态，等待用户点击气泡。
+    val fileDownloads = media?.fileDownloads
+    LaunchedEffect(fileDownloads, messages) {
+        if (fileDownloads != null) {
+            messages.asSequence()
+                .filter { it.sendStatus != Message.SEND_STATUS_UPLOADING }
+                .mapNotNull { it.body as? FileBody }
+                .filter { it.attachment.path.isNotBlank() }
+                .forEach { body ->
+                    fileDownloads.ensure(body.attachment)
+                    if (body.attachment.size <= com.virjar.tk.ui.component.FileDownloadController.AUTO_DOWNLOAD_LIMIT &&
+                        fileDownloads.states[body.attachment.path] is com.virjar.tk.ui.component.FileDownloadState.Idle
+                    ) {
+                        fileDownloads.download(body.attachment)
+                    }
+                }
+        }
+    }
+
     // 编辑时预填输入
     LaunchedEffect(editingMessage) {
         editingMessage?.let { msg ->
@@ -242,6 +263,10 @@ fun ChatPanel(
         }
     }
 
+    // 文件下载控制器注入（FileCard 消费；null = 回退旧 onMediaClick 路径）
+    androidx.compose.runtime.CompositionLocalProvider(
+        com.virjar.tk.ui.component.LocalFileDownloads provides fileDownloads,
+    ) {
     Box(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             // ── 消息列表 ──
@@ -628,6 +653,7 @@ fun ChatPanel(
         // ── 错误 Snackbar ──
         SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
     }
+    } // CompositionLocalProvider(LocalFileDownloads)
 }
 
 // ── 消息渲染常量 ──

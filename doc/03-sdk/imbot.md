@@ -37,7 +37,7 @@ bot.shutdown()   // 级联：scope → channel → session.close → imClient.de
 | 生命周期 | `register(host, port, prefix)` / `login(...)` / `awaitState()` / `shutdown()` |
 | 事件流 | `messages` / `contactEvents` / `chatEvents` / `presenceEvents` / `typingEvents`（皆有 `next*Event` 缓冲取用） |
 | 文本消息 | `sendText` / `send(body)` / `nextMessage(timeout, predicate)`（过滤发送者回环） |
-| 媒体消息 | `sendImage/sendFile/sendVoice/sendVideo`（URL 模式）/ `uploadFile` / `uploadAndSendFile` |
+| 媒体消息 | `sendImage/sendFile/sendVoice/sendVideo`（`Attachment` 模式）/ `uploadFile` / `uploadAndSendFile` |
 | typing | `sendTyping(chatId)`（不等 ACK） |
 | 消息操作 | `revoke` / `forward` / `markRead` / `getHistory` |
 | 群组 | `createGroup` / `inviteMembers` / `groupMembers` |

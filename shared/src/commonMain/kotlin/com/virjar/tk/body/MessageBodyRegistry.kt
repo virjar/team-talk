@@ -1,6 +1,5 @@
 package com.virjar.tk.body
 
-import com.virjar.tk.model.MessageBody
 import com.virjar.tk.protocol.IProtoReader
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.PacketBuffer

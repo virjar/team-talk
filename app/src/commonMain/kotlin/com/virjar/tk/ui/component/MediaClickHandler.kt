@@ -8,6 +8,7 @@ import com.virjar.tk.body.ImageBody
 import com.virjar.tk.body.VideoBody
 import com.virjar.tk.body.VoiceBody
 import com.virjar.tk.model.Message
+import com.virjar.tk.model.Attachment
 
 /**
  * 平台媒体操作接口。两端各提供实现，注入给 [rememberMediaClickHandler]。
@@ -18,10 +19,10 @@ import com.virjar.tk.model.Message
  */
 interface PlatformMediaActions {
     /** 播放语音（Android: VoicePlayer.play；Desktop: DesktopMediaHelper.playAudio） */
-    fun playVoice(url: String)
+    fun playVoice(attachment: Attachment)
 
     /** 打开/下载文件（Android: MediaHelper.openFile；Desktop: DesktopMediaHelper.openFile） */
-    fun openFile(url: String)
+    fun openFile(attachment: Attachment)
 
     /** 打开全屏媒体画廊（Android: 设 state 触发 MediaGallery；Desktop: 设 state 触发 MediaGalleryWindow） */
     fun showGallery(items: List<GalleryItem>, index: Int)
@@ -52,17 +53,17 @@ fun rememberMediaClickHandler(
                 is ImageBody, is VideoBody -> {
                     val mediaList = buildMediaList(messages.value)
                     val index = when (msg.body) {
-                        is ImageBody -> mediaList.indexOfFirst { it.url == (msg.body as ImageBody).url }
+                        is ImageBody -> mediaList.indexOfFirst { it.path == (msg.body as ImageBody).attachment.path }
                         is VideoBody -> {
                             val body = msg.body as VideoBody
-                            mediaList.indexOfFirst { it.url == body.url }
+                            mediaList.indexOfFirst { it.path == body.attachment.path }
                         }
                         else -> 0
                     }.coerceAtLeast(0)
                     actions.showGallery(mediaList, index)
                 }
-                is VoiceBody -> actions.playVoice((msg.body as VoiceBody).url)
-                is FileBody -> actions.openFile((msg.body as FileBody).url)
+                is VoiceBody -> actions.playVoice((msg.body as VoiceBody).attachment)
+                is FileBody -> actions.openFile((msg.body as FileBody).attachment)
                 else -> {}
             }
         }

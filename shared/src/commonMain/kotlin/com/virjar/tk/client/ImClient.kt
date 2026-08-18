@@ -161,18 +161,23 @@ class ImClient(
     }
 
     fun send(proto: IProto) {
+        // SDK 出站防线：附件只能引用 TeamTalk 文件端点，并统一归一化为相对 path。
+        // FileStore 存在性由服务端做权威校验。
+        val outbound = if (proto is com.virjar.tk.model.Message) {
+            com.virjar.tk.body.AttachmentPolicy.canonicalize(proto)
+        } else proto
         val ch = channel
         if (ch == null) {
-            logger.trace("send() called but channel is null, type=${proto::class.simpleName}")
+            logger.trace("send() called but channel is null, type=${outbound::class.simpleName}")
         } else if (_state.value != ConnectionState.AUTHENTICATED
-            && proto !is AuthRequestPayload
-            && proto !is PingSignal
-            && proto !is PongSignal
+            && outbound !is AuthRequestPayload
+            && outbound !is PingSignal
+            && outbound !is PongSignal
         ) {
             // 非认证/心跳包：必须在 AUTHENTICATED 状态才发送，防止重连期间业务消息抢先到达服务端
-            logger.trace("send() blocked: not authenticated, state=${_state.value}, type=${proto::class.simpleName}")
+            logger.trace("send() blocked: not authenticated, state=${_state.value}, type=${outbound::class.simpleName}")
         } else {
-            ch.writeAndFlush(proto)
+            ch.writeAndFlush(outbound)
         }
     }
 
@@ -181,16 +186,20 @@ class ImClient(
      * withContext(scope) 确保 pendingAcks 操作在 EventLoop 上。
      */
     suspend fun sendAndWaitAck(message: com.virjar.tk.model.Message, timeoutMs: Long = 10_000L): MessageAckPayload {
+        // 在登记 pendingAck 之前校验，避免非法附件抛错后留下永不完成的 deferred。
+        val outbound = com.virjar.tk.body.AttachmentPolicy.canonicalize(message)
         val s = scope ?: throw IllegalStateException("Not connected")
         return withContext(s.coroutineContext) {
             val deferred = CompletableDeferred<MessageAckPayload>()
-            pendingAcks[message.clientMsgId] = deferred
-            send(message)
+            pendingAcks[outbound.clientMsgId] = deferred
             try {
+                send(outbound)
                 withTimeout(timeoutMs) { deferred.await() }
             } catch (e: TimeoutCancellationException) {
-                pendingAcks.remove(message.clientMsgId)
-                MessageAckPayload(message.clientMsgId, 0, -1, "ACK timeout")
+                MessageAckPayload(outbound.clientMsgId, 0, -1, "ACK timeout")
+            } finally {
+                // 正常 ACK 会先由 handleAck 移除；同步发送异常、调用方取消与超时都在此兜底。
+                pendingAcks.remove(outbound.clientMsgId)
             }
         }
     }

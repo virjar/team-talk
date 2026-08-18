@@ -3,6 +3,7 @@ package com.virjar.tk.ui.bridge
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.virjar.tk.model.Message
+import com.virjar.tk.ui.component.FileDownloadController
 
 /**
  * ChatPanel 媒体能力配置：收敛 7 个平台相关 lambda/Composable 为一个参数。
@@ -44,6 +45,8 @@ data class ChatMediaConfig(
     val onMentionClick: ((uid: String) -> Unit)? = null,
     /** 富文本超链接点击（桌面开浏览器/Android ACTION_VIEW）。 */
     val onUrlClick: ((String) -> Unit)? = null,
+    /** 文件附件下载控制器（小文件静默/大文件点击/进度动画）。null=回退 onMediaClick。 */
+    val fileDownloads: FileDownloadController? = null,
 ) {
     /** 是否有任何媒体发送能力（决定附件工具栏是否显示）。 */
     val hasSendCapability: Boolean

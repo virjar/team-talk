@@ -3,6 +3,7 @@ package com.virjar.tk.repository
 import com.virjar.tk.AppError
 import com.virjar.tk.Outcome
 import com.virjar.tk.outcome
+import com.virjar.tk.model.Attachment
 import io.ktor.client.*
 import io.ktor.client.request.forms.*
 import io.ktor.client.request.forms.MultiPartFormDataContent
@@ -27,9 +28,9 @@ actual class FileRepository actual constructor(
         bytes: ByteArray,
         fileName: String,
         contentType: String,
-    ): Outcome<String> = withContext(Dispatchers.IO) {
+    ): Outcome<Attachment> = withContext(Dispatchers.IO) {
         outcome {
-            uploadRaw(bytes, fileName, contentType).path
+            uploadRaw(bytes, fileName, contentType).file
         }
     }
 
@@ -72,7 +73,7 @@ actual class FileRepository actual constructor(
         return FileOps.parseUploadResult(response.bodyAsText())
     }
 
-    actual suspend fun download(path: String): Outcome<ByteArray> = FileOps.download(serverUrl, path)
+    actual suspend fun download(attachment: Attachment): Outcome<ByteArray> = FileOps.download(serverUrl, attachment)
 
-    actual fun resolveUrl(path: String): String = FileOps.resolveUrl(serverUrl, path)
+    actual fun resolveUrl(attachment: Attachment): String = FileOps.resolveUrl(serverUrl, attachment)
 }

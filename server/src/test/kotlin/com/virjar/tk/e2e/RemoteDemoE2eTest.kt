@@ -13,6 +13,7 @@ import com.virjar.tk.body.TextBody
 import com.virjar.tk.body.FileBody
 import com.virjar.tk.body.VoiceBody
 import com.virjar.tk.body.ImageBody
+import com.virjar.tk.repository.FileRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -45,6 +46,13 @@ import java.util.UUID
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @EnabledIfSystemProperty(named = "tk.e2e.remote", matches = "true")
 class RemoteDemoE2eTest {
+
+    private suspend fun upload(session: RemoteDemoSupport.Session, bytes: ByteArray, fileName: String): Attachment {
+        val baseUrl = System.getProperty("tk.e2e.server") ?: "https://${RemoteDemoSupport.host}"
+        return FileRepository(baseUrl, session.userSession.accessToken)
+            .upload(bytes, fileName, "application/octet-stream")
+            .getOrThrow()
+    }
 
     @BeforeAll
     fun setup() {
@@ -261,10 +269,12 @@ class RemoteDemoE2eTest {
     fun `file message round-trip`() = runBlocking {
         val (user1, user2, chat) = createFriendPersonalChat("file")
         try {
+            val bytes = ByteArray(524288) { (it % 251).toByte() }
+            val attachment = upload(user1, bytes, "report.pdf")
             val msg = Message(
                 chatId = chat.chatId, clientMsgId = UUID.randomUUID().toString(),
                 messageType = MessageType.FILE.code, timestamp = System.currentTimeMillis(),
-                senderUid = "", body = FileBody(url = "https://demo/r.pdf", fileName = "report.pdf", size = 524288L),
+                senderUid = "", body = FileBody(attachment),
             )
             val ack = user1.imClient.sendAndWaitAck(msg)
             assertEquals(0, ack.code, "文件消息 ACK 应成功: ${ack.reason}")
@@ -273,8 +283,8 @@ class RemoteDemoE2eTest {
             val recv = ProtoCodec.decode(Message, notify.payload!!)
             assertEquals(MessageType.FILE.code, recv.messageType)
             val body = recv.body as FileBody
-            assertEquals("report.pdf", body.fileName)
-            assertEquals(524288L, body.size)
+            assertEquals("report.pdf", body.attachment.name)
+            assertEquals(524288L, body.attachment.size)
         } finally {
             user1.close(); user2.close()
         }
@@ -284,10 +294,12 @@ class RemoteDemoE2eTest {
     fun `voice message round-trip`() = runBlocking {
         val (user1, user2, chat) = createFriendPersonalChat("voice")
         try {
+            val bytes = ByteArray(32768) { (it % 127).toByte() }
+            val attachment = upload(user1, bytes, "voice.amr")
             val msg = Message(
                 chatId = chat.chatId, clientMsgId = UUID.randomUUID().toString(),
                 messageType = MessageType.VOICE.code, timestamp = System.currentTimeMillis(),
-                senderUid = "", body = VoiceBody(url = "https://demo/v.amr", duration = 15, size = 32768L),
+                senderUid = "", body = VoiceBody(attachment, duration = 15),
             )
             val ack = user1.imClient.sendAndWaitAck(msg)
             assertEquals(0, ack.code, "语音消息 ACK 应成功: ${ack.reason}")
@@ -296,7 +308,7 @@ class RemoteDemoE2eTest {
             val recv = ProtoCodec.decode(Message, notify.payload!!)
             val body = recv.body as VoiceBody
             assertEquals(15, body.duration)
-            assertEquals(32768L, body.size)
+            assertEquals(32768L, body.attachment.size)
         } finally {
             user1.close(); user2.close()
         }
@@ -306,10 +318,12 @@ class RemoteDemoE2eTest {
     fun `image message round-trip`() = runBlocking {
         val (user1, user2, chat) = createFriendPersonalChat("image")
         try {
+            val bytes = ByteArray(4096) { (it % 193).toByte() }
+            val attachment = upload(user1, bytes, "picture.png")
             val msg = Message(
                 chatId = chat.chatId, clientMsgId = UUID.randomUUID().toString(),
                 messageType = MessageType.IMAGE.code, timestamp = System.currentTimeMillis(),
-                senderUid = "", body = ImageBody(url = "https://demo/p.png", width = 1080, height = 1920, size = 2048576L),
+                senderUid = "", body = ImageBody(attachment, width = 1080, height = 1920),
             )
             val ack = user1.imClient.sendAndWaitAck(msg)
             assertEquals(0, ack.code, "图片消息 ACK 应成功: ${ack.reason}")

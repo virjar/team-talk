@@ -94,9 +94,9 @@ private fun MediaGalleryContent(
             val pageModifier = Modifier.fillMaxSize()
 
             when (item.type) {
-                "video" -> videoRenderer(item.url, pageModifier)
+                GalleryMediaType.VIDEO -> videoRenderer(item.path, pageModifier)
                 else -> ZoomableImagePage(
-                    url = item.url,
+                    url = item.path,
                     imageRenderer = imageRenderer,
                     onSingleTap = onDismiss,
                     modifier = pageModifier,

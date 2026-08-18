@@ -96,6 +96,13 @@ class TcpE2eEnvironment : AutoCloseable {
         }
     }
 
+    /** 测试辅助：直连 FileStore 存文件，返回相对 path（媒体消息附件存在性校验用）。 */
+    fun storeFile(bytes: ByteArray, fileName: String, contentType: String = "application/octet-stream"): com.virjar.tk.model.Attachment {
+        val store = koin.get<FileStore>()
+        val path = store.store("e2e-staging", fileName, contentType, bytes.inputStream())
+        return requireNotNull(store.getAttachment(path))
+    }
+
     /** 测试辅助：直接执行 SQL（造状态用）。 */
     fun jdbcExec(sql: String) {
         java.sql.DriverManager.getConnection(pgJdbc).use { conn ->

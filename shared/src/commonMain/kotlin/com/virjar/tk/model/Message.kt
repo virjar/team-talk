@@ -6,6 +6,7 @@ import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.PacketBuffer
 import com.virjar.tk.body.MessageBodyRegistry
+import com.virjar.tk.body.MessageBody
 
 /**
  * 消息传输模型。
@@ -84,8 +85,3 @@ data class Message(
         }
     }
 }
-
-/**
- * 消息 Body 基接口。所有消息类型实现此接口。
- */
-interface MessageBody : IProto

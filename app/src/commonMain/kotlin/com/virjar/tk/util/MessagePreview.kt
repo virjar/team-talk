@@ -2,7 +2,7 @@ package com.virjar.tk.util
 
 import com.virjar.tk.body.*
 import com.virjar.tk.model.Message
-import com.virjar.tk.model.MessageBody
+import com.virjar.tk.body.MessageBody
 import com.virjar.tk.protocol.MessageType
 
 /**
@@ -36,7 +36,7 @@ object MessagePreview {
         is TextBody -> body.text
         is RichTextBody -> body.plainText
         is InteractiveCardBody -> "[卡片] " + (body.toCard()?.title ?: "")
-        is FileBody -> "[文件] ${body.fileName}"
+        is FileBody -> "[文件] ${body.attachment.name}"
         is VoiceBody -> "[语音] ${body.duration}″"
         is ImageBody -> "[图片]"
         is VideoBody -> "[视频] ${body.duration}″"
@@ -50,7 +50,6 @@ object MessagePreview {
         is EditBody -> "已编辑：${body.newContent}"
         is ReactionBody -> "[表情回应]"
         null -> if (messageType == MessageType.TYPING.code) "正在输入..." else "[未知消息]"
-        else -> "[消息]"
     }
 }
 

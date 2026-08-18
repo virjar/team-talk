@@ -328,6 +328,18 @@ private fun ChatPanelWrapper(
 ) {
     val messagesState = viewModel.messages.collectAsState()
 
+    // 文件附件下载控制器（media/ 目录缓存；下载完成调系统打开）
+    val fileDownloads = remember {
+        DesktopFileDownloadController(
+            serverUrl = com.virjar.tk.client.defaultServerConfig().serverUrl,
+            cacheDir = java.io.File(System.getProperty("teamtalk.data.dir"), "media"),
+            onDownloaded = { f -> runCatching { java.awt.Desktop.getDesktop().open(f) } },
+        )
+    }
+    DisposableEffect(fileDownloads) {
+        onDispose { fileDownloads.close() }
+    }
+
     // 媒体画廊窗口状态
     var showGallery by remember { mutableStateOf(false) }
     var galleryItems by remember { mutableStateOf<List<GalleryItem>>(emptyList()) }
@@ -337,9 +349,9 @@ private fun ChatPanelWrapper(
         messages = messagesState,
         actions = object : PlatformMediaActions {
             // 语音已走 voicePlayback 应用内播放（ChatPanel.voicePlayback），此链路不再触达
-            override fun playVoice(url: String) {}
-            override fun openFile(url: String) {
-                kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch { DesktopMediaHelper.openFile(url) }
+            override fun playVoice(attachment: com.virjar.tk.model.Attachment) {}
+            override fun openFile(attachment: com.virjar.tk.model.Attachment) {
+                kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch { DesktopMediaHelper.openFile(attachment.path) }
             }
             override fun showGallery(items: List<GalleryItem>, index: Int) {
                 galleryIndex = index; galleryItems = items; showGallery = true
@@ -395,6 +407,7 @@ private fun ChatPanelWrapper(
                 }
             },
             media = com.virjar.tk.ui.bridge.ChatMediaConfig(
+                fileDownloads = fileDownloads,
                 onPickImage = { DesktopMediaHelper.pickAndSendImage(chatId, myUid, viewModel) },
                 onPickFile = { DesktopMediaHelper.pickAndSendFile(chatId, myUid, viewModel) },
                 onPickVideo = { DesktopMediaHelper.pickAndSendVideo(chatId, myUid, viewModel) },

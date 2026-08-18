@@ -20,12 +20,15 @@ class ImageThumbE2eTest {
                     val a = ImBot.register("127.0.0.1", env.tcpPort, "imgthumb-a")
                     try {
                         val chatId = a.createPersonalChat(b.uid)
+                        // 主 url 必须指向文件存储中的真实文件（附件存在性校验）
+                        val attachment = env.storeFile(ByteArray(64) { it.toByte() }, "im.png", "image/png")
+                        val thumbnail = env.storeFile(ByteArray(32) { (it + 1).toByte() }, "im-thumb.jpg", "image/jpeg")
                         val ack = a.send(
                             chatId,
                             ImageBody(
-                                "https://x/im.png",
-                                width = 800, height = 600, size = 12345,
-                                thumbnailUrl = "https://x/im.png.thumb",
+                                attachment,
+                                width = 800, height = 600,
+                                thumbnail = thumbnail,
                             ),
                             com.virjar.tk.protocol.MessageType.IMAGE,
                         )
@@ -33,7 +36,8 @@ class ImageThumbE2eTest {
                         assertTrue(ack.serverSeq > 0)
                         val received = withTimeout(10_000) { b.nextMessage { it.senderUid == a.uid } }
                         val body = received.body as ImageBody
-                        assertEquals("https://x/im.png.thumb", body.thumbnailUrl, "thumbnailUrl 应完整传输")
+                        assertEquals(thumbnail, body.thumbnail, "缩略图描述符应完整传输")
+                        assertEquals(attachment, body.attachment, "主附件描述符应完整传输")
                     } finally { a.shutdown() }
                 } finally { b.shutdown() }
             }

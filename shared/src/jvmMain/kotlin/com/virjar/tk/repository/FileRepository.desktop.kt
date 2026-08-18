@@ -3,6 +3,7 @@ package com.virjar.tk.repository
 import com.virjar.tk.AppError
 import com.virjar.tk.Outcome
 import com.virjar.tk.outcome
+import com.virjar.tk.model.Attachment
 
 /**
  * Desktop 端 [FileRepository] 实现 —— 上传用 [java.net.HttpURLConnection] 手搓 multipart，
@@ -17,8 +18,8 @@ actual class FileRepository actual constructor(
         bytes: ByteArray,
         fileName: String,
         contentType: String,
-    ): Outcome<String> = outcome {
-        uploadRaw(bytes, fileName, contentType).path
+    ): Outcome<Attachment> = outcome {
+        uploadRaw(bytes, fileName, contentType).file
     }
 
     actual suspend fun uploadWithMeta(
@@ -87,7 +88,7 @@ actual class FileRepository actual constructor(
         FileOps.parseUploadResult(conn.inputStream.bufferedReader().readText())
     }
 
-    actual suspend fun download(path: String): Outcome<ByteArray> = FileOps.download(serverUrl, path)
+    actual suspend fun download(attachment: Attachment): Outcome<ByteArray> = FileOps.download(serverUrl, attachment)
 
-    actual fun resolveUrl(path: String): String = FileOps.resolveUrl(serverUrl, path)
+    actual fun resolveUrl(attachment: Attachment): String = FileOps.resolveUrl(serverUrl, attachment)
 }

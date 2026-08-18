@@ -2,6 +2,9 @@ package com.virjar.tk.api
 
 import com.virjar.tk.domain.auth.TokenStore
 import com.virjar.tk.infra.storage.FileStore
+import com.virjar.tk.repository.FileOps
+import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationStopped
 import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
@@ -24,10 +27,19 @@ class FileUploadAuthTest {
         File("/tmp/tk-upload-auth-${System.nanoTime()}/files").absolutePath,
     ).also { it.init() }
 
+    private fun Application.installTestFileRoutes(fileStore: FileStore, tokenStore: TokenStore) {
+        monitor.subscribe(ApplicationStopped) {
+            fileStore.close()
+            tokenStore.close()
+        }
+        routing { fileRoutes(fileStore, tokenStore) }
+    }
+
     @Test
     fun `无 token 上传被拒 401`() = testApplication {
         val tokenStore = TokenStore(File("/tmp/tk-upload-auth-tokens-${System.nanoTime()}").absolutePath)
-        application { routing { fileRoutes(testFileStore(), tokenStore) } }
+        val fileStore = testFileStore()
+        application { installTestFileRoutes(fileStore, tokenStore) }
         val resp = client.post("/api/v1/files/upload")
         assertEquals(HttpStatusCode.Unauthorized, resp.status)
         assertTrue(resp.bodyAsText().contains("token"))
@@ -36,7 +48,8 @@ class FileUploadAuthTest {
     @Test
     fun `伪造 X-Uid 不再被接受`() = testApplication {
         val tokenStore = TokenStore(File("/tmp/tk-upload-auth-tokens2-${System.nanoTime()}").absolutePath)
-        application { routing { fileRoutes(testFileStore(), tokenStore) } }
+        val fileStore = testFileStore()
+        application { installTestFileRoutes(fileStore, tokenStore) }
         val resp = client.post("/api/v1/files/upload") {
             header("X-Uid", "victim-uid")
         }
@@ -47,7 +60,8 @@ class FileUploadAuthTest {
     fun `有效 accessToken 可上传`() = testApplication {
         val tokenStore = TokenStore(File("/tmp/tk-upload-auth-tokens3-${System.nanoTime()}").absolutePath)
         val (access, _) = tokenStore.generateTokens("real-uid", "dev-1", 0)
-        application { routing { fileRoutes(testFileStore(), tokenStore) } }
+        val fileStore = testFileStore()
+        application { installTestFileRoutes(fileStore, tokenStore) }
         val resp = client.post("/api/v1/files/upload") {
             header(HttpHeaders.Authorization, "Bearer $access")
             setBody(MultiPartFormDataContent(formData {
@@ -57,14 +71,20 @@ class FileUploadAuthTest {
                 })
             }))
         }
-        assertEquals(HttpStatusCode.OK, resp.status, "有效 token 上传应成功: ${resp.bodyAsText()}")
-        assertTrue(resp.bodyAsText().contains("\"path\""), "响应含 path: ${resp.bodyAsText()}")
+        val responseBody = resp.bodyAsText()
+        assertEquals(HttpStatusCode.OK, resp.status, "有效 token 上传应成功: $responseBody")
+        val result = FileOps.parseUploadResult(responseBody)
+        assertEquals("t.bin", result.file.name)
+        assertEquals("application/octet-stream", result.file.contentType)
+        assertEquals(3, result.file.size)
+        assertTrue(result.file.path.startsWith("real-uid/"), "响应含当前用户相对 path: $responseBody")
     }
 
     @Test
     fun `无效 token 被拒 401`() = testApplication {
         val tokenStore = TokenStore(File("/tmp/tk-upload-auth-tokens4-${System.nanoTime()}").absolutePath)
-        application { routing { fileRoutes(testFileStore(), tokenStore) } }
+        val fileStore = testFileStore()
+        application { installTestFileRoutes(fileStore, tokenStore) }
         val resp = client.post("/api/v1/files/upload") {
             header(HttpHeaders.Authorization, "Bearer forged-token")
         }

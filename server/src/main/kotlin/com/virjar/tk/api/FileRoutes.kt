@@ -1,19 +1,17 @@
 package com.virjar.tk.api
 
 import com.virjar.tk.infra.storage.FileStore
+import com.virjar.tk.repository.UploadResult
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.utils.io.*
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
 
-private val responseJson = Json {
-    encodeDefaults = true // 上传响应显式输出全字段（缩略图缺失时 thumbUrl:null 可见）
-}
+private val responseJson = Json { encodeDefaults = true }
 
 fun Route.fileRoutes(
     fileStore: FileStore,
@@ -91,15 +89,18 @@ fun Route.fileRoutes(
                 part.dispose()
             }
 
-            if (filePath != null) {
+            val storedPath = filePath
+            if (storedPath != null) {
                 val mi = mediaInfo
                 call.respondText(
                     responseJson.encodeToString(
-                        UploadResponse(
-                            path = filePath!!,
-                            url = fileStore.resolveUrl(filePath!!),
-                            thumbPath = thumbPath,
-                            thumbUrl = thumbPath?.let { fileStore.resolveUrl(it) },
+                        UploadResult(
+                            file = fileStore.getAttachment(storedPath)
+                                ?: error("Stored attachment metadata missing: $storedPath"),
+                            thumbnail = thumbPath?.let { path ->
+                                fileStore.getAttachment(path)
+                                    ?: error("Stored thumbnail metadata missing: $path")
+                            },
                             width = mi?.width ?: 0,
                             height = mi?.height ?: 0,
                             durationSec = mi?.durationSec,
@@ -113,14 +114,3 @@ fun Route.fileRoutes(
         }
     }
 }
-
-@Serializable
-private data class UploadResponse(
-    val path: String,
-    val url: String,
-    val thumbPath: String? = null,
-    val thumbUrl: String? = null,
-    val width: Int = 0,
-    val height: Int = 0,
-    val durationSec: Int? = null,
-)

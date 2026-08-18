@@ -80,6 +80,10 @@ val copyAdminDist by tasks.registering(Copy::class) {
 }
 
 tasks.test {
+    // CliPeerE2eTest 会启动 shared 的 headless agent；必须与当前协议一起重建，
+    // 否则工作区残留的旧分发包会用旧 PROTOCOL_VERSION 无限重连。
+    dependsOn(":shared:headlessDist")
+
     // 默认运行集成测试（基于 Embedded PostgreSQL，无需外部 DB）
     // 本地快速跳过：./gradlew :server:test -PskipTests
     onlyIf { !project.hasProperty("skipTests") }
@@ -87,7 +91,7 @@ tasks.test {
 
     // 远程 demo E2E 开关透传：默认关闭，仅 -Dtk.e2e.remote=true 时启用 RemoteDemoE2eTest。
     // Gradle 默认不把命令行 -D 转发给测试 JVM，需显式桥接。
-    listOf("tk.e2e.remote", "tk.e2e.host", "tk.e2e.port", "peer.action", "peer.arg", "peer.username", "peer.password", "peer.file", "peer.url", "peer.server").forEach { key ->
+    listOf("tk.e2e.remote", "tk.e2e.host", "tk.e2e.port", "tk.e2e.server", "peer.action", "peer.arg", "peer.username", "peer.password", "peer.file", "peer.url", "peer.server").forEach { key ->
         System.getProperty(key)?.let { systemProperty(key, it) }
     }
 }

@@ -237,8 +237,8 @@ Content-Type: multipart/form-data
 
 → 流式写入临时文件（8KB buffer）
 → FileStore.store() 路由到 RocksDB 或文件系统
-→ 返回 { "path": "{uid}/{uuid}.{ext}" }
-→ 完整 URL: $serverUrl/api/v1/files/$path
+→ 返回 UploadResult(file: Attachment, thumbnail: Attachment?, 媒体元数据)
+→ Attachment.path 固定为 "{uid}/{uuid}.{ext}" 相对路径
 ```
 
 上传限制：150MB（`application.conf` 中 `file.max-size-bytes = 157286400`，可配置）
@@ -256,7 +256,8 @@ GET /api/v1/files/{path}
 
 ### 鉴权
 
-当前无鉴权（TODO），从 `X-Uid` header 读取 uid，fallback `anonymous`。
+上传使用 `Authorization: Bearer <accessToken>`，由 `TokenStore` 解析真实 uid；
+`X-Uid` 不被接受。下载端点只按相对 path 读取。
 
 ---
 
@@ -267,8 +268,8 @@ GET /api/v1/files/{path}
 客户端所有媒体资源先下载到本地缓存再渲染：
 
 ```kotlin
-fun downloadToCache(url: String): File {
-    val cached = File(cacheDir, fileName)
+fun downloadToCache(attachment: Attachment): File {
+    val cached = File(cacheDir, safeName(attachment.name))
     if (cached.exists()) return cached  // 已缓存直接返回
     // 下载...
     return cached
@@ -276,6 +277,8 @@ fun downloadToCache(url: String): File {
 ```
 
 缓存目录：`~/.teamtalk/media/`（Desktop）/ 应用内部缓存（Android）
+
+消息附件契约详见 [协议 v4 附件契约](../01-protocol/attachment-contract.md)。
 
 ### Desktop 拖拽文件
 

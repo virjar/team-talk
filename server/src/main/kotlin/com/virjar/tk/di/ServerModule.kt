@@ -80,7 +80,8 @@ fun createServerModule(
     single { SyncEventService(get()) }
     single { ChatService(get(), get(), get(), get()) }
     single { ConversationService(get(), get(), get()) }
-    single { MessageService(get(), get(), get(), get(), get()) }
+    single { com.virjar.tk.domain.attachment.AttachmentService(get()) }
+    single { MessageService(get(), get(), get(), get(), get(), get()) }
     single { PresenceService(get(), get()) }
     single { HealthChecker(get(), get(), get()) }
 

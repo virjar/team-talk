@@ -4,7 +4,8 @@ import com.virjar.tk.body.ImageBody
 import com.virjar.tk.body.TextBody
 import com.virjar.tk.body.VideoBody
 import com.virjar.tk.model.Message
-import com.virjar.tk.model.MessageBody
+import com.virjar.tk.body.MessageBody
+import com.virjar.tk.model.Attachment
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -21,25 +22,25 @@ class BuildMediaListTest {
     fun filters_to_image_and_video_only() {
         val messages = listOf(
             msg(TextBody("hello")),
-            msg(ImageBody("http://img1")),
-            msg(VideoBody("http://vid1")),
+            msg(ImageBody(attachment("image/one.png"))),
+            msg(VideoBody(attachment("video/one.mp4"))),
             msg(TextBody("world")),
         )
         val result = buildMediaList(messages)
         assertEquals(2, result.size)
-        assertEquals("image", result[0].type)
-        assertEquals("video", result[1].type)
+        assertEquals(GalleryMediaType.IMAGE, result[0].type)
+        assertEquals(GalleryMediaType.VIDEO, result[1].type)
     }
 
     @Test
-    fun video_uses_url_not_thumbnailUrl() {
+    fun video_uses_main_attachment_not_thumbnail() {
         val messages = listOf(
-            msg(VideoBody(url = "http://video.mp4", thumbnailUrl = "http://thumb.jpg")),
+            msg(VideoBody(attachment("video/main.mp4"), thumbnail = attachment("video/thumb.jpg"))),
         )
         val result = buildMediaList(messages)
         assertEquals(1, result.size)
-        assertEquals("http://video.mp4", result[0].url)
-        assertNotEquals("http://thumb.jpg", result[0].url)
+        assertEquals("video/main.mp4", result[0].path)
+        assertNotEquals("video/thumb.jpg", result[0].path)
     }
 
     @Test
@@ -52,4 +53,6 @@ class BuildMediaListTest {
         val messages = listOf(msg(TextBody("hello")))
         assertTrue(buildMediaList(messages).isEmpty())
     }
+
+    private fun attachment(path: String) = Attachment(path, path.substringAfterLast('/'), "application/octet-stream", 1)
 }

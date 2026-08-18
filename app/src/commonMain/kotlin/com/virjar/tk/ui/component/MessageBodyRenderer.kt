@@ -59,21 +59,29 @@ fun MessageBodyRenderer(
             com.virjar.tk.ui.component.rich.InteractiveCardView(card)
         } ?: MediaIconCard(title = "卡片", subtitle = "")
 
-        is FileBody -> FileCard(
-            fileName = body.fileName,
-            sizeText = formatFileSize(body.size),
-            onClick = onMediaClick?.let { cb -> { cb(message) } },
-        )
+        is FileBody -> {
+            val fileDownloads = LocalFileDownloads.current
+            if (fileDownloads != null) {
+                FileCardWithDownload(fileDownloads, body.attachment)
+            } else {
+                // 未注入下载控制器（旧路径）：点击回退平台 onMediaClick
+                FileCard(
+                    fileName = body.attachment.name,
+                    sizeText = formatFileSize(body.attachment.size),
+                    onClick = onMediaClick?.let { cb -> { cb(message) } },
+                )
+            }
+        }
 
         is VoiceBody -> VoiceCard(
-            url = body.url,
+            url = body.attachment.path,
             durationSec = body.duration,
-            waveSeed = abs(body.url.hashCode()),
-            playing = voicePlayback?.playingUrl == body.url,
-            progress = if (voicePlayback?.playingUrl == body.url) voicePlayback.progress else 0f,
+            waveSeed = abs(body.attachment.path.hashCode()),
+            playing = voicePlayback?.playingUrl == body.attachment.path,
+            progress = if (voicePlayback?.playingUrl == body.attachment.path) voicePlayback.progress else 0f,
             // 已播高亮：自己气泡（蓝底）用纯白，对方气泡（灰底）用主色
             playedColor = if (isMe) Color.White else MaterialTheme.colorScheme.primary,
-            onTogglePlay = voicePlayback?.let { vb -> { vb.toggle(body.url, body.duration) } }
+            onTogglePlay = voicePlayback?.let { vb -> { vb.toggle(body.attachment.path, body.duration) } }
                 ?: onMediaClick?.let { cb -> { cb(message) } },
         )
 
@@ -82,7 +90,7 @@ fun MessageBodyRenderer(
             if (imageContent != null) {
                 // 缩略图数据源（服务端生成；旧消息无缩略图回退原图 URL，由平台缓存层统一处理）
                 ImageThumbCard(
-                    imageUrl = body.thumbnailUrl ?: body.url,
+                    imageUrl = body.thumbnail?.path ?: body.attachment.path,
                     imageContent = imageContent,
                     imgWidth = body.width,
                     imgHeight = body.height,
@@ -96,8 +104,8 @@ fun MessageBodyRenderer(
         is VideoBody -> {
             val clickAction = onMediaClick?.let { cb -> { cb(message) } }
             VideoThumbCard(
-                videoUrl = body.url,
-                thumbnailUrl = body.thumbnailUrl,
+                videoUrl = body.attachment.path,
+                thumbnailUrl = body.thumbnail?.path,
                 videoContent = videoContent,
                 imageContent = imageContent,
                 imgWidth = body.width,
@@ -114,7 +122,7 @@ fun MessageBodyRenderer(
             val clickAction = onMediaClick?.let { cb -> { cb(message) } }
             if (imageContent != null) {
                 ImageThumbCard(
-                    imageUrl = body.url,
+                    imageUrl = body.attachment.path,
                     imageContent = imageContent,
                     imgWidth = body.width,
                     imgHeight = body.height,
@@ -133,7 +141,6 @@ fun MessageBodyRenderer(
         is EditBody -> Text(body.newContent, style = MaterialTheme.typography.bodyMedium)
         is ReactionBody -> SystemHintText("表情回应 ${body.emoji}")
         null -> SystemHintText(MessagePreview.previewBody(null, message.messageType))
-        else -> SystemHintText(MessagePreview.previewBody(message.body))
     }
 
     if (message.flags and Message.FLAG_EDITED != 0) {
@@ -142,7 +149,7 @@ fun MessageBodyRenderer(
 }
 
 /** 贴边媒体：图片/视频/贴纸不以气泡卡片呈现，媒体本身即气泡（无内边距、圆角贴边）。 */
-internal fun com.virjar.tk.model.MessageBody?.isEdgeToEdgeMedia(): Boolean =
+internal fun MessageBody?.isEdgeToEdgeMedia(): Boolean =
     this is ImageBody || this is VideoBody || this is StickerBody
 
 // ── 引用样式：左侧竖线（飞书范式，两种气泡底色下都成立） ──

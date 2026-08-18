@@ -2,7 +2,7 @@ package com.virjar.tk.infra.search
 
 import com.virjar.tk.body.*
 import com.virjar.tk.model.Message
-import com.virjar.tk.model.MessageBody
+import com.virjar.tk.body.MessageBody
 import com.virjar.tk.protocol.MessageType
 
 /**
@@ -34,7 +34,7 @@ object MessageTextExtractor {
             MessageType.IMAGE -> null
             MessageType.VOICE -> null
             MessageType.VIDEO -> null
-            MessageType.FILE -> (body as? FileBody)?.fileName
+            MessageType.FILE -> (body as? FileBody)?.attachment?.name
             MessageType.LOCATION -> {
                 val loc = body as? LocationBody ?: return null
                 listOfNotNull(loc.title, loc.address).filter { it.isNotEmpty() }

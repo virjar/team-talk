@@ -90,11 +90,17 @@ class AgentApi(private val agent: AgentRuntime) {
                 ackJson(ack.code, ack.serverSeq, ack.reason)
             }
             "/v1/upload" -> withFile(r) { f ->
-                val url = agent.bot.uploadFile(
+                val attachment = agent.bot.uploadFile(
                     agent.serverUrl,
                     f.readBytes(), f.name, "application/octet-stream",
                 )
-                buildJsonObject { put("url", "${agent.serverUrl}/api/v1/files/$url") }
+                buildJsonObject {
+                    put("path", attachment.path)
+                    put("url", com.virjar.tk.repository.FileOps.resolveUrl(agent.serverUrl, attachment))
+                    put("name", attachment.name)
+                    put("contentType", attachment.contentType)
+                    put("size", attachment.size)
+                }
             }
             "/v1/history" -> {
                 val list = agent.bot.getHistory(r.req("chatId"), r["fromSeq"]?.toLongOrNull() ?: 0L, r["limit"]?.toIntOrNull() ?: 50)

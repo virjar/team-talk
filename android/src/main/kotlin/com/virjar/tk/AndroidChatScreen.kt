@@ -58,6 +58,13 @@ fun AndroidChatScreen(
     scope: kotlinx.coroutines.CoroutineScope = rememberCoroutineScope(),
 ) {
     val context = LocalContext.current
+    val attachmentServerUrl = serverUrl.ifBlank { com.virjar.tk.client.defaultServerConfig().serverUrl }
+    val fileDownloads = remember(context, attachmentServerUrl) {
+        AndroidFileDownloadController(context, attachmentServerUrl)
+    }
+    DisposableEffect(fileDownloads) {
+        onDispose { fileDownloads.close() }
+    }
     var isUploading by remember { mutableStateOf(false) }
 
     // 全屏画廊 overlay 状态
@@ -75,13 +82,17 @@ fun AndroidChatScreen(
     ) { }
 
     // ── 上传通用函数 ──
-    fun uploadAndSend(bytes: ByteArray, fileName: String, mimeType: String, buildBody: (String, Long) -> Message) {
+    fun uploadAndSend(
+        bytes: ByteArray,
+        fileName: String,
+        mimeType: String,
+        buildMessage: (com.virjar.tk.model.Attachment) -> Message,
+    ) {
         scope.launch {
             isUploading = true
             try {
-                val path = MediaHelper.uploadFile(bytes, fileName, mimeType, serverUrl)
-                val fileUrl = "$serverUrl/api/v1/files/$path"
-                viewModel.sendMessage(buildBody(fileUrl, bytes.size.toLong()))
+                val attachment = MediaHelper.uploadFile(bytes, fileName, mimeType, attachmentServerUrl)
+                viewModel.sendMessage(buildMessage(attachment))
             } catch (e: Exception) { Log.e("Chat", "Operation failed", e) }
             isUploading = false
         }
@@ -94,8 +105,8 @@ fun AndroidChatScreen(
                 MediaHelper.readBytes(context, uri),
                 MediaHelper.getFileName(context, uri),
                 MediaHelper.getMimeType(context, uri),
-            ) { url, size ->
-                Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.FILE.code, System.currentTimeMillis(), body = FileBody(url, MediaHelper.getFileName(context, uri), size))
+            ) { attachment ->
+                Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.FILE.code, System.currentTimeMillis(), body = FileBody(attachment))
             }
         }
     }
@@ -107,9 +118,9 @@ fun AndroidChatScreen(
                 isUploading = true
                 try {
                     val bytes = MediaHelper.readBytes(context, uri)
-                    val meta = MediaHelper.uploadWithMeta(bytes, MediaHelper.getFileName(context, uri), MediaHelper.getMimeType(context, uri), serverUrl)
+                    val meta = MediaHelper.uploadWithMeta(bytes, MediaHelper.getFileName(context, uri), MediaHelper.getMimeType(context, uri), attachmentServerUrl)
                     viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.IMAGE.code, System.currentTimeMillis(),
-                        body = ImageBody(meta.url, width = meta.width, height = meta.height, size = bytes.size.toLong(), thumbnailUrl = meta.thumbUrl)))
+                        body = ImageBody(meta.file, width = meta.width, height = meta.height, thumbnail = meta.thumbnail)))
                 } catch (e: Exception) { Log.e("Chat", "Operation failed", e) }
                 isUploading = false
             }
@@ -127,30 +138,29 @@ fun AndroidChatScreen(
                     val mimeType = MediaHelper.getMimeType(context, uri)
                     // 服务端 javacv 生成缩略图+元数据（准确）；失败回退本地 MediaMetadataRetriever 抽帧
                     val up = kotlin.runCatching {
-                        MediaHelper.uploadWithMeta(bytes, fileName, mimeType, serverUrl)
+                        MediaHelper.uploadWithMeta(bytes, fileName, mimeType, attachmentServerUrl)
                     }.getOrNull()
-                    val fileUrl = up?.url ?: run {
-                        val path = MediaHelper.uploadFile(bytes, fileName, mimeType, serverUrl)
-                        "$serverUrl/api/v1/files/$path"
+                    val attachment = up?.file ?: run {
+                        MediaHelper.uploadFile(bytes, fileName, mimeType, attachmentServerUrl)
                     }
                     var w = up?.width ?: 0
                     var h = up?.height ?: 0
                     var duration = up?.durationSec ?: 0
-                    var thumbUrl = up?.thumbUrl
-                    if (w == 0 || thumbUrl == null) {
+                    var thumbnail = up?.thumbnail
+                    if (w == 0 || thumbnail == null) {
                         val local = MediaHelper.getVideoMetadata(context, uri)
                         w = local?.first ?: w; h = local?.second ?: h; duration = local?.third ?: duration
-                        if (thumbUrl == null) {
+                        if (thumbnail == null) {
                             kotlin.runCatching { MediaHelper.extractVideoThumbnail(context, uri) }
                                 .getOrNull()?.let { tf ->
                                     kotlin.runCatching {
-                                        val tp = MediaHelper.uploadFile(tf.readBytes(), "thumb.jpg", "image/jpeg", serverUrl)
-                                        thumbUrl = "$serverUrl/api/v1/files/$tp"; tf.delete()
+                                        thumbnail = MediaHelper.uploadFile(tf.readBytes(), "thumb.jpg", "image/jpeg", attachmentServerUrl)
+                                        tf.delete()
                                     }
                                 }
                         }
                     }
-                    viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.VIDEO.code, System.currentTimeMillis(), body = VideoBody(fileUrl, duration, w, h, bytes.size.toLong(), thumbUrl)))
+                    viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.VIDEO.code, System.currentTimeMillis(), body = VideoBody(attachment, duration, w, h, thumbnail)))
                 } catch (e: Exception) { Log.e("Chat", "Operation failed", e) }
                 isUploading = false
             }
@@ -183,9 +193,9 @@ fun AndroidChatScreen(
         scope.launch {
             isUploading = true
             try {
-                val path = MediaHelper.uploadFile(file.readBytes(), file.name, "audio/aac", serverUrl)
+                val attachment = MediaHelper.uploadFile(file.readBytes(), file.name, "audio/aac", attachmentServerUrl)
                 val dur = ((System.currentTimeMillis() - voiceRecordStartTime) / 1000).toInt()
-                viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.VOICE.code, System.currentTimeMillis(), body = VoiceBody("$serverUrl/api/v1/files/$path", dur, size = file.length())))
+                viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.VOICE.code, System.currentTimeMillis(), body = VoiceBody(attachment, dur)))
                 file.delete()
             } catch (e: Exception) { Log.e("Chat", "Operation failed", e) }
             isUploading = false
@@ -214,32 +224,36 @@ fun AndroidChatScreen(
                 chatId = chatId, chatName = chatName, viewModel = viewModel, myUid = myUid,
                 chatType = chatType, resolveSender = resolveSender,
                 onForward = onForward, initialDraft = draft, onDraftChange = onDraftChange,
-                voicePlayback = rememberAndroidVoicePlayback(context),
+                voicePlayback = rememberAndroidVoicePlayback(context, attachmentServerUrl),
                 mentionCandidates = mentionCandidates,
                 media = com.virjar.tk.ui.bridge.ChatMediaConfig(
+                    fileDownloads = fileDownloads,
                     onPickImage = { imagePicker.launch(PickVisualMediaRequest.Builder().setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly).build()) },
                     onPickFile = { filePicker.launch(arrayOf("*/*")) },
                     onPickVideo = { videoPicker.launch(PickVisualMediaRequest.Builder().setMediaType(ActivityResultContracts.PickVisualMedia.VideoOnly).build()) },
                     onVoiceRecord = { if (it) startVoice() else stopVoice() },
-                    imageContent = { url, mod -> rememberAsyncThumb(url, mod, android.graphics.Color.LTGRAY) },
-                    videoContent = { url, mod -> rememberAsyncThumb(url, mod, android.graphics.Color.DKGRAY) },
+                    imageContent = { url, mod ->
+                        rememberAsyncThumb(com.virjar.tk.repository.FileOps.resolveUrl(attachmentServerUrl, url), mod, android.graphics.Color.LTGRAY)
+                    },
+                    videoContent = { url, mod ->
+                        rememberAsyncThumb(com.virjar.tk.repository.FileOps.resolveUrl(attachmentServerUrl, url), mod, android.graphics.Color.DKGRAY)
+                    },
                     onMediaClick = rememberMediaClickHandler(
                         messages = viewModel.messages.collectAsState(),
                         actions = object : PlatformMediaActions {
-                            override fun playVoice(url: String) = VoicePlayer.play(context, url)
-                            override fun openFile(url: String) {
+                            override fun playVoice(attachment: com.virjar.tk.model.Attachment) = VoicePlayer.play(
+                                context,
+                                com.virjar.tk.repository.FileOps.resolveUrl(attachmentServerUrl, attachment),
+                            )
+                            override fun openFile(attachment: com.virjar.tk.model.Attachment) {
                                 scope.launch {
                                     try {
-                                        // 兼容存量消息的相对 path（agent 旧链路曾直塞相对 path）
-                                        val full = if (url.startsWith("http")) url
-                                        else com.virjar.tk.repository.FileOps.resolveUrl(
-                                            com.virjar.tk.client.defaultServerConfig().serverUrl, url)
-                                        val fileName = url.substringAfterLast("/")
-                                        val f = File(context.cacheDir, "downloads/$fileName")
+                                        val full = com.virjar.tk.repository.FileOps.resolveUrl(attachmentServerUrl, attachment)
+                                        val f = File(context.cacheDir, "downloads/${attachment.name}")
                                         f.parentFile?.mkdirs()
                                         f.writeBytes(java.net.URL(full).readBytes())
-                                        MediaHelper.openFile(context, f, "application/octet-stream")
-                                    } catch (e: Exception) { Log.e("Chat", "openFile failed url=$url", e) }
+                                        MediaHelper.openFile(context, f, attachment.contentType)
+                                    } catch (e: Exception) { Log.e("Chat", "openFile failed path=${attachment.path}", e) }
                                 }
                             }
                             override fun showGallery(items: List<GalleryItem>, index: Int) {
@@ -259,10 +273,10 @@ fun AndroidChatScreen(
             initialIndex = galleryIndex,
             onDismiss = { showGallery = false },
             imageRenderer = { url, mod ->
-                rememberAsyncThumb(url, mod, android.graphics.Color.BLACK)
+                rememberAsyncThumb(com.virjar.tk.repository.FileOps.resolveUrl(attachmentServerUrl, url), mod, android.graphics.Color.BLACK)
             },
             videoRenderer = { url, mod ->
-                rememberVideoPlayer(url, mod)
+                rememberVideoPlayer(com.virjar.tk.repository.FileOps.resolveUrl(attachmentServerUrl, url), mod)
             },
         )
     }
@@ -274,24 +288,27 @@ fun AndroidChatScreen(
  * 轮询其非 Compose 状态转为可订阅状态，驱动气泡波形着色。
  */
 @Composable
-private fun rememberAndroidVoicePlayback(context: android.content.Context): com.virjar.tk.ui.component.VoicePlaybackController {
+private fun rememberAndroidVoicePlayback(
+    context: android.content.Context,
+    serverUrl: String,
+): com.virjar.tk.ui.component.VoicePlaybackController {
     val urlState = remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
     val progressState = remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
-    val controller = remember {
+    val controller = remember(serverUrl) {
         object : com.virjar.tk.ui.component.VoicePlaybackController {
             override val playingUrl: String? by urlState
             override val progress: Float by progressState
             override fun toggle(url: String, durationSec: Int) {
                 // Android MediaPlayer 上报真实进度，durationSec hint 不需要
                 urlState.value = url
-                VoicePlayer.play(context, url)
+                VoicePlayer.play(context, com.virjar.tk.repository.FileOps.resolveUrl(serverUrl, url))
             }
         }
     }
     LaunchedEffect(controller) {
         while (true) {
             // VoicePlayer 暂停时保留 playingUrl（气泡维持暂停态），播完/停止时为 null
-            urlState.value = VoicePlayer.playingUrl
+            if (VoicePlayer.playingUrl == null) urlState.value = null
             progressState.floatValue = VoicePlayer.progress
             kotlinx.coroutines.delay(200)
         }

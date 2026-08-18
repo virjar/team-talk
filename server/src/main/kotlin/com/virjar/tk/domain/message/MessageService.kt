@@ -1,5 +1,6 @@
 package com.virjar.tk.domain.message
 
+import com.virjar.tk.domain.attachment.AttachmentService
 import com.virjar.tk.domain.chat.ChatStore
 import com.virjar.tk.domain.conversation.ConversationService
 import com.virjar.tk.infra.search.MessageTextExtractor
@@ -15,6 +16,7 @@ class MessageService(
     private val syncEventService: SyncEventService,
     private val conversationService: ConversationService,
     private val searchIndex: SearchIndex,
+    private val attachmentService: AttachmentService,
 ) {
 
     suspend fun sendMessage(senderUid: String, message: Message): Long {
@@ -42,10 +44,15 @@ class MessageService(
             return existingSeq
         }
 
+        // 消息契约：发送成功 = 引用的附件真实存在（文件只走本服务端文件存储，
+        // 不存在三方文件服务；完整 http URL 只是客户端/外部 SDK 对接形态）。
+        // 断链消息在服务端拒绝，不能等对端点击才发现打不开。
+        val canonicalMessage = attachmentService.resolve(message)
+
         // 非阻塞递增 maxSeq
         val serverSeq = chatStore.incrementMaxSeq(chatId)
 
-        val storedMessage = message.copy(serverSeq = serverSeq, senderUid = senderUid)
+        val storedMessage = canonicalMessage.copy(serverSeq = serverSeq, senderUid = senderUid)
         messageStore.storeMessage(storedMessage)
 
         // 索引到 Lucene
@@ -107,7 +114,8 @@ class MessageService(
             throw IllegalArgumentException("只能编辑自己的消息")
         }
 
-        val edited = newMessage.copy(
+        val canonicalNewMessage = attachmentService.resolve(newMessage)
+        val edited = canonicalNewMessage.copy(
             serverSeq = serverSeq,
             senderUid = uid,
             flags = message.flags or 2,
@@ -127,15 +135,16 @@ class MessageService(
 
         val srcMsg = messageStore.getMessage(srcChatId, srcSeq)
             ?: throw IllegalArgumentException("原消息不存在")
+        val canonicalSource = attachmentService.resolve(srcMsg)
 
         val serverSeq = chatStore.incrementMaxSeq(targetChatId)
 
-        val forwardMsg = srcMsg.copy(
+        val forwardMsg = canonicalSource.copy(
             chatId = targetChatId,
             clientMsgId = java.util.UUID.randomUUID().toString(),
             serverSeq = serverSeq,
             senderUid = uid,
-            flags = srcMsg.flags or 4,
+            flags = canonicalSource.flags or 4,
             timestamp = System.currentTimeMillis(),
         )
 

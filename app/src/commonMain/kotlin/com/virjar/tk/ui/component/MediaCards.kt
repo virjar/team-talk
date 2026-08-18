@@ -1,5 +1,7 @@
 package com.virjar.tk.ui.component
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -8,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -248,9 +251,21 @@ internal fun fileIconColor(fileName: String): Color {
 }
 
 @Composable
-internal fun FileCard(fileName: String, sizeText: String, onClick: (() -> Unit)? = null) {
+internal fun FileCard(
+    fileName: String,
+    sizeText: String,
+    onClick: (() -> Unit)? = null,
+    downloadState: FileDownloadState? = null,
+) {
     val iconColor = fileIconColor(fileName)
     val ext = fileName.substringAfterLast('.', "").uppercase().take(4).ifEmpty { "FILE" }
+    val targetProgress = (downloadState as? FileDownloadState.Downloading)
+        ?.progress?.takeIf { it >= 0f }?.coerceIn(0f, 1f) ?: 0f
+    val animatedProgress = animateFloatAsState(
+        targetValue = targetProgress,
+        animationSpec = tween(durationMillis = 180),
+        label = "file-download-progress",
+    )
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -258,7 +273,7 @@ internal fun FileCard(fileName: String, sizeText: String, onClick: (() -> Unit)?
             .widthIn(max = 280.dp)
             .then(onClick?.let { Modifier.clickable(onClick = it) } ?: Modifier),
     ) {
-        // 扩展名图标块：圆角方形 + 大写扩展名
+        // 扩展名图标块：圆角方形 + 大写扩展名（下载中替换为进度环）
         Box(
             modifier = Modifier
                 .size(40.dp)
@@ -266,7 +281,24 @@ internal fun FileCard(fileName: String, sizeText: String, onClick: (() -> Unit)?
                 .background(iconColor),
             contentAlignment = Alignment.Center,
         ) {
-            if (ext.length <= 3) {
+            if (downloadState is FileDownloadState.Downloading) {
+                if (downloadState.progress < 0f) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(22.dp),
+                        color = Color.White,
+                        trackColor = Color.White.copy(alpha = 0.3f),
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    CircularProgressIndicator(
+                        progress = { animatedProgress.value },
+                        modifier = Modifier.size(22.dp),
+                        color = Color.White,
+                        trackColor = Color.White.copy(alpha = 0.3f),
+                        strokeWidth = 2.dp,
+                    )
+                }
+            } else if (ext.length <= 3) {
                 Text(ext, style = MaterialTheme.typography.labelMedium, color = Color.White, fontWeight = FontWeight.SemiBold)
             } else {
                 Icon(
@@ -286,7 +318,12 @@ internal fun FileCard(fileName: String, sizeText: String, onClick: (() -> Unit)?
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(sizeText, style = MaterialTheme.typography.labelSmall, color = Tk.colors.metaText)
+            Text(
+                sizeText,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (downloadState is FileDownloadState.Failed) MaterialTheme.colorScheme.error
+                else Tk.colors.metaText,
+            )
         }
     }
 }

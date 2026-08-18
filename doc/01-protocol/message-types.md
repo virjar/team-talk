@@ -1,6 +1,6 @@
 # 消息类型与消息体
 
-> TeamTalk 支持 15 种消息类型。本文记录消息模型的设计决策：为什么用 sealed interface、
+> TeamTalk 使用封闭消息体层次。本文记录消息模型的设计决策：为什么用 sealed interface、
 > 为什么 flags 用位标记、容器模式 vs 扁平模式的权衡。
 
 ## 消息类型枚举
@@ -8,20 +8,26 @@
 | Code | 类型 | 说明 | Body 类 |
 |------|------|------|---------|
 | 1 | TEXT | 纯文本消息 | `TextBody(text)` |
-| 2 | IMAGE | 图片消息 | `ImageBody(url, width, height, size)` |
-| 3 | VOICE | 语音消息 | `VoiceBody(url, duration, size)` |
-| 4 | VIDEO | 视频消息 | `VideoBody(url, size)` |
-| 5 | FILE | 文件消息 | `FileBody(url, fileName, size)` |
-| 6 | REPLY | 回复消息（引用原消息） | `ReplyBody(text, quoteMessage)` |
-| 7 | FORWARD | 转发消息 | `ForwardBody(text, originMessage)` |
-| 8 | REVOKE | 撤回消息 | `RevokeBody(revokeMessage)` |
-| 9 | SYSTEM | 系统消息 | `SystemBody(text)` |
-| 10 | TYPING | 输入状态（非持久化） | `TypingBody(chatId)` |
-| 11 | PRESENCE | 在线状态 | `PresenceBody(uid, online)` |
-| 12 | READ_RECEIPT | 已读回执 | `ReadReceiptBody(chatId, readSeq)` |
-| 13 | GROUP_NOTICE | 群公告 | `GroupNoticeBody(chatId, notice)` |
-| 14 | CONTACT_CARD | 名片消息 | `ContactCardBody(user)` |
-| 15 | LOCATION | 位置消息 | `LocationBody(lat, lng, address)` |
+| 2 | IMAGE | 图片消息 | `ImageBody(attachment, width, height, thumbnail)` |
+| 3 | VOICE | 语音消息 | `VoiceBody(attachment, duration)` |
+| 4 | VIDEO | 视频消息 | `VideoBody(attachment, duration, width, height, thumbnail)` |
+| 5 | FILE | 文件消息 | `FileBody(attachment)` |
+| 6 | LOCATION | 位置消息 | `LocationBody(latitude, longitude, ...)` |
+| 7 | CARD | 名片消息 | `CardBody(...)` |
+| 8 | REPLY | 回复消息 | `ReplyBody(...)` |
+| 9 | FORWARD | 转发消息 | `ForwardBody(...)` |
+| 10 | MERGE_FORWARD | 合并转发 | `MergeForwardBody(...)` |
+| 11 | REVOKE | 撤回载荷 | `RevokeBody(...)` |
+| 12 | EDIT | 编辑载荷 | `EditBody(...)` |
+| 13 | STICKER | 贴纸 | `StickerBody(attachment, width, height)` |
+| 14 | REACTION | 表情回应 | `ReactionBody(...)` |
+| 15 | TYPING | 输入状态（非持久化） | 无 body |
+| 16 | RICH_TEXT | 富文本 | `RichTextBody(...)` |
+| 17 | INTERACTIVE_CARD | 交互卡片 | `InteractiveCardBody(...)` |
+| 99 | GENERIC | 扩展保留 | 尚未注册 body |
+
+媒体附件的强类型模型、校验边界和 v4 迁移规则见
+[附件契约](attachment-contract.md)。
 
 ---
 

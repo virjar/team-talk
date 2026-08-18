@@ -7,12 +7,6 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
-import io.ktor.client.*
-import io.ktor.client.request.forms.*
-import io.ktor.client.request.forms.MultiPartFormDataContent
-import io.ktor.client.statement.*
-import io.ktor.client.request.headers
-import io.ktor.http.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -23,14 +17,6 @@ import java.security.MessageDigest
  * Android 媒体工具：文件上传（带进度）、视频下载缓存、元数据提取。
  */
 object MediaHelper {
-
-    private val httpClient = HttpClient()
-
-    /**
-     * 上传进度回调。
-     * @param bytesSent 已发送字节
-     * @param totalBytes 总字节
-     */
     /**
      * 上传文件到服务端，返回相对路径。
      * @param onProgress 上传进度回调（在 IO 线程调用，UI 更新需切线程）
@@ -40,57 +26,24 @@ object MediaHelper {
         fileName: String,
         contentType: String,
         serverUrl: String,
-    ): String = withContext(Dispatchers.IO) {
-        val token = com.virjar.tk.client.SessionContext.accessToken
-        val response = httpClient.submitFormWithBinaryData(
-            "$serverUrl/api/v1/files/upload",
-            formData {
-                append("file", bytes, Headers.build {
-                    append(HttpHeaders.ContentType, contentType)
-                    append(HttpHeaders.ContentDisposition, "filename=\"$fileName\"")
-                })
-            },
-        ) {
-            token?.let { headers { append(HttpHeaders.Authorization, "Bearer $it") } }
-        }
-        parseUploadResponse(response)
-    }
+    ): com.virjar.tk.model.Attachment = fileRepository(serverUrl)
+        .upload(bytes, fileName, contentType)
+        .getOrThrow()
 
-    private suspend fun parseUploadResponse(response: HttpResponse): String {
-        if (response.status != HttpStatusCode.OK) {
-            throw RuntimeException("Upload failed: ${response.status}")
-        }
-        return com.virjar.tk.repository.FileOps.parseUploadPath(response.bodyAsText())
-    }
-
-    /** 上传并返回服务端媒体元数据（缩略图/宽高/时长，url 已绝对化）。 */
+    /** 上传并返回服务端媒体元数据。 */
     suspend fun uploadWithMeta(
         bytes: ByteArray,
         fileName: String,
         contentType: String,
         serverUrl: String,
-    ): com.virjar.tk.repository.UploadResult = withContext(Dispatchers.IO) {
-        val token = com.virjar.tk.client.SessionContext.accessToken
-        val response = httpClient.submitFormWithBinaryData(
-            "$serverUrl/api/v1/files/upload",
-            formData {
-                append("file", bytes, Headers.build {
-                    append(HttpHeaders.ContentType, contentType)
-                    append(HttpHeaders.ContentDisposition, "filename=\"$fileName\"")
-                })
-            },
-        ) {
-            token?.let { headers { append(HttpHeaders.Authorization, "Bearer $it") } }
-        }
-        if (response.status != HttpStatusCode.OK) {
-            throw RuntimeException("Upload failed: ${response.status}")
-        }
-        val r = com.virjar.tk.repository.FileOps.parseUploadResult(response.bodyAsText())
-        r.copy(
-            url = if (r.url.startsWith("http")) r.url else "$serverUrl${r.url}",
-            thumbUrl = r.thumbUrl?.let { if (it.startsWith("http")) it else "$serverUrl$it" },
-        )
-    }
+    ): com.virjar.tk.repository.UploadResult = fileRepository(serverUrl)
+        .uploadWithMeta(bytes, fileName, contentType)
+        .getOrThrow()
+
+    private fun fileRepository(serverUrl: String) = com.virjar.tk.repository.FileRepository(
+        serverUrl,
+        com.virjar.tk.client.SessionContext.accessToken,
+    )
 
     /**
      * 下载视频到本地缓存目录。

@@ -1,5 +1,6 @@
 package com.virjar.tk.infra.storage
 
+import com.virjar.tk.model.Attachment
 import io.ktor.utils.io.ByteWriteChannel
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -33,11 +34,10 @@ data class ReadRange(val start: Long, val end: Long)
 class FileStore(
     private val dbPath: String,
     private val fsRoot: String,
+    private val largeFileThreshold: Long = 32L * 1024 * 1024,
 ) {
     private val logger = LoggerFactory.getLogger("FileStore")
     private val json = Json { ignoreUnknownKeys = true }
-
-    private val largeFileThreshold = 32L * 1024 * 1024 // 32MB
 
     private var db: RocksDB? = null
     private var metaCf: ColumnFamilyHandle? = null
@@ -95,13 +95,18 @@ class FileStore(
         val dbInst = db ?: error("FileStore not initialized")
         val mCf = metaCf ?: error("FileStore not initialized")
         val size = tempFile.length()
-        val ext = fileName.substringAfterLast('.', "")
-        val path = "$uid/${UUID.randomUUID().toString().replace("-", "")}.$ext"
+        val safeName = sanitizeOriginalName(fileName)
+        val ext = safeName.substringAfterLast('.', "")
+            .lowercase()
+            .filter { it.isLetterOrDigit() }
+            .take(12)
+        val suffix = if (ext.isBlank()) "" else ".$ext"
+        val path = "$uid/${UUID.randomUUID().toString().replace("-", "")}$suffix"
         val storageKey = UUID.randomUUID().toString().replace("-", "")
         val tier = if (size > largeFileThreshold) StorageTier.FILESYSTEM else StorageTier.ROCKSDB
 
         val meta = FileMetadata(
-            path = path, originalName = fileName, contentType = contentType,
+            path = path, originalName = safeName, contentType = contentType,
             size = size, tier = tier, storageKey = storageKey,
             uploadedAt = System.currentTimeMillis(), uid = uid,
         )
@@ -133,6 +138,24 @@ class FileStore(
         return json.decodeFromString(FileMetadata.serializer(), String(bytes, StandardCharsets.UTF_8))
     }
 
+    /**
+     * 向领域层暴露可用的公开附件描述符，隐藏 tier/storageKey 等存储实现细节。
+     * RocksDB tier 的 meta/data 在同一 WriteBatch 中原子提交；文件系统 tier 还需
+     * 核对实体文件及长度，避免只剩孤儿元数据的附件被消息服务判定为可发送。
+     */
+    fun getAttachment(path: String): Attachment? = getMeta(path)?.let { meta ->
+        if (meta.tier == StorageTier.FILESYSTEM) {
+            val file = getFile(meta)
+            if (file == null || file.length() != meta.size) return null
+        }
+        Attachment(
+            path = meta.path,
+            name = meta.originalName,
+            contentType = meta.contentType,
+            size = meta.size,
+        )
+    }
+
     suspend fun streamTo(meta: FileMetadata, channel: ByteWriteChannel, range: ReadRange? = null) {
         when (meta.tier) {
             StorageTier.ROCKSDB -> rocksDbTier!!.streamTo(meta, channel, range)
@@ -152,8 +175,6 @@ class FileStore(
         val file = File(File(File(fsRoot, level1), level2), "$storageKey.dat")
         return if (file.exists()) file else null
     }
-
-    fun resolveUrl(path: String): String = "/api/v1/files/$path"
 
     fun close() {
         rocksDbTier?.clearCache()
@@ -190,4 +211,12 @@ class FileStore(
             tempFile.delete()
         }
     }
+
+    private fun sanitizeOriginalName(fileName: String): String = fileName
+        .substringAfterLast('/')
+        .substringAfterLast('\\')
+        .replace(Regex("[\\u0000-\\u001F]"), "_")
+        .trim()
+        .take(255)
+        .ifBlank { "attachment" }
 }

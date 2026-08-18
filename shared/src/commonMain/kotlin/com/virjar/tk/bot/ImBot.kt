@@ -21,13 +21,13 @@ import com.virjar.tk.model.Contact
 import com.virjar.tk.model.Conversation
 import com.virjar.tk.model.Member
 import com.virjar.tk.model.Message
-import com.virjar.tk.model.MessageBody
+import com.virjar.tk.body.MessageBody
 import com.virjar.tk.model.User
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.PresencePayload
 import com.virjar.tk.protocol.payload.MessageAckPayload
-import com.virjar.tk.repository.FileOps
+import com.virjar.tk.model.Attachment
 import com.virjar.tk.repository.FileRepository
 import com.virjar.tk.testing.FakeLocalCache
 import com.virjar.tk.util.AppLog
@@ -124,28 +124,41 @@ class ImBot private constructor(
     suspend fun sendCard(chatId: String, card: com.virjar.tk.body.CardPayload): MessageAckPayload =
         send(chatId, com.virjar.tk.body.InteractiveCardBody.of(card), MessageType.INTERACTIVE_CARD)
 
-    // ── 媒体消息（URL 模式：调用方先行 uploadFile 上传） ──
+    // ── 媒体消息（调用方先 uploadFile；相对 path/文件端点 URL 均可，SDK 统一归一化） ──
 
-    suspend fun sendImage(chatId: String, url: String, width: Int, height: Int, size: Long): MessageAckPayload =
-        send(chatId, ImageBody(url, width, height, size), MessageType.IMAGE)
+    suspend fun sendImage(chatId: String, attachment: Attachment, width: Int, height: Int): MessageAckPayload =
+        send(chatId, ImageBody(attachment, width, height), MessageType.IMAGE)
 
-    suspend fun sendFile(chatId: String, url: String, fileName: String, size: Long): MessageAckPayload =
-        send(chatId, FileBody(url, fileName, size), MessageType.FILE)
+    suspend fun sendFile(chatId: String, attachment: Attachment): MessageAckPayload =
+        send(chatId, FileBody(attachment), MessageType.FILE)
 
-    suspend fun sendVoice(chatId: String, url: String, duration: Int, size: Long): MessageAckPayload =
-        send(chatId, VoiceBody(url, duration, size), MessageType.VOICE)
+    suspend fun sendVoice(chatId: String, attachment: Attachment, duration: Int): MessageAckPayload =
+        send(chatId, VoiceBody(attachment, duration), MessageType.VOICE)
 
-    suspend fun sendVideo(chatId: String, url: String, duration: Int, width: Int, height: Int, size: Long, thumbnailUrl: String? = null): MessageAckPayload =
-        send(chatId, VideoBody(url, duration, width, height, size, thumbnailUrl), MessageType.VIDEO)
+    suspend fun sendVideo(
+        chatId: String,
+        attachment: Attachment,
+        duration: Int,
+        width: Int,
+        height: Int,
+        thumbnail: Attachment? = null,
+    ): MessageAckPayload = send(
+        chatId,
+        VideoBody(attachment, duration, width, height, thumbnail),
+        MessageType.VIDEO,
+    )
 
-    /** 上传文件到服务器（HTTP），返回相对 path。 */
-    suspend fun uploadFile(serverUrl: String, bytes: ByteArray, fileName: String, contentType: String): String =
+    /** 上传文件到服务器（HTTP），返回服务端权威附件描述符。 */
+    suspend fun uploadFile(serverUrl: String, bytes: ByteArray, fileName: String, contentType: String): Attachment =
         FileRepository(serverUrl, userSession.accessToken ?: SessionContext.accessToken).upload(bytes, fileName, contentType).getOrThrow()
 
-    /** 上传并发送一步到位。body.url 绝对化（相对 path 直塞曾致对端点击文件无反应）。 */
+    /**
+     * 上传并发送一步到位。消息只携带强类型附件描述符，path 为 FileStore 相对路径；
+     * 服务端发送时重新核验整个描述符，客户端下载时才绑定当前服务器地址。
+     */
     suspend fun uploadAndSendFile(serverUrl: String, chatId: String, bytes: ByteArray, fileName: String, contentType: String): MessageAckPayload {
-        val path = uploadFile(serverUrl, bytes, fileName, contentType)
-        return sendFile(chatId, FileOps.resolveUrl(serverUrl, path), fileName, bytes.size.toLong())
+        val attachment = uploadFile(serverUrl, bytes, fileName, contentType)
+        return sendFile(chatId, attachment)
     }
 
     /** 发送 typing 指示（不等 ACK——服务端对 TYPING 消息只广播不回执）。 */

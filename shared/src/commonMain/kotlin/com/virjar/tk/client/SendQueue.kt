@@ -38,8 +38,10 @@ class SendQueue(
 
     /** 停止队列（会话关闭）。 */
     fun close() {
+        // scope.cancel() 会取消 worker 中挂起的 receive；随后再 wake.close() 会把
+        // receive 竞态恢复成 ClosedReceiveChannelException，泄漏为下一项 runTest 的
+        // UncaughtExceptionsBeforeTest。Channel 是队列私有对象，随 owner 一起回收即可。
         scope.cancel()
-        wake.close()
     }
 
     init {
@@ -69,13 +71,24 @@ class SendQueue(
                 wake.receive() // 挂起直到重连（或新消息重复唤醒，无副作用）
                 continue
             }
+            var sendFailure: Throwable? = null
             val ack = withTimeoutOrNull(30_000) {
-                runCatching { sender.sendAndWaitAck(msg) }.getOrNull()
+                try {
+                    sender.sendAndWaitAck(msg)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    sendFailure = failure
+                    null
+                }
             }
             if (ack != null && ack.code == 0) {
                 onSent(msg, ack)
             } else {
-                onFailed(msg, ack?.takeIf { it.code != 0 }?.reason ?: "发送超时")
+                val reason = ack?.takeIf { it.code != 0 }?.reason
+                    ?: sendFailure?.message
+                    ?: "发送超时"
+                onFailed(msg, reason)
             }
             mutex.withLock { queue.removeFirstOrNull() }
         }
