@@ -1,56 +1,62 @@
-# Demo 构建系统
+# 单一部署配置
 
-TeamTalk 当前只有一个可运行环境：**Demo**（`im.virjar.com`）。客户端、远程业务测试和部署任务共享同一份配置，不存在 dev/production flavor、`-Pprofile` 或运行时切换服务器。
+TeamTalk 不再维护环境 Profile、Gradle 任务矩阵、Android flavor 或客户端服务器切换 UI。客户端构建、远程业务验收和自动部署统一读取仓库内的 `gradle/deployment.json`。
 
-## 为什么收敛为单环境
+这并不意味着服务地址被写死。TeamTalk 是开源项目，fork 后可以直接修改这一份配置，将客户端和部署任务指向自己的私有服务器。仓库默认值指向项目维护者的公开实例，仅用于开箱即用和主仓库持续验收。
 
-原多 Profile 系统同时包含 JSON 动态发现、Gradle 任务矩阵、Android product flavor、Desktop JVM 参数选择和 CI 外部 JSON 注入。在项目只运营一个 Demo 时，这些分支没有业务价值，反而会导致：
+## 设计边界
 
-- 本地测试、客户端和部署可能指向不同服务器。
-- 新增功能需要在多套任务和配置中重复维护。
-- “可配置”隐藏了未被真实验证的分支。
+- 只有一个配置入口，避免本地运行、安装包、验收任务和部署任务连接不同服务器。
+- 配置随 fork 进入版本控制，私有发行版能够稳定复现其目标地址。
+- HTTP、TCP 与 SSH 部署主机可以不同；不假设所有端点位于同一台机器。
+- `serverUrl` 支持 `http` 和 `https`，其协议决定服务端是否启用 SSL。
+- 密码、JWT 密钥和证书口令不进入 Git。
 
-如果未来出现真实的私有化产品需求，应以独立发行工程设计，而不是提前在主工程恢复动态 Profile。
+## 配置格式
 
-## 唯一配置
-
-`gradle/profiles/demo.json` 只保留非敏感的构建与部署坐标：
+`gradle/deployment.json` 保存非敏感坐标：
 
 ```json
 {
   "serverUrl": "https://im.virjar.com",
   "tcpAddress": "im.virjar.com:5100",
   "deployHost": "im.virjar.com",
+  "deployPort": 22,
   "deployUser": "root",
   "deployPath": "/opt/teamtalk",
   "sslPort": 443
 }
 ```
 
-`DemoConfig` 在 Gradle 配置阶段严格解析该文件，并注入：
+| 字段 | 含义 |
+|---|---|
+| `serverUrl` | 客户端使用的 HTTP(S) 根地址；协议同时决定部署时是否启用 SSL |
+| `tcpAddress` | 客户端使用的 IM TCP `host:port`，其端口同步到服务端运行配置 |
+| `deployHost` | SSH 部署目标，可以与客户端端点不同 |
+| `deployPort` | SSH 端口，默认 22 |
+| `deployUser` | SSH 用户，默认 `root` |
+| `deployPath` | 服务端安装目录，必须是非根绝对路径 |
+| `sslPort` | HTTPS 监听端口；使用 HTTPS 时须与 `serverUrl` 中的端口一致 |
 
-- Android `BuildConfig`；
-- Desktop 运行与打包 JVM 参数；
-- `deployServerDemo` / `uploadRelease`；
-- `:server:demoTest`。
+`DeploymentConfig` 会在 Gradle 配置阶段严格校验未知字段、URL、端口和路径，然后注入 Android `BuildConfig`、Desktop 运行与打包参数、部署任务和远程验收任务。
 
-密码、JWT 密钥和证书口令位于 `gradle/profiles/demo.secrets`，不进入 Git。
+敏感配置保存在被 Git 忽略的 `gradle/deployment.secrets`。首次部署自动生成；升级时从远端 `conf/env.sh` 恢复。
 
-## 任务
+## 标准任务
 
 | 任务 | 用途 |
 |---|---|
-| `:desktop:runDemo` | 启动连接 Demo 的桌面客户端，开启测试 HTTP 端口 |
-| `:android:assembleDebug` | 构建连接 Demo 的 Debug APK |
-| `:server:demoTest` | 在已部署 Demo 上运行真实业务 E2E |
-| `buildRelease` | 构建 Demo 服务端和当前平台客户端产物 |
-| `deployServerDemo` | 部署/升级 Demo 服务端 |
-| `uploadRelease` | 构建并上传 Demo 客户端产物 |
+| `:desktop:run` | 启动连接已配置服务器的桌面客户端，并开启测试 HTTP 端口 |
+| `:android:assembleDebug` | 构建连接已配置服务器的 Android APK |
+| `:server:acceptanceTest` | 在已配置的真实部署上运行跨服务业务 E2E |
+| `buildRelease` | 构建服务端和当前平台客户端产物 |
+| `deployServer` | 首次部署或升级已配置服务器 |
+| `uploadRelease` | 构建并上传客户端产物 |
 
 ## CI/CD 边界
 
-- `ci.yml`：编译与本地确定性测试，是快速安全网。
-- `demo-smoke.yml`：手动在真实 Demo 上运行业务验收。
-- `release.yml`：构建多平台产物；手动部署时按“部署服务端 → Demo E2E → 上传客户端”顺序执行。
+- `ci.yml`：编译和本地确定性测试。
+- `acceptance.yml`：对 `gradle/deployment.json` 指定的服务器执行业务验收。
+- `release.yml`：构建多平台产物；手动发布按“部署服务端 → 远程验收 → 上传客户端”执行。
 
-配置文件是单一事实源，CI 不接受临时 host/profile JSON，从而保证测试的站点就是客户端实际使用的站点。
+CI 不接受临时主机或外部 JSON 覆盖。fork 项目应修改并提交自己的 `gradle/deployment.json`，使构建产物与验收目标始终一致。

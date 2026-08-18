@@ -39,8 +39,8 @@ class MessageStressTest {
 
     @Test
     fun `dual-end rapid send no loop no loss`() = runBlocking {
-        val user1 = RemoteDemoSupport.registerUser("stress1")
-        val user2 = RemoteDemoSupport.registerUser("stress2")
+        val user1 = RemoteAcceptanceSupport.registerUser("stress1")
+        val user2 = RemoteAcceptanceSupport.registerUser("stress2")
 
         try {
             // 建好友 + 私聊

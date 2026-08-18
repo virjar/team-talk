@@ -11,7 +11,7 @@ TeamTalk Desktop E2E 测试客户端。
     d.input_text("用户名", "alice")
     d.wait_for("会话", timeout=8)
 
-前置：先 ./gradlew :desktop:runDemo 启动 Desktop（内置测试 HTTP 服务）。
+前置：先 ./gradlew :desktop:run 启动 Desktop（内置测试 HTTP 服务）。
 """
 import json
 import os

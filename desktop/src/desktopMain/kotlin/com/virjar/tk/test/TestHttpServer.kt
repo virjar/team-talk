@@ -37,7 +37,7 @@ import javax.imageio.ImageIO
  */
 object TestHttpServer {
 
-    // 编译期常量：dev/demo 构建为 true（启用测试服务），production 为 false（ProGuard 删除整个类）
+    // 编译期常量：开发运行时为 true，发布包通过 ProGuard 删除整个类。
     private const val ENABLED = com.virjar.tk.BuildConfig.TEST_HTTP_SERVER
 
     /** 已注册窗口映射：id → ComposeWindow。主窗口 id="main"，子窗口用 SubScreen 名。 */

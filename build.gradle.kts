@@ -1,4 +1,4 @@
-import profiles.DemoConfig
+import deployment.DeploymentConfig
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform) apply false
@@ -23,12 +23,12 @@ extra.apply {
     set("packageVersion", "1.0.0")
 }
 
-// ── 唯一 Demo 环境 ──
+// ── 单一部署配置 ──
 
-val demoConfigFile = rootProject.file("gradle/profiles/demo.json")
-if (!demoConfigFile.isFile) throw GradleException("Demo config not found: $demoConfigFile")
-val demoConfig = DemoConfig.load(demoConfigFile.readText())
-extra.set("demoConfig", demoConfig)
+val deploymentConfigFile = rootProject.file("gradle/deployment.json")
+if (!deploymentConfigFile.isFile) throw GradleException("Deployment config not found: $deploymentConfigFile")
+val deploymentConfig = DeploymentConfig.load(deploymentConfigFile.readText())
+extra.set("deploymentConfig", deploymentConfig)
 
 // ── 构建信息 ──
 
@@ -56,37 +56,37 @@ subprojects {
 
 tasks.register("buildRelease") {
     group = "release"
-    description = "Build all Demo release artifacts"
+    description = "Build all release artifacts"
     dependsOn(":server:buildServerDist", ":desktop:packageReleaseDistributionForCurrentOS", ":android:assembleRelease")
 }
 
 tasks.register("uploadRelease") {
     group = "deploy"
-    description = "Build and upload Demo client artifacts"
+    description = "Build and upload client artifacts"
     dependsOn("buildRelease")
-    doLast { profiles.uploadArtifacts(rootDir, demoConfig) }
+    doLast { deployment.uploadArtifacts(rootDir, deploymentConfig) }
 }
 
 tasks.register("uploadClientArtifacts") {
     group = "deploy"
-    description = "Upload staged Demo client artifacts (CI use)"
+    description = "Upload staged client artifacts (CI use)"
     doLast {
         val stagingPath = project.findProperty("ARTIFACT_STAGING_DIR")?.toString()
             ?: throw GradleException("ARTIFACT_STAGING_DIR property is required")
         val stagingDir = File(stagingPath)
         if (!stagingDir.isDirectory) throw GradleException("Staging directory does not exist: $stagingPath")
-        profiles.uploadArtifacts(rootDir, demoConfig, stagingDir)
+        deployment.uploadArtifacts(rootDir, deploymentConfig, stagingDir)
     }
 }
 
-tasks.register("deployServerDemo") {
+tasks.register("deployServer") {
     group = "deploy"
-    description = "Build and deploy the Demo server"
+    description = "Build and deploy the server configured by gradle/deployment.json"
     dependsOn(":server:buildServerDist")
     doLast {
-        profiles.deployServer(
+        deployment.deployServer(
             rootDir,
-            demoConfig,
+            deploymentConfig,
             findProperty("sslCert")?.toString(),
             findProperty("sslKey")?.toString(),
         )

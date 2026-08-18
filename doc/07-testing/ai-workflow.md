@@ -7,17 +7,17 @@
 完整业务验收的固定顺序：
 
 ```bash
-./gradlew deployServerDemo      # 服务端有变更时
-./gradlew :server:demoTest      # 真实 Demo 协议/业务闭环
-./gradlew :desktop:runDemo      # 再做用户可见行为验收
+./gradlew deployServer      # 服务端有变更时
+./gradlew :server:acceptanceTest # 真实部署协议/业务闭环
+./gradlew :desktop:run      # 再做用户可见行为验收
 ```
 
 每一次 UI 操作都要遵循“读取语义树 → 单步操作 → 重新读取 → 截图”，不把一串假定状态的操作固化为脚本。
 
 ### 服务端
 
-- demo 站点 `im.virjar.com` 在线
-- TCP 5100 可达：`python3 -c "import socket; s=socket.socket(); s.settimeout(3); s.connect(('im.virjar.com',5100)); print('OK')"`
+- `gradle/deployment.json` 中的 HTTP 与 TCP 端点在线
+- `:server:acceptanceTest` 的 readiness 认证通过
 
 ### Android 真机
 
@@ -40,14 +40,14 @@ python3 -m uiautomator2 init -s <serial>
 
 **APK**：
 ```bash
-./gradlew :android:assembleDebug           # 固定连接 im.virjar.com
+./gradlew :android:assembleDebug           # 固定连接 deployment.json 中的服务器
 adb install -r android/build/outputs/apk/debug/android-debug.apk
 ```
 
 ### Desktop
 
 ```bash
-./gradlew :desktop:runDemo   # 启动 Desktop（内置测试 HTTP 服务 :18080）
+./gradlew :desktop:run   # 启动 Desktop（内置测试 HTTP 服务 :18080）
 ```
 
 ---
@@ -58,7 +58,7 @@ Desktop 应用内置测试 HTTP 服务（端口 18080），所有操作通过 **
 **全程不需要 macOS 辅助功能权限**。
 
 ```bash
-./gradlew :desktop:runDemo           # 启动（含测试 HTTP 服务）
+./gradlew :desktop:run           # 启动（含测试 HTTP 服务）
 curl http://localhost:18080/semantics  # 验证
 ```
 

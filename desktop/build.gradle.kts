@@ -1,11 +1,11 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.gradle.internal.os.OperatingSystem
-import profiles.DemoConfig
+import deployment.DeploymentConfig
 import java.util.jar.JarFile
 import java.util.jar.JarOutputStream
 import java.util.zip.ZipEntry
 
-val demoConfig = rootProject.extra.get("demoConfig") as DemoConfig
+val deploymentConfig = rootProject.extra.get("deploymentConfig") as DeploymentConfig
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
@@ -40,7 +40,7 @@ buildConfig {
     // 构建溯源：每个产物可回答「我是谁、用什么 commit 构建的」
     buildConfigField("GIT_COMMIT_ID", gitCommitId)
     buildConfigField("BUILD_TIME", buildTime)
-    // 测试 HTTP 服务：恒 true（dev/demo 运行含），打包 jar exclude 物理删除 TestHttpServer
+    // 测试 HTTP 服务：开发运行时启用，打包 jar exclude 物理删除 TestHttpServer
     buildConfigField("TEST_HTTP_SERVER", true)
 }
 
@@ -71,12 +71,12 @@ compose.desktop {
             packageName = "TeamTalk"
             packageVersion = rootProject.extra.get("packageVersion") as String
 
-            // Demo 地址固化进安装包 JVM 启动参数。
+            // 部署地址固化进安装包 JVM 启动参数。
             // 运行时 ServerConfig.defaultServerConfig() 读取这些 JVM 属性拿到正确服务端地址，
-            // 注意：是 nativeDistributions 层（打包专用），不影响 runDemo 开发运行任务。
-            jvmArgs.add("-Dteamtalk.server.url=${demoConfig.serverUrl}")
-            jvmArgs.add("-Dteamtalk.tcp.host=${demoConfig.tcpHost}")
-            jvmArgs.add("-Dteamtalk.tcp.port=${demoConfig.tcpPort}")
+            // 注意：是 nativeDistributions 层（打包专用），不影响 run 开发运行任务。
+            jvmArgs.add("-Dteamtalk.server.url=${deploymentConfig.serverUrl}")
+            jvmArgs.add("-Dteamtalk.tcp.host=${deploymentConfig.tcpHost}")
+            jvmArgs.add("-Dteamtalk.tcp.port=${deploymentConfig.tcpPort}")
 
             // 打包前从编译产物移除测试 HTTP 服务相关 class（生产构建不含测试代码）。
             // compileKotlinDesktop 产出后在 runtimeClasspath 里，打包时排除 test 包。
@@ -329,16 +329,15 @@ tasks.register("stripRuntimeFonts") {
     }
 }
 
-tasks.register<JavaExec>("runDemo") {
-    group = "application"
-    description = "Run Desktop against Demo with the test HTTP service"
-    mainClass.set("com.virjar.tk.MainKt")
-    classpath = configurations["desktopRuntimeClasspath"] + kotlin.targets["desktop"].compilations["main"].output.allOutputs
-    jvmArgs = listOf(
-        "-Dteamtalk.server.url=${demoConfig.serverUrl}",
-        "-Dteamtalk.tcp.host=${demoConfig.tcpHost}",
-        "-Dteamtalk.tcp.port=${demoConfig.tcpPort}",
-        "-Dteamtalk.data.dir=${rootProject.file("data/desktop").absolutePath}",
-        "-Dteamtalk.is.dev=true",
-    ) + System.getProperty("teamtalk.theme")?.let { listOf("-Dteamtalk.theme=$it") }.orEmpty()
+tasks.withType<JavaExec>().configureEach {
+    if (name == "run") {
+        description = "Run Desktop against the configured server with the test HTTP service"
+        jvmArgs = listOf(
+            "-Dteamtalk.server.url=${deploymentConfig.serverUrl}",
+            "-Dteamtalk.tcp.host=${deploymentConfig.tcpHost}",
+            "-Dteamtalk.tcp.port=${deploymentConfig.tcpPort}",
+            "-Dteamtalk.data.dir=${rootProject.file("data/desktop").absolutePath}",
+            "-Dteamtalk.is.dev=true",
+        ) + System.getProperty("teamtalk.theme")?.let { listOf("-Dteamtalk.theme=$it") }.orEmpty()
+    }
 }

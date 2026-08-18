@@ -1,4 +1,4 @@
-package profiles
+package deployment
 
 /**
  * 远程主机配置：SSL 证书、systemd 注册、数据库用户管理、部署后健康检查。
@@ -12,7 +12,7 @@ import org.gradle.api.GradleException
 
 fun handleSsl(
     rootDir: File,
-    host: String, user: String, deployPath: String,
+    host: String, user: String, port: Int, deployPath: String,
     sslCert: String, sslKey: String, secrets: Properties
 ) {
     val certFile = File(rootDir, sslCert)
@@ -36,16 +36,16 @@ fun handleSsl(
     if (rc != 0) throw GradleException("Failed to convert PEM to PKCS12")
 
     println("  Uploading SSL certificate ...")
-    localExecSilent("ssh", "-o", "ConnectTimeout=10", "$user@$host", "mkdir -p $deployPath/conf/ssl")
-    localExecSilent("scp", tmpP12.absolutePath, "$user@$host:$deployPath/conf/ssl/teamtalk.p12")
-    localExecSilent("ssh", "-o", "ConnectTimeout=10", "$user@$host", "chmod 600 $deployPath/conf/ssl/teamtalk.p12")
+    localExecSilent("ssh", "-p", port.toString(), "-o", "ConnectTimeout=10", "$user@$host", "mkdir -p $deployPath/conf/ssl")
+    localExecSilent("scp", "-P", port.toString(), tmpP12.absolutePath, "$user@$host:$deployPath/conf/ssl/teamtalk.p12")
+    localExecSilent("ssh", "-p", port.toString(), "-o", "ConnectTimeout=10", "$user@$host", "chmod 600 $deployPath/conf/ssl/teamtalk.p12")
     tmpP12.delete()
     println("  SSL certificate configured")
 }
 
 // ── systemd 注册 ──
 
-fun registerSystemd(host: String, user: String, deployPath: String) {
+fun registerSystemd(host: String, user: String, port: Int, deployPath: String) {
     val svcContent = """
 [Unit]
 Description=TeamTalk Server
@@ -70,9 +70,9 @@ WantedBy=multi-user.target
     tmpSvc.deleteOnExit()
     tmpSvc.writeText(svcContent)
 
-    localExecSilent("scp", tmpSvc.absolutePath, "$user@$host:/tmp/teamtalk.service")
+    localExecSilent("scp", "-P", port.toString(), tmpSvc.absolutePath, "$user@$host:/tmp/teamtalk.service")
     localExecSilent(
-        "ssh", "-o", "ConnectTimeout=10", "$user@$host",
+        "ssh", "-p", port.toString(), "-o", "ConnectTimeout=10", "$user@$host",
         "mv /tmp/teamtalk.service /etc/systemd/system/teamtalk.service"
     )
     tmpSvc.delete()
@@ -81,17 +81,24 @@ WantedBy=multi-user.target
 
 // ── 健康检查 ──
 
-fun healthCheck(host: String, user: String, deployPath: String, sslEnabled: Boolean, httpPort: Int) {
+fun healthCheck(
+    host: String,
+    user: String,
+    port: Int,
+    sslEnabled: Boolean,
+    httpPort: Int,
+    sslPort: Int,
+) {
     println("")
     println("=== Health Check ===")
 
-    val healthProtocol = if (sslEnabled) "https://127.0.0.1:443" else "http://127.0.0.1:$httpPort"
+    val healthProtocol = if (sslEnabled) "https://127.0.0.1:$sslPort" else "http://127.0.0.1:$httpPort"
     val healthFlag = if (sslEnabled) "-skf" else "-sf"
 
     print("  Waiting for TeamTalk Server ...")
     var retries = 0
     while (retries < 15) {
-        if (remoteCheck(host, user, "curl $healthFlag $healthProtocol/health &>/dev/null")) {
+        if (remoteCheck(host, user, "curl $healthFlag $healthProtocol/health &>/dev/null", port)) {
             println(" OK")
             break
         }
@@ -101,12 +108,16 @@ fun healthCheck(host: String, user: String, deployPath: String, sslEnabled: Bool
     }
     if (retries == 15) {
         println(" TIMEOUT")
-        throw GradleException("SERVICE FAILED TO START - check logs: ssh $host 'journalctl -u teamtalk -n 50'")
+        throw GradleException(
+            "SERVICE FAILED TO START - check logs: " +
+                "ssh -p $port $user@$host 'journalctl -u teamtalk -n 50'"
+        )
     }
 
     val healthOutput = remoteOutput(
         host, user,
-        "curl $healthFlag --max-time 15 -o- -w '\\n%{http_code}' $healthProtocol/health 2>/dev/null"
+        "curl $healthFlag --max-time 15 -o- -w '\\n%{http_code}' $healthProtocol/health 2>/dev/null",
+        port
     )
 
     if (healthOutput == null) {
@@ -115,8 +126,6 @@ fun healthCheck(host: String, user: String, deployPath: String, sslEnabled: Bool
 
     val lines = healthOutput.lines()
     val httpStatus = lines.lastOrNull()?.toIntOrNull()
-    val body = if (lines.size > 1) lines.dropLast(1).joinToString("\n") else healthOutput
-
     val allUp = httpStatus == 200
 
     if (allUp) {
@@ -135,11 +144,12 @@ fun healthCheck(host: String, user: String, deployPath: String, sslEnabled: Bool
 
 // ── 确保数据库用户存在 ──
 
-fun ensureDbUser(host: String, user: String, deployPath: String, dbPassword: String) {
+fun ensureDbUser(host: String, user: String, port: Int, deployPath: String, dbPassword: String) {
     println("  Ensuring database user 'teamtalk' is ready ...")
     val containerName = remoteOutput(
         host, user,
-        "cd $deployPath && ${dockerComposeCmd()} ps -q postgres 2>/dev/null | head -1"
+        "cd $deployPath && ${dockerComposeCmd()} ps -q postgres 2>/dev/null | head -1",
+        port
     )?.trim()
 
     if (containerName.isNullOrBlank()) {
@@ -149,7 +159,8 @@ fun ensureDbUser(host: String, user: String, deployPath: String, dbPassword: Str
 
     val fullContainerName = remoteOutput(
         host, user,
-        "docker inspect --format '{{.Name}}' $containerName 2>/dev/null"
+        "docker inspect --format '{{.Name}}' $containerName 2>/dev/null",
+        port
     )?.trim()?.removePrefix("/") ?: containerName
 
     // POSTGRES_USER=teamtalk 已创建超级用户，只需确保密码正确
@@ -168,7 +179,8 @@ fun ensureDbUser(host: String, user: String, deployPath: String, dbPassword: Str
                 "docker exec $fullContainerName psql -U postgres -d teamtalk -c " +
                 "\"GRANT ALL ON SCHEMA public TO teamtalk; " +
                 "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO teamtalk; " +
-                "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO teamtalk; \""
+                "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO teamtalk; \"",
+        port
     )
     println("  Database user 'teamtalk' ready")
 }

@@ -25,9 +25,9 @@
 |------|------|
 | [architecture.md](00-overview/architecture.md) | 系统组成/三条数据通道/发消息全链路/三级状态/依赖图 |
 | [design-philosophy.md](00-overview/design-philosophy.md) | 10 条设计决策及其"为什么"（模型确定性/Owner-Driven/本地优先/水位线/契约优先…） |
-| [build-system.md](00-overview/build-system.md) | Profile 构建体系/多渠道/CI |
+| [build-system.md](00-overview/build-system.md) | 单一部署配置/私有化 fork/CI |
 | [getting-started/develop.md](00-overview/getting-started/develop.md) | 开发环境 |
-| [getting-started/deploy.md](00-overview/getting-started/deploy.md) | 部署指南（deployServerDemo 一键） |
+| [getting-started/deploy.md](00-overview/getting-started/deploy.md) | 部署指南（deployServer 一键） |
 | [architecture-comparison.md](00-overview/architecture-comparison.md) | vs Signal/Telegram/开源 IM |
 
 ### 01-protocol — 协议规格（wire 级）

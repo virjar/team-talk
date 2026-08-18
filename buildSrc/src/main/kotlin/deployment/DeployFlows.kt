@@ -1,4 +1,4 @@
-package profiles
+package deployment
 
 /**
  * 服务端部署流程入口：
@@ -16,16 +16,15 @@ import org.gradle.api.GradleException
 
 fun deployNew(
     rootDir: File,
-    host: String, user: String, deployPath: String,
+    host: String, user: String, deployPort: Int, deployPath: String,
     secrets: Properties, sslEnabled: Boolean, sslPort: String,
     sslCert: String?, sslKey: String?,
-    profileName: String,
     httpPort: Int, tcpPort: String?,
-    effectiveDefaultHttpPort: Int
 ) {
     remoteExec(
         host, user,
-        "mkdir -p $deployPath/{data/pgdata,data/rocksdb,data/lucene-index,data/file-store/rocksdb,data/file-store/files,data/file-store/tmp,data/logs,conf/ssl,conf,static/downloads}"
+        "mkdir -p $deployPath/{data/pgdata,data/rocksdb,data/lucene-index,data/file-store/rocksdb,data/file-store/files,data/file-store/tmp,data/logs,conf/ssl,conf,static/downloads}",
+        deployPort
     )
 
     println("  Uploading server distribution ...")
@@ -34,7 +33,7 @@ fun deployNew(
         "rsync", "-avz", "--delete",
         "--exclude=data", "--exclude=logs", "--exclude=env.sh",
         "--exclude=docker-compose.yml", "--exclude=conf/ssl", "--exclude=conf/env.sh",
-        "-e", "ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new",
+        "-e", "ssh -p $deployPort -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new",
         "$distDir/", "$user@$host:$deployPath/"
     )
 
@@ -44,15 +43,13 @@ fun deployNew(
         sslEnabled,
         sslPort,
         deployPath,
-        profileName,
         httpPort,
         tcpPort,
-        effectiveDefaultHttpPort
     )
-    uploadEnvSh(envShContent, host, user, deployPath)
+    uploadEnvSh(envShContent, host, user, deployPort, deployPath)
 
     if (sslEnabled && sslCert != null && sslKey != null) {
-        handleSsl(rootDir, host, user, deployPath, sslCert, sslKey, secrets)
+        handleSsl(rootDir, host, user, deployPort, deployPath, sslCert, sslKey, secrets)
     }
 
     println("  Configuring Docker infrastructure ...")
@@ -78,7 +75,7 @@ services:
     val tmpDc = File.createTempFile("teamtalk-dc-", ".yml")
     tmpDc.deleteOnExit()
     tmpDc.writeText(dcContent)
-    localExecSilent("scp", tmpDc.absolutePath, "$user@$host:$deployPath/docker-compose.yml")
+    localExecSilent("scp", "-P", deployPort.toString(), tmpDc.absolutePath, "$user@$host:$deployPath/docker-compose.yml")
     tmpDc.delete()
 
     println("  Starting PostgreSQL ...")
@@ -87,7 +84,8 @@ services:
         "cd $deployPath && " +
                 "set -a && source conf/env.sh && set +a && " +
                 "export DB_PASSWORD=\"\$DATABASE_PASSWORD\" && " +
-                "${dockerComposeCmd()} up -d"
+                "${dockerComposeCmd()} up -d",
+        deployPort
     )
 
     print("  Waiting for PostgreSQL ...")
@@ -97,7 +95,8 @@ services:
         if (remoteCheck(
                 host, user,
                 "docker exec ${pgContainer}-postgres-1 pg_isready -U teamtalk &>/dev/null || " +
-                        "docker exec teamtalk-postgres-1 pg_isready -U teamtalk &>/dev/null"
+                        "docker exec teamtalk-postgres-1 pg_isready -U teamtalk &>/dev/null",
+                deployPort
             )
         ) {
             println(" OK")
@@ -109,13 +108,13 @@ services:
     }
     if (retries == 30) throw GradleException("PostgreSQL startup timeout")
 
-    ensureDbUser(host, user, deployPath, secrets.getProperty("DATABASE_PASSWORD"))
+    ensureDbUser(host, user, deployPort, deployPath, secrets.getProperty("DATABASE_PASSWORD"))
 
     println("  Registering systemd service ...")
-    registerSystemd(host, user, deployPath)
+    registerSystemd(host, user, deployPort, deployPath)
 
     println("  Starting TeamTalk Server ...")
-    remoteExec(host, user, "systemctl daemon-reload && systemctl enable teamtalk && systemctl start teamtalk")
+    remoteExec(host, user, "systemctl daemon-reload && systemctl enable teamtalk && systemctl start teamtalk", deployPort)
 
     println("")
     println("========================================")
@@ -123,11 +122,11 @@ services:
     println("========================================")
     println("")
     println("  Deploy path:     $deployPath")
-    println("  Secrets saved:   gradle/profiles/${profileName}.secrets")
+    println("  Secrets saved:   gradle/deployment.secrets")
     if (sslEnabled) {
         println("  SSL:             enabled (port $sslPort)")
     } else {
-        println("  SSL:             disabled (HTTP port 8080)")
+        println("  SSL:             disabled (HTTP port $httpPort)")
     }
     println("")
 }
@@ -136,24 +135,22 @@ services:
 
 fun deployUpgrade(
     rootDir: File,
-    host: String, user: String, deployPath: String,
+    host: String, user: String, deployPort: Int, deployPath: String,
     secrets: Properties, sslEnabled: Boolean, sslPort: String,
     sslCert: String?, sslKey: String?,
-    profileName: String,
     httpPort: Int, tcpPort: String?,
-    effectiveDefaultHttpPort: Int
 ) {
-    if (remoteCheck(host, user, "systemctl is-active --quiet teamtalk 2>/dev/null")) {
+    if (remoteCheck(host, user, "systemctl is-active --quiet teamtalk 2>/dev/null", deployPort)) {
         println("  Stopping TeamTalk Server ...")
-        remoteExec(host, user, "systemctl stop teamtalk || true")
+        remoteExec(host, user, "systemctl stop teamtalk || true", deployPort)
     }
 
     println("  Cleaning residual processes ...")
-    remoteExec(host, user, "pkill -f 'com.virjar.tk.ApplicationKt' 2>/dev/null || true")
+    remoteExec(host, user, "pkill -f 'com.virjar.tk.ApplicationKt' 2>/dev/null || true", deployPort)
     Thread.sleep(1000)
 
     println("  Backing up current version ...")
-    remoteExec(host, user, "rm -rf ${deployPath}.bak && cp -r $deployPath ${deployPath}.bak || true")
+    remoteExec(host, user, "rm -rf ${deployPath}.bak && cp -r $deployPath ${deployPath}.bak || true", deployPort)
 
     println("  Uploading new version ...")
     val distDir = File(rootDir, "server/build/install/teamtalk-server")
@@ -162,43 +159,41 @@ fun deployUpgrade(
         "--exclude=data", "--exclude=logs", "--exclude=env.sh",
         "--exclude=docker-compose.yml", "--exclude=.pid",
         "--exclude=conf/ssl", "--exclude=conf/env.sh",
-        "-e", "ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new",
+        "-e", "ssh -p $deployPort -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new",
         "$distDir/", "$user@$host:$deployPath/"
     )
 
     println("  Checking env.sh location ...")
-    val hasNewEnvSh = remoteCheck(host, user, "test -f $deployPath/conf/env.sh")
-    val hasOldEnvSh = remoteCheck(host, user, "test -f $deployPath/env.sh")
+    val hasNewEnvSh = remoteCheck(host, user, "test -f $deployPath/conf/env.sh", deployPort)
+    val hasOldEnvSh = remoteCheck(host, user, "test -f $deployPath/env.sh", deployPort)
     if (!hasNewEnvSh && hasOldEnvSh) {
         println("  Migrating env.sh -> conf/env.sh ...")
-        remoteExec(host, user, "cp $deployPath/env.sh $deployPath/conf/env.sh && chmod 600 $deployPath/conf/env.sh")
+        remoteExec(host, user, "cp $deployPath/env.sh $deployPath/conf/env.sh && chmod 600 $deployPath/conf/env.sh", deployPort)
     }
 
-    println("  Syncing port configuration from profile ...")
+    println("  Syncing port configuration ...")
     val envShContent = generateEnvShContent(
         secrets,
         sslEnabled,
         sslPort,
         deployPath,
-        profileName,
         httpPort,
         tcpPort,
-        effectiveDefaultHttpPort
     )
-    uploadEnvSh(envShContent, host, user, deployPath)
+    uploadEnvSh(envShContent, host, user, deployPort, deployPath)
 
-    ensureDbUser(host, user, deployPath, secrets.getProperty("DATABASE_PASSWORD"))
+    ensureDbUser(host, user, deployPort, deployPath, secrets.getProperty("DATABASE_PASSWORD"))
 
     if (sslEnabled && sslCert != null && sslKey != null) {
         println("  Updating SSL certificate ...")
-        handleSsl(rootDir, host, user, deployPath, sslCert, sslKey, secrets)
+        handleSsl(rootDir, host, user, deployPort, deployPath, sslCert, sslKey, secrets)
     }
 
     println("  Re-registering systemd service ...")
-    registerSystemd(host, user, deployPath)
+    registerSystemd(host, user, deployPort, deployPath)
 
     println("  Starting TeamTalk Server ...")
-    remoteExec(host, user, "systemctl daemon-reload && systemctl enable teamtalk && systemctl start teamtalk")
+    remoteExec(host, user, "systemctl daemon-reload && systemctl enable teamtalk && systemctl start teamtalk", deployPort)
 
     println("")
     println("========================================")

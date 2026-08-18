@@ -30,8 +30,8 @@ class AuthRulesTest {
 
     @Test
     fun `username too long is rejected`() {
-        // 完整 UUID 拼前缀会超长（这是之前 demo 测试踩过的坑）
-        val tooLong = "zcode-demo-" + "a".repeat(50)
+        // 完整 UUID 拼较长前缀会超过服务端限制
+        val tooLong = "integration-test-" + "a".repeat(50)
         assertEquals("用户名长度不能超过${AuthRules.USERNAME_MAX_LENGTH}位", AuthRules.validateUsername(tooLong))
     }
 

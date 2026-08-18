@@ -19,7 +19,7 @@ AI 驱动的交互式 E2E 测试辅助模块。固化测试客户端代码，避
 
 ```bash
 # 1. 启动 Desktop（内置测试 HTTP 服务 :18080）
-./gradlew :desktop:runDemo &
+./gradlew :desktop:run &
 
 # 2. 用固化模块驱动测试
 cd tools/e2e
@@ -85,5 +85,5 @@ peer.send_msg(info.username, chat_id, 'hello from B')
 
 ## 与测试指南的关系
 
-`doc/07-testing/` 定义 Demo 业务验收、AI 交互式驱动与 check list。
+`doc/07-testing/` 定义真实部署业务验收、AI 交互式驱动与 check list。
 本模块是执行工具——AI 用这些客户端做决策式操作，而非跑死脚本。

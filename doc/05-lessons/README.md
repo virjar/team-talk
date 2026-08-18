@@ -83,8 +83,8 @@
 | F8 | "文档与代码矛盾"错误裁决为删代码 | 2026-08 误删 GENERIC(99)：它是协议演进策略（01-protocol §9）的 wire 级预留入口，空枚举是刻意候选区；删除破坏前向兼容（fromCode 抛异常→游标卡死）。遇到矛盾先判断哪边是设计意图——wire 协议的空位预留 ≠ 应用层过早实现 |
 | F12 | refresh 认证响应漏 username/name（login/register 走 issueTokens 有带，handleRefresh 手写响应漏字段）| 客户端自动登录后 UserSession 身份为空，头像/昵称全退化为 uid/'?'。服务端补齐 + ReconnectE2eTest 断言"第二次认证必须携带 username"锁定。教训：**同一响应结构多处构造时，一个字段增删要 grep 全部构造点** |
 | F16 | TestHttpServer /screenshot 截到被遮挡窗口后的内容 | Robot.createScreenCapture 按窗口 bounds 截屏区域而非窗口内容；截前必须 toFront+requestFocus。曾导致视觉验收拿别应用的画面当 UI 反馈 |
-| F14 | 视觉改动不截图验收，"代码看起来对" | UI 迭代必须走截图闭环（runDemo + TestHttpServer + TestPeer 造数据），设计规格先写进 doc/04-ui-design 再实现 |
-| F17 | 三方 Compose 库 JVM 字节码版本绑架运行时（mikepenz markdown 0.40.x 用 Java 21 编译，class 65） | **编译通过 ≠ 运行兼容**：依赖变更必须 runDemo 实跑首屏。对策：渲染层只用 JetBrains 官方纯 Kotlin parser 自研（org.jetbrains:markdown 零传递依赖），UI 库引入前先查 class file version |
+| F14 | 视觉改动不截图验收，"代码看起来对" | UI 迭代必须走截图闭环（:desktop:run + TestHttpServer + TestPeer 造数据），设计规格先写进 doc/04-ui-design 再实现 |
+| F17 | 三方 Compose 库 JVM 字节码版本绑架运行时（mikepenz markdown 0.40.x 用 Java 21 编译，class 65） | **编译通过 ≠ 运行兼容**：依赖变更必须用 :desktop:run 实跑首屏。对策：渲染层只用 JetBrains 官方纯 Kotlin parser 自研（org.jetbrains:markdown 零传递依赖），UI 库引入前先查 class file version |
 | F23 | 客户端 PacketCodec 装配后从未放开 4KB 未认证帧限：认证后收到的合法大包（离线事件补发 sync_events 批量 NOTIFY，实测 105KB）被 CorruptedFrameException 当攻击帧拒绝，断连→重连→再收→死循环（重连风暴）。围栏设计只做了服务端（ImAgent 放开），客户端镜像漏掉 | 围栏类防御必须两端对称实现；ImClient.handleAuthResponse 认证成功后调大 maxPayloadLimit=AUTHED_LIMIT；LargePayloadE2eTest 锁定（断线累积→重连→大包补发→连接稳定） |
 | F24 | FileRoutes 缩略图生成放在 fileStore.store 之后：store 会消费（move）上传临时文件，随后 processImage 抛 FileNotFoundException 且被静默 catch 吞掉——表现为"响应永远无缩略图"且零日志 | 依赖"临时文件生命周期"的加工必须发生在消费它的调用之前；诊断期 catch 块禁止静默（至少 warn 日志）——本例靠打开 catch 日志 5 分钟定位 |
 | F26 | refresh token 一次一换，但客户端只在首认证（session==null）时持久化新 token：重连后再认证（token 已轮换）不落盘，进程退出时磁盘上是已作废的旧 token——表现为「每次启动都 invalid 或 expired refresh token」，而服务端 TokenStore（RocksDB）与 TTL（90 天）都无辜 | 一次一换（rotation）语义下，持久化必须在【每次】换发处执行，与「只做一次」的初始化逻辑严格分离 |

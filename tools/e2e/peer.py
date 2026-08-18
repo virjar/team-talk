@@ -18,13 +18,13 @@ TestPeer 是 Kotlin 测试（server 模块），扮演账号 B 与 UI 操作的�
     # B 给 A 发消息（需要 chatId）
     peer.send_msg(info.username, chat_id, "hello from B")
 
-前置：demo 站点 im.virjar.com 在线，TCP 5100 可达。
+前置：gradle/deployment.json 指定的服务器在线，TCP 端点可达。
 """
 import os
 import re
 import subprocess
 
-# TestPeer 默认密码（RemoteDemoSupport.registerUser 固定用 password123）
+# TestPeer 默认密码（RemoteAcceptanceSupport.registerUser 固定用 password123）
 DEFAULT_PASSWORD = "password123"
 
 
@@ -50,7 +50,7 @@ class TestPeer:
     def __init__(self, project_root, remote=True):
         """
         project_root: team-talk 项目根目录（含 settings.gradle.kts）。
-        remote: 是否连远程 demo（-Dtk.e2e.remote=true），默认 True。
+        remote: 是否连接远程部署（-Dtk.e2e.remote=true），默认 True。
         """
         self.project_root = os.path.abspath(project_root)
         self.remote = remote

@@ -71,7 +71,7 @@
 
 **决策**：没有实际调用方的功能不写（曾经删除过零注册方的 GenericDispatcher 扩展机制）；遇到"要不要加个开关"默认不加。
 
-**为什么**：N 个布尔开关 = 2^N 种未测组合，分散在 BuildConfig/系统属性/运行时参数里，出 bug 时甚至无法确认产物用了什么组合。配置一律走 Profile 模板体系（[构建系统](build-system.md)），构建产物内嵌 git commit + build time 可溯源。
+**为什么**：N 个布尔开关 = 2^N 种未测组合，分散在 BuildConfig/系统属性/运行时参数里，出 bug 时甚至无法确认产物用了什么组合。服务器坐标统一走[单一部署配置](build-system.md)，fork 修改这份配置完成私有化；构建产物内嵌 git commit + build time 可溯源。
 
 ## 8. 已读/未读 = 可合并的单调水位线
 

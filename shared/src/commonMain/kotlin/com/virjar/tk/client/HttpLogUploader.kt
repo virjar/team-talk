@@ -10,7 +10,7 @@ import kotlinx.coroutines.*
  *
  * 触发条件：
  * - fault 日志 → debounce 3s 批量上传
- * - 定时（5min）批量上传 trace（Demo 版本）
+ * - 定时（5min）批量上传 trace（开发构建）
  * - 用户手动触发（正式版本反馈功能）
  *
  * 失败兜底：落本地 pending 文件，下次启动重试。
@@ -37,7 +37,7 @@ class HttpLogUploader(
         // 启动时优先上传上次崩溃日志
         scope.launch { crashDumper.uploadPending(serverUrl, deviceId) }
 
-        // 定时上传（Demo: 全量 trace）
+        // 定时上传（开发构建：全量 trace）
         timerJob = scope.launch {
             while (isActive) {
                 delay(intervalMs)

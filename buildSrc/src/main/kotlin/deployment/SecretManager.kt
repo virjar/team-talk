@@ -1,4 +1,4 @@
-package profiles
+package deployment
 
 /**
  * Secret 管理：加载、生成、保存、从远程提取敏感配置。
@@ -16,11 +16,11 @@ fun extractSecretsFromRemote(
     secretsFile: File,
     host: String,
     user: String,
+    port: Int,
     deployPath: String,
-    profileName: String
 ): Properties? {
-    val envContent = remoteOutput(host, user, "cat $deployPath/conf/env.sh 2>/dev/null")
-        ?: remoteOutput(host, user, "cat $deployPath/env.sh 2>/dev/null")
+    val envContent = remoteOutput(host, user, "cat $deployPath/conf/env.sh 2>/dev/null", port)
+        ?: remoteOutput(host, user, "cat $deployPath/env.sh 2>/dev/null", port)
 
     if (envContent != null) {
         val secrets = Properties()
@@ -30,7 +30,7 @@ fun extractSecretsFromRemote(
             secrets.setProperty(match.groupValues[1], match.groupValues[2])
         }
         if (secrets.isNotEmpty()) {
-            saveSecrets(secretsFile, secrets, profileName)
+            saveSecrets(secretsFile, secrets)
             println("  Extracted secrets from remote env.sh, saved to ${secretsFile.name}")
             return secrets
         }
@@ -45,8 +45,8 @@ fun loadOrGenerateSecrets(
     secretsFile: File,
     host: String,
     user: String,
+    port: Int,
     deployPath: String,
-    profileName: String
 ): Properties {
     val secrets = Properties()
 
@@ -58,7 +58,7 @@ fun loadOrGenerateSecrets(
     }
 
     // 2. 尝试从远程 conf/env.sh 提取（首次部署但服务器已有配置的场景）
-    val remote = extractSecretsFromRemote(secretsFile, host, user, deployPath, profileName)
+    val remote = extractSecretsFromRemote(secretsFile, host, user, port, deployPath)
     if (remote != null) return remote
 
     // 3. 全新部署：生成随机密码
@@ -68,15 +68,15 @@ fun loadOrGenerateSecrets(
     secrets.setProperty("SSL_KEYSTORE_PASSWORD", genPassword())
     secrets.setProperty("SSL_PRIVATE_KEY_PASSWORD", genPassword())
 
-    saveSecrets(secretsFile, secrets, profileName)
+    saveSecrets(secretsFile, secrets)
     println("  Generated new secrets, saved to ${secretsFile.name}")
     return secrets
 }
 
-fun saveSecrets(secretsFile: File, secrets: Properties, profileName: String) {
+fun saveSecrets(secretsFile: File, secrets: Properties) {
     secretsFile.parentFile.mkdirs()
     secretsFile.bufferedWriter().use { w ->
-        w.write("# TeamTalk Secrets - profile: $profileName\n")
+        w.write("# TeamTalk deployment secrets\n")
         w.write("# 此文件包含敏感信息，已加入 .gitignore\n\n")
         w.write("# Database\n")
         w.write("DATABASE_PASSWORD=${secrets.getProperty("DATABASE_PASSWORD")}\n\n")

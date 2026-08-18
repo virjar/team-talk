@@ -2,6 +2,7 @@
   "serverUrl": "https://im.virjar.com",
   "tcpAddress": "im.virjar.com:5100",
   "deployHost": "im.virjar.com",
+  "deployPort": 22,
   "deployUser": "root",
   "deployPath": "/opt/teamtalk",
   "sslPort": 443

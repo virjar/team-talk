@@ -94,6 +94,6 @@ rememberAuthController（Compose 认证包装，Auto-login → createSession →
 | Repository | MessageRepositoryTest 等（FakeRpcInvoker 脚本化响应） | shared commonTest |
 | ViewModel | ConversationViewModelTest（FakeLocalCache，纯 JVM） | app commonTest |
 | 全链路 | **ImBot 对 bot**（对真实服务器） | shared commonTest（`-Dtk.botTest.host` 开关） |
-| 服务端 E2E | RemoteDemoE2e（真实 Demo 业务闭环） | `./gradlew :server:demoTest` |
+| 服务端 E2E | RemoteAcceptanceTest（真实部署业务闭环） | `./gradlew :server:acceptanceTest` |
 
 详见 [06-testing](../07-testing/README.md)。

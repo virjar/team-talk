@@ -1,4 +1,4 @@
-package profiles
+package deployment
 
 /**
  * SSH 远程执行和本地进程工具函数。
@@ -7,9 +7,9 @@ package profiles
  */
 
 /** 通过 SSH 在远程主机上执行命令，实时打印输出，返回退出码。 */
-fun remoteExec(host: String, user: String, cmd: String): Int {
+fun remoteExec(host: String, user: String, cmd: String, port: Int = 22): Int {
     val pb = ProcessBuilder(
-        "ssh", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new",
+        "ssh", "-p", port.toString(), "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new",
         "$user@$host", cmd
     ).redirectErrorStream(true)
     val proc = pb.start()
@@ -18,9 +18,9 @@ fun remoteExec(host: String, user: String, cmd: String): Int {
 }
 
 /** 通过 SSH 在远程主机上执行命令，仅返回是否成功（退出码 == 0）。 */
-fun remoteCheck(host: String, user: String, cmd: String): Boolean {
+fun remoteCheck(host: String, user: String, cmd: String, port: Int = 22): Boolean {
     val pb = ProcessBuilder(
-        "ssh", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new",
+        "ssh", "-p", port.toString(), "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new",
         "$user@$host", cmd
     ).redirectErrorStream(true)
     val proc = pb.start()
@@ -29,9 +29,9 @@ fun remoteCheck(host: String, user: String, cmd: String): Boolean {
 }
 
 /** 通过 SSH 在远程主机上执行命令，成功时返回标准输出文本，失败返回 null。 */
-fun remoteOutput(host: String, user: String, cmd: String): String? {
+fun remoteOutput(host: String, user: String, cmd: String, port: Int = 22): String? {
     val pb = ProcessBuilder(
-        "ssh", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new",
+        "ssh", "-p", port.toString(), "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new",
         "$user@$host", cmd
     ).redirectErrorStream(true)
     val proc = pb.start()

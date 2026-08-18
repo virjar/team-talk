@@ -1,4 +1,4 @@
-name: Build, Deploy & Release Demo
+name: Build, Deploy & Release
 
 on:
   workflow_dispatch:
@@ -110,7 +110,7 @@ jobs:
           retention-days: 7
 
   deploy:
-    name: Deploy and Verify Demo
+    name: Deploy and Verify
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     needs: [server, desktop-linux, desktop-windows, desktop-macos-arm64, desktop-macos-x86_64, android]
@@ -124,14 +124,14 @@ jobs:
       - uses: webfactory/ssh-agent@v0.9.1
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
-      - name: Deploy Demo server
-        run: ./gradlew deployServerDemo
-      - name: Run Demo business acceptance
-        run: ./gradlew :server:demoTest
+      - name: Deploy server
+        run: ./gradlew deployServer
+      - name: Run business acceptance
+        run: ./gradlew :server:acceptanceTest
       - uses: actions/download-artifact@v4
         with:
           path: client-artifacts
-      - name: Upload Demo clients
+      - name: Upload clients
         run: ./gradlew uploadClientArtifacts -PARTIFACT_STAGING_DIR="$GITHUB_WORKSPACE/client-artifacts"
 
   release:

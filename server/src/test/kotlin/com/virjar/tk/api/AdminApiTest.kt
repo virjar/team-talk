@@ -7,7 +7,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * 管理后台鉴权器单元测试（HTTP 路由层集成在 demo 实测覆盖）。
+ * 管理后台鉴权器单元测试（HTTP 路由层由远程业务验收覆盖）。
  */
 class AdminApiTest {
 

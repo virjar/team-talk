@@ -102,8 +102,8 @@ TeamTalk/
 ├── desktop/       # Desktop 应用 — ComposeWindow 入口、三栏布局、测试服务
 ├── doc/           # 详细文档（7大模块多级目录）
 ├── tools/e2e/     # E2E 测试工具（TestHttpServer 客户端、TestPeer 对端脚本）
-├── buildSrc/      # Demo 配置解析与部署逻辑
-├── gradle/profiles/ # 唯一 Demo 配置；secrets 不入 Git
+├── buildSrc/      # 单一部署配置解析与部署逻辑
+├── gradle/deployment.json # 客户端、验收和部署共享的非敏感坐标
 └── docker-compose.yml  # PostgreSQL 开发环境
 ```
 
@@ -118,14 +118,14 @@ TeamTalk/
 ### 启动开发环境
 
 ```bash
-# 客户端始终连接 Demo，并开启语义测试端口
-./gradlew :desktop:runDemo
+# 客户端连接 deployment.json 指定的服务器，并开启语义测试端口
+./gradlew :desktop:run
 
 # 编译检查
 ./gradlew :desktop:compileKotlinDesktop
 
 # 真实业务验收
-./gradlew :server:demoTest
+./gradlew :server:acceptanceTest
 ```
 
 详细的开发环境搭建请阅读 [doc/00-overview/getting-started/develop.md](doc/00-overview/getting-started/develop.md)。
@@ -135,10 +135,10 @@ TeamTalk/
 ```bash
 ./gradlew :desktop:compileKotlinDesktop  # 编译检查（最快）
 ./gradlew :server:run                     # 本地服务端调试
-./gradlew :desktop:runDemo                # Desktop 连接 Demo，含测试 HTTP 服务
+./gradlew :desktop:run                    # Desktop 连接已配置服务器，含测试 HTTP 服务
 ./gradlew :server:test                    # 本地确定性回归
-./gradlew :server:demoTest                # Demo 真实业务 E2E
-./gradlew deployServerDemo                # 部署服务端到 Demo
+./gradlew :server:acceptanceTest            # 真实部署业务 E2E
+./gradlew deployServer                      # 部署服务端
 ```
 
 ## 架构概览
@@ -195,16 +195,16 @@ TeamTalk/
 
 ## 部署
 
-所有客户端、部署与远程验收共享唯一 Demo 配置：
+所有客户端、部署与远程验收共享 `gradle/deployment.json`。主仓库提供公开实例默认值；开源 fork 修改该文件即可构建并部署自己的私有化版本，HTTP、TCP 与 SSH 主机可以分别配置：
 
 ```bash
 # 升级（自动检测已有部署，保留数据和配置）
-./gradlew deployServerDemo
+./gradlew deployServer
 
 # 部署后的真实业务验收
-./gradlew :server:demoTest
+./gradlew :server:acceptanceTest
 
-# 构建并上传 Demo 客户端安装包
+# 构建并上传客户端安装包
 ./gradlew uploadRelease
 ```
 
@@ -244,7 +244,7 @@ TeamTalk/
 | [doc/03-client/](doc/03-client/) | 客户端架构（本地优先/状态合并/文件树） |
 | [doc/04-shared/](doc/04-shared/) | 共享 SDK（模型/协议/TkLogger） |
 | [doc/05-logging/](doc/05-logging/) | 日志体系（trace/fault/HTTP上传/Crash） |
-| [doc/07-testing/](doc/07-testing/) | E2E 测试（Demo/TestHttpServer/testTag/用例） |
+| [doc/07-testing/](doc/07-testing/) | E2E 测试（真实部署/TestHttpServer/testTag/用例） |
 | [doc/07-conventions/](doc/07-conventions/) | 编码规范（6大约束） |
 | [doc/00-overview/architecture-comparison.md](doc/00-overview/architecture-comparison.md) | 与 Signal/Telegram 等横向对比 |
 | [doc/00-overview/getting-started/develop.md](doc/00-overview/getting-started/develop.md) | 开发环境搭建 |

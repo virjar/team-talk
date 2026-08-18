@@ -13,11 +13,11 @@ import java.util.UUID
 /**
  * 跨端编解码一致性 smoke 测试。
  *
- * 用真实客户端 Repository（:app）构造 RPC payload，发送到真实 demo 服务端，
+ * 用真实客户端 Repository（:app）构造 RPC payload，发送到真实部署的服务端，
  * 验证服务端能正确解析（不返回 500/FatalCodec）。
  *
  * **这是防止 getHistory 2字段vs3字段 类 bug 复发的核心防线**：
- * 之前 RemoteDemoE2eTest 没覆盖 getHistory，导致客户端 2 字段 + 服务端 3 字段
+ * 之前 RemoteAcceptanceTest 没覆盖 getHistory，导致客户端 2 字段 + 服务端 3 字段
  * 的不一致潜伏到 UI 自动化测试才暴露。本测试覆盖所有 Repository 的全部 RPC 方法。
  *
  * 判断标准：status != 500 即通过（400 业务错误也 OK，说明编解码正确只是业务拒绝）。
@@ -29,8 +29,8 @@ import java.util.UUID
 @EnabledIfSystemProperty(named = "tk.e2e.remote", matches = "true")
 class RpcCodecConsistencyTest {
 
-    private lateinit var user1: RemoteDemoSupport.Session
-    private lateinit var user2: RemoteDemoSupport.Session
+    private lateinit var user1: RemoteAcceptanceSupport.Session
+    private lateinit var user2: RemoteAcceptanceSupport.Session
     private lateinit var chatId: String
     private lateinit var groupChatId: String
 
@@ -47,9 +47,9 @@ class RpcCodecConsistencyTest {
 
     @BeforeAll
     fun setup() = runBlocking {
-        println("[RpcCodecConsistency] target = ${RemoteDemoSupport.host}:${RemoteDemoSupport.port}")
-        user1 = RemoteDemoSupport.registerUser("codec1")
-        user2 = RemoteDemoSupport.registerUser("codec2")
+        println("[RpcCodecConsistency] target = ${RemoteAcceptanceSupport.host}:${RemoteAcceptanceSupport.port}")
+        user1 = RemoteAcceptanceSupport.registerUser("codec1")
+        user2 = RemoteAcceptanceSupport.registerUser("codec2")
         // 建好友 + 私聊，为需要 chatId 的 RPC 提供前置
         val applyResp = user1.invoke("contact", 2, // APPLY
             com.virjar.tk.protocol.ProtoCodec.encodePayload { writeString(user2.uid); writeString("hi") })

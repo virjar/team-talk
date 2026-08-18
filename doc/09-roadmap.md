@@ -15,7 +15,7 @@
 
 | 项 | 说明 | 状态 |
 |----|------|------|
-| ~~CLI/AI 员工基础设施~~ | ✅ 2026-08 四期收官（doc/11-cli-agent）：tt-agent 守护进程（REST 22 端点+凭据持久化+环形缓冲）/ tt-cli 24 命令 / systemd 服务化（demo 部署实测）/ tt-mcp（12 工具 MCP server）/ CliPeer e2e（测试路径=产品路径） | ✅ |
+| ~~CLI/AI 员工基础设施~~ | ✅ 2026-08 四期收官（doc/11-cli-agent）：tt-agent 守护进程（REST 22 端点+凭据持久化+环形缓冲）/ tt-cli 24 命令 / systemd 服务化（Linux 部署实测）/ tt-mcp（12 工具 MCP server）/ CliPeer e2e（测试路径=产品路径） | ✅ |
 | AI 员工对话框架 | ImBot/agent 之上：消息→LLM→回复循环抽象（限速/会话白名单/人格配置/多 bot 编排）。基础设施已就绪，LLM 接入即可 | 💡 |
 | Webhook/HTTP 桥 | agent REST 已覆盖收发（外部系统直接调 REST 即为 HTTP 桥）；缺 webhook 推送订阅 | 💡 |
 | 群机器人管理 | bot 入群/踢出/权限 API 化（group-create/invite 已有，缺踢出/角色） | 💡 |
@@ -48,7 +48,7 @@
 | ~~桌面端导航独立重构（替换手搓 currentScreen 枚举，AppState 遗留清理）~~ | ✅ 2026-08：SubScreen 参数化 + DesktopNav（面板栈/子窗口局部栈）+ SubScreenContent 单渲染器；平行参数字段与死字段清除 |
 | ~~Desktop 子窗口 ESC 关闭不可靠 / TestHttpServer 窗口语义 owner 泄漏~~ | ✅ 2026-08：AWT KeyEventDispatcher 层拦截（F31 根因）+ 窗口注册 onDispose 兜底注销 |
 | F13 长按消息弹系统文本菜单（MessageBodyRenderer Text 被系统选择拦截 onLongClick） | 📋 |
-| F15 Desktop Profile 源码级隔离 | 📋 |
+| ~~Desktop 开发测试代码与发布包源码级隔离~~ | ✅（发布打包时物理移除 TestHttpServer） |
 | Android E2E 全流程 T01-T34 剩余用例 | 📋 |
 | ~~服务端视频缩略图生成~~ ✅（2026-08：javacv JNI 抽帧+元数据，图片 Java2D；客户端缓存体系+气泡缩略图数据源+画廊按需加载落地） | ✅ |
 | ~~拖拽发送~~ ✅（用户实测通过：拖图即占位+进度+送达；语音/文件同链路） | ✅ |

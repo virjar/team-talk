@@ -26,28 +26,28 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty
 import java.util.UUID
 
 /**
- * 远程 demo 服务器协议级 E2E 冒烟测试。
+ * 已部署服务器的协议级 E2E 业务验收。
  *
- * 通过 `./gradlew :server:demoTest` 执行；该任务会注入唯一 Demo 配置。
+ * 通过 `./gradlew :server:acceptanceTest` 执行；该任务会注入仓库的部署配置。
  * 普通 `:server:test` 不启用本类，避免本地安全网依赖外部站点。
  * 用真实 [com.virjar.tk.client.ImClient] + [com.virjar.tk.client.RpcClient] 直连
  * `im.virjar.com:5100`（明文 TCP，无需 TLS），覆盖核心 IM 流程：
  * 注册 / 登录 / RPC / 好友 / 建群 / 发消息 / 订阅投递。
  *
  * 与 [ProtocolE2eTest] 互补：后者连 in-process 服务端（CI 常规 job），
- * 本类连真实部署的 demo（验证端到端可达性，含真实 PG/RocksDB/SSL 部署）。
+ * 本类连接真实部署（验证端到端可达性，含真实 PG/RocksDB/文件存储）。
  *
  * 标准运行：
  * ```
- * ./gradlew :server:demoTest
+ * ./gradlew :server:acceptanceTest
  * ```
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @EnabledIfSystemProperty(named = "tk.e2e.remote", matches = "true")
-class RemoteDemoE2eTest {
+class RemoteAcceptanceTest {
 
-    private suspend fun upload(session: RemoteDemoSupport.Session, bytes: ByteArray, fileName: String): Attachment {
-        val baseUrl = System.getProperty("tk.e2e.server") ?: "https://${RemoteDemoSupport.host}"
+    private suspend fun upload(session: RemoteAcceptanceSupport.Session, bytes: ByteArray, fileName: String): Attachment {
+        val baseUrl = System.getProperty("tk.e2e.server") ?: "https://${RemoteAcceptanceSupport.host}"
         return FileRepository(baseUrl, session.userSession.accessToken)
             .upload(bytes, fileName, "application/octet-stream")
             .getOrThrow()
@@ -55,16 +55,16 @@ class RemoteDemoE2eTest {
 
     @BeforeAll
     fun setup() = runBlocking {
-        println("[RemoteDemoE2e] target = ${RemoteDemoSupport.host}:${RemoteDemoSupport.port}")
-        // 发布门禁先做一次真实认证。若 Demo 不可达或协议版本落后，
+        println("[RemoteAcceptance] target = ${RemoteAcceptanceSupport.host}:${RemoteAcceptanceSupport.port}")
+        // 发布门禁先做一次真实认证。若服务器不可达或协议版本落后，
         // 在所有业务 case 前立即终止，避免产生数十个没有诊断价值的超时。
         try {
             withTimeout(8_000) {
-                RemoteDemoSupport.registerUser("readiness").close()
+                RemoteAcceptanceSupport.registerUser("readiness").close()
             }
         } catch (cause: Exception) {
             throw AssertionError(
-                "Demo readiness failed: ${RemoteDemoSupport.host}:${RemoteDemoSupport.port}, " +
+                "Deployment readiness failed: ${RemoteAcceptanceSupport.host}:${RemoteAcceptanceSupport.port}, " +
                     "client protocol=${PacketCodec.PROTOCOL_VERSION}. " +
                     "Deploy the matching server before running business acceptance.",
                 cause,
@@ -74,14 +74,14 @@ class RemoteDemoE2eTest {
 
     @AfterAll
     fun teardown() {
-        RemoteDemoSupport.shutdown()
+        RemoteAcceptanceSupport.shutdown()
     }
 
     // ── 认证流程 ──
 
     @Test
     fun `register via TCP and receive uid`() = runBlocking {
-        val session = RemoteDemoSupport.registerUser("reg")
+        val session = RemoteAcceptanceSupport.registerUser("reg")
         assertTrue(session.uid.isNotEmpty(), "注册后应拿到 uid")
         session.close()
     }
@@ -89,30 +89,30 @@ class RemoteDemoE2eTest {
     @Test
     fun `login via TCP after register`() = runBlocking {
         // 动态注册一个账号，再用同账号登录
-        val username = "zd-login-" + UUID.randomUUID().toString().take(8)
+        val username = "e2e-login-" + UUID.randomUUID().toString().take(8)
         val regPassword = "pass123"
-        val regSession = RemoteDemoSupport.createSession()
-        regSession.imClient.register(username, regPassword, "DemoUser", "e2e-device", "E2E")
+        val regSession = RemoteAcceptanceSupport.createSession()
+        regSession.imClient.register(username, regPassword, "TestUser", "e2e-device", "E2E")
         withTimeout(10_000) { regSession.imClient.state.first { it == ConnectionState.AUTHENTICATED } }
         val uid = regSession.uid
         regSession.close()
 
         // 用新连接登录
-        val loginSession = RemoteDemoSupport.loginUser(username, regPassword)
+        val loginSession = RemoteAcceptanceSupport.loginUser(username, regPassword)
         assertEquals(uid, loginSession.uid, "登录后 uid 应与注册时一致")
         loginSession.close()
     }
 
     @Test
     fun `login rejects wrong password`() = runBlocking {
-        val username = "zd-wrongpw-" + UUID.randomUUID().toString().take(8)
-        val regSession = RemoteDemoSupport.createSession()
-        regSession.imClient.register(username, "pass123", "DemoUser", "e2e-device", "E2E")
+        val username = "e2e-wrongpw-" + UUID.randomUUID().toString().take(8)
+        val regSession = RemoteAcceptanceSupport.createSession()
+        regSession.imClient.register(username, "pass123", "TestUser", "e2e-device", "E2E")
         withTimeout(10_000) { regSession.imClient.state.first { it == ConnectionState.AUTHENTICATED } }
         regSession.close()
 
         // 错误密码应认证失败
-        val loginSession = RemoteDemoSupport.createSession()
+        val loginSession = RemoteAcceptanceSupport.createSession()
         loginSession.imClient.login(username, "wrong_password", "e2e-device", "E2E")
         withTimeout(10_000) { loginSession.imClient.state.first { it == ConnectionState.AUTH_FAILED } }
         loginSession.close()
@@ -122,7 +122,7 @@ class RemoteDemoE2eTest {
 
     @Test
     fun `get own profile via RPC`() = runBlocking {
-        val session = RemoteDemoSupport.registerUser("profile")
+        val session = RemoteAcceptanceSupport.registerUser("profile")
         val resp = session.invoke("user", UserRpcContract.M_GET_PROFILE,
             ProtoCodec.encodePayload { writeString(null) })
         assertEquals(0, resp.status, "GET_PROFILE 应成功")
@@ -133,7 +133,7 @@ class RemoteDemoE2eTest {
 
     @Test
     fun `list conversations via RPC`() = runBlocking {
-        val session = RemoteDemoSupport.registerUser("conv")
+        val session = RemoteAcceptanceSupport.registerUser("conv")
         val resp = session.invoke("conversation", ConversationRpcContract.M_LIST)
         assertEquals(0, resp.status, "会话列表 RPC 应成功")
         session.close()
@@ -141,7 +141,7 @@ class RemoteDemoE2eTest {
 
     @Test
     fun `list devices via RPC`() = runBlocking {
-        val session = RemoteDemoSupport.registerUser("device")
+        val session = RemoteAcceptanceSupport.registerUser("device")
         val resp = session.invoke("device", DeviceRpcContract.M_LIST_DEVICES)
         assertEquals(0, resp.status, "设备列表 RPC 应成功")
         session.close()
@@ -151,8 +151,8 @@ class RemoteDemoE2eTest {
 
     @Test
     fun `contact apply and accept via RPC`() = runBlocking {
-        val user1 = RemoteDemoSupport.registerUser("contact1")
-        val user2 = RemoteDemoSupport.registerUser("contact2")
+        val user1 = RemoteAcceptanceSupport.registerUser("contact1")
+        val user2 = RemoteAcceptanceSupport.registerUser("contact2")
 
         // user1 申请加 user2
         val applyResp = user1.invoke("contact", ContactRpcContract.M_APPLY,
@@ -178,12 +178,12 @@ class RemoteDemoE2eTest {
 
     @Test
     fun `create group chat via RPC`() = runBlocking {
-        val user1 = RemoteDemoSupport.registerUser("grp1")
-        val user2 = RemoteDemoSupport.registerUser("grp2")
+        val user1 = RemoteAcceptanceSupport.registerUser("grp1")
+        val user2 = RemoteAcceptanceSupport.registerUser("grp2")
 
         val chatResp = user1.invoke("chat", ChatRpcContract.M_CREATE_GROUP,
             ProtoCodec.encodePayload {
-                writeString("DemoGroup")
+                writeString("TestGroup")
                 writeString(null) // avatar
                 writeVarInt(1)    // member count
                 writeString(user2.uid)
@@ -191,7 +191,7 @@ class RemoteDemoE2eTest {
         assertEquals(0, chatResp.status, "建群应成功")
         val chat = ProtoCodec.decode(Chat, chatResp.payload!!)
         assertEquals(2, chat.chatType, "chatType 应为 group")
-        assertEquals("DemoGroup", chat.name)
+        assertEquals("TestGroup", chat.name)
 
         user1.close()
         user2.close()
@@ -443,7 +443,7 @@ class RemoteDemoE2eTest {
 
     @Test
     fun `get and update profile`() = runBlocking {
-        val session = RemoteDemoSupport.registerUser("prof-up")
+        val session = RemoteAcceptanceSupport.registerUser("prof-up")
         try {
             // GET_PROFILE
             val getResp = session.invoke("user", UserRpcContract.M_GET_PROFILE,
@@ -471,9 +471,9 @@ class RemoteDemoE2eTest {
 
     @Test
     fun `group message broadcasts to all members`() = runBlocking {
-        val user1 = RemoteDemoSupport.registerUser("grpbc-1")
-        val user2 = RemoteDemoSupport.registerUser("grpbc-2")
-        val user3 = RemoteDemoSupport.registerUser("grpbc-3")
+        val user1 = RemoteAcceptanceSupport.registerUser("grpbc-1")
+        val user2 = RemoteAcceptanceSupport.registerUser("grpbc-2")
+        val user3 = RemoteAcceptanceSupport.registerUser("grpbc-3")
         try {
             // 建 3 人群（user1 建群，加 user2 + user3）
             val chatResp = user1.invoke("chat", ChatRpcContract.M_CREATE_GROUP,
@@ -561,9 +561,9 @@ class RemoteDemoE2eTest {
 
     // ── helper：建立好友关系 + 创建私聊（消息类测试前置） ──
 
-    private suspend fun createFriendPersonalChat(tag: String): Triple<RemoteDemoSupport.Session, RemoteDemoSupport.Session, Chat> {
-        val user1 = RemoteDemoSupport.registerUser("$tag-1")
-        val user2 = RemoteDemoSupport.registerUser("$tag-2")
+    private suspend fun createFriendPersonalChat(tag: String): Triple<RemoteAcceptanceSupport.Session, RemoteAcceptanceSupport.Session, Chat> {
+        val user1 = RemoteAcceptanceSupport.registerUser("$tag-1")
+        val user2 = RemoteAcceptanceSupport.registerUser("$tag-2")
 
         // 申请 + 接受好友
         val applyResp = user1.invoke("contact", ContactRpcContract.M_APPLY,

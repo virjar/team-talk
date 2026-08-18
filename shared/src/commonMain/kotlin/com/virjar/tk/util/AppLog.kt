@@ -23,7 +23,7 @@ object AppLog {
     /** fault 触发上传回调（由 HttpLogUploader 注册） */
     internal var onFault: (() -> Unit)? = null
 
-    /** 业务流程日志。Demo 版本自动上传，正式版本仅本地。 */
+    /** 业务流程日志。开发构建自动上传，发布构建仅保存在本地。 */
     fun trace(tag: String, msg: String) {
         platformLog("trace", tag, msg, null)
         traceBuffer?.append("trace", tag, msg)

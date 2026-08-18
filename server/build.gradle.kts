@@ -1,4 +1,4 @@
-import profiles.DemoConfig
+import deployment.DeploymentConfig
 
 plugins {
     alias(libs.plugins.kotlin.jvm)
@@ -91,7 +91,7 @@ tasks.test {
     onlyIf { !project.hasProperty("skipTests") }
     useJUnitPlatform()
 
-    // 远程 demo E2E 开关透传：默认关闭，仅 -Dtk.e2e.remote=true 时启用 RemoteDemoE2eTest。
+    // 远程 E2E 开关透传：默认关闭，仅 -Dtk.e2e.remote=true 时启用远程测试。
     // Gradle 默认不把命令行 -D 转发给测试 JVM，需显式桥接。
     listOf("tk.e2e.remote", "tk.e2e.host", "tk.e2e.port", "tk.e2e.server", "peer.action", "peer.arg", "peer.username", "peer.password", "peer.file", "peer.url", "peer.server").forEach { key ->
         System.getProperty(key)?.let { systemProperty(key, it) }
@@ -99,22 +99,22 @@ tasks.test {
 }
 
 /**
- * 真实业务验收的唯一入口：始终对接 gradle/profiles/demo.json 指定的 Demo 站点。
+ * 真实业务验收的唯一入口：始终对接 gradle/deployment.json 指定的服务器。
  * 本地 test 保留为快速的协议、存储与算法回归，不代替该任务。
  */
-val demoConfig = rootProject.extra.get("demoConfig") as DemoConfig
-tasks.register<Test>("demoTest") {
+val deploymentConfig = rootProject.extra.get("deploymentConfig") as DeploymentConfig
+tasks.register<Test>("acceptanceTest") {
     group = "verification"
-    description = "Run business E2E tests against the deployed Demo site"
+    description = "Run business E2E tests against the configured deployment"
     dependsOn("testClasses")
     testClassesDirs = sourceSets["test"].output.classesDirs
     classpath = sourceSets["test"].runtimeClasspath
     useJUnitPlatform()
-    filter { includeTestsMatching("com.virjar.tk.e2e.RemoteDemoE2eTest") }
+    filter { includeTestsMatching("com.virjar.tk.e2e.RemoteAcceptanceTest") }
     systemProperty("tk.e2e.remote", "true")
-    systemProperty("tk.e2e.host", demoConfig.tcpHost)
-    systemProperty("tk.e2e.port", demoConfig.tcpPort)
-    systemProperty("tk.e2e.server", demoConfig.serverUrl)
+    systemProperty("tk.e2e.host", deploymentConfig.tcpHost)
+    systemProperty("tk.e2e.port", deploymentConfig.tcpPort)
+    systemProperty("tk.e2e.server", deploymentConfig.serverUrl)
     outputs.upToDateWhen { false }
 }
 

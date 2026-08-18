@@ -21,10 +21,10 @@
 ## 工作流（截图迭代闭环）
 
 ```
-改代码 → ./gradlew :desktop:runDemo → curl :18080/screenshot → 目视对比规格 → 修 → 循环
+改代码 → ./gradlew :desktop:run → curl :18080/screenshot → 目视对比规格 → 修 → 循环
 ```
 
-- TestHttpServer（仅 dev/demo 构建）提供语义树/点击/输入/截图 HTTP API，详见 [07-testing/ai-workflow.md](../07-testing/ai-workflow.md)。
+- TestHttpServer 在 Desktop 开发运行时提供语义树/点击/输入/截图 HTTP API，发布包会物理移除，详见 [07-testing/ai-workflow.md](../07-testing/ai-workflow.md)。
 - 每轮视觉迭代必须以截图为准，不接受"代码看起来对"。
 - 暗色模式在亮色验收后进行，两套截图都入 `screenshots/`（命名 `light-<页面>.png` / `dark-<页面>.png`）。
 

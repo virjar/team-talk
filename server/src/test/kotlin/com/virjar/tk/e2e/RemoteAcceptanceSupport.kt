@@ -11,25 +11,25 @@ import kotlinx.coroutines.flow.first
 import java.util.UUID
 
 /**
- * 远程 demo 服务器 E2E 测试工具。
+ * 远程部署 E2E 测试工具。
  *
  * 与 [TcpE2eEnvironment] 的区别：不启动任何 in-process 服务端（PG/Koin/TcpServer），
- * 只用真实客户端代码（[ImClient] + [RpcClient]）直连远程 demo 服务器。
+ * 只用真实客户端代码（[ImClient] + [RpcClient]）直连已部署服务器。
  *
- * 连接目标通过系统属性配置（默认指向官方 demo 站点）：
+ * 连接目标通过系统属性配置（公开任务从 `gradle/deployment.json` 注入）：
  *   - `tk.e2e.host`（默认 `im.virjar.com`）
  *   - `tk.e2e.port`（默认 `5100`）
  *
- * 测试账号每次动态注册（用户名前缀 `zd-`，总长度严格控制在 3..50 之间——
- * 服务端 UserService.require(username.length in 3..50)），避免污染 demo 常驻数据。
- * 整个开关由 [RemoteDemoE2eTest] 上的 `@EnabledIfSystemProperty("tk.e2e.remote")` 控制。
+ * 测试账号每次动态注册（用户名前缀 `e2e-`，总长度严格控制在 3..50 之间——
+ * 服务端 UserService.require(username.length in 3..50)），便于识别和清理测试数据。
+ * 整个开关由 [RemoteAcceptanceTest] 上的 `@EnabledIfSystemProperty("tk.e2e.remote")` 控制。
  */
-object RemoteDemoSupport {
+object RemoteAcceptanceSupport {
 
-    /** 远程 demo 主机。 */
+    /** 远程服务器主机。 */
     val host: String = System.getProperty("tk.e2e.host") ?: "im.virjar.com"
 
-    /** 远程 demo TCP 端口。 */
+    /** 远程服务器 TCP 端口。 */
     val port: Int = (System.getProperty("tk.e2e.port") ?: "5100").toInt()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -89,13 +89,13 @@ object RemoteDemoSupport {
         }
     }
 
-    /** 建立一条到远程 demo 的已认证会话（注册一个新账号）。 */
+    /** 建立一条到远程部署的已认证会话（注册一个新账号）。 */
     suspend fun registerUser(suffix: String): Session {
         val session = createSession()
-        // 用户名：zd-<suffix>-<8位hex>，总长度远小于 50（服务端限制 3..50）。
-        // 用短随机串而非完整 UUID，避免 zcode-demo-<uuid>(51字符) 超长被拒。
-        val username = "zd-$suffix-" + UUID.randomUUID().toString().take(8)
-        session.imClient.register(username, "password123", "DemoUser $suffix", "e2e-device", "E2E")
+        // 用户名：e2e-<suffix>-<8位hex>，总长度远小于 50（服务端限制 3..50）。
+        // 用短随机串而非完整 UUID，避免测试前缀 + UUID 超过 50 字符被拒。
+        val username = "e2e-$suffix-" + UUID.randomUUID().toString().take(8)
+        session.imClient.register(username, "password123", "TestUser $suffix", "e2e-device", "E2E")
         withTimeout(10_000) { session.imClient.state.first { it == ConnectionState.AUTHENTICATED } }
         session.registeredUsername = username
         return session

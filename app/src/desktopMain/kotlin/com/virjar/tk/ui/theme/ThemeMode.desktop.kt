@@ -6,7 +6,7 @@ import java.util.prefs.Preferences
  * Desktop 主题持久化（java.util.prefs）。
  *
  * dev 覆盖参数 `-Dteamtalk.theme=dark|light`：不落盘、优先于持久值，
- * 供暗色走查截图（runDemo 无法直接切系统外观时强制主题）。
+ * 供暗色走查截图（:desktop:run 无法直接切系统外观时强制主题）。
  */
 internal actual fun loadThemeMode(): ThemeMode {
     System.getProperty("teamtalk.theme")?.lowercase()?.let {

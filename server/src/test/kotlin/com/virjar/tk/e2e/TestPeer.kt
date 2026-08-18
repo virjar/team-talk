@@ -28,7 +28,7 @@ import java.util.UUID
  * 对端测试角色（账号 B）—— 真机 UI 测试的协同脚本。
  *
  * 真机 UI 操作账号 A，本脚本扮演账号 B（注册/登录/收发消息/接受好友），
- * 覆盖好友/消息/群等双账户场景。复用 [RemoteDemoSupport] 连真实 demo。
+ * 覆盖好友/消息/群等双账户场景。复用 [RemoteAcceptanceSupport] 连接真实部署。
  *
  * 使用方式见 doc/android-test-guide.md「对端脚本」章节。
  *
@@ -64,10 +64,10 @@ class TestPeer {
     @org.junit.jupiter.api.Test
     fun registerPeer() = runBlocking {
         val suffix = System.getProperty("peer.arg") ?: "peer"
-        val session = RemoteDemoSupport.registerUser(suffix)
-        // registerUser 内部注册的 username 是 "zd-$suffix-<8hex>" 格式，
+        val session = RemoteAcceptanceSupport.registerUser(suffix)
+        // registerUser 内部注册的 username 是 "e2e-$suffix-<8hex>" 格式，
         // 这里必须输出真实 username，否则后续 loginUser 用错误的 username 登录会失败。
-        val username = session.registeredUsername ?: "zd-$suffix-UNKNOWN"
+        val username = session.registeredUsername ?: "e2e-$suffix-UNKNOWN"
         println("===PEER_REGISTERED===")
         println("username=$username")
         println("uid=${session.uid}")
@@ -83,7 +83,7 @@ class TestPeer {
     fun printToken() = runBlocking {
         val username = System.getProperty("peer.username") ?: return@runBlocking
         val password = System.getProperty("peer.password") ?: "password123"
-        val session = RemoteDemoSupport.loginUser(username, password)
+        val session = RemoteAcceptanceSupport.loginUser(username, password)
         println("===TOKEN=== ${session.userSession.accessToken}")
         session.close()
     }
@@ -94,7 +94,7 @@ class TestPeer {
             println("[TestPeer] whoami 缺少 username"); return@runBlocking
         }
         val password = System.getProperty("peer.password") ?: "password123"
-        val session = RemoteDemoSupport.loginUser(username, password)
+        val session = RemoteAcceptanceSupport.loginUser(username, password)
         println("===WHOAMI=== username=$username uid=${session.uid}")
         session.close()
     }
@@ -105,7 +105,7 @@ class TestPeer {
         val token = System.getProperty("peer.arg") ?: run {
             println("[TestPeer] accept 缺少 token"); return@runBlocking
         }
-        val session = RemoteDemoSupport.loginUser(username, "password123")
+        val session = RemoteAcceptanceSupport.loginUser(username, "password123")
         val resp = session.invoke("contact", ContactRpcContract.M_ACCEPT,
             ProtoCodec.encodePayload { writeString(token) })
         println("===ACCEPT ${if (resp.status == 0) "SUCCESS" else "FAILED"}=== status=${resp.status}")
@@ -126,7 +126,7 @@ class TestPeer {
         val username = System.getProperty("peer.username") ?: run {
             println("[TestPeer] acceptLatest 缺少 username"); return@runBlocking
         }
-        val session = RemoteDemoSupport.loginUser(username, "password123")
+        val session = RemoteAcceptanceSupport.loginUser(username, "password123")
         val listResp = session.invoke("contact", ContactRpcContract.M_LIST_APPLIES)
         val listPayload = listResp.payload
         if (listResp.status != 0 || listPayload == null) {
@@ -154,7 +154,7 @@ class TestPeer {
     fun createPersonalChat() = runBlocking {
         val username = System.getProperty("peer.username") ?: return@runBlocking
         val targetUid = System.getProperty("peer.arg") ?: return@runBlocking
-        val session = RemoteDemoSupport.loginUser(username, "password123")
+        val session = RemoteAcceptanceSupport.loginUser(username, "password123")
         val resp = session.invoke("chat", ChatRpcContract.M_CREATE_PERSONAL,
             ProtoCodec.encodePayload { writeString(targetUid) })
         val payload = resp.payload
@@ -183,7 +183,7 @@ class TestPeer {
             println("[TestPeer] setup 缺少 arg (aUid:groupName)"); return@runBlocking
         }
         val (aUid, groupName) = arg.split(":", limit = 2).let { it[0] to it.getOrElse(1) { "测试群" } }
-        val session = RemoteDemoSupport.loginUser(username, "password123")
+        val session = RemoteAcceptanceSupport.loginUser(username, "password123")
 
         // 1. B 建群拉 A
         val groupResp = session.invoke("chat", ChatRpcContract.M_CREATE_GROUP,
@@ -226,7 +226,7 @@ class TestPeer {
             println("[TestPeer] sendMsg 缺少 arg (chatId:text)"); return@runBlocking
         }
         val (chatId, text) = arg.split(":", limit = 2).let { it[0] to it.getOrElse(1) { "hello from B" } }
-        val session = RemoteDemoSupport.loginUser(username, "password123")
+        val session = RemoteAcceptanceSupport.loginUser(username, "password123")
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
             messageType = MessageType.TEXT.code, timestamp = System.currentTimeMillis(),
             senderUid = session.uid, body = TextBody(text))
@@ -247,7 +247,7 @@ class TestPeer {
         val file = File(System.getProperty("peer.file") ?: return@runBlocking)
         if (!file.exists()) { println("[TestPeer] file not found: ${file.absolutePath}"); return@runBlocking }
 
-        val session = RemoteDemoSupport.loginUser(username, "password123")
+        val session = RemoteAcceptanceSupport.loginUser(username, "password123")
         val attachment = uploadFile(file, session.userSession.accessToken)
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
             messageType = MessageType.FILE.code, timestamp = System.currentTimeMillis(),
@@ -270,7 +270,7 @@ class TestPeer {
         val targetUid = System.getProperty("peer.arg") ?: run {
             println("[TestPeer] recvCheck 缺少 arg (targetUid)"); return@runBlocking
         }
-        val session = RemoteDemoSupport.loginUser(username, "password123")
+        val session = RemoteAcceptanceSupport.loginUser(username, "password123")
         // 列出会话（ConversationService.LIST，非 ChatMethod）
         val listResp = session.invoke("conversation", ConversationRpcContract.M_LIST)
         val listPayload = listResp.payload
@@ -311,7 +311,7 @@ class TestPeer {
             println("[TestPeer] sendMsgTo 缺少 arg (targetUid:text)"); return@runBlocking
         }
         val (targetUid, text) = arg.split(":", limit = 2).let { it[0] to it.getOrElse(1) { "hello from B" } }
-        val session = RemoteDemoSupport.loginUser(username, "password123")
+        val session = RemoteAcceptanceSupport.loginUser(username, "password123")
 
         // 创建私聊
         val pcResp = session.invoke("chat", ChatRpcContract.M_CREATE_PERSONAL,
@@ -450,7 +450,7 @@ class TestPeer {
         val file = File(System.getProperty("peer.file") ?: return@runBlocking)
         if (!file.exists()) { println("[TestPeer] file not found: ${file.absolutePath}"); return@runBlocking }
 
-        val session = RemoteDemoSupport.loginUser(username, "password123")
+        val session = RemoteAcceptanceSupport.loginUser(username, "password123")
         val upload = uploadFileMeta(file, session.userSession.accessToken, "image/png")
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
             messageType = MessageType.IMAGE.code, timestamp = System.currentTimeMillis(),
@@ -468,7 +468,7 @@ class TestPeer {
     fun sendCardAsB() = runBlocking {
         val username = System.getProperty("peer.username") ?: return@runBlocking
         val chatId = System.getProperty("peer.arg") ?: return@runBlocking
-        val session = RemoteDemoSupport.loginUser(username, "password123")
+        val session = RemoteAcceptanceSupport.loginUser(username, "password123")
         val card = com.virjar.tk.body.CardPayload(
             title = "构建通知",
             blocks = listOf(
@@ -495,7 +495,7 @@ class TestPeer {
         val file = File(System.getProperty("peer.file") ?: return@runBlocking)
         if (!file.exists()) { println("[TestPeer] file not found: ${file.absolutePath}"); return@runBlocking }
 
-        val session = RemoteDemoSupport.loginUser(username, "password123")
+        val session = RemoteAcceptanceSupport.loginUser(username, "password123")
         val attachment = uploadFile(file, session.userSession.accessToken, "audio/aac")
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
             messageType = MessageType.VOICE.code, timestamp = System.currentTimeMillis(),
@@ -516,7 +516,7 @@ class TestPeer {
         val file = File(System.getProperty("peer.file") ?: return@runBlocking)
         if (!file.exists()) { println("[TestPeer] file not found: ${file.absolutePath}"); return@runBlocking }
 
-        val session = RemoteDemoSupport.loginUser(username, "password123")
+        val session = RemoteAcceptanceSupport.loginUser(username, "password123")
         val upload = uploadFileMeta(file, session.userSession.accessToken, "video/mp4")
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
             messageType = MessageType.VIDEO.code, timestamp = System.currentTimeMillis(),

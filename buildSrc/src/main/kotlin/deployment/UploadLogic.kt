@@ -1,4 +1,4 @@
-package profiles
+package deployment
 
 /**
  * 客户端产物上传逻辑。
@@ -15,31 +15,33 @@ import kotlin.collections.iterator
  */
 fun uploadArtifacts(
     rootDir: File,
-    demo: DemoConfig,
+    config: DeploymentConfig,
     stagingDir: File? = null
 ) {
-    val host = demo.deployHost
-    val user = demo.deployUser
-    val path = demo.deployPath
+    val host = config.deployHost
+    val user = config.deployUser
+    val port = config.deployPort
+    val path = config.deployPath
 
     val remoteDir = "$path/static/downloads"
     println("Uploading to $user@$host:$remoteDir ...")
 
-    remoteExec(host, user, "mkdir -p $remoteDir")
+    remoteExec(host, user, "mkdir -p $remoteDir", port)
 
     if (stagingDir != null && stagingDir.exists()) {
-        uploadFromStaging(stagingDir, host, user, remoteDir)
+        uploadFromStaging(stagingDir, host, user, port, remoteDir)
     } else {
-        uploadFromBuildDir(rootDir, host, user, remoteDir)
+        uploadFromBuildDir(rootDir, host, user, port, remoteDir)
     }
 
-    println("Upload complete. Download page: https://$host/")
+    println("Upload complete. Download page: ${config.serverUrl}")
 }
 
 private fun uploadFromStaging(
     stagingDir: File,
     host: String,
     user: String,
+    port: Int,
     remoteDir: String
 ) {
     val artifacts = mapOf(
@@ -64,7 +66,7 @@ private fun uploadFromStaging(
 
         if (file != null) {
             println("  Uploading ${file.name} as $remoteName ...")
-            localExecSilent("scp", file.absolutePath, "$user@$host:$remoteDir/$remoteName")
+            localExecSilent("scp", "-P", port.toString(), file.absolutePath, "$user@$host:$remoteDir/$remoteName")
         } else {
             println("  Skipping $remoteName (no matching file in $dirName)")
         }
@@ -75,6 +77,7 @@ private fun uploadFromBuildDir(
     rootDir: File,
     host: String,
     user: String,
+    port: Int,
     remoteDir: String
 ) {
     val desktopRename = mapOf(
@@ -88,7 +91,7 @@ private fun uploadFromBuildDir(
             .forEach { pkg ->
                 val remoteName = desktopRename[pkg.extension] ?: pkg.name
                 println("  Uploading ${pkg.name} as $remoteName ...")
-                localExecSilent("scp", pkg.absolutePath, "$user@$host:$remoteDir/$remoteName")
+                localExecSilent("scp", "-P", port.toString(), pkg.absolutePath, "$user@$host:$remoteDir/$remoteName")
             }
 
         val dmgs = desktopDir.walkTopDown().filter { it.isFile && it.extension == "dmg" }.toList()
@@ -99,7 +102,7 @@ private fun uploadFromBuildDir(
             }
             val remoteName = "TeamTalk-macos-$arch.dmg"
             println("  Uploading ${dmg.name} as $remoteName ...")
-            localExecSilent("scp", dmg.absolutePath, "$user@$host:$remoteDir/$remoteName")
+            localExecSilent("scp", "-P", port.toString(), dmg.absolutePath, "$user@$host:$remoteDir/$remoteName")
         }
     }
 
@@ -110,7 +113,7 @@ private fun uploadFromBuildDir(
             .firstOrNull()
         if (apk != null) {
             println("  Uploading ${apk.name} ...")
-            localExecSilent("scp", apk.absolutePath, "$user@$host:$remoteDir/TeamTalk-android.apk")
+            localExecSilent("scp", "-P", port.toString(), apk.absolutePath, "$user@$host:$remoteDir/TeamTalk-android.apk")
         }
     }
 }
@@ -120,37 +123,37 @@ private fun uploadFromBuildDir(
  */
 fun deployServer(
     rootDir: File,
-    demo: DemoConfig,
+    config: DeploymentConfig,
     sslCert: String?,
     sslKey: String?
 ) {
-    val host = demo.deployHost
-    val user = demo.deployUser
-    val deployPath = demo.deployPath
-    val sslEnabled = true
-    val sslPort = demo.sslPort.toString()
-    val tcpPort = demo.tcpPort.toString()
+    val host = config.deployHost
+    val user = config.deployUser
+    val deployPort = config.deployPort
+    val deployPath = config.deployPath
+    val sslEnabled = config.sslEnabled
+    val sslPort = config.sslPort.toString()
+    val tcpPort = config.tcpPort.toString()
 
-    val url = demo.serverUrl
-    val port = extractHttpPort(url)
-    val effectiveDefault = effectiveDefaultHttpPort(url)
+    val url = config.serverUrl
+    val httpPort = if (sslEnabled) 8080 else extractHttpPort(url)
 
     println("")
-    println("=== TeamTalk Demo Deploy ===")
-    println("  Target: $user@$host")
+    println("=== TeamTalk Server Deploy ===")
+    println("  Target: $user@$host:$deployPort")
     println("  Path:   $deployPath")
-    println("  HTTP:   port $port")
+    println("  HTTP:   port $httpPort")
     println("  TCP:    port $tcpPort")
     println("  SSL:    ${if (sslEnabled) "enabled (port $sslPort)" else "disabled"}")
     println("")
 
-    val isFirstDeploy = !remoteCheck(host, user, "test -d $deployPath/bin")
+    val isFirstDeploy = !remoteCheck(host, user, "test -d $deployPath/bin", deployPort)
 
-    val secretsFile = File(rootDir, "gradle/profiles/demo.secrets")
+    val secretsFile = File(rootDir, "gradle/deployment.secrets")
     val secrets = if (isFirstDeploy) {
-        loadOrGenerateSecrets(secretsFile, host, user, deployPath, "demo")
+        loadOrGenerateSecrets(secretsFile, host, user, deployPort, deployPath)
     } else {
-        extractSecretsFromRemote(secretsFile, host, user, deployPath, "demo")
+        extractSecretsFromRemote(secretsFile, host, user, deployPort, deployPath)
             ?: throw GradleException(
                 "Cannot extract secrets from remote env.sh. " +
                     "Check if $deployPath/conf/env.sh exists on the server."
@@ -163,16 +166,15 @@ fun deployServer(
             rootDir,
             host,
             user,
+            deployPort,
             deployPath,
             secrets,
             sslEnabled,
             sslPort,
             sslCert,
             sslKey,
-            "demo",
-            port,
+            httpPort,
             tcpPort,
-            effectiveDefault
         )
     } else {
         println("=== Upgrade ===")
@@ -180,18 +182,17 @@ fun deployServer(
             rootDir,
             host,
             user,
+            deployPort,
             deployPath,
             secrets,
             sslEnabled,
             sslPort,
             sslCert,
             sslKey,
-            "demo",
-            port,
+            httpPort,
             tcpPort,
-            effectiveDefault
         )
     }
 
-    healthCheck(host, user, deployPath, sslEnabled, port)
+    healthCheck(host, user, deployPort, sslEnabled, httpPort, config.sslPort)
 }

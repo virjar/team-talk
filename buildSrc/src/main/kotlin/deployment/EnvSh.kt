@@ -1,4 +1,4 @@
-package profiles
+package deployment
 
 /**
  * env.sh 配置文件生成 + 上传，以及从 serverUrl 提取 HTTP 端口的工具。
@@ -17,15 +17,13 @@ fun generateEnvShContent(
     sslEnabled: Boolean,
     sslPort: String,
     deployPath: String,
-    profileName: String,
     httpPort: Int,
     tcpPort: String?,
-    effectiveDefaultHttpPort: Int
 ): String {
     val lines = mutableListOf<String>()
     val now = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"))
 
-    lines.add("# TeamTalk 运行配置 - profile: $profileName")
+    lines.add("# TeamTalk 运行配置")
     lines.add("# 自动生成于 $now")
     lines.add("# 权限 600，请勿提交到版本控制")
     lines.add("# 修改后执行: systemctl restart teamtalk")
@@ -36,7 +34,7 @@ fun generateEnvShContent(
     lines.add("")
 
     lines.add("# ── 服务端口 ──")
-    if (httpPort != effectiveDefaultHttpPort) {
+    if (httpPort != 8080) {
         lines.add("KTOR_PORT=$httpPort")
     }
     if (tcpPort != null && tcpPort != "5100") {
@@ -66,13 +64,13 @@ fun generateEnvShContent(
 
 // ── 上传 env.sh 到远程 ──
 
-fun uploadEnvSh(envShContent: String, host: String, user: String, deployPath: String) {
+fun uploadEnvSh(envShContent: String, host: String, user: String, port: Int, deployPath: String) {
     val tmpEnv = File.createTempFile("teamtalk-env-", ".sh")
     tmpEnv.deleteOnExit()
     tmpEnv.writeText(envShContent)
 
-    localExecSilent("scp", tmpEnv.absolutePath, "$user@$host:$deployPath/conf/env.sh")
-    localExecSilent("ssh", "-o", "ConnectTimeout=10", "$user@$host", "chmod 600 $deployPath/conf/env.sh")
+    localExecSilent("scp", "-P", port.toString(), tmpEnv.absolutePath, "$user@$host:$deployPath/conf/env.sh")
+    localExecSilent("ssh", "-p", port.toString(), "-o", "ConnectTimeout=10", "$user@$host", "chmod 600 $deployPath/conf/env.sh")
     tmpEnv.delete()
     println("  conf/env.sh uploaded (mode 600)")
 }
@@ -85,8 +83,4 @@ fun extractHttpPort(serverUrl: String): Int {
         val explicit = uri.port
         if (explicit != -1) explicit else if (uri.scheme == "https") 443 else 80
     } catch (_: Exception) { 8080 }
-}
-
-fun effectiveDefaultHttpPort(serverUrl: String): Int {
-    return if (serverUrl.startsWith("https://")) 443 else 8080
 }

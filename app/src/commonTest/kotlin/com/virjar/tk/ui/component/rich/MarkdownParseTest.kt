@@ -136,13 +136,13 @@ class MarkdownParseTest {
     @Test
     fun `全角标点后的 mention 不双 @`() {
         // 真实消息场景：全角标点后 parser 把 @ 并进前段文本（"完成！@"），非独立叶子
-        val p = MdParser.parse("**富文本二期**完成！@[DemoUser uidesign2](mention://dQ3KUFf7) 请验收")[0] as MdBlock.Paragraph
+        val p = MdParser.parse("**富文本二期**完成！@[TestUser uidesign2](mention://dQ3KUFf7) 请验收")[0] as MdBlock.Paragraph
         val mentionIdx = p.spans.indexOfFirst { it is MdSpan.Mention }
         val joined = p.spans.joinToString("") {
             when (it) { is MdSpan.Text -> it.text; is MdSpan.Styled -> it.text; else -> "@NAME" }
         }
         // 拼接结果只允许出现一个 @（mention 位以占位符计）
-        val rendered = joined.replace("@NAME", "@DemoUser uidesign2")
+        val rendered = joined.replace("@NAME", "@TestUser uidesign2")
         assertEquals(1, rendered.count { it == '@' }, "渲染拼接: $rendered")
     }
 
@@ -160,4 +160,3 @@ class MarkdownParseTest {
         }
     }
 }
-

@@ -59,7 +59,7 @@ register/login 同时等 `onAuthResult 回调(deferred)` 和 `state.first { AUTH
 ## 5. 集成测试（SDK 闭环验收）
 
 ```bash
-# 对 demo 服务器跑（默认跳过，属性开启）
+# 对已部署服务器运行（默认跳过，属性开启）
 ./gradlew :shared:jvmTest -Dtk.botTest.host=im.virjar.com -Dtk.botTest.port=5100
 ```
 

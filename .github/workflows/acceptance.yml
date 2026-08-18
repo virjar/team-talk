@@ -1,0 +1,27 @@
+name: Deployment Business Acceptance
+
+# 验收目标与客户端构建统一读取 gradle/deployment.json。
+# fork 项目修改该文件即可让 CI 对接自己的私有化部署。
+on:
+  workflow_dispatch:
+
+jobs:
+  business-e2e:
+    name: Remote Business E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run business tests against deployment
+        run: ./gradlew :server:acceptanceTest
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-business-test-report
+          path: server/build/reports/tests/acceptanceTest/
+          retention-days: 7

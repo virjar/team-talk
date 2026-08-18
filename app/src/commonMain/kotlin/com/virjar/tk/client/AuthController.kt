@@ -92,7 +92,7 @@ fun rememberAuthController(
         }
     }
 
-    // Demo 不可达或协议版本不匹配时，服务端可能在 AUTH 响应前直接断开。
+    // 服务器不可达或协议版本不匹配时，服务端可能在 AUTH 响应前直接断开。
     // 自动登录不能因此永久占据 loading 页：给连接一个有界等待，然后回到
     // 可操作的登录页。保留 token，避免短暂网络故障破坏持久化登录态。
     LaunchedEffect(autoLoggingIn) {
@@ -101,7 +101,7 @@ fun rememberAuthController(
         if (autoLoggingIn && !isLoggedIn) {
             imClient.disconnect()
             autoLoggingIn = false
-            authError = "Demo 暂时无法连接，请检查网络或稍后重试"
+            authError = "服务器暂时无法连接，请检查网络或稍后重试"
         }
     }
 

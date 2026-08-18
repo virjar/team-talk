@@ -1,7 +1,7 @@
 import java.util.Properties
-import profiles.DemoConfig
+import deployment.DeploymentConfig
 
-val demoConfig = rootProject.extra.get("demoConfig") as DemoConfig
+val deploymentConfig = rootProject.extra.get("deploymentConfig") as DeploymentConfig
 val gitCommitId = rootProject.extra.get("gitCommitId") as String
 val buildTime = rootProject.extra.get("buildTime") as String
 
@@ -21,9 +21,9 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = rootProject.extra.get("packageVersion") as String
-        buildConfigField("String", "SERVER_BASE_URL", "\"${demoConfig.serverUrl}\"")
-        buildConfigField("String", "TCP_HOST", "\"${demoConfig.tcpHost}\"")
-        buildConfigField("int", "TCP_PORT", "${demoConfig.tcpPort}")
+        buildConfigField("String", "SERVER_BASE_URL", "\"${deploymentConfig.serverUrl}\"")
+        buildConfigField("String", "TCP_HOST", "\"${deploymentConfig.tcpHost}\"")
+        buildConfigField("int", "TCP_PORT", "${deploymentConfig.tcpPort}")
         buildConfigField("String", "GIT_COMMIT_ID", "\"$gitCommitId\"")
         buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
     }
