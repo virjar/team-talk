@@ -1,5 +1,7 @@
 package com.virjar.tk.e2e
 
+import com.virjar.tk.AppError
+import com.virjar.tk.Outcome
 import com.virjar.tk.rpc.gen.ChatRpcContract
 import com.virjar.tk.rpc.gen.ContactRpcContract
 import com.virjar.tk.rpc.gen.ConversationRpcContract
@@ -278,11 +280,21 @@ class RemoteAcceptanceTest {
     // ── 多 body 类型消息往返 ──
 
     @Test
-    fun `file message round-trip`() = runBlocking {
+    fun `file message round-trip enforces attachment access`() = runBlocking {
         val (user1, user2, chat) = createFriendPersonalChat("file")
+        val stranger = RemoteAcceptanceSupport.registerUser("file-stranger")
         try {
             val bytes = ByteArray(524288) { (it % 251).toByte() }
             val attachment = upload(user1, bytes, "report.pdf")
+
+            // 上传者可以在消息发送前读取；未认证请求和无关用户不能把随机路径当作授权。
+            assertArrayEquals(
+                bytes,
+                FileRepository(baseUrl(), user1.userSession.accessToken).download(attachment).getOrThrow(),
+            )
+            assertDownloadRejected(attachment, null, 401)
+            assertDownloadRejected(attachment, stranger.userSession.accessToken, 403)
+
             val msg = Message(
                 chatId = chat.chatId, clientMsgId = UUID.randomUUID().toString(),
                 messageType = MessageType.FILE.code, timestamp = System.currentTimeMillis(),
@@ -297,8 +309,15 @@ class RemoteAcceptanceTest {
             val body = recv.body as FileBody
             assertEquals("report.pdf", body.attachment.name)
             assertEquals(524288L, body.attachment.size)
+
+            // 消息成功落库后，附件 ACL 从反向索引解析到会话成员；非成员仍无权访问。
+            assertArrayEquals(
+                bytes,
+                FileRepository(baseUrl(), user2.userSession.accessToken).download(body.attachment).getOrThrow(),
+            )
+            assertDownloadRejected(body.attachment, stranger.userSession.accessToken, 403)
         } finally {
-            user1.close(); user2.close()
+            user1.close(); user2.close(); stranger.close()
         }
     }
 
@@ -579,5 +598,16 @@ class RemoteAcceptanceTest {
         val chat = ProtoCodec.decode(Chat, chatResp.payload!!)
 
         return Triple(user1, user2, chat)
+    }
+
+    private fun baseUrl(): String =
+        System.getProperty("tk.e2e.server") ?: "https://${RemoteAcceptanceSupport.host}"
+
+    private suspend fun assertDownloadRejected(attachment: Attachment, accessToken: String?, expectedCode: Int) {
+        val outcome = FileRepository(baseUrl(), accessToken).download(attachment)
+        assertTrue(outcome is Outcome.Failure, "下载应被拒绝，实际结果: $outcome")
+        val error = (outcome as Outcome.Failure).error
+        assertTrue(error is AppError.Business, "HTTP 拒绝应保留业务状态码，实际错误: $error")
+        assertEquals(expectedCode, (error as AppError.Business).code)
     }
 }
