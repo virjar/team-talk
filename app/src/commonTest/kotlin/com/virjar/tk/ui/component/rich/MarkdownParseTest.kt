@@ -56,6 +56,24 @@ class MarkdownParseTest {
     }
 
     @Test
+    fun `CommonMark 标点转义在文本链接和 mention 中解码`() {
+        val p = MdParser.parse(
+            """字面 \* \[文本\] \\ \q [文档 \[v2\]](https://im.virjar.com/a\(b\)) @[研发\]组](mention://uid-1)"""
+        )[0] as MdBlock.Paragraph
+
+        assertEquals(
+            MdSpan.Link("文档 [v2]", "https://im.virjar.com/a(b)"),
+            p.spans.filterIsInstance<MdSpan.Link>().single(),
+        )
+        assertEquals(
+            MdSpan.Mention("uid-1", "研发]组"),
+            p.spans.filterIsInstance<MdSpan.Mention>().single(),
+        )
+        val ordinaryText = p.spans.filterIsInstance<MdSpan.Text>().joinToString("") { it.text }
+        assertTrue("字面 * [文本] \\ \\q" in ordinaryText)
+    }
+
+    @Test
     fun `代码块带语言`() {
         val blocks = MdParser.parse("```kotlin\nval a = 1\n```")
         val fence = blocks.filterIsInstance<MdBlock.CodeFence>().single()
@@ -66,12 +84,48 @@ class MarkdownParseTest {
     @Test
     fun `列表与引用`() {
         val blocks = MdParser.parse("- 项目一\n- 项目二\n\n> 引用内容")
-        assertEquals(2, blocks.filterIsInstance<MdBlock.ListItem>().size)
+        val items = blocks.filterIsInstance<MdBlock.ListItem>()
+        assertEquals(2, items.size)
+        assertTrue(items.all { it.kind == MdListKind.Unordered && it.depth == 0 && it.markerText == "•" })
         val quote = blocks.filterIsInstance<MdBlock.Quote>().single()
         assertEquals(
             listOf(MdSpan.Text("引用内容")),
             (quote.blocks[0] as MdBlock.Paragraph).spans,
         )
+    }
+
+    @Test
+    fun `有序列表保留源码序号`() {
+        val items = MdParser.parse("7. 七\n8. 八\n11. 十一")
+            .filterIsInstance<MdBlock.ListItem>()
+
+        assertEquals(listOf(MdListKind.Ordered, MdListKind.Ordered, MdListKind.Ordered), items.map { it.kind })
+        assertEquals(listOf(7, 8, 11), items.map { it.number })
+        assertEquals(listOf("7.", "8.", "11."), items.map { it.markerText })
+        assertEquals(listOf(0, 0, 0), items.map { it.depth })
+    }
+
+    @Test
+    fun `混合嵌套列表保留类型层级和内容边界`() {
+        val items = MdParser.parse(
+            """
+            3. 父项
+                - 子项
+                    7. 孙项
+            4. 末项
+            """.trimIndent()
+        ).filterIsInstance<MdBlock.ListItem>()
+
+        assertEquals(
+            listOf(
+                Triple(MdListKind.Ordered, 0, 3),
+                Triple(MdListKind.Unordered, 1, null),
+                Triple(MdListKind.Ordered, 2, 7),
+                Triple(MdListKind.Ordered, 0, 4),
+            ),
+            items.map { Triple(it.kind, it.depth, it.number) },
+        )
+        assertEquals(listOf("父项", "子项", "孙项", "末项"), items.map { it.plainText() })
     }
 
     @Test
@@ -160,6 +214,15 @@ class MarkdownParseTest {
                 when (it) { is MdSpan.Text -> it.text; is MdSpan.Styled -> it.text; else -> "" }
             }
             assertTrue(!text.contains("- "), "列表标记泄漏: $text")
+        }
+    }
+
+    private fun MdBlock.ListItem.plainText(): String = spans.joinToString("") {
+        when (it) {
+            is MdSpan.Text -> it.text
+            is MdSpan.Styled -> it.text
+            is MdSpan.Link -> it.label
+            is MdSpan.Mention -> "@${it.name}"
         }
     }
 }

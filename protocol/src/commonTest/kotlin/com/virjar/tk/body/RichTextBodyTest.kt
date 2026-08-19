@@ -67,6 +67,26 @@ class RichTextBodyTest {
     }
 
     @Test
+    fun `CommonMark 标点转义在派生字段中解码且非标点转义保留`() {
+        val markdown = """字面 \* \[文本\] \\ \q @[研发\]组](mention://uid-1) [文档 \[v2\]](https://im.virjar.com/a\(b\))"""
+        val body = buildRichTextBody(markdown)
+
+        val mention = body.mentions.single()
+        assertEquals("uid-1", mention.uid)
+        assertEquals("研发]组", mention.displayName)
+        assertEquals(
+            "@[研发\\]组](mention://uid-1)",
+            markdown.substring(mention.offset, mention.offset + mention.length),
+        )
+        assertEquals("字面 * [文本] \\ \\q @研发]组 文档 [v2]", body.plainText)
+    }
+
+    @Test
+    fun `CommonMark 解码器不吞非标点反斜杠`() {
+        assertEquals("* ] \\ \\q", decodeCommonMarkPunctuationEscapes("""\* \] \\ \q"""))
+    }
+
+    @Test
     fun `消息策略重建派生字段并拒绝类型错配`() {
         val declared = RichTextBody(
             markdown = "**可信源** @[张三](mention://u1)",

@@ -24,6 +24,8 @@ data class DocumentTreeRow(val node: DocumentNode, val depth: Int)
 /** 一个打开的文档标签。草稿与服务端基线分离，切换空间或标签不会丢失未保存内容。 */
 data class DocumentTabState(
     val tabId: String,
+    /** 每次打开标签都分配新实例，关闭后重开同一 documentId 也不会复用。 */
+    val instanceId: Long,
     val documentId: String?,
     val spaceId: String,
     val parentId: String?,
@@ -36,10 +38,16 @@ data class DocumentTabState(
     val revision: Long?,
     val dirty: Boolean = false,
     val creating: Boolean = false,
+    /**
+     * 本地草稿世代。每次标题或正文实际改变时递增；远端写请求只允许清理自己捕获的世代。
+     * 这不是服务端 revision，二者分别描述“本地是否又编辑过”和“服务端当前版本”。
+     */
+    val editGeneration: Long = 0,
 ) {
     companion object {
-        fun from(document: Document) = DocumentTabState(
+        fun from(document: Document, instanceId: Long, editGeneration: Long = 0) = DocumentTabState(
             tabId = document.documentId,
+            instanceId = instanceId,
             documentId = document.documentId,
             spaceId = document.spaceId,
             parentId = document.parentId,
@@ -49,6 +57,7 @@ data class DocumentTabState(
             draftTitle = document.title,
             draftMarkdown = document.markdown,
             revision = document.revision,
+            editGeneration = editGeneration,
         )
     }
 }
@@ -89,6 +98,109 @@ internal fun folderAncestorIds(
         currentId = node.parentId
     }
     return reversed.asReversed()
+}
+
+/** 一次文档写请求捕获的标签身份与本地/服务端世代。 */
+internal data class DocumentTabRequest(
+    val tabId: String,
+    val instanceId: Long,
+    val documentId: String?,
+    val spaceId: String,
+    val revision: Long?,
+    val editGeneration: Long,
+) {
+    fun targets(tab: DocumentTabState): Boolean =
+        tab.tabId == tabId && tab.instanceId == instanceId &&
+            tab.documentId == documentId && tab.spaceId == spaceId
+
+    companion object {
+        fun capture(tab: DocumentTabState) = DocumentTabRequest(
+            tabId = tab.tabId,
+            instanceId = tab.instanceId,
+            documentId = tab.documentId,
+            spaceId = tab.spaceId,
+            revision = tab.revision,
+            editGeneration = tab.editGeneration,
+        )
+    }
+}
+
+/** 写响应合并结果；新建文档时标签 ID 会从本地草稿 ID 迁移为服务端文档 ID。 */
+internal data class DocumentTabMerge(
+    val requestTabId: String,
+    val tabs: List<DocumentTabState>,
+    val tab: DocumentTabState,
+)
+
+/**
+ * 将服务端保存结果合并回仍然存在的同一标签。
+ *
+ * 服务端 revision/saved baseline 总是采用成功响应；若请求发出后用户又编辑过，则保留最新
+ * draft 并继续标脏。标签已经关闭、被另一响应推进 revision，或身份不一致时直接丢弃迟到响应。
+ */
+internal fun mergeDocumentMutationResponse(
+    tabs: List<DocumentTabState>,
+    request: DocumentTabRequest,
+    saved: Document,
+): DocumentTabMerge? {
+    if (saved.spaceId != request.spaceId) return null
+    if (request.documentId != null && saved.documentId != request.documentId) return null
+
+    val index = tabs.indexOfFirst { request.targets(it) }
+    if (index < 0) return null
+    val latest = tabs[index]
+    if (latest.revision != request.revision) return null
+
+    val editedAfterRequest = latest.editGeneration != request.editGeneration
+    val merged = DocumentTabState.from(
+        saved,
+        instanceId = latest.instanceId,
+        editGeneration = latest.editGeneration,
+    ).let { baseline ->
+        if (!editedAfterRequest) baseline else baseline.copy(
+            draftTitle = latest.draftTitle,
+            draftMarkdown = latest.draftMarkdown,
+            dirty = true,
+        )
+    }
+    return DocumentTabMerge(
+        requestTabId = request.tabId,
+        tabs = tabs.toMutableList().also { it[index] = merged },
+        tab = merged,
+    )
+}
+
+/** 历史/修订请求只以稳定文档身份为目标，不随正文编辑世代改变。 */
+internal data class DocumentRequestTarget(
+    val tabId: String,
+    val documentId: String,
+    val spaceId: String,
+) {
+    fun targets(tab: DocumentTabState?): Boolean = tab != null &&
+        tab.tabId == tabId && tab.documentId == documentId && tab.spaceId == spaceId
+
+    companion object {
+        fun from(tab: DocumentTabState): DocumentRequestTarget? = tab.documentId?.let { documentId ->
+            DocumentRequestTarget(tab.tabId, documentId, tab.spaceId)
+        }
+    }
+}
+
+/** 单调请求门；只有最后一次、且身份完全相同的异步响应可以落状态。 */
+internal class DocumentIdentityRequestGate<T> {
+    internal data class Token<T>(val generation: Long, val target: T)
+
+    private var generation = 0L
+    private var current: Token<T>? = null
+
+    fun begin(target: T): Token<T> = Token(++generation, target).also { current = it }
+
+    fun invalidate() {
+        generation++
+        current = null
+    }
+
+    fun isCurrent(token: Token<T>): Boolean = current == token
 }
 
 /** 企业文档工作台状态；不依赖聊天上下文，可同时保留来自多个空间的文档标签。 */
@@ -152,11 +264,22 @@ class DocumentWorkspaceFeature internal constructor(
         private set
     var loadingDocument by mutableStateOf(false)
         private set
-    var saving by mutableStateOf(false)
-        private set
+
+    /** 仍保留 UI 现有布尔接口，但含义收口为“当前活动标签是否有写请求在途”。 */
+    val saving: Boolean
+        get() {
+            val current = activeTab ?: return false
+            return pendingMutations.values.any { it.targets(current) }
+        }
 
     private var draftCounter = 0L
+    private var tabInstanceSequence = 0L
     private val navigationGeneration = DocumentNavigationGeneration()
+    private var mutationSequence = 0L
+    private var pendingMutations by mutableStateOf<Map<Long, DocumentTabRequest>>(emptyMap())
+    private var historyTarget: DocumentRequestTarget? = null
+    private val historyListGate = DocumentIdentityRequestGate<DocumentRequestTarget>()
+    private val revisionPreviewGate = DocumentIdentityRequestGate<DocumentRequestTarget>()
 
     suspend fun open() {
         val generation = beginNavigation()
@@ -261,6 +384,7 @@ class DocumentWorkspaceFeature internal constructor(
     }
 
     fun selectSpace(spaceId: String) = beginNavigation().let { generation ->
+        closeHistory()
         scope.launch {
             try {
                 selectSpaceNow(spaceId, generation)
@@ -310,6 +434,7 @@ class DocumentWorkspaceFeature internal constructor(
         val tabId = "draft-${++draftCounter}-${System.currentTimeMillis()}"
         val tab = DocumentTabState(
             tabId = tabId,
+            instanceId = nextTabInstanceId(),
             documentId = null,
             spaceId = spaceId,
             parentId = selectedFolderId,
@@ -328,6 +453,7 @@ class DocumentWorkspaceFeature internal constructor(
     }
 
     fun openDocument(node: DocumentNode) = beginNavigation().let { generation ->
+        closeHistory()
         scope.launch {
             if (node.nodeType != DocumentNode.TYPE_DOCUMENT) return@launch
             try {
@@ -341,6 +467,7 @@ class DocumentWorkspaceFeature internal constructor(
     }
 
     fun openHomeDocument(item: DocumentHomeItem) = beginNavigation().let { generation ->
+        closeHistory()
         scope.launch {
             try {
                 if (selectedSpaceId != item.spaceId && !selectSpaceNow(item.spaceId, generation)) return@launch
@@ -355,6 +482,8 @@ class DocumentWorkspaceFeature internal constructor(
     fun selectTab(tabId: String) {
         val tab = tabs.firstOrNull { it.tabId == tabId } ?: return
         val generation = beginNavigation()
+        // 点击标签即宣告旧文档历史失效，不能等目录展开的远端调用完成后才清理。
+        closeHistory()
         scope.launch {
             try {
                 if (selectedSpaceId != tab.spaceId && !selectSpaceNow(tab.spaceId, generation)) return@launch
@@ -362,7 +491,6 @@ class DocumentWorkspaceFeature internal constructor(
                 activeTabId = tabId
                 selectedFolderId = tab.parentId
                 revealDocumentPath(tab.ancestorIds, generation)
-                if (isCurrentNavigation(generation, tab.spaceId)) closeHistory()
             } catch (e: Exception) {
                 if (isCurrentNavigation(generation)) reportError(e, "切换文档标签失败")
             }
@@ -371,11 +499,14 @@ class DocumentWorkspaceFeature internal constructor(
 
     fun updateDraft(tabId: String, title: String, markdown: String, dirty: Boolean) {
         tabs = tabs.map { tab ->
-            if (tab.tabId == tabId) tab.copy(
+            if (tab.tabId != tabId) return@map tab
+            val contentChanged = tab.draftTitle != title || tab.draftMarkdown != markdown
+            tab.copy(
                 draftTitle = title,
                 draftMarkdown = markdown,
                 dirty = dirty || tab.creating,
-            ) else tab
+                editGeneration = if (contentChanged) tab.editGeneration + 1 else tab.editGeneration,
+            )
         }
     }
 
@@ -417,41 +548,46 @@ class DocumentWorkspaceFeature internal constructor(
         }
     }
 
-    fun saveActive() = scope.launch {
-        val current = activeTab ?: return@launch
-        saving = true
-        try {
-            val saved = if (current.creating || current.documentId == null) {
-                session.documentRepo.createDocument(
-                    current.spaceId,
-                    current.parentId,
-                    current.draftTitle,
-                    current.draftMarkdown,
-                ).getOrThrow()
-            } else {
-                session.documentRepo.updateDocument(
-                    current.spaceId,
-                    current.documentId,
-                    current.draftTitle,
-                    current.draftMarkdown,
-                    current.revision ?: 1,
-                ).getOrThrow()
+    fun saveActive() {
+        // 必须在调用时同步捕获活动标签；若放进 launch，紧接着的标签切换会把保存目标偷换掉。
+        val current = activeTab ?: return
+        val mutation = beginMutation(current) ?: return
+        scope.launch {
+            try {
+                val saved = if (current.creating || current.documentId == null) {
+                    session.documentRepo.createDocument(
+                        current.spaceId,
+                        current.parentId,
+                        current.draftTitle,
+                        current.draftMarkdown,
+                    ).getOrThrow()
+                } else {
+                    session.documentRepo.updateDocument(
+                        current.spaceId,
+                        current.documentId,
+                        current.draftTitle,
+                        current.draftMarkdown,
+                        current.revision ?: 1,
+                    ).getOrThrow()
+                }
+                val merge = mergeDocumentMutationResponse(tabs, mutation.request, saved)
+                if (merge != null) {
+                    val shouldRemainActive = activeTabId == merge.requestTabId
+                    tabs = merge.tabs
+                    if (shouldRemainActive) {
+                        activeTabId = merge.tab.tabId
+                        selectedFolderId = merge.tab.parentId
+                        closeHistory()
+                    }
+                }
+                // 即使标签已关闭，服务端写入仍然成功；资产首页/目录应反映真实远端状态。
+                if (selectedSpaceId == saved.spaceId) reloadChildren(saved.parentId)
+                loadHome()
+            } catch (e: Exception) {
+                if (requestStillTargetsOpenTab(mutation.request)) reportError(e, "保存文档失败")
+            } finally {
+                endMutation(mutation.id)
             }
-            val replacement = DocumentTabState.from(saved)
-            val tabStillOpen = tabs.any { it.tabId == current.tabId }
-            val shouldRemainActive = activeTabId == current.tabId
-            if (tabStillOpen) tabs = tabs.map { if (it.tabId == current.tabId) replacement else it }
-            if (tabStillOpen && shouldRemainActive) {
-                activeTabId = replacement.tabId
-                selectedFolderId = replacement.parentId
-                closeHistory()
-            }
-            if (selectedSpaceId == saved.spaceId) reloadChildren(saved.parentId)
-            loadHome()
-        } catch (e: Exception) {
-            reportError(e, "保存文档失败")
-        } finally {
-            saving = false
         }
     }
 
@@ -471,65 +607,95 @@ class DocumentWorkspaceFeature internal constructor(
         }
     }
 
-    fun showHistory() = scope.launch {
-        val current = activeTab ?: return@launch
-        val documentId = current.documentId ?: return@launch
-        try {
-            revisions = session.documentRepo.listRevisions(current.spaceId, documentId).getOrThrow()
-            revisionPreview = null
-        } catch (e: Exception) {
-            reportError(e, "加载版本历史失败")
-        }
-    }
-
-    fun openRevision(summary: DocumentRevisionSummary) = scope.launch {
-        val current = activeTab ?: return@launch
-        val documentId = current.documentId ?: return@launch
-        try {
-            revisionPreview = session.documentRepo.getRevision(current.spaceId, documentId, summary.revision).getOrThrow()
-        } catch (e: Exception) {
-            reportError(e, "加载文档版本失败")
-        }
-    }
-
-    fun restorePreview() = scope.launch {
-        val current = activeTab ?: return@launch
-        val documentId = current.documentId ?: return@launch
-        val preview = revisionPreview ?: return@launch
-        saving = true
-        try {
-            val restored = session.documentRepo.updateDocument(
-                current.spaceId,
-                documentId,
-                preview.title,
-                preview.markdown,
-                current.revision ?: return@launch,
-            ).getOrThrow()
-            val replacement = DocumentTabState.from(restored)
-            val tabStillOpen = tabs.any { it.tabId == current.tabId }
-            val shouldRemainActive = activeTabId == current.tabId
-            if (tabStillOpen) tabs = tabs.map { if (it.tabId == current.tabId) replacement else it }
-            if (tabStillOpen && shouldRemainActive) {
-                activeTabId = replacement.tabId
-                revisionPreview = null
-                val loadedRevisions = session.documentRepo.listRevisions(current.spaceId, documentId).getOrThrow()
-                if (activeTabId == replacement.tabId) revisions = loadedRevisions
+    fun showHistory() {
+        val target = activeTab?.let { DocumentRequestTarget.from(it) } ?: return
+        historyTarget = target
+        revisions = emptyList()
+        revisionPreview = null
+        revisionPreviewGate.invalidate()
+        val token = historyListGate.begin(target)
+        scope.launch {
+            try {
+                val loaded = session.documentRepo.listRevisions(target.spaceId, target.documentId).getOrThrow()
+                if (acceptHistoryResponse(token)) {
+                    revisions = loaded.filter { it.documentId == target.documentId }
+                    revisionPreview = null
+                }
+            } catch (e: Exception) {
+                if (acceptHistoryResponse(token)) reportError(e, "加载版本历史失败")
             }
-            if (selectedSpaceId == current.spaceId) reloadChildren(current.parentId)
-            loadHome()
-        } catch (e: Exception) {
-            reportError(e, "恢复文档版本失败")
-        } finally {
-            saving = false
+        }
+    }
+
+    fun openRevision(summary: DocumentRevisionSummary) {
+        val target = historyTarget ?: return
+        if (!target.targets(activeTab) || summary.documentId != target.documentId) return
+        val token = revisionPreviewGate.begin(target)
+        scope.launch {
+            try {
+                val loaded = session.documentRepo.getRevision(
+                    target.spaceId,
+                    target.documentId,
+                    summary.revision,
+                ).getOrThrow()
+                if (acceptRevisionResponse(token) &&
+                    loaded.documentId == target.documentId && loaded.revision == summary.revision
+                ) {
+                    revisionPreview = loaded
+                }
+            } catch (e: Exception) {
+                if (acceptRevisionResponse(token)) reportError(e, "加载文档版本失败")
+            }
+        }
+    }
+
+    fun restorePreview() {
+        val current = activeTab ?: return
+        val target = DocumentRequestTarget.from(current) ?: return
+        val preview = revisionPreview ?: return
+        if (historyTarget != target || preview.documentId != target.documentId) return
+        val expectedRevision = current.revision ?: return
+        val mutation = beginMutation(current) ?: return
+        scope.launch {
+            try {
+                val restored = session.documentRepo.updateDocument(
+                    target.spaceId,
+                    target.documentId,
+                    preview.title,
+                    preview.markdown,
+                    expectedRevision,
+                ).getOrThrow()
+                val merge = mergeDocumentMutationResponse(tabs, mutation.request, restored)
+                if (merge != null) {
+                    val shouldRemainActive = activeTabId == merge.requestTabId
+                    tabs = merge.tabs
+                    if (shouldRemainActive) {
+                        activeTabId = merge.tab.tabId
+                        selectedFolderId = merge.tab.parentId
+                        // 只刷新仍属于该文档的历史；切换后的 B 文档状态绝不能被 A 的恢复响应触碰。
+                        if (historyTarget == target) showHistory()
+                    }
+                }
+                if (selectedSpaceId == restored.spaceId) reloadChildren(restored.parentId)
+                loadHome()
+            } catch (e: Exception) {
+                if (requestStillTargetsOpenTab(mutation.request)) reportError(e, "恢复文档版本失败")
+            } finally {
+                endMutation(mutation.id)
+            }
         }
     }
 
     fun closeHistory() {
+        historyTarget = null
+        historyListGate.invalidate()
+        revisionPreviewGate.invalidate()
         revisions = emptyList()
         revisionPreview = null
     }
 
     fun closeRevisionPreview() {
+        revisionPreviewGate.invalidate()
         revisionPreview = null
     }
 
@@ -574,6 +740,7 @@ class DocumentWorkspaceFeature internal constructor(
         selectedSpaceId = spaceId
         // 直接进入空间先展示空间概览，避免沿用另一个空间的活动标签造成左右上下文错位。
         activeTabId = null
+        closeHistory()
         selectedFolderId = null
         expandedFolderIds = emptySet()
         treeChildren = emptyMap()
@@ -628,17 +795,15 @@ class DocumentWorkspaceFeature internal constructor(
                 activeTabId = refreshed.tabId
                 selectedFolderId = refreshed.parentId
                 revealDocumentPath(refreshed.ancestorIds, generation)
-                if (isCurrentNavigation(generation, spaceId)) closeHistory()
                 return
             }
             val document = session.documentRepo.getDocument(spaceId, documentId).getOrThrow()
             if (!isCurrentNavigation(generation, spaceId)) return
-            val tab = DocumentTabState.from(document)
+            val tab = DocumentTabState.from(document, instanceId = nextTabInstanceId())
             tabs = tabs + tab
             activeTabId = tab.tabId
             selectedFolderId = tab.parentId
             revealDocumentPath(tab.ancestorIds, generation)
-            if (isCurrentNavigation(generation, spaceId)) closeHistory()
         } finally {
             if (isCurrentNavigation(generation, spaceId)) loadingDocument = false
         }
@@ -694,6 +859,36 @@ class DocumentWorkspaceFeature internal constructor(
             session.organizationRepo.listMembers(root.unitId, recursive = true).getOrThrow()
         }.distinctBy { it.uid }
     }
+
+    private data class PendingMutation(val id: Long, val request: DocumentTabRequest)
+
+    private fun nextTabInstanceId(): Long = ++tabInstanceSequence
+
+    private fun beginMutation(tab: DocumentTabState): PendingMutation? {
+        // 同一标签同一时刻只允许一个保存/恢复请求；切换标签后其他标签仍可独立保存。
+        if (pendingMutations.values.any { it.targets(tab) }) return null
+        val request = DocumentTabRequest.capture(tab)
+        val id = ++mutationSequence
+        pendingMutations = pendingMutations + (id to request)
+        return PendingMutation(id, request)
+    }
+
+    private fun endMutation(id: Long) {
+        pendingMutations = pendingMutations - id
+    }
+
+    private fun requestStillTargetsOpenTab(request: DocumentTabRequest): Boolean =
+        tabs.any(request::targets)
+
+    private fun acceptHistoryResponse(
+        token: DocumentIdentityRequestGate.Token<DocumentRequestTarget>,
+    ): Boolean = historyListGate.isCurrent(token) &&
+        historyTarget == token.target && token.target.targets(activeTab)
+
+    private fun acceptRevisionResponse(
+        token: DocumentIdentityRequestGate.Token<DocumentRequestTarget>,
+    ): Boolean = revisionPreviewGate.isCurrent(token) &&
+        historyTarget == token.target && token.target.targets(activeTab)
 
     private fun clearSpaceSelection() {
         selectedSpaceId = null

@@ -47,13 +47,11 @@ import com.virjar.tk.body.plainTextContentOrNull
 import com.virjar.tk.ui.component.input.AttachmentPanel
 import com.virjar.tk.ui.component.input.AutoCompleteItem
 import com.virjar.tk.ui.component.input.AutoCompleteOverlay
-import com.virjar.tk.ui.component.input.MentionVisualTransformation
 import com.virjar.tk.ui.component.input.SlashCommands
 import com.virjar.tk.ui.component.input.detectMentionQuery
 import com.virjar.tk.ui.component.input.detectSlashQuery
 import com.virjar.tk.ui.component.input.expandSlashCommand
 import com.virjar.tk.ui.component.input.EmojiPanel
-import com.virjar.tk.ui.component.input.FormatKey
 import com.virjar.tk.model.ChatType
 import com.virjar.tk.model.Message
 import com.virjar.tk.model.User
@@ -62,6 +60,9 @@ import com.virjar.tk.ui.component.AvatarPlaceholder
 import com.virjar.tk.ui.component.isEdgeToEdgeMedia
 import com.virjar.tk.ui.platform.contextLongPress
 import com.virjar.tk.ui.platform.secondaryClick
+import com.virjar.tk.ui.component.rich.RichTextFormattingToolbar
+import com.virjar.tk.ui.component.rich.RichTextToolbarMode
+import com.mohamedrejeb.richeditor.model.RichTextState
 import com.mohamedrejeb.richeditor.model.rememberRichTextState
 import com.mohamedrejeb.richeditor.ui.BasicRichTextEditor
 import com.virjar.tk.ui.theme.Tk
@@ -135,6 +136,8 @@ fun ChatPanel(
     val richState = rememberRichTextState()
     var showEmoji by remember { mutableStateOf(false) }
     var showAttach by remember { mutableStateOf(false) }
+    var voiceMode by rememberSaveable { mutableStateOf(false) }
+    var restoreFocusAfterVoiceMode by remember { mutableStateOf(false) }
     val inputFocus = remember { FocusRequester() }
 
     // 会话切换：恢复草稿（markdown 双向：setMarkdown/toMarkdown）
@@ -142,21 +145,44 @@ fun ChatPanel(
         richState.setMarkdown(initialDraft.orEmpty())
     }
 
-    // @ / / 补全查询（从光标上下文推导；emoji/attach 面板打开时抑制）
+    // @ / / 补全查询（从光标上下文推导；语音模式或浮层打开时抑制）
     val inputView = TextFieldValue(richState.annotatedString.text, richState.selection)
-    val mentionQuery = if (!showEmoji && !showAttach) detectMentionQuery(inputView) else null
-    val slashQuery = if (!showEmoji && !showAttach && mentionQuery == null) detectSlashQuery(inputView) else null
+    val mentionQuery = if (!voiceMode && !showEmoji && !showAttach) detectMentionQuery(inputView) else null
+    val slashQuery = if (!voiceMode && !showEmoji && !showAttach && mentionQuery == null) detectSlashQuery(inputView) else null
 
-    /** 选中 mention 候选：替换 @query 为完整链接语法（编辑器内以 markdown 链接样式呈现） */
+    // 切回键盘后等编辑器重新挂载再恢复焦点，避免 FocusRequester 尚未关联组件时抛错。
+    LaunchedEffect(voiceMode, restoreFocusAfterVoiceMode) {
+        if (!voiceMode && restoreFocusAfterVoiceMode) {
+            inputFocus.requestFocus()
+            restoreFocusAfterVoiceMode = false
+        }
+    }
+
+    /** 清空正文、撤销/重做栈和外部草稿；焦点只在编辑器挂载时恢复。 */
+    fun resetComposer(requestFocus: Boolean = true) {
+        resetChatComposerState(richState)
+        onDraftChange?.invoke("")
+        if (requestFocus && !voiceMode) inputFocus.requestFocus()
+    }
+
+    /** 选中 mention 候选：编辑器显示 @姓名，导出时仍是服务端权威的 mention Markdown。 */
     fun pickMention(user: com.virjar.tk.model.User) {
+        if (voiceMode) return
         val q = mentionQuery ?: return
-        val syntax = "@[${user.name.ifBlank { user.username ?: user.uid }}](mention://${user.uid}) "
-        richState.replaceRange(q.atIndex, inputView.selection.min, syntax)
+        val displayName = user.name.ifBlank { user.username.ifBlank { user.uid } }
+        val displayText = "@$displayName "
+        richState.replaceRange(q.atIndex, inputView.selection.min, displayText)
+        richState.addLinkToTextRange(
+            url = "mention://${user.uid}",
+            textRange = TextRange(q.atIndex + 1, q.atIndex + 1 + displayName.length),
+        )
+        richState.selection = TextRange(q.atIndex + displayText.length)
         inputFocus.requestFocus()
     }
 
     /** 选中 / 指令候选：把行首不完整 token（如 /s）回填为完整命令 + 空格；发送时再展开 */
     fun pickSlash(cmd: String) {
+        if (voiceMode) return
         val text = inputView.text
         val pos = inputView.selection.min
         val lineStart = text.lastIndexOf('\n', (pos - 1).coerceAtLeast(0)).let { if (pos == 0) 0 else it + 1 }
@@ -164,8 +190,6 @@ fun ChatPanel(
         richState.replaceRange(lineStart, tokenEnd, "$cmd ")
         inputFocus.requestFocus()
     }
-    var voiceMode by rememberSaveable { mutableStateOf(false) }
-
     val isPersonal = ChatType.fromCode(chatType) == ChatType.PERSONAL
 
     // Save draft on dispose
@@ -208,7 +232,9 @@ fun ChatPanel(
     }
 
     // ── 发送动作（按钮与 Cmd/Ctrl+Enter 共用）──
-    val sendAction: () -> Unit = {
+    val sendAction: () -> Unit = sendAction@{
+        // 语音模式没有挂载编辑器，也不能发送不可见的文字草稿。
+        if (voiceMode) return@sendAction
         // WYSIWYG 编辑器导出 markdown（粗体等样式已编码为 **xx** 语法）
         // Markdown 是权威源。不能 trim：开头缩进、空行和结尾换行都可能有语义。
         val rawText = richState.toMarkdown()
@@ -222,8 +248,7 @@ fun ChatPanel(
                 )
                 viewModel.editMessage(edited)
                 editingMessage = null
-                richState.clear()
-                onDraftChange?.invoke("")
+                resetComposer()
             } else {
                 val target = replyingTo
                 val message = if (target != null) {
@@ -258,8 +283,7 @@ fun ChatPanel(
                     )
                 }
                 viewModel.sendMessage(message)
-                richState.clear()
-                onDraftChange?.invoke("") // 发送即清草稿（泄漏：发送后列表仍显示草稿并回填）
+                resetComposer()
                 replyingTo = null
             }
         }
@@ -267,29 +291,18 @@ fun ChatPanel(
 
     val boldStyle = remember { androidx.compose.ui.text.SpanStyle(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) }
     val italicStyle = remember { androidx.compose.ui.text.SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic) }
-    val strikeStyle = remember { androidx.compose.ui.text.SpanStyle(textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough) }
-    val toggleBold: () -> Unit = {
+    val toggleBold: () -> Unit = toggleBold@{
+        if (voiceMode) return@toggleBold
         richState.toggleSpanStyle(boldStyle)
         inputFocus.requestFocus()
         Unit
     }
-    val toggleItalic: () -> Unit = {
+    val toggleItalic: () -> Unit = toggleItalic@{
+        if (voiceMode) return@toggleItalic
         richState.toggleSpanStyle(italicStyle)
         inputFocus.requestFocus()
         Unit
     }
-    val toggleStrike: () -> Unit = {
-        richState.toggleSpanStyle(strikeStyle)
-        inputFocus.requestFocus()
-        Unit
-    }
-    val toggleCode: () -> Unit = {
-        // Code 是 RichSpanStyle，不能用 fontFamily=Monospace 冒充；后者不会序列化为反引号。
-        richState.toggleCodeSpan()
-        inputFocus.requestFocus()
-        Unit
-    }
-
     // 文件下载控制器注入（FileCard 消费；null = 回退旧 onMediaClick 路径）
     androidx.compose.runtime.CompositionLocalProvider(
         com.virjar.tk.ui.component.LocalFileDownloads provides fileDownloads,
@@ -389,18 +402,20 @@ fun ChatPanel(
                                                 menuMessage = null
                                             },
                                         )
-                                        DropdownMenuItem(
-                                            text = { Text("回复") },
-                                            onClick = { replyingTo = msg; menuMessage = null },
-                                        )
-                                        if (isMe && msg.body.isMarkdownTextBody()) {
+                                        if (!voiceMode) {
                                             DropdownMenuItem(
-                                                text = { Text("编辑") },
-                                                onClick = {
-                                                    editingMessage = msg
-                                                    menuMessage = null
-                                                },
+                                                text = { Text("回复") },
+                                                onClick = { replyingTo = msg; menuMessage = null },
                                             )
+                                            if (isMe && msg.body.isMarkdownTextBody()) {
+                                                DropdownMenuItem(
+                                                    text = { Text("编辑") },
+                                                    onClick = {
+                                                        editingMessage = msg
+                                                        menuMessage = null
+                                                    },
+                                                )
+                                            }
                                         }
                                         val canRevoke = isMe && (System.currentTimeMillis() - msg.timestamp < 2 * 60 * 1000)
                                         if (canRevoke) {
@@ -468,28 +483,35 @@ fun ChatPanel(
                     }
                 }
 
-                // 回复/编辑上下文条
-                replyingTo?.let { msg ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.xs),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            "回复 ${com.virjar.tk.util.MessagePreview.preview(msg).take(20)}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.weight(1f),
-                        )
-                        TextButton(onClick = { replyingTo = null }) { Text("取消") }
+                // 回复/编辑上下文条属于文字编辑器；语音模式下不暴露对不可见草稿的操作入口。
+                if (!voiceMode) {
+                    replyingTo?.let { msg ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.xs),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "回复 ${com.virjar.tk.util.MessagePreview.preview(msg).take(20)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(onClick = { replyingTo = null }) { Text("取消") }
+                        }
                     }
-                }
-                editingMessage?.let {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.xs),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text("编辑消息", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
-                        TextButton(onClick = { editingMessage = null; richState.clear() }) { Text("取消") }
+                    editingMessage?.let {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.xs),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("编辑消息", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+                            TextButton(
+                                onClick = {
+                                    editingMessage = null
+                                    resetComposer()
+                                },
+                            ) { Text("取消") }
+                        }
                     }
                 }
 
@@ -498,46 +520,59 @@ fun ChatPanel(
                 val effectivePickVideo = media?.onPickVideo
                 val hasAttachment = effectivePickImage != null || effectivePickFile != null || effectivePickVideo != null
                 run {
-                    val insertEmoji: (String) -> Unit = { emoji ->
-                        richState.insertAtCaret(emoji)
-                    }
-
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = Tk.spacing.xs),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        // 表情面板（锚定按钮上方弹出）
-                        Box {
-                            IconButton(
-                                onClick = { showEmoji = !showEmoji },
-                                modifier = Modifier.testTag("chat.emoji"),
-                            ) {
-                                Icon(
-                                    Icons.Filled.SentimentSatisfied,
-                                    contentDescription = "表情",
-                                    tint = if (showEmoji) MaterialTheme.colorScheme.primary else Tk.colors.secondaryText,
-                                )
+                        if (!voiceMode) {
+                            // 表情和格式工具仅在文字编辑器已挂载时存在。
+                            Box {
+                                IconButton(
+                                    onClick = { showEmoji = !showEmoji },
+                                    modifier = Modifier.testTag("chat.emoji"),
+                                ) {
+                                    Icon(
+                                        Icons.Filled.SentimentSatisfied,
+                                        contentDescription = "表情",
+                                        tint = if (showEmoji) MaterialTheme.colorScheme.primary else Tk.colors.secondaryText,
+                                    )
+                                }
+                                if (showEmoji) {
+                                    EmojiPanel(
+                                        onPick = {
+                                            richState.insertAtCaret(it)
+                                            inputFocus.requestFocus()
+                                        },
+                                        onDismiss = { showEmoji = false },
+                                    )
+                                }
                             }
-                            if (showEmoji) {
-                                EmojiPanel(
-                                    onPick = {
-                                        insertEmoji(it)
-                                        inputFocus.requestFocus()
-                                    },
-                                    onDismiss = { showEmoji = false },
-                                )
-                            }
-                        }
 
-                        // WYSIWYG 格式键（B/I/S/代码）：直改样式
-                        FormatKey("B", (richState.currentSpanStyle.fontWeight?.weight ?: 400) > 400, toggleBold, "chat.fmt.bold")
-                        FormatKey("I", richState.currentSpanStyle.fontStyle == androidx.compose.ui.text.font.FontStyle.Italic, toggleItalic, "chat.fmt.italic")
-                        FormatKey("S", richState.currentSpanStyle.textDecoration?.contains(androidx.compose.ui.text.style.TextDecoration.LineThrough) == true, toggleStrike, "chat.fmt.strike")
-                        FormatKey("</>", richState.isCodeSpan, toggleCode, "chat.fmt.code")
+                            // 聊天只保留高频格式；标题、缩进等文档能力不进入消息输入框。
+                            RichTextFormattingToolbar(
+                                state = richState,
+                                mode = RichTextToolbarMode.MESSAGE,
+                                onRequestFocus = { inputFocus.requestFocus() },
+                                modifier = Modifier.weight(1f),
+                                testTagPrefix = "chat.fmt",
+                            )
+                        }
 
                         // 语音/键盘切换
                         if (effectiveVoiceRecord != null) {
-                            IconButton(onClick = { voiceMode = !voiceMode }, modifier = Modifier.testTag("chat.voiceMode")) {
+                            IconButton(
+                                onClick = {
+                                    if (voiceMode) {
+                                        restoreFocusAfterVoiceMode = true
+                                        voiceMode = false
+                                    } else {
+                                        showEmoji = false
+                                        showAttach = false
+                                        voiceMode = true
+                                    }
+                                },
+                                modifier = Modifier.testTag("chat.voiceMode"),
+                            ) {
                                 Icon(
                                     if (voiceMode) Icons.Filled.Keyboard else Icons.Filled.KeyboardVoice,
                                     contentDescription = if (voiceMode) "键盘" else "语音",
@@ -545,8 +580,7 @@ fun ChatPanel(
                                 )
                             }
                         }
-
-                        Spacer(Modifier.weight(1f))
+                        if (voiceMode) Spacer(Modifier.weight(1f))
 
                         // ＋附件宫格弹层（图片/视频/文件）
                         if (hasAttachment) {
@@ -666,23 +700,25 @@ fun ChatPanel(
                             }
                         }
                     }
-                    Spacer(Modifier.width(Tk.spacing.sm))
-                    Button(
-                        onClick = sendAction,
-                        modifier = Modifier
-                            .testTag("chat.send")
-                            .height(Tk.dimens.inputMinHeight),
-                        enabled = richState.annotatedString.text.isNotBlank(),
-                        shape = MaterialTheme.shapes.small,
-                        contentPadding = PaddingValues(horizontal = Tk.spacing.lg),
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Send,
-                            contentDescription = null,
-                            modifier = Modifier.size(Tk.dimens.iconSize - 2.dp),
-                        )
-                        Spacer(Modifier.width(Tk.spacing.xs))
-                        Text(if (editingMessage != null) "保存" else "发送")
+                    if (!voiceMode) {
+                        Spacer(Modifier.width(Tk.spacing.sm))
+                        Button(
+                            onClick = sendAction,
+                            modifier = Modifier
+                                .testTag("chat.send")
+                                .height(Tk.dimens.inputMinHeight),
+                            enabled = richState.annotatedString.text.isNotBlank(),
+                            shape = MaterialTheme.shapes.small,
+                            contentPadding = PaddingValues(horizontal = Tk.spacing.lg),
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.Send,
+                                contentDescription = null,
+                                modifier = Modifier.size(Tk.dimens.iconSize - 2.dp),
+                            )
+                            Spacer(Modifier.width(Tk.spacing.xs))
+                            Text(if (editingMessage != null) "保存" else "发送")
+                        }
                     }
                 }
             }
@@ -695,6 +731,12 @@ fun ChatPanel(
 }
 
 // ── 消息渲染常量 ──
+
+/** 清理聊天正文时同步丢弃撤销/重做历史，避免撤销恢复已发送或已取消的内容。 */
+internal fun resetChatComposerState(state: RichTextState) {
+    state.clear()
+    state.history.clear()
+}
 
 /** 连续消息阈值：同一人 5 分钟内的消息视为连续，隐藏头像和昵称 */
 private const val CONTINUATION_THRESHOLD_MS = 5 * 60 * 1000L

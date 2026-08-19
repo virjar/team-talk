@@ -157,6 +157,9 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                     mentionCandidates.firstOrNull { it.uid == uid } ?: dataState.localCache.getUser(uid)
                 },
                 mentionCandidates = mentionCandidates,
+                onMentionClick = { uid ->
+                    safeMentionProfileRouteOrNull(uid)?.let { route -> navController.navigate(route) }
+                },
                 draft = currentDraft,
                 onDraftChange = { currentDraft = it },
                 onForward = { msg -> navController.navigate(Routes.forward(msg.chatId, msg.serverSeq)) },

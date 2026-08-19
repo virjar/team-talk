@@ -406,13 +406,15 @@ internal object RichTextStateMarkdownParser : RichTextStateParser<String> {
         var useLineBreak = false
 
         richTextState.richParagraphList.fastForEachIndexed { index, richParagraph ->
+            val paragraphBuilder = StringBuilder()
+
             // Append paragraph start text
-            builder.appendParagraphStartText(richParagraph)
+            paragraphBuilder.appendParagraphStartText(richParagraph)
 
             // Read the heading prefix from the first-class field rather than fingerprinting
             // the first child's SpanStyle.
             if (richParagraph.headingStyle != HeadingStyle.Normal) {
-                builder.append(richParagraph.headingStyle.markdownPrefix)
+                paragraphBuilder.append(richParagraph.headingStyle.markdownPrefix)
             }
 
             // Append paragraph children. Inside a heading paragraph the heading defaults already
@@ -420,8 +422,17 @@ internal object RichTextStateMarkdownParser : RichTextStateParser<String> {
             // attributes.
             val isHeading = richParagraph.headingStyle != HeadingStyle.Normal
             richParagraph.children.fastForEach { richSpan ->
-                builder.append(decodeRichSpanToMarkdown(richSpan, isHeading = isHeading))
+                paragraphBuilder.append(decodeRichSpanToMarkdown(richSpan, isHeading = isHeading))
             }
+
+            val paragraphMarkdown = paragraphBuilder.toString()
+            builder.append(
+                if (richParagraph.type is DefaultParagraph && !isHeading) {
+                    escapeMarkdownBlockSyntaxAtParagraphStart(paragraphMarkdown)
+                } else {
+                    paragraphMarkdown
+                },
+            )
 
             // Append line break if needed
             val isBlank = richParagraph.isBlank()
@@ -451,6 +462,39 @@ internal object RichTextStateMarkdownParser : RichTextStateParser<String> {
         }
 
         return correctMarkdownText(builder.toString())
+    }
+
+    /**
+     * [TT] Plain WYSIWYG paragraphs must not acquire block semantics after save/reload.
+     * Escape only the structural punctuation at the start of a normal paragraph; intentional
+     * headings and lists are emitted through their first-class paragraph model above.
+     */
+    private fun escapeMarkdownBlockSyntaxAtParagraphStart(markdown: String): String {
+        val leadingSpaces = markdown.takeWhile { it == ' ' }.length
+        if (leadingSpaces > 3 || leadingSpaces >= markdown.length) return markdown
+
+        val line = markdown.substring(leadingSpaces)
+        val headingMarks = line.takeWhile { it == '#' }.length
+        val orderedDigits = line.takeWhile(Char::isDigit).length
+        val orderedMarkerIndex = orderedDigits.takeIf { count ->
+            count in 1..9 &&
+                line.getOrNull(count) in setOf('.', ')') &&
+                line.getOrNull(count + 1)?.isWhitespace() == true
+        }
+        val nonWhitespace = line.filterNot(Char::isWhitespace)
+
+        val relativeEscapeIndex = when {
+            headingMarks in 1..6 &&
+                (line.length == headingMarks || line.getOrNull(headingMarks)?.isWhitespace() == true) -> 0
+            line.startsWith('>') -> 0
+            line.first() in setOf('-', '+') && line.getOrNull(1)?.isWhitespace() == true -> 0
+            nonWhitespace.length >= 3 && nonWhitespace.all { it == '-' } -> 0
+            nonWhitespace.isNotEmpty() && nonWhitespace.all { it == '=' } -> 0
+            orderedMarkerIndex != null -> orderedMarkerIndex
+            else -> return markdown
+        }
+        val escapeIndex = leadingSpaces + relativeEscapeIndex
+        return markdown.substring(0, escapeIndex) + "\\" + markdown.substring(escapeIndex)
     }
 
     private fun ParagraphType.isList(): Boolean =
@@ -589,6 +633,8 @@ internal object RichTextStateMarkdownParser : RichTextStateParser<String> {
                     .findChildOfType(MarkdownElementTypes.LINK_DESTINATION)
                     ?.getTextInNode(markdown)
                     ?.toString()
+                    // [TT] Match the destination escaping used by the fork encoder.
+                    ?.decodeMarkdownPunctuationEscapes()
                     .orEmpty()
 
                 val linkLabel = node
@@ -596,6 +642,7 @@ internal object RichTextStateMarkdownParser : RichTextStateParser<String> {
                     ?.getTextInNode(markdown)
                     ?.toString()
                     ?.removeSurrounding("[", "]")
+                    ?.decodeMarkdownPunctuationEscapes()
                     .orEmpty()
 
                 val token = parseTokenDestination(destination, linkLabel)
@@ -643,12 +690,17 @@ internal object RichTextStateMarkdownParser : RichTextStateParser<String> {
         richSpanStyle: RichSpanStyle,
     ): String {
         return when (richSpanStyle) {
-            is RichSpanStyle.Link -> "[$text](${richSpanStyle.url})"
+            // [TT] Escape link labels and destinations so editor-authored literal punctuation
+            // cannot terminate the link or become nested Markdown after a save/load round trip.
+            is RichSpanStyle.Link ->
+                "[${escapeMarkdownLiteralText(text)}]" +
+                    "(${escapeMarkdownLinkDestination(richSpanStyle.url)})"
             is RichSpanStyle.Code -> "`$text`"
             is RichSpanStyle.Token -> {
                 // Pseudo-link syntax: [label](trigger:triggerId:id)
                 val label = richSpanStyle.label.ifEmpty { text }
-                "[$label]($TokenDestinationPrefix${richSpanStyle.triggerId}:${richSpanStyle.id})"
+                "[${escapeMarkdownLiteralText(label)}]" +
+                    "($TokenDestinationPrefix${richSpanStyle.triggerId}:${richSpanStyle.id})"
             }
             is RichSpanStyle.Image -> {
                 // Standard Markdown image syntax `![alt](url)`. Only models
@@ -660,12 +712,13 @@ internal object RichTextStateMarkdownParser : RichTextStateParser<String> {
                 val model = richSpanStyle.model
                 if (model is String) {
                     val alt = richSpanStyle.contentDescription.orEmpty()
-                    "![$alt]($model)"
+                    "![${escapeMarkdownLiteralText(alt)}](${escapeMarkdownLinkDestination(model)})"
                 } else {
                     ""
                 }
             }
-            else -> text
+            // [TT] Plain WYSIWYG text stays literal when reparsed as Markdown.
+            else -> escapeMarkdownLiteralText(text)
         }
     }
 

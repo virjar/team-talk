@@ -43,7 +43,7 @@
 | `main.home` | 已进入主界面 |
 | `app.titleBar` | Desktop 应用级标题栏 |
 | `nav.avatar` | 当前用户入口 |
-| `nav.tab.会话` / `nav.tab.通讯录` / `nav.tab.设置` | 一级导航 |
+| `nav.tab.会话` / `nav.tab.通讯录` / `nav.tab.文档` / `nav.tab.设置` | 一级导航 |
 | `action.search` | 搜索入口 |
 | `global.search.input` | 全局搜索输入 |
 | `global.search.clear` | 清空搜索 |
@@ -88,6 +88,8 @@
 | `chat.input.hint` | 空输入提示 |
 | `chat.send` | 发送消息 |
 | `chat.emoji` | 表情入口 |
+| `chat.fmt.{bold|italic|strike|code|link|bullets|numbered|more}` | 消息输入的轻量格式工具与窄屏更多菜单 |
+| `rich.link.{text|url|confirm|remove}` | 富文本链接的显示文字、地址、确认与移除操作 |
 | `chat.voiceMode` | 语音模式 |
 | `chat.attach` | 附件入口 |
 | `chat.settings` | 打开群设置 |
@@ -139,8 +141,13 @@
 | `documents.node.{nodeId前8}` / `documents.tree.toggle.{nodeId前8}` | 目录节点与文件夹展开/折叠 |
 | `documents.tab.{tabId前12}` | 已打开的跨空间文档标签 |
 | `documents.editor.title` / `documents.editor.body` | 标题与 Markdown 富文本编辑器 |
+| `documents.editor.source` / `documents.editor.source.body` | Markdown 源码模式及其无损正文输入 |
+| `documents.editor.preview.source` | 高级 Markdown 无损只读源码预览 |
+| `documents.editor.format.{undo|redo|heading|bold|italic|strike|code|link|bullets|numbered|indent|outdent}` | 文档格式工具栏 |
+| `documents.editor.format.heading.{0..6}` | 正文及 H1–H6 段落样式 |
 | `documents.editor.preview` / `documents.editor.save` | 编辑预览切换与保存 |
 | `documents.editor.history` / `documents.revisions.dialog` | 打开版本历史及其弹窗 |
+| `documents.document.more` | 文档级更多操作 |
 | `documents.revision.{revision}` / `documents.revision.restore` | 指定修订及恢复 |
 | `documents.document.delete` / `documents.document.delete.confirm` | 删除入口与确认 |
 | `documents.tab.discard.confirm` | 未保存标签关闭保护 |

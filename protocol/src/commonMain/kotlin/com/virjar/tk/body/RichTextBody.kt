@@ -62,9 +62,78 @@ data class RichTextBody(
 }
 
 /** mention 内联语法：@[显示名](mention://uid) */
-private val MENTION_SYNTAX = Regex("""@\[([^\]]*)\]\(mention://([^)\s]+)\)""")
-private val LINK_SYNTAX = Regex("""(?<!!)\[([^\]]*)\]\(([^)\s]+)\)""")
-private val IMAGE_SYNTAX = Regex("""!\[([^\]]*)\]\(([^)\s]+)\)""")
+private const val COMMONMARK_ESCAPABLE_ASCII_PUNCTUATION = "!\"#\$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+
+/**
+ * CommonMark 的反斜杠转义只作用于 ASCII 标点；例如 `\\*` 解码为 `*`，
+ * `\\a` 必须继续保持两个字符，不能把用户正文中的反斜杠静默吞掉。
+ */
+fun decodeCommonMarkPunctuationEscapes(text: String): String {
+    if ('\\' !in text) return text
+    return buildString(text.length) {
+        var index = 0
+        while (index < text.length) {
+            val current = text[index]
+            val escaped = text.getOrNull(index + 1)
+            if (current == '\\' && escaped != null && escaped in COMMONMARK_ESCAPABLE_ASCII_PUNCTUATION) {
+                append(escaped)
+                index += 2
+            } else {
+                append(current)
+                index++
+            }
+        }
+    }
+}
+
+// `\\.` 作为一个原子跨过转义标点，避免 `\\]` / `\\)` 被误判为 label/destination 边界。
+private val MENTION_SYNTAX = Regex("""@\[((?:\\.|[^\]\\])*)\]\(mention://((?:\\.|[^)\\\s])+)\)""")
+private val LINK_SYNTAX = Regex("""(?<![!\\])\[((?:\\.|[^\]\\])*)\]\(((?:\\.|[^)\\\s])+)\)""")
+private val IMAGE_SYNTAX = Regex("""!\[((?:\\.|[^\]\\])*)\]\(((?:\\.|[^)\\\s])+)\)""")
+
+private data class ProtectedMarkdownEscapes(
+    val text: String,
+    val placeholderBase: Int,
+) {
+    fun restore(value: String): String = buildString(value.length) {
+        value.forEach { char ->
+            val punctuationIndex = char.code - placeholderBase
+            append(
+                if (punctuationIndex in COMMONMARK_ESCAPABLE_ASCII_PUNCTUATION.indices) {
+                    COMMONMARK_ESCAPABLE_ASCII_PUNCTUATION[punctuationIndex]
+                } else {
+                    char
+                }
+            )
+        }
+    }
+}
+
+/** 先把字面标点替换为私用区占位符，防止后续剥离 Markdown 标记时把它当成语法。 */
+private fun protectCommonMarkPunctuationEscapes(text: String): ProtectedMarkdownEscapes {
+    val width = COMMONMARK_ESCAPABLE_ASCII_PUNCTUATION.length
+    val base = generateSequence(0xE000) { previous ->
+        (previous + width).takeIf { it + width <= 0xF8FF }
+    }.first { candidate ->
+        (candidate until candidate + width).none { code -> code.toChar() in text }
+    }
+    val protected = buildString(text.length) {
+        var index = 0
+        while (index < text.length) {
+            val current = text[index]
+            val escaped = text.getOrNull(index + 1)
+            val punctuationIndex = escaped?.let(COMMONMARK_ESCAPABLE_ASCII_PUNCTUATION::indexOf) ?: -1
+            if (current == '\\' && punctuationIndex >= 0) {
+                append((base + punctuationIndex).toChar())
+                index += 2
+            } else {
+                append(current)
+                index++
+            }
+        }
+    }
+    return ProtectedMarkdownEscapes(protected, base)
+}
 
 /**
  * 由 markdown 源文本构造 RichTextBody：提取 mentions 侧信道 + 剥离语法生成 plainText。
@@ -72,9 +141,10 @@ private val IMAGE_SYNTAX = Regex("""!\[([^\]]*)\]\(([^)\s]+)\)""")
  */
 fun buildRichTextBody(markdown: String): RichTextBody {
     val mentions = MENTION_SYNTAX.findAll(markdown).mapIndexed { _, m ->
-        val name = m.groupValues[1].ifBlank { m.groupValues[2] }
+        val uid = decodeCommonMarkPunctuationEscapes(m.groupValues[2])
+        val name = decodeCommonMarkPunctuationEscapes(m.groupValues[1]).ifBlank { uid }
         RichTextBody.Mention(
-            uid = m.groupValues[2],
+            uid = uid,
             displayName = name,
             offset = m.range.first,
             length = m.value.length, // 完整链接语法区间（替换/定位用）
@@ -86,6 +156,8 @@ fun buildRichTextBody(markdown: String): RichTextBody {
     text = text.replace(IMAGE_SYNTAX) { "[图片]" }
     text = text.replace(MENTION_SYNTAX) { "@${it.groupValues[1]}" }
     text = text.replace(LINK_SYNTAX) { it.groupValues[1] }
+    val protectedEscapes = protectCommonMarkPunctuationEscapes(text)
+    text = protectedEscapes.text
     // 行内标记：先处理双字符标记，再处理单字符斜体，避免把 ** 拆成两组 *。
     text = text.replace(Regex("""(\*\*|__|~~|`)(.+?)\1""")) { it.groupValues[2] }
     text = text.replace(Regex("""(?<!\*)\*([^*\n]+)\*(?!\*)""")) { it.groupValues[1] }
@@ -96,5 +168,5 @@ fun buildRichTextBody(markdown: String): RichTextBody {
     text = text.replace(Regex("""^([-*+]|\d+\.)\s+""", RegexOption.MULTILINE), "")
     text = text.replace(Regex("""^```.*$""", RegexOption.MULTILINE), "")
 
-    return RichTextBody(markdown = markdown, mentions = mentions, plainText = text)
+    return RichTextBody(markdown = markdown, mentions = mentions, plainText = protectedEscapes.restore(text))
 }

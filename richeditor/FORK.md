@@ -36,6 +36,8 @@
 |------|---------|------|------|
 | 2026-08-17 | model/RichTextState.kt | + `insertAtCaret(text)` 公开方法（光标插入，走 onTextFieldValueChange 完整链路含撤销历史） | 表情/@语法插入，上游无公开定点插入 API |
 | 2026-08-17 | model/RichTextState.kt | + `replaceRange(start, end, text)` 公开方法（区间替换） | @补全选中替换 query、/指令回填 |
+| 2026-08-19 | model/RichTextState.kt | 链接选中态与更新/移除共用边界感知定位，覆盖完整选区和首字符光标 | 避免工具栏状态与实际链接操作分叉 |
+| 2026-08-19 | parser/markdown/MarkdownUtils.kt、RichTextStateMarkdownParser.kt | Markdown 普通文本、链接 label/destination 的最小转义与标点反解；普通段落起始块标记按上下文转义 | 保证编辑器文字及含括号、反斜杠链接可无损往返，避免字面 `#`、`>`、列表标记在重载后变成块结构 |
 
 ## 上游同步策略
 

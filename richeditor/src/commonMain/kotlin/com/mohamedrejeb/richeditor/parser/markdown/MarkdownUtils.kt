@@ -11,6 +11,42 @@ import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.flavours.gfm.GFMTokenTypes
 import org.intellij.markdown.parser.MarkdownParser
 
+// [TT] Markdown emitted from WYSIWYG text must parse back to the same literal text. Keep the
+// encoder set intentionally limited to inline constructs that otherwise change semantics; the
+// decoder accepts every CommonMark backslash-escapable ASCII punctuation character.
+private const val MarkdownInlineSemanticCharacters = "\\`*_[]~<>&\$"
+private const val MarkdownLinkDestinationCharacters = "\\()<>"
+private const val MarkdownEscapableAsciiPunctuation =
+    "!\"#\$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
+
+internal fun escapeMarkdownLiteralText(text: String): String =
+    text.escapeMarkdownCharacters(MarkdownInlineSemanticCharacters)
+
+internal fun escapeMarkdownLinkDestination(destination: String): String =
+    destination.escapeMarkdownCharacters(MarkdownLinkDestinationCharacters)
+
+internal fun String.decodeMarkdownPunctuationEscapes(): String = buildString(length) {
+    var index = 0
+    while (index < this@decodeMarkdownPunctuationEscapes.length) {
+        val char = this@decodeMarkdownPunctuationEscapes[index]
+        val escaped = this@decodeMarkdownPunctuationEscapes.getOrNull(index + 1)
+        if (char == '\\' && escaped != null && escaped in MarkdownEscapableAsciiPunctuation) {
+            append(escaped)
+            index += 2
+        } else {
+            append(char)
+            index++
+        }
+    }
+}
+
+private fun String.escapeMarkdownCharacters(characters: String): String = buildString(length) {
+    this@escapeMarkdownCharacters.forEach { char ->
+        if (char in characters) append('\\')
+        append(char)
+    }
+}
+
 internal fun encodeMarkdownToRichText(
     markdown: String,
     onOpenNode: (node: ASTNode) -> Unit,
@@ -165,8 +201,19 @@ internal fun correctMarkdownText(text: String): String {
             }
         }
 
+        // [TT] Backslash-escaped emphasis characters are literal WYSIWYG text, not tags.
+        // Count the immediately preceding slash run so `\\*` remains an unescaped marker
+        // while `\*` survives the normalizer unchanged.
+        var precedingBackslashes = 0
+        var slashIndex = i - 1
+        while (slashIndex >= 0 && text[slashIndex] == '\\') {
+            precedingBackslashes++
+            slashIndex--
+        }
+        val isEscapedPunctuation = precedingBackslashes % 2 == 1
+
         // Extract edge spaces from tags
-        if (char == '*' || char == '~') {
+        if ((char == '*' || char == '~') && !isEscapedPunctuation) {
             val nextChar = text.getOrNull(i + 1)
             val isBulletMarker =
                 char == '*' &&
@@ -220,7 +267,11 @@ private fun encodeMarkdownNodeToRichText(
     onHtmlBlock: (html: String) -> Unit,
 ) {
     when (node.type) {
-        MarkdownTokenTypes.TEXT -> onText(node.getTextInNode(markdown).toString())
+        // [TT] JetBrains Markdown exposes the source slice for escaped punctuation; strip only
+        // valid CommonMark punctuation escapes so `toMarkdown -> setMarkdown` restores literals.
+        MarkdownTokenTypes.TEXT -> onText(
+            node.getTextInNode(markdown).toString().decodeMarkdownPunctuationEscapes(),
+        )
         MarkdownTokenTypes.WHITE_SPACE -> onText(" ")
         MarkdownTokenTypes.SINGLE_QUOTE -> onText("'")
         MarkdownTokenTypes.DOUBLE_QUOTE -> onText("\"")
@@ -288,6 +339,7 @@ private fun encodeMarkdownNodeToRichText(
                 ?.drop(1)
                 ?.dropLast(1)
                 ?.toString()
+                ?.decodeMarkdownPunctuationEscapes()
             onText(text ?: "")
             onCloseNode(node)
         }

@@ -135,7 +135,11 @@ fun MessageBodyRenderer(
             }
         }
 
-        is ReplyBody -> ReplyView(body)
+        is ReplyBody -> ReplyView(
+            body = body,
+            onUrlClick = onUrlClick,
+            onMentionClick = onMentionClick,
+        )
         is ForwardBody -> ForwardView(body)
         is MergeForwardBody -> MediaIconCard(title = "合并转发", subtitle = "${body.messageCount} 条消息")
         is RevokeBody -> SystemHintText("撤回了一条消息")
@@ -157,7 +161,11 @@ internal fun MessageBody?.isEdgeToEdgeMedia(): Boolean =
 // ── 引用样式：左侧竖线（飞书范式，两种气泡底色下都成立） ──
 
 @Composable
-private fun ReplyView(body: ReplyBody) {
+private fun ReplyView(
+    body: ReplyBody,
+    onUrlClick: ((String) -> Unit)?,
+    onMentionClick: ((uid: String) -> Unit)?,
+) {
     Column {
         // 引用块：3dp 主色竖线 + 引用者 + 截断内容
         Row(
@@ -196,7 +204,11 @@ private fun ReplyView(body: ReplyBody) {
         // 回复正文
         if (body.content.isNotBlank()) {
             Spacer(Modifier.height(Tk.spacing.xs))
-            RichMessageText(body.content)
+            RichMessageText(
+                content = body.content,
+                onUrlClick = onUrlClick,
+                onMentionClick = onMentionClick,
+            )
         }
     }
 }

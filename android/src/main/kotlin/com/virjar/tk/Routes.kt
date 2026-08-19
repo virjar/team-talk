@@ -40,3 +40,18 @@ object Routes {
     const val FORWARD = "forward/{chatId}/{serverSeq}"
     fun forward(chatId: String, serverSeq: Long) = "forward/$chatId/$serverSeq"
 }
+
+/**
+ * 消息 Markdown 中的 mention uid 属于不可信输入，不能直接拼入 Navigation 路径。
+ *
+ * 服务端 UID 当前为 8 位 Base62，兼容历史 UUID；旧测试数据还会使用 `-`、`_`。
+ * 这里按服务端字段上限（36）做 fail-closed 白名单，拒绝路径、查询、片段、转义与控制字符。
+ */
+internal fun safeMentionProfileRouteOrNull(rawUid: String): String? {
+    if (rawUid.length !in 1..36) return null
+    if (!rawUid.all { it.isAsciiLetterOrDigit() || it == '-' || it == '_' }) return null
+    return Routes.userProfile(rawUid)
+}
+
+private fun Char.isAsciiLetterOrDigit(): Boolean =
+    this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9'

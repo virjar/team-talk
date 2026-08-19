@@ -396,22 +396,26 @@ public class RichTextState internal constructor(
     /**
      * Returns whether the current selected text is a link.
      */
-    public val isLink: Boolean get() = currentAppliedRichSpanStyle::class == RichSpanStyle.Link::class
+    // [TT] Keep toolbar state and link mutations on the same boundary-aware lookup. The
+    // upstream `selection.min - 1` rule misses a link's first character and a full selection.
+    public val isLink: Boolean get() = getSelectedLinkRichSpan() != null
 
     /**
      * Returns the selected link text.
      */
     public val selectedLinkText: String?
-        get() =
-            if (isLink)
-                getRichSpanByTextIndex(textIndex = selection.min - 1)?.text
-            else
-                null
+        get() = getSelectedLinkRichSpan()?.fullTextRange?.let { range ->
+            textFieldValue.text.substring(
+                range.min.coerceIn(0, textFieldValue.text.length),
+                range.max.coerceIn(0, textFieldValue.text.length),
+            )
+        }
 
     /**
      * Returns the selected link URL.
      */
-    public val selectedLinkUrl: String? get() = (currentAppliedRichSpanStyle as? RichSpanStyle.Link)?.url
+    public val selectedLinkUrl: String?
+        get() = (getSelectedLinkRichSpan()?.richSpanStyle as? RichSpanStyle.Link)?.url
 
     @Deprecated(
         message = "Use isCodeSpan instead",
@@ -1601,10 +1605,31 @@ public class RichTextState internal constructor(
                 ?: DefaultParagraph()
         }
 
+    // [TT] Resolve the actual selected link instead of always looking one character left.
+    // A non-collapsed selection is a link only when every intersecting span belongs to the
+    // same link. For a caret, prefer the character at the caret so the first character works,
+    // but retain the upstream edge filtering when falling back to the preceding character so
+    // a caret immediately after the link is not treated as part of it.
     private fun getSelectedLinkRichSpan(): RichSpan? {
-        val richSpan = getRichSpanByTextIndex(selection.min - 1)
+        if (!selection.collapsed) {
+            val selectedSpans = getRichSpanListByTextRange(selection)
+            if (selectedSpans.isEmpty()) return null
 
-        return getLinkRichSpan(richSpan)
+            val firstLink = getLinkRichSpan(selectedSpans.first()) ?: return null
+            return firstLink.takeIf { link ->
+                selectedSpans.all { getLinkRichSpan(it) === link }
+            }
+        }
+
+        val atCaret = getLinkRichSpan(
+            getRichSpanByTextIndex(
+                textIndex = selection.min,
+                ignoreCustomFiltering = true,
+            ),
+        )
+        if (atCaret != null && selection.min < atCaret.fullTextRange.max) return atCaret
+
+        return getLinkRichSpan(getRichSpanByTextIndex(selection.min - 1))
     }
 
     private fun addUnorderedList(paragraph: RichParagraph) {

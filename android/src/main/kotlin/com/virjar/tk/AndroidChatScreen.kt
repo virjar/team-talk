@@ -1,8 +1,10 @@
 package com.virjar.tk
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
+import android.net.Uri
 import android.os.Build
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -37,6 +39,7 @@ import com.virjar.tk.ui.screen.ChatPanel
 import com.virjar.tk.viewmodel.ChatViewModel
 import kotlinx.coroutines.launch
 import java.io.File
+import java.net.URI
 import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -56,6 +59,7 @@ fun AndroidChatScreen(
     accessToken: String? = null,
     resolveSender: ((uid: String) -> User?)? = null,
     mentionCandidates: List<User> = emptyList(),
+    onMentionClick: ((uid: String) -> Unit)? = null,
     scope: kotlinx.coroutines.CoroutineScope = rememberCoroutineScope(),
 ) {
     val context = LocalContext.current
@@ -233,6 +237,8 @@ fun AndroidChatScreen(
                     onPickFile = { filePicker.launch(arrayOf("*/*")) },
                     onPickVideo = { videoPicker.launch(PickVisualMediaRequest.Builder().setMediaType(ActivityResultContracts.PickVisualMedia.VideoOnly).build()) },
                     onVoiceRecord = { if (it) startVoice() else stopVoice() },
+                    onMentionClick = onMentionClick,
+                    onUrlClick = { url -> openSafeExternalLink(context, url) },
                     imageContent = { url, mod ->
                         rememberAsyncThumb(com.virjar.tk.repository.FileOps.resolveUrl(attachmentServerUrl, url), mod, android.graphics.Color.LTGRAY)
                     },
@@ -291,6 +297,42 @@ fun AndroidChatScreen(
         )
     }
 
+}
+
+/**
+ * 把消息中的外链收敛到 Android 可以安全交给外部应用的协议集合。
+ *
+ * 不接受相对地址、自定义 scheme、无 host 的 http(s) 地址或带账号信息的地址，避免消息内容
+ * 触发应用深链/本地资源，也避免把 URL 中的凭据交给外部浏览器。
+ */
+internal fun safeExternalLinkOrNull(rawUrl: String): String? {
+    val candidate = rawUrl.trim()
+    if (candidate.isEmpty()) return null
+
+    val uri = runCatching { URI(candidate) }.getOrNull() ?: return null
+    return when (uri.scheme?.lowercase()) {
+        "http", "https" -> candidate.takeIf {
+            uri.host?.isNotBlank() == true && uri.userInfo == null
+        }
+        "mailto" -> candidate.takeIf {
+            uri.rawSchemeSpecificPart?.isNotBlank() == true && !uri.rawSchemeSpecificPart.startsWith("//")
+        }
+        else -> null
+    }
+}
+
+private fun openSafeExternalLink(context: android.content.Context, rawUrl: String) {
+    val url = safeExternalLinkOrNull(rawUrl) ?: return
+    val uri = Uri.parse(url)
+    val intent = if (uri.scheme.equals("mailto", ignoreCase = true)) {
+        Intent(Intent.ACTION_SENDTO, uri)
+    } else {
+        Intent(Intent.ACTION_VIEW, uri).apply {
+            addCategory(Intent.CATEGORY_BROWSABLE)
+        }
+    }
+    runCatching { context.startActivity(intent) }
+        .onFailure { error -> Log.w("Chat", "No application can open external link", error) }
 }
 
 /**

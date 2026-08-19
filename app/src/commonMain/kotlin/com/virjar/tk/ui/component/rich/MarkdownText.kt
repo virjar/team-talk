@@ -28,9 +28,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.virjar.tk.body.decodeCommonMarkPunctuationEscapes
 import com.virjar.tk.ui.theme.Tk
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.ast.ASTNode
@@ -61,8 +63,30 @@ internal sealed class MdBlock {
     data class Heading(val level: Int, val spans: List<MdSpan>) : MdBlock()
     data class CodeFence(val lang: String?, val code: String) : MdBlock()
     data class Quote(val blocks: List<MdBlock>) : MdBlock()
-    data class ListItem(val spans: List<MdSpan>) : MdBlock()
+    data class ListItem(
+        val spans: List<MdSpan>,
+        val kind: MdListKind,
+        /** 根列表为 0；每进入一层嵌套列表递增 1。 */
+        val depth: Int,
+        /** 仅有序列表有值，并保留 Markdown 源码中的显式序号。 */
+        val number: Int? = null,
+    ) : MdBlock() {
+        init {
+            require(depth >= 0) { "List depth must not be negative" }
+            require((kind == MdListKind.Ordered) == (number != null)) {
+                "Only ordered list items have a number"
+            }
+        }
+
+        val markerText: String
+            get() = when (kind) {
+                MdListKind.Unordered -> "•"
+                MdListKind.Ordered -> "$number."
+            }
+    }
 }
+
+internal enum class MdListKind { Ordered, Unordered }
 
 internal sealed class MdSpan {
     data class Text(val text: String) : MdSpan()
@@ -85,6 +109,11 @@ internal object MdParser {
     private val flavour = GFMFlavourDescriptor()
     private val parser = MarkdownParser(flavour)
 
+    private val listContainerTypes: Set<org.intellij.markdown.IElementType> = setOf(
+        MarkdownElementTypes.UNORDERED_LIST,
+        MarkdownElementTypes.ORDERED_LIST,
+    )
+
     /** 语法标记 token（星号、波浪号、反引号、方圆括号等）：只参与结构不产出文本，逐出渲染（曾泄漏为可见字符） */
     private val markerTokens: Set<org.intellij.markdown.IElementType> = setOf(
         MarkdownTokenTypes.EMPH, MarkdownTokenTypes.BACKTICK, MarkdownTokenTypes.ESCAPED_BACKTICKS,
@@ -98,13 +127,77 @@ internal object MdParser {
     )
 
     fun parse(src: String): List<MdBlock> = parser.buildMarkdownTreeFromString(src)
-        .children.flatMap { it.toBlocks(src) }
+        .children.flatMap { it.toBlocks(src, listDepth = 0) }
 
-    /** 列表容器（UNORDERED_LIST/ORDERED_LIST）透传子项，其余块类型一一块映射。 */
-    private fun ASTNode.toBlocks(src: String): List<MdBlock> = when (type) {
+    /** 列表容器递归投影为带类型、显式序号和层级的平铺行；其余块类型一一映射。 */
+    private fun ASTNode.toBlocks(src: String, listDepth: Int): List<MdBlock> = when (type) {
         MarkdownElementTypes.UNORDERED_LIST, MarkdownElementTypes.ORDERED_LIST ->
-            children.mapNotNull { child -> child.toBlock(src) }
+            toListBlocks(src, listDepth)
         else -> listOfNotNull(toBlock(src))
+    }
+
+    private fun ASTNode.toListBlocks(src: String, depth: Int): List<MdBlock> {
+        val kind = when (type) {
+            MarkdownElementTypes.ORDERED_LIST -> MdListKind.Ordered
+            else -> MdListKind.Unordered
+        }
+        return children
+            .filter { it.type == MarkdownElementTypes.LIST_ITEM }
+            .flatMap { item ->
+                buildList {
+                    add(
+                        MdBlock.ListItem(
+                            spans = item.inline(
+                                src = src,
+                                literalMarkers = false,
+                                excludeNestedLists = true,
+                            ).trimListStructureTail(),
+                            kind = kind,
+                            depth = depth,
+                            number = if (kind == MdListKind.Ordered) {
+                                item.explicitListNumber(src) ?: 1
+                            } else {
+                                null
+                            },
+                        )
+                    )
+                    item.children
+                        .filter { it.type in listContainerTypes }
+                        .forEach { nested -> addAll(nested.toListBlocks(src, depth + 1)) }
+                }
+            }
+    }
+
+    private fun ASTNode.explicitListNumber(src: String): Int? {
+        // LIST_NUMBER 在不同嵌套深度下并不总是 LIST_ITEM 的可检索 AST 后代；
+        // 列表项自身首行才是序号的权威来源，也不会误读到更深层子列表。
+        val firstLine = getTextInNode(src).toString().lineSequence().firstOrNull()?.trimStart().orEmpty()
+        val digits = firstLine.takeWhile(Char::isDigit)
+        if (digits.isEmpty() || firstLine.getOrNull(digits.length) !in setOf('.', ')')) return null
+        return digits.toIntOrNull()
+    }
+
+    /** 移除嵌套列表前 AST 留在父项中的换行与缩进，不触碰正文内部空白。 */
+    private fun List<MdSpan>.trimListStructureTail(): List<MdSpan> {
+        val result = toMutableList()
+        while (result.isNotEmpty()) {
+            val last = result.last()
+            val trimmed = when (last) {
+                is MdSpan.Text -> last.text.trimEnd().let { MdSpan.Text(it) }
+                is MdSpan.Styled -> last.copy(text = last.text.trimEnd())
+                else -> return result
+            }
+            val empty = when (trimmed) {
+                is MdSpan.Text -> trimmed.text.isEmpty()
+                is MdSpan.Styled -> trimmed.text.isEmpty()
+                else -> false
+            }
+            if (empty) result.removeLast() else {
+                result[result.lastIndex] = trimmed
+                break
+            }
+        }
+        return result
     }
 
     private fun ASTNode.toBlock(src: String): MdBlock? = when (type) {
@@ -118,10 +211,7 @@ internal object MdParser {
             code = findChildOfType(MarkdownTokenTypes.CODE_FENCE_CONTENT)?.getTextInNode(src)?.toString()?.trimEnd('\n') ?: "",
         )
         MarkdownElementTypes.CODE_BLOCK -> MdBlock.CodeFence(lang = null, code = getTextInNode(src).toString().trimEnd('\n'))
-        MarkdownElementTypes.BLOCK_QUOTE -> MdBlock.Quote(children.flatMap { it.toBlocks(src) })
-        // 列表项上下文：marker token（- / 1.）一律逐出（它们不是用户内容；与段落内
-        // 未闭合语法的字面 marker 语义不同——后者是用户敲的字符要保序）
-        MarkdownElementTypes.LIST_ITEM -> MdBlock.ListItem(spans = inline(src, literalMarkers = false))
+        MarkdownElementTypes.BLOCK_QUOTE -> MdBlock.Quote(children.flatMap { it.toBlocks(src, listDepth = 0) })
         else -> null // 未支持块（HTML/链接定义等）丢弃，IM 消息不出现
     }
 
@@ -129,7 +219,11 @@ internal object MdParser {
      * @param literalMarkers 段落层孤立的 marker token（未闭合语法的 `**` 等）是否字面显示。
      *   段落内 true（保序不丢字）；列表项 false（`- ` 是结构不是内容）。
      */
-    private fun ASTNode.inline(src: String, literalMarkers: Boolean = true): List<MdSpan> {
+    private fun ASTNode.inline(
+        src: String,
+        literalMarkers: Boolean = true,
+        excludeNestedLists: Boolean = false,
+    ): List<MdSpan> {
         val out = mutableListOf<MdSpan>()
 
         /**
@@ -137,6 +231,7 @@ internal object MdParser {
          *   marker token 在结构内 = 语法符号（逐出）；在段落层孤立出现 = 未闭合语法的字面字符（保留，不丢字）。
          */
         fun walk(node: ASTNode, style: MdSpan.Styled, inStructure: Boolean) {
+            if (excludeNestedLists && node.type in listContainerTypes) return
             when (node.type) {
                 MarkdownElementTypes.EMPH -> node.children.forEach { walk(it, style.copy(italic = true), true) }
                 MarkdownElementTypes.STRONG -> node.children.forEach { walk(it, style.copy(bold = true), true) }
@@ -148,10 +243,14 @@ internal object MdParser {
                 MarkdownElementTypes.INLINE_LINK -> {
                     val dest = node.findChildOfType(MarkdownElementTypes.LINK_DESTINATION)
                         ?.getTextInNode(src)?.toString()
-                    // 显示文本在 LINK_TEXT 子树内（含 [ ] 包裹，取其 TEXT 叶子拼接）
+                        ?.let(::decodeCommonMarkPunctuationEscapes)
+                    // LINK_TEXT 的源码切片包含方括号；整体解码才能保留空格与被转义的 `]`。
+                    // 只拼 TEXT 叶子会漏掉 WHITE_SPACE，并把 `文档 [v2]` 错渲染为 `文档[v2]`。
                     val label = node.findChildOfType(MarkdownElementTypes.LINK_TEXT)
-                        ?.children?.filter { it.type == MarkdownTokenTypes.TEXT }
-                        ?.joinToString("") { it.getTextInNode(src).toString() }
+                        ?.getTextInNode(src)
+                        ?.toString()
+                        ?.removeSurrounding("[", "]")
+                        ?.let(::decodeCommonMarkPunctuationEscapes)
                         .orEmpty()
                     when {
                         dest != null && dest.startsWith("mention://") -> {
@@ -173,7 +272,7 @@ internal object MdParser {
                     // 无样式叠加时产出 Text（而非空 Styled，纯文本零包装）
                     if (node.children.isEmpty()) {
                         if (node.type !in markerTokens || !inStructure) {
-                            val text = node.getTextInNode(src).toString()
+                            val text = decodeCommonMarkPunctuationEscapes(node.getTextInNode(src).toString())
                             if (text.isNotEmpty()) {
                                 out += if (style.bold || style.italic || style.strike || style.code) {
                                     style.copy(text = text)
@@ -302,12 +401,20 @@ fun MarkdownText(
                     }
                 }
                 is MdBlock.ListItem -> Row(Modifier.padding(top = topPadding)) {
-                    Text("• ", style = MaterialTheme.typography.bodyMedium, color = contentColor)
+                    Text(
+                        text = block.markerText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = contentColor,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier
+                            .padding(start = (block.depth * 16).dp)
+                            .width(28.dp),
+                    )
                     Text(
                         text = block.spans.toAnnotated(onUrlClick, onMentionClick),
                         style = MaterialTheme.typography.bodyMedium,
                         color = contentColor,
-                        modifier = Modifier.padding(start = 2.dp),
+                        modifier = Modifier.padding(start = Tk.spacing.xs),
                     )
                 }
             }
