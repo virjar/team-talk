@@ -118,7 +118,22 @@ GroupFileVersion 后，它才获得群文件身份和成员下载权限。重命
 群文件不是 Message 的派生列表：聊天附件不会自动进入共享空间，删除消息也不会删除群文件。未来消息
 可以引用 GroupFileEntry，但权威名称、版本和权限仍由群文件领域维护。
 
-## 7. 自动化应用
+## 7. 协作文档
+
+### Document / DocumentRevision
+
+Document 是独立办公内容聚合，包含稳定 `documentId`、`scopeType/scopeId`、标题、Markdown 当前
+快照、revision 与创建/修改身份。当前只开放群聊 scope，但 scope 模型允许未来组织知识库或个人空间
+复用同一领域，而不是复制一套文档表。
+
+DocumentRevision 是每次成功保存产生的不可变完整快照。更新必须提交当前 `expectedRevision`；服务端
+只允许一个调用获得下一个版本，其余调用收到冲突并保留本地草稿。恢复旧版本不是回退或删除历史，而是
+以旧快照内容再创建一个新 revision。删除是当前文档的软删除，历史不再通过普通客户端访问。
+
+群文档权限不复制成员名单。服务端每次列出、读取、保存、查看历史和删除时都查询当前群成员资格，
+因此离群后不能依靠旧客户端缓存继续访问。当前所有群成员都可编辑；细粒度只读/编辑 ACL 尚未开放。
+
+## 8. 自动化应用
 
 ### AutomationBot
 
@@ -129,7 +144,7 @@ AutomationBot 是管理员创建的单向通知应用，关联一个不可密码
 AutomationBot 与 ImBot 不同：前者适合构建、监控、审批等外部系统主动通知，最小权限且无需常驻
 TCP；后者是完整无头客户端，适合需要接收消息和参与双向交互的自动化。
 
-## 8. 事件与本地状态
+## 9. 事件与本地状态
 
 ### Notify
 
@@ -141,7 +156,7 @@ TCP；后者是完整无头客户端，适合需要接收消息和参与双向�
 客户端本地缓存是 UI 的读取源，不是远端权限事实。事件处理成功后先更新本地数据，再推进事件
 游标；失败时保留游标以便重试。
 
-## 8. 关系图
+## 10. 关系图
 
 ```text
 User 1 ──* Device
@@ -155,6 +170,7 @@ Chat 1 ──* Message
 Message 0 ──* Attachment
 Chat 1 ──* GroupFileEntry
 GroupFileEntry 0..1 ──* GroupFileVersion ──1 Attachment
+Chat 1 ──* Document 1 ──* DocumentRevision
 User 1 ──* Notify
 AutomationBot 1 ──1 User(service identity)
 AutomationBot * ──* Chat  通过 explicit grant

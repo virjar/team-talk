@@ -39,12 +39,13 @@ sealed class SubScreen {
 
     // ── 主内容页 ──
     data object GlobalSearch : SubScreen()
+    data class GroupDocuments(val chatId: String) : SubScreen()
 
     /** Desktop 承载方式。显式建模，避免把“覆盖式检查器”和“主内容替换页”混成同一面板。 */
     val presentation: SubScreenPresentation
         get() = when (this) {
             is GroupDetail, is InviteMembers, is InviteLinks, is GroupFiles -> SubScreenPresentation.CHAT_INSPECTOR
-            GlobalSearch -> SubScreenPresentation.MAIN_PANE
+            GlobalSearch, is GroupDocuments -> SubScreenPresentation.MAIN_PANE
             else -> SubScreenPresentation.TASK_WINDOW
         }
 
@@ -72,6 +73,7 @@ sealed class SubScreen {
         is GroupDetail -> ScreenDataKey.GroupDetail(chatId)
         is InviteLinks -> ScreenDataKey.InviteLinks(chatId)
         is GroupFiles -> ScreenDataKey.GroupFiles(chatId)
+        is GroupDocuments -> ScreenDataKey.GroupDocuments(chatId)
         GlobalSearch -> null
         else -> null
     }

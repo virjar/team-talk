@@ -12,6 +12,7 @@ import com.virjar.tk.navigation.feature.DiscoveryFeature
 import com.virjar.tk.navigation.feature.GroupFeature
 import com.virjar.tk.navigation.feature.OrganizationFeature
 import com.virjar.tk.navigation.feature.GroupFilesFeature
+import com.virjar.tk.navigation.feature.GroupDocumentsFeature
 import com.virjar.tk.viewmodel.ChatViewModel
 import com.virjar.tk.viewmodel.ContactViewModel
 import com.virjar.tk.viewmodel.ConversationViewModel
@@ -41,6 +42,7 @@ open class AppDataState(val session: ClientSession) {
     val conversationRepo get() = session.conversationRepo
     val organizationRepo get() = session.organizationRepo
     val groupFileRepo get() = session.groupFileRepo
+    val documentRepo get() = session.documentRepo
 
     private val actionScope = CoroutineScope(
         Dispatchers.Main + SupervisorJob() +
@@ -59,6 +61,7 @@ open class AppDataState(val session: ClientSession) {
     val discovery = DiscoveryFeature(session, ::handleError)
     val organization = OrganizationFeature(session, ::handleError)
     val groupFiles = GroupFilesFeature(session, actionScope, ::handleError)
+    val groupDocuments = GroupDocumentsFeature(session, actionScope, ::handleError)
 
     var error by mutableStateOf<String?>(null)
         private set
@@ -98,6 +101,7 @@ open class AppDataState(val session: ClientSession) {
             is ScreenDataKey.UserProfile -> account.loadProfile(key.uid)
             is ScreenDataKey.InviteLinks -> groups.loadInviteLinks(key.chatId)
             is ScreenDataKey.GroupFiles -> groupFiles.open(key.chatId)
+            is ScreenDataKey.GroupDocuments -> groupDocuments.open(key.chatId)
         }
     }
 
@@ -134,4 +138,5 @@ sealed class ScreenDataKey {
     data class UserProfile(val uid: String) : ScreenDataKey()
     data class InviteLinks(val chatId: String) : ScreenDataKey()
     data class GroupFiles(val chatId: String) : ScreenDataKey()
+    data class GroupDocuments(val chatId: String) : ScreenDataKey()
 }

@@ -17,6 +17,7 @@ import com.virjar.tk.body.VoiceBody
 import com.virjar.tk.body.ImageBody
 import com.virjar.tk.repository.FileRepository
 import com.virjar.tk.repository.GroupFileRepository
+import com.virjar.tk.repository.DocumentRepository
 import com.virjar.tk.rpc.gen.ChatRpcProxy
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -310,6 +311,77 @@ class RemoteAcceptanceTest {
 
             ownerFiles.delete(chat.chatId, v2.entryId, v2.revision).getOrThrow()
             assertDownloadRejected(v1Attachment, member.userSession.accessToken, 403)
+        } finally {
+            owner.close(); member.close(); outsider.close()
+        }
+    }
+
+    @Test
+    fun `group documents keep revisions conflicts and live ACL`() = runBlocking {
+        val owner = RemoteAcceptanceSupport.registerUser("document-owner")
+        val member = RemoteAcceptanceSupport.registerUser("document-member")
+        val outsider = RemoteAcceptanceSupport.registerUser("document-outsider")
+        try {
+            val chatRpc = ChatRpcProxy(owner.rpc)
+            val chat = chatRpc.createGroup("远程协作文档验收", null, listOf(member.uid))
+            val ownerDocs = DocumentRepository(owner.rpc)
+            val memberDocs = DocumentRepository(member.rpc)
+            val outsiderDocs = DocumentRepository(outsider.rpc)
+
+            val created = ownerDocs.create(
+                Document.SCOPE_GROUP_CHAT,
+                chat.chatId,
+                "远程产品说明",
+                "# 第一版\n由群主创建。",
+            ).getOrThrow()
+            assertEquals(1L, created.revision)
+            assertEquals(
+                listOf("远程产品说明"),
+                memberDocs.list(Document.SCOPE_GROUP_CHAT, chat.chatId).getOrThrow().map { it.title },
+            )
+            assertTrue(
+                outsiderDocs.list(Document.SCOPE_GROUP_CHAT, chat.chatId) is Outcome.Failure,
+                "非群成员不能读取文档空间",
+            )
+
+            val updated = memberDocs.update(
+                Document.SCOPE_GROUP_CHAT,
+                chat.chatId,
+                created.documentId,
+                "远程产品说明 v2",
+                "# 第二版\n由群成员修订。",
+                created.revision,
+            ).getOrThrow()
+            assertEquals(2L, updated.revision)
+            assertTrue(
+                ownerDocs.update(
+                    Document.SCOPE_GROUP_CHAT,
+                    chat.chatId,
+                    created.documentId,
+                    "过期覆盖",
+                    "不应成功",
+                    created.revision,
+                ) is Outcome.Failure,
+                "旧 revision 不能覆盖其他成员的新版本",
+            )
+            assertEquals(
+                listOf(2L, 1L),
+                ownerDocs.listRevisions(Document.SCOPE_GROUP_CHAT, chat.chatId, created.documentId)
+                    .getOrThrow().map { it.revision },
+            )
+            assertEquals(
+                "# 第一版\n由群主创建。",
+                ownerDocs.getRevision(Document.SCOPE_GROUP_CHAT, chat.chatId, created.documentId, 1)
+                    .getOrThrow().markdown,
+            )
+
+            chatRpc.removeMembers(chat.chatId, member.uid)
+            assertTrue(
+                memberDocs.get(Document.SCOPE_GROUP_CHAT, chat.chatId, created.documentId) is Outcome.Failure,
+                "移出群聊后不能继续读取文档",
+            )
+            ownerDocs.delete(Document.SCOPE_GROUP_CHAT, chat.chatId, created.documentId, updated.revision).getOrThrow()
+            assertTrue(ownerDocs.list(Document.SCOPE_GROUP_CHAT, chat.chatId).getOrThrow().isEmpty())
         } finally {
             owner.close(); member.close(); outsider.close()
         }

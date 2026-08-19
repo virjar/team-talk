@@ -246,3 +246,38 @@ object GroupFileAudits : LongIdTable("group_file_audits") {
     val detail = varchar("detail", 500).nullable()
     val createdAt = long("created_at").index()
 }
+
+/** 文档当前快照；正文历史在 DocumentRevisions 中只追加保存。 */
+object Documents : Table("documents") {
+    val documentId = varchar("document_id", 36)
+    val scopeType = integer("scope_type")
+    val scopeId = varchar("scope_id", 36).index()
+    val title = varchar("title", 180)
+    val markdown = text("markdown")
+    val revision = long("revision").default(1)
+    val status = integer("status").default(1)
+    val createdBy = varchar("created_by", 36)
+    val createdAt = long("created_at")
+    val updatedBy = varchar("updated_by", 36)
+    val updatedAt = long("updated_at").index()
+
+    override val primaryKey = PrimaryKey(documentId)
+
+    init {
+        index("idx_document_scope", false, scopeType, scopeId)
+    }
+}
+
+/** 完整、不可变的文档修订快照。 */
+object DocumentRevisions : LongIdTable("document_revisions") {
+    val documentId = varchar("document_id", 36).index()
+    val revision = long("revision")
+    val title = varchar("title", 180)
+    val markdown = text("markdown")
+    val editedBy = varchar("edited_by", 36)
+    val editedAt = long("edited_at")
+
+    init {
+        uniqueIndex("idx_document_revision", documentId, revision)
+    }
+}

@@ -5,6 +5,7 @@ import com.virjar.tk.rpc.gen.ChatRpcContract
 import com.virjar.tk.rpc.gen.ContactRpcContract
 import com.virjar.tk.rpc.gen.ConversationRpcContract
 import com.virjar.tk.rpc.gen.DeviceRpcContract
+import com.virjar.tk.rpc.gen.DocumentRpcContract
 import com.virjar.tk.rpc.gen.GroupFileRpcContract
 import com.virjar.tk.rpc.gen.MessageRpcContract
 import com.virjar.tk.rpc.gen.OrganizationRpcContract
@@ -116,6 +117,17 @@ class RpcMethodIdGoldenTest {
     }
 
     @Test
+    fun `document methodId 稳定`() {
+        assertEquals(1, DocumentRpcContract.M_LIST)
+        assertEquals(2, DocumentRpcContract.M_GET)
+        assertEquals(3, DocumentRpcContract.M_CREATE)
+        assertEquals(4, DocumentRpcContract.M_UPDATE)
+        assertEquals(5, DocumentRpcContract.M_LIST_REVISIONS)
+        assertEquals(6, DocumentRpcContract.M_GET_REVISION)
+        assertEquals(7, DocumentRpcContract.M_DELETE)
+    }
+
+    @Test
     fun `serviceId 字符串稳定`() {
         assertEquals("auth", AuthRpcContract.SERVICE)
         assertEquals("user", UserRpcContract.SERVICE)
@@ -126,6 +138,7 @@ class RpcMethodIdGoldenTest {
         assertEquals("device", DeviceRpcContract.SERVICE)
         assertEquals("organization", OrganizationRpcContract.SERVICE)
         assertEquals("groupFile", GroupFileRpcContract.SERVICE)
+        assertEquals("document", DocumentRpcContract.SERVICE)
     }
 
     // 占位 map 防误用（golden 以字面断言为准）

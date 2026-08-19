@@ -109,10 +109,10 @@ internal object MdParser {
 
     private fun ASTNode.toBlock(src: String): MdBlock? = when (type) {
         MarkdownElementTypes.PARAGRAPH -> MdBlock.Paragraph(inline(src))
-        MarkdownElementTypes.ATX_1 -> MdBlock.Heading(1, inline(src))
-        MarkdownElementTypes.ATX_2 -> MdBlock.Heading(2, inline(src))
+        MarkdownElementTypes.ATX_1 -> MdBlock.Heading(1, inline(src).withoutHeadingPrefix())
+        MarkdownElementTypes.ATX_2 -> MdBlock.Heading(2, inline(src).withoutHeadingPrefix())
         MarkdownElementTypes.ATX_3, MarkdownElementTypes.ATX_4,
-        MarkdownElementTypes.ATX_5, MarkdownElementTypes.ATX_6 -> MdBlock.Heading(3, inline(src))
+        MarkdownElementTypes.ATX_5, MarkdownElementTypes.ATX_6 -> MdBlock.Heading(3, inline(src).withoutHeadingPrefix())
         MarkdownElementTypes.CODE_FENCE -> MdBlock.CodeFence(
             lang = findChildOfType(MarkdownTokenTypes.FENCE_LANG)?.getTextInNode(src)?.toString()?.trim(),
             code = findChildOfType(MarkdownTokenTypes.CODE_FENCE_CONTENT)?.getTextInNode(src)?.toString()?.trimEnd('\n') ?: "",
@@ -211,6 +211,30 @@ internal object MdParser {
                 if (empty) result.removeAt(i - 1)
             }
             i++
+        }
+        return result
+    }
+
+    /** ATX 标题的 `# ` 会被 parser 作为普通叶子暴露；它属于块结构，不应进入预览文本。 */
+    private fun List<MdSpan>.withoutHeadingPrefix(): List<MdSpan> {
+        val result = toMutableList()
+        var markerSeen = false
+        while (result.isNotEmpty()) {
+            val first = result.first() as? MdSpan.Text ?: break
+            val stripped = if (markerSeen) {
+                first.text.trimStart()
+            } else {
+                val withoutHashes = first.text.dropWhile { it == '#' }
+                if (withoutHashes.length == first.text.length) break
+                markerSeen = true
+                withoutHashes.trimStart()
+            }
+            if (stripped.isEmpty()) {
+                result.removeAt(0)
+            } else {
+                result[0] = first.copy(text = stripped)
+                break
+            }
         }
         return result
     }

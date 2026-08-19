@@ -49,6 +49,7 @@ object DatabaseFactory {
                 OrganizationUnits, OrganizationMemberships,
                 AutomationBots, AutomationBotGrants,
                 GroupFileEntries, GroupFileVersions, GroupFileAudits,
+                Documents, DocumentRevisions,
             )
         }
 

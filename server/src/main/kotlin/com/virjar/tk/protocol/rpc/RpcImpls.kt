@@ -4,6 +4,7 @@ import com.virjar.tk.domain.auth.AuthService
 import com.virjar.tk.domain.chat.ChatService
 import com.virjar.tk.domain.contact.ContactService
 import com.virjar.tk.domain.conversation.ConversationService
+import com.virjar.tk.domain.document.DocumentService
 import com.virjar.tk.domain.message.MessageService
 import com.virjar.tk.domain.organization.OrganizationService
 import com.virjar.tk.domain.groupfile.GroupFileService
@@ -18,6 +19,7 @@ import com.virjar.tk.rpc.gen.ChatRpcStub
 import com.virjar.tk.rpc.gen.ContactRpcStub
 import com.virjar.tk.rpc.gen.ConversationRpcStub
 import com.virjar.tk.rpc.gen.DeviceRpcStub
+import com.virjar.tk.rpc.gen.DocumentRpcStub
 import com.virjar.tk.rpc.gen.MessageRpcStub
 import com.virjar.tk.rpc.gen.OrganizationRpcStub
 import com.virjar.tk.rpc.gen.GroupFileRpcStub
@@ -153,6 +155,28 @@ class GroupFileRpcImpl(uid: String, private val service: GroupFileService) : Gro
         service.rename(uid, chatId, entryId, name, expectedRevision)
     override suspend fun delete(chatId: String, entryId: String, expectedRevision: Long) =
         service.delete(uid, chatId, entryId, expectedRevision)
+}
+
+class DocumentRpcImpl(uid: String, private val service: DocumentService) : DocumentRpcStub(uid) {
+    override suspend fun list(scopeType: Int, scopeId: String) = service.list(uid, scopeType, scopeId)
+    override suspend fun get(scopeType: Int, scopeId: String, documentId: String) =
+        service.get(uid, scopeType, scopeId, documentId)
+    override suspend fun create(scopeType: Int, scopeId: String, title: String, markdown: String) =
+        service.create(uid, scopeType, scopeId, title, markdown)
+    override suspend fun update(
+        scopeType: Int,
+        scopeId: String,
+        documentId: String,
+        title: String,
+        markdown: String,
+        expectedRevision: Long,
+    ) = service.update(uid, scopeType, scopeId, documentId, title, markdown, expectedRevision)
+    override suspend fun listRevisions(scopeType: Int, scopeId: String, documentId: String) =
+        service.listRevisions(uid, scopeType, scopeId, documentId)
+    override suspend fun getRevision(scopeType: Int, scopeId: String, documentId: String, revision: Long) =
+        service.getRevision(uid, scopeType, scopeId, documentId, revision)
+    override suspend fun delete(scopeType: Int, scopeId: String, documentId: String, expectedRevision: Long) =
+        service.delete(uid, scopeType, scopeId, documentId, expectedRevision)
 }
 
 /** 服务注册表：serviceId → 每请求 Stub 工厂（uid 注入）。由 Koin 装配。 */

@@ -80,6 +80,9 @@ class MarkdownParseTest {
         assertEquals(1, (blocks[0] as MdBlock.Heading).level)
         assertEquals(2, (blocks[1] as MdBlock.Heading).level)
         assertEquals(3, (blocks[2] as MdBlock.Heading).level)
+        assertEquals(listOf(MdSpan.Text("一级")), (blocks[0] as MdBlock.Heading).spans)
+        assertEquals(listOf(MdSpan.Text("二级")), (blocks[1] as MdBlock.Heading).spans)
+        assertEquals(listOf(MdSpan.Text("三级")), (blocks[2] as MdBlock.Heading).spans)
     }
 
     @Test

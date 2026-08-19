@@ -24,6 +24,8 @@ import com.virjar.tk.domain.contact.ContactStore
 import com.virjar.tk.domain.conversation.ConversationRepository
 import com.virjar.tk.domain.conversation.ConversationService
 import com.virjar.tk.domain.device.DeviceRepository
+import com.virjar.tk.domain.document.DocumentRepository
+import com.virjar.tk.domain.document.DocumentService
 import com.virjar.tk.domain.event.EventPublisher
 import com.virjar.tk.domain.event.SyncEventReader
 import com.virjar.tk.domain.message.MessageRepository
@@ -47,6 +49,7 @@ import com.virjar.tk.rpc.gen.OrganizationRpcContract
 import com.virjar.tk.rpc.gen.GroupFileRpcContract
 import com.virjar.tk.rpc.gen.ConversationRpcContract
 import com.virjar.tk.rpc.gen.DeviceRpcContract
+import com.virjar.tk.rpc.gen.DocumentRpcContract
 import com.virjar.tk.protocol.rpc.UserRpcImpl
 import com.virjar.tk.protocol.rpc.AuthRpcImpl
 import com.virjar.tk.protocol.rpc.ChatRpcImpl
@@ -55,6 +58,7 @@ import com.virjar.tk.protocol.rpc.OrganizationRpcImpl
 import com.virjar.tk.protocol.rpc.GroupFileRpcImpl
 import com.virjar.tk.protocol.rpc.ConversationRpcImpl
 import com.virjar.tk.protocol.rpc.DeviceRpcImpl
+import com.virjar.tk.protocol.rpc.DocumentRpcImpl
 import com.virjar.tk.protocol.rpc.ContactRpcImpl
 import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.env.Environment
@@ -65,6 +69,7 @@ import com.virjar.tk.infra.db.repository.ExposedChatRepository
 import com.virjar.tk.infra.db.repository.ExposedContactRepository
 import com.virjar.tk.infra.db.repository.ExposedConversationRepository
 import com.virjar.tk.infra.db.repository.ExposedDeviceRepository
+import com.virjar.tk.infra.db.repository.ExposedDocumentRepository
 import com.virjar.tk.infra.db.repository.ExposedInviteLinkRepository
 import com.virjar.tk.infra.db.repository.ExposedOrganizationRepository
 import com.virjar.tk.infra.db.repository.ExposedGroupFileRepository
@@ -111,6 +116,7 @@ fun createServerModule(
     single<DeviceRepository> { ExposedDeviceRepository() }
     single<OrganizationRepository> { ExposedOrganizationRepository() }
     single<GroupFileRepository> { ExposedGroupFileRepository() }
+    single<DocumentRepository> { ExposedDocumentRepository() }
     single<ManagedChatPolicy> { get<OrganizationRepository>() }
     single<BotRepository> { ExposedBotRepository() }
     single<RequiredChatParticipants> { get<BotRepository>() }
@@ -131,6 +137,7 @@ fun createServerModule(
     single { ChatService(get(), get(), get(), get(), get()) }
     single { OrganizationService(get(), get(), get(), get()) }
     single { GroupFileService(get(), get(), get(), get(), Environment.groupFileQuotaBytes) }
+    single { DocumentService(get(), get(), get()) }
     single { ConversationService(get(), get(), get()) }
     single { com.virjar.tk.domain.attachment.AttachmentService(get(), get()) }
     single<AttachmentReferences> {
@@ -159,6 +166,7 @@ fun createServerModule(
             register(DeviceRpcContract.SERVICE) { uid -> DeviceRpcImpl(uid, get(), get(), get()) }
             register(OrganizationRpcContract.SERVICE) { uid -> OrganizationRpcImpl(uid, get()) }
             register(GroupFileRpcContract.SERVICE) { uid -> GroupFileRpcImpl(uid, get()) }
+            register(DocumentRpcContract.SERVICE) { uid -> DocumentRpcImpl(uid, get()) }
         }
     }
     single { RpcDispatcher(get()) }

@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.FolderShared
+import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -38,6 +39,7 @@ fun GroupDetailScreen(
     onInviteMembers: () -> Unit = {},
     onViewInviteLinks: () -> Unit = {},
     onGroupFiles: () -> Unit = {},
+    onGroupDocuments: () -> Unit = {},
     onLeaveGroup: () -> Unit = {},
     onBack: (() -> Unit)? = null,
     // 成员管理操作（仅群主/管理员可用）
@@ -147,6 +149,17 @@ fun GroupDetailScreen(
                 headlineContent = { Text("共享文件") },
                 supportingContent = { Text("群成员共同维护的文件和版本") },
                 modifier = Modifier.clickable(onClick = onGroupFiles).testTag("group.detail.files"),
+            )
+
+            HorizontalDivider()
+
+            ListItem(
+                leadingContent = {
+                    Icon(Icons.AutoMirrored.Filled.Article, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                },
+                headlineContent = { Text("协作文档") },
+                supportingContent = { Text("使用 Markdown 共同沉淀知识与记录") },
+                modifier = Modifier.clickable(onClick = onGroupDocuments).testTag("group.detail.documents"),
             )
 
             HorizontalDivider()

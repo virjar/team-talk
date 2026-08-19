@@ -21,6 +21,7 @@ class SubScreenPresentationTest {
     @Test
     fun `global search replaces main pane`() {
         assertEquals(SubScreenPresentation.MAIN_PANE, SubScreen.GlobalSearch.presentation)
+        assertEquals(SubScreenPresentation.MAIN_PANE, SubScreen.GroupDocuments("chat-1").presentation)
     }
 
     @Test

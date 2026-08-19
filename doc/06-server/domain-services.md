@@ -105,7 +105,17 @@ GroupFileService 只接受当前群成员访问，并拒绝在私聊上创建文
 条目的历史版本参与配额。AttachmentAccess 汇总 MessageStore 和 GroupFileRepository 两类引用，再与
 实时群成员资格求交集，HTTP 文件端点不感知具体业务域。
 
-## 8. Bot
+## 8. Document
+
+DocumentService 当前只接受 `SCOPE_GROUP_CHAT`，并在每个 list/get/create/update/history/delete 调用时
+验证 scope 对应活动群聊且调用者仍是成员。文档记录不复制成员 ACL，避免群成员变化产生第二个事实源。
+
+标题去除首尾空白后必须为 1..180 个非控制字符；Markdown 可为空，最大 1,000,000 字符且不能包含
+NUL。Repository 在事务内锁定当前文档行，比较 expectedRevision，更新当前快照并追加下一个完整修订。
+陈旧 revision 必须失败，不能自动 last-write-wins。恢复旧版本仍调用 update，因此会生成新修订并保留
+全部历史。
+
+## 9. Bot
 
 BotService 为每个通知应用创建 UserRole.BOT 服务账户。该账户的随机密码不返回，UserService 登录路径
 也显式拒绝 BOT/SYSTEM。应用 token 使用 256-bit 随机值，数据库只保存 SHA-256。
@@ -114,7 +124,7 @@ BotService 为每个通知应用创建 UserRole.BOT 服务账户。该账户的�
 发送权，再移出群。发送使用由 `botId + chatId + idempotencyKey` 派生的 clientMsgId，随后进入正常
 MessageService，因此重试、历史、搜索、同步和部门群保留规则都与普通消息一致。
 
-## 9. Device / Presence
+## 10. Device / Presence
 
 DeviceService 列出当前用户设备并踢除指定 deviceId。不能踢其他用户设备，当前设备自踢应有明确
 连接关闭语义。
@@ -122,7 +132,7 @@ DeviceService 列出当前用户设备并踢除指定 deviceId。不能踢其他
 Presence 由 ClientRegistry 的连接计数派生：首个设备上线广播 online，最后一个设备下线广播
 offline。它是瞬时状态，不进入长期离线事件。
 
-## 10. Admin
+## 11. Admin
 
 管理员能力与普通用户领域调用分开认证。封禁用户需要同时影响后续登录和现有连接；不能只更新
 管理表而让活动 token 继续无限使用。

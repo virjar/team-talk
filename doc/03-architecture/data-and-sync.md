@@ -102,7 +102,26 @@ HTTP upload → FileStore Attachment（仅上传者可读）
 这意味着另一设备修改后，已打开的列表要手动刷新才能看到。它是明确的部分能力，不应被描述成实时
 同步；后续需要稳定事件、离线投影与搜索索引后才能进入本地优先模型。
 
-## 8. 故障语义
+## 8. 文档生命周期
+
+```text
+client list → document.list（仅摘要，不传全部 Markdown）
+client open → document.get（当前完整快照）
+client save(title, markdown, expectedRevision)
+  → server 重验当前群成员
+  → PostgreSQL 锁定文档当前行并比较 revision
+  → 原子更新当前快照 + 追加不可变 DocumentRevision
+  → 返回新 revision
+```
+
+修订列表只传标题、版本、字符数和编辑元数据；用户选择具体版本后才按需读取完整 Markdown。恢复历史
+版本沿用正常 update 流程，因此仍受最新 revision 冲突保护。
+
+文档 v1 不进入 LocalCache，也不发布持久化 Notify。页面在打开和本地修改后重新拉取，其他设备的修改
+需要手动刷新才能发现；若两个成员从同一 revision 保存，只有先到达者成功，失败者本地编辑内容不应被
+清空。后续增加实时事件或离线编辑时，必须先定义缓存投影、缺口恢复和合并语义。
+
+## 9. 故障语义
 
 | 故障 | 正确行为 |
 |---|---|
@@ -113,8 +132,9 @@ HTTP upload → FileStore Attachment（仅上传者可读）
 | AUTH_FAILED | 停止重连，清 token，销毁 ClientSession |
 | 历史存在 seq 缺口 | 按 serverSeq 主动拉取历史修复 |
 | 搜索索引缺失 | 从消息权威存储重建 Lucene，不修改消息 |
+| 文档 revision 冲突 | 拒绝覆盖并保留本地草稿；刷新或复制内容后由用户决定 |
 
-## 9. 一致性边界
+## 10. 一致性边界
 
 TeamTalk 不提供跨 PostgreSQL、RocksDB 与 Lucene 的分布式事务。写入顺序和恢复手段必须保证：
 

@@ -123,6 +123,21 @@
 | `group.files.versions.{dialog|upload|close}` | 版本记录弹窗及其操作 |
 | `group.files.version.{version}.open` | 打开指定历史版本 |
 
+## 群文档
+
+| testTag | 作用 |
+|---|---|
+| `group.detail.documents` | 从群设置进入协作文档 |
+| `group.documents.create` / `group.documents.refresh` | 新建与刷新文档 |
+| `group.documents.item.{documentId前8}` | 文档摘要项 |
+| `group.documents.title` / `group.documents.editor` | 标题与 Markdown 富文本编辑器 |
+| `group.documents.preview` / `group.documents.save` | 编辑预览切换与保存 |
+| `group.documents.history` / `group.documents.revisions.dialog` | 打开版本历史及其弹窗 |
+| `group.documents.revision.{revision}` | 指定文档修订 |
+| `group.documents.restore` | 将历史快照恢复为新修订 |
+| `group.documents.delete` / `group.documents.delete.confirm` | 删除入口与确认 |
+| `group.documents.discard.dialog` / `group.documents.discard.confirm` | 未保存修改保护 |
+
 ## 命名规则
 
 - 静态控件使用 `领域.角色`，例如 `chat.send`。

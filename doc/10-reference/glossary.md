@@ -23,6 +23,9 @@
 | 文件端点 | TeamTalk HTTP 服务提供的上传和读取接口 |
 | 群文件条目（GroupFileEntry） | 群共享文件空间中的稳定目录或文件身份，独立于消息附件 |
 | 文件版本（GroupFileVersion） | 群文件不可变的 Attachment 内容快照；追加版本不覆盖历史 |
+| 文档（Document） | 有稳定身份、scope、Markdown 当前快照和 revision 的独立办公对象，不是长消息 |
+| 文档修订（DocumentRevision） | 每次成功保存追加的不可变完整标题与 Markdown 快照 |
+| `expectedRevision` | 修改文档或群文件时提交的乐观锁坐标；陈旧值必须拒绝，不能静默覆盖 |
 | ImBot | 基于同一 SDK 的无头 IM 客户端封装 |
 | AutomationBot | 不能密码登录、按群显式授权、通过 HTTP 单向发送通知的服务身份 |
 | `tt-agent` | 常驻持有 ImBot 会话并暴露本地 REST 的进程 |
@@ -39,5 +42,6 @@
 - message `serverSeq` 决定聊天内顺序，Notify `eventId` 决定用户事件补发顺序。
 - URL 是客户端访问文件的解析结果，消息事实只保存附件相对路径。
 - Attachment 是物理对象描述，GroupFileEntry 是协作身份；上传和聊天发送都不会自动创建群文件。
+- Markdown 是文档正文格式，Document 才是身份、权限和历史事实；消息未来只能引用文档。
 - “发送中”是客户端本地状态；只有收到成功 ACK 后才是服务器接受的消息。
 - 群设置抽屉属于聊天上下文；设置一级导航属于当前用户和应用配置，两者不是同一信息域。

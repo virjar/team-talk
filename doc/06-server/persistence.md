@@ -4,7 +4,7 @@
 
 | 数据 | 存储 | 原因 |
 |---|---|---|
-| 用户、组织、机器人授权、设备、好友、群、成员、会话、申请、邀请、同步事件、群文件目录与版本 | PostgreSQL | 关系、约束、事务和查询 |
+| 用户、组织、机器人授权、设备、好友、群、成员、会话、申请、邀请、同步事件、群文件、文档与修订 | PostgreSQL | 关系、约束、事务和查询 |
 | 消息正文、幂等索引与投影 outbox | RocksDB | 按 chat/seq 顺序读写、单批原子 KV |
 | token | 独立 RocksDB | 随机 token 快速查询和删除 |
 | 文件小对象与元数据 | RocksDB | 本地嵌入、低运维成本 |
@@ -58,6 +58,15 @@ group_file_entries 保存群文件目录树、逻辑名称、当前 Attachment�
 group_file_versions 只追加不可变 Attachment 快照，`(entryId, version)` 唯一。group_file_audits 与每次
 创建、追加版本、重命名、删除在同一 PostgreSQL 事务提交，只记录动作与有限摘要，不保存文件正文。
 物理二进制仍在 FileStore；数据库版本表是下载引用和群空间配额的事实源。
+
+### documents / document_revisions
+
+documents 保存活动文档当前快照、scope、revision 和创建/修改身份。`(scopeType, scopeId)` 支持按工作区
+列出；删除只改变 status 并推进 revision，普通读取不返回软删除对象。
+
+document_revisions 只追加每次成功保存的标题与完整 Markdown 快照，`(documentId, revision)` 唯一。
+更新在锁定 documents 当前行的同一事务内完成 revision 条件写和修订插入，避免两个并发保存都成功。
+完整快照简化恢复与验收，但会增加存储；增量压缩、保留期和管理员审计属于生产化后续设计。
 
 ## 3. MessageStore
 

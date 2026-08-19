@@ -33,6 +33,8 @@ object Routes {
     fun groupDetail(chatId: String) = "group_detail/$chatId"
     const val GROUP_FILES = "group_files/{chatId}"
     fun groupFiles(chatId: String) = "group_files/$chatId"
+    const val GROUP_DOCUMENTS = "group_documents/{chatId}"
+    fun groupDocuments(chatId: String) = "group_documents/$chatId"
     const val INVITE_MEMBERS = "invite_members/{chatId}"
     fun inviteMembers(chatId: String) = "invite_members/$chatId"
     const val INVITE_LINKS = "invite_links/{chatId}"

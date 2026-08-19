@@ -132,6 +132,22 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 所有方法都按认证 uid 实时校验群成员。createFile/addVersion 只接受调用者自己上传且与 FileStore 元数据
 完全匹配的 Attachment；expectedRevision 是条目级乐观锁，不能用 contentVersion 代替。
 
+## document
+
+| ID | 方法 | 参数 | 返回 |
+|---:|---|---|---|
+| 1 | `list` | `scopeType`, `scopeId` | `List<DocumentSummary>` |
+| 2 | `get` | `scopeType`, `scopeId`, `documentId` | `Document` |
+| 3 | `create` | `scopeType`, `scopeId`, `title`, `markdown` | `Document` |
+| 4 | `update` | `scopeType`, `scopeId`, `documentId`, `title`, `markdown`, `expectedRevision` | `Document` |
+| 5 | `listRevisions` | `scopeType`, `scopeId`, `documentId` | `List<DocumentRevisionSummary>` |
+| 6 | `getRevision` | `scopeType`, `scopeId`, `documentId`, `revision` | `DocumentRevision` |
+| 7 | `delete` | `scopeType`, `scopeId`, `documentId`, `expectedRevision` | `Unit` |
+
+当前只接受 `Document.SCOPE_GROUP_CHAT`。所有调用按认证 uid 实时校验群成员；列表投影不返回 Markdown，
+修订列表只返回 contentLength 等摘要。update/delete 必须使用客户端实际读取到的 revision，冲突由服务端
+拒绝；错误文案不应被客户端当成并发控制协议。
+
 ## 状态与错误
 
 | status | 语义 | 客户端处理 |

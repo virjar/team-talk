@@ -162,6 +162,7 @@ internal fun WindowScope.MainAppContent(
                 connectionState = connectionState,
             )
             Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            val expandedWorkspace = nav.mainPaneScreen is SubScreen.GroupDocuments
             // ── 左栏：细导航栏（56dp 图标式，规格 §1.5）──
             SlimNavRail(
                 selectedTab = nav.selectedTab,
@@ -177,11 +178,12 @@ internal fun WindowScope.MainAppContent(
 
             // ── 中栏：列表区（会话/通讯录/设置，300dp）──
             // 三级层次：rail(surfaceVariant 深灰) → 列表(background 浅灰) → 内容(白)
-            Surface(
-                modifier = Modifier.width(Tk.dimens.listPaneWidth).fillMaxHeight(),
-                color = MaterialTheme.colorScheme.background,
-            ) {
-                when (MainTab.entries[nav.selectedTab]) {
+            if (!expandedWorkspace) {
+                Surface(
+                    modifier = Modifier.width(Tk.dimens.listPaneWidth).fillMaxHeight(),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
+                    when (MainTab.entries[nav.selectedTab]) {
                     MainTab.CONVERSATIONS -> {
                         Column {
                             ListHeader(title = "会话")
@@ -233,6 +235,7 @@ internal fun WindowScope.MainAppContent(
                             headerStyle = MeHeaderStyle.Compact,
                         )
                     }
+                    }
                 }
             }
 
@@ -252,7 +255,7 @@ internal fun WindowScope.MainAppContent(
                         openChatAndClose = { chatId, name, chatType -> nav.openChat(chatId, name, chatType) },
                         openUserProfile = nav::openProfile,
                         onLeaveGroup = {},
-                        showBack = false,
+                        showBack = mainPaneScreen !is SubScreen.GlobalSearch,
                         globalSearchQuery = nav.globalSearchQuery,
                         onGlobalSearchQueryChange = { nav.globalSearchQuery = it },
                     )
@@ -357,7 +360,10 @@ private fun BoxScope.ChatInspectorHost(nav: DesktopNav) {
                 SubScreenContent(
                     screen = screen,
                     data = nav,
-                    navigate = nav::pushInspector,
+                    navigate = { target ->
+                        if (target.presentation == SubScreenPresentation.CHAT_INSPECTOR) nav.pushInspector(target)
+                        else nav.openScreen(target)
+                    },
                     back = nav::popInspector,
                     openChatAndClose = { chatId, name, chatType -> nav.openChat(chatId, name, chatType) },
                     openUserProfile = nav::openProfile,
