@@ -9,13 +9,17 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import com.virjar.tk.dispatchWindowEscape
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import java.awt.Component
+import java.awt.Container
 import java.awt.EventQueue
 import java.awt.KeyboardFocusManager
 import java.awt.Robot
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.net.InetSocketAddress
-import javax.imageio.ImageIO
+import org.jetbrains.skia.EncodedImageFormat
+import org.jetbrains.skia.Image
+import org.jetbrains.skiko.SkiaLayer
 
 /**
  * Desktop UI 自动化测试 HTTP 服务。
@@ -475,10 +479,10 @@ object TestHttpServer {
             return
         }
         val wasAlwaysOnTop = window.isAlwaysOnTop
-        val img = try {
-            // Robot 捕获的是屏幕像素。窗口最小化或应用在后台时，即使 Compose
-            // 语义树仍可操作，也只会截到桌面/其他应用，产生“假通过”截图。
-            // 在 AWT 线程恢复窗口，并临时置顶，保证 HTTP 截图就是待测窗口。
+        val bytes = try {
+            // ComposeWindow 使用独立的 Skia 硬件层，Swing paintAll 只能得到窗口背景。
+            // 直接读取当前 Skia 渲染帧，避免系统录屏权限、窗口遮挡和 macOS Space 影响截图。
+            val captured = arrayOfNulls<ByteArray>(1)
             EventQueue.invokeAndWait {
                 if ((window.extendedState and java.awt.Frame.ICONIFIED) != 0) {
                     window.extendedState = window.extendedState and java.awt.Frame.ICONIFIED.inv()
@@ -487,25 +491,38 @@ object TestHttpServer {
                 window.isAlwaysOnTop = true
                 window.toFront()
                 window.requestFocus()
+                window.validate()
+                val skiaLayer = findSkiaLayer(window)
+                    ?: error("Compose Skia layer not found")
+                skiaLayer.renderImmediately()
+                skiaLayer.screenshot()?.use { bitmap ->
+                    Image.makeFromBitmap(bitmap).use { image ->
+                        image.encodeToData(EncodedImageFormat.PNG)?.use { data ->
+                            captured[0] = data.bytes
+                        } ?: error("PNG encoding failed")
+                    }
+                }
             }
-            Thread.sleep(350)
-            val location = window.locationOnScreen
-            val size = window.size
-            java.awt.Robot().createScreenCapture(
-                java.awt.Rectangle(location.x, location.y, size.width, size.height),
-            )
+            captured[0] ?: error("window capture failed")
         } catch (e: Exception) {
             exchange.send(500, """{"error":"${e.message?.escape()}"}""")
             return
         } finally {
             EventQueue.invokeLater { window.isAlwaysOnTop = wasAlwaysOnTop }
         }
-        val baos = java.io.ByteArrayOutputStream()
-        ImageIO.write(img, "png", baos)
-        val bytes = baos.toByteArray()
         exchange.responseHeaders.add("Content-Type", "image/png")
         exchange.sendResponseHeaders(200, bytes.size.toLong())
         exchange.responseBody.use { it.write(bytes) }
+    }
+
+    /** ComposeWindow hides its SkiaLayer behind internal containers; discover it without reflection. */
+    private fun findSkiaLayer(component: Component): SkiaLayer? {
+        if (component is SkiaLayer) return component
+        if (component !is Container) return null
+        component.components.forEach { child ->
+            findSkiaLayer(child)?.let { return it }
+        }
+        return null
     }
 
     private fun handleFind(exchange: HttpExchange) {

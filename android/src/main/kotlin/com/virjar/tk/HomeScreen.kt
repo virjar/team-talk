@@ -105,6 +105,7 @@ fun HomeScreen(
                         selectedUnitId = dataState.organization.selectedUnitId,
                         organizationLoading = dataState.organization.loading,
                         onUnitClick = { unitId -> directoryScope.launch { dataState.organization.selectUnit(unitId) } },
+                        onGroupClick = { chatId, chatName -> onConversationClick(chatId, chatName, 2) },
                         onUserClick = onUserProfile,
                         modifier = Modifier.weight(1f),
                         pendingApplyCount = pendingApplyCount,

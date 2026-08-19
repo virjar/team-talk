@@ -148,7 +148,9 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             if (vm != null) { AndroidChatScreen(chatId, chatName, chatType, vm, dataState.userSession.uid,
                 serverUrl = defaultServerConfig().serverUrl,
                 accessToken = dataState.userSession.accessToken,
-                resolveSender = { uid -> dataState.localCache.getUser(uid) },
+                resolveSender = { uid ->
+                    mentionCandidates.firstOrNull { it.uid == uid } ?: dataState.localCache.getUser(uid)
+                },
                 mentionCandidates = mentionCandidates,
                 draft = currentDraft,
                 onDraftChange = { currentDraft = it },

@@ -211,6 +211,7 @@ internal fun WindowScope.MainAppContent(
                                 selectedUnitId = nav.organization.selectedUnitId,
                                 organizationLoading = nav.organization.loading,
                                 onUnitClick = { unitId -> directoryScope.launch { nav.organization.selectUnit(unitId) } },
+                                onGroupClick = { chatId, chatName -> nav.openChat(chatId, chatName, 2) },
                                 onUserClick = nav::openProfile,
                                 modifier = Modifier.weight(1f),
                                 pendingApplyCount = pendingApplyCount,
@@ -270,7 +271,9 @@ internal fun WindowScope.MainAppContent(
                                     accessToken = nav.userSession.accessToken,
                                     conversationRepo = nav.conversationRepo,
                                     initialDraft = conv?.draft,
-                                    resolveSender = resolveUser,
+                                    resolveSender = { uid ->
+                                        mentionCandidates.firstOrNull { it.uid == uid } ?: resolveUser(uid)
+                                    },
                                     voicePlayback = voicePlayback,
                                     onMentionClick = nav::openProfile,
                                     mentionCandidates = mentionCandidates,

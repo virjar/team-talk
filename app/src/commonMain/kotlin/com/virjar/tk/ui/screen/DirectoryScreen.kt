@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -54,6 +55,7 @@ fun DirectoryScreen(
     selectedUnitId: String?,
     organizationLoading: Boolean,
     onUnitClick: (String) -> Unit,
+    onGroupClick: (chatId: String, chatName: String) -> Unit,
     onUserClick: (String) -> Unit,
     modifier: Modifier = Modifier,
     pendingApplyCount: Int = 0,
@@ -76,6 +78,7 @@ fun DirectoryScreen(
                 selectedUnitId = selectedUnitId,
                 loading = organizationLoading,
                 onUnitClick = onUnitClick,
+                onGroupClick = onGroupClick,
                 onUserClick = onUserClick,
             )
 
@@ -138,6 +141,7 @@ private fun OrganizationDirectory(
     selectedUnitId: String?,
     loading: Boolean,
     onUnitClick: (String) -> Unit,
+    onGroupClick: (chatId: String, chatName: String) -> Unit,
     onUserClick: (String) -> Unit,
 ) {
     when {
@@ -160,7 +164,12 @@ private fun OrganizationDirectory(
                 }
                 rows.forEach { row ->
                     item(key = "unit.${row.unit.unitId}") {
-                        DepartmentRow(row, row.unit.unitId == selectedUnitId, onUnitClick)
+                        DepartmentRow(
+                            row = row,
+                            selected = row.unit.unitId == selectedUnitId,
+                            onClick = onUnitClick,
+                            onGroupClick = onGroupClick,
+                        )
                     }
                     if (row.unit.unitId == selectedUnitId) {
                         if (members.isEmpty()) {
@@ -205,7 +214,12 @@ private fun flattenOrganization(units: List<OrganizationUnit>): List<UnitRow> {
 }
 
 @Composable
-private fun DepartmentRow(row: UnitRow, selected: Boolean, onClick: (String) -> Unit) {
+private fun DepartmentRow(
+    row: UnitRow,
+    selected: Boolean,
+    onClick: (String) -> Unit,
+    onGroupClick: (chatId: String, chatName: String) -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -230,13 +244,20 @@ private fun DepartmentRow(row: UnitRow, selected: Boolean, onClick: (String) -> 
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        if (row.unit.groupChatId != null) {
-            Icon(
-                Icons.Filled.Forum,
-                contentDescription = "已建立部门群",
-                modifier = Modifier.size(16.dp),
-                tint = MaterialTheme.colorScheme.primary,
-            )
+        row.unit.groupChatId?.let { chatId ->
+            IconButton(
+                onClick = { onGroupClick(chatId, "${row.unit.name}部门群") },
+                modifier = Modifier
+                    .size(32.dp)
+                    .testTag("organization.group.${chatId.take(8)}"),
+            ) {
+                Icon(
+                    Icons.Filled.Forum,
+                    contentDescription = "进入${row.unit.name}部门群",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
     }
 }
