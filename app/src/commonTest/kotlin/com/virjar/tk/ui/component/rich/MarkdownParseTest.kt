@@ -1,7 +1,9 @@
 package com.virjar.tk.ui.component.rich
 
+import com.virjar.tk.body.MessageBodyPolicy
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 /**
@@ -75,10 +77,99 @@ class MarkdownParseTest {
 
     @Test
     fun `代码块带语言`() {
-        val blocks = MdParser.parse("```kotlin\nval a = 1\n```")
+        val blocks = MdParser.parse("```kotlin\nfun greet() {\n    println(\"hello\")\n}\n```")
         val fence = blocks.filterIsInstance<MdBlock.CodeFence>().single()
         assertEquals("kotlin", fence.lang)
-        assertEquals("val a = 1", fence.code)
+        assertEquals("fun greet() {\n    println(\"hello\")\n}", fence.code)
+    }
+
+    @Test
+    fun `超深引用安全降级而不递归耗尽栈`() {
+        var block: MdBlock = MdParser.parse("> ".repeat(80) + "正文").single()
+        var renderedDepth = 0
+        while (block is MdBlock.Quote) {
+            renderedDepth += 1
+            block = block.blocks.single()
+        }
+        assertEquals(64, renderedDepth)
+        assertIs<MdBlock.Raw>(block)
+        assertTrue(block.source.contains("正文"))
+    }
+
+    @Test
+    fun `同级块共享全局预算且超限后只保留一个源码后缀`() {
+        val source = (0 until 2_500).joinToString("\n") { index -> "# heading-$index" }
+        MessageBodyPolicy.validateMarkdown(source)
+
+        val blocks = MdParser.parse(source)
+
+        assertTrue(blocks.size <= MdParser.MAX_RENDERED_BLOCKS)
+        val fallback = assertIs<MdBlock.Raw>(blocks.last())
+        assertTrue(fallback.source.contains("heading-2499"))
+    }
+
+    @Test
+    fun `同一段落的 AST 节点共享预算并局部降级源码`() {
+        val source = buildString {
+            repeat(3_000) { append("**x** ") }
+        }.trimEnd()
+        MessageBodyPolicy.validateMarkdown(source)
+
+        val blocks = MdParser.parse(source)
+
+        assertEquals(1, blocks.size)
+        assertEquals(source, assertIs<MdBlock.Raw>(blocks.single()).source)
+    }
+
+    @Test
+    fun `同级深引用共享源码工作预算而不是逐路径重置`() {
+        val source = buildString {
+            repeat(450) { index ->
+                append("> ".repeat(64))
+                append("正文-$index")
+                if (index != 449) append("\n\n")
+            }
+        }
+        MessageBodyPolicy.validateMarkdown(source)
+
+        val blocks = MdParser.parse(source)
+        val flattened = flattenBlocks(blocks)
+
+        assertTrue(flattened.size <= MdParser.MAX_RENDERED_BLOCKS)
+        assertTrue(flattened.filterIsInstance<MdBlock.Raw>().any { it.source.contains("正文-449") })
+    }
+
+    @Test
+    fun `列表内超深引用不会让行内 AST 遍历耗尽栈`() {
+        val source = "- " + "> ".repeat(256) + "正文"
+        val item = assertIs<MdBlock.ListItem>(MdParser.parse(source).first())
+        assertTrue(item.plainText().contains("正文"))
+    }
+
+    private fun flattenBlocks(blocks: List<MdBlock>): List<MdBlock> {
+        val pending = blocks.toMutableList()
+        val flattened = mutableListOf<MdBlock>()
+        while (pending.isNotEmpty()) {
+            val block = pending.removeAt(pending.lastIndex)
+            flattened += block
+            if (block is MdBlock.Quote) pending += block.blocks
+        }
+        return flattened
+    }
+
+    @Test
+    fun `超深嵌套列表局部源码降级而不递归耗尽栈`() {
+        val source = buildString {
+            repeat(140) { depth ->
+                append("    ".repeat(depth))
+                appendLine("- level-$depth")
+            }
+        }
+
+        val blocks = MdParser.parse(source)
+
+        assertTrue(blocks.isNotEmpty())
+        assertTrue(blocks.any { it is MdBlock.Raw })
     }
 
     @Test
@@ -91,6 +182,100 @@ class MarkdownParseTest {
         assertEquals(
             listOf(MdSpan.Text("引用内容")),
             (quote.blocks[0] as MdBlock.Paragraph).spans,
+        )
+    }
+
+    @Test
+    fun `GFM 表格保留单元格与对齐信息`() {
+        val table = assertIs<MdBlock.Table>(
+            MdParser.parse(
+                """
+                | 名称 | 状态 | 数量 |
+                | :--- | :---: | ---: |
+                | **研发** | [详情](https://im.virjar.com) | 7 |
+                | A\|B | 完成 | 11 |
+                """.trimIndent()
+            ).single()
+        )
+
+        assertEquals(listOf("名称", "状态", "数量"), table.headers)
+        assertEquals(
+            listOf(
+                DocumentTableAlignment.LEFT,
+                DocumentTableAlignment.CENTER,
+                DocumentTableAlignment.RIGHT,
+            ),
+            table.alignments,
+        )
+        assertEquals("**研发**", table.rows[0][0])
+        assertEquals("A\\|B", table.rows[1][0])
+    }
+
+    @Test
+    fun `超宽表格安全降级为可读源码`() {
+        val header = (1..33).joinToString(prefix = "|", postfix = "|", separator = "|") { "列$it" }
+        val divider = (1..33).joinToString(prefix = "|", postfix = "|", separator = "|") { "---" }
+        val source = "$header\n$divider"
+
+        assertEquals(MdBlock.Raw(source), MdParser.parse(source).single())
+    }
+
+    @Test
+    fun `引用递归保留列表任务代码和表格`() {
+        val quote = assertIs<MdBlock.Quote>(
+            MdParser.parse(
+                """
+                > - [x] 已验收
+                > - [ ] 待发布
+                >
+                > ```kotlin
+                > val ready = true
+                > ```
+                >
+                > | 项 | 值 |
+                > | --- | ---: |
+                > | 构建 | 1 |
+                """.trimIndent()
+            ).single()
+        )
+
+        val tasks = quote.blocks.filterIsInstance<MdBlock.ListItem>()
+        assertEquals(listOf(true, false), tasks.map { it.taskChecked })
+        assertEquals(listOf("已验收", "待发布"), tasks.map { it.plainText() })
+        assertEquals("val ready = true", quote.blocks.filterIsInstance<MdBlock.CodeFence>().single().code)
+        assertEquals(listOf("项", "值"), quote.blocks.filterIsInstance<MdBlock.Table>().single().headers)
+    }
+
+    @Test
+    fun `任务列表标记不泄漏到正文`() {
+        val items = MdParser.parse("- [x] 完成\n- [ ] 未完成")
+            .filterIsInstance<MdBlock.ListItem>()
+
+        assertEquals(listOf(true, false), items.map { it.taskChecked })
+        assertEquals(listOf("完成", "未完成"), items.map { it.plainText() })
+    }
+
+    @Test
+    fun `分隔线成为可见块`() {
+        assertIs<MdBlock.HorizontalRule>(MdParser.parse("---").single())
+    }
+
+    @Test
+    fun `HTML 和未知块保留可读源码而不解释执行`() {
+        val html = "<script src=\"https://evil.example/x.js\">alert(1)</script>"
+        assertEquals(MdBlock.Raw(html), MdParser.parse(html).single())
+
+        val linkDefinition = "[spec]: https://im.virjar.com/spec"
+        assertEquals(MdBlock.Raw(linkDefinition), MdParser.parse(linkDefinition).single())
+    }
+
+    @Test
+    fun `Markdown 图片仅保留源码不加载资源`() {
+        val imageSource = "![架构图](https://evil.example/tracker.png)"
+        val paragraph = assertIs<MdBlock.Paragraph>(MdParser.parse(imageSource).single())
+        assertEquals(
+            listOf(MdSpan.Styled(text = imageSource, code = true)),
+            paragraph.spans,
         )
     }
 

@@ -1,10 +1,37 @@
 package com.virjar.tk.protocol.payload
 
 
+import com.virjar.tk.auth.AuthRules
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.PacketCodec
 import com.virjar.tk.protocol.IProtoReader
 import com.virjar.tk.protocol.PacketBuffer
+
+/**
+ * 认证帧的字段级资源预算。
+ *
+ * 首次认证帧还有 [PacketCodec.UNAUTHED_LIMIT] 的整帧围栏；字段预算仍不可省略，因为同一
+ * codec 在认证成功后会放开帧上限，恶意客户端可能再次发送 AUTH。这里必须在构造 String
+ * 之前拒绝异常声明，不能把大对象交给认证线程池排队。
+ */
+object AuthPayloadPolicy {
+    const val MAX_USERNAME_LENGTH = AuthRules.USERNAME_MAX_LENGTH
+    const val MAX_PASSWORD_LENGTH = 256
+    const val MAX_NAME_LENGTH = 100
+    const val MAX_TOKEN_LENGTH = 256
+    const val MAX_DEVICE_ID_LENGTH = 100
+    const val MAX_DEVICE_NAME_LENGTH = 200
+    const val MAX_DEVICE_MODEL_LENGTH = 200
+    const val MAX_REASON_LENGTH = 1_000
+    const val MAX_UID_LENGTH = 64
+
+    private const val MAX_UTF8_BYTES_PER_CHARACTER = 4
+
+    fun utf8WireLimit(maxCharacters: Int): Int {
+        require(maxCharacters >= 0 && maxCharacters <= Int.MAX_VALUE / MAX_UTF8_BYTES_PER_CHARACTER)
+        return maxCharacters * MAX_UTF8_BYTES_PER_CHARACTER
+    }
+}
 
 // ── 认证请求 ──
 
@@ -66,13 +93,13 @@ data class AuthRequestPayload(
 
         private fun readBody(buf: PacketBuffer) = AuthRequestPayload(
             authType = buf.readVarInt(),
-            username = buf.readString(),
-            password = buf.readString(),
-            name = buf.readString(),
-            refreshToken = buf.readString(),
-            deviceId = buf.readString()!!,
-            deviceName = buf.readString(),
-            deviceModel = buf.readString(),
+            username = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_USERNAME_LENGTH)),
+            password = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_PASSWORD_LENGTH)),
+            name = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_NAME_LENGTH)),
+            refreshToken = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_TOKEN_LENGTH)),
+            deviceId = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_DEVICE_ID_LENGTH))!!,
+            deviceName = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_DEVICE_NAME_LENGTH)),
+            deviceModel = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_DEVICE_MODEL_LENGTH)),
             deviceFlag = buf.readVarInt(),
             lastEventId = buf.readVarLong(),
         )
@@ -105,12 +132,12 @@ data class AuthResponsePayload(
     companion object : IProtoReader<AuthResponsePayload> {
         override fun readFrom(buf: PacketBuffer) = AuthResponsePayload(
             code = buf.readVarInt(),
-            reason = buf.readString(),
-            uid = buf.readString(),
-            username = buf.readString(),
-            name = buf.readString(),
-            accessToken = buf.readString(),
-            refreshToken = buf.readString(),
+            reason = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_REASON_LENGTH)),
+            uid = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_UID_LENGTH)),
+            username = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_USERNAME_LENGTH)),
+            name = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_NAME_LENGTH)),
+            accessToken = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_TOKEN_LENGTH)),
+            refreshToken = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_TOKEN_LENGTH)),
             expiresIn = buf.readVarLong(),
         )
     }

@@ -148,7 +148,7 @@ fun createServerModule(
         }
     }
     single<AttachmentAccess> { AttachmentAccessService(get(), get(), get()) }
-    single { MessageService(get(), get(), get(), get(), get(), get()) }
+    single { MessageService(get(), get(), get(), get(), get(), get(), get()) }
     single { BotService(get(), get(), get(), get(), get()) }
     single { PresenceService(get(), get()) }
     single { PresenceCoordinator(get(), get()) }

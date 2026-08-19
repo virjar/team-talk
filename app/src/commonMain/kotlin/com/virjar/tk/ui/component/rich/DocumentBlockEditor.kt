@@ -356,7 +356,7 @@ internal fun DocumentBlockEditor(
         blocks.firstOrNull { block ->
             block is DocumentRichRun ||
                 (block is DocumentQuoteBlock &&
-                    !DocumentMarkdownCompatibility.inspect(block.innerMarkdown).requiresLocalSourceBlock)
+                    !RichEditorMarkdownCapability.inspect(block.innerMarkdown).requiresSourceMode)
         }?.key
     }
     var nextKey by remember(documentKey) { mutableStateOf(blocks.size + 1L) }
@@ -365,7 +365,7 @@ internal fun DocumentBlockEditor(
     fun snapshotBlock(block: DocumentMarkdownBlock): DocumentMarkdownBlock {
         if (
             block is DocumentQuoteBlock &&
-            DocumentMarkdownCompatibility.inspect(block.innerMarkdown).requiresLocalSourceBlock
+            RichEditorMarkdownCapability.inspect(block.innerMarkdown).requiresSourceMode
         ) {
             return block
         }
@@ -436,7 +436,7 @@ internal fun DocumentBlockEditor(
         when (block) {
             is DocumentRichRun -> controller.requestRichActivation(block.key)
             is DocumentQuoteBlock -> {
-                if (DocumentMarkdownCompatibility.inspect(block.innerMarkdown).requiresLocalSourceBlock) {
+                if (RichEditorMarkdownCapability.inspect(block.innerMarkdown).requiresSourceMode) {
                     controller.activate(block.key)
                 } else {
                     controller.requestRichActivation(block.key)
@@ -596,8 +596,8 @@ internal fun DocumentBlockEditor(
                         )
                     }
                     is DocumentQuoteBlock -> {
-                        val useRichEditor = !DocumentMarkdownCompatibility.inspect(block.innerMarkdown)
-                            .requiresLocalSourceBlock
+                        val useRichEditor = !RichEditorMarkdownCapability.inspect(block.innerMarkdown)
+                            .requiresSourceMode
                         val session = if (useRichEditor) {
                             richSessions.getOrPut(block.key) {
                                 DocumentRichEditorSession(RichTextState(), block)
@@ -1324,23 +1324,25 @@ private fun DocumentBlockMenu(
     }
 }
 
-private fun DocumentMarkdownUnsupportedFeature.displayName(): String = when (this) {
-    DocumentMarkdownUnsupportedFeature.FENCED_CODE_BLOCK -> "代码块"
-    DocumentMarkdownUnsupportedFeature.INDENTED_CODE_BLOCK -> "缩进代码"
-    DocumentMarkdownUnsupportedFeature.BLOCK_QUOTE -> "引用"
-    DocumentMarkdownUnsupportedFeature.TABLE -> "表格"
-    DocumentMarkdownUnsupportedFeature.TASK_LIST -> "任务清单"
-    DocumentMarkdownUnsupportedFeature.IMAGE -> "图片"
-    DocumentMarkdownUnsupportedFeature.RAW_HTML -> "HTML"
-    DocumentMarkdownUnsupportedFeature.SETEXT_HEADING -> "Setext 标题"
-    DocumentMarkdownUnsupportedFeature.REFERENCE_LINK -> "引用式链接"
-    DocumentMarkdownUnsupportedFeature.HORIZONTAL_RULE -> "分隔线"
-    DocumentMarkdownUnsupportedFeature.MATH -> "公式"
-    DocumentMarkdownUnsupportedFeature.HARD_LINE_BREAK -> "硬换行"
-    DocumentMarkdownUnsupportedFeature.NON_CANONICAL_ORDERED_LIST -> "自定义编号"
-    DocumentMarkdownUnsupportedFeature.LINK_TITLE -> "链接标题"
-    DocumentMarkdownUnsupportedFeature.FORMATTED_LINK_LABEL -> "富格式链接"
-    DocumentMarkdownUnsupportedFeature.MULTI_BACKTICK_CODE_SPAN -> "多反引号代码"
+private fun RichEditorUnsupportedMarkdownFeature.displayName(): String = when (this) {
+    RichEditorUnsupportedMarkdownFeature.FENCED_CODE_BLOCK -> "代码块"
+    RichEditorUnsupportedMarkdownFeature.INDENTED_CODE_BLOCK -> "缩进代码"
+    RichEditorUnsupportedMarkdownFeature.BLOCK_QUOTE -> "引用"
+    RichEditorUnsupportedMarkdownFeature.TABLE -> "表格"
+    RichEditorUnsupportedMarkdownFeature.TASK_LIST -> "任务清单"
+    RichEditorUnsupportedMarkdownFeature.IMAGE -> "图片"
+    RichEditorUnsupportedMarkdownFeature.RAW_HTML -> "HTML"
+    RichEditorUnsupportedMarkdownFeature.SETEXT_HEADING -> "Setext 标题"
+    RichEditorUnsupportedMarkdownFeature.REFERENCE_LINK -> "引用式链接"
+    RichEditorUnsupportedMarkdownFeature.HORIZONTAL_RULE -> "分隔线"
+    RichEditorUnsupportedMarkdownFeature.MATH -> "公式"
+    RichEditorUnsupportedMarkdownFeature.HARD_LINE_BREAK -> "硬换行"
+    RichEditorUnsupportedMarkdownFeature.NON_CANONICAL_ORDERED_LIST -> "自定义编号"
+    RichEditorUnsupportedMarkdownFeature.LINK_TITLE -> "链接标题"
+    RichEditorUnsupportedMarkdownFeature.FORMATTED_LINK_LABEL -> "富格式链接"
+    RichEditorUnsupportedMarkdownFeature.MULTI_BACKTICK_CODE_SPAN -> "多反引号代码"
+    RichEditorUnsupportedMarkdownFeature.EXCESSIVE_NESTING -> "过深嵌套结构"
+    RichEditorUnsupportedMarkdownFeature.EXCESSIVE_STRUCTURE -> "超出编辑器结构预算"
 }
 
 private fun DocumentTableAlignment.textAlign(): TextAlign = when (this) {

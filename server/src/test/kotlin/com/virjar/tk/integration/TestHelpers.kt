@@ -12,6 +12,7 @@ import com.virjar.tk.domain.conversation.ConversationService
 import com.virjar.tk.domain.device.DeviceRepository
 import com.virjar.tk.domain.document.DocumentRepository
 import com.virjar.tk.domain.document.DocumentService
+import com.virjar.tk.domain.event.SyncEventReader
 import com.virjar.tk.domain.message.MessageService
 import com.virjar.tk.domain.organization.OrganizationRepository
 import com.virjar.tk.domain.organization.OrganizationService
@@ -107,6 +108,7 @@ class TestEnvironment : AutoCloseable {
     val contactRepo: ContactRepository get() = koin.get()
     val chatRepo: ChatRepository get() = koin.get()
     val conversationRepo: ConversationRepository get() = koin.get()
+    val syncEventReader: SyncEventReader get() = koin.get()
     val searchIndex: SearchIndex get() = koin.get()
     val healthChecker: com.virjar.tk.infra.health.HealthChecker get() = koin.get()
     val fileStore: com.virjar.tk.infra.storage.FileStore get() = koin.get()
@@ -119,6 +121,7 @@ class TestEnvironment : AutoCloseable {
         conversationService = koin.get(),
         search = koin.get(),
         attachmentService = koin.get(),
+        users = koin.get(),
     )
 
     /** 注册用户，返回 uid */

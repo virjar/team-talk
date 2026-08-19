@@ -15,10 +15,33 @@ import com.virjar.tk.protocol.executor.IOExecutor
 import com.virjar.tk.protocol.payload.*
 import com.virjar.tk.protocol.dispatcher.FatalCodecException
 import com.virjar.tk.protocol.trace.Recorder
+import com.virjar.tk.rpc.gen.ConversationRpcContract
 import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelInboundHandlerAdapter
 import io.netty.handler.timeout.IdleStateEvent
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+
+/** 单连接认证状态机；CAS 保证同一 TCP 连接至多受理一个认证请求。 */
+internal enum class ImAgentAuthAdmission { ACCEPT, REJECT_AND_CLOSE }
+
+internal class ImAgentAuthState {
+    private val state = AtomicReference(ImAgent.State.CONNECTED)
+
+    val current: ImAgent.State get() = state.get()
+
+    fun admitAuthentication(): ImAgentAuthAdmission =
+        if (state.compareAndSet(ImAgent.State.CONNECTED, ImAgent.State.AUTHENTICATING)) {
+            ImAgentAuthAdmission.ACCEPT
+        } else {
+            ImAgentAuthAdmission.REJECT_AND_CLOSE
+        }
+
+    fun markAuthenticated(): Boolean =
+        state.compareAndSet(ImAgent.State.AUTHENTICATING, ImAgent.State.AUTHENTICATED)
+
+    fun disconnect(): ImAgent.State = state.getAndSet(ImAgent.State.DISCONNECTED)
+}
 
 /**
  * 连接级处理器。管理认证状态和包分发。
@@ -44,7 +67,7 @@ class ImAgent(
     private val presenceService: PresenceService,
     private val ioExecutor: IOExecutor,
 ) : ChannelInboundHandlerAdapter() {
-    enum class State { CONNECTED, AUTHENTICATED, DISCONNECTED }
+    enum class State { CONNECTED, AUTHENTICATING, AUTHENTICATED, DISCONNECTED }
 
     companion object {
         /** 未认证连接全局上限：端口扫描/慢速攻击的资源围栏（超限新连接即拒） */
@@ -54,8 +77,10 @@ class ImAgent(
         private const val AUTH_TIMEOUT_SECONDS = 10L
     }
 
-    private val _state = AtomicReference(State.CONNECTED)
-    val state: State get() = _state.get()
+    private val authState = ImAgentAuthState()
+    private val authenticationLifecycleLock = Any()
+    private val unauthedSlotHeld = AtomicBoolean(false)
+    val state: State get() = authState.current
     @Volatile
     var uid: String = ""; internal set
     @Volatile
@@ -75,9 +100,10 @@ class ImAgent(
             ctx.close()
             return
         }
+        unauthedSlotHeld.set(true)
         // 认证超时：慢滴保活绕不过（与读空闲独立——每44s滴1字节可无限续命 readerIdle）
         ctx.channel().eventLoop().schedule({
-            if (_state.get() == State.CONNECTED) {
+            if (state == State.CONNECTED || state == State.AUTHENTICATING) {
                 recorder.record { "[AUTH_TIMEOUT] closing after ${AUTH_TIMEOUT_SECONDS}s" }
                 ctx.close()
             }
@@ -117,14 +143,14 @@ class ImAgent(
     }
 
     override fun channelInactive(ctx: ChannelHandlerContext) {
-        // CONNECTED 状态断开（未完成认证）：回收围栏计数（AUTHENTICATED 已在认证时迁移）
-        val previousState = _state.getAndSet(State.DISCONNECTED)
-        if (previousState == State.CONNECTED) {
-            unauthedCount.decrementAndGet()
-        }
-        if (previousState == State.AUTHENTICATED && uid.isNotEmpty()) {
-            // 下线广播由 ClientRegistry.onLastDeviceOffline 钩子触发（仅最后一台设备）
-            clientRegistry.unregister(this)
+        synchronized(authenticationLifecycleLock) {
+            val previousState = authState.disconnect()
+            releaseUnauthedSlot()
+            if (previousState == State.AUTHENTICATED && uid.isNotEmpty()) {
+                // 与认证成功注册共用生命周期锁，保证 registry 队列中的 register 一定先于 unregister。
+                // 下线广播由 ClientRegistry.onLastDeviceOffline 钩子触发（仅最后一台设备）。
+                clientRegistry.unregister(this)
+            }
         }
         recorder.record { "[CLOSE] uid=$uid" }
     }
@@ -141,7 +167,7 @@ class ImAgent(
     private fun handleSubscribe(payload: SubscribePayload) {
         if (state != State.AUTHENTICATED) return
         recorder.record { "[SUBSCRIBE] chatId=${payload.chatId} lastSeq=${payload.lastSeq}" }
-        ioExecutor.launchWithAgent(this) { facade ->
+        val accepted = ioExecutor.launchWithAgent(this) { facade ->
             // 校验成员关系
             if (!chatStore.isMember(payload.chatId, facade.uid)) {
                 facade.recorder.record { "[SUBSCRIBE] denied: not member of ${payload.chatId}" }
@@ -160,11 +186,22 @@ class ImAgent(
             }
             facade.recorder.record { "[SUBSCRIBE] chatId=${payload.chatId}: sent ${messages.size} history messages" }
         }
+        if (!accepted) {
+            recorder.record { "[OVERLOAD] subscribe rejected; closing for resumable reconnect" }
+            channel.close()
+        }
     }
 
     private fun handleAuth(payload: AuthRequestPayload) {
+        // 状态切换必须在 EventLoop 收包路径同步完成。若等 IO worker 执行才切换，攻击者可在
+        // 首次认证排队期间继续塞入多份 AUTH；认证成功后的重复 AUTH 同样属于协议违规。
+        if (authState.admitAuthentication() == ImAgentAuthAdmission.REJECT_AND_CLOSE) {
+            recorder.record { "[AUTH REJECTED] duplicate auth in state=$state; closing" }
+            channel.close()
+            return
+        }
         recorder.record { "[AUTH] type=${payload.authType} device=${payload.deviceId}" }
-        ioExecutor.launchWithAgent(this) { facade ->
+        val accepted = ioExecutor.launchWithAgent(this) { facade ->
             val response = try {
                 authService.handleAuth(payload)
             } catch (e: Exception) {
@@ -173,15 +210,24 @@ class ImAgent(
             }
 
             if (response.code == AuthService.CODE_OK) {
-                uid = response.uid!!
-                deviceId = payload.deviceId
-                unauthedCount.decrementAndGet()  // 已认证：退出未认证围栏
-                // 认证后放开帧限（未认证期间 4KB——慢速攻击的最小权限防御）
-                channel.pipeline().get(PacketCodec::class.java)
-                    ?.maxPayloadLimit = PacketCodec.AUTHED_LIMIT
-                _state.set(State.AUTHENTICATED)
-                recorder.upgrade(uid, deviceId)
-                clientRegistry.register(this@ImAgent)
+                val completed = synchronized(authenticationLifecycleLock) {
+                    // channelInactive 可能在认证 IO 期间先行发生；断线状态不能被旧任务复活。
+                    uid = response.uid!!
+                    deviceId = payload.deviceId
+                    if (!authState.markAuthenticated()) {
+                        false
+                    } else {
+                        releaseUnauthedSlot() // 已认证：退出未认证围栏
+                        // 认证后放开帧限（未认证期间 4KB——慢速攻击的最小权限防御）
+                        channel.pipeline().get(PacketCodec::class.java)
+                            ?.maxPayloadLimit = PacketCodec.AUTHED_LIMIT
+                        recorder.upgrade(uid, deviceId)
+                        // 与 channelInactive 共用锁，确保 registry 的异步操作顺序为先注册、后注销。
+                        clientRegistry.register(this@ImAgent)
+                        true
+                    }
+                }
+                if (!completed) return@launchWithAgent
                 recorder.record { "[AUTH] success uid=$uid device=$deviceId" }
 
                 presenceService.broadcastOnline(uid)
@@ -199,6 +245,15 @@ class ImAgent(
 
             facade.send(response)
         }
+        if (!accepted) {
+            // 未收到认证终态的客户端会按连接断开策略退避重连；返回认证失败反而会停止重试。
+            recorder.record { "[OVERLOAD] auth rejected; closing for retry" }
+            channel.close()
+        }
+    }
+
+    private fun releaseUnauthedSlot() {
+        if (unauthedSlotHeld.compareAndSet(true, false)) unauthedCount.decrementAndGet()
     }
 
     private fun handleInvoke(payload: InvokePayload) {
@@ -206,7 +261,9 @@ class ImAgent(
             write(ResponsePayload(payload.requestId, 401, null))
             return
         }
-        ioExecutor.launchWithAgent(this) { facade ->
+        val dispatch: (
+            suspend kotlinx.coroutines.CoroutineScope.(com.virjar.tk.protocol.executor.ImAgentFacade) -> Unit
+        ) = { facade ->
             try {
                 val response = rpcDispatcher.dispatch(facade.uid, payload)
                 facade.recorder.record { "[RPC] service=${payload.serviceId} method=${payload.methodId} status=${response.status}" }
@@ -215,6 +272,20 @@ class ImAgent(
                 // 协议紊乱：连接已不可靠，直接断连 + FATAL 日志，不尝试返回错误响应
                 recorder.record({ "[FATAL CODEC] service=${e.service} method=${e.method} uid=${e.uid}: 断开不可靠连接" }, e)
                 channel.close()
+            }
+        }
+        // 草稿是同一用户跨设备共享的“最后写入”状态。按服务端观察到的请求顺序串行执行，
+        // 防止旧连接已超时的任务在线程池里晚于新连接的清空请求落库，复活已发送正文。
+        if (
+            payload.serviceId == ConversationRpcContract.SERVICE &&
+            payload.methodId == ConversationRpcContract.M_SET_DRAFT
+        ) {
+            if (!ioExecutor.launchSerialWithAgent("conversation-draft:$uid", this, dispatch)) {
+                write(ResponsePayload(payload.requestId, 429, "草稿请求过于频繁".encodeToByteArray()))
+            }
+        } else {
+            if (!ioExecutor.launchWithAgent(this, dispatch)) {
+                write(ResponsePayload(payload.requestId, 503, "服务器繁忙，请稍后重试".encodeToByteArray()))
             }
         }
     }
@@ -231,7 +302,7 @@ class ImAgent(
         }
 
         recorder.record { "[SEND] chatId=${msg.chatId} clientMsgId=${msg.clientMsgId} type=${msg.messageType}" }
-        ioExecutor.launchWithAgent(this) { facade ->
+        val accepted = ioExecutor.launchWithAgent(this) { facade ->
             try {
                 val serverSeq = messageService.sendMessage(facade.uid, msg)
                 facade.send(MessageAckPayload(msg.clientMsgId, serverSeq, 0, null))
@@ -247,17 +318,42 @@ class ImAgent(
                 facade.send(MessageAckPayload(msg.clientMsgId, 0, 500, "服务器内部错误"))
             }
         }
+        if (!accepted) {
+            write(MessageAckPayload(msg.clientMsgId, 0, 503, "服务器繁忙，请稍后重试"))
+        }
     }
 
     private fun handleTyping(msg: Message) {
-        recorder.record { "[TYPING] chatId=${msg.chatId}" }
-        ioExecutor.launchWithAgent(this) { facade ->
-            val memberUids = chatStore.getMemberUids(msg.chatId)
-            for (memberUid in memberUids) {
-                if (memberUid != facade.uid) {
-                    events.emitTransient(memberUid, NotifyType.TYPING, msg)
+        val accepted = ioExecutor.launchWithAgent(this) { facade ->
+            try {
+                val declared = com.virjar.tk.body.MessageBodyPolicy.canonicalize(msg)
+                if (!chatStore.isMember(declared.chatId, facade.uid)) {
+                    facade.recorder.record { "[TYPING REJECTED] uid=${facade.uid} chatId=${declared.chatId}" }
+                    return@launchWithAgent
                 }
+                // TYPING 不进入 MessageService，但仍必须由认证会话重建身份信封。
+                val trusted = declared.copy(
+                    senderUid = facade.uid,
+                    serverSeq = 0,
+                    timestamp = System.currentTimeMillis(),
+                    flags = 0,
+                    sendStatus = Message.SEND_STATUS_SENT,
+                    uploadProgress = 0f,
+                )
+                facade.recorder.record { "[TYPING] chatId=${trusted.chatId}" }
+                val memberUids = chatStore.getMemberUids(trusted.chatId)
+                for (memberUid in memberUids) {
+                    if (memberUid != facade.uid) {
+                        events.emitTransient(memberUid, NotifyType.TYPING, trusted)
+                    }
+                }
+            } catch (e: IllegalArgumentException) {
+                facade.recorder.record { "[TYPING REJECTED] uid=${facade.uid}: ${e.message}" }
             }
+        }
+        if (!accepted) {
+            // 输入状态是瞬态提示；过载时直接丢弃，不能挤占持久消息/RPC 的恢复窗口。
+            recorder.record { "[OVERLOAD] typing dropped uid=$uid chatId=${msg.chatId}" }
         }
     }
 

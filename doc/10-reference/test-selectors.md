@@ -87,6 +87,11 @@
 |---|---|
 | `chat.input` | 富文本消息输入 |
 | `chat.input.hint` | 空输入提示 |
+| `chat.composer` | 消息编辑器完整容器 |
+| `chat.composer.mode.{visual|source|preview}` | 可视编辑、Markdown 源码与气泡预览 |
+| `chat.input.source` / `chat.input.source.hint` | Markdown 源码输入与空提示 |
+| `chat.preview` | 与最终消息气泡同源的预览 |
+| `chat.message.seq.{serverSeq}` / `chat.message.seq.{serverSeq}.body` | 已 ACK 消息及其正文 |
 | `chat.send` | 发送消息 |
 | `chat.emoji` | 表情入口 |
 | `chat.fmt.{bold|italic|strike|code|link|bullets|numbered|more}` | 消息输入的轻量格式工具与窄屏更多菜单 |

@@ -16,9 +16,13 @@ data class CardBody(
 
     companion object : IProtoReader<CardBody> {
         override fun readFrom(buf: PacketBuffer) = CardBody(
-            targetUid = buf.readString()!!,
-            targetName = buf.readString()!!,
-            targetAvatar = buf.readString(),
+            targetUid = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH),
+            )!!,
+            targetName = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_DISPLAY_NAME_LENGTH),
+            )!!,
+            targetAvatar = buf.readString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_URL_LENGTH)),
         )
     }
 }

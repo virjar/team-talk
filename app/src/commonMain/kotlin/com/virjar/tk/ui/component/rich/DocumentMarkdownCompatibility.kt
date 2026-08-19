@@ -10,13 +10,13 @@ import org.intellij.markdown.flavours.gfm.GFMTokenTypes
 import org.intellij.markdown.parser.MarkdownParser
 
 /**
- * 当前富文本编辑器不能无损写回的 Markdown 结构。
+ * 当前可视富文本编辑器不能无损写回的 Markdown 结构。
  *
- * 这是单个文档块的保守能力门禁，而不是 Markdown 预览器的能力表：命中任一结构时只让该块
- * 使用局部源码卡片，避免普通编辑把尚未建模的结构静默改写或删除。代码块、引用和表格由外层
- * [DocumentMarkdownBlockCodec] 提前投影成一等可视块，不会命中整篇文档的降级路径。
+ * 这是编辑器 codec 的通用能力表，不是任一产品的预览能力表。文档会把代码、引用和表格
+ * 投影为局部结构块；聊天则让整条消息留在 Markdown 源码模式。两者共用这份“能否
+ * 无损进入 WYSIWYG”判定，但分别决定产品上的降级交互。
  */
-internal enum class DocumentMarkdownUnsupportedFeature {
+internal enum class RichEditorUnsupportedMarkdownFeature {
     FENCED_CODE_BLOCK,
     INDENTED_CODE_BLOCK,
     BLOCK_QUOTE,
@@ -33,86 +33,109 @@ internal enum class DocumentMarkdownUnsupportedFeature {
     LINK_TITLE,
     FORMATTED_LINK_LABEL,
     MULTI_BACKTICK_CODE_SPAN,
+    EXCESSIVE_NESTING,
+    EXCESSIVE_STRUCTURE,
 }
 
-internal data class DocumentMarkdownCompatibility(
-    val unsupportedFeatures: Set<DocumentMarkdownUnsupportedFeature>,
+internal data class RichEditorMarkdownCapability(
+    val unsupportedFeatures: Set<RichEditorUnsupportedMarkdownFeature>,
 ) {
-    val requiresLocalSourceBlock: Boolean
+    val requiresSourceMode: Boolean
         get() = unsupportedFeatures.isNotEmpty()
 
     companion object {
         private val parser = MarkdownParser(GFMFlavourDescriptor())
 
-        fun inspect(markdown: String): DocumentMarkdownCompatibility {
-            if (markdown.isEmpty()) return DocumentMarkdownCompatibility(emptySet())
+        fun inspect(markdown: String): RichEditorMarkdownCapability {
+            if (markdown.isEmpty()) return RichEditorMarkdownCapability(emptySet())
+            if (DocumentMarkdownEditorBudget.exceeds(markdown)) {
+                return RichEditorMarkdownCapability(
+                    setOf(RichEditorUnsupportedMarkdownFeature.EXCESSIVE_STRUCTURE)
+                )
+            }
 
-            val unsupported = linkedSetOf<DocumentMarkdownUnsupportedFeature>()
-            parser.buildMarkdownTreeFromString(markdown).visit(markdown, unsupported)
-            return DocumentMarkdownCompatibility(unsupported)
+            val unsupported = linkedSetOf<RichEditorUnsupportedMarkdownFeature>()
+            parser.buildMarkdownTreeFromString(markdown).visitIteratively(markdown, unsupported)
+            return RichEditorMarkdownCapability(unsupported)
         }
 
-        private fun ASTNode.visit(
+        private fun ASTNode.visitIteratively(
             markdown: String,
-            unsupported: MutableSet<DocumentMarkdownUnsupportedFeature>,
+            unsupported: MutableSet<RichEditorUnsupportedMarkdownFeature>,
+        ) {
+            val pending = ArrayDeque<Pair<ASTNode, Int>>()
+            pending.addLast(this to 0)
+            while (pending.isNotEmpty()) {
+                val (node, depth) = pending.removeLast()
+                if (depth > MAX_MARKDOWN_AST_DEPTH) {
+                    unsupported += RichEditorUnsupportedMarkdownFeature.EXCESSIVE_NESTING
+                    continue
+                }
+                node.inspectNode(markdown, unsupported)
+                node.children.asReversed().forEach { pending.addLast(it to depth + 1) }
+            }
+        }
+
+        private fun ASTNode.inspectNode(
+            markdown: String,
+            unsupported: MutableSet<RichEditorUnsupportedMarkdownFeature>,
         ) {
             when (type) {
                 MarkdownElementTypes.CODE_FENCE ->
-                    unsupported += DocumentMarkdownUnsupportedFeature.FENCED_CODE_BLOCK
+                    unsupported += RichEditorUnsupportedMarkdownFeature.FENCED_CODE_BLOCK
 
                 MarkdownElementTypes.CODE_BLOCK ->
-                    unsupported += DocumentMarkdownUnsupportedFeature.INDENTED_CODE_BLOCK
+                    unsupported += RichEditorUnsupportedMarkdownFeature.INDENTED_CODE_BLOCK
 
                 MarkdownElementTypes.BLOCK_QUOTE ->
-                    unsupported += DocumentMarkdownUnsupportedFeature.BLOCK_QUOTE
+                    unsupported += RichEditorUnsupportedMarkdownFeature.BLOCK_QUOTE
 
                 GFMElementTypes.TABLE ->
-                    unsupported += DocumentMarkdownUnsupportedFeature.TABLE
+                    unsupported += RichEditorUnsupportedMarkdownFeature.TABLE
 
                 GFMTokenTypes.CHECK_BOX ->
-                    unsupported += DocumentMarkdownUnsupportedFeature.TASK_LIST
+                    unsupported += RichEditorUnsupportedMarkdownFeature.TASK_LIST
 
                 MarkdownElementTypes.IMAGE ->
-                    unsupported += DocumentMarkdownUnsupportedFeature.IMAGE
+                    unsupported += RichEditorUnsupportedMarkdownFeature.IMAGE
 
                 MarkdownElementTypes.HTML_BLOCK, MarkdownTokenTypes.HTML_TAG ->
-                    unsupported += DocumentMarkdownUnsupportedFeature.RAW_HTML
+                    unsupported += RichEditorUnsupportedMarkdownFeature.RAW_HTML
 
                 MarkdownElementTypes.SETEXT_1, MarkdownElementTypes.SETEXT_2 ->
-                    unsupported += DocumentMarkdownUnsupportedFeature.SETEXT_HEADING
+                    unsupported += RichEditorUnsupportedMarkdownFeature.SETEXT_HEADING
 
                 MarkdownElementTypes.LINK_DEFINITION,
                 MarkdownElementTypes.FULL_REFERENCE_LINK,
                 MarkdownElementTypes.SHORT_REFERENCE_LINK,
-                -> unsupported += DocumentMarkdownUnsupportedFeature.REFERENCE_LINK
+                -> unsupported += RichEditorUnsupportedMarkdownFeature.REFERENCE_LINK
 
                 MarkdownTokenTypes.HORIZONTAL_RULE ->
-                    unsupported += DocumentMarkdownUnsupportedFeature.HORIZONTAL_RULE
+                    unsupported += RichEditorUnsupportedMarkdownFeature.HORIZONTAL_RULE
 
                 GFMElementTypes.INLINE_MATH, GFMElementTypes.BLOCK_MATH ->
-                    unsupported += DocumentMarkdownUnsupportedFeature.MATH
+                    unsupported += RichEditorUnsupportedMarkdownFeature.MATH
 
                 MarkdownTokenTypes.HARD_LINE_BREAK ->
-                    unsupported += DocumentMarkdownUnsupportedFeature.HARD_LINE_BREAK
+                    unsupported += RichEditorUnsupportedMarkdownFeature.HARD_LINE_BREAK
 
                 MarkdownElementTypes.LINK_TITLE ->
-                    unsupported += DocumentMarkdownUnsupportedFeature.LINK_TITLE
+                    unsupported += RichEditorUnsupportedMarkdownFeature.LINK_TITLE
 
                 MarkdownElementTypes.INLINE_LINK -> if (hasFormattedLinkLabel()) {
-                    unsupported += DocumentMarkdownUnsupportedFeature.FORMATTED_LINK_LABEL
+                    unsupported += RichEditorUnsupportedMarkdownFeature.FORMATTED_LINK_LABEL
                 }
 
                 MarkdownElementTypes.CODE_SPAN -> if (
                     getTextInNode(markdown).toString().takeWhile { it == '`' }.length > 1
                 ) {
-                    unsupported += DocumentMarkdownUnsupportedFeature.MULTI_BACKTICK_CODE_SPAN
+                    unsupported += RichEditorUnsupportedMarkdownFeature.MULTI_BACKTICK_CODE_SPAN
                 }
 
                 MarkdownElementTypes.ORDERED_LIST -> if (hasNonCanonicalNumbering(markdown)) {
-                    unsupported += DocumentMarkdownUnsupportedFeature.NON_CANONICAL_ORDERED_LIST
+                    unsupported += RichEditorUnsupportedMarkdownFeature.NON_CANONICAL_ORDERED_LIST
                 }
             }
-            children.forEach { it.visit(markdown, unsupported) }
         }
 
         /** 当前编辑器只保存 link 的纯 label，内嵌样式会在写回时被压平。 */
@@ -128,8 +151,15 @@ internal data class DocumentMarkdownCompatibility(
 
         private fun ASTNode.hasDescendantOfType(
             vararg targetTypes: org.intellij.markdown.IElementType,
-        ): Boolean = children.any { child ->
-            child.type in targetTypes || child.hasDescendantOfType(*targetTypes)
+        ): Boolean {
+            val pending = ArrayDeque<ASTNode>()
+            children.asReversed().forEach(pending::addLast)
+            while (pending.isNotEmpty()) {
+                val node = pending.removeLast()
+                if (node.type in targetTypes) return true
+                node.children.asReversed().forEach(pending::addLast)
+            }
+            return false
         }
 
         /**

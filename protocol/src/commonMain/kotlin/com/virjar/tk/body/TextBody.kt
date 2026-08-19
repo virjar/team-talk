@@ -22,7 +22,7 @@ data class TextBody(val text: String) : MessageBody {
 
     companion object : IProtoReader<TextBody> {
         override fun readFrom(buf: PacketBuffer): TextBody = TextBody(
-            text = buf.readString()!!
+            text = buf.readString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_MARKDOWN_LENGTH))!!,
         )
     }
 }

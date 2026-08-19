@@ -8,12 +8,13 @@ import com.virjar.tk.protocol.PacketBuffer
 import io.netty.buffer.Unpooled
 import org.rocksdb.*
 import org.slf4j.LoggerFactory
+import java.security.MessageDigest
 /**
  * 基于 RocksDB 的消息存储。
  *
  * Key 设计：
  * - chatSeqIndex: [chatId bytes][8B seq BE] → message bytes（按 chat+seq 有序扫描）
- * - clientMsgIdIndex: [0x01][clientMsgId bytes] → chatId + seq（去重）
+ * - clientMsgIdIndex: [0x04][chatId][clientMsgId] → sender + seq + 首次内容 SHA-256
  * - projectionOutbox: [0x02][chatId bytes][8B seq BE] → message bytes
  * - attachmentChatIndex: [0x03][path][0x00][chatId][0x00][8B seq] → empty
  *
@@ -50,15 +51,29 @@ class MessageStore(
      * 存储消息。使用 message 中已有的 serverSeq（由 ChatStore 分配）。
      * 返回存储的 serverSeq。如果 clientMsgId 已存在则返回已有 seq（幂等）。
      */
-    override fun storeMessage(message: Message): Long {
+    @Synchronized
+    override fun storeMessage(message: Message, idempotencyCandidate: Message): Long {
         val database = db ?: throw IllegalStateException("MessageStore not initialized")
         val seq = message.serverSeq
 
-        // 检查 clientMsgId 去重
-        val clientMsgIdKey = buildClientMsgIdKey(message.clientMsgId)
+        // clientMsgId 由客户端生成，但在整个 chat 内代表唯一消息身份。
+        // sender 放在 value 中一起持久化，防止另一个成员复用同一身份。
+        val clientMsgIdKey = buildClientMsgIdKey(message.chatId, message.clientMsgId)
+        val clientContentHash = hashClientContent(idempotencyCandidate)
         val existingValue = database.get(clientMsgIdKey)
         if (existingValue != null) {
-            return decodeSeq(existingValue.copyOfRange(existingValue.size - 8, existingValue.size))
+            val existing = decodeIdempotencyValue(existingValue)
+            require(existing.senderUid == message.senderUid) {
+                "clientMsgId 已被当前会话的其他发送者使用"
+            }
+            require(existing.clientContentHash.contentEquals(clientContentHash)) {
+                "clientMsgId 已用于不同消息内容"
+            }
+            getMessage(message.chatId, existing.serverSeq)
+                ?: throw IllegalStateException(
+                    "消息幂等索引损坏: chatId=${message.chatId}, seq=${existing.serverSeq}",
+                )
+            return existing.serverSeq
         }
 
         val msgBytes = encodeMessage(message)
@@ -69,7 +84,7 @@ class MessageStore(
         // outbox 始终保留，进程重启或客户端幂等重试都能继续补偿。
         WriteBatch().use { batch ->
             batch.put(chatSeqKey, msgBytes)
-            batch.put(clientMsgIdKey, message.chatId.encodeToByteArray() + encodeSeq(seq))
+            batch.put(clientMsgIdKey, encodeIdempotencyValue(message.senderUid, seq, clientContentHash))
             batch.put(projectionKey, msgBytes)
             AttachmentPolicy.attachments(message).forEach { attachment ->
                 batch.put(buildAttachmentIndexKey(attachment.path, message.chatId, seq), EMPTY_VALUE)
@@ -87,14 +102,18 @@ class MessageStore(
         return decodeMessage(bytes)
     }
 
-    /**
-     * 通过 clientMsgId 获取 seq（用于快速去重判断，无需反序列化消息）。
-     */
-    override fun getSeqByClientMsgId(clientMsgId: String): Long? {
+    override fun findIdempotentMessage(candidate: Message): Message? {
         val database = db ?: return null
-        val key = buildClientMsgIdKey(clientMsgId)
+        val key = buildClientMsgIdKey(candidate.chatId, candidate.clientMsgId)
         val indexValue = database.get(key) ?: return null
-        return decodeSeq(indexValue.copyOfRange(indexValue.size - 8, indexValue.size))
+        val existing = decodeIdempotencyValue(indexValue)
+        require(existing.senderUid == candidate.senderUid) {
+            "clientMsgId 已被当前会话的其他发送者使用"
+        }
+        require(existing.clientContentHash.contentEquals(hashClientContent(candidate))) {
+            "clientMsgId 已用于不同消息内容"
+        }
+        return getMessage(candidate.chatId, existing.serverSeq)
     }
 
     override fun getHistory(chatId: String, fromSeq: Long, limit: Int, forward: Boolean): List<Message> {
@@ -133,6 +152,7 @@ class MessageStore(
         return messages
     }
 
+    @Synchronized
     override fun updateMessage(chatId: String, seq: Long, message: Message) {
         val database = db ?: return
         val key = buildChatSeqKey(chatId, seq)
@@ -208,10 +228,53 @@ class MessageStore(
         return key
     }
 
-    private fun buildClientMsgIdKey(clientMsgId: String): ByteArray {
-        val prefix = byteArrayOf(0x01)
-        val idBytes = clientMsgId.encodeToByteArray()
-        return prefix + idBytes
+    private fun buildClientMsgIdKey(chatId: String, clientMsgId: String): ByteArray =
+        IDEMPOTENCY_PREFIX + encodeKeyPart(chatId) + encodeKeyPart(clientMsgId)
+
+    private fun encodeIdempotencyValue(senderUid: String, seq: Long, clientContentHash: ByteArray): ByteArray {
+        require(clientContentHash.size == SHA_256_LENGTH)
+        return encodeKeyPart(senderUid) + encodeSeq(seq) + clientContentHash
+    }
+
+    private fun decodeIdempotencyValue(value: ByteArray): IdempotencyRecord {
+        require(value.size >= KEY_PART_HEADER_LENGTH + 8 + SHA_256_LENGTH) { "消息幂等索引格式损坏" }
+        val senderLength = decodeKeyPartLength(value)
+        require(senderLength <= value.size - KEY_PART_HEADER_LENGTH - 8 - SHA_256_LENGTH) {
+            "消息幂等索引格式损坏"
+        }
+        val seqOffset = KEY_PART_HEADER_LENGTH + senderLength
+        require(seqOffset + 8 + SHA_256_LENGTH == value.size) { "消息幂等索引格式损坏" }
+        return IdempotencyRecord(
+            senderUid = value.copyOfRange(KEY_PART_HEADER_LENGTH, seqOffset).decodeToString(),
+            serverSeq = decodeSeq(value.copyOfRange(seqOffset, seqOffset + 8)),
+            clientContentHash = value.copyOfRange(seqOffset + 8, value.size),
+        )
+    }
+
+    private fun decodeKeyPartLength(value: ByteArray): Int {
+        val length = ((value[0].toLong() and 0xFF) shl 24) or
+            ((value[1].toLong() and 0xFF) shl 16) or
+            ((value[2].toLong() and 0xFF) shl 8) or
+            (value[3].toLong() and 0xFF)
+        require(length <= Int.MAX_VALUE) { "消息幂等索引格式损坏" }
+        return length.toInt()
+    }
+
+    private data class IdempotencyRecord(
+        val senderUid: String,
+        val serverSeq: Long,
+        val clientContentHash: ByteArray,
+    )
+
+    private fun encodeKeyPart(value: String): ByteArray {
+        val bytes = value.encodeToByteArray()
+        val size = bytes.size
+        return byteArrayOf(
+            (size ushr 24).toByte(),
+            (size ushr 16).toByte(),
+            (size ushr 8).toByte(),
+            size.toByte(),
+        ) + bytes
     }
 
     private fun buildProjectionKey(chatId: String, seq: Long): ByteArray =
@@ -258,6 +321,19 @@ class MessageStore(
                 (bytes[7].toLong() and 0xFF)
     }
 
+    /** 服务端分配字段不参与首次请求摘要；编辑消息不会改变这里保存的摘要。 */
+    private fun hashClientContent(message: Message): ByteArray = MessageDigest.getInstance("SHA-256").digest(
+        encodeMessage(
+            message.copy(
+                serverSeq = 0,
+                timestamp = 0,
+                flags = 0,
+                sendStatus = Message.SEND_STATUS_SENT,
+                uploadProgress = 0f,
+            ),
+        ),
+    )
+
     private fun encodeMessage(message: Message): ByteArray {
         val byteBuf = Unpooled.buffer()
         val buf = PacketBuffer(byteBuf)
@@ -275,9 +351,14 @@ class MessageStore(
     }
 
     companion object {
+        // 0x01 是旧的 sender-scoped 索引。新 prefix 避免与旧 key 空间混用；
+        // 当前尚未发布，测试数据可在此破坏性身份语义升级时清理。
+        private val IDEMPOTENCY_PREFIX = byteArrayOf(0x04)
         private val PROJECTION_PREFIX = byteArrayOf(0x02)
         private val ATTACHMENT_PREFIX = byteArrayOf(0x03)
         private val KEY_SEPARATOR = byteArrayOf(0x00)
         private val EMPTY_VALUE = byteArrayOf()
+        private const val KEY_PART_HEADER_LENGTH = 4
+        private const val SHA_256_LENGTH = 32
     }
 }

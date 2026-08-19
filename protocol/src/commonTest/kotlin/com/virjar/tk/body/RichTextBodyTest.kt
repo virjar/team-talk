@@ -11,6 +11,17 @@ import kotlin.test.assertTrue
 class RichTextBodyTest {
 
     @Test
+    fun `mention 构造器转义链接边界且派生字段可还原`() {
+        val markdown = buildMentionMarkdown("研发]平台\\组", "uid(研发)")
+        val body = buildRichTextBody(markdown)
+
+        assertEquals("@[研发\\]平台\\\\组](mention://uid\\(研发\\))", markdown)
+        assertEquals("研发]平台\\组", body.mentions.single().displayName)
+        assertEquals("uid(研发)", body.mentions.single().uid)
+        assertEquals("@研发]平台\\组", body.plainText)
+    }
+
+    @Test
     fun `wire round-trip 保真`() {
         val body = RichTextBody(
             markdown = "你好 **世界** @[设计测试员](mention://23ezOP9D)",

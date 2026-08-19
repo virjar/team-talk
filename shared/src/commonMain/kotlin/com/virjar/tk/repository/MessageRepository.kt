@@ -22,7 +22,7 @@ class MessageRepository(
     }
 
     /** 拉取历史并写入本地缓存（本地优先）。 */
-    suspend fun getHistory(chatId: String, fromSeq: Long = 0, limit: Int = 50): Outcome<List<Message>> = outcome {
+    suspend fun getHistory(chatId: String, fromSeq: Long = 0, limit: Int = 10): Outcome<List<Message>> = outcome {
         rpc.getHistory(chatId, fromSeq, limit).also { list -> list.forEach { localCache.insertMessage(it) } }
     }
 
@@ -33,7 +33,7 @@ class MessageRepository(
         rpc.forward(srcChatId, srcSeq, targetChatId)
     }
 
-    suspend fun searchMessages(chatId: String, keyword: String, limit: Int = 20): Outcome<List<Message>> = outcome {
+    suspend fun searchMessages(chatId: String, keyword: String, limit: Int = 10): Outcome<List<Message>> = outcome {
         rpc.search(chatId, keyword, limit)
     }
 

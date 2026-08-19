@@ -3,6 +3,8 @@ package com.virjar.tk.model
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.IProtoReader
 import com.virjar.tk.protocol.PacketBuffer
+import com.virjar.tk.body.AttachmentPolicy
+import com.virjar.tk.body.MessageBodyPolicy
 import kotlinx.serialization.Serializable
 
 /**
@@ -28,9 +30,11 @@ data class Attachment(
 
     companion object : IProtoReader<Attachment> {
         override fun readFrom(buf: PacketBuffer) = Attachment(
-            path = buf.readString()!!,
-            name = buf.readString()!!,
-            contentType = buf.readString()!!,
+            path = buf.readString(MessageBodyPolicy.utf8WireLimit(AttachmentPolicy.MAX_REFERENCE_LENGTH))!!,
+            name = buf.readString(MessageBodyPolicy.utf8WireLimit(AttachmentPolicy.MAX_NAME_LENGTH))!!,
+            contentType = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(AttachmentPolicy.MAX_CONTENT_TYPE_LENGTH),
+            )!!,
             size = buf.readVarLong(),
         )
     }

@@ -41,7 +41,8 @@ class TcpServer(
                             0, 0, TimeUnit.SECONDS))
                         // 当前协议无独立握手层：客户端首帧 AUTH 即连接序言
                         //（帧头 MAGIC+VERSION 由 PacketCodec 首帧校验，误连/版本不符即断）
-                        .addLast(PacketCodec())
+                        // 服务端只接受请求方向的包；响应/推送类型在 payload 累积和解码前拒绝。
+                        .addLast(PacketCodec(inboundRole = PacketInboundRole.SERVER))
                         .addLast(agent)
                 }
             })

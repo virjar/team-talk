@@ -22,6 +22,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.navigation.navArgument
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import com.virjar.tk.client.*
 import com.virjar.tk.model.User
 import com.virjar.tk.navigation.AppDataState
@@ -35,6 +37,10 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
+    private val appDataStateHolder: AndroidAppDataStateHolder by lazy {
+        ViewModelProvider(this)[AndroidAppDataStateHolder::class.java]
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 全局初始化（日志注入、ServerConfig、异常拦截）已在 TeamTalkApp.onCreate 完成
@@ -68,14 +74,50 @@ class MainActivity : ComponentActivity() {
                         AuthFlow(auth.imClient, config, scope, auth.authError) { auth.clearError() }
                     }
                 } else {
+                    val dataState = remember(auth.session) {
+                        appDataStateHolder.forSession(auth.session!!)
+                    }
                     AndroidMainApp(
-                        dataState = remember { AppDataState(auth.session!!) },
-                        onLogout = auth.onLogout,
+                        dataState = dataState,
+                        onLogout = {
+                            appDataStateHolder.clearForLogout()
+                            auth.onLogout()
+                        },
                     )
                 }
             }
                 }
         }
+    }
+}
+
+/**
+ * Retains the session-owned composer store across Activity recreation. Authentication currently
+ * creates a fresh ClientSession after rotation, so retaining only Compose state would strand the
+ * lightweight SavedState tokens. A different signed-in uid always receives a fresh store.
+ */
+internal class AndroidAppDataStateHolder : ViewModel() {
+    private var composerContexts = ChatComposerContextStore()
+    private var dataState: AppDataState? = null
+
+    fun forSession(session: ClientSession): AppDataState {
+        dataState?.takeIf { it.session === session }?.let { return it }
+        val previous = dataState
+        val sameUser = previous?.userSession?.uid == session.userSession.uid
+        previous?.destroy(clearComposerContexts = !sameUser)
+        if (!sameUser) composerContexts = ChatComposerContextStore()
+        return AppDataState(session, composerContexts).also { dataState = it }
+    }
+
+    fun clearForLogout() {
+        dataState?.destroy(clearComposerContexts = true)
+        dataState = null
+        composerContexts = ChatComposerContextStore()
+    }
+
+    override fun onCleared() {
+        dataState?.destroy(clearComposerContexts = true)
+        dataState = null
     }
 }
 
@@ -106,7 +148,6 @@ private fun AuthFlow(imClient: ImClient, config: ServerConfig, scope: kotlinx.co
 private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
     val navController = rememberNavController()
     val scope = rememberCoroutineScope()
-    DisposableEffect(Unit) { onDispose { dataState.destroy() } }
     NavHost(
         navController = navController,
         startDestination = Routes.HOME,
@@ -131,10 +172,26 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             val chatId = entry.arguments?.getString("chatId") ?: return@composable
             val chatName = entry.arguments?.getString("name") ?: ""
             val chatType = entry.arguments?.getInt("type") ?: 1
-            val vm = dataState.chatViewModel
+            // A restored/deep-linked CHAT destination must prepare itself; the navigation click
+            // that first opened it is not part of Android saved-state restoration.
+            LaunchedEffect(chatId, chatName, chatType) {
+                dataState.ensureChat(chatId, chatName, chatType)
+            }
+            // During a back-stack transition never render route A with route B's ViewModel.
+            val vm = dataState.chatViewModelFor(chatId)
             val conversations by dataState.conversationViewModel.conversations.collectAsState()
-            val draft = remember(chatId) { conversations.find { it.chatId == chatId }?.draft }
-            var currentDraft by remember { mutableStateOf(draft) }
+            // Full drafts live in ConversationRepository/ChatComposerContextStore. Keeping this
+            // mirror out of SavedState avoids a second 100k String in the Activity Bundle.
+            var currentDraft by remember(chatId) { mutableStateOf<String?>(null) }
+            var draftInitialized by remember(chatId) { mutableStateOf(false) }
+            // 会话列表可能晚于深链聊天页加载；只在用户未编辑时接受首次服务端草稿。
+            LaunchedEffect(chatId, conversations) {
+                val conversation = conversations.find { it.chatId == chatId }
+                if (!draftInitialized && conversation != null) {
+                    currentDraft = conversation.draft
+                    draftInitialized = true
+                }
+            }
             // @ 补全候选：群聊拉成员，私聊用好友
             var mentionCandidates by remember { mutableStateOf<List<com.virjar.tk.model.User>>(emptyList()) }
             LaunchedEffect(chatId, chatType) {
@@ -145,10 +202,6 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                         dataState.contactViewModel.contacts.value.mapNotNull { it.user }
                     }
                 } catch (_: Exception) { emptyList() }
-            }
-            // 离开聊天页时保存草稿（fire-and-forget，不再阻塞主线程）
-            DisposableEffect(chatId) {
-                onDispose { dataState.saveDraft(chatId, currentDraft) }
             }
             if (vm != null) { AndroidChatScreen(chatId, chatName, chatType, vm, dataState.userSession.uid,
                 serverUrl = defaultServerConfig().serverUrl,
@@ -161,7 +214,14 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                     safeMentionProfileRouteOrNull(uid)?.let { route -> navController.navigate(route) }
                 },
                 draft = currentDraft,
-                onDraftChange = { currentDraft = it },
+                composerContextStore = dataState.chatComposerContexts,
+                // ChatPanel 已防抖并在离开时同步 flush；单一出口避免父子
+                // DisposableEffect 销毁顺序不确定时，旧草稿在最后一帧反向覆盖新草稿。
+                onDraftChange = {
+                    draftInitialized = true
+                    currentDraft = it
+                    dataState.saveDraft(chatId, it)
+                },
                 onForward = { msg -> navController.navigate(Routes.forward(msg.chatId, msg.serverSeq)) },
                 onGroupDetail = { navController.navigate(Routes.groupDetail(chatId)) },
                 onBack = { navController.popBackStack() },

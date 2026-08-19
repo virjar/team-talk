@@ -24,4 +24,4 @@ internal fun PacketBuffer.writeAttachmentOrNull(attachment: Attachment?) {
 }
 
 internal fun PacketBuffer.readAttachmentOrNull(): Attachment? =
-    if (readByte() == 0) null else Attachment.readFrom(this)
+    if (!readPresenceFlag("attachment")) null else Attachment.readFrom(this)

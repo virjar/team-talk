@@ -7,6 +7,7 @@ import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.PacketBuffer
 import com.virjar.tk.body.MessageBodyRegistry
 import com.virjar.tk.body.MessageBody
+import com.virjar.tk.body.MessageBodyPolicy
 
 /**
  * 消息传输模型。
@@ -61,14 +62,18 @@ data class Message(
         const val FLAG_FORWARDED = 4 // bit2：消息是转发来的
 
         override fun readFrom(buf: PacketBuffer): Message {
-            val chatId = buf.readString()!!
-            val clientMsgId = buf.readString()!!
+            val chatId = buf.readString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_CHAT_ID_LENGTH))!!
+            val clientMsgId = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_CLIENT_MESSAGE_ID_LENGTH),
+            )!!
             val serverSeq = buf.readVarLong()
-            val senderUid = buf.readString()!!
+            val senderUid = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH),
+            )!!
             val messageType = buf.readByte()
             val timestamp = buf.readVarLong()
             val flags = buf.readVarInt()
-            val hasBody = buf.readByte() != 0
+            val hasBody = buf.readPresenceFlag("message body")
             val body = if (hasBody) {
                 MessageBodyRegistry.decode(MessageType.fromCode(messageType), buf)
             } else null

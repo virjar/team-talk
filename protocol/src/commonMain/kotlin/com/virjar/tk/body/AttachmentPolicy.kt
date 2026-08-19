@@ -16,9 +16,13 @@ import com.virjar.tk.protocol.MessageType
  */
 object AttachmentPolicy {
     private const val FILE_ENDPOINT = "/api/v1/files/"
+    const val MAX_REFERENCE_LENGTH = 4_096
+    const val MAX_NAME_LENGTH = 512
+    const val MAX_CONTENT_TYPE_LENGTH = 255
 
     /** 把相对 path/文件端点 URL 归一化为 FileStore 相对 path。 */
     fun canonicalPath(reference: String): String {
+        require(reference.length <= MAX_REFERENCE_LENGTH) { "附件地址过长" }
         val value = reference.trim()
         require(value.isNotEmpty()) { "附件地址不能为空" }
 
@@ -71,8 +75,12 @@ object AttachmentPolicy {
         (message.body as? AttachmentBody)?.let { listOfNotNull(it.attachment, it.thumbnail) }.orEmpty()
 
     private fun canonicalize(attachment: Attachment): Attachment {
-        require(attachment.name.isNotBlank()) { "附件名称不能为空" }
-        require(attachment.contentType.isNotBlank()) { "附件类型不能为空" }
+        require(attachment.name.isNotBlank() && attachment.name.length <= MAX_NAME_LENGTH) {
+            "附件名称不能为空或超过 $MAX_NAME_LENGTH 个字符"
+        }
+        require(
+            attachment.contentType.isNotBlank() && attachment.contentType.length <= MAX_CONTENT_TYPE_LENGTH,
+        ) { "附件类型不能为空或超过 $MAX_CONTENT_TYPE_LENGTH 个字符" }
         require(attachment.size >= 0) { "附件大小不能为负数: ${attachment.size}" }
         return attachment.copy(path = canonicalPath(attachment.path))
     }

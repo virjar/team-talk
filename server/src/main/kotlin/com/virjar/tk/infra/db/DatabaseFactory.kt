@@ -52,6 +52,9 @@ object DatabaseFactory {
                 DocumentSpaces, DocumentSpaceGrants, DocumentNodes, DocumentContentRevisions,
                 DocumentUserRecents,
             )
+            // Exposed 的 createMissingTablesAndColumns 不会把既有 VARCHAR(500) 自动扩为 TEXT。
+            // Markdown 源码草稿必须升级为无损正文列；该 PostgreSQL DDL 对新库和已升级库均幂等。
+            exec("ALTER TABLE conversations ALTER COLUMN draft TYPE TEXT")
         }
 
         logger.info("Database initialized: $jdbcUrl")

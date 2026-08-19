@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import com.virjar.tk.ui.platform.contextLongPress
 import com.virjar.tk.ui.platform.secondaryClick
 import androidx.compose.ui.unit.dp
@@ -58,8 +59,10 @@ internal fun MessageBubble(
     menuItems: @Composable ColumnScope.() -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    val acknowledgedMessageTag = msg.serverSeq.takeIf { it > 0 }?.let { "chat.message.seq.$it" }
     Row(
         modifier = modifier
+            .then(acknowledgedMessageTag?.let { Modifier.testTag(it) } ?: Modifier)
             .fillMaxWidth()
             .padding(vertical = if (isContinuation) Tk.spacing.xs / 2f else Tk.spacing.xs),
         horizontalArrangement = if (isMe) Arrangement.End else Arrangement.Start,
@@ -113,6 +116,7 @@ internal fun MessageBubble(
                 // 长按弹菜单平台分流（F29）：Android 长按；桌面无长按（拖选文字不被误判），
                 // 菜单只走右键 secondaryClick
                 modifier = Modifier
+                    .then(acknowledgedMessageTag?.let { Modifier.testTag("$it.body") } ?: Modifier)
                     .contextLongPress(onLongClick)
                     .secondaryClick(onLongClick),
             ) {

@@ -36,8 +36,10 @@ data class RichTextBody(
 
         companion object : IProtoReader<Mention> {
             override fun readFrom(buf: PacketBuffer): Mention = Mention(
-                uid = buf.readString()!!,
-                displayName = buf.readString()!!,
+                uid = buf.readString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH))!!,
+                displayName = buf.readString(
+                    MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_DISPLAY_NAME_LENGTH),
+                )!!,
                 offset = buf.readVarInt(),
                 length = buf.readVarInt(),
             )
@@ -52,10 +54,20 @@ data class RichTextBody(
     }
 
     companion object : IProtoReader<RichTextBody> {
+        /** 侧信道仅用于通知和定位；正文仍是唯一事实源，单条消息无需无限 mentions。 */
+        const val MAX_MENTIONS = 1_000
+
         override fun readFrom(buf: PacketBuffer): RichTextBody {
-            val markdown = buf.readString()!!
-            val mentions = (1..buf.readVarInt()).map { Mention.readFrom(buf) }
-            val plainText = buf.readString()!!
+            val markdown = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_MARKDOWN_LENGTH),
+            )!!
+            // Mention 最短为两个空 String（各 2B）和两个 VarInt（各 1B）。先校验
+            // count 再构造 List，避免极小帧用 Int.MAX_VALUE 触发巨量预分配。
+            val mentionCount = buf.readCollectionSize(MAX_MENTIONS, 6, "rich-text mentions")
+            val mentions = List(mentionCount) { Mention.readFrom(buf) }
+            val plainText = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_MARKDOWN_LENGTH),
+            )!!
             return RichTextBody(markdown, mentions, plainText)
         }
     }
@@ -83,6 +95,28 @@ fun decodeCommonMarkPunctuationEscapes(text: String): String {
                 index++
             }
         }
+    }
+}
+
+/** 构造 TeamTalk 权威 mention 语法，并保护显示名/uid 中会截断 Markdown 链接的标点。 */
+fun buildMentionMarkdown(displayName: String, uid: String): String {
+    require(uid.isNotBlank() && uid.none(Char::isWhitespace)) { "mention uid 不能为空或包含空白" }
+    val label = displayName.ifBlank { uid }.escapeCommonMarkLinkLabel()
+    val destination = uid.escapeCommonMarkLinkDestination()
+    return "@[$label](mention://$destination)"
+}
+
+private fun String.escapeCommonMarkLinkLabel(): String = buildString(length) {
+    this@escapeCommonMarkLinkLabel.forEach { char ->
+        if (char == '\\' || char == '[' || char == ']') append('\\')
+        append(char)
+    }
+}
+
+private fun String.escapeCommonMarkLinkDestination(): String = buildString(length) {
+    this@escapeCommonMarkLinkDestination.forEach { char ->
+        if (char == '\\' || char == '(' || char == ')' || char == '<' || char == '>') append('\\')
+        append(char)
     }
 }
 

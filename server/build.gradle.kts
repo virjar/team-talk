@@ -97,6 +97,10 @@ tasks.test {
     // 本地快速跳过：./gradlew :server:test -PskipTests
     onlyIf { !project.hasProperty("skipTests") }
     useJUnitPlatform()
+    // 服务端测试会间接加载 :app 的 JVM 类和 Java2D 缩略图，但不应注册 macOS GUI 应用。
+    // JBR 17 在新版 macOS 上尝试初始化 AppKit 会直接 SIGABRT（exit 134）；headless
+    // 仍保留 BufferedImage/ImageIO 能力，并让服务端测试符合真实无界面运行形态。
+    systemProperty("java.awt.headless", "true")
 
     // 远程 E2E 开关透传：默认关闭，仅 -Dtk.e2e.remote=true 时启用远程测试。
     // Gradle 默认不把命令行 -D 转发给测试 JVM，需显式桥接。
@@ -117,6 +121,7 @@ tasks.register<Test>("acceptanceTest") {
     testClassesDirs = sourceSets["test"].output.classesDirs
     classpath = sourceSets["test"].runtimeClasspath
     useJUnitPlatform()
+    systemProperty("java.awt.headless", "true")
     filter { includeTestsMatching("com.virjar.tk.e2e.RemoteAcceptanceTest") }
     systemProperty("tk.e2e.remote", "true")
     systemProperty("tk.e2e.host", deploymentConfig.tcpHost)

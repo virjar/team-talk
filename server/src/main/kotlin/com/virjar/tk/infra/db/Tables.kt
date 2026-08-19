@@ -87,7 +87,9 @@ object Conversations : LongIdTable("conversations") {
     val peerReadSeq = long("peer_read_seq").default(0)
     val isMuted = bool("is_muted").default(false)
     val isPinned = bool("is_pinned").default(false)
-    val draft = varchar("draft", 500).nullable()
+    // Markdown 源码草稿必须与可发送正文使用同一容量契约；VARCHAR(500) 会静默截断
+    // 代码块、表格等高频办公内容。项目尚未发布，测试实例可直接重建该列/数据。
+    val draft = text("draft").nullable()
     val version = long("version").default(0)
     val updatedAt = long("updated_at")
 

@@ -32,7 +32,11 @@ data class InteractiveCardBody(
 
     companion object : IProtoReader<InteractiveCardBody> {
         override fun readFrom(buf: PacketBuffer): InteractiveCardBody =
-            InteractiveCardBody(payloadJson = buf.readString()!!)
+            InteractiveCardBody(
+                payloadJson = buf.readString(
+                    MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_INTERACTIVE_CARD_JSON_LENGTH),
+                )!!,
+            )
 
         private val cardJson = Json { ignoreUnknownKeys = true }
 

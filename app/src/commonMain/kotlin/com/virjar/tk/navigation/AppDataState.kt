@@ -13,6 +13,7 @@ import com.virjar.tk.navigation.feature.GroupFeature
 import com.virjar.tk.navigation.feature.OrganizationFeature
 import com.virjar.tk.navigation.feature.GroupFilesFeature
 import com.virjar.tk.navigation.feature.DocumentWorkspaceFeature
+import com.virjar.tk.ui.screen.ChatComposerContextStore
 import com.virjar.tk.viewmodel.ChatViewModel
 import com.virjar.tk.viewmodel.ContactViewModel
 import com.virjar.tk.viewmodel.ConversationViewModel
@@ -30,7 +31,10 @@ import kotlinx.coroutines.launch
  * lifetime. Platform navigation remains in Android/Desktop shells; feature
  * state and actions live in [account], [groups] and [discovery].
  */
-open class AppDataState(val session: ClientSession) {
+open class AppDataState(
+    val session: ClientSession,
+    val chatComposerContexts: ChatComposerContextStore = ChatComposerContextStore(),
+) {
     val imClient get() = session.imClient
     val userSession get() = session.userSession
     val localCache get() = session.localCache
@@ -43,6 +47,8 @@ open class AppDataState(val session: ClientSession) {
     val organizationRepo get() = session.organizationRepo
     val groupFileRepo get() = session.groupFileRepo
     val documentRepo get() = session.documentRepo
+
+    private val activeChat = ActiveChatBinding()
 
     private val actionScope = CoroutineScope(
         Dispatchers.Main + SupervisorJob() +
@@ -66,15 +72,30 @@ open class AppDataState(val session: ClientSession) {
     var error by mutableStateOf<String?>(null)
         private set
 
-    fun destroy() {
+    fun destroy(clearComposerContexts: Boolean = true) {
         conversationViewModel.destroy()
         contactViewModel.destroy()
         chatViewModel?.destroy()
+        chatViewModel = null
+        activeChat.clear()
+        if (clearComposerContexts) chatComposerContexts.clear()
         actionScope.cancel()
         session.eventProcessor.onContactChanged = null
     }
 
     fun prepareChat(chatId: String, chatName: String, chatType: Int = ChatType.PERSONAL.code) {
+        ensureChat(chatId, chatName, chatType)
+    }
+
+    /**
+     * Ensure the session-scoped chat ViewModel belongs to the route being rendered.
+     *
+     * Android can restore a CHAT back-stack entry without replaying the click that originally
+     * navigated there. Keeping this operation idempotent lets the destination own preparation,
+     * while preserving an already-live ViewModel (and its loaded message window) on normal entry.
+     */
+    fun ensureChat(chatId: String, chatName: String, chatType: Int = ChatType.PERSONAL.code) {
+        if (!activeChat.needsPreparation(chatId, chatViewModel != null)) return
         chatViewModel?.destroy()
         chatViewModel = ChatViewModel(
             chatId,
@@ -86,7 +107,12 @@ open class AppDataState(val session: ClientSession) {
         ).apply {
             onAuthExpired = { session.close() }
         }
+        activeChat.markPrepared(chatId)
     }
+
+    /** Never expose another route's ViewModel during navigation/back-stack transitions. */
+    fun chatViewModelFor(chatId: String): ChatViewModel? =
+        chatViewModel.takeIf { activeChat.matches(chatId, it != null) }
 
     fun clearError() {
         error = null
@@ -105,11 +131,17 @@ open class AppDataState(val session: ClientSession) {
         }
     }
 
-    fun saveDraft(chatId: String, draft: String?) = actionScope.launch {
-        try {
-            conversationRepo.setDraft(chatId, draft?.takeIf { it.isNotBlank() })
-        } catch (_: Exception) {
-            // Draft persistence is best-effort and must not interrupt conversation flow.
+    fun saveDraft(chatId: String, draft: String?) {
+        val normalized = draft?.takeIf { it.isNotBlank() }
+        // 本地缓存同步落盘，保证立即返回/断网也不丢；Repository 会把远端镜像严格串行，
+        // 已发出的旧 RPC 完成后才会发送清空请求，避免服务端乱序复活旧草稿。
+        conversationRepo.setDraftLocal(chatId, normalized)
+        actionScope.launch {
+            try {
+                conversationRepo.mirrorDraft(chatId, normalized)
+            } catch (_: Exception) {
+                // Draft mirroring is best-effort and must not interrupt conversation flow.
+            }
         }
     }
 
@@ -127,6 +159,25 @@ open class AppDataState(val session: ClientSession) {
             is AppError -> error = throwable.message ?: fallbackMessage
             else -> error = fallbackMessage
         }
+    }
+}
+
+/** Pure route-to-owner binding kept separate so lifecycle/idempotency rules are unit-testable. */
+internal class ActiveChatBinding {
+    private var preparedChatId: String? = null
+
+    fun needsPreparation(routeChatId: String, hasViewModel: Boolean): Boolean =
+        !hasViewModel || preparedChatId != routeChatId
+
+    fun matches(routeChatId: String, hasViewModel: Boolean): Boolean =
+        hasViewModel && preparedChatId == routeChatId
+
+    fun markPrepared(chatId: String) {
+        preparedChatId = chatId
+    }
+
+    fun clear() {
+        preparedChatId = null
     }
 }
 

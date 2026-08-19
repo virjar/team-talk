@@ -24,12 +24,24 @@ data class ReplyBody(
 
     companion object : IProtoReader<ReplyBody> {
         override fun readFrom(buf: PacketBuffer) = ReplyBody(
-            replyToMsgId = buf.readString()!!,
-            replyToSenderUid = buf.readString()!!,
-            replyToSenderName = buf.readString(),
-            replySnippet = buf.readString(),
+            replyToMsgId = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH),
+            )!!,
+            replyToSenderUid = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH),
+            )!!,
+            replyToSenderName = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_DISPLAY_NAME_LENGTH),
+            ),
+            replySnippet = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_SHORT_TEXT_LENGTH),
+            ),
             // 向后兼容：旧格式无 content 字段
-            content = if (buf.readableBytes() > 0) buf.readString() ?: "" else "",
+            content = if (buf.readableBytes() > 0) {
+                buf.readString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_MARKDOWN_LENGTH)) ?: ""
+            } else {
+                ""
+            },
         )
     }
 }
@@ -52,10 +64,18 @@ data class ForwardBody(
 
     companion object : IProtoReader<ForwardBody> {
         override fun readFrom(buf: PacketBuffer) = ForwardBody(
-            forwardFromChatId = buf.readString(),
-            forwardFromMsgId = buf.readString(),
-            forwardFromSenderUid = buf.readString(),
-            forwardNote = buf.readString(),
+            forwardFromChatId = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH),
+            ),
+            forwardFromMsgId = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH),
+            ),
+            forwardFromSenderUid = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH),
+            ),
+            forwardNote = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_SHORT_TEXT_LENGTH),
+            ),
         )
     }
 }
@@ -75,7 +95,7 @@ data class MergeForwardBody(
 
     companion object : IProtoReader<MergeForwardBody> {
         override fun readFrom(buf: PacketBuffer) = MergeForwardBody(
-            title = buf.readString(),
+            title = buf.readString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_DISPLAY_NAME_LENGTH)),
             messageCount = buf.readVarInt(),
         )
     }
@@ -93,7 +113,9 @@ data class RevokeBody(
 
     companion object : IProtoReader<RevokeBody> {
         override fun readFrom(buf: PacketBuffer) = RevokeBody(
-            revokedMsgId = buf.readString()!!,
+            revokedMsgId = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH),
+            )!!,
         )
     }
 }
@@ -112,8 +134,12 @@ data class EditBody(
 
     companion object : IProtoReader<EditBody> {
         override fun readFrom(buf: PacketBuffer) = EditBody(
-            editedMsgId = buf.readString()!!,
-            newContent = buf.readString()!!,
+            editedMsgId = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH),
+            )!!,
+            newContent = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_MARKDOWN_LENGTH),
+            )!!,
         )
     }
 }
@@ -134,8 +160,10 @@ data class ReactionBody(
 
     companion object : IProtoReader<ReactionBody> {
         override fun readFrom(buf: PacketBuffer) = ReactionBody(
-            targetMsgId = buf.readString()!!,
-            emoji = buf.readString()!!,
+            targetMsgId = buf.readString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH),
+            )!!,
+            emoji = buf.readString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_EMOJI_LENGTH))!!,
             action = buf.readVarInt(),
         )
     }

@@ -62,6 +62,7 @@ class SearchIndex(private val indexDir: File) : MessageSearch {
         val w = writer ?: return
 
         val doc = Document().apply {
+            add(StringField("messageKey", message.searchIndexKey(), Field.Store.NO))
             add(StringField("clientMsgId", message.clientMsgId, Field.Store.YES))
             add(StringField("chatId", message.chatId, Field.Store.YES))
             add(LongPoint("seq", message.serverSeq))
@@ -75,7 +76,8 @@ class SearchIndex(private val indexDir: File) : MessageSearch {
             add(StoredField("messageType", message.messageType))
         }
 
-        w.updateDocument(Term("clientMsgId", message.clientMsgId), doc)
+        // clientMsgId 只在 sender + chat 范围内唯一；chat + serverSeq 才是服务端消息身份。
+        w.updateDocument(Term("messageKey", message.searchIndexKey()), doc)
     }
 
     override fun deleteMessage(clientMsgId: String) {
@@ -174,4 +176,6 @@ class SearchIndex(private val indexDir: File) : MessageSearch {
 
         return builder.build()
     }
+
+    private fun Message.searchIndexKey(): String = "$chatId\u0000$serverSeq"
 }

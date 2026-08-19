@@ -59,7 +59,12 @@ class ServiceFileGenerator(private val svc: ServiceModel, private val codeGenera
             p.typeName == "kotlin.Int" -> "val ${p.name} = buf.readVarInt()"
             p.typeName == "kotlin.Long" -> "val ${p.name} = buf.readVarLong()"
             p.typeName == "kotlin.Boolean" -> "val ${p.name} = buf.readByte() != 0"
-            p.isStringList -> "val n${p.name.replaceFirstChar { it.uppercase() }} = buf.readVarInt(); val ${p.name} = (0 until n${p.name.replaceFirstChar { it.uppercase() }}).map { buf.readString()!! }"
+            p.isStringList -> {
+                val countName = "n${p.name.replaceFirstChar { it.uppercase() }}"
+                "val $countName = buf.readCollectionSize(" +
+                    "minimumBytesPerEntry = 2, fieldName = \"${svc.name}.${m.name}.${p.name}\"); " +
+                    "val ${p.name} = List($countName) { buf.readString()!! }"
+            }
             p.isProto -> "val ${p.name} = ${p.short}.readFrom(buf)"
             else -> "// unsupported"
         }
@@ -90,8 +95,11 @@ class ServiceFileGenerator(private val svc: ServiceModel, private val codeGenera
     private fun retDecodeExpr(m: MethodModel, payloadExpr: String): String {
         val body = when {
             m.ret.isList && m.ret.listArg == "kotlin.String" ->
-                "val n = readVarInt(); (0 until n).map { readString()!! }"
-            m.ret.isList -> "val n = readVarInt(); (0 until n).map { ${m.ret.listArgShort}.readFrom(this) }"
+                "val n = readCollectionSize(minimumBytesPerEntry = 2, " +
+                    "fieldName = \"${svc.name}.${m.name} result\"); List(n) { readString()!! }"
+            m.ret.isList -> "val n = readCollectionSize(minimumBytesPerEntry = 1, " +
+                "fieldName = \"${svc.name}.${m.name} result\"); " +
+                "List(n) { ${m.ret.listArgShort}.readFrom(this) }"
             m.ret.typeName == "kotlin.String" -> "readString()!!"
             m.ret.typeName == "kotlin.Int" -> "readVarInt()"
             m.ret.typeName == "kotlin.Long" -> "readVarLong()"

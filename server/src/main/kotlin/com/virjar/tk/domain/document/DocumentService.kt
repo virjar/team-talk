@@ -406,6 +406,14 @@ class DocumentService(
     private fun validateMarkdown(value: String): String {
         require(value.length <= MAX_MARKDOWN_LENGTH) { "文档正文不能超过 $MAX_MARKDOWN_LENGTH 个字符" }
         require('\u0000' !in value) { "文档正文包含非法字符" }
+        DocumentMarkdownStructurePolicy.validate(
+            markdown = value,
+            maxQuoteDepth = MAX_MARKDOWN_QUOTE_DEPTH,
+            maxTableColumns = MAX_MARKDOWN_TABLE_COLUMNS,
+            maxTableCells = MAX_MARKDOWN_TABLE_CELLS,
+            maxLines = MAX_MARKDOWN_LINES,
+            maxRenderableBlocks = MAX_MARKDOWN_RENDERABLE_BLOCKS,
+        )
         return value
     }
 
@@ -419,6 +427,11 @@ class DocumentService(
         const val MAX_DESCRIPTION_LENGTH = 500
         const val MAX_NODE_NAME_LENGTH = 180
         const val MAX_MARKDOWN_LENGTH = 1_000_000
+        const val MAX_MARKDOWN_QUOTE_DEPTH = 64
+        const val MAX_MARKDOWN_TABLE_COLUMNS = 32
+        const val MAX_MARKDOWN_TABLE_CELLS = 1_000
+        const val MAX_MARKDOWN_LINES = 20_000
+        const val MAX_MARKDOWN_RENDERABLE_BLOCKS = 4_096
         const val MAX_HOME_DOCUMENTS = 50
     }
 }

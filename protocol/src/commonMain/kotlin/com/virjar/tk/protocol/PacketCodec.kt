@@ -7,6 +7,50 @@ import io.netty.channel.ChannelHandlerContext
 import io.netty.handler.codec.ByteToMessageCodec
 
 /**
+ * 当前连接接收的是哪一端发来的帧。
+ *
+ * 协议编解码器由客户端和服务端共用，但请求与响应的方向是固定的。服务端必须在读取
+ * payload 之前拒绝只可能由服务端发送的包，否则攻击者可以借 RESPONSE/NOTIFY 等类型
+ * 让服务端先分配一个大 byte array，再由上层把对象当 UNKNOWN 丢弃。
+ */
+enum class PacketInboundRole {
+    ANY,
+    SERVER,
+    CLIENT;
+
+    internal fun accepts(type: PacketType): Boolean = when (this) {
+        ANY -> true
+        SERVER -> type in SERVER_INBOUND_TYPES
+        CLIENT -> type in CLIENT_INBOUND_TYPES
+    }
+
+    private companion object {
+        val SERVER_INBOUND_TYPES = setOf(
+            PacketType.AUTH,
+            PacketType.DISCONNECT,
+            PacketType.PING,
+            PacketType.PONG,
+            PacketType.INVOKE,
+            PacketType.MESSAGE,
+            PacketType.SUBSCRIBE,
+            PacketType.UNSUBSCRIBE,
+        )
+        val CLIENT_INBOUND_TYPES = setOf(
+            PacketType.AUTH_RESP,
+            PacketType.DISCONNECT,
+            PacketType.PING,
+            PacketType.PONG,
+            PacketType.RESPONSE,
+            PacketType.STREAM_ITEM,
+            PacketType.STREAM_END,
+            PacketType.MESSAGE,
+            PacketType.MESSAGE_ACK,
+            PacketType.NOTIFY,
+        )
+    }
+}
+
+/**
  * TCP 帧编解码器。
  *
  * 帧格式（v3）：[TYPE(1B)][LENGTH(4B)][PAYLOAD(LENGTH bytes)]
@@ -17,6 +61,7 @@ class PacketCodec(
     /** 帧长度上限（可变：未认证连接收紧为 [UNAUTHED_LIMIT]，认证成功后调至 16MB）。
      * 慢速攻击防御：防止未认证连接声明大 LENGTH 诱发累积缓冲放大。 */
     @Volatile var maxPayloadLimit: Int = UNAUTHED_LIMIT,
+    private val inboundRole: PacketInboundRole = PacketInboundRole.ANY,
 ) : ByteToMessageCodec<IProto>() {
     companion object {
         /** 帧头大小：TYPE(1B) + LENGTH(4B) */
@@ -54,11 +99,6 @@ class PacketCodec(
             throw io.netty.handler.codec.CorruptedFrameException("Invalid payload length: $length (limit=$maxPayloadLimit)")
         }
 
-        if (buf.readableBytes() < length) {
-            buf.resetReaderIndex()
-            return
-        }
-
         val packetType = try {
             PacketType.fromCode(typeCode)
         } catch (e: IllegalArgumentException) {
@@ -66,27 +106,58 @@ class PacketCodec(
             // 断连（v2 及之前带帧头 magic 时曾静默丢帧——掩盖协议异常）
             throw io.netty.handler.codec.CorruptedFrameException("Unknown packet type: $typeCode")
         }
+        if (!inboundRole.accepts(packetType)) {
+            // 此检查必须位于 payload 完整性等待和 decodePayload 之前：只收齐 5 字节帧头
+            // 即可拒绝方向错误的大帧，不让累积缓冲或 readBytes/readString 扩容。
+            throw io.netty.handler.codec.CorruptedFrameException(
+                "Packet type $packetType is not valid for $inboundRole inbound traffic",
+            )
+        }
 
-        val proto = if (length == 0) {
-            // 零载荷信号
-            when (packetType) {
-                PacketType.PING -> PingSignal
-                PacketType.PONG -> PongSignal
-                PacketType.DISCONNECT -> DisconnectSignal
-                else -> null
-            }
+        val signal = packetType.toSignalOrNull()
+        if (signal != null && length != 0) {
+            // PING/PONG/DISCONNECT 没有 payload。若允许非零长度，认证客户端就能持续发送
+            // 16 MiB 填充帧，让 EventLoop 在完全绕过有界 IO 队列的情况下累积和丢弃数据。
+            // 只看帧头即可拒绝，不能等待攻击者把声明的填充字节传完。
+            throw io.netty.handler.codec.CorruptedFrameException(
+                "Signal packet $packetType must have an empty payload, got $length bytes",
+            )
+        }
+
+        if (buf.readableBytes() < length) {
+            buf.resetReaderIndex()
+            return
+        }
+
+        val proto = if (signal != null) {
+            signal
         } else {
             // decodePayload 在当前调用内同步读完，slice 无需独立引用计数。
             // retainedSlice 会把父 ByteBuf 的 refCnt +1，而 PacketBuffer 没有释放语义，
             // 导致每个非空 TCP 帧泄漏一份 Netty 堆外缓冲区。
             val payloadBuf = PacketBuffer(buf.readSlice(length))
-            decodePayload(packetType, payloadBuf)
+            val decoded = decodePayload(packetType, payloadBuf)
+            if (payloadBuf.readableBytes() != 0) {
+                // 每个 frame 都必须是唯一、完整的 wire 表示。静默忽略尾随字节既隐藏版本
+                // 错位，也允许小 Message/Invoke 后附大块 padding 绕过字段预算和任务队列。
+                throw io.netty.handler.codec.CorruptedFrameException(
+                    "Packet $packetType has ${payloadBuf.readableBytes()} trailing payload bytes",
+                )
+            }
+            decoded
         }
 
-        if (proto != null) out.add(proto)
+        out.add(proto)
     }
 
-    private fun decodePayload(type: PacketType, buf: PacketBuffer): IProto? = when (type) {
+    private fun PacketType.toSignalOrNull(): IProto? = when (this) {
+        PacketType.PING -> PingSignal
+        PacketType.PONG -> PongSignal
+        PacketType.DISCONNECT -> DisconnectSignal
+        else -> null
+    }
+
+    private fun decodePayload(type: PacketType, buf: PacketBuffer): IProto = when (type) {
         PacketType.AUTH -> AuthRequestPayload.readFrom(buf)
         PacketType.AUTH_RESP -> AuthResponsePayload.readFrom(buf)
         PacketType.INVOKE -> InvokePayload.readFrom(buf)
@@ -98,7 +169,8 @@ class PacketCodec(
         PacketType.NOTIFY -> NotifyPayload.readFrom(buf)
         PacketType.SUBSCRIBE -> SubscribePayload.readFrom(buf)
         PacketType.UNSUBSCRIBE -> UnsubscribePayload.readFrom(buf)
-        else -> null
+        PacketType.PING, PacketType.PONG, PacketType.DISCONNECT ->
+            throw io.netty.handler.codec.CorruptedFrameException("Signal packet $type cannot have a payload")
     }
 
     override fun encode(ctx: ChannelHandlerContext, msg: IProto, out: ByteBuf) {

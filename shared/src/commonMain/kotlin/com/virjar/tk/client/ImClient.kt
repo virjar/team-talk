@@ -162,10 +162,10 @@ class ImClient(
     }
 
     fun send(proto: IProto) {
-        // SDK 出站防线：附件只能引用 TeamTalk 文件端点，并统一归一化为相对 path。
-        // FileStore 存在性由服务端做权威校验。
+        // SDK 出站防线：先归一化附件，再执行所有消息体/type/正文预算规则。
+        // FileStore 存在性仍由服务端做权威校验。
         val outbound = if (proto is com.virjar.tk.model.Message) {
-            com.virjar.tk.body.AttachmentPolicy.canonicalize(proto)
+            canonicalizeOutboundMessage(proto)
         } else proto
         val ch = channel
         if (ch == null) {
@@ -187,8 +187,8 @@ class ImClient(
      * withContext(scope) 确保 pendingAcks 操作在 EventLoop 上。
      */
     suspend fun sendAndWaitAck(message: com.virjar.tk.model.Message, timeoutMs: Long = 10_000L): MessageAckPayload {
-        // 在登记 pendingAck 之前校验，避免非法附件抛错后留下永不完成的 deferred。
-        val outbound = com.virjar.tk.body.AttachmentPolicy.canonicalize(message)
+        // 在登记 pendingAck 之前校验，避免非法消息抛错后留下永不完成的 deferred。
+        val outbound = canonicalizeOutboundMessage(message)
         val s = scope ?: throw IllegalStateException("Not connected")
         return withContext(s.coroutineContext) {
             val deferred = CompletableDeferred<MessageAckPayload>()
@@ -473,6 +473,12 @@ class ImClient(
         }
     }
 }
+
+/** SDK 所有消息发送入口共用的确定性出站防线。 */
+internal fun canonicalizeOutboundMessage(message: com.virjar.tk.model.Message): com.virjar.tk.model.Message =
+    com.virjar.tk.body.MessageBodyPolicy.canonicalize(
+        com.virjar.tk.body.AttachmentPolicy.canonicalize(message),
+    )
 
 enum class ConnectionState {
     DISCONNECTED,

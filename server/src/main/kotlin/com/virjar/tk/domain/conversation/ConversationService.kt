@@ -1,5 +1,6 @@
 package com.virjar.tk.domain.conversation
 
+import com.virjar.tk.body.MessageBodyPolicy
 import com.virjar.tk.domain.chat.ChatRepository
 import com.virjar.tk.domain.event.EventPublisher
 import com.virjar.tk.model.Conversation
@@ -22,8 +23,9 @@ class ConversationService(
     }
 
     suspend fun setDraft(uid: String, chatId: String, draft: String?) {
-        // 草稿列 varchar(500)，超限截断（富文本长草稿曾致 code=400）
-        conversationRepo.setDraft(uid, chatId, draft?.take(400))
+        // 草稿与最终消息共享 Markdown 资源预算。禁止截断：截断 fence/table 会制造
+        // 无法预览的损坏源码；非法或超限草稿应明确拒绝，由本地缓存保留完整内容。
+        conversationRepo.setDraft(uid, chatId, draft?.let(MessageBodyPolicy::validateMarkdown))
         val conv = conversationRepo.getConversation(uid, chatId) ?: return
         events.emitEvent(uid, NotifyType.CONVERSATION_UPDATED, conv)
     }

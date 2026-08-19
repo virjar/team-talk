@@ -93,7 +93,7 @@ internal data class DocumentOpaqueRawBlock(
     override val key: String,
     /** Exact semantic body. A block-local source editor may update this field. */
     val rawMarkdown: String,
-    val features: Set<DocumentMarkdownUnsupportedFeature> = emptySet(),
+    val features: Set<RichEditorUnsupportedMarkdownFeature> = emptySet(),
     override val originalMarkdown: String = "",
     override val leadingMarkdown: String = "",
     override val trailingMarkdown: String = "",
@@ -116,6 +116,18 @@ internal object DocumentMarkdownBlockCodec {
     )
 
     fun parse(markdown: String): List<DocumentMarkdownBlock> {
+        if (DocumentMarkdownEditorBudget.exceeds(markdown)) {
+            return listOf(
+                DocumentOpaqueRawBlock(
+                    key = blockKey(0, BlockKind.OPAQUE, 0, markdown.length),
+                    rawMarkdown = markdown,
+                    features = setOf(RichEditorUnsupportedMarkdownFeature.EXCESSIVE_STRUCTURE),
+                    originalMarkdown = markdown,
+                    dirty = false,
+                )
+            )
+        }
+
         if (markdown.isBlank()) {
             return listOf(
                 DocumentRichRun(
@@ -199,12 +211,24 @@ internal object DocumentMarkdownBlockCodec {
                     leading = leading,
                     trailing = trailing,
                     original = original,
-                )
+                ).takeUnless { DocumentMarkdownPreviewBudget.tableViolation(it) != null }
+                    ?: DocumentOpaqueRawBlock(
+                        key = key,
+                        rawMarkdown = body,
+                        features = setOf(
+                            RichEditorUnsupportedMarkdownFeature.TABLE,
+                            RichEditorUnsupportedMarkdownFeature.EXCESSIVE_STRUCTURE,
+                        ),
+                        originalMarkdown = original,
+                        leadingMarkdown = leading,
+                        trailingMarkdown = trailing,
+                        dirty = false,
+                    )
 
                 BlockKind.OPAQUE -> DocumentOpaqueRawBlock(
                     key = key,
                     rawMarkdown = body,
-                    features = DocumentMarkdownCompatibility.inspect(body).unsupportedFeatures,
+                    features = RichEditorMarkdownCapability.inspect(body).unsupportedFeatures,
                     originalMarkdown = original,
                     leadingMarkdown = leading,
                     trailingMarkdown = trailing,
@@ -230,7 +254,7 @@ internal object DocumentMarkdownBlockCodec {
         MarkdownElementTypes.BLOCK_QUOTE -> BlockKind.QUOTE
         MarkdownElementTypes.CODE_FENCE, MarkdownElementTypes.CODE_BLOCK -> BlockKind.CODE_FENCE
         GFMElementTypes.TABLE -> BlockKind.TABLE
-        in richTopLevelTypes -> if (DocumentMarkdownCompatibility.inspect(body).requiresLocalSourceBlock) {
+        in richTopLevelTypes -> if (RichEditorMarkdownCapability.inspect(body).requiresSourceMode) {
             BlockKind.OPAQUE
         } else {
             BlockKind.RICH
@@ -576,5 +600,76 @@ internal object DocumentMarkdownBlockCodec {
         CODE_FENCE("code"),
         TABLE("table"),
         OPAQUE("raw"),
+    }
+}
+
+/**
+ * Cheap preflight before the Markdown parser allocates an AST and one editor model per block.
+ * The server enforces the same public limits; this client guard also protects old/offline data.
+ */
+internal object DocumentMarkdownEditorBudget {
+    const val MAX_LINES = 20_000
+    const val MAX_RENDERABLE_BLOCKS = 4_096
+    const val MAX_UNESCAPED_PIPES_PER_LINE = 128
+    const val MAX_UNESCAPED_PIPES_TOTAL = 4_096
+
+    fun exceeds(markdown: String): Boolean {
+        var lineCount = 0
+        var renderableBlockUpperBound = 0
+        var unescapedPipeCount = 0
+        var fence: Pair<Char, Int>? = null
+
+        markdown.lineSequence().forEach { line ->
+            lineCount++
+            if (lineCount > MAX_LINES) return true
+
+            val trimmed = line.dropUpToThreeSpacesForBudget()
+            val openFence = fence
+            if (openFence != null) {
+                val (marker, length) = openFence
+                if (trimmed.firstOrNull() == marker) {
+                    val run = trimmed.takeWhile { it == marker }.length
+                    if (run >= length && trimmed.drop(run).isBlank()) fence = null
+                }
+                return@forEach
+            }
+
+            if (trimmed.isNotBlank()) {
+                renderableBlockUpperBound++
+                if (renderableBlockUpperBound > MAX_RENDERABLE_BLOCKS) return true
+            }
+
+            val marker = trimmed.firstOrNull().takeIf { it == '`' || it == '~' }
+            if (marker != null) {
+                val run = trimmed.takeWhile { it == marker }.length
+                if (run >= 3 && (marker != '`' || '`' !in trimmed.drop(run))) {
+                    fence = marker to run
+                    return@forEach
+                }
+            }
+
+            // JetBrains Markdown 0.7.3 splits every prospective GFM table header at each
+            // unescaped pipe before it knows whether the next line is a delimiter. Bound that
+            // temporary list both per line and for the whole document. Fenced code is exempt: its
+            // body is owned by the fence marker provider and never reaches the table provider.
+            var linePipeCount = 0
+            trimmed.forEachIndexed { index, char ->
+                if (char == '|' && (index == 0 || trimmed[index - 1] != '\\')) {
+                    linePipeCount++
+                    unescapedPipeCount++
+                    if (
+                        linePipeCount > MAX_UNESCAPED_PIPES_PER_LINE ||
+                        unescapedPipeCount > MAX_UNESCAPED_PIPES_TOTAL
+                    ) return true
+                }
+            }
+        }
+        return false
+    }
+
+    private fun String.dropUpToThreeSpacesForBudget(): String {
+        var count = 0
+        while (count < 3 && getOrNull(count) == ' ') count++
+        return substring(count)
     }
 }

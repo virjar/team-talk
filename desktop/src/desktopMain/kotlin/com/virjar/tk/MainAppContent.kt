@@ -73,6 +73,8 @@ internal fun WindowScope.MainAppContent(
     onLogout: () -> Unit,
 ) {
     val nav = rememberDesktopNav(session)
+    // 与 DesktopNav/ClientSession 同寿命；聊天页销毁只移除 UI，不会取消已入队的草稿镜像。
+    val draftDispatcher = remember(nav) { DesktopDraftDispatcher(nav::saveDraft) }
     val conversations by nav.conversationViewModel.conversations.collectAsState()
     val contacts by nav.contactViewModel.contacts.collectAsState()
     val pendingApplyCount by nav.contactViewModel.pendingApplyCount.collectAsState()
@@ -303,8 +305,9 @@ internal fun WindowScope.MainAppContent(
                                     viewModel = nav.chatViewModel!!,
                                     myUid = nav.userSession.uid,
                                     accessToken = nav.userSession.accessToken,
-                                    conversationRepo = nav.conversationRepo,
+                                    draftDispatcher = draftDispatcher,
                                     initialDraft = conv?.draft,
+                                    composerContextStore = nav.chatComposerContexts,
                                     resolveSender = { uid ->
                                         mentionCandidates.firstOrNull { it.uid == uid } ?: resolveUser(uid)
                                     },
@@ -572,6 +575,19 @@ private fun BoxScope.ErrorSnackbar(data: com.virjar.tk.navigation.AppDataState) 
     SnackbarHost(hostState = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
 }
 
+/**
+ * Desktop 聊天页只同步提交草稿意图；真正的本地落盘和 RPC 镜像由 DesktopNav 的
+ * session-scoped actionScope 持有。这样 ChatPanel 的 onDispose 最终清空不会落进
+ * 已取消的 rememberCoroutineScope，且调用顺序原样交给 Repository 的有序队列。
+ */
+internal class DesktopDraftDispatcher(
+    private val saveDraft: (chatId: String, draft: String?) -> Unit,
+) {
+    fun update(chatId: String, draft: String) {
+        saveDraft(chatId, draft.takeIf { it.isNotBlank() })
+    }
+}
+
 @Composable
 private fun ChatPanelWrapper(
     chatId: String,
@@ -580,8 +596,9 @@ private fun ChatPanelWrapper(
     viewModel: ChatViewModel,
     myUid: String,
     accessToken: String?,
-    conversationRepo: com.virjar.tk.repository.ConversationRepository,
+    draftDispatcher: DesktopDraftDispatcher,
     initialDraft: String?,
+    composerContextStore: com.virjar.tk.ui.screen.ChatComposerContextStore,
     onForward: (Message) -> Unit,
     onGroupSettings: () -> Unit,
     resolveSender: ((uid: String) -> User?)? = null,
@@ -676,14 +693,12 @@ private fun ChatPanelWrapper(
             resolveSender = resolveSender,
             onForward = onForward,
             initialDraft = initialDraft,
+            composerContextStore = composerContextStore,
             voicePlayback = voicePlayback,
             mentionCandidates = mentionCandidates,
             selectableText = true,
             onDraftChange = { draft ->
-                // 空草稿传 null，避免 [草稿] 标签残留
-                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                    conversationRepo.setDraft(chatId, draft.ifBlank { null })
-                }
+                draftDispatcher.update(chatId, draft)
             },
             media = com.virjar.tk.ui.bridge.ChatMediaConfig(
                 fileDownloads = fileDownloads,

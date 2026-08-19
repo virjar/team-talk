@@ -21,11 +21,15 @@ data class InvokePayload(
     }
 
     companion object : IProtoReader<InvokePayload> {
+        /** 文档正文约一百万字符；4 MiB 可覆盖其 UTF-8 wire，同时阻止 16 MiB 对象排队。 */
+        const val MAX_INVOKE_PAYLOAD_BYTES = 4 * 1024 * 1024
+        const val MAX_SERVICE_ID_BYTES = 256
+
         override fun readFrom(buf: PacketBuffer) = InvokePayload(
             requestId = buf.readVarInt(),
-            serviceId = buf.readString()!!,
+            serviceId = buf.readString(MAX_SERVICE_ID_BYTES)!!,
             methodId = buf.readVarInt(),
-            payload = buf.readBytes(),
+            payload = buf.readBytes(MAX_INVOKE_PAYLOAD_BYTES),
         )
     }
 }

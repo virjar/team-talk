@@ -88,6 +88,18 @@ class ConversationIntegrationTest {
     }
 
     @Test
+    fun `markdown source draft is not truncated`() = runTest {
+        val uid1 = ctx.registerUser()
+        val uid2 = ctx.registerUser()
+        val chat = ctx.chatService.createPersonalChat(uid1, uid2)
+        val markdown = "```kotlin\n" + "println(\"完整源码\")\n".repeat(80) + "```"
+
+        ctx.conversationService.setDraft(uid1, chat.chatId, markdown)
+
+        assertEquals(markdown, ctx.conversationService.listConversations(uid1).single().draft)
+    }
+
+    @Test
     fun `set pin`() = runTest {
         val uid1 = ctx.registerUser()
         val uid2 = ctx.registerUser()

@@ -3,6 +3,7 @@ package com.virjar.tk.agent
 import com.sun.net.httpserver.HttpExchange
 import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.body.markdownContentOrNull
+import com.virjar.tk.protocol.payload.MessageAckPayload
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -77,18 +78,23 @@ class AgentApi(private val agent: AgentRuntime) {
         when (path) {
             "/v1/send-text" -> {
                 val ack = agent.bot.sendText(r.req("chatId"), r.req("text"))
-                200 to ok(ackJson(ack.code, ack.serverSeq, ack.reason))
+                agentAckResponse(ack)
             }
             "/v1/send-rich" -> {
                 val ack = agent.bot.sendRichText(r.req("chatId"), r.req("markdown"))
-                200 to ok(ackJson(ack.code, ack.serverSeq, ack.reason))
+                agentAckResponse(ack)
             }
-            "/v1/send-file" -> withFile(r) { f ->
-                val ack = agent.bot.uploadAndSendFile(
-                    agent.serverUrl,
-                    r.req("chatId"), f.readBytes(), f.name, "application/octet-stream",
-                )
-                ackJson(ack.code, ack.serverSeq, ack.reason)
+            "/v1/send-file" -> {
+                val file = File(r.req("path"))
+                if (!file.exists()) {
+                    404 to err("file not found: ${file.path}")
+                } else {
+                    val ack = agent.bot.uploadAndSendFile(
+                        agent.serverUrl,
+                        r.req("chatId"), file.readBytes(), file.name, "application/octet-stream",
+                    )
+                    agentAckResponse(ack)
+                }
             }
             "/v1/upload" -> withFile(r) { f ->
                 val attachment = agent.bot.uploadFile(
@@ -104,7 +110,7 @@ class AgentApi(private val agent: AgentRuntime) {
                 }
             }
             "/v1/history" -> {
-                val list = agent.bot.getHistory(r.req("chatId"), r["fromSeq"]?.toLongOrNull() ?: 0L, r["limit"]?.toIntOrNull() ?: 50)
+                val list = agent.bot.getHistory(r.req("chatId"), r["fromSeq"]?.toLongOrNull() ?: 0L, r["limit"]?.toIntOrNull() ?: 10)
                 200 to ok(buildJsonObject {
                     put("messages", buildJsonArray {
                         list.forEach { m -> add(buildJsonObject {
@@ -227,10 +233,6 @@ class AgentApi(private val agent: AgentRuntime) {
             json.parseToJsonElement(body).jsonObject.mapValues { it.value.jsonPrimitive.content }
         }.getOrDefault(emptyMap())
 
-    private fun ackJson(code: Int, seq: Long, reason: String?) = buildJsonObject {
-        put("code", code); put("serverSeq", seq); put("reason", reason ?: "")
-    }
-
     private fun ok(data: JsonObject) = buildJsonObject { put("ok", true); put("data", data) }
     private fun err(msg: String) = buildJsonObject { put("ok", false); put("error", msg) }
 
@@ -247,5 +249,25 @@ class AgentApi(private val agent: AgentRuntime) {
         responseHeaders.add("Content-Type", "application/json; charset=utf-8")
         sendResponseHeaders(code, bytes.size.toLong())
         responseBody.use { it.write(bytes) }
+    }
+}
+
+/** 服务端拒绝、内部错误和 ACK 超时都不能被本地 Agent 伪装成成功。 */
+internal fun agentAckResponse(ack: MessageAckPayload): Pair<Int, JsonObject> {
+    if (ack.code == 0) {
+        return 200 to buildJsonObject {
+            put("ok", true)
+            put("data", buildJsonObject {
+                put("code", ack.code)
+                put("serverSeq", ack.serverSeq)
+                put("reason", ack.reason ?: "")
+            })
+        }
+    }
+
+    val status = if (ack.code in 400..499) ack.code else 502
+    return status to buildJsonObject {
+        put("ok", false)
+        put("error", ack.reason?.takeIf { it.isNotBlank() } ?: "消息发送失败（ACK ${ack.code}）")
     }
 }

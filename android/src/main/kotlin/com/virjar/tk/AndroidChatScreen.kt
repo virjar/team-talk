@@ -36,6 +36,7 @@ import com.virjar.tk.ui.component.MediaGallery
 import com.virjar.tk.ui.component.PlatformMediaActions
 import com.virjar.tk.ui.component.rememberMediaClickHandler
 import com.virjar.tk.ui.screen.ChatPanel
+import com.virjar.tk.ui.screen.ChatComposerContextStore
 import com.virjar.tk.viewmodel.ChatViewModel
 import kotlinx.coroutines.launch
 import java.io.File
@@ -52,6 +53,7 @@ fun AndroidChatScreen(
     myUid: String,
     draft: String? = null,
     onDraftChange: ((String) -> Unit)? = null,
+    composerContextStore: ChatComposerContextStore,
     onForward: (Message) -> Unit,
     onGroupDetail: () -> Unit,
     onBack: () -> Unit,
@@ -229,6 +231,7 @@ fun AndroidChatScreen(
                 chatId = chatId, chatName = chatName, viewModel = viewModel, myUid = myUid,
                 chatType = chatType, resolveSender = resolveSender,
                 onForward = onForward, initialDraft = draft, onDraftChange = onDraftChange,
+                composerContextStore = composerContextStore,
                 voicePlayback = rememberAndroidVoicePlayback(context, attachmentServerUrl),
                 mentionCandidates = mentionCandidates,
                 media = com.virjar.tk.ui.bridge.ChatMediaConfig(

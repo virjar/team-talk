@@ -15,6 +15,8 @@ import com.virjar.tk.body.TextBody
 import com.virjar.tk.body.FileBody
 import com.virjar.tk.body.VoiceBody
 import com.virjar.tk.body.ImageBody
+import com.virjar.tk.body.RichTextBody
+import com.virjar.tk.body.buildRichTextBody
 import com.virjar.tk.repository.FileRepository
 import com.virjar.tk.repository.GroupFileRepository
 import com.virjar.tk.repository.DocumentRepository
@@ -243,6 +245,57 @@ class RemoteAcceptanceTest {
             // user2 应实时收到消息通知
             val notify = user2.awaitNotify(NotifyType.MESSAGE_RECV.code, 10_000)
             assertEquals(NotifyType.MESSAGE_RECV.code, notify.notifyType, "user2 应收到 MESSAGE_RECV 通知")
+        } finally {
+            user1.close()
+            user2.close()
+        }
+    }
+
+    @Test
+    fun `complex markdown source survives ack delivery and decode`() = runBlocking {
+        val (user1, user2, chat) = createFriendPersonalChat("markdown")
+        try {
+            val token = "TT-MARKDOWN-${UUID.randomUUID()}"
+            val markdown = """
+                # $token
+
+                > 引用中的 **重点**
+
+                ```kotlin
+                fun greet(name: String) {
+                    println("Hello, ${'$'}name")
+                }
+                ```
+
+                | 能力 | 状态 |
+                | :--- | ---: |
+                | 源码 | ✅ |
+                | 预览 | ✅ |
+
+                - [x] Markdown 原文
+                - [ ] 后续任务
+
+                @[接收者](mention://${user2.uid})
+            """.trimIndent()
+            val message = Message(
+                chatId = chat.chatId,
+                clientMsgId = UUID.randomUUID().toString(),
+                messageType = MessageType.RICH_TEXT.code,
+                timestamp = System.currentTimeMillis(),
+                senderUid = "",
+                body = buildRichTextBody(markdown),
+            )
+
+            val ack = user1.imClient.sendAndWaitAck(message)
+            assertEquals(0, ack.code, "复杂 Markdown ACK 应成功: ${ack.reason}")
+            assertTrue(ack.serverSeq > 0)
+
+            val notify = user2.awaitNotify(NotifyType.MESSAGE_RECV.code, 10_000)
+            val received = ProtoCodec.decode(Message, notify.payload!!)
+            val body = assertInstanceOf(RichTextBody::class.java, received.body)
+            assertEquals(markdown, body.markdown, "服务端不得改写客户端的权威 Markdown 源码")
+            assertEquals(listOf(user2.uid), body.mentions.map { it.uid })
+            assertTrue(body.plainText.contains(token))
         } finally {
             user1.close()
             user2.close()
@@ -682,9 +735,9 @@ class RemoteAcceptanceTest {
                 ))
             }
 
-            // GET_HISTORY: chatId + fromSeq + limit（3 字段，之前客户端漏了 limit 导致 500）
+            // GET_HISTORY: chatId + fromSeq + limit（3 字段；服务端单页上限为 10）
             val resp = user1.invoke("message", MessageRpcContract.M_GET_HISTORY,
-                ProtoCodec.encodePayload { writeString(chat.chatId); writeVarLong(0); writeVarInt(50) })
+                ProtoCodec.encodePayload { writeString(chat.chatId); writeVarLong(0); writeVarInt(10) })
             assertEquals(0, resp.status, "GET_HISTORY 应成功: status=${resp.status}")
             val messages = ProtoCodec.decodeList(Message, resp.payload!!)
             assertTrue(messages.size >= 2, "应至少返回 2 条历史消息，实际 ${messages.size}")

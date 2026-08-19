@@ -51,8 +51,13 @@ data class Document(
             val createdAt = buf.readVarLong()
             val updatedBy = buf.readString()!!
             val updatedAt = buf.readVarLong()
-            val ancestorCount = buf.readVarInt()
-            require(ancestorCount in 0..MAX_ANCESTOR_DEPTH) { "文档目录层级非法" }
+            // String 的最短 wire 形态为 present + zero-length VarInt（2B）。数量与当前
+            // payload 必须在建立 List 前同时验证，避免畸形小包触发大容量预分配。
+            val ancestorCount = buf.readCollectionSize(
+                maximum = MAX_ANCESTOR_DEPTH,
+                minimumBytesPerEntry = 2,
+                fieldName = "document ancestors",
+            )
             return Document(
                 documentId = documentId,
                 spaceId = spaceId,

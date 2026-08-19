@@ -6,6 +6,16 @@ package com.virjar.tk.protocol
  */
 class PacketBuffer(private val buf: io.netty.buffer.ByteBuf) {
 
+    companion object {
+        /** 任何长度分隔字段都必须能被当前帧完整容纳，且不能超过认证后单帧上限。 */
+        const val MAX_LENGTH_DELIMITED_BYTES = PacketCodec.MAX_PAYLOAD_SIZE
+
+        /** 通用集合的最后一道分配上限；业务模型可使用更小的专用上限。 */
+        const val MAX_COLLECTION_ENTRIES = 100_000
+
+        const val MAX_EXTENSION_ENTRIES = 1_024
+    }
+
     // ── 写操作 ──
 
     fun writeByte(value: Int) { buf.writeByte(value) }
@@ -79,50 +89,69 @@ class PacketBuffer(private val buf: io.netty.buffer.ByteBuf) {
 
     fun readVarInt(): Int {
         var result = 0
-        var shift = 0
-        var byte: Int
-        do {
-            byte = buf.readByte().toInt() and 0xFF
-            result = result or ((byte and 0x7F) shl shift)
-            shift += 7
-        } while (byte and 0x80 != 0)
-        return result
+        for (index in 0 until 5) {
+            val byte = readByte()
+            // 第 5 字节只允许 Int.MAX_VALUE 剩余的 3 个有效位；其余位意味着
+            // 溢出、负值或继续读取第 6 字节，均不是本协议的非负 VarInt。
+            if (index == 4 && byte and 0xF8 != 0) corrupted("VarInt overflow")
+            result = result or ((byte and 0x7F) shl (index * 7))
+            if (byte and 0x80 == 0) return result
+        }
+        corrupted("VarInt exceeds 5 bytes")
     }
 
     fun readVarLong(): Long {
         var result = 0L
-        var shift = 0
-        var byte: Int
-        do {
-            byte = buf.readByte().toInt() and 0xFF
-            result = result or ((byte.toLong() and 0x7F) shl shift)
-            shift += 7
-        } while (byte and 0x80 != 0)
-        return result
+        // writer 只编码非负 Long，因此最多使用 9 个 7-bit 分组（63 bits）。
+        for (index in 0 until 9) {
+            val byte = readByte()
+            result = result or ((byte.toLong() and 0x7F) shl (index * 7))
+            if (byte and 0x80 == 0) return result
+        }
+        corrupted("VarLong exceeds 9 bytes")
     }
 
-    fun readString(): String? {
-        val present = buf.readByte().toInt()
+    fun readString(maxByteLength: Int = MAX_LENGTH_DELIMITED_BYTES): String? {
+        val present = readPresence("String")
         if (present == 0) return null
-        val len = readVarInt()
+        val len = readLength(maxByteLength, "String")
         val bytes = ByteArray(len)
         buf.readBytes(bytes)
         return bytes.decodeToString()
     }
 
-    fun readBytes(): ByteArray? {
-        val present = buf.readByte().toInt()
+    fun readBytes(maxLength: Int = MAX_LENGTH_DELIMITED_BYTES): ByteArray? {
+        val present = readPresence("bytes")
         if (present == 0) return null
-        val len = readVarInt()
+        val len = readLength(maxLength, "bytes")
         val bytes = ByteArray(len)
         buf.readBytes(bytes)
         return bytes
     }
 
-    fun readExtension(): Map<String, String>? {
-        val hasExt = buf.readByte().toInt()
-        if (hasExt == 0) return null
+    /** 可选复合字段的 presence marker 也只能是 0/1，其他值说明 wire 已错位或被污染。 */
+    fun readPresenceFlag(fieldName: String): Boolean = readPresence(fieldName) == 1
+
+    /** 在分配集合前同时校验业务上限和当前帧可提供的最小字节数。 */
+    fun readCollectionSize(
+        maximum: Int = MAX_COLLECTION_ENTRIES,
+        minimumBytesPerEntry: Int = 0,
+        fieldName: String = "collection",
+    ): Int {
+        require(maximum >= 0 && minimumBytesPerEntry >= 0) { "集合预算不能为负数" }
         val count = readVarInt()
+        if (count > maximum) corrupted("$fieldName count $count exceeds limit $maximum")
+        if (minimumBytesPerEntry > 0 && count > buf.readableBytes() / minimumBytesPerEntry) {
+            corrupted("$fieldName count $count exceeds remaining payload")
+        }
+        return count
+    }
+
+    fun readExtension(): Map<String, String>? {
+        val hasExt = readPresence("extension")
+        if (hasExt == 0) return null
+        // 两个非空 String 的最短 wire 形态各 2 字节（present + zero length）。
+        val count = readCollectionSize(MAX_EXTENSION_ENTRIES, 4, "extension")
         val map = LinkedHashMap<String, String>(count)
         repeat(count) {
             val k = readString() ?: return null
@@ -131,4 +160,22 @@ class PacketBuffer(private val buf: io.netty.buffer.ByteBuf) {
         }
         return map
     }
+
+    private fun readPresence(fieldName: String): Int {
+        val present = readByte()
+        if (present != 0 && present != 1) corrupted("Invalid $fieldName presence marker: $present")
+        return present
+    }
+
+    private fun readLength(maximum: Int, fieldName: String): Int {
+        require(maximum >= 0) { "$fieldName 长度预算不能为负数" }
+        val length = readVarInt()
+        if (length > maximum || length > buf.readableBytes()) {
+            corrupted("$fieldName length $length exceeds limit/remaining payload")
+        }
+        return length
+    }
+
+    private fun corrupted(message: String): Nothing =
+        throw io.netty.handler.codec.CorruptedFrameException(message)
 }

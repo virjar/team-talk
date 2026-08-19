@@ -9,6 +9,77 @@ import kotlin.test.assertTrue
 class DocumentMarkdownBlockCodecTest {
 
     @Test
+    fun `百万字符普通管道行在建立 GFM 临时列表前安全降级且保持原文`() {
+        val markdown = "x|".repeat(500_000)
+
+        val blocks = DocumentMarkdownBlockCodec.parse(markdown)
+
+        val raw = assertIs<DocumentOpaqueRawBlock>(blocks.single())
+        assertEquals(setOf(RichEditorUnsupportedMarkdownFeature.EXCESSIVE_STRUCTURE), raw.features)
+        assertEquals(markdown, raw.rawMarkdown)
+        assertEquals(markdown, DocumentMarkdownBlockCodec.encode(blocks))
+    }
+
+    @Test
+    fun `分散在多行的管道超过全文预算时也在解析前安全降级`() {
+        val line = "x|".repeat(DocumentMarkdownEditorBudget.MAX_UNESCAPED_PIPES_PER_LINE)
+        val lineCount = DocumentMarkdownEditorBudget.MAX_UNESCAPED_PIPES_TOTAL /
+            DocumentMarkdownEditorBudget.MAX_UNESCAPED_PIPES_PER_LINE + 1
+        val markdown = List(lineCount) { line }.joinToString("\n")
+
+        val raw = assertIs<DocumentOpaqueRawBlock>(DocumentMarkdownBlockCodec.parse(markdown).single())
+
+        assertEquals(setOf(RichEditorUnsupportedMarkdownFeature.EXCESSIVE_STRUCTURE), raw.features)
+        assertEquals(markdown, raw.rawMarkdown)
+    }
+
+    @Test
+    fun `代码围栏中的管道和合法小表格不消耗解析管道预算`() {
+        val fencedPipes = "x|".repeat(DocumentMarkdownEditorBudget.MAX_UNESCAPED_PIPES_TOTAL + 1)
+        val markdown = "```text\n$fencedPipes\n```\n\n| A | B |\n| --- | --- |\n| 1 | 2 |"
+
+        assertFalse(DocumentMarkdownEditorBudget.exceeds(markdown))
+        assertEquals(markdown, DocumentMarkdownBlockCodec.encode(DocumentMarkdownBlockCodec.parse(markdown)))
+    }
+
+    @Test
+    fun `稀疏转义管道表超过可视单元格预算时只降级该表且保持原文`() {
+        val headers = (1..32).joinToString(prefix = "| ", postfix = " |", separator = " | ") { "H$it" }
+        val delimiter = (1..32).joinToString(prefix = "| ", postfix = " |", separator = " | ") { "---" }
+        val markdown = buildString {
+            appendLine("前言")
+            appendLine()
+            appendLine(headers)
+            appendLine(delimiter)
+            repeat(32) { appendLine("x\\|y") }
+            appendLine()
+            append("后记")
+        }
+
+        val blocks = DocumentMarkdownBlockCodec.parse(markdown)
+        val raw = blocks.filterIsInstance<DocumentOpaqueRawBlock>().single()
+
+        assertTrue(RichEditorUnsupportedMarkdownFeature.TABLE in raw.features)
+        assertTrue(RichEditorUnsupportedMarkdownFeature.EXCESSIVE_STRUCTURE in raw.features)
+        assertEquals(markdown, DocumentMarkdownBlockCodec.encode(blocks))
+        assertEquals(2, blocks.filterIsInstance<DocumentRichRun>().size)
+    }
+
+    @Test
+    fun `异常多块文档在建立AST前安全降级且保持原文`() {
+        val markdown = List(DocumentMarkdownEditorBudget.MAX_RENDERABLE_BLOCKS + 1) { "正文 $it" }
+            .joinToString("\n")
+
+        val blocks = DocumentMarkdownBlockCodec.parse(markdown)
+
+        assertEquals(1, blocks.size)
+        val raw = blocks.single() as DocumentOpaqueRawBlock
+        assertEquals(setOf(RichEditorUnsupportedMarkdownFeature.EXCESSIVE_STRUCTURE), raw.features)
+        assertEquals(markdown, raw.rawMarkdown)
+        assertEquals(markdown, DocumentMarkdownBlockCodec.encode(blocks))
+    }
+
+    @Test
     fun `空文档和纯空白文档仍提供可编辑富文本块`() {
         listOf("", "  \n\r\n").forEach { markdown ->
             val blocks = DocumentMarkdownBlockCodec.parse(markdown)
@@ -278,7 +349,7 @@ class DocumentMarkdownBlockCodecTest {
         val blocks = DocumentMarkdownBlockCodec.parse(markdown)
         val raw = blocks.filterIsInstance<DocumentOpaqueRawBlock>().single()
 
-        assertEquals(setOf(DocumentMarkdownUnsupportedFeature.IMAGE), raw.features)
+        assertEquals(setOf(RichEditorUnsupportedMarkdownFeature.IMAGE), raw.features)
         assertEquals("![架构图](/files/a.png)", raw.rawMarkdown)
         assertEquals(2, blocks.filterIsInstance<DocumentRichRun>().size)
 
@@ -294,7 +365,7 @@ class DocumentMarkdownBlockCodecTest {
         val blocks = DocumentMarkdownBlockCodec.parse(markdown)
 
         val raw = blocks.filterIsInstance<DocumentOpaqueRawBlock>().single()
-        assertTrue(DocumentMarkdownUnsupportedFeature.NON_CANONICAL_ORDERED_LIST in raw.features)
+        assertTrue(RichEditorUnsupportedMarkdownFeature.NON_CANONICAL_ORDERED_LIST in raw.features)
         assertEquals(markdown, DocumentMarkdownBlockCodec.encode(blocks))
     }
 

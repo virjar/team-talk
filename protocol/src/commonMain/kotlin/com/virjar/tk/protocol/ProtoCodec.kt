@@ -26,8 +26,8 @@ object ProtoCodec {
 
     fun <T : IProto> decodeList(reader: IProtoReader<T>, bytes: ByteArray): List<T> {
         val buf = PacketBuffer(Unpooled.wrappedBuffer(bytes))
-        val count = buf.readVarInt()
-        return (0 until count).map { reader.readFrom(buf) }
+        val count = buf.readCollectionSize(minimumBytesPerEntry = 1, fieldName = "proto list")
+        return List(count) { reader.readFrom(buf) }
     }
 
     // ── Payload 写入辅助 ──

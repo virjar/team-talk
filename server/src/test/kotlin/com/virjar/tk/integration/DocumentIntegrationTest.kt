@@ -547,6 +547,57 @@ class DocumentIntegrationTest {
         )
     }
 
+    @Test
+    fun `document create and update enforce markdown structure budgets`() = runTest {
+        val owner = ctx.registerUser(uniqueUsername("markdown-budget-owner"))
+        val space = ctx.documentService.createSpace(owner, "结构预算空间", null)
+        val validQuote = "> ".repeat(DocumentService.MAX_MARKDOWN_QUOTE_DEPTH) + "边界正文"
+        val created = ctx.documentService.createDocument(owner, space.spaceId, null, "结构预算", validQuote)
+
+        assertFailsWith<IllegalArgumentException> {
+            ctx.documentService.createDocument(
+                owner,
+                space.spaceId,
+                null,
+                "引用超限",
+                "> ".repeat(DocumentService.MAX_MARKDOWN_QUOTE_DEPTH + 1) + "正文",
+            )
+        }
+
+        val tooManyColumns = listOf(
+            markdownTableRow(DocumentService.MAX_MARKDOWN_TABLE_COLUMNS + 1) { "h$it" },
+            markdownTableRow(DocumentService.MAX_MARKDOWN_TABLE_COLUMNS + 1) { "---" },
+        ).joinToString("\n")
+        assertFailsWith<IllegalArgumentException> {
+            ctx.documentService.createDocument(owner, space.spaceId, null, "表格列超限", tooManyColumns)
+        }
+
+        val columns = 10
+        val bodyRows = DocumentService.MAX_MARKDOWN_TABLE_CELLS / columns
+        val tooManyCells = buildList {
+            add(markdownTableRow(columns) { "h$it" })
+            add(markdownTableRow(columns) { "---" })
+            repeat(bodyRows) { row -> add(markdownTableRow(columns) { column -> "$row:$column" }) }
+        }.joinToString("\n")
+        assertFailsWith<IllegalArgumentException> {
+            ctx.documentService.updateDocument(
+                owner,
+                space.spaceId,
+                created.documentId,
+                created.title,
+                tooManyCells,
+                created.revision,
+            )
+        }
+
+        val unchanged = ctx.documentService.getDocument(owner, space.spaceId, created.documentId)
+        assertEquals(1, unchanged.revision)
+        assertEquals(validQuote, unchanged.markdown)
+    }
+
+    private fun markdownTableRow(columns: Int, cell: (Int) -> String): String =
+        "| " + (0 until columns).joinToString(" | ", transform = cell) + " |"
+
     /** 仅用于构造深度边界；被测的最后一层及后续写入仍全部走正式服务/仓储路径。 */
     private fun seedFolderChain(spaceId: String, actorUid: String, count: Int): List<String> {
         val nodeIds = List(count) { UUID.randomUUID().toString() }

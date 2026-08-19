@@ -84,7 +84,7 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 | 5 | `forward` | `srcChatId`, `srcSeq`, `targetChatId` | `Message` |
 | 6 | `markRead` | `chatId`, `readSeq` | `Unit` |
 
-`getHistory(fromSeq = 0)` 从最新位置取倒序窗口。搜索、历史、编辑、撤回和转发都必须校验调用者属于相关会话。发送新消息的幂等键是 `clientMsgId`，成功 ACK 返回服务器分配的 seq。
+`getHistory(fromSeq = 0)` 从最新位置取倒序窗口。历史与搜索的 `limit` 必须在 1..10；该上限同时约束存储/索引扫描，并为最坏消息正文保留 16 MiB 响应帧余量。搜索、历史、编辑、撤回和转发都必须校验调用者当前仍属于相关会话。发送新消息的幂等键是 `clientMsgId`，成功 ACK 返回服务器分配的 seq。
 
 ## conversation
 

@@ -49,13 +49,13 @@ class BotIntegrationTest {
             created.bot.botId,
             created.webhookToken,
             group.chatId,
-            "重复请求不会生成第二条消息",
+            "## 构建完成\n\n版本 `1.2.3` 已发布。",
             "deploy-1.2.3",
         )
         assertEquals(first.serverSeq, retried.serverSeq)
         assertEquals(first.clientMsgId, retried.clientMsgId)
 
-        val history = ctx.messageService.getHistory(owner, group.chatId, Long.MAX_VALUE, 20)
+        val history = ctx.messageService.getHistory(owner, group.chatId, Long.MAX_VALUE, 10)
         val delivered = history.single { it.clientMsgId == first.clientMsgId }
         assertEquals(created.bot.userUid, delivered.senderUid)
         assertEquals("## 构建完成\n\n版本 `1.2.3` 已发布。", (delivered.body as RichTextBody).markdown)

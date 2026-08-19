@@ -176,17 +176,26 @@ class ChatViewModel(
         }
     }
 
-    fun editMessage(message: Message) {
+    fun editMessage(message: Message, onResult: (Boolean) -> Unit = {}) {
+        val previous = localCache.getMessages(message.chatId, limit = 200).firstOrNull {
+            (message.serverSeq > 0 && it.serverSeq == message.serverSeq) ||
+                it.clientMsgId == message.clientMsgId
+        }
         scope.launch {
             // 乐观更新：立即更新本地缓存，用户马上看到效果
             val optimistic = message.copy(flags = message.flags or Message.FLAG_EDITED)
             localCache.insertMessage(optimistic)
             try {
                 messageRepo.editMessage(message).getOrThrow()
+                onResult(true)
             } catch (e: AppError.AuthExpired) {
+                previous?.let(localCache::insertMessage)
                 handleAuthExpired()
+                onResult(false)
             } catch (e: Exception) {
+                previous?.let(localCache::insertMessage)
                 setError("编辑失败: ${e.message}")
+                onResult(false)
             }
         }
     }
