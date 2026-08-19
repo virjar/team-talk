@@ -18,17 +18,24 @@ curl http://127.0.0.1:18080/semantics
 |---|---|---|
 | GET | `/ping` | 检查测试服务是否启动 |
 | GET | `/semantics` | 读取窗口及 Popup 的合并语义树 |
+| GET | `/window-state` | 读取窗口 placement、位置和尺寸 |
 | GET | `/find` | 按 `testTag` 或文本查询节点 |
 | GET | `/wait` | 在有限时间内等待节点出现 |
 | GET | `/debug` | 查看节点可点击与父节点动作信息 |
 | GET | `/screenshot` | 获取指定窗口 PNG 截图 |
 | POST | `/click` | 单击节点或坐标 |
+| POST | `/doubleclick` | 在节点或坐标派发一次原生鼠标双击 |
 | POST | `/longclick` | 触发长按语义动作 |
 | POST | `/rightclick` | 触发右键交互 |
 | POST | `/input` | 设置可编辑节点文本 |
 | POST | `/keypress` | 派发 ESCAPE、ENTER 等按键 |
 
 所有端点都可使用 `window` 查询参数；省略时操作 `main`。
+
+`/doubleclick` 用于自绘标题栏等必须走真实指针链路的窗口手势。它在一个请求内完成两次点击，避免
+两次网络请求超过操作系统的双击阈值；该端点使用 Robot，macOS 首次运行可能需要辅助功能权限。
+窗口缩放验收必须同时读取 `/window-state`：`Maximized` 表示占满菜单栏和 Dock 之外的可用区域，
+不能用截图尺寸猜测，也不能把 `Fullscreen` 当作通过。
 
 ## 状态驱动的操作循环
 
@@ -54,7 +61,9 @@ curl http://127.0.0.1:18080/semantics
 3. 文本，仅用于探索或没有稳定标识的临时界面；
 4. 坐标，只有在语义动作确实不可用时作为诊断性回退。
 
-坐标依赖窗口位置、缩放比例和 Retina 像素换算，Robot 回退还可能需要系统辅助权限，因此不能成为正式验收的主路径。完整选择器见[测试选择器参考](../10-reference/test-selectors.md)。
+坐标依赖窗口位置和缩放比例，Robot 回退还可能需要系统辅助权限，因此不能成为正式验收的主路径。
+服务端会按窗口的屏幕 transform 把 Retina 语义像素转换为 AWT 逻辑点；调用方应直接使用语义树返回的
+bounds，不能自行再乘除缩放倍率。完整选择器见[测试选择器参考](../10-reference/test-selectors.md)。
 
 ## 多窗口模型
 
@@ -76,6 +85,7 @@ curl http://127.0.0.1:18080/semantics
 - 输入多行 Markdown 后可读回完整文本，Enter 与换行快捷键符合平台约定；
 - 文件发送时出现上传或下载状态，完成后状态收敛；
 - 窗口关闭、ESC 返回和任务栈返回不会残留不可见语义节点。
+- 双击 `app.titleBar.drag.left/right` 后窗口在 `Floating` 与 `Maximized` 间切换，搜索框双击不改变窗口状态。
 
 ## 截图闭环
 

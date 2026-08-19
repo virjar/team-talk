@@ -17,6 +17,7 @@ import java.awt.Robot
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.net.InetSocketAddress
+import kotlin.math.roundToInt
 import org.jetbrains.skia.EncodedImageFormat
 import org.jetbrains.skia.Image
 import org.jetbrains.skiko.SkiaLayer
@@ -34,9 +35,11 @@ import org.jetbrains.skiko.SkiaLayer
  * HTTP API：
  *   GET  /ping                      健康检查
  *   GET  /semantics                 导出语义树 JSON（id/testTag/text/clickable/bounds/children）
+ *   GET  /window-state              读取窗口 placement、位置和尺寸
  *   POST /click?x=N&y=N             点击屏幕坐标（用 Robot 模拟真实鼠标）
  *   POST /click?testTag=xxx         按 testTag 查找节点并点击其中心
  *   POST /click?text=xxx            按 text 查找节点并点击其中心
+ *   POST /doubleclick?testTag=xxx   在节点中心派发一次真实鼠标双击
  *   POST /input?testTag=xxx         向 testTag 节点输入文本（清空后输入）
  *   POST /input?text=xxx           同上，按 text 定位
  *   GET  /screenshot                返回窗口截图 PNG
@@ -51,6 +54,7 @@ object TestHttpServer {
     private val windows = java.util.concurrent.ConcurrentHashMap<String, ComposeWindow>()
     private var server: HttpServer? = null
     private val robot: Robot by lazy { Robot() }
+    private val robotLock = Any()
 
     /** 反射调用的无参入口（供 TestServiceBridge 用，规避 Kotlin 默认参数的方法签名问题）。 */
     @JvmStatic
@@ -94,7 +98,9 @@ object TestHttpServer {
         s.createContext("/ping", ::handlePing)
         s.createContext("/debug", safe(::handleDebug))
         s.createContext("/semantics", safe(::handleSemantics))
+        s.createContext("/window-state", safe(::handleWindowState))
         s.createContext("/click", safe(::handleClick))
+        s.createContext("/doubleclick", safe(::handleDoubleClick))
         s.createContext("/longclick", safe(::handleLongClick))
         s.createContext("/rightclick", safe(::handleRightClick))
         s.createContext("/input", safe(::handleInput))
@@ -260,6 +266,56 @@ object TestHttpServer {
         exchange.send(200, """{"clicked":["$cx","$cy"],"method":"robot","testTag":"${params["testTag"] ?: ""}"}""")
     }
 
+    /**
+     * 原生双击必须在同一个 handler 内连续派发；两次独立 HTTP /click 可能超过系统多击阈值。
+     * 该端点始终走 Robot，确保验证的是 PointerEvent/AWT 真实手势链，而不是直接调用业务回调。
+     */
+    private fun handleDoubleClick(exchange: HttpExchange) {
+        val params = exchange.queryParams()
+        val wid = params["window"] ?: "main"
+        if (windows[wid] == null) {
+            exchange.send(404, """{"error":"window not found"}""")
+            return
+        }
+
+        val requestedX = params["x"]?.toFloatOrNull()
+        val requestedY = params["y"]?.toFloatOrNull()
+        val (x, y) = if (requestedX != null && requestedY != null) {
+            requestedX to requestedY
+        } else {
+            val node = findNode(params["testTag"], params["text"], wid)
+            if (node == null) {
+                exchange.send(404, """{"error":"node not found"}""")
+                return
+            }
+            val bounds = node.boundsInWindow
+            ((bounds.left + bounds.right) / 2f) to ((bounds.top + bounds.bottom) / 2f)
+        }
+
+        clickScreen(x, y, wid, clickCount = 2)
+        exchange.send(
+            200,
+            """{"doubleclicked":[$x,$y],"method":"robot","window":"$wid","testTag":"${params["testTag"] ?: ""}"}""",
+        )
+    }
+
+    /** 返回 Compose 实际窗口状态，避免仅凭截图把 Maximized 与 Fullscreen 混淆。 */
+    private fun handleWindowState(exchange: HttpExchange) {
+        val wid = exchange.queryParams()["window"] ?: "main"
+        val target = windows[wid]
+        if (target == null) {
+            exchange.send(404, """{"error":"window not found"}""")
+            return
+        }
+
+        var payload = ""
+        EventQueue.invokeAndWait {
+            val transform = target.graphicsConfiguration.defaultTransform
+            payload = """{"window":"$wid","placement":"${target.placement.name}","x":${target.x},"y":${target.y},"width":${target.width},"height":${target.height},"scaleX":${transform.scaleX},"scaleY":${transform.scaleY},"visible":${target.isVisible},"active":${target.isActive}}"""
+        }
+        exchange.send(200, payload)
+    }
+
     /** 长按：调用节点的 OnLongClick 语义 action（触发 combinedClickable 的长按菜单）。 */
     private fun handleLongClick(exchange: HttpExchange) {
         val params = exchange.queryParams()
@@ -303,19 +359,21 @@ object TestHttpServer {
             exchange.send(404, """{"error":"no window"}""")
             return
         }
-        if (!window.isActive) {
-            window.toFront(); window.requestFocus(); Thread.sleep(150)
+        synchronized(robotLock) {
+            if (!window.isActive) {
+                window.toFront(); window.requestFocus(); Thread.sleep(150)
+            }
+            // Compose 语义 bounds 在 Retina 上使用设备像素，AWT Window/Robot 使用逻辑点。
+            // 必须除以当前屏幕 transform；直接使用语义坐标会让右半窗口的点击落到窗外。
+            val (screenX, screenY) = composePointToScreen(window, x, y)
+            robot.mouseMove(screenX, screenY)
+            Thread.sleep(50)
+            robot.mousePress(java.awt.event.InputEvent.BUTTON3_DOWN_MASK)
+            Thread.sleep(20)
+            robot.mouseRelease(java.awt.event.InputEvent.BUTTON3_DOWN_MASK)
+            robot.waitForIdle()
+            Thread.sleep(150)
         }
-        // 语义 bounds 单位 dp；macOS AWT 坐标为逻辑 pt，1dp=1pt（Retina 无需换算——
-        // 曾误乘 scale 导致点击出屏）
-        val loc = window.locationOnScreen
-        robot.mouseMove(loc.x + x.toInt(), loc.y + y.toInt())
-        Thread.sleep(50)
-        robot.mousePress(java.awt.event.InputEvent.BUTTON3_DOWN_MASK)
-        Thread.sleep(20)
-        robot.mouseRelease(java.awt.event.InputEvent.BUTTON3_DOWN_MASK)
-        robot.waitForIdle()
-        Thread.sleep(150)
         exchange.send(200, """{"rightclicked":[$x,$y]}""")
     }
 
@@ -334,19 +392,22 @@ object TestHttpServer {
             exchange.send(200, """{"input":"${text.escape()}","method":"action"}""")
             return
         }
-        // fallback：Robot 激活焦点 + 剪贴板粘贴（需系统辅助功能权限）
-        if (!invokeClickAction(node)) {
-            val b = node.boundsInWindow
-            clickScreen((b.left + b.right) / 2, (b.top + b.bottom) / 2)
+        // fallback：Robot 激活焦点 + 剪贴板粘贴（需系统辅助功能权限）。共享 Robot 的整段
+        // 手势必须串行，避免与双击/右键请求交错后留下按键或鼠标按钮未释放。
+        synchronized(robotLock) {
+            if (!invokeClickAction(node)) {
+                val b = node.boundsInWindow
+                clickScreen((b.left + b.right) / 2, (b.top + b.bottom) / 2)
+            }
+            Thread.sleep(150)
+            // 清空 + 粘贴
+            robot.keyPress(KeyEvent.VK_META); robot.keyPress(KeyEvent.VK_A)
+            robot.keyRelease(KeyEvent.VK_A); robot.keyRelease(KeyEvent.VK_META)
+            Thread.sleep(30)
+            robot.keyPress(KeyEvent.VK_DELETE); robot.keyRelease(KeyEvent.VK_DELETE)
+            Thread.sleep(50)
+            pasteText(text)
         }
-        Thread.sleep(150)
-        // 清空 + 粘贴
-        robot.keyPress(KeyEvent.VK_META); robot.keyPress(KeyEvent.VK_A)
-        robot.keyRelease(KeyEvent.VK_A); robot.keyRelease(KeyEvent.VK_META)
-        Thread.sleep(30)
-        robot.keyPress(KeyEvent.VK_DELETE); robot.keyRelease(KeyEvent.VK_DELETE)
-        Thread.sleep(50)
-        pasteText(text)
         exchange.send(200, """{"input":"${text.escape()}","method":"robot"}""")
     }
 
@@ -749,24 +810,42 @@ object TestHttpServer {
     // ───────── 输入模拟 ─────────
 
     /** 点击屏幕坐标（窗口内坐标 → 屏幕坐标转换）。先置前窗口再点击。 */
-    private fun clickScreen(x: Float, y: Float, windowId: String = "main") {
-        val window = windows[windowId] ?: windows["main"] ?: return
-        // 确保窗口在前台（Robot 点击需要窗口聚焦）
-        if (!window.isActive) {
-            window.toFront()
-            window.requestFocus()
-            Thread.sleep(100)
+    private fun clickScreen(
+        x: Float,
+        y: Float,
+        windowId: String = "main",
+        clickCount: Int = 1,
+    ) {
+        synchronized(robotLock) {
+            val window = windows[windowId] ?: windows["main"] ?: return
+            // 确保窗口在前台（Robot 点击需要窗口聚焦）
+            if (!window.isActive) {
+                window.toFront()
+                window.requestFocus()
+                Thread.sleep(100)
+            }
+            val (sx, sy) = composePointToScreen(window, x, y)
+            // 移动到目标位置并短暂停留（某些系统需要 mouseMove 触发 hover）
+            robot.mouseMove(sx, sy)
+            Thread.sleep(50)
+            repeat(clickCount.coerceAtLeast(1)) { index ->
+                robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
+                Thread.sleep(20)
+                robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
+                if (index < clickCount - 1) Thread.sleep(75)
+            }
+            robot.waitForIdle()
         }
-        val loc = window.locationOnScreen
-        val sx = loc.x + x.toInt()
-        val sy = loc.y + y.toInt()
-        // 移动到目标位置并短暂停留（某些系统需要 mouseMove 触发 hover）
-        robot.mouseMove(sx, sy)
-        Thread.sleep(50)
-        robot.mousePress(InputEvent.BUTTON1_DOWN_MASK)
-        Thread.sleep(20)
-        robot.mouseRelease(InputEvent.BUTTON1_DOWN_MASK)
-        robot.waitForIdle()
+    }
+
+    /** Compose 窗口内设备像素 → AWT 屏幕逻辑点。 */
+    private fun composePointToScreen(window: ComposeWindow, x: Float, y: Float): Pair<Int, Int> {
+        val location = window.locationOnScreen
+        val transform = window.graphicsConfiguration.defaultTransform
+        val scaleX = transform.scaleX.takeIf { it > 0.0 } ?: 1.0
+        val scaleY = transform.scaleY.takeIf { it > 0.0 } ?: 1.0
+        return (location.x + (x / scaleX).roundToInt()) to
+            (location.y + (y / scaleY).roundToInt())
     }
 
     // ───────── 工具 ─────────

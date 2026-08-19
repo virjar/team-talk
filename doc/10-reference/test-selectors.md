@@ -42,6 +42,7 @@
 |---|---|
 | `main.home` | 已进入主界面 |
 | `app.titleBar` | Desktop 应用级标题栏 |
+| `app.titleBar.drag.left` / `app.titleBar.drag.right` | 顶栏左右空白拖拽与双击缩放区 |
 | `nav.avatar` | 当前用户入口 |
 | `nav.tab.会话` / `nav.tab.通讯录` / `nav.tab.文档` / `nav.tab.设置` | 一级导航 |
 | `action.search` | 搜索入口 |

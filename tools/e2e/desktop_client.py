@@ -2,7 +2,7 @@
 TeamTalk Desktop E2E 测试客户端。
 
 封装 TestHttpServer（端口 18080）的语义 Action 调用，供 AI 驱动的交互式测试使用。
-所有操作走进程内 Compose 语义 OnClick/SetText，零 macOS 辅助功能权限依赖。
+常规操作走进程内 Compose 语义 OnClick/SetText；标题栏双击等原生窗口手势使用 Robot。
 
 用法：
     from desktop_client import DesktopClient
@@ -93,6 +93,22 @@ class DesktopClient:
         if window:
             params["window"] = window
         code, body = self._req("/click", params, method="POST")
+        return code == 200, body
+
+    def doubleclick_test_tag(self, tag, window=None):
+        """在指定节点中心派发一次真实鼠标双击，用于标题栏等原生窗口手势。"""
+        params = {"testTag": tag}
+        if window:
+            params["window"] = window
+        code, body = self._req("/doubleclick", params, method="POST")
+        return code == 200, body
+
+    def doubleclick_xy(self, x, y, window=None):
+        """在窗口内坐标派发一次真实鼠标双击。"""
+        params = {"x": x, "y": y}
+        if window:
+            params["window"] = window
+        code, body = self._req("/doubleclick", params, method="POST")
         return code == 200, body
 
     def longclick_text(self, text, window=None):
@@ -199,6 +215,27 @@ class DesktopClient:
             return json.loads(body)
         except Exception:
             return {}
+
+    def window_state(self, window=None):
+        """读取窗口 placement、位置与尺寸；失败时返回空 dict。"""
+        params = {"window": window} if window else None
+        code, body = self._req("/window-state", params)
+        if code != 200:
+            return {}
+        try:
+            return json.loads(body)
+        except Exception:
+            return {}
+
+    def wait_window_placement(self, placement, timeout=10, interval=0.2, window=None):
+        """等待窗口进入 Floating / Maximized / Fullscreen 中的指定状态。"""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            state = self.window_state(window)
+            if state.get("placement") == placement:
+                return state
+            time.sleep(interval)
+        return None
 
     def _flat_nodes(self, window=None):
         """语义树扁平化为节点列表（带 bounds/text/clickable），按深度优先顺序。"""

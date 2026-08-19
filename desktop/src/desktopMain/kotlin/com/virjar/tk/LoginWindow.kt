@@ -285,6 +285,9 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                     session = session,
                     mainWindow = window,
                     connectionState = connectionState,
+                    onToggleWindowZoom = {
+                        mainWindowState.placement = nextTitleBarPlacement(mainWindowState.placement)
+                    },
                     onLogout = { auth.onLogout() },
                 )
             }

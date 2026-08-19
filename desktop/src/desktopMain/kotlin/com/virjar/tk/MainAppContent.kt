@@ -69,6 +69,7 @@ internal fun WindowScope.MainAppContent(
     session: ClientSession,
     mainWindow: java.awt.Window,
     connectionState: ConnectionState,
+    onToggleWindowZoom: () -> Unit,
     onLogout: () -> Unit,
 ) {
     val nav = rememberDesktopNav(session)
@@ -178,6 +179,7 @@ internal fun WindowScope.MainAppContent(
                 onSearchFocus = { nav.openGlobalSearch() },
                 focusNonce = nav.searchFocusNonce,
                 connectionState = connectionState,
+                onToggleWindowZoom = onToggleWindowZoom,
             )
             Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
             val expandedWorkspace = MainTab.entries[nav.selectedTab] == MainTab.DOCUMENTS || nav.mainPaneScreen != null
@@ -424,6 +426,7 @@ private fun WindowScope.DesktopTitleBar(
     onSearchFocus: () -> Unit,
     focusNonce: Int,
     connectionState: ConnectionState,
+    onToggleWindowZoom: () -> Unit,
 ) {
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(focusNonce) {
@@ -441,7 +444,12 @@ private fun WindowScope.DesktopTitleBar(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                    WindowDraggableArea(modifier = Modifier.fillMaxSize())
+                    WindowDraggableArea(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("app.titleBar.drag.left")
+                            .onTitleBarDoubleClick(onToggleWindowZoom),
+                    )
                     Row(
                         modifier = Modifier.fillMaxHeight().padding(start = 76.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -464,7 +472,12 @@ private fun WindowScope.DesktopTitleBar(
                 )
 
                 Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                    WindowDraggableArea(modifier = Modifier.fillMaxSize())
+                    WindowDraggableArea(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("app.titleBar.drag.right")
+                            .onTitleBarDoubleClick(onToggleWindowZoom),
+                    )
                     val statusLabel = when (connectionState) {
                         ConnectionState.AUTHENTICATED -> "在线"
                         ConnectionState.CONNECTING -> "连接中"
