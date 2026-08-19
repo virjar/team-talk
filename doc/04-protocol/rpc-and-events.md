@@ -54,6 +54,10 @@ KSP 生成：
 - 每个新模型或复杂 payload 添加 round-trip 测试。
 - 业务错误用 RESPONSE status 返回；协议损坏或连接错误关闭连接。
 
+群文件使用独立 `groupFile` 服务，当前方法顺序为 list、createFolder、createFile、addVersion、
+listVersions、rename、delete。GroupFileEntry 携带逻辑 revision 和当前 contentVersion；
+GroupFileVersion 携带不可变 Attachment 快照。文件二进制不进入 TCP payload，仍先通过 HTTP 上传。
+
 完整方法查询见[RPC 参考](../10-reference/rpc-reference.md)。
 
 ## 4. NOTIFY envelope

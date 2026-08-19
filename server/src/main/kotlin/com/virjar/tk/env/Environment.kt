@@ -29,6 +29,13 @@ import java.io.File
  */
 object Environment {
 
+    /** 群共享文件总配额（包含当前可见条目的全部历史版本），默认 1 GiB。 */
+    val groupFileQuotaBytes: Long = (
+        System.getProperty("teamtalk.groupFile.quotaBytes")
+            ?: System.getenv("TEAMTALK_GROUP_FILE_QUOTA_BYTES")
+        )?.toLongOrNull()?.takeIf { it > 0 }
+        ?: 1024L * 1024 * 1024
+
     /** 是否为 IDE/Gradle 开发环境 */
     val isDevelopment: Boolean = detectDevelopment()
 

@@ -273,6 +273,12 @@ object DesktopMediaHelper {
         return File(dir, name)
     }
 
+    /** 群文件等非消息场景使用的原生文件选择入口。 */
+    fun chooseFile(title: String = "选择文件"): File? = pickFile(title, null)
+
+    /** 根据文件名推导上传 Content-Type。 */
+    fun contentType(fileName: String): String = guessContentType(fileName)
+
     private fun guessContentType(fileName: String): String {
         val ext = fileName.substringAfterLast('.', "").lowercase()
         return when (ext) {

@@ -12,6 +12,7 @@ MainActivity
             ├── Chat
             ├── UserProfile
             ├── GroupDetail
+            ├── GroupFiles
             ├── CreateGroup
             └── Search / Security / Devices …
 ```
@@ -50,14 +51,20 @@ TopAppBar 入口进入全屏结果页，分类和数据源与 Desktop 一致。
 输入器支持多行、富文本、`@` 和附件。触屏空间不足时可以调整工具栏或使用 bottom sheet，但发送
 出的 Markdown/Attachment 契约必须一致。
 
-## 6. 生命周期
+## 6. 群共享文件
+
+群详情中的“共享文件”进入独立全屏页面。文件选择使用 Storage Access Framework，上传成功后再发布到
+当前群目录；打开文件复用带 Bearer token 的下载控制器和系统 Intent。目录与版本语义和 Desktop
+一致，但导航、返回和文件选择保持 Android 原生行为。
+
+## 7. 生命周期
 
 - Activity 重建不能重建用户身份或丢失持久化 token。
 - ClientSession 属于用户层，不应绑定单个页面。
 - 切后台可能影响通知和媒体，但普通暂停不等于登出。
 - AUTH_FAILED 需要清 token 并返回登录，网络断开只触发 SDK 重连。
 
-## 7. 验证
+## 8. 验证
 
 本地 JVM 测试覆盖共享逻辑，Android 特有行为使用真机/模拟器、ADB 和 uiautomator2 验证。涉及
 服务端或跨客户端的业务结果仍以真实部署验收为准。

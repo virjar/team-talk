@@ -28,6 +28,7 @@ class ClientSession(
     val deviceRepo: DeviceRepository,
     val userRepo: UserRepository,
     val organizationRepo: OrganizationRepository,
+    val groupFileRepo: GroupFileRepository,
     /** 发送队列（断线排队重连补发，状态机回写 localCache） */
     val sendQueue: SendQueue,
 ) {
@@ -111,6 +112,7 @@ fun createSession(
         deviceRepo = DeviceRepository(rpcClient),
         userRepo = UserRepository(rpcClient, cache),
         organizationRepo = OrganizationRepository(rpcClient),
+        groupFileRepo = GroupFileRepository(rpcClient),
         sendQueue = sendQueue,
     )
 }

@@ -95,7 +95,17 @@ ConversationService 维护用户视角状态：
 
 `ensureConversations` 是建群、加人和邀请加入的强制步骤，不是可选修复。
 
-## 7. Bot
+## 7. GroupFile
+
+GroupFileService 只接受当前群成员访问，并拒绝在私聊上创建文件空间。创建文件或新版本时，服务端重新
+查询 FileStore，要求 Attachment 元数据完全匹配且调用者就是该次上传者；因此不能抢占其他成员尚未
+发布的上传。Repository 在一个事务中更新条目、追加不可变版本并写审计。
+
+条目 revision 是所有修改的乐观锁；contentVersion 只随内容追加递增。目录非空时拒绝删除，所有活跃
+条目的历史版本参与配额。AttachmentAccess 汇总 MessageStore 和 GroupFileRepository 两类引用，再与
+实时群成员资格求交集，HTTP 文件端点不感知具体业务域。
+
+## 8. Bot
 
 BotService 为每个通知应用创建 UserRole.BOT 服务账户。该账户的随机密码不返回，UserService 登录路径
 也显式拒绝 BOT/SYSTEM。应用 token 使用 256-bit 随机值，数据库只保存 SHA-256。
@@ -104,7 +114,7 @@ BotService 为每个通知应用创建 UserRole.BOT 服务账户。该账户的�
 发送权，再移出群。发送使用由 `botId + chatId + idempotencyKey` 派生的 clientMsgId，随后进入正常
 MessageService，因此重试、历史、搜索、同步和部门群保留规则都与普通消息一致。
 
-## 8. Device / Presence
+## 9. Device / Presence
 
 DeviceService 列出当前用户设备并踢除指定 deviceId。不能踢其他用户设备，当前设备自踢应有明确
 连接关闭语义。
@@ -112,7 +122,7 @@ DeviceService 列出当前用户设备并踢除指定 deviceId。不能踢其他
 Presence 由 ClientRegistry 的连接计数派生：首个设备上线广播 online，最后一个设备下线广播
 offline。它是瞬时状态，不进入长期离线事件。
 
-## 9. Admin
+## 10. Admin
 
 管理员能力与普通用户领域调用分开认证。封禁用户需要同时影响后续登录和现有连接；不能只更新
 管理表而让活动 token 继续无限使用。

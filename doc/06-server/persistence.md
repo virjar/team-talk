@@ -4,7 +4,7 @@
 
 | 数据 | 存储 | 原因 |
 |---|---|---|
-| 用户、组织、机器人授权、设备、好友、群、成员、会话、申请、邀请、同步事件 | PostgreSQL | 关系、约束、事务和查询 |
+| 用户、组织、机器人授权、设备、好友、群、成员、会话、申请、邀请、同步事件、群文件目录与版本 | PostgreSQL | 关系、约束、事务和查询 |
 | 消息正文、幂等索引与投影 outbox | RocksDB | 按 chat/seq 顺序读写、单批原子 KV |
 | token | 独立 RocksDB | 随机 token 快速查询和删除 |
 | 文件小对象与元数据 | RocksDB | 本地嵌入、低运维成本 |
@@ -49,6 +49,15 @@ organization_units 保存单根层级、负责人和可选稳定部门群 ID；o
 automation_bots 关联服务 User，只保存 webhook token 哈希、状态和最后调用时间；明文 token 不落库。
 automation_bot_grants 以 `(botId, chatId)` 唯一，作为可发送群的权限事实。group_members 中的机器人行
 是可修复投影，服务启动按 grant 重放。
+
+### group_file_entries / group_file_versions / group_file_audits
+
+group_file_entries 保存群文件目录树、逻辑名称、当前 Attachment、revision 和当前内容版本。根目录用
+稳定 parentKey 参与同级名称唯一约束；软删除时释放名称键，允许重新创建同名条目。
+
+group_file_versions 只追加不可变 Attachment 快照，`(entryId, version)` 唯一。group_file_audits 与每次
+创建、追加版本、重命名、删除在同一 PostgreSQL 事务提交，只记录动作与有限摘要，不保存文件正文。
+物理二进制仍在 FileStore；数据库版本表是下载引用和群空间配额的事实源。
 
 ## 3. MessageStore
 

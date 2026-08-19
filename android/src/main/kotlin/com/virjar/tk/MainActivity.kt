@@ -5,6 +5,8 @@ import android.util.Log
 import com.virjar.tk.android.BuildConfig
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.*
@@ -12,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.compose.animation.AnimatedContentTransitionScope
@@ -27,6 +30,8 @@ import com.virjar.tk.ui.AppTheme
 import com.virjar.tk.ui.screen.*
 import com.virjar.tk.ui.theme.initThemeStore
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
@@ -261,6 +266,7 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             GroupDetailScreen(chat = dataState.groups.detailChat, members = dataState.groups.members, isOwner = dataState.groups.members.any { it.uid == dataState.userSession.uid && it.role == 2 },
                 myUid = dataState.userSession.uid,
                 onMemberClick = { uid -> navController.navigate(Routes.userProfile(uid)) }, onInviteMembers = { navController.navigate(Routes.inviteMembers(chatId)) }, onViewInviteLinks = { navController.navigate(Routes.inviteLinks(chatId)) },
+                onGroupFiles = { navController.navigate(Routes.groupFiles(chatId)) },
                 onLeaveGroup = {
                     val isOwner = dataState.groups.members.any {
                         it.uid == dataState.userSession.uid && it.role == 2
@@ -276,6 +282,64 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                 onMuteMember = { uid -> dataState.groups.muteMember(chatId, uid) },
                 onUnmuteMember = { uid -> dataState.groups.unmuteMember(chatId, uid) },
                 onRemoveMember = { uid -> dataState.groups.removeMember(chatId, uid) },
+            )
+        }
+        composable(Routes.GROUP_FILES, arguments = listOf(navArgument("chatId"){type=NavType.StringType})) { entry ->
+            val chatId = entry.arguments?.getString("chatId") ?: return@composable
+            val context = LocalContext.current
+            val config = remember { defaultServerConfig() }
+            var uploading by remember { mutableStateOf(false) }
+            var versionTarget by remember { mutableStateOf<com.virjar.tk.model.GroupFileEntry?>(null) }
+            val downloads = remember(context, config.serverUrl, dataState.userSession.accessToken) {
+                AndroidFileDownloadController(context, config.serverUrl, dataState.userSession.accessToken)
+            }
+            DisposableEffect(downloads) { onDispose { downloads.close() } }
+            LaunchedEffect(chatId) { dataState.loadScreenDataByKey(ScreenDataKey.GroupFiles(chatId)) }
+
+            val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                if (uri != null) scope.launch {
+                    uploading = true
+                    try {
+                        val bytes = withContext(Dispatchers.IO) { MediaHelper.readBytes(context, uri) }
+                        val name = MediaHelper.getFileName(context, uri)
+                        val type = MediaHelper.getMimeType(context, uri)
+                        val attachment = com.virjar.tk.repository.FileRepository(
+                            config.serverUrl,
+                            dataState.userSession.accessToken,
+                        ).upload(bytes, name, type).getOrThrow()
+                        val target = versionTarget
+                        if (target == null) dataState.groupFiles.publish(name, attachment)
+                        else dataState.groupFiles.addVersion(target, attachment)
+                    } catch (e: Exception) {
+                        Log.e("GroupFiles", "upload failed", e)
+                        dataState.groupFiles.reportUploadError(e)
+                    } finally {
+                        versionTarget = null
+                        uploading = false
+                    }
+                } else {
+                    versionTarget = null
+                }
+            }
+
+            GroupFilesScreen(
+                entries = dataState.groupFiles.entries,
+                path = dataState.groupFiles.path,
+                selectedFile = dataState.groupFiles.selectedFile,
+                versions = dataState.groupFiles.versions,
+                loading = dataState.groupFiles.loading,
+                uploading = uploading,
+                onRefresh = { scope.launch { dataState.groupFiles.refresh() } },
+                onEnter = dataState.groupFiles::enter,
+                onUp = dataState.groupFiles::up,
+                onCreateFolder = dataState.groupFiles::createFolder,
+                onUpload = { versionTarget = null; picker.launch(arrayOf("*/*")) },
+                onOpenFile = downloads::openOrDownload,
+                onShowVersions = dataState.groupFiles::showVersions,
+                onUploadVersion = { target -> versionTarget = target; picker.launch(arrayOf("*/*")) },
+                onRename = dataState.groupFiles::rename,
+                onDelete = dataState.groupFiles::delete,
+                onBack = { navController.popBackStack() },
             )
         }
         composable(Routes.INVITE_MEMBERS, arguments = listOf(navArgument("chatId"){type=NavType.StringType})) { entry ->

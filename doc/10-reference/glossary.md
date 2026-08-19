@@ -21,6 +21,8 @@
 | ACK | MESSAGE 发送的独立确认；成功表示服务器校验并接受消息 |
 | 附件相对路径 | FileStore 内部可解析路径，不包含部署域名或第三方 URL |
 | 文件端点 | TeamTalk HTTP 服务提供的上传和读取接口 |
+| 群文件条目（GroupFileEntry） | 群共享文件空间中的稳定目录或文件身份，独立于消息附件 |
+| 文件版本（GroupFileVersion） | 群文件不可变的 Attachment 内容快照；追加版本不覆盖历史 |
 | ImBot | 基于同一 SDK 的无头 IM 客户端封装 |
 | AutomationBot | 不能密码登录、按群显式授权、通过 HTTP 单向发送通知的服务身份 |
 | `tt-agent` | 常驻持有 ImBot 会话并暴露本地 REST 的进程 |
@@ -36,5 +38,6 @@
 - Chat 是共享对象，Conversation 是用户私有投影。
 - message `serverSeq` 决定聊天内顺序，Notify `eventId` 决定用户事件补发顺序。
 - URL 是客户端访问文件的解析结果，消息事实只保存附件相对路径。
+- Attachment 是物理对象描述，GroupFileEntry 是协作身份；上传和聊天发送都不会自动创建群文件。
 - “发送中”是客户端本地状态；只有收到成功 ACK 后才是服务器接受的消息。
 - 群设置抽屉属于聊天上下文；设置一级导航属于当前用户和应用配置，两者不是同一信息域。

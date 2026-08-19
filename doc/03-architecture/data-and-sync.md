@@ -88,7 +88,21 @@ HTTP upload
 退出或被移除后，服务端按实时成员资格拒绝新的下载。附件完整契约见
 [消息与附件](../04-protocol/messages-and-attachments.md)。
 
-## 7. 故障语义
+## 7. 群文件生命周期
+
+```text
+HTTP upload → FileStore Attachment（仅上传者可读）
+  → groupFile.createFile / addVersion
+  → PostgreSQL 原子写条目、不可变版本、审计
+  → AttachmentReferences 合并群文件与消息引用
+  → 当前群成员通过同一文件端点下载
+```
+
+客户端 v1 不把群文件写入 LocalCache，也没有持久化 Notify；页面打开、目录切换和修改后主动拉取。
+这意味着另一设备修改后，已打开的列表要手动刷新才能看到。它是明确的部分能力，不应被描述成实时
+同步；后续需要稳定事件、离线投影与搜索索引后才能进入本地优先模型。
+
+## 8. 故障语义
 
 | 故障 | 正确行为 |
 |---|---|
@@ -100,7 +114,7 @@ HTTP upload
 | 历史存在 seq 缺口 | 按 serverSeq 主动拉取历史修复 |
 | 搜索索引缺失 | 从消息权威存储重建 Lucene，不修改消息 |
 
-## 8. 一致性边界
+## 9. 一致性边界
 
 TeamTalk 不提供跨 PostgreSQL、RocksDB 与 Lucene 的分布式事务。写入顺序和恢复手段必须保证：
 

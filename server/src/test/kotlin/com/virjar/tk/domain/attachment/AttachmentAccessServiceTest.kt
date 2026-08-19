@@ -40,7 +40,7 @@ class AttachmentAccessServiceTest {
             )
             val service = AttachmentAccessService(
                 files,
-                messages,
+                AttachmentReferences(messages::getAttachmentChatIds),
                 ActiveChatMembership { uid ->
                     if (uid == "owner" || uid == "member") setOf("chat-private") else emptySet()
                 },

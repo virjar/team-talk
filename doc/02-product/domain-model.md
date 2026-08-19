@@ -100,7 +100,25 @@ Markdown 权威源的富文本消息；旧 `TextBody` 仅作为兼容概念，�
 Attachment 只描述 TeamTalk 服务端中的文件：规范化相对路径、名称、媒体类型、大小和可选摘要。
 它不是任意 HTTP URL。客户端需要展示或下载时，用部署的 `serverUrl` 解析成自身端点 URL。
 
-## 6. 自动化应用
+### GroupFileEntry / GroupFileVersion
+
+GroupFileEntry 是群共享文件空间中的稳定逻辑对象，通过 `parentId` 组成目录树。目录和文件共享名称、
+创建者、更新时间与乐观锁 revision；文件另外指向当前 Attachment，并记录独立的 contentVersion。
+
+GroupFileVersion 是不可变的内容版本。上传只是创建 FileStore 对象，只有群成员把自己上传的附件发布为
+GroupFileVersion 后，它才获得群文件身份和成员下载权限。重命名不会制造内容版本，替换内容不会覆盖
+历史版本。聊天消息引用和群文件引用是两个独立事实源，但下载都经过统一引用 ACL。
+
+## 6. 群文件空间
+
+群文件空间只存在于群 Chat 下，当前群成员可以读取和协作。所有读写都实时校验成员资格；退出或被移除
+后，未被其他有权 Chat 引用的文件立即不可下载。目录只能在清空后删除，修改携带 revision 防止多端
+静默覆盖。所有历史版本计入当前活跃条目的配额，默认值可由私有部署配置。
+
+群文件不是 Message 的派生列表：聊天附件不会自动进入共享空间，删除消息也不会删除群文件。未来消息
+可以引用 GroupFileEntry，但权威名称、版本和权限仍由群文件领域维护。
+
+## 7. 自动化应用
 
 ### AutomationBot
 
@@ -111,7 +129,7 @@ AutomationBot 是管理员创建的单向通知应用，关联一个不可密码
 AutomationBot 与 ImBot 不同：前者适合构建、监控、审批等外部系统主动通知，最小权限且无需常驻
 TCP；后者是完整无头客户端，适合需要接收消息和参与双向交互的自动化。
 
-## 7. 事件与本地状态
+## 8. 事件与本地状态
 
 ### Notify
 
@@ -135,6 +153,8 @@ User * ──* Chat      通过 Member
 User 1 ──* Conversation *──1 Chat
 Chat 1 ──* Message
 Message 0 ──* Attachment
+Chat 1 ──* GroupFileEntry
+GroupFileEntry 0..1 ──* GroupFileVersion ──1 Attachment
 User 1 ──* Notify
 AutomationBot 1 ──1 User(service identity)
 AutomationBot * ──* Chat  通过 explicit grant

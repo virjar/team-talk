@@ -3,6 +3,9 @@ package com.virjar.tk
 import androidx.compose.runtime.*
 import com.virjar.tk.navigation.AppDataState
 import com.virjar.tk.ui.screen.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 单个子屏幕的渲染器（参数驱动，不读写全局导航状态）。
@@ -33,6 +36,7 @@ fun SubScreenContent(
 ) {
     val contacts by data.contactViewModel.contacts.collectAsState()
     val conversations by data.conversationViewModel.conversations.collectAsState()
+    val actionScope = rememberCoroutineScope()
 
     LaunchedEffect(screen) {
         screen.dataKey()?.let { data.loadScreenDataByKey(it) }
@@ -97,6 +101,7 @@ fun SubScreenContent(
             onMemberClick = openUserProfile,
             onInviteMembers = { navigate(SubScreen.InviteMembers(screen.chatId)) },
             onViewInviteLinks = { navigate(SubScreen.InviteLinks(screen.chatId)) },
+            onGroupFiles = { navigate(SubScreen.GroupFiles(screen.chatId)) },
             onLeaveGroup = { onLeaveGroup(screen.chatId) },
             onEditNotice = { notice -> data.groups.updateNotice(screen.chatId, notice) },
             onBack = onBack,
@@ -121,6 +126,54 @@ fun SubScreenContent(
             onRevokeLink = { token -> data.groups.revokeInviteLink(screen.chatId, token) },
             onBack = onBack,
         )
+
+        is SubScreen.GroupFiles -> {
+            var uploading by remember(screen.chatId) { mutableStateOf(false) }
+
+            fun chooseAndUpload(versionTarget: com.virjar.tk.model.GroupFileEntry?) {
+                val file = DesktopMediaHelper.chooseFile("选择群文件") ?: return
+                actionScope.launch {
+                    uploading = true
+                    try {
+                        val bytes = withContext(Dispatchers.IO) { file.readBytes() }
+                        val attachment = com.virjar.tk.repository.FileRepository(
+                            com.virjar.tk.client.defaultServerConfig().serverUrl,
+                            data.userSession.accessToken,
+                        ).upload(bytes, file.name, DesktopMediaHelper.contentType(file.name)).getOrThrow()
+                        if (versionTarget == null) data.groupFiles.publish(file.name, attachment)
+                        else data.groupFiles.addVersion(versionTarget, attachment)
+                    } catch (e: Exception) {
+                        com.virjar.tk.util.AppLog.fault("GroupFiles", "upload failed: ${e.message}")
+                        data.groupFiles.reportUploadError(e)
+                    } finally {
+                        uploading = false
+                    }
+                }
+            }
+
+            GroupFilesScreen(
+                entries = data.groupFiles.entries,
+                path = data.groupFiles.path,
+                selectedFile = data.groupFiles.selectedFile,
+                versions = data.groupFiles.versions,
+                loading = data.groupFiles.loading,
+                uploading = uploading,
+                onRefresh = { actionScope.launch { data.groupFiles.refresh() } },
+                onEnter = data.groupFiles::enter,
+                onUp = data.groupFiles::up,
+                onCreateFolder = data.groupFiles::createFolder,
+                onUpload = { chooseAndUpload(null) },
+                onOpenFile = { attachment ->
+                    actionScope.launch(Dispatchers.IO) { DesktopMediaHelper.openFile(attachment.path) }
+                },
+                onShowVersions = data.groupFiles::showVersions,
+                onUploadVersion = { chooseAndUpload(it) },
+                onRename = data.groupFiles::rename,
+                onDelete = data.groupFiles::delete,
+                onBack = onBack,
+                onClose = onClose,
+            )
+        }
 
         is SubScreen.Forward -> ForwardScreen(
             conversations = conversations,

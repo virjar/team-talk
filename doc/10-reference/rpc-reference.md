@@ -117,6 +117,21 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 
 普通客户端只有读取能力；组织结构、成员归属和部门群启停通过独立管理 HTTP API 执行。
 
+## groupFile
+
+| ID | 方法 | 参数 | 返回 |
+|---:|---|---|---|
+| 1 | `list` | `chatId`, `parentId?` | `List<GroupFileEntry>` |
+| 2 | `createFolder` | `chatId`, `parentId?`, `name` | `GroupFileEntry` |
+| 3 | `createFile` | `chatId`, `parentId?`, `name`, `attachment` | `GroupFileEntry` |
+| 4 | `addVersion` | `chatId`, `entryId`, `attachment`, `expectedRevision` | `GroupFileEntry` |
+| 5 | `listVersions` | `chatId`, `entryId` | `List<GroupFileVersion>` |
+| 6 | `rename` | `chatId`, `entryId`, `name`, `expectedRevision` | `GroupFileEntry` |
+| 7 | `delete` | `chatId`, `entryId`, `expectedRevision` | `Unit` |
+
+所有方法都按认证 uid 实时校验群成员。createFile/addVersion 只接受调用者自己上传且与 FileStore 元数据
+完全匹配的 Attachment；expectedRevision 是条目级乐观锁，不能用 contentVersion 代替。
+
 ## 状态与错误
 
 | status | 语义 | 客户端处理 |

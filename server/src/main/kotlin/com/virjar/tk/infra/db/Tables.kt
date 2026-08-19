@@ -190,3 +190,59 @@ object AutomationBotGrants : LongIdTable("automation_bot_grants") {
         uniqueIndex("idx_bot_grant_bot_chat", botId, chatId)
     }
 }
+
+/** 群共享文件的逻辑目录树；文件内容本身仍由 FileStore 保存。 */
+object GroupFileEntries : Table("group_file_entries") {
+    val entryId = varchar("entry_id", 36)
+    val chatId = varchar("chat_id", 36).index()
+    val parentId = varchar("parent_id", 36).nullable().index()
+    /** null 父级统一写为空串，用于根目录唯一约束。 */
+    val parentKey = varchar("parent_key", 36).default("")
+    val kind = integer("kind")
+    val name = varchar("name", 180)
+    /** 活跃条目为规范化名称；删除后追加 entryId，允许用户再次使用原名称。 */
+    val nameKey = varchar("name_key", 260)
+    val attachmentPath = varchar("attachment_path", 500).nullable().index()
+    val attachmentName = varchar("attachment_name", 500).nullable()
+    val attachmentContentType = varchar("attachment_content_type", 200).nullable()
+    val attachmentSize = long("attachment_size").nullable()
+    val revision = long("revision").default(1)
+    val contentVersion = long("content_version").default(0)
+    val status = integer("status").default(1)
+    val createdBy = varchar("created_by", 36)
+    val createdAt = long("created_at")
+    val updatedBy = varchar("updated_by", 36)
+    val updatedAt = long("updated_at")
+
+    override val primaryKey = PrimaryKey(entryId)
+
+    init {
+        uniqueIndex("idx_group_file_sibling_name", chatId, parentKey, nameKey)
+    }
+}
+
+/** 文件内容版本不可变，只追加；所有版本都参与群空间配额。 */
+object GroupFileVersions : LongIdTable("group_file_versions") {
+    val entryId = varchar("entry_id", 36).index()
+    val version = long("version")
+    val attachmentPath = varchar("attachment_path", 500).index()
+    val attachmentName = varchar("attachment_name", 500)
+    val attachmentContentType = varchar("attachment_content_type", 200)
+    val attachmentSize = long("attachment_size")
+    val createdBy = varchar("created_by", 36)
+    val createdAt = long("created_at")
+
+    init {
+        uniqueIndex("idx_group_file_entry_version", entryId, version)
+    }
+}
+
+/** 共享文件的最小审计轨迹，不记录文件内容。 */
+object GroupFileAudits : LongIdTable("group_file_audits") {
+    val chatId = varchar("chat_id", 36).index()
+    val entryId = varchar("entry_id", 36).nullable().index()
+    val actorUid = varchar("actor_uid", 36).index()
+    val action = varchar("action", 32)
+    val detail = varchar("detail", 500).nullable()
+    val createdAt = long("created_at").index()
+}

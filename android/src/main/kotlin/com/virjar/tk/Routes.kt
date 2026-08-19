@@ -31,6 +31,8 @@ object Routes {
     const val BLACKLIST = "blacklist"
     const val GROUP_DETAIL = "group_detail/{chatId}"
     fun groupDetail(chatId: String) = "group_detail/$chatId"
+    const val GROUP_FILES = "group_files/{chatId}"
+    fun groupFiles(chatId: String) = "group_files/$chatId"
     const val INVITE_MEMBERS = "invite_members/{chatId}"
     fun inviteMembers(chatId: String) = "invite_members/$chatId"
     const val INVITE_LINKS = "invite_links/{chatId}"

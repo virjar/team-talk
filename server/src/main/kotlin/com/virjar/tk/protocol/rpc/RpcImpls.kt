@@ -6,6 +6,7 @@ import com.virjar.tk.domain.contact.ContactService
 import com.virjar.tk.domain.conversation.ConversationService
 import com.virjar.tk.domain.message.MessageService
 import com.virjar.tk.domain.organization.OrganizationService
+import com.virjar.tk.domain.groupfile.GroupFileService
 import com.virjar.tk.domain.session.OnlineSessions
 import com.virjar.tk.domain.user.UserService
 import com.virjar.tk.domain.chat.toModel as inviteLinkToModel
@@ -19,6 +20,7 @@ import com.virjar.tk.rpc.gen.ConversationRpcStub
 import com.virjar.tk.rpc.gen.DeviceRpcStub
 import com.virjar.tk.rpc.gen.MessageRpcStub
 import com.virjar.tk.rpc.gen.OrganizationRpcStub
+import com.virjar.tk.rpc.gen.GroupFileRpcStub
 import com.virjar.tk.rpc.gen.UserRpcStub
 
 /**
@@ -128,6 +130,29 @@ class DeviceRpcImpl(
 class OrganizationRpcImpl(uid: String, private val service: OrganizationService) : OrganizationRpcStub(uid) {
     override suspend fun listUnits() = service.listUnits()
     override suspend fun listMembers(unitId: String, recursive: Boolean) = service.listMembers(unitId, recursive)
+}
+
+class GroupFileRpcImpl(uid: String, private val service: GroupFileService) : GroupFileRpcStub(uid) {
+    override suspend fun list(chatId: String, parentId: String?) = service.list(uid, chatId, parentId)
+    override suspend fun createFolder(chatId: String, parentId: String?, name: String) =
+        service.createFolder(uid, chatId, parentId, name)
+    override suspend fun createFile(
+        chatId: String,
+        parentId: String?,
+        name: String,
+        attachment: com.virjar.tk.model.Attachment,
+    ) = service.createFile(uid, chatId, parentId, name, attachment)
+    override suspend fun addVersion(
+        chatId: String,
+        entryId: String,
+        attachment: com.virjar.tk.model.Attachment,
+        expectedRevision: Long,
+    ) = service.addVersion(uid, chatId, entryId, attachment, expectedRevision)
+    override suspend fun listVersions(chatId: String, entryId: String) = service.listVersions(uid, chatId, entryId)
+    override suspend fun rename(chatId: String, entryId: String, name: String, expectedRevision: Long) =
+        service.rename(uid, chatId, entryId, name, expectedRevision)
+    override suspend fun delete(chatId: String, entryId: String, expectedRevision: Long) =
+        service.delete(uid, chatId, entryId, expectedRevision)
 }
 
 /** 服务注册表：serviceId → 每请求 Stub 工厂（uid 注入）。由 Koin 装配。 */

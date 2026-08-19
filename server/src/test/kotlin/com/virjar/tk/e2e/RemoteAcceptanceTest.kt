@@ -16,6 +16,8 @@ import com.virjar.tk.body.FileBody
 import com.virjar.tk.body.VoiceBody
 import com.virjar.tk.body.ImageBody
 import com.virjar.tk.repository.FileRepository
+import com.virjar.tk.repository.GroupFileRepository
+import com.virjar.tk.rpc.gen.ChatRpcProxy
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -278,6 +280,40 @@ class RemoteAcceptanceTest {
     }
 
     // ── 多 body 类型消息往返 ──
+
+    @Test
+    fun `group file space keeps versions and member download ACL`() = runBlocking {
+        val owner = RemoteAcceptanceSupport.registerUser("group-file-owner")
+        val member = RemoteAcceptanceSupport.registerUser("group-file-member")
+        val outsider = RemoteAcceptanceSupport.registerUser("group-file-outsider")
+        try {
+            val chat = ChatRpcProxy(owner.rpc)
+                .createGroup("远程群文件验收", null, listOf(member.uid))
+            val ownerFiles = GroupFileRepository(owner.rpc)
+            val memberFiles = GroupFileRepository(member.rpc)
+            val outsiderFiles = GroupFileRepository(outsider.rpc)
+
+            val folder = ownerFiles.createFolder(chat.chatId, null, "项目资料").getOrThrow()
+            val v1Bytes = "# Remote acceptance v1".encodeToByteArray()
+            val v1Attachment = upload(owner, v1Bytes, "readme-v1.md")
+            val file = ownerFiles.createFile(chat.chatId, folder.entryId, "README.md", v1Attachment).getOrThrow()
+
+            assertEquals(listOf("README.md"), memberFiles.list(chat.chatId, folder.entryId).getOrThrow().map { it.name })
+            assertArrayEquals(v1Bytes, FileRepository(baseUrl(), member.userSession.accessToken).download(v1Attachment).getOrThrow())
+            assertTrue(outsiderFiles.list(chat.chatId, null) is Outcome.Failure, "非群成员不能读取群文件目录")
+
+            val v2Bytes = "# Remote acceptance v2".encodeToByteArray()
+            val v2Attachment = upload(member, v2Bytes, "readme-v2.md")
+            val v2 = memberFiles.addVersion(chat.chatId, file.entryId, v2Attachment, file.revision).getOrThrow()
+            assertEquals(2L, v2.contentVersion)
+            assertEquals(listOf(2L, 1L), ownerFiles.listVersions(chat.chatId, file.entryId).getOrThrow().map { it.version })
+
+            ownerFiles.delete(chat.chatId, v2.entryId, v2.revision).getOrThrow()
+            assertDownloadRejected(v1Attachment, member.userSession.accessToken, 403)
+        } finally {
+            owner.close(); member.close(); outsider.close()
+        }
+    }
 
     @Test
     fun `file message round-trip enforces attachment access`() = runBlocking {

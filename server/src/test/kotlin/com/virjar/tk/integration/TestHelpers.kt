@@ -13,6 +13,9 @@ import com.virjar.tk.domain.device.DeviceRepository
 import com.virjar.tk.domain.message.MessageService
 import com.virjar.tk.domain.organization.OrganizationRepository
 import com.virjar.tk.domain.organization.OrganizationService
+import com.virjar.tk.domain.groupfile.GroupFileRepository
+import com.virjar.tk.domain.groupfile.GroupFileService
+import com.virjar.tk.domain.attachment.AttachmentAccess
 import com.virjar.tk.domain.user.UserRepository
 import com.virjar.tk.domain.user.UserService
 import com.virjar.tk.di.createServerModule
@@ -91,6 +94,9 @@ class TestEnvironment : AutoCloseable {
     val conversationService: ConversationService get() = koin.get()
     val organizationService: OrganizationService get() = koin.get()
     val botService: BotService get() = koin.get()
+    val groupFileService: GroupFileService get() = koin.get()
+    val groupFileRepo: GroupFileRepository get() = koin.get()
+    val attachmentAccess: AttachmentAccess get() = koin.get()
     val organizationRepo: OrganizationRepository get() = koin.get()
     val deviceRepo: DeviceRepository get() = koin.get()
     val userRepo: UserRepository get() = koin.get()

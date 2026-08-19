@@ -5,6 +5,7 @@ import com.virjar.tk.application.presence.PresenceCoordinator
 import com.virjar.tk.domain.attachment.AttachmentCatalog
 import com.virjar.tk.domain.attachment.AttachmentAccess
 import com.virjar.tk.domain.attachment.AttachmentAccessService
+import com.virjar.tk.domain.attachment.AttachmentReferences
 import com.virjar.tk.domain.auth.AuthService
 import com.virjar.tk.domain.auth.TokenRepository
 import com.virjar.tk.domain.bot.BotRepository
@@ -30,6 +31,8 @@ import com.virjar.tk.domain.message.MessageSearch
 import com.virjar.tk.domain.message.MessageService
 import com.virjar.tk.domain.organization.OrganizationRepository
 import com.virjar.tk.domain.organization.OrganizationService
+import com.virjar.tk.domain.groupfile.GroupFileRepository
+import com.virjar.tk.domain.groupfile.GroupFileService
 import com.virjar.tk.domain.presence.PresenceService
 import com.virjar.tk.domain.session.OnlineSessions
 import com.virjar.tk.domain.user.UserRepository
@@ -41,6 +44,7 @@ import com.virjar.tk.rpc.gen.ContactRpcContract
 import com.virjar.tk.rpc.gen.ChatRpcContract
 import com.virjar.tk.rpc.gen.MessageRpcContract
 import com.virjar.tk.rpc.gen.OrganizationRpcContract
+import com.virjar.tk.rpc.gen.GroupFileRpcContract
 import com.virjar.tk.rpc.gen.ConversationRpcContract
 import com.virjar.tk.rpc.gen.DeviceRpcContract
 import com.virjar.tk.protocol.rpc.UserRpcImpl
@@ -48,6 +52,7 @@ import com.virjar.tk.protocol.rpc.AuthRpcImpl
 import com.virjar.tk.protocol.rpc.ChatRpcImpl
 import com.virjar.tk.protocol.rpc.MessageRpcImpl
 import com.virjar.tk.protocol.rpc.OrganizationRpcImpl
+import com.virjar.tk.protocol.rpc.GroupFileRpcImpl
 import com.virjar.tk.protocol.rpc.ConversationRpcImpl
 import com.virjar.tk.protocol.rpc.DeviceRpcImpl
 import com.virjar.tk.protocol.rpc.ContactRpcImpl
@@ -62,6 +67,7 @@ import com.virjar.tk.infra.db.repository.ExposedConversationRepository
 import com.virjar.tk.infra.db.repository.ExposedDeviceRepository
 import com.virjar.tk.infra.db.repository.ExposedInviteLinkRepository
 import com.virjar.tk.infra.db.repository.ExposedOrganizationRepository
+import com.virjar.tk.infra.db.repository.ExposedGroupFileRepository
 import com.virjar.tk.infra.db.repository.ExposedUserRepository
 import com.virjar.tk.infra.health.HealthChecker
 import com.virjar.tk.infra.storage.ClientLogStore
@@ -104,6 +110,7 @@ fun createServerModule(
     single<ConversationRepository> { ExposedConversationRepository(get(), get(), get()) }
     single<DeviceRepository> { ExposedDeviceRepository() }
     single<OrganizationRepository> { ExposedOrganizationRepository() }
+    single<GroupFileRepository> { ExposedGroupFileRepository() }
     single<ManagedChatPolicy> { get<OrganizationRepository>() }
     single<BotRepository> { ExposedBotRepository() }
     single<RequiredChatParticipants> { get<BotRepository>() }
@@ -123,8 +130,16 @@ fun createServerModule(
     single { ContactService(get(), get()) }
     single { ChatService(get(), get(), get(), get(), get()) }
     single { OrganizationService(get(), get(), get(), get()) }
+    single { GroupFileService(get(), get(), get(), get(), Environment.groupFileQuotaBytes) }
     single { ConversationService(get(), get(), get()) }
     single { com.virjar.tk.domain.attachment.AttachmentService(get(), get()) }
+    single<AttachmentReferences> {
+        val messages = get<MessageRepository>()
+        val groupFiles = get<GroupFileRepository>()
+        AttachmentReferences { path ->
+            messages.getAttachmentChatIds(path) + groupFiles.getAttachmentChatIds(path)
+        }
+    }
     single<AttachmentAccess> { AttachmentAccessService(get(), get(), get()) }
     single { MessageService(get(), get(), get(), get(), get(), get()) }
     single { BotService(get(), get(), get(), get(), get()) }
@@ -143,6 +158,7 @@ fun createServerModule(
             register(ConversationRpcContract.SERVICE) { uid -> ConversationRpcImpl(uid, get()) }
             register(DeviceRpcContract.SERVICE) { uid -> DeviceRpcImpl(uid, get(), get(), get()) }
             register(OrganizationRpcContract.SERVICE) { uid -> OrganizationRpcImpl(uid, get()) }
+            register(GroupFileRpcContract.SERVICE) { uid -> GroupFileRpcImpl(uid, get()) }
         }
     }
     single { RpcDispatcher(get()) }

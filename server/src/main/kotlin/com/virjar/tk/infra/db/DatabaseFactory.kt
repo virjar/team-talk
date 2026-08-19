@@ -48,6 +48,7 @@ object DatabaseFactory {
                 Conversations, Friends, FriendApplies, GroupInviteLinks, SyncEvents,
                 OrganizationUnits, OrganizationMemberships,
                 AutomationBots, AutomationBotGrants,
+                GroupFileEntries, GroupFileVersions, GroupFileAudits,
             )
         }
 

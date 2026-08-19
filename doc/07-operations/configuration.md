@@ -40,6 +40,7 @@
 | `SSL_PRIVATE_KEY_PASSWORD` | 无 | 私钥密码 |
 | `DATABASE_PASSWORD` | 必填部署值 | PostgreSQL 用户密码 |
 | `FILE_MAX_SIZE_BYTES` | 157286400 | HTTP 单文件上限 |
+| `TEAMTALK_GROUP_FILE_QUOTA_BYTES` | 1073741824 | 每个群共享文件空间配额；系统属性 `teamtalk.groupFile.quotaBytes` 优先 |
 | `ADMIN_USER` | `admin` | 管理后台用户名 |
 | `ADMIN_PASSWORD` | `admin-change-me` | 管理后台密码；部署必须修改 |
 | `LOG_DIR` | 平台默认 | logback 输出目录 |

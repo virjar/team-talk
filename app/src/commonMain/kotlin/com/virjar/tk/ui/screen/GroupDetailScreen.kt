@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.FolderShared
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -36,6 +37,7 @@ fun GroupDetailScreen(
     onEditNotice: ((String) -> Unit)? = null,
     onInviteMembers: () -> Unit = {},
     onViewInviteLinks: () -> Unit = {},
+    onGroupFiles: () -> Unit = {},
     onLeaveGroup: () -> Unit = {},
     onBack: (() -> Unit)? = null,
     // 成员管理操作（仅群主/管理员可用）
@@ -135,6 +137,17 @@ fun GroupDetailScreen(
             // 群公告
             NoticeSection(notice = chat.notice, canEdit = isOwner && onEditNotice != null,
                 onClick = { showNoticeEdit = true })
+
+            HorizontalDivider()
+
+            ListItem(
+                leadingContent = {
+                    Icon(Icons.Filled.FolderShared, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                },
+                headlineContent = { Text("共享文件") },
+                supportingContent = { Text("群成员共同维护的文件和版本") },
+                modifier = Modifier.clickable(onClick = onGroupFiles).testTag("group.detail.files"),
+            )
 
             HorizontalDivider()
 

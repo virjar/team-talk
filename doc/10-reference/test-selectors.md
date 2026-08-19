@@ -109,6 +109,20 @@
 | `search.msg.query` / `search.msg.submit` | 消息搜索 |
 | `search.msg.result.{chatId前12}.{serverSeq}` | 消息搜索结果 |
 
+## 群文件
+
+| testTag | 作用 |
+|---|---|
+| `group.detail.files` | 从群设置进入群文件 |
+| `group.files.upload` / `group.files.createFolder` | 上传文件与新建目录入口 |
+| `group.files.createFolder.{dialog|input|confirm|cancel}` | 新建目录弹窗及其操作 |
+| `group.files.entry.{entryId前8}` | 文件或目录项 |
+| `group.files.entry.{entryId前8}.more` | 条目更多操作 |
+| `group.files.rename.{dialog|input|confirm|cancel}` | 重命名弹窗及其操作 |
+| `group.files.delete.{dialog|confirm|cancel}` | 删除确认弹窗及其操作 |
+| `group.files.versions.{dialog|upload|close}` | 版本记录弹窗及其操作 |
+| `group.files.version.{version}.open` | 打开指定历史版本 |
+
 ## 命名规则
 
 - 静态控件使用 `领域.角色`，例如 `chat.send`。
