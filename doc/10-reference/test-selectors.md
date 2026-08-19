@@ -140,11 +140,14 @@
 | `documents.tree` / `documents.tree.root` | 紧凑目录树与空间根节点 |
 | `documents.node.{nodeId前8}` / `documents.tree.toggle.{nodeId前8}` | 目录节点与文件夹展开/折叠 |
 | `documents.tab.{tabId前12}` | 已打开的跨空间文档标签 |
-| `documents.editor.title` / `documents.editor.body` | 标题与 Markdown 富文本编辑器 |
+| `documents.editor.title` / `documents.editor.body` / `documents.editor.blocks` | 标题、文档编辑器与无损块级画布 |
 | `documents.editor.source` / `documents.editor.source.body` | Markdown 源码模式及其无损正文输入 |
-| `documents.editor.preview.source` | 高级 Markdown 无损只读源码预览 |
 | `documents.editor.format.{undo|redo|heading|bold|italic|strike|code|link|bullets|numbered|indent|outdent}` | 文档格式工具栏 |
 | `documents.editor.format.heading.{0..6}` | 正文及 H1–H6 段落样式 |
+| `documents.editor.block.{rich|quote|code|table|insert}` | 在活动光标位置插入正文、引用、代码块或表格；窄屏使用插入菜单 |
+| `documents.editor.block.bottom.{rich|quote|code|table}` | 在文档末尾追加内容块 |
+| `documents.editor.{rich|quote|code|table|raw}.*` | 各类可视内容块；未建模扩展只使用局部 raw 卡片 |
+| `documents.editor.table.header.*.align.{column}` | 循环切换表格列的默认、居中、右对齐和左对齐 |
 | `documents.editor.preview` / `documents.editor.save` | 编辑预览切换与保存 |
 | `documents.editor.history` / `documents.revisions.dialog` | 打开版本历史及其弹窗 |
 | `documents.document.more` | 文档级更多操作 |

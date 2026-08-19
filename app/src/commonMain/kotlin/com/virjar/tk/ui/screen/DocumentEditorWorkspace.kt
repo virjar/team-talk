@@ -25,7 +25,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,6 +70,9 @@ internal fun DocumentEditorWorkspace(
     val tabScroll = rememberScrollState()
     val density = LocalDensity.current
     val spaceNames = remember(spaces) { spaces.associate { it.spaceId to it.name } }
+    var activeDraftSnapshot by remember {
+        mutableStateOf<(() -> DocumentEditorDraftSnapshot)?>(null)
+    }
     val canEdit = spaces.firstOrNull { it.spaceId == activeTab?.spaceId }
         ?.myRole?.let { it >= DocumentSpace.ROLE_EDITOR } ?: false
 
@@ -113,7 +119,23 @@ internal fun DocumentEditorWorkspace(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                             }
-                            IconButton(onClick = { onCloseTab(tab) }, modifier = Modifier.size(34.dp)) {
+                            IconButton(
+                                onClick = {
+                                    val latest = if (tab.tabId == activeTab?.tabId) {
+                                        activeDraftSnapshot?.invoke()
+                                    } else {
+                                        null
+                                    }
+                                    onCloseTab(
+                                        if (latest == null) tab else tab.copy(
+                                            draftTitle = latest.title,
+                                            draftMarkdown = latest.markdown,
+                                            dirty = latest.dirty,
+                                        )
+                                    )
+                                },
+                                modifier = Modifier.size(34.dp),
+                            ) {
                                 Icon(Icons.Filled.Close, contentDescription = "关闭标签", Modifier.size(16.dp))
                             }
                         }
@@ -134,6 +156,7 @@ internal fun DocumentEditorWorkspace(
                     saving = saving,
                     canEdit = canEdit,
                     onUpdateDraft = onUpdateDraft,
+                    onRegisterDraftSnapshot = { activeDraftSnapshot = it },
                     onSave = onSave,
                     onDelete = onDelete,
                     onShowHistory = onShowHistory,

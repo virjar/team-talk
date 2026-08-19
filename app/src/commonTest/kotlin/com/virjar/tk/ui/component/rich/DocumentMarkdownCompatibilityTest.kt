@@ -8,7 +8,7 @@ import kotlin.test.assertTrue
 class DocumentMarkdownCompatibilityTest {
 
     @Test
-    fun `富文本编辑器已支持的基础语法不切换源码模式`() {
+    fun `富文本编辑器已支持的基础语法不生成局部源码块`() {
         val markdown = """
             # 标题
 
@@ -21,7 +21,7 @@ class DocumentMarkdownCompatibilityTest {
 
         val result = DocumentMarkdownCompatibility.inspect(markdown)
 
-        assertFalse(result.requiresSourceMode)
+        assertFalse(result.requiresLocalSourceBlock)
         assertEquals(emptySet(), result.unsupportedFeatures)
     }
 
@@ -56,14 +56,14 @@ class DocumentMarkdownCompatibilityTest {
     }
 
     @Test
-    fun `只有非标准有序编号需要源码模式`() {
-        assertFalse(DocumentMarkdownCompatibility.inspect("1. 一\n2. 二\n3. 三").requiresSourceMode)
+    fun `只有非标准有序编号需要局部源码块`() {
+        assertFalse(DocumentMarkdownCompatibility.inspect("1. 一\n2. 二\n3. 三").requiresLocalSourceBlock)
         assertUnsupported("7. 七\n8. 八", DocumentMarkdownUnsupportedFeature.NON_CANONICAL_ORDERED_LIST)
         assertUnsupported("1. 一\n3. 三", DocumentMarkdownUnsupportedFeature.NON_CANONICAL_ORDERED_LIST)
     }
 
     @Test
-    fun `链接扩展和多反引号代码必须进入源码模式`() {
+    fun `链接扩展和多反引号代码必须进入局部源码块`() {
         assertUnsupported(
             "[文档](https://im.virjar.com \"内部说明\")",
             DocumentMarkdownUnsupportedFeature.LINK_TITLE,
@@ -87,7 +87,7 @@ class DocumentMarkdownCompatibilityTest {
         feature: DocumentMarkdownUnsupportedFeature,
     ) {
         val result = DocumentMarkdownCompatibility.inspect(markdown)
-        assertTrue(result.requiresSourceMode, "应为源码模式：$markdown")
+        assertTrue(result.requiresLocalSourceBlock, "应使用局部源码块：$markdown")
         assertTrue(feature in result.unsupportedFeatures, "未识别 $feature：${result.unsupportedFeatures}")
     }
 }

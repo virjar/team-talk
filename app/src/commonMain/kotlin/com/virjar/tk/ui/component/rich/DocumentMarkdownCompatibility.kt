@@ -12,8 +12,9 @@ import org.intellij.markdown.parser.MarkdownParser
 /**
  * 当前富文本编辑器不能无损写回的 Markdown 结构。
  *
- * 这是文档编辑入口的保守能力门禁，而不是 Markdown 预览器的能力表：命中任一结构时应使用
- * 源码模式，避免一次普通编辑把原文中尚未建模的结构静默改写或删除。
+ * 这是单个文档块的保守能力门禁，而不是 Markdown 预览器的能力表：命中任一结构时只让该块
+ * 使用局部源码卡片，避免普通编辑把尚未建模的结构静默改写或删除。代码块、引用和表格由外层
+ * [DocumentMarkdownBlockCodec] 提前投影成一等可视块，不会命中整篇文档的降级路径。
  */
 internal enum class DocumentMarkdownUnsupportedFeature {
     FENCED_CODE_BLOCK,
@@ -37,7 +38,7 @@ internal enum class DocumentMarkdownUnsupportedFeature {
 internal data class DocumentMarkdownCompatibility(
     val unsupportedFeatures: Set<DocumentMarkdownUnsupportedFeature>,
 ) {
-    val requiresSourceMode: Boolean
+    val requiresLocalSourceBlock: Boolean
         get() = unsupportedFeatures.isNotEmpty()
 
     companion object {

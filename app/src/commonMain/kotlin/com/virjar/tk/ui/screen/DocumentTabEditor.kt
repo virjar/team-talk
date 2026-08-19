@@ -19,10 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -46,7 +43,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,23 +53,32 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import com.mohamedrejeb.richeditor.model.rememberRichTextState
-import com.mohamedrejeb.richeditor.ui.BasicRichTextEditor
 import com.virjar.tk.model.DocumentRevision
 import com.virjar.tk.model.DocumentRevisionSummary
 import com.virjar.tk.navigation.feature.DocumentTabState
-import com.virjar.tk.ui.component.rich.DocumentMarkdownCompatibility
-import com.virjar.tk.ui.component.rich.MarkdownText
-import com.virjar.tk.ui.component.rich.RichTextFormattingToolbar
-import com.virjar.tk.ui.component.rich.RichTextToolbarMode
+import com.virjar.tk.ui.component.rich.DocumentBlockEditor
+import com.virjar.tk.ui.component.rich.DocumentBlockFormattingToolbar
+import com.virjar.tk.ui.component.rich.DocumentMarkdownPreview
 import com.virjar.tk.ui.component.rich.normalizeRichTextLink
+import com.virjar.tk.ui.component.rich.rememberDocumentBlockEditorController
+
+internal data class DocumentEditorDraftSnapshot(
+    val title: String,
+    val markdown: String,
+    val dirty: Boolean,
+)
+
+/** A per-editor-instance stable handle; an old tab must never read a new tab's capture lambda. */
+internal class DocumentDraftCaptureHandle(
+    var action: () -> DocumentEditorDraftSnapshot,
+) {
+    fun capture(): DocumentEditorDraftSnapshot = action()
+}
 
 @Composable
 internal fun DocumentTabEditor(
@@ -80,6 +88,7 @@ internal fun DocumentTabEditor(
     saving: Boolean,
     canEdit: Boolean,
     onUpdateDraft: (String, String, String, Boolean) -> Unit,
+    onRegisterDraftSnapshot: ((() -> DocumentEditorDraftSnapshot)?) -> Unit,
     onSave: () -> Unit,
     onDelete: () -> Unit,
     onShowHistory: () -> Unit,
@@ -91,55 +100,66 @@ internal fun DocumentTabEditor(
 ) {
     val uriHandler = LocalUriHandler.current
     val editorKey = "${tab.tabId}:${tab.revision ?: 0}"
-    val richState = rememberRichTextState()
-    val inputFocus = remember { FocusRequester() }
-    val initialTitle = remember(editorKey) { tab.draftTitle }
+    val blockController = rememberDocumentBlockEditorController(editorKey)
+    val baselineTitle = remember(editorKey) { tab.savedTitle }
     var title by remember(editorKey) { mutableStateOf(tab.draftTitle) }
-    var baselineMarkdown by remember(editorKey) { mutableStateOf(tab.savedMarkdown) }
+    val baselineMarkdown = remember(editorKey) { tab.savedMarkdown }
+    var blockMarkdown by remember(editorKey) { mutableStateOf(tab.draftMarkdown) }
     var sourceMarkdown by remember(editorKey) { mutableStateOf(tab.draftMarkdown) }
-    var sourceMode by remember(editorKey) {
-        mutableStateOf(DocumentMarkdownCompatibility.inspect(tab.draftMarkdown).requiresSourceMode)
-    }
+    var sourceMode by remember(editorKey) { mutableStateOf(false) }
     var editorReady by remember(editorKey) { mutableStateOf(false) }
     var dirty by remember(editorKey) { mutableStateOf(tab.dirty || tab.creating) }
     var previewMode by remember(editorKey, canEdit) { mutableStateOf(!canEdit) }
     var historyDialog by remember(editorKey) { mutableStateOf(false) }
     var deleteDialog by remember(editorKey) { mutableStateOf(false) }
     var documentMenu by remember(editorKey) { mutableStateOf(false) }
-    var pendingRichEditorFocus by remember(editorKey) { mutableStateOf(false) }
 
     LaunchedEffect(editorKey) {
         editorReady = false
+        blockMarkdown = tab.draftMarkdown
         sourceMarkdown = tab.draftMarkdown
-        sourceMode = DocumentMarkdownCompatibility.inspect(tab.draftMarkdown).requiresSourceMode
-        if (!sourceMode) richState.setMarkdown(tab.draftMarkdown)
-        // RichTextEditor 会在首次布局时补齐段落与列表信息。等两帧后再记录干净基线，
-        // 避免把编辑器自身的 Markdown 规范化误判成用户修改。
+        sourceMode = false
+        // Block codec 会原样保留所有未编辑源码。等待画布挂载后再开始同步草稿，
+        // 避免初始化期间的子编辑器状态被误判为用户输入。
         withFrameNanos { }
         withFrameNanos { }
-        if (!tab.dirty && !tab.creating) {
-            baselineMarkdown = if (sourceMode) tab.savedMarkdown else richState.toMarkdown()
-        }
         editorReady = true
     }
     val currentMarkdown = if (editorReady) {
-        if (sourceMode) sourceMarkdown else richState.toMarkdown()
+        if (sourceMode) sourceMarkdown else blockMarkdown
     } else tab.draftMarkdown
-    val sourceCompatibility = remember(sourceMarkdown) { DocumentMarkdownCompatibility.inspect(sourceMarkdown) }
-    val previewCompatibility = remember(currentMarkdown) { DocumentMarkdownCompatibility.inspect(currentMarkdown) }
     LaunchedEffect(editorReady, title, currentMarkdown, sourceMode) {
         if (!editorReady) return@LaunchedEffect
-        if (title != initialTitle || currentMarkdown != baselineMarkdown) dirty = true
+        dirty = tab.creating || title != baselineTitle || currentMarkdown != baselineMarkdown
         onUpdateDraft(tab.tabId, title, currentMarkdown, dirty)
     }
-    LaunchedEffect(pendingRichEditorFocus, sourceMode, previewMode, canEdit) {
-        if (pendingRichEditorFocus && canEdit && !sourceMode && !previewMode) {
-            // sourceMode 变更提交后 BasicRichTextEditor 才会进入焦点树，再等一帧请求焦点。
-            // 直接在按钮回调中请求会命中尚未挂载的 FocusRequester 并抛异常。
-            withFrameNanos { }
-            pendingRichEditorFocus = false
-            inputFocus.requestFocus()
+
+    fun latestVisualMarkdown(): String = blockController.snapshotMarkdown(blockMarkdown)
+    fun publishDraft(markdown: String): DocumentEditorDraftSnapshot {
+        blockMarkdown = markdown
+        dirty = tab.creating || title != baselineTitle || markdown != baselineMarkdown
+        onUpdateDraft(tab.tabId, title, markdown, dirty)
+        return DocumentEditorDraftSnapshot(title, markdown, dirty)
+    }
+    fun captureLatestDraft(): DocumentEditorDraftSnapshot = publishDraft(
+        if (sourceMode) sourceMarkdown else latestVisualMarkdown()
+    )
+    val draftCaptureHandle = remember(editorKey) {
+        DocumentDraftCaptureHandle { captureLatestDraft() }
+    }
+    SideEffect { draftCaptureHandle.action = { captureLatestDraft() } }
+    val stableDraftCapture = remember(editorKey) {
+        { draftCaptureHandle.capture() }
+    }
+    DisposableEffect(editorKey) {
+        onRegisterDraftSnapshot(stableDraftCapture)
+        onDispose {
+            stableDraftCapture()
+            onRegisterDraftSnapshot(null)
         }
+    }
+    LaunchedEffect(canEdit) {
+        if (!canEdit) stableDraftCapture()
     }
 
     if (deleteDialog) {
@@ -173,18 +193,25 @@ internal fun DocumentTabEditor(
 
     val toggleSourceMode = {
         if (sourceMode) {
-            if (!sourceCompatibility.requiresSourceMode) {
-                richState.setMarkdown(sourceMarkdown)
-                sourceMode = false
-                pendingRichEditorFocus = true
-            }
+            blockMarkdown = sourceMarkdown
+            sourceMode = false
         } else {
-            sourceMarkdown = richState.toMarkdown()
+            val latest = latestVisualMarkdown()
+            publishDraft(latest)
+            sourceMarkdown = latest
             sourceMode = true
         }
     }
+    val togglePreviewMode = {
+        if (!previewMode) {
+            val latest = if (sourceMode) sourceMarkdown else latestVisualMarkdown()
+            if (!sourceMode) publishDraft(latest)
+        }
+        previewMode = !previewMode
+    }
     val saveDocument = {
-        onUpdateDraft(tab.tabId, title, currentMarkdown, dirty)
+        val latest = if (sourceMode) sourceMarkdown else latestVisualMarkdown()
+        publishDraft(latest)
         onSave()
     }
 
@@ -221,10 +248,9 @@ internal fun DocumentTabEditor(
                                 creating = tab.creating,
                                 previewMode = previewMode,
                                 sourceMode = sourceMode,
-                                canUseRichMode = !sourceCompatibility.requiresSourceMode,
                                 documentMenu = documentMenu,
                                 onToggleSource = toggleSourceMode,
-                                onTogglePreview = { previewMode = !previewMode },
+                                onTogglePreview = togglePreviewMode,
                                 onShowHistory = { historyDialog = true; onShowHistory() },
                                 onShowDocumentMenu = { documentMenu = true },
                                 onDismissDocumentMenu = { documentMenu = false },
@@ -249,10 +275,9 @@ internal fun DocumentTabEditor(
                         creating = tab.creating,
                         previewMode = previewMode,
                         sourceMode = sourceMode,
-                        canUseRichMode = !sourceCompatibility.requiresSourceMode,
                         documentMenu = documentMenu,
                         onToggleSource = toggleSourceMode,
-                        onTogglePreview = { previewMode = !previewMode },
+                        onTogglePreview = togglePreviewMode,
                         onShowHistory = { historyDialog = true; onShowHistory() },
                         onShowDocumentMenu = { documentMenu = true },
                         onDismissDocumentMenu = { documentMenu = false },
@@ -274,18 +299,13 @@ internal fun DocumentTabEditor(
             modifier = Modifier.fillMaxWidth(),
         ) {
             if (canEdit && !previewMode && !sourceMode) {
-                RichTextFormattingToolbar(
-                    state = richState,
-                    mode = RichTextToolbarMode.DOCUMENT,
-                    onRequestFocus = { inputFocus.requestFocus() },
+                DocumentBlockFormattingToolbar(
+                    controller = blockController,
                     modifier = Modifier.fillMaxWidth().padding(4.dp),
-                    testTagPrefix = "documents.editor.format",
                 )
             } else {
                 Text(
-                    if ((previewMode || !canEdit) && previewCompatibility.requiresSourceMode) {
-                        "Markdown 只读源码"
-                    } else if (previewMode || !canEdit) {
+                    if (previewMode || !canEdit) {
                         "Markdown 预览"
                     } else {
                         "Markdown 源码"
@@ -293,20 +313,6 @@ internal fun DocumentTabEditor(
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
-                )
-            }
-        }
-        if (canEdit && !previewMode && sourceMode && sourceCompatibility.requiresSourceMode) {
-            Surface(
-                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f),
-                shape = MaterialTheme.shapes.small,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-            ) {
-                Text(
-                    "正文包含代码块、引用、表格或其他高级 Markdown，已使用源码模式保护原始内容。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                 )
             }
         }
@@ -319,12 +325,10 @@ internal fun DocumentTabEditor(
             if (previewMode || !canEdit) {
                 if (currentMarkdown.isBlank()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("文档内容为空", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                } else if (previewCompatibility.requiresSourceMode) {
-                    UnsupportedMarkdownSourcePreview(currentMarkdown, Modifier.fillMaxSize())
                 } else {
-                    MarkdownText(
-                        currentMarkdown,
-                        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+                    DocumentMarkdownPreview(
+                        markdown = currentMarkdown,
+                        modifier = Modifier.fillMaxSize(),
                         onUrlClick = { url -> normalizeRichTextLink(url)?.let { runCatching { uriHandler.openUri(it) } } },
                     )
                 }
@@ -347,19 +351,13 @@ internal fun DocumentTabEditor(
                     )
                 }
             } else {
-                Box(Modifier.fillMaxSize()) {
-                    BasicRichTextEditor(
-                        state = richState,
-                        modifier = Modifier.fillMaxSize().testTag("documents.editor.body").focusRequester(inputFocus).padding(18.dp),
-                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = androidx.compose.material3.LocalContentColor.current),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    )
-                    if (richState.annotatedString.text.isEmpty()) Text(
-                        "使用 Markdown 组织正文，支持多行、粗体、斜体、删除线和代码。",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(18.dp),
-                    )
-                }
+                DocumentBlockEditor(
+                    documentKey = editorKey,
+                    initialMarkdown = blockMarkdown,
+                    controller = blockController,
+                    onMarkdownChange = { blockMarkdown = it },
+                    modifier = Modifier.fillMaxSize().testTag("documents.editor.body"),
+                )
             }
         }
     }
@@ -419,7 +417,6 @@ private fun DocumentHeaderActions(
     creating: Boolean,
     previewMode: Boolean,
     sourceMode: Boolean,
-    canUseRichMode: Boolean,
     documentMenu: Boolean,
     onToggleSource: () -> Unit,
     onTogglePreview: () -> Unit,
@@ -431,7 +428,6 @@ private fun DocumentHeaderActions(
     if (canEdit) {
         if (!previewMode) TextButton(
             onClick = onToggleSource,
-            enabled = !sourceMode || canUseRichMode,
             modifier = Modifier.testTag("documents.editor.source"),
         ) {
             Icon(if (sourceMode) Icons.Filled.Edit else Icons.Filled.Code, null, Modifier.size(18.dp))
@@ -500,39 +496,6 @@ private fun DocumentSaveAction(
 }
 
 @Composable
-private fun UnsupportedMarkdownSourcePreview(
-    markdown: String,
-    modifier: Modifier = Modifier,
-) {
-    Column(modifier.testTag("documents.editor.preview.source")) {
-        Surface(
-            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.68f),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-                Text(
-                    "完整预览暂不可用",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                )
-                Text(
-                    "正文包含当前预览器不能完整呈现的高级 Markdown，以下按只读源码显示，内容不会被省略。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer,
-                )
-            }
-        }
-        SelectionContainer(Modifier.fillMaxWidth().weight(1f)) {
-            Text(
-                markdown,
-                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
-                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-            )
-        }
-    }
-}
-
-@Composable
 private fun DocumentRevisionDialog(
     title: String,
     currentRevision: Long,
@@ -552,28 +515,17 @@ private fun DocumentRevisionDialog(
         title = { Text("$title · 版本历史") },
         text = {
             if (preview != null) {
-                val previewCompatibility = remember(preview.markdown) {
-                    DocumentMarkdownCompatibility.inspect(preview.markdown)
-                }
                 Column(Modifier.fillMaxWidth()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = onClosePreview) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) }
                         Text("版本 ${preview.revision}", style = MaterialTheme.typography.titleSmall)
                     }
                     HorizontalDivider()
-                    if (previewCompatibility.requiresSourceMode) {
-                        UnsupportedMarkdownSourcePreview(
-                            markdown = preview.markdown,
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 340.dp),
-                        )
-                    } else {
-                        MarkdownText(
-                            preview.markdown,
-                            Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 340.dp)
-                                .verticalScroll(rememberScrollState()).padding(12.dp),
-                            onUrlClick = { url -> normalizeRichTextLink(url)?.let { runCatching { uriHandler.openUri(it) } } },
-                        )
-                    }
+                    DocumentMarkdownPreview(
+                        markdown = preview.markdown,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 340.dp),
+                        onUrlClick = { url -> normalizeRichTextLink(url)?.let { runCatching { uriHandler.openUri(it) } } },
+                    )
                 }
             } else if (revisions.isEmpty()) {
                 Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
