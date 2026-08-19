@@ -2,6 +2,7 @@ package com.virjar.tk.repository
 
 import com.virjar.tk.Outcome
 import com.virjar.tk.model.Document
+import com.virjar.tk.model.DocumentHomeItem
 import com.virjar.tk.model.DocumentNode
 import com.virjar.tk.model.DocumentRevision
 import com.virjar.tk.model.DocumentRevisionSummary
@@ -64,4 +65,10 @@ class DocumentRepository(rpcClient: RpcInvoker) {
         outcome { rpc.listRevisions(spaceId, documentId) }
     suspend fun getRevision(spaceId: String, documentId: String, revision: Long): Outcome<DocumentRevision> =
         outcome { rpc.getRevision(spaceId, documentId, revision) }
+
+    suspend fun listRecentDocuments(limit: Int): Outcome<List<DocumentHomeItem>> =
+        outcome { rpc.listRecentDocuments(limit) }
+
+    suspend fun listRecentlyCreatedDocuments(limit: Int): Outcome<List<DocumentHomeItem>> =
+        outcome { rpc.listRecentlyCreatedDocuments(limit) }
 }

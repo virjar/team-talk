@@ -258,6 +258,10 @@ object DocumentSpaces : Table("document_spaces") {
     val updatedAt = long("updated_at").index()
 
     override val primaryKey = PrimaryKey(spaceId)
+
+    init {
+        index("idx_document_space_owner_active", false, createdBy, status)
+    }
 }
 
 /** 用户或组织部门对文档空间的授权。空间所有者由 DocumentSpaces.createdBy 表示。 */
@@ -281,6 +285,8 @@ object DocumentNodes : Table("document_nodes") {
     val parentId = varchar("parent_id", 36).nullable().index()
     val nodeType = integer("node_type")
     val name = varchar("name", 180)
+    /** 列表与首页投影使用的有界摘要，避免读取最大 1MB 的 Markdown 正文。 */
+    val excerpt = varchar("excerpt", 500).default("")
     val markdown = text("markdown").nullable()
     val revision = long("revision").default(1)
     val status = integer("status").default(1)
@@ -293,6 +299,7 @@ object DocumentNodes : Table("document_nodes") {
 
     init {
         index("idx_document_node_parent", false, spaceId, parentId, status)
+        index("idx_document_node_created", false, spaceId, nodeType, status, createdAt)
     }
 }
 
@@ -307,5 +314,19 @@ object DocumentContentRevisions : LongIdTable("document_content_revisions") {
 
     init {
         uniqueIndex("idx_document_content_revision", documentId, revision)
+    }
+}
+
+/** 每个用户最近打开的文档；一篇文档只保留该用户最后一次访问时间。 */
+object DocumentUserRecents : Table("document_user_recents") {
+    val uid = varchar("uid", 36)
+    val documentId = varchar("document_id", 36)
+    val accessedAt = long("accessed_at")
+
+    override val primaryKey = PrimaryKey(uid, documentId)
+
+    init {
+        index("idx_document_user_recents_order", false, uid, accessedAt)
+        index("idx_document_user_recents_document", false, documentId)
     }
 }

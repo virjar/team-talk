@@ -23,7 +23,7 @@ class PacketCodec(
         const val HEADER_SIZE = 5
 
         /** 协议版本（连接级不变量；AUTH 序言魔第 3 字节协商） */
-        const val PROTOCOL_VERSION: Byte = 5
+        const val PROTOCOL_VERSION: Byte = 6
 
         /** 单帧 payload 上限（认证后） */
         const val MAX_PAYLOAD_SIZE = 16 * 1024 * 1024  // 16MB

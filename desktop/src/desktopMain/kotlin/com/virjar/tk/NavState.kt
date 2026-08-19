@@ -96,7 +96,10 @@ class DesktopNav(session: ClientSession) : AppDataState(session) {
 
     var selectedTab by mutableIntStateOf(0)
 
-    /** 文档工作台可从主窗口拉出；两个宿主共享 [documents] 中的标签与草稿状态。 */
+    /**
+     * 文档工作台可从主窗口拉出。拉出期间主窗口只显示承接态，不再挂载第二个工作台，
+     * 因而独立窗口独占导航位置；[documents] 中的标签与草稿仍可在收回后连续使用。
+     */
     var documentWindowVisible by mutableStateOf(false)
 
     // 当前聊天（右栏聊天面板；null = 空态）

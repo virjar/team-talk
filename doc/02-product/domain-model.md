@@ -132,8 +132,15 @@ DocumentSpace 是企业文档的一级权限边界，与 Chat 和 OrganizationUn
 ### DocumentNode / Document / DocumentRevision
 
 DocumentNode 是空间目录树摘要，文件夹和文档共用 `nodeId`、`spaceId`、`parentId`、名称、revision
-与审计身份。Document 是文档节点的 Markdown 当前快照，`documentId` 等于其 nodeId；目录列表不返回
-完整正文。
+与审计身份。文档节点还持久化有界 `excerpt` 作为目录和首页查询投影。Document 是文档节点的 Markdown
+当前快照，`documentId` 等于其 nodeId；目录和首页列表不读取或返回完整正文。
+
+Document 返回服务端解析的 `ancestorIds`，表示从空间根到直接父目录的有序节点 ID，不包含
+文档自身；根目录文档为空。该字段是当前目录关系的派生定位信息，不是独立的可写入事实；客户端用它
+定位深层文档并按路径懒加载目录树。
+
+DocumentHomeItem 是跨空间首页投影，包含空间、标题、有界摘要、创建人以及创建/更新/当前用户访问
+时间。用户访问时间来自 `(uid, documentId)` 唯一的服务端事实，不能由客户端用更新时间推断。
 
 DocumentRevision 是每次成功保存产生的不可变完整快照。更新、移动和删除必须提交当前
 `expectedRevision`；服务端只允许一个调用获得下一个版本，其余调用收到冲突并保留本地草稿。恢复旧

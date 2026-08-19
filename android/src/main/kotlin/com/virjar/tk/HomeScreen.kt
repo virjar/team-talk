@@ -59,14 +59,17 @@ fun HomeScreen(
     Scaffold(
         modifier = Modifier.testTag("main.home"),
         topBar = {
-            TopAppBar(
-                title = { Text(tabIcons[selectedTab].second) },
-                actions = {
-                    IconButton(onClick = onGlobalSearch, modifier = Modifier.testTag("action.search")) {
-                        Icon(Icons.Filled.Search, contentDescription = "全局搜索")
-                    }
-                },
-            )
+            // 文档拥有自己的首页/空间标题栏；叠加通用 TopAppBar 会形成两个页面标题。
+            if (MainTab.entries[selectedTab] != MainTab.DOCUMENTS) {
+                TopAppBar(
+                    title = { Text(tabIcons[selectedTab].second) },
+                    actions = {
+                        IconButton(onClick = onGlobalSearch, modifier = Modifier.testTag("action.search")) {
+                            Icon(Icons.Filled.Search, contentDescription = "全局搜索")
+                        }
+                    },
+                )
+            }
         },
         bottomBar = {
             NavigationBar {
@@ -118,7 +121,11 @@ fun HomeScreen(
                         onFriendApplies = onFriendApplies,
                     )
                 }
-                MainTab.DOCUMENTS -> DocumentWorkspaceHost(workspace = dataState.documents)
+                MainTab.DOCUMENTS -> DocumentWorkspaceHost(
+                    workspace = dataState.documents,
+                    // 文档首页再返回时回到应用一级会话页，不直接退出 Activity；未保存标签仍留在 session。
+                    onExitDocuments = { selectedTab = MainTab.CONVERSATIONS.ordinal },
+                )
                 MainTab.SETTINGS -> MeScreen(
                     currentUser = dataState.account.currentUser,
                     onLogout = onLogout,

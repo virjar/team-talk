@@ -152,10 +152,17 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 | 14 | `deleteNode` | `spaceId`, `nodeId`, `expectedRevision` | `Unit` |
 | 15 | `listRevisions` | `spaceId`, `documentId` | `List<DocumentRevisionSummary>` |
 | 16 | `getRevision` | `spaceId`, `documentId`, `revision` | `DocumentRevision` |
+| 17 | `listRecentDocuments` | `limit` | `List<DocumentHomeItem>` |
+| 18 | `listRecentlyCreatedDocuments` | `limit` | `List<DocumentHomeItem>` |
 
-协议版本 5 起，文档不再接受群 scope。所有调用按认证 uid 合并空间所有权、用户授权和实时组织部门
+协议版本 6 使用上述完整方法集；文档从版本 5 起不再接受群 scope。所有调用按认证 uid 合并空间所有权、用户授权和实时组织部门
 授权。目录列表不返回 Markdown，修订列表只返回摘要；更新、移动和删除必须使用客户端实际读取到的
 revision，冲突由服务端拒绝，错误文案不作为并发控制协议。
+
+首页两类列表都限制 `limit` 为 1..50，并只返回调用者当前仍可访问的活动空间与活动文档。最近访问按
+当前用户成功打开正文的服务端时间排序；最近创建按所有可访问空间的 `createdAt` 排序，并非“我创建
+的文档”。`DocumentHomeItem` 只携带有界摘要、空间、创建人和时间元数据，正文仍通过 `getDocument`
+按需读取。
 
 ## 状态与错误
 

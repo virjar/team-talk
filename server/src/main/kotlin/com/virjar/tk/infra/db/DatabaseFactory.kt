@@ -50,6 +50,7 @@ object DatabaseFactory {
                 AutomationBots, AutomationBotGrants,
                 GroupFileEntries, GroupFileVersions, GroupFileAudits,
                 DocumentSpaces, DocumentSpaceGrants, DocumentNodes, DocumentContentRevisions,
+                DocumentUserRecents,
             )
         }
 

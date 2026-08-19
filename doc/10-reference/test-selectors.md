@@ -128,11 +128,15 @@
 | testTag | 作用 |
 |---|---|
 | `nav.tab.文档` / `documents.workspace` | 一级文档入口与工作台根节点 |
+| `documents.home` / `documents.home.spaces` / `documents.home.recents` | 文档资产首页、空间索引与最近列表 |
+| `documents.home.recent.{documentId前8}` / `documents.home.created.{documentId前8}` | 首页最近访问与最近创建文档 |
 | `documents.space.create` / `documents.space.create.dialog` | 新建空间入口与弹窗 |
 | `documents.space.{spaceId前8}` | 空间列表项 |
+| `documents.space.workspace` / `documents.space.back` / `documents.space.overview` | 空间工作区、返回首页与空间概览 |
 | `documents.space.settings` / `documents.space.settings.dialog` | 空间信息与授权管理 |
 | `documents.folder.create` / `documents.document.create` | 新建目录或文档 |
-| `documents.node.{nodeId前8}` | 当前目录节点 |
+| `documents.tree` / `documents.tree.root` | 紧凑目录树与空间根节点 |
+| `documents.node.{nodeId前8}` / `documents.tree.toggle.{nodeId前8}` | 目录节点与文件夹展开/折叠 |
 | `documents.tab.{tabId前12}` | 已打开的跨空间文档标签 |
 | `documents.editor.title` / `documents.editor.body` | 标题与 Markdown 富文本编辑器 |
 | `documents.editor.preview` / `documents.editor.save` | 编辑预览切换与保存 |

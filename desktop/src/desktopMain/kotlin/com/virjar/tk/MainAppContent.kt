@@ -76,14 +76,23 @@ internal fun WindowScope.MainAppContent(
     val contacts by nav.contactViewModel.contacts.collectAsState()
     val pendingApplyCount by nav.contactViewModel.pendingApplyCount.collectAsState()
     val directoryScope = rememberCoroutineScope()
+    var documentsInitialized by remember { mutableStateOf(false) }
 
-    LaunchedEffect(nav.selectedTab) {
+    LaunchedEffect(nav.selectedTab, nav.documentWindowVisible) {
         when (MainTab.entries[nav.selectedTab]) {
             MainTab.CONTACTS -> {
                 nav.contactViewModel.refreshPendingApplyCount()
                 nav.organization.refresh()
             }
-            MainTab.DOCUMENTS -> nav.documents.open()
+            MainTab.DOCUMENTS -> if (!nav.documentWindowVisible) {
+                if (documentsInitialized) {
+                    // refresh 保留当前首页/空间位置；open 会回到首页，只用于会话内首次进入。
+                    nav.documents.refresh()
+                } else {
+                    documentsInitialized = true
+                    nav.documents.open()
+                }
+            }
             else -> Unit
         }
     }

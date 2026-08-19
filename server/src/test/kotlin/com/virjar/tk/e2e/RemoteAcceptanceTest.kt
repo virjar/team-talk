@@ -348,12 +348,27 @@ class RemoteAcceptanceTest {
             ).getOrThrow()
             assertEquals(1L, created.revision)
             assertEquals(
+                listOf(created.documentId),
+                ownerDocs.listRecentDocuments(10).getOrThrow().map { it.documentId },
+                "创建文档与创建者最近访问必须同一提交可见",
+            )
+            val memberCreated = memberDocs.listRecentlyCreatedDocuments(10).getOrThrow().single()
+            assertEquals(created.documentId, memberCreated.documentId)
+            assertEquals(space.name, memberCreated.spaceName)
+            assertEquals("第一版", memberCreated.excerpt)
+            assertTrue(memberDocs.listRecentDocuments(10).getOrThrow().isEmpty())
+            assertEquals(
                 listOf("远程产品说明"),
                 memberDocs.listNodes(space.spaceId, folder.nodeId).getOrThrow().map { it.name },
             )
             assertTrue(
                 outsiderDocs.getDocument(space.spaceId, created.documentId) is Outcome.Failure,
                 "未授权用户不能读取文档",
+            )
+            memberDocs.getDocument(space.spaceId, created.documentId).getOrThrow()
+            assertEquals(
+                listOf(created.documentId),
+                memberDocs.listRecentDocuments(10).getOrThrow().map { it.documentId },
             )
 
             val updated = memberDocs.updateDocument(
@@ -364,6 +379,11 @@ class RemoteAcceptanceTest {
                 created.revision,
             ).getOrThrow()
             assertEquals(2L, updated.revision)
+            assertEquals(
+                "第二版",
+                ownerDocs.listNodes(space.spaceId, folder.nodeId).getOrThrow().single().excerpt,
+                "目录投影摘要必须随正文保存更新",
+            )
             assertTrue(
                 ownerDocs.updateDocument(
                     space.spaceId,
@@ -390,7 +410,11 @@ class RemoteAcceptanceTest {
                 memberDocs.getDocument(space.spaceId, created.documentId) is Outcome.Failure,
                 "撤销空间授权后不能继续读取文档",
             )
+            assertTrue(memberDocs.listRecentDocuments(10).getOrThrow().isEmpty(), "撤权后最近访问也必须过滤")
+            assertTrue(memberDocs.listRecentlyCreatedDocuments(10).getOrThrow().isEmpty(), "撤权后最近创建也必须过滤")
             ownerDocs.deleteNode(space.spaceId, created.documentId, updated.revision).getOrThrow()
+            assertTrue(ownerDocs.listRecentDocuments(10).getOrThrow().isEmpty(), "删除后最近访问不可见")
+            assertTrue(ownerDocs.listRecentlyCreatedDocuments(10).getOrThrow().isEmpty(), "删除后最近创建不可见")
             ownerDocs.deleteNode(space.spaceId, folder.nodeId, folder.revision).getOrThrow()
             assertTrue(ownerDocs.listNodes(space.spaceId, null).getOrThrow().isEmpty())
         } finally {

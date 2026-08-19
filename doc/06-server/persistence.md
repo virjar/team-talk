@@ -67,13 +67,25 @@ document_spaces 保存空间元数据、创建者所有权与归档状态。docu
 
 ### document_nodes / document_content_revisions
 
-document_nodes 同时保存目录树、文档当前 Markdown 快照、revision 和创建/修改身份；文件夹正文为 null。
-parentId 必须指向同空间文件夹，循环约束由领域服务在写入前检查。删除只改变 status 并推进 revision。
+document_nodes 同时保存目录树、文档当前 Markdown 快照、有界 excerpt 投影、revision 和创建/修改身份；
+文件夹正文为 null。目录和首页查询必须只投影 excerpt，不能用 `selectAll` 把正文载入内存。parentId 必须
+指向同空间的活动文件夹。活动文件夹图最深包含 128 个文件夹，文档因而最多返回 128 个祖先 ID。创建、
+移动和删除在同一
+PostgreSQL 事务中锁定 document_spaces 行，然后复验父节点、环、整个活动子树深度和空目录约束；
+领域层的提前检查只用于快速报错，仓储事务才是并发下的最终不变量边界。删除只改变 status 并推进
+revision。
+
+当前祖先链解析采用最多 128 次的有界逐层 SQL，代码简单且便于每层执行防御性校验。当单空间规模或深层
+打开频率成为瓶颈时，应改为受深度限制的 recursive CTE 或批量路径投影，但不能牺牲同空间、活动文件夹和防环校验。
 
 document_content_revisions 只追加每次成功保存的标题与完整 Markdown 快照，
 `(documentId, revision)` 唯一。更新在锁定 document_nodes 当前行的同一事务内完成 revision 条件写和
 修订插入，避免两个并发保存都成功。完整快照简化恢复与验收，但会增加存储；增量压缩、保留期和管理
 员审计属于生产化后续设计。
+
+document_user_recents 以 `(uid, documentId)` 为主键保存最后访问时间。创建文档时，创建者的访问记录与
+文档及首个修订在同一事务提交；读取正文后的访问更新是辅助索引，失败不得把已授权正文伪装成读取
+失败。最近列表查询仍需实时过滤空间 ACL、空间归档和节点删除，历史访问记录本身不是权限凭据。
 
 ## 3. MessageStore
 

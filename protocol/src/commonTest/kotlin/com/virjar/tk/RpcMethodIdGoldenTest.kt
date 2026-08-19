@@ -134,6 +134,8 @@ class RpcMethodIdGoldenTest {
         assertEquals(14, DocumentRpcContract.M_DELETE_NODE)
         assertEquals(15, DocumentRpcContract.M_LIST_REVISIONS)
         assertEquals(16, DocumentRpcContract.M_GET_REVISION)
+        assertEquals(17, DocumentRpcContract.M_LIST_RECENT_DOCUMENTS)
+        assertEquals(18, DocumentRpcContract.M_LIST_RECENTLY_CREATED_DOCUMENTS)
     }
 
     @Test

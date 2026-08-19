@@ -1,14 +1,16 @@
 package com.virjar.tk.rpc.def
 
 import com.virjar.tk.model.Document
+import com.virjar.tk.model.DocumentHomeItem
 import com.virjar.tk.model.DocumentNode
 import com.virjar.tk.model.DocumentRevision
 import com.virjar.tk.model.DocumentRevisionSummary
 import com.virjar.tk.model.DocumentSpace
 import com.virjar.tk.model.DocumentSpaceGrant
 import com.virjar.tk.rpc.RpcService
+import com.virjar.tk.rpc.RpcMethod
 
-/** 企业文档空间 RPC。协议版本 5 起，文档不再以群聊作为根作用域。 */
+/** 企业文档空间 RPC。协议版本 5 起文档不再以群聊为根；版本 6 增加企业文档首页索引。 */
 @RpcService("document")
 interface DocumentRpc {
     suspend fun listSpaces(): List<DocumentSpace>
@@ -45,4 +47,10 @@ interface DocumentRpc {
     suspend fun deleteNode(spaceId: String, nodeId: String, expectedRevision: Long)
     suspend fun listRevisions(spaceId: String, documentId: String): List<DocumentRevisionSummary>
     suspend fun getRevision(spaceId: String, documentId: String, revision: Long): DocumentRevision
+
+    @RpcMethod(17)
+    suspend fun listRecentDocuments(limit: Int): List<DocumentHomeItem>
+
+    @RpcMethod(18)
+    suspend fun listRecentlyCreatedDocuments(limit: Int): List<DocumentHomeItem>
 }

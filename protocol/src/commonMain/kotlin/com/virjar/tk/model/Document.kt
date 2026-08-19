@@ -18,6 +18,8 @@ data class Document(
     val createdAt: Long,
     val updatedBy: String,
     val updatedAt: Long,
+    /** 当前文档所在目录链，顺序固定为 root → parent，不包含文档自身。 */
+    val ancestorIds: List<String> = emptyList(),
 ) : IProto {
     override fun writeTo(buf: PacketBuffer) {
         buf.writeString(documentId)
@@ -30,20 +32,40 @@ data class Document(
         buf.writeVarLong(createdAt)
         buf.writeString(updatedBy)
         buf.writeVarLong(updatedAt)
+        require(ancestorIds.size <= MAX_ANCESTOR_DEPTH) { "文档目录层级超过限制" }
+        buf.writeVarInt(ancestorIds.size)
+        ancestorIds.forEach(buf::writeString)
     }
 
     companion object : IProtoReader<Document> {
-        override fun readFrom(buf: PacketBuffer): Document = Document(
-            documentId = buf.readString()!!,
-            spaceId = buf.readString()!!,
-            parentId = buf.readString(),
-            title = buf.readString()!!,
-            markdown = buf.readString()!!,
-            revision = buf.readVarLong(),
-            createdBy = buf.readString()!!,
-            createdAt = buf.readVarLong(),
-            updatedBy = buf.readString()!!,
-            updatedAt = buf.readVarLong(),
-        )
+        const val MAX_ANCESTOR_DEPTH = 128
+
+        override fun readFrom(buf: PacketBuffer): Document {
+            val documentId = buf.readString()!!
+            val spaceId = buf.readString()!!
+            val parentId = buf.readString()
+            val title = buf.readString()!!
+            val markdown = buf.readString()!!
+            val revision = buf.readVarLong()
+            val createdBy = buf.readString()!!
+            val createdAt = buf.readVarLong()
+            val updatedBy = buf.readString()!!
+            val updatedAt = buf.readVarLong()
+            val ancestorCount = buf.readVarInt()
+            require(ancestorCount in 0..MAX_ANCESTOR_DEPTH) { "文档目录层级非法" }
+            return Document(
+                documentId = documentId,
+                spaceId = spaceId,
+                parentId = parentId,
+                title = title,
+                markdown = markdown,
+                revision = revision,
+                createdBy = createdBy,
+                createdAt = createdAt,
+                updatedBy = updatedBy,
+                updatedAt = updatedAt,
+                ancestorIds = List(ancestorCount) { buf.readString()!! },
+            )
+        }
     }
 }

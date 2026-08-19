@@ -200,6 +200,8 @@ class DocumentRpcImpl(uid: String, private val service: DocumentService) : Docum
         service.listRevisions(uid, spaceId, documentId)
     override suspend fun getRevision(spaceId: String, documentId: String, revision: Long) =
         service.getRevision(uid, spaceId, documentId, revision)
+    override suspend fun listRecentDocuments(limit: Int) = service.listRecentDocuments(uid, limit)
+    override suspend fun listRecentlyCreatedDocuments(limit: Int) = service.listRecentlyCreatedDocuments(uid, limit)
 }
 
 /** 服务注册表：serviceId → 每请求 Stub 工厂（uid 注入）。由 Koin 装配。 */

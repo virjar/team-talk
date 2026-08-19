@@ -11,7 +11,10 @@ import androidx.compose.ui.window.rememberWindowState
 import com.virjar.tk.ui.AppTheme
 import com.virjar.tk.ui.screen.DocumentWorkspaceHost
 
-/** Desktop 文档专用窗口；与主窗口共享同一个 session-scoped 工作台状态。 */
+/**
+ * Desktop 文档专用窗口。它显示期间是文档导航的唯一宿主；主窗口只保留承接态，
+ * 关闭或收回后再由主窗口接续同一个 session-scoped 工作台状态与未保存草稿。
+ */
 @Composable
 internal fun DocumentWorkspaceWindow(nav: DesktopNav, onClose: () -> Unit) {
     Window(

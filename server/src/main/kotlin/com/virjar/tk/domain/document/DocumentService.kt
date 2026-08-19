@@ -3,12 +3,14 @@ package com.virjar.tk.domain.document
 import com.virjar.tk.domain.organization.OrganizationRepository
 import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.model.Document
+import com.virjar.tk.model.DocumentHomeItem
 import com.virjar.tk.model.DocumentNode
 import com.virjar.tk.model.DocumentRevision
 import com.virjar.tk.model.DocumentRevisionSummary
 import com.virjar.tk.model.DocumentSpace
 import com.virjar.tk.model.DocumentSpaceGrant
 import com.virjar.tk.model.UserRole
+import org.slf4j.LoggerFactory
 import java.util.UUID
 
 /**
@@ -22,9 +24,9 @@ class DocumentService(
     private val organizations: OrganizationRepository,
     private val users: UserStore,
 ) {
-    fun listSpaces(actorUid: String): List<DocumentSpace> = repository.listSpaces().mapNotNull { space ->
-        effectiveRole(actorUid, space).takeIf { it >= DocumentSpace.ROLE_VIEWER }?.let { space.copy(myRole = it) }
-    }
+    private val logger = LoggerFactory.getLogger(DocumentService::class.java)
+
+    fun listSpaces(actorUid: String): List<DocumentSpace> = resolveAccessibleSpaces(actorUid)
 
     fun createSpace(actorUid: String, name: String, description: String?): DocumentSpace {
         val actor = users.findByUid(actorUid) ?: throw IllegalArgumentException("用户不存在")
@@ -169,7 +171,14 @@ class DocumentService(
 
     fun getDocument(actorUid: String, spaceId: String, documentId: String): Document {
         requireRole(actorUid, spaceId, DocumentSpace.ROLE_VIEWER)
-        return requireDocument(spaceId, documentId)
+        val document = requireDocument(spaceId, documentId)
+        try {
+            repository.touchRecentDocument(actorUid, document.documentId, System.currentTimeMillis())
+        } catch (error: Exception) {
+            // 最近访问是个人索引，写入异常不得把已经授权且存在的正文伪装成读取失败。
+            logger.warn("Failed to update document recent access uid={} documentId={}", actorUid, documentId, error)
+        }
+        return document
     }
 
     fun updateDocument(
@@ -253,37 +262,111 @@ class DocumentService(
         return repository.findRevision(documentId, revision) ?: throw IllegalArgumentException("文档版本不存在")
     }
 
+    fun listRecentDocuments(actorUid: String, limit: Int): List<DocumentHomeItem> {
+        validateHomeLimit(limit)
+        val spaces = accessibleSpaces(actorUid)
+        if (spaces.isEmpty()) return emptyList()
+        return repository.listRecentDocuments(actorUid, spaces.keys, limit).map(::toHomeItem)
+    }
+
+    fun listRecentlyCreatedDocuments(actorUid: String, limit: Int): List<DocumentHomeItem> {
+        validateHomeLimit(limit)
+        val spaces = accessibleSpaces(actorUid)
+        if (spaces.isEmpty()) return emptyList()
+        return repository.listRecentlyCreatedDocuments(spaces.keys, limit).map(::toHomeItem)
+    }
+
     private fun requireRole(actorUid: String, spaceId: String, minimum: Int): DocumentSpace {
         val space = repository.findSpace(spaceId) ?: throw IllegalArgumentException("文档空间不存在")
         require(effectiveRole(actorUid, space) >= minimum) { "没有文档空间权限" }
         return space
     }
 
+    private fun accessibleSpaces(actorUid: String): Map<String, DocumentSpace> =
+        resolveAccessibleSpaces(actorUid).associateBy(DocumentSpace::spaceId)
+
+    private fun toHomeItem(record: DocumentHomeRecord): DocumentHomeItem = DocumentHomeItem(
+        documentId = record.documentId,
+        spaceId = record.spaceId,
+        spaceName = record.spaceName,
+        title = record.title,
+        excerpt = record.excerpt,
+        createdBy = record.createdBy,
+        creatorName = record.creatorName,
+        createdAt = record.createdAt,
+        updatedAt = record.updatedAt,
+        accessedAt = record.accessedAt,
+    )
+
+    private fun validateHomeLimit(limit: Int) {
+        require(limit in 1..MAX_HOME_DOCUMENTS) { "首页文档数量必须在 1..$MAX_HOME_DOCUMENTS 之间" }
+    }
+
+    private fun resolveAccessibleSpaces(actorUid: String): List<DocumentSpace> {
+        val access = actorAccess(actorUid)
+        return repository.listSpaceAccessCandidates(
+            actorUid = actorUid,
+            directUnitIds = access.directUnitIds,
+            unitAndAncestorIds = access.unitAndAncestorIds,
+        ).mapNotNull { candidate ->
+            effectiveRole(actorUid, candidate.space, candidate.grants, access)
+                .takeIf { it >= DocumentSpace.ROLE_VIEWER }
+                ?.let { candidate.space.copy(myRole = it) }
+        }
+    }
+
     private fun effectiveRole(actorUid: String, space: DocumentSpace): Int {
         if (space.createdBy == actorUid) return DocumentSpace.ROLE_OWNER
-        val memberships = organizations.listMemberships(actorUid).mapTo(mutableSetOf()) { it.unitId }
-        val units = organizations.listUnits()
-        val children = units.groupBy { it.parentId }
-        fun descendants(unitId: String): Set<String> {
-            val result = linkedSetOf<String>()
-            fun visit(id: String) {
-                if (!result.add(id)) return
-                children[id].orEmpty().forEach { visit(it.unitId) }
-            }
-            visit(unitId)
-            return result
-        }
-        return repository.listGrants(space.spaceId).asSequence().filter { grant ->
+        return effectiveRole(actorUid, space, repository.listGrants(space.spaceId), actorAccess(actorUid))
+    }
+
+    private fun effectiveRole(
+        actorUid: String,
+        space: DocumentSpace,
+        grants: List<DocumentSpaceGrant>,
+        access: ActorAccess,
+    ): Int {
+        if (space.createdBy == actorUid) return DocumentSpace.ROLE_OWNER
+        return grants.asSequence().filter { grant ->
             when (grant.principalType) {
                 DocumentSpaceGrant.PRINCIPAL_USER -> grant.principalId == actorUid
                 DocumentSpaceGrant.PRINCIPAL_ORGANIZATION_UNIT -> if (grant.includeDescendants) {
-                    memberships.any { it in descendants(grant.principalId) }
+                    grant.principalId in access.unitAndAncestorIds
                 } else {
-                    grant.principalId in memberships
+                    grant.principalId in access.directUnitIds
                 }
                 else -> false
             }
         }.maxOfOrNull { it.role } ?: DocumentSpace.ROLE_NONE
+    }
+
+    private fun actorAccess(actorUid: String): ActorAccess {
+        val activeUnits = organizations.listUnits()
+        val activeUnitIds = activeUnits.mapTo(hashSetOf()) { it.unitId }
+        val directUnitIds = organizations.listMemberships(actorUid)
+            .mapNotNullTo(linkedSetOf()) { membership ->
+                membership.unitId.takeIf(activeUnitIds::contains)
+            }
+        if (directUnitIds.isEmpty()) return ActorAccess(emptySet(), emptySet())
+        val parentByUnitId = activeUnits.associate { it.unitId to it.parentId }
+        // 直属关系是独立事实；继承祖先必须来自一条完整无环的活动路径。
+        val unitAndAncestorIds = linkedSetOf<String>().apply { addAll(directUnitIds) }
+        directUnitIds.forEach { directId ->
+            val inheritedPath = arrayListOf<String>()
+            var cursor: String? = directId
+            val visited = hashSetOf<String>()
+            var cycleDetected = false
+            while (cursor != null && cursor in activeUnitIds) {
+                if (!visited.add(cursor)) {
+                    cycleDetected = true
+                    break
+                }
+                inheritedPath += cursor
+                cursor = parentByUnitId[cursor]
+            }
+            if (!cycleDetected) unitAndAncestorIds += inheritedPath
+        }
+        return ActorAccess(directUnitIds, unitAndAncestorIds)
     }
 
     private fun requireParentFolder(spaceId: String, parentId: String?) {
@@ -326,10 +409,16 @@ class DocumentService(
         return value
     }
 
+    private data class ActorAccess(
+        val directUnitIds: Set<String>,
+        val unitAndAncestorIds: Set<String>,
+    )
+
     companion object {
         const val MAX_SPACE_NAME_LENGTH = 120
         const val MAX_DESCRIPTION_LENGTH = 500
         const val MAX_NODE_NAME_LENGTH = 180
         const val MAX_MARKDOWN_LENGTH = 1_000_000
+        const val MAX_HOME_DOCUMENTS = 50
     }
 }

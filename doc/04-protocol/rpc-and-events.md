@@ -58,10 +58,16 @@ KSP 生成：
 listVersions、rename、delete。GroupFileEntry 携带逻辑 revision 和当前 contentVersion；
 GroupFileVersion 携带不可变 Attachment 快照。文件二进制不进入 TCP payload，仍先通过 HTTP 上传。
 
-文档使用独立 `document` 服务。协议版本 5 的方法按空间、授权、目录和修订分组：list/create/update/
+文档使用独立 `document` 服务。协议版本 6 的方法按空间、授权、目录、修订和首页索引分组：list/create/update/
 archive space，list/upsert/remove grant，list/create/move/delete node，以及 get/update document 和
-list/get revision。列表模型不携带正文，修订列表不携带完整 Markdown；正文只在打开当前文档或指定
-修订时返回。update/move/delete 的 expectedRevision 是并发契约，不是可选提示。
+list/get revision；新增的最近访问与最近创建方法固定为 17/18。列表模型不携带正文，修订列表不携带
+完整 Markdown；正文只在打开当前文档或指定修订时返回。update/move/delete 的 expectedRevision 是
+并发契约，不是可选提示。
+
+`Document.ancestorIds` 是服务端根据当前目录事实生成的定位路径，顺序固定为 `root → parent`，
+不包含文档自身；根目录文档返回空列表。create/get/update/restore 返回的 `Document` 都必须携带
+当次事实对应的路径，供客户端在懒加载目录树中逐层展开。协议限制最多 128 层；服务端解析时对跨空间、
+非文件夹父节点和循环链路执行防御性校验。
 
 完整方法查询见[RPC 参考](../10-reference/rpc-reference.md)。
 
