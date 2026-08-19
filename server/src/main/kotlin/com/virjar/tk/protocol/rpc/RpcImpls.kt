@@ -158,25 +158,48 @@ class GroupFileRpcImpl(uid: String, private val service: GroupFileService) : Gro
 }
 
 class DocumentRpcImpl(uid: String, private val service: DocumentService) : DocumentRpcStub(uid) {
-    override suspend fun list(scopeType: Int, scopeId: String) = service.list(uid, scopeType, scopeId)
-    override suspend fun get(scopeType: Int, scopeId: String, documentId: String) =
-        service.get(uid, scopeType, scopeId, documentId)
-    override suspend fun create(scopeType: Int, scopeId: String, title: String, markdown: String) =
-        service.create(uid, scopeType, scopeId, title, markdown)
-    override suspend fun update(
-        scopeType: Int,
-        scopeId: String,
+    override suspend fun listSpaces() = service.listSpaces(uid)
+    override suspend fun createSpace(name: String, description: String?) = service.createSpace(uid, name, description)
+    override suspend fun updateSpace(spaceId: String, name: String, description: String?) =
+        service.updateSpace(uid, spaceId, name, description)
+    override suspend fun archiveSpace(spaceId: String) = service.archiveSpace(uid, spaceId)
+    override suspend fun listGrants(spaceId: String) = service.listGrants(uid, spaceId)
+    override suspend fun upsertGrant(
+        spaceId: String,
+        principalType: Int,
+        principalId: String,
+        role: Int,
+        includeDescendants: Boolean,
+    ) = service.upsertGrant(uid, spaceId, principalType, principalId, role, includeDescendants)
+    override suspend fun removeGrant(spaceId: String, principalType: Int, principalId: String) =
+        service.removeGrant(uid, spaceId, principalType, principalId)
+    override suspend fun listNodes(spaceId: String, parentId: String?) = service.listNodes(uid, spaceId, parentId)
+    override suspend fun createFolder(spaceId: String, parentId: String?, name: String) =
+        service.createFolder(uid, spaceId, parentId, name)
+    override suspend fun createDocument(spaceId: String, parentId: String?, title: String, markdown: String) =
+        service.createDocument(uid, spaceId, parentId, title, markdown)
+    override suspend fun getDocument(spaceId: String, documentId: String) =
+        service.getDocument(uid, spaceId, documentId)
+    override suspend fun updateDocument(
+        spaceId: String,
         documentId: String,
         title: String,
         markdown: String,
         expectedRevision: Long,
-    ) = service.update(uid, scopeType, scopeId, documentId, title, markdown, expectedRevision)
-    override suspend fun listRevisions(scopeType: Int, scopeId: String, documentId: String) =
-        service.listRevisions(uid, scopeType, scopeId, documentId)
-    override suspend fun getRevision(scopeType: Int, scopeId: String, documentId: String, revision: Long) =
-        service.getRevision(uid, scopeType, scopeId, documentId, revision)
-    override suspend fun delete(scopeType: Int, scopeId: String, documentId: String, expectedRevision: Long) =
-        service.delete(uid, scopeType, scopeId, documentId, expectedRevision)
+    ) = service.updateDocument(uid, spaceId, documentId, title, markdown, expectedRevision)
+    override suspend fun moveNode(
+        spaceId: String,
+        nodeId: String,
+        parentId: String?,
+        name: String,
+        expectedRevision: Long,
+    ) = service.moveNode(uid, spaceId, nodeId, parentId, name, expectedRevision)
+    override suspend fun deleteNode(spaceId: String, nodeId: String, expectedRevision: Long) =
+        service.deleteNode(uid, spaceId, nodeId, expectedRevision)
+    override suspend fun listRevisions(spaceId: String, documentId: String) =
+        service.listRevisions(uid, spaceId, documentId)
+    override suspend fun getRevision(spaceId: String, documentId: String, revision: Long) =
+        service.getRevision(uid, spaceId, documentId, revision)
 }
 
 /** 服务注册表：serviceId → 每请求 Stub 工厂（uid 注入）。由 Koin 装配。 */

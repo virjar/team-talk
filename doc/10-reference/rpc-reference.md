@@ -136,17 +136,26 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 
 | ID | 方法 | 参数 | 返回 |
 |---:|---|---|---|
-| 1 | `list` | `scopeType`, `scopeId` | `List<DocumentSummary>` |
-| 2 | `get` | `scopeType`, `scopeId`, `documentId` | `Document` |
-| 3 | `create` | `scopeType`, `scopeId`, `title`, `markdown` | `Document` |
-| 4 | `update` | `scopeType`, `scopeId`, `documentId`, `title`, `markdown`, `expectedRevision` | `Document` |
-| 5 | `listRevisions` | `scopeType`, `scopeId`, `documentId` | `List<DocumentRevisionSummary>` |
-| 6 | `getRevision` | `scopeType`, `scopeId`, `documentId`, `revision` | `DocumentRevision` |
-| 7 | `delete` | `scopeType`, `scopeId`, `documentId`, `expectedRevision` | `Unit` |
+| 1 | `listSpaces` | — | `List<DocumentSpace>` |
+| 2 | `createSpace` | `name`, `description?` | `DocumentSpace` |
+| 3 | `updateSpace` | `spaceId`, `name`, `description?` | `DocumentSpace` |
+| 4 | `archiveSpace` | `spaceId` | `Unit` |
+| 5 | `listGrants` | `spaceId` | `List<DocumentSpaceGrant>` |
+| 6 | `upsertGrant` | `spaceId`, `principalType`, `principalId`, `role`, `includeDescendants` | `DocumentSpaceGrant` |
+| 7 | `removeGrant` | `spaceId`, `principalType`, `principalId` | `Unit` |
+| 8 | `listNodes` | `spaceId`, `parentId?` | `List<DocumentNode>` |
+| 9 | `createFolder` | `spaceId`, `parentId?`, `name` | `DocumentNode` |
+| 10 | `createDocument` | `spaceId`, `parentId?`, `title`, `markdown` | `Document` |
+| 11 | `getDocument` | `spaceId`, `documentId` | `Document` |
+| 12 | `updateDocument` | `spaceId`, `documentId`, `title`, `markdown`, `expectedRevision` | `Document` |
+| 13 | `moveNode` | `spaceId`, `nodeId`, `parentId?`, `name`, `expectedRevision` | `DocumentNode` |
+| 14 | `deleteNode` | `spaceId`, `nodeId`, `expectedRevision` | `Unit` |
+| 15 | `listRevisions` | `spaceId`, `documentId` | `List<DocumentRevisionSummary>` |
+| 16 | `getRevision` | `spaceId`, `documentId`, `revision` | `DocumentRevision` |
 
-当前只接受 `Document.SCOPE_GROUP_CHAT`。所有调用按认证 uid 实时校验群成员；列表投影不返回 Markdown，
-修订列表只返回 contentLength 等摘要。update/delete 必须使用客户端实际读取到的 revision，冲突由服务端
-拒绝；错误文案不应被客户端当成并发控制协议。
+协议版本 5 起，文档不再接受群 scope。所有调用按认证 uid 合并空间所有权、用户授权和实时组织部门
+授权。目录列表不返回 Markdown，修订列表只返回摘要；更新、移动和删除必须使用客户端实际读取到的
+revision，冲突由服务端拒绝，错误文案不作为并发控制协议。
 
 ## 状态与错误
 

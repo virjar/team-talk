@@ -1,137 +1,323 @@
 package com.virjar.tk.domain.document
 
-import com.virjar.tk.domain.chat.ActiveChatMembership
-import com.virjar.tk.domain.chat.ChatRepository
-import com.virjar.tk.model.ChatType
+import com.virjar.tk.domain.organization.OrganizationRepository
+import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.model.Document
+import com.virjar.tk.model.DocumentNode
 import com.virjar.tk.model.DocumentRevision
 import com.virjar.tk.model.DocumentRevisionSummary
-import com.virjar.tk.model.DocumentSummary
+import com.virjar.tk.model.DocumentSpace
+import com.virjar.tk.model.DocumentSpaceGrant
+import com.virjar.tk.model.UserRole
 import java.util.UUID
 
 /**
- * 协作文档领域服务。
+ * 企业文档空间领域服务。
  *
- * v1 只开放群聊作用域；权限不固化到文档，而是在每次读写时根据当前群成员资格判断。
- * 客户端提交的 expectedRevision 是唯一覆盖坐标，服务端不会静默合并或覆盖并发修改。
+ * 空间是独立权限根。用户授权与组织部门授权共同计算当前角色；文档和目录节点只属于空间，
+ * 群聊既不拥有文档，也不参与权限判断。所有读写都重新计算实时组织归属。
  */
 class DocumentService(
     private val repository: DocumentRepository,
-    private val chats: ChatRepository,
-    private val memberships: ActiveChatMembership,
+    private val organizations: OrganizationRepository,
+    private val users: UserStore,
 ) {
-    fun list(actorUid: String, scopeType: Int, scopeId: String): List<DocumentSummary> {
-        requireScopeAccess(actorUid, scopeType, scopeId)
-        return repository.list(scopeType, scopeId)
+    fun listSpaces(actorUid: String): List<DocumentSpace> = repository.listSpaces().mapNotNull { space ->
+        effectiveRole(actorUid, space).takeIf { it >= DocumentSpace.ROLE_VIEWER }?.let { space.copy(myRole = it) }
     }
 
-    fun get(actorUid: String, scopeType: Int, scopeId: String, documentId: String): Document {
-        requireScopeAccess(actorUid, scopeType, scopeId)
-        return requireDocument(scopeType, scopeId, documentId)
+    fun createSpace(actorUid: String, name: String, description: String?): DocumentSpace {
+        val actor = users.findByUid(actorUid) ?: throw IllegalArgumentException("用户不存在")
+        require(actor.role == UserRole.HUMAN) { "服务账户不能创建文档空间" }
+        val now = System.currentTimeMillis()
+        val created = repository.createSpace(
+            DocumentSpace(
+                spaceId = UUID.randomUUID().toString(),
+                name = validateSpaceName(name),
+                description = validateDescription(description),
+                myRole = DocumentSpace.ROLE_NONE,
+                createdBy = actorUid,
+                createdAt = now,
+                updatedAt = now,
+            ),
+        )
+        return created.copy(myRole = DocumentSpace.ROLE_OWNER)
     }
 
-    fun create(actorUid: String, scopeType: Int, scopeId: String, title: String, markdown: String): Document {
-        requireScopeAccess(actorUid, scopeType, scopeId)
-        val validTitle = validateTitle(title)
-        val validMarkdown = validateMarkdown(markdown)
+    fun updateSpace(actorUid: String, spaceId: String, name: String, description: String?): DocumentSpace {
+        val space = requireRole(actorUid, spaceId, DocumentSpace.ROLE_ADMIN)
+        return repository.updateSpace(
+            space.spaceId,
+            validateSpaceName(name),
+            validateDescription(description),
+            System.currentTimeMillis(),
+        ).copy(myRole = effectiveRole(actorUid, space))
+    }
+
+    fun archiveSpace(actorUid: String, spaceId: String) {
+        requireRole(actorUid, spaceId, DocumentSpace.ROLE_OWNER)
+        repository.archiveSpace(spaceId, System.currentTimeMillis())
+    }
+
+    fun listGrants(actorUid: String, spaceId: String): List<DocumentSpaceGrant> {
+        requireRole(actorUid, spaceId, DocumentSpace.ROLE_ADMIN)
+        val unitNames = organizations.listUnits().associate { it.unitId to it.name }
+        return repository.listGrants(spaceId).map { grant ->
+            grant.copy(
+                displayName = when (grant.principalType) {
+                    DocumentSpaceGrant.PRINCIPAL_USER -> users.findByUid(grant.principalId)?.name
+                    DocumentSpaceGrant.PRINCIPAL_ORGANIZATION_UNIT -> unitNames[grant.principalId]
+                    else -> null
+                },
+            )
+        }
+    }
+
+    fun upsertGrant(
+        actorUid: String,
+        spaceId: String,
+        principalType: Int,
+        principalId: String,
+        role: Int,
+        includeDescendants: Boolean,
+    ): DocumentSpaceGrant {
+        val space = requireRole(actorUid, spaceId, DocumentSpace.ROLE_ADMIN)
+        require(role in DocumentSpace.ROLE_VIEWER..DocumentSpace.ROLE_ADMIN) { "空间角色非法" }
+        require(principalId.isNotBlank()) { "授权对象不能为空" }
+        require(principalId != space.createdBy || principalType != DocumentSpaceGrant.PRINCIPAL_USER) {
+            "空间所有者不需要重复授权"
+        }
+        val displayName = when (principalType) {
+            DocumentSpaceGrant.PRINCIPAL_USER -> {
+                val user = users.findByUid(principalId) ?: throw IllegalArgumentException("用户不存在")
+                require(user.role == UserRole.HUMAN) { "不能向服务账户授予文档空间" }
+                user.name
+            }
+            DocumentSpaceGrant.PRINCIPAL_ORGANIZATION_UNIT ->
+                organizations.findUnit(principalId)?.name ?: throw IllegalArgumentException("组织节点不存在")
+            else -> throw IllegalArgumentException("授权对象类型非法")
+        }
+        val grant = DocumentSpaceGrant(
+            spaceId = spaceId,
+            principalType = principalType,
+            principalId = principalId,
+            role = role,
+            includeDescendants = principalType == DocumentSpaceGrant.PRINCIPAL_ORGANIZATION_UNIT && includeDescendants,
+            displayName = displayName,
+        )
+        repository.upsertGrant(grant.copy(displayName = null))
+        return grant
+    }
+
+    fun removeGrant(actorUid: String, spaceId: String, principalType: Int, principalId: String) {
+        requireRole(actorUid, spaceId, DocumentSpace.ROLE_ADMIN)
+        repository.removeGrant(spaceId, principalType, principalId)
+    }
+
+    fun listNodes(actorUid: String, spaceId: String, parentId: String?): List<DocumentNode> {
+        requireRole(actorUid, spaceId, DocumentSpace.ROLE_VIEWER)
+        requireParentFolder(spaceId, parentId)
+        return repository.listNodes(spaceId, parentId)
+    }
+
+    fun createFolder(actorUid: String, spaceId: String, parentId: String?, name: String): DocumentNode {
+        requireRole(actorUid, spaceId, DocumentSpace.ROLE_EDITOR)
+        requireParentFolder(spaceId, parentId)
+        val now = System.currentTimeMillis()
+        return repository.createFolder(
+            DocumentNode(
+                nodeId = UUID.randomUUID().toString(),
+                spaceId = spaceId,
+                parentId = parentId,
+                nodeType = DocumentNode.TYPE_FOLDER,
+                name = validateNodeName(name),
+                revision = 1,
+                createdBy = actorUid,
+                createdAt = now,
+                updatedBy = actorUid,
+                updatedAt = now,
+            ),
+        )
+    }
+
+    fun createDocument(
+        actorUid: String,
+        spaceId: String,
+        parentId: String?,
+        title: String,
+        markdown: String,
+    ): Document {
+        requireRole(actorUid, spaceId, DocumentSpace.ROLE_EDITOR)
+        requireParentFolder(spaceId, parentId)
         val now = System.currentTimeMillis()
         val document = Document(
             documentId = UUID.randomUUID().toString(),
-            scopeType = scopeType,
-            scopeId = scopeId,
-            title = validTitle,
-            markdown = validMarkdown,
+            spaceId = spaceId,
+            parentId = parentId,
+            title = validateNodeName(title),
+            markdown = validateMarkdown(markdown),
             createdBy = actorUid,
             createdAt = now,
             updatedBy = actorUid,
             updatedAt = now,
         )
-        return repository.create(
+        return repository.createDocument(
             document,
-            DocumentRevision(
-                documentId = document.documentId,
-                revision = document.revision,
-                title = document.title,
-                markdown = document.markdown,
-                editedBy = actorUid,
-                editedAt = now,
-            ),
+            DocumentRevision(document.documentId, 1, document.title, document.markdown, actorUid, now),
         )
     }
 
-    fun update(
+    fun getDocument(actorUid: String, spaceId: String, documentId: String): Document {
+        requireRole(actorUid, spaceId, DocumentSpace.ROLE_VIEWER)
+        return requireDocument(spaceId, documentId)
+    }
+
+    fun updateDocument(
         actorUid: String,
-        scopeType: Int,
-        scopeId: String,
+        spaceId: String,
         documentId: String,
         title: String,
         markdown: String,
         expectedRevision: Long,
     ): Document {
-        requireScopeAccess(actorUid, scopeType, scopeId)
-        requireDocument(scopeType, scopeId, documentId)
+        requireRole(actorUid, spaceId, DocumentSpace.ROLE_EDITOR)
+        requireDocument(spaceId, documentId)
         require(expectedRevision > 0) { "文档版本非法" }
-        return repository.update(
-            documentId = documentId,
-            expectedRevision = expectedRevision,
-            title = validateTitle(title),
-            markdown = validateMarkdown(markdown),
-            actorUid = actorUid,
-            updatedAt = System.currentTimeMillis(),
+        return repository.updateDocument(
+            documentId,
+            expectedRevision,
+            validateNodeName(title),
+            validateMarkdown(markdown),
+            actorUid,
+            System.currentTimeMillis(),
         )
     }
 
-    fun listRevisions(
+    fun moveNode(
         actorUid: String,
-        scopeType: Int,
-        scopeId: String,
-        documentId: String,
-    ): List<DocumentRevisionSummary> {
-        requireScopeAccess(actorUid, scopeType, scopeId)
-        requireDocument(scopeType, scopeId, documentId)
+        spaceId: String,
+        nodeId: String,
+        parentId: String?,
+        name: String,
+        expectedRevision: Long,
+    ): DocumentNode {
+        requireRole(actorUid, spaceId, DocumentSpace.ROLE_EDITOR)
+        val node = requireNode(spaceId, nodeId)
+        requireParentFolder(spaceId, parentId)
+        require(parentId != nodeId) { "目录不能移动到自身" }
+        if (node.nodeType == DocumentNode.TYPE_FOLDER && parentId != null) {
+            var cursor: String? = parentId
+            val visited = mutableSetOf<String>()
+            while (cursor != null) {
+                require(visited.add(cursor)) { "文档目录存在循环" }
+                require(cursor != nodeId) { "目录不能移动到自己的下级目录" }
+                cursor = requireNode(spaceId, cursor).parentId
+            }
+        }
+        require(expectedRevision > 0) { "节点版本非法" }
+        return repository.moveNode(
+            nodeId,
+            expectedRevision,
+            parentId,
+            validateNodeName(name),
+            actorUid,
+            System.currentTimeMillis(),
+        )
+    }
+
+    fun deleteNode(actorUid: String, spaceId: String, nodeId: String, expectedRevision: Long) {
+        requireRole(actorUid, spaceId, DocumentSpace.ROLE_EDITOR)
+        val node = requireNode(spaceId, nodeId)
+        if (node.nodeType == DocumentNode.TYPE_FOLDER) {
+            require(repository.listNodes(spaceId, nodeId).isEmpty()) { "请先清空文件夹" }
+        }
+        require(expectedRevision > 0) { "节点版本非法" }
+        repository.deleteNode(nodeId, expectedRevision, actorUid, System.currentTimeMillis())
+    }
+
+    fun listRevisions(actorUid: String, spaceId: String, documentId: String): List<DocumentRevisionSummary> {
+        requireRole(actorUid, spaceId, DocumentSpace.ROLE_VIEWER)
+        requireDocument(spaceId, documentId)
         return repository.listRevisions(documentId)
     }
 
     fun getRevision(
         actorUid: String,
-        scopeType: Int,
-        scopeId: String,
+        spaceId: String,
         documentId: String,
         revision: Long,
     ): DocumentRevision {
-        requireScopeAccess(actorUid, scopeType, scopeId)
-        requireDocument(scopeType, scopeId, documentId)
+        requireRole(actorUid, spaceId, DocumentSpace.ROLE_VIEWER)
+        requireDocument(spaceId, documentId)
         require(revision > 0) { "文档版本非法" }
-        return repository.findRevision(documentId, revision)
-            ?: throw IllegalArgumentException("文档版本不存在")
+        return repository.findRevision(documentId, revision) ?: throw IllegalArgumentException("文档版本不存在")
     }
 
-    fun delete(actorUid: String, scopeType: Int, scopeId: String, documentId: String, expectedRevision: Long) {
-        requireScopeAccess(actorUid, scopeType, scopeId)
-        requireDocument(scopeType, scopeId, documentId)
-        require(expectedRevision > 0) { "文档版本非法" }
-        repository.delete(documentId, expectedRevision, actorUid, System.currentTimeMillis())
+    private fun requireRole(actorUid: String, spaceId: String, minimum: Int): DocumentSpace {
+        val space = repository.findSpace(spaceId) ?: throw IllegalArgumentException("文档空间不存在")
+        require(effectiveRole(actorUid, space) >= minimum) { "没有文档空间权限" }
+        return space
     }
 
-    private fun requireScopeAccess(actorUid: String, scopeType: Int, scopeId: String) {
-        require(scopeType == Document.SCOPE_GROUP_CHAT) { "暂不支持该文档空间" }
-        val chat = chats.getChat(scopeId)
-        require(chat != null && chat.chatType == ChatType.GROUP.code) { "群聊不存在" }
-        require(scopeId in memberships.listUserChatIds(actorUid)) { "你不是当前群成员" }
+    private fun effectiveRole(actorUid: String, space: DocumentSpace): Int {
+        if (space.createdBy == actorUid) return DocumentSpace.ROLE_OWNER
+        val memberships = organizations.listMemberships(actorUid).mapTo(mutableSetOf()) { it.unitId }
+        val units = organizations.listUnits()
+        val children = units.groupBy { it.parentId }
+        fun descendants(unitId: String): Set<String> {
+            val result = linkedSetOf<String>()
+            fun visit(id: String) {
+                if (!result.add(id)) return
+                children[id].orEmpty().forEach { visit(it.unitId) }
+            }
+            visit(unitId)
+            return result
+        }
+        return repository.listGrants(space.spaceId).asSequence().filter { grant ->
+            when (grant.principalType) {
+                DocumentSpaceGrant.PRINCIPAL_USER -> grant.principalId == actorUid
+                DocumentSpaceGrant.PRINCIPAL_ORGANIZATION_UNIT -> if (grant.includeDescendants) {
+                    memberships.any { it in descendants(grant.principalId) }
+                } else {
+                    grant.principalId in memberships
+                }
+                else -> false
+            }
+        }.maxOfOrNull { it.role } ?: DocumentSpace.ROLE_NONE
     }
 
-    private fun requireDocument(scopeType: Int, scopeId: String, documentId: String): Document {
-        val document = repository.find(documentId) ?: throw IllegalArgumentException("文档不存在")
-        require(document.scopeType == scopeType && document.scopeId == scopeId) { "文档不属于当前空间" }
+    private fun requireParentFolder(spaceId: String, parentId: String?) {
+        if (parentId == null) return
+        val parent = requireNode(spaceId, parentId)
+        require(parent.nodeType == DocumentNode.TYPE_FOLDER) { "父节点不是文件夹" }
+    }
+
+    private fun requireNode(spaceId: String, nodeId: String): DocumentNode {
+        val node = repository.findNode(nodeId) ?: throw IllegalArgumentException("文档节点不存在")
+        require(node.spaceId == spaceId) { "文档节点不属于当前空间" }
+        return node
+    }
+
+    private fun requireDocument(spaceId: String, documentId: String): Document {
+        val document = repository.findDocument(documentId) ?: throw IllegalArgumentException("文档不存在")
+        require(document.spaceId == spaceId) { "文档不属于当前空间" }
         return document
     }
 
-    private fun validateTitle(value: String): String {
-        val title = value.trim()
-        require(title.isNotEmpty()) { "文档标题不能为空" }
-        require(title.length <= MAX_TITLE_LENGTH) { "文档标题不能超过 $MAX_TITLE_LENGTH 个字符" }
-        require(title.none { it.code < 32 }) { "文档标题包含非法字符" }
-        return title
+    private fun validateSpaceName(value: String): String = validateName(value, MAX_SPACE_NAME_LENGTH, "空间名称")
+    private fun validateNodeName(value: String): String = validateName(value, MAX_NODE_NAME_LENGTH, "名称")
+
+    private fun validateName(value: String, limit: Int, label: String): String {
+        val name = value.trim()
+        require(name.isNotEmpty()) { "$label 不能为空" }
+        require(name.length <= limit) { "$label 不能超过 $limit 个字符" }
+        require(name.none { it.code < 32 }) { "$label 包含非法字符" }
+        return name
+    }
+
+    private fun validateDescription(value: String?): String? = value?.trim()?.takeIf(String::isNotEmpty)?.also {
+        require(it.length <= MAX_DESCRIPTION_LENGTH) { "空间说明不能超过 $MAX_DESCRIPTION_LENGTH 个字符" }
+        require('\u0000' !in it) { "空间说明包含非法字符" }
     }
 
     private fun validateMarkdown(value: String): String {
@@ -141,7 +327,9 @@ class DocumentService(
     }
 
     companion object {
-        const val MAX_TITLE_LENGTH = 180
+        const val MAX_SPACE_NAME_LENGTH = 120
+        const val MAX_DESCRIPTION_LENGTH = 500
+        const val MAX_NODE_NAME_LENGTH = 180
         const val MAX_MARKDOWN_LENGTH = 1_000_000
     }
 }

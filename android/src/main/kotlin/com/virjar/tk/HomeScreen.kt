@@ -13,6 +13,7 @@ import com.virjar.tk.navigation.AppDataState
 import com.virjar.tk.navigation.MainTab
 import com.virjar.tk.ui.screen.DirectoryScreen
 import com.virjar.tk.ui.screen.ConversationListScreen
+import com.virjar.tk.ui.screen.DocumentWorkspaceHost
 import com.virjar.tk.ui.screen.MeScreen
 import kotlinx.coroutines.launch
 
@@ -38,15 +39,20 @@ fun HomeScreen(
 
     // 切换标签时刷新待处理申请数
     LaunchedEffect(selectedTab) {
-        if (selectedTab == 1) { // 通讯录
-            dataState.contactViewModel.refreshPendingApplyCount()
-            dataState.organization.refresh()
+        when (MainTab.entries[selectedTab]) {
+            MainTab.CONTACTS -> {
+                dataState.contactViewModel.refreshPendingApplyCount()
+                dataState.organization.refresh()
+            }
+            MainTab.DOCUMENTS -> dataState.documents.open()
+            else -> Unit
         }
     }
 
     val tabIcons: List<Pair<ImageVector, String>> = listOf(
         Icons.Filled.Chat to "会话",
         Icons.Filled.Contacts to "通讯录",
+        Icons.Filled.Description to "文档",
         Icons.Filled.Settings to "设置",
     )
 
@@ -112,6 +118,7 @@ fun HomeScreen(
                         onFriendApplies = onFriendApplies,
                     )
                 }
+                MainTab.DOCUMENTS -> DocumentWorkspaceHost(workspace = dataState.documents)
                 MainTab.SETTINGS -> MeScreen(
                     currentUser = dataState.account.currentUser,
                     onLogout = onLogout,

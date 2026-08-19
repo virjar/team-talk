@@ -15,6 +15,7 @@ import androidx.compose.foundation.window.WindowDraggableArea
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Contacts
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -44,6 +45,7 @@ import com.virjar.tk.ui.component.PlatformMediaActions
 import com.virjar.tk.ui.component.rememberMediaClickHandler
 import com.virjar.tk.ui.screen.ChatPanel
 import com.virjar.tk.ui.screen.DirectoryScreen
+import com.virjar.tk.ui.screen.DocumentWorkspaceHost
 import com.virjar.tk.ui.screen.ConversationListScreen
 import com.virjar.tk.ui.screen.GlobalSearchField
 import com.virjar.tk.ui.screen.MeHeaderStyle
@@ -76,9 +78,13 @@ internal fun WindowScope.MainAppContent(
     val directoryScope = rememberCoroutineScope()
 
     LaunchedEffect(nav.selectedTab) {
-        if (MainTab.entries[nav.selectedTab] == MainTab.CONTACTS) {
-            nav.contactViewModel.refreshPendingApplyCount()
-            nav.organization.refresh()
+        when (MainTab.entries[nav.selectedTab]) {
+            MainTab.CONTACTS -> {
+                nav.contactViewModel.refreshPendingApplyCount()
+                nav.organization.refresh()
+            }
+            MainTab.DOCUMENTS -> nav.documents.open()
+            else -> Unit
         }
     }
 
@@ -129,6 +135,9 @@ internal fun WindowScope.MainAppContent(
             SubWindow(screen = windowScreen, nav = nav, onClose = { nav.windowScreen = null })
         }
     }
+    if (nav.documentWindowVisible) {
+        DocumentWorkspaceWindow(nav = nav, onClose = { nav.documentWindowVisible = false })
+    }
 
     // 语音应用内播放（native 引擎，聊天面板级共享：切会话即静音）
     val voicePlayback = rememberDesktopVoicePlayback()
@@ -162,7 +171,7 @@ internal fun WindowScope.MainAppContent(
                 connectionState = connectionState,
             )
             Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
-            val expandedWorkspace = nav.mainPaneScreen is SubScreen.GroupDocuments
+            val expandedWorkspace = MainTab.entries[nav.selectedTab] == MainTab.DOCUMENTS || nav.mainPaneScreen != null
             // ── 左栏：细导航栏（56dp 图标式，规格 §1.5）──
             SlimNavRail(
                 selectedTab = nav.selectedTab,
@@ -223,6 +232,8 @@ internal fun WindowScope.MainAppContent(
                         }
                     }
 
+                    MainTab.DOCUMENTS -> Unit
+
                     MainTab.SETTINGS -> {
                         MeScreen(
                             currentUser = nav.account.currentUser,
@@ -259,6 +270,15 @@ internal fun WindowScope.MainAppContent(
                         globalSearchQuery = nav.globalSearchQuery,
                         onGlobalSearchQueryChange = { nav.globalSearchQuery = it },
                     )
+                } else if (MainTab.entries[nav.selectedTab] == MainTab.DOCUMENTS) {
+                    if (nav.documentWindowVisible) {
+                        DocumentDetachedPlaceholder(onBringBack = { nav.documentWindowVisible = false })
+                    } else {
+                        DocumentWorkspaceHost(
+                            workspace = nav.documents,
+                            onDetach = { nav.documentWindowVisible = true },
+                        )
+                    }
                 } else {
                     Box(modifier = Modifier.fillMaxSize()) {
                         when {
@@ -474,6 +494,7 @@ private fun MainPaneEmptyState(tab: MainTab) {
     val (icon, title, detail) = when (tab) {
         MainTab.CONVERSATIONS -> Triple(Icons.AutoMirrored.Filled.Chat, "选择一个会话", "从会话列表继续沟通，或使用顶部搜索查找内容")
         MainTab.CONTACTS -> Triple(Icons.Filled.Contacts, "选择一个联系人", "查看资料、发送消息或从资料页发起群聊")
+        MainTab.DOCUMENTS -> Triple(Icons.Filled.Description, "打开企业文档", "从独立文档入口访问空间、目录和协作文档")
         MainTab.SETTINGS -> Triple(Icons.Filled.Settings, "账号与设置", "在左侧管理个人资料、安全、设备和外观")
     }
     Column(
@@ -494,6 +515,25 @@ private fun MainPaneEmptyState(tab: MainTab) {
         Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
         Spacer(Modifier.height(Tk.spacing.xs))
         Text(detail, style = MaterialTheme.typography.bodySmall, color = Tk.colors.metaText)
+    }
+}
+
+@Composable
+private fun DocumentDetachedPlaceholder(onBringBack: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().testTag("documents.detached.placeholder"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(Icons.Filled.Description, contentDescription = null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.height(16.dp))
+        Text("文档工作台已在独立窗口打开", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(6.dp))
+        Text("多个空间与已打开标签会保留在该窗口中", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(18.dp))
+        FilledTonalButton(onClick = onBringBack, modifier = Modifier.testTag("documents.detached.bringBack")) {
+            Text("收回主窗口")
+        }
     }
 }
 

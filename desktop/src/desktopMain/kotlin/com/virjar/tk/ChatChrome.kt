@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Contacts
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -81,6 +82,13 @@ internal fun SlimNavRail(
                 label = MainTab.CONTACTS.label,
                 selected = selectedTab == MainTab.CONTACTS.ordinal,
                 onClick = { onSelectTab(MainTab.CONTACTS.ordinal) },
+            )
+
+            RailItem(
+                icon = { Icon(Icons.Filled.Description, contentDescription = MainTab.DOCUMENTS.label) },
+                label = MainTab.DOCUMENTS.label,
+                selected = selectedTab == MainTab.DOCUMENTS.ordinal,
+                onClick = { onSelectTab(MainTab.DOCUMENTS.ordinal) },
             )
 
             Spacer(Modifier.weight(1f))

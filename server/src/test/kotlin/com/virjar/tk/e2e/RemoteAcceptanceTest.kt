@@ -317,46 +317,56 @@ class RemoteAcceptanceTest {
     }
 
     @Test
-    fun `group documents keep revisions conflicts and live ACL`() = runBlocking {
+    fun `document spaces keep tree revisions conflicts and live ACL`() = runBlocking {
         val owner = RemoteAcceptanceSupport.registerUser("document-owner")
         val member = RemoteAcceptanceSupport.registerUser("document-member")
         val outsider = RemoteAcceptanceSupport.registerUser("document-outsider")
         try {
-            val chatRpc = ChatRpcProxy(owner.rpc)
-            val chat = chatRpc.createGroup("远程协作文档验收", null, listOf(member.uid))
             val ownerDocs = DocumentRepository(owner.rpc)
             val memberDocs = DocumentRepository(member.rpc)
             val outsiderDocs = DocumentRepository(outsider.rpc)
 
-            val created = ownerDocs.create(
-                Document.SCOPE_GROUP_CHAT,
-                chat.chatId,
+            val space = ownerDocs.createSpace("远程产品空间", "独立于群聊的企业资产").getOrThrow()
+            assertEquals(DocumentSpace.ROLE_OWNER, space.myRole)
+            assertTrue(memberDocs.listSpaces().getOrThrow().isEmpty())
+            ownerDocs.upsertGrant(
+                space.spaceId,
+                DocumentSpaceGrant.PRINCIPAL_USER,
+                member.uid,
+                DocumentSpace.ROLE_EDITOR,
+                false,
+            ).getOrThrow()
+            assertEquals(listOf(space.spaceId), memberDocs.listSpaces().getOrThrow().map { it.spaceId })
+            assertTrue(outsiderDocs.listSpaces().getOrThrow().isEmpty(), "未授权用户看不到空间")
+
+            val folder = ownerDocs.createFolder(space.spaceId, null, "产品资料").getOrThrow()
+            val created = ownerDocs.createDocument(
+                space.spaceId,
+                folder.nodeId,
                 "远程产品说明",
                 "# 第一版\n由群主创建。",
             ).getOrThrow()
             assertEquals(1L, created.revision)
             assertEquals(
                 listOf("远程产品说明"),
-                memberDocs.list(Document.SCOPE_GROUP_CHAT, chat.chatId).getOrThrow().map { it.title },
+                memberDocs.listNodes(space.spaceId, folder.nodeId).getOrThrow().map { it.name },
             )
             assertTrue(
-                outsiderDocs.list(Document.SCOPE_GROUP_CHAT, chat.chatId) is Outcome.Failure,
-                "非群成员不能读取文档空间",
+                outsiderDocs.getDocument(space.spaceId, created.documentId) is Outcome.Failure,
+                "未授权用户不能读取文档",
             )
 
-            val updated = memberDocs.update(
-                Document.SCOPE_GROUP_CHAT,
-                chat.chatId,
+            val updated = memberDocs.updateDocument(
+                space.spaceId,
                 created.documentId,
                 "远程产品说明 v2",
-                "# 第二版\n由群成员修订。",
+                "# 第二版\n由空间编辑者修订。",
                 created.revision,
             ).getOrThrow()
             assertEquals(2L, updated.revision)
             assertTrue(
-                ownerDocs.update(
-                    Document.SCOPE_GROUP_CHAT,
-                    chat.chatId,
+                ownerDocs.updateDocument(
+                    space.spaceId,
                     created.documentId,
                     "过期覆盖",
                     "不应成功",
@@ -366,22 +376,23 @@ class RemoteAcceptanceTest {
             )
             assertEquals(
                 listOf(2L, 1L),
-                ownerDocs.listRevisions(Document.SCOPE_GROUP_CHAT, chat.chatId, created.documentId)
+                ownerDocs.listRevisions(space.spaceId, created.documentId)
                     .getOrThrow().map { it.revision },
             )
             assertEquals(
                 "# 第一版\n由群主创建。",
-                ownerDocs.getRevision(Document.SCOPE_GROUP_CHAT, chat.chatId, created.documentId, 1)
+                ownerDocs.getRevision(space.spaceId, created.documentId, 1)
                     .getOrThrow().markdown,
             )
 
-            chatRpc.removeMembers(chat.chatId, member.uid)
+            ownerDocs.removeGrant(space.spaceId, DocumentSpaceGrant.PRINCIPAL_USER, member.uid).getOrThrow()
             assertTrue(
-                memberDocs.get(Document.SCOPE_GROUP_CHAT, chat.chatId, created.documentId) is Outcome.Failure,
-                "移出群聊后不能继续读取文档",
+                memberDocs.getDocument(space.spaceId, created.documentId) is Outcome.Failure,
+                "撤销空间授权后不能继续读取文档",
             )
-            ownerDocs.delete(Document.SCOPE_GROUP_CHAT, chat.chatId, created.documentId, updated.revision).getOrThrow()
-            assertTrue(ownerDocs.list(Document.SCOPE_GROUP_CHAT, chat.chatId).getOrThrow().isEmpty())
+            ownerDocs.deleteNode(space.spaceId, created.documentId, updated.revision).getOrThrow()
+            ownerDocs.deleteNode(space.spaceId, folder.nodeId, folder.revision).getOrThrow()
+            assertTrue(ownerDocs.listNodes(space.spaceId, null).getOrThrow().isEmpty())
         } finally {
             owner.close(); member.close(); outsider.close()
         }

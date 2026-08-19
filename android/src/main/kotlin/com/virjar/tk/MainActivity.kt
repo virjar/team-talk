@@ -267,7 +267,6 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                 myUid = dataState.userSession.uid,
                 onMemberClick = { uid -> navController.navigate(Routes.userProfile(uid)) }, onInviteMembers = { navController.navigate(Routes.inviteMembers(chatId)) }, onViewInviteLinks = { navController.navigate(Routes.inviteLinks(chatId)) },
                 onGroupFiles = { navController.navigate(Routes.groupFiles(chatId)) },
-                onGroupDocuments = { navController.navigate(Routes.groupDocuments(chatId)) },
                 onLeaveGroup = {
                     val isOwner = dataState.groups.members.any {
                         it.uid == dataState.userSession.uid && it.role == 2
@@ -340,32 +339,6 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                 onUploadVersion = { target -> versionTarget = target; picker.launch(arrayOf("*/*")) },
                 onRename = dataState.groupFiles::rename,
                 onDelete = dataState.groupFiles::delete,
-                onBack = { navController.popBackStack() },
-            )
-        }
-        composable(Routes.GROUP_DOCUMENTS, arguments = listOf(navArgument("chatId"){type=NavType.StringType})) { entry ->
-            val chatId = entry.arguments?.getString("chatId") ?: return@composable
-            LaunchedEffect(chatId) { dataState.loadScreenDataByKey(ScreenDataKey.GroupDocuments(chatId)) }
-            GroupDocumentsScreen(
-                documents = dataState.groupDocuments.documents,
-                selected = dataState.groupDocuments.selected,
-                creating = dataState.groupDocuments.creating,
-                revisions = dataState.groupDocuments.revisions,
-                revisionPreview = dataState.groupDocuments.revisionPreview,
-                loading = dataState.groupDocuments.loading,
-                loadingDocument = dataState.groupDocuments.loadingDocument,
-                saving = dataState.groupDocuments.saving,
-                onRefresh = { scope.launch { dataState.groupDocuments.refresh() } },
-                onCreate = dataState.groupDocuments::beginCreate,
-                onOpen = dataState.groupDocuments::openDocument,
-                onCloseEditor = dataState.groupDocuments::closeEditor,
-                onSave = dataState.groupDocuments::save,
-                onDelete = dataState.groupDocuments::deleteCurrent,
-                onShowHistory = dataState.groupDocuments::showHistory,
-                onOpenRevision = dataState.groupDocuments::openRevision,
-                onRestoreRevision = dataState.groupDocuments::restorePreview,
-                onCloseRevisionPreview = dataState.groupDocuments::closeRevisionPreview,
-                onCloseHistory = dataState.groupDocuments::closeHistory,
                 onBack = { navController.popBackStack() },
             )
         }

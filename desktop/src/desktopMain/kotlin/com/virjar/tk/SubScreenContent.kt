@@ -102,7 +102,6 @@ fun SubScreenContent(
             onInviteMembers = { navigate(SubScreen.InviteMembers(screen.chatId)) },
             onViewInviteLinks = { navigate(SubScreen.InviteLinks(screen.chatId)) },
             onGroupFiles = { navigate(SubScreen.GroupFiles(screen.chatId)) },
-            onGroupDocuments = { navigate(SubScreen.GroupDocuments(screen.chatId)) },
             onLeaveGroup = { onLeaveGroup(screen.chatId) },
             onEditNotice = { notice -> data.groups.updateNotice(screen.chatId, notice) },
             onBack = onBack,
@@ -175,29 +174,6 @@ fun SubScreenContent(
                 onClose = onClose,
             )
         }
-
-        is SubScreen.GroupDocuments -> GroupDocumentsScreen(
-            documents = data.groupDocuments.documents,
-            selected = data.groupDocuments.selected,
-            creating = data.groupDocuments.creating,
-            revisions = data.groupDocuments.revisions,
-            revisionPreview = data.groupDocuments.revisionPreview,
-            loading = data.groupDocuments.loading,
-            loadingDocument = data.groupDocuments.loadingDocument,
-            saving = data.groupDocuments.saving,
-            onRefresh = { actionScope.launch { data.groupDocuments.refresh() } },
-            onCreate = data.groupDocuments::beginCreate,
-            onOpen = data.groupDocuments::openDocument,
-            onCloseEditor = data.groupDocuments::closeEditor,
-            onSave = data.groupDocuments::save,
-            onDelete = data.groupDocuments::deleteCurrent,
-            onShowHistory = data.groupDocuments::showHistory,
-            onOpenRevision = data.groupDocuments::openRevision,
-            onRestoreRevision = data.groupDocuments::restorePreview,
-            onCloseRevisionPreview = data.groupDocuments::closeRevisionPreview,
-            onCloseHistory = data.groupDocuments::closeHistory,
-            onBack = back,
-        )
 
         is SubScreen.Forward -> ForwardScreen(
             conversations = conversations,

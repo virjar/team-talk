@@ -237,6 +237,10 @@ object TestHttpServer {
         // 优先用语义 action 直接调用（绕过 Robot/系统权限，最可靠）
         // 若节点本身无 OnClick（如 Button 内部 Text），向上找带 OnClick 的祖先
         val clickTarget = findClickableAncestor(node)
+        if (clickTarget != null && safeContains(clickTarget.config, SemanticsProperties.Disabled)) {
+            exchange.send(409, """{"clicked":false,"error":"node disabled"}""")
+            return
+        }
         val invoked = clickTarget != null && invokeClickAction(clickTarget)
         if (invoked) {
             exchange.send(200, """{"clicked":true,"method":"action","testTag":"${params["testTag"] ?: params["text"] ?: ""}"}""")

@@ -107,13 +107,14 @@ GroupFileService 只接受当前群成员访问，并拒绝在私聊上创建文
 
 ## 8. Document
 
-DocumentService 当前只接受 `SCOPE_GROUP_CHAT`，并在每个 list/get/create/update/history/delete 调用时
-验证 scope 对应活动群聊且调用者仍是成员。文档记录不复制成员 ACL，避免群成员变化产生第二个事实源。
+DocumentService 以 DocumentSpace 为权限根。所有者是创建者；用户授权和组织部门授权按最高角色合并，
+部门授权可包含下级节点。每个 list/read/write/history 调用都从 OrganizationRepository 读取当前成员
+归属并重算角色，群成员资格不参与文档权限。
 
-标题去除首尾空白后必须为 1..180 个非控制字符；Markdown 可为空，最大 1,000,000 字符且不能包含
-NUL。Repository 在事务内锁定当前文档行，比较 expectedRevision，更新当前快照并追加下一个完整修订。
-陈旧 revision 必须失败，不能自动 last-write-wins。恢复旧版本仍调用 update，因此会生成新修订并保留
-全部历史。
+服务负责空间元数据与归档、grant 管理、目录树无环约束、非空目录删除保护，以及文档正文与历史。
+名称去除首尾空白后必须为 1..180 个非控制字符，空间名上限 120；Markdown 可为空，最大 1,000,000
+字符且不能包含 NUL。Repository 在事务内锁定当前节点行，比较 expectedRevision，更新当前快照并为
+文档追加下一个完整修订。陈旧 revision 必须失败，不能自动 last-write-wins。
 
 ## 9. Bot
 

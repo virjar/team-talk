@@ -59,14 +59,21 @@ group_file_versions 只追加不可变 Attachment 快照，`(entryId, version)` 
 创建、追加版本、重命名、删除在同一 PostgreSQL 事务提交，只记录动作与有限摘要，不保存文件正文。
 物理二进制仍在 FileStore；数据库版本表是下载引用和群空间配额的事实源。
 
-### documents / document_revisions
+### document_spaces / document_space_grants
 
-documents 保存活动文档当前快照、scope、revision 和创建/修改身份。`(scopeType, scopeId)` 支持按工作区
-列出；删除只改变 status 并推进 revision，普通读取不返回软删除对象。
+document_spaces 保存空间元数据、创建者所有权与归档状态。document_space_grants 以
+`(spaceId, principalType, principalId)` 唯一，保存用户或组织部门的角色以及是否包含下级部门；它不
+复制部门成员，实时有效角色由领域服务计算。
 
-document_revisions 只追加每次成功保存的标题与完整 Markdown 快照，`(documentId, revision)` 唯一。
-更新在锁定 documents 当前行的同一事务内完成 revision 条件写和修订插入，避免两个并发保存都成功。
-完整快照简化恢复与验收，但会增加存储；增量压缩、保留期和管理员审计属于生产化后续设计。
+### document_nodes / document_content_revisions
+
+document_nodes 同时保存目录树、文档当前 Markdown 快照、revision 和创建/修改身份；文件夹正文为 null。
+parentId 必须指向同空间文件夹，循环约束由领域服务在写入前检查。删除只改变 status 并推进 revision。
+
+document_content_revisions 只追加每次成功保存的标题与完整 Markdown 快照，
+`(documentId, revision)` 唯一。更新在锁定 document_nodes 当前行的同一事务内完成 revision 条件写和
+修订插入，避免两个并发保存都成功。完整快照简化恢复与验收，但会增加存储；增量压缩、保留期和管理
+员审计属于生产化后续设计。
 
 ## 3. MessageStore
 

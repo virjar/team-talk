@@ -123,20 +123,24 @@
 | `group.files.versions.{dialog|upload|close}` | 版本记录弹窗及其操作 |
 | `group.files.version.{version}.open` | 打开指定历史版本 |
 
-## 群文档
+## 企业文档
 
 | testTag | 作用 |
 |---|---|
-| `group.detail.documents` | 从群设置进入协作文档 |
-| `group.documents.create` / `group.documents.refresh` | 新建与刷新文档 |
-| `group.documents.item.{documentId前8}` | 文档摘要项 |
-| `group.documents.title` / `group.documents.editor` | 标题与 Markdown 富文本编辑器 |
-| `group.documents.preview` / `group.documents.save` | 编辑预览切换与保存 |
-| `group.documents.history` / `group.documents.revisions.dialog` | 打开版本历史及其弹窗 |
-| `group.documents.revision.{revision}` | 指定文档修订 |
-| `group.documents.restore` | 将历史快照恢复为新修订 |
-| `group.documents.delete` / `group.documents.delete.confirm` | 删除入口与确认 |
-| `group.documents.discard.dialog` / `group.documents.discard.confirm` | 未保存修改保护 |
+| `nav.tab.文档` / `documents.workspace` | 一级文档入口与工作台根节点 |
+| `documents.space.create` / `documents.space.create.dialog` | 新建空间入口与弹窗 |
+| `documents.space.{spaceId前8}` | 空间列表项 |
+| `documents.space.settings` / `documents.space.settings.dialog` | 空间信息与授权管理 |
+| `documents.folder.create` / `documents.document.create` | 新建目录或文档 |
+| `documents.node.{nodeId前8}` | 当前目录节点 |
+| `documents.tab.{tabId前12}` | 已打开的跨空间文档标签 |
+| `documents.editor.title` / `documents.editor.body` | 标题与 Markdown 富文本编辑器 |
+| `documents.editor.preview` / `documents.editor.save` | 编辑预览切换与保存 |
+| `documents.editor.history` / `documents.revisions.dialog` | 打开版本历史及其弹窗 |
+| `documents.revision.{revision}` / `documents.revision.restore` | 指定修订及恢复 |
+| `documents.document.delete` / `documents.document.delete.confirm` | 删除入口与确认 |
+| `documents.tab.discard.confirm` | 未保存标签关闭保护 |
+| `documents.detach` / `documents.detached.placeholder` / `documents.detached.bringBack` | 拉出独立窗口、主窗口承接态与收回操作 |
 
 ## 命名规则
 

@@ -118,13 +118,22 @@ class RpcMethodIdGoldenTest {
 
     @Test
     fun `document methodId 稳定`() {
-        assertEquals(1, DocumentRpcContract.M_LIST)
-        assertEquals(2, DocumentRpcContract.M_GET)
-        assertEquals(3, DocumentRpcContract.M_CREATE)
-        assertEquals(4, DocumentRpcContract.M_UPDATE)
-        assertEquals(5, DocumentRpcContract.M_LIST_REVISIONS)
-        assertEquals(6, DocumentRpcContract.M_GET_REVISION)
-        assertEquals(7, DocumentRpcContract.M_DELETE)
+        assertEquals(1, DocumentRpcContract.M_LIST_SPACES)
+        assertEquals(2, DocumentRpcContract.M_CREATE_SPACE)
+        assertEquals(3, DocumentRpcContract.M_UPDATE_SPACE)
+        assertEquals(4, DocumentRpcContract.M_ARCHIVE_SPACE)
+        assertEquals(5, DocumentRpcContract.M_LIST_GRANTS)
+        assertEquals(6, DocumentRpcContract.M_UPSERT_GRANT)
+        assertEquals(7, DocumentRpcContract.M_REMOVE_GRANT)
+        assertEquals(8, DocumentRpcContract.M_LIST_NODES)
+        assertEquals(9, DocumentRpcContract.M_CREATE_FOLDER)
+        assertEquals(10, DocumentRpcContract.M_CREATE_DOCUMENT)
+        assertEquals(11, DocumentRpcContract.M_GET_DOCUMENT)
+        assertEquals(12, DocumentRpcContract.M_UPDATE_DOCUMENT)
+        assertEquals(13, DocumentRpcContract.M_MOVE_NODE)
+        assertEquals(14, DocumentRpcContract.M_DELETE_NODE)
+        assertEquals(15, DocumentRpcContract.M_LIST_REVISIONS)
+        assertEquals(16, DocumentRpcContract.M_GET_REVISION)
     }
 
     @Test

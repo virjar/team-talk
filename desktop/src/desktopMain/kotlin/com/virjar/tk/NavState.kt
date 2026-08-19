@@ -39,13 +39,12 @@ sealed class SubScreen {
 
     // ── 主内容页 ──
     data object GlobalSearch : SubScreen()
-    data class GroupDocuments(val chatId: String) : SubScreen()
 
     /** Desktop 承载方式。显式建模，避免把“覆盖式检查器”和“主内容替换页”混成同一面板。 */
     val presentation: SubScreenPresentation
         get() = when (this) {
             is GroupDetail, is InviteMembers, is InviteLinks, is GroupFiles -> SubScreenPresentation.CHAT_INSPECTOR
-            GlobalSearch, is GroupDocuments -> SubScreenPresentation.MAIN_PANE
+            GlobalSearch -> SubScreenPresentation.MAIN_PANE
             else -> SubScreenPresentation.TASK_WINDOW
         }
 
@@ -73,7 +72,6 @@ sealed class SubScreen {
         is GroupDetail -> ScreenDataKey.GroupDetail(chatId)
         is InviteLinks -> ScreenDataKey.InviteLinks(chatId)
         is GroupFiles -> ScreenDataKey.GroupFiles(chatId)
-        is GroupDocuments -> ScreenDataKey.GroupDocuments(chatId)
         GlobalSearch -> null
         else -> null
     }
@@ -97,6 +95,9 @@ enum class SubScreenPresentation {
 class DesktopNav(session: ClientSession) : AppDataState(session) {
 
     var selectedTab by mutableIntStateOf(0)
+
+    /** 文档工作台可从主窗口拉出；两个宿主共享 [documents] 中的标签与草稿状态。 */
+    var documentWindowVisible by mutableStateOf(false)
 
     // 当前聊天（右栏聊天面板；null = 空态）
     var chatId by mutableStateOf<String?>(null)

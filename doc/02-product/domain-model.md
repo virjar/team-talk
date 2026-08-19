@@ -118,20 +118,28 @@ GroupFileVersion 后，它才获得群文件身份和成员下载权限。重命
 群文件不是 Message 的派生列表：聊天附件不会自动进入共享空间，删除消息也不会删除群文件。未来消息
 可以引用 GroupFileEntry，但权威名称、版本和权限仍由群文件领域维护。
 
-## 7. 协作文档
+## 7. 企业文档
 
-### Document / DocumentRevision
+### DocumentSpace / DocumentSpaceGrant
 
-Document 是独立办公内容聚合，包含稳定 `documentId`、`scopeType/scopeId`、标题、Markdown 当前
-快照、revision 与创建/修改身份。当前只开放群聊 scope，但 scope 模型允许未来组织知识库或个人空间
-复用同一领域，而不是复制一套文档表。
+DocumentSpace 是企业文档的一级权限边界，与 Chat 和 OrganizationUnit 均无所有权关系。空间创建者是
+隐式 owner；DocumentSpaceGrant 可以把 viewer、editor 或 admin 角色授予具体用户或组织部门，部门
+授权可选择包含下级部门。一个用户命中多条授权时取最高角色。
 
-DocumentRevision 是每次成功保存产生的不可变完整快照。更新必须提交当前 `expectedRevision`；服务端
-只允许一个调用获得下一个版本，其余调用收到冲突并保留本地草稿。恢复旧版本不是回退或删除历史，而是
-以旧快照内容再创建一个新 revision。删除是当前文档的软删除，历史不再通过普通客户端访问。
+服务端每次访问都根据实时 OrganizationMember 关系计算有效角色，不复制部门成员名单。空间可以覆盖
+大部门、跨部门项目或任意团队，不要求和自动部门群一一对应。
 
-群文档权限不复制成员名单。服务端每次列出、读取、保存、查看历史和删除时都查询当前群成员资格，
-因此离群后不能依靠旧客户端缓存继续访问。当前所有群成员都可编辑；细粒度只读/编辑 ACL 尚未开放。
+### DocumentNode / Document / DocumentRevision
+
+DocumentNode 是空间目录树摘要，文件夹和文档共用 `nodeId`、`spaceId`、`parentId`、名称、revision
+与审计身份。Document 是文档节点的 Markdown 当前快照，`documentId` 等于其 nodeId；目录列表不返回
+完整正文。
+
+DocumentRevision 是每次成功保存产生的不可变完整快照。更新、移动和删除必须提交当前
+`expectedRevision`；服务端只允许一个调用获得下一个版本，其余调用收到冲突并保留本地草稿。恢复旧
+版本以旧内容再创建一个新 revision，不回退或删除历史。
+
+完整产品边界见[企业文档](documents.md)。
 
 ## 8. 自动化应用
 
@@ -170,7 +178,9 @@ Chat 1 ──* Message
 Message 0 ──* Attachment
 Chat 1 ──* GroupFileEntry
 GroupFileEntry 0..1 ──* GroupFileVersion ──1 Attachment
-Chat 1 ──* Document 1 ──* DocumentRevision
+DocumentSpace 1 ──* DocumentSpaceGrant ── User / OrganizationUnit
+DocumentSpace 1 ──* DocumentNode(folder/document)
+Document(document node) 1 ──* DocumentRevision
 User 1 ──* Notify
 AutomationBot 1 ──1 User(service identity)
 AutomationBot * ──* Chat  通过 explicit grant

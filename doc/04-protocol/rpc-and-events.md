@@ -58,9 +58,10 @@ KSP 生成：
 listVersions、rename、delete。GroupFileEntry 携带逻辑 revision 和当前 contentVersion；
 GroupFileVersion 携带不可变 Attachment 快照。文件二进制不进入 TCP payload，仍先通过 HTTP 上传。
 
-文档使用独立 `document` 服务，当前方法顺序为 list、get、create、update、listRevisions、
-getRevision、delete。列表模型不携带正文，修订列表不携带完整 Markdown；正文只在打开当前文档或指定
-修订时返回。update/delete 的 expectedRevision 是并发契约，不是可选提示。
+文档使用独立 `document` 服务。协议版本 5 的方法按空间、授权、目录和修订分组：list/create/update/
+archive space，list/upsert/remove grant，list/create/move/delete node，以及 get/update document 和
+list/get revision。列表模型不携带正文，修订列表不携带完整 Markdown；正文只在打开当前文档或指定
+修订时返回。update/move/delete 的 expectedRevision 是并发契约，不是可选提示。
 
 完整方法查询见[RPC 参考](../10-reference/rpc-reference.md)。
 

@@ -247,13 +247,41 @@ object GroupFileAudits : LongIdTable("group_file_audits") {
     val createdAt = long("created_at").index()
 }
 
-/** 文档当前快照；正文历史在 DocumentRevisions 中只追加保存。 */
-object Documents : Table("documents") {
-    val documentId = varchar("document_id", 36)
-    val scopeType = integer("scope_type")
-    val scopeId = varchar("scope_id", 36).index()
-    val title = varchar("title", 180)
-    val markdown = text("markdown")
+/** 企业文档空间；权限和目录树都以 spaceId 为根。 */
+object DocumentSpaces : Table("document_spaces") {
+    val spaceId = varchar("space_id", 36)
+    val name = varchar("name", 120)
+    val description = varchar("description", 500).nullable()
+    val status = integer("status").default(1)
+    val createdBy = varchar("created_by", 36)
+    val createdAt = long("created_at")
+    val updatedAt = long("updated_at").index()
+
+    override val primaryKey = PrimaryKey(spaceId)
+}
+
+/** 用户或组织部门对文档空间的授权。空间所有者由 DocumentSpaces.createdBy 表示。 */
+object DocumentSpaceGrants : LongIdTable("document_space_grants") {
+    val spaceId = varchar("space_id", 36).index()
+    val principalType = integer("principal_type")
+    val principalId = varchar("principal_id", 36).index()
+    val role = integer("role")
+    val includeDescendants = bool("include_descendants").default(false)
+    val updatedAt = long("updated_at")
+
+    init {
+        uniqueIndex("idx_document_space_principal", spaceId, principalType, principalId)
+    }
+}
+
+/** 空间目录树和文档当前快照；文件夹的 markdown 为 null。 */
+object DocumentNodes : Table("document_nodes") {
+    val nodeId = varchar("node_id", 36)
+    val spaceId = varchar("space_id", 36).index()
+    val parentId = varchar("parent_id", 36).nullable().index()
+    val nodeType = integer("node_type")
+    val name = varchar("name", 180)
+    val markdown = text("markdown").nullable()
     val revision = long("revision").default(1)
     val status = integer("status").default(1)
     val createdBy = varchar("created_by", 36)
@@ -261,15 +289,15 @@ object Documents : Table("documents") {
     val updatedBy = varchar("updated_by", 36)
     val updatedAt = long("updated_at").index()
 
-    override val primaryKey = PrimaryKey(documentId)
+    override val primaryKey = PrimaryKey(nodeId)
 
     init {
-        index("idx_document_scope", false, scopeType, scopeId)
+        index("idx_document_node_parent", false, spaceId, parentId, status)
     }
 }
 
 /** 完整、不可变的文档修订快照。 */
-object DocumentRevisions : LongIdTable("document_revisions") {
+object DocumentContentRevisions : LongIdTable("document_content_revisions") {
     val documentId = varchar("document_id", 36).index()
     val revision = long("revision")
     val title = varchar("title", 180)
@@ -278,6 +306,6 @@ object DocumentRevisions : LongIdTable("document_revisions") {
     val editedAt = long("edited_at")
 
     init {
-        uniqueIndex("idx_document_revision", documentId, revision)
+        uniqueIndex("idx_document_content_revision", documentId, revision)
     }
 }

@@ -7,13 +7,13 @@ Android 使用单 Activity、Compose NavHost 和系统返回栈。一级栏目�
 
 ```text
 MainActivity
-  └── Home（会话 / 通讯录 / 设置）
+  └── Home（会话 / 通讯录 / 文档 / 设置）
        └── NavHost destinations
             ├── Chat
             ├── UserProfile
             ├── GroupDetail
             ├── GroupFiles
-            ├── GroupDocuments
+            ├── DocumentWorkspace（空间 / 目录 / 编辑器）
             ├── CreateGroup
             └── Search / Security / Devices …
 ```
@@ -58,11 +58,11 @@ TopAppBar 入口进入全屏结果页，分类和数据源与 Desktop 一致。
 当前群目录；打开文件复用带 Bearer token 的下载控制器和系统 Intent。目录与版本语义和 Desktop
 一致，但导航、返回和文件选择保持 Android 原生行为。
 
-## 7. 协作文档
+## 7. 企业文档
 
-群详情中的“协作文档”进入独立全屏页面。窄屏先显示文档列表，选择或新建后进入编辑页；系统返回先
-处理未保存确认，再回列表，最后退出工作区。编辑、预览、版本历史、恢复和冲突语义与 Desktop 相同，
-但不复制双栏和桌面快捷键。当前同样采用按需拉取，没有后台实时文档同步或离线编辑。
+底部导航提供独立“文档”入口，不从群详情进入。窄屏按空间列表、目录、编辑器逐层显示；系统返回先
+处理未保存确认，再回目录和空间。编辑、预览、版本历史、空间权限与冲突语义和 Desktop 相同，但不
+复制多栏、标签窗口尺寸或桌面快捷键。当前采用按需拉取，没有后台实时文档同步或离线编辑。
 
 ## 8. 生命周期
 
