@@ -18,13 +18,14 @@ curl http://127.0.0.1:18080/semantics
 |---|---|---|
 | GET | `/ping` | 检查测试服务是否启动 |
 | GET | `/semantics` | 读取窗口及 Popup 的合并语义树 |
-| GET | `/window-state` | 读取窗口 placement、位置和尺寸 |
+| GET | `/window-state` | 读取窗口及 AWT、Compose、Skia 各层 placement、位置和尺寸 |
 | GET | `/find` | 按 `testTag` 或文本查询节点 |
 | GET | `/wait` | 在有限时间内等待节点出现 |
 | GET | `/debug` | 查看节点可点击与父节点动作信息 |
-| GET | `/screenshot` | 获取指定窗口 PNG 截图 |
+| GET | `/screenshot` | 获取指定窗口 Skia PNG；`mode=screen` 获取窗口所在物理屏幕 PNG |
 | POST | `/click` | 单击节点或坐标 |
 | POST | `/doubleclick` | 在节点或坐标派发一次原生鼠标双击 |
+| POST | `/window-fullscreen` | 请求窗口进入、退出或切换全屏 |
 | POST | `/longclick` | 触发长按语义动作 |
 | POST | `/rightclick` | 触发右键交互 |
 | POST | `/input` | 设置可编辑节点文本 |
@@ -36,6 +37,14 @@ curl http://127.0.0.1:18080/semantics
 两次网络请求超过操作系统的双击阈值；该端点使用 Robot，macOS 首次运行可能需要辅助功能权限。
 窗口缩放验收必须同时读取 `/window-state`：`Maximized` 表示占满菜单栏和 Dock 之外的可用区域，
 不能用截图尺寸猜测，也不能把 `Fullscreen` 当作通过。
+
+macOS 原生全屏还必须验证完整尺寸链。用绿色按钮真实进入后，等待 `placement=Fullscreen`，并断言
+`rootPane`、`contentPane`、`composePanel`、`skiaLayer` 和 `skiaCanvas` 都与 `screen` 的宽高一致；
+随后通过 `/window-fullscreen?action=exit` 退出，确认普通窗口的位置和尺寸精确恢复。`/window-fullscreen`
+用于确定性地驱动状态与退出恢复，不替代绿色按钮进入路径的真实验收。黑边属于原生窗口与绘制层
+尺寸不同步，必须使用 `/screenshot?window=main&mode=screen` 检查系统屏幕；普通 `/screenshot` 读取
+Skia 帧，不能单独证明原生窗口边缘。`mode=screen` 使用系统屏幕捕获，macOS 首次运行可能需要授予
+“屏幕与系统录音”权限。
 
 ## 状态驱动的操作循环
 

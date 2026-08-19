@@ -217,7 +217,7 @@ class DesktopClient:
             return {}
 
     def window_state(self, window=None):
-        """读取窗口 placement、位置与尺寸；失败时返回空 dict。"""
+        """读取窗口 placement 及 AWT/Compose/Skia 各层尺寸；失败时返回空 dict。"""
         params = {"window": window} if window else None
         code, body = self._req("/window-state", params)
         if code != 200:
@@ -226,6 +226,20 @@ class DesktopClient:
             return json.loads(body)
         except Exception:
             return {}
+
+    def request_fullscreen(self, action="toggle", window=None):
+        """请求窗口全屏 enter/exit/toggle；用于自动化退出恢复和跨平台回归。"""
+        params = {"action": action}
+        if window:
+            params["window"] = window
+        code, body = self._req("/window-fullscreen", params, method="POST")
+        return code == 200, body
+
+    def enter_fullscreen(self, window=None):
+        return self.request_fullscreen("enter", window)
+
+    def exit_fullscreen(self, window=None):
+        return self.request_fullscreen("exit", window)
 
     def wait_window_placement(self, placement, timeout=10, interval=0.2, window=None):
         """等待窗口进入 Floating / Maximized / Fullscreen 中的指定状态。"""
@@ -292,7 +306,15 @@ class DesktopClient:
             time.sleep(interval)
         return False
 
-    def screenshot(self, path):
+    def screenshot(self, path, window=None, mode=None):
         """截图保存到 path，返回文件大小（字节）。"""
-        urllib.request.urlretrieve(self.base + "/screenshot", path)
+        params = {}
+        if window:
+            params["window"] = window
+        if mode:
+            params["mode"] = mode
+        url = self.base + "/screenshot"
+        if params:
+            url += "?" + urllib.parse.urlencode(params)
+        urllib.request.urlretrieve(url, path)
         return os.path.getsize(path)

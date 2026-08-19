@@ -6,6 +6,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsOwner
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.window.WindowPlacement
 import com.virjar.tk.dispatchWindowEscape
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
@@ -13,10 +14,14 @@ import java.awt.Component
 import java.awt.Container
 import java.awt.EventQueue
 import java.awt.KeyboardFocusManager
+import java.awt.Rectangle
 import java.awt.Robot
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
+import java.awt.image.BufferedImage
+import java.io.ByteArrayOutputStream
 import java.net.InetSocketAddress
+import javax.imageio.ImageIO
 import kotlin.math.roundToInt
 import org.jetbrains.skia.EncodedImageFormat
 import org.jetbrains.skia.Image
@@ -35,14 +40,15 @@ import org.jetbrains.skiko.SkiaLayer
  * HTTP API：
  *   GET  /ping                      健康检查
  *   GET  /semantics                 导出语义树 JSON（id/testTag/text/clickable/bounds/children）
- *   GET  /window-state              读取窗口 placement、位置和尺寸
+ *   GET  /window-state              读取窗口与 Compose/Skia 各层 placement、位置和尺寸
+ *   POST /window-fullscreen         请求窗口进入、退出或切换全屏
  *   POST /click?x=N&y=N             点击屏幕坐标（用 Robot 模拟真实鼠标）
  *   POST /click?testTag=xxx         按 testTag 查找节点并点击其中心
  *   POST /click?text=xxx            按 text 查找节点并点击其中心
  *   POST /doubleclick?testTag=xxx   在节点中心派发一次真实鼠标双击
  *   POST /input?testTag=xxx         向 testTag 节点输入文本（清空后输入）
  *   POST /input?text=xxx           同上，按 text 定位
- *   GET  /screenshot                返回窗口截图 PNG
+ *   GET  /screenshot                返回窗口 Skia 截图 PNG；mode=screen 截取所在物理屏幕
  *   GET  /find?testTag=xxx          查找节点是否存在，返回 {found, bounds}
  */
 object TestHttpServer {
@@ -52,6 +58,8 @@ object TestHttpServer {
 
     /** 已注册窗口映射：id → ComposeWindow。主窗口 id="main"，子窗口用 SubScreen 名。 */
     private val windows = java.util.concurrent.ConcurrentHashMap<String, ComposeWindow>()
+    private val preFullscreenPlacements =
+        java.util.concurrent.ConcurrentHashMap<String, WindowPlacement>()
     private var server: HttpServer? = null
     private val robot: Robot by lazy { Robot() }
     private val robotLock = Any()
@@ -81,6 +89,7 @@ object TestHttpServer {
     fun unregisterWindow(id: String) {
         if (!ENABLED) return
         windows.remove(id)
+        preFullscreenPlacements.remove(id)
     }
 
     /** 获取指定窗口（默认 main）。 */
@@ -99,6 +108,7 @@ object TestHttpServer {
         s.createContext("/debug", safe(::handleDebug))
         s.createContext("/semantics", safe(::handleSemantics))
         s.createContext("/window-state", safe(::handleWindowState))
+        s.createContext("/window-fullscreen", safe(::handleWindowFullscreen))
         s.createContext("/click", safe(::handleClick))
         s.createContext("/doubleclick", safe(::handleDoubleClick))
         s.createContext("/longclick", safe(::handleLongClick))
@@ -229,7 +239,7 @@ object TestHttpServer {
                 exchange.send(200, """{"clicked":[$x,$y],"method":"action"}""")
             } else {
                 // fallback Robot 坐标点击（macOS 需辅助功能权限）
-                clickScreen(x, y)
+                clickScreen(x, y, wid)
                 exchange.send(200, """{"clicked":[$x,$y],"method":"robot"}""")
             }
             return
@@ -262,7 +272,7 @@ object TestHttpServer {
         val b = node.boundsInWindow
         val cx = (b.left + b.right) / 2
         val cy = (b.top + b.bottom) / 2
-        clickScreen(cx, cy)
+        clickScreen(cx, cy, wid)
         exchange.send(200, """{"clicked":["$cx","$cy"],"method":"robot","testTag":"${params["testTag"] ?: ""}"}""")
     }
 
@@ -299,7 +309,12 @@ object TestHttpServer {
         )
     }
 
-    /** 返回 Compose 实际窗口状态，避免仅凭截图把 Maximized 与 Fullscreen 混淆。 */
+    /**
+     * 返回窗口从 AWT 到 Skia 的完整尺寸链。
+     *
+     * macOS 原生全屏可能只扩大 NSWindow，而 Java 侧 JFrame 仍保留普通态 bounds；同时读取每一层
+     * 才能区分业务布局留白与原生渲染层没有跟随全屏的问题。
+     */
     private fun handleWindowState(exchange: HttpExchange) {
         val wid = exchange.queryParams()["window"] ?: "main"
         val target = windows[wid]
@@ -311,9 +326,111 @@ object TestHttpServer {
         var payload = ""
         EventQueue.invokeAndWait {
             val transform = target.graphicsConfiguration.defaultTransform
-            payload = """{"window":"$wid","placement":"${target.placement.name}","x":${target.x},"y":${target.y},"width":${target.width},"height":${target.height},"scaleX":${transform.scaleX},"scaleY":${transform.scaleY},"visible":${target.isVisible},"active":${target.isActive}}"""
+            val skiaLayer = findSkiaLayer(target)
+            val screen = target.graphicsConfiguration.bounds
+            val insets = target.insets
+            payload = buildString {
+                append("{\"window\":\"").append(wid.escape()).append("\"")
+                append(",\"placement\":\"").append(target.placement.name).append("\"")
+                append(",\"x\":").append(target.x)
+                append(",\"y\":").append(target.y)
+                append(",\"width\":").append(target.width)
+                append(",\"height\":").append(target.height)
+                append(",\"scaleX\":").append(transform.scaleX)
+                append(",\"scaleY\":").append(transform.scaleY)
+                append(",\"visible\":").append(target.isVisible)
+                append(",\"active\":").append(target.isActive)
+                append(",\"extendedState\":").append(target.extendedState)
+                append(",\"insets\":{")
+                append("\"top\":").append(insets.top)
+                append(",\"left\":").append(insets.left)
+                append(",\"bottom\":").append(insets.bottom)
+                append(",\"right\":").append(insets.right).append("}")
+                append(",\"screen\":").append(componentBoundsJson(screen.x, screen.y, screen.width, screen.height))
+                append(",\"rootPane\":").append(componentStateJson(target.rootPane))
+                append(",\"contentPane\":").append(componentStateJson(target.contentPane))
+                append(",\"composePanel\":").append(componentStateJson(target.contentPane.components.firstOrNull()))
+                append(",\"skiaLayer\":").append(componentStateJson(skiaLayer))
+                append(",\"skiaCanvas\":").append(componentStateJson(skiaLayer?.canvas))
+                append(",\"skiaFullscreen\":").append(skiaLayer?.fullscreen ?: false)
+                append("}")
+            }
         }
         exchange.send(200, payload)
+    }
+
+    /** 请求 Compose 窗口进入、退出或切换全屏，供退出恢复与跨平台自动化使用。 */
+    private fun handleWindowFullscreen(exchange: HttpExchange) {
+        val params = exchange.queryParams()
+        val wid = params["window"] ?: "main"
+        val target = windows[wid]
+        if (target == null) {
+            exchange.send(404, """{"error":"window not found"}""")
+            return
+        }
+        val action = params["action"]?.lowercase() ?: "toggle"
+        if (action !in setOf("enter", "exit", "leave", "toggle")) {
+            exchange.send(400, """{"error":"action must be enter, exit or toggle"}""")
+            return
+        }
+
+        var requestedPlacement = WindowPlacement.Floating
+        EventQueue.invokeAndWait {
+            val current = target.placement
+            val restorePlacement = {
+                preFullscreenPlacements.remove(wid) ?: if (
+                    (target.extendedState and java.awt.Frame.MAXIMIZED_BOTH) != 0
+                ) {
+                    WindowPlacement.Maximized
+                } else {
+                    WindowPlacement.Floating
+                }
+            }
+            requestedPlacement = when (action) {
+                "enter" -> {
+                    if (current != WindowPlacement.Fullscreen) preFullscreenPlacements[wid] = current
+                    WindowPlacement.Fullscreen
+                }
+                "exit", "leave" -> restorePlacement()
+                else -> if (current == WindowPlacement.Fullscreen) {
+                    restorePlacement()
+                } else {
+                    preFullscreenPlacements[wid] = current
+                    WindowPlacement.Fullscreen
+                }
+            }
+            if (current == WindowPlacement.Fullscreen && requestedPlacement != WindowPlacement.Fullscreen) {
+                requestFullScreenExit(target, requestedPlacement)
+            } else {
+                target.placement = requestedPlacement
+            }
+        }
+        exchange.send(
+            200,
+            """{"requested":"$action","requestedPlacement":"${requestedPlacement.name}","window":"${wid.escape()}"}""",
+        )
+    }
+
+    /** macOS 必须先离开原生 Fullscreen，动画完成后才能恢复进入前的 Maximized 状态。 */
+    private fun requestFullScreenExit(target: ComposeWindow, restorePlacement: WindowPlacement) {
+        target.placement = WindowPlacement.Floating
+        if (restorePlacement == WindowPlacement.Floating) return
+
+        var attempts = 0
+        val restoreTimer = javax.swing.Timer(100, null)
+        restoreTimer.addActionListener {
+            attempts++
+            when {
+                !target.isDisplayable -> restoreTimer.stop()
+                target.placement != WindowPlacement.Fullscreen -> {
+                    target.placement = restorePlacement
+                    restoreTimer.stop()
+                }
+                attempts >= 50 -> restoreTimer.stop()
+            }
+        }
+        restoreTimer.initialDelay = 100
+        restoreTimer.start()
     }
 
     /** 长按：调用节点的 OnLongClick 语义 action（触发 combinedClickable 的长按菜单）。 */
@@ -543,6 +660,7 @@ object TestHttpServer {
             exchange.send(404, """{"error":"no window"}""")
             return
         }
+        val screenMode = exchange.queryParams()["mode"] == "screen"
         val wasAlwaysOnTop = window.isAlwaysOnTop
         val bytes = try {
             // ComposeWindow 使用独立的 Skia 硬件层，Swing paintAll 只能得到窗口背景。
@@ -553,22 +671,24 @@ object TestHttpServer {
                     window.extendedState = window.extendedState and java.awt.Frame.ICONIFIED.inv()
                 }
                 window.isVisible = true
-                window.isAlwaysOnTop = true
                 window.toFront()
                 window.requestFocus()
-                window.validate()
-                val skiaLayer = findSkiaLayer(window)
-                    ?: error("Compose Skia layer not found")
-                skiaLayer.renderImmediately()
-                skiaLayer.screenshot()?.use { bitmap ->
-                    Image.makeFromBitmap(bitmap).use { image ->
-                        image.encodeToData(EncodedImageFormat.PNG)?.use { data ->
-                            captured[0] = data.bytes
-                        } ?: error("PNG encoding failed")
+                if (!screenMode) {
+                    window.isAlwaysOnTop = true
+                    if (window.placement != WindowPlacement.Fullscreen) window.validate()
+                    val skiaLayer = findSkiaLayer(window)
+                        ?: error("Compose Skia layer not found")
+                    skiaLayer.renderImmediately()
+                    skiaLayer.screenshot()?.use { bitmap ->
+                        Image.makeFromBitmap(bitmap).use { image ->
+                            image.encodeToData(EncodedImageFormat.PNG)?.use { data ->
+                                captured[0] = data.bytes
+                            } ?: error("PNG encoding failed")
+                        }
                     }
                 }
             }
-            captured[0] ?: error("window capture failed")
+            if (screenMode) captureScreenPng(window) else captured[0] ?: error("window capture failed")
         } catch (e: Exception) {
             exchange.send(500, """{"error":"${e.message?.escape()}"}""")
             return
@@ -578,6 +698,34 @@ object TestHttpServer {
         exchange.responseHeaders.add("Content-Type", "image/png")
         exchange.sendResponseHeaders(200, bytes.size.toLong())
         exchange.responseBody.use { it.write(bytes) }
+    }
+
+    /** 系统全屏视觉验收使用物理屏幕截图，才能看见 NSWindow 周围是否仍暴露黑色底层。 */
+    private fun captureScreenPng(window: ComposeWindow): ByteArray {
+        var screenBounds = Rectangle()
+        EventQueue.invokeAndWait { screenBounds = window.graphicsConfiguration.bounds }
+        val multiResolution = synchronized(robotLock) {
+            robot.createMultiResolutionScreenCapture(screenBounds)
+        }
+        val image = multiResolution.resolutionVariants.maxByOrNull { candidate ->
+            candidate.getWidth(null).toLong() * candidate.getHeight(null).toLong()
+        } ?: error("screen capture failed")
+        val buffered = if (image is BufferedImage) {
+            image
+        } else {
+            BufferedImage(image.getWidth(null), image.getHeight(null), BufferedImage.TYPE_INT_ARGB).also { target ->
+                val graphics = target.createGraphics()
+                try {
+                    graphics.drawImage(image, 0, 0, null)
+                } finally {
+                    graphics.dispose()
+                }
+            }
+        }
+        return ByteArrayOutputStream().use { output ->
+            check(ImageIO.write(buffered, "png", output)) { "screen PNG encoding failed" }
+            output.toByteArray()
+        }
     }
 
     /** ComposeWindow hides its SkiaLayer behind internal containers; discover it without reflection. */
@@ -840,15 +988,32 @@ object TestHttpServer {
 
     /** Compose 窗口内设备像素 → AWT 屏幕逻辑点。 */
     private fun composePointToScreen(window: ComposeWindow, x: Float, y: Float): Pair<Int, Int> {
-        val location = window.locationOnScreen
+        val fullScreenUsesStaleFrameBounds = window.placement == WindowPlacement.Fullscreen &&
+            (window.width != window.rootPane.width || window.height != window.rootPane.height)
+        val screen = window.graphicsConfiguration.bounds
+        val originX = if (fullScreenUsesStaleFrameBounds) screen.x else window.locationOnScreen.x
+        val originY = if (fullScreenUsesStaleFrameBounds) screen.y else window.locationOnScreen.y
         val transform = window.graphicsConfiguration.defaultTransform
         val scaleX = transform.scaleX.takeIf { it > 0.0 } ?: 1.0
         val scaleY = transform.scaleY.takeIf { it > 0.0 } ?: 1.0
-        return (location.x + (x / scaleX).roundToInt()) to
-            (location.y + (y / scaleY).roundToInt())
+        return (originX + (x / scaleX).roundToInt()) to
+            (originY + (y / scaleY).roundToInt())
     }
 
     // ───────── 工具 ─────────
+
+    private fun componentStateJson(component: Component?): String {
+        if (component == null) return "null"
+        return buildString {
+            append(componentBoundsJson(component.x, component.y, component.width, component.height).dropLast(1))
+            append(",\"valid\":").append(component.isValid)
+            append(",\"showing\":").append(component.isShowing)
+            append("}")
+        }
+    }
+
+    private fun componentBoundsJson(x: Int, y: Int, width: Int, height: Int): String =
+        """{"x":$x,"y":$y,"width":$width,"height":$height}"""
 
     private fun String.escape() = replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
 

@@ -272,7 +272,8 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                     window.rootPane.putClientProperty("apple.awt.windowTitleVisible", false)
                 }
                 window.minimumSize = java.awt.Dimension(880, 600)
-                onDispose { }
+                val fullScreenContentSync = installMacFullScreenContentSync(window)
+                onDispose { fullScreenContentSync.close() }
             }
             // 同步 AWT window focus 状态到 AppState
             LaunchedEffect(Unit) {
