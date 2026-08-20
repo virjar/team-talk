@@ -11,6 +11,7 @@ class SubScreenPresentationTest {
             SubScreen.GroupDetail("chat-1"),
             SubScreen.InviteMembers("chat-1"),
             SubScreen.InviteLinks("chat-1"),
+            SubScreen.GroupBots("chat-1"),
         )
 
         screens.forEach { screen ->

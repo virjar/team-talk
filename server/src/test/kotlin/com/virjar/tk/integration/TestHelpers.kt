@@ -93,6 +93,7 @@ class TestEnvironment : AutoCloseable {
     /** RPC adapter binds the caller uid; the domain service remains transport-neutral. */
     fun contactService(uid: String): ContactRpcImpl = ContactRpcImpl(uid, koin.get())
     val chatService: ChatService get() = koin.get()
+    val chatStore: ChatStore get() = koin.get()
     val messageService: MessageService get() = koin.get()
     val conversationService: ConversationService get() = koin.get()
     val organizationService: OrganizationService get() = koin.get()

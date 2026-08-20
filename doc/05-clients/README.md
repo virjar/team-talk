@@ -43,6 +43,7 @@ Android 是单屏触控应用；把其中一端的页面结构直接复制到另
 
 - [Desktop](desktop.md)：三栏、窗口和上下文容器。
 - [Android](android.md)：页面栈、触控和平台能力。
+- [通知机器人](notification-bots.md)：群内创建、一次性凭据与外部系统入站通知。
 - [无头客户端](headless.md)：ImBot、tt-agent、CLI 与 MCP 接入。
 - [设计系统](design-system.md)：颜色、字阶、间距、组件与状态。
 - [富文本与媒体](rich-content.md)：编辑、渲染、附件和播放。

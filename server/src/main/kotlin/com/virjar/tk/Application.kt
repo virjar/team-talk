@@ -162,15 +162,16 @@ fun Application.module() {
     if (recoveredProjections > 0) {
         logger.info("Recovered {} pending message projections", recoveredProjections)
     }
+    // Clean legacy grants for inactive chats before a stable-id department group can be re-created.
+    val botGrantFailures = runBlocking(Dispatchers.IO) { koin.get<BotService>().reconcileGrants() }
+    if (botGrantFailures.isNotEmpty()) {
+        logger.error("Bot grant reconciliation failed for grants={}", botGrantFailures)
+    }
     val organizationFailures = runBlocking(Dispatchers.IO) {
         koin.get<OrganizationService>().reconcileAllManagedGroups()
     }
     if (organizationFailures.isNotEmpty()) {
         logger.error("Managed department group reconciliation failed for units={}", organizationFailures)
-    }
-    val botGrantFailures = runBlocking(Dispatchers.IO) { koin.get<BotService>().reconcileGrants() }
-    if (botGrantFailures.isNotEmpty()) {
-        logger.error("Bot grant reconciliation failed for grants={}", botGrantFailures)
     }
     tcpServer.start { channel, recorder, ioExecutor ->
         ImAgent(
@@ -205,7 +206,7 @@ fun Application.module() {
             call.respond(status, health)
         }
         fileRoutes(fileStore, koin.get(), koin.get())
-        botRoutes(koin.get())
+        botRoutes(koin.get(), koin.get())
         adminRoutes(koin.get())
         clientLogRoutes(clientLogStore)
 

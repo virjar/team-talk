@@ -176,6 +176,8 @@ object AutomationBots : Table("automation_bots") {
     val name = varchar("name", 100)
     val tokenHash = varchar("token_hash", 64).uniqueIndex()
     val status = integer("status").default(1)
+    val managedChatId = varchar("managed_chat_id", 36).nullable().index()
+    val createdByUid = varchar("created_by_uid", 36).nullable().index()
     val lastUsedAt = long("last_used_at").nullable()
     val createdAt = long("created_at")
     val updatedAt = long("updated_at")

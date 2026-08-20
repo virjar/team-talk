@@ -130,6 +130,20 @@
 | `search.msg.query` / `search.msg.submit` | 消息搜索 |
 | `search.msg.result.{chatId前12}.{serverSeq}` | 消息搜索结果 |
 
+## 群机器人
+
+| testTag | 作用 |
+|---|---|
+| `group.detail.bots` | 从群设置进入通知机器人管理 |
+| `group.bots.screen` / `group.bots.close` | 通知机器人页面与 Desktop 关闭操作 |
+| `group.bots.add` / `group.bots.empty` / `group.bots.loading` | 所有成员可用的添加入口、空状态与加载状态 |
+| `group.bots.error` / `group.bots.retry` | 加载或操作错误与重试 |
+| `group.bots.create.name` / `group.bots.create.confirm` | 新机器人名称与创建提交 |
+| `group.bots.credentials` / `group.bots.credentials.copyExample` / `group.bots.credentials.saved` | 一次性凭据弹窗、复制完整调用示例与已安全保存确认 |
+| `group.bot.{botId前8}` | 当前群中的机器人列表项 |
+| `group.bot.{botId前8}.more` / `group.bot.{botId前8}.copyUrl` | 机器人操作菜单与复制 TeamTalk 入站通知 URL |
+| `group.bot.rotate.confirm` / `group.bot.remove.confirm` | 凭据轮换与移除二次确认 |
+
 ## 群文件
 
 | testTag | 作用 |

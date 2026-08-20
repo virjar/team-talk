@@ -8,6 +8,7 @@ import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.JoinType
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insert
@@ -24,6 +25,8 @@ class ExposedBotRepository : BotRepository {
             it[name] = bot.name
             it[AutomationBots.tokenHash] = tokenHash
             it[status] = bot.status
+            it[managedChatId] = bot.managedChatId
+            it[createdByUid] = bot.createdByUid
             it[createdAt] = bot.createdAt
             it[updatedAt] = bot.createdAt
         }
@@ -33,6 +36,40 @@ class ExposedBotRepository : BotRepository {
     override fun list(): List<AutomationBot> = transaction {
         AutomationBots.selectAll().orderBy(AutomationBots.createdAt to SortOrder.DESC)
             .map { it.toBot(listGrantsInternal(it[AutomationBots.botId])) }
+    }
+
+    override fun listForChat(chatId: String): List<AutomationBot> = transaction {
+        AutomationBotGrants.join(
+            otherTable = AutomationBots,
+            joinType = JoinType.INNER,
+            onColumn = AutomationBotGrants.botId,
+            otherColumn = AutomationBots.botId,
+        ).selectAll().where {
+            AutomationBotGrants.chatId eq chatId
+        }.orderBy(AutomationBots.createdAt to SortOrder.DESC)
+            .map { it.toBot(listGrantsInternal(it[AutomationBots.botId])) }
+    }
+
+    override fun countActiveManagedForChat(chatId: String): Long = transaction {
+        AutomationBots.selectAll().where {
+            (AutomationBots.managedChatId eq chatId) and
+                (AutomationBots.status eq AutomationBot.STATUS_ACTIVE)
+        }.count()
+    }
+
+    override fun countActiveManagedForCreator(createdByUid: String): Long = transaction {
+        AutomationBots.selectAll().where {
+            (AutomationBots.createdByUid eq createdByUid) and
+                (AutomationBots.status eq AutomationBot.STATUS_ACTIVE)
+        }.count()
+    }
+
+    override fun countActiveManagedForCreatorInChat(createdByUid: String, chatId: String): Long = transaction {
+        AutomationBots.selectAll().where {
+            (AutomationBots.createdByUid eq createdByUid) and
+                (AutomationBots.managedChatId eq chatId) and
+                (AutomationBots.status eq AutomationBot.STATUS_ACTIVE)
+        }.count()
     }
 
     override fun find(botId: String): AutomationBot? = transaction {
@@ -111,6 +148,16 @@ class ExposedBotRepository : BotRepository {
         }.mapTo(linkedSetOf()) { it[AutomationBots.userUid] }
     }
 
+    override fun onChatDeactivated(chatId: String) {
+        transaction {
+            AutomationBots.update({ AutomationBots.managedChatId eq chatId }) {
+                it[status] = AutomationBot.STATUS_DISABLED
+                it[updatedAt] = System.currentTimeMillis()
+            }
+            AutomationBotGrants.deleteWhere { AutomationBotGrants.chatId eq chatId }
+        }
+    }
+
     private fun listGrantsInternal(botId: String): List<String> =
         AutomationBotGrants.selectAll().where { AutomationBotGrants.botId eq botId }
             .map { it[AutomationBotGrants.chatId] }
@@ -121,6 +168,8 @@ private fun ResultRow.toBot(grants: List<String>) = AutomationBot(
     userUid = this[AutomationBots.userUid],
     name = this[AutomationBots.name],
     status = this[AutomationBots.status],
+    managedChatId = this[AutomationBots.managedChatId],
+    createdByUid = this[AutomationBots.createdByUid],
     grantedChatIds = grants,
     lastUsedAt = this[AutomationBots.lastUsedAt],
     createdAt = this[AutomationBots.createdAt],

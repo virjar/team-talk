@@ -134,6 +134,7 @@ open class AppDataState(
             is ScreenDataKey.UserProfile -> account.loadProfile(key.uid)
             is ScreenDataKey.InviteLinks -> groups.loadInviteLinks(key.chatId)
             is ScreenDataKey.GroupFiles -> groupFiles.open(key.chatId)
+            is ScreenDataKey.GroupBots -> groups.loadGroupBots(key.chatId)
             ScreenDataKey.Documents -> documents.open()
         }
     }
@@ -196,5 +197,6 @@ sealed class ScreenDataKey {
     data class UserProfile(val uid: String) : ScreenDataKey()
     data class InviteLinks(val chatId: String) : ScreenDataKey()
     data class GroupFiles(val chatId: String) : ScreenDataKey()
+    data class GroupBots(val chatId: String) : ScreenDataKey()
     data object Documents : ScreenDataKey()
 }

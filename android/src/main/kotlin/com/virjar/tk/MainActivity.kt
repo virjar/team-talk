@@ -460,6 +460,7 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                 myUid = dataState.userSession.uid,
                 onMemberClick = { uid -> navController.navigate(Routes.userProfile(uid)) }, onInviteMembers = { navController.navigate(Routes.inviteMembers(chatId)) }, onViewInviteLinks = { navController.navigate(Routes.inviteLinks(chatId)) },
                 onGroupFiles = { navController.navigate(Routes.groupFiles(chatId)) },
+                onGroupBots = { navController.navigate(Routes.groupBots(chatId)) },
                 onLeaveGroup = {
                     dataState.groups.exit(chatId, dissolve = currentUserIsOwner) {
                         navController.popBackStack(Routes.HOME, inclusive = false)
@@ -472,6 +473,28 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                 onMuteMember = { uid -> dataState.groups.muteMember(chatId, uid) },
                 onUnmuteMember = { uid -> dataState.groups.unmuteMember(chatId, uid) },
                 onRemoveMember = { uid -> dataState.groups.removeMember(chatId, uid) },
+            )
+        }
+        composable(Routes.GROUP_BOTS, arguments = listOf(navArgument("chatId"){type=NavType.StringType})) { entry ->
+            val chatId = entry.arguments?.getString("chatId") ?: return@composable
+            LaunchedEffect(chatId) { dataState.loadScreenDataByKey(ScreenDataKey.GroupBots(chatId)) }
+            val ready = dataState.groups.groupBotsTargetChatId == chatId
+            GroupBotsScreen(
+                chatId = chatId,
+                serverUrl = defaultServerConfig().serverUrl,
+                bots = dataState.groups.groupBots.takeIf { ready }.orEmpty(),
+                loading = !ready || dataState.groups.groupBotsLoading,
+                error = dataState.groups.groupBotsError.takeIf { ready },
+                canCreate = ready && dataState.groups.groupBotsError == null,
+                creating = dataState.groups.creatingGroupBot,
+                operationBotId = dataState.groups.groupBotOperationId,
+                credentials = dataState.groups.groupBotCredentialsFor(chatId).takeIf { ready },
+                onRefresh = { scope.launch { dataState.loadScreenDataByKey(ScreenDataKey.GroupBots(chatId)) } },
+                onCreate = { name -> dataState.groups.createGroupBot(chatId, name) },
+                onRotate = { botId -> dataState.groups.rotateGroupBotToken(chatId, botId) },
+                onRemove = { botId -> dataState.groups.removeGroupBot(chatId, botId) },
+                onDismissCredentials = { dataState.groups.dismissGroupBotCredentials(chatId) },
+                onBack = { navController.popBackStack() },
             )
         }
         composable(Routes.GROUP_FILES, arguments = listOf(navArgument("chatId"){type=NavType.StringType})) { entry ->

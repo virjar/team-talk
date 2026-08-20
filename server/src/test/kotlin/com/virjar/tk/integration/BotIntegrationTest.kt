@@ -2,6 +2,7 @@ package com.virjar.tk.integration
 
 import com.virjar.tk.body.RichTextBody
 import com.virjar.tk.domain.bot.BotAuthenticationException
+import com.virjar.tk.domain.bot.BotAuthorizationException
 import com.virjar.tk.model.UserRole
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -79,5 +80,200 @@ class BotIntegrationTest {
 
         assertTrue(ctx.chatService.getMembers(unit.groupChatId!!).any { it.uid == created.bot.userUid })
         assertTrue(ctx.botService.reconcileGrants().isEmpty())
+
+        ctx.organizationService.disableDepartmentGroup(unit.unitId)
+        val reenabled = ctx.organizationService.enableDepartmentGroup(unit.unitId)
+        assertEquals(unit.unitId, reenabled.groupChatId)
+        assertFalse(ctx.chatService.getMembers(unit.unitId).any { it.uid == created.bot.userUid })
+        assertFailsWith<BotAuthorizationException> {
+            ctx.botService.deliver(
+                created.bot.botId,
+                created.webhookToken,
+                unit.unitId,
+                "停用后不应恢复",
+                "department-reenabled",
+            )
+        }
+    }
+
+    @Test
+    fun `dissolving a group disables owned bot and revokes system bot grant`() = runTest {
+        val owner = ctx.registerUser(uniqueUsername("bot-dissolve-owner"))
+        val member = ctx.registerUser(uniqueUsername("bot-dissolve-member"))
+        val group = ctx.chatService.createGroup("待解散群", null, owner, listOf(member))
+        val owned = ctx.botService.createForGroup(member, group.chatId, "群内机器人")
+        val system = ctx.botService.create("系统机器人")
+        ctx.botService.grant(system.bot.botId, group.chatId)
+
+        ctx.chatService.dissolveGroup(owner, group.chatId)
+
+        assertFailsWith<BotAuthenticationException> {
+            ctx.botService.deliver(owned.bot.botId, owned.webhookToken, group.chatId, "不应发送", "owned-after-delete")
+        }
+        assertFailsWith<BotAuthorizationException> {
+            ctx.botService.deliver(system.bot.botId, system.webhookToken, group.chatId, "不应发送", "system-after-delete")
+        }
+    }
+
+    @Test
+    fun `startup reconciliation removes legacy grants from an inactive chat`() = runTest {
+        val owner = ctx.registerUser(uniqueUsername("bot-legacy-owner"))
+        val member = ctx.registerUser(uniqueUsername("bot-legacy-member"))
+        val group = ctx.chatService.createGroup("旧版本已停用群", null, owner, listOf(member))
+        val owned = ctx.botService.createForGroup(member, group.chatId, "旧群属机器人")
+        val system = ctx.botService.create("旧系统机器人")
+        ctx.botService.grant(system.bot.botId, group.chatId)
+
+        // Simulate a pre-fix server that marked the chat inactive without invoking the bot hook.
+        ctx.chatStore.deactivateChat(group.chatId)
+        assertTrue(ctx.botService.reconcileGrants().isEmpty())
+
+        ctx.chatService.adminReconcileManagedGroup(group.chatId, "重新启用", owner, setOf(owner, member))
+        assertFailsWith<BotAuthenticationException> {
+            ctx.botService.deliver(
+                owned.bot.botId,
+                owned.webhookToken,
+                group.chatId,
+                "旧群属 token 不应恢复",
+                "legacy-owned",
+            )
+        }
+        assertFailsWith<BotAuthorizationException> {
+            ctx.botService.deliver(
+                system.bot.botId,
+                system.webhookToken,
+                group.chatId,
+                "旧系统授权不应恢复",
+                "legacy-system",
+            )
+        }
+    }
+
+    @Test
+    fun `every group member can create while credentials remain creator scoped`() = runTest {
+        val owner = ctx.registerUser(uniqueUsername("bot-group-owner"))
+        val creator = ctx.registerUser(uniqueUsername("bot-group-creator"))
+        val member = ctx.registerUser(uniqueUsername("bot-group-member"))
+        val admin = ctx.registerUser(uniqueUsername("bot-group-admin"))
+        val outsider = ctx.registerUser(uniqueUsername("bot-group-outsider"))
+        val group = ctx.chatService.createGroup("工程协作", null, owner, listOf(creator, member, admin))
+        ctx.chatService.setRole(owner, group.chatId, admin, 1)
+
+        val personalChat = ctx.chatService.createPersonalChat(creator, member)
+        val botCountBeforePersonalAttempt = ctx.botService.list().size
+        assertFailsWith<BotAuthorizationException> {
+            ctx.botService.createForGroup(creator, personalChat.chatId, "错误的私聊机器人")
+        }
+        assertEquals(botCountBeforePersonalAttempt, ctx.botService.list().size, "私聊请求不应留下服务账号机器人")
+
+        val created = ctx.botService.createForGroup(creator, group.chatId, "流水线通知")
+        assertTrue(created.webhookToken.startsWith("ttb_"))
+        assertTrue(created.bot.createdByMe)
+        assertTrue(created.bot.canRotateToken)
+        assertTrue(created.bot.canRemove)
+        assertTrue(ctx.chatService.getMembers(group.chatId).any { it.uid == ctx.botService.list()
+            .single { bot -> bot.botId == created.bot.botId }.userUid })
+        val botUid = ctx.botService.list().single { bot -> bot.botId == created.bot.botId }.userUid
+        assertFailsWith<IllegalArgumentException> {
+            ctx.chatService.removeMember(owner, group.chatId, botUid)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ctx.chatService.setRole(owner, group.chatId, botUid, 1)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ctx.chatService.transferOwner(owner, group.chatId, botUid)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ctx.chatService.muteMember(owner, group.chatId, botUid, 60)
+        }
+
+        val ordinaryView = ctx.botService.listForGroup(member, group.chatId).single()
+        assertFalse(ordinaryView.createdByMe)
+        assertFalse(ordinaryView.canRotateToken)
+        assertFalse(ordinaryView.canRemove)
+
+        val ownerView = ctx.botService.listForGroup(owner, group.chatId).single()
+        assertFalse(ownerView.canRotateToken, "群主不能接管别人机器人的外部凭据")
+        assertTrue(ownerView.canRemove)
+        val adminView = ctx.botService.listForGroup(admin, group.chatId).single()
+        assertTrue(adminView.canRemove)
+
+        assertFailsWith<BotAuthorizationException> {
+            ctx.botService.listForGroup(outsider, group.chatId)
+        }
+        assertFailsWith<BotAuthorizationException> {
+            ctx.botService.rotateTokenForGroup(member, group.chatId, created.bot.botId)
+        }
+        assertFailsWith<BotAuthorizationException> {
+            ctx.botService.removeFromGroup(member, group.chatId, created.bot.botId)
+        }
+
+        val otherGroup = ctx.chatService.createGroup("另一项目", null, owner, listOf(creator))
+        assertFailsWith<BotAuthorizationException> {
+            ctx.botService.grant(created.bot.botId, otherGroup.chatId)
+        }
+
+        val rotated = ctx.botService.rotateTokenForGroup(creator, group.chatId, created.bot.botId)
+        assertFailsWith<BotAuthenticationException> {
+            ctx.botService.deliver(
+                created.bot.botId,
+                created.webhookToken,
+                group.chatId,
+                "old token",
+                "old-token",
+            )
+        }
+        val delivered = ctx.botService.deliver(
+            created.bot.botId,
+            rotated.webhookToken,
+            group.chatId,
+            "## 自动构建完成",
+            "build-1",
+        )
+        assertTrue(delivered.serverSeq > 0)
+
+        ctx.botService.removeFromGroup(admin, group.chatId, created.bot.botId)
+        assertTrue(ctx.botService.listForGroup(owner, group.chatId).isEmpty())
+        assertFailsWith<BotAuthenticationException> {
+            ctx.botService.deliver(
+                created.bot.botId,
+                rotated.webhookToken,
+                group.chatId,
+                "after remove",
+                "after-remove",
+            )
+        }
+
+        val systemBot = ctx.botService.create("系统下发通知")
+        ctx.botService.grant(systemBot.bot.botId, group.chatId)
+        val systemView = ctx.botService.listForGroup(member, group.chatId).single()
+        assertFalse(systemView.groupManaged)
+        assertFalse(systemView.canRotateToken)
+        assertFalse(systemView.canRemove)
+        assertFailsWith<BotAuthorizationException> {
+            ctx.botService.removeFromGroup(owner, group.chatId, systemBot.bot.botId)
+        }
+    }
+
+    @Test
+    fun `group bot quota limits one creator without reserving the group for admins`() = runTest {
+        val owner = ctx.registerUser(uniqueUsername("bot-quota-owner"))
+        val creator = ctx.registerUser(uniqueUsername("bot-quota-creator"))
+        val teammate = ctx.registerUser(uniqueUsername("bot-quota-teammate"))
+        val group = ctx.chatService.createGroup("机器人配额", null, owner, listOf(creator, teammate))
+
+        val owned = (1..com.virjar.tk.domain.bot.BotService.MAX_MANAGED_BOTS_PER_CREATOR_IN_GROUP).map { index ->
+            ctx.botService.createForGroup(creator, group.chatId, "创建者机器人-$index")
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ctx.botService.createForGroup(creator, group.chatId, "超过个人配额")
+        }
+
+        val teammateBot = ctx.botService.createForGroup(teammate, group.chatId, "团队成员机器人")
+        assertTrue(teammateBot.bot.createdByMe)
+
+        ctx.botService.removeFromGroup(creator, group.chatId, owned.first().bot.botId)
+        val replacement = ctx.botService.createForGroup(creator, group.chatId, "释放配额后创建")
+        assertTrue(replacement.bot.createdByMe)
     }
 }

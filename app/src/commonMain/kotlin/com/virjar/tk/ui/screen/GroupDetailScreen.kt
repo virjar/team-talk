@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.FolderShared
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,11 +25,17 @@ import com.virjar.tk.ui.component.ScreenHeader
 import com.virjar.tk.ui.component.AvatarPlaceholder
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Member
+import com.virjar.tk.model.UserRole
 import com.virjar.tk.ui.theme.Tk
 
 /** 群主可管理非群主；管理员只能管理普通成员；普通成员永远不能因目标角色而获得权限。 */
-internal fun canManageGroupMember(actorRole: Int, targetRole: Int, isSelf: Boolean): Boolean {
-    if (isSelf) return false
+internal fun canManageGroupMember(
+    actorRole: Int,
+    targetRole: Int,
+    isSelf: Boolean,
+    targetUserRole: Int = UserRole.HUMAN,
+): Boolean {
+    if (isSelf || targetUserRole != UserRole.HUMAN) return false
     return when (actorRole) {
         2 -> targetRole < 2
         1 -> targetRole == 0
@@ -48,6 +55,7 @@ fun GroupDetailScreen(
     onInviteMembers: () -> Unit = {},
     onViewInviteLinks: () -> Unit = {},
     onGroupFiles: () -> Unit = {},
+    onGroupBots: () -> Unit = {},
     onLeaveGroup: () -> Unit = {},
     onBack: (() -> Unit)? = null,
     // 成员管理操作（仅群主/管理员可用）
@@ -165,6 +173,21 @@ fun GroupDetailScreen(
 
             HorizontalDivider()
 
+            ListItem(
+                leadingContent = {
+                    Icon(
+                        Icons.Filled.SmartToy,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                },
+                headlineContent = { Text("机器人") },
+                supportingContent = { Text("接入 CI、监控和审批系统，向本群发送通知") },
+                modifier = Modifier.clickable(onClick = onGroupBots).testTag("group.detail.bots"),
+            )
+
+            HorizontalDivider()
+
             // 创建者信息
             CreatorSection(chat = chat, members = members)
 
@@ -192,7 +215,12 @@ fun GroupDetailScreen(
             LazyColumn(modifier = Modifier.weight(1f)) {
                 items(members, key = { it.uid }) { member ->
                     val isSelf = member.uid == myUid
-                    val canManage = canManageGroupMember(myRole, member.role, isSelf)
+                    val canManage = canManageGroupMember(
+                        actorRole = myRole,
+                        targetRole = member.role,
+                        isSelf = isSelf,
+                        targetUserRole = member.user?.role ?: UserRole.SYSTEM,
+                    )
                     var showMenu by remember { mutableStateOf(false) }
 
                     Box {

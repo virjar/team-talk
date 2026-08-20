@@ -103,6 +103,7 @@ fun SubScreenContent(
             onInviteMembers = { navigate(SubScreen.InviteMembers(screen.chatId)) },
             onViewInviteLinks = { navigate(SubScreen.InviteLinks(screen.chatId)) },
             onGroupFiles = { navigate(SubScreen.GroupFiles(screen.chatId)) },
+            onGroupBots = { navigate(SubScreen.GroupBots(screen.chatId)) },
             onLeaveGroup = { onLeaveGroup(screen.chatId) },
             onEditNotice = { notice -> data.groups.updateNotice(screen.chatId, notice) },
             onBack = onBack,
@@ -127,6 +128,30 @@ fun SubScreenContent(
             onRevokeLink = { token -> data.groups.revokeInviteLink(screen.chatId, token) },
             onBack = onBack,
         )
+
+        is SubScreen.GroupBots -> {
+            val ready = data.groups.groupBotsTargetChatId == screen.chatId
+            GroupBotsScreen(
+                chatId = screen.chatId,
+                serverUrl = com.virjar.tk.client.defaultServerConfig().serverUrl,
+                bots = data.groups.groupBots.takeIf { ready }.orEmpty(),
+                loading = !ready || data.groups.groupBotsLoading,
+                error = data.groups.groupBotsError.takeIf { ready },
+                canCreate = ready && data.groups.groupBotsError == null,
+                creating = data.groups.creatingGroupBot,
+                operationBotId = data.groups.groupBotOperationId,
+                credentials = data.groups.groupBotCredentialsFor(screen.chatId).takeIf { ready },
+                onRefresh = {
+                    actionScope.launch { data.loadScreenDataByKey(com.virjar.tk.navigation.ScreenDataKey.GroupBots(screen.chatId)) }
+                },
+                onCreate = { name -> data.groups.createGroupBot(screen.chatId, name) },
+                onRotate = { botId -> data.groups.rotateGroupBotToken(screen.chatId, botId) },
+                onRemove = { botId -> data.groups.removeGroupBot(screen.chatId, botId) },
+                onDismissCredentials = { data.groups.dismissGroupBotCredentials(screen.chatId) },
+                onBack = onBack,
+                onClose = onClose,
+            )
+        }
 
         is SubScreen.GroupFiles -> {
             var uploading by remember(screen.chatId) { mutableStateOf(false) }

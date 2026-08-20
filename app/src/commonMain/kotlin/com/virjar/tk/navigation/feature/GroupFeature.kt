@@ -8,6 +8,11 @@ import com.virjar.tk.client.ClientSession
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.InviteLink
 import com.virjar.tk.model.Member
+import com.virjar.tk.client.defaultServerConfig
+import com.virjar.tk.http.GroupBotCredentials
+import com.virjar.tk.http.GroupBotSummary
+import com.virjar.tk.repository.GroupBotManagementRepository
+import com.virjar.tk.repository.HttpGroupBotManagementRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -16,6 +21,9 @@ class GroupFeature internal constructor(
     private val session: ClientSession,
     private val scope: CoroutineScope,
     private val reportError: (Throwable, String) -> Unit,
+    private val botRepositoryFactory: () -> GroupBotManagementRepository = {
+        HttpGroupBotManagementRepository(defaultServerConfig().serverUrl, session.userSession.accessToken)
+    },
 ) {
     var detailChat by mutableStateOf<Chat?>(null)
         private set
@@ -27,9 +35,23 @@ class GroupFeature internal constructor(
         private set
     var inviteLinksTargetChatId by mutableStateOf<String?>(null)
         private set
+    var groupBots by mutableStateOf(emptyList<GroupBotSummary>())
+        private set
+    var groupBotsTargetChatId by mutableStateOf<String?>(null)
+        private set
+    var groupBotsLoading by mutableStateOf(false)
+        private set
+    var groupBotsError by mutableStateOf<String?>(null)
+        private set
+    private var groupBotCredentialsByChat by mutableStateOf<Map<String, GroupBotCredentials>>(emptyMap())
+    var creatingGroupBot by mutableStateOf(false)
+        private set
+    var groupBotOperationId by mutableStateOf<String?>(null)
+        private set
 
     private val detailGate = GroupRequestGate<String>()
     private val inviteLinksGate = GroupRequestGate<String>()
+    private val groupBotsGate = GroupRequestGate<String>()
 
     internal suspend fun loadDetail(chatId: String) {
         loadDetail(chatId, clearBeforeLoad = true)
@@ -61,6 +83,109 @@ class GroupFeature internal constructor(
 
     internal suspend fun loadInviteLinks(chatId: String) {
         loadInviteLinks(chatId, clearBeforeLoad = true)
+    }
+
+    internal suspend fun loadGroupBots(chatId: String) {
+        loadGroupBots(chatId, clearBeforeLoad = true)
+    }
+
+    private suspend fun loadGroupBots(chatId: String, clearBeforeLoad: Boolean) {
+        val token = groupBotsGate.begin(chatId)
+        groupBotsTargetChatId = chatId
+        if (clearBeforeLoad) {
+            groupBots = emptyList()
+            groupBotsError = null
+        }
+        groupBotsLoading = true
+        try {
+            val loaded = botRepositoryFactory().list(chatId).getOrThrow()
+            if (!groupBotsGate.isCurrent(token)) return
+            groupBots = loaded
+            groupBotsError = null
+        } catch (e: Exception) {
+            if (groupBotsGate.isCurrent(token)) {
+                groupBotsError = e.message ?: "加载群机器人失败"
+                reportError(e, "加载群机器人失败")
+            }
+        } finally {
+            if (groupBotsGate.isCurrent(token)) groupBotsLoading = false
+        }
+    }
+
+    fun createGroupBot(chatId: String, name: String) {
+        if (
+            !groupBotsGate.targets(chatId) ||
+            creatingGroupBot ||
+            groupBotOperationId != null ||
+            groupBotCredentialsByChat.containsKey(chatId)
+        ) return
+        creatingGroupBot = true
+        groupBotsError = null
+        scope.launch {
+            try {
+                val created = botRepositoryFactory().create(chatId, name).getOrThrow()
+                groupBotCredentialsByChat = groupBotCredentialsByChat + (chatId to created)
+                refreshGroupBotsIfCurrent(chatId)
+            } catch (e: Exception) {
+                if (groupBotsGate.targets(chatId)) {
+                    groupBotsError = e.message ?: "创建机器人失败"
+                    reportError(e, "创建机器人失败")
+                }
+            } finally {
+                creatingGroupBot = false
+            }
+        }
+    }
+
+    fun rotateGroupBotToken(chatId: String, botId: String) {
+        if (
+            !groupBotsGate.targets(chatId) ||
+            creatingGroupBot ||
+            groupBotOperationId != null ||
+            groupBotCredentialsByChat.containsKey(chatId)
+        ) return
+        groupBotOperationId = botId
+        groupBotsError = null
+        scope.launch {
+            try {
+                val rotated = botRepositoryFactory().rotate(chatId, botId).getOrThrow()
+                groupBotCredentialsByChat = groupBotCredentialsByChat + (chatId to rotated)
+                refreshGroupBotsIfCurrent(chatId)
+            } catch (e: Exception) {
+                if (groupBotsGate.targets(chatId)) {
+                    groupBotsError = e.message ?: "轮换机器人 Token 失败"
+                    reportError(e, "轮换机器人 Token 失败")
+                }
+            } finally {
+                groupBotOperationId = null
+            }
+        }
+    }
+
+    fun removeGroupBot(chatId: String, botId: String) {
+        if (!groupBotsGate.targets(chatId) || creatingGroupBot || groupBotOperationId != null) return
+        groupBotOperationId = botId
+        groupBotsError = null
+        scope.launch {
+            try {
+                botRepositoryFactory().remove(chatId, botId).getOrThrow()
+                if (!groupBotsGate.targets(chatId)) return@launch
+                refreshGroupBotsIfCurrent(chatId)
+            } catch (e: Exception) {
+                if (groupBotsGate.targets(chatId)) {
+                    groupBotsError = e.message ?: "移除机器人失败"
+                    reportError(e, "移除机器人失败")
+                }
+            } finally {
+                groupBotOperationId = null
+            }
+        }
+    }
+
+    fun groupBotCredentialsFor(chatId: String): GroupBotCredentials? = groupBotCredentialsByChat[chatId]
+
+    fun dismissGroupBotCredentials(chatId: String) {
+        groupBotCredentialsByChat = groupBotCredentialsByChat - chatId
     }
 
     private suspend fun loadInviteLinks(chatId: String, clearBeforeLoad: Boolean) {
@@ -160,5 +285,9 @@ class GroupFeature internal constructor(
 
     private suspend fun refreshInviteLinksIfCurrent(chatId: String) {
         if (inviteLinksGate.targets(chatId)) loadInviteLinks(chatId, clearBeforeLoad = false)
+    }
+
+    private suspend fun refreshGroupBotsIfCurrent(chatId: String) {
+        if (groupBotsGate.targets(chatId)) loadGroupBots(chatId, clearBeforeLoad = false)
     }
 }

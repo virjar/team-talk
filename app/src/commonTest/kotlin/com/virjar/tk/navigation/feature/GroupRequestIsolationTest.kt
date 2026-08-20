@@ -1,6 +1,7 @@
 package com.virjar.tk.navigation.feature
 
 import com.virjar.tk.ui.screen.canManageGroupMember
+import com.virjar.tk.model.UserRole
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
@@ -83,5 +84,13 @@ class GroupRequestIsolationTest {
         assertTrue(canManageGroupMember(actorRole = 2, targetRole = 1, isSelf = false))
         assertFalse(canManageGroupMember(actorRole = 2, targetRole = 2, isSelf = false))
         assertFalse(canManageGroupMember(actorRole = 2, targetRole = 0, isSelf = true))
+        assertFalse(
+            canManageGroupMember(
+                actorRole = 2,
+                targetRole = 0,
+                isSelf = false,
+                targetUserRole = UserRole.BOT,
+            ),
+        )
     }
 }

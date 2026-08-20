@@ -6,6 +6,7 @@ import com.virjar.tk.domain.event.EventPublisher
 import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Member
+import com.virjar.tk.model.UserRole
 import com.virjar.tk.protocol.NotifyType
 
 class ChatService(
@@ -15,6 +16,8 @@ class ChatService(
     private val conversationService: ConversationService,
     private val managedChats: ManagedChatPolicy,
     private val contacts: ContactStore,
+    private val requiredParticipants: RequiredChatParticipants,
+    private val lifecycleGate: ChatLifecycleGate,
 ) {
 
     // ── 创建聊天 ──
@@ -63,7 +66,10 @@ class ChatService(
         require(chat.chatType == 2) { "单聊不能解散，请删除自己的会话视图" }
         requireOwner(operatorUid, chatId)
         val memberUids = chatStore.getMemberUids(chatId)
-        chatStore.deactivateChat(chatId)
+        lifecycleGate.withChat(chatId) {
+            requiredParticipants.onChatDeactivated(chatId)
+            chatStore.deactivateChat(chatId)
+        }
         events.emitEvents(memberUids, NotifyType.CHAT_DELETED, chat)
     }
 
@@ -109,6 +115,7 @@ class ChatService(
             chatStore.removeMember(chatId, targetUid)
         } else {
             requireGroupAdmin(operatorUid, chatId)
+            requireHumanMemberTarget(targetUid)
             val target = chatStore.getMember(chatId, targetUid)
                 ?: throw IllegalArgumentException("目标不是群成员")
             if (target.role == 2) throw IllegalArgumentException("不能踢出群主")
@@ -125,6 +132,7 @@ class ChatService(
     suspend fun transferOwner(operatorUid: String, chatId: String, newOwnerUid: String) {
         requireUserManaged(chatId)
         requireOwner(operatorUid, chatId)
+        requireHumanMemberTarget(newOwnerUid)
         chatStore.getMember(chatId, newOwnerUid) ?: throw IllegalArgumentException("目标不是群成员")
         chatStore.transferOwner(chatId, operatorUid, newOwnerUid)
         val chat = chatStore.getChat(chatId) ?: return
@@ -137,6 +145,7 @@ class ChatService(
         requireOwner(operatorUid, chatId)
         if (role !in 0..1) throw IllegalArgumentException("角色只能是 0(member) 或 1(admin)")
         require(operatorUid != targetUid) { "群主不能修改自己的角色，请先转让群主" }
+        requireHumanMemberTarget(targetUid)
         val target = chatStore.getMember(chatId, targetUid)
             ?: throw IllegalArgumentException("目标不是群成员")
         require(target.role != 2) { "不能直接修改群主角色，请使用转让群主" }
@@ -231,7 +240,10 @@ class ChatService(
     suspend fun adminDissolve(chatId: String) {
         val chat = chatStore.getChat(chatId) ?: throw IllegalArgumentException("聊天不存在")
         val memberUids = chatStore.getMemberUids(chatId)
-        chatStore.deactivateChat(chatId)
+        lifecycleGate.withChat(chatId) {
+            requiredParticipants.onChatDeactivated(chatId)
+            chatStore.deactivateChat(chatId)
+        }
         events.emitEvents(memberUids, NotifyType.CHAT_DELETED, chat)
     }
 
@@ -273,7 +285,21 @@ class ChatService(
      * 以外部领域的成员集合为唯一事实源收敛受管群。该操作幂等，服务启动时可以安全重放。
      */
     suspend fun adminReconcileManagedGroup(chatId: String, name: String, ownerUid: String, desiredUids: Set<String>) {
-        val desired = desiredUids + ownerUid
+        lifecycleGate.withChat(chatId) {
+            reconcileManagedGroupInternal(chatId, name, ownerUid, desiredUids)
+        }
+    }
+
+    private suspend fun reconcileManagedGroupInternal(
+        chatId: String,
+        name: String,
+        ownerUid: String,
+        desiredUids: Set<String>,
+    ) {
+        // Read required service participants under the same lifecycle gate used by bot grants.
+        // A grant created before this snapshot is retained; one created afterwards waits for the
+        // reconciliation to finish and then adds itself, so neither ordering can remove it.
+        val desired = desiredUids + ownerUid + requiredParticipants.forChat(chatId)
         var chat = chatStore.getChat(chatId)
             ?: adminEnsureManagedGroup(chatId, name, ownerUid, desired.toList())
 
@@ -356,12 +382,19 @@ class ChatService(
     /** Owner may manage admins/members; admins may only manage ordinary members. */
     private fun requireCanManageMember(operatorUid: String, chatId: String, targetUid: String) {
         require(operatorUid != targetUid) { "不能管理自己" }
+        requireHumanMemberTarget(targetUid)
         val actor = chatStore.getMember(chatId, operatorUid)
             ?: throw IllegalArgumentException("操作者不是群成员")
         require(actor.role >= 1) { "需要管理员权限" }
         val target = chatStore.getMember(chatId, targetUid)
             ?: throw IllegalArgumentException("目标不是群成员")
         require(actor.role > target.role) { "不能管理同级或更高角色" }
+    }
+
+    private fun requireHumanMemberTarget(uid: String) {
+        require(userStore.findByUid(uid)?.role == UserRole.HUMAN) {
+            "机器人或系统成员只能通过对应的管理入口操作"
+        }
     }
 
     private fun requireUserManaged(chatId: String) {

@@ -9,6 +9,10 @@ data class AutomationBot(
     val userUid: String,
     val name: String,
     val status: Int,
+    /** Owning group for a group-created bot; null denotes a system-admin managed global bot. */
+    val managedChatId: String? = null,
+    /** Human creator for a group-created bot; null denotes a system-admin managed global bot. */
+    val createdByUid: String? = null,
     val grantedChatIds: List<String> = emptyList(),
     val lastUsedAt: Long? = null,
     val createdAt: Long,
@@ -22,6 +26,10 @@ data class AutomationBot(
 interface BotRepository : RequiredChatParticipants {
     fun create(bot: AutomationBot, tokenHash: String): AutomationBot
     fun list(): List<AutomationBot>
+    fun listForChat(chatId: String): List<AutomationBot>
+    fun countActiveManagedForChat(chatId: String): Long
+    fun countActiveManagedForCreator(createdByUid: String): Long
+    fun countActiveManagedForCreatorInChat(createdByUid: String, chatId: String): Long
     fun find(botId: String): AutomationBot?
     fun findByTokenHash(tokenHash: String): AutomationBot?
     fun updateTokenHash(botId: String, tokenHash: String)
@@ -32,4 +40,6 @@ interface BotRepository : RequiredChatParticipants {
     fun revokeGrant(botId: String, chatId: String)
     fun listGrants(botId: String): List<String>
     fun isGranted(botId: String, chatId: String): Boolean
+
+    override fun onChatDeactivated(chatId: String)
 }

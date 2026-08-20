@@ -1,7 +1,6 @@
 package com.virjar.tk.domain.organization
 
 import com.virjar.tk.domain.chat.ChatService
-import com.virjar.tk.domain.chat.RequiredChatParticipants
 import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.model.OrganizationMember
 import com.virjar.tk.model.OrganizationUnit
@@ -18,7 +17,6 @@ class OrganizationService(
     private val repository: OrganizationRepository,
     private val users: UserStore,
     private val chats: ChatService,
-    private val requiredParticipants: RequiredChatParticipants,
 ) {
     private val logger = LoggerFactory.getLogger(OrganizationService::class.java)
 
@@ -174,7 +172,6 @@ class OrganizationService(
         val chatId = unit.groupChatId ?: return
         val ownerUid = unit.leaderUid ?: throw IllegalStateException("受管部门群缺少负责人: ${unit.unitId}")
         val desired = repository.listMembers(descendantIds(unit.unitId)).mapTo(linkedSetOf()) { it.uid }
-        desired += requiredParticipants.forChat(chatId)
         chats.adminReconcileManagedGroup(chatId, "${unit.name}部门群", ownerUid, desired)
     }
 

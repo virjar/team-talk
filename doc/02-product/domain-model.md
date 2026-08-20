@@ -154,9 +154,11 @@ DocumentRevision 是每次成功保存产生的不可变完整快照。更新、
 
 ### AutomationBot
 
-AutomationBot 是管理员创建的单向通知应用，关联一个不可密码登录的机器人 User。应用 token 仅在
-创建或轮换时显示一次，服务端只保存 SHA-256；每个可发送群必须有独立 grant。`idempotencyKey`
-与 bot/chat 共同决定稳定 `clientMsgId`，调用重试不会产生第二条消息。
+AutomationBot 是当前群成员可以从群设置创建、系统管理员也可以在后台下发的单向通知应用，关联一个
+不可密码登录的机器人 User。群成员创建的机器人固定属于当前群：创建者拥有凭据轮换和移除权，群主
+和群管理员拥有本群移除权，但不能读取或轮换其他创建者的 token；系统下发机器人只由后台治理。
+应用 token 仅在创建或轮换时显示一次，服务端只保存 SHA-256；每个可发送群必须有独立 grant。
+`idempotencyKey` 与 bot/chat 共同决定稳定 `clientMsgId`，调用重试不会产生第二条消息。
 
 AutomationBot 与 ImBot 不同：前者适合构建、监控、审批等外部系统主动通知，最小权限且无需常驻
 TCP；后者是完整无头客户端，适合需要接收消息和参与双向交互的自动化。
