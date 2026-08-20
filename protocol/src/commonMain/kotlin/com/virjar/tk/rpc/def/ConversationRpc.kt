@@ -9,8 +9,8 @@ import com.virjar.tk.rpc.RpcService
 interface ConversationRpc {
     @RpcMethod(1)
     suspend fun list(): List<Conversation>
-    @RpcMethod(2)
-    suspend fun sync(afterVersion: Long): List<Conversation>
+    // methodId=2 (sync) retired before release: Conversation carried no global cursor, so a
+    // per-row version filter could skip rows and was never a valid incremental-sync contract.
     @RpcMethod(3)
     suspend fun setDraft(chatId: String, draft: String?)
     @RpcMethod(4)

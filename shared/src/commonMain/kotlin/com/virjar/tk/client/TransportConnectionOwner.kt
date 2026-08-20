@@ -120,6 +120,31 @@ internal class TransportConnectionOwner(
         execute { sendNow(proto) }
     }
 
+    /**
+     * Schedule one session-owned write and validate its complete lease at the EventLoop execution
+     * point. Capturing a generation on the caller thread is not sufficient: a retiring RPC can be
+     * preempted after registration, then resume after another account has authenticated on this
+     * reusable transport. The payload must never fall through to that replacement channel.
+     *
+     * [leaseIsActive] is request/session-owned and permanently becomes false on cancellation or
+     * session stop. [onResult] runs on the EventLoop and reports whether the payload was handed to
+     * the channel; task rejection reports false through the Boolean return value instead.
+     */
+    fun sendIfOwned(
+        expectedOwnerGeneration: Long,
+        expectedConnectionGeneration: Long,
+        leaseIsActive: () -> Boolean,
+        proto: IProto,
+        onResult: (Boolean) -> Unit,
+    ): Boolean = execute {
+        val accepted = !terminallyDestroyed.get() &&
+            leaseIsActive() &&
+            ownerGeneration == expectedOwnerGeneration &&
+            connectionGeneration.matches(expectedConnectionGeneration) &&
+            sendNow(proto)
+        onResult(accepted)
+    }
+
     /** EventLoop-only protocol write used by AUTH/SYNC/PING control paths. */
     fun writeProtocolNow(proto: IProto): Boolean {
         requireEventLoop()

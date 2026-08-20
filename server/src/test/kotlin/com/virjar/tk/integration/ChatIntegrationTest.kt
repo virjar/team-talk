@@ -258,7 +258,6 @@ class ChatIntegrationTest {
         assertNull(ctx.chatService.getChat(group.chatId))
         assertTrue(ctx.chatRepo.listUserChats(creator).none { it.chatId == group.chatId })
         assertTrue(ctx.conversationService.listConversations(creator).none { it.chatId == group.chatId })
-        assertTrue(ctx.conversationService.syncConversations(creator, 0).none { it.chatId == group.chatId })
         assertNull(ctx.conversationRepo.getConversation(creator, group.chatId))
         assertFailsWith<IllegalArgumentException> { ctx.chatService.getInviteInfo(invite) }
     }

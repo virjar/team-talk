@@ -104,11 +104,13 @@ token 只向收到申请的一方返回，发出记录和已处理记录中的 t
 | ID | 方法 | 参数 | 返回 |
 |---:|---|---|---|
 | 1 | `list` | — | `List<Conversation>` |
-| 2 | `sync` | `afterVersion` | `List<Conversation>` |
 | 3 | `setDraft` | `chatId`, `draft?` | `Unit` |
 | 4 | `setPin` | `chatId`, `pinned` | `Unit` |
 | 5 | `setMute` | `chatId`, `muted` | `Unit` |
 | 6 | `delete` | `chatId` | `Unit` |
+
+编号 2 的旧 `sync(afterVersion)` 在发布前已删除并保留编号空洞：`version` 是单行会话版本，
+不是用户全局游标，无法安全表达增量同步。客户端重放使用持久 `sync_events` 流，权威会话快照使用 `list`。
 
 会话是“用户对聊天的视图”，因此草稿、置顶、静音和 readSeq 属于用户维度，而不是 Chat 的全局属性。
 

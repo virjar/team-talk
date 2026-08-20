@@ -185,16 +185,6 @@ class ConversationIntegrationTest {
         assertTrue(conversations.none { it.chatId == chat.chatId })
     }
 
-    @Test
-    fun `sync conversations`() = runTest {
-        val uid1 = ctx.registerUser()
-        val uid2 = ctx.registerUser()
-        val chat = ctx.chatService.createPersonalChat(uid1, uid2)
-        sendMessage(uid1, chat.chatId, "Hi")
-        val all = ctx.conversationService.syncConversations(uid1, 0)
-        assertTrue(all.any { it.chatId == chat.chatId })
-    }
-
     private suspend fun sendMessage(senderUid: String, chatId: String, text: String): Long {
         val msg = com.virjar.tk.model.Message(
             chatId = chatId,

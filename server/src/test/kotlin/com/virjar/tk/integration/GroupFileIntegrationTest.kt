@@ -2,6 +2,7 @@ package com.virjar.tk.integration
 
 import com.virjar.tk.domain.groupfile.GroupFileService
 import com.virjar.tk.model.GroupFileEntry
+import com.virjar.tk.model.GroupFileVersion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -143,5 +144,85 @@ class GroupFileIntegrationTest {
         assertFailsWith<IllegalArgumentException> {
             ctx.groupFileRepo.create(orphan, null, GroupFileService.DEFAULT_QUOTA_BYTES)
         }
+    }
+
+    @Test
+    fun `repository rechecks active group membership inside every write transaction`() = runTest {
+        val owner = ctx.registerUser(uniqueUsername("files-acl-owner"))
+        val removed = ctx.registerUser(uniqueUsername("files-acl-removed"))
+        val group = ctx.chatService.createGroup("写入权限事务", null, owner, listOf(removed))
+
+        val firstPath = ctx.fileStore.store(
+            removed,
+            "before-removal.txt",
+            "text/plain",
+            ByteArrayInputStream("v1".encodeToByteArray()),
+        )
+        val firstAttachment = requireNotNull(ctx.fileStore.getAttachment(firstPath))
+        val existing = ctx.groupFileService.createFile(
+            removed,
+            group.chatId,
+            parentId = null,
+            name = "成员文件.txt",
+            declared = firstAttachment,
+        )
+
+        ctx.chatService.removeMember(owner, group.chatId, removed)
+        val afterRemoval = folderEntry(group.chatId, removed, "被移除后的目录")
+        assertFailsWith<IllegalArgumentException> {
+            ctx.groupFileRepo.create(afterRemoval, null, GroupFileService.DEFAULT_QUOTA_BYTES)
+        }
+
+        val secondPath = ctx.fileStore.store(
+            removed,
+            "after-removal.txt",
+            "text/plain",
+            ByteArrayInputStream("v2".encodeToByteArray()),
+        )
+        val secondAttachment = requireNotNull(ctx.fileStore.getAttachment(secondPath))
+        val secondVersion = GroupFileVersion(
+            entryId = existing.entryId,
+            version = existing.contentVersion + 1,
+            attachment = secondAttachment,
+            createdBy = removed,
+            createdAt = System.currentTimeMillis(),
+        )
+        assertFailsWith<IllegalArgumentException> {
+            ctx.groupFileRepo.appendVersion(
+                existing.entryId,
+                existing.revision,
+                secondVersion,
+                removed,
+                GroupFileService.DEFAULT_QUOTA_BYTES,
+            )
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ctx.groupFileRepo.rename(existing.entryId, existing.revision, "越权重命名.txt", removed)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ctx.groupFileRepo.delete(existing.entryId, existing.revision, removed)
+        }
+        assertEquals(listOf(existing.entryId), ctx.groupFileRepo.list(group.chatId, null).map { it.entryId })
+
+        ctx.chatService.dissolveGroup(owner, group.chatId)
+        val afterDissolve = folderEntry(group.chatId, owner, "解散后的目录")
+        assertFailsWith<IllegalArgumentException> {
+            ctx.groupFileRepo.create(afterDissolve, null, GroupFileService.DEFAULT_QUOTA_BYTES)
+        }
+        assertEquals(listOf(existing.entryId), ctx.groupFileRepo.list(group.chatId, null).map { it.entryId })
+    }
+
+    private fun folderEntry(chatId: String, actorUid: String, name: String): GroupFileEntry {
+        val now = System.currentTimeMillis()
+        return GroupFileEntry(
+            entryId = UUID.randomUUID().toString(),
+            chatId = chatId,
+            kind = GroupFileEntry.KIND_FOLDER,
+            name = name,
+            createdBy = actorUid,
+            createdAt = now,
+            updatedBy = actorUid,
+            updatedAt = now,
+        )
     }
 }

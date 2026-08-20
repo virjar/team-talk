@@ -6,6 +6,7 @@ import com.virjar.tk.infra.db.GroupFileAudits
 import com.virjar.tk.infra.db.GroupFileEntries
 import com.virjar.tk.infra.db.GroupFileVersions
 import com.virjar.tk.infra.db.Chats
+import com.virjar.tk.infra.db.GroupMembers
 import com.virjar.tk.model.Attachment
 import com.virjar.tk.model.GroupFileEntry
 import com.virjar.tk.model.GroupFileVersion
@@ -39,7 +40,7 @@ class ExposedGroupFileRepository : GroupFileRepository {
     }
 
     override fun create(entry: GroupFileEntry, initialVersion: GroupFileVersion?, quotaBytes: Long): GroupFileEntry = transaction {
-        lockChat(entry.chatId)
+        requireWritableGroup(entry.chatId, entry.createdBy)
         requireActiveParent(entry.chatId, entry.parentId)
         if (initialVersion != null) {
             requireQuota(entry.chatId, initialVersion.attachment.size, quotaBytes)
@@ -78,7 +79,8 @@ class ExposedGroupFileRepository : GroupFileRepository {
         quotaBytes: Long,
     ): GroupFileEntry = transaction {
         val snapshot = requireActiveEntry(entryId)
-        lockChat(snapshot.chatId)
+        require(version.createdBy == actorUid) { "文件版本创建者与当前用户不一致" }
+        requireWritableGroup(snapshot.chatId, actorUid)
         val current = requireActiveEntry(entryId)
         requireQuota(current.chatId, version.attachment.size, quotaBytes)
         require(current.revision == expectedRevision) { "文件已被其他成员修改，请刷新后重试" }
@@ -107,7 +109,7 @@ class ExposedGroupFileRepository : GroupFileRepository {
 
     override fun rename(entryId: String, expectedRevision: Long, name: String, actorUid: String): GroupFileEntry = transaction {
         val snapshot = requireActiveEntry(entryId)
-        lockChat(snapshot.chatId)
+        requireWritableGroup(snapshot.chatId, actorUid)
         val current = requireActiveEntry(entryId)
         require(current.revision == expectedRevision) { "文件已被其他成员修改，请刷新后重试" }
         requireAvailableName(current.chatId, current.parentId, name, excludingEntryId = entryId)
@@ -130,7 +132,7 @@ class ExposedGroupFileRepository : GroupFileRepository {
     override fun delete(entryId: String, expectedRevision: Long, actorUid: String) {
         transaction {
             val snapshot = requireActiveEntry(entryId)
-            lockChat(snapshot.chatId)
+            requireWritableGroup(snapshot.chatId, actorUid)
             val current = requireActiveEntry(entryId)
             require(current.revision == expectedRevision) { "文件已被其他成员修改，请刷新后重试" }
             require(current.kind != GroupFileEntry.KIND_FOLDER || !hasActiveChildrenInternal(entryId)) {
@@ -211,9 +213,26 @@ class ExposedGroupFileRepository : GroupFileRepository {
         otherColumn = GroupFileEntries.entryId,
     )
 
-    /** 复用 chat 行作为每个群文件空间的互斥锁，统一保护目录树、名称、版本和配额。 */
-    private fun lockChat(chatId: String) {
-        require(Chats.selectAll().where { Chats.chatId eq chatId }.forUpdate().singleOrNull() != null) { "群聊不存在" }
+    /**
+     * 复用 chat 行作为每个群文件空间的互斥锁，并在同一事务内复验授权。
+     *
+     * 服务层的预检只负责尽早返回友好错误；真正的安全边界必须位于写事务里。这样即使用户
+     * 在上传准备完成后被踢出，或群在请求进入仓储前解散，也不能再提交文件树、版本或审计行。
+     */
+    private fun requireWritableGroup(chatId: String, actorUid: String) {
+        val activeGroup = Chats.selectAll().where {
+            (Chats.chatId eq chatId) and
+                (Chats.chatType eq 2) and
+                (Chats.status eq 1)
+        }.forUpdate().singleOrNull()
+        require(activeGroup != null) { "群聊不存在或已解散" }
+
+        val activeMember = GroupMembers.selectAll().where {
+            (GroupMembers.chatId eq chatId) and
+                (GroupMembers.uid eq actorUid) and
+                (GroupMembers.status eq 1)
+        }.limit(1).any()
+        require(activeMember) { "你不是当前群成员" }
     }
 
     private fun requireQuota(chatId: String, incomingBytes: Long, quotaBytes: Long) {

@@ -116,7 +116,6 @@ class MessageRpcImpl(
 
 class ConversationRpcImpl(uid: String, private val service: ConversationService) : ConversationRpcStub(uid) {
     override suspend fun list() = service.listConversations(uid)
-    override suspend fun sync(afterVersion: Long) = service.syncConversations(uid, afterVersion)
     override suspend fun setDraft(chatId: String, draft: String?) = service.setDraft(uid, chatId, draft)
     override suspend fun setPin(chatId: String, pinned: Boolean) = service.setPin(uid, chatId, pinned)
     override suspend fun setMute(chatId: String, muted: Boolean) = service.setMute(uid, chatId, muted)

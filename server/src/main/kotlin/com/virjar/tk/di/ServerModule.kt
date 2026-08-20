@@ -162,7 +162,7 @@ fun createServerModule(
     single { OrganizationService(get(), get(), get()) }
     single { GroupFileService(get(), get(), get(), Environment.groupFileQuotaBytes) }
     single { DocumentService(get(), get(), get()) }
-    single { ConversationService(get(), get(), get(), get(), get(), get()) }
+    single { ConversationService(get(), get(), get()) }
     single { com.virjar.tk.domain.attachment.AttachmentService(get(), get()) }
     single<AttachmentReferences> {
         val messages = get<MessageRepository>()

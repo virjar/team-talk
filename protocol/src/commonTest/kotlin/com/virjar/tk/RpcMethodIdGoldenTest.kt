@@ -88,7 +88,8 @@ class RpcMethodIdGoldenTest {
     @Test
     fun `conversation methodId 稳定`() {
         assertEquals(1, ConversationRpcContract.M_LIST)
-        assertEquals(2, ConversationRpcContract.M_SYNC)
+        // methodId=2 was the invalid pre-release per-row-version sync contract. Keep the gap so
+        // the remaining method IDs do not churn while generated clients are refreshed.
         assertEquals(3, ConversationRpcContract.M_SET_DRAFT)
         assertEquals(4, ConversationRpcContract.M_SET_PIN)
         assertEquals(5, ConversationRpcContract.M_SET_MUTE)

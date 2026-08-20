@@ -114,7 +114,6 @@ class RpcCodecConsistencyTest {
     // ── ConversationRepository ──
 
     @Test fun `CONVERSATION LIST codec`() = runBlocking { assertCodecOk("CONV.LIST", user1.invoke("conversation", 1)) }
-    @Test fun `CONVERSATION SYNC codec`() = runBlocking { assertCodecOk("CONV.SYNC", user1.invoke("conversation", 2, com.virjar.tk.protocol.ProtoCodec.encodePayload { writeVarLong(0) })) }
     @Test fun `CONVERSATION SET_DRAFT codec`() = runBlocking { assertCodecOk("CONV.SET_DRAFT", user1.invoke("conversation", 3, com.virjar.tk.protocol.ProtoCodec.encodePayload { writeString(chatId); writeString("draft text") })) }
     @Test fun `CONVERSATION SET_PIN codec`() = runBlocking { assertCodecOk("CONV.SET_PIN", user1.invoke("conversation", 4, com.virjar.tk.protocol.ProtoCodec.encodePayload { writeString(chatId); writeVarInt(1) })) }
     @Test fun `CONVERSATION SET_MUTE codec`() = runBlocking { assertCodecOk("CONV.SET_MUTE", user1.invoke("conversation", 5, com.virjar.tk.protocol.ProtoCodec.encodePayload { writeString(chatId); writeVarInt(1) })) }

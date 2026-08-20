@@ -44,7 +44,10 @@ Contact 是首个完整迁入 `PgUnitOfWork` 的关系聚合。apply、accept、
 ### conversations
 
 主键概念是 `(uid, chatId)`。保存 lastSeq、readSeq、peerReadSeq、draft、pin、mute 和版本。单调字段
-更新使用 max/条件写，避免乱序事件倒退。
+更新在锁定 Chat 和会话行后使用 max/条件写，避免乱序事件倒退。draft/pin/mute/delete/markRead
+必须携带 outer UoW 事务句柄；只有实际改变的行才推进 version。draft/pin/mute 即使同值也会返回并发布
+当前权威快照，以收敛“服务端已提交但 RPC 响应丢失”后的客户端重试和本地草稿 outbox。markRead 事务同时推进
+读者 readSeq 与已存在对端投影的 peerReadSeq；已删除/缺失的对端 Conversation 没有可持久水位，不伪造 READ_SYNC。
 
 ### chat 聚合约束
 
@@ -65,7 +68,7 @@ Contact 是首个完整迁入 `PgUnitOfWork` 的关系聚合。apply、accept、
 启动扫描恢复；某序号 live push 失败时，同 uid 后续序号不得越过。`dispatched_at` 只表示完成过一次
 实时推送尝试，不参与离线 replay 过滤。
 
-除 Contact 外，尚未逐域迁移的服务暂由 standalone `EventPublisher` 创建 event-only UoW，以保持现有调用兼容；
+除 Contact 与 Conversation 外，尚未逐域迁移的服务暂由 standalone `EventPublisher` 创建 event-only UoW，以保持现有调用兼容；
 它仍不能把之前已经提交的领域 mutation 变成同一事务。后续领域迁移必须在 outer `PgWriteScope`
 中直接 append，禁止在 UoW 内再次调用 standalone publisher。
 
@@ -93,6 +96,8 @@ group_file_entries 保存群文件目录树、逻辑名称、当前 Attachment�
 group_file_versions 只追加不可变 Attachment 快照，`(entryId, version)` 唯一。group_file_audits 与每次
 创建、追加版本、重命名、删除在同一 PostgreSQL 事务提交，只记录动作与有限摘要，不保存文件正文。
 物理二进制仍在 FileStore；数据库版本表是下载引用和群空间配额的事实源。
+所有写事务先锁定对应的活动群行并复验操作者的活动成员行；服务层事务外的 ACL 预检不能替代这一
+安全边界。
 
 ### document_spaces / document_space_grants
 

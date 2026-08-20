@@ -18,7 +18,7 @@
 - 若反复收到 SYNC_RESET，检查本地事务是否成功清空 projection/cursor/inbox，以及服务端是否错误拒绝 0；
   同一连接第二次 RESET 会按协议主动断开。
 - 查 EventProcessor 是否解码/写库失败且未推进游标。
-- 主动 list/sync 是否能恢复 Conversation/Contact。
+- 权威 list 与持久事件重放是否能恢复 Conversation/Contact。
 - 测试环境若经历过破坏性结构调整，清理对应测试数据库后重验。
 
 不要只在 UI 层加“重新请求”掩盖游标或契约错误。

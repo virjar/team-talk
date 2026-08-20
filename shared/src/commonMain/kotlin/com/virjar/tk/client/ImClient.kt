@@ -7,6 +7,7 @@ import com.virjar.tk.protocol.payload.AuthRequestPayload
 import com.virjar.tk.protocol.payload.MessageAckPayload
 import com.virjar.tk.protocol.payload.NotifyPayload
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -214,6 +215,29 @@ class ImClient(
             canonicalizeOutboundMessage(proto)
         } else proto
         transport.send(outbound)
+    }
+
+    /**
+     * RPC-only leased send. Both transport generations and the request/session lifetime are checked
+     * on the EventLoop immediately before the write, so an old ClientSession cannot target a later
+     * account merely because the same ImClient instance was reused.
+     */
+    internal suspend fun sendIfOwned(
+        expectedOwnerGeneration: Long,
+        expectedConnectionGeneration: Long,
+        leaseIsActive: () -> Boolean,
+        proto: IProto,
+    ): Boolean {
+        val result = CompletableDeferred<Boolean>()
+        val scheduled = transport.sendIfOwned(
+            expectedOwnerGeneration = expectedOwnerGeneration,
+            expectedConnectionGeneration = expectedConnectionGeneration,
+            leaseIsActive = leaseIsActive,
+            proto = proto,
+            onResult = { accepted -> result.complete(accepted) },
+        )
+        if (!scheduled) return false
+        return result.await()
     }
 
     /**

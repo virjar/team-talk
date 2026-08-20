@@ -103,10 +103,13 @@ GroupFile 和 Bot 不得各自复制角色数字和成员错误分支；禁言�
 
 ConversationService 维护用户视角状态：
 
-- list/sync 返回合并后的会话快照。
+- list 返回当前权威会话快照；增量恢复统一走持久 `sync_events` 流。
 - setDraft、setPin、setMute 只影响当前用户。
 - markRead 用 max 合并 readSeq，更新自己所有设备并向会话成员同步 peer waterline。
 - deleteConversation 删除收件箱视图，不删除 Chat 或消息。
+
+上述用户写操作都在锁定 Chat 聚合行后重验活动成员资格，会话行、已读水位、对端水位和
+durable event 在同一 `PgUnitOfWork` 中提交。事件 payload 必须从该事务的最终行状态构造，不得在提交后另起查询。
 
 创建 Chat 时，初始 Member 与 Conversation 由 ChatRepository 在同一 PostgreSQL 事务建立。后续加人、
 邀请加入以及受管群收敛使用 `ensureConversations` 补齐新增成员；创建完成后不能再重复写一轮相同投影。
@@ -117,6 +120,9 @@ GroupFileService 通过统一 `ChatAccess` 只接受当前群成员访问，并�
 通过“先列出用户全部会话再查包含关系”的旁路判断权限。创建文件或新版本时，服务端重新
 查询 FileStore，要求 Attachment 元数据完全匹配且调用者就是该次上传者；因此不能抢占其他成员尚未
 发布的上传。Repository 在一个事务中更新条目、追加不可变版本并写审计。
+服务层的成员检查只用于提前返回友好错误；每个创建、追加版本、重命名和删除事务都会先锁定群行，
+再复验群仍处于活动状态、类型仍为群聊且操作者仍是活动成员。踢人或解散一旦先提交，已经完成上传
+准备但尚未落库的旧请求也必须失败，不能越过撤权边界写入文件树。
 
 条目 revision 是所有修改的乐观锁；contentVersion 只随内容追加递增。目录非空时拒绝删除，所有活跃
 条目的历史版本参与配额。AttachmentAccess 汇总 MessageStore 和 GroupFileRepository 两类引用，再与
