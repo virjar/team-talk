@@ -49,6 +49,12 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     private val membersFlow = MutableStateFlow<Map<String, List<Member>>>(emptyMap())
     private val conversationsFlow = MutableStateFlow<List<Conversation>>(emptyList())
     private val usersFlow = MutableStateFlow<List<User>>(emptyList())
+    /** 联系人关系变化的进程内水位；进程重建后没有在途 RPC，因此无需落盘。 */
+    private var contactProjectionGeneration = 0L
+    /** 最近一次全量替换的代次，用于整体拒绝更早的并发快照。 */
+    private var lastFullContactSnapshotGeneration = 0L
+    /** 单联系人最近变化水位；删除也保留 tombstone，防止旧快照复活。 */
+    private val contactMutationGenerations = mutableMapOf<String, Long>()
     /**
      * 持久化 outbox 的内存镜像。map 中“有 key + draft=null”表示明确清空；
      * 缺少 key 才表示本机没有待收敛操作，可接受跨设备草稿。
@@ -101,12 +107,9 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     // ── 用户 ──
     override fun getUser(uid: String): User? = usersFlow.value.find { it.uid == uid }
     override fun upsertUser(user: User) {
-        queries.upsertUser(user.uid, user.username, user.name, user.avatar, user.phone, user.sex.toLong(), user.role.toLong(), user.status.toLong())
-        updateFlow(usersFlow) { current ->
-            val list = current.toMutableList()
-            val idx = list.indexOfFirst { it.uid == user.uid }
-            if (idx >= 0) list[idx] = user else list.add(user)
-            list
+        synchronized(stateLock) {
+            persistUser(user)
+            usersFlow.value = mergeUser(usersFlow.value, user)
         }
     }
 
@@ -120,26 +123,121 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     }
     override fun observeContacts(): Flow<List<Contact>> = contactsFlow
     override fun upsertContact(contact: Contact) {
-        queries.upsertContact(contact.uid, contact.friendUid, contact.remark, contact.status.toLong())
-        contact.user?.let { user ->
-            queries.upsertUser(user.uid, user.username, user.name, user.avatar, user.phone, user.sex.toLong(), user.role.toLong(), user.status.toLong())
-            updateFlow(usersFlow) { current ->
-                val list = current.toMutableList()
-                val idx = list.indexOfFirst { it.uid == user.uid }
-                if (idx >= 0) list[idx] = user else list.add(user)
-                list
+        synchronized(stateLock) {
+            queries.transaction {
+                persistContact(contact)
+                contact.user?.let(::persistUser)
             }
-        }
-        updateFlow(contactsFlow) { current ->
-            val list = current.toMutableList()
-            val idx = list.indexOfFirst { it.friendUid == contact.friendUid }
-            if (idx >= 0) list[idx] = contact else list.add(contact)
-            list
+            contact.user?.let { usersFlow.value = mergeUser(usersFlow.value, it) }
+            contactsFlow.value = mergeContact(contactsFlow.value, contact)
+            markContactMutated(contact.friendUid)
         }
     }
     override fun deleteContact(friendUid: String) {
-        queries.deleteContact(friendUid)
-        updateFlow(contactsFlow) { it.filter { c -> c.friendUid != friendUid } }
+        synchronized(stateLock) {
+            queries.deleteContact(friendUid)
+            contactsFlow.value = contactsFlow.value.filter { it.friendUid != friendUid }
+            // 即使本地当前没有该行也必须记 tombstone：在途旧 RPC 可能仍携带它。
+            markContactMutated(friendUid)
+        }
+    }
+
+    override fun contactProjectionGeneration(): Long = synchronized(stateLock) {
+        contactProjectionGeneration
+    }
+
+    override fun applyContactSnapshot(expectedGeneration: Long, contacts: List<Contact>): Boolean {
+        require(expectedGeneration >= 0L) { "expectedGeneration 不能为负数" }
+        val snapshot = normalizeContacts(contacts)
+        return synchronized(stateLock) {
+            if (contactProjectionGeneration == expectedGeneration) {
+                queries.transaction {
+                    queries.deleteAllContacts()
+                    snapshot.forEach { contact ->
+                        persistContact(contact)
+                        contact.user?.let(::persistUser)
+                    }
+                }
+                usersFlow.value = mergeContactUsers(usersFlow.value, snapshot)
+                contactsFlow.value = snapshot
+                contactProjectionGeneration += 1L
+                lastFullContactSnapshotGeneration = contactProjectionGeneration
+                // lastFullContactSnapshotGeneration 已能拒绝所有更早请求；新事件从空 map 重新记录。
+                contactMutationGenerations.clear()
+                true
+            } else {
+                // 如果其他全量快照已经先收敛，该请求整体过期；否则按单联系人
+                // 水位合并。这样既不会删掉刚 ACCEPTED 的人，也不会复活刚 DELETED 的人。
+                val mergeable = if (expectedGeneration < lastFullContactSnapshotGeneration) {
+                    emptyList()
+                } else {
+                    snapshot.filter { contact ->
+                        (contactMutationGenerations[contact.friendUid] ?: 0L) <= expectedGeneration
+                    }
+                }
+                if (mergeable.isNotEmpty()) {
+                    queries.transaction {
+                        mergeable.forEach { contact ->
+                            persistContact(contact)
+                            contact.user?.let(::persistUser)
+                        }
+                    }
+                    usersFlow.value = mergeContactUsers(usersFlow.value, mergeable)
+                    var mergedContacts = contactsFlow.value
+                    mergeable.forEach { mergedContacts = mergeContact(mergedContacts, it) }
+                    contactsFlow.value = mergedContacts
+                    contactProjectionGeneration += 1L
+                    val mergedGeneration = contactProjectionGeneration
+                    mergeable.forEach { contactMutationGenerations[it.friendUid] = mergedGeneration }
+                }
+                false
+            }
+        }
+    }
+
+    private fun persistUser(user: User) {
+        queries.upsertUser(
+            user.uid,
+            user.username,
+            user.name,
+            user.avatar,
+            user.phone,
+            user.sex.toLong(),
+            user.role.toLong(),
+            user.status.toLong(),
+        )
+    }
+
+    private fun persistContact(contact: Contact) {
+        queries.upsertContact(contact.uid, contact.friendUid, contact.remark, contact.status.toLong())
+    }
+
+    private fun mergeUser(current: List<User>, user: User): List<User> {
+        val list = current.toMutableList()
+        val index = list.indexOfFirst { it.uid == user.uid }
+        if (index >= 0) list[index] = user else list.add(user)
+        return list
+    }
+
+    private fun mergeContactUsers(current: List<User>, contacts: List<Contact>): List<User> {
+        var merged = current
+        contacts.mapNotNull(Contact::user).forEach { merged = mergeUser(merged, it) }
+        return merged
+    }
+
+    private fun mergeContact(current: List<Contact>, contact: Contact): List<Contact> {
+        val list = current.toMutableList()
+        val index = list.indexOfFirst { it.friendUid == contact.friendUid }
+        if (index >= 0) list[index] = contact else list.add(contact)
+        return list
+    }
+
+    private fun normalizeContacts(contacts: List<Contact>): List<Contact> =
+        contacts.associateBy(Contact::friendUid).values.toList()
+
+    private fun markContactMutated(friendUid: String) {
+        contactProjectionGeneration += 1L
+        contactMutationGenerations[friendUid] = contactProjectionGeneration
     }
 
     // ── 聊天 ──

@@ -64,6 +64,66 @@ class LocalCacheImplTest {
         assertEquals(threads * perThread, cache.getContacts().size)
     }
 
+    @Test
+    fun `权威好友快照清理旧客户端污染并持久化`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        AppDatabase.Schema.create(driver)
+        val cache = LocalCacheImpl(driver)
+        cache.upsertContact(Contact(uid = "me", friendUid = "polluted"))
+        val generation = cache.contactProjectionGeneration()
+
+        assertTrue(
+            cache.applyContactSnapshot(
+                generation,
+                listOf(Contact(uid = "me", friendUid = "real")),
+            ),
+        )
+        assertEquals(listOf("real"), cache.getContacts().map(Contact::friendUid))
+
+        val reloaded = LocalCacheImpl(driver)
+        assertEquals(listOf("real"), reloaded.getContacts().map(Contact::friendUid))
+    }
+
+    @Test
+    fun `迟到快照不能在 SQLite 复活请求期间删除的好友`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        AppDatabase.Schema.create(driver)
+        val cache = LocalCacheImpl(driver)
+        val stale = Contact(uid = "me", friendUid = "deleted")
+        cache.upsertContact(stale)
+        val generation = cache.contactProjectionGeneration()
+
+        cache.deleteContact(stale.friendUid)
+        assertFalse(cache.applyContactSnapshot(generation, listOf(stale)))
+        assertTrue(cache.getContacts().isEmpty())
+
+        val reloaded = LocalCacheImpl(driver)
+        assertTrue(reloaded.getContacts().isEmpty())
+    }
+
+    @Test
+    fun `迟到快照保留请求期间接受的好友并持久化安全项`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        AppDatabase.Schema.create(driver)
+        val cache = LocalCacheImpl(driver)
+        val existing = Contact(uid = "me", friendUid = "existing")
+        cache.upsertContact(existing)
+        val generation = cache.contactProjectionGeneration()
+
+        cache.upsertContact(Contact(uid = "me", friendUid = "accepted"))
+        assertFalse(cache.applyContactSnapshot(generation, listOf(existing)))
+        assertEquals(
+            setOf("existing", "accepted"),
+            cache.getContacts().map(Contact::friendUid).toSet(),
+        )
+
+        val reloaded = LocalCacheImpl(driver)
+        assertEquals(
+            setOf("existing", "accepted"),
+            reloaded.getContacts().map(Contact::friendUid).toSet(),
+        )
+    }
+
     private fun usersCount(cache: LocalCacheImpl): Int {
         // 通过观察流当前值计数
         var n = 0

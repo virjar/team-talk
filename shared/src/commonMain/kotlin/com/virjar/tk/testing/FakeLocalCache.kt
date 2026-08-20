@@ -27,6 +27,10 @@ class FakeLocalCache : LocalCache {
     // 其他实体存储
     private val usersFlow = MutableStateFlow<List<User>>(emptyList())
     private val contactsFlow = MutableStateFlow<List<Contact>>(emptyList())
+    private val contactLock = Any()
+    private var contactProjectionGeneration = 0L
+    private var lastFullContactSnapshotGeneration = 0L
+    private val contactMutationGenerations = mutableMapOf<String, Long>()
     private val chatsFlow = MutableStateFlow<List<Chat>>(emptyList())
     private val membersMap = mutableMapOf<String, MutableList<Member>>()
     private val conversationsFlow = MutableStateFlow<List<Conversation>>(emptyList())
@@ -107,13 +111,61 @@ class FakeLocalCache : LocalCache {
     override fun getContacts(): List<Contact> = contactsFlow.value
     override fun observeContacts(): Flow<List<Contact>> = contactsFlow
     override fun upsertContact(contact: Contact) {
-        val list = contactsFlow.value.toMutableList()
-        val idx = list.indexOfFirst { it.friendUid == contact.friendUid }
-        if (idx >= 0) list[idx] = contact else list.add(contact)
-        contactsFlow.value = list
+        synchronized(contactLock) {
+            contactsFlow.value = mergeContact(contactsFlow.value, contact)
+            markContactMutated(contact.friendUid)
+        }
     }
     override fun deleteContact(friendUid: String) {
-        contactsFlow.value = contactsFlow.value.filter { it.friendUid != friendUid }
+        synchronized(contactLock) {
+            contactsFlow.value = contactsFlow.value.filter { it.friendUid != friendUid }
+            markContactMutated(friendUid)
+        }
+    }
+    override fun contactProjectionGeneration(): Long = synchronized(contactLock) {
+        contactProjectionGeneration
+    }
+    override fun applyContactSnapshot(expectedGeneration: Long, contacts: List<Contact>): Boolean {
+        require(expectedGeneration >= 0L) { "expectedGeneration 不能为负数" }
+        val snapshot = contacts.associateBy(Contact::friendUid).values.toList()
+        return synchronized(contactLock) {
+            if (contactProjectionGeneration == expectedGeneration) {
+                contactsFlow.value = snapshot
+                contactProjectionGeneration += 1L
+                lastFullContactSnapshotGeneration = contactProjectionGeneration
+                contactMutationGenerations.clear()
+                true
+            } else {
+                val mergeable = if (expectedGeneration < lastFullContactSnapshotGeneration) {
+                    emptyList()
+                } else {
+                    snapshot.filter { contact ->
+                        (contactMutationGenerations[contact.friendUid] ?: 0L) <= expectedGeneration
+                    }
+                }
+                if (mergeable.isNotEmpty()) {
+                    var merged = contactsFlow.value
+                    mergeable.forEach { merged = mergeContact(merged, it) }
+                    contactsFlow.value = merged
+                    contactProjectionGeneration += 1L
+                    val mergedGeneration = contactProjectionGeneration
+                    mergeable.forEach { contactMutationGenerations[it.friendUid] = mergedGeneration }
+                }
+                false
+            }
+        }
+    }
+
+    private fun mergeContact(current: List<Contact>, contact: Contact): List<Contact> {
+        val list = current.toMutableList()
+        val index = list.indexOfFirst { it.friendUid == contact.friendUid }
+        if (index >= 0) list[index] = contact else list.add(contact)
+        return list
+    }
+
+    private fun markContactMutated(friendUid: String) {
+        contactProjectionGeneration += 1L
+        contactMutationGenerations[friendUid] = contactProjectionGeneration
     }
 
     // ── 聊天 ──

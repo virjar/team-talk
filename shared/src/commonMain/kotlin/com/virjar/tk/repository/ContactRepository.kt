@@ -14,8 +14,13 @@ class ContactRepository(
 ) {
     private val rpc = ContactRpcProxy(rpcClient)
 
-    suspend fun listFriends(): Outcome<List<Contact>> = outcome {
-        rpc.list().also { list -> list.forEach { localCache.upsertContact(it) } }
+    suspend fun listFriends(): Outcome<List<Contact>> {
+        val projectionGeneration = localCache.contactProjectionGeneration()
+        return outcome {
+            rpc.list().also { list ->
+                localCache.applyContactSnapshot(projectionGeneration, list)
+            }
+        }
     }
 
     suspend fun apply(toUid: String, remark: String? = null): Outcome<ContactApply> = outcome { rpc.apply(toUid, remark) }

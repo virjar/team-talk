@@ -111,6 +111,9 @@ VALUES (?, ?, ?, ?);
 deleteContact:
 DELETE FROM contact WHERE friend_uid = ?;
 
+deleteAllContacts:
+DELETE FROM contact;
+
 selectChatById:
 SELECT * FROM chat WHERE chat_id = ?;
 

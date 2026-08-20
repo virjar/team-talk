@@ -30,6 +30,23 @@ interface LocalCache {
     fun upsertContact(contact: Contact)
     fun deleteContact(friendUid: String)
 
+    /**
+     * 当前联系人投影的进程内代次。Repository 在发起好友全量请求前捕获它，
+     * 用于防止请求期间到达的 CONTACT_ACCEPTED / CONTACT_DELETED 被迟到快照覆盖。
+     */
+    fun contactProjectionGeneration(): Long
+
+    /**
+     * 应用服务端的好友全量快照。
+     *
+     * 当 [expectedGeneration] 仍是当前代次时，快照会原子替换 SQLite 和内存投影，
+     * 从而清理旧客户端误写的联系人。如果请求期间已有实时关系事件，则不执行
+     * 删除，且只合并没有被更新事件触及的快照项。
+     *
+     * @return true 表示完成了全量替换；false 表示检测到并发变化并采用了安全合并。
+     */
+    fun applyContactSnapshot(expectedGeneration: Long, contacts: List<Contact>): Boolean
+
     // ── 聊天 ──
     fun getChat(chatId: String): Chat?
     fun upsertChat(chat: Chat)
