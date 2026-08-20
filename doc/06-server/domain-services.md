@@ -89,11 +89,12 @@ GroupFile 和 Bot 不得各自复制角色数字和成员错误分支；禁言�
 3. 校验群禁言、消息类型和业务限制。
 4. 在 FileStore 验证全部附件。
 5. 按 clientMsgId 查询幂等结果。
-6. 分配 serverSeq，原子写入 MessageStore、幂等索引、附件到会话反向索引和待投影 outbox。
-7. 幂等投影到 Lucene、Conversation 和持久化同步事件。
+6. 分配 serverSeq，原子写入 MessageStore、幂等索引、附件反向索引、revision 和 CREATE operation。
+7. Lucene 按 revision 幂等提交；PostgreSQL receipt、Conversation 和同步事件在同一 UoW 提交。
 8. 投影全部成功后清除 outbox，再返回 ACK。
 
-若第 7 步中断，相同 `clientMsgId` 重试或服务端重启会继续补齐投影，不能只返回旧 seq。
+若第 7 步中断，相同 `clientMsgId` 重试或服务端重启会继续补齐投影，不能只返回旧 seq。EDIT/REVOKE
+也写入不可变的递增 revision operation；重复 canonical edit/revoke 不产生新 revision。
 
 编辑只允许原发送者修改可编辑的文字消息；撤回允许发送者或有权限的管理员；转发产生新消息并
 重新走目标会话权限和附件校验。

@@ -31,6 +31,16 @@ friends 以有向双行表达双方视角，备注属于各自记录。friend_ap
 users 行，使同方向 pending 的查询与插入原子复用；token 仍保存在关系事实中，但读取投影只向待处理
 申请的收件人返回。
 
+Contact 是首个完整迁入 `PgUnitOfWork` 的关系聚合。apply、accept、reject、delete、blacklist、解除拉黑、
+直接 add/remove 和备注更新都必须携带 outer UoW 提供的不透明事务句柄；Exposed 适配器不能自行开启或
+提交写事务。所有双人 mutation 依 uid 排序锁定双方 users 行，accept 同一事务内生成双方 Contact
+视角，随后 durable event intents 才按 uid 排序取得 stream 锁并提交。这样故障只会得到“关系事实和
+全部事件都提交”或“全部回滚”，不会留下已接受但无通知、单边删除事件等永久裂缝。
+
+`ContactStore` 是无状态门面，不缓存好友 UID。好友关系同时参与聊天授权，旧的无界进程缓存既会随
+活跃账号增长，也存在 load 与 mutation 并发时回填提交前旧集合的窗口；当前直接读取 PostgreSQL
+权威事实，因而没有需要在事务前更新的本地投影或 after-commit write-through。
+
 ### conversations
 
 主键概念是 `(uid, chatId)`。保存 lastSeq、readSeq、peerReadSeq、draft、pin、mute 和版本。单调字段
@@ -44,8 +54,21 @@ users 行，使同方向 pending 的查询与插入原子复用；token 仍保�
 
 ### sync_events
 
-按 uid 和自增 event ID 保存 NotifyType 与 payload bytes。认证后由已就绪客户端显式请求
-`id > lastEventId` 的升序有界批次；最终查空与实时连接激活共用 per-user delivery gate。
+`sync_streams(uid, last_seq)` 为每个账号分配连续序号；`sync_events` 以 `(uid, stream_seq)` 为复合
+主键保存 NotifyType、payload bytes、可选 dedupe key 与 live dispatcher 重试状态。`stream_seq`
+继续使用现有 wire `eventId`，不是跨账号全局 ID。认证后由已就绪客户端显式请求
+`stream_seq > lastEventId` 的升序有界批次；最终查空与实时连接激活共用 per-user delivery gate。
+
+`PgUnitOfWork` 先运行全部领域 SQL 和事件 intent 构造，block 返回后才按 uid 排序锁定 stream 行、
+分配序号并一起提交。stream 锁是命令最后获取的数据库锁；同 uid 后来的事务不能先提交，多 uid
+命令也不会留下部分事件。commit 后的 wake 与缓存 callback 都只是进程内提示，崩溃后由 dispatcher
+启动扫描恢复；某序号 live push 失败时，同 uid 后续序号不得越过。`dispatched_at` 只表示完成过一次
+实时推送尝试，不参与离线 replay 过滤。
+
+除 Contact 外，尚未逐域迁移的服务暂由 standalone `EventPublisher` 创建 event-only UoW，以保持现有调用兼容；
+它仍不能把之前已经提交的领域 mutation 变成同一事务。后续领域迁移必须在 outer `PgWriteScope`
+中直接 append，禁止在 UoW 内再次调用 standalone publisher。
+
 当前开发基线用 `SYNC_RESET` 让错误/串账号 cursor 从 0 原子重建投影，但重建仍依赖完整事件历史，
 所以不设 TTL，定时 cleanup 是明确 no-op；这保住长离线正确性，代价是表无界增长。正式上线前
 必须先增加权威快照/checkpoint bootstrap，之后才能开启保留期和物理删除。
@@ -110,14 +133,21 @@ document_user_recents 以 `(uid, documentId)` 为主键保存最后访问时间�
 另有 clientMsgId 幂等索引指向 chatId/serverSeq。分配 seq、写消息和写幂等索引需要保持可恢复顺序；
 重复请求必须返回已存在消息。
 
-MessageStore 在同一 RocksDB `WriteBatch` 中写入消息、clientMsgId 索引和待投影记录：
+MessageStore 在同一 RocksDB `WriteBatch` 中写入消息、clientMsgId 索引、消息 revision 和不可变操作记录：
 
 ```text
-[0x02][chatId bytes][serverSeq 8B BE] → Message bytes
+[0x05][chatId length+bytes][serverSeq 8B][revision 8B][operation 1B]
+    → { CREATE | EDIT | REVOKE, revision, Message, chatType, sorted recipient snapshot }
+[0x06][chatId length+bytes][serverSeq 8B] → latest revision 8B
 ```
 
-Lucene、Conversation 和 `sync_events` 都完成后删除该记录。幂等重试和服务启动会扫描并补偿未完成项；
-重放可以产生重复 Notify，客户端按 at-least-once 契约 upsert。
+`projectionKey = message/v1/{length}:{chatId}/{serverSeq}` 在消息整个生命周期内稳定，revision 从 CREATE=1
+开始递增。ACK 只删除完全匹配的 operation key，因此旧 projector 不可能误删稍后写入的 EDIT/REVOKE。
+相同 canonical edit 和已经撤回的 revoke 重试是 no-op，不会人为制造新 revision。
+
+Lucene、Conversation 和 `sync_events` 都完成后才精确删除该 operation。幂等重试和服务启动会扫描并
+补偿未完成项；启动恢复循环分页直到全局 outbox 连续两次为空，不受单页 1000 条限制。永久失败会
+保留 operation、使 `message-projection` readiness 为 DOWN，并阻止启动进入 TCP 服务阶段。
 
 ## 4. 派生数据
 
@@ -128,17 +158,30 @@ Lucene 索引、会话预览、缩略图和部分计数都是派生数据：
 - 重建工具读取 MessageStore，不从客户端缓存回灌。
 - 健康检查应区分“索引不可用”和“消息已丢失”。
 
+Lucene 文档保存同一个稳定 projectionKey 和最新 revision。`applyProjection` 只接受更大的 revision，
+并在返回前 commit；EDIT 覆盖原文，空正文和 REVOKE 写入带 revision 的不可搜索 tombstone。进程重启
+从 live document 恢复 revision fence，所以较旧操作不能让已撤回正文复活。
+
 ## 5. 一致性与事务
 
 PostgreSQL 事务只覆盖关系表；它不能原子覆盖 RocksDB/Lucene。跨存储流程必须用业务顺序保证：
 
 1. 权威消息与 outbox 原子写成功。
-2. 幂等更新可重建索引和会话投影。
-3. 持久化同步事件并推送在线设备。
+2. 按 revision 幂等更新 Lucene 并 commit。
+3. 在 PostgreSQL UoW 中插入 `external_projection_receipts(projection_key, revision)`、更新 Conversation，
+   并为快照中当前仍活跃的成员追加 MESSAGE_RECV / CONVERSATION_UPDATED；receipt、关系投影和事件一次提交。
 4. 清除 outbox 并对外返回成功。
 
-如果第 2 或第 3 步失败，outbox 保留并由重试/重启补偿。不能在权威写入前推送事件，也不能在
-补偿未完成时把重复 `clientMsgId` 直接解释为完整成功。
+receipt 同时保存 operation、消息身份和完整 payload/recipient/preview 摘要；同 key/revision 内容不同会
+fail-fast。若 PostgreSQL 已提交而进程在 Rocks ACK 前退出，重放命中 receipt，不再分配新的 eventId，
+包括机器人账号的 inbox 也只收到该 revision 一次。若第 2 或第 3 步失败，outbox 保留并由重试/重启
+补偿。不能在权威写入前推送事件，也不能在补偿未完成时把重复 `clientMsgId` 直接解释为完整成功。
+
+recipient snapshot 是消息命令被接受时的最大收件集合。正常路径由同一 chat lifecycle gate 覆盖快照、
+Rocks 写入和投影，因此集合不变；异常停顿期间若成员事实先发生变化，恢复使用
+`snapshot ∩ current active members`。后来加入者不补旧事件，已经移除的成员也不会在
+MEMBER_REMOVED/CHAT_DELETED 之后收到一条更晚的旧 MESSAGE_RECV；剩余成员仍可按稳定消息身份收敛。
+若 chat 已失效，该 operation 记录 receipt 后不再发布事件并清除 outbox。
 
 ## 6. Schema epoch 与生命周期
 

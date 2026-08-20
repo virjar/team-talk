@@ -17,6 +17,10 @@ import com.virjar.tk.domain.document.DocumentService
 import com.virjar.tk.domain.event.SyncEventReader
 import com.virjar.tk.domain.event.EventPublisher
 import com.virjar.tk.domain.message.MessageService
+import com.virjar.tk.domain.message.MessageProjectionReadiness
+import com.virjar.tk.domain.message.MessageProjectionRepository
+import com.virjar.tk.domain.message.MessageProjectionHooks
+import com.virjar.tk.domain.message.MessageSearch
 import com.virjar.tk.domain.organization.OrganizationRepository
 import com.virjar.tk.domain.organization.OrganizationService
 import com.virjar.tk.domain.groupfile.GroupFileRepository
@@ -24,12 +28,14 @@ import com.virjar.tk.domain.groupfile.GroupFileService
 import com.virjar.tk.domain.attachment.AttachmentAccess
 import com.virjar.tk.domain.user.UserRepository
 import com.virjar.tk.domain.user.UserService
+import com.virjar.tk.domain.transaction.PgUnitOfWork
 import com.virjar.tk.di.createServerModule
 import com.virjar.tk.infra.db.DatabaseFactory
 import com.virjar.tk.infra.search.SearchIndex
 import com.virjar.tk.infra.storage.MessageStore
 import com.virjar.tk.infra.storage.TokenStore
 import com.virjar.tk.infra.sync.ClientRegistry
+import com.virjar.tk.infra.sync.SyncEventDispatcher
 import com.virjar.tk.protocol.rpc.ContactRpcImpl
 import com.virjar.tk.testing.PostgresSchemaLease
 import org.junit.jupiter.api.extension.AfterAllCallback
@@ -82,6 +88,9 @@ class TestEnvironment : AutoCloseable {
                 password = postgres.password,
                 maxPoolSize = 4,
             )
+            // Resolve lifecycle-owned sync infrastructure after PostgreSQL exists. Integration
+            // tests start it explicitly only when exercising restart scanning.
+            koin.get<SyncEventDispatcher>()
             koin.get<MessageStore>().init()
             koin.get<SearchIndex>().start()
             koin.get<com.virjar.tk.infra.storage.FileStore>().init()
@@ -100,6 +109,7 @@ class TestEnvironment : AutoCloseable {
     val chatStore: ChatStore get() = koin.get()
     val chatAccess: ChatAccess get() = koin.get()
     val messageService: MessageService get() = koin.get()
+    val messageStore: MessageStore get() = koin.get()
     val conversationService: ConversationService get() = koin.get()
     val organizationService: OrganizationService get() = koin.get()
     val botService: BotService get() = koin.get()
@@ -116,24 +126,35 @@ class TestEnvironment : AutoCloseable {
     val conversationRepo: ConversationRepository get() = koin.get()
     val syncEventReader: SyncEventReader get() = koin.get()
     val eventPublisher: EventPublisher get() = koin.get()
+    val pgUnitOfWork: PgUnitOfWork get() = koin.get()
+    val messageProjectionRepository: MessageProjectionRepository get() = koin.get()
+    val messageProjectionReadiness: MessageProjectionReadiness get() = koin.get()
+    val syncEventDispatcher: SyncEventDispatcher get() = koin.get()
     val searchIndex: SearchIndex get() = koin.get()
     val healthChecker: com.virjar.tk.infra.health.HealthChecker get() = koin.get()
     val fileStore: com.virjar.tk.infra.storage.FileStore get() = koin.get()
 
     /** 模拟服务进程重启后的冷缓存，但复用同一套持久化数据。 */
-    fun freshMessageService(): MessageService {
+    fun freshMessageService(
+        projectionHooks: MessageProjectionHooks = MessageProjectionHooks.None,
+        unitOfWork: PgUnitOfWork = pgUnitOfWork,
+        projectionRepository: MessageProjectionRepository = messageProjectionRepository,
+        search: MessageSearch = searchIndex,
+    ): MessageService {
         val coldChatStore = ChatStore(koin.get(), koin.get(), koin.get())
         return MessageService(
             messages = koin.get(),
             chatStore = coldChatStore,
             access = ChatAccessPolicy(coldChatStore),
-            events = koin.get(),
-            conversationService = koin.get(),
-            search = koin.get(),
+            projectionRepository = projectionRepository,
+            unitOfWork = unitOfWork,
+            projectionReadiness = koin.get(),
+            search = search,
             attachmentService = koin.get(),
             users = koin.get(),
             contacts = koin.get(),
             lifecycleGate = koin.get(),
+            projectionHooks = projectionHooks,
         )
     }
 
@@ -155,6 +176,7 @@ class TestEnvironment : AutoCloseable {
         cleanUp { koin.get<MessageStore>().close() }
         cleanUp { koin.get<com.virjar.tk.infra.storage.FileStore>().close() }
         cleanUp { koin.get<TokenStore>().close() }
+        cleanUp { koin.get<SyncEventDispatcher>().close() }
         cleanUp { koin.get<ClientRegistry>().stop() }
         cleanUp { DatabaseFactory.close() }
         cleanUp { koinApp.close() }

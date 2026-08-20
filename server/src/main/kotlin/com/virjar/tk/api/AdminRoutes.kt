@@ -7,16 +7,17 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.Serializable
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 管理后台 REST API（/api/admin 前缀）。
  *
- * 鉴权模型（刻意极简）：固定账号密码（env ADMIN_USER/ADMIN_PASSWORD，默认 admin/admin-change-me），
- * POST /login 换随机 token（内存，12h 过期）→ 后续请求 Authorization: Bearer。
- * 生产建议：强密码 + nginx/防火墙将 /api/admin 限内网。
+ * 鉴权模型（刻意极简）：只有同时显式配置 ADMIN_USER/ADMIN_PASSWORD 才开放登录，
+ * POST /login 换随机 token（有界内存，12h 过期）→ 后续请求 Authorization: Bearer。
+ * 部署仍应使用强密码，并通过网关/防火墙限制 /api/admin 来源。
  */
 @Serializable
 data class AdminLoginRequest(val username: String, val password: String)
@@ -49,31 +50,76 @@ data class CreateBotRequest(val name: String)
 @Serializable
 data class BotGrantRequest(val chatId: String)
 
-/** 鉴权器（独立可单元测试）：固定凭据 + 内存 token（12h）。 */
-internal class AdminAuthConfig {
-    val username: String = System.getenv("ADMIN_USER") ?: "admin"
-    val password: String = System.getenv("ADMIN_PASSWORD") ?: "admin-change-me"
-    private val tokens = ConcurrentHashMap<String, Long>() // token -> expireAt
+/** 鉴权器（独立可单元测试）：显式凭据 + 有界内存 token（12h）。 */
+internal class AdminAuthConfig(
+    username: String? = System.getenv("ADMIN_USER"),
+    password: String? = System.getenv("ADMIN_PASSWORD"),
+    private val clock: () -> Long = System::currentTimeMillis,
+    private val maxActiveTokens: Int = DEFAULT_MAX_ACTIVE_TOKENS,
+) {
+    private val configuredUsername = username?.takeIf(String::isNotBlank)
+    private val configuredPassword = password?.takeIf(String::isNotBlank)
+    /** Insertion order is the revocation order when a valid administrator exceeds the cap. */
+    private val tokens = LinkedHashMap<String, Long>() // token -> expireAt
+    private val tokenLock = Any()
     private val random = SecureRandom()
 
+    init {
+        require(maxActiveTokens > 0) { "maxActiveTokens must be positive" }
+    }
+
     fun login(user: String, pass: String): String? {
-        if (user != username || pass != password) return null
+        val expectedUser = configuredUsername ?: return null
+        val expectedPassword = configuredPassword ?: return null
+        if (!constantTimeEquals(user, expectedUser) || !constantTimeEquals(pass, expectedPassword)) return null
         val token = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32).also { random.nextBytes(it) })
-        tokens[token] = System.currentTimeMillis() + TOKEN_TTL_MS
+        synchronized(tokenLock) {
+            val now = clock()
+            removeExpired(now)
+            while (tokens.size >= maxActiveTokens) {
+                val oldest = tokens.entries.iterator()
+                if (!oldest.hasNext()) break
+                oldest.next()
+                oldest.remove()
+            }
+            tokens[token] = saturatedAdd(now, TOKEN_TTL_MS)
+        }
         return token
     }
 
     fun validate(token: String?): Boolean {
         if (token.isNullOrBlank()) return false
-        val expire = tokens[token] ?: return false
-        if (System.currentTimeMillis() > expire) {
-            tokens.remove(token); return false
+        return synchronized(tokenLock) {
+            val expire = tokens[token] ?: return@synchronized false
+            if (clock() >= expire) {
+                tokens.remove(token)
+                false
+            } else {
+                true
+            }
         }
-        return true
     }
+
+    internal fun activeTokenCount(): Int = synchronized(tokenLock) { tokens.size }
+
+    private fun removeExpired(now: Long) {
+        val iterator = tokens.entries.iterator()
+        while (iterator.hasNext()) {
+            if (now >= iterator.next().value) iterator.remove()
+        }
+    }
+
+    private fun constantTimeEquals(actual: String, expected: String): Boolean = MessageDigest.isEqual(
+        actual.toByteArray(StandardCharsets.UTF_8),
+        expected.toByteArray(StandardCharsets.UTF_8),
+    )
 
     companion object {
         internal const val TOKEN_TTL_MS = 12 * 3600 * 1000L
+        internal const val DEFAULT_MAX_ACTIVE_TOKENS = 256
+
+        private fun saturatedAdd(left: Long, right: Long): Long =
+            if (Long.MAX_VALUE - left < right) Long.MAX_VALUE else left + right
     }
 }
 

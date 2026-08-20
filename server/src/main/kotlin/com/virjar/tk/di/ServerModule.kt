@@ -38,6 +38,8 @@ import com.virjar.tk.domain.document.DocumentService
 import com.virjar.tk.domain.event.EventPublisher
 import com.virjar.tk.domain.event.SyncEventReader
 import com.virjar.tk.domain.message.MessageRepository
+import com.virjar.tk.domain.message.MessageProjectionReadiness
+import com.virjar.tk.domain.message.MessageProjectionRepository
 import com.virjar.tk.domain.message.MessageSearch
 import com.virjar.tk.domain.message.MessageService
 import com.virjar.tk.domain.organization.OrganizationRepository
@@ -46,6 +48,7 @@ import com.virjar.tk.domain.groupfile.GroupFileRepository
 import com.virjar.tk.domain.groupfile.GroupFileService
 import com.virjar.tk.domain.presence.PresenceService
 import com.virjar.tk.domain.session.OnlineSessions
+import com.virjar.tk.domain.transaction.PgUnitOfWork
 import com.virjar.tk.domain.user.UserRepository
 import com.virjar.tk.domain.user.UserService
 import com.virjar.tk.protocol.rpc.RpcStubRegistry
@@ -72,6 +75,7 @@ import com.virjar.tk.protocol.rpc.ContactRpcImpl
 import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.env.Environment
 import com.virjar.tk.infra.search.SearchIndex
+import com.virjar.tk.infra.db.ExposedPgUnitOfWork
 import com.virjar.tk.infra.db.repository.ExposedChatMemberRepository
 import com.virjar.tk.infra.db.repository.ExposedBotRepository
 import com.virjar.tk.infra.db.repository.ExposedChatRepository
@@ -80,6 +84,7 @@ import com.virjar.tk.infra.db.repository.ExposedConversationRepository
 import com.virjar.tk.infra.db.repository.ExposedDeviceRepository
 import com.virjar.tk.infra.db.repository.ExposedDocumentRepository
 import com.virjar.tk.infra.db.repository.ExposedInviteLinkRepository
+import com.virjar.tk.infra.db.repository.ExposedMessageProjectionRepository
 import com.virjar.tk.infra.db.repository.ExposedOrganizationRepository
 import com.virjar.tk.infra.db.repository.ExposedGroupFileRepository
 import com.virjar.tk.infra.db.repository.ExposedUserRepository
@@ -89,6 +94,7 @@ import com.virjar.tk.infra.storage.FileStore
 import com.virjar.tk.infra.storage.MessageStore
 import com.virjar.tk.infra.storage.TokenStore
 import com.virjar.tk.infra.sync.ClientRegistry
+import com.virjar.tk.infra.sync.SyncEventDispatcher
 import com.virjar.tk.infra.sync.SyncEventService
 import com.virjar.tk.protocol.TcpServer
 import com.virjar.tk.protocol.dispatcher.*
@@ -105,6 +111,11 @@ fun createServerModule(
     // 基础设施 — 使用参数替代 Environment
     single { TokenStore(tokenStorePath) }
     single { ClientRegistry() }
+    single { SyncEventDispatcher(get<ClientRegistry>()) }
+    single<PgUnitOfWork> {
+        val dispatcher = get<SyncEventDispatcher>()
+        ExposedPgUnitOfWork(dispatcher::signal)
+    }
     single { MessageStore(messageStorePath) }
     single { FileStore(fileStoreDbPath, fileStoreFsPath) }
     single { SearchIndex(searchIndexPath) }
@@ -122,6 +133,7 @@ fun createServerModule(
     single<ChatMemberRepository> { ExposedChatMemberRepository() }
     single<InviteLinkRepository> { ExposedInviteLinkRepository() }
     single<ConversationRepository> { ExposedConversationRepository(get(), get(), get()) }
+    single<MessageProjectionRepository> { ExposedMessageProjectionRepository() }
     single<DeviceRepository> { ExposedDeviceRepository() }
     single<OrganizationRepository> { ExposedOrganizationRepository() }
     single<GroupFileRepository> { ExposedGroupFileRepository() }
@@ -130,21 +142,22 @@ fun createServerModule(
     single<BotRepository> { ExposedBotRepository() }
     single<RequiredChatParticipants> { get<BotRepository>() }
 
-    // Store（热缓存 + 异步写入，包装 Repository）
+    // Domain store/facade（ContactStore 刻意无缓存；其余按各自一致性约束实现）
     single { UserStore(get()) }
     single { ContactStore(get()) }
     single { ChatStore(get(), get(), get()) }
     single<ActiveChatMembership> { get<ChatStore>() }
     single<ChatAccess> { ChatAccessPolicy(get<ChatStore>()) }
     single { ChatLifecycleGate() }
+    single { MessageProjectionReadiness() }
 
     // Domain Service
-    single { SyncEventService(get()) }
+    single { SyncEventService(get(), get()) }
     single<EventPublisher> { get<SyncEventService>() }
     single<SyncEventReader> { get<SyncEventService>() }
     single { UserService(get(), get()) }
     single { AuthService(get(), get(), get()) }
-    single { ContactService(get(), get(), get()) }
+    single { ContactService(get<ContactStore>(), get<PgUnitOfWork>(), get<UserStore>()) }
     single { ChatService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     single { OrganizationService(get(), get(), get()) }
     single { GroupFileService(get(), get(), get(), Environment.groupFileQuotaBytes) }
@@ -159,14 +172,28 @@ fun createServerModule(
         }
     }
     single<AttachmentAccess> { AttachmentAccessService(get(), get(), get()) }
-    single { MessageService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    single {
+        MessageService(
+            messages = get(),
+            chatStore = get(),
+            access = get(),
+            projectionRepository = get(),
+            unitOfWork = get(),
+            projectionReadiness = get(),
+            search = get(),
+            attachmentService = get(),
+            users = get(),
+            contacts = get(),
+            lifecycleGate = get(),
+        )
+    }
     single<BotAccountProvisioner> { UserServiceBotAccounts(get()) }
     single<BotGroupMembership> { ChatServiceBotMembership(get()) }
     single<BotMessageSender> { MessageServiceBotSender(get()) }
     single { BotService(get(), get(), get(), get(), get(), get()) }
     single { PresenceService(get(), get()) }
     single { PresenceCoordinator(get(), get()) }
-    single { HealthChecker(get(), get(), get()) }
+    single { HealthChecker(get(), get(), get(), get()) }
 
     // RPC 注册表（IDL 生成 Stub + 薄壳 Impl；serviceId 字符串注册）
     single {

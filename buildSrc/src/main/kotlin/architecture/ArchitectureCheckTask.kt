@@ -122,14 +122,47 @@ abstract class ArchitectureCheckTask : DefaultTask() {
             ),
         )
 
+        val attachmentTransferFiles = listOf(
+            "shared/src/commonMain/kotlin/com/virjar/tk/repository/FileRepository.kt",
+            "shared/src/jvmMain/kotlin/com/virjar/tk/repository/FileRepository.desktop.kt",
+            "shared/src/androidMain/kotlin/com/virjar/tk/repository/FileRepository.android.kt",
+            "shared/src/commonMain/kotlin/com/virjar/tk/bot/ImBot.kt",
+            "shared/src/jvmMain/kotlin/com/virjar/tk/agent/AgentApi.kt",
+            "desktop/src/desktopMain/kotlin/com/virjar/tk/DesktopMediaServices.kt",
+            "desktop/src/desktopMain/kotlin/com/virjar/tk/media/DesktopMediaCache.kt",
+            "desktop/src/desktopMain/kotlin/com/virjar/tk/DesktopFileDownloadController.kt",
+            "android/src/main/kotlin/com/virjar/tk/MediaHelper.kt",
+            "android/src/main/kotlin/com/virjar/tk/AndroidFileDownloadController.kt",
+        )
+
+        val productionSourceRoots = listOf(
+            "protocol/src/commonMain",
+            "shared/src/commonMain",
+            "shared/src/androidMain",
+            "shared/src/jvmMain",
+            "app/src/commonMain",
+            "android/src/main",
+            "desktop/src/desktopMain",
+            "server/src/main",
+        )
+        val temporaryOversizedFiles = setOf(
+            "app/src/commonMain/kotlin/com/virjar/tk/navigation/feature/DocumentWorkspaceFeature.kt",
+            "app/src/commonMain/kotlin/com/virjar/tk/ui/component/rich/DocumentBlockEditor.kt",
+            "app/src/commonMain/kotlin/com/virjar/tk/ui/component/rich/MarkdownText.kt",
+            "app/src/commonMain/kotlin/com/virjar/tk/ui/screen/ChatScreen.kt",
+            "desktop/src/desktopMain/kotlin/com/virjar/tk/MainAppContent.kt",
+            "desktop/src/desktopMain/kotlin/com/virjar/tk/test/TestHttpServer.kt",
+            "shared/src/commonMain/kotlin/com/virjar/tk/client/LocalCacheImpl.kt",
+        )
+
         val violations = buildList {
             for (rule in rules) {
-                val sourceRoot = root.resolve(rule.relativeRoot)
-                if (!sourceRoot.isDirectory) {
+                val ruleSourceRoot = root.resolve(rule.relativeRoot)
+                if (!ruleSourceRoot.isDirectory) {
                     add("${rule.name}: missing source root ${rule.relativeRoot}")
                     continue
                 }
-                sourceRoot.walkTopDown()
+                ruleSourceRoot.walkTopDown()
                     .filter { it.isFile && it.extension == "kt" }
                     .forEach { file ->
                         file.useLines { lines ->
@@ -147,14 +180,15 @@ abstract class ArchitectureCheckTask : DefaultTask() {
                         }
                     }
             }
+
             for (rule in sourcePatternRules) {
-                for (relativeRoot in rule.relativeRoots) {
-                    val sourceRoot = root.resolve(relativeRoot)
-                    if (!sourceRoot.isDirectory) {
-                        add("${rule.name}: missing source root $relativeRoot")
+                for (ruleRelativeRoot in rule.relativeRoots) {
+                    val patternSourceRoot = root.resolve(ruleRelativeRoot)
+                    if (!patternSourceRoot.isDirectory) {
+                        add("${rule.name}: missing source root $ruleRelativeRoot")
                         continue
                     }
-                    sourceRoot.walkTopDown()
+                    patternSourceRoot.walkTopDown()
                         .filter { it.isFile && it.extension == "kt" }
                         .forEach { file ->
                             file.useLines { lines ->
@@ -171,6 +205,43 @@ abstract class ArchitectureCheckTask : DefaultTask() {
                             }
                         }
                 }
+            }
+
+            for (relativeFile in attachmentTransferFiles) {
+                val transferFile = root.resolve(relativeFile)
+                if (!transferFile.isFile) {
+                    add("attachment streaming: missing production source $relativeFile")
+                    continue
+                }
+                transferFile.useLines { lines ->
+                    lines.forEachIndexed { index, line ->
+                        if (Regex("\\.readBytes\\s*\\(").containsMatchIn(line)) {
+                            add(
+                                "$relativeFile:${index + 1}: attachment streaming forbids whole-file readBytes()",
+                            )
+                        }
+                    }
+                }
+            }
+
+            for (productionRelativeRoot in productionSourceRoots) {
+                val productionSourceRoot = root.resolve(productionRelativeRoot)
+                if (!productionSourceRoot.isDirectory) {
+                    add("production source size: missing source root $productionRelativeRoot")
+                    continue
+                }
+                productionSourceRoot.walkTopDown()
+                    .filter { it.isFile && it.extension == "kt" }
+                    .forEach { file ->
+                        val relativePath = file.relativeTo(root).invariantSeparatorsPath
+                        val lineCount = file.useLines { lines -> lines.count() }
+                        if (lineCount > MAX_PRODUCTION_KOTLIN_LINES && relativePath !in temporaryOversizedFiles) {
+                            add(
+                                "$relativePath: production Kotlin file has $lineCount lines; " +
+                                    "split real responsibilities before exceeding $MAX_PRODUCTION_KOTLIN_LINES",
+                            )
+                        }
+                    }
             }
         }
 
@@ -190,4 +261,8 @@ abstract class ArchitectureCheckTask : DefaultTask() {
         val relativeRoots: List<String>,
         val forbiddenPatterns: List<Pair<Regex, String>>,
     )
+
+    private companion object {
+        const val MAX_PRODUCTION_KOTLIN_LINES = 800
+    }
 }

@@ -2,6 +2,7 @@ package com.virjar.tk.domain.attachment
 
 import com.virjar.tk.body.FileBody
 import com.virjar.tk.domain.chat.ActiveChatMembership
+import com.virjar.tk.domain.message.MessageProjectionTarget
 import com.virjar.tk.infra.storage.FileStore
 import com.virjar.tk.infra.storage.MessageStore
 import com.virjar.tk.model.Message
@@ -27,16 +28,19 @@ class AttachmentAccessServiceTest {
             val source = File(root, "source.txt").apply { writeText("private") }
             val path = files.store("owner", "private.txt", "text/plain", source)
             val attachment = requireNotNull(files.getAttachment(path))
+            val message = Message(
+                chatId = "chat-private",
+                clientMsgId = "message-1",
+                serverSeq = 1,
+                senderUid = "owner",
+                messageType = MessageType.FILE.code,
+                timestamp = 1,
+                body = FileBody(attachment),
+            )
             messages.storeMessage(
-                Message(
-                    chatId = "chat-private",
-                    clientMsgId = "message-1",
-                    serverSeq = 1,
-                    senderUid = "owner",
-                    messageType = MessageType.FILE.code,
-                    timestamp = 1,
-                    body = FileBody(attachment),
-                ),
+                message,
+                message,
+                MessageProjectionTarget(chatType = 1, recipientUids = listOf("owner", "member")),
             )
             val service = AttachmentAccessService(
                 files,
@@ -56,5 +60,4 @@ class AttachmentAccessServiceTest {
             root.deleteRecursively()
         }
     }
-
 }

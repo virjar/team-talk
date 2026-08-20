@@ -89,7 +89,7 @@ list/get revision；新增的最近访问与最近创建方法固定为 17/18。
 
 NOTIFY 表示服务端主动状态变化。概念字段包括：
 
-- `eventId`：持久化事件的用户级游标；直写瞬时事件可为 0。
+- `eventId`：持久化事件的用户级连续游标；不同 uid 可以有相同数字，直写瞬时事件可为 0。
 - `notifyType`：事件类型。
 - `payload`：NotifyContracts 指定的 IProto 字节。
 
@@ -115,7 +115,7 @@ domain change
 - 本地处理必须幂等。
 - 只有处理完成才能推进游标。
 - 解码失败要记录具体 type/eventId，并让事件下次重试。
-- 非零游标必须对应当前 uid 已持久化的事件；任意高水位或其他账号的事件 ID 触发 `SYNC_RESET`，
+- 非零游标必须位于当前 uid 已持久化的 `1..lastSeq`；任意越过本账号水位的值触发 `SYNC_RESET`，
   服务端不关闭身份连接也不提前激活实时推送。
 
 收到 `SYNC_RESET` 后，客户端在一个本地事务内删除 user/contact/chat/member/message/conversation、

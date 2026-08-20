@@ -16,7 +16,6 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 
 class BotAuthenticationException : IllegalArgumentException("机器人凭据无效")
 class BotAuthorizationException(message: String) : IllegalArgumentException(message)
@@ -57,8 +56,16 @@ class BotService(
     private val rateLimitPerMinute: Int = DEFAULT_RATE_LIMIT_PER_MINUTE,
 ) : GroupBotManagement, BotMessageDelivery {
     private val random = SecureRandom()
-    private val deliveryWindows = ConcurrentHashMap<String, DeliveryWindow>()
-    private val creationWindows = ConcurrentHashMap<String, CreationWindow>()
+    private val deliveryRateLimiter = BoundedFixedWindowRateLimiter<String>(
+        limit = rateLimitPerMinute.coerceAtLeast(1),
+        windowMillis = RATE_WINDOW_MILLIS,
+        maxTrackedKeys = MAX_TRACKED_DELIVERY_WINDOWS,
+    )
+    private val creationRateLimiter = BoundedFixedWindowRateLimiter<String>(
+        limit = MAX_GROUP_BOT_CREATIONS_PER_MEMBER_PER_HOUR,
+        windowMillis = GROUP_CREATION_RATE_WINDOW_MILLIS,
+        maxTrackedKeys = MAX_TRACKED_CREATION_WINDOWS,
+    )
     private val groupBotCreationMutex = Mutex()
 
     fun list(): List<AutomationBot> = repository.list()
@@ -316,27 +323,11 @@ class BotService(
 
     private fun enforceRateLimit(botId: String) {
         if (rateLimitPerMinute <= 0) return
-        val now = System.currentTimeMillis()
-        val window = deliveryWindows.compute(botId) { _, current ->
-            if (current == null || now - current.startedAt >= RATE_WINDOW_MILLIS) {
-                DeliveryWindow(now, 1)
-            } else {
-                current.copy(count = current.count + 1)
-            }
-        } ?: return
-        if (window.count > rateLimitPerMinute) throw BotRateLimitException()
+        if (!deliveryRateLimiter.tryAcquire(botId)) throw BotRateLimitException()
     }
 
     private fun enforceGroupCreationRate(actorUid: String) {
-        val now = System.currentTimeMillis()
-        val window = creationWindows.compute(actorUid) { _, current ->
-            if (current == null || now - current.startedAt >= GROUP_CREATION_RATE_WINDOW_MILLIS) {
-                CreationWindow(now, 1)
-            } else {
-                current.copy(count = current.count + 1)
-            }
-        } ?: return
-        if (window.count > MAX_GROUP_BOT_CREATIONS_PER_MEMBER_PER_HOUR) {
+        if (!creationRateLimiter.tryAcquire(actorUid)) {
             throw BotRateLimitException("创建机器人过于频繁，请稍后再试")
         }
     }
@@ -360,8 +351,7 @@ class BotService(
         const val DEFAULT_RATE_LIMIT_PER_MINUTE = 120
         private const val RATE_WINDOW_MILLIS = 60_000L
         private const val GROUP_CREATION_RATE_WINDOW_MILLIS = 60 * 60_000L
+        private const val MAX_TRACKED_DELIVERY_WINDOWS = 100_000
+        private const val MAX_TRACKED_CREATION_WINDOWS = 50_000
     }
-
-    private data class DeliveryWindow(val startedAt: Long, val count: Int)
-    private data class CreationWindow(val startedAt: Long, val count: Int)
 }

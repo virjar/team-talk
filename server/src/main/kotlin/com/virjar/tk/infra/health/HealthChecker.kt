@@ -1,5 +1,6 @@
 package com.virjar.tk.infra.health
 
+import com.virjar.tk.domain.message.MessageProjectionReadiness
 import com.virjar.tk.infra.search.SearchIndex
 import com.virjar.tk.infra.storage.FileStore
 import com.virjar.tk.infra.storage.MessageStore
@@ -21,6 +22,7 @@ class HealthChecker(
     private val messageStore: MessageStore,
     private val searchIndex: SearchIndex,
     private val fileStore: FileStore,
+    private val messageProjectionReadiness: MessageProjectionReadiness,
     private val tcpPort: Int = 5100,
 ) {
     suspend fun check(): HealthResponse {
@@ -29,6 +31,7 @@ class HealthChecker(
         components["postgres"] = withContext(Dispatchers.IO) { checkDatabase() }
         components["rocksdb"] = checkRocksDB()
         components["lucene"] = checkLucene()
+        components["message-projection"] = checkMessageProjection()
         components["file-storage"] = checkFileStorage()
         components["tcp"] = withContext(Dispatchers.IO) { checkTcp() }
 
@@ -52,6 +55,11 @@ class HealthChecker(
     private fun checkLucene(): ComponentHealth =
         if (searchIndex.isRunning) ComponentHealth("UP")
         else ComponentHealth("DOWN", "Lucene index not initialized")
+
+    private fun checkMessageProjection(): ComponentHealth {
+        val failure = messageProjectionReadiness.currentFailure() ?: return ComponentHealth("UP")
+        return ComponentHealth("DOWN", "${failure.projectionKey}: ${failure.detail}")
+    }
 
     private fun checkFileStorage(): ComponentHealth =
         if (fileStore.isHealthy) ComponentHealth("UP")

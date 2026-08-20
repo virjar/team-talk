@@ -7,9 +7,11 @@ import com.virjar.tk.infra.storage.FileStore
 import com.virjar.tk.infra.storage.MessageStore
 import com.virjar.tk.infra.storage.TokenStore
 import com.virjar.tk.infra.sync.ClientRegistry
+import com.virjar.tk.infra.sync.SyncEventDispatcher
 import com.virjar.tk.protocol.TcpServer
 import com.virjar.tk.protocol.codec.ImAgent
 import com.virjar.tk.testing.PostgresSchemaLease
+import kotlinx.coroutines.runBlocking
 import org.koin.dsl.koinApplication
 import java.io.File
 import java.util.UUID
@@ -43,6 +45,8 @@ class TcpE2eEnvironment : AutoCloseable {
     private val tcpServer = TcpServer(port = 0)
     private val postgres = PostgresSchemaLease.open()
     private val closed = AtomicBoolean(false)
+    private var clientRegistry: ClientRegistry? = null
+    private var syncEventDispatcher: SyncEventDispatcher? = null
 
     val tcpPort: Int
 
@@ -58,6 +62,14 @@ class TcpE2eEnvironment : AutoCloseable {
             koin.get<MessageStore>().init()
             koin.get<FileStore>().init()
             koin.get<SearchIndex>().start()
+
+            // Match the production runtime ordering: the registry owns online delivery, while the
+            // durable dispatcher must finish its recovery scan before TCP accepts any client.
+            clientRegistry = koin.get()
+            syncEventDispatcher = koin.get<SyncEventDispatcher>().also { dispatcher ->
+                dispatcher.start()
+                runBlocking { dispatcher.awaitStartupScan() }
+            }
 
             tcpServer.start { channel, recorder, ioExecutor ->
                 ImAgent(
@@ -121,11 +133,12 @@ class TcpE2eEnvironment : AutoCloseable {
             }
         }
         cleanUp { tcpServer.stop() }
+        cleanUp { syncEventDispatcher?.close() }
         cleanUp { koin.get<SearchIndex>().stop() }
         cleanUp { koin.get<MessageStore>().close() }
         cleanUp { koin.get<FileStore>().close() }
         cleanUp { koin.get<TokenStore>().close() }
-        cleanUp { koin.get<ClientRegistry>().stop() }
+        cleanUp { clientRegistry?.stop() }
         cleanUp { DatabaseFactory.close() }
         cleanUp { koinApp.close() }
         cleanUp { postgres.close() }

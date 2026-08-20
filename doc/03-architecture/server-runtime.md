@@ -25,8 +25,8 @@ resolve Environment/dataRoot
   → expose health status
 ```
 
-存储初始化失败时应阻止实例进入可用状态。`/health` 只有在 PostgreSQL、RocksDB、Lucene、文件存储
-和 TCP 均可用时返回成功。
+存储初始化或 message operation outbox 恢复失败时应阻止实例进入可用状态。`/health` 只有在
+PostgreSQL、RocksDB、Lucene、message-projection readiness、文件存储和 TCP 均可用时返回成功。
 
 ## 3. TCP 管线
 
@@ -64,8 +64,8 @@ EventLoop 不执行数据库和慢业务。ImAgent 把工作提交到协议执�
 
 1. 校验调用者、成员和参数。
 2. 在权威存储提交状态；消息同时提交投影 outbox。
-3. 幂等更新派生视图并构造完整事件快照。
-4. 事件适配器持久化并推送，然后清除 outbox。
+3. 按 revision 提交 Lucene；在一个 PostgreSQL UoW 中提交 receipt、Conversation 和完整事件快照。
+4. PostgreSQL commit 后唤醒 dispatcher，最后精确清除对应 revision 的 Rocks outbox operation。
 5. 返回 RPC 或消息 ACK。
 
 不能先向客户端报告成功再异步做关键校验。例如文件消息必须在 ACK 前确认附件存在；群消息必须在

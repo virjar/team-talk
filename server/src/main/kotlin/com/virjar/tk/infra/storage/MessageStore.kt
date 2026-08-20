@@ -1,11 +1,18 @@
 package com.virjar.tk.infra.storage
 
 import com.virjar.tk.body.AttachmentPolicy
-import com.virjar.tk.model.Message
+import com.virjar.tk.domain.message.MessageOperationType
+import com.virjar.tk.domain.message.MessageProjectionOperation
+import com.virjar.tk.domain.message.MessageProjectionTarget
 import com.virjar.tk.domain.message.MessageRepository
+import com.virjar.tk.model.Message
 import com.virjar.tk.protocol.ProtoCodec
 import org.rocksdb.*
 import org.slf4j.LoggerFactory
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
 import java.security.MessageDigest
 /**
  * 基于 RocksDB 的消息存储。
@@ -13,7 +20,8 @@ import java.security.MessageDigest
  * Key 设计：
  * - chatSeqIndex: [chatId bytes][8B seq BE] → message bytes（按 chat+seq 有序扫描）
  * - clientMsgIdIndex: [0x04][chatId][clientMsgId] → sender + seq + 首次内容 SHA-256
- * - projectionOutbox: [0x02][chatId bytes][8B seq BE] → message bytes
+ * - operationOutbox: [0x05][chatId part][8B seq][8B revision][operation] → versioned operation
+ * - messageRevision: [0x06][chatId part][8B seq] → latest operation revision
  * - attachmentChatIndex: [0x03][path][0x00][chatId][0x00][8B seq] → empty
  *
  * 注意：seq 由 ChatStore 统一分配，本类不自增 seq。
@@ -59,7 +67,11 @@ class MessageStore(
      * 返回存储的 serverSeq。如果 clientMsgId 已存在则返回已有 seq（幂等）。
      */
     @Synchronized
-    override fun storeMessage(message: Message, idempotencyCandidate: Message): Long {
+    override fun storeMessage(
+        message: Message,
+        idempotencyCandidate: Message,
+        projectionTarget: MessageProjectionTarget,
+    ): Long {
         val database = db ?: throw IllegalStateException("MessageStore not initialized")
         val seq = message.serverSeq
 
@@ -85,14 +97,20 @@ class MessageStore(
 
         val msgBytes = encodeMessage(message)
         val chatSeqKey = buildChatSeqKey(message.chatId, seq)
-        val projectionKey = buildProjectionKey(message.chatId, seq)
+        val operation = newProjectionOperation(
+            operation = MessageOperationType.CREATE,
+            revision = INITIAL_REVISION,
+            message = message,
+            projectionTarget = projectionTarget,
+        )
 
         // 消息、幂等索引与待投影标记必须同批原子提交。跨库投影完成前
         // outbox 始终保留，进程重启或客户端幂等重试都能继续补偿。
         WriteBatch().use { batch ->
             batch.put(chatSeqKey, msgBytes)
             batch.put(clientMsgIdKey, encodeIdempotencyValue(message.senderUid, seq, clientContentHash))
-            batch.put(projectionKey, msgBytes)
+            batch.put(buildRevisionKey(message.chatId, seq), encodeSeq(INITIAL_REVISION))
+            batch.put(buildOperationKey(operation), encodeProjectionOperation(operation))
             AttachmentPolicy.attachments(message).forEach { attachment ->
                 batch.put(buildAttachmentIndexKey(attachment.path, message.chatId, seq), EMPTY_VALUE)
             }
@@ -160,44 +178,90 @@ class MessageStore(
     }
 
     @Synchronized
-    override fun updateMessage(chatId: String, seq: Long, message: Message) {
-        val database = db ?: return
+    override fun updateMessage(
+        chatId: String,
+        seq: Long,
+        message: Message,
+        operation: MessageOperationType,
+        projectionTarget: MessageProjectionTarget,
+    ): MessageProjectionOperation {
+        require(operation != MessageOperationType.CREATE) { "CREATE must use storeMessage" }
+        val database = db ?: throw IllegalStateException("MessageStore not initialized")
         val key = buildChatSeqKey(chatId, seq)
         val previous = database.get(key)?.let(::decodeMessage)
+            ?: throw IllegalArgumentException("消息不存在")
+        require(message.chatId == chatId && message.serverSeq == seq) { "消息身份不可修改" }
+        require(message.clientMsgId == previous.clientMsgId && message.senderUid == previous.senderUid) {
+            "消息发送者或客户端身份不可修改"
+        }
+        val revisionKey = buildRevisionKey(chatId, seq)
+        val currentRevision = database.get(revisionKey)?.let(::decodeSeq)
+            ?: throw IllegalStateException("消息 revision 索引损坏: chatId=$chatId, seq=$seq")
+        check(currentRevision < Long.MAX_VALUE) { "消息 revision 已耗尽" }
+        val nextRevision = currentRevision + 1L
+        val projection = newProjectionOperation(operation, nextRevision, message, projectionTarget)
         WriteBatch().use { batch ->
             batch.put(key, encodeMessage(message))
-            previous?.let { old ->
-                AttachmentPolicy.attachments(old).forEach { attachment ->
-                    batch.delete(buildAttachmentIndexKey(attachment.path, chatId, seq))
-                }
+            AttachmentPolicy.attachments(previous).forEach { attachment ->
+                batch.delete(buildAttachmentIndexKey(attachment.path, chatId, seq))
             }
             AttachmentPolicy.attachments(message).forEach { attachment ->
                 batch.put(buildAttachmentIndexKey(attachment.path, chatId, seq), EMPTY_VALUE)
             }
+            batch.put(revisionKey, encodeSeq(nextRevision))
+            batch.put(buildOperationKey(projection), encodeProjectionOperation(projection))
             WriteOptions().use { options -> database.write(options, batch) }
         }
+        return projection
     }
 
-    override fun isProjectionPending(chatId: String, seq: Long): Boolean {
-        val database = db ?: return false
-        return database.get(buildProjectionKey(chatId, seq)) != null
+    override fun isProjectionPending(operation: MessageProjectionOperation): Boolean {
+        val database = db ?: throw IllegalStateException("MessageStore not initialized")
+        return database.get(buildOperationKey(operation)) != null
     }
 
-    override fun getPendingProjections(limit: Int): List<Message> {
-        val database = db ?: return emptyList()
-        val pending = mutableListOf<Message>()
+    override fun getPendingProjectionOperations(limit: Int): List<MessageProjectionOperation> {
+        val database = db ?: throw IllegalStateException("MessageStore not initialized")
+        require(limit > 0) { "Projection page size must be positive" }
+        val pending = mutableListOf<MessageProjectionOperation>()
         database.newIterator().use { iterator ->
-            iterator.seek(PROJECTION_PREFIX)
-            while (iterator.isValid && pending.size < limit && iterator.key().startsWith(PROJECTION_PREFIX)) {
-                pending += decodeMessage(iterator.value())
+            iterator.seek(OPERATION_PREFIX)
+            while (iterator.isValid && pending.size < limit && iterator.key().startsWith(OPERATION_PREFIX)) {
+                pending += decodeProjectionEntry(iterator.key(), iterator.value())
                 iterator.next()
             }
         }
         return pending
     }
 
-    override fun markProjectionComplete(chatId: String, seq: Long) {
-        db?.delete(buildProjectionKey(chatId, seq))
+    override fun getPendingProjectionOperations(
+        chatId: String,
+        seq: Long,
+        limit: Int,
+    ): List<MessageProjectionOperation> {
+        val database = db ?: throw IllegalStateException("MessageStore not initialized")
+        require(limit > 0) { "Projection page size must be positive" }
+        val prefix = buildOperationMessagePrefix(chatId, seq)
+        val pending = mutableListOf<MessageProjectionOperation>()
+        database.newIterator().use { iterator ->
+            iterator.seek(prefix)
+            while (iterator.isValid && pending.size < limit && iterator.key().startsWith(prefix)) {
+                pending += decodeProjectionEntry(iterator.key(), iterator.value())
+                iterator.next()
+            }
+        }
+        return pending
+    }
+
+    @Synchronized
+    override fun markProjectionComplete(operation: MessageProjectionOperation) {
+        val database = db ?: throw IllegalStateException("MessageStore not initialized")
+        val key = buildOperationKey(operation)
+        val current = database.get(key) ?: return
+        check(current.contentEquals(encodeProjectionOperation(operation))) {
+            "Message operation changed before exact acknowledgement: ${operation.projectionKey}@${operation.revision}"
+        }
+        database.delete(key)
     }
 
     override fun getAttachmentChatIds(path: String): Set<String> {
@@ -284,25 +348,107 @@ class MessageStore(
         ) + bytes
     }
 
-    private fun buildProjectionKey(chatId: String, seq: Long): ByteArray =
-        PROJECTION_PREFIX + buildChatSeqKey(chatId, seq)
+    private fun buildRevisionKey(chatId: String, seq: Long): ByteArray =
+        REVISION_PREFIX + encodeKeyPart(chatId) + encodeSeq(seq)
+
+    private fun buildOperationMessagePrefix(chatId: String, seq: Long): ByteArray =
+        OPERATION_PREFIX + encodeKeyPart(chatId) + encodeSeq(seq)
+
+    private fun buildOperationKey(operation: MessageProjectionOperation): ByteArray =
+        buildOperationMessagePrefix(operation.message.chatId, operation.message.serverSeq) +
+            encodeSeq(operation.revision) + byteArrayOf(operation.operation.code.toByte())
+
+    private fun newProjectionOperation(
+        operation: MessageOperationType,
+        revision: Long,
+        message: Message,
+        projectionTarget: MessageProjectionTarget,
+    ): MessageProjectionOperation = MessageProjectionOperation(
+        projectionKey = MessageProjectionOperation.stableKey(message.chatId, message.serverSeq),
+        operation = operation,
+        revision = revision,
+        message = message,
+        target = projectionTarget.canonical(),
+    )
+
+    private fun encodeProjectionOperation(operation: MessageProjectionOperation): ByteArray {
+        val messageBytes = encodeMessage(operation.message)
+        return ByteArrayOutputStream().use { bytes ->
+            DataOutputStream(bytes).use { output ->
+                output.writeInt(OPERATION_FORMAT_VERSION)
+                output.writeByte(operation.operation.code)
+                output.writeLong(operation.revision)
+                output.writeSizedString(operation.projectionKey)
+                output.writeInt(operation.target.chatType)
+                output.writeInt(operation.target.recipientUids.size)
+                operation.target.recipientUids.forEach { output.writeSizedString(it) }
+                output.writeSizedBytes(messageBytes)
+            }
+            bytes.toByteArray()
+        }
+    }
+
+    private fun decodeProjectionOperation(encoded: ByteArray): MessageProjectionOperation {
+        return DataInputStream(ByteArrayInputStream(encoded)).use { input ->
+            val version = input.readInt()
+            require(version == OPERATION_FORMAT_VERSION) {
+                "Unsupported message operation outbox version: $version"
+            }
+            val operation = MessageOperationType.fromCode(input.readUnsignedByte())
+            val revision = input.readLong()
+            require(revision > 0L) { "Invalid message operation revision: $revision" }
+            val projectionKey = input.readSizedString(MAX_PROJECTION_KEY_BYTES)
+            val chatType = input.readInt()
+            val recipientCount = input.readInt()
+            require(recipientCount in 0..MAX_PROJECTION_RECIPIENTS) {
+                "Invalid message projection recipient count: $recipientCount"
+            }
+            val recipients = List(recipientCount) { input.readSizedString(MAX_UID_BYTES) }
+            require(recipients == recipients.distinct().sorted()) {
+                "Message projection recipients are not canonical"
+            }
+            val message = decodeMessage(input.readSizedBytes(MAX_MESSAGE_BYTES))
+            require(input.available() == 0) { "Message operation outbox has trailing bytes" }
+            MessageProjectionOperation(
+                projectionKey = projectionKey,
+                operation = operation,
+                revision = revision,
+                message = message,
+                target = MessageProjectionTarget(chatType, recipients),
+            )
+        }
+    }
+
+    private fun decodeProjectionEntry(key: ByteArray, value: ByteArray): MessageProjectionOperation {
+        val operation = decodeProjectionOperation(value)
+        require(key.contentEquals(buildOperationKey(operation))) {
+            "Message operation outbox key/value identity mismatch"
+        }
+        return operation
+    }
+
+    private fun DataOutputStream.writeSizedString(value: String) =
+        writeSizedBytes(value.encodeToByteArray(throwOnInvalidSequence = true))
+
+    private fun DataOutputStream.writeSizedBytes(value: ByteArray) {
+        writeInt(value.size)
+        write(value)
+    }
+
+    private fun DataInputStream.readSizedString(maxBytes: Int): String =
+        readSizedBytes(maxBytes).decodeToString(throwOnInvalidSequence = true)
+
+    private fun DataInputStream.readSizedBytes(maxBytes: Int): ByteArray {
+        val size = readInt()
+        require(size in 0..maxBytes && size <= available()) { "Invalid outbox field size: $size" }
+        return ByteArray(size).also(::readFully)
+    }
 
     private fun buildAttachmentPathPrefix(path: String): ByteArray =
         ATTACHMENT_PREFIX + path.encodeToByteArray() + KEY_SEPARATOR
 
     private fun buildAttachmentIndexKey(path: String, chatId: String, seq: Long): ByteArray =
         buildAttachmentPathPrefix(path) + chatId.encodeToByteArray() + KEY_SEPARATOR + encodeSeq(seq)
-
-    private fun decodeSeqFromKey(key: ByteArray, offset: Int): Long {
-        return ((key[offset].toLong() and 0xFF) shl 56) or
-                ((key[offset + 1].toLong() and 0xFF) shl 48) or
-                ((key[offset + 2].toLong() and 0xFF) shl 40) or
-                ((key[offset + 3].toLong() and 0xFF) shl 32) or
-                ((key[offset + 4].toLong() and 0xFF) shl 24) or
-                ((key[offset + 5].toLong() and 0xFF) shl 16) or
-                ((key[offset + 6].toLong() and 0xFF) shl 8) or
-                (key[offset + 7].toLong() and 0xFF)
-    }
 
     private fun encodeSeq(seq: Long): ByteArray {
         val bytes = ByteArray(8)
@@ -349,10 +495,17 @@ class MessageStore(
         // 0x01 是旧的 sender-scoped 索引。新 prefix 避免与旧 key 空间混用；
         // 当前尚未发布，测试数据可在此破坏性身份语义升级时清理。
         private val IDEMPOTENCY_PREFIX = byteArrayOf(0x04)
-        private val PROJECTION_PREFIX = byteArrayOf(0x02)
         private val ATTACHMENT_PREFIX = byteArrayOf(0x03)
+        private val OPERATION_PREFIX = byteArrayOf(0x05)
+        private val REVISION_PREFIX = byteArrayOf(0x06)
         private val KEY_SEPARATOR = byteArrayOf(0x00)
         private val EMPTY_VALUE = byteArrayOf()
+        private const val OPERATION_FORMAT_VERSION = 1
+        private const val INITIAL_REVISION = 1L
+        private const val MAX_PROJECTION_KEY_BYTES = 1_024
+        private const val MAX_PROJECTION_RECIPIENTS = 100_000
+        private const val MAX_UID_BYTES = 256
+        private const val MAX_MESSAGE_BYTES = 16 * 1024 * 1024
         private const val KEY_PART_HEADER_LENGTH = 4
         private const val SHA_256_LENGTH = 32
     }

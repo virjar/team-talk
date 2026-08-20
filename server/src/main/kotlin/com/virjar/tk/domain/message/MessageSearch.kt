@@ -1,11 +1,15 @@
 package com.virjar.tk.domain.message
 
-import com.virjar.tk.model.Message
-
 /** Search index boundary; Lucene-specific concepts do not cross this interface. */
 interface MessageSearch {
-    fun indexMessage(message: Message, text: String?)
-    fun deleteMessage(clientMsgId: String)
+    /**
+     * Durably applies one immutable message projection.
+     *
+     * @return true when [operation] advanced the indexed revision, or false when the same/newer
+     * revision was already durable.
+     */
+    fun applyProjection(operation: MessageProjectionOperation, text: String?): Boolean
+
     fun search(
         query: String,
         chatIds: Set<String>,

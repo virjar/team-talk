@@ -1,6 +1,6 @@
 package com.virjar.tk.domain.contact
 
-import com.virjar.tk.domain.event.EventPublisher
+import com.virjar.tk.domain.transaction.PgUnitOfWork
 import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.model.Contact
 import com.virjar.tk.model.ContactApply
@@ -11,7 +11,7 @@ import com.virjar.tk.protocol.NotifyType
 
 class ContactService(
     private val contactStore: ContactStore,
-    private val events: EventPublisher,
+    private val unitOfWork: PgUnitOfWork,
     private val users: UserStore,
 ) {
     fun list(uid: String): List<Contact> = contactStore.listFriends(uid)
@@ -21,48 +21,63 @@ class ContactService(
         requireHumanTarget(targetUid)
         // 好友、黑名单与 pending 必须在仓储持有双方行锁时一起判断。这里若先读再写，
         // accept / blacklist 与 apply 并发时会产生“已是好友或已拉黑但仍有 pending”的非法组合。
-        val creation = contactStore.createApply(uid, targetUid, remark)
-        if (creation.created) {
-            events.emitEvent(targetUid, NotifyType.CONTACT_APPLY, creation.apply)
+        val creation = unitOfWork.write {
+            val result = contactStore.createApply(transaction, uid, targetUid, remark)
+            if (result.created) {
+                appendEvent(targetUid, NotifyType.CONTACT_APPLY, result.apply)
+            }
+            result
         }
         // token 是收件人的处理凭据。即使旧 apply RPC 返回 ContactApply，也不能回显给发件人。
         return creation.apply.copy(token = null)
     }
 
     suspend fun accept(uid: String, token: String): ContactApply {
-        val apply = contactStore.acceptApply(token, uid) ?: throw IllegalArgumentException("申请不存在、无权处理或已处理")
-        // 通知双方：好友关系已建立（各自视角的 Contact，契约：CONTACT_ACCEPTED 发 Contact）
-        val fromSide = contactStore.getFriend(apply.fromUid, apply.toUid)
-        val toSide = contactStore.getFriend(apply.toUid, apply.fromUid)
-        fromSide?.let { events.emitEvent(apply.fromUid, NotifyType.CONTACT_ACCEPTED, it) }
-        toSide?.let { events.emitEvent(apply.toUid, NotifyType.CONTACT_ACCEPTED, it) }
-        return apply
+        return unitOfWork.write {
+            val accepted = contactStore.acceptApply(transaction, token, uid)
+                ?: throw IllegalArgumentException("申请不存在、无权处理或已处理")
+            // 两个视角的 payload 与关系行在同一快照中生成并原子落入各自 durable stream。
+            appendEvent(accepted.apply.fromUid, NotifyType.CONTACT_ACCEPTED, accepted.fromSide)
+            appendEvent(accepted.apply.toUid, NotifyType.CONTACT_ACCEPTED, accepted.toSide)
+            accepted.apply
+        }
     }
 
     suspend fun reject(uid: String, token: String): ContactApply {
-        return contactStore.rejectApply(token, uid) ?: throw IllegalArgumentException("申请不存在、无权处理或已处理")
+        return unitOfWork.write {
+            contactStore.rejectApply(transaction, token, uid)
+                ?: throw IllegalArgumentException("申请不存在、无权处理或已处理")
+        }
     }
 
     suspend fun delete(uid: String, friendUid: String) {
-        contactStore.removeFriend(uid, friendUid)
-        // 各自视角的 Contact（契约：CONTACT_DELETED 发 Contact）
-        events.emitEvent(uid, NotifyType.CONTACT_DELETED, Contact(uid = uid, friendUid = friendUid))
-        events.emitEvent(friendUid, NotifyType.CONTACT_DELETED, Contact(uid = friendUid, friendUid = uid))
+        unitOfWork.write {
+            contactStore.removeFriend(transaction, uid, friendUid)
+            // 各自视角的 Contact（契约：CONTACT_DELETED 发 Contact）
+            appendEvent(uid, NotifyType.CONTACT_DELETED, Contact(uid = uid, friendUid = friendUid))
+            appendEvent(friendUid, NotifyType.CONTACT_DELETED, Contact(uid = friendUid, friendUid = uid))
+        }
     }
 
-    fun setRemark(uid: String, friendUid: String, remark: String?) {
-        contactStore.setRemark(uid, friendUid, remark)
+    suspend fun setRemark(uid: String, friendUid: String, remark: String?) {
+        unitOfWork.write {
+            contactStore.setRemark(transaction, uid, friendUid, remark)
+        }
     }
 
     suspend fun blacklist(uid: String, targetUid: String) {
         require(uid != targetUid) { "不能拉黑自己" }
-        contactStore.blacklist(uid, targetUid)
-        events.emitEvent(uid, NotifyType.CONTACT_DELETED, Contact(uid = uid, friendUid = targetUid))
-        events.emitEvent(targetUid, NotifyType.CONTACT_DELETED, Contact(uid = targetUid, friendUid = uid))
+        unitOfWork.write {
+            contactStore.blacklist(transaction, uid, targetUid)
+            appendEvent(uid, NotifyType.CONTACT_DELETED, Contact(uid = uid, friendUid = targetUid))
+            appendEvent(targetUid, NotifyType.CONTACT_DELETED, Contact(uid = targetUid, friendUid = uid))
+        }
     }
 
-    fun removeFromBlacklist(uid: String, targetUid: String) {
-        contactStore.removeFromBlacklist(uid, targetUid)
+    suspend fun removeFromBlacklist(uid: String, targetUid: String) {
+        unitOfWork.write {
+            contactStore.removeFromBlacklist(transaction, uid, targetUid)
+        }
     }
 
     fun listBlacklist(uid: String): List<Contact> = contactStore.listBlacklist(uid)

@@ -1,6 +1,7 @@
 package com.virjar.tk.domain.event
 
 import com.virjar.tk.protocol.IProto
+import com.virjar.tk.protocol.NotifyContracts
 import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.payload.NotifyPayload
 
@@ -9,7 +10,9 @@ import com.virjar.tk.protocol.payload.NotifyPayload
  * transient events are delivered only to currently connected sessions.
  */
 interface EventPublisher {
+    /** Compatibility path for domains not yet migrated to an outer PgWriteScope. Never nest it. */
     suspend fun emitEvent(uid: String, notifyType: NotifyType, payload: IProto)
+    /** Compatibility path for domains not yet migrated to an outer PgWriteScope. Never nest it. */
     suspend fun emitEvents(uids: List<String>, notifyType: NotifyType, payload: IProto)
     suspend fun emitTransient(uid: String, notifyType: NotifyType, payload: IProto)
 }
@@ -37,4 +40,15 @@ sealed interface SyncBatchResult {
     data object ConnectionClosed : SyncBatchResult
     /** The claimed durable cursor is neither zero nor an event owned by this user. */
     data object InvalidCursor : SyncBatchResult
+}
+
+/** Fail at the server boundary instead of persisting a payload under the wrong NotifyType. */
+fun requireNotifyContract(notifyType: NotifyType, payload: IProto) {
+    val reader = NotifyContracts.payloads[notifyType] ?: return
+    val expected = NotifyContracts.expectedPayloadClassName(notifyType, reader::class.java.name)
+    val actual = payload::class.java.name
+    require(expected == actual) {
+        "Notify contract violation: $notifyType expects payload $expected but got $actual. " +
+            "Fix the emit site or update NotifyContracts."
+    }
 }

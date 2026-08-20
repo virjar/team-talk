@@ -34,11 +34,12 @@ eventId(varLong) + notifyType(1B) + payload(bytes?)
 
 ## 持久事件与临时事件
 
-通过 `SyncEventService` 发出的事件带递增 `eventId`，服务端保存用户事件。认证成功只建立身份，
+通过 `SyncEventService` 发出的事件带 uid 内从 1 连续递增的 `eventId`，不同账号可使用相同数字；
+服务端保存用户事件。认证成功只建立身份，
 不直接推送历史事件；LocalCache 与 EventProcessor 就绪后，客户端用 `SYNC_REQUEST(lastEventId)`
 逐批拉取。每批事件全部完成本地投影并把游标单调写入 `sync_cursor` 后，客户端才请求下一批。
 服务端最终在同一用户事件门闩内二次确认无遗漏，发送 `SYNC_READY` 后才把连接加入实时推送表。
-非零游标若不存在或不归属当前账号，服务端先发送 `SYNC_RESET` 且保持同步态；客户端原子清空
+非零游标若越过当前账号的 `lastSeq`，服务端先发送 `SYNC_RESET` 且保持同步态；客户端原子清空
 本地服务器投影、cursor、草稿 outbox 和 bot inbox 后，在同一连接以 0 重新开始。重置失败或重复
 RESET 必须断开，不能跳过历史进入实时态。
 

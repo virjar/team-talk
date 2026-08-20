@@ -13,10 +13,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  * uid → 已完成持久事件同步的连接。认证成功本身不会把连接放进本表。
  *
  * 激活和实时推送都在同一个 Looper 上串行；[activate] 先写 SYNC_READY 再公开连接。
- * SyncEventService 还会在 per-user delivery gate 内调用它，因此 gate 释放后的第一个
+ * SyncEventDispatcher 还会在 per-user delivery gate 内调用它，因此 gate 释放后的第一个
  * 实时 NOTIFY 必然排在 SYNC_READY 之后。
  */
-class ClientRegistry : OnlineSessions {
+class ClientRegistry : OnlineSessions, LiveEventSink {
     private val logger = LoggerFactory.getLogger("ClientRegistry")
     private val workThread = Looper("client-registry").apply { start() }
     private val acceptingWork = AtomicBoolean(true)
@@ -71,7 +71,7 @@ class ClientRegistry : OnlineSessions {
     }
 
     /** 实时事件的唯一投递入口；避免“先取连接快照、后写入”穿透激活屏障。 */
-    suspend fun push(uid: String, notify: NotifyPayload) {
+    override suspend fun push(uid: String, notify: NotifyPayload) {
         workThread.suspendAwait {
             userAgents[uid]?.values?.toList().orEmpty().forEach { agent ->
                 if (agent.isActive) {

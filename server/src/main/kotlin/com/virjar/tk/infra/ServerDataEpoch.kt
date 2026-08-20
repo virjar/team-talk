@@ -13,7 +13,7 @@ import java.nio.file.StandardCopyOption
  * separate migration branch.
  */
 object ServerDataEpoch {
-    const val CURRENT_EPOCH = 3
+    const val CURRENT_EPOCH = 5
 
     private const val MARKER_FILE = "data-epoch"
     private val durableRelativePaths = listOf(

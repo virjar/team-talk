@@ -12,9 +12,9 @@ Server
   5. 校验认证、成员、消息类型与附件存在性
   6. 按 clientMsgId 幂等查询
   7. 为 chat 分配 serverSeq
-  8. RocksDB 原子写消息、幂等索引和投影 outbox
-  9. 幂等更新 Lucene 与 Conversation
- 10. 持久化 MESSAGE_RECV / CONVERSATION_UPDATED 事件并推送
+  8. RocksDB 原子写消息、幂等索引、revision 和 CREATE operation outbox
+  9. 按 operation revision 幂等提交 Lucene
+ 10. PostgreSQL receipt、Conversation 与 MESSAGE_RECV / CONVERSATION_UPDATED 一次提交
  11. 清除 outbox，返回 MESSAGE_ACK
 Client
  12. ACK 更新本地发送状态
@@ -27,7 +27,8 @@ Client
 ## 2. 幂等与顺序
 
 `clientMsgId` 防止超时重试产生重复消息。服务端保存它到 `(chatId, serverSeq)` 的索引；重复发送
-不再分配序列。如原请求留有未完成 outbox，重试会先补齐投影再返回原结果。
+不再分配序列。如原请求留有未完成 outbox，重试会按 revision 顺序补齐投影再返回原结果。EDIT 和
+REVOKE 同样先把新消息快照与递增 revision 原子写进 RocksDB；相同 edit 或重复 revoke 不新增 revision。
 
 `serverSeq` 在单个 Chat 内单调递增，是历史分页、消息排序、缺口恢复和已读水位的共同坐标。跨 Chat
 不提供全局消息顺序。
@@ -37,19 +38,30 @@ Client
 大多数领域变更使用同一模型：
 
 ```text
-domain commit
-  → NotifyContracts.assertContract
-  → INSERT sync_events(uid, type, payload)
-  → push to all online devices
+PgUnitOfWork domain writes
+  → append durable event intents
+  → lock sync_streams in sorted uid order
+  → allocate contiguous per-user stream_seq and commit once
+  → after-commit dispatcher wake
+  → push to all online devices under the user delivery gate
 ```
+
+`stream_seq` 通过现有 wire `eventId` 暴露，只在一个 uid 内从 1 连续递增；不同账号可以拥有相同的
+数字游标。领域 SQL 全部完成后才按 uid 固定顺序锁定 `sync_streams`，因此同用户序号顺序也是事务
+提交顺序，多接收者命令不会只提交一部分事件。进程若在提交后、内存 wake 前退出，启动扫描仍会
+发现未派发事件；live 派发失败会阻塞该 uid 的后续序号并按持久重试状态恢复。
+
+阶段性尚未迁入 aggregate transaction 的领域仍通过 `EventPublisher` 的 event-only UoW 兼容入口
+写事件；该入口不能在活动 `PgWriteScope` 内嵌套调用。逐域迁移时必须在同一个 outer UoW 中完成
+权威 mutation 并直接 `appendEvent`，再删除对应的 standalone 调用。
 
 认证成功后，客户端等待 LocalCache 与 EventProcessor 就绪，再用本地 `sync_cursor` 中的
 `lastEventId` 发起显式分页同步。服务端按 ID 升序返回有界批次；客户端只有在整条事件投影成功并
 单调保存游标后才请求下一批。最终的二次查空、`SYNC_READY` 与实时连接注册受同一用户事件门闩
 保护。语义是 at-least-once：可能重复，不能丢失；完整快照通过 upsert 或稳定键删除收敛。
 
-`lastEventId` 是“该账号已经持久投影完成的事件凭证”，不是客户端可任意填写的全局序号。除初始值
-`0` 外，服务端只接受仍存在且归属当前账号的事件 ID；伪造、损坏或串账号的高游标触发显式
+`lastEventId` 是“该账号已经持久投影完成的事件凭证”，不是跨账号全局序号。除初始值
+`0` 外，服务端只接受该账号 `1..lastSeq` 内的事件 ID；伪造、损坏或越过本账号水位的高游标触发显式
 `SYNC_RESET`，不能通过一次空查询直接进入实时态并永久跳过后续事件。客户端在同一连接内原子
 清空服务器投影、草稿 outbox、无头 inbox 与 sync cursor，同步清空 StateFlow/消息窗口，再以 0
 重新请求。独立的文档草稿 store 不在清理范围内。清理失败、同步页与 RESET 重叠或重复 RESET
@@ -156,6 +168,9 @@ TeamTalk 不提供跨 PostgreSQL、RocksDB 与 Lucene 的分布式事务。写�
 
 - PostgreSQL/RocksDB 权威数据先于通知成功。
 - Lucene 是可重建派生索引。
-- Conversation 与事件允许通过幂等更新修复。
-- MessageStore 以持久化 outbox 记录未完成的跨存储投影，启动和幂等重试都会恢复。
+- Conversation 与事件由 PostgreSQL receipt + 同一 `PgUnitOfWork` 原子投影；PG 已提交后的重放不会
+  产生新 eventId。
+- MessageStore 以版本化 operation outbox 记录 CREATE/EDIT/REVOKE；启动循环恢复到全局连续两次查空，
+  运行期失败保留 operation 并拉低 readiness。
+- Lucene 以稳定 projectionKey 和 revision 拒绝旧重放；撤回/空正文使用 tombstone 防止旧正文复活。
 - 客户端不因短暂派生数据缺失伪造权威成功。

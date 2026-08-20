@@ -1,5 +1,6 @@
 package com.virjar.tk.domain.contact
 
+import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.model.Contact
 import com.virjar.tk.model.ContactApply
 import com.virjar.tk.model.ContactApplyRecord
@@ -10,21 +11,37 @@ data class ContactApplyCreation(
     val created: Boolean,
 )
 
+/** Accepted relationship plus the two committed notification projections. */
+data class ContactApplyAcceptance(
+    val apply: ContactApply,
+    val fromSide: Contact,
+    val toSide: Contact,
+)
+
 /** Persistence port owned by the contact domain. */
 interface ContactRepository {
-    fun getFriend(uid: String, friendUid: String): Contact?
     fun listFriends(uid: String): List<Contact>
+    fun listFriendUids(uid: String): Set<String>
     fun isFriend(uid: String, friendUid: String): Boolean
     fun isBlocked(uid: String, targetUid: String): Boolean
-    fun addFriend(uid: String, friendUid: String, remark: String? = null)
-    fun removeFriend(uid: String, friendUid: String)
-    fun setRemark(uid: String, friendUid: String, remark: String?)
-    fun blacklist(uid: String, targetUid: String)
-    fun removeFromBlacklist(uid: String, targetUid: String)
+    fun addFriend(transaction: PgTransactionContext, uid: String, friendUid: String, remark: String? = null)
+    fun removeFriend(transaction: PgTransactionContext, uid: String, friendUid: String)
+    fun setRemark(transaction: PgTransactionContext, uid: String, friendUid: String, remark: String?)
+    fun blacklist(transaction: PgTransactionContext, uid: String, targetUid: String)
+    fun removeFromBlacklist(transaction: PgTransactionContext, uid: String, targetUid: String)
     fun listBlacklist(uid: String): List<Contact>
-    fun createApply(fromUid: String, toUid: String, remark: String?): ContactApplyCreation
-    fun acceptApply(token: String, receiverUid: String): ContactApply?
-    fun rejectApply(token: String, receiverUid: String): ContactApply?
+    fun createApply(
+        transaction: PgTransactionContext,
+        fromUid: String,
+        toUid: String,
+        remark: String?,
+    ): ContactApplyCreation
+    fun acceptApply(
+        transaction: PgTransactionContext,
+        token: String,
+        receiverUid: String,
+    ): ContactApplyAcceptance?
+    fun rejectApply(transaction: PgTransactionContext, token: String, receiverUid: String): ContactApply?
     fun listPendingApplies(uid: String): List<ContactApply>
     fun listApplyRecords(uid: String, beforeId: Long, limit: Int): List<ContactApplyRecord>
     fun getPendingApply(uid: String, targetUid: String): ContactApplyRecord?

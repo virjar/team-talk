@@ -3,6 +3,8 @@ package com.virjar.tk.infra.storage
 import com.virjar.tk.body.FileBody
 import com.virjar.tk.body.GenericPayload
 import com.virjar.tk.body.buildRichTextBody
+import com.virjar.tk.domain.message.MessageOperationType
+import com.virjar.tk.domain.message.MessageProjectionTarget
 import com.virjar.tk.model.Attachment
 import com.virjar.tk.model.Message
 import com.virjar.tk.protocol.MessageType
@@ -33,12 +35,12 @@ class MessageStoreTest {
         )
         try {
             store.init()
-            store.storeMessage(message)
+            store.storeTestMessage(message)
             store.close()
 
             store = MessageStore(root.absolutePath).also { it.init() }
             assertEquals(generic, store.getMessage(message.chatId, message.serverSeq)?.body)
-            assertEquals(generic, store.getPendingProjections().single().body)
+            assertEquals(generic, store.getPendingProjectionOperations().single().message.body)
         } finally {
             store.close()
             root.deleteRecursively()
@@ -52,15 +54,17 @@ class MessageStoreTest {
         try {
             store.init()
             val message = message(seq = 7)
-            assertEquals(7, store.storeMessage(message))
-            assertTrue(store.isProjectionPending(message.chatId, message.serverSeq))
+            assertEquals(7, store.storeTestMessage(message))
+            val operation = store.getPendingProjectionOperations().single()
+            assertTrue(store.isProjectionPending(operation))
             store.close()
 
             store = MessageStore(root.absolutePath).also { it.init() }
-            assertEquals(listOf(message), store.getPendingProjections())
-            store.markProjectionComplete(message.chatId, message.serverSeq)
-            assertFalse(store.isProjectionPending(message.chatId, message.serverSeq))
-            assertTrue(store.getPendingProjections().isEmpty())
+            val restartedOperation = store.getPendingProjectionOperations().single()
+            assertEquals(message, restartedOperation.message)
+            store.markProjectionComplete(restartedOperation)
+            assertFalse(store.isProjectionPending(restartedOperation))
+            assertTrue(store.getPendingProjectionOperations().isEmpty())
         } finally {
             store.close()
             root.deleteRecursively()
@@ -75,9 +79,58 @@ class MessageStoreTest {
             store.init()
             val first = message(seq = 3)
             val racingDuplicate = first.copy(serverSeq = 4)
-            assertEquals(3, store.storeMessage(first))
-            assertEquals(3, store.storeMessage(racingDuplicate))
-            assertEquals(listOf(first), store.getPendingProjections())
+            assertEquals(3, store.storeTestMessage(first))
+            assertEquals(3, store.storeTestMessage(racingDuplicate))
+            assertEquals(listOf(first), store.getPendingProjectionOperations().map { it.message })
+        } finally {
+            store.close()
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `versioned edit and revoke operations survive restart and exact ack cannot delete a later revision`() {
+        val root = Files.createTempDirectory("tk-message-operation-revisions-").toFile()
+        var store = MessageStore(root.absolutePath)
+        try {
+            store.init()
+            val created = message(seq = 9)
+            store.storeTestMessage(created)
+            val edited = created.copy(body = buildRichTextBody("edited"), flags = Message.FLAG_EDITED)
+            val editOperation = store.updateMessage(
+                created.chatId,
+                created.serverSeq,
+                edited,
+                MessageOperationType.EDIT,
+                target(created),
+            )
+            val revoked = edited.copy(flags = edited.flags or Message.FLAG_REVOKED)
+            val revokeOperation = store.updateMessage(
+                created.chatId,
+                created.serverSeq,
+                revoked,
+                MessageOperationType.REVOKE,
+                target(created),
+            )
+            val createOperation = store.getPendingProjectionOperations(created.chatId, created.serverSeq)
+                .single { it.operation == MessageOperationType.CREATE }
+
+            assertEquals(listOf(1L, 2L, 3L), listOf(createOperation, editOperation, revokeOperation).map { it.revision })
+            store.markProjectionComplete(createOperation)
+            assertEquals(
+                listOf(2L, 3L),
+                store.getPendingProjectionOperations(created.chatId, created.serverSeq).map { it.revision },
+            )
+
+            store.close()
+            store = MessageStore(root.absolutePath).also { it.init() }
+            assertEquals(
+                listOf(MessageOperationType.EDIT, MessageOperationType.REVOKE),
+                store.getPendingProjectionOperations(created.chatId, created.serverSeq).map { it.operation },
+            )
+            store.markProjectionComplete(editOperation)
+            assertTrue(store.isProjectionPending(revokeOperation))
+            assertEquals(revoked, store.getMessage(created.chatId, created.serverSeq))
         } finally {
             store.close()
             root.deleteRecursively()
@@ -94,10 +147,10 @@ class MessageStoreTest {
             val otherSender = message(seq = 2, senderUid = "user-2")
             val otherChat = message(seq = 1, chatId = "chat-2")
 
-            assertEquals(1, store.storeMessage(first))
-            assertFailsWith<IllegalArgumentException> { store.storeMessage(otherSender) }
+            assertEquals(1, store.storeTestMessage(first))
+            assertFailsWith<IllegalArgumentException> { store.storeTestMessage(otherSender) }
             assertFailsWith<IllegalArgumentException> { store.findIdempotentMessage(otherSender) }
-            assertEquals(1, store.storeMessage(otherChat))
+            assertEquals(1, store.storeTestMessage(otherChat))
             assertNotNull(store.findIdempotentMessage(first))
             assertNotNull(store.findIdempotentMessage(otherChat))
 
@@ -105,19 +158,21 @@ class MessageStoreTest {
                 first.chatId,
                 first.serverSeq,
                 first.copy(body = buildRichTextBody("edited later"), flags = Message.FLAG_EDITED),
+                MessageOperationType.EDIT,
+                target(first),
             )
             assertEquals(first.serverSeq, store.findIdempotentMessage(first)?.serverSeq)
-            assertEquals(first.serverSeq, store.storeMessage(first.copy(serverSeq = 3)))
+            assertEquals(first.serverSeq, store.storeTestMessage(first.copy(serverSeq = 3)))
 
             assertFailsWith<IllegalArgumentException> {
-                store.storeMessage(first.copy(serverSeq = 3, body = buildRichTextBody("different")))
+                store.storeTestMessage(first.copy(serverSeq = 3, body = buildRichTextBody("different")))
             }
 
             store.close()
             store = MessageStore(root.absolutePath).also { it.init() }
-            assertEquals(first.serverSeq, store.storeMessage(first.copy(serverSeq = 4)))
+            assertEquals(first.serverSeq, store.storeTestMessage(first.copy(serverSeq = 4)))
             assertFailsWith<IllegalArgumentException> {
-                store.storeMessage(otherSender.copy(serverSeq = 5))
+                store.storeTestMessage(otherSender.copy(serverSeq = 5))
             }
         } finally {
             store.close()
@@ -138,7 +193,7 @@ class MessageStoreTest {
             val attempts = listOf(first, second).map { candidate ->
                 executor.submit<Pair<String, Result<Long>>> {
                     start.await()
-                    candidate.senderUid to runCatching { store.storeMessage(candidate) }
+                    candidate.senderUid to runCatching { store.storeTestMessage(candidate) }
                 }
             }
             start.countDown()
@@ -173,13 +228,15 @@ class MessageStoreTest {
                 body = FileBody(firstAttachment),
             )
 
-            store.storeMessage(message)
+            store.storeTestMessage(message)
             assertEquals(setOf("chat-files"), store.getAttachmentChatIds(firstAttachment.path))
 
             store.updateMessage(
                 message.chatId,
                 message.serverSeq,
                 message.copy(body = FileBody(secondAttachment)),
+                MessageOperationType.EDIT,
+                target(message),
             )
             assertTrue(store.getAttachmentChatIds(firstAttachment.path).isEmpty())
             assertEquals(setOf("chat-files"), store.getAttachmentChatIds(secondAttachment.path))
@@ -206,7 +263,7 @@ class MessageStoreTest {
                 timestamp = 1_700_000_000_000,
                 body = FileBody(initial),
             )
-            store.storeMessage(message)
+            store.storeTestMessage(message)
             val candidates = List(32) { index ->
                 Attachment("owner/edit-$index.pdf", "edit-$index.pdf", "application/pdf", index.toLong() + 2)
             }
@@ -218,6 +275,8 @@ class MessageStoreTest {
                         message.chatId,
                         message.serverSeq,
                         message.copy(body = FileBody(attachment)),
+                        MessageOperationType.EDIT,
+                        target(message),
                     )
                 }
             }
@@ -253,4 +312,12 @@ class MessageStoreTest {
         timestamp = 1_700_000_000_000,
         body = buildRichTextBody("durable message"),
     )
+
+    private fun MessageStore.storeTestMessage(
+        message: Message,
+        idempotencyCandidate: Message = message,
+    ): Long = storeMessage(message, idempotencyCandidate, target(message))
+
+    private fun target(message: Message): MessageProjectionTarget =
+        MessageProjectionTarget(chatType = 2, recipientUids = listOf(message.senderUid))
 }

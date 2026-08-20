@@ -22,6 +22,7 @@ class SystemIntegrationTest {
         assertEquals("UP", result.components["postgres"]?.status)
         assertEquals("UP", result.components["rocksdb"]?.status)
         assertEquals("UP", result.components["lucene"]?.status)
+        assertEquals("UP", result.components["message-projection"]?.status)
         assertEquals("UP", result.components["file-storage"]?.status)
     }
 }

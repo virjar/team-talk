@@ -36,14 +36,16 @@ protocol/src/commonMain/kotlin/com/virjar/tk/
 ```text
 shared/src/commonMain/kotlin/com/virjar/tk/
 ├── client/         ImClient、RpcClient、Session、EventProcessor、LocalCache
-├── repository/     领域 Repository 和 FileRepository expect
+├── repository/     领域 Repository、会话级 FileRepository 与 common 流式契约
 ├── bot/            ImBot
 ├── testing/        FakeLocalCache/FakeRpcInvoker
 ├── log/            TkLogger
 └── util/           AppLog、HTTP 等
 ```
 
-平台实现位于 `androidMain` 和 `jvmMain`。shared 不能 import Compose 或平台应用导航。
+平台实现位于 `androidMain` 和 `jvmMain`。文件 Repository 的所有权、凭据门禁、multipart 纯规则和
+`UploadSource` 位于 common，平台层只实现可关闭的 HTTP 连接与 `File.asUploadSource()`。shared 不能
+import Compose 或平台应用导航。
 
 ## 4. rpc-processor
 

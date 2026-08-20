@@ -168,11 +168,72 @@ object GroupInviteLinks : LongIdTable("group_invite_links") {
     }
 }
 
-object SyncEvents : LongIdTable("sync_events") {
-    val uid = varchar("uid", 36).index()
+/** Per-user durable event sequence allocator. A row is locked only after all domain writes finish. */
+object SyncStreams : Table("sync_streams") {
+    val uid = varchar("uid", 36).references(Users.uid)
+    val lastSeq = long("last_seq").default(0)
+
+    override val primaryKey = PrimaryKey(uid)
+
+    init {
+        check("ck_sync_streams_last_seq_non_negative") { lastSeq greaterEq 0L }
+    }
+}
+
+/**
+ * Durable user event log. [streamSeq] is exposed as the existing wire `eventId` and is contiguous
+ * only inside one authenticated uid; two users may legitimately have the same numeric event ID.
+ */
+object SyncEvents : Table("sync_events") {
+    val uid = varchar("uid", 36).references(SyncStreams.uid)
+    val streamSeq = long("stream_seq")
     val eventType = integer("event_type")
     val payload = binary("payload")
+    val dedupeKey = varchar("dedupe_key", 192).nullable()
     val createdAt = long("created_at")
+    /** Live delivery is an optimization; replay always reads rows regardless of this marker. */
+    val dispatchedAt = long("dispatched_at").nullable()
+    val dispatchAttempts = integer("dispatch_attempts").default(0)
+    val nextAttemptAt = long("next_attempt_at").default(0)
+    val lastDispatchError = text("last_dispatch_error").nullable()
+
+    override val primaryKey = PrimaryKey(uid, streamSeq)
+
+    init {
+        uniqueIndex("uq_sync_events_uid_dedupe", uid, dedupeKey)
+        index(
+            "idx_sync_events_dispatch",
+            false,
+            nextAttemptAt,
+            uid,
+            streamSeq,
+            filterCondition = { dispatchedAt.isNull() },
+        )
+        check("ck_sync_events_stream_seq_positive") { streamSeq greater 0L }
+        check("ck_sync_events_dispatch_attempts_non_negative") { dispatchAttempts greaterEq 0 }
+        check("ck_sync_events_next_attempt_non_negative") { nextAttemptAt greaterEq 0L }
+    }
+}
+
+/**
+ * Idempotency receipt for a projection whose authoritative operation lives in an external store.
+ * The stable projection key identifies one message; revision identifies CREATE/EDIT/REVOKE.
+ */
+object ExternalProjectionReceipts : Table("external_projection_receipts") {
+    val projectionKey = varchar("projection_key", 512)
+    val revision = long("revision")
+    val operationType = integer("operation_type")
+    val chatId = varchar("chat_id", 160)
+    val serverSeq = long("server_seq")
+    val payloadHash = binary("payload_hash")
+    val appliedAt = long("applied_at")
+
+    override val primaryKey = PrimaryKey(projectionKey, revision)
+
+    init {
+        check("ck_external_projection_revision_positive") { revision greater 0L }
+        check("ck_external_projection_server_seq_positive") { serverSeq greater 0L }
+    }
 }
 
 /** 单组织目录节点。groupChatId 非空时，该群的成员由组织领域维护。 */

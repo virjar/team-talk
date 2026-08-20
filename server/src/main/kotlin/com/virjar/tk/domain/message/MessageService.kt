@@ -11,33 +11,40 @@ import com.virjar.tk.domain.attachment.AttachmentService
 import com.virjar.tk.domain.chat.ChatAccess
 import com.virjar.tk.domain.chat.ChatLifecycleGate
 import com.virjar.tk.domain.chat.ChatStore
-import com.virjar.tk.domain.conversation.ConversationService
 import com.virjar.tk.domain.contact.ContactStore
-import com.virjar.tk.domain.event.EventPublisher
+import com.virjar.tk.domain.transaction.PgUnitOfWork
 import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.model.Message
 import com.virjar.tk.protocol.ExtensionType
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.NotifyType
+import com.virjar.tk.protocol.ProtoCodec
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.security.MessageDigest
 
 class MessageService(
     private val messages: MessageRepository,
     private val chatStore: ChatStore,
     private val access: ChatAccess,
-    private val events: EventPublisher,
-    private val conversationService: ConversationService,
+    private val projectionRepository: MessageProjectionRepository,
+    private val unitOfWork: PgUnitOfWork,
+    private val projectionReadiness: MessageProjectionReadiness,
     private val search: MessageSearch,
     private val attachmentService: AttachmentService,
     private val users: UserStore,
     private val contacts: ContactStore,
     private val lifecycleGate: ChatLifecycleGate,
+    private val projectionHooks: MessageProjectionHooks = MessageProjectionHooks.None,
 ) {
     /** 固定条带避免按消息创建锁导致无界缓存，同时串行化同一 chat+seq 的 outbox 投影。 */
     private val projectionLocks = Array(PROJECTION_LOCK_STRIPES) { Mutex() }
+    private val recoveryMutex = Mutex()
 
-    suspend fun sendMessage(senderUid: String, message: Message): Long =
-        lifecycleGate.withChat(message.chatId) { sendMessageLocked(senderUid, message) }
+    suspend fun sendMessage(senderUid: String, message: Message): Long {
+        recoverIfBlocked()
+        return lifecycleGate.withChat(message.chatId) { sendMessageLocked(senderUid, message) }
+    }
 
     /** Caller holds [lifecycleGate] for this chat through durable storage and projection. */
     private suspend fun sendMessageLocked(senderUid: String, message: Message): Long {
@@ -65,9 +72,7 @@ class MessageService(
         // 离线事件和会话投影，才能满足“发送成功即可用”的契约。
         val existing = messages.findIdempotentMessage(clientDeclaredMessage)
         if (existing != null) {
-            if (messages.isProjectionPending(chatId, existing.serverSeq)) {
-                projectNewMessageLocked(existing)
-            }
+            drainPendingForMessageLocked(chatId, existing.serverSeq)
             return existing.serverSeq
         }
 
@@ -101,15 +106,17 @@ class MessageService(
         )
         // 幂等摘要保存首次被接受的客户端声明，而不是服务端补齐后的可变展示侧信道；
         // 因此目标消息后续编辑、文件元数据刷新都不会让同一请求的延迟重试变成冲突。
-        val committedSeq = messages.storeMessage(storedMessage, clientDeclaredMessage)
+        val committedSeq = messages.storeMessage(
+            storedMessage,
+            clientDeclaredMessage,
+            projectionTarget(chatId),
+        )
         if (committedSeq != serverSeq) {
             // 并发的同 clientMsgId 已先行提交，当前分配的 seq 保留为合法空洞。
-            messages.getMessage(chatId, committedSeq)?.let { committed ->
-                if (messages.isProjectionPending(chatId, committedSeq)) projectNewMessageLocked(committed)
-            }
+            drainPendingForMessageLocked(chatId, committedSeq)
             return committedSeq
         }
-        projectNewMessageLocked(storedMessage)
+        drainPendingForMessageLocked(chatId, serverSeq)
 
         return serverSeq
     }
@@ -120,8 +127,10 @@ class MessageService(
         return messages.getHistory(chatId, fromSeq, limit, forward = false)
     }
 
-    suspend fun revokeMessage(uid: String, chatId: String, serverSeq: Long) =
+    suspend fun revokeMessage(uid: String, chatId: String, serverSeq: Long) {
+        recoverIfBlocked()
         lifecycleGate.withChat(chatId) { revokeMessageLocked(uid, chatId, serverSeq) }
+    }
 
     private suspend fun revokeMessageLocked(uid: String, chatId: String, serverSeq: Long) {
         val actor = access.requireMember(uid, chatId)
@@ -135,27 +144,35 @@ class MessageService(
     }
 
     /** 管理员撤回：免权限检查，广播链路复用。 */
-    suspend fun adminRevoke(chatId: String, serverSeq: Long) = lifecycleGate.withChat(chatId) {
-        val message = messages.getMessage(chatId, serverSeq)
-            ?: throw IllegalArgumentException("消息不存在")
-        doRevoke(message)
+    suspend fun adminRevoke(chatId: String, serverSeq: Long) {
+        recoverIfBlocked()
+        lifecycleGate.withChat(chatId) {
+            val message = messages.getMessage(chatId, serverSeq)
+                ?: throw IllegalArgumentException("消息不存在")
+            doRevoke(message)
+        }
     }
 
     private suspend fun doRevoke(message: Message) {
-        val revoked = message.copy(flags = message.flags or 1)
-        messages.updateMessage(message.chatId, message.serverSeq, revoked)
-
-        val memberUids = chatStore.getMemberUids(message.chatId)
-        events.emitEvents(memberUids, NotifyType.MESSAGE_RECV, revoked)
-        conversationService.onMessageChanged(
-            // ConversationList 以 lastMessage 非 null 作为是否渲染摘要的开关；
-            // REVOKE 类型不读取正文，但仍需非 null 占位才能显示“撤回了一条消息”。
-            message.chatId, message.serverSeq, MessageType.REVOKE.code, "", memberUids
+        if (message.flags and Message.FLAG_REVOKED != 0) {
+            drainPendingForMessageLocked(message.chatId, message.serverSeq)
+            return
+        }
+        val revoked = message.copy(flags = message.flags or Message.FLAG_REVOKED)
+        messages.updateMessage(
+            message.chatId,
+            message.serverSeq,
+            revoked,
+            MessageOperationType.REVOKE,
+            projectionTarget(message.chatId),
         )
+        drainPendingForMessageLocked(message.chatId, message.serverSeq)
     }
 
-    suspend fun editMessage(uid: String, chatId: String, serverSeq: Long, newMessage: Message) =
+    suspend fun editMessage(uid: String, chatId: String, serverSeq: Long, newMessage: Message) {
+        recoverIfBlocked()
         lifecycleGate.withChat(chatId) { editMessageLocked(uid, chatId, serverSeq, newMessage) }
+    }
 
     private suspend fun editMessageLocked(uid: String, chatId: String, serverSeq: Long, newMessage: Message) {
         access.requireMember(uid, chatId)
@@ -165,6 +182,7 @@ class MessageService(
         if (message.senderUid != uid) {
             throw IllegalArgumentException("只能编辑自己的消息")
         }
+        require(message.flags and Message.FLAG_REVOKED == 0) { "已撤回消息不能编辑" }
         val originalType = MessageType.fromCode(message.messageType)
             ?: throw IllegalArgumentException("原消息类型非法")
         val editedType = MessageType.fromCode(newMessage.messageType)
@@ -187,19 +205,24 @@ class MessageService(
         val canonicalNewMessage = attachmentService.resolve(editCandidate, uid)
         validateMentionMembership(canonicalNewMessage)
         val edited = canonicalNewMessage.copy(
-            flags = message.flags or 2,
+            flags = message.flags or Message.FLAG_EDITED,
         )
-        messages.updateMessage(chatId, serverSeq, edited)
-
-        val text = MessageTextExtractor.extract(edited, edited.body)
-        search.indexMessage(edited, text)
-
-        val memberUids = chatStore.getMemberUids(chatId)
-        events.emitEvents(memberUids, NotifyType.MESSAGE_RECV, edited)
-        conversationService.onMessageChanged(chatId, serverSeq, edited.messageType, text, memberUids)
+        if (ProtoCodec.encode(edited).contentEquals(ProtoCodec.encode(message))) {
+            drainPendingForMessageLocked(chatId, serverSeq)
+            return
+        }
+        messages.updateMessage(
+            chatId,
+            serverSeq,
+            edited,
+            MessageOperationType.EDIT,
+            projectionTarget(chatId),
+        )
+        drainPendingForMessageLocked(chatId, serverSeq)
     }
 
     suspend fun forwardMessage(uid: String, srcChatId: String, srcSeq: Long, targetChatId: String): Message {
+        recoverIfBlocked()
         return lifecycleGate.withChats(srcChatId, targetChatId) {
             forwardMessageLocked(uid, srcChatId, srcSeq, targetChatId)
         }
@@ -236,8 +259,8 @@ class MessageService(
         )
         validateMentionMembership(forwardMsg)
 
-        messages.storeMessage(forwardMsg)
-        projectNewMessageLocked(forwardMsg)
+        messages.storeMessage(forwardMsg, forwardMsg, projectionTarget(targetChatId))
+        drainPendingForMessageLocked(targetChatId, serverSeq)
 
         return forwardMsg
     }
@@ -292,47 +315,120 @@ class MessageService(
         }
     }
 
-    /** Replays durable projection outbox entries left by an interrupted process. */
+    /**
+     * Replays the complete durable operation outbox, not merely one startup page. Readiness is
+     * cleared only after two global empty observations and only if no concurrent failure changed
+     * the generation between those observations.
+     */
     suspend fun recoverPendingProjections(limit: Int = 1_000): Int {
-        val pending = messages.getPendingProjections(limit)
-        for (message in pending) projectNewMessage(message)
-        return pending.size
-    }
-
-    private suspend fun projectNewMessage(message: Message) {
-        lifecycleGate.withChat(message.chatId) { projectNewMessageLocked(message) }
-    }
-
-    /** Must run under the chat lifecycle gate; projection lock only deduplicates the same seq. */
-    private suspend fun projectNewMessageLocked(message: Message) {
-        val lock = projectionLocks[projectionLockIndex(message.chatId, message.serverSeq)]
-        lock.lock()
-        try {
-            // 两个并发重试都可能观察到 pending；获得单飞锁后必须重查，
-            // 否则会重复产生 MESSAGE_RECV / CONVERSATION_UPDATED durable events。
-            if (!messages.isProjectionPending(message.chatId, message.serverSeq)) return
-
-            val text = MessageTextExtractor.extract(message, message.body)
-            search.indexMessage(message, text)
-
-            val memberUids = chatStore.getMemberUids(message.chatId)
-            events.emitEvents(memberUids, NotifyType.MESSAGE_RECV, message)
-
-            chatStore.getChat(message.chatId)?.let { chat ->
-                conversationService.onMessageReceived(
-                    message.chatId,
-                    chat.chatType,
-                    message.serverSeq,
-                    message.messageType,
-                    text,
-                    memberUids,
-                    message.senderUid,
-                )
+        require(limit > 0) { "Projection page size must be positive" }
+        return recoveryMutex.withLock {
+            var recovered = 0
+            var emptyScans = 0
+            var observedGeneration = projectionReadiness.generation()
+            while (true) {
+                val pending = messages.getPendingProjectionOperations(limit)
+                if (pending.isEmpty()) {
+                    emptyScans += 1
+                    if (emptyScans < REQUIRED_EMPTY_SCANS) continue
+                    if (projectionReadiness.markReadyIfUnchanged(observedGeneration)) return@withLock recovered
+                    observedGeneration = projectionReadiness.generation()
+                    emptyScans = 0
+                    continue
+                }
+                emptyScans = 0
+                for (operation in pending) {
+                    projectOperation(operation)
+                    recovered += 1
+                }
             }
-            messages.markProjectionComplete(message.chatId, message.serverSeq)
-        } finally {
-            lock.unlock()
+            @Suppress("UNREACHABLE_CODE")
+            recovered
         }
+    }
+
+    private suspend fun recoverIfBlocked() {
+        if (projectionReadiness.currentFailure() != null) recoverPendingProjections()
+    }
+
+    /** Caller holds [lifecycleGate] for this chat. */
+    private suspend fun drainPendingForMessageLocked(chatId: String, serverSeq: Long) {
+        while (true) {
+            val pending = messages.getPendingProjectionOperations(chatId, serverSeq, PROJECTION_MESSAGE_PAGE_SIZE)
+            if (pending.isEmpty()) return
+            pending.forEach { projectOperationLocked(it) }
+        }
+    }
+
+    private suspend fun projectOperation(operation: MessageProjectionOperation) {
+        lifecycleGate.withChat(operation.message.chatId) { projectOperationLocked(operation) }
+    }
+
+    /** Must run under the chat lifecycle gate; the striped lock deduplicates one message identity. */
+    private suspend fun projectOperationLocked(operation: MessageProjectionOperation) {
+        val message = operation.message
+        projectionLocks[projectionLockIndex(message.chatId, message.serverSeq)].withLock {
+            // Concurrent command retry and global recovery can both observe one immutable operation.
+            if (!messages.isProjectionPending(operation)) return
+            try {
+                val preview = when (operation.operation) {
+                    MessageOperationType.REVOKE -> ""
+                    MessageOperationType.CREATE,
+                    MessageOperationType.EDIT,
+                    -> MessageTextExtractor.extract(message, message.body)
+                }
+                val searchText = if (operation.operation == MessageOperationType.REVOKE) null else preview
+                search.applyProjection(operation, searchText)
+                projectionHooks.hit(MessageProjectionStage.AFTER_LUCENE_BEFORE_POSTGRES, operation)
+
+                unitOfWork.write {
+                    val applied = projectionRepository.apply(transaction, operation, preview)
+                    if (applied.applied) {
+                        for (recipient in applied.recipients) {
+                            appendEvent(
+                                recipient.uid,
+                                NotifyType.MESSAGE_RECV,
+                                message,
+                                projectionEventDedupeKey(operation, recipient.uid, "message"),
+                            )
+                            recipient.conversation?.let { conversation ->
+                                appendEvent(
+                                    recipient.uid,
+                                    NotifyType.CONVERSATION_UPDATED,
+                                    conversation,
+                                    projectionEventDedupeKey(operation, recipient.uid, "conversation"),
+                                )
+                            }
+                        }
+                    }
+                }
+                projectionHooks.hit(MessageProjectionStage.AFTER_POSTGRES_BEFORE_ROCKS_ACK, operation)
+                messages.markProjectionComplete(operation)
+            } catch (error: Throwable) {
+                projectionReadiness.block("${operation.projectionKey}@${operation.revision}", error)
+                throw error
+            }
+        }
+    }
+
+    private fun projectionTarget(chatId: String): MessageProjectionTarget {
+        val chat = chatStore.getChat(chatId) ?: throw IllegalArgumentException("聊天不存在")
+        val recipients = chatStore.getMemberUids(chatId).distinct().sorted()
+        require(recipients.isNotEmpty()) { "聊天没有活动成员" }
+        return MessageProjectionTarget(chat.chatType, recipients)
+    }
+
+    private fun projectionEventDedupeKey(
+        operation: MessageProjectionOperation,
+        uid: String,
+        kind: String,
+    ): String {
+        val identity = "${operation.projectionKey}\u0000${operation.revision}\u0000$uid\u0000$kind"
+        val hash = MessageDigest.getInstance("SHA-256").digest(identity.encodeToByteArray())
+        return "message-projection:${hash.joinToString("") { byte ->
+            val value = byte.toInt() and 0xFF
+            "${HEX[value ushr 4]}${HEX[value and 0x0F]}"
+        }}"
     }
 
     private fun projectionLockIndex(chatId: String, serverSeq: Long): Int {
@@ -442,6 +538,9 @@ class MessageService(
          */
         const val MAX_QUERY_PAGE_SIZE = 10
         private const val PROJECTION_LOCK_STRIPES = 256
+        private const val PROJECTION_MESSAGE_PAGE_SIZE = 100
+        private const val REQUIRED_EMPTY_SCANS = 2
+        private const val HEX = "0123456789abcdef"
 
         /** 操作型消息只能走权限明确的 RPC，不能伪装成普通 MESSAGE 帧落库。 */
         private val CREATABLE_MESSAGE_TYPES = setOf(

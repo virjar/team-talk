@@ -4,7 +4,11 @@ import com.virjar.tk.model.Message
 
 /** Authoritative message archive boundary. */
 interface MessageRepository {
-    fun storeMessage(message: Message, idempotencyCandidate: Message = message): Long
+    fun storeMessage(
+        message: Message,
+        idempotencyCandidate: Message,
+        projectionTarget: MessageProjectionTarget,
+    ): Long
     fun getMessage(chatId: String, seq: Long): Message?
     /**
      * `chatId + clientMsgId` 是全会话唯一的消息身份。返回首次接受的消息；
@@ -13,9 +17,17 @@ interface MessageRepository {
      */
     fun findIdempotentMessage(candidate: Message): Message?
     fun getHistory(chatId: String, fromSeq: Long, limit: Int, forward: Boolean = false): List<Message>
-    fun updateMessage(chatId: String, seq: Long, message: Message)
-    fun isProjectionPending(chatId: String, seq: Long): Boolean
-    fun getPendingProjections(limit: Int = 100): List<Message>
-    fun markProjectionComplete(chatId: String, seq: Long)
+    fun updateMessage(
+        chatId: String,
+        seq: Long,
+        message: Message,
+        operation: MessageOperationType,
+        projectionTarget: MessageProjectionTarget,
+    ): MessageProjectionOperation
+    fun getPendingProjectionOperations(limit: Int = 100): List<MessageProjectionOperation>
+    fun getPendingProjectionOperations(chatId: String, seq: Long, limit: Int = 100): List<MessageProjectionOperation>
+    fun isProjectionPending(operation: MessageProjectionOperation): Boolean
+    fun markProjectionComplete(operation: MessageProjectionOperation)
+
     fun getAttachmentChatIds(path: String): Set<String>
 }

@@ -17,9 +17,9 @@ import com.virjar.tk.domain.chat.ChatStore
 import com.virjar.tk.domain.chat.InviteLinkRepository
 import com.virjar.tk.domain.contact.ContactRepository
 import com.virjar.tk.domain.contact.ContactStore
-import com.virjar.tk.domain.conversation.ConversationRepository
-import com.virjar.tk.domain.conversation.ConversationService
-import com.virjar.tk.domain.event.EventPublisher
+import com.virjar.tk.domain.transaction.PgTransactionContext
+import com.virjar.tk.domain.transaction.PgUnitOfWork
+import com.virjar.tk.domain.transaction.PgWriteScope
 import com.virjar.tk.domain.user.UserRepository
 import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.model.Chat
@@ -27,6 +27,8 @@ import com.virjar.tk.model.ChatType
 import com.virjar.tk.model.Member
 import com.virjar.tk.model.Message
 import com.virjar.tk.protocol.MessageType
+import com.virjar.tk.protocol.IProto
+import com.virjar.tk.protocol.NotifyType
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -177,29 +179,8 @@ class MessageServiceLifecycleTest {
             memberRepo = memberRepository,
             inviteRepo = interfaceStub<InviteLinkRepository>(),
         )
-        val events = interfaceStub<EventPublisher> { method, _ ->
-            when (method) {
-                "emitEvent", "emitEvents", "emitTransient" -> Unit
-                else -> UnhandledCall
-            }
-        }
-        val conversationRepository = interfaceStub<ConversationRepository> { method, _ ->
-            when (method) {
-                "getConversation" -> null
-                "upsertConversation", "markRead" -> Unit
-                else -> UnhandledCall
-            }
-        }
-        val conversationService = ConversationService(
-            conversationRepo = conversationRepository,
-            chatRepo = chatRepository,
-            events = events,
-            access = access,
-            chatStore = chatStore,
-            lifecycleGate = gate,
-        )
         var storedMessage: Message? = null
-        var projectionPending = false
+        var pendingOperation: MessageProjectionOperation? = null
         val messages = interfaceStub<MessageRepository> { method, args ->
             when (method) {
                 "getMessage" -> {
@@ -213,12 +194,22 @@ class MessageServiceLifecycleTest {
                 }
                 "storeMessage" -> {
                     storedMessage = args[0] as Message
-                    projectionPending = true
+                    pendingOperation = MessageProjectionOperation(
+                        projectionKey = MessageProjectionOperation.stableKey(
+                            storedMessage!!.chatId,
+                            storedMessage!!.serverSeq,
+                        ),
+                        operation = MessageOperationType.CREATE,
+                        revision = 1L,
+                        message = storedMessage!!,
+                        target = (args[2] as MessageProjectionTarget).canonical(),
+                    )
                     storedMessage!!.serverSeq
                 }
-                "isProjectionPending" -> projectionPending
+                "getPendingProjectionOperations" -> listOfNotNull(pendingOperation)
+                "isProjectionPending" -> pendingOperation == args[0]
                 "markProjectionComplete" -> {
-                    projectionPending = false
+                    if (pendingOperation == args[0]) pendingOperation = null
                     Unit
                 }
                 else -> UnhandledCall
@@ -228,10 +219,16 @@ class MessageServiceLifecycleTest {
             messages = messages,
             chatStore = chatStore,
             access = access,
-            events = events,
-            conversationService = conversationService,
+            projectionRepository = MessageProjectionRepository { _, operation, _ ->
+                MessageProjectionApplyResult(
+                    applied = true,
+                    recipients = operation.target.recipientUids.map { MessageProjectionRecipient(it, null) },
+                )
+            },
+            unitOfWork = ImmediatePgUnitOfWork,
+            projectionReadiness = MessageProjectionReadiness(),
             search = interfaceStub<MessageSearch> { method, _ ->
-                if (method == "indexMessage") Unit else UnhandledCall
+                if (method == "applyProjection") true else UnhandledCall
             },
             attachmentService = AttachmentService(
                 attachmentCatalog = interfaceStub<AttachmentCatalog>(),
@@ -290,6 +287,18 @@ class MessageServiceLifecycleTest {
         const val SOURCE_SEQ = 11L
         const val TEST_STRIPES = 8
     }
+}
+
+private object ImmediatePgUnitOfWork : PgUnitOfWork {
+    private object Transaction : PgTransactionContext
+
+    override suspend fun <T> write(block: suspend PgWriteScope.() -> T): T = block(
+        object : PgWriteScope {
+            override val transaction: PgTransactionContext = Transaction
+            override fun appendEvent(uid: String, notifyType: NotifyType, payload: IProto, dedupeKey: String?) = Unit
+            override fun afterCommit(action: () -> Unit) = action()
+        },
+    )
 }
 
 private object UnhandledCall

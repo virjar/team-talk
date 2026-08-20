@@ -22,7 +22,24 @@ class SchemaDeclarationTest {
     @Test
     fun `fresh schema contains the final draft type and explicit epoch`() {
         assertIs<TextColumnType>(Conversations.draft.columnType)
-        assertEquals(3, DatabaseFactory.CURRENT_SCHEMA_EPOCH)
+        assertEquals(5, DatabaseFactory.CURRENT_SCHEMA_EPOCH)
+    }
+
+    @Test
+    fun `fresh schema uses a composite per user durable event cursor`() {
+        assertEquals(listOf(SyncStreams.uid), SyncStreams.primaryKey?.columns?.toList())
+        assertEquals(listOf(SyncEvents.uid, SyncEvents.streamSeq), SyncEvents.primaryKey?.columns?.toList())
+        val dedupe = SyncEvents.indices.single { it.customName == "uq_sync_events_uid_dedupe" }
+        assertTrue(dedupe.unique)
+        assertEquals(listOf(SyncEvents.uid, SyncEvents.dedupeKey), dedupe.columns)
+    }
+
+    @Test
+    fun `fresh schema versions external projection receipts by stable key`() {
+        assertEquals(
+            listOf(ExternalProjectionReceipts.projectionKey, ExternalProjectionReceipts.revision),
+            ExternalProjectionReceipts.primaryKey?.columns?.toList(),
+        )
     }
 
     @Test

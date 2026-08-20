@@ -159,6 +159,11 @@ fun Application.module() {
 
         // ClientRegistry starts its looper in the constructor. Own it before resolving services that use it.
         val clientRegistry = resources.own("client registry", koin.get<ClientRegistry>()) { it.stop() }
+        val syncEventDispatcher = resources.own(
+            "sync event dispatcher",
+            koin.get<com.virjar.tk.infra.sync.SyncEventDispatcher>(),
+        ) { it.close() }
+        syncEventDispatcher.start()
         val authService = koin.get<AuthService>()
         val rpcDispatcher = koin.get<RpcDispatcher>()
         val msgService = koin.get<MessageService>()

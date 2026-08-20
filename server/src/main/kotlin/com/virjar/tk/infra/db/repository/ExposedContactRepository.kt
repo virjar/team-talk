@@ -1,32 +1,24 @@
 package com.virjar.tk.infra.db.repository
 
-import com.virjar.tk.domain.contact.ContactRepository
+import com.virjar.tk.domain.contact.ContactApplyAcceptance
 import com.virjar.tk.domain.contact.ContactApplyCreation
+import com.virjar.tk.domain.contact.ContactRepository
+import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.domain.user.UserRepository
 import com.virjar.tk.infra.db.FriendApplies
 import com.virjar.tk.infra.db.Friends
 import com.virjar.tk.infra.db.Users
+import com.virjar.tk.infra.db.requireExposedTransaction
 import com.virjar.tk.model.Contact
 import com.virjar.tk.model.ContactApply
 import com.virjar.tk.model.ContactApplyRecord
+import com.virjar.tk.model.User
+import com.virjar.tk.model.UserRole
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.util.UUID
 
 class ExposedContactRepository(private val userRepo: UserRepository) : ContactRepository {
-
-    /** 按 (uid, friendUid) 单行直查（accept 通知两行查询，替代两次全列表扫）。 */
-    override fun getFriend(uid: String, friendUid: String): Contact? {
-        val row = transaction {
-            Friends.selectAll()
-                .where { (Friends.uid eq uid) and (Friends.friendUid eq friendUid) and (Friends.status eq 1) }
-                .limit(1)
-                .firstOrNull()
-        } ?: return null
-        val friendUser = userRepo.findByUid(friendUid) ?: return null
-        return Contact(uid = uid, friendUid = friendUid, remark = row[Friends.remark], status = 1, user = friendUser)
-    }
-
     override fun listFriends(uid: String): List<Contact> {
         val friendRows = transaction {
             Friends.selectAll().where { (Friends.uid eq uid) and (Friends.status eq 1) }
@@ -36,6 +28,11 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
             val friendUser = userRepo.findByUid(friendUid) ?: return@mapNotNull null
             Contact(uid = uid, friendUid = friendUid, remark = remark, status = 1, user = friendUser)
         }
+    }
+
+    override fun listFriendUids(uid: String): Set<String> = transaction {
+        Friends.selectAll().where { (Friends.uid eq uid) and (Friends.status eq 1) }
+            .mapTo(linkedSetOf()) { it[Friends.friendUid] }
     }
 
     override fun isFriend(uid: String, friendUid: String): Boolean {
@@ -52,27 +49,48 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
         }.limit(1).any()
     }
 
-    override fun addFriend(uid: String, friendUid: String, remark: String?) {
-        transaction {
+    override fun addFriend(
+        transaction: PgTransactionContext,
+        uid: String,
+        friendUid: String,
+        remark: String?,
+    ) {
+        inWriteTransaction(transaction) {
             lockUserPair(uid, friendUid)
-            Friends.insertIgnore {
-                it[Friends.uid] = uid
-                it[Friends.friendUid] = friendUid
+            val now = System.currentTimeMillis()
+            val firstUpdated = Friends.update({
+                (Friends.uid eq uid) and (Friends.friendUid eq friendUid)
+            }) {
                 it[Friends.remark] = remark
                 it[Friends.status] = 1
-                it[Friends.createdAt] = System.currentTimeMillis()
             }
-            Friends.insertIgnore {
-                it[Friends.uid] = friendUid
-                it[Friends.friendUid] = uid
+            if (firstUpdated == 0) {
+                Friends.insert {
+                    it[Friends.uid] = uid
+                    it[Friends.friendUid] = friendUid
+                    it[Friends.remark] = remark
+                    it[Friends.status] = 1
+                    it[Friends.createdAt] = now
+                }
+            }
+            val secondUpdated = Friends.update({
+                (Friends.uid eq friendUid) and (Friends.friendUid eq uid)
+            }) {
                 it[Friends.status] = 1
-                it[Friends.createdAt] = System.currentTimeMillis()
+            }
+            if (secondUpdated == 0) {
+                Friends.insert {
+                    it[Friends.uid] = friendUid
+                    it[Friends.friendUid] = uid
+                    it[Friends.status] = 1
+                    it[Friends.createdAt] = now
+                }
             }
         }
     }
 
-    override fun removeFriend(uid: String, friendUid: String) {
-        transaction {
+    override fun removeFriend(transaction: PgTransactionContext, uid: String, friendUid: String) {
+        inWriteTransaction(transaction) {
             lockUserPair(uid, friendUid)
             Friends.update({ (Friends.uid eq uid) and (Friends.friendUid eq friendUid) }) {
                 it[status] = 0
@@ -83,16 +101,22 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
         }
     }
 
-    override fun setRemark(uid: String, friendUid: String, remark: String?) {
-        transaction {
+    override fun setRemark(
+        transaction: PgTransactionContext,
+        uid: String,
+        friendUid: String,
+        remark: String?,
+    ) {
+        inWriteTransaction(transaction) {
+            lockUserPair(uid, friendUid)
             Friends.update({ (Friends.uid eq uid) and (Friends.friendUid eq friendUid) }) {
                 it[Friends.remark] = remark
             }
         }
     }
 
-    override fun blacklist(uid: String, targetUid: String) {
-        transaction {
+    override fun blacklist(transaction: PgTransactionContext, uid: String, targetUid: String) {
+        inWriteTransaction(transaction) {
             lockUserPair(uid, targetUid)
             val existing = Friends.selectAll().where {
                 (Friends.uid eq uid) and (Friends.friendUid eq targetUid)
@@ -131,8 +155,8 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
         }
     }
 
-    override fun removeFromBlacklist(uid: String, targetUid: String) {
-        transaction {
+    override fun removeFromBlacklist(transaction: PgTransactionContext, uid: String, targetUid: String) {
+        inWriteTransaction(transaction) {
             lockUserPair(uid, targetUid)
             Friends.update({ (Friends.uid eq uid) and (Friends.friendUid eq targetUid) and (Friends.status eq 2) }) {
                 it[status] = 0
@@ -153,9 +177,15 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
 
     // ── 好友申请 ──
 
-    override fun createApply(fromUid: String, toUid: String, remark: String?): ContactApplyCreation {
-        val result = transaction {
-            lockUserPair(fromUid, toUid)
+    override fun createApply(
+        transaction: PgTransactionContext,
+        fromUid: String,
+        toUid: String,
+        remark: String?,
+    ): ContactApplyCreation = inWriteTransaction(transaction) {
+            val users = lockUserPair(fromUid, toUid)
+            val target = users.getValue(toUid).toUser()
+            require(target.role == UserRole.HUMAN) { "不能向机器人或系统账户发起好友申请" }
 
             val blocked = Friends.selectAll().where {
                 ((((Friends.uid eq fromUid) and (Friends.friendUid eq toUid)) or
@@ -177,7 +207,11 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
                     (FriendApplies.status eq ContactApplyRecord.STATUS_PENDING)
             }.orderBy(FriendApplies.id, SortOrder.DESC).limit(1).firstOrNull()
             if (existing != null) {
-                return@transaction FriendApplyCreationRow(existing.toFriendApplyRow(), created = false)
+                val row = existing.toFriendApplyRow()
+                return@inWriteTransaction ContactApplyCreation(
+                    apply = row.toContactApply(users.getValue(row.fromUid).toUser()),
+                    created = false,
+                )
             }
 
             val reversePending = FriendApplies.selectAll().where {
@@ -199,31 +233,33 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
                 it[FriendApplies.updatedAt] = now
             }
             val inserted = FriendApplies.selectAll().where { FriendApplies.token eq token }.single()
-            FriendApplyCreationRow(inserted.toFriendApplyRow(), created = true)
+            val row = inserted.toFriendApplyRow()
+            ContactApplyCreation(
+                apply = row.toContactApply(users.getValue(row.fromUid).toUser()),
+                created = true,
+            )
         }
-        return ContactApplyCreation(
-            apply = result.row.toContactApply(userRepo.findByUid(result.row.fromUid)),
-            created = result.created,
-        )
-    }
 
-    override fun acceptApply(token: String, receiverUid: String): ContactApply? {
-        val result = transaction {
+    override fun acceptApply(
+        transaction: PgTransactionContext,
+        token: String,
+        receiverUid: String,
+    ): ContactApplyAcceptance? = inWriteTransaction(transaction) {
             // token 行先只用于解析稳定不变的双方 uid；真正的状态读取必须等取得 pair lock 后重做。
             // 不能先 FOR UPDATE 申请行再锁 User，否则会与 createApply 的 User -> Apply 顺序相反。
             val identity = FriendApplies.selectAll().where {
                 (FriendApplies.token eq token) and (FriendApplies.toUid eq receiverUid)
-            }.singleOrNull() ?: return@transaction null
+            }.singleOrNull() ?: return@inWriteTransaction null
             val fromUid = identity[FriendApplies.fromUid]
             val toUid = identity[FriendApplies.toUid]
-            lockUserPair(fromUid, toUid)
+            val users = lockUserPair(fromUid, toUid)
 
             val row = FriendApplies.selectAll().where {
                 (FriendApplies.token eq token) and (FriendApplies.toUid eq receiverUid)
             }.forUpdate().singleOrNull()
-                ?: return@transaction null
+                ?: return@inWriteTransaction null
 
-            if (row[FriendApplies.status] != ContactApplyRecord.STATUS_PENDING) return@transaction null
+            if (row[FriendApplies.status] != ContactApplyRecord.STATUS_PENDING) return@inWriteTransaction null
 
             val blocked = Friends.selectAll().where {
                 (((Friends.uid eq fromUid) and (Friends.friendUid eq toUid)) or
@@ -273,30 +309,45 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
                 }
             }
 
-            row.toFriendApplyRow().copy(
+            val accepted = row.toFriendApplyRow().copy(
                 token = null,
                 status = ContactApplyRecord.STATUS_ACCEPTED,
                 updatedAt = updatedAt,
             )
-        } ?: return null
+            val fromContact = activeContact(
+                uid = fromUid,
+                friendUid = toUid,
+                friendUser = users.getValue(toUid).toUser(),
+            )
+            val toContact = activeContact(
+                uid = toUid,
+                friendUid = fromUid,
+                friendUser = users.getValue(fromUid).toUser(),
+            )
+            ContactApplyAcceptance(
+                apply = accepted.toContactApply(users.getValue(fromUid).toUser()),
+                fromSide = fromContact,
+                toSide = toContact,
+            )
+        }
 
-        return result.toContactApply(userRepo.findByUid(result.fromUid))
-    }
-
-    override fun rejectApply(token: String, receiverUid: String): ContactApply? {
-        val result = transaction {
+    override fun rejectApply(
+        transaction: PgTransactionContext,
+        token: String,
+        receiverUid: String,
+    ): ContactApply? = inWriteTransaction(transaction) {
             val identity = FriendApplies.selectAll().where {
                 (FriendApplies.token eq token) and (FriendApplies.toUid eq receiverUid)
-            }.singleOrNull() ?: return@transaction null
+            }.singleOrNull() ?: return@inWriteTransaction null
             val fromUid = identity[FriendApplies.fromUid]
             val toUid = identity[FriendApplies.toUid]
-            lockUserPair(fromUid, toUid)
+            val users = lockUserPair(fromUid, toUid)
 
             val row = FriendApplies.selectAll().where {
                 (FriendApplies.token eq token) and (FriendApplies.toUid eq receiverUid)
             }.forUpdate().singleOrNull()
-                ?: return@transaction null
-            if (row[FriendApplies.status] != ContactApplyRecord.STATUS_PENDING) return@transaction null
+                ?: return@inWriteTransaction null
+            if (row[FriendApplies.status] != ContactApplyRecord.STATUS_PENDING) return@inWriteTransaction null
             val updatedAt = System.currentTimeMillis()
             FriendApplies.update({
                 (FriendApplies.fromUid eq fromUid) and
@@ -310,11 +361,8 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
                 token = null,
                 status = ContactApplyRecord.STATUS_REJECTED,
                 updatedAt = updatedAt,
-            )
-        } ?: return null
-
-        return result.toContactApply(userRepo.findByUid(result.fromUid))
-    }
+            ).toContactApply(users.getValue(fromUid).toUser())
+        }
 
     override fun listPendingApplies(uid: String): List<ContactApply> {
         val applies = transaction {
@@ -367,15 +415,45 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
      * 两人关系写操作的唯一串行化锁。调用方必须已经位于 Exposed transaction 内；本方法不创建
      * 嵌套事务。所有入口都让 PostgreSQL 依相同的 uid 排序取得 Users 行锁，避免 A→B / B→A 死锁。
      */
-    private fun lockUserPair(firstUid: String, secondUid: String) {
+    private fun lockUserPair(firstUid: String, secondUid: String): Map<String, ResultRow> {
         val expected = setOf(firstUid, secondUid)
         val locked = Users.selectAll()
             .where { Users.uid inList expected.toList() }
             .orderBy(Users.uid, SortOrder.ASC)
             .forUpdate()
-            .map { it[Users.uid] }
-        require(locked.toSet() == expected) { "联系人双方用户必须存在" }
+            .associateBy { it[Users.uid] }
+        require(locked.keys == expected) { "联系人双方用户必须存在" }
+        return locked
     }
+
+    private inline fun <T> inWriteTransaction(
+        context: PgTransactionContext,
+        block: Transaction.() -> T,
+    ): T = context.requireExposedTransaction().block()
+
+    private fun activeContact(uid: String, friendUid: String, friendUser: User): Contact {
+        val row = Friends.selectAll().where {
+            (Friends.uid eq uid) and (Friends.friendUid eq friendUid) and (Friends.status eq 1)
+        }.single()
+        return Contact(
+            uid = uid,
+            friendUid = friendUid,
+            remark = row[Friends.remark],
+            status = 1,
+            user = friendUser,
+        )
+    }
+
+    private fun ResultRow.toUser() = User(
+        uid = this[Users.uid],
+        username = this[Users.username],
+        name = this[Users.name],
+        avatar = this[Users.avatar],
+        phone = this[Users.phone],
+        sex = this[Users.sex],
+        role = this[Users.role],
+        status = this[Users.status],
+    )
 
     private fun FriendApplyRow.toRecord(viewerUid: String): ContactApplyRecord {
         require(viewerUid == fromUid || viewerUid == toUid) { "申请记录不属于当前用户" }
@@ -399,7 +477,7 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
         )
     }
 
-    private fun FriendApplyRow.toContactApply(fromUser: com.virjar.tk.model.User?): ContactApply = ContactApply(
+    private fun FriendApplyRow.toContactApply(fromUser: User?): ContactApply = ContactApply(
         id = id,
         fromUid = fromUid,
         toUid = toUid,
@@ -420,8 +498,6 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
         createdAt = this[FriendApplies.createdAt],
         updatedAt = this[FriendApplies.updatedAt],
     )
-
-    private data class FriendApplyCreationRow(val row: FriendApplyRow, val created: Boolean)
 
     private data class FriendApplyRow(
         val id: Long,

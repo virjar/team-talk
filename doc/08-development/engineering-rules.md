@@ -11,6 +11,9 @@
 - 每个长期对象有唯一所有者，owner 销毁时级联销毁。
 - `close/destroy` 幂等。
 - 网络断开只清连接层；AUTH_FAILED 清用户层。
+- 大附件传输必须使用已知长度、可重复打开的分块 source；禁止用 `File.readBytes()` 或
+  `InputStream.readBytes()` 回退。HTTP Repository 固定 server 与 owner uid，每请求读取同会话最新
+  token，uid 变化或 owner 关闭后失败关闭。
 
 ## 2. 协议
 
