@@ -7,6 +7,7 @@ import com.virjar.tk.client.MessagePager
 import com.virjar.tk.model.Message
 import com.virjar.tk.repository.MessageRepository
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -52,6 +53,7 @@ class ChatViewModel(
     val typingUid: StateFlow<String?> = _typingUid.asStateFlow()
 
     private var typingJob: Job? = null
+    private val readReceipts = ReadReceiptQueue(scope, ::syncReadWatermark)
 
     init {
         // 监听本地消息窗口变化（pager 创建时已从 DB 加载最近窗口）
@@ -59,9 +61,9 @@ class ChatViewModel(
             pager.messages.collect { _messages.value = it }
         }
 
-        // 从服务端拉取最新消息（写入 LocalCache 后 pager 自动看到）
-        // loadHistory 成功后会触发 markRead（确保 _messages 已填充最新 seq）
-        loadHistory(markReadAfter = true)
+        // 从服务端拉取最新消息（写入 LocalCache 后 pager 自动看到）。是否已读只由
+        // 实际可见的 ChatPanel 决定，后台 ViewModel 不得因同步历史而消费红点。
+        loadHistory()
 
         // 监听 typing 事件
         scope.launch {
@@ -80,13 +82,12 @@ class ChatViewModel(
     }
 
     /** 从服务端拉取最新消息（同步到本地 DB，pager 自动更新）。 */
-    fun loadHistory(markReadAfter: Boolean = false) {
+    fun loadHistory() {
         scope.launch {
             try {
                 _loading.value = true
                 val latest = messageRepo.getHistory(chatId, fromSeq = 0, limit = HISTORY_PAGE_SIZE).getOrThrow()
                 _remoteHasMore.value = latest.size == HISTORY_PAGE_SIZE
-                if (markReadAfter) markRead()
             } catch (e: AppError.AuthExpired) {
                 handleAuthExpired()
             } catch (e: Exception) {
@@ -201,21 +202,29 @@ class ChatViewModel(
      * 标记已读。
      * @param seq 显式指定的 readSeq；null 时取当前消息列表的最新 seq。
      *
-     * 关键：服务端 markRead 成功后**立即本地清零 unreadCount**，不依赖
-     * CONVERSATION_UPDATED 通知回环——自己发消息不会触发该通知。
+     * 关键：请求由单一队列合并、串行提交；RPC 成功后才推进本地确认水位。这样既不会
+     * 在网络失败时永久吞掉未读，也不会让消息突发产生并发 READ_SYNC 风暴。
      */
     fun markRead(seq: Long? = null) {
-        scope.launch {
-            try {
-                val readSeq = seq ?: _messages.value.firstOrNull()?.serverSeq ?: return@launch
-                messageRepo.markRead(chatId, readSeq).getOrThrow()
-                // 本地立即清零未读数，红点即时消失
-                localCache.markConversationRead(chatId, readSeq)
-            } catch (e: AppError.AuthExpired) {
-                handleAuthExpired()
-            } catch (e: Exception) {
-                com.virjar.tk.util.AppLog.trace("ChatViewModel", "markRead failed: ${e.message}")
-            }
+        val readSeq = seq ?: _messages.value.maxOfOrNull(Message::serverSeq) ?: return
+        if (readSeq > 0L) readReceipts.request(readSeq)
+    }
+
+    private suspend fun syncReadWatermark(readSeq: Long): Boolean {
+        return try {
+            messageRepo.markRead(chatId, readSeq).getOrThrow()
+            // Persist only after the RPC succeeds. Without a durable read outbox, optimistic
+            // persistence would permanently hide server unread state after a failed request.
+            localCache.markConversationRead(chatId, readSeq)
+            true
+        } catch (e: AppError.AuthExpired) {
+            handleAuthExpired()
+            false
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            com.virjar.tk.util.AppLog.trace("ChatViewModel", "markRead failed: ${e.message}")
+            false
         }
     }
 
@@ -257,11 +266,42 @@ class ChatViewModel(
 
     /** 释放内存窗口（Phase C LRU 治理）。 */
     override fun destroy() {
+        readReceipts.close()
         localCache.onChatInactive(chatId)
         super.destroy()
     }
 
     private companion object {
         const val HISTORY_PAGE_SIZE = 10
+    }
+}
+
+/** Serializes read receipts and collapses every waiting burst to its highest sequence. */
+internal class ReadReceiptQueue(
+    scope: kotlinx.coroutines.CoroutineScope,
+    private val synchronize: suspend (Long) -> Boolean,
+) {
+    private val requests = Channel<Long>(Channel.UNLIMITED)
+    private val worker = scope.launch {
+        var desired = 0L
+        var confirmed = 0L
+        for (first in requests) {
+            desired = maxOf(desired, first)
+            while (true) {
+                val next = requests.tryReceive().getOrNull() ?: break
+                desired = maxOf(desired, next)
+            }
+            if (desired <= confirmed) continue
+            if (synchronize(desired)) confirmed = desired
+        }
+    }
+
+    fun request(readSeq: Long) {
+        if (readSeq > 0L) requests.trySend(readSeq)
+    }
+
+    fun close() {
+        requests.close()
+        worker.cancel()
     }
 }

@@ -2,14 +2,19 @@ package com.virjar.tk.api
 
 import com.virjar.tk.domain.bot.BotAuthenticationException
 import com.virjar.tk.domain.bot.BotAuthorizationException
+import com.virjar.tk.domain.bot.BotMessageDelivery
 import com.virjar.tk.domain.bot.BotRateLimitException
 import com.virjar.tk.domain.bot.BotRequestException
 import com.virjar.tk.domain.bot.BotService
 import com.virjar.tk.domain.bot.GroupBotManagement
 import com.virjar.tk.domain.auth.TokenRepository
+import com.virjar.tk.http.BOT_IDEMPOTENCY_KEY_HEADER
 import com.virjar.tk.http.CreateGroupBotRequest
+import com.virjar.tk.http.GroupBotMessageRequest
+import com.virjar.tk.http.GroupBotMessageResponse
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.receive
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -18,41 +23,97 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 import kotlinx.serialization.Serializable
+import java.util.UUID
 
+/** Compatibility body for the original multi-grant/system-bot webhook. */
 @Serializable
-data class BotMessageRequest(
+private data class LegacyBotMessageRequest(
     val chatId: String,
     val markdown: String,
     val idempotencyKey: String,
 )
 
-/** 外部系统通知入口。token 只代表一个 bot，chatId 还必须通过显式授权白名单。 */
+/** External bot delivery plus access-token-authenticated group management. */
 fun Route.botRoutes(service: BotService, tokenStore: TokenRepository) {
+    targetBoundBotMessageRoutes(service)
+    legacyBotMessageRoutes(service)
+    groupBotRoutes(service, tokenStore)
+}
+
+/**
+ * Canonical target-bound webhook. The URL chatId is the sole delivery destination; any legacy
+ * JSON fields are ignored by [GroupBotMessageRequest] and can never redirect the message.
+ */
+internal fun Route.targetBoundBotMessageRoutes(
+    service: BotMessageDelivery,
+    newIdempotencyKey: () -> String = { UUID.randomUUID().toString() },
+) {
+    post("/api/v1/groups/{chatId}/bots/{botId}/messages") {
+        val chatId = call.parameters["chatId"]
+            ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "chatId required"))
+        val botId = call.parameters["botId"]
+            ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "botId required"))
+        try {
+            val request = call.receive<GroupBotMessageRequest>()
+            val idempotencyKey = call.request.headers[BOT_IDEMPOTENCY_KEY_HEADER] ?: newIdempotencyKey()
+            service.deliver(
+                botId = botId,
+                token = call.botBearerToken(),
+                chatId = chatId,
+                markdown = request.markdown,
+                idempotencyKey = idempotencyKey,
+            )
+            call.respond(GroupBotMessageResponse(ok = true))
+        } catch (error: IllegalArgumentException) {
+            call.respondBotDeliveryError(error)
+        }
+    }
+}
+
+/**
+ * Legacy direct-bot webhook retained for deployed system integrations that choose a grant in JSON.
+ * Group-facing API paths never point here.
+ */
+internal fun Route.legacyBotMessageRoutes(service: BotMessageDelivery) {
     route("/api/v1/bots") {
         post("/{botId}/messages") {
             val botId = call.parameters["botId"]
                 ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "botId required"))
-            val token = call.request.headers[HttpHeaders.Authorization]
-                ?.removePrefix("Bearer ")
-                ?.takeIf(String::isNotBlank)
-            val request = call.receive<BotMessageRequest>()
             try {
-                call.respond(service.deliver(botId, token, request.chatId, request.markdown, request.idempotencyKey))
-            } catch (_: BotAuthenticationException) {
-                call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "invalid bot credentials"))
-            } catch (e: BotAuthorizationException) {
-                call.respond(HttpStatusCode.Forbidden, mapOf("error" to (e.message ?: "request rejected")))
-            } catch (e: BotRateLimitException) {
-                call.respond(HttpStatusCode.TooManyRequests, mapOf("error" to (e.message ?: "rate limited")))
-            } catch (e: BotRequestException) {
-                call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "invalid request")))
-            } catch (e: IllegalArgumentException) {
-                call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "invalid request")))
+                val request = call.receive<LegacyBotMessageRequest>()
+                call.respond(
+                    service.deliver(
+                        botId = botId,
+                        token = call.botBearerToken(),
+                        chatId = request.chatId,
+                        markdown = request.markdown,
+                        idempotencyKey = request.idempotencyKey,
+                    ),
+                )
+            } catch (error: IllegalArgumentException) {
+                call.respondBotDeliveryError(error)
             }
         }
     }
+}
 
-    groupBotRoutes(service, tokenStore)
+private fun ApplicationCall.botBearerToken(): String? =
+    request.headers[HttpHeaders.Authorization]
+        ?.removePrefix("Bearer ")
+        ?.takeIf(String::isNotBlank)
+
+private suspend fun ApplicationCall.respondBotDeliveryError(error: IllegalArgumentException) {
+    when (error) {
+        is BotAuthenticationException ->
+            respond(HttpStatusCode.Unauthorized, mapOf("error" to "invalid bot credentials"))
+        is BotAuthorizationException ->
+            respond(HttpStatusCode.Forbidden, mapOf("error" to (error.message ?: "request rejected")))
+        is BotRateLimitException ->
+            respond(HttpStatusCode.TooManyRequests, mapOf("error" to (error.message ?: "rate limited")))
+        is BotRequestException ->
+            respond(HttpStatusCode.BadRequest, mapOf("error" to (error.message ?: "invalid request")))
+        else -> respond(HttpStatusCode.BadRequest, mapOf("error" to (error.message ?: "invalid request")))
+    }
 }
 
 internal fun Route.groupBotRoutes(service: GroupBotManagement, tokenStore: TokenRepository) {

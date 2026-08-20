@@ -176,7 +176,7 @@ MCP 是适配层，不是新的权限边界。模型能做什么取决于 agent 
 
 只需要由 CI、监控或审批系统主动向群发通知时，不应启动持有完整客户端身份的 ImBot。当前群成员可以从
 群设置创建通知机器人，保存 TeamTalk 一次性签发的 `ttb_...` token，再把页面给出的入站通知 URL
-交给外部系统调用。
+交给外部系统调用。URL 已绑定目标群，调用正文只需要 Markdown，不需要让外部系统另外维护 chatId。
 
 完整的群内工作流、HTTP 契约、curl/Python/GitHub Actions 示例、错误码和凭据安全边界见
 [通知机器人接入](notification-bots.md)。通知机器人是单向、最小权限身份；ImBot/tt-agent 是可以

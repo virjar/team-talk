@@ -30,7 +30,7 @@
 1. 当前群成员打开目标群，进入“群设置”。
 2. 选择“机器人”，点击“添加机器人”。
 3. 输入便于群成员识别的名称，例如“发布通知”或“生产告警”。
-4. 创建成功后，页面会显示入站通知 URL 和以 `ttb_` 开头的 Bearer token。
+4. 创建成功后，页面会显示已经绑定当前群的入站通知 URL 和以 `ttb_` 开头的 Bearer token。
 5. 立即把 URL 和 token 保存到调用系统的密钥库。确认已安全保存后再关闭凭据弹窗。
 
 token 只在创建或轮换时显示一次。服务端只保存不可恢复的哈希；遗失后无法查看原 token，
@@ -56,47 +56,39 @@ token 只在创建或轮换时显示一次。服务端只保存不可恢复的�
 页面给出的 URL 应当是完整的 TeamTalk HTTPS 地址，形如：
 
 ```text
-https://im.example.com/api/v1/bots/<botId>/messages
+https://im.example.com/api/v1/groups/<chatId>/bots/<botId>/messages
 ```
+
+URL 已经绑定目标群和机器人。调用方只需原样保存、调用，不需要另外读取、配置或提交群 ID，也不应
+自行拼接路径。
 
 调用方在 HTTP Header 中携带 Bot token，不得把 token 拼进 URL 或 query string：
 
 ```http
-POST /api/v1/bots/<botId>/messages HTTP/1.1
+POST /api/v1/groups/<chatId>/bots/<botId>/messages HTTP/1.1
 Host: im.example.com
 Authorization: Bearer ttb_<only-shown-once>
 Content-Type: application/json
 
 {
-  "chatId": "<granted-group-chat-id>",
-  "markdown": "## 构建完成\n\n版本 `1.2.3` 已发布。",
-  "idempotencyKey": "deploy-production-1.2.3"
+  "markdown": "## 构建完成\n\n版本 `1.2.3` 已发布。"
 }
 ```
 
 成功返回 HTTP 200：
 
 ```json
-{
-  "chatId": "<granted-group-chat-id>",
-  "serverSeq": 12345,
-  "clientMsgId": "bot-..."
-}
+{ "ok": true }
 ```
 
 字段约束：
 
 | 字段 | 约束 |
 |---|---|
-| `chatId` | 必须是当前机器人已获授权的群；群成员创建的机器人只能使用创建时所在群 |
 | `markdown` | 非空，最多 20,000 个字符 |
-| `idempotencyKey` | 1–120 个字符；同一业务事件的所有重试必须复用同一个 key |
 
-`botId + chatId + idempotencyKey` 共同决定幂等消息身份。同一 key 的重试应使用完全相同的正文；
-不要把已用过的 key 用于另一条消息。
-
-单节点默认对每个机器人限制 120 次/分钟，包括幂等重试。调用方应对网络错误、5xx 和 429
-做有上限的退避重试，并在重试时保持原 `idempotencyKey`。
+单节点默认对每个机器人限制 120 次/分钟。调用方应对 429 和 5xx 做有上限的退避；如果业务不能
+接受网络超时后的潜在重复通知，请使用后文的“高级重试”机制。
 
 ## 4. Markdown 内容
 
@@ -113,12 +105,11 @@ TeamTalk 支持的 Markdown 展示，也不接收远程文件 URL 或附件字�
 
 ## 5. curl 示例
 
-先从密钥管理系统注入 URL、token 和群 ID。本地临时验收时，可用隐藏输入读取 token，
+先从密钥管理系统注入 URL 和 token。本地临时验收时，可用隐藏输入读取 token，
 避免它进入 shell 历史：
 
 ```bash
-export TEAMTALK_BOT_URL='https://im.example.com/api/v1/bots/<botId>/messages'
-export TEAMTALK_CHAT_ID='<granted-group-chat-id>'
+export TEAMTALK_BOT_URL='https://im.example.com/api/v1/groups/<chatId>/bots/<botId>/messages'
 read -rsp 'TeamTalk bot token: ' TEAMTALK_BOT_TOKEN
 echo
 
@@ -127,10 +118,8 @@ curl --fail-with-body --silent --show-error \
   --header "Authorization: Bearer $TEAMTALK_BOT_TOKEN" \
   --header 'Content-Type: application/json' \
   --data "$(jq -n \
-    --arg chatId "$TEAMTALK_CHAT_ID" \
     --arg markdown $'## 构建完成\n\n版本 `1.2.3` 已发布。' \
-    --arg key 'deploy-production-1.2.3' \
-    '{chatId: $chatId, markdown: $markdown, idempotencyKey: $key}')"
+    '{markdown: $markdown}')"
 
 unset TEAMTALK_BOT_TOKEN
 ```
@@ -146,12 +135,9 @@ import urllib.request
 
 url = os.environ["TEAMTALK_BOT_URL"]
 token = os.environ["TEAMTALK_BOT_TOKEN"]
-chat_id = os.environ["TEAMTALK_CHAT_ID"]
 
 payload = json.dumps({
-    "chatId": chat_id,
     "markdown": "## 构建完成\n\n版本 `1.2.3` 已发布。",
-    "idempotencyKey": "deploy-production-1.2.3",
 }).encode("utf-8")
 
 request = urllib.request.Request(
@@ -166,7 +152,9 @@ request = urllib.request.Request(
 
 with urllib.request.urlopen(request, timeout=15) as response:
     result = json.load(response)
-    print(f"delivered: chat={result['chatId']} seq={result['serverSeq']}")
+    if result != {"ok": True}:
+        raise RuntimeError(f"unexpected TeamTalk response: {result}")
+    print("TeamTalk notification delivered")
 ```
 
 ## 7. GitHub Actions 示例
@@ -174,7 +162,6 @@ with urllib.request.urlopen(request, timeout=15) as response:
 在 GitHub 仓库或 Environment 中配置：
 
 - Variable `TEAMTALK_BOT_URL`：页面给出的完整入站通知 URL；
-- Variable `TEAMTALK_CHAT_ID`：已授权的群 ID；
 - Secret `TEAMTALK_BOT_TOKEN`：一次性 `ttb_...` token。
 
 ```yaml
@@ -192,42 +179,54 @@ jobs:
       - name: Send TeamTalk notification
         env:
           TEAMTALK_BOT_URL: ${{ vars.TEAMTALK_BOT_URL }}
-          TEAMTALK_CHAT_ID: ${{ vars.TEAMTALK_CHAT_ID }}
           TEAMTALK_BOT_TOKEN: ${{ secrets.TEAMTALK_BOT_TOKEN }}
           RESULT: ${{ github.event.workflow_run.conclusion }}
           RUN_URL: ${{ github.event.workflow_run.html_url }}
-          IDEMPOTENCY_KEY: build-${{ github.event.workflow_run.id }}
         run: |
           markdown="$(printf '## Build %s\n\nRun: %s' "$RESULT" "$RUN_URL")"
           payload="$(jq -n \
-            --arg chatId "$TEAMTALK_CHAT_ID" \
             --arg markdown "$markdown" \
-            --arg key "$IDEMPOTENCY_KEY" \
-            '{chatId: $chatId, markdown: $markdown, idempotencyKey: $key}')"
+            '{markdown: $markdown}')"
           curl --fail-with-body --silent --show-error \
-            --retry 3 --retry-delay 2 \
             --request POST "$TEAMTALK_BOT_URL" \
             --header "Authorization: Bearer $TEAMTALK_BOT_TOKEN" \
             --header 'Content-Type: application/json' \
             --data "$payload"
 ```
 
-同一 workflow run 的所有传输重试都使用同一 `IDEMPOTENCY_KEY`，不会因网络超时重复生成消息。
+URL 自身已经确定接收群，因此 GitHub 中不需要再维护群 ID。默认示例只发送一次，避免在结果不明的
+网络超时后自动重复通知；需要自动重试时，使用下一节的高级机制。
 
-## 8. 错误码与处理
+## 8. 高级重试（可选）
+
+普通调用不需要幂等参数。只有调用方会在网络超时、429 或 5xx 后自动重试，并且不能接受重复通知时，
+才应额外发送 `Idempotency-Key` Header：
+
+```http
+Idempotency-Key: deploy-production-1.2.3
+```
+
+key 长度为 1–120 个字符，应由调用方使用稳定的业务事件 ID 生成。同一业务事件的所有尝试必须使用
+相同 URL、相同 key 和完全相同的 Markdown；服务端会把它们识别为同一次投递。同一个 key 如果配上
+不同正文会被拒绝。新的业务事件必须使用新 key。
+
+不发送该 Header 时，每个请求都是一次独立通知。`Idempotency-Key` 只用于重试去重，不代替 Bot token，
+也不能改变 URL 已经绑定的目标群。单节点每机器人 120 次/分钟的限制仍会计算所有请求尝试。
+
+## 9. 错误码与处理
 
 | HTTP 状态 | 含义 | 调用方处理 |
 |---|---|---|
-| `200` | 消息已被 TeamTalk 接受 | 记录 `serverSeq`，结束重试 |
-| `400` | 正文、幂等键或其他请求参数不合法 | 修正请求，不要盲目重试 |
+| `200` | 消息已被 TeamTalk 接受，响应为 `{ "ok": true }` | 结束调用或重试 |
+| `400` | Markdown、可选幂等 Header 或其他请求参数不合法 | 修正请求，不要盲目重试 |
 | `401` | token 缺失、错误、已轮换，或机器人已停用 | 核对凭据和机器人状态 |
-| `403` | 机器人未获目标群授权，或当前不允许发送 | 请创建者、群管理员或群主检查当前群授权，不要继续重试 |
-| `429` | 单节点每 bot 120 次/分钟限制已触发 | 退避后使用原幂等键重试 |
-| `5xx` | TeamTalk 服务暂时失败 | 有上限地退避重试，保持原幂等键 |
+| `403` | URL 对应机器人未获目标群授权，或当前不允许发送 | 请创建者、群管理员或群主检查机器人状态，不要继续重试 |
+| `429` | 单节点每 bot 120 次/分钟限制已触发 | 有上限地退避；启用高级重试时保持原 key 和正文 |
+| `5xx` | TeamTalk 服务暂时失败 | 有上限地退避；启用高级重试时保持原 key 和正文 |
 
 错误响应使用 `{ "error": "..." }`。不要依赖自然语言错误文案做程序分支，应以 HTTP 状态为主。
 
-## 9. 凭据轮换、移除与泄露处置
+## 10. 凭据轮换、移除与泄露处置
 
 ### 轮换凭据
 
@@ -255,13 +254,13 @@ jobs:
 检查最近机器人消息，并从历史、日志、截图和代码仓库中清理泄露值。群主或群管理员无法代替创建者
 查看或轮换 token；在等待创建者处置期间，应先把该机器人从当前群移除。
 
-## 10. 安全边界
+## 11. 安全边界
 
 - 只通过 HTTPS 向入站通知 URL 发送 Bot token。
 - token 只放在 `Authorization` Header，不放在 URL、代码、日志、报错或截图中。
-- 群成员创建的机器人固定授权给创建时所在群；系统下发机器人也必须使用服务端显式群授权。不能靠
-  隐藏 `chatId` 代替权限控制。
-- 入站通知 URL 中的 botId 不是密钥；即使知道 URL，没有 token 和群授权也不能发送。
+- 群成员创建的机器人固定授权给创建时所在群；URL 中的目标群由服务端生成并校验，请求正文不能
+  指定或改写目标。系统下发机器人同样必须具备服务端显式群授权。
+- 入站通知 URL 中的 chatId 和 botId 都不是密钥；即使知道 URL，没有 token 和群授权也不能发送。
 - 不得使用管理员凭据、普通用户 access/refresh token 或 tt-agent token 调用通知端点。
 - 单节点限速不是跨节点防滥用系统；多节点共享配额和持久化调用审计仍是后续能力。
 
@@ -275,7 +274,7 @@ jobs:
 | tt-agent API token | 本机 tt-agent | 本机 loopback REST | 否 |
 | AI/云服务 API Key | 第三方服务 | 调用第三方产品 | 否 |
 
-## 11. 与 ImBot / tt-agent 的区别
+## 12. 与 ImBot / tt-agent 的区别
 
 | 能力 | 通知机器人 | ImBot | tt-agent |
 |---|---|---|---|

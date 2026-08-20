@@ -328,7 +328,8 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
      * 本地与服务端 Conversation 合并策略。
      *
      * readSeq 服务端权威持久化（Commit 7f91d58 修复 markRead 不再 no-op + 会话行预创建），
-     * unreadCount = lastSeq - readSeq 由服务端权威计算，客户端直接信任。
+     * unreadCount 与服务端使用同一 lastSeq - readSeq 模型；合并单调水位后重新计算，
+     * 避免迟到事件覆盖更新摘要或复活/隐藏红点。
      *
      * 仍需本地合并的三项（纯客户端状态/水位线）：
      * - readSeq: 取 max（本地 markRead 可能比服务端通知先到，水位线只增不减）
@@ -340,8 +341,20 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
         remote: Conversation,
         draftOverride: LocalDraftOverride? = localDraftOverrides[remote.chatId],
     ): Conversation {
+        val mergedReadSeq = maxOf(local.readSeq, remote.readSeq)
+        val latestMessage = if (remote.lastSeq >= local.lastSeq) remote else local
         return remote.copy(
-            readSeq = maxOf(local.readSeq, remote.readSeq),
+            lastMessage = latestMessage.lastMessage,
+            lastMessageType = latestMessage.lastMessageType,
+            lastMsgTimestamp = latestMessage.lastMsgTimestamp,
+            lastSeq = latestMessage.lastSeq,
+            readSeq = mergedReadSeq,
+            // A CONVERSATION_UPDATED event produced before our markRead request can arrive late.
+            // Once the local watermark already covers that event's latest message, accepting its
+            // stale unread count would resurrect a badge that the user just cleared.
+            unreadCount = (latestMessage.lastSeq - mergedReadSeq)
+                .coerceIn(0L, Int.MAX_VALUE.toLong())
+                .toInt(),
             peerReadSeq = maxOf(local.peerReadSeq, remote.peerReadSeq),
             draft = if (draftOverride != null) draftOverride.draft else remote.draft,
         )
@@ -359,9 +372,18 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     }
 
     override fun markConversationRead(chatId: String, readSeq: Long) {
-        queries.markConversationRead(readSeq, chatId)
-        updateFlow(conversationsFlow) { current ->
-            current.map { if (it.chatId == chatId) it.copy(unreadCount = 0, readSeq = readSeq) else it }
+        synchronized(stateLock) {
+            queries.markConversationRead(readSeq, chatId)
+            conversationsFlow.value = conversationsFlow.value.map {
+                if (it.chatId != chatId) return@map it
+                val mergedReadSeq = maxOf(it.readSeq, readSeq)
+                it.copy(
+                    unreadCount = (it.lastSeq - mergedReadSeq)
+                        .coerceIn(0L, Int.MAX_VALUE.toLong())
+                        .toInt(),
+                    readSeq = mergedReadSeq,
+                )
+            }
         }
     }
 

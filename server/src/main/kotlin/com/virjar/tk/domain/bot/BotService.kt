@@ -31,6 +31,16 @@ data class CreatedAutomationBot(val bot: AutomationBot, val webhookToken: String
 @Serializable
 data class BotDeliveryResult(val chatId: String, val serverSeq: Long, val clientMsgId: String)
 
+interface BotMessageDelivery {
+    suspend fun deliver(
+        botId: String,
+        token: String?,
+        chatId: String,
+        markdown: String,
+        idempotencyKey: String,
+    ): BotDeliveryResult
+}
+
 interface GroupBotManagement {
     fun listForGroup(actorUid: String, chatId: String): List<GroupBotSummary>
     suspend fun createForGroup(actorUid: String, chatId: String, name: String): GroupBotCredentials
@@ -47,7 +57,7 @@ class BotService(
     private val messages: MessageService,
     private val lifecycleGate: ChatLifecycleGate,
     private val rateLimitPerMinute: Int = DEFAULT_RATE_LIMIT_PER_MINUTE,
-) : GroupBotManagement {
+) : GroupBotManagement, BotMessageDelivery {
     private val random = SecureRandom()
     private val deliveryWindows = ConcurrentHashMap<String, DeliveryWindow>()
     private val creationWindows = ConcurrentHashMap<String, CreationWindow>()
@@ -75,7 +85,7 @@ class BotService(
                     throw error
                 }
                 GroupBotCredentials(
-                    bot = requireBot(created.bot.botId).toGroupSummary(actorUid, actorRole),
+                    bot = requireBot(created.bot.botId).toGroupSummary(actorUid, actorRole, chatId),
                     webhookToken = created.webhookToken,
                 )
             }
@@ -84,7 +94,7 @@ class BotService(
 
     override fun listForGroup(actorUid: String, chatId: String): List<GroupBotSummary> {
         val actorRole = requireGroupMember(actorUid, chatId).role
-        return repository.listForChat(chatId).map { it.toGroupSummary(actorUid, actorRole) }
+        return repository.listForChat(chatId).map { it.toGroupSummary(actorUid, actorRole, chatId) }
     }
 
     override fun rotateTokenForGroup(actorUid: String, chatId: String, botId: String): GroupBotCredentials {
@@ -94,7 +104,7 @@ class BotService(
             throw BotAuthorizationException("只有机器人创建者可以轮换 Token")
         }
         val rotated = rotateToken(botId)
-        return GroupBotCredentials(rotated.bot.toGroupSummary(actorUid, actorRole), rotated.webhookToken)
+        return GroupBotCredentials(rotated.bot.toGroupSummary(actorUid, actorRole, chatId), rotated.webhookToken)
     }
 
     override suspend fun removeFromGroup(actorUid: String, chatId: String, botId: String) {
@@ -173,7 +183,7 @@ class BotService(
         return requireBot(botId)
     }
 
-    suspend fun deliver(
+    override suspend fun deliver(
         botId: String,
         token: String?,
         chatId: String,
@@ -295,7 +305,7 @@ class BotService(
         }
     }
 
-    private fun AutomationBot.toGroupSummary(actorUid: String, actorRole: Int): GroupBotSummary {
+    private fun AutomationBot.toGroupSummary(actorUid: String, actorRole: Int, chatId: String): GroupBotSummary {
         val managedHere = managedChatId?.let(grantedChatIds::contains) == true
         val createdByCaller = managedHere && createdByUid == actorUid
         return GroupBotSummary(
@@ -304,7 +314,7 @@ class BotService(
             status = status,
             lastUsedAt = lastUsedAt,
             createdAt = createdAt,
-            apiPath = "/api/v1/bots/$botId/messages",
+            apiPath = "/api/v1/groups/$chatId/bots/$botId/messages",
             groupManaged = managedHere,
             createdByMe = createdByCaller,
             canRotateToken = createdByCaller,

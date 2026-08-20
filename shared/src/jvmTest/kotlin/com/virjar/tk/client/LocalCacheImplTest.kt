@@ -76,14 +76,54 @@ class LocalCacheImplTest {
     }
 
     @Test
-    fun `mergeConversation - readSeq 与 peerReadSeq 取 max 不回退`() {
+    fun `mergeConversation - readSeq 与 peerReadSeq 取 max 且已清红点不复活`() {
         val cache = newCache()
-        cache.upsertConversation(conv("c1", readSeq = 100, peer = 50, unread = 0))
+        cache.upsertConversation(conv("c1", readSeq = 100, peer = 50, unread = 0).copy(lastSeq = 100))
         // 服务端滞后通知（readSeq 更小）不得回退本地水位线
-        cache.upsertConversation(conv("c1", readSeq = 80, peer = 60, unread = 5))
+        cache.upsertConversation(conv("c1", readSeq = 80, peer = 60, unread = 5).copy(lastSeq = 100))
         val merged = cache.getConversations().first { it.chatId == "c1" }
         assertEquals(100L, merged.readSeq, "readSeq 水位线只增不减")
         assertEquals(60L, merged.peerReadSeq, "peerReadSeq 水位线只增不减")
+        assertEquals(0, merged.unreadCount, "迟到的会话事件不得复活已经清除的红点")
+    }
+
+    @Test
+    fun `mergeConversation keeps a newer local message tuple when an older event arrives late`() {
+        val cache = newCache()
+        cache.upsertConversation(
+            conv("c1", readSeq = 100, unread = 1, ts = 1010)
+                .copy(lastSeq = 101, lastMessage = "newer", lastMessageType = 2),
+        )
+
+        cache.upsertConversation(
+            conv("c1", readSeq = 100, unread = 0, ts = 1000)
+                .copy(lastSeq = 100, lastMessage = "stale", lastMessageType = 1),
+        )
+
+        val merged = cache.getConversations().single { it.chatId == "c1" }
+        assertEquals(101L, merged.lastSeq)
+        assertEquals("newer", merged.lastMessage)
+        assertEquals(2, merged.lastMessageType)
+        assertEquals(1, merged.unreadCount, "旧事件不能隐藏更新消息的未读")
+    }
+
+    @Test
+    fun `mergeConversation recomputes unread after a newer read watermark arrives in an older event`() {
+        val cache = newCache()
+        cache.upsertConversation(
+            conv("c1", readSeq = 90, unread = 11, ts = 1010)
+                .copy(lastSeq = 101, lastMessage = "newer"),
+        )
+
+        cache.upsertConversation(
+            conv("c1", readSeq = 100, unread = 0, ts = 1000)
+                .copy(lastSeq = 100, lastMessage = "stale"),
+        )
+
+        val merged = cache.getConversations().single { it.chatId == "c1" }
+        assertEquals(101L, merged.lastSeq)
+        assertEquals(100L, merged.readSeq)
+        assertEquals(1, merged.unreadCount)
     }
 
     @Test
@@ -104,11 +144,36 @@ class LocalCacheImplTest {
     @Test
     fun `markConversationRead 即时清零未读`() {
         val cache = newCache()
-        cache.upsertConversation(conv("c1", readSeq = 10, unread = 7))
+        cache.upsertConversation(conv("c1", readSeq = 10, unread = 7).copy(lastSeq = 17))
         cache.markConversationRead("c1", 17)
         val c = cache.getConversations().first { it.chatId == "c1" }
         assertEquals(0, c.unreadCount, "标记已读必须即时清零（不等服务端回环）")
         assertEquals(17L, c.readSeq)
+    }
+
+    @Test
+    fun `markConversationRead is monotonic and an older completion cannot regress it`() {
+        val cache = newCache()
+        cache.upsertConversation(conv("c1", readSeq = 10, unread = 7).copy(lastSeq = 20))
+
+        cache.markConversationRead("c1", 20)
+        cache.markConversationRead("c1", 17)
+
+        val conversation = cache.getConversations().first { it.chatId == "c1" }
+        assertEquals(20L, conversation.readSeq)
+        assertEquals(0, conversation.unreadCount)
+    }
+
+    @Test
+    fun `markConversationRead recomputes remaining unread when only part of the window is visible`() {
+        val cache = newCache()
+        cache.upsertConversation(conv("c1", readSeq = 10, unread = 10).copy(lastSeq = 20))
+
+        cache.markConversationRead("c1", 17)
+
+        val conversation = cache.getConversations().single { it.chatId == "c1" }
+        assertEquals(17L, conversation.readSeq)
+        assertEquals(3, conversation.unreadCount)
     }
 
     @Test

@@ -159,8 +159,9 @@ OrganizationService 根据节点子树幂等 reconciliation。受管群拒绝普
 准确发现、轮换和撤销。
 
 **决定**：AutomationBot 关联不可密码登录的 User 服务身份；高熵 token 只保存哈希，每个群使用显式
-grant。HTTP 入口只接受 Markdown、chatId 与幂等键，并复用 MessageService 完成成员、禁言、附件和
-消息投影语义。停用先撤权再移出群，启动时按 grant 修复成员投影。
+grant。HTTP 入口把 bot 与目标群编码在服务端签发的路径中，请求正文只接受 Markdown，并可通过独立
+`Idempotency-Key` Header 启用重试去重；调用方不能在正文中改写目标群。发送复用 MessageService
+完成成员、禁言、附件和消息投影语义。停用先撤权再移出群，启动时按 grant 修复成员投影。
 
 **结果**：机器人消息与普通消息共享显示、历史、搜索和 ACK 语义，外部系统不需要数据库或 TCP
 权限。当前仅是单向通知入口并使用进程内每 bot 限速；持久化审计、分布式配额和可靠事件回调仍需在

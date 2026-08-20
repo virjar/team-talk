@@ -3,6 +3,7 @@ package com.virjar.tk.integration
 import com.virjar.tk.body.RichTextBody
 import com.virjar.tk.domain.bot.BotAuthenticationException
 import com.virjar.tk.domain.bot.BotAuthorizationException
+import com.virjar.tk.domain.bot.BotRequestException
 import com.virjar.tk.model.UserRole
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -55,6 +56,25 @@ class BotIntegrationTest {
         )
         assertEquals(first.serverSeq, retried.serverSeq)
         assertEquals(first.clientMsgId, retried.clientMsgId)
+        assertFailsWith<BotRequestException> {
+            ctx.botService.deliver(created.bot.botId, created.webhookToken, group.chatId, "invalid key", "")
+        }
+        assertFailsWith<BotRequestException> {
+            ctx.botService.deliver(
+                created.bot.botId,
+                created.webhookToken,
+                group.chatId,
+                "invalid key",
+                "x".repeat(com.virjar.tk.domain.bot.BotService.MAX_IDEMPOTENCY_KEY_LENGTH + 1),
+            )
+        }
+
+        val unread = ctx.conversationService.listConversations(member).single { it.chatId == group.chatId }
+        assertTrue(unread.unreadCount > 0, "机器人消息应形成目标人类成员的未读")
+        ctx.conversationService.markRead(member, group.chatId, first.serverSeq)
+        val read = ctx.conversationService.listConversations(member).single { it.chatId == group.chatId }
+        assertEquals(first.serverSeq, read.readSeq)
+        assertEquals(0, read.unreadCount, "markRead 到机器人消息 seq 后应清零未读")
 
         val history = ctx.messageService.getHistory(owner, group.chatId, Long.MAX_VALUE, 10)
         val delivered = history.single { it.clientMsgId == first.clientMsgId }
@@ -168,6 +188,10 @@ class BotIntegrationTest {
 
         val created = ctx.botService.createForGroup(creator, group.chatId, "流水线通知")
         assertTrue(created.webhookToken.startsWith("ttb_"))
+        assertEquals(
+            "/api/v1/groups/${group.chatId}/bots/${created.bot.botId}/messages",
+            created.bot.apiPath,
+        )
         assertTrue(created.bot.createdByMe)
         assertTrue(created.bot.canRotateToken)
         assertTrue(created.bot.canRemove)
@@ -247,6 +271,10 @@ class BotIntegrationTest {
         val systemBot = ctx.botService.create("系统下发通知")
         ctx.botService.grant(systemBot.bot.botId, group.chatId)
         val systemView = ctx.botService.listForGroup(member, group.chatId).single()
+        assertEquals(
+            "/api/v1/groups/${group.chatId}/bots/${systemView.botId}/messages",
+            systemView.apiPath,
+        )
         assertFalse(systemView.groupManaged)
         assertFalse(systemView.canRotateToken)
         assertFalse(systemView.canRemove)

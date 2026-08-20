@@ -119,7 +119,6 @@ fun GroupBotsScreen(
     }
     credentials?.let { value ->
         GroupBotCredentialsDialog(
-            chatId = chatId,
             serverUrl = serverUrl,
             credentials = value,
             onDismiss = onDismissCredentials,
@@ -157,7 +156,7 @@ fun GroupBotsScreen(
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text("让外部系统向本群发通知", fontWeight = FontWeight.SemiBold)
                 Text(
-                    "TeamTalk 会生成固定的入站通知地址和一次性 Bot Token。它适合 CI、监控和审批系统，不需要填写第三方 API Key。",
+                    "TeamTalk 会生成已绑定本群的入站通知地址和一次性 Bot Token。它适合 CI、监控和审批系统，不需要再填写群 ID 或第三方 API Key。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -329,14 +328,13 @@ private fun GroupBotRow(
 
 @Composable
 private fun GroupBotCredentialsDialog(
-    chatId: String,
     serverUrl: String,
     credentials: GroupBotCredentials,
     onDismiss: () -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
     val endpoint = absoluteBotEndpoint(serverUrl, credentials.bot.apiPath)
-    val curl = botCurlExample(endpoint, credentials.webhookToken, chatId)
+    val curl = botCurlExample(endpoint, credentials.webhookToken)
     AlertDialog(
         // 凭据只显示一次，必须由用户显式确认；点击外部或系统 Back 不应误丢。
         onDismissRequest = {},
@@ -355,9 +353,11 @@ private fun GroupBotCredentialsDialog(
                 CredentialField("TeamTalk 入站通知 URL", endpoint) {
                     clipboard.setText(AnnotatedString(endpoint))
                 }
-                CredentialField("Chat ID", chatId) {
-                    clipboard.setText(AnnotatedString(chatId))
-                }
+                Text(
+                    "该 URL 已绑定当前群，请求正文只需要提供 Markdown。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 CredentialField("Bearer Token", credentials.webhookToken) {
                     clipboard.setText(AnnotatedString(credentials.webhookToken))
                 }
@@ -434,8 +434,8 @@ private fun GroupBotsEmpty(canCreate: Boolean, onAdd: () -> Unit, modifier: Modi
 internal fun absoluteBotEndpoint(serverUrl: String, apiPath: String): String =
     serverUrl.trimEnd('/') + "/" + apiPath.trimStart('/')
 
-internal fun botCurlExample(endpoint: String, token: String, chatId: String): String =
+internal fun botCurlExample(endpoint: String, token: String): String =
     """curl -X POST '$endpoint' \
   -H 'Authorization: Bearer $token' \
   -H 'Content-Type: application/json' \
-  -d '{"chatId":"$chatId","markdown":"## 构建完成\n\n版本已发布。","idempotencyKey":"deploy-20260820-1"}'"""
+  -d '{"markdown":"## 构建完成\n\n版本已发布。"}'"""

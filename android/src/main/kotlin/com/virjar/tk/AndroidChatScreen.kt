@@ -32,6 +32,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.virjar.tk.body.*
 import com.virjar.tk.model.ChatType
 import com.virjar.tk.model.Attachment
@@ -75,6 +76,7 @@ fun AndroidChatScreen(
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findComponentActivity() }
+    val routeLifecycleOwner = LocalLifecycleOwner.current
     val focusManager = LocalFocusManager.current
     val softwareKeyboardController = LocalSoftwareKeyboardController.current
     val attachmentServerUrl = serverUrl.ifBlank { com.virjar.tk.client.defaultServerConfig().serverUrl }
@@ -378,6 +380,16 @@ fun AndroidChatScreen(
     }
 
     // 离开聊天页和应用退到后台都必须释放麦克风；后台录音不自动发送残片。
+    var chatRouteResumed by remember(routeLifecycleOwner) {
+        mutableStateOf(routeLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
+    DisposableEffect(routeLifecycleOwner) {
+        val observer = LifecycleEventObserver { _, _ ->
+            chatRouteResumed = routeLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        }
+        routeLifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { routeLifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val latestCancelVoice by rememberUpdatedState(newValue = { cancelVoiceRecording() })
     DisposableEffect(activity, voiceRecording) {
         val observer = LifecycleEventObserver { _, event ->
@@ -424,6 +436,7 @@ fun AndroidChatScreen(
                     cacheNamespace = mediaCacheScope,
                 ),
                 mentionCandidates = mentionCandidates,
+                readReceiptsEnabled = chatRouteResumed,
                 media = com.virjar.tk.ui.bridge.ChatMediaConfig(
                     fileDownloads = fileDownloads,
                     onPickImage = { imagePicker.launch(PickVisualMediaRequest.Builder().setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly).build()) },

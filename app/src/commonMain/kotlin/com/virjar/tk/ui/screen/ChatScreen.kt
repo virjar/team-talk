@@ -140,6 +140,8 @@ fun ChatPanel(
     mentionCandidates: List<com.virjar.tk.model.User>? = null,
     /** 文本气泡可鼠标拖选复制（桌面 true；Android 走长按菜单「复制」，避免选择拦截长按菜单） */
     selectableText: Boolean = false,
+    /** Only an actually visible/foreground chat may consume unread messages. */
+    readReceiptsEnabled: Boolean,
 ) {
     // 统一入口：media 优先，回退到独立 lambda
     val effectiveAttachClick = media?.onAttachClick ?: onAttachClick
@@ -160,6 +162,17 @@ fun ChatPanel(
     val error by viewModel.error.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val messageListState = rememberLazyListState()
+
+    // A session keeps the current ChatViewModel alive while Android navigates back to the
+    // conversation list. Re-entering that same chat therefore does not run the ViewModel init
+    // block again. Tie the read receipt to the actually visible panel instead: opening the panel
+    // clears an existing badge, and a newer message received while it remains visible advances
+    // the read watermark as well. Only confirmed server messages participate.
+    val latestVisibleServerSeq = messages.maxOfOrNull(Message::serverSeq)?.coerceAtLeast(0L) ?: 0L
+    val visibleReadTarget = visibleChatReadTarget(readReceiptsEnabled, latestVisibleServerSeq)
+    LaunchedEffect(viewModel, chatId, visibleReadTarget) {
+        visibleReadTarget?.let(viewModel::markRead)
+    }
 
     // reverseLayout puts index 0 at the bottom; reaching the highest message index means the user
     // has scrolled to the visual top. Keep a manual button below as a deterministic fallback.
@@ -1242,6 +1255,11 @@ fun ChatPanel(
     }
     } // CompositionLocalProvider(LocalFileDownloads)
 }
+
+internal fun visibleChatReadTarget(
+    readReceiptsEnabled: Boolean,
+    latestVisibleServerSeq: Long,
+): Long? = latestVisibleServerSeq.takeIf { readReceiptsEnabled && it > 0L }
 
 // ── 消息渲染常量 ──
 

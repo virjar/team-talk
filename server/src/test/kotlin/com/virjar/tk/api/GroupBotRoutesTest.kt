@@ -45,7 +45,10 @@ class GroupBotRoutesTest {
             header(HttpHeaders.Authorization, "Bearer $accessToken")
         }
         assertEquals(HttpStatusCode.OK, listed.status)
-        assertFalse("ttb_" in listed.bodyAsText(), "list responses must never contain bot credentials")
+        val listedBody = listed.bodyAsText()
+        assertFalse("ttb_" in listedBody, "list responses must never contain bot credentials")
+        assertTrue("/api/v1/groups/chat-1/bots/bot-1/messages" in listedBody)
+        assertFalse("\"apiPath\":\"/api/v1/bots/" in listedBody, "group UI must not receive the legacy webhook")
         assertEquals("member-1", service.lastActorUid)
         assertEquals("chat-1", service.lastChatId)
 
@@ -133,7 +136,7 @@ private class FakeGroupBotManagement(private val deny: Boolean = false) : GroupB
         status = 1,
         lastUsedAt = null,
         createdAt = 1,
-        apiPath = "/api/v1/bots/bot-1/messages",
+        apiPath = "/api/v1/groups/chat-1/bots/bot-1/messages",
         groupManaged = true,
         createdByMe = true,
         canRotateToken = true,

@@ -169,8 +169,18 @@ class FakeLocalCache : LocalCache {
             // 合并策略与 LocalCacheImpl 一致（简化版）
             val local = list[idx]
             val mergedReadSeq = maxOf(local.readSeq, incoming.readSeq)
-            val mergedUnread = if (local.readSeq >= incoming.readSeq && local.unreadCount == 0) 0 else incoming.unreadCount
-            list[idx] = incoming.copy(readSeq = mergedReadSeq, unreadCount = mergedUnread)
+            val latestMessage = if (incoming.lastSeq >= local.lastSeq) incoming else local
+            val mergedUnread = (latestMessage.lastSeq - mergedReadSeq)
+                .coerceIn(0L, Int.MAX_VALUE.toLong())
+                .toInt()
+            list[idx] = incoming.copy(
+                lastMessage = latestMessage.lastMessage,
+                lastMessageType = latestMessage.lastMessageType,
+                lastMsgTimestamp = latestMessage.lastMsgTimestamp,
+                lastSeq = latestMessage.lastSeq,
+                readSeq = mergedReadSeq,
+                unreadCount = mergedUnread,
+            )
         } else {
             list.add(incoming)
         }
@@ -223,7 +233,14 @@ class FakeLocalCache : LocalCache {
 
     override fun markConversationRead(chatId: String, readSeq: Long) {
         conversationsFlow.value = conversationsFlow.value.map {
-            if (it.chatId == chatId) it.copy(unreadCount = 0, readSeq = readSeq) else it
+            if (it.chatId != chatId) return@map it
+            val mergedReadSeq = maxOf(it.readSeq, readSeq)
+            it.copy(
+                unreadCount = (it.lastSeq - mergedReadSeq)
+                    .coerceIn(0L, Int.MAX_VALUE.toLong())
+                    .toInt(),
+                readSeq = mergedReadSeq,
+            )
         }
     }
 }

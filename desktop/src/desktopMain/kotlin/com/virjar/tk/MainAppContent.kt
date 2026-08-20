@@ -74,6 +74,34 @@ internal fun WindowScope.MainAppContent(
     onAuthExpired: () -> Unit,
 ) {
     val nav = rememberDesktopNav(session, onAuthExpired)
+    var mainWindowReadActive by remember(mainWindow) {
+        mutableStateOf(mainWindow.isVisible && mainWindow.isFocused)
+    }
+    DisposableEffect(mainWindow) {
+        fun updateReadActive() {
+            mainWindowReadActive = mainWindow.isVisible && mainWindow.isFocused
+        }
+        val focusListener = object : java.awt.event.WindowFocusListener {
+            override fun windowGainedFocus(event: java.awt.event.WindowEvent?) {
+                updateReadActive()
+            }
+
+            override fun windowLostFocus(event: java.awt.event.WindowEvent?) {
+                updateReadActive()
+            }
+        }
+        val componentListener = object : java.awt.event.ComponentAdapter() {
+            override fun componentShown(event: java.awt.event.ComponentEvent?) = updateReadActive()
+
+            override fun componentHidden(event: java.awt.event.ComponentEvent?) = updateReadActive()
+        }
+        mainWindow.addWindowFocusListener(focusListener)
+        mainWindow.addComponentListener(componentListener)
+        onDispose {
+            mainWindow.removeWindowFocusListener(focusListener)
+            mainWindow.removeComponentListener(componentListener)
+        }
+    }
     // 与 DesktopNav/ClientSession 同寿命；聊天页销毁只移除 UI，不会取消已入队的草稿镜像。
     val draftDispatcher = remember(nav) { DesktopDraftDispatcher(nav::saveDraft) }
     val conversations by nav.conversationViewModel.conversations.collectAsState()
@@ -219,7 +247,7 @@ internal fun WindowScope.MainAppContent(
                                 },
                                 onPinClick = { chatId, pinned -> nav.session.localCache.toggleConversationPin(chatId, pinned) },
                                 onMarkRead = { chatId, lastSeq ->
-                                    nav.session.localCache.markConversationRead(chatId, lastSeq)
+                                    nav.markConversationRead(chatId, lastSeq)
                                 },
                             )
                         }
@@ -316,6 +344,7 @@ internal fun WindowScope.MainAppContent(
                                     voicePlayback = voicePlayback,
                                     onMentionClick = nav::openProfile,
                                     mentionCandidates = mentionCandidates,
+                                    readReceiptsEnabled = mainWindowReadActive,
                                     onForward = { msg -> nav.openScreen(SubScreen.Forward(msg)) },
                                     onGroupSettings = { nav.openScreen(SubScreen.GroupDetail(nav.chatId!!)) },
                                 )
@@ -607,6 +636,7 @@ private fun ChatPanelWrapper(
     voicePlayback: com.virjar.tk.ui.component.VoicePlaybackController? = null,
     onMentionClick: ((uid: String) -> Unit)? = null,
     mentionCandidates: List<User> = emptyList(),
+    readReceiptsEnabled: Boolean,
 ) {
     val messagesState = viewModel.messages.collectAsState()
     val previewScope = rememberCoroutineScope()
@@ -714,6 +744,7 @@ private fun ChatPanelWrapper(
             voicePlayback = voicePlayback,
             mentionCandidates = mentionCandidates,
             selectableText = true,
+            readReceiptsEnabled = readReceiptsEnabled,
             onDraftChange = { draft ->
                 draftDispatcher.update(chatId, draft)
             },

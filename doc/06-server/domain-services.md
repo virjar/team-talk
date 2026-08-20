@@ -124,8 +124,9 @@ BotService 为每个通知应用创建 UserRole.BOT 服务账户。该账户的�
 也显式拒绝 BOT/SYSTEM。应用 token 使用 256-bit 随机值，数据库只保存 SHA-256。
 
 授权是 `(botId, chatId)` 白名单事实。grant 只接受群聊，并把服务身份加入群；revoke/disable 先撤销
-发送权，再移出群。发送使用由 `botId + chatId + idempotencyKey` 派生的 clientMsgId，随后进入正常
-MessageService，因此重试、历史、搜索、同步和部门群保留规则都与普通消息一致。
+发送权，再移出群。群绑定入口从 URL 取得 botId 与 chatId，正文只接收 Markdown，不能由调用方改写
+目标；可选 `Idempotency-Key` Header 与 bot/chat 派生稳定 clientMsgId。消息随后进入正常
+MessageService，因此幂等重试、历史、搜索、同步和部门群保留规则都与普通消息一致。
 
 ## 10. Device / Presence
 

@@ -153,6 +153,21 @@ open class AppDataState(
         }
     }
 
+    /** Persist an explicit conversation-list "mark read" action on every device. */
+    fun markConversationRead(chatId: String, readSeq: Long) {
+        if (readSeq <= 0L) return
+        actionScope.launch {
+            try {
+                messageRepo.markRead(chatId, readSeq).getOrThrow()
+                localCache.markConversationRead(chatId, readSeq)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (throwable: Throwable) {
+                handleError(throwable, "标记已读失败")
+            }
+        }
+    }
+
     private fun handleError(throwable: Throwable, fallbackMessage: String) {
         when (throwable) {
             is AppError.AuthExpired -> {

@@ -111,7 +111,7 @@ fun HomeScreen(
                     },
                     onPinClick = { chatId, pinned -> dataState.session.localCache.toggleConversationPin(chatId, pinned) },
                     onMarkRead = { chatId, lastSeq ->
-                        dataState.session.localCache.markConversationRead(chatId, lastSeq)
+                        dataState.markConversationRead(chatId, lastSeq)
                     },
                 )
                 MainTab.CONTACTS -> Column(modifier = Modifier.fillMaxSize()) {

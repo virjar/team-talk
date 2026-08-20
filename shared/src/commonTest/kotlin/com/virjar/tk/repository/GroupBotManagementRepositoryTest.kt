@@ -22,11 +22,12 @@ class GroupBotManagementRepositoryTest {
     @Test
     fun `contract decodes safe metadata without requiring credentials`() {
         val bots = GroupBotHttpContract.decodeList(
-            """[{"botId":"bot-1","name":"构建通知","status":1,"lastUsedAt":null,"createdAt":7,"apiPath":"/api/v1/bots/bot-1/messages","groupManaged":true,"createdByMe":false,"canRotateToken":false,"canRemove":true,"futureField":"ignored"}]""",
+            """[{"botId":"bot-1","name":"构建通知","status":1,"lastUsedAt":null,"createdAt":7,"apiPath":"/api/v1/groups/chat-1/bots/bot-1/messages","groupManaged":true,"createdByMe":false,"canRotateToken":false,"canRemove":true,"futureField":"ignored"}]""",
         )
 
         assertEquals(1, bots.size)
         assertEquals("构建通知", bots.single().name)
+        assertEquals("/api/v1/groups/chat-1/bots/bot-1/messages", bots.single().apiPath)
         assertTrue(bots.single().canRemove)
     }
 

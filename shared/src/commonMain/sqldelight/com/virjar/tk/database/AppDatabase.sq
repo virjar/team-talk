@@ -181,7 +181,10 @@ deleteConversation:
 DELETE FROM conversation WHERE chat_id = ?;
 
 markConversationRead:
-UPDATE conversation SET unread_count = 0, read_seq = ? WHERE chat_id = ?;
+UPDATE conversation
+SET unread_count = MAX(0, last_seq - MAX(read_seq, :readSeq)),
+    read_seq = MAX(read_seq, :readSeq)
+WHERE chat_id = :chatId;
 
 setConversationDraft:
 UPDATE conversation SET draft = ? WHERE chat_id = ?;
