@@ -13,6 +13,8 @@ fun DocumentWorkspaceHost(
     onDetach: (() -> Unit)? = null,
     onExitDocuments: (() -> Unit)? = null,
     detached: Boolean = false,
+    mobileSingleDocumentMode: Boolean = false,
+    mobileExitCoordinator: MobileDocumentExitCoordinator? = null,
 ) {
     DocumentWorkspaceScreen(
         spaces = workspace.spaces,
@@ -49,6 +51,7 @@ fun DocumentWorkspaceHost(
         onSelectTab = workspace::selectTab,
         onUpdateDraft = workspace::updateDraft,
         onCloseTab = workspace::closeTab,
+        onCloseTabByInstance = workspace::closeTabByInstance,
         onSave = workspace::saveActive,
         onDelete = workspace::deleteActive,
         onShowHistory = workspace::showHistory,
@@ -62,5 +65,8 @@ fun DocumentWorkspaceHost(
         onDetach = onDetach,
         onExitDocuments = onExitDocuments,
         detached = detached,
+        mobileSingleDocumentMode = mobileSingleDocumentMode,
+        draftLifecycleBridge = workspace.draftLifecycleBridge,
+        mobileExitCoordinator = mobileExitCoordinator,
     )
 }

@@ -13,6 +13,28 @@ import androidx.compose.ui.Modifier
 expect fun Modifier.contextLongPress(onLongPress: () -> Unit): Modifier
 
 /**
+ * 同一个点击目标同时支持主点击和触屏长按。
+ *
+ * Android 必须由单个 combinedClickable 节点接管两个动作；若在 clickable 外再叠加一个
+ * 仅处理长按的 combinedClickable，后者会消费普通点击。Desktop 则保留主点击，菜单继续
+ * 由 [secondaryClick] 的右键语义触发。
+ */
+expect fun Modifier.primaryClickWithContextLongPress(
+    onClick: () -> Unit,
+    onLongPress: () -> Unit,
+): Modifier
+
+/** 可脱离 Compose 输入系统验证的手势动作分发器。 */
+internal class PrimaryContextGestureActions(
+    private val onClick: () -> Unit,
+    private val onLongPress: () -> Unit,
+) {
+    fun click() = onClick()
+
+    fun longPress() = onLongPress()
+}
+
+/**
  * 次键（右键）点击：桌面上下文菜单的正确交互（F19）。
  * combinedClickable 的 onLongClick 桌面只由「按住左键」触发，右键无效。
  */

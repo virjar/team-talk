@@ -29,7 +29,11 @@ internal fun DocumentWorkspaceWindow(nav: DesktopNav, onClose: () -> Unit) {
         setTeamTalkIcon()
         AppTheme {
             Surface(Modifier.fillMaxSize()) {
-                DocumentWorkspaceHost(workspace = nav.documents, detached = true)
+                DocumentWorkspaceHost(
+                    workspace = nav.documents,
+                    detached = true,
+                    mobileSingleDocumentMode = false,
+                )
             }
         }
     }

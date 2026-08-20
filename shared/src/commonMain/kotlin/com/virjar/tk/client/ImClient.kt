@@ -53,6 +53,25 @@ class ImClient(
 
     // 连接级状态（EventLoop 独占）
     private var channel: Channel? = null
+    private var connectingChannel: Channel? = null
+
+    /**
+     * Every TCP attempt receives a new generation. Pipeline callbacks must match this value before
+     * mutating global connection state; a superseded channel may report channelInactive after its
+     * replacement is already authenticated.
+     */
+    @Volatile
+    private var connectionGeneration = 0L
+
+    /**
+     * Logical transport owner. Explicit connect/auth starts a new owner, while automatic network
+     * reconnects keep it. ClientSession captures this lease so a retired session cannot disconnect
+     * a newer login that happens to reuse the same ImClient.
+     */
+    @Volatile
+    private var transportOwnerGeneration = 0L
+
+    internal val currentTransportOwnerGeneration: Long get() = transportOwnerGeneration
 
     /** 认证终态（AUTH_FAILED 后置位）：停止自动重连——失效 token 重试永远失败，
      *  曾致 retry=28+ 风暴反复踢翻登录窗（F30）。用户主动 login/register 时重置。 */
@@ -76,6 +95,12 @@ class ImClient(
     // 线程安全的观察状态
     private val _state = MutableStateFlow(ConnectionState.DISCONNECTED)
     val state: StateFlow<ConnectionState> = _state.asStateFlow()
+
+    // Only an explicit AUTH_RESP can populate this flow. A refused socket, timeout or malformed
+    // frame therefore remains a transport failure and can never trigger a forced-upgrade UI.
+    private val _authenticationFailure = MutableStateFlow<AuthenticationFailure?>(null)
+    val authenticationFailure: StateFlow<AuthenticationFailure?> =
+        _authenticationFailure.asStateFlow()
 
     private val incomingPackets = MutableSharedFlow<IProto>(extraBufferCapacity = 64)
     val packets: SharedFlow<IProto> = incomingPackets.asSharedFlow()
@@ -110,6 +135,9 @@ class ImClient(
             reconnectFuture?.cancel(false)
             reconnectFuture = null
             destroyed = false
+            authTerminal = false
+            _authenticationFailure.value = null
+            transportOwnerGeneration += 1
             // 离线补发：认证包携带最新事件游标（服务端按 lastEventId 补发断线期间事件）
             pendingAuth = auth.copy(lastEventId = lastEventIdProvider?.invoke() ?: auth.lastEventId)
             connectHost = host
@@ -128,34 +156,64 @@ class ImClient(
             reconnectFuture?.cancel(false)
             reconnectFuture = null
             destroyed = false
+            transportOwnerGeneration += 1
             connectHost = host
             connectPort = port
             createAndConnect()
         }
     }
 
-    fun login(username: String, password: String, deviceId: String, deviceName: String, host: String = connectHost, port: Int = connectPort) {
+    fun login(
+        username: String,
+        password: String,
+        deviceId: String,
+        deviceName: String,
+        host: String = connectHost,
+        port: Int = connectPort,
+        deviceModel: String? = null,
+        deviceFlag: Int = 0,
+    ) {
         AuthRules.validateLogin(username, password)
         val auth = AuthRequestPayload(authType = 0, username = username, password = password,
-            deviceId = deviceId, deviceName = deviceName)
+            deviceId = deviceId, deviceName = deviceName, deviceModel = deviceModel, deviceFlag = deviceFlag)
         authTerminal = false // 用户主动重登：清除终态
         logger.trace("login requested: username=$username")
         // pendingAuth + connect 原子化，消除协程/EventLoop 竞态
         connectAndAuth(auth, host, port)
     }
 
-    fun register(username: String, password: String, name: String, deviceId: String, deviceName: String, host: String = connectHost, port: Int = connectPort) {
+    fun register(
+        username: String,
+        password: String,
+        name: String,
+        deviceId: String,
+        deviceName: String,
+        host: String = connectHost,
+        port: Int = connectPort,
+        deviceModel: String? = null,
+        deviceFlag: Int = 0,
+    ) {
         AuthRules.validateRegister(username, password)
         val auth = AuthRequestPayload(authType = 1, username = username, password = password,
-            name = name, deviceId = deviceId, deviceName = deviceName)
+            name = name, deviceId = deviceId, deviceName = deviceName,
+            deviceModel = deviceModel, deviceFlag = deviceFlag)
         authTerminal = false
         logger.trace("register requested: username=$username")
         connectAndAuth(auth, host, port)
     }
 
-    fun authenticate(uid: String, token: String, deviceId: String, deviceName: String, host: String = connectHost, port: Int = connectPort) {
+    fun authenticate(
+        uid: String,
+        token: String,
+        deviceId: String,
+        deviceName: String,
+        host: String = connectHost,
+        port: Int = connectPort,
+        deviceModel: String? = null,
+        deviceFlag: Int = 0,
+    ) {
         val auth = AuthRequestPayload(authType = 2, refreshToken = token,
-            deviceId = deviceId, deviceName = deviceName)
+            deviceId = deviceId, deviceName = deviceName, deviceModel = deviceModel, deviceFlag = deviceFlag)
         authTerminal = false
         logger.trace("authenticate requested: uid=$uid")
         connectAndAuth(auth, host, port)
@@ -214,16 +272,21 @@ class ImClient(
      */
     fun disconnect() {
         doOnEventLoop {
-            destroyed = true
-            reconnectFuture?.cancel(false)
-            reconnectFuture = null
-            channel?.close()
-            scope?.cancel()
-            scope = null
-            channel = null
-            cleanupOnDisconnect()
-            // 注意：不 shutdown workerGroup——保留 EventLoop 供 connect() 复用。
-            _state.value = ConnectionState.DISCONNECTED
+            disconnectCurrentTransport()
+        }
+    }
+
+    /** Disconnect only while [expectedOwnerGeneration] still owns this logical transport. */
+    internal fun disconnectIfOwned(expectedOwnerGeneration: Long) {
+        doOnEventLoop {
+            if (transportOwnerGeneration != expectedOwnerGeneration) {
+                logger.trace(
+                    "Ignoring disconnect from retired transport owner=$expectedOwnerGeneration, " +
+                        "current=$transportOwnerGeneration",
+                )
+                return@doOnEventLoop
+            }
+            disconnectCurrentTransport()
         }
     }
 
@@ -233,17 +296,30 @@ class ImClient(
      */
     fun destroy() {
         doOnEventLoop {
-            destroyed = true
-            reconnectFuture?.cancel(false)
-            reconnectFuture = null
-            channel?.close()
-            scope?.cancel()
-            scope = null
-            channel = null
-            cleanupOnDisconnect()
+            disconnectCurrentTransport()
             workerGroup.shutdownGracefully(0, 2, TimeUnit.SECONDS)
-            _state.value = ConnectionState.DISCONNECTED
         }
+    }
+
+    /** EventLoop-only teardown shared by disconnect, destroy and a valid session lease. */
+    private fun disconnectCurrentTransport() {
+        destroyed = true
+        transportOwnerGeneration += 1
+        // Invalidate handlers before close() can enqueue their channelInactive callbacks.
+        connectionGeneration += 1
+        reconnectFuture?.cancel(false)
+        reconnectFuture = null
+        val active = channel
+        val connecting = connectingChannel
+        channel = null
+        connectingChannel = null
+        scope?.cancel()
+        scope = null
+        cleanupOnDisconnect()
+        active?.close()
+        if (connecting !== active) connecting?.close()
+        // 注意：不 shutdown workerGroup——保留 EventLoop 供 connect() 复用。
+        _state.value = ConnectionState.DISCONNECTED
     }
 
     /**
@@ -268,14 +344,28 @@ class ImClient(
      * 触发 channelInactive → 自动重连路径（区别于主动 disconnect）。
      */
     fun simulateNetworkDrop() {
-        doOnEventLoop { channel?.close() }
+        doOnEventLoop { (channel ?: connectingChannel)?.close() }
     }
 
     // ── 连接管理（EventLoop 上执行） ──
 
     private fun createAndConnect() {
+        // Supersede an active or in-flight attempt explicitly. Incrementing first makes every late
+        // callback from that attempt observationally inert.
+        val generation = connectionGeneration + 1
+        connectionGeneration = generation
+        val previousActive = channel
+        val previousConnecting = connectingChannel
+        channel = null
+        connectingChannel = null
+        scope?.cancel()
+        scope = null
+        cleanupOnDisconnect()
+        previousActive?.close()
+        if (previousConnecting !== previousActive) previousConnecting?.close()
+
         _state.value = ConnectionState.CONNECTING
-        logger.trace("Connecting to $connectHost:$connectPort")
+        logger.trace("Connecting to $connectHost:$connectPort (generation=$generation)")
 
         val bootstrap = Bootstrap()
         bootstrap.group(eventLoop)
@@ -291,18 +381,27 @@ class ImClient(
                             PacketCodec.PING_INTERVAL_SECONDS,
                             0, TimeUnit.SECONDS))
                         .addLast(PacketCodec())
-                        .addLast(PacketHandler())
+                        .addLast(PacketHandler(generation))
                 }
             })
 
-        bootstrap.connect(connectHost, connectPort).addListener { future ->
+        val connectFuture = bootstrap.connect(connectHost, connectPort)
+        connectingChannel = connectFuture.channel()
+        connectFuture.addListener { future ->
+            val connectedChannel = (future as io.netty.channel.ChannelFuture).channel()
+            if (generation != connectionGeneration || destroyed) {
+                logger.trace("Ignoring stale connect completion (generation=$generation, current=$connectionGeneration)")
+                connectedChannel.close()
+                return@addListener
+            }
+            if (connectingChannel === connectedChannel) connectingChannel = null
             if (!future.isSuccess) {
                 logger.trace("Connect failed: ${future.cause()?.message}")
                 _state.value = ConnectionState.DISCONNECTED
                 if (!destroyed) scheduleReconnect()
             } else {
                 // TCP 就绪 = 数据阶段就绪（无独立握手）：建 scope、置 CONNECTED、发认证
-                onTcpReady((future as io.netty.channel.ChannelFuture).channel())
+                onTcpReady(connectedChannel, generation)
             }
         }
     }
@@ -312,7 +411,11 @@ class ImClient(
      * v2 之前这里要等服务端 3 字节握手回显（HandshakeHandler 状态机 + pipeline 手术，
      * 且是 FFAC6B1 认证竞态的温床）——v3 客户端首帧即序言，握手层整体移除。
      */
-    private fun onTcpReady(ch: Channel) {
+    private fun onTcpReady(ch: Channel, generation: Long) {
+        if (generation != connectionGeneration || destroyed) {
+            ch.close()
+            return
+        }
         channel = ch
         scope = CoroutineScope(eventLoop.asCoroutineDispatcher() + SupervisorJob() +
             CoroutineExceptionHandler { _, throwable ->
@@ -332,10 +435,18 @@ class ImClient(
     }
 
     private fun scheduleReconnect() {
+        if (destroyed || authTerminal || reconnectFuture != null) return
         val delay = nextRetryDelay(retryCount)
         retryCount++
+        val disconnectedGeneration = connectionGeneration
         logger.trace("Schedule reconnect in ${delay}ms (retry=$retryCount)")
-        reconnectFuture = eventLoop.schedule({ createAndConnect() }, delay, TimeUnit.MILLISECONDS)
+        reconnectFuture = eventLoop.schedule({
+            reconnectFuture = null
+            if (!destroyed && !authTerminal && connectionGeneration == disconnectedGeneration) {
+                // Automatic reconnect belongs to the same ClientSession transport lease.
+                createAndConnect()
+            }
+        }, delay, TimeUnit.MILLISECONDS)
     }
 
     private fun nextRetryDelay(count: Int): Long {
@@ -350,8 +461,9 @@ class ImClient(
     }
 
     private fun handleAuthResponse(response: AuthResponsePayload) {
-        if (response.code == 0) {
+        if (response.code == AuthResponsePayload.CODE_OK) {
             retryCount = 0
+            _authenticationFailure.value = null
             _state.value = ConnectionState.AUTHENTICATED
             // 认证后放开帧限（镜像服务端 ImAgent 的围栏设计）：客户端收包也会超 4KB——
             // 离线事件补发（sync_events 批量 NOTIFY）实测可达 100KB+，曾因未放开被
@@ -375,10 +487,11 @@ class ImClient(
             onAuthResult?.invoke(true, response.uid, response.username, response.name, response.refreshToken, response.accessToken, null)
             logger.trace("Authenticated: uid=${response.uid}, username=${response.username}")
         } else {
-            val reason = response.reason ?: "认证失败(code=${response.code})"
+            val failure = checkNotNull(response.toAuthenticationFailure())
             authTerminal = true // 终态：channelInactive 不再自动重连
+            _authenticationFailure.value = failure
             _state.value = ConnectionState.AUTH_FAILED
-            onAuthResult?.invoke(false, null, null, null, null, null, reason)
+            onAuthResult?.invoke(false, null, null, null, null, null, failure.reason)
             logger.trace("Auth failed (terminal): code=${response.code}, reason=${response.reason}")
         }
         scope?.launch { incomingPackets.emit(response) }
@@ -417,8 +530,18 @@ class ImClient(
     /**
      * 数据阶段 Handler：处理业务包、心跳、断连。
      */
-    private inner class PacketHandler : ChannelInboundHandlerAdapter() {
+    private inner class PacketHandler(
+        private val generation: Long,
+    ) : ChannelInboundHandlerAdapter() {
+        private fun isCurrent(ctx: ChannelHandlerContext): Boolean =
+            generation == connectionGeneration &&
+                (channel === ctx.channel() || connectingChannel === ctx.channel())
+
         override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
+            if (!isCurrent(ctx)) {
+                logger.trace("Ignoring packet from stale channel generation=$generation")
+                return
+            }
             if (msg is IProto) {
                 logger.trace("Packet received: type=${msg::class.simpleName}")
                 when (msg) {
@@ -435,6 +558,10 @@ class ImClient(
         }
 
         override fun userEventTriggered(ctx: ChannelHandlerContext, evt: Any) {
+            if (!isCurrent(ctx)) {
+                ctx.close()
+                return
+            }
             if (evt is IdleStateEvent) {
                 when (evt.state()) {
                     IdleState.WRITER_IDLE -> {
@@ -453,11 +580,15 @@ class ImClient(
         }
 
         override fun channelInactive(ctx: ChannelHandlerContext) {
-            if (destroyed) return  // disconnect 已清理
+            if (destroyed || !isCurrent(ctx)) {
+                logger.trace("Ignoring channelInactive from stale generation=$generation")
+                return
+            }
             cleanupOnDisconnect()
             scope?.cancel()
             scope = null
-            channel = null
+            if (channel === ctx.channel()) channel = null
+            if (connectingChannel === ctx.channel()) connectingChannel = null
             if (authTerminal) {
                 // 认证终态：保持 AUTH_FAILED，不再自动重连（F30：失效 token 风暴）
                 _state.value = ConnectionState.AUTH_FAILED

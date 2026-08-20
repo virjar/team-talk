@@ -1,4 +1,4 @@
--- 当前 schema 版本 2（v2: conversation 加 peer_read_seq）。迁移历史见同目录 .sqm 文件
+-- 当前 schema 版本 3（v3: 持久化会话草稿镜像 outbox）。迁移历史见同目录 .sqm 文件
 -- 用户
 CREATE TABLE IF NOT EXISTS user (
     uid TEXT PRIMARY KEY NOT NULL,
@@ -72,6 +72,16 @@ CREATE TABLE IF NOT EXISTS conversation (
     is_muted INTEGER DEFAULT 0,
     draft TEXT,
     last_msg_timestamp INTEGER DEFAULT 0
+);
+
+-- 草稿本地写入与服务端镜像之间的持久化 outbox。
+-- 表中无行：服务端草稿可以正常进入本地；有行且 draft IS NULL：用户明确清空。
+-- state 0=PENDING（待 RPC），1=ACKED（RPC 成功，等待匹配的权威快照后清理）。
+CREATE TABLE IF NOT EXISTS conversation_draft_outbox (
+    chat_id TEXT PRIMARY KEY NOT NULL,
+    draft TEXT,
+    generation INTEGER NOT NULL,
+    state INTEGER NOT NULL DEFAULT 0
 );
 
 -- 同步游标
@@ -175,6 +185,20 @@ UPDATE conversation SET unread_count = 0, read_seq = ? WHERE chat_id = ?;
 
 setConversationDraft:
 UPDATE conversation SET draft = ? WHERE chat_id = ?;
+
+selectAllConversationDraftOutbox:
+SELECT * FROM conversation_draft_outbox;
+
+upsertConversationDraftOutbox:
+INSERT OR REPLACE INTO conversation_draft_outbox(chat_id, draft, generation, state)
+VALUES (?, ?, ?, ?);
+
+markConversationDraftOutboxAcked:
+UPDATE conversation_draft_outbox SET state = 1
+WHERE chat_id = ? AND generation = ? AND state = 0;
+
+deleteConversationDraftOutbox:
+DELETE FROM conversation_draft_outbox WHERE chat_id = ?;
 
 updatePeerReadSeq:
 UPDATE conversation SET peer_read_seq = ? WHERE chat_id = ?;

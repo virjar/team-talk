@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
-    <cache-path name="downloads" path="downloads/" />
+    <cache-path name="session_attachments" path="teamtalk-media/attachments/" />
 </paths>

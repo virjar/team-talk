@@ -8,7 +8,7 @@ import com.virjar.tk.protocol.PacketCodec
 
 // ── 认证请求 ──
 
-data class AuthRequestPayload(
+private data class RoundTripAuthRequestPayload(
     val authType: Int,      // 0=login, 1=register, 2=refresh
     val username: String? = null,
     val password: String? = null,
@@ -45,13 +45,13 @@ data class AuthRequestPayload(
         buf.writeVarLong(lastEventId)
     }
 
-    companion object : IProtoReader<AuthRequestPayload> {
+    companion object : IProtoReader<RoundTripAuthRequestPayload> {
         /** 连接序言魔常量："TK" + PROTOCOL_VERSION + 固定尾字节 */
         const val PREAMBLE_HIGH: Int = 0x54  // 'T'
         const val PREAMBLE_LOW: Int = 0x4B   // 'K'
         private const val PREAMBLE_TAIL: Int = 0x01
 
-        override fun readFrom(buf: PacketBuffer): AuthRequestPayload {
+        override fun readFrom(buf: PacketBuffer): RoundTripAuthRequestPayload {
             // 序言魔校验：不匹配 = 非协议流量/错位 → 抛异常经 codec 异常路径断连
             val b0 = buf.readByte()
             val b1 = buf.readByte()
@@ -64,7 +64,7 @@ data class AuthRequestPayload(
             return readBody(buf)
         }
 
-        private fun readBody(buf: PacketBuffer) = AuthRequestPayload(
+        private fun readBody(buf: PacketBuffer) = RoundTripAuthRequestPayload(
             authType = buf.readVarInt(),
             username = buf.readString(),
             password = buf.readString(),
@@ -81,7 +81,7 @@ data class AuthRequestPayload(
 
 // ── 认证响应 ──
 
-data class AuthResponsePayload(
+private data class RoundTripAuthResponsePayload(
     val code: Int,          // 0=OK, 1=auth_failed, 2=version_unsupported, 3=server_maintenance, 4=device_banned, 5=too_many_connections
     val reason: String? = null,
     val uid: String? = null,
@@ -102,8 +102,8 @@ data class AuthResponsePayload(
         buf.writeVarLong(expiresIn)
     }
 
-    companion object : IProtoReader<AuthResponsePayload> {
-        override fun readFrom(buf: PacketBuffer) = AuthResponsePayload(
+    companion object : IProtoReader<RoundTripAuthResponsePayload> {
+        override fun readFrom(buf: PacketBuffer) = RoundTripAuthResponsePayload(
             code = buf.readVarInt(),
             reason = buf.readString(),
             uid = buf.readString(),

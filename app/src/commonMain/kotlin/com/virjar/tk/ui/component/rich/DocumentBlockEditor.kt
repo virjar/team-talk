@@ -1037,18 +1037,31 @@ private fun DocumentTableBlockEditor(
     onMoveDown: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    val columnCount = maxOf(
-        1,
-        block.headers.size,
-        block.alignments.size,
-        block.rows.maxOfOrNull { it.size } ?: 0,
-    )
-    fun normalizedHeaders(): List<String> = block.headers + List((columnCount - block.headers.size).coerceAtLeast(0)) { "" }
-    fun normalizedRows(): List<List<String>> = block.rows.map { row ->
-        row + List((columnCount - row.size).coerceAtLeast(0)) { "" }
+    var activeCell by remember(block.key) { mutableStateOf<DocumentTableCellAddress?>(null) }
+    val editorState = DocumentTableEditorState(block = block, activeCell = activeCell)
+
+    fun perform(action: DocumentTableEditAction) {
+        val changed = editorState.perform(action)
+        activeCell = changed.activeCell
+        if (changed.block != block) onChange(changed.block)
     }
-    fun normalizedAlignments(): List<DocumentTableAlignment> = block.alignments +
-        List((columnCount - block.alignments.size).coerceAtLeast(0)) { DocumentTableAlignment.NONE }
+
+    val insertionLimitMessage = when {
+        editorState.rowInsertLimit == DocumentTableInsertLimit.MAX_CELLS &&
+            editorState.columnInsertLimit == DocumentTableInsertLimit.MAX_COLUMNS ->
+            "已达上限：最多 ${DocumentMarkdownPreviewBudget.MAX_TABLE_COLUMNS} 列；新增行不得超过 " +
+                "${DocumentMarkdownPreviewBudget.MAX_TABLE_CELLS} 个单元格（含表头）"
+        editorState.rowInsertLimit == DocumentTableInsertLimit.MAX_CELLS &&
+            editorState.columnInsertLimit == DocumentTableInsertLimit.MAX_CELLS ->
+            "已达容量上限：最多 ${DocumentMarkdownPreviewBudget.MAX_TABLE_CELLS} 个单元格（含表头）"
+        editorState.columnInsertLimit == DocumentTableInsertLimit.MAX_COLUMNS ->
+            "已达 ${DocumentMarkdownPreviewBudget.MAX_TABLE_COLUMNS} 列上限"
+        editorState.rowInsertLimit == DocumentTableInsertLimit.MAX_CELLS ->
+            "新增行会超过 ${DocumentMarkdownPreviewBudget.MAX_TABLE_CELLS} 个单元格上限（含表头）"
+        editorState.columnInsertLimit == DocumentTableInsertLimit.MAX_CELLS ->
+            "新增列会超过 ${DocumentMarkdownPreviewBudget.MAX_TABLE_CELLS} 个单元格上限（含表头）"
+        else -> null
+    }
 
     Surface(
         shape = MaterialTheme.shapes.medium,
@@ -1058,7 +1071,7 @@ private fun DocumentTableBlockEditor(
         Column {
             DocumentBlockHeader(
                 icon = { Icon(Icons.Filled.TableChart, null) },
-                label = "表格 · $columnCount 列",
+                label = "表格 · ${editorState.columnCount} 列",
                 canMoveUp = canMoveUp,
                 canMoveDown = canMoveDown,
                 onMoveUp = onMoveUp,
@@ -1068,29 +1081,41 @@ private fun DocumentTableBlockEditor(
             )
             Column(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
                 DocumentTableEditorRow(
-                    cells = normalizedHeaders(),
-                    alignments = normalizedAlignments(),
+                    cells = editorState.normalizedHeaders,
+                    alignments = editorState.normalizedAlignments,
                     header = true,
                     testTagPrefix = "documents.editor.table.header.${block.key}",
-                    onActivate = onActivate,
+                    activeColumn = editorState.activeCell
+                        ?.takeIf { it.isHeader }
+                        ?.columnIndex,
+                    onActivate = { column ->
+                        activeCell = editorState.focusHeader(column).activeCell
+                        onActivate()
+                    },
                     onCellChange = { column, value ->
-                        val headers = normalizedHeaders().toMutableList().apply { this[column] = value }
+                        val headers = editorState.normalizedHeaders.toMutableList().apply { this[column] = value }
                         onChange(block.copy(headers = headers, dirty = true))
                     },
                     onAlignmentChange = { column, alignment ->
-                        val alignments = normalizedAlignments().toMutableList().apply { this[column] = alignment }
+                        val alignments = editorState.normalizedAlignments.toMutableList().apply { this[column] = alignment }
                         onChange(block.copy(alignments = alignments, dirty = true))
                     },
                 )
-                normalizedRows().forEachIndexed { rowIndex, row ->
+                editorState.normalizedRows.forEachIndexed { rowIndex, row ->
                     DocumentTableEditorRow(
                         cells = row,
-                        alignments = normalizedAlignments(),
+                        alignments = editorState.normalizedAlignments,
                         header = false,
                         testTagPrefix = "documents.editor.table.row.$rowIndex.${block.key}",
-                        onActivate = onActivate,
+                        activeColumn = editorState.activeCell
+                            ?.takeIf { it.rowIndex == rowIndex }
+                            ?.columnIndex,
+                        onActivate = { column ->
+                            activeCell = editorState.focusRow(rowIndex, column).activeCell
+                            onActivate()
+                        },
                         onCellChange = { column, value ->
-                            val rows = normalizedRows().map { it.toMutableList() }.toMutableList()
+                            val rows = editorState.normalizedRows.map { it.toMutableList() }.toMutableList()
                             rows[rowIndex][column] = value
                             onChange(block.copy(rows = rows, dirty = true))
                         },
@@ -1098,52 +1123,218 @@ private fun DocumentTableBlockEditor(
                 }
             }
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                Modifier.fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .testTag("documents.editor.table.actions.${block.key}"),
                 horizontalArrangement = Arrangement.End,
             ) {
                 TextButton(
-                    onClick = {
-                        onChange(
-                            block.copy(
-                                rows = normalizedRows() + listOf(List(columnCount) { "" }),
-                                dirty = true,
-                            )
-                        )
-                    },
+                    onClick = { perform(DocumentTableEditAction.INSERT_ROW_AFTER) },
+                    enabled = editorState.canInsertRow,
                     modifier = Modifier.testTag("documents.editor.table.addRow.${block.key}"),
-                ) { Text("+ 行") }
+                ) {
+                    Text(if (editorState.activeCell == null) "+ 末尾行" else "+ 下方行")
+                }
                 TextButton(
-                    onClick = {
-                        onChange(
-                            block.copy(
-                                headers = normalizedHeaders() + "列 ${columnCount + 1}",
-                                alignments = normalizedAlignments() + DocumentTableAlignment.NONE,
-                                rows = normalizedRows().map { it + "" },
-                                dirty = true,
-                            )
-                        )
-                    },
+                    onClick = { perform(DocumentTableEditAction.INSERT_COLUMN_AFTER) },
+                    enabled = editorState.canInsertColumn,
                     modifier = Modifier.testTag("documents.editor.table.addColumn.${block.key}"),
-                ) { Text("+ 列") }
+                ) {
+                    Text(if (editorState.activeCell == null) "+ 末尾列" else "+ 右侧列")
+                }
                 if (block.rows.isNotEmpty()) TextButton(
-                    onClick = { onChange(block.copy(rows = normalizedRows().dropLast(1), dirty = true)) },
+                    onClick = { perform(DocumentTableEditAction.DELETE_CURRENT_ROW) },
+                    enabled = editorState.canDeleteCurrentRow,
                     modifier = Modifier.testTag("documents.editor.table.removeRow.${block.key}"),
-                ) { Text("移除末行") }
-                if (columnCount > 1) TextButton(
-                    onClick = {
-                        onChange(
-                            block.copy(
-                                headers = normalizedHeaders().dropLast(1),
-                                alignments = normalizedAlignments().dropLast(1),
-                                rows = normalizedRows().map { it.dropLast(1) },
-                                dirty = true,
-                            )
-                        )
-                    },
+                ) { Text("删除当前行") }
+                if (editorState.columnCount > 1) TextButton(
+                    onClick = { perform(DocumentTableEditAction.DELETE_CURRENT_COLUMN) },
+                    enabled = editorState.canDeleteCurrentColumn,
                     modifier = Modifier.testTag("documents.editor.table.removeColumn.${block.key}"),
-                ) { Text("移除末列") }
+                ) { Text("删除当前列") }
+            }
+            if (insertionLimitMessage != null) {
+                Text(
+                    text = insertionLimitMessage,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp)
+                        .testTag("documents.editor.table.limit.${block.key}"),
+                )
             }
         }
+    }
+}
+
+/** A null [rowIndex] identifies a header cell; data rows are zero-based. */
+internal data class DocumentTableCellAddress(
+    val rowIndex: Int?,
+    val columnIndex: Int,
+) {
+    val isHeader: Boolean get() = rowIndex == null
+}
+
+internal enum class DocumentTableEditAction {
+    INSERT_ROW_AFTER,
+    INSERT_COLUMN_AFTER,
+    DELETE_CURRENT_ROW,
+    DELETE_CURRENT_COLUMN,
+}
+
+internal enum class DocumentTableInsertLimit {
+    MAX_COLUMNS,
+    MAX_CELLS,
+}
+
+/**
+ * Pure table interaction state shared by the composable and common tests. [activeCell] is the last
+ * focused cell, so clicking an action button does not lose the row/column that the action targets.
+ */
+internal data class DocumentTableEditorState(
+    val block: DocumentGfmTableBlock,
+    val activeCell: DocumentTableCellAddress? = null,
+) {
+    val columnCount: Int = maxOf(
+        1,
+        block.headers.size,
+        block.alignments.size,
+        block.rows.maxOfOrNull { it.size } ?: 0,
+    )
+    val normalizedHeaders: List<String> = block.headers +
+        List((columnCount - block.headers.size).coerceAtLeast(0)) { "" }
+    val normalizedRows: List<List<String>> = block.rows.map { row ->
+        row + List((columnCount - row.size).coerceAtLeast(0)) { "" }
+    }
+    val normalizedAlignments: List<DocumentTableAlignment> = block.alignments +
+        List((columnCount - block.alignments.size).coerceAtLeast(0)) { DocumentTableAlignment.NONE }
+
+    private val validActiveCell: DocumentTableCellAddress? = activeCell?.takeIf { cell ->
+        cell.columnIndex in 0 until columnCount &&
+            (cell.isHeader || cell.rowIndex?.let { it in normalizedRows.indices } == true)
+    }
+
+    val canDeleteCurrentRow: Boolean =
+        validActiveCell?.rowIndex?.let { it in normalizedRows.indices } == true
+    val canDeleteCurrentColumn: Boolean = columnCount > 1 && validActiveCell != null
+    val rowInsertLimit: DocumentTableInsertLimit? = when {
+        columnCount > DocumentMarkdownPreviewBudget.MAX_TABLE_COLUMNS ->
+            DocumentTableInsertLimit.MAX_COLUMNS
+        columnCount.toLong() * (normalizedRows.size.toLong() + 2L) >
+            DocumentMarkdownPreviewBudget.MAX_TABLE_CELLS.toLong() ->
+            DocumentTableInsertLimit.MAX_CELLS
+        else -> null
+    }
+    val columnInsertLimit: DocumentTableInsertLimit? = when {
+        columnCount >= DocumentMarkdownPreviewBudget.MAX_TABLE_COLUMNS ->
+            DocumentTableInsertLimit.MAX_COLUMNS
+        (columnCount.toLong() + 1L) * (normalizedRows.size.toLong() + 1L) >
+            DocumentMarkdownPreviewBudget.MAX_TABLE_CELLS.toLong() ->
+            DocumentTableInsertLimit.MAX_CELLS
+        else -> null
+    }
+    val canInsertRow: Boolean = rowInsertLimit == null
+    val canInsertColumn: Boolean = columnInsertLimit == null
+
+    fun focusHeader(columnIndex: Int): DocumentTableEditorState =
+        focus(DocumentTableCellAddress(rowIndex = null, columnIndex = columnIndex))
+
+    fun focusRow(rowIndex: Int, columnIndex: Int): DocumentTableEditorState =
+        focus(DocumentTableCellAddress(rowIndex = rowIndex, columnIndex = columnIndex))
+
+    private fun focus(cell: DocumentTableCellAddress): DocumentTableEditorState =
+        if (
+            cell.columnIndex in 0 until columnCount &&
+            (cell.isHeader || cell.rowIndex?.let { it in normalizedRows.indices } == true)
+        ) {
+            copy(activeCell = cell)
+        } else {
+            this
+        }
+
+    fun perform(action: DocumentTableEditAction): DocumentTableEditorState = when (action) {
+        DocumentTableEditAction.INSERT_ROW_AFTER -> insertRowAfterActiveCell()
+        DocumentTableEditAction.INSERT_COLUMN_AFTER -> insertColumnAfterActiveCell()
+        DocumentTableEditAction.DELETE_CURRENT_ROW -> deleteCurrentRow()
+        DocumentTableEditAction.DELETE_CURRENT_COLUMN -> deleteCurrentColumn()
+    }
+
+    private fun insertRowAfterActiveCell(): DocumentTableEditorState {
+        if (!canInsertRow) return copy(activeCell = validActiveCell)
+        val insertIndex = when {
+            validActiveCell == null -> normalizedRows.size
+            validActiveCell.isHeader -> 0
+            else -> validActiveCell.rowIndex!! + 1
+        }
+        val rows = normalizedRows.toMutableList().apply {
+            add(insertIndex, List(columnCount) { "" })
+        }
+        val nextActive = validActiveCell ?: DocumentTableCellAddress(insertIndex, 0)
+        return copy(
+            block = block.copy(rows = rows, dirty = true),
+            activeCell = nextActive,
+        )
+    }
+
+    private fun insertColumnAfterActiveCell(): DocumentTableEditorState {
+        if (!canInsertColumn) return copy(activeCell = validActiveCell)
+        val insertIndex = (validActiveCell?.columnIndex?.plus(1) ?: columnCount)
+            .coerceIn(0, columnCount)
+        val headers = normalizedHeaders.toMutableList().apply {
+            add(insertIndex, "列 ${columnCount + 1}")
+        }
+        val alignments = normalizedAlignments.toMutableList().apply {
+            add(insertIndex, DocumentTableAlignment.NONE)
+        }
+        val rows = normalizedRows.map { row -> row.toMutableList().apply { add(insertIndex, "") } }
+        val nextActive = validActiveCell ?: DocumentTableCellAddress(rowIndex = null, columnIndex = insertIndex)
+        return copy(
+            block = block.copy(
+                headers = headers,
+                alignments = alignments,
+                rows = rows,
+                dirty = true,
+            ),
+            activeCell = nextActive,
+        )
+    }
+
+    private fun deleteCurrentRow(): DocumentTableEditorState {
+        val rowIndex = validActiveCell?.rowIndex
+            ?.takeIf { it in normalizedRows.indices }
+            ?: return copy(activeCell = validActiveCell)
+        val rows = normalizedRows.toMutableList().apply { removeAt(rowIndex) }
+        val nextActive = if (rows.isEmpty()) {
+            DocumentTableCellAddress(rowIndex = null, columnIndex = validActiveCell.columnIndex)
+        } else {
+            DocumentTableCellAddress(
+                rowIndex = rowIndex.coerceAtMost(rows.lastIndex),
+                columnIndex = validActiveCell.columnIndex,
+            )
+        }
+        return copy(
+            block = block.copy(rows = rows, dirty = true),
+            activeCell = nextActive,
+        )
+    }
+
+    private fun deleteCurrentColumn(): DocumentTableEditorState {
+        val columnIndex = validActiveCell?.columnIndex
+            ?.takeIf { columnCount > 1 }
+            ?: return copy(activeCell = validActiveCell)
+        val headers = normalizedHeaders.toMutableList().apply { removeAt(columnIndex) }
+        val alignments = normalizedAlignments.toMutableList().apply { removeAt(columnIndex) }
+        val rows = normalizedRows.map { row -> row.toMutableList().apply { removeAt(columnIndex) } }
+        val nextColumn = columnIndex.coerceAtMost(columnCount - 2)
+        return copy(
+            block = block.copy(
+                headers = headers,
+                alignments = alignments,
+                rows = rows,
+                dirty = true,
+            ),
+            activeCell = validActiveCell.copy(columnIndex = nextColumn),
+        )
     }
 }
 
@@ -1153,14 +1344,20 @@ private fun DocumentTableEditorRow(
     alignments: List<DocumentTableAlignment>,
     header: Boolean,
     testTagPrefix: String,
-    onActivate: () -> Unit,
+    activeColumn: Int?,
+    onActivate: (Int) -> Unit,
     onCellChange: (Int, String) -> Unit,
     onAlignmentChange: ((Int, DocumentTableAlignment) -> Unit)? = null,
 ) {
     Row {
         cells.forEachIndexed { index, value ->
+            val isActive = activeColumn == index
             Surface(
-                border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
+                border = BorderStroke(
+                    if (isActive) 1.5.dp else 0.5.dp,
+                    if (isActive) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.outlineVariant,
+                ),
                 color = if (header) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
                 else MaterialTheme.colorScheme.surface,
                 modifier = Modifier.width(180.dp).heightIn(min = 48.dp),
@@ -1174,7 +1371,7 @@ private fun DocumentTableEditorRow(
                         value = decodeDocumentTableCellForVisual(value),
                         onValueChange = { onCellChange(index, it.replace('\n', ' ')) },
                         modifier = Modifier.weight(1f).padding(vertical = 12.dp)
-                            .onFocusChanged { if (it.isFocused) onActivate() }
+                            .onFocusChanged { if (it.isFocused) onActivate(index) }
                             .testTag("$testTagPrefix.$index"),
                         textStyle = MaterialTheme.typography.bodyMedium.copy(
                             color = LocalContentColor.current,

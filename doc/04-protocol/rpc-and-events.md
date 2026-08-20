@@ -58,7 +58,7 @@ KSP 生成：
 listVersions、rename、delete。GroupFileEntry 携带逻辑 revision 和当前 contentVersion；
 GroupFileVersion 携带不可变 Attachment 快照。文件二进制不进入 TCP payload，仍先通过 HTTP 上传。
 
-文档使用独立 `document` 服务。协议版本 6 的方法按空间、授权、目录、修订和首页索引分组：list/create/update/
+文档使用独立 `document` 服务。协议版本 8 沿用版本 6 引入的完整方法集，按空间、授权、目录、修订和首页索引分组：list/create/update/
 archive space，list/upsert/remove grant，list/create/move/delete node，以及 get/update document 和
 list/get revision；新增的最近访问与最近创建方法固定为 17/18。列表模型不携带正文，修订列表不携带
 完整 Markdown；正文只在打开当前文档或指定修订时返回。update/move/delete 的 expectedRevision 是
@@ -70,6 +70,11 @@ list/get revision；新增的最近访问与最近创建方法固定为 17/18。
 非文件夹父节点和循环链路执行防御性校验。
 
 完整方法查询见[RPC 参考](../10-reference/rpc-reference.md)。
+
+`organization.listUnits` 在协议版本 7 起返回带 `directMemberCount` 的 `OrganizationUnit`。
+该值只统计直接归属当前节点的成员，不包含子部门；服务端对整棵目录使用一次数据库
+`GROUP BY unit_id` 聚合，不得按节点逐个查询。需要子树成员时显式调用
+`organization.listMembers(unitId, recursive = true)`。
 
 ## 4. NOTIFY envelope
 

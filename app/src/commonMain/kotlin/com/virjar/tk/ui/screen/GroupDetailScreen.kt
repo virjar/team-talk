@@ -26,6 +26,16 @@ import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Member
 import com.virjar.tk.ui.theme.Tk
 
+/** 群主可管理非群主；管理员只能管理普通成员；普通成员永远不能因目标角色而获得权限。 */
+internal fun canManageGroupMember(actorRole: Int, targetRole: Int, isSelf: Boolean): Boolean {
+    if (isSelf) return false
+    return when (actorRole) {
+        2 -> targetRole < 2
+        1 -> targetRole == 0
+        else -> false
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun GroupDetailScreen(
@@ -51,6 +61,10 @@ fun GroupDetailScreen(
     var showNoticeEdit by remember { mutableStateOf(false) }
     var noticeText by remember(chat?.notice) { mutableStateOf(chat?.notice ?: "") }
     val compactDesktop = Tk.dimens.headerHeight < 56.dp
+    val myRole = members.firstOrNull { it.uid == myUid }?.role ?: -1
+    // isOwner 来自平台路由；成员快照也必须确认同一登录者身份，缺任一项时 fail-safe。
+    val currentUserIsOwner = isOwner && myRole == 2
+    val currentUserCanManage = myRole == 1 || currentUserIsOwner
 
     Column(modifier = Modifier.fillMaxSize()) {
         ScreenHeader(
@@ -135,7 +149,7 @@ fun GroupDetailScreen(
             HorizontalDivider()
 
             // 群公告
-            NoticeSection(notice = chat.notice, canEdit = isOwner && onEditNotice != null,
+            NoticeSection(notice = chat.notice, canEdit = currentUserCanManage && onEditNotice != null,
                 onClick = { showNoticeEdit = true })
 
             HorizontalDivider()
@@ -156,7 +170,7 @@ fun GroupDetailScreen(
 
             HorizontalDivider()
 
-            if (isOwner) {
+            if (currentUserCanManage) {
                 ListItem(
                     headlineContent = { Text("邀请成员") },
                     modifier = Modifier.clickable(onClick = onInviteMembers).testTag("group.detail.invite"),
@@ -178,7 +192,7 @@ fun GroupDetailScreen(
             LazyColumn(modifier = Modifier.weight(1f)) {
                 items(members, key = { it.uid }) { member ->
                     val isSelf = member.uid == myUid
-                    val canManage = (isOwner || member.role == 1) && !isSelf
+                    val canManage = canManageGroupMember(myRole, member.role, isSelf)
                     var showMenu by remember { mutableStateOf(false) }
 
                     Box {
@@ -197,8 +211,12 @@ fun GroupDetailScreen(
                                 onDismiss = { showMenu = false },
                                 isAdmin = member.role == 1,
                                 onViewProfile = { showMenu = false; onMemberClick(member.uid) },
-                                onSetAdmin = if (isOwner) ({ showMenu = false; onSetAdmin?.invoke(member.uid) }) else null,
-                                onRemoveAdmin = if (isOwner) ({ showMenu = false; onRemoveAdmin?.invoke(member.uid) }) else null,
+                                onSetAdmin = if (currentUserIsOwner && member.role == 0) {
+                                    ({ showMenu = false; onSetAdmin?.invoke(member.uid) })
+                                } else null,
+                                onRemoveAdmin = if (currentUserIsOwner && member.role == 1) {
+                                    ({ showMenu = false; onRemoveAdmin?.invoke(member.uid) })
+                                } else null,
                                 onMute = { showMenu = false; onMuteMember?.invoke(member.uid) },
                                 onUnmute = { showMenu = false; onUnmuteMember?.invoke(member.uid) },
                                 onRemove = { showMenu = false; onRemoveMember?.invoke(member.uid) },
@@ -216,7 +234,7 @@ fun GroupDetailScreen(
                         modifier = Modifier.testTag("group.detail.leave"),
                         colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
                     ) {
-                        Text(if (isOwner) "解散群组" else "退出群组")
+                        Text(if (currentUserIsOwner) "解散群组" else "退出群组")
                     }
                 }
             } else {
@@ -225,7 +243,7 @@ fun GroupDetailScreen(
                     modifier = Modifier.fillMaxWidth().padding(16.dp).testTag("group.detail.leave"),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
                 ) {
-                    Text(if (isOwner) "解散群组" else "退出群组")
+                    Text(if (currentUserIsOwner) "解散群组" else "退出群组")
                 }
             }
         }

@@ -60,7 +60,7 @@ fun MediaGalleryWindow(
                 // 原图按需：缓存命中直接渲染；未命中画廊内进度覆盖层，下载完成才展示
                 com.virjar.tk.media.CachedImageContent(url, modifier, progressOverlay = true)
             },
-            videoRenderer = { url, modifier ->
+            videoRenderer = { url, _, modifier ->
                 DesktopVideoPage(url, modifier)
             },
         )

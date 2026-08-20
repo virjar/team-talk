@@ -35,6 +35,10 @@ data class ChatMediaConfig(
     val onPickVideo: (() -> Unit)? = null,
     /** 语音录制：true=开始，false=停止发送。 */
     val onVoiceRecord: ((Boolean) -> Unit)? = null,
+    /** 进入语音模式；Android 用于在用户真正长按前申请麦克风权限。 */
+    val onVoiceModeEntered: (() -> Unit)? = null,
+    /** 指针手势取消或录音控件离开组合：停止并丢弃，不得发送残片。 */
+    val onVoiceRecordCancel: (() -> Unit)? = null,
     /** 图片消息内容渲染器。null=回退到 MediaCard。 */
     val imageContent: @Composable ((url: String, modifier: Modifier) -> Unit)? = null,
     /** 视频消息内容渲染器。null=回退到 MediaCard。 */

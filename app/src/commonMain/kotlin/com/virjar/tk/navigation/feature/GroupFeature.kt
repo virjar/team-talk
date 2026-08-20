@@ -23,21 +23,60 @@ class GroupFeature internal constructor(
         private set
     var inviteLinks by mutableStateOf(emptyList<InviteLink>())
         private set
+    var detailTargetChatId by mutableStateOf<String?>(null)
+        private set
+    var inviteLinksTargetChatId by mutableStateOf<String?>(null)
+        private set
+
+    private val detailGate = GroupRequestGate<String>()
+    private val inviteLinksGate = GroupRequestGate<String>()
 
     internal suspend fun loadDetail(chatId: String) {
+        loadDetail(chatId, clearBeforeLoad = true)
+    }
+
+    private suspend fun loadDetail(chatId: String, clearBeforeLoad: Boolean) {
+        val token = detailGate.begin(chatId)
+        detailTargetChatId = chatId
+        if (clearBeforeLoad) {
+            detailChat = null
+            members = emptyList()
+        }
         try {
-            detailChat = session.chatRepo.getChat(chatId).getOrThrow()
-            members = session.chatRepo.getMembers(chatId).getOrThrow()
-        } catch (e: AppError) {
-            reportError(e, "加载群详情失败")
+            // 先加载到局部变量，再原子提交，避免 chat 已是 B 而 members 仍是 A。
+            val loadedChat = session.chatRepo.getChat(chatId).getOrThrow()
+                ?: throw IllegalStateException("群详情不存在")
+            val loadedMembers = session.chatRepo.getMembers(chatId).getOrThrow()
+            if (!detailGate.isCurrent(token)) return
+            if (loadedChat.chatId != chatId || loadedMembers.any { it.chatId != chatId }) {
+                reportError(IllegalStateException("群详情响应身份不匹配"), "加载群详情失败")
+                return
+            }
+            detailChat = loadedChat
+            members = loadedMembers
+        } catch (e: Exception) {
+            if (detailGate.isCurrent(token)) reportError(e, "加载群详情失败")
         }
     }
 
     internal suspend fun loadInviteLinks(chatId: String) {
+        loadInviteLinks(chatId, clearBeforeLoad = true)
+    }
+
+    private suspend fun loadInviteLinks(chatId: String, clearBeforeLoad: Boolean) {
+        val token = inviteLinksGate.begin(chatId)
+        inviteLinksTargetChatId = chatId
+        if (clearBeforeLoad) inviteLinks = emptyList()
         try {
-            inviteLinks = session.chatRepo.listInviteLinks(chatId).getOrThrow()
-        } catch (e: AppError) {
-            reportError(e, "加载邀请链接失败")
+            val loaded = session.chatRepo.listInviteLinks(chatId).getOrThrow()
+            if (!inviteLinksGate.isCurrent(token)) return
+            if (loaded.any { it.chatId != chatId }) {
+                reportError(IllegalStateException("邀请链接响应身份不匹配"), "加载邀请链接失败")
+                return
+            }
+            inviteLinks = loaded
+        } catch (e: Exception) {
+            if (inviteLinksGate.isCurrent(token)) reportError(e, "加载邀请链接失败")
         }
     }
 
@@ -90,28 +129,36 @@ class GroupFeature internal constructor(
 
     suspend fun createInviteLink(chatId: String): String? = try {
         val token = session.chatRepo.createInviteLink(chatId).getOrThrow()
-        inviteLinks = session.chatRepo.listInviteLinks(chatId).getOrThrow()
+        refreshInviteLinksIfCurrent(chatId)
         token
-    } catch (e: AppError) {
-        reportError(e, "创建链接失败")
+    } catch (e: Exception) {
+        if (inviteLinksGate.targets(chatId)) reportError(e, "创建链接失败")
         null
     }
 
     fun revokeInviteLink(chatId: String, token: String) = scope.launch {
         try {
             session.chatRepo.revokeInviteLink(token).getOrThrow()
-            inviteLinks = session.chatRepo.listInviteLinks(chatId).getOrThrow()
-        } catch (e: AppError) {
-            reportError(e, "撤销链接失败")
+            refreshInviteLinksIfCurrent(chatId)
+        } catch (e: Exception) {
+            if (inviteLinksGate.targets(chatId)) reportError(e, "撤销链接失败")
         }
     }
 
     private suspend fun runAndRefresh(chatId: String, fallback: String, action: suspend () -> Unit) {
         try {
             action()
-            loadDetail(chatId)
-        } catch (e: AppError) {
-            reportError(e, fallback)
+            refreshDetailIfCurrent(chatId)
+        } catch (e: Exception) {
+            if (detailGate.targets(chatId)) reportError(e, fallback)
         }
+    }
+
+    private suspend fun refreshDetailIfCurrent(chatId: String) {
+        if (detailGate.targets(chatId)) loadDetail(chatId, clearBeforeLoad = false)
+    }
+
+    private suspend fun refreshInviteLinksIfCurrent(chatId: String) {
+        if (inviteLinksGate.targets(chatId)) loadInviteLinks(chatId, clearBeforeLoad = false)
     }
 }

@@ -39,6 +39,14 @@ class ChatViewModel(
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading.asStateFlow()
 
+    private val _loadingOlder = MutableStateFlow(false)
+    val loadingOlder: StateFlow<Boolean> = _loadingOlder.asStateFlow()
+
+    private val _remoteHasMore = MutableStateFlow(true)
+    val hasMore: StateFlow<Boolean> = combine(pager.hasMore, _remoteHasMore) { local, remote ->
+        local || remote
+    }.stateIn(scope, SharingStarted.Eagerly, true)
+
     /** 当前正在输入的用户 uid，null 表示无人输入 */
     private val _typingUid = MutableStateFlow<String?>(null)
     val typingUid: StateFlow<String?> = _typingUid.asStateFlow()
@@ -76,7 +84,8 @@ class ChatViewModel(
         scope.launch {
             try {
                 _loading.value = true
-                messageRepo.getHistory(chatId, fromSeq = 0).getOrThrow()
+                val latest = messageRepo.getHistory(chatId, fromSeq = 0, limit = HISTORY_PAGE_SIZE).getOrThrow()
+                _remoteHasMore.value = latest.size == HISTORY_PAGE_SIZE
                 if (markReadAfter) markRead()
             } catch (e: AppError.AuthExpired) {
                 handleAuthExpired()
@@ -84,6 +93,52 @@ class ChatViewModel(
                 setError("加载消息失败: ${e.message}")
             } finally {
                 _loading.value = false
+            }
+        }
+    }
+
+    /**
+     * Load the next older page. Local persisted rows are consumed first; once exhausted, request
+     * the server page immediately before the oldest confirmed sequence currently visible.
+     */
+    fun loadOlder() {
+        if (_loading.value || _loadingOlder.value || !hasMore.value) return
+        scope.launch {
+            _loadingOlder.value = true
+            try {
+                if (pager.hasMore.value) {
+                    pager.loadMore(HISTORY_PAGE_SIZE)
+                    return@launch
+                }
+                if (!_remoteHasMore.value) return@launch
+                // MessageWindow atomically anchors the visible list to the newest server page, so
+                // its minimum is the floor of that proven response chain. A stale pre-sync local
+                // tail is deliberately not present here; legal sequence holes inside a page are.
+                val oldestSeq = _messages.value.asSequence()
+                    .map(Message::serverSeq)
+                    .filter { it > 0L }
+                    .minOrNull()
+                    ?: 0L
+                if (oldestSeq <= 1L) {
+                    _remoteHasMore.value = false
+                    return@launch
+                }
+                val older = messageRepo.getHistory(
+                    chatId = chatId,
+                    // RocksDB's backwards cursor is inclusive; step left once so the boundary
+                    // message is not returned on every page.
+                    fromSeq = oldestSeq - 1L,
+                    limit = HISTORY_PAGE_SIZE,
+                ).getOrThrow()
+                _remoteHasMore.value = older.size == HISTORY_PAGE_SIZE
+                // MessageRepository applies the authoritative response to MessageWindow as one
+                // atomic page, including legal gaps, so no secondary SQLite append is required.
+            } catch (e: AppError.AuthExpired) {
+                handleAuthExpired()
+            } catch (e: Exception) {
+                setError("加载更早消息失败: ${e.message}")
+            } finally {
+                _loadingOlder.value = false
             }
         }
     }
@@ -204,5 +259,9 @@ class ChatViewModel(
     override fun destroy() {
         localCache.onChatInactive(chatId)
         super.destroy()
+    }
+
+    private companion object {
+        const val HISTORY_PAGE_SIZE = 10
     }
 }

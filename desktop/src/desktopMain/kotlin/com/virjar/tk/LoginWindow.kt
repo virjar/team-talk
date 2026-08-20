@@ -27,6 +27,7 @@ import com.virjar.tk.ui.AppTheme
 import com.virjar.tk.ui.screen.LoginScreen
 import com.virjar.tk.ui.screen.RegisterScreen
 import java.io.File
+import java.util.UUID
 
 /** 显示"已有实例运行"对话框后退出。 */
 internal fun showAlreadyRunningDialog(dataDir: File) = application {
@@ -70,6 +71,7 @@ internal fun showAlreadyRunningDialog(dataDir: File) = application {
 internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = application {
     val config = defaultServerConfig()
     val tokenStore = remember { DesktopTokenStore(dataDir) }
+    val deviceId = remember(dataDir) { desktopInstallationDeviceId(dataDir) }
 
     // 启动 UI 自动化测试 HTTP 服务（通过反射隔离，production 打包删除 test 包也不报错）
     LaunchedEffect(Unit) { TestServiceBridge.startIfEnabled() }
@@ -79,8 +81,10 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
         tokenStore = tokenStore,
         tcpHost = config.tcpHost,
         tcpPort = config.tcpPort,
-        deviceId = "desktop-device",
+        deviceId = deviceId,
         deviceName = "Desktop",
+        deviceModel = System.getProperty("os.name"),
+        deviceFlag = 2,
         createCache = { uid -> createDesktopLocalCache(uid, dataDir) },
     )
 
@@ -290,8 +294,19 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                         mainWindowState.placement = nextTitleBarPlacement(mainWindowState.placement)
                     },
                     onLogout = { auth.onLogout() },
+                    onAuthExpired = { auth.onAuthExpired() },
                 )
             }
         }
     }
+}
+
+/** One durable identity per Desktop data directory (different profiles remain different devices). */
+private fun desktopInstallationDeviceId(dataDir: File): String {
+    val identityFile = File(dataDir, "device-id")
+    identityFile.takeIf(File::isFile)?.readText()?.trim()?.takeIf(String::isNotEmpty)?.let { return it }
+    dataDir.mkdirs()
+    val generated = "desktop-${UUID.randomUUID()}"
+    identityFile.writeText(generated)
+    return generated
 }

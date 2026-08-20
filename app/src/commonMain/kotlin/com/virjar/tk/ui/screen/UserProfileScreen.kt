@@ -17,6 +17,39 @@ enum class UserProfilePresentation {
     CompactDialog,
 }
 
+internal enum class UserProfileDestructiveAction {
+    DeleteFriend,
+    BlockUser,
+}
+
+internal data class UserProfileActionUiState(
+    val pendingConfirmation: UserProfileDestructiveAction? = null,
+) {
+    fun request(
+        action: UserProfileDestructiveAction,
+        availableActions: Collection<UserProfileDestructiveAction>,
+    ): UserProfileActionUiState = if (action in availableActions) {
+        copy(pendingConfirmation = action)
+    } else {
+        this
+    }
+
+    fun dismissConfirmation(): UserProfileActionUiState = copy(pendingConfirmation = null)
+}
+
+/**
+ * 资料页危险动作的纯展示策略。调用方通过是否提供回调决定能否拉黑当前用户，因而可以在
+ * 自己的资料页传 null，避免 UI 层猜测当前登录身份。
+ */
+internal fun availableUserProfileDestructiveActions(
+    isFriend: Boolean,
+    hasDeleteFriendAction: Boolean,
+    hasBlockUserAction: Boolean,
+): List<UserProfileDestructiveAction> = buildList {
+    if (isFriend && hasDeleteFriendAction) add(UserProfileDestructiveAction.DeleteFriend)
+    if (hasBlockUserAction) add(UserProfileDestructiveAction.BlockUser)
+}
+
 @Composable
 fun UserProfileScreen(
     user: User?,
@@ -26,6 +59,7 @@ fun UserProfileScreen(
     onSendMessage: () -> Unit,
     onCreateGroup: (() -> Unit)? = null,
     onDeleteFriend: (() -> Unit)? = null,
+    onBlockUser: (() -> Unit)? = null,
     onBack: (() -> Unit)? = null,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
@@ -38,6 +72,7 @@ fun UserProfileScreen(
             onSendMessage = onSendMessage,
             onCreateGroup = onCreateGroup,
             onDeleteFriend = onDeleteFriend,
+            onBlockUser = onBlockUser,
             presentation = UserProfilePresentation.FullPage,
             modifier = Modifier.fillMaxWidth().weight(1f),
         )
@@ -57,21 +92,61 @@ fun UserProfileContent(
     onSendMessage: () -> Unit,
     onCreateGroup: (() -> Unit)? = null,
     onDeleteFriend: (() -> Unit)? = null,
+    onBlockUser: (() -> Unit)? = null,
     presentation: UserProfilePresentation = UserProfilePresentation.FullPage,
     modifier: Modifier = Modifier,
 ) {
-    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var actionUiState by remember(user?.uid) {
+        mutableStateOf(UserProfileActionUiState())
+    }
+    val destructiveActions = availableUserProfileDestructiveActions(
+        isFriend = isFriend,
+        hasDeleteFriendAction = onDeleteFriend != null,
+        hasBlockUserAction = onBlockUser != null,
+    )
 
-    if (showDeleteConfirm) {
+    val confirmation = actionUiState.pendingConfirmation
+    if (confirmation != null) {
         AlertDialog(
-            onDismissRequest = { showDeleteConfirm = false },
-            title = { Text("删除好友") },
-            text = { Text("确定要删除该好友吗？") },
+            onDismissRequest = { actionUiState = actionUiState.dismissConfirmation() },
+            title = {
+                Text(
+                    when (confirmation) {
+                        UserProfileDestructiveAction.DeleteFriend -> "删除好友"
+                        UserProfileDestructiveAction.BlockUser -> "加入黑名单"
+                    },
+                )
+            },
+            text = {
+                Text(
+                    when (confirmation) {
+                        UserProfileDestructiveAction.DeleteFriend -> "确定要删除该好友吗？"
+                        UserProfileDestructiveAction.BlockUser ->
+                            "确定要将该用户加入黑名单吗？加入后可在设置的黑名单中移除。"
+                    },
+                )
+            },
             confirmButton = {
-                TextButton(onClick = { showDeleteConfirm = false; onDeleteFriend?.invoke() }) { Text("确定") }
+                TextButton(
+                    onClick = {
+                        actionUiState = actionUiState.dismissConfirmation()
+                        when (confirmation) {
+                            UserProfileDestructiveAction.DeleteFriend -> onDeleteFriend?.invoke()
+                            UserProfileDestructiveAction.BlockUser -> onBlockUser?.invoke()
+                        }
+                    },
+                    modifier = Modifier.testTag(
+                        when (confirmation) {
+                            UserProfileDestructiveAction.DeleteFriend -> "profile.deleteFriend.confirm"
+                            UserProfileDestructiveAction.BlockUser -> "profile.blockUser.confirm"
+                        },
+                    ),
+                ) { Text("确定") }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteConfirm = false }) { Text("取消") }
+                TextButton(
+                    onClick = { actionUiState = actionUiState.dismissConfirmation() },
+                ) { Text("取消") }
             },
         )
     }
@@ -108,10 +183,15 @@ fun UserProfileContent(
                                 ) { Text("发起群聊") }
                             }
                         }
-                        if (onDeleteFriend != null) {
+                        if (UserProfileDestructiveAction.DeleteFriend in destructiveActions) {
                             Spacer(Modifier.height(8.dp))
                             TextButton(
-                                onClick = { showDeleteConfirm = true },
+                                onClick = {
+                                    actionUiState = actionUiState.request(
+                                        UserProfileDestructiveAction.DeleteFriend,
+                                        destructiveActions,
+                                    )
+                                },
                                 modifier = if (presentation == UserProfilePresentation.CompactDialog) {
                                     Modifier.align(Alignment.CenterHorizontally).testTag("profile.deleteFriend")
                                 } else {
@@ -136,6 +216,26 @@ fun UserProfileContent(
                             modifier = Modifier.fillMaxWidth().testTag("profile.addFriend"),
                         ) { Text("添加好友") }
                     }
+                }
+
+                if (UserProfileDestructiveAction.BlockUser in destructiveActions) {
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(
+                        onClick = {
+                            actionUiState = actionUiState.request(
+                                UserProfileDestructiveAction.BlockUser,
+                                destructiveActions,
+                            )
+                        },
+                        modifier = if (presentation == UserProfilePresentation.CompactDialog) {
+                            Modifier.align(Alignment.CenterHorizontally).testTag("profile.blockUser")
+                        } else {
+                            Modifier.fillMaxWidth().testTag("profile.blockUser")
+                        },
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error,
+                        ),
+                    ) { Text("加入黑名单") }
                 }
             }
         }

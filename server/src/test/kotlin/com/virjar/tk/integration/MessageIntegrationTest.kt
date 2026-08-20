@@ -60,6 +60,18 @@ class MessageIntegrationTest {
     }
 
     @Test
+    fun `blacklist blocks new messages in an existing personal chat`() = runTest {
+        val uid1 = ctx.registerUser()
+        val uid2 = ctx.registerUser()
+        val chat = ctx.chatService.createPersonalChat(uid1, uid2)
+        ctx.contactService(uid2).blacklist(uid1)
+
+        assertFailsWith<IllegalArgumentException> { sendText(uid1, chat.chatId, "blocked") }
+        assertFailsWith<IllegalArgumentException> { sendText(uid2, chat.chatId, "also blocked") }
+        assertTrue(ctx.messageService.getHistory(uid1, chat.chatId, 0, 10).isEmpty())
+    }
+
+    @Test
     fun `get message history`() = runTest {
         val uid1 = ctx.registerUser()
         val uid2 = ctx.registerUser()
@@ -218,6 +230,44 @@ class MessageIntegrationTest {
         assertEquals("Forward me", senderConversation.lastMessage)
         assertEquals(4, recipientConversation.lastSeq)
         assertEquals(2, recipientConversation.unreadCount)
+    }
+
+    @Test
+    fun `blacklist blocks forwarding into an existing personal chat`() = runTest {
+        val sender = ctx.registerUser()
+        val sourcePeer = ctx.registerUser()
+        val targetPeer = ctx.registerUser()
+        val source = ctx.chatService.createPersonalChat(sender, sourcePeer)
+        val target = ctx.chatService.createPersonalChat(sender, targetPeer)
+        val sourceSeq = sendText(sender, source.chatId, "must not cross block")
+        ctx.contactService(targetPeer).blacklist(sender)
+
+        assertFailsWith<IllegalArgumentException> {
+            ctx.messageService.forwardMessage(sender, source.chatId, sourceSeq, target.chatId)
+        }
+        assertTrue(ctx.messageService.getHistory(sender, target.chatId, 0, 10).isEmpty())
+    }
+
+    @Test
+    fun `member and all mute block forwarding into a group`() = runTest {
+        val owner = ctx.registerUser()
+        val sender = ctx.registerUser()
+        val sourcePeer = ctx.registerUser()
+        val source = ctx.chatService.createPersonalChat(sender, sourcePeer)
+        val target = ctx.chatService.createGroup("Forward permissions", null, owner, listOf(sender))
+        val sourceSeq = sendText(sender, source.chatId, "must respect mute")
+
+        ctx.chatService.muteMember(owner, target.chatId, sender, durationSeconds = 3_600)
+        assertFailsWith<IllegalArgumentException> {
+            ctx.messageService.forwardMessage(sender, source.chatId, sourceSeq, target.chatId)
+        }
+
+        ctx.chatService.unmuteMember(owner, target.chatId, sender)
+        ctx.chatService.muteAll(owner, target.chatId)
+        assertFailsWith<IllegalArgumentException> {
+            ctx.messageService.forwardMessage(sender, source.chatId, sourceSeq, target.chatId)
+        }
+        assertTrue(ctx.messageService.getHistory(owner, target.chatId, 0, 10).isEmpty())
     }
 
     @Test
@@ -575,7 +625,7 @@ class MessageIntegrationTest {
         val storedReply = ctx.messageService.getHistory(uid1, chat.chatId, 0, 10)
             .first { it.serverSeq == replySeq }.body as ReplyBody
         assertEquals(uid2, storedReply.replyToSenderUid)
-        assertTrue(storedReply.replyToSenderName != "伪造同事")
+        assertEquals(assertNotNull(ctx.userRepo.findByUid(uid2)).name, storedReply.replyToSenderName)
         assertEquals("权威原文", storedReply.replySnippet)
 
         sendText(uid1, otherChat.chatId, "other-1")

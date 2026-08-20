@@ -122,6 +122,7 @@ class TestEnvironment : AutoCloseable {
         search = koin.get(),
         attachmentService = koin.get(),
         users = koin.get(),
+        contacts = koin.get(),
     )
 
     /** 注册用户，返回 uid */

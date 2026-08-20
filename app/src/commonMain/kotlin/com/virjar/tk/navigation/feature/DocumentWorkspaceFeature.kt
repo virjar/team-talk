@@ -14,9 +14,11 @@ import com.virjar.tk.model.DocumentSpaceGrant
 import com.virjar.tk.model.OrganizationMember
 import com.virjar.tk.model.OrganizationUnit
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 目录树当前可见的一行。子目录只在展开后按需从服务端加载。 */
 data class DocumentTreeRow(val node: DocumentNode, val depth: Int)
@@ -80,6 +82,12 @@ internal fun replacementDocumentTab(
     closedSpaceId: String,
 ): DocumentTabState? = remainingTabs.lastOrNull { it.spaceId == closedSpaceId }
 
+/** 关闭编辑器后目录仍定位到替补文档或刚关闭文档所在的文件夹。 */
+internal fun selectedFolderAfterClosingDocumentTab(
+    closing: DocumentTabState,
+    replacement: DocumentTabState?,
+): String? = replacement?.parentId ?: closing.parentId
+
 /** 根据已加载节点恢复某个目录的 root → folder 路径，供新建草稿保存导航上下文。 */
 internal fun folderAncestorIds(
     folderId: String?,
@@ -124,6 +132,44 @@ internal data class DocumentTabRequest(
         )
     }
 }
+
+/** 删除请求在 launch 前捕获；之后切换活动标签不能偷换 RPC 目标。 */
+internal data class DocumentDeleteRequest(
+    val instanceId: Long,
+    val documentId: String,
+    val spaceId: String,
+    val parentId: String?,
+    val revision: Long,
+) {
+    companion object {
+        fun capture(tab: DocumentTabState): DocumentDeleteRequest? {
+            val documentId = tab.documentId ?: return null
+            val revision = tab.revision ?: return null
+            return DocumentDeleteRequest(
+                instanceId = tab.instanceId,
+                documentId = documentId,
+                spaceId = tab.spaceId,
+                parentId = tab.parentId,
+                revision = revision,
+            )
+        }
+    }
+}
+
+/** tabId 会在新建保存后迁移，跨确认框/异步响应只能用稳定 instanceId 重新解析。 */
+internal fun documentTabIdByInstance(
+    tabs: List<DocumentTabState>,
+    instanceId: Long,
+): String? = tabs.firstOrNull { it.instanceId == instanceId }?.tabId
+
+/** 删除成功后，同一远端文档在请求期间重新打开的实例也已经失效，必须一并关闭。 */
+internal fun documentTabIdsInvalidatedByDelete(
+    tabs: List<DocumentTabState>,
+    request: DocumentDeleteRequest,
+): List<String> = tabs.filter { tab ->
+    tab.instanceId == request.instanceId ||
+        (tab.spaceId == request.spaceId && tab.documentId == request.documentId)
+}.map(DocumentTabState::tabId)
 
 /** 写响应合并结果；新建文档时标签 ID 会从本地草稿 ID 迁移为服务端文档 ID。 */
 internal data class DocumentTabMerge(
@@ -208,7 +254,10 @@ class DocumentWorkspaceFeature internal constructor(
     private val session: ClientSession,
     private val scope: CoroutineScope,
     private val reportError: (Throwable, String) -> Unit,
+    private val draftStore: DocumentDraftStore = DocumentDraftStore(),
 ) {
+    internal val draftLifecycleBridge = DocumentDraftLifecycleBridge()
+
     var spaces by mutableStateOf(emptyList<DocumentSpace>())
         private set
     var selectedSpaceId by mutableStateOf<String?>(null)
@@ -273,6 +322,8 @@ class DocumentWorkspaceFeature internal constructor(
         }
 
     private var draftCounter = 0L
+    private var draftRestorationLoaded = false
+    private var pendingDraftRestoration: DocumentWorkspaceDraftSnapshot? = null
     private var tabInstanceSequence = 0L
     private val navigationGeneration = DocumentNavigationGeneration()
     private var mutationSequence = 0L
@@ -285,11 +336,21 @@ class DocumentWorkspaceFeature internal constructor(
         val generation = beginNavigation()
         loading = true
         try {
+            // A persisted body can be several MiB; read and deserialize it away from the UI
+            // dispatcher, and only when the user actually enters Documents.
+            val restoration = loadInitialDraftRestoration()
+            if (!isCurrentNavigation(generation)) return
             // 一级导航进入“文档”时总是回到资产首页；已打开标签和草稿仍保留在工作台会话中。
-            clearSpaceSelection()
+            // Activity/process 重建后的新 feature 例外：只在第一次 open 恢复本地编辑现场。
+            if (restoration == null) clearSpaceSelection()
             val loadedSpaces = session.documentRepo.listSpaces().getOrThrow()
             if (!isCurrentNavigation(generation)) return
             spaces = loadedSpaces
+            if (restoration != null) {
+                restoreDraftWorkspace(restoration, generation)
+                if (!isCurrentNavigation(generation)) return
+                pendingDraftRestoration = null
+            }
             loadHome(generation)
         } catch (e: Exception) {
             if (isCurrentNavigation(generation)) reportError(e, "加载文档首页失败")
@@ -376,6 +437,7 @@ class DocumentWorkspaceFeature internal constructor(
             spaces = spaces.filterNot { it.spaceId == spaceId }
             tabs = tabs.filterNot { it.spaceId == spaceId }
             if (activeTabId !in tabs.map { it.tabId }) activeTabId = tabs.lastOrNull()?.tabId
+            persistDraftSnapshot()
             clearSpaceSelection()
             loadHome()
         } catch (e: Exception) {
@@ -396,6 +458,7 @@ class DocumentWorkspaceFeature internal constructor(
 
     fun selectRootFolder() {
         selectedFolderId = null
+        persistDraftSnapshot()
     }
 
     fun toggleFolder(folder: DocumentNode) = scope.launch {
@@ -403,6 +466,7 @@ class DocumentWorkspaceFeature internal constructor(
         val spaceId = selectedSpaceId ?: return@launch
         if (folder.spaceId != spaceId) return@launch
         selectedFolderId = folder.nodeId
+        persistDraftSnapshot()
         if (folder.nodeId in expandedFolderIds) {
             expandedFolderIds = expandedFolderIds - folder.nodeId
             return@launch
@@ -450,6 +514,7 @@ class DocumentWorkspaceFeature internal constructor(
         tabs = tabs + tab
         activeTabId = tabId
         closeHistory()
+        persistDraftSnapshot()
     }
 
     fun openDocument(node: DocumentNode) = beginNavigation().let { generation ->
@@ -490,6 +555,7 @@ class DocumentWorkspaceFeature internal constructor(
                 if (!isCurrentNavigation(generation, tab.spaceId)) return@launch
                 activeTabId = tabId
                 selectedFolderId = tab.parentId
+                persistDraftSnapshot()
                 revealDocumentPath(tab.ancestorIds, generation)
             } catch (e: Exception) {
                 if (isCurrentNavigation(generation)) reportError(e, "切换文档标签失败")
@@ -508,31 +574,39 @@ class DocumentWorkspaceFeature internal constructor(
                 editGeneration = if (contentChanged) tab.editGeneration + 1 else tab.editGeneration,
             )
         }
+        persistDraftSnapshot()
     }
 
     fun closeTab(tabId: String) {
         val closing = tabs.firstOrNull { it.tabId == tabId } ?: return
         val remainingTabs = tabs.filterNot { it.tabId == tabId }
         tabs = remainingTabs
-        if (activeTabId != tabId) return
+        if (activeTabId != tabId) {
+            persistDraftSnapshot()
+            return
+        }
 
         val generation = beginNavigation()
         val replacement = replacementDocumentTab(remainingTabs, closing.spaceId)
         if (replacement == null) {
             activeTabId = null
-            selectedFolderId = null
+            // 关闭最后一篇文档后回到它所在的目录，而不是把用户弹回空间根目录。
+            // 打开该文档时 revealDocumentPath 已展开 ancestorIds，目录上下文可以直接复用。
+            selectedFolderId = selectedFolderAfterClosingDocumentTab(closing, replacement)
             closeHistory()
+            persistDraftSnapshot()
             return
         }
 
         if (selectedSpaceId == replacement.spaceId) {
             activeTabId = replacement.tabId
-            selectedFolderId = replacement.parentId
+            selectedFolderId = selectedFolderAfterClosingDocumentTab(closing, replacement)
         } else {
             activeTabId = null
             selectedFolderId = null
         }
         closeHistory()
+        persistDraftSnapshot()
         scope.launch {
             try {
                 if (selectedSpaceId != replacement.spaceId &&
@@ -541,11 +615,17 @@ class DocumentWorkspaceFeature internal constructor(
                 if (!isCurrentNavigation(generation, replacement.spaceId)) return@launch
                 activeTabId = replacement.tabId
                 selectedFolderId = replacement.parentId
+                persistDraftSnapshot()
                 revealDocumentPath(replacement.ancestorIds, generation)
             } catch (e: Exception) {
                 if (isCurrentNavigation(generation)) reportError(e, "恢复文档标签失败")
             }
         }
+    }
+
+    fun closeTabByInstance(instanceId: Long) {
+        val currentTabId = documentTabIdByInstance(tabs, instanceId) ?: return
+        closeTab(currentTabId)
     }
 
     fun saveActive() {
@@ -579,6 +659,7 @@ class DocumentWorkspaceFeature internal constructor(
                         selectedFolderId = merge.tab.parentId
                         closeHistory()
                     }
+                    persistDraftSnapshot()
                 }
                 // 即使标签已关闭，服务端写入仍然成功；资产首页/目录应反映真实远端状态。
                 if (selectedSpaceId == saved.spaceId) reloadChildren(saved.parentId)
@@ -591,19 +672,28 @@ class DocumentWorkspaceFeature internal constructor(
         }
     }
 
-    fun deleteActive() = scope.launch {
-        val current = activeTab ?: return@launch
-        if (current.documentId == null || current.revision == null) {
-            closeTab(current.tabId)
-            return@launch
+    fun deleteActive() {
+        // 必须在 launch 前同步捕获；否则用户紧接着切换到 B 时，协程可能误删 B。
+        val current = activeTab ?: return
+        val request = DocumentDeleteRequest.capture(current)
+        if (request == null) {
+            closeTabByInstance(current.instanceId)
+            return
         }
-        try {
-            session.documentRepo.deleteNode(current.spaceId, current.documentId, current.revision).getOrThrow()
-            closeTab(current.tabId)
-            if (selectedSpaceId == current.spaceId) reloadChildren(current.parentId)
-            loadHome()
-        } catch (e: Exception) {
-            reportError(e, "删除文档失败")
+        scope.launch {
+            try {
+                session.documentRepo.deleteNode(
+                    request.spaceId,
+                    request.documentId,
+                    request.revision,
+                ).getOrThrow()
+                // 请求期间用户可能已关闭旧实例并重新打开同一文档；远端删除成功后这些实例都已失效。
+                documentTabIdsInvalidatedByDelete(tabs, request).forEach(::closeTab)
+                if (selectedSpaceId == request.spaceId) reloadChildren(request.parentId)
+                loadHome()
+            } catch (e: Exception) {
+                reportError(e, "删除文档失败")
+            }
         }
     }
 
@@ -675,6 +765,7 @@ class DocumentWorkspaceFeature internal constructor(
                         // 只刷新仍属于该文档的历史；切换后的 B 文档状态绝不能被 A 的恢复响应触碰。
                         if (historyTarget == target) showHistory()
                     }
+                    persistDraftSnapshot()
                 }
                 if (selectedSpaceId == restored.spaceId) reloadChildren(restored.parentId)
                 loadHome()
@@ -745,7 +836,9 @@ class DocumentWorkspaceFeature internal constructor(
         expandedFolderIds = emptySet()
         treeChildren = emptyMap()
         grants = emptyList()
-        return loadTreeRoot(generation)
+        val loaded = loadTreeRoot(generation)
+        persistDraftSnapshot()
+        return loaded
     }
 
     private suspend fun loadTreeRoot(generation: Long): Boolean {
@@ -787,13 +880,11 @@ class DocumentWorkspaceFeature internal constructor(
                 // 显式再次打开也要经过实时 ACL 并刷新最近访问；保留本地草稿，不以服务端快照覆盖。
                 val verified = session.documentRepo.getDocument(spaceId, documentId).getOrThrow()
                 if (!isCurrentNavigation(generation, spaceId)) return
-                val refreshed = existing.copy(
-                    parentId = verified.parentId,
-                    ancestorIds = verified.ancestorIds,
-                )
+                val refreshed = refreshRestoredDocumentPath(existing, verified) ?: return
                 tabs = tabs.map { if (it.tabId == existing.tabId) refreshed else it }
                 activeTabId = refreshed.tabId
                 selectedFolderId = refreshed.parentId
+                persistDraftSnapshot()
                 revealDocumentPath(refreshed.ancestorIds, generation)
                 return
             }
@@ -803,6 +894,7 @@ class DocumentWorkspaceFeature internal constructor(
             tabs = tabs + tab
             activeTabId = tab.tabId
             selectedFolderId = tab.parentId
+            persistDraftSnapshot()
             revealDocumentPath(tab.ancestorIds, generation)
         } finally {
             if (isCurrentNavigation(generation, spaceId)) loadingDocument = false
@@ -862,6 +954,94 @@ class DocumentWorkspaceFeature internal constructor(
 
     private data class PendingMutation(val id: Long, val request: DocumentTabRequest)
 
+    private suspend fun loadInitialDraftRestoration(): DocumentWorkspaceDraftSnapshot? {
+        if (draftRestorationLoaded) return pendingDraftRestoration
+        val restored = withContext(Dispatchers.Default) {
+            draftStore.restore(session.userSession.uid)?.normalized()
+        }
+        pendingDraftRestoration = restored
+        draftRestorationLoaded = true
+        tabInstanceSequence = maxOf(
+            tabInstanceSequence,
+            restored?.tabs?.maxOfOrNull(DocumentTabState::instanceId) ?: 0L,
+        )
+        return restored
+    }
+
+    /**
+     * Rehydrates only unsaved tabs retained by the same uid. Space/ACL metadata is still loaded
+     * from the server, while the restored title and Markdown remain the local source of truth.
+     */
+    private suspend fun restoreDraftWorkspace(
+        rawSnapshot: DocumentWorkspaceDraftSnapshot,
+        generation: Long,
+    ) {
+        val snapshot = rawSnapshot.normalized() ?: return
+        tabs = snapshot.tabs
+        tabInstanceSequence = maxOf(
+            tabInstanceSequence,
+            snapshot.tabs.maxOfOrNull(DocumentTabState::instanceId) ?: 0L,
+        )
+
+        val targetSpaceId = snapshot.selectedSpaceId
+        if (targetSpaceId == null || spaces.none { it.spaceId == targetSpaceId }) {
+            activeTabId = null
+            selectedSpaceId = null
+            selectedFolderId = null
+            treeChildren = emptyMap()
+            expandedFolderIds = emptySet()
+            persistDraftSnapshot()
+            return
+        }
+
+        selectedSpaceId = targetSpaceId
+        activeTabId = null
+        selectedFolderId = null
+        treeChildren = emptyMap()
+        expandedFolderIds = emptySet()
+        grants = emptyList()
+        closeHistory()
+
+        val active = snapshot.activeTabInstanceId?.let { instanceId ->
+            tabs.firstOrNull { it.instanceId == instanceId && it.spaceId == targetSpaceId }
+        }
+        var directoryFailure: Exception? = null
+        try {
+            if (loadTreeRoot(generation) && active != null) {
+                revealDocumentPath(active.ancestorIds, generation)
+            }
+        } catch (e: Exception) {
+            // Directory state is recoverable; never sacrifice the user's local body because the
+            // network/tree request failed during an Activity recreation.
+            directoryFailure = e
+        }
+        if (!isCurrentNavigation(generation, targetSpaceId)) return
+
+        activeTabId = active?.tabId
+        selectedFolderId = active?.parentId ?: snapshot.selectedFolderId
+        persistDraftSnapshot()
+        directoryFailure?.let { reportError(it, "恢复文档目录失败，草稿已保留") }
+    }
+
+    private fun persistDraftSnapshot() {
+        draftStore.save(
+            uid = session.userSession.uid,
+            tabs = tabs,
+            activeTabId = activeTabId,
+            selectedSpaceId = selectedSpaceId,
+            selectedFolderId = selectedFolderId,
+        )
+    }
+
+    /**
+     * Android calls this synchronously before `super.onStop()`: capture the editor's last frame,
+     * let [updateDraft] enqueue that exact workspace snapshot, then wait for platform persistence.
+     * Flush is still attempted if a custom editor callback fails, preserving the previous snapshot.
+     */
+    fun captureAndFlushDrafts(): Boolean {
+        return captureDocumentDraftThenFlush(draftLifecycleBridge, draftStore::flush)
+    }
+
     private fun nextTabInstanceId(): Long = ++tabInstanceSequence
 
     private fun beginMutation(tab: DocumentTabState): PendingMutation? {
@@ -898,6 +1078,7 @@ class DocumentWorkspaceFeature internal constructor(
         loadingNodes = false
         grants = emptyList()
         closeHistory()
+        persistDraftSnapshot()
     }
 
     private fun beginNavigation(): Long {

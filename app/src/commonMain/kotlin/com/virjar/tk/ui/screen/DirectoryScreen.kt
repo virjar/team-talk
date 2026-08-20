@@ -244,6 +244,12 @@ private fun DepartmentRow(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        Text(
+            "${row.unit.directMemberCount} 人",
+            style = MaterialTheme.typography.labelMedium,
+            color = Tk.colors.metaText,
+            modifier = Modifier.testTag("organization.unit.${row.unit.unitId.take(8)}.memberCount"),
+        )
         row.unit.groupChatId?.let { chatId ->
             IconButton(
                 onClick = { onGroupClick(chatId, "${row.unit.name}部门群") },

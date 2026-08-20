@@ -92,7 +92,8 @@ enum class SubScreenPresentation {
  * - 聊天检查器有导航栈（[inspectorStack]）：群详情→邀请成员 可逐级返回，
  *   旧单槽 currentScreen 无栈，InviteMembers 只能硬编码跳回 GroupDetail。
  */
-class DesktopNav(session: ClientSession) : AppDataState(session) {
+class DesktopNav(session: ClientSession, onAuthExpired: () -> Unit) :
+    AppDataState(session, onAuthExpired = onAuthExpired) {
 
     var selectedTab by mutableIntStateOf(0)
 
@@ -199,4 +200,11 @@ class DesktopNav(session: ClientSession) : AppDataState(session) {
 }
 
 @Composable
-internal fun rememberDesktopNav(session: ClientSession): DesktopNav = remember { DesktopNav(session) }
+internal fun rememberDesktopNav(session: ClientSession, onAuthExpired: () -> Unit): DesktopNav {
+    val latestAuthExpired by rememberUpdatedState(onAuthExpired)
+    val nav = remember(session) { DesktopNav(session) { latestAuthExpired() } }
+    DisposableEffect(nav) {
+        onDispose { nav.destroy(clearComposerContexts = true) }
+    }
+    return nav
+}

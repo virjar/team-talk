@@ -10,7 +10,15 @@ import kotlin.test.assertEquals
 class OrganizationModelTest {
     @Test
     fun `organization unit round trips`() {
-        val unit = OrganizationUnit("engineering", "company", "研发部", "u1", 20, "chat-1")
+        val unit = OrganizationUnit(
+            unitId = "engineering",
+            parentId = "company",
+            name = "研发部",
+            leaderUid = "u1",
+            sortOrder = 20,
+            groupChatId = "chat-1",
+            directMemberCount = 12,
+        )
         assertEquals(unit, ProtoCodec.decode(OrganizationUnit, ProtoCodec.encode(unit)))
     }
 

@@ -24,6 +24,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.body.*
 import com.virjar.tk.model.Message
+import com.virjar.tk.model.User
 import com.virjar.tk.ui.theme.Tk
 import com.virjar.tk.util.MessagePreview
 import com.virjar.tk.util.formatFileSize
@@ -50,6 +51,7 @@ fun MessageBodyRenderer(
     voicePlayback: VoicePlaybackController? = null,
     onMentionClick: ((uid: String) -> Unit)? = null,
     onUrlClick: ((String) -> Unit)? = null,
+    resolveSender: ((uid: String) -> User?)? = null,
 ) {
     @Suppress("DEPRECATION")
     when (val body = message.body) {
@@ -139,6 +141,7 @@ fun MessageBodyRenderer(
             body = body,
             onUrlClick = onUrlClick,
             onMentionClick = onMentionClick,
+            resolveSender = resolveSender,
         )
         is ForwardBody -> ForwardView(body)
         is MergeForwardBody -> MediaIconCard(title = "合并转发", subtitle = "${body.messageCount} 条消息")
@@ -165,6 +168,7 @@ private fun ReplyView(
     body: ReplyBody,
     onUrlClick: ((String) -> Unit)?,
     onMentionClick: ((uid: String) -> Unit)?,
+    resolveSender: ((uid: String) -> User?)?,
 ) {
     Column {
         // 引用块：3dp 主色竖线 + 引用者 + 截断内容
@@ -180,16 +184,14 @@ private fun ReplyView(
             )
             Spacer(Modifier.width(Tk.spacing.sm))
             Column(Modifier.weight(1f)) {
-                body.replyToSenderName?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = LocalContentColor.current,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+                Text(
+                    resolveReplySenderName(body, resolveSender),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = LocalContentColor.current,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 body.replySnippet?.let {
                     Text(
                         it,
@@ -211,6 +213,27 @@ private fun ReplyView(
             )
         }
     }
+}
+
+/**
+ * Prefer the server's authoritative reply snapshot. Older messages sometimes stored the UID in
+ * that field; resolve those only by replyToSenderUid, never by the outer reply author or an
+ * unrelated message. If the referenced user has left or the directory is not loaded yet, use a
+ * human-readable placeholder rather than leaking an internal UID into the message bubble.
+ */
+internal fun resolveReplySenderName(
+    body: ReplyBody,
+    resolveSender: ((uid: String) -> User?)?,
+): String {
+    body.replyToSenderName
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() && it != body.replyToSenderUid }
+        ?.let { return it }
+
+    val user = resolveSender?.invoke(body.replyToSenderUid)
+    return user?.name?.trim()?.takeIf(String::isNotEmpty)
+        ?: user?.username?.trim()?.takeIf(String::isNotEmpty)
+        ?: "未知成员"
 }
 
 @Composable

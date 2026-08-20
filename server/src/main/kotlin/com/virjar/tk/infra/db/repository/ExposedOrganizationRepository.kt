@@ -9,6 +9,7 @@ import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.and
+import org.jetbrains.exposed.sql.count
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.selectAll
@@ -90,6 +91,20 @@ class ExposedOrganizationRepository : OrganizationRepository {
                 .where { OrganizationMemberships.unitId inList unitIds }
                 .orderBy(OrganizationMemberships.joinedAt to SortOrder.ASC)
                 .map(ResultRow::toOrganizationMember)
+        }
+    }
+
+    override fun countDirectMembers(unitIds: Set<String>): Map<String, Int> {
+        if (unitIds.isEmpty()) return emptyMap()
+        return transaction {
+            val memberCount = OrganizationMemberships.id.count()
+            OrganizationMemberships
+                .select(OrganizationMemberships.unitId, memberCount)
+                .where { OrganizationMemberships.unitId inList unitIds }
+                .groupBy(OrganizationMemberships.unitId)
+                .associate { row ->
+                    row[OrganizationMemberships.unitId] to row[memberCount].toInt()
+                }
         }
     }
 

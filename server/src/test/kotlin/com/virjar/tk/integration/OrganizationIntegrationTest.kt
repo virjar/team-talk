@@ -19,12 +19,13 @@ class OrganizationIntegrationTest {
     private val ctx get() = ext.env
 
     @Test
-    fun `department group follows subtree and rejects manual membership changes`() = runTest {
+    fun `department group follows subtree and directory projects direct member counts`() = runTest {
         val leader = ctx.registerUser(uniqueUsername("org-leader"))
         val engineer = ctx.registerUser(uniqueUsername("org-engineer"))
         val root = ctx.organizationService.createUnit(null, "Example Inc", null)
         val engineering = ctx.organizationService.createUnit(root.unitId, "研发", leader, enableGroup = true)
         val mobile = ctx.organizationService.createUnit(engineering.unitId, "移动端", null)
+        val emptyDepartment = ctx.organizationService.createUnit(root.unitId, "空部门", null)
 
         assertFailsWith<IllegalArgumentException> {
             ctx.organizationService.createUnit(null, "Another Root", null)
@@ -35,7 +36,18 @@ class OrganizationIntegrationTest {
 
         ctx.organizationService.assignMember(mobile.unitId, engineer, "客户端工程师", primary = true)
 
-        val managed = ctx.organizationService.listUnits().first { it.unitId == engineering.unitId }
+        val units = ctx.organizationService.listUnits().associateBy { it.unitId }
+        assertEquals(0, units.getValue(root.unitId).directMemberCount)
+        assertEquals(1, units.getValue(engineering.unitId).directMemberCount)
+        assertEquals(1, units.getValue(mobile.unitId).directMemberCount)
+        assertEquals(0, units.getValue(emptyDepartment.unitId).directMemberCount)
+        assertEquals(
+            2,
+            ctx.organizationService.listMembers(root.unitId, recursive = true).size,
+            "递归人数仍由显式 recursive 查询提供，目录行只展示直属人数",
+        )
+
+        val managed = units.getValue(engineering.unitId)
         assertEquals(engineering.unitId, managed.groupChatId, "部门节点 ID 同时作为稳定受管群 ID")
         assertEquals("研发部门群", ctx.chatService.getChat(managed.groupChatId!!)?.name)
         assertTrue(ctx.chatService.getMembers(managed.groupChatId!!).map { it.uid }.containsAll(listOf(leader, engineer)))

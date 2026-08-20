@@ -1,6 +1,12 @@
 package com.virjar.tk
 
+import com.virjar.tk.client.StoredLogin
+import com.virjar.tk.client.TokenStoreOwner
 import java.io.File
+import java.io.FileOutputStream
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.Properties
 
 /**
@@ -14,28 +20,62 @@ import java.util.Properties
 class DesktopTokenStore(dataDir: File) : com.virjar.tk.client.TokenStore {
     private val file = File(dataDir, "auth.properties")
 
-    /** 保存登录态。 */
-    override fun save(uid: String, refreshToken: String) {
-        val props = Properties().apply {
-            setProperty(KEY_UID, uid)
-            setProperty(KEY_TOKEN, refreshToken)
-        }
-        file.parentFile?.mkdirs()
-        file.outputStream().use { props.store(it, "TeamTalk auth") }
+    override fun claimOwner(): TokenStoreOwner = synchronized(PROCESS_LOCK) {
+        val props = readProps() ?: Properties()
+        val generation = nextOwnerGeneration(props.ownerGeneration())
+        props.setProperty(KEY_OWNER_GENERATION, generation.toString())
+        normalizeCredentials(props)
+        writeProps(props)
+        TokenStoreOwner(generation, props.toStoredLogin(generation))
     }
 
-    /** 读取已保存的 uid（null = 未登录过或已登出）。 */
-    override val savedUid: String? get() = readProps()?.getProperty(KEY_UID)
+    override fun save(ownerGeneration: Long, uid: String, refreshToken: String): StoredLogin? =
+        synchronized(PROCESS_LOCK) {
+            require(uid.isNotBlank()) { "uid 不能为空" }
+            require(refreshToken.isNotBlank()) { "refreshToken 不能为空" }
+            val props = readProps() ?: Properties()
+            if (props.ownerGeneration() != ownerGeneration) return@synchronized null
+            props.setProperty(KEY_UID, uid)
+            props.setProperty(KEY_TOKEN, refreshToken)
+            writeProps(props)
+            StoredLogin(uid, refreshToken, ownerGeneration)
+        }
 
-    /** 读取已保存的 refreshToken。 */
-    override val savedToken: String? get() = readProps()?.getProperty(KEY_TOKEN)
+    override fun compareAndClear(expected: StoredLogin): Boolean = synchronized(PROCESS_LOCK) {
+        val props = readProps() ?: return@synchronized false
+        val matches = props.ownerGeneration() == expected.ownerGeneration &&
+            props.getProperty(KEY_UID) == expected.uid &&
+            props.getProperty(KEY_TOKEN) == expected.refreshToken
+        if (!matches) return@synchronized false
+        props.remove(KEY_UID)
+        props.remove(KEY_TOKEN)
+        writeProps(props)
+        true
+    }
 
-    /** 是否有已保存的登录态。 */
-    override fun hasSavedLogin(): Boolean = !savedUid.isNullOrEmpty() && !savedToken.isNullOrEmpty()
+    override fun isCurrentOwner(ownerGeneration: Long): Boolean = synchronized(PROCESS_LOCK) {
+        readProps()?.ownerGeneration() == ownerGeneration
+    }
 
-    /** 清除登录态（登出 / token 失效）。 */
-    override fun clear() {
-        file.delete()
+    /** Temp + fsync + atomic replace: refresh token 轮换不能在进程退出时落回旧值。 */
+    private fun writeProps(props: Properties) {
+        file.parentFile?.mkdirs()
+        val temp = File(file.parentFile, "${file.name}.tmp")
+        FileOutputStream(temp).use { output ->
+            props.store(output, "TeamTalk auth")
+            output.flush()
+            output.fd.sync()
+        }
+        try {
+            Files.move(
+                temp.toPath(),
+                file.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
     }
 
     private fun readProps(): Properties? = try {
@@ -44,8 +84,29 @@ class DesktopTokenStore(dataDir: File) : com.virjar.tk.client.TokenStore {
         null
     }
 
+    private fun Properties.ownerGeneration(): Long =
+        getProperty(KEY_OWNER_GENERATION)?.toLongOrNull() ?: 0L
+
+    private fun normalizeCredentials(props: Properties) {
+        if (props.getProperty(KEY_UID).isNullOrBlank() || props.getProperty(KEY_TOKEN).isNullOrBlank()) {
+            props.remove(KEY_UID)
+            props.remove(KEY_TOKEN)
+        }
+    }
+
+    private fun Properties.toStoredLogin(ownerGeneration: Long): StoredLogin? {
+        val uid = getProperty(KEY_UID)?.takeIf { it.isNotBlank() } ?: return null
+        val token = getProperty(KEY_TOKEN)?.takeIf { it.isNotBlank() } ?: return null
+        return StoredLogin(uid, token, ownerGeneration)
+    }
+
     companion object {
+        private val PROCESS_LOCK = Any()
+        private const val KEY_OWNER_GENERATION = "owner_generation"
         private const val KEY_UID = "uid"
         private const val KEY_TOKEN = "refresh_token"
+
+        private fun nextOwnerGeneration(current: Long): Long =
+            (current + 1L).takeUnless { it == 0L } ?: 1L
     }
 }

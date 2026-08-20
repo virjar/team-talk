@@ -1,6 +1,8 @@
 package com.virjar.tk
 
+import android.app.Application
 import android.os.Bundle
+import android.os.Build
 import android.util.Log
 import com.virjar.tk.android.BuildConfig
 import androidx.activity.ComponentActivity
@@ -9,12 +11,16 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.compose.animation.AnimatedContentTransitionScope
@@ -22,19 +28,19 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.navigation.navArgument
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.virjar.tk.client.*
 import com.virjar.tk.model.User
 import com.virjar.tk.navigation.AppDataState
 import com.virjar.tk.navigation.ScreenDataKey
+import com.virjar.tk.navigation.feature.DocumentDraftStore
 import com.virjar.tk.ui.AppTheme
+import com.virjar.tk.ui.component.LocalScreenHeaderTopSafeAreaEnabled
 import com.virjar.tk.ui.screen.*
 import com.virjar.tk.ui.theme.initThemeStore
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     private val appDataStateHolder: AndroidAppDataStateHolder by lazy {
@@ -51,13 +57,17 @@ class MainActivity : ComponentActivity() {
                 TestTagEnabler {
                 val config = remember { defaultServerConfig() }
                 val tokenStore = remember { TokenStore(applicationContext) }
-                val scope = rememberCoroutineScope()
+                val deviceId = remember { AndroidDeviceIdentity.getOrCreate(applicationContext) }
+                val deviceName = remember { "${Build.MANUFACTURER} ${Build.MODEL}".trim() }
+                val uiScope = rememberCoroutineScope()
                 val auth = rememberAuthController(
                     tokenStore = tokenStore,
                     tcpHost = config.tcpHost,
                     tcpPort = config.tcpPort,
-                    deviceId = "android-device",
-                    deviceName = "Android",
+                    deviceId = deviceId,
+                    deviceName = deviceName,
+                    deviceModel = Build.MODEL,
+                    deviceFlag = 1,
                     createCache = { uid -> createAndroidLocalCache(applicationContext, uid) },
                     onAuthenticated = { session ->
                         // 注册/登录后缓存可能还没写入，回退用 UserSession 内存字段构建
@@ -71,11 +81,19 @@ class MainActivity : ComponentActivity() {
                     if (auth.autoLoggingIn) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                     } else {
-                        AuthFlow(auth.imClient, config, scope, auth.authError) { auth.clearError() }
+                        AuthFlow(auth)
                     }
                 } else {
                     val dataState = remember(auth.session) {
-                        appDataStateHolder.forSession(auth.session!!)
+                        appDataStateHolder.forSession(auth.session!!) {
+                            // Repository/ViewModel errors may arrive on a background dispatcher.
+                            // Tear down the retained AppDataState on the composition's UI scope
+                            // before the auth controller switches back to the login screen.
+                            uiScope.launch {
+                                appDataStateHolder.clearForAuthenticationLoss()
+                                auth.onAuthExpired()
+                            }
+                        }
                     }
                     AndroidMainApp(
                         dataState = dataState,
@@ -85,60 +103,99 @@ class MainActivity : ComponentActivity() {
                         },
                     )
                 }
+                if (auth.requiresProtocolUpgrade) {
+                    ProtocolUpgradeDialog(onExit = { this@MainActivity.finishAffinity() })
+                }
             }
                 }
         }
     }
+
+    override fun onStop() {
+        // Android may reclaim the process after this point. Synchronously publish the editor's
+        // latest title/body first, then finish that exact AtomicFile write before lifecycle
+        // dispatch from super.onStop(). This cannot depend on a later composable disposal.
+        appDataStateHolder.captureAndFlushDocumentDrafts()
+        super.onStop()
+    }
 }
 
 /**
- * Retains the session-owned composer store across Activity recreation. Authentication currently
- * creates a fresh ClientSession after rotation, so retaining only Compose state would strand the
- * lightweight SavedState tokens. A different signed-in uid always receives a fresh store.
+ * Retains session-owned composer context and unsaved document bodies across Activity recreation.
+ * Ordinary configuration changes are handled in-place by the Activity; this holder also protects
+ * large continuations when an explicit recreation occurs. A different signed-in uid always
+ * receives fresh stores and therefore can never inherit another account's draft.
  */
-internal class AndroidAppDataStateHolder : ViewModel() {
+internal class AndroidAppDataStateHolder(application: Application) : AndroidViewModel(application) {
     private var composerContexts = ChatComposerContextStore()
+    private var documentDrafts = newDocumentDraftStore()
     private var dataState: AppDataState? = null
 
-    fun forSession(session: ClientSession): AppDataState {
+    fun forSession(session: ClientSession, onAuthExpired: () -> Unit): AppDataState {
         dataState?.takeIf { it.session === session }?.let { return it }
         val previous = dataState
         val sameUser = previous?.userSession?.uid == session.userSession.uid
         previous?.destroy(clearComposerContexts = !sameUser)
-        if (!sameUser) composerContexts = ChatComposerContextStore()
-        return AppDataState(session, composerContexts).also { dataState = it }
+        // AuthController owns the transport. A retained holder may still reference an already
+        // closed session after the same ImClient has started a newer login; only release the old
+        // session resources here and never request a transport disconnect from the holder.
+        previous?.session?.close(disconnectTransport = false)
+        if (!sameUser) {
+            composerContexts = ChatComposerContextStore()
+            documentDrafts = newDocumentDraftStore()
+        }
+        return AppDataState(
+            session = session,
+            chatComposerContexts = composerContexts,
+            documentDrafts = documentDrafts,
+            onAuthExpired = onAuthExpired,
+        ).also { dataState = it }
     }
 
     fun clearForLogout() {
         dataState?.destroy(clearComposerContexts = true)
         dataState = null
         composerContexts = ChatComposerContextStore()
+        documentDrafts = newDocumentDraftStore()
+    }
+
+    /** Authentication expiry requires re-login, but is not the user's instruction to discard work. */
+    fun clearForAuthenticationLoss() {
+        dataState?.destroy(clearComposerContexts = true, clearDocumentDrafts = false)
+        dataState = null
+        composerContexts = ChatComposerContextStore()
+        documentDrafts = newDocumentDraftStore()
+    }
+
+    fun captureAndFlushDocumentDrafts() {
+        dataState?.documents?.captureAndFlushDrafts() ?: documentDrafts.flush()
     }
 
     override fun onCleared() {
-        dataState?.destroy(clearComposerContexts = true)
+        // Task removal is not an explicit account logout. Retain the uid-scoped AtomicFile so a
+        // fresh process can resume the unsaved document.
+        dataState?.destroy(clearComposerContexts = true, clearDocumentDrafts = false)
+        dataState?.session?.close(disconnectTransport = false)
         dataState = null
     }
+
+    private fun newDocumentDraftStore() = DocumentDraftStore(
+        AndroidDocumentDraftPersistence(getApplication()),
+    )
 }
 
 @Composable
-private fun AuthFlow(imClient: ImClient, config: ServerConfig, scope: kotlinx.coroutines.CoroutineScope, authError: String?, onAuthErrorChange: (String?) -> Unit) {
+private fun AuthFlow(auth: AuthState) {
     var showRegister by remember { mutableStateOf(false) }
     if (showRegister) {
         RegisterScreen(
-            onRegister = { u, p, n -> onAuthErrorChange(null); scope.launch {
-                try { imClient.register(u, p, n, "android-${UUID.randomUUID()}", "Android", config.tcpHost, config.tcpPort) }
-                catch (e: IllegalArgumentException) { onAuthErrorChange(e.message) }
-            }},
-            onNavigateBack = { showRegister = false; onAuthErrorChange(null) }, error = authError,
+            onRegister = auth.onRegister,
+            onNavigateBack = { showRegister = false; auth.clearError() }, error = auth.authError,
         )
     } else {
         LoginScreen(
-            onLogin = { u, p -> onAuthErrorChange(null); scope.launch {
-                try { imClient.login(u, p, "android-${UUID.randomUUID()}", "Android", config.tcpHost, config.tcpPort) }
-                catch (e: IllegalArgumentException) { onAuthErrorChange(e.message) }
-            }},
-            onNavigateToRegister = { showRegister = true; onAuthErrorChange(null) }, error = authError,
+            onLogin = auth.onLogin,
+            onNavigateToRegister = { showRegister = true; auth.clearError() }, error = auth.authError,
         )
     }
 }
@@ -148,14 +205,28 @@ private fun AuthFlow(imClient: ImClient, config: ServerConfig, scope: kotlinx.co
 private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
     val navController = rememberNavController()
     val scope = rememberCoroutineScope()
-    NavHost(
-        navController = navController,
-        startDestination = Routes.HOME,
-        enterTransition = { slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, animationSpec = tween(300)) },
-        exitTransition = { slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Start, animationSpec = tween(300)) },
-        popEnterTransition = { slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.End, animationSpec = tween(300)) },
-        popExitTransition = { slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.End, animationSpec = tween(300)) },
-    ) {
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(dataState) {
+        snapshotFlow { dataState.error }
+            .filterNotNull()
+            .collect { message ->
+                // Clear before suspending so an identical follow-up error is still observable.
+                // Keeping this collection keyed to dataState avoids cancelling showSnackbar when
+                // clearError itself triggers recomposition.
+                dataState.clearError()
+                snackbarHostState.showSnackbar(message)
+            }
+    }
+    Box(Modifier.fillMaxSize()) {
+        CompositionLocalProvider(LocalScreenHeaderTopSafeAreaEnabled provides true) {
+        NavHost(
+            navController = navController,
+            startDestination = Routes.HOME,
+            enterTransition = { slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, animationSpec = tween(300)) },
+            exitTransition = { slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Start, animationSpec = tween(300)) },
+            popEnterTransition = { slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.End, animationSpec = tween(300)) },
+            popExitTransition = { slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.End, animationSpec = tween(300)) },
+        ) {
         composable(Routes.HOME) {
             HomeScreen(dataState = dataState, onLogout = onLogout,
                 onConversationClick = { cid, n, t -> dataState.prepareChat(cid, n, t); navController.navigate(Routes.chat(cid, n, t)) },
@@ -170,7 +241,7 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
         }
         composable(Routes.CHAT, arguments = listOf(navArgument("chatId"){type=NavType.StringType}, navArgument("name"){type=NavType.StringType;defaultValue=""}, navArgument("type"){type=NavType.IntType;defaultValue=1})) { entry ->
             val chatId = entry.arguments?.getString("chatId") ?: return@composable
-            val chatName = entry.arguments?.getString("name") ?: ""
+            val chatName = decodeChatRouteName(entry.arguments?.getString("name").orEmpty())
             val chatType = entry.arguments?.getInt("type") ?: 1
             // A restored/deep-linked CHAT destination must prepare itself; the navigation click
             // that first opened it is not part of Android saved-state restoration.
@@ -193,7 +264,11 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                 }
             }
             // @ 补全候选：群聊拉成员，私聊用好友
-            var mentionCandidates by remember { mutableStateOf<List<com.virjar.tk.model.User>>(emptyList()) }
+            // Key the state to this route. A slow result from chat A must never become the sender
+            // directory while chat B is on screen.
+            var mentionCandidates by remember(chatId) {
+                mutableStateOf<List<com.virjar.tk.model.User>>(emptyList())
+            }
             LaunchedEffect(chatId, chatType) {
                 mentionCandidates = try {
                     if (chatType == com.virjar.tk.model.ChatType.GROUP.code) {
@@ -223,9 +298,55 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                     dataState.saveDraft(chatId, it)
                 },
                 onForward = { msg -> navController.navigate(Routes.forward(msg.chatId, msg.serverSeq)) },
+                onTextAttachmentPreview = { attachment ->
+                    navController.navigate(Routes.textAttachmentPreview(attachment))
+                },
                 onGroupDetail = { navController.navigate(Routes.groupDetail(chatId)) },
                 onBack = { navController.popBackStack() },
             )}
+        }
+        composable(
+            Routes.TEXT_ATTACHMENT_PREVIEW,
+            arguments = listOf(
+                navArgument("path") { type = NavType.StringType },
+                navArgument("name") { type = NavType.StringType },
+                navArgument("contentType") { type = NavType.StringType },
+                navArgument("size") { type = NavType.LongType },
+            ),
+        ) { entry ->
+            val attachment = remember(entry) {
+                runCatching {
+                    com.virjar.tk.model.Attachment(
+                        path = decodeAttachmentRouteValue(entry.arguments?.getString("path").orEmpty()),
+                        name = decodeAttachmentRouteValue(entry.arguments?.getString("name").orEmpty()),
+                        contentType = decodeAttachmentRouteValue(
+                            entry.arguments?.getString("contentType").orEmpty(),
+                        ),
+                        size = entry.arguments?.getLong("size") ?: 0L,
+                    )
+                }.getOrNull()
+            }
+            val previewKind = attachment?.let {
+                com.virjar.tk.ui.component.textAttachmentPreviewKind(it)
+            }
+            if (attachment == null || previewKind == null) {
+                LaunchedEffect(entry) { navController.popBackStack() }
+            } else {
+                val mediaCacheScope = remember(dataState.userSession.uid, dataState.userSession.accessToken) {
+                    mediaCacheNamespace(
+                        dataState.userSession.uid,
+                        dataState.userSession.accessToken,
+                        java.util.UUID.randomUUID().toString(),
+                    )
+                }
+                AndroidTextAttachmentPreviewScreen(
+                    attachment = attachment,
+                    serverUrl = defaultServerConfig().serverUrl,
+                    accessToken = dataState.userSession.accessToken,
+                    cacheNamespace = mediaCacheScope,
+                    onBack = { navController.popBackStack() },
+                )
+            }
         }
         composable(Routes.SEARCH_MESSAGES) {
             val conversations by dataState.conversationViewModel.conversations.collectAsState()
@@ -306,6 +427,9 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                 onCreateGroup = if (dataState.account.isFriend) {
                     { navController.navigate(Routes.createGroup(uid)) }
                 } else null,
+                onBlockUser = if (uid != dataState.userSession.uid) {
+                    { dataState.account.blockContact(uid) { navController.popBackStack() } }
+                } else null,
                 onDeleteFriend = { dataState.contactViewModel.deleteFriend(uid); navController.popBackStack() },
                 onBack = { navController.popBackStack() })
         }
@@ -314,6 +438,7 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
         composable(Routes.DEVICES) {
             LaunchedEffect(Unit) { dataState.loadScreenDataByKey(ScreenDataKey.Devices) }
             DeviceManagementScreen(devices = dataState.account.devices.map { DeviceInfo(it.deviceId, it.deviceName ?: "", it.deviceModel ?: "", it.lastLogin) },
+                currentDeviceId = dataState.account.currentDeviceId,
                 onKick = { d -> dataState.account.kickDevice(d) },
                 onBack = { navController.popBackStack() })
         }
@@ -326,15 +451,17 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
         composable(Routes.GROUP_DETAIL, arguments = listOf(navArgument("chatId"){type=NavType.StringType})) { entry ->
             val chatId = entry.arguments?.getString("chatId") ?: return@composable
             LaunchedEffect(chatId) { dataState.loadScreenDataByKey(ScreenDataKey.GroupDetail(chatId)) }
-            GroupDetailScreen(chat = dataState.groups.detailChat, members = dataState.groups.members, isOwner = dataState.groups.members.any { it.uid == dataState.userSession.uid && it.role == 2 },
+            val detailReady = dataState.groups.detailTargetChatId == chatId
+            val detailChat = dataState.groups.detailChat?.takeIf { detailReady && it.chatId == chatId }
+            val detailMembers = dataState.groups.members.takeIf { detailReady }.orEmpty()
+            val currentRole = detailMembers.firstOrNull { it.uid == dataState.userSession.uid }?.role ?: -1
+            val currentUserIsOwner = currentRole == 2
+            GroupDetailScreen(chat = detailChat, members = detailMembers, isOwner = currentUserIsOwner,
                 myUid = dataState.userSession.uid,
                 onMemberClick = { uid -> navController.navigate(Routes.userProfile(uid)) }, onInviteMembers = { navController.navigate(Routes.inviteMembers(chatId)) }, onViewInviteLinks = { navController.navigate(Routes.inviteLinks(chatId)) },
                 onGroupFiles = { navController.navigate(Routes.groupFiles(chatId)) },
                 onLeaveGroup = {
-                    val isOwner = dataState.groups.members.any {
-                        it.uid == dataState.userSession.uid && it.role == 2
-                    }
-                    dataState.groups.exit(chatId, dissolve = isOwner) {
+                    dataState.groups.exit(chatId, dissolve = currentUserIsOwner) {
                         navController.popBackStack(Routes.HOME, inclusive = false)
                     }
                 },
@@ -362,14 +489,19 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
                 if (uri != null) scope.launch {
                     uploading = true
+                    var selected: PreparedMedia? = null
                     try {
-                        val bytes = withContext(Dispatchers.IO) { MediaHelper.readBytes(context, uri) }
-                        val name = MediaHelper.getFileName(context, uri)
-                        val type = MediaHelper.getMimeType(context, uri)
-                        val attachment = com.virjar.tk.repository.FileRepository(
+                        selected = MediaHelper.prepareSelectedMedia(context, uri)
+                        val name = selected.fileName
+                        val attachment = MediaHelper.uploadFile(
+                            selected.file,
+                            name,
+                            selected.contentType,
                             config.serverUrl,
                             dataState.userSession.accessToken,
-                        ).upload(bytes, name, type).getOrThrow()
+                        )
+                        // 文件选择器返回时路由可能已切到另一群；此时取消发布，绝不能借用 B 的当前目录。
+                        if (dataState.groupFiles.chatId != chatId) return@launch
                         val target = versionTarget
                         if (target == null) dataState.groupFiles.publish(name, attachment)
                         else dataState.groupFiles.addVersion(target, attachment)
@@ -377,6 +509,7 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                         Log.e("GroupFiles", "upload failed", e)
                         dataState.groupFiles.reportUploadError(e)
                     } finally {
+                        selected?.delete()
                         versionTarget = null
                         uploading = false
                     }
@@ -385,12 +518,13 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                 }
             }
 
+            val filesReady = dataState.groupFiles.chatId == chatId
             GroupFilesScreen(
-                entries = dataState.groupFiles.entries,
-                path = dataState.groupFiles.path,
-                selectedFile = dataState.groupFiles.selectedFile,
-                versions = dataState.groupFiles.versions,
-                loading = dataState.groupFiles.loading,
+                entries = dataState.groupFiles.entries.takeIf { filesReady }.orEmpty(),
+                path = dataState.groupFiles.path.takeIf { filesReady }.orEmpty(),
+                selectedFile = dataState.groupFiles.selectedFile.takeIf { filesReady },
+                versions = dataState.groupFiles.versions.takeIf { filesReady }.orEmpty(),
+                loading = !filesReady || dataState.groupFiles.loading,
                 uploading = uploading,
                 onRefresh = { scope.launch { dataState.groupFiles.refresh() } },
                 onEnter = dataState.groupFiles::enter,
@@ -415,7 +549,10 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
         composable(Routes.INVITE_LINKS, arguments = listOf(navArgument("chatId"){type=NavType.StringType})) { entry ->
             val chatId = entry.arguments?.getString("chatId") ?: return@composable
             LaunchedEffect(chatId) { dataState.loadScreenDataByKey(ScreenDataKey.InviteLinks(chatId)) }
-            InviteLinksScreen(links = dataState.groups.inviteLinks.map { InviteLink(it.token, it.maxUses, it.useCount, it.revokedAt > 0) },
+            val links = dataState.groups.inviteLinks
+                .takeIf { dataState.groups.inviteLinksTargetChatId == chatId }
+                .orEmpty()
+            InviteLinksScreen(links = links.map { InviteLink(it.token, it.maxUses, it.useCount, it.revokedAt > 0) },
                 onCreateLink = { dataState.groups.createInviteLink(chatId) },
                 onRevokeLink = { t -> dataState.groups.revokeInviteLink(chatId, t) },
                 onBack = { navController.popBackStack() })
@@ -426,5 +563,15 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             val conversations by dataState.conversationViewModel.conversations.collectAsState()
             ForwardScreen(conversations = conversations, onForward = { tc -> dataState.discovery.forwardMessage(chatId, serverSeq, tc) }, onBack = { navController.popBackStack() })
         }
+        }
+        }
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = 72.dp)
+                .testTag("main.error.snackbar"),
+        )
     }
 }

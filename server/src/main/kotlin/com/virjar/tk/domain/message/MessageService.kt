@@ -9,6 +9,7 @@ import com.virjar.tk.body.buildRichTextBody
 import com.virjar.tk.domain.attachment.AttachmentService
 import com.virjar.tk.domain.chat.ChatStore
 import com.virjar.tk.domain.conversation.ConversationService
+import com.virjar.tk.domain.contact.ContactStore
 import com.virjar.tk.domain.event.EventPublisher
 import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.model.Message
@@ -24,6 +25,7 @@ class MessageService(
     private val search: MessageSearch,
     private val attachmentService: AttachmentService,
     private val users: UserStore,
+    private val contacts: ContactStore,
 ) {
     /** 固定条带避免按消息创建锁导致无界缓存，同时串行化同一 chat+seq 的 outbox 投影。 */
     private val projectionLocks = Array(PROJECTION_LOCK_STRIPES) { Mutex() }
@@ -61,21 +63,7 @@ class MessageService(
         // 成员和禁言都是会随时间变化的当前权限，只约束尚未接受的新消息。若原 ACK 丢失，
         // 已持久化请求必须先按 sender/hash 命中上面的幂等记录；否则发送者随后离群或被禁言
         // 会把一条收件方已经收到的成功消息反向显示为发送失败。
-        if (!chatStore.isMember(chatId, senderUid)) {
-            throw IllegalArgumentException("不是聊天成员")
-        }
-
-        if (chatStore.isMuted(chatId, senderUid)) {
-            throw IllegalArgumentException("你已被禁言")
-        }
-
-        // 全员禁言检查（管理员豁免）
-        if (chatStore.isMutedAll(chatId)) {
-            val member = chatStore.getMember(chatId, senderUid)
-            if (member == null || member.role < 1) {
-                throw IllegalArgumentException("群聊已开启全员禁言")
-            }
-        }
+        requireCanCreateMessage(senderUid, chatId)
 
         // 成员校验只限制尚未接受的新消息。已成功消息延迟重试时，
         // 被 mention 的成员可能已离群，但幂等 ACK 仍必须返回原 serverSeq。
@@ -201,7 +189,9 @@ class MessageService(
 
     suspend fun forwardMessage(uid: String, srcChatId: String, srcSeq: Long, targetChatId: String): Message {
         if (!chatStore.isMember(srcChatId, uid)) throw IllegalArgumentException("不是源聊天成员")
-        if (!chatStore.isMember(targetChatId, uid)) throw IllegalArgumentException("不是目标聊天成员")
+        // 转发会在目标会话创建并广播一条全新的消息，必须服从与 sendMessage 相同的
+        // 当前权限事实；否则黑名单、单成员禁言和全员禁言都能被转发入口绕过。
+        requireCanCreateMessage(uid, targetChatId)
 
         val srcMsg = messages.getMessage(srcChatId, srcSeq)
             ?: throw IllegalArgumentException("原消息不存在")
@@ -223,6 +213,37 @@ class MessageService(
         projectNewMessage(forwardMsg)
 
         return forwardMsg
+    }
+
+    /**
+     * 新消息进入目标聊天前的实时权限边界。
+     *
+     * 普通发送的幂等命中在调用本方法之前返回，保证 ACK 丢失后的重试不被后来发生的
+     * 拉黑/禁言反向改写；转发没有客户端幂等身份，因此每次都必须先通过此检查。
+     */
+    private fun requireCanCreateMessage(senderUid: String, chatId: String) {
+        if (!chatStore.isMember(chatId, senderUid)) {
+            throw IllegalArgumentException("不是聊天成员")
+        }
+
+        val chat = chatStore.getChat(chatId) ?: throw IllegalArgumentException("聊天不存在")
+        if (chat.chatType == 1) {
+            val peerUid = chatStore.getMemberUids(chatId).firstOrNull { it != senderUid }
+                ?: throw IllegalArgumentException("私聊成员不完整")
+            require(!contacts.isBlockedEither(senderUid, peerUid)) { "黑名单关系下不能发送私聊消息" }
+        }
+
+        if (chatStore.isMuted(chatId, senderUid)) {
+            throw IllegalArgumentException("你已被禁言")
+        }
+
+        // 全员禁言检查（管理员豁免）
+        if (chatStore.isMutedAll(chatId)) {
+            val member = chatStore.getMember(chatId, senderUid)
+            if (member == null || member.role < 1) {
+                throw IllegalArgumentException("群聊已开启全员禁言")
+            }
+        }
     }
 
     fun searchMessages(uid: String, chatId: String, keyword: String, limit: Int): List<Message> {
@@ -324,11 +345,13 @@ class MessageService(
             ?: throw IllegalArgumentException("回复目标必须是已落库消息的 serverSeq")
         val target = messages.getMessage(message.chatId, targetSeq)
             ?: throw IllegalArgumentException("回复目标不存在或不属于当前会话")
-        val member = chatStore.getMember(message.chatId, target.senderUid)
+        // ChatStore's hot member projection intentionally contains only uid/role. Resolve the
+        // display snapshot from the global user directory after the target has been bound to this
+        // exact chat; using the client-declared uid/name here would permit cross-chat spoofing.
+        val targetUser = users.findByUid(target.senderUid)
         val displayName = sequenceOf(
-            member?.user?.name,
-            member?.user?.username,
-            member?.nickname,
+            targetUser?.name,
+            targetUser?.username,
             target.senderUid,
         ).filterNotNull().firstOrNull { it.isNotBlank() }
             ?.take(MessageBodyPolicy.MAX_DISPLAY_NAME_LENGTH)

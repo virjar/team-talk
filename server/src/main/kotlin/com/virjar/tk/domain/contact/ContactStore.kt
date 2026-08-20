@@ -21,6 +21,11 @@ class ContactStore(private val repo: ContactRepository) {
         return friendUids[uid]?.contains(friendUid) == true
     }
 
+    fun isBlocked(uid: String, targetUid: String): Boolean = repo.isBlocked(uid, targetUid)
+
+    fun isBlockedEither(uid: String, targetUid: String): Boolean =
+        repo.isBlocked(uid, targetUid) || repo.isBlocked(targetUid, uid)
+
     fun getFriendUids(uid: String): Set<String> {
         ensureFriendsLoaded(uid)
         return friendUids[uid]?.toSet() ?: emptySet()
@@ -61,7 +66,7 @@ class ContactStore(private val repo: ContactRepository) {
 
     fun blacklist(uid: String, targetUid: String) {
         repo.blacklist(uid, targetUid)
-        friendUids[uid]?.remove(targetUid)
+        removeFriendPair(uid, targetUid)
     }
 
     fun removeFromBlacklist(uid: String, targetUid: String) =
@@ -74,13 +79,14 @@ class ContactStore(private val repo: ContactRepository) {
     fun createApply(fromUid: String, toUid: String, remark: String?): ContactApply =
         repo.createApply(fromUid, toUid, remark)
 
-    fun acceptApply(token: String): ContactApply? {
-        val apply = repo.acceptApply(token) ?: return null
+    fun acceptApply(token: String, receiverUid: String): ContactApply? {
+        val apply = repo.acceptApply(token, receiverUid) ?: return null
         addFriendPair(apply.fromUid, apply.toUid)
         return apply
     }
 
-    fun rejectApply(token: String): ContactApply? = repo.rejectApply(token)
+    fun rejectApply(token: String, receiverUid: String): ContactApply? =
+        repo.rejectApply(token, receiverUid)
 
     fun listPendingApplies(uid: String): List<ContactApply> = repo.listPendingApplies(uid)
 

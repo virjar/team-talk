@@ -123,7 +123,7 @@ internal fun MessageBubble(
                 if (msg.body.isEdgeToEdgeMedia()) {
                     // 贴边媒体（图片/视频/贴纸）：无气泡内边距，媒体自身即气泡面（微信/飞书范式）
                     Box(modifier = Modifier.widthIn(max = Tk.dimens.bubbleMaxWidth)) {
-                        com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback, onMentionClick, onUrlClick)
+                        com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback, onMentionClick, onUrlClick, resolveSender)
                     }
                 } else {
                     val bubbleContent: @Composable () -> Unit = {
@@ -132,7 +132,7 @@ internal fun MessageBubble(
                                 .padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.sm)
                                 .widthIn(max = Tk.dimens.bubbleMaxWidth - (Tk.spacing.md * 2))
                         ) {
-                            com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback, onMentionClick, onUrlClick)
+                            com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback, onMentionClick, onUrlClick, resolveSender)
                         }
                     }
                     if (selectableText) {
@@ -156,6 +156,16 @@ internal fun MessageBubble(
                     style = MaterialTheme.typography.labelSmall,
                     color = if (isRead) Tk.colors.secondaryText else Tk.colors.metaText,
                     modifier = Modifier.padding(top = 1.dp, end = Tk.spacing.xs),
+                )
+            }
+            if (isMe && msg.sendStatus == Message.SEND_STATUS_FAILED) {
+                Text(
+                    text = "发送失败",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier
+                        .padding(top = 1.dp, end = Tk.spacing.xs)
+                        .testTag("chat.message.failed.${msg.clientMsgId.take(12)}"),
                 )
             }
             // 长按/右键菜单：挂在气泡同级（Column 内），Compose 自动以气泡为锚点定位

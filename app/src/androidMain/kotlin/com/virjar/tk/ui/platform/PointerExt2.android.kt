@@ -15,3 +15,16 @@ import androidx.compose.ui.platform.LocalTextToolbar
 @OptIn(ExperimentalFoundationApi::class)
 actual fun Modifier.contextLongPress(onLongPress: () -> Unit): Modifier =
     this.combinedClickable(onClick = {}, onLongClick = onLongPress)
+
+/** Android：单个手势节点同时分发普通点击和长按，避免两个点击节点互相消费事件。 */
+@OptIn(ExperimentalFoundationApi::class)
+actual fun Modifier.primaryClickWithContextLongPress(
+    onClick: () -> Unit,
+    onLongPress: () -> Unit,
+): Modifier {
+    val actions = PrimaryContextGestureActions(onClick, onLongPress)
+    return this.combinedClickable(
+        onClick = actions::click,
+        onLongClick = actions::longPress,
+    )
+}

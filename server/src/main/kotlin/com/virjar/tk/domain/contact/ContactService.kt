@@ -13,6 +13,7 @@ class ContactService(
 
     suspend fun apply(uid: String, targetUid: String, remark: String?): ContactApply {
         require(uid != targetUid) { "不能向自己发起好友申请" }
+        require(!contactStore.isBlockedEither(uid, targetUid)) { "黑名单关系下不能发起好友申请" }
         if (contactStore.isFriend(uid, targetUid)) {
             throw IllegalArgumentException("已经是好友")
         }
@@ -21,8 +22,8 @@ class ContactService(
         return apply
     }
 
-    suspend fun accept(token: String): ContactApply {
-        val apply = contactStore.acceptApply(token) ?: throw IllegalArgumentException("申请不存在或已处理")
+    suspend fun accept(uid: String, token: String): ContactApply {
+        val apply = contactStore.acceptApply(token, uid) ?: throw IllegalArgumentException("申请不存在、无权处理或已处理")
         // 通知双方：好友关系已建立（各自视角的 Contact，契约：CONTACT_ACCEPTED 发 Contact）
         val fromSide = contactStore.getFriend(apply.fromUid, apply.toUid)
         val toSide = contactStore.getFriend(apply.toUid, apply.fromUid)
@@ -31,8 +32,8 @@ class ContactService(
         return apply
     }
 
-    suspend fun reject(token: String): ContactApply {
-        return contactStore.rejectApply(token) ?: throw IllegalArgumentException("申请不存在或已处理")
+    suspend fun reject(uid: String, token: String): ContactApply {
+        return contactStore.rejectApply(token, uid) ?: throw IllegalArgumentException("申请不存在、无权处理或已处理")
     }
 
     suspend fun delete(uid: String, friendUid: String) {
@@ -46,8 +47,11 @@ class ContactService(
         contactStore.setRemark(uid, friendUid, remark)
     }
 
-    fun blacklist(uid: String, targetUid: String) {
+    suspend fun blacklist(uid: String, targetUid: String) {
+        require(uid != targetUid) { "不能拉黑自己" }
         contactStore.blacklist(uid, targetUid)
+        events.emitEvent(uid, NotifyType.CONTACT_DELETED, Contact(uid = uid, friendUid = targetUid))
+        events.emitEvent(targetUid, NotifyType.CONTACT_DELETED, Contact(uid = targetUid, friendUid = uid))
     }
 
     fun removeFromBlacklist(uid: String, targetUid: String) {

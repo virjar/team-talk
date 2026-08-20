@@ -3,15 +3,18 @@ package com.virjar.tk
 import android.media.MediaPlayer
 import android.util.Log
 import kotlinx.coroutines.*
-import java.io.File
+import java.util.UUID
 
 /**
  * 语音播放器（单例，全局共享）。点击语音卡片 → 下载 → 播放，不弹窗。
  */
 object VoicePlayer {
 
-    private var currentPlayer: MediaPlayer? = null
-    private var currentUrl: String? = null
+    @Volatile private var currentPlayer: MediaPlayer? = null
+    @Volatile private var currentUrl: String? = null
+    @Volatile private var currentCacheNamespace: String? = null
+    @Volatile private var currentRequestId: String? = null
+    private var loadingJob: Job? = null
     private var _isPlaying = false
     private var _isLoading = false
     private var _error: String? = null
@@ -33,9 +36,14 @@ object VoicePlayer {
             Log.e("VoicePlayer", "Scope unhandled exception", throwable)
         })
 
-    fun play(context: android.content.Context, url: String) {
+    fun play(
+        context: android.content.Context,
+        url: String,
+        accessToken: String?,
+        cacheNamespace: String,
+    ) {
         // 如果已经在播放同一个，则暂停/继续
-        if (url == currentUrl && currentPlayer != null) {
+        if (url == currentUrl && cacheNamespace == currentCacheNamespace && currentPlayer != null) {
             val mp = currentPlayer!!
             if (mp.isPlaying) {
                 mp.pause()
@@ -51,13 +59,21 @@ object VoicePlayer {
         stop()
 
         currentUrl = url
+        currentCacheNamespace = cacheNamespace
+        val requestId = UUID.randomUUID().toString()
+        currentRequestId = requestId
         _isLoading = true
         _error = null
 
-        scope.launch {
+        loadingJob = scope.launch {
             try {
-                val cacheDir = File(context.cacheDir, "media")
-                val file = MediaHelper.downloadToCache(url, cacheDir)
+                val file = MediaHelper.downloadToCache(
+                    url = url,
+                    cacheDir = context.cacheDir,
+                    accessToken = accessToken,
+                    cacheNamespace = cacheNamespace,
+                )
+                if (currentRequestId != requestId) return@launch
 
                 val mp = MediaPlayer().apply {
                     setDataSource(file.absolutePath)
@@ -67,27 +83,53 @@ object VoicePlayer {
                         _isPlaying = false
                     }
                 }
+                if (currentRequestId != requestId) {
+                    runCatching { mp.stop() }
+                    runCatching { mp.release() }
+                    return@launch
+                }
                 currentPlayer = mp
                 _isLoading = false
                 _isPlaying = true
             } catch (e: Exception) {
                 Log.e("VoicePlayer", "Failed to play voice: $url", e)
-                _isLoading = false
-                _error = e.message
-                currentUrl = null
+                if (currentRequestId == requestId) {
+                    _isLoading = false
+                    _error = e.message
+                    currentUrl = null
+                    currentCacheNamespace = null
+                    currentRequestId = null
+                }
             }
         }
     }
 
-    fun stop() {
+    fun stop(cacheNamespace: String? = null, onStopped: (() -> Unit)? = null) {
+        if (cacheNamespace != null && currentCacheNamespace != cacheNamespace) {
+            onStopped?.invoke()
+            return
+        }
+        val job = loadingJob
+        loadingJob = null
+        currentRequestId = null
         currentPlayer?.apply {
             try { stop() } catch (e: Exception) { Log.w("VoicePlayer", "Stop failed", e) }
             try { release() } catch (e: Exception) { Log.w("VoicePlayer", "Release failed", e) }
         }
         currentPlayer = null
         currentUrl = null
+        currentCacheNamespace = null
         _isPlaying = false
         _isLoading = false
         _error = null
+
+        // 清理回调必须晚于下载任务真实结束和 MediaPlayer 释放；旧任务即便无法立刻中断，
+        // 也不能在会话目录清理之后把缓存文件重新写回来。
+        if (job == null || job.isCompleted) {
+            onStopped?.invoke()
+        } else {
+            job.invokeOnCompletion { onStopped?.invoke() }
+            job.cancel()
+        }
     }
 }

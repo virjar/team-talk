@@ -47,6 +47,7 @@ fun SubScreenContent(
     when (screen) {
         is SubScreen.Devices -> DeviceManagementScreen(
             devices = data.account.devices.map { DeviceInfo(it.deviceId, it.deviceName ?: "", it.deviceModel ?: "", it.lastLogin) },
+            currentDeviceId = data.account.currentDeviceId,
             onKick = { deviceId -> data.account.kickDevice(deviceId) },
             onBack = onBack,
         )

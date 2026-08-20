@@ -60,6 +60,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.model.DocumentRevision
 import com.virjar.tk.model.DocumentRevisionSummary
+import com.virjar.tk.navigation.feature.DocumentDraftLifecycleBridge
 import com.virjar.tk.navigation.feature.DocumentTabState
 import com.virjar.tk.ui.component.rich.DocumentBlockEditor
 import com.virjar.tk.ui.component.rich.DocumentBlockFormattingToolbar
@@ -80,6 +81,17 @@ internal class DocumentDraftCaptureHandle(
     fun capture(): DocumentEditorDraftSnapshot = action()
 }
 
+/**
+ * Mobile single-document navigation is primarily a reading surface: existing documents open in
+ * preview, while a newly-created draft must stay immediately editable. Desktop keeps its editing
+ * default, and viewers without edit permission always use preview on every platform.
+ */
+internal fun shouldStartDocumentInPreview(
+    canEdit: Boolean,
+    mobileSingleDocumentMode: Boolean,
+    creating: Boolean,
+): Boolean = !canEdit || (mobileSingleDocumentMode && !creating)
+
 @Composable
 internal fun DocumentTabEditor(
     tab: DocumentTabState,
@@ -87,6 +99,8 @@ internal fun DocumentTabEditor(
     revisionPreview: DocumentRevision?,
     saving: Boolean,
     canEdit: Boolean,
+    mobileSingleDocumentMode: Boolean,
+    draftLifecycleBridge: DocumentDraftLifecycleBridge,
     onUpdateDraft: (String, String, String, Boolean) -> Unit,
     onRegisterDraftSnapshot: ((() -> DocumentEditorDraftSnapshot)?) -> Unit,
     onSave: () -> Unit,
@@ -109,7 +123,15 @@ internal fun DocumentTabEditor(
     var sourceMode by remember(editorKey) { mutableStateOf(false) }
     var editorReady by remember(editorKey) { mutableStateOf(false) }
     var dirty by remember(editorKey) { mutableStateOf(tab.dirty || tab.creating) }
-    var previewMode by remember(editorKey, canEdit) { mutableStateOf(!canEdit) }
+    var previewMode by remember(editorKey, canEdit, mobileSingleDocumentMode, tab.creating) {
+        mutableStateOf(
+            shouldStartDocumentInPreview(
+                canEdit = canEdit,
+                mobileSingleDocumentMode = mobileSingleDocumentMode,
+                creating = tab.creating,
+            )
+        )
+    }
     var historyDialog by remember(editorKey) { mutableStateOf(false) }
     var deleteDialog by remember(editorKey) { mutableStateOf(false) }
     var documentMenu by remember(editorKey) { mutableStateOf(false) }
@@ -151,10 +173,14 @@ internal fun DocumentTabEditor(
     val stableDraftCapture = remember(editorKey) {
         { draftCaptureHandle.capture() }
     }
-    DisposableEffect(editorKey) {
+    DisposableEffect(editorKey, draftLifecycleBridge) {
+        val lifecycleRegistration = draftLifecycleBridge.register {
+            stableDraftCapture()
+        }
         onRegisterDraftSnapshot(stableDraftCapture)
         onDispose {
             stableDraftCapture()
+            draftLifecycleBridge.unregister(lifecycleRegistration)
             onRegisterDraftSnapshot(null)
         }
     }

@@ -71,8 +71,9 @@ internal fun WindowScope.MainAppContent(
     connectionState: ConnectionState,
     onToggleWindowZoom: () -> Unit,
     onLogout: () -> Unit,
+    onAuthExpired: () -> Unit,
 ) {
-    val nav = rememberDesktopNav(session)
+    val nav = rememberDesktopNav(session, onAuthExpired)
     // 与 DesktopNav/ClientSession 同寿命；聊天页销毁只移除 UI，不会取消已入队的草稿镜像。
     val draftDispatcher = remember(nav) { DesktopDraftDispatcher(nav::saveDraft) }
     val conversations by nav.conversationViewModel.conversations.collectAsState()
@@ -289,6 +290,7 @@ internal fun WindowScope.MainAppContent(
                     } else {
                         DocumentWorkspaceHost(
                             workspace = nav.documents,
+                            mobileSingleDocumentMode = false,
                             onDetach = { nav.documentWindowVisible = true },
                         )
                     }
@@ -607,14 +609,29 @@ private fun ChatPanelWrapper(
     mentionCandidates: List<User> = emptyList(),
 ) {
     val messagesState = viewModel.messages.collectAsState()
+    val previewScope = rememberCoroutineScope()
+    val textPreviewEventState = remember(chatId) {
+        mutableStateOf<DesktopTextAttachmentPreviewEvent?>(null)
+    }
+    var textPreviewEvent by textPreviewEventState
 
     // 文件附件下载控制器（media/ 目录缓存；下载完成调系统打开）
-    val fileDownloads = remember {
+    val fileDownloads = remember(chatId, accessToken) {
         DesktopFileDownloadController(
             serverUrl = com.virjar.tk.client.defaultServerConfig().serverUrl,
             accessToken = accessToken,
             cacheDir = java.io.File(System.getProperty("teamtalk.data.dir"), "media"),
             onDownloaded = { f -> runCatching { java.awt.Desktop.getDesktop().open(f) } },
+            onTextAttachmentPreview = { event ->
+                previewScope.launch {
+                    val current = textPreviewEventState.value
+                    if (event is DesktopTextAttachmentPreviewEvent.Loading ||
+                        current?.attachment?.path == event.attachment.path
+                    ) {
+                        textPreviewEventState.value = event
+                    }
+                }
+            },
         )
     }
     DisposableEffect(fileDownloads) {
@@ -729,5 +746,11 @@ private fun ChatPanelWrapper(
         items = galleryItems,
         initialIndex = galleryIndex,
         onDismiss = { showGallery = false },
+    )
+    DesktopTextAttachmentPreviewDialog(
+        event = textPreviewEvent,
+        onDismiss = { textPreviewEvent = null },
+        onRetry = fileDownloads::openOrDownload,
+        onOpenExternally = fileDownloads::openExternally,
     )
 }

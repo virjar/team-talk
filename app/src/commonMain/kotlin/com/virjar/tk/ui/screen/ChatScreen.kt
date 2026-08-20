@@ -2,6 +2,9 @@ package com.virjar.tk.ui.screen
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -11,6 +14,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
@@ -89,6 +93,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 
 /**
  * 共享聊天面板。包含消息列表和输入栏，不含 Scaffold/TopAppBar。
@@ -139,6 +146,8 @@ fun ChatPanel(
     val effectivePickImage = media?.onPickImage ?: onPickImage
     val effectivePickFile = media?.onPickFile ?: onPickFile
     val effectiveVoiceRecord = media?.onVoiceRecord ?: onVoiceRecord
+    val effectiveVoiceModeEntered = media?.onVoiceModeEntered
+    val effectiveVoiceRecordCancel = media?.onVoiceRecordCancel
     val effectiveMediaClick = media?.onMediaClick ?: onMediaClick
     val effectiveImageContent = media?.imageContent ?: imageContent
     val effectiveVideoContent = media?.videoContent ?: videoContent
@@ -146,8 +155,24 @@ fun ChatPanel(
     val effectiveUrlClick = media?.onUrlClick
     val messages by viewModel.messages.collectAsState()
     val loading by viewModel.loading.collectAsState()
+    val loadingOlder by viewModel.loadingOlder.collectAsState()
+    val hasMore by viewModel.hasMore.collectAsState()
     val error by viewModel.error.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    val messageListState = rememberLazyListState()
+
+    // reverseLayout puts index 0 at the bottom; reaching the highest message index means the user
+    // has scrolled to the visual top. Keep a manual button below as a deterministic fallback.
+    LaunchedEffect(messageListState, messages.size, hasMore, loading) {
+        snapshotFlow { messageListState.layoutInfo.visibleItemsInfo.maxOfOrNull { it.index } ?: -1 }
+            .map { lastVisible ->
+                !loading && messages.isNotEmpty() && hasMore &&
+                    lastVisible >= (messages.lastIndex - 1).coerceAtLeast(0)
+            }
+            .distinctUntilChanged()
+            .filter { it }
+            .collect { viewModel.loadOlder() }
+    }
     // Same-session A -> B -> A navigation does not retain rememberSaveable entries for A by
     // itself. Seed each new composition from the session store; Android SavedState restoration
     // still wins because every field below keeps its existing rememberSaveable/Saver contract.
@@ -557,7 +582,7 @@ fun ChatPanel(
                         viewModel.onError("发送失败: 回复目标尚未被服务器确认")
                         return@sendAction
                     }
-                    val replySenderName = resolveSender?.invoke(target.senderUid)?.name ?: target.senderUid
+                    val replySenderName = resolveDisplayNameOrNull(target.senderUid, resolveSender)
                     val snippet = com.virjar.tk.util.MessagePreview.preview(target).take(50)
                     Message(
                         chatId = chatId,
@@ -651,6 +676,7 @@ fun ChatPanel(
             } else {
                 LazyColumn(
                     modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = Tk.spacing.md),
+                    state = messageListState,
                     reverseLayout = true,
                 ) {
                     items(messages.size) { index ->
@@ -779,6 +805,26 @@ fun ChatPanel(
                                         }
                                     },
                                 )
+                            }
+                        }
+                    }
+                    if (hasMore || loadingOlder) {
+                        item(key = "history-loader") {
+                            Box(
+                                modifier = Modifier.fillMaxWidth().padding(Tk.spacing.sm),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (loadingOlder) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp).testTag("chat.history.loading"),
+                                        strokeWidth = 2.dp,
+                                    )
+                                } else {
+                                    TextButton(
+                                        onClick = viewModel::loadOlder,
+                                        modifier = Modifier.testTag("chat.history.loadMore"),
+                                    ) { Text("加载更早消息") }
+                                }
                             }
                         }
                     }
@@ -942,6 +988,7 @@ fun ChatPanel(
                                     } else {
                                         showEmoji = false
                                         showAttach = false
+                                        effectiveVoiceModeEntered?.invoke()
                                         voiceMode = true
                                     }
                                 },
@@ -990,17 +1037,27 @@ fun ChatPanel(
                             modifier = Modifier
                                 .weight(1f)
                                 .height(48.dp)
-                                .pointerInput(Unit) {
-                                    awaitPointerEventScope {
-                                        while (true) {
-                                            val event = awaitPointerEvent()
-                                            val pressed = event.changes.any { it.pressed }
-                                            if (pressed && !isRecording) {
-                                                isRecording = true
-                                                effectiveVoiceRecord?.invoke(true)
-                                            } else if (!pressed && isRecording) {
-                                                isRecording = false
+                                .pointerInput(effectiveVoiceRecord, effectiveVoiceRecordCancel) {
+                                    awaitEachGesture {
+                                        awaitFirstDown(requireUnconsumed = false)
+                                        var started = false
+                                        var sent = false
+                                        try {
+                                            isRecording = true
+                                            started = true
+                                            effectiveVoiceRecord?.invoke(true)
+                                            val up = waitForUpOrCancellation()
+                                            if (up != null) {
+                                                // 只有明确抬手才发送；pointer cancel、控件离开组合、
+                                                // 导航销毁都会进入 finally 的丢弃路径。
+                                                sent = true
                                                 effectiveVoiceRecord?.invoke(false)
+                                            }
+                                        } finally {
+                                            isRecording = false
+                                            if (started && !sent) {
+                                                effectiveVoiceRecordCancel?.invoke()
+                                                    ?: effectiveVoiceRecord?.invoke(false)
                                             }
                                         }
                                     }
@@ -1347,8 +1404,12 @@ internal fun formatChatTime(timestamp: Long): String {
  * fallback 链：User.name → User.username → uid.take(8)
  */
 internal fun resolveDisplayName(uid: String, resolveSender: ((uid: String) -> User?)?): String {
+    return resolveDisplayNameOrNull(uid, resolveSender) ?: uid.take(8)
+}
+
+/** Returns null when the current chat's sender directory has not resolved this uid yet. */
+internal fun resolveDisplayNameOrNull(uid: String, resolveSender: ((uid: String) -> User?)?): String? {
     val user = resolveSender?.invoke(uid)
-    return user?.name?.ifBlank { null }
-        ?: user?.username?.ifBlank { null }
-        ?: uid.take(8)
+    return user?.name?.trim()?.takeIf(String::isNotEmpty)
+        ?: user?.username?.trim()?.takeIf(String::isNotEmpty)
 }

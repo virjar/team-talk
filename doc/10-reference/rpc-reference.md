@@ -15,9 +15,11 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 
 ## auth
 
+协议版本 8 为 `logout` 增加安装级 `deviceId`，用于完整撤销本机凭证与设备登记。
+
 | ID | 方法 | 参数 | 返回 | 说明 |
 |---:|---|---|---|---|
-| 1 | `logout` | `refreshToken: String?` | `Unit` | 吊销当前 refresh token |
+| 1 | `logout` | `refreshToken: String?, deviceId: String?` | `Unit` | 吊销当前安装的凭证并移除设备记录 |
 | 2 | `updatePassword` | `oldPassword`, `newPassword` | `Unit` | 校验旧密码并更新 |
 
 ## user
@@ -112,10 +114,12 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 
 | ID | 方法 | 参数 | 返回 | 说明 |
 |---:|---|---|---|---|
-| 1 | `listUnits` | — | `List<OrganizationUnit>` | 返回当前单组织的活动节点 |
+| 1 | `listUnits` | — | `List<OrganizationUnit>` | 返回当前单组织的活动节点及各节点直属人数 |
 | 2 | `listMembers` | `unitId`, `recursive` | `List<OrganizationMember>` | 直属或包含子树的成员 |
 
 普通客户端只有读取能力；组织结构、成员归属和部门群启停通过独立管理 HTTP API 执行。
+协议版本 7 起 `OrganizationUnit.directMemberCount` 与
+`listMembers(unitId, recursive = false)` 的直属成员口径一致，根节点也不例外；子部门成员不重复计入。
 
 ## groupFile
 
@@ -155,7 +159,7 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 | 17 | `listRecentDocuments` | `limit` | `List<DocumentHomeItem>` |
 | 18 | `listRecentlyCreatedDocuments` | `limit` | `List<DocumentHomeItem>` |
 
-协议版本 6 使用上述完整方法集；文档从版本 5 起不再接受群 scope。所有调用按认证 uid 合并空间所有权、用户授权和实时组织部门
+协议版本 8 沿用版本 6 引入的上述完整方法集；文档从版本 5 起不再接受群 scope。所有调用按认证 uid 合并空间所有权、用户授权和实时组织部门
 授权。目录列表不返回 Markdown，修订列表只返回摘要；更新、移动和删除必须使用客户端实际读取到的
 revision，冲突由服务端拒绝，错误文案不作为并发控制协议。
 

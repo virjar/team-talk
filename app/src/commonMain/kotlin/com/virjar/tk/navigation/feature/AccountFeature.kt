@@ -20,6 +20,10 @@ class AccountFeature internal constructor(
     private val scope: CoroutineScope,
     private val reportError: (Throwable, String) -> Unit,
 ) {
+    /** Prevent a slow profile request for A from replacing the currently routed profile B. */
+    private val profileRequestGate = GroupRequestGate<String>()
+
+    val currentDeviceId: String get() = session.deviceId
     var devices by mutableStateOf(emptyList<Device>())
         private set
     var blockedContacts by mutableStateOf(emptyList<Contact>())
@@ -68,12 +72,17 @@ class AccountFeature internal constructor(
     }
 
     internal suspend fun loadProfile(uid: String) {
+        val request = profileRequestGate.begin(uid)
         profileUser = null
-        isFriend = contactViewModel.contacts.value.any { it.friendUid == uid }
+        isFriend = false
+        val loadedFriendState = contactViewModel.contacts.value.any { it.friendUid == uid }
         try {
-            profileUser = session.userRepo.getProfile(uid).getOrThrow()
+            val loadedProfile = session.userRepo.getProfile(uid).getOrThrow()
+            if (!profileRequestGate.isCurrent(request)) return
+            profileUser = loadedProfile
+            isFriend = loadedFriendState
         } catch (e: AppError) {
-            reportError(e, "加载用户信息失败")
+            if (profileRequestGate.isCurrent(request)) reportError(e, "加载用户信息失败")
         }
     }
 
@@ -93,6 +102,45 @@ class AccountFeature internal constructor(
         } catch (e: AppError) {
             reportError(e, "移出黑名单失败")
         }
+    }
+
+    /**
+     * 将用户加入黑名单，并让本地联系人投影与黑名单投影在操作完成后立即收敛。
+     *
+     * 服务端拉黑不会发送 CONTACT_DELETED 事件，因此这里必须主动移除本地联系人；否则
+     * 联系人页面会一直保留已经被拉黑的用户，直到其他事件碰巧触发一次完整刷新。
+     */
+    fun blockContact(uid: String, onBlocked: (() -> Unit)? = null) = scope.launch {
+        try {
+            session.contactRepo.blacklist(uid).getOrThrow()
+        } catch (e: AppError) {
+            reportError(e, "加入黑名单失败")
+            return@launch
+        }
+
+        // 先更新当前页面可见状态；后续刷新失败也不能把已完成的拉黑操作伪装成仍是好友。
+        session.localCache.deleteContact(uid)
+        if (profileRequestGate.targets(uid) && profileUser?.uid == uid) isFriend = false
+
+        var refreshError: AppError? = null
+        try {
+            // listFriends 会把服务端现有好友写回 LocalCache；最后再次删除目标，避免并发旧列表
+            // 将刚拉黑的联系人短暂写回。
+            session.contactRepo.listFriends().getOrThrow()
+        } catch (e: AppError) {
+            refreshError = e
+        } finally {
+            session.localCache.deleteContact(uid)
+        }
+
+        try {
+            blockedContacts = session.contactRepo.listBlacklist().getOrThrow()
+        } catch (e: AppError) {
+            if (refreshError == null) refreshError = e
+        }
+
+        refreshError?.let { reportError(it, "已加入黑名单，但刷新状态失败") }
+        onBlocked?.invoke()
     }
 
     suspend fun saveProfile(name: String, phone: String?): Boolean = try {

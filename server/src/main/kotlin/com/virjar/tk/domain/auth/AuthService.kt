@@ -1,6 +1,7 @@
 package com.virjar.tk.domain.auth
 
 import com.virjar.tk.domain.user.UserService
+import com.virjar.tk.domain.device.DeviceRepository
 import com.virjar.tk.model.User
 import com.virjar.tk.protocol.payload.AuthRequestPayload
 import com.virjar.tk.protocol.payload.AuthResponsePayload
@@ -8,18 +9,19 @@ import com.virjar.tk.protocol.payload.AuthResponsePayload
 class AuthService(
     private val userService: UserService,
     private val tokenStore: TokenRepository,
+    private val devices: DeviceRepository,
 ) {
     companion object {
-        const val CODE_OK = 0
-        const val CODE_AUTH_FAILED = 1
-        const val CODE_VERSION_UNSUPPORTED = 2
-        const val CODE_SERVER_MAINTENANCE = 3
-        const val CODE_DEVICE_BANNED = 4
-        const val CODE_TOO_MANY_CONNECTIONS = 5
+        const val CODE_OK = AuthResponsePayload.CODE_OK
+        const val CODE_AUTH_FAILED = AuthResponsePayload.CODE_AUTH_FAILED
+        const val CODE_VERSION_UNSUPPORTED = AuthResponsePayload.CODE_VERSION_UNSUPPORTED
+        const val CODE_SERVER_MAINTENANCE = AuthResponsePayload.CODE_SERVER_MAINTENANCE
+        const val CODE_DEVICE_BANNED = AuthResponsePayload.CODE_DEVICE_BANNED
+        const val CODE_TOO_MANY_CONNECTIONS = AuthResponsePayload.CODE_TOO_MANY_CONNECTIONS
     }
 
     fun handleAuth(payload: AuthRequestPayload): AuthResponsePayload {
-        // 版本检查由 AUTH 序言魔承担（readFrom 校验，不匹配断连）——
+        // 版本检查由 AUTH 序言魔承担；不匹配会在进入 AuthService 前回写专用拒绝码。
         // payload 内 protocolVersion 字段已删（曾与之重复且恒真）
         return when (payload.authType) {
             0 -> handleLogin(payload)      // login
@@ -41,7 +43,7 @@ class AuthService(
             return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = e.message)
         }
 
-        return issueTokens(user, payload.deviceId, payload.deviceFlag ?: 0)
+        return issueTokens(user, payload)
     }
 
     private fun handleRegister(payload: AuthRequestPayload): AuthResponsePayload {
@@ -57,14 +59,18 @@ class AuthService(
             return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = e.message)
         }
 
-        return issueTokens(user, payload.deviceId, payload.deviceFlag ?: 0)
+        return issueTokens(user, payload)
     }
 
     private fun handleRefresh(payload: AuthRequestPayload): AuthResponsePayload {
         val refreshToken = payload.refreshToken?.takeIf { it.isNotBlank() }
             ?: return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = "Missing refresh token")
 
-        val newTokens = tokenStore.refreshAccessToken(refreshToken)
+        val newTokens = tokenStore.refreshAccessToken(
+            refreshToken,
+            expectedDeviceId = payload.deviceId,
+            expectedDeviceFlag = payload.deviceFlag,
+        )
             ?: return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = "Invalid or expired refresh token")
 
         val info = tokenStore.validateAccessToken(newTokens.first)
@@ -82,6 +88,8 @@ class AuthService(
             return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = "账号已被封禁")
         }
 
+        registerDevice(user.uid, payload)
+
         return AuthResponsePayload(
             code = CODE_OK,
             uid = info.uid,
@@ -93,8 +101,9 @@ class AuthService(
         )
     }
 
-    private fun issueTokens(user: User, deviceId: String, deviceFlag: Int): AuthResponsePayload {
-        val (accessToken, refreshToken) = tokenStore.generateTokens(user.uid, deviceId, deviceFlag)
+    private fun issueTokens(user: User, payload: AuthRequestPayload): AuthResponsePayload {
+        val (accessToken, refreshToken) = tokenStore.generateTokens(user.uid, payload.deviceId, payload.deviceFlag)
+        registerDevice(user.uid, payload)
         return AuthResponsePayload(
             code = CODE_OK,
             uid = user.uid,
@@ -106,6 +115,16 @@ class AuthService(
         )
     }
 
+    private fun registerDevice(uid: String, payload: AuthRequestPayload) {
+        devices.registerDevice(
+            uid = uid,
+            deviceId = payload.deviceId,
+            deviceName = payload.deviceName,
+            deviceModel = payload.deviceModel,
+            deviceFlag = payload.deviceFlag,
+        )
+    }
+
     fun validateToken(token: String): TokenInfo? {
         return tokenStore.validateAccessToken(token)
     }
@@ -114,15 +133,19 @@ class AuthService(
         tokenStore.revokeAllDeviceTokens(uid, deviceId)
     }
 
-    fun logout(uid: String, refreshToken: String?, deviceId: String? = null) {
-        // 吊销 refreshToken（仅删除，不换发——refreshAccessToken 会生成新凭证造成泄露）
-        if (refreshToken != null) {
-            tokenStore.revokeRefreshToken(refreshToken)
-        }
-        // 仅清除当前设备的 token，不影响其他设备
-        if (deviceId != null) {
-            tokenStore.revokeAllDeviceTokens(uid, deviceId)
-        }
+    fun logout(uid: String, refreshToken: String?, deviceId: String? = null): Boolean {
+        // deviceId/refreshToken 都来自 RPC payload，必须先与 token 内的 uid/device 绑定；
+        // 否则一个已认证客户端可以把“退出”伪装成另一个设备，污染设备表或误吊销凭证。
+        if (refreshToken == null || deviceId == null) return false
+        val owned = tokenStore.revokeRefreshToken(
+            refreshToken,
+            expectedUid = uid,
+            expectedDeviceId = deviceId,
+        )
+        if (!owned) return false
+        tokenStore.revokeAllDeviceTokens(uid, deviceId)
+        devices.kickDevice(uid, deviceId)
+        return true
     }
 
     fun changePassword(uid: String, oldPassword: String, newPassword: String) {

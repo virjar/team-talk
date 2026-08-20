@@ -20,6 +20,7 @@ token 是服务端保存的随机值，不是 JWT：
 - access token 用于当前连接和 HTTP 上传认证。
 - refresh token 用于重建认证，会在成功使用后轮换。
 - token 与 uid/deviceId 绑定。
+- `deviceId` 是安装级稳定标识；密码登录、注册和 refresh 必须复用同一个值，认证成功会刷新设备登记与最后登录时间。
 - 踢设备或登出删除 token，使后续认证立即失败。
 
 客户端持久化 refresh token；access token 只属于活动用户会话。日志、错误提示和截图不能输出 token。
@@ -32,7 +33,7 @@ AUTH_RESP code：
 |---:|---|---|
 | 0 | 成功 | 创建/恢复 ClientSession |
 | 1 | 认证失败 | 清凭据并进入登录 |
-| 2 | 协议版本不支持 | 停止重连并提示升级 |
+| 2 | 协议版本不支持 | 停止重连；Android 显示不可取消的强制升级弹窗，确认后退出应用 |
 | 3 | 服务维护 | 显示服务不可用，可延迟重试 |
 | 4 | 设备被封禁 | 清凭据并提示管理员处理 |
 | 5 | 连接过多 | 停止当前尝试并提示设备限制 |
@@ -45,6 +46,7 @@ AUTH_RESP code：
 
 - 断网、超时、连接重置：保留 UserSession，ImClient 重连并自动认证。
 - AUTH_FAILED、设备被踢、主动登出：销毁 ClientSession、清 token、停止重连。
+- 只有结构有效的 TeamTalk AUTH 序言携带了不支持的版本号时，服务端才返回 code 2；坏 magic、截断帧、连接超时和普通断网不能提升为强制升级。
 
 SDK 的 `send()` 和 RPC 在未认证状态必须失败，不能在身份未知时静默排队。
 

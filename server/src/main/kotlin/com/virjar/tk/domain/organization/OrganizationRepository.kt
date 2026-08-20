@@ -14,6 +14,8 @@ interface OrganizationRepository : ManagedChatPolicy {
     fun setGroupChat(unitId: String, chatId: String?)
 
     fun listMembers(unitIds: Set<String>): List<OrganizationMember>
+    /** 一次查询返回各节点的直属成员数；不存在成员的节点由调用方补零。 */
+    fun countDirectMembers(unitIds: Set<String>): Map<String, Int>
     fun listMemberships(uid: String): List<OrganizationMember>
     fun upsertMember(member: OrganizationMember)
     fun removeMember(unitId: String, uid: String)

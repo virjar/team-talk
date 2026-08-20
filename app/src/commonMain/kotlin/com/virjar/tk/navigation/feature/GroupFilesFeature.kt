@@ -10,6 +10,8 @@ import com.virjar.tk.model.GroupFileVersion
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
+internal data class GroupFileLocation(val chatId: String, val parentId: String?)
+
 /** 群文件页面状态。v1 采用打开/修改后拉取，不伪装成实时同步。 */
 class GroupFilesFeature internal constructor(
     private val session: ClientSession,
@@ -29,88 +31,167 @@ class GroupFilesFeature internal constructor(
     var loading by mutableStateOf(false)
         private set
 
+    private val entriesGate = GroupRequestGate<GroupFileLocation>()
+    private val versionsGate = GroupRequestGate<Pair<String, String>>()
+
     val parentId: String? get() = path.lastOrNull()?.entryId
 
     internal suspend fun open(chatId: String) {
         this.chatId = chatId
         path = emptyList()
+        entries = emptyList()
         selectedFile = null
         versions = emptyList()
+        loading = false
+        versionsGate.invalidate()
         refresh()
     }
 
     suspend fun refresh() {
-        val targetChatId = chatId ?: return
+        val location = currentLocation() ?: return
+        refresh(location)
+    }
+
+    private suspend fun refresh(location: GroupFileLocation) {
+        if (currentLocation() != location) return
+        val token = entriesGate.begin(location)
         loading = true
         try {
-            entries = session.groupFileRepo.list(targetChatId, parentId).getOrThrow()
+            val loaded = session.groupFileRepo.list(location.chatId, location.parentId).getOrThrow()
+            if (!entriesGate.isCurrent(token) || currentLocation() != location) return
+            if (loaded.any { it.chatId != location.chatId || it.parentId != location.parentId }) {
+                reportError(IllegalStateException("群文件响应身份不匹配"), "加载群文件失败")
+                return
+            }
+            entries = loaded
         } catch (e: Exception) {
-            reportError(e, "加载群文件失败")
+            if (entriesGate.isCurrent(token)) reportError(e, "加载群文件失败")
         } finally {
-            loading = false
+            if (entriesGate.isCurrent(token)) loading = false
         }
     }
 
-    fun enter(folder: GroupFileEntry) = scope.launch {
-        if (folder.kind != GroupFileEntry.KIND_FOLDER) return@launch
-        path = path + folder
-        selectedFile = null
-        versions = emptyList()
-        refresh()
-    }
-
-    fun up() = scope.launch {
-        if (path.isEmpty()) return@launch
-        path = path.dropLast(1)
-        selectedFile = null
-        versions = emptyList()
-        refresh()
-    }
-
-    fun createFolder(name: String) = scope.launch {
-        mutate("创建目录失败") { chat -> session.groupFileRepo.createFolder(chat, parentId, name).getOrThrow() }
-    }
-
-    suspend fun publish(name: String, attachment: Attachment): Boolean = try {
-        val targetChatId = chatId ?: return false
-        session.groupFileRepo.createFile(targetChatId, parentId, name, attachment).getOrThrow()
-        refresh()
-        true
-    } catch (e: Exception) {
-        reportError(e, "发布群文件失败")
-        false
-    }
-
-    suspend fun addVersion(entry: GroupFileEntry, attachment: Attachment): Boolean = try {
-        val targetChatId = chatId ?: return false
-        session.groupFileRepo.addVersion(targetChatId, entry.entryId, attachment, entry.revision).getOrThrow()
-        refresh()
-        showVersions(entries.firstOrNull { it.entryId == entry.entryId })
-        true
-    } catch (e: Exception) {
-        reportError(e, "上传新版本失败")
-        false
-    }
-
-    fun rename(entry: GroupFileEntry, name: String) = scope.launch {
-        mutate("重命名失败") { chat ->
-            session.groupFileRepo.rename(chat, entry.entryId, name, entry.revision).getOrThrow()
+    fun enter(folder: GroupFileEntry) {
+        val location = currentLocation() ?: return
+        if (folder.kind != GroupFileEntry.KIND_FOLDER ||
+            folder.chatId != location.chatId || folder.parentId != location.parentId
+        ) return
+        scope.launch {
+            if (currentLocation() != location) return@launch
+            path = path + folder
+            selectedFile = null
+            versions = emptyList()
+            versionsGate.invalidate()
+            refresh()
         }
     }
 
-    fun delete(entry: GroupFileEntry) = scope.launch {
-        mutate("删除失败") { chat ->
-            session.groupFileRepo.delete(chat, entry.entryId, entry.revision).getOrThrow()
+    fun up() {
+        val location = currentLocation() ?: return
+        val targetPath = path.dropLast(1)
+        if (path.isEmpty()) return
+        scope.launch {
+            if (currentLocation() != location) return@launch
+            path = targetPath
+            selectedFile = null
+            versions = emptyList()
+            versionsGate.invalidate()
+            refresh()
         }
     }
 
-    fun showVersions(entry: GroupFileEntry?) = scope.launch {
-        selectedFile = entry
-        versions = if (entry == null) emptyList() else try {
-            session.groupFileRepo.listVersions(entry.chatId, entry.entryId).getOrThrow()
+    fun createFolder(name: String) {
+        val location = currentLocation() ?: return
+        scope.launch {
+            if (currentLocation() != location) return@launch
+            mutate(location, "创建目录失败") { target ->
+                session.groupFileRepo.createFolder(target.chatId, target.parentId, name).getOrThrow()
+            }
+        }
+    }
+
+    suspend fun publish(name: String, attachment: Attachment): Boolean {
+        val location = currentLocation() ?: return false
+        return try {
+            session.groupFileRepo.createFile(
+                location.chatId,
+                location.parentId,
+                name,
+                attachment,
+            ).getOrThrow()
+            if (currentLocation() == location) refresh(location)
+            true
         } catch (e: Exception) {
-            reportError(e, "加载文件版本失败")
-            emptyList()
+            reportError(e, "发布群文件失败")
+            false
+        }
+    }
+
+    suspend fun addVersion(entry: GroupFileEntry, attachment: Attachment): Boolean {
+        val location = currentLocation() ?: return false
+        if (entry.chatId != location.chatId) return false
+        return try {
+            session.groupFileRepo.addVersion(
+                location.chatId,
+                entry.entryId,
+                attachment,
+                entry.revision,
+            ).getOrThrow()
+            if (currentLocation() == location) {
+                refresh(location)
+                showVersions(entries.firstOrNull { it.entryId == entry.entryId })
+            }
+            true
+        } catch (e: Exception) {
+            reportError(e, "上传新版本失败")
+            false
+        }
+    }
+
+    fun rename(entry: GroupFileEntry, name: String) {
+        val location = currentLocation() ?: return
+        if (entry.chatId != location.chatId || entry.parentId != location.parentId) return
+        scope.launch {
+            if (currentLocation() != location) return@launch
+            mutate(location, "重命名失败") { target ->
+                session.groupFileRepo.rename(target.chatId, entry.entryId, name, entry.revision).getOrThrow()
+            }
+        }
+    }
+
+    fun delete(entry: GroupFileEntry) {
+        val location = currentLocation() ?: return
+        if (entry.chatId != location.chatId || entry.parentId != location.parentId) return
+        scope.launch {
+            if (currentLocation() != location) return@launch
+            mutate(location, "删除失败") { target ->
+                session.groupFileRepo.delete(target.chatId, entry.entryId, entry.revision).getOrThrow()
+            }
+        }
+    }
+
+    fun showVersions(entry: GroupFileEntry?) {
+        val targetChatId = chatId
+        if (entry != null && (targetChatId == null || entry.chatId != targetChatId)) return
+        selectedFile = entry
+        versions = emptyList()
+        if (entry == null) {
+            versionsGate.invalidate()
+            return
+        }
+        val token = versionsGate.begin(entry.chatId to entry.entryId)
+        scope.launch {
+            try {
+                val loaded = session.groupFileRepo.listVersions(entry.chatId, entry.entryId).getOrThrow()
+                if (versionsGate.isCurrent(token) &&
+                    chatId == entry.chatId && selectedFile?.entryId == entry.entryId &&
+                    loaded.all { it.entryId == entry.entryId }
+                ) {
+                    versions = loaded
+                }
+            } catch (e: Exception) {
+                if (versionsGate.isCurrent(token)) reportError(e, "加载文件版本失败")
+            }
         }
     }
 
@@ -118,13 +199,18 @@ class GroupFilesFeature internal constructor(
         reportError(error, "上传群文件失败")
     }
 
-    private suspend fun mutate(fallback: String, action: suspend (String) -> Unit) {
-        val targetChatId = chatId ?: return
+    private suspend fun mutate(
+        location: GroupFileLocation,
+        fallback: String,
+        action: suspend (GroupFileLocation) -> Unit,
+    ) {
         try {
-            action(targetChatId)
-            refresh()
+            action(location)
+            if (currentLocation() == location) refresh(location)
         } catch (e: Exception) {
-            reportError(e, fallback)
+            if (currentLocation() == location) reportError(e, fallback)
         }
     }
+
+    private fun currentLocation(): GroupFileLocation? = chatId?.let { GroupFileLocation(it, parentId) }
 }

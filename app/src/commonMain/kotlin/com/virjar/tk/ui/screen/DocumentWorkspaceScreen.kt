@@ -6,9 +6,11 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -20,9 +22,34 @@ import com.virjar.tk.model.DocumentSpace
 import com.virjar.tk.model.DocumentSpaceGrant
 import com.virjar.tk.model.OrganizationMember
 import com.virjar.tk.model.OrganizationUnit
+import com.virjar.tk.navigation.feature.DocumentDraftLifecycleBridge
 import com.virjar.tk.navigation.feature.DocumentTabState
 import com.virjar.tk.navigation.feature.DocumentTreeRow
 import com.virjar.tk.ui.platform.TkBackHandler
+
+/** Android 一级导航在离开“文档”前，通过该协调器复用工作台的同步草稿保护。 */
+class MobileDocumentExitCoordinator {
+    private var exitRequest: (((() -> Unit)) -> Unit)? = null
+
+    fun requestExit(onExit: () -> Unit) {
+        exitRequest?.invoke(onExit) ?: onExit()
+    }
+
+    internal fun attach(request: ((() -> Unit)) -> Unit) {
+        exitRequest = request
+    }
+
+    internal fun detach(request: ((() -> Unit)) -> Unit) {
+        if (exitRequest === request) exitRequest = null
+    }
+}
+
+private data class MobileWorkspaceDiscardRequest(
+    val tabInstanceId: Long,
+    val title: String,
+    val message: String,
+    val onDiscard: () -> Unit,
+)
 
 /**
  * 企业文档的共享页面壳。
@@ -66,6 +93,7 @@ fun DocumentWorkspaceScreen(
     onSelectTab: (String) -> Unit,
     onUpdateDraft: (String, String, String, Boolean) -> Unit,
     onCloseTab: (String) -> Unit,
+    onCloseTabByInstance: (Long) -> Unit,
     onSave: () -> Unit,
     onDelete: () -> Unit,
     onShowHistory: () -> Unit,
@@ -79,11 +107,60 @@ fun DocumentWorkspaceScreen(
     onDetach: (() -> Unit)? = null,
     onExitDocuments: (() -> Unit)? = null,
     detached: Boolean = false,
+    mobileSingleDocumentMode: Boolean = false,
+    draftLifecycleBridge: DocumentDraftLifecycleBridge,
+    mobileExitCoordinator: MobileDocumentExitCoordinator? = null,
 ) {
     var createSpaceDialog by remember { mutableStateOf(false) }
     var createFolderDialog by remember { mutableStateOf(false) }
     var manageSpaceDialog by remember { mutableStateOf(false) }
     var closeCandidate by remember { mutableStateOf<DocumentTabState?>(null) }
+    var mobileDraftCapture by remember { mutableStateOf<(() -> DocumentEditorDraftSnapshot)?>(null) }
+    var mobileWorkspaceDiscardRequest by remember { mutableStateOf<MobileWorkspaceDiscardRequest?>(null) }
+
+    fun requestMobileWorkspaceTransition(
+        targetDocumentId: String?,
+        title: String,
+        message: String,
+        onProceed: () -> Unit,
+    ) {
+        val decision = prepareMobileSingleDocumentTransition(
+            currentTab = activeTab,
+            captureDraft = mobileDraftCapture,
+            targetDocumentId = targetDocumentId,
+        )
+        when (decision.transition) {
+            MobileSingleDocumentTransition.OPEN_DIRECTLY,
+            MobileSingleDocumentTransition.RESUME_CURRENT -> onProceed()
+            MobileSingleDocumentTransition.CLOSE_AND_CONTINUE -> {
+                decision.currentTab?.let { onCloseTabByInstance(it.instanceId) }
+                onProceed()
+            }
+            MobileSingleDocumentTransition.CONFIRM_DISCARD -> {
+                mobileWorkspaceDiscardRequest = MobileWorkspaceDiscardRequest(
+                    tabInstanceId = requireNotNull(decision.currentTab).instanceId,
+                    title = title,
+                    message = message,
+                    onDiscard = onProceed,
+                )
+            }
+        }
+    }
+
+    val latestMobileExitRequest by rememberUpdatedState<((() -> Unit) -> Unit)> { onExit ->
+        requestMobileWorkspaceTransition(
+            targetDocumentId = null,
+            title = "离开文档？",
+            message = "该文档有未保存修改，放弃后将离开文档。",
+            onProceed = onExit,
+        )
+    }
+    DisposableEffect(mobileExitCoordinator, mobileSingleDocumentMode) {
+        if (!mobileSingleDocumentMode || mobileExitCoordinator == null) return@DisposableEffect onDispose { }
+        val request: ((() -> Unit) -> Unit) = { onExit -> latestMobileExitRequest(onExit) }
+        mobileExitCoordinator.attach(request)
+        onDispose { mobileExitCoordinator.detach(request) }
+    }
 
     if (createSpaceDialog) {
         CreateDocumentSpaceDialog(
@@ -140,11 +217,44 @@ fun DocumentWorkspaceScreen(
             },
         )
     }
+    mobileWorkspaceDiscardRequest?.let { request ->
+        AlertDialog(
+            onDismissRequest = { mobileWorkspaceDiscardRequest = null },
+            title = { Text(request.title) },
+            text = { Text(request.message) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        mobileWorkspaceDiscardRequest = null
+                        // 新建保存会迁移 tabId；确认时只用稳定实例重新解析当前标签。
+                        onCloseTabByInstance(request.tabInstanceId)
+                        request.onDiscard()
+                    },
+                    modifier = Modifier.testTag("documents.mobile.discard.confirm"),
+                ) { Text("放弃修改") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { mobileWorkspaceDiscardRequest = null },
+                    modifier = Modifier.testTag("documents.mobile.discard.cancel"),
+                ) { Text("继续编辑") }
+            },
+            modifier = Modifier.testTag("documents.mobile.discard.dialog"),
+        )
+    }
 
     Box(Modifier.fillMaxSize().testTag("documents.workspace")) {
         if (selectedSpace == null) {
             TkBackHandler(enabled = onExitDocuments != null) {
-                onExitDocuments?.invoke()
+                if (mobileSingleDocumentMode) {
+                    requestMobileWorkspaceTransition(
+                        targetDocumentId = null,
+                        title = "离开文档？",
+                        message = "该文档有未保存修改，放弃后将离开文档。",
+                    ) { onExitDocuments?.invoke() }
+                } else {
+                    onExitDocuments?.invoke()
+                }
             }
             DocumentHomeScreen(
                 spaces = spaces,
@@ -154,8 +264,28 @@ fun DocumentWorkspaceScreen(
                 detached = detached,
                 onRefresh = onRefresh,
                 onCreateSpace = { createSpaceDialog = true },
-                onSelectSpace = onSelectSpace,
-                onOpenDocument = onOpenHomeDocument,
+                onSelectSpace = { spaceId ->
+                    if (mobileSingleDocumentMode) {
+                        requestMobileWorkspaceTransition(
+                            targetDocumentId = null,
+                            title = "切换空间？",
+                            message = "该文档有未保存修改，放弃后将切换空间。",
+                        ) { onSelectSpace(spaceId) }
+                    } else {
+                        onSelectSpace(spaceId)
+                    }
+                },
+                onOpenDocument = { item ->
+                    if (mobileSingleDocumentMode) {
+                        requestMobileWorkspaceTransition(
+                            targetDocumentId = item.documentId,
+                            title = "切换文档？",
+                            message = "该文档有未保存修改，放弃后将切换到另一篇文档。",
+                        ) { onOpenHomeDocument(item) }
+                    } else {
+                        onOpenHomeDocument(item)
+                    }
+                },
                 onDetach = onDetach,
                 modifier = Modifier.fillMaxSize(),
             )
@@ -192,6 +322,7 @@ fun DocumentWorkspaceScreen(
                 onCloseTab = { tab ->
                     if (tab.dirty) closeCandidate = tab else onCloseTab(tab.tabId)
                 },
+                onCloseTabNow = onCloseTabByInstance,
                 onSave = onSave,
                 onDelete = onDelete,
                 onShowHistory = onShowHistory,
@@ -200,6 +331,9 @@ fun DocumentWorkspaceScreen(
                 onCloseRevisionPreview = onCloseRevisionPreview,
                 onCloseHistory = onCloseHistory,
                 onDetach = onDetach,
+                mobileSingleDocumentMode = mobileSingleDocumentMode,
+                draftLifecycleBridge = draftLifecycleBridge,
+                onActiveDraftSnapshotChange = { mobileDraftCapture = it },
                 modifier = Modifier.fillMaxSize(),
             )
         }

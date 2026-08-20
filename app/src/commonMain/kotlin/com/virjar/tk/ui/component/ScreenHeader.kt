@@ -3,10 +3,15 @@ package com.virjar.tk.ui.component
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.HorizontalDivider
@@ -34,6 +39,12 @@ val LocalScreenHeaderBackButtonVisible = staticCompositionLocalOf { true }
 val LocalScreenHeaderLeadingInset = staticCompositionLocalOf { 0.dp }
 
 /**
+ * Android edge-to-edge 页面需要由共享页头消费顶部安全区。Desktop 保持默认关闭，避免原生
+ * 标题栏下再次增加一层空白；Android 壳在 NavHost 外显式开启。
+ */
+val LocalScreenHeaderTopSafeAreaEnabled = staticCompositionLocalOf { false }
+
+/**
  * 子页面通用头部。高度与排版由平台密度令牌决定：
  * Desktop 为 48dp 左对齐工具栏，Android 为 56dp 居中触控页头。
  *
@@ -54,9 +65,16 @@ fun ScreenHeader(
     val compactDesktop = headerHeight < 56.dp
     val showBackButton = onBack != null && LocalScreenHeaderBackButtonVisible.current
     val leadingInset: Dp = LocalScreenHeaderLeadingInset.current
+    val topSafeAreaModifier = if (LocalScreenHeaderTopSafeAreaEnabled.current) {
+        Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+    } else {
+        Modifier
+    }
 
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
-        androidx.compose.foundation.layout.Column {
+        // windowInsetsPadding applies only the still-unconsumed portion and consumes it for
+        // descendants, so nested Android hosts cannot accidentally double-pad this header.
+        androidx.compose.foundation.layout.Column(modifier = topSafeAreaModifier) {
             if (compactDesktop) {
                 Row(
                     modifier = Modifier

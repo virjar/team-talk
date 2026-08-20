@@ -11,8 +11,11 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -20,7 +23,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 
 /**
  * 全屏沉浸式媒体画廊（对标 Telegram/Signal）。
@@ -39,7 +44,10 @@ import androidx.compose.ui.unit.dp
  * @param initialIndex 初始页面索引
  * @param onDismiss 关闭回调
  * @param imageRenderer 平台注入的图片渲染
- * @param videoRenderer 平台注入的视频渲染
+ * @param videoRenderer 平台注入的视频渲染；第二个参数只在该页是 currentPage 时为 true，
+ * 平台播放器必须据此收敛播放所有权，预加载页不得发声。
+ * @param animateEnterExit 是否执行缩放进入/退出动画。Android 独立画廊窗口会关闭该动画，
+ * 避免部分设备的视频纹理层在窗口切换期间与 Compose 变换不同步。
  */
 @Composable
 fun MediaGallery(
@@ -48,8 +56,22 @@ fun MediaGallery(
     initialIndex: Int,
     onDismiss: () -> Unit,
     imageRenderer: @Composable (url: String, modifier: Modifier) -> Unit,
-    videoRenderer: @Composable (url: String, modifier: Modifier) -> Unit,
+    videoRenderer: @Composable (url: String, isCurrentPage: Boolean, modifier: Modifier) -> Unit,
+    animateEnterExit: Boolean = true,
 ) {
+    if (!animateEnterExit) {
+        if (visible && items.isNotEmpty()) {
+            MediaGalleryContent(
+                items = items,
+                initialIndex = initialIndex,
+                onDismiss = onDismiss,
+                imageRenderer = imageRenderer,
+                videoRenderer = videoRenderer,
+            )
+        }
+        return
+    }
+
     AnimatedVisibility(
         visible = visible && items.isNotEmpty(),
         enter = fadeIn() + scaleIn(initialScale = 0.92f),
@@ -71,7 +93,7 @@ private fun MediaGalleryContent(
     initialIndex: Int,
     onDismiss: () -> Unit,
     imageRenderer: @Composable (url: String, modifier: Modifier) -> Unit,
-    videoRenderer: @Composable (url: String, modifier: Modifier) -> Unit,
+    videoRenderer: @Composable (url: String, isCurrentPage: Boolean, modifier: Modifier) -> Unit,
 ) {
     if (items.isEmpty()) return
 
@@ -94,7 +116,11 @@ private fun MediaGalleryContent(
             val pageModifier = Modifier.fillMaxSize()
 
             when (item.type) {
-                GalleryMediaType.VIDEO -> videoRenderer(item.path, pageModifier)
+                GalleryMediaType.VIDEO -> videoRenderer(
+                    item.path,
+                    pagerState.currentPage == page,
+                    pageModifier,
+                )
                 else -> ZoomableImagePage(
                     url = item.path,
                     imageRenderer = imageRenderer,
@@ -109,7 +135,9 @@ private fun MediaGalleryContent(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .statusBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .zIndex(2f),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -118,8 +146,15 @@ private fun MediaGalleryContent(
                 color = Color.White.copy(alpha = 0.8f),
                 style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
             )
-            TextButton(onClick = onDismiss) {
-                Text("✕", color = Color.White)
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("media.gallery.close"),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "关闭媒体画廊",
+                    tint = Color.White,
+                )
             }
         }
     }

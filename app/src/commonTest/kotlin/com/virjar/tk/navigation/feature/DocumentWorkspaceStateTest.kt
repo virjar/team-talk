@@ -39,6 +39,103 @@ class DocumentWorkspaceStateTest {
     }
 
     @Test
+    fun `closing last document keeps its parent folder selected`() {
+        val closing = tab("doc-a", "space-a").copy(parentId = "folder-deep")
+        val replacement = tab("doc-b", "space-a").copy(parentId = "folder-other")
+
+        assertEquals("folder-deep", selectedFolderAfterClosingDocumentTab(closing, replacement = null))
+        assertEquals("folder-other", selectedFolderAfterClosingDocumentTab(closing, replacement))
+    }
+
+    @Test
+    fun `delete request keeps A identity after active tab switches to B`() {
+        val tabA = tab("doc-a", "space-a").copy(
+            instanceId = 41L,
+            parentId = "folder-a",
+            revision = 7L,
+        )
+        val request = requireNotNull(DocumentDeleteRequest.capture(tabA))
+        val activeTabAfterLaunch = tab("doc-b", "space-a").copy(instanceId = 42L, revision = 9L)
+
+        assertEquals(41L, request.instanceId)
+        assertEquals("doc-a", request.documentId)
+        assertEquals(7L, request.revision)
+        assertEquals("doc-b", activeTabAfterLaunch.documentId)
+    }
+
+    @Test
+    fun `delete success invalidates a document reopened while request is pending`() {
+        val original = tab("doc-a", "space-a").copy(instanceId = 41L, revision = 7L)
+        val request = requireNotNull(DocumentDeleteRequest.capture(original))
+        val reopened = tab("doc-a-reopened-tab", "space-a").copy(
+            instanceId = 43L,
+            documentId = "doc-a",
+            revision = 7L,
+        )
+        val unrelated = tab("doc-b", "space-a").copy(instanceId = 42L, revision = 9L)
+
+        assertEquals(
+            listOf("doc-a-reopened-tab"),
+            documentTabIdsInvalidatedByDelete(listOf(reopened, unrelated), request),
+        )
+    }
+
+    @Test
+    fun `instance identity resolves migrated draft tab id`() {
+        val migrated = tab("server-doc-a", "space-a").copy(instanceId = 41L)
+        val other = tab("doc-b", "space-a").copy(instanceId = 42L)
+
+        assertEquals("server-doc-a", documentTabIdByInstance(listOf(migrated, other), instanceId = 41L))
+        assertEquals("doc-b", documentTabIdByInstance(listOf(migrated, other), instanceId = 42L))
+        assertNull(documentTabIdByInstance(listOf(migrated, other), instanceId = 404L))
+    }
+
+    @Test
+    fun `discard confirmation before create response closes draft and late response cannot restore it`() {
+        val draft = tab("draft-1", "space-a").copy(
+            instanceId = 41L,
+            documentId = null,
+            revision = null,
+            creating = true,
+            dirty = true,
+        )
+        val saveRequest = DocumentTabRequest.capture(draft)
+        val storedConfirmationInstanceId = draft.instanceId
+        val closeId = documentTabIdByInstance(listOf(draft), storedConfirmationInstanceId)
+        val afterDiscard = listOf(draft).filterNot { it.tabId == closeId }
+
+        assertTrue(afterDiscard.isEmpty())
+        assertNull(
+            mergeDocumentMutationResponse(
+                afterDiscard,
+                saveRequest,
+                document("doc-created", "已保存", "正文", revision = 1),
+            ),
+        )
+    }
+
+    @Test
+    fun `discard confirmation after create response resolves migrated tab id by instance`() {
+        val draft = tab("draft-1", "space-a").copy(
+            instanceId = 41L,
+            documentId = null,
+            revision = null,
+            creating = true,
+            dirty = true,
+        )
+        val saveRequest = DocumentTabRequest.capture(draft)
+        val migrated = requireNotNull(
+            mergeDocumentMutationResponse(
+                listOf(draft),
+                saveRequest,
+                document("doc-created", "已保存", "正文", revision = 1),
+            ),
+        ).tabs
+
+        assertEquals("doc-created", documentTabIdByInstance(migrated, instanceId = 41L))
+    }
+
+    @Test
     fun `folder target path is rebuilt from root to selected folder`() {
         val root = folder("root", parentId = null)
         val chapter = folder("chapter", parentId = root.nodeId)

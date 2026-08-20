@@ -132,9 +132,9 @@ fun createServerModule(
     single<EventPublisher> { get<SyncEventService>() }
     single<SyncEventReader> { get<SyncEventService>() }
     single { UserService(get(), get()) }
-    single { AuthService(get(), get()) }
+    single { AuthService(get(), get(), get()) }
     single { ContactService(get(), get()) }
-    single { ChatService(get(), get(), get(), get(), get()) }
+    single { ChatService(get(), get(), get(), get(), get(), get()) }
     single { OrganizationService(get(), get(), get(), get()) }
     single { GroupFileService(get(), get(), get(), get(), Environment.groupFileQuotaBytes) }
     single { DocumentService(get(), get(), get()) }
@@ -148,7 +148,7 @@ fun createServerModule(
         }
     }
     single<AttachmentAccess> { AttachmentAccessService(get(), get(), get()) }
-    single { MessageService(get(), get(), get(), get(), get(), get(), get()) }
+    single { MessageService(get(), get(), get(), get(), get(), get(), get(), get()) }
     single { BotService(get(), get(), get(), get(), get()) }
     single { PresenceService(get(), get()) }
     single { PresenceCoordinator(get(), get()) }
@@ -158,7 +158,7 @@ fun createServerModule(
     single {
         RpcStubRegistry().apply {
             register(UserRpcContract.SERVICE) { uid -> UserRpcImpl(uid, get()) }
-            register(AuthRpcContract.SERVICE) { uid -> AuthRpcImpl(uid, get(), get()) }
+            register(AuthRpcContract.SERVICE) { uid -> AuthRpcImpl(uid, get(), get(), get()) }
             register(ContactRpcContract.SERVICE) { uid -> ContactRpcImpl(uid, get()) }
             register(ChatRpcContract.SERVICE) { uid -> ChatRpcImpl(uid, get()) }
             register(MessageRpcContract.SERVICE) { uid -> MessageRpcImpl(uid, get(), get()) }

@@ -39,9 +39,14 @@ class AuthRpcImpl(
     uid: String,
     private val authService: AuthService,
     private val userService: UserService,
+    private val onlineSessions: OnlineSessions,
 ) : AuthRpcStub(uid) {
-    override suspend fun logout(refreshToken: String?) {
-        authService.logout(uid, refreshToken)
+    override suspend fun logout(refreshToken: String?, deviceId: String?) {
+        if (authService.logout(uid, refreshToken, deviceId) && deviceId != null) {
+            // Token revocation alone does not invalidate an already authenticated TCP channel.
+            // Close every live connection registered for this exact principal/device.
+            onlineSessions.kickDevice(uid, deviceId)
+        }
     }
 
     override suspend fun updatePassword(oldPassword: String, newPassword: String) {
@@ -52,8 +57,8 @@ class AuthRpcImpl(
 class ContactRpcImpl(uid: String, private val service: ContactService) : ContactRpcStub(uid) {
     override suspend fun list() = service.list(uid)
     override suspend fun apply(targetUid: String, remark: String?) = service.apply(uid, targetUid, remark)
-    override suspend fun accept(token: String) = service.accept(token)
-    override suspend fun reject(token: String) = service.reject(token)
+    override suspend fun accept(token: String) = service.accept(uid, token)
+    override suspend fun reject(token: String) = service.reject(uid, token)
     override suspend fun delete(friendUid: String) = service.delete(uid, friendUid)
     override suspend fun setRemark(friendUid: String, remark: String?) = service.setRemark(uid, friendUid, remark)
     override suspend fun blacklist(targetUid: String) = service.blacklist(uid, targetUid)
@@ -66,14 +71,14 @@ class ChatRpcImpl(uid: String, private val service: ChatService) : ChatRpcStub(u
     override suspend fun createPersonal(targetUid: String) = service.createPersonalChat(uid, targetUid)
     override suspend fun createGroup(name: String, avatar: String?, memberUids: List<String>) =
         service.createGroup(name, avatar, uid, memberUids)
-    override suspend fun get(chatId: String) = service.getChat(chatId)
+    override suspend fun get(chatId: String) = service.getChatFor(uid, chatId)
         ?: throw IllegalArgumentException("聊天不存在")
     override suspend fun update(chatId: String, name: String?, avatar: String?, notice: String?) =
         service.updateGroup(uid, chatId, name, avatar, notice)
     override suspend fun delete(chatId: String) = service.dissolveGroup(uid, chatId)
     override suspend fun addMembers(chatId: String, uids: List<String>) = service.addMembers(uid, chatId, uids)
     override suspend fun removeMembers(chatId: String, targetUid: String) = service.removeMember(uid, chatId, targetUid)
-    override suspend fun getMembers(chatId: String) = service.getMembers(chatId)
+    override suspend fun getMembers(chatId: String) = service.getMembersFor(uid, chatId)
     override suspend fun transferOwner(chatId: String, newOwnerUid: String) = service.transferOwner(uid, chatId, newOwnerUid)
     override suspend fun setRole(chatId: String, targetUid: String, role: Int) = service.setRole(uid, chatId, targetUid, role)
     override suspend fun muteMember(chatId: String, targetUid: String, durationSeconds: Int) =

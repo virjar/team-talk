@@ -12,6 +12,7 @@ import com.virjar.tk.navigation.feature.DiscoveryFeature
 import com.virjar.tk.navigation.feature.GroupFeature
 import com.virjar.tk.navigation.feature.OrganizationFeature
 import com.virjar.tk.navigation.feature.GroupFilesFeature
+import com.virjar.tk.navigation.feature.DocumentDraftStore
 import com.virjar.tk.navigation.feature.DocumentWorkspaceFeature
 import com.virjar.tk.ui.screen.ChatComposerContextStore
 import com.virjar.tk.viewmodel.ChatViewModel
@@ -34,6 +35,8 @@ import kotlinx.coroutines.launch
 open class AppDataState(
     val session: ClientSession,
     val chatComposerContexts: ChatComposerContextStore = ChatComposerContextStore(),
+    val documentDrafts: DocumentDraftStore = DocumentDraftStore(),
+    private val onAuthExpired: () -> Unit = { session.close() },
 ) {
     val imClient get() = session.imClient
     val userSession get() = session.userSession
@@ -67,18 +70,22 @@ open class AppDataState(
     val discovery = DiscoveryFeature(session, ::handleError)
     val organization = OrganizationFeature(session, ::handleError)
     val groupFiles = GroupFilesFeature(session, actionScope, ::handleError)
-    val documents = DocumentWorkspaceFeature(session, actionScope, ::handleError)
+    val documents = DocumentWorkspaceFeature(session, actionScope, ::handleError, documentDrafts)
 
     var error by mutableStateOf<String?>(null)
         private set
 
-    fun destroy(clearComposerContexts: Boolean = true) {
+    fun destroy(
+        clearComposerContexts: Boolean = true,
+        clearDocumentDrafts: Boolean = clearComposerContexts,
+    ) {
         conversationViewModel.destroy()
         contactViewModel.destroy()
         chatViewModel?.destroy()
         chatViewModel = null
         activeChat.clear()
         if (clearComposerContexts) chatComposerContexts.clear()
+        if (clearDocumentDrafts) documentDrafts.clear(userSession.uid) else documentDrafts.flush()
         actionScope.cancel()
         session.eventProcessor.onContactChanged = null
     }
@@ -105,7 +112,7 @@ open class AppDataState(
             userSession.uid,
             session.sendQueue,
         ).apply {
-            onAuthExpired = { session.close() }
+            onAuthExpired = { this@AppDataState.onAuthExpired() }
         }
         activeChat.markPrepared(chatId)
     }
@@ -135,10 +142,10 @@ open class AppDataState(
         val normalized = draft?.takeIf { it.isNotBlank() }
         // 本地缓存同步落盘，保证立即返回/断网也不丢；Repository 会把远端镜像严格串行，
         // 已发出的旧 RPC 完成后才会发送清空请求，避免服务端乱序复活旧草稿。
-        conversationRepo.setDraftLocal(chatId, normalized)
+        val generation = conversationRepo.setDraftLocal(chatId, normalized)
         actionScope.launch {
             try {
-                conversationRepo.mirrorDraft(chatId, normalized)
+                conversationRepo.mirrorDraft(chatId, generation)
             } catch (_: Exception) {
                 // Draft mirroring is best-effort and must not interrupt conversation flow.
             }
@@ -149,7 +156,7 @@ open class AppDataState(
         when (throwable) {
             is AppError.AuthExpired -> {
                 error = "认证失效，请重新登录"
-                session.close()
+                onAuthExpired()
             }
 
             is AppError.FatalCodec -> {

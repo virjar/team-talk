@@ -1,6 +1,7 @@
 package com.virjar.tk.domain.chat
 
 import com.virjar.tk.domain.conversation.ConversationService
+import com.virjar.tk.domain.contact.ContactStore
 import com.virjar.tk.domain.event.EventPublisher
 import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.model.Chat
@@ -13,12 +14,14 @@ class ChatService(
     private val events: EventPublisher,
     private val conversationService: ConversationService,
     private val managedChats: ManagedChatPolicy,
+    private val contacts: ContactStore,
 ) {
 
     // ── 创建聊天 ──
 
     suspend fun createPersonalChat(uid: String, targetUid: String): Chat {
         require(uid != targetUid) { "不能和自己创建私聊" }
+        require(!contacts.isBlockedEither(uid, targetUid)) { "黑名单关系下不能创建私聊" }
         val chat = chatStore.createPersonalChat(uid, targetUid)
         // 预创建会话行，确保 markRead 有行可更新（readSeq 多设备同步基础）
         conversationService.ensureConversations(chat.chatId, chat.chatType, listOf(uid, targetUid))
@@ -36,6 +39,12 @@ class ChatService(
     }
 
     fun getChat(chatId: String): Chat? = chatStore.getChat(chatId)
+
+    /** Client-facing detail lookup. Knowing a chat id must not reveal private/group metadata. */
+    fun getChatFor(uid: String, chatId: String): Chat? {
+        requireMember(uid, chatId)
+        return chatStore.getChat(chatId)
+    }
 
     suspend fun updateGroup(operatorUid: String, chatId: String, name: String? = null, avatar: String? = null, notice: String? = null) {
         if ((name != null || avatar != null) && managedChats.managedBy(chatId) != null) {
@@ -69,6 +78,12 @@ class ChatService(
 
     fun getMembers(chatId: String): List<Member> =
         chatStore.getMembers(chatId).map { it.copy(user = userStore.findByUid(it.uid)) }
+
+    /** Client-facing member lookup with the same membership boundary as chat details. */
+    fun getMembersFor(uid: String, chatId: String): List<Member> {
+        requireMember(uid, chatId)
+        return getMembers(chatId)
+    }
 
     suspend fun addMembers(operatorUid: String, chatId: String, uids: List<String>) {
         requireUserManaged(chatId)
@@ -121,6 +136,10 @@ class ChatService(
         requireUserManaged(chatId)
         requireOwner(operatorUid, chatId)
         if (role !in 0..1) throw IllegalArgumentException("角色只能是 0(member) 或 1(admin)")
+        require(operatorUid != targetUid) { "群主不能修改自己的角色，请先转让群主" }
+        val target = chatStore.getMember(chatId, targetUid)
+            ?: throw IllegalArgumentException("目标不是群成员")
+        require(target.role != 2) { "不能直接修改群主角色，请使用转让群主" }
         chatStore.setRole(chatId, targetUid, role)
         val chat = chatStore.getChat(chatId) ?: return
         val memberUids = chatStore.getMemberUids(chatId)
@@ -130,7 +149,8 @@ class ChatService(
     // ── 禁言 ──
 
     suspend fun muteMember(operatorUid: String, chatId: String, targetUid: String, durationSeconds: Int) {
-        requireGroupAdmin(operatorUid, chatId)
+        requireCanManageMember(operatorUid, chatId, targetUid)
+        require(durationSeconds > 0) { "禁言时长必须大于 0" }
         val expiresAt = System.currentTimeMillis() + durationSeconds * 1000L
         chatStore.muteMember(chatId, targetUid, operatorUid, expiresAt)
         val chat = chatStore.getChat(chatId) ?: return
@@ -139,7 +159,7 @@ class ChatService(
     }
 
     suspend fun unmuteMember(operatorUid: String, chatId: String, targetUid: String) {
-        requireGroupAdmin(operatorUid, chatId)
+        requireCanManageMember(operatorUid, chatId, targetUid)
         chatStore.unmuteMember(chatId, targetUid)
         val chat = chatStore.getChat(chatId) ?: return
         val memberUids = chatStore.getMemberUids(chatId)
@@ -327,6 +347,21 @@ class ChatService(
         val member = chatStore.getMember(chatId, uid)
             ?: throw IllegalArgumentException("不是群成员")
         if (member.role != 2) throw IllegalArgumentException("需要群主权限")
+    }
+
+    private fun requireMember(uid: String, chatId: String) {
+        chatStore.getMember(chatId, uid) ?: throw IllegalArgumentException("不是聊天成员")
+    }
+
+    /** Owner may manage admins/members; admins may only manage ordinary members. */
+    private fun requireCanManageMember(operatorUid: String, chatId: String, targetUid: String) {
+        require(operatorUid != targetUid) { "不能管理自己" }
+        val actor = chatStore.getMember(chatId, operatorUid)
+            ?: throw IllegalArgumentException("操作者不是群成员")
+        require(actor.role >= 1) { "需要管理员权限" }
+        val target = chatStore.getMember(chatId, targetUid)
+            ?: throw IllegalArgumentException("目标不是群成员")
+        require(actor.role > target.role) { "不能管理同级或更高角色" }
     }
 
     private fun requireUserManaged(chatId: String) {

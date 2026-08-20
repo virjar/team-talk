@@ -13,6 +13,19 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
 import java.util.concurrent.ConcurrentHashMap
 
+private const val DRAFT_MIRROR_PENDING = 0L
+private const val DRAFT_MIRROR_ACKED = 1L
+
+private data class LocalDraftOverride(
+    val draft: String?,
+    val generation: Long,
+    val state: Long,
+    val observedAuthority: AuthoritativeDraftObservation? = null,
+)
+
+/** 包装类用于区分“还没观察到事件”与“已观察到权威 null”。 */
+private data class AuthoritativeDraftObservation(val draft: String?)
+
 /**
  * 基于 SQLDelight 的 LocalCache 实现。
  *
@@ -22,7 +35,7 @@ import java.util.concurrent.ConcurrentHashMap
  *   单聊窗口限制（[LocalCache.DEFAULT_MESSAGE_WINDOW]）
  * - [onChatInactive] 释放窗口，DB 持久化不变
  */
-class LocalCacheImpl(driver: SqlDriver) : LocalCache {
+class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     private val db = AppDatabase(driver)
     private val queries = db.appDatabaseQueries
 
@@ -36,6 +49,15 @@ class LocalCacheImpl(driver: SqlDriver) : LocalCache {
     private val membersFlow = MutableStateFlow<Map<String, List<Member>>>(emptyMap())
     private val conversationsFlow = MutableStateFlow<List<Conversation>>(emptyList())
     private val usersFlow = MutableStateFlow<List<User>>(emptyList())
+    /**
+     * 持久化 outbox 的内存镜像。map 中“有 key + draft=null”表示明确清空；
+     * 缺少 key 才表示本机没有待收敛操作，可接受跨设备草稿。
+     */
+    private val localDraftOverrides = mutableMapOf<String, LocalDraftOverride>()
+    /** 已收敛后仍保留进程内高水位，避免迟到的旧 ACK 命中重新从 1 开始的新操作。 */
+    private val draftGenerationHighWatermarks = mutableMapOf<String, Long>()
+    private val closeLock = Any()
+    private var closed = false
 
     // ── 消息窗口（LRU 管理） ──
     // 每个 active chat 对应一个 MessageWindow，持有最近 N 条消息的内存副本
@@ -55,6 +77,18 @@ class LocalCacheImpl(driver: SqlDriver) : LocalCache {
         contactsFlow.value = queries.selectAllContacts().executeAsList().map { it.toModel() }
         chatsFlow.value = queries.selectAllChats().executeAsList().map { it.toModel() }
         conversationsFlow.value = queries.selectAllConversations().executeAsList().map { it.toModel() }
+        localDraftOverrides.putAll(
+            queries.selectAllConversationDraftOutbox().executeAsList().associate { row ->
+                row.chat_id to LocalDraftOverride(
+                    draft = row.draft,
+                    generation = row.generation,
+                    state = row.state,
+                )
+            },
+        )
+        localDraftOverrides.forEach { (chatId, override) ->
+            draftGenerationHighWatermarks[chatId] = override.generation
+        }
 
         val memberMap = mutableMapOf<String, List<Member>>()
         for (chat in chatsFlow.value) {
@@ -158,10 +192,27 @@ class LocalCacheImpl(driver: SqlDriver) : LocalCache {
         getOrCreateWindow(chatId).messages
 
     override fun insertMessage(message: Message) {
-        val bodyBytes = message.body?.let { ProtoCodec.encode(it) }
-        queries.insertMessage(message.chatId, message.clientMsgId, message.serverSeq, message.senderUid, message.messageType.toLong(), message.timestamp, message.flags.toLong(), bodyBytes, message.sendStatus.toLong())
+        persistMessage(message)
         // 只更新已驻留的窗口；未驻留的 chat 下次 observe 时从 DB 加载
         chatWindows[message.chatId]?.upsert(message)
+    }
+
+    override fun insertMessagePage(
+        chatId: String,
+        messages: List<Message>,
+        resetResidentWindow: Boolean,
+    ) {
+        messages.forEach { message ->
+            require(message.chatId == chatId) { "history page contains another chat: ${message.chatId}" }
+            persistMessage(message)
+        }
+        // Page provenance, not numeric adjacency, tells the window that gaps are authoritative.
+        chatWindows[chatId]?.applyHistoryPage(messages, resetResidentWindow)
+    }
+
+    private fun persistMessage(message: Message) {
+        val bodyBytes = message.body?.let { ProtoCodec.encode(it) }
+        queries.insertMessage(message.chatId, message.clientMsgId, message.serverSeq, message.senderUid, message.messageType.toLong(), message.timestamp, message.flags.toLong(), bodyBytes, message.sendStatus.toLong())
     }
 
     override fun updateMessage(chatId: String, clientMsgId: String, serverSeq: Long) {
@@ -221,8 +272,56 @@ class LocalCacheImpl(driver: SqlDriver) : LocalCache {
     override fun getConversations(): List<Conversation> = conversationsFlow.value
     override fun observeConversations(): Flow<List<Conversation>> = conversationsFlow
     override fun upsertConversation(conv: Conversation) {
-        queries.upsertConversation(conv.chatId, conv.chatType.toLong(), conv.chatName, conv.chatAvatar, conv.lastSeq, conv.readSeq, conv.peerReadSeq, conv.unreadCount.toLong(), if (conv.isPinned) 1L else 0L, if (conv.isMuted) 1L else 0L, conv.draft, conv.lastMsgTimestamp ?: 0L)
-        updateFlow(conversationsFlow) { mergeSorted(it, conv) }
+        synchronized(stateLock) {
+            val currentOverride = localDraftOverrides[conv.chatId]
+            // Conversation 事件可能比 setDraft RPC ACK 更早到达。只记录当前
+            // generation 创建之后最后观察到的权威值，ACK 才有资格据此收敛 outbox。
+            val observedOverride = currentOverride?.let { override ->
+                if (override.state == DRAFT_MIRROR_PENDING) {
+                    override.copy(observedAuthority = AuthoritativeDraftObservation(conv.draft))
+                } else {
+                    override
+                }
+            }
+            // RPC 成功不等于本地已消费权威快照。在收到值匹配的
+            // Conversation 前保留 override，防止更早的通知在应答后短暂复活草稿。
+            val clearAcknowledgedOverride = observedOverride?.let { override ->
+                override.state == DRAFT_MIRROR_ACKED && override.draft == conv.draft
+            } == true
+            val effectiveOverride = observedOverride.takeUnless { clearAcknowledgedOverride }
+            val incoming = conv.copy(
+                draft = if (effectiveOverride != null) effectiveOverride.draft else conv.draft,
+            )
+            val mergedList = mergeSorted(conversationsFlow.value, incoming, effectiveOverride)
+            val merged = mergedList.first { it.chatId == conv.chatId }
+            queries.transaction {
+                if (clearAcknowledgedOverride) {
+                    queries.deleteConversationDraftOutbox(conv.chatId)
+                }
+                // 持久化的也必须是合并后的草稿，否则进程重建会暂时
+                // 读回迟到事件里的旧值。
+                queries.upsertConversation(
+                    merged.chatId,
+                    merged.chatType.toLong(),
+                    merged.chatName,
+                    merged.chatAvatar,
+                    merged.lastSeq,
+                    merged.readSeq,
+                    merged.peerReadSeq,
+                    merged.unreadCount.toLong(),
+                    if (merged.isPinned) 1L else 0L,
+                    if (merged.isMuted) 1L else 0L,
+                    merged.draft,
+                    merged.lastMsgTimestamp ?: 0L,
+                )
+            }
+            if (clearAcknowledgedOverride) {
+                localDraftOverrides.remove(conv.chatId)
+            } else if (observedOverride != null) {
+                localDraftOverrides[conv.chatId] = observedOverride
+            }
+            conversationsFlow.value = mergedList
+        }
     }
 
     /**
@@ -231,22 +330,32 @@ class LocalCacheImpl(driver: SqlDriver) : LocalCache {
      * readSeq 服务端权威持久化（Commit 7f91d58 修复 markRead 不再 no-op + 会话行预创建），
      * unreadCount = lastSeq - readSeq 由服务端权威计算，客户端直接信任。
      *
-     * 仍需本地合并的两项（纯客户端状态/水位线）：
+     * 仍需本地合并的三项（纯客户端状态/水位线）：
      * - readSeq: 取 max（本地 markRead 可能比服务端通知先到，水位线只增不减）
      * - peerReadSeq: 取 max（同理）
-     * - draft: 本地优先（草稿是纯客户端状态，服务端只是镜像）
+     * - draft: 仅在 outbox 有明确本地操作时本地优先；否则接受远端（包括 null）
      */
-    private fun mergeConversation(local: Conversation, remote: Conversation): Conversation {
+    private fun mergeConversation(
+        local: Conversation,
+        remote: Conversation,
+        draftOverride: LocalDraftOverride? = localDraftOverrides[remote.chatId],
+    ): Conversation {
         return remote.copy(
             readSeq = maxOf(local.readSeq, remote.readSeq),
             peerReadSeq = maxOf(local.peerReadSeq, remote.peerReadSeq),
-            draft = local.draft ?: remote.draft,
+            draft = if (draftOverride != null) draftOverride.draft else remote.draft,
         )
     }
 
     override fun deleteConversation(chatId: String) {
-        queries.deleteConversation(chatId)
-        updateFlow(conversationsFlow) { it.filter { c -> c.chatId != chatId } }
+        synchronized(stateLock) {
+            queries.transaction {
+                queries.deleteConversationDraftOutbox(chatId)
+                queries.deleteConversation(chatId)
+            }
+            localDraftOverrides.remove(chatId)
+            conversationsFlow.value = conversationsFlow.value.filter { it.chatId != chatId }
+        }
     }
 
     override fun markConversationRead(chatId: String, readSeq: Long) {
@@ -274,20 +383,76 @@ class LocalCacheImpl(driver: SqlDriver) : LocalCache {
         }
     }
 
-    override fun setConversationDraft(chatId: String, draft: String?) {
-        synchronized(stateLock) {
-            queries.setConversationDraft(draft, chatId)
+    override fun setConversationDraft(chatId: String, draft: String?): Long {
+        return synchronized(stateLock) {
+            val generation = (draftGenerationHighWatermarks[chatId] ?: 0L) + 1L
+            draftGenerationHighWatermarks[chatId] = generation
+            val override = LocalDraftOverride(draft, generation, DRAFT_MIRROR_PENDING)
+            queries.transaction {
+                queries.upsertConversationDraftOutbox(chatId, draft, generation, DRAFT_MIRROR_PENDING)
+                queries.setConversationDraft(draft, chatId)
+            }
+            localDraftOverrides[chatId] = override
             conversationsFlow.value = conversationsFlow.value.map {
                 if (it.chatId == chatId) it.copy(draft = draft) else it
+            }
+            generation
+        }
+    }
+
+    override fun getPendingConversationDrafts(): List<PendingConversationDraft> =
+        synchronized(stateLock) {
+            localDraftOverrides.mapNotNull { (chatId, override) ->
+                if (override.state == DRAFT_MIRROR_PENDING) {
+                    PendingConversationDraft(chatId, override.draft, override.generation)
+                } else {
+                    null
+                }
+            }
+        }
+
+    override fun markConversationDraftMirrored(chatId: String, generation: Long) {
+        synchronized(stateLock) {
+            val current = localDraftOverrides[chatId] ?: return
+            if (current.generation != generation || current.state != DRAFT_MIRROR_PENDING) return
+            val matchingAuthorityAlreadyObserved =
+                current.observedAuthority?.draft == current.draft && current.observedAuthority != null
+            queries.transaction {
+                if (matchingAuthorityAlreadyObserved) {
+                    // stateLock 下 generation 仍匹配，因此这里只可能删除本次 ACK
+                    // 对应的行；新 generation 无法在事务中途插入被误清。
+                    queries.deleteConversationDraftOutbox(chatId)
+                } else {
+                    queries.markConversationDraftOutboxAcked(chatId, generation)
+                }
+            }
+            if (matchingAuthorityAlreadyObserved) {
+                localDraftOverrides.remove(chatId)
+            } else {
+                localDraftOverrides[chatId] = current.copy(state = DRAFT_MIRROR_ACKED)
             }
         }
     }
 
+    override fun close() {
+        val shouldClose = synchronized(closeLock) {
+            if (closed) false else {
+                closed = true
+                true
+            }
+        }
+        if (shouldClose) driver.close()
+    }
+
     /** 在已排序列表中 upsert 一条会话（保持 置顶+时间 排序）。调用方持 stateLock。 */
-    private fun mergeSorted(current: List<Conversation>, conv: Conversation): List<Conversation> {
+    private fun mergeSorted(
+        current: List<Conversation>,
+        conv: Conversation,
+        draftOverride: LocalDraftOverride? = localDraftOverrides[conv.chatId],
+    ): List<Conversation> {
         val list = current.toMutableList()
         val idx = list.indexOfFirst { it.chatId == conv.chatId }
-        val merged = if (idx >= 0) mergeConversation(list[idx], conv) else conv
+        val merged = if (idx >= 0) mergeConversation(list[idx], conv, draftOverride) else conv
         if (idx >= 0) list[idx] = merged else list.add(merged)
         list.sortWith(compareByDescending<Conversation> { it.isPinned }.thenByDescending { it.lastMsgTimestamp ?: 0L })
         return list

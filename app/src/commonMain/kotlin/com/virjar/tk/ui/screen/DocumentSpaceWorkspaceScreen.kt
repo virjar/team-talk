@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -38,6 +39,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -55,9 +57,63 @@ import com.virjar.tk.model.DocumentNode
 import com.virjar.tk.model.DocumentRevision
 import com.virjar.tk.model.DocumentRevisionSummary
 import com.virjar.tk.model.DocumentSpace
+import com.virjar.tk.navigation.feature.DocumentDraftLifecycleBridge
 import com.virjar.tk.navigation.feature.DocumentTabState
 import com.virjar.tk.navigation.feature.DocumentTreeRow
 import com.virjar.tk.ui.platform.TkBackHandler
+
+internal enum class MobileSingleDocumentTransition {
+    OPEN_DIRECTLY,
+    RESUME_CURRENT,
+    CLOSE_AND_CONTINUE,
+    CONFIRM_DISCARD,
+}
+
+internal data class MobileSingleDocumentDecision(
+    val transition: MobileSingleDocumentTransition,
+    val currentTab: DocumentTabState?,
+)
+
+/** 首页最近文档会先进入空间、再异步产生活动文档；后者一到达就应进入移动编辑器。 */
+internal fun shouldShowMobileSingleDocumentEditor(
+    activeTab: DocumentTabState?,
+    selectedSpaceId: String,
+): Boolean = activeTab?.spaceId == selectedSpaceId
+
+/**
+ * 移动端离开当前文档前必须主动拉取编辑器的最后一拍；Compose state 可能还没完成下一帧提交。
+ * [targetDocumentId] 仅在打开已有文档时传入，用于识别“重新打开当前文档”。
+ */
+internal fun prepareMobileSingleDocumentTransition(
+    currentTab: DocumentTabState?,
+    captureDraft: (() -> DocumentEditorDraftSnapshot)?,
+    targetDocumentId: String?,
+): MobileSingleDocumentDecision {
+    val captured = currentTab?.withDraftSnapshot(captureDraft?.invoke())
+        ?: return MobileSingleDocumentDecision(MobileSingleDocumentTransition.OPEN_DIRECTLY, null)
+    if (targetDocumentId != null && captured.documentId == targetDocumentId) {
+        return MobileSingleDocumentDecision(MobileSingleDocumentTransition.RESUME_CURRENT, captured)
+    }
+    return MobileSingleDocumentDecision(
+        transition = if (captured.dirty || captured.creating) {
+            MobileSingleDocumentTransition.CONFIRM_DISCARD
+        } else {
+            MobileSingleDocumentTransition.CLOSE_AND_CONTINUE
+        },
+        currentTab = captured,
+    )
+}
+
+private sealed interface MobileDocumentDestination {
+    data object Directory : MobileDocumentDestination
+    data object NewDocument : MobileDocumentDestination
+    data class ExistingDocument(val node: DocumentNode) : MobileDocumentDestination
+}
+
+private data class MobileDiscardRequest(
+    val tabInstanceId: Long,
+    val destination: MobileDocumentDestination,
+)
 
 /** 进入某个文档空间后的工作区：紧凑目录树 + 空间概览或多标签编辑器。 */
 @Composable
@@ -86,6 +142,7 @@ internal fun DocumentSpaceWorkspaceScreen(
     onSelectTab: (String) -> Unit,
     onUpdateDraft: (String, String, String, Boolean) -> Unit,
     onCloseTab: (DocumentTabState) -> Unit,
+    onCloseTabNow: (Long) -> Unit,
     onSave: () -> Unit,
     onDelete: () -> Unit,
     onShowHistory: () -> Unit,
@@ -94,32 +151,138 @@ internal fun DocumentSpaceWorkspaceScreen(
     onCloseRevisionPreview: () -> Unit,
     onCloseHistory: () -> Unit,
     onDetach: (() -> Unit)?,
+    mobileSingleDocumentMode: Boolean,
+    draftLifecycleBridge: DocumentDraftLifecycleBridge,
+    onActiveDraftSnapshotChange: ((() -> DocumentEditorDraftSnapshot)?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var compactEditor by remember(space.spaceId) {
         mutableStateOf(activeTab?.spaceId == space.spaceId)
     }
     val visibleActiveTab = activeTab?.takeIf { it.spaceId == space.spaceId }
+    var activeDraftCapture by remember(space.spaceId) {
+        mutableStateOf<(() -> DocumentEditorDraftSnapshot)?>(null)
+    }
+    var mobileDiscardRequest by remember(space.spaceId) { mutableStateOf<MobileDiscardRequest?>(null) }
 
-    LaunchedEffect(space.spaceId, visibleActiveTab?.tabId) {
-        if (visibleActiveTab != null) compactEditor = true
+    LaunchedEffect(
+        space.spaceId,
+        mobileSingleDocumentMode,
+        visibleActiveTab?.tabId,
+    ) {
+        if (mobileSingleDocumentMode) {
+            // 单文档前台的页面完全由活动文档决定：首页最近项异步打开也会自然进入编辑器；
+            // 删除失败时活动文档仍在，因此不会被提前藏回目录。
+            compactEditor = shouldShowMobileSingleDocumentEditor(activeTab, space.spaceId)
+            if (visibleActiveTab == null) activeDraftCapture = null
+        } else if (visibleActiveTab != null) {
+            compactEditor = true
+        }
+    }
+
+    fun performMobileDestination(destination: MobileDocumentDestination) {
+        activeDraftCapture = null
+        onActiveDraftSnapshotChange(null)
+        when (destination) {
+            MobileDocumentDestination.Directory -> {
+                compactEditor = false
+            }
+            MobileDocumentDestination.NewDocument -> {
+                onCreateDocument()
+                // beginDocument() 同步创建活动草稿；本次事件提交后直接显示新编辑器。
+                compactEditor = true
+            }
+            is MobileDocumentDestination.ExistingDocument -> {
+                compactEditor = false
+                onOpenDocument(destination.node)
+            }
+        }
+    }
+
+    fun requestMobileDestination(destination: MobileDocumentDestination) {
+        val targetDocumentId = (destination as? MobileDocumentDestination.ExistingDocument)?.node?.nodeId
+        val decision = prepareMobileSingleDocumentTransition(
+            currentTab = visibleActiveTab,
+            captureDraft = activeDraftCapture,
+            targetDocumentId = targetDocumentId,
+        )
+        when (decision.transition) {
+            MobileSingleDocumentTransition.OPEN_DIRECTLY -> performMobileDestination(destination)
+            MobileSingleDocumentTransition.RESUME_CURRENT -> {
+                compactEditor = true
+                if (destination is MobileDocumentDestination.ExistingDocument) onOpenDocument(destination.node)
+            }
+            MobileSingleDocumentTransition.CLOSE_AND_CONTINUE -> {
+                decision.currentTab?.let { onCloseTabNow(it.instanceId) }
+                performMobileDestination(destination)
+            }
+            MobileSingleDocumentTransition.CONFIRM_DISCARD -> {
+                mobileDiscardRequest = MobileDiscardRequest(
+                    tabInstanceId = requireNotNull(decision.currentTab).instanceId,
+                    destination = destination,
+                )
+            }
+        }
+    }
+
+    mobileDiscardRequest?.let { request ->
+        val returningToDirectory = request.destination == MobileDocumentDestination.Directory
+        AlertDialog(
+            onDismissRequest = { mobileDiscardRequest = null },
+            title = { Text(if (returningToDirectory) "返回目录？" else "切换文档？") },
+            text = {
+                Text(
+                    if (returningToDirectory) {
+                        "该文档有未保存修改，放弃后返回目录。"
+                    } else {
+                        "该文档有未保存修改，放弃后将切换到另一篇文档。"
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        mobileDiscardRequest = null
+                        onCloseTabNow(request.tabInstanceId)
+                        performMobileDestination(request.destination)
+                    },
+                    modifier = Modifier.testTag("documents.mobile.discard.confirm"),
+                ) { Text("放弃修改") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { mobileDiscardRequest = null },
+                    modifier = Modifier.testTag("documents.mobile.discard.cancel"),
+                ) { Text("继续编辑") }
+            },
+            modifier = Modifier.testTag("documents.mobile.discard.dialog"),
+        )
     }
 
     Column(modifier.testTag("documents.space.workspace")) {
+        val mobileEditorVisible = mobileSingleDocumentMode && compactEditor && visibleActiveTab != null
         DocumentSpaceHeader(
             space = space,
             detached = detached,
-            onShowHome = onShowHome,
+            onBack = if (mobileEditorVisible) {
+                { requestMobileDestination(MobileDocumentDestination.Directory) }
+            } else {
+                onShowHome
+            },
+            backContentDescription = if (mobileEditorVisible) "返回目录" else "返回文档首页",
+            backTestTag = if (mobileEditorVisible) "documents.editor.back" else "documents.space.back",
             onRefresh = onRefresh,
             onManageSpace = onManageSpace,
             onDetach = onDetach,
         )
         HorizontalDivider()
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            val compact = maxWidth < 700.dp
+            val compact = mobileSingleDocumentMode || maxWidth < 700.dp
             TkBackHandler {
-                if (compact && compactEditor && visibleActiveTab != null) {
-                    // 只退回目录，标签和未保存草稿仍由 session-scoped 工作台持有。
+                if (mobileSingleDocumentMode && compactEditor && visibleActiveTab != null) {
+                    requestMobileDestination(MobileDocumentDestination.Directory)
+                } else if (compact && compactEditor && visibleActiveTab != null) {
+                    // Desktop 窄窗口保留多标签工作台，只改变目录/编辑器的前台页。
                     compactEditor = false
                 } else {
                     onShowHome()
@@ -135,7 +298,7 @@ internal fun DocumentSpaceWorkspaceScreen(
                         revisionPreview = revisionPreview,
                         saving = saving,
                         loadingDocument = loadingDocument,
-                        onBack = { compactEditor = false },
+                        onBack = if (mobileSingleDocumentMode) null else { { compactEditor = false } },
                         onSelectTab = {
                             compactEditor = true
                             onSelectTab(it)
@@ -150,6 +313,13 @@ internal fun DocumentSpaceWorkspaceScreen(
                         onCloseRevisionPreview = onCloseRevisionPreview,
                         onCloseHistory = onCloseHistory,
                         emptyContent = { DocumentSpaceOverview(space) },
+                        showTabStrip = !mobileSingleDocumentMode,
+                        mobileSingleDocumentMode = mobileSingleDocumentMode,
+                        draftLifecycleBridge = draftLifecycleBridge,
+                        onActiveDraftSnapshotChange = {
+                            activeDraftCapture = it
+                            onActiveDraftSnapshotChange(it)
+                        },
                         modifier = Modifier.fillMaxSize(),
                     )
                 } else {
@@ -162,14 +332,22 @@ internal fun DocumentSpaceWorkspaceScreen(
                         loading = loadingNodes,
                         onSelectRootFolder = onSelectRootFolder,
                         onToggleFolder = onToggleFolder,
-                        onOpenDocument = {
-                            compactEditor = true
-                            onOpenDocument(it)
+                        onOpenDocument = if (mobileSingleDocumentMode) {
+                            { requestMobileDestination(MobileDocumentDestination.ExistingDocument(it)) }
+                        } else {
+                            {
+                                compactEditor = true
+                                onOpenDocument(it)
+                            }
                         },
                         onCreateFolder = onCreateFolder,
-                        onCreateDocument = {
-                            compactEditor = true
-                            onCreateDocument()
+                        onCreateDocument = if (mobileSingleDocumentMode) {
+                            { requestMobileDestination(MobileDocumentDestination.NewDocument) }
+                        } else {
+                            {
+                                compactEditor = true
+                                onCreateDocument()
+                            }
                         },
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -214,6 +392,7 @@ internal fun DocumentSpaceWorkspaceScreen(
                         onCloseRevisionPreview = onCloseRevisionPreview,
                         onCloseHistory = onCloseHistory,
                         emptyContent = { DocumentSpaceOverview(space) },
+                        draftLifecycleBridge = draftLifecycleBridge,
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                     )
                 }
@@ -226,7 +405,9 @@ internal fun DocumentSpaceWorkspaceScreen(
 private fun DocumentSpaceHeader(
     space: DocumentSpace,
     detached: Boolean,
-    onShowHome: () -> Unit,
+    onBack: () -> Unit,
+    backContentDescription: String,
+    backTestTag: String,
     onRefresh: () -> Unit,
     onManageSpace: (() -> Unit)?,
     onDetach: (() -> Unit)?,
@@ -235,8 +416,8 @@ private fun DocumentSpaceHeader(
         Modifier.fillMaxWidth().height(54.dp).padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onShowHome, modifier = Modifier.testTag("documents.space.back")) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回文档首页")
+        IconButton(onClick = onBack, modifier = Modifier.testTag(backTestTag)) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = backContentDescription)
         }
         Surface(
             color = MaterialTheme.colorScheme.primaryContainer,

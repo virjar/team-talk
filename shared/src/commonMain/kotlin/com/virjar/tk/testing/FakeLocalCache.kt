@@ -2,6 +2,7 @@ package com.virjar.tk.testing
 
 import com.virjar.tk.client.LocalCache
 import com.virjar.tk.client.MessagePager
+import com.virjar.tk.client.PendingConversationDraft
 import com.virjar.tk.model.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,6 +30,15 @@ class FakeLocalCache : LocalCache {
     private val chatsFlow = MutableStateFlow<List<Chat>>(emptyList())
     private val membersMap = mutableMapOf<String, MutableList<Member>>()
     private val conversationsFlow = MutableStateFlow<List<Conversation>>(emptyList())
+    private data class DraftObservation(val draft: String?)
+    private data class DraftOverride(
+        val draft: String?,
+        val generation: Long,
+        val mirrored: Boolean,
+        val observedAuthority: DraftObservation? = null,
+    )
+    private val draftOverrides = mutableMapOf<String, DraftOverride>()
+    private val draftGenerationHighWatermarks = mutableMapOf<String, Long>()
 
     // 记录 onChatInactive 调用（测试断言用）
     val inactiveChats = mutableListOf<String>()
@@ -50,7 +60,11 @@ class FakeLocalCache : LocalCache {
     override fun insertMessage(message: Message) {
         val list = messagesMap.getOrPut(message.chatId) { mutableListOf() }
         val idx = list.indexOfFirst { it.clientMsgId == message.clientMsgId }
-        if (idx >= 0) list[idx] = message else list.add(0, message)
+        if (idx >= 0) list[idx] = message else list.add(message)
+        list.sortWith(
+            compareByDescending<Message> { if (it.serverSeq > 0L) it.serverSeq else Long.MAX_VALUE }
+                .thenByDescending { it.timestamp },
+        )
         syncFlow(message.chatId)
     }
 
@@ -134,25 +148,59 @@ class FakeLocalCache : LocalCache {
     override fun getConversations(): List<Conversation> = conversationsFlow.value
     override fun observeConversations(): Flow<List<Conversation>> = conversationsFlow
     override fun upsertConversation(conv: Conversation) {
+        val currentOverride = draftOverrides[conv.chatId]
+        val observedOverride = currentOverride?.let { override ->
+            if (!override.mirrored) {
+                override.copy(observedAuthority = DraftObservation(conv.draft))
+            } else {
+                override
+            }
+        }
+        val clearOverride = observedOverride?.let { it.mirrored && it.draft == conv.draft } == true
+        if (clearOverride) draftOverrides.remove(conv.chatId)
+        else if (observedOverride != null) draftOverrides[conv.chatId] = observedOverride
+        val effectiveOverride = observedOverride.takeUnless { clearOverride }
+        val incoming = conv.copy(
+            draft = if (effectiveOverride != null) effectiveOverride.draft else conv.draft,
+        )
         val list = conversationsFlow.value.toMutableList()
-        val idx = list.indexOfFirst { it.chatId == conv.chatId }
+        val idx = list.indexOfFirst { it.chatId == incoming.chatId }
         if (idx >= 0) {
             // 合并策略与 LocalCacheImpl 一致（简化版）
             val local = list[idx]
-            val mergedReadSeq = maxOf(local.readSeq, conv.readSeq)
-            val mergedUnread = if (local.readSeq >= conv.readSeq && local.unreadCount == 0) 0 else conv.unreadCount
-            list[idx] = conv.copy(readSeq = mergedReadSeq, unreadCount = mergedUnread, draft = local.draft ?: conv.draft)
+            val mergedReadSeq = maxOf(local.readSeq, incoming.readSeq)
+            val mergedUnread = if (local.readSeq >= incoming.readSeq && local.unreadCount == 0) 0 else incoming.unreadCount
+            list[idx] = incoming.copy(readSeq = mergedReadSeq, unreadCount = mergedUnread)
         } else {
-            list.add(conv)
+            list.add(incoming)
         }
         conversationsFlow.value = list
     }
-    override fun setConversationDraft(chatId: String, draft: String?) {
+    override fun setConversationDraft(chatId: String, draft: String?): Long {
+        val generation = (draftGenerationHighWatermarks[chatId] ?: 0L) + 1L
+        draftGenerationHighWatermarks[chatId] = generation
+        draftOverrides[chatId] = DraftOverride(draft, generation, mirrored = false)
         conversationsFlow.value = conversationsFlow.value.map {
             if (it.chatId == chatId) it.copy(draft = draft) else it
         }
+        return generation
+    }
+    override fun getPendingConversationDrafts(): List<PendingConversationDraft> =
+        draftOverrides.mapNotNull { (chatId, override) ->
+            if (!override.mirrored) PendingConversationDraft(chatId, override.draft, override.generation) else null
+        }
+    override fun markConversationDraftMirrored(chatId: String, generation: Long) {
+        val current = draftOverrides[chatId] ?: return
+        if (current.generation == generation && !current.mirrored) {
+            if (current.observedAuthority?.draft == current.draft && current.observedAuthority != null) {
+                draftOverrides.remove(chatId)
+            } else {
+                draftOverrides[chatId] = current.copy(mirrored = true)
+            }
+        }
     }
     override fun deleteConversation(chatId: String) {
+        draftOverrides.remove(chatId)
         conversationsFlow.value = conversationsFlow.value.filter { it.chatId != chatId }
     }
     override fun updatePeerReadSeq(chatId: String, peerReadSeq: Long) {

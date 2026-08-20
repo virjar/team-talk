@@ -41,7 +41,21 @@ import androidx.compose.ui.unit.dp
 import com.virjar.tk.model.DocumentRevision
 import com.virjar.tk.model.DocumentRevisionSummary
 import com.virjar.tk.model.DocumentSpace
+import com.virjar.tk.navigation.feature.DocumentDraftLifecycleBridge
 import com.virjar.tk.navigation.feature.DocumentTabState
+
+/** 把编辑器同步捕获的最后一拍正文合并回标签快照，供离开/切换前做可靠判断。 */
+internal fun DocumentTabState.withDraftSnapshot(
+    snapshot: DocumentEditorDraftSnapshot?,
+): DocumentTabState = if (snapshot == null) {
+    this
+} else {
+    copy(
+        draftTitle = snapshot.title,
+        draftMarkdown = snapshot.markdown,
+        dirty = snapshot.dirty || creating,
+    )
+}
 
 /** 多空间标签和编辑器画布；首页与目录树由外层页面负责。 */
 @Composable
@@ -65,6 +79,10 @@ internal fun DocumentEditorWorkspace(
     onCloseRevisionPreview: () -> Unit,
     onCloseHistory: () -> Unit,
     emptyContent: @Composable () -> Unit,
+    showTabStrip: Boolean = true,
+    mobileSingleDocumentMode: Boolean = false,
+    draftLifecycleBridge: DocumentDraftLifecycleBridge,
+    onActiveDraftSnapshotChange: ((() -> DocumentEditorDraftSnapshot)?) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val tabScroll = rememberScrollState()
@@ -86,7 +104,7 @@ internal fun DocumentEditorWorkspace(
     }
 
     Column(modifier) {
-        if (tabs.isNotEmpty() || onBack != null) {
+        if (showTabStrip && (tabs.isNotEmpty() || onBack != null)) {
             Row(
                 Modifier.fillMaxWidth().height(50.dp).horizontalScroll(tabScroll)
                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)),
@@ -126,13 +144,7 @@ internal fun DocumentEditorWorkspace(
                                     } else {
                                         null
                                     }
-                                    onCloseTab(
-                                        if (latest == null) tab else tab.copy(
-                                            draftTitle = latest.title,
-                                            draftMarkdown = latest.markdown,
-                                            dirty = latest.dirty,
-                                        )
-                                    )
+                                    onCloseTab(tab.withDraftSnapshot(latest))
                                 },
                                 modifier = Modifier.size(34.dp),
                             ) {
@@ -155,8 +167,13 @@ internal fun DocumentEditorWorkspace(
                     revisionPreview = revisionPreview,
                     saving = saving,
                     canEdit = canEdit,
+                    mobileSingleDocumentMode = mobileSingleDocumentMode,
+                    draftLifecycleBridge = draftLifecycleBridge,
                     onUpdateDraft = onUpdateDraft,
-                    onRegisterDraftSnapshot = { activeDraftSnapshot = it },
+                    onRegisterDraftSnapshot = {
+                        activeDraftSnapshot = it
+                        onActiveDraftSnapshotChange(it)
+                    },
                     onSave = onSave,
                     onDelete = onDelete,
                     onShowHistory = onShowHistory,

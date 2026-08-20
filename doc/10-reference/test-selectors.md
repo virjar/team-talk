@@ -35,6 +35,7 @@
 | `register.password` | 注册密码 |
 | `register.submit` | 提交注册 |
 | `register.gotoLogin` | 返回登录 |
+| `auth.upgrade.dialog` / `auth.upgrade.exit` | Android 协议不兼容强制升级弹窗与退出操作 |
 
 ## 应用壳与搜索
 
@@ -44,7 +45,8 @@
 | `app.titleBar` | Desktop 应用级标题栏 |
 | `app.titleBar.drag.left` / `app.titleBar.drag.right` | 顶栏左右空白拖拽与双击缩放区 |
 | `nav.avatar` | 当前用户入口 |
-| `nav.tab.会话` / `nav.tab.通讯录` / `nav.tab.文档` / `nav.tab.设置` | 一级导航 |
+| `nav.tab.会话` / `nav.tab.通讯录` / `nav.tab.文档` / `nav.tab.设置` | Desktop 一级导航 |
+| `nav.会话` / `nav.通讯录` / `nav.文档` / `nav.设置` | Android 一级导航 |
 | `action.search` | 搜索入口 |
 | `global.search.input` | 全局搜索输入 |
 | `global.search.clear` | 清空搜索 |
@@ -62,6 +64,10 @@
 | `contacts.friendApplies` | 新的朋友入口 |
 | `contacts.search` | 通讯录本地搜索 |
 | `contact.{uid前8}` | 联系人项 |
+| `organization.unit.{unitId前8}` | 组织节点 |
+| `organization.unit.{unitId前8}.memberCount` | 组织节点直属人数 |
+| `organization.member.{uid前8}` | 当前组织节点的直属成员 |
+| `organization.group.{chatId前8}` | 进入受管部门群 |
 | `search.query` / `search.submit` | 用户搜索输入与提交 |
 | `search.result.{uid前8}` | 用户搜索结果 |
 | `profile.dialog` / `profile.close` | Desktop 资料弹窗与关闭 |
@@ -69,6 +75,7 @@
 | `profile.sendMessage` | 发起私聊 |
 | `profile.createGroup` | 从资料发起群聊 |
 | `profile.deleteFriend` | 删除好友 |
+| `profile.blockUser` / `profile.blockUser.confirm` | 将他人加入黑名单及二次确认 |
 
 ## 设置和账户
 
@@ -88,10 +95,13 @@
 | `chat.input` | 富文本消息输入 |
 | `chat.input.hint` | 空输入提示 |
 | `chat.composer` | 消息编辑器完整容器 |
+| `chat.history.loadMore` | 手动加载更早消息 |
+| `chat.history.loading` | 更早消息加载中 |
 | `chat.composer.mode.{visual|source|preview}` | 可视编辑、Markdown 源码与气泡预览 |
 | `chat.input.source` / `chat.input.source.hint` | Markdown 源码输入与空提示 |
 | `chat.preview` | 与最终消息气泡同源的预览 |
 | `chat.message.seq.{serverSeq}` / `chat.message.seq.{serverSeq}.body` | 已 ACK 消息及其正文 |
+| `chat.message.failed.{clientMsgId前12}` | 客户端发送失败且仍保留在消息流中的状态提示 |
 | `chat.send` | 发送消息 |
 | `chat.emoji` | 表情入口 |
 | `chat.fmt.{bold|italic|strike|code|link|bullets|numbered|more}` | 消息输入的轻量格式工具与窄屏更多菜单 |
@@ -102,6 +112,9 @@
 | `chat.inspector` | 右侧群设置抽屉 |
 | `chat.inspector.dismissArea` | 抽屉外部关闭区 |
 | `chat.inspector.close` | 抽屉关闭按钮 |
+| `attachment.preview.dialog` / `attachment.preview.close` | Desktop 文本附件预览弹窗与关闭 |
+| `attachment.preview.{loading|text|markdown|error|tooLarge|unsupportedCharset}` | TXT/Markdown 附件预览状态与正文 |
+| `attachment.preview.retry` / `attachment.preview.external` | 预览重试与改用系统应用打开 |
 
 ## 群组、成员和转发
 
@@ -140,27 +153,35 @@
 | `documents.home.recent.{documentId前8}` / `documents.home.created.{documentId前8}` | 首页最近访问与最近创建文档 |
 | `documents.space.create` / `documents.space.create.dialog` | 新建空间入口与弹窗 |
 | `documents.space.{spaceId前8}` | 空间列表项 |
-| `documents.space.workspace` / `documents.space.back` / `documents.space.overview` | 空间工作区、返回首页与空间概览 |
+| `documents.space.workspace` / `documents.space.back` / `documents.space.overview` | 空间工作区、从目录返回首页与空间概览 |
 | `documents.space.settings` / `documents.space.settings.dialog` | 空间信息与授权管理 |
 | `documents.folder.create` / `documents.document.create` | 新建目录或文档 |
 | `documents.tree` / `documents.tree.root` | 紧凑目录树与空间根节点 |
 | `documents.node.{nodeId前8}` / `documents.tree.toggle.{nodeId前8}` | 目录节点与文件夹展开/折叠 |
 | `documents.tab.{tabId前12}` | 已打开的跨空间文档标签 |
 | `documents.editor.title` / `documents.editor.body` / `documents.editor.blocks` | 标题、文档编辑器与无损块级画布 |
+| `documents.editor.back` | Android 单文档编辑器返回空间目录；离开前同步捕获最后一拍草稿 |
 | `documents.editor.source` / `documents.editor.source.body` | Markdown 源码模式及其无损正文输入 |
 | `documents.editor.format.{undo|redo|heading|bold|italic|strike|code|link|bullets|numbered|indent|outdent}` | 文档格式工具栏 |
 | `documents.editor.format.heading.{0..6}` | 正文及 H1–H6 段落样式 |
 | `documents.editor.block.{rich|quote|code|table|insert}` | 在活动光标位置插入正文、引用、代码块或表格；窄屏使用插入菜单 |
 | `documents.editor.block.bottom.{rich|quote|code|table}` | 在文档末尾追加内容块 |
 | `documents.editor.{rich|quote|code|table|raw}.*` | 各类可视内容块；未建模扩展只使用局部 raw 卡片 |
+| `documents.editor.table.header.{blockKey}.{column}` / `documents.editor.table.row.{row}.{blockKey}.{column}` | 表头与正文单元格；聚焦后成为行列结构操作锚点 |
 | `documents.editor.table.header.*.align.{column}` | 循环切换表格列的默认、居中、右对齐和左对齐 |
+| `documents.editor.table.actions.{blockKey}` | 可横向滚动的表格行列操作栏，保证窄屏四项操作都可达 |
+| `documents.editor.table.{addRow|addColumn}.{blockKey}` | 在聚焦单元格下方插入行、右侧插入列；未聚焦时追加到末尾 |
+| `documents.editor.table.{removeRow|removeColumn}.{blockKey}` | 删除当前行或当前列；表头不能删行，且至少保留一列 |
+| `documents.editor.table.limit.{blockKey}` | 行列新增命中 32 列或 1000 单元格（含表头）上限时的辅助说明 |
 | `documents.editor.preview` / `documents.editor.save` | 编辑预览切换与保存 |
 | `documents.editor.history` / `documents.revisions.dialog` | 打开版本历史及其弹窗 |
 | `documents.document.more` | 文档级更多操作 |
 | `documents.revision.{revision}` / `documents.revision.restore` | 指定修订及恢复 |
 | `documents.document.delete` / `documents.document.delete.confirm` | 删除入口与确认 |
-| `documents.tab.discard.confirm` | 未保存标签关闭保护 |
+| `documents.tab.discard.confirm` | Desktop 未保存标签关闭保护 |
+| `documents.mobile.discard.{dialog|confirm|cancel}` | Android 返回目录或切换文档时的未保存确认 |
 | `documents.detach` / `documents.detached.placeholder` / `documents.detached.bringBack` | 拉出独立窗口、主窗口承接态与收回操作 |
+| `main.error.snackbar` | Android 会话级错误提示，包含文档删除等操作失败 |
 
 ## 命名规则
 

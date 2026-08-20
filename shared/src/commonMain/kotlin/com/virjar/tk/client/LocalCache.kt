@@ -4,6 +4,13 @@ import com.virjar.tk.model.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
+/** 一条等待镜像到服务端的本地会话草稿操作。[draft] 为 null 表示明确清空。 */
+data class PendingConversationDraft(
+    val chatId: String,
+    val draft: String?,
+    val generation: Long,
+)
+
 /**
  * 客户端本地缓存接口。
  * 具体实现由各平台提供（基于 SQLDelight）。
@@ -38,6 +45,19 @@ interface LocalCache {
     fun getMessages(chatId: String, limit: Int = 50): List<Message>
     fun observeMessages(chatId: String): Flow<List<Message>>
     fun insertMessage(message: Message)
+
+    /**
+     * Persist one authoritative server-history response atomically for a resident message window.
+     * [resetResidentWindow] is true for the newest-page sync (`fromSeq = 0`); older pages extend
+     * that same server-proven interval. The default keeps lightweight fakes source-compatible.
+     */
+    fun insertMessagePage(
+        chatId: String,
+        messages: List<Message>,
+        resetResidentWindow: Boolean,
+    ) {
+        messages.forEach(::insertMessage)
+    }
     fun updateMessage(chatId: String, clientMsgId: String, serverSeq: Long)
     fun updateMessageStatus(chatId: String, clientMsgId: String, sendStatus: Int)
     /** 变换更新（上传进度等纯 UI 状态，只更新驻留窗口不落库）。 */
@@ -80,13 +100,21 @@ interface LocalCache {
     fun toggleConversationPin(chatId: String, pinned: Boolean): Conversation?
 
     /**
-     * 精确更新单条会话的草稿（null = 清除）。
+     * 精确更新单条会话的草稿（null = 明确清除），并原子写入镜像 outbox。
      *
-     * 草稿清除不能依赖服务端 CONVERSATION_UPDATED 事件回环：事件合并策略是
-     * 「draft 本地非空优先」（见 LocalCacheImpl.mergeConversation），远端 null
-     * 永远覆盖不了本地残值——清除必须本地直接落库。
+     * 返回本次操作的本地 generation。镜像 RPC 只能条件确认同一 generation，
+     * 防止迟到的旧请求把更新的草稿误标为已同步。
      */
-    fun setConversationDraft(chatId: String, draft: String?)
+    fun setConversationDraft(chatId: String, draft: String?): Long
+
+    /** 返回尚未收到成功 RPC 应答的草稿操作，用于启动/重连重试。 */
+    fun getPendingConversationDrafts(): List<PendingConversationDraft>
+
+    /** 仅当 [generation] 仍是该会话最新操作时，标记 RPC 已成功。 */
+    fun markConversationDraftMirrored(chatId: String, generation: Long)
+
+    /** Release the platform SQL driver owned by this cache. Test/fake caches may keep the no-op. */
+    fun close() = Unit
 
     companion object {
         /** 单聊消息内存窗口大小（最近 N 条） */

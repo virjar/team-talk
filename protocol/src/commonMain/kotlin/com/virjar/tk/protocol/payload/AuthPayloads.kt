@@ -6,6 +6,8 @@ import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.PacketCodec
 import com.virjar.tk.protocol.IProtoReader
 import com.virjar.tk.protocol.PacketBuffer
+import com.virjar.tk.protocol.ProtocolVersionMismatchException
+import io.netty.handler.codec.CorruptedFrameException
 
 /**
  * 认证帧的字段级资源预算。
@@ -79,14 +81,21 @@ data class AuthRequestPayload(
         private const val PREAMBLE_TAIL: Int = 0x01
 
         override fun readFrom(buf: PacketBuffer): AuthRequestPayload {
-            // 序言魔校验：不匹配 = 非协议流量/错位 → 抛异常经 codec 异常路径断连
+            // 只有魔数和尾字节都有效时，版本字节才是可信的升级判据。随机流量、错位和
+            // 畸形帧继续走普通 codec 断连，绝不能被客户端误报成“必须升级”。
             val b0 = buf.readByte()
             val b1 = buf.readByte()
             val b2 = buf.readByte()
             val b3 = buf.readByte()
-            if (b0 != PREAMBLE_HIGH || b1 != PREAMBLE_LOW || b2 != PacketCodec.PROTOCOL_VERSION.toInt() || b3 != PREAMBLE_TAIL) {
-                throw IllegalStateException(
-                    "Bad auth preamble: ${b0.toInt() and 0xFF} ${b1.toInt() and 0xFF} ${b2.toInt() and 0xFF} ${b3.toInt() and 0xFF}")
+            if (b0 != PREAMBLE_HIGH || b1 != PREAMBLE_LOW || b3 != PREAMBLE_TAIL) {
+                throw CorruptedFrameException("Bad auth preamble: $b0 $b1 $b2 $b3")
+            }
+            val supportedVersion = PacketCodec.PROTOCOL_VERSION.toInt() and 0xFF
+            if (b2 != supportedVersion) {
+                throw ProtocolVersionMismatchException(
+                    receivedVersion = b2,
+                    supportedVersion = supportedVersion,
+                )
             }
             return readBody(buf)
         }
@@ -130,6 +139,13 @@ data class AuthResponsePayload(
     }
 
     companion object : IProtoReader<AuthResponsePayload> {
+        const val CODE_OK = 0
+        const val CODE_AUTH_FAILED = 1
+        const val CODE_VERSION_UNSUPPORTED = 2
+        const val CODE_SERVER_MAINTENANCE = 3
+        const val CODE_DEVICE_BANNED = 4
+        const val CODE_TOO_MANY_CONNECTIONS = 5
+
         override fun readFrom(buf: PacketBuffer) = AuthResponsePayload(
             code = buf.readVarInt(),
             reason = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_REASON_LENGTH)),

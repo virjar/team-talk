@@ -28,7 +28,9 @@ TeamTalk 使用服务端保存的随机 token，不使用 JWT。access token 用
 ### OrganizationUnit
 
 OrganizationUnit 是单组织内的层级节点。一个实例只有一个根节点，其他节点通过 `parentId` 组成树；
-`leaderUid` 表示负责人，`sortOrder` 只影响同级展示顺序。节点移动必须阻止自引用和循环。
+`leaderUid` 表示负责人，`sortOrder` 只影响同级展示顺序。目录读取投影携带 `directMemberCount`，表示
+直接归属于该节点的用户数，不包含下级节点；递归人数只有在明确请求子树成员时计算。节点移动必须阻止
+自引用和循环。
 
 ### OrganizationMember
 

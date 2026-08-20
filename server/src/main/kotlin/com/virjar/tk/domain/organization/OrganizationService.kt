@@ -22,7 +22,13 @@ class OrganizationService(
 ) {
     private val logger = LoggerFactory.getLogger(OrganizationService::class.java)
 
-    fun listUnits(): List<OrganizationUnit> = repository.listUnits()
+    fun listUnits(): List<OrganizationUnit> {
+        val units = repository.listUnits()
+        val counts = repository.countDirectMembers(units.mapTo(linkedSetOf()) { it.unitId })
+        return units.map { unit ->
+            unit.copy(directMemberCount = counts[unit.unitId] ?: 0)
+        }
+    }
 
     fun listMembers(unitId: String, recursive: Boolean): List<OrganizationMember> {
         requireUnit(unitId)

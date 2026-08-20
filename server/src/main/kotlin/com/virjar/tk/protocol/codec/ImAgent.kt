@@ -18,6 +18,7 @@ import com.virjar.tk.protocol.trace.Recorder
 import com.virjar.tk.rpc.gen.ConversationRpcContract
 import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelInboundHandlerAdapter
+import io.netty.channel.ChannelFutureListener
 import io.netty.handler.timeout.IdleStateEvent
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -135,6 +136,14 @@ class ImAgent(
     }
 
     override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
+        protocolVersionFailureResponse(cause)?.let { response ->
+            // A valid TeamTalk preamble with a different version is the one codec failure the
+            // peer can act on. Return the stable AUTH_RESP rejection before closing so clients
+            // can distinguish an upgrade requirement from packet loss or an unreachable server.
+            recorder.record { "[AUTH VERSION] ${response.reason}" }
+            ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE)
+            return
+        }
         // Netty 坑：异常传播到 pipeline tail 默认只打日志不关连接——
         // CorruptedFrameException（垃圾流量/错位）抛了也白抛，连接继续挂着。
         // 此处统一兜底断连（编解码错误的既定策略：连接不可信即断）。
@@ -371,4 +380,20 @@ class ImAgent(
         channel.close()
     }
 
+}
+
+/** Returns an upgrade response only for the dedicated, structurally verified preamble error. */
+internal fun protocolVersionFailureResponse(cause: Throwable): AuthResponsePayload? {
+    var current: Throwable? = cause
+    while (current != null) {
+        if (current is ProtocolVersionMismatchException) {
+            return AuthResponsePayload(
+                code = AuthResponsePayload.CODE_VERSION_UNSUPPORTED,
+                reason = "Client protocol ${current.receivedVersion} is unsupported; " +
+                    "server requires ${current.supportedVersion}",
+            )
+        }
+        current = current.cause
+    }
+    return null
 }

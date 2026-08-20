@@ -13,6 +13,7 @@ import com.virjar.tk.ui.component.ScreenHeader
 @Composable
 fun DeviceManagementScreen(
     devices: List<DeviceInfo>,
+    currentDeviceId: String? = null,
     onKick: (deviceId: String) -> Unit,
     onBack: (() -> Unit)? = null,
 ) {
@@ -27,12 +28,22 @@ fun DeviceManagementScreen(
             LazyColumn {
                 items(devices, key = { it.deviceId }) { device ->
                     ListItem(
-                        headlineContent = { Text(device.deviceName) },
+                        headlineContent = {
+                            Text(
+                                if (device.deviceId == currentDeviceId) {
+                                    "${device.deviceName}（当前设备）"
+                                } else {
+                                    device.deviceName
+                                },
+                            )
+                        },
                         supportingContent = {
                             Text("${device.deviceModel} · ${formatTime(device.lastLogin)}", style = MaterialTheme.typography.bodySmall)
                         },
                         trailingContent = {
-                            OutlinedButton(onClick = { onKick(device.deviceId) }) { Text("下线") }
+                            if (device.deviceId != currentDeviceId) {
+                                OutlinedButton(onClick = { onKick(device.deviceId) }) { Text("下线") }
+                            }
                         },
                     )
                 }

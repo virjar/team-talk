@@ -19,6 +19,8 @@ class TokenStore(dbPath: String) : TokenRepository {
     private val db: RocksDB
     private val cfHandle: ColumnFamilyHandle
     private val random = SecureRandom()
+    /** Serializes refresh rotation with logout/device revocation. */
+    private val tokenMutationLock = Any()
 
     init {
         RocksDB.loadLibrary()
@@ -36,7 +38,12 @@ class TokenStore(dbPath: String) : TokenRepository {
      * 生成新的 access token 和 refresh token。
      * Returns (accessToken, refreshToken)
      */
-    override fun generateTokens(uid: String, deviceId: String, deviceFlag: Int): Pair<String, String> {
+    override fun generateTokens(uid: String, deviceId: String, deviceFlag: Int): Pair<String, String> =
+        synchronized(tokenMutationLock) {
+            generateTokensLocked(uid, deviceId, deviceFlag)
+        }
+
+    private fun generateTokensLocked(uid: String, deviceId: String, deviceFlag: Int): Pair<String, String> {
         val accessToken = generateRandomToken()
         val refreshToken = generateRandomToken()
         val now = System.currentTimeMillis()
@@ -56,17 +63,26 @@ class TokenStore(dbPath: String) : TokenRepository {
         return info
     }
 
-    override fun refreshAccessToken(refreshToken: String): Pair<String, String>? {
+    override fun refreshAccessToken(
+        refreshToken: String,
+        expectedDeviceId: String,
+        expectedDeviceFlag: Int,
+    ): Pair<String, String>? = synchronized(tokenMutationLock) {
         val key = "refresh:$refreshToken"
-        val info = get(key) ?: return null
+        val info = get(key) ?: return@synchronized null
         if (System.currentTimeMillis() > info.expiresAt) {
             delete(key)
-            return null
+            return@synchronized null
+        }
+        // Check before deleting/rotating. A forged device identity must neither consume the real
+        // device's one-time refresh token nor create an online-registry alias.
+        if (info.deviceId != expectedDeviceId || info.deviceFlag != expectedDeviceFlag) {
+            return@synchronized null
         }
         // 删除旧 refresh token
         delete(key)
         // 生成新的 token 对
-        return generateTokens(info.uid, info.deviceId, info.deviceFlag)
+        generateTokensLocked(info.uid, info.deviceId, info.deviceFlag)
     }
 
     /**
@@ -75,14 +91,20 @@ class TokenStore(dbPath: String) : TokenRepository {
      * 会产生游离的有效凭证。
      * @return true 若 token 存在且已删除；false 若 token 不存在。
      */
-    override fun revokeRefreshToken(refreshToken: String): Boolean {
+    override fun revokeRefreshToken(
+        refreshToken: String,
+        expectedUid: String?,
+        expectedDeviceId: String?,
+    ): Boolean = synchronized(tokenMutationLock) {
         val key = "refresh:$refreshToken"
-        if (get(key) == null) return false
+        val info = get(key) ?: return@synchronized false
+        if (expectedUid != null && info.uid != expectedUid) return@synchronized false
+        if (expectedDeviceId != null && info.deviceId != expectedDeviceId) return@synchronized false
         delete(key)
-        return true
+        true
     }
 
-    override fun revokeAllDeviceTokens(uid: String, deviceId: String) {
+    override fun revokeAllDeviceTokens(uid: String, deviceId: String) = synchronized(tokenMutationLock) {
         // 扫描并删除该 uid+deviceId 的所有 token
         val toDelete = mutableListOf<String>()
         val iter = db.newIterator(cfHandle)
@@ -103,7 +125,7 @@ class TokenStore(dbPath: String) : TokenRepository {
      * 吊销某用户的全部 token（封禁/重置密码用）。
      * 注：曾在 4c3a97e 以"零调用"删除——管理后台上线后恢复。
      */
-    override fun revokeAllUserTokens(uid: String) {
+    override fun revokeAllUserTokens(uid: String) = synchronized(tokenMutationLock) {
         val toDelete = mutableListOf<String>()
         val iter = db.newIterator(cfHandle)
         iter.seekToFirst()

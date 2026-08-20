@@ -4,6 +4,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -79,6 +80,18 @@ class ChatIntegrationTest {
     }
 
     @Test
+    fun `non member cannot read chat detail or member profiles`() = runTest {
+        val owner = ctx.registerUser()
+        val member = ctx.registerUser()
+        val outsider = ctx.registerUser()
+        val group = ctx.chatService.createGroup("PrivateGroup", null, owner, listOf(member))
+
+        assertFailsWith<IllegalArgumentException> { ctx.chatService.getChatFor(outsider, group.chatId) }
+        assertFailsWith<IllegalArgumentException> { ctx.chatService.getMembersFor(outsider, group.chatId) }
+        assertEquals(group.chatId, ctx.chatService.getChatFor(member, group.chatId)?.chatId)
+    }
+
+    @Test
     fun `add members to group`() = runTest {
         val creator = ctx.registerUser()
         val member1 = ctx.registerUser()
@@ -108,6 +121,21 @@ class ChatIntegrationTest {
         val members = ctx.chatService.getMembers(group.chatId)
         val updatedMember = members.first { it.uid == member1 }
         assertEquals(1, updatedMember.role)
+    }
+
+    @Test
+    fun `owner cannot demote self and admin cannot mute equal or higher roles`() = runTest {
+        val owner = ctx.registerUser()
+        val admin = ctx.registerUser()
+        val member = ctx.registerUser()
+        val group = ctx.chatService.createGroup("Hierarchy", null, owner, listOf(admin, member))
+        ctx.chatService.setRole(owner, group.chatId, admin, 1)
+
+        assertFailsWith<IllegalArgumentException> { ctx.chatService.setRole(owner, group.chatId, owner, 0) }
+        assertFailsWith<IllegalArgumentException> { ctx.chatService.muteMember(admin, group.chatId, owner, 60) }
+        assertFailsWith<IllegalArgumentException> { ctx.chatService.muteMember(admin, group.chatId, admin, 60) }
+        ctx.chatService.muteMember(admin, group.chatId, member, 60)
+        ctx.chatService.unmuteMember(admin, group.chatId, member)
     }
 
     @Test

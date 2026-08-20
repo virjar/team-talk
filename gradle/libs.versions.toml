@@ -1,7 +1,7 @@
 [versions]
 kotlin = "2.3.20"
 compose = "1.10.3"
-agp = "8.10.0"
+agp = "8.13.2"
 ktor = "3.4.3"
 exposed = "0.61.0"
 kotlinx-serialization = "1.8.1"

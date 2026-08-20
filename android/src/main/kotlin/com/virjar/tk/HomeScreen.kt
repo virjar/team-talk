@@ -14,6 +14,7 @@ import com.virjar.tk.navigation.MainTab
 import com.virjar.tk.ui.screen.DirectoryScreen
 import com.virjar.tk.ui.screen.ConversationListScreen
 import com.virjar.tk.ui.screen.DocumentWorkspaceHost
+import com.virjar.tk.ui.screen.MobileDocumentExitCoordinator
 import com.virjar.tk.ui.screen.MeScreen
 import kotlinx.coroutines.launch
 
@@ -36,6 +37,7 @@ fun HomeScreen(
     val contacts by dataState.contactViewModel.contacts.collectAsState()
     val pendingApplyCount by dataState.contactViewModel.pendingApplyCount.collectAsState()
     val directoryScope = rememberCoroutineScope()
+    val documentExitCoordinator = remember { MobileDocumentExitCoordinator() }
 
     // 切换标签时刷新待处理申请数
     LaunchedEffect(selectedTab) {
@@ -76,7 +78,13 @@ fun HomeScreen(
                 tabIcons.forEachIndexed { index, (icon, label) ->
                     NavigationBarItem(
                         selected = selectedTab == index,
-                        onClick = { selectedTab = index },
+                        onClick = {
+                            if (MainTab.entries[selectedTab] == MainTab.DOCUMENTS && index != selectedTab) {
+                                documentExitCoordinator.requestExit { selectedTab = index }
+                            } else {
+                                selectedTab = index
+                            }
+                        },
                         icon = {
                             if (label == "通讯录" && pendingApplyCount > 0) {
                                 BadgedBox(badge = { Badge { Text("$pendingApplyCount") } }) {
@@ -123,7 +131,9 @@ fun HomeScreen(
                 }
                 MainTab.DOCUMENTS -> DocumentWorkspaceHost(
                     workspace = dataState.documents,
-                    // 文档首页再返回时回到应用一级会话页，不直接退出 Activity；未保存标签仍留在 session。
+                    mobileSingleDocumentMode = true,
+                    mobileExitCoordinator = documentExitCoordinator,
+                    // 文档首页再返回时回到应用一级会话页，不直接退出 Activity。
                     onExitDocuments = { selectedTab = MainTab.CONVERSATIONS.ordinal },
                 )
                 MainTab.SETTINGS -> MeScreen(

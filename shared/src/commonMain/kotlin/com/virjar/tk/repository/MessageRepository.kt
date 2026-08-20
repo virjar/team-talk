@@ -23,7 +23,13 @@ class MessageRepository(
 
     /** 拉取历史并写入本地缓存（本地优先）。 */
     suspend fun getHistory(chatId: String, fromSeq: Long = 0, limit: Int = 10): Outcome<List<Message>> = outcome {
-        rpc.getHistory(chatId, fromSeq, limit).also { list -> list.forEach { localCache.insertMessage(it) } }
+        rpc.getHistory(chatId, fromSeq, limit).also { page ->
+            localCache.insertMessagePage(
+                chatId = chatId,
+                messages = page,
+                resetResidentWindow = fromSeq == 0L,
+            )
+        }
     }
 
     suspend fun revokeMessage(chatId: String, serverSeq: Long): Outcome<Unit> = outcome { rpc.revoke(chatId, serverSeq) }
