@@ -145,7 +145,10 @@ internal class AndroidAppDataStateHolder(application: Application) : AndroidView
         // AuthController owns the transport. A retained holder may still reference an already
         // closed session after the same ImClient has started a newer login; only release the old
         // session resources here and never request a transport disconnect from the holder.
-        previousSession?.close(disconnectTransport = false)
+        previousSession?.close(
+            reason = SessionEndReason.PROCESS_REPLACED,
+            disconnectTransport = false,
+        )
         if (!sameUser) {
             composerContexts = ChatComposerContextStore()
             documentDrafts = newDocumentDraftStore()
@@ -194,7 +197,7 @@ internal class AndroidAppDataStateHolder(application: Application) : AndroidView
         dataState?.documents?.captureDrafts()
         dataState?.destroy(clearComposerContexts = true, clearDocumentDrafts = false)
         documentDraftPersistence.requestFlush()
-        retainedSession?.close(disconnectTransport = false)
+        retainedSession?.close(reason = SessionEndReason.SHUTDOWN, disconnectTransport = false)
         dataState = null
         retainedSession = null
     }
@@ -303,7 +306,7 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                 }
             }
             if (vm != null) { AndroidChatScreen(chatId, chatName, chatType, vm, dataState.userSession.uid,
-                dataState.userSession,
+                dataState::httpCredentialsSnapshot,
                 serverUrl = defaultServerConfig().serverUrl,
                 resolveSender = { uid ->
                     mentionCandidates.firstOrNull { it.uid == uid } ?: dataState.cachedUser(uid)
@@ -358,11 +361,11 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             } else {
                 val sessionUser = dataState.userSession
                 val ownerUid = sessionUser.uid
-                val mediaSession = remember(ownerUid, sessionUser) {
+                val mediaSession = remember(ownerUid, dataState) {
                     AndroidMediaSession.create(
                         serverUrl = defaultServerConfig().serverUrl,
                         ownerUid = ownerUid,
-                        credentialsProvider = sessionUser::httpCredentialsSnapshot,
+                        credentialsProvider = dataState::httpCredentialsSnapshot,
                     )
                 }
                 DisposableEffect(mediaSession) {
@@ -538,11 +541,11 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             val routeScope = rememberCoroutineScope()
             val sessionUser = dataState.userSession
             val sessionUid = sessionUser.uid
-            val mediaSession = remember(config.serverUrl, sessionUid, sessionUser) {
+            val mediaSession = remember(config.serverUrl, sessionUid, dataState) {
                 AndroidMediaSession.create(
                     serverUrl = config.serverUrl,
                     ownerUid = sessionUid,
-                    credentialsProvider = sessionUser::httpCredentialsSnapshot,
+                    credentialsProvider = dataState::httpCredentialsSnapshot,
                 )
             }
             var uploading by remember { mutableStateOf(false) }

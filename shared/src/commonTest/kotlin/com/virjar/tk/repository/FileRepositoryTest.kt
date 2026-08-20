@@ -94,6 +94,7 @@ class FileRepositoryTest {
         repository.uploadSmallBytes(byteArrayOf(2), "b.bin", "application/octet-stream").getOrThrow()
         assertEquals(listOf("token-a", "token-b"), transport.tokens)
 
+        userSession.onAuthFailed("retired")
         userSession.onAuthSuccess("other", "other", "Other", "other-refresh", "other-token")
         assertIs<Outcome.Failure>(
             repository.uploadSmallBytes(byteArrayOf(3), "c.bin", "application/octet-stream"),
@@ -107,6 +108,27 @@ class FileRepositoryTest {
             repository.uploadSmallBytes(byteArrayOf(4), "d.bin", "application/octet-stream"),
         )
         Unit
+    }
+
+    @Test
+    fun `same uid replacement epoch cannot lend token or publish progress to old repository`() = runBlocking {
+        var credentials = SessionHttpCredentials("owner", "old", identityEpoch = 4L)
+        val transport = RecordingTransport()
+        val repository = repository(transport) { credentials }
+        repository.uploadSmallBytes(byteArrayOf(1), "old.bin", "application/octet-stream").getOrThrow()
+
+        credentials = SessionHttpCredentials("owner", "replacement", identityEpoch = 5L)
+        var progress = 0
+        assertIs<Outcome.Failure>(
+            repository.uploadWithMeta(
+                byteArrayOf(2).asSmallUploadSource(),
+                "replacement.bin",
+                "application/octet-stream",
+            ) { progress += 1 },
+        )
+
+        assertEquals(listOf("old"), transport.tokens)
+        assertEquals(0, progress)
     }
 
     @Test

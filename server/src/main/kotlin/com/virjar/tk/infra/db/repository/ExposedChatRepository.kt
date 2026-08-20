@@ -5,12 +5,14 @@ import com.virjar.tk.domain.chat.ChatRepository
 import com.virjar.tk.domain.chat.InviteJoinResult
 import com.virjar.tk.domain.chat.personalChatKey
 import com.virjar.tk.domain.chat.requireJoinable
+import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.infra.db.Chats
 import com.virjar.tk.infra.db.Conversations
 import com.virjar.tk.infra.db.GroupChats
 import com.virjar.tk.infra.db.GroupInviteLinks
 import com.virjar.tk.infra.db.GroupMemberMutes
 import com.virjar.tk.infra.db.GroupMembers
+import com.virjar.tk.infra.db.requireExposedTransaction
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Member
 import org.jetbrains.exposed.sql.*
@@ -161,7 +163,12 @@ class ExposedChatRepository : ChatRepository {
         }
     }
 
-    override fun joinByInvite(uid: String, token: String, nowMillis: Long): InviteJoinResult = transaction {
+    override fun joinByInvite(
+        transaction: PgTransactionContext,
+        uid: String,
+        token: String,
+        nowMillis: Long,
+    ): InviteJoinResult = inWriteTransaction(transaction) {
         // The invite lock serializes quota/revoke changes. The chat lock serializes joins made
         // through different links and normal membership writes for the same aggregate.
         val inviteRow = GroupInviteLinks.selectAll()
@@ -169,7 +176,6 @@ class ExposedChatRepository : ChatRepository {
             .forUpdate()
             .singleOrNull()
             ?: throw IllegalArgumentException("邀请链接不存在")
-        inviteRow.toInviteLinkRecord().requireJoinable(nowMillis)
 
         val chatId = inviteRow[GroupInviteLinks.chatId]
         val chatRow = Chats.selectAll()
@@ -185,9 +191,13 @@ class ExposedChatRepository : ChatRepository {
 
         val membership = GroupMembers.selectAll().where {
             (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid)
-        }.singleOrNull()
+        }.forUpdate().singleOrNull()
         val joined = membership?.get(GroupMembers.status) != 1
         if (joined) {
+            // Apply mutable link policy only when this command changes membership. An already
+            // active member may be retrying a response that was lost after the first commit; an
+            // exhausted/revoked link must not turn that committed success into a later failure.
+            inviteRow.toInviteLinkRecord().requireJoinable(nowMillis)
             if (membership == null) {
                 GroupMembers.insert {
                     it[GroupMembers.chatId] = chatId
@@ -221,6 +231,11 @@ class ExposedChatRepository : ChatRepository {
             .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1) }
             .map(ResultRow::toMemberSnapshot)
         InviteJoinResult(chat = chat, joined = joined, members = members)
+    }
+
+    private inline fun <T> inWriteTransaction(context: PgTransactionContext, block: () -> T): T {
+        context.requireExposedTransaction()
+        return block()
     }
 
     private fun ensureActiveGroupMember(chatId: String, uid: String, role: Int, now: Long) {

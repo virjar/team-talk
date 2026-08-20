@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.virjar.tk.AppError
 import com.virjar.tk.client.ClientSession
+import com.virjar.tk.client.SessionEndReason
 import com.virjar.tk.client.logUnhandledError
 import com.virjar.tk.model.ChatType
 import com.virjar.tk.navigation.feature.AccountFeature
@@ -37,9 +38,10 @@ open class AppDataState(
     private val session: ClientSession,
     val chatComposerContexts: ChatComposerContextStore = ChatComposerContextStore(),
     val documentDrafts: DocumentDraftStore = DocumentDraftStore(),
-    private val onAuthExpired: () -> Unit = { session.close() },
+    private val onAuthExpired: () -> Unit = { session.close(reason = SessionEndReason.AUTH_REVOKED) },
 ) {
     val userSession get() = session.userSession
+    fun httpCredentialsSnapshot() = session.httpCredentialsSnapshot()
 
     /** Narrow synchronous lookup for platform renderers; the cache itself remains session-owned. */
     fun cachedUser(uid: String) = session.localCache.getUser(uid)

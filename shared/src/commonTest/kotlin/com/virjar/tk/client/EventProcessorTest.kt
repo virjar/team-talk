@@ -17,6 +17,7 @@ import com.virjar.tk.testing.FakeLocalCache
 import com.virjar.tk.testing.FakeRpcInvoker
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
@@ -294,6 +295,65 @@ class EventProcessorTest {
 
         assertEquals(0L, ep2.lastEventId.value)
         assertEquals(0L, cache.getSyncCursor(EventProcessor.SYNC_CURSOR_KEY))
+    }
+
+    @Test
+    fun `stop waits admitted synchronous durable sink and rejects later cursor publication`() = runBlocking {
+        val local = FakeLocalCache()
+        val sinkEntered = CompletableDeferred<Unit>()
+        val releaseSink = CompletableDeferred<Unit>()
+        val processor = EventProcessor(
+            ImClient(),
+            local,
+            durableMessageSink = { _, _ ->
+                sinkEntered.complete(Unit)
+                while (!releaseSink.isCompleted) {
+                    // The extension contract is synchronous. This deterministic fake models a
+                    // slow database call without introducing a resumable post-stop callback.
+                }
+                error("blocked sink released")
+            },
+        )
+        val message = Message(
+            chatId = "retired",
+            clientMsgId = "late",
+            serverSeq = 1L,
+            senderUid = "u1",
+            messageType = 1,
+            timestamp = 1L,
+        )
+        val processing = async(kotlinx.coroutines.Dispatchers.Default) {
+            // Capture inside the child: an unhandled async failure cancels runBlocking before a
+            // later await-side catch can inspect the expected projection failure.
+            try {
+                processor.processNotify(
+                    NotifyPayload(
+                        eventId = 1L,
+                        notifyType = NotifyType.MESSAGE_RECV.code,
+                        payload = ProtoCodec.encode(message),
+                    ),
+                )
+                null
+            } catch (failure: Throwable) {
+                failure
+            }
+        }
+        sinkEntered.await()
+
+        val stopStarted = CompletableDeferred<Unit>()
+        val stopping = async(kotlinx.coroutines.Dispatchers.Default) {
+            stopStarted.complete(Unit)
+            processor.stop()
+        }
+        stopStarted.await()
+        assertFalse(stopping.isCompleted, "stop returned while an admitted sink still owned publication")
+        releaseSink.complete(Unit)
+        stopping.await()
+
+        val lateFailure = processing.await()
+        assertTrue(lateFailure is IllegalStateException)
+        assertEquals(0L, local.getSyncCursor(EventProcessor.SYNC_CURSOR_KEY))
+        assertEquals(0L, processor.lastEventId.value)
     }
 
     @Test

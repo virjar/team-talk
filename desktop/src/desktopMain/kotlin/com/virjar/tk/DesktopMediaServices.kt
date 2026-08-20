@@ -8,12 +8,13 @@ import com.virjar.tk.body.MessageBody
 import com.virjar.tk.body.VideoBody
 import com.virjar.tk.body.VoiceBody
 import com.virjar.tk.http.UploadResult
+import com.virjar.tk.media.DesktopSessionDiagnosticEvent
+import com.virjar.tk.media.DesktopSessionDiagnostics
 import com.virjar.tk.media.DesktopSessionResources
 import com.virjar.tk.model.Attachment
 import com.virjar.tk.model.Message
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.repository.asUploadSource
-import com.virjar.tk.util.AppLog
 import com.virjar.tk.viewmodel.ChatViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -105,15 +106,13 @@ private fun String.extensionLowercase(): String = substringAfterLast('.', "").lo
 internal object DesktopExternalFileOpener {
     fun open(file: File) {
         require(file.isFile) { "文件不存在: ${file.name}" }
-        runCatching { Desktop.getDesktop().open(file) }
-            .onFailure { AppLog.fault("FileOpen", "open failed ${file.name}: ${it.message}") }
-            .getOrThrow()
+        Desktop.getDesktop().open(file)
     }
 }
 
 /** 图片编码/解码，不负责下载。 */
 internal object DesktopImageCodec {
-    fun decode(file: File): ImageBitmap? = try {
+    fun decode(file: File, diagnostics: DesktopSessionDiagnostics): ImageBitmap? = try {
         Data.makeFromFileName(file.absolutePath).use { encoded ->
             Codec.makeFromData(encoded).use { codec ->
                 codec.readPixels().use { bitmap ->
@@ -121,11 +120,8 @@ internal object DesktopImageCodec {
                 }
             }
         }
-    } catch (error: Exception) {
-        AppLog.fault(
-            "ImageDecode",
-            "decode failed ${file.name} ${file.length()}B ${error::class.simpleName}: ${error.message}",
-        )
+    } catch (_: Exception) {
+        diagnostics.record(DesktopSessionDiagnosticEvent.IMAGE_DECODE_FAILED)
         null
     }
 
@@ -369,8 +365,8 @@ internal class DesktopVoiceRecorder(
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (error: Exception) {
-                AppLog.fault("VoiceRecord", "record failed: ${error.message}")
+            } catch (_: Exception) {
+                resources.diagnostics.record(DesktopSessionDiagnosticEvent.VOICE_RECORD_FAILED)
             }
         }
         synchronized(stateLock) {

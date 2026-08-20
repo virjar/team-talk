@@ -8,6 +8,7 @@ import com.virjar.tk.protocol.payload.NotifyPayload
 import com.virjar.tk.protocol.payload.ResponsePayload
 import com.virjar.tk.protocol.payload.SyncBatchPayload
 import com.virjar.tk.protocol.payload.SyncRequestPayload
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -70,6 +71,8 @@ class ImClientStateOwnersTest {
         var projectedPages = 0
         harness.coordinator.installEventSync(
             owner = this,
+            expectedUid = null,
+            wireAdmission = SessionOutboundLease(),
             cursor = { 41L },
             processBatch = { events, reportProgress ->
                 projectedPages += 1
@@ -105,6 +108,8 @@ class ImClientStateOwnersTest {
         val harness = AuthSyncHarness(this)
         harness.coordinator.installEventSync(
             owner = this,
+            expectedUid = null,
+            wireAdmission = SessionOutboundLease(),
             cursor = { 41L },
             processBatch = { events, _ -> events.last().eventId },
             reset = { 0L },
@@ -126,6 +131,8 @@ class ImClientStateOwnersTest {
         val harness = AuthSyncHarness(this)
         harness.coordinator.installEventSync(
             owner = this,
+            expectedUid = null,
+            wireAdmission = SessionOutboundLease(),
             cursor = { 0L },
             processBatch = { events, _ -> events.last().eventId },
             reset = { 0L },
@@ -141,11 +148,40 @@ class ImClientStateOwnersTest {
     }
 
     @Test
+    fun `retired session sync admission rejects auth race before cursor or wire publication`() = runTest {
+        val harness = AuthSyncHarness(this)
+        val owner = Any()
+        val wireAdmission = SessionOutboundLease()
+        var cursorReads = 0
+        harness.coordinator.installEventSync(
+            owner = owner,
+            expectedUid = "u1",
+            wireAdmission = wireAdmission,
+            cursor = { cursorReads += 1; 73L },
+            processBatch = { _, _ -> error("retired projection must not run") },
+            reset = { error("retired projection must not reset") },
+        )
+
+        wireAdmission.retire()
+        harness.authenticateSuccessfully()
+        harness.coordinator.handleSyncReady()
+        harness.coordinator.removeEventSync(owner)
+        harness.coordinator.handleSyncReady()
+
+        assertEquals(ConnectionState.SYNCHRONIZING, harness.state)
+        assertEquals(0, cursorReads)
+        assertTrue(harness.syncRequests().isEmpty())
+        assertTrue(harness.closes.isEmpty())
+    }
+
+    @Test
     fun `retired sync coroutine cannot advance a replacement transport`() = runTest {
         val harness = AuthSyncHarness(this)
         val projectionGate = CompletableDeferred<Unit>()
         harness.coordinator.installEventSync(
             owner = this,
+            expectedUid = null,
+            wireAdmission = SessionOutboundLease(),
             cursor = { 7L },
             processBatch = { events, _ ->
                 projectionGate.await()
@@ -172,6 +208,8 @@ class ImClientStateOwnersTest {
         var resets = 0
         harness.coordinator.installEventSync(
             owner = this,
+            expectedUid = null,
+            wireAdmission = SessionOutboundLease(),
             cursor = { 99L },
             processBatch = { events, _ -> events.last().eventId },
             reset = {
@@ -218,6 +256,32 @@ class ImClientStateOwnersTest {
             router.onTransportDisconnected()
 
             assertFailsWith<AckTransportDisconnectedException> { waiter.await() }
+        }
+    }
+
+    @Test
+    fun `retired account ACK namespace rejects a replacement account ACK`() = runTest {
+        supervisorScope {
+            val router = packetRouter(scope = this)
+            val lease = SessionOutboundLease()
+            val registered = CompletableDeferred<Unit>()
+            val waiter = async(start = CoroutineStart.UNDISPATCHED) {
+                router.sendAndAwaitAck(
+                    clientMsgId = "account-a-message",
+                    timeoutMs = 10_000L,
+                    sessionOwner = lease.ackOwner,
+                    sessionLease = lease,
+                ) {
+                    registered.complete(Unit)
+                }
+            }
+            registered.await()
+
+            lease.retire()
+            router.retirePendingAcks(lease.ackOwner)
+            router.route(2L, MessageAckPayload("account-a-message", 99L, 0))
+
+            assertFailsWith<CancellationException> { waiter.await() }
         }
     }
 

@@ -57,6 +57,17 @@ interface TokenRepository : AccessTokenValidator {
      */
     suspend fun revokeDevice(uid: String, deviceId: String): Long?
 
+    /**
+     * Revoke [deviceId] only when it still has the generation authenticated by the calling
+     * session. If a newer login/refresh already rotated the device, leave that newer credential
+     * pair intact and return its epoch so the live-session fence can still retire the stale caller.
+     */
+    suspend fun revokeDeviceIfCurrent(
+        uid: String,
+        deviceId: String,
+        expectedDeviceCredentialEpoch: Long,
+    ): Long?
+
     /** Atomically compare the verified old hash, replace it, and revoke every user credential. */
     suspend fun changePasswordAndRevoke(
         uid: String,

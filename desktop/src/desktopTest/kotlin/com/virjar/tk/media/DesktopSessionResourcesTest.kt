@@ -1,6 +1,8 @@
 package com.virjar.tk.media
 
 import com.virjar.tk.client.SessionHttpCredentials
+import com.virjar.tk.log.NoopLogger
+import com.virjar.tk.log.TkLogger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -64,12 +66,14 @@ class DesktopSessionResourcesTest {
         withTempDirectory { dataDir ->
             var currentUid = "owner"
             var currentToken = "token-a"
+            var identityEpoch = 4L
             val seenTokens = mutableListOf<String>()
             val resources = DesktopSessionResources(
                 ownerUid = "owner",
                 serverUrl = "https://chat.example",
-                credentialProvider = { SessionHttpCredentials(currentUid, currentToken) },
+                credentialProvider = { SessionHttpCredentials(currentUid, currentToken, identityEpoch) },
                 dataDir = dataDir,
+                diagnosticLogger = NoopLogger,
                 downloader = downloader { request, partial ->
                     seenTokens += request.authorizationToken
                     partial.writeText(request.authorizationToken)
@@ -80,6 +84,12 @@ class DesktopSessionResourcesTest {
                 currentToken = "token-b"
                 resources.mediaCache.ensureDownloaded("owner/second.bin")
                 assertEquals(listOf("token-a", "token-b"), seenTokens)
+
+                identityEpoch = 5L
+                currentToken = "same-uid-replacement-token"
+                assertFailsWith<IllegalStateException> {
+                    resources.mediaCache.ensureDownloaded("owner/replacement.bin")
+                }
 
                 currentUid = "other"
                 currentToken = "other-token"
@@ -286,18 +296,48 @@ class DesktopSessionResourcesTest {
         assertFailsWith<IllegalArgumentException> { canonicalDesktopServerBase("https://example.com?q=1") }
     }
 
+    @Test
+    fun `session diagnostics are redacted and reject retained tasks after close`() = runBlocking {
+        withTempDirectory { dataDir ->
+            val logger = RecordingTkLogger()
+            val resources = resources(
+                dataDir = dataDir,
+                diagnosticLogger = logger,
+                downloader = downloader(),
+            )
+            val secretReference = "owner/private/acquisition-plan-2026.txt"
+            val secretName = "board-only-acquisition-plan.txt"
+
+            resources.mediaCache.ensureDownloaded(secretReference, secretName)
+            assertTrue(resources.diagnostics.record(DesktopSessionDiagnosticEvent.FILE_DOWNLOAD_FAILED))
+
+            val messagesBeforeClose = logger.messages.toList()
+            assertEquals(
+                listOf("trace:media cache stored", "fault:file download failed"),
+                messagesBeforeClose,
+            )
+            assertFalse(messagesBeforeClose.any { secretReference in it || secretName in it })
+
+            resources.close()
+            assertFalse(resources.diagnostics.record(DesktopSessionDiagnosticEvent.FILE_OPEN_FAILED))
+            assertEquals(messagesBeforeClose, logger.messages)
+        }
+    }
+
     private fun resources(
         dataDir: File,
         uid: String = "owner",
         token: String = "fixed-token",
         server: String = "https://chat.example",
         quotaBytes: Long = DEFAULT_DESKTOP_MEDIA_QUOTA_BYTES,
+        diagnosticLogger: TkLogger = NoopLogger,
         downloader: DesktopMediaDownloader,
     ) = DesktopSessionResources(
         ownerUid = uid,
         serverUrl = server,
         credentialProvider = { SessionHttpCredentials(uid, token) },
         dataDir = dataDir,
+        diagnosticLogger = diagnosticLogger,
         quotaBytes = quotaBytes,
         downloader = downloader,
     )
@@ -318,6 +358,18 @@ class DesktopSessionResourcesTest {
         } finally {
             // The directory is owned by this test and never contains user data.
             directory.deleteRecursively()
+        }
+    }
+
+    private class RecordingTkLogger : TkLogger {
+        val messages = mutableListOf<String>()
+
+        override fun trace(msg: String) {
+            messages += "trace:$msg"
+        }
+
+        override fun fault(msg: String, t: Throwable?) {
+            messages += "fault:$msg"
         }
     }
 }

@@ -54,8 +54,10 @@ class TeamTalkApp : Application(), coil3.SingletonImageLoader.Factory {
             // Android 主进程即将死亡，不能做网络请求
             try {
                 val dataDir = getDir("teamtalk", MODE_PRIVATE)
-                val crashDumper = com.virjar.tk.client.CrashDumper(dataDir)
-                crashDumper.flushPending("Crash in ${thread.name}: ${throwable.stackTraceToString()}")
+                com.virjar.tk.client.flushPendingCrash(
+                    dataDir,
+                    "Crash in ${thread.name}: ${throwable.stackTraceToString()}",
+                )
             } catch (e: Exception) {
                 // 即使持久化失败也不能阻止默认行为，但要打印到 logcat
                 Log.e("Crash", "Failed to persist crash log", e)

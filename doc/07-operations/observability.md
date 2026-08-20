@@ -38,7 +38,26 @@ KICK、IDLE 和 CLOSE。
 - `fault`：异常、不可恢复状态、事件解码和存储失败。
 
 ClientSession 持有独立环形缓冲。fault 经短 debounce 触发上传；开发构建定期上传 trace。上传失败
-保存 pending，CrashDumper 使用原子文件保存未处理崩溃，下一次启动重传。
+保存 pending。CrashDumper 的 pending 空间固定按 `server identity + uid` 隔离；登录 A 产生的崩溃
+不能由随后登录的 B 读取或上传，A 在同一服务器重新登录后才能处理。认证前无法归属的崩溃写入
+独立 unowned 空间，任何后来账号都不会自动认领。禁用日志上传的无头会话不安装或覆盖进程全局
+AppLog/crash owner，因此同进程多个 ImBot 或图形客户端不会互相接管日志身份。
+认证前的 ImClient/AuthSync/Transport/PacketRouter 与禁用上传的 headless 连接树只写平台诊断，不读取
+进程 AppLog owner；认证后的 RpcClient/EventProcessor 才绑定本会话固定 logger。当前安全边界因此会
+牺牲一部分底层连接日志上传，完整的可比较 owner-token 连接 logger 绑定留作独立演进，不能退回动态
+全局 logger。
+
+进程全局 AppLog 只有一个 `@Volatile` owner 快照；trace/fault buffer、fault handler 与 crash owner
+以一次原子替换共同轮换，释放使用 identity CAS。会话异步任务持有固定 owner 追加，因此 A 的迟到
+失败只能进入 A 的 buffer/pending，不能在 B 登录后被路由到 B。HttpLogUploader 固定 server、uid 与
+认证 identity epoch，每次请求动态读取同一 epoch 的 token；quiesce 先关闭凭据/发布 gate，再主动
+断开所有阻塞 HTTP 连接，之后既不读新凭据，也不消费迟到响应。stop 返回后旧 worker 的迟到成功或
+失败都直接丢弃，不再写 crash namespace、buffer 或触发 uploader。
+
+CrashDumper 的 owner namespace 目录以 0700、文件以 0600 创建；既存过宽路径、符号链接、硬链接或
+owner 不匹配均 fail closed。pending 通过同目录临时文件、文件 fsync、原子替换与目录 fsync 发布，
+上传完成只删除内容仍精确匹配的 owner 文件。Windows 的等价 ACL primitive 在后续平台批次实现，
+不能以宽权限 fallback 代替。
 
 上传端点只接受当前会话的 Bearer access token 和有界 GZIP；uid/deviceId 一律取 token 中的权威身份，
 不接受请求头伪造目录。服务端把压缩体限制为 1 MiB、解压后限制为 4 MiB，再按

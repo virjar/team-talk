@@ -1,6 +1,7 @@
 package com.virjar.tk
 
 import com.virjar.tk.client.UserSession
+import com.virjar.tk.client.SessionHttpCredentials
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -149,6 +150,7 @@ class AndroidMediaSafetyTest {
         assertEquals("token-a2", mediaSession.accessTokenForRequest())
         assertEquals(originalNamespace, mediaSession.cacheNamespace)
 
+        userSession.onAuthFailed("retired")
         userSession.onAuthSuccess("uid-b", "bob", "Bob", "refresh-b", "token-b")
         assertFalse(mediaSession.isCurrentOwner())
         assertFailsWith<IllegalStateException> { mediaSession.accessTokenForRequest() }
@@ -157,6 +159,23 @@ class AndroidMediaSafetyTest {
         mediaSession.close()
         assertFalse(mediaSession.isCurrentOwner())
         assertFailsWith<IllegalStateException> { mediaSession.accessTokenForRequest() }
+    }
+
+    @Test
+    fun `media session rejects same uid replacement epoch`() {
+        var credentials = SessionHttpCredentials("uid-a", "old-token", identityEpoch = 4L)
+        val mediaSession = AndroidMediaSession.create(
+            serverUrl = "https://server.example",
+            ownerUid = "uid-a",
+            credentialsProvider = { credentials },
+        )
+        assertEquals("old-token", mediaSession.accessTokenForRequest())
+
+        credentials = SessionHttpCredentials("uid-a", "replacement-token", identityEpoch = 5L)
+
+        assertFalse(mediaSession.isCurrentOwner())
+        assertFailsWith<IllegalStateException> { mediaSession.accessTokenForRequest() }
+        mediaSession.close()
     }
 
     @Test

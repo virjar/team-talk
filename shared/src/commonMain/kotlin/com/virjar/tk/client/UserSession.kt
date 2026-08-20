@@ -4,7 +4,16 @@ package com.virjar.tk.client
 data class SessionHttpCredentials(
     val uid: String,
     val accessToken: String?,
+    /** Changes when an authenticated identity is retired, including same-uid re-login. */
+    val identityEpoch: Long = 0L,
 )
+
+/** Read-only identity surface exposed by ClientSession to UI/platform consumers. */
+interface UserSessionView {
+    val uid: String
+    val username: String?
+    val name: String?
+}
 
 /**
  * 用户层状态容器（三级状态设计的第二级）。
@@ -20,19 +29,20 @@ data class SessionHttpCredentials(
  *
  * @see ImClient 连接层（不持有用户身份，认证结果通过回调回传本类）
  */
-class UserSession {
+class UserSession : UserSessionView {
     private val identityLock = Any()
+    private var identityEpoch = 1L
     /** 当前登录用户 uid。认证成功后填充，认证失败/登出时清空。 */
     @Volatile
-    var uid: String = ""; private set
+    override var uid: String = ""; private set
 
     /** 当前登录用户 username（登录名）。 */
     @Volatile
-    var username: String? = null; private set
+    override var username: String? = null; private set
 
     /** 当前登录用户显示名（name）。 */
     @Volatile
-    var name: String? = null; private set
+    override var name: String? = null; private set
 
     /** 当前登录的 refresh token（用于持久化登录态、重连认证）。 */
     @Volatile
@@ -50,8 +60,20 @@ class UserSession {
      * 认证成功回调（由 [ImClient] 的 onAuthResult 触发）。
      * 填充用户身份 + 清失败原因。
      */
-    fun onAuthSuccess(uid: String, username: String?, name: String?, refreshToken: String?, accessToken: String? = null) {
+    fun onAuthSuccess(
+        uid: String,
+        username: String?,
+        name: String?,
+        refreshToken: String?,
+        accessToken: String? = null,
+        durableCommit: () -> Unit = {},
+    ) {
         synchronized(identityLock) {
+            requireCompatibleAuthenticatedUidLocked(uid)
+            // Credential rotation is part of AUTH admission. Holding the identity lock makes
+            // logout/auth-failure linearize either before this whole commit or after it; a stale
+            // callback can neither persist then resurrect identity nor publish before durability.
+            durableCommit()
             this.uid = uid
             this.username = username
             this.name = name
@@ -67,6 +89,7 @@ class UserSession {
      */
     fun onAuthFailed(reason: String?) {
         synchronized(identityLock) {
+            identityEpoch = nextIdentityEpoch(identityEpoch)
             this.authFailureReason = reason
             this.uid = ""
             this.accessToken = null
@@ -81,6 +104,18 @@ class UserSession {
      * instead of reading the two volatile properties separately across a reconnect/login update.
      */
     fun httpCredentialsSnapshot(): SessionHttpCredentials = synchronized(identityLock) {
-        SessionHttpCredentials(uid = uid, accessToken = accessToken)
+        SessionHttpCredentials(uid = uid, accessToken = accessToken, identityEpoch = identityEpoch)
+    }
+
+    private fun nextIdentityEpoch(current: Long): Long {
+        check(current < Long.MAX_VALUE) { "UserSession identity epoch exhausted" }
+        return current + 1L
+    }
+
+    private fun requireCompatibleAuthenticatedUidLocked(uid: String) {
+        require(uid.isNotBlank()) { "Authenticated uid must not be blank" }
+        check(this.uid.isBlank() || this.uid == uid) {
+            "Authenticated uid cannot replace a live user session"
+        }
     }
 }

@@ -1,7 +1,7 @@
 package com.virjar.tk.client
 
 import com.virjar.tk.auth.AuthRules
-import com.virjar.tk.log.TkLoggerFactory
+import com.virjar.tk.util.PlatformOnlyTkLogger
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.payload.AuthRequestPayload
 import com.virjar.tk.protocol.payload.MessageAckPayload
@@ -36,9 +36,10 @@ class ImClient(
     private val port: Int = 0,
     private val onAuthResult: ((success: Boolean, uid: String?, username: String?, name: String?, refreshToken: String?, accessToken: String?, failureReason: String?) -> Unit)? = null,
 ) {
-    private val logger = TkLoggerFactory.get("ImClient")
-    private lateinit var transport: TransportConnectionOwner
-    private lateinit var router: PacketRouter
+    private val standaloneAckOwner = Any()
+    private val logger = PlatformOnlyTkLogger("ImClient")
+    private val transport: TransportConnectionOwner
+    private val router: PacketRouter
     private val authSync = AuthSyncCoordinator(
         connectionState = { transport.state.value },
         transitionTo = { next -> transport.transitionTo(next) },
@@ -107,12 +108,14 @@ class ImClient(
 
     internal fun installEventSync(
         owner: Any,
+        expectedUid: String?,
+        wireAdmission: WireSendAdmission,
         cursor: () -> Long,
         processBatch: suspend (List<NotifyPayload>, reportProgress: (Long) -> Unit) -> Long,
         reset: suspend () -> Long,
     ) {
         transport.execute {
-            authSync.installEventSync(owner, cursor, processBatch, reset)
+            authSync.installEventSync(owner, expectedUid, wireAdmission, cursor, processBatch, reset)
         }
     }
 
@@ -143,10 +146,18 @@ class ImClient(
      * 然后调此方法——payload 已构造完毕，此方法内不做 CPU 工作，直接投递一个 EventLoop 任务，
      * 在任务内先设 pendingAuth 再 createAndConnect。TCP 回调一定排在 pendingAuth 设置之后。
      */
-    fun connectAndAuth(auth: AuthRequestPayload, host: String, port: Int) {
+    fun connectAndAuth(
+        auth: AuthRequestPayload,
+        host: String,
+        port: Int,
+        expectedUid: String? = null,
+    ) {
+        require(auth.authType != 2 || !expectedUid.isNullOrBlank()) {
+            "Refresh authentication must bind its expected uid"
+        }
         logger.trace("connectAndAuth: host=$host, port=$port, authType=${auth.authType}")
         transport.connect(host, port) {
-            authSync.prepareAuthentication(auth)
+            authSync.prepareAuthentication(auth, expectedUid)
         }
     }
 
@@ -205,7 +216,7 @@ class ImClient(
         val auth = AuthRequestPayload(authType = 2, refreshToken = token,
             deviceId = deviceId, deviceName = deviceName, deviceModel = deviceModel, deviceFlag = deviceFlag)
         logger.trace("authenticate requested: uid=$uid")
-        connectAndAuth(auth, host, port)
+        connectAndAuth(auth, host, port, expectedUid = uid)
     }
 
     fun send(proto: IProto) {
@@ -217,6 +228,28 @@ class ImClient(
         transport.send(outbound)
     }
 
+    /** Non-suspending session send whose lease is rechecked on the EventLoop write point. */
+    internal fun sendSessionOwned(
+        expectedOwnerGeneration: Long,
+        sessionLease: SessionOutboundLease,
+        proto: IProto,
+    ): Boolean {
+        val outbound = if (proto is com.virjar.tk.model.Message) {
+            canonicalizeOutboundMessage(proto)
+        } else {
+            proto
+        }
+        val expectedConnectionGeneration = transport.currentConnectionGeneration
+        if (expectedConnectionGeneration <= 0L) return false
+        return transport.sendIfOwned(
+            expectedOwnerGeneration = expectedOwnerGeneration,
+            expectedConnectionGeneration = expectedConnectionGeneration,
+            sendAdmission = sessionLease,
+            proto = outbound,
+            onResult = {},
+        )
+    }
+
     /**
      * RPC-only leased send. Both transport generations and the request/session lifetime are checked
      * on the EventLoop immediately before the write, so an old ClientSession cannot target a later
@@ -225,14 +258,14 @@ class ImClient(
     internal suspend fun sendIfOwned(
         expectedOwnerGeneration: Long,
         expectedConnectionGeneration: Long,
-        leaseIsActive: () -> Boolean,
+        sendAdmission: WireSendAdmission,
         proto: IProto,
     ): Boolean {
         val result = CompletableDeferred<Boolean>()
         val scheduled = transport.sendIfOwned(
             expectedOwnerGeneration = expectedOwnerGeneration,
             expectedConnectionGeneration = expectedConnectionGeneration,
-            leaseIsActive = leaseIsActive,
+            sendAdmission = sendAdmission,
             proto = proto,
             onResult = { accepted -> result.complete(accepted) },
         )
@@ -244,14 +277,71 @@ class ImClient(
      * 发送消息并等待服务端 ACK。切入连接 scope 后，登记、发送与清理都在 EventLoop 上。
      */
     suspend fun sendAndWaitAck(message: com.virjar.tk.model.Message, timeoutMs: Long = 10_000L): MessageAckPayload {
-        // 在登记 pendingAck 之前校验，避免非法消息抛错后留下永不完成的 deferred。
+        val expectedOwnerGeneration = transport.currentOwnerGeneration
+        val expectedConnectionGeneration = transport.currentConnectionGeneration
+        return sendAndWaitAckOwned(
+            message = message,
+            timeoutMs = timeoutMs,
+            expectedOwnerGeneration = expectedOwnerGeneration,
+            expectedConnectionGeneration = expectedConnectionGeneration,
+            sessionOwner = standaloneAckOwner,
+            sessionLease = null,
+            sendAdmission = AlwaysWireSendAdmission,
+        )
+    }
+
+    internal suspend fun sendAndWaitAckIfOwned(
+        message: com.virjar.tk.model.Message,
+        expectedOwnerGeneration: Long,
+        sessionLease: SessionOutboundLease,
+        timeoutMs: Long = 10_000L,
+    ): MessageAckPayload = sendAndWaitAckOwned(
+        message = message,
+        timeoutMs = timeoutMs,
+        expectedOwnerGeneration = expectedOwnerGeneration,
+        expectedConnectionGeneration = transport.currentConnectionGeneration,
+        sessionOwner = sessionLease.ackOwner,
+        sessionLease = sessionLease,
+        sendAdmission = sessionLease,
+    )
+
+    private suspend fun sendAndWaitAckOwned(
+        message: com.virjar.tk.model.Message,
+        timeoutMs: Long,
+        expectedOwnerGeneration: Long,
+        expectedConnectionGeneration: Long,
+        sessionOwner: Any,
+        sessionLease: SessionOutboundLease?,
+        sendAdmission: WireSendAdmission,
+    ): MessageAckPayload {
+        // Validate before registration, then repeat the complete lease at the EventLoop write.
         val outbound = canonicalizeOutboundMessage(message)
+        check(expectedOwnerGeneration > 0L && expectedConnectionGeneration > 0L) {
+            "Session transport is not available"
+        }
         val s = transport.coroutineScope ?: throw IllegalStateException("Not connected")
         return withContext(s.coroutineContext.minusKey(Job)) {
-            router.sendAndAwaitAck(outbound.clientMsgId, timeoutMs) {
-                check(transport.sendNow(outbound)) { "Connection is not ready for message send" }
+            router.sendAndAwaitAck(
+                clientMsgId = outbound.clientMsgId,
+                timeoutMs = timeoutMs,
+                sessionOwner = sessionOwner,
+                sessionLease = sessionLease,
+            ) {
+                check(
+                    transport.sendNowIfOwned(
+                        expectedOwnerGeneration,
+                        expectedConnectionGeneration,
+                        sendAdmission,
+                        outbound,
+                    ),
+                ) { "Session changed before message send" }
             }
         }
+    }
+
+    /** Cancel only this retired session's ACK waiters; replacement-account waiters are untouched. */
+    internal fun retireSessionOutbound(sessionOwner: Any) {
+        transport.execute { router.retirePendingAcks(sessionOwner) }
     }
 
     /**
@@ -278,6 +368,11 @@ class ImClient(
      * 触发 channelInactive → 自动重连路径（区别于主动 disconnect）。
      */
     fun simulateNetworkDrop() = transport.simulateNetworkDrop()
+}
+
+private object AlwaysWireSendAdmission : WireSendAdmission {
+    override fun isActive(): Boolean = true
+    override fun use(block: () -> Boolean): Boolean = block()
 }
 
 /** SDK 所有消息发送入口共用的确定性出站防线。 */

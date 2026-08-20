@@ -42,14 +42,17 @@ PgUnitOfWork domain writes
   → append durable event intents
   → lock sync_streams in sorted uid order
   → allocate contiguous per-user stream_seq and commit once
+  → invalidate process-local aggregate caches
   → after-commit dispatcher wake
   → push to all online devices under the user delivery gate
 ```
 
 `stream_seq` 通过现有 wire `eventId` 暴露，只在一个 uid 内从 1 连续递增；不同账号可以拥有相同的
 数字游标。领域 SQL 全部完成后才按 uid 固定顺序锁定 `sync_streams`，因此同用户序号顺序也是事务
-提交顺序，多接收者命令不会只提交一部分事件。进程若在提交后、内存 wake 前退出，启动扫描仍会
-发现未派发事件；live 派发失败会阻塞该 uid 的后续序号并按持久重试状态恢复。
+提交顺序，多接收者命令不会只提交一部分事件。命令准入后，事务、缓存失效与 wake 是不可被请求
+取消拆开的终态段；缓存失效必须先于 wake，保证事件触发的回查不会命中旧快照。进程若在提交后、
+内存 wake 前退出，启动扫描仍会发现未派发事件；live 派发失败会阻塞该 uid 的后续序号并按持久重试
+状态恢复。
 
 阶段性尚未迁入 aggregate transaction 的领域仍通过 `EventPublisher` 的 event-only UoW 兼容入口
 写事件；该入口不能在活动 `PgWriteScope` 内嵌套调用。逐域迁移时必须在同一个 outer UoW 中完成

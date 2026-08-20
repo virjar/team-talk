@@ -70,13 +70,16 @@ Contact 是首个完整迁入 `PgUnitOfWork` 的关系聚合。apply、accept、
 
 `PgUnitOfWork` 先运行全部领域 SQL 和事件 intent 构造，block 返回后才按 uid 排序锁定 stream 行、
 分配序号并一起提交。stream 锁是命令最后获取的数据库锁；同 uid 后来的事务不能先提交，多 uid
-命令也不会留下部分事件。commit 后的 wake 与缓存 callback 都只是进程内提示，崩溃后由 dispatcher
-启动扫描恢复；某序号 live push 失败时，同 uid 后续序号不得越过。`dispatched_at` 只表示完成过一次
-实时推送尝试，不参与离线 replay 过滤。
+命令也不会留下部分事件。进入 UoW 前先拒绝已经取消的调用；一旦准入，数据库事务、提交后的本地
+缓存失效和 dispatcher wake 是一个不可取消的终态段。commit 后先完成全部本地可见性 callback，再
+唤醒 live dispatcher，避免客户端收到事件后回查到旧热缓存。进程若在 commit 后直接退出，dispatcher
+启动扫描仍能恢复持久事件，进程缓存也随进程消失；某序号 live push 失败时，同 uid 后续序号不得越过。
+`dispatched_at` 只表示完成过一次实时推送尝试，不参与离线 replay 过滤。
 
-除 Contact 与 Conversation 外，尚未逐域迁移的服务暂由 standalone `EventPublisher` 创建 event-only UoW，以保持现有调用兼容；
-它仍不能把之前已经提交的领域 mutation 变成同一事务。后续领域迁移必须在 outer `PgWriteScope`
-中直接 append，禁止在 UoW 内再次调用 standalone publisher。
+Contact、Conversation，以及 Chat 的成员增删/邀请加入已经迁入聚合 UoW。其余尚未迁移的领域命令
+暂由 standalone `EventPublisher` 创建 event-only UoW，以保持现有调用兼容；它仍不能把之前已经提交的
+领域 mutation 变成同一事务。后续领域迁移必须在 outer `PgWriteScope` 中直接 append，禁止在 UoW 内
+再次调用 standalone publisher。
 
 当前开发基线用 `SYNC_RESET` 让错误/串账号 cursor 从 0 原子重建投影，但重建仍依赖完整事件历史，
 所以不设 TTL，定时 cleanup 是明确 no-op；这保住长离线正确性，代价是表无界增长。正式上线前

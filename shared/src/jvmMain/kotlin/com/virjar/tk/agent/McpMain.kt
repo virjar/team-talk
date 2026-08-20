@@ -46,7 +46,7 @@ fun main(args: Array<String>) {
             server.handle(req)
         }.getOrElse { e ->
             buildJsonObject {
-                put("jsonrpc", "2.0"); put("id", null)
+                put("jsonrpc", "2.0"); put("id", JsonNull)
                 put("error", buildJsonObject { put("code", -32603); put("message", e.message ?: "parse error") })
             }
         }

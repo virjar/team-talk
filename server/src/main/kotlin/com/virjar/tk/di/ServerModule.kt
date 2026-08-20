@@ -203,7 +203,13 @@ fun createServerModule(
         RpcStubRegistry().apply {
             register(UserRpcContract.SERVICE) { session -> UserRpcImpl(session.uid, get()) }
             register(AuthRpcContract.SERVICE) { session ->
-                AuthRpcImpl(session.uid, session.deviceId, session.sessionId, get())
+                AuthRpcImpl(
+                    session.uid,
+                    session.deviceId,
+                    session.deviceCredentialEpoch,
+                    session.sessionId,
+                    get(),
+                )
             }
             register(ContactRpcContract.SERVICE) { session -> ContactRpcImpl(session.uid, get()) }
             register(ChatRpcContract.SERVICE) { session -> ChatRpcImpl(session.uid, get()) }

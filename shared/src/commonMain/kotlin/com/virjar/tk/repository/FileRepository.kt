@@ -209,15 +209,19 @@ internal class FileCredentialGate(
 ) {
     private val lock = Any()
     private var closed = false
+    private val ownerIdentityEpoch: Long
 
     init {
         require(ownerUid.isNotBlank()) { "文件仓库 owner uid 不能为空" }
+        val initial = credentialsProvider()
+        check(initial.uid == ownerUid) { "文件仓库初始认证身份不匹配" }
+        ownerIdentityEpoch = initial.identityEpoch
     }
 
     fun requireCredentials(): RequiredFileCredentials = synchronized(lock) {
         check(!closed) { "文件仓库已经关闭" }
         val snapshot = credentialsProvider()
-        check(snapshot.uid == ownerUid) { "文件仓库所属认证身份已经变更" }
+        requireCurrentOwner(snapshot)
         val token = snapshot.accessToken?.takeIf(String::isNotBlank)
             ?: error("认证会话缺少文件访问凭据")
         require(token.all { it.code in 0x21..0x7e }) { "文件访问凭据包含非法字符" }
@@ -226,13 +230,13 @@ internal class FileCredentialGate(
 
     fun ensureCurrentOwner() = synchronized(lock) {
         check(!closed) { "文件仓库已经关闭" }
-        check(credentialsProvider().uid == ownerUid) { "文件仓库所属认证身份已经变更" }
+        requireCurrentOwner(credentialsProvider())
     }
 
     /** Executes callbacks inside the lifecycle boundary, excluding a concurrent [close]. */
     fun publishProgress(block: () -> Unit) = synchronized(lock) {
         check(!closed) { "文件仓库已经关闭" }
-        check(credentialsProvider().uid == ownerUid) { "文件仓库所属认证身份已经变更" }
+        requireCurrentOwner(credentialsProvider())
         block()
     }
 
@@ -240,6 +244,12 @@ internal class FileCredentialGate(
         if (closed) false else {
             closed = true
             true
+        }
+    }
+
+    private fun requireCurrentOwner(snapshot: SessionHttpCredentials) {
+        check(snapshot.uid == ownerUid && snapshot.identityEpoch == ownerIdentityEpoch) {
+            "文件仓库所属认证会话已经变更"
         }
     }
 }

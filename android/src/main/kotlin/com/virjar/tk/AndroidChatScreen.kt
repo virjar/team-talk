@@ -34,7 +34,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.virjar.tk.body.*
-import com.virjar.tk.client.UserSession
+import com.virjar.tk.client.SessionHttpCredentials
 import com.virjar.tk.model.ChatType
 import com.virjar.tk.model.Attachment
 import com.virjar.tk.model.Message
@@ -62,7 +62,7 @@ fun AndroidChatScreen(
     chatType: Int,
     viewModel: ChatViewModel,
     myUid: String,
-    userSession: UserSession,
+    credentialsProvider: () -> SessionHttpCredentials,
     draft: String? = null,
     onDraftChange: ((String) -> Unit)? = null,
     composerContextStore: ChatComposerContextStore,
@@ -82,11 +82,11 @@ fun AndroidChatScreen(
     val focusManager = LocalFocusManager.current
     val softwareKeyboardController = LocalSoftwareKeyboardController.current
     val attachmentServerUrl = serverUrl.ifBlank { com.virjar.tk.client.defaultServerConfig().serverUrl }
-    val mediaSession = remember(attachmentServerUrl, myUid, userSession) {
+    val mediaSession = remember(attachmentServerUrl, myUid, credentialsProvider) {
         AndroidMediaSession.create(
             serverUrl = attachmentServerUrl,
             ownerUid = myUid,
-            credentialsProvider = userSession::httpCredentialsSnapshot,
+            credentialsProvider = credentialsProvider,
         )
     }
     val mediaCacheScope = mediaSession.cacheNamespace

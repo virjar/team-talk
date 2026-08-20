@@ -17,7 +17,7 @@ expect fun platformDataDir(): File
 fun logUnhandledError(tag: String, throwable: Throwable) {
     System.err.println("[Unhandled:$tag] ${throwable.stackTraceToString()}")
     try {
-        CrashDumper(platformDataDir()).flushPending("Unhandled $tag: ${throwable.stackTraceToString()}")
+        flushPendingCrash(platformDataDir(), "Unhandled $tag: ${throwable.stackTraceToString()}")
     } catch (_: Exception) {
         // crash dump 本身失败不能掩盖原始异常
     }

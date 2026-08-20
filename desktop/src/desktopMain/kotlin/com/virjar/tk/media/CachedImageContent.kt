@@ -75,7 +75,7 @@ internal fun CachedImageContent(
                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
             }
         }
-        is CachedImageState.Ready -> CachedBitmapImage(File(s.localPath), modifier)
+        is CachedImageState.Ready -> CachedBitmapImage(File(s.localPath), resources.diagnostics, modifier)
         is CachedImageState.Failed -> Box(modifier, contentAlignment = Alignment.Center) {
             Text("加载失败", color = Color.White)
         }
@@ -90,9 +90,13 @@ private sealed interface CachedImageState {
 
 /** 本地文件解码（IO 线程）。 */
 @Composable
-private fun CachedBitmapImage(file: File, modifier: Modifier = Modifier) {
+private fun CachedBitmapImage(
+    file: File,
+    diagnostics: DesktopSessionDiagnostics,
+    modifier: Modifier = Modifier,
+) {
     val bitmap = produceState<ImageBitmap?>(null, file) {
-        value = withContext(Dispatchers.IO) { DesktopImageCodec.decode(file) }
+        value = withContext(Dispatchers.IO) { DesktopImageCodec.decode(file, diagnostics) }
     }
     bitmap.value?.let { bmp ->
         Image(bitmap = bmp, contentDescription = "图片", modifier = modifier, contentScale = ContentScale.Crop)

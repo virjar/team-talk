@@ -1,6 +1,6 @@
 package com.virjar.tk.client
 
-import com.virjar.tk.log.TkLoggerFactory
+import com.virjar.tk.util.PlatformOnlyTkLogger
 import com.virjar.tk.protocol.DisconnectSignal
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.PingSignal
@@ -52,7 +52,7 @@ internal class PacketRouter(
         require(inboundBufferCapacity >= 0) { "inboundBufferCapacity must be non-negative" }
     }
 
-    private val logger = TkLoggerFactory.get("PacketRouter")
+    private val logger = PlatformOnlyTkLogger("PacketRouter")
     private val pendingAcks = PendingAckRegistry()
     private val incomingPackets = MutableSharedFlow<RoutedPacket>(
         extraBufferCapacity = inboundBufferCapacity,
@@ -100,9 +100,11 @@ internal class PacketRouter(
     suspend fun sendAndAwaitAck(
         clientMsgId: String,
         timeoutMs: Long,
+        sessionOwner: Any = LEGACY_ACK_OWNER,
+        sessionLease: SessionOutboundLease? = null,
         send: () -> Unit,
     ): MessageAckPayload {
-        val deferred = pendingAcks.register(clientMsgId)
+        val deferred = pendingAcks.register(clientMsgId, sessionOwner, sessionLease)
         return try {
             send()
             withTimeoutOrNull(timeoutMs) { deferred.await() }
@@ -112,6 +114,11 @@ internal class PacketRouter(
             // only their own waiter, so a duplicate-id programming error cannot erase a successor.
             pendingAcks.remove(clientMsgId, deferred)
         }
+    }
+
+    /** EventLoop-only retirement of one authenticated session's ACK namespace. */
+    fun retirePendingAcks(sessionOwner: Any) {
+        pendingAcks.cancelOwner(sessionOwner)
     }
 
     fun onTransportDisconnected() {
@@ -131,5 +138,6 @@ internal class PacketRouter(
 
     private companion object {
         const val DEFAULT_INBOUND_BUFFER_CAPACITY = 64
+        val LEGACY_ACK_OWNER = Any()
     }
 }

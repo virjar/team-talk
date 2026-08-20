@@ -419,7 +419,14 @@ class ImAgent(
                 return@dispatch
             }
             try {
-                val response = dispatcher.dispatch(facade.uid, facade.deviceId, facade.sessionId, payload)
+                val response = dispatcher.dispatch(
+                    uid = facade.uid,
+                    deviceId = facade.deviceId,
+                    userCredentialEpoch = facade.userCredentialEpoch,
+                    deviceCredentialEpoch = facade.deviceCredentialEpoch,
+                    sessionId = facade.sessionId,
+                    invoke = payload,
+                )
                 facade.recorder.record { "[RPC] service=${payload.serviceId} method=${payload.methodId} status=${response.status}" }
                 if (
                     response.status == 0 && payload.serviceId == AuthRpcContract.SERVICE &&

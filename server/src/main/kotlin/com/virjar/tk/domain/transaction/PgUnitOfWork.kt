@@ -38,8 +38,9 @@ interface PgWriteScope {
     /**
      * Register a process-local cache/invalidation callback.
      *
-     * It runs only after the database commit succeeds. The durable event dispatcher has its own
-     * startup scan, so correctness must never depend on this callback executing before a crash.
+     * It runs only after the database commit succeeds and before the live dispatcher is signalled,
+     * so an event-triggered read cannot observe an older process-local cache snapshot. The durable
+     * dispatcher has its own startup scan, so crash recovery must not depend on the callback.
      */
     fun afterCommit(action: () -> Unit)
 }

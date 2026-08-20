@@ -9,7 +9,11 @@ class HttpLogUploaderCredentialTest {
     fun `same owner accepts rotated token`() {
         assertEquals(
             "token-a2",
-            ownedHttpAccessToken("uid-a", SessionHttpCredentials("uid-a", "token-a2")),
+            ownedHttpAccessToken(
+                "uid-a",
+                SessionHttpCredentials("uid-a", "token-a2", identityEpoch = 7L),
+                ownerIdentityEpoch = 7L,
+            ),
         )
     }
 
@@ -24,6 +28,17 @@ class HttpLogUploaderCredentialTest {
     fun `missing token fails closed`() {
         assertFailsWith<IllegalStateException> {
             ownedHttpAccessToken("uid-a", SessionHttpCredentials("uid-a", null))
+        }
+    }
+
+    @Test
+    fun `same uid replacement session cannot lend its token to retired uploader`() {
+        assertFailsWith<IllegalStateException> {
+            ownedHttpAccessToken(
+                "uid-a",
+                SessionHttpCredentials("uid-a", "new-token", identityEpoch = 8L),
+                ownerIdentityEpoch = 7L,
+            )
         }
     }
 }

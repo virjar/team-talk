@@ -36,8 +36,10 @@ fun main() {
     Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
         AppLog.fault("Uncaught", "Uncaught exception in thread: ${thread.name}", throwable)
         try {
-            com.virjar.tk.client.CrashDumper(com.virjar.tk.client.platformDataDir())
-                .flushPending("Desktop crash in ${thread.name}: ${throwable.stackTraceToString()}")
+            com.virjar.tk.client.flushPendingCrash(
+                com.virjar.tk.client.platformDataDir(),
+                "Desktop crash in ${thread.name}: ${throwable.stackTraceToString()}",
+            )
         } catch (_: Exception) {
             // crash dump 本身失败不掩盖原始异常
         }

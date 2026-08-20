@@ -86,13 +86,18 @@ ImBot 是可多实例 SDK；创建时把 `fileServerUrl` 固定到自身认证�
 ```bash
 ./gradlew :shared:headlessDist
 
+read -r TK_USER
+read -rs TK_PASS
+export TK_USER TK_PASS
 shared/build/headless/bin/tt-agent \
   --host im.example.com \
   --port 5100 \
-  --server-url https://im.example.com \
-  --user bot-user \
-  --pass '<password>'
+  --server-url https://im.example.com
+unset TK_USER TK_PASS
 ```
+
+上例用于前台 bootstrap，秘密不会进入命令参数或 shell history。常驻部署应在首次认证后使用
+`dataDir/credentials.properties`，不要把登录参数长期留在进程命令行。
 
 默认值：
 
@@ -101,11 +106,116 @@ shared/build/headless/bin/tt-agent \
 | `--host` / `TK_HOST` | `im.virjar.com` | TCP 主机 |
 | `--port` / `TK_PORT` | `5100` | TCP 端口 |
 | `--server-url` / `TK_SERVER_URL` | `https://<host>` | 文件 HTTP 根地址 |
-| `--api` | `127.0.0.1:8600` | 本地 REST 监听 |
+| `--api` | `127.0.0.1:8600` | 本地 REST 监听；只接受 `127.0.0.0/8`、`localhost` 或 `[::1]` |
 | `--data-dir` / `TK_AGENT_DIR` | `~/.tt-agent` | 凭据与 API token 目录 |
 | `--user` / `TK_USER` | 无 | 登录用户名 |
-| `--pass` / `TK_PASS` | 无 | 登录密码 |
+| `TK_PASS` | 无 | 登录密码；仅从受控前台环境输入提供，命令行 `--pass` 被拒绝 |
 | `--register --prefix <name>` | 关闭 | 注册随机后缀账户 |
+| `--reauth` | 关闭 | ACTIVE refresh 撤销/过期后，仅用 stored username + `TK_PASS` 一次性恢复 |
+
+dataDir 是带 `.tt-agent-data` 标记的专用目录。仅当它不存在、直接父目录已存在且完整父链没有
+symlink 时，agent 才以 POSIX `0700` 创建这一个叶目录；既存目录必须已有正确标记、owner 和
+`0700`，否则 fail-fast，绝不把任意目录自动 chmod 后接管。`/etc`、`/var`、`/var/lib`、`/opt`、
+`/usr`、`/root`、`/home`、`/Users`、文件系统根和整个 user home 都不能直接作为 dataDir。
+任何 OS temporary root（包括当前 `java.io.tmpdir`）的子树也不允许；完整父链必须是普通目录、
+没有 symlink，且不能对 group/others 可写，避免攻击者在校验后 rename/swap 数据目录。
+预发布旧 dataDir 若没有标记，应显式删除后重新 bootstrap，不能由新进程隐式迁移。
+
+`credentials.properties` 固定为 `0600`，同时保存本地 API token、稳定 `deviceId` 和认证状态。
+只有 `REGISTER_PENDING` 会临时保存 exact username/password；首次 AUTH 成功时会在进入历史同步和
+ready 前原子替换为 `ACTIVE` 的 uid/username/refresh token，并删除 password。后续进程启动只走
+refresh 认证，每次服务端轮换 refresh token 也先完成同一持久化门，再允许连接进入同步。因此同一
+dataDir 不会不断新增设备，也不会长期保存登录密码。凭据更新使用同目录临时文件、文件 fsync、
+原子替换和目录 fsync，并拒绝 symlink、hard link、错误 owner 或过宽权限。非 POSIX 文件系统会
+直接失败，不以宽松权限继续运行。旧 plaintext ACTIVE 格式不再隐式兼容，预发布环境应重新
+bootstrap 专用 dataDir。
+
+### 3.1 systemd 安装
+
+systemd 服务使用明确的非 root 账号。安装是三步闭环：先由 root 只准备专用
+dataDir，再由服务账号以受控前台输入完成 ACTIVE bootstrap，最后才生成 unit。
+unit 从不引用 EnvironmentFile，也不包含用户名、密码、refresh token 或注册标志。
+
+先创建不可登录账号；它的 home 不应指向整个数据目录，然后显式准备数据目录：
+
+```bash
+sudo groupadd --system tt-agent
+sudo useradd --system --gid tt-agent --home-dir /nonexistent --no-create-home \
+  --shell /usr/sbin/nologin tt-agent
+sudo cp -a shared/build/headless /opt/tt-agent
+sudo /opt/tt-agent/bin/tt-agent prepare-service-data \
+  --service-user tt-agent \
+  --data-dir /var/lib/tt-agent
+```
+
+`prepare-service-data` 只解析真实 UID/GID，并创建带标记、owner 和 `0700` 的单一叶目录；
+它不写 unit，也不接受任何认证参数。对已有账号，从终端读入一次性密码后以
+服务账号前台启动；值只经环境传递，不进入 argv 或文件：
+
+```bash
+read -r TK_USER
+read -rs TK_PASS
+export TK_USER TK_PASS
+sudo --preserve-env=TK_USER,TK_PASS -u tt-agent \
+  /opt/tt-agent/bin/tt-agent \
+  --host im.example.com \
+  --server-url https://im.example.com \
+  --data-dir /var/lib/tt-agent
+unset TK_USER TK_PASS
+```
+
+看到 `ready` 后停止该前台进程。此时文件已是不含 password 的 `ACTIVE`。需要新注册账号时，
+在同一个已准备 dataDir 上执行下列前台命令；username、随机密码、稳定 deviceId 和
+`REGISTER_PENDING` 会在联网前原子落盘。进程若在服务端提交后崩溃，重启会先以同一身份
+login，失败才用同一 exact username 注册，不会制造第二个账号：
+
+```bash
+sudo -u tt-agent /opt/tt-agent/bin/tt-agent \
+  --register --prefix agent \
+  --host im.example.com \
+  --server-url https://im.example.com \
+  --data-dir /var/lib/tt-agent
+```
+
+只有 ACTIVE dataDir 才能进入最后安装；未执行准备步骤时，`install` 不会顺带创建目录：
+
+```bash
+sudo /opt/tt-agent/bin/tt-agent install \
+  --host im.example.com \
+  --port 5100 \
+  --server-url https://im.example.com \
+  --service-user tt-agent \
+  --data-dir /var/lib/tt-agent
+sudo systemctl daemon-reload
+sudo systemctl enable --now tt-agent
+```
+
+`install` 明确拒绝 `--pass`、`--user`、`--register`、`--reauth` 和本地 API 凭据。
+若管理员在服务端 revoke 了 device 或 refresh 过期，先停服务，再以一次性 `--reauth`
+恢复同一账号。它只使用 ACTIVE 中的 username 和稳定 deviceId，仅从 `TK_PASS` 取密码；
+成功后替换 refresh 并立即退出；AUTH 拒绝或本地原子提交失败都不覆盖旧 ACTIVE：
+
+```bash
+sudo systemctl stop tt-agent
+read -rs TK_PASS
+export TK_PASS
+sudo --preserve-env=TK_PASS -u tt-agent \
+  /opt/tt-agent/bin/tt-agent --reauth --data-dir /var/lib/tt-agent
+unset TK_PASS
+sudo systemctl start tt-agent
+```
+
+生成的 unit 使用 `User=tt-agent`、`UMask=0077`、默认 dataDir 对应的 `StateDirectoryMode=0700`、
+`NoNewPrivileges=true`、`ProtectSystem=strict`、`ProtectHome=true`、`PrivateTmp=true` 和只指向 dataDir 的
+`ReadWritePaths`。若通过 `--service-user` 改名，必须先创建同名 primary group 的非 root 系统账号；
+准备命令会先解析实际 UID/GID（UID/GID 0 的别名同样拒绝），再创建或校验自定义 dataDir 的标记、
+owner 与 `0700`；最终安装再次校验 owner/mode 和 ACTIVE refresh 后才写 unit。自定义 dataDir 不会额外声明或改动默认
+`/var/lib/tt-agent`。
+
+unit 同时设置 `RestartPreventExitStatus=78`：网络暂态仍按 `Restart=on-failure` 恢复，但 ACTIVE
+refresh 被服务端明确拒绝时 agent 以 78 退出并停止重启，避免每 5 秒形成认证风暴；管理员按上面的
+one-shot `--reauth` 步骤恢复后再启动服务。maintenance/connection-limit 等可恢复拒绝仍允许重启，
+但 unit 的 5 次/300 秒启动限流会阻止持续高频重试。
 
 agent 的普通 SQLite 消息投影保存 REST recent 事实，单次最多返回 1000 条；内存只为长轮询提供
 唤醒，不保存业务消息。完整、可分页的服务端历史仍通过 message RPC 查询。
@@ -120,6 +230,8 @@ Content-Type: application/json
 ```
 
 响应统一为 `{ "ok": true, "data": {...} }` 或 `{ "ok": false, "error": "..." }`。
+request body 最大 64 KiB；服务先检查 `Content-Length`，并在流式读取时再次计数。超限返回
+413，错误响应不会回显本地文件路径。
 
 ### 状态与接收
 
@@ -138,8 +250,8 @@ Content-Type: application/json
 |---|---|---|
 | POST | `/v1/send-text` | `{chatId, text}` |
 | POST | `/v1/send-rich` | `{chatId, markdown}` |
-| POST | `/v1/send-file` | `{chatId, path}`，path 是 agent 所在机器的本地文件 |
-| POST | `/v1/upload` | `{path}` |
+| POST | `/v1/send-file` | `{chatId, path}`，path 必须位于 `dataDir/outgoing` |
+| POST | `/v1/upload` | `{path}`，与 send-file 使用同一文件访问策略 |
 | POST | `/v1/history` | `{chatId, fromSeq, limit}` |
 | POST | `/v1/revoke` | `{chatId, serverSeq}` |
 | POST | `/v1/forward` | `{srcChatId, srcSeq, targetChatId}` |
@@ -148,6 +260,14 @@ Content-Type: application/json
 `send-file` 以流式 `File` source 通过 TeamTalk HTTP 端点上传，再用服务端返回的 Attachment 发送
 消息，不把本地附件整体读入内存。REST 返回 200 只表示 agent 调用成功；消息结果仍应检查 data
 中的 ACK code。
+
+文件端点只接受 `dataDir/outgoing` 下可 canonicalize 的普通文件；相对路径以该目录为根。包含
+`..` 的路径、任何符号链接路径、目录、hard link、错误 owner、group/world-writable 文件、dataDir 私密文件
+以及 root/home 等宽泛路径都会被拒绝。策略以 `NOFOLLOW` 打开一次原文件，复制到 dataDir 内
+`0600` 的唯一 staging 文件并原子安装；上传重试只重开私有 snapshot，原路径随后被替换也不会改变
+上传内容。两个端点都会 best-effort 删除 staging；清理失败会记录不含路径的诊断并保留文件供受控
+清理，但绝不把已经确定的远端成功改成 500、诱发重复发送。调用方应先以最小权限把待上传文件复制
+到 outgoing，上传完成后自行清理原文件。
 
 ### 联系人与群组
 
@@ -163,7 +283,20 @@ Content-Type: application/json
 
 ## 5. CLI
 
-把 agent 启动时生成的 API token 写入 `~/.tt-cli`，或通过 `TT_TOKEN` / `--token` 提供：
+本地 API token 生成后只写入 `credentials.properties`，ready 行和 journal 都不会打印它。可由有权
+读取 agent dataDir 的管理员直接写入调用用户的 `~/.tt-cli`，再将文件收紧为 `0600`；也可通过
+`TT_TOKEN` / `--token` 提供（后者可能进入 shell history，不建议用于常驻环境）：
+
+```bash
+umask 077
+token_file="$(mktemp "$HOME/.tt-cli.XXXXXX")"
+trap 'rm -f "$token_file"' EXIT
+sudo -u tt-agent sed -n 's/^apiToken=//p' /var/lib/tt-agent/credentials.properties > "$token_file"
+test -s "$token_file"
+chmod 0600 "$token_file"
+mv -f "$token_file" "$HOME/.tt-cli"
+trap - EXIT
+```
 
 ```bash
 shared/build/headless/bin/tt status
@@ -173,7 +306,7 @@ shared/build/headless/bin/tt chat-with <uid>
 shared/build/headless/bin/tt send <chatId> 'hello'
 shared/build/headless/bin/tt send-rich <chatId> '**hello**'
 shared/build/headless/bin/tt recv --chatId <chatId> --wait 10
-shared/build/headless/bin/tt send-file <chatId> /absolute/path/report.pdf
+shared/build/headless/bin/tt send-file <chatId> /var/lib/tt-agent/outgoing/report.pdf
 ```
 
 其他命令包括 `messages`、`history`、`upload`、`revoke`、`forward`、`mark-read`、`friends`、`friend-pending`、`friend-add`、`friend-accept`、`group-create`、`group-members` 和 `group-invite`。`--json` 输出机器可读 data。
@@ -194,11 +327,11 @@ MCP 是适配层，不是新的权限边界。模型能做什么取决于 agent 
 
 ## 7. 安全与运行边界
 
-- REST 默认只绑定 loopback。不要把 `--api` 改为公网地址；当前 HTTP 服务没有 TLS、来源限制或细粒度授权。
-- 所有 REST 端点都校验同一个 agent API token；仍应保持 loopback 监听，避免把拥有完整客户端权限的接口暴露到局域网或公网。
-- `credentials.properties` 当前保存可恢复的用户名和密码以及 API token。运行用户目录权限必须收紧；正式产品应接入系统密钥库或只持久化可轮换 token。
+- REST 强制绑定 loopback；通配地址、局域网/公网地址和需要 DNS 解析的主机名都会在启动前被拒绝。当前 HTTP 服务没有 TLS、来源限制或细粒度授权。
+- 所有 REST 端点都校验同一个 agent API token，但 token 永远不进入 ready/journal。读取 token 是一次显式的本机特权操作。
+- `credentials.properties` 的 ACTIVE 状态只保存 uid、username、refresh token、API token 与稳定 deviceId；plaintext password 仅允许短暂存在于 REGISTER_PENDING，AUTH 成功即原子删除。目录 `0700`、文件 `0600`、NOFOLLOW 与原子落盘是强制条件。已有账号的 plaintext password 只经受控前台环境传递，systemd unit 不引用任何持久 bootstrap 环境文件。正式产品仍可进一步接入系统密钥库。
 - CLI token 不应出现在命令历史、日志或代码仓库。
-- `send-file` 读取 agent 主机本地路径，只能在受信任调用者可以访问本地 REST 时使用。
+- `send-file` 和 `upload` 只能读取 agent dataDir 的 `outgoing` 子树，并共用同一 canonical/symlink/secret 校验链。
 - agent 的长轮询不是 Webhook；内存唤醒在进程重启时会消失，但消息仍在 SQLite recent 投影中，
   重连后可通过 `/v1/messages` 读取。需要消费确认、多个订阅者或永久保留时仍应单独设计外部订阅。
 

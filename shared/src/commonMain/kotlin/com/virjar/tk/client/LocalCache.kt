@@ -18,6 +18,25 @@ data class PendingBotMessage(
 )
 
 /**
+ * Capability for applying exactly one server-history response to the cache generation that
+ * requested it.
+ *
+ * A lease is cache-instance bound and captures the global projection generation, the chat
+ * lifecycle, the request generation and either a pending newest chain or a committed history
+ * anchor. Callers must acquire it before starting the RPC and submit the response through
+ * [LocalCache.applyMessageHistoryPage].
+ */
+class MessageHistoryLease internal constructor(
+    val chatId: String,
+    internal val owner: Any,
+    internal val globalGeneration: Long,
+    internal val chatLifecycleGeneration: Long,
+    internal val requestGeneration: Long,
+    internal val historyChainGeneration: Long,
+    internal val resetResidentWindow: Boolean,
+)
+
+/**
  * 客户端本地缓存接口。
  * 具体实现由各平台提供（基于 SQLDelight）。
  *
@@ -78,17 +97,37 @@ interface LocalCache {
     fun insertMessage(message: Message)
 
     /**
-     * Persist one authoritative server-history response atomically for a resident message window.
-     * [resetResidentWindow] is true for the newest-page sync (`fromSeq = 0`); older pages extend
-     * that same server-proven interval. The default keeps lightweight fakes source-compatible.
+     * Begin one history request before invoking the server.
+     *
+     * A newest-page request ([resetResidentWindow] = true) reserves a pending chain and invalidates
+     * every earlier newest request. It does not become the committed anchor until its complete page
+     * is applied. An older-page request binds only the currently committed anchor, never a merely
+     * pending newest chain; without a committed anchor its eventual apply is stale.
      */
-    fun insertMessagePage(
+    fun beginMessageHistoryLease(
         chatId: String,
-        messages: List<Message>,
         resetResidentWindow: Boolean,
-    ) {
-        messages.forEach(::insertMessage)
-    }
+    ): MessageHistoryLease
+
+    /**
+     * Atomically apply a server-history response if [lease] still names the current cache/chat
+     * lifecycle, request and history chain.
+     *
+     * Implementations must validate and persist the complete page in one transaction. A stale
+     * lease returns false without touching SQLite or resident flows; malformed page data throws and
+     * rolls the whole page back. Realtime [insertMessage] is deliberately independent of this fence.
+     */
+    fun applyMessageHistoryPage(
+        lease: MessageHistoryLease,
+        messages: List<Message>,
+    ): Boolean
+
+    /**
+     * Abandon a failed or cancelled request. Only the still-current exact lease can clear its lane;
+     * abandoning a superseded lease is a no-op. In particular, abandoning newest releases its
+     * pending chain without changing the last committed anchor.
+     */
+    fun abandonMessageHistoryLease(lease: MessageHistoryLease): Boolean
     fun updateMessage(chatId: String, clientMsgId: String, serverSeq: Long)
     fun updateMessageStatus(chatId: String, clientMsgId: String, sendStatus: Int)
     /** 变换更新（上传进度等纯 UI 状态，只更新驻留窗口不落库）。 */
@@ -187,8 +226,11 @@ interface LocalCache {
     /** 仅当 [generation] 仍是该会话最新操作时，标记 RPC 已成功。 */
     fun markConversationDraftMirrored(chatId: String, generation: Long)
 
-    /** Release the platform SQL driver owned by this cache. Test/fake caches may keep the no-op. */
-    fun close() = Unit
+    /**
+     * Invalidate outstanding history leases and release the platform SQL driver owned by this
+     * cache. Implementations without a driver must still provide the lease-invalidation boundary.
+     */
+    fun close()
 
     companion object {
         /** 单聊消息内存窗口大小（最近 N 条） */

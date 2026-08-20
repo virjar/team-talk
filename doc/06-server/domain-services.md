@@ -53,7 +53,10 @@ OrganizationService 维护单根无环目录、用户多部门归属和唯一主
 
 部门群以 OrganizationUnit.groupChatId 是否存在为启用状态。收敛算法计算当前节点及全部后代成员，
 再合并 RequiredChatParticipants（当前为获授权机器人），调用 ChatService 的受管群管理入口补齐成员、
-移除多余成员并维护 Conversation。普通群 RPC 遇到受管群时拒绝成员或生命周期变更。
+移除多余成员并维护 Conversation。受管群 reconciliation 和机器人撤权不得使用独立的“成员删除→
+Conversation 删除→事件发送”链；它们与普通踢人共用 transaction-bound member removal，一次提交
+成员事实、Conversation tombstone、目标 CHAT_DELETED/CONVERSATION_DELETED 与剩余成员刷新事件。
+普通群 RPC 遇到受管群时拒绝成员或生命周期变更。
 
 跨表流程采用“先组织事实、后幂等投影”：节点移动和成员变更提交后立即收敛，应用启动再重放全部
 启用节点。单个失败会记录 unitId，不阻止其他部门恢复。
@@ -87,7 +90,13 @@ CHAT_CREATED。
 每个活跃群最多一个 owner 由部分唯一索引兜底，转让在锁定 Chat 聚合行的事务内重新校验双方成员状态。
 
 邀请加入先锁定邀请行与 Chat 聚合行，再在同一 PostgreSQL 事务内校验失效、过期、限额和群活跃状态，
-建立成员与 Conversation 并消费一次额度。重复加入只补齐 Conversation，不重复计数；缓存和事件只在事务提交后更新。
+建立成员与 Conversation、消费一次额度，并在同一 PgUnitOfWork 写入所有收件人的 CHAT_CREATED。
+重复加入只补齐 Conversation，不重复计数或发事件；即使首次提交已耗尽额度，丢失响应后的同成员重试仍按
+已提交事实成功返回。缓存仅在上述事务提交后失效。
+
+普通成员添加、受管群补员与服务成员授权共用 transaction-bound addition：锁定 Chat/成员快照后
+重新校验权限，在一个 PgUnitOfWork 内建立或重新激活 Member、创建 Conversation，并按同一提交写入
+新成员 CHAT_CREATED 与全部现有成员 MEMBER_ADDED。重复命令没有事实变化时不重复产生事件。
 
 聊天是否存在、是否群聊、成员资格以及管理员/群主阈值统一由 `ChatAccess` 判断。Chat、Message、
 GroupFile 和 Bot 不得各自复制角色数字和成员错误分支；禁言、黑名单、受管群等操作专属规则仍由
@@ -124,8 +133,9 @@ ConversationService 维护用户视角状态：
 上述用户写操作都在锁定 Chat 聚合行后重验活动成员资格，会话行、已读水位、对端水位和
 durable event 在同一 `PgUnitOfWork` 中提交。事件 payload 必须从该事务的最终行状态构造，不得在提交后另起查询。
 
-创建 Chat 时，初始 Member 与 Conversation 由 ChatRepository 在同一 PostgreSQL 事务建立。后续加人、
-邀请加入以及受管群收敛使用 `ensureConversations` 补齐新增成员；创建完成后不能再重复写一轮相同投影。
+创建 Chat 时，初始 Member 与 Conversation 由 ChatRepository 在同一 PostgreSQL 事务建立。后续普通加人、
+邀请加入、受管群和服务成员增删都在同一 `PgUnitOfWork` 内更新 Member/Conversation 并写收件人事件；
+提交后先失效 ChatStore 热缓存再唤醒事件分发。创建完成后不能再重复写一轮相同投影。
 
 ## 7. GroupFile
 
@@ -173,6 +183,9 @@ MessageService，因此幂等重试、历史、搜索、同步和部门群保留
 DeviceService 列出当前用户设备并踢除指定 deviceId。不能踢其他用户设备，当前设备自踢应有明确
 连接关闭语义。设备撤销在 PostgreSQL 事务内推进设备级 credential epoch 并失效该设备 credential；
 提交后再以新 epoch 更新 ClientRegistry fence 并关闭旧连接，不能先踢连接再提交撤权。
+主动登出还必须携带服务器从当前认证会话捕获的设备 epoch，并在同一事务内 compare-and-revoke；若
+同一 deviceId 已由更新的登录或 refresh 推进代次，迟到的旧登出只能退休旧 session，不能删除新 pair。
+客户端提交的 deviceId 或 refresh token 不能替代这个权威会话代次。
 
 Presence 由 ClientRegistry 的连接计数派生：首个设备上线广播 online，最后一个设备下线广播
 offline。它是瞬时状态，不进入长期离线事件。

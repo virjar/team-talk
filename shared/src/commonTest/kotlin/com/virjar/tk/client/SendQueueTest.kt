@@ -2,13 +2,16 @@ package com.virjar.tk.client
 
 import com.virjar.tk.model.Message
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class SendQueueTest {
     @Test
     fun `transport loss keeps the head item and retries after authentication`() = runTest {
@@ -73,5 +76,41 @@ class SendQueueTest {
 
         assertEquals("附件路径非法", withTimeout(1_000) { failure.await() })
         queue.close()
+    }
+
+    @Test
+    fun `ack returning after close cannot publish sent or failed callback`() = runTest {
+        val senderEntered = CompletableDeferred<Unit>()
+        val releaseAck = CompletableDeferred<Unit>()
+        val callbacks = mutableListOf<String>()
+        val queue = SendQueue(
+            connectionState = MutableStateFlow(ConnectionState.AUTHENTICATED),
+            sender = MessageSender { message ->
+                senderEntered.complete(Unit)
+                releaseAck.await()
+                com.virjar.tk.protocol.payload.MessageAckPayload(message.clientMsgId, 11L, 0)
+            },
+            scope = backgroundScope,
+            onSent = { _, _ -> callbacks += "sent" },
+            onFailed = { _, _ -> callbacks += "failed" },
+        )
+
+        queue.enqueue(
+            Message(
+                chatId = "retired",
+                clientMsgId = "late-ack",
+                senderUid = "u1",
+                messageType = 1,
+                timestamp = 1L,
+            ),
+        )
+        runCurrent()
+        assertTrue(senderEntered.isCompleted)
+
+        queue.close()
+        releaseAck.complete(Unit)
+        runCurrent()
+
+        assertEquals(emptyList(), callbacks)
     }
 }

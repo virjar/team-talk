@@ -1,6 +1,6 @@
 package com.virjar.tk.client
 
-import com.virjar.tk.log.TkLoggerFactory
+import com.virjar.tk.util.PlatformOnlyTkLogger
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.PacketCodec
 import com.virjar.tk.protocol.PacketInboundRole
@@ -50,7 +50,7 @@ internal class TransportConnectionOwner(
     private val routePacket: (connectionGeneration: Long, IProto) -> Unit,
     private val onTransportDisconnected: () -> Unit,
 ) {
-    private val logger = TkLoggerFactory.get("TransportConnectionOwner")
+    private val logger = PlatformOnlyTkLogger("TransportConnectionOwner")
 
     private val workerGroup = NioEventLoopGroup(1)
     private val eventLoop: EventLoop = workerGroup.next()
@@ -126,23 +126,41 @@ internal class TransportConnectionOwner(
      * preempted after registration, then resume after another account has authenticated on this
      * reusable transport. The payload must never fall through to that replacement channel.
      *
-     * [leaseIsActive] is request/session-owned and permanently becomes false on cancellation or
+     * [sendAdmission] is request/session-owned and permanently becomes false on cancellation or
      * session stop. [onResult] runs on the EventLoop and reports whether the payload was handed to
      * the channel; task rejection reports false through the Boolean return value instead.
      */
     fun sendIfOwned(
         expectedOwnerGeneration: Long,
         expectedConnectionGeneration: Long,
-        leaseIsActive: () -> Boolean,
+        sendAdmission: WireSendAdmission,
         proto: IProto,
         onResult: (Boolean) -> Unit,
     ): Boolean = execute {
-        val accepted = !terminallyDestroyed.get() &&
-            leaseIsActive() &&
-            ownerGeneration == expectedOwnerGeneration &&
-            connectionGeneration.matches(expectedConnectionGeneration) &&
-            sendNow(proto)
-        onResult(accepted)
+        onResult(
+            sendNowIfOwned(
+                expectedOwnerGeneration,
+                expectedConnectionGeneration,
+                sendAdmission,
+                proto,
+            ),
+        )
+    }
+
+    /** EventLoop-only leased write used by the atomic ACK-register + message-send path. */
+    fun sendNowIfOwned(
+        expectedOwnerGeneration: Long,
+        expectedConnectionGeneration: Long,
+        sendAdmission: WireSendAdmission,
+        proto: IProto,
+    ): Boolean {
+        requireEventLoop()
+        return sendAdmission.use {
+            !terminallyDestroyed.get() &&
+                ownerGeneration == expectedOwnerGeneration &&
+                connectionGeneration.matches(expectedConnectionGeneration) &&
+                sendNow(proto)
+        }
     }
 
     /** EventLoop-only protocol write used by AUTH/SYNC/PING control paths. */

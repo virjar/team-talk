@@ -8,9 +8,13 @@ import com.virjar.tk.infra.db.SyncStreams
 import com.virjar.tk.infra.db.Users
 import com.virjar.tk.model.User
 import com.virjar.tk.protocol.NotifyType
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -95,6 +99,92 @@ class PgUnitOfWorkIntegrationTest {
         })
         assertFalse(commitWakeCalled.get())
         assertFalse(afterCommitCalled.get())
+    }
+
+    @Test
+    fun `local visibility callbacks run before durable event dispatch is signalled`() = runTest {
+        val uid = ctx.registerUser(uniqueUsername("uow-callback-order"))
+        val publicationOrder = mutableListOf<String>()
+        val unitOfWork = ExposedPgUnitOfWork(
+            onEventsCommitted = { committedUids ->
+                assertEquals(setOf(uid), committedUids)
+                assertEquals(listOf("cache-visible"), publicationOrder)
+                publicationOrder += "dispatcher-wake"
+            },
+        )
+
+        unitOfWork.write {
+            appendEvent(uid, NotifyType.USER_UPDATED, userPayload(uid, "callback-order"))
+            afterCommit { publicationOrder += "cache-visible" }
+        }
+
+        assertEquals(listOf("cache-visible", "dispatcher-wake"), publicationOrder)
+    }
+
+    @Test
+    fun `caller cancellation after commit cannot split callbacks from dispatcher wake`() = runTest {
+        val uid = ctx.registerUser(uniqueUsername("uow-post-commit-cancel"))
+        val afterCommitReached = CompletableDeferred<Unit>()
+        val releaseAfterCommit = CompletableDeferred<Unit>()
+        val cacheVisible = AtomicBoolean(false)
+        val dispatcherSignalled = AtomicBoolean(false)
+        val unitOfWork = ExposedPgUnitOfWork(
+            onEventsCommitted = { dispatcherSignalled.set(true) },
+            hooks = PgUnitOfWorkHooks { stage ->
+                if (stage == PgUnitOfWorkStage.AFTER_COMMIT_BEFORE_CALLBACKS) {
+                    afterCommitReached.complete(Unit)
+                    releaseAfterCommit.await()
+                }
+            },
+        )
+
+        val writer = async(Dispatchers.Default) {
+            unitOfWork.write {
+                appendEvent(uid, NotifyType.USER_UPDATED, userPayload(uid, "post-commit-cancel"))
+                afterCommit { cacheVisible.set(true) }
+            }
+        }
+        afterCommitReached.await()
+        writer.cancel()
+        releaseAfterCommit.complete(Unit)
+        writer.join()
+
+        assertTrue(writer.isCancelled)
+        assertTrue(cacheVisible.get(), "committed mutation must still publish local visibility")
+        assertTrue(dispatcherSignalled.get(), "committed event must still wake the dispatcher")
+        assertEquals(listOf(1L), streamSequences(uid))
+    }
+
+    @Test
+    fun `already cancelled caller cannot begin an aggregate transaction`() = runTest {
+        val uid = ctx.registerUser(uniqueUsername("uow-pre-cancel"))
+        val enteredWriteBlock = AtomicBoolean(false)
+        val callerStarted = CompletableDeferred<Unit>()
+        val observedFailure = CompletableDeferred<Throwable?>()
+        val unitOfWork = ExposedPgUnitOfWork(onEventsCommitted = {})
+
+        val caller = launch {
+            try {
+                callerStarted.complete(Unit)
+                awaitCancellation()
+            } catch (_: CancellationException) {
+                observedFailure.complete(
+                    runCatching {
+                        unitOfWork.write {
+                            enteredWriteBlock.set(true)
+                            appendEvent(uid, NotifyType.USER_UPDATED, userPayload(uid, "must-not-run"))
+                        }
+                    }.exceptionOrNull(),
+                )
+            }
+        }
+        callerStarted.await()
+        caller.cancel()
+        caller.join()
+
+        assertIs<CancellationException>(observedFailure.await())
+        assertFalse(enteredWriteBlock.get())
+        assertTrue(streamSequences(uid).isEmpty())
     }
 
     @Test

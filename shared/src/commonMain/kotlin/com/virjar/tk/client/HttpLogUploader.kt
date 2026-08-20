@@ -1,134 +1,233 @@
 package com.virjar.tk.client
 
-import com.virjar.tk.util.AppLog
+import com.virjar.tk.repository.canonicalHttpServerBase
 import com.virjar.tk.util.HttpUtil
 import com.virjar.tk.util.LogBuffer
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 /**
- * HTTP 日志上传器。替代 TCP LogUploader，解决 TCP 断连时无法上传日志的悖论。
- *
- * 触发条件：
- * - fault 日志 → debounce 3s 批量上传
- * - 定时（5min）批量上传 trace（开发构建）
- * - 用户手动触发（正式版本反馈功能）
- *
- * 失败兜底：落本地 pending 文件，下次启动重试。
+ * Session-owned HTTP log uploader. Credential reads and response-side mutations are generation
+ * gated; the blocking transport itself is closeable so quiesce can disconnect active requests.
  */
-class HttpLogUploader(
+class HttpLogUploader internal constructor(
     private val traceBuffer: LogBuffer,
     private val faultBuffer: LogBuffer,
-    private val serverUrl: String,
+    serverUrl: String,
     private val ownerUid: String,
+    private val ownerIdentityEpoch: Long,
     private val credentialsProvider: () -> SessionHttpCredentials,
     private val crashDumper: CrashDumper,
-    private val intervalMs: Long = 5 * 60 * 1000L,
+    private val intervalMs: Long,
+    private val transport: PlatformLogHttpTransport,
 ) {
+    constructor(
+        traceBuffer: LogBuffer,
+        faultBuffer: LogBuffer,
+        serverUrl: String,
+        ownerUid: String,
+        credentialsProvider: () -> SessionHttpCredentials,
+        crashDumper: CrashDumper,
+        intervalMs: Long = 5 * 60 * 1000L,
+    ) : this(
+        traceBuffer = traceBuffer,
+        faultBuffer = faultBuffer,
+        serverUrl = serverUrl,
+        ownerUid = ownerUid,
+        ownerIdentityEpoch = credentialsProvider().identityEpoch,
+        credentialsProvider = credentialsProvider,
+        crashDumper = crashDumper,
+        intervalMs = intervalMs,
+        transport = createPlatformLogHttpTransport(),
+    )
+
+    private val uploadUrl = canonicalHttpServerBase(serverUrl) + "/api/client-logs"
     private val lifecycleLock = Any()
+    private val uploadLock = Any()
+    private val workGate = SessionWorkGate("HttpLogUploader")
+    private val workLease = workGate.lease()
     private val lifecycleJob = SupervisorJob()
-    private val scope = CoroutineScope(Dispatchers.Default + lifecycleJob +
-        CoroutineExceptionHandler { _, throwable ->
-            logUnhandledError("HttpLogUploader", throwable)
-        })
+    private val scope = CoroutineScope(
+        Dispatchers.Default + lifecycleJob + CoroutineExceptionHandler { _, throwable ->
+            // Fixed buffer: a late old-session failure can never enter a replacement AppLog owner.
+            workGate.runIfActive(workLease) {
+                traceBuffer.append("trace", "HttpLogUploader", "Worker failed: ${throwable.message}")
+            }
+        },
+    )
     private var timerJob: Job? = null
     private var faultDebounceJob: Job? = null
-    private var stopped = false
 
-    fun start() = synchronized(lifecycleLock) {
-        if (stopped) return@synchronized
-
-        // 幂等：重复 start 先取消旧定时任务。
-        timerJob?.cancel()
-        faultDebounceJob?.cancel()
-        // 启动时优先上传上次崩溃日志。该任务也归会话 scope 所有。
-        scope.launch { crashDumper.uploadPending(serverUrl, currentAccessToken()) }
-
-        // 定时上传（开发构建：全量 trace）
-        timerJob = scope.launch {
-            while (isActive) {
-                delay(intervalMs)
-                uploadAll()
+    fun start() = workGate.use(workLease) {
+        synchronized(lifecycleLock) {
+            timerJob?.cancel()
+            faultDebounceJob?.cancel()
+            scope.launch { uploadPendingCrash() }
+            timerJob = scope.launch {
+                while (isActive) {
+                    delay(intervalMs)
+                    uploadAll()
+                }
             }
         }
     }
 
     fun stop() {
-        val shouldStop = synchronized(lifecycleLock) {
-            if (stopped) {
-                false
-            } else {
-                stopped = true
-                timerJob?.cancel()
-                faultDebounceJob?.cancel()
-                timerJob = null
-                faultDebounceJob = null
-                true
-            }
+        var boundaryFailure: SessionWorkGateReentrantCloseException? = null
+        val newlyClosed = try {
+            workGate.close()
+        } catch (failure: SessionWorkGateReentrantCloseException) {
+            boundaryFailure = failure
+            true
         }
-        if (!shouldStop) return
-
-        // close/logout 可能发生在 UI 线程，这里绝不等待 HTTP。已启动的上传也由
-        // 会话 job 统一取消，失败数据仍由 uploadAll 的 pending 文件兜底。
-        lifecycleJob.cancel()
+        if (!newlyClosed) return
+        val failures = mutableListOf<Throwable>()
+        synchronized(lifecycleLock) {
+            runCatching { timerJob?.cancel() }.exceptionOrNull()?.let(failures::add)
+            runCatching { faultDebounceJob?.cancel() }.exceptionOrNull()?.let(failures::add)
+            timerJob = null
+            faultDebounceJob = null
+        }
+        runCatching { lifecycleJob.cancel() }.exceptionOrNull()?.let(failures::add)
+        // Cancellation cannot interrupt a blocking HttpURLConnection; close is the hard stop.
+        runCatching { transport.close() }.exceptionOrNull()?.let(failures::add)
+        boundaryFailure?.let { throw it }
+        if (failures.isNotEmpty()) {
+            throw SessionResourceCloseException("HttpLogUploader", failures)
+        }
     }
 
-    /**
-     * fault 触发上传（debounce 3s，避免连续异常打满 HTTP）。
-     * 由 AppLog.onFault 回调调用。
-     */
+    /** Fault-triggered upload, debounced without accepting work after quiesce. */
     fun trigger() {
-        synchronized(lifecycleLock) {
-            if (stopped) return
-            faultDebounceJob?.cancel()
-            faultDebounceJob = scope.launch {
-                delay(3000)
-                uploadAll()
+        workGate.use(workLease) {
+            synchronized(lifecycleLock) {
+                faultDebounceJob?.cancel()
+                faultDebounceJob = scope.launch {
+                    delay(3_000)
+                    uploadAll()
+                }
             }
         }
     }
 
-    /** 用户手动触发：打包上传最近日志。 */
     fun manualUpload() {
-        synchronized(lifecycleLock) {
-            if (stopped) return
-            scope.launch { uploadAll() }
+        workGate.use(workLease) { scope.launch { uploadAll() } }
+    }
+
+    private fun uploadPendingCrash() {
+        synchronized(uploadLock) {
+            var content: String? = null
+            if (!workGate.runIfActive(workLease) { content = crashDumper.pendingContent() }) {
+                return@synchronized
+            }
+            val fixedContent = content ?: return@synchronized
+            uploadPayload(fixedContent, persistOnFailure = false) {
+                crashDumper.markPendingUploaded(fixedContent)
+            }
         }
     }
 
-    private fun uploadAll() {
-        val traceText = traceBuffer.drain() ?: ""
-        val faultText = faultBuffer.drain() ?: ""
-        val combined = buildString {
-            if (traceText.isNotBlank()) appendLine("=== TRACE ===").appendLine(traceText)
-            if (faultText.isNotBlank()) appendLine("=== FAULT ===").appendLine(faultText)
+    private fun uploadAll() = synchronized(uploadLock) {
+        var combined = ""
+        if (!workGate.runIfActive(workLease) {
+                val traceText = traceBuffer.drain().orEmpty()
+                val faultText = faultBuffer.drain().orEmpty()
+                combined = buildString {
+                    if (traceText.isNotBlank()) appendLine("=== TRACE ===").appendLine(traceText)
+                    if (faultText.isNotBlank()) appendLine("=== FAULT ===").appendLine(faultText)
+                }
+            }
+        ) {
+            return@synchronized
         }
-        if (combined.isBlank()) return
+        if (combined.isBlank()) return@synchronized
+        uploadPayload(combined, persistOnFailure = true)
+    }
+
+    private fun uploadPayload(
+        content: String,
+        persistOnFailure: Boolean,
+        onSuccess: () -> Unit = {},
+    ) {
+        var accessToken: String? = null
+        val admitted = try {
+            workGate.runIfActive(workLease) {
+                accessToken = ownedHttpAccessToken(
+                    ownerUid = ownerUid,
+                    credentials = credentialsProvider(),
+                    ownerIdentityEpoch = ownerIdentityEpoch,
+                )
+            }
+        } catch (failure: Exception) {
+            workGate.runIfActive(workLease) {
+                if (persistOnFailure) crashDumper.flushPending(content)
+                traceBuffer.append(
+                    "trace",
+                    "HttpLogUploader",
+                    "Credential gate rejected upload for fixed owner: ${failure.message}",
+                )
+            }
+            return
+        }
+        // Once stop wins, an in-flight drained payload is deliberately discarded. Persisting it
+        // from the old worker would race a same-uid replacement session's fixed crash namespace.
+        if (!admitted) return
 
         try {
-            val compressed = HttpUtil.gzip(combined)
-            val accessToken = currentAccessToken()
-            val code = HttpUtil.postGzip(
-                "$serverUrl/api/client-logs",
-                compressed,
-                mapOf("Authorization" to "Bearer $accessToken"),
+            val code = transport.postGzip(
+                uploadUrl,
+                HttpUtil.gzip(content),
+                mapOf("Authorization" to "Bearer ${checkNotNull(accessToken)}"),
             )
             if (code != 200) throw RuntimeException("HTTP $code")
-        } catch (e: Exception) {
-            // 先打印原始异常到控制台，确保 logcat 可见，再落盘
-            System.err.println("[Crash] Upload failed, saving to pending: ${e.message}")
-            e.printStackTrace()
-            crashDumper.flushPending(combined)
-            AppLog.trace("HttpLogUploader", "Upload failed, saved to pending: ${e.message}")
+            // Stop wins over a late response. In particular it cannot delete/replace state after
+            // the account's retirement generation has changed.
+            workGate.runIfActive(workLease) { onSuccess() }
+        } catch (failure: Exception) {
+            workGate.runIfActive(workLease) {
+                if (persistOnFailure) crashDumper.flushPending(content)
+                traceBuffer.append(
+                    "trace",
+                    "HttpLogUploader",
+                    "Upload failed, retained by fixed owner: ${failure.message}",
+                )
+            }
         }
     }
-
-    private fun currentAccessToken(): String = ownedHttpAccessToken(ownerUid, credentialsProvider())
 }
 
-/** Prevents a retired uploader from borrowing credentials after the UserSession container changes uid. */
-internal fun ownedHttpAccessToken(ownerUid: String, credentials: SessionHttpCredentials): String {
+internal class SessionResourceCloseException(
+    owner: String,
+    val failures: List<Throwable>,
+) : IllegalStateException("$owner close failed in ${failures.size} operation(s)", failures.firstOrNull())
+
+/** Prevent a retired uploader from borrowing a different identity or a same-uid re-login token. */
+internal fun ownedHttpAccessToken(
+    ownerUid: String,
+    credentials: SessionHttpCredentials,
+    ownerIdentityEpoch: Long? = null,
+): String {
     check(ownerUid.isNotBlank()) { "HTTP resource owner uid must not be blank" }
     check(credentials.uid == ownerUid) { "Authenticated HTTP identity changed" }
-    return credentials.accessToken?.takeIf(String::isNotBlank)
+    if (ownerIdentityEpoch != null) {
+        check(credentials.identityEpoch == ownerIdentityEpoch) { "Authenticated HTTP session changed" }
+    }
+    val token = credentials.accessToken?.takeIf(String::isNotBlank)
         ?: error("No authenticated access token for HTTP request")
+    require(token.all { it.code in 0x21..0x7e }) { "HTTP access token contains illegal characters" }
+    return token
 }
+
+internal interface PlatformLogHttpTransport {
+    fun postGzip(url: String, compressed: ByteArray, headers: Map<String, String>): Int
+    fun close()
+}
+
+internal expect fun createPlatformLogHttpTransport(): PlatformLogHttpTransport

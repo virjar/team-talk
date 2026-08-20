@@ -50,17 +50,18 @@ class ChatStoreCacheConcurrencyTest {
             val read = pool.submit<List<Member>> { store.getMembers(CHAT_ID) }
             members.loadStarted.await()
             val writerAttempted = CountDownLatch(1)
-            val remove = pool.submit {
+            members.commitRemoval()
+            val invalidate = pool.submit {
                 writerAttempted.countDown()
-                store.removeMember(CHAT_ID, MEMBER_UID)
+                store.invalidateCommittedMembershipChange(CHAT_ID)
             }
             writerAttempted.await()
 
-            assertFalse(members.removeStarted.await(100, TimeUnit.MILLISECONDS))
+            assertFalse(invalidate.isDone)
             members.releaseLoad.countDown()
 
             assertEquals(listOf(MEMBER_UID), read.get(1, TimeUnit.SECONDS).map(Member::uid))
-            remove.get(1, TimeUnit.SECONDS)
+            invalidate.get(1, TimeUnit.SECONDS)
             assertFalse(store.isMember(CHAT_ID, MEMBER_UID))
         } finally {
             pool.shutdownNow()
@@ -106,7 +107,12 @@ private open class ImmediateChatRepository : ChatRepository {
         memberUids: List<String>,
         requestedChatId: String?,
     ): Chat = error("unused")
-    override fun joinByInvite(uid: String, token: String, nowMillis: Long): InviteJoinResult = error("unused")
+    override fun joinByInvite(
+        transaction: com.virjar.tk.domain.transaction.PgTransactionContext,
+        uid: String,
+        token: String,
+        nowMillis: Long,
+    ): InviteJoinResult = error("unused")
     override fun updateGroup(chatId: String, name: String?, avatar: String?, notice: String?) = Unit
     override fun findPersonalChatId(uid1: String, uid2: String): String? = null
     override fun getChatById(chatId: String): Chat? = getChat(chatId)
@@ -141,8 +147,13 @@ private open class PassiveMemberRepository : ChatMemberRepository {
     override fun getMember(chatId: String, uid: String): Member? = null
     override fun getMemberUids(chatId: String): List<String> = emptyList()
     override fun isMember(chatId: String, uid: String): Boolean = false
-    override fun addMembers(chatId: String, uids: List<String>) = Unit
-    override fun removeMember(chatId: String, uid: String) = Unit
+    override fun addMembers(
+        transaction: com.virjar.tk.domain.transaction.PgTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        uids: List<String>,
+        authorize: (GroupMemberAdditionFacts) -> Unit,
+    ): GroupMemberAddition = error("unused")
     override fun removeMember(
         transaction: com.virjar.tk.domain.transaction.PgTransactionContext,
         chatId: String,
@@ -162,7 +173,6 @@ private open class PassiveMemberRepository : ChatMemberRepository {
 private class BlockingMemberRepository : PassiveMemberRepository() {
     val loadStarted = CountDownLatch(1)
     val releaseLoad = CountDownLatch(1)
-    val removeStarted = CountDownLatch(1)
     private val blockFirstLoad = AtomicBoolean(true)
     @Volatile
     private var active = true
@@ -176,8 +186,7 @@ private class BlockingMemberRepository : PassiveMemberRepository() {
         return snapshot
     }
 
-    override fun removeMember(chatId: String, uid: String) {
-        removeStarted.countDown()
+    fun commitRemoval() {
         active = false
     }
 }

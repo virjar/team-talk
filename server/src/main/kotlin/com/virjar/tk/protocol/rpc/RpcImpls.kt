@@ -37,11 +37,12 @@ class UserRpcImpl(uid: String, private val service: UserService) : UserRpcStub(u
 class AuthRpcImpl(
     uid: String,
     private val deviceId: String,
+    private val deviceCredentialEpoch: Long,
     private val sessionId: String,
     private val authService: AuthService,
 ) : AuthRpcStub(uid) {
     override suspend fun logout() {
-        authService.logoutCurrentSession(uid, deviceId, sessionId)
+        authService.logoutCurrentSession(uid, deviceId, deviceCredentialEpoch, sessionId)
     }
 
     override suspend fun updatePassword(oldPassword: String, newPassword: String) {
@@ -203,7 +204,13 @@ class DocumentRpcImpl(uid: String, private val service: DocumentService) : Docum
     override suspend fun listRecentlyCreatedDocuments(limit: Int) = service.listRecentlyCreatedDocuments(uid, limit)
 }
 
-data class RpcSessionContext(val uid: String, val deviceId: String, val sessionId: String)
+data class RpcSessionContext(
+    val uid: String,
+    val deviceId: String,
+    val userCredentialEpoch: Long,
+    val deviceCredentialEpoch: Long,
+    val sessionId: String,
+)
 
 /** 服务注册表：serviceId → 每请求 Stub 工厂（认证会话身份注入）。由 Koin 装配。 */
 class RpcStubRegistry {

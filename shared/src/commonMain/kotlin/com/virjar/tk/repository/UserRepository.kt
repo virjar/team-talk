@@ -30,8 +30,4 @@ class UserRepository(
     suspend fun changePassword(oldPassword: String, newPassword: String): Outcome<Unit> = outcome {
         authRpc.updatePassword(oldPassword, newPassword)
     }
-
-    suspend fun logout(): Outcome<Unit> = outcome {
-        authRpc.logout()
-    }
 }

@@ -89,7 +89,8 @@ class HeadlessSyncSemanticsTest {
 
     @Test
     fun `agent reliable inbox retains replay and ready-gap messages exactly once`() = runBlocking {
-        val dataDir = createTempDirectory("agent-inbox-").toFile().also(tempDirs::add)
+        val root = createAgentSecurityTestRoot("agent-inbox-").also(tempDirs::add)
+        val dataDir = File(root, "agent-data")
         val cache = FakeLocalCache()
         val inbox = ImBotMessageInbox().also { it.bind(cache) }
         val replay = message("replay", serverSeq = 1L)

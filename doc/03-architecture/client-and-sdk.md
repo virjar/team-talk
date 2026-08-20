@@ -25,16 +25,20 @@ UserSession（uid/token）
       ├── LocalCache（按 uid 隔离）
       ├── EventProcessor
       ├── Repositories
+      ├── GroupBotManagementRepository（session-owned HTTP）
       ├── CrashDumper / HttpLogUploader
       └── ViewModels（由 app 层持有）
 ```
 
 平台的 HTTP 与媒体资源同样必须归属这次认证会话，不能通过进程全局 token 补参数。Desktop 在
 `ClientSession` 外侧建立同寿命的 `DesktopSessionResources`：固定 owner uid，逐次从当前
-`UserSession` 读取可轮换的 access token，并在每次请求前校验 uid 仍属于原所有者。这样 TCP 重连
-轮换 token 后 HTTP 请求可以继续工作，而退出后复用同一个 `UserSession` 容器登录另一账号时，旧
+`ClientSession` 的生命周期门禁凭据入口读取可轮换的 access token，并在每次请求前同时校验 uid 与
+identity epoch 仍属于原认证会话。这样同 uid 的正常 TCP 重连/令牌轮换可以继续工作，而 logout 后
+同 uid 重登也不能复用旧 HTTP owner；退出后复用同一个 `UserSession` 容器登录另一账号时，旧
 下载或上传任务无法取得新账号凭据。认证会话销毁会统一取消平台协程、录音与传输任务；`close()`
-同样必须幂等。
+同样必须幂等。平台异步任务的诊断 logger 也必须从 `ClientSession` 取得固定 owner 快照，再由平台会话
+资源增加独立 close gate；不得在任务内读取进程全局 `AppLog`。Desktop 诊断只接受预定义的脱敏事件，
+不记录附件引用、本地路径、文件名或底层异常文本，避免退出重登后串入下一账号日志或上传敏感元数据。
 
 HTTP 附件上传由会话拥有的 `FileRepository` 统一协调。Repository 固定 `server + owner uid`，每个请求
 从同一 `UserSession` 读取一份原子凭据快照；上传内容实现 common `UploadSource`，声明已知长度并把
@@ -42,8 +46,32 @@ HTTP 附件上传由会话拥有的 `FileRepository` 统一协调。Repository �
 `ByteArray`。只有不超过 1 MiB 的明确小 payload 可以使用内存便利入口；Repository 关闭会断开正在
 执行的 HTTP 连接，关闭或取消之后不再发布进度和结果。
 
-销毁顺序先停止日志上传、RPC 和事件消费，再断开 TCP，最后解除全局日志回调。`close()` 必须幂等，
-防止登出、认证失败和窗口销毁同时触发时产生二次清理问题。
+群机器人管理的 HTTP Repository 同样是 `ClientSession` 的唯一资源，不由页面临时构造。它固定
+`server + owner uid + identity epoch`，每个请求读取同一 `UserSession` 的最新原子凭据，任一 owner
+字段变化立即失败；quiesce
+会先关闭发布 gate，再断开所有活跃连接，因此迟到响应不能回写退出后的页面状态。
+
+会话终止采用两个不可逆阶段。`quiesce(reason)` 先拒绝全部新业务，停止发送队列、事件消费、HTTP
+Repository、日志上传和本地缓存；reason 明确区分用户退出、认证撤销、进程 owner 替换、协议升级与
+应用关闭。用户主动退出时，原始 `RpcClient` 不通过 Repository 或 session getter 暴露，只在
+`USER_LOGOUT` quiesced 状态下签发一次性 retirement capability；该 capability 至多发送一次 logout
+RPC，并在 `finally` 中至多执行一次 full close。页面先退出认证 UI，再尽力完成它；随后按 transport
+owner generation 决定是否断开 TCP。其他终态直接从 quiesce 进入 close。每个资源按 best-effort
+释放，单项 close 或 TokenStore 清理异常不得阻断后续资源、UI 终态、RPC stop 或 transport disconnect。
+`createSession` 的组装本身也是事务：cache、worker、HTTP transport、AppLog、RpcClient 与事件 binding
+每取得一个 owner 就登记逆序 rollback，只有完整构造后才移交给 `ClientSession`；构造失败由组合根
+继续清空内存身份并断开不属于 construction stack 的 `ImClient`。
+
+业务 RPC、消息/typing、ACK 注册和事件同步控制各持有不可复活的 session admission。quiesce 在发布
+`QUIESCED` 前同步退休业务 wire 与 sync wire；EventLoop 在 admission 锁内完成“校验 owner generation
+→ 注册 waiter → 实际 write”，退休会等待已经准入的实际 write 退出，返回后不可能再向替代账号写包。
+`SYNC_REQUEST` 的初次、分页与 reset 三个出口以及 `SYNC_READY` 都经过同一 sync admission；异步移除
+binding 仅用于回收，不承担安全边界。
+
+LocalCache 与所有已捕获的 `MessagePager` 共享同一个 `CacheUseGate`。固定锁序从 cache lease 开始；
+close 取得独占 lease，等待已准入的同步 DB 操作退出，推进历史代次并关闭 driver，之后 ACK、cursor、
+draft、history page 或 pager 的任何迟到写入都会在 SQL 前失败。SendQueue 回调和 EventProcessor 的
+cache/SharedFlow/cursor 发布另带不可复用的停止代次，协程 cancel 只负责回收，不作为安全边界。
 
 `app` 在 `ClientSession` 之上建立一个会话级组合根，而不是再造一个包含全部业务的“超级
 ViewModel”：
@@ -74,6 +102,11 @@ DISCONNECTED → CONNECTING → CONNECTED → AUTHENTICATED
 ```
 
 - `connectAndAuth` 把认证参数设置和连接调度放入同一个 EventLoop 任务，避免协程线程插入造成竞态。
+- refresh attempt 固定 caller 期望 uid；AUTH 回包在 durable credential hook、事件同步和 cache 构造前
+  同时校验 credential owner 与已安装 projection owner。不同 uid 直接进入终态，不发送 SYNC_REQUEST。
+- token 轮换属于 AUTH admission：`UserSession` 在同一身份锁内执行 uid 校验、同步持久化 hook、再发布
+  新身份；持久化失败时旧身份保持完整且认证不能进入同步。logout/timeout 会先退休 callback gate，
+  等待已准入 commit 后再清凭据和内存身份，迟到 AUTH 不能重新保存 token 或复活会话。
 - 连接状态在单线程 Netty EventLoop 中修改。
 - 重连指数退避并复用用户层认证材料。
 - 写操作在未认证时被门禁拒绝，不能排队成未知时序。
@@ -108,7 +141,7 @@ EventProcessor 消费 `NOTIFY`，在 IO 调度器解码和写数据库：
 
 1. 根据 NotifyContracts 选择唯一 reader，校验并解码完整快照。
 2. upsert 或删除本地对象。
-3. 如果会话安装了可靠 sink，先投递持久入站消息。
+3. 如果会话安装了可靠 sink，在停止代次 gate 内同步投递持久入站消息；sink 返回前 stop 不得返回。
 4. 以非阻塞 `tryEmit` 发出消息、输入状态或联系人变化提示；它不参与成功语义。
 5. 权威本地投影和可靠 sink 都成功后推进 `lastEventId`。
 
@@ -151,6 +184,20 @@ ImClient 才在同一认证连接发送 `SYNC_REQUEST(0)`。一次连接只准�
 - 会话合并，确保 serverSeq、readSeq 等单调字段不倒退。
 - `markConversationRead` 的即时本地反馈与远端同步。
 - 测试使用的 `FakeLocalCache`。
+
+历史消息 RPC 必须在发请求前从 LocalCache 取得 `MessageHistoryLease`，并且只能通过该
+lease 提交整页结果。lease 绑定缓存实例、全局投影代次、chat 生命周期、请求代次和
+当前历史链。newest-page 的 begin 只预留 pending 新链并使更早的 newest 请求失效；
+完整页成功提交后它才取代 committed anchor。older-page 只绑定 begin 当时已提交的
+anchor，绝不绑定仅 pending 的新链：older 先提交可以安全扩展旧链，newest 先提交则
+使旧 older 失效，因此不会把两段不连续页拼成假链。newest RPC 失败或取消时，
+MessageRepository 必须显式 abandon pending lease，恢复上一个 committed anchor。`deleteChat`、
+`resetServerProjection` 与 `close`
+都会推进对应代次，因此墓碑之前的迟到页只返回 stale，不得重建被删除的 chat。
+LocalCache 在固定锁序下再次验证 lease，并用一个 SQLite 事务校验、写入完整页；
+页内任意一行失败必须整页回滚。MessageRepository 把 stale 映射为 `CancellationException`，
+避免页面把丢弃结果当成业务失败。EventProcessor 的实时单条 `insertMessage` 不参与该 fence，
+也不会使正常在途历史页失效。
 
 联系人展示模型由 Contact 关系与 User 资料组合投影；`getContacts` 与 `observeContacts`
 使用同一 projector，`USER_UPDATED` 必须能驱动已展示联系人的姓名更新。平台壳不得直接写

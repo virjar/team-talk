@@ -179,15 +179,16 @@ class ChatStore(
         return chat
     }
 
-    /** Drops pre-transaction cache state only after the aggregate transaction has committed. */
-    fun joinByInvite(uid: String, token: String, nowMillis: Long): InviteJoinResult {
-        val chatId = inviteRepo.getInviteLink(token)?.chatId
-            ?: throw IllegalArgumentException("邀请链接不存在")
-        return withCacheGate(chatId) {
-            val result = repo.joinByInvite(uid, token, nowMillis)
-            invalidateChat(result.chat.chatId)
-            result
-        }
+    /** Transaction-bound invite consumption; cache invalidation is published only after commit. */
+    internal fun joinByInvite(
+        transaction: PgTransactionContext,
+        uid: String,
+        token: String,
+        nowMillis: Long,
+    ): InviteJoinResult = repo.joinByInvite(transaction, uid, token, nowMillis)
+
+    internal fun invalidateCommittedInviteJoin(chatId: String) {
+        withCacheGate(chatId) { invalidateChat(chatId) }
     }
 
     fun updateGroup(chatId: String, name: String?, avatar: String?, notice: String?) {
@@ -210,21 +211,20 @@ class ChatStore(
         }
     }
 
-    fun addMembers(chatId: String, uids: List<String>) {
-        withCacheGate(chatId) {
-            memberRepo.addMembers(chatId, uids)
-            chats.remove(chatId)
-            invalidateMembers(chatId)
-        }
-    }
-
-    fun removeMember(chatId: String, uid: String) {
-        withCacheGate(chatId) {
-            memberRepo.removeMember(chatId, uid)
-            chats.remove(chatId)
-            invalidateMembers(chatId)
-        }
-    }
+    /** Transaction-bound add. Cache state remains untouched until the caller publishes commit. */
+    internal fun addMembers(
+        transaction: PgTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        uids: List<String>,
+        authorize: (GroupMemberAdditionFacts) -> Unit,
+    ): GroupMemberAddition = memberRepo.addMembers(
+        transaction = transaction,
+        chatId = chatId,
+        operatorUid = operatorUid,
+        uids = uids,
+        authorize = authorize,
+    )
 
     /** Transaction-bound member removal. Cache state is intentionally untouched before commit. */
     internal fun removeMember(
@@ -241,8 +241,8 @@ class ChatStore(
         authorize = authorize,
     )
 
-    /** Called only through PgWriteScope.afterCommit after member/event state is durable. */
-    internal fun invalidateCommittedMemberRemoval(chatId: String) {
+    /** Called only after a transaction-bound membership add/remove and its events commit. */
+    internal fun invalidateCommittedMembershipChange(chatId: String) {
         withCacheGate(chatId) { invalidateChat(chatId) }
     }
 

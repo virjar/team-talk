@@ -1,6 +1,6 @@
 package com.virjar.tk.client
 
-import com.virjar.tk.log.TkLoggerFactory
+import com.virjar.tk.util.PlatformOnlyTkLogger
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.payload.AuthRequestPayload
 import com.virjar.tk.protocol.payload.AuthResponsePayload
@@ -32,10 +32,12 @@ internal class AuthSyncCoordinator(
     private val publishAuthResponse: (AuthResponsePayload) -> Unit,
     private val onAuthResult: ((success: Boolean, uid: String?, username: String?, name: String?, refreshToken: String?, accessToken: String?, failureReason: String?) -> Unit)?,
 ) {
-    private val logger = TkLoggerFactory.get("AuthSyncCoordinator")
+    private val logger = PlatformOnlyTkLogger("AuthSyncCoordinator")
 
     private data class EventSyncBinding(
         val owner: Any,
+        val expectedUid: String?,
+        val wireAdmission: WireSendAdmission,
         val cursor: () -> Long,
         val processBatch: suspend (List<NotifyPayload>, reportProgress: (Long) -> Unit) -> Long,
         val reset: suspend () -> Long,
@@ -43,11 +45,15 @@ internal class AuthSyncCoordinator(
 
     /** Reused after a transport reconnect; upgraded to refresh-token auth after a successful AUTH. */
     private var pendingAuth: AuthRequestPayload? = null
+    /** Caller-bound uid for refresh authentication and every later reconnect of that identity. */
+    private var pendingExpectedUid: String? = null
 
     /** A server-declared AUTH failure is terminal until an explicit new authentication attempt. */
     private var authenticationTerminal = false
 
     private var eventSyncBinding: EventSyncBinding? = null
+    /** Suppresses control packets queued behind a synchronously retired session binding. */
+    private var eventSyncRetired = false
     private var syncBatchInFlight = false
     private var syncResetApplied = false
     private var lastRequestedSyncCursor = -1L
@@ -61,8 +67,10 @@ internal class AuthSyncCoordinator(
     private val _eventSyncCursor = MutableStateFlow(-1L)
     val eventSyncCursor: StateFlow<Long> = _eventSyncCursor.asStateFlow()
 
-    fun prepareAuthentication(auth: AuthRequestPayload) {
+    fun prepareAuthentication(auth: AuthRequestPayload, expectedUid: String? = null) {
+        require(expectedUid == null || expectedUid.isNotBlank()) { "Expected auth uid must not be blank" }
         pendingAuth = auth
+        pendingExpectedUid = expectedUid
         authenticationTerminal = false
         _authenticationFailure.value = null
     }
@@ -73,12 +81,23 @@ internal class AuthSyncCoordinator(
 
     fun installEventSync(
         owner: Any,
+        expectedUid: String?,
+        wireAdmission: WireSendAdmission,
         cursor: () -> Long,
         processBatch: suspend (List<NotifyPayload>, reportProgress: (Long) -> Unit) -> Long,
         reset: suspend () -> Long,
     ) {
         val previous = eventSyncBinding
-        eventSyncBinding = EventSyncBinding(owner, cursor, processBatch, reset)
+        require(expectedUid == null || expectedUid.isNotBlank()) { "Event sync owner uid must not be blank" }
+        eventSyncRetired = false
+        eventSyncBinding = EventSyncBinding(
+            owner,
+            expectedUid,
+            wireAdmission,
+            cursor,
+            processBatch,
+            reset,
+        )
         if (
             previous != null &&
             previous.owner !== owner &&
@@ -91,9 +110,10 @@ internal class AuthSyncCoordinator(
     }
 
     fun removeEventSync(owner: Any) {
-        if (eventSyncBinding?.owner !== owner) return
+        val removed = eventSyncBinding?.takeIf { it.owner === owner } ?: return
         eventSyncBinding = null
-        if (connectionState() == ConnectionState.SYNCHRONIZING) {
+        eventSyncRetired = !removed.wireAdmission.isActive()
+        if (!eventSyncRetired && connectionState() == ConnectionState.SYNCHRONIZING) {
             closeForEventResync("Event sync projection owner was removed during synchronization")
         }
     }
@@ -118,6 +138,7 @@ internal class AuthSyncCoordinator(
             if (uid == null || username == null || name == null || refreshToken == null || accessToken == null) {
                 val reason = "服务器认证成功响应缺少必需身份或令牌字段"
                 pendingAuth = null
+                pendingExpectedUid = null
                 authenticationTerminal = true
                 _authenticationFailure.value = AuthenticationFailure(
                     kind = AuthenticationFailureKind.REJECTED,
@@ -126,6 +147,36 @@ internal class AuthSyncCoordinator(
                 transitionTo(ConnectionState.AUTH_FAILED)
                 onAuthResult?.invoke(false, null, null, null, null, null, reason)
                 publishAuthResponse(response)
+                return
+            }
+            val expectedAuthUid = pendingExpectedUid
+            if (expectedAuthUid != null && expectedAuthUid != uid) {
+                val reason = "认证响应 uid 与 refresh credential owner 不一致"
+                pendingAuth = null
+                pendingExpectedUid = null
+                authenticationTerminal = true
+                _authenticationFailure.value = AuthenticationFailure(
+                    kind = AuthenticationFailureKind.REJECTED,
+                    reason = reason,
+                )
+                transitionTo(ConnectionState.AUTH_FAILED)
+                onAuthResult?.invoke(false, null, null, null, null, null, reason)
+                closeTransport("Authentication uid rejected by credential owner", null)
+                return
+            }
+            val expectedProjectionUid = eventSyncBinding?.expectedUid
+            if (expectedProjectionUid != null && expectedProjectionUid != uid) {
+                val reason = "认证身份与已安装的事件投影 owner 不一致"
+                pendingAuth = null
+                pendingExpectedUid = null
+                authenticationTerminal = true
+                _authenticationFailure.value = AuthenticationFailure(
+                    kind = AuthenticationFailureKind.REJECTED,
+                    reason = reason,
+                )
+                transitionTo(ConnectionState.AUTH_FAILED)
+                onAuthResult?.invoke(false, null, null, null, null, null, reason)
+                closeTransport("Authentication uid rejected by event projection owner", null)
                 return
             }
             _authenticationFailure.value = null
@@ -138,15 +189,27 @@ internal class AuthSyncCoordinator(
                 password = null,
                 name = null,
             )
-            onAuthResult?.invoke(
-                true,
-                uid,
-                username,
-                name,
-                refreshToken,
-                accessToken,
-                null,
-            )
+            pendingExpectedUid = uid
+            try {
+                onAuthResult?.invoke(
+                    true,
+                    uid,
+                    username,
+                    name,
+                    refreshToken,
+                    accessToken,
+                    null,
+                )
+            } catch (failure: Throwable) {
+                // Credential admission is part of AUTH acceptance. A client which cannot commit
+                // rotated durable credentials must never enter sync/ready with an unusable token.
+                pendingAuth = null
+                pendingExpectedUid = null
+                authenticationTerminal = true
+                transitionTo(ConnectionState.AUTH_FAILED)
+                closeTransport("Authentication credential admission failed", failure)
+                return
+            }
             resetSyncAttempt()
             transitionTo(ConnectionState.SYNCHRONIZING)
             beginEventSyncIfReady()
@@ -157,11 +220,14 @@ internal class AuthSyncCoordinator(
         } else {
             val failure = checkNotNull(response.toAuthenticationFailure())
             pendingAuth = null
+            pendingExpectedUid = null
             authenticationTerminal = true
             _authenticationFailure.value = failure
             transitionTo(ConnectionState.AUTH_FAILED)
             onAuthResult?.invoke(false, null, null, null, null, null, failure.reason)
-            logger.trace("Auth failed (terminal): code=${response.code}, reason=${response.reason}")
+            // The server reason is intentionally not journaled: auth diagnostics must never echo
+            // attacker-controlled or accidentally credential-bearing text.
+            logger.trace("Auth failed (terminal): code=${response.code}")
         }
         publishAuthResponse(response)
     }
@@ -176,38 +242,60 @@ internal class AuthSyncCoordinator(
     }
 
     fun handleSyncReady() {
-        if (
-            connectionState() != ConnectionState.SYNCHRONIZING ||
-            syncBatchInFlight ||
-            lastRequestedSyncCursor < 0L ||
-            eventSyncBinding == null
-        ) {
+        val binding = eventSyncBinding
+        if (binding == null) {
+            if (eventSyncRetired) return
             closeForEventResync("Unexpected SYNC_READY")
             return
         }
-        onAuthenticationAccepted()
-        transitionTo(ConnectionState.AUTHENTICATED)
+        var admitted = false
+        var stillCurrent = false
+        binding.wireAdmission.use {
+            admitted = true
+            stillCurrent = eventSyncBinding === binding &&
+                connectionState() == ConnectionState.SYNCHRONIZING &&
+                !syncBatchInFlight &&
+                lastRequestedSyncCursor >= 0L
+            if (stillCurrent) {
+                onAuthenticationAccepted()
+                transitionTo(ConnectionState.AUTHENTICATED)
+            } else {
+                closeForEventResync("Unexpected SYNC_READY")
+            }
+            true
+        }
+        if (!admitted) return
+        if (!stillCurrent) return
         logger.trace("Persistent event sync ready at cursor=$lastRequestedSyncCursor")
     }
 
     fun handleSyncReset() {
-        if (
-            connectionState() != ConnectionState.SYNCHRONIZING ||
-            syncBatchInFlight ||
-            syncResetApplied ||
-            lastRequestedSyncCursor < 0L
-        ) {
-            closeForEventResync("Unexpected, overlapping, or repeated SYNC_RESET")
-            return
-        }
         val binding = eventSyncBinding
         val scope = connectionScope()
         if (binding == null || scope == null) {
+            if (binding == null && eventSyncRetired) return
             closeForEventResync("SYNC_RESET arrived without an active projection owner")
             return
         }
-        syncResetApplied = true
-        syncBatchInFlight = true
+        var admitted = false
+        var valid = false
+        binding.wireAdmission.use {
+            admitted = true
+            valid = eventSyncBinding === binding &&
+                connectionState() == ConnectionState.SYNCHRONIZING &&
+                !syncBatchInFlight &&
+                !syncResetApplied &&
+                lastRequestedSyncCursor >= 0L
+            if (valid) {
+                syncResetApplied = true
+                syncBatchInFlight = true
+            } else {
+                closeForEventResync("Unexpected, overlapping, or repeated SYNC_RESET")
+            }
+            true
+        }
+        if (!admitted) return
+        if (!valid) return
         val attemptGeneration = syncAttemptGeneration
         scope.launch {
             try {
@@ -217,21 +305,36 @@ internal class AuthSyncCoordinator(
                 check(connectionState() == ConnectionState.SYNCHRONIZING) {
                     "Connection left synchronization during projection reset"
                 }
-                lastRequestedSyncCursor = 0L
-                _eventSyncCursor.value = 0L
-                check(writeProtocol(SyncRequestPayload(0L))) {
-                    "Connection closed during projection reset"
+                var admitted = false
+                var current = false
+                binding.wireAdmission.use {
+                    admitted = true
+                    current = isCurrentAttempt(attemptGeneration, binding)
+                    if (!current) return@use true
+                    lastRequestedSyncCursor = 0L
+                    _eventSyncCursor.value = 0L
+                    if (!writeProtocol(SyncRequestPayload(0L))) {
+                        closeForEventResync("Connection closed during projection reset")
+                    }
+                    true
                 }
+                if (!admitted || !current) return@launch
                 logger.trace("Server projection reset; event sync restarted from cursor=0")
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
-                if (isCurrentAttempt(attemptGeneration, binding)) {
-                    closeForEventResync("Failed to reset server projection", failure)
+                binding.wireAdmission.use {
+                    if (isCurrentAttempt(attemptGeneration, binding)) {
+                        closeForEventResync("Failed to reset server projection", failure)
+                    }
+                    true
                 }
             } finally {
-                if (attemptGeneration == syncAttemptGeneration) {
-                    syncBatchInFlight = false
+                binding.wireAdmission.use {
+                    if (attemptGeneration == syncAttemptGeneration && eventSyncBinding === binding) {
+                        syncBatchInFlight = false
+                    }
+                    true
                 }
             }
         }
@@ -250,60 +353,89 @@ internal class AuthSyncCoordinator(
             return
         }
         val binding = eventSyncBinding ?: return
-        val initialCursor = binding.cursor()
-        if (initialCursor < 0L) {
-            closeForEventResync("Persistent event cursor is negative: $initialCursor")
-            return
+        var admitted = false
+        var attemptedWrite = false
+        var initialCursor = -1L
+        binding.wireAdmission.use {
+            admitted = true
+            if (
+                eventSyncBinding !== binding ||
+                connectionState() != ConnectionState.SYNCHRONIZING ||
+                lastRequestedSyncCursor >= 0L
+            ) return@use true
+            initialCursor = binding.cursor()
+            if (initialCursor < 0L) {
+                closeForEventResync("Persistent event cursor is negative: $initialCursor")
+                return@use true
+            }
+            lastRequestedSyncCursor = initialCursor
+            _eventSyncCursor.value = initialCursor
+            attemptedWrite = true
+            if (!writeProtocol(SyncRequestPayload(initialCursor))) {
+                closeForEventResync("Connection closed before the first sync request")
+            }
+            true
         }
-        lastRequestedSyncCursor = initialCursor
-        _eventSyncCursor.value = initialCursor
-        if (!writeProtocol(SyncRequestPayload(initialCursor))) {
-            closeForEventResync("Connection closed before the first sync request")
-            return
-        }
+        if (!admitted) return
+        if (initialCursor < 0L) return
+        if (!attemptedWrite) return
         logger.trace("Event sync requested after cursor=$initialCursor")
     }
 
     private fun handleSyncEvents(events: List<NotifyPayload>) {
-        if (connectionState() != ConnectionState.SYNCHRONIZING || syncBatchInFlight) {
-            closeForEventResync("Unexpected or overlapping sync batch")
-            return
-        }
         val binding = eventSyncBinding
         val scope = connectionScope()
         if (binding == null || scope == null) {
+            if (binding == null && eventSyncRetired) return
             closeForEventResync("Sync batch arrived without an active projection owner")
             return
         }
-        val requestedAfter = lastRequestedSyncCursor
-        val hasCursorOverflow = requestedAfter == Long.MAX_VALUE
-        if (
-            requestedAfter < 0L ||
-            hasCursorOverflow ||
-            events.isEmpty() ||
-            events.any { it.eventId <= 0L } ||
-            events.first().eventId != requestedAfter + 1L ||
-            events.zipWithNext().any { (left, right) -> right.eventId != left.eventId + 1L }
-        ) {
-            closeForEventResync(
-                "Sync events are not contiguous after requested cursor=$requestedAfter",
-            )
-            return
+        var admitted = false
+        var valid = false
+        var requestedAfter = -1L
+        binding.wireAdmission.use {
+            admitted = true
+            requestedAfter = lastRequestedSyncCursor
+            val hasCursorOverflow = requestedAfter == Long.MAX_VALUE
+            valid = eventSyncBinding === binding &&
+                connectionState() == ConnectionState.SYNCHRONIZING &&
+                !syncBatchInFlight &&
+                requestedAfter >= 0L &&
+                !hasCursorOverflow &&
+                events.isNotEmpty() &&
+                events.none { it.eventId <= 0L } &&
+                events.first().eventId == requestedAfter + 1L &&
+                events.zipWithNext().all { (left, right) -> right.eventId == left.eventId + 1L }
+            if (valid) {
+                syncBatchInFlight = true
+            } else {
+                closeForEventResync(
+                    "Sync events are not contiguous after requested cursor=$requestedAfter",
+                )
+            }
+            true
         }
-        syncBatchInFlight = true
+        if (!admitted || !valid) return
         val attemptGeneration = syncAttemptGeneration
         val expectedCursor = events.last().eventId
         val reportProgress: (Long) -> Unit = { cursor ->
             connectionScope()?.launch {
-                if (!isCurrentAttempt(attemptGeneration, binding)) return@launch
-                if (cursor <= requestedAfter || cursor > expectedCursor) {
-                    closeForEventResync(
-                        "Sync projection reported invalid progress=$cursor for " +
-                            "requested=$requestedAfter expected=$expectedCursor",
-                    )
-                } else if (cursor > _eventSyncCursor.value) {
-                    _eventSyncCursor.value = cursor
+                var invalidProgress = false
+                val admitted = binding.wireAdmission.use {
+                    if (!isCurrentAttempt(attemptGeneration, binding)) return@use true
+                    if (cursor <= requestedAfter || cursor > expectedCursor) {
+                        invalidProgress = true
+                        closeForEventResync(
+                            "Sync projection reported invalid progress=$cursor for " +
+                                "requested=$requestedAfter expected=$expectedCursor",
+                        )
+                    } else if (cursor > _eventSyncCursor.value) {
+                        _eventSyncCursor.value = cursor
+                    }
+                    true
                 }
+                if (!admitted) return@launch
+                if (invalidProgress) return@launch
             }
         }
         scope.launch {
@@ -313,20 +445,35 @@ internal class AuthSyncCoordinator(
                 check(persistedCursor == expectedCursor) {
                     "Sync projection stopped at $persistedCursor instead of $expectedCursor"
                 }
-                lastRequestedSyncCursor = persistedCursor
-                _eventSyncCursor.value = persistedCursor
-                check(writeProtocol(SyncRequestPayload(persistedCursor))) {
-                    "Connection closed during event synchronization"
+                var admitted = false
+                var current = false
+                binding.wireAdmission.use {
+                    admitted = true
+                    current = isCurrentAttempt(attemptGeneration, binding)
+                    if (!current) return@use true
+                    lastRequestedSyncCursor = persistedCursor
+                    _eventSyncCursor.value = persistedCursor
+                    if (!writeProtocol(SyncRequestPayload(persistedCursor))) {
+                        closeForEventResync("Connection closed during event synchronization")
+                    }
+                    true
                 }
+                if (!admitted || !current) return@launch
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
-                if (isCurrentAttempt(attemptGeneration, binding)) {
-                    closeForEventResync("Failed to persist sync batch", failure)
+                binding.wireAdmission.use {
+                    if (isCurrentAttempt(attemptGeneration, binding)) {
+                        closeForEventResync("Failed to persist sync batch", failure)
+                    }
+                    true
                 }
             } finally {
-                if (attemptGeneration == syncAttemptGeneration) {
-                    syncBatchInFlight = false
+                binding.wireAdmission.use {
+                    if (attemptGeneration == syncAttemptGeneration && eventSyncBinding === binding) {
+                        syncBatchInFlight = false
+                    }
+                    true
                 }
             }
         }

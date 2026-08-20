@@ -4,7 +4,7 @@ import com.sun.net.httpserver.HttpExchange
 import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.body.markdownContentOrNull
 import com.virjar.tk.protocol.payload.MessageAckPayload
-import com.virjar.tk.repository.asUploadSource
+import com.virjar.tk.util.PlatformOnlyTkLogger
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -13,10 +13,14 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.put
-import java.io.File
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.security.MessageDigest
+
+private val agentApiLogger = PlatformOnlyTkLogger("AgentApi")
 
 /**
- * agent REST API（doc/05-clients/headless.md）。仅 127.0.0.1 + Bearer apiToken。
+ * agent REST API（doc/05-clients/headless.md）。仅 loopback + Bearer apiToken。
  * 统一 `{ok, data|error}`；JSON 手工构建（body 多态结构不适合序列化器推断）。
  */
 class AgentApi(private val agent: AgentRuntime) {
@@ -30,7 +34,10 @@ class AgentApi(private val agent: AgentRuntime) {
                 ex.resp(401, err("invalid token"))
                 return
             }
-            val body = ex.bodyString()
+            val body = readAgentRequestBody(
+                input = ex.requestBody,
+                declaredLength = ex.requestHeaders.getFirst("Content-Length"),
+            )
             // 只读端点 GET/POST 双支持（读操作 GET 语义为主，POST 便于 curl 无 -G）
             val readonly = path == "/v1/conversations" || path == "/v1/friends" || path == "/v1/friend-pending"
             val resp: Pair<Int, JsonObject> = when {
@@ -42,6 +49,8 @@ class AgentApi(private val agent: AgentRuntime) {
                 else -> 404 to err("unknown $path")
             }
             ex.resp(resp.first, resp.second)
+        } catch (e: AgentRequestBodyException) {
+            runCatching { ex.resp(e.status, err(e.safeMessage)) }
         } catch (e: Exception) {
             runCatching { ex.resp(500, err(e.message ?: e::class.simpleName ?: "error")) }
         }
@@ -53,7 +62,7 @@ class AgentApi(private val agent: AgentRuntime) {
             put("connected", state == ConnectionState.AUTHENTICATED)
             put("state", state.name)
             put("uid", agent.bot.uid)
-            put("username", agent.bot.userSession.username ?: "")
+            put("username", agent.bot.username ?: "")
             put("bufferedMessages", agent.bufferedCount)
         })
     }
@@ -86,32 +95,29 @@ class AgentApi(private val agent: AgentRuntime) {
                 agentAckResponse(ack)
             }
             "/v1/send-file" -> {
-                val file = File(r.req("path"))
-                if (!file.exists()) {
-                    404 to err("file not found: ${file.path}")
-                } else {
+                withStagedUpload(r) { staged ->
                     val ack = agent.bot.uploadAndSendFile(
                         r.req("chatId"),
-                        file.asUploadSource(),
-                        file.name,
+                        staged.source,
+                        staged.originalFileName,
                         "application/octet-stream",
                     )
                     agentAckResponse(ack)
                 }
             }
-            "/v1/upload" -> withFile(r) { f ->
+            "/v1/upload" -> withStagedUpload(r) { staged ->
                 val attachment = agent.bot.uploadFile(
-                    f.asUploadSource(),
-                    f.name,
+                    staged.source,
+                    staged.originalFileName,
                     "application/octet-stream",
                 )
-                buildJsonObject {
+                200 to ok(buildJsonObject {
                     put("path", attachment.path)
                     put("url", com.virjar.tk.repository.FileOps.resolveUrl(agent.serverUrl, attachment))
                     put("name", attachment.name)
                     put("contentType", attachment.contentType)
                     put("size", attachment.size)
-                }
+                })
             }
             "/v1/history" -> {
                 val list = agent.bot.getHistory(r.req("chatId"), r["fromSeq"]?.toLongOrNull() ?: 0L, r["limit"]?.toIntOrNull() ?: 10)
@@ -217,10 +223,16 @@ class AgentApi(private val agent: AgentRuntime) {
     }
 
     // ── 工具 ──
-    private inline fun withFile(r: Map<String, String>, block: (File) -> JsonObject): Pair<Int, JsonObject> {
-        val f = File(r.req("path"))
-        return if (!f.exists()) 404 to err("file not found: ${f.path}")
-        else 200 to ok(block(f))
+    private suspend fun withStagedUpload(
+        request: Map<String, String>,
+        block: suspend (AgentStagedUpload) -> Pair<Int, JsonObject>,
+    ): Pair<Int, JsonObject> {
+        val staged = runCatching {
+            agent.fileAccessPolicy.stageUpload(request.req("path"))
+        }.getOrElse {
+            return 400 to err("file path is not allowed")
+        }
+        return preserveRemoteResultDuringCleanup(staged::close) { block(staged) }
     }
 
     private fun Map<String, String>.req(key: String): String =
@@ -240,7 +252,6 @@ class AgentApi(private val agent: AgentRuntime) {
     private fun ok(data: JsonObject) = buildJsonObject { put("ok", true); put("data", data) }
     private fun err(msg: String) = buildJsonObject { put("ok", false); put("error", msg) }
 
-    private fun HttpExchange.bodyString() = requestBody.bufferedReader().use { it.readText() }
     private fun HttpExchange.query(): Map<String, String> {
         val q = requestURI.query ?: return emptyMap()
         return q.split("&").mapNotNull {
@@ -256,8 +267,67 @@ class AgentApi(private val agent: AgentRuntime) {
     }
 }
 
-internal fun isValidAgentAuthorization(header: String?, apiToken: String): Boolean =
-    apiToken.isNotBlank() && header == "Bearer $apiToken"
+internal fun isValidAgentAuthorization(header: String?, apiToken: String): Boolean {
+    if (apiToken.isBlank() || header == null || !header.startsWith(BEARER_PREFIX)) return false
+    val candidate = header.removePrefix(BEARER_PREFIX)
+    return MessageDigest.isEqual(candidate.toByteArray(), apiToken.toByteArray())
+}
+
+private const val BEARER_PREFIX = "Bearer "
+internal const val MAX_AGENT_REQUEST_BODY_BYTES = 64 * 1024
+
+internal class AgentRequestBodyException(
+    val status: Int,
+    val safeMessage: String,
+) : IllegalArgumentException(safeMessage)
+
+/** Content-Length is only a preflight; streaming accounting remains the authoritative limit. */
+internal fun readAgentRequestBody(input: InputStream, declaredLength: String?): String {
+    val expected = declaredLength?.let { raw ->
+        raw.toLongOrNull()?.takeIf { it >= 0L }
+            ?: throw AgentRequestBodyException(400, "invalid request body length")
+    }
+    if (expected != null && expected > MAX_AGENT_REQUEST_BODY_BYTES) {
+        throw AgentRequestBodyException(413, "request body is too large")
+    }
+    val initialCapacity = minOf(expected ?: 0L, MAX_AGENT_REQUEST_BODY_BYTES.toLong()).toInt()
+    return input.use { stream ->
+        val output = ByteArrayOutputStream(initialCapacity)
+        val buffer = ByteArray(8 * 1024)
+        var total = 0
+        while (true) {
+            val read = stream.read(buffer)
+            if (read < 0) break
+            if (read == 0) continue
+            if (total > MAX_AGENT_REQUEST_BODY_BYTES - read) {
+                throw AgentRequestBodyException(413, "request body is too large")
+            }
+            output.write(buffer, 0, read)
+            total += read
+        }
+        output.toByteArray().toString(Charsets.UTF_8)
+    }
+}
+
+/**
+ * A remote upload/send result is authoritative once [block] returns. Local staging cleanup is
+ * best-effort and must neither turn success into a retryable 500 nor mask a remote failure.
+ */
+internal suspend fun <T> preserveRemoteResultDuringCleanup(
+    cleanup: () -> Unit,
+    block: suspend () -> T,
+): T = try {
+    block()
+} finally {
+    runCatching(cleanup).onFailure {
+        // Never log the staging path or the exception message: either may contain caller input.
+        runCatching {
+            agentApiLogger.fault(
+                "Private upload staging cleanup failed; operator cleanup may be required",
+            )
+        }
+    }
+}
 
 /** 服务端拒绝、内部错误和 ACK 超时都不能被本地 Agent 伪装成成功。 */
 internal fun agentAckResponse(ack: MessageAckPayload): Pair<Int, JsonObject> {

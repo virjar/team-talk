@@ -1,10 +1,6 @@
 package com.virjar.tk.repository
 
 import com.virjar.tk.AppError
-import com.virjar.tk.Outcome
-import com.virjar.tk.http.GroupBotCredentials
-import com.virjar.tk.http.GroupBotSummary
-import com.virjar.tk.outcome
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -12,49 +8,41 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
-actual class HttpGroupBotManagementRepository actual constructor(
-    serverUrl: String,
-    accessToken: String?,
-) : GroupBotManagementRepository {
-    private val transport = AndroidGroupBotHttpTransport(serverUrl, accessToken)
+internal actual fun createPlatformGroupBotHttpTransport(): PlatformGroupBotHttpTransport =
+    AndroidGroupBotHttpTransport()
 
-    override suspend fun list(chatId: String): Outcome<List<GroupBotSummary>> = outcome {
-        GroupBotHttpContract.decodeList(transport.request("GET", GroupBotHttpContract.listPath(chatId)))
-    }
+private class AndroidGroupBotHttpTransport : PlatformGroupBotHttpTransport {
+    private val lifecycleLock = Any()
+    private val activeConnections = mutableSetOf<HttpURLConnection>()
+    private var closed = false
 
-    override suspend fun create(chatId: String, name: String): Outcome<GroupBotCredentials> = outcome {
-        GroupBotHttpContract.decodeCredentials(
-            transport.request("POST", GroupBotHttpContract.listPath(chatId), GroupBotHttpContract.encodeCreate(name)),
-        )
-    }
-
-    override suspend fun rotate(chatId: String, botId: String): Outcome<GroupBotCredentials> = outcome {
-        GroupBotHttpContract.decodeCredentials(
-            transport.request("POST", GroupBotHttpContract.rotatePath(chatId, botId)),
-        )
-    }
-
-    override suspend fun remove(chatId: String, botId: String): Outcome<Unit> = outcome {
-        transport.request("DELETE", GroupBotHttpContract.botPath(chatId, botId))
-        Unit
-    }
-}
-
-private class AndroidGroupBotHttpTransport(serverUrl: String, private val accessToken: String?) {
-    private val baseUrl = serverUrl.trimEnd('/')
-
-    suspend fun request(method: String, path: String, jsonBody: String? = null): String = withContext(Dispatchers.IO) {
+    override suspend fun request(
+        method: String,
+        url: String,
+        bearerToken: String,
+        jsonBody: String?,
+    ): String = withContext(Dispatchers.IO) {
         try {
-            val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
+            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = method
                 connectTimeout = 10_000
                 readTimeout = 30_000
                 setRequestProperty("Accept", "application/json")
-                accessToken?.let { setRequestProperty("Authorization", "Bearer $it") }
+                setRequestProperty("Authorization", "Bearer $bearerToken")
                 if (jsonBody != null) {
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 }
+            }
+            val accepted = synchronized(lifecycleLock) {
+                if (closed) false else {
+                    activeConnections += connection
+                    true
+                }
+            }
+            if (!accepted) {
+                connection.disconnect()
+                throw IOException("Group bot HTTP transport is closed")
             }
             try {
                 jsonBody?.encodeToByteArray()?.let { bytes -> connection.outputStream.use { it.write(bytes) } }
@@ -71,11 +59,21 @@ private class AndroidGroupBotHttpTransport(serverUrl: String, private val access
                     else -> body
                 }
             } finally {
+                synchronized(lifecycleLock) { activeConnections -= connection }
                 connection.disconnect()
             }
         } catch (error: IOException) {
             throw AppError.Network
         }
+    }
+
+    override fun close() {
+        val connections = synchronized(lifecycleLock) {
+            if (closed) return
+            closed = true
+            activeConnections.toList().also { activeConnections.clear() }
+        }
+        connections.forEach(HttpURLConnection::disconnect)
     }
 }
 

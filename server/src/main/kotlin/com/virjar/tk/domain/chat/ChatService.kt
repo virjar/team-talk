@@ -101,16 +101,42 @@ class ChatService(
 
     private suspend fun addMembersInternal(operatorUid: String, chatId: String, uids: List<String>) {
         requireUserManaged(chatId)
+        // Fail closed before resolving target identities; the transaction callback below repeats
+        // the authoritative role check under the locked membership snapshot.
         access.requireAdmin(operatorUid, chatId)
-        chatStore.addMembers(chatId, uids)
-        val chat = chatStore.getChat(chatId) ?: return
-        // 新成员预创建会话行
-        conversationService.ensureConversations(chatId, chat.chatType, uids)
-        val allMemberUids = chatStore.getMemberUids(chatId)
-        for (uid in uids) {
-            events.emitEvent(uid, NotifyType.CHAT_CREATED, chat)
+        val targets = uids.distinct()
+        targets.forEach(::requireHumanMemberTarget)
+        addMembersWithDurableEvents(chatId, operatorUid, targets) { facts ->
+            require(facts.chat.chatType == 2) { "单聊不能添加成员" }
+            val operator = facts.operator ?: throw IllegalArgumentException("操作者不是群成员")
+            require(operator.role >= 1) { "需要管理员权限" }
         }
-        events.emitEvents(allMemberUids, NotifyType.MEMBER_ADDED, chat)
+    }
+
+    /** Membership, Conversation creation and recipient events commit as one aggregate write. */
+    private suspend fun addMembersWithDurableEvents(
+        chatId: String,
+        operatorUid: String,
+        uids: List<String>,
+        authorize: (GroupMemberAdditionFacts) -> Unit,
+    ) {
+        unitOfWork.write {
+            val addition = chatStore.addMembers(
+                transaction = transaction,
+                chatId = chatId,
+                operatorUid = operatorUid,
+                uids = uids,
+                authorize = authorize,
+            )
+            if (addition.addedUids.isEmpty()) return@write
+            addition.addedUids.forEach { uid ->
+                appendEvent(uid, NotifyType.CHAT_CREATED, addition.chat)
+            }
+            addition.activeMemberUids.forEach { uid ->
+                appendEvent(uid, NotifyType.MEMBER_ADDED, addition.chat)
+            }
+            afterCommit { chatStore.invalidateCommittedMembershipChange(chatId) }
+        }
     }
 
     suspend fun removeMember(operatorUid: String, chatId: String, targetUid: String) =
@@ -118,31 +144,46 @@ class ChatService(
 
     private suspend fun removeMemberInternal(operatorUid: String, chatId: String, targetUid: String) {
         requireUserManaged(chatId)
+        removeMemberWithDurableTombstones(chatId, operatorUid, targetUid) { facts ->
+            require(facts.chat.chatType == 2) { "单聊不能退出，请删除自己的会话视图" }
+            val operator = facts.operator
+                ?: throw IllegalArgumentException("操作者不是群成员")
+            val target = facts.target
+                ?: throw IllegalArgumentException("目标不是群成员")
+            if (operatorUid == targetUid) {
+                if (operator.role == 2) {
+                    throw IllegalArgumentException("群主不能退出，请先转让群主")
+                }
+            } else {
+                if (operator.role < 1) throw IllegalArgumentException("需要管理员权限")
+                requireHumanMemberTarget(targetUid)
+                if (target.role == 2) throw IllegalArgumentException("不能踢出群主")
+                if (target.role == 1 && operator.role != 2) {
+                    throw IllegalArgumentException("只有群主能踢管理员")
+                }
+            }
+        }
+    }
+
+    /**
+     * Membership authority, conversation deletion and every per-user tombstone share one PG
+     * transaction. Internal managed/service-member callers use this boundary too; otherwise a
+     * crash after deactivating the member would leave offline clients permanently authorized.
+     */
+    private suspend fun removeMemberWithDurableTombstones(
+        chatId: String,
+        operatorUid: String,
+        targetUid: String,
+        authorize: (GroupMemberRemovalFacts) -> Unit,
+    ) {
         unitOfWork.write {
             val removal = chatStore.removeMember(
                 transaction = transaction,
                 chatId = chatId,
                 operatorUid = operatorUid,
                 targetUid = targetUid,
-            ) { facts ->
-                require(facts.chat.chatType == 2) { "单聊不能退出，请删除自己的会话视图" }
-                val operator = facts.operator
-                    ?: throw IllegalArgumentException("操作者不是群成员")
-                val target = facts.target
-                    ?: throw IllegalArgumentException("目标不是群成员")
-                if (operatorUid == targetUid) {
-                    if (operator.role == 2) {
-                        throw IllegalArgumentException("群主不能退出，请先转让群主")
-                    }
-                } else {
-                    if (operator.role < 1) throw IllegalArgumentException("需要管理员权限")
-                    requireHumanMemberTarget(targetUid)
-                    if (target.role == 2) throw IllegalArgumentException("不能踢出群主")
-                    if (target.role == 1 && operator.role != 2) {
-                        throw IllegalArgumentException("只有群主能踢管理员")
-                    }
-                }
-            }
+                authorize = authorize,
+            )
 
             // The target's local authority must be a chat tombstone, never a MEMBER_REMOVED
             // refresh hint. Remaining members keep the group and only refresh its member view.
@@ -158,7 +199,7 @@ class ChatService(
             removal.remainingMemberUids.forEach { uid ->
                 appendEvent(uid, NotifyType.MEMBER_REMOVED, removal.chat)
             }
-            afterCommit { chatStore.invalidateCommittedMemberRemoval(chatId) }
+            afterCommit { chatStore.invalidateCommittedMembershipChange(chatId) }
         }
     }
 
@@ -282,11 +323,21 @@ class ChatService(
                 ?: throw IllegalArgumentException("邀请链接不存在")
             require(currentChatId == chatId) { "邀请链接归属已变更" }
             requireUserManaged(chatId)
-            val result = chatStore.joinByInvite(uid, token, System.currentTimeMillis())
-            if (result.joined) {
-                notifyChatCreated(result.chat, result.members.map { it.uid })
+            unitOfWork.write {
+                val result = chatStore.joinByInvite(
+                    transaction = transaction,
+                    uid = uid,
+                    token = token,
+                    nowMillis = System.currentTimeMillis(),
+                )
+                if (result.joined) {
+                    result.members.forEach { member ->
+                        appendEvent(member.uid, NotifyType.CHAT_CREATED, result.chat)
+                    }
+                    afterCommit { chatStore.invalidateCommittedInviteJoin(chatId) }
+                }
+                result.chat
             }
-            result.chat
         }
     }
 
@@ -374,8 +425,9 @@ class ChatService(
         val before = chatStore.getMembers(chatId)
         val currentOwner = before.firstOrNull { it.role == 2 }?.uid
         if (!chatStore.isMember(chatId, ownerUid)) {
-            chatStore.addMembers(chatId, listOf(ownerUid))
-            conversationService.ensureConversations(chatId, chat.chatType, listOf(ownerUid))
+            addMembersWithDurableEvents(chatId, ownerUid, listOf(ownerUid)) { facts ->
+                require(facts.chat.chatType == 2) { "受管群主只能存在于群聊" }
+            }
         }
         if (currentOwner != null && currentOwner != ownerUid) {
             chatStore.transferOwner(chatId, currentOwner, ownerUid)
@@ -386,17 +438,19 @@ class ChatService(
         val current = chatStore.getMemberUids(chatId).toSet()
         val added = desired - current
         if (added.isNotEmpty()) {
-            chatStore.addMembers(chatId, added.toList())
-            conversationService.ensureConversations(chatId, chat.chatType, added.toList())
+            addMembersWithDurableEvents(chatId, ownerUid, added.toList()) { facts ->
+                require(facts.chat.chatType == 2) { "受管成员只能存在于群聊" }
+            }
             chat = chatStore.getChat(chatId) ?: chat
-            for (uid in added) events.emitEvent(uid, NotifyType.CHAT_CREATED, chat)
         }
 
         val removed = current - desired
         for (uid in removed) {
-            chatStore.removeMember(chatId, uid)
-            conversationService.deleteConversationProjection(uid, chatId)
-            events.emitEvent(uid, NotifyType.CHAT_DELETED, chat)
+            removeMemberWithDurableTombstones(chatId, uid, uid) { facts ->
+                require(facts.chat.chatType == 2) { "受管成员只能存在于群聊" }
+                val target = facts.target ?: throw IllegalArgumentException("受管成员不是群成员")
+                require(target.role != 2) { "受管群主必须先完成权威转移" }
+            }
         }
 
         val updated = chatStore.getChat(chatId) ?: chat
@@ -414,13 +468,9 @@ class ChatService(
 
     /** Caller must already hold [lifecycleGate] for [chatId]. */
     internal suspend fun adminAddServiceMemberWithinLifecycle(chatId: String, uid: String) {
-        val chat = chatStore.getChat(chatId) ?: throw IllegalArgumentException("聊天不存在")
-        require(chat.chatType == 2) { "机器人只能授权到群聊" }
-        if (chatStore.isMember(chatId, uid)) return
-        chatStore.addMembers(chatId, listOf(uid))
-        conversationService.ensureConversations(chatId, chat.chatType, listOf(uid))
-        events.emitEvent(uid, NotifyType.CHAT_CREATED, chatStore.getChat(chatId) ?: chat)
-        events.emitEvents(chatStore.getMemberUids(chatId), NotifyType.MEMBER_ADDED, chatStore.getChat(chatId) ?: chat)
+        addMembersWithDurableEvents(chatId, uid, listOf(uid)) { facts ->
+            require(facts.chat.chatType == 2) { "机器人只能授权到群聊" }
+        }
     }
 
     suspend fun adminRemoveServiceMember(chatId: String, uid: String) = lifecycleGate.withChat(chatId) {
@@ -429,12 +479,13 @@ class ChatService(
 
     /** Caller must already hold [lifecycleGate] for [chatId]. */
     internal suspend fun adminRemoveServiceMemberWithinLifecycle(chatId: String, uid: String) {
-        val chat = chatStore.getChat(chatId) ?: return
+        chatStore.getChat(chatId) ?: return
         if (!chatStore.isMember(chatId, uid)) return
-        chatStore.removeMember(chatId, uid)
-        conversationService.deleteConversationProjection(uid, chatId)
-        events.emitEvent(uid, NotifyType.CHAT_DELETED, chat)
-        events.emitEvents(chatStore.getMemberUids(chatId), NotifyType.MEMBER_REMOVED, chat)
+        removeMemberWithDurableTombstones(chatId, uid, uid) { facts ->
+            require(facts.chat.chatType == 2) { "服务身份只能存在于群聊" }
+            val target = facts.target ?: throw IllegalArgumentException("服务身份不是群成员")
+            require(target.role != 2) { "不能移除群主" }
+        }
     }
 
     /** Owner may manage admins/members; admins may only manage ordinary members. */

@@ -35,27 +35,47 @@ class SendQueue(
     private val queue = ArrayDeque<Message>()
     private val wake = Channel<Unit>(Channel.CONFLATED) // 唤醒信号可合并
     private val scope = CoroutineScope(scope.coroutineContext + SupervisorJob())
+    private val callbackGate = SessionWorkGate("SendQueue")
+    private val callbackLease = callbackGate.lease()
 
     /** 停止队列（会话关闭）。 */
     fun close() {
+        var boundaryFailure: SessionWorkGateReentrantCloseException? = null
+        val newlyClosed = try {
+            callbackGate.close()
+        } catch (failure: SessionWorkGateReentrantCloseException) {
+            boundaryFailure = failure
+            true
+        }
+        if (!newlyClosed) return
         // scope.cancel() 会取消 worker 中挂起的 receive；随后再 wake.close() 会把
         // receive 竞态恢复成 ClosedReceiveChannelException，泄漏为下一项 runTest 的
         // UncaughtExceptionsBeforeTest。Channel 是队列私有对象，随 owner 一起回收即可。
         scope.cancel()
+        boundaryFailure?.let { throw it }
     }
 
     init {
         connectionState
-            .onEach { if (it == ConnectionState.AUTHENTICATED) wake.trySend(Unit) }
+            .onEach {
+                if (it == ConnectionState.AUTHENTICATED) {
+                    callbackGate.runIfActive(callbackLease) { wake.trySend(Unit) }
+                }
+            }
             .launchIn(scope)
         scope.launch { workerLoop() }
     }
 
     /** 入队（总是接受；结果经 onSent/onFailed 回调）。 */
     fun enqueue(message: Message) {
-        scope.launch {
-            mutex.withLock { queue.addLast(message) }
-            wake.trySend(Unit)
+        callbackGate.use(callbackLease) {
+            scope.launch {
+                val admitted = mutex.withLock {
+                    callbackGate.runIfActive(callbackLease) { queue.addLast(message) }
+                }
+                if (!admitted) return@launch
+                callbackGate.runIfActive(callbackLease) { wake.trySend(Unit) }
+            }
         }
     }
 
@@ -67,7 +87,7 @@ class SendQueue(
                 continue
             }
             if (connectionState.value != ConnectionState.AUTHENTICATED) {
-                onQueued(msg) // 渲染层显示「排队中」
+                if (!callbackGate.runIfActive(callbackLease) { onQueued(msg) }) return
                 wake.receive() // 挂起直到重连（或新消息重复唤醒，无副作用）
                 continue
             }
@@ -79,7 +99,9 @@ class SendQueue(
                 } catch (_: AckTransportDisconnectedException) {
                     // Keep the head item. The outer loop either observes the already-published
                     // non-ready state and waits, or immediately retries after a fast reconnect.
-                    onQueued(msg)
+                    if (!callbackGate.runIfActive(callbackLease) { onQueued(msg) }) {
+                        return@withTimeoutOrNull null
+                    }
                     retryAfterDisconnect = true
                     return@withTimeoutOrNull null
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -91,12 +113,12 @@ class SendQueue(
             }
             if (retryAfterDisconnect) continue
             if (ack != null && ack.code == 0) {
-                onSent(msg, ack)
+                if (!callbackGate.runIfActive(callbackLease) { onSent(msg, ack) }) return
             } else {
                 val reason = ack?.takeIf { it.code != 0 }?.reason
                     ?: sendFailure?.message
                     ?: "发送超时"
-                onFailed(msg, reason)
+                if (!callbackGate.runIfActive(callbackLease) { onFailed(msg, reason) }) return
             }
             mutex.withLock { queue.removeFirstOrNull() }
         }

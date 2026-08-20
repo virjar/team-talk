@@ -29,8 +29,10 @@ token 是服务端签发的随机值，不是 JWT：
 - `deviceId` 是安装级稳定标识；密码登录、注册和 refresh 必须复用同一个值，认证成功会刷新设备登记与最后登录时间。
 - 同一账号同一设备的新登录或 refresh 会严格推进设备 credential epoch，替换此前 pair，只保留最新
   access/refresh token；事务提交后、AUTH 成功前先发布设备 fence，延迟到达的旧认证不能反向接管连接。
-- 登出失效当前设备 credential；踢设备推进设备 epoch，封禁账号、管理员重置密码和用户自助改密都推进用户 epoch。事务提交后
-  服务端以新 epoch 建立连接 fence，使旧 token 和旧连接都不能重新生效。
+- 登出按发起会话认证时的设备 credential epoch 做 compare-and-revoke：若同一设备已经完成更新的登录或
+  refresh，迟到的旧登出只终止旧会话，不能撤销新 credential pair。真正命中当前代次时才推进设备
+  epoch 并删除该设备凭据。踢设备也推进设备 epoch；封禁账号、管理员重置密码和用户自助改密都推进
+  用户 epoch。事务提交后服务端以权威 epoch 建立连接 fence，使旧 token 和旧连接都不能重新生效。
 - 自助改密的数据库事务提交后，发起连接先退出实时/认证集合，只允许写完本次成功 RPC 响应，随后立即关闭；
   其他旧会话在提交后的 fence 阶段关闭。客户端必须使用新密码重新登录。
 - 解除封禁不回退用户 epoch，因此不会恢复封禁前的 token。

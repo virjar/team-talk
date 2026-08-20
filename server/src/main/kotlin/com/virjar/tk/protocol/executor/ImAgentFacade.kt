@@ -21,6 +21,8 @@ class ImAgentFacade(agent: ImAgent) {
 
     val uid: String = agent.uid
     val deviceId: String = agent.deviceId
+    val userCredentialEpoch: Long = agent.userCredentialEpoch
+    val deviceCredentialEpoch: Long = agent.deviceCredentialEpoch
     val recorder: Recorder = agent.recorder
 
     val isActive: Boolean

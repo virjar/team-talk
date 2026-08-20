@@ -33,6 +33,16 @@ private data class ConversationMergePlan(
     val clearDraftOverride: Boolean,
 )
 
+private data class MessageHistoryState(
+    var lifecycleGeneration: Long = 0L,
+    /** Monotonic allocator; pending chains are never reused after failure/cancellation. */
+    var historyChainGeneration: Long = 0L,
+    var committedHistoryChainGeneration: Long = 0L,
+    var pendingNewestChainGeneration: Long = 0L,
+    var newestRequestGeneration: Long = 0L,
+    var olderRequestGeneration: Long = 0L,
+)
+
 /**
  * 基于 SQLDelight 的 LocalCache 实现。
  *
@@ -75,8 +85,13 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     private val localDraftOverrides = mutableMapOf<String, LocalDraftOverride>()
     /** 已收敛后仍保留进程内高水位，避免迟到的旧 ACK 命中重新从 1 开始的新操作。 */
     private val draftGenerationHighWatermarks = mutableMapOf<String, Long>()
-    private val closeLock = Any()
-    private var closed = false
+    private val cacheUseGate = CacheUseGate()
+
+    /** In-memory request fences are sufficient: no RPC can survive a process restart. */
+    private val messageHistoryOwner = Any()
+    private var messageHistoryGlobalGeneration = 0L
+    private var messageHistoryRequestGeneration = 0L
+    private val messageHistoryStates = mutableMapOf<String, MessageHistoryState>()
 
     // ── 消息窗口（LRU 管理） ──
     // 每个 active chat 对应一个 MessageWindow，持有最近 N 条消息的内存副本
@@ -118,8 +133,10 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     }
 
     // ── 用户 ──
-    override fun getUser(uid: String): User? = usersFlow.value.find { it.uid == uid }
-    override fun upsertUser(user: User) {
+    override fun getUser(uid: String): User? = cacheUseGate.use {
+        usersFlow.value.find { it.uid == uid }
+    }
+    override fun upsertUser(user: User) = cacheUseGate.use {
         synchronized(stateLock) {
             persistUser(user)
             usersFlow.value = mergeUser(usersFlow.value, user)
@@ -127,12 +144,12 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     }
 
     // ── 联系人 ──
-    override fun getContacts(): List<Contact> = synchronized(stateLock) {
-        projectContacts(contactsFlow.value, usersFlow.value)
+    override fun getContacts(): List<Contact> = cacheUseGate.use {
+        synchronized(stateLock) { projectContacts(contactsFlow.value, usersFlow.value) }
     }
 
-    override fun observeContacts(): Flow<List<Contact>> = combine(contactsFlow, usersFlow) { contacts, users ->
-        projectContacts(contacts, users)
+    override fun observeContacts(): Flow<List<Contact>> = cacheUseGate.use {
+        combine(contactsFlow, usersFlow) { contacts, users -> projectContacts(contacts, users) }
     }
 
     private fun projectContacts(contacts: List<Contact>, users: List<User>): List<Contact> {
@@ -143,7 +160,7 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
         }
     }
 
-    override fun upsertContact(contact: Contact) {
+    override fun upsertContact(contact: Contact) = cacheUseGate.use {
         synchronized(stateLock) {
             queries.transaction {
                 persistContact(contact)
@@ -154,7 +171,7 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
             markContactMutated(contact.friendUid)
         }
     }
-    override fun deleteContact(friendUid: String) {
+    override fun deleteContact(friendUid: String) = cacheUseGate.use {
         synchronized(stateLock) {
             queries.deleteContact(friendUid)
             contactsFlow.value = contactsFlow.value.filter { it.friendUid != friendUid }
@@ -163,14 +180,14 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
         }
     }
 
-    override fun contactProjectionGeneration(): Long = synchronized(stateLock) {
-        contactProjectionGeneration
+    override fun contactProjectionGeneration(): Long = cacheUseGate.use {
+        synchronized(stateLock) { contactProjectionGeneration }
     }
 
-    override fun applyContactSnapshot(expectedGeneration: Long, contacts: List<Contact>): Boolean {
+    override fun applyContactSnapshot(expectedGeneration: Long, contacts: List<Contact>): Boolean = cacheUseGate.use {
         require(expectedGeneration >= 0L) { "expectedGeneration 不能为负数" }
         val snapshot = normalizeContacts(contacts)
-        return synchronized(stateLock) {
+        synchronized(stateLock) {
             if (contactProjectionGeneration == expectedGeneration) {
                 queries.transaction {
                     queries.deleteAllContacts()
@@ -262,8 +279,10 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     }
 
     // ── 聊天 ──
-    override fun getChat(chatId: String): Chat? = chatsFlow.value.find { it.chatId == chatId }
-    override fun upsertChat(chat: Chat) {
+    override fun getChat(chatId: String): Chat? = cacheUseGate.use {
+        chatsFlow.value.find { it.chatId == chatId }
+    }
+    override fun upsertChat(chat: Chat) = cacheUseGate.use {
         synchronized(stateLock) {
             queries.upsertChat(chat.chatId, chat.chatType.toLong(), chat.name, chat.avatar, chat.creator, chat.memberCount.toLong(), chat.maxSeq, chat.notice, if (chat.mutedAll) 1L else 0L)
             val list = chatsFlow.value.toMutableList()
@@ -276,35 +295,42 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
         }
     }
     override fun deleteChat(chatId: String) {
-        synchronized(stateLock) {
-            queries.transaction {
-                queries.deleteConversationDraftOutbox(chatId)
-                queries.deleteBotMessagesByChat(chatId)
-                queries.deleteMessagesByChat(chatId)
-                queries.deleteMembersByChat(chatId)
-                queries.deleteConversation(chatId)
-                queries.deleteChat(chatId)
-            }
-            localDraftOverrides.remove(chatId)
-            chatsFlow.value = chatsFlow.value.filter { it.chatId != chatId }
-            conversationsFlow.value = conversationsFlow.value.filter { it.chatId != chatId }
-            membersFlow.value = membersFlow.value - chatId
-            // Even an already-applied tombstone must advance the in-process fence so an older
-            // listConversations response cannot resurrect the deleted chat projection.
-            markConversationMutated(chatId)
+        cacheUseGate.use {
+            synchronized(stateLock) {
+                queries.transaction {
+                    queries.deleteConversationDraftOutbox(chatId)
+                    queries.deleteBotMessagesByChat(chatId)
+                    queries.deleteMessagesByChat(chatId)
+                    queries.deleteMembersByChat(chatId)
+                    queries.deleteConversation(chatId)
+                    queries.deleteChat(chatId)
+                }
+                invalidateMessageHistoryForChat(chatId)
+                localDraftOverrides.remove(chatId)
+                chatsFlow.value = chatsFlow.value.filter { it.chatId != chatId }
+                conversationsFlow.value = conversationsFlow.value.filter { it.chatId != chatId }
+                membersFlow.value = membersFlow.value - chatId
+                // Even an already-applied tombstone must advance the in-process fence so an older
+                // listConversations response cannot resurrect the deleted chat projection.
+                markConversationMutated(chatId)
 
-            // Keep the resident window object registered. Existing collectors must observe an
-            // immediate empty projection and later replay inserts through this same Flow.
-            synchronized(chatLock) {
-                chatWindows[chatId]?.resetServerProjection()
+                // Keep the resident window object registered. Existing collectors must observe an
+                // immediate empty projection and later replay inserts through this same Flow.
+                synchronized(chatLock) {
+                    chatWindows[chatId]?.resetServerProjection()
+                }
+                // Keep draftGenerationHighWatermarks as a stale-ACK fence, just like a full reset.
             }
-            // Keep draftGenerationHighWatermarks as a stale-ACK fence, just like a full reset.
         }
     }
     // ── 成员 ──
-    override fun getMembers(chatId: String): List<Member> = membersFlow.value[chatId] ?: emptyList()
-    override fun observeMembers(chatId: String): Flow<List<Member>> = membersFlow.map { it[chatId] ?: emptyList() }
-    override fun upsertMember(member: Member) {
+    override fun getMembers(chatId: String): List<Member> = cacheUseGate.use {
+        membersFlow.value[chatId] ?: emptyList()
+    }
+    override fun observeMembers(chatId: String): Flow<List<Member>> = cacheUseGate.use {
+        membersFlow.map { it[chatId] ?: emptyList() }
+    }
+    override fun upsertMember(member: Member) = cacheUseGate.use {
         queries.upsertMember(member.chatId, member.uid, member.role.toLong(), member.nickname, member.joinedAt)
         synchronized(stateLock) {
             val current = membersFlow.value.toMutableMap()
@@ -315,7 +341,7 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
             membersFlow.value = current
         }
     }
-    override fun removeMember(chatId: String, uid: String) {
+    override fun removeMember(chatId: String, uid: String) = cacheUseGate.use {
         queries.removeMember(chatId, uid)
         synchronized(stateLock) {
             val current = membersFlow.value.toMutableMap()
@@ -326,10 +352,11 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
 
     // ── 消息（LRU 窗口 + 持久化） ──
 
-    override fun getMessages(chatId: String, limit: Int): List<Message> =
+    override fun getMessages(chatId: String, limit: Int): List<Message> = cacheUseGate.use {
         getOrCreateWindow(chatId).snapshot(limit)
+    }
 
-    override fun getRecentMessages(chatId: String?, afterSeq: Long, limit: Int): List<Message> {
+    override fun getRecentMessages(chatId: String?, afterSeq: Long, limit: Int): List<Message> = cacheUseGate.use {
         require(afterSeq >= 0L) { "afterSeq must be non-negative" }
         require(limit > 0) { "limit must be positive" }
         val rows = synchronized(stateLock) {
@@ -339,30 +366,114 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
                 queries.selectRecentMessagesByChat(chatId, afterSeq, limit.toLong()).executeAsList()
             }
         }
-        return rows.asReversed().map { it.toModel() }
+        rows.asReversed().map { it.toModel() }
     }
 
-    override fun observeMessages(chatId: String): Flow<List<Message>> =
+    override fun observeMessages(chatId: String): Flow<List<Message>> = cacheUseGate.use {
         getOrCreateWindow(chatId).messages
+    }
 
     override fun insertMessage(message: Message) {
-        persistMessage(message)
-        // 只更新已驻留的窗口；未驻留的 chat 下次 observe 时从 DB 加载
-        chatWindows[message.chatId]?.upsert(message)
+        cacheUseGate.use {
+            persistMessage(message)
+            // 只更新已驻留的窗口；未驻留的 chat 下次 observe 时从 DB 加载
+            chatWindows[message.chatId]?.upsert(message)
+        }
     }
 
-    override fun insertMessagePage(
+    override fun beginMessageHistoryLease(
         chatId: String,
-        messages: List<Message>,
         resetResidentWindow: Boolean,
-    ) {
-        messages.forEach { message ->
-            require(message.chatId == chatId) { "history page contains another chat: ${message.chatId}" }
-            persistMessage(message)
+    ): MessageHistoryLease = cacheUseGate.use {
+        synchronized(stateLock) {
+            val state = messageHistoryStates.getOrPut(chatId, ::MessageHistoryState)
+            val requestGeneration = nextMessageHistoryRequestGeneration()
+            if (resetResidentWindow) {
+                state.historyChainGeneration = nextGeneration(
+                    state.historyChainGeneration,
+                    "message history chain generation",
+                )
+                state.pendingNewestChainGeneration = state.historyChainGeneration
+                state.newestRequestGeneration = requestGeneration
+            } else {
+                state.olderRequestGeneration = requestGeneration
+            }
+
+            MessageHistoryLease(
+                chatId = chatId,
+                owner = messageHistoryOwner,
+                globalGeneration = messageHistoryGlobalGeneration,
+                chatLifecycleGeneration = state.lifecycleGeneration,
+                requestGeneration = requestGeneration,
+                historyChainGeneration = if (resetResidentWindow) {
+                    state.pendingNewestChainGeneration
+                } else {
+                    state.committedHistoryChainGeneration
+                },
+                resetResidentWindow = resetResidentWindow,
+            )
         }
-        // Page provenance, not numeric adjacency, tells the window that gaps are authoritative.
-        chatWindows[chatId]?.applyHistoryPage(messages, resetResidentWindow)
     }
+
+    override fun applyMessageHistoryPage(
+        lease: MessageHistoryLease,
+        messages: List<Message>,
+    ): Boolean = cacheUseGate.runIfOpen {
+        synchronized(stateLock) state@{
+            val state = currentMessageHistoryState(lease) ?: return@state false
+            val page = messages.toList()
+
+            // Fixed order: CacheUseGate -> stateLock -> chatLock -> SQLite -> window lock.
+            synchronized(chatLock) {
+                queries.transaction {
+                    page.forEach { message ->
+                        require(message.chatId == lease.chatId) {
+                            "history page contains another chat: ${message.chatId}"
+                        }
+                        persistMessage(message)
+                    }
+                }
+                // Page provenance, not numeric adjacency, tells the window that gaps are authoritative.
+                chatWindows[lease.chatId]?.applyHistoryPage(page, lease.resetResidentWindow)
+            }
+
+            if (lease.resetResidentWindow) {
+                state.committedHistoryChainGeneration = lease.historyChainGeneration
+                state.pendingNewestChainGeneration = 0L
+                state.newestRequestGeneration = 0L
+                // Any older request was bound to the previous committed anchor. If it did not win the
+                // stateLock before this commit it must not append across the reset.
+                state.olderRequestGeneration = 0L
+            } else {
+                state.olderRequestGeneration = 0L
+            }
+            true
+        }
+    }
+
+    override fun abandonMessageHistoryLease(lease: MessageHistoryLease): Boolean =
+        cacheUseGate.runIfOpen {
+            synchronized(stateLock) state@{
+                val state = messageHistoryStateForLeaseLifecycle(lease) ?: return@state false
+                if (lease.resetResidentWindow) {
+                    if (state.newestRequestGeneration != lease.requestGeneration ||
+                        state.pendingNewestChainGeneration != lease.historyChainGeneration
+                    ) {
+                        return@state false
+                    }
+                    state.newestRequestGeneration = 0L
+                    state.pendingNewestChainGeneration = 0L
+                } else {
+                    if (state.olderRequestGeneration != lease.requestGeneration ||
+                        state.committedHistoryChainGeneration != lease.historyChainGeneration
+                    ) {
+                        return@state false
+                    }
+                    state.olderRequestGeneration = 0L
+                }
+                true
+            }
+        }
 
     private fun persistMessage(message: Message) {
         val bodyBytes = message.body?.let { ProtoCodec.encode(it) }
@@ -370,27 +481,41 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     }
 
     override fun updateMessage(chatId: String, clientMsgId: String, serverSeq: Long) {
-        queries.updateMessageSeqStatus(serverSeq, chatId, clientMsgId)
-        chatWindows[chatId]?.updateMessage(clientMsgId, serverSeq = serverSeq, sendStatus = Message.SEND_STATUS_SENT)
+        cacheUseGate.use {
+            queries.updateMessageSeqStatus(serverSeq, chatId, clientMsgId)
+            chatWindows[chatId]?.updateMessage(clientMsgId, serverSeq = serverSeq, sendStatus = Message.SEND_STATUS_SENT)
+        }
     }
 
     override fun updateMessageStatus(chatId: String, clientMsgId: String, sendStatus: Int) {
-        queries.updateMessageSendStatus(sendStatus.toLong(), chatId, clientMsgId)
-        chatWindows[chatId]?.updateMessage(clientMsgId, sendStatus = sendStatus)
+        cacheUseGate.use {
+            queries.updateMessageSendStatus(sendStatus.toLong(), chatId, clientMsgId)
+            chatWindows[chatId]?.updateMessage(clientMsgId, sendStatus = sendStatus)
+        }
     }
 
-    override fun updateMessageInMemory(chatId: String, clientMsgId: String, transform: (Message) -> Message) {
-        chatWindows[chatId]?.updateMessage(clientMsgId, transform = transform)
+    override fun updateMessageInMemory(
+        chatId: String,
+        clientMsgId: String,
+        transform: (Message) -> Message,
+    ) {
+        cacheUseGate.use {
+            chatWindows[chatId]?.updateMessage(clientMsgId, transform = transform)
+        }
     }
 
     // ── Phase C：内存治理 API ──
 
-    override fun pager(chatId: String, windowSize: Int): MessagePager = getOrCreateWindow(chatId, windowSize)
+    override fun pager(chatId: String, windowSize: Int): MessagePager = cacheUseGate.use {
+        getOrCreateWindow(chatId, windowSize)
+    }
 
     override fun onChatInactive(chatId: String) {
-        synchronized(chatLock) {
-            chatWindows.remove(chatId)
-            chatLru.remove(chatId)
+        cacheUseGate.use {
+            synchronized(chatLock) {
+                chatWindows.remove(chatId)
+                chatLru.remove(chatId)
+            }
         }
     }
 
@@ -406,7 +531,7 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
                 evictIfOverCapacity()
                 return existing
             }
-            val window = MessageWindow(chatId, queries, windowSize) { it.toModel() }
+            val window = MessageWindow(chatId, queries, cacheUseGate, windowSize) { it.toModel() }
             chatWindows[chatId] = window
             evictIfOverCapacity()
             return window
@@ -423,9 +548,13 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     }
 
     // ── 会话 ──
-    override fun getConversations(): List<Conversation> = conversationsFlow.value
-    override fun observeConversations(): Flow<List<Conversation>> = conversationsFlow
-    override fun upsertConversation(conv: Conversation) {
+    override fun getConversations(): List<Conversation> = cacheUseGate.use {
+        conversationsFlow.value
+    }
+    override fun observeConversations(): Flow<List<Conversation>> = cacheUseGate.use {
+        conversationsFlow
+    }
+    override fun upsertConversation(conv: Conversation) = cacheUseGate.use {
         synchronized(stateLock) {
             val plan = prepareConversationMerge(
                 local = conversationsFlow.value.firstOrNull { it.chatId == conv.chatId },
@@ -450,17 +579,17 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
         }
     }
 
-    override fun beginConversationSnapshot(): Long = synchronized(stateLock) {
-        nextConversationGeneration()
+    override fun beginConversationSnapshot(): Long = cacheUseGate.use {
+        synchronized(stateLock) { nextConversationGeneration() }
     }
 
     override fun applyConversationSnapshot(
         snapshotGeneration: Long,
         conversations: List<Conversation>,
-    ): Boolean {
+    ): Boolean = cacheUseGate.use {
         require(snapshotGeneration > 0L) { "snapshotGeneration must be positive" }
         val snapshot = conversations.associateBy(Conversation::chatId).values.toList()
-        return synchronized(stateLock) {
+        synchronized(stateLock) {
             // 同一进程内两个全量请求可能乱序返回。更新的请求已经应用后，旧请求
             // 整体不能再触碰投影，即使期间没有 Notify。
             if (snapshotGeneration <= lastAppliedConversationSnapshotGeneration) {
@@ -630,7 +759,7 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
         )
     }
 
-    override fun deleteConversation(chatId: String) {
+    override fun deleteConversation(chatId: String) = cacheUseGate.use {
         synchronized(stateLock) {
             queries.transaction {
                 queries.deleteConversationDraftOutbox(chatId)
@@ -643,7 +772,7 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
         }
     }
 
-    override fun markConversationRead(chatId: String, readSeq: Long) {
+    override fun markConversationRead(chatId: String, readSeq: Long) = cacheUseGate.use {
         synchronized(stateLock) {
             queries.markConversationRead(readSeq, chatId)
             var changed = false
@@ -663,11 +792,11 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
         }
     }
 
-    override fun updatePeerReadSeq(chatId: String, peerReadSeq: Long) {
-        synchronized(stateLock) {
-            val existing = conversationsFlow.value.firstOrNull { it.chatId == chatId } ?: return
+    override fun updatePeerReadSeq(chatId: String, peerReadSeq: Long) = cacheUseGate.use {
+        synchronized(stateLock) state@{
+            val existing = conversationsFlow.value.firstOrNull { it.chatId == chatId } ?: return@state
             val mergedPeerReadSeq = maxOf(existing.peerReadSeq, peerReadSeq)
-            if (mergedPeerReadSeq == existing.peerReadSeq) return
+            if (mergedPeerReadSeq == existing.peerReadSeq) return@state
             queries.updatePeerReadSeq(mergedPeerReadSeq, chatId)
             conversationsFlow.value = conversationsFlow.value.map {
                 if (it.chatId == chatId) it.copy(peerReadSeq = mergedPeerReadSeq) else it
@@ -676,13 +805,13 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
         }
     }
 
-    override fun getSyncCursor(key: String): Long = synchronized(stateLock) {
-        queries.getSyncCursor(key).executeAsOneOrNull() ?: 0L
+    override fun getSyncCursor(key: String): Long = cacheUseGate.use {
+        synchronized(stateLock) { queries.getSyncCursor(key).executeAsOneOrNull() ?: 0L }
     }
 
-    override fun advanceSyncCursor(key: String, eventId: Long): Long {
+    override fun advanceSyncCursor(key: String, eventId: Long): Long = cacheUseGate.use {
         require(eventId > 0L) { "eventId must be positive" }
-        return synchronized(stateLock) {
+        synchronized(stateLock) {
             var persisted = 0L
             queries.transaction {
                 queries.ensureSyncCursor(key)
@@ -693,7 +822,7 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
         }
     }
 
-    override fun resetServerProjection() {
+    override fun resetServerProjection() = cacheUseGate.use {
         synchronized(stateLock) {
             queries.transaction {
                 queries.deleteAllBotMessages()
@@ -706,6 +835,12 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
                 queries.deleteAllChats()
                 queries.deleteAllUsers()
             }
+
+            messageHistoryGlobalGeneration = nextGeneration(
+                messageHistoryGlobalGeneration,
+                "message history global generation",
+            )
+            messageHistoryStates.clear()
 
             usersFlow.value = emptyList()
             contactsFlow.value = emptyList()
@@ -736,36 +871,42 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     }
 
     override fun enqueueBotMessage(eventId: Long, message: Message) {
-        require(eventId > 0L) { "eventId must be positive" }
-        require(message.serverSeq > 0L) { "durable bot messages require a positive serverSeq" }
-        synchronized(stateLock) {
-            queries.enqueueBotMessage(
-                eventId,
-                message.chatId,
-                message.serverSeq,
-                ProtoCodec.encode(message),
-            )
+        cacheUseGate.use {
+            require(eventId > 0L) { "eventId must be positive" }
+            require(message.serverSeq > 0L) { "durable bot messages require a positive serverSeq" }
+            synchronized(stateLock) {
+                queries.enqueueBotMessage(
+                    eventId,
+                    message.chatId,
+                    message.serverSeq,
+                    ProtoCodec.encode(message),
+                )
+            }
         }
     }
 
-    override fun peekBotMessage(): PendingBotMessage? = synchronized(stateLock) {
-        queries.peekBotMessage().executeAsOneOrNull()?.let { row ->
-            PendingBotMessage(
-                eventId = row.event_id,
-                message = ProtoCodec.decode(Message, row.payload),
-            )
+    override fun peekBotMessage(): PendingBotMessage? = cacheUseGate.use {
+        synchronized(stateLock) {
+            queries.peekBotMessage().executeAsOneOrNull()?.let { row ->
+                PendingBotMessage(
+                    eventId = row.event_id,
+                    message = ProtoCodec.decode(Message, row.payload),
+                )
+            }
         }
     }
 
     override fun deleteBotMessage(eventId: Long) {
-        require(eventId > 0L) { "eventId must be positive" }
-        synchronized(stateLock) {
-            queries.deleteBotMessage(eventId)
+        cacheUseGate.use {
+            require(eventId > 0L) { "eventId must be positive" }
+            synchronized(stateLock) {
+                queries.deleteBotMessage(eventId)
+            }
         }
     }
 
-    override fun setConversationDraft(chatId: String, draft: String?): Long {
-        return synchronized(stateLock) {
+    override fun setConversationDraft(chatId: String, draft: String?): Long = cacheUseGate.use {
+        synchronized(stateLock) {
             val generation = (draftGenerationHighWatermarks[chatId] ?: 0L) + 1L
             draftGenerationHighWatermarks[chatId] = generation
             val override = LocalDraftOverride(draft, generation, DRAFT_MIRROR_PENDING)
@@ -782,7 +923,7 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
         }
     }
 
-    override fun getPendingConversationDrafts(): List<PendingConversationDraft> =
+    override fun getPendingConversationDrafts(): List<PendingConversationDraft> = cacheUseGate.use {
         synchronized(stateLock) {
             localDraftOverrides.mapNotNull { (chatId, override) ->
                 if (override.state == DRAFT_MIRROR_PENDING) {
@@ -792,11 +933,12 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
                 }
             }
         }
+    }
 
-    override fun markConversationDraftMirrored(chatId: String, generation: Long) {
-        synchronized(stateLock) {
-            val current = localDraftOverrides[chatId] ?: return
-            if (current.generation != generation || current.state != DRAFT_MIRROR_PENDING) return
+    override fun markConversationDraftMirrored(chatId: String, generation: Long) = cacheUseGate.use {
+        synchronized(stateLock) state@{
+            val current = localDraftOverrides[chatId] ?: return@state
+            if (current.generation != generation || current.state != DRAFT_MIRROR_PENDING) return@state
             val matchingAuthorityAlreadyObserved =
                 current.observedAuthority?.draft == current.draft && current.observedAuthority != null
             queries.transaction {
@@ -817,13 +959,16 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     }
 
     override fun close() {
-        val shouldClose = synchronized(closeLock) {
-            if (closed) false else {
-                closed = true
-                true
+        cacheUseGate.close {
+            synchronized(stateLock) {
+                messageHistoryGlobalGeneration = nextGeneration(
+                    messageHistoryGlobalGeneration,
+                    "message history global generation",
+                )
+                messageHistoryStates.clear()
             }
+            driver.close()
         }
-        if (shouldClose) driver.close()
     }
 
     /** 在已排序列表中替换一条已完成合并的会话。调用方持 stateLock。 */
@@ -860,6 +1005,69 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     /** 调用方必须持有 stateLock。 */
     private fun wasConversationMutatedAfter(chatId: String, generation: Long): Boolean =
         (conversationMutationGenerations[chatId] ?: 0L) > generation
+
+    /** Caller holds stateLock. */
+    private fun currentMessageHistoryState(lease: MessageHistoryLease): MessageHistoryState? {
+        val state = messageHistoryStateForLeaseLifecycle(lease) ?: return null
+        val currentRequest: Long
+        val currentChain: Long
+        if (lease.resetResidentWindow) {
+            currentRequest = state.newestRequestGeneration
+            currentChain = state.pendingNewestChainGeneration
+        } else {
+            if (lease.historyChainGeneration == 0L) return null
+            currentRequest = state.olderRequestGeneration
+            currentChain = state.committedHistoryChainGeneration
+        }
+        return state.takeIf {
+            currentRequest == lease.requestGeneration && currentChain == lease.historyChainGeneration
+        }
+    }
+
+    /** Caller holds stateLock. */
+    private fun messageHistoryStateForLeaseLifecycle(lease: MessageHistoryLease): MessageHistoryState? {
+        if (lease.owner !== messageHistoryOwner ||
+            lease.globalGeneration != messageHistoryGlobalGeneration
+        ) {
+            return null
+        }
+        val state = messageHistoryStates[lease.chatId] ?: return null
+        if (lease.chatLifecycleGeneration != state.lifecycleGeneration) {
+            return null
+        }
+        return state
+    }
+
+    /** Caller holds stateLock. */
+    private fun invalidateMessageHistoryForChat(chatId: String) {
+        val state = messageHistoryStates.getOrPut(chatId, ::MessageHistoryState)
+        state.lifecycleGeneration = nextGeneration(
+            state.lifecycleGeneration,
+            "message history chat lifecycle generation",
+        )
+        state.historyChainGeneration = nextGeneration(
+            state.historyChainGeneration,
+            "message history chain generation",
+        )
+        state.committedHistoryChainGeneration = 0L
+        state.pendingNewestChainGeneration = 0L
+        state.newestRequestGeneration = 0L
+        state.olderRequestGeneration = 0L
+    }
+
+    /** Caller holds stateLock. */
+    private fun nextMessageHistoryRequestGeneration(): Long {
+        messageHistoryRequestGeneration = nextGeneration(
+            messageHistoryRequestGeneration,
+            "message history request generation",
+        )
+        return messageHistoryRequestGeneration
+    }
+
+    private fun nextGeneration(current: Long, label: String): Long {
+        check(current < Long.MAX_VALUE) { "$label exhausted" }
+        return current + 1L
+    }
 
     // ── helpers ──
     /**
@@ -920,7 +1128,15 @@ private fun com.virjar.tk.database.Message.toModel(): Message {
                 "Corrupt cached message body chatId=$chat_id msgId=$client_msg_id type=$message_type",
                 e,
             )
-            com.virjar.tk.util.AppLog.fault("LocalCache", failure.message ?: "Corrupt cached message body", failure)
+            // This mapper can be reached by headless sessions that deliberately do not own the
+            // process-global AppLog slot. Keep diagnostics platform-local instead of attributing
+            // account A's corrupt row to whichever graphical account currently owns AppLog.
+            com.virjar.tk.util.platformLog(
+                "fault",
+                "LocalCache",
+                failure.message ?: "Corrupt cached message body",
+                failure,
+            )
             throw failure
         }
     } else null

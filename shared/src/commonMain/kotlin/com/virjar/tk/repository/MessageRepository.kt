@@ -8,6 +8,9 @@ import com.virjar.tk.model.Message
 import com.virjar.tk.outcome
 import com.virjar.tk.protocol.payload.MessageAckPayload
 import com.virjar.tk.rpc.gen.MessageRpcProxy
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 class MessageRepository(
     rpcClient: RpcInvoker,
@@ -23,12 +26,25 @@ class MessageRepository(
 
     /** 拉取历史并写入本地缓存（本地优先）。 */
     suspend fun getHistory(chatId: String, fromSeq: Long = 0, limit: Int = 10): Outcome<List<Message>> = outcome {
-        rpc.getHistory(chatId, fromSeq, limit).also { page ->
-            localCache.insertMessagePage(
-                chatId = chatId,
-                messages = page,
-                resetResidentWindow = fromSeq == 0L,
-            )
+        val lease = localCache.beginMessageHistoryLease(
+            chatId = chatId,
+            resetResidentWindow = fromSeq == 0L,
+        )
+        var applied = false
+        try {
+            val page = rpc.getHistory(chatId, fromSeq, limit)
+            currentCoroutineContext().ensureActive()
+            if (!localCache.applyMessageHistoryPage(lease, page)) {
+                throw CancellationException(
+                    "Message history request was superseded for chat $chatId",
+                )
+            }
+            applied = true
+            page
+        } finally {
+            if (!applied) {
+                localCache.abandonMessageHistoryLease(lease)
+            }
         }
     }
 

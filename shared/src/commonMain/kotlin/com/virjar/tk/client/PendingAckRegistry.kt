@@ -16,30 +16,65 @@ internal class AckTransportDisconnectedException : IllegalStateException(
  * boundary prevents connection teardown and packet routing from growing separate ACK owners.
  */
 internal class PendingAckRegistry {
-    private val pending = mutableMapOf<String, CompletableDeferred<MessageAckPayload>>()
+    private data class Entry(
+        val sessionOwner: Any,
+        val sessionLease: SessionOutboundLease?,
+        val deferred: CompletableDeferred<MessageAckPayload>,
+    )
 
-    fun register(clientMsgId: String): CompletableDeferred<MessageAckPayload> {
+    private val pending = mutableMapOf<String, Entry>()
+
+    fun register(
+        clientMsgId: String,
+        sessionOwner: Any,
+        sessionLease: SessionOutboundLease?,
+    ): CompletableDeferred<MessageAckPayload> {
+        check(sessionLease?.isActive() != false) { "Outbound session is retired" }
         val deferred = CompletableDeferred<MessageAckPayload>()
         check(clientMsgId !in pending) {
             "Duplicate pending clientMsgId: $clientMsgId"
         }
-        pending[clientMsgId] = deferred
+        pending[clientMsgId] = Entry(sessionOwner, sessionLease, deferred)
         return deferred
     }
 
-    fun complete(ack: MessageAckPayload): Boolean =
-        pending.remove(ack.clientMsgId)?.complete(ack) == true
+    fun complete(ack: MessageAckPayload): Boolean {
+        val entry = pending.remove(ack.clientMsgId) ?: return false
+        // Never resume an arbitrary continuation while holding SessionOutboundLease: the caller's
+        // post-ACK lifecycle check takes the lifecycle lock, while quiesce retires in the opposite
+        // order. EventLoop-owned cancelOwner plus that publication check are the ACK boundary.
+        return if (entry.sessionLease?.isActive() == false) {
+            entry.deferred.completeExceptionally(
+                kotlinx.coroutines.CancellationException("Outbound session retired before ACK"),
+            )
+            false
+        } else {
+            entry.deferred.complete(ack)
+        }
+    }
 
     fun remove(
         clientMsgId: String,
         expected: CompletableDeferred<MessageAckPayload>,
     ) {
-        if (pending[clientMsgId] === expected) pending.remove(clientMsgId)
+        if (pending[clientMsgId]?.deferred === expected) pending.remove(clientMsgId)
+    }
+
+    fun cancelOwner(sessionOwner: Any) {
+        val retired = pending.entries
+            .filter { (_, entry) -> entry.sessionOwner === sessionOwner }
+            .map { (clientMsgId, entry) -> clientMsgId to entry.deferred }
+        retired.forEach { (clientMsgId, deferred) ->
+            pending.remove(clientMsgId)
+            deferred.completeExceptionally(
+                kotlinx.coroutines.CancellationException("Outbound session retired before ACK"),
+            )
+        }
     }
 
     fun cancelAll() {
-        pending.values.forEach { deferred ->
-            deferred.completeExceptionally(AckTransportDisconnectedException())
+        pending.values.forEach { entry ->
+            entry.deferred.completeExceptionally(AckTransportDisconnectedException())
         }
         pending.clear()
     }

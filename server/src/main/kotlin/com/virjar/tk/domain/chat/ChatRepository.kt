@@ -1,5 +1,6 @@
 package com.virjar.tk.domain.chat
 
+import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Member
 import kotlinx.serialization.Serializable
@@ -24,7 +25,12 @@ interface ChatRepository {
      * user's conversation projection. The returned snapshot contains the committed recipients;
      * ChatStore may invalidate old cache state only after this method returns.
      */
-    fun joinByInvite(uid: String, token: String, nowMillis: Long): InviteJoinResult
+    fun joinByInvite(
+        transaction: PgTransactionContext,
+        uid: String,
+        token: String,
+        nowMillis: Long,
+    ): InviteJoinResult
     fun getChat(chatId: String): Chat?
     fun updateGroup(chatId: String, name: String? = null, avatar: String? = null, notice: String? = null)
     /** Atomically deactivates chat/members and removes conversation, mute and invite projections. */

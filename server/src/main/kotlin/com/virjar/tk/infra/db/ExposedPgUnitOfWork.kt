@@ -8,6 +8,8 @@ import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.ProtoCodec
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.Transaction
@@ -43,7 +45,9 @@ fun interface PgUnitOfWorkHooks {
  *
  * The domain block runs first. Event intents are flushed afterwards, acquiring `sync_streams`
  * rows in lexical uid order as the transaction's final locks. A stream lock therefore serializes
- * sequence allocation and commit order without exposing Exposed to the domain API.
+ * sequence allocation and commit order without exposing Exposed to the domain API. A command that
+ * is already cancelled is rejected before admission; once admitted, transaction, local visibility
+ * callbacks and dispatcher signalling form one non-cancellable terminal stage.
  */
 class ExposedPgUnitOfWork(
     private val onEventsCommitted: (Set<String>) -> Unit,
@@ -56,7 +60,11 @@ class ExposedPgUnitOfWork(
         check(coroutineContext[ActivePgUnitOfWorkKey] == null) {
             "Nested PgUnitOfWork is forbidden; append the event through the active PgWriteScope"
         }
-        return withContext(coroutineContext + ActivePgUnitOfWorkElement) {
+        // Reject work that was already cancelled, then treat an admitted aggregate command as one
+        // terminal stage. In particular, cancellation must not land after PostgreSQL commits but
+        // before cache invalidation and dispatcher wake become visible in this process.
+        coroutineContext.ensureActive()
+        return withContext(NonCancellable + ActivePgUnitOfWorkElement) {
             executeWrite(block)
         }
     }
@@ -82,13 +90,18 @@ class ExposedPgUnitOfWork(
         // This hook deliberately sits outside Exposed's transaction. Tests use it to model a
         // process exit after commit and before all process-local hints are published.
         hooks.hit(PgUnitOfWorkStage.AFTER_COMMIT_BEFORE_CALLBACKS)
-        if (committedUids.isNotEmpty()) {
-            runCatching { onEventsCommitted(committedUids) }
-                .onFailure { logger.warn("Failed to wake sync dispatcher for uids={}", committedUids, it) }
-        }
+        // Publish process-local state before waking live delivery. A durable event may cause the
+        // client to immediately issue a read RPC; that read must not observe a pre-commit cache
+        // snapshot after the matching event is already visible on the wire. Each action remains
+        // best-effort, and dispatcher wake still runs if one cache callback fails (startup/periodic
+        // scanning is the durable fallback for a lost wake).
         afterCommitActions.forEach { action ->
             runCatching(action)
                 .onFailure { logger.warn("Post-commit callback failed; durable transaction remains committed", it) }
+        }
+        if (committedUids.isNotEmpty()) {
+            runCatching { onEventsCommitted(committedUids) }
+                .onFailure { logger.warn("Failed to wake sync dispatcher for uids={}", committedUids, it) }
         }
         return result
     }

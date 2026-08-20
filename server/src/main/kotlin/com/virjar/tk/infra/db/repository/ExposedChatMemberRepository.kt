@@ -1,6 +1,8 @@
 package com.virjar.tk.infra.db.repository
 
 import com.virjar.tk.domain.chat.ChatMemberRepository
+import com.virjar.tk.domain.chat.GroupMemberAddition
+import com.virjar.tk.domain.chat.GroupMemberAdditionFacts
 import com.virjar.tk.domain.chat.GroupMemberRemoval
 import com.virjar.tk.domain.chat.GroupMemberRemovalFacts
 import com.virjar.tk.domain.transaction.PgTransactionContext
@@ -60,64 +62,79 @@ class ExposedChatMemberRepository : ChatMemberRepository {
 
     // ── 成员变更 ──
 
-    override fun addMembers(chatId: String, uids: List<String>) {
+    override fun addMembers(
+        transaction: PgTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        uids: List<String>,
+        authorize: (GroupMemberAdditionFacts) -> Unit,
+    ): GroupMemberAddition = inWriteTransaction(transaction) {
+        val requestedUids = uids.distinct()
+        val chatRow = lockActiveChat(chatId)
+        val activeMembers = GroupMembers.selectAll().where {
+            (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1)
+        }.orderBy(GroupMembers.uid, SortOrder.ASC).forUpdate()
+            .map(ResultRow::toMember)
+        val membersByUid = activeMembers.associateBy(Member::uid)
+        val before = chatSnapshot(chatRow, activeMembers.size)
+        authorize(
+            GroupMemberAdditionFacts(
+                chat = before,
+                operator = membersByUid[operatorUid],
+                requestedUids = requestedUids,
+            ),
+        )
+
         val now = System.currentTimeMillis()
-        transaction {
-            val chatType = lockActiveChat(chatId)[Chats.chatType]
-            for (uid in uids) {
-                val existing = GroupMembers.selectAll().where {
-                    (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid)
-                }.singleOrNull()
-                if (existing == null) {
+        val addedUids = ArrayList<String>(requestedUids.size)
+        for (uid in requestedUids) {
+            val existing = GroupMembers.selectAll().where {
+                (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid)
+            }.forUpdate().singleOrNull()
+            when {
+                existing == null -> {
                     GroupMembers.insert {
                         it[GroupMembers.chatId] = chatId
-                        it[GroupMembers.chatType] = 2
+                        it[GroupMembers.chatType] = before.chatType
                         it[GroupMembers.uid] = uid
                         it[GroupMembers.role] = 0
                         it[GroupMembers.status] = 1
                         it[GroupMembers.joinedAt] = now
                     }
-                } else if (existing[GroupMembers.status] != 1) {
+                    addedUids += uid
+                }
+
+                existing[GroupMembers.status] != 1 -> {
                     GroupMembers.update({
                         (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid)
                     }) {
-                        // A normal rejoin is a fresh ordinary membership. Persisting the old role
-                        // would let a previously removed admin silently regain privileges.
+                        // A normal/system reconciliation reactivation is a fresh ordinary role.
+                        // Explicit managed roles are assigned through the dedicated role command.
                         it[GroupMembers.role] = 0
                         it[GroupMembers.status] = 1
                         it[GroupMembers.joinedAt] = now
                     }
-                }
-                Conversations.insertIgnore {
-                    it[Conversations.uid] = uid
-                    it[Conversations.chatId] = chatId
-                    it[Conversations.chatType] = chatType
-                    it[Conversations.lastMsgSeq] = 0
-                    it[Conversations.updatedAt] = now
+                    addedUids += uid
                 }
             }
+            Conversations.insertIgnore {
+                it[Conversations.uid] = uid
+                it[Conversations.chatId] = chatId
+                it[Conversations.chatType] = before.chatType
+                it[Conversations.lastMsgSeq] = 0
+                it[Conversations.updatedAt] = now
+            }
         }
-    }
 
-    override fun removeMember(chatId: String, uid: String) {
-        transaction {
-            lockActiveChat(chatId)
-            val member = GroupMembers.selectAll().where {
-                (GroupMembers.chatId eq chatId) and
-                    (GroupMembers.uid eq uid) and
-                    (GroupMembers.status eq 1)
-            }.singleOrNull() ?: return@transaction
-            require(member[GroupMembers.role] != 2) { "群主不能退出，请先转让群主" }
-            GroupMembers.update({
-                (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid)
-            }) { it[GroupMembers.status] = 0 }
-            Conversations.deleteWhere {
-                (Conversations.chatId eq chatId) and (Conversations.uid eq uid)
-            }
-            GroupMemberMutes.deleteWhere {
-                (GroupMemberMutes.chatId eq chatId) and (GroupMemberMutes.uid eq uid)
-            }
-        }
+        val activeUids = (activeMembers.asSequence().map(Member::uid) + addedUids.asSequence())
+            .distinct()
+            .sorted()
+            .toList()
+        GroupMemberAddition(
+            chat = before.copy(memberCount = activeUids.size),
+            addedUids = addedUids,
+            activeMemberUids = activeUids,
+        )
     }
 
     override fun removeMember(

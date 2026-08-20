@@ -56,7 +56,7 @@ fun main(args: Array<String>) {
             .takeIf { it.exists() }?.readText()?.trim()
 
     if (token == null) {
-        System.err.println("缺少 token：--token / TT_TOKEN / ~/.tt-cli（写入 agent 打印的 api-token）")
+        System.err.println("缺少 token：--token / TT_TOKEN / ~/.tt-cli（从 agent 私有凭据显式配置）")
         kotlin.system.exitProcess(2)
     }
     val cli = Cli(api, token)

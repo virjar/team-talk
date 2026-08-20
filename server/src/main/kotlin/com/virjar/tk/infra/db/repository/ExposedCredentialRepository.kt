@@ -180,6 +180,43 @@ class ExposedCredentialRepository(
             committedEpoch
         }
 
+    override suspend fun revokeDeviceIfCurrent(
+        uid: String,
+        deviceId: String,
+        expectedDeviceCredentialEpoch: Long,
+    ): Long? = credentialTransaction {
+        require(expectedDeviceCredentialEpoch > 0L) { "Session device credential epoch must be positive" }
+        hooks.beforeUserLock(CredentialMutation.REVOKE_DEVICE, uid, deviceId)
+        lockUser(uid) ?: return@credentialTransaction null
+        hooks.afterUserLock(CredentialMutation.REVOKE_DEVICE, uid, deviceId)
+        val device = lockDevice(uid, deviceId) ?: return@credentialTransaction null
+        val currentDeviceEpoch = device[Devices.credentialEpoch]
+        check(currentDeviceEpoch >= expectedDeviceCredentialEpoch) {
+            "Session device credential epoch is ahead of authority"
+        }
+
+        // A delayed logout from an older TCP session must not revoke credentials issued by a
+        // later password login or refresh on the same installation.
+        if (currentDeviceEpoch != expectedDeviceCredentialEpoch) {
+            return@credentialTransaction currentDeviceEpoch
+        }
+
+        val committedEpoch = if (device[Devices.status] == STATUS_ACTIVE) {
+            checkedNextEpoch(currentDeviceEpoch).also { next ->
+                Devices.update({ (Devices.uid eq uid) and (Devices.deviceId eq deviceId) }) {
+                    it[status] = STATUS_REVOKED
+                    it[credentialEpoch] = next
+                }
+            }
+        } else {
+            currentDeviceEpoch
+        }
+        Credentials.deleteWhere {
+            (Credentials.uid eq uid) and (Credentials.deviceId eq deviceId)
+        }
+        committedEpoch
+    }
+
     override suspend fun changePasswordAndRevoke(
         uid: String,
         expectedPasswordHash: String,

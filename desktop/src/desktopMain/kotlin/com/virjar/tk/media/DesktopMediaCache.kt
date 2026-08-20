@@ -1,7 +1,6 @@
 package com.virjar.tk.media
 
 import com.virjar.tk.repository.FileOps
-import com.virjar.tk.util.AppLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
@@ -36,6 +35,7 @@ internal const val DEFAULT_DESKTOP_MEDIA_QUOTA_BYTES: Long = 500L * 1024L * 1024
 internal class DesktopMediaCache(
     private val serverBaseUrl: String,
     private val credentialGate: DesktopCredentialGate,
+    private val diagnostics: DesktopSessionDiagnostics,
     private val cacheDir: File,
     private val scope: CoroutineScope,
     private val downloader: DesktopMediaDownloader = HttpDesktopMediaDownloader,
@@ -165,7 +165,7 @@ internal class DesktopMediaCache(
             target.setLastModified(System.currentTimeMillis())
             onProgress(1f)
             evictToQuotaPreserving(target)
-            AppLog.trace("MediaCache", "cached ${target.name} (${target.length()}B)")
+            diagnostics.record(DesktopSessionDiagnosticEvent.MEDIA_CACHE_STORED)
             return target
         } catch (error: Throwable) {
             partial.delete()

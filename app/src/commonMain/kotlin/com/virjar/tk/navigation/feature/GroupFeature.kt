@@ -9,11 +9,8 @@ import com.virjar.tk.model.Chat
 import com.virjar.tk.model.InviteLink
 import com.virjar.tk.model.Member
 import com.virjar.tk.model.User
-import com.virjar.tk.client.defaultServerConfig
 import com.virjar.tk.http.GroupBotCredentials
 import com.virjar.tk.http.GroupBotSummary
-import com.virjar.tk.repository.GroupBotManagementRepository
-import com.virjar.tk.repository.HttpGroupBotManagementRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -23,9 +20,6 @@ class GroupFeature internal constructor(
     private val session: ClientSession,
     private val scope: CoroutineScope,
     private val reportError: (Throwable, String) -> Unit,
-    private val botRepositoryFactory: () -> GroupBotManagementRepository = {
-        HttpGroupBotManagementRepository(defaultServerConfig().serverUrl, session.userSession.accessToken)
-    },
 ) {
     var detailChat by mutableStateOf<Chat?>(null)
         private set
@@ -109,17 +103,20 @@ class GroupFeature internal constructor(
         }
         groupBotsLoading = true
         try {
-            val loaded = botRepositoryFactory().list(chatId).getOrThrow()
+            val loaded = session.groupBotManagementRepo.list(chatId).getOrThrow()
+            if (!session.isBusinessActive) return
             if (!groupBotsGate.isCurrent(token)) return
             groupBots = loaded
             groupBotsError = null
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
-            if (groupBotsGate.isCurrent(token)) {
+            if (session.isBusinessActive && groupBotsGate.isCurrent(token)) {
                 groupBotsError = e.message ?: "加载群机器人失败"
                 reportError(e, "加载群机器人失败")
             }
         } finally {
-            if (groupBotsGate.isCurrent(token)) groupBotsLoading = false
+            if (session.isBusinessActive && groupBotsGate.isCurrent(token)) groupBotsLoading = false
         }
     }
 
@@ -134,16 +131,19 @@ class GroupFeature internal constructor(
         groupBotsError = null
         scope.launch {
             try {
-                val created = botRepositoryFactory().create(chatId, name).getOrThrow()
+                val created = session.groupBotManagementRepo.create(chatId, name).getOrThrow()
+                if (!session.isBusinessActive) return@launch
                 groupBotCredentialsByChat = groupBotCredentialsByChat + (chatId to created)
                 refreshGroupBotsIfCurrent(chatId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
-                if (groupBotsGate.targets(chatId)) {
+                if (session.isBusinessActive && groupBotsGate.targets(chatId)) {
                     groupBotsError = e.message ?: "创建机器人失败"
                     reportError(e, "创建机器人失败")
                 }
             } finally {
-                creatingGroupBot = false
+                if (session.isBusinessActive) creatingGroupBot = false
             }
         }
     }
@@ -159,16 +159,19 @@ class GroupFeature internal constructor(
         groupBotsError = null
         scope.launch {
             try {
-                val rotated = botRepositoryFactory().rotate(chatId, botId).getOrThrow()
+                val rotated = session.groupBotManagementRepo.rotate(chatId, botId).getOrThrow()
+                if (!session.isBusinessActive) return@launch
                 groupBotCredentialsByChat = groupBotCredentialsByChat + (chatId to rotated)
                 refreshGroupBotsIfCurrent(chatId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
-                if (groupBotsGate.targets(chatId)) {
+                if (session.isBusinessActive && groupBotsGate.targets(chatId)) {
                     groupBotsError = e.message ?: "轮换机器人 Token 失败"
                     reportError(e, "轮换机器人 Token 失败")
                 }
             } finally {
-                groupBotOperationId = null
+                if (session.isBusinessActive) groupBotOperationId = null
             }
         }
     }
@@ -179,16 +182,19 @@ class GroupFeature internal constructor(
         groupBotsError = null
         scope.launch {
             try {
-                botRepositoryFactory().remove(chatId, botId).getOrThrow()
+                session.groupBotManagementRepo.remove(chatId, botId).getOrThrow()
+                if (!session.isBusinessActive) return@launch
                 if (!groupBotsGate.targets(chatId)) return@launch
                 refreshGroupBotsIfCurrent(chatId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
-                if (groupBotsGate.targets(chatId)) {
+                if (session.isBusinessActive && groupBotsGate.targets(chatId)) {
                     groupBotsError = e.message ?: "移除机器人失败"
                     reportError(e, "移除机器人失败")
                 }
             } finally {
-                groupBotOperationId = null
+                if (session.isBusinessActive) groupBotOperationId = null
             }
         }
     }

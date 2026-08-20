@@ -66,6 +66,7 @@ internal fun mediaCacheNamespace(
 class AndroidMediaSession private constructor(
     val serverUrl: String,
     private val ownerUid: String,
+    private val ownerIdentityEpoch: Long,
     private val credentialsProvider: () -> SessionHttpCredentials,
     val cacheNamespace: String,
 ) : AutoCloseable {
@@ -79,12 +80,14 @@ class AndroidMediaSession private constructor(
     fun accessTokenForRequest(): String {
         check(!closed.get()) { "媒体会话已经关闭" }
         val credentials = credentialsProvider()
-        check(credentials.uid == ownerUid) { "媒体任务所属登录会话已失效" }
+        requireCurrentOwner(credentials)
         return credentials.accessToken?.takeIf(String::isNotBlank)
             ?: throw IllegalStateException("认证凭据不可用，请重新登录")
     }
 
-    fun isCurrentOwner(): Boolean = !closed.get() && credentialsProvider().uid == ownerUid
+    fun isCurrentOwner(): Boolean = !closed.get() && runCatching {
+        requireCurrentOwner(credentialsProvider())
+    }.isSuccess
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
@@ -98,15 +101,24 @@ class AndroidMediaSession private constructor(
             credentialsProvider: () -> SessionHttpCredentials,
         ): AndroidMediaSession {
             val normalizedServerUrl = serverUrl.trim().trimEnd('/')
+            val initial = credentialsProvider()
+            check(initial.uid == ownerUid) { "媒体会话初始认证身份不匹配" }
             return AndroidMediaSession(
                 serverUrl = normalizedServerUrl,
                 ownerUid = ownerUid,
+                ownerIdentityEpoch = initial.identityEpoch,
                 credentialsProvider = credentialsProvider,
                 cacheNamespace = mediaCacheNamespace(
                     serverUrl = normalizedServerUrl,
                     ownerUid = ownerUid,
                 ),
             )
+        }
+    }
+
+    private fun requireCurrentOwner(credentials: SessionHttpCredentials) {
+        check(credentials.uid == ownerUid && credentials.identityEpoch == ownerIdentityEpoch) {
+            "媒体任务所属登录会话已失效"
         }
     }
 }

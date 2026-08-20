@@ -1,6 +1,7 @@
 package com.virjar.tk
 
 import androidx.compose.runtime.*
+import com.virjar.tk.media.DesktopSessionDiagnosticEvent
 import com.virjar.tk.media.DesktopSessionResources
 import com.virjar.tk.navigation.AppDataState
 import com.virjar.tk.ui.screen.*
@@ -185,7 +186,7 @@ internal fun SubScreenContent(
                         throw cancelled
                     } catch (e: Exception) {
                         if (runCatching { resources.ensureOpen() }.isSuccess) {
-                            com.virjar.tk.util.AppLog.fault("GroupFiles", "upload failed: ${e.message}")
+                            resources.diagnostics.record(DesktopSessionDiagnosticEvent.GROUP_FILE_UPLOAD_FAILED)
                             data.groupFiles.reportUploadError(e)
                         }
                     } finally {

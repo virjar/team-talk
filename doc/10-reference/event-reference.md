@@ -32,7 +32,8 @@ eventId(varLong) + notifyType(1B) + payload(bytes?)
 | 60 | `USER_UPDATED` | `User` | 当前用户设备 | 更新用户缓存 |
 | 99 | `GENERIC` | `GenericPayload` | 扩展定义决定 | 严格解码信封；未注册扩展安全忽略并推进游标 |
 
-踢人和自行退群以同一数据库事务提交成员停用、目标会话行删除和上述持久事件。目标用户
+踢人、自行退群、受管群收敛移除和服务成员撤权都以同一数据库事务提交成员停用、目标会话行删除
+和上述持久事件。目标用户
 先收到隐私边界 `CHAT_DELETED`，再收到兼容的 `CONVERSATION_DELETED`，不会再收到容易被
 误解为“刷新群成员”的 `MEMBER_REMOVED`；剩余成员只收到 `MEMBER_REMOVED`。客户端处理 `CHAT_DELETED` 时会在一个
 SQLite 事务中清除 chat、conversation、草稿 outbox、member、message 和机器人 inbox，已被

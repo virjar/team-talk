@@ -1,11 +1,13 @@
 package com.virjar.tk.client
 
-import com.virjar.tk.log.TkLoggerFactory
+import com.virjar.tk.log.TkLogger
+import com.virjar.tk.util.PlatformOnlyTkLogger
 import com.virjar.tk.protocol.payload.InvokePayload
 import com.virjar.tk.protocol.payload.ResponsePayload
 import com.virjar.tk.rpc.RpcInvoker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -30,9 +32,15 @@ internal interface RpcRequestTransport {
     suspend fun sendIfOwned(
         expectedOwnerGeneration: Long,
         expectedConnectionGeneration: Long,
-        leaseIsActive: () -> Boolean,
+        sendAdmission: WireSendAdmission,
         payload: InvokePayload,
     ): Boolean
+}
+
+/** Serializes irreversible retirement against the EventLoop's actual channel write. */
+internal interface WireSendAdmission {
+    fun isActive(): Boolean
+    fun use(block: () -> Boolean): Boolean
 }
 
 private class ImClientRpcRequestTransport(
@@ -47,12 +55,12 @@ private class ImClientRpcRequestTransport(
     override suspend fun sendIfOwned(
         expectedOwnerGeneration: Long,
         expectedConnectionGeneration: Long,
-        leaseIsActive: () -> Boolean,
+        sendAdmission: WireSendAdmission,
         payload: InvokePayload,
     ): Boolean = imClient.sendIfOwned(
         expectedOwnerGeneration = expectedOwnerGeneration,
         expectedConnectionGeneration = expectedConnectionGeneration,
-        leaseIsActive = leaseIsActive,
+        sendAdmission = sendAdmission,
         proto = payload,
     )
 }
@@ -60,28 +68,40 @@ private class ImClientRpcRequestTransport(
 /** One RpcClient instance owns one irreversible authenticated-session lease. */
 private class RpcSessionLease(
     val transportOwnerGeneration: Long,
-) {
+) : WireSendAdmission {
+    private val lock = Any()
     @Volatile
     private var active = true
 
-    fun isActive(): Boolean = active
-    fun retire() {
-        active = false
+    override fun isActive(): Boolean = active
+    override fun use(block: () -> Boolean): Boolean = synchronized(lock) {
+        if (!active) return@synchronized false
+        block()
     }
+    fun retire() = synchronized(lock) { active = false }
 }
 
 /** One invocation can additionally be retired by caller cancellation without reviving its session. */
 private class RpcRequestLease(
     val session: RpcSessionLease,
     val connectionGeneration: Long,
-) {
+    private val businessAdmission: SessionOutboundLease?,
+) : WireSendAdmission {
+    private val lock = Any()
     @Volatile
     private var active = true
 
-    fun isActive(): Boolean = active && session.isActive()
-    fun retire() {
-        active = false
+    override fun isActive(): Boolean =
+        active && session.isActive() && (businessAdmission?.isActive() != false)
+
+    override fun use(block: () -> Boolean): Boolean = session.use {
+        synchronized(lock) {
+            if (!active) return@synchronized false
+            businessAdmission?.use(block) ?: block()
+        }
     }
+
+    fun retire() = synchronized(lock) { active = false }
 }
 
 internal class RpcTransportDisconnectedException : IllegalStateException(
@@ -98,6 +118,7 @@ internal class RpcTransportDisconnectedException : IllegalStateException(
  */
 class RpcClient internal constructor(
     private val transport: RpcRequestTransport,
+    lifecycleDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : RpcInvoker {
     constructor(imClient: ImClient) : this(ImClientRpcRequestTransport(imClient))
 
@@ -106,12 +127,13 @@ class RpcClient internal constructor(
         val deferred: CompletableDeferred<ResponsePayload>,
     )
 
-    private val logger = TkLoggerFactory.get("RpcClient")
+    @Volatile
+    private var logger: TkLogger = PlatformOnlyTkLogger("RpcClient")
     private val pendingLock = Any()
     private val pendingRequests = mutableMapOf<Int, PendingRequest>()
     private var nextRequestId = 1
     private val lifecycleScope = CoroutineScope(
-        Dispatchers.Default +
+        lifecycleDispatcher +
             SupervisorJob() +
             CoroutineExceptionHandler { _, failure ->
                 logger.fault("RpcClient session listener crashed", failure)
@@ -125,6 +147,12 @@ class RpcClient internal constructor(
     private var stopped = false
     @Volatile
     private var sessionLease: RpcSessionLease? = null
+
+    /** Bind before [start]; production sessions never borrow another AppLog owner's global logger. */
+    internal fun bindLogger(sessionLogger: TkLogger) {
+        check(!started) { "RpcClient logger must bind before start" }
+        logger = sessionLogger
+    }
 
     fun start() {
         check(!stopped) { "RpcClient is session-owned and cannot restart after stop" }
@@ -181,7 +209,22 @@ class RpcClient internal constructor(
         service: String,
         methodId: Int,
         payload: ByteArray?,
+    ): ResponsePayload = invokeOwned(service, methodId, payload, businessAdmission = null)
+
+    internal suspend fun invokeWhileActive(
+        service: String,
+        methodId: Int,
+        payload: ByteArray?,
+        businessAdmission: SessionOutboundLease,
+    ): ResponsePayload = invokeOwned(service, methodId, payload, businessAdmission)
+
+    private suspend fun invokeOwned(
+        service: String,
+        methodId: Int,
+        payload: ByteArray?,
+        businessAdmission: SessionOutboundLease?,
     ): ResponsePayload {
+        check(businessAdmission?.isActive() != false) { "RPC admission is retired" }
         check(started && !stopped) { "RpcClient is not started" }
         check(transport.state.value == ConnectionState.AUTHENTICATED) {
             "RPC requires an authenticated connection"
@@ -202,8 +245,9 @@ class RpcClient internal constructor(
         }
         val connectionGeneration = transport.currentConnectionGeneration
         check(connectionGeneration > 0L) { "RPC connection generation is unavailable" }
-        val requestLease = RpcRequestLease(activeSession, connectionGeneration)
+        val requestLease = RpcRequestLease(activeSession, connectionGeneration, businessAdmission)
         val (request, requestId) = synchronized(pendingLock) {
+            check(businessAdmission?.isActive() != false) { "RPC admission is retired" }
             check(started && !stopped && sessionLease === activeSession && activeSession.isActive()) {
                 "RpcClient session is not active"
             }
@@ -226,10 +270,13 @@ class RpcClient internal constructor(
                 val sent = transport.sendIfOwned(
                     expectedOwnerGeneration = activeSession.transportOwnerGeneration,
                     expectedConnectionGeneration = connectionGeneration,
-                    leaseIsActive = requestLease::isActive,
+                    sendAdmission = requestLease,
                     payload = InvokePayload(requestId, service, methodId, payload),
                 )
                 if (!sent) {
+                    if (businessAdmission?.isActive() == false) {
+                        throw CancellationException("RPC admission retired before request send")
+                    }
                     if (!activeSession.isActive()) {
                         throw CancellationException("RpcClient session closed before request send")
                     }

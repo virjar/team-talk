@@ -2,15 +2,22 @@ package com.virjar.tk.repository
 
 import com.virjar.tk.AppError
 import com.virjar.tk.Outcome
+import com.virjar.tk.client.LocalCache
+import com.virjar.tk.client.MessageHistoryLease
 import com.virjar.tk.model.Message
-import com.virjar.tk.rpc.gen.MessageRpcContract
 import com.virjar.tk.protocol.ProtoCodec
+import com.virjar.tk.protocol.payload.ResponsePayload
+import com.virjar.tk.rpc.RpcInvoker
+import com.virjar.tk.rpc.gen.MessageRpcContract
 import com.virjar.tk.testing.FakeLocalCache
 import com.virjar.tk.testing.FakeRpcInvoker
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -55,6 +62,91 @@ class MessageRepositoryTest {
         assertEquals("message", rpc.calls[0].first)
         assertEquals(MessageRpcContract.M_GET_HISTORY, rpc.calls[0].second)
     }
+
+    @Test
+    fun `history response suspended across chat tombstone is cancelled and cannot restore messages`() =
+        kotlinx.coroutines.runBlocking {
+            val rpc = BlockingHistoryRpc(listOf(sampleMsg))
+            val cache = FakeLocalCache()
+            val repo = MessageRepository(
+                rpc,
+                cache,
+                com.virjar.tk.client.MessageSender { throw IllegalStateException("not used") },
+            )
+
+            val request = async { repo.getHistory(chatId) }
+            rpc.started.await()
+            cache.deleteChat(chatId)
+            rpc.release.complete(Unit)
+
+            assertFailsWith<CancellationException> { request.await() }
+            assertTrue(cache.getMessages(chatId).isEmpty())
+        }
+
+    @Test
+    fun `failed newest request abandons pending chain and a later newest request recovers`() {
+        val cache = RecordingHistoryCache()
+        val failedRpc = FakeRpcInvoker().apply { enqueueError(500, "history unavailable") }
+        val failedRepository = MessageRepository(
+            failedRpc,
+            cache,
+            com.virjar.tk.client.MessageSender { throw IllegalStateException("not used") },
+        )
+
+        val failure = kotlinx.coroutines.runBlocking { failedRepository.getHistory(chatId) }
+
+        assertIs<Outcome.Failure>(failure)
+        assertEquals(1, cache.abandonCalls)
+
+        val recoveryRpc = FakeRpcInvoker().apply {
+            enqueueOk(ProtoCodec.encodeList(listOf(sampleMsg)))
+        }
+        val recoveryRepository = MessageRepository(
+            recoveryRpc,
+            cache,
+            com.virjar.tk.client.MessageSender { throw IllegalStateException("not used") },
+        )
+        val recovered = kotlinx.coroutines.runBlocking { recoveryRepository.getHistory(chatId) }
+
+        assertIs<Outcome.Success<List<Message>>>(recovered)
+        assertEquals(1, cache.abandonCalls)
+        assertEquals(listOf(sampleMsg.clientMsgId), cache.getMessages(chatId).map(Message::clientMsgId))
+    }
+
+    @Test
+    fun `cancelled newest request abandons pending chain and a later newest request recovers`() =
+        kotlinx.coroutines.runBlocking {
+            val cache = RecordingHistoryCache()
+            val blockedRpc = BlockingHistoryRpc(listOf(sampleMsg))
+            val blockedRepository = MessageRepository(
+                blockedRpc,
+                cache,
+                com.virjar.tk.client.MessageSender { throw IllegalStateException("not used") },
+            )
+            val request = async { blockedRepository.getHistory(chatId) }
+            blockedRpc.started.await()
+
+            request.cancel()
+            assertFailsWith<CancellationException> { request.await() }
+            assertEquals(1, cache.abandonCalls)
+
+            val recoveryRpc = FakeRpcInvoker().apply {
+                enqueueOk(ProtoCodec.encodeList(listOf(sampleMsg)))
+            }
+            val recoveryRepository = MessageRepository(
+                recoveryRpc,
+                cache,
+                com.virjar.tk.client.MessageSender { throw IllegalStateException("not used") },
+            )
+            val recovered = recoveryRepository.getHistory(chatId)
+
+            assertIs<Outcome.Success<List<Message>>>(recovered)
+            assertEquals(1, cache.abandonCalls)
+            assertEquals(
+                listOf(sampleMsg.clientMsgId),
+                cache.getMessages(chatId).map(Message::clientMsgId),
+            )
+        }
 
     @Test
     fun `getHistory business error does NOT silently fallback to cache`() {
@@ -157,5 +249,38 @@ class MessageRepositoryTest {
         // 调用方通过 recover 主动降级到缓存
         assertEquals(1, result.size)
         assertEquals("cmsg-1", result[0].clientMsgId)
+    }
+
+    private class BlockingHistoryRpc(
+        private val page: List<Message>,
+    ) : RpcInvoker {
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+
+        override suspend fun invoke(
+            service: String,
+            methodId: Int,
+            payload: ByteArray?,
+        ): ResponsePayload {
+            started.complete(Unit)
+            release.await()
+            return ResponsePayload(
+                requestId = 1,
+                status = 0,
+                payload = ProtoCodec.encodeList(page),
+            )
+        }
+    }
+
+    private class RecordingHistoryCache(
+        private val delegate: FakeLocalCache = FakeLocalCache(),
+    ) : LocalCache by delegate {
+        var abandonCalls = 0
+            private set
+
+        override fun abandonMessageHistoryLease(lease: MessageHistoryLease): Boolean {
+            abandonCalls += 1
+            return delegate.abandonMessageHistoryLease(lease)
+        }
     }
 }

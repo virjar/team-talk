@@ -16,10 +16,23 @@ class RpcDispatcher(
 ) {
     private val logger = LoggerFactory.getLogger("RpcDispatcher")
 
-    suspend fun dispatch(uid: String, deviceId: String, sessionId: String, invoke: InvokePayload): ResponsePayload {
+    suspend fun dispatch(
+        uid: String,
+        deviceId: String,
+        userCredentialEpoch: Long,
+        deviceCredentialEpoch: Long,
+        sessionId: String,
+        invoke: InvokePayload,
+    ): ResponsePayload {
         return try {
             val result = registry.dispatchSuspend(
-                RpcSessionContext(uid = uid, deviceId = deviceId, sessionId = sessionId),
+                RpcSessionContext(
+                    uid = uid,
+                    deviceId = deviceId,
+                    userCredentialEpoch = userCredentialEpoch,
+                    deviceCredentialEpoch = deviceCredentialEpoch,
+                    sessionId = sessionId,
+                ),
                 invoke.serviceId,
                 invoke.methodId,
                 invoke.payload,

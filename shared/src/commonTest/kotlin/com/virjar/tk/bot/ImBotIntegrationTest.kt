@@ -58,7 +58,7 @@ class ImBotIntegrationTest {
         runBlocking {
             val b = bot("reg")
             assertTrue(b.uid.isNotBlank())
-            assertEquals(ConnectionState.AUTHENTICATED, b.imClient.state.value)
+            assertEquals(ConnectionState.AUTHENTICATED, b.connectionState.value)
         }
     }
 
@@ -106,7 +106,7 @@ class ImBotIntegrationTest {
             val deadline = System.currentTimeMillis() + 10_000
             var peerReadSeq = 0L
             while (System.currentTimeMillis() < deadline) {
-                peerReadSeq = sender.session.localCache.getConversations()
+                peerReadSeq = sender.cachedConversationsForTest()
                     .firstOrNull { it.chatId == chatId }?.peerReadSeq ?: 0L
                 if (peerReadSeq >= msg.serverSeq) break
                 delay(300)
@@ -130,8 +130,8 @@ class ImBotIntegrationTest {
             b.nextMessage { it.senderUid == a.uid && it.body is com.virjar.tk.body.RichTextBody }
 
             // A 模拟网络断（不置 destroyed → 自动重连路径）
-            a.imClient.simulateNetworkDrop()
-            withTimeout(10_000) { a.imClient.state.first { it == ConnectionState.DISCONNECTED } }
+            a.simulateNetworkDropForTest()
+            withTimeout(10_000) { a.connectionState.first { it == ConnectionState.DISCONNECTED } }
 
             // 断线期间 B 发 3 条（A 不在线，事件入 sync_events）
             val texts = (1..3).map { "offline-$it-${UUID.randomUUID()}" }
@@ -139,7 +139,7 @@ class ImBotIntegrationTest {
             delay(500)
 
             // A 自动重连（退避 1s 起）→ 认证后从持久 cursor 显式分页同步
-            withTimeout(30_000) { a.imClient.state.first { it == ConnectionState.AUTHENTICATED } }
+            withTimeout(30_000) { a.connectionState.first { it == ConnectionState.AUTHENTICATED } }
             val received = mutableListOf<String>()
             repeat(texts.size) {
                 val m = withTimeout(15_000) {
@@ -274,8 +274,8 @@ class ImBotIntegrationTest {
             val b = bot("prb")
             befriend(a, b)
             // A 下线再上线 → B 观察 presenceEvents（offline→online 序列）
-            a.imClient.simulateNetworkDrop()
-            withTimeout(10_000) { a.imClient.state.first { it == ConnectionState.DISCONNECTED } }
+            a.simulateNetworkDropForTest()
+            withTimeout(10_000) { a.connectionState.first { it == ConnectionState.DISCONNECTED } }
             val presence = launch {
                 withTimeout(30_000) {
                     while (true) {
@@ -284,7 +284,7 @@ class ImBotIntegrationTest {
                     }
                 }
             }
-            withTimeout(30_000) { a.imClient.state.first { it == ConnectionState.AUTHENTICATED } }
+            withTimeout(30_000) { a.connectionState.first { it == ConnectionState.AUTHENTICATED } }
             presence.join()
         }
     }

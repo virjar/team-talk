@@ -113,6 +113,37 @@ class CredentialEpochIntegrationTest {
     }
 
     @Test
+    fun `delayed logout from an older session cannot revoke a newer device pair`() = runTest {
+        val username = uniqueUsername("credential-stale-logout")
+        val password = "pass123"
+        val uid = ctx.registerUser(username, password)
+        val first = login(username, password, "stale-logout-device")
+        val firstPrincipal = assertNotNull(
+            ctx.accessTokenValidator.validateAccessToken(requireNotNull(first.accessToken)),
+        )
+        val second = login(username, password, "stale-logout-device")
+        val secondAccess = requireNotNull(second.accessToken)
+        val secondPrincipal = assertNotNull(ctx.accessTokenValidator.validateAccessToken(secondAccess))
+        assertTrue(secondPrincipal.deviceCredentialEpoch > firstPrincipal.deviceCredentialEpoch)
+
+        val fencedEpoch = assertNotNull(
+            ctx.tokenRepository.revokeDeviceIfCurrent(
+                uid = uid,
+                deviceId = "stale-logout-device",
+                expectedDeviceCredentialEpoch = firstPrincipal.deviceCredentialEpoch,
+            ),
+        )
+
+        assertEquals(secondPrincipal.deviceCredentialEpoch, fencedEpoch)
+        assertNotNull(ctx.accessTokenValidator.validateAccessToken(secondAccess))
+        assertEquals(2L, transaction {
+            Credentials.selectAll().where {
+                (Credentials.uid eq uid) and (Credentials.deviceId eq "stale-logout-device")
+            }.count()
+        })
+    }
+
+    @Test
     fun `refresh rotates the complete pair and remains bounded`() = runTest {
         val username = uniqueUsername("credential-refresh")
         val password = "pass123"

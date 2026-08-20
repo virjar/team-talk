@@ -46,6 +46,33 @@ class LocalCacheImplTest {
     }
 
     @Test
+    fun `late ack cursor draft and captured pager fail before touching closed driver`() {
+        val cache = newCache()
+        val message = Message(
+            chatId = "retired",
+            clientMsgId = "late-ack",
+            senderUid = "u1",
+            messageType = 1,
+            timestamp = 1L,
+        )
+        cache.insertMessage(message)
+        cache.upsertConversation(conv("retired"))
+        val draftGeneration = cache.setConversationDraft("retired", "pending")
+        val pager = cache.pager("retired")
+
+        cache.close()
+
+        assertFailsWith<IllegalStateException> { cache.updateMessage("retired", "late-ack", 9L) }
+        assertFailsWith<IllegalStateException> {
+            cache.advanceSyncCursor(EventProcessor.SYNC_CURSOR_KEY, 9L)
+        }
+        assertFailsWith<IllegalStateException> {
+            cache.markConversationDraftMirrored("retired", draftGeneration)
+        }
+        assertFailsWith<IllegalStateException> { pager.loadMore() }
+    }
+
+    @Test
     fun `sync cursor is monotonic and restored by a rebuilt event processor`() {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         AppDatabase.Schema.create(driver)
@@ -591,21 +618,37 @@ class LocalCacheImplTest {
                 ),
             )
         }
-
-        cache.insertMessagePage(
+        val newestPage = (9 downTo 4).map { seq ->
+            Message(
+                chatId = "history-capacity",
+                clientMsgId = "m$seq",
+                serverSeq = seq.toLong(),
+                senderUid = "u",
+                messageType = 1,
+                timestamp = seq.toLong(),
+            )
+        }
+        val newestLease = cache.beginMessageHistoryLease(
             chatId = "history-capacity",
-            messages = (3 downTo 1).map { seq ->
-                Message(
-                    chatId = "history-capacity",
-                    clientMsgId = "m$seq",
-                    serverSeq = seq.toLong(),
-                    senderUid = "u",
-                    messageType = 1,
-                    timestamp = seq.toLong(),
-                )
-            },
+            resetResidentWindow = true,
+        )
+        assertTrue(cache.applyMessageHistoryPage(newestLease, newestPage))
+
+        val olderPage = (3 downTo 1).map { seq ->
+            Message(
+                chatId = "history-capacity",
+                clientMsgId = "m$seq",
+                serverSeq = seq.toLong(),
+                senderUid = "u",
+                messageType = 1,
+                timestamp = seq.toLong(),
+            )
+        }
+        val olderLease = cache.beginMessageHistoryLease(
+            chatId = "history-capacity",
             resetResidentWindow = false,
         )
+        assertTrue(cache.applyMessageHistoryPage(olderLease, olderPage))
 
         assertEquals((9 downTo 1).map(Int::toLong), cache.getMessages("history-capacity", 20).map { it.serverSeq })
     }
@@ -639,7 +682,8 @@ class LocalCacheImplTest {
                 timestamp = seq,
             )
         }
-        cache.insertMessagePage("history-gap", latestPage, resetResidentWindow = true)
+        val latestLease = cache.beginMessageHistoryLease("history-gap", resetResidentWindow = true)
+        assertTrue(cache.applyMessageHistoryPage(latestLease, latestPage))
 
         assertEquals(
             listOf(100L, 99L, 97L),
@@ -661,7 +705,8 @@ class LocalCacheImplTest {
                 timestamp = seq,
             )
         }
-        cache.insertMessagePage("history-gap", olderPage, resetResidentWindow = false)
+        val olderLease = cache.beginMessageHistoryLease("history-gap", resetResidentWindow = false)
+        assertTrue(cache.applyMessageHistoryPage(olderLease, olderPage))
 
         assertEquals(
             listOf(100L, 99L, 97L, 95L, 94L, 90L),

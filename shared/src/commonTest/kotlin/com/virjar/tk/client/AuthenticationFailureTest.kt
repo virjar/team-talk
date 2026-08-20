@@ -29,4 +29,23 @@ class AuthenticationFailureTest {
         assertEquals(AuthenticationFailureKind.REJECTED, failure?.kind)
         assertEquals("认证失败(code=99)", failure?.reason)
     }
+
+    @Test
+    fun `operational auth responses retain their retry classification`() {
+        assertEquals(
+            AuthenticationFailureKind.SERVER_MAINTENANCE,
+            AuthResponsePayload(code = AuthResponsePayload.CODE_SERVER_MAINTENANCE)
+                .toAuthenticationFailure()?.kind,
+        )
+        assertEquals(
+            AuthenticationFailureKind.DEVICE_BANNED,
+            AuthResponsePayload(code = AuthResponsePayload.CODE_DEVICE_BANNED)
+                .toAuthenticationFailure()?.kind,
+        )
+        assertEquals(
+            AuthenticationFailureKind.TOO_MANY_CONNECTIONS,
+            AuthResponsePayload(code = AuthResponsePayload.CODE_TOO_MANY_CONNECTIONS)
+                .toAuthenticationFailure()?.kind,
+        )
+    }
 }

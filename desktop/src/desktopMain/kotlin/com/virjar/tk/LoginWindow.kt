@@ -126,7 +126,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
         }
 
         // DISCONNECTED 时清 loading 和注册页状态
-        val connectionState by auth.imClient.state.collectAsState()
+        val connectionState by auth.connectionState.collectAsState()
         LaunchedEffect(connectionState) {
             if (connectionState == ConnectionState.DISCONNECTED || connectionState == ConnectionState.AUTH_FAILED) {
                 loginLoading = false; registerLoading = false; showRegister = false
@@ -200,8 +200,9 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
             DesktopSessionResources(
                 ownerUid = session.userSession.uid,
                 serverUrl = config.serverUrl,
-                credentialProvider = session.userSession::httpCredentialsSnapshot,
+                credentialProvider = session::httpCredentialsSnapshot,
                 dataDir = dataDir,
+                diagnosticLogger = session.diagnosticLogger("DesktopSession"),
             )
         }
         DisposableEffect(desktopResources) {
@@ -211,7 +212,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
         var windowVisible by remember { mutableStateOf(true) }
 
         // ── 连接状态 → KeepAwake + 托盘 tooltip ──
-        val connectionState by auth.imClient.state.collectAsState()
+        val connectionState by auth.connectionState.collectAsState()
         LaunchedEffect(connectionState) {
             when (connectionState) {
                 ConnectionState.AUTHENTICATED -> KeepAwake.start()

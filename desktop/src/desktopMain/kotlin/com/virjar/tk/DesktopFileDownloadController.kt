@@ -2,6 +2,7 @@ package com.virjar.tk
 
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.snapshots.SnapshotStateMap
+import com.virjar.tk.media.DesktopSessionDiagnosticEvent
 import com.virjar.tk.media.DesktopSessionResources
 import com.virjar.tk.model.Attachment
 import com.virjar.tk.ui.component.FileDownloadController
@@ -114,7 +115,7 @@ internal class DesktopFileDownloadController(
             throw cancelled
         } catch (e: Exception) {
             if (runCatching { resources.ensureOpen() }.isFailure) return
-            com.virjar.tk.util.AppLog.fault("FileDownload", "download failed path=$key: ${e.message}")
+            resources.diagnostics.record(DesktopSessionDiagnosticEvent.FILE_DOWNLOAD_FAILED)
             states[key] = FileDownloadState.Failed(e.message)
             val pendingOpen = mutex.withLock { openAfterDownload.remove(key) }
             if (pendingOpen == PendingOpenMode.PREVIEW) {
@@ -136,7 +137,9 @@ internal class DesktopFileDownloadController(
             return
         }
         runCatching { onDownloaded(file) }
-            .onFailure { com.virjar.tk.util.AppLog.fault("FileDownload", "open failed ${file.name}: ${it.message}") }
+            .onFailure {
+                resources.diagnostics.record(DesktopSessionDiagnosticEvent.FILE_OPEN_FAILED)
+            }
     }
 
     private fun cachedFile(attachment: Attachment): File? =

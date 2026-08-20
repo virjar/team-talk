@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import com.virjar.tk.media.DesktopSessionDiagnosticEvent
 import com.virjar.tk.media.DesktopSessionResources
 import com.virjar.tk.ui.component.VoicePlaybackController
 import io.github.kdroidfilter.composemediaplayer.InitialPlayerState
@@ -64,13 +65,13 @@ private class DesktopVoicePlaybackImpl(
                     try {
                         val file = resources.mediaCache.ensureDownloaded(url)
                         resources.ensureOpen()
-                        com.virjar.tk.util.AppLog.trace("VoicePlayback", "openUri ${file.absolutePath} (${file.length()}B)")
+                        resources.diagnostics.record(DesktopSessionDiagnosticEvent.VOICE_PLAYBACK_OPENING)
                         playerState.openUri(file.absolutePath, InitialPlayerState.PLAY)
                     } catch (cancelled: CancellationException) {
                         throw cancelled
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
                         // 下载/打开失败：复位，不弹系统播放器
-                        com.virjar.tk.util.AppLog.fault("VoicePlayback", "voice open failed: ${e.message}")
+                        resources.diagnostics.record(DesktopSessionDiagnosticEvent.VOICE_PLAYBACK_FAILED)
                         reset()
                     }
                 }

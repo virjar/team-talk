@@ -14,11 +14,14 @@ import kotlinx.coroutines.flow.asStateFlow
  * 调用 [loadMore] 向上翻页加载更老消息，追加到窗口末尾。
  * 当窗口大小超过 [windowSize] * 2 时自动裁剪最老的消息（保留 hasMore=true）。
  *
- * 所有操作不持有 LocalCacheImpl 引用，通过 [queries] 直接访问 DB。
+ * 所有操作不持有 LocalCacheImpl 引用，通过 [queries] 直接访问 DB。SQLite 访问和
+ * resident-window 发布都必须先取得 [cacheUseGate]，因此 cache close 会等待已经准入的
+ * pager 操作退出，且 close 返回后旧 pager 无法触碰已关闭的 driver。
  */
 internal class MessageWindow(
     private val chatId: String,
     private val queries: AppDatabaseQueries,
+    private val cacheUseGate: CacheUseGate,
     private val windowSize: Int,
     toModel: (com.virjar.tk.database.Message) -> Message,
 ) : MessagePager {
@@ -44,12 +47,14 @@ internal class MessageWindow(
         loadInitialWindow()
     }
 
-    private fun loadInitialWindow() {
-        val rows = queries.selectMessagesByChat(chatId, windowSize.toLong()).executeAsList()
-        val msgs = rows.map { toModelFn(it) }.sortedWith(messageOrder)
-        _messages.value = msgs
-        historyCursor = oldestServerSeq(msgs)
-        refreshHasMore(msgs)
+    private fun loadInitialWindow() = cacheUseGate.use {
+        synchronized(stateLock) {
+            val rows = queries.selectMessagesByChat(chatId, windowSize.toLong()).executeAsList()
+            val msgs = rows.map { toModelFn(it) }.sortedWith(messageOrder)
+            _messages.value = msgs
+            historyCursor = oldestServerSeq(msgs)
+            refreshHasMore(msgs)
+        }
     }
 
     private fun refreshHasMore(currentMsgs: List<Message>) {
@@ -64,70 +69,76 @@ internal class MessageWindow(
             queries.selectMessagesByChatBefore(chatId, cursor, 1L).executeAsList().isNotEmpty()
     }
 
-    override fun loadMore(pageSize: Int) = synchronized(stateLock) {
-        if (serverPageAnchored) return@synchronized
-        val current = _messages.value
-        val oldestSeq = historyCursor ?: oldestServerSeq(current) ?: return@synchronized
-        if (!_hasMore.value) return@synchronized
+    override fun loadMore(pageSize: Int) = cacheUseGate.use {
+        synchronized(stateLock) {
+            if (serverPageAnchored) return@synchronized
+            val current = _messages.value
+            val oldestSeq = historyCursor ?: oldestServerSeq(current) ?: return@synchronized
+            if (!_hasMore.value) return@synchronized
 
-        val olderRows = queries.selectMessagesByChatBefore(chatId, oldestSeq, pageSize.toLong()).executeAsList()
-        val existingIds = current.asSequence().map(Message::clientMsgId).toHashSet()
-        val older = olderRows.map(toModelFn).filter { existingIds.add(it.clientMsgId) }
-        val merged = (current + older).sortedWith(messageOrder)
-        _messages.value = merged
-        historyCursor = oldestServerSeq(merged)
-        refreshHasMore(merged)
+            val olderRows = queries.selectMessagesByChatBefore(chatId, oldestSeq, pageSize.toLong()).executeAsList()
+            val existingIds = current.asSequence().map(Message::clientMsgId).toHashSet()
+            val older = olderRows.map(toModelFn).filter { existingIds.add(it.clientMsgId) }
+            val merged = (current + older).sortedWith(messageOrder)
+            _messages.value = merged
+            historyCursor = oldestServerSeq(merged)
+            refreshHasMore(merged)
+        }
     }
 
     /**
      * Apply one RPC history response as an atomic, server-proven page. Sequence numbers are
      * cursors, not a promise of `n - 1` adjacency: legal holes inside or between pages are kept.
      */
-    fun applyHistoryPage(page: List<Message>, resetResidentWindow: Boolean) = synchronized(stateLock) {
-        val startNewChain = resetResidentWindow || !serverPageAnchored
-        val base = if (startNewChain) {
-            val pageMaxSeq = page.asSequence().map(Message::serverSeq).filter { it > 0L }.maxOrNull()
-            _messages.value.filter { message ->
-                message.serverSeq <= 0L || (pageMaxSeq != null && message.serverSeq > pageMaxSeq)
+    fun applyHistoryPage(page: List<Message>, resetResidentWindow: Boolean) = cacheUseGate.use {
+        synchronized(stateLock) {
+            val startNewChain = resetResidentWindow || !serverPageAnchored
+            val base = if (startNewChain) {
+                val pageMaxSeq = page.asSequence().map(Message::serverSeq).filter { it > 0L }.maxOrNull()
+                _messages.value.filter { message ->
+                    message.serverSeq <= 0L || (pageMaxSeq != null && message.serverSeq > pageMaxSeq)
+                }
+            } else {
+                _messages.value
             }
-        } else {
-            _messages.value
+            val merged = mergeByClientId(base, page)
+            serverPageAnchored = true
+            historyCursor = oldestServerSeq(merged)
+            _messages.value = merged
+            _hasMore.value = false
         }
-        val merged = mergeByClientId(base, page)
-        serverPageAnchored = true
-        historyCursor = oldestServerSeq(merged)
-        _messages.value = merged
-        _hasMore.value = false
     }
 
     /**
      * 新消息到达（NOTIFY 推送）或发送时调用，更新内存窗口。
      * 如果窗口不存在该消息则插入到最前面（最新），存在则更新。
      */
-    fun upsert(message: Message) = synchronized(stateLock) {
-        val current = _messages.value.toMutableList()
-        val idx = current.indexOfFirst { it.clientMsgId == message.clientMsgId }
-        if (idx >= 0) {
-            current[idx] = message
-        } else {
-            // Single-message events are not history-page provenance. Once anchored, an event below
-            // the cursor is persisted by LocalCacheImpl but stays hidden until an RPC page proves
-            // that it belongs to the active history chain.
-            val cursor = historyCursor
-            if (serverPageAnchored && message.serverSeq > 0L && cursor != null && message.serverSeq < cursor) {
-                refreshHasMore(current)
-                return@synchronized
+    fun upsert(message: Message) = cacheUseGate.use {
+        synchronized(stateLock) {
+            val current = _messages.value.toMutableList()
+            val idx = current.indexOfFirst { it.clientMsgId == message.clientMsgId }
+            if (idx >= 0) {
+                current[idx] = message
+            } else {
+                // Single-message events are not history-page provenance. Once anchored, an event below
+                // the cursor is persisted by LocalCacheImpl but stays hidden until an RPC page proves
+                // that it belongs to the active history chain.
+                val cursor = historyCursor
+                if (serverPageAnchored && message.serverSeq > 0L && cursor != null && message.serverSeq < cursor) {
+                    refreshHasMore(current)
+                    return@synchronized
+                }
+                current.add(message)
             }
-            current.add(message)
+            // Keep the public order explicit for live/pending upserts. RPC history uses the atomic
+            // applyHistoryPage path above; pending local messages (seq=0) remain before confirmed
+            // history and are ordered by their local timestamp.
+            current.sortWith(messageOrder)
+            trimIfOversized(current)
+            _messages.value = current
+            historyCursor = oldestServerSeq(current)
+            refreshHasMore(current)
         }
-        // Keep the public order explicit for live/pending upserts. RPC history uses the atomic
-        // applyHistoryPage path above; pending local messages (seq=0) remain before confirmed
-        // history and are ordered by their local timestamp.
-        current.sortWith(messageOrder)
-        trimIfOversized(current)
-        _messages.value = current
-        historyCursor = oldestServerSeq(current)
-        refreshHasMore(current)
     }
 
     /**
@@ -138,27 +149,31 @@ internal class MessageWindow(
         serverSeq: Long? = null,
         sendStatus: Int? = null,
         transform: (Message.() -> Message)? = null,
-    ) = synchronized(stateLock) {
-        val current = _messages.value.toMutableList()
-        val idx = current.indexOfFirst { it.clientMsgId == clientMsgId }
-        if (idx < 0) return@synchronized
-        current[idx] = current[idx].let {
-            transform?.invoke(it) ?: it.copy(
-                serverSeq = serverSeq ?: it.serverSeq,
-                sendStatus = sendStatus ?: it.sendStatus,
-            )
+    ) = cacheUseGate.use {
+        synchronized(stateLock) {
+            val current = _messages.value.toMutableList()
+            val idx = current.indexOfFirst { it.clientMsgId == clientMsgId }
+            if (idx < 0) return@synchronized
+            current[idx] = current[idx].let {
+                transform?.invoke(it) ?: it.copy(
+                    serverSeq = serverSeq ?: it.serverSeq,
+                    sendStatus = sendStatus ?: it.sendStatus,
+                )
+            }
+            current.sortWith(messageOrder)
+            _messages.value = current
+            historyCursor = oldestServerSeq(current)
+            refreshHasMore(current)
         }
-        current.sortWith(messageOrder)
-        _messages.value = current
-        historyCursor = oldestServerSeq(current)
-        refreshHasMore(current)
     }
 
-    fun deleteMessage(clientMsgId: String) = synchronized(stateLock) {
-        val current = _messages.value.filter { it.clientMsgId != clientMsgId }
-        _messages.value = current
-        historyCursor = oldestServerSeq(current)
-        refreshHasMore(current)
+    fun deleteMessage(clientMsgId: String) = cacheUseGate.use {
+        synchronized(stateLock) {
+            val current = _messages.value.filter { it.clientMsgId != clientMsgId }
+            _messages.value = current
+            historyCursor = oldestServerSeq(current)
+            refreshHasMore(current)
+        }
     }
 
     /**
@@ -167,11 +182,13 @@ internal class MessageWindow(
      * SYNC_RESET keeps this window instance registered in LocalCacheImpl so replayed messages
      * repopulate the same Flow observed by an already-open chat screen.
      */
-    fun resetServerProjection() = synchronized(stateLock) {
-        _messages.value = emptyList()
-        _hasMore.value = false
-        serverPageAnchored = false
-        historyCursor = null
+    fun resetServerProjection() = cacheUseGate.use {
+        synchronized(stateLock) {
+            _messages.value = emptyList()
+            _hasMore.value = false
+            serverPageAnchored = false
+            historyCursor = null
+        }
     }
 
     /** 窗口超过 windowSize * 2 时裁剪最老的消息（保留 hasMore=true）。 */
@@ -183,8 +200,8 @@ internal class MessageWindow(
     }
 
     /** 当前窗口快照（用于 getMessages 同步访问）。 */
-    fun snapshot(limit: Int): List<Message> = synchronized(stateLock) {
-        _messages.value.take(limit)
+    fun snapshot(limit: Int): List<Message> = cacheUseGate.use {
+        synchronized(stateLock) { _messages.value.take(limit) }
     }
 
     private val maxCapacity: Int get() = windowSize * 2

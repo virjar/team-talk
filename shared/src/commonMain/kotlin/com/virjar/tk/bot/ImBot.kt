@@ -1,14 +1,20 @@
 package com.virjar.tk.bot
 
 import com.virjar.tk.client.ClientSession
+import com.virjar.tk.client.AuthenticationFailureKind
 import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.client.EventProcessor
 import com.virjar.tk.client.ImClient
-import com.virjar.tk.client.LocalCache
 import com.virjar.tk.client.MessageSender
 import com.virjar.tk.client.PendingBotMessage
+import com.virjar.tk.client.SessionBoundaryReentrantCloseException
+import com.virjar.tk.client.SessionEndReason
+import com.virjar.tk.client.SessionResourceCloseException
+import com.virjar.tk.client.SessionWorkGate
+import com.virjar.tk.client.SessionWorkGateReentrantCloseException
 import com.virjar.tk.client.UserSession
 import com.virjar.tk.client.createSession
+import com.virjar.tk.client.releaseAllSessionResources
 import com.virjar.tk.body.FileBody
 import com.virjar.tk.body.ImageBody
 import com.virjar.tk.body.buildRichTextBody
@@ -30,7 +36,7 @@ import com.virjar.tk.model.Attachment
 import com.virjar.tk.repository.FileRepository
 import com.virjar.tk.repository.UploadSource
 import com.virjar.tk.repository.asSmallUploadSource
-import com.virjar.tk.util.AppLog
+import com.virjar.tk.util.PlatformOnlyTkLogger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,115 +54,103 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import java.util.UUID
 
-/**
- * ImBot 的账号缓存打开策略。
- *
- * 调用方必须明确选择持久缓存或测试缓存；[open] 只会在认证成功并取得服务端 uid 后调用，
- * 返回的缓存所有权随即移交给 ClientSession，并由 ImBot.shutdown 级联关闭。
- */
-fun interface ImBotCacheOwner {
-    fun open(uid: String): LocalCache
-}
-
-/**
- * ImBot 的单消费者可靠收件箱。
- *
- * 消息主体落在账号 LocalCache 的磁盘表；进程内只用 CONFLATED wake-up，因此初始 replay
- * 不依赖消费者启动时序、不会形成内存 backlog。eventId 与 `(chatId, serverSeq)` 都是
- * INSERT OR IGNORE 幂等边界。
- */
-class ImBotMessageInbox {
-    private val wakeUp = Channel<Unit>(Channel.CONFLATED)
-    private val stateLock = Any()
-    private var localCache: LocalCache? = null
-    private var closed = false
-
-    /** Cache lifecycle remains owned by ClientSession; inbox only borrows it until [close]. */
-    internal fun bind(cache: LocalCache) {
-        synchronized(stateLock) {
-            check(!closed) { "ImBot inbox is closed" }
-            check(localCache == null) { "ImBot inbox is already bound" }
-            localCache = cache
-        }
-        // Wake a consumer which started before authentication/cache creation.
-        wakeUp.trySend(Unit)
-    }
-
-    internal suspend fun publish(eventId: Long, message: Message) {
-        val cache = synchronized(stateLock) {
-            check(!closed) { "ImBot inbox is closed" }
-            checkNotNull(localCache) { "ImBot inbox is not bound" }
-        }
-        cache.enqueueBotMessage(eventId, message)
-        wakeUp.trySend(Unit)
-    }
-
-    /** 读取但不删除最早一条持久消息；业务接受后必须显式 [ack]。 */
-    suspend fun receivePending(): PendingBotMessage =
-        checkNotNull(receivePendingOrNull()) { "ImBot inbox is closed" }
-
-    /** inbox 关闭时返回 null；未绑定或暂时为空时等待 CONFLATED wake-up。 */
-    suspend fun receivePendingOrNull(): PendingBotMessage? {
-        while (true) {
-            val state = synchronized(stateLock) { localCache to closed }
-            if (state.second) return null
-            state.first?.peekBotMessage()?.let { return it }
-            if (wakeUp.receiveCatching().isClosed) return null
-        }
-    }
-
-    /** 确认业务已经接受该 delivery；崩溃前未调用则重启后会再次收到。 */
-    fun ack(eventId: Long) {
-        val cache = synchronized(stateLock) {
-            check(!closed) { "ImBot inbox is closed" }
-            checkNotNull(localCache) { "ImBot inbox is not bound" }
-        }
-        cache.deleteBotMessage(eventId)
-        // There may already be a following durable row.
-        wakeUp.trySend(Unit)
-    }
-
-    /** tt-agent recent/history 的磁盘事实源；不依赖进程内 ring。 */
-    fun recentMessages(chatId: String?, afterSeq: Long, limit: Int): List<Message> {
-        val cache = synchronized(stateLock) {
-            check(!closed) { "ImBot inbox is closed" }
-            checkNotNull(localCache) { "ImBot inbox is not bound" }
-        }
-        return cache.getRecentMessages(chatId, afterSeq, limit)
-    }
-
-    /**
-     * at-most-once 便利读取：在返回前自动 ack。需要跨业务处理重试时使用
-     * [receivePending] + [ack]，不要调用此方法。
-     */
-    suspend fun receive(): Message {
-        val pending = receivePending()
-        ack(pending.eventId)
-        return pending.message
-    }
-
-    /** at-most-once 便利读取；inbox 关闭时返回 null。 */
-    suspend fun receiveOrNull(): Message? {
-        val pending = receivePendingOrNull() ?: return null
-        ack(pending.eventId)
-        return pending.message
-    }
-
-    internal fun close() {
-        synchronized(stateLock) {
-            if (closed) return
-            closed = true
-            localCache = null
-        }
-        wakeUp.close()
-    }
-}
-
 /** 非权威提示缓冲发生的丢弃计数；消费者收到提示后应从 Repository 重拉详情。 */
 data class ImBotEventBufferOverflow(
     val contactEventsDropped: Long = 0L,
     val chatEventsDropped: Long = 0L,
 )
+
+/** A typed server rejection, distinct from transport and timeout failures. */
+internal class ImBotAuthenticationRejectedException(
+    val kind: AuthenticationFailureKind,
+    reason: String,
+) : IllegalStateException("authentication rejected: $reason") {
+    val requiresOperatorIntervention: Boolean
+        get() = kind !in setOf(
+            AuthenticationFailureKind.SERVER_MAINTENANCE,
+            AuthenticationFailureKind.TOO_MANY_CONNECTIONS,
+        )
+}
+
+/** Durably admits rotated credentials before atomically publishing the live identity. */
+internal fun admitImBotAuthentication(
+    userSession: UserSession,
+    uid: String,
+    username: String,
+    displayName: String?,
+    refreshToken: String,
+    accessToken: String?,
+    onRefreshCredentials: ((uid: String, username: String, refreshToken: String) -> Unit)?,
+) {
+    userSession.onAuthSuccess(
+        uid = uid,
+        username = username,
+        name = displayName,
+        refreshToken = refreshToken,
+        accessToken = accessToken,
+        durableCommit = {
+            onRefreshCredentials?.invoke(uid, username, refreshToken)
+        },
+    )
+}
+
+/** Drains an admitted durable credential commit before the bot owner can finish shutdown. */
+internal class ImBotAuthResultAdmission {
+    private val gate = SessionWorkGate("ImBot authentication result")
+    private val lease = gate.lease()
+
+    fun <T> use(block: () -> T): T = gate.use(lease, block)
+
+    fun runIfActive(block: () -> Unit): Boolean = gate.runIfActive(lease, block)
+
+    fun close(): Boolean = gate.close()
+}
+
+/** Joins every shutdown caller to one cleanup and one terminal outcome without lock inversion. */
+internal class ImBotShutdownLifecycle(
+    private val authResultAdmission: ImBotAuthResultAdmission,
+) {
+    private val lock = Any()
+    private var phase = Phase.OPEN
+    private var terminalFailure: Throwable? = null
+
+    fun shutdown(vararg releases: Pair<String, () -> Unit>) {
+        // Never wait for the auth gate while holding [lock]. A durable hook is allowed to call
+        // shutdown reentrantly, so lock -> gate would deadlock against that hook's gate -> lock.
+        var boundaryFailure: SessionWorkGateReentrantCloseException? = null
+        try {
+            authResultAdmission.close()
+        } catch (failure: SessionWorkGateReentrantCloseException) {
+            boundaryFailure = failure
+        }
+
+        synchronized(lock) {
+            when (phase) {
+                Phase.CLOSED -> {
+                    terminalFailure?.let { throw it }
+                    return
+                }
+                Phase.CLOSING -> throw SessionBoundaryReentrantCloseException(
+                    "ImBot shutdown cannot reenter its resource cleanup",
+                )
+                Phase.OPEN -> phase = Phase.CLOSING
+            }
+
+            val failures = releaseAllSessionResources(*releases)
+            terminalFailure = boundaryFailure
+                ?: failures.firstOrNull { it.second is SessionBoundaryReentrantCloseException }?.second
+                ?: if (failures.isNotEmpty()) {
+                    SessionResourceCloseException("ImBot", failures.map { failure -> failure.second })
+                } else {
+                    null
+                }
+            phase = Phase.CLOSED
+            terminalFailure?.let { throw it }
+        }
+    }
+
+    private enum class Phase { OPEN, CLOSING, CLOSED }
+}
 
 /** contact/chat 是有界 wake-up，presence 只保留最新值；权威事实始终在 LocalCache/RPC。 */
 internal class ImBotEventBuffers {
@@ -214,19 +208,33 @@ internal class ImBotEventBuffers {
  * }
  * ```
  *
- * 三级状态说明：uid 在 [UserSession]（用户层），本类是会话所有者——
- * [shutdown] 级联销毁 session（owner-driven）。
+ * 本类只公开只读身份/连接状态和领域操作；raw transport、mutable identity 与 session
+ * ownership 都保持封装。[shutdown] 级联销毁 session（owner-driven）。
  */
 class ImBot private constructor(
-    val imClient: ImClient,
-    val session: ClientSession,
-    val userSession: UserSession,
+    private val imClient: ImClient,
+    private val session: ClientSession,
+    private val userSession: UserSession,
     private val messageSender: MessageSender,
     private val messageInbox: ImBotMessageInbox,
     private val fileRepository: FileRepository?,
+    private val authResultAdmission: ImBotAuthResultAdmission,
 ) {
+    private val shutdownLifecycle = ImBotShutdownLifecycle(authResultAdmission)
+
     /** 当前用户 uid（认证成功后有效）。 */
     val uid: String get() = userSession.uid
+    /** 当前认证用户名的只读快照。 */
+    val username: String? get() = userSession.username
+    /** Raw transport stays private; SDK consumers observe only its read-only state flow. */
+    val connectionState: StateFlow<ConnectionState> get() = imClient.state
+
+    /** Narrow integration-test hook; production callers cannot mutate the raw transport. */
+    internal fun simulateNetworkDropForTest() = imClient.simulateNetworkDrop()
+
+    /** Narrow integration-test projection read; the owned ClientSession remains private. */
+    internal fun cachedConversationsForTest(): List<Conversation> =
+        session.localCache.getConversations()
 
     // ── 事件流（EventProcessor 契约解码后转发；next* 为带缓冲的便捷取用） ──
 
@@ -338,7 +346,7 @@ class ImBot private constructor(
 
     /** 发送 typing 指示（不等 ACK——服务端对 TYPING 消息只广播不回执）。 */
     fun sendTyping(chatId: String) {
-        imClient.send(
+        session.sendTransient(
             Message(
                 chatId = chatId,
                 clientMsgId = UUID.randomUUID().toString(),
@@ -458,25 +466,16 @@ class ImBot private constructor(
 
     /** 级联销毁会话（owner-driven：bot 是 session 所有者）。 */
     fun shutdown() {
-        val shouldShutdown = synchronized(shutdownLock) {
-            if (shutdown) false else {
-                shutdown = true
-                true
-            }
-        }
-        if (!shouldShutdown) return
-        scope.cancel()
-        fileRepository?.close()
-        // Stop the producer first, then detach inbox consumers while its borrowed cache is open.
-        session.eventProcessor.stop()
-        messageInbox.close()
-        eventBuffers.close()
-        session.close()
-        imClient.destroy()
+        shutdownLifecycle.shutdown(
+            "bot scope" to { scope.cancel() },
+            // ClientSession stops the producer and closes its cache before the inbox detaches.
+            "client session" to { session.close(reason = SessionEndReason.SHUTDOWN) },
+            "file repository" to { fileRepository?.close() },
+            "message inbox" to messageInbox::close,
+            "event buffers" to eventBuffers::close,
+            "transport" to imClient::destroy,
+        )
     }
-
-    private val shutdownLock = Any()
-    private var shutdown = false
 
     companion object {
         /**
@@ -492,11 +491,39 @@ class ImBot private constructor(
             password: String = "password123",
             deviceId: String = "bot-${UUID.randomUUID()}",
             fileServerUrl: String? = null,
+            onRefreshCredentials: ((uid: String, username: String, refreshToken: String) -> Unit)? = null,
+        ): ImBot = registerExact(
+            host = host,
+            port = port,
+            username = "$usernamePrefix-${UUID.randomUUID().toString().take(8)}",
+            password = password,
+            deviceId = deviceId,
+            cacheOwner = cacheOwner,
+            messageInbox = messageInbox,
+            fileServerUrl = fileServerUrl,
+            onRefreshCredentials = onRefreshCredentials,
+        )
+
+        /**
+         * Registers one caller-owned exact identity. Durable headless bootstrap uses this narrow
+         * entry after persisting username/password/deviceId, so a crash can retry the same account.
+         */
+        suspend fun registerExact(
+            host: String,
+            port: Int,
+            username: String,
+            password: String,
+            deviceId: String,
+            cacheOwner: ImBotCacheOwner,
+            messageInbox: ImBotMessageInbox = ImBotMessageInbox(),
+            fileServerUrl: String? = null,
+            onRefreshCredentials: ((uid: String, username: String, refreshToken: String) -> Unit)? = null,
         ): ImBot = connect(
             host, port, mode = AuthMode.REGISTER,
-            username = "$usernamePrefix-${UUID.randomUUID().toString().take(8)}",
+            username = username,
             password = password, deviceId = deviceId, name = null,
             cacheOwner = cacheOwner, messageInbox = messageInbox, fileServerUrl = fileServerUrl,
+            onRefreshCredentials = onRefreshCredentials,
         )
 
         /** 已有账号登录，常驻调用方必须提供按账号持久的 [cacheOwner]。 */
@@ -509,29 +536,97 @@ class ImBot private constructor(
             messageInbox: ImBotMessageInbox = ImBotMessageInbox(),
             deviceId: String = "bot-${UUID.randomUUID()}",
             fileServerUrl: String? = null,
+            onRefreshCredentials: ((uid: String, username: String, refreshToken: String) -> Unit)? = null,
         ): ImBot = connect(
-            host, port, AuthMode.LOGIN, username, password, deviceId, null,
-            cacheOwner, messageInbox, fileServerUrl,
+            host = host,
+            port = port,
+            mode = AuthMode.LOGIN,
+            username = username,
+            password = password,
+            deviceId = deviceId,
+            name = null,
+            cacheOwner = cacheOwner,
+            messageInbox = messageInbox,
+            fileServerUrl = fileServerUrl,
+            onRefreshCredentials = onRefreshCredentials,
+        )
+
+        /** Password-free restart authentication with one caller-owned durable refresh identity. */
+        suspend fun authenticate(
+            host: String,
+            port: Int,
+            uid: String,
+            refreshToken: String,
+            deviceId: String,
+            cacheOwner: ImBotCacheOwner,
+            messageInbox: ImBotMessageInbox = ImBotMessageInbox(),
+            fileServerUrl: String? = null,
+            onRefreshCredentials: ((uid: String, username: String, refreshToken: String) -> Unit)? = null,
+        ): ImBot = connect(
+            host = host,
+            port = port,
+            mode = AuthMode.REFRESH,
+            username = null,
+            password = null,
+            uid = uid,
+            refreshToken = refreshToken,
+            deviceId = deviceId,
+            name = null,
+            cacheOwner = cacheOwner,
+            messageInbox = messageInbox,
+            fileServerUrl = fileServerUrl,
+            onRefreshCredentials = onRefreshCredentials,
         )
 
         private suspend fun connect(
             host: String, port: Int, mode: AuthMode,
-            username: String, password: String, deviceId: String, name: String?,
+            username: String?, password: String?, deviceId: String, name: String?,
+            uid: String? = null,
+            refreshToken: String? = null,
             cacheOwner: ImBotCacheOwner,
             messageInbox: ImBotMessageInbox,
             fileServerUrl: String?,
+            onRefreshCredentials: ((uid: String, username: String, refreshToken: String) -> Unit)?,
         ): ImBot {
             val authResult = CompletableDeferred<Boolean>()
             val userSession = UserSession()
-            val imClient = ImClient(
-                onAuthResult = { success, uid, uname, dispName, refreshToken, access, failureReason ->
-                    if (success && !uid.isNullOrBlank()) {
-                        userSession.onAuthSuccess(uid, uname, dispName, refreshToken, access)
-                        authResult.complete(true)
+            val authResultAdmission = ImBotAuthResultAdmission()
+            lateinit var imClient: ImClient
+            imClient = ImClient(
+                onAuthResult = authCallback@{ success, uid, uname, dispName, refreshToken, access, failureReason ->
+                    if (
+                        success && !uid.isNullOrBlank() &&
+                        !uname.isNullOrBlank() && !refreshToken.isNullOrBlank()
+                    ) {
+                        try {
+                            // Headless installs use this low-frequency, size-bounded commit gate.
+                            // It is synchronous by design: rotated refresh material is durable
+                            // before AuthSyncCoordinator may enter synchronization and then ready.
+                            authResultAdmission.use {
+                                admitImBotAuthentication(
+                                    userSession = userSession,
+                                    uid = uid,
+                                    username = uname,
+                                    displayName = dispName,
+                                    refreshToken = refreshToken,
+                                    accessToken = access,
+                                    onRefreshCredentials = onRefreshCredentials,
+                                )
+                            }
+                            authResult.complete(true)
+                        } catch (failure: Throwable) {
+                            authResult.completeExceptionally(failure)
+                            throw failure
+                        }
                     } else {
                         val reason = failureReason ?: "auth response did not contain uid"
-                        userSession.onAuthFailed(reason)
-                        authResult.completeExceptionally(IllegalStateException("auth failed: $reason"))
+                        val failureKind = imClient.authenticationFailure.value?.kind
+                            ?: AuthenticationFailureKind.REJECTED
+                        val admitted = authResultAdmission.runIfActive {
+                            userSession.onAuthFailed(reason)
+                        }
+                        if (!admitted) return@authCallback
+                        authResult.completeExceptionally(ImBotAuthenticationRejectedException(failureKind, reason))
                     }
                 },
             )
@@ -541,9 +636,12 @@ class ImBot private constructor(
             try {
                 when (mode) {
                     AuthMode.REGISTER -> imClient.register(
-                        username, password, name ?: username, deviceId, "ImBot", host, port)
+                        requireNotNull(username), requireNotNull(password), name ?: requireNotNull(username),
+                        deviceId, "ImBot", host, port)
                     AuthMode.LOGIN -> imClient.login(
-                        username, password, deviceId, "ImBot", host, port)
+                        requireNotNull(username), requireNotNull(password), deviceId, "ImBot", host, port)
+                    AuthMode.REFRESH -> imClient.authenticate(
+                        requireNotNull(uid), requireNotNull(refreshToken), deviceId, "ImBot", host, port)
                 }
                 // 注册路径在这里之前没有 uid，因而不会创建临时/错误账号目录。
                 withTimeout(AUTH_NO_PROGRESS_TIMEOUT_MS) { authResult.await() }
@@ -571,38 +669,42 @@ class ImBot private constructor(
                     logUploadEnabled = false,
                     durableMessageSink = messageInbox::publish,
                 )
-                val sender = MessageSender { msg -> imClient.sendAndWaitAck(msg) }
                 // Construct the owner before awaiting SYNC_READY. Replay may start immediately
                 // after createSession installs EventProcessor, so waiting first would lose backlog.
                 val connectedBot = ImBot(
                     imClient,
                     session,
                     userSession,
-                    sender,
+                    session.messageSender,
                     messageInbox,
                     fileRepository,
+                    authResultAdmission,
                 )
                 bot = connectedBot
                 imClient.awaitAuthenticated(AUTH_NO_PROGRESS_TIMEOUT_MS)
-                AppLog.trace("ImBot", "session ready uid=${userSession.uid}")
+                logger.trace("session ready uid=${userSession.uid}")
                 return connectedBot
             } catch (failure: Throwable) {
                 if (bot != null) {
                     bot.shutdown()
                 } else {
-                    fileRepository?.close()
-                    session?.close()
-                    messageInbox.close()
-                    imClient.destroy()
+                    releaseAllSessionResources(
+                        "authentication result admission" to { authResultAdmission.close() },
+                        "file repository" to { fileRepository?.close() },
+                        "client session" to { session?.close() },
+                        "message inbox" to messageInbox::close,
+                        "transport" to imClient::destroy,
+                    )
                 }
                 throw failure
             }
         }
 
         private const val AUTH_NO_PROGRESS_TIMEOUT_MS = 15_000L
+        private val logger = PlatformOnlyTkLogger("ImBot")
     }
 
-    private enum class AuthMode { REGISTER, LOGIN }
+    private enum class AuthMode { REGISTER, LOGIN, REFRESH }
 }
 
 private data class AuthenticationProgress(

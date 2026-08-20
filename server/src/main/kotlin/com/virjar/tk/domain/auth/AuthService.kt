@@ -5,7 +5,6 @@ import com.virjar.tk.domain.session.OnlineSessions
 import com.virjar.tk.protocol.payload.AuthRequestPayload
 import com.virjar.tk.protocol.payload.AuthResponsePayload
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
 class AuthenticationResult(
@@ -169,10 +168,19 @@ class AuthService(
         )
     }
 
-    suspend fun logoutCurrentSession(uid: String, deviceId: String, responseSessionId: String) {
+    suspend fun logoutCurrentSession(
+        uid: String,
+        deviceId: String,
+        expectedDeviceCredentialEpoch: Long,
+        responseSessionId: String,
+    ) {
         val epoch = commitCredentialMutationAndFence(
             commit = {
-                credentials.revokeDevice(uid = uid, deviceId = deviceId)
+                credentials.revokeDeviceIfCurrent(
+                    uid = uid,
+                    deviceId = deviceId,
+                    expectedDeviceCredentialEpoch = expectedDeviceCredentialEpoch,
+                )
             },
             publishFence = { committedEpoch ->
                 committedEpoch?.let {

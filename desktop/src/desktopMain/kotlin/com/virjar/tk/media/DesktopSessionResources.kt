@@ -4,6 +4,7 @@ import com.virjar.tk.DesktopFileTransfer
 import com.virjar.tk.DesktopMediaSender
 import com.virjar.tk.DesktopVoiceRecorder
 import com.virjar.tk.client.SessionHttpCredentials
+import com.virjar.tk.log.TkLogger
 import com.virjar.tk.repository.FileRepository
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
@@ -28,6 +29,7 @@ internal class DesktopSessionResources(
     serverUrl: String,
     credentialProvider: () -> SessionHttpCredentials,
     dataDir: File,
+    diagnosticLogger: TkLogger,
     quotaBytes: Long = DEFAULT_DESKTOP_MEDIA_QUOTA_BYTES,
     downloader: DesktopMediaDownloader = HttpDesktopMediaDownloader,
 ) : Closeable {
@@ -41,10 +43,12 @@ internal class DesktopSessionResources(
     val serverFingerprint: String = desktopSha256(serverBaseUrl)
     val sessionFingerprint: String = desktopSha256("$serverBaseUrl\n$ownerUid")
     internal val credentialGate = DesktopCredentialGate(ownerUid, credentialProvider)
+    internal val diagnostics = DesktopSessionDiagnostics(diagnosticLogger)
     val mediaDirectory: File = File(dataDir, "media_e1/$sessionFingerprint")
     val mediaCache = DesktopMediaCache(
         serverBaseUrl = serverBaseUrl,
         credentialGate = credentialGate,
+        diagnostics = diagnostics,
         cacheDir = mediaDirectory,
         scope = ioScope,
         downloader = downloader,
@@ -70,6 +74,9 @@ internal class DesktopSessionResources(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        // Close the diagnostic admission before cancelling jobs: retained tasks may unwind later,
+        // but none can write after this Desktop owner has crossed its close boundary.
+        diagnostics.close()
         voiceRecorder.close()
         mediaSender.close()
         fileRepository.close()
@@ -79,11 +86,62 @@ internal class DesktopSessionResources(
     }
 }
 
+internal enum class DesktopSessionDiagnosticEvent(
+    internal val message: String,
+    internal val kind: DesktopSessionDiagnosticKind,
+) {
+    MEDIA_CACHE_STORED("media cache stored", DesktopSessionDiagnosticKind.TRACE),
+    FILE_DOWNLOAD_FAILED("file download failed", DesktopSessionDiagnosticKind.FAULT),
+    FILE_OPEN_FAILED("file open failed", DesktopSessionDiagnosticKind.FAULT),
+    IMAGE_DECODE_FAILED("image decode failed", DesktopSessionDiagnosticKind.FAULT),
+    VOICE_PLAYBACK_OPENING("voice playback opening", DesktopSessionDiagnosticKind.TRACE),
+    VOICE_PLAYBACK_FAILED("voice playback failed", DesktopSessionDiagnosticKind.FAULT),
+    VOICE_RECORD_FAILED("voice recording failed", DesktopSessionDiagnosticKind.FAULT),
+    GROUP_FILE_UPLOAD_FAILED("group file upload failed", DesktopSessionDiagnosticKind.FAULT),
+}
+
+internal enum class DesktopSessionDiagnosticKind { TRACE, FAULT }
+
+/**
+ * Session-fixed and close-gated diagnostics for retained Desktop tasks. Callers can only emit a
+ * finite redacted event vocabulary: attachment references, paths, names and exception text never
+ * cross this boundary.
+ */
+internal class DesktopSessionDiagnostics(
+    private val logger: TkLogger,
+) : Closeable {
+    private val gate = Any()
+    private var open = true
+
+    /** Returns whether the event was admitted; logging failures never break the media operation. */
+    fun record(event: DesktopSessionDiagnosticEvent): Boolean = synchronized(gate) {
+        if (!open) return@synchronized false
+        runCatching {
+            when (event.kind) {
+                DesktopSessionDiagnosticKind.TRACE -> logger.trace(event.message)
+                DesktopSessionDiagnosticKind.FAULT -> logger.fault(event.message)
+            }
+        }
+        true
+    }
+
+    override fun close() = synchronized(gate) {
+        open = false
+    }
+}
+
 internal class DesktopCredentialGate(
     val ownerUid: String,
     private val credentialProvider: () -> SessionHttpCredentials,
 ) : Closeable {
     private val open = AtomicBoolean(true)
+    private val ownerIdentityEpoch: Long
+
+    init {
+        val initial = credentialProvider()
+        check(initial.uid == ownerUid) { "Desktop 初始认证身份不匹配" }
+        ownerIdentityEpoch = initial.identityEpoch
+    }
 
     fun ensureOpen() {
         check(open.get()) { "Desktop 认证会话已经失效" }
@@ -91,7 +149,7 @@ internal class DesktopCredentialGate(
 
     fun ensureOwner() {
         ensureOpen()
-        check(credentialProvider().uid == ownerUid) { "Desktop 认证身份已经变更" }
+        requireCurrentOwner(credentialProvider())
     }
 
     fun requireAccessToken(): String {
@@ -99,13 +157,19 @@ internal class DesktopCredentialGate(
         val credentials = credentialProvider()
         // uid 门禁是安全边界：同一个 UserSession 容器可在退出后承载下一账号，旧资源
         // 绝不能读取新账号 token；同 uid 重连轮换 token 则应立即读取最新值。
-        check(credentials.uid == ownerUid) { "Desktop 认证身份已经变更" }
+        requireCurrentOwner(credentials)
         return credentials.accessToken?.takeIf(String::isNotBlank)
             ?: error("认证会话缺少文件访问凭据")
     }
 
     override fun close() {
         open.set(false)
+    }
+
+    private fun requireCurrentOwner(credentials: SessionHttpCredentials) {
+        check(credentials.uid == ownerUid && credentials.identityEpoch == ownerIdentityEpoch) {
+            "Desktop 认证会话已经变更"
+        }
     }
 }
 
