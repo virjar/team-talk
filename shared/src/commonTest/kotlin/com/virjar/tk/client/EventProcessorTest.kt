@@ -1,6 +1,7 @@
 package com.virjar.tk.client
 
 import com.virjar.tk.model.Chat
+import com.virjar.tk.model.Contact
 import com.virjar.tk.model.Message
 import com.virjar.tk.model.User
 import com.virjar.tk.protocol.NotifyType
@@ -36,16 +37,45 @@ class EventProcessorTest {
     }
 
     @Test
-    fun `CONTACT_APPLY - 转换视角入库并发 contactEvents`() = runBlocking {
+    fun `CONTACT_APPLY - 只缓存申请人资料且不得写入好友`() = runBlocking {
         val apply = com.virjar.tk.model.ContactApply(id = 1, fromUid = "u2", toUid = "me", token = "t", remark = "hi", fromUser = User(uid = "u2", username = "u2", name = "U2"))
         val received = launch { withTimeout(2000) { ep.contactEvents.first() } }
         kotlinx.coroutines.delay(50)
         ep.handleNotifyPayload(NotifyType.CONTACT_APPLY, ProtoCodec.encode(apply))
         received.join()
-        val contact = cache.getContacts().single()
-        assertEquals("me", contact.uid, "uid=接收者视角")
-        assertEquals("u2", contact.friendUid)
-        assertEquals("u2", contact.user?.uid, "user=申请方资料")
+        assertTrue(cache.getContacts().isEmpty(), "申请尚未接受，不得出现在好友投影")
+        assertEquals("U2", cache.getUser("u2")?.name, "申请人的公开资料可以安全缓存")
+    }
+
+    @Test
+    fun `CONTACT_ACCEPTED - 写入服务端权威好友快照`() = runBlocking {
+        val contact = Contact(
+            uid = "me",
+            friendUid = "u2",
+            user = User(uid = "u2", username = "u2", name = "U2"),
+        )
+
+        ep.handleNotifyPayload(NotifyType.CONTACT_ACCEPTED, ProtoCodec.encode(contact))
+
+        assertEquals(contact, cache.getContacts().single())
+    }
+
+    @Test
+    fun `CONTACT_DELETED - 即使 payload status 默认为正常也必须删除好友`() = runBlocking {
+        cache.upsertContact(
+            Contact(
+                uid = "me",
+                friendUid = "u2",
+                user = User(uid = "u2", username = "u2", name = "U2"),
+            ),
+        )
+
+        ep.handleNotifyPayload(
+            NotifyType.CONTACT_DELETED,
+            ProtoCodec.encode(Contact(uid = "me", friendUid = "u2")),
+        )
+
+        assertTrue(cache.getContacts().isEmpty(), "删除 tombstone 不得被当成正常好友 upsert")
     }
 
     @Test

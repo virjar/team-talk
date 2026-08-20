@@ -14,7 +14,8 @@ class ContactViewModel(
     private val localCache: LocalCache,
     private val contactRepo: ContactRepository,
     private val myUid: String = "",
-) : BaseViewModel() {
+    dispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.Default,
+) : BaseViewModel(dispatcher) {
 
     private val _contacts = MutableStateFlow<List<Contact>>(emptyList())
     /** 联系人列表（过滤掉自己，避免通讯录出现自己）。 */
@@ -37,7 +38,7 @@ class ContactViewModel(
 
     fun refresh() {
         scope.launch {
-            try { contactRepo.listFriends() }
+            try { contactRepo.listFriends().getOrThrow() }
             catch (e: Exception) { setError("刷新联系人失败: ${e.message}") }
         }
     }
@@ -56,21 +57,21 @@ class ContactViewModel(
 
     fun apply(toUid: String, remark: String? = null) {
         scope.launch {
-            try { contactRepo.apply(toUid, remark) }
+            try { contactRepo.apply(toUid, remark).getOrThrow() }
             catch (e: Exception) { setError("申请好友失败: ${e.message}") }
         }
     }
 
     fun deleteFriend(friendUid: String) {
         scope.launch {
-            try { contactRepo.deleteFriend(friendUid) }
+            try { contactRepo.deleteFriend(friendUid).getOrThrow() }
             catch (e: Exception) { setError("删除好友失败: ${e.message}") }
         }
     }
 
     fun updateRemark(friendUid: String, remark: String?) {
         scope.launch {
-            try { contactRepo.setRemark(friendUid, remark) }
+            try { contactRepo.setRemark(friendUid, remark).getOrThrow() }
             catch (e: Exception) { setError("修改备注失败: ${e.message}") }
         }
     }

@@ -153,22 +153,27 @@ class EventProcessor(
     internal suspend fun handleNotifyPayload(notifyType: NotifyType, payload: ByteArray) {
         when (notifyType) {
             NotifyType.CONTACT_APPLY -> {
-                // 契约：CONTACT_APPLY 发 ContactApply（含 fromUid/toUid/fromUser），转换为本地 Contact
+                // 好友申请不是好友关系。只缓存申请人的资料并通知上层刷新
+                // 待处理申请；在 CONTACT_ACCEPTED 到达前绝不能写入 Contact。
                 val apply = decodePayload<ContactApply>(notifyType, payload)
-                val contact = Contact(
-                    uid = apply.toUid, friendUid = apply.fromUid,
-                    remark = apply.remark, status = 1, user = apply.fromUser,
-                )
+                apply.fromUser?.let(localCache::upsertUser)
+                onContactChanged?.invoke()
+                _contactEvents.emit(Unit)
+            }
+
+            NotifyType.CONTACT_ACCEPTED -> {
+                // 契约：ACCEPTED 发各自视角的完整 Contact 快照。
+                val contact = decodePayload<Contact>(notifyType, payload)
                 localCache.upsertContact(contact)
                 onContactChanged?.invoke()
                 _contactEvents.emit(Unit)
             }
 
-            NotifyType.CONTACT_ACCEPTED,
             NotifyType.CONTACT_DELETED -> {
-                // 契约：ACCEPTED/DELETED 发各自视角的 Contact（服务端已按接收者构造）
+                // DELETED 的 payload 只用 friendUid 定位 tombstone。Contact.status 默认为 1，
+                // 因此绝不能与 ACCEPTED 共用 upsert 路径，否则删除/拉黑后会重新出现。
                 val contact = decodePayload<Contact>(notifyType, payload)
-                localCache.upsertContact(contact)
+                localCache.deleteContact(contact.friendUid)
                 onContactChanged?.invoke()
                 _contactEvents.emit(Unit)
             }
