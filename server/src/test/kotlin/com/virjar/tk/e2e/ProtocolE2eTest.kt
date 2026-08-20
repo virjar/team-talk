@@ -72,10 +72,6 @@ class ProtocolE2eTest {
                 .token ?: error("待处理申请缺少收件人 token")
         }
 
-        fun subscribe(chatId: String, lastSeq: Long = 0) {
-            imClient.send(SubscribePayload(chatId, lastSeq))
-        }
-
         suspend fun awaitNotify(notifyType: Int? = null, timeoutMs: Long = 5000): NotifyPayload =
             withTimeout(timeoutMs) {
                 var found: NotifyPayload? = null
@@ -356,48 +352,6 @@ class ProtocolE2eTest {
         // user2 应收到消息通知
         val notify = user2.awaitNotify(NotifyType.MESSAGE_RECV.code, 5000)
         assertEquals(NotifyType.MESSAGE_RECV.code, notify.notifyType)
-
-        user1.close()
-        user2.close()
-    }
-
-    // ── 订阅与历史 ──
-
-    @Test
-    fun `subscribe delivers history`() = runBlocking {
-        val user1 = registerUser("sub1-${UUID.randomUUID()}")
-        val user2 = registerUser("sub2-${UUID.randomUUID()}")
-
-        // 建立好友关系 + 创建私聊
-        user1.invoke("contact", ContactRpcContract.M_APPLY,
-            ProtoCodec.encodePayload { writeString(user2.uid); writeString("hi") })
-        val pendingToken = user2.pendingApplyToken(user1.uid)
-        user2.invoke("contact", ContactRpcContract.M_ACCEPT,
-            ProtoCodec.encodePayload { writeString(pendingToken) })
-
-        val chatResp = user1.invoke("chat", ChatRpcContract.M_CREATE_PERSONAL,
-            ProtoCodec.encodePayload { writeString(user2.uid) })
-        val chat = ProtoCodec.decode(Chat, chatResp.payload!!)
-
-        // user1 发两条消息
-        for (i in 1..2) {
-            val msg = com.virjar.tk.model.Message(
-                chatId = chat.chatId,
-                clientMsgId = UUID.randomUUID().toString(),
-                messageType = MessageType.RICH_TEXT.code,
-                timestamp = System.currentTimeMillis(),
-                senderUid = "",
-                body = com.virjar.tk.body.buildRichTextBody("msg$i"),
-            )
-            user1.imClient.sendAndWaitAck(msg)
-        }
-
-        // user2 订阅，应收到历史消息
-        user2.subscribe(chat.chatId, 0)
-        val notify1 = user2.awaitNotify(NotifyType.MESSAGE_RECV.code, 5000)
-        assertNotNull(notify1)
-        val notify2 = user2.awaitNotify(NotifyType.MESSAGE_RECV.code, 5000)
-        assertNotNull(notify2)
 
         user1.close()
         user2.close()

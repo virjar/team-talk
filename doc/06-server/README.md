@@ -10,7 +10,7 @@ TCP                              HTTP(S)
 ├── AUTH                         ├── /health
 ├── INVOKE → generated RPC Stub  ├── /api/v1/files/*
 ├── MESSAGE                      ├── /api/client-logs
-├── SUBSCRIBE                    ├── /api/admin/*
+├── SYNC_REQUEST                 ├── /api/admin/*
 └── PING/PONG                    └── /downloads/* and static
 ```
 

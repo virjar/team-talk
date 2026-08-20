@@ -33,8 +33,6 @@ enum class PacketInboundRole {
             PacketType.PONG,
             PacketType.INVOKE,
             PacketType.MESSAGE,
-            PacketType.SUBSCRIBE,
-            PacketType.UNSUBSCRIBE,
         )
         val CLIENT_INBOUND_TYPES = setOf(
             PacketType.AUTH_RESP,
@@ -190,8 +188,6 @@ class PacketCodec(
         PacketType.MESSAGE -> Message.readFrom(buf)
         PacketType.MESSAGE_ACK -> MessageAckPayload.readFrom(buf)
         PacketType.NOTIFY -> NotifyPayload.readFrom(buf)
-        PacketType.SUBSCRIBE -> SubscribePayload.readFrom(buf)
-        PacketType.UNSUBSCRIBE -> UnsubscribePayload.readFrom(buf)
         PacketType.PING, PacketType.PONG, PacketType.DISCONNECT ->
             throw io.netty.handler.codec.CorruptedFrameException("Signal packet $type cannot have a payload")
     }
@@ -237,8 +233,6 @@ class PacketCodec(
         is Message -> PacketType.MESSAGE.code to { it.writePayload(msg) }
         is MessageAckPayload -> PacketType.MESSAGE_ACK.code to { it.writePayload(msg) }
         is NotifyPayload -> PacketType.NOTIFY.code to { it.writePayload(msg) }
-        is SubscribePayload -> PacketType.SUBSCRIBE.code to { it.writePayload(msg) }
-        is UnsubscribePayload -> PacketType.UNSUBSCRIBE.code to { it.writePayload(msg) }
         else -> throw IllegalArgumentException("Unknown proto type: ${msg::class}")
     }
 

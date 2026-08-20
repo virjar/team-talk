@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * IO 线程池，用于将重量级操作（DB/消息存储）从 Netty EventLoop 上卸载。
  *
- * EventLoop 适合处理轻量网络操作（PING/PONG/DISCONNECT/SUBSCRIBE），
+ * EventLoop 适合处理轻量网络操作（PING/PONG/DISCONNECT），
  * 重量操作（消息存储、好友查询、频道成员查询）应 dispatch 到此线程池。
  *
  * Channel.writeAndFlush() 是线程安全的（Netty 内部会提交到对应 EventLoop），

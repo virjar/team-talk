@@ -302,37 +302,6 @@ class RemoteAcceptanceTest {
         }
     }
 
-    // ── 订阅与历史 ──
-
-    @Test
-    fun `subscribe delivers history`() = runBlocking {
-        val (user1, user2, chat) = createFriendPersonalChat("sub")
-        try {
-            // user1 发两条消息
-            repeat(2) { i ->
-                val msg = Message(
-                    chatId = chat.chatId,
-                    clientMsgId = UUID.randomUUID().toString(),
-                    messageType = MessageType.RICH_TEXT.code,
-                    timestamp = System.currentTimeMillis(),
-                    senderUid = "",
-                    body = buildRichTextBody("history-$i"),
-                )
-                user1.imClient.sendAndWaitAck(msg)
-            }
-
-            // user2 订阅，应收到历史消息
-            user2.subscribe(chat.chatId, 0)
-            val n1 = user2.awaitNotify(NotifyType.MESSAGE_RECV.code, 10_000)
-            assertNotNull(n1, "应收到第 1 条历史")
-            val n2 = user2.awaitNotify(NotifyType.MESSAGE_RECV.code, 10_000)
-            assertNotNull(n2, "应收到第 2 条历史")
-        } finally {
-            user1.close()
-            user2.close()
-        }
-    }
-
     // ── 多 body 类型消息往返 ──
 
     @Test
@@ -741,34 +710,6 @@ class RemoteAcceptanceTest {
             assertEquals(0, resp.status, "GET_HISTORY 应成功: status=${resp.status}")
             val messages = ProtoCodec.decodeList(Message, resp.payload!!)
             assertTrue(messages.size >= 2, "应至少返回 2 条历史消息，实际 ${messages.size}")
-        } finally {
-            user1.close(); user2.close()
-        }
-    }
-
-    // ── 订阅增量 ──
-
-    @Test
-    fun `subscribe delivers only messages after lastSeq`() = runBlocking {
-        val (user1, user2, chat) = createFriendPersonalChat("incr")
-        try {
-            // 发 3 条消息
-            val seqs = mutableListOf<Long>()
-            repeat(3) { i ->
-                val ack = user1.imClient.sendAndWaitAck(Message(
-                    chatId = chat.chatId, clientMsgId = UUID.randomUUID().toString(),
-                    messageType = MessageType.RICH_TEXT.code, timestamp = System.currentTimeMillis(),
-                    senderUid = "", body = buildRichTextBody("msg-$i"),
-                ))
-                seqs.add(ack.serverSeq)
-            }
-
-            // user2 订阅 lastSeq = 第1条的 seq，应只收到后 2 条
-            user2.subscribe(chat.chatId, seqs[0])
-            val n1 = user2.awaitNotify(NotifyType.MESSAGE_RECV.code, 10_000)
-            val n2 = user2.awaitNotify(NotifyType.MESSAGE_RECV.code, 10_000)
-            assertNotNull(n1, "应收到第 2 条")
-            assertNotNull(n2, "应收到第 3 条")
         } finally {
             user1.close(); user2.close()
         }

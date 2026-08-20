@@ -42,9 +42,9 @@ eventId(varLong) + notifyType(1B) + payload(bytes?)
 本地服务器投影、cursor、草稿 outbox 和 bot inbox 后，在同一连接以 0 重新开始。重置失败或重复
 RESET 必须断开，不能跳过历史进入实时态。
 
-`eventId = 0` 表示不参与持久游标，当前用于 PRESENCE、TYPING 等瞬时直发。SUBSCRIBE 返回的会话
-历史虽然可以复用 NOTIFY 信封展示，但它属于按 chat `serverSeq` 的历史响应，不得进入持久事件批次，
-也不得推进或覆盖已经保存的正数事件游标。
+`eventId = 0` 表示不参与持久游标，当前用于 PRESENCE、TYPING 等瞬时直发。历史消息通过
+`MessageRpc.getHistory` 按 chat `serverSeq` 分页读取，不进入持久事件批次，也不推进或覆盖已经保存的
+正数事件游标。
 
 TYPING 在产品语义上是临时状态；当前服务端仍通过同步事件设施广播。后续若改为完全非持久直发，必须保持 NotifyType 和 payload 兼容，并补充断线场景测试。
 

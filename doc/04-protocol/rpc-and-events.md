@@ -134,8 +134,8 @@ conversation draft outbox、bot inbox 与所有 sync cursor，同步清空内存
 Presence 与 Typing 是短暂信号，不应被误认为持久业务实体。Presence 可以直推而不进离线队列；
 Typing 的 Message 只是承载 chatId/senderUid 的信号快照，不落消息历史。
 
-## 7. SUBSCRIBE
+## 7. 历史消息分页
 
-SUBSCRIBE 用于按会话与序列请求历史回放，服务端可通过 MESSAGE_RECV 形式把结果写回请求连接。
-它和持久化 NOTIFY 的区别是：订阅响应面向当前连接，不代表新的领域事件，也不能推进全局事件
-游标。
+历史消息通过 `MessageRpc.getHistory(chatId, fromSeq, limit)` 按会话序号分页读取；响应是当前查询
+结果，不伪装成新的 `MESSAGE_RECV` 事件，也不参与用户级持久事件游标。登录后的跨领域离线补偿只由
+`SYNC_REQUEST/BATCH/READY/RESET` 状态机负责。

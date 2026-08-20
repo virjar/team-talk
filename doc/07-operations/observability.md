@@ -27,7 +27,7 @@ UP 才返回 200。外部探针应检查 HTTP status 和结构化 component 结�
 - `traces/trace.log`：被采样 TCP 连接的有序业务轨迹。
 
 Recorder 在认证前缓存有限条目，认证后按 uid/deviceId 升级为采样 writer。全局采样数受限，未采样
-连接的日志构造应近似零开销。常用标签包括 AUTH、RPC、SEND、SENDACK、SUBSCRIBE、TYPING、
+连接的日志构造应近似零开销。常用标签包括 AUTH、SYNC、RPC、SEND、SENDACK、TYPING、
 KICK、IDLE 和 CLOSE。
 
 ## 4. 客户端日志

@@ -5,7 +5,6 @@ import com.virjar.tk.domain.chat.ChatStore
 import com.virjar.tk.domain.event.EventPublisher
 import com.virjar.tk.domain.event.SyncBatchResult
 import com.virjar.tk.domain.event.SyncEventReader
-import com.virjar.tk.domain.message.MessageRepository
 import com.virjar.tk.domain.message.MessageService
 import com.virjar.tk.infra.sync.ClientRegistry
 import com.virjar.tk.model.Message
@@ -77,7 +76,7 @@ internal class ImAgentSyncCursor {
  * 连接级处理器。管理认证状态和包分发。
  *
  * 线程安全模型：
- * - **EventLoop**（当前线程）：只做轻量操作（PING/PONG/DISCONNECT/SUBSCRIBE、数据提取、协程启动）
+ * - **EventLoop**（当前线程）：只做轻量操作（PING/PONG/DISCONNECT、数据提取、协程启动）
  * - **IOExecutor**：重量 IO 操作（auth/RPC/message）通过 launchWithAgent 调度
  * - **ImAgentFacade**：WeakReference 门面，协程挂起期间 agent 可被 GC 回收
  *
@@ -91,7 +90,6 @@ class ImAgent(
     private val rpcDispatcher: RpcDispatcher,
     private val messageService: MessageService,
     private val chatStore: ChatStore,
-    private val messageStore: MessageRepository,
     private val syncEvents: SyncEventReader,
     private val events: EventPublisher,
     private val ioExecutor: IOExecutor,
@@ -186,14 +184,12 @@ class ImAgent(
             // ── 轻量操作：EventLoop 直接处理 ──
             is PingSignal -> write(PongSignal)
             is DisconnectSignal -> ctx.close()
-            is UnsubscribePayload -> handleUnsubscribe(msg)
 
             // ── 重量操作：dispatch 到 IOExecutor ──
             is AuthRequestPayload -> handleAuth(msg)
             is SyncRequestPayload -> handleSyncRequest(msg)
             is InvokePayload -> handleInvoke(msg)
             is Message -> handleMessage(msg)
-            is SubscribePayload -> handleSubscribe(msg)
 
             else -> recorder.record { "[UNKNOWN] type=${msg::class.simpleName}" }
         }
@@ -235,44 +231,7 @@ class ImAgent(
         recorder.record { "[CLOSE] uid=$uid" }
     }
 
-    // ── 轻量操作（EventLoop 直接处理） ──
-
-    private fun handleUnsubscribe(payload: UnsubscribePayload) {
-        if (state != State.AUTHENTICATED) return
-        recorder.record { "[UNSUBSCRIBE] chatId=${payload.chatId}" }
-    }
-
     // ── 重量操作（IOExecutor 协程处理） ──
-
-    private fun handleSubscribe(payload: SubscribePayload) {
-        if (state != State.AUTHENTICATED) return
-        recorder.record { "[SUBSCRIBE] chatId=${payload.chatId} lastSeq=${payload.lastSeq}" }
-        val membership = chatStore
-        val history = messageStore
-        val accepted = ioExecutor.launchWithAgent(this) { facade ->
-            // 校验成员关系
-            if (!membership.isMember(payload.chatId, facade.uid)) {
-                facade.recorder.record { "[SUBSCRIBE] denied: not member of ${payload.chatId}" }
-                return@launchWithAgent
-            }
-
-            // 获取离线消息
-            val messages = if (payload.lastSeq > 0) {
-                history.getHistory(payload.chatId, payload.lastSeq + 1, 100, forward = true)
-            } else {
-                history.getHistory(payload.chatId, 0, 100, forward = false).reversed()
-            }
-
-            for (msg in messages) {
-                facade.send(NotifyPayload(0, NotifyType.MESSAGE_RECV.code, ProtoCodec.encode(msg)))
-            }
-            facade.recorder.record { "[SUBSCRIBE] chatId=${payload.chatId}: sent ${messages.size} history messages" }
-        }
-        if (!accepted) {
-            recorder.record { "[OVERLOAD] subscribe rejected; closing for resumable reconnect" }
-            channel.close()
-        }
-    }
 
     private fun handleAuth(payload: AuthRequestPayload) {
         // 状态切换必须在 EventLoop 收包路径同步完成。若等 IO worker 执行才切换，攻击者可在

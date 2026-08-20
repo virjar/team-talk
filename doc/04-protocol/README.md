@@ -12,7 +12,6 @@ TCP stream
        ├── INVOKE / RESPONSE / STREAM_*
        ├── MESSAGE / MESSAGE_ACK
        ├── NOTIFY
-       ├── SUBSCRIBE / UNSUBSCRIBE
        └── PING / PONG / DISCONNECT
             └── IProto fields：fixed integers、VarInt、String、Bytes
 ```

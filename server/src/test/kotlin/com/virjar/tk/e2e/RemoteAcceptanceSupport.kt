@@ -7,7 +7,6 @@ import com.virjar.tk.model.ContactApply
 import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.payload.NotifyPayload
 import com.virjar.tk.protocol.payload.ResponsePayload
-import com.virjar.tk.protocol.payload.SubscribePayload
 import com.virjar.tk.rpc.gen.ContactRpcContract
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
@@ -75,10 +74,6 @@ object RemoteAcceptanceSupport {
             return ProtoCodec.decodeList(ContactApply, response.payload!!)
                 .single { it.fromUid == fromUid && it.status == 0 }
                 .token ?: error("待处理申请缺少收件人 token")
-        }
-
-        fun subscribe(chatId: String, lastSeq: Long = 0) {
-            imClient.send(SubscribePayload(chatId, lastSeq))
         }
 
         suspend fun awaitNotify(notifyType: Int? = null, timeoutMs: Long = 5000): NotifyPayload =

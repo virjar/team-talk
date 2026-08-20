@@ -48,8 +48,6 @@
 | 20 | MESSAGE | C→S | Message |
 | 21 | MESSAGE_ACK | S→C | MessageAckPayload |
 | 30 | NOTIFY | S→C | NotifyPayload |
-| 40 | SUBSCRIBE | C→S | SubscribePayload |
-| 41 | UNSUBSCRIBE | C→S | UnsubscribePayload |
 
 顶层类型集合与 MessageType 都随协议版本固定。未知类型没有可证明的 body 长度和语义，必须
 拒绝整帧并断开连接，不能静默跳过或猜测降级。

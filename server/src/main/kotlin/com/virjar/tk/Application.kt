@@ -191,7 +191,7 @@ fun Application.module() {
         tcpServer.start { channel, recorder, ioExecutor ->
             ImAgent(
                 channel, recorder, authService, clientRegistry, rpcDispatcher, msgService,
-                chatStore, messageStore, syncEventService, syncEventService, ioExecutor,
+                chatStore, syncEventService, syncEventService, ioExecutor,
             )
         }
 

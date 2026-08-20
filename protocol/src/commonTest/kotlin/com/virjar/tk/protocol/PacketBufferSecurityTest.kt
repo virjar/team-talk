@@ -19,9 +19,7 @@ import com.virjar.tk.protocol.payload.AuthRequestPayload
 import com.virjar.tk.protocol.payload.AuthResponsePayload
 import com.virjar.tk.protocol.payload.InvokePayload
 import com.virjar.tk.protocol.payload.NotifyPayload
-import com.virjar.tk.protocol.payload.SubscribePayload
 import com.virjar.tk.protocol.payload.SyncBatchPayload
-import com.virjar.tk.protocol.payload.UnsubscribePayload
 import io.netty.buffer.Unpooled
 import io.netty.channel.embedded.EmbeddedChannel
 import io.netty.handler.codec.CorruptedFrameException
@@ -311,13 +309,6 @@ class PacketBufferSecurityTest {
     }
 
     @Test
-    fun `subscribe payloads reject oversized chat ids before allocation`() {
-        val maximumBytes = MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_CHAT_ID_LENGTH)
-        assertDeclaredStringRejected(maximumBytes) { SubscribePayload.readFrom(it) }
-        assertDeclaredStringRejected(maximumBytes) { UnsubscribePayload.readFrom(it) }
-    }
-
-    @Test
     fun `every auth request string has a strict wire budget`() {
         val limits = listOf(
             AuthPayloadPolicy.MAX_USERNAME_LENGTH,
@@ -414,10 +405,15 @@ class PacketBufferSecurityTest {
     @Test
     fun `decoded payload must consume the complete frame`() {
         val payload = Unpooled.buffer()
-        SubscribePayload("chat", lastSeq = 7).writeTo(PacketBuffer(payload))
+        InvokePayload(
+            requestId = 1,
+            serviceId = "service",
+            methodId = 2,
+            payload = byteArrayOf(3),
+        ).writeTo(PacketBuffer(payload))
         payload.writeByte(0x42)
         val frame = Unpooled.buffer(PacketCodec.HEADER_SIZE + payload.readableBytes()).apply {
-            writeByte(PacketType.SUBSCRIBE.code)
+            writeByte(PacketType.INVOKE.code)
             writeInt(payload.readableBytes())
             writeBytes(payload)
         }

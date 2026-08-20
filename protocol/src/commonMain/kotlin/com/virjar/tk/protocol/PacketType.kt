@@ -34,11 +34,7 @@ enum class PacketType(val code: Int) {
     MESSAGE_ACK(21),
 
     // 推送 (30)
-    NOTIFY(30),
-
-    // 订阅 (40-41)
-    SUBSCRIBE(40),
-    UNSUBSCRIBE(41);
+    NOTIFY(30);
 
     companion object {
         private val codeMap = entries.associateBy { it.code }

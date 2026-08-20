@@ -1,7 +1,6 @@
 package com.virjar.tk.protocol.payload
 
 import com.virjar.tk.body.MessageBodyPolicy
-import com.virjar.tk.model.Message
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.IProtoReader
 import com.virjar.tk.protocol.PacketBuffer
@@ -31,47 +30,6 @@ data class MessageAckPayload(
             code = buf.readVarInt(),
             reason = buf.readString(
                 MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_SHORT_TEXT_LENGTH),
-            ),
-        )
-    }
-}
-
-/**
- * SUBSCRIBE payload。
- */
-data class SubscribePayload(
-    val chatId: String,
-    val lastSeq: Long = 0,
-) : IProto {
-    override fun writeTo(buf: PacketBuffer) {
-        buf.writeString(chatId)
-        buf.writeVarLong(lastSeq)
-    }
-
-    companion object : IProtoReader<SubscribePayload> {
-        override fun readFrom(buf: PacketBuffer) = SubscribePayload(
-            chatId = buf.readRequiredString(
-                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_CHAT_ID_LENGTH),
-            ),
-            lastSeq = buf.readVarLong(),
-        )
-    }
-}
-
-/**
- * UNSUBSCRIBE payload。
- */
-data class UnsubscribePayload(
-    val chatId: String,
-) : IProto {
-    override fun writeTo(buf: PacketBuffer) {
-        buf.writeString(chatId)
-    }
-
-    companion object : IProtoReader<UnsubscribePayload> {
-        override fun readFrom(buf: PacketBuffer) = UnsubscribePayload(
-            chatId = buf.readRequiredString(
-                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_CHAT_ID_LENGTH),
             ),
         )
     }

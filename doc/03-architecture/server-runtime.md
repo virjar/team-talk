@@ -38,7 +38,7 @@ SocketChannel
        ├── AUTH
        ├── INVOKE → RpcDispatcher → generated Stub → domain service
        ├── MESSAGE → MessageService
-       ├── SUBSCRIBE / READ_SYNC
+       ├── SYNC_REQUEST → SyncEventReader
        └── NOTIFY outbound
 ```
 
