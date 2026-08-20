@@ -9,7 +9,7 @@ import com.virjar.tk.client.TokenStoreOwner
  * 登录态持久化（SharedPreferences）。
  *
  * 存储认证成功后的 uid + refreshToken，使 app 重启后能自动登录（直达主界面），
- * 而非每次都走登录页。refreshToken 有效期 30 天（服务端 TokenStore）。
+ * 而非每次都走登录页。refreshToken 当前有效期 90 天，由服务端 PostgreSQL 凭据表管理。
  *
  * 清除时机：用户主动登出、token 失效（AUTH_FAILED）、被踢下线。
  */

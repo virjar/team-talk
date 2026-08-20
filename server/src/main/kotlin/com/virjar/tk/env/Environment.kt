@@ -19,14 +19,13 @@ import java.io.File
      * $dataRoot/
      * ├── data-epoch          # 本地持久化格式门禁
      * ├── rocksdb/            # RocksDB 消息存储
- * ├── tokenstore/         # RocksDB Token 存储
- * ├── lucene-index/       # Lucene 全文索引
- * ├── file-store/
- * │   ├── rocksdb         # 文件存储索引
- * │   ├── files           # 大文件存储
- * │   └── tmp             # 临时文件
- * └── logs/               # 应用日志
- * ```
+     * ├── lucene-index/       # Lucene 全文索引
+     * ├── file-store/
+     * │   ├── rocksdb         # 文件存储索引
+     * │   ├── files           # 大文件存储
+     * │   └── tmp             # 临时文件
+     * └── logs/               # 应用日志
+     * ```
  */
 object Environment {
 
@@ -57,9 +56,6 @@ object Environment {
 
     /** 文件存储临时目录 */
     val fileStoreTmpDir: File = ensureDir(File(dataRoot, "file-store/tmp"))
-
-    /** Token 存储 RocksDB 目录 */
-    val tokenStoreDir: File = ensureDir(File(dataRoot, "tokenstore"))
 
     /** 日志目录 */
     val logsDir: File = ensureDir(File(dataRoot, "logs"))

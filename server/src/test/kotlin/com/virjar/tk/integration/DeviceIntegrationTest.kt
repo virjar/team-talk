@@ -18,10 +18,12 @@ class DeviceIntegrationTest {
     private val ctx get() = ext.env
 
     @Test
-    fun `register and list devices`() = runTest {
-        val uid = ctx.registerUser()
-        ctx.deviceRepo.registerDevice(uid, "dev-1", "iPhone", "iPhone 15", 1)
-        ctx.deviceRepo.registerDevice(uid, "dev-2", "Desktop", "MacBook", 2)
+    fun `authentication registers and lists devices`() = runTest {
+        val username = uniqueUsername("device-list")
+        val password = "pass123"
+        val uid = ctx.registerUser(username, password)
+        login(username, password, "dev-1", "iPhone", "iPhone 15", 1)
+        login(username, password, "dev-2", "Desktop", "MacBook", 2)
 
         val devices = ctx.deviceRepo.getDevices(uid)
         assertEquals(2, devices.size)
@@ -30,10 +32,12 @@ class DeviceIntegrationTest {
     }
 
     @Test
-    fun `register same device updates info`() = runTest {
-        val uid = ctx.registerUser()
-        ctx.deviceRepo.registerDevice(uid, "dev-same", "Old Name", "Model A", 1)
-        ctx.deviceRepo.registerDevice(uid, "dev-same", "New Name", "Model B", 1)
+    fun `authenticating same device updates info`() = runTest {
+        val username = uniqueUsername("device-update")
+        val password = "pass123"
+        val uid = ctx.registerUser(username, password)
+        login(username, password, "dev-same", "Old Name", "Model A", 1)
+        login(username, password, "dev-same", "New Name", "Model B", 1)
 
         val devices = ctx.deviceRepo.getDevices(uid)
         assertEquals(1, devices.size)
@@ -42,21 +46,25 @@ class DeviceIntegrationTest {
     }
 
     @Test
-    fun `kick device removes it`() = runTest {
-        val uid = ctx.registerUser()
-        ctx.deviceRepo.registerDevice(uid, "dev-kick", "Phone", "Pixel", 1)
+    fun `revoking device removes it from active list`() = runTest {
+        val username = uniqueUsername("device-revoke")
+        val password = "pass123"
+        val uid = ctx.registerUser(username, password)
+        login(username, password, "dev-kick", "Phone", "Pixel", 1)
         assertEquals(1, ctx.deviceRepo.getDevices(uid).size)
 
-        ctx.deviceRepo.kickDevice(uid, "dev-kick")
+        assertTrue(ctx.authService.revokeDevice(uid, "dev-kick") != null)
         assertEquals(0, ctx.deviceRepo.getDevices(uid).size)
     }
 
     @Test
     fun `devices sorted by last login desc`() = runTest {
-        val uid = ctx.registerUser()
-        ctx.deviceRepo.registerDevice(uid, "dev-old", "Old", "Model", 1)
+        val username = uniqueUsername("device-order")
+        val password = "pass123"
+        val uid = ctx.registerUser(username, password)
+        login(username, password, "dev-old", "Old", "Model", 1)
         Thread.sleep(10)
-        ctx.deviceRepo.registerDevice(uid, "dev-new", "New", "Model", 1)
+        login(username, password, "dev-new", "New", "Model", 1)
 
         val devices = ctx.deviceRepo.getDevices(uid)
         assertEquals(2, devices.size)
@@ -102,12 +110,12 @@ class DeviceIntegrationTest {
         assertEquals(1, devices.size)
         assertEquals("Xiaomi Phone (renamed)", devices.single().deviceName)
 
-        ctx.authService.logout(uid, refresh.refreshToken, "android-install-1")
+        ctx.authService.revokeDevice(uid, "android-install-1")
         assertTrue(ctx.deviceRepo.getDevices(uid).isEmpty())
     }
 
     @Test
-    fun `refresh and logout cannot relabel another device`() = runTest {
+    fun `refresh cannot relabel another device`() = runTest {
         val username = uniqueUsername("device-binding")
         val password = "pass123"
         val uid = ctx.registerUser(username, password)
@@ -146,18 +154,25 @@ class DeviceIntegrationTest {
         )
         assertEquals(0, validRefresh.code)
 
-        // A forged logout target cannot revoke or remove the token's real device.
-        ctx.authService.logout(uid, validRefresh.refreshToken, "forged-device")
         assertEquals(listOf("trusted-device"), ctx.deviceRepo.getDevices(uid).map { it.deviceId })
-        val stillValid = ctx.authService.handleAuth(
-            AuthRequestPayload(
-                authType = 2,
-                refreshToken = validRefresh.refreshToken,
-                deviceId = "trusted-device",
-                deviceName = "Trusted phone",
-                deviceFlag = 1,
-            ),
-        )
-        assertEquals(0, stillValid.code)
     }
+
+    private suspend fun login(
+        username: String,
+        password: String,
+        deviceId: String,
+        deviceName: String,
+        deviceModel: String,
+        deviceFlag: Int,
+    ) = ctx.authService.handleAuth(
+        AuthRequestPayload(
+            authType = 0,
+            username = username,
+            password = password,
+            deviceId = deviceId,
+            deviceName = deviceName,
+            deviceModel = deviceModel,
+            deviceFlag = deviceFlag,
+        ),
+    ).also { response -> assertEquals(0, response.code) }
 }

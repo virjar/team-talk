@@ -3,8 +3,10 @@ package com.virjar.tk.domain.chat
 import com.virjar.tk.domain.conversation.ConversationService
 import com.virjar.tk.domain.contact.ContactStore
 import com.virjar.tk.domain.event.EventPublisher
+import com.virjar.tk.domain.transaction.PgUnitOfWork
 import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.model.Chat
+import com.virjar.tk.model.Conversation
 import com.virjar.tk.model.Member
 import com.virjar.tk.model.UserRole
 import com.virjar.tk.protocol.NotifyType
@@ -19,6 +21,7 @@ class ChatService(
     private val contacts: ContactStore,
     private val requiredParticipants: RequiredChatParticipants,
     private val lifecycleGate: ChatLifecycleGate,
+    private val unitOfWork: PgUnitOfWork,
 ) {
 
     // ── 创建聊天 ──
@@ -79,9 +82,6 @@ class ChatService(
     }
 
     suspend fun leaveGroup(uid: String, chatId: String) = lifecycleGate.withChat(chatId) {
-        requireUserManaged(chatId)
-        val chat = chatStore.getChat(chatId) ?: throw IllegalArgumentException("聊天不存在")
-        require(chat.chatType == 2) { "单聊不能退出，请删除自己的会话视图" }
         removeMemberInternal(uid, chatId, uid)
     }
 
@@ -118,24 +118,48 @@ class ChatService(
 
     private suspend fun removeMemberInternal(operatorUid: String, chatId: String, targetUid: String) {
         requireUserManaged(chatId)
-        val member = access.requireGroupMember(operatorUid, chatId, "操作者不是群成员")
+        unitOfWork.write {
+            val removal = chatStore.removeMember(
+                transaction = transaction,
+                chatId = chatId,
+                operatorUid = operatorUid,
+                targetUid = targetUid,
+            ) { facts ->
+                require(facts.chat.chatType == 2) { "单聊不能退出，请删除自己的会话视图" }
+                val operator = facts.operator
+                    ?: throw IllegalArgumentException("操作者不是群成员")
+                val target = facts.target
+                    ?: throw IllegalArgumentException("目标不是群成员")
+                if (operatorUid == targetUid) {
+                    if (operator.role == 2) {
+                        throw IllegalArgumentException("群主不能退出，请先转让群主")
+                    }
+                } else {
+                    if (operator.role < 1) throw IllegalArgumentException("需要管理员权限")
+                    requireHumanMemberTarget(targetUid)
+                    if (target.role == 2) throw IllegalArgumentException("不能踢出群主")
+                    if (target.role == 1 && operator.role != 2) {
+                        throw IllegalArgumentException("只有群主能踢管理员")
+                    }
+                }
+            }
 
-        if (operatorUid == targetUid) {
-            if (member.role == 2) throw IllegalArgumentException("群主不能退出，请先转让群主")
-            chatStore.removeMember(chatId, targetUid)
-        } else {
-            access.requireAdmin(operatorUid, chatId)
-            requireHumanMemberTarget(targetUid)
-            val target = access.requireGroupMember(targetUid, chatId, "目标不是群成员")
-            if (target.role == 2) throw IllegalArgumentException("不能踢出群主")
-            if (target.role == 1 && member.role != 2) throw IllegalArgumentException("只有群主能踢管理员")
-            chatStore.removeMember(chatId, targetUid)
+            // The target's local authority must be a chat tombstone, never a MEMBER_REMOVED
+            // refresh hint. Remaining members keep the group and only refresh its member view.
+            // Persist the privacy tombstone first in the target's ordered stream. If the client
+            // stops between these two events, content is already gone; the list tombstone is a
+            // compatibility projection and is idempotent after CHAT_DELETED.
+            appendEvent(targetUid, NotifyType.CHAT_DELETED, removal.chat)
+            appendEvent(
+                targetUid,
+                NotifyType.CONVERSATION_DELETED,
+                Conversation(chatId = chatId, chatType = 0),
+            )
+            removal.remainingMemberUids.forEach { uid ->
+                appendEvent(uid, NotifyType.MEMBER_REMOVED, removal.chat)
+            }
+            afterCommit { chatStore.invalidateCommittedMemberRemoval(chatId) }
         }
-
-        val memberUids = chatStore.getMemberUids(chatId) + targetUid
-        val chat = chatStore.getChat(chatId) ?: return
-        conversationService.deleteConversationProjection(targetUid, chatId)
-        events.emitEvents(memberUids, NotifyType.MEMBER_REMOVED, chat)
     }
 
     suspend fun transferOwner(operatorUid: String, chatId: String, newOwnerUid: String) =

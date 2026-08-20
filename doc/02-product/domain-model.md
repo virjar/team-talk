@@ -15,13 +15,17 @@
 
 ### Device
 
-一次登录发生在具体设备上。每个设备拥有独立 token 和 TCP 连接。用户可以多设备同时在线，也可
-查看或踢除设备。最后一个设备下线时才代表用户整体离线。
+一次登录发生在具体设备上。每个设备拥有独立 credential epoch、credential 和 TCP 连接；同一设备
+使用密码、注册或 refresh 流程重新认证时，严格推进设备 credential epoch，只保留新签发的
+access/refresh pair，并替换旧连接。用户可以多设备
+同时在线，也可查看或踢除设备。最后一个设备下线时才代表用户整体离线。
 
 ### Token
 
-TeamTalk 使用服务端保存的随机 token，不使用 JWT。access token 用于当前访问，refresh token
-一次性轮换。删除 token 可以立即让设备失效。
+TeamTalk 使用服务端签发的随机 token，不使用 JWT。access token 用于当前访问，refresh token
+按完整 access/refresh pair 一次性轮换；服务端只保存 SHA-256，不能回读明文。User 与 Device 分别
+维护 credential epoch：封禁、管理员重置密码或用户自助改密推进用户 epoch，设备撤销推进设备 epoch，
+任何旧代际 token 随即失效。解除封禁不会回退 epoch，也不会恢复旧 token。
 
 ## 2. 组织目录
 

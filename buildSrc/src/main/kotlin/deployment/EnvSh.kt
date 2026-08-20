@@ -46,10 +46,6 @@ fun generateEnvShContent(
     lines.add("DATABASE_PASSWORD=\"${secrets.getProperty("DATABASE_PASSWORD")}\"")
     lines.add("")
 
-    lines.add("# ── 认证 ──")
-    lines.add("JWT_SECRET=\"${secrets.getProperty("JWT_SECRET")}\"")
-    lines.add("")
-
     if (sslEnabled) {
         lines.add("# ── SSL ──")
         lines.add("KTOR_SSL_PORT=$sslPort")

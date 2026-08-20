@@ -117,6 +117,74 @@ class LocalCacheImplTest {
     }
 
     @Test
+    fun `chat tombstone atomically purges owned rows keeps resident flow and leaves other chats intact`() = runBlocking {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        AppDatabase.Schema.create(driver)
+        val cache = LocalCacheImpl(driver)
+        val deletedChatId = "deleted-chat"
+        val retainedChatId = "retained-chat"
+        fun message(chatId: String, id: String, seq: Long) = Message(
+            chatId = chatId,
+            clientMsgId = id,
+            serverSeq = seq,
+            senderUid = "sender",
+            messageType = 1,
+            timestamp = seq,
+        )
+
+        cache.upsertChat(Chat(chatId = deletedChatId, chatType = 2, name = "deleted"))
+        cache.upsertChat(Chat(chatId = retainedChatId, chatType = 2, name = "retained"))
+        cache.upsertMember(Member(chatId = deletedChatId, uid = "deleted-member", role = 0))
+        cache.upsertMember(Member(chatId = retainedChatId, uid = "retained-member", role = 0))
+        cache.upsertConversation(conv(deletedChatId))
+        cache.upsertConversation(conv(retainedChatId))
+        cache.setConversationDraft(deletedChatId, "deleted draft")
+        cache.setConversationDraft(retainedChatId, "retained draft")
+        val residentFlow = cache.observeMessages(deletedChatId)
+        val deletedMessage = message(deletedChatId, "deleted-message", 1L)
+        val retainedMessage = message(retainedChatId, "retained-message", 1L)
+        cache.insertMessage(deletedMessage)
+        cache.insertMessage(retainedMessage)
+        cache.enqueueBotMessage(1L, deletedMessage)
+        cache.enqueueBotMessage(2L, retainedMessage)
+
+        cache.deleteChat(deletedChatId)
+        cache.deleteChat(deletedChatId) // replayed CHAT_DELETED is an idempotent tombstone
+
+        assertNull(cache.getChat(deletedChatId))
+        assertTrue(cache.getMembers(deletedChatId).isEmpty())
+        assertTrue(cache.getMessages(deletedChatId).isEmpty())
+        assertTrue(cache.getConversations().none { it.chatId == deletedChatId })
+        assertTrue(cache.getPendingConversationDrafts().none { it.chatId == deletedChatId })
+        assertTrue(residentFlow === cache.observeMessages(deletedChatId))
+        assertTrue(residentFlow.first().isEmpty())
+
+        assertEquals("retained", cache.getChat(retainedChatId)?.name)
+        assertEquals(listOf("retained-member"), cache.getMembers(retainedChatId).map(Member::uid))
+        assertEquals(listOf("retained-message"), cache.getMessages(retainedChatId).map(Message::clientMsgId))
+        assertEquals(listOf(retainedChatId), cache.getConversations().map(Conversation::chatId))
+        assertEquals(listOf(retainedChatId), cache.getPendingConversationDrafts().map(PendingConversationDraft::chatId))
+        assertEquals(2L, cache.peekBotMessage()?.eventId)
+
+        val rebuilt = LocalCacheImpl(driver)
+        assertNull(rebuilt.getChat(deletedChatId))
+        assertTrue(rebuilt.getMembers(deletedChatId).isEmpty())
+        assertTrue(rebuilt.getMessages(deletedChatId).isEmpty())
+        assertTrue(rebuilt.getConversations().none { it.chatId == deletedChatId })
+        assertTrue(rebuilt.getPendingConversationDrafts().none { it.chatId == deletedChatId })
+        assertEquals(2L, rebuilt.peekBotMessage()?.eventId)
+        assertEquals("retained", rebuilt.getChat(retainedChatId)?.name)
+        assertEquals(listOf("retained-member"), rebuilt.getMembers(retainedChatId).map(Member::uid))
+        assertEquals(listOf("retained-message"), rebuilt.getMessages(retainedChatId).map(Message::clientMsgId))
+        assertEquals(listOf(retainedChatId), rebuilt.getConversations().map(Conversation::chatId))
+        assertEquals(listOf(retainedChatId), rebuilt.getPendingConversationDrafts().map(PendingConversationDraft::chatId))
+
+        val replayed = message(deletedChatId, "replayed-message", 2L)
+        cache.insertMessage(replayed)
+        assertEquals(listOf("replayed-message"), residentFlow.first().map(Message::clientMsgId))
+    }
+
+    @Test
     fun `并发 upsertUser 无丢失 - stateLock 语义`() {
         val cache = newCache()
         val threads = 8

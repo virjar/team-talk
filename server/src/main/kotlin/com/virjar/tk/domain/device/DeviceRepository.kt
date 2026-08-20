@@ -4,9 +4,7 @@ import com.virjar.tk.model.Device
 
 /** Persistence port owned by the device domain. */
 interface DeviceRepository {
-    fun registerDevice(uid: String, deviceId: String, deviceName: String?, deviceModel: String?, deviceFlag: Int)
     fun getDevices(uid: String): List<DeviceRecord>
-    fun kickDevice(uid: String, deviceId: String)
 }
 
 data class DeviceRecord(

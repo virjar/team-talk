@@ -59,6 +59,10 @@ docker compose up -d
 本地 PostgreSQL 默认数据库为 `teamtalk`，开发口令来自 `docker-compose.yml`。服务端数据默认写入
 仓库的 `data/`；该目录是运行数据，不应提交。
 
+当前预发布持久化 epoch 为 6。旧数据库或旧 `data/` 目录不能原地升级到这一基线；开发实例首次切换
+时必须同时重建 PostgreSQL schema/volume 并清空服务端 `data/`。旧 RocksDB TokenStore 已移除，原有
+access/refresh token 不会迁移，所有客户端都需要重新登录。完整生命周期见[持久化](../06-server/persistence.md)。
+
 服务端调试适合领域逻辑、存储、协议分发和迁移问题。涉及多端行为时，最终仍需在配置部署上执行
 真实业务验收。
 
@@ -95,7 +99,6 @@ docker compose up -d
 ```text
 data/
 ├── rocksdb/
-├── tokenstore/
 ├── lucene-index/
 ├── file-store/
 ├── client-logs/

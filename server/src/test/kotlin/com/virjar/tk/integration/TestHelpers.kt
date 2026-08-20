@@ -1,6 +1,10 @@
 package com.virjar.tk.integration
 
 import com.virjar.tk.domain.auth.AuthService
+import com.virjar.tk.domain.auth.AccessTokenValidator
+import com.virjar.tk.domain.auth.CredentialAdministration
+import com.virjar.tk.domain.auth.TokenRepository
+import com.virjar.tk.application.admin.AdminService
 import com.virjar.tk.domain.bot.BotService
 import com.virjar.tk.domain.chat.ChatRepository
 import com.virjar.tk.domain.chat.ChatAccess
@@ -28,12 +32,12 @@ import com.virjar.tk.domain.groupfile.GroupFileService
 import com.virjar.tk.domain.attachment.AttachmentAccess
 import com.virjar.tk.domain.user.UserRepository
 import com.virjar.tk.domain.user.UserService
+import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.domain.transaction.PgUnitOfWork
 import com.virjar.tk.di.createServerModule
 import com.virjar.tk.infra.db.DatabaseFactory
 import com.virjar.tk.infra.search.SearchIndex
 import com.virjar.tk.infra.storage.MessageStore
-import com.virjar.tk.infra.storage.TokenStore
 import com.virjar.tk.infra.sync.ClientRegistry
 import com.virjar.tk.infra.sync.SyncEventDispatcher
 import com.virjar.tk.protocol.rpc.ContactRpcImpl
@@ -60,7 +64,6 @@ class TestEnvironment : AutoCloseable {
     private val testId = UUID.randomUUID().toString()
     private val testRoot = File("/tmp/tk-test-${testId}")
 
-    private val tokensDir = File(testRoot, "tokens")
     private val msgsDir = File(testRoot, "msgs")
     private val searchDir = File(testRoot, "search")
     private val fileStoreDir = File(testRoot, "file-store")
@@ -68,7 +71,6 @@ class TestEnvironment : AutoCloseable {
     // Koin 容器（独立实例，不污染全局）
     private val koinApp = koinApplication {
         modules(createServerModule(
-            tokenStorePath = tokensDir.absolutePath,
             messageStorePath = msgsDir.absolutePath,
             searchIndexPath = searchDir,
             fileStoreDbPath = File(fileStoreDir, "rocksdb").absolutePath,
@@ -103,6 +105,11 @@ class TestEnvironment : AutoCloseable {
     // 便捷属性 — 与旧 TestContext 保持相同接口
     val userService: UserService get() = koin.get()
     val authService: AuthService get() = koin.get()
+    val tokenRepository: TokenRepository get() = koin.get()
+    val accessTokenValidator: AccessTokenValidator get() = koin.get()
+    val credentialAdministration: CredentialAdministration get() = koin.get()
+    val adminService: AdminService get() = koin.get()
+    val clientRegistry: ClientRegistry get() = koin.get()
     /** RPC adapter binds the caller uid; the domain service remains transport-neutral. */
     fun contactService(uid: String): ContactRpcImpl = ContactRpcImpl(uid, koin.get())
     val chatService: ChatService get() = koin.get()
@@ -121,6 +128,7 @@ class TestEnvironment : AutoCloseable {
     val organizationRepo: OrganizationRepository get() = koin.get()
     val deviceRepo: DeviceRepository get() = koin.get()
     val userRepo: UserRepository get() = koin.get()
+    val userStore: UserStore get() = koin.get()
     val contactRepo: ContactRepository get() = koin.get()
     val chatRepo: ChatRepository get() = koin.get()
     val conversationRepo: ConversationRepository get() = koin.get()
@@ -133,6 +141,20 @@ class TestEnvironment : AutoCloseable {
     val searchIndex: SearchIndex get() = koin.get()
     val healthChecker: com.virjar.tk.infra.health.HealthChecker get() = koin.get()
     val fileStore: com.virjar.tk.infra.storage.FileStore get() = koin.get()
+
+    /** Build the same ChatService graph with a deterministic UoW failpoint for atomicity tests. */
+    fun freshChatService(unitOfWork: PgUnitOfWork): ChatService = ChatService(
+        chatStore = koin.get(),
+        access = koin.get(),
+        userStore = koin.get(),
+        events = koin.get(),
+        conversationService = koin.get(),
+        managedChats = koin.get(),
+        contacts = koin.get(),
+        requiredParticipants = koin.get(),
+        lifecycleGate = koin.get(),
+        unitOfWork = unitOfWork,
+    )
 
     /** 模拟服务进程重启后的冷缓存，但复用同一套持久化数据。 */
     fun freshMessageService(
@@ -175,7 +197,6 @@ class TestEnvironment : AutoCloseable {
         cleanUp { koin.get<SearchIndex>().stop() }
         cleanUp { koin.get<MessageStore>().close() }
         cleanUp { koin.get<com.virjar.tk.infra.storage.FileStore>().close() }
-        cleanUp { koin.get<TokenStore>().close() }
         cleanUp { koin.get<SyncEventDispatcher>().close() }
         cleanUp { koin.get<ClientRegistry>().stop() }
         cleanUp { DatabaseFactory.close() }

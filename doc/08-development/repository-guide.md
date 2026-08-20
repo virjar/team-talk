@@ -63,7 +63,7 @@ server/src/main/kotlin/com/virjar/tk/
 ├── domain/              业务规则、Store 与持久化/事件/搜索端口
 ├── infra/db/            PostgreSQL schema
 ├── infra/db/repository/ Exposed 端口实现
-├── infra/storage/       Message/File/Token/ClientLog stores
+├── infra/storage/       Message/File/ClientLog stores
 ├── infra/search/        Lucene
 ├── infra/sync/          ClientRegistry/SyncEventService
 ├── env/                 data root

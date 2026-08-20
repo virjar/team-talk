@@ -31,7 +31,7 @@ class UserRepository(
         authRpc.updatePassword(oldPassword, newPassword)
     }
 
-    suspend fun logout(refreshToken: String?, deviceId: String): Outcome<Unit> = outcome {
-        authRpc.logout(refreshToken, deviceId)
+    suspend fun logout(): Outcome<Unit> = outcome {
+        authRpc.logout()
     }
 }

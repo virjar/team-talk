@@ -75,8 +75,10 @@ class DocumentDraftStore(
 ) {
     private var ownerUid: String? = null
     private var snapshot: DocumentWorkspaceDraftSnapshot? = null
+    private var retiredUid: String? = null
 
     internal fun restore(uid: String): DocumentWorkspaceDraftSnapshot? {
+        if (retiredUid == uid) return null
         snapshot?.takeIf { ownerUid == uid }?.let { return it }
 
         val payload = safely { persistence.read(uid) } ?: return null
@@ -94,6 +96,10 @@ class DocumentDraftStore(
         selectedSpaceId: String?,
         selectedFolderId: String?,
     ) {
+        // Explicit logout retires this store instance before the old Compose tree disposes. A
+        // late editor callback may still reach its old DocumentWorkspaceFeature, but it must never
+        // resurrect a draft that logout already deleted. A later login receives a new store.
+        if (retiredUid == uid) return
         val draftTabs = tabs
             .asSequence()
             .filter { it.dirty || it.creating }
@@ -131,6 +137,16 @@ class DocumentDraftStore(
             snapshot = null
             return
         }
+        safely { persistence.delete(uid) }
+        if (ownerUid == uid) {
+            ownerUid = null
+            snapshot = null
+        }
+    }
+
+    /** Permanently reject later writes for [uid] on this session-owned store. */
+    internal fun clearAndRetire(uid: String) {
+        retiredUid = uid
         safely { persistence.delete(uid) }
         if (ownerUid == uid) {
             ownerUid = null

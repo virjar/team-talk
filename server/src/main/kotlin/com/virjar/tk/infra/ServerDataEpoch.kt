@@ -7,25 +7,37 @@ import java.nio.file.StandardCopyOption
 /**
  * Fail-fast guard for all non-PostgreSQL durable server data.
  *
- * Message bytes use the current protocol model, tokens refer to current relational identities,
- * Lucene is derived from current messages, and file metadata is joined with current ACL rows.
+ * Message bytes use the current protocol model, Lucene is derived from current messages, and
+ * file metadata is joined with current ACL rows. Authentication credentials now live in the
+ * epoch-bound PostgreSQL schema and are intentionally invalidated by the same reset.
  * They therefore advance as one disposable pre-release epoch instead of each store carrying a
  * separate migration branch.
  */
 object ServerDataEpoch {
-    const val CURRENT_EPOCH = 5
+    const val CURRENT_EPOCH = 6
 
     private const val MARKER_FILE = "data-epoch"
     private val durableRelativePaths = listOf(
         "rocksdb",
-        "tokenstore",
         "lucene-index",
         "file-store/rocksdb",
         "file-store/files",
     )
+    /** Removed stores that can contain secrets and must never survive into a current epoch. */
+    private val legacyRejectedPaths = listOf("tokenstore")
 
     fun initializeOrValidate(dataRoot: File) {
         dataRoot.mkdirs()
+        val legacyData = legacyRejectedPaths
+            .map { File(dataRoot, it) }
+            .filter { it.containsEntries() }
+            .map { it.relativeTo(dataRoot).path }
+        if (legacyData.isNotEmpty()) {
+            throw DataResetRequiredException(
+                "Removed credential storage is still present; delete the disposable pre-release " +
+                    "server data before startup (found: ${legacyData.joinToString()})",
+            )
+        }
         val marker = File(dataRoot, MARKER_FILE)
         if (marker.exists()) {
             val actual = marker.readText().trim().toIntOrNull()

@@ -3,7 +3,9 @@ package com.virjar.tk.client
 import com.virjar.tk.body.GenericPayload
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Contact
+import com.virjar.tk.model.Conversation
 import com.virjar.tk.model.Message
+import com.virjar.tk.model.Member
 import com.virjar.tk.model.User
 import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.PresencePayload
@@ -141,6 +143,48 @@ class EventProcessorTest {
         assertTrue(!ep2.refreshDirtyConversations(authenticated = true))
         assertEquals(2L, cache.getSyncCursor(EventProcessor.SYNC_CURSOR_KEY))
         assertTrue(ep2.hasDirtyConversations)
+    }
+
+    @Test
+    fun `CHAT_DELETED applies one comprehensive local tombstone`() = runBlocking {
+        val deleted = Chat(chatId = "deleted-chat", chatType = 2, name = "deleted")
+        val retained = Chat(chatId = "retained-chat", chatType = 2, name = "retained")
+        cache.upsertChat(deleted)
+        cache.upsertChat(retained)
+        cache.upsertMember(Member(chatId = deleted.chatId, uid = "removed", role = 0))
+        cache.upsertMember(Member(chatId = retained.chatId, uid = "retained", role = 0))
+        cache.upsertConversation(Conversation(chatId = deleted.chatId, chatType = 2))
+        cache.upsertConversation(Conversation(chatId = retained.chatId, chatType = 2))
+        cache.setConversationDraft(deleted.chatId, "deleted draft")
+        val deletedMessage = Message(
+            chatId = deleted.chatId,
+            clientMsgId = "deleted-message",
+            serverSeq = 1,
+            senderUid = "sender",
+            messageType = 1,
+            timestamp = 1,
+        )
+        val retainedMessage = deletedMessage.copy(
+            chatId = retained.chatId,
+            clientMsgId = "retained-message",
+        )
+        val residentFlow = cache.observeMessages(deleted.chatId)
+        cache.insertMessage(deletedMessage)
+        cache.insertMessage(retainedMessage)
+        cache.enqueueBotMessage(1L, deletedMessage)
+        cache.enqueueBotMessage(2L, retainedMessage)
+
+        ep.handleNotifyPayload(NotifyType.CHAT_DELETED, ProtoCodec.encode(deleted))
+
+        assertNull(cache.getChat(deleted.chatId))
+        assertTrue(cache.getMembers(deleted.chatId).isEmpty())
+        assertTrue(cache.getMessages(deleted.chatId).isEmpty())
+        assertTrue(cache.getConversations().none { it.chatId == deleted.chatId })
+        assertTrue(cache.getPendingConversationDrafts().none { it.chatId == deleted.chatId })
+        assertTrue(residentFlow.first().isEmpty())
+        assertEquals(retained, cache.getChat(retained.chatId))
+        assertEquals(listOf("retained-message"), cache.getMessages(retained.chatId).map(Message::clientMsgId))
+        assertEquals(2L, cache.peekBotMessage()?.eventId)
     }
 
     @Test

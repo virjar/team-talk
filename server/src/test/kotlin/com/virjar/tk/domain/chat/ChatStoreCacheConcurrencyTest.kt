@@ -143,6 +143,13 @@ private open class PassiveMemberRepository : ChatMemberRepository {
     override fun isMember(chatId: String, uid: String): Boolean = false
     override fun addMembers(chatId: String, uids: List<String>) = Unit
     override fun removeMember(chatId: String, uid: String) = Unit
+    override fun removeMember(
+        transaction: com.virjar.tk.domain.transaction.PgTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        targetUid: String,
+        authorize: (GroupMemberRemovalFacts) -> Unit,
+    ): GroupMemberRemoval = error("unused")
     override fun transferOwner(chatId: String, oldOwnerUid: String, newOwnerUid: String) = Unit
     override fun setRole(chatId: String, uid: String, role: Int) = Unit
     override fun muteMember(chatId: String, uid: String, operatorUid: String, expiresAt: Long) = Unit

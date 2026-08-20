@@ -1,11 +1,12 @@
 package com.virjar.tk.e2e
 
 import com.virjar.tk.di.createServerModule
+import com.virjar.tk.application.admin.AdminService
+import com.virjar.tk.domain.auth.AccessTokenValidator
 import com.virjar.tk.infra.db.DatabaseFactory
 import com.virjar.tk.infra.search.SearchIndex
 import com.virjar.tk.infra.storage.FileStore
 import com.virjar.tk.infra.storage.MessageStore
-import com.virjar.tk.infra.storage.TokenStore
 import com.virjar.tk.infra.sync.ClientRegistry
 import com.virjar.tk.infra.sync.SyncEventDispatcher
 import com.virjar.tk.protocol.TcpServer
@@ -27,14 +28,12 @@ class TcpE2eEnvironment : AutoCloseable {
     private val testId = UUID.randomUUID().toString().replace("-", "").take(12)
     private val testRoot = File("/tmp/tk-e2e-${testId}")
 
-    private val tokensDir = File(testRoot, "tokens")
     private val msgsDir = File(testRoot, "msgs")
     private val searchDir = File(testRoot, "search")
     private val fileStoreDir = File(testRoot, "file-store")
 
     private val koinApp = koinApplication {
         modules(createServerModule(
-            tokenStorePath = tokensDir.absolutePath,
             messageStorePath = msgsDir.absolutePath,
             searchIndexPath = searchDir,
             fileStoreDbPath = File(fileStoreDir, "rocksdb").absolutePath,
@@ -49,6 +48,8 @@ class TcpE2eEnvironment : AutoCloseable {
     private var syncEventDispatcher: SyncEventDispatcher? = null
 
     val tcpPort: Int
+    val adminService: AdminService get() = koin.get()
+    val accessTokenValidator: AccessTokenValidator get() = koin.get()
 
     init {
         try {
@@ -117,13 +118,6 @@ class TcpE2eEnvironment : AutoCloseable {
         return requireNotNull(store.getAttachment(path))
     }
 
-    /** 测试辅助：直接执行 SQL（造状态用）。 */
-    fun jdbcExec(sql: String) {
-        postgres.openConnection().use { conn ->
-            conn.createStatement().execute(sql)
-        }
-    }
-
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         var failure: Throwable? = null
@@ -137,7 +131,6 @@ class TcpE2eEnvironment : AutoCloseable {
         cleanUp { koin.get<SearchIndex>().stop() }
         cleanUp { koin.get<MessageStore>().close() }
         cleanUp { koin.get<FileStore>().close() }
-        cleanUp { koin.get<TokenStore>().close() }
         cleanUp { clientRegistry?.stop() }
         cleanUp { DatabaseFactory.close() }
         cleanUp { koinApp.close() }

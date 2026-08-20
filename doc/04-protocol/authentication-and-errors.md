@@ -19,13 +19,21 @@ AUTH 的 `authType`：
 
 ## 2. Token 模型
 
-token 是服务端保存的随机值，不是 JWT：
+token 是服务端签发的随机值，不是 JWT：
 
 - access token 用于当前连接和 HTTP 上传认证。
-- refresh token 用于重建认证，会在成功使用后轮换。
+- refresh token 用于重建认证；成功使用后 access/refresh 整对轮换，旧 access 与旧 refresh 同时失效。
 - token 与 uid/deviceId 绑定。
+- 服务端 PostgreSQL 只保存 token 的 SHA-256、类型、有效期和签发时的用户/设备 credential epoch；
+  明文 token 只在签发响应中出现，不能从服务端存储恢复。
 - `deviceId` 是安装级稳定标识；密码登录、注册和 refresh 必须复用同一个值，认证成功会刷新设备登记与最后登录时间。
-- 踢设备或登出删除 token，使后续认证立即失败。
+- 同一账号同一设备的新登录或 refresh 会严格推进设备 credential epoch，替换此前 pair，只保留最新
+  access/refresh token；事务提交后、AUTH 成功前先发布设备 fence，延迟到达的旧认证不能反向接管连接。
+- 登出失效当前设备 credential；踢设备推进设备 epoch，封禁账号、管理员重置密码和用户自助改密都推进用户 epoch。事务提交后
+  服务端以新 epoch 建立连接 fence，使旧 token 和旧连接都不能重新生效。
+- 自助改密的数据库事务提交后，发起连接先退出实时/认证集合，只允许写完本次成功 RPC 响应，随后立即关闭；
+  其他旧会话在提交后的 fence 阶段关闭。客户端必须使用新密码重新登录。
+- 解除封禁不回退用户 epoch，因此不会恢复封禁前的 token。
 
 客户端持久化 refresh token；access token 只属于活动用户会话。日志、错误提示和截图不能输出 token。
 

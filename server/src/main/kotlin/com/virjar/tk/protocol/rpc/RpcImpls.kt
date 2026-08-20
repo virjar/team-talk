@@ -8,7 +8,6 @@ import com.virjar.tk.domain.document.DocumentService
 import com.virjar.tk.domain.message.MessageService
 import com.virjar.tk.domain.organization.OrganizationService
 import com.virjar.tk.domain.groupfile.GroupFileService
-import com.virjar.tk.domain.session.OnlineSessions
 import com.virjar.tk.domain.user.UserService
 import com.virjar.tk.domain.chat.toModel as inviteLinkToModel
 import com.virjar.tk.domain.device.toModel
@@ -37,20 +36,16 @@ class UserRpcImpl(uid: String, private val service: UserService) : UserRpcStub(u
 
 class AuthRpcImpl(
     uid: String,
+    private val deviceId: String,
+    private val sessionId: String,
     private val authService: AuthService,
-    private val userService: UserService,
-    private val onlineSessions: OnlineSessions,
 ) : AuthRpcStub(uid) {
-    override suspend fun logout(refreshToken: String?, deviceId: String?) {
-        if (authService.logout(uid, refreshToken, deviceId) && deviceId != null) {
-            // Token revocation alone does not invalidate an already authenticated TCP channel.
-            // Close every live connection registered for this exact principal/device.
-            onlineSessions.kickDevice(uid, deviceId)
-        }
+    override suspend fun logout() {
+        authService.logoutCurrentSession(uid, deviceId, sessionId)
     }
 
     override suspend fun updatePassword(oldPassword: String, newPassword: String) {
-        userService.changePassword(uid, oldPassword, newPassword)
+        authService.changePassword(uid, oldPassword, newPassword, responseSessionId = sessionId)
     }
 }
 
@@ -126,13 +121,10 @@ class DeviceRpcImpl(
     uid: String,
     private val deviceRepo: com.virjar.tk.domain.device.DeviceRepository,
     private val authService: AuthService,
-    private val onlineSessions: OnlineSessions,
 ) : DeviceRpcStub(uid) {
     override suspend fun listDevices() = deviceRepo.getDevices(uid).map { it.toModel() }
     override suspend fun kickDevice(deviceId: String) {
-        onlineSessions.kickDevice(uid, deviceId)  // 关闭被踢设备的活连接（曾遗漏：只删记录不踢线）
-        deviceRepo.kickDevice(uid, deviceId)
-        authService.kickDevice(uid, deviceId)
+        authService.revokeDevice(uid, deviceId)
     }
 }
 
@@ -211,15 +203,22 @@ class DocumentRpcImpl(uid: String, private val service: DocumentService) : Docum
     override suspend fun listRecentlyCreatedDocuments(limit: Int) = service.listRecentlyCreatedDocuments(uid, limit)
 }
 
-/** 服务注册表：serviceId → 每请求 Stub 工厂（uid 注入）。由 Koin 装配。 */
-class RpcStubRegistry {
-    private val factories = mutableMapOf<String, (String) -> RpcStub>()
+data class RpcSessionContext(val uid: String, val deviceId: String, val sessionId: String)
 
-    fun register(service: String, factory: (uid: String) -> RpcStub) {
+/** 服务注册表：serviceId → 每请求 Stub 工厂（认证会话身份注入）。由 Koin 装配。 */
+class RpcStubRegistry {
+    private val factories = mutableMapOf<String, (RpcSessionContext) -> RpcStub>()
+
+    fun register(service: String, factory: (session: RpcSessionContext) -> RpcStub) {
         factories[service] = factory
     }
 
-    suspend fun dispatchSuspend(uid: String, service: String, methodId: Int, payload: ByteArray?): ByteArray? =
-        factories[service]?.invoke(uid)?.dispatch(methodId, payload)
+    suspend fun dispatchSuspend(
+        session: RpcSessionContext,
+        service: String,
+        methodId: Int,
+        payload: ByteArray?,
+    ): ByteArray? =
+        factories[service]?.invoke(session)?.dispatch(methodId, payload)
             ?: throw IllegalArgumentException("Unknown service: $service")
 }

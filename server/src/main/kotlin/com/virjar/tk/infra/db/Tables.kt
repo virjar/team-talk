@@ -25,8 +25,15 @@ object Users : LongIdTable("users") {
     val shortNo = varchar("short_no", 20).nullable().uniqueIndex()
     val status = integer("status").default(1)
     val role = integer("role").default(0)
+    /** Incremented whenever every credential for this user must become permanently invalid. */
+    val credentialEpoch = long("credential_epoch").default(1)
     val createdAt = long("created_at")
     val updatedAt = long("updated_at")
+
+    init {
+        check("ck_users_status") { (status greaterEq 1) and (status lessEq 2) }
+        check("ck_users_credential_epoch_positive") { credentialEpoch greater 0L }
+    }
 }
 
 object Devices : LongIdTable("devices") {
@@ -35,11 +42,39 @@ object Devices : LongIdTable("devices") {
     val deviceName = varchar("device_name", 200).nullable()
     val deviceModel = varchar("device_model", 200).nullable()
     val deviceFlag = integer("device_flag").default(0)
+    val status = integer("status").default(1)
+    /** Every credential-pair rotation and revocation advances this value. */
+    val credentialEpoch = long("credential_epoch").default(1)
     val lastLogin = long("last_login").default(0)
     val createdAt = long("created_at")
 
     init {
         uniqueIndex("idx_device_uid_id", uid, deviceId)
+        check("ck_devices_status") { (status greaterEq 1) and (status lessEq 2) }
+        check("ck_devices_credential_epoch_positive") { credentialEpoch greater 0L }
+    }
+}
+
+/** Hash-only access and refresh credentials. Raw bearer secrets never enter durable storage. */
+object Credentials : Table("credentials") {
+    val tokenHash = varchar("token_hash", 64)
+    val tokenType = integer("token_type")
+    val uid = varchar("uid", 36).references(Users.uid)
+    val deviceId = varchar("device_id", 100)
+    val deviceFlag = integer("device_flag")
+    val userCredentialEpoch = long("user_credential_epoch")
+    val deviceCredentialEpoch = long("device_credential_epoch")
+    val createdAt = long("created_at")
+    val expiresAt = long("expires_at")
+
+    override val primaryKey = PrimaryKey(tokenHash)
+
+    init {
+        index("idx_credentials_uid_device", false, uid, deviceId)
+        index("idx_credentials_expires_at", false, expiresAt)
+        check("ck_credentials_token_type") { (tokenType greaterEq 1) and (tokenType lessEq 2) }
+        check("ck_credentials_user_epoch_positive") { userCredentialEpoch greater 0L }
+        check("ck_credentials_device_epoch_positive") { deviceCredentialEpoch greater 0L }
     }
 }
 

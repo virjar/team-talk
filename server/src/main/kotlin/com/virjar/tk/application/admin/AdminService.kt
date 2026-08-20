@@ -1,6 +1,7 @@
 package com.virjar.tk.application.admin
 
-import com.virjar.tk.domain.auth.TokenRepository
+import com.virjar.tk.domain.auth.CredentialAdministration
+import com.virjar.tk.domain.auth.commitCredentialMutationAndFence
 import com.virjar.tk.domain.bot.BotService
 import com.virjar.tk.domain.chat.AdminPage
 import com.virjar.tk.domain.chat.ChatRepository
@@ -13,7 +14,6 @@ import com.virjar.tk.domain.message.MessageSearch
 import com.virjar.tk.domain.organization.OrganizationService
 import com.virjar.tk.domain.session.OnlineSessions
 import com.virjar.tk.domain.user.UserRepository
-import com.virjar.tk.domain.user.UserService
 import com.virjar.tk.infra.db.Users
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Device
@@ -29,6 +29,9 @@ import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.mindrot.jbcrypt.BCrypt
 import kotlinx.serialization.Serializable
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
@@ -37,7 +40,6 @@ import java.io.File
  */
 class AdminService(
     private val userRepository: UserRepository,
-    private val userService: UserService,
     private val deviceRepository: DeviceRepository,
     private val contactRepository: ContactRepository,
     private val chatRepository: ChatRepository,
@@ -45,7 +47,7 @@ class AdminService(
     private val messageService: MessageService,
     private val messages: MessageRepository,
     private val search: MessageSearch,
-    private val tokens: TokenRepository,
+    private val credentials: CredentialAdministration,
     private val onlineSessions: OnlineSessions,
     private val organizationService: OrganizationService,
     private val botService: BotService,
@@ -133,34 +135,26 @@ class AdminService(
         )
     }
 
-    /** 封禁：status + 全 token 吊销 + 全设备踢线（三动作）。 */
+    /** 封禁事实与凭据 epoch 在 PG 原子提交，随后发布不可逆在线会话 fence。 */
     suspend fun banUser(uid: String) {
-        transaction {
-            Users.selectAll().where { Users.uid eq uid }.singleOrNull()
-                ?: throw IllegalArgumentException("用户不存在: $uid")
-            Users.update({ Users.uid eq uid }) { it[status] = 2 }
-        }
-        tokens.revokeAllUserTokens(uid)
-        onlineSessions.kickUser(uid)
+        commitCredentialMutationAndFence(
+            commit = { credentials.banUser(uid) },
+            publishFence = { epoch -> onlineSessions.invalidateUserCredentials(uid, epoch) },
+        )
     }
 
-    suspend fun unbanUser(uid: String) {
-        transaction {
-            Users.update({ Users.uid eq uid }) { it[status] = 1 }
-        }
-    }
+    suspend fun unbanUser(uid: String) = credentials.unbanUser(uid)
 
     suspend fun kickAll(uid: String) = onlineSessions.kickUser(uid)
 
     /** 重置密码：新 BCrypt + 全设备踢线（强制重新登录）。 */
     suspend fun resetPassword(uid: String, newPassword: String) {
         require(newPassword.length >= 6) { "密码至少 6 位" }
-        val hash = BCrypt.hashpw(newPassword, BCrypt.gensalt())
-        transaction {
-            Users.update({ Users.uid eq uid }) { it[passwordHash] = hash }
-        }
-        tokens.revokeAllUserTokens(uid)
-        onlineSessions.kickUser(uid)
+        val hash = withContext(Dispatchers.Default) { BCrypt.hashpw(newPassword, BCrypt.gensalt()) }
+        commitCredentialMutationAndFence(
+            commit = { credentials.resetPasswordAndRevoke(uid, hash) },
+            publishFence = { epoch -> onlineSessions.invalidateUserCredentials(uid, epoch) },
+        )
     }
 
     // ── 消息 ──

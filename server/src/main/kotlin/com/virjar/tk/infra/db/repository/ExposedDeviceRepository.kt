@@ -8,48 +8,12 @@ import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.transactions.transaction
 
 class ExposedDeviceRepository : DeviceRepository {
-
-    override fun registerDevice(uid: String, deviceId: String, deviceName: String?, deviceModel: String?, deviceFlag: Int) {
-        transaction {
-            val existing = Devices.selectAll()
-                .where { (Devices.uid eq uid) and (Devices.deviceId eq deviceId) }
-                .singleOrNull()
-
-            if (existing != null) {
-                Devices.update({ (Devices.uid eq uid) and (Devices.deviceId eq deviceId) }) {
-                    it[Devices.deviceName] = deviceName
-                    it[Devices.deviceModel] = deviceModel
-                    it[Devices.deviceFlag] = deviceFlag
-                    it[Devices.lastLogin] = System.currentTimeMillis()
-                }
-            } else {
-                Devices.insert {
-                    it[Devices.uid] = uid
-                    it[Devices.deviceId] = deviceId
-                    it[Devices.deviceName] = deviceName
-                    it[Devices.deviceModel] = deviceModel
-                    it[Devices.deviceFlag] = deviceFlag
-                    it[Devices.lastLogin] = System.currentTimeMillis()
-                    it[Devices.createdAt] = System.currentTimeMillis()
-                }
-            }
-        }
-    }
-
     override fun getDevices(uid: String): List<DeviceRecord> {
         return transaction {
             Devices.selectAll()
-                .where { Devices.uid eq uid }
+                .where { (Devices.uid eq uid) and (Devices.status eq 1) }
                 .orderBy(Devices.lastLogin, SortOrder.DESC)
                 .map { it.toDeviceRecord() }
-        }
-    }
-
-    override fun kickDevice(uid: String, deviceId: String) {
-        transaction {
-            Devices.deleteWhere {
-                (Devices.uid eq uid) and (Devices.deviceId eq deviceId)
-            }
         }
     }
 }

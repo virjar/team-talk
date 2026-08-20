@@ -1,15 +1,25 @@
 package com.virjar.tk.domain.auth
 
 import com.virjar.tk.domain.user.UserService
-import com.virjar.tk.domain.device.DeviceRepository
-import com.virjar.tk.model.User
+import com.virjar.tk.domain.session.OnlineSessions
 import com.virjar.tk.protocol.payload.AuthRequestPayload
 import com.virjar.tk.protocol.payload.AuthResponsePayload
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+
+class AuthenticationResult(
+    val response: AuthResponsePayload,
+    val principal: TokenInfo?,
+) {
+    override fun toString(): String =
+        "AuthenticationResult(code=${response.code}, hasPrincipal=${principal != null}, credentials=<redacted>)"
+}
 
 class AuthService(
     private val userService: UserService,
-    private val tokenStore: TokenRepository,
-    private val devices: DeviceRepository,
+    private val credentials: TokenRepository,
+    private val onlineSessions: OnlineSessions,
 ) {
     companion object {
         const val CODE_OK = AuthResponsePayload.CODE_OK
@@ -20,139 +30,194 @@ class AuthService(
         const val CODE_TOO_MANY_CONNECTIONS = AuthResponsePayload.CODE_TOO_MANY_CONNECTIONS
     }
 
-    fun handleAuth(payload: AuthRequestPayload): AuthResponsePayload {
+    suspend fun handleAuth(payload: AuthRequestPayload): AuthResponsePayload = authenticate(payload).response
+
+    suspend fun authenticate(payload: AuthRequestPayload): AuthenticationResult {
         // 版本检查由 AUTH 序言魔承担；不匹配会在进入 AuthService 前回写专用拒绝码。
         // payload 内 protocolVersion 字段已删（曾与之重复且恒真）
         if (!isValidDeviceId(payload.deviceId)) {
-            return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = "Invalid device id")
+            return failure("Invalid device id")
         }
         return when (payload.authType) {
             0 -> handleLogin(payload)      // login
             1 -> handleRegister(payload)   // register
             2 -> handleRefresh(payload)    // refresh token
-            else -> AuthResponsePayload(code = CODE_AUTH_FAILED, reason = "Unknown auth type")
+            else -> failure("Unknown auth type")
         }
     }
 
-    private fun handleLogin(payload: AuthRequestPayload): AuthResponsePayload {
+    private suspend fun handleLogin(payload: AuthRequestPayload): AuthenticationResult {
         val username = payload.username?.takeIf { it.isNotBlank() }
-            ?: return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = "Missing username")
+            ?: return failure("Missing username")
         val password = payload.password?.takeIf { it.isNotBlank() }
-            ?: return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = "Missing password")
+            ?: return failure("Missing password")
 
-        val user = try {
-            userService.login(username, password)
+        val proof = try {
+            userService.authenticateForCredentialIssue(username, password)
         } catch (e: IllegalArgumentException) {
-            return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = e.message)
+            return failure(e.message)
         }
 
-        return issueTokens(user, payload)
+        return issueTokens(proof, payload)
     }
 
-    private fun handleRegister(payload: AuthRequestPayload): AuthResponsePayload {
+    private suspend fun handleRegister(payload: AuthRequestPayload): AuthenticationResult {
         val username = payload.username?.takeIf { it.isNotBlank() }
-            ?: return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = "Missing username")
+            ?: return failure("Missing username")
         val password = payload.password?.takeIf { it.isNotBlank() }
-            ?: return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = "Missing password")
+            ?: return failure("Missing password")
         val name = payload.name?.takeIf { it.isNotBlank() } ?: username
 
-        val user = try {
-            userService.register(username, password, name)
+        val proof = try {
+            userService.registerForCredentialIssue(username, password, name)
         } catch (e: IllegalArgumentException) {
-            return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = e.message)
+            return failure(e.message)
         }
 
-        return issueTokens(user, payload)
+        return issueTokens(proof, payload)
     }
 
-    private fun handleRefresh(payload: AuthRequestPayload): AuthResponsePayload {
+    private suspend fun handleRefresh(payload: AuthRequestPayload): AuthenticationResult {
         val refreshToken = payload.refreshToken?.takeIf { it.isNotBlank() }
-            ?: return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = "Missing refresh token")
+            ?: return failure("Missing refresh token")
 
-        val newTokens = tokenStore.refreshAccessToken(
-            refreshToken,
-            expectedDeviceId = payload.deviceId,
-            expectedDeviceFlag = payload.deviceFlag,
+        val issued = commitCredentialMutationAndFence(
+            commit = { credentials.refreshCredentials(refreshToken, payload.toCredentialDevice()) },
+            publishFence = { committed -> committed?.let { publishDeviceCredentialFence(it.principal) } },
+        ) ?: return failure("Invalid or expired refresh token")
+
+        return AuthenticationResult(
+            response = successResponse(
+                issued.principal.uid,
+                issued.subject.username,
+                issued.subject.name,
+                issued,
+            ),
+            principal = issued.principal,
         )
-            ?: return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = "Invalid or expired refresh token")
+    }
 
-        val info = tokenStore.validateAccessToken(newTokens.first)
-            ?: return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = "Token validation failed")
+    private suspend fun issueTokens(
+        proof: UserService.CredentialLoginProof,
+        payload: AuthRequestPayload,
+    ): AuthenticationResult {
+        val issued = commitCredentialMutationAndFence(
+            commit = {
+                credentials.issueCredentials(
+                CredentialIssueRequest(
+                    uid = proof.user.uid,
+                    expectedUserCredentialEpoch = proof.userCredentialEpoch,
+                    expectedPasswordHash = proof.passwordHashSnapshot,
+                    device = payload.toCredentialDevice(),
+                    ),
+                )
+            },
+            publishFence = { committed -> committed?.let { publishDeviceCredentialFence(it.principal) } },
+        ) ?: return failure("账号状态已变化，请重新登录")
+        return AuthenticationResult(
+            response = successResponse(
+                issued.principal.uid,
+                issued.subject.username,
+                issued.subject.name,
+                issued,
+            ),
+            principal = issued.principal,
+        )
+    }
 
-        // 封禁复查：refresh 路径只验 token 不查用户状态——ban 后已发 token 仍可续期（曾可绕过）
-        // 顺带取回 user：refresh 响应必须带 username/name（与 login/register 的 issueTokens 对齐），
-        // 否则客户端自动登录后 UserSession 身份为空，头像/昵称退化为 uid（曾现 '?' 头像）
-        val user = try {
-            userService.getProfile(info.uid)
-        } catch (e: IllegalArgumentException) {
-            return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = e.message)
+    private fun successResponse(
+        uid: String,
+        username: String?,
+        name: String,
+        issued: IssuedCredentials,
+    ) = AuthResponsePayload(
+        code = CODE_OK,
+        uid = uid,
+        username = username,
+        name = name,
+        accessToken = issued.accessToken,
+        refreshToken = issued.refreshToken,
+        expiresIn = 30 * 24 * 3600L,
+    )
+
+    private fun failure(reason: String?) = AuthenticationResult(
+        response = AuthResponsePayload(code = CODE_AUTH_FAILED, reason = reason),
+        principal = null,
+    )
+
+    private fun AuthRequestPayload.toCredentialDevice() = CredentialDevice(
+        deviceId = deviceId,
+        deviceName = deviceName,
+        deviceModel = deviceModel,
+        deviceFlag = deviceFlag,
+    )
+
+    private suspend fun publishDeviceCredentialFence(principal: TokenInfo) {
+        // The pair is already committed. Publish its generation before AUTH succeeds so an older
+        // delayed login can neither remain live nor supersede this credential generation.
+        onlineSessions.invalidateDeviceCredentials(
+            principal.uid,
+            principal.deviceId,
+            principal.deviceCredentialEpoch,
+        )
+    }
+
+    suspend fun revokeDevice(uid: String, deviceId: String): Long? {
+        return commitCredentialMutationAndFence(
+            commit = { credentials.revokeDevice(uid, deviceId) },
+            publishFence = { epoch -> epoch?.let { onlineSessions.invalidateDeviceCredentials(uid, deviceId, it) } },
+        )
+    }
+
+    suspend fun logoutCurrentSession(uid: String, deviceId: String, responseSessionId: String) {
+        val epoch = commitCredentialMutationAndFence(
+            commit = {
+                credentials.revokeDevice(uid = uid, deviceId = deviceId)
+            },
+            publishFence = { committedEpoch ->
+                committedEpoch?.let {
+                    onlineSessions.invalidateDeviceCredentialsExceptSession(
+                        uid = uid,
+                        deviceId = deviceId,
+                        minimumEpoch = it,
+                        sessionId = responseSessionId,
+                    )
+                }
+            },
+        )
+        requireNotNull(epoch) { "当前设备已经退出" }
+    }
+
+    suspend fun changePassword(
+        uid: String,
+        oldPassword: String,
+        newPassword: String,
+        responseSessionId: String? = null,
+    ) {
+        // Keep the synchronous Exposed read off the CPU pool; only BCrypt belongs on Default.
+        val internal = withContext(Dispatchers.IO) { userService.passwordChangeSource(uid, newPassword) }
+        val proof = withContext(Dispatchers.Default) {
+            userService.preparePasswordChange(internal, oldPassword, newPassword)
         }
-        if (user.status == 2) {
-            return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = "账号已被封禁")
-        }
-
-        registerDevice(user.uid, payload)
-
-        return AuthResponsePayload(
-            code = CODE_OK,
-            uid = info.uid,
-            username = user.username,
-            name = user.name,
-            accessToken = newTokens.first,
-            refreshToken = newTokens.second,
-            expiresIn = 30 * 24 * 3600L,
+        val epoch = commitCredentialMutationAndFence(
+            commit = {
+                credentials.changePasswordAndRevoke(
+                uid = uid,
+                expectedPasswordHash = proof.expectedPasswordHash,
+                newPasswordHash = proof.newPasswordHash,
+                )
+            },
+            publishFence = { committedEpoch ->
+                committedEpoch?.let {
+                    if (responseSessionId == null) {
+                        onlineSessions.invalidateUserCredentials(uid, it)
+                    } else {
+                        onlineSessions.invalidateUserCredentialsExceptSession(uid, it, responseSessionId)
+                    }
+                }
+            },
         )
-    }
-
-    private fun issueTokens(user: User, payload: AuthRequestPayload): AuthResponsePayload {
-        val (accessToken, refreshToken) = tokenStore.generateTokens(user.uid, payload.deviceId, payload.deviceFlag)
-        registerDevice(user.uid, payload)
-        return AuthResponsePayload(
-            code = CODE_OK,
-            uid = user.uid,
-            username = user.username,
-            name = user.name,
-            accessToken = accessToken,
-            refreshToken = refreshToken,
-            expiresIn = 30 * 24 * 3600L,
-        )
-    }
-
-    private fun registerDevice(uid: String, payload: AuthRequestPayload) {
-        devices.registerDevice(
-            uid = uid,
-            deviceId = payload.deviceId,
-            deviceName = payload.deviceName,
-            deviceModel = payload.deviceModel,
-            deviceFlag = payload.deviceFlag,
-        )
-    }
-
-    fun validateToken(token: String): TokenInfo? {
-        return tokenStore.validateAccessToken(token)
-    }
-
-    fun kickDevice(uid: String, deviceId: String) {
-        tokenStore.revokeAllDeviceTokens(uid, deviceId)
-    }
-
-    fun logout(uid: String, refreshToken: String?, deviceId: String? = null): Boolean {
-        // deviceId/refreshToken 都来自 RPC payload，必须先与 token 内的 uid/device 绑定；
-        // 否则一个已认证客户端可以把“退出”伪装成另一个设备，污染设备表或误吊销凭证。
-        if (refreshToken == null || deviceId == null) return false
-        val owned = tokenStore.revokeRefreshToken(
-            refreshToken,
-            expectedUid = uid,
-            expectedDeviceId = deviceId,
-        )
-        if (!owned) return false
-        tokenStore.revokeAllDeviceTokens(uid, deviceId)
-        devices.kickDevice(uid, deviceId)
-        return true
-    }
-
-    fun changePassword(uid: String, oldPassword: String, newPassword: String) {
-        userService.changePassword(uid, oldPassword, newPassword)
+        if (epoch == null) throw IllegalArgumentException("密码或账号状态已变化，请重试")
     }
 }
 

@@ -102,6 +102,32 @@ class DocumentDraftStoreTest {
     }
 
     @Test
+    fun `late editor disposal cannot resurrect a draft after explicit logout`() {
+        val persistence = FakeDocumentDraftPersistence()
+        val oldSessionStore = DocumentDraftStore(persistence)
+        val dirty = existingTab("doc-a", 1, "logout 前的草稿")
+        oldSessionStore.save("user-a", listOf(dirty), dirty.tabId, dirty.spaceId, dirty.parentId)
+
+        oldSessionStore.clearAndRetire("user-a")
+        // Models DisposableEffect.onDispose reaching the retired feature after logout returned.
+        oldSessionStore.save(
+            "user-a",
+            listOf(dirty.copy(draftMarkdown = "迟到写入")),
+            dirty.tabId,
+            dirty.spaceId,
+            dirty.parentId,
+        )
+
+        assertNull(persistence.payloads["user-a"])
+        assertNull(oldSessionStore.restore("user-a"))
+
+        // A later authenticated session owns a fresh store and can persist normally.
+        val replacementStore = DocumentDraftStore(persistence)
+        replacementStore.save("user-a", listOf(dirty), dirty.tabId, dirty.spaceId, dirty.parentId)
+        assertTrue(replacementStore.restore("user-a") != null)
+    }
+
+    @Test
     fun `successful save or explicit discard removes retained body`() {
         val persistence = FakeDocumentDraftPersistence()
         val store = DocumentDraftStore(persistence)

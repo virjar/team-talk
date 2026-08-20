@@ -1,6 +1,6 @@
 package com.virjar.tk.api
 
-import com.virjar.tk.domain.auth.TokenRepository
+import com.virjar.tk.domain.auth.AccessTokenValidator
 import com.virjar.tk.infra.storage.ClientLogStore
 import io.ktor.http.*
 import io.ktor.server.request.*
@@ -25,13 +25,13 @@ private val logger = LoggerFactory.getLogger("ClientLogRoutes")
  * Bearer access token is authoritative for both uid and device identity. The endpoint accepts only
  * bounded gzip payloads so diagnostics cannot become an anonymous storage or decompression sink.
  */
-fun Route.clientLogRoutes(clientLogStore: ClientLogStore, tokenStore: TokenRepository) {
+fun Route.clientLogRoutes(clientLogStore: ClientLogStore, accessTokens: AccessTokenValidator) {
     post("/api/client-logs") {
         val bearer = call.request.header(HttpHeaders.Authorization)
             ?.takeIf { it.startsWith("Bearer ") }
             ?.removePrefix("Bearer ")
             ?.takeIf { it.isNotBlank() }
-        val principal = bearer?.let(tokenStore::validateAccessToken)
+        val principal = bearer?.let { accessTokens.validateAccessToken(it) }
             ?: return@post call.respond(HttpStatusCode.Unauthorized, "invalid or missing token")
 
         val raw = try {

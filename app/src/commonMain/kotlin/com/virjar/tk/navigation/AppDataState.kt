@@ -83,7 +83,7 @@ open class AppDataState(
         if (clearComposerContexts) chatComposerContexts.clear()
         // Platform persistence owns its async durability queue. Retaining drafts requires no
         // blocking work here; Android captures the editor and schedules a barrier before destroy.
-        if (clearDocumentDrafts) documentDrafts.clear(userSession.uid)
+        if (clearDocumentDrafts) documentDrafts.clearAndRetire(userSession.uid)
         actionScope.cancel()
     }
 

@@ -45,8 +45,6 @@
 | `ADMIN_PASSWORD` | 无（管理登录关闭） | 管理后台密码；必须与用户名同时显式配置 |
 | `LOG_DIR` | 平台默认 | logback 输出目录 |
 
-`JWT_SECRET` 仍由旧部署脚本生成，但当前认证使用随机 token store，不应把它解释为 JWT 签名契约。
-
 ## 4. JVM 系统属性
 
 - `teamtalk.data.root`：显式指定数据根目录，Gradle 本地运行使用仓库 `data/`。
@@ -61,7 +59,6 @@
 data/
 ├── pgdata/                  PostgreSQL volume（部署模式）
 ├── rocksdb/                 MessageStore
-├── tokenstore/              token KV
 ├── lucene-index/            可重建索引
 ├── file-store/rocksdb/      文件元数据/小对象
 ├── file-store/files/        大对象
@@ -69,6 +66,10 @@ data/
 ├── client-logs/             客户端上传日志
 └── logs/                    服务端日志
 ```
+
+`credentials` 与用户、设备一起属于 PostgreSQL 备份边界；不要再创建、挂载或恢复历史
+`data/tokenstore`。当前预发布 schema/data epoch 为 6，旧 epoch 实例必须同时重建 PostgreSQL 与服务端
+durable data，不能把旧目录拼接到新实例。
 
 修改路径前必须评估备份、systemd 工作目录、容器 volume 和应用 Environment 的共同影响。
 

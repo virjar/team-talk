@@ -1,5 +1,6 @@
 package com.virjar.tk.integration
 
+import com.virjar.tk.protocol.payload.AuthRequestPayload
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -84,6 +85,28 @@ class AuthIntegrationTest {
     }
 
     @Test
+    fun `user facade always reflects repository updates and releases old phone`() = runTest {
+        val username = uniqueUsername("fresh-user")
+        val oldPhone = "13${System.nanoTime().toString().takeLast(9).padStart(9, '0')}"
+        val newPhone = "15${System.nanoTime().toString().takeLast(9).padStart(9, '0')}"
+        val user = ctx.userService.register(username, "password123", "Before", oldPhone)
+
+        // Exercise all former cache indexes before changing the authoritative row directly.
+        assertEquals(user.uid, ctx.userStore.findByUid(user.uid)?.uid)
+        assertEquals(user.uid, ctx.userStore.findByUsername(username)?.uid)
+        assertEquals(user.uid, ctx.userStore.findByPhone(oldPhone)?.uid)
+
+        ctx.userRepo.updateProfile(user.uid, name = "After", phone = newPhone)
+
+        assertEquals("After", ctx.userStore.findByUid(user.uid)?.name)
+        assertEquals(newPhone, ctx.userStore.findByUsername(username)?.phone)
+        assertEquals(user.uid, ctx.userStore.findByPhone(newPhone)?.uid)
+        assertEquals(null, ctx.userStore.findByPhone(oldPhone))
+        val reused = ctx.userService.register(uniqueUsername("reused-phone"), "password123", "Reused", oldPhone)
+        assertEquals(oldPhone, reused.phone)
+    }
+
+    @Test
     fun `search users`() = runTest {
         val username = uniqueUsername("searchable")
         ctx.userService.register(username, "password123", "SearchMe")
@@ -94,21 +117,52 @@ class AuthIntegrationTest {
     @Test
     fun `change password`() = runTest {
         val username = uniqueUsername("chpwd")
-        ctx.userService.register(username, "oldpass123", "ChPwd")
-        ctx.userService.changePassword(
-            ctx.userService.login(username, "oldpass123").uid,
-            "oldpass123", "newpass123"
+        val oldPassword = "oldpass123"
+        val newPassword = "newpass123"
+        val uid = ctx.userService.register(username, oldPassword, "ChPwd").uid
+        val before = ctx.authService.handleAuth(
+            AuthRequestPayload(
+                authType = 0,
+                username = username,
+                password = oldPassword,
+                deviceId = "password-device",
+            ),
         )
-        // 验证新密码可以登录
-        val user = ctx.userService.login(username, "newpass123")
-        assertNotNull(user)
+        assertEquals(0, before.code)
+
+        ctx.authService.changePassword(uid, oldPassword, newPassword)
+
+        assertEquals(null, ctx.accessTokenValidator.validateAccessToken(requireNotNull(before.accessToken)))
+        assertEquals(1, ctx.authService.handleAuth(
+            AuthRequestPayload(
+                authType = 2,
+                refreshToken = before.refreshToken,
+                deviceId = "password-device",
+            ),
+        ).code)
+        assertEquals(1, ctx.authService.handleAuth(
+            AuthRequestPayload(
+                authType = 0,
+                username = username,
+                password = oldPassword,
+                deviceId = "password-device",
+            ),
+        ).code)
+        assertEquals(0, ctx.authService.handleAuth(
+            AuthRequestPayload(
+                authType = 0,
+                username = username,
+                password = newPassword,
+                deviceId = "password-device",
+            ),
+        ).code)
     }
 
     @Test
     fun `change password rejects wrong old password`() = runTest {
         val uid = ctx.registerUser()
         try {
-            ctx.userService.changePassword(uid, "wrongold", "newpass123")
+            ctx.authService.changePassword(uid, "wrongold", "newpass123")
             throw AssertionError("Should have thrown")
         } catch (e: IllegalArgumentException) {
             assertTrue(e.message!!.contains("旧密码错误"))

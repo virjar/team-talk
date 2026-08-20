@@ -315,7 +315,6 @@ fun rememberAuthController(
         },
         onLogout = {
             val closingSession = session
-            val closingRefreshToken = userSession.refreshToken
             val retirementGeneration = authGeneration + 1
             authGeneration = retirementGeneration
             // Leave the authenticated UI immediately, but let the session-owned RPC finish before
@@ -333,7 +332,7 @@ fun rememberAuthController(
                 retiringSession = closingSession
                 logoutJob = controllerScope.launch {
                     try {
-                        closingSession.userRepo.logout(closingRefreshToken, deviceId).getOrThrow()
+                        closingSession.userRepo.logout().getOrThrow()
                     } catch (_: Exception) {
                         // Local logout must remain available offline; the server token will still
                         // expire and a later device-management action can revoke the installation.

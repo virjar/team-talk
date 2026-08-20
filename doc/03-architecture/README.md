@@ -73,12 +73,17 @@ Service 与 method ID 由 IDL 生成物锁定。
 
 | 层级 | 所有者 | 生命周期 |
 |---|---|---|
-| 应用层 | 进程 | 配置、token store、登录窗口 |
+| 应用层 | 进程 | 配置、客户端凭据存储、登录窗口 |
 | 用户层 | `UserSession` / `ClientSession` | 从认证成功到登出或认证失效 |
 | 连接层 | `ImClient` | 单次 TCP 连接，可自动重建 |
 
 网络断开只清理连接层；不能顺带清空用户身份和本地数据。认证失效终止用户层，客户端清 token 并
 回到登录流程。具体实现见[客户端与 SDK](client-and-sdk.md)。
+
+服务端不持有进程内或 RocksDB token store。随机 access/refresh token 只以 SHA-256 保存在 PostgreSQL；
+Users 与 Devices 各有独立 credential epoch。封禁、密码重置或设备撤销先原子提交状态与 epoch，再把
+已提交代际发布为 ClientRegistry fence，从而拒绝旧连接重新激活。解除封禁不会回退 fence 或恢复旧
+token；同一设备的新登录只保留最新 credential pair 并替换旧连接。
 
 ## 5. 一致性模型
 

@@ -17,9 +17,9 @@ eventId(varLong) + notifyType(1B) + payload(bytes?)
 | 3 | `CONTACT_DELETED` | `Contact` | 双方 | 更新或移除联系人投影 |
 | 10 | `CHAT_CREATED` | `Chat` | 新会话成员 | 写入 Chat，刷新会话列表 |
 | 11 | `CHAT_UPDATED` | `Chat` | 全体成员 | 更新群资料和权限相关状态 |
-| 12 | `CHAT_DELETED` | `Chat` | 原成员 | 移除或标记会话不可用 |
+| 12 | `CHAT_DELETED` | `Chat` | 解散时的原成员；成员移除时仅目标用户 | 删除该 chat 的全部本地投影 |
 | 13 | `MEMBER_ADDED` | `Chat` | 群成员 | 刷新群与成员信息 |
-| 14 | `MEMBER_REMOVED` | `Chat` | 群成员和被移除者 | 刷新群与成员信息 |
+| 14 | `MEMBER_REMOVED` | `Chat` | 移除完成后的剩余群成员（不含目标） | 保留群并刷新成员信息 |
 | 15 | `MEMBER_MUTED` | `Chat` | 群成员 | 刷新禁言状态 |
 | 16 | `MEMBER_UNMUTED` | `Chat` | 群成员 | 刷新禁言状态 |
 | 17 | `MEMBER_ROLE_CHANGED` | `Chat` | 群成员 | 刷新角色与管理权限 |
@@ -31,6 +31,12 @@ eventId(varLong) + notifyType(1B) + payload(bytes?)
 | 50 | `READ_SYNC` | `ReadSyncPayload` | 其他会话成员 | 更新 `peerReadSeq` |
 | 60 | `USER_UPDATED` | `User` | 当前用户设备 | 更新用户缓存 |
 | 99 | `GENERIC` | `GenericPayload` | 扩展定义决定 | 严格解码信封；未注册扩展安全忽略并推进游标 |
+
+踢人和自行退群以同一数据库事务提交成员停用、目标会话行删除和上述持久事件。目标用户
+先收到隐私边界 `CHAT_DELETED`，再收到兼容的 `CONVERSATION_DELETED`，不会再收到容易被
+误解为“刷新群成员”的 `MEMBER_REMOVED`；剩余成员只收到 `MEMBER_REMOVED`。客户端处理 `CHAT_DELETED` 时会在一个
+SQLite 事务中清除 chat、conversation、草稿 outbox、member、message 和机器人 inbox，已被
+界面持有的消息 Flow 保持原对象但立即变空，后续合法重放仍写回同一 Flow。
 
 ## 持久事件与临时事件
 

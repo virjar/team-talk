@@ -2,7 +2,7 @@ package com.virjar.tk.api
 
 import com.virjar.tk.infra.storage.FileStore
 import com.virjar.tk.domain.attachment.AttachmentAccess
-import com.virjar.tk.domain.auth.TokenRepository
+import com.virjar.tk.domain.auth.AccessTokenValidator
 import com.virjar.tk.http.UploadResult
 import io.ktor.http.*
 import io.ktor.http.content.*
@@ -17,7 +17,7 @@ private val responseJson = Json { encodeDefaults = true }
 
 fun Route.fileRoutes(
     fileStore: FileStore,
-    tokenStore: TokenRepository,
+    accessTokens: AccessTokenValidator,
     attachmentAccess: AttachmentAccess,
     thumbnailService: com.virjar.tk.infra.media.ThumbnailService = com.virjar.tk.infra.media.ThumbnailService(),
 ) {
@@ -25,7 +25,7 @@ fun Route.fileRoutes(
         get("/{path...}") {
             val path = call.parameters.getAll("path")?.joinToString("/") ?: return@get call.respond(HttpStatusCode.NotFound)
             val token = call.bearerToken()
-            val info = token?.let { tokenStore.validateAccessToken(it) }
+            val info = token?.let { accessTokens.validateAccessToken(it) }
                 ?: return@get call.respond(HttpStatusCode.Unauthorized, "invalid or missing token")
             if (!attachmentAccess.canRead(info.uid, path)) {
                 return@get call.respond(HttpStatusCode.Forbidden, "attachment access denied")
@@ -49,9 +49,9 @@ fun Route.fileRoutes(
         }
 
         post("/upload") {
-            // 鉴权：Bearer accessToken（TCP 认证时下发，TokenStore 校验）。上传必须已认证。
+            // 鉴权：Bearer accessToken（TCP 认证时下发，PG epoch 校验）。上传必须已认证。
             val token = call.bearerToken()
-            val info = token?.let { tokenStore.validateAccessToken(it) }
+            val info = token?.let { accessTokens.validateAccessToken(it) }
             if (info == null) return@post call.respond(HttpStatusCode.Unauthorized, "invalid or missing token")
             val uid = info.uid
 

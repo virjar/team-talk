@@ -56,6 +56,12 @@ interface LocalCache {
     // ── 聊天 ──
     fun getChat(chatId: String): Chat?
     fun upsertChat(chat: Chat)
+
+    /**
+     * Apply an authoritative chat tombstone. Implementations atomically delete every chat-owned
+     * SQLite projection (chat, conversation/draft outbox, members, messages and bot inbox), while
+     * retaining an already-observed message Flow as an empty resident object for safe replay.
+     */
     fun deleteChat(chatId: String)
 
     // ── 成员 ──

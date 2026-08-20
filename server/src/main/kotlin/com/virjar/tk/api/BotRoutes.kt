@@ -7,7 +7,7 @@ import com.virjar.tk.domain.bot.BotRateLimitException
 import com.virjar.tk.domain.bot.BotRequestException
 import com.virjar.tk.domain.bot.BotService
 import com.virjar.tk.domain.bot.GroupBotManagement
-import com.virjar.tk.domain.auth.TokenRepository
+import com.virjar.tk.domain.auth.AccessTokenValidator
 import com.virjar.tk.http.BOT_IDEMPOTENCY_KEY_HEADER
 import com.virjar.tk.http.CreateGroupBotRequest
 import com.virjar.tk.http.GroupBotMessageRequest
@@ -25,9 +25,9 @@ import io.ktor.server.routing.route
 import java.util.UUID
 
 /** External bot delivery plus access-token-authenticated group management. */
-fun Route.botRoutes(service: BotService, tokenStore: TokenRepository) {
+fun Route.botRoutes(service: BotService, accessTokens: AccessTokenValidator) {
     targetBoundBotMessageRoutes(service)
-    groupBotRoutes(service, tokenStore)
+    groupBotRoutes(service, accessTokens)
 }
 
 /**
@@ -78,10 +78,10 @@ private suspend fun ApplicationCall.respondBotDeliveryError(error: IllegalArgume
     }
 }
 
-internal fun Route.groupBotRoutes(service: GroupBotManagement, tokenStore: TokenRepository) {
+internal fun Route.groupBotRoutes(service: GroupBotManagement, accessTokens: AccessTokenValidator) {
     route("/api/v1/groups/{chatId}/bots") {
         get {
-            val actorUid = call.groupBotActorUid(tokenStore) ?: return@get
+            val actorUid = call.groupBotActorUid(accessTokens) ?: return@get
             val chatId = call.parameters["chatId"]
                 ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "chatId required"))
             try {
@@ -91,7 +91,7 @@ internal fun Route.groupBotRoutes(service: GroupBotManagement, tokenStore: Token
             }
         }
         post {
-            val actorUid = call.groupBotActorUid(tokenStore) ?: return@post
+            val actorUid = call.groupBotActorUid(accessTokens) ?: return@post
             val chatId = call.parameters["chatId"]
                 ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "chatId required"))
             try {
@@ -105,7 +105,7 @@ internal fun Route.groupBotRoutes(service: GroupBotManagement, tokenStore: Token
             }
         }
         post("/{botId}/rotate-token") {
-            val actorUid = call.groupBotActorUid(tokenStore) ?: return@post
+            val actorUid = call.groupBotActorUid(accessTokens) ?: return@post
             val chatId = call.parameters["chatId"]
                 ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "chatId required"))
             val botId = call.parameters["botId"]
@@ -119,7 +119,7 @@ internal fun Route.groupBotRoutes(service: GroupBotManagement, tokenStore: Token
             }
         }
         delete("/{botId}") {
-            val actorUid = call.groupBotActorUid(tokenStore) ?: return@delete
+            val actorUid = call.groupBotActorUid(accessTokens) ?: return@delete
             val chatId = call.parameters["chatId"]
                 ?: return@delete call.respond(HttpStatusCode.BadRequest, mapOf("error" to "chatId required"))
             val botId = call.parameters["botId"]
@@ -137,12 +137,12 @@ internal fun Route.groupBotRoutes(service: GroupBotManagement, tokenStore: Token
 }
 
 private suspend fun io.ktor.server.application.ApplicationCall.groupBotActorUid(
-    tokenStore: TokenRepository,
+    accessTokens: AccessTokenValidator,
 ): String? {
     val token = request.headers[HttpHeaders.Authorization]
         ?.removePrefix("Bearer ")
         ?.takeIf(String::isNotBlank)
-    val uid = token?.let(tokenStore::validateAccessToken)?.uid
+    val uid = token?.let { accessTokens.validateAccessToken(it) }?.uid
     if (uid == null) respond(HttpStatusCode.Unauthorized, mapOf("error" to "invalid or missing token"))
     return uid
 }

@@ -7,6 +7,7 @@ import com.virjar.tk.api.botRoutes
 import com.virjar.tk.application.presence.PresenceCoordinator
 import com.virjar.tk.di.serverModule
 import com.virjar.tk.domain.auth.AuthService
+import com.virjar.tk.domain.auth.AccessTokenValidator
 import com.virjar.tk.domain.bot.BotService
 import com.virjar.tk.domain.chat.ChatStore
 import com.virjar.tk.infra.health.HealthChecker
@@ -17,7 +18,6 @@ import com.virjar.tk.infra.db.DatabaseFactory
 import com.virjar.tk.infra.search.SearchIndex
 import com.virjar.tk.infra.storage.FileStore
 import com.virjar.tk.infra.storage.MessageStore
-import com.virjar.tk.infra.storage.TokenStore
 import com.virjar.tk.infra.sync.ClientRegistry
 import com.virjar.tk.infra.sync.SyncEventService
 import com.virjar.tk.protocol.TcpServer
@@ -148,7 +148,7 @@ fun Application.module() {
         val koin = org.koin.java.KoinJavaComponent.getKoin()
         val messageStore = resources.own("message store", koin.get<MessageStore>()) { it.close() }
         messageStore.init()
-        val tokenStore = resources.own("token store", koin.get<TokenStore>()) { it.close() }
+        val accessTokens = koin.get<AccessTokenValidator>()
         val fileStore = resources.own("file store", koin.get<FileStore>()) { it.close() }
         fileStore.init()
         val clientLogStore = koin.get<com.virjar.tk.infra.storage.ClientLogStore>()
@@ -230,10 +230,10 @@ fun Application.module() {
                 val status = if (health.status == "UP") HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable
                 call.respond(status, health)
             }
-            fileRoutes(fileStore, koin.get(), koin.get())
-            botRoutes(koin.get(), koin.get())
+            fileRoutes(fileStore, accessTokens, koin.get())
+            botRoutes(koin.get(), accessTokens)
             adminRoutes(koin.get())
-            clientLogRoutes(clientLogStore, tokenStore)
+            clientLogRoutes(clientLogStore, accessTokens)
 
             // 首页
             val staticDir = resolveStaticDir()

@@ -1,5 +1,6 @@
 package com.virjar.tk.domain.chat
 
+import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Member
 import java.util.concurrent.ConcurrentHashMap
@@ -223,6 +224,26 @@ class ChatStore(
             chats.remove(chatId)
             invalidateMembers(chatId)
         }
+    }
+
+    /** Transaction-bound member removal. Cache state is intentionally untouched before commit. */
+    internal fun removeMember(
+        transaction: PgTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        targetUid: String,
+        authorize: (GroupMemberRemovalFacts) -> Unit,
+    ): GroupMemberRemoval = memberRepo.removeMember(
+        transaction = transaction,
+        chatId = chatId,
+        operatorUid = operatorUid,
+        targetUid = targetUid,
+        authorize = authorize,
+    )
+
+    /** Called only through PgWriteScope.afterCommit after member/event state is durable. */
+    internal fun invalidateCommittedMemberRemoval(chatId: String) {
+        withCacheGate(chatId) { invalidateChat(chatId) }
     }
 
     fun transferOwner(chatId: String, oldOwnerUid: String, newOwnerUid: String) {

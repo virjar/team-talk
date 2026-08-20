@@ -277,14 +277,30 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     }
     override fun deleteChat(chatId: String) {
         synchronized(stateLock) {
-            queries.deleteChat(chatId)
+            queries.transaction {
+                queries.deleteConversationDraftOutbox(chatId)
+                queries.deleteBotMessagesByChat(chatId)
+                queries.deleteMessagesByChat(chatId)
+                queries.deleteMembersByChat(chatId)
+                queries.deleteConversation(chatId)
+                queries.deleteChat(chatId)
+            }
+            localDraftOverrides.remove(chatId)
             chatsFlow.value = chatsFlow.value.filter { it.chatId != chatId }
+            conversationsFlow.value = conversationsFlow.value.filter { it.chatId != chatId }
+            membersFlow.value = membersFlow.value - chatId
+            // Even an already-applied tombstone must advance the in-process fence so an older
+            // listConversations response cannot resurrect the deleted chat projection.
             markConversationMutated(chatId)
-        }
-        // 同步释放该聊天的消息窗口
-        onChatInactive(chatId)
-    }
 
+            // Keep the resident window object registered. Existing collectors must observe an
+            // immediate empty projection and later replay inserts through this same Flow.
+            synchronized(chatLock) {
+                chatWindows[chatId]?.resetServerProjection()
+            }
+            // Keep draftGenerationHighWatermarks as a stale-ACK fence, just like a full reset.
+        }
+    }
     // ── 成员 ──
     override fun getMembers(chatId: String): List<Member> = membersFlow.value[chatId] ?: emptyList()
     override fun observeMembers(chatId: String): Flow<List<Member>> = membersFlow.map { it[chatId] ?: emptyList() }

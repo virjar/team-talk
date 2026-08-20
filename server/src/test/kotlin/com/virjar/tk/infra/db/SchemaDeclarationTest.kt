@@ -22,7 +22,18 @@ class SchemaDeclarationTest {
     @Test
     fun `fresh schema contains the final draft type and explicit epoch`() {
         assertIs<TextColumnType>(Conversations.draft.columnType)
-        assertEquals(5, DatabaseFactory.CURRENT_SCHEMA_EPOCH)
+        assertEquals(6, DatabaseFactory.CURRENT_SCHEMA_EPOCH)
+    }
+
+    @Test
+    fun `fresh schema stores only hashed epoch bound credentials`() {
+        assertEquals(listOf(Credentials.tokenHash), Credentials.primaryKey?.columns?.toList())
+        assertTrue(Credentials.indices.any {
+            it.columns == listOf(Credentials.uid, Credentials.deviceId)
+        })
+        assertTrue(Credentials.indices.any {
+            it.columns == listOf(Credentials.expiresAt)
+        })
     }
 
     @Test

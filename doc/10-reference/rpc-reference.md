@@ -22,11 +22,12 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 
 ## auth
 
-`logout` 使用安装级 `deviceId`，用于完整撤销本机凭证与设备登记。
+`logout` 不接受客户端身份参数；服务端只使用当前已认证连接绑定的 uid/deviceId，完整撤销
+该设备凭证与登记。凭据事务提交后，服务端先将连接移出实时投递集合，再发送成功响应并关闭连接。
 
 | ID | 方法 | 参数 | 返回 | 说明 |
 |---:|---|---|---|---|
-| 1 | `logout` | `refreshToken: String?, deviceId: String?` | `Unit` | 吊销当前安装的凭证并移除设备记录 |
+| 1 | `logout` | 无 | `Unit` | 吊销当前认证设备的凭证并关闭本连接 |
 | 2 | `updatePassword` | `oldPassword`, `newPassword` | `Unit` | 校验旧密码并更新 |
 
 ## user

@@ -1,6 +1,7 @@
 package com.virjar.tk.e2e
 
 import com.virjar.tk.rpc.gen.ChatRpcContract
+import com.virjar.tk.rpc.gen.AuthRpcContract
 import com.virjar.tk.rpc.gen.ContactRpcContract
 import com.virjar.tk.rpc.gen.ConversationRpcContract
 import com.virjar.tk.rpc.gen.DeviceRpcContract
@@ -160,6 +161,99 @@ class ProtocolE2eTest {
         loginSession.imClient.login(username, "wrong_password", "dev2", "TestDevice")
         withTimeout(5000) { loginSession.imClient.state.first { it == ConnectionState.AUTH_FAILED } }
         loginSession.close()
+    }
+
+    @Test
+    fun `password change returns success before closing the rotated session`() = runBlocking {
+        val username = "e2e-password-${UUID.randomUUID()}"
+        val session = createSession()
+        session.imClient.register(username, "oldpass123", "Password User", "password-device", "TestDevice")
+        withTimeout(5_000) { session.imClient.state.first { it == ConnectionState.AUTHENTICATED } }
+        val oldAccess = requireNotNull(session.userSession.accessToken)
+        val sibling = createSession()
+        sibling.imClient.login(username, "oldpass123", "password-sibling-device", "SiblingDevice")
+        withTimeout(5_000) { sibling.imClient.state.first { it == ConnectionState.AUTHENTICATED } }
+        val siblingAccess = requireNotNull(sibling.userSession.accessToken)
+
+        val response = session.invoke(
+            AuthRpcContract.SERVICE,
+            AuthRpcContract.M_UPDATE_PASSWORD,
+            ProtoCodec.encodePayload {
+                writeString("oldpass123")
+                writeString("newpass123")
+            },
+        )
+
+        assertEquals(0, response.status, "the committed password change must flush its RPC response")
+        withTimeout(10_000) {
+            session.imClient.state.first {
+                it == ConnectionState.DISCONNECTED || it == ConnectionState.AUTH_FAILED
+            }
+        }
+        withTimeout(10_000) {
+            sibling.imClient.state.first {
+                it == ConnectionState.DISCONNECTED || it == ConnectionState.AUTH_FAILED
+            }
+        }
+        assertNull(env.accessTokenValidator.validateAccessToken(oldAccess))
+        assertNull(env.accessTokenValidator.validateAccessToken(siblingAccess))
+        session.close()
+        sibling.close()
+
+        val oldPasswordSession = createSession()
+        oldPasswordSession.imClient.login(username, "oldpass123", "password-device", "TestDevice")
+        withTimeout(5_000) { oldPasswordSession.imClient.state.first { it == ConnectionState.AUTH_FAILED } }
+        oldPasswordSession.close()
+
+        val newPasswordSession = createSession()
+        newPasswordSession.imClient.login(username, "newpass123", "password-device", "TestDevice")
+        withTimeout(5_000) { newPasswordSession.imClient.state.first { it == ConnectionState.AUTHENTICATED } }
+        newPasswordSession.close()
+    }
+
+    @Test
+    fun `same-device credential rotation fences the old live connection before new auth succeeds`() = runBlocking {
+        val username = "e2e-device-rotate-${UUID.randomUUID().toString().take(8)}"
+        val first = createSession()
+        first.imClient.register(username, "password123", "Device Rotation", "stable-device", "Device")
+        withTimeout(5_000) { first.imClient.state.first { it == ConnectionState.AUTHENTICATED } }
+        val oldAccess = requireNotNull(first.userSession.accessToken)
+
+        val second = createSession()
+        second.imClient.login(username, "password123", "stable-device", "Device")
+        withTimeout(5_000) { second.imClient.state.first { it == ConnectionState.AUTHENTICATED } }
+        withTimeout(10_000) {
+            first.imClient.state.first {
+                it == ConnectionState.DISCONNECTED || it == ConnectionState.AUTH_FAILED
+            }
+        }
+
+        assertNull(env.accessTokenValidator.validateAccessToken(oldAccess))
+        assertNotNull(
+            env.accessTokenValidator.validateAccessToken(requireNotNull(second.userSession.accessToken)),
+        )
+        first.close()
+        second.close()
+    }
+
+    @Test
+    fun `logout derives the device from the authenticated session and flushes before close`() = runBlocking {
+        val username = "e2e-logout-${UUID.randomUUID().toString().take(8)}"
+        val session = createSession()
+        session.imClient.register(username, "password123", "Logout User", "logout-device", "Device")
+        withTimeout(5_000) { session.imClient.state.first { it == ConnectionState.AUTHENTICATED } }
+        val oldAccess = requireNotNull(session.userSession.accessToken)
+
+        val response = session.invoke(AuthRpcContract.SERVICE, AuthRpcContract.M_LOGOUT)
+
+        assertEquals(0, response.status)
+        withTimeout(10_000) {
+            session.imClient.state.first {
+                it == ConnectionState.DISCONNECTED || it == ConnectionState.AUTH_FAILED
+            }
+        }
+        assertNull(env.accessTokenValidator.validateAccessToken(oldAccess))
+        session.close()
     }
 
     // ── RPC 调用 ──

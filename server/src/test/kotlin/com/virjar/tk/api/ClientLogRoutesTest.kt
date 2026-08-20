@@ -1,13 +1,11 @@
 package com.virjar.tk.api
 
 import com.virjar.tk.infra.storage.ClientLogStore
-import com.virjar.tk.infra.storage.TokenStore
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
-import io.ktor.server.application.ApplicationStopped
 import io.ktor.server.routing.routing
 import io.ktor.server.testing.testApplication
 import java.io.ByteArrayOutputStream
@@ -24,11 +22,10 @@ class ClientLogRoutesTest {
     @Test
     fun `logs require access token and use its identity`() = testApplication {
         val root = Files.createTempDirectory("teamtalk-client-logs-").toFile()
-        val tokens = TokenStore(root.resolve("tokens").absolutePath)
         val logs = ClientLogStore(root.resolve("logs"))
-        val (accessToken, _) = tokens.generateTokens("user-1", "device-1", 0)
+        val accessToken = "valid-client-log-token"
+        val tokens = TestAccessTokenValidator.single(accessToken, "user-1", "device-1")
         application {
-            monitor.subscribe(ApplicationStopped) { tokens.close() }
             routing { clientLogRoutes(logs, tokens) }
         }
 

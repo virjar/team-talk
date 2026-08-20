@@ -70,15 +70,6 @@ class ExposedUserRepository : UserRepository {
         }
     }
 
-    override fun updatePassword(uid: String, passwordHash: String) {
-        transaction {
-            Users.update({ Users.uid eq uid }) {
-                it[Users.passwordHash] = passwordHash
-                it[Users.updatedAt] = System.currentTimeMillis()
-            }
-        }
-    }
-
     override fun searchUsers(keyword: String, limit: Int): List<User> {
         return transaction {
             val query = Users.selectAll().where {
@@ -113,5 +104,6 @@ class ExposedUserRepository : UserRepository {
             status = this[Users.status],
         ),
         passwordHash = this[Users.passwordHash],
+        credentialEpoch = this[Users.credentialEpoch],
     )
 }

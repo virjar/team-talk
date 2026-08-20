@@ -44,6 +44,13 @@ Desktop 不能在一个 OS 交叉生成所有安装包；GitHub Actions 分别�
 
 部署脚本创建的 `${deployPath}.bak` 不是完整数据备份，不能代替 PostgreSQL dump 与 data 快照。
 
+### 预发布 epoch 6 切换
+
+当前认证持久化已从 RocksDB TokenStore 切换到 PostgreSQL `credentials`，服务端 schema/data epoch 为
+6。这是明确的破坏性预发布基线，不提供旧 token 或旧 schema 的兼容迁移。切换测试实例前停止写入，
+同时重建 PostgreSQL schema/volume 并清空服务端 durable `data/` 后再启动；所有 access/refresh token
+永久失效，客户端必须重新登录。只清数据库或只删 `data/tokenstore` 都不是有效升级方式。
+
 ## 4. 发布门禁
 
 ```text
@@ -62,8 +69,8 @@ local deterministic tests
 
 一次可恢复备份至少包括：
 
-- PostgreSQL 一致性 dump/volume snapshot。
-- `data/rocksdb` 和 `data/tokenstore`。
+- PostgreSQL 一致性 dump/volume snapshot，包含 users、devices 与只存哈希的 credentials。
+- `data/rocksdb`。
 - `data/file-store/rocksdb` 与 `data/file-store/files` 同一时间点副本。
 - `conf/env.sh`、TLS 和部署坐标的安全副本。
 
@@ -72,7 +79,7 @@ Lucene 可以重建，但在恢复时间要求严格时也可备份。临时上�
 ## 6. 回滚
 
 1. 停止新实例写入。
-2. 判断失败是否改变 PostgreSQL/RocksDB schema。
+2. 判断失败是否改变 PostgreSQL schema、服务端 data epoch 或 RocksDB 格式。
 3. 若数据结构兼容，可恢复旧二进制和 conf。
 4. 若不兼容，恢复升级前数据库与 data 快照，不能只换 jar。
 5. 启动后检查 health，并运行至少认证、消息和附件验收。

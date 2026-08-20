@@ -10,6 +10,8 @@ import com.virjar.tk.domain.attachment.AttachmentAccess
 import com.virjar.tk.domain.attachment.AttachmentAccessService
 import com.virjar.tk.domain.attachment.AttachmentReferences
 import com.virjar.tk.domain.auth.AuthService
+import com.virjar.tk.domain.auth.AccessTokenValidator
+import com.virjar.tk.domain.auth.CredentialAdministration
 import com.virjar.tk.domain.auth.TokenRepository
 import com.virjar.tk.domain.bot.BotRepository
 import com.virjar.tk.domain.bot.BotAccountProvisioner
@@ -81,6 +83,7 @@ import com.virjar.tk.infra.db.repository.ExposedBotRepository
 import com.virjar.tk.infra.db.repository.ExposedChatRepository
 import com.virjar.tk.infra.db.repository.ExposedContactRepository
 import com.virjar.tk.infra.db.repository.ExposedConversationRepository
+import com.virjar.tk.infra.db.repository.ExposedCredentialRepository
 import com.virjar.tk.infra.db.repository.ExposedDeviceRepository
 import com.virjar.tk.infra.db.repository.ExposedDocumentRepository
 import com.virjar.tk.infra.db.repository.ExposedInviteLinkRepository
@@ -92,7 +95,6 @@ import com.virjar.tk.infra.health.HealthChecker
 import com.virjar.tk.infra.storage.ClientLogStore
 import com.virjar.tk.infra.storage.FileStore
 import com.virjar.tk.infra.storage.MessageStore
-import com.virjar.tk.infra.storage.TokenStore
 import com.virjar.tk.infra.sync.ClientRegistry
 import com.virjar.tk.infra.sync.SyncEventDispatcher
 import com.virjar.tk.infra.sync.SyncEventService
@@ -102,14 +104,13 @@ import org.koin.dsl.module
 import java.io.File
 
 fun createServerModule(
-    tokenStorePath: String = Environment.tokenStoreDir.absolutePath,
     messageStorePath: String = Environment.rocksdbDir.absolutePath,
     searchIndexPath: File = Environment.luceneIndexDir,
     fileStoreDbPath: String = Environment.fileStoreRocksdbDir.absolutePath,
     fileStoreFsPath: String = Environment.fileStoreFsDir.absolutePath,
 ) = module {
     // 基础设施 — 使用参数替代 Environment
-    single { TokenStore(tokenStorePath) }
+    single { ExposedCredentialRepository() }
     single { ClientRegistry() }
     single { SyncEventDispatcher(get<ClientRegistry>()) }
     single<PgUnitOfWork> {
@@ -120,7 +121,9 @@ fun createServerModule(
     single { FileStore(fileStoreDbPath, fileStoreFsPath) }
     single { SearchIndex(searchIndexPath) }
     single { ClientLogStore() }
-    single<TokenRepository> { get<TokenStore>() }
+    single<TokenRepository> { get<ExposedCredentialRepository>() }
+    single<AccessTokenValidator> { get<ExposedCredentialRepository>() }
+    single<CredentialAdministration> { get<ExposedCredentialRepository>() }
     single<OnlineSessions> { get<ClientRegistry>() }
     single<MessageRepository> { get<MessageStore>() }
     single<AttachmentCatalog> { get<FileStore>() }
@@ -142,7 +145,7 @@ fun createServerModule(
     single<BotRepository> { ExposedBotRepository() }
     single<RequiredChatParticipants> { get<BotRepository>() }
 
-    // Domain store/facade（ContactStore 刻意无缓存；其余按各自一致性约束实现）
+    // Domain store/facade（UserStore/ContactStore 刻意无缓存；其余按各自一致性约束实现）
     single { UserStore(get()) }
     single { ContactStore(get()) }
     single { ChatStore(get(), get(), get()) }
@@ -158,7 +161,7 @@ fun createServerModule(
     single { UserService(get(), get()) }
     single { AuthService(get(), get(), get()) }
     single { ContactService(get<ContactStore>(), get<PgUnitOfWork>(), get<UserStore>()) }
-    single { ChatService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    single { ChatService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     single { OrganizationService(get(), get(), get()) }
     single { GroupFileService(get(), get(), get(), Environment.groupFileQuotaBytes) }
     single { DocumentService(get(), get(), get()) }
@@ -198,23 +201,24 @@ fun createServerModule(
     // RPC 注册表（IDL 生成 Stub + 薄壳 Impl；serviceId 字符串注册）
     single {
         RpcStubRegistry().apply {
-            register(UserRpcContract.SERVICE) { uid -> UserRpcImpl(uid, get()) }
-            register(AuthRpcContract.SERVICE) { uid -> AuthRpcImpl(uid, get(), get(), get()) }
-            register(ContactRpcContract.SERVICE) { uid -> ContactRpcImpl(uid, get()) }
-            register(ChatRpcContract.SERVICE) { uid -> ChatRpcImpl(uid, get()) }
-            register(MessageRpcContract.SERVICE) { uid -> MessageRpcImpl(uid, get(), get()) }
-            register(ConversationRpcContract.SERVICE) { uid -> ConversationRpcImpl(uid, get()) }
-            register(DeviceRpcContract.SERVICE) { uid -> DeviceRpcImpl(uid, get(), get(), get()) }
-            register(OrganizationRpcContract.SERVICE) { uid -> OrganizationRpcImpl(uid, get()) }
-            register(GroupFileRpcContract.SERVICE) { uid -> GroupFileRpcImpl(uid, get()) }
-            register(DocumentRpcContract.SERVICE) { uid -> DocumentRpcImpl(uid, get()) }
+            register(UserRpcContract.SERVICE) { session -> UserRpcImpl(session.uid, get()) }
+            register(AuthRpcContract.SERVICE) { session ->
+                AuthRpcImpl(session.uid, session.deviceId, session.sessionId, get())
+            }
+            register(ContactRpcContract.SERVICE) { session -> ContactRpcImpl(session.uid, get()) }
+            register(ChatRpcContract.SERVICE) { session -> ChatRpcImpl(session.uid, get()) }
+            register(MessageRpcContract.SERVICE) { session -> MessageRpcImpl(session.uid, get(), get()) }
+            register(ConversationRpcContract.SERVICE) { session -> ConversationRpcImpl(session.uid, get()) }
+            register(DeviceRpcContract.SERVICE) { session -> DeviceRpcImpl(session.uid, get(), get()) }
+            register(OrganizationRpcContract.SERVICE) { session -> OrganizationRpcImpl(session.uid, get()) }
+            register(GroupFileRpcContract.SERVICE) { session -> GroupFileRpcImpl(session.uid, get()) }
+            register(DocumentRpcContract.SERVICE) { session -> DocumentRpcImpl(session.uid, get()) }
         }
     }
     single { RpcDispatcher(get()) }
     single {
         AdminService(
             userRepository = get(),
-            userService = get(),
             deviceRepository = get(),
             contactRepository = get(),
             chatRepository = get(),
@@ -222,7 +226,7 @@ fun createServerModule(
             messageService = get(),
             messages = get(),
             search = get(),
-            tokens = get(),
+            credentials = get(),
             onlineSessions = get(),
             organizationService = get(),
             botService = get(),

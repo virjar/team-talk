@@ -17,7 +17,7 @@ import java.lang.ref.WeakReference
  */
 class ImAgentFacade(agent: ImAgent) {
     private val ref = WeakReference(agent)
-    private val channelId = agent.channelId
+    val sessionId: String = agent.sessionId
 
     val uid: String = agent.uid
     val deviceId: String = agent.deviceId
@@ -26,10 +26,20 @@ class ImAgentFacade(agent: ImAgent) {
     val isActive: Boolean
         get() = ref.get()?.isActive == true
 
+    val isCredentialTerminal: Boolean
+        get() = ref.get()?.isCredentialTerminal != false
+
     fun send(proto: IProto) {
-        val agent = ref.get() ?: throw AgentDisposedException("Agent GC'd: $channelId")
-        if (!agent.isActive) throw AgentDisposedException("Agent disconnected: $channelId")
+        val agent = ref.get() ?: throw AgentDisposedException("Agent GC'd: $sessionId")
+        if (!agent.isActive) throw AgentDisposedException("Agent disconnected: $sessionId")
         agent.write(proto)
+    }
+
+    /** Flush one terminal response before closing the credential-invalidated connection. */
+    fun sendAndClose(proto: IProto) {
+        val agent = ref.get() ?: throw AgentDisposedException("Agent GC'd: $sessionId")
+        if (!agent.isActive) throw AgentDisposedException("Agent disconnected: $sessionId")
+        agent.writeAndClose(proto)
     }
 
     /** Close an invalid protocol session without retaining the Netty handler across suspension. */
@@ -38,8 +48,17 @@ class ImAgentFacade(agent: ImAgent) {
     }
 
     /** Complete auth state transition through the weak connection boundary. */
-    fun completeAuthentication(uid: String, deviceId: String): Boolean =
-        ref.get()?.completeAuthentication(uid, deviceId) == true
+    fun completeAuthentication(
+        uid: String,
+        deviceId: String,
+        userCredentialEpoch: Long,
+        deviceCredentialEpoch: Long,
+    ): Boolean = ref.get()?.completeAuthentication(
+        uid,
+        deviceId,
+        userCredentialEpoch,
+        deviceCredentialEpoch,
+    ) == true
 
     /** Reset page admission after the server proves that the submitted cursor is foreign. */
     fun resetSyncAdmission() {
@@ -49,6 +68,13 @@ class ImAgentFacade(agent: ImAgent) {
     /** Refresh the bounded synchronization window without capturing the handler in an IO task. */
     fun refreshSyncStallTimeout() {
         ref.get()?.refreshSyncStallTimeout()
+    }
+
+    /** Register an epoch-bound identity before the server exposes a successful AUTH response. */
+    suspend fun admitAuthenticated(admit: suspend (ImAgent) -> Boolean): Boolean {
+        val agent = ref.get() ?: return false
+        if (!agent.isActive) return false
+        return admit(agent)
     }
 
     /** Called by the EventLoop timer, which itself retains only this weak facade. */

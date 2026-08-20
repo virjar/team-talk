@@ -4,9 +4,8 @@
 
 | 数据 | 存储 | 原因 |
 |---|---|---|
-| 用户、组织、机器人授权、设备、好友、群、成员、会话、申请、邀请、同步事件、群文件、文档与修订 | PostgreSQL | 关系、约束、事务和查询 |
+| 用户、设备、凭据哈希、组织、机器人授权、好友、群、成员、会话、申请、邀请、同步事件、群文件、文档与修订 | PostgreSQL | 关系、约束、事务和查询 |
 | 消息正文、幂等索引与投影 outbox | RocksDB | 按 chat/seq 顺序读写、单批原子 KV |
-| token | 独立 RocksDB | 随机 token 快速查询和删除 |
 | 文件小对象与元数据 | RocksDB | 本地嵌入、低运维成本 |
 | 大文件 | 文件系统 | 避免 KV 大 blob 放大 |
 | 消息全文索引 | Lucene | 分词、相关性和高亮 |
@@ -14,10 +13,17 @@
 
 ## 2. PostgreSQL 关系
 
-### users / devices
+### users / devices / credentials
 
-users 保存身份和资料；devices 保存用户设备、状态与最后活动。token 本体不应直接作为普通关系表
-字段输出到管理查询。
+users 保存身份、资料、状态与用户级 `credential_epoch`；devices 保存设备状态、最后活动与设备级
+`credential_epoch`。credentials 保存 access/refresh 类型、uid、deviceId、签发时捕获的两层 epoch、
+有效期和 token 的 SHA-256；明文 token 不落库，也不能由管理查询恢复。
+
+签发、refresh 轮换、封禁、密码重置和设备撤销使用固定锁序 `users → devices → credentials`。封禁或
+密码重置在同一事务推进用户级 epoch，设备撤销推进设备级 epoch；旧 credential 即使尚未物理清理，
+校验时也会因 epoch 不匹配而失效。解除封禁只改变账号状态，不回退 epoch，因此不会恢复任何旧 token。
+同一用户同一设备再次登录时，事务删除此前 credential，只保留最新 access/refresh pair，避免多个
+可长期轮换的设备凭据分支。
 
 ### chats / group_chats / group_members
 
@@ -195,7 +201,8 @@ MEMBER_REMOVED/CHAT_DELETED 之后收到一条更晚的旧 MESSAGE_RECV；剩余
 `createMissingTablesAndColumns`。这使数据库结构问题在启动阶段明确失败，而不是把一次性兼容 SQL
 永久留在每次启动路径。
 
-关系库校验通过后，数据根目录还必须有同 epoch 的 `data-epoch` marker。消息 RocksDB、token、Lucene、
+当前 `ServerDataEpoch.CURRENT_EPOCH` 为 6。关系库校验通过后，数据根目录还必须有同 epoch 的
+`data-epoch` marker。消息 RocksDB、Lucene、
 FileStore RocksDB 与大文件目录被视为一个整体：marker 缺失时只有这些目录全部为空才能初始化；marker
 不匹配或缺失但已有数据时启动失败。尤其是 Message 的 wire 字段或 MessageType 重排后，服务端不能把
 旧 RocksDB 字节交给新 decoder 碰运气解析；Lucene 虽是派生数据，也不能与另一代消息混用。
@@ -203,8 +210,9 @@ FileStore RocksDB 与大文件目录被视为一个整体：marker 缺失时只�
 epoch 缺失或不匹配表示当前测试数据已经过期，服务端会抛出 `SchemaResetRequiredException` 或
 `DataResetRequiredException` 并拒绝提供服务。开发和测试实例应停止写入后重建 PostgreSQL
 schema/volume 与服务端 durable data，再重新启动；只清空表数据不能
-把旧列结构升级为当前结构。关系数据允许丢弃，但 RocksDB、FileStore 和 token 数据也应按同一轮测试
-数据整体重置，不能把不同 epoch 的存储拼接使用。
+把旧列结构升级为当前结构。关系数据允许丢弃，但 RocksDB 与 FileStore 数据也应按同一轮测试数据整体
+重置，不能把不同 epoch 的存储拼接使用。epoch 6 不读取或迁移已经删除的 RocksDB TokenStore；旧
+access/refresh token 永久失效，客户端必须重新登录。
 
 当前好友申请的“同方向只能有一条 pending”直接由最终 schema 的部分唯一索引保证；草稿正文从建库
 起就是文本列。启动流程不再识别、修补或标记旧重复申请。

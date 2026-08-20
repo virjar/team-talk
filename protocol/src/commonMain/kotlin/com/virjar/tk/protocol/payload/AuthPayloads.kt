@@ -50,6 +50,21 @@ data class AuthRequestPayload(
 ) : IProto {
 
     /**
+     * Authentication payloads may be included in generic diagnostics. Keep the object useful for
+     * troubleshooting without ever rendering passwords or bearer credentials.
+     */
+    override fun toString(): String =
+        "AuthRequestPayload(" +
+            "authType=$authType, " +
+            "deviceId=$deviceId, " +
+            "hasUsername=${username != null}, " +
+            "hasPassword=${password != null}, " +
+            "hasName=${name != null}, " +
+            "hasRefreshToken=${refreshToken != null}, " +
+            "deviceFlag=$deviceFlag" +
+            ")"
+
+    /**
      * 连接序言魔（wire 首字段）："TK" + PROTOCOL_VERSION + 固定尾字节。
      * 首帧 AUTH 是连接的必经包——首字节特征让端口扫描/误连流量在 payload
      * 第一字节即被拒（复刻 HTTP/2 连接序言思路），并保留错位自检锚点。
@@ -124,6 +139,16 @@ data class AuthResponsePayload(
     val refreshToken: String? = null,
     val expiresIn: Long = 0,
 ) : IProto {
+    /** Never render access or refresh credentials through generic diagnostics. */
+    override fun toString(): String =
+        "AuthResponsePayload(" +
+            "code=$code, " +
+            "uid=$uid, " +
+            "hasAccessToken=${accessToken != null}, " +
+            "hasRefreshToken=${refreshToken != null}, " +
+            "expiresIn=$expiresIn" +
+            ")"
+
     override fun writeTo(buf: PacketBuffer) {
         buf.writeVarInt(code)
         buf.writeString(reason)

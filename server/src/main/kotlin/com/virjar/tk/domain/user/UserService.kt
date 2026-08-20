@@ -14,7 +14,31 @@ class UserService(
     private val events: EventPublisher,
 ) {
     private val logger = LoggerFactory.getLogger(UserService::class.java)
-    fun register(username: String, password: String, name: String, phone: String? = null): User {
+    class CredentialLoginProof(
+        val user: User,
+        val userCredentialEpoch: Long,
+        val passwordHashSnapshot: String,
+    ) {
+        override fun toString(): String =
+            "CredentialLoginProof(uid=${user.uid}, userCredentialEpoch=$userCredentialEpoch, " +
+                "passwordHashSnapshot=<redacted>)"
+    }
+    class PasswordChangeProof(
+        val expectedPasswordHash: String,
+        val newPasswordHash: String,
+    ) {
+        override fun toString(): String = "PasswordChangeProof(<redacted>)"
+    }
+
+    fun register(username: String, password: String, name: String, phone: String? = null): User =
+        registerForCredentialIssue(username, password, name, phone).user
+
+    fun registerForCredentialIssue(
+        username: String,
+        password: String,
+        name: String,
+        phone: String? = null,
+    ): CredentialLoginProof {
         // 校验规则与客户端 SDK（ImClient via AuthRules）保持一致，避免规则不一致
         require(username.length in AuthRules.USERNAME_MIN_LENGTH..AuthRules.USERNAME_MAX_LENGTH) {
             "用户名长度需在${AuthRules.USERNAME_MIN_LENGTH}-${AuthRules.USERNAME_MAX_LENGTH}之间"
@@ -30,7 +54,8 @@ class UserService(
 
         val uid = generateShortUid()
         val passwordHash = BCrypt.hashpw(password, BCrypt.gensalt())
-        return userStore.create(uid, username, name, passwordHash, phone)
+        val user = userStore.create(uid, username, name, passwordHash, phone)
+        return CredentialLoginProof(user, userCredentialEpoch = 1L, passwordHashSnapshot = passwordHash)
     }
 
     private fun generateShortUid(): String {
@@ -43,7 +68,10 @@ class UserService(
         return java.util.UUID.randomUUID().toString()
     }
 
-    fun login(username: String, password: String): User {
+    fun login(username: String, password: String): User =
+        authenticateForCredentialIssue(username, password).user
+
+    fun authenticateForCredentialIssue(username: String, password: String): CredentialLoginProof {
         val internal = userStore.findInternalByUsername(username)
             ?: throw IllegalArgumentException("用户名或密码错误")
 
@@ -51,13 +79,13 @@ class UserService(
             throw IllegalArgumentException("用户名或密码错误")
         }
         // 封禁 enforcement（管理后台 ban 后 status=2；此前该字段无人检查）
-        if (internal.user.status == 2) {
+        if (internal.user.status != 1) {
             throw IllegalArgumentException("账号已被封禁")
         }
         if (internal.user.role == UserRole.BOT || internal.user.role == UserRole.SYSTEM) {
             throw IllegalArgumentException("服务账户不能使用客户端密码登录")
         }
-        return internal.user
+        return CredentialLoginProof(internal.user, internal.credentialEpoch, internal.passwordHash)
     }
 
     /** 创建没有客户端登录能力的服务账户。外部调用只能使用其独立应用凭据。 */
@@ -69,12 +97,6 @@ class UserService(
         val passwordBytes = ByteArray(48).also(SecureRandom()::nextBytes)
         val unusablePasswordHash = BCrypt.hashpw(java.util.Base64.getEncoder().encodeToString(passwordBytes), BCrypt.gensalt())
         return userStore.create(uid, username, name.trim().take(100), unusablePasswordHash, role = role)
-    }
-
-    /** 认证续期路径的封禁复查（refresh 只验 token，不查用户状态——曾可绕过封禁）。 */
-    fun requireActive(uid: String) {
-        val user = userStore.findByUid(uid) ?: throw IllegalArgumentException("用户不存在")
-        if (user.status == 2) throw IllegalArgumentException("账号已被封禁")
     }
 
     fun getProfile(uid: String): User {
@@ -95,16 +117,24 @@ class UserService(
 
     fun findByUid(uid: String): User? = userStore.findByUid(uid)
 
-    fun changePassword(uid: String, oldPassword: String, newPassword: String) {
+    /** IO phase for password change. The returned row is revalidated under lock before commit. */
+    fun passwordChangeSource(uid: String, newPassword: String): UserInternal {
         require(newPassword.length >= AuthRules.PASSWORD_MIN_LENGTH) {
             "新密码长度至少${AuthRules.PASSWORD_MIN_LENGTH}位"
         }
-        val internal = userStore.findInternalByUid(uid)
-            ?: throw IllegalArgumentException("用户不存在")
+        return userStore.findInternalByUid(uid) ?: throw IllegalArgumentException("用户不存在")
+    }
+
+    /** BCrypt-only phase; no database call is allowed on the CPU dispatcher. */
+    fun preparePasswordChange(
+        internal: UserInternal,
+        oldPassword: String,
+        newPassword: String,
+    ): PasswordChangeProof {
         if (!BCrypt.checkpw(oldPassword, internal.passwordHash)) {
             throw IllegalArgumentException("旧密码错误")
         }
         val newHash = BCrypt.hashpw(newPassword, BCrypt.gensalt())
-        userStore.updatePassword(uid, newHash)
+        return PasswordChangeProof(internal.passwordHash, newHash)
     }
 }

@@ -1,11 +1,16 @@
 package com.virjar.tk.infra.db.repository
 
 import com.virjar.tk.domain.chat.ChatMemberRepository
+import com.virjar.tk.domain.chat.GroupMemberRemoval
+import com.virjar.tk.domain.chat.GroupMemberRemovalFacts
+import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.infra.db.Chats
 import com.virjar.tk.infra.db.Conversations
 import com.virjar.tk.infra.db.GroupMemberMutes
 import com.virjar.tk.infra.db.GroupMembers
 import com.virjar.tk.infra.db.GroupChats
+import com.virjar.tk.infra.db.requireExposedTransaction
+import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Member
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
@@ -115,6 +120,52 @@ class ExposedChatMemberRepository : ChatMemberRepository {
         }
     }
 
+    override fun removeMember(
+        transaction: PgTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        targetUid: String,
+        authorize: (GroupMemberRemovalFacts) -> Unit,
+    ): GroupMemberRemoval = inWriteTransaction(transaction) {
+        val chatRow = lockActiveChat(chatId)
+        val activeMembers = GroupMembers.selectAll().where {
+            (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1)
+        }.orderBy(GroupMembers.uid, SortOrder.ASC).forUpdate()
+            .map(ResultRow::toMember)
+        val membersByUid = activeMembers.associateBy(Member::uid)
+        val chat = chatSnapshot(chatRow, activeMembers.size)
+
+        authorize(
+            GroupMemberRemovalFacts(
+                chat = chat,
+                operator = membersByUid[operatorUid],
+                target = membersByUid[targetUid],
+            ),
+        )
+
+        val changed = GroupMembers.update({
+            (GroupMembers.chatId eq chatId) and
+                (GroupMembers.uid eq targetUid) and
+                (GroupMembers.status eq 1)
+        }) { it[GroupMembers.status] = 0 }
+        check(changed == 1) { "Locked target membership changed before removal" }
+        Conversations.deleteWhere {
+            (Conversations.chatId eq chatId) and (Conversations.uid eq targetUid)
+        }
+        GroupMemberMutes.deleteWhere {
+            (GroupMemberMutes.chatId eq chatId) and (GroupMemberMutes.uid eq targetUid)
+        }
+
+        val remainingUids = activeMembers.asSequence()
+            .map(Member::uid)
+            .filter { it != targetUid }
+            .toList()
+        GroupMemberRemoval(
+            chat = chat.copy(memberCount = remainingUids.size),
+            remainingMemberUids = remainingUids,
+        )
+    }
+
     override fun transferOwner(chatId: String, oldOwnerUid: String, newOwnerUid: String) {
         transaction {
             lockActiveChat(chatId)
@@ -215,6 +266,35 @@ class ExposedChatMemberRepository : ChatMemberRepository {
         return Chats.selectAll().where {
             (Chats.chatId eq chatId) and (Chats.status eq 1)
         }.forUpdate().singleOrNull() ?: throw IllegalArgumentException("聊天不存在")
+    }
+
+    private fun chatSnapshot(chatRow: ResultRow, memberCount: Int): Chat {
+        val chatId = chatRow[Chats.chatId]
+        val chatType = chatRow[Chats.chatType]
+        if (chatType == 1) {
+            return Chat(chatId = chatId, chatType = chatType, maxSeq = chatRow[Chats.maxSeq])
+        }
+        val group = GroupChats.selectAll().where { GroupChats.chatId eq chatId }.singleOrNull()
+            ?: throw IllegalStateException("群聊数据不完整")
+        return Chat(
+            chatId = chatId,
+            chatType = chatType,
+            name = group[GroupChats.name],
+            avatar = group[GroupChats.avatar],
+            creator = group[GroupChats.creator],
+            memberCount = memberCount,
+            maxSeq = chatRow[Chats.maxSeq],
+            notice = group[GroupChats.notice],
+            mutedAll = group[GroupChats.mutedAll],
+        )
+    }
+
+    private inline fun <T> inWriteTransaction(
+        context: PgTransactionContext,
+        block: () -> T,
+    ): T {
+        context.requireExposedTransaction()
+        return block()
     }
 }
 

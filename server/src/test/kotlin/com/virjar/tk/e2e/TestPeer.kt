@@ -102,19 +102,6 @@ class TestPeer {
         session.close()
     }
 
-    /**
-     * 登录任意账号打印其 uid。用法：
-     *   -Dpeer.username=<user> (-Dpeer.password=<pass>，默认 password123)
-     */
-    @org.junit.jupiter.api.Test
-    fun printToken() = runBlocking {
-        val username = System.getProperty("peer.username") ?: return@runBlocking
-        val password = System.getProperty("peer.password") ?: "password123"
-        val session = RemoteAcceptanceSupport.loginUser(username, password)
-        println("===TOKEN=== ${session.userSession.accessToken}")
-        session.close()
-    }
-
     @org.junit.jupiter.api.Test
     fun whoami() = runBlocking {
         val username = System.getProperty("peer.username") ?: run {

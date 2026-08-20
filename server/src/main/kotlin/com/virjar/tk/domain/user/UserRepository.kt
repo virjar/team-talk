@@ -18,11 +18,14 @@ interface UserRepository {
         role: Int = 0,
     ): User
     fun updateProfile(uid: String, name: String? = null, avatar: String? = null, sex: Int? = null, phone: String? = null)
-    fun updatePassword(uid: String, passwordHash: String)
     fun searchUsers(keyword: String, limit: Int = 20): List<User>
 }
 
-data class UserInternal(
+class UserInternal(
     val user: User,
     val passwordHash: String,
-)
+    val credentialEpoch: Long,
+) {
+    override fun toString(): String =
+        "UserInternal(uid=${user.uid}, credentialEpoch=$credentialEpoch, passwordHash=<redacted>)"
+}

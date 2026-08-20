@@ -146,6 +146,9 @@ VALUES (?, ?, ?, ?, ?);
 removeMember:
 DELETE FROM member WHERE chat_id = ? AND uid = ?;
 
+deleteMembersByChat:
+DELETE FROM member WHERE chat_id = ?;
+
 selectMessagesByChat:
 SELECT * FROM message WHERE chat_id = ? ORDER BY server_seq DESC LIMIT ?;
 
@@ -194,6 +197,9 @@ WHERE chat_id = ? AND client_msg_id = ?;
 
 deleteMessage:
 DELETE FROM message WHERE chat_id = ? AND client_msg_id = ?;
+
+deleteMessagesByChat:
+DELETE FROM message WHERE chat_id = ?;
 
 selectAllConversations:
 SELECT * FROM conversation ORDER BY is_pinned DESC, last_msg_timestamp DESC;
@@ -250,6 +256,9 @@ SELECT event_id, payload FROM bot_message_inbox ORDER BY event_id ASC LIMIT 1;
 
 deleteBotMessage:
 DELETE FROM bot_message_inbox WHERE event_id = ?;
+
+deleteBotMessagesByChat:
+DELETE FROM bot_message_inbox WHERE chat_id = ?;
 
 deleteAllUsers:
 DELETE FROM user;

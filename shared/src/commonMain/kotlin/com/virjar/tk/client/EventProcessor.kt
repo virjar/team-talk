@@ -334,7 +334,6 @@ class EventProcessor(
 
             NotifyType.CHAT_DELETED -> {
                 val chat = decodePayload<Chat>(notifyType, payload)
-                localCache.deleteConversation(chat.chatId)
                 localCache.deleteChat(chat.chatId)
                 _chatEvents.tryEmit(notifyType to chat)
             }

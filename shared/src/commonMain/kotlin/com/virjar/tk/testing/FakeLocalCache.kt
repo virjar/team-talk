@@ -207,8 +207,20 @@ class FakeLocalCache : LocalCache {
     }
     override fun deleteChat(chatId: String) {
         synchronized(conversationLock) {
-            chatsFlow.value = chatsFlow.value.filter { it.chatId != chatId }
-            markConversationMutated(chatId)
+            synchronized(messagesMap) {
+                synchronized(botMessageInbox) {
+                    chatsFlow.value = chatsFlow.value.filter { it.chatId != chatId }
+                    conversationsFlow.value = conversationsFlow.value.filter { it.chatId != chatId }
+                    draftOverrides.remove(chatId)
+                    membersMap.remove(chatId)
+                    messagesMap.remove(chatId)
+                    messagesFlows[chatId]?.value = emptyList()
+                    botMessageInbox.entries.removeAll { (_, message) -> message.chatId == chatId }
+                    markConversationMutated(chatId)
+                    // Retain the resident messagesFlows entry and the draft generation high-watermark
+                    // so replay collectors and stale-ACK fencing match LocalCacheImpl semantics.
+                }
+            }
         }
     }
 

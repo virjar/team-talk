@@ -4,7 +4,6 @@ import com.virjar.tk.domain.bot.BotAuthorizationException
 import com.virjar.tk.domain.bot.GroupBotManagement
 import com.virjar.tk.http.GroupBotCredentials
 import com.virjar.tk.http.GroupBotSummary
-import com.virjar.tk.infra.storage.TokenStore
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -17,11 +16,9 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.install
-import io.ktor.server.application.ApplicationStopped
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.routing.routing
 import io.ktor.server.testing.testApplication
-import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -30,12 +27,11 @@ import kotlin.test.assertTrue
 class GroupBotRoutesTest {
     @Test
     fun `group bot management uses user access token and stable paths`() = testApplication {
-        val tokens = TokenStore(File("/tmp/tk-group-bot-route-${System.nanoTime()}").absolutePath)
-        val (accessToken, _) = tokens.generateTokens("member-1", "device-1", 0)
+        val accessToken = "member-access-token"
+        val tokens = TestAccessTokenValidator.single(accessToken, "member-1", "device-1")
         val service = FakeGroupBotManagement()
         application {
             this.install(ContentNegotiation) { json() }
-            this.monitor.subscribe(ApplicationStopped) { tokens.close() }
             this.routing { groupBotRoutes(service, tokens) }
         }
 
@@ -76,12 +72,11 @@ class GroupBotRoutesTest {
 
     @Test
     fun `domain authorization rejection is returned as forbidden`() = testApplication {
-        val tokens = TokenStore(File("/tmp/tk-group-bot-route-denied-${System.nanoTime()}").absolutePath)
-        val (accessToken, _) = tokens.generateTokens("outsider", "device-1", 0)
+        val accessToken = "outsider-access-token"
+        val tokens = TestAccessTokenValidator.single(accessToken, "outsider", "device-1")
         val service = FakeGroupBotManagement(deny = true)
         application {
             this.install(ContentNegotiation) { json() }
-            this.monitor.subscribe(ApplicationStopped) { tokens.close() }
             this.routing { groupBotRoutes(service, tokens) }
         }
 

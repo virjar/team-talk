@@ -1,6 +1,7 @@
 package com.virjar.tk.protocol.codec
 
 import com.virjar.tk.domain.auth.AuthService
+import com.virjar.tk.domain.auth.AuthenticationResult
 import com.virjar.tk.domain.chat.ChatStore
 import com.virjar.tk.domain.event.EventPublisher
 import com.virjar.tk.domain.event.SyncBatchResult
@@ -14,7 +15,7 @@ import com.virjar.tk.protocol.executor.IOExecutor
 import com.virjar.tk.protocol.payload.*
 import com.virjar.tk.protocol.dispatcher.FatalCodecException
 import com.virjar.tk.protocol.trace.Recorder
-import com.virjar.tk.rpc.gen.ConversationRpcContract
+import com.virjar.tk.rpc.gen.AuthRpcContract
 import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelInboundHandlerAdapter
 import io.netty.channel.ChannelFutureListener
@@ -111,6 +112,7 @@ class ImAgent(
     private val unauthedSlotHeld = AtomicBoolean(false)
     private val syncRequestInFlight = AtomicBoolean(false)
     private val syncTimeoutGeneration = AtomicLong(0L)
+    private val credentialTerminal = AtomicBoolean(false)
     /** 同一连接的分页 cursor 必须严格前进；InvalidCursor 后显式恢复为可接收 0。 */
     private val admittedSyncCursor = ImAgentSyncCursor()
     val state: State get() = authState.current
@@ -118,9 +120,21 @@ class ImAgent(
     var uid: String = ""; internal set
     @Volatile
     var deviceId: String = ""; internal set
+    @Volatile
+    internal var userCredentialEpoch: Long = 0L
+    @Volatile
+    internal var deviceCredentialEpoch: Long = 0L
+
+    /** Full Netty channel id is used for security identity; [channelId] remains log-only. */
+    val sessionId: String = channel.id().asLongText()
 
     /** 连接是否活跃 */
     val isActive: Boolean get() = state != State.DISCONNECTED && channel.isActive
+    internal val isCredentialTerminal: Boolean get() = credentialTerminal.get()
+
+    internal fun markCredentialTerminal() {
+        credentialTerminal.set(true)
+    }
 
     /** Called only by ClientRegistry's serial looper immediately before publishing this session. */
     internal fun markReadyForLiveActivation(): Boolean = synchronized(authenticationLifecycleLock) {
@@ -132,15 +146,25 @@ class ImAgent(
      * The caller reaches this method through [com.virjar.tk.protocol.executor.ImAgentFacade], so
      * a queued authentication task never owns this handler or its channel strongly.
      */
-    internal fun completeAuthentication(authenticatedUid: String, authenticatedDeviceId: String): Boolean =
+    internal fun completeAuthentication(
+        authenticatedUid: String,
+        authenticatedDeviceId: String,
+        authenticatedUserCredentialEpoch: Long,
+        authenticatedDeviceCredentialEpoch: Long,
+    ): Boolean =
         synchronized(authenticationLifecycleLock) {
+            require(authenticatedUserCredentialEpoch > 0L && authenticatedDeviceCredentialEpoch > 0L) {
+                "Credential epochs must be positive"
+            }
             // channelInactive may win while authentication IO is running. A stale worker must not
             // resurrect that connection or publish partially initialized identity state.
-            uid = authenticatedUid
-            deviceId = authenticatedDeviceId
             if (!authState.markSynchronizing()) {
                 false
             } else {
+                uid = authenticatedUid
+                deviceId = authenticatedDeviceId
+                userCredentialEpoch = authenticatedUserCredentialEpoch
+                deviceCredentialEpoch = authenticatedDeviceCredentialEpoch
                 releaseUnauthedSlot()
                 channel.pipeline().get(PacketCodec::class.java)
                     ?.maxPayloadLimit = PacketCodec.AUTHED_LIMIT
@@ -222,8 +246,8 @@ class ImAgent(
         synchronized(authenticationLifecycleLock) {
             val previousState = authState.disconnect()
             releaseUnauthedSlot()
-            if (previousState == State.AUTHENTICATED && uid.isNotEmpty()) {
-                // 与认证成功注册共用生命周期锁，保证 registry 队列中的 register 一定先于 unregister。
+            if (uid.isNotEmpty()) {
+                // SYNCHRONIZING 连接也已经受凭据 fence 管理，必须对称注销。
                 // 下线广播由 ClientRegistry.onLastDeviceOffline 钩子触发（仅最后一台设备）。
                 clientRegistry.unregister(this)
             }
@@ -243,18 +267,34 @@ class ImAgent(
         }
         recorder.record { "[AUTH] type=${payload.authType} device=${payload.deviceId}" }
         val authentication = authService
+        val registry = clientRegistry
         val accepted = ioExecutor.launchWithAgent(this) { facade ->
-            val response = try {
-                authentication.handleAuth(payload)
+            val result = try {
+                authentication.authenticate(payload)
             } catch (e: Exception) {
                 facade.recorder.record({ "[AUTH] error" }, e)
-                AuthResponsePayload(code = AuthService.CODE_AUTH_FAILED, reason = "Internal error")
+                AuthenticationResult(
+                    response = AuthResponsePayload(code = AuthService.CODE_AUTH_FAILED, reason = "Internal error"),
+                    principal = null,
+                )
             }
+            val response = result.response
 
             if (response.code == AuthService.CODE_OK) {
-                val authenticatedUid = response.uid!!
-                val completed = facade.completeAuthentication(authenticatedUid, payload.deviceId)
+                val principal = checkNotNull(result.principal) { "Successful auth result has no principal" }
+                check(response.uid == principal.uid) { "Authentication response/principal mismatch" }
+                check(payload.deviceId == principal.deviceId) { "Authentication device/principal mismatch" }
+                val authenticatedUid = principal.uid
+                val completed = facade.completeAuthentication(
+                    uid = authenticatedUid,
+                    deviceId = principal.deviceId,
+                    userCredentialEpoch = principal.userCredentialEpoch,
+                    deviceCredentialEpoch = principal.deviceCredentialEpoch,
+                )
                 if (!completed) return@launchWithAgent
+                if (!facade.admitAuthenticated { registry.admitAuthenticated(it) }) {
+                    return@launchWithAgent
+                }
                 facade.recorder.record {
                     "[AUTH] identity accepted uid=$authenticatedUid device=${payload.deviceId}; awaiting sync"
                 }
@@ -364,18 +404,34 @@ class ImAgent(
     }
 
     private fun handleInvoke(payload: InvokePayload) {
-        if (state != State.AUTHENTICATED) {
+        if (state != State.AUTHENTICATED || isCredentialTerminal) {
             write(ResponsePayload(payload.requestId, 401, null))
+            if (isCredentialTerminal) channel.close()
             return
         }
         val dispatcher = rpcDispatcher
         val dispatch: (
             suspend kotlinx.coroutines.CoroutineScope.(com.virjar.tk.protocol.executor.ImAgentFacade) -> Unit
-        ) = { facade ->
+        ) = dispatch@ { facade ->
+            if (facade.isCredentialTerminal) {
+                facade.send(ResponsePayload(payload.requestId, 401, null))
+                facade.closeConnection()
+                return@dispatch
+            }
             try {
-                val response = dispatcher.dispatch(facade.uid, payload)
+                val response = dispatcher.dispatch(facade.uid, facade.deviceId, facade.sessionId, payload)
                 facade.recorder.record { "[RPC] service=${payload.serviceId} method=${payload.methodId} status=${response.status}" }
-                facade.send(response)
+                if (
+                    response.status == 0 && payload.serviceId == AuthRpcContract.SERVICE &&
+                    (payload.methodId == AuthRpcContract.M_UPDATE_PASSWORD ||
+                        payload.methodId == AuthRpcContract.M_LOGOUT)
+                ) {
+                    // The credential mutation has already advanced its fence while preserving
+                    // this exact terminal session solely to flush the success response.
+                    facade.sendAndClose(response)
+                } else {
+                    facade.send(response)
+                }
             } catch (e: FatalCodecException) {
                 // 协议紊乱：连接已不可靠，直接断连 + FATAL 日志，不尝试返回错误响应
                 facade.recorder.record(
@@ -385,25 +441,18 @@ class ImAgent(
                 facade.closeConnection()
             }
         }
-        // 草稿是同一用户跨设备共享的“最后写入”状态。按服务端观察到的请求顺序串行执行，
-        // 防止旧连接已超时的任务在线程池里晚于新连接的清空请求落库，复活已发送正文。
-        if (
-            payload.serviceId == ConversationRpcContract.SERVICE &&
-            payload.methodId == ConversationRpcContract.M_SET_DRAFT
-        ) {
-            if (!ioExecutor.launchSerialWithAgent("conversation-draft:$uid", this, dispatch)) {
-                write(ResponsePayload(payload.requestId, 429, "草稿请求过于频繁".encodeToByteArray()))
-            }
-        } else {
-            if (!ioExecutor.launchWithAgent(this, dispatch)) {
-                write(ResponsePayload(payload.requestId, 503, "服务器繁忙，请稍后重试".encodeToByteArray()))
-            }
+        // Per-user command order is the security boundary for credential rotation and also keeps
+        // cross-device draft writes deterministic. Reads currently share the same bounded queue;
+        // optimize with an explicit read/write command model only when profiling justifies it.
+        if (!ioExecutor.launchSerialWithAgent("user-command:$uid", this, dispatch)) {
+            write(ResponsePayload(payload.requestId, 429, "用户请求过于频繁".encodeToByteArray()))
         }
     }
 
     private fun handleMessage(msg: Message) {
-        if (state != State.AUTHENTICATED) {
+        if (state != State.AUTHENTICATED || isCredentialTerminal) {
             write(MessageAckPayload(msg.clientMsgId, 0, 401, "Not authenticated"))
+            if (isCredentialTerminal) channel.close()
             return
         }
 
@@ -414,7 +463,12 @@ class ImAgent(
 
         recorder.record { "[SEND] chatId=${msg.chatId} clientMsgId=${msg.clientMsgId} type=${msg.messageType}" }
         val messages = messageService
-        val accepted = ioExecutor.launchWithAgent(this) { facade ->
+        val accepted = ioExecutor.launchSerialWithAgent("user-command:$uid", this) { facade ->
+            if (facade.isCredentialTerminal) {
+                facade.send(MessageAckPayload(msg.clientMsgId, 0, 401, "Credentials rotated"))
+                facade.closeConnection()
+                return@launchSerialWithAgent
+            }
             try {
                 val serverSeq = messages.sendMessage(facade.uid, msg)
                 facade.send(MessageAckPayload(msg.clientMsgId, serverSeq, 0, null))
@@ -442,6 +496,10 @@ class ImAgent(
         val membership = chatStore
         val publisher = events
         val accepted = ioExecutor.launchWithAgent(this) { facade ->
+            if (facade.isCredentialTerminal) {
+                facade.closeConnection()
+                return@launchWithAgent
+            }
             try {
                 val declared = com.virjar.tk.body.MessageBodyPolicy.canonicalize(msg)
                 if (!membership.isMember(declared.chatId, facade.uid)) {
@@ -484,6 +542,10 @@ class ImAgent(
 
     internal fun closeConnection() {
         channel.close()
+    }
+
+    internal fun writeAndClose(msg: IProto) {
+        if (channel.isActive) channel.writeAndFlush(msg).addListener(ChannelFutureListener.CLOSE)
     }
 
     /** 踢下线 */

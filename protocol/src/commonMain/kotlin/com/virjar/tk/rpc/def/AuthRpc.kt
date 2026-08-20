@@ -10,7 +10,7 @@ import com.virjar.tk.rpc.RpcService
 @RpcService("auth")
 interface AuthRpc {
     @RpcMethod(1)
-    suspend fun logout(refreshToken: String?, deviceId: String?)
+    suspend fun logout()
 
     @RpcMethod(2)
     suspend fun updatePassword(oldPassword: String, newPassword: String)

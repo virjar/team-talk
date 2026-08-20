@@ -1,6 +1,7 @@
 package com.virjar.tk.protocol.dispatcher
 
 import com.virjar.tk.protocol.rpc.RpcStubRegistry
+import com.virjar.tk.protocol.rpc.RpcSessionContext
 import com.virjar.tk.protocol.payload.InvokePayload
 import com.virjar.tk.protocol.payload.ResponsePayload
 import io.netty.handler.codec.CorruptedFrameException
@@ -15,9 +16,14 @@ class RpcDispatcher(
 ) {
     private val logger = LoggerFactory.getLogger("RpcDispatcher")
 
-    suspend fun dispatch(uid: String, invoke: InvokePayload): ResponsePayload {
+    suspend fun dispatch(uid: String, deviceId: String, sessionId: String, invoke: InvokePayload): ResponsePayload {
         return try {
-            val result = registry.dispatchSuspend(uid, invoke.serviceId, invoke.methodId, invoke.payload)
+            val result = registry.dispatchSuspend(
+                RpcSessionContext(uid = uid, deviceId = deviceId, sessionId = sessionId),
+                invoke.serviceId,
+                invoke.methodId,
+                invoke.payload,
+            )
             ResponsePayload(invoke.requestId, 0, result)
         } catch (e: IllegalArgumentException) {
             // 业务校验错误（如用户名已存在、参数非法）—— 客户端可处理的预期错误

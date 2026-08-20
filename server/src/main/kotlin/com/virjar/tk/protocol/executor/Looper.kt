@@ -20,6 +20,8 @@ class Looper(val name: String) {
     private val logger = LoggerFactory.getLogger(Looper::class.java)
 
     private val queue = LinkedBlockingDeque<Runnable>()
+    private val lifecycleLock = Any()
+    private val stopSignal = Runnable { }
     private val thread: Thread
     private val scheduler = Executors.newScheduledThreadPool(1) { r ->
         Thread(r, "$name-scheduler").apply { isDaemon = true }
@@ -39,15 +41,19 @@ class Looper(val name: String) {
     }
 
     fun stop() {
-        if (stopped.compareAndSet(false, true)) {
-            queue.offer(Runnable { /* sentinel */ })
-            scheduler.shutdown()
-            logger.info("Looper '{}' stopping", name)
+        synchronized(lifecycleLock) {
+            if (stopped.compareAndSet(false, true)) {
+                // The signal is queued after every task accepted under the same lock. The loop
+                // drains those tasks before exiting, while all later submissions fail fast.
+                queue.offer(stopSignal)
+                scheduler.shutdown()
+                logger.info("Looper '{}' stopping", name)
+            }
         }
     }
 
-    fun post(block: () -> Unit) {
-        queue.offer(Runnable { block() })
+    fun post(block: () -> Unit): Boolean = synchronized(lifecycleLock) {
+        if (stopped.get()) false else queue.offer(Runnable { block() })
     }
 
     suspend fun <T> suspendAwait(block: () -> T): T {
@@ -55,14 +61,23 @@ class Looper(val name: String) {
             return block()
         }
         return suspendCancellableCoroutine { cont ->
-            queue.offer(Runnable {
-                try {
-                    val result = block()
-                    cont.resumeWith(Result.success(result))
-                } catch (e: Throwable) {
-                    cont.resumeWithException(e)
+            val accepted = synchronized(lifecycleLock) {
+                if (stopped.get()) {
+                    false
+                } else {
+                    queue.offer(Runnable {
+                        try {
+                            val result = block()
+                            cont.resumeWith(Result.success(result))
+                        } catch (e: Throwable) {
+                            cont.resumeWithException(e)
+                        }
+                    })
                 }
-            })
+            }
+            if (!accepted) {
+                cont.resumeWithException(IllegalStateException("Looper '$name' is stopped"))
+            }
         }
     }
 
@@ -92,12 +107,13 @@ class Looper(val name: String) {
 
     private fun loop() {
         try {
-            while (!stopped.get()) {
+            while (true) {
                 try {
-                    val task = queue.poll(1, TimeUnit.SECONDS)
-                    task?.run()
+                    val task = queue.take()
+                    if (task === stopSignal) break
+                    task.run()
                 } catch (_: InterruptedException) {
-                    // 正常退出
+                    if (stopped.get()) break
                 } catch (e: Exception) {
                     logger.error("Looper '{}' task failed", name, e)
                 }

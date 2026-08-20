@@ -1,5 +1,7 @@
 package deployment
 
+import java.io.File
+import java.util.Properties
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -7,6 +9,55 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DeploymentConfigTest {
+    @Test
+    fun `saved deployment secrets contain only active database and ssl values`() {
+        val output = File.createTempFile("teamtalk-deployment-secrets-", ".properties")
+        try {
+            val secrets = Properties().apply {
+                setProperty("DATABASE_PASSWORD", "database-secret")
+                setProperty("JWT_SECRET", "obsolete-secret")
+                setProperty("SSL_KEYSTORE_PASSWORD", "keystore-secret")
+                setProperty("SSL_PRIVATE_KEY_PASSWORD", "private-key-secret")
+            }
+
+            saveSecrets(output, secrets)
+
+            val saved = output.readText()
+            assertTrue(saved.contains("DATABASE_PASSWORD=database-secret"))
+            assertTrue(saved.contains("SSL_KEYSTORE_PASSWORD=keystore-secret"))
+            assertTrue(saved.contains("SSL_PRIVATE_KEY_PASSWORD=private-key-secret"))
+            assertFalse(saved.contains("JWT_SECRET"))
+            assertFalse(saved.contains("obsolete-secret"))
+        } finally {
+            output.delete()
+        }
+    }
+
+    @Test
+    fun `generated env contains active secrets without obsolete auth secret`() {
+        val secrets = Properties().apply {
+            setProperty("DATABASE_PASSWORD", "database-secret")
+            setProperty("JWT_SECRET", "obsolete-secret")
+            setProperty("SSL_KEYSTORE_PASSWORD", "keystore-secret")
+            setProperty("SSL_PRIVATE_KEY_PASSWORD", "private-key-secret")
+        }
+
+        val env = generateEnvShContent(
+            secrets = secrets,
+            sslEnabled = true,
+            sslPort = "443",
+            deployPath = "/opt/teamtalk",
+            httpPort = 8080,
+            tcpPort = "5100",
+        )
+
+        assertTrue(env.contains("DATABASE_PASSWORD=\"database-secret\""))
+        assertTrue(env.contains("SSL_KEYSTORE_PASSWORD=\"keystore-secret\""))
+        assertTrue(env.contains("SSL_PRIVATE_KEY_PASSWORD=\"private-key-secret\""))
+        assertFalse(env.contains("JWT_SECRET"))
+        assertFalse(env.contains("obsolete-secret"))
+    }
+
     @Test
     fun `loads https deployment`() {
         val config = DeploymentConfig.load(

@@ -37,6 +37,28 @@ class ServerDataEpochTest {
         }
     }
 
+    @Test
+    fun `legacy raw-token store is rejected before creating an epoch marker`() = withTempRoot { root ->
+        File(root, "tokenstore").apply { mkdirs() }
+        File(root, "tokenstore/CURRENT").writeText("legacy rocks token data")
+
+        assertFailsWith<DataResetRequiredException> {
+            ServerDataEpoch.initializeOrValidate(root)
+        }
+        assertEquals(false, File(root, "data-epoch").exists())
+    }
+
+    @Test
+    fun `legacy raw-token store is rejected even beside a current marker`() = withTempRoot { root ->
+        File(root, "data-epoch").writeText("${ServerDataEpoch.CURRENT_EPOCH}\n")
+        File(root, "tokenstore").apply { mkdirs() }
+        File(root, "tokenstore/CURRENT").writeText("legacy rocks token data")
+
+        assertFailsWith<DataResetRequiredException> {
+            ServerDataEpoch.initializeOrValidate(root)
+        }
+    }
+
     private fun withTempRoot(block: (File) -> Unit) {
         val root = Files.createTempDirectory("teamtalk-data-epoch-").toFile()
         try {

@@ -9,9 +9,22 @@
 
 ### 登录与 refresh
 
-未知用户和密码错误使用相同外部错误。认证成功创建/更新 Device，签发随机 access/refresh token，
-但不注册实时连接。客户端事件投影就绪后按持久游标显式分页同步；服务端最终在用户 delivery gate
-内二次查空、发送 `SYNC_READY` 并激活实时连接。refresh token 成功使用后轮换。
+未知用户和密码错误使用相同外部错误。认证在 PostgreSQL 事务内创建或更新 Device，签发随机
+access/refresh token，但只保存 SHA-256；密码登录或注册签发时，同一用户同一设备只保留最新
+credential pair。签发记录同时捕获 Users 与 Devices 的 `credentialEpoch`，后续 TCP 和 HTTP 校验都
+要求账号、设备、凭据三者状态与 epoch 一致。refresh token 成功使用后在同一事务轮换完整
+access/refresh pair，旧 access 也立即失效，避免同设备凭据记录无界增长。每次 pair rotation 都严格
+推进设备 credential epoch，并把“数据库 mutation + ClientRegistry fence”作为不可被请求取消拆开的
+终态编排；不能出现已提交新凭据、旧 TCP 却继续有写权限的窗口。
+
+认证成功本身不注册实时连接。客户端事件投影就绪后按持久游标显式分页同步；服务端最终在用户
+delivery gate 内二次查空、发送 `SYNC_READY` 并激活实时连接。ClientRegistry 激活时还要检查已提交的
+credential fence，旧 epoch 会话不能重新进入在线集合；同设备的新登录会立即替换旧连接。
+
+用户自助改密与管理员重置一样，在锁定 User 行的事务内更新密码、推进用户 credential epoch 并删除
+全部凭据。发起自助改密的精确连接在提交后立即从认证/实时集合移除并进入终态，只为写完成功 RPC
+响应而短暂保留 channel，响应 flush 后关闭；其他旧连接由同一 fence 关闭。会话例外使用 Netty 完整
+channel id，而不是 deviceId 或用于日志的短 id，避免误保留同设备并发连接。
 
 ### 资料更新
 
@@ -158,12 +171,14 @@ MessageService，因此幂等重试、历史、搜索、同步和部门群保留
 ## 10. Device / Presence
 
 DeviceService 列出当前用户设备并踢除指定 deviceId。不能踢其他用户设备，当前设备自踢应有明确
-连接关闭语义。
+连接关闭语义。设备撤销在 PostgreSQL 事务内推进设备级 credential epoch 并失效该设备 credential；
+提交后再以新 epoch 更新 ClientRegistry fence 并关闭旧连接，不能先踢连接再提交撤权。
 
 Presence 由 ClientRegistry 的连接计数派生：首个设备上线广播 online，最后一个设备下线广播
 offline。它是瞬时状态，不进入长期离线事件。
 
 ## 11. Admin
 
-管理员能力与普通用户领域调用分开认证。封禁用户需要同时影响后续登录和现有连接；不能只更新
-管理表而让活动 token 继续无限使用。
+管理员能力与普通用户领域调用分开认证。封禁与密码重置在 PostgreSQL 事务内推进用户级 credential
+epoch 并失效已有 credential；事务提交后在不可取消的清理阶段更新 ClientRegistry fence、关闭所有
+较旧 epoch 连接。解除封禁只恢复账号可登录状态，不回退 epoch，也不会让任何旧 token 复活。

@@ -24,7 +24,7 @@ fun extractSecretsFromRemote(
 
     if (envContent != null) {
         val secrets = Properties()
-        val keyPattern = Regex("""^(DATABASE_PASSWORD|JWT_SECRET|SSL_KEYSTORE_PASSWORD|SSL_PRIVATE_KEY_PASSWORD)="?([^"]*)"?\s*$""")
+        val keyPattern = Regex("""^(DATABASE_PASSWORD|SSL_KEYSTORE_PASSWORD|SSL_PRIVATE_KEY_PASSWORD)="?([^"]*)"?\s*$""")
         for (line in envContent.lines()) {
             val match = keyPattern.find(line) ?: continue
             secrets.setProperty(match.groupValues[1], match.groupValues[2])
@@ -64,7 +64,6 @@ fun loadOrGenerateSecrets(
     // 3. 全新部署：生成随机密码
     println("  Generating new secrets ...")
     secrets.setProperty("DATABASE_PASSWORD", genPassword())
-    secrets.setProperty("JWT_SECRET", genPassword() + genPassword())
     secrets.setProperty("SSL_KEYSTORE_PASSWORD", genPassword())
     secrets.setProperty("SSL_PRIVATE_KEY_PASSWORD", genPassword())
 
@@ -80,8 +79,6 @@ fun saveSecrets(secretsFile: File, secrets: Properties) {
         w.write("# 此文件包含敏感信息，已加入 .gitignore\n\n")
         w.write("# Database\n")
         w.write("DATABASE_PASSWORD=${secrets.getProperty("DATABASE_PASSWORD")}\n\n")
-        w.write("# Auth\n")
-        w.write("JWT_SECRET=${secrets.getProperty("JWT_SECRET")}\n\n")
         w.write("# SSL\n")
         w.write("SSL_KEYSTORE_PASSWORD=${secrets.getProperty("SSL_KEYSTORE_PASSWORD")}\n")
         w.write("SSL_PRIVATE_KEY_PASSWORD=${secrets.getProperty("SSL_PRIVATE_KEY_PASSWORD")}\n")
