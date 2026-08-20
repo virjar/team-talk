@@ -3,6 +3,7 @@ package com.virjar.tk.infra.db
 import com.zaxxer.hikari.HikariDataSource
 import org.jetbrains.exposed.sql.SchemaUtils
 import org.jetbrains.exposed.sql.Transaction
+import org.jetbrains.exposed.sql.statements.StatementType
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.slf4j.LoggerFactory
 import java.sql.Connection
@@ -117,6 +118,7 @@ object DatabaseFactory {
                 )
                 SELECT COUNT(*) FROM superseded_duplicates
                 """.trimIndent(),
+                explicitStatementType = StatementType.SELECT,
             ) { result ->
                 if (result.next()) result.getInt(1) else 0
             } ?: 0
