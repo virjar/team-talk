@@ -116,7 +116,7 @@ object FriendApplies : LongIdTable("friend_applies") {
     val toUid = varchar("to_uid", 36).index()
     val token = varchar("token", 36).uniqueIndex()
     val remark = varchar("remark", 200).nullable()
-    val status = integer("status").default(0)  // 0=pending, 1=accepted, 2=rejected
+    val status = integer("status").default(0)  // 0=pending, 1=accepted, 2=rejected, 3=superseded
     val createdAt = long("created_at")
     val updatedAt = long("updated_at")
 }

@@ -24,6 +24,7 @@ internal fun friendApplyStatusText(record: ContactApplyRecord): String = when (r
     }
     ContactApplyRecord.STATUS_ACCEPTED -> "已接受"
     ContactApplyRecord.STATUS_REJECTED -> "已拒绝"
+    ContactApplyRecord.STATUS_SUPERSEDED -> "已合并"
     else -> "未知状态"
 }
 
@@ -45,6 +46,7 @@ internal fun friendApplyDescription(record: ContactApplyRecord): String {
         } else {
             "你已拒绝"
         }
+        ContactApplyRecord.STATUS_SUPERSEDED -> "重复申请已合并"
         else -> "状态未知"
     }
     return listOfNotNull(directionText, statusText, record.remark?.takeIf(String::isNotBlank)).joinToString(" · ")

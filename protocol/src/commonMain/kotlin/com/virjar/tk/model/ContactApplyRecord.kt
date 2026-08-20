@@ -45,6 +45,8 @@ data class ContactApplyRecord(
         const val STATUS_PENDING = 0
         const val STATUS_ACCEPTED = 1
         const val STATUS_REJECTED = 2
+        /** 旧客户端重复创建的同方向 pending 已被最新一条取代。 */
+        const val STATUS_SUPERSEDED = 3
 
         override fun readFrom(buf: PacketBuffer): ContactApplyRecord = ContactApplyRecord(
             id = buf.readVarLong(),
