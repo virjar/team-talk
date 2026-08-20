@@ -12,6 +12,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.rememberWindowState
 import com.virjar.tk.ui.AppTheme
+import com.virjar.tk.media.DesktopSessionResources
 import com.virjar.tk.ui.component.LocalScreenHeaderBackButtonVisible
 import com.virjar.tk.ui.component.LocalScreenHeaderLeadingInset
 
@@ -26,6 +27,7 @@ import com.virjar.tk.ui.component.LocalScreenHeaderLeadingInset
 internal fun SubWindow(
     screen: SubScreen,
     nav: DesktopNav,
+    resources: DesktopSessionResources,
     onClose: () -> Unit,
 ) {
     val shortId = "sub-" + (screen::class.simpleName ?: "window")
@@ -53,7 +55,7 @@ internal fun SubWindow(
         }
         AppTheme {
             Surface(modifier = Modifier.fillMaxSize()) {
-                SubWindowBody(screen, nav, window, onClose)
+                SubWindowBody(screen, nav, resources, window, onClose)
             }
         }
     }
@@ -63,6 +65,7 @@ internal fun SubWindow(
 private fun SubWindowBody(
     initial: SubScreen,
     nav: DesktopNav,
+    resources: DesktopSessionResources,
     window: java.awt.Window,
     onClose: () -> Unit,
 ) {
@@ -97,6 +100,7 @@ private fun SubWindowBody(
             SubScreenContent(
                 screen = current,
                 data = nav,
+                resources = resources,
                 navigate = { stack = stack + it },
                 back = back,
                 openChatAndClose = { chatId, name, chatType ->

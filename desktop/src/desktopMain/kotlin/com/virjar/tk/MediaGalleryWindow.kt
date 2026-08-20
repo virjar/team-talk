@@ -1,19 +1,13 @@
 package com.virjar.tk
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -21,24 +15,24 @@ import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberWindowState
 import com.virjar.tk.ui.component.GalleryItem
 import com.virjar.tk.ui.component.MediaGallery
+import com.virjar.tk.media.DesktopSessionResources
 import io.github.kdroidfilter.composemediaplayer.VideoPlayerSurface
-import kotlinx.coroutines.withContext
 import io.github.kdroidfilter.composemediaplayer.rememberVideoPlayerState
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 
 /**
  * Desktop 全屏媒体画廊窗口。
  *
  * 包装 commonMain 的 [MediaGallery] 组件，注入 Desktop 平台渲染器：
- * - 图片：[DesktopImagePage] — 从 URL 下载 + Skia 解码 + Compose Image 显示
- * - 视频：系统播放器打开（后续可升级为内嵌播放器）
+ * - 图片：统一会话缓存下载 + Skia 解码 + Compose Image 显示
+ * - 视频：统一会话缓存下载后交给内嵌播放器
  */
 @Composable
-fun MediaGalleryWindow(
+internal fun MediaGalleryWindow(
     visible: Boolean,
     items: List<GalleryItem>,
     initialIndex: Int,
+    resources: DesktopSessionResources,
     onDismiss: () -> Unit,
 ) {
     if (!visible || items.isEmpty()) return
@@ -58,48 +52,17 @@ fun MediaGalleryWindow(
             onDismiss = onDismiss,
             imageRenderer = { url, modifier ->
                 // 原图按需：缓存命中直接渲染；未命中画廊内进度覆盖层，下载完成才展示
-                com.virjar.tk.media.CachedImageContent(url, modifier, progressOverlay = true)
+                com.virjar.tk.media.CachedImageContent(
+                    url = url,
+                    resources = resources,
+                    modifier = modifier,
+                    progressOverlay = true,
+                )
             },
             videoRenderer = { url, _, modifier ->
-                DesktopVideoPage(url, modifier)
+                DesktopVideoPage(url, resources, modifier)
             },
         )
-    }
-}
-
-/**
- * Desktop 图片渲染：异步下载 + Skia 解码 + Compose Image。
- */
-@Composable
-private fun DesktopImagePage(url: String, modifier: Modifier = Modifier) {
-    var bitmap by remember { mutableStateOf<ImageBitmap?>(null) }
-    var isLoading by remember { mutableStateOf(true) }
-    var error by remember { mutableStateOf(false) }
-
-    LaunchedEffect(url) {
-        try {
-            val result = withContext(Dispatchers.IO) {
-                DesktopMediaHelper.loadImageBitmap(url)
-            }
-            bitmap = result
-            isLoading = false
-        } catch (_: Exception) {
-            error = true
-            isLoading = false
-        }
-    }
-
-    Box(modifier = modifier, contentAlignment = Alignment.Center) {
-        when {
-            error -> Text("加载失败", color = Color.White)
-            isLoading -> CircularProgressIndicator(color = Color.White)
-            bitmap != null -> Image(
-                bitmap = bitmap!!,
-                contentDescription = "图片",
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Fit,
-            )
-        }
     }
 }
 
@@ -107,21 +70,28 @@ private fun DesktopImagePage(url: String, modifier: Modifier = Modifier) {
  * Desktop 视频渲染：先下载到本地缓存再播放（避免播放器直接处理网络URL导致数据错乱）。
  */
 @Composable
-private fun DesktopVideoPage(url: String, modifier: Modifier = Modifier) {
+private fun DesktopVideoPage(
+    url: String,
+    resources: DesktopSessionResources,
+    modifier: Modifier = Modifier,
+) {
     val playerState = rememberVideoPlayerState()
     var state by remember { mutableStateOf<VideoLoadState>(VideoLoadState.Downloading(0f)) }
 
-    LaunchedEffect(url) {
+    LaunchedEffect(url, resources) {
         state = VideoLoadState.Downloading(0f)
         try {
             // 媒体缓存体系：按需下载原图到本地（播放器始终播本地文件）
-            val localPath = com.virjar.tk.media.DesktopMediaCache.ensureDownloaded(url) { p ->
+            val localFile = resources.mediaCache.ensureDownloaded(url) { p ->
                 state = VideoLoadState.Downloading(p)
             }
+            resources.ensureOpen()
             playerState.apply {
-                openUri(localPath)
+                openUri(localFile.absolutePath)
             }
             state = VideoLoadState.Ready
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
             state = VideoLoadState.Error(e.message ?: "Unknown error")
         }

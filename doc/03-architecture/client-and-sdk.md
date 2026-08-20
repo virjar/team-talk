@@ -29,6 +29,13 @@ UserSession（uid/token）
       └── ViewModels（由 app 层持有）
 ```
 
+平台的 HTTP 与媒体资源同样必须归属这次认证会话，不能通过进程全局 token 补参数。Desktop 在
+`ClientSession` 外侧建立同寿命的 `DesktopSessionResources`：固定 owner uid，逐次从当前
+`UserSession` 读取可轮换的 access token，并在每次请求前校验 uid 仍属于原所有者。这样 TCP 重连
+轮换 token 后 HTTP 请求可以继续工作，而退出后复用同一个 `UserSession` 容器登录另一账号时，旧
+下载或上传任务无法取得新账号凭据。认证会话销毁会统一取消平台协程、录音与传输任务；`close()`
+同样必须幂等。
+
 销毁顺序先停止日志上传、RPC 和事件消费，再断开 TCP，最后解除全局日志回调。`close()` 必须幂等，
 防止登出、认证失败和窗口销毁同时触发时产生二次清理问题。
 
@@ -158,5 +165,8 @@ LocalCache、如何从事件恢复、如何在重启后存在。
 - Android NavHost、Activity、权限、通知和 Media3。
 - Desktop Window、弹窗/抽屉/任务窗口、系统托盘、文件选择和桌面媒体。
 - token store、SQLite driver、文件下载目录等平台实现。
+
+Desktop 媒体目录按部署服务器与 uid 隔离；图片、视频、语音、普通附件、文本预览和群文件必须走
+同一会话缓存与传输入口，不能各自维护全局目录、匿名协程或重复 HTTP 实现。
 
 “代码能共享”不是共享的充分理由。交互模型不一致时，应共享业务动作和视觉令牌，分别实现容器。

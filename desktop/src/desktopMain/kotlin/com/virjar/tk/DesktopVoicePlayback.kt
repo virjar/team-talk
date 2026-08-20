@@ -9,15 +9,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import com.virjar.tk.media.DesktopSessionResources
 import com.virjar.tk.ui.component.VoicePlaybackController
 import io.github.kdroidfilter.composemediaplayer.InitialPlayerState
 import io.github.kdroidfilter.composemediaplayer.VideoPlayerState
 import io.github.kdroidfilter.composemediaplayer.rememberVideoPlayerState
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * Desktop 语音应用内播放控制器。
@@ -31,6 +31,7 @@ import kotlinx.coroutines.withContext
 private class DesktopVoicePlaybackImpl(
     private val playerState: VideoPlayerState,
     private val scope: CoroutineScope,
+    private val resources: DesktopSessionResources,
 ) : VoicePlaybackController {
     private var urlState = mutableStateOf<String?>(null)
     private var progressState = mutableFloatStateOf(0f)
@@ -61,9 +62,12 @@ private class DesktopVoicePlaybackImpl(
                     progressState.floatValue = 0f
                     urlState.value = url
                     try {
-                        val file = withContext(Dispatchers.IO) { DesktopMediaHelper.downloadToCache(url) }
+                        val file = resources.mediaCache.ensureDownloaded(url)
+                        resources.ensureOpen()
                         com.virjar.tk.util.AppLog.trace("VoicePlayback", "openUri ${file.absolutePath} (${file.length()}B)")
                         playerState.openUri(file.absolutePath, InitialPlayerState.PLAY)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
                     } catch (e: Exception) {
                         // 下载/打开失败：复位，不弹系统播放器
                         com.virjar.tk.util.AppLog.fault("VoicePlayback", "voice open failed: ${e.message}")
@@ -111,10 +115,12 @@ private class DesktopVoicePlaybackImpl(
 }
 
 @Composable
-fun rememberDesktopVoicePlayback(): VoicePlaybackController {
+internal fun rememberDesktopVoicePlayback(resources: DesktopSessionResources): VoicePlaybackController {
     val playerState = rememberVideoPlayerState()
     val scope = rememberCoroutineScope()
-    val impl = remember(playerState, scope) { DesktopVoicePlaybackImpl(playerState, scope) }
+    val impl = remember(playerState, scope, resources) {
+        DesktopVoicePlaybackImpl(playerState, scope, resources)
+    }
 
     DisposableEffect(impl) {
         playerState.onPlaybackEnded = { impl.reset() }

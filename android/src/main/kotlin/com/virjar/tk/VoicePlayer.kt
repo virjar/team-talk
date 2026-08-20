@@ -31,7 +31,8 @@ object VoicePlayer {
             if (d > 0) mp.currentPosition.toFloat() / d else 0f
         } ?: 0f
 
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob() +
+    private val scopeJob = SupervisorJob()
+    private val scope = CoroutineScope(Dispatchers.IO + scopeJob +
         CoroutineExceptionHandler { _, throwable ->
             Log.e("VoicePlayer", "Scope unhandled exception", throwable)
         })
@@ -39,11 +40,11 @@ object VoicePlayer {
     fun play(
         context: android.content.Context,
         url: String,
-        accessToken: String?,
-        cacheNamespace: String,
+        mediaSession: AndroidMediaSession,
     ) {
+        if (!mediaSession.isCurrentOwner()) return
         // 如果已经在播放同一个，则暂停/继续
-        if (url == currentUrl && cacheNamespace == currentCacheNamespace && currentPlayer != null) {
+        if (url == currentUrl && mediaSession.cacheNamespace == currentCacheNamespace && currentPlayer != null) {
             val mp = currentPlayer!!
             if (mp.isPlaying) {
                 mp.pause()
@@ -59,7 +60,7 @@ object VoicePlayer {
         stop()
 
         currentUrl = url
-        currentCacheNamespace = cacheNamespace
+        currentCacheNamespace = mediaSession.cacheNamespace
         val requestId = UUID.randomUUID().toString()
         currentRequestId = requestId
         _isLoading = true
@@ -70,10 +71,9 @@ object VoicePlayer {
                 val file = MediaHelper.downloadToCache(
                     url = url,
                     cacheDir = context.cacheDir,
-                    accessToken = accessToken,
-                    cacheNamespace = cacheNamespace,
+                    mediaSession = mediaSession,
                 )
-                if (currentRequestId != requestId) return@launch
+                if (currentRequestId != requestId || !mediaSession.isCurrentOwner()) return@launch
 
                 val mp = MediaPlayer().apply {
                     setDataSource(file.absolutePath)
@@ -131,5 +131,11 @@ object VoicePlayer {
             job.invokeOnCompletion { onStopped?.invoke() }
             job.cancel()
         }
+    }
+
+    /** Process-owner teardown. Page-level callers must continue to use namespace-scoped [stop]. */
+    fun close() {
+        stop()
+        scopeJob.cancel()
     }
 }

@@ -6,18 +6,17 @@ import com.virjar.tk.navigation.feature.DocumentDraftPersistence
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
-import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.ThreadFactory
-import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 
 /**
- * Private, no-backup storage for unsaved document bodies.
+ * Process-owned private, no-backup storage for unsaved document bodies.
  *
  * AtomicFile writes through a temporary file and renames only after the complete UTF-8 payload
- * is synced. A uid hash is used as the filename, so account identifiers never become paths.
+ * is synced. A uid hash is used as the filename, so account identifiers never become paths. One
+ * instance is owned by [TeamTalkApp] and shared by Activity/session-level [DocumentDraftStore]s.
  */
-internal class AndroidDocumentDraftPersistence(context: Context) : DocumentDraftPersistence {
+internal class AndroidDocumentDraftPersistence(context: Context) : DocumentDraftPersistence, AutoCloseable {
     private val appContext = context.applicationContext
     private val directory = File(appContext.noBackupFilesDir, DIRECTORY_NAME)
     private val ownerPreferences = appContext.getSharedPreferences(OWNER_PREFERENCES, Context.MODE_PRIVATE)
@@ -26,20 +25,14 @@ internal class AndroidDocumentDraftPersistence(context: Context) : DocumentDraft
     private val pendingWrites = mutableMapOf<String, PendingWrite>()
     private val uidGenerations = mutableMapOf<String, Long>()
     private var nextGeneration = 0L
-    private var drainScheduled = false
-    @Volatile
+    private var drainEpoch = 0L
+    private var scheduledDrainEpoch: Long? = null
+    private var closed = false
     private var selectedOwnerHash: String? = null
-    private val executor = ThreadPoolExecutor(
-        0,
-        1,
-        5,
-        TimeUnit.SECONDS,
-        LinkedBlockingQueue(),
-        ThreadFactory { task -> Thread(task, "document-draft-io").apply { isDaemon = true } },
-    )
+    private val taskQueue = CloseableSerialTaskQueue("document-draft-io")
 
     override fun read(uid: String): String? {
-        flush()
+        awaitPendingWrites()
         return synchronized(ioLock) {
             selectOwnerLocked(uid)
             val base = fileFor(uid)
@@ -66,26 +59,76 @@ internal class AndroidDocumentDraftPersistence(context: Context) : DocumentDraft
     }
 
     override fun write(uid: String, payload: () -> String): Boolean {
-        ensureOwner(uid)
         synchronized(stateLock) {
+            if (closed) return false
             val generation = ++nextGeneration
             uidGenerations[uid] = generation
             pendingWrites[uid] = PendingWrite(uid, generation, payload)
-            if (!drainScheduled) {
-                drainScheduled = true
-                executor.execute(::drainWrites)
+            if (!scheduleDrainLocked()) {
+                pendingWrites.remove(uid)
+                return false
             }
         }
         return true
     }
 
-    override fun delete(uid: String): Boolean = synchronized(ioLock) {
-        synchronized(stateLock) {
-            uidGenerations[uid] = ++nextGeneration
-            pendingWrites.remove(uid)
+    override fun delete(uid: String): Boolean = synchronized(stateLock) {
+        if (closed) return@synchronized false
+        uidGenerations[uid] = ++nextGeneration
+        pendingWrites.remove(uid)
+        invalidateCurrentDrainLocked()
+        val accepted = taskQueue.execute {
+            synchronized(ioLock) {
+                deleteNow(uid)
+            }
         }
+        if (accepted) scheduleDrainLocked()
+        accepted
+    }
+
+    override fun clearAll(): Boolean = synchronized(stateLock) {
+        if (closed) return@synchronized false
+        nextGeneration++
+        uidGenerations.clear()
+        pendingWrites.clear()
+        invalidateCurrentDrainLocked()
+        taskQueue.execute {
+            synchronized(ioLock) {
+                try {
+                    clearDraftFiles()
+                    ownerPreferences.edit().remove(ACTIVE_OWNER_KEY).commit()
+                    selectedOwnerHash = null
+                } catch (_: Exception) {
+                    // The next owner selection retries cleanup; callers only need immediate
+                    // invalidation of already accepted writes on the UI thread.
+                }
+            }
+        }
+    }
+
+    /** Non-blocking durability marker used by Activity lifecycle callbacks. */
+    fun requestFlush(): CompletableFuture<Boolean> = taskQueue.barrier()
+
+    /** Blocking read barrier; draft restoration already calls [read] from a background dispatcher. */
+    private fun awaitPendingWrites(): Boolean = try {
+        requestFlush().get(FLUSH_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+    } catch (_: Exception) {
+        false
+    }
+
+    /** Gracefully drains accepted writes without blocking the lifecycle callback that owns close. */
+    fun closeAsync(): CompletableFuture<Boolean> = synchronized(stateLock) {
+        if (!closed) closed = true
+        taskQueue.closeAsync()
+    }
+
+    override fun close() {
+        closeAsync()
+    }
+
+    private fun deleteNow(uid: String): Boolean {
         val atomicFile = AtomicFile(fileFor(uid))
-        try {
+        return try {
             atomicFile.delete()
             if (ownerPreferences.getString(ACTIVE_OWNER_KEY, null) == draftFileName(uid)) {
                 ownerPreferences.edit().remove(ACTIVE_OWNER_KEY).commit()
@@ -97,42 +140,12 @@ internal class AndroidDocumentDraftPersistence(context: Context) : DocumentDraft
         }
     }
 
-    override fun clearAll(): Boolean = synchronized(ioLock) {
-        synchronized(stateLock) {
-            nextGeneration++
-            uidGenerations.clear()
-            pendingWrites.clear()
-        }
-        try {
-            val filesCleared = clearDraftFiles()
-            val ownerCleared = ownerPreferences.edit().remove(ACTIVE_OWNER_KEY).commit()
-            selectedOwnerHash = null
-            filesCleared && ownerCleared
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    override fun flush(): Boolean = try {
-        executor.submit { }.get(FLUSH_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        true
-    } catch (_: Exception) {
-        false
-    }
-
     private fun fileFor(uid: String): File = File(directory, draftFileName(uid))
 
-    /** One installation retains drafts for at most the currently active uid. */
-    private fun ensureOwner(uid: String) {
-        val requested = draftFileName(uid)
-        if (selectedOwnerHash == requested) return
-        synchronized(ioLock) {
-            if (selectedOwnerHash != requested) selectOwnerLocked(uid)
-        }
-    }
-
+    /** One installation retains drafts for at most the currently active uid. Runs on the queue. */
     private fun selectOwnerLocked(uid: String) {
         val requested = draftFileName(uid)
+        if (selectedOwnerHash == requested) return
         val current = ownerPreferences.getString(ACTIVE_OWNER_KEY, null)
         if (current != null && current != requested) clearDraftFiles()
         if (current != requested) ownerPreferences.edit().putString(ACTIVE_OWNER_KEY, requested).commit()
@@ -146,12 +159,33 @@ internal class AndroidDocumentDraftPersistence(context: Context) : DocumentDraft
         return !directory.exists()
     }
 
-    private fun drainWrites() {
+    /**
+     * Ends the current coalescing window before a delete/clear control operation is queued.
+     * Otherwise the running drain could consume a later write ahead of that queued deletion and
+     * let the deletion erase the newer generation.
+     */
+    private fun invalidateCurrentDrainLocked() {
+        drainEpoch++
+        scheduledDrainEpoch = null
+    }
+
+    /** Must run under [stateLock]. */
+    private fun scheduleDrainLocked(): Boolean {
+        if (pendingWrites.isEmpty() || scheduledDrainEpoch != null) return true
+        val epoch = drainEpoch
+        scheduledDrainEpoch = epoch
+        if (taskQueue.execute { drainWrites(epoch) }) return true
+        if (scheduledDrainEpoch == epoch) scheduledDrainEpoch = null
+        return false
+    }
+
+    private fun drainWrites(epoch: Long) {
         while (true) {
             val pending = synchronized(stateLock) {
+                if (epoch != drainEpoch) return
                 val entry = pendingWrites.entries.firstOrNull()
                 if (entry == null) {
-                    drainScheduled = false
+                    if (scheduledDrainEpoch == epoch) scheduledDrainEpoch = null
                     null
                 } else {
                     pendingWrites.remove(entry.key)
@@ -171,6 +205,7 @@ internal class AndroidDocumentDraftPersistence(context: Context) : DocumentDraft
                 }
                 if (!isCurrent) return@synchronized
 
+                selectOwnerLocked(pending.uid)
                 val atomicFile = AtomicFile(fileFor(pending.uid))
                 if (bytes.size > MAX_PAYLOAD_BYTES) {
                     // Never keep an older snapshot that could masquerade as the current draft.

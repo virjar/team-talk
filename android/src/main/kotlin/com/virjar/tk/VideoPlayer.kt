@@ -90,8 +90,7 @@ internal class GalleryVideoPlaybackGate {
 @Composable
 fun rememberVideoPlayer(
     url: String,
-    accessToken: String?,
-    cacheNamespace: String,
+    mediaSession: AndroidMediaSession,
     isCurrentPage: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -108,20 +107,19 @@ fun rememberVideoPlayer(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    var retryAttempt by remember(url, cacheNamespace) { mutableIntStateOf(0) }
-    var loadState by remember(url, cacheNamespace) {
+    var retryAttempt by remember(url, mediaSession.cacheNamespace) { mutableIntStateOf(0) }
+    var loadState by remember(url, mediaSession.cacheNamespace) {
         mutableStateOf<GalleryVideoLoadState>(GalleryVideoLoadState.Loading)
     }
 
     // 下载视频到缓存
-    LaunchedEffect(url, accessToken, cacheNamespace, retryAttempt) {
+    LaunchedEffect(url, mediaSession, retryAttempt) {
         loadState = GalleryVideoLoadState.Loading
         try {
             val file = MediaHelper.downloadToCache(
                 url = url,
                 cacheDir = context.cacheDir,
-                accessToken = accessToken,
-                cacheNamespace = cacheNamespace,
+                mediaSession = mediaSession,
             )
             loadState = GalleryVideoLoadState.Ready(file.absolutePath)
         } catch (cancelled: CancellationException) {

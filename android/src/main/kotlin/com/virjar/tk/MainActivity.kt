@@ -112,10 +112,10 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
-        // Android may reclaim the process after this point. Synchronously publish the editor's
-        // latest title/body first, then finish that exact AtomicFile write before lifecycle
-        // dispatch from super.onStop(). This cannot depend on a later composable disposal.
-        appDataStateHolder.captureAndFlushDocumentDrafts()
+        // Capture Compose-owned editor state while it is still attached. Persistence itself is a
+        // process-owned serial queue: enqueue a barrier and return without a five-second main-thread
+        // wait. Android may reclaim the process after onStop, so this cannot depend on disposal.
+        appDataStateHolder.captureAndScheduleDocumentDraftFlush()
         super.onStop()
     }
 }
@@ -127,6 +127,8 @@ class MainActivity : ComponentActivity() {
  * receives fresh stores and therefore can never inherit another account's draft.
  */
 internal class AndroidAppDataStateHolder(application: Application) : AndroidViewModel(application) {
+    private val documentDraftPersistence =
+        (application as TeamTalkApp).documentDraftPersistence
     private var composerContexts = ChatComposerContextStore()
     private var documentDrafts = newDocumentDraftStore()
     private var dataState: AppDataState? = null
@@ -137,7 +139,9 @@ internal class AndroidAppDataStateHolder(application: Application) : AndroidView
         val previous = dataState
         val previousSession = retainedSession
         val sameUser = previous?.userSession?.uid == session.userSession.uid
+        if (sameUser) previous?.documents?.captureDrafts()
         previous?.destroy(clearComposerContexts = !sameUser)
+        if (sameUser) documentDraftPersistence.requestFlush()
         // AuthController owns the transport. A retained holder may still reference an already
         // closed session after the same ImClient has started a newer login; only release the old
         // session resources here and never request a transport disconnect from the holder.
@@ -159,6 +163,7 @@ internal class AndroidAppDataStateHolder(application: Application) : AndroidView
 
     fun clearForLogout() {
         dataState?.destroy(clearComposerContexts = true)
+        documentDraftPersistence.requestFlush()
         dataState = null
         retainedSession = null
         composerContexts = ChatComposerContextStore()
@@ -167,28 +172,35 @@ internal class AndroidAppDataStateHolder(application: Application) : AndroidView
 
     /** Authentication expiry requires re-login, but is not the user's instruction to discard work. */
     fun clearForAuthenticationLoss() {
+        dataState?.documents?.captureDrafts()
         dataState?.destroy(clearComposerContexts = true, clearDocumentDrafts = false)
+        documentDraftPersistence.requestFlush()
         dataState = null
         retainedSession = null
         composerContexts = ChatComposerContextStore()
         documentDrafts = newDocumentDraftStore()
     }
 
-    fun captureAndFlushDocumentDrafts() {
-        dataState?.documents?.captureAndFlushDrafts() ?: documentDrafts.flush()
+    fun captureAndScheduleDocumentDraftFlush() {
+        captureThenScheduleDocumentDraftFlush(
+            captureDrafts = { dataState?.documents?.captureDrafts() ?: true },
+            scheduleFlush = { documentDraftPersistence.requestFlush() },
+        )
     }
 
     override fun onCleared() {
         // Task removal is not an explicit account logout. Retain the uid-scoped AtomicFile so a
         // fresh process can resume the unsaved document.
+        dataState?.documents?.captureDrafts()
         dataState?.destroy(clearComposerContexts = true, clearDocumentDrafts = false)
+        documentDraftPersistence.requestFlush()
         retainedSession?.close(disconnectTransport = false)
         dataState = null
         retainedSession = null
     }
 
     private fun newDocumentDraftStore() = DocumentDraftStore(
-        AndroidDocumentDraftPersistence(getApplication()),
+        documentDraftPersistence,
     )
 }
 
@@ -291,8 +303,8 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                 }
             }
             if (vm != null) { AndroidChatScreen(chatId, chatName, chatType, vm, dataState.userSession.uid,
+                dataState.userSession,
                 serverUrl = defaultServerConfig().serverUrl,
-                accessToken = dataState.userSession.accessToken,
                 resolveSender = { uid ->
                     mentionCandidates.firstOrNull { it.uid == uid } ?: dataState.cachedUser(uid)
                 },
@@ -344,18 +356,18 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             if (attachment == null || previewKind == null) {
                 LaunchedEffect(entry) { navController.popBackStack() }
             } else {
-                val mediaCacheScope = remember(dataState.userSession.uid, dataState.userSession.accessToken) {
-                    mediaCacheNamespace(
-                        dataState.userSession.uid,
-                        dataState.userSession.accessToken,
-                        java.util.UUID.randomUUID().toString(),
+                val sessionUser = dataState.userSession
+                val ownerUid = sessionUser.uid
+                val mediaSession = remember(ownerUid, sessionUser) {
+                    AndroidMediaSession.create(
+                        serverUrl = defaultServerConfig().serverUrl,
+                        ownerUid = ownerUid,
+                        credentialsProvider = sessionUser::httpCredentialsSnapshot,
                     )
                 }
                 AndroidTextAttachmentPreviewScreen(
                     attachment = attachment,
-                    serverUrl = defaultServerConfig().serverUrl,
-                    accessToken = dataState.userSession.accessToken,
-                    cacheNamespace = mediaCacheScope,
+                    mediaSession = mediaSession,
                     onBack = { navController.popBackStack() },
                 )
             }
@@ -520,27 +532,36 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             val chatId = entry.arguments?.getString("chatId") ?: return@composable
             val context = LocalContext.current
             val config = remember { defaultServerConfig() }
+            val routeScope = rememberCoroutineScope()
+            val sessionUser = dataState.userSession
+            val sessionUid = sessionUser.uid
+            val mediaSession = remember(config.serverUrl, sessionUid, sessionUser) {
+                AndroidMediaSession.create(
+                    serverUrl = config.serverUrl,
+                    ownerUid = sessionUid,
+                    credentialsProvider = sessionUser::httpCredentialsSnapshot,
+                )
+            }
             var uploading by remember { mutableStateOf(false) }
             var versionTarget by remember { mutableStateOf<com.virjar.tk.model.GroupFileEntry?>(null) }
-            val downloads = remember(context, config.serverUrl, dataState.userSession.accessToken) {
-                AndroidFileDownloadController(context, config.serverUrl, dataState.userSession.accessToken)
+            val downloads = remember(context, mediaSession) {
+                AndroidFileDownloadController(context, mediaSession)
             }
             DisposableEffect(downloads) { onDispose { downloads.close() } }
             LaunchedEffect(chatId) { dataState.loadScreenDataByKey(ScreenDataKey.GroupFiles(chatId)) }
 
             val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-                if (uri != null) scope.launch {
+                if (uri != null) routeScope.launch {
                     uploading = true
                     var selected: PreparedMedia? = null
                     try {
-                        selected = MediaHelper.prepareSelectedMedia(context, uri)
+                        selected = MediaHelper.prepareSelectedMedia(context, uri, mediaSession)
                         val name = selected.fileName
                         val attachment = MediaHelper.uploadFile(
                             selected.file,
                             name,
                             selected.contentType,
-                            config.serverUrl,
-                            dataState.userSession.accessToken,
+                            mediaSession,
                         )
                         // 文件选择器返回时路由可能已切到另一群；此时取消发布，绝不能借用 B 的当前目录。
                         if (dataState.groupFiles.chatId != chatId) return@launch
@@ -568,7 +589,7 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                 versions = dataState.groupFiles.versions.takeIf { filesReady }.orEmpty(),
                 loading = !filesReady || dataState.groupFiles.loading,
                 uploading = uploading,
-                onRefresh = { scope.launch { dataState.groupFiles.refresh() } },
+                onRefresh = { routeScope.launch { dataState.groupFiles.refresh() } },
                 onEnter = dataState.groupFiles::enter,
                 onUp = dataState.groupFiles::up,
                 onCreateFolder = dataState.groupFiles::createFolder,

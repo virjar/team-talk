@@ -1,11 +1,11 @@
 package com.virjar.tk
 
 import androidx.compose.runtime.*
+import com.virjar.tk.media.DesktopSessionResources
 import com.virjar.tk.navigation.AppDataState
 import com.virjar.tk.ui.screen.*
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * 单个子屏幕的渲染器（参数驱动，不读写全局导航状态）。
@@ -21,9 +21,10 @@ import kotlinx.coroutines.withContext
  * @param onClose 检查器根页面的关闭动作；任务窗口和主内容页不提供
  */
 @Composable
-fun SubScreenContent(
+internal fun SubScreenContent(
     screen: SubScreen,
     data: AppDataState,
+    resources: DesktopSessionResources,
     navigate: (SubScreen) -> Unit,
     back: () -> Unit,
     openChatAndClose: (chatId: String, chatName: String, chatType: Int) -> Unit,
@@ -37,6 +38,19 @@ fun SubScreenContent(
     val contacts by data.contactViewModel.contacts.collectAsState()
     val conversations by data.conversationViewModel.conversations.collectAsState()
     val actionScope = rememberCoroutineScope()
+    var textPreviewEvent by remember { mutableStateOf<DesktopTextAttachmentPreviewEvent?>(null) }
+    val fileDownloads = remember(resources) {
+        DesktopFileDownloadController(
+            resources = resources,
+            onDownloaded = DesktopExternalFileOpener::open,
+            onTextAttachmentPreview = { event ->
+                actionScope.launch { textPreviewEvent = event }
+            },
+        )
+    }
+    DisposableEffect(fileDownloads) {
+        onDispose { fileDownloads.close() }
+    }
 
     LaunchedEffect(screen) {
         screen.dataKey()?.let { data.loadScreenDataByKey(it) }
@@ -136,7 +150,7 @@ fun SubScreenContent(
             val ready = data.groups.groupBotsTargetChatId == screen.chatId
             GroupBotsScreen(
                 chatId = screen.chatId,
-                serverUrl = com.virjar.tk.client.defaultServerConfig().serverUrl,
+                serverUrl = resources.serverBaseUrl,
                 bots = data.groups.groupBots.takeIf { ready }.orEmpty(),
                 loading = !ready || data.groups.groupBotsLoading,
                 error = data.groups.groupBotsError.takeIf { ready },
@@ -160,22 +174,22 @@ fun SubScreenContent(
             var uploading by remember(screen.chatId) { mutableStateOf(false) }
 
             fun chooseAndUpload(versionTarget: com.virjar.tk.model.GroupFileEntry?) {
-                val file = DesktopMediaHelper.chooseFile("选择群文件") ?: return
+                val file = DesktopFilePicker.chooseFile("选择群文件") ?: return
                 actionScope.launch {
                     uploading = true
                     try {
-                        val bytes = withContext(Dispatchers.IO) { file.readBytes() }
-                        val attachment = com.virjar.tk.repository.FileRepository(
-                            com.virjar.tk.client.defaultServerConfig().serverUrl,
-                            data.userSession.accessToken,
-                        ).upload(bytes, file.name, DesktopMediaHelper.contentType(file.name)).getOrThrow()
+                        val attachment = resources.fileTransfer.upload(file)
                         if (versionTarget == null) data.groupFiles.publish(file.name, attachment)
                         else data.groupFiles.addVersion(versionTarget, attachment)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
                     } catch (e: Exception) {
-                        com.virjar.tk.util.AppLog.fault("GroupFiles", "upload failed: ${e.message}")
-                        data.groupFiles.reportUploadError(e)
+                        if (runCatching { resources.ensureOpen() }.isSuccess) {
+                            com.virjar.tk.util.AppLog.fault("GroupFiles", "upload failed: ${e.message}")
+                            data.groupFiles.reportUploadError(e)
+                        }
                     } finally {
-                        uploading = false
+                        if (runCatching { resources.ensureOpen() }.isSuccess) uploading = false
                     }
                 }
             }
@@ -192,9 +206,7 @@ fun SubScreenContent(
                 onUp = data.groupFiles::up,
                 onCreateFolder = data.groupFiles::createFolder,
                 onUpload = { chooseAndUpload(null) },
-                onOpenFile = { attachment ->
-                    actionScope.launch(Dispatchers.IO) { DesktopMediaHelper.openFile(attachment.path) }
-                },
+                onOpenFile = fileDownloads::openOrDownload,
                 onShowVersions = data.groupFiles::showVersions,
                 onUploadVersion = { chooseAndUpload(it) },
                 onRename = data.groupFiles::rename,
@@ -247,4 +259,11 @@ fun SubScreenContent(
             showSearchField = false,
         )
     }
+
+    DesktopTextAttachmentPreviewDialog(
+        event = textPreviewEvent,
+        onDismiss = { textPreviewEvent = null },
+        onRetry = fileDownloads::openOrDownload,
+        onOpenExternally = fileDownloads::openExternally,
+    )
 }

@@ -33,7 +33,7 @@ class AndroidTextAttachmentPreviewTest {
     fun `chat controller and preview page resolve the same authenticated cache target`() {
         val root = Files.createTempDirectory("teamtalk-text-preview-target").toFile()
         try {
-            val namespace = mediaCacheNamespace("uid", "token", "nonce")
+            val namespace = mediaCacheNamespace("https://server.example", "uid")
             val attachment = Attachment("files/readme.md", "../README.md", "text/markdown", 10L)
             val first = attachmentCacheFile(root, namespace, attachment)
             val second = attachmentCacheFile(root, namespace, attachment)

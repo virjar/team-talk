@@ -132,9 +132,6 @@ fun rememberAuthController(
             ownedStoredLogin?.let(tokenStore::compareAndClear)
             ownedStoredLogin = null
         }
-        if (tokenStore.isCurrentOwner(tokenOwner.generation)) {
-            SessionContext.accessToken = null
-        }
         // The controller can stay composed on the login screen, so do not leave the previous
         // account's identity or bearer credentials resident in its long-lived UserSession.
         userSession.onAuthFailed(message)
@@ -246,9 +243,6 @@ fun rememberAuthController(
                 session = createSession(imClient, userSession, createCache, deviceId)
                 onAuthenticated?.invoke(checkNotNull(session))
             }
-            if (tokenStore.isCurrentOwner(tokenOwner.generation)) {
-                SessionContext.accessToken = userSession.accessToken
-            }
             authError = null
             return true
         }
@@ -332,9 +326,6 @@ fun rememberAuthController(
             authError = null
             ownedStoredLogin?.let(tokenStore::compareAndClear)
             ownedStoredLogin = null
-            if (tokenStore.isCurrentOwner(tokenOwner.generation)) {
-                SessionContext.accessToken = null
-            }
             userSession.onAuthFailed(null)
             if (closingSession == null) {
                 imClient.disconnect()

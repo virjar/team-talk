@@ -53,15 +53,13 @@ internal fun readTextAttachmentPreviewBytes(
 @Composable
 internal fun AndroidTextAttachmentPreviewScreen(
     attachment: Attachment,
-    serverUrl: String,
-    accessToken: String?,
-    cacheNamespace: String,
+    mediaSession: AndroidMediaSession,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val cacheLease = remember(context, cacheNamespace) {
-        acquireMediaCacheLease(context.cacheDir, cacheNamespace)
+    val cacheLease = remember(context, mediaSession.cacheNamespace) {
+        acquireMediaCacheLease(context.cacheDir, mediaSession.cacheNamespace)
     }
     DisposableEffect(cacheLease) {
         onDispose { cacheLease.close() }
@@ -74,9 +72,7 @@ internal fun AndroidTextAttachmentPreviewScreen(
         attachment,
         plan,
         retryGeneration,
-        serverUrl,
-        accessToken,
-        cacheNamespace,
+        mediaSession,
     ) {
         value = when (plan) {
             is TextAttachmentPreviewPlan.TooLarge -> TextAttachmentPreviewState.TooLarge(plan.maxBytes)
@@ -90,9 +86,7 @@ internal fun AndroidTextAttachmentPreviewScreen(
                 withContext(Dispatchers.IO) {
                     val cached = downloadAttachmentToCache(
                         cacheRoot = context.cacheDir,
-                        cacheNamespace = cacheNamespace,
-                        serverUrl = serverUrl,
-                        accessToken = accessToken,
+                        mediaSession = mediaSession,
                         attachment = attachment,
                     )
                     val bytes = readTextAttachmentPreviewBytes(cached)
@@ -115,11 +109,10 @@ internal fun AndroidTextAttachmentPreviewScreen(
             runCatching {
                 val cached = downloadAttachmentToCache(
                     cacheRoot = context.cacheDir,
-                    cacheNamespace = cacheNamespace,
-                    serverUrl = serverUrl,
-                    accessToken = accessToken,
+                    mediaSession = mediaSession,
                     attachment = attachment,
                 )
+                if (!mediaSession.isCurrentOwner()) return@runCatching
                 MediaHelper.openFile(context.applicationContext, cached, attachment.contentType)
             }
         }

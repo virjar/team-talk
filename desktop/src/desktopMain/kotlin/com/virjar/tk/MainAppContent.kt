@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.WindowScope
 import com.virjar.tk.client.ClientSession
 import com.virjar.tk.client.ConnectionState
+import com.virjar.tk.media.DesktopSessionResources
 import com.virjar.tk.model.ChatType
 import com.virjar.tk.model.Message
 import com.virjar.tk.model.User
@@ -67,6 +68,7 @@ private val ChatInspectorWidth = 400.dp
 @Composable
 internal fun WindowScope.MainAppContent(
     session: ClientSession,
+    resources: DesktopSessionResources,
     mainWindow: java.awt.Window,
     connectionState: ConnectionState,
     onToggleWindowZoom: () -> Unit,
@@ -173,7 +175,12 @@ internal fun WindowScope.MainAppContent(
     // key(windowScreen)：入口切换时强制重建 SubWindow，清空窗口内局部导航栈
     nav.windowScreen?.let { windowScreen ->
         key(windowScreen) {
-            SubWindow(screen = windowScreen, nav = nav, onClose = { nav.windowScreen = null })
+            SubWindow(
+                screen = windowScreen,
+                nav = nav,
+                resources = resources,
+                onClose = { nav.windowScreen = null },
+            )
         }
     }
     if (nav.documentWindowVisible) {
@@ -181,7 +188,7 @@ internal fun WindowScope.MainAppContent(
     }
 
     // 语音应用内播放（native 引擎，聊天面板级共享：切会话即静音）
-    val voicePlayback = rememberDesktopVoicePlayback()
+    val voicePlayback = rememberDesktopVoicePlayback(resources)
 
     // @ 补全候选：群聊拉成员列表；私聊用好友列表（chatId 不含对方 uid，好友即候选）
     var mentionCandidates by remember { mutableStateOf<List<User>>(emptyList()) }
@@ -307,6 +314,7 @@ internal fun WindowScope.MainAppContent(
                     SubScreenContent(
                         screen = mainPaneScreen,
                         data = nav,
+                        resources = resources,
                         navigate = nav::openScreen,
                         back = nav::closeMainPane,
                         openChatAndClose = { chatId, name, chatType -> nav.openChat(chatId, name, chatType) },
@@ -338,7 +346,7 @@ internal fun WindowScope.MainAppContent(
                                     chatType = nav.chatType,
                                     viewModel = nav.chatViewModel!!,
                                     myUid = nav.userSession.uid,
-                                    accessToken = nav.userSession.accessToken,
+                                    resources = resources,
                                     draftDispatcher = draftDispatcher,
                                     initialDraft = conv?.draft,
                                     composerContextStore = nav.chatComposerContexts,
@@ -357,7 +365,7 @@ internal fun WindowScope.MainAppContent(
                             else -> MainPaneEmptyState(MainTab.entries[nav.selectedTab])
                         }
 
-                        ChatInspectorHost(nav)
+                        ChatInspectorHost(nav, resources)
                     }
                 }
             }
@@ -381,7 +389,10 @@ internal fun WindowScope.MainAppContent(
  * 阻断：第一次点击只关闭抽屉，不会穿透触发聊天操作。
  */
 @Composable
-private fun BoxScope.ChatInspectorHost(nav: DesktopNav) {
+private fun BoxScope.ChatInspectorHost(
+    nav: DesktopNav,
+    resources: DesktopSessionResources,
+) {
     val requestedScreen = nav.inspectorStack.lastOrNull()
     var renderedScreen by remember { mutableStateOf<SubScreen?>(null) }
     val visibility = remember { MutableTransitionState(false) }
@@ -429,6 +440,7 @@ private fun BoxScope.ChatInspectorHost(nav: DesktopNav) {
                 SubScreenContent(
                     screen = screen,
                     data = nav,
+                    resources = resources,
                     navigate = { target ->
                         if (target.presentation == SubScreenPresentation.CHAT_INSPECTOR) nav.pushInspector(target)
                         else nav.openScreen(target)
@@ -633,7 +645,7 @@ private fun ChatPanelWrapper(
     chatType: Int,
     viewModel: ChatViewModel,
     myUid: String,
-    accessToken: String?,
+    resources: DesktopSessionResources,
     draftDispatcher: DesktopDraftDispatcher,
     initialDraft: String?,
     composerContextStore: com.virjar.tk.ui.screen.ChatComposerContextStore,
@@ -652,13 +664,11 @@ private fun ChatPanelWrapper(
     }
     var textPreviewEvent by textPreviewEventState
 
-    // 文件附件下载控制器（media/ 目录缓存；下载完成调系统打开）
-    val fileDownloads = remember(chatId, accessToken) {
+    // 页面只持有状态控制器；下载、缓存和凭据都归认证会话资源所有。
+    val fileDownloads = remember(chatId, resources) {
         DesktopFileDownloadController(
-            serverUrl = com.virjar.tk.client.defaultServerConfig().serverUrl,
-            accessToken = accessToken,
-            cacheDir = java.io.File(System.getProperty("teamtalk.data.dir"), "media"),
-            onDownloaded = { f -> runCatching { java.awt.Desktop.getDesktop().open(f) } },
+            resources = resources,
+            onDownloaded = DesktopExternalFileOpener::open,
             onTextAttachmentPreview = { event ->
                 previewScope.launch {
                     val current = textPreviewEventState.value
@@ -686,7 +696,7 @@ private fun ChatPanelWrapper(
             // 语音已走 voicePlayback 应用内播放（ChatPanel.voicePlayback），此链路不再触达
             override fun playVoice(attachment: com.virjar.tk.model.Attachment) {}
             override fun openFile(attachment: com.virjar.tk.model.Attachment) {
-                kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch { DesktopMediaHelper.openFile(attachment.path) }
+                fileDownloads.openOrDownload(attachment)
             }
             override fun showGallery(items: List<GalleryItem>, index: Int) {
                 galleryIndex = index; galleryItems = items; showGallery = true
@@ -700,7 +710,7 @@ private fun ChatPanelWrapper(
             .fillMaxSize()
             .dragAndDropTarget(
                 shouldStartDragAndDrop = { true },
-                target = remember(chatId, myUid) {
+                target = remember(chatId, myUid, resources, viewModel) {
                     object : DragAndDropTarget {
                         override fun onDrop(event: DragAndDropEvent): Boolean {
                             val data = event.dragData()
@@ -710,7 +720,7 @@ private fun ChatPanelWrapper(
                                     val path = java.net.URI(uri).path
                                     val file = java.io.File(path)
                                     if (file.exists()) {
-                                        DesktopMediaHelper.sendDroppedFile(chatId, myUid, file, viewModel)
+                                        resources.mediaSender.sendDroppedFile(chatId, myUid, file, viewModel)
                                     }
                                 }
                                 return true
@@ -757,22 +767,28 @@ private fun ChatPanelWrapper(
             },
             media = com.virjar.tk.ui.bridge.ChatMediaConfig(
                 fileDownloads = fileDownloads,
-                onPickImage = { DesktopMediaHelper.pickAndSendImage(chatId, myUid, viewModel) },
-                onPickFile = { DesktopMediaHelper.pickAndSendFile(chatId, myUid, viewModel) },
-                onPickVideo = { DesktopMediaHelper.pickAndSendVideo(chatId, myUid, viewModel) },
+                onPickImage = { resources.mediaSender.pickAndSendImage(chatId, myUid, viewModel) },
+                onPickFile = { resources.mediaSender.pickAndSendFile(chatId, myUid, viewModel) },
+                onPickVideo = { resources.mediaSender.pickAndSendVideo(chatId, myUid, viewModel) },
                 onMentionClick = onMentionClick,
                 onUrlClick = { rawUrl ->
                     safeDesktopExternalLinkOrNull(rawUrl)?.let { url ->
-                        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+                        previewScope.launch(Dispatchers.IO) {
                             try { java.awt.Desktop.getDesktop().browse(java.net.URI(url)) } catch (_: Exception) {}
                         }
                     }
                 },
                 onVoiceRecord = { start ->
-                    if (start) DesktopMediaHelper.startRecording()
-                    else DesktopMediaHelper.stopAndSendVoice(chatId, myUid, viewModel)
+                    if (start) resources.voiceRecorder.start()
+                    else resources.voiceRecorder.stopAndSend(chatId, myUid, viewModel)
                 },
-                imageContent = { url, modifier -> com.virjar.tk.media.CachedImageContent(url, modifier) },
+                imageContent = { url, modifier ->
+                    com.virjar.tk.media.CachedImageContent(
+                        url = url,
+                        resources = resources,
+                        modifier = modifier,
+                    )
+                },
                 onMediaClick = onMediaClick,
             ),
         )
@@ -783,6 +799,7 @@ private fun ChatPanelWrapper(
         visible = showGallery,
         items = galleryItems,
         initialIndex = galleryIndex,
+        resources = resources,
         onDismiss = { showGallery = false },
     )
     DesktopTextAttachmentPreviewDialog(

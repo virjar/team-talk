@@ -90,6 +90,38 @@ abstract class ArchitectureCheckTask : DefaultTask() {
             ),
         )
 
+        val sourcePatternRules = listOf(
+            SourcePatternRule(
+                name = "client credentials have no process-global session singleton",
+                relativeRoots = listOf(
+                    "shared/src/commonMain",
+                    "app/src/commonMain",
+                    "android/src/main",
+                    "desktop/src/desktopMain",
+                ),
+                forbiddenPatterns = listOf(
+                    Regex("\\bSessionContext\\b") to
+                        "bearer credentials must be provided by an authenticated session owner",
+                ),
+            ),
+            SourcePatternRule(
+                name = "desktop authenticated work has structured ownership",
+                relativeRoots = listOf("desktop/src/desktopMain"),
+                forbiddenPatterns = listOf(
+                    Regex("\\brunBlocking\\s*\\(") to
+                        "desktop UI/session shutdown must never block its caller",
+                    Regex("\\bGlobalScope\\b") to
+                        "desktop background work must belong to a closeable session scope",
+                    Regex("\\bkotlin\\.concurrent\\.thread\\s*\\{") to
+                        "desktop background work must belong to a closeable session scope",
+                    Regex("\\bDesktopMediaCache\\s*\\.\\s*(init|initialize)\\s*\\(") to
+                        "desktop media cache is session-owned and must not be globally initialized",
+                    Regex("\\bobject\\s+DesktopMediaCache\\b") to
+                        "desktop media cache must remain a session-owned instance",
+                ),
+            ),
+        )
+
         val violations = buildList {
             for (rule in rules) {
                 val sourceRoot = root.resolve(rule.relativeRoot)
@@ -115,6 +147,31 @@ abstract class ArchitectureCheckTask : DefaultTask() {
                         }
                     }
             }
+            for (rule in sourcePatternRules) {
+                for (relativeRoot in rule.relativeRoots) {
+                    val sourceRoot = root.resolve(relativeRoot)
+                    if (!sourceRoot.isDirectory) {
+                        add("${rule.name}: missing source root $relativeRoot")
+                        continue
+                    }
+                    sourceRoot.walkTopDown()
+                        .filter { it.isFile && it.extension == "kt" }
+                        .forEach { file ->
+                            file.useLines { lines ->
+                                lines.forEachIndexed { index, line ->
+                                    rule.forbiddenPatterns.forEach { (pattern, reason) ->
+                                        if (pattern.containsMatchIn(line)) {
+                                            add(
+                                                "${file.relativeTo(root).path}:${index + 1}: " +
+                                                    "${rule.name}: $reason",
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                }
+            }
         }
 
         if (violations.isNotEmpty()) {
@@ -126,5 +183,11 @@ abstract class ArchitectureCheckTask : DefaultTask() {
         val name: String,
         val relativeRoot: String,
         val forbiddenImports: List<String>,
+    )
+
+    private data class SourcePatternRule(
+        val name: String,
+        val relativeRoots: List<String>,
+        val forbiddenPatterns: List<Pair<Regex, String>>,
     )
 }

@@ -14,14 +14,14 @@ import com.virjar.tk.model.Attachment
  * 平台媒体操作接口。两端各提供实现，注入给 [rememberMediaClickHandler]。
  *
  * 抽象目的：聊天页点击媒体消息的**分发逻辑**（哪种 body 走哪个动作）两端完全一致，
- * 只有底层 helper 不同（Android: VoicePlayer/MediaHelper；Desktop: DesktopMediaHelper）。
+ * 只有底层会话媒体实现不同（Android 平台播放器；Desktop 会话资源）。
  * 用此接口把分发逻辑收敛到 commonMain，平台只提供三个回调。
  */
 interface PlatformMediaActions {
-    /** 播放语音（Android: VoicePlayer.play；Desktop: DesktopMediaHelper.playAudio） */
+    /** 播放语音（由平台会话播放器实现）。 */
     fun playVoice(attachment: Attachment)
 
-    /** 打开/下载文件（Android: MediaHelper.openFile；Desktop: DesktopMediaHelper.openFile） */
+    /** 打开或下载文件（由平台认证会话资源实现）。 */
     fun openFile(attachment: Attachment)
 
     /** 打开全屏媒体画廊（Android: 设 state 触发 MediaGallery；Desktop: 设 state 触发 MediaGalleryWindow） */

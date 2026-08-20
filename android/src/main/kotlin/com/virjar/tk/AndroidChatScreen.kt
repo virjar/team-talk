@@ -34,6 +34,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.virjar.tk.body.*
+import com.virjar.tk.client.UserSession
 import com.virjar.tk.model.ChatType
 import com.virjar.tk.model.Attachment
 import com.virjar.tk.model.Message
@@ -60,6 +61,7 @@ fun AndroidChatScreen(
     chatType: Int,
     viewModel: ChatViewModel,
     myUid: String,
+    userSession: UserSession,
     draft: String? = null,
     onDraftChange: ((String) -> Unit)? = null,
     composerContextStore: ChatComposerContextStore,
@@ -67,7 +69,6 @@ fun AndroidChatScreen(
     onGroupDetail: () -> Unit,
     onBack: () -> Unit,
     serverUrl: String = "",
-    accessToken: String? = null,
     resolveSender: ((uid: String) -> User?)? = null,
     mentionCandidates: List<User> = emptyList(),
     onMentionClick: ((uid: String) -> Unit)? = null,
@@ -80,15 +81,18 @@ fun AndroidChatScreen(
     val focusManager = LocalFocusManager.current
     val softwareKeyboardController = LocalSoftwareKeyboardController.current
     val attachmentServerUrl = serverUrl.ifBlank { com.virjar.tk.client.defaultServerConfig().serverUrl }
-    val mediaCacheScope = remember(myUid, accessToken) {
-        mediaCacheNamespace(myUid, accessToken, UUID.randomUUID().toString())
+    val mediaSession = remember(attachmentServerUrl, myUid, userSession) {
+        AndroidMediaSession.create(
+            serverUrl = attachmentServerUrl,
+            ownerUid = myUid,
+            credentialsProvider = userSession::httpCredentialsSnapshot,
+        )
     }
-    val fileDownloads = remember(context, attachmentServerUrl, accessToken, mediaCacheScope) {
+    val mediaCacheScope = mediaSession.cacheNamespace
+    val fileDownloads = remember(context, mediaSession) {
         AndroidFileDownloadController(
             context,
-            attachmentServerUrl,
-            accessToken,
-            cacheNamespace = mediaCacheScope,
+            mediaSession,
             onTextAttachmentPreview = onTextAttachmentPreview,
         )
     }
@@ -148,14 +152,13 @@ fun AndroidChatScreen(
                 selected = MediaHelper.prepareSelectedMedia(
                     context,
                     uri,
-                    cacheNamespace = mediaCacheScope,
+                    mediaSession = mediaSession,
                 )
                 val attachment = MediaHelper.uploadFile(
                     selected.file,
                     selected.fileName,
                     selected.contentType,
-                    attachmentServerUrl,
-                    accessToken,
+                    mediaSession,
                 )
                 viewModel.sendMessage(buildMessage(attachment))
             } catch (error: Exception) {
@@ -186,14 +189,13 @@ fun AndroidChatScreen(
                     selected = MediaHelper.prepareSelectedMedia(
                         context,
                         uri,
-                        cacheNamespace = mediaCacheScope,
+                        mediaSession = mediaSession,
                     )
                     val meta = MediaHelper.uploadWithMeta(
                         selected.file,
                         selected.fileName,
                         selected.contentType,
-                        attachmentServerUrl,
-                        accessToken,
+                        mediaSession,
                     )
                     viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.IMAGE.code, System.currentTimeMillis(),
                         body = ImageBody(meta.file, width = meta.width, height = meta.height, thumbnail = meta.thumbnail)))
@@ -217,7 +219,7 @@ fun AndroidChatScreen(
                     selected = MediaHelper.prepareSelectedMedia(
                         context,
                         uri,
-                        cacheNamespace = mediaCacheScope,
+                        mediaSession = mediaSession,
                     )
                     val selectedFile = selected.file
                     // 服务端生成缩略图和元数据；字段缺失时再回退本地 MediaMetadataRetriever。
@@ -225,8 +227,7 @@ fun AndroidChatScreen(
                         selectedFile,
                         selected.fileName,
                         selected.contentType,
-                        attachmentServerUrl,
-                        accessToken,
+                        mediaSession,
                     )
                     val attachment = up.file
                     var w = up.width
@@ -243,7 +244,7 @@ fun AndroidChatScreen(
                                 MediaHelper.extractVideoThumbnail(
                                     context,
                                     selectedFile,
-                                    cacheNamespace = mediaCacheScope,
+                                    mediaSession = mediaSession,
                                 )
                             }
                                 ?.let { thumbnailFile ->
@@ -252,8 +253,7 @@ fun AndroidChatScreen(
                                             thumbnailFile,
                                             "thumb.jpg",
                                             "image/jpeg",
-                                            attachmentServerUrl,
-                                            accessToken,
+                                            mediaSession,
                                         )
                                     } finally {
                                         thumbnailFile.delete()
@@ -358,8 +358,7 @@ fun AndroidChatScreen(
                     file,
                     file.name,
                     "audio/aac",
-                    attachmentServerUrl,
-                    accessToken,
+                    mediaSession,
                 )
                 viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.VOICE.code, System.currentTimeMillis(), body = VoiceBody(attachment, duration)))
             } catch (error: Exception) {
@@ -432,8 +431,7 @@ fun AndroidChatScreen(
                 voicePlayback = rememberAndroidVoicePlayback(
                     context = context,
                     serverUrl = attachmentServerUrl,
-                    accessToken = accessToken,
-                    cacheNamespace = mediaCacheScope,
+                    mediaSession = mediaSession,
                 ),
                 mentionCandidates = mentionCandidates,
                 readReceiptsEnabled = chatRouteResumed,
@@ -450,8 +448,7 @@ fun AndroidChatScreen(
                     imageContent = { url, mod ->
                         rememberAsyncThumb(
                             url = com.virjar.tk.repository.FileOps.resolveUrl(attachmentServerUrl, url),
-                            accessToken = accessToken,
-                            cacheNamespace = mediaCacheScope,
+                            mediaSession = mediaSession,
                             modifier = mod,
                             placeholderColor = android.graphics.Color.LTGRAY,
                         )
@@ -459,8 +456,7 @@ fun AndroidChatScreen(
                     videoContent = { url, mod ->
                         rememberAsyncThumb(
                             url = com.virjar.tk.repository.FileOps.resolveUrl(attachmentServerUrl, url),
-                            accessToken = accessToken,
-                            cacheNamespace = mediaCacheScope,
+                            mediaSession = mediaSession,
                             modifier = mod,
                             placeholderColor = android.graphics.Color.DKGRAY,
                         )
@@ -471,8 +467,7 @@ fun AndroidChatScreen(
                             override fun playVoice(attachment: com.virjar.tk.model.Attachment) = VoicePlayer.play(
                                 context,
                                 com.virjar.tk.repository.FileOps.resolveUrl(attachmentServerUrl, attachment),
-                                accessToken,
-                                mediaCacheScope,
+                                mediaSession,
                             )
                             override fun openFile(attachment: com.virjar.tk.model.Attachment) {
                                 fileDownloads.openOrDownload(attachment)
@@ -512,8 +507,7 @@ fun AndroidChatScreen(
             imageRenderer = { url, mod ->
                 rememberAsyncThumb(
                     url = com.virjar.tk.repository.FileOps.resolveUrl(attachmentServerUrl, url),
-                    accessToken = accessToken,
-                    cacheNamespace = mediaCacheScope,
+                    mediaSession = mediaSession,
                     modifier = mod,
                     placeholderColor = android.graphics.Color.BLACK,
                 )
@@ -521,8 +515,7 @@ fun AndroidChatScreen(
             videoRenderer = { url, isCurrentPage, mod ->
                 rememberVideoPlayer(
                     url = com.virjar.tk.repository.FileOps.resolveUrl(attachmentServerUrl, url),
-                    accessToken = accessToken,
-                    cacheNamespace = mediaCacheScope,
+                    mediaSession = mediaSession,
                     isCurrentPage = isCurrentPage,
                     modifier = mod,
                 )
@@ -708,12 +701,11 @@ internal fun openSafeExternalLink(context: android.content.Context, rawUrl: Stri
 private fun rememberAndroidVoicePlayback(
     context: android.content.Context,
     serverUrl: String,
-    accessToken: String?,
-    cacheNamespace: String,
+    mediaSession: AndroidMediaSession,
 ): com.virjar.tk.ui.component.VoicePlaybackController {
     val urlState = remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
     val progressState = remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
-    val controller = remember(serverUrl, accessToken, cacheNamespace) {
+    val controller = remember(serverUrl, mediaSession) {
         object : com.virjar.tk.ui.component.VoicePlaybackController {
             override val playingUrl: String? by urlState
             override val progress: Float by progressState
@@ -723,14 +715,13 @@ private fun rememberAndroidVoicePlayback(
                 VoicePlayer.play(
                     context = context,
                     url = com.virjar.tk.repository.FileOps.resolveUrl(serverUrl, url),
-                    accessToken = accessToken,
-                    cacheNamespace = cacheNamespace,
+                    mediaSession = mediaSession,
                 )
             }
         }
     }
-    DisposableEffect(controller, cacheNamespace) {
-        onDispose { VoicePlayer.stop(cacheNamespace) }
+    DisposableEffect(controller, mediaSession.cacheNamespace) {
+        onDispose { VoicePlayer.stop(mediaSession.cacheNamespace) }
     }
     LaunchedEffect(controller) {
         while (true) {

@@ -1005,13 +1005,11 @@ class DocumentWorkspaceFeature internal constructor(
     }
 
     /**
-     * Android calls this synchronously before `super.onStop()`: capture the editor's last frame,
-     * let [updateDraft] enqueue that exact workspace snapshot, then wait for platform persistence.
-     * Flush is still attempted if a custom editor callback fails, preserving the previous snapshot.
+     * Publishes the editor's last visual/source frame into the immutable workspace snapshot.
+     * Platform shells call this synchronously, then enqueue their own non-blocking durability
+     * barrier; the common feature never performs filesystem waits on the UI thread.
      */
-    fun captureAndFlushDrafts(): Boolean {
-        return captureDocumentDraftThenFlush(draftLifecycleBridge, draftStore::flush)
-    }
+    fun captureDrafts(): Boolean = draftLifecycleBridge.captureLatest()
 
     private fun nextTabInstanceId(): Long = ++tabInstanceSequence
 

@@ -44,9 +44,6 @@ fun main() {
         oldHandler?.uncaughtException(thread, throwable)
     }
 
-    // 媒体缓存体系（SQLite 管理 + 磁盘配额清理）
-    com.virjar.tk.media.DesktopMediaCache.init(dataDir)
-
     AppLog.trace("Main", "TeamTalk starting, dataDir=${dataDir.absolutePath}")
     // 构建溯源：启动即打印 commit/build time，排查问题时可从日志确认产物来源
     AppLog.trace("Main", "Build: commit=${BuildConfig.GIT_COMMIT_ID} time=${BuildConfig.BUILD_TIME}")

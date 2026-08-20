@@ -18,6 +18,9 @@ import com.virjar.tk.util.AppLogTkLogger
  * - 日志注入、ServerConfig 等是进程级单次初始化
  */
 class TeamTalkApp : Application(), coil3.SingletonImageLoader.Factory {
+    /** Process-owned writer shared by every Activity/session draft store in this installation. */
+    internal lateinit var documentDraftPersistence: AndroidDocumentDraftPersistence
+        private set
 
     /**
      * Coil 全局图片加载器：媒体缓存体系（Android 端实现）——
@@ -38,6 +41,7 @@ class TeamTalkApp : Application(), coil3.SingletonImageLoader.Factory {
 
         // 0. 初始化 AndroidContext（供 platformDataDir() 使用）
         com.virjar.tk.client.AndroidContext.appContext = this
+        documentDraftPersistence = AndroidDocumentDraftPersistence(this)
 
         // 1. 日志注入：shared 模块的 TkLogger → AppLog
         TkLoggerFactory.install { name -> AppLogTkLogger(name) }
@@ -66,5 +70,14 @@ class TeamTalkApp : Application(), coil3.SingletonImageLoader.Factory {
             tcpHost = BuildConfig.TCP_HOST,
             tcpPort = BuildConfig.TCP_PORT,
         ))
+    }
+
+    override fun onTerminate() {
+        // Real devices terminate the process directly; emulators/tests invoke this hook. The
+        // asynchronous close still defines and verifies ownership without blocking the main loop.
+        VoicePlayer.close()
+        MediaCacheLeaseRegistry.close()
+        if (::documentDraftPersistence.isInitialized) documentDraftPersistence.close()
+        super.onTerminate()
     }
 }

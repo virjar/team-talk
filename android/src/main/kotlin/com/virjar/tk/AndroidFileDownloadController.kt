@@ -19,18 +19,11 @@ import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.UUID
 
 /** Android 文件附件下载控制器：会话隔离缓存 + 气泡进度动画数据源。 */
 class AndroidFileDownloadController(
     context: Context,
-    private val serverUrl: String,
-    private val accessToken: String?,
-    private val cacheNamespace: String = mediaCacheNamespace(
-        uid = null,
-        accessToken = accessToken,
-        fallbackNonce = UUID.randomUUID().toString(),
-    ),
+    private val mediaSession: AndroidMediaSession,
     private val onTextAttachmentPreview: ((Attachment) -> Unit)? = null,
 ) : FileDownloadController {
 
@@ -42,18 +35,24 @@ class AndroidFileDownloadController(
     private val inFlight = mutableSetOf<String>()
     private val openAfterDownload = mutableSetOf<String>()
     private val mutex = Mutex()
-    private val cacheLease = acquireMediaCacheLease(appContext.cacheDir, cacheNamespace)
+    private val cacheLease = acquireMediaCacheLease(appContext.cacheDir, mediaSession.cacheNamespace)
 
     override fun ensure(attachment: Attachment) {
+        if (!mediaSession.isCurrentOwner()) return
         if (states.containsKey(attachment.path)) return
         states[attachment.path] = if (cachedFile(attachment).isFile) FileDownloadState.Done else FileDownloadState.Idle
     }
 
     override fun download(attachment: Attachment) {
+        if (!mediaSession.isCurrentOwner()) return
         scope.launch { downloadInternal(attachment, openWhenDone = false) }
     }
 
     override fun openOrDownload(attachment: Attachment) {
+        if (!mediaSession.isCurrentOwner()) {
+            states[attachment.path] = FileDownloadState.Failed("登录会话已切换")
+            return
+        }
         if (onTextAttachmentPreview != null && textAttachmentPreviewKind(attachment) != null) {
             onTextAttachmentPreview.invoke(attachment)
             return
@@ -68,7 +67,7 @@ class AndroidFileDownloadController(
 
     override fun close() {
         // URLConnection 的阻塞读取不一定在 cancel() 当下退出。子任务真正结束后再释放租约；
-        // 同 token 的其他页面仍持有租约时，关闭本控制器不会删除共享缓存。
+        // 同账号的其他页面仍持有租约时，关闭本控制器不会删除共享缓存。
         scopeJob.invokeOnCompletion {
             cacheLease.close()
         }
@@ -88,13 +87,12 @@ class AndroidFileDownloadController(
             states[key] = FileDownloadState.Downloading(0f)
             val cached = downloadAttachmentToCache(
                 cacheRoot = appContext.cacheDir,
-                cacheNamespace = cacheNamespace,
-                serverUrl = serverUrl,
-                accessToken = accessToken,
+                mediaSession = mediaSession,
                 attachment = attachment,
             ) { progress ->
                 states[key] = FileDownloadState.Downloading(progress)
             }
+            if (!mediaSession.isCurrentOwner()) return
             states[key] = FileDownloadState.Done
             val shouldOpen = mutex.withLock { openAfterDownload.remove(key) }
             if (shouldOpen) openCached(cached, attachment.contentType)
@@ -113,7 +111,7 @@ class AndroidFileDownloadController(
     }
 
     private fun cachedFile(attachment: Attachment): File {
-        return attachmentCacheFile(appContext.cacheDir, cacheNamespace, attachment)
+        return attachmentCacheFile(appContext.cacheDir, mediaSession.cacheNamespace, attachment)
     }
 }
 
@@ -129,25 +127,24 @@ internal fun attachmentCacheFile(
         .replace(Regex("[\\\\/:*?\"<>|\\u0000-\\u001F]"), "_")
         .take(120)
         .ifBlank { "attachment" }
-    val key = attachment.path.hashCode().toUInt().toString(16)
+    val key = sha256Hex(attachment.path).take(32)
     return File(directory, "$key-$leaf")
 }
 
 /** 聊天附件与内嵌预览共用的认证下载和原子缓存路径。 */
 internal suspend fun downloadAttachmentToCache(
     cacheRoot: File,
-    cacheNamespace: String,
-    serverUrl: String,
-    accessToken: String?,
+    mediaSession: AndroidMediaSession,
     attachment: Attachment,
     onProgress: ((Float) -> Unit)? = null,
 ): File {
-    val target = attachmentCacheFile(cacheRoot, cacheNamespace, attachment)
+    val accessToken = mediaSession.accessTokenForRequest()
+    val target = attachmentCacheFile(cacheRoot, mediaSession.cacheNamespace, attachment)
     val cached = materializeMediaCacheFile(target) { partial ->
-        val conn = URL(FileOps.resolveUrl(serverUrl, attachment)).openConnection() as HttpURLConnection
+        val conn = URL(FileOps.resolveUrl(mediaSession.serverUrl, attachment)).openConnection() as HttpURLConnection
         conn.connectTimeout = 10_000
         conn.readTimeout = 120_000
-        accessToken?.let { conn.setRequestProperty("Authorization", "Bearer $it") }
+        conn.setRequestProperty("Authorization", "Bearer $accessToken")
         try {
             val code = conn.responseCode
             if (code !in 200..299) throw IllegalStateException("下载失败 HTTP $code")

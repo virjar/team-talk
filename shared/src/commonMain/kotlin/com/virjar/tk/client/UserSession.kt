@@ -1,5 +1,11 @@
 package com.virjar.tk.client
 
+/** Atomic HTTP identity used by session-owned platform adapters. */
+data class SessionHttpCredentials(
+    val uid: String,
+    val accessToken: String?,
+)
+
 /**
  * 用户层状态容器（三级状态设计的第二级）。
  *
@@ -15,6 +21,7 @@ package com.virjar.tk.client
  * @see ImClient 连接层（不持有用户身份，认证结果通过回调回传本类）
  */
 class UserSession {
+    private val identityLock = Any()
     /** 当前登录用户 uid。认证成功后填充，认证失败/登出时清空。 */
     @Volatile
     var uid: String = ""; private set
@@ -44,12 +51,14 @@ class UserSession {
      * 填充用户身份 + 清失败原因。
      */
     fun onAuthSuccess(uid: String, username: String?, name: String?, refreshToken: String?, accessToken: String? = null) {
-        this.uid = uid
-        this.username = username
-        this.name = name
-        this.accessToken = accessToken
-        this.refreshToken = refreshToken
-        this.authFailureReason = null
+        synchronized(identityLock) {
+            this.uid = uid
+            this.username = username
+            this.name = name
+            this.accessToken = accessToken
+            this.refreshToken = refreshToken
+            this.authFailureReason = null
+        }
     }
 
     /**
@@ -57,11 +66,21 @@ class UserSession {
      * 注意：TCP 断开（非认证失败）**不调此方法**——用户身份保留，重连后自动重认证。
      */
     fun onAuthFailed(reason: String?) {
-        this.authFailureReason = reason
-        this.uid = ""
-        this.accessToken = null
-        this.username = null
-        this.name = null
-        this.refreshToken = null
+        synchronized(identityLock) {
+            this.authFailureReason = reason
+            this.uid = ""
+            this.accessToken = null
+            this.username = null
+            this.name = null
+            this.refreshToken = null
+        }
+    }
+
+    /**
+     * Reads uid and Bearer token as one generation. Platform HTTP work must use this snapshot
+     * instead of reading the two volatile properties separately across a reconnect/login update.
+     */
+    fun httpCredentialsSnapshot(): SessionHttpCredentials = synchronized(identityLock) {
+        SessionHttpCredentials(uid = uid, accessToken = accessToken)
     }
 }

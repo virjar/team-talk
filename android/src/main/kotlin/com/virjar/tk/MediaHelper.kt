@@ -12,6 +12,7 @@ import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import com.virjar.tk.AppError
+import com.virjar.tk.client.SessionHttpCredentials
 import com.virjar.tk.http.UploadResult
 import com.virjar.tk.model.Attachment
 import com.virjar.tk.repository.FileOps
@@ -45,23 +46,62 @@ import kotlin.concurrent.withLock
 internal const val MAX_SELECTED_MEDIA_BYTES: Long = 512L * 1024 * 1024
 
 /**
- * 生成不暴露 uid/token 的会话缓存命名空间。fallbackNonce 在无认证信息时必须由调用方按实例生成，
- * 这样匿名/过渡态也不会复用另一个账户留下的受保护媒体。
+ * 生成不暴露服务器或 uid 的账号缓存命名空间。Bearer token 轮换不改变同一服务器、同一账号的
+ * 缓存身份；跨账号和跨服务器仍严格隔离。
  */
 internal fun mediaCacheNamespace(
-    uid: String?,
-    accessToken: String?,
-    fallbackNonce: String,
+    serverUrl: String,
+    ownerUid: String,
 ): String {
-    require(uid?.isNotBlank() == true || accessToken?.isNotBlank() == true || fallbackNonce.isNotBlank()) {
-        "media cache identity must not be empty"
+    val serverIdentity = serverUrl.trim().trimEnd('/')
+    require(serverIdentity.isNotBlank()) { "media server identity must not be empty" }
+    require(ownerUid.isNotBlank()) { "media owner uid must not be empty" }
+    return sha256Hex("teamtalk-media-v2\u0000$serverIdentity\u0000uid\u0000$ownerUid").take(32)
+}
+
+/**
+ * Immutable credentials captured when an authenticated Android UI session is composed.
+ *
+ * Passing this value through every protected-media operation makes it impossible to pair account
+ * A's cache namespace with a token read later from account B's mutable login state.
+ */
+class AndroidMediaSession private constructor(
+    val serverUrl: String,
+    private val ownerUid: String,
+    private val credentialsProvider: () -> SessionHttpCredentials,
+    val cacheNamespace: String,
+) {
+    /**
+     * Reads a reconnect-rotated token while refusing a later login that reused the UserSession
+     * object for another uid. The returned token is fixed by each HTTP request before IO begins.
+     */
+    fun accessTokenForRequest(): String {
+        val credentials = credentialsProvider()
+        check(credentials.uid == ownerUid) { "媒体任务所属登录会话已失效" }
+        return credentials.accessToken?.takeIf(String::isNotBlank)
+            ?: throw IllegalStateException("认证凭据不可用，请重新登录")
     }
-    val identity = when {
-        accessToken?.isNotBlank() == true -> "token\u0000$accessToken"
-        uid?.isNotBlank() == true -> "uid\u0000$uid"
-        else -> "nonce\u0000$fallbackNonce"
+
+    fun isCurrentOwner(): Boolean = credentialsProvider().uid == ownerUid
+
+    companion object {
+        fun create(
+            serverUrl: String,
+            ownerUid: String,
+            credentialsProvider: () -> SessionHttpCredentials,
+        ): AndroidMediaSession {
+            val normalizedServerUrl = serverUrl.trim().trimEnd('/')
+            return AndroidMediaSession(
+                serverUrl = normalizedServerUrl,
+                ownerUid = ownerUid,
+                credentialsProvider = credentialsProvider,
+                cacheNamespace = mediaCacheNamespace(
+                    serverUrl = normalizedServerUrl,
+                    ownerUid = ownerUid,
+                ),
+            )
+        }
     }
-    return sha256Hex("teamtalk-media-v1\u0000$identity").take(32)
 }
 
 /** 所有 Android 媒体临时文件与下载缓存都收敛到会话隔离目录。 */
@@ -120,7 +160,7 @@ internal fun acquireMediaCacheLease(cacheRoot: File, cacheNamespace: String): Me
     MediaCacheLeaseRegistry.acquire(cacheRoot, cacheNamespace)
 
 /**
- * token 命名空间会被多个聊天/群文件页共享。只有最后一个所有者退出后才可以清理；
+ * 账号命名空间会被多个聊天/群文件页共享。只有最后一个所有者退出后才可以清理；
  * 新页面在清理检查前获取租约会取消该次清理。
  */
 internal object MediaCacheLeaseRegistry {
@@ -131,7 +171,8 @@ internal object MediaCacheLeaseRegistry {
     )
 
     private val states = mutableMapOf<Key, State>()
-    private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val cleanupJob = SupervisorJob()
+    private val cleanupScope = CoroutineScope(cleanupJob + Dispatchers.IO)
 
     fun acquire(cacheRoot: File, cacheNamespace: String): MediaCacheLease {
         val key = Key(cacheRoot.absoluteFile.normalize().path, cacheNamespace)
@@ -180,6 +221,12 @@ internal object MediaCacheLeaseRegistry {
             }
         }
     }
+
+    /** Process-owner teardown; normal page disposal releases an individual lease instead. */
+    fun close() {
+        cleanupJob.cancel()
+        synchronized(this) { states.clear() }
+    }
 }
 
 internal const val FILE_PROVIDER_ATTACHMENTS_PATH = "teamtalk-media/attachments/"
@@ -209,18 +256,16 @@ object MediaHelper {
         file: File,
         fileName: String,
         contentType: String,
-        serverUrl: String,
-        accessToken: String? = com.virjar.tk.client.SessionContext.accessToken,
-    ): Attachment = uploadFileStreaming(file, fileName, contentType, serverUrl, accessToken).file
+        mediaSession: AndroidMediaSession,
+    ): Attachment = uploadFileStreaming(file, fileName, contentType, mediaSession).file
 
     /** 从磁盘流式上传并返回服务端媒体元数据。 */
     suspend fun uploadWithMeta(
         file: File,
         fileName: String,
         contentType: String,
-        serverUrl: String,
-        accessToken: String? = com.virjar.tk.client.SessionContext.accessToken,
-    ): UploadResult = uploadFileStreaming(file, fileName, contentType, serverUrl, accessToken)
+        mediaSession: AndroidMediaSession,
+    ): UploadResult = uploadFileStreaming(file, fileName, contentType, mediaSession)
 
     /**
      * 在 IO 线程把一次系统选择固化为有界临时文件。
@@ -231,13 +276,10 @@ object MediaHelper {
     internal suspend fun prepareSelectedMedia(
         context: Context,
         uri: Uri,
+        mediaSession: AndroidMediaSession,
         maxBytes: Long = MAX_SELECTED_MEDIA_BYTES,
-        cacheNamespace: String = mediaCacheNamespace(
-            uid = null,
-            accessToken = com.virjar.tk.client.SessionContext.accessToken,
-            fallbackNonce = UUID.randomUUID().toString(),
-        ),
     ): PreparedMedia = withContext(Dispatchers.IO) {
+        mediaSession.accessTokenForRequest()
         require(maxBytes > 0) { "maxBytes must be positive" }
         val declaredSize = getFileSizeOrNull(context, uri)
         if (declaredSize != null && declaredSize > maxBytes) {
@@ -246,7 +288,7 @@ object MediaHelper {
 
         val directory = mediaCacheDirectory(
             context.cacheDir,
-            cacheNamespace,
+            mediaSession.cacheNamespace,
             "outgoing-media",
         ).apply { mkdirs() }
         val target = File.createTempFile("selected-", ".tmp", directory)
@@ -278,21 +320,19 @@ object MediaHelper {
     suspend fun downloadToCache(
         url: String,
         cacheDir: File,
-        accessToken: String?,
-        cacheNamespace: String,
+        mediaSession: AndroidMediaSession,
         onProgress: ((Float) -> Unit)? = null,
     ): File = withContext(Dispatchers.IO) {
+        val accessToken = mediaSession.accessTokenForRequest()
         val hash = sha256Hex(url)
         val ext = url.substringAfterLast('.', "").let { if (it.length <= 5) it else "mp4" }
-        val directory = mediaCacheDirectory(cacheDir, cacheNamespace, "downloads").apply { mkdirs() }
+        val directory = mediaCacheDirectory(cacheDir, mediaSession.cacheNamespace, "downloads").apply { mkdirs() }
         val file = File(directory, "$hash.$ext")
         val cached = materializeMediaCacheFile(file) { partial ->
             val conn = URL(url).openConnection() as HttpURLConnection
             conn.connectTimeout = 10_000
             conn.readTimeout = 60_000
-            accessToken?.let {
-                conn.setRequestProperty("Authorization", "Bearer $it")
-            }
+            conn.setRequestProperty("Authorization", "Bearer $accessToken")
             try {
                 val responseCode = conn.responseCode
                 if (responseCode !in 200..299) {
@@ -395,12 +435,9 @@ object MediaHelper {
     fun extractVideoThumbnail(
         context: Context,
         sourceFile: File,
-        cacheNamespace: String = mediaCacheNamespace(
-            uid = null,
-            accessToken = com.virjar.tk.client.SessionContext.accessToken,
-            fallbackNonce = UUID.randomUUID().toString(),
-        ),
+        mediaSession: AndroidMediaSession,
     ): File? {
+        mediaSession.accessTokenForRequest()
         val retriever = MediaMetadataRetriever()
         return try {
             retriever.setDataSource(sourceFile.absolutePath)
@@ -426,7 +463,7 @@ object MediaHelper {
             if (bitmap !== decoded) decoded.recycle()
             val directory = mediaCacheDirectory(
                 context.cacheDir,
-                cacheNamespace,
+                mediaSession.cacheNamespace,
                 "outgoing-thumbnails",
             ).apply { mkdirs() }
             val file = File.createTempFile("thumb-", ".jpg", directory)
@@ -465,9 +502,9 @@ object MediaHelper {
         file: File,
         fileName: String,
         contentType: String,
-        serverUrl: String,
-        accessToken: String?,
+        mediaSession: AndroidMediaSession,
     ): UploadResult = withContext(Dispatchers.IO) {
+        val accessToken = mediaSession.accessTokenForRequest()
         require(file.isFile) { "待上传文件不存在" }
 
         val boundary = "TeamTalk-${UUID.randomUUID()}"
@@ -482,16 +519,14 @@ object MediaHelper {
         val suffix = "\r\n--$boundary--\r\n".toByteArray(StandardCharsets.UTF_8)
         val requestLength = prefix.size.toLong() + file.length() + suffix.size.toLong()
 
-        val connection = (URL("${serverUrl.trimEnd('/')}/api/v1/files/upload")
+        val connection = (URL("${mediaSession.serverUrl}/api/v1/files/upload")
             .openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             doOutput = true
             connectTimeout = 10_000
             readTimeout = 120_000
             setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
-            accessToken?.let {
-                setRequestProperty("Authorization", "Bearer $it")
-            }
+            setRequestProperty("Authorization", "Bearer $accessToken")
             setFixedLengthStreamingMode(requestLength)
         }
 
@@ -641,6 +676,6 @@ private fun constrainVideoThumbnail(bitmap: Bitmap): Bitmap {
     return Bitmap.createScaledBitmap(bitmap, width, height, true)
 }
 
-private fun sha256Hex(value: String): String = MessageDigest.getInstance("SHA-256")
+internal fun sha256Hex(value: String): String = MessageDigest.getInstance("SHA-256")
     .digest(value.toByteArray(StandardCharsets.UTF_8))
     .joinToString("") { "%02x".format(it) }

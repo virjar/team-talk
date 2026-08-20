@@ -20,22 +20,20 @@ import java.io.File
 @Composable
 fun rememberAsyncThumb(
     url: String,
-    accessToken: String?,
-    cacheNamespace: String,
+    mediaSession: AndroidMediaSession,
     modifier: Modifier = Modifier,
     placeholderColor: Int = android.graphics.Color.LTGRAY,
 ) {
     val context = LocalContext.current
-    var targetSize by remember(url, cacheNamespace) { mutableStateOf(IntSize.Zero) }
-    val bitmap by produceState<Bitmap?>(null, url, targetSize, accessToken, cacheNamespace) {
+    var targetSize by remember(url, mediaSession.cacheNamespace) { mutableStateOf(IntSize.Zero) }
+    val bitmap by produceState<Bitmap?>(null, url, targetSize, mediaSession) {
         if (targetSize.width <= 0 || targetSize.height <= 0) return@produceState
         value = withContext(Dispatchers.IO) {
             runCatching {
                 val file = MediaHelper.downloadToCache(
                     url = url,
                     cacheDir = context.cacheDir,
-                    accessToken = accessToken,
-                    cacheNamespace = cacheNamespace,
+                    mediaSession = mediaSession,
                 )
                 decodeSampledBitmap(file, targetSize.width, targetSize.height)
             }.onFailure { Log.e("MediaThumb", "加载失败: $url", it) }.getOrNull()

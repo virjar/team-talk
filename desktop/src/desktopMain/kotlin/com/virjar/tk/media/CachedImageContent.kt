@@ -15,8 +15,9 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
-import com.virjar.tk.DesktopMediaHelper
+import com.virjar.tk.DesktopImageCodec
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -29,16 +30,31 @@ import java.io.File
  * @param progressOverlay true=画廊式大进度覆盖（原图按需下载），false=气泡式小指示
  */
 @Composable
-fun CachedImageContent(url: String, modifier: Modifier = Modifier, progressOverlay: Boolean = false) {
-    val state = produceState<CachedImageState>(CachedImageState.Loading(0f), url) {
-        val cached = DesktopMediaCache.cachedPath(url)
-        value = cached?.let { CachedImageState.Ready(it) }
+internal fun CachedImageContent(
+    url: String,
+    resources: DesktopSessionResources,
+    modifier: Modifier = Modifier,
+    progressOverlay: Boolean = false,
+) {
+    val state = produceState<CachedImageState>(
+        CachedImageState.Loading(0f),
+        url,
+        resources,
+    ) {
+        val cached = resources.mediaCache.cachedFile(url)
+        value = cached?.let {
+            resources.ensureOpen()
+            CachedImageState.Ready(it.absolutePath)
+        }
             ?: try {
-                DesktopMediaCache.ensureDownloaded(url) { p ->
+                resources.mediaCache.ensureDownloaded(url) { p ->
                     value = CachedImageState.Loading(p)
-                }.let {
-                    CachedImageState.Ready(it)
+                }.let { file ->
+                    resources.ensureOpen()
+                    CachedImageState.Ready(file.absolutePath)
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 CachedImageState.Failed(e.message ?: "download failed")
             }
@@ -76,7 +92,7 @@ private sealed interface CachedImageState {
 @Composable
 private fun CachedBitmapImage(file: File, modifier: Modifier = Modifier) {
     val bitmap = produceState<ImageBitmap?>(null, file) {
-        value = withContext(Dispatchers.IO) { DesktopMediaHelper.decodeLocalImage(file) }
+        value = withContext(Dispatchers.IO) { DesktopImageCodec.decode(file) }
     }
     bitmap.value?.let { bmp ->
         Image(bitmap = bmp, contentDescription = "图片", modifier = modifier, contentScale = ContentScale.Crop)

@@ -16,7 +16,6 @@ interface DocumentDraftPersistence {
     fun write(uid: String, payload: () -> String): Boolean
     fun delete(uid: String): Boolean
     fun clearAll(): Boolean
-    fun flush(): Boolean = true
 }
 
 /**
@@ -54,16 +53,6 @@ class DocumentDraftLifecycleBridge {
         val entry = active ?: return true
         return runCatching(entry.captureAndPublish).isSuccess
     }
-}
-
-/** Keeps the lifecycle ordering explicit and unit-testable without an Android Activity. */
-internal fun captureDocumentDraftThenFlush(
-    bridge: DocumentDraftLifecycleBridge,
-    flush: () -> Boolean,
-): Boolean {
-    val captured = bridge.captureLatest()
-    val flushed = flush()
-    return captured && flushed
 }
 
 private object NoOpDocumentDraftPersistence : DocumentDraftPersistence {
@@ -148,9 +137,6 @@ class DocumentDraftStore(
             snapshot = null
         }
     }
-
-    /** Waits for platform storage to finish its latest coalesced atomic write. */
-    fun flush(): Boolean = safely { persistence.flush() } == true
 
     private fun encodeSnapshot(value: DocumentWorkspaceDraftSnapshot): String =
         payloadJson.encodeToString(PersistedDocumentWorkspaceDraft.from(value))

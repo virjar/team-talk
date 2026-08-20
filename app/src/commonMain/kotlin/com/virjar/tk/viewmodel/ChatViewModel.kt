@@ -195,7 +195,7 @@ class ChatViewModel(
     }
 
     /**
-     * 供平台媒体工具（DesktopMediaHelper 等）调用，设置错误提示。
+     * 供平台会话媒体服务调用，设置错误提示。
      */
     fun onError(msg: String) = setError(msg)
 

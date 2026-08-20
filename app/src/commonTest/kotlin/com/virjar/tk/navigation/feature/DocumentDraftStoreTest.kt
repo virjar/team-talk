@@ -26,7 +26,7 @@ class DocumentDraftStoreTest {
     }
 
     @Test
-    fun `lifecycle path captures before flush and still flushes after editor failure`() {
+    fun `lifecycle capture reports editor failure without losing the previous snapshot`() {
         val bridge = DocumentDraftLifecycleBridge()
         val events = mutableListOf<String>()
         bridge.register {
@@ -34,13 +34,8 @@ class DocumentDraftStoreTest {
             error("editor unavailable")
         }
 
-        assertFalse(
-            captureDocumentDraftThenFlush(bridge) {
-                events += "flush"
-                true
-            }
-        )
-        assertEquals(listOf("capture", "flush"), events)
+        assertFalse(bridge.captureLatest())
+        assertEquals(listOf("capture"), events)
     }
 
     @Test

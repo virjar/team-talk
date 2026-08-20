@@ -1,5 +1,6 @@
 package com.virjar.tk
 
+import com.virjar.tk.client.UserSession
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -119,24 +120,45 @@ class AndroidMediaSafetyTest {
     }
 
     @Test
-    fun `media cache namespace is opaque stable per session and changes with token`() {
-        val first = mediaCacheNamespace("uid-a", "secret-token-a", "nonce-a")
-        val sameSession = mediaCacheNamespace("uid-a", "secret-token-a", "another-nonce")
-        val anotherSession = mediaCacheNamespace("uid-a", "secret-token-b", "nonce-a")
-        val anotherAccount = mediaCacheNamespace("uid-b", "secret-token-c", "nonce-a")
+    fun `media cache namespace is opaque stable across token rotation and isolated by owner`() {
+        val first = mediaCacheNamespace("https://server-a.example", "uid-a")
+        val sameSession = mediaCacheNamespace("https://server-a.example/", "uid-a")
+        val anotherAccount = mediaCacheNamespace("https://server-a.example", "uid-b")
+        val anotherServer = mediaCacheNamespace("https://server-b.example", "uid-a")
 
         assertEquals(first, sameSession)
-        assertNotEquals(first, anotherSession)
         assertNotEquals(first, anotherAccount)
+        assertNotEquals(first, anotherServer)
         assertFalse(first.contains("uid-a"))
-        assertFalse(first.contains("secret-token-a"))
+    }
+
+    @Test
+    fun `media session follows same-user token rotation and fails closed after uid changes`() {
+        val userSession = UserSession().apply {
+            onAuthSuccess("uid-a", "alice", "Alice", "refresh-a", "token-a1")
+        }
+        val mediaSession = AndroidMediaSession.create(
+            serverUrl = "https://server.example/",
+            ownerUid = "uid-a",
+            credentialsProvider = userSession::httpCredentialsSnapshot,
+        )
+        val originalNamespace = mediaSession.cacheNamespace
+
+        assertEquals("token-a1", mediaSession.accessTokenForRequest())
+        userSession.onAuthSuccess("uid-a", "alice", "Alice", "refresh-a2", "token-a2")
+        assertEquals("token-a2", mediaSession.accessTokenForRequest())
+        assertEquals(originalNamespace, mediaSession.cacheNamespace)
+
+        userSession.onAuthSuccess("uid-b", "bob", "Bob", "refresh-b", "token-b")
+        assertFalse(mediaSession.isCurrentOwner())
+        assertFailsWith<IllegalStateException> { mediaSession.accessTokenForRequest() }
     }
 
     @Test
     fun `session media directories never resolve to legacy global caches`() {
         val root = Files.createTempDirectory("teamtalk-media-path-test").toFile()
         try {
-            val namespace = mediaCacheNamespace("uid-a", "token-a", "nonce-a")
+            val namespace = mediaCacheNamespace("https://server.example", "uid-a")
             val downloads = mediaCacheDirectory(root, namespace, "downloads")
             val attachments = mediaCacheDirectory(root, namespace, "attachments")
 
@@ -161,8 +183,8 @@ class AndroidMediaSafetyTest {
     fun `clearing one media session preserves other sessions and legacy caches`() = runBlocking {
         val root = Files.createTempDirectory("teamtalk-media-clear-test").toFile()
         try {
-            val first = mediaCacheNamespace("uid-a", "token-a", "nonce-a")
-            val second = mediaCacheNamespace("uid-b", "token-b", "nonce-b")
+            val first = mediaCacheNamespace("https://server.example", "uid-a")
+            val second = mediaCacheNamespace("https://server.example", "uid-b")
             val firstFile = File(mediaCacheDirectory(root, first, "downloads"), "first.bin")
             val secondFile = File(mediaCacheDirectory(root, second, "downloads"), "second.bin")
             val firstAttachment = File(mediaCacheDirectory(root, first, "attachments"), "first.txt")
@@ -198,7 +220,7 @@ class AndroidMediaSafetyTest {
     fun `closing one owner never clears another page cache`() = runBlocking {
         val root = Files.createTempDirectory("teamtalk-media-lease-owners").toFile()
         try {
-            val namespace = mediaCacheNamespace("uid-a", "token-a", "nonce-a")
+            val namespace = mediaCacheNamespace("https://server.example", "uid-a")
             val firstPage = acquireMediaCacheLease(root, namespace)
             val secondPage = acquireMediaCacheLease(root, namespace)
             val cached = File(mediaCacheDirectory(root, namespace, "downloads"), "shared.png").apply {
@@ -220,7 +242,7 @@ class AndroidMediaSafetyTest {
     fun `quick page switch cancels queued cleanup while target is being written`() = runBlocking {
         val root = Files.createTempDirectory("teamtalk-media-lease-switch").toFile()
         try {
-            val namespace = mediaCacheNamespace("uid-a", "token-a", "nonce-a")
+            val namespace = mediaCacheNamespace("https://server.example", "uid-a")
             val oldPage = acquireMediaCacheLease(root, namespace)
             val target = File(mediaCacheDirectory(root, namespace, "downloads"), "switch.png")
             val writerStarted = CompletableDeferred<Unit>()
@@ -252,7 +274,7 @@ class AndroidMediaSafetyTest {
     fun `explicit session cleanup waits for an active atomic cache write`() = runBlocking {
         val root = Files.createTempDirectory("teamtalk-media-clear-write-race").toFile()
         try {
-            val namespace = mediaCacheNamespace("uid-a", "token-a", "nonce-a")
+            val namespace = mediaCacheNamespace("https://server.example", "uid-a")
             val target = File(mediaCacheDirectory(root, namespace, "downloads"), "active.png")
             val writerStarted = CompletableDeferred<Unit>()
             val allowWriterToFinish = CompletableDeferred<Unit>()
