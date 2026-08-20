@@ -147,11 +147,14 @@ fun createSession(
     val serverUrl = defaultServerConfig().serverUrl
     val dataDir = platformDataDir()
     val uploader: HttpLogUploader? = if (logUploadEnabled) {
+        val logOwnerUid = userSession.uid
+        check(logOwnerUid.isNotBlank()) { "Cannot create HTTP log uploader before authentication" }
         HttpLogUploader(
             traceBuffer = traceBuffer,
             faultBuffer = faultBuffer,
             serverUrl = serverUrl,
-            accessTokenProvider = { userSession.accessToken },
+            ownerUid = logOwnerUid,
+            credentialsProvider = userSession::httpCredentialsSnapshot,
             crashDumper = CrashDumper(dataDir),
         ).also {
             it.start()

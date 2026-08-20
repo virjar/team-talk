@@ -19,7 +19,8 @@ class HttpLogUploader(
     private val traceBuffer: LogBuffer,
     private val faultBuffer: LogBuffer,
     private val serverUrl: String,
-    private val accessTokenProvider: () -> String?,
+    private val ownerUid: String,
+    private val credentialsProvider: () -> SessionHttpCredentials,
     private val crashDumper: CrashDumper,
     private val intervalMs: Long = 5 * 60 * 1000L,
 ) {
@@ -40,7 +41,7 @@ class HttpLogUploader(
         timerJob?.cancel()
         faultDebounceJob?.cancel()
         // 启动时优先上传上次崩溃日志。该任务也归会话 scope 所有。
-        scope.launch { crashDumper.uploadPending(serverUrl, accessTokenProvider()) }
+        scope.launch { crashDumper.uploadPending(serverUrl, currentAccessToken()) }
 
         // 定时上传（开发构建：全量 trace）
         timerJob = scope.launch {
@@ -105,8 +106,7 @@ class HttpLogUploader(
 
         try {
             val compressed = HttpUtil.gzip(combined)
-            val accessToken = accessTokenProvider()
-                ?: throw IllegalStateException("No authenticated access token for log upload")
+            val accessToken = currentAccessToken()
             val code = HttpUtil.postGzip(
                 "$serverUrl/api/client-logs",
                 compressed,
@@ -121,4 +121,14 @@ class HttpLogUploader(
             AppLog.trace("HttpLogUploader", "Upload failed, saved to pending: ${e.message}")
         }
     }
+
+    private fun currentAccessToken(): String = ownedHttpAccessToken(ownerUid, credentialsProvider())
+}
+
+/** Prevents a retired uploader from borrowing credentials after the UserSession container changes uid. */
+internal fun ownedHttpAccessToken(ownerUid: String, credentials: SessionHttpCredentials): String {
+    check(ownerUid.isNotBlank()) { "HTTP resource owner uid must not be blank" }
+    check(credentials.uid == ownerUid) { "Authenticated HTTP identity changed" }
+    return credentials.accessToken?.takeIf(String::isNotBlank)
+        ?: error("No authenticated access token for HTTP request")
 }

@@ -70,6 +70,7 @@ fun main(args: Array<String>) {
                     cacheOwner = cacheOwner,
                     password = regPassword!!,
                     messageInbox = agent.messageInbox,
+                    fileServerUrl = serverUrl,
                 )
             }
             username != null && password != null -> runBlocking {
@@ -80,6 +81,7 @@ fun main(args: Array<String>) {
                     password = password,
                     cacheOwner = cacheOwner,
                     messageInbox = agent.messageInbox,
+                    fileServerUrl = serverUrl,
                 )
             }
             cred != null -> runBlocking {
@@ -91,6 +93,7 @@ fun main(args: Array<String>) {
                     password = cred.second,
                     cacheOwner = cacheOwner,
                     messageInbox = agent.messageInbox,
+                    fileServerUrl = serverUrl,
                 )
             }
             else -> {

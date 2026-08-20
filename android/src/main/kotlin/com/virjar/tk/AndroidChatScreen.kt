@@ -46,6 +46,7 @@ import com.virjar.tk.ui.component.rememberMediaClickHandler
 import com.virjar.tk.ui.screen.ChatPanel
 import com.virjar.tk.ui.screen.ChatComposerContextStore
 import com.virjar.tk.viewmodel.ChatViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -100,6 +101,7 @@ fun AndroidChatScreen(
         onDispose {
             fileDownloads.close()
             VoicePlayer.stop(mediaCacheScope)
+            mediaSession.close()
         }
     }
     var isUploading by remember { mutableStateOf(false) }
@@ -161,6 +163,8 @@ fun AndroidChatScreen(
                     mediaSession,
                 )
                 viewModel.sendMessage(buildMessage(attachment))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
                 reportMediaFailure("文件发送", error)
             } finally {
@@ -199,6 +203,8 @@ fun AndroidChatScreen(
                     )
                     viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.IMAGE.code, System.currentTimeMillis(),
                         body = ImageBody(meta.file, width = meta.width, height = meta.height, thumbnail = meta.thumbnail)))
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
                 } catch (error: Exception) {
                     reportMediaFailure("图片发送", error)
                 } finally {
@@ -262,6 +268,8 @@ fun AndroidChatScreen(
                         }
                     }
                     viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.VIDEO.code, System.currentTimeMillis(), body = VideoBody(attachment, duration, w, h, thumbnail)))
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
                 } catch (error: Exception) {
                     reportMediaFailure("视频发送", error)
                 } finally {
@@ -361,6 +369,8 @@ fun AndroidChatScreen(
                     mediaSession,
                 )
                 viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.VOICE.code, System.currentTimeMillis(), body = VoiceBody(attachment, duration)))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
                 reportMediaFailure("语音发送", error)
             } finally {

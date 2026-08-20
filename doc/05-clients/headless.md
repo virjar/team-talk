@@ -77,8 +77,9 @@ SQLite 投影读取，而不是以内存 ring 为事实源，所以进程崩溃�
 `(chatId, serverSeq)` 或业务幂等键去重。
 
 MESSAGE_RECV 会发给包含发送者在内的成员，因此 echo bot 必须过滤自己的消息。`shutdown()` 是 ImBot 的生命周期终点，并级联关闭 session 和连接资源。
-ImBot 是可多实例 SDK；HTTP 文件操作只使用各自 `UserSession.accessToken`，不会读取、写入或在
-shutdown 时清除 Android/Desktop 使用的进程全局登录 token。
+ImBot 是可多实例 SDK；创建时把 `fileServerUrl` 固定到自身认证会话，文件上传逐次读取该
+`UserSession` 的原子凭据快照。同 uid 重连后的 token 轮换自动生效，uid 变化则失败关闭；
+`shutdown()` 同时关闭文件 Repository 和活跃 HTTP 连接，不存在进程全局登录 token。
 
 ## 3. 构建与启动 agent
 
@@ -144,7 +145,9 @@ Content-Type: application/json
 | POST | `/v1/forward` | `{srcChatId, srcSeq, targetChatId}` |
 | POST | `/v1/mark-read` | `{chatId, readSeq}` |
 
-`send-file` 先通过 TeamTalk HTTP 端点上传，再用服务端返回的 Attachment 发送消息。REST 返回 200 只表示 agent 调用成功；消息结果仍应检查 data 中的 ACK code。
+`send-file` 以流式 `File` source 通过 TeamTalk HTTP 端点上传，再用服务端返回的 Attachment 发送
+消息，不把本地附件整体读入内存。REST 返回 200 只表示 agent 调用成功；消息结果仍应检查 data
+中的 ACK code。
 
 ### 联系人与群组
 

@@ -1,102 +1,161 @@
 package com.virjar.tk.client
 
-import com.virjar.tk.protocol.*
-import com.virjar.tk.protocol.payload.*
-import com.virjar.tk.rpc.RpcInvoker
-import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.*
 import com.virjar.tk.log.TkLoggerFactory
+import com.virjar.tk.protocol.payload.InvokePayload
+import com.virjar.tk.protocol.payload.ResponsePayload
+import com.virjar.tk.rpc.RpcInvoker
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+
+internal class RpcTransportDisconnectedException : IllegalStateException(
+    "Connection closed before RPC response",
+)
 
 /**
- * RPC 客户端。所有状态操作在 ImClient 的 EventLoop 上执行。
+ * Session-owned RPC request/response owner.
+ *
+ * The response collector exists before the session enters AUTHENTICATED and survives every TCP
+ * reconnect. Each pending request is leased to one connection generation, so a late response from
+ * a retired channel cannot complete a replacement request. Caller cancellation is never replaced
+ * with a connection Job; disconnect completes pending requests with a typed ordinary failure.
  */
 class RpcClient(
     private val imClient: ImClient,
 ) : RpcInvoker {
-    private val logger = TkLoggerFactory.get("RpcClient")
-    private var nextRequestId = 1
-    private val pendingRequests = mutableMapOf<Int, CompletableDeferred<ResponsePayload>>()
-    private var listenJob: Job? = null
+    private data class PendingRequest(
+        val connectionGeneration: Long,
+        val deferred: CompletableDeferred<ResponsePayload>,
+    )
 
-    /**
-     * 自治重连 watcher：监听协程挂在连接 scope 上，断线时随 scope 消亡；
-     * 重连成功（新 scope 就绪）时自动在新 scope 重启监听。
-     * （历史 bug：监听只在 createSession 启动一次，断线重连后 RPC 应答无人处理 → 全部超时。）
-     */
-    private val lifecycleScope = CoroutineScope(SupervisorJob() + CoroutineExceptionHandler { _, t ->
-        logger.fault("RpcClient lifecycle watcher crashed", t)
-    })
-    private var watcherJob: Job? = null
+    private val logger = TkLoggerFactory.get("RpcClient")
+    private val pendingLock = Any()
+    private val pendingRequests = mutableMapOf<Int, PendingRequest>()
+    private var nextRequestId = 1
+    private val lifecycleScope = CoroutineScope(
+        Dispatchers.Default +
+            SupervisorJob() +
+            CoroutineExceptionHandler { _, failure ->
+                logger.fault("RpcClient session listener crashed", failure)
+            },
+    )
+    private var responseJob: Job? = null
+    private var disconnectJob: Job? = null
     @Volatile
     private var started = false
+    @Volatile
+    private var stopped = false
 
     fun start() {
+        check(!stopped) { "RpcClient is session-owned and cannot restart after stop" }
+        if (started) return
         started = true
-        ensureListening()
-        if (watcherJob?.isActive == true) return
-        watcherJob = lifecycleScope.launch {
-            imClient.state.collect { state ->
-                if (state == ConnectionState.CONNECTED) {
-                    // 新连接 scope 就绪；监听若已死（随旧 scope cancel）则重启
-                    if (listenJob?.isActive != true) {
-                        logger.trace("Connection restored, restarting RPC listener")
-                        ensureListening()
+
+        // UNDISTPATCHED installs both collectors before start() returns. This closes the
+        // AUTHENTICATED -> first response window and does not bind either collector to a TCP scope.
+        responseJob = lifecycleScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            imClient.routedPackets.collect { packet ->
+                val response = packet.payload as? ResponsePayload ?: return@collect
+                val pending = synchronized(pendingLock) {
+                    val candidate = pendingRequests[response.requestId]
+                    if (candidate?.connectionGeneration == packet.connectionGeneration) {
+                        pendingRequests.remove(response.requestId)
+                    } else {
+                        null
                     }
                 }
+                if (pending == null) {
+                    logger.trace(
+                        "Ignoring unknown/stale RPC response requestId=${response.requestId}, " +
+                            "generation=${packet.connectionGeneration}",
+                    )
+                } else {
+                    pending.deferred.complete(response)
+                }
+            }
+        }
+        disconnectJob = lifecycleScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            var observedEpoch = imClient.transportDisconnectEpoch.value
+            imClient.transportDisconnectEpoch.collect { epoch ->
+                if (epoch == observedEpoch) return@collect
+                observedEpoch = epoch
+                failAllPending(RpcTransportDisconnectedException())
             }
         }
     }
 
-    private fun ensureListening() {
-        val scope = imClient.coroutineScope ?: run {
-            logger.trace("Cannot listen: ImClient not connected")
-            return
+    override suspend fun invoke(
+        service: String,
+        methodId: Int,
+        payload: ByteArray?,
+    ): ResponsePayload {
+        check(started && !stopped) { "RpcClient is not started" }
+        check(imClient.state.value == ConnectionState.AUTHENTICATED) {
+            "RPC requires an authenticated connection"
         }
-        if (listenJob?.isActive == true) return  // 已在当前/存活 scope 上监听
-        listenJob = scope.launch {
-            try {
-                launch {
-                    imClient.packets.collect { proto ->
-                        if (proto is ResponsePayload) {
-                            pendingRequests.remove(proto.requestId)?.complete(proto)
-                        }
-                    }
-                }
-                // 监听断连，清理残留请求
-                imClient.state.first { it == ConnectionState.DISCONNECTED }
-                pendingRequests.forEach { (_, d) ->
-                    d.completeExceptionally(CancellationException("Connection closed"))
-                }
-                pendingRequests.clear()
-            } catch (e: CancellationException) {
-                // 正常的协作式取消（断连/重连时 SupervisorJob 被 cancel），不是 crash
-                throw e
-            } catch (e: Exception) {
-                // 根监听循环：记好日志后兜住，不让单次错误搞垮整个监听
-                logger.fault("RpcClient listen loop crashed", e)
+        val connectionGeneration = imClient.currentConnectionGeneration
+        check(connectionGeneration > 0L) { "RPC connection generation is unavailable" }
+        val (request, requestId) = synchronized(pendingLock) {
+            check(imClient.state.value == ConnectionState.AUTHENTICATED) {
+                "Connection changed before RPC registration"
             }
+            check(imClient.currentConnectionGeneration == connectionGeneration) {
+                "Connection generation changed before RPC registration"
+            }
+            val requestId = allocateRequestIdLocked()
+            PendingRequest(connectionGeneration, CompletableDeferred()).also {
+                pendingRequests[requestId] = it
+            } to requestId
         }
-    }
-
-    override suspend fun invoke(service: String, methodId: Int, payload: ByteArray?): ResponsePayload {
-        val scope = imClient.coroutineScope ?: throw IllegalStateException("Not connected")
-        return withContext(scope.coroutineContext) {
-            val requestId = nextRequestId++
-            val deferred = CompletableDeferred<ResponsePayload>()
-            pendingRequests[requestId] = deferred
+        return try {
             imClient.send(InvokePayload(requestId, service, methodId, payload))
-            withTimeoutOrNull(10_000L) {
-                deferred.await()
-            } ?: run {
-                pendingRequests.remove(requestId)
-                ResponsePayload(requestId, 504, "Request timeout".encodeToByteArray())
+            withTimeoutOrNull(RPC_TIMEOUT_MS) { request.deferred.await() }
+                ?: ResponsePayload(requestId, 504, "Request timeout".encodeToByteArray())
+        } finally {
+            synchronized(pendingLock) {
+                if (pendingRequests[requestId] === request) pendingRequests.remove(requestId)
             }
         }
     }
 
     fun stop() {
+        if (stopped) return
+        stopped = true
         started = false
-        watcherJob?.cancel()
-        listenJob?.cancel()
+        responseJob?.cancel()
+        disconnectJob?.cancel()
+        failAllPending(CancellationException("RpcClient session closed"))
+        lifecycleScope.cancel()
+    }
+
+    private fun allocateRequestIdLocked(): Int {
+        repeat(Int.MAX_VALUE) {
+            val candidate = nextRequestId
+            nextRequestId = if (candidate == Int.MAX_VALUE) 1 else candidate + 1
+            if (candidate !in pendingRequests) return candidate
+        }
+        error("RPC request id space exhausted")
+    }
+
+    private fun failAllPending(failure: Throwable) {
+        val pending = synchronized(pendingLock) {
+            pendingRequests.values.map(PendingRequest::deferred).also {
+                pendingRequests.clear()
+            }
+        }
+        pending.forEach { it.completeExceptionally(failure) }
+    }
+
+    private companion object {
+        const val RPC_TIMEOUT_MS = 10_000L
     }
 }

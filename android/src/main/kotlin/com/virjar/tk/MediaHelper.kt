@@ -11,11 +11,11 @@ import android.os.Build
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
-import com.virjar.tk.AppError
 import com.virjar.tk.client.SessionHttpCredentials
 import com.virjar.tk.http.UploadResult
 import com.virjar.tk.model.Attachment
-import com.virjar.tk.repository.FileOps
+import com.virjar.tk.repository.FileRepository
+import com.virjar.tk.repository.asUploadSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -24,7 +24,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.io.BufferedOutputStream
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -32,7 +31,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
-import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -70,19 +68,28 @@ class AndroidMediaSession private constructor(
     private val ownerUid: String,
     private val credentialsProvider: () -> SessionHttpCredentials,
     val cacheNamespace: String,
-) {
+) : AutoCloseable {
+    private val closed = AtomicBoolean(false)
+    internal val fileRepository = FileRepository(serverUrl, ownerUid, credentialsProvider)
+
     /**
      * Reads a reconnect-rotated token while refusing a later login that reused the UserSession
      * object for another uid. The returned token is fixed by each HTTP request before IO begins.
      */
     fun accessTokenForRequest(): String {
+        check(!closed.get()) { "媒体会话已经关闭" }
         val credentials = credentialsProvider()
         check(credentials.uid == ownerUid) { "媒体任务所属登录会话已失效" }
         return credentials.accessToken?.takeIf(String::isNotBlank)
             ?: throw IllegalStateException("认证凭据不可用，请重新登录")
     }
 
-    fun isCurrentOwner(): Boolean = credentialsProvider().uid == ownerUid
+    fun isCurrentOwner(): Boolean = !closed.get() && credentialsProvider().uid == ownerUid
+
+    override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        fileRepository.close()
+    }
 
     companion object {
         fun create(
@@ -257,7 +264,10 @@ object MediaHelper {
         fileName: String,
         contentType: String,
         mediaSession: AndroidMediaSession,
-    ): Attachment = uploadFileStreaming(file, fileName, contentType, mediaSession).file
+    ): Attachment {
+        val source = withContext(Dispatchers.IO) { file.asUploadSource() }
+        return mediaSession.fileRepository.upload(source, fileName, contentType).getOrThrow()
+    }
 
     /** 从磁盘流式上传并返回服务端媒体元数据。 */
     suspend fun uploadWithMeta(
@@ -265,7 +275,10 @@ object MediaHelper {
         fileName: String,
         contentType: String,
         mediaSession: AndroidMediaSession,
-    ): UploadResult = uploadFileStreaming(file, fileName, contentType, mediaSession)
+    ): UploadResult {
+        val source = withContext(Dispatchers.IO) { file.asUploadSource() }
+        return mediaSession.fileRepository.uploadWithMeta(source, fileName, contentType).getOrThrow()
+    }
 
     /**
      * 在 IO 线程把一次系统选择固化为有界临时文件。
@@ -498,56 +511,6 @@ object MediaHelper {
         context.startActivity(intent)
     }
 
-    private suspend fun uploadFileStreaming(
-        file: File,
-        fileName: String,
-        contentType: String,
-        mediaSession: AndroidMediaSession,
-    ): UploadResult = withContext(Dispatchers.IO) {
-        val accessToken = mediaSession.accessTokenForRequest()
-        require(file.isFile) { "待上传文件不存在" }
-
-        val boundary = "TeamTalk-${UUID.randomUUID()}"
-        val safeName = sanitizeHeaderValue(fileName).ifBlank { "attachment" }.take(255)
-        val safeType = sanitizeContentType(contentType)
-        val prefix = buildString {
-            append("--").append(boundary).append("\r\n")
-            append("Content-Disposition: form-data; name=\"file\"; filename=\"")
-            append(safeName).append("\"\r\n")
-            append("Content-Type: ").append(safeType).append("\r\n\r\n")
-        }.toByteArray(StandardCharsets.UTF_8)
-        val suffix = "\r\n--$boundary--\r\n".toByteArray(StandardCharsets.UTF_8)
-        val requestLength = prefix.size.toLong() + file.length() + suffix.size.toLong()
-
-        val connection = (URL("${mediaSession.serverUrl}/api/v1/files/upload")
-            .openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            doOutput = true
-            connectTimeout = 10_000
-            readTimeout = 120_000
-            setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
-            setRequestProperty("Authorization", "Bearer $accessToken")
-            setFixedLengthStreamingMode(requestLength)
-        }
-
-        try {
-            BufferedOutputStream(connection.outputStream, 64 * 1024).use { output ->
-                output.write(prefix)
-                file.inputStream().buffered().use { input -> input.copyTo(output, 64 * 1024) }
-                output.write(suffix)
-            }
-            val code = connection.responseCode
-            val response = (if (code in 200..299) connection.inputStream else connection.errorStream)
-                ?.use { input -> String(readUploadResponseBounded(input), StandardCharsets.UTF_8) }
-                .orEmpty()
-            if (code !in 200..299) {
-                throw AppError.Business(code, "上传失败（HTTP $code）")
-            }
-            FileOps.parseUploadResult(response)
-        } finally {
-            connection.disconnect()
-        }
-    }
 }
 
 /**
@@ -597,8 +560,6 @@ internal suspend fun materializeMediaCacheFile(
     }
 }
 
-private const val MAX_UPLOAD_RESPONSE_BYTES = 1024L * 1024
-
 /** 逐块复制并在写入第 maxBytes + 1 个字节前失败。 */
 internal fun copyBounded(
     input: InputStream,
@@ -617,31 +578,6 @@ internal fun copyBounded(
         total += read
     }
 }
-
-internal fun readBytesBounded(input: InputStream, maxBytes: Long): ByteArray {
-    val output = java.io.ByteArrayOutputStream(minOf(maxBytes, 64 * 1024L).toInt())
-    copyBounded(input, output, maxBytes)
-    return output.toByteArray()
-}
-
-private fun readUploadResponseBounded(input: InputStream): ByteArray = try {
-    readBytesBounded(input, MAX_UPLOAD_RESPONSE_BYTES)
-} catch (_: SelectedMediaTooLargeException) {
-    throw IllegalStateException("上传响应超过安全上限")
-}
-
-private fun sanitizeHeaderValue(value: String): String = value
-    .replace('\r', '_')
-    .replace('\n', '_')
-    .replace('"', '_')
-    .replace('\\', '_')
-
-private fun sanitizeContentType(value: String): String = value
-    .trim()
-    .takeIf { candidate ->
-        candidate.isNotEmpty() && candidate.all { it.isLetterOrDigit() || it in "!#$&^_.+-/" }
-    }
-    ?: "application/octet-stream"
 
 internal fun fileOpenRequiresNewTask(isActivityContext: Boolean): Boolean = !isActivityContext
 

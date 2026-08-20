@@ -3,6 +3,8 @@ package com.virjar.tk.media
 import com.virjar.tk.DesktopFileTransfer
 import com.virjar.tk.DesktopMediaSender
 import com.virjar.tk.DesktopVoiceRecorder
+import com.virjar.tk.client.SessionHttpCredentials
+import com.virjar.tk.repository.FileRepository
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,7 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal class DesktopSessionResources(
     val ownerUid: String,
     serverUrl: String,
-    credentialProvider: () -> DesktopCredentialSnapshot,
+    credentialProvider: () -> SessionHttpCredentials,
     dataDir: File,
     quotaBytes: Long = DEFAULT_DESKTOP_MEDIA_QUOTA_BYTES,
     downloader: DesktopMediaDownloader = HttpDesktopMediaDownloader,
@@ -48,6 +50,7 @@ internal class DesktopSessionResources(
         downloader = downloader,
         quotaBytes = quotaBytes,
     )
+    val fileRepository = FileRepository(serverBaseUrl, ownerUid, credentialProvider)
     val fileTransfer = DesktopFileTransfer(this)
     val mediaSender = DesktopMediaSender(this, fileTransfer)
     val voiceRecorder = DesktopVoiceRecorder(this, fileTransfer)
@@ -69,6 +72,7 @@ internal class DesktopSessionResources(
         if (!closed.compareAndSet(false, true)) return
         voiceRecorder.close()
         mediaSender.close()
+        fileRepository.close()
         credentialGate.close()
         rootJob.cancel()
         mediaCache.close()
@@ -77,7 +81,7 @@ internal class DesktopSessionResources(
 
 internal class DesktopCredentialGate(
     val ownerUid: String,
-    private val credentialProvider: () -> DesktopCredentialSnapshot,
+    private val credentialProvider: () -> SessionHttpCredentials,
 ) : Closeable {
     private val open = AtomicBoolean(true)
 
@@ -104,11 +108,6 @@ internal class DesktopCredentialGate(
         open.set(false)
     }
 }
-
-internal data class DesktopCredentialSnapshot(
-    val uid: String,
-    val accessToken: String?,
-)
 
 /** 只保留实际部署基址；拒绝凭据、query 和 fragment 混入服务器身份。 */
 internal fun canonicalDesktopServerBase(serverUrl: String): String {

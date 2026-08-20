@@ -28,6 +28,8 @@ import com.virjar.tk.protocol.PresencePayload
 import com.virjar.tk.protocol.payload.MessageAckPayload
 import com.virjar.tk.model.Attachment
 import com.virjar.tk.repository.FileRepository
+import com.virjar.tk.repository.UploadSource
+import com.virjar.tk.repository.asSmallUploadSource
 import com.virjar.tk.util.AppLog
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -221,6 +223,7 @@ class ImBot private constructor(
     val userSession: UserSession,
     private val messageSender: MessageSender,
     private val messageInbox: ImBotMessageInbox,
+    private val fileRepository: FileRepository?,
 ) {
     /** 当前用户 uid（认证成功后有效）。 */
     val uid: String get() = userSession.uid
@@ -301,20 +304,37 @@ class ImBot private constructor(
         VideoBody(attachment, duration, width, height, thumbnail),
     )
 
-    /** 上传文件到服务器（HTTP），返回服务端权威附件描述符。 */
-    suspend fun uploadFile(serverUrl: String, bytes: ByteArray, fileName: String, contentType: String): Attachment =
-        FileRepository(serverUrl, requireImBotAccessToken(userSession))
-            .upload(bytes, fileName, contentType)
-            .getOrThrow()
+    /** 流式上传文件到本会话固定的 HTTP 文件服务器。 */
+    suspend fun uploadFile(source: UploadSource, fileName: String, contentType: String): Attachment =
+        requireNotNull(fileRepository) {
+            "ImBot 未配置 fileServerUrl，不能执行文件上传"
+        }.upload(source, fileName, contentType).getOrThrow()
+
+    /** 仅供明确的小 payload 使用；大附件必须传入 [UploadSource]。 */
+    suspend fun uploadSmallFile(bytes: ByteArray, fileName: String, contentType: String): Attachment =
+        uploadFile(bytes.asSmallUploadSource(), fileName, contentType)
 
     /**
      * 上传并发送一步到位。消息只携带强类型附件描述符，path 为 FileStore 相对路径；
      * 服务端发送时重新核验整个描述符，客户端下载时才绑定当前服务器地址。
      */
-    suspend fun uploadAndSendFile(serverUrl: String, chatId: String, bytes: ByteArray, fileName: String, contentType: String): MessageAckPayload {
-        val attachment = uploadFile(serverUrl, bytes, fileName, contentType)
+    suspend fun uploadAndSendFile(
+        chatId: String,
+        source: UploadSource,
+        fileName: String,
+        contentType: String,
+    ): MessageAckPayload {
+        val attachment = uploadFile(source, fileName, contentType)
         return sendFile(chatId, attachment)
     }
+
+    /** 小 payload 的显式一步上传发送便利入口。 */
+    suspend fun uploadAndSendSmallFile(
+        chatId: String,
+        bytes: ByteArray,
+        fileName: String,
+        contentType: String,
+    ): MessageAckPayload = uploadAndSendFile(chatId, bytes.asSmallUploadSource(), fileName, contentType)
 
     /** 发送 typing 指示（不等 ACK——服务端对 TYPING 消息只广播不回执）。 */
     fun sendTyping(chatId: String) {
@@ -446,6 +466,7 @@ class ImBot private constructor(
         }
         if (!shouldShutdown) return
         scope.cancel()
+        fileRepository?.close()
         // Stop the producer first, then detach inbox consumers while its borrowed cache is open.
         session.eventProcessor.stop()
         messageInbox.close()
@@ -470,11 +491,12 @@ class ImBot private constructor(
             messageInbox: ImBotMessageInbox = ImBotMessageInbox(),
             password: String = "password123",
             deviceId: String = "bot-${UUID.randomUUID()}",
+            fileServerUrl: String? = null,
         ): ImBot = connect(
             host, port, mode = AuthMode.REGISTER,
             username = "$usernamePrefix-${UUID.randomUUID().toString().take(8)}",
             password = password, deviceId = deviceId, name = null,
-            cacheOwner = cacheOwner, messageInbox = messageInbox,
+            cacheOwner = cacheOwner, messageInbox = messageInbox, fileServerUrl = fileServerUrl,
         )
 
         /** 已有账号登录，常驻调用方必须提供按账号持久的 [cacheOwner]。 */
@@ -486,9 +508,10 @@ class ImBot private constructor(
             cacheOwner: ImBotCacheOwner,
             messageInbox: ImBotMessageInbox = ImBotMessageInbox(),
             deviceId: String = "bot-${UUID.randomUUID()}",
+            fileServerUrl: String? = null,
         ): ImBot = connect(
             host, port, AuthMode.LOGIN, username, password, deviceId, null,
-            cacheOwner, messageInbox,
+            cacheOwner, messageInbox, fileServerUrl,
         )
 
         private suspend fun connect(
@@ -496,6 +519,7 @@ class ImBot private constructor(
             username: String, password: String, deviceId: String, name: String?,
             cacheOwner: ImBotCacheOwner,
             messageInbox: ImBotMessageInbox,
+            fileServerUrl: String?,
         ): ImBot {
             val authResult = CompletableDeferred<Boolean>()
             val userSession = UserSession()
@@ -513,6 +537,7 @@ class ImBot private constructor(
             )
             var session: ClientSession? = null
             var bot: ImBot? = null
+            var fileRepository: FileRepository? = null
             try {
                 when (mode) {
                     AuthMode.REGISTER -> imClient.register(
@@ -522,6 +547,13 @@ class ImBot private constructor(
                 }
                 // 注册路径在这里之前没有 uid，因而不会创建临时/错误账号目录。
                 withTimeout(AUTH_NO_PROGRESS_TIMEOUT_MS) { authResult.await() }
+                fileRepository = fileServerUrl?.let { baseUrl ->
+                    FileRepository(
+                        serverUrl = baseUrl,
+                        ownerUid = userSession.uid,
+                        credentialsProvider = userSession::httpCredentialsSnapshot,
+                    )
+                }
                 session = createSession(
                     imClient,
                     userSession,
@@ -542,7 +574,14 @@ class ImBot private constructor(
                 val sender = MessageSender { msg -> imClient.sendAndWaitAck(msg) }
                 // Construct the owner before awaiting SYNC_READY. Replay may start immediately
                 // after createSession installs EventProcessor, so waiting first would lose backlog.
-                val connectedBot = ImBot(imClient, session, userSession, sender, messageInbox)
+                val connectedBot = ImBot(
+                    imClient,
+                    session,
+                    userSession,
+                    sender,
+                    messageInbox,
+                    fileRepository,
+                )
                 bot = connectedBot
                 imClient.awaitAuthenticated(AUTH_NO_PROGRESS_TIMEOUT_MS)
                 AppLog.trace("ImBot", "session ready uid=${userSession.uid}")
@@ -551,6 +590,7 @@ class ImBot private constructor(
                 if (bot != null) {
                     bot.shutdown()
                 } else {
+                    fileRepository?.close()
                     session?.close()
                     messageInbox.close()
                     imClient.destroy()
@@ -605,7 +645,3 @@ internal suspend fun awaitAuthenticatedWithProgress(
 private suspend fun ImClient.awaitAuthenticated(noProgressTimeoutMs: Long) {
     awaitAuthenticatedWithProgress(state, eventSyncCursor, noProgressTimeoutMs)
 }
-
-/** ImBot 的 HTTP 凭据严格属于当前 UserSession，不允许回退到 UI 进程全局 token。 */
-internal fun requireImBotAccessToken(userSession: UserSession): String =
-    requireNotNull(userSession.accessToken) { "ImBot session has no access token" }

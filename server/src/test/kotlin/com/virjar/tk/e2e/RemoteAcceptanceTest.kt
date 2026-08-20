@@ -9,6 +9,7 @@ import com.virjar.tk.rpc.gen.DeviceRpcContract
 import com.virjar.tk.rpc.gen.MessageRpcContract
 import com.virjar.tk.rpc.gen.UserRpcContract
 import com.virjar.tk.client.ConnectionState
+import com.virjar.tk.client.SessionHttpCredentials
 import com.virjar.tk.model.*
 import com.virjar.tk.protocol.*
 import com.virjar.tk.body.FileBody
@@ -17,11 +18,14 @@ import com.virjar.tk.body.ImageBody
 import com.virjar.tk.body.RichTextBody
 import com.virjar.tk.body.buildRichTextBody
 import com.virjar.tk.repository.FileRepository
+import com.virjar.tk.repository.FileOps
 import com.virjar.tk.repository.GroupFileRepository
 import com.virjar.tk.repository.DocumentRepository
 import com.virjar.tk.rpc.gen.ChatRpcProxy
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.*
@@ -54,9 +58,24 @@ class RemoteAcceptanceTest {
 
     private suspend fun upload(session: RemoteAcceptanceSupport.Session, bytes: ByteArray, fileName: String): Attachment {
         val baseUrl = System.getProperty("tk.e2e.server") ?: "https://${RemoteAcceptanceSupport.host}"
-        return FileRepository(baseUrl, session.userSession.accessToken)
-            .upload(bytes, fileName, "application/octet-stream")
-            .getOrThrow()
+        val repository = FileRepository(baseUrl, session.uid, session.userSession::httpCredentialsSnapshot)
+        return try {
+            repository.uploadSmallBytes(bytes, fileName, "application/octet-stream").getOrThrow()
+        } finally {
+            repository.close()
+        }
+    }
+
+    private suspend fun download(
+        session: RemoteAcceptanceSupport.Session,
+        attachment: Attachment,
+    ): ByteArray {
+        val repository = FileRepository(baseUrl(), session.uid, session.userSession::httpCredentialsSnapshot)
+        return try {
+            repository.downloadSmall(attachment).getOrThrow()
+        } finally {
+            repository.close()
+        }
     }
 
     @BeforeAll
@@ -322,7 +341,7 @@ class RemoteAcceptanceTest {
             val file = ownerFiles.createFile(chat.chatId, folder.entryId, "README.md", v1Attachment).getOrThrow()
 
             assertEquals(listOf("README.md"), memberFiles.list(chat.chatId, folder.entryId).getOrThrow().map { it.name })
-            assertArrayEquals(v1Bytes, FileRepository(baseUrl(), member.userSession.accessToken).download(v1Attachment).getOrThrow())
+            assertArrayEquals(v1Bytes, download(member, v1Attachment))
             assertTrue(outsiderFiles.list(chat.chatId, null) is Outcome.Failure, "非群成员不能读取群文件目录")
 
             val v2Bytes = "# Remote acceptance v2".encodeToByteArray()
@@ -455,7 +474,7 @@ class RemoteAcceptanceTest {
             // 上传者可以在消息发送前读取；未认证请求和无关用户不能把随机路径当作授权。
             assertArrayEquals(
                 bytes,
-                FileRepository(baseUrl(), user1.userSession.accessToken).download(attachment).getOrThrow(),
+                download(user1, attachment),
             )
             assertDownloadRejected(attachment, null, 401)
             assertDownloadRejected(attachment, stranger.userSession.accessToken, 403)
@@ -478,7 +497,7 @@ class RemoteAcceptanceTest {
             // 消息成功落库后，附件 ACL 从反向索引解析到会话成员；非成员仍无权访问。
             assertArrayEquals(
                 bytes,
-                FileRepository(baseUrl(), user2.userSession.accessToken).download(body.attachment).getOrThrow(),
+                download(user2, body.attachment),
             )
             assertDownloadRejected(body.attachment, stranger.userSession.accessToken, 403)
         } finally {
@@ -741,7 +760,29 @@ class RemoteAcceptanceTest {
         System.getProperty("tk.e2e.server") ?: "https://${RemoteAcceptanceSupport.host}"
 
     private suspend fun assertDownloadRejected(attachment: Attachment, accessToken: String?, expectedCode: Int) {
-        val outcome = FileRepository(baseUrl(), accessToken).download(attachment)
+        val outcome: Outcome<ByteArray> = if (accessToken == null) {
+            val code = withContext(Dispatchers.IO) {
+                val connection = java.net.URL(FileOps.resolveUrl(baseUrl(), attachment))
+                    .openConnection() as java.net.HttpURLConnection
+                connection.instanceFollowRedirects = false
+                try {
+                    connection.responseCode
+                } finally {
+                    connection.disconnect()
+                }
+            }
+            Outcome.Failure(AppError.Business(code, "download rejected HTTP $code"))
+        } else {
+            val testOwner = "download-rejection-check"
+            val repository = FileRepository(baseUrl(), testOwner) {
+                SessionHttpCredentials(uid = testOwner, accessToken = accessToken)
+            }
+            try {
+                repository.downloadSmall(attachment)
+            } finally {
+                repository.close()
+            }
+        }
         assertTrue(outcome is Outcome.Failure, "下载应被拒绝，实际结果: $outcome")
         val error = (outcome as Outcome.Failure).error
         assertTrue(error is AppError.Business, "HTTP 拒绝应保留业务状态码，实际错误: $error")

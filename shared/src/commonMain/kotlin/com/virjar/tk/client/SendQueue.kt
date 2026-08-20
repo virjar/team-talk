@@ -72,9 +72,16 @@ class SendQueue(
                 continue
             }
             var sendFailure: Throwable? = null
+            var retryAfterDisconnect = false
             val ack = withTimeoutOrNull(30_000) {
                 try {
                     sender.sendAndWaitAck(msg)
+                } catch (_: AckTransportDisconnectedException) {
+                    // Keep the head item. The outer loop either observes the already-published
+                    // non-ready state and waits, or immediately retries after a fast reconnect.
+                    onQueued(msg)
+                    retryAfterDisconnect = true
+                    return@withTimeoutOrNull null
                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                     throw cancelled
                 } catch (failure: Exception) {
@@ -82,6 +89,7 @@ class SendQueue(
                     null
                 }
             }
+            if (retryAfterDisconnect) continue
             if (ack != null && ack.code == 0) {
                 onSent(msg, ack)
             } else {

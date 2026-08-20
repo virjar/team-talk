@@ -3,11 +3,10 @@ package com.virjar.tk.bot
 import com.virjar.tk.client.UserSession
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 
 class ImBotSessionIsolationTest {
     @Test
-    fun `each bot resolves only its own access token`() {
+    fun `each bot exposes only its own atomic HTTP credential generation`() {
         val first = UserSession().apply {
             onAuthSuccess("uid-a", "a", "A", "refresh-a", "access-a")
         }
@@ -15,11 +14,11 @@ class ImBotSessionIsolationTest {
             onAuthSuccess("uid-b", "b", "B", "refresh-b", "access-b")
         }
 
-        assertEquals("access-a", requireImBotAccessToken(first))
-        assertEquals("access-b", requireImBotAccessToken(second))
+        assertEquals("uid-a" to "access-a", first.httpCredentialsSnapshot().let { it.uid to it.accessToken })
+        assertEquals("uid-b" to "access-b", second.httpCredentialsSnapshot().let { it.uid to it.accessToken })
 
         first.onAuthFailed("closed")
-        assertFailsWith<IllegalArgumentException> { requireImBotAccessToken(first) }
-        assertEquals("access-b", requireImBotAccessToken(second))
+        assertEquals("" to null, first.httpCredentialsSnapshot().let { it.uid to it.accessToken })
+        assertEquals("uid-b" to "access-b", second.httpCredentialsSnapshot().let { it.uid to it.accessToken })
     }
 }

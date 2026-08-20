@@ -12,7 +12,7 @@ import com.virjar.tk.media.DesktopSessionResources
 import com.virjar.tk.model.Attachment
 import com.virjar.tk.model.Message
 import com.virjar.tk.protocol.MessageType
-import com.virjar.tk.repository.FileRepository
+import com.virjar.tk.repository.asUploadSource
 import com.virjar.tk.util.AppLog
 import com.virjar.tk.viewmodel.ChatViewModel
 import kotlinx.coroutines.CancellationException
@@ -22,9 +22,12 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import org.jetbrains.skia.Codec
+import org.jetbrains.skia.Data
 import org.jetbrains.skia.Image as SkiaImage
+import org.jetbrains.skia.makeFromFileName
+import org.jetbrains.skia.impl.use
 import java.awt.Desktop
 import java.awt.FileDialog
 import java.awt.Frame
@@ -111,7 +114,13 @@ internal object DesktopExternalFileOpener {
 /** 图片编码/解码，不负责下载。 */
 internal object DesktopImageCodec {
     fun decode(file: File): ImageBitmap? = try {
-        SkiaImage.makeFromEncoded(file.readBytes()).toComposeImageBitmap()
+        Data.makeFromFileName(file.absolutePath).use { encoded ->
+            Codec.makeFromData(encoded).use { codec ->
+                codec.readPixels().use { bitmap ->
+                    SkiaImage.makeFromBitmap(bitmap).toComposeImageBitmap()
+                }
+            }
+        }
     } catch (error: Exception) {
         AppLog.fault(
             "ImageDecode",
@@ -120,8 +129,10 @@ internal object DesktopImageCodec {
         null
     }
 
-    fun dimensions(bytes: ByteArray): Pair<Int, Int> = try {
-        SkiaImage.makeFromEncoded(bytes).let { image -> image.width to image.height }
+    fun dimensions(file: File): Pair<Int, Int> = try {
+        Data.makeFromFileName(file.absolutePath).use { encoded ->
+            Codec.makeFromData(encoded).use { codec -> codec.size.x to codec.size.y }
+        }
     } catch (_: Exception) {
         0 to 0
     }
@@ -135,39 +146,30 @@ internal class DesktopFileTransfer(
     private val resources: DesktopSessionResources,
 ) {
     suspend fun upload(file: File, contentType: String = desktopContentType(file.name)): Attachment {
-        val bytes = readFile(file)
         resources.ensureOpen()
-        val repository = currentRepository()
-        val result = repository.upload(bytes, file.name, contentType).getOrThrow()
+        require(file.isFile) { "文件不存在: ${file.name}" }
+        val result = resources.fileRepository
+            .upload(file.asUploadSource(), file.name, contentType)
+            .getOrThrow()
         resources.ensureOpen()
         return result
     }
 
     suspend fun uploadWithMeta(
-        bytes: ByteArray,
-        fileName: String,
+        file: File,
         contentType: String,
         onProgress: (Float) -> Unit = {},
     ): UploadResult {
         resources.ensureOpen()
-        val repository = currentRepository()
-        val result = repository.uploadWithMeta(bytes, fileName, contentType) { progress ->
-            resources.ensureOpen()
-            onProgress(progress)
-        }.getOrThrow()
+        require(file.isFile) { "文件不存在: ${file.name}" }
+        val result = resources.fileRepository
+            .uploadWithMeta(file.asUploadSource(), file.name, contentType) { progress ->
+                resources.ensureOpen()
+                onProgress(progress)
+            }
+            .getOrThrow()
         resources.ensureOpen()
         return result
-    }
-
-    private fun currentRepository() = FileRepository(
-        resources.serverBaseUrl,
-        resources.credentialGate.requireAccessToken(),
-    )
-
-    private suspend fun readFile(file: File): ByteArray = withContext(kotlinx.coroutines.Dispatchers.IO) {
-        resources.ensureOpen()
-        require(file.isFile) { "文件不存在: ${file.name}" }
-        file.readBytes()
     }
 }
 
@@ -210,16 +212,14 @@ internal class DesktopMediaSender(
         scope.launch {
             try {
                 resources.ensureOpen()
-                val bytes = file.readBytes()
                 coroutineContext.ensureActive()
                 val contentType = desktopContentType(file.name)
                 uploadAndSendWithPlaceholder(
                     chatId = chatId,
                     myUid = myUid,
                     viewModel = viewModel,
-                    fileName = file.name,
+                    file = file,
                     contentType = contentType,
-                    bytes = bytes,
                     kind = kind,
                 )
             } catch (cancelled: CancellationException) {
@@ -235,13 +235,12 @@ internal class DesktopMediaSender(
         chatId: String,
         myUid: String,
         viewModel: ChatViewModel,
-        fileName: String,
+        file: File,
         contentType: String,
-        bytes: ByteArray,
         kind: MediaKind,
     ) {
         val clientMsgId = UUID.randomUUID().toString()
-        val pendingAttachment = Attachment("", fileName, contentType, bytes.size.toLong())
+        val pendingAttachment = Attachment("", file.name, contentType, file.length())
         val placeholder = Message(
             chatId = chatId,
             clientMsgId = clientMsgId,
@@ -249,17 +248,17 @@ internal class DesktopMediaSender(
             senderUid = myUid,
             messageType = kind.messageType.code,
             timestamp = System.currentTimeMillis(),
-            body = kind.body(UploadResult(file = pendingAttachment), bytes),
+            body = kind.body(UploadResult(file = pendingAttachment), file),
             sendStatus = Message.SEND_STATUS_UPLOADING,
         )
         viewModel.insertUploadingPlaceholder(placeholder)
 
         try {
-            val metadata = transfer.uploadWithMeta(bytes, fileName, contentType) { progress ->
+            val metadata = transfer.uploadWithMeta(file, contentType) { progress ->
                 viewModel.updateUploadProgress(chatId, clientMsgId, progress)
             }
             resources.ensureOpen()
-            val body = kind.body(metadata, bytes)
+            val body = kind.body(metadata, file)
             viewModel.sendMessage(
                 placeholder.copy(
                     body = body,
@@ -288,12 +287,12 @@ internal class DesktopMediaSender(
         VIDEO(MessageType.VIDEO, "视频"),
         FILE(MessageType.FILE, "文件");
 
-        fun body(metadata: UploadResult, sourceBytes: ByteArray): MessageBody = when (this) {
+        fun body(metadata: UploadResult, sourceFile: File): MessageBody = when (this) {
             IMAGE -> {
                 val dimensions = if (metadata.width > 0 && metadata.height > 0) {
                     metadata.width to metadata.height
                 } else {
-                    DesktopImageCodec.dimensions(sourceBytes)
+                    DesktopImageCodec.dimensions(sourceFile)
                 }
                 ImageBody(
                     attachment = metadata.file,

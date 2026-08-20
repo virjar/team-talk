@@ -14,12 +14,14 @@ import com.virjar.tk.log.TkLoggerFactory
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 
 /**
  * 事件处理器。收集 NotifyPayload 并写入本地缓存。
- * 收集协程运行在 ImClient 的 EventLoop scope 上，
- * DB 操作切换到 Dispatchers.IO 避免阻塞 EventLoop。
+ * 入站订阅属于整个认证会话并跨 TCP 重连存活；数据库投影切换到 Dispatchers.IO，
+ * 认证/同步控制仍由 ImClient 的 EventLoop 串行化。
  */
 class EventProcessor(
     private val imClient: ImClient,
@@ -79,8 +81,9 @@ class EventProcessor(
     private var conversationRefreshJob: Job? = null
     private val conversationsDirty = MutableStateFlow(false)
     private val conversationRefreshSignals = Channel<Unit>(Channel.CONFLATED)
-    @Volatile
-    private var activeSyncOwner: Any? = null
+    /** Serializes live delivery, replay pages, and destructive projection reset across reconnects. */
+    private val projectionMutex = Mutex()
+    private val syncOwner = Any()
     @Volatile
     private var started = false
     @Volatile
@@ -88,16 +91,23 @@ class EventProcessor(
 
     fun start() {
         check(!stopped) { "EventProcessor is session-owned and cannot restart after stop" }
+        if (started) return
         started = true
         ensureConversationRefreshWorker()
         ensureListening()
+        imClient.installEventSync(
+            owner = syncOwner,
+            cursor = { lastEventId.value },
+            processBatch = { events, reportProgress ->
+                withContext(Dispatchers.IO) { processBatch(events, reportProgress) }
+            },
+            reset = {
+                withContext(Dispatchers.IO) { resetServerProjection() }
+            },
+        )
         if (watcherJob?.isActive == true) return
         watcherJob = lifecycleScope.launch {
             imClient.state.collect { state ->
-                if (state == ConnectionState.CONNECTED && listenJob?.isActive != true) {
-                    logger.trace("Connection restored, restarting event listener")
-                    ensureListening()
-                }
                 if (state == ConnectionState.AUTHENTICATED) {
                     requireConversationReconciliation()
                 }
@@ -157,62 +167,39 @@ class EventProcessor(
     internal val hasDirtyConversations: Boolean
         get() = conversationsDirty.value
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     private fun ensureListening() {
-        val scope = imClient.coroutineScope ?: run {
-            logger.fault("Cannot listen: ImClient not connected")
-            return
-        }
         if (!started || listenJob?.isActive == true) return
-        val bindingOwner = Any()
-        activeSyncOwner = bindingOwner
-        // UNDISTPATCHED makes the SharedFlow subscription visible before the event loop can send
-        // SYNC_REQUEST. This matters for a maximum-sized durable event which is delivered as a
-        // standalone NOTIFY instead of inside SYNC_BATCH.
-        val newListenJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            try {
-                imClient.packets
-                    .onSubscription {
-                        if (!started || stopped) return@onSubscription
-                        // onSubscription runs only after the collector is registered, so the
-                        // first replay item cannot disappear from a replay=0 SharedFlow.
-                        imClient.installEventSync(
-                            owner = bindingOwner,
-                            cursor = { lastEventId.value },
-                            processBatch = { events ->
-                                withContext(Dispatchers.IO) { processBatch(events) }
-                            },
-                            reset = {
-                                withContext(Dispatchers.IO) { resetServerProjection() }
-                            },
-                        )
-                    }
-                    .collect { proto ->
-                        if (proto is NotifyPayload) {
-                            withContext(Dispatchers.IO) { processNotify(proto) }
-                        }
-                    }
-            } catch (e: CancellationException) {
-                // 正常的协作式取消（断连/重连时 SupervisorJob 被 cancel），不是 crash
-                throw e
-            } catch (e: Exception) {
-                // Durable events are ordered. Once one projection fails, processing a later event
-                // would permanently advance the cursor past the failed item. Close immediately so
-                // reconnect resumes from the last successfully persisted cursor.
-                logger.fault("EventProcessor projection failed; reconnecting from durable cursor", e)
-                imClient.closeForEventResync("Persistent event projection failed", e)
-            } finally {
-                imClient.removeEventSync(bindingOwner)
-                if (activeSyncOwner === bindingOwner) activeSyncOwner = null
+        // This subscription belongs to the authenticated session rather than one TCP attempt. It is
+        // visible before installEventSync can send SYNC_REQUEST and survives every reconnect, so the
+        // READY -> first live NOTIFY boundary has no replay=0 subscription gap.
+        listenJob = lifecycleScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            imClient.routedPackets.collect { packet ->
+                val proto = packet.payload as? NotifyPayload ?: return@collect
+                // A packet already queued by a retired TCP attempt is never allowed to mutate the
+                // replacement attempt. Durable replay will deliver it again when required.
+                if (packet.connectionGeneration != imClient.currentConnectionGeneration) {
+                    return@collect
+                }
+                try {
+                    withContext(Dispatchers.IO) { processNotify(proto) }
+                } catch (cancelled: CancellationException) {
+                    // Session stop owns this cancellation; TCP reconnects do not replace listener.
+                    throw cancelled
+                } catch (failure: Exception) {
+                    // Keep the session-owned collector alive for the replacement connection. The
+                    // generation lease prevents a late failure from closing that replacement.
+                    logger.fault(
+                        "EventProcessor projection failed; reconnecting from durable cursor",
+                        failure,
+                    )
+                    imClient.closeForEventResync(
+                        owner = syncOwner,
+                        connectionGeneration = packet.connectionGeneration,
+                        reason = "Persistent event projection failed",
+                        cause = failure,
+                    )
+                }
             }
-        }
-        listenJob = newListenJob
-        // stop() may race the UNDISTPATCHED launch before listenJob is assigned. In that case its
-        // direct removal can precede the queued install; cancel and remove once more after launch
-        // returns, which is necessarily ordered after onSubscription's install submission.
-        if (stopped) {
-            newListenJob.cancel()
-            imClient.removeEventSync(bindingOwner)
         }
     }
 
@@ -220,10 +207,8 @@ class EventProcessor(
         if (stopped) return
         stopped = true
         started = false
-        // Cancel the connection-owned collector first. Its finally block repeats owner-scoped
-        // removeEventSync, covering an install task which was already queued on the EventLoop.
+        imClient.removeEventSync(syncOwner)
         listenJob?.cancel()
-        activeSyncOwner?.let { imClient.removeEventSync(it) }
         watcherJob?.cancel()
         conversationRefreshJob?.cancel()
         conversationRefreshSignals.close()
@@ -234,25 +219,45 @@ class EventProcessor(
      * Project one server page in event-id order. Every successful item advances the durable
      * cursor independently; the first failure escapes immediately and later items are untouched.
      */
-    internal suspend fun processBatch(events: List<NotifyPayload>): Long {
+    internal suspend fun processBatch(
+        events: List<NotifyPayload>,
+        reportProgress: (Long) -> Unit = {},
+    ): Long {
         require(events.isNotEmpty()) { "sync batch must not be empty" }
-        events.forEach { processNotify(it) }
-        return lastEventId.value
+        return projectionMutex.withLock {
+            events.forEach { processNotifyLocked(it, reportProgress) }
+            val expectedCursor = events.last().eventId
+            check(lastEventId.value >= expectedCursor) {
+                "sync page was not durably projected through cursor=$expectedCursor"
+            }
+            // A retired live delivery may already have persisted farther. The server page itself
+            // is nevertheless complete through expectedCursor, so acknowledge precisely its end.
+            expectedCursor
+        }
     }
 
     /** Destructive recovery requested by an authenticated server-side cursor rejection. */
-    internal fun resetServerProjection(): Long {
+    internal suspend fun resetServerProjection(): Long = projectionMutex.withLock {
         localCache.resetServerProjection()
         _lastEventId.value = localCache.getSyncCursor(SYNC_CURSOR_KEY)
         check(_lastEventId.value == 0L) { "projection reset did not clear sync cursor" }
         conversationsDirty.value = false
-        return _lastEventId.value
+        _lastEventId.value
     }
 
-    internal suspend fun processNotify(notify: NotifyPayload) {
+    internal suspend fun processNotify(notify: NotifyPayload) =
+        projectionMutex.withLock { processNotifyLocked(notify) }
+
+    private suspend fun processNotifyLocked(
+        notify: NotifyPayload,
+        reportProgress: (Long) -> Unit = {},
+    ) {
         // 重连/最终激活竞态可能产生 at-least-once 重复。已经持久化完成的事件不再
         // 重放上层 SharedFlow 副作用；服务端保证同一用户的持久事件按 ID 交付。
-        if (notify.eventId > 0L && notify.eventId <= _lastEventId.value) return
+        if (notify.eventId > 0L && notify.eventId <= _lastEventId.value) {
+            reportProgress(notify.eventId)
+            return
+        }
         val notifyType = NotifyType.fromCode(notify.notifyType)
         val payload = notify.payload
         // payload 为空的事件（如部分 PRESENCE）直接视为已处理。
@@ -265,7 +270,7 @@ class EventProcessor(
             _lastEventId.value = localCache.advanceSyncCursor(SYNC_CURSOR_KEY, notify.eventId)
             // A large page can legitimately take time. Surface each durable commit so the
             // controller's synchronization watchdog measures no-progress rather than wall time.
-            imClient.reportEventSyncProgress(_lastEventId.value)
+            reportProgress(notify.eventId)
         }
         if (notifyType == NotifyType.CHAT_CREATED) {
             // Signal strictly after the authoritative projection and durable cursor commit. The

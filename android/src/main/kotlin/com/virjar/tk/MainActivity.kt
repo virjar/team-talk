@@ -365,6 +365,9 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                         credentialsProvider = sessionUser::httpCredentialsSnapshot,
                     )
                 }
+                DisposableEffect(mediaSession) {
+                    onDispose { mediaSession.close() }
+                }
                 AndroidTextAttachmentPreviewScreen(
                     attachment = attachment,
                     mediaSession = mediaSession,
@@ -547,7 +550,12 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             val downloads = remember(context, mediaSession) {
                 AndroidFileDownloadController(context, mediaSession)
             }
-            DisposableEffect(downloads) { onDispose { downloads.close() } }
+            DisposableEffect(downloads) {
+                onDispose {
+                    downloads.close()
+                    mediaSession.close()
+                }
+            }
             LaunchedEffect(chatId) { dataState.loadScreenDataByKey(ScreenDataKey.GroupFiles(chatId)) }
 
             val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -568,6 +576,8 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                         val target = versionTarget
                         if (target == null) dataState.groupFiles.publish(name, attachment)
                         else dataState.groupFiles.addVersion(target, attachment)
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
                     } catch (e: Exception) {
                         Log.e("GroupFiles", "upload failed", e)
                         dataState.groupFiles.reportUploadError(e)

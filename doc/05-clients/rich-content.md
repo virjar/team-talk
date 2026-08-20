@@ -87,6 +87,11 @@ Markdown 源码用于“静态且安全的富表现”：标题、引用、代�
 图片与视频先通过 HTTP 上传。服务端在存储源文件前生成缩略图和媒体元数据：图片使用 Java2D，
 视频使用内嵌 FFmpeg/JavaCV。响应提供 path、缩略图 path、尺寸和时长。
 
+Desktop、Android 与 ImBot 共用 SDK 的流式上传契约：本地文件每次重试重新打开，以 64 KiB 级分块
+写入固定长度 multipart，不把大附件整体读入堆。文件名和 Content-Type 在进入 multipart header 前
+清洗，认证请求不跟随重定向，响应按上限读取。Repository 属于认证会话；同 uid 的 token 轮换在
+下一请求生效，uid 变化或会话关闭立即拒绝后续传输。
+
 ### 气泡
 
 - 图片/贴纸：媒体贴边，气泡本身裁剪圆角。

@@ -36,6 +36,12 @@ UserSession（uid/token）
 下载或上传任务无法取得新账号凭据。认证会话销毁会统一取消平台协程、录音与传输任务；`close()`
 同样必须幂等。
 
+HTTP 附件上传由会话拥有的 `FileRepository` 统一协调。Repository 固定 `server + owner uid`，每个请求
+从同一 `UserSession` 读取一份原子凭据快照；上传内容实现 common `UploadSource`，声明已知长度并把
+分块写给平台 sink。JVM 与 Android 只负责固定长度 multipart 的平台传输，不接收整块大文件
+`ByteArray`。只有不超过 1 MiB 的明确小 payload 可以使用内存便利入口；Repository 关闭会断开正在
+执行的 HTTP 连接，关闭或取消之后不再发布进度和结果。
+
 销毁顺序先停止日志上传、RPC 和事件消费，再断开 TCP，最后解除全局日志回调。`close()` 必须幂等，
 防止登出、认证失败和窗口销毁同时触发时产生二次清理问题。
 

@@ -1,5 +1,6 @@
 package com.virjar.tk.media
 
+import com.virjar.tk.client.SessionHttpCredentials
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
@@ -67,7 +68,7 @@ class DesktopSessionResourcesTest {
             val resources = DesktopSessionResources(
                 ownerUid = "owner",
                 serverUrl = "https://chat.example",
-                credentialProvider = { DesktopCredentialSnapshot(currentUid, currentToken) },
+                credentialProvider = { SessionHttpCredentials(currentUid, currentToken) },
                 dataDir = dataDir,
                 downloader = downloader { request, partial ->
                     seenTokens += request.authorizationToken
@@ -295,7 +296,7 @@ class DesktopSessionResourcesTest {
     ) = DesktopSessionResources(
         ownerUid = uid,
         serverUrl = server,
-        credentialProvider = { DesktopCredentialSnapshot(uid, token) },
+        credentialProvider = { SessionHttpCredentials(uid, token) },
         dataDir = dataDir,
         quotaBytes = quotaBytes,
         downloader = downloader,

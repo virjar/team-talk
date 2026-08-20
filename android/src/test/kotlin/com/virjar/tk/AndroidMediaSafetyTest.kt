@@ -152,6 +152,11 @@ class AndroidMediaSafetyTest {
         userSession.onAuthSuccess("uid-b", "bob", "Bob", "refresh-b", "token-b")
         assertFalse(mediaSession.isCurrentOwner())
         assertFailsWith<IllegalStateException> { mediaSession.accessTokenForRequest() }
+
+        mediaSession.close()
+        mediaSession.close()
+        assertFalse(mediaSession.isCurrentOwner())
+        assertFailsWith<IllegalStateException> { mediaSession.accessTokenForRequest() }
     }
 
     @Test

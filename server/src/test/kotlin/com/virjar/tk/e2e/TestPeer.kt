@@ -21,6 +21,7 @@ import com.virjar.tk.protocol.payload.MessageAckPayload
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import com.virjar.tk.repository.FileRepository
+import com.virjar.tk.repository.asUploadSource
 import com.virjar.tk.http.UploadResult
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty
 import java.io.*
@@ -47,19 +48,43 @@ class TestPeer {
     // ──────────────── 工具方法 ────────────────
 
     /** 上传并解析服务端媒体描述符。 */
-    private suspend fun uploadFileMeta(file: File, accessToken: String?, mimeType: String): UploadResult =
-        FileRepository(serverUrl, accessToken)
-            .uploadWithMeta(file.readBytes(), file.name, mimeType)
-            .getOrThrow()
+    private suspend fun uploadFileMeta(
+        file: File,
+        session: RemoteAcceptanceSupport.Session,
+        mimeType: String,
+    ): UploadResult {
+        val repository = FileRepository(
+            serverUrl,
+            session.uid,
+            session.userSession::httpCredentialsSnapshot,
+        )
+        return try {
+            repository.uploadWithMeta(file.asUploadSource(), file.name, mimeType).getOrThrow()
+        } finally {
+            repository.close()
+        }
+    }
 
     /**
      * 上传本地文件到服务器，返回权威附件描述符。
      * 文件上传接口走 Bearer accessToken 鉴权（FileRoutes），必须带认证头。
      */
-    private suspend fun uploadFile(file: File, accessToken: String?, mimeType: String = "application/octet-stream"): Attachment =
-        FileRepository(serverUrl, accessToken)
-            .upload(file.readBytes(), file.name, mimeType)
-            .getOrThrow()
+    private suspend fun uploadFile(
+        file: File,
+        session: RemoteAcceptanceSupport.Session,
+        mimeType: String = "application/octet-stream",
+    ): Attachment {
+        val repository = FileRepository(
+            serverUrl,
+            session.uid,
+            session.userSession::httpCredentialsSnapshot,
+        )
+        return try {
+            repository.upload(file.asUploadSource(), file.name, mimeType).getOrThrow()
+        } finally {
+            repository.close()
+        }
+    }
 
     // ──────────────── 测试方法 ────────────────
 
@@ -250,7 +275,7 @@ class TestPeer {
         if (!file.exists()) { println("[TestPeer] file not found: ${file.absolutePath}"); return@runBlocking }
 
         val session = RemoteAcceptanceSupport.loginUser(username, "password123")
-        val attachment = uploadFile(file, session.userSession.accessToken)
+        val attachment = uploadFile(file, session)
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
             messageType = MessageType.FILE.code, timestamp = System.currentTimeMillis(),
             senderUid = session.uid, body = FileBody(attachment))
@@ -507,7 +532,7 @@ class TestPeer {
         if (!file.exists()) { println("[TestPeer] file not found: ${file.absolutePath}"); return@runBlocking }
 
         val session = RemoteAcceptanceSupport.loginUser(username, "password123")
-        val upload = uploadFileMeta(file, session.userSession.accessToken, "image/png")
+        val upload = uploadFileMeta(file, session, "image/png")
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
             messageType = MessageType.IMAGE.code, timestamp = System.currentTimeMillis(),
             senderUid = session.uid, body = ImageBody(upload.file, thumbnail = upload.thumbnail))
@@ -552,7 +577,7 @@ class TestPeer {
         if (!file.exists()) { println("[TestPeer] file not found: ${file.absolutePath}"); return@runBlocking }
 
         val session = RemoteAcceptanceSupport.loginUser(username, "password123")
-        val attachment = uploadFile(file, session.userSession.accessToken, "audio/aac")
+        val attachment = uploadFile(file, session, "audio/aac")
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
             messageType = MessageType.VOICE.code, timestamp = System.currentTimeMillis(),
             senderUid = session.uid, body = VoiceBody(attachment, duration = 12))
@@ -573,7 +598,7 @@ class TestPeer {
         if (!file.exists()) { println("[TestPeer] file not found: ${file.absolutePath}"); return@runBlocking }
 
         val session = RemoteAcceptanceSupport.loginUser(username, "password123")
-        val upload = uploadFileMeta(file, session.userSession.accessToken, "video/mp4")
+        val upload = uploadFileMeta(file, session, "video/mp4")
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
             messageType = MessageType.VIDEO.code, timestamp = System.currentTimeMillis(),
             senderUid = session.uid,

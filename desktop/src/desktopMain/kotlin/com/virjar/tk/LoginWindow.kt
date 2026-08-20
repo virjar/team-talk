@@ -22,7 +22,6 @@ import com.virjar.tk.client.defaultServerConfig
 import com.virjar.tk.client.rememberAuthController
 import com.virjar.tk.keepawake.KeepAwake
 import com.virjar.tk.media.DesktopSessionResources
-import com.virjar.tk.media.DesktopCredentialSnapshot
 import com.virjar.tk.tray.AppTray
 import com.virjar.tk.tray.DesktopNotificationManager
 import com.virjar.tk.ui.AppTheme
@@ -201,17 +200,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
             DesktopSessionResources(
                 ownerUid = session.userSession.uid,
                 serverUrl = config.serverUrl,
-                credentialProvider = {
-                    // uid 前后读一致才能生成快照；跨账号切换期间宁可拒绝请求，也不能
-                    // 把新账号 token 交给旧资源。相同 uid 的重连 token 轮换正常透传。
-                    val uidBefore = session.userSession.uid
-                    val token = session.userSession.accessToken
-                    val uidAfter = session.userSession.uid
-                    DesktopCredentialSnapshot(
-                        uid = uidBefore.takeIf { it == uidAfter }.orEmpty(),
-                        accessToken = token,
-                    )
-                },
+                credentialProvider = session.userSession::httpCredentialsSnapshot,
                 dataDir = dataDir,
             )
         }

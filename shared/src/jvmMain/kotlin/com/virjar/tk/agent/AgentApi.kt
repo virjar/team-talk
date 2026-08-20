@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpExchange
 import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.body.markdownContentOrNull
 import com.virjar.tk.protocol.payload.MessageAckPayload
+import com.virjar.tk.repository.asUploadSource
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -90,16 +91,19 @@ class AgentApi(private val agent: AgentRuntime) {
                     404 to err("file not found: ${file.path}")
                 } else {
                     val ack = agent.bot.uploadAndSendFile(
-                        agent.serverUrl,
-                        r.req("chatId"), file.readBytes(), file.name, "application/octet-stream",
+                        r.req("chatId"),
+                        file.asUploadSource(),
+                        file.name,
+                        "application/octet-stream",
                     )
                     agentAckResponse(ack)
                 }
             }
             "/v1/upload" -> withFile(r) { f ->
                 val attachment = agent.bot.uploadFile(
-                    agent.serverUrl,
-                    f.readBytes(), f.name, "application/octet-stream",
+                    f.asUploadSource(),
+                    f.name,
+                    "application/octet-stream",
                 )
                 buildJsonObject {
                     put("path", attachment.path)

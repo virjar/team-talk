@@ -105,9 +105,7 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.material.icons.extended)
     implementation(libs.slf4j.jdk14)
-    // 媒体/上传依赖（VideoPlayerDialog / MediaHelper 使用）
-    implementation(libs.ktor.client.core)
-    implementation(libs.ktor.client.okhttp)
+    // 媒体展示依赖（上传已收敛到 shared 流式 transport）
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)
     implementation(libs.coil.compose)
