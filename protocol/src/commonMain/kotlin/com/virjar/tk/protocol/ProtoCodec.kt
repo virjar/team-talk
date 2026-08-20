@@ -20,15 +20,14 @@ object ProtoCodec {
 
     // ── 解码 ──
 
-    fun <T : IProto> decode(reader: IProtoReader<T>, bytes: ByteArray): T {
-        return reader.readFrom(PacketBuffer(Unpooled.wrappedBuffer(bytes)))
-    }
+    fun <T : IProto> decode(reader: IProtoReader<T>, bytes: ByteArray): T =
+        withPayload(bytes) { reader.readFrom(this) }
 
-    fun <T : IProto> decodeList(reader: IProtoReader<T>, bytes: ByteArray): List<T> {
-        val buf = PacketBuffer(Unpooled.wrappedBuffer(bytes))
-        val count = buf.readCollectionSize(minimumBytesPerEntry = 1, fieldName = "proto list")
-        return List(count) { reader.readFrom(buf) }
-    }
+    fun <T : IProto> decodeList(reader: IProtoReader<T>, bytes: ByteArray): List<T> =
+        withPayload(bytes) {
+            val count = readCollectionSize(minimumBytesPerEntry = 1, fieldName = "proto list")
+            List(count) { reader.readFrom(this) }
+        }
 
     // ── Payload 写入辅助 ──
 
@@ -54,7 +53,15 @@ object ProtoCodec {
      * 从 ByteArray 打开 PacketBuffer 并执行 block，用于 RPC 路由中读取请求参数。
      */
     inline fun <T> withPayload(payload: ByteArray?, block: PacketBuffer.() -> T): T {
-        return PacketBuffer(Unpooled.wrappedBuffer(payload!!)).block()
+        val byteBuf = Unpooled.wrappedBuffer(payload ?: EMPTY_PAYLOAD)
+        try {
+            val packetBuffer = PacketBuffer(byteBuf)
+            val result = packetBuffer.block()
+            packetBuffer.requireExhausted()
+            return result
+        } finally {
+            byteBuf.release()
+        }
     }
 
     // ── 内部 ──
@@ -71,4 +78,7 @@ object ProtoCodec {
             byteBuf.release()
         }
     }
+
+    @PublishedApi
+    internal val EMPTY_PAYLOAD = ByteArray(0)
 }

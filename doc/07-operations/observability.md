@@ -40,7 +40,9 @@ KICK、IDLE 和 CLOSE。
 ClientSession 持有独立环形缓冲。fault 经短 debounce 触发上传；开发构建定期上传 trace。上传失败
 保存 pending，CrashDumper 使用原子文件保存未处理崩溃，下一次启动重传。
 
-服务端按 `client-logs/{uid}/{deviceId}/{date}.log` 保存并设置保留期。
+上传端点只接受当前会话的 Bearer access token 和有界 GZIP；uid/deviceId 一律取 token 中的权威身份，
+不接受请求头伪造目录。服务端把压缩体限制为 1 MiB、解压后限制为 4 MiB，再按
+`client-logs/{uid}/{deviceId}/{date}.log` 保存并设置保留期。
 
 ## 5. 诊断键
 

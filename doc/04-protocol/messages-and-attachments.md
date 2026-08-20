@@ -29,20 +29,25 @@ body fields（当 hasBody=1）
 
 ## 3. 消息类型
 
-当前协议分配 TEXT、IMAGE、VOICE、VIDEO、FILE、LOCATION、CARD、REPLY、FORWARD、
-MERGE_FORWARD、REVOKE、EDIT、STICKER、REACTION、TYPING、RICH_TEXT、
-INTERACTIVE_CARD 与 GENERIC。是否有完整产品入口以[功能状态](../10-reference/feature-status.md)为准，
+当前协议分配 RICH_TEXT、IMAGE、VOICE、VIDEO、FILE、LOCATION、CARD、REPLY、FORWARD、
+MERGE_FORWARD、REVOKE、EDIT、STICKER、REACTION、TYPING、
+INTERACTIVE_CARD，以及预留的 `GENERIC(99)`。是否有完整产品入口以[功能状态](../10-reference/feature-status.md)为准，
 枚举存在不等于所有客户端已经完成体验。
 
 MessageBodyRegistry 是 `MessageType → reader` 的唯一解码入口。发送前与服务端落库前都调用
 MessageBodyPolicy，确保 messageType 与 body 实际类型一致。
+
+`GENERIC` 的 body 固定为 `GenericPayload(extensionType, opaque data)`。接收端必须完整消费并原样
+保存未知扩展字节，不能因为当前版本不理解 extensionType 而断开连接；UI 只显示“不支持的扩展消息”，
+不得把 opaque data 当成文本或 Markdown。前向兼容接收不等于开放创建：客户端发送未登记的
+`ExtensionType` 时，服务端在落库与 ACK 前拒绝。
 
 ## 4. 富文本
 
 普通文字消息的权威源是 `RichTextBody.markdown`。`plainText` 与 mentions 从 Markdown 重建，服务端
 不能信任调用方上传的派生值。这保证搜索、预览和 `@` 权限检查使用同一文本解释。
 
-旧 TextBody 仅用于兼容读取。新增文字能力应扩展 RichText/Markdown 语义，不继续产生 TextBody。
+文字消息只有 `RICH_TEXT(code=1)` 一种 wire 形式，不存在并行的兼容解码路径。
 
 交互卡片是独立消息类型，不把可执行动作塞进 Markdown。服务端仍需校验 action schema 与权限。
 

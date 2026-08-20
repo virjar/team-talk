@@ -26,11 +26,11 @@ data class DocumentRevision(
 
     companion object : IProtoReader<DocumentRevision> {
         override fun readFrom(buf: PacketBuffer): DocumentRevision = DocumentRevision(
-            documentId = buf.readString()!!,
+            documentId = buf.readRequiredString(),
             revision = buf.readVarLong(),
-            title = buf.readString()!!,
-            markdown = buf.readString()!!,
-            editedBy = buf.readString()!!,
+            title = buf.readRequiredString(),
+            markdown = buf.readRequiredString(),
+            editedBy = buf.readRequiredString(),
             editedAt = buf.readVarLong(),
         )
     }

@@ -8,7 +8,7 @@ package com.virjar.tk.rpc
  * ```kotlin
  * @RpcService("message")                    // serviceId = 字符串（wire 直接传输）
  * interface MessageRpc {
- *     @RpcMethod(1)                         // 可省略：省略时按声明顺序 1,2,3... 分配
+ *     @RpcMethod(1)                         // 必填：显式、永久锁定 methodId
  *     suspend fun getHistory(chatId: String, fromSeq: Long, limit: Int): List<Message>
  *     suspend fun revokeMessage(chatId: String, serverSeq: Long)   // Unit 返回
  * }
@@ -18,8 +18,7 @@ package com.virjar.tk.rpc
  * - 方法必须是 `suspend`
  * - 参数类型白名单：String / Int / Long / Boolean / IProto 子类；禁止默认值
  * - 返回类型白名单：上述 + Unit / List<IProto 子类> / List<String>
- * - **methodId 稳定性**：新方法只追加到 interface 末尾；在中间插入方法必须显式
- *   `@RpcMethod(id)` 锁定，否则后续方法 id 整体漂移（wire 不兼容）
+ * - 每个方法必须显式声明唯一、正数的 `@RpcMethod(id)`；声明顺序不参与 wire 编号
  *
  * ### 生成物（每 service 一个文件，rpc/processor 生成）
  * - `XxxRpcContract`：SERVICE/M_* 常量 + 每方法参数编解码（**唯一事实源**，两侧共用）
@@ -33,7 +32,7 @@ package com.virjar.tk.rpc
 @Retention(AnnotationRetention.SOURCE)
 annotation class RpcService(val name: String)
 
-/** 覆盖方法 id 分配（默认按 interface 声明顺序 1,2,3...）。 */
+/** 显式分配 wire methodId；每个 RPC 方法都必须声明。 */
 @Target(AnnotationTarget.FUNCTION)
 @Retention(AnnotationRetention.SOURCE)
 annotation class RpcMethod(val id: Int)

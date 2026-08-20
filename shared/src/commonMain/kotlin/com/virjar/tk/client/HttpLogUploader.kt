@@ -19,23 +19,28 @@ class HttpLogUploader(
     private val traceBuffer: LogBuffer,
     private val faultBuffer: LogBuffer,
     private val serverUrl: String,
-    private val deviceId: String,
+    private val accessTokenProvider: () -> String?,
     private val crashDumper: CrashDumper,
     private val intervalMs: Long = 5 * 60 * 1000L,
 ) {
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob() +
+    private val lifecycleLock = Any()
+    private val lifecycleJob = SupervisorJob()
+    private val scope = CoroutineScope(Dispatchers.Default + lifecycleJob +
         CoroutineExceptionHandler { _, throwable ->
             logUnhandledError("HttpLogUploader", throwable)
         })
     private var timerJob: Job? = null
     private var faultDebounceJob: Job? = null
+    private var stopped = false
 
-    fun start() {
-        // 幂等：重复 start 先取消旧定时任务
+    fun start() = synchronized(lifecycleLock) {
+        if (stopped) return@synchronized
+
+        // 幂等：重复 start 先取消旧定时任务。
         timerJob?.cancel()
         faultDebounceJob?.cancel()
-        // 启动时优先上传上次崩溃日志
-        scope.launch { crashDumper.uploadPending(serverUrl, deviceId) }
+        // 启动时优先上传上次崩溃日志。该任务也归会话 scope 所有。
+        scope.launch { crashDumper.uploadPending(serverUrl, accessTokenProvider()) }
 
         // 定时上传（开发构建：全量 trace）
         timerJob = scope.launch {
@@ -47,9 +52,23 @@ class HttpLogUploader(
     }
 
     fun stop() {
-        timerJob?.cancel()
-        faultDebounceJob?.cancel()
-        runCatching { runBlocking { uploadAll() } }
+        val shouldStop = synchronized(lifecycleLock) {
+            if (stopped) {
+                false
+            } else {
+                stopped = true
+                timerJob?.cancel()
+                faultDebounceJob?.cancel()
+                timerJob = null
+                faultDebounceJob = null
+                true
+            }
+        }
+        if (!shouldStop) return
+
+        // close/logout 可能发生在 UI 线程，这里绝不等待 HTTP。已启动的上传也由
+        // 会话 job 统一取消，失败数据仍由 uploadAll 的 pending 文件兜底。
+        lifecycleJob.cancel()
     }
 
     /**
@@ -57,16 +76,22 @@ class HttpLogUploader(
      * 由 AppLog.onFault 回调调用。
      */
     fun trigger() {
-        faultDebounceJob?.cancel()
-        faultDebounceJob = scope.launch {
-            delay(3000)
-            uploadAll()
+        synchronized(lifecycleLock) {
+            if (stopped) return
+            faultDebounceJob?.cancel()
+            faultDebounceJob = scope.launch {
+                delay(3000)
+                uploadAll()
+            }
         }
     }
 
     /** 用户手动触发：打包上传最近日志。 */
     fun manualUpload() {
-        scope.launch { uploadAll() }
+        synchronized(lifecycleLock) {
+            if (stopped) return
+            scope.launch { uploadAll() }
+        }
     }
 
     private fun uploadAll() {
@@ -80,10 +105,12 @@ class HttpLogUploader(
 
         try {
             val compressed = HttpUtil.gzip(combined)
+            val accessToken = accessTokenProvider()
+                ?: throw IllegalStateException("No authenticated access token for log upload")
             val code = HttpUtil.postGzip(
                 "$serverUrl/api/client-logs",
                 compressed,
-                mapOf("X-Device-Id" to deviceId),
+                mapOf("Authorization" to "Bearer $accessToken"),
             )
             if (code != 200) throw RuntimeException("HTTP $code")
         } catch (e: Exception) {

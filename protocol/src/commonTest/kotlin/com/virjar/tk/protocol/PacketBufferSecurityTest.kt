@@ -12,23 +12,98 @@ import com.virjar.tk.body.ReactionBody
 import com.virjar.tk.body.ReplyBody
 import com.virjar.tk.body.RevokeBody
 import com.virjar.tk.body.RichTextBody
-import com.virjar.tk.body.TextBody
 import com.virjar.tk.model.Attachment
 import com.virjar.tk.model.Message
 import com.virjar.tk.protocol.payload.AuthPayloadPolicy
 import com.virjar.tk.protocol.payload.AuthRequestPayload
+import com.virjar.tk.protocol.payload.AuthResponsePayload
 import com.virjar.tk.protocol.payload.InvokePayload
+import com.virjar.tk.protocol.payload.NotifyPayload
 import com.virjar.tk.protocol.payload.SubscribePayload
+import com.virjar.tk.protocol.payload.SyncBatchPayload
 import com.virjar.tk.protocol.payload.UnsubscribePayload
 import io.netty.buffer.Unpooled
 import io.netty.channel.embedded.EmbeddedChannel
 import io.netty.handler.codec.CorruptedFrameException
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class PacketBufferSecurityTest {
+
+    @Test
+    fun `client codec raises frame limit while decoding auth before a coalesced large notify`() {
+        val authFrame = encodeFrame(
+            AuthResponsePayload(
+                code = AuthResponsePayload.CODE_OK,
+                uid = "u1",
+                username = "user",
+                name = "User",
+                accessToken = "access",
+                refreshToken = "refresh",
+            ),
+        )
+        val largeEvent = NotifyPayload(
+            eventId = 1L,
+            notifyType = NotifyType.GENERIC.code,
+            payload = ByteArray(PacketCodec.UNAUTHED_LIMIT + 512) { 0x41 },
+        )
+        val notifyFrame = encodeFrame(largeEvent)
+        val coalesced = Unpooled.buffer(authFrame.size + notifyFrame.size).apply {
+            writeBytes(authFrame)
+            writeBytes(notifyFrame)
+        }
+        val channel = EmbeddedChannel(PacketCodec(inboundRole = PacketInboundRole.CLIENT))
+
+        try {
+            assertTrue(channel.writeInbound(coalesced))
+            assertEquals(AuthResponsePayload.CODE_OK, channel.readInbound<AuthResponsePayload>().code)
+            val decodedEvent = channel.readInbound<NotifyPayload>()
+            assertEquals(largeEvent.eventId, decodedEvent.eventId)
+            assertEquals(largeEvent.notifyType, decodedEvent.notifyType)
+            assertTrue(checkNotNull(decodedEvent.payload).contentEquals(checkNotNull(largeEvent.payload)))
+        } finally {
+            channel.finishAndReleaseAll()
+        }
+    }
+
+    @Test
+    fun `sync batch rejects oversized event count before allocating entries`() {
+        val payload = Unpooled.buffer().apply {
+            PacketBuffer(this).writeVarInt(SyncBatchPayload.MAX_EVENTS + 1)
+        }
+        try {
+            assertFailsWith<CorruptedFrameException> {
+                SyncBatchPayload.readFrom(PacketBuffer(payload))
+            }
+        } finally {
+            payload.release()
+        }
+    }
+
+    @Test
+    fun `sync batch prefix observes wire budget and exposes standalone fallback`() {
+        val events = (1L..3L).map { eventId ->
+            NotifyPayload(
+                eventId = eventId,
+                notifyType = NotifyType.GENERIC.code,
+                payload = ByteArray(17) { eventId.toByte() },
+            )
+        }
+        val oneEventBytes = SyncBatchPayload.eventWireSize(events.first()).toInt()
+        assertTrue(
+            SyncBatchPayload.boundedPrefix(events, maximumWireBytes = oneEventBytes).isEmpty(),
+            "a standalone event may fit even when the batch count byte does not",
+        )
+
+        val firstTwoBudget = 1 + events.take(2).sumOf { SyncBatchPayload.eventWireSize(it) }.toInt()
+        assertEquals(
+            listOf(1L, 2L),
+            SyncBatchPayload.boundedPrefix(events, maximumWireBytes = firstTwoBudget).map { it.eventId },
+        )
+    }
 
     @Test
     fun `varints reject overflow and continuation beyond their wire width`() {
@@ -41,6 +116,75 @@ class PacketBufferSecurityTest {
         }
         assertFailsWith<CorruptedFrameException> {
             buffer(0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80).readVarLong()
+        }
+    }
+
+    @Test
+    fun `varints only accept their shortest canonical encoding`() {
+        assertEquals(128, buffer(0x80, 0x01).readVarInt())
+        assertEquals(128L, buffer(0x80, 0x01).readVarLong())
+
+        listOf(
+            intArrayOf(0x80, 0x00),
+            intArrayOf(0x81, 0x00),
+            intArrayOf(0xff, 0x00),
+        ).forEach { bytes ->
+            assertFailsWith<CorruptedFrameException> { buffer(*bytes).readVarInt() }
+            assertFailsWith<CorruptedFrameException> { buffer(*bytes).readVarLong() }
+        }
+    }
+
+    @Test
+    fun `varint writers reject negative values`() {
+        val byteBuf = Unpooled.buffer()
+        try {
+            val writer = PacketBuffer(byteBuf)
+            assertFailsWith<IllegalArgumentException> { writer.writeVarInt(-1) }
+            assertFailsWith<IllegalArgumentException> { writer.writeVarLong(-1) }
+            assertEquals(0, byteBuf.readableBytes())
+        } finally {
+            byteBuf.release()
+        }
+    }
+
+    @Test
+    fun `boolean values and presence markers are canonical`() {
+        assertFalse(buffer(0).readBoolean("test flag"))
+        assertTrue(buffer(1).readBoolean("test flag"))
+        assertFailsWith<CorruptedFrameException> { buffer(2).readBoolean("test flag") }
+
+        val byteBuf = Unpooled.buffer()
+        try {
+            val writer = PacketBuffer(byteBuf)
+            writer.writeBoolean(false)
+            writer.writeBoolean(true)
+            assertEquals(0, byteBuf.readUnsignedByte().toInt())
+            assertEquals(1, byteBuf.readUnsignedByte().toInt())
+        } finally {
+            byteBuf.release()
+        }
+    }
+
+    @Test
+    fun `strings reject malformed UTF-8 and null required values`() {
+        assertFailsWith<CorruptedFrameException> {
+            buffer(1, 2, 0xc0, 0xaf).readString()
+        }
+        assertFailsWith<CorruptedFrameException> {
+            buffer(1, 1, 0x80).readRequiredString(fieldName = "required")
+        }
+        assertFailsWith<CorruptedFrameException> {
+            buffer(0).readRequiredString(fieldName = "required")
+        }
+
+        val byteBuf = Unpooled.buffer()
+        try {
+            assertFailsWith<kotlin.text.CharacterCodingException> {
+                PacketBuffer(byteBuf).writeString("\uD800")
+            }
+            assertEquals(0, byteBuf.readableBytes())
+        } finally {
+            byteBuf.release()
         }
     }
 
@@ -87,14 +231,10 @@ class PacketBufferSecurityTest {
         }
     }
 
-    @Suppress("DEPRECATION")
     @Test
     fun `message envelope and every string based body reject oversized wire fields before allocation`() {
         assertDeclaredStringRejected(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_CHAT_ID_LENGTH)) {
             Message.readFrom(it)
-        }
-        assertDeclaredStringRejected(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_MARKDOWN_LENGTH)) {
-            TextBody.readFrom(it)
         }
         assertDeclaredStringRejected(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_MARKDOWN_LENGTH)) {
             RichTextBody.readFrom(it)
@@ -309,6 +449,21 @@ class PacketBufferSecurityTest {
             assertFailsWith<CorruptedFrameException> { reader(PacketBuffer(byteBuf)) }
         } finally {
             byteBuf.release()
+        }
+    }
+
+    private fun encodeFrame(proto: IProto): ByteArray {
+        val channel = EmbeddedChannel(PacketCodec(maxPayloadLimit = PacketCodec.AUTHED_LIMIT))
+        return try {
+            channel.writeOutbound(proto)
+            val frame = channel.readOutbound<io.netty.buffer.ByteBuf>()
+            try {
+                ByteArray(frame.readableBytes()).also(frame::readBytes)
+            } finally {
+                frame.release()
+            }
+        } finally {
+            channel.finishAndReleaseAll()
         }
     }
 

@@ -73,7 +73,14 @@ class RpcCodecConsistencyTest {
     @Test fun `MESSAGE SEARCH codec`() = runBlocking { assertCodecOk("SEARCH", user1.invoke("message", 2, com.virjar.tk.protocol.ProtoCodec.encodePayload { writeString(chatId); writeString("test"); writeVarInt(10) })) }
     @Test fun `MESSAGE REVOKE codec`() = runBlocking {
         // 先发一条消息拿 seq
-        val msg = com.virjar.tk.model.Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(), senderUid = user1.uid, messageType = 1, timestamp = System.currentTimeMillis(), body = null)
+        val msg = com.virjar.tk.model.Message(
+            chatId = chatId,
+            clientMsgId = UUID.randomUUID().toString(),
+            senderUid = user1.uid,
+            messageType = com.virjar.tk.protocol.MessageType.RICH_TEXT.code,
+            timestamp = System.currentTimeMillis(),
+            body = com.virjar.tk.body.buildRichTextBody("codec message"),
+        )
         val ack = user1.imClient.sendAndWaitAck(msg)
         assertCodecOk("REVOKE", user1.invoke("message", 3, com.virjar.tk.protocol.ProtoCodec.encodePayload { writeString(chatId); writeVarLong(ack.serverSeq) }))
     }
@@ -84,7 +91,7 @@ class RpcCodecConsistencyTest {
     @Test fun `CONTACT LIST codec`() = runBlocking { assertCodecOk("CONTACT.LIST", user1.invoke("contact", 1)) }
     @Test fun `CONTACT APPLY codec`() = runBlocking { assertCodecOk("CONTACT.APPLY", user1.invoke("contact", 2, com.virjar.tk.protocol.ProtoCodec.encodePayload { writeString(user2.uid); writeString("hello") })) }
     @Test fun `CONTACT BLACKLIST codec`() = runBlocking { assertCodecOk("CONTACT.BLACKLIST", user1.invoke("contact", 7, com.virjar.tk.protocol.ProtoCodec.encodePayload { writeString(user2.uid) })) }
-    @Test fun `CONTACT LIST_APPLIES codec`() = runBlocking { assertCodecOk("CONTACT.LIST_APPLIES", user1.invoke("contact", 9)) }
+    @Test fun `CONTACT LIST_PENDING_APPLIES codec`() = runBlocking { assertCodecOk("CONTACT.LIST_PENDING_APPLIES", user1.invoke("contact", 9)) }
     @Test fun `CONTACT LIST_BLACKLIST codec`() = runBlocking { assertCodecOk("CONTACT.LIST_BLACKLIST", user1.invoke("contact", 10)) }
     @Test fun `CONTACT LIST_APPLY_RECORDS codec`() = runBlocking {
         assertCodecOk("CONTACT.LIST_APPLY_RECORDS", user1.invoke("contact", 11,

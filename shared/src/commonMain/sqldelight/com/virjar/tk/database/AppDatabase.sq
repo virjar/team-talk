@@ -1,4 +1,4 @@
--- 当前 schema 版本 3（v3: 持久化会话草稿镜像 outbox）。迁移历史见同目录 .sqm 文件
+-- 发布前阶段本地库按 schema epoch 整库重建，不维护就地迁移。
 -- 用户
 CREATE TABLE IF NOT EXISTS user (
     uid TEXT PRIMARY KEY NOT NULL,
@@ -90,6 +90,15 @@ CREATE TABLE IF NOT EXISTS sync_cursor (
     value INTEGER NOT NULL
 );
 
+-- 无头客户端的持久业务 inbox。event_id 既保持投递顺序，也让 cursor 重放幂等。
+CREATE TABLE IF NOT EXISTS bot_message_inbox (
+    event_id INTEGER PRIMARY KEY NOT NULL,
+    chat_id TEXT NOT NULL,
+    server_seq INTEGER NOT NULL CHECK(server_seq > 0),
+    payload BLOB NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_inbox_message ON bot_message_inbox(chat_id, server_seq);
+
 -- 查询
 selectAllUsers:
 SELECT * FROM user;
@@ -139,6 +148,19 @@ DELETE FROM member WHERE chat_id = ? AND uid = ?;
 
 selectMessagesByChat:
 SELECT * FROM message WHERE chat_id = ? ORDER BY server_seq DESC LIMIT ?;
+
+-- tt-agent 的持久 recent 事实源；返回最新 limit 条，调用方反转为时间正序。
+selectRecentMessages:
+SELECT * FROM message
+WHERE server_seq > ?
+ORDER BY timestamp DESC, server_seq DESC
+LIMIT ?;
+
+selectRecentMessagesByChat:
+SELECT * FROM message
+WHERE chat_id = ? AND server_seq > ?
+ORDER BY timestamp DESC, server_seq DESC
+LIMIT ?;
 
 -- 向上翻页：加载某个 seq 之前的更老消息（利用 idx_message_chat_seq 索引）
 -- server_seq > 0 排除正在发送的消息（serverSeq=0 表示尚未服务端确认）
@@ -212,5 +234,43 @@ UPDATE conversation SET peer_read_seq = ? WHERE chat_id = ?;
 getSyncCursor:
 SELECT value FROM sync_cursor WHERE key = ?;
 
-setSyncCursor:
-INSERT OR REPLACE INTO sync_cursor(key, value) VALUES (?, ?);
+ensureSyncCursor:
+INSERT OR IGNORE INTO sync_cursor(key, value) VALUES (?, 0);
+
+advanceSyncCursor:
+UPDATE sync_cursor
+SET value = CASE WHEN :value > value THEN :value ELSE value END
+WHERE key = :key;
+
+enqueueBotMessage:
+INSERT OR IGNORE INTO bot_message_inbox(event_id, chat_id, server_seq, payload) VALUES (?, ?, ?, ?);
+
+peekBotMessage:
+SELECT event_id, payload FROM bot_message_inbox ORDER BY event_id ASC LIMIT 1;
+
+deleteBotMessage:
+DELETE FROM bot_message_inbox WHERE event_id = ?;
+
+deleteAllUsers:
+DELETE FROM user;
+
+deleteAllChats:
+DELETE FROM chat;
+
+deleteAllMembers:
+DELETE FROM member;
+
+deleteAllMessages:
+DELETE FROM message;
+
+deleteAllConversations:
+DELETE FROM conversation;
+
+deleteAllConversationDraftOutbox:
+DELETE FROM conversation_draft_outbox;
+
+deleteAllSyncCursors:
+DELETE FROM sync_cursor;
+
+deleteAllBotMessages:
+DELETE FROM bot_message_inbox;

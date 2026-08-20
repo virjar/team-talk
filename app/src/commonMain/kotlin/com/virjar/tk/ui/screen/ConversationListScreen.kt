@@ -228,7 +228,7 @@ private fun ConversationItem(
 private fun lastMessagePreview(text: String, type: Int?): String {
     if (type == null) return text
     return when (type) {
-        com.virjar.tk.protocol.MessageType.TEXT.code -> text
+        com.virjar.tk.protocol.MessageType.RICH_TEXT.code -> text
         com.virjar.tk.protocol.MessageType.FILE.code -> "[文件] $text"
         com.virjar.tk.protocol.MessageType.VOICE.code -> "[语音]"
         com.virjar.tk.protocol.MessageType.IMAGE.code -> "[图片]"
@@ -240,6 +240,7 @@ private fun lastMessagePreview(text: String, type: Int?): String {
         com.virjar.tk.protocol.MessageType.MERGE_FORWARD.code -> "[合并转发]"
         com.virjar.tk.protocol.MessageType.REVOKE.code -> "撤回了一条消息"
         com.virjar.tk.protocol.MessageType.TYPING.code -> "正在输入..."
+        com.virjar.tk.protocol.MessageType.GENERIC.code -> "不支持的扩展消息"
         else -> text
     }
 }

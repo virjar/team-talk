@@ -15,7 +15,6 @@ import com.virjar.tk.ui.component.FileDownloadController
  * ```
  * val media = remember(chatId) {
  *     ChatMediaConfig(
- *         onAttachClick = { showAttachSheet = true },
  *         onPickImage = { imagePicker.launch(...) },
  *         imageContent = { url, mod -> AsyncImage(url, mod) },
  *         onMediaClick = rememberMediaClickHandler(...),
@@ -25,8 +24,6 @@ import com.virjar.tk.ui.component.FileDownloadController
  * ```
  */
 data class ChatMediaConfig(
-    /** 附件(+)按钮点击。null=不显示附件工具栏。 */
-    val onAttachClick: (() -> Unit)? = null,
     /** 选择图片发送。 */
     val onPickImage: (() -> Unit)? = null,
     /** 选择文件发送。 */
@@ -51,8 +48,4 @@ data class ChatMediaConfig(
     val onUrlClick: ((String) -> Unit)? = null,
     /** 文件附件下载控制器（小文件静默/大文件点击/进度动画）。null=回退 onMediaClick。 */
     val fileDownloads: FileDownloadController? = null,
-) {
-    /** 是否有任何媒体发送能力（决定附件工具栏是否显示）。 */
-    val hasSendCapability: Boolean
-        get() = onAttachClick != null || onPickImage != null || onPickFile != null || onPickVideo != null || onVoiceRecord != null
-}
+)

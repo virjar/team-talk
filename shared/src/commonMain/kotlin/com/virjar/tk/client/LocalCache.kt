@@ -11,6 +11,12 @@ data class PendingConversationDraft(
     val generation: Long,
 )
 
+/** 一条尚未被无头消费者取走的持久消息；eventId 同时承担 replay 幂等键。 */
+data class PendingBotMessage(
+    val eventId: Long,
+    val message: Message,
+)
+
 /**
  * 客户端本地缓存接口。
  * 具体实现由各平台提供（基于 SQLDelight）。
@@ -60,6 +66,8 @@ interface LocalCache {
 
     // ── 消息 ──
     fun getMessages(chatId: String, limit: Int = 50): List<Message>
+    /** tt-agent 的持久 recent 查询；返回按时间正序排列的最新 [limit] 条。 */
+    fun getRecentMessages(chatId: String?, afterSeq: Long, limit: Int): List<Message>
     fun observeMessages(chatId: String): Flow<List<Message>>
     fun insertMessage(message: Message)
 
@@ -102,6 +110,29 @@ interface LocalCache {
     fun deleteConversation(chatId: String)
 
     /**
+     * 为一次服务端会话全量请求分配唯一代次。必须在发起 RPC 之前调用。
+     *
+     * 代次同时为请求期间到达的 CHAT / CONVERSATION 实时事件建立边界，
+     * 使迟到的旧快照不能删除刚创建的会话，也不能复活刚删除的会话。
+     */
+    fun beginConversationSnapshot(): Long
+
+    /**
+     * 原子收敛服务端会话全量快照。
+     *
+     * 返回项会被合并；服务端不再返回、且在 [snapshotGeneration] 之后没有
+     * 实时变化的本地会话会按 [deleteConversation] 等价语义删除（包括草稿
+     * outbox）。Chat 并不属于该 RPC 的权威范围，因此不会仅凭会话缺失而删除。
+     *
+     * @return true 表示该快照没有遇到更新代次；false 表示它已整体过期，
+     * 或部分 chat 因请求期间发生变化而被安全跳过。
+     */
+    fun applyConversationSnapshot(
+        snapshotGeneration: Long,
+        conversations: List<Conversation>,
+    ): Boolean
+
+    /**
      * 本地清零会话未读数 + 推进 readSeq。
      *
      * 进入聊天页/发送消息后立即调用，不等服务端 CONVERSATION_UPDATED 通知回环
@@ -113,8 +144,28 @@ interface LocalCache {
     /** 更新对方已读位置（READ_SYNC 通知触发）。 */
     fun updatePeerReadSeq(chatId: String, peerReadSeq: Long)
 
-    /** 置顶/取消置顶会话。返回更新后的 Conversation。 */
-    fun toggleConversationPin(chatId: String, pinned: Boolean): Conversation?
+    // ── 持久事件同步 ──
+    /** 读取持久化同步游标；不存在时返回 0。 */
+    fun getSyncCursor(key: String): Long
+
+    /** 单调推进并返回持久化后的游标；较旧/重复事件不能让游标回退。 */
+    fun advanceSyncCursor(key: String, eventId: Long): Long
+
+    /**
+     * 原子删除当前账号的全部服务器事件投影并把同步游标恢复为 0。
+     * 独立的文档草稿存储不属于 LocalCache，不受此操作影响。
+     */
+    fun resetServerProjection()
+
+    // ── 无头可靠 inbox ──
+    /** INSERT OR IGNORE：同一持久事件重放不得产生重复业务投递。 */
+    fun enqueueBotMessage(eventId: Long, message: Message)
+
+    /** 按 eventId 返回最早一条未消费消息。 */
+    fun peekBotMessage(): PendingBotMessage?
+
+    /** 消费确认；只删除精确 eventId。 */
+    fun deleteBotMessage(eventId: Long)
 
     /**
      * 精确更新单条会话的草稿（null = 明确清除），并原子写入镜像 outbox。

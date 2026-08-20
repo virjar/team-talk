@@ -63,7 +63,6 @@ class ClientSession(
             httpLogUploader?.stop()
             rpcClient.stop()
             eventProcessor.stop()
-            eventProcessor.onContactChanged = null
             localCache.close()
             releaseAppLogOwnership(ownedTraceBuffer, ownedFaultBuffer, ownedFaultHandler)
         }
@@ -104,11 +103,17 @@ fun createSession(
     createCache: (String) -> LocalCache,
     deviceId: String,
     logUploadEnabled: Boolean = true,  // 无头场景（serverUrl 未知）传 false 免噪音
+    durableMessageSink: (suspend (Long, Message) -> Unit)? = null,
 ): ClientSession {
     val cache = createCache(userSession.uid)
     val rpcClient = RpcClient(imClient)
     val conversationRepo = ConversationRepository(rpcClient, cache)
-    val ep = EventProcessor(imClient, cache, onConversationsDirty = { conversationRepo.listConversations() })
+    val ep = EventProcessor(
+        imClient,
+        cache,
+        onConversationsDirty = { conversationRepo.listConversations().getOrThrow() },
+        durableMessageSink = durableMessageSink,
+    )
     val messageSender = MessageSender { msg -> imClient.sendAndWaitAck(msg) }
 
     // 发送队列：断线排队 → AUTHENTICATED 唤醒补发；状态机回写本地缓存驱动 UI
@@ -125,10 +130,8 @@ fun createSession(
     val traceBuffer = LogBuffer(capacity = 2000)
     val faultBuffer = LogBuffer(capacity = 500)
 
-    // 离线补发接线：重连认证时携带事件游标，服务端补发断线期间事件
-    imClient.lastEventIdProvider = { ep.lastEventId.value }
-
     rpcClient.start()
+    // EventProcessor 先订阅入站事件，再安装持久 cursor/批次投影 binding 并发起显式分页同步。
     ep.start()
 
     // outbox 在账号本地库中持久化；初始认证与每次重连认证完成后均重试。
@@ -144,7 +147,13 @@ fun createSession(
     val serverUrl = defaultServerConfig().serverUrl
     val dataDir = platformDataDir()
     val uploader: HttpLogUploader? = if (logUploadEnabled) {
-        HttpLogUploader(traceBuffer, faultBuffer, serverUrl, deviceId, CrashDumper(dataDir)).also {
+        HttpLogUploader(
+            traceBuffer = traceBuffer,
+            faultBuffer = faultBuffer,
+            serverUrl = serverUrl,
+            accessTokenProvider = { userSession.accessToken },
+            crashDumper = CrashDumper(dataDir),
+        ).also {
             it.start()
         }
     } else null

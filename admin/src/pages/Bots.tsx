@@ -105,11 +105,10 @@ export default function Bots() {
       </Modal>
 
       <Modal title="保存机器人凭据" open={!!revealed} onCancel={() => setRevealed(undefined)} footer={<Button type="primary" onClick={() => setRevealed(undefined)}>我已安全保存</Button>}>
-        <Alert type="warning" showIcon message="该凭据只显示一次" description="服务端只保存哈希，关闭后无法找回；遗失时请轮换凭据。" style={{ marginBottom: 16 }} />
+        <Alert type="warning" showIcon message="该凭据只显示一次" description="服务端只保存哈希，关闭后无法找回；先保存凭据，再到群授权中复制绑定目标群的 Webhook URL。" style={{ marginBottom: 16 }} />
         <Descriptions column={1} bordered size="small">
           <Descriptions.Item label="Bot ID"><Typography.Text copyable>{revealed?.bot.botId}</Typography.Text></Descriptions.Item>
           <Descriptions.Item label="Bearer Token"><Typography.Text code copyable={{ icon: <CopyOutlined /> }}>{revealed?.webhookToken}</Typography.Text></Descriptions.Item>
-          <Descriptions.Item label="端点"><Typography.Text copyable>/api/v1/bots/{revealed?.bot.botId}/messages</Typography.Text></Descriptions.Item>
         </Descriptions>
       </Modal>
 
@@ -124,10 +123,11 @@ export default function Bots() {
           </Form>
           <Table rowKey={value => value} size="small" pagination={false} dataSource={managed.grantedChatIds} columns={[
             { title: '已授权群 chatId', render: value => <Typography.Text copyable>{value}</Typography.Text> },
+            { title: '群绑定 Webhook', render: value => <Typography.Text copyable>{`/api/v1/groups/${value}/bots/${managed.botId}/messages`}</Typography.Text> },
             { title: '操作', width: 90, render: value => <Popconfirm title="撤销该群授权？" onConfirm={() => revoke(managed.botId, value)}><Button type="link" danger>撤销</Button></Popconfirm> },
           ]} locale={{ emptyText: '尚未授权任何群' }} />
           <Card size="small" title="Webhook 请求契约">
-            <Typography.Paragraph code style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>{`POST /api/v1/bots/${managed.botId}/messages\nAuthorization: Bearer <token>\nContent-Type: application/json\n\n{"chatId":"<授权群>","markdown":"## 通知","idempotencyKey":"业务唯一键"}`}</Typography.Paragraph>
+            <Typography.Paragraph code style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>{`POST /api/v1/groups/<chatId>/bots/${managed.botId}/messages\nAuthorization: Bearer <token>\nContent-Type: application/json\nIdempotency-Key: <可选业务事件 ID>\n\n{"markdown":"## 通知"}`}</Typography.Paragraph>
           </Card>
         </Space>}
       </Drawer>

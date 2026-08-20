@@ -1,6 +1,5 @@
 package com.virjar.tk.integration
 
-import com.virjar.tk.domain.chat.ActiveChatMembership
 import com.virjar.tk.domain.groupfile.GroupFileService
 import com.virjar.tk.model.GroupFileEntry
 import kotlinx.coroutines.Dispatchers
@@ -88,10 +87,7 @@ class GroupFileIntegrationTest {
         val chat = ctx.chatService.createGroup("配额测试", null, owner, emptyList())
         val service = GroupFileService(
             repository = ctx.groupFileRepo,
-            chats = ctx.chatRepo,
-            memberships = ActiveChatMembership { uid ->
-                ctx.chatRepo.listUserChats(uid).mapTo(linkedSetOf()) { it.chatId }
-            },
+            access = ctx.chatAccess,
             attachments = ctx.fileStore,
             quotaBytes = 5,
         )

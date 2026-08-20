@@ -2,18 +2,22 @@ package com.virjar.tk.http
 
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class GroupBotApiTest {
     @Test
-    fun `target webhook body contains only markdown and ignores legacy routing fields`() {
-        val decoded = Json.decodeFromString<GroupBotMessageRequest>(
-            """{"chatId":"must-not-route","markdown":"hello","idempotencyKey":"must-not-win"}""",
-        )
+    fun `target webhook body contains only markdown and rejects routing fields`() {
+        assertFailsWith<SerializationException> {
+            Json.decodeFromString<GroupBotMessageRequest>(
+                """{"chatId":"must-not-route","markdown":"hello","idempotencyKey":"must-not-win"}""",
+            )
+        }
 
-        assertEquals("hello", decoded.markdown)
+        val decoded = Json.decodeFromString<GroupBotMessageRequest>("""{"markdown":"hello"}""")
         assertEquals("""{"markdown":"hello"}""", Json.encodeToString(decoded))
     }
 

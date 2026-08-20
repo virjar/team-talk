@@ -2,10 +2,8 @@ package com.virjar.tk.domain.groupfile
 
 import com.virjar.tk.body.AttachmentPolicy
 import com.virjar.tk.domain.attachment.AttachmentCatalog
-import com.virjar.tk.domain.chat.ActiveChatMembership
-import com.virjar.tk.domain.chat.ChatRepository
+import com.virjar.tk.domain.chat.ChatAccess
 import com.virjar.tk.model.Attachment
-import com.virjar.tk.model.ChatType
 import com.virjar.tk.model.GroupFileEntry
 import com.virjar.tk.model.GroupFileVersion
 import java.util.Locale
@@ -19,8 +17,7 @@ import java.util.UUID
  */
 class GroupFileService(
     private val repository: GroupFileRepository,
-    private val chats: ChatRepository,
-    private val memberships: ActiveChatMembership,
+    private val access: ChatAccess,
     private val attachments: AttachmentCatalog,
     private val quotaBytes: Long = DEFAULT_QUOTA_BYTES,
 ) {
@@ -126,9 +123,7 @@ class GroupFileService(
     }
 
     private fun requireMember(uid: String, chatId: String) {
-        val chat = chats.getChat(chatId)
-        require(chat != null && chat.chatType == ChatType.GROUP.code) { "群聊不存在" }
-        require(chatId in memberships.listUserChatIds(uid)) { "你不是当前群成员" }
+        access.requireGroupMember(uid, chatId, "你不是当前群成员")
     }
 
     private fun requireParent(chatId: String, parentId: String?) {

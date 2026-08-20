@@ -216,7 +216,9 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
         LaunchedEffect(connectionState, unreadTotal) {
             val status = when (connectionState) {
                 ConnectionState.AUTHENTICATED -> "在线"
-                ConnectionState.CONNECTING -> "连接中…"
+                ConnectionState.CONNECTING,
+                ConnectionState.CONNECTED,
+                ConnectionState.SYNCHRONIZING -> "连接中…"
                 else -> "离线"
             }
             val suffix = if (unreadTotal > 0) " ($unreadTotal 条未读)" else ""

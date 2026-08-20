@@ -130,16 +130,18 @@ internal class AndroidAppDataStateHolder(application: Application) : AndroidView
     private var composerContexts = ChatComposerContextStore()
     private var documentDrafts = newDocumentDraftStore()
     private var dataState: AppDataState? = null
+    private var retainedSession: ClientSession? = null
 
     fun forSession(session: ClientSession, onAuthExpired: () -> Unit): AppDataState {
-        dataState?.takeIf { it.session === session }?.let { return it }
+        dataState?.takeIf { retainedSession === session }?.let { return it }
         val previous = dataState
+        val previousSession = retainedSession
         val sameUser = previous?.userSession?.uid == session.userSession.uid
         previous?.destroy(clearComposerContexts = !sameUser)
         // AuthController owns the transport. A retained holder may still reference an already
         // closed session after the same ImClient has started a newer login; only release the old
         // session resources here and never request a transport disconnect from the holder.
-        previous?.session?.close(disconnectTransport = false)
+        previousSession?.close(disconnectTransport = false)
         if (!sameUser) {
             composerContexts = ChatComposerContextStore()
             documentDrafts = newDocumentDraftStore()
@@ -149,12 +151,16 @@ internal class AndroidAppDataStateHolder(application: Application) : AndroidView
             chatComposerContexts = composerContexts,
             documentDrafts = documentDrafts,
             onAuthExpired = onAuthExpired,
-        ).also { dataState = it }
+        ).also {
+            dataState = it
+            retainedSession = session
+        }
     }
 
     fun clearForLogout() {
         dataState?.destroy(clearComposerContexts = true)
         dataState = null
+        retainedSession = null
         composerContexts = ChatComposerContextStore()
         documentDrafts = newDocumentDraftStore()
     }
@@ -163,6 +169,7 @@ internal class AndroidAppDataStateHolder(application: Application) : AndroidView
     fun clearForAuthenticationLoss() {
         dataState?.destroy(clearComposerContexts = true, clearDocumentDrafts = false)
         dataState = null
+        retainedSession = null
         composerContexts = ChatComposerContextStore()
         documentDrafts = newDocumentDraftStore()
     }
@@ -175,8 +182,9 @@ internal class AndroidAppDataStateHolder(application: Application) : AndroidView
         // Task removal is not an explicit account logout. Retain the uid-scoped AtomicFile so a
         // fresh process can resume the unsaved document.
         dataState?.destroy(clearComposerContexts = true, clearDocumentDrafts = false)
-        dataState?.session?.close(disconnectTransport = false)
+        retainedSession?.close(disconnectTransport = false)
         dataState = null
+        retainedSession = null
     }
 
     private fun newDocumentDraftStore() = DocumentDraftStore(
@@ -272,17 +280,21 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             LaunchedEffect(chatId, chatType) {
                 mentionCandidates = try {
                     if (chatType == com.virjar.tk.model.ChatType.GROUP.code) {
-                        dataState.chatRepo.getMembers(chatId).getOrNull()?.mapNotNull { it.user } ?: emptyList()
+                        dataState.groups.mentionCandidates(chatId)
                     } else {
                         dataState.contactViewModel.contacts.value.mapNotNull { it.user }
                     }
-                } catch (_: Exception) { emptyList() }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    emptyList()
+                }
             }
             if (vm != null) { AndroidChatScreen(chatId, chatName, chatType, vm, dataState.userSession.uid,
                 serverUrl = defaultServerConfig().serverUrl,
                 accessToken = dataState.userSession.accessToken,
                 resolveSender = { uid ->
-                    mentionCandidates.firstOrNull { it.uid == uid } ?: dataState.localCache.getUser(uid)
+                    mentionCandidates.firstOrNull { it.uid == uid } ?: dataState.cachedUser(uid)
                 },
                 mentionCandidates = mentionCandidates,
                 onMentionClick = { uid ->

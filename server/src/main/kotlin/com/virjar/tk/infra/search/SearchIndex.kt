@@ -33,21 +33,57 @@ class SearchIndex(private val indexDir: File) : MessageSearch {
 
     val isRunning: Boolean get() = writer != null
 
+    @Synchronized
     fun start() {
-        analyzer = IKAnalyzer(true)
-        directory = FSDirectory.open(indexDir.toPath())
-        val config = IndexWriterConfig(analyzer).apply {
-            openMode = IndexWriterConfig.OpenMode.CREATE_OR_APPEND
+        if (writer != null) return
+        var openedAnalyzer: Analyzer? = null
+        var openedDirectory: FSDirectory? = null
+        var openedWriter: IndexWriter? = null
+        try {
+            val newAnalyzer = IKAnalyzer(true)
+            openedAnalyzer = newAnalyzer
+            val newDirectory = FSDirectory.open(indexDir.toPath())
+            openedDirectory = newDirectory
+            val config = IndexWriterConfig(newAnalyzer).apply {
+                openMode = IndexWriterConfig.OpenMode.CREATE_OR_APPEND
+            }
+            val newWriter = IndexWriter(newDirectory, config)
+            openedWriter = newWriter
+            analyzer = newAnalyzer
+            directory = newDirectory
+            writer = newWriter
+        } catch (error: Throwable) {
+            runCatching { openedWriter?.close() }
+            runCatching { openedDirectory?.close() }
+            runCatching { openedAnalyzer?.close() }
+            throw error
         }
-        writer = IndexWriter(directory, config)
         logger.info("Lucene search index opened at: {}", indexDir.absolutePath)
     }
 
+    @Synchronized
     fun stop() {
-        try { writer?.commit() } catch (_: Exception) {}
-        runCatching { writer?.close() }
-        runCatching { directory?.close() }
+        val openedWriter = writer
+        val openedDirectory = directory
+        val openedAnalyzer = analyzer
+        writer = null
+        directory = null
+        analyzer = null
+        var failure: Throwable? = null
+        fun closePart(block: () -> Unit) {
+            try {
+                block()
+            } catch (error: Throwable) {
+                val first = failure
+                if (first == null) failure = error else first.addSuppressed(error)
+            }
+        }
+        closePart { openedWriter?.commit() }
+        closePart { openedWriter?.close() }
+        closePart { openedDirectory?.close() }
+        closePart { openedAnalyzer?.close() }
         logger.info("Lucene search index closed")
+        failure?.let { throw it }
     }
 
     fun commit() {

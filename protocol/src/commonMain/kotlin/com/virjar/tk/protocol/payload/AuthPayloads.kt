@@ -47,7 +47,6 @@ data class AuthRequestPayload(
     val deviceName: String? = null,
     val deviceModel: String? = null,
     val deviceFlag: Int = 0,
-    val lastEventId: Long = 0,
 ) : IProto {
 
     /**
@@ -71,7 +70,6 @@ data class AuthRequestPayload(
         buf.writeString(deviceName)
         buf.writeString(deviceModel)
         buf.writeVarInt(deviceFlag)
-        buf.writeVarLong(lastEventId)
     }
 
     companion object : IProtoReader<AuthRequestPayload> {
@@ -106,11 +104,10 @@ data class AuthRequestPayload(
             password = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_PASSWORD_LENGTH)),
             name = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_NAME_LENGTH)),
             refreshToken = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_TOKEN_LENGTH)),
-            deviceId = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_DEVICE_ID_LENGTH))!!,
+            deviceId = buf.readRequiredString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_DEVICE_ID_LENGTH)),
             deviceName = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_DEVICE_NAME_LENGTH)),
             deviceModel = buf.readString(AuthPayloadPolicy.utf8WireLimit(AuthPayloadPolicy.MAX_DEVICE_MODEL_LENGTH)),
             deviceFlag = buf.readVarInt(),
-            lastEventId = buf.readVarLong(),
         )
     }
 }

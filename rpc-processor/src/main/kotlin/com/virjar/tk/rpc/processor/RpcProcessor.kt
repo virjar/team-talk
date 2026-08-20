@@ -24,6 +24,14 @@ private fun com.google.devtools.ksp.symbol.KSType.isIProto(): Boolean {
     return decl.superTypes.any { it.resolve().isIProto() }
 }
 
+private const val RPC_SERVICE_ANNOTATION = "com.virjar.tk.rpc.RpcService"
+private const val RPC_METHOD_ANNOTATION = "com.virjar.tk.rpc.RpcMethod"
+
+/** 注解按完整限定名识别，避免业务源码声明同名注解后被误当成 RPC IDL。 */
+private fun KSAnnotated.findAnnotation(qualifiedName: String): KSAnnotation? = annotations.firstOrNull {
+    it.annotationType.resolve().declaration.qualifiedName?.asString() == qualifiedName
+}
+
 class RpcProcessor(
     private val codeGenerator: CodeGenerator,
     private val logger: KSPLogger,
@@ -52,22 +60,20 @@ class RpcProcessor(
     // ── 扫描与校验 ──
 
     private fun KSClassDeclaration.toServiceModel(): ServiceModel? {
-        val ann = annotations.firstOrNull {
-            it.annotationType.resolve().declaration.simpleName.asString() == "RpcService"
-        } ?: return null
+        val ann = findAnnotation(RPC_SERVICE_ANNOTATION) ?: return null
         val serviceName = ann.arguments.firstOrNull { it.name?.asString() == "name" }?.value as? String
         if (serviceName.isNullOrBlank()) {
             logger.error("@RpcService(name) 必填", this); return null
         }
         val methods = declarations.filterIsInstance<KSFunctionDeclaration>()
-            .mapIndexed { idx, fn -> fn.toMethodModel(idx + 1) }
+            .map { fn -> fn.toMethodModel() }
             .toList()
         if (methods.isEmpty()) logger.error("@RpcService $serviceName 无方法", this)
         // methodId 完整性：重复/非法 id 编译期报错（否则生成 when 静默错乱 wire）
-        methods.groupBy { it.id }.filter { it.value.size > 1 }.forEach { (id, dup) ->
+        methods.filter { it.id > 0 }.groupBy { it.id }.filter { it.value.size > 1 }.forEach { (id, dup) ->
             logger.error(
                 "service [$serviceName] methodId=$id 重复分配: ${dup.joinToString { it.name }}" +
-                    "（中间插入新方法必须 @RpcMethod 显式锁定 id）", this)
+                    "（每个方法必须用 @RpcMethod 显式分配唯一 id）", this)
         }
         methods.filter { it.id <= 0 }.forEach {
             logger.error("service [$serviceName] 方法 ${it.name} 的 @RpcMethod id 必须 > 0", this)
@@ -75,10 +81,17 @@ class RpcProcessor(
         return ServiceModel(serviceName, packageName.asString(), simpleName.asString(), methods)
     }
 
-    private fun KSFunctionDeclaration.toMethodModel(defaultId: Int): MethodModel {
-        val annId = annotations.firstOrNull {
-            it.annotationType.resolve().declaration.simpleName.asString() == "RpcMethod"
-        }?.arguments?.firstOrNull()?.value as? Int
+    private fun KSFunctionDeclaration.toMethodModel(): MethodModel {
+        val methodAnnotation = findAnnotation(RPC_METHOD_ANNOTATION)
+        val annId = methodAnnotation?.arguments
+            ?.firstOrNull { it.name?.asString() == "id" }
+            ?.value as? Int
+        if (annId == null) {
+            logger.error(
+                "@RpcService 方法必须显式声明 @RpcMethod(id): ${simpleName.asString()}",
+                this,
+            )
+        }
 
         if (!modifiers.contains(Modifier.SUSPEND)) {
             logger.error("@RpcService 方法必须是 suspend: $simpleName", this)
@@ -94,9 +107,13 @@ class RpcProcessor(
                 logger.error("IDL 方法参数禁止默认值（保持 wire 明确性）: $simpleName.${p.name?.asString()}", p)
             }
             if (typeName == "kotlin.collections.List") {
-                val elem = resolved.arguments.firstOrNull()?.type?.resolve()?.declaration?.qualifiedName?.asString()
+                val elementType = resolved.arguments.firstOrNull()?.type?.resolve()
+                val elem = elementType?.declaration?.qualifiedName?.asString()
                 if (elem != "kotlin.String") {
                     logger.error("List 参数仅支持 List<String>，实际 List<$elem>", p)
+                }
+                if (elementType?.isMarkedNullable == true) {
+                    logger.error("List 参数元素禁止 nullable: $simpleName.${p.name?.asString()}", p)
                 }
                 if (resolved.isMarkedNullable) {
                     logger.error("List 参数禁止 nullable", p)
@@ -123,15 +140,24 @@ class RpcProcessor(
         val retListArg = if (retIsList) {
             retResolved?.arguments?.firstOrNull()?.type?.resolve()?.declaration?.qualifiedName?.asString()
         } else null
+        if (retResolved?.isMarkedNullable == true) {
+            logger.error("RPC 返回类型禁止 nullable: ${simpleName.asString()}(): $retQn?", this)
+        }
         if (retIsList) {
-            if (retListArg != "kotlin.String" && !(retListArg?.startsWith("com.virjar.tk.") ?: false)) {
-                logger.error("List 返回的元素类型仅支持 String/IProto 子类，实际 $retListArg", this)
+            val elementType = retResolved?.arguments?.firstOrNull()?.type?.resolve()
+            if (elementType?.isMarkedNullable == true) {
+                logger.error("List 返回元素禁止 nullable: ${simpleName.asString()}(): List<$retListArg?>", this)
             }
-        } else if (retQn !in TypeCodec.PRIMITIVES && retQn != "kotlin.Unit" && !retQn.startsWith("com.virjar.tk.")) {
-            logger.error("返回类型 $retQn 不在白名单", this)
+            if (retListArg != "kotlin.String" && elementType?.isIProto() != true) {
+                logger.error("List 返回的元素类型仅支持 String/IProto 实现，实际 $retListArg", this)
+            }
+        } else if (retQn !in TypeCodec.PRIMITIVES && retQn != "kotlin.Unit") {
+            if (retResolved?.isIProto() != true) {
+                logger.error("返回类型仅支持基础类型/IProto 实现，实际 $retQn", this)
+            }
         }
         return MethodModel(
-            id = annId ?: defaultId,
+            id = annId ?: 0,
             name = simpleName.asString(),
             params = params,
             ret = ReturnModel(retQn, retIsList, retListArg, retResolved?.isMarkedNullable ?: false),
@@ -163,20 +189,4 @@ data class ServiceModel(val name: String, val pkg: String, val interfaceName: St
 
 object TypeCodec {
     val PRIMITIVES = setOf("kotlin.String", "kotlin.Int", "kotlin.Long", "kotlin.Boolean")
-
-    fun writeExpr(p: ParamModel): String = when (p.typeName) {
-        "kotlin.String" -> "writeString(${p.name})"
-        "kotlin.Int" -> "writeVarInt(${p.name})"
-        "kotlin.Long" -> "writeVarLong(${p.name})"
-        "kotlin.Boolean" -> "writeByte(if (${p.name}) 1 else 0)"
-        else -> null.also { } // IProto 嵌套直写，调用方处理
-    } ?: "__proto__"
-
-    fun readExpr(typeName: String, nullable: Boolean, reader: String): String = when (typeName) {
-        "kotlin.String" -> if (nullable) "buf.readString()" else "buf.readString()!!"
-        "kotlin.Int" -> "buf.readVarInt()"
-        "kotlin.Long" -> "buf.readVarLong()"
-        "kotlin.Boolean" -> "buf.readByte() != 0"
-        else -> reader  // IProto companion readFrom
-    }
 }

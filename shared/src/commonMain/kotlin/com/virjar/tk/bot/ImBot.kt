@@ -5,11 +5,10 @@ import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.client.EventProcessor
 import com.virjar.tk.client.ImClient
 import com.virjar.tk.client.LocalCache
-import com.virjar.tk.client.SessionContext
 import com.virjar.tk.client.MessageSender
+import com.virjar.tk.client.PendingBotMessage
 import com.virjar.tk.client.UserSession
 import com.virjar.tk.client.createSession
-import com.virjar.tk.client.defaultServerConfig
 import com.virjar.tk.body.FileBody
 import com.virjar.tk.body.ImageBody
 import com.virjar.tk.body.buildRichTextBody
@@ -29,7 +28,6 @@ import com.virjar.tk.protocol.PresencePayload
 import com.virjar.tk.protocol.payload.MessageAckPayload
 import com.virjar.tk.model.Attachment
 import com.virjar.tk.repository.FileRepository
-import com.virjar.tk.testing.FakeLocalCache
 import com.virjar.tk.util.AppLog
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -37,23 +35,180 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import java.util.UUID
 
 /**
+ * ImBot 的账号缓存打开策略。
+ *
+ * 调用方必须明确选择持久缓存或测试缓存；[open] 只会在认证成功并取得服务端 uid 后调用，
+ * 返回的缓存所有权随即移交给 ClientSession，并由 ImBot.shutdown 级联关闭。
+ */
+fun interface ImBotCacheOwner {
+    fun open(uid: String): LocalCache
+}
+
+/**
+ * ImBot 的单消费者可靠收件箱。
+ *
+ * 消息主体落在账号 LocalCache 的磁盘表；进程内只用 CONFLATED wake-up，因此初始 replay
+ * 不依赖消费者启动时序、不会形成内存 backlog。eventId 与 `(chatId, serverSeq)` 都是
+ * INSERT OR IGNORE 幂等边界。
+ */
+class ImBotMessageInbox {
+    private val wakeUp = Channel<Unit>(Channel.CONFLATED)
+    private val stateLock = Any()
+    private var localCache: LocalCache? = null
+    private var closed = false
+
+    /** Cache lifecycle remains owned by ClientSession; inbox only borrows it until [close]. */
+    internal fun bind(cache: LocalCache) {
+        synchronized(stateLock) {
+            check(!closed) { "ImBot inbox is closed" }
+            check(localCache == null) { "ImBot inbox is already bound" }
+            localCache = cache
+        }
+        // Wake a consumer which started before authentication/cache creation.
+        wakeUp.trySend(Unit)
+    }
+
+    internal suspend fun publish(eventId: Long, message: Message) {
+        val cache = synchronized(stateLock) {
+            check(!closed) { "ImBot inbox is closed" }
+            checkNotNull(localCache) { "ImBot inbox is not bound" }
+        }
+        cache.enqueueBotMessage(eventId, message)
+        wakeUp.trySend(Unit)
+    }
+
+    /** 读取但不删除最早一条持久消息；业务接受后必须显式 [ack]。 */
+    suspend fun receivePending(): PendingBotMessage =
+        checkNotNull(receivePendingOrNull()) { "ImBot inbox is closed" }
+
+    /** inbox 关闭时返回 null；未绑定或暂时为空时等待 CONFLATED wake-up。 */
+    suspend fun receivePendingOrNull(): PendingBotMessage? {
+        while (true) {
+            val state = synchronized(stateLock) { localCache to closed }
+            if (state.second) return null
+            state.first?.peekBotMessage()?.let { return it }
+            if (wakeUp.receiveCatching().isClosed) return null
+        }
+    }
+
+    /** 确认业务已经接受该 delivery；崩溃前未调用则重启后会再次收到。 */
+    fun ack(eventId: Long) {
+        val cache = synchronized(stateLock) {
+            check(!closed) { "ImBot inbox is closed" }
+            checkNotNull(localCache) { "ImBot inbox is not bound" }
+        }
+        cache.deleteBotMessage(eventId)
+        // There may already be a following durable row.
+        wakeUp.trySend(Unit)
+    }
+
+    /** tt-agent recent/history 的磁盘事实源；不依赖进程内 ring。 */
+    fun recentMessages(chatId: String?, afterSeq: Long, limit: Int): List<Message> {
+        val cache = synchronized(stateLock) {
+            check(!closed) { "ImBot inbox is closed" }
+            checkNotNull(localCache) { "ImBot inbox is not bound" }
+        }
+        return cache.getRecentMessages(chatId, afterSeq, limit)
+    }
+
+    /**
+     * at-most-once 便利读取：在返回前自动 ack。需要跨业务处理重试时使用
+     * [receivePending] + [ack]，不要调用此方法。
+     */
+    suspend fun receive(): Message {
+        val pending = receivePending()
+        ack(pending.eventId)
+        return pending.message
+    }
+
+    /** at-most-once 便利读取；inbox 关闭时返回 null。 */
+    suspend fun receiveOrNull(): Message? {
+        val pending = receivePendingOrNull() ?: return null
+        ack(pending.eventId)
+        return pending.message
+    }
+
+    internal fun close() {
+        synchronized(stateLock) {
+            if (closed) return
+            closed = true
+            localCache = null
+        }
+        wakeUp.close()
+    }
+}
+
+/** 非权威提示缓冲发生的丢弃计数；消费者收到提示后应从 Repository 重拉详情。 */
+data class ImBotEventBufferOverflow(
+    val contactEventsDropped: Long = 0L,
+    val chatEventsDropped: Long = 0L,
+)
+
+/** contact/chat 是有界 wake-up，presence 只保留最新值；权威事实始终在 LocalCache/RPC。 */
+internal class ImBotEventBuffers {
+    private val contactChannel = Channel<Unit>(CONTACT_CAPACITY)
+    private val chatChannel = Channel<Pair<NotifyType, Chat>>(CHAT_CAPACITY)
+    private val presenceChannel = Channel<PresencePayload>(Channel.CONFLATED)
+    private val _overflow = MutableStateFlow(ImBotEventBufferOverflow())
+    val overflow: StateFlow<ImBotEventBufferOverflow> = _overflow.asStateFlow()
+
+    fun offerContact() {
+        if (contactChannel.trySend(Unit).isFailure) {
+            _overflow.update { it.copy(contactEventsDropped = it.contactEventsDropped + 1L) }
+        }
+    }
+
+    fun offerChat(event: Pair<NotifyType, Chat>) {
+        if (chatChannel.trySend(event).isFailure) {
+            _overflow.update { it.copy(chatEventsDropped = it.chatEventsDropped + 1L) }
+        }
+    }
+
+    fun offerPresence(event: PresencePayload) {
+        presenceChannel.trySend(event)
+    }
+
+    suspend fun receiveContact(): Unit = contactChannel.receive()
+    suspend fun receiveChat(): Pair<NotifyType, Chat> = chatChannel.receive()
+    suspend fun receivePresence(): PresencePayload = presenceChannel.receive()
+
+    fun close() {
+        contactChannel.close()
+        chatChannel.close()
+        presenceChannel.close()
+    }
+
+    companion object {
+        const val CONTACT_CAPACITY = 32
+        const val CHAT_CAPACITY = 64
+    }
+}
+
+/**
  * 无头 IM 客户端（AI bot / CLI / 服务器端集成入口）。
  *
  * 复用 SDK 完整闭环（ImClient 连接 + ClientSession 组装 + EventProcessor 事件同步），
- * 内存 LocalCache（[FakeLocalCache]，零持久化），无任何 UI 依赖。
+ * LocalCache 与可靠 inbox 均由调用方明确提供 owner，无任何 UI 依赖。
  *
  * 典型用法：
  * ```kotlin
- * val bot = ImBot.register("im.virjar.com", 5100, "my-bot")
- * bot.messages.collect { msg ->                      // 收消息
- *     bot.sendText(msg.chatId, "echo: ${msg.body}")  // 回消息
+ * val bot = ImBot.register("im.virjar.com", 5100, "my-bot", cacheOwner)
+ * while (true) {
+ *     val delivery = bot.nextMessageDelivery { it.senderUid != bot.uid }
+ *     bot.sendText(delivery.message.chatId, "echo: ${delivery.message.body}")
+ *     bot.ackMessage(delivery)
  * }
  * ```
  *
@@ -65,13 +220,14 @@ class ImBot private constructor(
     val session: ClientSession,
     val userSession: UserSession,
     private val messageSender: MessageSender,
+    private val messageInbox: ImBotMessageInbox,
 ) {
     /** 当前用户 uid（认证成功后有效）。 */
     val uid: String get() = userSession.uid
 
     // ── 事件流（EventProcessor 契约解码后转发；next* 为带缓冲的便捷取用） ──
 
-    /** 入站消息流（所有会话）。 */
+    /** 入站实时消息流（可合并的广播）；需可靠 backlog 时使用 [nextMessageDelivery]。 */
     val messages: SharedFlow<Message> get() = session.eventProcessor.messageEvents
     /** 联系人关系变更流（申请/接受/删除）。 */
     val contactEvents get() = session.eventProcessor.contactEvents
@@ -81,34 +237,32 @@ class ImBot private constructor(
     val presenceEvents get() = session.eventProcessor.presenceEvents
     /** typing 流：(chatId, senderUid)。 */
     val typingEvents get() = session.eventProcessor.typingEvents
+    /** 非权威 contact/chat wake-up 被有界缓冲丢弃的累计计数。 */
+    val eventBufferOverflow: StateFlow<ImBotEventBufferOverflow> get() = eventBuffers.overflow
 
     /**
-     * 消息缓冲：ImBot 创建即订阅 [messages] 转入 Channel（UNLIMITED），
-     * 保证 [nextMessage] 在消息到达之后调用也不丢（SharedFlow 无 replay，
-     * 晚订阅会错过 emit）。
+     * [messageInbox] 在会话开始同步前即绑定到 EventProcessor 的可靠投影边界。
+     * 它使用账号 SQLite 持久行和 CONFLATED wake-up，因此首次登录 backlog 不依赖
+     * SharedFlow 订阅时序，也不会形成无界内存队列。
      */
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-    private val messageChannel = Channel<Message>(Channel.UNLIMITED)
-    private val contactChannel = Channel<Unit>(Channel.UNLIMITED)
-    private val chatChannel = Channel<Pair<NotifyType, Chat>>(Channel.UNLIMITED)
-    private val presenceChannel = Channel<PresencePayload>(Channel.UNLIMITED)
+    private val eventBuffers = ImBotEventBuffers()
 
     init {
-        // 各流启动即缓冲（SharedFlow 无 replay，晚订阅会错过 emit——见 lessons C2）
-        scope.launch { messages.collect { messageChannel.send(it) } }
-        scope.launch { contactEvents.collect { contactChannel.send(it) } }
-        scope.launch { chatEvents.collect { chatChannel.send(it) } }
-        scope.launch { presenceEvents.collect { presenceChannel.send(it) } }
+        // 这些 flow 是刷新提示而非权威事实：有限 wake-up 满时记数，presence 只保留最新值。
+        scope.launch { contactEvents.collect { eventBuffers.offerContact() } }
+        scope.launch { chatEvents.collect { eventBuffers.offerChat(it) } }
+        scope.launch { presenceEvents.collect { eventBuffers.offerPresence(it) } }
     }
 
     /** 等待下一个联系人事件（好友申请/接受/删除）。 */
-    suspend fun nextContactEvent(timeoutMs: Long = 10_000) = withTimeout(timeoutMs) { contactChannel.receive() }
+    suspend fun nextContactEvent(timeoutMs: Long = 10_000) = withTimeout(timeoutMs) { eventBuffers.receiveContact() }
 
     /** 等待下一个群/成员变更事件。 */
-    suspend fun nextChatEvent(timeoutMs: Long = 10_000) = withTimeout(timeoutMs) { chatChannel.receive() }
+    suspend fun nextChatEvent(timeoutMs: Long = 10_000) = withTimeout(timeoutMs) { eventBuffers.receiveChat() }
 
     /** 等待下一个在线状态事件。 */
-    suspend fun nextPresenceEvent(timeoutMs: Long = 10_000) = withTimeout(timeoutMs) { presenceChannel.receive() }
+    suspend fun nextPresenceEvent(timeoutMs: Long = 10_000) = withTimeout(timeoutMs) { eventBuffers.receivePresence() }
 
     // ── 消息 ──
 
@@ -149,7 +303,9 @@ class ImBot private constructor(
 
     /** 上传文件到服务器（HTTP），返回服务端权威附件描述符。 */
     suspend fun uploadFile(serverUrl: String, bytes: ByteArray, fileName: String, contentType: String): Attachment =
-        FileRepository(serverUrl, userSession.accessToken ?: SessionContext.accessToken).upload(bytes, fileName, contentType).getOrThrow()
+        FileRepository(serverUrl, requireImBotAccessToken(userSession))
+            .upload(bytes, fileName, contentType)
+            .getOrThrow()
 
     /**
      * 上传并发送一步到位。消息只携带强类型附件描述符，path 为 FileStore 相对路径；
@@ -210,31 +366,38 @@ class ImBot private constructor(
         return messageSender.sendAndWaitAck(message)
     }
 
-    /** 兼容旧 SDK 调用；显式类型只用于校验，不再允许覆盖 body 的真实类型。 */
-    @Deprecated("messageType 由 body 自动推导，请调用 send(chatId, body)")
-    suspend fun send(chatId: String, body: MessageBody, messageType: MessageType): MessageAckPayload {
-        require(MessageBodyPolicy.typeOf(body) == messageType) {
-            "消息类型与消息体不匹配: body=${body::class.simpleName}, messageType=$messageType"
-        }
-        return send(chatId, body)
-    }
-
     /**
-     * 等待下一条入站消息（从启动即缓冲的 Channel 取，不丢历史）。
-     *
-     * 注意：服务端 MESSAGE_RECV 推给全部成员（含发送者，UI 客户端靠
-     * LocalCache 幂等覆盖消化），bot 侧通常要用 [predicate] 过滤自己：
-     * `nextMessage { it.senderUid != uid }`。
+     * 等待一条未确认的持久 delivery。匹配 [predicate] 的消息不会自动删除；业务副作用
+     * 成功后必须调用 [ackMessage]。被 predicate 排除的消息视为有意忽略并自动确认。
      */
-    suspend fun nextMessage(timeoutMs: Long = 10_000, predicate: (Message) -> Boolean = { true }): Message =
+    suspend fun nextMessageDelivery(
+        timeoutMs: Long = 10_000,
+        predicate: (Message) -> Boolean = { true },
+    ): PendingBotMessage =
         withTimeout(timeoutMs) {
             while (true) {
-                val m = messageChannel.receive()
-                if (predicate(m)) return@withTimeout m
+                val pending = messageInbox.receivePending()
+                if (predicate(pending.message)) return@withTimeout pending
+                messageInbox.ack(pending.eventId)
             }
             @Suppress("UNREACHABLE_CODE")
             error("unreachable")
         }
+
+    /** 确认 [nextMessageDelivery] 已完成业务处理；未确认 delivery 会在重启后再次出现。 */
+    fun ackMessage(delivery: PendingBotMessage) {
+        messageInbox.ack(delivery.eventId)
+    }
+
+    /**
+     * at-most-once 便利 API：在返回消息前自动确认。执行外部副作用的 bot 应改用
+     * [nextMessageDelivery] + [ackMessage]，并以 `(chatId, serverSeq)` 做业务幂等。
+     */
+    suspend fun nextMessage(timeoutMs: Long = 10_000, predicate: (Message) -> Boolean = { true }): Message {
+        val delivery = nextMessageDelivery(timeoutMs, predicate)
+        ackMessage(delivery)
+        return delivery.message
+    }
 
     // ── 社交 / 会话（直通 Repository） ──
 
@@ -251,7 +414,7 @@ class ImBot private constructor(
         session.contactRepo.accept(token).getOrThrow()
 
     suspend fun pendingApplies() =
-        session.contactRepo.listApplies().getOrThrow()
+        session.contactRepo.listPendingApplies().getOrThrow()
 
     suspend fun friendApplyRecords(beforeId: Long = 0, limit: Int = 50) =
         session.contactRepo.listApplyRecords(beforeId, limit).getOrThrow()
@@ -261,19 +424,38 @@ class ImBot private constructor(
 
     // ── 生命周期 ──
 
-    /** 等待连接进入指定状态（默认已认证）。 */
+    /**
+     * 等待连接进入指定状态（默认已认证）。等待 AUTHENTICATED 时 [timeoutMs] 表示
+     * “无进展窗口”：SYNCHRONIZING 的持久 cursor 每次推进都会续期，而不是限制总同步时长。
+     */
     suspend fun awaitState(state: ConnectionState = ConnectionState.AUTHENTICATED, timeoutMs: Long = 15_000) {
-        withTimeout(timeoutMs) { imClient.state.first { it == state } }
+        if (state == ConnectionState.AUTHENTICATED) {
+            awaitAuthenticatedWithProgress(imClient.state, imClient.eventSyncCursor, timeoutMs)
+        } else {
+            withTimeout(timeoutMs) { imClient.state.first { it == state } }
+        }
     }
 
     /** 级联销毁会话（owner-driven：bot 是 session 所有者）。 */
     fun shutdown() {
-        SessionContext.accessToken = null
+        val shouldShutdown = synchronized(shutdownLock) {
+            if (shutdown) false else {
+                shutdown = true
+                true
+            }
+        }
+        if (!shouldShutdown) return
         scope.cancel()
-        messageChannel.close()
+        // Stop the producer first, then detach inbox consumers while its borrowed cache is open.
+        session.eventProcessor.stop()
+        messageInbox.close()
+        eventBuffers.close()
         session.close()
         imClient.destroy()
     }
+
+    private val shutdownLock = Any()
+    private var shutdown = false
 
     companion object {
         /**
@@ -284,65 +466,146 @@ class ImBot private constructor(
             host: String,
             port: Int,
             usernamePrefix: String,
+            cacheOwner: ImBotCacheOwner,
+            messageInbox: ImBotMessageInbox = ImBotMessageInbox(),
             password: String = "password123",
             deviceId: String = "bot-${UUID.randomUUID()}",
         ): ImBot = connect(
             host, port, mode = AuthMode.REGISTER,
             username = "$usernamePrefix-${UUID.randomUUID().toString().take(8)}",
             password = password, deviceId = deviceId, name = null,
+            cacheOwner = cacheOwner, messageInbox = messageInbox,
         )
 
-        /** 已有账号登录。 */
+        /** 已有账号登录，常驻调用方必须提供按账号持久的 [cacheOwner]。 */
         suspend fun login(
             host: String,
             port: Int,
             username: String,
             password: String,
+            cacheOwner: ImBotCacheOwner,
+            messageInbox: ImBotMessageInbox = ImBotMessageInbox(),
             deviceId: String = "bot-${UUID.randomUUID()}",
-        ): ImBot = connect(host, port, AuthMode.LOGIN, username, password, deviceId, null)
+        ): ImBot = connect(
+            host, port, AuthMode.LOGIN, username, password, deviceId, null,
+            cacheOwner, messageInbox,
+        )
 
         private suspend fun connect(
             host: String, port: Int, mode: AuthMode,
             username: String, password: String, deviceId: String, name: String?,
+            cacheOwner: ImBotCacheOwner,
+            messageInbox: ImBotMessageInbox,
         ): ImBot {
             val authResult = CompletableDeferred<Boolean>()
             val userSession = UserSession()
             val imClient = ImClient(
                 onAuthResult = { success, uid, uname, dispName, refreshToken, access, failureReason ->
-                    if (success) {
-                        userSession.onAuthSuccess(uid ?: "", uname, dispName, refreshToken, access)
+                    if (success && !uid.isNullOrBlank()) {
+                        userSession.onAuthSuccess(uid, uname, dispName, refreshToken, access)
                         authResult.complete(true)
                     } else {
-                        userSession.onAuthFailed(failureReason)
-                        authResult.completeExceptionally(IllegalStateException("auth failed: $failureReason"))
+                        val reason = failureReason ?: "auth response did not contain uid"
+                        userSession.onAuthFailed(reason)
+                        authResult.completeExceptionally(IllegalStateException("auth failed: $reason"))
                     }
                 },
             )
-            when (mode) {
-                AuthMode.REGISTER -> imClient.register(
-                    username, password, name ?: username, deviceId, "ImBot", host, port)
-                AuthMode.LOGIN -> imClient.login(
-                    username, password, deviceId, "ImBot", host, port)
+            var session: ClientSession? = null
+            var bot: ImBot? = null
+            try {
+                when (mode) {
+                    AuthMode.REGISTER -> imClient.register(
+                        username, password, name ?: username, deviceId, "ImBot", host, port)
+                    AuthMode.LOGIN -> imClient.login(
+                        username, password, deviceId, "ImBot", host, port)
+                }
+                // 注册路径在这里之前没有 uid，因而不会创建临时/错误账号目录。
+                withTimeout(AUTH_NO_PROGRESS_TIMEOUT_MS) { authResult.await() }
+                session = createSession(
+                    imClient,
+                    userSession,
+                    createCache = { uid ->
+                        val cache = cacheOwner.open(uid)
+                        try {
+                            messageInbox.bind(cache)
+                            cache
+                        } catch (failure: Throwable) {
+                            cache.close()
+                            throw failure
+                        }
+                    },
+                    deviceId,
+                    logUploadEnabled = false,
+                    durableMessageSink = messageInbox::publish,
+                )
+                val sender = MessageSender { msg -> imClient.sendAndWaitAck(msg) }
+                // Construct the owner before awaiting SYNC_READY. Replay may start immediately
+                // after createSession installs EventProcessor, so waiting first would lose backlog.
+                val connectedBot = ImBot(imClient, session, userSession, sender, messageInbox)
+                bot = connectedBot
+                imClient.awaitAuthenticated(AUTH_NO_PROGRESS_TIMEOUT_MS)
+                AppLog.trace("ImBot", "session ready uid=${userSession.uid}")
+                return connectedBot
+            } catch (failure: Throwable) {
+                if (bot != null) {
+                    bot.shutdown()
+                } else {
+                    session?.close()
+                    messageInbox.close()
+                    imClient.destroy()
+                }
+                throw failure
             }
-            // 等认证结果（15s），成功后组装完整会话
-            withTimeout(15_000) { authResult.await() }
-            imClient.awaitAuthenticated()
-
-            val session = createSession(
-                imClient, userSession, createCache = { FakeLocalCache() }, deviceId,
-                logUploadEnabled = false,  // 无头场景 serverUrl 未知；日志本地 buffer 照常
-            )
-            val sender = MessageSender { msg -> imClient.sendAndWaitAck(msg) }
-            SessionContext.accessToken = userSession.accessToken
-            AppLog.trace("ImBot", "session ready uid=${userSession.uid}")
-            return ImBot(imClient, session, userSession, sender)
         }
+
+        private const val AUTH_NO_PROGRESS_TIMEOUT_MS = 15_000L
     }
 
     private enum class AuthMode { REGISTER, LOGIN }
 }
 
-/** 等待 [ImClient] 认证完成（连接层状态轮次）。 */
-private suspend fun ImClient.awaitAuthenticated() {
-    withTimeout(15_000) { state.first { it == ConnectionState.AUTHENTICATED } }
+private data class AuthenticationProgress(
+    val state: ConnectionState,
+    val cursor: Long,
+)
+
+/**
+ * 等待认证完成，但把超时定义成“没有任何同步进展”。一个健康的大历史回放可以超过
+ * [noProgressTimeoutMs] 总时长；每次 SYNCHRONIZING cursor 前进都会续期。普通连接状态
+ * 抖动不算持久进展，不能靠反复重连无限延长等待。
+ */
+internal suspend fun awaitAuthenticatedWithProgress(
+    state: StateFlow<ConnectionState>,
+    syncCursor: StateFlow<Long>,
+    noProgressTimeoutMs: Long,
+) {
+    require(noProgressTimeoutMs > 0L) { "noProgressTimeoutMs must be positive" }
+    var lastProgressCursor = syncCursor.value
+    while (true) {
+        val observed = withTimeout(noProgressTimeoutMs) {
+            combine(state, syncCursor) { currentState, cursor ->
+                AuthenticationProgress(currentState, cursor)
+            }.first { next ->
+                next.state == ConnectionState.AUTHENTICATED ||
+                    next.state == ConnectionState.AUTH_FAILED ||
+                    (next.state == ConnectionState.SYNCHRONIZING && next.cursor != lastProgressCursor)
+            }
+        }
+        when (observed.state) {
+            ConnectionState.AUTHENTICATED -> return
+            ConnectionState.AUTH_FAILED -> error("authentication failed")
+            ConnectionState.SYNCHRONIZING -> lastProgressCursor = observed.cursor
+            else -> error("unexpected authentication progress state: ${observed.state}")
+        }
+    }
 }
+
+/** 等待 [ImClient] 认证完成（连接层状态轮次）。 */
+private suspend fun ImClient.awaitAuthenticated(noProgressTimeoutMs: Long) {
+    awaitAuthenticatedWithProgress(state, eventSyncCursor, noProgressTimeoutMs)
+}
+
+/** ImBot 的 HTTP 凭据严格属于当前 UserSession，不允许回退到 UI 进程全局 token。 */
+internal fun requireImBotAccessToken(userSession: UserSession): String =
+    requireNotNull(userSession.accessToken) { "ImBot session has no access token" }

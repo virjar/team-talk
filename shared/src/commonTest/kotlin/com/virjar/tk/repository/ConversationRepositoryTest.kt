@@ -1,19 +1,144 @@
 package com.virjar.tk.repository
 
+import com.virjar.tk.Outcome
+import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Conversation
+import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.payload.ResponsePayload
 import com.virjar.tk.rpc.RpcInvoker
 import com.virjar.tk.testing.FakeLocalCache
+import com.virjar.tk.testing.FakeRpcInvoker
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class ConversationRepositoryTest {
+    @Test
+    fun `authoritative snapshot removes stale conversation and pending draft but preserves chat cache`() = runBlocking {
+        val cache = FakeLocalCache().apply {
+            upsertChat(Chat(chatId = "stale", chatType = 2, name = "still-safe-to-cache"))
+            upsertChat(Chat(chatId = "profile-only", chatType = 1, name = "profile"))
+            upsertConversation(Conversation(chatId = "stale", chatType = 2, draft = "unsent"))
+            setConversationDraft("stale", "pending")
+        }
+        val rpc = FakeRpcInvoker().apply {
+            enqueueOk(ProtoCodec.encodeList(listOf(Conversation(chatId = "real", chatType = 2))))
+        }
+        val repository = ConversationRepository(rpc, cache)
+
+        val result = repository.listConversations()
+
+        assertIs<Outcome.Success<List<Conversation>>>(result)
+        assertEquals(listOf("real"), cache.getConversations().map(Conversation::chatId))
+        assertTrue(cache.getPendingConversationDrafts().isEmpty(), "snapshot removal must clear draft outbox")
+        assertNotNull(cache.getChat("stale"), "conversation omission alone does not prove lost membership")
+        assertNotNull(cache.getChat("profile-only"), "profile-only chat cache must not be deleted")
+        Unit
+    }
+
+    @Test
+    fun `late snapshot cannot remove conversation created while rpc is in flight`() = runBlocking {
+        val existing = Conversation(chatId = "existing", chatType = 2)
+        val cache = FakeLocalCache().apply { upsertConversation(existing) }
+        val created = Conversation(chatId = "just-created", chatType = 2)
+        val rpc = BlockingConversationListRpc(
+            firstConversations = listOf(existing),
+            retryConversations = listOf(existing, created),
+        )
+        val repository = ConversationRepository(rpc, cache)
+
+        val request = async { repository.listConversations() }
+        rpc.started.await()
+        cache.upsertConversation(created)
+        rpc.release.complete(Unit)
+
+        val result = assertIs<Outcome.Success<List<Conversation>>>(request.await())
+        val expectedIds = setOf("existing", "just-created")
+        assertEquals(
+            expectedIds,
+            cache.getConversations().map(Conversation::chatId).toSet(),
+        )
+        assertEquals(expectedIds, result.value.map(Conversation::chatId).toSet())
+        assertEquals(2, rpc.invocationCount, "conflicted snapshot must be fetched again")
+    }
+
+    @Test
+    fun `chat created notify forces a second snapshot even before a conversation row exists`() = runBlocking {
+        val created = Conversation(chatId = "new-chat", chatType = 2)
+        val cache = FakeLocalCache()
+        val rpc = BlockingConversationListRpc(
+            firstConversations = emptyList(),
+            retryConversations = listOf(created),
+        )
+        val repository = ConversationRepository(rpc, cache)
+
+        val request = async { repository.listConversations() }
+        rpc.started.await()
+        // EventProcessor 在 CHAT_CREATED 阶段先提交 Chat，Conversation 要到 READY 后刷新。
+        cache.upsertChat(Chat(chatId = created.chatId, chatType = 2, name = "new group"))
+        rpc.release.complete(Unit)
+
+        val result = assertIs<Outcome.Success<List<Conversation>>>(request.await())
+        assertEquals(listOf(created.chatId), cache.getConversations().map(Conversation::chatId))
+        assertEquals(listOf(created.chatId), result.value.map(Conversation::chatId))
+        assertEquals(2, rpc.invocationCount)
+    }
+
+    @Test
+    fun `late snapshot cannot resurrect conversation deleted while rpc is in flight`() = runBlocking {
+        val stale = Conversation(chatId = "just-deleted", chatType = 2)
+        val cache = FakeLocalCache().apply { upsertConversation(stale) }
+        val rpc = BlockingConversationListRpc(
+            firstConversations = listOf(stale),
+            retryConversations = emptyList(),
+        )
+        val repository = ConversationRepository(rpc, cache)
+
+        val request = async { repository.listConversations() }
+        rpc.started.await()
+        cache.deleteConversation(stale.chatId)
+        rpc.release.complete(Unit)
+
+        val result = assertIs<Outcome.Success<List<Conversation>>>(request.await())
+        assertFalse(cache.getConversations().any { it.chatId == stale.chatId })
+        assertFalse(result.value.any { it.chatId == stale.chatId })
+        assertEquals(2, rpc.invocationCount)
+    }
+
+    @Test
+    fun `continuously conflicted snapshots fail after a bounded number of retries`() = runBlocking {
+        lateinit var cache: FakeLocalCache
+        var calls = 0
+        val rpc = object : RpcInvoker {
+            override suspend fun invoke(service: String, methodId: Int, payload: ByteArray?): ResponsePayload {
+                calls += 1
+                cache.upsertConversation(Conversation(chatId = "notify-$calls", chatType = 2))
+                return ResponsePayload(
+                    requestId = calls,
+                    status = 0,
+                    payload = ProtoCodec.encodeList(emptyList<Conversation>()),
+                )
+            }
+        }
+        cache = FakeLocalCache()
+        val repository = ConversationRepository(rpc, cache)
+
+        val result = repository.listConversations()
+
+        assertIs<Outcome.Failure>(result)
+        assertEquals(3, calls)
+        assertEquals(listOf("notify-3"), cache.getConversations().map(Conversation::chatId))
+    }
+
     @Test
     fun `最终清空在远端请求完成前已同步写入本地`() = runBlocking {
         val remoteStarted = CompletableDeferred<Unit>()
@@ -120,5 +245,31 @@ class ConversationRepositoryTest {
         assertTrue(cache.getPendingConversationDrafts().isEmpty())
         cache.upsertConversation(Conversation(chatId = "chat-1", chatType = 1, draft = "跨设备新草稿"))
         assertEquals("跨设备新草稿", cache.getConversations().single().draft)
+    }
+
+    private class BlockingConversationListRpc(
+        private val firstConversations: List<Conversation>,
+        private val retryConversations: List<Conversation> = firstConversations,
+    ) : RpcInvoker {
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var invocationCount = 0
+            private set
+
+        override suspend fun invoke(service: String, methodId: Int, payload: ByteArray?): ResponsePayload {
+            invocationCount += 1
+            val response = if (invocationCount == 1) {
+                started.complete(Unit)
+                release.await()
+                firstConversations
+            } else {
+                retryConversations
+            }
+            return ResponsePayload(
+                requestId = invocationCount,
+                status = 0,
+                payload = ProtoCodec.encodeList(response),
+            )
+        }
     }
 }

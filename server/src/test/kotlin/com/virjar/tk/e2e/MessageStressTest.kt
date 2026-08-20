@@ -2,7 +2,7 @@ package com.virjar.tk.e2e
 
 import com.virjar.tk.rpc.gen.ChatRpcContract
 import com.virjar.tk.rpc.gen.ContactRpcContract
-import com.virjar.tk.body.TextBody
+import com.virjar.tk.body.buildRichTextBody
 import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.model.Message
 import com.virjar.tk.protocol.MessageType
@@ -18,9 +18,6 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * 双端快速收发消息压力测试。
- *
- * 历史背景：V2 重构前，双端同时快速发消息会触发 subscribe→push→loadMessages→subscribe
- * 死循环（commit e9f8e96），表现：消息同步死循环 + 页面不停闪烁 + 网络不停发包。
  *
  * 本测试模拟双端同时快速发送 N 条消息，验证：
  * 1. 消息不丢失（A 发的 B 都收到，反之亦然）
@@ -96,8 +93,8 @@ class MessageStressTest {
                 repeat(MSG_COUNT) { i ->
                     val msg = Message(
                         chatId = chatId, clientMsgId = "u1-${UUID.randomUUID()}",
-                        messageType = MessageType.TEXT.code, timestamp = System.currentTimeMillis(),
-                        senderUid = user1.uid, body = TextBody("A-$i"),
+                        messageType = MessageType.RICH_TEXT.code, timestamp = System.currentTimeMillis(),
+                        senderUid = user1.uid, body = buildRichTextBody("A-$i"),
                     )
                     user1.imClient.sendAndWaitAck(msg)
                 }
@@ -106,8 +103,8 @@ class MessageStressTest {
                 repeat(MSG_COUNT) { i ->
                     val msg = Message(
                         chatId = chatId, clientMsgId = "u2-${UUID.randomUUID()}",
-                        messageType = MessageType.TEXT.code, timestamp = System.currentTimeMillis(),
-                        senderUid = user2.uid, body = TextBody("B-$i"),
+                        messageType = MessageType.RICH_TEXT.code, timestamp = System.currentTimeMillis(),
+                        senderUid = user2.uid, body = buildRichTextBody("B-$i"),
                     )
                     user2.imClient.sendAndWaitAck(msg)
                 }

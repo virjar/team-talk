@@ -67,8 +67,8 @@ class ContactService(
 
     fun listBlacklist(uid: String): List<Contact> = contactStore.listBlacklist(uid)
 
-    /** methodId 9 的兼容语义：只返回当前用户收到且仍待处理的申请。 */
-    fun listApplies(uid: String): List<ContactApply> = contactStore.listPendingApplies(uid)
+    /** 只返回当前用户收到且仍待处理的申请。 */
+    fun listPendingApplies(uid: String): List<ContactApply> = contactStore.listPendingApplies(uid)
 
     fun listApplyRecords(uid: String, beforeId: Long, limit: Int): List<ContactApplyRecord> {
         require(beforeId >= 0) { "beforeId 不能为负数" }

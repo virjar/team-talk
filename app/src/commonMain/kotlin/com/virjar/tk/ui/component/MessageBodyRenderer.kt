@@ -53,10 +53,7 @@ fun MessageBodyRenderer(
     onUrlClick: ((String) -> Unit)? = null,
     resolveSender: ((uid: String) -> User?)? = null,
 ) {
-    @Suppress("DEPRECATION")
     when (val body = message.body) {
-        // TextBody 只保留历史消息兼容；新文字统一是 RichTextBody。
-        is TextBody -> RichMessageText(body.text, onUrlClick = onUrlClick)
         is RichTextBody -> RichMessageText(body.markdown, onUrlClick = onUrlClick, onMentionClick = onMentionClick)
         is InteractiveCardBody -> body.toCard()?.let { card ->
             com.virjar.tk.ui.component.rich.InteractiveCardView(card)
@@ -149,6 +146,9 @@ fun MessageBodyRenderer(
         // 编辑消息直接渲染新内容；「（已编辑）」角标由 FLAG_EDITED 统一显示
         is EditBody -> Text(body.newContent, style = MaterialTheme.typography.bodyMedium)
         is ReactionBody -> SystemHintText("表情回应 ${body.emoji}")
+        // GenericPayload deliberately keeps data opaque. A future registered extension may
+        // replace this branch with a session-owned renderer; unknown data is never rendered.
+        is GenericPayload -> SystemHintText("不支持的扩展消息")
         null -> SystemHintText(MessagePreview.previewBody(null, message.messageType))
     }
 

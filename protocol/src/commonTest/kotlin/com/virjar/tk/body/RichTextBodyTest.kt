@@ -149,7 +149,7 @@ class InteractiveCardBodyTest {
 }
 
 
-/** 协议 v4 的强类型图片附件 round-trip。 */
+/** 强类型图片附件 round-trip。 */
 class ImageBodyProtocolTest {
 
     private fun encode(body: com.virjar.tk.body.ImageBody): io.netty.buffer.ByteBuf {

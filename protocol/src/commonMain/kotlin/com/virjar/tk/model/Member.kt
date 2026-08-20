@@ -21,18 +21,18 @@ data class Member(
         buf.writeVarInt(role)
         buf.writeString(nickname)
         buf.writeVarLong(joinedAt)
-        buf.writeByte(if (user != null) 1 else 0)
+        buf.writeBoolean(user != null)
         user?.writeTo(buf)
     }
 
     companion object : com.virjar.tk.protocol.IProtoReader<Member> {
         override fun readFrom(buf: PacketBuffer): Member = Member(
-            uid = buf.readString()!!,
-            chatId = buf.readString()!!,
+            uid = buf.readRequiredString(),
+            chatId = buf.readRequiredString(),
             role = buf.readVarInt(),
             nickname = buf.readString(),
             joinedAt = buf.readVarLong(),
-            user = if (buf.readByte() != 0) User.readFrom(buf) else null,
+            user = if (buf.readBoolean("member user presence")) User.readFrom(buf) else null,
         )
     }
 }

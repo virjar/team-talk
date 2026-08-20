@@ -3,6 +3,7 @@ package com.virjar.tk.integration
 import com.virjar.tk.body.EditBody
 import com.virjar.tk.body.CardBody
 import com.virjar.tk.body.ForwardBody
+import com.virjar.tk.body.GenericPayload
 import com.virjar.tk.body.InteractiveCardBody
 import com.virjar.tk.body.MessageBodyPolicy
 import com.virjar.tk.body.ReactionBody
@@ -13,6 +14,7 @@ import com.virjar.tk.body.buildMentionMarkdown
 import com.virjar.tk.body.buildRichTextBody
 import com.virjar.tk.domain.message.MessageService
 import com.virjar.tk.model.Message
+import com.virjar.tk.protocol.ExtensionType
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.NotifyType
 import kotlinx.coroutines.Dispatchers
@@ -57,6 +59,30 @@ class MessageIntegrationTest {
         val chat = ctx.chatService.createPersonalChat(uid1, uid2)
         val seq = sendText(uid1, chat.chatId, "Hello")
         assertTrue(seq > 0)
+    }
+
+    @Test
+    fun `server rejects client-created generic messages with an unregistered extension`() = runTest {
+        val sender = ctx.registerUser()
+        val peer = ctx.registerUser()
+        val chat = ctx.chatService.createPersonalChat(sender, peer)
+        val unknownCode = generateSequence(1) { it + 1 }
+            .first { ExtensionType.fromCode(it) == null }
+        val message = Message(
+            chatId = chat.chatId,
+            clientMsgId = "unregistered-generic",
+            senderUid = sender,
+            messageType = MessageType.GENERIC.code,
+            timestamp = 1,
+            body = GenericPayload(unknownCode, byteArrayOf(1, 2, 3)),
+        )
+
+        val failure = assertFailsWith<IllegalArgumentException> {
+            ctx.messageService.sendMessage(sender, message)
+        }
+
+        assertTrue(failure.message.orEmpty().contains("未登记的消息扩展类型"))
+        assertTrue(ctx.messageService.getHistory(sender, chat.chatId, 0, 10).isEmpty())
     }
 
     @Test

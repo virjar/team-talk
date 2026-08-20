@@ -15,7 +15,7 @@
 ## 2. 协议
 
 - IProto 读写字段严格同序同类型。
-- RPC IDL 是 method 编解码的唯一入口；已发布方法只追加。
+- RPC IDL 是 method 编解码的唯一入口；每个方法必须显式声明唯一 `@RpcMethod(id)`。
 - 新 NotifyType 登记 NotifyContracts。
 - 新 MessageType 登记 body registry 和 policy。
 - 不兼容变化升级 PROTOCOL_VERSION 和 golden tests。
@@ -45,6 +45,8 @@
 - Compose 可空状态先捕获局部变量，不在跨重组分支中滥用 `!!`。
 - StateFlow 的读改写在明确同步边界内完成。
 - 不把可变集合直接暴露给 UI。
+- Repository 保持 `CancellationException`；Feature/ViewModel 捕获宽泛异常时必须先重抛取消，
+  owner 销毁后不得写入错误状态或调用结果回调。
 - 单文件超过约 500 行时按真实职责拆分，避免为了行数机械分割。
 
 ## 6. 平台 UI

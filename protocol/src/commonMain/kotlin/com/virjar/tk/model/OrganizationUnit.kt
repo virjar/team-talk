@@ -41,9 +41,9 @@ data class OrganizationUnit(
         const val STATUS_ACTIVE = 1
 
         override fun readFrom(buf: PacketBuffer): OrganizationUnit = OrganizationUnit(
-            unitId = buf.readString()!!,
+            unitId = buf.readRequiredString(),
             parentId = buf.readString(),
-            name = buf.readString()!!,
+            name = buf.readRequiredString(),
             leaderUid = buf.readString(),
             sortOrder = buf.readVarInt(),
             groupChatId = buf.readString(),

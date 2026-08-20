@@ -7,6 +7,9 @@ import com.virjar.tk.repository.ContactRepository
 import com.virjar.tk.testing.FakeLocalCache
 import com.virjar.tk.testing.FakeRpcInvoker
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -57,8 +60,33 @@ class ContactViewModelTest {
         assertEquals("修改备注失败: 备注保存失败", viewModel.error.value)
     }
 
+    @Test
+    fun `contact events refresh pending count only while view model owns subscription`() = runTest(testDispatcher) {
+        val contactEvents = MutableSharedFlow<Unit>()
+        val (viewModel, rpc) = createViewModel(contactEvents = contactEvents)
+        advanceUntilIdle()
+        rpc.enqueueOk(
+            ProtoCodec.encodeList(
+                listOf(ContactApply(id = 1, fromUid = "u2", toUid = "me", token = "token")),
+            ),
+        )
+
+        contactEvents.emit(Unit)
+        advanceUntilIdle()
+
+        assertEquals(1, viewModel.pendingApplyCount.value)
+        val callsBeforeDestroy = rpc.calls.size
+        viewModel.destroy()
+        contactEvents.emit(Unit)
+        advanceUntilIdle()
+
+        assertEquals(callsBeforeDestroy, rpc.calls.size, "destroy 后不得继续处理联系人事件")
+        assertEquals(1, viewModel.pendingApplyCount.value)
+    }
+
     private fun createViewModel(
         cache: FakeLocalCache = FakeLocalCache(),
+        contactEvents: Flow<Unit> = emptyFlow(),
     ): Pair<ContactViewModel, FakeRpcInvoker> {
         val rpc = FakeRpcInvoker().apply {
             // The initial refresh is authoritative. Mirror the seeded cache in the
@@ -72,6 +100,7 @@ class ContactViewModelTest {
             localCache = cache,
             contactRepo = repository,
             myUid = "me",
+            contactEvents = contactEvents,
             dispatcher = testDispatcher,
         ) to rpc
     }

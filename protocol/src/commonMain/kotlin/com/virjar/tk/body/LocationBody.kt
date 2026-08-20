@@ -18,12 +18,12 @@ data class LocationBody(
 
     companion object : IProtoReader<LocationBody> {
         override fun readFrom(buf: PacketBuffer) = LocationBody(
-            latitude = buf.readString(
+            latitude = buf.readRequiredString(
                 MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_COORDINATE_TEXT_LENGTH),
-            )!!.toDouble(),
-            longitude = buf.readString(
+            ).toDouble(),
+            longitude = buf.readRequiredString(
                 MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_COORDINATE_TEXT_LENGTH),
-            )!!.toDouble(),
+            ).toDouble(),
             title = buf.readString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_DISPLAY_NAME_LENGTH)),
             address = buf.readString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_SHORT_TEXT_LENGTH)),
         )

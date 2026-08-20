@@ -49,7 +49,6 @@ object MessageBodyPolicy {
         return maxCharacters * MAX_UTF8_BYTES_PER_CHARACTER
     }
 
-    @Suppress("DEPRECATION")
     fun canonicalize(message: Message): Message {
         require(message.chatId.isNotBlank() && message.chatId.length <= MAX_CHAT_ID_LENGTH) { "chatId 非法" }
         require(
@@ -71,8 +70,6 @@ object MessageBodyPolicy {
             "消息类型与消息体不匹配: body=${body::class.simpleName}, messageType=${message.messageType}"
         }
         val canonicalBody = when (body) {
-            // TEXT 仍需兼容旧客户端发送，但不能成为绕过 Markdown 资源预算的旁路。
-            is TextBody -> body.copy(text = validateMarkdown(body.text))
             is RichTextBody -> buildRichTextBody(validateMarkdown(body.markdown)).also {
                 require(it.mentions.size <= RichTextBody.MAX_MENTIONS) {
                     "单条消息不能超过 ${RichTextBody.MAX_MENTIONS} 个 mention"
@@ -95,6 +92,9 @@ object MessageBodyPolicy {
             )
             is StickerBody -> validateSticker(body)
             is ReactionBody -> validateReaction(body)
+            // extensionType 是否已登记是服务端创建权限，不是接收/缓存解码条件；
+            // 未知扩展消息必须能跨版本原样保存和转发。
+            is GenericPayload -> body
         }
         return if (canonicalBody == body) message else message.copy(body = canonicalBody)
     }
@@ -474,9 +474,7 @@ object MessageBodyPolicy {
         return body
     }
 
-    @Suppress("DEPRECATION")
     fun typeOf(body: MessageBody): MessageType = when (body) {
-        is TextBody -> MessageType.TEXT
         is RichTextBody -> MessageType.RICH_TEXT
         is InteractiveCardBody -> MessageType.INTERACTIVE_CARD
         is ImageBody -> MessageType.IMAGE
@@ -492,30 +490,26 @@ object MessageBodyPolicy {
         is EditBody -> MessageType.EDIT
         is StickerBody -> MessageType.STICKER
         is ReactionBody -> MessageType.REACTION
+        is GenericPayload -> MessageType.GENERIC
     }
 
     private const val MARKDOWN_STRUCTURE_CHARACTERS = "#>*_~`[]()|!"
 }
 
-/** Markdown 源文本；旧 TextBody 只在兼容读取时进入这里。 */
-@Suppress("DEPRECATION")
+/** Markdown 源文本。 */
 fun MessageBody?.markdownContentOrNull(): String? = when (this) {
     is RichTextBody -> markdown
-    is TextBody -> text
     is ReplyBody -> content
     is EditBody -> newContent
     else -> null
 }
 
 /** 是否为可直接在 Markdown 编辑器中重新编辑的独立文本消息。 */
-@Suppress("DEPRECATION")
-fun MessageBody?.isMarkdownTextBody(): Boolean = this is RichTextBody || this is TextBody
+fun MessageBody?.isMarkdownTextBody(): Boolean = this is RichTextBody
 
 /** 去除 Markdown 语法后的可检索/可预览文本。 */
-@Suppress("DEPRECATION")
 fun MessageBody?.plainTextContentOrNull(): String? = when (this) {
     is RichTextBody -> plainText
-    is TextBody -> text
     is ReplyBody -> content.takeIf { it.isNotBlank() }?.let { buildRichTextBody(it).plainText }
     is EditBody -> buildRichTextBody(newContent).plainText
     else -> null

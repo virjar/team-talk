@@ -43,9 +43,22 @@ domain commit
   → push to all online devices
 ```
 
-认证请求携带 `lastEventId`。服务端按 ID 升序补发事件；客户端只有在成功处理后才保存新游标。
-语义是 at-least-once：可能重复，不能丢失。事件 payload 使用完整快照，客户端用 upsert 或按稳定键
-删除。
+认证成功后，客户端等待 LocalCache 与 EventProcessor 就绪，再用本地 `sync_cursor` 中的
+`lastEventId` 发起显式分页同步。服务端按 ID 升序返回有界批次；客户端只有在整条事件投影成功并
+单调保存游标后才请求下一批。最终的二次查空、`SYNC_READY` 与实时连接注册受同一用户事件门闩
+保护。语义是 at-least-once：可能重复，不能丢失；完整快照通过 upsert 或稳定键删除收敛。
+
+`lastEventId` 是“该账号已经持久投影完成的事件凭证”，不是客户端可任意填写的全局序号。除初始值
+`0` 外，服务端只接受仍存在且归属当前账号的事件 ID；伪造、损坏或串账号的高游标触发显式
+`SYNC_RESET`，不能通过一次空查询直接进入实时态并永久跳过后续事件。客户端在同一连接内原子
+清空服务器投影、草稿 outbox、无头 inbox 与 sync cursor，同步清空 StateFlow/消息窗口，再以 0
+重新请求。独立的文档草稿 store 不在清理范围内。清理失败、同步页与 RESET 重叠或重复 RESET
+一律断开，重连后从最后一个完整本地事务状态重试。
+
+当前 RESET 通过从 0 重放完整历史自愈错误游标，但尚没有独立权威快照/checkpoint bootstrap，
+所以服务端仍不按 TTL 过滤，也不物理删除 `sync_events`。这是开发期的正确性取舍：事件表会
+无界增长，但重置不会从残缺历史重建出貌似成功的投影。正式上线前必须先补全量状态基线，再配置
+保留期与清理。
 
 Presence 不持久化，因为离线期间的在线状态没有补发价值。当前实现只接收连接变化产生的实时事件，
 登录后的好友在线快照尚未补齐；在快照能力完成前，重连不能被视为已经恢复了完整在线状态。
@@ -98,7 +111,7 @@ HTTP upload → FileStore Attachment（仅上传者可读）
   → 当前群成员通过同一文件端点下载
 ```
 
-客户端 v1 不把群文件写入 LocalCache，也没有持久化 Notify；页面打开、目录切换和修改后主动拉取。
+当前客户端不把群文件写入 LocalCache，也没有持久化 Notify；页面打开、目录切换和修改后主动拉取。
 这意味着另一设备修改后，已打开的列表要手动刷新才能看到。它是明确的部分能力，不应被描述成实时
 同步；后续需要稳定事件、离线投影与搜索索引后才能进入本地优先模型。
 
@@ -119,7 +132,7 @@ client updateDocument(title, markdown, expectedRevision)
 修订列表只传标题、版本、字符数和编辑元数据；用户选择具体版本后才按需读取完整 Markdown。恢复历史
 版本沿用正常 update 流程，因此仍受最新 revision 冲突保护。
 
-空间授权不复制部门成员；每次访问都使用当前 OrganizationMember 关系。文档 v1 不进入 LocalCache，
+空间授权不复制部门成员；每次访问都使用当前 OrganizationMember 关系。当前文档投影不进入 LocalCache，
 也不发布持久化 Notify。页面在打开和本地修改后重新拉取，其他设备的修改需要手动刷新才能发现；若
 两个成员从同一 revision 保存，只有先到达者成功，失败者本地编辑内容不应被清空。后续增加实时事件
 或离线编辑时，必须先定义缓存投影、权限撤销、缺口恢复和合并语义。
@@ -130,7 +143,7 @@ client updateDocument(title, markdown, expectedRevision)
 |---|---|
 | ACK 超时 | 本地消息标记失败/可重试；用同一 clientMsgId 重发 |
 | NOTIFY 重复 | upsert 幂等，游标继续推进 |
-| NOTIFY 解码或写库失败 | 记录 fault，不推进游标，下次认证补发 |
+| NOTIFY 解码或写库失败 | 记录 fault，不推进游标并关闭连接；重连后显式同步重试 |
 | TCP 断开 | 保留用户层与本地缓存，指数退避重连 |
 | AUTH_FAILED | 停止重连，清 token，销毁 ClientSession |
 | 历史存在 seq 缺口 | 按 serverSeq 主动拉取历史修复 |

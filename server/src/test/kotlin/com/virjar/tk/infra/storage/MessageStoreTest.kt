@@ -1,6 +1,7 @@
 package com.virjar.tk.infra.storage
 
 import com.virjar.tk.body.FileBody
+import com.virjar.tk.body.GenericPayload
 import com.virjar.tk.body.buildRichTextBody
 import com.virjar.tk.model.Attachment
 import com.virjar.tk.model.Message
@@ -16,6 +17,34 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class MessageStoreTest {
+    @Test
+    fun `unknown generic body survives durable storage and projection restart`() {
+        val root = Files.createTempDirectory("tk-message-generic-").toFile()
+        var store = MessageStore(root.absolutePath)
+        val generic = GenericPayload(404, byteArrayOf(0, 1, 0, 2, 0x7f))
+        val message = Message(
+            chatId = "chat-generic",
+            clientMsgId = "client-generic",
+            serverSeq = 1,
+            senderUid = "future-client",
+            messageType = MessageType.GENERIC.code,
+            timestamp = 1,
+            body = generic,
+        )
+        try {
+            store.init()
+            store.storeMessage(message)
+            store.close()
+
+            store = MessageStore(root.absolutePath).also { it.init() }
+            assertEquals(generic, store.getMessage(message.chatId, message.serverSeq)?.body)
+            assertEquals(generic, store.getPendingProjections().single().body)
+        } finally {
+            store.close()
+            root.deleteRecursively()
+        }
+    }
+
     @Test
     fun `message and projection outbox survive restart until projection completes`() {
         val root = Files.createTempDirectory("tk-message-outbox-").toFile()

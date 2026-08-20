@@ -16,9 +16,9 @@ import kotlin.test.assertEquals
 /**
  * RPC methodId golden 锁定：wire 稳定性的最后一道防线。
  *
- * 生成物在 build/（gitignore），IDL 声明顺序变化会静默漂移 id——本表是
+ * 生成物在 build/（gitignore），每个 IDL 方法都用必填 `@RpcMethod` 显式编号；本表是
  * **手写的已发布契约**，任何 id 变化必须显式改这里 + 递增 PROTOCOL_VERSION。
- * processor 已在编译期拦截重复 id；本测试拦截"合法但漂移"的重排。
+ * processor 在编译期拦截缺失、重复和非法 id；本测试锁定当前 wire 数值。
  */
 class RpcMethodIdGoldenTest {
 
@@ -45,7 +45,7 @@ class RpcMethodIdGoldenTest {
         assertEquals(6, ContactRpcContract.M_SET_REMARK)
         assertEquals(7, ContactRpcContract.M_BLACKLIST)
         assertEquals(8, ContactRpcContract.M_REMOVE_FROM_BLACKLIST)
-        assertEquals(9, ContactRpcContract.M_LIST_APPLIES)
+        assertEquals(9, ContactRpcContract.M_LIST_PENDING_APPLIES)
         assertEquals(10, ContactRpcContract.M_LIST_BLACKLIST)
         assertEquals(11, ContactRpcContract.M_LIST_APPLY_RECORDS)
         assertEquals(12, ContactRpcContract.M_GET_PENDING_APPLY)

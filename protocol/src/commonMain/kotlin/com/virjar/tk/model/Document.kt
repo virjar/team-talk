@@ -41,15 +41,15 @@ data class Document(
         const val MAX_ANCESTOR_DEPTH = 128
 
         override fun readFrom(buf: PacketBuffer): Document {
-            val documentId = buf.readString()!!
-            val spaceId = buf.readString()!!
+            val documentId = buf.readRequiredString()
+            val spaceId = buf.readRequiredString()
             val parentId = buf.readString()
-            val title = buf.readString()!!
-            val markdown = buf.readString()!!
+            val title = buf.readRequiredString()
+            val markdown = buf.readRequiredString()
             val revision = buf.readVarLong()
-            val createdBy = buf.readString()!!
+            val createdBy = buf.readRequiredString()
             val createdAt = buf.readVarLong()
-            val updatedBy = buf.readString()!!
+            val updatedBy = buf.readRequiredString()
             val updatedAt = buf.readVarLong()
             // String 的最短 wire 形态为 present + zero-length VarInt（2B）。数量与当前
             // payload 必须在建立 List 前同时验证，避免畸形小包触发大容量预分配。
@@ -69,7 +69,7 @@ data class Document(
                 createdAt = createdAt,
                 updatedBy = updatedBy,
                 updatedAt = updatedAt,
-                ancestorIds = List(ancestorCount) { buf.readString()!! },
+                ancestorIds = List(ancestorCount) { buf.readRequiredString() },
             )
         }
     }

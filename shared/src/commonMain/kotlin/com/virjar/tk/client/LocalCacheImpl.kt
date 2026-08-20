@@ -10,6 +10,7 @@ import com.virjar.tk.protocol.ProtoCodec
 import io.netty.buffer.Unpooled
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import java.util.concurrent.ConcurrentHashMap
 
@@ -25,6 +26,12 @@ private data class LocalDraftOverride(
 
 /** 包装类用于区分“还没观察到事件”与“已观察到权威 null”。 */
 private data class AuthoritativeDraftObservation(val draft: String?)
+
+private data class ConversationMergePlan(
+    val conversation: Conversation,
+    val draftOverride: LocalDraftOverride?,
+    val clearDraftOverride: Boolean,
+)
 
 /**
  * 基于 SQLDelight 的 LocalCache 实现。
@@ -55,6 +62,12 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     private var lastFullContactSnapshotGeneration = 0L
     /** 单联系人最近变化水位；删除也保留 tombstone，防止旧快照复活。 */
     private val contactMutationGenerations = mutableMapOf<String, Long>()
+    /** 会话全量请求、实时投影和本地会话操作共享的进程内逻辑时钟。 */
+    private var conversationProjectionGeneration = 0L
+    /** 最近一次已开始应用的权威会话快照；用于整体拒绝乱序返回的旧请求。 */
+    private var lastAppliedConversationSnapshotGeneration = 0L
+    /** chat 级变化水位；删除也保留 tombstone，防止迟到快照复活。 */
+    private val conversationMutationGenerations = mutableMapOf<String, Long>()
     /**
      * 持久化 outbox 的内存镜像。map 中“有 key + draft=null”表示明确清空；
      * 缺少 key 才表示本机没有待收敛操作，可接受跨设备草稿。
@@ -114,14 +127,22 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     }
 
     // ── 联系人 ──
-    override fun getContacts(): List<Contact> {
-        val users = usersFlow.value.associateBy { it.uid }
-        return contactsFlow.value.map { contact ->
-            val friendUser = users[contact.friendUid]
+    override fun getContacts(): List<Contact> = synchronized(stateLock) {
+        projectContacts(contactsFlow.value, usersFlow.value)
+    }
+
+    override fun observeContacts(): Flow<List<Contact>> = combine(contactsFlow, usersFlow) { contacts, users ->
+        projectContacts(contacts, users)
+    }
+
+    private fun projectContacts(contacts: List<Contact>, users: List<User>): List<Contact> {
+        val usersByUid = users.associateBy(User::uid)
+        return contacts.map { contact ->
+            val friendUser = usersByUid[contact.friendUid]
             if (friendUser != null && contact.user != friendUser) contact.copy(user = friendUser) else contact
         }
     }
-    override fun observeContacts(): Flow<List<Contact>> = contactsFlow
+
     override fun upsertContact(contact: Contact) {
         synchronized(stateLock) {
             queries.transaction {
@@ -243,17 +264,23 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     // ── 聊天 ──
     override fun getChat(chatId: String): Chat? = chatsFlow.value.find { it.chatId == chatId }
     override fun upsertChat(chat: Chat) {
-        queries.upsertChat(chat.chatId, chat.chatType.toLong(), chat.name, chat.avatar, chat.creator, chat.memberCount.toLong(), chat.maxSeq, chat.notice, if (chat.mutedAll) 1L else 0L)
-        updateFlow(chatsFlow) { current ->
-            val list = current.toMutableList()
+        synchronized(stateLock) {
+            queries.upsertChat(chat.chatId, chat.chatType.toLong(), chat.name, chat.avatar, chat.creator, chat.memberCount.toLong(), chat.maxSeq, chat.notice, if (chat.mutedAll) 1L else 0L)
+            val list = chatsFlow.value.toMutableList()
             val idx = list.indexOfFirst { it.chatId == chat.chatId }
             if (idx >= 0) list[idx] = chat else list.add(chat)
-            list
+            chatsFlow.value = list
+            // CHAT_CREATED 只先落 Chat，Conversation 由 READY 后的全量刷新补齐。
+            // 因此 Chat 变化也必须保护同 chat 的旧会话不被在途快照误删。
+            markConversationMutated(chat.chatId)
         }
     }
     override fun deleteChat(chatId: String) {
-        queries.deleteChat(chatId)
-        chatsFlow.value = chatsFlow.value.filter { it.chatId != chatId }
+        synchronized(stateLock) {
+            queries.deleteChat(chatId)
+            chatsFlow.value = chatsFlow.value.filter { it.chatId != chatId }
+            markConversationMutated(chatId)
+        }
         // 同步释放该聊天的消息窗口
         onChatInactive(chatId)
     }
@@ -285,6 +312,19 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
 
     override fun getMessages(chatId: String, limit: Int): List<Message> =
         getOrCreateWindow(chatId).snapshot(limit)
+
+    override fun getRecentMessages(chatId: String?, afterSeq: Long, limit: Int): List<Message> {
+        require(afterSeq >= 0L) { "afterSeq must be non-negative" }
+        require(limit > 0) { "limit must be positive" }
+        val rows = synchronized(stateLock) {
+            if (chatId == null) {
+                queries.selectRecentMessages(afterSeq, limit.toLong()).executeAsList()
+            } else {
+                queries.selectRecentMessagesByChat(chatId, afterSeq, limit.toLong()).executeAsList()
+            }
+        }
+        return rows.asReversed().map { it.toModel() }
+    }
 
     override fun observeMessages(chatId: String): Flow<List<Message>> =
         getOrCreateWindow(chatId).messages
@@ -371,55 +411,171 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     override fun observeConversations(): Flow<List<Conversation>> = conversationsFlow
     override fun upsertConversation(conv: Conversation) {
         synchronized(stateLock) {
-            val currentOverride = localDraftOverrides[conv.chatId]
-            // Conversation 事件可能比 setDraft RPC ACK 更早到达。只记录当前
-            // generation 创建之后最后观察到的权威值，ACK 才有资格据此收敛 outbox。
-            val observedOverride = currentOverride?.let { override ->
-                if (override.state == DRAFT_MIRROR_PENDING) {
-                    override.copy(observedAuthority = AuthoritativeDraftObservation(conv.draft))
-                } else {
-                    override
-                }
-            }
-            // RPC 成功不等于本地已消费权威快照。在收到值匹配的
-            // Conversation 前保留 override，防止更早的通知在应答后短暂复活草稿。
-            val clearAcknowledgedOverride = observedOverride?.let { override ->
-                override.state == DRAFT_MIRROR_ACKED && override.draft == conv.draft
-            } == true
-            val effectiveOverride = observedOverride.takeUnless { clearAcknowledgedOverride }
-            val incoming = conv.copy(
-                draft = if (effectiveOverride != null) effectiveOverride.draft else conv.draft,
+            val plan = prepareConversationMerge(
+                local = conversationsFlow.value.firstOrNull { it.chatId == conv.chatId },
+                remote = conv,
+                draftOverride = localDraftOverrides[conv.chatId],
             )
-            val mergedList = mergeSorted(conversationsFlow.value, incoming, effectiveOverride)
-            val merged = mergedList.first { it.chatId == conv.chatId }
             queries.transaction {
-                if (clearAcknowledgedOverride) {
+                if (plan.clearDraftOverride) {
                     queries.deleteConversationDraftOutbox(conv.chatId)
                 }
                 // 持久化的也必须是合并后的草稿，否则进程重建会暂时
                 // 读回迟到事件里的旧值。
-                queries.upsertConversation(
-                    merged.chatId,
-                    merged.chatType.toLong(),
-                    merged.chatName,
-                    merged.chatAvatar,
-                    merged.lastSeq,
-                    merged.readSeq,
-                    merged.peerReadSeq,
-                    merged.unreadCount.toLong(),
-                    if (merged.isPinned) 1L else 0L,
-                    if (merged.isMuted) 1L else 0L,
-                    merged.draft,
-                    merged.lastMsgTimestamp ?: 0L,
-                )
+                persistConversation(plan.conversation)
             }
-            if (clearAcknowledgedOverride) {
+            if (plan.clearDraftOverride) {
                 localDraftOverrides.remove(conv.chatId)
-            } else if (observedOverride != null) {
-                localDraftOverrides[conv.chatId] = observedOverride
+            } else if (plan.draftOverride != null) {
+                localDraftOverrides[conv.chatId] = plan.draftOverride
             }
-            conversationsFlow.value = mergedList
+            conversationsFlow.value = replaceSorted(conversationsFlow.value, plan.conversation)
+            markConversationMutated(conv.chatId)
         }
+    }
+
+    override fun beginConversationSnapshot(): Long = synchronized(stateLock) {
+        nextConversationGeneration()
+    }
+
+    override fun applyConversationSnapshot(
+        snapshotGeneration: Long,
+        conversations: List<Conversation>,
+    ): Boolean {
+        require(snapshotGeneration > 0L) { "snapshotGeneration must be positive" }
+        val snapshot = conversations.associateBy(Conversation::chatId).values.toList()
+        return synchronized(stateLock) {
+            // 同一进程内两个全量请求可能乱序返回。更新的请求已经应用后，旧请求
+            // 整体不能再触碰投影，即使期间没有 Notify。
+            if (snapshotGeneration <= lastAppliedConversationSnapshotGeneration) {
+                return@synchronized false
+            }
+
+            var projectedConversations = conversationsFlow.value
+            val projectedOverrides = localDraftOverrides.toMutableMap()
+            val mergePlans = mutableListOf<ConversationMergePlan>()
+            // CHAT_CREATED 在下一次 list 前只有 Chat 投影，没有 Conversation 行；
+            // 因此冲突判断不能只遍历 snapshot/current conversation 的交集。
+            var hadConflict = conversationMutationGenerations.values.any { generation ->
+                generation > snapshotGeneration
+            }
+
+            snapshot.forEach { remote ->
+                if (wasConversationMutatedAfter(remote.chatId, snapshotGeneration)) {
+                    // 新实时删除留下的 tombstone 会阻止旧快照复活；新实时 upsert
+                    // 也不会被旧快照覆盖。
+                    hadConflict = true
+                } else {
+                    val plan = prepareConversationMerge(
+                        local = projectedConversations.firstOrNull { it.chatId == remote.chatId },
+                        remote = remote,
+                        draftOverride = projectedOverrides[remote.chatId],
+                    )
+                    mergePlans += plan
+                    projectedConversations = replaceSorted(projectedConversations, plan.conversation)
+                    if (plan.clearDraftOverride) {
+                        projectedOverrides.remove(remote.chatId)
+                    } else if (plan.draftOverride != null) {
+                        projectedOverrides[remote.chatId] = plan.draftOverride
+                    }
+                }
+            }
+
+            val remoteIds = snapshot.mapTo(mutableSetOf(), Conversation::chatId)
+            // outbox 可能因旧版本 bug 在 conversation 行已不存在时仍残留，所以清理
+            // 候选必须同时覆盖当前投影与 override key。
+            val absentIds = buildSet {
+                projectedConversations.forEach { if (it.chatId !in remoteIds) add(it.chatId) }
+                projectedOverrides.keys.forEach { if (it !in remoteIds) add(it) }
+            }
+            val removableIds = absentIds.filterTo(mutableSetOf()) { chatId ->
+                val safeToRemove = !wasConversationMutatedAfter(chatId, snapshotGeneration)
+                if (!safeToRemove) hadConflict = true
+                safeToRemove
+            }
+
+            queries.transaction {
+                mergePlans.forEach { plan ->
+                    if (plan.clearDraftOverride) {
+                        queries.deleteConversationDraftOutbox(plan.conversation.chatId)
+                    }
+                    persistConversation(plan.conversation)
+                }
+                removableIds.forEach { chatId ->
+                    // 与 deleteConversation 保持同一持久化语义，避免被踢/解散后
+                    // pending draft 在每次登录时永久重试。
+                    queries.deleteConversationDraftOutbox(chatId)
+                    queries.deleteConversation(chatId)
+                }
+            }
+
+            removableIds.forEach { projectedOverrides.remove(it) }
+            projectedConversations = projectedConversations.filterNot { it.chatId in removableIds }
+            localDraftOverrides.clear()
+            localDraftOverrides.putAll(projectedOverrides)
+            conversationsFlow.value = sortConversations(projectedConversations)
+
+            conversationProjectionGeneration = maxOf(
+                conversationProjectionGeneration,
+                snapshotGeneration,
+            )
+            lastAppliedConversationSnapshotGeneration = snapshotGeneration
+            // 已被该快照覆盖的旧 mutation 不再需要；更新水位和删除 tombstone 均保留。
+            conversationMutationGenerations.entries.removeAll { (_, generation) ->
+                generation <= snapshotGeneration
+            }
+            !hadConflict
+        }
+    }
+
+    private fun prepareConversationMerge(
+        local: Conversation?,
+        remote: Conversation,
+        draftOverride: LocalDraftOverride?,
+    ): ConversationMergePlan {
+        // Conversation 事件可能比 setDraft RPC ACK 更早到达。只记录当前
+        // generation 创建之后最后观察到的权威值，ACK 才有资格据此收敛 outbox。
+        val observedOverride = draftOverride?.let { override ->
+            if (override.state == DRAFT_MIRROR_PENDING) {
+                override.copy(observedAuthority = AuthoritativeDraftObservation(remote.draft))
+            } else {
+                override
+            }
+        }
+        // RPC 成功不等于本地已消费权威快照。在收到值匹配的
+        // Conversation 前保留 override，防止更早的通知在应答后短暂复活草稿。
+        val clearAcknowledgedOverride = observedOverride?.let { override ->
+            override.state == DRAFT_MIRROR_ACKED && override.draft == remote.draft
+        } == true
+        val effectiveOverride = observedOverride.takeUnless { clearAcknowledgedOverride }
+        val incoming = remote.copy(
+            draft = if (effectiveOverride != null) effectiveOverride.draft else remote.draft,
+        )
+        val merged = if (local == null) incoming else {
+            mergeConversation(local, incoming, effectiveOverride)
+        }
+        return ConversationMergePlan(
+            conversation = merged,
+            draftOverride = effectiveOverride,
+            clearDraftOverride = clearAcknowledgedOverride,
+        )
+    }
+
+    private fun persistConversation(conversation: Conversation) {
+        queries.upsertConversation(
+            conversation.chatId,
+            conversation.chatType.toLong(),
+            conversation.chatName,
+            conversation.chatAvatar,
+            conversation.lastSeq,
+            conversation.readSeq,
+            conversation.peerReadSeq,
+            conversation.unreadCount.toLong(),
+            if (conversation.isPinned) 1L else 0L,
+            if (conversation.isMuted) 1L else 0L,
+            conversation.draft,
+            conversation.lastMsgTimestamp ?: 0L,
+        )
     }
 
     /**
@@ -466,15 +622,20 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
             }
             localDraftOverrides.remove(chatId)
             conversationsFlow.value = conversationsFlow.value.filter { it.chatId != chatId }
+            // 即使本地没有行也记录 tombstone：在途旧快照可能仍携带该会话。
+            markConversationMutated(chatId)
         }
     }
 
     override fun markConversationRead(chatId: String, readSeq: Long) {
         synchronized(stateLock) {
             queries.markConversationRead(readSeq, chatId)
+            var changed = false
             conversationsFlow.value = conversationsFlow.value.map {
                 if (it.chatId != chatId) return@map it
                 val mergedReadSeq = maxOf(it.readSeq, readSeq)
+                changed = changed || mergedReadSeq != it.readSeq || it.unreadCount !=
+                    (it.lastSeq - mergedReadSeq).coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
                 it.copy(
                     unreadCount = (it.lastSeq - mergedReadSeq)
                         .coerceIn(0L, Int.MAX_VALUE.toLong())
@@ -482,24 +643,108 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
                     readSeq = mergedReadSeq,
                 )
             }
+            if (changed) markConversationMutated(chatId)
         }
     }
 
     override fun updatePeerReadSeq(chatId: String, peerReadSeq: Long) {
-        queries.updatePeerReadSeq(peerReadSeq, chatId)
-        updateFlow(conversationsFlow) { current ->
-            current.map { if (it.chatId == chatId) it.copy(peerReadSeq = peerReadSeq) else it }
+        synchronized(stateLock) {
+            val existing = conversationsFlow.value.firstOrNull { it.chatId == chatId } ?: return
+            val mergedPeerReadSeq = maxOf(existing.peerReadSeq, peerReadSeq)
+            if (mergedPeerReadSeq == existing.peerReadSeq) return
+            queries.updatePeerReadSeq(mergedPeerReadSeq, chatId)
+            conversationsFlow.value = conversationsFlow.value.map {
+                if (it.chatId == chatId) it.copy(peerReadSeq = mergedPeerReadSeq) else it
+            }
+            markConversationMutated(chatId)
         }
     }
 
-    override fun toggleConversationPin(chatId: String, pinned: Boolean): Conversation? {
+    override fun getSyncCursor(key: String): Long = synchronized(stateLock) {
+        queries.getSyncCursor(key).executeAsOneOrNull() ?: 0L
+    }
+
+    override fun advanceSyncCursor(key: String, eventId: Long): Long {
+        require(eventId > 0L) { "eventId must be positive" }
         return synchronized(stateLock) {
-            val existing = conversationsFlow.value.find { it.chatId == chatId } ?: return@synchronized null
-            val updated = existing.copy(isPinned = pinned)
-            // 直接在锁内更新 DB + flow（不递归 updateFlow 的锁）
-            queries.upsertConversation(updated.chatId, updated.chatType.toLong(), updated.chatName, updated.chatAvatar, updated.lastSeq, updated.readSeq, updated.peerReadSeq, updated.unreadCount.toLong(), if (updated.isPinned) 1L else 0L, if (updated.isMuted) 1L else 0L, updated.draft, updated.lastMsgTimestamp ?: 0L)
-            conversationsFlow.value = mergeSorted(conversationsFlow.value, updated)
-            updated
+            var persisted = 0L
+            queries.transaction {
+                queries.ensureSyncCursor(key)
+                queries.advanceSyncCursor(value = eventId, key = key)
+                persisted = queries.getSyncCursor(key).executeAsOne()
+            }
+            persisted
+        }
+    }
+
+    override fun resetServerProjection() {
+        synchronized(stateLock) {
+            queries.transaction {
+                queries.deleteAllBotMessages()
+                queries.deleteAllConversationDraftOutbox()
+                queries.deleteAllSyncCursors()
+                queries.deleteAllMessages()
+                queries.deleteAllMembers()
+                queries.deleteAllConversations()
+                queries.deleteAllContacts()
+                queries.deleteAllChats()
+                queries.deleteAllUsers()
+            }
+
+            usersFlow.value = emptyList()
+            contactsFlow.value = emptyList()
+            chatsFlow.value = emptyList()
+            membersFlow.value = emptyMap()
+            conversationsFlow.value = emptyList()
+            localDraftOverrides.clear()
+
+            check(contactProjectionGeneration < Long.MAX_VALUE) {
+                "contact projection generation exhausted"
+            }
+            contactProjectionGeneration += 1L
+            lastFullContactSnapshotGeneration = contactProjectionGeneration
+            contactMutationGenerations.clear()
+
+            val resetGeneration = nextConversationGeneration()
+            lastAppliedConversationSnapshotGeneration = resetGeneration
+            conversationMutationGenerations.clear()
+
+            // Keep existing windows attached: open screens first observe empty, then receive the
+            // same connection's replay inserts. Removing the map entries would strand collectors.
+            synchronized(chatLock) {
+                chatWindows.values.forEach(MessageWindow::resetServerProjection)
+            }
+            // Keep draftGenerationHighWatermarks as stale-ACK fences. The outbox/overrides are
+            // gone, while the next local edit must not reuse a generation still in flight.
+        }
+    }
+
+    override fun enqueueBotMessage(eventId: Long, message: Message) {
+        require(eventId > 0L) { "eventId must be positive" }
+        require(message.serverSeq > 0L) { "durable bot messages require a positive serverSeq" }
+        synchronized(stateLock) {
+            queries.enqueueBotMessage(
+                eventId,
+                message.chatId,
+                message.serverSeq,
+                ProtoCodec.encode(message),
+            )
+        }
+    }
+
+    override fun peekBotMessage(): PendingBotMessage? = synchronized(stateLock) {
+        queries.peekBotMessage().executeAsOneOrNull()?.let { row ->
+            PendingBotMessage(
+                eventId = row.event_id,
+                message = ProtoCodec.decode(Message, row.payload),
+            )
+        }
+    }
+
+    override fun deleteBotMessage(eventId: Long) {
+        require(eventId > 0L) { "eventId must be positive" }
+        synchronized(stateLock) {
+            queries.deleteBotMessage(eventId)
         }
     }
 
@@ -516,6 +761,7 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
             conversationsFlow.value = conversationsFlow.value.map {
                 if (it.chatId == chatId) it.copy(draft = draft) else it
             }
+            markConversationMutated(chatId)
             generation
         }
     }
@@ -564,19 +810,40 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
         if (shouldClose) driver.close()
     }
 
-    /** 在已排序列表中 upsert 一条会话（保持 置顶+时间 排序）。调用方持 stateLock。 */
-    private fun mergeSorted(
+    /** 在已排序列表中替换一条已完成合并的会话。调用方持 stateLock。 */
+    private fun replaceSorted(
         current: List<Conversation>,
         conv: Conversation,
-        draftOverride: LocalDraftOverride? = localDraftOverrides[conv.chatId],
     ): List<Conversation> {
         val list = current.toMutableList()
         val idx = list.indexOfFirst { it.chatId == conv.chatId }
-        val merged = if (idx >= 0) mergeConversation(list[idx], conv, draftOverride) else conv
-        if (idx >= 0) list[idx] = merged else list.add(merged)
-        list.sortWith(compareByDescending<Conversation> { it.isPinned }.thenByDescending { it.lastMsgTimestamp ?: 0L })
-        return list
+        if (idx >= 0) list[idx] = conv else list.add(conv)
+        return sortConversations(list)
     }
+
+    private fun sortConversations(conversations: List<Conversation>): List<Conversation> =
+        conversations.sortedWith(
+            compareByDescending<Conversation> { it.isPinned }
+                .thenByDescending { it.lastMsgTimestamp ?: 0L },
+        )
+
+    /** 调用方必须持有 stateLock。 */
+    private fun markConversationMutated(chatId: String) {
+        conversationMutationGenerations[chatId] = nextConversationGeneration()
+    }
+
+    /** 调用方必须持有 stateLock。 */
+    private fun nextConversationGeneration(): Long {
+        check(conversationProjectionGeneration < Long.MAX_VALUE) {
+            "conversation projection generation exhausted"
+        }
+        conversationProjectionGeneration += 1L
+        return conversationProjectionGeneration
+    }
+
+    /** 调用方必须持有 stateLock。 */
+    private fun wasConversationMutatedAfter(chatId: String, generation: Long): Boolean =
+        (conversationMutationGenerations[chatId] ?: 0L) > generation
 
     // ── helpers ──
     /**
@@ -618,11 +885,28 @@ private fun com.virjar.tk.database.Message.toModel(): Message {
     val bodyBytes = body
     val body = if (bodyBytes != null) {
         try {
-            val msgType = MessageType.fromCode(message_type.toInt()) ?: MessageType.TEXT
+            val msgType = requireNotNull(MessageType.fromCode(message_type.toInt())) {
+                "Unknown cached message type: $message_type"
+            }
             val byteBuf = Unpooled.wrappedBuffer(bodyBytes)
-            val buf = PacketBuffer(byteBuf)
-            MessageBodyRegistry.decode(msgType, buf)
-        } catch (e: Exception) { com.virjar.tk.util.AppLog.fault("LocalCache", "Failed to decode message body chatId=$chat_id msgId=$client_msg_id", e); null }
+            try {
+                val buf = PacketBuffer(byteBuf)
+                val decoded = requireNotNull(MessageBodyRegistry.decode(msgType, buf)) {
+                    "Message type $msgType has no body reader"
+                }
+                require(buf.readableBytes() == 0) { "Cached message body has trailing bytes" }
+                decoded
+            } finally {
+                byteBuf.release()
+            }
+        } catch (e: Exception) {
+            val failure = IllegalStateException(
+                "Corrupt cached message body chatId=$chat_id msgId=$client_msg_id type=$message_type",
+                e,
+            )
+            com.virjar.tk.util.AppLog.fault("LocalCache", failure.message ?: "Corrupt cached message body", failure)
+            throw failure
+        }
     } else null
     return Message(
         chatId = chat_id, clientMsgId = client_msg_id, serverSeq = server_seq ?: 0L,

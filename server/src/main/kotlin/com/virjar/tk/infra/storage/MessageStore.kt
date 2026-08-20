@@ -3,9 +3,7 @@ package com.virjar.tk.infra.storage
 import com.virjar.tk.body.AttachmentPolicy
 import com.virjar.tk.model.Message
 import com.virjar.tk.domain.message.MessageRepository
-import com.virjar.tk.protocol.IProto
-import com.virjar.tk.protocol.PacketBuffer
-import io.netty.buffer.Unpooled
+import com.virjar.tk.protocol.ProtoCodec
 import org.rocksdb.*
 import org.slf4j.LoggerFactory
 import java.security.MessageDigest
@@ -35,16 +33,25 @@ class MessageStore(
     val isRunning: Boolean get() = db != null
     private var db: RocksDB? = null
 
+    @Synchronized
     fun init() {
+        if (db != null) return
         RocksDB.loadLibrary()
-        val options = Options().setCreateIfMissing(true)
-            .setWriteBufferSize(16 * 1024 * 1024)
-        db = RocksDB.open(options, dbPath)
+        val opened = Options().use { options ->
+            options
+                .setCreateIfMissing(true)
+                .setWriteBufferSize(16 * 1024 * 1024)
+            RocksDB.open(options, dbPath)
+        }
+        db = opened
         logger.info("MessageStore initialized at $dbPath")
     }
 
+    @Synchronized
     fun close() {
-        db?.close()
+        val opened = db ?: return
+        db = null
+        opened.close()
     }
 
     /**
@@ -124,29 +131,29 @@ class MessageStore(
         if (forward) {
             // 从 fromSeq 开始向后
             val startKey = buildChatSeqKey(chatId, fromSeq)
-            val iterator = database.newIterator()
-            iterator.seek(startKey)
-            while (iterator.isValid && messages.size < limit) {
-                val key = iterator.key()
-                if (!key.startsWith(chatIdBytes)) break
-                messages.add(decodeMessage(iterator.value()))
-                iterator.next()
+            database.newIterator().use { iterator ->
+                iterator.seek(startKey)
+                while (iterator.isValid && messages.size < limit) {
+                    val key = iterator.key()
+                    if (!key.startsWith(chatIdBytes)) break
+                    messages.add(decodeMessage(iterator.value()))
+                    iterator.next()
+                }
             }
-            iterator.close()
         } else {
             // 从 fromSeq 开始向前（更早的消息）
             // fromSeq=0 表示获取最新消息，使用 MAX_VALUE 作为起点
             val effectiveSeq = if (fromSeq == 0L) Long.MAX_VALUE else fromSeq
             val startKey = buildChatSeqKey(chatId, effectiveSeq)
-            val iterator = database.newIterator()
-            iterator.seekForPrev(startKey)
-            while (iterator.isValid && messages.size < limit) {
-                val key = iterator.key()
-                if (!key.startsWith(chatIdBytes)) break
-                messages.add(decodeMessage(iterator.value()))
-                iterator.prev()
+            database.newIterator().use { iterator ->
+                iterator.seekForPrev(startKey)
+                while (iterator.isValid && messages.size < limit) {
+                    val key = iterator.key()
+                    if (!key.startsWith(chatIdBytes)) break
+                    messages.add(decodeMessage(iterator.value()))
+                    iterator.prev()
+                }
             }
-            iterator.close()
         }
 
         return messages
@@ -334,21 +341,9 @@ class MessageStore(
         ),
     )
 
-    private fun encodeMessage(message: Message): ByteArray {
-        val byteBuf = Unpooled.buffer()
-        val buf = PacketBuffer(byteBuf)
-        message.writeTo(buf)
-        val bytes = ByteArray(byteBuf.readableBytes())
-        byteBuf.readBytes(bytes)
-        byteBuf.release()
-        return bytes
-    }
+    private fun encodeMessage(message: Message): ByteArray = ProtoCodec.encode(message)
 
-    private fun decodeMessage(bytes: ByteArray): Message {
-        val byteBuf = Unpooled.wrappedBuffer(bytes)
-        val buf = PacketBuffer(byteBuf)
-        return Message.readFrom(buf)
-    }
+    private fun decodeMessage(bytes: ByteArray): Message = ProtoCodec.decode(Message, bytes)
 
     companion object {
         // 0x01 是旧的 sender-scoped 索引。新 prefix 避免与旧 key 空间混用；

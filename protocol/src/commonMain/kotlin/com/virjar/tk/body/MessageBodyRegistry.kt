@@ -10,9 +10,7 @@ import com.virjar.tk.protocol.PacketBuffer
  */
 object MessageBodyRegistry {
 
-    @Suppress("DEPRECATION")
     private val readers: Map<MessageType, IProtoReader<out MessageBody>> = mapOf(
-        MessageType.TEXT to TextBody,
         MessageType.RICH_TEXT to RichTextBody,
         MessageType.INTERACTIVE_CARD to InteractiveCardBody,
         MessageType.IMAGE to ImageBody,
@@ -28,6 +26,9 @@ object MessageBodyRegistry {
         MessageType.EDIT to EditBody,
         MessageType.STICKER to StickerBody,
         MessageType.REACTION to ReactionBody,
+        // GENERIC 也必须走严格 reader；这样未知 extensionType 的 opaque bytes 会被完整消费，
+        // 不会在 Message 外层留下 trailing bytes 并被误判为损坏连接。
+        MessageType.GENERIC to GenericPayload,
     )
 
     fun decode(messageType: MessageType?, buf: PacketBuffer): MessageBody? {

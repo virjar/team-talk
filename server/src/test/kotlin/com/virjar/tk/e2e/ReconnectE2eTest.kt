@@ -29,6 +29,7 @@ class ReconnectE2eTest {
                         else authFailReason = reason
                     },
                 )
+                val eventProjection = imClient.installE2eEventProjection()
                 val username = "recon-${System.nanoTime()}"
                 imClient.register(username, "password123", "R", "dev-1", "Test", "127.0.0.1", env.tcpPort)
                 withTimeout(10_000) { imClient.state.first { it == ConnectionState.AUTHENTICATED } }
@@ -43,6 +44,7 @@ class ReconnectE2eTest {
                 // 客户端自动登录后 UserSession 身份为空，头像/昵称退化为 uid）
                 assertEquals(2, authCount, "应恰好认证两次（注册 + refresh 重连）")
                 assertEquals(username, lastUsername, "refresh 认证响应必须携带 username")
+                eventProjection.close()
                 imClient.destroy()
             }
         }

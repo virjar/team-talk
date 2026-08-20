@@ -2,11 +2,17 @@ package com.virjar.tk.infra.db.repository
 
 import com.virjar.tk.domain.chat.AdminPage
 import com.virjar.tk.domain.chat.ChatRepository
+import com.virjar.tk.domain.chat.InviteJoinResult
+import com.virjar.tk.domain.chat.personalChatKey
+import com.virjar.tk.domain.chat.requireJoinable
 import com.virjar.tk.infra.db.Chats
-import com.virjar.tk.infra.db.GroupChats
 import com.virjar.tk.infra.db.Conversations
+import com.virjar.tk.infra.db.GroupChats
+import com.virjar.tk.infra.db.GroupInviteLinks
+import com.virjar.tk.infra.db.GroupMemberMutes
 import com.virjar.tk.infra.db.GroupMembers
 import com.virjar.tk.model.Chat
+import com.virjar.tk.model.Member
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.Op
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
@@ -19,14 +25,15 @@ import java.util.UUID
  *
  * 成员管理见 [ChatMemberRepository]，邀请链接见 [InviteLinkRepository]。
  *
- * 注意：[createPersonalChat] / [createGroupChat] 会同时初始化 GroupMembers，
- * 因为这是"创建 chat 时的关联初始化"，不应割裂给两个 Repository。
+ * [createPersonalChat] / [createGroupChat] atomically initialize GroupMembers and Conversations;
+ * these rows are required parts of the newly created chat, not best-effort service projections.
  */
 class ExposedChatRepository : ChatRepository {
 
     // ── Chat CRUD ──
 
     override fun createPersonalChat(uid1: String, uid2: String): Chat {
+        val pairKey = personalChatKey(uid1, uid2)
         return transaction {
             val existingChatId = findPersonalChatIdInternal(uid1, uid2)
             if (existingChatId != null) {
@@ -35,13 +42,22 @@ class ExposedChatRepository : ChatRepository {
 
             val chatId = UUID.randomUUID().toString()
             val now = System.currentTimeMillis()
-            Chats.insert {
+            val inserted = Chats.insertIgnore {
                 it[Chats.chatId] = chatId
                 it[Chats.chatType] = 1
+                it[Chats.personalKey] = pairKey
                 it[Chats.maxSeq] = 0
                 it[Chats.status] = 1
                 it[Chats.createdAt] = now
                 it[Chats.updatedAt] = now
+            }
+            if (inserted.insertedCount == 0) {
+                val winnerChatId = Chats.selectAll()
+                    .where { (Chats.personalKey eq pairKey) and (Chats.status eq 1) }
+                    .singleOrNull()
+                    ?.get(Chats.chatId)
+                    ?: error("私聊唯一键冲突，但未找到已建立的会话")
+                return@transaction getChatByIdInternal(winnerChatId)!!
             }
             GroupMembers.insert {
                 it[GroupMembers.chatId] = chatId
@@ -61,13 +77,7 @@ class ExposedChatRepository : ChatRepository {
             }
             // 为双方创建 conversation 记录
             for (uid in listOf(uid1, uid2)) {
-                Conversations.insertIgnore {
-                    it[Conversations.uid] = uid
-                    it[Conversations.chatId] = chatId
-                    it[Conversations.chatType] = 1
-                    it[Conversations.lastMsgSeq] = 0
-                                        it[Conversations.updatedAt] = now
-                }
+                ensureConversation(uid = uid, chatId = chatId, chatType = 1, now = now)
             }
             Chat(chatId = chatId, chatType = 1)
         }
@@ -129,7 +139,7 @@ class ExposedChatRepository : ChatRepository {
                 it[GroupMembers.status] = 1
                 it[GroupMembers.joinedAt] = now
             }
-            for (uid in memberUids) {
+            for (uid in memberUids.distinct()) {
                 GroupMembers.insertIgnore {
                     it[GroupMembers.chatId] = chatId
                     it[GroupMembers.chatType] = 2
@@ -140,21 +150,77 @@ class ExposedChatRepository : ChatRepository {
                 }
             }
             // 为所有成员创建 conversation 记录，确保会话列表能显示群聊
-            val allUids = memberUids + creatorUid
+            val allUids = (memberUids + creatorUid).distinct()
             for (uid in allUids) {
-                Conversations.insertIgnore {
-                    it[Conversations.uid] = uid
-                    it[Conversations.chatId] = chatId
-                    it[Conversations.chatType] = 2
-                    it[Conversations.lastMsgSeq] = 0
-                                        it[Conversations.updatedAt] = now
-                }
+                ensureConversation(uid = uid, chatId = chatId, chatType = 2, now = now)
             }
             Chat(
                 chatId = chatId, chatType = 2, name = name, avatar = avatar,
-                creator = creatorUid, memberCount = memberUids.size + 1,
+                creator = creatorUid, memberCount = allUids.size,
             )
         }
+    }
+
+    override fun joinByInvite(uid: String, token: String, nowMillis: Long): InviteJoinResult = transaction {
+        // The invite lock serializes quota/revoke changes. The chat lock serializes joins made
+        // through different links and normal membership writes for the same aggregate.
+        val inviteRow = GroupInviteLinks.selectAll()
+            .where { GroupInviteLinks.token eq token }
+            .forUpdate()
+            .singleOrNull()
+            ?: throw IllegalArgumentException("邀请链接不存在")
+        inviteRow.toInviteLinkRecord().requireJoinable(nowMillis)
+
+        val chatId = inviteRow[GroupInviteLinks.chatId]
+        val chatRow = Chats.selectAll()
+            .where { Chats.chatId eq chatId }
+            .forUpdate()
+            .singleOrNull()
+            ?: throw IllegalArgumentException("聊天不存在")
+        require(chatRow[Chats.status] == 1) { "聊天不存在" }
+        require(chatRow[Chats.chatType] == 2) { "邀请链接只能用于群聊" }
+        require(GroupChats.selectAll().where { GroupChats.chatId eq chatId }.singleOrNull() != null) {
+            "群聊数据不完整"
+        }
+
+        val membership = GroupMembers.selectAll().where {
+            (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid)
+        }.singleOrNull()
+        val joined = membership?.get(GroupMembers.status) != 1
+        if (joined) {
+            if (membership == null) {
+                GroupMembers.insert {
+                    it[GroupMembers.chatId] = chatId
+                    it[GroupMembers.chatType] = 2
+                    it[GroupMembers.uid] = uid
+                    it[GroupMembers.role] = 0
+                    it[GroupMembers.status] = 1
+                    it[GroupMembers.joinedAt] = nowMillis
+                }
+            } else {
+                GroupMembers.update({
+                    (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid)
+                }) {
+                    // Invite joins are always ordinary user membership. Managed reconciliation
+                    // has a separate role-aware internal path (ensureActiveGroupMember/setRole).
+                    it[GroupMembers.role] = 0
+                    it[GroupMembers.status] = 1
+                    it[GroupMembers.joinedAt] = nowMillis
+                }
+            }
+            GroupInviteLinks.update({ GroupInviteLinks.token eq token }) {
+                with(SqlExpressionBuilder) {
+                    it[GroupInviteLinks.useCount] = GroupInviteLinks.useCount + 1
+                }
+            }
+        }
+
+        ensureConversation(uid = uid, chatId = chatId, chatType = 2, now = nowMillis)
+        val chat = getChatByIdInternal(chatId) ?: throw IllegalArgumentException("聊天不存在")
+        val members = GroupMembers.selectAll()
+            .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1) }
+            .map(ResultRow::toMemberSnapshot)
+        InviteJoinResult(chat = chat, joined = joined, members = members)
     }
 
     private fun ensureActiveGroupMember(chatId: String, uid: String, role: Int, now: Long) {
@@ -186,6 +252,9 @@ class ExposedChatRepository : ChatRepository {
 
     override fun updateGroup(chatId: String, name: String?, avatar: String?, notice: String?) {
         transaction {
+            require(Chats.selectAll().where {
+                (Chats.chatId eq chatId) and (Chats.status eq 1)
+            }.forUpdate().singleOrNull() != null) { "聊天不存在" }
             name?.let { v -> GroupChats.update({ GroupChats.chatId eq chatId }) { it[GroupChats.name] = v } }
             avatar?.let { v -> GroupChats.update({ GroupChats.chatId eq chatId }) { it[GroupChats.avatar] = v } }
             notice?.let { v -> GroupChats.update({ GroupChats.chatId eq chatId }) { it[GroupChats.notice] = v } }
@@ -195,7 +264,31 @@ class ExposedChatRepository : ChatRepository {
     }
 
     override fun deactivateChat(chatId: String) {
-        transaction { Chats.update({ Chats.chatId eq chatId }) { it[Chats.status] = 0 } }
+        transaction {
+            // Invite joins lock invite -> chat. Keep the same order here before deleting links,
+            // otherwise a cross-process join and dissolve can deadlock on opposite row locks.
+            GroupInviteLinks.selectAll()
+                .where { GroupInviteLinks.chatId eq chatId }
+                .orderBy(GroupInviteLinks.id)
+                .forUpdate()
+                .toList()
+            val chat = Chats.selectAll()
+                .where { (Chats.chatId eq chatId) and (Chats.status eq 1) }
+                .forUpdate()
+                .singleOrNull() ?: return@transaction
+            Chats.update({ Chats.id eq chat[Chats.id] }) {
+                it[Chats.status] = 0
+                it[Chats.updatedAt] = System.currentTimeMillis()
+            }
+            GroupMembers.update({ GroupMembers.chatId eq chatId }) {
+                it[GroupMembers.status] = 0
+            }
+            // Conversation is a projection of active membership. Delete it in the same aggregate
+            // transaction so a cold process can never resurrect a dissolved chat from old rows.
+            Conversations.deleteWhere { Conversations.chatId eq chatId }
+            GroupMemberMutes.deleteWhere { GroupMemberMutes.chatId eq chatId }
+            GroupInviteLinks.deleteWhere { GroupInviteLinks.chatId eq chatId }
+        }
     }
 
     override fun getMemberUids(chatId: String): List<String> {
@@ -265,16 +358,24 @@ class ExposedChatRepository : ChatRepository {
     // ── 内部辅助（在 transaction 内调用） ──
 
     private fun findPersonalChatIdInternal(uid1: String, uid2: String): String? {
-        val memberChatIds = GroupMembers.selectAll()
-            .where { (GroupMembers.uid eq uid1) and (GroupMembers.chatType eq 1) and (GroupMembers.status eq 1) }
-            .map { it[GroupMembers.chatId] }
-        if (memberChatIds.isEmpty()) return null
-        val chatIds = Chats.selectAll()
-            .where { (Chats.chatId inList memberChatIds) and (Chats.status eq 1) }
-            .map { it[Chats.chatId] }
-        return GroupMembers.selectAll()
-            .where { (GroupMembers.uid eq uid2) and (GroupMembers.chatId inList chatIds) and (GroupMembers.status eq 1) }
-            .map { it[GroupMembers.chatId] }.firstOrNull()
+        return Chats.selectAll()
+            .where {
+                (Chats.personalKey eq personalChatKey(uid1, uid2)) and
+                    (Chats.chatType eq 1) and
+                    (Chats.status eq 1)
+            }
+            .singleOrNull()
+            ?.get(Chats.chatId)
+    }
+
+    private fun ensureConversation(uid: String, chatId: String, chatType: Int, now: Long) {
+        Conversations.insertIgnore {
+            it[Conversations.uid] = uid
+            it[Conversations.chatId] = chatId
+            it[Conversations.chatType] = chatType
+            it[Conversations.lastMsgSeq] = 0
+            it[Conversations.updatedAt] = now
+        }
     }
 
     private fun getChatByIdInternal(chatId: String): Chat? {
@@ -311,3 +412,11 @@ class ExposedChatRepository : ChatRepository {
         )
     }
 }
+
+private fun ResultRow.toMemberSnapshot() = Member(
+    uid = this[GroupMembers.uid],
+    chatId = this[GroupMembers.chatId],
+    role = this[GroupMembers.role],
+    nickname = this[GroupMembers.nickname],
+    joinedAt = this[GroupMembers.joinedAt],
+)

@@ -93,13 +93,40 @@ Repository。
 
 EventProcessor 消费 `NOTIFY`，在 IO 调度器解码和写数据库：
 
-1. 根据 NotifyContracts 选择唯一 payload reader。
-2. 校验并解码完整快照。
-3. upsert 或删除本地对象。
-4. 发出消息、输入状态或联系人变化流。
-5. 全部成功后推进 `lastEventId`。
+1. 根据 NotifyContracts 选择唯一 reader，校验并解码完整快照。
+2. upsert 或删除本地对象。
+3. 如果会话安装了可靠 sink，先投递持久入站消息。
+4. 以非阻塞 `tryEmit` 发出消息、输入状态或联系人变化提示；它不参与成功语义。
+5. 权威本地投影和可靠 sink 都成功后推进 `lastEventId`。
 
-如果步骤 2–4 失败，游标不能提前推进；否则服务端会认为事件已消费，客户端永久丢失变化。
+身份认证成功只进入 `SYNCHRONIZING`。EventProcessor 先订阅入站事件并打开按 uid 的 LocalCache，
+再从持久游标发起 `SYNC_REQUEST`；每一批严格按 eventId 投影并逐条单调落盘，整批完成后才请求
+下一页。任一持久事件失败都立即断开，后续事件不得越过失败项；收到 `SYNC_READY` 后连接才进入
+`AUTHENTICATED` 并承接实时事件。
+
+如果服务端以 `SYNC_RESET` 拒绝本地游标，EventProcessor 在 IO dispatcher 上执行一次事务性
+投影重置：清 user/contact/chat/member/message/conversation、draft outbox、sync cursor 和 bot inbox，
+并同步清空既有 StateFlow 与消息窗口；独立文档草稿不受影响。事务成功且返回 cursor 0 后，
+ImClient 才在同一认证连接发送 `SYNC_REQUEST(0)`。一次连接只准接受一次 RESET；与页面投影重叠、
+重复 RESET 或本地清理失败都会关闭连接。
+
+跨层通知只通过 `SharedFlow` 对多个会话内消费者广播，消费者在自己的 scope 中订阅。
+这些 flow 是可合并/可丢弃的刷新提示，LocalCache 和持久 cursor 才是权威；慢 UI 消费者不得对
+持久事件 replay 施加背压。无头 ImBot 不把 `SharedFlow` 当业务队列：MESSAGE_RECV 先写普通消息
+投影，再 `INSERT OR IGNORE` 到账号 SQLite inbox，最后推进 cursor。eventId 保序，
+`(chatId, serverSeq)` 唯一键吸收服务端不同 eventId 的重复 projection；两个磁盘语句之间崩溃会
+触发安全重放而不是丢消息。进程内仅保留 CONFLATED wake-up。
+直连 ImBot 使用 `nextMessageDelivery` + 显式 ack 获得 at-least-once；tt-agent 的 REST recent/history
+直接查询普通消息 SQLite 投影，内存对象只负责唤醒长轮询，不承担事实源。
+`CHAT_CREATED` 在投影时只合并 conversation-dirty，先提交 Chat
+与 cursor，再在 `AUTHENTICATED` 后异步重拉会话；重拉失败不回滚 cursor，也不高频自旋。
+每次进入 `AUTHENTICATED` 还会无条件对账一次，以修复“cursor 已提交但 dirty 尚未落地就进程死亡”
+的窗口。
+`EventProcessor` 不保留可被后来者覆盖的单槽页面回调。页面、ViewModel 或会话销毁产生的
+`CancellationException` 必须继续向上传播，Repository 不得将它包装成网络失败，Feature/ViewModel
+也不得在取消后提交迟到状态或错误提示。
+
+如果步骤 1–3 失败，游标不能提前推进；提示流被合并不影响权威投影的成功语义。
 
 ## 6. LocalCache
 
@@ -111,6 +138,15 @@ EventProcessor 消费 `NOTIFY`，在 IO 调度器解码和写数据库：
 - 会话合并，确保 serverSeq、readSeq 等单调字段不倒退。
 - `markConversationRead` 的即时本地反馈与远端同步。
 - 测试使用的 `FakeLocalCache`。
+
+联系人展示模型由 Contact 关系与 User 资料组合投影；`getContacts` 与 `observeContacts`
+使用同一 projector，`USER_UPDATED` 必须能驱动已展示联系人的姓名更新。平台壳不得直接写
+LocalCache 伪造服务端状态；例如会话置顶必须经过 ConversationRepository，再由
+`CONVERSATION_UPDATED` 收敛到本地投影。
+
+当前仍是正式发布前阶段，本地 SQLite 只是可重建投影，不承载兼容性契约。不兼容的
+schema 变化递增 `LOCAL_CACHE_SCHEMA_EPOCH` 并切换数据库文件，登录后由服务端快照和事件重建；
+客户端启动路径不再维护历史增量迁移。正式发布前必须重新评审这一策略。
 
 UI 不应绕过 ViewModel 直接把网络响应当作长期状态。任何新增展示数据都需要先回答：它如何进入
 LocalCache、如何从事件恢复、如何在重启后存在。

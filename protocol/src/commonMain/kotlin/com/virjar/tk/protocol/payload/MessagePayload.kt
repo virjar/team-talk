@@ -24,9 +24,9 @@ data class MessageAckPayload(
 
     companion object : IProtoReader<MessageAckPayload> {
         override fun readFrom(buf: PacketBuffer) = MessageAckPayload(
-            clientMsgId = buf.readString(
+            clientMsgId = buf.readRequiredString(
                 MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_CLIENT_MESSAGE_ID_LENGTH),
-            )!!,
+            ),
             serverSeq = buf.readVarLong(),
             code = buf.readVarInt(),
             reason = buf.readString(
@@ -50,9 +50,9 @@ data class SubscribePayload(
 
     companion object : IProtoReader<SubscribePayload> {
         override fun readFrom(buf: PacketBuffer) = SubscribePayload(
-            chatId = buf.readString(
+            chatId = buf.readRequiredString(
                 MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_CHAT_ID_LENGTH),
-            )!!,
+            ),
             lastSeq = buf.readVarLong(),
         )
     }
@@ -70,9 +70,9 @@ data class UnsubscribePayload(
 
     companion object : IProtoReader<UnsubscribePayload> {
         override fun readFrom(buf: PacketBuffer) = UnsubscribePayload(
-            chatId = buf.readString(
+            chatId = buf.readRequiredString(
                 MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_CHAT_ID_LENGTH),
-            )!!,
+            ),
         )
     }
 }

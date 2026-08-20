@@ -1,4 +1,5 @@
 import deployment.DeploymentConfig
+import architecture.ArchitectureCheckTask
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform) apply false
@@ -58,6 +59,12 @@ tasks.register("buildRelease") {
     group = "release"
     description = "Build all release artifacts"
     dependsOn(":server:buildServerDist", ":desktop:packageReleaseDistributionForCurrentOS", ":android:assembleRelease")
+}
+
+tasks.register<ArchitectureCheckTask>("checkArchitecture") {
+    group = "verification"
+    description = "Verify source-level module and hexagonal architecture boundaries"
+    repositoryRoot.set(layout.projectDirectory)
 }
 
 tasks.register("uploadRelease") {

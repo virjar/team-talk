@@ -1,6 +1,7 @@
 package com.virjar.tk.e2e
 
-import com.virjar.tk.body.TextBody
+import com.virjar.tk.body.RichTextBody
+import com.virjar.tk.body.buildRichTextBody
 import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.client.ImClient
 import kotlinx.coroutines.CoroutineScope
@@ -27,10 +28,13 @@ class SendQueueE2eTest {
                 // B 在线（队列发送方）
                 var bUid: String? = null
                 val b = ImClient(onAuthResult = { ok, uid, _, _, _, _, _ -> if (ok) bUid = uid })
+                val bEvents = b.installE2eEventProjection()
                 b.register("sq-b-${System.nanoTime()}", "password123", "B", "dev-b", "Test", "127.0.0.1", env.tcpPort)
                 withTimeout(10_000) { b.state.first { it == ConnectionState.AUTHENTICATED } }
 
-                val a = com.virjar.tk.bot.ImBot.register("127.0.0.1", env.tcpPort, "sq-a")
+                val a = com.virjar.tk.bot.ImBot.register(
+                    "127.0.0.1", env.tcpPort, "sq-a", testImBotCacheOwner,
+                )
                 try {
                     val chatId = a.createPersonalChat(bUid!!)
                     val queueScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -53,9 +57,9 @@ class SendQueueE2eTest {
                         chatId = chatId,
                         clientMsgId = java.util.UUID.randomUUID().toString(),
                         senderUid = bUid!!,
-                        messageType = com.virjar.tk.protocol.MessageType.TEXT.code,
+                        messageType = com.virjar.tk.protocol.MessageType.RICH_TEXT.code,
                         timestamp = System.currentTimeMillis(),
-                        body = TextBody("断线排队的消息"),
+                        body = buildRichTextBody("断线排队的消息"),
                     )
                     queue.enqueue(msg)
                     Thread.sleep(2_000) // 断线期间排队
@@ -71,12 +75,13 @@ class SendQueueE2eTest {
 
                     // A 侧收到
                     val received = withTimeout(10_000) { a.nextMessage { it.senderUid == bUid } }
-                    assertEquals("断线排队的消息", (received.body as TextBody).text)
+                    assertEquals("断线排队的消息", (received.body as RichTextBody).markdown)
 
                     queue.close(); queueScope.cancel()
-                    a.shutdown(); b.destroy()
+                    a.shutdown(); bEvents.close(); b.destroy()
                 } finally {
                     runCatching { a.shutdown() }
+                    runCatching { bEvents.close() }
                     runCatching { b.destroy() }
                 }
             }

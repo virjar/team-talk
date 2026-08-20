@@ -22,6 +22,22 @@
 开发中可以只运行受影响模块；准备交付时应扩大到相邻边界。例如修改消息体既影响 `protocol`
 编解码，也影响服务端校验和客户端渲染，不能只跑一个 UI 测试。
 
+`:server:test` 需要一个已经存在的 PostgreSQL 数据库，但不会创建数据库，也不会清空或修改其
+`public` schema。每个进程内集成/E2E 环境会创建随机 `tt_test_*` schema，并通过 JDBC
+`currentSchema` 只在该 schema 建表；正常关闭和启动失败都会执行 `DROP SCHEMA ... CASCADE`。
+默认连接是本机 `jdbc:postgresql://localhost:5432/teamtalk`、当前系统用户名和空密码，也可显式设置：
+
+```bash
+TK_TEST_PG_JDBC=jdbc:postgresql://localhost:5432/teamtalk_test \
+TK_TEST_PG_USER=teamtalk_test \
+TK_TEST_PG_PASSWORD=your-test-password \
+./gradlew :server:test
+```
+
+测试数据库账号只需要连接目标数据库以及创建、删除 schema 的权限。`DatabaseFactory` 目前仍是
+进程级单例，因此服务端测试固定单 fork、关闭 JUnit 并行执行；schema 隔离用于保护开发数据和失败
+清理，不表示同一测试 JVM 可以并发启动多个环境。
+
 ## 应优先放在本地的测试
 
 - wire header、payload 编解码和协议版本拒绝规则；
@@ -34,7 +50,7 @@
 
 ## 不应只靠本地测试证明的行为
 
-- PostgreSQL、RocksDB、Lucene 和真实进程生命周期的协作；
+- PostgreSQL、RocksDB、Lucene 和真实独立进程生命周期的协作（进程内组合测试仍属于本地安全网）；
 - 上传后的附件是否能从正式文件端点读取；
 - 两个账户之间的实时通知、离线补偿和已读同步；
 - Desktop 窗口层级、弹窗、抽屉、拖放和下载动画；

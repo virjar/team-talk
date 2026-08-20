@@ -24,7 +24,7 @@ object MessageTextExtractor {
 
     private fun extractFromBody(messageType: Int, body: MessageBody): String? {
         return when (MessageType.fromCode(messageType)) {
-            MessageType.TEXT, MessageType.RICH_TEXT -> body.plainTextContentOrNull()
+            MessageType.RICH_TEXT -> body.plainTextContentOrNull()
             MessageType.INTERACTIVE_CARD -> {
                 val card = (body as? InteractiveCardBody)?.toCard()
                 listOfNotNull(card?.title, card?.blocks?.filterIsInstance<CardBlock.Text>()?.joinToString(" ") { it.text })
@@ -50,8 +50,10 @@ object MessageTextExtractor {
             MessageType.EDIT -> (body as? EditBody)?.newContent
             MessageType.STICKER -> null
             MessageType.REACTION -> null
-            MessageType.TYPING -> null
-            MessageType.GENERIC, null -> null
+            // Never index or expose opaque extension bytes. Until a typed extension renderer
+            // exists, the conversation projection gets only a stable safe placeholder.
+            MessageType.GENERIC -> "不支持的扩展消息"
+            MessageType.TYPING, null -> null
         }
     }
 }

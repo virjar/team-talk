@@ -28,15 +28,29 @@ class ConversationViewModel(
 
     fun refresh() {
         scope.launch {
-            try { conversationRepo.listConversations() }
-            catch (e: Exception) { setError("刷新会话失败: ${e.message}") }
+            runViewModelAction("刷新会话失败") {
+                conversationRepo.listConversations().getOrThrow()
+            }
         }
     }
 
     fun deleteConversation(chatId: String) {
         scope.launch {
-            try { conversationRepo.deleteConversation(chatId) }
-            catch (e: Exception) { setError("删除会话失败: ${e.message}") }
+            runViewModelAction("删除会话失败") {
+                conversationRepo.deleteConversation(chatId).getOrThrow()
+            }
+        }
+    }
+
+    /**
+     * Persist pin state through the authoritative conversation service. The local projection is
+     * updated only by CONVERSATION_UPDATED, so a rejected or cancelled RPC cannot show fake state.
+     */
+    fun setPinned(chatId: String, pinned: Boolean) {
+        scope.launch {
+            runViewModelAction("会话置顶失败") {
+                conversationRepo.setPin(chatId, pinned).getOrThrow()
+            }
         }
     }
 }

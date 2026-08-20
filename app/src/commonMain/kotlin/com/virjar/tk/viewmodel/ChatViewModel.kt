@@ -90,6 +90,8 @@ class ChatViewModel(
                 _remoteHasMore.value = latest.size == HISTORY_PAGE_SIZE
             } catch (e: AppError.AuthExpired) {
                 handleAuthExpired()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 setError("加载消息失败: ${e.message}")
             } finally {
@@ -136,6 +138,8 @@ class ChatViewModel(
                 // atomic page, including legal gaps, so no secondary SQLite append is required.
             } catch (e: AppError.AuthExpired) {
                 handleAuthExpired()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 setError("加载更早消息失败: ${e.message}")
             } finally {
@@ -181,6 +185,8 @@ class ChatViewModel(
                 }
             } catch (e: AppError.AuthExpired) {
                 handleAuthExpired()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 localCache.updateMessageStatus(sending.chatId, sending.clientMsgId, Message.SEND_STATUS_FAILED)
                 setError("发送失败: ${e.message}")
@@ -234,6 +240,8 @@ class ChatViewModel(
                 messageRepo.revokeMessage(chatId, serverSeq).getOrThrow()
             } catch (e: AppError.AuthExpired) {
                 handleAuthExpired()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 setError("撤回失败: ${e.message}")
             }
@@ -256,6 +264,9 @@ class ChatViewModel(
                 previous?.let(localCache::insertMessage)
                 handleAuthExpired()
                 onResult(false)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                previous?.let(localCache::insertMessage)
+                throw cancelled
             } catch (e: Exception) {
                 previous?.let(localCache::insertMessage)
                 setError("编辑失败: ${e.message}")

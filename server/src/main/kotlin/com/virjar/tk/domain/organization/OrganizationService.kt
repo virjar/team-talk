@@ -44,6 +44,7 @@ class OrganizationService(
         enableGroup: Boolean = false,
     ): OrganizationUnit {
         validateName(name)
+        validateSortOrder(sortOrder)
         if (parentId == null) {
             require(repository.listUnits().none { it.parentId == null }) { "单组织只能有一个根节点" }
         } else {
@@ -76,6 +77,7 @@ class OrganizationService(
     ): OrganizationUnit {
         val old = requireUnit(unitId)
         validateName(name)
+        validateSortOrder(sortOrder)
         if (parentId != null) {
             requireUnit(parentId)
             require(parentId != unitId && parentId !in descendantIds(unitId)) { "组织节点不能移动到自己或后代节点下" }
@@ -208,5 +210,9 @@ class OrganizationService(
     private fun validateName(name: String) {
         require(name.isNotBlank()) { "组织节点名称不能为空" }
         require(name.trim().length <= 120) { "组织节点名称不能超过 120 个字符" }
+    }
+
+    private fun validateSortOrder(sortOrder: Int) {
+        require(sortOrder >= 0) { "sortOrder 不能为负数" }
     }
 }

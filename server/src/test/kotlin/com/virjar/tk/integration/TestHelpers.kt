@@ -3,6 +3,8 @@ package com.virjar.tk.integration
 import com.virjar.tk.domain.auth.AuthService
 import com.virjar.tk.domain.bot.BotService
 import com.virjar.tk.domain.chat.ChatRepository
+import com.virjar.tk.domain.chat.ChatAccess
+import com.virjar.tk.domain.chat.ChatAccessPolicy
 import com.virjar.tk.domain.chat.ChatService
 import com.virjar.tk.domain.chat.ChatStore
 import com.virjar.tk.domain.contact.ContactRepository
@@ -13,6 +15,7 @@ import com.virjar.tk.domain.device.DeviceRepository
 import com.virjar.tk.domain.document.DocumentRepository
 import com.virjar.tk.domain.document.DocumentService
 import com.virjar.tk.domain.event.SyncEventReader
+import com.virjar.tk.domain.event.EventPublisher
 import com.virjar.tk.domain.message.MessageService
 import com.virjar.tk.domain.organization.OrganizationRepository
 import com.virjar.tk.domain.organization.OrganizationService
@@ -28,6 +31,7 @@ import com.virjar.tk.infra.storage.MessageStore
 import com.virjar.tk.infra.storage.TokenStore
 import com.virjar.tk.infra.sync.ClientRegistry
 import com.virjar.tk.protocol.rpc.ContactRpcImpl
+import com.virjar.tk.testing.PostgresSchemaLease
 import org.junit.jupiter.api.extension.AfterAllCallback
 import org.junit.jupiter.api.extension.BeforeAllCallback
 import org.junit.jupiter.api.extension.ExtendWith
@@ -35,6 +39,7 @@ import org.junit.jupiter.api.extension.ExtensionContext
 import org.koin.dsl.koinApplication
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 private val testRunId = System.nanoTime()
@@ -43,7 +48,7 @@ fun uniqueUsername(base: String): String = "${base}-${testRunId}-${counter.incre
 
 /**
  * 测试环境容器。
- * 使用 Embedded PostgreSQL + Koin 容器，完全隔离，测试结束自动清理所有临时文件。
+ * 使用独立 PostgreSQL schema + Koin 容器，测试结束删除 schema 与所有临时文件。
  */
 class TestEnvironment : AutoCloseable {
     private val testId = UUID.randomUUID().toString()
@@ -53,10 +58,6 @@ class TestEnvironment : AutoCloseable {
     private val msgsDir = File(testRoot, "msgs")
     private val searchDir = File(testRoot, "search")
     private val fileStoreDir = File(testRoot, "file-store")
-
-    // 真实 PG（本地 teamtalk 库，与 local profile 同环境；init 时 TRUNCATE 清场）
-    private val pgUser = System.getenv("TK_E2E_PG_USER") ?: System.getProperty("user.name")
-    private val pgJdbc = "jdbc:postgresql://localhost:5432/teamtalk?user=$pgUser"
 
     // Koin 容器（独立实例，不污染全局）
     private val koinApp = koinApplication {
@@ -69,22 +70,25 @@ class TestEnvironment : AutoCloseable {
         ))
     }
     private val koin = koinApp.koin
+    private val postgres = PostgresSchemaLease.open()
+    private val closed = AtomicBoolean(false)
 
     init {
-        testRoot.mkdirs()
-        java.sql.DriverManager.getConnection(pgJdbc).use { conn ->
-            val tables = conn.createStatement().executeQuery(
-                "SELECT tablename FROM pg_tables WHERE schemaname='public'").let { rs ->
-                buildList { while (rs.next()) add(rs.getString(1)) }
-            }
-            if (tables.isNotEmpty()) {
-                conn.createStatement().execute("TRUNCATE ${tables.joinToString(", ")} RESTART IDENTITY CASCADE")
-            }
+        try {
+            testRoot.mkdirs()
+            DatabaseFactory.create(
+                jdbcUrl = postgres.jdbcUrl,
+                user = postgres.user,
+                password = postgres.password,
+                maxPoolSize = 4,
+            )
+            koin.get<MessageStore>().init()
+            koin.get<SearchIndex>().start()
+            koin.get<com.virjar.tk.infra.storage.FileStore>().init()
+        } catch (error: Throwable) {
+            runCatching { close() }.onFailure(error::addSuppressed)
+            throw error
         }
-        DatabaseFactory.create(jdbcUrl = pgJdbc, user = pgUser, password = "", maxPoolSize = 4)
-        koin.get<MessageStore>().init()
-        koin.get<SearchIndex>().start()
-        koin.get<com.virjar.tk.infra.storage.FileStore>().init()
     }
 
     // 便捷属性 — 与旧 TestContext 保持相同接口
@@ -94,6 +98,7 @@ class TestEnvironment : AutoCloseable {
     fun contactService(uid: String): ContactRpcImpl = ContactRpcImpl(uid, koin.get())
     val chatService: ChatService get() = koin.get()
     val chatStore: ChatStore get() = koin.get()
+    val chatAccess: ChatAccess get() = koin.get()
     val messageService: MessageService get() = koin.get()
     val conversationService: ConversationService get() = koin.get()
     val organizationService: OrganizationService get() = koin.get()
@@ -110,21 +115,27 @@ class TestEnvironment : AutoCloseable {
     val chatRepo: ChatRepository get() = koin.get()
     val conversationRepo: ConversationRepository get() = koin.get()
     val syncEventReader: SyncEventReader get() = koin.get()
+    val eventPublisher: EventPublisher get() = koin.get()
     val searchIndex: SearchIndex get() = koin.get()
     val healthChecker: com.virjar.tk.infra.health.HealthChecker get() = koin.get()
     val fileStore: com.virjar.tk.infra.storage.FileStore get() = koin.get()
 
     /** 模拟服务进程重启后的冷缓存，但复用同一套持久化数据。 */
-    fun freshMessageService(): MessageService = MessageService(
-        messages = koin.get(),
-        chatStore = ChatStore(koin.get(), koin.get(), koin.get()),
-        events = koin.get(),
-        conversationService = koin.get(),
-        search = koin.get(),
-        attachmentService = koin.get(),
-        users = koin.get(),
-        contacts = koin.get(),
-    )
+    fun freshMessageService(): MessageService {
+        val coldChatStore = ChatStore(koin.get(), koin.get(), koin.get())
+        return MessageService(
+            messages = koin.get(),
+            chatStore = coldChatStore,
+            access = ChatAccessPolicy(coldChatStore),
+            events = koin.get(),
+            conversationService = koin.get(),
+            search = koin.get(),
+            attachmentService = koin.get(),
+            users = koin.get(),
+            contacts = koin.get(),
+            lifecycleGate = koin.get(),
+        )
+    }
 
     /** 注册用户，返回 uid */
     suspend fun registerUser(username: String = uniqueUsername("user"), password: String = "pass123"): String {
@@ -133,13 +144,23 @@ class TestEnvironment : AutoCloseable {
     }
 
     override fun close() {
-        koin.get<SearchIndex>().stop()
-        koin.get<MessageStore>().close()
-        koin.get<com.virjar.tk.infra.storage.FileStore>().close()
-        koin.get<TokenStore>().close()
-        koin.get<ClientRegistry>().stop()
-        koinApp.close()
-                testRoot.deleteRecursively()
+        if (!closed.compareAndSet(false, true)) return
+        var failure: Throwable? = null
+        fun cleanUp(action: () -> Unit) {
+            runCatching(action).onFailure { error ->
+                failure?.addSuppressed(error) ?: run { failure = error }
+            }
+        }
+        cleanUp { koin.get<SearchIndex>().stop() }
+        cleanUp { koin.get<MessageStore>().close() }
+        cleanUp { koin.get<com.virjar.tk.infra.storage.FileStore>().close() }
+        cleanUp { koin.get<TokenStore>().close() }
+        cleanUp { koin.get<ClientRegistry>().stop() }
+        cleanUp { DatabaseFactory.close() }
+        cleanUp { koinApp.close() }
+        cleanUp { postgres.close() }
+        cleanUp { testRoot.deleteRecursively() }
+        failure?.let { throw it }
     }
 }
 

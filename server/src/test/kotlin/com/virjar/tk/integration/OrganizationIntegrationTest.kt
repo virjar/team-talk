@@ -22,10 +22,18 @@ class OrganizationIntegrationTest {
     fun `department group follows subtree and directory projects direct member counts`() = runTest {
         val leader = ctx.registerUser(uniqueUsername("org-leader"))
         val engineer = ctx.registerUser(uniqueUsername("org-engineer"))
+        assertFailsWith<IllegalArgumentException> {
+            ctx.organizationService.createUnit(null, "invalid sort", null, sortOrder = -1)
+        }
+        assertTrue(ctx.organizationService.listUnits().isEmpty())
         val root = ctx.organizationService.createUnit(null, "Example Inc", null)
         val engineering = ctx.organizationService.createUnit(root.unitId, "研发", leader, enableGroup = true)
         val mobile = ctx.organizationService.createUnit(engineering.unitId, "移动端", null)
         val emptyDepartment = ctx.organizationService.createUnit(root.unitId, "空部门", null)
+        assertFailsWith<IllegalArgumentException> {
+            ctx.organizationService.updateUnit(mobile.unitId, engineering.unitId, mobile.name, null, sortOrder = -1)
+        }
+        assertEquals(0, ctx.organizationService.listUnits().single { it.unitId == mobile.unitId }.sortOrder)
 
         assertFailsWith<IllegalArgumentException> {
             ctx.organizationService.createUnit(null, "Another Root", null)

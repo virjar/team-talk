@@ -99,7 +99,7 @@ class BotIntegrationTest {
         assertTrue(ctx.organizationService.reconcileAllManagedGroups().isEmpty())
 
         assertTrue(ctx.chatService.getMembers(unit.groupChatId!!).any { it.uid == created.bot.userUid })
-        assertTrue(ctx.botService.reconcileGrants().isEmpty())
+        assertTrue(ctx.botService.recoverGrantMemberships().isEmpty())
 
         ctx.organizationService.disableDepartmentGroup(unit.unitId)
         val reenabled = ctx.organizationService.enableDepartmentGroup(unit.unitId)
@@ -132,40 +132,6 @@ class BotIntegrationTest {
         }
         assertFailsWith<BotAuthorizationException> {
             ctx.botService.deliver(system.bot.botId, system.webhookToken, group.chatId, "不应发送", "system-after-delete")
-        }
-    }
-
-    @Test
-    fun `startup reconciliation removes legacy grants from an inactive chat`() = runTest {
-        val owner = ctx.registerUser(uniqueUsername("bot-legacy-owner"))
-        val member = ctx.registerUser(uniqueUsername("bot-legacy-member"))
-        val group = ctx.chatService.createGroup("旧版本已停用群", null, owner, listOf(member))
-        val owned = ctx.botService.createForGroup(member, group.chatId, "旧群属机器人")
-        val system = ctx.botService.create("旧系统机器人")
-        ctx.botService.grant(system.bot.botId, group.chatId)
-
-        // Simulate a pre-fix server that marked the chat inactive without invoking the bot hook.
-        ctx.chatStore.deactivateChat(group.chatId)
-        assertTrue(ctx.botService.reconcileGrants().isEmpty())
-
-        ctx.chatService.adminReconcileManagedGroup(group.chatId, "重新启用", owner, setOf(owner, member))
-        assertFailsWith<BotAuthenticationException> {
-            ctx.botService.deliver(
-                owned.bot.botId,
-                owned.webhookToken,
-                group.chatId,
-                "旧群属 token 不应恢复",
-                "legacy-owned",
-            )
-        }
-        assertFailsWith<BotAuthorizationException> {
-            ctx.botService.deliver(
-                system.bot.botId,
-                system.webhookToken,
-                group.chatId,
-                "旧系统授权不应恢复",
-                "legacy-system",
-            )
         }
     }
 

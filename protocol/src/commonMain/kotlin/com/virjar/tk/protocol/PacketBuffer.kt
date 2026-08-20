@@ -12,8 +12,6 @@ class PacketBuffer(private val buf: io.netty.buffer.ByteBuf) {
 
         /** 通用集合的最后一道分配上限；业务模型可使用更小的专用上限。 */
         const val MAX_COLLECTION_ENTRIES = 100_000
-
-        const val MAX_EXTENSION_ENTRIES = 1_024
     }
 
     // ── 写操作 ──
@@ -24,6 +22,7 @@ class PacketBuffer(private val buf: io.netty.buffer.ByteBuf) {
     fun writeLong(value: Long) { buf.writeLong(value) }
 
     fun writeVarInt(value: Int) {
+        require(value >= 0) { "VarInt only supports non-negative values: $value" }
         var v = value
         while (v > 0x7F) {
             buf.writeByte((v and 0x7F) or 0x80)
@@ -33,6 +32,7 @@ class PacketBuffer(private val buf: io.netty.buffer.ByteBuf) {
     }
 
     fun writeVarLong(value: Long) {
+        require(value >= 0) { "VarLong only supports non-negative values: $value" }
         var v = value
         while (v > 0x7F) {
             buf.writeByte((v.toInt() and 0x7F) or 0x80)
@@ -41,42 +41,30 @@ class PacketBuffer(private val buf: io.netty.buffer.ByteBuf) {
         buf.writeByte(v.toInt())
     }
 
+    /** Boolean 的 wire 表示只能是单字节 0/1。 */
+    fun writeBoolean(value: Boolean) {
+        buf.writeByte(if (value) 1 else 0)
+    }
+
     fun writeString(value: String?) {
         if (value == null) {
-            buf.writeByte(0)
+            writeBoolean(false)
             return
         }
-        val bytes = value.encodeToByteArray()
-        buf.writeByte(1)
+        val bytes = value.encodeToByteArray(throwOnInvalidSequence = true)
+        writeBoolean(true)
         writeVarInt(bytes.size)
         buf.writeBytes(bytes)
     }
 
     fun writeBytes(value: ByteArray?) {
         if (value == null) {
-            buf.writeByte(0)
+            writeBoolean(false)
             return
         }
-        buf.writeByte(1)
+        writeBoolean(true)
         writeVarInt(value.size)
         buf.writeBytes(value)
-    }
-
-    // ── 通用扩展（Escape Hatch） ──
-    // wire format: [hasExtension(1B)] [count VarInt] [key1][val1] [key2][val2] ...
-    // 无扩展时只写 1 字节（0），对已固化模型零开销。
-
-    fun writeExtension(extras: Map<String, String>?) {
-        if (extras == null || extras.isEmpty()) {
-            buf.writeByte(0)
-            return
-        }
-        buf.writeByte(1)
-        writeVarInt(extras.size)
-        for ((k, v) in extras) {
-            writeString(k)
-            writeString(v)
-        }
     }
 
     // ── 读操作 ──
@@ -87,6 +75,13 @@ class PacketBuffer(private val buf: io.netty.buffer.ByteBuf) {
     fun readLong(): Long = buf.readLong()
     fun readableBytes(): Int = buf.readableBytes()
 
+    /** 独立 payload 必须被 reader 完整消费，不允许尾随未定义字节。 */
+    fun requireExhausted(context: String = "payload") {
+        if (buf.readableBytes() != 0) {
+            corrupted("$context has ${buf.readableBytes()} trailing bytes")
+        }
+    }
+
     fun readVarInt(): Int {
         var result = 0
         for (index in 0 until 5) {
@@ -95,7 +90,10 @@ class PacketBuffer(private val buf: io.netty.buffer.ByteBuf) {
             // 溢出、负值或继续读取第 6 字节，均不是本协议的非负 VarInt。
             if (index == 4 && byte and 0xF8 != 0) corrupted("VarInt overflow")
             result = result or ((byte and 0x7F) shl (index * 7))
-            if (byte and 0x80 == 0) return result
+            if (byte and 0x80 == 0) {
+                if (index > 0 && byte and 0x7F == 0) corrupted("Non-canonical VarInt")
+                return result
+            }
         }
         corrupted("VarInt exceeds 5 bytes")
     }
@@ -106,31 +104,48 @@ class PacketBuffer(private val buf: io.netty.buffer.ByteBuf) {
         for (index in 0 until 9) {
             val byte = readByte()
             result = result or ((byte.toLong() and 0x7F) shl (index * 7))
-            if (byte and 0x80 == 0) return result
+            if (byte and 0x80 == 0) {
+                if (index > 0 && byte and 0x7F == 0) corrupted("Non-canonical VarLong")
+                return result
+            }
         }
         corrupted("VarLong exceeds 9 bytes")
     }
 
     fun readString(maxByteLength: Int = MAX_LENGTH_DELIMITED_BYTES): String? {
-        val present = readPresence("String")
-        if (present == 0) return null
+        if (!readBoolean("String presence")) return null
         val len = readLength(maxByteLength, "String")
         val bytes = ByteArray(len)
         buf.readBytes(bytes)
-        return bytes.decodeToString()
+        return decodeUtf8(bytes, "String")
+    }
+
+    /** 必填字符串遇到 null marker 时作为损坏 wire 拒绝，不把错误泄漏成 Kotlin NPE。 */
+    fun readRequiredString(
+        maxByteLength: Int = MAX_LENGTH_DELIMITED_BYTES,
+        fieldName: String = "String",
+    ): String {
+        if (!readBoolean("$fieldName presence")) corrupted("Missing required $fieldName")
+        val len = readLength(maxByteLength, fieldName)
+        val bytes = ByteArray(len)
+        buf.readBytes(bytes)
+        return decodeUtf8(bytes, fieldName)
     }
 
     fun readBytes(maxLength: Int = MAX_LENGTH_DELIMITED_BYTES): ByteArray? {
-        val present = readPresence("bytes")
-        if (present == 0) return null
+        if (!readBoolean("bytes presence")) return null
         val len = readLength(maxLength, "bytes")
         val bytes = ByteArray(len)
         buf.readBytes(bytes)
         return bytes
     }
 
-    /** 可选复合字段的 presence marker 也只能是 0/1，其他值说明 wire 已错位或被污染。 */
-    fun readPresenceFlag(fieldName: String): Boolean = readPresence(fieldName) == 1
+    /** Boolean 与复合字段 presence marker 都严格只接受 0/1。 */
+    fun readBoolean(fieldName: String = "Boolean"): Boolean {
+        val value = readByte()
+        if (value != 0 && value != 1) corrupted("Invalid $fieldName boolean value: $value")
+        return value == 1
+    }
 
     /** 在分配集合前同时校验业务上限和当前帧可提供的最小字节数。 */
     fun readCollectionSize(
@@ -147,24 +162,12 @@ class PacketBuffer(private val buf: io.netty.buffer.ByteBuf) {
         return count
     }
 
-    fun readExtension(): Map<String, String>? {
-        val hasExt = readPresence("extension")
-        if (hasExt == 0) return null
-        // 两个非空 String 的最短 wire 形态各 2 字节（present + zero length）。
-        val count = readCollectionSize(MAX_EXTENSION_ENTRIES, 4, "extension")
-        val map = LinkedHashMap<String, String>(count)
-        repeat(count) {
-            val k = readString() ?: return null
-            val v = readString() ?: return null
-            map[k] = v
+    private fun decodeUtf8(bytes: ByteArray, fieldName: String): String {
+        return try {
+            bytes.decodeToString(throwOnInvalidSequence = true)
+        } catch (_: kotlin.text.CharacterCodingException) {
+            corrupted("Invalid UTF-8 in $fieldName")
         }
-        return map
-    }
-
-    private fun readPresence(fieldName: String): Int {
-        val present = readByte()
-        if (present != 0 && present != 1) corrupted("Invalid $fieldName presence marker: $present")
-        return present
     }
 
     private fun readLength(maximum: Int, fieldName: String): Int {

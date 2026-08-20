@@ -16,7 +16,9 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            api(project(":shared"))
+            // Platform shells depend on :shared explicitly. Keep SDK internals off :app's
+            // transitive API so the module boundary remains android/desktop -> app + shared.
+            implementation(project(":shared"))
             api(compose.runtime)
             api(compose.foundation)
             api(compose.material3)

@@ -34,8 +34,7 @@ class BotWebhookRoutesTest {
             contentType(ContentType.Application.Json)
             header(HttpHeaders.Authorization, "Bearer ttb_secret")
             header(BOT_IDEMPOTENCY_KEY_HEADER, "deploy-42")
-            // Migration compatibility: legacy fields may be present, but must never select target/key.
-            setBody("""{"chatId":"chat-body","markdown":"## 完成","idempotencyKey":"body-key"}""")
+            setBody("""{"markdown":"## 完成"}""")
         }
 
         assertEquals(HttpStatusCode.OK, response.status)
@@ -86,28 +85,21 @@ class BotWebhookRoutesTest {
     }
 
     @Test
-    fun `legacy webhook keeps body target key and detailed response`() = testApplication {
+    fun `target webhook rejects body routing fields before delivery`() = testApplication {
         val delivery = RecordingBotDelivery()
         application {
             install(ContentNegotiation) { json() }
-            routing { legacyBotMessageRoutes(delivery) }
+            routing { targetBoundBotMessageRoutes(delivery) }
         }
 
-        val response = client.post("/api/v1/bots/bot-legacy/messages") {
+        val response = client.post("/api/v1/groups/chat-path/bots/bot-1/messages") {
             contentType(ContentType.Application.Json)
-            header(HttpHeaders.Authorization, "Bearer ttb_legacy")
-            setBody("""{"chatId":"chat-legacy","markdown":"legacy","idempotencyKey":"legacy-1"}""")
+            header(HttpHeaders.Authorization, "Bearer ttb_secret")
+            setBody("""{"chatId":"chat-body","markdown":"hello"}""")
         }
 
-        assertEquals(HttpStatusCode.OK, response.status)
-        assertEquals(
-            """{"chatId":"chat-legacy","serverSeq":7,"clientMsgId":"client-legacy-1"}""",
-            response.bodyAsText(),
-        )
-        assertEquals(
-            DeliveryCall("bot-legacy", "ttb_legacy", "chat-legacy", "legacy", "legacy-1"),
-            delivery.calls.single(),
-        )
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertEquals(emptyList(), delivery.calls)
     }
 }
 

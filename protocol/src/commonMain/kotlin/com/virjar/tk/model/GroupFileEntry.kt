@@ -32,7 +32,7 @@ data class GroupFileEntry(
         buf.writeString(parentId)
         buf.writeVarInt(kind)
         buf.writeString(name)
-        buf.writeByte(if (attachment == null) 0 else 1)
+        buf.writeBoolean(attachment != null)
         attachment?.writeTo(buf)
         buf.writeVarLong(revision)
         buf.writeVarLong(contentVersion)
@@ -47,17 +47,17 @@ data class GroupFileEntry(
         const val KIND_FILE = 2
 
         override fun readFrom(buf: PacketBuffer): GroupFileEntry = GroupFileEntry(
-            entryId = buf.readString()!!,
-            chatId = buf.readString()!!,
+            entryId = buf.readRequiredString(),
+            chatId = buf.readRequiredString(),
             parentId = buf.readString(),
             kind = buf.readVarInt(),
-            name = buf.readString()!!,
-            attachment = if (buf.readByte() != 0) Attachment.readFrom(buf) else null,
+            name = buf.readRequiredString(),
+            attachment = if (buf.readBoolean("group file attachment presence")) Attachment.readFrom(buf) else null,
             revision = buf.readVarLong(),
             contentVersion = buf.readVarLong(),
-            createdBy = buf.readString()!!,
+            createdBy = buf.readRequiredString(),
             createdAt = buf.readVarLong(),
-            updatedBy = buf.readString()!!,
+            updatedBy = buf.readRequiredString(),
             updatedAt = buf.readVarLong(),
         )
     }

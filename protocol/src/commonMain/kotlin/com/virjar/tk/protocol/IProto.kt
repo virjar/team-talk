@@ -32,8 +32,8 @@ data class ReadSyncPayload(
 
     companion object : IProtoReader<ReadSyncPayload> {
         override fun readFrom(buf: PacketBuffer): ReadSyncPayload {
-            val peerUid = buf.readString() ?: ""
-            val chatId = buf.readString() ?: ""
+            val peerUid = buf.readRequiredString()
+            val chatId = buf.readRequiredString()
             val peerReadSeq = buf.readVarLong()
             return ReadSyncPayload(peerUid, chatId, peerReadSeq)
         }

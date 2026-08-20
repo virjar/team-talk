@@ -4,6 +4,7 @@ import com.virjar.tk.model.Conversation
 
 /** Persistence port owned by the conversation domain. */
 interface ConversationRepository {
+    /** Only rows backed by an active chat and active membership may be returned. */
     fun listConversations(uid: String): List<Conversation>
     fun getConversation(uid: String, chatId: String): Conversation?
     fun upsertConversation(uid: String, chatId: String, chatType: Int, lastMsgSeq: Long, lastMsgType: Int = 0, lastMsgPreview: String? = null)

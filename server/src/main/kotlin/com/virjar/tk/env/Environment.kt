@@ -15,9 +15,10 @@ import java.io.File
  * - dataRoot 为 classpath 父目录下的 data/
  * - 数据随部署目录一起管理，卸载即清理
  *
- * ```
- * $dataRoot/
- * ├── rocksdb/            # RocksDB 消息存储
+     * ```
+     * $dataRoot/
+     * ├── data-epoch          # 本地持久化格式门禁
+     * ├── rocksdb/            # RocksDB 消息存储
  * ├── tokenstore/         # RocksDB Token 存储
  * ├── lucene-index/       # Lucene 全文索引
  * ├── file-store/

@@ -1,5 +1,6 @@
 package com.virjar.tk.client
 
+import com.virjar.tk.body.GenericPayload
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Contact
 import com.virjar.tk.model.Message
@@ -8,13 +9,23 @@ import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.PresencePayload
 import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.ReadSyncPayload
+import com.virjar.tk.protocol.payload.NotifyPayload
+import com.virjar.tk.repository.ConversationRepository
 import com.virjar.tk.testing.FakeLocalCache
+import com.virjar.tk.testing.FakeRpcInvoker
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -25,6 +36,17 @@ class EventProcessorTest {
 
     private val cache = FakeLocalCache()
     private val ep = EventProcessor(ImClient(), cache)
+
+    @Test
+    fun `stop is idempotent and terminal for the session-owned processor`() {
+        val owned = EventProcessor(ImClient(), FakeLocalCache())
+        owned.start()
+
+        owned.stop()
+        owned.stop()
+
+        assertFailsWith<IllegalStateException> { owned.start() }
+    }
 
     @Test
     fun `MESSAGE_RECV - 写缓存并发 messageEvents`() = runBlocking {
@@ -79,16 +101,155 @@ class EventProcessorTest {
     }
 
     @Test
-    fun `CHAT_CREATED - upsertChat 发 chatEvents 触发 dirty`() = runBlocking {
-        var dirty = false
-        val ep2 = EventProcessor(ImClient(), cache, onConversationsDirty = { dirty = true })
+    fun `CHAT_CREATED - replay 先提交本地投影和 cursor 再合并刷新`() = runBlocking {
+        var refreshCount = 0
+        val ep2 = EventProcessor(ImClient(), cache, onConversationsDirty = { refreshCount += 1 })
         val chat = Chat(chatId = "g1", chatType = 2, name = "群")
         val received = launch { withTimeout(2000) { assertEquals(NotifyType.CHAT_CREATED, ep2.chatEvents.first().first) } }
         kotlinx.coroutines.delay(50)
-        ep2.handleNotifyPayload(NotifyType.CHAT_CREATED, ProtoCodec.encode(chat))
+        ep2.processNotify(
+            NotifyPayload(
+                eventId = 1L,
+                notifyType = NotifyType.CHAT_CREATED.code,
+                payload = ProtoCodec.encode(chat),
+            ),
+        )
         received.join()
         assertEquals("g1", cache.getChat("g1")?.chatId)
-        assertTrue(dirty, "CHAT_CREATED 必须触发会话重拉（被拉入群场景）")
+        assertEquals(1L, cache.getSyncCursor(EventProcessor.SYNC_CURSOR_KEY))
+        assertEquals(0, refreshCount, "SYNCHRONIZING replay 不得调用业务 RPC")
+        assertTrue(ep2.hasDirtyConversations)
+
+        assertTrue(ep2.refreshDirtyConversations(authenticated = true))
+        assertEquals(1, refreshCount)
+        assertTrue(!ep2.hasDirtyConversations)
+    }
+
+    @Test
+    fun `CHAT_CREATED - 刷新失败不回滚 cursor 且保留 dirty`() = runBlocking {
+        val ep2 = EventProcessor(ImClient(), cache, onConversationsDirty = { error("rpc unavailable") })
+        val chat = Chat(chatId = "g2", chatType = 2, name = "群 2")
+
+        ep2.processNotify(
+            NotifyPayload(
+                eventId = 2L,
+                notifyType = NotifyType.CHAT_CREATED.code,
+                payload = ProtoCodec.encode(chat),
+            ),
+        )
+
+        assertTrue(!ep2.refreshDirtyConversations(authenticated = true))
+        assertEquals(2L, cache.getSyncCursor(EventProcessor.SYNC_CURSOR_KEY))
+        assertTrue(ep2.hasDirtyConversations)
+    }
+
+    @Test
+    fun `conversation RPC Outcome failure is thrown across refresh callback and keeps dirty`() = runBlocking {
+        val local = FakeLocalCache()
+        val rpc = FakeRpcInvoker().apply { enqueueError(503, "rpc unavailable") }
+        val repository = ConversationRepository(rpc, local)
+        val ep2 = EventProcessor(
+            ImClient(),
+            local,
+            onConversationsDirty = { repository.listConversations().getOrThrow() },
+        )
+        ep2.requireConversationReconciliation()
+
+        assertFalse(ep2.refreshDirtyConversations(authenticated = true))
+
+        assertTrue(ep2.hasDirtyConversations)
+        assertEquals(1, rpc.calls.size)
+    }
+
+    @Test
+    fun `new processor reconciles conversations on ready even when dirty memory was lost`() = runBlocking {
+        var refreshCount = 0
+        // Simulates process reconstruction after CHAT_CREATED + cursor committed. The new instance
+        // intentionally starts with no in-memory dirty marker.
+        val reconstructed = EventProcessor(
+            ImClient(),
+            FakeLocalCache(),
+            onConversationsDirty = { refreshCount += 1 },
+        )
+        assertTrue(!reconstructed.hasDirtyConversations)
+
+        reconstructed.requireConversationReconciliation()
+        assertTrue(reconstructed.refreshDirtyConversations(authenticated = true))
+
+        assertEquals(1, refreshCount)
+        assertTrue(!reconstructed.hasDirtyConversations)
+    }
+
+    @Test
+    fun `durable projection never waits for a slow SharedFlow observer`() = runBlocking {
+        val reliableMessages = mutableListOf<String>()
+        val ep2 = EventProcessor(
+            ImClient(),
+            cache,
+            durableMessageSink = { _, message -> reliableMessages += message.clientMsgId },
+        )
+        val firstDelivery = CompletableDeferred<Unit>()
+        val releaseObserver = CompletableDeferred<Unit>()
+        val observer = launch(start = CoroutineStart.UNDISPATCHED) {
+            ep2.messageEvents.collect {
+                firstDelivery.complete(Unit)
+                releaseObserver.await()
+            }
+        }
+        val events = (1L..100L).map { eventId ->
+            val message = Message(
+                chatId = "c1",
+                clientMsgId = "m$eventId",
+                serverSeq = eventId,
+                senderUid = "u2",
+                messageType = 1,
+                timestamp = eventId,
+            )
+            NotifyPayload(
+                eventId = eventId,
+                notifyType = NotifyType.MESSAGE_RECV.code,
+                payload = ProtoCodec.encode(message),
+            )
+        }
+
+        withTimeout(2_000) { ep2.processBatch(events) }
+
+        firstDelivery.await()
+        assertEquals(100L, ep2.lastEventId.value)
+        assertEquals((1L..100L).map { "m$it" }, reliableMessages)
+        assertEquals(100, cache.getMessages("c1", 200).size)
+        releaseObserver.complete(Unit)
+        observer.cancelAndJoin()
+    }
+
+    @Test
+    fun `durable message sink failure aborts cursor so replay can retry`() = runBlocking {
+        val ep2 = EventProcessor(
+            ImClient(),
+            cache,
+            durableMessageSink = { _, _ -> error("inbox closed") },
+        )
+        val message = Message(
+            chatId = "c1",
+            clientMsgId = "m1",
+            serverSeq = 1,
+            senderUid = "u2",
+            messageType = 1,
+            timestamp = 1,
+        )
+
+        assertFailsWith<IllegalStateException> {
+            ep2.processNotify(
+                NotifyPayload(
+                    eventId = 1L,
+                    notifyType = NotifyType.MESSAGE_RECV.code,
+                    payload = ProtoCodec.encode(message),
+                ),
+            )
+        }
+
+        assertEquals(0L, ep2.lastEventId.value)
+        assertEquals(0L, cache.getSyncCursor(EventProcessor.SYNC_CURSOR_KEY))
     }
 
     @Test
@@ -110,5 +271,111 @@ class EventProcessorTest {
     fun `USER_UPDATED - upsertUser`() = runBlocking {
         ep.handleNotifyPayload(NotifyType.USER_UPDATED, ProtoCodec.encode(User(uid = "u1", username = "a", name = "A")))
         assertEquals("A", cache.getUser("u1")?.name)
+    }
+
+    @Test
+    fun `unknown GENERIC notify is ignored after strict decode and advances durable cursor`() = runBlocking {
+        val local = FakeLocalCache()
+        val processor = EventProcessor(ImClient(), local)
+
+        processor.processNotify(
+            NotifyPayload(
+                eventId = 1L,
+                notifyType = NotifyType.GENERIC.code,
+                payload = ProtoCodec.encode(GenericPayload(404, byteArrayOf(1, 2, 3))),
+            ),
+        )
+
+        assertEquals(1L, processor.lastEventId.value)
+        assertEquals(1L, local.getSyncCursor(EventProcessor.SYNC_CURSOR_KEY))
+    }
+
+    @Test
+    fun `unknown GENERIC message keeps opaque bytes in local projection`() = runBlocking {
+        val local = FakeLocalCache()
+        val processor = EventProcessor(ImClient(), local)
+        val generic = GenericPayload(405, byteArrayOf(0, 9, 0, 8))
+        val message = Message(
+            chatId = "c-generic",
+            clientMsgId = "m-generic",
+            serverSeq = 1,
+            senderUid = "future-client",
+            messageType = com.virjar.tk.protocol.MessageType.GENERIC.code,
+            timestamp = 1,
+            body = generic,
+        )
+
+        processor.processNotify(
+            NotifyPayload(
+                eventId = 1L,
+                notifyType = NotifyType.MESSAGE_RECV.code,
+                payload = ProtoCodec.encode(message),
+            ),
+        )
+
+        assertEquals(generic, local.getMessages("c-generic").single().body)
+        assertEquals(1L, processor.lastEventId.value)
+    }
+
+    @Test
+    fun `durable batch stops at first failed projection and cannot advance past it`() = runBlocking {
+        val events = listOf(
+            NotifyPayload(
+                eventId = 1L,
+                notifyType = NotifyType.USER_UPDATED.code,
+                payload = ProtoCodec.encode(User(uid = "u1", username = "a", name = "A")),
+            ),
+            NotifyPayload(
+                eventId = 2L,
+                notifyType = NotifyType.USER_UPDATED.code,
+                payload = byteArrayOf(0x7f),
+            ),
+            NotifyPayload(
+                eventId = 3L,
+                notifyType = NotifyType.USER_UPDATED.code,
+                payload = ProtoCodec.encode(User(uid = "u3", username = "c", name = "C")),
+            ),
+        )
+
+        assertFailsWith<Exception> {
+            ep.processBatch(events)
+        }
+
+        assertEquals(1L, ep.lastEventId.value)
+        assertEquals(1L, cache.getSyncCursor(EventProcessor.SYNC_CURSOR_KEY))
+        assertEquals("A", cache.getUser("u1")?.name)
+        assertNull(cache.getUser("u3"), "events after the failed item must not be projected")
+    }
+
+    @Test
+    fun `sync reset clears projections and returns cursor zero`() = runBlocking {
+        val local = FakeLocalCache()
+        val processor = EventProcessor(ImClient(), local)
+        local.upsertUser(User(uid = "u1", username = "u1", name = "U1"))
+        local.upsertContact(Contact(uid = "me", friendUid = "u1"))
+        local.upsertChat(Chat(chatId = "c1", chatType = 1))
+        local.upsertConversation(com.virjar.tk.model.Conversation(chatId = "c1", chatType = 1))
+        local.setConversationDraft("c1", "pending")
+        val message = Message(
+            chatId = "c1",
+            clientMsgId = "m1",
+            serverSeq = 1,
+            senderUid = "u1",
+            messageType = 1,
+            timestamp = 1,
+        )
+        local.insertMessage(message)
+        local.enqueueBotMessage(7L, message)
+        local.advanceSyncCursor(EventProcessor.SYNC_CURSOR_KEY, 7L)
+
+        assertEquals(0L, processor.resetServerProjection())
+
+        assertEquals(0L, processor.lastEventId.value)
+        assertTrue(local.getContacts().isEmpty())
+        assertNull(local.getChat("c1"))
+        assertTrue(local.getConversations().isEmpty())
+        assertTrue(local.getMessages("c1").isEmpty())
+        assertTrue(local.getPendingConversationDrafts().isEmpty())
+        assertNull(local.peekBotMessage())
     }
 }

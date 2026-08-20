@@ -21,17 +21,17 @@ data class Device(
         buf.writeString(deviceModel)
         buf.writeVarInt(deviceFlag)
         buf.writeVarLong(lastLogin)
-        buf.writeByte(if (isOnline) 1 else 0)
+        buf.writeBoolean(isOnline)
     }
 
     companion object : com.virjar.tk.protocol.IProtoReader<Device> {
         override fun readFrom(buf: PacketBuffer): Device = Device(
-            deviceId = buf.readString()!!,
+            deviceId = buf.readRequiredString(),
             deviceName = buf.readString(),
             deviceModel = buf.readString(),
             deviceFlag = buf.readVarInt(),
             lastLogin = buf.readVarLong(),
-            isOnline = buf.readByte() != 0,
+            isOnline = buf.readBoolean("device online"),
         )
     }
 }

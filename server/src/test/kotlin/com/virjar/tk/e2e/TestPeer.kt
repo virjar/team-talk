@@ -129,7 +129,7 @@ class TestPeer {
             println("[TestPeer] acceptLatest 缺少 username"); return@runBlocking
         }
         val session = RemoteAcceptanceSupport.loginUser(username, "password123")
-        val listResp = session.invoke("contact", ContactRpcContract.M_LIST_APPLIES)
+        val listResp = session.invoke("contact", ContactRpcContract.M_LIST_PENDING_APPLIES)
         val listPayload = listResp.payload
         if (listResp.status != 0 || listPayload == null) {
             println("===ACCEPT FAILED=== 无法获取申请列表 status=${listResp.status}")

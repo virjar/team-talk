@@ -30,11 +30,11 @@ data class Attachment(
 
     companion object : IProtoReader<Attachment> {
         override fun readFrom(buf: PacketBuffer) = Attachment(
-            path = buf.readString(MessageBodyPolicy.utf8WireLimit(AttachmentPolicy.MAX_REFERENCE_LENGTH))!!,
-            name = buf.readString(MessageBodyPolicy.utf8WireLimit(AttachmentPolicy.MAX_NAME_LENGTH))!!,
-            contentType = buf.readString(
+            path = buf.readRequiredString(MessageBodyPolicy.utf8WireLimit(AttachmentPolicy.MAX_REFERENCE_LENGTH)),
+            name = buf.readRequiredString(MessageBodyPolicy.utf8WireLimit(AttachmentPolicy.MAX_NAME_LENGTH)),
+            contentType = buf.readRequiredString(
                 MessageBodyPolicy.utf8WireLimit(AttachmentPolicy.MAX_CONTENT_TYPE_LENGTH),
-            )!!,
+            ),
             size = buf.readVarLong(),
         )
     }

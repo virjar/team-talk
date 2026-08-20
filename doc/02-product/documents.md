@@ -142,9 +142,9 @@ Android 底部导航提供独立“文档”入口，并以平台能力显式启
 - 当前不是实时共同编辑，不提供光标、逐字符合并或 CRDT；
 - 评论、全文搜索、离线编辑和细粒度 ACL 需要先设计事件、缓存与冲突恢复。
 
-## 8. 破坏性迁移
+## 8. 数据基线
 
-旧实验模型把 Document 直接挂在群 `scope` 下。项目尚未发布，本次协议版本升级后直接启用
-`document_spaces`、`document_space_grants`、`document_nodes`、`document_content_revisions` 和
-`document_user_recents`，不保留双写或兼容转换。`document_nodes.excerpt` 是首页和目录的读取投影；
-测试部署可清理旧文档测试数据。正式发布后必须改用版本化迁移和摘要回填，不能再依赖重建数据。
+文档域的当前基线由 `document_spaces`、`document_space_grants`、`document_nodes`、
+`document_content_revisions` 和 `document_user_recents` 组成，不保留群 scope 双写或兼容转换。
+`document_nodes.excerpt` 是首页和目录的读取投影。当前开发部署切换不兼容 schema 时直接重建
+测试数据；正式发布后必须改用版本化迁移和摘要回填。

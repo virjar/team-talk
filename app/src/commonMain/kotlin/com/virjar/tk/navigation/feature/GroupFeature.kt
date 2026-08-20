@@ -8,11 +8,13 @@ import com.virjar.tk.client.ClientSession
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.InviteLink
 import com.virjar.tk.model.Member
+import com.virjar.tk.model.User
 import com.virjar.tk.client.defaultServerConfig
 import com.virjar.tk.http.GroupBotCredentials
 import com.virjar.tk.http.GroupBotSummary
 import com.virjar.tk.repository.GroupBotManagementRepository
 import com.virjar.tk.repository.HttpGroupBotManagementRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -49,9 +51,18 @@ class GroupFeature internal constructor(
     var groupBotOperationId by mutableStateOf<String?>(null)
         private set
 
-    private val detailGate = GroupRequestGate<String>()
-    private val inviteLinksGate = GroupRequestGate<String>()
-    private val groupBotsGate = GroupRequestGate<String>()
+    private val detailGate = LatestRequestGate<String>()
+    private val inviteLinksGate = LatestRequestGate<String>()
+    private val groupBotsGate = LatestRequestGate<String>()
+
+    /** Optional composer query; platform shells never receive the chat repository itself. */
+    suspend fun mentionCandidates(chatId: String): List<User> = try {
+        session.chatRepo.getMembers(chatId).getOrThrow().mapNotNull(Member::user)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        emptyList()
+    }
 
     internal suspend fun loadDetail(chatId: String) {
         loadDetail(chatId, clearBeforeLoad = true)

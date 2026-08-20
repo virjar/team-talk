@@ -16,7 +16,7 @@ class DocumentWorkspaceStateTest {
 
     @Test
     fun `new navigation invalidates every older target`() {
-        val navigation = DocumentNavigationGeneration()
+        val navigation = GenerationGate()
 
         val first = navigation.next()
         val second = navigation.next()
@@ -312,7 +312,7 @@ class DocumentWorkspaceStateTest {
 
     @Test
     fun `history request gate rejects delayed document A after document B becomes current`() = runTest {
-        val gate = DocumentIdentityRequestGate<DocumentRequestTarget>()
+        val gate = LatestRequestGate<DocumentRequestTarget>()
         val targetA = DocumentRequestTarget("doc-a", "doc-a", "space-a")
         val targetB = DocumentRequestTarget("doc-b", "doc-b", "space-a")
         val delayedA = CompletableDeferred<String>()
@@ -333,7 +333,7 @@ class DocumentWorkspaceStateTest {
 
     @Test
     fun `closing history invalidates an in flight revision preview`() = runTest {
-        val gate = DocumentIdentityRequestGate<DocumentRequestTarget>()
+        val gate = LatestRequestGate<DocumentRequestTarget>()
         val target = DocumentRequestTarget("doc-a", "doc-a", "space-a")
         val delayedPreview = CompletableDeferred<String>()
         val token = gate.begin(target)

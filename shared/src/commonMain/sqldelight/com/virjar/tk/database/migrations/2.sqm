@@ -1,7 +1,0 @@
--- v2 → v3: 持久化本地草稿操作，区分“从未本地写入”与“明确清空”。
-CREATE TABLE IF NOT EXISTS conversation_draft_outbox (
-    chat_id TEXT PRIMARY KEY NOT NULL,
-    draft TEXT,
-    generation INTEGER NOT NULL,
-    state INTEGER NOT NULL DEFAULT 0
-);

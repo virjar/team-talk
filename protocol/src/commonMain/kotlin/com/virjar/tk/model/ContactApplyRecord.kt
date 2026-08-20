@@ -8,7 +8,7 @@ import kotlinx.serialization.Serializable
 /**
  * 当前用户视角的好友申请记录。
  *
- * 这是独立于旧 [ContactApply] 的追加契约，避免给 V8 已发布的固定字段模型追加字段。
+ * 与 [ContactApply] 分离：前者是处理动作的定向投影，本模型是包含方向和历史状态的查询投影。
  * [token] 只会在“收到且待处理”时返回；发出申请及已处理记录始终为 null。
  */
 @Serializable
@@ -34,7 +34,7 @@ data class ContactApplyRecord(
         buf.writeVarInt(status)
         buf.writeVarLong(createdAt)
         buf.writeVarLong(updatedAt)
-        buf.writeByte(if (peerUser != null) 1 else 0)
+        buf.writeBoolean(peerUser != null)
         peerUser?.writeTo(buf)
     }
 
@@ -45,20 +45,18 @@ data class ContactApplyRecord(
         const val STATUS_PENDING = 0
         const val STATUS_ACCEPTED = 1
         const val STATUS_REJECTED = 2
-        /** 旧客户端重复创建的同方向 pending 已被最新一条取代。 */
-        const val STATUS_SUPERSEDED = 3
 
         override fun readFrom(buf: PacketBuffer): ContactApplyRecord = ContactApplyRecord(
             id = buf.readVarLong(),
-            fromUid = buf.readString()!!,
-            toUid = buf.readString()!!,
+            fromUid = buf.readRequiredString(),
+            toUid = buf.readRequiredString(),
             direction = buf.readVarInt(),
             token = buf.readString(),
             remark = buf.readString(),
             status = buf.readVarInt(),
             createdAt = buf.readVarLong(),
             updatedAt = buf.readVarLong(),
-            peerUser = if (buf.readPresenceFlag("contact apply peer user")) User.readFrom(buf) else null,
+            peerUser = if (buf.readBoolean("contact apply peer user presence")) User.readFrom(buf) else null,
         )
     }
 }
@@ -69,13 +67,13 @@ data class ContactApplyLookup(
     val record: ContactApplyRecord? = null,
 ) : IProto {
     override fun writeTo(buf: PacketBuffer) {
-        buf.writeByte(if (record != null) 1 else 0)
+        buf.writeBoolean(record != null)
         record?.writeTo(buf)
     }
 
     companion object : IProtoReader<ContactApplyLookup> {
         override fun readFrom(buf: PacketBuffer): ContactApplyLookup = ContactApplyLookup(
-            record = if (buf.readPresenceFlag("contact apply lookup")) ContactApplyRecord.readFrom(buf) else null,
+            record = if (buf.readBoolean("contact apply lookup presence")) ContactApplyRecord.readFrom(buf) else null,
         )
     }
 }

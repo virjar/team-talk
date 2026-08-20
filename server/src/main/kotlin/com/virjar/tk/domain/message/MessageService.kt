@@ -2,17 +2,21 @@ package com.virjar.tk.domain.message
 
 import com.virjar.tk.body.AttachmentPolicy
 import com.virjar.tk.body.CardBody
+import com.virjar.tk.body.GenericPayload
 import com.virjar.tk.body.MessageBodyPolicy
 import com.virjar.tk.body.ReplyBody
 import com.virjar.tk.body.RichTextBody
 import com.virjar.tk.body.buildRichTextBody
 import com.virjar.tk.domain.attachment.AttachmentService
+import com.virjar.tk.domain.chat.ChatAccess
+import com.virjar.tk.domain.chat.ChatLifecycleGate
 import com.virjar.tk.domain.chat.ChatStore
 import com.virjar.tk.domain.conversation.ConversationService
 import com.virjar.tk.domain.contact.ContactStore
 import com.virjar.tk.domain.event.EventPublisher
 import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.model.Message
+import com.virjar.tk.protocol.ExtensionType
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.NotifyType
 import kotlinx.coroutines.sync.Mutex
@@ -20,17 +24,23 @@ import kotlinx.coroutines.sync.Mutex
 class MessageService(
     private val messages: MessageRepository,
     private val chatStore: ChatStore,
+    private val access: ChatAccess,
     private val events: EventPublisher,
     private val conversationService: ConversationService,
     private val search: MessageSearch,
     private val attachmentService: AttachmentService,
     private val users: UserStore,
     private val contacts: ContactStore,
+    private val lifecycleGate: ChatLifecycleGate,
 ) {
     /** 固定条带避免按消息创建锁导致无界缓存，同时串行化同一 chat+seq 的 outbox 投影。 */
     private val projectionLocks = Array(PROJECTION_LOCK_STRIPES) { Mutex() }
 
-    suspend fun sendMessage(senderUid: String, message: Message): Long {
+    suspend fun sendMessage(senderUid: String, message: Message): Long =
+        lifecycleGate.withChat(message.chatId) { sendMessageLocked(senderUid, message) }
+
+    /** Caller holds [lifecycleGate] for this chat through durable storage and projection. */
+    private suspend fun sendMessageLocked(senderUid: String, message: Message): Long {
         val chatId = message.chatId
         require(chatId.isNotBlank() && chatId.length <= MessageBodyPolicy.MAX_CHAT_ID_LENGTH) { "chatId 非法" }
         require(
@@ -49,13 +59,14 @@ class MessageService(
         // 先做不依赖 FileStore 当前状态的规范化，使已成功文件消息在文件生命周期变化后仍可幂等重试。
         val clientDeclaredMessage = MessageBodyPolicy.canonicalize(AttachmentPolicy.canonicalize(message))
             .copy(senderUid = senderUid)
+        requireRegisteredGenericExtension(clientDeclaredMessage)
 
         // 幂等重试不只返回 seq；如果上次在跨库投影中途失败，先补齐搜索、
         // 离线事件和会话投影，才能满足“发送成功即可用”的契约。
         val existing = messages.findIdempotentMessage(clientDeclaredMessage)
         if (existing != null) {
             if (messages.isProjectionPending(chatId, existing.serverSeq)) {
-                projectNewMessage(existing)
+                projectNewMessageLocked(existing)
             }
             return existing.serverSeq
         }
@@ -94,26 +105,26 @@ class MessageService(
         if (committedSeq != serverSeq) {
             // 并发的同 clientMsgId 已先行提交，当前分配的 seq 保留为合法空洞。
             messages.getMessage(chatId, committedSeq)?.let { committed ->
-                if (messages.isProjectionPending(chatId, committedSeq)) projectNewMessage(committed)
+                if (messages.isProjectionPending(chatId, committedSeq)) projectNewMessageLocked(committed)
             }
             return committedSeq
         }
-        projectNewMessage(storedMessage)
+        projectNewMessageLocked(storedMessage)
 
         return serverSeq
     }
 
     fun getHistory(uid: String, chatId: String, fromSeq: Long, limit: Int): List<Message> {
         requireQueryPageLimit(limit)
-        if (!chatStore.isMember(chatId, uid)) {
-            throw IllegalArgumentException("不是聊天成员")
-        }
+        access.requireMember(uid, chatId)
         return messages.getHistory(chatId, fromSeq, limit, forward = false)
     }
 
-    suspend fun revokeMessage(uid: String, chatId: String, serverSeq: Long) {
-        val actor = chatStore.getMember(chatId, uid)
-            ?: throw IllegalArgumentException("不是聊天成员")
+    suspend fun revokeMessage(uid: String, chatId: String, serverSeq: Long) =
+        lifecycleGate.withChat(chatId) { revokeMessageLocked(uid, chatId, serverSeq) }
+
+    private suspend fun revokeMessageLocked(uid: String, chatId: String, serverSeq: Long) {
+        val actor = access.requireMember(uid, chatId)
         val message = messages.getMessage(chatId, serverSeq)
             ?: throw IllegalArgumentException("消息不存在")
 
@@ -124,7 +135,7 @@ class MessageService(
     }
 
     /** 管理员撤回：免权限检查，广播链路复用。 */
-    suspend fun adminRevoke(chatId: String, serverSeq: Long) {
+    suspend fun adminRevoke(chatId: String, serverSeq: Long) = lifecycleGate.withChat(chatId) {
         val message = messages.getMessage(chatId, serverSeq)
             ?: throw IllegalArgumentException("消息不存在")
         doRevoke(message)
@@ -143,10 +154,11 @@ class MessageService(
         )
     }
 
-    suspend fun editMessage(uid: String, chatId: String, serverSeq: Long, newMessage: Message) {
-        if (!chatStore.isMember(chatId, uid)) {
-            throw IllegalArgumentException("不是聊天成员")
-        }
+    suspend fun editMessage(uid: String, chatId: String, serverSeq: Long, newMessage: Message) =
+        lifecycleGate.withChat(chatId) { editMessageLocked(uid, chatId, serverSeq, newMessage) }
+
+    private suspend fun editMessageLocked(uid: String, chatId: String, serverSeq: Long, newMessage: Message) {
+        access.requireMember(uid, chatId)
         val message = messages.getMessage(chatId, serverSeq)
             ?: throw IllegalArgumentException("消息不存在")
 
@@ -188,7 +200,22 @@ class MessageService(
     }
 
     suspend fun forwardMessage(uid: String, srcChatId: String, srcSeq: Long, targetChatId: String): Message {
-        if (!chatStore.isMember(srcChatId, uid)) throw IllegalArgumentException("不是源聊天成员")
+        return lifecycleGate.withChats(srcChatId, targetChatId) {
+            forwardMessageLocked(uid, srcChatId, srcSeq, targetChatId)
+        }
+    }
+
+    private suspend fun forwardMessageLocked(
+        uid: String,
+        srcChatId: String,
+        srcSeq: Long,
+        targetChatId: String,
+    ): Message {
+        // Source membership is a current authorization fact too. Keep the check under the same
+        // two-chat lifecycle boundary as the source read and target commit, otherwise a kick,
+        // leave, or dissolve can revoke access while a forward is waiting on the target chat.
+        access.requireMember(uid, srcChatId, "不是源聊天成员")
+
         // 转发会在目标会话创建并广播一条全新的消息，必须服从与 sendMessage 相同的
         // 当前权限事实；否则黑名单、单成员禁言和全员禁言都能被转发入口绕过。
         requireCanCreateMessage(uid, targetChatId)
@@ -210,7 +237,7 @@ class MessageService(
         validateMentionMembership(forwardMsg)
 
         messages.storeMessage(forwardMsg)
-        projectNewMessage(forwardMsg)
+        projectNewMessageLocked(forwardMsg)
 
         return forwardMsg
     }
@@ -222,9 +249,7 @@ class MessageService(
      * 拉黑/禁言反向改写；转发没有客户端幂等身份，因此每次都必须先通过此检查。
      */
     private fun requireCanCreateMessage(senderUid: String, chatId: String) {
-        if (!chatStore.isMember(chatId, senderUid)) {
-            throw IllegalArgumentException("不是聊天成员")
-        }
+        access.requireMember(senderUid, chatId)
 
         val chat = chatStore.getChat(chatId) ?: throw IllegalArgumentException("聊天不存在")
         if (chat.chatType == 1) {
@@ -253,7 +278,7 @@ class MessageService(
             // 根据当前用户会话计算，不能信任客户端上传任意 chatId 列表。
             chatStore.listUserChatIds(uid)
         } else {
-            if (!chatStore.isMember(chatId, uid)) throw IllegalArgumentException("不是聊天成员")
+            access.requireMember(uid, chatId)
             setOf(chatId)
         }
         if (allowedChatIds.isEmpty()) return emptyList()
@@ -275,6 +300,11 @@ class MessageService(
     }
 
     private suspend fun projectNewMessage(message: Message) {
+        lifecycleGate.withChat(message.chatId) { projectNewMessageLocked(message) }
+    }
+
+    /** Must run under the chat lifecycle gate; projection lock only deduplicates the same seq. */
+    private suspend fun projectNewMessageLocked(message: Message) {
         val lock = projectionLocks[projectionLockIndex(message.chatId, message.serverSeq)]
         lock.lock()
         try {
@@ -336,6 +366,18 @@ class MessageService(
         val memberUids = chatStore.getMemberUids(message.chatId).toHashSet()
         require(mentionedUids.all(memberUids::contains)) {
             "mention 目标必须是当前聊天成员"
+        }
+    }
+
+    /**
+     * GENERIC is a receive-compatible escape hatch, not permission for clients to invent an
+     * extension number. The protocol decoder preserves unknown opaque messages from a newer
+     * server, while this authoritative create boundary accepts only explicitly allocated codes.
+     */
+    private fun requireRegisteredGenericExtension(message: Message) {
+        val generic = message.body as? GenericPayload ?: return
+        require(ExtensionType.fromCode(generic.extensionType) != null) {
+            "未登记的消息扩展类型: ${generic.extensionType}"
         }
     }
 
@@ -403,7 +445,6 @@ class MessageService(
 
         /** 操作型消息只能走权限明确的 RPC，不能伪装成普通 MESSAGE 帧落库。 */
         private val CREATABLE_MESSAGE_TYPES = setOf(
-            MessageType.TEXT,
             MessageType.RICH_TEXT,
             MessageType.INTERACTIVE_CARD,
             MessageType.IMAGE,
@@ -415,8 +456,11 @@ class MessageService(
             MessageType.REPLY,
             MessageType.MERGE_FORWARD,
             MessageType.STICKER,
+            // GENERIC enters canonicalization so the server can produce an explicit
+            // "unregistered extension" rejection instead of treating code 99 as unknown.
+            MessageType.GENERIC,
         )
 
-        private val EDITABLE_MESSAGE_TYPES = setOf(MessageType.TEXT, MessageType.RICH_TEXT)
+        private val EDITABLE_MESSAGE_TYPES = setOf(MessageType.RICH_TEXT)
     }
 }

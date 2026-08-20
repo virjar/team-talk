@@ -15,7 +15,7 @@ class GroupRequestIsolationTest {
 
     @Test
     fun `late group A detail cannot overwrite group B`() = runTest {
-        val gate = GroupRequestGate<String>()
+        val gate = LatestRequestGate<String>()
         val responseA = CompletableDeferred<String>()
         val responseB = CompletableDeferred<String>()
         var committed: String? = null
@@ -43,7 +43,7 @@ class GroupRequestIsolationTest {
 
     @Test
     fun `late folder response cannot overwrite current root or finish its loading`() = runTest {
-        val gate = GroupRequestGate<GroupFileLocation>()
+        val gate = LatestRequestGate<GroupFileLocation>()
         val folderResponse = CompletableDeferred<String>()
         val rootResponse = CompletableDeferred<String>()
         var entries: String? = null

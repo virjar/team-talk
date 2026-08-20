@@ -64,18 +64,6 @@ data class DocumentTabState(
     }
 }
 
-/**
- * 文档工作台的导航世代。所有带远端等待的导航都先领取 token，等待返回后只允许最新 token 落状态。
- * UI 事件在同一 Compose scope 中串行领取 token，因此这里不引入平台相关的原子类型。
- */
-internal class DocumentNavigationGeneration {
-    private var current = 0L
-
-    fun next(): Long = ++current
-
-    fun isCurrent(generation: Long): Boolean = generation == current
-}
-
 /** 关闭活动标签后只在原空间内选择替补，避免编辑上下文暗中跳到另一个空间。 */
 internal fun replacementDocumentTab(
     remainingTabs: List<DocumentTabState>,
@@ -232,23 +220,6 @@ internal data class DocumentRequestTarget(
     }
 }
 
-/** 单调请求门；只有最后一次、且身份完全相同的异步响应可以落状态。 */
-internal class DocumentIdentityRequestGate<T> {
-    internal data class Token<T>(val generation: Long, val target: T)
-
-    private var generation = 0L
-    private var current: Token<T>? = null
-
-    fun begin(target: T): Token<T> = Token(++generation, target).also { current = it }
-
-    fun invalidate() {
-        generation++
-        current = null
-    }
-
-    fun isCurrent(token: Token<T>): Boolean = current == token
-}
-
 /** 企业文档工作台状态；不依赖聊天上下文，可同时保留来自多个空间的文档标签。 */
 class DocumentWorkspaceFeature internal constructor(
     private val session: ClientSession,
@@ -325,12 +296,12 @@ class DocumentWorkspaceFeature internal constructor(
     private var draftRestorationLoaded = false
     private var pendingDraftRestoration: DocumentWorkspaceDraftSnapshot? = null
     private var tabInstanceSequence = 0L
-    private val navigationGeneration = DocumentNavigationGeneration()
+    private val navigationGeneration = GenerationGate()
     private var mutationSequence = 0L
     private var pendingMutations by mutableStateOf<Map<Long, DocumentTabRequest>>(emptyMap())
     private var historyTarget: DocumentRequestTarget? = null
-    private val historyListGate = DocumentIdentityRequestGate<DocumentRequestTarget>()
-    private val revisionPreviewGate = DocumentIdentityRequestGate<DocumentRequestTarget>()
+    private val historyListGate = LatestRequestGate<DocumentRequestTarget>()
+    private val revisionPreviewGate = LatestRequestGate<DocumentRequestTarget>()
 
     suspend fun open() {
         val generation = beginNavigation()
@@ -1061,12 +1032,12 @@ class DocumentWorkspaceFeature internal constructor(
         tabs.any(request::targets)
 
     private fun acceptHistoryResponse(
-        token: DocumentIdentityRequestGate.Token<DocumentRequestTarget>,
+        token: LatestRequestGate.Token<DocumentRequestTarget>,
     ): Boolean = historyListGate.isCurrent(token) &&
         historyTarget == token.target && token.target.targets(activeTab)
 
     private fun acceptRevisionResponse(
-        token: DocumentIdentityRequestGate.Token<DocumentRequestTarget>,
+        token: LatestRequestGate.Token<DocumentRequestTarget>,
     ): Boolean = revisionPreviewGate.isCurrent(token) &&
         historyTarget == token.target && token.target.targets(activeTab)
 

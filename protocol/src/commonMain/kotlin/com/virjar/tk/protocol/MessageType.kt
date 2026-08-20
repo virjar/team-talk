@@ -5,7 +5,8 @@ package com.virjar.tk.protocol
  * MESSAGE 包的 payload 内含 messageType(1B)，二级子类型设计提供 255 个空间。
  */
 enum class MessageType(val code: Int) {
-    TEXT(1),
+    /** Markdown 是文字消息的唯一权威源。 */
+    RICH_TEXT(1),
     IMAGE(2),
     VOICE(3),
     VIDEO(4),
@@ -20,10 +21,15 @@ enum class MessageType(val code: Int) {
     STICKER(13),
     REACTION(14),
     TYPING(15),
-    RICH_TEXT(16),
-    INTERACTIVE_CARD(17),
+    INTERACTIVE_CARD(16),
 
-    // 通用扩展入口（协议演进策略 §9）：body = GenericPayload(extensionType + data)
+    /**
+     * MESSAGE 通道的受控扩展入口，body 固定为 `GenericPayload(extensionType, opaque data)`。
+     *
+     * **这是与 RPC、NOTIFY 并列的刻意协议预留，不是模糊降级类型；禁止因为当前没有已登记的
+     * [ExtensionType] 就删除。** 未知 extensionType 必须完整解码并保留 opaque bytes，客户端只
+     * 显示安全占位；客户端创建未登记扩展时由服务端拒绝。
+     */
     GENERIC(99);
 
     companion object {

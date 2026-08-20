@@ -19,6 +19,7 @@ import com.virjar.tk.viewmodel.ChatViewModel
 import com.virjar.tk.viewmodel.ContactViewModel
 import com.virjar.tk.viewmodel.ConversationViewModel
 import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,23 +34,15 @@ import kotlinx.coroutines.launch
  * state and actions live in [account], [groups] and [discovery].
  */
 open class AppDataState(
-    val session: ClientSession,
+    private val session: ClientSession,
     val chatComposerContexts: ChatComposerContextStore = ChatComposerContextStore(),
     val documentDrafts: DocumentDraftStore = DocumentDraftStore(),
     private val onAuthExpired: () -> Unit = { session.close() },
 ) {
-    val imClient get() = session.imClient
     val userSession get() = session.userSession
-    val localCache get() = session.localCache
-    val chatRepo get() = session.chatRepo
-    val contactRepo get() = session.contactRepo
-    val messageRepo get() = session.messageRepo
-    val deviceRepo get() = session.deviceRepo
-    val userRepo get() = session.userRepo
-    val conversationRepo get() = session.conversationRepo
-    val organizationRepo get() = session.organizationRepo
-    val groupFileRepo get() = session.groupFileRepo
-    val documentRepo get() = session.documentRepo
+
+    /** Narrow synchronous lookup for platform renderers; the cache itself remains session-owned. */
+    fun cachedUser(uid: String) = session.localCache.getUser(uid)
 
     private val activeChat = ActiveChatBinding()
 
@@ -58,10 +51,13 @@ open class AppDataState(
             CoroutineExceptionHandler { _, throwable -> logUnhandledError("AppDataState", throwable) },
     )
 
-    val conversationViewModel = ConversationViewModel(localCache, conversationRepo)
-    val contactViewModel = ContactViewModel(localCache, contactRepo, userSession.uid).also { viewModel ->
-        session.eventProcessor.onContactChanged = { viewModel.refreshPendingApplyCount() }
-    }
+    val conversationViewModel = ConversationViewModel(session.localCache, session.conversationRepo)
+    val contactViewModel = ContactViewModel(
+        localCache = session.localCache,
+        contactRepo = session.contactRepo,
+        myUid = userSession.uid,
+        contactEvents = session.eventProcessor.contactEvents,
+    )
     var chatViewModel by mutableStateOf<ChatViewModel?>(null)
         private set
 
@@ -87,7 +83,6 @@ open class AppDataState(
         if (clearComposerContexts) chatComposerContexts.clear()
         if (clearDocumentDrafts) documentDrafts.clear(userSession.uid) else documentDrafts.flush()
         actionScope.cancel()
-        session.eventProcessor.onContactChanged = null
     }
 
     fun prepareChat(chatId: String, chatName: String, chatType: Int = ChatType.PERSONAL.code) {
@@ -106,8 +101,8 @@ open class AppDataState(
         chatViewModel?.destroy()
         chatViewModel = ChatViewModel(
             chatId,
-            localCache,
-            messageRepo,
+            session.localCache,
+            session.messageRepo,
             session.eventProcessor,
             userSession.uid,
             session.sendQueue,
@@ -143,10 +138,12 @@ open class AppDataState(
         val normalized = draft?.takeIf { it.isNotBlank() }
         // 本地缓存同步落盘，保证立即返回/断网也不丢；Repository 会把远端镜像严格串行，
         // 已发出的旧 RPC 完成后才会发送清空请求，避免服务端乱序复活旧草稿。
-        val generation = conversationRepo.setDraftLocal(chatId, normalized)
+        val generation = session.conversationRepo.setDraftLocal(chatId, normalized)
         actionScope.launch {
             try {
-                conversationRepo.mirrorDraft(chatId, generation)
+                session.conversationRepo.mirrorDraft(chatId, generation)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 // Draft mirroring is best-effort and must not interrupt conversation flow.
             }
@@ -158,8 +155,8 @@ open class AppDataState(
         if (readSeq <= 0L) return
         actionScope.launch {
             try {
-                messageRepo.markRead(chatId, readSeq).getOrThrow()
-                localCache.markConversationRead(chatId, readSeq)
+                session.messageRepo.markRead(chatId, readSeq).getOrThrow()
+                session.localCache.markConversationRead(chatId, readSeq)
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (throwable: Throwable) {
@@ -169,6 +166,7 @@ open class AppDataState(
     }
 
     private fun handleError(throwable: Throwable, fallbackMessage: String) {
+        if (throwable is CancellationException) throw throwable
         when (throwable) {
             is AppError.AuthExpired -> {
                 error = "认证失效，请重新登录"

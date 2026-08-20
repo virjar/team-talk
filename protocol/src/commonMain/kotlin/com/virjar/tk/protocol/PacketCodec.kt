@@ -27,6 +27,7 @@ enum class PacketInboundRole {
     private companion object {
         val SERVER_INBOUND_TYPES = setOf(
             PacketType.AUTH,
+            PacketType.SYNC_REQUEST,
             PacketType.DISCONNECT,
             PacketType.PING,
             PacketType.PONG,
@@ -37,6 +38,9 @@ enum class PacketInboundRole {
         )
         val CLIENT_INBOUND_TYPES = setOf(
             PacketType.AUTH_RESP,
+            PacketType.SYNC_BATCH,
+            PacketType.SYNC_READY,
+            PacketType.SYNC_RESET,
             PacketType.DISCONNECT,
             PacketType.PING,
             PacketType.PONG,
@@ -53,7 +57,7 @@ enum class PacketInboundRole {
 /**
  * TCP 帧编解码器。
  *
- * 帧格式（v3）：[TYPE(1B)][LENGTH(4B)][PAYLOAD(LENGTH bytes)]
+ * 帧格式：[TYPE(1B)][LENGTH(4B)][PAYLOAD(LENGTH bytes)]
  *
  * 解码产出 IProto 对象，编码接收 IProto 对象写入 ByteBuf。
  */
@@ -67,8 +71,11 @@ class PacketCodec(
         /** 帧头大小：TYPE(1B) + LENGTH(4B) */
         const val HEADER_SIZE = 5
 
-        /** 协议版本（连接级不变量；AUTH 序言魔第 3 字节协商） */
-        const val PROTOCOL_VERSION: Byte = 8
+        /**
+         * 正式发布前的开发协议基线。以后如果发生不兼容变更，必须从当前值递增，
+         * 避免两个不同 wire 共用同一版本号。
+         */
+        const val PROTOCOL_VERSION: Byte = 0
 
         /** 单帧 payload 上限（认证后） */
         const val MAX_PAYLOAD_SIZE = 16 * 1024 * 1024  // 16MB
@@ -103,7 +110,7 @@ class PacketCodec(
             PacketType.fromCode(typeCode)
         } catch (e: IllegalArgumentException) {
             // 帧级类型集随 PROTOCOL_VERSION 固定：未知 TYPE = 错位/污染/跨版本，
-            // 断连（v2 及之前带帧头 magic 时曾静默丢帧——掩盖协议异常）
+            // 必须断连，不能静默丢帧掩盖协议异常。
             throw io.netty.handler.codec.CorruptedFrameException("Unknown packet type: $typeCode")
         }
         if (!inboundRole.accepts(packetType)) {
@@ -147,6 +154,18 @@ class PacketCodec(
             decoded
         }
 
+        // ByteToMessageDecoder may decode several coalesced frames before downstream handlers run.
+        // Raise the client-side frame limit at the successful AUTH_RESP itself so a large
+        // SYNC_BATCH immediately following it in the same TCP read is decoded under the
+        // authenticated budget, not the 4 KiB pre-authentication fence.
+        if (
+            inboundRole == PacketInboundRole.CLIENT &&
+            proto is AuthResponsePayload &&
+            proto.code == AuthResponsePayload.CODE_OK
+        ) {
+            maxPayloadLimit = AUTHED_LIMIT
+        }
+
         out.add(proto)
     }
 
@@ -160,6 +179,10 @@ class PacketCodec(
     private fun decodePayload(type: PacketType, buf: PacketBuffer): IProto = when (type) {
         PacketType.AUTH -> AuthRequestPayload.readFrom(buf)
         PacketType.AUTH_RESP -> AuthResponsePayload.readFrom(buf)
+        PacketType.SYNC_REQUEST -> SyncRequestPayload.readFrom(buf)
+        PacketType.SYNC_BATCH -> SyncBatchPayload.readFrom(buf)
+        PacketType.SYNC_READY -> SyncReadyPayload.readFrom(buf)
+        PacketType.SYNC_RESET -> SyncResetPayload.readFrom(buf)
         PacketType.INVOKE -> InvokePayload.readFrom(buf)
         PacketType.RESPONSE -> ResponsePayload.readFrom(buf)
         PacketType.STREAM_ITEM -> StreamItemPayload.readFrom(buf)
@@ -200,6 +223,10 @@ class PacketCodec(
     private fun resolveTypeAndWriter(msg: IProto): Pair<Int, (PacketBuffer) -> Unit> = when (msg) {
         is AuthRequestPayload -> PacketType.AUTH.code to { it.writePayload(msg) }
         is AuthResponsePayload -> PacketType.AUTH_RESP.code to { it.writePayload(msg) }
+        is SyncRequestPayload -> PacketType.SYNC_REQUEST.code to { it.writePayload(msg) }
+        is SyncBatchPayload -> PacketType.SYNC_BATCH.code to { it.writePayload(msg) }
+        is SyncReadyPayload -> PacketType.SYNC_READY.code to { it.writePayload(msg) }
+        is SyncResetPayload -> PacketType.SYNC_RESET.code to { it.writePayload(msg) }
         is PingSignal -> PacketType.PING.code to {}
         is PongSignal -> PacketType.PONG.code to {}
         is DisconnectSignal -> PacketType.DISCONNECT.code to {}

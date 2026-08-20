@@ -19,20 +19,20 @@ data class OrganizationMember(
         buf.writeString(unitId)
         buf.writeString(uid)
         buf.writeString(title)
-        buf.writeByte(if (primary) 1 else 0)
+        buf.writeBoolean(primary)
         buf.writeVarLong(joinedAt)
-        buf.writeByte(if (user != null) 1 else 0)
+        buf.writeBoolean(user != null)
         user?.writeTo(buf)
     }
 
     companion object : IProtoReader<OrganizationMember> {
         override fun readFrom(buf: PacketBuffer): OrganizationMember = OrganizationMember(
-            unitId = buf.readString()!!,
-            uid = buf.readString()!!,
+            unitId = buf.readRequiredString(),
+            uid = buf.readRequiredString(),
             title = buf.readString(),
-            primary = buf.readByte() != 0,
+            primary = buf.readBoolean("organization member primary"),
             joinedAt = buf.readVarLong(),
-            user = if (buf.readByte() != 0) User.readFrom(buf) else null,
+            user = if (buf.readBoolean("organization member user presence")) User.readFrom(buf) else null,
         )
     }
 }

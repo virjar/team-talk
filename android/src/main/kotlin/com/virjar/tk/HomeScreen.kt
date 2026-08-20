@@ -109,7 +109,7 @@ fun HomeScreen(
                         val conv = conversations.find { it.chatId == chatId }
                         onConversationClick(chatId, conv?.chatName ?: chatId.take(16), conv?.chatType ?: 1)
                     },
-                    onPinClick = { chatId, pinned -> dataState.session.localCache.toggleConversationPin(chatId, pinned) },
+                    onPinClick = dataState.conversationViewModel::setPinned,
                     onMarkRead = { chatId, lastSeq ->
                         dataState.markConversationRead(chatId, lastSeq)
                     },

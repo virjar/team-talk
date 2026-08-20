@@ -21,7 +21,7 @@ distributions {
             // 启动脚本：随构建打包，避免 rsync --delete 部署时丢失
             from("src/main/resources/bin/teamtalk.sh") {
                 into("bin")
-                fileMode = 0b111101101 // 0755
+                filePermissions { unix("rwxr-xr-x") }
             }
         }
     }
@@ -69,7 +69,6 @@ dependencies {
     testImplementation("io.ktor:ktor-server-test-host:${libs.versions.ktor.get()}")
     testImplementation("io.ktor:ktor-client-mock:${libs.versions.ktor.get()}")
     // 跨端编解码一致性测试需要客户端 Repository（:app 的 JVM target）
-    testImplementation(project(":app"))
     testImplementation(libs.ktor.server.core)
     testImplementation(libs.koin.core)
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
@@ -93,10 +92,14 @@ tasks.test {
     // 否则工作区残留的旧分发包会用旧 PROTOCOL_VERSION 无限重连。
     dependsOn(":shared:headlessDist")
 
-    // 默认运行集成测试（基于 Embedded PostgreSQL，无需外部 DB）
+    // 默认运行集成测试；PostgreSQL 连接由 TK_TEST_PG_* 提供，每个环境只使用自己的临时 schema。
     // 本地快速跳过：./gradlew :server:test -PskipTests
     onlyIf { !project.hasProperty("skipTests") }
     useJUnitPlatform()
+    // DatabaseFactory is process-global. Every database-backed test owns a private PostgreSQL schema, while the
+    // single test fork keeps Exposed's global default database from crossing concurrently active environments.
+    maxParallelForks = 1
+    systemProperty("junit.jupiter.execution.parallel.enabled", "false")
     // 服务端测试会间接加载 :app 的 JVM 类和 Java2D 缩略图，但不应注册 macOS GUI 应用。
     // JBR 17 在新版 macOS 上尝试初始化 AppKit 会直接 SIGABRT（exit 134）；headless
     // 仍保留 BufferedImage/ImageIO 能力，并让服务端测试符合真实无界面运行形态。

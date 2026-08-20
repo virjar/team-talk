@@ -22,7 +22,7 @@ data class Message(
     val messageType: Int,
     val timestamp: Long,
     val flags: Int = 0,
-    // JSON 序列化跳过多态 body（15 种 Body 子类未标 @Serializable；admin 高亮走 Lucene，
+    // JSON 序列化跳过多态 body（MessageBody 子类未标 @Serializable；admin 高亮走 Lucene，
     // wire 编解码走 IProto.writeTo 不受影响）
     @kotlinx.serialization.Transient
     val body: MessageBody? = null,
@@ -41,12 +41,8 @@ data class Message(
         buf.writeByte(messageType)
         buf.writeVarLong(timestamp)
         buf.writeVarInt(flags)
-        if (body != null) {
-            buf.writeByte(1)
-            body.writeTo(buf)
-        } else {
-            buf.writeByte(0)
-        }
+        buf.writeBoolean(body != null)
+        body?.writeTo(buf)
     }
 
     companion object : com.virjar.tk.protocol.IProtoReader<Message> {
@@ -62,18 +58,18 @@ data class Message(
         const val FLAG_FORWARDED = 4 // bit2：消息是转发来的
 
         override fun readFrom(buf: PacketBuffer): Message {
-            val chatId = buf.readString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_CHAT_ID_LENGTH))!!
-            val clientMsgId = buf.readString(
+            val chatId = buf.readRequiredString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_CHAT_ID_LENGTH))
+            val clientMsgId = buf.readRequiredString(
                 MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_CLIENT_MESSAGE_ID_LENGTH),
-            )!!
+            )
             val serverSeq = buf.readVarLong()
-            val senderUid = buf.readString(
+            val senderUid = buf.readRequiredString(
                 MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH),
-            )!!
+            )
             val messageType = buf.readByte()
             val timestamp = buf.readVarLong()
             val flags = buf.readVarInt()
-            val hasBody = buf.readPresenceFlag("message body")
+            val hasBody = buf.readBoolean("message body presence")
             val body = if (hasBody) {
                 MessageBodyRegistry.decode(MessageType.fromCode(messageType), buf)
             } else null

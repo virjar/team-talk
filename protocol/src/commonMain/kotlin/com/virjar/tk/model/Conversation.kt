@@ -29,43 +29,38 @@ data class Conversation(
         buf.writeString(chatName)
         buf.writeString(chatAvatar)
         buf.writeString(lastMessage)
-        // nullable Int: 0=present, 1=null
+        // nullable Int/Long use an explicit presence marker.
+        buf.writeBoolean(lastMessageType != null)
         if (lastMessageType != null) {
-            buf.writeByte(1)
             buf.writeVarInt(lastMessageType)
-        } else {
-            buf.writeByte(0)
         }
-        // nullable Long
+        buf.writeBoolean(lastMsgTimestamp != null)
         if (lastMsgTimestamp != null) {
-            buf.writeByte(1)
             buf.writeVarLong(lastMsgTimestamp)
-        } else {
-            buf.writeByte(0)
         }
         buf.writeVarLong(lastSeq)
         buf.writeVarLong(readSeq)
         buf.writeVarInt(unreadCount)
-        buf.writeByte(if (isPinned) 1 else 0)
-        buf.writeByte(if (isMuted) 1 else 0)
+        buf.writeBoolean(isPinned)
+        buf.writeBoolean(isMuted)
         buf.writeVarLong(peerReadSeq)
         buf.writeString(draft)
     }
 
     companion object : com.virjar.tk.protocol.IProtoReader<Conversation> {
         override fun readFrom(buf: PacketBuffer): Conversation {
-            val chatId = buf.readString()!!
+            val chatId = buf.readRequiredString()
             val chatType = buf.readVarInt()
             val chatName = buf.readString()
             val chatAvatar = buf.readString()
             val lastMessage = buf.readString()
-            val lastMessageType = if (buf.readByte() != 0) buf.readVarInt() else null
-            val lastMsgTimestamp = if (buf.readByte() != 0) buf.readVarLong() else null
+            val lastMessageType = if (buf.readBoolean("last message type presence")) buf.readVarInt() else null
+            val lastMsgTimestamp = if (buf.readBoolean("last message timestamp presence")) buf.readVarLong() else null
             val lastSeq = buf.readVarLong()
             val readSeq = buf.readVarLong()
             val unreadCount = buf.readVarInt()
-            val isPinned = buf.readByte() != 0
-            val isMuted = buf.readByte() != 0
+            val isPinned = buf.readBoolean("conversation pinned")
+            val isMuted = buf.readBoolean("conversation muted")
             val peerReadSeq = buf.readVarLong()
             val draft = buf.readString()
             return Conversation(

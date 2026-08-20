@@ -1,11 +1,11 @@
 # RPC 参考
 
-TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符串 `serviceId`，KSP 生成 Contract、客户端 Proxy 和服务端 Stub。默认 `methodId` 按声明顺序从 1 分配。
+TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符串 `serviceId`，每个方法用 `@RpcMethod(id)` 显式声明 wire 编号，KSP 生成 Contract、客户端 Proxy 和服务端 Stub。
 
 ## 兼容性规则
 
 1. 已发布的 `serviceId` 和 `methodId` 不得改变含义。
-2. 新方法追加在 interface 末尾；确需重排时用 `@RpcMethod(id)` 锁定旧编号。
+2. 每个方法必须声明唯一、正数的 `@RpcMethod(id)`；声明顺序不参与编号，已有编号不得复用。
 3. 方法必须是 `suspend`，参数和返回类型必须属于生成器支持的协议类型。
 4. 修改 IDL 后必须同时实现服务端方法、客户端仓储封装和契约测试。
 5. 注册、登录和 refresh 属于 TCP AUTH 握手，不属于下列 RPC。
@@ -13,9 +13,16 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 
 源文件位于 `protocol/src/commonMain/kotlin/com/virjar/tk/rpc/def/`。
 
+## generic（预留）
+
+通用 RPC 逃生入口固定为字符串 `serviceId="generic"`，方法号直接等于 `ExtensionType.code`。
+当前 `ExtensionType` 刻意为空，服务端也没有注册 generic dispatcher，因此该入口不是可调用功能；
+首个真实扩展必须同时补稳定编号、会话所有的 handler、权限与契约测试。禁止写回旧的数字
+`ServiceId.GENERIC(99)`，也禁止因为当前没有调用方就删除这项 wire 预留。
+
 ## auth
 
-协议版本 8 为 `logout` 增加安装级 `deviceId`，用于完整撤销本机凭证与设备登记。
+`logout` 使用安装级 `deviceId`，用于完整撤销本机凭证与设备登记。
 
 | ID | 方法 | 参数 | 返回 | 说明 |
 |---:|---|---|---|---|
@@ -42,13 +49,13 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 | 6 | `setRemark` | `friendUid`, `remark?` | `Unit` |
 | 7 | `blacklist` | `targetUid` | `Unit` |
 | 8 | `removeFromBlacklist` | `targetUid` | `Unit` |
-| 9 | `listApplies` | — | `List<ContactApply>`（收到且待处理，最新 100 条） |
+| 9 | `listPendingApplies` | — | `List<ContactApply>`（收到且待处理，最新 100 条） |
 | 10 | `listBlacklist` | — | `List<Contact>` |
 | 11 | `listApplyRecords` | `beforeId`, `limit` | `List<ContactApplyRecord>`（双向历史，id 倒序） |
 | 12 | `getPendingApply` | `targetUid` | `ContactApplyLookup`（两人间精确 pending） |
 
 好友关系和黑名单权限必须由服务器判断。客户端列表是投影，不能作为能否发送或查看资料的权威依据。
-`ContactApply` 的既有字段顺序保持不变；11/12 是 V8 末尾追加方法，并使用独立记录模型。申请处理
+`ContactApply` 是收件人处理动作的定向投影；`ContactApplyRecord` 是双向历史查询投影。申请处理
 token 只向收到申请的一方返回，发出记录和已处理记录中的 token 始终为空。
 
 ## chat
@@ -112,7 +119,7 @@ token 只向收到申请的一方返回，发出记录和已处理记录中的 t
 | 1 | `listDevices` | — | `List<Device>` |
 | 2 | `kickDevice` | `deviceId` | `Unit` |
 
-`kickDevice` 显式使用 `@RpcMethod(2)`。踢出设备同时吊销该设备凭证并关闭活跃连接。
+`kickDevice` 使用稳定编号 `@RpcMethod(2)`。踢出设备同时吊销该设备凭证并关闭活跃连接。
 
 ## organization
 
@@ -122,8 +129,8 @@ token 只向收到申请的一方返回，发出记录和已处理记录中的 t
 | 2 | `listMembers` | `unitId`, `recursive` | `List<OrganizationMember>` | 直属或包含子树的成员 |
 
 普通客户端只有读取能力；组织结构、成员归属和部门群启停通过独立管理 HTTP API 执行。
-协议版本 7 起 `OrganizationUnit.directMemberCount` 与
-`listMembers(unitId, recursive = false)` 的直属成员口径一致，根节点也不例外；子部门成员不重复计入。
+`OrganizationUnit.directMemberCount` 与 `listMembers(unitId, recursive = false)` 的直属成员口径一致，
+根节点也不例外；子部门成员不重复计入。
 
 ## groupFile
 
@@ -163,7 +170,7 @@ token 只向收到申请的一方返回，发出记录和已处理记录中的 t
 | 17 | `listRecentDocuments` | `limit` | `List<DocumentHomeItem>` |
 | 18 | `listRecentlyCreatedDocuments` | `limit` | `List<DocumentHomeItem>` |
 
-协议版本 8 沿用版本 6 引入的上述完整方法集；文档从版本 5 起不再接受群 scope。所有调用按认证 uid 合并空间所有权、用户授权和实时组织部门
+文档只以独立空间为权限根，不接受群 scope。所有调用按认证 uid 合并空间所有权、用户授权和实时组织部门
 授权。目录列表不返回 Markdown，修订列表只返回摘要；更新、移动和删除必须使用客户端实际读取到的
 revision，冲突由服务端拒绝，错误文案不作为并发控制协议。
 

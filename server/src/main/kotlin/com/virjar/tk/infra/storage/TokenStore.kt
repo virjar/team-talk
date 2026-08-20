@@ -6,6 +6,7 @@ import org.rocksdb.*
 import org.slf4j.LoggerFactory
 import java.security.SecureRandom
 import java.util.*
+import java.util.concurrent.atomic.AtomicBoolean
 
 private val logger = LoggerFactory.getLogger("TokenStore")
 
@@ -16,22 +17,21 @@ private val logger = LoggerFactory.getLogger("TokenStore")
  */
 class TokenStore(dbPath: String) : TokenRepository {
 
-    private val db: RocksDB
-    private val cfHandle: ColumnFamilyHandle
     private val random = SecureRandom()
+    private val closed = AtomicBoolean(false)
     /** Serializes refresh rotation with logout/device revocation. */
     private val tokenMutationLock = Any()
+    private val opened = openDatabase(dbPath)
+    private val db: RocksDB = opened.db
+    private val cfHandle: ColumnFamilyHandle = opened.tokenHandle
 
     init {
-        RocksDB.loadLibrary()
-        val options = DBOptions().setCreateIfMissing(true).setCreateMissingColumnFamilies(true)
-        val cfDesc = ColumnFamilyDescriptor("tokens".toByteArray(), ColumnFamilyOptions())
-        val cfDefault = ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY, ColumnFamilyOptions())
-
-        val handles = mutableListOf<ColumnFamilyHandle>()
-        db = RocksDB.open(options, dbPath, listOf(cfDefault, cfDesc), handles)
-        cfHandle = handles[1]
-        logger.info("TokenStore initialized at $dbPath")
+        try {
+            logger.info("TokenStore initialized at $dbPath")
+        } catch (error: Throwable) {
+            runCatching { close() }.onFailure(error::addSuppressed)
+            throw error
+        }
     }
 
     /**
@@ -107,17 +107,17 @@ class TokenStore(dbPath: String) : TokenRepository {
     override fun revokeAllDeviceTokens(uid: String, deviceId: String) = synchronized(tokenMutationLock) {
         // 扫描并删除该 uid+deviceId 的所有 token
         val toDelete = mutableListOf<String>()
-        val iter = db.newIterator(cfHandle)
-        iter.seekToFirst()
-        while (iter.isValid) {
-            val key = String(iter.key(), Charsets.UTF_8)
-            val value = decodeValue(iter.value())
-            if (value != null && value.uid == uid && value.deviceId == deviceId) {
-                toDelete.add(key)
+        db.newIterator(cfHandle).use { iter ->
+            iter.seekToFirst()
+            while (iter.isValid) {
+                val key = String(iter.key(), Charsets.UTF_8)
+                val value = decodeValue(iter.value())
+                if (value != null && value.uid == uid && value.deviceId == deviceId) {
+                    toDelete.add(key)
+                }
+                iter.next()
             }
-            iter.next()
         }
-        iter.close()
         toDelete.forEach { delete(it) }
     }
 
@@ -127,23 +127,34 @@ class TokenStore(dbPath: String) : TokenRepository {
      */
     override fun revokeAllUserTokens(uid: String) = synchronized(tokenMutationLock) {
         val toDelete = mutableListOf<String>()
-        val iter = db.newIterator(cfHandle)
-        iter.seekToFirst()
-        while (iter.isValid) {
-            val key = String(iter.key(), Charsets.UTF_8)
-            val value = decodeValue(iter.value())
-            if (value != null && value.uid == uid) {
-                toDelete.add(key)
+        db.newIterator(cfHandle).use { iter ->
+            iter.seekToFirst()
+            while (iter.isValid) {
+                val key = String(iter.key(), Charsets.UTF_8)
+                val value = decodeValue(iter.value())
+                if (value != null && value.uid == uid) {
+                    toDelete.add(key)
+                }
+                iter.next()
             }
-            iter.next()
         }
-        iter.close()
         toDelete.forEach { delete(it) }
     }
 
     fun close() {
-        cfHandle.close()
-        db.close()
+        if (!closed.compareAndSet(false, true)) return
+        var failure: Throwable? = null
+        fun closePart(block: () -> Unit) {
+            try {
+                block()
+            } catch (error: Throwable) {
+                val first = failure
+                if (first == null) failure = error else first.addSuppressed(error)
+            }
+        }
+        opened.handles.asReversed().forEach { handle -> closePart { handle.close() } }
+        closePart { db.close() }
+        failure?.let { throw it }
     }
 
     // ── 内部方法 ──
@@ -181,5 +192,47 @@ class TokenStore(dbPath: String) : TokenRepository {
     companion object {
         private const val ACCESS_TOKEN_TTL = 30 * 24 * 60 * 60 * 1000L  // 30 days
         private const val REFRESH_TOKEN_TTL = 90 * 24 * 60 * 60 * 1000L // 90 days
+
+        private data class OpenDatabase(
+            val db: RocksDB,
+            val handles: List<ColumnFamilyHandle>,
+        ) {
+            val tokenHandle: ColumnFamilyHandle get() = handles[1]
+        }
+
+        private fun openDatabase(dbPath: String): OpenDatabase {
+            RocksDB.loadLibrary()
+            val nativeOptions = mutableListOf<AutoCloseable>()
+            try {
+                val dbOptions = DBOptions().also(nativeOptions::add)
+                dbOptions
+                    .setCreateIfMissing(true)
+                    .setCreateMissingColumnFamilies(true)
+                val defaultOptions = ColumnFamilyOptions().also(nativeOptions::add)
+                val tokenOptions = ColumnFamilyOptions().also(nativeOptions::add)
+                val handles = mutableListOf<ColumnFamilyHandle>()
+                var database: RocksDB? = null
+                try {
+                    val openedDb = RocksDB.open(
+                        dbOptions,
+                        dbPath,
+                        listOf(
+                            ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY, defaultOptions),
+                            ColumnFamilyDescriptor("tokens".toByteArray(), tokenOptions),
+                        ),
+                        handles,
+                    )
+                    database = openedDb
+                    check(handles.size == 2) { "TokenStore column-family initialization was incomplete" }
+                    return OpenDatabase(openedDb, handles.toList())
+                } catch (error: Throwable) {
+                    handles.asReversed().forEach { handle -> runCatching { handle.close() } }
+                    runCatching { database?.close() }
+                    throw error
+                }
+            } finally {
+                nativeOptions.asReversed().forEach { option -> runCatching { option.close() } }
+            }
+        }
     }
 }

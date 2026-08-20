@@ -19,9 +19,9 @@ sealed interface AttachmentBody : MessageBody {
 }
 
 internal fun PacketBuffer.writeAttachmentOrNull(attachment: Attachment?) {
-    writeByte(if (attachment == null) 0 else 1)
+    writeBoolean(attachment != null)
     attachment?.writeTo(this)
 }
 
 internal fun PacketBuffer.readAttachmentOrNull(): Attachment? =
-    if (!readPresenceFlag("attachment")) null else Attachment.readFrom(this)
+    if (!readBoolean("attachment presence")) null else Attachment.readFrom(this)

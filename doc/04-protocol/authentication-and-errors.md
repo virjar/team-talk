@@ -10,8 +10,12 @@ AUTH 的 `authType`：
 | 1 | 注册并登录 | username、password、name、deviceId |
 | 2 | refresh token 自动登录 | refreshToken、deviceId |
 
-所有流程都携带设备信息和 `lastEventId`。认证成功后服务端返回 uid、access token、新 refresh token
-和过期时间，再开始离线事件补发。
+所有流程都携带设备信息。认证成功后服务端返回 uid、access token、新 refresh token 和过期时间；
+随后由已经打开本地缓存的 EventProcessor 通过独立 `SYNC_REQUEST(lastEventId)` 开始增量事件同步。
+客户端的自动登录看门狗将连接/身份认证和事件同步分开：前者为 12 秒有界等待，
+进入 `SYNCHRONIZING` 后改用 35 秒无进度窗口，每次持久化 cursor 前进都会续期。长 replay
+不能被身份认证的固定计时主动断开。若 cursor 不属于当前账号，服务端通过 `SYNC_RESET` 要求
+客户端在同一身份连接内清空服务器投影并从 0 重放；这不是认证失败，也不触发强制升级。
 
 ## 2. Token 模型
 

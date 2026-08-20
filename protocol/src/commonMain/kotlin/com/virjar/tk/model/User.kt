@@ -30,9 +30,9 @@ data class User(
 
     companion object : com.virjar.tk.protocol.IProtoReader<User> {
         override fun readFrom(buf: PacketBuffer): User = User(
-            uid = buf.readString()!!,
-            username = buf.readString()!!,
-            name = buf.readString()!!,
+            uid = buf.readRequiredString(),
+            username = buf.readRequiredString(),
+            name = buf.readRequiredString(),
             avatar = buf.readString(),
             phone = buf.readString(),
             sex = buf.readVarInt(),

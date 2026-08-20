@@ -2,6 +2,7 @@ package com.virjar.tk.model
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 class ChatTypeTest {
 
@@ -16,10 +17,10 @@ class ChatTypeTest {
     }
 
     @Test
-    fun fromCode_falls_back_to_PERSONAL_for_unknown_code() {
-        assertEquals(ChatType.PERSONAL, ChatType.fromCode(0))
-        assertEquals(ChatType.PERSONAL, ChatType.fromCode(99))
-        assertEquals(ChatType.PERSONAL, ChatType.fromCode(-1))
+    fun fromCode_rejects_unknown_code() {
+        listOf(0, 99, -1).forEach { code ->
+            assertFailsWith<IllegalArgumentException> { ChatType.fromCode(code) }
+        }
     }
 
     @Test

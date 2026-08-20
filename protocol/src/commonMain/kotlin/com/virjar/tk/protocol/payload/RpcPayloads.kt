@@ -8,7 +8,7 @@ import com.virjar.tk.protocol.PacketBuffer
 
 data class InvokePayload(
     val requestId: Int,
-    /** serviceId：字符串（协议 v2 起，@RpcService name） */
+    /** serviceId：@RpcService name 字符串。 */
     val serviceId: String,
     val methodId: Int,
     val payload: ByteArray?,
@@ -27,7 +27,7 @@ data class InvokePayload(
 
         override fun readFrom(buf: PacketBuffer) = InvokePayload(
             requestId = buf.readVarInt(),
-            serviceId = buf.readString(MAX_SERVICE_ID_BYTES)!!,
+            serviceId = buf.readRequiredString(MAX_SERVICE_ID_BYTES),
             methodId = buf.readVarInt(),
             payload = buf.readBytes(MAX_INVOKE_PAYLOAD_BYTES),
         )
@@ -58,6 +58,11 @@ data class ResponsePayload(
 
 // ── STREAM_ITEM payload ──
 
+/**
+ * 保留的流式 RPC 数据帧布局。当前只锁定 wire codec，没有 client/server 流状态机，
+ * 因而是 reserved / not operational；不得据此声称大列表 RPC 已通过 stream 分片。
+ */
+
 data class StreamItemPayload(
     val requestId: Int,
     val payload: ByteArray?,
@@ -76,6 +81,11 @@ data class StreamItemPayload(
 }
 
 // ── STREAM_END payload ──
+
+/**
+ * 保留的流式 RPC 终止帧布局。只有同时落地发送端背压、客户端聚合/取消、超时和错误语义后，
+ * STREAM_ITEM/STREAM_END 才能成为可用能力。
+ */
 
 data class StreamEndPayload(
     val requestId: Int,

@@ -7,6 +7,7 @@ import com.virjar.tk.model.Conversation
 import com.virjar.tk.model.Member
 import com.virjar.tk.model.Message
 import com.virjar.tk.model.User
+import com.virjar.tk.body.GenericPayload
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.NotifyContracts
 import com.virjar.tk.protocol.NotifyType
@@ -88,7 +89,7 @@ class NotifyContractTest {
         NotifyType.READ_SYNC -> ReadSyncPayload(peerUid = "u2", chatId = "c1", peerReadSeq = 7L)
         NotifyType.USER_UPDATED -> sampleUser
         NotifyType.PRESENCE -> com.virjar.tk.protocol.PresencePayload("u1", 1, 123L)
-        NotifyType.GENERIC -> com.virjar.tk.protocol.payload.GenericPayload(extensionType = 1, data = byteArrayOf(1, 2))
+        NotifyType.GENERIC -> GenericPayload(extensionType = 1, data = byteArrayOf(1, 2))
     }
 
     private val sampleUser = User(uid = "u1", username = "alice", name = "Alice")

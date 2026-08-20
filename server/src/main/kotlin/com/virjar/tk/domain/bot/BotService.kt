@@ -1,11 +1,9 @@
 package com.virjar.tk.domain.bot
 
 import com.virjar.tk.body.buildRichTextBody
-import com.virjar.tk.domain.chat.ChatService
-import com.virjar.tk.domain.chat.ChatStore
+import com.virjar.tk.domain.chat.ChatAccess
+import com.virjar.tk.domain.chat.ChatAccessDeniedException
 import com.virjar.tk.domain.chat.ChatLifecycleGate
-import com.virjar.tk.domain.message.MessageService
-import com.virjar.tk.domain.user.UserService
 import com.virjar.tk.http.GroupBotCredentials
 import com.virjar.tk.http.GroupBotSummary
 import com.virjar.tk.model.Member
@@ -51,10 +49,10 @@ interface GroupBotManagement {
 /** 受治理通知机器人：服务身份、群白名单、不可恢复 token 与幂等消息发送。 */
 class BotService(
     private val repository: BotRepository,
-    private val users: UserService,
-    private val chatStore: ChatStore,
-    private val chats: ChatService,
-    private val messages: MessageService,
+    private val accounts: BotAccountProvisioner,
+    private val access: ChatAccess,
+    private val groupMembership: BotGroupMembership,
+    private val messageSender: BotMessageSender,
     private val lifecycleGate: ChatLifecycleGate,
     private val rateLimitPerMinute: Int = DEFAULT_RATE_LIMIT_PER_MINUTE,
 ) : GroupBotManagement, BotMessageDelivery {
@@ -81,7 +79,7 @@ class BotService(
                     // A credential must never escape for a bot whose membership/grant did not complete.
                     repository.revokeGrant(created.bot.botId, chatId)
                     repository.setStatus(created.bot.botId, AutomationBot.STATUS_DISABLED)
-                    runCatching { chats.adminRemoveServiceMember(chatId, created.bot.userUid) }
+                    runCatching { groupMembership.removeServiceMember(chatId, created.bot.userUid) }
                     throw error
                 }
                 GroupBotCredentials(
@@ -119,7 +117,7 @@ class BotService(
     private fun createInternal(name: String, managedChatId: String?, createdByUid: String?): CreatedAutomationBot {
         require(name.isNotBlank()) { "机器人名称不能为空" }
         require(name.trim().length <= MAX_NAME_LENGTH) { "机器人名称不能超过 $MAX_NAME_LENGTH 个字符" }
-        val account = users.createServiceAccount(name.trim())
+        val account = accounts.createServiceAccount(name.trim())
         val secret = newToken()
         val now = System.currentTimeMillis()
         val bot = AutomationBot(
@@ -149,7 +147,7 @@ class BotService(
         for (chatId in bot.grantedChatIds) {
             lifecycleGate.withChat(chatId) {
                 repository.revokeGrant(botId, chatId)
-                chats.adminRemoveServiceMember(chatId, bot.userUid)
+                groupMembership.removeServiceMember(chatId, bot.userUid)
             }
         }
     }
@@ -164,12 +162,11 @@ class BotService(
         if (bot.managedChatId != null && bot.managedChatId != chatId) {
             throw BotAuthorizationException("群内创建的机器人只能用于其所属群")
         }
-        val chat = chatStore.getChat(chatId) ?: throw IllegalArgumentException("群聊不存在: $chatId")
-        require(chat.chatType == 2) { "机器人只能授权到群聊" }
+        access.requireGroup(chatId)
 
         // 先提交授权事实，再幂等补齐群成员；崩溃后启动 reconciliation 会继续完成。
         repository.grant(bot.botId, chatId)
-        chats.adminAddServiceMember(chatId, bot.userUid)
+        groupMembership.addServiceMember(chatId, bot.userUid)
         return requireBot(bot.botId)
     }
 
@@ -178,7 +175,7 @@ class BotService(
         lifecycleGate.withChat(chatId) {
             // 先撤销权限再移出群；中途崩溃最多留下一个无发送权限的可见成员，不会产生越权。
             repository.revokeGrant(botId, chatId)
-            chats.adminRemoveServiceMember(chatId, bot.userUid)
+            groupMembership.removeServiceMember(chatId, bot.userUid)
         }
         return requireBot(botId)
     }
@@ -201,7 +198,7 @@ class BotService(
 
         val clientMsgId = "bot-${botId.take(8)}-${hashText("$chatId:$idempotencyKey").take(32)}"
         val seq = try {
-            messages.sendMessage(
+            messageSender.send(
                 bot.userUid,
                 Message(
                     chatId = chatId,
@@ -221,7 +218,7 @@ class BotService(
     }
 
     /** 启动恢复：授权表是事实源，确保所有活动机器人仍是对应群成员。 */
-    suspend fun reconcileGrants(): List<String> {
+    suspend fun recoverGrantMemberships(): List<String> {
         val failures = mutableListOf<String>()
         for (bot in repository.list().filter { it.status == AutomationBot.STATUS_ACTIVE }) {
             bot.managedChatId?.takeIf { it !in bot.grantedChatIds }?.let { chatId ->
@@ -244,19 +241,11 @@ class BotService(
                 runCatching {
                     lifecycleGate.withChat(chatId) {
                         val current = repository.find(bot.botId)
-                        if (chatStore.getChat(chatId) == null) {
-                            // Upgrade cleanup: legacy servers could leave grants on inactive chats.
-                            // Revoke them before organization reconciliation can re-create a stable
-                            // department chat id and accidentally restore an old credential.
-                            repository.revokeGrant(bot.botId, chatId)
-                            if (current?.managedChatId == chatId) {
-                                repository.setStatus(bot.botId, AutomationBot.STATUS_DISABLED)
-                            }
-                        } else if (
+                        if (
                             current?.status == AutomationBot.STATUS_ACTIVE &&
                             repository.isGranted(bot.botId, chatId)
                         ) {
-                            chats.adminAddServiceMember(chatId, bot.userUid)
+                            groupMembership.addServiceMember(chatId, bot.userUid)
                         }
                     }
                 }
@@ -277,9 +266,12 @@ class BotService(
         repository.find(botId) ?: throw IllegalArgumentException("机器人不存在: $botId")
 
     private fun requireGroupMember(actorUid: String, chatId: String): Member {
-        val chat = chatStore.getChat(chatId) ?: throw BotAuthorizationException("群聊不存在")
-        if (chat.chatType != 2) throw BotAuthorizationException("机器人只能在群聊中管理")
-        return chatStore.getMember(chatId, actorUid) ?: throw BotAuthorizationException("不是当前群成员")
+        return try {
+            access.requireGroupMember(actorUid, chatId, "不是当前群成员")
+        } catch (error: ChatAccessDeniedException) {
+            val message = if (error.message == "群聊不存在") "机器人只能在群聊中管理" else error.message
+            throw BotAuthorizationException(message ?: "无权管理群机器人")
+        }
     }
 
     private fun requireGroupOwnedBot(botId: String, chatId: String): AutomationBot {

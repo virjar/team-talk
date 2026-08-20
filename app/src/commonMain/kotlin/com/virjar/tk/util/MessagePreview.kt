@@ -11,7 +11,6 @@ import com.virjar.tk.protocol.MessageType
  * 将 [Message]（含任意 [MessageBody] 子类型）转成单行纯文本预览，
  * 供会话列表 lastMessage 预览、消息搜索结果、通知等场景共用。
  *
- * 替代旧代码中 `msg.body as? TextBody ?: "[${msg.messageType}]"` 的降级逻辑，
  * 让每种消息类型都有可读预览而非 `[2]` `[5]` 这样的占位符。
  */
 object MessagePreview {
@@ -32,9 +31,7 @@ object MessagePreview {
     }
 
     /** 仅按 body 生成预览（不考虑 flags）。 */
-    @Suppress("DEPRECATION")
     fun previewBody(body: MessageBody?, messageType: Int = MessageType.RICH_TEXT.code): String = when (body) {
-        is TextBody -> body.text
         is RichTextBody -> body.plainText
         is InteractiveCardBody -> "[卡片] " + (body.toCard()?.title ?: "")
         is FileBody -> "[文件] ${body.attachment.name}"
@@ -53,6 +50,8 @@ object MessagePreview {
         is RevokeBody -> "撤回了一条消息"
         is EditBody -> "已编辑：${body.newContent}"
         is ReactionBody -> "[表情回应]"
+        // Opaque data 不能作为文字、Markdown 或调试串渲染，避免泄露未知扩展内容。
+        is GenericPayload -> "不支持的扩展消息"
         null -> if (messageType == MessageType.TYPING.code) "正在输入..." else "[未知消息]"
     }
 }

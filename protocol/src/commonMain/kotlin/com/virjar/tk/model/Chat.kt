@@ -27,12 +27,12 @@ data class Chat(
         buf.writeVarInt(memberCount)
         buf.writeVarLong(maxSeq)
         buf.writeString(notice)
-        buf.writeByte(if (mutedAll) 1 else 0)
+        buf.writeBoolean(mutedAll)
     }
 
     companion object : com.virjar.tk.protocol.IProtoReader<Chat> {
         override fun readFrom(buf: PacketBuffer): Chat = Chat(
-            chatId = buf.readString()!!,
+            chatId = buf.readRequiredString(),
             chatType = buf.readVarInt(),
             name = buf.readString(),
             avatar = buf.readString(),
@@ -40,7 +40,7 @@ data class Chat(
             memberCount = buf.readVarInt(),
             maxSeq = buf.readVarLong(),
             notice = buf.readString(),
-            mutedAll = buf.readByte() != 0,
+            mutedAll = buf.readBoolean("chat mutedAll"),
         )
     }
 }

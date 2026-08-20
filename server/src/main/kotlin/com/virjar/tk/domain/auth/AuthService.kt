@@ -23,6 +23,9 @@ class AuthService(
     fun handleAuth(payload: AuthRequestPayload): AuthResponsePayload {
         // 版本检查由 AUTH 序言魔承担；不匹配会在进入 AuthService 前回写专用拒绝码。
         // payload 内 protocolVersion 字段已删（曾与之重复且恒真）
+        if (!isValidDeviceId(payload.deviceId)) {
+            return AuthResponsePayload(code = CODE_AUTH_FAILED, reason = "Invalid device id")
+        }
         return when (payload.authType) {
             0 -> handleLogin(payload)      // login
             1 -> handleRegister(payload)   // register
@@ -152,3 +155,9 @@ class AuthService(
         userService.changePassword(uid, oldPassword, newPassword)
     }
 }
+
+internal fun isValidDeviceId(value: String): Boolean =
+    value.length in 1..100 &&
+        value != "." &&
+        value != ".." &&
+        value.all { it.isLetterOrDigit() || it == '-' || it == '_' || it == '.' }

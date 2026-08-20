@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.CancellationException
 
 /**
  * ViewModel 基类。提供共享的协程作用域和错误状态管理。
@@ -45,6 +46,20 @@ abstract class BaseViewModel(
 
     fun clearError() { _error.value = null }
     protected fun setError(msg: String) { _error.value = msg }
+
+    /** Execute an owned action without turning lifecycle cancellation into a visible failure. */
+    protected suspend fun runViewModelAction(
+        failurePrefix: String,
+        action: suspend () -> Unit,
+    ) {
+        try {
+            action()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (throwable: Exception) {
+            setError("$failurePrefix: ${throwable.message}")
+        }
+    }
 
     /** 释放资源。子类可 override 添加清理逻辑（如通知 LocalCache 释放窗口）。 */
     open fun destroy() { scope.cancel() }

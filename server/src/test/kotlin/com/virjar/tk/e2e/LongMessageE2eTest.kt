@@ -16,9 +16,9 @@ class LongMessageE2eTest {
     fun `超长文本消息可发送可接收`() {
         TcpE2eEnvironment().use { env ->
             runBlocking {
-                val b = ImBot.register("127.0.0.1", env.tcpPort, "longmsg-b")
+                val b = ImBot.register("127.0.0.1", env.tcpPort, "longmsg-b", testImBotCacheOwner)
                 try {
-                    val a = ImBot.register("127.0.0.1", env.tcpPort, "longmsg-a")
+                    val a = ImBot.register("127.0.0.1", env.tcpPort, "longmsg-a", testImBotCacheOwner)
                     try {
                         val chatId = a.createPersonalChat(b.uid)
                         val longText = buildString { repeat(400) { append("长文本测试段落。") } } // ~2400 字符

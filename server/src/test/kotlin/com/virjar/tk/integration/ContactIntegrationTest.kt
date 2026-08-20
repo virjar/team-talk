@@ -167,7 +167,7 @@ class ContactIntegrationTest {
         val uid1 = ctx.registerUser()
         val uid2 = ctx.registerUser()
         ctx.contactService(uid1).apply(uid2, "Hello")
-        val pending = ctx.contactService(uid2).listApplies()
+        val pending = ctx.contactService(uid2).listPendingApplies()
         assertTrue(pending.any { it.fromUid == uid1 })
     }
 
@@ -231,7 +231,7 @@ class ContactIntegrationTest {
 
         assertEquals(1, results.map { it.id }.toSet().size)
         assertTrue(results.all { it.token == null })
-        assertEquals(1, ctx.contactService(recipient).listApplies().count { it.fromUid == sender })
+        assertEquals(1, ctx.contactService(recipient).listPendingApplies().count { it.fromUid == sender })
         val afterEvents = ctx.syncEventReader.getEventsAfter(recipient, 0, 1_000)
             .count { it.notifyType == NotifyType.CONTACT_APPLY.code }
         assertEquals(beforeEvents + 1, afterEvents)
@@ -268,8 +268,8 @@ class ContactIntegrationTest {
             assertTrue(ctx.contactService(recipient).list().any { it.friendUid == sender })
             assertNull(ctx.contactService(sender).getPendingApply(recipient).record)
             assertNull(ctx.contactService(recipient).getPendingApply(sender).record)
-            assertTrue(ctx.contactService(sender).listApplies().none { it.fromUid == recipient })
-            assertTrue(ctx.contactService(recipient).listApplies().none { it.fromUid == sender })
+            assertTrue(ctx.contactService(sender).listPendingApplies().none { it.fromUid == recipient })
+            assertTrue(ctx.contactService(recipient).listPendingApplies().none { it.fromUid == sender })
         }
     }
 
@@ -281,7 +281,7 @@ class ContactIntegrationTest {
 
         ctx.contactService(recipient).blacklist(sender)
 
-        assertTrue(ctx.contactService(recipient).listApplies().none { it.fromUid == sender })
+        assertTrue(ctx.contactService(recipient).listPendingApplies().none { it.fromUid == sender })
         assertNull(ctx.contactService(sender).getPendingApply(recipient).record)
         assertNull(ctx.contactService(recipient).getPendingApply(sender).record)
         val closed = ctx.contactService(sender).listApplyRecords(0, 10).single { it.id == first.id }
@@ -328,14 +328,14 @@ class ContactIntegrationTest {
             }
         }
 
-        val pending = ctx.contactService(recipient).listApplies()
+        val pending = ctx.contactService(recipient).listPendingApplies()
         assertEquals(100, pending.size)
         assertEquals("legacy-sender-100", pending.first().fromUid)
         assertTrue(pending.none { it.fromUid == "legacy-sender-0" })
     }
 
     private suspend fun pendingToken(recipientUid: String, senderUid: String): String =
-        ctx.contactService(recipientUid).listApplies()
+        ctx.contactService(recipientUid).listPendingApplies()
             .single { it.fromUid == senderUid }
             .token!!
 }

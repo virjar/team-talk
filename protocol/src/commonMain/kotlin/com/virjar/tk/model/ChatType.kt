@@ -11,7 +11,8 @@ enum class ChatType(val code: Int) {
     GROUP(2);
 
     companion object {
-        /** 从 Int 恢复枚举，未知值 fallback 到 PERSONAL。 */
-        fun fromCode(code: Int): ChatType = entries.find { it.code == code } ?: PERSONAL
+        /** 从 Int 恢复枚举；未知值说明协议或持久化数据已损坏。 */
+        fun fromCode(code: Int): ChatType = entries.find { it.code == code }
+            ?: throw IllegalArgumentException("Unknown ChatType: $code")
     }
 }

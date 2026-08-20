@@ -1,12 +1,12 @@
 package com.virjar.tk.protocol
 
+import com.virjar.tk.body.GenericPayload
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Contact
 import com.virjar.tk.model.ContactApply
 import com.virjar.tk.model.Conversation
 import com.virjar.tk.model.Message
 import com.virjar.tk.model.User
-import com.virjar.tk.protocol.payload.GenericPayload
 
 /**
  * NOTIFY 契约表：NotifyType → payload 类型的**唯一事实源**。
@@ -58,7 +58,7 @@ object NotifyContracts {
         // 在线状态（服务端直写不持久化，但类型契约仍需锁定）
         NotifyType.PRESENCE to PresencePayload,
 
-        // 通用扩展入口（协议演进策略 §9）：未注册扩展由客户端静默忽略（前向兼容）
+        // 三入口协议演进策略：未注册扩展由客户端严格解码信封后忽略（前向兼容）。
         NotifyType.GENERIC to GenericPayload,
     )
 

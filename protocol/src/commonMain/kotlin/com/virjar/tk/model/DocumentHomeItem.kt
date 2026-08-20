@@ -39,13 +39,13 @@ data class DocumentHomeItem(
 
     companion object : IProtoReader<DocumentHomeItem> {
         override fun readFrom(buf: PacketBuffer): DocumentHomeItem = DocumentHomeItem(
-            documentId = buf.readString()!!,
-            spaceId = buf.readString()!!,
-            spaceName = buf.readString()!!,
-            title = buf.readString()!!,
-            excerpt = buf.readString()!!,
-            createdBy = buf.readString()!!,
-            creatorName = buf.readString()!!,
+            documentId = buf.readRequiredString(),
+            spaceId = buf.readRequiredString(),
+            spaceName = buf.readRequiredString(),
+            title = buf.readRequiredString(),
+            excerpt = buf.readRequiredString(),
+            createdBy = buf.readRequiredString(),
+            creatorName = buf.readRequiredString(),
             createdAt = buf.readVarLong(),
             updatedAt = buf.readVarLong(),
             accessedAt = buf.readVarLong(),

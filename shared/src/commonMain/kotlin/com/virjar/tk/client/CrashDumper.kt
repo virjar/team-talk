@@ -41,8 +41,9 @@ class CrashDumper(
      * 上传 pending crash 日志（启动时调用）。
      * 上传成功后删除 pending 文件。
      */
-    fun uploadPending(serverUrl: String, deviceId: String) {
+    fun uploadPending(serverUrl: String, accessToken: String?) {
         if (!hasPending()) return
+        if (accessToken.isNullOrBlank()) return
         synchronized(this) {
             val text = pendingFile.readText()
             try {
@@ -50,7 +51,7 @@ class CrashDumper(
                 val code = HttpUtil.postGzip(
                     "$serverUrl/api/client-logs",
                     compressed,
-                    mapOf("X-Device-Id" to deviceId),
+                    mapOf("Authorization" to "Bearer $accessToken"),
                 )
                 if (code == 200) {
                     pendingFile.delete()

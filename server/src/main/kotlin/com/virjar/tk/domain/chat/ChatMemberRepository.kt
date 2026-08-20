@@ -8,7 +8,9 @@ interface ChatMemberRepository {
     fun getMember(chatId: String, uid: String): Member?
     fun getMemberUids(chatId: String): List<String>
     fun isMember(chatId: String, uid: String): Boolean
+    /** Adds/reactivates ordinary members and establishes their conversation rows atomically. */
     fun addMembers(chatId: String, uids: List<String>)
+    /** Deactivates membership and removes its conversation/mute rows atomically. */
     fun removeMember(chatId: String, uid: String)
     fun transferOwner(chatId: String, oldOwnerUid: String, newOwnerUid: String)
     fun setRole(chatId: String, uid: String, role: Int)

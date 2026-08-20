@@ -80,7 +80,7 @@ class AccountFeature internal constructor(
     private val reportError: (Throwable, String) -> Unit,
 ) {
     /** Prevent a slow profile request for A from replacing the currently routed profile B. */
-    private val profileRequestGate = GroupRequestGate<String>()
+    private val profileRequestGate = LatestRequestGate<String>()
 
     val currentDeviceId: String get() = session.deviceId
     var devices by mutableStateOf(emptyList<Device>())

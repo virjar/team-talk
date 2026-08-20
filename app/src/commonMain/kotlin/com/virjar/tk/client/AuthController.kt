@@ -43,9 +43,10 @@ class AuthState(
  *
  * 1. 创建 [UserSession]（用户层）+ [ImClient]（连接层，注入认证回调）
  * 2. 启动时检查 token → 自动登录（connect → authenticate）
- * 3. 监听 connectionState → AUTHENTICATED 时创建 session + 保存 token
- * 4. AUTH_FAILED 时清除 token + 显示错误
- * 5. onLogout 时清理 session + 清除 token
+ * 3. 身份认证成功后先创建 session + 保存 token，由 EventProcessor 完成持久事件分页同步
+ * 4. 同步完成进入 AUTHENTICATED 后才开放业务 UI
+ * 5. AUTH_FAILED 时清除 token + 显示错误
+ * 6. onLogout 时清理 session + 清除 token
  *
  * ImClient 的认证结果通过回调写入 UserSession（三级状态隔离），
  * UserSession 生命周期独立于 TCP 连接。
@@ -172,20 +173,35 @@ fun rememberAuthController(
         }
     }
 
-    // 服务器不可达时，自动登录不能永久占据 loading 页：给连接一个有界等待，然后回到
-    // 可操作的登录页。保留 token，避免短暂网络故障破坏持久化登录态。
-    LaunchedEffect(autoLoggingIn) {
+    val connectionState by imClient.state.collectAsState()
+    val eventSyncCursor by imClient.eventSyncCursor.collectAsState()
+    val authenticationFailure by imClient.authenticationFailure.collectAsState()
+
+    // 自动登录分为“连接/身份认证”与“持久事件同步”两个阶段。前者保留
+    // 12s 快速失败；后者按已落盘 cursor 续期 35s 无进度窗口，避免合法多页 replay
+    // 被旧的固定 12s 计时主动断开。保留 token，短暂网络故障不破坏持久登录态。
+    LaunchedEffect(autoLoggingIn, connectionState, eventSyncCursor) {
         if (!autoLoggingIn) return@LaunchedEffect
-        delay(AUTO_LOGIN_TIMEOUT_MS)
-        if (autoLoggingIn && !isLoggedIn) {
+        val timeoutMs = autoLoginTimeoutMillis(connectionState) ?: return@LaunchedEffect
+        val observedState = connectionState
+        val observedCursor = eventSyncCursor
+        delay(timeoutMs)
+        if (
+            autoLoggingIn &&
+            !isLoggedIn &&
+            imClient.state.value == observedState &&
+            (observedState != ConnectionState.SYNCHRONIZING || imClient.eventSyncCursor.value == observedCursor)
+        ) {
             imClient.disconnect()
             autoLoggingIn = false
-            authError = "服务器暂时无法连接，请检查网络或稍后重试"
+            authError = if (observedState == ConnectionState.SYNCHRONIZING) {
+                "数据同步暂无进展，请检查网络或稍后重试"
+            } else {
+                "服务器暂时无法连接，请检查网络或稍后重试"
+            }
         }
     }
 
-    val connectionState by imClient.state.collectAsState()
-    val authenticationFailure by imClient.authenticationFailure.collectAsState()
     LaunchedEffect(connectionState, authenticationFailure) {
         if (requiresForcedProtocolUpgrade(authenticationFailure)) {
             if (!requiresProtocolUpgrade) {
@@ -197,50 +213,57 @@ fun rememberAuthController(
             }
             return@LaunchedEffect
         }
-        when (connectionState) {
-            ConnectionState.AUTHENTICATED -> {
-                requiresProtocolUpgrade = false
-                val authenticatedUid = userSession.uid
-                val rotatedRefreshToken = userSession.refreshToken
-                if (authenticatedUid.isBlank() || rotatedRefreshToken.isNullOrBlank()) {
-                    endAuthenticatedSession(
-                        message = "认证响应缺少持久凭据",
-                        clearStoredLogin = false,
-                    )
-                    imClient.disconnect()
-                    return@LaunchedEffect
-                }
-                val persistedLogin = tokenStore.save(
-                    tokenOwner.generation,
-                    authenticatedUid,
-                    rotatedRefreshToken,
+
+        fun ensureSessionForAuthenticatedIdentity(): Boolean {
+            requiresProtocolUpgrade = false
+            val authenticatedUid = userSession.uid
+            val rotatedRefreshToken = userSession.refreshToken
+            if (authenticatedUid.isBlank() || rotatedRefreshToken.isNullOrBlank()) {
+                endAuthenticatedSession(
+                    message = "认证响应缺少持久凭据",
+                    clearStoredLogin = false,
                 )
-                if (persistedLogin == null) {
-                    // 这个 controller 已被新 Activity/窗口取代。它可以关闭自己的
-                    // transport，但绝不得覆盖新 owner 的 refresh/access token。
-                    isLoggedIn = false
-                    autoLoggingIn = false
-                    session?.close()
-                    session = null
-                    userSession.onAuthFailed(null)
-                    imClient.disconnect()
-                    return@LaunchedEffect
-                }
-                ownedStoredLogin = persistedLogin
-                // 重连不重建 session：组件（RpcClient/EventProcessor）自治重启监听，
-                // 这里重复 createSession 会泄漏旧 session + 重复打开同一 SQLite。
-                if (session == null) {
-                    session = createSession(imClient, userSession, createCache, deviceId)
-                    onAuthenticated?.invoke(session!!)
+                imClient.disconnect()
+                return false
+            }
+            val persistedLogin = tokenStore.save(
+                tokenOwner.generation,
+                authenticatedUid,
+                rotatedRefreshToken,
+            )
+            if (persistedLogin == null) {
+                // 这个 controller 已被新 Activity/窗口取代。旧 owner 不得覆盖新凭据。
+                isLoggedIn = false
+                autoLoggingIn = false
+                session?.close()
+                session = null
+                userSession.onAuthFailed(null)
+                imClient.disconnect()
+                return false
+            }
+            ownedStoredLogin = persistedLogin
+            if (session == null) {
+                session = createSession(imClient, userSession, createCache, deviceId)
+                onAuthenticated?.invoke(checkNotNull(session))
+            }
+            if (tokenStore.isCurrentOwner(tokenOwner.generation)) {
+                SessionContext.accessToken = userSession.accessToken
+            }
+            authError = null
+            return true
+        }
+
+        when (connectionState) {
+            ConnectionState.SYNCHRONIZING -> {
+                // LocalCache/EventProcessor must exist before the client can send its persisted
+                // cursor. Initial login remains on the loading surface until SYNC_READY.
+                ensureSessionForAuthenticatedIdentity()
+            }
+            ConnectionState.AUTHENTICATED -> {
+                if (ensureSessionForAuthenticatedIdentity()) {
                     isLoggedIn = true
                     autoLoggingIn = false
                 }
-                // save() 已在创建会话前同步、可靠落盘；服务端一次性轮换后
-                // 不存在“UI 已登录但磁盘仍是作废 token”的窗口。
-                if (tokenStore.isCurrentOwner(tokenOwner.generation)) {
-                    SessionContext.accessToken = userSession.accessToken
-                }
-                authError = null
             }
             ConnectionState.AUTH_FAILED -> {
                 // token 失效必须回到登录页；级联关闭会话（uploader/watcher/AppLog 全局引用）
@@ -342,7 +365,20 @@ fun rememberAuthController(
     )
 }
 
-private const val AUTO_LOGIN_TIMEOUT_MS = 12_000L
+private const val IDENTITY_AUTO_LOGIN_TIMEOUT_MS = 12_000L
+private const val SYNC_NO_PROGRESS_TIMEOUT_MS = 35_000L
+
+/** Null means this terminal/ready state is handled by the authentication state machine itself. */
+internal fun autoLoginTimeoutMillis(state: ConnectionState): Long? = when (state) {
+    ConnectionState.SYNCHRONIZING -> SYNC_NO_PROGRESS_TIMEOUT_MS
+    ConnectionState.AUTHENTICATED,
+    ConnectionState.AUTH_FAILED,
+    -> null
+    ConnectionState.DISCONNECTED,
+    ConnectionState.CONNECTING,
+    ConnectionState.CONNECTED,
+    -> IDENTITY_AUTO_LOGIN_TIMEOUT_MS
+}
 
 internal fun requiresForcedProtocolUpgrade(failure: AuthenticationFailure?): Boolean =
     failure?.kind == AuthenticationFailureKind.PROTOCOL_VERSION_UNSUPPORTED

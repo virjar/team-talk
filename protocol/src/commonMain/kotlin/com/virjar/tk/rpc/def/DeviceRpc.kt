@@ -7,10 +7,11 @@ import com.virjar.tk.rpc.RpcService
 /**
  * 设备管理 RPC IDL。
  *
- * ⚠️ methodId 稳定性：新方法只追加末尾；中间插入必须 @RpcMethod(id) 显式锁定。
+ * 每个方法用 @RpcMethod(id) 显式锁定稳定 wire 编号，声明顺序不参与编号。
  */
 @RpcService("device")
 interface DeviceRpc {
+    @RpcMethod(1)
     suspend fun listDevices(): List<Device>
 
     @RpcMethod(2)

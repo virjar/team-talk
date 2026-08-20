@@ -45,7 +45,7 @@ class ServiceFileGenerator(private val svc: ServiceModel, private val codeGenera
             p.typeName == "kotlin.String" -> "writeString(${p.name})"
             p.typeName == "kotlin.Int" -> "writeVarInt(${p.name})"
             p.typeName == "kotlin.Long" -> "writeVarLong(${p.name})"
-            p.typeName == "kotlin.Boolean" -> "writeByte(if (${p.name}) 1 else 0)"
+            p.typeName == "kotlin.Boolean" -> "writeBoolean(${p.name})"
             p.isStringList -> "writeVarInt(${p.name}.size); ${p.name}.forEach { writeString(it) }"
             p.isProto -> "${p.name}.writeTo(this)"
             else -> "// unsupported"
@@ -55,15 +55,23 @@ class ServiceFileGenerator(private val svc: ServiceModel, private val codeGenera
     /** 参数解码语句（val 声明）——与 encodeBody 字段序严格对称。 */
     private fun decodeStmts(m: MethodModel): String = m.params.joinToString("\n                ") { p ->
         when {
-            p.typeName == "kotlin.String" -> "val ${p.name} = ${if (p.nullable) "buf.readString()" else "buf.readString()!!"}"
+            p.typeName == "kotlin.String" -> "val ${p.name} = ${
+                if (p.nullable) {
+                    "buf.readString()"
+                } else {
+                    "buf.readRequiredString(fieldName = \"${svc.name}.${m.name}.${p.name}\")"
+                }
+            }"
             p.typeName == "kotlin.Int" -> "val ${p.name} = buf.readVarInt()"
             p.typeName == "kotlin.Long" -> "val ${p.name} = buf.readVarLong()"
-            p.typeName == "kotlin.Boolean" -> "val ${p.name} = buf.readByte() != 0"
+            p.typeName == "kotlin.Boolean" ->
+                "val ${p.name} = buf.readBoolean(\"${svc.name}.${m.name}.${p.name}\")"
             p.isStringList -> {
                 val countName = "n${p.name.replaceFirstChar { it.uppercase() }}"
                 "val $countName = buf.readCollectionSize(" +
                     "minimumBytesPerEntry = 2, fieldName = \"${svc.name}.${m.name}.${p.name}\"); " +
-                    "val ${p.name} = List($countName) { buf.readString()!! }"
+                    "val ${p.name} = List($countName) { " +
+                    "buf.readRequiredString(fieldName = \"${svc.name}.${m.name}.${p.name}[]\") }"
             }
             p.isProto -> "val ${p.name} = ${p.short}.readFrom(buf)"
             else -> "// unsupported"
@@ -88,7 +96,7 @@ class ServiceFileGenerator(private val svc: ServiceModel, private val codeGenera
         m.ret.typeName == "kotlin.String" -> "ProtoCodec.encodePayload { writeString($rv) }"
         m.ret.typeName == "kotlin.Int" -> "ProtoCodec.encodePayload { writeVarInt($rv) }"
         m.ret.typeName == "kotlin.Long" -> "ProtoCodec.encodePayload { writeVarLong($rv) }"
-        m.ret.typeName == "kotlin.Boolean" -> "ProtoCodec.encodePayload { writeByte(if ($rv) 1 else 0) }"
+        m.ret.typeName == "kotlin.Boolean" -> "ProtoCodec.encodePayload { writeBoolean($rv) }"
         else -> "ProtoCodec.encode($rv)"
     }
 
@@ -96,14 +104,16 @@ class ServiceFileGenerator(private val svc: ServiceModel, private val codeGenera
         val body = when {
             m.ret.isList && m.ret.listArg == "kotlin.String" ->
                 "val n = readCollectionSize(minimumBytesPerEntry = 2, " +
-                    "fieldName = \"${svc.name}.${m.name} result\"); List(n) { readString()!! }"
+                    "fieldName = \"${svc.name}.${m.name} result\"); " +
+                    "List(n) { readRequiredString(fieldName = \"${svc.name}.${m.name} result[]\") }"
             m.ret.isList -> "val n = readCollectionSize(minimumBytesPerEntry = 1, " +
                 "fieldName = \"${svc.name}.${m.name} result\"); " +
                 "List(n) { ${m.ret.listArgShort}.readFrom(this) }"
-            m.ret.typeName == "kotlin.String" -> "readString()!!"
+            m.ret.typeName == "kotlin.String" ->
+                "readRequiredString(fieldName = \"${svc.name}.${m.name} result\")"
             m.ret.typeName == "kotlin.Int" -> "readVarInt()"
             m.ret.typeName == "kotlin.Long" -> "readVarLong()"
-            m.ret.typeName == "kotlin.Boolean" -> "readByte() != 0"
+            m.ret.typeName == "kotlin.Boolean" -> "readBoolean(\"${svc.name}.${m.name} result\")"
             else -> "${m.ret.short}.readFrom(this)"
         }
         return "ProtoCodec.withPayload($payloadExpr) { $body }"
@@ -136,13 +146,16 @@ class ServiceFileGenerator(private val svc: ServiceModel, private val codeGenera
             }
             appendLine("        run {")
             appendLine("            val bytes = encode${m.name.replaceFirstChar { it.uppercase() }}($samples)")
-            appendLine("            val buf = PacketBuffer(io.netty.buffer.Unpooled.wrappedBuffer(bytes))")
-            appendLine("            ${m.params.joinToString("\n            ") { p ->
+            appendLine("            ProtoCodec.withPayload(bytes) {")
+            appendLine("                val buf = this")
+            appendLine("                ${m.params.joinToString("\n                ") { p ->
                 when (p.typeName) {
-                    "kotlin.String" -> "val rt${p.name.replaceFirstChar { it.uppercase() }} = buf.readString()!!"
+                    "kotlin.String" -> "val rt${p.name.replaceFirstChar { it.uppercase() }} = " +
+                        "buf.readRequiredString(fieldName = \"${svc.name}.${m.name}.${p.name}\")"
                     "kotlin.Int" -> "val rt${p.name.replaceFirstChar { it.uppercase() }} = buf.readVarInt()"
                     "kotlin.Long" -> "val rt${p.name.replaceFirstChar { it.uppercase() }} = buf.readVarLong()"
-                    "kotlin.Boolean" -> "val rt${p.name.replaceFirstChar { it.uppercase() }} = buf.readByte() != 0"
+                    "kotlin.Boolean" -> "val rt${p.name.replaceFirstChar { it.uppercase() }} = " +
+                        "buf.readBoolean(\"${svc.name}.${m.name}.${p.name}\")"
                     else -> ""
                 }
             }}")
@@ -155,7 +168,8 @@ class ServiceFileGenerator(private val svc: ServiceModel, private val codeGenera
                     else -> "true"
                 }
             }
-            appendLine("            check($checks) { \"${svc.name}.${m.name} round-trip failed\" }")
+            appendLine("                check($checks) { \"${svc.name}.${m.name} round-trip failed\" }")
+            appendLine("            }")
             appendLine("        }")
         }
         appendLine("    }")
@@ -170,13 +184,17 @@ class ServiceFileGenerator(private val svc: ServiceModel, private val codeGenera
         svc.methods.forEach { m ->
             appendLine("            ${svc.contractName}.${m.constName} -> {")
             val ret = if (m.ret.isUnit) "" else "val result = "
-            if (m.params.isEmpty()) {
-                appendLine("                ${ret}${m.name}()")
-            } else {
-                appendLine("                val buf = PacketBuffer(io.netty.buffer.Unpooled.wrappedBuffer(payload!!))")
-                appendLine("                ${decodeStmts(m)}")
-                appendLine("                ${ret}${m.name}(${m.params.joinToString(", ") { it.name }})")
+            appendLine("                ${ret}ProtoCodec.withPayload(payload) {")
+            appendLine("                    val buf = this")
+            if (m.params.isNotEmpty()) {
+                appendLine("                    ${decodeStmts(m)}")
             }
+            // withPayload performs a final postcondition check too, but that runs after the block.
+            // Validate before calling business code so malformed trailing bytes cannot commit a
+            // mutation and only then turn the connection into a codec failure.
+            appendLine("                    buf.requireExhausted(\"${svc.name}.${m.name} request\")")
+            appendLine("                    ${m.name}(${m.params.joinToString(", ") { it.name }})")
+            appendLine("                }")
             appendLine("                ${if (m.ret.isUnit) "ByteArray(0)" else retEncodeExpr(m, "result")}")
             appendLine("            }")
         }

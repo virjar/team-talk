@@ -27,7 +27,11 @@
 
 ## 2. ImBot
 
-`ImBot` 位于 `shared`，直接复用 ClientSession。它使用内存 `FakeLocalCache`，进程退出后不保留会话投影；需要长期缓存的产品应提供明确的持久化实现，不能假设 FakeLocalCache 是生产数据库。
+`ImBot` 位于 `shared`，直接复用 ClientSession。登录/注册支持显式注入 `ImBotCacheOwner`；
+`tt-agent` 固定使用 `PersistentImBotCacheOwner(dataDir)`，认证成功取得 uid 后才打开
+`dataDir/users/<uid>/`，因此进程重启会从该账号已提交的 cursor 继续。登录/注册不再提供隐式
+owner；短生命周期测试也必须显式注入
+`ImBotCacheOwner { FakeLocalCache() }`，避免测试便利路径被常驻机器人误用。
 
 主要能力：
 
@@ -39,17 +43,42 @@
 - 创建私聊、创建群、邀请成员和读取成员。
 
 ```kotlin
-val bot = ImBot.login(host, port, username, password)
+val inbox = ImBotMessageInbox()
+val bot = ImBot.login(
+    host, port, username, password,
+    cacheOwner = PersistentImBotCacheOwner(dataDir),
+    messageInbox = inbox,
+)
 bot.awaitState()
 
-bot.messages.collect { message ->
-    if (message.senderUid != bot.uid) {
-        bot.sendText(message.chatId, "收到：${message.serverSeq}")
-    }
+while (true) {
+    val delivery = bot.nextMessageDelivery { it.senderUid != bot.uid }
+    bot.sendText(delivery.message.chatId, "收到：${delivery.message.serverSeq}")
+    bot.ackMessage(delivery)
 }
 ```
 
+消息先进入普通持久投影，再以 eventId 写入账号 SQLite 的 `bot_message_inbox`，最后才推进 cursor。
+inbox 对 `(chatId, serverSeq)` 另有唯一约束，服务端即使以不同 eventId 重试同一 projection 也只
+产生一条业务 delivery。进程内只有 CONFLATED wake-up，因此大 backlog 不依赖消费者启动时序，
+也不会形成内存队列。崩溃发生在 inbox INSERT 与 cursor 提交之间时，事件会重放但被幂等键吸收；
+cursor 已提交而业务尚未消费时，pending 磁盘行会在重启后继续交付。
+
+`nextMessageDelivery` 是显式 peek/ack：业务成功后才调用 `ackMessage`，未 ack 的 delivery 重启会
+再次出现。`nextMessage` 是兼顾简单脚本的 at-most-once 便利 API，会在返回前自动 ack，不适合直接
+驱动不可重入的外部副作用。tt-agent ack inbox 后，REST `/messages` 与 `/recv-wait` 仍从普通消息
+SQLite 投影读取，而不是以内存 ring 为事实源，所以进程崩溃不会抹掉 REST 可见 recent 历史。
+`bot.messages` 只是不对 cursor 施加背压的实时广播，不应用作可靠 backlog 队列。
+
+等待 `AUTHENTICATED` 使用 15 秒“无同步进展”窗口，而不是 15 秒总时长；
+`SYNCHRONIZING` cursor 每次持久推进都会续期，因此大历史回放只要持续前进就不会误超时。
+
+磁盘 inbox 提供 at-least-once delivery，不承诺外部副作用 exactly-once；调用方仍应以
+`(chatId, serverSeq)` 或业务幂等键去重。
+
 MESSAGE_RECV 会发给包含发送者在内的成员，因此 echo bot 必须过滤自己的消息。`shutdown()` 是 ImBot 的生命周期终点，并级联关闭 session 和连接资源。
+ImBot 是可多实例 SDK；HTTP 文件操作只使用各自 `UserSession.accessToken`，不会读取、写入或在
+shutdown 时清除 Android/Desktop 使用的进程全局登录 token。
 
 ## 3. 构建与启动 agent
 
@@ -77,11 +106,12 @@ shared/build/headless/bin/tt-agent \
 | `--pass` / `TK_PASS` | 无 | 登录密码 |
 | `--register --prefix <name>` | 关闭 | 注册随机后缀账户 |
 
-agent 在内存中保留最近 1000 条收到的消息，并为长轮询请求提供唤醒。它不是完整历史库；历史必须通过 message RPC 查询。
+agent 的普通 SQLite 消息投影保存 REST recent 事实，单次最多返回 1000 条；内存只为长轮询提供
+唤醒，不保存业务消息。完整、可分页的服务端历史仍通过 message RPC 查询。
 
 ## 4. 本地 REST
 
-除 `/v1/status` 外，端点要求：
+所有端点（包括 `/v1/status`）都要求：
 
 ```http
 Authorization: Bearer <agent-api-token>
@@ -95,7 +125,7 @@ Content-Type: application/json
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/v1/status` | 连接状态、uid、username、缓冲数量 |
-| GET | `/v1/messages?chatId=&limit=&afterSeq=` | 读取内存环形缓冲 |
+| GET | `/v1/messages?chatId=&limit=&afterSeq=` | 读取 SQLite recent 消息投影 |
 | GET | `/v1/recv-wait?chatId=&timeout=` | 等待一条消息 |
 | GET/POST | `/v1/conversations` | 会话列表 |
 | GET/POST | `/v1/friends` | 好友列表 |
@@ -127,8 +157,6 @@ Content-Type: application/json
 | POST | `/v1/group-create` | `{name, memberUids}`，成员用逗号分隔 |
 | POST | `/v1/group-members` | `{chatId}` |
 | POST | `/v1/group-invite` | `{chatId, uids}`，成员用逗号分隔 |
-
-代码目前注册了 `/v1/selftest` 路由，但 AgentApi 没有对应分支，调用会返回 unknown。它不是可依赖的公开端点，补齐实现和测试后才能加入正式表格。
 
 ## 5. CLI
 
@@ -164,11 +192,12 @@ MCP 是适配层，不是新的权限边界。模型能做什么取决于 agent 
 ## 7. 安全与运行边界
 
 - REST 默认只绑定 loopback。不要把 `--api` 改为公网地址；当前 HTTP 服务没有 TLS、来源限制或细粒度授权。
-- `/v1/status` 当前不校验 API token，会暴露 uid 和 username；在修复前只能运行在可信本机。
+- 所有 REST 端点都校验同一个 agent API token；仍应保持 loopback 监听，避免把拥有完整客户端权限的接口暴露到局域网或公网。
 - `credentials.properties` 当前保存可恢复的用户名和密码以及 API token。运行用户目录权限必须收紧；正式产品应接入系统密钥库或只持久化可轮换 token。
 - CLI token 不应出现在命令历史、日志或代码仓库。
 - `send-file` 读取 agent 主机本地路径，只能在受信任调用者可以访问本地 REST 时使用。
-- agent 的环形缓冲和长轮询不是 Webhook；进程重启会丢失缓冲，可靠外部订阅仍需单独设计。
+- agent 的长轮询不是 Webhook；内存唤醒在进程重启时会消失，但消息仍在 SQLite recent 投影中，
+  重连后可通过 `/v1/messages` 读取。需要消费确认、多个订阅者或永久保留时仍应单独设计外部订阅。
 
 无头能力的产品化计划见[路线图](../10-reference/roadmap.md)，当前成熟度见[功能状态](../10-reference/feature-status.md)。
 

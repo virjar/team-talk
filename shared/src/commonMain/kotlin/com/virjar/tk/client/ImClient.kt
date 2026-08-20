@@ -109,11 +109,61 @@ class ImClient(
     val coroutineScope: CoroutineScope? get() = scope
 
     /**
-     * 离线事件游标提供者（由 ClientSession 注入 EventProcessor.lastEventId）。
-     * 认证/重连时携带该游标，服务端补发断线期间的事件（离线补发链路）。
+     * 持久事件同步由本地投影 owner 显式接管。AUTH 成功只进入 SYNCHRONIZING；
+     * consumer 从持久 cursor 发起分页，并在每批完整落库后才请求下一批。
      */
-    @Volatile
-    var lastEventIdProvider: (() -> Long)? = null
+    private data class EventSyncBinding(
+        val owner: Any,
+        val cursor: () -> Long,
+        val processBatch: suspend (List<NotifyPayload>) -> Long,
+        val reset: suspend () -> Long,
+    )
+
+    private var eventSyncBinding: EventSyncBinding? = null
+    private var syncBatchInFlight = false
+    private var syncResetApplied = false
+    private var lastRequestedSyncCursor = -1L
+
+    /**
+     * Cursor durably projected by the active synchronization attempt, or -1 outside that phase.
+     * UI/controller watchdogs observe this value as progress; each committed page renews their
+     * no-progress window without treating a long but healthy replay as an authentication timeout.
+     */
+    private val _eventSyncCursor = MutableStateFlow(-1L)
+    val eventSyncCursor: StateFlow<Long> = _eventSyncCursor.asStateFlow()
+
+    internal fun installEventSync(
+        owner: Any,
+        cursor: () -> Long,
+        processBatch: suspend (List<NotifyPayload>) -> Long,
+        reset: suspend () -> Long,
+    ) {
+        doOnEventLoop {
+            eventSyncBinding = EventSyncBinding(owner, cursor, processBatch, reset)
+            beginEventSyncIfReady()
+        }
+    }
+
+    internal fun removeEventSync(owner: Any) {
+        doOnEventLoop {
+            if (eventSyncBinding?.owner === owner) eventSyncBinding = null
+        }
+    }
+
+    /** Report per-event durable progress while a page is still being projected on Dispatchers.IO. */
+    internal fun reportEventSyncProgress(cursor: Long) {
+        if (_state.value == ConnectionState.SYNCHRONIZING && cursor > _eventSyncCursor.value) {
+            _eventSyncCursor.value = cursor
+        }
+    }
+
+    /** A broken projection must reconnect from its last durable cursor, never skip the event. */
+    internal fun closeForEventResync(reason: String, cause: Throwable? = null) {
+        doOnEventLoop {
+            if (cause == null) logger.fault(reason) else logger.fault(reason, cause)
+            channel?.close()
+        }
+    }
 
     // ── 公共 API ──
 
@@ -138,8 +188,7 @@ class ImClient(
             authTerminal = false
             _authenticationFailure.value = null
             transportOwnerGeneration += 1
-            // 离线补发：认证包携带最新事件游标（服务端按 lastEventId 补发断线期间事件）
-            pendingAuth = auth.copy(lastEventId = lastEventIdProvider?.invoke() ?: auth.lastEventId)
+            pendingAuth = auth
             connectHost = host
             connectPort = port
             createAndConnect()            // 再启动连接（TCP 回调排在 pendingAuth 设置之后）
@@ -230,10 +279,11 @@ class ImClient(
             logger.trace("send() called but channel is null, type=${outbound::class.simpleName}")
         } else if (_state.value != ConnectionState.AUTHENTICATED
             && outbound !is AuthRequestPayload
+            && !(_state.value == ConnectionState.SYNCHRONIZING && outbound is SyncRequestPayload)
             && outbound !is PingSignal
             && outbound !is PongSignal
         ) {
-            // 非认证/心跳包：必须在 AUTHENTICATED 状态才发送，防止重连期间业务消息抢先到达服务端
+            // 业务包只在完整同步后发送；SYNCHRONIZING 只允许协议内的分页请求。
             logger.trace("send() blocked: not authenticated, state=${_state.value}, type=${outbound::class.simpleName}")
         } else {
             ch.writeAndFlush(outbound)
@@ -380,7 +430,11 @@ class ImClient(
                             PacketCodec.READ_IDLE_TIMEOUT_SECONDS,
                             PacketCodec.PING_INTERVAL_SECONDS,
                             0, TimeUnit.SECONDS))
-                        .addLast(PacketCodec())
+                        // The shared codec can only lift its 4 KiB pre-authentication fence when
+                        // it knows this side receives AUTH_RESP. Using the role-less default keeps
+                        // the client permanently at 4 KiB and turns any larger live/sync NOTIFY
+                        // into a corrupt frame immediately after an otherwise successful login.
+                        .addLast(PacketCodec(inboundRole = PacketInboundRole.CLIENT))
                         .addLast(PacketHandler(generation))
                 }
             })
@@ -406,11 +460,7 @@ class ImClient(
         }
     }
 
-    /**
-     * TCP 连接就绪（EventLoop 上）：创建会话 scope、置 CONNECTED、发送认证包。
-     * v2 之前这里要等服务端 3 字节握手回显（HandshakeHandler 状态机 + pipeline 手术，
-     * 且是 FFAC6B1 认证竞态的温床）——v3 客户端首帧即序言，握手层整体移除。
-     */
+    /** TCP 就绪后在 EventLoop 上创建会话 scope、置 CONNECTED，并直接发送带序言的 AUTH。 */
     private fun onTcpReady(ch: Channel, generation: Long) {
         if (generation != connectionGeneration || destroyed) {
             ch.close()
@@ -423,14 +473,10 @@ class ImClient(
             })
         _state.value = ConnectionState.CONNECTED
 
-        // 认证包（连接序言）：lastEventId 现取最新游标（离线补发）。
-        // 连上即发——无"握手完成"事件，从根上消除 FFAC6B1 类竞态。
+        // 认证包只建立身份。持久事件 cursor 不再塞进 AUTH；本地投影 ready 后另行分页同步。
         pendingAuth?.let {
-            val auth = lastEventIdProvider?.invoke()
-                ?.takeIf { id -> id > 0L }
-                ?.let { id -> it.copy(lastEventId = id) } ?: it
-            logger.trace("Sending auth: type=${auth.authType} lastEventId=${auth.lastEventId}")
-            channel?.writeAndFlush(auth)
+            logger.trace("Sending auth: type=${it.authType}")
+            channel?.writeAndFlush(it)
         }
     }
 
@@ -464,15 +510,8 @@ class ImClient(
         if (response.code == AuthResponsePayload.CODE_OK) {
             retryCount = 0
             _authenticationFailure.value = null
-            _state.value = ConnectionState.AUTHENTICATED
-            // 认证后放开帧限（镜像服务端 ImAgent 的围栏设计）：客户端收包也会超 4KB——
-            // 离线事件补发（sync_events 批量 NOTIFY）实测可达 100KB+，曾因未放开被
-            // CorruptedFrameException 断连并重连风暴（F23）
-            channel?.pipeline()?.get(PacketCodec::class.java)
-                ?.maxPayloadLimit = PacketCodec.AUTHED_LIMIT
             // 认证成功 → pendingAuth 升级为 refresh-token 认证（authType=2）。
-            // 历史bug：重连曾重放 register/login 原包——register 撞"用户名已存在"永久掉线；
-            // login 则重复传密码。token 一次一换，重连必须带最新 refreshToken。
+            // register/login 只用一次；后续重连必须使用服务端轮换后的 refresh token。
             response.refreshToken?.let { newToken ->
                 pendingAuth = pendingAuth?.copy(
                     authType = 2,
@@ -480,12 +519,16 @@ class ImClient(
                     username = null,
                     password = null,
                     name = null,
-                    lastEventId = lastEventIdProvider?.invoke() ?: pendingAuth?.lastEventId ?: 0L,
                 )
             }
             // 认证结果通过回调传给 UserSession（三级状态隔离：ImClient 不持有用户身份）
             onAuthResult?.invoke(true, response.uid, response.username, response.name, response.refreshToken, response.accessToken, null)
-            logger.trace("Authenticated: uid=${response.uid}, username=${response.username}")
+            syncBatchInFlight = false
+            syncResetApplied = false
+            lastRequestedSyncCursor = -1L
+            _state.value = ConnectionState.SYNCHRONIZING
+            beginEventSyncIfReady()
+            logger.trace("Identity authenticated; synchronizing uid=${response.uid}, username=${response.username}")
         } else {
             val failure = checkNotNull(response.toAuthenticationFailure())
             authTerminal = true // 终态：channelInactive 不再自动重连
@@ -497,6 +540,124 @@ class ImClient(
         scope?.launch { incomingPackets.emit(response) }
     }
 
+    private fun beginEventSyncIfReady() {
+        if (_state.value != ConnectionState.SYNCHRONIZING || lastRequestedSyncCursor >= 0L) return
+        val binding = eventSyncBinding ?: return
+        val initialCursor = binding.cursor()
+        if (initialCursor < 0L) {
+            closeForEventResync("Persistent event cursor is negative: $initialCursor")
+            return
+        }
+        lastRequestedSyncCursor = initialCursor
+        _eventSyncCursor.value = initialCursor
+        channel?.writeAndFlush(SyncRequestPayload(initialCursor))
+        logger.trace("Event sync requested after cursor=$initialCursor")
+    }
+
+    private fun handleSyncBatch(batch: SyncBatchPayload) {
+        handleSyncEvents(batch.events)
+    }
+
+    /** A maximum-sized durable event may be sent as a standalone NOTIFY during replay. */
+    private fun handleSyncEvent(event: NotifyPayload) {
+        handleSyncEvents(listOf(event))
+    }
+
+    private fun handleSyncEvents(events: List<NotifyPayload>) {
+        if (_state.value != ConnectionState.SYNCHRONIZING || syncBatchInFlight) {
+            closeForEventResync("Unexpected or overlapping sync batch")
+            return
+        }
+        val binding = eventSyncBinding
+        val connectionScope = scope
+        if (binding == null || connectionScope == null) {
+            closeForEventResync("Sync batch arrived without an active projection owner")
+            return
+        }
+        val requestedAfter = lastRequestedSyncCursor
+        if (
+            requestedAfter < 0L ||
+            events.isEmpty() ||
+            events.any { it.eventId <= 0L } ||
+            events.zipWithNext().any { (left, right) -> left.eventId >= right.eventId } ||
+            events.first().eventId <= requestedAfter
+        ) {
+            closeForEventResync(
+                "Sync events are not ordered after requested cursor=$requestedAfter",
+            )
+            return
+        }
+        syncBatchInFlight = true
+        connectionScope.launch {
+            try {
+                val persistedCursor = binding.processBatch(events)
+                val expectedCursor = events.last().eventId
+                check(persistedCursor == expectedCursor) {
+                    "Sync projection stopped at $persistedCursor instead of $expectedCursor"
+                }
+                lastRequestedSyncCursor = persistedCursor
+                _eventSyncCursor.value = persistedCursor
+                channel?.writeAndFlush(SyncRequestPayload(persistedCursor))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                closeForEventResync("Failed to persist sync batch", failure)
+            } finally {
+                syncBatchInFlight = false
+            }
+        }
+    }
+
+    private fun handleSyncReady() {
+        if (_state.value != ConnectionState.SYNCHRONIZING || syncBatchInFlight || lastRequestedSyncCursor < 0L) {
+            closeForEventResync("Unexpected SYNC_READY")
+            return
+        }
+        _state.value = ConnectionState.AUTHENTICATED
+        logger.trace("Persistent event sync ready at cursor=$lastRequestedSyncCursor")
+    }
+
+    private fun handleSyncReset() {
+        if (
+            _state.value != ConnectionState.SYNCHRONIZING ||
+            syncBatchInFlight ||
+            syncResetApplied ||
+            lastRequestedSyncCursor < 0L
+        ) {
+            closeForEventResync("Unexpected, overlapping, or repeated SYNC_RESET")
+            return
+        }
+        val binding = eventSyncBinding
+        val connectionScope = scope
+        if (binding == null || connectionScope == null) {
+            closeForEventResync("SYNC_RESET arrived without an active projection owner")
+            return
+        }
+        syncResetApplied = true
+        syncBatchInFlight = true
+        connectionScope.launch {
+            try {
+                val resetCursor = binding.reset()
+                check(resetCursor == 0L) { "Projection reset returned cursor=$resetCursor" }
+                check(_state.value == ConnectionState.SYNCHRONIZING) {
+                    "Connection left synchronization during projection reset"
+                }
+                lastRequestedSyncCursor = 0L
+                _eventSyncCursor.value = 0L
+                channel?.writeAndFlush(SyncRequestPayload(0L))
+                    ?: error("Connection closed during projection reset")
+                logger.trace("Server projection reset; event sync restarted from cursor=0")
+            } catch (cancelled: CancellationException) {
+                closeForEventResync("Server projection reset was cancelled", cancelled)
+                throw cancelled
+            } catch (failure: Throwable) {
+                closeForEventResync("Failed to reset server projection", failure)
+            } finally {
+                syncBatchInFlight = false
+            }
+        }
+    }
+
     /**
      * 连接级清理：只清连接层状态（pendingAcks）。
      *
@@ -504,6 +665,10 @@ class ImClient(
      * 用户层状态（uid/refreshToken 等）在 UserSession 中，不受 TCP 断开影响。
      */
     private fun cleanupOnDisconnect() {
+        syncBatchInFlight = false
+        syncResetApplied = false
+        lastRequestedSyncCursor = -1L
+        _eventSyncCursor.value = -1L
         pendingAcks.forEach { (_, deferred) ->
             deferred.completeExceptionally(CancellationException("Connection closed"))
         }
@@ -546,11 +711,25 @@ class ImClient(
                 logger.trace("Packet received: type=${msg::class.simpleName}")
                 when (msg) {
                     is AuthResponsePayload -> handleAuthResponse(msg)
+                    is SyncBatchPayload -> handleSyncBatch(msg)
+                    is SyncReadyPayload -> handleSyncReady()
+                    is SyncResetPayload -> handleSyncReset()
+                    is NotifyPayload -> {
+                        if (_state.value == ConnectionState.SYNCHRONIZING) {
+                            handleSyncEvent(msg)
+                        } else if (!incomingPackets.tryEmit(msg)) {
+                            logger.fault("Inbound packet buffer full; closing type=${msg::class.simpleName}")
+                            ctx.close()
+                        }
+                    }
                     is MessageAckPayload -> handleAck(msg)
                     is PingSignal -> send(PongSignal)
                     else -> {
                         if (!incomingPackets.tryEmit(msg)) {
-                            logger.trace("Packet dropped: buffer full, type=${msg::class.simpleName}")
+                            // A durable NOTIFY or RPC response cannot be silently discarded. Closing
+                            // makes the durable cursor/retry owners recover from their last commit.
+                            logger.fault("Inbound packet buffer full; closing type=${msg::class.simpleName}")
+                            ctx.close()
                         }
                     }
                 }
@@ -615,6 +794,7 @@ enum class ConnectionState {
     DISCONNECTED,
     CONNECTING,
     CONNECTED,
+    SYNCHRONIZING,
     AUTHENTICATED,
     AUTH_FAILED,
 }

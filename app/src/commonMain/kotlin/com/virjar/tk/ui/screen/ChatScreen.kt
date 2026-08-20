@@ -72,6 +72,7 @@ import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.ui.component.AvatarPlaceholder
 import com.virjar.tk.ui.component.RichMessageText
 import com.virjar.tk.ui.component.isEdgeToEdgeMedia
+import com.virjar.tk.ui.bridge.ChatMediaConfig
 import com.virjar.tk.ui.platform.contextLongPress
 import com.virjar.tk.ui.platform.secondaryClick
 import com.virjar.tk.ui.component.rich.RichTextFormattingToolbar
@@ -119,20 +120,8 @@ fun ChatPanel(
     onDraftChange: ((String) -> Unit)? = null,
     /** Session-owned continuation for reply/edit and composer UI state; not a draft backend. */
     composerContextStore: ChatComposerContextStore,
-    /**
-     * 平台媒体能力配置。提供时替代 onAttachClick/onPickImage/onPickFile/onVoiceRecord/
-     * onMediaClick/imageContent/videoContent 这 7 个分散参数。
-     * 为 null 时回退到下面的独立 lambda（向后兼容，不推荐）。
-     */
-    media: com.virjar.tk.ui.bridge.ChatMediaConfig? = null,
-    // 以下参数为向后兼容，推荐使用 media 参数
-    onAttachClick: (() -> Unit)? = null,
-    onPickImage: (() -> Unit)? = null,
-    onPickFile: (() -> Unit)? = null,
-    onVoiceRecord: ((Boolean) -> Unit)? = null,
-    onMediaClick: ((Message) -> Unit)? = null,
-    imageContent: (@Composable (String, Modifier) -> Unit)? = null,
-    videoContent: (@Composable (String, Modifier) -> Unit)? = null,
+    /** 平台媒体能力的唯一入口；平台壳负责构造，聊天 UI 不再维护平行回调。 */
+    media: ChatMediaConfig,
     peerReadSeq: Long = 0,
     /** 语音应用内播放控制器（null 时语音点击回退 onMediaClick 链路） */
     voicePlayback: com.virjar.tk.ui.component.VoicePlaybackController? = null,
@@ -143,18 +132,16 @@ fun ChatPanel(
     /** Only an actually visible/foreground chat may consume unread messages. */
     readReceiptsEnabled: Boolean,
 ) {
-    // 统一入口：media 优先，回退到独立 lambda
-    val effectiveAttachClick = media?.onAttachClick ?: onAttachClick
-    val effectivePickImage = media?.onPickImage ?: onPickImage
-    val effectivePickFile = media?.onPickFile ?: onPickFile
-    val effectiveVoiceRecord = media?.onVoiceRecord ?: onVoiceRecord
-    val effectiveVoiceModeEntered = media?.onVoiceModeEntered
-    val effectiveVoiceRecordCancel = media?.onVoiceRecordCancel
-    val effectiveMediaClick = media?.onMediaClick ?: onMediaClick
-    val effectiveImageContent = media?.imageContent ?: imageContent
-    val effectiveVideoContent = media?.videoContent ?: videoContent
-    val effectiveMentionClick = media?.onMentionClick
-    val effectiveUrlClick = media?.onUrlClick
+    val effectivePickImage = media.onPickImage
+    val effectivePickFile = media.onPickFile
+    val effectiveVoiceRecord = media.onVoiceRecord
+    val effectiveVoiceModeEntered = media.onVoiceModeEntered
+    val effectiveVoiceRecordCancel = media.onVoiceRecordCancel
+    val effectiveMediaClick = media.onMediaClick
+    val effectiveImageContent = media.imageContent
+    val effectiveVideoContent = media.videoContent
+    val effectiveMentionClick = media.onMentionClick
+    val effectiveUrlClick = media.onUrlClick
     val messages by viewModel.messages.collectAsState()
     val loading by viewModel.loading.collectAsState()
     val loadingOlder by viewModel.loadingOlder.collectAsState()
@@ -526,7 +513,7 @@ fun ChatPanel(
 
     // 当前会话收到的小文件即使尚未滚动到可见区域，也要静默下载。
     // 大文件只初始化状态，等待用户点击气泡。
-    val fileDownloads = media?.fileDownloads
+    val fileDownloads = media.fileDownloads
     LaunchedEffect(fileDownloads, messages) {
         if (fileDownloads != null) {
             messages.asSequence()
@@ -612,8 +599,7 @@ fun ChatPanel(
                         ),
                     )
                 } else {
-                    // 普通文本是 Markdown 的自然子集；所有新文本统一走 RICH_TEXT，
-                    // 彻底消除发送/编辑/SDK 在 TEXT 与 RICH_TEXT 之间的行为分叉。
+                    // 普通文本是 Markdown 的自然子集；所有文本统一走 RICH_TEXT。
                     Message(
                         chatId = chatId,
                         clientMsgId = UUID.randomUUID().toString(),
@@ -923,7 +909,7 @@ fun ChatPanel(
 
                 // 工具行（输入框下方，飞书范式）：表情/格式键/语音 居左；＋附件 居右。
                 // 替代旧的"图标平铺+AlertDialog 文字菜单"（曾是最丑的一层）。
-                val effectivePickVideo = media?.onPickVideo
+                val effectivePickVideo = media.onPickVideo
                 // 编辑已发消息只允许修改文本 body，不制造“附件会并入原消息”的错觉。
                 val hasAttachment = !editingSessionActive &&
                     (effectivePickImage != null || effectivePickFile != null || effectivePickVideo != null)

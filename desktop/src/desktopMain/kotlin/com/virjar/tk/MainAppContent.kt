@@ -158,7 +158,7 @@ internal fun WindowScope.MainAppContent(
     // 自动登录路径 localCache/currentUser 可能为空，没有兜底时自己消息头像退化为 uid 首字母。
     val userSession = nav.userSession
     val resolveUser: (String) -> User? = { uid ->
-        nav.localCache.getUser(uid)
+        nav.cachedUser(uid)
             ?: nav.account.currentUser?.takeIf { it.uid == uid }
             ?: if (uid == userSession.uid) {
                 User(
@@ -191,8 +191,12 @@ internal fun WindowScope.MainAppContent(
             emptyList()
         } else if (nav.chatType == ChatType.GROUP.code) {
             try {
-                nav.chatRepo.getMembers(chatId).getOrNull()?.mapNotNull { it.user } ?: emptyList()
-            } catch (_: Exception) { emptyList() }
+                nav.groups.mentionCandidates(chatId)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                emptyList()
+            }
         } else {
             contacts.mapNotNull { it.user }
         }
@@ -245,7 +249,7 @@ internal fun WindowScope.MainAppContent(
                                     val conv = conversations.find { it.chatId == chatId }
                                     nav.openChat(chatId, conv?.chatName ?: chatId.take(16), conv?.chatType ?: 1)
                                 },
-                                onPinClick = { chatId, pinned -> nav.session.localCache.toggleConversationPin(chatId, pinned) },
+                                onPinClick = nav.conversationViewModel::setPinned,
                                 onMarkRead = { chatId, lastSeq ->
                                     nav.markConversationRead(chatId, lastSeq)
                                 },
@@ -516,12 +520,15 @@ private fun WindowScope.DesktopTitleBar(
                         ConnectionState.AUTHENTICATED -> "在线"
                         ConnectionState.CONNECTING -> "连接中"
                         ConnectionState.CONNECTED -> "验证中"
+                        ConnectionState.SYNCHRONIZING -> "同步中"
                         ConnectionState.AUTH_FAILED -> "认证失效"
                         ConnectionState.DISCONNECTED -> "离线"
                     }
                     val statusColor = when (connectionState) {
                         ConnectionState.AUTHENTICATED -> Tk.colors.online
-                        ConnectionState.CONNECTING, ConnectionState.CONNECTED -> MaterialTheme.colorScheme.primary
+                        ConnectionState.CONNECTING,
+                        ConnectionState.CONNECTED,
+                        ConnectionState.SYNCHRONIZING -> MaterialTheme.colorScheme.primary
                         else -> Tk.colors.metaText
                     }
                     Row(

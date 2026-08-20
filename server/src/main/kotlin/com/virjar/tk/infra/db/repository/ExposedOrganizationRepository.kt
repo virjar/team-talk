@@ -3,6 +3,7 @@ package com.virjar.tk.infra.db.repository
 import com.virjar.tk.domain.organization.OrganizationRepository
 import com.virjar.tk.infra.db.OrganizationMemberships
 import com.virjar.tk.infra.db.OrganizationUnits
+import com.virjar.tk.infra.db.Users
 import com.virjar.tk.model.OrganizationMember
 import com.virjar.tk.model.OrganizationUnit
 import org.jetbrains.exposed.sql.ResultRow
@@ -35,6 +36,7 @@ class ExposedOrganizationRepository : OrganizationRepository {
     }
 
     override fun createUnit(unit: OrganizationUnit): OrganizationUnit = transaction {
+        require(unit.sortOrder >= 0) { "sortOrder 不能为负数" }
         val now = System.currentTimeMillis()
         OrganizationUnits.insert {
             it[unitId] = unit.unitId
@@ -51,6 +53,7 @@ class ExposedOrganizationRepository : OrganizationRepository {
     }
 
     override fun updateUnit(unit: OrganizationUnit): OrganizationUnit = transaction {
+        require(unit.sortOrder >= 0) { "sortOrder 不能为负数" }
         val updated = OrganizationUnits.update({
             (OrganizationUnits.unitId eq unit.unitId) and
                 (OrganizationUnits.status eq OrganizationUnit.STATUS_ACTIVE)
@@ -117,6 +120,12 @@ class ExposedOrganizationRepository : OrganizationRepository {
     override fun upsertMember(member: OrganizationMember) {
         transaction {
             if (member.primary) {
+                // The user row is the aggregate lock for competing primary assignments. The
+                // second writer waits, clears the first assignment and then installs its own, so
+                // the partial unique index remains a guard rather than surfacing a race failure.
+                require(Users.selectAll().where { Users.uid eq member.uid }.forUpdate().singleOrNull() != null) {
+                    "用户不存在: ${member.uid}"
+                }
                 OrganizationMemberships.update({ OrganizationMemberships.uid eq member.uid }) {
                     it[primary] = false
                     it[updatedAt] = System.currentTimeMillis()

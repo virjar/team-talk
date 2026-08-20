@@ -22,27 +22,16 @@ import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
-import kotlinx.serialization.Serializable
 import java.util.UUID
-
-/** Compatibility body for the original multi-grant/system-bot webhook. */
-@Serializable
-private data class LegacyBotMessageRequest(
-    val chatId: String,
-    val markdown: String,
-    val idempotencyKey: String,
-)
 
 /** External bot delivery plus access-token-authenticated group management. */
 fun Route.botRoutes(service: BotService, tokenStore: TokenRepository) {
     targetBoundBotMessageRoutes(service)
-    legacyBotMessageRoutes(service)
     groupBotRoutes(service, tokenStore)
 }
 
 /**
- * Canonical target-bound webhook. The URL chatId is the sole delivery destination; any legacy
- * JSON fields are ignored by [GroupBotMessageRequest] and can never redirect the message.
+ * Canonical target-bound webhook. The URL chatId is the sole delivery destination.
  */
 internal fun Route.targetBoundBotMessageRoutes(
     service: BotMessageDelivery,
@@ -66,33 +55,6 @@ internal fun Route.targetBoundBotMessageRoutes(
             call.respond(GroupBotMessageResponse(ok = true))
         } catch (error: IllegalArgumentException) {
             call.respondBotDeliveryError(error)
-        }
-    }
-}
-
-/**
- * Legacy direct-bot webhook retained for deployed system integrations that choose a grant in JSON.
- * Group-facing API paths never point here.
- */
-internal fun Route.legacyBotMessageRoutes(service: BotMessageDelivery) {
-    route("/api/v1/bots") {
-        post("/{botId}/messages") {
-            val botId = call.parameters["botId"]
-                ?: return@post call.respond(HttpStatusCode.BadRequest, mapOf("error" to "botId required"))
-            try {
-                val request = call.receive<LegacyBotMessageRequest>()
-                call.respond(
-                    service.deliver(
-                        botId = botId,
-                        token = call.botBearerToken(),
-                        chatId = request.chatId,
-                        markdown = request.markdown,
-                        idempotencyKey = request.idempotencyKey,
-                    ),
-                )
-            } catch (error: IllegalArgumentException) {
-                call.respondBotDeliveryError(error)
-            }
         }
     }
 }

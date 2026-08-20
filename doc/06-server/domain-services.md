@@ -10,7 +10,8 @@
 ### 登录与 refresh
 
 未知用户和密码错误使用相同外部错误。认证成功创建/更新 Device，签发随机 access/refresh token，
-注册连接并从 lastEventId 开始补发。refresh token 成功使用后轮换。
+但不注册实时连接。客户端事件投影就绪后按持久游标显式分页同步；服务端最终在用户 delivery gate
+内二次查空、发送 `SYNC_READY` 并激活实时连接。refresh token 成功使用后轮换。
 
 ### 资料更新
 
@@ -23,7 +24,7 @@ USER_UPDATED。
   锁定双方 User 行的事务中复用且不重复通知；反方向 pending 保留给接收者处理，不能再创建镜像申请。
 - `accept`：验证申请接收者和 token，在事务中形成双方关系。
 - `reject`：只改变申请状态，不创建关系。
-- `listApplies` 保留兼容语义，只返回收到且待处理的最新 100 条；双向历史使用有界分页
+- `listPendingApplies` 只返回收到且待处理的最新 100 条；双向历史使用有界分页
   `listApplyRecords`，资料页的两人 pending 状态使用 `getPendingApply` 精确查询，不能从历史首屏推断。
 - 处理 token 只属于收到申请的一方；`apply` 响应、发出记录和已处理记录不得回显 token。
 - `delete`：删除双方关系，并分别发送双方视角的 CONTACT_DELETED。
@@ -48,7 +49,8 @@ OrganizationService 维护单根无环目录、用户多部门归属和唯一主
 
 ### 私聊
 
-创建私聊前验证两人关系与已有会话，避免同一成员组合重复生成多个私聊容器。
+创建私聊前验证两人关系，并以排序后的用户对作为数据库唯一键。并发创建会收敛到同一 Chat，
+成员与双方 Conversation 在同一事务内建立。
 
 ### 群聊
 
@@ -69,6 +71,14 @@ CHAT_CREATED。
 
 最终矩阵以 ChatService 当前实现和 RPC 验收为准。权限变化必须在一个操作内更新存储并发完整群快照。
 退出只失效当前成员关系，解散才把 Chat 标记为非活跃；两者不能共享一个含糊的“删除群”用例。
+每个活跃群最多一个 owner 由部分唯一索引兜底，转让在锁定 Chat 聚合行的事务内重新校验双方成员状态。
+
+邀请加入先锁定邀请行与 Chat 聚合行，再在同一 PostgreSQL 事务内校验失效、过期、限额和群活跃状态，
+建立成员与 Conversation 并消费一次额度。重复加入只补齐 Conversation，不重复计数；缓存和事件只在事务提交后更新。
+
+聊天是否存在、是否群聊、成员资格以及管理员/群主阈值统一由 `ChatAccess` 判断。Chat、Message、
+GroupFile 和 Bot 不得各自复制角色数字和成员错误分支；禁言、黑名单、受管群等操作专属规则仍由
+对应领域服务负责。
 
 ## 5. Message
 
@@ -97,11 +107,13 @@ ConversationService 维护用户视角状态：
 - markRead 用 max 合并 readSeq，更新自己所有设备并向会话成员同步 peer waterline。
 - deleteConversation 删除收件箱视图，不删除 Chat 或消息。
 
-`ensureConversations` 是建群、加人和邀请加入的强制步骤，不是可选修复。
+创建 Chat 时，初始 Member 与 Conversation 由 ChatRepository 在同一 PostgreSQL 事务建立。后续加人、
+邀请加入以及受管群收敛使用 `ensureConversations` 补齐新增成员；创建完成后不能再重复写一轮相同投影。
 
 ## 7. GroupFile
 
-GroupFileService 只接受当前群成员访问，并拒绝在私聊上创建文件空间。创建文件或新版本时，服务端重新
+GroupFileService 通过统一 `ChatAccess` 只接受当前群成员访问，并拒绝在私聊上创建文件空间；它不再
+通过“先列出用户全部会话再查包含关系”的旁路判断权限。创建文件或新版本时，服务端重新
 查询 FileStore，要求 Attachment 元数据完全匹配且调用者就是该次上传者；因此不能抢占其他成员尚未
 发布的上传。Repository 在一个事务中更新条目、追加不可变版本并写审计。
 
@@ -126,6 +138,10 @@ DocumentService 以 DocumentSpace 为权限根。所有者是创建者；用户�
 
 BotService 为每个通知应用创建 UserRole.BOT 服务账户。该账户的随机密码不返回，UserService 登录路径
 也显式拒绝 BOT/SYSTEM。应用 token 使用 256-bit 随机值，数据库只保存 SHA-256。
+
+BotService 只依赖服务账号创建、群成员投影和消息发送三个窄端口；application 适配器再委托给
+UserService、ChatService 和 MessageService。机器人领域不能直接持有这些完整服务或 ChatStore，避免
+管理入口绕开统一聊天权限并降低跨领域构造和测试成本。
 
 授权是 `(botId, chatId)` 白名单事实。grant 只接受群聊，并把服务身份加入群；revoke/disable 先撤销
 发送权，再移出群。群绑定入口从 URL 取得 botId 与 chatId，正文只接收 Markdown，不能由调用方改写

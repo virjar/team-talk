@@ -1,12 +1,15 @@
 package com.virjar.tk.client
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import app.cash.turbine.test
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Contact
 import com.virjar.tk.model.Conversation
 import com.virjar.tk.model.Message
+import com.virjar.tk.model.Member
 import com.virjar.tk.model.User
 import com.virjar.tk.database.AppDatabase
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -14,7 +17,9 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -38,6 +43,77 @@ class LocalCacheImplTest {
         val cache = newCache()
         cache.close()
         cache.close()
+    }
+
+    @Test
+    fun `sync cursor is monotonic and restored by a rebuilt event processor`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        AppDatabase.Schema.create(driver)
+        val firstCache = LocalCacheImpl(driver)
+
+        assertEquals(91L, firstCache.advanceSyncCursor(EventProcessor.SYNC_CURSOR_KEY, 91L))
+        assertEquals(
+            91L,
+            firstCache.advanceSyncCursor(EventProcessor.SYNC_CURSOR_KEY, 40L),
+            "a delayed duplicate must not regress the durable cursor",
+        )
+
+        val rebuiltCache = LocalCacheImpl(driver)
+        val client = ImClient()
+        try {
+            val rebuiltProcessor = EventProcessor(client, rebuiltCache)
+            assertEquals(91L, rebuiltProcessor.lastEventId.value)
+            assertEquals(91L, rebuiltCache.getSyncCursor(EventProcessor.SYNC_CURSOR_KEY))
+        } finally {
+            client.destroy()
+        }
+    }
+
+    @Test
+    fun `server projection reset is transactional and keeps resident message flow attached`() = runBlocking {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        AppDatabase.Schema.create(driver)
+        val cache = LocalCacheImpl(driver)
+        val message = Message(
+            chatId = "c1",
+            clientMsgId = "m1",
+            serverSeq = 1,
+            senderUid = "u1",
+            messageType = 1,
+            timestamp = 1,
+        )
+        cache.upsertUser(user(1))
+        cache.upsertContact(Contact(uid = "me", friendUid = "u1"))
+        cache.upsertChat(Chat(chatId = "c1", chatType = 1))
+        cache.upsertMember(Member(chatId = "c1", uid = "u1", role = 0))
+        cache.upsertConversation(conv("c1"))
+        cache.setConversationDraft("c1", "pending")
+        cache.insertMessage(message)
+        cache.enqueueBotMessage(9L, message)
+        cache.advanceSyncCursor(EventProcessor.SYNC_CURSOR_KEY, 9L)
+        val residentMessages = cache.observeMessages("c1")
+
+        cache.resetServerProjection()
+
+        assertNull(cache.getUser("u1"))
+        assertTrue(cache.getContacts().isEmpty())
+        assertNull(cache.getChat("c1"))
+        assertTrue(cache.getMembers("c1").isEmpty())
+        assertTrue(cache.getConversations().isEmpty())
+        assertTrue(cache.getMessages("c1").isEmpty())
+        assertTrue(cache.getPendingConversationDrafts().isEmpty())
+        assertEquals(0L, cache.getSyncCursor(EventProcessor.SYNC_CURSOR_KEY))
+        assertNull(cache.peekBotMessage())
+        assertTrue(residentMessages.first().isEmpty())
+
+        val replayed = message.copy(clientMsgId = "m2", serverSeq = 2)
+        cache.insertMessage(replayed)
+        assertEquals(listOf("m2"), residentMessages.first().map(Message::clientMsgId))
+
+        val rebuilt = LocalCacheImpl(driver)
+        assertNull(rebuilt.getUser("u1"))
+        assertEquals(listOf("m2"), rebuilt.getMessages("c1").map(Message::clientMsgId))
+        assertEquals(0L, rebuilt.getSyncCursor(EventProcessor.SYNC_CURSOR_KEY))
     }
 
     @Test
@@ -82,6 +158,41 @@ class LocalCacheImplTest {
 
         val reloaded = LocalCacheImpl(driver)
         assertEquals(listOf("real"), reloaded.getContacts().map(Contact::friendUid))
+    }
+
+    @Test
+    fun `reloaded raw contact is projected with persisted user`() = runBlocking {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        AppDatabase.Schema.create(driver)
+        val cache = LocalCacheImpl(driver)
+        cache.upsertContact(
+            Contact(
+                uid = "me",
+                friendUid = "friend",
+                user = User(uid = "friend", username = "friend", name = "Persisted Name"),
+            ),
+        )
+
+        val reloaded = LocalCacheImpl(driver)
+        val contact = reloaded.observeContacts().first().single()
+
+        assertEquals("Persisted Name", contact.user?.name)
+        assertEquals(reloaded.getContacts(), listOf(contact), "get/observe 必须使用同一投影")
+    }
+
+    @Test
+    fun `later user update re-emits projected contact`() = runBlocking {
+        val cache = newCache()
+        cache.observeContacts().test {
+            assertTrue(awaitItem().isEmpty())
+
+            cache.upsertContact(Contact(uid = "me", friendUid = "friend"))
+            assertNull(awaitItem().single().user)
+
+            cache.upsertUser(User(uid = "friend", username = "friend", name = "Updated Name"))
+            assertEquals("Updated Name", awaitItem().single().user?.name)
+            cancelAndIgnoreRemainingEvents()
+        }
     }
 
     @Test
@@ -133,6 +244,76 @@ class LocalCacheImplTest {
             n++
         }
         return n
+    }
+
+    @Test
+    fun `权威会话快照原子删除旧行和草稿 outbox 但保留 Chat 缓存`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        AppDatabase.Schema.create(driver)
+        val cache = LocalCacheImpl(driver)
+        cache.upsertChat(Chat(chatId = "stale", chatType = 2, name = "cached group"))
+        cache.upsertChat(Chat(chatId = "profile-only", chatType = 1, name = "cached profile"))
+        cache.upsertConversation(conv("stale", draft = "old"))
+        cache.setConversationDraft("stale", "pending")
+
+        val generation = cache.beginConversationSnapshot()
+        assertTrue(cache.applyConversationSnapshot(generation, emptyList()))
+
+        assertTrue(cache.getConversations().isEmpty())
+        assertTrue(cache.getPendingConversationDrafts().isEmpty())
+        assertEquals("cached group", cache.getChat("stale")?.name)
+        assertEquals("cached profile", cache.getChat("profile-only")?.name)
+
+        val reloaded = LocalCacheImpl(driver)
+        assertTrue(reloaded.getConversations().isEmpty(), "conversation deletion must be durable")
+        assertTrue(reloaded.getPendingConversationDrafts().isEmpty(), "draft outbox deletion must be durable")
+        assertEquals("cached group", reloaded.getChat("stale")?.name)
+        assertEquals("cached profile", reloaded.getChat("profile-only")?.name)
+    }
+
+    @Test
+    fun `迟到会话快照不能删除新会话或复活删除 tombstone 且结果持久化`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        AppDatabase.Schema.create(driver)
+        val cache = LocalCacheImpl(driver)
+        val deleted = conv("deleted")
+        cache.upsertConversation(deleted)
+        val generation = cache.beginConversationSnapshot()
+
+        cache.deleteConversation(deleted.chatId)
+        cache.upsertConversation(conv("created-during-request"))
+        assertFalse(cache.applyConversationSnapshot(generation, listOf(deleted)))
+
+        assertEquals(
+            listOf("created-during-request"),
+            cache.getConversations().map(Conversation::chatId),
+        )
+        val reloaded = LocalCacheImpl(driver)
+        assertEquals(
+            listOf("created-during-request"),
+            reloaded.getConversations().map(Conversation::chatId),
+        )
+    }
+
+    @Test
+    fun `并发全量请求乱序返回时旧会话快照整体失效`() {
+        val cache = newCache()
+        val olderGeneration = cache.beginConversationSnapshot()
+        val newerGeneration = cache.beginConversationSnapshot()
+
+        assertTrue(
+            cache.applyConversationSnapshot(
+                newerGeneration,
+                listOf(conv("newer-response")),
+            ),
+        )
+        assertFalse(
+            cache.applyConversationSnapshot(
+                olderGeneration,
+                listOf(conv("older-response")),
+            ),
+        )
+        assertEquals(listOf("newer-response"), cache.getConversations().map(Conversation::chatId))
     }
 
     @Test
@@ -241,8 +422,7 @@ class LocalCacheImplTest {
         val cache = newCache()
         cache.upsertConversation(conv("old", ts = 1000))
         cache.upsertConversation(conv("new", ts = 2000))
-        cache.upsertConversation(conv("pinned", ts = 500))
-        cache.toggleConversationPin("pinned", true)
+        cache.upsertConversation(conv("pinned", ts = 500).copy(isPinned = true))
         val ids = cache.getConversations().map { it.chatId }
         assertEquals(listOf("pinned", "new", "old"), ids)
     }
@@ -259,6 +439,32 @@ class LocalCacheImplTest {
         val reloaded = cache.getMessages("c0", 10)
         assertTrue(reloaded.isNotEmpty(), "evicted 窗口应从 DB 重载")
         assertEquals("m0", reloaded.first().clientMsgId)
+    }
+
+    @Test
+    fun `损坏的持久消息正文必须携带行上下文 fail fast`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        AppDatabase.Schema.create(driver)
+        AppDatabase(driver).appDatabaseQueries.insertMessage(
+            chat_id = "corrupt-chat",
+            client_msg_id = "corrupt-message",
+            server_seq = 1L,
+            sender_uid = "sender",
+            message_type = 999L,
+            timestamp = 1L,
+            flags = 0L,
+            body = byteArrayOf(1),
+            send_status = 0L,
+        )
+        val cache = LocalCacheImpl(driver)
+
+        val failure = assertFailsWith<IllegalStateException> {
+            cache.getMessages("corrupt-chat", 10)
+        }
+
+        assertTrue(failure.message?.contains("chatId=corrupt-chat") == true)
+        assertTrue(failure.message?.contains("msgId=corrupt-message") == true)
+        assertTrue(failure.message?.contains("type=999") == true)
     }
 
     @Test

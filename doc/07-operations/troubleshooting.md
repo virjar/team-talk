@@ -4,7 +4,7 @@
 
 1. 从客户端构建信息确认 serverUrl/tcpAddress 和 commit。
 2. 检查 DNS、TLS 与 TCP 5100 可达性。
-3. 查看 ConnectionState：CONNECTING、CONNECTED、AUTH_FAILED 语义不同。
+3. 查看 ConnectionState：CONNECTING、CONNECTED、SYNCHRONIZING、AUTHENTICATED、AUTH_FAILED 语义不同。
 4. 服务端查 AUTH/CLOSE trace 和协议版本。
 5. AUTH_FAILED 不应重试；普通网络断开才进入指数退避。
 
@@ -13,7 +13,10 @@
 ## 2. 登录后数据为空
 
 - 确认 ClientSession 和按 uid 的本地数据库已创建。
-- 检查 lastEventId 是否异常领先。
+- 检查 `sync_cursor` 中的 lastEventId 是否异常领先或未单调落盘。
+- 若停在 SYNCHRONIZING，检查 SYNC_REQUEST / SYNC_BATCH / SYNC_RESET / SYNC_READY、批次投影异常和同步超时。
+- 若反复收到 SYNC_RESET，检查本地事务是否成功清空 projection/cursor/inbox，以及服务端是否错误拒绝 0；
+  同一连接第二次 RESET 会按协议主动断开。
 - 查 EventProcessor 是否解码/写库失败且未推进游标。
 - 主动 list/sync 是否能恢复 Conversation/Contact。
 - 测试环境若经历过破坏性结构调整，清理对应测试数据库后重验。
@@ -33,7 +36,7 @@
 ## 4. 新消息导致本地解码错误
 
 - 对比 messageType 与 body registry。
-- 确认旧 TextBody/RichText 的实际 wire。
+- 确认 `RICH_TEXT` 的 messageType 与 body wire 是否一致。
 - 检查本地旧缓存是否来自破坏性变更前。
 - 运行 ProtoRoundTripTest 和实际消息 payload 解码。
 - 测试阶段可清空不兼容历史；不能把刚发送的新消息误判为旧数据。

@@ -44,8 +44,9 @@
 
 **决定**：持久化 NOTIFY 尽量携带完整对象快照；客户端成功处理后才推进游标。
 
-**结果**：重复事件可以 upsert，恢复简单；payload 比 patch 大，事件表需要 TTL 和分页。Presence 等
-瞬时状态可以明确豁免持久化。
+**结果**：重复事件可以 upsert，恢复简单；payload 比 patch 大，事件交付必须分页。Presence 等
+瞬时状态可以明确豁免持久化。TTL 清理只能在协议能明确要求并验证 full resync 后启用；
+当前开发基线为避免静默 cursor gap，接受 `sync_events` 无界增长。
 
 ## D6 · 已读使用单调水位
 

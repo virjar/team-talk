@@ -37,7 +37,12 @@ enum class NotifyType(val code: Int) {
     // 用户
     USER_UPDATED(60),
 
-    // 通用扩展入口（协议演进策略 §9）：payload = GenericPayload(extensionType + data)
+    /**
+     * NOTIFY 通道的受控扩展入口：payload = GenericPayload(extensionType + opaque data)。
+     *
+     * **这是与 RPC、MESSAGE 并列的刻意协议预留；即使 [ExtensionType] 暂时为空、当前没有业务
+     * handler，也禁止按“零引用/死代码”删除。** 未知扩展必须安全忽略，持久事件游标照常推进。
+     */
     GENERIC(99);
 
     companion object {

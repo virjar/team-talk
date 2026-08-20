@@ -4,7 +4,9 @@ import com.virjar.tk.domain.chat.ChatMemberRepository
 import com.virjar.tk.domain.chat.ChatRepository
 import com.virjar.tk.domain.user.UserRepository
 import com.virjar.tk.domain.conversation.ConversationRepository
+import com.virjar.tk.infra.db.Chats
 import com.virjar.tk.infra.db.Conversations
+import com.virjar.tk.infra.db.GroupMembers
 import com.virjar.tk.model.Conversation
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
@@ -18,18 +20,29 @@ class ExposedConversationRepository(
 
     override fun listConversations(uid: String): List<Conversation> {
         val rows = transaction {
-            Conversations.selectAll()
-                .where { Conversations.uid eq uid }
+            activeConversationJoin().selectAll()
+                .where {
+                    (Conversations.uid eq uid) and
+                        (GroupMembers.uid eq uid) and
+                        (GroupMembers.status eq 1) and
+                        (Chats.status eq 1)
+                }
                 .orderBy(Conversations.updatedAt, SortOrder.DESC)
                 .map { it.toConversationRow() }
         }
-        return rows.map { enrichConversation(uid, it) }
+        return rows.mapNotNull { enrichConversation(uid, it) }
     }
 
     override fun getConversation(uid: String, chatId: String): Conversation? {
         val row = transaction {
-            Conversations.selectAll()
-                .where { (Conversations.uid eq uid) and (Conversations.chatId eq chatId) }
+            activeConversationJoin().selectAll()
+                .where {
+                    (Conversations.uid eq uid) and
+                        (Conversations.chatId eq chatId) and
+                        (GroupMembers.uid eq uid) and
+                        (GroupMembers.status eq 1) and
+                        (Chats.status eq 1)
+                }
                 .map { it.toConversationRow() }
                 .singleOrNull()
         } ?: return null
@@ -38,6 +51,7 @@ class ExposedConversationRepository(
 
     override fun upsertConversation(uid: String, chatId: String, chatType: Int, lastMsgSeq: Long, lastMsgType: Int, lastMsgPreview: String?) {
         transaction {
+            if (!lockActiveMembership(uid, chatId)) return@transaction
             val existing = Conversations.selectAll()
                 .where { (Conversations.uid eq uid) and (Conversations.chatId eq chatId) }
                 .singleOrNull()
@@ -111,18 +125,6 @@ class ExposedConversationRepository(
                     it[Conversations.version] = existing[Conversations.version] + 1
                     it[Conversations.updatedAt] = System.currentTimeMillis()
                 }
-            } else {
-                // 会话行不存在（如建群后未收到消息就 markRead）→ 创建行持久化 readSeq。
-                // 之前这里静默 no-op 导致 readSeq 丢失，换设备登录后全未读。
-                Conversations.insert {
-                    it[Conversations.uid] = uid
-                    it[Conversations.chatId] = chatId
-                    it[Conversations.chatType] = 1 // 未知 chatType 时默认 personal，listConversations 会用 chat 表覆盖
-                    it[Conversations.lastMsgSeq] = 0
-                    it[Conversations.readSeq] = readSeq
-                    it[Conversations.version] = 1
-                    it[Conversations.updatedAt] = System.currentTimeMillis()
-                }
             }
         }
     }
@@ -152,6 +154,7 @@ class ExposedConversationRepository(
      */
     override fun ensureConversation(uid: String, chatId: String, chatType: Int) {
         transaction {
+            if (!lockActiveMembership(uid, chatId)) return@transaction
             val exists = Conversations.selectAll()
                 .where { (Conversations.uid eq uid) and (Conversations.chatId eq chatId) }
                 .count() > 0
@@ -212,40 +215,49 @@ class ExposedConversationRepository(
 
     override fun getConversationsAfter(uid: String, afterVersion: Long, limit: Int): List<Conversation> {
         val rows = transaction {
-            Conversations.selectAll()
-                .where { (Conversations.uid eq uid) and (Conversations.version greater afterVersion) }
+            activeConversationJoin().selectAll()
+                .where {
+                    (Conversations.uid eq uid) and
+                        (Conversations.version greater afterVersion) and
+                        (GroupMembers.uid eq uid) and
+                        (GroupMembers.status eq 1) and
+                        (Chats.status eq 1)
+                }
                 .orderBy(Conversations.version)
                 .limit(limit)
                 .map { it.toConversationRow() }
         }
-        return rows.map { enrichConversation(uid, it) }
+        return rows.mapNotNull { enrichConversation(uid, it) }
     }
 
-    private fun enrichConversation(uid: String, row: ConversationRow): Conversation {
-        val chat = chatRepo.getChat(row.chatId)
+    private fun enrichConversation(uid: String, row: ConversationRow): Conversation? {
+        // Revalidate after the projection query. This makes the adapter fail closed even if a
+        // deactivate/removal commits between selecting rows and resolving display metadata.
+        val chat = chatRepo.getChat(row.chatId) ?: return null
+        if (memberRepo.getMember(row.chatId, uid) == null) return null
         var chatName: String? = null
         var chatAvatar: String? = null
 
-        if (chat != null) {
-            if (chat.chatType == 2) {
-                chatName = chat.name
-                chatAvatar = chat.avatar
-            } else {
-                val members = memberRepo.getMembers(row.chatId)
-                val otherUid = members.firstOrNull { it.uid != uid }?.uid
-                if (otherUid != null) {
-                    val otherUser = userRepo.findByUid(otherUid)
-                    chatName = otherUser?.name ?: otherUid
-                    chatAvatar = otherUser?.avatar
-                }
+        if (chat.chatType == 2) {
+            chatName = chat.name
+            chatAvatar = chat.avatar
+        } else {
+            val members = memberRepo.getMembers(row.chatId)
+            val otherUid = members.firstOrNull { it.uid != uid }?.uid
+            if (otherUid != null) {
+                val otherUser = userRepo.findByUid(otherUid)
+                chatName = otherUser?.name ?: otherUid
+                chatAvatar = otherUser?.avatar
             }
         }
 
-        val unreadCount = maxOf(0, (row.lastMsgSeq - row.readSeq).toInt())
+        val unreadCount = (row.lastMsgSeq - row.readSeq)
+            .coerceIn(0L, Int.MAX_VALUE.toLong())
+            .toInt()
 
         return Conversation(
             chatId = row.chatId,
-            chatType = row.chatType,
+            chatType = chat.chatType,
             chatName = chatName,
             chatAvatar = chatAvatar,
             lastMessage = row.lastMessage,
@@ -258,6 +270,31 @@ class ExposedConversationRepository(
             peerReadSeq = row.peerReadSeq,
             draft = row.draft,
         )
+    }
+
+    private fun activeConversationJoin() = Conversations.join(
+        otherTable = GroupMembers,
+        joinType = JoinType.INNER,
+        onColumn = Conversations.chatId,
+        otherColumn = GroupMembers.chatId,
+    ).join(
+        otherTable = Chats,
+        joinType = JoinType.INNER,
+        onColumn = Conversations.chatId,
+        otherColumn = Chats.chatId,
+    )
+
+    /** Serialize projection creation with deactivateChat's lock on the same aggregate row. */
+    private fun lockActiveMembership(uid: String, chatId: String): Boolean {
+        if (Chats.selectAll().where {
+                (Chats.chatId eq chatId) and (Chats.status eq 1)
+            }.forUpdate().singleOrNull() == null
+        ) return false
+        return GroupMembers.selectAll().where {
+            (GroupMembers.chatId eq chatId) and
+                (GroupMembers.uid eq uid) and
+                (GroupMembers.status eq 1)
+        }.count() > 0
     }
 }
 

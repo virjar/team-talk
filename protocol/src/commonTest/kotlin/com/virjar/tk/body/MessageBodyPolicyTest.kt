@@ -34,13 +34,9 @@ class MessageBodyPolicyTest {
     }
 
     @Test
-    fun `legacy text rich text and reply share markdown safety budget`() {
+    fun `rich text and reply share markdown safety budget`() {
         val oversized = "a".repeat(MessageBodyPolicy.MAX_MARKDOWN_LENGTH + 1)
 
-        @Suppress("DEPRECATION")
-        assertFailsWith<IllegalArgumentException> {
-            MessageBodyPolicy.canonicalize(message(MessageType.TEXT, TextBody(oversized)))
-        }
         assertFailsWith<IllegalArgumentException> {
             MessageBodyPolicy.canonicalize(message(MessageType.RICH_TEXT, buildRichTextBody(oversized)))
         }

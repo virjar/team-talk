@@ -24,24 +24,21 @@ data class ReplyBody(
 
     companion object : IProtoReader<ReplyBody> {
         override fun readFrom(buf: PacketBuffer) = ReplyBody(
-            replyToMsgId = buf.readString(
+            replyToMsgId = buf.readRequiredString(
                 MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH),
-            )!!,
-            replyToSenderUid = buf.readString(
+            ),
+            replyToSenderUid = buf.readRequiredString(
                 MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH),
-            )!!,
+            ),
             replyToSenderName = buf.readString(
                 MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_DISPLAY_NAME_LENGTH),
             ),
             replySnippet = buf.readString(
                 MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_SHORT_TEXT_LENGTH),
             ),
-            // 向后兼容：旧格式无 content 字段
-            content = if (buf.readableBytes() > 0) {
-                buf.readString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_MARKDOWN_LENGTH)) ?: ""
-            } else {
-                ""
-            },
+            content = buf.readRequiredString(
+                MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_MARKDOWN_LENGTH),
+            ),
         )
     }
 }
@@ -113,9 +110,9 @@ data class RevokeBody(
 
     companion object : IProtoReader<RevokeBody> {
         override fun readFrom(buf: PacketBuffer) = RevokeBody(
-            revokedMsgId = buf.readString(
+            revokedMsgId = buf.readRequiredString(
                 MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH),
-            )!!,
+            ),
         )
     }
 }
@@ -134,12 +131,12 @@ data class EditBody(
 
     companion object : IProtoReader<EditBody> {
         override fun readFrom(buf: PacketBuffer) = EditBody(
-            editedMsgId = buf.readString(
+            editedMsgId = buf.readRequiredString(
                 MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH),
-            )!!,
-            newContent = buf.readString(
+            ),
+            newContent = buf.readRequiredString(
                 MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_MARKDOWN_LENGTH),
-            )!!,
+            ),
         )
     }
 }
@@ -160,10 +157,10 @@ data class ReactionBody(
 
     companion object : IProtoReader<ReactionBody> {
         override fun readFrom(buf: PacketBuffer) = ReactionBody(
-            targetMsgId = buf.readString(
+            targetMsgId = buf.readRequiredString(
                 MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH),
-            )!!,
-            emoji = buf.readString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_EMOJI_LENGTH))!!,
+            ),
+            emoji = buf.readRequiredString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_EMOJI_LENGTH)),
             action = buf.readVarInt(),
         )
     }

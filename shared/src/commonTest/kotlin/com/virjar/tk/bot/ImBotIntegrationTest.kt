@@ -3,6 +3,7 @@ package com.virjar.tk.bot
 import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.model.Message
 import com.virjar.tk.protocol.NotifyType
+import com.virjar.tk.testing.FakeLocalCache
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -29,6 +30,7 @@ class ImBotIntegrationTest {
     private val port = System.getProperty("tk.botTest.port")?.toInt() ?: 5100
 
     private val bots = mutableListOf<ImBot>()
+    private val cacheOwner = ImBotCacheOwner { FakeLocalCache() }
 
     @AfterTest
     fun tearDown() {
@@ -36,7 +38,7 @@ class ImBotIntegrationTest {
     }
 
     private fun bot(prefix: String): ImBot = runBlocking {
-        ImBot.register(host, port, prefix).also { bots += it }
+        ImBot.register(host, port, prefix, cacheOwner).also { bots += it }
     }
 
     /** 建立好友关系并返回 B 的私聊 chatId（A 视角）。 */
@@ -136,7 +138,7 @@ class ImBotIntegrationTest {
             texts.forEach { assertEquals(0, b.sendText(chatId, it).code) }
             delay(500)
 
-            // A 自动重连（退避 1s 起）+ 认证携带 lastEventId → 服务端补发
+            // A 自动重连（退避 1s 起）→ 认证后从持久 cursor 显式分页同步
             withTimeout(30_000) { a.imClient.state.first { it == ConnectionState.AUTHENTICATED } }
             val received = mutableListOf<String>()
             repeat(texts.size) {

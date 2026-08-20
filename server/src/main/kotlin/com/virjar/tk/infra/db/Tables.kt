@@ -2,6 +2,16 @@ package com.virjar.tk.infra.db
 
 import org.jetbrains.exposed.dao.id.LongIdTable
 import org.jetbrains.exposed.sql.Table
+import org.jetbrains.exposed.sql.and
+
+/** Single-row marker for the disposable pre-release database schema. */
+object SchemaMetadata : Table("schema_metadata") {
+    val id = integer("id")
+    val epoch = integer("epoch")
+    val createdAt = long("created_at")
+
+    override val primaryKey = PrimaryKey(id)
+}
 
 object Users : LongIdTable("users") {
     val uid = varchar("uid", 36).uniqueIndex()
@@ -36,6 +46,8 @@ object Devices : LongIdTable("devices") {
 object Chats : LongIdTable("chats") {
     val chatId = varchar("chat_id", 36).uniqueIndex()
     val chatType = integer("chat_type")  // 1=personal, 2=group
+    /** Canonical sorted uid pair for personal chats; null for group chats. */
+    val personalKey = varchar("personal_key", 80).nullable().uniqueIndex()
     val maxSeq = long("max_seq").default(0)
     val status = integer("status").default(1)
     val createdAt = long("created_at")
@@ -65,6 +77,11 @@ object GroupMembers : LongIdTable("group_members") {
 
     init {
         uniqueIndex("idx_member_chat_uid", chatId, uid)
+        uniqueIndex(
+            "uq_group_members_active_owner",
+            chatId,
+            filterCondition = { (status eq 1) and (role eq 2) },
+        )
     }
 }
 
@@ -74,6 +91,10 @@ object GroupMemberMutes : LongIdTable("group_member_mutes") {
     val operatorUid = varchar("operator_uid", 36)
     val expiresAt = long("expires_at")
     val createdAt = long("created_at")
+
+    init {
+        uniqueIndex("uq_group_member_mute_chat_uid", chatId, uid)
+    }
 }
 
 object Conversations : LongIdTable("conversations") {
@@ -116,9 +137,18 @@ object FriendApplies : LongIdTable("friend_applies") {
     val toUid = varchar("to_uid", 36).index()
     val token = varchar("token", 36).uniqueIndex()
     val remark = varchar("remark", 200).nullable()
-    val status = integer("status").default(0)  // 0=pending, 1=accepted, 2=rejected, 3=superseded
+    val status = integer("status").default(0)  // 0=pending, 1=accepted, 2=rejected
     val createdAt = long("created_at")
     val updatedAt = long("updated_at")
+
+    init {
+        uniqueIndex(
+            "uq_friend_applies_pending_direction",
+            fromUid,
+            toUid,
+            filterCondition = { status eq 0 },
+        )
+    }
 }
 
 object GroupInviteLinks : LongIdTable("group_invite_links") {
@@ -131,6 +161,11 @@ object GroupInviteLinks : LongIdTable("group_invite_links") {
     val expiresAt = long("expires_at").default(0)
     val revokedAt = long("revoked_at").default(0)
     val createdAt = long("created_at")
+
+    init {
+        check("ck_group_invite_links_max_uses_non_negative") { maxUses greaterEq 0 }
+        check("ck_group_invite_links_expires_at_non_negative") { expiresAt greaterEq 0L }
+    }
 }
 
 object SyncEvents : LongIdTable("sync_events") {
@@ -153,9 +188,13 @@ object OrganizationUnits : Table("organization_units") {
     val updatedAt = long("updated_at")
 
     override val primaryKey = PrimaryKey(unitId)
+
+    init {
+        check("ck_organization_units_sort_order_non_negative") { sortOrder greaterEq 0 }
+    }
 }
 
-/** 用户可以属于多个部门，但同一用户最多有一个 primary 归属（Repository 写入时收敛）。 */
+/** 用户可以属于多个部门，但同一用户最多有一个 primary 归属。 */
 object OrganizationMemberships : LongIdTable("organization_memberships") {
     val unitId = varchar("unit_id", 36).index()
     val uid = varchar("uid", 36).index()
@@ -166,6 +205,11 @@ object OrganizationMemberships : LongIdTable("organization_memberships") {
 
     init {
         uniqueIndex("idx_org_member_unit_uid", unitId, uid)
+        uniqueIndex(
+            "uq_org_membership_primary_uid",
+            uid,
+            filterCondition = { primary eq true },
+        )
     }
 }
 

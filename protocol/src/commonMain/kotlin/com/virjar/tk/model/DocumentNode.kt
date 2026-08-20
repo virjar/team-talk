@@ -39,16 +39,16 @@ data class DocumentNode(
         const val TYPE_DOCUMENT = 2
 
         override fun readFrom(buf: PacketBuffer): DocumentNode = DocumentNode(
-            nodeId = buf.readString()!!,
-            spaceId = buf.readString()!!,
+            nodeId = buf.readRequiredString(),
+            spaceId = buf.readRequiredString(),
             parentId = buf.readString(),
             nodeType = buf.readVarInt(),
-            name = buf.readString()!!,
-            excerpt = buf.readString()!!,
+            name = buf.readRequiredString(),
+            excerpt = buf.readRequiredString(),
             revision = buf.readVarLong(),
-            createdBy = buf.readString()!!,
+            createdBy = buf.readRequiredString(),
             createdAt = buf.readVarLong(),
-            updatedBy = buf.readString()!!,
+            updatedBy = buf.readRequiredString(),
             updatedAt = buf.readVarLong(),
         )
     }

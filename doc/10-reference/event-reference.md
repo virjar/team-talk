@@ -30,13 +30,21 @@ eventId(varLong) + notifyType(1B) + payload(bytes?)
 | 41 | `TYPING` | `Message` | 其他会话成员 | 发布 `(chatId, senderUid)` 临时状态 |
 | 50 | `READ_SYNC` | `ReadSyncPayload` | 其他会话成员 | 更新 `peerReadSeq` |
 | 60 | `USER_UPDATED` | `User` | 当前用户设备 | 更新用户缓存 |
-| 99 | `GENERIC` | `GenericPayload` | 扩展定义决定 | 未注册扩展安全忽略 |
+| 99 | `GENERIC` | `GenericPayload` | 扩展定义决定 | 严格解码信封；未注册扩展安全忽略并推进游标 |
 
 ## 持久事件与临时事件
 
-通过 `SyncEventService` 发出的事件带递增 `eventId`，服务端保存用户事件，客户端只在处理成功后推进 `lastEventId`。重连认证时，服务器按游标补发遗漏事件。
+通过 `SyncEventService` 发出的事件带递增 `eventId`，服务端保存用户事件。认证成功只建立身份，
+不直接推送历史事件；LocalCache 与 EventProcessor 就绪后，客户端用 `SYNC_REQUEST(lastEventId)`
+逐批拉取。每批事件全部完成本地投影并把游标单调写入 `sync_cursor` 后，客户端才请求下一批。
+服务端最终在同一用户事件门闩内二次确认无遗漏，发送 `SYNC_READY` 后才把连接加入实时推送表。
+非零游标若不存在或不归属当前账号，服务端先发送 `SYNC_RESET` 且保持同步态；客户端原子清空
+本地服务器投影、cursor、草稿 outbox 和 bot inbox 后，在同一连接以 0 重新开始。重置失败或重复
+RESET 必须断开，不能跳过历史进入实时态。
 
-`eventId = 0` 表示不参与离线游标，当前用于 PRESENCE 直发和订阅历史回放。客户端绝不能用 0 覆盖已经推进的正数游标。
+`eventId = 0` 表示不参与持久游标，当前用于 PRESENCE、TYPING 等瞬时直发。SUBSCRIBE 返回的会话
+历史虽然可以复用 NOTIFY 信封展示，但它属于按 chat `serverSeq` 的历史响应，不得进入持久事件批次，
+也不得推进或覆盖已经保存的正数事件游标。
 
 TYPING 在产品语义上是临时状态；当前服务端仍通过同步事件设施广播。后续若改为完全非持久直发，必须保持 NotifyType 和 payload 兼容，并补充断线场景测试。
 
@@ -45,9 +53,10 @@ TYPING 在产品语义上是临时状态；当前服务端仍通过同步事件�
 1. 领域写入成功后再发事件，事件不能代替权威持久化。
 2. UI 不直接消费原始 wire；`EventProcessor` 先更新 LocalCache 或领域事件流。
 3. 多次收到同一结果必须安全，缓存写入使用 upsert 或最大水位。
-4. payload 解码或处理失败时不推进游标，让后续重连有机会重放。
+4. payload 解码、投影或游标落盘失败时不请求下一批，并关闭异常连接；自动重连后从已持久游标重试。
 5. MESSAGE 既有 chat seq，也有用户事件 eventId：seq 用于聊天历史，eventId 用于跨领域离线补偿，两者不能混用。
 6. 新增 NotifyType 必须追加稳定 code、登记 `NotifyContracts`、实现双端处理并通过完备性测试。
+7. `SYNC_RESET` 只清服务器事件投影；独立文档草稿 store 不属于该边界，必须保留。
 
 ## 消息与会话的联动
 

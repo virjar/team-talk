@@ -25,7 +25,7 @@ class AgentApi(private val agent: AgentRuntime) {
     fun handle(ex: HttpExchange, path: String) {
         try {
             val auth = ex.requestHeaders.getFirst("Authorization")
-            if (path != "/v1/status" && auth != "Bearer ${agent.apiToken}") {
+            if (!isValidAgentAuthorization(auth, agent.apiToken)) {
                 ex.resp(401, err("invalid token"))
                 return
             }
@@ -251,6 +251,9 @@ class AgentApi(private val agent: AgentRuntime) {
         responseBody.use { it.write(bytes) }
     }
 }
+
+internal fun isValidAgentAuthorization(header: String?, apiToken: String): Boolean =
+    apiToken.isNotBlank() && header == "Bearer $apiToken"
 
 /** 服务端拒绝、内部错误和 ACK 超时都不能被本地 Agent 伪装成成功。 */
 internal fun agentAckResponse(ack: MessageAckPayload): Pair<Int, JsonObject> {

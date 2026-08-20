@@ -113,6 +113,35 @@ class ChatIntegrationTest {
     }
 
     @Test
+    fun `ordinary add after removal does not restore old admin role`() = runTest {
+        val owner = ctx.registerUser()
+        val member = ctx.registerUser()
+        val group = ctx.chatService.createGroup("RoleResetAdd", null, owner, listOf(member))
+        ctx.chatService.setRole(owner, group.chatId, member, 1)
+        ctx.chatService.addMembers(owner, group.chatId, listOf(member))
+        assertEquals(1, ctx.chatService.getMembers(group.chatId).single { it.uid == member }.role)
+        ctx.chatService.removeMember(owner, group.chatId, member)
+
+        ctx.chatService.addMembers(owner, group.chatId, listOf(member))
+
+        assertEquals(0, ctx.chatService.getMembers(group.chatId).single { it.uid == member }.role)
+    }
+
+    @Test
+    fun `invite rejoin after removal does not restore old admin role`() = runTest {
+        val owner = ctx.registerUser()
+        val member = ctx.registerUser()
+        val group = ctx.chatService.createGroup("RoleResetInvite", null, owner, listOf(member))
+        val token = ctx.chatService.createInviteLink(owner, group.chatId, "rejoin", 0, 0)
+        ctx.chatService.setRole(owner, group.chatId, member, 1)
+        ctx.chatService.removeMember(owner, group.chatId, member)
+
+        ctx.chatService.joinByInvite(member, token)
+
+        assertEquals(0, ctx.chatService.getMembers(group.chatId).single { it.uid == member }.role)
+    }
+
+    @Test
     fun `set member role`() = runTest {
         val creator = ctx.registerUser()
         val member1 = ctx.registerUser()
@@ -207,12 +236,31 @@ class ChatIntegrationTest {
     }
 
     @Test
+    fun `negative invite limits are rejected without persistence`() = runTest {
+        val owner = ctx.registerUser()
+        val group = ctx.chatService.createGroup("InvalidInvite", null, owner, emptyList())
+
+        assertFailsWith<IllegalArgumentException> {
+            ctx.chatService.createInviteLink(owner, group.chatId, "negative uses", -1, 0)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ctx.chatService.createInviteLink(owner, group.chatId, "negative expiry", 0, -1)
+        }
+        assertTrue(ctx.chatService.listInviteLinks(owner, group.chatId).isEmpty())
+    }
+
+    @Test
     fun `dissolved chat is no longer active`() = runTest {
         val creator = ctx.registerUser()
         val group = ctx.chatService.createGroup("ToDelete", null, creator, listOf(creator))
+        val invite = ctx.chatService.createInviteLink(creator, group.chatId, "deleted with chat", 0, 0)
         ctx.chatService.dissolveGroup(creator, group.chatId)
         assertNull(ctx.chatService.getChat(group.chatId))
         assertTrue(ctx.chatRepo.listUserChats(creator).none { it.chatId == group.chatId })
+        assertTrue(ctx.conversationService.listConversations(creator).none { it.chatId == group.chatId })
+        assertTrue(ctx.conversationService.syncConversations(creator, 0).none { it.chatId == group.chatId })
+        assertNull(ctx.conversationRepo.getConversation(creator, group.chatId))
+        assertFailsWith<IllegalArgumentException> { ctx.chatService.getInviteInfo(invite) }
     }
 
     @Test

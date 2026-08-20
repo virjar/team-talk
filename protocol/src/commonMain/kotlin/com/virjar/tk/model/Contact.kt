@@ -19,17 +19,17 @@ data class Contact(
         buf.writeString(friendUid)
         buf.writeString(remark)
         buf.writeVarInt(status)
-        buf.writeByte(if (user != null) 1 else 0)
+        buf.writeBoolean(user != null)
         user?.writeTo(buf)
     }
 
     companion object : com.virjar.tk.protocol.IProtoReader<Contact> {
         override fun readFrom(buf: PacketBuffer): Contact = Contact(
-            uid = buf.readString()!!,
-            friendUid = buf.readString()!!,
+            uid = buf.readRequiredString(),
+            friendUid = buf.readRequiredString(),
             remark = buf.readString(),
             status = buf.readVarInt(),
-            user = if (buf.readByte() != 0) User.readFrom(buf) else null,
+            user = if (buf.readBoolean("contact user presence")) User.readFrom(buf) else null,
         )
     }
 }

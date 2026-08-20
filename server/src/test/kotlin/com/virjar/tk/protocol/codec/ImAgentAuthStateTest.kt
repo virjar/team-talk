@@ -7,8 +7,26 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.test.assertFailsWith
 
 class ImAgentAuthStateTest {
+
+    @Test
+    fun `invalid sync cursor reset admits zero on the same connection`() {
+        val cursor = ImAgentSyncCursor()
+
+        assertTrue(cursor.admit(Long.MAX_VALUE))
+        assertFalse(cursor.admit(Long.MAX_VALUE))
+        assertFalse(cursor.admit(0L))
+
+        cursor.reset()
+
+        assertEquals(-1L, cursor.current)
+        assertTrue(cursor.admit(0L))
+        assertFalse(cursor.admit(0L), "a duplicate zero request still violates page acknowledgement")
+        assertTrue(cursor.admit(1L))
+        assertFailsWith<IllegalArgumentException> { cursor.admit(-1L) }
+    }
 
     @Test
     fun `one connection accepts only its first authentication attempt`() {
@@ -21,7 +39,9 @@ class ImAgentAuthStateTest {
             state.admitAuthentication(),
             "认证处理中必须拒绝后续 AUTH 并断开连接",
         )
-        assertTrue(state.markAuthenticated())
+        assertTrue(state.markSynchronizing())
+        assertEquals(ImAgent.State.SYNCHRONIZING, state.current)
+        assertTrue(state.markReady())
         assertEquals(ImAgent.State.AUTHENTICATED, state.current)
         assertEquals(
             ImAgentAuthAdmission.REJECT_AND_CLOSE,
@@ -65,6 +85,7 @@ class ImAgentAuthStateTest {
         assertEquals(ImAgentAuthAdmission.ACCEPT, state.admitAuthentication())
         assertEquals(ImAgent.State.AUTHENTICATING, state.disconnect())
         assertEquals(ImAgent.State.DISCONNECTED, state.current)
-        assertFalse(state.markAuthenticated())
+        assertFalse(state.markSynchronizing())
+        assertFalse(state.markReady())
     }
 }

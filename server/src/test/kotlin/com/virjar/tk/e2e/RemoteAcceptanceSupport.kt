@@ -41,10 +41,11 @@ object RemoteAcceptanceSupport {
      * 轻量会话包装，复用真实 ImClient + RpcClient。
      * 结构与 [ProtocolE2eTest] 内的 E2eSession 一致，抽出来供远程测试复用。
      */
-    class Session(
+    class Session internal constructor(
         val imClient: ImClient,
         val rpc: RpcClient,
         val userSession: com.virjar.tk.client.UserSession,
+        private val eventProjection: E2eEventProjection,
     ) {
         private val notifyBuffer = mutableListOf<NotifyPayload>()
         private var collectJob: Job? = null
@@ -69,7 +70,7 @@ object RemoteAcceptanceSupport {
 
         /** 好友处理 token 只属于收件人，测试也必须从收件箱读取，不能依赖 apply 响应。 */
         suspend fun pendingApplyToken(fromUid: String): String {
-            val response = invoke("contact", ContactRpcContract.M_LIST_APPLIES)
+            val response = invoke("contact", ContactRpcContract.M_LIST_PENDING_APPLIES)
             require(response.status == 0 && response.payload != null) { "无法读取待处理好友申请" }
             return ProtoCodec.decodeList(ContactApply, response.payload!!)
                 .single { it.fromUid == fromUid && it.status == 0 }
@@ -96,6 +97,7 @@ object RemoteAcceptanceSupport {
         fun close() {
             collectJob?.cancel()
             rpc.stop()
+            eventProjection.close()
             // E2E 测试会话是一次性的，彻底销毁线程资源
             imClient.destroy()
         }
@@ -128,13 +130,14 @@ object RemoteAcceptanceSupport {
             if (success) userSession.onAuthSuccess(uid ?: "", username, name, refreshToken, accessToken)
             else userSession.onAuthFailed(failureReason)
         })
+        val eventProjection = imClient.installE2eEventProjection()
         imClient.connect(host, port)
         withTimeout(10_000) { imClient.state.first { it == ConnectionState.CONNECTED } }
 
         val rpc = RpcClient(imClient)
         rpc.start()
 
-        val session = Session(imClient, rpc, userSession)
+        val session = Session(imClient, rpc, userSession, eventProjection)
         session.startCollecting(scope)
         return session
     }

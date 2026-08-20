@@ -20,7 +20,7 @@ data class DocumentSpaceGrant(
         buf.writeVarInt(principalType)
         buf.writeString(principalId)
         buf.writeVarInt(role)
-        buf.writeByte(if (includeDescendants) 1 else 0)
+        buf.writeBoolean(includeDescendants)
         buf.writeString(displayName)
     }
 
@@ -29,11 +29,11 @@ data class DocumentSpaceGrant(
         const val PRINCIPAL_ORGANIZATION_UNIT = 2
 
         override fun readFrom(buf: PacketBuffer): DocumentSpaceGrant = DocumentSpaceGrant(
-            spaceId = buf.readString()!!,
+            spaceId = buf.readRequiredString(),
             principalType = buf.readVarInt(),
-            principalId = buf.readString()!!,
+            principalId = buf.readRequiredString(),
             role = buf.readVarInt(),
-            includeDescendants = buf.readByte() != 0,
+            includeDescendants = buf.readBoolean("document grant include descendants"),
             displayName = buf.readString(),
         )
     }

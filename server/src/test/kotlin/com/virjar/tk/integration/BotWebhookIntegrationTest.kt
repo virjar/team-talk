@@ -42,14 +42,21 @@ class BotWebhookIntegrationTest {
             routing { targetBoundBotMessageRoutes(ctx.botService) }
         }
 
+        val bodyRoutingAttempt = client.post(created.bot.apiPath) {
+            contentType(ContentType.Application.Json)
+            header(HttpHeaders.Authorization, "Bearer ${created.webhookToken}")
+            setBody(
+                """{"chatId":"${otherGroup.chatId}","markdown":"must be rejected","idempotencyKey":"ignored-body-key"}""",
+            )
+        }
+        assertEquals(HttpStatusCode.BadRequest, bodyRoutingAttempt.status)
+
         repeat(2) {
             val response = client.post(created.bot.apiPath) {
                 contentType(ContentType.Application.Json)
                 header(HttpHeaders.Authorization, "Bearer ${created.webhookToken}")
                 header(BOT_IDEMPOTENCY_KEY_HEADER, "same-event")
-                setBody(
-                    """{"chatId":"${otherGroup.chatId}","markdown":"explicit idempotency","idempotencyKey":"ignored-body-key"}""",
-                )
+                setBody("""{"markdown":"explicit idempotency"}""")
             }
             assertEquals(HttpStatusCode.OK, response.status)
             assertEquals("""{"ok":true}""", response.bodyAsText())

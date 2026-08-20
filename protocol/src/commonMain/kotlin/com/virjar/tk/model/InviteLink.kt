@@ -29,9 +29,9 @@ data class InviteLink(
 
     companion object : IProtoReader<InviteLink> {
         override fun readFrom(buf: PacketBuffer): InviteLink = InviteLink(
-            token = buf.readString()!!,
-            chatId = buf.readString()!!,
-            name = buf.readString() ?: "",
+            token = buf.readRequiredString(),
+            chatId = buf.readRequiredString(),
+            name = buf.readRequiredString(),
             maxUses = buf.readVarInt(),
             useCount = buf.readVarInt(),
             expiresAt = buf.readVarLong(),

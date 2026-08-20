@@ -12,7 +12,7 @@ import kotlinx.coroutines.launch
 
 internal data class GroupFileLocation(val chatId: String, val parentId: String?)
 
-/** 群文件页面状态。v1 采用打开/修改后拉取，不伪装成实时同步。 */
+/** 群文件页面状态。当前实现采用打开/修改后拉取，不伪装成实时同步。 */
 class GroupFilesFeature internal constructor(
     private val session: ClientSession,
     private val scope: CoroutineScope,
@@ -31,8 +31,8 @@ class GroupFilesFeature internal constructor(
     var loading by mutableStateOf(false)
         private set
 
-    private val entriesGate = GroupRequestGate<GroupFileLocation>()
-    private val versionsGate = GroupRequestGate<Pair<String, String>>()
+    private val entriesGate = LatestRequestGate<GroupFileLocation>()
+    private val versionsGate = LatestRequestGate<Pair<String, String>>()
 
     val parentId: String? get() = path.lastOrNull()?.entryId
 

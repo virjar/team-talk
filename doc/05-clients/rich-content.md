@@ -2,10 +2,9 @@
 
 ## 1. 单一文本模型
 
-所有新文字消息使用 `RICH_TEXT`。Markdown 是持久化和传输的权威源，WYSIWYG 编辑器只是它的
+所有文字消息使用 `RICH_TEXT`。Markdown 是持久化和传输的权威源，WYSIWYG 编辑器只是它的
 交互表示；`plainText` 与 mentions 每次由 Markdown 重建。
-
-旧 `TEXT/TextBody` 仅兼容读取。这样发送、编辑、搜索、通知预览和 SDK 不需要维护两条文字路径。
+发送、编辑、搜索、通知预览和 SDK 共用这一条文字路径。
 
 ## 2. 编辑器
 

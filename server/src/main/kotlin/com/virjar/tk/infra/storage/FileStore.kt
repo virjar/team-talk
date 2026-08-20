@@ -41,6 +41,7 @@ class FileStore(
     private val json = Json { ignoreUnknownKeys = true }
 
     private var db: RocksDB? = null
+    private var defaultCf: ColumnFamilyHandle? = null
     private var metaCf: ColumnFamilyHandle? = null
     private var dataCf: ColumnFamilyHandle? = null
     private var rocksDbTier: RocksDbTier? = null
@@ -49,43 +50,84 @@ class FileStore(
     val isHealthy: Boolean get() = db != null
     val isRunning: Boolean get() = db != null
 
+    @Synchronized
     fun init() {
-        val metaOptions = ColumnFamilyOptions()
-            .setWriteBufferSize(64 * 1024 * 1024)
+        if (db != null) return
+        RocksDB.loadLibrary()
+        val dbDirectory = File(dbPath)
+        check((dbDirectory.isDirectory || dbDirectory.mkdirs()) && dbDirectory.isDirectory) {
+            "Cannot create FileStore RocksDB directory: $dbPath"
+        }
+        val fsDirectory = File(fsRoot)
+        check((fsDirectory.isDirectory || fsDirectory.mkdirs()) && fsDirectory.isDirectory) {
+            "Cannot create FileStore filesystem directory: $fsRoot"
+        }
 
-        val dataOptions = ColumnFamilyOptions()
-            .setWriteBufferSize(64 * 1024 * 1024)
-            .setCompressionType(CompressionType.LZ4_COMPRESSION)
-            .setBottommostCompressionType(CompressionType.ZSTD_COMPRESSION)
-            .setEnableBlobFiles(true)
-            .setMinBlobSize(4 * 1024)
-            .setBlobFileSize(4 * 1024 * 1024)
-            .setBlobCompressionType(CompressionType.LZ4_COMPRESSION)
-            .setEnableBlobGarbageCollection(true)
-            .setBlobGarbageCollectionAgeCutoff(0.25)
-            .setBlobGarbageCollectionForceThreshold(0.5)
-            .setBlobCompactionReadaheadSize(1 * 1024 * 1024)
-            .setPrepopulateBlobCache(PrepopulateBlobCache.PREPOPULATE_BLOB_FLUSH_ONLY)
+        val nativeOptions = mutableListOf<AutoCloseable>()
+        try {
+            val metaOptions = ColumnFamilyOptions().also(nativeOptions::add)
+            metaOptions.setWriteBufferSize(64 * 1024 * 1024)
 
-        val dbOptions = DBOptions()
-            .setCreateIfMissing(true)
-            .setCreateMissingColumnFamilies(true)
-            .setIncreaseParallelism(Runtime.getRuntime().availableProcessors())
-            .setMaxOpenFiles(1000)
+            val dataOptions = ColumnFamilyOptions().also(nativeOptions::add)
+            dataOptions
+                .setWriteBufferSize(64 * 1024 * 1024)
+                .setCompressionType(CompressionType.LZ4_COMPRESSION)
+                .setBottommostCompressionType(CompressionType.ZSTD_COMPRESSION)
+                .setEnableBlobFiles(true)
+                .setMinBlobSize(4 * 1024)
+                .setBlobFileSize(4 * 1024 * 1024)
+                .setBlobCompressionType(CompressionType.LZ4_COMPRESSION)
+                .setEnableBlobGarbageCollection(true)
+                .setBlobGarbageCollectionAgeCutoff(0.25)
+                .setBlobGarbageCollectionForceThreshold(0.5)
+                .setBlobCompactionReadaheadSize(1 * 1024 * 1024)
+                .setPrepopulateBlobCache(PrepopulateBlobCache.PREPOPULATE_BLOB_FLUSH_ONLY)
 
-        val cfDescriptors = listOf(
-            ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY, ColumnFamilyOptions()),
-            ColumnFamilyDescriptor("meta".toByteArray(), metaOptions),
-            ColumnFamilyDescriptor("data".toByteArray(), dataOptions),
-        )
-        val cfHandles = mutableListOf<ColumnFamilyHandle>()
-        File(dbPath).mkdirs()
-        db = RocksDB.open(dbOptions, dbPath, cfDescriptors, cfHandles)
-        metaCf = cfHandles[1]
-        dataCf = cfHandles[2]
+            val dbOptions = DBOptions().also(nativeOptions::add)
+            dbOptions
+                .setCreateIfMissing(true)
+                .setCreateMissingColumnFamilies(true)
+                .setIncreaseParallelism(Runtime.getRuntime().availableProcessors())
+                .setMaxOpenFiles(1000)
+            val defaultOptions = ColumnFamilyOptions().also(nativeOptions::add)
 
-        rocksDbTier = RocksDbTier(db!!, dataCf!!)
-        fsTier = FileSystemTier(db!!, dataCf!!, File(fsRoot))
+            val cfDescriptors = listOf(
+                ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY, defaultOptions),
+                ColumnFamilyDescriptor("meta".toByteArray(), metaOptions),
+                ColumnFamilyDescriptor("data".toByteArray(), dataOptions),
+            )
+            val cfHandles = mutableListOf<ColumnFamilyHandle>()
+            var openedDb: RocksDB? = null
+            try {
+                val database = RocksDB.open(dbOptions, dbPath, cfDescriptors, cfHandles)
+                openedDb = database
+                check(cfHandles.size == 3) { "FileStore column-family initialization was incomplete" }
+                val openedDefaultCf = cfHandles[0]
+                val openedMetaCf = cfHandles[1]
+                val openedDataCf = cfHandles[2]
+                val openedRocksTier = RocksDbTier(database, openedDataCf)
+                val openedFsTier = FileSystemTier(database, openedDataCf, fsDirectory)
+
+                defaultCf = openedDefaultCf
+                metaCf = openedMetaCf
+                dataCf = openedDataCf
+                rocksDbTier = openedRocksTier
+                fsTier = openedFsTier
+                db = database
+            } catch (error: Throwable) {
+                db = null
+                defaultCf = null
+                metaCf = null
+                dataCf = null
+                rocksDbTier = null
+                fsTier = null
+                cfHandles.asReversed().forEach { handle -> runCatching { handle.close() } }
+                runCatching { openedDb?.close() }
+                throw error
+            }
+        } finally {
+            nativeOptions.asReversed().forEach { option -> runCatching { option.close() } }
+        }
 
         logger.info("FileStore opened at: {} (fs: {})", dbPath, fsRoot)
     }
@@ -179,17 +221,36 @@ class FileStore(
         return if (file.exists()) file else null
     }
 
+    @Synchronized
     fun close() {
-        rocksDbTier?.clearCache()
-        metaCf?.close()
-        dataCf?.close()
-        db?.close()
+        val openedDb = db ?: return
+        val openedRocksTier = rocksDbTier
+        val openedDefaultCf = defaultCf
+        val openedMetaCf = metaCf
+        val openedDataCf = dataCf
         db = null
+        defaultCf = null
         metaCf = null
         dataCf = null
         rocksDbTier = null
         fsTier = null
+
+        var failure: Throwable? = null
+        fun closePart(block: () -> Unit) {
+            try {
+                block()
+            } catch (error: Throwable) {
+                val first = failure
+                if (first == null) failure = error else first.addSuppressed(error)
+            }
+        }
+        closePart { openedRocksTier?.clearCache() }
+        closePart { openedDataCf?.close() }
+        closePart { openedMetaCf?.close() }
+        closePart { openedDefaultCf?.close() }
+        closePart { openedDb.close() }
         logger.info("FileStore closed")
+        failure?.let { throw it }
     }
 
     // ── 内部方法 ──
@@ -209,7 +270,7 @@ class FileStore(
             WriteBatch().use { batch ->
                 batch.put(mCf, pathBytes, metaJson)
                 rocksDbTier!!.addToBatch(batch, meta, data)
-                dbInst.write(WriteOptions(), batch)
+                WriteOptions().use { options -> dbInst.write(options, batch) }
             }
             tempFile.delete()
         }

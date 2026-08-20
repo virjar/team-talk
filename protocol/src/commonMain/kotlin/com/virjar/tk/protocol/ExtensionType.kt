@@ -1,25 +1,29 @@
 package com.virjar.tk.protocol
 
 /**
- * 通用扩展类型枚举。跨 RPC/NOTIFY/MESSAGE 三种通信模型共用。
+ * 三条通用扩展通道共用的稳定编号空间：
  *
- * 当某个需求当前二进制协议的枚举（ServiceId/NotifyType/MessageType）覆盖不了时，
- * 通过 GENERIC(99) 入口进入扩展路由，按 [ExtensionType] 分发到对应处理器。
+ * - RPC：`GenericRpcContract.SERVICE == "generic"`，`methodId = ExtensionType.code`
+ * - NOTIFY：`NotifyType.GENERIC(99)` + `GenericPayload`
+ * - MESSAGE：`MessageType.GENERIC(99)` + `GenericPayload`
  *
- * 设计原则：
- * - 正常需求优先用已有枚举（ServiceId 1-7 / NotifyType 1-60 / MessageType 1-15）
- * - GENERIC(99) 是逃生通道，用扩展承载当前版本无法覆盖的需求
- * - 大版本升级时把成熟的扩展收敛固化为新的枚举值
+ * ## 维护者警告
+ *
+ * **这里刻意允许保持空枚举。空预留不是死代码或僵尸协议，禁止仅因零引用、零枚举项、
+ * 静态扫描无调用方而删除本类型或上述三个入口。** 新扩展只在出现真实需求时追加；成熟后
+ * 再随一次明确的大协议版本收敛为强类型契约。
+ *
+ * 历史提交 `eace1d5a` 已记录过一次把这套预留误判为死代码后恢复的设计教训。该提交号只用于
+ * 维护追溯，不是运行时依赖；当前契约必须由本文件、三个入口、权威协议文档和测试共同锁定。
  */
 enum class ExtensionType(val code: Int) {
-    // 预留扩展类型，随需求追加
-    // 每个扩展类型需在三种注册表中至少注册一种处理器（Rpc/Notify/Message）
+    // 候选区刻意为空；首个真实扩展落地时追加稳定、非负且不复用的编号。
     ;
 
     companion object {
         private val codeMap = entries.associateBy { it.code }
 
-        /** 返回 null 表示未知扩展类型（旧客户端忽略新扩展）。 */
+        /** 返回 null 表示当前版本未登记该扩展；接收端按各通道的未知扩展策略处理。 */
         fun fromCode(code: Int): ExtensionType? = codeMap[code]
     }
 }

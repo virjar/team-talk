@@ -24,7 +24,19 @@ class ConversationRepository(
     private val draftMirrorMutex = Mutex()
 
     suspend fun listConversations(): Outcome<List<Conversation>> = outcome {
-        rpc.list().also { list -> list.forEach { localCache.upsertConversation(it) } }
+        repeat(MAX_SNAPSHOT_ATTEMPTS) {
+            // 必须在每次 RPC 发出前建立边界；否则请求期间到达的 Notify
+            // 无法与旧响应区分。
+            val snapshotGeneration = localCache.beginConversationSnapshot()
+            val remote = rpc.list()
+            if (localCache.applyConversationSnapshot(snapshotGeneration, remote)) {
+                // 调用方必须看到收敛后的本地投影，不能把原始 RPC 响应直接渲染出去。
+                return@outcome localCache.getConversations()
+            }
+        }
+        throw IllegalStateException(
+            "Conversation snapshot stayed conflicted after $MAX_SNAPSHOT_ATTEMPTS attempts",
+        )
     }
 
     /**
@@ -77,5 +89,9 @@ class ConversationRepository(
     suspend fun deleteConversation(chatId: String): Outcome<Unit> = outcome {
         rpc.delete(chatId)
         localCache.deleteConversation(chatId)
+    }
+
+    private companion object {
+        const val MAX_SNAPSHOT_ATTEMPTS = 3
     }
 }

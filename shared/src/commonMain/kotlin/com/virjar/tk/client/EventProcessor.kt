@@ -1,5 +1,6 @@
 package com.virjar.tk.client
 
+import com.virjar.tk.body.GenericPayload
 import com.virjar.tk.model.*
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.IProtoReader
@@ -11,6 +12,7 @@ import com.virjar.tk.protocol.ReadSyncPayload
 import com.virjar.tk.protocol.payload.NotifyPayload
 import com.virjar.tk.log.TkLoggerFactory
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 
 
@@ -23,25 +25,33 @@ class EventProcessor(
     private val imClient: ImClient,
     private val localCache: LocalCache,
     /**
-     * 会话/群变更时的刷新回调。收到 CHAT_CREATED 通知时触发，
-     * 用于从服务端拉取最新会话列表——否则被拉入群的一方本地 Conversation 表
-     * 不会更新，群会话不出现在会话列表（与建群发起方的 listConversations 修复保持一致）。
+     * 会话/群变更时的刷新回调。CHAT_CREATED 在持久事件投影阶段只标记 dirty，
+     * 只有连接进入 AUTHENTICATED 后才能调用该 RPC。这保证 replay 的 cache + cursor
+     * 提交不依赖业务 RPC，多个 CHAT_CREATED 也只合并为一次刷新。
      */
     private val onConversationsDirty: (suspend () -> Unit)? = null,
-    /** 联系人关系变更回调（好友申请/接受/删除），用于刷新红点等。 */
-    var onContactChanged: (() -> Unit)? = null,
+    /**
+     * Optional reliable session-owned sink for durable inbound messages (used by ImBot inbox).
+     * It receives the authoritative event id, runs after the local insert and before cursor commit,
+     * and persists with INSERT OR IGNORE. Failure aborts the batch so replay can retry; UI-facing
+     * [messageEvents] remains a non-blocking refresh stream.
+     */
+    private val durableMessageSink: (suspend (Long, Message) -> Unit)? = null,
 ) {
     private val logger = TkLoggerFactory.get("EventProcessor")
     private var listenJob: Job? = null
 
-    private val _lastEventId = MutableStateFlow(0L)
+    private val _lastEventId = MutableStateFlow(localCache.getSyncCursor(SYNC_CURSOR_KEY))
     val lastEventId: StateFlow<Long> = _lastEventId.asStateFlow()
 
     /** typing 事件：(chatId, senderUid) */
     private val _typingEvents = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 8)
     val typingEvents: SharedFlow<Pair<String, String>> = _typingEvents.asSharedFlow()
 
-    /** 入站消息事件流（无头客户端/AI bot 的消息入口，UI 客户端走 LocalCache 观察也可）。 */
+    /**
+     * 入站消息的非阻塞广播提示。UI 以 LocalCache 为权威；ImBot.nextMessage
+     * 使用 [durableMessageSink] 的独立可靠 inbox，不依赖此 SharedFlow 的缓冲。
+     */
     private val _messageEvents = MutableSharedFlow<Message>(extraBufferCapacity = 64)
     val messageEvents: SharedFlow<Message> = _messageEvents.asSharedFlow()
 
@@ -66,11 +76,20 @@ class EventProcessor(
         logger.fault("EventProcessor lifecycle watcher crashed", t)
     })
     private var watcherJob: Job? = null
+    private var conversationRefreshJob: Job? = null
+    private val conversationsDirty = MutableStateFlow(false)
+    private val conversationRefreshSignals = Channel<Unit>(Channel.CONFLATED)
+    @Volatile
+    private var activeSyncOwner: Any? = null
     @Volatile
     private var started = false
+    @Volatile
+    private var stopped = false
 
     fun start() {
+        check(!stopped) { "EventProcessor is session-owned and cannot restart after stop" }
         started = true
+        ensureConversationRefreshWorker()
         ensureListening()
         if (watcherJob?.isActive == true) return
         watcherJob = lifecycleScope.launch {
@@ -79,62 +98,179 @@ class EventProcessor(
                     logger.trace("Connection restored, restarting event listener")
                     ensureListening()
                 }
+                if (state == ConnectionState.AUTHENTICATED) {
+                    requireConversationReconciliation()
+                }
             }
         }
     }
 
+    private fun ensureConversationRefreshWorker() {
+        if (onConversationsDirty == null || conversationRefreshJob?.isActive == true) return
+        conversationRefreshJob = lifecycleScope.launch {
+            for (ignored in conversationRefreshSignals) {
+                refreshDirtyConversations()
+            }
+        }
+    }
+
+    private fun markConversationsDirty() {
+        conversationsDirty.value = true
+    }
+
+    /**
+     * Every ready edge performs one full reconciliation even when the in-memory dirty flag is
+     * false. A process may die after committing CHAT_CREATED's cursor but before persisting any
+     * auxiliary signal; unconditional reconciliation closes that crash window.
+     */
+    internal fun requireConversationReconciliation() {
+        conversationsDirty.value = true
+        conversationRefreshSignals.trySend(Unit)
+    }
+
+    /**
+     * Consume one coalesced refresh only beyond the authentication boundary.
+     *
+     * Failure deliberately restores dirty without immediately signalling again: retry happens on
+     * the next CHAT_CREATED or AUTHENTICATED edge, so an unavailable RPC cannot create a hot loop.
+     * The durable event cursor has already committed and is never rolled back by this hint refresh.
+     */
+    internal suspend fun refreshDirtyConversations(
+        authenticated: Boolean = imClient.state.value == ConnectionState.AUTHENTICATED,
+    ): Boolean {
+        val refresh = onConversationsDirty ?: return true
+        if (!authenticated || !conversationsDirty.value) return false
+        conversationsDirty.value = false
+        return try {
+            refresh()
+            true
+        } catch (cancelled: CancellationException) {
+            conversationsDirty.value = true
+            throw cancelled
+        } catch (failure: Throwable) {
+            conversationsDirty.value = true
+            logger.fault("Conversation refresh failed; keeping dirty for a later ready edge", failure)
+            false
+        }
+    }
+
+    internal val hasDirtyConversations: Boolean
+        get() = conversationsDirty.value
+
+    @OptIn(ExperimentalCoroutinesApi::class)
     private fun ensureListening() {
         val scope = imClient.coroutineScope ?: run {
             logger.fault("Cannot listen: ImClient not connected")
             return
         }
         if (!started || listenJob?.isActive == true) return
-        listenJob = scope.launch {
+        val bindingOwner = Any()
+        activeSyncOwner = bindingOwner
+        // UNDISTPATCHED makes the SharedFlow subscription visible before the event loop can send
+        // SYNC_REQUEST. This matters for a maximum-sized durable event which is delivered as a
+        // standalone NOTIFY instead of inside SYNC_BATCH.
+        val newListenJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
-                imClient.packets.collect { proto ->
-                    if (proto is NotifyPayload) {
-                        withContext(Dispatchers.IO) { processNotify(proto) }
+                imClient.packets
+                    .onSubscription {
+                        if (!started || stopped) return@onSubscription
+                        // onSubscription runs only after the collector is registered, so the
+                        // first replay item cannot disappear from a replay=0 SharedFlow.
+                        imClient.installEventSync(
+                            owner = bindingOwner,
+                            cursor = { lastEventId.value },
+                            processBatch = { events ->
+                                withContext(Dispatchers.IO) { processBatch(events) }
+                            },
+                            reset = {
+                                withContext(Dispatchers.IO) { resetServerProjection() }
+                            },
+                        )
                     }
-                }
+                    .collect { proto ->
+                        if (proto is NotifyPayload) {
+                            withContext(Dispatchers.IO) { processNotify(proto) }
+                        }
+                    }
             } catch (e: CancellationException) {
                 // 正常的协作式取消（断连/重连时 SupervisorJob 被 cancel），不是 crash
                 throw e
             } catch (e: Exception) {
-                // 根监听循环：记好日志后兜住，不让单次错误搞垮整个监听
-                logger.fault("EventProcessor listen loop crashed, events lost until reconnect", e)
+                // Durable events are ordered. Once one projection fails, processing a later event
+                // would permanently advance the cursor past the failed item. Close immediately so
+                // reconnect resumes from the last successfully persisted cursor.
+                logger.fault("EventProcessor projection failed; reconnecting from durable cursor", e)
+                imClient.closeForEventResync("Persistent event projection failed", e)
+            } finally {
+                imClient.removeEventSync(bindingOwner)
+                if (activeSyncOwner === bindingOwner) activeSyncOwner = null
             }
+        }
+        listenJob = newListenJob
+        // stop() may race the UNDISTPATCHED launch before listenJob is assigned. In that case its
+        // direct removal can precede the queued install; cancel and remove once more after launch
+        // returns, which is necessarily ordered after onSubscription's install submission.
+        if (stopped) {
+            newListenJob.cancel()
+            imClient.removeEventSync(bindingOwner)
         }
     }
 
     fun stop() {
+        if (stopped) return
+        stopped = true
         started = false
-        watcherJob?.cancel()
+        // Cancel the connection-owned collector first. Its finally block repeats owner-scoped
+        // removeEventSync, covering an install task which was already queued on the EventLoop.
         listenJob?.cancel()
+        activeSyncOwner?.let { imClient.removeEventSync(it) }
+        watcherJob?.cancel()
+        conversationRefreshJob?.cancel()
+        conversationRefreshSignals.close()
+        lifecycleScope.cancel()
     }
 
-    private suspend fun processNotify(notify: NotifyPayload) {
-        try {
-            val notifyType = NotifyType.fromCode(notify.notifyType)
-            val payload = notify.payload
-            // payload 为空的事件（如部分 PRESENCE）直接视为已处理
-            if (payload != null) {
-                handleNotifyPayload(notifyType, payload)
-            }
-            // 处理成功才推进游标：失败时不推进，下次重连/上线时服务端按
-            // lastEventId 补发会重新拿到该事件，天然重试。
-            // 不会死循环：消息类事件有独立的 seq 兜底（进聊天页按 seq 拉历史）。
-            //
-            // eventId=0 是非持久事件（PRESENCE 直写 / SUBSCRIBE 历史回放），
-            // 不参与游标——推进它会把游标砸回 0，重连时 lastEventId>0 不成立，
-            // 离线补发被整体跳过（历史 bug：好友上线广播即可触发）。
-            if (notify.eventId > 0) {
-                _lastEventId.value = notify.eventId
-            }
-        } catch (e: Exception) {
-            // 处理失败：游标不推进，记录错误。下次补发自会重试该事件。
-            // 若为永久性错误（如协议不兼容），事件会在 7 天 TTL 后自然过期，
-            // 此时游标虽暂时落后，但新事件的补发会持续触发，TTL 后即可推进。
-            logger.fault("Failed to process notify eventId=${notify.eventId} type=${notify.notifyType}", e)
+    /**
+     * Project one server page in event-id order. Every successful item advances the durable
+     * cursor independently; the first failure escapes immediately and later items are untouched.
+     */
+    internal suspend fun processBatch(events: List<NotifyPayload>): Long {
+        require(events.isNotEmpty()) { "sync batch must not be empty" }
+        events.forEach { processNotify(it) }
+        return lastEventId.value
+    }
+
+    /** Destructive recovery requested by an authenticated server-side cursor rejection. */
+    internal fun resetServerProjection(): Long {
+        localCache.resetServerProjection()
+        _lastEventId.value = localCache.getSyncCursor(SYNC_CURSOR_KEY)
+        check(_lastEventId.value == 0L) { "projection reset did not clear sync cursor" }
+        conversationsDirty.value = false
+        return _lastEventId.value
+    }
+
+    internal suspend fun processNotify(notify: NotifyPayload) {
+        // 重连/最终激活竞态可能产生 at-least-once 重复。已经持久化完成的事件不再
+        // 重放上层 SharedFlow 副作用；服务端保证同一用户的持久事件按 ID 交付。
+        if (notify.eventId > 0L && notify.eventId <= _lastEventId.value) return
+        val notifyType = NotifyType.fromCode(notify.notifyType)
+        val payload = notify.payload
+        // payload 为空的事件（如部分 PRESENCE）直接视为已处理。
+        if (payload != null) {
+            handleNotifyPayload(notifyType, payload, notify.eventId)
+        }
+        // 只有完整投影成功后才单调落盘。异常故意向监听/批次循环传播：调用方必须
+        // 立即停止后续事件并关闭连接，重连从最后一个已持久化 cursor 继续。
+        if (notify.eventId > 0L) {
+            _lastEventId.value = localCache.advanceSyncCursor(SYNC_CURSOR_KEY, notify.eventId)
+            // A large page can legitimately take time. Surface each durable commit so the
+            // controller's synchronization watchdog measures no-progress rather than wall time.
+            imClient.reportEventSyncProgress(_lastEventId.value)
+        }
+        if (notifyType == NotifyType.CHAT_CREATED) {
+            // Signal strictly after the authoritative projection and durable cursor commit. The
+            // worker is conflated/non-blocking and will additionally enforce AUTHENTICATED.
+            conversationRefreshSignals.trySend(Unit)
         }
     }
 
@@ -150,23 +286,25 @@ class EventProcessor(
     }
 
     /** 按 NOTIFY 类型分发处理。internal 供单测直调（绕过监听协程）。 */
-    internal suspend fun handleNotifyPayload(notifyType: NotifyType, payload: ByteArray) {
+    internal suspend fun handleNotifyPayload(
+        notifyType: NotifyType,
+        payload: ByteArray,
+        eventId: Long = 0L,
+    ) {
         when (notifyType) {
             NotifyType.CONTACT_APPLY -> {
                 // 好友申请不是好友关系。只缓存申请人的资料并通知上层刷新
                 // 待处理申请；在 CONTACT_ACCEPTED 到达前绝不能写入 Contact。
                 val apply = decodePayload<ContactApply>(notifyType, payload)
                 apply.fromUser?.let(localCache::upsertUser)
-                onContactChanged?.invoke()
-                _contactEvents.emit(Unit)
+                _contactEvents.tryEmit(Unit)
             }
 
             NotifyType.CONTACT_ACCEPTED -> {
                 // 契约：ACCEPTED 发各自视角的完整 Contact 快照。
                 val contact = decodePayload<Contact>(notifyType, payload)
                 localCache.upsertContact(contact)
-                onContactChanged?.invoke()
-                _contactEvents.emit(Unit)
+                _contactEvents.tryEmit(Unit)
             }
 
             NotifyType.CONTACT_DELETED -> {
@@ -174,27 +312,26 @@ class EventProcessor(
                 // 因此绝不能与 ACCEPTED 共用 upsert 路径，否则删除/拉黑后会重新出现。
                 val contact = decodePayload<Contact>(notifyType, payload)
                 localCache.deleteContact(contact.friendUid)
-                onContactChanged?.invoke()
-                _contactEvents.emit(Unit)
+                _contactEvents.tryEmit(Unit)
             }
 
             NotifyType.CHAT_CREATED,
             NotifyType.CHAT_UPDATED -> {
                 val chat = decodePayload<Chat>(notifyType, payload)
                 localCache.upsertChat(chat)
-                // 新会话（如被拉入群）需要刷新本地会话列表，
-                // 否则 Conversation 表无对应记录，群会话不显示。
+                // 新会话（如被拉入群）需要刷新 Conversation 全量投影，但
+                // SYNCHRONIZING 阶段严禁 RPC。先提交 Chat + cursor，READY 后合并刷新。
                 if (notifyType == NotifyType.CHAT_CREATED) {
-                    onConversationsDirty?.invoke()
+                    markConversationsDirty()
                 }
-                _chatEvents.emit(notifyType to chat)
+                _chatEvents.tryEmit(notifyType to chat)
             }
 
             NotifyType.CHAT_DELETED -> {
                 val chat = decodePayload<Chat>(notifyType, payload)
                 localCache.deleteConversation(chat.chatId)
                 localCache.deleteChat(chat.chatId)
-                _chatEvents.emit(notifyType to chat)
+                _chatEvents.tryEmit(notifyType to chat)
             }
 
             NotifyType.MEMBER_ADDED,
@@ -204,13 +341,19 @@ class EventProcessor(
             NotifyType.MEMBER_ROLE_CHANGED -> {
                 val chat = decodePayload<Chat>(notifyType, payload)
                 localCache.upsertChat(chat)
-                _chatEvents.emit(notifyType to chat)
+                _chatEvents.tryEmit(notifyType to chat)
             }
 
             NotifyType.MESSAGE_RECV -> {
                 val message = decodePayload<Message>(notifyType, payload)
                 localCache.insertMessage(message)
-                _messageEvents.emit(message)
+                // The disk inbox insert and cursor are separate idempotent statements: a crash
+                // between them replays this event, and INSERT OR IGNORE deduplicates by eventId.
+                durableMessageSink?.let { sink ->
+                    require(eventId > 0L) { "durable message inbox requires a positive eventId" }
+                    sink(eventId, message)
+                }
+                _messageEvents.tryEmit(message)
             }
 
             NotifyType.CONVERSATION_UPDATED -> {
@@ -226,17 +369,20 @@ class EventProcessor(
             NotifyType.PRESENCE -> {
                 // 在线状态广播（服务端直写不持久化）；无头端消费 presenceEvents
                 val presence = decodePayload<PresencePayload>(notifyType, payload)
-                _presenceEvents.emit(presence)
+                _presenceEvents.tryEmit(presence)
             }
 
             NotifyType.GENERIC -> {
-                // 通用扩展入口（协议演进策略 §9）：未注册扩展静默忽略（前向兼容），
-                // 游标照常推进。分发机制（GenericDispatcher）待首个扩展需求落地时实现。
-                logger.trace("GENERIC notify ignored (no extension registered)")
+                // 先严格消费通用信封，避免 malformed payload 被当作已处理事件；只要信封合法，
+                // 未知 extensionType 就是前向兼容输入，opaque data 不解释、不记录，外层照常提交游标。
+                val generic = decodePayload<GenericPayload>(notifyType, payload)
+                // 首个真实通知扩展落地时在这个会话所有的 EventProcessor 边界注入 handler；
+                // 禁止建立会跨登录会话泄漏状态的全局可变 GenericDispatcher。
+                logger.trace("GENERIC notify ignored (extensionType=${generic.extensionType}, no session handler)")
             }
             NotifyType.TYPING -> {
                 val msg = decodePayload<Message>(notifyType, payload)
-                _typingEvents.emit(msg.chatId to msg.senderUid)
+                _typingEvents.tryEmit(msg.chatId to msg.senderUid)
             }
             NotifyType.READ_SYNC -> {
                 val sync = decodePayload<ReadSyncPayload>(notifyType, payload)
@@ -251,5 +397,9 @@ class EventProcessor(
 
 
         }
+    }
+
+    companion object {
+        const val SYNC_CURSOR_KEY = "durable_events"
     }
 }

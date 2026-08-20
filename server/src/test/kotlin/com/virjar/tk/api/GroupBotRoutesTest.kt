@@ -48,7 +48,6 @@ class GroupBotRoutesTest {
         val listedBody = listed.bodyAsText()
         assertFalse("ttb_" in listedBody, "list responses must never contain bot credentials")
         assertTrue("/api/v1/groups/chat-1/bots/bot-1/messages" in listedBody)
-        assertFalse("\"apiPath\":\"/api/v1/bots/" in listedBody, "group UI must not receive the legacy webhook")
         assertEquals("member-1", service.lastActorUid)
         assertEquals("chat-1", service.lastChatId)
 

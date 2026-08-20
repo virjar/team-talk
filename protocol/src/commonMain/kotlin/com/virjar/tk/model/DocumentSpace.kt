@@ -35,11 +35,11 @@ data class DocumentSpace(
         const val ROLE_OWNER = 4
 
         override fun readFrom(buf: PacketBuffer): DocumentSpace = DocumentSpace(
-            spaceId = buf.readString()!!,
-            name = buf.readString()!!,
+            spaceId = buf.readRequiredString(),
+            name = buf.readRequiredString(),
             description = buf.readString(),
             myRole = buf.readVarInt(),
-            createdBy = buf.readString()!!,
+            createdBy = buf.readRequiredString(),
             createdAt = buf.readVarLong(),
             updatedAt = buf.readVarLong(),
         )

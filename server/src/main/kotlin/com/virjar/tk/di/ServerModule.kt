@@ -1,6 +1,9 @@
 package com.virjar.tk.di
 
 import com.virjar.tk.application.admin.AdminService
+import com.virjar.tk.application.bot.ChatServiceBotMembership
+import com.virjar.tk.application.bot.MessageServiceBotSender
+import com.virjar.tk.application.bot.UserServiceBotAccounts
 import com.virjar.tk.application.presence.PresenceCoordinator
 import com.virjar.tk.domain.attachment.AttachmentCatalog
 import com.virjar.tk.domain.attachment.AttachmentAccess
@@ -9,9 +12,14 @@ import com.virjar.tk.domain.attachment.AttachmentReferences
 import com.virjar.tk.domain.auth.AuthService
 import com.virjar.tk.domain.auth.TokenRepository
 import com.virjar.tk.domain.bot.BotRepository
+import com.virjar.tk.domain.bot.BotAccountProvisioner
+import com.virjar.tk.domain.bot.BotGroupMembership
+import com.virjar.tk.domain.bot.BotMessageSender
 import com.virjar.tk.domain.bot.BotService
 import com.virjar.tk.domain.chat.ChatMemberRepository
 import com.virjar.tk.domain.chat.ActiveChatMembership
+import com.virjar.tk.domain.chat.ChatAccess
+import com.virjar.tk.domain.chat.ChatAccessPolicy
 import com.virjar.tk.domain.chat.ChatLifecycleGate
 import com.virjar.tk.domain.chat.ChatRepository
 import com.virjar.tk.domain.chat.ChatService
@@ -127,6 +135,7 @@ fun createServerModule(
     single { ContactStore(get()) }
     single { ChatStore(get(), get(), get()) }
     single<ActiveChatMembership> { get<ChatStore>() }
+    single<ChatAccess> { ChatAccessPolicy(get<ChatStore>()) }
     single { ChatLifecycleGate() }
 
     // Domain Service
@@ -136,11 +145,11 @@ fun createServerModule(
     single { UserService(get(), get()) }
     single { AuthService(get(), get(), get()) }
     single { ContactService(get(), get(), get()) }
-    single { ChatService(get(), get(), get(), get(), get(), get(), get(), get()) }
+    single { ChatService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     single { OrganizationService(get(), get(), get()) }
-    single { GroupFileService(get(), get(), get(), get(), Environment.groupFileQuotaBytes) }
+    single { GroupFileService(get(), get(), get(), Environment.groupFileQuotaBytes) }
     single { DocumentService(get(), get(), get()) }
-    single { ConversationService(get(), get(), get()) }
+    single { ConversationService(get(), get(), get(), get(), get(), get()) }
     single { com.virjar.tk.domain.attachment.AttachmentService(get(), get()) }
     single<AttachmentReferences> {
         val messages = get<MessageRepository>()
@@ -150,7 +159,10 @@ fun createServerModule(
         }
     }
     single<AttachmentAccess> { AttachmentAccessService(get(), get(), get()) }
-    single { MessageService(get(), get(), get(), get(), get(), get(), get(), get()) }
+    single { MessageService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    single<BotAccountProvisioner> { UserServiceBotAccounts(get()) }
+    single<BotGroupMembership> { ChatServiceBotMembership(get()) }
+    single<BotMessageSender> { MessageServiceBotSender(get()) }
     single { BotService(get(), get(), get(), get(), get(), get()) }
     single { PresenceService(get(), get()) }
     single { PresenceCoordinator(get(), get()) }

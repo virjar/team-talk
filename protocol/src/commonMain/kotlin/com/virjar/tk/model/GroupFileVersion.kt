@@ -24,10 +24,10 @@ data class GroupFileVersion(
 
     companion object : IProtoReader<GroupFileVersion> {
         override fun readFrom(buf: PacketBuffer): GroupFileVersion = GroupFileVersion(
-            entryId = buf.readString()!!,
+            entryId = buf.readRequiredString(),
             version = buf.readVarLong(),
             attachment = Attachment.readFrom(buf),
-            createdBy = buf.readString()!!,
+            createdBy = buf.readRequiredString(),
             createdAt = buf.readVarLong(),
         )
     }

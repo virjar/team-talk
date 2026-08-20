@@ -161,6 +161,19 @@ internal class MessageWindow(
         refreshHasMore(current)
     }
 
+    /**
+     * Clear the resident server projection without detaching existing collectors.
+     *
+     * SYNC_RESET keeps this window instance registered in LocalCacheImpl so replayed messages
+     * repopulate the same Flow observed by an already-open chat screen.
+     */
+    fun resetServerProjection() = synchronized(stateLock) {
+        _messages.value = emptyList()
+        _hasMore.value = false
+        serverPageAnchored = false
+        historyCursor = null
+    }
+
     /** 窗口超过 windowSize * 2 时裁剪最老的消息（保留 hasMore=true）。 */
     private fun trimIfOversized(list: MutableList<Message>) {
         if (list.size > maxCapacity) {

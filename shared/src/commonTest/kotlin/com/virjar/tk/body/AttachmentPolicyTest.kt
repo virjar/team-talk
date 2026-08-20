@@ -58,7 +58,7 @@ class AttachmentPolicyTest {
     @Test
     fun `attachment body and message type must agree`() {
         assertFailsWith<IllegalArgumentException> {
-            AttachmentPolicy.canonicalize(message(MessageType.TEXT, FileBody(attachment("u/a.txt"))))
+            AttachmentPolicy.canonicalize(message(MessageType.RICH_TEXT, FileBody(attachment("u/a.txt"))))
         }
         assertFailsWith<IllegalArgumentException> {
             AttachmentPolicy.canonicalize(message(MessageType.FILE, body = null))

@@ -8,7 +8,6 @@ interface InviteLinkRepository {
     fun listInviteLinks(chatId: String): List<InviteLinkRecord>
     fun revokeInviteLink(token: String)
     fun getInviteLink(token: String): InviteLinkRecord?
-    fun incrementInviteUseCount(token: String)
 }
 
 data class InviteLinkRecord(
@@ -22,6 +21,15 @@ data class InviteLinkRecord(
     val revokedAt: Long,
     val createdAt: Long,
 )
+
+/** Pure invite policy reused inside the persistence transaction and covered without a database. */
+fun InviteLinkRecord.requireJoinable(nowMillis: Long) {
+    require(maxUses >= 0) { "邀请链接次数非法" }
+    require(expiresAt >= 0) { "邀请链接过期时间非法" }
+    require(revokedAt == 0L) { "邀请链接已失效" }
+    require(maxUses == 0 || useCount < maxUses) { "邀请链接已用完" }
+    require(expiresAt == 0L || expiresAt >= nowMillis) { "邀请链接已过期" }
+}
 
 fun InviteLinkRecord.toModel() = InviteLink(
     token = token,

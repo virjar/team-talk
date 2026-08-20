@@ -65,13 +65,13 @@ android {
     }
 }
 
-// ── ImBot CLI 分发包（headless）──
+// ── tt-agent / CLI / MCP 分发包（headless）──
 // application 插件与 android library 冲突，此处手写等价 installDist：
 // jvmJar 带 Main-Class + runtimeClasspath 全量 lib + bin 启动脚本。
 val jvmJar by tasks.existing(org.gradle.jvm.tasks.Jar::class) {
-    manifest { attributes["Main-Class"] = "com.virjar.tk.bot.HeadlessMainKt" }
+    manifest { attributes["Main-Class"] = "com.virjar.tk.agent.AgentMainKt" }
 }
-tasks.register<Copy>("headlessDist") {
+tasks.register<org.gradle.api.tasks.Sync>("headlessDist") {
     group = "distribution"
     description = "ImBot 无头 CLI 分发（build/headless/）"
     into(layout.buildDirectory.dir("headless"))
@@ -82,15 +82,7 @@ tasks.register<Copy>("headlessDist") {
     doLast {
         val bin = layout.buildDirectory.dir("headless/bin").get().asFile
         bin.mkdirs()
-        File(bin, "headless").apply {
-            writeText(
-                "#!/usr/bin/env bash\n" +
-                "cd \"\$(dirname \"\$0\")/..\"\n" +
-                "exec java -cp \"lib/*\" com.virjar.tk.bot.HeadlessMainKt \"\$@\"\n"
-            )
-            setExecutable(true)
-        }
-        // tt-agent：同一 jar，守护进程 Main-Class（doc/05-clients/headless.md）
+        // 同一 jar 提供守护进程、CLI 与 MCP 三个明确入口。
         File(bin, "tt-mcp").apply {
             val script = buildString {
                 appendLine("#!/usr/bin/env bash")
@@ -100,7 +92,7 @@ tasks.register<Copy>("headlessDist") {
             writeText(script)
             setExecutable(true)
         }
-File(bin, "tt").apply {
+        File(bin, "tt").apply {
             val script = buildString {
                 appendLine("#!/usr/bin/env bash")
                 appendLine("cd \"\$(dirname \"\$0\")/..\"")
@@ -109,7 +101,7 @@ File(bin, "tt").apply {
             writeText(script)
             setExecutable(true)
         }
-File(bin, "tt-agent").apply {
+        File(bin, "tt-agent").apply {
             val script = buildString {
                 appendLine("#!/usr/bin/env bash")
                 appendLine("cd \"\$(dirname \"\$0\")/..\"")

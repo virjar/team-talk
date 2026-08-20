@@ -25,20 +25,20 @@ data class ContactApply(
         buf.writeString(remark)
         buf.writeVarInt(status)
         buf.writeVarLong(createdAt)
-        buf.writeByte(if (fromUser != null) 1 else 0)
+        buf.writeBoolean(fromUser != null)
         fromUser?.writeTo(buf)
     }
 
     companion object : com.virjar.tk.protocol.IProtoReader<ContactApply> {
         override fun readFrom(buf: PacketBuffer): ContactApply = ContactApply(
             id = buf.readVarLong(),
-            fromUid = buf.readString()!!,
-            toUid = buf.readString()!!,
+            fromUid = buf.readRequiredString(),
+            toUid = buf.readRequiredString(),
             token = buf.readString(),
             remark = buf.readString(),
             status = buf.readVarInt(),
             createdAt = buf.readVarLong(),
-            fromUser = if (buf.readByte() != 0) User.readFrom(buf) else null,
+            fromUser = if (buf.readBoolean("contact apply user presence")) User.readFrom(buf) else null,
         )
     }
 }

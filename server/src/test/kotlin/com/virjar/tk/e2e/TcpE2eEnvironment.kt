@@ -9,17 +9,17 @@ import com.virjar.tk.infra.storage.TokenStore
 import com.virjar.tk.infra.sync.ClientRegistry
 import com.virjar.tk.protocol.TcpServer
 import com.virjar.tk.protocol.codec.ImAgent
+import com.virjar.tk.testing.PostgresSchemaLease
 import org.koin.dsl.koinApplication
 import java.io.File
-import java.sql.DriverManager
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * E2E 协议测试环境：进程内 Koin + TcpServer + 真实 PostgreSQL。
  *
- * 数据库直接使用本地 PG 的 teamtalk 库（与 local profile 的 `:server:run` 同一环境，
- * 不另建测试库/不做环境编排），每个测试开始时 TRUNCATE 全部业务表清场。
- * 前置：本机 5432 运行 PostgreSQL（brew services start postgresql@16）。
+ * 每个环境租用独立的 `tt_test_*` schema；关闭或启动失败时均以 `DROP SCHEMA ... CASCADE` 回收，
+ * 不读取或修改开发环境的 public schema。连接由 TK_TEST_PG_JDBC/USER/PASSWORD 配置。
  */
 class TcpE2eEnvironment : AutoCloseable {
     private val testId = UUID.randomUUID().toString().replace("-", "").take(12)
@@ -29,9 +29,6 @@ class TcpE2eEnvironment : AutoCloseable {
     private val msgsDir = File(testRoot, "msgs")
     private val searchDir = File(testRoot, "search")
     private val fileStoreDir = File(testRoot, "file-store")
-
-    private val pgUser = System.getenv("TK_E2E_PG_USER") ?: System.getProperty("user.name")
-    private val pgJdbc = "jdbc:postgresql://localhost:5432/teamtalk?user=$pgUser"
 
     private val koinApp = koinApplication {
         modules(createServerModule(
@@ -43,56 +40,56 @@ class TcpE2eEnvironment : AutoCloseable {
         ))
     }
     private val koin = koinApp.koin
-
     private val tcpServer = TcpServer(port = 0)
+    private val postgres = PostgresSchemaLease.open()
+    private val closed = AtomicBoolean(false)
+
     val tcpPort: Int
 
     init {
-        testRoot.mkdirs()
-        // 团队库存在性保证（与 local profile 共用；首次运行自动创建）
-        DriverManager.getConnection("jdbc:postgresql://localhost:5432/postgres?user=$pgUser").use { conn ->
-            val rs = conn.createStatement().executeQuery("SELECT 1 FROM pg_database WHERE datname='teamtalk'")
-            if (!rs.next()) conn.createStatement().execute("CREATE DATABASE teamtalk")
-        }
-        // 清场：TRUNCATE 全部业务表（自增序列重置）
-        DriverManager.getConnection(pgJdbc).use { conn ->
-            val tables = conn.createStatement().executeQuery(
-                "SELECT tablename FROM pg_tables WHERE schemaname='public'").let { rs ->
-                buildList { while (rs.next()) add(rs.getString(1)) }
-            }
-            if (tables.isNotEmpty()) {
-                conn.createStatement().execute("TRUNCATE ${tables.joinToString(", ")} RESTART IDENTITY CASCADE")
-            }
-        }
-        DatabaseFactory.create(jdbcUrl = pgJdbc, user = pgUser, password = "", maxPoolSize = 4)
-        koin.get<MessageStore>().init()
-        koin.get<FileStore>().init()
-        koin.get<SearchIndex>().start()
-
-        tcpServer.start { channel, recorder, ioExecutor ->
-            ImAgent(
-                channel = channel,
-                recorder = recorder,
-                authService = koin.get(),
-                clientRegistry = koin.get(),
-                rpcDispatcher = koin.get(),
-                messageService = koin.get(),
-                chatStore = koin.get(),
-                messageStore = koin.get(),
-                syncEvents = koin.get(),
-                events = koin.get(),
-                presenceService = koin.get(),
-                ioExecutor = ioExecutor,
+        try {
+            testRoot.mkdirs()
+            DatabaseFactory.create(
+                jdbcUrl = postgres.jdbcUrl,
+                user = postgres.user,
+                password = postgres.password,
+                maxPoolSize = 4,
             )
+            koin.get<MessageStore>().init()
+            koin.get<FileStore>().init()
+            koin.get<SearchIndex>().start()
+
+            tcpServer.start { channel, recorder, ioExecutor ->
+                ImAgent(
+                    channel = channel,
+                    recorder = recorder,
+                    authService = koin.get(),
+                    clientRegistry = koin.get(),
+                    rpcDispatcher = koin.get(),
+                    messageService = koin.get(),
+                    chatStore = koin.get(),
+                    messageStore = koin.get(),
+                    syncEvents = koin.get(),
+                    events = koin.get(),
+                    ioExecutor = ioExecutor,
+                )
+            }
+            tcpPort = tcpServer.actualPort
+        } catch (error: Throwable) {
+            runCatching { close() }.onFailure(error::addSuppressed)
+            throw error
         }
-        tcpPort = tcpServer.actualPort
     }
 
     /** 测试辅助：用户名 → uid。 */
     fun uidOf(username: String): String {
-        return java.sql.DriverManager.getConnection(pgJdbc).use { conn ->
-            conn.createStatement().executeQuery("SELECT uid FROM users WHERE username = '$username'").use {
-                it.next(); it.getString(1)
+        return postgres.openConnection().use { connection ->
+            connection.prepareStatement("SELECT uid FROM users WHERE username = ?").use { statement ->
+                statement.setString(1, username)
+                statement.executeQuery().use {
+                    it.next()
+                    it.getString(1)
+                }
             }
         }
     }
@@ -111,19 +108,29 @@ class TcpE2eEnvironment : AutoCloseable {
 
     /** 测试辅助：直接执行 SQL（造状态用）。 */
     fun jdbcExec(sql: String) {
-        java.sql.DriverManager.getConnection(pgJdbc).use { conn ->
+        postgres.openConnection().use { conn ->
             conn.createStatement().execute(sql)
         }
     }
 
     override fun close() {
-        tcpServer.stop()
-        koin.get<SearchIndex>().stop()
-        koin.get<MessageStore>().close()
-        koin.get<FileStore>().close()
-        koin.get<TokenStore>().close()
-        koin.get<ClientRegistry>().stop()
-        koinApp.close()
-        testRoot.deleteRecursively()
+        if (!closed.compareAndSet(false, true)) return
+        var failure: Throwable? = null
+        fun cleanUp(action: () -> Unit) {
+            runCatching(action).onFailure { error ->
+                failure?.addSuppressed(error) ?: run { failure = error }
+            }
+        }
+        cleanUp { tcpServer.stop() }
+        cleanUp { koin.get<SearchIndex>().stop() }
+        cleanUp { koin.get<MessageStore>().close() }
+        cleanUp { koin.get<FileStore>().close() }
+        cleanUp { koin.get<TokenStore>().close() }
+        cleanUp { koin.get<ClientRegistry>().stop() }
+        cleanUp { DatabaseFactory.close() }
+        cleanUp { koinApp.close() }
+        cleanUp { postgres.close() }
+        cleanUp { testRoot.deleteRecursively() }
+        failure?.let { throw it }
     }
 }

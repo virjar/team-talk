@@ -82,4 +82,45 @@ class ConversationViewModelTest {
             cancelAndIgnoreRemainingEvents()
         }
     }
+
+    @Test
+    fun `pin waits for authoritative event instead of mutating cache optimistically`() = runTest(testDispatcher) {
+        val original = Conversation(chatId = "c1", chatType = 1, isPinned = false)
+        val cache = FakeLocalCache().apply { upsertConversation(original) }
+        val rpc = FakeRpcInvoker().apply {
+            enqueueOk() // initial list
+            enqueueOk() // setPin
+        }
+        val vm = ConversationViewModel(cache, ConversationRepository(rpc, cache), testDispatcher)
+        advanceUntilIdle()
+
+        vm.setPinned("c1", true)
+        advanceUntilIdle()
+
+        assertEquals(ConversationRpcContract.M_SET_PIN, rpc.calls.last().second)
+        assertEquals(false, cache.getConversations().single().isPinned, "RPC ACK 不得伪造本地权威快照")
+
+        cache.upsertConversation(original.copy(isPinned = true))
+        advanceUntilIdle()
+        assertEquals(true, vm.conversations.value.single().isPinned)
+    }
+
+    @Test
+    fun `pin failure keeps projection unchanged and exposes error`() = runTest(testDispatcher) {
+        val cache = FakeLocalCache().apply {
+            upsertConversation(Conversation(chatId = "c1", chatType = 1, isPinned = false))
+        }
+        val rpc = FakeRpcInvoker().apply {
+            enqueueOk() // initial list
+            enqueueError(403, "无权修改")
+        }
+        val vm = ConversationViewModel(cache, ConversationRepository(rpc, cache), testDispatcher)
+        advanceUntilIdle()
+
+        vm.setPinned("c1", true)
+        advanceUntilIdle()
+
+        assertEquals(false, cache.getConversations().single().isPinned)
+        assertEquals("会话置顶失败: 无权修改", vm.error.value)
+    }
 }

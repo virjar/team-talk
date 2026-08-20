@@ -2,6 +2,7 @@ package com.virjar.tk.testing
 
 import com.virjar.tk.client.LocalCache
 import com.virjar.tk.client.MessagePager
+import com.virjar.tk.client.PendingBotMessage
 import com.virjar.tk.client.PendingConversationDraft
 import com.virjar.tk.model.*
 import kotlinx.coroutines.flow.Flow
@@ -34,12 +35,23 @@ class FakeLocalCache : LocalCache {
     private val chatsFlow = MutableStateFlow<List<Chat>>(emptyList())
     private val membersMap = mutableMapOf<String, MutableList<Member>>()
     private val conversationsFlow = MutableStateFlow<List<Conversation>>(emptyList())
+    private val conversationLock = Any()
+    private var conversationProjectionGeneration = 0L
+    private var lastAppliedConversationSnapshotGeneration = 0L
+    private val conversationMutationGenerations = mutableMapOf<String, Long>()
+    private val syncCursors = mutableMapOf<String, Long>()
+    private val botMessageInbox = sortedMapOf<Long, Message>()
     private data class DraftObservation(val draft: String?)
     private data class DraftOverride(
         val draft: String?,
         val generation: Long,
         val mirrored: Boolean,
         val observedAuthority: DraftObservation? = null,
+    )
+    private data class ConversationMergePlan(
+        val conversation: Conversation,
+        val draftOverride: DraftOverride?,
+        val clearDraftOverride: Boolean,
     )
     private val draftOverrides = mutableMapOf<String, DraftOverride>()
     private val draftGenerationHighWatermarks = mutableMapOf<String, Long>()
@@ -58,6 +70,19 @@ class FakeLocalCache : LocalCache {
 
     override fun getMessages(chatId: String, limit: Int): List<Message> =
         (messagesMap[chatId] ?: emptyList()).take(limit)
+
+    override fun getRecentMessages(chatId: String?, afterSeq: Long, limit: Int): List<Message> {
+        require(afterSeq >= 0L) { "afterSeq must be non-negative" }
+        require(limit > 0) { "limit must be positive" }
+        return synchronized(messagesMap) {
+            messagesMap.values.asSequence()
+                .flatten()
+                .filter { (chatId == null || it.chatId == chatId) && it.serverSeq > afterSeq }
+                .sortedWith(compareBy<Message> { it.timestamp }.thenBy { it.serverSeq })
+                .toList()
+                .takeLast(limit)
+        }
+    }
 
     override fun observeMessages(chatId: String): Flow<List<Message>> = messagesFlow(chatId)
 
@@ -172,13 +197,19 @@ class FakeLocalCache : LocalCache {
 
     override fun getChat(chatId: String): Chat? = chatsFlow.value.find { it.chatId == chatId }
     override fun upsertChat(chat: Chat) {
-        val list = chatsFlow.value.toMutableList()
-        val idx = list.indexOfFirst { it.chatId == chat.chatId }
-        if (idx >= 0) list[idx] = chat else list.add(chat)
-        chatsFlow.value = list
+        synchronized(conversationLock) {
+            val list = chatsFlow.value.toMutableList()
+            val idx = list.indexOfFirst { it.chatId == chat.chatId }
+            if (idx >= 0) list[idx] = chat else list.add(chat)
+            chatsFlow.value = list
+            markConversationMutated(chat.chatId)
+        }
     }
     override fun deleteChat(chatId: String) {
-        chatsFlow.value = chatsFlow.value.filter { it.chatId != chatId }
+        synchronized(conversationLock) {
+            chatsFlow.value = chatsFlow.value.filter { it.chatId != chatId }
+            markConversationMutated(chatId)
+        }
     }
 
     // ── 成员 ──
@@ -197,104 +228,294 @@ class FakeLocalCache : LocalCache {
 
     // ── 会话 ──
 
-    override fun getConversations(): List<Conversation> = conversationsFlow.value
+    override fun getConversations(): List<Conversation> = synchronized(conversationLock) {
+        conversationsFlow.value
+    }
     override fun observeConversations(): Flow<List<Conversation>> = conversationsFlow
     override fun upsertConversation(conv: Conversation) {
-        val currentOverride = draftOverrides[conv.chatId]
-        val observedOverride = currentOverride?.let { override ->
-            if (!override.mirrored) {
-                override.copy(observedAuthority = DraftObservation(conv.draft))
-            } else {
-                override
-            }
-        }
-        val clearOverride = observedOverride?.let { it.mirrored && it.draft == conv.draft } == true
-        if (clearOverride) draftOverrides.remove(conv.chatId)
-        else if (observedOverride != null) draftOverrides[conv.chatId] = observedOverride
-        val effectiveOverride = observedOverride.takeUnless { clearOverride }
-        val incoming = conv.copy(
-            draft = if (effectiveOverride != null) effectiveOverride.draft else conv.draft,
-        )
-        val list = conversationsFlow.value.toMutableList()
-        val idx = list.indexOfFirst { it.chatId == incoming.chatId }
-        if (idx >= 0) {
-            // 合并策略与 LocalCacheImpl 一致（简化版）
-            val local = list[idx]
-            val mergedReadSeq = maxOf(local.readSeq, incoming.readSeq)
-            val latestMessage = if (incoming.lastSeq >= local.lastSeq) incoming else local
-            val mergedUnread = (latestMessage.lastSeq - mergedReadSeq)
-                .coerceIn(0L, Int.MAX_VALUE.toLong())
-                .toInt()
-            list[idx] = incoming.copy(
-                lastMessage = latestMessage.lastMessage,
-                lastMessageType = latestMessage.lastMessageType,
-                lastMsgTimestamp = latestMessage.lastMsgTimestamp,
-                lastSeq = latestMessage.lastSeq,
-                readSeq = mergedReadSeq,
-                unreadCount = mergedUnread,
+        synchronized(conversationLock) {
+            val plan = prepareConversationMerge(
+                local = conversationsFlow.value.firstOrNull { it.chatId == conv.chatId },
+                remote = conv,
+                draftOverride = draftOverrides[conv.chatId],
             )
-        } else {
-            list.add(incoming)
+            if (plan.clearDraftOverride) {
+                draftOverrides.remove(conv.chatId)
+            } else if (plan.draftOverride != null) {
+                draftOverrides[conv.chatId] = plan.draftOverride
+            }
+            conversationsFlow.value = replaceSorted(conversationsFlow.value, plan.conversation)
+            markConversationMutated(conv.chatId)
         }
-        conversationsFlow.value = list
     }
-    override fun setConversationDraft(chatId: String, draft: String?): Long {
-        val generation = (draftGenerationHighWatermarks[chatId] ?: 0L) + 1L
-        draftGenerationHighWatermarks[chatId] = generation
-        draftOverrides[chatId] = DraftOverride(draft, generation, mirrored = false)
-        conversationsFlow.value = conversationsFlow.value.map {
-            if (it.chatId == chatId) it.copy(draft = draft) else it
+
+    override fun beginConversationSnapshot(): Long = synchronized(conversationLock) {
+        nextConversationGeneration()
+    }
+
+    override fun applyConversationSnapshot(
+        snapshotGeneration: Long,
+        conversations: List<Conversation>,
+    ): Boolean {
+        require(snapshotGeneration > 0L) { "snapshotGeneration must be positive" }
+        val snapshot = conversations.associateBy(Conversation::chatId).values.toList()
+        return synchronized(conversationLock) {
+            if (snapshotGeneration <= lastAppliedConversationSnapshotGeneration) {
+                return@synchronized false
+            }
+
+            var projectedConversations = conversationsFlow.value
+            val projectedOverrides = draftOverrides.toMutableMap()
+            var hadConflict = conversationMutationGenerations.values.any { generation ->
+                generation > snapshotGeneration
+            }
+            snapshot.forEach { remote ->
+                if (wasConversationMutatedAfter(remote.chatId, snapshotGeneration)) {
+                    hadConflict = true
+                } else {
+                    val plan = prepareConversationMerge(
+                        local = projectedConversations.firstOrNull { it.chatId == remote.chatId },
+                        remote = remote,
+                        draftOverride = projectedOverrides[remote.chatId],
+                    )
+                    projectedConversations = replaceSorted(projectedConversations, plan.conversation)
+                    if (plan.clearDraftOverride) {
+                        projectedOverrides.remove(remote.chatId)
+                    } else if (plan.draftOverride != null) {
+                        projectedOverrides[remote.chatId] = plan.draftOverride
+                    }
+                }
+            }
+
+            val remoteIds = snapshot.mapTo(mutableSetOf(), Conversation::chatId)
+            val absentIds = buildSet {
+                projectedConversations.forEach { if (it.chatId !in remoteIds) add(it.chatId) }
+                projectedOverrides.keys.forEach { if (it !in remoteIds) add(it) }
+            }
+            val removableIds = absentIds.filterTo(mutableSetOf()) { chatId ->
+                val safeToRemove = !wasConversationMutatedAfter(chatId, snapshotGeneration)
+                if (!safeToRemove) hadConflict = true
+                safeToRemove
+            }
+
+            projectedConversations = projectedConversations.filterNot { it.chatId in removableIds }
+            removableIds.forEach { projectedOverrides.remove(it) }
+            draftOverrides.clear()
+            draftOverrides.putAll(projectedOverrides)
+            conversationsFlow.value = sortConversations(projectedConversations)
+            conversationProjectionGeneration = maxOf(
+                conversationProjectionGeneration,
+                snapshotGeneration,
+            )
+            lastAppliedConversationSnapshotGeneration = snapshotGeneration
+            conversationMutationGenerations.entries.removeAll { (_, generation) ->
+                generation <= snapshotGeneration
+            }
+            !hadConflict
         }
-        return generation
+    }
+
+    override fun setConversationDraft(chatId: String, draft: String?): Long {
+        return synchronized(conversationLock) {
+            val generation = (draftGenerationHighWatermarks[chatId] ?: 0L) + 1L
+            draftGenerationHighWatermarks[chatId] = generation
+            draftOverrides[chatId] = DraftOverride(draft, generation, mirrored = false)
+            conversationsFlow.value = conversationsFlow.value.map {
+                if (it.chatId == chatId) it.copy(draft = draft) else it
+            }
+            markConversationMutated(chatId)
+            generation
+        }
     }
     override fun getPendingConversationDrafts(): List<PendingConversationDraft> =
-        draftOverrides.mapNotNull { (chatId, override) ->
-            if (!override.mirrored) PendingConversationDraft(chatId, override.draft, override.generation) else null
+        synchronized(conversationLock) {
+            draftOverrides.mapNotNull { (chatId, override) ->
+                if (!override.mirrored) PendingConversationDraft(chatId, override.draft, override.generation) else null
+            }
         }
     override fun markConversationDraftMirrored(chatId: String, generation: Long) {
-        val current = draftOverrides[chatId] ?: return
-        if (current.generation == generation && !current.mirrored) {
-            if (current.observedAuthority?.draft == current.draft && current.observedAuthority != null) {
-                draftOverrides.remove(chatId)
-            } else {
-                draftOverrides[chatId] = current.copy(mirrored = true)
+        synchronized(conversationLock) {
+            val current = draftOverrides[chatId] ?: return
+            if (current.generation == generation && !current.mirrored) {
+                if (current.observedAuthority?.draft == current.draft && current.observedAuthority != null) {
+                    draftOverrides.remove(chatId)
+                } else {
+                    draftOverrides[chatId] = current.copy(mirrored = true)
+                }
             }
         }
     }
     override fun deleteConversation(chatId: String) {
-        draftOverrides.remove(chatId)
-        conversationsFlow.value = conversationsFlow.value.filter { it.chatId != chatId }
+        synchronized(conversationLock) {
+            draftOverrides.remove(chatId)
+            conversationsFlow.value = conversationsFlow.value.filter { it.chatId != chatId }
+            markConversationMutated(chatId)
+        }
     }
     override fun updatePeerReadSeq(chatId: String, peerReadSeq: Long) {
-        conversationsFlow.value = conversationsFlow.value.map {
-            if (it.chatId == chatId) it.copy(peerReadSeq = peerReadSeq) else it
+        synchronized(conversationLock) {
+            val existing = conversationsFlow.value.firstOrNull { it.chatId == chatId } ?: return
+            val mergedPeerReadSeq = maxOf(existing.peerReadSeq, peerReadSeq)
+            if (mergedPeerReadSeq == existing.peerReadSeq) return
+            conversationsFlow.value = conversationsFlow.value.map {
+                if (it.chatId == chatId) it.copy(peerReadSeq = mergedPeerReadSeq) else it
+            }
+            markConversationMutated(chatId)
         }
     }
-    override fun toggleConversationPin(chatId: String, pinned: Boolean): Conversation? {
-        var result: Conversation? = null
-        conversationsFlow.value = conversationsFlow.value.map {
-            if (it.chatId == chatId) {
-                result = it.copy(isPinned = pinned); result!!
-            } else it
+    override fun getSyncCursor(key: String): Long = synchronized(syncCursors) {
+        syncCursors[key] ?: 0L
+    }
+    override fun advanceSyncCursor(key: String, eventId: Long): Long {
+        require(eventId > 0L) { "eventId must be positive" }
+        return synchronized(syncCursors) {
+            maxOf(syncCursors[key] ?: 0L, eventId).also { syncCursors[key] = it }
         }
-        return result
+    }
+    override fun resetServerProjection() {
+        synchronized(contactLock) {
+            synchronized(conversationLock) {
+                synchronized(messagesMap) {
+                    synchronized(syncCursors) {
+                        synchronized(botMessageInbox) {
+                            usersFlow.value = emptyList()
+                            contactsFlow.value = emptyList()
+                            chatsFlow.value = emptyList()
+                            membersMap.clear()
+                            conversationsFlow.value = emptyList()
+                            messagesMap.clear()
+                            messagesFlows.values.forEach { it.value = emptyList() }
+                            syncCursors.clear()
+                            botMessageInbox.clear()
+                            draftOverrides.clear()
+
+                            check(contactProjectionGeneration < Long.MAX_VALUE)
+                            contactProjectionGeneration += 1L
+                            lastFullContactSnapshotGeneration = contactProjectionGeneration
+                            contactMutationGenerations.clear()
+
+                            val resetGeneration = nextConversationGeneration()
+                            lastAppliedConversationSnapshotGeneration = resetGeneration
+                            conversationMutationGenerations.clear()
+                            // Retain draft high-watermarks so a stale pre-reset ACK cannot match
+                            // the next edit's generation.
+                        }
+                    }
+                }
+            }
+        }
+    }
+    override fun enqueueBotMessage(eventId: Long, message: Message) {
+        require(eventId > 0L) { "eventId must be positive" }
+        require(message.serverSeq > 0L) { "durable bot messages require a positive serverSeq" }
+        synchronized(botMessageInbox) {
+            val duplicateMessage = botMessageInbox.values.any {
+                it.chatId == message.chatId && it.serverSeq == message.serverSeq
+            }
+            if (!duplicateMessage) {
+                botMessageInbox.putIfAbsent(eventId, message)
+            }
+        }
+    }
+    override fun peekBotMessage(): PendingBotMessage? = synchronized(botMessageInbox) {
+        botMessageInbox.entries.firstOrNull()?.let { (eventId, message) ->
+            PendingBotMessage(eventId, message)
+        }
+    }
+    override fun deleteBotMessage(eventId: Long) {
+        synchronized(botMessageInbox) {
+            botMessageInbox.remove(eventId)
+        }
     }
     override fun updateMessageInMemory(chatId: String, clientMsgId: String, transform: (Message) -> Message) {
         // 测试桩：无窗口概念，直接忽略（进度动画不影响测试语义）
     }
 
     override fun markConversationRead(chatId: String, readSeq: Long) {
-        conversationsFlow.value = conversationsFlow.value.map {
-            if (it.chatId != chatId) return@map it
-            val mergedReadSeq = maxOf(it.readSeq, readSeq)
-            it.copy(
-                unreadCount = (it.lastSeq - mergedReadSeq)
+        synchronized(conversationLock) {
+            var changed = false
+            conversationsFlow.value = conversationsFlow.value.map {
+                if (it.chatId != chatId) return@map it
+                val mergedReadSeq = maxOf(it.readSeq, readSeq)
+                val mergedUnread = (it.lastSeq - mergedReadSeq)
                     .coerceIn(0L, Int.MAX_VALUE.toLong())
-                    .toInt(),
-                readSeq = mergedReadSeq,
-            )
+                    .toInt()
+                changed = changed || mergedReadSeq != it.readSeq || mergedUnread != it.unreadCount
+                it.copy(unreadCount = mergedUnread, readSeq = mergedReadSeq)
+            }
+            if (changed) markConversationMutated(chatId)
         }
     }
+
+    private fun prepareConversationMerge(
+        local: Conversation?,
+        remote: Conversation,
+        draftOverride: DraftOverride?,
+    ): ConversationMergePlan {
+        val observedOverride = draftOverride?.let { override ->
+            if (!override.mirrored) {
+                override.copy(observedAuthority = DraftObservation(remote.draft))
+            } else {
+                override
+            }
+        }
+        val clearOverride = observedOverride?.let { it.mirrored && it.draft == remote.draft } == true
+        val effectiveOverride = observedOverride.takeUnless { clearOverride }
+        val incoming = remote.copy(
+            draft = if (effectiveOverride != null) effectiveOverride.draft else remote.draft,
+        )
+        val merged = if (local == null) incoming else mergeConversation(local, incoming, effectiveOverride)
+        return ConversationMergePlan(merged, effectiveOverride, clearOverride)
+    }
+
+    private fun mergeConversation(
+        local: Conversation,
+        remote: Conversation,
+        draftOverride: DraftOverride?,
+    ): Conversation {
+        val mergedReadSeq = maxOf(local.readSeq, remote.readSeq)
+        val latestMessage = if (remote.lastSeq >= local.lastSeq) remote else local
+        return remote.copy(
+            lastMessage = latestMessage.lastMessage,
+            lastMessageType = latestMessage.lastMessageType,
+            lastMsgTimestamp = latestMessage.lastMsgTimestamp,
+            lastSeq = latestMessage.lastSeq,
+            readSeq = mergedReadSeq,
+            unreadCount = (latestMessage.lastSeq - mergedReadSeq)
+                .coerceIn(0L, Int.MAX_VALUE.toLong())
+                .toInt(),
+            peerReadSeq = maxOf(local.peerReadSeq, remote.peerReadSeq),
+            draft = if (draftOverride != null) draftOverride.draft else remote.draft,
+        )
+    }
+
+    private fun replaceSorted(current: List<Conversation>, conversation: Conversation): List<Conversation> {
+        val result = current.toMutableList()
+        val index = result.indexOfFirst { it.chatId == conversation.chatId }
+        if (index >= 0) result[index] = conversation else result.add(conversation)
+        return sortConversations(result)
+    }
+
+    private fun sortConversations(conversations: List<Conversation>): List<Conversation> =
+        conversations.sortedWith(
+            compareByDescending<Conversation> { it.isPinned }
+                .thenByDescending { it.lastMsgTimestamp ?: 0L },
+        )
+
+    private fun markConversationMutated(chatId: String) {
+        conversationMutationGenerations[chatId] = nextConversationGeneration()
+    }
+
+    private fun nextConversationGeneration(): Long {
+        check(conversationProjectionGeneration < Long.MAX_VALUE) {
+            "conversation projection generation exhausted"
+        }
+        conversationProjectionGeneration += 1L
+        return conversationProjectionGeneration
+    }
+
+    private fun wasConversationMutatedAfter(chatId: String, generation: Long): Boolean =
+        (conversationMutationGenerations[chatId] ?: 0L) > generation
 }
 
 /** 简化版 MessagePager，直接镜像 FakeLocalCache 的消息列表。 */

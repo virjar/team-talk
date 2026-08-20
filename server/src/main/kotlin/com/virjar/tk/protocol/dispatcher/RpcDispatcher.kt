@@ -3,6 +3,7 @@ package com.virjar.tk.protocol.dispatcher
 import com.virjar.tk.protocol.rpc.RpcStubRegistry
 import com.virjar.tk.protocol.payload.InvokePayload
 import com.virjar.tk.protocol.payload.ResponsePayload
+import io.netty.handler.codec.CorruptedFrameException
 import org.slf4j.LoggerFactory
 
 /**
@@ -24,6 +25,9 @@ class RpcDispatcher(
             ResponsePayload(invoke.requestId, 400, e.message?.encodeToByteArray())
         } catch (e: IndexOutOfBoundsException) {
             // 编解码错误（字段数量/类型/顺序不一致）—— 协议紊乱，连接不可靠，断连
+            throw FatalCodecException(invoke.serviceId, invoke.methodId, uid, e)
+        } catch (e: CorruptedFrameException) {
+            // 长度预算、presence marker 或尾随字节非法，同样是连接级协议错误。
             throw FatalCodecException(invoke.serviceId, invoke.methodId, uid, e)
         } catch (e: Exception) {
             // 其他内部错误 —— 返回 500 但不断连（可能是 DB 等临时故障）

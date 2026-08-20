@@ -84,7 +84,8 @@ sealed class AppError(
  *
  * 捕获规则：
  * - [AppError] 直接透传（已类型化）
- * - [IllegalStateException]("Not connected") / [kotlinx.coroutines.CancellationException] → [AppError.Network]
+ * - [IllegalStateException]("Not connected") → [AppError.Network]
+ * - [kotlinx.coroutines.CancellationException] 保持取消语义，不转成业务失败
  * - 其他 Throwable → [AppError.Unknown]
  *
  * 注意：[kotlinx.coroutines.TimeoutCancellationException] 不在此捕获，因为 RpcClient
@@ -105,10 +106,11 @@ suspend inline fun <T> outcome(crossinline block: suspend () -> T): Outcome<T> =
 } catch (e: IndexOutOfBoundsException) {
     // 客户端 decode 越界 = 编解码紊乱（与服务端字段不一致），FATAL 级别
     Outcome.Failure(AppError.FatalCodec("数据解析错误（客户端与服务端编解码不一致）：${e.message}"))
-} catch (e: IllegalStateException) {
-    Outcome.Failure(AppError.Network)
 } catch (e: kotlinx.coroutines.CancellationException) {
-    Outcome.Failure(AppError.Network)
+    throw e
+} catch (e: IllegalStateException) {
+    if (e.message == "Not connected") Outcome.Failure(AppError.Network)
+    else Outcome.Failure(AppError.Unknown(e))
 } catch (e: Throwable) {
     Outcome.Failure(AppError.Unknown(e))
 }

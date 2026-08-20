@@ -20,7 +20,7 @@ data class PresencePayload(
         const val STATUS_ONLINE: Byte = 1
 
         override fun readFrom(buf: PacketBuffer) = PresencePayload(
-            uid = buf.readString()!!,
+            uid = buf.readRequiredString(),
             status = buf.readByte().toByte(),
             lastSeenAt = buf.readVarLong(),
         )

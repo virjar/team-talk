@@ -59,18 +59,6 @@ class FriendApplyRecordPresentationTest {
         )
     }
 
-    @Test
-    fun `legacy duplicate pending is described as merged rather than rejected`() {
-        val superseded = record(
-            direction = ContactApplyRecord.DIRECTION_OUTGOING,
-            status = ContactApplyRecord.STATUS_SUPERSEDED,
-        )
-
-        assertEquals("已合并", friendApplyStatusText(superseded))
-        assertEquals("发出的申请 · 重复申请已合并", friendApplyDescription(superseded))
-        assertFalse(canProcessFriendApply(superseded))
-    }
-
     private fun record(
         direction: Int,
         status: Int,

@@ -1,6 +1,8 @@
 package com.virjar.tk.infra.db.repository
 
 import com.virjar.tk.domain.chat.ChatMemberRepository
+import com.virjar.tk.infra.db.Chats
+import com.virjar.tk.infra.db.Conversations
 import com.virjar.tk.infra.db.GroupMemberMutes
 import com.virjar.tk.infra.db.GroupMembers
 import com.virjar.tk.infra.db.GroupChats
@@ -56,6 +58,7 @@ class ExposedChatMemberRepository : ChatMemberRepository {
     override fun addMembers(chatId: String, uids: List<String>) {
         val now = System.currentTimeMillis()
         transaction {
+            val chatType = lockActiveChat(chatId)[Chats.chatType]
             for (uid in uids) {
                 val existing = GroupMembers.selectAll().where {
                     (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid)
@@ -69,13 +72,23 @@ class ExposedChatMemberRepository : ChatMemberRepository {
                         it[GroupMembers.status] = 1
                         it[GroupMembers.joinedAt] = now
                     }
-                } else {
+                } else if (existing[GroupMembers.status] != 1) {
                     GroupMembers.update({
                         (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid)
                     }) {
+                        // A normal rejoin is a fresh ordinary membership. Persisting the old role
+                        // would let a previously removed admin silently regain privileges.
+                        it[GroupMembers.role] = 0
                         it[GroupMembers.status] = 1
                         it[GroupMembers.joinedAt] = now
                     }
+                }
+                Conversations.insertIgnore {
+                    it[Conversations.uid] = uid
+                    it[Conversations.chatId] = chatId
+                    it[Conversations.chatType] = chatType
+                    it[Conversations.lastMsgSeq] = 0
+                    it[Conversations.updatedAt] = now
                 }
             }
         }
@@ -83,14 +96,35 @@ class ExposedChatMemberRepository : ChatMemberRepository {
 
     override fun removeMember(chatId: String, uid: String) {
         transaction {
+            lockActiveChat(chatId)
+            val member = GroupMembers.selectAll().where {
+                (GroupMembers.chatId eq chatId) and
+                    (GroupMembers.uid eq uid) and
+                    (GroupMembers.status eq 1)
+            }.singleOrNull() ?: return@transaction
+            require(member[GroupMembers.role] != 2) { "群主不能退出，请先转让群主" }
             GroupMembers.update({
                 (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid)
             }) { it[GroupMembers.status] = 0 }
+            Conversations.deleteWhere {
+                (Conversations.chatId eq chatId) and (Conversations.uid eq uid)
+            }
+            GroupMemberMutes.deleteWhere {
+                (GroupMemberMutes.chatId eq chatId) and (GroupMemberMutes.uid eq uid)
+            }
         }
     }
 
     override fun transferOwner(chatId: String, oldOwnerUid: String, newOwnerUid: String) {
         transaction {
+            lockActiveChat(chatId)
+            val members = GroupMembers.selectAll().where {
+                (GroupMembers.chatId eq chatId) and
+                    (GroupMembers.uid inList listOf(oldOwnerUid, newOwnerUid)) and
+                    (GroupMembers.status eq 1)
+            }.associateBy { it[GroupMembers.uid] }
+            require(members[oldOwnerUid]?.get(GroupMembers.role) == 2) { "操作者不是群主" }
+            require(members.containsKey(newOwnerUid)) { "目标不是群成员" }
             GroupMembers.update({ (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq oldOwnerUid) }) {
                 it[GroupMembers.role] = 1
             }
@@ -103,8 +137,22 @@ class ExposedChatMemberRepository : ChatMemberRepository {
 
     override fun setRole(chatId: String, uid: String, role: Int) {
         transaction {
+            lockActiveChat(chatId)
+            val member = GroupMembers.selectAll().where {
+                (GroupMembers.chatId eq chatId) and
+                    (GroupMembers.uid eq uid) and
+                    (GroupMembers.status eq 1)
+            }.singleOrNull() ?: throw IllegalArgumentException("目标不是群成员")
+            require(member[GroupMembers.role] != 2 || role == 2) {
+                "不能直接修改群主角色，请使用转让群主"
+            }
             GroupMembers.update({ (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid) }) {
                 it[GroupMembers.role] = role
+            }
+            if (role == 2) {
+                GroupChats.update({ GroupChats.chatId eq chatId }) {
+                    it[GroupChats.creator] = uid
+                }
             }
         }
     }
@@ -113,7 +161,13 @@ class ExposedChatMemberRepository : ChatMemberRepository {
 
     override fun muteMember(chatId: String, uid: String, operatorUid: String, expiresAt: Long) {
         transaction {
-            GroupMemberMutes.insert {
+            lockActiveChat(chatId)
+            require(GroupMembers.selectAll().where {
+                (GroupMembers.chatId eq chatId) and
+                    (GroupMembers.uid eq uid) and
+                    (GroupMembers.status eq 1)
+            }.count() == 1L) { "目标不是群成员" }
+            GroupMemberMutes.upsert(GroupMemberMutes.chatId, GroupMemberMutes.uid) {
                 it[GroupMemberMutes.chatId] = chatId
                 it[GroupMemberMutes.uid] = uid
                 it[GroupMemberMutes.operatorUid] = operatorUid
@@ -125,6 +179,7 @@ class ExposedChatMemberRepository : ChatMemberRepository {
 
     override fun unmuteMember(chatId: String, uid: String) {
         transaction {
+            lockActiveChat(chatId)
             GroupMemberMutes.deleteWhere {
                 (GroupMemberMutes.chatId eq chatId) and (GroupMemberMutes.uid eq uid)
             }
@@ -142,6 +197,7 @@ class ExposedChatMemberRepository : ChatMemberRepository {
 
     override fun setMuteAll(chatId: String, mutedAll: Boolean) {
         transaction {
+            lockActiveChat(chatId)
             GroupChats.update({ GroupChats.chatId eq chatId }) { it[GroupChats.mutedAll] = mutedAll }
         }
     }
@@ -153,6 +209,12 @@ class ExposedChatMemberRepository : ChatMemberRepository {
                 .where { (GroupMemberMutes.chatId eq chatId) and (GroupMemberMutes.expiresAt greater now) }
                 .map { it[GroupMemberMutes.uid] }
         }
+    }
+
+    private fun lockActiveChat(chatId: String): ResultRow {
+        return Chats.selectAll().where {
+            (Chats.chatId eq chatId) and (Chats.status eq 1)
+        }.forUpdate().singleOrNull() ?: throw IllegalArgumentException("聊天不存在")
     }
 }
 

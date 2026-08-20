@@ -44,6 +44,7 @@ class ProtocolE2eTest {
         val imClient: ImClient,
         val rpc: RpcClient,
         val userSession: com.virjar.tk.client.UserSession,
+        private val eventProjection: E2eEventProjection,
     ) {
         private val notifyBuffer = mutableListOf<NotifyPayload>()
         private var collectJob: Job? = null
@@ -64,7 +65,7 @@ class ProtocolE2eTest {
             rpc.invoke(serviceId, methodId, payload)
 
         suspend fun pendingApplyToken(fromUid: String): String {
-            val response = invoke("contact", ContactRpcContract.M_LIST_APPLIES)
+            val response = invoke("contact", ContactRpcContract.M_LIST_PENDING_APPLIES)
             require(response.status == 0 && response.payload != null) { "无法读取待处理好友申请" }
             return ProtoCodec.decodeList(ContactApply, response.payload!!)
                 .single { it.fromUid == fromUid && it.status == 0 }
@@ -91,6 +92,7 @@ class ProtocolE2eTest {
         fun close() {
             collectJob?.cancel()
             rpc.stop()
+            eventProjection.close()
             // E2E 测试会话是一次性的，彻底销毁线程资源
             imClient.destroy()
         }
@@ -102,13 +104,14 @@ class ProtocolE2eTest {
             if (success) userSession.onAuthSuccess(uid ?: "", username, name, refreshToken, accessToken)
             else userSession.onAuthFailed(failureReason)
         })
+        val eventProjection = imClient.installE2eEventProjection()
         imClient.connect("127.0.0.1", env.tcpPort)
         withTimeout(5000) { imClient.state.first { it == ConnectionState.CONNECTED } }
 
         val rpc = RpcClient(imClient)
         rpc.start()
 
-        val session = E2eSession(imClient, rpc, userSession)
+        val session = E2eSession(imClient, rpc, userSession, eventProjection)
         session.startCollecting(testScope)
         return session
     }
@@ -309,10 +312,10 @@ class ProtocolE2eTest {
         val msg = com.virjar.tk.model.Message(
             chatId = chat.chatId,
             clientMsgId = UUID.randomUUID().toString(),
-            messageType = MessageType.TEXT.code,
+            messageType = MessageType.RICH_TEXT.code,
             timestamp = System.currentTimeMillis(),
             senderUid = "",
-            body = com.virjar.tk.body.TextBody("Hello E2E"),
+            body = com.virjar.tk.body.buildRichTextBody("Hello E2E"),
         )
         val ack = user1.imClient.sendAndWaitAck(msg)
         assertEquals(0, ack.code, "Message ACK code should be OK: ${ack.reason}")
@@ -342,10 +345,10 @@ class ProtocolE2eTest {
         val msg = com.virjar.tk.model.Message(
             chatId = chat.chatId,
             clientMsgId = UUID.randomUUID().toString(),
-            messageType = MessageType.TEXT.code,
+            messageType = MessageType.RICH_TEXT.code,
             timestamp = System.currentTimeMillis(),
             senderUid = "",
-            body = com.virjar.tk.body.TextBody("Hello from user1"),
+            body = com.virjar.tk.body.buildRichTextBody("Hello from user1"),
         )
         val ack = user1.imClient.sendAndWaitAck(msg)
         assertEquals(0, ack.code)
@@ -381,10 +384,10 @@ class ProtocolE2eTest {
             val msg = com.virjar.tk.model.Message(
                 chatId = chat.chatId,
                 clientMsgId = UUID.randomUUID().toString(),
-                messageType = MessageType.TEXT.code,
+                messageType = MessageType.RICH_TEXT.code,
                 timestamp = System.currentTimeMillis(),
                 senderUid = "",
-                body = com.virjar.tk.body.TextBody("msg$i"),
+                body = com.virjar.tk.body.buildRichTextBody("msg$i"),
             )
             user1.imClient.sendAndWaitAck(msg)
         }

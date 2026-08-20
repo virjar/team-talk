@@ -59,7 +59,8 @@ Service 与 method ID 由 IDL 生成物锁定。
 ### 消息与事件通道
 
 消息发送使用独立 `MESSAGE/MESSAGE_ACK`，便于按 `clientMsgId` 幂等和分配 `serverSeq`。服务端状态
-变化通过 `NOTIFY` 推送；离线设备认证后补发持久化事件。
+变化通过 `NOTIFY` 推送；离线设备认证后由本地事件消费者显式分页恢复持久化事件，完成后才开放
+实时推送。
 
 ### HTTP 通道
 

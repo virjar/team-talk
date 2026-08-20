@@ -22,8 +22,8 @@ class FileValidationE2eTest {
     fun `other users cannot claim an unattached upload but chat members may reuse a referenced file`() {
         TcpE2eEnvironment().use { env ->
             runBlocking {
-                val owner = ImBot.register("127.0.0.1", env.tcpPort, "file-owner")
-                val member = ImBot.register("127.0.0.1", env.tcpPort, "file-member")
+                val owner = ImBot.register("127.0.0.1", env.tcpPort, "file-owner", testImBotCacheOwner)
+                val member = ImBot.register("127.0.0.1", env.tcpPort, "file-member", testImBotCacheOwner)
                 try {
                     val chatId = owner.createPersonalChat(member.uid)
                     val attachment = env.storeFile(owner.uid, "private".toByteArray(), "private.txt")
@@ -44,8 +44,8 @@ class FileValidationE2eTest {
     fun `相对 path 引用真实文件 - 发送成功`() {
         TcpE2eEnvironment().use { env ->
             runBlocking {
-                val b = ImBot.register("127.0.0.1", env.tcpPort, "fileval-b")
-                val a = ImBot.register("127.0.0.1", env.tcpPort, "fileval-a")
+                val b = ImBot.register("127.0.0.1", env.tcpPort, "fileval-b", testImBotCacheOwner)
+                val a = ImBot.register("127.0.0.1", env.tcpPort, "fileval-a", testImBotCacheOwner)
                 try {
                     val chatId = a.createPersonalChat(b.uid)
                     val attachment = env.storeFile(a.uid, "hello".toByteArray(), "a.txt")
@@ -60,8 +60,8 @@ class FileValidationE2eTest {
     fun `完整 URL 形态 - 剥前缀后校验成功`() {
         TcpE2eEnvironment().use { env ->
             runBlocking {
-                val b = ImBot.register("127.0.0.1", env.tcpPort, "fileval2-b")
-                val a = ImBot.register("127.0.0.1", env.tcpPort, "fileval2-a")
+                val b = ImBot.register("127.0.0.1", env.tcpPort, "fileval2-b", testImBotCacheOwner)
+                val a = ImBot.register("127.0.0.1", env.tcpPort, "fileval2-a", testImBotCacheOwner)
                 try {
                     val chatId = a.createPersonalChat(b.uid)
                     val attachment = env.storeFile(a.uid, "hello".toByteArray(), "b.txt")
@@ -80,8 +80,8 @@ class FileValidationE2eTest {
     fun `不存在的附件 path - 服务端拒绝`() {
         TcpE2eEnvironment().use { env ->
             runBlocking {
-                val b = ImBot.register("127.0.0.1", env.tcpPort, "fileval3-b")
-                val a = ImBot.register("127.0.0.1", env.tcpPort, "fileval3-a")
+                val b = ImBot.register("127.0.0.1", env.tcpPort, "fileval3-b", testImBotCacheOwner)
+                val a = ImBot.register("127.0.0.1", env.tcpPort, "fileval3-a", testImBotCacheOwner)
                 try {
                     val chatId = a.createPersonalChat(b.uid)
                     val missing = Attachment("no-such-uid/ghost.txt", "ghost.txt", "text/plain", 5)
@@ -97,8 +97,8 @@ class FileValidationE2eTest {
     fun `伪造小文件大小 - 服务端拒绝`() {
         TcpE2eEnvironment().use { env ->
             runBlocking {
-                val b = ImBot.register("127.0.0.1", env.tcpPort, "fileval-size-b")
-                val a = ImBot.register("127.0.0.1", env.tcpPort, "fileval-size-a")
+                val b = ImBot.register("127.0.0.1", env.tcpPort, "fileval-size-b", testImBotCacheOwner)
+                val a = ImBot.register("127.0.0.1", env.tcpPort, "fileval-size-a", testImBotCacheOwner)
                 try {
                     val chatId = a.createPersonalChat(b.uid)
                     val attachment = env.storeFile(a.uid, ByteArray(2048), "large.bin")
@@ -114,8 +114,8 @@ class FileValidationE2eTest {
     fun `图片消息假 URL - 同样拦截`() {
         TcpE2eEnvironment().use { env ->
             runBlocking {
-                val b = ImBot.register("127.0.0.1", env.tcpPort, "fileval4-b")
-                val a = ImBot.register("127.0.0.1", env.tcpPort, "fileval4-a")
+                val b = ImBot.register("127.0.0.1", env.tcpPort, "fileval4-b", testImBotCacheOwner)
+                val a = ImBot.register("127.0.0.1", env.tcpPort, "fileval4-a", testImBotCacheOwner)
                 try {
                     val chatId = a.createPersonalChat(b.uid)
                     // 带 TeamTalk 端点的 SDK 兼容 URL 会先归一化；不存在性由服务端权威拒绝。
@@ -133,8 +133,8 @@ class FileValidationE2eTest {
     fun `缩略图不存在 - 服务端拒绝整条消息`() {
         TcpE2eEnvironment().use { env ->
             runBlocking {
-                val b = ImBot.register("127.0.0.1", env.tcpPort, "fileval5-b")
-                val a = ImBot.register("127.0.0.1", env.tcpPort, "fileval5-a")
+                val b = ImBot.register("127.0.0.1", env.tcpPort, "fileval5-b", testImBotCacheOwner)
+                val a = ImBot.register("127.0.0.1", env.tcpPort, "fileval5-a", testImBotCacheOwner)
                 try {
                     val chatId = a.createPersonalChat(b.uid)
                     val attachment = env.storeFile(a.uid, byteArrayOf(1, 2, 3), "real.png", "image/png")

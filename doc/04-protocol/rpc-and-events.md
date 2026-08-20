@@ -22,8 +22,14 @@ payload Bytes?
 `requestId` 只在当前连接内关联请求。客户端保存 `requestId → Deferred`；连接断开时必须完成或取消
 全部 pending request，不能让调用永远等待。
 
-STREAM_ITEM/STREAM_END 复用 requestId，为大结果的流式返回保留。普通列表 RPC 仍使用单一
-RESPONSE。
+STREAM_ITEM/STREAM_END 复用 requestId，只为未知长度结果保留 wire code 和 payload codec；当前
+没有服务端分片发送、客户端聚合/取消、背压或超时状态机，因此是 **reserved / not operational**。
+普通列表 RPC 仍使用单一 RESPONSE；大结果必须使用各领域已经声明的分页/游标契约，不能把这两个
+可解码帧当作已落地的流式能力。
+
+通用 RPC 扩展使用字符串 `serviceId="generic"`，`methodId=ExtensionType.code`。当前只由
+`GenericRpcContract` 锁定入口，没有注册 dispatcher；首个真实扩展落地时才同时增加稳定编号、
+会话所有的 handler、权限边界与双端测试。不要恢复已经过时的 `ServiceId.GENERIC(99)` 表达。
 
 ## 2. IDL 代码生成
 
@@ -32,7 +38,9 @@ RPC 定义位于 `protocol/src/commonMain/.../rpc/def/`：
 ```kotlin
 @RpcService("message")
 interface MessageRpc {
+    @RpcMethod(1)
     suspend fun getHistory(chatId: String, fromSeq: Long, limit: Int): List<Message>
+    @RpcMethod(6)
     suspend fun markRead(chatId: String, readSeq: Long)
 }
 ```
@@ -43,8 +51,9 @@ KSP 生成：
 - `Proxy`：客户端类型安全调用。
 - `Stub`：服务端分发和参数解码。
 
-方法 ID 默认由声明顺序决定。已经进入协议的接口新增方法只能追加；中间插入必须显式锁定 ID，并
-更新 `RpcMethodIdGoldenTest`。客户端和服务端不得手写另一套 service/method 枚举。
+每个方法必须用唯一、正数的 `@RpcMethod(id)` 显式锁定 ID；processor 对缺失、重复和非法 ID
+直接报编译错误，声明顺序不参与编号。修改契约时同时更新 `RpcMethodIdGoldenTest`。客户端和
+服务端不得手写另一套 service/method 枚举。
 
 ## 3. payload 规则
 
@@ -58,7 +67,7 @@ KSP 生成：
 listVersions、rename、delete。GroupFileEntry 携带逻辑 revision 和当前 contentVersion；
 GroupFileVersion 携带不可变 Attachment 快照。文件二进制不进入 TCP payload，仍先通过 HTTP 上传。
 
-文档使用独立 `document` 服务。协议版本 8 沿用版本 6 引入的完整方法集，按空间、授权、目录、修订和首页索引分组：list/create/update/
+文档使用独立 `document` 服务，按空间、授权、目录、修订和首页索引分组：list/create/update/
 archive space，list/upsert/remove grant，list/create/move/delete node，以及 get/update document 和
 list/get revision；新增的最近访问与最近创建方法固定为 17/18。列表模型不携带正文，修订列表不携带
 完整 Markdown；正文只在打开当前文档或指定修订时返回。update/move/delete 的 expectedRevision 是
@@ -71,7 +80,7 @@ list/get revision；新增的最近访问与最近创建方法固定为 17/18。
 
 完整方法查询见[RPC 参考](../10-reference/rpc-reference.md)。
 
-`organization.listUnits` 在协议版本 7 起返回带 `directMemberCount` 的 `OrganizationUnit`。
+`organization.listUnits` 返回带 `directMemberCount` 的 `OrganizationUnit`。
 该值只统计直接归属当前节点的成员，不包含子部门；服务端对整棵目录使用一次数据库
 `GROUP BY unit_id` 聚合，不得按节点逐个查询。需要子树成员时显式调用
 `organization.listMembers(unitId, recursive = true)`。
@@ -98,12 +107,24 @@ domain change
   → persist lastEventId
 ```
 
-客户端认证时携带 lastEventId，服务端分页补发更大的事件。语义为 at-least-once，因此：
+认证成功后，客户端等待 LocalCache/EventProcessor 就绪，再通过独立 SYNC_REQUEST 携带持久化
+`lastEventId`。服务端每次只返回同时满足条数和 wire 字节预算的一批；客户端完成投影、落盘游标后
+才请求下一批，最终收到 SYNC_READY 后才进入实时 NOTIFY。语义为 at-least-once，因此：
 
 - payload 应尽量是完整快照。
 - 本地处理必须幂等。
 - 只有处理完成才能推进游标。
 - 解码失败要记录具体 type/eventId，并让事件下次重试。
+- 非零游标必须对应当前 uid 已持久化的事件；任意高水位或其他账号的事件 ID 触发 `SYNC_RESET`，
+  服务端不关闭身份连接也不提前激活实时推送。
+
+收到 `SYNC_RESET` 后，客户端在一个本地事务内删除 user/contact/chat/member/message/conversation、
+conversation draft outbox、bot inbox 与所有 sync cursor，同步清空内存窗口和 StateFlow，然后在
+同一连接发送 `SYNC_REQUEST(0)`。独立文档草稿 store 不属于服务器事件投影，不随该事务删除。
+
+`SYNC_RESET` 当前依赖从 0 可重放的完整事件历史，因此服务端仍不得按 TTL 跳过或物理删除
+`sync_events`。仅有 RESET 不足以从被裁剪的事件尾部重建全量状态；上线前若启用保留期，还必须
+提供权威快照/checkpoint bootstrap。
 
 ## 6. 事件类别
 

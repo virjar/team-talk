@@ -8,7 +8,7 @@ import com.virjar.tk.protocol.PacketBuffer
  * 富文本消息体（wire 协议，doc/05-clients/rich-content.md）。
  *
  * markdown 为唯一事实源；mentions 是侧信道（供 UI 直取/通知语义/免二次解析）；
- * plainText 是剥离语法的纯文本（服务端搜索索引、会话预览、旧端 fallback 均用它，
+ * plainText 是剥离语法的纯文本（服务端搜索索引与会话预览均用它，
  * 语法符号与 mention 链接语法不进搜索）。
  *
  * @ 的内联语法：`@[显示名](mention://uid)` —— 标准 markdown 链接语法，任何工具可解析。
@@ -36,10 +36,10 @@ data class RichTextBody(
 
         companion object : IProtoReader<Mention> {
             override fun readFrom(buf: PacketBuffer): Mention = Mention(
-                uid = buf.readString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH))!!,
-                displayName = buf.readString(
+                uid = buf.readRequiredString(MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_IDENTIFIER_LENGTH)),
+                displayName = buf.readRequiredString(
                     MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_DISPLAY_NAME_LENGTH),
-                )!!,
+                ),
                 offset = buf.readVarInt(),
                 length = buf.readVarInt(),
             )
@@ -58,16 +58,16 @@ data class RichTextBody(
         const val MAX_MENTIONS = 1_000
 
         override fun readFrom(buf: PacketBuffer): RichTextBody {
-            val markdown = buf.readString(
+            val markdown = buf.readRequiredString(
                 MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_MARKDOWN_LENGTH),
-            )!!
+            )
             // Mention 最短为两个空 String（各 2B）和两个 VarInt（各 1B）。先校验
             // count 再构造 List，避免极小帧用 Int.MAX_VALUE 触发巨量预分配。
             val mentionCount = buf.readCollectionSize(MAX_MENTIONS, 6, "rich-text mentions")
             val mentions = List(mentionCount) { Mention.readFrom(buf) }
-            val plainText = buf.readString(
+            val plainText = buf.readRequiredString(
                 MessageBodyPolicy.utf8WireLimit(MessageBodyPolicy.MAX_MARKDOWN_LENGTH),
-            )!!
+            )
             return RichTextBody(markdown, mentions, plainText)
         }
     }

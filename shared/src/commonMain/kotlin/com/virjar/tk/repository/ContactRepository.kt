@@ -37,8 +37,8 @@ class ContactRepository(
     suspend fun blacklist(targetUid: String): Outcome<Unit> = outcome { rpc.blacklist(targetUid) }
     suspend fun removeFromBlacklist(targetUid: String): Outcome<Unit> = outcome { rpc.removeFromBlacklist(targetUid) }
     suspend fun listBlacklist(): Outcome<List<Contact>> = outcome { rpc.listBlacklist() }
-    /** 兼容入口：仅收到且待处理，用于旧页面与红点。 */
-    suspend fun listApplies(): Outcome<List<ContactApply>> = outcome { rpc.listApplies() }
+    /** 仅收到且待处理，用于红点与快速入口。 */
+    suspend fun listPendingApplies(): Outcome<List<ContactApply>> = outcome { rpc.listPendingApplies() }
 
     /** 双向申请历史，按 id 倒序游标分页。 */
     suspend fun listApplyRecords(

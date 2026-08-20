@@ -31,4 +31,45 @@ class ImAgentFacade(agent: ImAgent) {
         if (!agent.isActive) throw AgentDisposedException("Agent disconnected: $channelId")
         agent.write(proto)
     }
+
+    /** Close an invalid protocol session without retaining the Netty handler across suspension. */
+    fun closeConnection() {
+        ref.get()?.closeConnection()
+    }
+
+    /** Complete auth state transition through the weak connection boundary. */
+    fun completeAuthentication(uid: String, deviceId: String): Boolean =
+        ref.get()?.completeAuthentication(uid, deviceId) == true
+
+    /** Reset page admission after the server proves that the submitted cursor is foreign. */
+    fun resetSyncAdmission() {
+        ref.get()?.resetSyncAdmission()
+    }
+
+    /** Refresh the bounded synchronization window without capturing the handler in an IO task. */
+    fun refreshSyncStallTimeout() {
+        ref.get()?.refreshSyncStallTimeout()
+    }
+
+    /** Called by the EventLoop timer, which itself retains only this weak facade. */
+    fun closeIfSyncStalled(generation: Long, timeoutSeconds: Long) {
+        ref.get()?.closeIfSyncStalled(generation, timeoutSeconds)
+    }
+
+    /** Authentication timer counterpart; the scheduled task retains no channel context. */
+    fun closeIfAuthenticationStalled(timeoutSeconds: Long) {
+        ref.get()?.closeIfAuthenticationStalled(timeoutSeconds)
+    }
+
+    /**
+     * Runs the final live-session activation against the still-current connection.
+     *
+     * The facade intentionally keeps the agent behind a weak reference; callers provide the
+     * infrastructure operation instead of retaining the Netty handler across suspension.
+     */
+    suspend fun activateLive(activate: suspend (ImAgent) -> Boolean): Boolean {
+        val agent = ref.get() ?: return false
+        if (!agent.isActive) return false
+        return activate(agent)
+    }
 }

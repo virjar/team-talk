@@ -1,7 +1,8 @@
 package com.virjar.tk.integration
 
-import com.virjar.tk.body.TextBody
+import com.virjar.tk.body.buildRichTextBody
 import com.virjar.tk.model.Message
+import com.virjar.tk.protocol.MessageType
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -90,10 +91,10 @@ class SearchIntegrationTest {
             clientMsgId = java.util.UUID.randomUUID().toString(),
             serverSeq = 0,
             senderUid = "",
-            messageType = 1, // TEXT
+            messageType = MessageType.RICH_TEXT.code,
             timestamp = System.currentTimeMillis(),
             flags = 0,
-            body = TextBody(text),
+            body = buildRichTextBody(text),
         )
     }
 }

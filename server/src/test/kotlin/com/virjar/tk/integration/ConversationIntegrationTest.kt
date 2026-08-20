@@ -4,6 +4,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -59,15 +60,15 @@ class ConversationIntegrationTest {
             clientMsgId = java.util.UUID.randomUUID().toString(),
             serverSeq = seq,
             senderUid = sender,
-            messageType = com.virjar.tk.protocol.MessageType.TEXT.code,
+            messageType = com.virjar.tk.protocol.MessageType.RICH_TEXT.code,
             timestamp = System.currentTimeMillis(),
-            body = com.virjar.tk.body.TextBody("After edit"),
+            body = com.virjar.tk.body.buildRichTextBody("After edit"),
         )
 
         ctx.messageService.editMessage(sender, chat.chatId, seq, edited)
         val editedConv = ctx.conversationService.listConversations(recipient).first { it.chatId == chat.chatId }
         assertEquals("After edit", editedConv.lastMessage)
-        assertEquals(com.virjar.tk.protocol.MessageType.TEXT.code, editedConv.lastMessageType)
+        assertEquals(com.virjar.tk.protocol.MessageType.RICH_TEXT.code, editedConv.lastMessageType)
 
         ctx.messageService.revokeMessage(sender, chat.chatId, seq)
         val revokedConv = ctx.conversationService.listConversations(recipient).first { it.chatId == chat.chatId }
@@ -136,6 +137,44 @@ class ConversationIntegrationTest {
     }
 
     @Test
+    fun `outsider cannot mutate another chats conversation projection`() = runTest {
+        val owner = ctx.registerUser()
+        val member = ctx.registerUser()
+        val outsider = ctx.registerUser()
+        val chat = ctx.chatService.createGroup("PrivateConversation", null, owner, listOf(member))
+
+        assertFailsWith<IllegalArgumentException> {
+            ctx.conversationService.setDraft(outsider, chat.chatId, "forged")
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ctx.conversationService.setPin(outsider, chat.chatId, true)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ctx.conversationService.setMute(outsider, chat.chatId, true)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ctx.conversationService.markRead(outsider, chat.chatId, 0)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ctx.conversationService.deleteConversation(outsider, chat.chatId)
+        }
+        assertTrue(ctx.conversationService.listConversations(outsider).none { it.chatId == chat.chatId })
+    }
+
+    @Test
+    fun `mark read rejects a cursor ahead of authoritative chat max seq`() = runTest {
+        val sender = ctx.registerUser()
+        val recipient = ctx.registerUser()
+        val chat = ctx.chatService.createPersonalChat(sender, recipient)
+        val maxSeq = sendMessage(sender, chat.chatId, "bounded read cursor")
+
+        assertFailsWith<IllegalArgumentException> {
+            ctx.conversationService.markRead(recipient, chat.chatId, maxSeq + 1)
+        }
+        assertEquals(0, ctx.conversationService.listConversations(recipient).single().readSeq)
+    }
+
+    @Test
     fun `delete conversation`() = runTest {
         val uid1 = ctx.registerUser()
         val uid2 = ctx.registerUser()
@@ -161,9 +200,9 @@ class ConversationIntegrationTest {
             chatId = chatId,
             clientMsgId = java.util.UUID.randomUUID().toString(),
             senderUid = senderUid,
-            messageType = 1, // TEXT
+            messageType = com.virjar.tk.protocol.MessageType.RICH_TEXT.code,
             timestamp = System.currentTimeMillis(),
-            body = com.virjar.tk.body.TextBody(text),
+            body = com.virjar.tk.body.buildRichTextBody(text),
         )
         return ctx.messageService.sendMessage(senderUid, msg)
     }

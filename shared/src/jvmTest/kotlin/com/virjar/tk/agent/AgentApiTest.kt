@@ -5,8 +5,19 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class AgentApiTest {
+
+    @Test
+    fun `every agent endpoint requires the exact bearer token`() {
+        assertTrue(isValidAgentAuthorization("Bearer secret", "secret"))
+        assertFalse(isValidAgentAuthorization(null, "secret"))
+        assertFalse(isValidAgentAuthorization("secret", "secret"))
+        assertFalse(isValidAgentAuthorization("Bearer other", "secret"))
+        assertFalse(isValidAgentAuthorization("Bearer ", ""))
+    }
 
     @Test
     fun `only successful ack is exposed as ok`() {

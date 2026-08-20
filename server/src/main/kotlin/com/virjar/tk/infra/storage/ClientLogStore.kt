@@ -5,10 +5,7 @@ import org.slf4j.LoggerFactory
 import java.io.File
 import java.time.Instant
 import java.time.LocalDate
-import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.zip.GZIPInputStream
-import java.util.zip.GZIPOutputStream
 
 /**
  * 客户端日志文件存储。
@@ -24,31 +21,11 @@ class ClientLogStore(
     /** 日志保留天数 */
     private val retentionDays = 7
 
-    /**
-     * 追加写入客户端日志（GZIP 压缩输入）。
-     *
-     * @param uid 用户 ID
-     * @param deviceId 设备 ID
-     * @param gzipPayload GZIP 压缩的日志内容
-     */
-    fun append(uid: String, deviceId: String, gzipPayload: ByteArray) {
-        val text = try {
-            GZIPInputStream(gzipPayload.inputStream()).bufferedReader().readText()
-        } catch (e: Exception) {
-            logger.warn("Failed to decompress client log from uid=$uid device=$deviceId", e)
-            return
-        }
-        writeText(uid, deviceId, text)
-    }
-
-    /**
-     * 直接写入明文日志（HTTP 端点已解压）。
-     *
-     * @param deviceId 设备 ID（uid 可选，未知时用 "unknown"）
-     * @param text 明文日志内容
-     */
-    fun store(deviceId: String, text: String) {
-        writeText("unknown", deviceId, text)
+    /** Persist a decoded log under the authenticated identity supplied by the HTTP boundary. */
+    fun store(uid: String, deviceId: String, text: String) {
+        requireSafeSegment(uid, "uid")
+        requireSafeSegment(deviceId, "deviceId")
+        synchronized(this) { writeText(uid, deviceId, text) }
     }
 
     private fun writeText(uid: String, deviceId: String, text: String) {
@@ -58,6 +35,15 @@ class ClientLogStore(
         val file = File(dir, "$date.log")
         file.appendText(text)
         logger.debug("Client log appended: uid=$uid device=$deviceId size=${text.length}")
+    }
+
+    private fun requireSafeSegment(value: String, field: String) {
+        require(
+            value.length in 1..100 &&
+                value != "." &&
+                value != ".." &&
+                value.all { it.isLetterOrDigit() || it == '-' || it == '_' || it == '.' },
+        ) { "Invalid $field for client log storage" }
     }
 
     /**

@@ -36,15 +36,24 @@ users 行，使同方向 pending 的查询与插入原子复用；token 仍保�
 主键概念是 `(uid, chatId)`。保存 lastSeq、readSeq、peerReadSeq、draft、pin、mute 和版本。单调字段
 更新使用 max/条件写，避免乱序事件倒退。
 
+### chat 聚合约束
+
+`chats.personal_key` 保存排序后的私聊用户对并全局唯一；群聊该列为 null。`group_members` 以部分唯一索引
+保证每个 Chat 最多一个活跃 owner，`group_member_mutes` 以 `(chat_id, uid)` 唯一并使用 upsert 刷新禁言。
+邀请加入的链接额度、成员行和 Conversation 是同一聚合事务，不再由领域服务分步投影。
+
 ### sync_events
 
-按 uid 和自增 event ID 保存 NotifyType 与 payload bytes。认证按 `id > lastEventId` 升序分页。事件
-保留期和清理必须大于客户端合理离线窗口，并与 seq 缺口恢复配合。
+按 uid 和自增 event ID 保存 NotifyType 与 payload bytes。认证后由已就绪客户端显式请求
+`id > lastEventId` 的升序有界批次；最终查空与实时连接激活共用 per-user delivery gate。
+当前开发基线用 `SYNC_RESET` 让错误/串账号 cursor 从 0 原子重建投影，但重建仍依赖完整事件历史，
+所以不设 TTL，定时 cleanup 是明确 no-op；这保住长离线正确性，代价是表无界增长。正式上线前
+必须先增加权威快照/checkpoint bootstrap，之后才能开启保留期和物理删除。
 
 ### organization_units / organization_memberships
 
 organization_units 保存单根层级、负责人和可选稳定部门群 ID；organization_memberships 保存直接部门
-归属、职位与主部门标记。同一用户的唯一主部门由 Repository 写入事务收敛。群成员表只是组织事实的
+归属、职位与主部门标记。同一用户的唯一主部门由用户行锁串行化写入，并由 `is_primary = true` 的部分唯一索引兜底。群成员表只是组织事实的
 投影，不能反向编辑组织关系。
 
 ### automation_bots / automation_bot_grants
@@ -131,13 +140,32 @@ PostgreSQL 事务只覆盖关系表；它不能原子覆盖 RocksDB/Lucene。跨
 如果第 2 或第 3 步失败，outbox 保留并由重试/重启补偿。不能在权威写入前推送事件，也不能在
 补偿未完成时把重复 `clientMsgId` 直接解释为完整成功。
 
-## 6. 生命周期
+## 6. Schema epoch 与生命周期
 
-当前正式发布前允许清空测试数据处理不兼容结构。生产化前必须补齐：
+正式发布前的服务端持久化使用单一 epoch（以 `ServerDataEpoch.CURRENT_EPOCH` 为唯一事实源）。空 PostgreSQL 首次启动时一次性创建当前全部表、约束和
+索引，并写入 `schema_metadata`；以后启动只校验 epoch，不再执行 `ALTER TABLE`、历史数据归并或
+`createMissingTablesAndColumns`。这使数据库结构问题在启动阶段明确失败，而不是把一次性兼容 SQL
+永久留在每次启动路径。
 
-- 明确的数据库迁移版本。
-- RocksDB key/version 迁移策略。
-- sync_events 与孤儿文件清理策略。
+关系库校验通过后，数据根目录还必须有同 epoch 的 `data-epoch` marker。消息 RocksDB、token、Lucene、
+FileStore RocksDB 与大文件目录被视为一个整体：marker 缺失时只有这些目录全部为空才能初始化；marker
+不匹配或缺失但已有数据时启动失败。尤其是 Message 的 wire 字段或 MessageType 重排后，服务端不能把
+旧 RocksDB 字节交给新 decoder 碰运气解析；Lucene 虽是派生数据，也不能与另一代消息混用。
+
+epoch 缺失或不匹配表示当前测试数据已经过期，服务端会抛出 `SchemaResetRequiredException` 或
+`DataResetRequiredException` 并拒绝提供服务。开发和测试实例应停止写入后重建 PostgreSQL
+schema/volume 与服务端 durable data，再重新启动；只清空表数据不能
+把旧列结构升级为当前结构。关系数据允许丢弃，但 RocksDB、FileStore 和 token 数据也应按同一轮测试
+数据整体重置，不能把不同 epoch 的存储拼接使用。
+
+当前好友申请的“同方向只能有一条 pending”直接由最终 schema 的部分唯一索引保证；草稿正文从建库
+起就是文本列。启动流程不再识别、修补或标记旧重复申请。
+
+正式发布前仍必须把这一策略替换为可审计的版本化迁移，并补齐：
+
+- PostgreSQL 向前迁移及回滚/恢复演练；
+- RocksDB key/version 迁移策略；
+- sync_events 与孤儿文件清理策略；
 - 备份、恢复和一致性校验工具。
 
 这些未完成项集中维护在[功能状态](../10-reference/feature-status.md)和

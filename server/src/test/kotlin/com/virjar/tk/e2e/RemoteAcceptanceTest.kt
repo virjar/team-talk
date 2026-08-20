@@ -11,7 +11,6 @@ import com.virjar.tk.rpc.gen.UserRpcContract
 import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.model.*
 import com.virjar.tk.protocol.*
-import com.virjar.tk.body.TextBody
 import com.virjar.tk.body.FileBody
 import com.virjar.tk.body.VoiceBody
 import com.virjar.tk.body.ImageBody
@@ -214,10 +213,10 @@ class RemoteAcceptanceTest {
             val msg = Message(
                 chatId = chat.chatId,
                 clientMsgId = UUID.randomUUID().toString(),
-                messageType = MessageType.TEXT.code,
+                messageType = MessageType.RICH_TEXT.code,
                 timestamp = System.currentTimeMillis(),
                 senderUid = "",
-                body = TextBody("Hello from remote E2E"),
+                body = buildRichTextBody("Hello from remote E2E"),
             )
             val ack = user1.imClient.sendAndWaitAck(msg)
             assertEquals(0, ack.code, "消息 ACK 应成功: ${ack.reason}")
@@ -235,10 +234,10 @@ class RemoteAcceptanceTest {
             val msg = Message(
                 chatId = chat.chatId,
                 clientMsgId = UUID.randomUUID().toString(),
-                messageType = MessageType.TEXT.code,
+                messageType = MessageType.RICH_TEXT.code,
                 timestamp = System.currentTimeMillis(),
                 senderUid = "",
-                body = TextBody("Deliver me"),
+                body = buildRichTextBody("Deliver me"),
             )
             val ack = user1.imClient.sendAndWaitAck(msg)
             assertEquals(0, ack.code, "发送应成功")
@@ -314,10 +313,10 @@ class RemoteAcceptanceTest {
                 val msg = Message(
                     chatId = chat.chatId,
                     clientMsgId = UUID.randomUUID().toString(),
-                    messageType = MessageType.TEXT.code,
+                    messageType = MessageType.RICH_TEXT.code,
                     timestamp = System.currentTimeMillis(),
                     senderUid = "",
-                    body = TextBody("history-$i"),
+                    body = buildRichTextBody("history-$i"),
                 )
                 user1.imClient.sendAndWaitAck(msg)
             }
@@ -575,8 +574,8 @@ class RemoteAcceptanceTest {
             // 先发一条源消息
             val src = Message(
                 chatId = chat.chatId, clientMsgId = UUID.randomUUID().toString(),
-                messageType = MessageType.TEXT.code, timestamp = System.currentTimeMillis(),
-                senderUid = "", body = TextBody("to be forwarded"),
+                messageType = MessageType.RICH_TEXT.code, timestamp = System.currentTimeMillis(),
+                senderUid = "", body = buildRichTextBody("to be forwarded"),
             )
             val ack = user1.imClient.sendAndWaitAck(src)
             assertEquals(0, ack.code)
@@ -603,8 +602,8 @@ class RemoteAcceptanceTest {
         try {
             val msg = Message(
                 chatId = chat.chatId, clientMsgId = UUID.randomUUID().toString(),
-                messageType = MessageType.TEXT.code, timestamp = System.currentTimeMillis(),
-                senderUid = "", body = TextBody("will be revoked"),
+                messageType = MessageType.RICH_TEXT.code, timestamp = System.currentTimeMillis(),
+                senderUid = "", body = buildRichTextBody("will be revoked"),
             )
             val ack = user1.imClient.sendAndWaitAck(msg)
             assertEquals(0, ack.code)
@@ -631,14 +630,14 @@ class RemoteAcceptanceTest {
         try {
             val msg = Message(
                 chatId = chat.chatId, clientMsgId = UUID.randomUUID().toString(),
-                messageType = MessageType.TEXT.code, timestamp = System.currentTimeMillis(),
-                senderUid = "", body = TextBody("original content"),
+                messageType = MessageType.RICH_TEXT.code, timestamp = System.currentTimeMillis(),
+                senderUid = "", body = buildRichTextBody("original content"),
             )
             val ack = user1.imClient.sendAndWaitAck(msg)
             assertEquals(0, ack.code)
 
             // EDIT RPC: 完整 Message 编码（含 serverSeq + 新 body）
-            val edited = msg.copy(serverSeq = ack.serverSeq, body = TextBody("edited content"))
+            val edited = msg.copy(serverSeq = ack.serverSeq, body = buildRichTextBody("edited content"))
             val editResp = user1.invoke("message", MessageRpcContract.M_EDIT, ProtoCodec.encode(edited))
             assertEquals(0, editResp.status, "编辑 RPC 应成功: status=${editResp.status}")
 
@@ -648,8 +647,8 @@ class RemoteAcceptanceTest {
             val recv = ProtoCodec.decode(Message, notify.payload!!)
             assertEquals(ack.serverSeq, recv.serverSeq, "应是同一条消息")
             assertTrue(recv.flags and 2 != 0, "flags bit1 应置位（已编辑）: flags=${recv.flags}")
-            val newBody = recv.body as TextBody
-            assertEquals("edited content", newBody.text, "body 应为编辑后的内容")
+            val newBody = recv.body as RichTextBody
+            assertEquals("edited content", newBody.markdown, "body 应为编辑后的内容")
         } finally {
             user1.close(); user2.close()
         }
@@ -705,8 +704,8 @@ class RemoteAcceptanceTest {
             // user1 发消息
             val msg = Message(
                 chatId = chat.chatId, clientMsgId = UUID.randomUUID().toString(),
-                messageType = MessageType.TEXT.code, timestamp = System.currentTimeMillis(),
-                senderUid = "", body = TextBody("hello group"),
+                messageType = MessageType.RICH_TEXT.code, timestamp = System.currentTimeMillis(),
+                senderUid = "", body = buildRichTextBody("hello group"),
             )
             val ack = user1.imClient.sendAndWaitAck(msg)
             assertEquals(0, ack.code)
@@ -731,8 +730,8 @@ class RemoteAcceptanceTest {
             repeat(2) { i ->
                 user1.imClient.sendAndWaitAck(Message(
                     chatId = chat.chatId, clientMsgId = UUID.randomUUID().toString(),
-                    messageType = MessageType.TEXT.code, timestamp = System.currentTimeMillis(),
-                    senderUid = "", body = TextBody("history-$i"),
+                    messageType = MessageType.RICH_TEXT.code, timestamp = System.currentTimeMillis(),
+                    senderUid = "", body = buildRichTextBody("history-$i"),
                 ))
             }
 
@@ -758,8 +757,8 @@ class RemoteAcceptanceTest {
             repeat(3) { i ->
                 val ack = user1.imClient.sendAndWaitAck(Message(
                     chatId = chat.chatId, clientMsgId = UUID.randomUUID().toString(),
-                    messageType = MessageType.TEXT.code, timestamp = System.currentTimeMillis(),
-                    senderUid = "", body = TextBody("msg-$i"),
+                    messageType = MessageType.RICH_TEXT.code, timestamp = System.currentTimeMillis(),
+                    senderUid = "", body = buildRichTextBody("msg-$i"),
                 ))
                 seqs.add(ack.serverSeq)
             }

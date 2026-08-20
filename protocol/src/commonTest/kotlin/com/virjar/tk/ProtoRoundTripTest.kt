@@ -18,7 +18,6 @@ private data class RoundTripAuthRequestPayload(
     val deviceName: String? = null,
     val deviceModel: String? = null,
     val deviceFlag: Int = 0,
-    val lastEventId: Long = 0,
 ) : IProto {
 
     /**
@@ -42,7 +41,6 @@ private data class RoundTripAuthRequestPayload(
         buf.writeString(deviceName)
         buf.writeString(deviceModel)
         buf.writeVarInt(deviceFlag)
-        buf.writeVarLong(lastEventId)
     }
 
     companion object : IProtoReader<RoundTripAuthRequestPayload> {
@@ -59,7 +57,7 @@ private data class RoundTripAuthRequestPayload(
             val b3 = buf.readByte()
             if (b0 != PREAMBLE_HIGH || b1 != PREAMBLE_LOW || b2 != PacketCodec.PROTOCOL_VERSION.toInt() || b3 != PREAMBLE_TAIL) {
                 throw IllegalStateException(
-                    "Bad auth preamble: ${b0.toInt() and 0xFF} ${b1.toInt() and 0xFF} ${b2.toInt() and 0xFF} ${b3.toInt() and 0xFF}")
+                    "Bad auth preamble: $b0 $b1 $b2 $b3")
             }
             return readBody(buf)
         }
@@ -70,11 +68,10 @@ private data class RoundTripAuthRequestPayload(
             password = buf.readString(),
             name = buf.readString(),
             refreshToken = buf.readString(),
-            deviceId = buf.readString()!!,
+            deviceId = buf.readRequiredString(fieldName = "auth.deviceId"),
             deviceName = buf.readString(),
             deviceModel = buf.readString(),
             deviceFlag = buf.readVarInt(),
-            lastEventId = buf.readVarLong(),
         )
     }
 }
