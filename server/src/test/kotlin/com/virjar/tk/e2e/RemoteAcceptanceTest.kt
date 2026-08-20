@@ -166,11 +166,12 @@ class RemoteAcceptanceTest {
             ProtoCodec.encodePayload { writeString(user2.uid); writeString("hello") })
         assertEquals(0, applyResp.status)
         val apply = ProtoCodec.decode(ContactApply, applyResp.payload!!)
-        assertNotNull(apply.token)
+        assertNull(apply.token, "发件人 apply 响应不应包含处理 token")
 
         // user2 接受
+        val pendingToken = user2.pendingApplyToken(user1.uid)
         val acceptResp = user2.invoke("contact", ContactRpcContract.M_ACCEPT,
-            ProtoCodec.encodePayload { writeString(apply.token) })
+            ProtoCodec.encodePayload { writeString(pendingToken) })
         assertEquals(0, acceptResp.status)
 
         // 验证好友列表
@@ -781,11 +782,11 @@ class RemoteAcceptanceTest {
         val user2 = RemoteAcceptanceSupport.registerUser("$tag-2")
 
         // 申请 + 接受好友
-        val applyResp = user1.invoke("contact", ContactRpcContract.M_APPLY,
+        user1.invoke("contact", ContactRpcContract.M_APPLY,
             ProtoCodec.encodePayload { writeString(user2.uid); writeString("hi") })
-        val apply = ProtoCodec.decode(ContactApply, applyResp.payload!!)
+        val pendingToken = user2.pendingApplyToken(user1.uid)
         user2.invoke("contact", ContactRpcContract.M_ACCEPT,
-            ProtoCodec.encodePayload { writeString(apply.token) })
+            ProtoCodec.encodePayload { writeString(pendingToken) })
 
         // 创建私聊
         val chatResp = user1.invoke("chat", ChatRpcContract.M_CREATE_PERSONAL,

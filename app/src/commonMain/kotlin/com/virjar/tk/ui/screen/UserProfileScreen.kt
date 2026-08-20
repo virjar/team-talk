@@ -9,6 +9,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.model.User
+import com.virjar.tk.model.UserRole
 import com.virjar.tk.ui.component.AvatarPlaceholder
 import com.virjar.tk.ui.component.ScreenHeader
 
@@ -50,12 +51,19 @@ internal fun availableUserProfileDestructiveActions(
     if (hasBlockUserAction) add(UserProfileDestructiveAction.BlockUser)
 }
 
+internal fun canAddFriendFromProfile(user: User, myUid: String): Boolean =
+    user.uid != myUid && user.role == UserRole.HUMAN
+
 @Composable
 fun UserProfileScreen(
     user: User?,
+    myUid: String,
     isFriend: Boolean,
     hasPendingApply: Boolean,
+    hasIncomingApply: Boolean = false,
+    isApplyingFriend: Boolean = false,
     onAddFriend: () -> Unit,
+    onViewFriendApplies: (() -> Unit)? = null,
     onSendMessage: () -> Unit,
     onCreateGroup: (() -> Unit)? = null,
     onDeleteFriend: (() -> Unit)? = null,
@@ -66,9 +74,13 @@ fun UserProfileScreen(
         ScreenHeader(title = "用户资料", onBack = onBack)
         UserProfileContent(
             user = user,
+            myUid = myUid,
             isFriend = isFriend,
             hasPendingApply = hasPendingApply,
+            hasIncomingApply = hasIncomingApply,
+            isApplyingFriend = isApplyingFriend,
             onAddFriend = onAddFriend,
+            onViewFriendApplies = onViewFriendApplies,
             onSendMessage = onSendMessage,
             onCreateGroup = onCreateGroup,
             onDeleteFriend = onDeleteFriend,
@@ -86,9 +98,13 @@ fun UserProfileScreen(
 @Composable
 fun UserProfileContent(
     user: User?,
+    myUid: String,
     isFriend: Boolean,
     hasPendingApply: Boolean,
+    hasIncomingApply: Boolean = false,
+    isApplyingFriend: Boolean = false,
     onAddFriend: () -> Unit,
+    onViewFriendApplies: (() -> Unit)? = null,
     onSendMessage: () -> Unit,
     onCreateGroup: (() -> Unit)? = null,
     onDeleteFriend: (() -> Unit)? = null,
@@ -208,14 +224,23 @@ fun UserProfileContent(
                             onClick = {},
                             modifier = Modifier.fillMaxWidth().testTag("profile.applied"),
                             enabled = false,
-                        ) { Text("已申请") }
+                        ) { Text("已申请，等待对方验证") }
                     }
-                    else -> {
+                    hasIncomingApply -> {
+                        OutlinedButton(
+                            onClick = { onViewFriendApplies?.invoke() },
+                            modifier = Modifier.fillMaxWidth().testTag("profile.incomingApply"),
+                            enabled = onViewFriendApplies != null,
+                        ) { Text("对方已申请，去处理") }
+                    }
+                    canAddFriendFromProfile(user, myUid) -> {
                         Button(
                             onClick = onAddFriend,
                             modifier = Modifier.fillMaxWidth().testTag("profile.addFriend"),
-                        ) { Text("添加好友") }
+                            enabled = !isApplyingFriend,
+                        ) { Text(if (isApplyingFriend) "申请中…" else "添加好友") }
                     }
+                    else -> Unit
                 }
 
                 if (UserProfileDestructiveAction.BlockUser in destructiveActions) {

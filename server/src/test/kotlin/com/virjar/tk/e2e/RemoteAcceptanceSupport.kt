@@ -3,9 +3,12 @@ package com.virjar.tk.e2e
 import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.client.ImClient
 import com.virjar.tk.client.RpcClient
+import com.virjar.tk.model.ContactApply
+import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.payload.NotifyPayload
 import com.virjar.tk.protocol.payload.ResponsePayload
 import com.virjar.tk.protocol.payload.SubscribePayload
+import com.virjar.tk.rpc.gen.ContactRpcContract
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
 import java.util.UUID
@@ -63,6 +66,15 @@ object RemoteAcceptanceSupport {
 
         suspend fun invoke(serviceId: String, methodId: Int, payload: ByteArray? = null): ResponsePayload =
             rpc.invoke(serviceId, methodId, payload)
+
+        /** 好友处理 token 只属于收件人，测试也必须从收件箱读取，不能依赖 apply 响应。 */
+        suspend fun pendingApplyToken(fromUid: String): String {
+            val response = invoke("contact", ContactRpcContract.M_LIST_APPLIES)
+            require(response.status == 0 && response.payload != null) { "无法读取待处理好友申请" }
+            return ProtoCodec.decodeList(ContactApply, response.payload!!)
+                .single { it.fromUid == fromUid && it.status == 0 }
+                .token ?: error("待处理申请缺少收件人 token")
+        }
 
         fun subscribe(chatId: String, lastSeq: Long = 0) {
             imClient.send(SubscribePayload(chatId, lastSeq))

@@ -1,11 +1,14 @@
 package com.virjar.tk.infra.db.repository
 
 import com.virjar.tk.domain.contact.ContactRepository
+import com.virjar.tk.domain.contact.ContactApplyCreation
 import com.virjar.tk.domain.user.UserRepository
 import com.virjar.tk.infra.db.FriendApplies
 import com.virjar.tk.infra.db.Friends
+import com.virjar.tk.infra.db.Users
 import com.virjar.tk.model.Contact
 import com.virjar.tk.model.ContactApply
+import com.virjar.tk.model.ContactApplyRecord
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.util.UUID
@@ -51,6 +54,7 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
 
     override fun addFriend(uid: String, friendUid: String, remark: String?) {
         transaction {
+            lockUserPair(uid, friendUid)
             Friends.insertIgnore {
                 it[Friends.uid] = uid
                 it[Friends.friendUid] = friendUid
@@ -69,6 +73,7 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
 
     override fun removeFriend(uid: String, friendUid: String) {
         transaction {
+            lockUserPair(uid, friendUid)
             Friends.update({ (Friends.uid eq uid) and (Friends.friendUid eq friendUid) }) {
                 it[status] = 0
             }
@@ -88,6 +93,7 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
 
     override fun blacklist(uid: String, targetUid: String) {
         transaction {
+            lockUserPair(uid, targetUid)
             val existing = Friends.selectAll().where {
                 (Friends.uid eq uid) and (Friends.friendUid eq targetUid)
             }.count()
@@ -110,11 +116,24 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
             }) {
                 it[status] = 0
             }
+
+            // 拉黑在关系语义上同时终止双方之间尚未处理的申请。否则 apply 先完成、
+            // blacklist 后完成时仍会留下可处理 token 和红点，解除拉黑后还会复活旧请求。
+            val updatedAt = System.currentTimeMillis()
+            FriendApplies.update({
+                ((((FriendApplies.fromUid eq uid) and (FriendApplies.toUid eq targetUid)) or
+                    ((FriendApplies.fromUid eq targetUid) and (FriendApplies.toUid eq uid))) and
+                    (FriendApplies.status eq ContactApplyRecord.STATUS_PENDING))
+            }) {
+                it[status] = ContactApplyRecord.STATUS_REJECTED
+                it[FriendApplies.updatedAt] = updatedAt
+            }
         }
     }
 
     override fun removeFromBlacklist(uid: String, targetUid: String) {
         transaction {
+            lockUserPair(uid, targetUid)
             Friends.update({ (Friends.uid eq uid) and (Friends.friendUid eq targetUid) and (Friends.status eq 2) }) {
                 it[status] = 0
             }
@@ -134,36 +153,77 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
 
     // ── 好友申请 ──
 
-    override fun createApply(fromUid: String, toUid: String, remark: String?): ContactApply {
-        val token = UUID.randomUUID().toString()
-        val now = System.currentTimeMillis()
-        val id = transaction {
+    override fun createApply(fromUid: String, toUid: String, remark: String?): ContactApplyCreation {
+        val result = transaction {
+            lockUserPair(fromUid, toUid)
+
+            val blocked = Friends.selectAll().where {
+                ((((Friends.uid eq fromUid) and (Friends.friendUid eq toUid)) or
+                    ((Friends.uid eq toUid) and (Friends.friendUid eq fromUid))) and
+                    (Friends.status eq 2))
+            }.limit(1).any()
+            require(!blocked) { "黑名单关系下不能发起好友申请" }
+
+            val alreadyFriends = Friends.selectAll().where {
+                ((((Friends.uid eq fromUid) and (Friends.friendUid eq toUid)) or
+                    ((Friends.uid eq toUid) and (Friends.friendUid eq fromUid))) and
+                    (Friends.status eq 1))
+            }.limit(1).any()
+            require(!alreadyFriends) { "已经是好友" }
+
+            val existing = FriendApplies.selectAll().where {
+                (FriendApplies.fromUid eq fromUid) and
+                    (FriendApplies.toUid eq toUid) and
+                    (FriendApplies.status eq ContactApplyRecord.STATUS_PENDING)
+            }.orderBy(FriendApplies.id, SortOrder.DESC).limit(1).firstOrNull()
+            if (existing != null) {
+                return@transaction FriendApplyCreationRow(existing.toFriendApplyRow(), created = false)
+            }
+
+            val reversePending = FriendApplies.selectAll().where {
+                (FriendApplies.fromUid eq toUid) and
+                    (FriendApplies.toUid eq fromUid) and
+                    (FriendApplies.status eq ContactApplyRecord.STATUS_PENDING)
+            }.limit(1).any()
+            require(!reversePending) { "对方已申请你，请处理现有申请" }
+
+            val token = UUID.randomUUID().toString()
+            val now = System.currentTimeMillis()
             FriendApplies.insert {
                 it[FriendApplies.fromUid] = fromUid
                 it[FriendApplies.toUid] = toUid
                 it[FriendApplies.token] = token
                 it[FriendApplies.remark] = remark
-                it[FriendApplies.status] = 0
+                it[FriendApplies.status] = ContactApplyRecord.STATUS_PENDING
                 it[FriendApplies.createdAt] = now
                 it[FriendApplies.updatedAt] = now
             }
-            FriendApplies.selectAll().where { FriendApplies.token eq token }.single()[FriendApplies.id].value
+            val inserted = FriendApplies.selectAll().where { FriendApplies.token eq token }.single()
+            FriendApplyCreationRow(inserted.toFriendApplyRow(), created = true)
         }
-        val fromUser = userRepo.findByUid(fromUid)
-        return ContactApply(id = id, fromUid = fromUid, toUid = toUid, token = token, remark = remark, status = 0, createdAt = now, fromUser = fromUser)
+        return ContactApplyCreation(
+            apply = result.row.toContactApply(userRepo.findByUid(result.row.fromUid)),
+            created = result.created,
+        )
     }
 
     override fun acceptApply(token: String, receiverUid: String): ContactApply? {
         val result = transaction {
+            // token 行先只用于解析稳定不变的双方 uid；真正的状态读取必须等取得 pair lock 后重做。
+            // 不能先 FOR UPDATE 申请行再锁 User，否则会与 createApply 的 User -> Apply 顺序相反。
+            val identity = FriendApplies.selectAll().where {
+                (FriendApplies.token eq token) and (FriendApplies.toUid eq receiverUid)
+            }.singleOrNull() ?: return@transaction null
+            val fromUid = identity[FriendApplies.fromUid]
+            val toUid = identity[FriendApplies.toUid]
+            lockUserPair(fromUid, toUid)
+
             val row = FriendApplies.selectAll().where {
                 (FriendApplies.token eq token) and (FriendApplies.toUid eq receiverUid)
-            }.singleOrNull()
+            }.forUpdate().singleOrNull()
                 ?: return@transaction null
 
-            if (row[FriendApplies.status] != 0) return@transaction null
-
-            val fromUid = row[FriendApplies.fromUid]
-            val toUid = row[FriendApplies.toUid]
+            if (row[FriendApplies.status] != ContactApplyRecord.STATUS_PENDING) return@transaction null
 
             val blocked = Friends.selectAll().where {
                 (((Friends.uid eq fromUid) and (Friends.friendUid eq toUid)) or
@@ -172,11 +232,15 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
             }.limit(1).any()
             require(!blocked) { "对方已在黑名单中，不能建立好友关系" }
 
+            val updatedAt = System.currentTimeMillis()
+            // 建立好友后，双方之间任何遗留 pending 都不应继续出现在 methodId 9 的红点中。
             FriendApplies.update({
-                (FriendApplies.token eq token) and (FriendApplies.toUid eq receiverUid)
+                ((((FriendApplies.fromUid eq fromUid) and (FriendApplies.toUid eq toUid)) or
+                    ((FriendApplies.fromUid eq toUid) and (FriendApplies.toUid eq fromUid))) and
+                    (FriendApplies.status eq ContactApplyRecord.STATUS_PENDING))
             }) {
-                it[status] = 1
-                it[updatedAt] = System.currentTimeMillis()
+                it[status] = ContactApplyRecord.STATUS_ACCEPTED
+                it[FriendApplies.updatedAt] = updatedAt
             }
 
             // 双向添加好友。删除好友或解除黑名单后，唯一键对应的行仍以 status=0
@@ -209,51 +273,168 @@ class ExposedContactRepository(private val userRepo: UserRepository) : ContactRe
                 }
             }
 
-            Triple(row[FriendApplies.id].value, fromUid, toUid)
+            row.toFriendApplyRow().copy(
+                token = null,
+                status = ContactApplyRecord.STATUS_ACCEPTED,
+                updatedAt = updatedAt,
+            )
         } ?: return null
 
-        return ContactApply(id = result.first, fromUid = result.second, toUid = result.third, status = 1)
+        return result.toContactApply(userRepo.findByUid(result.fromUid))
     }
 
     override fun rejectApply(token: String, receiverUid: String): ContactApply? {
         val result = transaction {
+            val identity = FriendApplies.selectAll().where {
+                (FriendApplies.token eq token) and (FriendApplies.toUid eq receiverUid)
+            }.singleOrNull() ?: return@transaction null
+            val fromUid = identity[FriendApplies.fromUid]
+            val toUid = identity[FriendApplies.toUid]
+            lockUserPair(fromUid, toUid)
+
             val row = FriendApplies.selectAll().where {
                 (FriendApplies.token eq token) and (FriendApplies.toUid eq receiverUid)
-            }.singleOrNull()
+            }.forUpdate().singleOrNull()
                 ?: return@transaction null
-            if (row[FriendApplies.status] != 0) return@transaction null
+            if (row[FriendApplies.status] != ContactApplyRecord.STATUS_PENDING) return@transaction null
+            val updatedAt = System.currentTimeMillis()
             FriendApplies.update({
-                (FriendApplies.token eq token) and (FriendApplies.toUid eq receiverUid)
+                (FriendApplies.fromUid eq fromUid) and
+                    (FriendApplies.toUid eq toUid) and
+                    (FriendApplies.status eq ContactApplyRecord.STATUS_PENDING)
             }) {
-                it[status] = 2
-                it[updatedAt] = System.currentTimeMillis()
+                it[status] = ContactApplyRecord.STATUS_REJECTED
+                it[FriendApplies.updatedAt] = updatedAt
             }
-            Triple(row[FriendApplies.id].value, row[FriendApplies.fromUid], row[FriendApplies.toUid])
+            row.toFriendApplyRow().copy(
+                token = null,
+                status = ContactApplyRecord.STATUS_REJECTED,
+                updatedAt = updatedAt,
+            )
         } ?: return null
 
-        return ContactApply(id = result.first, fromUid = result.second, toUid = result.third, status = 2)
+        return result.toContactApply(userRepo.findByUid(result.fromUid))
     }
 
     override fun listPendingApplies(uid: String): List<ContactApply> {
         val applies = transaction {
             FriendApplies.selectAll().where { (FriendApplies.toUid eq uid) and (FriendApplies.status eq 0) }
-                .orderBy(FriendApplies.createdAt, SortOrder.DESC)
-                .map { row ->
-                    row[FriendApplies.id].value to FriendAppliesRow(
-                        fromUid = row[FriendApplies.fromUid],
-                        token = row[FriendApplies.token],
-                        remark = row[FriendApplies.remark],
-                    )
-                }
+                .orderBy(FriendApplies.id, SortOrder.DESC)
+                .limit(MAX_PENDING_APPLIES)
+                .map { it.toFriendApplyRow() }
         }
-        return applies.map { (id, data) ->
-            ContactApply(
-                id = id, fromUid = data.fromUid, toUid = uid,
-                token = data.token, remark = data.remark, status = 0,
-                fromUser = userRepo.findByUid(data.fromUid),
-            )
+        return applies.map { row ->
+            row.toContactApply(userRepo.findByUid(row.fromUid))
         }
     }
 
-    private data class FriendAppliesRow(val fromUid: String, val token: String, val remark: String?)
+    override fun listApplyRecords(uid: String, beforeId: Long, limit: Int): List<ContactApplyRecord> {
+        val rows = transaction {
+            FriendApplies.selectAll().where {
+                val belongsToUser = (FriendApplies.fromUid eq uid) or (FriendApplies.toUid eq uid)
+                if (beforeId > 0) {
+                    belongsToUser and (FriendApplies.id less beforeId)
+                } else {
+                    belongsToUser
+                }
+            }
+                .orderBy(FriendApplies.id, SortOrder.DESC)
+                .limit(limit)
+                .map { it.toFriendApplyRow() }
+        }
+        return rows.map { it.toRecord(uid) }
+    }
+
+    override fun getPendingApply(uid: String, targetUid: String): ContactApplyRecord? {
+        val row = transaction {
+            val alreadyFriends = Friends.selectAll().where {
+                ((((Friends.uid eq uid) and (Friends.friendUid eq targetUid)) or
+                    ((Friends.uid eq targetUid) and (Friends.friendUid eq uid))) and
+                    (Friends.status eq 1))
+            }.limit(1).any()
+            if (alreadyFriends) return@transaction null
+
+            FriendApplies.selectAll().where {
+                ((((FriendApplies.fromUid eq uid) and (FriendApplies.toUid eq targetUid)) or
+                    ((FriendApplies.fromUid eq targetUid) and (FriendApplies.toUid eq uid))) and
+                    (FriendApplies.status eq ContactApplyRecord.STATUS_PENDING))
+            }.orderBy(FriendApplies.id, SortOrder.DESC).limit(1).firstOrNull()?.toFriendApplyRow()
+        } ?: return null
+        return row.toRecord(uid)
+    }
+
+    /**
+     * 两人关系写操作的唯一串行化锁。调用方必须已经位于 Exposed transaction 内；本方法不创建
+     * 嵌套事务。所有入口都让 PostgreSQL 依相同的 uid 排序取得 Users 行锁，避免 A→B / B→A 死锁。
+     */
+    private fun lockUserPair(firstUid: String, secondUid: String) {
+        val expected = setOf(firstUid, secondUid)
+        val locked = Users.selectAll()
+            .where { Users.uid inList expected.toList() }
+            .orderBy(Users.uid, SortOrder.ASC)
+            .forUpdate()
+            .map { it[Users.uid] }
+        require(locked.toSet() == expected) { "联系人双方用户必须存在" }
+    }
+
+    private fun FriendApplyRow.toRecord(viewerUid: String): ContactApplyRecord {
+        require(viewerUid == fromUid || viewerUid == toUid) { "申请记录不属于当前用户" }
+        val incoming = viewerUid == toUid
+        val peerUid = if (incoming) fromUid else toUid
+        return ContactApplyRecord(
+            id = id,
+            fromUid = fromUid,
+            toUid = toUid,
+            direction = if (incoming) {
+                ContactApplyRecord.DIRECTION_INCOMING
+            } else {
+                ContactApplyRecord.DIRECTION_OUTGOING
+            },
+            token = token.takeIf { incoming && status == ContactApplyRecord.STATUS_PENDING },
+            remark = remark,
+            status = status,
+            createdAt = createdAt,
+            updatedAt = updatedAt,
+            peerUser = userRepo.findByUid(peerUid),
+        )
+    }
+
+    private fun FriendApplyRow.toContactApply(fromUser: com.virjar.tk.model.User?): ContactApply = ContactApply(
+        id = id,
+        fromUid = fromUid,
+        toUid = toUid,
+        token = token,
+        remark = remark,
+        status = status,
+        createdAt = createdAt,
+        fromUser = fromUser,
+    )
+
+    private fun ResultRow.toFriendApplyRow(): FriendApplyRow = FriendApplyRow(
+        id = this[FriendApplies.id].value,
+        fromUid = this[FriendApplies.fromUid],
+        toUid = this[FriendApplies.toUid],
+        token = this[FriendApplies.token],
+        remark = this[FriendApplies.remark],
+        status = this[FriendApplies.status],
+        createdAt = this[FriendApplies.createdAt],
+        updatedAt = this[FriendApplies.updatedAt],
+    )
+
+    private data class FriendApplyCreationRow(val row: FriendApplyRow, val created: Boolean)
+
+    private data class FriendApplyRow(
+        val id: Long,
+        val fromUid: String,
+        val toUid: String,
+        val token: String?,
+        val remark: String?,
+        val status: Int,
+        val createdAt: Long,
+        val updatedAt: Long,
+    )
+
+    private companion object {
+        const val MAX_PENDING_APPLIES = 100
+    }
 }

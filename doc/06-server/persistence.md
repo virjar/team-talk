@@ -26,7 +26,10 @@ chats 保存共同身份与类型；group_chats 保存群扩展；group_members 
 
 ### friends / friend_applies
 
-friends 以有向双行表达双方视角，备注属于各自记录。friend_applies 保存申请方向、token 和状态。
+friends 以有向双行表达双方视角，备注属于各自记录。friend_applies 保存申请方向、token、状态和创建/
+更新时间；收到与发出记录由当前 uid 对应 `to_uid` 或 `from_uid` 得出。创建申请时按固定顺序锁定双方
+users 行，使同方向 pending 的查询与插入原子复用；token 仍保存在关系事实中，但读取投影只向待处理
+申请的收件人返回。
 
 ### conversations
 

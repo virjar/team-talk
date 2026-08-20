@@ -2,6 +2,7 @@ package com.virjar.tk.domain.contact
 
 import com.virjar.tk.model.Contact
 import com.virjar.tk.model.ContactApply
+import com.virjar.tk.model.ContactApplyRecord
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -76,7 +77,7 @@ class ContactStore(private val repo: ContactRepository) {
 
     // ── 好友申请（纯 DB，不缓存） ──
 
-    fun createApply(fromUid: String, toUid: String, remark: String?): ContactApply =
+    fun createApply(fromUid: String, toUid: String, remark: String?): ContactApplyCreation =
         repo.createApply(fromUid, toUid, remark)
 
     fun acceptApply(token: String, receiverUid: String): ContactApply? {
@@ -89,6 +90,12 @@ class ContactStore(private val repo: ContactRepository) {
         repo.rejectApply(token, receiverUid)
 
     fun listPendingApplies(uid: String): List<ContactApply> = repo.listPendingApplies(uid)
+
+    fun listApplyRecords(uid: String, beforeId: Long, limit: Int): List<ContactApplyRecord> =
+        repo.listApplyRecords(uid, beforeId, limit)
+
+    fun getPendingApply(uid: String, targetUid: String): ContactApplyRecord? =
+        repo.getPendingApply(uid, targetUid)
 
     // ── 内部方法 ──
 

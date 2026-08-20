@@ -47,6 +47,8 @@ class RpcMethodIdGoldenTest {
         assertEquals(8, ContactRpcContract.M_REMOVE_FROM_BLACKLIST)
         assertEquals(9, ContactRpcContract.M_LIST_APPLIES)
         assertEquals(10, ContactRpcContract.M_LIST_BLACKLIST)
+        assertEquals(11, ContactRpcContract.M_LIST_APPLY_RECORDS)
+        assertEquals(12, ContactRpcContract.M_GET_PENDING_APPLY)
     }
 
     @Test

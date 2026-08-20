@@ -253,6 +253,12 @@ class ImBot private constructor(
     suspend fun pendingApplies() =
         session.contactRepo.listApplies().getOrThrow()
 
+    suspend fun friendApplyRecords(beforeId: Long = 0, limit: Int = 50) =
+        session.contactRepo.listApplyRecords(beforeId, limit).getOrThrow()
+
+    suspend fun pendingApplyWith(targetUid: String) =
+        session.contactRepo.getPendingApply(targetUid).getOrThrow()
+
     // ── 生命周期 ──
 
     /** 等待连接进入指定状态（默认已认证）。 */

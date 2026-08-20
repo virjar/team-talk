@@ -141,7 +141,7 @@ class TestPeer {
             println("===ACCEPT FAILED=== 没有可接受的申请（共 ${applies.size} 条，可能 token 未下发）")
             session.close(); return@runBlocking
         }
-        println("[TestPeer] 待处理申请 from=${pending.fromUser?.name ?: pending.fromUid} token=${pending.token}")
+        println("[TestPeer] 待处理申请 from=${pending.fromUser?.name ?: pending.fromUid}")
         val resp = session.invoke("contact", ContactRpcContract.M_ACCEPT,
             ProtoCodec.encodePayload { writeString(pending.token) })
         println("===ACCEPT ${if (resp.status == 0) "SUCCESS" else "FAILED"}=== status=${resp.status} fromUid=${pending.fromUid}")

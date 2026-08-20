@@ -65,6 +65,9 @@ class ContactRpcImpl(uid: String, private val service: ContactService) : Contact
     override suspend fun removeFromBlacklist(targetUid: String) = service.removeFromBlacklist(uid, targetUid)
     override suspend fun listBlacklist() = service.listBlacklist(uid)
     override suspend fun listApplies() = service.listApplies(uid)
+    override suspend fun listApplyRecords(beforeId: Long, limit: Int) =
+        service.listApplyRecords(uid, beforeId, limit)
+    override suspend fun getPendingApply(targetUid: String) = service.getPendingApply(uid, targetUid)
 }
 
 class ChatRpcImpl(uid: String, private val service: ChatService) : ChatRpcStub(uid) {

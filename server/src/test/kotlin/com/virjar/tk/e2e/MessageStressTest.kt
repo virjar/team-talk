@@ -44,16 +44,16 @@ class MessageStressTest {
 
         try {
             // 建好友 + 私聊
-            val applyResp = user1.invoke(
+            user1.invoke(
                 "contact",
                 ContactRpcContract.M_APPLY,
                 ProtoCodec.encodePayload { writeString(user2.uid); writeString("hi") }
             )
-            val apply = ProtoCodec.decode(com.virjar.tk.model.ContactApply, applyResp.payload!!)
+            val pendingToken = user2.pendingApplyToken(user1.uid)
             user2.invoke(
                 "contact",
                 ContactRpcContract.M_ACCEPT,
-                ProtoCodec.encodePayload { writeString(apply.token) }
+                ProtoCodec.encodePayload { writeString(pendingToken) }
             )
             val chatResp = user1.invoke(
                 "chat",

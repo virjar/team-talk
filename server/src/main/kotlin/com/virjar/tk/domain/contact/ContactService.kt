@@ -1,25 +1,32 @@
 package com.virjar.tk.domain.contact
 
 import com.virjar.tk.domain.event.EventPublisher
+import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.model.Contact
 import com.virjar.tk.model.ContactApply
+import com.virjar.tk.model.ContactApplyLookup
+import com.virjar.tk.model.ContactApplyRecord
+import com.virjar.tk.model.UserRole
 import com.virjar.tk.protocol.NotifyType
 
 class ContactService(
     private val contactStore: ContactStore,
     private val events: EventPublisher,
+    private val users: UserStore,
 ) {
     fun list(uid: String): List<Contact> = contactStore.listFriends(uid)
 
     suspend fun apply(uid: String, targetUid: String, remark: String?): ContactApply {
         require(uid != targetUid) { "不能向自己发起好友申请" }
-        require(!contactStore.isBlockedEither(uid, targetUid)) { "黑名单关系下不能发起好友申请" }
-        if (contactStore.isFriend(uid, targetUid)) {
-            throw IllegalArgumentException("已经是好友")
+        requireHumanTarget(targetUid)
+        // 好友、黑名单与 pending 必须在仓储持有双方行锁时一起判断。这里若先读再写，
+        // accept / blacklist 与 apply 并发时会产生“已是好友或已拉黑但仍有 pending”的非法组合。
+        val creation = contactStore.createApply(uid, targetUid, remark)
+        if (creation.created) {
+            events.emitEvent(targetUid, NotifyType.CONTACT_APPLY, creation.apply)
         }
-        val apply = contactStore.createApply(uid, targetUid, remark)
-        events.emitEvent(targetUid, NotifyType.CONTACT_APPLY, apply)
-        return apply
+        // token 是收件人的处理凭据。即使旧 apply RPC 返回 ContactApply，也不能回显给发件人。
+        return creation.apply.copy(token = null)
     }
 
     suspend fun accept(uid: String, token: String): ContactApply {
@@ -60,5 +67,30 @@ class ContactService(
 
     fun listBlacklist(uid: String): List<Contact> = contactStore.listBlacklist(uid)
 
+    /** methodId 9 的兼容语义：只返回当前用户收到且仍待处理的申请。 */
     fun listApplies(uid: String): List<ContactApply> = contactStore.listPendingApplies(uid)
+
+    fun listApplyRecords(uid: String, beforeId: Long, limit: Int): List<ContactApplyRecord> {
+        require(beforeId >= 0) { "beforeId 不能为负数" }
+        require(limit in 1..MAX_APPLY_RECORD_PAGE_SIZE) {
+            "好友申请记录数量必须在 1..$MAX_APPLY_RECORD_PAGE_SIZE 之间"
+        }
+        return contactStore.listApplyRecords(uid, beforeId, limit)
+    }
+
+    fun getPendingApply(uid: String, targetUid: String): ContactApplyLookup {
+        if (uid == targetUid) return ContactApplyLookup()
+        val target = users.findByUid(targetUid) ?: return ContactApplyLookup()
+        if (target.role != UserRole.HUMAN) return ContactApplyLookup()
+        return ContactApplyLookup(contactStore.getPendingApply(uid, targetUid))
+    }
+
+    private fun requireHumanTarget(targetUid: String) {
+        val target = users.findByUid(targetUid) ?: throw IllegalArgumentException("用户不存在")
+        require(target.role == UserRole.HUMAN) { "不能向机器人或系统账户发起好友申请" }
+    }
+
+    companion object {
+        const val MAX_APPLY_RECORD_PAGE_SIZE = 100
+    }
 }

@@ -70,7 +70,10 @@ fun SubScreenContent(
         )
 
         is SubScreen.FriendApplies -> FriendAppliesScreen(
-            applies = data.account.applies,
+            records = data.account.friendApplyRecords,
+            loading = data.account.friendApplyRecordsLoading,
+            hasMore = data.account.friendApplyRecordsHasMore,
+            onLoadMore = data.account::loadMoreFriendApplies,
             onAccept = { token -> data.account.acceptFriendApply(token) },
             onReject = { token -> data.account.rejectFriendApply(token) },
             onBack = onBack,

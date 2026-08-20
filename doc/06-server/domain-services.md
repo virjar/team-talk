@@ -19,9 +19,13 @@ USER_UPDATED。
 
 ## 2. Contact
 
-- `apply`：不能申请自己、已有好友或被策略禁止的用户。
+- `apply`：不能申请自己、不存在的用户、服务身份、已有好友或被策略禁止的用户。同方向 pending 在
+  锁定双方 User 行的事务中复用且不重复通知；反方向 pending 保留给接收者处理，不能再创建镜像申请。
 - `accept`：验证申请接收者和 token，在事务中形成双方关系。
 - `reject`：只改变申请状态，不创建关系。
+- `listApplies` 保留兼容语义，只返回收到且待处理的最新 100 条；双向历史使用有界分页
+  `listApplyRecords`，资料页的两人 pending 状态使用 `getPendingApply` 精确查询，不能从历史首屏推断。
+- 处理 token 只属于收到申请的一方；`apply` 响应、发出记录和已处理记录不得回显 token。
 - `delete`：删除双方关系，并分别发送双方视角的 CONTACT_DELETED。
 - 备注属于关系所有者，不更新对方 User。
 - 黑名单在建立关系和发送交互时参与权限判断。

@@ -42,10 +42,14 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 | 6 | `setRemark` | `friendUid`, `remark?` | `Unit` |
 | 7 | `blacklist` | `targetUid` | `Unit` |
 | 8 | `removeFromBlacklist` | `targetUid` | `Unit` |
-| 9 | `listApplies` | — | `List<ContactApply>` |
+| 9 | `listApplies` | — | `List<ContactApply>`（收到且待处理，最新 100 条） |
 | 10 | `listBlacklist` | — | `List<Contact>` |
+| 11 | `listApplyRecords` | `beforeId`, `limit` | `List<ContactApplyRecord>`（双向历史，id 倒序） |
+| 12 | `getPendingApply` | `targetUid` | `ContactApplyLookup`（两人间精确 pending） |
 
 好友关系和黑名单权限必须由服务器判断。客户端列表是投影，不能作为能否发送或查看资料的权威依据。
+`ContactApply` 的既有字段顺序保持不变；11/12 是 V8 末尾追加方法，并使用独立记录模型。申请处理
+token 只向收到申请的一方返回，发出记录和已处理记录中的 token 始终为空。
 
 ## chat
 

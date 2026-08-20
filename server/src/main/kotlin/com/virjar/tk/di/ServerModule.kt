@@ -135,7 +135,7 @@ fun createServerModule(
     single<SyncEventReader> { get<SyncEventService>() }
     single { UserService(get(), get()) }
     single { AuthService(get(), get(), get()) }
-    single { ContactService(get(), get()) }
+    single { ContactService(get(), get(), get()) }
     single { ChatService(get(), get(), get(), get(), get(), get(), get(), get()) }
     single { OrganizationService(get(), get(), get()) }
     single { GroupFileService(get(), get(), get(), get(), Environment.groupFileQuotaBytes) }

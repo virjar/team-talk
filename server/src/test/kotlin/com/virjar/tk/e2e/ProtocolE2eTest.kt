@@ -63,6 +63,14 @@ class ProtocolE2eTest {
         suspend fun invoke(serviceId: String, methodId: Int, payload: ByteArray? = null): ResponsePayload =
             rpc.invoke(serviceId, methodId, payload)
 
+        suspend fun pendingApplyToken(fromUid: String): String {
+            val response = invoke("contact", ContactRpcContract.M_LIST_APPLIES)
+            require(response.status == 0 && response.payload != null) { "无法读取待处理好友申请" }
+            return ProtoCodec.decodeList(ContactApply, response.payload!!)
+                .single { it.fromUid == fromUid && it.status == 0 }
+                .token ?: error("待处理申请缺少收件人 token")
+        }
+
         fun subscribe(chatId: String, lastSeq: Long = 0) {
             imClient.send(SubscribePayload(chatId, lastSeq))
         }
@@ -194,11 +202,12 @@ class ProtocolE2eTest {
             ProtoCodec.encodePayload { writeString(user2.uid); writeString("hello") })
         assertEquals(0, applyResp.status)
         val apply = ProtoCodec.decode(ContactApply, applyResp.payload!!)
-        assertNotNull(apply.token)
+        assertNull(apply.token, "发件人 apply 响应不应包含处理 token")
 
         // user2 接受
+        val pendingToken = user2.pendingApplyToken(user1.uid)
         val acceptResp = user2.invoke("contact", ContactRpcContract.M_ACCEPT,
-            ProtoCodec.encodePayload { writeString(apply.token) })
+            ProtoCodec.encodePayload { writeString(pendingToken) })
         assertEquals(0, acceptResp.status)
 
         // 验证好友列表（最多重试 3 次，应对 CI runner 时序差异）
@@ -222,11 +231,11 @@ class ProtocolE2eTest {
         val user2 = registerUser("pchat2-${UUID.randomUUID()}")
 
         // 先成为好友
-        val applyResp = user1.invoke("contact", ContactRpcContract.M_APPLY,
+        user1.invoke("contact", ContactRpcContract.M_APPLY,
             ProtoCodec.encodePayload { writeString(user2.uid); writeString("hi") })
-        val apply = ProtoCodec.decode(ContactApply, applyResp.payload!!)
+        val pendingToken = user2.pendingApplyToken(user1.uid)
         user2.invoke("contact", ContactRpcContract.M_ACCEPT,
-            ProtoCodec.encodePayload { writeString(apply.token) })
+            ProtoCodec.encodePayload { writeString(pendingToken) })
 
         // 创建私聊（等待 accept 生效）
         delay(100)
@@ -286,11 +295,11 @@ class ProtocolE2eTest {
         val user2 = registerUser("msg2-${UUID.randomUUID()}")
 
         // 建立好友关系 + 创建私聊
-        val applyResp = user1.invoke("contact", ContactRpcContract.M_APPLY,
+        user1.invoke("contact", ContactRpcContract.M_APPLY,
             ProtoCodec.encodePayload { writeString(user2.uid); writeString("hi") })
-        val apply = ProtoCodec.decode(ContactApply, applyResp.payload!!)
+        val pendingToken = user2.pendingApplyToken(user1.uid)
         user2.invoke("contact", ContactRpcContract.M_ACCEPT,
-            ProtoCodec.encodePayload { writeString(apply.token) })
+            ProtoCodec.encodePayload { writeString(pendingToken) })
 
         val chatResp = user1.invoke("chat", ChatRpcContract.M_CREATE_PERSONAL,
             ProtoCodec.encodePayload { writeString(user2.uid) })
@@ -319,11 +328,11 @@ class ProtocolE2eTest {
         val user2 = registerUser("deliver2-${UUID.randomUUID()}")
 
         // 建立好友关系 + 创建私聊
-        val applyResp = user1.invoke("contact", ContactRpcContract.M_APPLY,
+        user1.invoke("contact", ContactRpcContract.M_APPLY,
             ProtoCodec.encodePayload { writeString(user2.uid); writeString("hi") })
-        val apply = ProtoCodec.decode(ContactApply, applyResp.payload!!)
+        val pendingToken = user2.pendingApplyToken(user1.uid)
         user2.invoke("contact", ContactRpcContract.M_ACCEPT,
-            ProtoCodec.encodePayload { writeString(apply.token) })
+            ProtoCodec.encodePayload { writeString(pendingToken) })
 
         val chatResp = user1.invoke("chat", ChatRpcContract.M_CREATE_PERSONAL,
             ProtoCodec.encodePayload { writeString(user2.uid) })
@@ -357,11 +366,11 @@ class ProtocolE2eTest {
         val user2 = registerUser("sub2-${UUID.randomUUID()}")
 
         // 建立好友关系 + 创建私聊
-        val applyResp = user1.invoke("contact", ContactRpcContract.M_APPLY,
+        user1.invoke("contact", ContactRpcContract.M_APPLY,
             ProtoCodec.encodePayload { writeString(user2.uid); writeString("hi") })
-        val apply = ProtoCodec.decode(ContactApply, applyResp.payload!!)
+        val pendingToken = user2.pendingApplyToken(user1.uid)
         user2.invoke("contact", ContactRpcContract.M_ACCEPT,
-            ProtoCodec.encodePayload { writeString(apply.token) })
+            ProtoCodec.encodePayload { writeString(pendingToken) })
 
         val chatResp = user1.invoke("chat", ChatRpcContract.M_CREATE_PERSONAL,
             ProtoCodec.encodePayload { writeString(user2.uid) })

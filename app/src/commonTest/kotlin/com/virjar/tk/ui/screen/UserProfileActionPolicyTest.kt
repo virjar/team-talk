@@ -1,10 +1,24 @@
 package com.virjar.tk.ui.screen
 
+import com.virjar.tk.model.User
+import com.virjar.tk.model.UserRole
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class UserProfileActionPolicyTest {
+
+    @Test
+    fun `friend request is available only for another human user`() {
+        val human = User(uid = "human", username = "human", name = "Human", role = UserRole.HUMAN)
+        val bot = User(uid = "bot", username = "bot", name = "Bot", role = UserRole.BOT)
+        val system = User(uid = "system", username = "system", name = "System", role = UserRole.SYSTEM)
+
+        assertEquals(true, canAddFriendFromProfile(human, myUid = "me"))
+        assertEquals(false, canAddFriendFromProfile(human, myUid = "human"))
+        assertEquals(false, canAddFriendFromProfile(bot, myUid = "me"))
+        assertEquals(false, canAddFriendFromProfile(system, myUid = "me"))
+    }
 
     @Test
     fun `friend can expose delete and block actions independently`() {

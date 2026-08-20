@@ -71,7 +71,10 @@
 | `search.query` / `search.submit` | 用户搜索输入与提交 |
 | `search.result.{uid前8}` | 用户搜索结果 |
 | `profile.dialog` / `profile.close` | Desktop 资料弹窗与关闭 |
-| `profile.addFriend` / `profile.applied` | 申请好友状态 |
+| `profile.addFriend` / `profile.applied` / `profile.incomingApply` | 添加、已发出及收到待处理申请的资料页状态 |
+| `friendApply.loading` / `friendApply.empty` / `friendApply.loadMore` | 双向好友申请记录的加载、空态与分页 |
+| `friendApply.record.{id}` | 收到或发出的单条好友申请记录 |
+| `friendApply.accept.{id}` / `friendApply.reject.{id}` | 处理收到且待验证的申请 |
 | `profile.sendMessage` | 发起私聊 |
 | `profile.createGroup` | 从资料发起群聊 |
 | `profile.deleteFriend` | 删除好友 |

@@ -27,10 +27,8 @@ internal fun DesktopUserProfileDialog(
     onDismiss: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    var hasPendingApply by remember(uid) { mutableStateOf(false) }
 
     LaunchedEffect(uid) {
-        hasPendingApply = false
         nav.loadScreenDataByKey(ScreenDataKey.UserProfile(uid))
     }
 
@@ -66,11 +64,17 @@ internal fun DesktopUserProfileDialog(
 
                 UserProfileContent(
                     user = nav.account.profileUser?.takeIf { it.uid == uid },
+                    myUid = nav.userSession.uid,
                     isFriend = nav.account.isFriend,
-                    hasPendingApply = hasPendingApply,
+                    hasPendingApply = nav.account.hasOutgoingFriendApply(uid),
+                    hasIncomingApply = nav.account.hasIncomingFriendApply(uid),
+                    isApplyingFriend = nav.account.isApplyingFriend(uid),
                     onAddFriend = {
-                        nav.contactViewModel.apply(uid)
-                        hasPendingApply = true
+                        nav.account.applyFriend(uid)
+                    },
+                    onViewFriendApplies = {
+                        onDismiss()
+                        nav.openScreen(SubScreen.FriendApplies)
                     },
                     onSendMessage = {
                         scope.launch {

@@ -196,7 +196,7 @@ private fun NewFriendsRow(pendingApplyCount: Int, onClick: () -> Unit) {
         Spacer(Modifier.width(Tk.spacing.md))
         Column(modifier = Modifier.weight(1f)) {
             Text("新的朋友", style = MaterialTheme.typography.titleSmall)
-            Text("好友申请与验证", style = MaterialTheme.typography.bodySmall, color = Tk.colors.secondaryText)
+            Text("收到和发出的好友申请", style = MaterialTheme.typography.bodySmall, color = Tk.colors.secondaryText)
         }
         if (pendingApplyCount > 0) {
             Text(

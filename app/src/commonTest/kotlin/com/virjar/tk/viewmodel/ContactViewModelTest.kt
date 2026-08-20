@@ -61,7 +61,10 @@ class ContactViewModelTest {
         cache: FakeLocalCache = FakeLocalCache(),
     ): Pair<ContactViewModel, FakeRpcInvoker> {
         val rpc = FakeRpcInvoker().apply {
-            enqueueOk(ProtoCodec.encodeList(emptyList<Contact>()))
+            // The initial refresh is authoritative. Mirror the seeded cache in the
+            // server snapshot so individual action tests do not accidentally test
+            // stale-contact reconciliation instead.
+            enqueueOk(ProtoCodec.encodeList(cache.getContacts()))
             enqueueOk(ProtoCodec.encodeList(emptyList<ContactApply>()))
         }
         val repository = ContactRepository(rpc, cache)

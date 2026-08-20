@@ -51,11 +51,11 @@ class RpcCodecConsistencyTest {
         user1 = RemoteAcceptanceSupport.registerUser("codec1")
         user2 = RemoteAcceptanceSupport.registerUser("codec2")
         // 建好友 + 私聊，为需要 chatId 的 RPC 提供前置
-        val applyResp = user1.invoke("contact", 2, // APPLY
+        user1.invoke("contact", 2, // APPLY
             com.virjar.tk.protocol.ProtoCodec.encodePayload { writeString(user2.uid); writeString("hi") })
-        val apply = com.virjar.tk.protocol.ProtoCodec.decode(com.virjar.tk.model.ContactApply, applyResp.payload!!)
+        val pendingToken = user2.pendingApplyToken(user1.uid)
         user2.invoke("contact", 3, // ACCEPT
-            com.virjar.tk.protocol.ProtoCodec.encodePayload { writeString(apply.token) })
+            com.virjar.tk.protocol.ProtoCodec.encodePayload { writeString(pendingToken) })
         val chatResp = user1.invoke("chat", 1, // CREATE_PERSONAL
             com.virjar.tk.protocol.ProtoCodec.encodePayload { writeString(user2.uid) })
         chatId = com.virjar.tk.protocol.ProtoCodec.decode(com.virjar.tk.model.Chat, chatResp.payload!!).chatId
@@ -86,6 +86,14 @@ class RpcCodecConsistencyTest {
     @Test fun `CONTACT BLACKLIST codec`() = runBlocking { assertCodecOk("CONTACT.BLACKLIST", user1.invoke("contact", 7, com.virjar.tk.protocol.ProtoCodec.encodePayload { writeString(user2.uid) })) }
     @Test fun `CONTACT LIST_APPLIES codec`() = runBlocking { assertCodecOk("CONTACT.LIST_APPLIES", user1.invoke("contact", 9)) }
     @Test fun `CONTACT LIST_BLACKLIST codec`() = runBlocking { assertCodecOk("CONTACT.LIST_BLACKLIST", user1.invoke("contact", 10)) }
+    @Test fun `CONTACT LIST_APPLY_RECORDS codec`() = runBlocking {
+        assertCodecOk("CONTACT.LIST_APPLY_RECORDS", user1.invoke("contact", 11,
+            com.virjar.tk.protocol.ProtoCodec.encodePayload { writeVarLong(0); writeVarInt(20) }))
+    }
+    @Test fun `CONTACT GET_PENDING_APPLY codec`() = runBlocking {
+        assertCodecOk("CONTACT.GET_PENDING_APPLY", user1.invoke("contact", 12,
+            com.virjar.tk.protocol.ProtoCodec.encodePayload { writeString(user2.uid) }))
+    }
 
     // ── ChatRepository ──
 

@@ -398,24 +398,30 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
         }
         composable(Routes.FRIEND_APPLIES) {
             LaunchedEffect(Unit) { dataState.loadScreenDataByKey(ScreenDataKey.FriendApplies) }
-            FriendAppliesScreen(applies = dataState.account.applies,
+            FriendAppliesScreen(
+                records = dataState.account.friendApplyRecords,
+                loading = dataState.account.friendApplyRecordsLoading,
+                hasMore = dataState.account.friendApplyRecordsHasMore,
+                onLoadMore = dataState.account::loadMoreFriendApplies,
                 onAccept = { t -> dataState.account.acceptFriendApply(t) },
                 onReject = { t -> dataState.account.rejectFriendApply(t) },
-                onBack = { navController.popBackStack() })
+                onBack = { navController.popBackStack() },
+            )
         }
         composable(Routes.USER_PROFILE, arguments = listOf(navArgument("uid"){type=NavType.StringType})) { entry ->
             val uid = entry.arguments?.getString("uid") ?: return@composable
-            var hasPendingApply by remember { mutableStateOf(false) }
-            LaunchedEffect(uid) { dataState.loadScreenDataByKey(ScreenDataKey.UserProfile(uid)); hasPendingApply = false }
-            UserProfileScreen(user = dataState.account.profileUser, isFriend = dataState.account.isFriend, hasPendingApply = hasPendingApply,
+            LaunchedEffect(uid) { dataState.loadScreenDataByKey(ScreenDataKey.UserProfile(uid)) }
+            UserProfileScreen(
+                user = dataState.account.profileUser?.takeIf { it.uid == uid },
+                myUid = dataState.userSession.uid,
+                isFriend = dataState.account.isFriend,
+                hasPendingApply = dataState.account.hasOutgoingFriendApply(uid),
+                hasIncomingApply = dataState.account.hasIncomingFriendApply(uid),
+                isApplyingFriend = dataState.account.isApplyingFriend(uid),
                 onAddFriend = {
-                    dataState.contactViewModel.apply(uid)
-                    hasPendingApply = true
-                    scope.launch {
-                        kotlinx.coroutines.delay(800)
-                        navController.navigate(Routes.HOME) { popUpTo(Routes.HOME) { inclusive = true } }
-                    }
+                    dataState.account.applyFriend(uid)
                 },
+                onViewFriendApplies = { navController.navigate(Routes.FRIEND_APPLIES) },
                 onSendMessage = { scope.launch {
                     val chatId = dataState.discovery.startPersonalChat(uid)
                     if (chatId != null) {
@@ -431,7 +437,8 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                     { dataState.account.blockContact(uid) { navController.popBackStack() } }
                 } else null,
                 onDeleteFriend = { dataState.contactViewModel.deleteFriend(uid); navController.popBackStack() },
-                onBack = { navController.popBackStack() })
+                onBack = { navController.popBackStack() },
+            )
         }
         composable(Routes.EDIT_PROFILE) { EditProfileScreen(currentUser = dataState.account.currentUser, onSave = { n, p -> dataState.account.saveProfile(n, p) }, onBack = { navController.popBackStack() }) }
         composable(Routes.CHANGE_PASSWORD) { ChangePasswordScreen(onChangePassword = { o, n -> dataState.account.changePassword(o, n) }, onBack = { navController.popBackStack() }) }
