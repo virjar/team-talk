@@ -35,6 +35,13 @@ interface ChatRepository {
     fun updateGroup(chatId: String, name: String? = null, avatar: String? = null, notice: String? = null)
     /** Atomically deactivates chat/members and removes conversation, mute and invite projections. */
     fun deactivateChat(chatId: String)
+    /**
+     * Transaction-bound counterpart used after the caller locks the chat and deactivates required
+     * external participants. Implementations return the pre-deactivation recipients for durable
+     * tombstones.
+     */
+    fun deactivateChat(transaction: PgTransactionContext, chatId: String): ChatDeactivation =
+        error("Transactional chat deactivation is not implemented")
     fun getMemberUids(chatId: String): List<String>
     fun updateMaxSeq(chatId: String, seq: Long)
     fun findPersonalChatId(uid1: String, uid2: String): String?
@@ -44,6 +51,11 @@ interface ChatRepository {
     fun countEventsSince(since: Long): Long
     fun listUserChats(uid: String): List<Chat>
 }
+
+data class ChatDeactivation(
+    val chat: Chat,
+    val memberUids: List<String>,
+)
 
 data class InviteJoinResult(
     val chat: Chat,

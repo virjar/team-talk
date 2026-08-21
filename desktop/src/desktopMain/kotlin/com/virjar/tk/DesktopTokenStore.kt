@@ -2,11 +2,10 @@ package com.virjar.tk
 
 import com.virjar.tk.client.StoredLogin
 import com.virjar.tk.client.TokenStoreOwner
+import com.virjar.tk.client.JvmPrivateDataDirectory
 import java.io.File
-import java.io.FileOutputStream
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
+import java.io.StringReader
+import java.io.StringWriter
 import java.util.Properties
 
 /**
@@ -18,7 +17,9 @@ import java.util.Properties
  * 清除时机：用户主动登出、token 失效（AUTH_FAILED）。
  */
 class DesktopTokenStore(dataDir: File) : com.virjar.tk.client.TokenStore {
-    private val file = File(dataDir, "auth.properties")
+    private val store = JvmPrivateDataDirectory.openExisting(dataDir).atomicTextFile(
+        fileName = "auth.properties",
+    )
 
     override fun claimOwner(): TokenStoreOwner = synchronized(PROCESS_LOCK) {
         val props = readProps() ?: Properties()
@@ -59,29 +60,12 @@ class DesktopTokenStore(dataDir: File) : com.virjar.tk.client.TokenStore {
 
     /** Temp + fsync + atomic replace: refresh token 轮换不能在进程退出时落回旧值。 */
     private fun writeProps(props: Properties) {
-        file.parentFile?.mkdirs()
-        val temp = File(file.parentFile, "${file.name}.tmp")
-        FileOutputStream(temp).use { output ->
-            props.store(output, "TeamTalk auth")
-            output.flush()
-            output.fd.sync()
-        }
-        try {
-            Files.move(
-                temp.toPath(),
-                file.toPath(),
-                StandardCopyOption.ATOMIC_MOVE,
-                StandardCopyOption.REPLACE_EXISTING,
-            )
-        } catch (_: AtomicMoveNotSupportedException) {
-            Files.move(temp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
-        }
+        val serialized = StringWriter().also { props.store(it, "TeamTalk auth") }.toString()
+        store.replaceText(serialized, MAX_AUTH_FILE_BYTES)
     }
 
-    private fun readProps(): Properties? = try {
-        if (file.exists()) Properties().apply { file.inputStream().use { load(it) } } else null
-    } catch (_: Exception) {
-        null
+    private fun readProps(): Properties? = store.readText(MAX_AUTH_FILE_BYTES)?.let { serialized ->
+        Properties().apply { StringReader(serialized).use { reader -> load(reader) } }
     }
 
     private fun Properties.ownerGeneration(): Long =
@@ -105,6 +89,7 @@ class DesktopTokenStore(dataDir: File) : com.virjar.tk.client.TokenStore {
         private const val KEY_OWNER_GENERATION = "owner_generation"
         private const val KEY_UID = "uid"
         private const val KEY_TOKEN = "refresh_token"
+        private const val MAX_AUTH_FILE_BYTES = 64L * 1024L
 
         private fun nextOwnerGeneration(current: Long): Long =
             (current + 1L).takeUnless { it == 0L } ?: 1L

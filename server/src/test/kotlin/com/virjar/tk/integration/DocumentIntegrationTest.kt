@@ -140,29 +140,46 @@ class DocumentIntegrationTest {
             ctx.documentService.deleteNode(owner, space.spaceId, parent.nodeId, parent.revision)
         }
         assertFailsWith<IllegalArgumentException> {
-            ctx.documentRepo.deleteNode(parent.nodeId, parent.revision, owner, System.currentTimeMillis())
+            ctx.pgUnitOfWork.write {
+                ctx.documentRepo.deleteNode(
+                    transaction,
+                    space.spaceId,
+                    parent.nodeId,
+                    parent.revision,
+                    owner,
+                    System.currentTimeMillis(),
+                )
+            }
         }
         assertFailsWith<IllegalArgumentException> {
-            ctx.documentRepo.moveNode(
-                child.nodeId,
-                child.revision,
-                created.documentId,
-                child.name,
-                owner,
-                System.currentTimeMillis(),
-            )
+            ctx.pgUnitOfWork.write {
+                ctx.documentRepo.moveNode(
+                    transaction,
+                    space.spaceId,
+                    child.nodeId,
+                    child.revision,
+                    created.documentId,
+                    child.name,
+                    owner,
+                    System.currentTimeMillis(),
+                )
+            }
         }
         val otherSpace = ctx.documentService.createSpace(owner, "其他空间", null)
         val otherFolder = ctx.documentService.createFolder(owner, otherSpace.spaceId, null, "其他目录")
         assertFailsWith<IllegalArgumentException> {
-            ctx.documentRepo.moveNode(
-                child.nodeId,
-                child.revision,
-                otherFolder.nodeId,
-                child.name,
-                owner,
-                System.currentTimeMillis(),
-            )
+            ctx.pgUnitOfWork.write {
+                ctx.documentRepo.moveNode(
+                    transaction,
+                    space.spaceId,
+                    child.nodeId,
+                    child.revision,
+                    otherFolder.nodeId,
+                    child.name,
+                    owner,
+                    System.currentTimeMillis(),
+                )
+            }
         }
         assertFailsWith<IllegalArgumentException> {
             ctx.documentService.createDocument(owner, space.spaceId, null, "x".repeat(181), "")
@@ -179,14 +196,18 @@ class DocumentIntegrationTest {
 
         // 即使绕过领域服务，仓储事务也不允许制造环。
         assertFailsWith<IllegalArgumentException> {
-            ctx.documentRepo.moveNode(
-                parent.nodeId,
-                parent.revision,
-                child.nodeId,
-                parent.name,
-                owner,
-                System.currentTimeMillis(),
-            )
+            ctx.pgUnitOfWork.write {
+                ctx.documentRepo.moveNode(
+                    transaction,
+                    space.spaceId,
+                    parent.nodeId,
+                    parent.revision,
+                    child.nodeId,
+                    parent.name,
+                    owner,
+                    System.currentTimeMillis(),
+                )
+            }
         }
         assertEquals(listOf(parent.nodeId), ctx.documentRepo.findDocument(created.documentId)!!.ancestorIds)
     }
@@ -386,14 +407,18 @@ class DocumentIntegrationTest {
             listOf(left to right, right to left).map { (moving, target) ->
                 async(Dispatchers.Default) {
                     runCatching {
-                        ctx.documentRepo.moveNode(
-                            moving.nodeId,
-                            moving.revision,
-                            target.nodeId,
-                            moving.name,
-                            owner,
-                            System.currentTimeMillis(),
-                        )
+                        ctx.pgUnitOfWork.write {
+                            ctx.documentRepo.moveNode(
+                                transaction,
+                                space.spaceId,
+                                moving.nodeId,
+                                moving.revision,
+                                target.nodeId,
+                                moving.name,
+                                owner,
+                                System.currentTimeMillis(),
+                            )
+                        }
                     }
                 }
             }.awaitAll()
@@ -421,15 +446,23 @@ class DocumentIntegrationTest {
             updatedAt = now,
         )
         val (createResult, deleteResult) = coroutineScope {
-            val create = async(Dispatchers.Default) { runCatching { ctx.documentRepo.createFolder(child) } }
+            val create = async(Dispatchers.Default) {
+                runCatching {
+                    ctx.pgUnitOfWork.write { ctx.documentRepo.createFolder(transaction, child) }
+                }
+            }
             val delete = async(Dispatchers.Default) {
                 runCatching {
-                    ctx.documentRepo.deleteNode(
-                        emptyFolder.nodeId,
-                        emptyFolder.revision,
-                        owner,
-                        System.currentTimeMillis(),
-                    )
+                    ctx.pgUnitOfWork.write {
+                        ctx.documentRepo.deleteNode(
+                            transaction,
+                            space.spaceId,
+                            emptyFolder.nodeId,
+                            emptyFolder.revision,
+                            owner,
+                            System.currentTimeMillis(),
+                        )
+                    }
                 }
             }
             create.await() to delete.await()

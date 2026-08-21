@@ -1,5 +1,6 @@
 package com.virjar.tk.domain.user
 
+import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.model.User
 
 /**
@@ -30,6 +31,22 @@ class UserStore(private val repo: UserRepository) {
     ): User {
         return repo.create(uid, username, name, passwordHash, phone, role)
     }
+
+    fun createServiceAccount(
+        transaction: PgTransactionContext,
+        uid: String,
+        username: String,
+        name: String,
+        unusablePasswordHash: String,
+        role: Int,
+    ): User = repo.createServiceAccount(
+        transaction = transaction,
+        uid = uid,
+        username = username,
+        name = name,
+        unusablePasswordHash = unusablePasswordHash,
+        role = role,
+    )
 
     fun updateProfile(uid: String, name: String? = null, avatar: String? = null, sex: Int? = null, phone: String? = null) {
         repo.updateProfile(uid, name, avatar, sex, phone)

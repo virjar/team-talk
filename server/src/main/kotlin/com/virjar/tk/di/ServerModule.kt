@@ -164,7 +164,14 @@ fun createServerModule(
     single { ChatService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     single { OrganizationService(get(), get(), get()) }
     single { GroupFileService(get(), get(), get(), Environment.groupFileQuotaBytes) }
-    single { DocumentService(get(), get(), get()) }
+    single {
+        DocumentService(
+            repository = get(),
+            organizations = get(),
+            users = get(),
+            unitOfWork = get<PgUnitOfWork>(),
+        )
+    }
     single { ConversationService(get(), get(), get()) }
     single { com.virjar.tk.domain.attachment.AttachmentService(get(), get()) }
     single<AttachmentReferences> {
@@ -193,7 +200,7 @@ fun createServerModule(
     single<BotAccountProvisioner> { UserServiceBotAccounts(get()) }
     single<BotGroupMembership> { ChatServiceBotMembership(get()) }
     single<BotMessageSender> { MessageServiceBotSender(get()) }
-    single { BotService(get(), get(), get(), get(), get(), get()) }
+    single { BotService(get(), get(), get(), get(), get(), get(), get<PgUnitOfWork>()) }
     single { PresenceService(get(), get()) }
     single { PresenceCoordinator(get(), get()) }
     single { HealthChecker(get(), get(), get(), get()) }

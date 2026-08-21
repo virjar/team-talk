@@ -4,14 +4,21 @@ import com.virjar.tk.body.buildRichTextBody
 import com.virjar.tk.domain.chat.ChatAccess
 import com.virjar.tk.domain.chat.ChatAccessDeniedException
 import com.virjar.tk.domain.chat.ChatLifecycleGate
+import com.virjar.tk.domain.chat.GroupMemberAddition
+import com.virjar.tk.domain.chat.LockedChat
+import com.virjar.tk.domain.transaction.PgTransactionContext
+import com.virjar.tk.domain.transaction.PgUnitOfWork
+import com.virjar.tk.domain.transaction.PgWriteScope
 import com.virjar.tk.http.GroupBotCredentials
 import com.virjar.tk.http.GroupBotSummary
 import com.virjar.tk.model.Member
 import com.virjar.tk.model.Message
+import com.virjar.tk.model.Conversation
 import com.virjar.tk.protocol.MessageType
+import com.virjar.tk.protocol.NotifyType
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
@@ -41,7 +48,7 @@ interface BotMessageDelivery {
 interface GroupBotManagement {
     fun listForGroup(actorUid: String, chatId: String): List<GroupBotSummary>
     suspend fun createForGroup(actorUid: String, chatId: String, name: String): GroupBotCredentials
-    fun rotateTokenForGroup(actorUid: String, chatId: String, botId: String): GroupBotCredentials
+    suspend fun rotateTokenForGroup(actorUid: String, chatId: String, botId: String): GroupBotCredentials
     suspend fun removeFromGroup(actorUid: String, chatId: String, botId: String)
 }
 
@@ -53,6 +60,7 @@ class BotService(
     private val groupMembership: BotGroupMembership,
     private val messageSender: BotMessageSender,
     private val lifecycleGate: ChatLifecycleGate,
+    private val unitOfWork: PgUnitOfWork,
     private val rateLimitPerMinute: Int = DEFAULT_RATE_LIMIT_PER_MINUTE,
 ) : GroupBotManagement, BotMessageDelivery {
     private val random = SecureRandom()
@@ -66,31 +74,59 @@ class BotService(
         windowMillis = GROUP_CREATION_RATE_WINDOW_MILLIS,
         maxTrackedKeys = MAX_TRACKED_CREATION_WINDOWS,
     )
-    private val groupBotCreationMutex = Mutex()
+    private val commandGate = BotCommandGate()
 
     fun list(): List<AutomationBot> = repository.list()
 
-    fun create(name: String): CreatedAutomationBot = createInternal(name, managedChatId = null, createdByUid = null)
+    suspend fun create(name: String): CreatedAutomationBot {
+        val normalizedName = validateName(name)
+        return unitOfWork.write {
+            createInternal(transaction, normalizedName, managedChatId = null, createdByUid = null)
+        }
+    }
 
     /** Every active group member may create a bot scoped to that group. */
     override suspend fun createForGroup(actorUid: String, chatId: String, name: String): GroupBotCredentials {
-        return groupBotCreationMutex.withLock {
-            lifecycleGate.withChat(chatId) {
-                val actorRole = requireGroupMember(actorUid, chatId).role
-                requireGroupCreationCapacity(actorUid, chatId)
-                enforceGroupCreationRate(actorUid)
-                val created = createInternal(name, managedChatId = chatId, createdByUid = actorUid)
-                try {
-                    grantInternal(created.bot, chatId)
-                } catch (error: Throwable) {
-                    // A credential must never escape for a bot whose membership/grant did not complete.
-                    repository.revokeGrant(created.bot.botId, chatId)
-                    repository.setStatus(created.bot.botId, AutomationBot.STATUS_DISABLED)
-                    runCatching { groupMembership.removeServiceMember(chatId, created.bot.userUid) }
-                    throw error
+        val normalizedName = validateName(name)
+        enforceGroupCreationRate(actorUid)
+        return lifecycleGate.withChat(chatId) {
+            unitOfWork.write {
+                val chat = groupMembership.lockChats(
+                    transaction,
+                    listOf(chatId),
+                    requireActive = true,
+                ).getValue(chatId).chat
+                if (chat.chatType != 2) throw BotAuthorizationException("机器人只能在群聊中管理")
+
+                repository.lockCreatorQuota(transaction, actorUid)
+                val actor = groupMembership.getActiveMember(transaction, chatId, actorUid)
+                    ?: throw BotAuthorizationException("不是当前群成员")
+                requireGroupCreationCapacity(transaction, actorUid, chatId)
+
+                val created = createInternal(
+                    transaction,
+                    normalizedName,
+                    managedChatId = chatId,
+                    createdByUid = actorUid,
+                )
+                repository.grant(transaction, created.bot.botId, chatId)
+                val addition = groupMembership.addServiceMember(
+                    transaction = transaction,
+                    chatId = chatId,
+                    operatorUid = actorUid,
+                    uid = created.bot.userUid,
+                ) { facts ->
+                    require(facts.chat.chatType == 2) { "机器人只能授权到群聊" }
+                    if (facts.operator == null) throw BotAuthorizationException("不是当前群成员")
                 }
+                appendMembershipAddition(addition)
+                if (addition.addedUids.isNotEmpty()) {
+                    afterCommit { groupMembership.invalidateCommittedMembershipChange(chatId) }
+                }
+
+                val committedBot = created.bot.copy(grantedChatIds = listOf(chatId))
                 GroupBotCredentials(
-                    bot = requireBot(created.bot.botId).toGroupSummary(actorUid, actorRole, chatId),
+                    bot = committedBot.toGroupSummary(actorUid, actor.role, chatId),
                     webhookToken = created.webhookToken,
                 )
             }
@@ -102,29 +138,74 @@ class BotService(
         return repository.listForChat(chatId).map { it.toGroupSummary(actorUid, actorRole, chatId) }
     }
 
-    override fun rotateTokenForGroup(actorUid: String, chatId: String, botId: String): GroupBotCredentials {
-        val actorRole = requireGroupMember(actorUid, chatId).role
-        val bot = requireGroupOwnedBot(botId, chatId)
-        if (bot.createdByUid != actorUid) {
-            throw BotAuthorizationException("只有机器人创建者可以轮换 Token")
+    override suspend fun rotateTokenForGroup(
+        actorUid: String,
+        chatId: String,
+        botId: String,
+    ): GroupBotCredentials = commandGate.withBot(botId) {
+        val snapshot = requireBot(botId)
+        lifecycleGate.withChat(chatId) {
+            unitOfWork.write {
+                val chat = groupMembership.lockChats(
+                    transaction,
+                    listOf(chatId),
+                    requireActive = true,
+                ).getValue(chatId).chat
+                require(chat.chatType == 2) { "机器人只能在群聊中管理" }
+                repository.lockServiceIdentity(transaction, snapshot.userUid)
+                val bot = requireBotForUpdate(transaction, botId)
+                requireBotIdentity(bot, snapshot.userUid)
+                val actor = groupMembership.getActiveMember(transaction, chatId, actorUid)
+                    ?: throw BotAuthorizationException("不是当前群成员")
+                requireGroupOwnedBot(bot, chatId)
+                if (bot.createdByUid != actorUid) {
+                    throw BotAuthorizationException("只有机器人创建者可以轮换 Token")
+                }
+                require(bot.status == AutomationBot.STATUS_ACTIVE) { "机器人已停用" }
+                val secret = newToken()
+                repository.updateTokenHash(transaction, botId, hashToken(secret))
+                GroupBotCredentials(bot.toGroupSummary(actorUid, actor.role, chatId), secret)
+            }
         }
-        val rotated = rotateToken(botId)
-        return GroupBotCredentials(rotated.bot.toGroupSummary(actorUid, actorRole, chatId), rotated.webhookToken)
     }
 
     override suspend fun removeFromGroup(actorUid: String, chatId: String, botId: String) {
-        val actor = requireGroupMember(actorUid, chatId)
-        val bot = requireGroupOwnedBot(botId, chatId)
-        if (bot.createdByUid != actorUid && actor.role < 1) {
-            throw BotAuthorizationException("只能移除自己创建的机器人")
+        commandGate.withBot(botId) {
+            val snapshot = requireBot(botId)
+            lifecycleGate.withChat(chatId) {
+                unitOfWork.write {
+                    val lockedChat = groupMembership.lockChats(
+                        transaction,
+                        listOf(chatId),
+                        requireActive = true,
+                    ).getValue(chatId)
+                    val chat = lockedChat.chat
+                    require(chat.chatType == 2) { "机器人只能在群聊中管理" }
+                    repository.lockServiceIdentity(transaction, snapshot.userUid)
+                    val bot = requireBotForUpdate(transaction, botId)
+                    requireBotIdentity(bot, snapshot.userUid)
+                    val actor = groupMembership.getActiveMember(transaction, chatId, actorUid)
+                        ?: throw BotAuthorizationException("不是当前群成员")
+                    requireGroupOwnedBot(bot, chatId)
+                    if (bot.createdByUid != actorUid && actor.role < 1) {
+                        throw BotAuthorizationException("只能移除自己创建的机器人")
+                    }
+                    repository.setStatus(transaction, botId, AutomationBot.STATUS_DISABLED)
+                    repository.revokeGrant(transaction, botId, chatId)
+                    removeMembershipProjection(bot, chatId, lockedChat)
+                }
+            }
         }
-        disable(botId)
     }
 
-    private fun createInternal(name: String, managedChatId: String?, createdByUid: String?): CreatedAutomationBot {
-        require(name.isNotBlank()) { "机器人名称不能为空" }
-        require(name.trim().length <= MAX_NAME_LENGTH) { "机器人名称不能超过 $MAX_NAME_LENGTH 个字符" }
-        val account = accounts.createServiceAccount(name.trim())
+    private fun createInternal(
+        transaction: PgTransactionContext,
+        normalizedName: String,
+        managedChatId: String?,
+        createdByUid: String?,
+    ): CreatedAutomationBot {
+        val account = accounts.createServiceAccount(transaction, normalizedName)
+        repository.lockServiceIdentity(transaction, account.uid)
         val secret = newToken()
         val now = System.currentTimeMillis()
         val bot = AutomationBot(
@@ -136,55 +217,94 @@ class BotService(
             createdByUid = createdByUid,
             createdAt = now,
         )
-        repository.create(bot, hashToken(secret))
+        repository.create(transaction, bot, hashToken(secret))
         return CreatedAutomationBot(bot, secret)
     }
 
-    fun rotateToken(botId: String): CreatedAutomationBot {
-        val bot = requireBot(botId)
-        require(bot.status == AutomationBot.STATUS_ACTIVE) { "机器人已停用" }
-        val secret = newToken()
-        repository.updateTokenHash(botId, hashToken(secret))
-        return CreatedAutomationBot(requireBot(botId), secret)
-    }
-
-    suspend fun disable(botId: String) {
-        val bot = requireBot(botId)
-        repository.setStatus(botId, AutomationBot.STATUS_DISABLED)
-        for (chatId in bot.grantedChatIds) {
-            lifecycleGate.withChat(chatId) {
-                repository.revokeGrant(botId, chatId)
-                groupMembership.removeServiceMember(chatId, bot.userUid)
+    suspend fun rotateToken(botId: String): CreatedAutomationBot = commandGate.withBot(botId) {
+        val snapshot = requireBot(botId)
+        val chatIds = listOfNotNull(snapshot.managedChatId)
+        lifecycleGate.withChats(*chatIds.toTypedArray()) {
+            unitOfWork.write {
+                if (chatIds.isNotEmpty()) {
+                    groupMembership.lockChats(transaction, chatIds, requireActive = true)
+                }
+                repository.lockServiceIdentity(transaction, snapshot.userUid)
+                val bot = requireBotForUpdate(transaction, botId)
+                requireBotIdentity(bot, snapshot.userUid)
+                require(bot.status == AutomationBot.STATUS_ACTIVE) { "机器人已停用" }
+                require(bot.managedChatId == snapshot.managedChatId) { "机器人归属已变更" }
+                val secret = newToken()
+                repository.updateTokenHash(transaction, botId, hashToken(secret))
+                CreatedAutomationBot(bot, secret)
             }
         }
     }
 
-    suspend fun grant(botId: String, chatId: String): AutomationBot {
-        val bot = requireBot(botId)
-        return lifecycleGate.withChat(chatId) { grantInternal(bot, chatId) }
-    }
-
-    private suspend fun grantInternal(bot: AutomationBot, chatId: String): AutomationBot {
-        require(bot.status == AutomationBot.STATUS_ACTIVE) { "机器人已停用" }
-        if (bot.managedChatId != null && bot.managedChatId != chatId) {
-            throw BotAuthorizationException("群内创建的机器人只能用于其所属群")
+    suspend fun disable(botId: String): AutomationBot = commandGate.withBot(botId) {
+        withStableBotChats(botId) { bot, lockedChats, actualChatIds ->
+            repository.setStatus(transaction, botId, AutomationBot.STATUS_DISABLED)
+            actualChatIds.sorted().forEach { chatId ->
+                repository.revokeGrant(transaction, botId, chatId)
+                removeMembershipProjection(bot, chatId, lockedChats[chatId])
+            }
+            bot.copy(status = AutomationBot.STATUS_DISABLED, grantedChatIds = emptyList())
         }
-        access.requireGroup(chatId)
-
-        // 先提交授权事实，再幂等补齐群成员；崩溃后启动 reconciliation 会继续完成。
-        repository.grant(bot.botId, chatId)
-        groupMembership.addServiceMember(chatId, bot.userUid)
-        return requireBot(bot.botId)
     }
 
-    suspend fun revokeGrant(botId: String, chatId: String): AutomationBot {
-        val bot = requireBot(botId)
+    suspend fun grant(botId: String, chatId: String): AutomationBot = commandGate.withBot(botId) {
+        val snapshot = requireBot(botId)
         lifecycleGate.withChat(chatId) {
-            // 先撤销权限再移出群；中途崩溃最多留下一个无发送权限的可见成员，不会产生越权。
-            repository.revokeGrant(botId, chatId)
-            groupMembership.removeServiceMember(chatId, bot.userUid)
+            unitOfWork.write {
+                val chat = groupMembership.lockChats(
+                    transaction,
+                    listOf(chatId),
+                    requireActive = true,
+                ).getValue(chatId).chat
+                require(chat.chatType == 2) { "机器人只能授权到群聊" }
+                repository.lockServiceIdentity(transaction, snapshot.userUid)
+                val bot = requireBotForUpdate(transaction, botId)
+                requireBotIdentity(bot, snapshot.userUid)
+                require(bot.status == AutomationBot.STATUS_ACTIVE) { "机器人已停用" }
+                if (bot.managedChatId != null && bot.managedChatId != chatId) {
+                    throw BotAuthorizationException("群内创建的机器人只能用于其所属群")
+                }
+                repository.grant(transaction, botId, chatId)
+                val addition = groupMembership.addServiceMember(
+                    transaction = transaction,
+                    chatId = chatId,
+                    operatorUid = bot.userUid,
+                    uid = bot.userUid,
+                ) { facts ->
+                    require(facts.chat.chatType == 2) { "机器人只能授权到群聊" }
+                }
+                appendMembershipAddition(addition)
+                if (addition.addedUids.isNotEmpty()) {
+                    afterCommit { groupMembership.invalidateCommittedMembershipChange(chatId) }
+                }
+                bot.copy(grantedChatIds = (bot.grantedChatIds + chatId).distinct())
+            }
         }
-        return requireBot(botId)
+    }
+
+    suspend fun revokeGrant(botId: String, chatId: String): AutomationBot = commandGate.withBot(botId) {
+        val snapshot = requireBot(botId)
+        lifecycleGate.withChat(chatId) {
+            unitOfWork.write {
+                val lockedChats = groupMembership.lockChats(transaction, listOf(chatId), requireActive = false)
+                repository.lockServiceIdentity(transaction, snapshot.userUid)
+                val bot = requireBotForUpdate(transaction, botId)
+                requireBotIdentity(bot, snapshot.userUid)
+                repository.revokeGrant(transaction, botId, chatId)
+                val disabled = bot.managedChatId == chatId
+                if (disabled) repository.setStatus(transaction, botId, AutomationBot.STATUS_DISABLED)
+                removeMembershipProjection(bot, chatId, lockedChats[chatId])
+                bot.copy(
+                    status = if (disabled) AutomationBot.STATUS_DISABLED else bot.status,
+                    grantedChatIds = bot.grantedChatIds - chatId,
+                )
+            }
+        }
     }
 
     override suspend fun deliver(
@@ -193,7 +313,7 @@ class BotService(
         chatId: String,
         markdown: String,
         idempotencyKey: String,
-    ): BotDeliveryResult {
+    ): BotDeliveryResult = commandGate.withBot(botId) {
         val bot = authenticate(botId, token)
         if (markdown.isBlank()) throw BotRequestException("markdown 不能为空")
         if (markdown.length > MAX_MARKDOWN_LENGTH) throw BotRequestException("markdown 不能超过 $MAX_MARKDOWN_LENGTH 个字符")
@@ -221,56 +341,167 @@ class BotService(
             throw BotAuthorizationException(e.message ?: "机器人当前不能向该群发送")
         }
         repository.touch(botId, System.currentTimeMillis())
-        return BotDeliveryResult(chatId, seq, clientMsgId)
+        BotDeliveryResult(chatId, seq, clientMsgId)
     }
 
-    /** 启动恢复：授权表是事实源，确保所有活动机器人仍是对应群成员。 */
+    /** 启动恢复：以 grant + member/Conversation/mute 投影并集清理负状态。 */
     suspend fun recoverGrantMemberships(): List<String> {
         val failures = mutableListOf<String>()
-        for (bot in repository.list().filter { it.status == AutomationBot.STATUS_ACTIVE }) {
-            bot.managedChatId?.takeIf { it !in bot.grantedChatIds }?.let { chatId ->
-                runCatching {
-                    lifecycleGate.withChat(chatId) {
-                        val current = repository.find(bot.botId)
-                        if (
-                            current?.status == AutomationBot.STATUS_ACTIVE &&
-                            !repository.isGranted(bot.botId, chatId)
-                        ) {
-                            // The process may have stopped after creating the service identity but
-                            // before committing its only group grant. No credential was returned,
-                            // so disable the unreachable orphan instead of charging quota forever.
-                            repository.setStatus(bot.botId, AutomationBot.STATUS_DISABLED)
+        repository.list().map(AutomationBot::botId).distinct().forEach { botId ->
+            try {
+                commandGate.withBot(botId) {
+                    withStableBotChats(botId) { bot, lockedChats, actualChatIds ->
+                        val managedChat = bot.managedChatId
+                        val managedChatIsUsable = managedChat == null || (
+                            lockedChats[managedChat]?.active == true &&
+                                lockedChats.getValue(managedChat).chat.chatType == 2 &&
+                                managedChat in bot.grantedChatIds
+                            )
+                        val shouldDisable =
+                            bot.status != AutomationBot.STATUS_ACTIVE || !managedChatIsUsable
+                        if (shouldDisable && bot.status != AutomationBot.STATUS_DISABLED) {
+                            repository.setStatus(transaction, botId, AutomationBot.STATUS_DISABLED)
                         }
-                    }
-                }.onFailure { failures += "${bot.botId}:$chatId" }
-            }
-            for (chatId in bot.grantedChatIds) {
-                runCatching {
-                    lifecycleGate.withChat(chatId) {
-                        val current = repository.find(bot.botId)
-                        if (
-                            current?.status == AutomationBot.STATUS_ACTIVE &&
-                            repository.isGranted(bot.botId, chatId)
-                        ) {
-                            groupMembership.addServiceMember(chatId, bot.userUid)
+
+                        val desiredChatIds = if (shouldDisable) {
+                            emptySet()
+                        } else {
+                            bot.grantedChatIds.filterTo(linkedSetOf()) { chatId ->
+                                lockedChats[chatId]?.let { it.active && it.chat.chatType == 2 } == true
+                            }
+                        }
+
+                        actualChatIds.sorted().forEach { chatId ->
+                            if (chatId in desiredChatIds) {
+                                val addition = groupMembership.addServiceMember(
+                                    transaction = transaction,
+                                    chatId = chatId,
+                                    operatorUid = bot.userUid,
+                                    uid = bot.userUid,
+                                ) { facts ->
+                                    require(facts.chat.chatType == 2) { "机器人只能授权到群聊" }
+                                }
+                                appendMembershipAddition(addition)
+                                if (addition.addedUids.isNotEmpty()) {
+                                    afterCommit {
+                                        groupMembership.invalidateCommittedMembershipChange(chatId)
+                                    }
+                                }
+                            } else {
+                                repository.revokeGrant(transaction, botId, chatId)
+                                removeMembershipProjection(bot, chatId, lockedChats[chatId])
+                            }
                         }
                     }
                 }
-                    .onFailure { failures += "${bot.botId}:$chatId" }
+            } catch (error: Throwable) {
+                when (error) {
+                    is CancellationException -> throw error
+                    is Error -> throw error
+                    else -> failures += botId
+                }
             }
         }
         return failures
+    }
+
+    /** Caller already owns the bounded bot command gate. */
+    private suspend fun <T> withStableBotChats(
+        botId: String,
+        block: suspend PgWriteScope.(AutomationBot, Map<String, LockedChat>, Set<String>) -> T,
+    ): T {
+        repeat(MAX_AGGREGATE_SNAPSHOT_RETRIES) {
+            val snapshot = requireBot(botId)
+            val candidateChatIds = (
+                snapshot.grantedChatIds +
+                    groupMembership.projectedChatIds(snapshot.userUid) +
+                    listOfNotNull(snapshot.managedChatId)
+                ).toSortedSet()
+            try {
+                return lifecycleGate.withChats(*candidateChatIds.toTypedArray()) {
+                    unitOfWork.write {
+                        val lockedChats = groupMembership.lockChats(
+                            transaction,
+                            candidateChatIds,
+                            requireActive = false,
+                        )
+                        repository.lockServiceIdentity(transaction, snapshot.userUid)
+                        val current = requireBotForUpdate(transaction, botId)
+                        requireBotIdentity(current, snapshot.userUid)
+                        val projectedChatIds = groupMembership.projectedChatIds(transaction, current.userUid)
+                        val actualChatIds = (
+                            current.grantedChatIds + projectedChatIds + listOfNotNull(current.managedChatId)
+                            ).toSet()
+                        if (!candidateChatIds.containsAll(actualChatIds)) {
+                            throw RetryBotAggregateSnapshotException()
+                        }
+                        block(current, lockedChats, actualChatIds)
+                    }
+                }
+            } catch (_: RetryBotAggregateSnapshotException) {
+                // A concurrent process committed a new chat edge before the bot lock. This UoW
+                // rolled back without changes; expand the gate set and retry.
+            }
+        }
+        error("机器人聚合持续变化，请重试: $botId")
+    }
+
+    private fun PgWriteScope.appendMembershipAddition(addition: GroupMemberAddition) {
+        if (addition.addedUids.isEmpty()) return
+        addition.addedUids.forEach { uid ->
+            appendEvent(uid, NotifyType.CHAT_CREATED, addition.chat)
+        }
+        addition.activeMemberUids.forEach { uid ->
+            appendEvent(uid, NotifyType.MEMBER_ADDED, addition.chat)
+        }
+    }
+
+    private fun PgWriteScope.removeMembershipProjection(
+        bot: AutomationBot,
+        chatId: String,
+        lockedChat: LockedChat?,
+    ) {
+        val cleanup = groupMembership.cleanupServiceMemberProjection(
+            transaction = transaction,
+            chatId = chatId,
+            uid = bot.userUid,
+            lockedChat = lockedChat,
+        ) ?: return
+
+        if (cleanup.membershipDeactivated) {
+            appendEvent(bot.userUid, NotifyType.CHAT_DELETED, cleanup.chat)
+            cleanup.remainingMemberUids.forEach { uid ->
+                appendEvent(uid, NotifyType.MEMBER_REMOVED, cleanup.chat)
+            }
+        }
+        if (cleanup.conversationDeleted) {
+            appendEvent(
+                bot.userUid,
+                NotifyType.CONVERSATION_DELETED,
+                Conversation(chatId = cleanup.chat.chatId, chatType = 0),
+            )
+        }
+        afterCommit { groupMembership.invalidateCommittedMembershipChange(chatId) }
     }
 
     private fun authenticate(botId: String, token: String?): AutomationBot {
         if (token.isNullOrBlank()) throw BotAuthenticationException()
         val bot = repository.findByTokenHash(hashToken(token)) ?: throw BotAuthenticationException()
         if (bot.botId != botId || bot.status != AutomationBot.STATUS_ACTIVE) throw BotAuthenticationException()
+        if (!repository.isServiceIdentity(bot.userUid)) throw BotAuthenticationException()
         return bot
     }
 
     private fun requireBot(botId: String): AutomationBot =
         repository.find(botId) ?: throw IllegalArgumentException("机器人不存在: $botId")
+
+    private fun requireBotForUpdate(transaction: PgTransactionContext, botId: String): AutomationBot =
+        repository.findForUpdate(transaction, botId)
+            ?: throw IllegalArgumentException("机器人不存在: $botId")
+
+    private fun requireBotIdentity(bot: AutomationBot, expectedUserUid: String) {
+        check(bot.userUid == expectedUserUid) { "机器人服务身份在锁定前发生变化" }
+    }
 
     private fun requireGroupMember(actorUid: String, chatId: String): Member {
         return try {
@@ -281,25 +512,27 @@ class BotService(
         }
     }
 
-    private fun requireGroupOwnedBot(botId: String, chatId: String): AutomationBot {
-        val bot = requireBot(botId)
-        if (bot.managedChatId != chatId || !repository.isGranted(botId, chatId)) {
+    private fun requireGroupOwnedBot(bot: AutomationBot, chatId: String) {
+        if (bot.managedChatId != chatId || chatId !in bot.grantedChatIds) {
             throw BotAuthorizationException("该机器人不由当前群管理")
         }
-        return bot
     }
 
-    private fun requireGroupCreationCapacity(actorUid: String, chatId: String) {
-        if (repository.countActiveManagedForChat(chatId) >= MAX_MANAGED_BOTS_PER_GROUP) {
+    private fun requireGroupCreationCapacity(
+        transaction: PgTransactionContext,
+        actorUid: String,
+        chatId: String,
+    ) {
+        if (repository.countActiveManagedForChat(transaction, chatId) >= MAX_MANAGED_BOTS_PER_GROUP) {
             throw BotRequestException("本群机器人数量已达上限 $MAX_MANAGED_BOTS_PER_GROUP")
         }
         if (
-            repository.countActiveManagedForCreatorInChat(actorUid, chatId) >=
+            repository.countActiveManagedForCreatorInChat(transaction, actorUid, chatId) >=
             MAX_MANAGED_BOTS_PER_CREATOR_IN_GROUP
         ) {
             throw BotRequestException("每位成员在同一群最多创建 $MAX_MANAGED_BOTS_PER_CREATOR_IN_GROUP 个机器人")
         }
-        if (repository.countActiveManagedForCreator(actorUid) >= MAX_MANAGED_BOTS_PER_CREATOR) {
+        if (repository.countActiveManagedForCreator(transaction, actorUid) >= MAX_MANAGED_BOTS_PER_CREATOR) {
             throw BotRequestException("每位成员最多管理 $MAX_MANAGED_BOTS_PER_CREATOR 个机器人")
         }
     }
@@ -332,6 +565,13 @@ class BotService(
         }
     }
 
+    private fun validateName(name: String): String {
+        require(name.isNotBlank()) { "机器人名称不能为空" }
+        val normalized = name.trim()
+        require(normalized.length <= MAX_NAME_LENGTH) { "机器人名称不能超过 $MAX_NAME_LENGTH 个字符" }
+        return normalized
+    }
+
     private fun newToken(): String =
         "ttb_" + Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32).also(random::nextBytes))
 
@@ -353,5 +593,27 @@ class BotService(
         private const val GROUP_CREATION_RATE_WINDOW_MILLIS = 60 * 60_000L
         private const val MAX_TRACKED_DELIVERY_WINDOWS = 100_000
         private const val MAX_TRACKED_CREATION_WINDOWS = 50_000
+        private const val MAX_AGGREGATE_SNAPSHOT_RETRIES = 8
     }
 }
+
+/** Fixed-size process-local serialization for delivery, rotation and authorization changes. */
+internal class BotCommandGate(stripeCount: Int = DEFAULT_STRIPE_COUNT) {
+    private val stripes = Array(stripeCount.coerceAtLeast(1)) { Mutex() }
+
+    suspend fun <T> withBot(botId: String, block: suspend () -> T): T {
+        val mutex = stripes[(botId.hashCode() and Int.MAX_VALUE) % stripes.size]
+        mutex.lock()
+        return try {
+            block()
+        } finally {
+            mutex.unlock()
+        }
+    }
+
+    private companion object {
+        const val DEFAULT_STRIPE_COUNT = 256
+    }
+}
+
+private class RetryBotAggregateSnapshotException : RuntimeException()

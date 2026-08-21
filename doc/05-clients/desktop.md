@@ -123,7 +123,40 @@ Desktop 依靠键盘搜索、鼠标滚轮和 sticky 分组，不显示移动端�
 焦点是桌面体验的一部分：登录打开时聚焦账号输入；打开会话后聚焦编辑器；关闭补全或弹层后恢复原
 焦点。不能仅依赖某个 Compose focusable 节点接收 ESC，窗口级临时容器需要可靠的键盘拦截。
 
-## 11. 可测试性
+## 11. 私有数据目录
+
+Desktop 不再把运行数据放在安装目录或开发仓库。默认用户级根目录为：
+
+| 平台 | 路径 |
+|---|---|
+| macOS | `~/Library/Application Support/TeamTalk` |
+| Windows | `%LOCALAPPDATA%\TeamTalk`；环境缺失时使用 `~/AppData/Local/TeamTalk` |
+| Linux | `$XDG_DATA_HOME/teamtalk`；未设置或为相对路径时使用 `~/.local/share/teamtalk` |
+
+`-Dteamtalk.data.dir=<absolute-path>` 只用于显式开发/诊断 profile：路径必须绝对、父目录已存在，父链不能
+经过符号链接或由其他普通用户修改。Gradle `:desktop:run` 与安装包使用相同的平台默认路径，不再隐式
+回退到仓库 `data/desktop`。需要隔离开发数据时必须显式传入已准备的私有目录。
+
+数据根带固定 marker。POSIX 根和账号 namespace 必须为 `0700`；认证文件、device-id、SQLite 主 DB 与
+crash pending 必须为 `0600`，同时校验 owner、符号链接和硬链接。SQLite 自建的 journal/WAL/SHM
+sidecar 以账号 namespace 为安全边界，不承诺其单文件 mode 恒为 `0600`，但不得逃出该目录。macOS 还会
+用固定原生命令检查扩展 ACL；Windows 使用当前 owner 的精确 ACL，父目录 ACL 会拒绝 Everyone/Users 等
+非 owner 主体对当前目录或新建子项的创建、写入、删除或改 ACL 权限。已有路径不由启动代码静默
+`chmod`、改 owner、清 ACL 或放宽 ACL，不满足门禁时直接拒绝启动。
+
+旧版安装目录旁的 `data/` 只在以下条件全部成立时自动复制一次：新用户根不存在；旧根及其整棵树已是
+同一 OS 用户的私有真实目录/文件；不存在符号链接或过宽权限，POSIX 文件的硬链接数为 1；
+旧版留下的 `.lock` 存在且未被
+进程持有。启动器先复制到新根同文件系统的私有 staging，逐文件 fsync，写入绑定旧绝对路径的 receipt，
+最后原子发布新根。旧 `data/` 的路径、内容和权限保持不变，也不会被删除。以后两处同时存在时，只有
+marker、receipt、source 路径和旧树私有性全部匹配才接受；其他双根冲突一律拒绝，绝不猜测应使用哪个
+账号。迁移后不要再运行会写旧 `data/` 的旧版客户端。
+
+若旧树不满足门禁，应先离线备份并由用户/管理员人工处理权限，或使用新的显式私有 profile 重新认证；
+TeamTalk 不会为了“自动成功”读取其他用户或宽权限目录中的 refresh token。本地缓存可从服务器重建，
+但未上服草稿和待发状态需由操作者决定是否人工保留。
+
+## 12. 可测试性
 
 Desktop 内置只绑定 loopback 的 HTTP 测试服务，导出语义树、点击、输入、按键和截图。稳定入口使用
 testTag，不以可变中文文案或屏幕坐标作为首选。多窗口操作必须指定 window ID。

@@ -3,18 +3,24 @@ package com.virjar.tk.infra.db.repository
 import com.virjar.tk.domain.document.DocumentRepository
 import com.virjar.tk.domain.document.DocumentHomeRecord
 import com.virjar.tk.domain.document.DocumentSpaceAccessCandidate
+import com.virjar.tk.domain.document.DocumentWriteAuthority
+import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.infra.db.DocumentContentRevisions
 import com.virjar.tk.infra.db.DocumentNodes
 import com.virjar.tk.infra.db.DocumentSpaceGrants
 import com.virjar.tk.infra.db.DocumentSpaces
 import com.virjar.tk.infra.db.DocumentUserRecents
+import com.virjar.tk.infra.db.OrganizationUnits
 import com.virjar.tk.infra.db.Users
+import com.virjar.tk.infra.db.requireExposedTransaction
 import com.virjar.tk.model.Document
 import com.virjar.tk.model.DocumentNode
 import com.virjar.tk.model.DocumentRevision
 import com.virjar.tk.model.DocumentRevisionSummary
 import com.virjar.tk.model.DocumentSpace
 import com.virjar.tk.model.DocumentSpaceGrant
+import com.virjar.tk.model.OrganizationUnit
+import com.virjar.tk.model.User
 import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.JoinType
 import org.jetbrains.exposed.sql.Op
@@ -94,7 +100,38 @@ class ExposedDocumentRepository : DocumentRepository {
         )
     }
 
-    override fun createSpace(space: DocumentSpace): DocumentSpace = transaction {
+    override fun lockWriteAuthority(
+        transaction: PgTransactionContext,
+        actorUid: String,
+        spaceId: String,
+        requiredOrganizationUnitIds: Set<String>,
+        requiredUserIds: Set<String>,
+    ): DocumentWriteAuthority = ExposedDocumentWriteAuthority.lock(
+        transaction = transaction,
+        actorUid = actorUid,
+        spaceId = spaceId,
+        requiredOrganizationUnitIds = requiredOrganizationUnitIds,
+        requiredUserIds = requiredUserIds,
+    )
+
+    override fun findUser(transaction: PgTransactionContext, uid: String): User? =
+        inWriteTransaction(transaction) {
+            Users.selectAll().where { Users.uid eq uid }.singleOrNull()?.toDocumentAclUser()
+        }
+
+    override fun findActiveOrganizationUnitName(
+        transaction: PgTransactionContext,
+        unitId: String,
+    ): String? = inWriteTransaction(transaction) {
+        OrganizationUnits.selectAll().where {
+            OrganizationUnits.unitId eq unitId
+        }.singleOrNull()
+            ?.takeIf { it[OrganizationUnits.status] == OrganizationUnit.STATUS_ACTIVE }
+            ?.get(OrganizationUnits.name)
+    }
+
+    override fun createSpace(transaction: PgTransactionContext, space: DocumentSpace): DocumentSpace =
+        inWriteTransaction(transaction) {
         DocumentSpaces.insert {
             it[spaceId] = space.spaceId
             it[name] = space.name
@@ -107,7 +144,14 @@ class ExposedDocumentRepository : DocumentRepository {
         space
     }
 
-    override fun updateSpace(spaceId: String, name: String, description: String?, updatedAt: Long): DocumentSpace = transaction {
+    override fun updateSpace(
+        transaction: PgTransactionContext,
+        spaceId: String,
+        name: String,
+        description: String?,
+        updatedAt: Long,
+    ): DocumentSpace = inWriteTransaction(transaction) {
+        lockSpace(spaceId)
         val updated = DocumentSpaces.update({
             (DocumentSpaces.spaceId eq spaceId) and (DocumentSpaces.status eq STATUS_ACTIVE)
         }) {
@@ -119,8 +163,9 @@ class ExposedDocumentRepository : DocumentRepository {
         requireActiveSpace(spaceId)
     }
 
-    override fun archiveSpace(spaceId: String, updatedAt: Long) {
-        transaction {
+    override fun archiveSpace(transaction: PgTransactionContext, spaceId: String, updatedAt: Long) {
+        inWriteTransaction(transaction) {
+            lockSpace(spaceId)
             val updated = DocumentSpaces.update({
                 (DocumentSpaces.spaceId eq spaceId) and (DocumentSpaces.status eq STATUS_ACTIVE)
             }) {
@@ -137,8 +182,8 @@ class ExposedDocumentRepository : DocumentRepository {
             .map(ResultRow::toDocumentSpaceGrant)
     }
 
-    override fun upsertGrant(grant: DocumentSpaceGrant) {
-        transaction {
+    override fun upsertGrant(transaction: PgTransactionContext, grant: DocumentSpaceGrant) {
+        inWriteTransaction(transaction) {
             lockSpace(grant.spaceId)
             val existing = DocumentSpaceGrants.selectAll().where {
                 (DocumentSpaceGrants.spaceId eq grant.spaceId) and
@@ -168,8 +213,13 @@ class ExposedDocumentRepository : DocumentRepository {
         }
     }
 
-    override fun removeGrant(spaceId: String, principalType: Int, principalId: String) {
-        transaction {
+    override fun removeGrant(
+        transaction: PgTransactionContext,
+        spaceId: String,
+        principalType: Int,
+        principalId: String,
+    ) {
+        inWriteTransaction(transaction) {
             lockSpace(spaceId)
             DocumentSpaceGrants.deleteWhere {
                 (DocumentSpaceGrants.spaceId eq spaceId) and
@@ -180,6 +230,18 @@ class ExposedDocumentRepository : DocumentRepository {
     }
 
     override fun listNodes(spaceId: String, parentId: String?): List<DocumentNode> = transaction {
+        listNodesInternal(spaceId, parentId)
+    }
+
+    override fun listNodes(
+        transaction: PgTransactionContext,
+        spaceId: String,
+        parentId: String?,
+    ): List<DocumentNode> = inWriteTransaction(transaction) {
+        listNodesInternal(spaceId, parentId)
+    }
+
+    private fun listNodesInternal(spaceId: String, parentId: String?): List<DocumentNode> =
         DocumentNodes.select(
             DocumentNodes.nodeId,
             DocumentNodes.spaceId,
@@ -197,20 +259,32 @@ class ExposedDocumentRepository : DocumentRepository {
             (DocumentNodes.spaceId eq spaceId) and parentMatches and (DocumentNodes.status eq STATUS_ACTIVE)
         }.orderBy(DocumentNodes.nodeType to SortOrder.ASC, DocumentNodes.name to SortOrder.ASC)
             .map(ResultRow::toDocumentNode)
-    }
 
     override fun findNode(nodeId: String): DocumentNode? = transaction {
         findActiveNodeRow(nodeId)?.toDocumentNode()
     }
 
+    override fun findNode(transaction: PgTransactionContext, nodeId: String): DocumentNode? =
+        inWriteTransaction(transaction) {
+            findActiveNodeRow(nodeId)?.toDocumentNode()
+        }
+
     override fun findDocument(documentId: String): Document? = transaction {
-        val row = findActiveNodeRow(documentId)
-            ?.takeIf { it[DocumentNodes.nodeType] == DocumentNode.TYPE_DOCUMENT }
-            ?: return@transaction null
-        row.toDocument(resolveAncestorIds(row[DocumentNodes.spaceId], row[DocumentNodes.parentId]))
+        findDocumentInternal(documentId)
     }
 
-    override fun createFolder(node: DocumentNode): DocumentNode = transaction {
+    override fun findDocument(transaction: PgTransactionContext, documentId: String): Document? =
+        inWriteTransaction(transaction) { findDocumentInternal(documentId) }
+
+    private fun findDocumentInternal(documentId: String): Document? {
+        val row = findActiveNodeRow(documentId)
+            ?.takeIf { it[DocumentNodes.nodeType] == DocumentNode.TYPE_DOCUMENT }
+            ?: return null
+        return row.toDocument(resolveAncestorIds(row[DocumentNodes.spaceId], row[DocumentNodes.parentId]))
+    }
+
+    override fun createFolder(transaction: PgTransactionContext, node: DocumentNode): DocumentNode =
+        inWriteTransaction(transaction) {
         lockSpace(node.spaceId)
         val ancestorIds = resolveAncestorIds(node.spaceId, node.parentId)
         require(ancestorIds.size < Document.MAX_ANCESTOR_DEPTH) { "文档目录层级超过限制" }
@@ -218,29 +292,37 @@ class ExposedDocumentRepository : DocumentRepository {
         node
     }
 
-    override fun createDocument(document: Document, initialRevision: DocumentRevision): Document = transaction {
+    override fun createDocument(
+        transaction: PgTransactionContext,
+        document: Document,
+        initialRevision: DocumentRevision,
+    ): Document = inWriteTransaction(transaction) {
         lockSpace(document.spaceId)
         val ancestorIds = resolveAncestorIds(document.spaceId, document.parentId)
         insertNode(document.toNode(), document.markdown)
         insertRevision(initialRevision)
-        // 创建与“创建者最近访问”属于同一提交，避免辅助索引失败却留下重复业务文档。
-        touchRecentDocumentInternal(document.createdBy, document.documentId, document.createdAt)
         document.copy(ancestorIds = ancestorIds)
     }
 
     override fun updateDocument(
+        transaction: PgTransactionContext,
+        spaceId: String,
         documentId: String,
         expectedRevision: Long,
         title: String,
         markdown: String,
         actorUid: String,
         updatedAt: Long,
-    ): Document = transaction {
+    ): Document = inWriteTransaction(transaction) {
+        // Explicit aggregate fence: archive must either commit first and make this fail closed, or
+        // wait until the entire current snapshot + immutable revision append has committed.
+        lockSpace(spaceId)
         val current = requireActiveNodeRow(documentId, forUpdate = true)
+        require(current[DocumentNodes.spaceId] == spaceId) { "文档不属于当前空间" }
         require(current[DocumentNodes.nodeType] == DocumentNode.TYPE_DOCUMENT) { "节点不是文档" }
         require(current[DocumentNodes.revision] == expectedRevision) { CONFLICT_MESSAGE }
         if (current[DocumentNodes.name] == title && current[DocumentNodes.markdown].orEmpty() == markdown) {
-            return@transaction current.toDocument(
+            return@inWriteTransaction current.toDocument(
                 resolveAncestorIds(current[DocumentNodes.spaceId], current[DocumentNodes.parentId]),
             )
         }
@@ -264,16 +346,18 @@ class ExposedDocumentRepository : DocumentRepository {
     }
 
     override fun moveNode(
+        transaction: PgTransactionContext,
+        spaceId: String,
         nodeId: String,
         expectedRevision: Long,
         parentId: String?,
         name: String,
         actorUid: String,
         updatedAt: Long,
-    ): DocumentNode = transaction {
-        val spaceId = requireActiveNodeSpaceId(nodeId)
+    ): DocumentNode = inWriteTransaction(transaction) {
         lockSpace(spaceId)
         val current = requireActiveNodeRow(nodeId, forUpdate = true)
+        require(current[DocumentNodes.spaceId] == spaceId) { "文档节点不属于当前空间" }
         require(current[DocumentNodes.revision] == expectedRevision) { CONFLICT_MESSAGE }
         val targetAncestorIds = resolveAncestorIds(spaceId, parentId)
         require(nodeId !in targetAncestorIds) { "目录不能移动到自己的下级目录" }
@@ -313,11 +397,18 @@ class ExposedDocumentRepository : DocumentRepository {
         requireActiveNodeRow(nodeId).toDocumentNode()
     }
 
-    override fun deleteNode(nodeId: String, expectedRevision: Long, actorUid: String, updatedAt: Long) {
-        transaction {
-            val spaceId = requireActiveNodeSpaceId(nodeId)
+    override fun deleteNode(
+        transaction: PgTransactionContext,
+        spaceId: String,
+        nodeId: String,
+        expectedRevision: Long,
+        actorUid: String,
+        updatedAt: Long,
+    ) {
+        inWriteTransaction(transaction) {
             lockSpace(spaceId)
             val current = requireActiveNodeRow(nodeId, forUpdate = true)
+            require(current[DocumentNodes.spaceId] == spaceId) { "文档节点不属于当前空间" }
             require(current[DocumentNodes.revision] == expectedRevision) { CONFLICT_MESSAGE }
             if (current[DocumentNodes.nodeType] == DocumentNode.TYPE_FOLDER) {
                 require(!hasActiveChildren(nodeId)) { "请先清空文件夹" }
@@ -349,8 +440,13 @@ class ExposedDocumentRepository : DocumentRepository {
         }.singleOrNull()?.toDocumentRevision()
     }
 
-    override fun touchRecentDocument(actorUid: String, documentId: String, accessedAt: Long) {
-        transaction {
+    override fun touchRecentDocument(
+        transaction: PgTransactionContext,
+        actorUid: String,
+        documentId: String,
+        accessedAt: Long,
+    ) {
+        inWriteTransaction(transaction) {
             touchRecentDocumentInternal(actorUid, documentId, accessedAt)
         }
     }
@@ -443,10 +539,19 @@ class ExposedDocumentRepository : DocumentRepository {
         otherColumn = Users.uid,
     )
 
-    private fun lockSpace(spaceId: String) {
-        require(DocumentSpaces.selectAll().where {
+    private inline fun <T> inWriteTransaction(
+        transaction: PgTransactionContext,
+        block: () -> T,
+    ): T {
+        transaction.requireExposedTransaction()
+        return block()
+    }
+
+    private fun lockSpace(spaceId: String): DocumentSpace {
+        val row = DocumentSpaces.selectAll().where {
             (DocumentSpaces.spaceId eq spaceId) and (DocumentSpaces.status eq STATUS_ACTIVE)
-        }.forUpdate().singleOrNull() != null) { "文档空间不存在" }
+        }.forUpdate().singleOrNull() ?: throw IllegalArgumentException("文档空间不存在")
+        return row.toDocumentSpace()
     }
 
     private fun requireActiveSpace(spaceId: String): DocumentSpace =
@@ -465,15 +570,6 @@ class ExposedDocumentRepository : DocumentRepository {
         return (if (forUpdate) query.forUpdate() else query).singleOrNull()
             ?: throw IllegalArgumentException("文档节点不存在")
     }
-
-    private fun requireActiveNodeSpaceId(nodeId: String): String = DocumentNodes
-        .select(DocumentNodes.spaceId)
-        .where {
-            (DocumentNodes.nodeId eq nodeId) and (DocumentNodes.status eq STATUS_ACTIVE)
-        }
-        .singleOrNull()
-        ?.get(DocumentNodes.spaceId)
-        ?: throw IllegalArgumentException("文档节点不存在")
 
     private fun resolveAncestorIds(spaceId: String, parentId: String?): List<String> {
         if (parentId == null) return emptyList()
@@ -591,7 +687,7 @@ class ExposedDocumentRepository : DocumentRepository {
     }
 }
 
-private fun ResultRow.toDocumentSpace() = DocumentSpace(
+internal fun ResultRow.toDocumentSpace() = DocumentSpace(
     spaceId = this[DocumentSpaces.spaceId],
     name = this[DocumentSpaces.name],
     description = this[DocumentSpaces.description],
@@ -601,7 +697,7 @@ private fun ResultRow.toDocumentSpace() = DocumentSpace(
     updatedAt = this[DocumentSpaces.updatedAt],
 )
 
-private fun ResultRow.toDocumentSpaceGrant() = DocumentSpaceGrant(
+internal fun ResultRow.toDocumentSpaceGrant() = DocumentSpaceGrant(
     spaceId = this[DocumentSpaceGrants.spaceId],
     principalType = this[DocumentSpaceGrants.principalType],
     principalId = this[DocumentSpaceGrants.principalId],

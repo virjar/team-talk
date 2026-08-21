@@ -1,11 +1,13 @@
 package com.virjar.tk.domain.document
 
+import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.model.Document
 import com.virjar.tk.model.DocumentNode
 import com.virjar.tk.model.DocumentRevision
 import com.virjar.tk.model.DocumentRevisionSummary
 import com.virjar.tk.model.DocumentSpace
 import com.virjar.tk.model.DocumentSpaceGrant
+import com.virjar.tk.model.User
 
 /** 文档空间持久化端口。正文修订只追加，节点变更使用 revision 乐观锁。 */
 interface DocumentRepository {
@@ -15,20 +17,57 @@ interface DocumentRepository {
         directUnitIds: Set<String>,
         unitAndAncestorIds: Set<String>,
     ): List<DocumentSpaceAccessCandidate>
-    fun createSpace(space: DocumentSpace): DocumentSpace
-    fun updateSpace(spaceId: String, name: String, description: String?, updatedAt: Long): DocumentSpace
-    fun archiveSpace(spaceId: String, updatedAt: Long)
+    /**
+     * Lock the active space aggregate and resolve the actor's ACL from the same PostgreSQL
+     * transaction. Implementations must serialize this snapshot with grant revocation, space
+     * archival and every node/revision write rooted at the space.
+     */
+    fun lockWriteAuthority(
+        transaction: PgTransactionContext,
+        actorUid: String,
+        spaceId: String,
+        requiredOrganizationUnitIds: Set<String> = emptySet(),
+        requiredUserIds: Set<String> = emptySet(),
+    ): DocumentWriteAuthority
+
+    /** Resolve grant principals inside the command transaction after authority pre-locks them. */
+    fun findUser(transaction: PgTransactionContext, uid: String): User?
+    fun findActiveOrganizationUnitName(transaction: PgTransactionContext, unitId: String): String?
+
+    fun createSpace(transaction: PgTransactionContext, space: DocumentSpace): DocumentSpace
+    fun updateSpace(
+        transaction: PgTransactionContext,
+        spaceId: String,
+        name: String,
+        description: String?,
+        updatedAt: Long,
+    ): DocumentSpace
+    fun archiveSpace(transaction: PgTransactionContext, spaceId: String, updatedAt: Long)
 
     fun listGrants(spaceId: String): List<DocumentSpaceGrant>
-    fun upsertGrant(grant: DocumentSpaceGrant)
-    fun removeGrant(spaceId: String, principalType: Int, principalId: String)
+    fun upsertGrant(transaction: PgTransactionContext, grant: DocumentSpaceGrant)
+    fun removeGrant(
+        transaction: PgTransactionContext,
+        spaceId: String,
+        principalType: Int,
+        principalId: String,
+    )
 
     fun listNodes(spaceId: String, parentId: String?): List<DocumentNode>
     fun findNode(nodeId: String): DocumentNode?
     fun findDocument(documentId: String): Document?
-    fun createFolder(node: DocumentNode): DocumentNode
-    fun createDocument(document: Document, initialRevision: DocumentRevision): Document
+    fun listNodes(transaction: PgTransactionContext, spaceId: String, parentId: String?): List<DocumentNode>
+    fun findNode(transaction: PgTransactionContext, nodeId: String): DocumentNode?
+    fun findDocument(transaction: PgTransactionContext, documentId: String): Document?
+    fun createFolder(transaction: PgTransactionContext, node: DocumentNode): DocumentNode
+    fun createDocument(
+        transaction: PgTransactionContext,
+        document: Document,
+        initialRevision: DocumentRevision,
+    ): Document
     fun updateDocument(
+        transaction: PgTransactionContext,
+        spaceId: String,
         documentId: String,
         expectedRevision: Long,
         title: String,
@@ -37,6 +76,8 @@ interface DocumentRepository {
         updatedAt: Long,
     ): Document
     fun moveNode(
+        transaction: PgTransactionContext,
+        spaceId: String,
         nodeId: String,
         expectedRevision: Long,
         parentId: String?,
@@ -44,12 +85,24 @@ interface DocumentRepository {
         actorUid: String,
         updatedAt: Long,
     ): DocumentNode
-    fun deleteNode(nodeId: String, expectedRevision: Long, actorUid: String, updatedAt: Long)
+    fun deleteNode(
+        transaction: PgTransactionContext,
+        spaceId: String,
+        nodeId: String,
+        expectedRevision: Long,
+        actorUid: String,
+        updatedAt: Long,
+    )
 
     fun listRevisions(documentId: String): List<DocumentRevisionSummary>
     fun findRevision(documentId: String, revision: Long): DocumentRevision?
 
-    fun touchRecentDocument(actorUid: String, documentId: String, accessedAt: Long)
+    fun touchRecentDocument(
+        transaction: PgTransactionContext,
+        actorUid: String,
+        documentId: String,
+        accessedAt: Long,
+    )
     fun listRecentDocuments(
         actorUid: String,
         accessibleSpaceIds: Set<String>,
@@ -60,6 +113,20 @@ interface DocumentRepository {
         limit: Int,
     ): List<DocumentHomeRecord>
 }
+
+/**
+ * Authorization facts captured only after the active space row is locked.
+ *
+ * Direct membership rows and every active organization row used to resolve an inherited grant are
+ * locked by the adapter before this value is returned. The domain remains the owner of effective
+ * role semantics while PostgreSQL owns the linearization boundary.
+ */
+data class DocumentWriteAuthority(
+    val space: DocumentSpace,
+    val grants: List<DocumentSpaceGrant>,
+    val directUnitIds: Set<String>,
+    val unitAndAncestorIds: Set<String>,
+)
 
 /** SQL 侧预筛后的空间及相关授权；领域层仍须执行最终 effectiveRole 判定。 */
 data class DocumentSpaceAccessCandidate(

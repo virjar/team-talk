@@ -72,13 +72,12 @@ class ChatService(
 
     suspend fun dissolveGroup(operatorUid: String, chatId: String) = lifecycleGate.withChat(chatId) {
         requireUserManaged(chatId)
-        val chat = chatStore.getChat(chatId) ?: throw IllegalArgumentException("聊天不存在")
-        require(chat.chatType == 2) { "单聊不能解散，请删除自己的会话视图" }
-        access.requireOwner(operatorUid, chatId)
-        val memberUids = chatStore.getMemberUids(chatId)
-        requiredParticipants.onChatDeactivated(chatId)
-        chatStore.deactivateChat(chatId)
-        events.emitEvents(memberUids, NotifyType.CHAT_DELETED, chat)
+        deactivateGroupWithDurableEvents(chatId) { transaction, chat ->
+            require(chat.chatType == 2) { "单聊不能解散，请删除自己的会话视图" }
+            val actor = chatStore.getActiveMember(transaction, chatId, operatorUid)
+                ?: throw IllegalArgumentException("操作者不是群成员")
+            require(actor.role == 2) { "需要群主权限" }
+        }
     }
 
     suspend fun leaveGroup(uid: String, chatId: String) = lifecycleGate.withChat(chatId) {
@@ -348,11 +347,25 @@ class ChatService(
     // ── 管理端操作（免权限检查，广播链路复用）──
 
     suspend fun adminDissolve(chatId: String) = lifecycleGate.withChat(chatId) {
-        val chat = chatStore.getChat(chatId) ?: throw IllegalArgumentException("聊天不存在")
-        val memberUids = chatStore.getMemberUids(chatId)
-        requiredParticipants.onChatDeactivated(chatId)
-        chatStore.deactivateChat(chatId)
-        events.emitEvents(memberUids, NotifyType.CHAT_DELETED, chat)
+        deactivateGroupWithDurableEvents(chatId) { _, _ -> Unit }
+    }
+
+    /** Chat, bot/grant facts, members, Conversations and tombstones share one commit boundary. */
+    private suspend fun deactivateGroupWithDurableEvents(
+        chatId: String,
+        authorize: (com.virjar.tk.domain.transaction.PgTransactionContext, Chat) -> Unit,
+    ) {
+        unitOfWork.write {
+            val chat = chatStore.lockChats(transaction, listOf(chatId), requireActive = true)
+                .getValue(chatId).chat
+            authorize(transaction, chat)
+            requiredParticipants.deactivateForChat(transaction, chatId)
+            val deactivation = chatStore.deactivateChat(transaction, chatId)
+            deactivation.memberUids.forEach { uid ->
+                appendEvent(uid, NotifyType.CHAT_DELETED, deactivation.chat)
+            }
+            afterCommit { chatStore.invalidateCommittedDeactivation(chatId) }
+        }
     }
 
     suspend fun adminMuteAll(chatId: String) = lifecycleGate.withChat(chatId) {
@@ -473,6 +486,53 @@ class ChatService(
         }
     }
 
+    /** Read side used only to reconcile service-domain projections. */
+    internal fun activeChatIdsForServiceMember(uid: String): Set<String> =
+        chatStore.getActiveChatIds(uid)
+
+    internal fun activeChatIdsForServiceMember(
+        transaction: com.virjar.tk.domain.transaction.PgTransactionContext,
+        uid: String,
+    ): Set<String> = chatStore.getActiveChatIds(transaction, uid)
+
+    internal fun projectedChatIdsForServiceMember(uid: String): Set<String> =
+        chatStore.getProjectedChatIds(uid)
+
+    internal fun projectedChatIdsForServiceMember(
+        transaction: com.virjar.tk.domain.transaction.PgTransactionContext,
+        uid: String,
+    ): Set<String> = chatStore.getProjectedChatIds(transaction, uid)
+
+    internal fun lockChatsForServiceMember(
+        transaction: com.virjar.tk.domain.transaction.PgTransactionContext,
+        chatIds: Collection<String>,
+        requireActive: Boolean,
+    ): Map<String, LockedChat> = chatStore.lockChats(transaction, chatIds, requireActive)
+
+    internal fun getActiveMemberForService(
+        transaction: com.virjar.tk.domain.transaction.PgTransactionContext,
+        chatId: String,
+        uid: String,
+    ): Member? = chatStore.getActiveMember(transaction, chatId, uid)
+
+    /**
+     * Transaction-bound service membership mutation. The external domain owns event intents and
+     * post-commit invalidation so it can atomically include its own authorization fact.
+     */
+    internal fun addServiceMember(
+        transaction: com.virjar.tk.domain.transaction.PgTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        uid: String,
+        authorize: (GroupMemberAdditionFacts) -> Unit,
+    ): GroupMemberAddition = chatStore.addMembers(
+        transaction = transaction,
+        chatId = chatId,
+        operatorUid = operatorUid,
+        uids = listOf(uid),
+        authorize = authorize,
+    )
+
     suspend fun adminRemoveServiceMember(chatId: String, uid: String) = lifecycleGate.withChat(chatId) {
         adminRemoveServiceMemberWithinLifecycle(chatId, uid)
     }
@@ -486,6 +546,39 @@ class ChatService(
             val target = facts.target ?: throw IllegalArgumentException("服务身份不是群成员")
             require(target.role != 2) { "不能移除群主" }
         }
+    }
+
+    /** Transaction-bound, idempotent counterpart to [adminRemoveServiceMemberWithinLifecycle]. */
+    internal fun removeServiceMemberIfPresent(
+        transaction: com.virjar.tk.domain.transaction.PgTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        uid: String,
+        requireActiveChat: Boolean = true,
+        authorize: (GroupMemberRemovalFacts) -> Unit,
+    ): GroupMemberRemoval? = chatStore.removeMemberIfPresent(
+        transaction = transaction,
+        chatId = chatId,
+        operatorUid = operatorUid,
+        targetUid = uid,
+        requireActiveChat = requireActiveChat,
+        authorize = authorize,
+    )
+
+    internal fun cleanupServiceMemberProjection(
+        transaction: com.virjar.tk.domain.transaction.PgTransactionContext,
+        chatId: String,
+        uid: String,
+        lockedChat: LockedChat?,
+    ): ServiceMemberProjectionCleanup? = chatStore.cleanupServiceMemberProjection(
+        transaction,
+        chatId,
+        uid,
+        lockedChat,
+    )
+
+    internal fun invalidateCommittedServiceMembershipChange(chatId: String) {
+        chatStore.invalidateCommittedMembershipChange(chatId)
     }
 
     /** Owner may manage admins/members; admins may only manage ordinary members. */

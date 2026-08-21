@@ -94,8 +94,8 @@ class AdminService(
     // ── 通知机器人 ──
 
     fun listBots() = botService.list()
-    fun createBot(name: String) = botService.create(name)
-    fun rotateBotToken(botId: String) = botService.rotateToken(botId)
+    suspend fun createBot(name: String) = botService.create(name)
+    suspend fun rotateBotToken(botId: String) = botService.rotateToken(botId)
     suspend fun disableBot(botId: String) = botService.disable(botId)
     suspend fun grantBot(botId: String, chatId: String) = botService.grant(botId, chatId)
     suspend fun revokeBotGrant(botId: String, chatId: String) = botService.revokeGrant(botId, chatId)

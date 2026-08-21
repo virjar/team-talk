@@ -5,6 +5,8 @@ import com.virjar.tk.domain.chat.GroupMemberAddition
 import com.virjar.tk.domain.chat.GroupMemberAdditionFacts
 import com.virjar.tk.domain.chat.GroupMemberRemoval
 import com.virjar.tk.domain.chat.GroupMemberRemovalFacts
+import com.virjar.tk.domain.chat.LockedChat
+import com.virjar.tk.domain.chat.ServiceMemberProjectionCleanup
 import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.infra.db.Chats
 import com.virjar.tk.infra.db.Conversations
@@ -50,6 +52,62 @@ class ExposedChatMemberRepository : ChatMemberRepository {
                 .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1) }
                 .map { it[GroupMembers.uid] }
         }
+    }
+
+    override fun getActiveChatIds(uid: String): Set<String> = transaction {
+        GroupMembers.selectAll()
+            .where { (GroupMembers.uid eq uid) and (GroupMembers.status eq 1) }
+            .mapTo(linkedSetOf()) { it[GroupMembers.chatId] }
+    }
+
+    override fun getActiveChatIds(transaction: PgTransactionContext, uid: String): Set<String> =
+        inWriteTransaction(transaction) {
+            GroupMembers.selectAll()
+                .where { (GroupMembers.uid eq uid) and (GroupMembers.status eq 1) }
+                .mapTo(linkedSetOf()) { it[GroupMembers.chatId] }
+        }
+
+    override fun getProjectedChatIds(uid: String): Set<String> = transaction {
+        projectedChatIdsInternal(uid)
+    }
+
+    override fun getProjectedChatIds(transaction: PgTransactionContext, uid: String): Set<String> =
+        inWriteTransaction(transaction) { projectedChatIdsInternal(uid) }
+
+    override fun lockChats(
+        transaction: PgTransactionContext,
+        chatIds: Collection<String>,
+        requireActive: Boolean,
+    ): Map<String, LockedChat> = inWriteTransaction(transaction) {
+        val requested = chatIds.distinct().sorted()
+        if (requested.isEmpty()) return@inWriteTransaction emptyMap()
+        val rows = Chats.selectAll()
+            .where { Chats.chatId inList requested }
+            .orderBy(Chats.chatId, SortOrder.ASC)
+            .forUpdate()
+            .toList()
+        if (requireActive) require(rows.size == requested.size) { "聊天不存在" }
+        if (requireActive) {
+            require(rows.all { it[Chats.status] == 1 }) { "聊天不存在" }
+        }
+        rows.associate { row ->
+            row[Chats.chatId] to LockedChat(
+                chat = chatSnapshot(row, memberCount = 0),
+                active = row[Chats.status] == 1,
+            )
+        }
+    }
+
+    override fun getActiveMember(
+        transaction: PgTransactionContext,
+        chatId: String,
+        uid: String,
+    ): Member? = inWriteTransaction(transaction) {
+        GroupMembers.selectAll().where {
+            (GroupMembers.chatId eq chatId) and
+                (GroupMembers.uid eq uid) and
+                (GroupMembers.status eq 1)
+        }.singleOrNull()?.toMember()
     }
 
     override fun isMember(chatId: String, uid: String): Boolean {
@@ -143,8 +201,108 @@ class ExposedChatMemberRepository : ChatMemberRepository {
         operatorUid: String,
         targetUid: String,
         authorize: (GroupMemberRemovalFacts) -> Unit,
-    ): GroupMemberRemoval = inWriteTransaction(transaction) {
-        val chatRow = lockActiveChat(chatId)
+    ): GroupMemberRemoval = removeMemberInternal(
+        transaction = transaction,
+        chatId = chatId,
+        operatorUid = operatorUid,
+        targetUid = targetUid,
+        allowMissing = false,
+        authorize = authorize,
+    ) ?: error("Required membership removal unexpectedly became a no-op")
+
+    override fun removeMemberIfPresent(
+        transaction: PgTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        targetUid: String,
+        requireActiveChat: Boolean,
+        authorize: (GroupMemberRemovalFacts) -> Unit,
+    ): GroupMemberRemoval? = removeMemberInternal(
+        transaction = transaction,
+        chatId = chatId,
+        operatorUid = operatorUid,
+        targetUid = targetUid,
+        allowMissing = true,
+        requireActiveChat = requireActiveChat,
+        authorize = authorize,
+    )
+
+    override fun cleanupServiceMemberProjection(
+        transaction: PgTransactionContext,
+        chatId: String,
+        uid: String,
+        lockedChat: LockedChat?,
+    ): ServiceMemberProjectionCleanup? = inWriteTransaction(transaction) {
+        // The owning bot command locked every existing Chat before its service identity and bot.
+        // Never re-query a missing Chat here: if the id were concurrently recreated, taking that
+        // new row after the User/Bot locks would invert the global Chat -> User -> Bot order.
+        val activeMembers = GroupMembers.selectAll().where {
+            (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1)
+        }.orderBy(GroupMembers.uid, SortOrder.ASC).forUpdate().toList()
+        val activeByUid = activeMembers.associateBy { it[GroupMembers.uid] }
+        val targetRow = activeByUid[uid] ?: GroupMembers.selectAll().where {
+            (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid)
+        }.forUpdate().singleOrNull()
+        val conversationRow = Conversations.selectAll().where {
+            (Conversations.chatId eq chatId) and (Conversations.uid eq uid)
+        }.forUpdate().singleOrNull()
+        val muteRows = GroupMemberMutes.selectAll().where {
+            (GroupMemberMutes.chatId eq chatId) and (GroupMemberMutes.uid eq uid)
+        }.forUpdate().toList()
+        require(targetRow?.get(GroupMembers.role) != 2) {
+            "服务身份不能作为群主，拒绝清理损坏的成员投影"
+        }
+
+        val membershipDeactivated = targetRow?.get(GroupMembers.status) == 1 &&
+            GroupMembers.update({
+                (GroupMembers.chatId eq chatId) and
+                    (GroupMembers.uid eq uid) and
+                    (GroupMembers.status eq 1)
+            }) { it[GroupMembers.status] = 0 } > 0
+        val conversationDeleted = conversationRow != null && Conversations.deleteWhere {
+            (Conversations.chatId eq chatId) and (Conversations.uid eq uid)
+        } > 0
+        val muteDeleted = muteRows.isNotEmpty() && GroupMemberMutes.deleteWhere {
+            (GroupMemberMutes.chatId eq chatId) and (GroupMemberMutes.uid eq uid)
+        } > 0
+        if (!membershipDeactivated && !conversationDeleted && !muteDeleted) {
+            return@inWriteTransaction null
+        }
+
+        val chatType = when {
+            lockedChat != null -> lockedChat.chat.chatType
+            targetRow != null -> targetRow[GroupMembers.chatType]
+            conversationRow != null -> conversationRow[Conversations.chatType]
+            else -> 0
+        }
+        val remainingUids = activeMembers.asSequence()
+            .map { it[GroupMembers.uid] }
+            .filter { it != uid }
+            .toList()
+        val chat = if (lockedChat != null) {
+            lockedChat.chat.copy(memberCount = remainingUids.size)
+        } else {
+            Chat(chatId = chatId, chatType = chatType, memberCount = remainingUids.size)
+        }
+        ServiceMemberProjectionCleanup(
+            chat = chat,
+            membershipDeactivated = membershipDeactivated,
+            conversationDeleted = conversationDeleted,
+            muteDeleted = muteDeleted,
+            remainingMemberUids = remainingUids,
+        )
+    }
+
+    private fun removeMemberInternal(
+        transaction: PgTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        targetUid: String,
+        allowMissing: Boolean,
+        requireActiveChat: Boolean = true,
+        authorize: (GroupMemberRemovalFacts) -> Unit,
+    ): GroupMemberRemoval? = inWriteTransaction(transaction) {
+        val chatRow = lockChat(chatId, requireActiveChat)
         val activeMembers = GroupMembers.selectAll().where {
             (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1)
         }.orderBy(GroupMembers.uid, SortOrder.ASC).forUpdate()
@@ -159,6 +317,8 @@ class ExposedChatMemberRepository : ChatMemberRepository {
                 target = membersByUid[targetUid],
             ),
         )
+
+        if (membersByUid[targetUid] == null && allowMissing) return@inWriteTransaction null
 
         val changed = GroupMembers.update({
             (GroupMembers.chatId eq chatId) and
@@ -279,10 +439,30 @@ class ExposedChatMemberRepository : ChatMemberRepository {
         }
     }
 
-    private fun lockActiveChat(chatId: String): ResultRow {
-        return Chats.selectAll().where {
-            (Chats.chatId eq chatId) and (Chats.status eq 1)
-        }.forUpdate().singleOrNull() ?: throw IllegalArgumentException("聊天不存在")
+    private fun lockActiveChat(chatId: String): ResultRow = lockChat(chatId, requireActive = true)
+
+    private fun projectedChatIdsInternal(uid: String): Set<String> = buildSet {
+        addAll(
+            GroupMembers.selectAll().where {
+                (GroupMembers.uid eq uid) and (GroupMembers.status eq 1)
+            }.map { it[GroupMembers.chatId] },
+        )
+        addAll(
+            Conversations.selectAll().where { Conversations.uid eq uid }
+                .map { it[Conversations.chatId] },
+        )
+        addAll(
+            GroupMemberMutes.selectAll().where { GroupMemberMutes.uid eq uid }
+                .map { it[GroupMemberMutes.chatId] },
+        )
+    }
+
+    private fun lockChat(chatId: String, requireActive: Boolean): ResultRow {
+        val row = Chats.selectAll().where { Chats.chatId eq chatId }
+            .forUpdate()
+            .singleOrNull() ?: throw IllegalArgumentException("聊天不存在")
+        if (requireActive) require(row[Chats.status] == 1) { "聊天不存在" }
+        return row
     }
 
     private fun chatSnapshot(chatRow: ResultRow, memberCount: Int): Chat {

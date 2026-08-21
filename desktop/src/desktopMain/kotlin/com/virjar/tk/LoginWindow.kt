@@ -17,6 +17,7 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.client.ImClient
+import com.virjar.tk.client.JvmPrivateDataDirectory
 import com.virjar.tk.client.createDesktopLocalCache
 import com.virjar.tk.client.defaultServerConfig
 import com.virjar.tk.client.rememberAuthController
@@ -318,11 +319,19 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
 }
 
 /** One durable identity per Desktop data directory (different profiles remain different devices). */
-private fun desktopInstallationDeviceId(dataDir: File): String {
-    val identityFile = File(dataDir, "device-id")
-    identityFile.takeIf(File::isFile)?.readText()?.trim()?.takeIf(String::isNotEmpty)?.let { return it }
-    dataDir.mkdirs()
+internal fun desktopInstallationDeviceId(dataDir: File): String {
+    val identityStore = JvmPrivateDataDirectory.openExisting(dataDir).atomicTextFile(fileName = "device-id")
+    identityStore.readText(MAX_DEVICE_ID_FILE_BYTES)?.trim()?.let { stored ->
+        require(DESKTOP_DEVICE_ID.matches(stored)) { "Stored Desktop device identity is invalid" }
+        return stored
+    }
     val generated = "desktop-${UUID.randomUUID()}"
-    identityFile.writeText(generated)
+    identityStore.replaceText(generated, MAX_DEVICE_ID_FILE_BYTES)
+    check(identityStore.readText(MAX_DEVICE_ID_FILE_BYTES) == generated) {
+        "Desktop device identity was not persisted"
+    }
     return generated
 }
+
+private val DESKTOP_DEVICE_ID = Regex("[A-Za-z0-9._-]{8,256}")
+private const val MAX_DEVICE_ID_FILE_BYTES = 1024L

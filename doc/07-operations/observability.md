@@ -54,10 +54,13 @@ AppLog/crash owner，因此同进程多个 ImBot 或图形客户端不会互相�
 断开所有阻塞 HTTP 连接，之后既不读新凭据，也不消费迟到响应。stop 返回后旧 worker 的迟到成功或
 失败都直接丢弃，不再写 crash namespace、buffer 或触发 uploader。
 
-CrashDumper 的 owner namespace 目录以 0700、文件以 0600 创建；既存过宽路径、符号链接、硬链接或
-owner 不匹配均 fail closed。pending 通过同目录临时文件、文件 fsync、原子替换与目录 fsync 发布，
-上传完成只删除内容仍精确匹配的 owner 文件。Windows 的等价 ACL primitive 在后续平台批次实现，
-不能以宽权限 fallback 代替。
+CrashDumper 与 Desktop auth、device-id、SQLite 共用 JVM 私有存储基元。POSIX owner namespace 目录以
+0700 创建；由 JVM 管理的 auth、device-id、crash pending 与 SQLite 主 DB 以 0600 创建并校验单一硬链接。
+SQLite 自建 journal/WAL/SHM sidecar 的安全边界是账号 0700 namespace，不依赖其单文件 mode 恒为 0600，
+并验证 sidecar 不会逃出该 namespace。既存过宽路径、符号链接、受保护文件硬链接数不为 1、owner 不匹配
+或 macOS 扩展 ACL 授予额外访问均 fail closed。Windows 使用当前 owner 的精确 ACL，任何额外主体的访问
+ACE 都不作为宽权限 fallback 接受。pending 通过同目录临时文件、文件 fsync、原子替换与平台可用的目录
+fsync 发布，上传完成只删除内容仍精确匹配的 owner 文件。
 
 上传端点只接受当前会话的 Bearer access token 和有界 GZIP；uid/deviceId 一律取 token 中的权威身份，
 不接受请求头伪造目录。服务端把压缩体限制为 1 MiB、解压后限制为 4 MiB，再按

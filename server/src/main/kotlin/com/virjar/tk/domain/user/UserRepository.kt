@@ -1,5 +1,6 @@
 package com.virjar.tk.domain.user
 
+import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.model.User
 
 /** Persistence port owned by the user domain. */
@@ -16,6 +17,15 @@ interface UserRepository {
         passwordHash: String,
         phone: String? = null,
         role: Int = 0,
+    ): User
+    /** Service identities are enlisted in their owning application's aggregate transaction. */
+    fun createServiceAccount(
+        transaction: PgTransactionContext,
+        uid: String,
+        username: String,
+        name: String,
+        unusablePasswordHash: String,
+        role: Int,
     ): User
     fun updateProfile(uid: String, name: String? = null, avatar: String? = null, sex: Int? = null, phone: String? = null)
     fun searchUsers(keyword: String, limit: Int = 20): List<User>

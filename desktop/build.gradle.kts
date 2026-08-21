@@ -343,13 +343,19 @@ tasks.withType<JavaExec>().configureEach {
             // 将未裁剪的主编译输出置于 classpath 最前，仅开发 run 可加载 TestHttpServer。
             classpath = files(layout.buildDirectory.dir("classes/kotlin/desktop/main")) + classpath
 
+            val dataDirectoryArgs = System.getProperty("teamtalk.data.dir")
+                ?.takeIf(String::isNotBlank)
+                ?.let { listOf("-Dteamtalk.data.dir=$it") }
+                .orEmpty()
+            val themeArgs = System.getProperty("teamtalk.theme")
+                ?.let { listOf("-Dteamtalk.theme=$it") }
+                .orEmpty()
             jvmArgs = listOf(
                 "-Dteamtalk.server.url=${deploymentConfig.serverUrl}",
                 "-Dteamtalk.tcp.host=${deploymentConfig.tcpHost}",
                 "-Dteamtalk.tcp.port=${deploymentConfig.tcpPort}",
-                "-Dteamtalk.data.dir=${System.getProperty("teamtalk.data.dir") ?: rootProject.file("data/desktop").absolutePath}",
                 "-Dteamtalk.is.dev=true",
-            ) + System.getProperty("teamtalk.theme")?.let { listOf("-Dteamtalk.theme=$it") }.orEmpty()
+            ) + dataDirectoryArgs + themeArgs
         }
     }
 }

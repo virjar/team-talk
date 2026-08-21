@@ -2,6 +2,7 @@ package com.virjar.tk.domain.user
 
 import com.virjar.tk.auth.AuthRules
 import com.virjar.tk.domain.event.EventPublisher
+import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.model.User
 import com.virjar.tk.model.UserRole
 import com.virjar.tk.protocol.NotifyType
@@ -89,14 +90,25 @@ class UserService(
     }
 
     /** 创建没有客户端登录能力的服务账户。外部调用只能使用其独立应用凭据。 */
-    fun createServiceAccount(name: String, role: Int = UserRole.BOT): User {
+    fun createServiceAccount(
+        transaction: PgTransactionContext,
+        name: String,
+        role: Int = UserRole.BOT,
+    ): User {
         require(role == UserRole.BOT || role == UserRole.SYSTEM) { "非法服务账户类型" }
         require(name.isNotBlank()) { "服务账户名称不能为空" }
         val uid = generateShortUid()
         val username = "bot-${uid.take(12)}"
         val passwordBytes = ByteArray(48).also(SecureRandom()::nextBytes)
         val unusablePasswordHash = BCrypt.hashpw(java.util.Base64.getEncoder().encodeToString(passwordBytes), BCrypt.gensalt())
-        return userStore.create(uid, username, name.trim().take(100), unusablePasswordHash, role = role)
+        return userStore.createServiceAccount(
+            transaction = transaction,
+            uid = uid,
+            username = username,
+            name = name.trim().take(100),
+            unusablePasswordHash = unusablePasswordHash,
+            role = role,
+        )
     }
 
     fun getProfile(uid: String): User {

@@ -300,15 +300,15 @@ class ContactIntegrationTest {
     @Test
     fun `apply rejects missing and service identities while pending lookup is empty for service profile`() = runTest {
         val sender = ctx.registerUser(uniqueUsername("human-sender"))
-        val bot = ctx.userService.createServiceAccount("不可加好友机器人")
+        val bot = ctx.botService.create("不可加好友机器人").bot
 
         assertFailsWith<IllegalArgumentException> {
             ctx.contactService(sender).apply("missing-user", null)
         }
         assertFailsWith<IllegalArgumentException> {
-            ctx.contactService(sender).apply(bot.uid, null)
+            ctx.contactService(sender).apply(bot.userUid, null)
         }
-        assertNull(ctx.contactService(sender).getPendingApply(bot.uid).record)
+        assertNull(ctx.contactService(sender).getPendingApply(bot.userUid).record)
     }
 
     @Test

@@ -2,7 +2,9 @@ package com.virjar.tk.infra.db.repository
 
 import com.virjar.tk.domain.user.UserInternal
 import com.virjar.tk.domain.user.UserRepository
+import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.infra.db.Users
+import com.virjar.tk.infra.db.requireExposedTransaction
 import com.virjar.tk.model.User
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
@@ -44,18 +46,28 @@ class ExposedUserRepository : UserRepository {
     override fun create(uid: String, username: String, name: String, passwordHash: String, phone: String?, role: Int): User {
         val now = System.currentTimeMillis()
         return transaction {
-            Users.insert {
-                it[Users.uid] = uid
-                it[Users.username] = username
-                it[Users.name] = name
-                it[Users.passwordHash] = passwordHash
-                it[Users.phone] = phone
-                it[Users.role] = role
-                it[Users.createdAt] = now
-                it[Users.updatedAt] = now
-            }
-            User(uid = uid, username = username, name = name, phone = phone, role = role)
+            insertUser(uid, username, name, passwordHash, phone, role, now)
         }
+    }
+
+    override fun createServiceAccount(
+        transaction: PgTransactionContext,
+        uid: String,
+        username: String,
+        name: String,
+        unusablePasswordHash: String,
+        role: Int,
+    ): User {
+        transaction.requireExposedTransaction()
+        return insertUser(
+            uid = uid,
+            username = username,
+            name = name,
+            passwordHash = unusablePasswordHash,
+            phone = null,
+            role = role,
+            now = System.currentTimeMillis(),
+        )
     }
 
     override fun updateProfile(uid: String, name: String?, avatar: String?, sex: Int?, phone: String?) {
@@ -79,6 +91,28 @@ class ExposedUserRepository : UserRepository {
             logger.info("searchUsers keyword='$keyword' SQL count=$count")
             query.map { it.toUser() }
         }
+    }
+
+    private fun insertUser(
+        uid: String,
+        username: String,
+        name: String,
+        passwordHash: String,
+        phone: String?,
+        role: Int,
+        now: Long,
+    ): User {
+        Users.insert {
+            it[Users.uid] = uid
+            it[Users.username] = username
+            it[Users.name] = name
+            it[Users.passwordHash] = passwordHash
+            it[Users.phone] = phone
+            it[Users.role] = role
+            it[Users.createdAt] = now
+            it[Users.updatedAt] = now
+        }
+        return User(uid = uid, username = username, name = name, phone = phone, role = role)
     }
 
     private fun ResultRow.toUser() = User(

@@ -121,6 +121,28 @@ class ChatStore(
         }
     }
 
+    fun getActiveChatIds(uid: String): Set<String> = memberRepo.getActiveChatIds(uid)
+
+    internal fun getActiveChatIds(transaction: PgTransactionContext, uid: String): Set<String> =
+        memberRepo.getActiveChatIds(transaction, uid)
+
+    internal fun getProjectedChatIds(uid: String): Set<String> = memberRepo.getProjectedChatIds(uid)
+
+    internal fun getProjectedChatIds(transaction: PgTransactionContext, uid: String): Set<String> =
+        memberRepo.getProjectedChatIds(transaction, uid)
+
+    internal fun lockChats(
+        transaction: PgTransactionContext,
+        chatIds: Collection<String>,
+        requireActive: Boolean,
+    ): Map<String, LockedChat> = memberRepo.lockChats(transaction, chatIds, requireActive)
+
+    internal fun getActiveMember(
+        transaction: PgTransactionContext,
+        chatId: String,
+        uid: String,
+    ): Member? = memberRepo.getActiveMember(transaction, chatId, uid)
+
     /** 用户当前仍有效的全部会话 ID，用于跨会话搜索等需要权限集合的读操作。 */
     override fun listUserChatIds(uid: String): Set<String> =
         repo.listUserChats(uid).mapTo(linkedSetOf()) { it.chatId }
@@ -211,6 +233,16 @@ class ChatStore(
         }
     }
 
+    /** Transaction-bound deactivation; cache publication is deferred until commit. */
+    internal fun deactivateChat(
+        transaction: PgTransactionContext,
+        chatId: String,
+    ): ChatDeactivation = repo.deactivateChat(transaction, chatId)
+
+    internal fun invalidateCommittedDeactivation(chatId: String) {
+        withCacheGate(chatId) { invalidateChat(chatId) }
+    }
+
     /** Transaction-bound add. Cache state remains untouched until the caller publishes commit. */
     internal fun addMembers(
         transaction: PgTransactionContext,
@@ -239,6 +271,35 @@ class ChatStore(
         operatorUid = operatorUid,
         targetUid = targetUid,
         authorize = authorize,
+    )
+
+    /** Transaction-bound idempotent removal used by external service projections. */
+    internal fun removeMemberIfPresent(
+        transaction: PgTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        targetUid: String,
+        requireActiveChat: Boolean = true,
+        authorize: (GroupMemberRemovalFacts) -> Unit,
+    ): GroupMemberRemoval? = memberRepo.removeMemberIfPresent(
+        transaction = transaction,
+        chatId = chatId,
+        operatorUid = operatorUid,
+        targetUid = targetUid,
+        requireActiveChat = requireActiveChat,
+        authorize = authorize,
+    )
+
+    internal fun cleanupServiceMemberProjection(
+        transaction: PgTransactionContext,
+        chatId: String,
+        uid: String,
+        lockedChat: LockedChat?,
+    ): ServiceMemberProjectionCleanup? = memberRepo.cleanupServiceMemberProjection(
+        transaction = transaction,
+        chatId = chatId,
+        uid = uid,
+        lockedChat = lockedChat,
     )
 
     /** Called only after a transaction-bound membership add/remove and its events commit. */

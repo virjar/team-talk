@@ -2,6 +2,7 @@ package com.virjar.tk.infra.db.repository
 
 import com.virjar.tk.domain.chat.AdminPage
 import com.virjar.tk.domain.chat.ChatRepository
+import com.virjar.tk.domain.chat.ChatDeactivation
 import com.virjar.tk.domain.chat.InviteJoinResult
 import com.virjar.tk.domain.chat.personalChatKey
 import com.virjar.tk.domain.chat.requireJoinable
@@ -169,20 +170,25 @@ class ExposedChatRepository : ChatRepository {
         token: String,
         nowMillis: Long,
     ): InviteJoinResult = inWriteTransaction(transaction) {
-        // The invite lock serializes quota/revoke changes. The chat lock serializes joins made
-        // through different links and normal membership writes for the same aggregate.
+        // Resolve the owning chat without a lock, then acquire the aggregate locks in the global
+        // chat -> invite order also used by dissolution. The locked re-read below is authoritative.
+        val resolvedChatId = GroupInviteLinks.selectAll()
+            .where { GroupInviteLinks.token eq token }
+            .singleOrNull()
+            ?.get(GroupInviteLinks.chatId)
+            ?: throw IllegalArgumentException("邀请链接不存在")
+        val chatRow = Chats.selectAll()
+            .where { Chats.chatId eq resolvedChatId }
+            .forUpdate()
+            .singleOrNull()
+            ?: throw IllegalArgumentException("聊天不存在")
         val inviteRow = GroupInviteLinks.selectAll()
             .where { GroupInviteLinks.token eq token }
             .forUpdate()
             .singleOrNull()
             ?: throw IllegalArgumentException("邀请链接不存在")
-
         val chatId = inviteRow[GroupInviteLinks.chatId]
-        val chatRow = Chats.selectAll()
-            .where { Chats.chatId eq chatId }
-            .forUpdate()
-            .singleOrNull()
-            ?: throw IllegalArgumentException("聊天不存在")
+        require(chatId == resolvedChatId) { "邀请链接归属已变更" }
         require(chatRow[Chats.status] == 1) { "聊天不存在" }
         require(chatRow[Chats.chatType] == 2) { "邀请链接只能用于群聊" }
         require(GroupChats.selectAll().where { GroupChats.chatId eq chatId }.singleOrNull() != null) {
@@ -280,30 +286,51 @@ class ExposedChatRepository : ChatRepository {
 
     override fun deactivateChat(chatId: String) {
         transaction {
-            // Invite joins lock invite -> chat. Keep the same order here before deleting links,
-            // otherwise a cross-process join and dissolve can deadlock on opposite row locks.
-            GroupInviteLinks.selectAll()
-                .where { GroupInviteLinks.chatId eq chatId }
-                .orderBy(GroupInviteLinks.id)
-                .forUpdate()
-                .toList()
-            val chat = Chats.selectAll()
-                .where { (Chats.chatId eq chatId) and (Chats.status eq 1) }
-                .forUpdate()
-                .singleOrNull() ?: return@transaction
-            Chats.update({ Chats.id eq chat[Chats.id] }) {
-                it[Chats.status] = 0
-                it[Chats.updatedAt] = System.currentTimeMillis()
-            }
-            GroupMembers.update({ GroupMembers.chatId eq chatId }) {
-                it[GroupMembers.status] = 0
-            }
-            // Conversation is a projection of active membership. Delete it in the same aggregate
-            // transaction so a cold process can never resurrect a dissolved chat from old rows.
-            Conversations.deleteWhere { Conversations.chatId eq chatId }
-            GroupMemberMutes.deleteWhere { GroupMemberMutes.chatId eq chatId }
-            GroupInviteLinks.deleteWhere { GroupInviteLinks.chatId eq chatId }
+            deactivateChatInternal(chatId, allowMissing = true)
         }
+    }
+
+    override fun deactivateChat(transaction: PgTransactionContext, chatId: String): ChatDeactivation =
+        inWriteTransaction(transaction) {
+            deactivateChatInternal(chatId, allowMissing = false)
+                ?: throw IllegalArgumentException("聊天不存在")
+        }
+
+    private fun deactivateChatInternal(chatId: String, allowMissing: Boolean): ChatDeactivation? {
+        // The caller may already hold this row. Re-locking is safe and documents that no member or
+        // Conversation mutation occurs without the chat aggregate fence.
+        val chatRow = Chats.selectAll()
+            .where { Chats.chatId eq chatId }
+            .forUpdate()
+            .singleOrNull()
+        if (chatRow == null || chatRow[Chats.status] != 1) {
+            if (allowMissing) return null
+            throw IllegalArgumentException("聊天不存在")
+        }
+        GroupInviteLinks.selectAll()
+            .where { GroupInviteLinks.chatId eq chatId }
+            .orderBy(GroupInviteLinks.id)
+            .forUpdate()
+            .toList()
+        val memberRows = GroupMembers.selectAll()
+            .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1) }
+            .orderBy(GroupMembers.uid, SortOrder.ASC)
+            .forUpdate()
+            .toList()
+        val chat = getChatByIdInternal(chatId) ?: throw IllegalStateException("聊天数据不完整")
+        val memberUids = memberRows.map { it[GroupMembers.uid] }
+
+        Chats.update({ Chats.id eq chatRow[Chats.id] }) {
+            it[Chats.status] = 0
+            it[Chats.updatedAt] = System.currentTimeMillis()
+        }
+        GroupMembers.update({ GroupMembers.chatId eq chatId }) {
+            it[GroupMembers.status] = 0
+        }
+        Conversations.deleteWhere { Conversations.chatId eq chatId }
+        GroupMemberMutes.deleteWhere { GroupMemberMutes.chatId eq chatId }
+        GroupInviteLinks.deleteWhere { GroupInviteLinks.chatId eq chatId }
+        return ChatDeactivation(chat, memberUids)
     }
 
     override fun getMemberUids(chatId: String): List<String> {

@@ -78,6 +78,13 @@
 `pkill -f gradle`，它会杀死所有匹配进程。沙箱环境出现 FileLock 或 SocketException 时，需要给予
 Gradle cache 和本机进程通信权限，而不是删除项目缓存。
 
+若启动前出现“cannot open its private data directory”，先区分：平台默认用户目录被其他用户拥有或可写、
+父链包含符号链接、macOS 扩展 ACL 向其他主体授予访问/修改权限、已有 TeamTalk 根没有 marker、Windows
+ACL 向 Everyone/Users 授予当前目录或继承到新子项的修改权限，或旧
+安装目录与新根形成未知双根冲突。启动器不会自动改 owner/权限，也不会删除旧数据。停止所有新旧客户端，
+备份两处目录，再按[Desktop 私有数据目录](../05-clients/desktop.md#11-私有数据目录)核对默认路径、receipt
+和旧树门禁；不要通过把目录改成 0777 或给 Everyone 完全控制来绕过检查。
+
 ## 10. 收集问题材料
 
 至少提供：commit/build time、平台、目标实例、时间范围、uid/deviceId、复现步骤、相关

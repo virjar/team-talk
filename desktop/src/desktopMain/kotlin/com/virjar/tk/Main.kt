@@ -4,7 +4,7 @@ import com.virjar.tk.env.DesktopEnvironment
 import com.virjar.tk.log.TkLoggerFactory
 import com.virjar.tk.util.AppLog
 import com.virjar.tk.util.AppLogTkLogger
-import java.io.File
+import javax.swing.JOptionPane
 
 /**
  * Desktop 客户端入口。
@@ -18,12 +18,24 @@ import java.io.File
  */
 fun main() {
     // ── 1. 数据目录初始化（必须在 logback 初始化前） ──
-    val dataDir = DesktopEnvironment.dataDir
+    val preparedData = try {
+        DesktopEnvironment.prepareDataDirectory()
+    } catch (failure: Throwable) {
+        showDataDirectoryFailure(failure)
+        return
+    }
+    val dataDir = preparedData.dataDirectory
     System.setProperty("teamtalk.data.dir", dataDir.absolutePath)
 
     // ── 2. 文件锁：同一数据目录不允许启动多个实例 ──
     val locker = FileLocker(dataDir)
-    if (!locker.tryLock()) {
+    val lockAcquired = try {
+        locker.tryLock()
+    } catch (failure: Throwable) {
+        showDataDirectoryFailure(failure)
+        return
+    }
+    if (!lockAcquired) {
         showAlreadyRunningDialog(dataDir)
         return
     }
@@ -47,9 +59,31 @@ fun main() {
     }
 
     AppLog.trace("Main", "TeamTalk starting, dataDir=${dataDir.absolutePath}")
+    preparedData.legacySourceDirectory?.let { source ->
+        AppLog.trace("Main", "Legacy installation data was copied and preserved unchanged: ${source.absolutePath}")
+    }
     // 构建溯源：启动即打印 commit/build time，排查问题时可从日志确认产物来源
     AppLog.trace("Main", "Build: commit=${BuildConfig.GIT_COMMIT_ID} time=${BuildConfig.BUILD_TIME}")
 
     // ── 4. 进入 Compose ──
     teamTalkApplication(dataDir, locker)
+}
+
+private fun showDataDirectoryFailure(failure: Throwable) {
+    val detail = generateSequence(failure) { it.cause }
+        .mapNotNull(Throwable::message)
+        .firstOrNull()
+        ?: failure::class.simpleName.orEmpty()
+    runCatching {
+        JOptionPane.showMessageDialog(
+            null,
+            "TeamTalk cannot open its private data directory.\n\n$detail\n\n" +
+                "No account data was selected or deleted. Resolve the directory conflict and start again.",
+            "TeamTalk data directory",
+            JOptionPane.ERROR_MESSAGE,
+        )
+    }.onFailure {
+        System.err.write("TeamTalk data directory error: $detail\n".encodeToByteArray())
+        System.err.flush()
+    }
 }

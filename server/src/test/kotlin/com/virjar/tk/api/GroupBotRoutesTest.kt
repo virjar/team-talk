@@ -106,7 +106,7 @@ private class FakeGroupBotManagement(private val deny: Boolean = false) : GroupB
         return GroupBotCredentials(summary(), "ttb_once")
     }
 
-    override fun rotateTokenForGroup(actorUid: String, chatId: String, botId: String): GroupBotCredentials {
+    override suspend fun rotateTokenForGroup(actorUid: String, chatId: String, botId: String): GroupBotCredentials {
         capture(actorUid, chatId)
         lastBotId = botId
         return GroupBotCredentials(summary(), "ttb_rotated")

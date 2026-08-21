@@ -107,8 +107,11 @@ data/
 
 ### Desktop
 
-Desktop 的 SQLite、token 和日志位于平台应用数据目录。具体路径由平台实现决定；排障时优先查看
-应用启动日志中输出的 resolved path，而不是假设固定用户目录。
+Desktop 的 SQLite、token、device-id、crash pending 和日志位于平台用户应用数据目录：macOS 为
+`~/Library/Application Support/TeamTalk`，Windows 为 `%LOCALAPPDATA%\TeamTalk`，Linux 为
+`${XDG_DATA_HOME:-~/.local/share}/teamtalk`。目录安全和旧安装目录复制规则见
+[Desktop 私有数据目录](../05-clients/desktop.md#11-私有数据目录)。开发运行也使用平台默认路径；只有显式
+设置绝对 `-Dteamtalk.data.dir=<path>` 才使用独立 profile，不再自动写仓库 `data/desktop`。
 
 ## 6. 修改后的验证顺序
 

@@ -1,9 +1,12 @@
 package com.virjar.tk
 
+import com.virjar.tk.client.JvmPrivateDataDirectory
 import java.io.File
+import java.io.IOException
 import java.io.RandomAccessFile
 import java.nio.channels.FileChannel
 import java.nio.channels.FileLock
+import java.nio.channels.OverlappingFileLockException
 
 /**
  * File-based lock to prevent multiple Desktop instances from using the same data directory.
@@ -19,19 +22,23 @@ class FileLocker(private val dataDir: File) {
      * @return true if lock acquired, false if another instance holds the lock.
      */
     fun tryLock(): Boolean {
+        val privateData = JvmPrivateDataDirectory.openExisting(dataDir)
+        val lockFile = privateData.preparePrivateFile(emptyList(), ".lock")
         try {
-            dataDir.mkdirs()
-            val lockFile = File(dataDir, ".lock")
             raf = RandomAccessFile(lockFile, "rw")
             channel = raf!!.channel
             lock = channel!!.tryLock()
             if (lock != null) {
                 raf!!.setLength(0)
                 raf!!.writeBytes("pid=${ProcessHandle.current().pid()}\n")
+                raf!!.fd.sync()
+                privateData.requirePrivateFile(emptyList(), ".lock")
                 return true
             }
-        } catch (_: Exception) {
-            // Lock failed
+        } catch (_: IOException) {
+            // A platform can report an already-held lock as an IOException instead of null.
+        } catch (_: OverlappingFileLockException) {
+            // This JVM already owns an overlapping lock.
         }
         release()
         return false

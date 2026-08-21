@@ -78,3 +78,10 @@ durable data，不能把旧目录拼接到新实例。
 Desktop 与 Android 的默认服务器在构建时生成。ServerConfig 的 JVM 系统属性覆盖主要用于开发或
 无头入口，不能作为最终用户 profile 系统。排查客户端连错服务器时，查看设置页的 commit/build time
 和构建配置，不要只看当前仓库文件。
+
+Desktop 的默认数据根是当前用户的平台 app-data 目录：macOS 为
+`~/Library/Application Support/TeamTalk`，Windows 为 `%LOCALAPPDATA%\TeamTalk`，Linux 为
+`${XDG_DATA_HOME:-~/.local/share}/teamtalk`。`teamtalk.data.dir` 只是 Desktop 的显式、绝对路径覆盖；
+其父目录必须已存在且通过当前用户的安全检查。开发模式也不会默认回退到仓库
+`data/`；如确需隔离 profile，必须显式传入该覆盖。迁移和冲突处理详见
+[桌面端客户端](../05-clients/desktop.md)。
