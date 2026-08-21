@@ -47,25 +47,7 @@ fun handleSsl(
 // ── systemd 注册 ──
 
 fun registerSystemd(host: String, user: String, port: Int, deployPath: String) {
-    val svcContent = """
-[Unit]
-Description=TeamTalk Server
-After=network.target docker.service
-Requires=docker.service
-
-[Service]
-Type=simple
-WorkingDirectory=$deployPath
-EnvironmentFile=$deployPath/conf/env.sh
-ExecStartPre=/bin/bash -c 'cd $deployPath && export DB_PASSWORD="$${'$'}{DATABASE_PASSWORD}" && ${dockerComposeCmd(systemdContext = true)} up -d'
-ExecStart=$deployPath/bin/teamtalk.sh
-ExecStop=/bin/kill $${'$'}MAINPID
-Restart=on-failure
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-""".trimIndent()
+    val svcContent = generateSystemdServiceContent(deployPath)
 
     val tmpSvc = File.createTempFile("teamtalk-", ".service")
     tmpSvc.deleteOnExit()
@@ -79,6 +61,27 @@ WantedBy=multi-user.target
     tmpSvc.delete()
     println("  systemd service registered")
 }
+
+internal fun generateSystemdServiceContent(deployPath: String): String =
+    """
+[Unit]
+Description=TeamTalk Server
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=$deployPath
+EnvironmentFile=$deployPath/conf/env.sh
+ExecStartPre=/bin/bash -c 'cd $deployPath && export DB_PASSWORD="$${'$'}{DATABASE_PASSWORD}" && ${dockerComposeCmd(systemdContext = true)} up -d'
+ExecStart=$deployPath/bin/teamtalk.sh
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+    """.trimIndent()
 
 // ── 健康检查 ──
 

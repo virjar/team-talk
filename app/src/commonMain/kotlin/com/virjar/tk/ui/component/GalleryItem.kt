@@ -19,7 +19,10 @@ data class GalleryItem(val path: String, val type: GalleryMediaType)
  */
 fun buildMediaList(messages: List<Message>): List<GalleryItem> =
     messages
-        .filter { it.body is ImageBody || it.body is VideoBody }
+        .filter { message ->
+            (message.body is ImageBody || message.body is VideoBody) &&
+                attachmentRenderMode(message) == AttachmentRenderMode.REMOTE_CONTENT
+        }
         .map { msg ->
             val b = msg.body!!
             GalleryItem(

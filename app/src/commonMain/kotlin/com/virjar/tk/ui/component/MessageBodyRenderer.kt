@@ -53,6 +53,22 @@ fun MessageBodyRenderer(
     onUrlClick: ((String) -> Unit)? = null,
     resolveSender: ((uid: String) -> User?)? = null,
 ) {
+    when (attachmentRenderMode(message)) {
+        AttachmentRenderMode.UPLOAD_PLACEHOLDER -> {
+            UploadingIndicator(message.uploadProgress.coerceIn(0f, 1f))
+            return
+        }
+        AttachmentRenderMode.UNAVAILABLE_PLACEHOLDER -> {
+            val attachment = (message.body as AttachmentBody).attachment
+            MediaIconCard(
+                title = attachment.name.ifBlank { "附件" },
+                subtitle = if (message.sendStatus == Message.SEND_STATUS_FAILED) "上传失败" else "附件尚未就绪",
+            )
+            return
+        }
+        AttachmentRenderMode.REMOTE_CONTENT, null -> Unit
+    }
+
     when (val body = message.body) {
         is RichTextBody -> RichMessageText(body.markdown, onUrlClick = onUrlClick, onMentionClick = onMentionClick)
         is InteractiveCardBody -> body.toCard()?.let { card ->
@@ -160,6 +176,30 @@ fun MessageBodyRenderer(
 /** 贴边媒体：图片/视频/贴纸不以气泡卡片呈现，媒体本身即气泡（无内边距、圆角贴边）。 */
 internal fun MessageBody?.isEdgeToEdgeMedia(): Boolean =
     this is ImageBody || this is VideoBody || this is StickerBody
+
+/**
+ * Upload placeholders deliberately carry an empty attachment path until HTTP upload completes.
+ * They are local UI state, not remotely downloadable attachments, so renderers must not hand
+ * them to a file controller, image cache, gallery, or any other path consumer.
+ */
+internal enum class AttachmentRenderMode {
+    REMOTE_CONTENT,
+    UPLOAD_PLACEHOLDER,
+    UNAVAILABLE_PLACEHOLDER,
+}
+
+internal fun attachmentRenderMode(message: Message): AttachmentRenderMode? {
+    val body = message.body as? AttachmentBody ?: return null
+    return when {
+        message.sendStatus == Message.SEND_STATUS_UPLOADING -> AttachmentRenderMode.UPLOAD_PLACEHOLDER
+        body.attachment.path.isBlank() -> AttachmentRenderMode.UNAVAILABLE_PLACEHOLDER
+        else -> AttachmentRenderMode.REMOTE_CONTENT
+    }
+}
+
+/** Edge-to-edge media chrome is enabled only after a real remote attachment exists. */
+internal fun Message.hasReadyEdgeToEdgeMedia(): Boolean =
+    body.isEdgeToEdgeMedia() && attachmentRenderMode(this) == AttachmentRenderMode.REMOTE_CONTENT
 
 // ── 引用样式：左侧竖线（飞书范式，两种气泡底色下都成立） ──
 

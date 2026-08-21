@@ -59,6 +59,17 @@ class DeploymentConfigTest {
     }
 
     @Test
+    fun `generated systemd service delegates process shutdown to systemd`() {
+        val service = generateSystemdServiceContent("/opt/teamtalk")
+
+        assertFalse(service.contains("ExecStop="))
+        assertFalse(service.contains("MAINPID"))
+        assertTrue(service.contains("WorkingDirectory=/opt/teamtalk"))
+        assertTrue(service.contains("ExecStart=/opt/teamtalk/bin/teamtalk.sh"))
+        assertTrue(service.contains("SuccessExitStatus=143"))
+    }
+
+    @Test
     fun `loads https deployment`() {
         val config = DeploymentConfig.load(
             """

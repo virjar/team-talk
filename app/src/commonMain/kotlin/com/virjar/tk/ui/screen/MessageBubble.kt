@@ -31,7 +31,7 @@ import com.virjar.tk.model.User
 import com.virjar.tk.model.UserRole
 import androidx.compose.runtime.key
 import com.virjar.tk.ui.component.AvatarPlaceholder
-import com.virjar.tk.ui.component.isEdgeToEdgeMedia
+import com.virjar.tk.ui.component.hasReadyEdgeToEdgeMedia
 import com.virjar.tk.ui.component.VoicePlaybackController
 import com.virjar.tk.ui.theme.Tk
 
@@ -120,7 +120,7 @@ internal fun MessageBubble(
                     .contextLongPress(onLongClick)
                     .secondaryClick(onLongClick),
             ) {
-                if (msg.body.isEdgeToEdgeMedia()) {
+                if (msg.hasReadyEdgeToEdgeMedia()) {
                     // 贴边媒体（图片/视频/贴纸）：无气泡内边距，媒体自身即气泡面（微信/飞书范式）
                     Box(modifier = Modifier.widthIn(max = Tk.dimens.bubbleMaxWidth)) {
                         com.virjar.tk.ui.component.MessageBodyRenderer(msg, isMe, onMediaClick, imageContent, videoContent, voicePlayback, onMentionClick, onUrlClick, resolveSender)

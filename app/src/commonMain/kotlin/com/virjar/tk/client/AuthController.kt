@@ -10,7 +10,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -61,6 +60,10 @@ class AuthState(
  * @param deviceName 设备名（如 "Android" / "Desktop"）
  * @param createCache 平台 LocalCache 工厂
  * @param onAuthenticated 认证成功后的额外回调（如 Android 的 upsertUser）
+ * @param beforeSessionRetirement 平台认证 UI 的同步前置边界。只在已经存在 [ClientSession]
+ * 的终止路径触发，必须在返回前停止所有仍会借用 cache/HTTP bearer 的平台 owner。
+ * @param afterSessionRetirement 与前置边界严格 try/finally 配对；平台可据此唤醒等待同一
+ * session 终止完成的并发 follower。
  */
 @Composable
 fun rememberAuthController(
@@ -74,6 +77,8 @@ fun rememberAuthController(
     deviceFlag: Int = 0,
     createCache: (deploymentIdentity: DeploymentIdentity, uid: String) -> LocalCache,
     onAuthenticated: ((ClientSession) -> Unit)? = null,
+    beforeSessionRetirement: (ClientSession, SessionEndReason) -> Unit = { _, _ -> },
+    afterSessionRetirement: (ClientSession, SessionEndReason) -> Unit = { _, _ -> },
 ): AuthState {
     // claimOwner 是认证根的持久化租约。Android 外部 Activity 返回或窗口重建时，
     // 新 controller 会先接管世代，从此旧 controller 的延迟回调无权改写凭据。
@@ -140,6 +145,24 @@ fun rememberAuthController(
     var logoutJob by remember { mutableStateOf<Job?>(null) }
     val controllerScope = rememberCoroutineScope()
 
+    fun <T> retireWithPlatformBoundary(
+        retiring: ClientSession,
+        reason: SessionEndReason,
+        retirement: () -> T,
+    ): T = withAuthenticatedSessionRetirementBoundary(
+        before = { beforeSessionRetirement(retiring, reason) },
+        retirement = retirement,
+        after = { afterSessionRetirement(retiring, reason) },
+        onHookFailure = { stage, failure ->
+            runCatching {
+                retiring.recordRetirementFailure(
+                    "Platform $stage session-retirement hook failed",
+                    failure,
+                )
+            }
+        },
+    )
+
     fun beginAuthAttempt(): Throwable? {
         // A previous AUTH callback may already be durably committing on the EventLoop. Drain it,
         // then erase every provisional artifact before reopening admission for the explicit new
@@ -153,23 +176,35 @@ fun rememberAuthController(
             authGeneration += 1
             logoutJob?.cancel()
             logoutJob = null
-            val failures = mutableListOf<Throwable>()
-            fun release(block: () -> Unit) {
-                try {
-                    block()
-                } catch (failure: Throwable) {
-                    failures += failure
+            fun retirePreviousOwners(): Throwable? {
+                val failures = mutableListOf<Throwable>()
+                fun release(block: () -> Unit) {
+                    try {
+                        block()
+                    } catch (failure: Throwable) {
+                        failures += failure
+                    }
                 }
+                release { abandonedSession?.close(reason = SessionEndReason.PROCESS_REPLACED) }
+                release { session?.close(reason = SessionEndReason.PROCESS_REPLACED) }
+                session = null
+                release { credentialSnapshot.snapshot()?.let(tokenStore::compareAndClear) }
+                credentialSnapshot.clear()
+                release { userSession.onAuthFailed(null) }
+                // Deletion failure must not permanently brick this controller. A successful new AUTH
+                // atomically overwrites the same owner generation before synchronization can start.
+                return failures.firstOrNull()
             }
-            release { abandonedSession?.close(reason = SessionEndReason.PROCESS_REPLACED) }
-            release { session?.close(reason = SessionEndReason.PROCESS_REPLACED) }
-            session = null
-            release { credentialSnapshot.snapshot()?.let(tokenStore::compareAndClear) }
-            credentialSnapshot.clear()
-            release { userSession.onAuthFailed(null) }
-            // Deletion failure must not permanently brick this controller. A successful new AUTH
-            // atomically overwrites the same owner generation before synchronization can start.
-            failures.firstOrNull()
+            val platformOwner = session ?: abandonedSession
+            if (platformOwner == null) {
+                retirePreviousOwners()
+            } else {
+                retireWithPlatformBoundary(
+                    platformOwner,
+                    SessionEndReason.PROCESS_REPLACED,
+                    ::retirePreviousOwners,
+                )
+            }
         }
     }
 
@@ -178,51 +213,60 @@ fun rememberAuthController(
         clearStoredLogin: Boolean,
         reason: SessionEndReason,
     ) {
-        // Wait for a credential callback which already won admission, or make every later callback
-        // fail before TokenStore/UserSession mutation. This is the logout/auth-result linearization
-        // point; compare-and-clear below therefore cannot be followed by same-owner resurrection.
-        authResultAdmission.retire()
         val closingRetiring = retiringSession
         val closingSession = session
-        authGeneration += 1
-        logoutJob?.cancel()
-        logoutJob = null
-        retiringSession = null
-        session = null
-        isLoggedIn = false
-        autoLoggingIn = false
-        authError = message
+        fun retireControllerState() {
+            // Wait for a credential callback which already won admission, or make every later
+            // callback fail before TokenStore/UserSession mutation. This is the logout/auth-result
+            // linearization point; compare-and-clear cannot be followed by same-owner resurrection.
+            authResultAdmission.retire()
+            authGeneration += 1
+            logoutJob?.cancel()
+            logoutJob = null
+            retiringSession = null
+            session = null
+            isLoggedIn = false
+            autoLoggingIn = false
+            authError = message
 
-        val failures = mutableListOf<Pair<String, Throwable>>()
-        fun release(owner: String, block: () -> Unit) {
-            try {
-                block()
-            } catch (failure: Throwable) {
-                failures += owner to failure
+            val failures = mutableListOf<Pair<String, Throwable>>()
+            fun release(owner: String, block: () -> Unit) {
+                try {
+                    block()
+                } catch (failure: Throwable) {
+                    failures += owner to failure
+                }
+            }
+            release("retiring session") {
+                closingRetiring?.close(reason = reason, disconnectTransport = false)
+            }
+            release("active session") { closingSession?.close(reason = reason) }
+            if (clearStoredLogin) {
+                release("stored login") {
+                    // uid + token + owner generation 全部匹配才会清除。旧 Activity 的
+                    // AUTH_FAILED/401 即使延迟到达，也不能删除新 owner 已轮换的 token。
+                    credentialSnapshot.snapshot()?.let(tokenStore::compareAndClear)
+                }
+                credentialSnapshot.clear()
+            }
+            release("user identity") {
+                // The controller can stay composed on the login screen, so do not leave the previous
+                // account's identity or bearer credentials resident in its long-lived UserSession.
+                userSession.onAuthFailed(message)
+            }
+            if (failures.isNotEmpty()) {
+                (closingSession ?: closingRetiring)?.recordRetirementFailure(
+                    "Authentication retirement completed with ${failures.size} cleanup failure(s)",
+                    failures.first().second,
+                )
             }
         }
-        release("retiring session") {
-            closingRetiring?.close(reason = reason, disconnectTransport = false)
-        }
-        release("active session") { closingSession?.close(reason = reason) }
-        if (clearStoredLogin) {
-            release("stored login") {
-                // uid + token + owner generation 全部匹配才会清除。旧 Activity 的
-                // AUTH_FAILED/401 即使延迟到达，也不能删除新 owner 已轮换的 token。
-                credentialSnapshot.snapshot()?.let(tokenStore::compareAndClear)
-            }
-            credentialSnapshot.clear()
-        }
-        release("user identity") {
-            // The controller can stay composed on the login screen, so do not leave the previous
-            // account's identity or bearer credentials resident in its long-lived UserSession.
-            userSession.onAuthFailed(message)
-        }
-        if (failures.isNotEmpty()) {
-            (closingSession ?: closingRetiring)?.recordRetirementFailure(
-                "Authentication retirement completed with ${failures.size} cleanup failure(s)",
-                failures.first().second,
-            )
+
+        val platformOwner = closingSession ?: closingRetiring
+        if (platformOwner == null) {
+            retireControllerState()
+        } else {
+            retireWithPlatformBoundary(platformOwner, reason, ::retireControllerState)
         }
     }
 
@@ -231,15 +275,45 @@ fun rememberAuthController(
     // composition must also release the old session/EventLoop rather than leaving a ghost client.
     DisposableEffect(imClient) {
         onDispose {
-            authResultAdmission.retire()
-            authGeneration += 1
-            logoutJob?.cancel()
-            logoutJob = null
-            retiringSession?.close(reason = SessionEndReason.SHUTDOWN, disconnectTransport = false)
-            retiringSession = null
-            session?.close(reason = SessionEndReason.SHUTDOWN, disconnectTransport = false)
-            session = null
-            imClient.destroy()
+            val closingRetiring = retiringSession
+            val closingSession = session
+            fun retireController() {
+                val failures = mutableListOf<Throwable>()
+                fun release(block: () -> Unit) {
+                    try {
+                        block()
+                    } catch (failure: Throwable) {
+                        failures += failure
+                    }
+                }
+                release(authResultAdmission::retire)
+                authGeneration += 1
+                release { logoutJob?.cancel() }
+                logoutJob = null
+                release {
+                    closingRetiring?.close(reason = SessionEndReason.SHUTDOWN, disconnectTransport = false)
+                }
+                retiringSession = null
+                release {
+                    closingSession?.close(reason = SessionEndReason.SHUTDOWN, disconnectTransport = false)
+                }
+                session = null
+                release(imClient::destroy)
+                failures.firstOrNull()?.let { failure ->
+                    runCatching {
+                        (closingSession ?: closingRetiring)?.recordRetirementFailure(
+                            "Controller disposal completed with ${failures.size} cleanup failure(s)",
+                            failure,
+                        )
+                    }
+                }
+            }
+            val platformOwner = closingSession ?: closingRetiring
+            if (platformOwner == null) {
+                retireController()
+            } else {
+                retireWithPlatformBoundary(platformOwner, SessionEndReason.SHUTDOWN, ::retireController)
+            }
         }
     }
 
@@ -347,13 +421,41 @@ fun rememberAuthController(
                 !tokenStore.isCurrentOwner(tokenOwner.generation)
             ) {
                 // 这个 controller 已被新 Activity/窗口取代。旧 owner 不得覆盖新凭据。
-                isLoggedIn = false
-                autoLoggingIn = false
-                session?.close(reason = SessionEndReason.PROCESS_REPLACED)
-                session = null
-                credentialSnapshot.clear()
-                userSession.onAuthFailed(null)
-                imClient.disconnect()
+                val staleSession = session
+                fun retireStaleOwner() {
+                    val failures = mutableListOf<Throwable>()
+                    fun release(block: () -> Unit) {
+                        try {
+                            block()
+                        } catch (failure: Throwable) {
+                            failures += failure
+                        }
+                    }
+                    isLoggedIn = false
+                    autoLoggingIn = false
+                    release { staleSession?.close(reason = SessionEndReason.PROCESS_REPLACED) }
+                    session = null
+                    credentialSnapshot.clear()
+                    release { userSession.onAuthFailed(null) }
+                    release(imClient::disconnect)
+                    failures.firstOrNull()?.let { failure ->
+                        runCatching {
+                            staleSession?.recordRetirementFailure(
+                                "Stale controller retirement completed with ${failures.size} cleanup failure(s)",
+                                failure,
+                            )
+                        }
+                    }
+                }
+                if (staleSession == null) {
+                    retireStaleOwner()
+                } else {
+                    retireWithPlatformBoundary(
+                        staleSession,
+                        SessionEndReason.PROCESS_REPLACED,
+                        ::retireStaleOwner,
+                    )
+                }
                 return false
             }
             if (session == null) {
@@ -470,63 +572,110 @@ fun rememberAuthController(
         },
         onLogout = {
             val closingSession = session
-            val retirementGeneration = authGeneration + 1
-            authGeneration = retirementGeneration
-            // Leave the authenticated UI immediately, but let the session-owned RPC finish before
-            // closing its transport. The controller composition itself remains mounted at app root.
-            closingSession?.beginUserLogoutRetirement()
-            isLoggedIn = false
-            autoLoggingIn = false
-            session = null
-            authError = null
-            authResultAdmission.retire()
-            val localCleanupFailures = mutableListOf<Throwable>()
-            try {
-                credentialSnapshot.snapshot()?.let(tokenStore::compareAndClear)
-            } catch (failure: Throwable) {
-                localCleanupFailures += failure
-            } finally {
-                credentialSnapshot.clear()
+            fun retireUserSession() {
+                val retirementGeneration = authGeneration + 1
+                authGeneration = retirementGeneration
+                // The platform pre-retirement hook has already stopped every cache/bearer borrower.
+                // Quiesce locally before publishing the login surface; the remote logout RPC may
+                // finish later on the controller-owned retirement scope.
+                val quiesceFailure = runCatching {
+                    closingSession?.beginUserLogoutRetirement()
+                }.exceptionOrNull()
+                isLoggedIn = false
+                autoLoggingIn = false
+                session = null
+                authError = null
+                authResultAdmission.retire()
+                val localCleanupFailures = mutableListOf<Throwable>()
                 try {
-                    userSession.onAuthFailed(null)
+                    credentialSnapshot.snapshot()?.let(tokenStore::compareAndClear)
                 } catch (failure: Throwable) {
                     localCleanupFailures += failure
+                } finally {
+                    credentialSnapshot.clear()
+                    try {
+                        userSession.onAuthFailed(null)
+                    } catch (failure: Throwable) {
+                        localCleanupFailures += failure
+                    }
                 }
-            }
-            if (localCleanupFailures.isNotEmpty()) {
-                closingSession?.recordRetirementFailure(
-                    "User logout local cleanup completed with ${localCleanupFailures.size} failure(s)",
-                    localCleanupFailures.first(),
-                )
-            }
-            if (closingSession == null) {
-                imClient.disconnect()
-            } else {
-                retiringSession = closingSession
-                val retirementJob = controllerScope.launchRetirementWithFallback(
-                    fallback = {
+                if (localCleanupFailures.isNotEmpty()) {
+                    runCatching {
+                        closingSession?.recordRetirementFailure(
+                            "User logout local cleanup completed with ${localCleanupFailures.size} failure(s)",
+                            localCleanupFailures.first(),
+                        )
+                    }
+                }
+                if (closingSession == null) {
+                    imClient.disconnect()
+                } else if (quiesceFailure != null) {
+                    runCatching {
                         closingSession.close(
                             reason = SessionEndReason.USER_LOGOUT,
                             disconnectTransport = authGeneration == retirementGeneration,
                         )
-                    },
-                ) {
-                    try {
-                        closingSession.completeUserLogoutRetirement {
-                            authGeneration == retirementGeneration
-                        }.getOrThrow()
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Exception) {
-                        // Local logout remains terminal offline. The sealed capability has already
-                        // closed the raw RPC owner in finally.
-                    } finally {
-                        if (retiringSession === closingSession) retiringSession = null
+                    }.exceptionOrNull()?.let(quiesceFailure::addSuppressed)
+                    runCatching {
+                        closingSession.recordRetirementFailure(
+                            "User logout quiesce failed; forced terminal close",
+                            quiesceFailure,
+                        )
                     }
+                    retiringSession = null
+                } else {
+                    retiringSession = closingSession
+                    val retirementJob = try {
+                        controllerScope.launchRetirementWithFallback(
+                            fallback = {
+                                closingSession.close(
+                                    reason = SessionEndReason.USER_LOGOUT,
+                                    disconnectTransport = authGeneration == retirementGeneration,
+                                )
+                            },
+                        ) {
+                            try {
+                                closingSession.completeUserLogoutRetirement {
+                                    authGeneration == retirementGeneration
+                                }.getOrThrow()
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                // Local logout remains terminal offline. The sealed capability has
+                                // already closed the raw RPC owner in finally.
+                            } finally {
+                                if (retiringSession === closingSession) retiringSession = null
+                            }
+                        }
+                    } catch (startupFailure: Throwable) {
+                        runCatching {
+                            closingSession.close(
+                                reason = SessionEndReason.USER_LOGOUT,
+                                disconnectTransport = authGeneration == retirementGeneration,
+                            )
+                        }.exceptionOrNull()?.let(startupFailure::addSuppressed)
+                        runCatching {
+                            closingSession.recordRetirementFailure(
+                                "User logout retirement job failed to start",
+                                startupFailure,
+                            )
+                        }
+                        if (retiringSession === closingSession) retiringSession = null
+                        null
+                    }
+                    // Covers a scope cancelled before dispatch/start. Ordinary completion has already
+                    // closed in the sealed capability's finally; this idempotent fallback then no-ops.
+                    logoutJob = retirementJob
                 }
-                // Covers a scope cancelled before dispatch/start. Ordinary completion has already
-                // closed in the sealed capability's finally; this idempotent fallback then no-ops.
-                logoutJob = retirementJob
+            }
+            if (closingSession == null) {
+                retireUserSession()
+            } else {
+                retireWithPlatformBoundary(
+                    closingSession,
+                    SessionEndReason.USER_LOGOUT,
+                    ::retireUserSession,
+                )
             }
         },
         onAuthExpired = {
@@ -538,19 +687,6 @@ fun rememberAuthController(
         },
         clearError = { authError = null },
     )
-}
-
-/**
- * Enters retirement before the first dispatcher hop and always runs an idempotent close fallback,
- * including when the owning Compose scope was already cancelled before launch.
- */
-internal fun kotlinx.coroutines.CoroutineScope.launchRetirementWithFallback(
-    fallback: () -> Unit,
-    block: suspend kotlinx.coroutines.CoroutineScope.() -> Unit,
-): Job {
-    val job = launch(start = CoroutineStart.UNDISPATCHED, block = block)
-    job.invokeOnCompletion { runCatching(fallback) }
-    return job
 }
 
 /**
@@ -636,15 +772,3 @@ internal fun autoLoginTimeoutMillis(state: ConnectionState): Long? = when (state
 
 internal fun requiresForcedProtocolUpgrade(failure: AuthenticationFailure?): Boolean =
     failure?.kind == AuthenticationFailureKind.PROTOCOL_VERSION_UNSUPPORTED
-
-/** AUTH_FAILED is terminal even before a ClientSession exists; always release the raw socket. */
-internal inline fun retireAuthFailureAndDisconnect(
-    endSession: () -> Unit,
-    disconnectTransport: () -> Unit,
-) {
-    try {
-        endSession()
-    } finally {
-        disconnectTransport()
-    }
-}

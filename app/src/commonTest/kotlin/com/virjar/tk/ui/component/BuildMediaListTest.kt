@@ -14,9 +14,15 @@ import kotlin.test.assertTrue
 
 class BuildMediaListTest {
 
-    private fun msg(body: MessageBody) = Message(
+    private fun msg(
+        body: MessageBody,
+        sendStatus: Int = Message.SEND_STATUS_SENT,
+    ) = Message(
         chatId = "c1", clientMsgId = "m1", senderUid = "u1",
-        messageType = MessageBodyPolicy.typeOf(body).code, timestamp = 0, body = body,
+        messageType = MessageBodyPolicy.typeOf(body).code,
+        timestamp = 0,
+        body = body,
+        sendStatus = sendStatus,
     )
 
     @Test
@@ -52,6 +58,26 @@ class BuildMediaListTest {
     @Test
     fun text_only_messages_returns_empty_list() {
         val messages = listOf(msg(buildRichTextBody("hello")))
+        assertTrue(buildMediaList(messages).isEmpty())
+    }
+
+    @Test
+    fun uploading_media_with_blank_or_early_paths_never_enters_gallery() {
+        val messages = listOf(
+            msg(ImageBody(attachment("")), Message.SEND_STATUS_UPLOADING),
+            msg(VideoBody(attachment("video/not-authoritative-yet.mp4")), Message.SEND_STATUS_UPLOADING),
+        )
+
+        assertTrue(buildMediaList(messages).isEmpty())
+    }
+
+    @Test
+    fun failed_media_with_blank_paths_never_enters_gallery() {
+        val messages = listOf(
+            msg(ImageBody(attachment("   ")), Message.SEND_STATUS_FAILED),
+            msg(VideoBody(attachment("")), Message.SEND_STATUS_FAILED),
+        )
+
         assertTrue(buildMediaList(messages).isEmpty())
     }
 

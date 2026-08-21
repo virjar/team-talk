@@ -6,6 +6,7 @@ import android.os.Build
 import android.util.Log
 import com.virjar.tk.android.BuildConfig
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -46,6 +47,9 @@ class MainActivity : ComponentActivity() {
     private val appDataStateHolder: AndroidAppDataStateHolder by lazy {
         ViewModelProvider(this)[AndroidAppDataStateHolder::class.java]
     }
+    private val beforeSessionRetirement: (ClientSession, SessionEndReason) -> Unit by lazy {
+        { session, reason -> appDataStateHolder.beforeSessionRetirement(session, reason) }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -82,6 +86,7 @@ class MainActivity : ComponentActivity() {
                             session.localCache.upsertUser(User(uid = us.uid, username = username, name = us.name ?: username))
                         }
                     },
+                    beforeSessionRetirement = beforeSessionRetirement,
                 )
                 if (!auth.isLoggedIn) {
                     if (auth.autoLoggingIn) {
@@ -90,23 +95,21 @@ class MainActivity : ComponentActivity() {
                         AuthFlow(auth)
                     }
                 } else {
-                    val dataState = remember(auth.session) {
+                    val uiSession = remember(auth.session) {
                         appDataStateHolder.forSession(auth.session!!) {
                             // Repository/ViewModel errors may arrive on a background dispatcher.
-                            // Tear down the retained AppDataState on the composition's UI scope
-                            // before the auth controller switches back to the login screen.
+                            // Enter AuthController on the composition's UI scope. Its synchronous
+                            // platform hook tears down this exact retained session before closing
+                            // LocalCache and publishing the login screen.
                             uiScope.launch {
-                                appDataStateHolder.clearForAuthenticationLoss()
                                 auth.onAuthExpired()
                             }
                         }
                     }
                     AndroidMainApp(
-                        dataState = dataState,
-                        onLogout = {
-                            appDataStateHolder.clearForLogout()
-                            auth.onLogout()
-                        },
+                        dataState = uiSession.dataState,
+                        resourceOwner = uiSession.resourceOwner,
+                        onLogout = auth.onLogout,
                     )
                 }
                 if (auth.requiresProtocolUpgrade) {
@@ -138,100 +141,195 @@ internal class AndroidAppDataStateHolder(application: Application) : AndroidView
     private var composerContexts = ChatComposerContextStore()
     private var documentDrafts = newDocumentDraftStore()
     private var dataState: AppDataState? = null
-    private var retainedSession: ClientSession? = null
+    private var authenticatedResources: AndroidAuthenticatedResourceOwner? = null
+    private var continuationOwnerUid: String? = null
+    private val sessionOwner = AndroidSessionOwnerGate<ClientSession>()
 
-    fun forSession(session: ClientSession, onAuthExpired: () -> Unit): AppDataState {
-        dataState?.takeIf { retainedSession === session }?.let { return it }
-        val previous = dataState
-        val previousSession = retainedSession
-        val sameUser = previous?.userSession?.uid == session.userSession.uid
-        if (sameUser) previous?.documents?.captureDrafts()
-        previous?.destroy(clearComposerContexts = !sameUser)
-        if (sameUser) documentDraftPersistence.requestFlush()
-        // AuthController owns the transport. A retained holder may still reference an already
-        // closed session after the same ImClient has started a newer login; only release the old
-        // session resources here and never request a transport disconnect from the holder.
-        previousSession?.close(
-            reason = SessionEndReason.PROCESS_REPLACED,
-            disconnectTransport = false,
-        )
-        if (!sameUser) {
-            composerContexts = ChatComposerContextStore()
-            documentDrafts = newDocumentDraftStore()
+    fun forSession(session: ClientSession, onAuthExpired: () -> Unit): AndroidAuthenticatedUiSession =
+        sessionOwner.replaceOwner(session) { previousSession ->
+            val currentState = dataState
+            val currentResources = authenticatedResources
+            if (previousSession === session && currentState != null && currentResources != null) {
+                return@replaceOwner AndroidAuthenticatedUiSession(currentState, currentResources)
+            }
+            closeAuthenticatedResources("session replacement")
+            val previous = dataState
+            val previousOwnerUid = previous?.userSession?.uid ?: continuationOwnerUid
+            val sameUser = previousOwnerUid == session.userSession.uid
+            if (sameUser) previous?.documents?.captureDrafts()
+            previous?.destroy(
+                clearComposerContexts = !sameUser,
+                clearDocumentDrafts = !sameUser,
+            )
+            if (sameUser) documentDraftPersistence.requestFlush()
+            // AuthController owns the transport. A retained holder may still reference an already
+            // closed session after the same ImClient has started a newer login; only release the old
+            // session resources here and never request a transport disconnect from the holder.
+            previousSession?.takeIf { it !== session }?.close(
+                reason = SessionEndReason.PROCESS_REPLACED,
+                disconnectTransport = false,
+            )
+            if (!sameUser) {
+                composerContexts = ChatComposerContextStore()
+                documentDrafts = newDocumentDraftStore()
+            }
+            continuationOwnerUid = null
+            AppDataState(
+                session = session,
+                chatComposerContexts = composerContexts,
+                documentDrafts = documentDrafts,
+                onAuthExpired = onAuthExpired,
+            ).let { state ->
+                val resources = AndroidAuthenticatedResourceOwner()
+                dataState = state
+                authenticatedResources = resources
+                AndroidAuthenticatedUiSession(state, resources)
+            }
         }
-        return AppDataState(
-            session = session,
-            chatComposerContexts = composerContexts,
-            documentDrafts = documentDrafts,
-            onAuthExpired = onAuthExpired,
-        ).also {
-            dataState = it
-            retainedSession = session
+
+    /** AuthController invokes this synchronously before the matching session can close LocalCache. */
+    fun beforeSessionRetirement(session: ClientSession, reason: SessionEndReason) {
+        sessionOwner.retireIfOwner(session) {
+            val failures = mutableListOf<Pair<String, Throwable>>()
+            fun release(owner: String, block: () -> Unit) {
+                try {
+                    block()
+                } catch (failure: Throwable) {
+                    failures += owner to failure
+                }
+            }
+
+            release("authenticated resources") {
+                closeAuthenticatedResources("$reason retirement")
+            }
+            val retiringState = dataState
+            dataState = null
+            when (reason.androidUiRetirementPolicy()) {
+                AndroidUiRetirementPolicy.DISCARD_DRAFTS -> {
+                    continuationOwnerUid = null
+                    release("AppDataState") {
+                        retiringState?.destroy(clearComposerContexts = true, clearDocumentDrafts = true)
+                    }
+                    release("document draft flush") { documentDraftPersistence.requestFlush() }
+                    release("composer store reset") { composerContexts = ChatComposerContextStore() }
+                    release("document store reset") { documentDrafts = newDocumentDraftStore() }
+                }
+
+                AndroidUiRetirementPolicy.PRESERVE_DURABLE_DRAFTS -> {
+                    continuationOwnerUid = null
+                    release("document draft capture") { retiringState?.documents?.captureDrafts() }
+                    release("AppDataState") {
+                        retiringState?.destroy(clearComposerContexts = true, clearDocumentDrafts = false)
+                    }
+                    release("document draft flush") { documentDraftPersistence.requestFlush() }
+                    release("composer store reset") { composerContexts = ChatComposerContextStore() }
+                    release("document store reset") { documentDrafts = newDocumentDraftStore() }
+                }
+
+                AndroidUiRetirementPolicy.PRESERVE_SAME_USER_CONTINUATION -> {
+                    continuationOwnerUid = session.userSession.uid
+                    release("document draft capture") { retiringState?.documents?.captureDrafts() }
+                    release("AppDataState") {
+                        retiringState?.destroy(clearComposerContexts = false, clearDocumentDrafts = false)
+                    }
+                    release("document draft flush") { documentDraftPersistence.requestFlush() }
+                }
+            }
+            failures.forEachIndexed { index, (owner, failure) ->
+                Log.e(
+                    "AndroidAuth",
+                    "$reason retirement cleanup failed for $owner (failure ${index + 1})",
+                    failure,
+                )
+            }
         }
-    }
-
-    fun clearForLogout() {
-        dataState?.destroy(clearComposerContexts = true)
-        documentDraftPersistence.requestFlush()
-        dataState = null
-        retainedSession = null
-        composerContexts = ChatComposerContextStore()
-        documentDrafts = newDocumentDraftStore()
-    }
-
-    /** Authentication expiry requires re-login, but is not the user's instruction to discard work. */
-    fun clearForAuthenticationLoss() {
-        dataState?.documents?.captureDrafts()
-        dataState?.destroy(clearComposerContexts = true, clearDocumentDrafts = false)
-        documentDraftPersistence.requestFlush()
-        dataState = null
-        retainedSession = null
-        composerContexts = ChatComposerContextStore()
-        documentDrafts = newDocumentDraftStore()
     }
 
     fun captureAndScheduleDocumentDraftFlush() {
-        captureThenScheduleDocumentDraftFlush(
-            captureDrafts = { dataState?.documents?.captureDrafts() ?: true },
-            scheduleFlush = { documentDraftPersistence.requestFlush() },
-        )
+        sessionOwner.withOwner {
+            captureThenScheduleDocumentDraftFlush(
+                captureDrafts = { dataState?.documents?.captureDrafts() ?: true },
+                scheduleFlush = { documentDraftPersistence.requestFlush() },
+            )
+        }
     }
 
     override fun onCleared() {
-        // Task removal is not an explicit account logout. Retain the uid-scoped AtomicFile so a
-        // fresh process can resume the unsaved document.
-        dataState?.documents?.captureDrafts()
-        dataState?.destroy(clearComposerContexts = true, clearDocumentDrafts = false)
-        documentDraftPersistence.requestFlush()
-        retainedSession?.close(reason = SessionEndReason.SHUTDOWN, disconnectTransport = false)
-        dataState = null
-        retainedSession = null
+        sessionOwner.retireCurrent { retainedSession ->
+            closeAuthenticatedResources("ViewModel clearing")
+            // Task removal is not an explicit account logout. Retain the uid-scoped AtomicFile so
+            // a fresh process can resume the unsaved document.
+            val retiringState = dataState
+            dataState = null
+            retiringState?.documents?.captureDrafts()
+            retiringState?.destroy(clearComposerContexts = true, clearDocumentDrafts = false)
+            documentDraftPersistence.requestFlush()
+            retainedSession?.close(reason = SessionEndReason.SHUTDOWN, disconnectTransport = false)
+            continuationOwnerUid = null
+        }
     }
 
     private fun newDocumentDraftStore() = DocumentDraftStore(
         documentDraftPersistence,
     )
+
+    private fun closeAuthenticatedResources(boundary: String) {
+        val closing = authenticatedResources
+        authenticatedResources = null
+        closing?.closeAll().orEmpty().forEachIndexed { index, failure ->
+            Log.e(
+                "AndroidAuth",
+                "Authenticated resource cleanup failed at $boundary (failure ${index + 1})",
+                failure,
+            )
+        }
+    }
 }
+
+internal data class AndroidAuthenticatedUiSession(
+    val dataState: AppDataState,
+    val resourceOwner: AndroidAuthenticatedResourceOwner,
+)
 
 @Composable
 private fun AuthFlow(auth: AuthState) {
-    var showRegister by remember { mutableStateOf(false) }
-    if (showRegister) {
+    var destination by remember { mutableStateOf(AuthDestination.LOGIN) }
+    val backDestination = destination.backDestination()
+    BackHandler(enabled = backDestination != null) {
+        backDestination?.let { destination = it }
+        auth.clearError()
+    }
+    if (destination == AuthDestination.REGISTER) {
         RegisterScreen(
             onRegister = auth.onRegister,
-            onNavigateBack = { showRegister = false; auth.clearError() }, error = auth.authError,
+            onNavigateBack = { destination = AuthDestination.LOGIN; auth.clearError() }, error = auth.authError,
         )
     } else {
         LoginScreen(
             onLogin = auth.onLogin,
-            onNavigateToRegister = { showRegister = true; auth.clearError() }, error = auth.authError,
+            onNavigateToRegister = { destination = AuthDestination.REGISTER; auth.clearError() }, error = auth.authError,
         )
+    }
+}
+
+internal enum class AuthDestination {
+    LOGIN,
+    REGISTER,
+    ;
+
+    fun backDestination(): AuthDestination? = when (this) {
+        LOGIN -> null
+        REGISTER -> LOGIN
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
+private fun AndroidMainApp(
+    dataState: AppDataState,
+    resourceOwner: AndroidAuthenticatedResourceOwner,
+    onLogout: () -> Unit,
+) {
     val navController = rememberNavController()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -314,6 +412,7 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             if (vm != null) { AndroidChatScreen(chatId, chatName, chatType, vm, dataState.userSession.uid,
                 dataState::httpCredentialsSnapshot,
                 deploymentIdentity = dataState.deploymentIdentity,
+                resourceOwner = resourceOwner,
                 resolveSender = { uid ->
                     mentionCandidates.firstOrNull { it.uid == uid } ?: dataState.cachedUser(uid)
                 },
@@ -367,21 +466,33 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             } else {
                 val sessionUser = dataState.userSession
                 val ownerUid = sessionUser.uid
-                val mediaSession = remember(ownerUid, dataState) {
-                    AndroidMediaSession.create(
-                        deploymentIdentity = dataState.deploymentIdentity,
-                        ownerUid = ownerUid,
-                        credentialsProvider = dataState::httpCredentialsSnapshot,
+                val mediaResourcesLease = remember(ownerUid, dataState, resourceOwner) {
+                    resourceOwner.acquire {
+                        AndroidAuthenticatedMediaResources.create(
+                            createMediaSession = {
+                                AndroidMediaSession.create(
+                                    deploymentIdentity = dataState.deploymentIdentity,
+                                    ownerUid = ownerUid,
+                                    credentialsProvider = dataState::httpCredentialsSnapshot,
+                                )
+                            },
+                        )
+                    }
+                }
+                DisposableEffect(mediaResourcesLease) {
+                    onDispose {
+                        runCatching(mediaResourcesLease::close).onFailure { failure ->
+                            Log.e("TextAttachment", "Failed to dispose authenticated media", failure)
+                        }
+                    }
+                }
+                mediaResourcesLease.resourceOrNull()?.let { resources ->
+                    AndroidTextAttachmentPreviewScreen(
+                        attachment = attachment,
+                        mediaSession = resources.mediaSession,
+                        onBack = { navController.popBackStack() },
                     )
                 }
-                DisposableEffect(mediaSession) {
-                    onDispose { mediaSession.close() }
-                }
-                AndroidTextAttachmentPreviewScreen(
-                    attachment = attachment,
-                    mediaSession = mediaSession,
-                    onBack = { navController.popBackStack() },
-                )
             }
         }
         composable(Routes.SEARCH_MESSAGES) {
@@ -546,24 +657,40 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             val routeScope = rememberCoroutineScope()
             val sessionUser = dataState.userSession
             val sessionUid = sessionUser.uid
-            val mediaSession = remember(dataState.deploymentIdentity, sessionUid, dataState) {
-                AndroidMediaSession.create(
-                    deploymentIdentity = dataState.deploymentIdentity,
-                    ownerUid = sessionUid,
-                    credentialsProvider = dataState::httpCredentialsSnapshot,
-                )
-            }
-            var uploading by remember { mutableStateOf(false) }
-            var versionTarget by remember { mutableStateOf<com.virjar.tk.model.GroupFileEntry?>(null) }
-            val downloads = remember(context, mediaSession) {
-                AndroidFileDownloadController(context, mediaSession)
-            }
-            DisposableEffect(downloads) {
-                onDispose {
-                    downloads.close()
-                    mediaSession.close()
+            val mediaResourcesLease = remember(
+                dataState.deploymentIdentity,
+                sessionUid,
+                dataState,
+                resourceOwner,
+                context,
+            ) {
+                resourceOwner.acquire {
+                    AndroidAuthenticatedMediaResources.create(
+                        createMediaSession = {
+                            AndroidMediaSession.create(
+                                deploymentIdentity = dataState.deploymentIdentity,
+                                ownerUid = sessionUid,
+                                credentialsProvider = dataState::httpCredentialsSnapshot,
+                            )
+                        },
+                        createFileDownloads = { mediaSession ->
+                            AndroidFileDownloadController(context, mediaSession)
+                        },
+                    )
                 }
             }
+            DisposableEffect(mediaResourcesLease) {
+                onDispose {
+                    runCatching(mediaResourcesLease::close).onFailure { failure ->
+                        Log.e("GroupFiles", "Failed to dispose authenticated media", failure)
+                    }
+                }
+            }
+            val mediaResources = mediaResourcesLease.resourceOrNull() ?: return@composable
+            val mediaSession = mediaResources.mediaSession
+            val downloads = requireNotNull(mediaResources.fileDownloads)
+            var uploading by remember { mutableStateOf(false) }
+            var versionTarget by remember { mutableStateOf<com.virjar.tk.model.GroupFileEntry?>(null) }
             LaunchedEffect(chatId) { dataState.loadScreenDataByKey(ScreenDataKey.GroupFiles(chatId)) }
 
             val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->

@@ -203,9 +203,7 @@ class DesktopNav(session: ClientSession, onAuthExpired: () -> Unit) :
 }
 
 @Composable
-internal fun rememberDesktopNav(session: ClientSession, onAuthExpired: () -> Unit): DesktopNav {
-    val latestAuthExpired by rememberUpdatedState(onAuthExpired)
-    val nav = remember(session) { DesktopNav(session) { latestAuthExpired() } }
+internal fun rememberDesktopNav(nav: DesktopNav): DesktopNav {
     DisposableEffect(nav) {
         onDispose { nav.destroy(clearComposerContexts = true) }
     }

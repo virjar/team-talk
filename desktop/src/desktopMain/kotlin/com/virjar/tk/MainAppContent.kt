@@ -33,7 +33,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.WindowScope
-import com.virjar.tk.client.ClientSession
 import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.media.DesktopSessionResources
 import com.virjar.tk.model.ChatType
@@ -67,15 +66,13 @@ private val ChatInspectorWidth = 400.dp
  */
 @Composable
 internal fun WindowScope.MainAppContent(
-    session: ClientSession,
+    nav: DesktopNav,
     resources: DesktopSessionResources,
     mainWindow: java.awt.Window,
     connectionState: ConnectionState,
     onToggleWindowZoom: () -> Unit,
     onLogout: () -> Unit,
-    onAuthExpired: () -> Unit,
 ) {
-    val nav = rememberDesktopNav(session, onAuthExpired)
     var mainWindowReadActive by remember(mainWindow) {
         mutableStateOf(mainWindow.isVisible && mainWindow.isFocused)
     }
@@ -129,10 +126,6 @@ internal fun WindowScope.MainAppContent(
             }
             else -> Unit
         }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose { nav.destroy() }
     }
 
     // ESC 优先关闭资料弹窗，再关闭检查器：AWT KeyEventDispatcher 层拦截（Compose onPreviewKeyEvent 依赖

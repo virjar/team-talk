@@ -75,6 +75,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
     val deploymentIdentity = remember(config) { config.deploymentIdentity() }
     val tokenStore = remember(deploymentIdentity) { DesktopTokenStore(dataDir, deploymentIdentity) }
     val deviceId = remember(dataDir) { desktopInstallationDeviceId(dataDir) }
+    val sessionRetirementBridge = remember { DesktopAuthenticatedUiRetirementBridge() }
 
     // 启动 UI 自动化测试 HTTP 服务（通过反射隔离，production 打包删除 test 包也不报错）
     LaunchedEffect(Unit) { TestServiceBridge.startIfEnabled() }
@@ -90,6 +91,8 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
         deviceModel = System.getProperty("os.name"),
         deviceFlag = 2,
         createCache = { identity, uid -> createDesktopLocalCache(identity, uid, dataDir) },
+        beforeSessionRetirement = sessionRetirementBridge::beforeSessionRetirement,
+        afterSessionRetirement = sessionRetirementBridge::afterSessionRetirement,
     )
 
     // ════════════════════════════════════════════════════════════
@@ -208,8 +211,22 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                 diagnosticLogger = session.diagnosticLogger("DesktopSession"),
             )
         }
+        val authenticatedUi = remember(session, desktopResources) {
+            DesktopAuthenticatedUiOwner(
+                session = session,
+                closePlatformResources = desktopResources::close,
+                requestAuthExpired = { auth.onAuthExpired() },
+            )
+        }
+        val desktopNav = rememberDesktopNav(authenticatedUi.navigation)
+        DisposableEffect(sessionRetirementBridge, session, authenticatedUi) {
+            val retirementBinding = sessionRetirementBridge.bind(session, authenticatedUi.retirement)
+            onDispose { retirementBinding.close() }
+        }
         DisposableEffect(desktopResources) {
-            onDispose { desktopResources.close() }
+            onDispose {
+                disposeDesktopAuthenticatedResources(desktopResources::close)
+            }
         }
         // 主窗口可见性：true=显示，false=隐藏到托盘
         var windowVisible by remember { mutableStateOf(true) }
@@ -305,7 +322,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
             setTeamTalkIcon()
             AppTheme {
                 MainAppContent(
-                    session = session,
+                    nav = desktopNav,
                     resources = desktopResources,
                     mainWindow = window,
                     connectionState = connectionState,
@@ -313,7 +330,6 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                         mainWindowState.placement = nextTitleBarPlacement(mainWindowState.placement)
                     },
                     onLogout = { auth.onLogout() },
-                    onAuthExpired = { auth.onAuthExpired() },
                 )
             }
         }

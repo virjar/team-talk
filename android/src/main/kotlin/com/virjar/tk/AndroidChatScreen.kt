@@ -57,7 +57,7 @@ import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AndroidChatScreen(
+internal fun AndroidChatScreen(
     chatId: String,
     chatName: String,
     chatType: Int,
@@ -71,6 +71,7 @@ fun AndroidChatScreen(
     onGroupDetail: () -> Unit,
     onBack: () -> Unit,
     deploymentIdentity: DeploymentIdentity,
+    resourceOwner: AndroidAuthenticatedResourceOwner,
     resolveSender: ((uid: String) -> User?)? = null,
     mentionCandidates: List<User> = emptyList(),
     onMentionClick: ((uid: String) -> Unit)? = null,
@@ -82,28 +83,55 @@ fun AndroidChatScreen(
     val routeLifecycleOwner = LocalLifecycleOwner.current
     val focusManager = LocalFocusManager.current
     val softwareKeyboardController = LocalSoftwareKeyboardController.current
-    val mediaSession = remember(deploymentIdentity, myUid, credentialsProvider) {
-        AndroidMediaSession.create(
-            deploymentIdentity = deploymentIdentity,
-            ownerUid = myUid,
-            credentialsProvider = credentialsProvider,
-        )
-    }
-    val mediaCacheScope = mediaSession.cacheNamespace
-    val fileDownloads = remember(context, mediaSession) {
-        AndroidFileDownloadController(
-            context,
-            mediaSession,
-            onTextAttachmentPreview = onTextAttachmentPreview,
-        )
-    }
-    DisposableEffect(fileDownloads) {
-        onDispose {
-            fileDownloads.close()
-            VoicePlayer.stop(mediaCacheScope)
-            mediaSession.close()
+    val latestTextAttachmentPreview = rememberUpdatedState(onTextAttachmentPreview)
+    val voiceRecording = remember(resourceOwner) { VoiceRecordingLease<MediaRecorder>() }
+    val voicePermissionGate = remember(resourceOwner) { VoiceRecordPermissionGate() }
+    val mediaResourcesLease = remember(
+        context,
+        deploymentIdentity,
+        myUid,
+        credentialsProvider,
+        resourceOwner,
+    ) {
+        resourceOwner.acquire {
+            AndroidAuthenticatedMediaResources.create(
+                createMediaSession = {
+                    AndroidMediaSession.create(
+                        deploymentIdentity = deploymentIdentity,
+                        ownerUid = myUid,
+                        credentialsProvider = credentialsProvider,
+                    )
+                },
+                createFileDownloads = { mediaSession ->
+                    AndroidFileDownloadController(
+                        context,
+                        mediaSession,
+                        onTextAttachmentPreview = { attachment ->
+                            latestTextAttachmentPreview.value?.invoke(attachment)
+                        },
+                    )
+                },
+                stopVoice = { mediaSession ->
+                    closeAndroidChatVoiceResources(
+                        permissionGate = voicePermissionGate,
+                        recording = voiceRecording,
+                        cacheNamespace = mediaSession.cacheNamespace,
+                    )
+                },
+            )
         }
     }
+    DisposableEffect(mediaResourcesLease) {
+        onDispose {
+            runCatching(mediaResourcesLease::close).onFailure { failure ->
+                Log.e("Chat", "Failed to dispose authenticated media", failure)
+            }
+        }
+    }
+    val mediaResources = mediaResourcesLease.resourceOrNull() ?: return
+    val mediaSession = mediaResources.mediaSession
+    val mediaCacheScope = mediaSession.cacheNamespace
+    val fileDownloads = requireNotNull(mediaResources.fileDownloads)
     var isUploading by remember { mutableStateOf(false) }
     var mediaError by remember { mutableStateOf<String?>(null) }
     val mediaSnackbar = remember { SnackbarHostState() }
@@ -127,10 +155,6 @@ fun AndroidChatScreen(
     var showGallery by remember { mutableStateOf(false) }
     var galleryItems by remember { mutableStateOf<List<GalleryItem>>(emptyList()) }
     var galleryIndex by remember { mutableIntStateOf(0) }
-
-    // 录音状态
-    val voiceRecording = remember(mediaCacheScope) { VoiceRecordingLease<MediaRecorder>() }
-    val voicePermissionGate = remember(mediaCacheScope) { VoiceRecordPermissionGate() }
 
     val recordAudioPermission = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()

@@ -16,6 +16,7 @@ import com.virjar.tk.navigation.feature.GroupFilesFeature
 import com.virjar.tk.navigation.feature.DocumentDraftStore
 import com.virjar.tk.navigation.feature.DocumentWorkspaceFeature
 import com.virjar.tk.ui.screen.ChatComposerContextStore
+import com.virjar.tk.util.AppLog
 import com.virjar.tk.viewmodel.ChatViewModel
 import com.virjar.tk.viewmodel.ContactViewModel
 import com.virjar.tk.viewmodel.ConversationViewModel
@@ -48,6 +49,7 @@ open class AppDataState(
     fun cachedUser(uid: String) = session.localCache.getUser(uid)
 
     private val activeChat = ActiveChatBinding()
+    private val destroyGate = AppDataStateDestroyGate()
 
     private val actionScope = CoroutineScope(
         Dispatchers.Main + SupervisorJob() +
@@ -78,16 +80,43 @@ open class AppDataState(
         clearComposerContexts: Boolean = true,
         clearDocumentDrafts: Boolean = clearComposerContexts,
     ) {
-        conversationViewModel.destroy()
-        contactViewModel.destroy()
-        chatViewModel?.destroy()
-        chatViewModel = null
-        activeChat.clear()
-        if (clearComposerContexts) chatComposerContexts.clear()
-        // Platform persistence owns its async durability queue. Retaining drafts requires no
-        // blocking work here; Android captures the editor and schedules a barrier before destroy.
-        if (clearDocumentDrafts) documentDrafts.clearAndRetire(userSession.uid)
-        actionScope.cancel()
+        val completion = destroyGate.destroy {
+            val failures = mutableListOf<Pair<String, Throwable>>()
+            fun release(owner: String, block: () -> Unit) {
+                try {
+                    block()
+                } catch (failure: Throwable) {
+                    failures += owner to failure
+                }
+            }
+
+            release("conversation ViewModel", conversationViewModel::destroy)
+            release("contact ViewModel", contactViewModel::destroy)
+            val closingChat = chatViewModel
+            chatViewModel = null
+            release("chat ViewModel") { closingChat?.destroy() }
+            release("active chat binding", activeChat::clear)
+            if (clearComposerContexts) {
+                release("chat composer contexts", chatComposerContexts::clear)
+            }
+            // Platform persistence owns its async durability queue. Retaining drafts requires no
+            // blocking work here; Android captures the editor and schedules a barrier before destroy.
+            if (clearDocumentDrafts) {
+                release("document drafts") { documentDrafts.clearAndRetire(userSession.uid) }
+            }
+            release("action scope") { actionScope.cancel() }
+            failures
+        }
+        if (completion.completedNow && completion.failures.isNotEmpty()) {
+            val first = completion.failures.first()
+            runCatching {
+                AppLog.fault(
+                    "AppDataState",
+                    "Destroy completed with ${completion.failures.size} cleanup failure(s); first owner=${first.first}",
+                    first.second,
+                )
+            }
+        }
     }
 
     fun prepareChat(chatId: String, chatName: String, chatType: Int = ChatType.PERSONAL.code) {
@@ -187,6 +216,52 @@ open class AppDataState(
         }
     }
 }
+
+/**
+ * One-shot completion gate shared by explicit retirement and later Compose disposal.
+ *
+ * The common-source monitor remains held for the complete best-effort cleanup. A different thread
+ * therefore joins the leader naturally before observing CLOSED; a same-thread reentrant destroy
+ * sees CLOSING and no-ops instead of deadlocking itself.
+ */
+internal class AppDataStateDestroyGate {
+    private val lock = Any()
+    private var phase = AppDataStateDestroyPhase.OPEN
+    private var terminalFailures = emptyList<Pair<String, Throwable>>()
+
+    fun destroy(cleanup: () -> List<Pair<String, Throwable>>): AppDataStateDestroyCompletion = synchronized(lock) {
+        when (phase) {
+            AppDataStateDestroyPhase.CLOSED -> return@synchronized AppDataStateDestroyCompletion(
+                completedNow = false,
+                failures = terminalFailures,
+            )
+            AppDataStateDestroyPhase.CLOSING -> return@synchronized AppDataStateDestroyCompletion(
+                completedNow = false,
+                failures = terminalFailures,
+            )
+            AppDataStateDestroyPhase.OPEN -> phase = AppDataStateDestroyPhase.CLOSING
+        }
+
+        terminalFailures = try {
+            cleanup()
+        } catch (failure: Throwable) {
+            listOf("destroy boundary" to failure)
+        } finally {
+            phase = AppDataStateDestroyPhase.CLOSED
+        }
+        AppDataStateDestroyCompletion(
+            completedNow = true,
+            failures = terminalFailures,
+        )
+    }
+}
+
+internal data class AppDataStateDestroyCompletion(
+    val completedNow: Boolean,
+    val failures: List<Pair<String, Throwable>>,
+)
+
+private enum class AppDataStateDestroyPhase { OPEN, CLOSING, CLOSED }
 
 /** Pure route-to-owner binding kept separate so lifecycle/idempotency rules are unit-testable. */
 internal class ActiveChatBinding {
