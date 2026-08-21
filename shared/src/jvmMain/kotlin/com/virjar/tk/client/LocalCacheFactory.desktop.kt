@@ -7,8 +7,9 @@ import java.io.File
 /**
  * Desktop(JVM) 平台 LocalCache 工厂。
  *
- * 本地缓存不承载业务权威数据。当 schema 不兼容时通过 [LOCAL_CACHE_SCHEMA_EPOCH]
- * 切换到新文件，再由服务端快照和事件重建，不在客户端启动路径累积历史迁移分支。
+ * 服务端投影可由快照和事件重建；当前发布前策略在明确批准后通过
+ * [LOCAL_CACHE_SCHEMA_EPOCH] 切换到新文件，不在启动路径累积历史迁移分支。epoch 3 起库内还含
+ * outgoing/delivery 本地事实，后续切 epoch 必须另行决定它们的迁移或丢弃策略。
  * 主 DB 在 SQLite 打开前预创建为 0600/owner-only；SQLite 可能自建的 journal/WAL/SHM
  * sidecar 由专属账号 namespace（POSIX 0700 / Windows owner-only ACL 继承）承担安全边界，
  * 不假设 sidecar 的单文件 mode 由 SQLite 恒定为 0600。
@@ -22,10 +23,12 @@ fun createDesktopLocalCache(uid: String, dataDir: File): LocalCache {
         privateDirectories = listOf("users", safeUid),
         fileName = localCacheDatabaseFileName(),
     )
-    val createSchema = databaseFile.length() == 0L
     val driver = JdbcSqliteDriver("jdbc:sqlite:${databaseFile.absolutePath}")
     try {
-        if (createSchema) AppDatabase.Schema.create(driver)
+        // SQLDelight emits multiple DDL statements. A process crash can leave a non-empty file
+        // after only a prefix was committed, so file length is not a completion marker. Every DDL
+        // in this fresh-epoch schema is idempotent (`IF NOT EXISTS`); replay it on every open.
+        AppDatabase.Schema.create(driver)
         privateData.requirePrivateFile(
             privateDirectories = listOf("users", safeUid),
             fileName = localCacheDatabaseFileName(),

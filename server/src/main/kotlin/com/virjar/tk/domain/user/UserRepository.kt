@@ -1,6 +1,7 @@
 package com.virjar.tk.domain.user
 
 import com.virjar.tk.domain.transaction.PgTransactionContext
+import com.virjar.tk.model.ProfilePatch
 import com.virjar.tk.model.User
 
 /** Persistence port owned by the user domain. */
@@ -27,9 +28,19 @@ interface UserRepository {
         unusablePasswordHash: String,
         role: Int,
     ): User
-    fun updateProfile(uid: String, name: String? = null, avatar: String? = null, sex: Int? = null, phone: String? = null)
+    /** Locks the User row and applies only fields marked present in [patch]. */
+    fun updateProfile(
+        transaction: PgTransactionContext,
+        uid: String,
+        patch: ProfilePatch,
+    ): UserProfileMutation
     fun searchUsers(keyword: String, limit: Int = 20): List<User>
 }
+
+data class UserProfileMutation(
+    val user: User,
+    val changed: Boolean,
+)
 
 class UserInternal(
     val user: User,

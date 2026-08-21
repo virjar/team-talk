@@ -18,8 +18,8 @@ import kotlin.test.assertTrue
 class ProtocolBaselineTest {
 
     @Test
-    fun `pre-release wire baseline starts at epoch zero`() {
-        assertEquals(0, PacketCodec.PROTOCOL_VERSION.toInt())
+    fun `profile patch wire change advances the pre-release protocol epoch`() {
+        assertEquals(1, PacketCodec.PROTOCOL_VERSION.toInt())
         assertEquals(9, PacketType.SYNC_RESET.code)
         assertEquals(SyncResetPayload, ProtoCodec.decode(SyncResetPayload, byteArrayOf()))
     }

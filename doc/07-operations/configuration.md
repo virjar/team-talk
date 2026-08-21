@@ -68,7 +68,7 @@ data/
 ```
 
 `credentials` 与用户、设备一起属于 PostgreSQL 备份边界；不要再创建、挂载或恢复历史
-`data/tokenstore`。当前预发布 schema/data epoch 为 6，旧 epoch 实例必须同时重建 PostgreSQL 与服务端
+`data/tokenstore`。当前预发布 schema/data epoch 为 7，旧 epoch 实例必须同时重建 PostgreSQL 与服务端
 durable data，不能把旧目录拼接到新实例。
 
 修改路径前必须评估备份、systemd 工作目录、容器 volume 和应用 Environment 的共同影响。

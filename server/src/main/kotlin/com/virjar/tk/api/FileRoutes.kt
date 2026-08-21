@@ -27,13 +27,12 @@ fun Route.fileRoutes(
             val token = call.bearerToken()
             val info = token?.let { accessTokens.validateAccessToken(it) }
                 ?: return@get call.respond(HttpStatusCode.Unauthorized, "invalid or missing token")
-            if (!attachmentAccess.canRead(info.uid, path)) {
-                return@get call.respond(HttpStatusCode.Forbidden, "attachment access denied")
-            }
-            val meta = fileStore.getMeta(path) ?: return@get call.respond(HttpStatusCode.NotFound)
+            val download = attachmentAccess.readAuthorized(info.uid, path) { canonicalPath ->
+                fileStore.getMeta(canonicalPath)?.let { meta -> meta to fileStore.getFile(meta) }
+            } ?: return@get call.respond(HttpStatusCode.Forbidden, "attachment access denied")
+            val (meta, file) = download
 
             // 尝试从文件系统层获取（大文件）
-            val file = fileStore.getFile(meta)
             if (file != null) {
                 call.respondFile(file)
             } else {

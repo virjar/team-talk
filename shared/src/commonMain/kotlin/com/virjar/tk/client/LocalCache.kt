@@ -1,6 +1,7 @@
 package com.virjar.tk.client
 
 import com.virjar.tk.model.*
+import com.virjar.tk.protocol.payload.MessageAckPayload
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -16,6 +17,39 @@ data class PendingBotMessage(
     val eventId: Long,
     val message: Message,
 )
+
+/** SQLite-backed send state. Both terminal outcomes remain queryable as durable receipts. */
+enum class OutgoingMessageState(val code: Long) {
+    PENDING(0),
+    IN_FLIGHT(1),
+    RETRY_WAIT(2),
+    TERMINAL_FAILED(3),
+    SUCCESS(4),
+    ;
+
+    companion object {
+        fun fromCode(code: Long): OutgoingMessageState = entries.firstOrNull { it.code == code }
+            ?: error("Unknown outgoing message state: $code")
+    }
+}
+
+/** Immutable canonical payload plus its durable local ordering and retry metadata. */
+data class OutgoingMessage(
+    val localOrdinal: Long,
+    val message: Message,
+    val state: OutgoingMessageState,
+    val attemptCount: Long,
+    val lastError: String?,
+    val nextAttemptAt: Long,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val serverSeq: Long? = null,
+    val terminalCode: Int? = null,
+    val completedAt: Long? = null,
+)
+
+/** A stable `(chatId, clientMsgId)` was already bound to another logical request. */
+class OutgoingMessageConflictException(message: String) : IllegalArgumentException(message)
 
 /**
  * Capability for applying exactly one server-history response to the cache generation that
@@ -78,8 +112,9 @@ interface LocalCache {
 
     /**
      * Apply an authoritative chat tombstone. Implementations atomically delete every chat-owned
-     * SQLite projection (chat, conversation/draft outbox, members, messages and bot inbox), while
-     * retaining an already-observed message Flow as an empty resident object for safe replay.
+     * SQLite projection (chat, conversation/draft outbox, members, messages, outgoing and bot
+     * inbox), while retaining an already-observed message Flow as an empty resident object for
+     * safe replay.
      */
     fun deleteChat(chatId: String)
 
@@ -91,10 +126,51 @@ interface LocalCache {
 
     // ── 消息 ──
     fun getMessages(chatId: String, limit: Int = 50): List<Message>
-    /** tt-agent 的持久 recent 查询；返回按时间正序排列的最新 [limit] 条。 */
-    fun getRecentMessages(chatId: String?, afterSeq: Long, limit: Int): List<Message>
     fun observeMessages(chatId: String): Flow<List<Message>>
     fun insertMessage(message: Message)
+
+    /** Atomically persists the optimistic message and immutable outbox payload before send admission. */
+    fun enqueueOutgoingMessage(
+        message: Message,
+        now: Long,
+        requestFingerprint: ByteArray? = null,
+    ): OutgoingMessage
+
+    /** Returns the durable active/failed/success receipt, optionally validating a request fingerprint. */
+    fun getOutgoingMessage(
+        chatId: String,
+        clientMsgId: String,
+        requestFingerprint: ByteArray? = null,
+    ): OutgoingMessage?
+
+    /**
+     * Recovers IN_FLIGHT and repairs only active/failed optimistic projections. SUCCESS is a
+     * status receipt; its authoritative message can only come from server echo/history replay.
+     */
+    fun recoverOutgoingMessages(now: Long): List<OutgoingMessage>
+
+    /** Returns the oldest non-terminal row without changing it. */
+    fun peekNextOutgoingMessage(): OutgoingMessage?
+
+    /** Atomically claims the oldest ready row. A future head row deliberately blocks newer rows. */
+    fun claimNextOutgoingMessage(now: Long): OutgoingMessage?
+
+    /** Persists a recoverable failure and its next eligible attempt. */
+    fun markOutgoingMessageRetry(localOrdinal: Long, error: String, nextAttemptAt: Long, now: Long)
+
+    /** Atomically marks the projected message failed and retains the terminal outbox diagnostic. */
+    fun markOutgoingMessageTerminalFailed(
+        localOrdinal: Long,
+        error: String,
+        now: Long,
+        terminalCode: Int? = null,
+    )
+
+    /** Atomically applies the authoritative ACK and retains a bounded SUCCESS receipt. */
+    fun completeOutgoingMessage(localOrdinal: Long, ack: MessageAckPayload, now: Long)
+
+    /** Terminally cancels all non-terminal rows for an explicit account/session retirement. */
+    fun cancelOutgoingMessages(reason: String, now: Long)
 
     /**
      * Begin one history request before invoking the server.
@@ -209,8 +285,14 @@ interface LocalCache {
     /** 按 eventId 返回最早一条未消费消息。 */
     fun peekBotMessage(): PendingBotMessage?
 
-    /** 消费确认；只删除精确 eventId。 */
-    fun deleteBotMessage(eventId: Long)
+    /** 消费确认；更新精确 eventId 的 acked 状态，历史 delivery 仍可按 cursor 查询。 */
+    fun ackBotMessage(eventId: Long, now: Long)
+
+    /** 全局 eventId 正序分页；chatId 仅过滤，不改变 cursor 的含义。 */
+    fun listBotMessageDeliveries(afterEventId: Long, chatId: String?, limit: Int): List<PendingBotMessage>
+
+    /** 当前持久 delivery 日志的全局 eventId 高水位；空日志返回 0。 */
+    fun maxBotMessageEventId(): Long
 
     /**
      * 精确更新单条会话的草稿（null = 明确清除），并原子写入镜像 outbox。
@@ -254,10 +336,22 @@ interface MessagePager {
     /** 是否还有更老的消息可加载。 */
     val hasMore: StateFlow<Boolean>
 
-    /** 向上加载更老的一页消息。同步操作，更新 [messages] 和 [hasMore]。 */
-    fun loadMore(pageSize: Int = DEFAULT_PAGE_SIZE)
+    /**
+     * 向上加载更老的一页消息。同步操作，更新 [messages] 和 [hasMore]。
+     *
+     * [MessagePageLoadResult.RemoteRequired] means a bounded server-anchored window trimmed
+     * confirmed history. The caller must fetch the authoritative page immediately before the
+     * returned cursor; ordinary SQLite rows outside that response chain are not safe substitutes.
+     */
+    fun loadMore(pageSize: Int = DEFAULT_PAGE_SIZE): MessagePageLoadResult
 
     companion object {
         const val DEFAULT_PAGE_SIZE = 50
     }
+}
+
+sealed interface MessagePageLoadResult {
+    data object LocalLoaded : MessagePageLoadResult
+    data object Exhausted : MessagePageLoadResult
+    data class RemoteRequired(val beforeServerSeq: Long) : MessagePageLoadResult
 }

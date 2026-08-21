@@ -10,11 +10,16 @@ import com.virjar.tk.body.buildRichTextBody
 import com.virjar.tk.domain.attachment.AttachmentService
 import com.virjar.tk.domain.chat.ChatAccess
 import com.virjar.tk.domain.chat.ChatLifecycleGate
+import com.virjar.tk.domain.chat.ManagedChatPolicy
+import com.virjar.tk.domain.chat.MessageAdmission
 import com.virjar.tk.domain.chat.ChatStore
+import com.virjar.tk.domain.chat.UnmanagedChatPolicy
 import com.virjar.tk.domain.contact.ContactStore
+import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.domain.transaction.PgUnitOfWork
 import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.model.Message
+import com.virjar.tk.model.Member
 import com.virjar.tk.protocol.ExtensionType
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.NotifyType
@@ -35,6 +40,7 @@ class MessageService(
     private val users: UserStore,
     private val contacts: ContactStore,
     private val lifecycleGate: ChatLifecycleGate,
+    private val managedChats: ManagedChatPolicy = UnmanagedChatPolicy,
     private val projectionHooks: MessageProjectionHooks = MessageProjectionHooks.None,
 ) {
     /** 固定条带避免按消息创建锁导致无界缓存，同时串行化同一 chat+seq 的 outbox 投影。 */
@@ -42,12 +48,33 @@ class MessageService(
     private val recoveryMutex = Mutex()
 
     suspend fun sendMessage(senderUid: String, message: Message): Long {
+        return sendMessageWithAdmissionAuthorization(senderUid, message, authorizeAfterChatLock = null)
+    }
+
+    /** Bot-only admission seam; the callback is synchronous and enlisted in the admission UoW. */
+    internal suspend fun sendMessage(
+        senderUid: String,
+        message: Message,
+        authorizeAfterChatLock: (PgTransactionContext) -> Unit,
+    ): Long = sendMessageWithAdmissionAuthorization(senderUid, message, authorizeAfterChatLock)
+
+    private suspend fun sendMessageWithAdmissionAuthorization(
+        senderUid: String,
+        message: Message,
+        authorizeAfterChatLock: ((PgTransactionContext) -> Unit)?,
+    ): Long {
         recoverIfBlocked()
-        return lifecycleGate.withChat(message.chatId) { sendMessageLocked(senderUid, message) }
+        return lifecycleGate.withChat(message.chatId) {
+            sendMessageLocked(senderUid, message, authorizeAfterChatLock)
+        }
     }
 
     /** Caller holds [lifecycleGate] for this chat through durable storage and projection. */
-    private suspend fun sendMessageLocked(senderUid: String, message: Message): Long {
+    private suspend fun sendMessageLocked(
+        senderUid: String,
+        message: Message,
+        authorizeAfterChatLock: ((PgTransactionContext) -> Unit)?,
+    ): Long {
         val chatId = message.chatId
         require(chatId.isNotBlank() && chatId.length <= MessageBodyPolicy.MAX_CHAT_ID_LENGTH) { "chatId 非法" }
         require(
@@ -72,18 +99,19 @@ class MessageService(
         // 离线事件和会话投影，才能满足“发送成功即可用”的契约。
         val existing = messages.findIdempotentMessage(clientDeclaredMessage)
         if (existing != null) {
+            if (authorizeAfterChatLock != null) {
+                authorizeIdempotentBotRetry(chatId, authorizeAfterChatLock)
+            }
             drainPendingForMessageLocked(chatId, existing.serverSeq)
             return existing.serverSeq
         }
 
-        // 成员和禁言都是会随时间变化的当前权限，只约束尚未接受的新消息。若原 ACK 丢失，
+        // Human membership/mute state only constrains new messages; the bot-only path above still
+        // revalidates its current credential and grant before returning an idempotent ACK. 若原 ACK 丢失，
         // 已持久化请求必须先按 sender/hash 命中上面的幂等记录；否则发送者随后离群或被禁言
         // 会把一条收件方已经收到的成功消息反向显示为发送失败。
-        requireCanCreateMessage(senderUid, chatId)
-
         // 成员校验只限制尚未接受的新消息。已成功消息延迟重试时，
         // 被 mention 的成员可能已离群，但幂等 ACK 仍必须返回原 serverSeq。
-        validateMentionMembership(clientDeclaredMessage)
 
         val declaredMessage = rebuildAuthoritativeReferences(clientDeclaredMessage)
 
@@ -92,8 +120,13 @@ class MessageService(
         // 断链消息在服务端拒绝，不能等对端点击才发现打不开。
         val canonicalMessage = attachmentService.resolve(declaredMessage, senderUid)
 
-        // 非阻塞递增 maxSeq
-        val serverSeq = chatStore.incrementMaxSeq(chatId)
+        val admission = admitNewMessage(
+            senderUid,
+            chatId,
+            canonicalMessage,
+            authorizeAfterChatLock,
+        )
+        val serverSeq = admission.serverSeq
 
         // 客户端只声明 chatId/clientMsgId/type/body；消息身份、时间和状态位全部由服务端重建。
         val storedMessage = canonicalMessage.copy(
@@ -109,7 +142,7 @@ class MessageService(
         val committedSeq = messages.storeMessage(
             storedMessage,
             clientDeclaredMessage,
-            projectionTarget(chatId),
+            MessageProjectionTarget(admission.chatType, admission.recipientUids),
         )
         if (committedSeq != serverSeq) {
             // 并发的同 clientMsgId 已先行提交，当前分配的 seq 保留为合法空洞。
@@ -121,10 +154,11 @@ class MessageService(
         return serverSeq
     }
 
-    fun getHistory(uid: String, chatId: String, fromSeq: Long, limit: Int): List<Message> {
+    suspend fun getHistory(uid: String, chatId: String, fromSeq: Long, limit: Int): List<Message> {
         requireQueryPageLimit(limit)
-        access.requireMember(uid, chatId)
-        return messages.getHistory(chatId, fromSeq, limit, forward = false)
+        return access.readAsMember(uid, chatId) { _, _ ->
+            messages.getHistory(chatId, fromSeq, limit, forward = false)
+        }
     }
 
     suspend fun revokeMessage(uid: String, chatId: String, serverSeq: Long) {
@@ -133,40 +167,41 @@ class MessageService(
     }
 
     private suspend fun revokeMessageLocked(uid: String, chatId: String, serverSeq: Long) {
-        val actor = access.requireMember(uid, chatId)
-        val message = messages.getMessage(chatId, serverSeq)
-            ?: throw IllegalArgumentException("消息不存在")
-
-        if (message.senderUid != uid) {
-            if (actor.role < 1) throw IllegalArgumentException("需要管理员权限")
+        access.readMembersFor(uid, chatId) { chat, members ->
+            val actor = members.first { it.uid == uid }
+            val message = messages.getMessage(chatId, serverSeq)
+                ?: throw IllegalArgumentException("消息不存在")
+            if (message.senderUid != uid && actor.role < 1) {
+                throw IllegalArgumentException("需要管理员权限")
+            }
+            revokeUnderSnapshot(message, projectionTarget(chat, members))
         }
-        doRevoke(message)
+        drainPendingForMessageLocked(chatId, serverSeq)
     }
 
     /** 管理员撤回：免权限检查，广播链路复用。 */
     suspend fun adminRevoke(chatId: String, serverSeq: Long) {
         recoverIfBlocked()
         lifecycleGate.withChat(chatId) {
-            val message = messages.getMessage(chatId, serverSeq)
-                ?: throw IllegalArgumentException("消息不存在")
-            doRevoke(message)
+            access.readChatMembers(chatId) { chat, members ->
+                val message = messages.getMessage(chatId, serverSeq)
+                    ?: throw IllegalArgumentException("消息不存在")
+                revokeUnderSnapshot(message, projectionTarget(chat, members))
+            }
+            drainPendingForMessageLocked(chatId, serverSeq)
         }
     }
 
-    private suspend fun doRevoke(message: Message) {
-        if (message.flags and Message.FLAG_REVOKED != 0) {
-            drainPendingForMessageLocked(message.chatId, message.serverSeq)
-            return
-        }
+    private fun revokeUnderSnapshot(message: Message, target: MessageProjectionTarget) {
+        if (message.flags and Message.FLAG_REVOKED != 0) return
         val revoked = message.copy(flags = message.flags or Message.FLAG_REVOKED)
         messages.updateMessage(
             message.chatId,
             message.serverSeq,
             revoked,
             MessageOperationType.REVOKE,
-            projectionTarget(message.chatId),
+            target,
         )
-        drainPendingForMessageLocked(message.chatId, message.serverSeq)
     }
 
     suspend fun editMessage(uid: String, chatId: String, serverSeq: Long, newMessage: Message) {
@@ -175,9 +210,10 @@ class MessageService(
     }
 
     private suspend fun editMessageLocked(uid: String, chatId: String, serverSeq: Long, newMessage: Message) {
-        access.requireMember(uid, chatId)
-        val message = messages.getMessage(chatId, serverSeq)
-            ?: throw IllegalArgumentException("消息不存在")
+        val message = access.readAsMember(uid, chatId) { _, _ ->
+            messages.getMessage(chatId, serverSeq)
+                ?: throw IllegalArgumentException("消息不存在")
+        }
 
         if (message.senderUid != uid) {
             throw IllegalArgumentException("只能编辑自己的消息")
@@ -203,21 +239,28 @@ class MessageService(
             uploadProgress = 0f,
         )
         val canonicalNewMessage = attachmentService.resolve(editCandidate, uid)
-        validateMentionMembership(canonicalNewMessage)
         val edited = canonicalNewMessage.copy(
             flags = message.flags or Message.FLAG_EDITED,
         )
-        if (ProtoCodec.encode(edited).contentEquals(ProtoCodec.encode(message))) {
+        val updated = access.readMembersFor(uid, chatId) { chat, members ->
+            validateMentionMembership(edited, members.map(Member::uid))
+            if (ProtoCodec.encode(edited).contentEquals(ProtoCodec.encode(message))) {
+                false
+            } else {
+                messages.updateMessage(
+                    chatId,
+                    serverSeq,
+                    edited,
+                    MessageOperationType.EDIT,
+                    projectionTarget(chat, members),
+                )
+                true
+            }
+        }
+        if (!updated) {
             drainPendingForMessageLocked(chatId, serverSeq)
             return
         }
-        messages.updateMessage(
-            chatId,
-            serverSeq,
-            edited,
-            MessageOperationType.EDIT,
-            projectionTarget(chatId),
-        )
         drainPendingForMessageLocked(chatId, serverSeq)
     }
 
@@ -237,17 +280,17 @@ class MessageService(
         // Source membership is a current authorization fact too. Keep the check under the same
         // two-chat lifecycle boundary as the source read and target commit, otherwise a kick,
         // leave, or dissolve can revoke access while a forward is waiting on the target chat.
-        access.requireMember(uid, srcChatId, "不是源聊天成员")
-
-        // 转发会在目标会话创建并广播一条全新的消息，必须服从与 sendMessage 相同的
-        // 当前权限事实；否则黑名单、单成员禁言和全员禁言都能被转发入口绕过。
-        requireCanCreateMessage(uid, targetChatId)
-
-        val srcMsg = messages.getMessage(srcChatId, srcSeq)
-            ?: throw IllegalArgumentException("原消息不存在")
+        val srcMsg = access.readAsMember(uid, srcChatId, "不是源聊天成员") { _, _ ->
+            messages.getMessage(srcChatId, srcSeq)
+                ?: throw IllegalArgumentException("原消息不存在")
+        }
         val canonicalSource = attachmentService.resolve(srcMsg, uid)
 
-        val serverSeq = chatStore.incrementMaxSeq(targetChatId)
+        // File metadata/reference validation may suspend after the source snapshot. Re-check at
+        // the final source boundary before admitting the target write.
+        access.requireMember(uid, srcChatId, "不是源聊天成员")
+        val admission = admitNewMessage(uid, targetChatId, canonicalSource)
+        val serverSeq = admission.serverSeq
 
         val forwardMsg = canonicalSource.copy(
             chatId = targetChatId,
@@ -257,9 +300,11 @@ class MessageService(
             flags = canonicalSource.flags or 4,
             timestamp = System.currentTimeMillis(),
         )
-        validateMentionMembership(forwardMsg)
-
-        messages.storeMessage(forwardMsg, forwardMsg, projectionTarget(targetChatId))
+        messages.storeMessage(
+            forwardMsg,
+            forwardMsg,
+            MessageProjectionTarget(admission.chatType, admission.recipientUids),
+        )
         drainPendingForMessageLocked(targetChatId, serverSeq)
 
         return forwardMsg
@@ -271,39 +316,69 @@ class MessageService(
      * 普通发送的幂等命中在调用本方法之前返回，保证 ACK 丢失后的重试不被后来发生的
      * 拉黑/禁言反向改写；转发没有客户端幂等身份，因此每次都必须先通过此检查。
      */
-    private fun requireCanCreateMessage(senderUid: String, chatId: String) {
-        access.requireMember(senderUid, chatId)
-
-        val chat = chatStore.getChat(chatId) ?: throw IllegalArgumentException("聊天不存在")
-        if (chat.chatType == 1) {
-            val peerUid = chatStore.getMemberUids(chatId).firstOrNull { it != senderUid }
-                ?: throw IllegalArgumentException("私聊成员不完整")
-            require(!contacts.isBlockedEither(senderUid, peerUid)) { "黑名单关系下不能发送私聊消息" }
+    private suspend fun admitNewMessage(
+        senderUid: String,
+        chatId: String,
+        messageForMentions: Message,
+        authorizeAfterChatLock: ((PgTransactionContext) -> Unit)? = null,
+    ): MessageAdmission =
+        unitOfWork.write {
+            val authority = managedChats.lockAuthority(transaction, listOf(chatId)).getValue(chatId)
+            require(authority.ready) { "受管群投影尚未收敛" }
+            val admission = chatStore.admitMessage(
+                transaction,
+                chatId,
+                senderUid,
+                System.currentTimeMillis(),
+                afterChatLocked = { authorizeAfterChatLock?.invoke(transaction) },
+            ) { facts ->
+                val sender = facts.sender ?: throw IllegalArgumentException("不是聊天成员")
+                if (facts.chat.chatType == 1) {
+                    val peerUid = facts.activeMemberUids.firstOrNull { it != senderUid }
+                        ?: throw IllegalArgumentException("私聊成员不完整")
+                    require(!contacts.isBlockedEither(senderUid, peerUid)) {
+                        "黑名单关系下不能发送私聊消息"
+                    }
+                }
+                if (facts.senderMuted) throw IllegalArgumentException("你已被禁言")
+                if (facts.chat.mutedAll && sender.role < 1) {
+                    throw IllegalArgumentException("群聊已开启全员禁言")
+                }
+                validateMentionMembership(messageForMentions, facts.activeMemberUids)
+            }
+            afterCommit { chatStore.invalidateManagedChat(chatId) }
+            admission
         }
 
-        if (chatStore.isMuted(chatId, senderUid)) {
-            throw IllegalArgumentException("你已被禁言")
+    /** Current bot credentials still gate idempotent ACKs, without changing normal user retry semantics. */
+    private suspend fun authorizeIdempotentBotRetry(
+        chatId: String,
+        authorizeAfterChatLock: (PgTransactionContext) -> Unit,
+    ) {
+        unitOfWork.write {
+            val authority = managedChats.lockAuthority(transaction, listOf(chatId)).getValue(chatId)
+            require(authority.ready) { "受管群投影尚未收敛" }
+            chatStore.lockChats(transaction, listOf(chatId), requireActive = true)
+            authorizeAfterChatLock(transaction)
         }
+    }
 
-        // 全员禁言检查（管理员豁免）
-        if (chatStore.isMutedAll(chatId)) {
-            val member = chatStore.getMember(chatId, senderUid)
-            if (member == null || member.role < 1) {
-                throw IllegalArgumentException("群聊已开启全员禁言")
+    suspend fun searchMessages(uid: String, chatId: String, keyword: String, limit: Int): List<Message> {
+        requireQueryPageLimit(limit)
+        return if (chatId.isBlank()) {
+            // 空 chatId 是客户端“搜索全部消息”的明确契约。权限集合必须由服务端
+            // 根据当前用户会话计算，不能信任客户端上传任意 chatId 列表。
+            access.readAccessibleChatIds(uid) { allowedChatIds ->
+                searchAuthorized(keyword, allowedChatIds, limit)
+            }
+        } else {
+            access.readAsMember(uid, chatId) { _, _ ->
+                searchAuthorized(keyword, setOf(chatId), limit)
             }
         }
     }
 
-    fun searchMessages(uid: String, chatId: String, keyword: String, limit: Int): List<Message> {
-        requireQueryPageLimit(limit)
-        val allowedChatIds = if (chatId.isBlank()) {
-            // 空 chatId 是客户端“搜索全部消息”的明确契约。权限集合必须由服务端
-            // 根据当前用户会话计算，不能信任客户端上传任意 chatId 列表。
-            chatStore.listUserChatIds(uid)
-        } else {
-            access.requireMember(uid, chatId)
-            setOf(chatId)
-        }
+    private fun searchAuthorized(keyword: String, allowedChatIds: Set<String>, limit: Int): List<Message> {
         if (allowedChatIds.isEmpty()) return emptyList()
         val results = search.search(keyword, chatIds = allowedChatIds, limit = limit)
         return results.hits.mapNotNull { messages.getMessage(it.chatId, it.seq) }
@@ -411,9 +486,8 @@ class MessageService(
         }
     }
 
-    private fun projectionTarget(chatId: String): MessageProjectionTarget {
-        val chat = chatStore.getChat(chatId) ?: throw IllegalArgumentException("聊天不存在")
-        val recipients = chatStore.getMemberUids(chatId).distinct().sorted()
+    private fun projectionTarget(chat: com.virjar.tk.model.Chat, members: List<Member>): MessageProjectionTarget {
+        val recipients = members.map(Member::uid).distinct().sorted()
         require(recipients.isNotEmpty()) { "聊天没有活动成员" }
         return MessageProjectionTarget(chat.chatType, recipients)
     }
@@ -451,7 +525,7 @@ class MessageService(
      * RichTextBody 使用 canonical mentions；ReplyBody 的 content 仍是 Markdown 事实源，
      * 在服务端现场解析，不信任任何客户端侧信道。
      */
-    private fun validateMentionMembership(message: Message) {
+    private fun validateMentionMembership(message: Message, activeMemberUids: Collection<String>) {
         val mentionedUids = when (val body = message.body) {
             is RichTextBody -> body.mentions.map { it.uid }
             is ReplyBody -> buildRichTextBody(body.content).mentions.map { it.uid }
@@ -459,7 +533,7 @@ class MessageService(
         }
         if (mentionedUids.isEmpty()) return
 
-        val memberUids = chatStore.getMemberUids(message.chatId).toHashSet()
+        val memberUids = activeMemberUids.toHashSet()
         require(mentionedUids.all(memberUids::contains)) {
             "mention 目标必须是当前聊天成员"
         }

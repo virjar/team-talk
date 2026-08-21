@@ -2,44 +2,102 @@ package com.virjar.tk.client
 
 import com.virjar.tk.model.Message
 import com.virjar.tk.protocol.payload.MessageAckPayload
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
+/** Whether an explicit session retirement keeps durable work for the same account's next session. */
+enum class SendQueueCloseDisposition { PRESERVE, CANCEL }
+
+internal enum class OutgoingAckDisposition { SUCCESS, RETRYABLE, TERMINAL }
+
+/** Local timeout/transport-style negative codes and server 5xx preserve the idempotency key. */
+internal fun classifyOutgoingAck(
+    ack: MessageAckPayload,
+    expectedClientMsgId: String,
+): OutgoingAckDisposition = when {
+    ack.clientMsgId != expectedClientMsgId -> OutgoingAckDisposition.TERMINAL
+    ack.code == 0 && ack.serverSeq > 0L -> OutgoingAckDisposition.SUCCESS
+    ack.code < 0 || ack.code in 500..599 -> OutgoingAckDisposition.RETRYABLE
+    else -> OutgoingAckDisposition.TERMINAL
+}
+
 /**
- * 发送队列与断线重试（roadmap P2）。
+ * Account-owned durable FIFO sender.
  *
- * 模型：串行 worker + Channel 唤醒。入队总是成功（在线时等价直发），状态机经回调推进
- * （SENDING→QUEUED→SENT/FAILED 由持有方写本地缓存）。断线时 worker 挂起在 wake 通道上，
- * AUTHENTICATED 唤醒继续——保序 FIFO，毒丸消息只失败自己（30s ack 超时）。
- *
- * 不自动重试：认证类失败重试无意义；网络类失败由断线等待机制天然覆盖（重连即续发）。
- * 队列为会话级内存态，不落库（重启后残留 FAILED 态由用户手动重发，避免与消息表双事实源）。
+ * Admission first commits the optimistic message and immutable canonical wire payload to SQLite.
+ * The worker claims only the oldest active local ordinal. Successful ACK projection and durable
+ * SUCCESS receipt share one transaction; ambiguous outcomes remain retryable under the same
+ * clientMsgId, allowing the server's idempotency boundary to resolve a lost response.
  */
 class SendQueue(
+    private val ownerUid: String,
+    private val localCache: LocalCache,
     private val connectionState: kotlinx.coroutines.flow.StateFlow<ConnectionState>,
     private val sender: MessageSender,
     scope: CoroutineScope,
     private val onQueued: (Message) -> Unit = {},
     private val onSent: (Message, MessageAckPayload) -> Unit = { _, _ -> },
     private val onFailed: (Message, String) -> Unit = { _, _ -> },
+    private val clock: () -> Long = { System.currentTimeMillis() },
+    private val ackTimeoutMs: Long = 30_000L,
 ) {
-    private val mutex = Mutex()
-    private val queue = ArrayDeque<Message>()
-    private val wake = Channel<Unit>(Channel.CONFLATED) // 唤醒信号可合并
-    private val scope = CoroutineScope(scope.coroutineContext + SupervisorJob())
+    private val wake = Channel<Unit>(Channel.CONFLATED)
+    private val scope = CoroutineScope(
+        scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]),
+    )
     private val callbackGate = SessionWorkGate("SendQueue")
     private val callbackLease = callbackGate.lease()
 
-    /** 停止队列（会话关闭）。 */
-    fun close() {
+    init {
+        require(ownerUid.isNotBlank()) { "SendQueue owner uid must not be blank" }
+        require(ackTimeoutMs > 0L) { "ackTimeoutMs must be positive" }
+        callbackGate.use(callbackLease) { localCache.recoverOutgoingMessages(clock()) }
+        connectionState
+            .onEach {
+                if (it == ConnectionState.AUTHENTICATED) {
+                    callbackGate.runIfActive(callbackLease) { wake.trySend(Unit) }
+                }
+            }
+            .launchIn(this.scope)
+        this.scope.launch { workerLoop() }
+        wake.trySend(Unit)
+    }
+
+    /** Synchronously commits before returning; no in-memory lambda is part of the durable fact. */
+    fun enqueue(message: Message, requestFingerprint: ByteArray? = null): OutgoingMessage =
+        callbackGate.use(callbackLease) {
+            require(message.senderUid == ownerUid) {
+                "Outgoing message owner ${message.senderUid} does not match fixed session owner $ownerUid"
+            }
+            val canonical = canonicalizeOutboundMessage(message)
+            val receipt = localCache.enqueueOutgoingMessage(canonical, clock(), requestFingerprint)
+            wake.trySend(Unit)
+            receipt
+        }
+
+    /** Reads a receipt without touching worker state; an expected fingerprint makes mismatch fail closed. */
+    fun receipt(
+        chatId: String,
+        clientMsgId: String,
+        requestFingerprint: ByteArray? = null,
+    ): OutgoingMessage? = callbackGate.use(callbackLease) {
+        localCache.getOutgoingMessage(chatId, clientMsgId, requestFingerprint)
+    }
+
+    /**
+     * Crosses the callback/cache boundary before cancellation. CANCEL is used for explicit account
+     * retirement; PRESERVE leaves an IN_FLIGHT row for deterministic restart recovery.
+     */
+    fun close(disposition: SendQueueCloseDisposition = SendQueueCloseDisposition.PRESERVE) {
         var boundaryFailure: SessionWorkGateReentrantCloseException? = null
         val newlyClosed = try {
             callbackGate.close()
@@ -48,79 +106,105 @@ class SendQueue(
             true
         }
         if (!newlyClosed) return
-        // scope.cancel() 会取消 worker 中挂起的 receive；随后再 wake.close() 会把
-        // receive 竞态恢复成 ClosedReceiveChannelException，泄漏为下一项 runTest 的
-        // UncaughtExceptionsBeforeTest。Channel 是队列私有对象，随 owner 一起回收即可。
         scope.cancel()
-        boundaryFailure?.let { throw it }
-    }
-
-    init {
-        connectionState
-            .onEach {
-                if (it == ConnectionState.AUTHENTICATED) {
-                    callbackGate.runIfActive(callbackLease) { wake.trySend(Unit) }
-                }
-            }
-            .launchIn(scope)
-        scope.launch { workerLoop() }
-    }
-
-    /** 入队（总是接受；结果经 onSent/onFailed 回调）。 */
-    fun enqueue(message: Message) {
-        callbackGate.use(callbackLease) {
-            scope.launch {
-                val admitted = mutex.withLock {
-                    callbackGate.runIfActive(callbackLease) { queue.addLast(message) }
-                }
-                if (!admitted) return@launch
-                callbackGate.runIfActive(callbackLease) { wake.trySend(Unit) }
-            }
+        if (disposition == SendQueueCloseDisposition.CANCEL) {
+            localCache.cancelOutgoingMessages("cancelled by account retirement", clock())
         }
+        boundaryFailure?.let { throw it }
     }
 
     private suspend fun workerLoop() {
         while (true) {
-            val msg = mutex.withLock { queue.firstOrNull() }
-            if (msg == null) {
-                wake.receive() // 挂起直到新消息或重连
+            var head: OutgoingMessage? = null
+            if (!callbackGate.runIfActive(callbackLease) {
+                    head = localCache.peekNextOutgoingMessage()
+                }
+            ) return
+            if (head == null) {
+                wake.receive()
                 continue
             }
             if (connectionState.value != ConnectionState.AUTHENTICATED) {
-                if (!callbackGate.runIfActive(callbackLease) { onQueued(msg) }) return
-                wake.receive() // 挂起直到重连（或新消息重复唤醒，无副作用）
+                if (!callbackGate.runIfActive(callbackLease) { onQueued(checkNotNull(head).message) }) return
+                wake.receive()
                 continue
             }
-            var sendFailure: Throwable? = null
-            var retryAfterDisconnect = false
-            val ack = withTimeoutOrNull(30_000) {
-                try {
-                    sender.sendAndWaitAck(msg)
-                } catch (_: AckTransportDisconnectedException) {
-                    // Keep the head item. The outer loop either observes the already-published
-                    // non-ready state and waits, or immediately retries after a fast reconnect.
-                    if (!callbackGate.runIfActive(callbackLease) { onQueued(msg) }) {
-                        return@withTimeoutOrNull null
-                    }
-                    retryAfterDisconnect = true
-                    return@withTimeoutOrNull null
-                } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                    throw cancelled
-                } catch (failure: Exception) {
-                    sendFailure = failure
-                    null
+            val now = clock()
+            if (checkNotNull(head).nextAttemptAt > now) {
+                delay((checkNotNull(head).nextAttemptAt - now).coerceAtMost(MAX_RETRY_DELAY_MS))
+                continue
+            }
+            var claimed: OutgoingMessage? = null
+            if (!callbackGate.runIfActive(callbackLease) {
+                    claimed = localCache.claimNextOutgoingMessage(clock())
                 }
-            }
-            if (retryAfterDisconnect) continue
-            if (ack != null && ack.code == 0) {
-                if (!callbackGate.runIfActive(callbackLease) { onSent(msg, ack) }) return
-            } else {
-                val reason = ack?.takeIf { it.code != 0 }?.reason
-                    ?: sendFailure?.message
-                    ?: "发送超时"
-                if (!callbackGate.runIfActive(callbackLease) { onFailed(msg, reason) }) return
-            }
-            mutex.withLock { queue.removeFirstOrNull() }
+            ) return
+            claimed ?: continue
+            deliver(checkNotNull(claimed))
         }
+    }
+
+    private suspend fun deliver(outgoing: OutgoingMessage) {
+        var failure: Exception? = null
+        val ack = withTimeoutOrNull(ackTimeoutMs) {
+            try {
+                sender.sendAndWaitAck(outgoing.message)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (caught: Exception) {
+                failure = caught
+                null
+            }
+        }
+        val now = clock()
+        val ackDisposition = ack?.let { classifyOutgoingAck(it, outgoing.message.clientMsgId) }
+        if (ack != null && ackDisposition == OutgoingAckDisposition.SUCCESS) {
+            if (!callbackGate.runIfActive(callbackLease) {
+                    localCache.completeOutgoingMessage(outgoing.localOrdinal, ack, now)
+                    onSent(outgoing.message, ack)
+                }
+            ) return
+            return
+        }
+
+        val reason = when {
+            ack != null && ack.clientMsgId != outgoing.message.clientMsgId -> "ACK clientMsgId mismatch"
+            ack != null && ack.code != 0 -> ack.reason ?: "server rejected message (${ack.code})"
+            ack != null && ack.serverSeq <= 0L -> "successful ACK has no server sequence"
+            failure != null -> failure.message ?: failure::class.simpleName ?: "send failed"
+            else -> "send acknowledgement timed out"
+        }
+        val terminal = when {
+            ack == null -> failure is IllegalArgumentException
+            else -> ackDisposition == OutgoingAckDisposition.TERMINAL
+        }
+        if (terminal) {
+            callbackGate.runIfActive(callbackLease) {
+                localCache.markOutgoingMessageTerminalFailed(
+                    outgoing.localOrdinal,
+                    reason,
+                    now,
+                    terminalCode = ack?.code ?: if (failure is IllegalArgumentException) 400 else null,
+                )
+                onFailed(outgoing.message, reason)
+            }
+        } else {
+            val nextAttemptAt = now + retryDelayMillis(outgoing.attemptCount)
+            callbackGate.runIfActive(callbackLease) {
+                localCache.markOutgoingMessageRetry(outgoing.localOrdinal, reason, nextAttemptAt, now)
+                onQueued(outgoing.message)
+                wake.trySend(Unit)
+            }
+        }
+    }
+
+    private fun retryDelayMillis(attemptCount: Long): Long {
+        val shift = (attemptCount - 1L).coerceIn(0L, 6L).toInt()
+        return (BASE_RETRY_DELAY_MS shl shift).coerceAtMost(MAX_RETRY_DELAY_MS)
+    }
+
+    private companion object {
+        const val BASE_RETRY_DELAY_MS = 500L
+        const val MAX_RETRY_DELAY_MS = 30_000L
     }
 }

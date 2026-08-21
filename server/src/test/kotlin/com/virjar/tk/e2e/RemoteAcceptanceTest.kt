@@ -655,16 +655,17 @@ class RemoteAcceptanceTest {
             val user = ProtoCodec.decode(User, getResp.payload!!)
             assertEquals(session.uid, user.uid)
 
-            // UPDATE_PROFILE: 修改昵称（payload = User 编码，只取 name/avatar/sex）
-            val updated = user.copy(name = "NewName-${UUID.randomUUID().toString().take(4)}")
-            val updResp = session.invoke("user", UserRpcContract.M_UPDATE_PROFILE, ProtoCodec.encode(updated))
+            // UPDATE_PROFILE: 只提交明确 present 的昵称字段。
+            val updatedName = "NewName-${UUID.randomUUID().toString().take(4)}"
+            val patch = ProfilePatch(name = ProfilePatchValue.Set(updatedName))
+            val updResp = session.invoke("user", UserRpcContract.M_UPDATE_PROFILE, ProtoCodec.encode(patch))
             assertEquals(0, updResp.status, "更新 profile 应成功")
 
             // 再查确认
             val getResp2 = session.invoke("user", UserRpcContract.M_GET_PROFILE,
                 ProtoCodec.encodePayload { writeString(null) })
             val user2 = ProtoCodec.decode(User, getResp2.payload!!)
-            assertEquals(updated.name, user2.name, "昵称应已更新")
+            assertEquals(updatedName, user2.name, "昵称应已更新")
         } finally {
             session.close()
         }

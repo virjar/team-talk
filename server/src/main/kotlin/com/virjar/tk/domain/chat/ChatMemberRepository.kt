@@ -45,6 +45,19 @@ data class ServiceMemberProjectionCleanup(
     val remainingMemberUids: List<String>,
 )
 
+data class MessageAdmissionFacts(
+    val chat: Chat,
+    val sender: Member?,
+    val senderMuted: Boolean,
+    val activeMemberUids: List<String>,
+)
+
+data class MessageAdmission(
+    val serverSeq: Long,
+    val chatType: Int,
+    val recipientUids: List<String>,
+)
+
 /** Persistence port for membership, roles and mute state. */
 interface ChatMemberRepository {
     fun getMembers(chatId: String): List<Member>
@@ -72,22 +85,36 @@ interface ChatMemberRepository {
     /** Read an actor after its chat and the owning application row have been locked. */
     fun getActiveMember(transaction: PgTransactionContext, chatId: String, uid: String): Member? =
         getMember(chatId, uid)
+
     /**
-     * Lock the active chat and memberships, authorize against that snapshot, then add/reactivate
-     * members and establish Conversation rows inside the caller's PG unit of work.
+     * Authority-fenced message admission and max-seq allocation in one locked Chat snapshot.
+     * [afterChatLocked] is the cross-domain User/Bot/grant lock seam and must run before Member/Mute.
+     */
+    fun admitMessage(
+        transaction: PgTransactionContext,
+        chatId: String,
+        senderUid: String,
+        nowMillis: Long,
+        afterChatLocked: () -> Unit = {},
+        authorize: (MessageAdmissionFacts) -> Unit,
+    ): MessageAdmission = error("Transactional message admission is not implemented")
+    /**
+     * Lock the active chat, required human Users and memberships in that order, authorize against
+     * the snapshot, then add/reactivate members and establish Conversation rows in the UoW.
      */
     fun addMembers(
         transaction: PgTransactionContext,
         chatId: String,
         operatorUid: String,
         uids: List<String>,
+        requiredHumanUids: Set<String> = emptySet(),
         authorize: (GroupMemberAdditionFacts) -> Unit,
     ): GroupMemberAddition
     /**
-     * Lock the active chat and all active memberships, re-run [authorize] against those facts,
-     * then deactivate [targetUid] and delete its conversation/mute projections in the caller's
-     * [com.virjar.tk.domain.transaction.PgUnitOfWork]. The callback cannot suspend or escape the
-     * database transaction, so authorization and mutation share one locked snapshot.
+     * Lock the active chat, then operator + target Users in one sorted acquisition. The operator
+     * must be an active human; a distinct target must still exist as a human but may be disabled
+     * so administrators can remove a banned account. A self-leaver must be active. Memberships,
+     * authorization and projection deletion then share the same locked transaction snapshot.
      */
     fun removeMember(
         transaction: PgTransactionContext,
@@ -123,11 +150,39 @@ interface ChatMemberRepository {
         lockedChat: LockedChat?,
     ): ServiceMemberProjectionCleanup? = error("Service projection cleanup is not implemented")
 
-    fun transferOwner(chatId: String, oldOwnerUid: String, newOwnerUid: String)
-    fun setRole(chatId: String, uid: String, role: Int)
-    fun muteMember(chatId: String, uid: String, operatorUid: String, expiresAt: Long)
-    fun unmuteMember(chatId: String, uid: String)
+    fun transferOwner(
+        transaction: PgTransactionContext,
+        chatId: String,
+        oldOwnerUid: String,
+        newOwnerUid: String,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): ChatMutation = error("Transactional owner transfer is not implemented")
+
+    fun setRole(
+        transaction: PgTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        targetUid: String,
+        role: Int,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): ChatMutation = error("Transactional member role mutation is not implemented")
+
+    fun setMemberMute(
+        transaction: PgTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        targetUid: String,
+        expiresAt: Long?,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): ChatMutation = error("Transactional member mute mutation is not implemented")
+
     fun isMuted(chatId: String, uid: String): Boolean
-    fun setMuteAll(chatId: String, mutedAll: Boolean)
+    fun setMuteAll(
+        transaction: PgTransactionContext,
+        chatId: String,
+        operatorUid: String?,
+        mutedAll: Boolean,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): ChatMutation = error("Transactional group mute mutation is not implemented")
     fun getMutedMembers(chatId: String): List<String>
 }

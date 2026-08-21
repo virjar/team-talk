@@ -44,12 +44,14 @@ Desktop 不能在一个 OS 交叉生成所有安装包；GitHub Actions 分别�
 
 部署脚本创建的 `${deployPath}.bak` 不是完整数据备份，不能代替 PostgreSQL dump 与 data 快照。
 
-### 预发布 epoch 6 切换
+### 预发布 epoch 7 切换
 
-当前认证持久化已从 RocksDB TokenStore 切换到 PostgreSQL `credentials`，服务端 schema/data epoch 为
-6。这是明确的破坏性预发布基线，不提供旧 token 或旧 schema 的兼容迁移。切换测试实例前停止写入，
+当前组织事实与受管部门群使用持久 desired/applied revision 投影，服务端 schema/data epoch 为 7。
+这是明确的破坏性预发布基线，不提供旧 token、旧组织投影或旧 schema 的兼容迁移。切换测试实例前停止写入，
 同时重建 PostgreSQL schema/volume 并清空服务端 durable `data/` 后再启动；所有 access/refresh token
-永久失效，客户端必须重新登录。只清数据库或只删 `data/tokenstore` 都不是有效升级方式。
+永久失效，客户端必须重新登录。只清数据库或只清某个本地存储目录都不是有效升级方式。
+启动会在绑定 TCP 前完整应用所有受管部门群 pending revision；任何未收敛项都会使启动失败，不能通过
+反复重启或忽略日志绕过。修复数据库事实或投影错误后再启动。
 
 ## 4. 发布门禁
 

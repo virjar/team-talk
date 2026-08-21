@@ -29,14 +29,14 @@ eventId(varLong) + notifyType(1B) + payload(bytes?)
 | 40 | `PRESENCE` | `PresencePayload` | 好友在线设备 | 发布在线状态流 |
 | 41 | `TYPING` | `Message` | 其他会话成员 | 发布 `(chatId, senderUid)` 临时状态 |
 | 50 | `READ_SYNC` | `ReadSyncPayload` | 其他会话成员 | 更新 `peerReadSeq` |
-| 60 | `USER_UPDATED` | `User` | 当前用户设备 | 更新用户缓存 |
+| 60 | `USER_UPDATED` | `User` | 当前用户设备 | 与资料事实同事务提交；更新用户缓存 |
 | 99 | `GENERIC` | `GenericPayload` | 扩展定义决定 | 严格解码信封；未注册扩展安全忽略并推进游标 |
 
 踢人、自行退群、受管群收敛移除和服务成员撤权都以同一数据库事务提交成员停用、目标会话行删除
 和上述持久事件。目标用户
 先收到隐私边界 `CHAT_DELETED`，再收到兼容的 `CONVERSATION_DELETED`，不会再收到容易被
 误解为“刷新群成员”的 `MEMBER_REMOVED`；剩余成员只收到 `MEMBER_REMOVED`。客户端处理 `CHAT_DELETED` 时会在一个
-SQLite 事务中清除 chat、conversation、草稿 outbox、member、message 和机器人 inbox，已被
+SQLite 事务中清除 chat、conversation、草稿 outbox、member、message、该 chat 的 outgoing 和机器人 inbox，已被
 界面持有的消息 Flow 保持原对象但立即变空，后续合法重放仍写回同一 Flow。
 
 ## 持久事件与临时事件
@@ -47,8 +47,9 @@ SQLite 事务中清除 chat、conversation、草稿 outbox、member、message �
 逐批拉取。每批事件全部完成本地投影并把游标单调写入 `sync_cursor` 后，客户端才请求下一批。
 服务端最终在同一用户事件门闩内二次确认无遗漏，发送 `SYNC_READY` 后才把连接加入实时推送表。
 非零游标若越过当前账号的 `lastSeq`，服务端先发送 `SYNC_RESET` 且保持同步态；客户端原子清空
-本地服务器投影、cursor、草稿 outbox 和 bot inbox 后，在同一连接以 0 重新开始。重置失败或重复
-RESET 必须断开，不能跳过历史进入实时态。
+本地服务器投影、cursor、草稿 outbox 和 bot inbox 后，在同一连接以 0 重新开始；本地 outgoing
+不删除，而是在同一事务从 immutable payload 重建 active/terminal 消息气泡。重置失败或重复 RESET
+必须断开，不能跳过历史进入实时态。
 
 `eventId = 0` 表示不参与持久游标，当前用于 PRESENCE、TYPING 等瞬时直发。历史消息通过
 `MessageRpc.getHistory` 按 chat `serverSeq` 分页读取，不进入持久事件批次，也不推进或覆盖已经保存的

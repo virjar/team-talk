@@ -9,7 +9,7 @@ import com.virjar.tk.di.serverModule
 import com.virjar.tk.domain.auth.AuthService
 import com.virjar.tk.domain.auth.AccessTokenValidator
 import com.virjar.tk.domain.bot.BotService
-import com.virjar.tk.domain.chat.ChatStore
+import com.virjar.tk.domain.chat.ChatAccess
 import com.virjar.tk.infra.health.HealthChecker
 import com.virjar.tk.infra.ServerDataEpoch
 import com.virjar.tk.domain.message.MessageService
@@ -35,6 +35,7 @@ import io.ktor.server.http.content.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
@@ -167,22 +168,24 @@ fun Application.module() {
         val authService = koin.get<AuthService>()
         val rpcDispatcher = koin.get<RpcDispatcher>()
         val msgService = koin.get<MessageService>()
-        val chatStore = koin.get<ChatStore>()
+        val chatAccess = koin.get<ChatAccess>()
         val syncEventService = koin.get<SyncEventService>()
         val recoveredProjections = runBlocking(Dispatchers.IO) { msgService.recoverPendingProjections() }
         if (recoveredProjections > 0) {
             logger.info("Recovered {} pending message projections", recoveredProjections)
         }
-        // Grant rows are authoritative; recover a missing service-member projection before accepting traffic.
-        val botGrantFailures = runBlocking(Dispatchers.IO) { koin.get<BotService>().recoverGrantMemberships() }
-        if (botGrantFailures.isNotEmpty()) {
-            logger.error("Bot grant reconciliation failed for grants={}", botGrantFailures)
-        }
+        val organizationService = koin.get<OrganizationService>()
         val organizationFailures = runBlocking(Dispatchers.IO) {
-            koin.get<OrganizationService>().reconcileAllManagedGroups()
+            organizationService.reconcileAllManagedGroups()
         }
-        if (organizationFailures.isNotEmpty()) {
-            logger.error("Managed department group reconciliation failed for units={}", organizationFailures)
+        check(organizationFailures.isEmpty()) {
+            "Managed department group startup drain did not converge: $organizationFailures"
+        }
+        // Bot recovery enters every chat through the managed authority fence. Drain organization
+        // revisions first so startup never tries to take Chat behind a deliberately pending row.
+        val botGrantFailures = runBlocking(Dispatchers.IO) { koin.get<BotService>().recoverGrantMemberships() }
+        check(botGrantFailures.isEmpty()) {
+            "Bot grant startup reconciliation did not converge: $botGrantFailures"
         }
 
         val presenceCoordinator = resources.own(
@@ -196,7 +199,7 @@ fun Application.module() {
         tcpServer.start { channel, recorder, ioExecutor ->
             ImAgent(
                 channel, recorder, authService, clientRegistry, rpcDispatcher, msgService,
-                chatStore, syncEventService, syncEventService, ioExecutor,
+                chatAccess, syncEventService, syncEventService, ioExecutor,
             )
         }
 
@@ -215,6 +218,21 @@ fun Application.module() {
                 runCatching { syncEventService.cleanupExpiredEvents() }
                     .onFailure { logger.warn("sync_events cleanup failed", it) }
                 delay(24 * 60 * 60 * 1000L)
+            }
+        }
+        maintenanceScope.launch {
+            while (isActive) {
+                delay(5_000L)
+                try {
+                    val failures = organizationService.reconcileDueManagedGroups()
+                    if (failures.isNotEmpty()) {
+                        logger.warn("Managed department group runtime drain is still pending for units={}", failures)
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    logger.warn("Managed department group runtime drain failed", failure)
+                }
             }
         }
 

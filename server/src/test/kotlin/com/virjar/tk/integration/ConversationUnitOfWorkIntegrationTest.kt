@@ -263,6 +263,7 @@ class ConversationUnitOfWorkIntegrationTest {
         conversationRepo = ctx.conversationRepo,
         lifecycleGate = ChatLifecycleGate(),
         unitOfWork = unitOfWork,
+        access = ctx.chatAccess,
     )
 
     private fun failingUnitOfWork(): PgUnitOfWork = ExposedPgUnitOfWork(

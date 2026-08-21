@@ -127,6 +127,28 @@ class AgentFileAccessPolicyTest {
         assertEquals("secret!", outside.readText())
     }
 
+    @Test
+    fun `startup removes only owned orphan staging names without following links`() {
+        val root = temporaryRoot()
+        val dataDir = File(root, "agent-data")
+        AgentFileAccessPolicy(dataDir)
+        val staging = File(dataDir, ".staging")
+        val partial = File(staging, ".upload-crash.partial").apply { writeText("partial") }
+        val ready = File(staging, ".upload-crash.partial.ready").apply { writeText("ready") }
+        val unrelated = File(staging, "operator-note").apply { writeText("keep") }
+        val outside = File(root, "outside.txt").apply { writeText("outside") }
+        val orphanLink = File(staging, ".upload-link.partial.ready")
+        Files.createSymbolicLink(orphanLink.toPath(), outside.toPath())
+
+        AgentFileAccessPolicy(dataDir)
+
+        assertFalse(partial.exists())
+        assertFalse(ready.exists())
+        assertFalse(Files.exists(orphanLink.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS))
+        assertEquals("outside", outside.readText())
+        assertEquals("keep", unrelated.readText())
+    }
+
     private suspend fun UploadSource.readAll(): ByteArray {
         val output = ByteArrayOutputStream()
         writeTo(UploadSink { bytes, offset, length -> output.write(bytes, offset, length) })

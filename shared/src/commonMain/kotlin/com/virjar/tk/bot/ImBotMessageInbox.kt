@@ -19,8 +19,8 @@ fun interface ImBotCacheOwner {
  * ImBot 的单消费者可靠收件箱。
  *
  * 消息主体落在账号 LocalCache 的磁盘表；进程内只用 CONFLATED wake-up，因此初始 replay
- * 不依赖消费者启动时序、不会形成内存 backlog。eventId 与 `(chatId, serverSeq)` 都是
- * INSERT OR IGNORE 幂等边界。
+ * 不依赖消费者启动时序、不会形成内存 backlog。eventId 是 INSERT OR IGNORE 的重放幂等
+ * 边界；同一 `(chatId, serverSeq)` 的创建、编辑和撤回会作为不同事件完整保留。
  */
 class ImBotMessageInbox {
     private val wakeUp = Channel<Unit>(Channel.CONFLATED)
@@ -68,18 +68,27 @@ class ImBotMessageInbox {
             check(!closed) { "ImBot inbox is closed" }
             checkNotNull(localCache) { "ImBot inbox is not bound" }
         }
-        cache.deleteBotMessage(eventId)
+        cache.ackBotMessage(eventId, System.currentTimeMillis())
         // There may already be a following durable row.
         wakeUp.trySend(Unit)
     }
 
-    /** tt-agent recent/history 的磁盘事实源；不依赖进程内 ring。 */
-    fun recentMessages(chatId: String?, afterSeq: Long, limit: Int): List<Message> {
+    /** Cursor-safe delivery history, including acknowledged rows, in global event-id order. */
+    fun deliveries(afterEventId: Long, chatId: String?, limit: Int): List<PendingBotMessage> {
         val cache = synchronized(stateLock) {
             check(!closed) { "ImBot inbox is closed" }
             checkNotNull(localCache) { "ImBot inbox is not bound" }
         }
-        return cache.getRecentMessages(chatId, afterSeq, limit)
+        return cache.listBotMessageDeliveries(afterEventId, chatId, limit)
+    }
+
+    /** Snapshot used by recv-wait without a cursor so it observes only future deliveries. */
+    fun maxEventId(): Long {
+        val cache = synchronized(stateLock) {
+            check(!closed) { "ImBot inbox is closed" }
+            checkNotNull(localCache) { "ImBot inbox is not bound" }
+        }
+        return cache.maxBotMessageEventId()
     }
 
     /**

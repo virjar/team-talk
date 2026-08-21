@@ -4,12 +4,13 @@ import com.virjar.tk.client.LocalCache
 import com.virjar.tk.client.CacheUseGate
 import com.virjar.tk.client.MessageHistoryLease
 import com.virjar.tk.client.MessagePager
+import com.virjar.tk.client.OutgoingMessage
 import com.virjar.tk.client.PendingBotMessage
 import com.virjar.tk.client.PendingConversationDraft
 import com.virjar.tk.model.*
+import com.virjar.tk.protocol.payload.MessageAckPayload
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 
 /**
@@ -22,7 +23,9 @@ import kotlinx.coroutines.flow.map
  *
  * 其他实体（用户/联系人/聊天/成员/会话）用 MutableStateFlow 模拟，可手动设置。
  */
-class FakeLocalCache : LocalCache {
+class FakeLocalCache(
+    successReceiptLimit: Int = com.virjar.tk.client.DEFAULT_OUTGOING_SUCCESS_RECEIPTS,
+) : LocalCache {
     private data class MessageHistoryState(
         var lifecycleGeneration: Long = 0L,
         var historyChainGeneration: Long = 0L,
@@ -57,7 +60,15 @@ class FakeLocalCache : LocalCache {
     private var lastAppliedConversationSnapshotGeneration = 0L
     private val conversationMutationGenerations = mutableMapOf<String, Long>()
     private val syncCursors = mutableMapOf<String, Long>()
-    private val botMessageInbox = sortedMapOf<Long, Message>()
+    private val botMessageLog = FakeBotMessageLog()
+    private val outgoingStore = FakeOutgoingMessageStore(
+        lock = messagesMap,
+        upsertProjection = ::upsertFakeMessage,
+        updateProjectionStatus = ::updateFakeMessageStatus,
+        completeProjection = ::completeFakeMessage,
+        markAuthoritativeProjectionSent = ::markFakeAuthoritativeMessageSent,
+        successReceiptLimit = successReceiptLimit,
+    )
     private data class DraftObservation(val draft: String?)
     private data class DraftOverride(
         val draft: String?,
@@ -86,35 +97,64 @@ class FakeLocalCache : LocalCache {
     }
 
     // ── 消息 ──
-
     override fun getMessages(chatId: String, limit: Int): List<Message> = cacheUseGate.use {
-        synchronized(messagesMap) { (messagesMap[chatId] ?: emptyList()).take(limit) }
-    }
-
-    override fun getRecentMessages(chatId: String?, afterSeq: Long, limit: Int): List<Message> = cacheUseGate.use {
-        require(afterSeq >= 0L) { "afterSeq must be non-negative" }
-        require(limit > 0) { "limit must be positive" }
-        synchronized(messagesMap) {
-            messagesMap.values.asSequence()
-                .flatten()
-                .filter { (chatId == null || it.chatId == chatId) && it.serverSeq > afterSeq }
-                .sortedWith(compareBy<Message> { it.timestamp }.thenBy { it.serverSeq })
-                .toList()
-                .takeLast(limit)
-        }
+        synchronized(messagesMap) { fakeInitialMessages(messagesMap[chatId] ?: emptyList(), limit) }
     }
 
     override fun observeMessages(chatId: String): Flow<List<Message>> = cacheUseGate.use { messagesFlow(chatId) }
 
     override fun insertMessage(message: Message) = cacheUseGate.use {
+        upsertFakeInboundMessage(messagesMap, outgoingStore, message, ::syncFlow)
+    }
+
+    override fun enqueueOutgoingMessage(
+        message: Message,
+        now: Long,
+        requestFingerprint: ByteArray?,
+    ): OutgoingMessage = cacheUseGate.use {
+        enqueueFakeOutgoingMessage(messagesMap, outgoingStore, message, now, requestFingerprint)
+    }
+
+    override fun getOutgoingMessage(
+        chatId: String,
+        clientMsgId: String,
+        requestFingerprint: ByteArray?,
+    ): OutgoingMessage? = cacheUseGate.use {
+        outgoingStore.get(chatId, clientMsgId, requestFingerprint)
+    }
+
+    override fun recoverOutgoingMessages(now: Long): List<OutgoingMessage> = cacheUseGate.use {
         synchronized(messagesMap) {
-            val list = messagesMap.getOrPut(message.chatId) { mutableListOf() }
-            val idx = list.indexOfFirst { it.clientMsgId == message.clientMsgId }
-            if (idx >= 0) list[idx] = message else list.add(message)
-            list.sortWith(messageOrder)
-            syncFlow(message.chatId)
+            failFakeOrphanedMessages(messagesMap, outgoingStore.projectionKeys(), ::syncFlow)
+            reconcileFakeAuthoritativeOutgoing(messagesMap, outgoingStore, now)
+            outgoingStore.recover(now)
         }
     }
+
+    override fun peekNextOutgoingMessage(): OutgoingMessage? = cacheUseGate.use { outgoingStore.peek() }
+
+    override fun claimNextOutgoingMessage(now: Long): OutgoingMessage? =
+        cacheUseGate.use { outgoingStore.claim(now) }
+
+    override fun markOutgoingMessageRetry(
+        localOrdinal: Long,
+        error: String,
+        nextAttemptAt: Long,
+        now: Long,
+    ) = cacheUseGate.use { outgoingStore.retry(localOrdinal, error, nextAttemptAt, now) }
+
+    override fun markOutgoingMessageTerminalFailed(
+        localOrdinal: Long,
+        error: String,
+        now: Long,
+        terminalCode: Int?,
+    ) = cacheUseGate.use { outgoingStore.fail(localOrdinal, error, now, terminalCode) }
+
+    override fun completeOutgoingMessage(localOrdinal: Long, ack: MessageAckPayload, now: Long) =
+        cacheUseGate.use { outgoingStore.complete(localOrdinal, ack, now) }
+
+    override fun cancelOutgoingMessages(reason: String, now: Long) =
+        cacheUseGate.use { outgoingStore.cancel(reason, now) }
 
     override fun beginMessageHistoryLease(
         chatId: String,
@@ -152,35 +192,14 @@ class FakeLocalCache : LocalCache {
     ): Boolean = cacheUseGate.runIfOpen {
         synchronized(messageHistoryLock) history@{
         val state = currentMessageHistoryState(lease) ?: return@history false
-        val page = messages.toList()
-        // Validate the complete page before replacing the fake's single in-memory projection. This
-        // mirrors the all-or-nothing SQLite transaction used by LocalCacheImpl.
-        page.forEach { message ->
-            require(message.chatId == lease.chatId) {
-                "history page contains another chat: ${message.chatId}"
-            }
-        }
-
-        synchronized(messagesMap) {
-            val current = messagesMap[lease.chatId]?.toList() ?: emptyList()
-            val base = if (lease.resetResidentWindow) {
-                val pageMaxSeq = page.asSequence()
-                    .map(Message::serverSeq)
-                    .filter { it > 0L }
-                    .maxOrNull()
-                current.filter { message ->
-                    message.serverSeq <= 0L ||
-                        (pageMaxSeq != null && message.serverSeq > pageMaxSeq)
-                }
-            } else {
-                current
-            }
-            val merged = LinkedHashMap<String, Message>(base.size + page.size)
-            base.forEach { merged[it.clientMsgId] = it }
-            page.forEach { merged[it.clientMsgId] = it }
-            messagesMap[lease.chatId] = merged.values.sortedWith(messageOrder).toMutableList()
-            syncFlow(lease.chatId)
-        }
+        applyFakeHistoryProjection(
+            messagesMap,
+            outgoingStore,
+            lease.chatId,
+            messages,
+            lease.resetResidentWindow,
+            ::syncFlow,
+        )
 
         if (lease.resetResidentWindow) {
             state.committedHistoryChainGeneration = lease.historyChainGeneration
@@ -222,7 +241,7 @@ class FakeLocalCache : LocalCache {
         synchronized(messagesMap) messages@{
             val list = messagesMap[chatId] ?: return@messages
             val idx = list.indexOfFirst { it.clientMsgId == clientMsgId }
-            if (idx >= 0) {
+            if (idx >= 0 && list[idx].serverSeq == 0L) {
                 list[idx] = list[idx].copy(serverSeq = serverSeq, sendStatus = Message.SEND_STATUS_SENT)
                 syncFlow(chatId)
             }
@@ -233,15 +252,59 @@ class FakeLocalCache : LocalCache {
         synchronized(messagesMap) messages@{
             val list = messagesMap[chatId] ?: return@messages
             val idx = list.indexOfFirst { it.clientMsgId == clientMsgId }
-            if (idx >= 0) {
+            if (idx >= 0 && list[idx].serverSeq == 0L) {
                 list[idx] = list[idx].copy(sendStatus = sendStatus)
                 syncFlow(chatId)
             }
         }
     }
 
+    /** Caller already owns cache admission; helpers avoid recursively expressing public operations. */
+    private fun upsertFakeMessage(message: Message) = synchronized(messagesMap) {
+        val list = messagesMap.getOrPut(message.chatId) { mutableListOf() }
+        val index = list.indexOfFirst { it.clientMsgId == message.clientMsgId }
+        if (index >= 0) {
+            if (list[index].serverSeq > 0L && message.serverSeq == 0L) return@synchronized
+            list[index] = message
+        } else {
+            list.add(message)
+        }
+        list.sortWith(fakeMessageOrder)
+        syncFlow(message.chatId)
+    }
+
+    private fun updateFakeMessageStatus(message: Message, sendStatus: Int) = synchronized(messagesMap) {
+        val list = messagesMap[message.chatId] ?: return@synchronized
+        val index = list.indexOfFirst { it.clientMsgId == message.clientMsgId }
+        if (index >= 0 && list[index].serverSeq == 0L) {
+            list[index] = list[index].copy(sendStatus = sendStatus)
+            syncFlow(message.chatId)
+        }
+    }
+
+    private fun completeFakeMessage(message: Message, serverSeq: Long) = synchronized(messagesMap) {
+        val list = messagesMap[message.chatId] ?: return@synchronized
+        val index = list.indexOfFirst { it.clientMsgId == message.clientMsgId }
+        if (index >= 0 && list[index].serverSeq == 0L) {
+            list[index] = list[index].copy(
+                serverSeq = serverSeq,
+                sendStatus = Message.SEND_STATUS_SENT,
+            )
+            syncFlow(message.chatId)
+        }
+    }
+
+    private fun markFakeAuthoritativeMessageSent(message: Message) = synchronized(messagesMap) {
+        val list = messagesMap[message.chatId] ?: return@synchronized
+        val index = list.indexOfFirst { it.clientMsgId == message.clientMsgId }
+        if (index >= 0 && list[index].serverSeq > 0L) {
+            list[index] = list[index].copy(sendStatus = Message.SEND_STATUS_SENT)
+            syncFlow(message.chatId)
+        }
+    }
+
     override fun pager(chatId: String, windowSize: Int): MessagePager = cacheUseGate.use {
-        SimpleMessagePager(chatId, this, cacheUseGate)
+        SimpleMessagePager(chatId, this, cacheUseGate, windowSize)
     }
 
     override fun onChatInactive(chatId: String) = cacheUseGate.use {
@@ -249,7 +312,6 @@ class FakeLocalCache : LocalCache {
     }
 
     // ── 用户 ──
-
     override fun getUser(uid: String): User? = cacheUseGate.use { usersFlow.value.find { it.uid == uid } }
     override fun upsertUser(user: User) = cacheUseGate.use {
         val list = usersFlow.value.toMutableList()
@@ -335,14 +397,15 @@ class FakeLocalCache : LocalCache {
         synchronized(messageHistoryLock) {
             synchronized(conversationLock) {
                 synchronized(messagesMap) {
-                    synchronized(botMessageInbox) {
+                    synchronized(botMessageLog) {
                         chatsFlow.value = chatsFlow.value.filter { it.chatId != chatId }
                         conversationsFlow.value = conversationsFlow.value.filter { it.chatId != chatId }
                         draftOverrides.remove(chatId)
                         membersMap.remove(chatId)
                         messagesMap.remove(chatId)
                         messagesFlows[chatId]?.value = emptyList()
-                        botMessageInbox.entries.removeAll { (_, message) -> message.chatId == chatId }
+                        botMessageLog.deleteChat(chatId)
+                        outgoingStore.deleteChat(chatId)
                         markConversationMutated(chatId)
                         // Retain the resident messagesFlows entry and the draft generation high-watermark
                         // so replay collectors and stale-ACK fencing match LocalCacheImpl semantics.
@@ -527,7 +590,7 @@ class FakeLocalCache : LocalCache {
                 synchronized(conversationLock) {
                     synchronized(messagesMap) {
                         synchronized(syncCursors) {
-                            synchronized(botMessageInbox) {
+                            synchronized(botMessageLog) {
                                 usersFlow.value = emptyList()
                                 contactsFlow.value = emptyList()
                                 chatsFlow.value = emptyList()
@@ -536,8 +599,14 @@ class FakeLocalCache : LocalCache {
                                 messagesMap.clear()
                                 messagesFlows.values.forEach { it.value = emptyList() }
                                 syncCursors.clear()
-                                botMessageInbox.clear()
+                                botMessageLog.reset()
                                 draftOverrides.clear()
+                                outgoingStore.projectionAfterReset().forEach { restored ->
+                                    val list = messagesMap.getOrPut(restored.chatId) { mutableListOf() }
+                                    list += restored
+                                    list.sortWith(fakeMessageOrder)
+                                    messagesFlows[restored.chatId]?.value = list.toList()
+                                }
 
                                 check(contactProjectionGeneration < Long.MAX_VALUE)
                                 contactProjectionGeneration += 1L
@@ -567,32 +636,19 @@ class FakeLocalCache : LocalCache {
             }
         }
     }
-    override fun enqueueBotMessage(eventId: Long, message: Message) = cacheUseGate.use {
-        require(eventId > 0L) { "eventId must be positive" }
-        require(message.serverSeq > 0L) { "durable bot messages require a positive serverSeq" }
-        synchronized(botMessageInbox) {
-            val duplicateMessage = botMessageInbox.values.any {
-                it.chatId == message.chatId && it.serverSeq == message.serverSeq
-            }
-            if (!duplicateMessage) {
-                botMessageInbox.putIfAbsent(eventId, message)
-            }
-        }
-    }
-    override fun peekBotMessage(): PendingBotMessage? = cacheUseGate.use {
-        synchronized(botMessageInbox) {
-            botMessageInbox.entries.firstOrNull()?.let { (eventId, message) ->
-                PendingBotMessage(eventId, message)
-            }
-        }
-    }
-    override fun deleteBotMessage(eventId: Long) {
-        cacheUseGate.use {
-            synchronized(botMessageInbox) {
-                botMessageInbox.remove(eventId)
-            }
-        }
-    }
+    override fun enqueueBotMessage(eventId: Long, message: Message) =
+        cacheUseGate.use { botMessageLog.enqueue(eventId, message) }
+
+    override fun peekBotMessage(): PendingBotMessage? = cacheUseGate.use { botMessageLog.peek() }
+
+    override fun ackBotMessage(eventId: Long, now: Long) = cacheUseGate.use { botMessageLog.ack(eventId) }
+    override fun listBotMessageDeliveries(
+        afterEventId: Long,
+        chatId: String?,
+        limit: Int,
+    ): List<PendingBotMessage> = cacheUseGate.use { botMessageLog.list(afterEventId, chatId, limit) }
+
+    override fun maxBotMessageEventId(): Long = cacheUseGate.use { botMessageLog.maxEventId() }
     override fun updateMessageInMemory(
         chatId: String,
         clientMsgId: String,
@@ -741,20 +797,4 @@ class FakeLocalCache : LocalCache {
         return current + 1L
     }
 
-    private companion object {
-        val messageOrder = compareByDescending<Message> {
-            if (it.serverSeq > 0L) it.serverSeq else Long.MAX_VALUE
-        }.thenByDescending { it.timestamp }
-    }
-}
-
-/** 简化版 MessagePager，直接镜像 FakeLocalCache 的消息列表。 */
-private class SimpleMessagePager(
-    private val chatId: String,
-    private val cache: FakeLocalCache,
-    private val cacheUseGate: CacheUseGate,
-) : MessagePager {
-    override val messages: Flow<List<Message>> get() = cache.observeMessages(chatId)
-    override val hasMore: StateFlow<Boolean> = MutableStateFlow(false)
-    override fun loadMore(pageSize: Int) = cacheUseGate.use { /* Fake 不分页 */ }
 }

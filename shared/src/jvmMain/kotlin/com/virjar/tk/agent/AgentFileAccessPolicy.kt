@@ -21,15 +21,24 @@ import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.PosixFileAttributeView
 import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.attribute.PosixFilePermissions
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 
+/** Minimal immutable snapshot contract used by the retry-safe file coordinator and its tests. */
+internal interface AgentPreparedUpload : AutoCloseable {
+    val originalFileName: String
+    val source: UploadSource
+    val contentSha256: ByteArray
+}
+
 /** Private immutable upload snapshot. Closing it removes the staging file. */
-class AgentStagedUpload internal constructor(
-    val originalFileName: String,
-    val source: UploadSource,
+internal class AgentStagedUpload internal constructor(
+    override val originalFileName: String,
+    override val source: UploadSource,
+    override val contentSha256: ByteArray,
     internal val stagingPath: Path,
     private val stagingRoot: Path,
-) : AutoCloseable {
+) : AgentPreparedUpload {
     private val closed = AtomicBoolean(false)
 
     override fun close() {
@@ -53,12 +62,22 @@ class AgentFileAccessPolicy(
     private val outgoingRoot = dataDirectory.ensurePrivateChild(OUTGOING_DIRECTORY)
     private val stagingRoot = dataDirectory.ensurePrivateChild(STAGING_DIRECTORY)
 
-    fun stageUpload(rawPath: String): AgentStagedUpload {
+    init {
+        cleanupOrphanedStagingFiles()
+    }
+
+    internal fun stageUpload(rawPath: String): AgentStagedUpload {
         val verifiedSource = requireSourcePath(rawPath)
         val sourcePath = verifiedSource.path
         val originalName = sourcePath.fileName.toString()
-        val partial = Files.createTempFile(stagingRoot, ".upload-", ".partial", FILE_ATTRIBUTE)
+        val partial = Files.createTempFile(
+            stagingRoot,
+            STAGING_FILE_PREFIX,
+            STAGING_PARTIAL_SUFFIX,
+            FILE_ATTRIBUTE,
+        )
         val ready = stagingRoot.resolve("${partial.fileName}.ready")
+        val digest = MessageDigest.getInstance("SHA-256")
         var installed = false
         try {
             Files.setPosixFilePermissions(partial, FILE_PERMISSIONS)
@@ -80,6 +99,7 @@ class AgentFileAccessPolicy(
                         if (read == 0) continue
                         copied += read
                         buffer.flip()
+                        digest.update(buffer.asReadOnlyBuffer())
                         while (buffer.hasRemaining()) output.write(buffer)
                     }
                     require(copied == verifiedSource.size) {
@@ -106,6 +126,7 @@ class AgentFileAccessPolicy(
             val staged = AgentStagedUpload(
                 originalFileName = originalName,
                 source = PrivateStagedUploadSource(ready),
+                contentSha256 = digest.digest(),
                 stagingPath = ready,
                 stagingRoot = stagingRoot,
             )
@@ -210,6 +231,32 @@ class AgentFileAccessPolicy(
         }
     }
 
+    /** Single-owner startup boundary: remove only this implementation's direct staging names. */
+    private fun cleanupOrphanedStagingFiles() {
+        var changed = false
+        Files.newDirectoryStream(stagingRoot).use { entries ->
+            entries.forEach { entry ->
+                val name = entry.fileName.toString()
+                if (!name.startsWith(STAGING_FILE_PREFIX) ||
+                    !(name.endsWith(STAGING_PARTIAL_SUFFIX) || name.endsWith(STAGING_READY_SUFFIX))
+                ) {
+                    return@forEach
+                }
+                require(entry.parent == stagingRoot) { "Invalid private staging entry" }
+                val attributes = Files.readAttributes(
+                    entry,
+                    BasicFileAttributes::class.java,
+                    LinkOption.NOFOLLOW_LINKS,
+                )
+                require(attributes.isRegularFile || attributes.isSymbolicLink) {
+                    "Invalid private staging entry type"
+                }
+                changed = Files.deleteIfExists(entry) || changed
+            }
+        }
+        if (changed) forceDirectory(stagingRoot)
+    }
+
     private fun posixPermissions(path: Path): Set<PosixFilePermission> {
         val view = Files.getFileAttributeView(
             path,
@@ -236,6 +283,9 @@ class AgentFileAccessPolicy(
     private companion object {
         const val OUTGOING_DIRECTORY = "outgoing"
         const val STAGING_DIRECTORY = ".staging"
+        const val STAGING_FILE_PREFIX = ".upload-"
+        const val STAGING_PARTIAL_SUFFIX = ".partial"
+        const val STAGING_READY_SUFFIX = ".partial.ready"
         const val COPY_BUFFER_BYTES = 64 * 1024
         val FILE_PERMISSIONS = PosixFilePermissions.fromString("rw-------")
         val FILE_ATTRIBUTE = PosixFilePermissions.asFileAttribute(FILE_PERMISSIONS)

@@ -80,7 +80,7 @@ class TcpE2eEnvironment : AutoCloseable {
                     clientRegistry = koin.get(),
                     rpcDispatcher = koin.get(),
                     messageService = koin.get(),
-                    chatStore = koin.get(),
+                    chatAccess = koin.get(),
                     syncEvents = koin.get(),
                     events = koin.get(),
                     ioExecutor = ioExecutor,

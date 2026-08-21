@@ -31,6 +31,7 @@ import org.jetbrains.exposed.sql.transactions.transaction
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
@@ -110,14 +111,7 @@ class MessageProjectionIntegrationTest {
         val chat = ctx.chatService.createPersonalChat(sender, peer)
         val beforeEvents = allDurableEvents(peer)
         val beforeConversation = conversationProjection(peer, chat.chatId)
-        val rollbackUnitOfWork = ExposedPgUnitOfWork(
-            onEventsCommitted = {},
-            hooks = PgUnitOfWorkHooks { stage ->
-                if (stage == PgUnitOfWorkStage.AFTER_EVENT_FLUSH_BEFORE_COMMIT) {
-                    throw InjectedProjectionRollback()
-                }
-            },
-        )
+        val rollbackUnitOfWork = projectionRollbackUnitOfWork()
         val rollbackService = ctx.freshMessageService(unitOfWork = rollbackUnitOfWork)
         val message = textMessage(chat.chatId, sender, "projection-rollback", "rollback searchable")
 
@@ -151,14 +145,7 @@ class MessageProjectionIntegrationTest {
         val owner = ctx.registerUser(uniqueUsername("projection-removal-owner"))
         val member = ctx.registerUser(uniqueUsername("projection-removal-member"))
         val group = ctx.chatService.createGroup("Projection removal ordering", null, owner, listOf(member))
-        val rollbackUnitOfWork = ExposedPgUnitOfWork(
-            onEventsCommitted = {},
-            hooks = PgUnitOfWorkHooks { stage ->
-                if (stage == PgUnitOfWorkStage.AFTER_EVENT_FLUSH_BEFORE_COMMIT) {
-                    throw InjectedProjectionRollback()
-                }
-            },
-        )
+        val rollbackUnitOfWork = projectionRollbackUnitOfWork()
         val rollbackService = ctx.freshMessageService(unitOfWork = rollbackUnitOfWork)
         val message = textMessage(group.chatId, owner, "projection-before-removal", "accepted before removal")
 
@@ -185,14 +172,7 @@ class MessageProjectionIntegrationTest {
         val owner = ctx.registerUser(uniqueUsername("projection-dissolve-owner"))
         val member = ctx.registerUser(uniqueUsername("projection-dissolve-member"))
         val group = ctx.chatService.createGroup("Projection dissolve ordering", null, owner, listOf(member))
-        val rollbackUnitOfWork = ExposedPgUnitOfWork(
-            onEventsCommitted = {},
-            hooks = PgUnitOfWorkHooks { stage ->
-                if (stage == PgUnitOfWorkStage.AFTER_EVENT_FLUSH_BEFORE_COMMIT) {
-                    throw InjectedProjectionRollback()
-                }
-            },
-        )
+        val rollbackUnitOfWork = projectionRollbackUnitOfWork()
         val rollbackService = ctx.freshMessageService(unitOfWork = rollbackUnitOfWork)
 
         val message = textMessage(
@@ -310,6 +290,24 @@ class MessageProjectionIntegrationTest {
     private fun pendingOperation(clientMsgId: String): MessageProjectionOperation =
         ctx.messageStore.getPendingProjectionOperations(limit = 100_000)
             .single { it.message.clientMsgId == clientMsgId }
+
+    /**
+     * A new-message command now has two PostgreSQL units of work: admission/sequence allocation,
+     * then the external projection. Fail the latter so the Rocks operation remains recoverable.
+     */
+    private fun projectionRollbackUnitOfWork(): ExposedPgUnitOfWork {
+        val committedBoundaries = AtomicInteger()
+        return ExposedPgUnitOfWork(
+            onEventsCommitted = {},
+            hooks = PgUnitOfWorkHooks { stage ->
+                if (stage == PgUnitOfWorkStage.AFTER_EVENT_FLUSH_BEFORE_COMMIT &&
+                    committedBoundaries.incrementAndGet() == 2
+                ) {
+                    throw InjectedProjectionRollback()
+                }
+            },
+        )
+    }
 
     private fun messageEventIds(uid: String): List<Long> =
         ctx.syncEventReader.getEventsAfter(uid, 0L, 10_000)

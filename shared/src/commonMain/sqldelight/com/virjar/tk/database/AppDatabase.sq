@@ -58,6 +58,29 @@ CREATE TABLE IF NOT EXISTS message (
 );
 CREATE INDEX IF NOT EXISTS idx_message_chat_seq ON message(chat_id, server_seq);
 
+-- 客户端发送事实源。payload 是入队时规范化后的完整 Message protobuf，之后不可改写。
+-- state: 0=PENDING, 1=IN_FLIGHT, 2=RETRY_WAIT, 3=TERMINAL_FAILED, 4=SUCCESS。
+-- SUCCESS 是有界持久回执；worker 只读取 active 状态，GC 只删除最老 SUCCESS。
+CREATE TABLE IF NOT EXISTS outgoing_message (
+    local_ordinal INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    client_msg_id TEXT NOT NULL,
+    chat_id TEXT NOT NULL,
+    payload BLOB NOT NULL,
+    request_fingerprint BLOB,
+    state INTEGER NOT NULL DEFAULT 0,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    terminal_code INTEGER,
+    server_seq INTEGER,
+    next_attempt_at INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    completed_at INTEGER,
+    UNIQUE(chat_id, client_msg_id)
+);
+CREATE INDEX IF NOT EXISTS idx_outgoing_ready
+ON outgoing_message(state, next_attempt_at, local_ordinal);
+
 -- 会话
 CREATE TABLE IF NOT EXISTS conversation (
     chat_id TEXT PRIMARY KEY NOT NULL,
@@ -95,9 +118,14 @@ CREATE TABLE IF NOT EXISTS bot_message_inbox (
     event_id INTEGER PRIMARY KEY NOT NULL,
     chat_id TEXT NOT NULL,
     server_seq INTEGER NOT NULL CHECK(server_seq > 0),
-    payload BLOB NOT NULL
+    payload BLOB NOT NULL,
+    acked INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    acked_at INTEGER
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_bot_inbox_message ON bot_message_inbox(chat_id, server_seq);
+-- CREATE / EDIT / REVOKE events deliberately reuse the same chat/server sequence. event_id is
+-- the replay-idempotency key; this index only accelerates chat-scoped diagnostics and cleanup.
+CREATE INDEX IF NOT EXISTS idx_bot_inbox_message ON bot_message_inbox(chat_id, server_seq);
 
 -- 查询
 selectAllUsers:
@@ -149,21 +177,21 @@ DELETE FROM member WHERE chat_id = ? AND uid = ?;
 deleteMembersByChat:
 DELETE FROM member WHERE chat_id = ?;
 
-selectMessagesByChat:
-SELECT * FROM message WHERE chat_id = ? ORDER BY server_seq DESC LIMIT ?;
-
--- tt-agent 的持久 recent 事实源；返回最新 limit 条，调用方反转为时间正序。
-selectRecentMessages:
+-- Initial resident window: optimistic facts are selected first under an explicit memory cap.
+selectOptimisticMessagesByChat:
 SELECT * FROM message
-WHERE server_seq > ?
-ORDER BY timestamp DESC, server_seq DESC
+WHERE chat_id = ? AND server_seq = 0
+ORDER BY timestamp DESC, client_msg_id ASC
 LIMIT ?;
 
-selectRecentMessagesByChat:
+selectLatestAuthoritativeMessagesByChat:
 SELECT * FROM message
-WHERE chat_id = ? AND server_seq > ?
-ORDER BY timestamp DESC, server_seq DESC
+WHERE chat_id = ? AND server_seq > 0
+ORDER BY server_seq DESC
 LIMIT ?;
+
+selectMessageById:
+SELECT * FROM message WHERE chat_id = ? AND client_msg_id = ?;
 
 -- 向上翻页：加载某个 seq 之前的更老消息（利用 idx_message_chat_seq 索引）
 -- server_seq > 0 排除正在发送的消息（serverSeq=0 表示尚未服务端确认）
@@ -187,13 +215,121 @@ insertMessage:
 INSERT OR REPLACE INTO message(chat_id, client_msg_id, server_seq, sender_uid, message_type, timestamp, flags, body, send_status)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 
+enqueueOutgoingMessage:
+INSERT OR IGNORE INTO outgoing_message(
+    client_msg_id, chat_id, payload, request_fingerprint, state, attempt_count, last_error,
+    terminal_code, server_seq, next_attempt_at, created_at, updated_at, completed_at
+) VALUES (?, ?, ?, ?, 0, 0, NULL, NULL, NULL, 0, ?, ?, NULL);
+
+selectOutgoingMessageById:
+SELECT * FROM outgoing_message WHERE chat_id = ? AND client_msg_id = ?;
+
+selectOutgoingMessageByOrdinal:
+SELECT * FROM outgoing_message WHERE local_ordinal = ?;
+
+selectAllOutgoingMessages:
+SELECT * FROM outgoing_message ORDER BY local_ordinal ASC;
+
+selectMaxOutgoingCompletedAt:
+SELECT MAX(completed_at) AS max_completed_at FROM outgoing_message;
+
+selectOrphanedLocalMessages:
+SELECT * FROM message
+WHERE server_seq = 0
+  AND (send_status = 1 OR send_status = 3 OR send_status = 4)
+  AND NOT EXISTS (
+      SELECT 1 FROM outgoing_message
+      WHERE outgoing_message.chat_id = message.chat_id
+        AND outgoing_message.client_msg_id = message.client_msg_id
+  );
+
+failOrphanedLocalMessages:
+UPDATE message
+SET send_status = 2
+WHERE server_seq = 0
+  AND (send_status = 1 OR send_status = 3 OR send_status = 4)
+  AND NOT EXISTS (
+      SELECT 1 FROM outgoing_message
+      WHERE outgoing_message.chat_id = message.chat_id
+        AND outgoing_message.client_msg_id = message.client_msg_id
+  );
+
+selectNextActiveOutgoingMessage:
+SELECT * FROM outgoing_message
+WHERE state = 0 OR state = 2
+ORDER BY local_ordinal ASC
+LIMIT 1;
+
+recoverInFlightOutgoingMessages:
+UPDATE outgoing_message
+SET state = 0, last_error = 'interrupted before durable response', next_attempt_at = 0,
+    updated_at = ?
+WHERE state = 1;
+
+markOutgoingMessageInFlight:
+UPDATE outgoing_message
+SET state = 1, attempt_count = attempt_count + 1, last_error = NULL, updated_at = ?
+WHERE local_ordinal = ? AND (state = 0 OR state = 2);
+
+markOutgoingMessageRetry:
+UPDATE outgoing_message
+SET state = 2, last_error = ?, terminal_code = NULL, next_attempt_at = ?, updated_at = ?
+WHERE local_ordinal = ? AND state = 1;
+
+markOutgoingMessageTerminalFailed:
+UPDATE outgoing_message
+SET state = 3, last_error = ?, terminal_code = ?, next_attempt_at = 0, updated_at = ?,
+    completed_at = ?
+WHERE local_ordinal = ? AND state = 1;
+
+markOutgoingMessageSucceeded:
+UPDATE outgoing_message
+SET state = 4, last_error = NULL, terminal_code = NULL, server_seq = ?, next_attempt_at = 0,
+    updated_at = ?, completed_at = ?
+WHERE local_ordinal = ? AND state = 1;
+
+promoteOutgoingMessageSucceededFromProjection:
+UPDATE outgoing_message
+SET state = 4, last_error = NULL, terminal_code = NULL, server_seq = ?, next_attempt_at = 0,
+    updated_at = ?, completed_at = ?
+WHERE local_ordinal = ? AND state != 4;
+
+pruneOutgoingSuccessReceipts:
+DELETE FROM outgoing_message
+WHERE state = 4
+  AND local_ordinal NOT IN (
+      SELECT local_ordinal FROM outgoing_message
+      WHERE state = 4
+      ORDER BY completed_at DESC, local_ordinal DESC
+      LIMIT :retained
+  );
+
+cancelActiveOutgoingMessages:
+UPDATE outgoing_message
+SET state = 3, last_error = ?, terminal_code = 499, next_attempt_at = 0, updated_at = ?,
+    completed_at = ?
+WHERE state = 0 OR state = 1 OR state = 2;
+
+deleteOutgoingMessage:
+DELETE FROM outgoing_message WHERE local_ordinal = ?;
+
+deleteOutgoingMessagesByChat:
+DELETE FROM outgoing_message WHERE chat_id = ?;
+
+deleteAllOutgoingMessages:
+DELETE FROM outgoing_message;
+
 updateMessageSeqStatus:
 UPDATE message SET server_seq = ?, send_status = 0
-WHERE chat_id = ? AND client_msg_id = ?;
+WHERE chat_id = ? AND client_msg_id = ? AND server_seq = 0;
 
 updateMessageSendStatus:
 UPDATE message SET send_status = ?
-WHERE chat_id = ? AND client_msg_id = ?;
+WHERE chat_id = ? AND client_msg_id = ? AND server_seq = 0;
+
+markAuthoritativeMessageSent:
+UPDATE message SET send_status = 0
+WHERE chat_id = ? AND client_msg_id = ? AND server_seq > 0;
 
 deleteMessage:
 DELETE FROM message WHERE chat_id = ? AND client_msg_id = ?;
@@ -249,13 +385,29 @@ SET value = CASE WHEN :value > value THEN :value ELSE value END
 WHERE key = :key;
 
 enqueueBotMessage:
-INSERT OR IGNORE INTO bot_message_inbox(event_id, chat_id, server_seq, payload) VALUES (?, ?, ?, ?);
+INSERT OR IGNORE INTO bot_message_inbox(
+    event_id, chat_id, server_seq, payload, acked, created_at, acked_at
+) VALUES (?, ?, ?, ?, 0, ?, NULL);
 
 peekBotMessage:
-SELECT event_id, payload FROM bot_message_inbox ORDER BY event_id ASC LIMIT 1;
+SELECT event_id, payload FROM bot_message_inbox
+WHERE acked = 0
+ORDER BY event_id ASC
+LIMIT 1;
 
-deleteBotMessage:
-DELETE FROM bot_message_inbox WHERE event_id = ?;
+ackBotMessage:
+UPDATE bot_message_inbox SET acked = 1, acked_at = ?
+WHERE event_id = ? AND acked = 0;
+
+selectBotMessageDeliveries:
+SELECT event_id, payload FROM bot_message_inbox
+WHERE event_id > :afterEventId
+  AND (:chatId IS NULL OR chat_id = :chatId)
+ORDER BY event_id ASC
+LIMIT :limit;
+
+selectMaxBotMessageEventId:
+SELECT COALESCE(MAX(event_id), 0) AS max_event_id FROM bot_message_inbox;
 
 deleteBotMessagesByChat:
 DELETE FROM bot_message_inbox WHERE chat_id = ?;

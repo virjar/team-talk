@@ -1,12 +1,17 @@
 package com.virjar.tk.e2e
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import java.io.File
 import java.net.HttpURLConnection
+import java.net.URLEncoder
 import java.net.URL
+import java.nio.charset.StandardCharsets
+import java.util.UUID
 
 /**
  * CLI 对等账号操作器（doc/05-clients/headless.md）。
@@ -24,6 +29,7 @@ class CliPeer(
         ?: error("需要 -Dcli.token 或 ~/.tt-cli"),
 ) {
     private val json = Json { ignoreUnknownKeys = true }
+    private var recvCursor = 0L
 
     fun status(): Map<String, String> {
         val d = get("/v1/status").jsonObject
@@ -34,9 +40,32 @@ class CliPeer(
         )
     }
 
-    fun sendText(chatId: String, text: String): Pair<Int, Long> {
-        val d = post("/v1/send-text", mapOf("chatId" to chatId, "text" to text))
-        return d["code"]!!.jsonPrimitive.content.toInt() to d["serverSeq"]!!.jsonPrimitive.content.toLong()
+    fun sendText(
+        chatId: String,
+        text: String,
+        clientMsgId: String = UUID.randomUUID().toString(),
+    ): Pair<Int, Long> {
+        var receipt = post(
+            "/v1/send-text",
+            mapOf("chatId" to chatId, "clientMsgId" to clientMsgId, "text" to text),
+        )
+        val deadline = System.currentTimeMillis() + 30_000L
+        while (true) {
+            when (receipt["state"]?.jsonPrimitive?.content) {
+                "sent" -> return 0 to receipt["serverSeq"]!!.jsonPrimitive.content.toLong()
+                "failed" -> {
+                    val code = receipt["terminalCode"]?.jsonPrimitive?.content?.toIntOrNull()?.takeIf { it != 0 } ?: -1
+                    return code to (receipt["serverSeq"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L)
+                }
+            }
+            check(System.currentTimeMillis() < deadline) {
+                "agent outgoing receipt did not reach a terminal state: chatId=$chatId clientMsgId=$clientMsgId"
+            }
+            Thread.sleep(50L)
+            receipt = get(
+                "/v1/outgoing?chatId=${queryValue(chatId)}&clientMsgId=${queryValue(clientMsgId)}",
+            )
+        }
     }
 
     fun searchUsers(keyword: String): List<Map<String, String>> =
@@ -52,8 +81,14 @@ class CliPeer(
     fun recvFrom(senderUid: String, timeoutSec: Int = 10): Map<String, String>? {
         val deadline = System.currentTimeMillis() + timeoutSec * 1000L
         while (System.currentTimeMillis() < deadline) {
-            val d = runCatching { get("/v1/recv-wait?timeout=3") }.getOrNull() ?: continue
-            val m = d["message"]?.jsonObject ?: continue
+            val d = runCatching {
+                get("/v1/recv-wait?timeout=3&afterEventId=$recvCursor")
+            }.getOrNull() ?: continue
+            recvCursor = maxOf(
+                recvCursor,
+                d["nextEventId"]?.jsonPrimitive?.content?.toLongOrNull() ?: recvCursor,
+            )
+            val m = d["message"] as? kotlinx.serialization.json.JsonObject ?: continue
             if (m["sender"]?.jsonPrimitive?.content == senderUid) {
                 return mapOf(
                     "chatId" to m["chatId"]!!.jsonPrimitive.content,
@@ -100,8 +135,10 @@ class CliPeer(
         return obj["data"]?.jsonObject ?: kotlinx.serialization.json.JsonObject(emptyMap())
     }
 
-    private fun jsonBody(f: Map<String, String>): String =
-        f.entries.joinToString(",", prefix = "{", postfix = "}") {
-            "\"${it.key}\":\"${it.value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
-        }
+    private fun jsonBody(fields: Map<String, String>): String = buildJsonObject {
+        fields.forEach { (key, value) -> put(key, value) }
+    }.toString()
+
+    private fun queryValue(value: String): String =
+        URLEncoder.encode(value, StandardCharsets.UTF_8.name())
 }

@@ -1,6 +1,7 @@
 package com.virjar.tk.domain.user
 
 import com.virjar.tk.domain.transaction.PgTransactionContext
+import com.virjar.tk.model.ProfilePatch
 import com.virjar.tk.model.User
 
 /**
@@ -48,8 +49,10 @@ class UserStore(private val repo: UserRepository) {
         role = role,
     )
 
-    fun updateProfile(uid: String, name: String? = null, avatar: String? = null, sex: Int? = null, phone: String? = null) {
-        repo.updateProfile(uid, name, avatar, sex, phone)
-    }
+    fun updateProfile(
+        transaction: PgTransactionContext,
+        uid: String,
+        patch: ProfilePatch,
+    ): UserProfileMutation = repo.updateProfile(transaction, uid, patch)
 
 }

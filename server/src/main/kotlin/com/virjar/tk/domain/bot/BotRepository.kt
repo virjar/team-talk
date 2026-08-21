@@ -44,9 +44,11 @@ interface BotRepository : RequiredChatParticipants {
     /** Locks the bot status row and returns grants from the same aggregate transaction. */
     fun findForUpdate(transaction: PgTransactionContext, botId: String): AutomationBot?
     fun findByTokenHash(tokenHash: String): AutomationBot?
+    /** Call after [findForUpdate] to compare the presented credential in the same locked snapshot. */
+    fun tokenMatches(transaction: PgTransactionContext, botId: String, tokenHash: String): Boolean
     fun updateTokenHash(transaction: PgTransactionContext, botId: String, tokenHash: String)
     fun setStatus(transaction: PgTransactionContext, botId: String, status: Int)
-    fun touch(botId: String, timestamp: Long)
+    fun touch(transaction: PgTransactionContext, botId: String, timestamp: Long)
 
     fun grant(transaction: PgTransactionContext, botId: String, chatId: String): Boolean
     fun revokeGrant(transaction: PgTransactionContext, botId: String, chatId: String): Boolean

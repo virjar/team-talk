@@ -1,8 +1,9 @@
 package com.virjar.tk.domain.user
 
 import com.virjar.tk.auth.AuthRules
-import com.virjar.tk.domain.event.EventPublisher
 import com.virjar.tk.domain.transaction.PgTransactionContext
+import com.virjar.tk.domain.transaction.PgUnitOfWork
+import com.virjar.tk.model.ProfilePatch
 import com.virjar.tk.model.User
 import com.virjar.tk.model.UserRole
 import com.virjar.tk.protocol.NotifyType
@@ -12,7 +13,7 @@ import java.security.SecureRandom
 
 class UserService(
     private val userStore: UserStore,
-    private val events: EventPublisher,
+    private val unitOfWork: PgUnitOfWork,
 ) {
     private val logger = LoggerFactory.getLogger(UserService::class.java)
     class CredentialLoginProof(
@@ -115,10 +116,14 @@ class UserService(
         return userStore.findByUid(uid) ?: throw IllegalArgumentException("用户不存在")
     }
 
-    suspend fun updateProfile(uid: String, name: String? = null, avatar: String? = null, sex: Int? = null, phone: String? = null) {
-        userStore.updateProfile(uid, name, avatar, sex, phone)
-        val updatedUser = userStore.findByUid(uid) ?: return
-        events.emitEvent(uid, NotifyType.USER_UPDATED, updatedUser)
+    suspend fun updateProfile(uid: String, patch: ProfilePatch) {
+        validateProfilePatch(patch)
+        unitOfWork.write {
+            val mutation = userStore.updateProfile(transaction, uid, patch)
+            if (mutation.changed) {
+                appendEvent(uid, NotifyType.USER_UPDATED, mutation.user)
+            }
+        }
     }
 
     fun search(keyword: String, limit: Int = 20): List<User> {
@@ -128,6 +133,19 @@ class UserService(
     }
 
     fun findByUid(uid: String): User? = userStore.findByUid(uid)
+
+    private fun validateProfilePatch(patch: ProfilePatch) {
+        patch.name.valueOrNull?.let { name ->
+            require(name.isNotBlank()) { "显示名不能为空" }
+            require(name.length <= 100) { "显示名不能超过 100 个字符" }
+        }
+        patch.avatar.valueOrNull?.let { avatar ->
+            require(avatar.length <= 500) { "头像地址不能超过 500 个字符" }
+        }
+        patch.phone.valueOrNull?.let { phone ->
+            require(phone.length <= 20) { "手机号不能超过 20 个字符" }
+        }
+    }
 
     /** IO phase for password change. The returned row is revalidated under lock before commit. */
     fun passwordChangeSource(uid: String, newPassword: String): UserInternal {

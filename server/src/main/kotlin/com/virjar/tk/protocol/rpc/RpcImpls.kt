@@ -11,6 +11,7 @@ import com.virjar.tk.domain.groupfile.GroupFileService
 import com.virjar.tk.domain.user.UserService
 import com.virjar.tk.domain.chat.toModel as inviteLinkToModel
 import com.virjar.tk.domain.device.toModel
+import com.virjar.tk.model.ProfilePatch
 import com.virjar.tk.model.User
 import com.virjar.tk.rpc.RpcStub
 import com.virjar.tk.rpc.gen.AuthRpcStub
@@ -30,7 +31,7 @@ import com.virjar.tk.rpc.gen.UserRpcStub
  */
 class UserRpcImpl(uid: String, private val service: UserService) : UserRpcStub(uid) {
     override suspend fun getProfile(targetUid: String?): User = service.getProfile(targetUid?.takeIf { it.isNotBlank() } ?: uid)
-    override suspend fun updateProfile(user: User) = service.updateProfile(uid, user.name, user.avatar, user.sex, user.phone)
+    override suspend fun updateProfile(patch: ProfilePatch) = service.updateProfile(uid, patch)
     override suspend fun search(keyword: String) = service.search(keyword)
 }
 
@@ -71,7 +72,6 @@ class ChatRpcImpl(uid: String, private val service: ChatService) : ChatRpcStub(u
     override suspend fun createGroup(name: String, avatar: String?, memberUids: List<String>) =
         service.createGroup(name, avatar, uid, memberUids)
     override suspend fun get(chatId: String) = service.getChatFor(uid, chatId)
-        ?: throw IllegalArgumentException("聊天不存在")
     override suspend fun update(chatId: String, name: String?, avatar: String?, notice: String?) =
         service.updateGroup(uid, chatId, name, avatar, notice)
     override suspend fun delete(chatId: String) = service.dissolveGroup(uid, chatId)

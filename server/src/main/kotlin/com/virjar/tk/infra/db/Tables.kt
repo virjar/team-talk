@@ -13,11 +13,13 @@ object SchemaMetadata : Table("schema_metadata") {
     override val primaryKey = PrimaryKey(id)
 }
 
+internal const val USERS_PHONE_UNIQUE_INDEX = "users_phone_unique"
+
 object Users : LongIdTable("users") {
     val uid = varchar("uid", 36).uniqueIndex()
     val username = varchar("username", 50).uniqueIndex()
     val name = varchar("name", 100)
-    val phone = varchar("phone", 20).nullable().uniqueIndex()
+    val phone = varchar("phone", 20).nullable().uniqueIndex(USERS_PHONE_UNIQUE_INDEX)
     val zone = varchar("zone", 10).default("+86")
     val passwordHash = varchar("password_hash", 100)
     val avatar = varchar("avatar", 500).nullable()
@@ -271,6 +273,20 @@ object ExternalProjectionReceipts : Table("external_projection_receipts") {
     }
 }
 
+/** Global monotonic revision for every organization fact mutation. */
+object OrganizationState : Table("organization_state") {
+    val id = integer("id")
+    val revision = long("revision").default(0)
+    val updatedAt = long("updated_at")
+
+    override val primaryKey = PrimaryKey(id)
+
+    init {
+        check("ck_organization_state_singleton") { id eq 1 }
+        check("ck_organization_state_revision_non_negative") { revision greaterEq 0L }
+    }
+}
+
 /** 单组织目录节点。groupChatId 非空时，该群的成员由组织领域维护。 */
 object OrganizationUnits : Table("organization_units") {
     val unitId = varchar("unit_id", 36)
@@ -306,6 +322,41 @@ object OrganizationMemberships : LongIdTable("organization_memberships") {
             uid,
             filterCondition = { primary eq true },
         )
+    }
+}
+
+/**
+ * Durable desired/applied state for organization-owned chats.
+ *
+ * Rows are never deleted when a unit disables its chat or is archived: the negative desired
+ * state is the fence which prevents an older positive reconciliation from resurrecting access.
+ */
+object OrganizationManagedChatProjections : Table("organization_managed_chat_projections") {
+    val unitId = varchar("unit_id", 36)
+    val chatId = varchar("chat_id", 36).uniqueIndex()
+    val desiredRevision = long("desired_revision")
+    val appliedRevision = long("applied_revision").default(0)
+    val desiredActive = bool("desired_active")
+    val attemptCount = integer("attempt_count").default(0)
+    val nextAttemptAt = long("next_attempt_at").default(0)
+    val lastFailure = varchar("last_failure", 1000).nullable()
+    val updatedAt = long("updated_at")
+
+    override val primaryKey = PrimaryKey(unitId)
+
+    init {
+        index(
+            "idx_org_managed_chat_projection_pending",
+            false,
+            nextAttemptAt,
+            desiredRevision,
+            unitId,
+        )
+        check("ck_org_managed_chat_desired_revision_positive") { desiredRevision greater 0L }
+        check("ck_org_managed_chat_applied_revision_non_negative") { appliedRevision greaterEq 0L }
+        check("ck_org_managed_chat_applied_not_ahead") { appliedRevision lessEq desiredRevision }
+        check("ck_org_managed_chat_attempts_non_negative") { attemptCount greaterEq 0 }
+        check("ck_org_managed_chat_next_attempt_non_negative") { nextAttemptAt greaterEq 0L }
     }
 }
 

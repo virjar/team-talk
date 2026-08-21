@@ -22,7 +22,7 @@ class SchemaDeclarationTest {
     @Test
     fun `fresh schema contains the final draft type and explicit epoch`() {
         assertIs<TextColumnType>(Conversations.draft.columnType)
-        assertEquals(6, DatabaseFactory.CURRENT_SCHEMA_EPOCH)
+        assertEquals(7, DatabaseFactory.CURRENT_SCHEMA_EPOCH)
     }
 
     @Test
@@ -77,5 +77,14 @@ class SchemaDeclarationTest {
         assertTrue(primaryMembership.unique)
         assertEquals(listOf(OrganizationMemberships.uid), primaryMembership.columns)
         assertNotNull(primaryMembership.filterCondition)
+
+        assertEquals(listOf(OrganizationState.id), OrganizationState.primaryKey?.columns?.toList())
+        assertEquals(
+            listOf(OrganizationManagedChatProjections.unitId),
+            OrganizationManagedChatProjections.primaryKey?.columns?.toList(),
+        )
+        assertTrue(OrganizationManagedChatProjections.indices.any {
+            it.unique && it.columns == listOf(OrganizationManagedChatProjections.chatId)
+        })
     }
 }

@@ -35,7 +35,7 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 | ID | 方法 | 参数 | 返回 | 说明 |
 |---:|---|---|---|---|
 | 1 | `getProfile` | `targetUid: String?` | `User` | 空 uid 表示当前用户 |
-| 2 | `updateProfile` | `user: User` | `Unit` | 服务端以认证 uid 为准 |
+| 2 | `updateProfile` | `patch: ProfilePatch` | `Unit` | 缺席字段不变；avatar/phone 可显式设为 null；服务端以认证 uid 为准 |
 | 3 | `search` | `keyword: String` | `List<User>` | 用户搜索 |
 
 ## contact

@@ -2,7 +2,7 @@ package com.virjar.tk.protocol.codec
 
 import com.virjar.tk.domain.auth.AuthService
 import com.virjar.tk.domain.auth.AuthenticationResult
-import com.virjar.tk.domain.chat.ChatStore
+import com.virjar.tk.domain.chat.ChatAccess
 import com.virjar.tk.domain.event.EventPublisher
 import com.virjar.tk.domain.event.SyncBatchResult
 import com.virjar.tk.domain.event.SyncEventReader
@@ -23,6 +23,44 @@ import io.netty.handler.timeout.IdleStateEvent
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
+
+/** Immutable result of a bounded authoritative TYPING admission. */
+internal data class TypingDelivery(
+    val message: Message,
+    val recipientUids: List<String>,
+)
+
+/**
+ * Builds the trusted transient envelope and recipient snapshot under one authoritative chat read.
+ * The caller deliberately performs network delivery only after this function returns and the
+ * PostgreSQL read transaction has closed.
+ */
+internal suspend fun authorizeTypingDelivery(
+    access: ChatAccess,
+    senderUid: String,
+    message: Message,
+    nowMillis: Long = System.currentTimeMillis(),
+): TypingDelivery {
+    val declared = com.virjar.tk.body.MessageBodyPolicy.canonicalize(message)
+    return access.readMembersFor(senderUid, declared.chatId) { _, members ->
+        TypingDelivery(
+            message = declared.copy(
+                senderUid = senderUid,
+                serverSeq = 0,
+                timestamp = nowMillis,
+                flags = 0,
+                sendStatus = Message.SEND_STATUS_SENT,
+                uploadProgress = 0f,
+            ),
+            recipientUids = members.asSequence()
+                .map { it.uid }
+                .filter { it != senderUid }
+                .distinct()
+                .sorted()
+                .toList(),
+        )
+    }
+}
 
 /** 单连接认证状态机；CAS 保证同一 TCP 连接至多受理一个认证请求。 */
 internal enum class ImAgentAuthAdmission { ACCEPT, REJECT_AND_CLOSE }
@@ -90,7 +128,7 @@ class ImAgent(
     private val clientRegistry: ClientRegistry,
     private val rpcDispatcher: RpcDispatcher,
     private val messageService: MessageService,
-    private val chatStore: ChatStore,
+    private val chatAccess: ChatAccess,
     private val syncEvents: SyncEventReader,
     private val events: EventPublisher,
     private val ioExecutor: IOExecutor,
@@ -500,7 +538,7 @@ class ImAgent(
     }
 
     private fun handleTyping(msg: Message) {
-        val membership = chatStore
+        val access = chatAccess
         val publisher = events
         val accepted = ioExecutor.launchWithAgent(this) { facade ->
             if (facade.isCredentialTerminal) {
@@ -508,26 +546,12 @@ class ImAgent(
                 return@launchWithAgent
             }
             try {
-                val declared = com.virjar.tk.body.MessageBodyPolicy.canonicalize(msg)
-                if (!membership.isMember(declared.chatId, facade.uid)) {
-                    facade.recorder.record { "[TYPING REJECTED] uid=${facade.uid} chatId=${declared.chatId}" }
-                    return@launchWithAgent
-                }
-                // TYPING 不进入 MessageService，但仍必须由认证会话重建身份信封。
-                val trusted = declared.copy(
-                    senderUid = facade.uid,
-                    serverSeq = 0,
-                    timestamp = System.currentTimeMillis(),
-                    flags = 0,
-                    sendStatus = Message.SEND_STATUS_SENT,
-                    uploadProgress = 0f,
-                )
-                facade.recorder.record { "[TYPING] chatId=${trusted.chatId}" }
-                val memberUids = membership.getMemberUids(trusted.chatId)
-                for (memberUid in memberUids) {
-                    if (memberUid != facade.uid) {
-                        publisher.emitTransient(memberUid, NotifyType.TYPING, trusted)
-                    }
+                // This call runs on IOExecutor. Its callback only builds immutable data; all
+                // transient network emission happens after the authoritative PG snapshot closes.
+                val delivery = authorizeTypingDelivery(access, facade.uid, msg)
+                facade.recorder.record { "[TYPING] chatId=${delivery.message.chatId}" }
+                for (memberUid in delivery.recipientUids) {
+                    publisher.emitTransient(memberUid, NotifyType.TYPING, delivery.message)
                 }
             } catch (e: IllegalArgumentException) {
                 facade.recorder.record { "[TYPING REJECTED] uid=${facade.uid}: ${e.message}" }

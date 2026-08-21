@@ -63,15 +63,15 @@ internal object ExposedDocumentWriteAuthority {
             DocumentSpaceGrants.principalId to SortOrder.ASC,
         ).forUpdate().map(ResultRow::toDocumentSpaceGrant)
 
-        // Existing membership removal must wait for an admitted document command, or complete
-        // before this SELECT and disappear from its authorization snapshot. Concurrent membership
-        // insertion only grants future authority and therefore need not block this command.
-        val directMembershipUnitIds = OrganizationMemberships.selectAll().where {
+        // Discover memberships without row locks. Organization writers lock Units before
+        // Memberships, so taking a Membership lock here would invert their order. We lock the
+        // discovered Unit paths first, then the membership rows and compare this snapshot below.
+        val discoveredDirectMembershipUnitIds = OrganizationMemberships.selectAll().where {
             OrganizationMemberships.uid eq actorUid
         }.orderBy(
             OrganizationMemberships.unitId to SortOrder.ASC,
             OrganizationMemberships.id to SortOrder.ASC,
-        ).forUpdate().map { it[OrganizationMemberships.unitId] }.distinct()
+        ).map { it[OrganizationMemberships.unitId] }.distinct()
 
         // Discover only the actor's current paths without locks, then acquire every referenced unit
         // row in one lexical order. Locking child->parent while following a historical cycle can
@@ -93,7 +93,7 @@ internal object ExposedDocumentWriteAuthority {
             authorityUnitIds += unitId
             observeUnit(unitId)
         }
-        directMembershipUnitIds.sorted().forEach { directId ->
+        discoveredDirectMembershipUnitIds.sorted().forEach { directId ->
             var cursor: String? = directId
             val visited = hashSetOf<String>()
             while (cursor != null && visited.add(cursor)) {
@@ -117,6 +117,19 @@ internal object ExposedDocumentWriteAuthority {
             require(lockedUnits[unitId] == observedUnits[unitId]) {
                 "组织权限正在变更，请重试"
             }
+        }
+
+        // Unit -> Membership is shared with organization commands. A raced membership removal or
+        // insertion changes this set and is rejected instead of authorizing against a partially
+        // locked path. Once these rows are locked, removal linearizes after this document write.
+        val directMembershipUnitIds = OrganizationMemberships.selectAll().where {
+            OrganizationMemberships.uid eq actorUid
+        }.orderBy(
+            OrganizationMemberships.unitId to SortOrder.ASC,
+            OrganizationMemberships.id to SortOrder.ASC,
+        ).forUpdate().map { it[OrganizationMemberships.unitId] }.distinct()
+        require(directMembershipUnitIds == discoveredDirectMembershipUnitIds) {
+            "组织权限正在变更，请重试"
         }
 
         val directUnitIds = linkedSetOf<String>()

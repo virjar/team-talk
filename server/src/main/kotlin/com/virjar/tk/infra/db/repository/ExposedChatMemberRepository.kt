@@ -1,11 +1,15 @@
 package com.virjar.tk.infra.db.repository
 
 import com.virjar.tk.domain.chat.ChatMemberRepository
+import com.virjar.tk.domain.chat.ChatMutation
+import com.virjar.tk.domain.chat.GroupCommandFacts
 import com.virjar.tk.domain.chat.GroupMemberAddition
 import com.virjar.tk.domain.chat.GroupMemberAdditionFacts
 import com.virjar.tk.domain.chat.GroupMemberRemoval
 import com.virjar.tk.domain.chat.GroupMemberRemovalFacts
 import com.virjar.tk.domain.chat.LockedChat
+import com.virjar.tk.domain.chat.MessageAdmission
+import com.virjar.tk.domain.chat.MessageAdmissionFacts
 import com.virjar.tk.domain.chat.ServiceMemberProjectionCleanup
 import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.infra.db.Chats
@@ -13,9 +17,11 @@ import com.virjar.tk.infra.db.Conversations
 import com.virjar.tk.infra.db.GroupMemberMutes
 import com.virjar.tk.infra.db.GroupMembers
 import com.virjar.tk.infra.db.GroupChats
+import com.virjar.tk.infra.db.Users
 import com.virjar.tk.infra.db.requireExposedTransaction
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Member
+import com.virjar.tk.model.UserRole
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.transactions.transaction
@@ -110,6 +116,45 @@ class ExposedChatMemberRepository : ChatMemberRepository {
         }.singleOrNull()?.toMember()
     }
 
+    override fun admitMessage(
+        transaction: PgTransactionContext,
+        chatId: String,
+        senderUid: String,
+        nowMillis: Long,
+        afterChatLocked: () -> Unit,
+        authorize: (MessageAdmissionFacts) -> Unit,
+    ): MessageAdmission = inWriteTransaction(transaction) {
+        val chatRow = lockActiveChat(chatId)
+        // Cross-domain delivery authorization follows projection -> Chat -> User -> Bot/grant.
+        // Membership and mute locks remain strictly after that seam on every process.
+        afterChatLocked()
+        val members = GroupMembers.selectAll().where {
+            (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1)
+        }.orderBy(GroupMembers.uid, SortOrder.ASC).forUpdate().map(ResultRow::toMember)
+        val sender = members.firstOrNull { it.uid == senderUid }
+        val senderMuted = GroupMemberMutes.selectAll().where {
+            (GroupMemberMutes.chatId eq chatId) and
+                (GroupMemberMutes.uid eq senderUid)
+        }.forUpdate().singleOrNull()?.get(GroupMemberMutes.expiresAt)?.let { it > nowMillis } == true
+        val chat = chatSnapshot(chatRow, members.size)
+        authorize(
+            MessageAdmissionFacts(
+                chat = chat,
+                sender = sender,
+                senderMuted = senderMuted,
+                activeMemberUids = members.map(Member::uid),
+            ),
+        )
+        val nextSeq = chatRow[Chats.maxSeq] + 1L
+        check(Chats.update({
+            (Chats.chatId eq chatId) and (Chats.maxSeq eq chatRow[Chats.maxSeq])
+        }) {
+            it[Chats.maxSeq] = nextSeq
+            it[Chats.updatedAt] = nowMillis
+        } == 1) { "Locked chat maxSeq changed before message admission" }
+        MessageAdmission(nextSeq, chat.chatType, members.map(Member::uid))
+    }
+
     override fun isMember(chatId: String, uid: String): Boolean {
         return transaction {
             GroupMembers.selectAll()
@@ -125,10 +170,12 @@ class ExposedChatMemberRepository : ChatMemberRepository {
         chatId: String,
         operatorUid: String,
         uids: List<String>,
+        requiredHumanUids: Set<String>,
         authorize: (GroupMemberAdditionFacts) -> Unit,
     ): GroupMemberAddition = inWriteTransaction(transaction) {
         val requestedUids = uids.distinct()
         val chatRow = lockActiveChat(chatId)
+        lockRequiredHumanUsers(requiredHumanUids)
         val activeMembers = GroupMembers.selectAll().where {
             (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1)
         }.orderBy(GroupMembers.uid, SortOrder.ASC).forUpdate()
@@ -207,6 +254,7 @@ class ExposedChatMemberRepository : ChatMemberRepository {
         operatorUid = operatorUid,
         targetUid = targetUid,
         allowMissing = false,
+        validateHumanActors = true,
         authorize = authorize,
     ) ?: error("Required membership removal unexpectedly became a no-op")
 
@@ -224,6 +272,7 @@ class ExposedChatMemberRepository : ChatMemberRepository {
         targetUid = targetUid,
         allowMissing = true,
         requireActiveChat = requireActiveChat,
+        validateHumanActors = false,
         authorize = authorize,
     )
 
@@ -243,12 +292,12 @@ class ExposedChatMemberRepository : ChatMemberRepository {
         val targetRow = activeByUid[uid] ?: GroupMembers.selectAll().where {
             (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid)
         }.forUpdate().singleOrNull()
-        val conversationRow = Conversations.selectAll().where {
-            (Conversations.chatId eq chatId) and (Conversations.uid eq uid)
-        }.forUpdate().singleOrNull()
         val muteRows = GroupMemberMutes.selectAll().where {
             (GroupMemberMutes.chatId eq chatId) and (GroupMemberMutes.uid eq uid)
         }.forUpdate().toList()
+        val conversationRow = Conversations.selectAll().where {
+            (Conversations.chatId eq chatId) and (Conversations.uid eq uid)
+        }.forUpdate().singleOrNull()
         require(targetRow?.get(GroupMembers.role) != 2) {
             "服务身份不能作为群主，拒绝清理损坏的成员投影"
         }
@@ -259,11 +308,11 @@ class ExposedChatMemberRepository : ChatMemberRepository {
                     (GroupMembers.uid eq uid) and
                     (GroupMembers.status eq 1)
             }) { it[GroupMembers.status] = 0 } > 0
-        val conversationDeleted = conversationRow != null && Conversations.deleteWhere {
-            (Conversations.chatId eq chatId) and (Conversations.uid eq uid)
-        } > 0
         val muteDeleted = muteRows.isNotEmpty() && GroupMemberMutes.deleteWhere {
             (GroupMemberMutes.chatId eq chatId) and (GroupMemberMutes.uid eq uid)
+        } > 0
+        val conversationDeleted = conversationRow != null && Conversations.deleteWhere {
+            (Conversations.chatId eq chatId) and (Conversations.uid eq uid)
         } > 0
         if (!membershipDeactivated && !conversationDeleted && !muteDeleted) {
             return@inWriteTransaction null
@@ -300,9 +349,11 @@ class ExposedChatMemberRepository : ChatMemberRepository {
         targetUid: String,
         allowMissing: Boolean,
         requireActiveChat: Boolean = true,
+        validateHumanActors: Boolean,
         authorize: (GroupMemberRemovalFacts) -> Unit,
     ): GroupMemberRemoval? = inWriteTransaction(transaction) {
         val chatRow = lockChat(chatId, requireActiveChat)
+        if (validateHumanActors) lockRemovalHumanUsers(operatorUid, targetUid)
         val activeMembers = GroupMembers.selectAll().where {
             (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1)
         }.orderBy(GroupMembers.uid, SortOrder.ASC).forUpdate()
@@ -326,11 +377,17 @@ class ExposedChatMemberRepository : ChatMemberRepository {
                 (GroupMembers.status eq 1)
         }) { it[GroupMembers.status] = 0 }
         check(changed == 1) { "Locked target membership changed before removal" }
-        Conversations.deleteWhere {
+        GroupMemberMutes.selectAll().where {
+            (GroupMemberMutes.chatId eq chatId) and (GroupMemberMutes.uid eq targetUid)
+        }.forUpdate().toList()
+        Conversations.selectAll().where {
             (Conversations.chatId eq chatId) and (Conversations.uid eq targetUid)
-        }
+        }.forUpdate().toList()
         GroupMemberMutes.deleteWhere {
             (GroupMemberMutes.chatId eq chatId) and (GroupMemberMutes.uid eq targetUid)
+        }
+        Conversations.deleteWhere {
+            (Conversations.chatId eq chatId) and (Conversations.uid eq targetUid)
         }
 
         val remainingUids = activeMembers.asSequence()
@@ -343,75 +400,112 @@ class ExposedChatMemberRepository : ChatMemberRepository {
         )
     }
 
-    override fun transferOwner(chatId: String, oldOwnerUid: String, newOwnerUid: String) {
-        transaction {
-            lockActiveChat(chatId)
-            val members = GroupMembers.selectAll().where {
-                (GroupMembers.chatId eq chatId) and
-                    (GroupMembers.uid inList listOf(oldOwnerUid, newOwnerUid)) and
-                    (GroupMembers.status eq 1)
-            }.associateBy { it[GroupMembers.uid] }
-            require(members[oldOwnerUid]?.get(GroupMembers.role) == 2) { "操作者不是群主" }
-            require(members.containsKey(newOwnerUid)) { "目标不是群成员" }
-            GroupMembers.update({ (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq oldOwnerUid) }) {
-                it[GroupMembers.role] = 1
-            }
-            GroupMembers.update({ (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq newOwnerUid) }) {
-                it[GroupMembers.role] = 2
-            }
-            GroupChats.update({ GroupChats.chatId eq chatId }) { it[GroupChats.creator] = newOwnerUid }
-        }
+    override fun transferOwner(
+        transaction: PgTransactionContext,
+        chatId: String,
+        oldOwnerUid: String,
+        newOwnerUid: String,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): ChatMutation = inWriteTransaction(transaction) {
+        val chatRow = lockActiveChat(chatId)
+        lockRequiredHumanUsers(setOf(oldOwnerUid, newOwnerUid))
+        val members = lockActiveMembers(chatId)
+        val before = chatSnapshot(chatRow, members.size)
+        authorize(
+            GroupCommandFacts(
+                chat = before,
+                operator = members.firstOrNull { it.uid == oldOwnerUid },
+                target = members.firstOrNull { it.uid == newOwnerUid },
+                activeMemberUids = members.map(Member::uid),
+            ),
+        )
+        check(GroupMembers.update({
+            (GroupMembers.chatId eq chatId) and
+                (GroupMembers.uid eq oldOwnerUid) and
+                (GroupMembers.status eq 1)
+        }) { it[GroupMembers.role] = 1 } == 1) { "操作者成员身份在锁定后发生变化" }
+        check(GroupMembers.update({
+            (GroupMembers.chatId eq chatId) and
+                (GroupMembers.uid eq newOwnerUid) and
+                (GroupMembers.status eq 1)
+        }) { it[GroupMembers.role] = 2 } == 1) { "目标成员身份在锁定后发生变化" }
+        check(GroupChats.update({ GroupChats.chatId eq chatId }) {
+            it[GroupChats.creator] = newOwnerUid
+            it[GroupChats.updatedAt] = System.currentTimeMillis()
+        } == 1) { "群聊数据不完整" }
+        ChatMutation(
+            chat = before.copy(creator = newOwnerUid),
+            recipientUids = members.map(Member::uid),
+        )
     }
 
-    override fun setRole(chatId: String, uid: String, role: Int) {
-        transaction {
-            lockActiveChat(chatId)
-            val member = GroupMembers.selectAll().where {
-                (GroupMembers.chatId eq chatId) and
-                    (GroupMembers.uid eq uid) and
-                    (GroupMembers.status eq 1)
-            }.singleOrNull() ?: throw IllegalArgumentException("目标不是群成员")
-            require(member[GroupMembers.role] != 2 || role == 2) {
-                "不能直接修改群主角色，请使用转让群主"
-            }
-            GroupMembers.update({ (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid) }) {
-                it[GroupMembers.role] = role
-            }
-            if (role == 2) {
-                GroupChats.update({ GroupChats.chatId eq chatId }) {
-                    it[GroupChats.creator] = uid
-                }
-            }
-        }
+    override fun setRole(
+        transaction: PgTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        targetUid: String,
+        role: Int,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): ChatMutation = inWriteTransaction(transaction) {
+        val chatRow = lockActiveChat(chatId)
+        lockRequiredHumanUsers(setOf(operatorUid, targetUid))
+        val members = lockActiveMembers(chatId)
+        val before = chatSnapshot(chatRow, members.size)
+        authorize(
+            GroupCommandFacts(
+                chat = before,
+                operator = members.firstOrNull { it.uid == operatorUid },
+                target = members.firstOrNull { it.uid == targetUid },
+                activeMemberUids = members.map(Member::uid),
+            ),
+        )
+        check(GroupMembers.update({
+            (GroupMembers.chatId eq chatId) and
+                (GroupMembers.uid eq targetUid) and
+                (GroupMembers.status eq 1)
+        }) { it[GroupMembers.role] = role } == 1) { "目标成员身份在锁定后发生变化" }
+        ChatMutation(before, members.map(Member::uid))
     }
 
     // ── 禁言（单成员 / 全群） ──
 
-    override fun muteMember(chatId: String, uid: String, operatorUid: String, expiresAt: Long) {
-        transaction {
-            lockActiveChat(chatId)
-            require(GroupMembers.selectAll().where {
-                (GroupMembers.chatId eq chatId) and
-                    (GroupMembers.uid eq uid) and
-                    (GroupMembers.status eq 1)
-            }.count() == 1L) { "目标不是群成员" }
+    override fun setMemberMute(
+        transaction: PgTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        targetUid: String,
+        expiresAt: Long?,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): ChatMutation = inWriteTransaction(transaction) {
+        val chatRow = lockActiveChat(chatId)
+        lockRequiredHumanUsers(setOf(operatorUid, targetUid))
+        val members = lockActiveMembers(chatId)
+        val before = chatSnapshot(chatRow, members.size)
+        authorize(
+            GroupCommandFacts(
+                chat = before,
+                operator = members.firstOrNull { it.uid == operatorUid },
+                target = members.firstOrNull { it.uid == targetUid },
+                activeMemberUids = members.map(Member::uid),
+            ),
+        )
+        GroupMemberMutes.selectAll().where {
+            (GroupMemberMutes.chatId eq chatId) and (GroupMemberMutes.uid eq targetUid)
+        }.forUpdate().toList()
+        if (expiresAt == null) {
+            GroupMemberMutes.deleteWhere {
+                (GroupMemberMutes.chatId eq chatId) and (GroupMemberMutes.uid eq targetUid)
+            }
+        } else {
             GroupMemberMutes.upsert(GroupMemberMutes.chatId, GroupMemberMutes.uid) {
                 it[GroupMemberMutes.chatId] = chatId
-                it[GroupMemberMutes.uid] = uid
+                it[GroupMemberMutes.uid] = targetUid
                 it[GroupMemberMutes.operatorUid] = operatorUid
                 it[GroupMemberMutes.expiresAt] = expiresAt
                 it[GroupMemberMutes.createdAt] = System.currentTimeMillis()
             }
         }
-    }
-
-    override fun unmuteMember(chatId: String, uid: String) {
-        transaction {
-            lockActiveChat(chatId)
-            GroupMemberMutes.deleteWhere {
-                (GroupMemberMutes.chatId eq chatId) and (GroupMemberMutes.uid eq uid)
-            }
-        }
+        ChatMutation(before, members.map(Member::uid))
     }
 
     override fun isMuted(chatId: String, uid: String): Boolean {
@@ -423,11 +517,29 @@ class ExposedChatMemberRepository : ChatMemberRepository {
         }
     }
 
-    override fun setMuteAll(chatId: String, mutedAll: Boolean) {
-        transaction {
-            lockActiveChat(chatId)
-            GroupChats.update({ GroupChats.chatId eq chatId }) { it[GroupChats.mutedAll] = mutedAll }
-        }
+    override fun setMuteAll(
+        transaction: PgTransactionContext,
+        chatId: String,
+        operatorUid: String?,
+        mutedAll: Boolean,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): ChatMutation = inWriteTransaction(transaction) {
+        val chatRow = lockActiveChat(chatId)
+        operatorUid?.let { lockRequiredHumanUsers(listOf(it)) }
+        val members = lockActiveMembers(chatId)
+        val before = chatSnapshot(chatRow, members.size)
+        authorize(
+            GroupCommandFacts(
+                chat = before,
+                operator = operatorUid?.let { uid -> members.firstOrNull { it.uid == uid } },
+                activeMemberUids = members.map(Member::uid),
+            ),
+        )
+        check(GroupChats.update({ GroupChats.chatId eq chatId }) {
+            it[GroupChats.mutedAll] = mutedAll
+            it[GroupChats.updatedAt] = System.currentTimeMillis()
+        } == 1) { "群聊数据不完整" }
+        ChatMutation(before.copy(mutedAll = mutedAll), members.map(Member::uid))
     }
 
     override fun getMutedMembers(chatId: String): List<String> {
@@ -440,6 +552,41 @@ class ExposedChatMemberRepository : ChatMemberRepository {
     }
 
     private fun lockActiveChat(chatId: String): ResultRow = lockChat(chatId, requireActive = true)
+
+    private fun lockActiveMembers(chatId: String): List<Member> = GroupMembers.selectAll().where {
+        (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1)
+    }.orderBy(GroupMembers.uid, SortOrder.ASC).forUpdate().map(ResultRow::toMember)
+
+    private fun lockRequiredHumanUsers(uids: Collection<String>) {
+        val required = uids.distinct().sorted()
+        if (required.isEmpty()) return
+        val rows = Users.selectAll().where { Users.uid inList required }
+            .orderBy(Users.uid, SortOrder.ASC)
+            .forUpdate()
+            .toList()
+        require(rows.size == required.size) { "用户不存在" }
+        require(rows.all { it[Users.status] == 1 }) { "用户已停用" }
+        require(rows.all { it[Users.role] == UserRole.HUMAN }) {
+            "机器人或系统成员只能通过对应的管理入口操作"
+        }
+    }
+
+    private fun lockRemovalHumanUsers(operatorUid: String, targetUid: String) {
+        val required = listOf(operatorUid, targetUid).distinct().sorted()
+        val rows = Users.selectAll().where { Users.uid inList required }
+            .orderBy(Users.uid, SortOrder.ASC)
+            .forUpdate()
+            .toList()
+        require(rows.size == required.size) { "用户不存在" }
+        require(rows.all { it[Users.role] == UserRole.HUMAN }) {
+            "机器人或系统成员只能通过对应的管理入口操作"
+        }
+        val usersByUid = rows.associateBy { it[Users.uid] }
+        require(usersByUid.getValue(operatorUid)[Users.status] == 1) { "操作者已停用" }
+        if (operatorUid == targetUid) {
+            require(usersByUid.getValue(targetUid)[Users.status] == 1) { "用户已停用" }
+        }
+    }
 
     private fun projectedChatIdsInternal(uid: String): Set<String> = buildSet {
         addAll(

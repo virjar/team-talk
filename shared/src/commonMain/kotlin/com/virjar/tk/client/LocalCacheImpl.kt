@@ -7,6 +7,7 @@ import com.virjar.tk.model.*
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.PacketBuffer
 import com.virjar.tk.protocol.ProtoCodec
+import com.virjar.tk.protocol.payload.MessageAckPayload
 import io.netty.buffer.Unpooled
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,6 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 private const val DRAFT_MIRROR_PENDING = 0L
 private const val DRAFT_MIRROR_ACKED = 1L
+internal const val DEFAULT_OUTGOING_SUCCESS_RECEIPTS = 512
 
 private data class LocalDraftOverride(
     val draft: String?,
@@ -52,7 +54,10 @@ private data class MessageHistoryState(
  *   单聊窗口限制（[LocalCache.DEFAULT_MESSAGE_WINDOW]）
  * - [onChatInactive] 释放窗口，DB 持久化不变
  */
-class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
+class LocalCacheImpl(
+    private val driver: SqlDriver,
+    private val successReceiptLimit: Int = DEFAULT_OUTGOING_SUCCESS_RECEIPTS,
+) : LocalCache {
     private val db = AppDatabase(driver)
     private val queries = db.appDatabaseQueries
 
@@ -92,7 +97,6 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     private var messageHistoryGlobalGeneration = 0L
     private var messageHistoryRequestGeneration = 0L
     private val messageHistoryStates = mutableMapOf<String, MessageHistoryState>()
-
     // ── 消息窗口（LRU 管理） ──
     // 每个 active chat 对应一个 MessageWindow，持有最近 N 条消息的内存副本
     private val chatWindows = ConcurrentHashMap<String, MessageWindow>()
@@ -101,8 +105,11 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     // synchronized(chatLock) 保护 chatWindows 和 chatLru 的复合操作
     private val chatLru = LinkedHashMap<String, Long>(LocalCache.MAX_ACTIVE_CHATS, 0.75f, true)
     private val chatLock = Any()
+    /** JVM concurrency tests pause exactly after the initial SQL snapshot and before publication. */
+    internal var windowSnapshotLoadedHookForTest: (() -> Unit)? = null
 
     init {
+        require(successReceiptLimit > 0) { "successReceiptLimit must be positive" }
         loadFromDb()
     }
 
@@ -300,6 +307,7 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
                 queries.transaction {
                     queries.deleteConversationDraftOutbox(chatId)
                     queries.deleteBotMessagesByChat(chatId)
+                    queries.deleteOutgoingMessagesByChat(chatId)
                     queries.deleteMessagesByChat(chatId)
                     queries.deleteMembersByChat(chatId)
                     queries.deleteConversation(chatId)
@@ -356,28 +364,329 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
         getOrCreateWindow(chatId).snapshot(limit)
     }
 
-    override fun getRecentMessages(chatId: String?, afterSeq: Long, limit: Int): List<Message> = cacheUseGate.use {
-        require(afterSeq >= 0L) { "afterSeq must be non-negative" }
-        require(limit > 0) { "limit must be positive" }
-        val rows = synchronized(stateLock) {
-            if (chatId == null) {
-                queries.selectRecentMessages(afterSeq, limit.toLong()).executeAsList()
-            } else {
-                queries.selectRecentMessagesByChat(chatId, afterSeq, limit.toLong()).executeAsList()
-            }
-        }
-        rows.asReversed().map { it.toModel() }
-    }
-
     override fun observeMessages(chatId: String): Flow<List<Message>> = cacheUseGate.use {
         getOrCreateWindow(chatId).messages
     }
 
     override fun insertMessage(message: Message) {
         cacheUseGate.use {
-            persistMessage(message)
+            val projection = message.asAuthoritativeProjection()
+            synchronized(stateLock) {
+                queries.transaction {
+                    persistMessage(projection)
+                    promoteOutgoingFromAuthoritativeProjection(projection, System.currentTimeMillis())
+                }
+            }
             // 只更新已驻留的窗口；未驻留的 chat 下次 observe 时从 DB 加载
-            chatWindows[message.chatId]?.upsert(message)
+            chatWindows[projection.chatId]?.upsert(projection)
+        }
+    }
+
+    override fun enqueueOutgoingMessage(
+        message: Message,
+        now: Long,
+        requestFingerprint: ByteArray?,
+    ): OutgoingMessage = cacheUseGate.use {
+        val canonical = canonicalizeOutboundMessage(message)
+        require(canonical.serverSeq == 0L) { "Only unacknowledged messages can enter the outbox" }
+        require(requestFingerprint == null || requestFingerprint.isNotEmpty()) {
+            "requestFingerprint must not be empty"
+        }
+        val payload = ProtoCodec.encode(canonical)
+        synchronized(stateLock) {
+            lateinit var persisted: com.virjar.tk.database.Outgoing_message
+            var projection: Message? = null
+            queries.transaction {
+                val existing = queries.selectOutgoingMessageById(
+                    canonical.chatId,
+                    canonical.clientMsgId,
+                ).executeAsOneOrNull()
+                if (existing == null) {
+                    val authoritative = queries.selectMessageById(
+                        canonical.chatId,
+                        canonical.clientMsgId,
+                    ).executeAsOneOrNull()
+                    if ((authoritative?.server_seq ?: 0L) > 0L) {
+                        throw OutgoingMessageConflictException(
+                            "clientMsgId already belongs to an authoritative server message",
+                        )
+                    }
+                    queries.enqueueOutgoingMessage(
+                        canonical.clientMsgId,
+                        canonical.chatId,
+                        payload,
+                        requestFingerprint,
+                        now,
+                        now,
+                    )
+                } else {
+                    existing.requireSameOutgoingRequest(payload, requestFingerprint)
+                }
+                persisted = queries.selectOutgoingMessageById(
+                    canonical.chatId,
+                    canonical.clientMsgId,
+                ).executeAsOne()
+                val existingProjection = queries.selectMessageById(
+                    canonical.chatId,
+                    canonical.clientMsgId,
+                ).executeAsOneOrNull()
+                if (
+                    persisted.state != OutgoingMessageState.SUCCESS.code &&
+                    (existingProjection?.server_seq ?: 0L) == 0L
+                ) {
+                    projection = persisted.toProjectionMessage().also(::persistMessage)
+                }
+            }
+            projection?.let { chatWindows[canonical.chatId]?.upsert(it) }
+            persisted.toModel()
+        }
+    }
+
+    override fun getOutgoingMessage(
+        chatId: String,
+        clientMsgId: String,
+        requestFingerprint: ByteArray?,
+    ): OutgoingMessage? = cacheUseGate.use {
+        synchronized(stateLock) {
+            queries.selectOutgoingMessageById(chatId, clientMsgId).executeAsOneOrNull()?.also { row ->
+                if (requestFingerprint != null) row.requireRequestFingerprint(requestFingerprint)
+            }?.toModel()
+        }
+    }
+
+    override fun recoverOutgoingMessages(now: Long): List<OutgoingMessage> = cacheUseGate.use {
+        synchronized(stateLock) {
+            lateinit var recovered: List<com.virjar.tk.database.Outgoing_message>
+            var orphaned = emptyList<com.virjar.tk.database.Message>()
+            val repairedProjection = mutableListOf<Message>()
+            val reconciledAuthority = mutableListOf<Message>()
+            queries.transaction {
+                orphaned = queries.selectOrphanedLocalMessages().executeAsList()
+                queries.failOrphanedLocalMessages()
+                queries.recoverInFlightOutgoingMessages(now)
+                recovered = queries.selectAllOutgoingMessages().executeAsList()
+                recovered.forEach { row ->
+                    val authority = queries.selectMessageById(row.chat_id, row.client_msg_id).executeAsOneOrNull()
+                    if (authority != null && (authority.server_seq ?: 0L) > 0L) {
+                        val projection = authority.toModel().asAuthoritativeProjection()
+                        promoteOutgoingFromAuthoritativeProjection(projection, now)
+                        reconciledAuthority += projection
+                    }
+                }
+                queries.pruneOutgoingSuccessReceipts(successReceiptLimit.toLong())
+                recovered = queries.selectAllOutgoingMessages().executeAsList()
+                recovered.filter { it.state != OutgoingMessageState.SUCCESS.code }.forEach { row ->
+                    val existing = queries.selectMessageById(row.chat_id, row.client_msg_id).executeAsOneOrNull()
+                    if ((existing?.server_seq ?: 0L) == 0L) {
+                        repairedProjection += row.toProjectionMessage().also(::persistMessage)
+                    }
+                }
+            }
+            orphaned.forEach { row ->
+                updateResidentOptimisticMessage(
+                    chatId = row.chat_id,
+                    clientMsgId = row.client_msg_id,
+                    sendStatus = Message.SEND_STATUS_FAILED,
+                )
+            }
+            reconciledAuthority.forEach { message -> chatWindows[message.chatId]?.upsert(message) }
+            repairedProjection.forEach { message -> chatWindows[message.chatId]?.upsert(message) }
+            recovered.map { it.toModel() }
+        }
+    }
+
+    /** Caller holds [stateLock] and an enclosing transaction. */
+    private fun promoteOutgoingFromAuthoritativeProjection(message: Message, now: Long) {
+        if (message.serverSeq <= 0L) return
+        // Server projections are authoritative regardless of whether a matching local receipt
+        // remains. This also repairs rows written by an interrupted intermediate epoch-3 build.
+        queries.markAuthoritativeMessageSent(message.chatId, message.clientMsgId)
+        val row = queries.selectOutgoingMessageById(message.chatId, message.clientMsgId)
+            .executeAsOneOrNull() ?: return
+        if (row.state == OutgoingMessageState.SUCCESS.code) return
+        val original = ProtoCodec.decode(Message, row.payload)
+        if (original.senderUid != message.senderUid) return
+        val completedAt = nextOutgoingCompletionTime(now)
+        queries.promoteOutgoingMessageSucceededFromProjection(
+            message.serverSeq,
+            now,
+            completedAt,
+            row.local_ordinal,
+        )
+        queries.pruneOutgoingSuccessReceipts(successReceiptLimit.toLong())
+    }
+
+    /** Caller holds [stateLock] and a transaction. Durable MAX survives restart and clock rollback. */
+    private fun nextOutgoingCompletionTime(now: Long): Long {
+        val previous = queries.selectMaxOutgoingCompletedAt().executeAsOne().max_completed_at
+        return if (previous == null || now > previous) {
+            now
+        } else {
+            check(previous < Long.MAX_VALUE) { "outgoing completion clock exhausted" }
+            previous + 1L
+        }
+    }
+
+    override fun peekNextOutgoingMessage(): OutgoingMessage? = cacheUseGate.use {
+        synchronized(stateLock) {
+            queries.selectNextActiveOutgoingMessage().executeAsOneOrNull()?.toModel()
+        }
+    }
+
+    override fun claimNextOutgoingMessage(now: Long): OutgoingMessage? = cacheUseGate.use {
+        synchronized(stateLock) {
+            var claimed: com.virjar.tk.database.Outgoing_message? = null
+            queries.transaction {
+                val head = queries.selectNextActiveOutgoingMessage().executeAsOneOrNull()
+                if (head != null && head.next_attempt_at <= now) {
+                    queries.markOutgoingMessageInFlight(now, head.local_ordinal)
+                    claimed = queries.selectOutgoingMessageByOrdinal(head.local_ordinal).executeAsOneOrNull()
+                    claimed?.let { row ->
+                        queries.updateMessageSendStatus(
+                            Message.SEND_STATUS_SENDING.toLong(),
+                            row.chat_id,
+                            row.client_msg_id,
+                        )
+                    }
+                }
+            }
+            claimed?.also { row ->
+                updateResidentOptimisticMessage(
+                    chatId = row.chat_id,
+                    clientMsgId = row.client_msg_id,
+                    sendStatus = Message.SEND_STATUS_SENDING,
+                )
+            }?.toModel()
+        }
+    }
+
+    override fun markOutgoingMessageRetry(
+        localOrdinal: Long,
+        error: String,
+        nextAttemptAt: Long,
+        now: Long,
+    ) {
+        cacheUseGate.use {
+            synchronized(stateLock) {
+                var changed: com.virjar.tk.database.Outgoing_message? = null
+                queries.transaction {
+                    val row = queries.selectOutgoingMessageByOrdinal(localOrdinal).executeAsOneOrNull()
+                    if (row == null || row.state != OutgoingMessageState.IN_FLIGHT.code) return@transaction
+                    queries.markOutgoingMessageRetry(error, nextAttemptAt, now, localOrdinal)
+                    queries.updateMessageSendStatus(
+                        Message.SEND_STATUS_QUEUED.toLong(),
+                        row.chat_id,
+                        row.client_msg_id,
+                    )
+                    changed = row
+                }
+                changed?.let { row ->
+                    updateResidentOptimisticMessage(
+                        chatId = row.chat_id,
+                        clientMsgId = row.client_msg_id,
+                        sendStatus = Message.SEND_STATUS_QUEUED,
+                    )
+                }
+            }
+        }
+    }
+
+    override fun markOutgoingMessageTerminalFailed(
+        localOrdinal: Long,
+        error: String,
+        now: Long,
+        terminalCode: Int?,
+    ) {
+        cacheUseGate.use {
+            synchronized(stateLock) {
+                var changed: com.virjar.tk.database.Outgoing_message? = null
+                queries.transaction {
+                    val row = queries.selectOutgoingMessageByOrdinal(localOrdinal).executeAsOneOrNull()
+                    if (row == null || row.state != OutgoingMessageState.IN_FLIGHT.code) return@transaction
+                    queries.markOutgoingMessageTerminalFailed(
+                        error,
+                        terminalCode?.toLong(),
+                        now,
+                        nextOutgoingCompletionTime(now),
+                        localOrdinal,
+                    )
+                    queries.updateMessageSendStatus(
+                        Message.SEND_STATUS_FAILED.toLong(),
+                        row.chat_id,
+                        row.client_msg_id,
+                    )
+                    changed = row
+                }
+                changed?.let { row ->
+                    updateResidentOptimisticMessage(
+                        chatId = row.chat_id,
+                        clientMsgId = row.client_msg_id,
+                        sendStatus = Message.SEND_STATUS_FAILED,
+                    )
+                }
+            }
+        }
+    }
+
+    override fun completeOutgoingMessage(localOrdinal: Long, ack: MessageAckPayload, now: Long) {
+        cacheUseGate.use {
+            require(ack.code == 0) { "Only successful ACKs complete an outgoing message" }
+            require(ack.serverSeq > 0L) { "Successful ACK must carry a positive serverSeq" }
+            synchronized(stateLock) {
+                var completed: com.virjar.tk.database.Outgoing_message? = null
+                queries.transaction {
+                    val row = queries.selectOutgoingMessageByOrdinal(localOrdinal).executeAsOneOrNull()
+                    if (row == null || row.state != OutgoingMessageState.IN_FLIGHT.code) return@transaction
+                    require(ack.clientMsgId == row.client_msg_id) { "ACK belongs to another outgoing message" }
+                    queries.updateMessageSeqStatus(ack.serverSeq, row.chat_id, row.client_msg_id)
+                    queries.markOutgoingMessageSucceeded(
+                        ack.serverSeq,
+                        now,
+                        nextOutgoingCompletionTime(now),
+                        localOrdinal,
+                    )
+                    queries.pruneOutgoingSuccessReceipts(successReceiptLimit.toLong())
+                    completed = row
+                }
+                completed?.let { row ->
+                    updateResidentOptimisticMessage(
+                        chatId = row.chat_id,
+                        clientMsgId = row.client_msg_id,
+                        serverSeq = ack.serverSeq,
+                        sendStatus = Message.SEND_STATUS_SENT,
+                    )
+                }
+            }
+        }
+    }
+
+    override fun cancelOutgoingMessages(reason: String, now: Long) = cacheUseGate.use {
+        synchronized(stateLock) {
+            var active = emptyList<com.virjar.tk.database.Outgoing_message>()
+            queries.transaction {
+                active = queries.selectAllOutgoingMessages().executeAsList().filter {
+                    it.state == OutgoingMessageState.PENDING.code ||
+                        it.state == OutgoingMessageState.IN_FLIGHT.code ||
+                        it.state == OutgoingMessageState.RETRY_WAIT.code
+                }
+                if (active.isNotEmpty()) {
+                    queries.cancelActiveOutgoingMessages(reason, now, nextOutgoingCompletionTime(now))
+                }
+                active.forEach { row ->
+                    queries.updateMessageSendStatus(
+                        Message.SEND_STATUS_FAILED.toLong(),
+                        row.chat_id,
+                        row.client_msg_id,
+                    )
+                }
+            }
+            active.forEach { row ->
+                updateResidentOptimisticMessage(
+                    chatId = row.chat_id,
+                    clientMsgId = row.client_msg_id,
+                    sendStatus = Message.SEND_STATUS_FAILED,
+                )
+            }
         }
     }
 
@@ -421,7 +730,7 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
     ): Boolean = cacheUseGate.runIfOpen {
         synchronized(stateLock) state@{
             val state = currentMessageHistoryState(lease) ?: return@state false
-            val page = messages.toList()
+            val page = messages.map(Message::asAuthoritativeProjection)
 
             // Fixed order: CacheUseGate -> stateLock -> chatLock -> SQLite -> window lock.
             synchronized(chatLock) {
@@ -431,6 +740,7 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
                             "history page contains another chat: ${message.chatId}"
                         }
                         persistMessage(message)
+                        promoteOutgoingFromAuthoritativeProjection(message, System.currentTimeMillis())
                     }
                 }
                 // Page provenance, not numeric adjacency, tells the window that gaps are authoritative.
@@ -476,21 +786,38 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
         }
 
     private fun persistMessage(message: Message) {
+        if (message.serverSeq == 0L) {
+            val existing = queries.selectMessageById(message.chatId, message.clientMsgId).executeAsOneOrNull()
+            if ((existing?.server_seq ?: 0L) > 0L) {
+                throw OutgoingMessageConflictException(
+                    "local message cannot replace an authoritative server projection",
+                )
+            }
+        }
         val bodyBytes = message.body?.let { ProtoCodec.encode(it) }
         queries.insertMessage(message.chatId, message.clientMsgId, message.serverSeq, message.senderUid, message.messageType.toLong(), message.timestamp, message.flags.toLong(), bodyBytes, message.sendStatus.toLong())
     }
 
     override fun updateMessage(chatId: String, clientMsgId: String, serverSeq: Long) {
         cacheUseGate.use {
-            queries.updateMessageSeqStatus(serverSeq, chatId, clientMsgId)
-            chatWindows[chatId]?.updateMessage(clientMsgId, serverSeq = serverSeq, sendStatus = Message.SEND_STATUS_SENT)
+            synchronized(stateLock) {
+                queries.updateMessageSeqStatus(serverSeq, chatId, clientMsgId)
+                updateResidentOptimisticMessage(
+                    chatId = chatId,
+                    clientMsgId = clientMsgId,
+                    serverSeq = serverSeq,
+                    sendStatus = Message.SEND_STATUS_SENT,
+                )
+            }
         }
     }
 
     override fun updateMessageStatus(chatId: String, clientMsgId: String, sendStatus: Int) {
         cacheUseGate.use {
-            queries.updateMessageSendStatus(sendStatus.toLong(), chatId, clientMsgId)
-            chatWindows[chatId]?.updateMessage(clientMsgId, sendStatus = sendStatus)
+            synchronized(stateLock) {
+                queries.updateMessageSendStatus(sendStatus.toLong(), chatId, clientMsgId)
+                updateResidentOptimisticMessage(chatId, clientMsgId, sendStatus = sendStatus)
+            }
         }
     }
 
@@ -502,6 +829,21 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
         cacheUseGate.use {
             chatWindows[chatId]?.updateMessage(clientMsgId, transform = transform)
         }
+    }
+
+    /** Outbox callbacks must never mutate a server-owned same-id row in a resident window. */
+    private fun updateResidentOptimisticMessage(
+        chatId: String,
+        clientMsgId: String,
+        serverSeq: Long? = null,
+        sendStatus: Int? = null,
+    ) {
+        chatWindows[chatId]?.updateMessage(clientMsgId, transform = {
+            if (this.serverSeq > 0L) this else copy(
+                serverSeq = serverSeq ?: this.serverSeq,
+                sendStatus = sendStatus ?: this.sendStatus,
+            )
+        })
     }
 
     // ── Phase C：内存治理 API ──
@@ -524,17 +866,23 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
      * 触发 LRU 更新；超过 [LocalCache.MAX_ACTIVE_CHATS] 时 evict 最旧窗口。
      */
     private fun getOrCreateWindow(chatId: String, windowSize: Int = LocalCache.DEFAULT_MESSAGE_WINDOW): MessageWindow {
-        synchronized(chatLock) {
-            chatLru[chatId] = System.currentTimeMillis()  // access-order 更新
-            val existing = chatWindows[chatId]
-            if (existing != null) {
+        // Fixed order: stateLock -> chatLock -> SQLite snapshot -> map publication. Every durable
+        // message writer takes stateLock first, so a row is either in this snapshot or its writer
+        // observes the registered window and publishes the same fact after commit.
+        synchronized(stateLock) {
+            synchronized(chatLock) {
+                chatLru[chatId] = System.currentTimeMillis()  // access-order 更新
+                val existing = chatWindows[chatId]
+                if (existing != null) {
+                    evictIfOverCapacity()
+                    return existing
+                }
+                val window = MessageWindow(chatId, queries, cacheUseGate, windowSize) { it.toModel() }
+                windowSnapshotLoadedHookForTest?.invoke()
+                chatWindows[chatId] = window
                 evictIfOverCapacity()
-                return existing
+                return window
             }
-            val window = MessageWindow(chatId, queries, cacheUseGate, windowSize) { it.toModel() }
-            chatWindows[chatId] = window
-            evictIfOverCapacity()
-            return window
         }
     }
 
@@ -824,6 +1172,7 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
 
     override fun resetServerProjection() = cacheUseGate.use {
         synchronized(stateLock) {
+            var outgoingProjection = emptyList<Message>()
             queries.transaction {
                 queries.deleteAllBotMessages()
                 queries.deleteAllConversationDraftOutbox()
@@ -834,6 +1183,9 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
                 queries.deleteAllContacts()
                 queries.deleteAllChats()
                 queries.deleteAllUsers()
+                outgoingProjection = queries.selectAllOutgoingMessages().executeAsList()
+                    .filter { it.state != OutgoingMessageState.SUCCESS.code }
+                    .map { row -> row.toProjectionMessage().also(::persistMessage) }
             }
 
             messageHistoryGlobalGeneration = nextGeneration(
@@ -864,6 +1216,7 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
             // same connection's replay inserts. Removing the map entries would strand collectors.
             synchronized(chatLock) {
                 chatWindows.values.forEach(MessageWindow::resetServerProjection)
+                outgoingProjection.forEach { message -> chatWindows[message.chatId]?.upsert(message) }
             }
             // Keep draftGenerationHighWatermarks as stale-ACK fences. The outbox/overrides are
             // gone, while the next local edit must not reuse a generation still in flight.
@@ -880,6 +1233,7 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
                     message.chatId,
                     message.serverSeq,
                     ProtoCodec.encode(message),
+                    System.currentTimeMillis(),
                 )
             }
         }
@@ -896,12 +1250,34 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
         }
     }
 
-    override fun deleteBotMessage(eventId: Long) {
+    override fun ackBotMessage(eventId: Long, now: Long) {
         cacheUseGate.use {
             require(eventId > 0L) { "eventId must be positive" }
             synchronized(stateLock) {
-                queries.deleteBotMessage(eventId)
+                queries.ackBotMessage(now, eventId)
             }
+        }
+    }
+
+    override fun listBotMessageDeliveries(
+        afterEventId: Long,
+        chatId: String?,
+        limit: Int,
+    ): List<PendingBotMessage> = cacheUseGate.use {
+        require(afterEventId >= 0L) { "afterEventId must be non-negative" }
+        require(limit > 0) { "limit must be positive" }
+        synchronized(stateLock) {
+            queries.selectBotMessageDeliveries(afterEventId, chatId, limit.toLong())
+                .executeAsList()
+                .map { row ->
+                    PendingBotMessage(row.event_id, ProtoCodec.decode(Message, row.payload))
+                }
+        }
+    }
+
+    override fun maxBotMessageEventId(): Long = cacheUseGate.use {
+        synchronized(stateLock) {
+            queries.selectMaxBotMessageEventId().executeAsOne()
         }
     }
 
@@ -1083,6 +1459,14 @@ class LocalCacheImpl(private val driver: SqlDriver) : LocalCache {
 
 // ── SQLDelight generated row -> domain model mapping ─
 
+/** A positive server sequence makes the server projection the sole display authority. */
+private fun Message.asAuthoritativeProjection(): Message =
+    if (serverSeq > 0L && sendStatus != Message.SEND_STATUS_SENT) {
+        copy(sendStatus = Message.SEND_STATUS_SENT)
+    } else {
+        this
+    }
+
 private fun com.virjar.tk.database.User.toModel() = User(
     uid = uid, username = username, name = name,
     avatar = avatar, phone = phone,
@@ -1146,6 +1530,72 @@ private fun com.virjar.tk.database.Message.toModel(): Message {
         timestamp = timestamp, flags = flags?.toInt() ?: 0, body = body,
         sendStatus = send_status?.toInt() ?: 0,
     )
+}
+
+private fun com.virjar.tk.database.Outgoing_message.toModel() = OutgoingMessage(
+    localOrdinal = local_ordinal,
+    message = ProtoCodec.decode(Message, payload),
+    state = OutgoingMessageState.fromCode(state),
+    attemptCount = attempt_count,
+    lastError = last_error,
+    nextAttemptAt = next_attempt_at,
+    createdAt = created_at,
+    updatedAt = updated_at,
+    serverSeq = server_seq,
+    terminalCode = terminal_code?.toInt(),
+    completedAt = completed_at,
+)
+
+private fun com.virjar.tk.database.Outgoing_message.projectionSendStatus(): Int = when (
+    OutgoingMessageState.fromCode(state)
+) {
+    OutgoingMessageState.IN_FLIGHT -> Message.SEND_STATUS_SENDING
+    OutgoingMessageState.TERMINAL_FAILED -> Message.SEND_STATUS_FAILED
+    OutgoingMessageState.SUCCESS -> Message.SEND_STATUS_SENT
+    OutgoingMessageState.PENDING,
+    OutgoingMessageState.RETRY_WAIT -> Message.SEND_STATUS_QUEUED
+}
+
+private fun com.virjar.tk.database.Outgoing_message.toProjectionMessage(): Message =
+    ProtoCodec.decode(Message, payload).copy(
+        serverSeq = if (state == OutgoingMessageState.SUCCESS.code) {
+            requireNotNull(server_seq) { "SUCCESS outgoing receipt has no serverSeq" }
+        } else {
+            0L
+        },
+        sendStatus = projectionSendStatus(),
+    )
+
+private fun com.virjar.tk.database.Outgoing_message.requireSameOutgoingRequest(
+    candidatePayload: ByteArray,
+    candidateFingerprint: ByteArray?,
+) {
+    if (request_fingerprint != null || candidateFingerprint != null) {
+        if (
+            request_fingerprint == null || candidateFingerprint == null ||
+            !request_fingerprint.contentEquals(candidateFingerprint)
+        ) {
+            throw OutgoingMessageConflictException(
+                "clientMsgId already names a different durable outgoing request",
+            )
+        }
+        // The fingerprint identifies a higher-level stable request. Keep the first immutable wire
+        // payload (including its original timestamp/remote attachment) as the canonical fact.
+        return
+    }
+    if (!payload.contentEquals(candidatePayload)) {
+        throw OutgoingMessageConflictException(
+            "clientMsgId already names a different immutable outgoing payload",
+        )
+    }
+}
+
+private fun com.virjar.tk.database.Outgoing_message.requireRequestFingerprint(expected: ByteArray) {
+    if (request_fingerprint == null || !request_fingerprint.contentEquals(expected)) {
+        throw OutgoingMessageConflictException(
+            "clientMsgId already names a different durable outgoing request",
+        )
+    }
 }
 
 private fun com.virjar.tk.database.Conversation.toModel() = Conversation(

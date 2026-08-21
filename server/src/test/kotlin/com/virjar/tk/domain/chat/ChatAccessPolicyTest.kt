@@ -3,9 +3,9 @@ package com.virjar.tk.domain.chat
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.ChatType
 import com.virjar.tk.model.Member
+import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 
 class ChatAccessPolicyTest {
     private val source = FakeChatAccessSource(
@@ -23,14 +23,14 @@ class ChatAccessPolicyTest {
     private val access = ChatAccessPolicy(source)
 
     @Test
-    fun `group boundary rejects a missing or personal chat before membership`() {
+    fun `group boundary rejects a missing or personal chat before membership`() = runTest {
         assertDenied("群聊不存在") { access.requireGroupMember("person", "missing") }
         assertDenied("群聊不存在") { access.requireGroupMember("person", "personal") }
         assertDenied("不是群成员") { access.requireGroupMember("outsider", "group") }
     }
 
     @Test
-    fun `admin and owner thresholds are defined once`() {
+    fun `admin and owner thresholds are defined once`() = runTest {
         assertEquals(1, access.requireAdmin("admin", "group").role)
         assertEquals(2, access.requireAdmin("owner", "group").role)
         assertEquals(2, access.requireOwner("owner", "group").role)
@@ -39,7 +39,7 @@ class ChatAccessPolicyTest {
     }
 
     @Test
-    fun `member management requires a strictly higher role`() {
+    fun `member management requires a strictly higher role`() = runTest {
         assertEquals(
             "admin" to "member",
             access.requireCanManageMember("admin", "group", "member").let { it.first.uid to it.second.uid },
@@ -56,8 +56,14 @@ class ChatAccessPolicyTest {
         }
     }
 
-    private fun assertDenied(message: String, block: () -> Unit) {
-        assertEquals(message, assertFailsWith<ChatAccessDeniedException>(block = block).message)
+    private suspend fun assertDenied(message: String, block: suspend () -> Unit) {
+        val error = try {
+            block()
+            throw AssertionError("expected ChatAccessDeniedException")
+        } catch (error: ChatAccessDeniedException) {
+            error
+        }
+        assertEquals(message, error.message)
     }
 }
 
@@ -65,6 +71,27 @@ private class FakeChatAccessSource(
     private val chats: Map<String, Chat>,
     private val members: Map<Pair<String, String>, Member>,
 ) : ChatAccessSource {
-    override fun getChat(chatId: String): Chat? = chats[chatId]
-    override fun getMember(chatId: String, uid: String): Member? = members[chatId to uid]
+    override suspend fun load(chatId: String, memberUids: Set<String>): ChatAccessSnapshot = ChatAccessSnapshot(
+        chat = chats[chatId],
+        members = memberUids.mapNotNull { uid -> members[chatId to uid] },
+    )
+
+    override suspend fun loadAllMembers(chatId: String): ChatAccessSnapshot = ChatAccessSnapshot(
+        chat = chats[chatId],
+        members = members.filterKeys { it.first == chatId }.values.toList(),
+    )
+
+    override suspend fun listAccessibleChatIds(uid: String): Set<String> = members.keys
+        .filterTo(linkedSetOf()) { (_, memberUid) -> memberUid == uid }
+        .mapTo(linkedSetOf()) { it.first }
+
+    override suspend fun <T> read(
+        chatId: String,
+        memberUids: Set<String>,
+        includeAllMembers: Boolean,
+        block: (ChatAccessSnapshot) -> T,
+    ): T = block(if (includeAllMembers) loadAllMembers(chatId) else load(chatId, memberUids))
+
+    override suspend fun <T> readAccessibleChatIds(uid: String, block: (Set<String>) -> T): T =
+        block(listAccessibleChatIds(uid))
 }

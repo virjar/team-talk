@@ -6,6 +6,8 @@ import com.virjar.tk.domain.chat.ChatAccess
 import com.virjar.tk.model.Attachment
 import com.virjar.tk.model.GroupFileEntry
 import com.virjar.tk.model.GroupFileVersion
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import java.util.UUID
 
@@ -21,13 +23,14 @@ class GroupFileService(
     private val attachments: AttachmentCatalog,
     private val quotaBytes: Long = DEFAULT_QUOTA_BYTES,
 ) {
-    fun list(actorUid: String, chatId: String, parentId: String?): List<GroupFileEntry> {
-        requireMember(actorUid, chatId)
-        requireParent(chatId, parentId)
-        return repository.list(chatId, parentId)
+    suspend fun list(actorUid: String, chatId: String, parentId: String?): List<GroupFileEntry> = onIo {
+        access.readAsGroupMember(actorUid, chatId, "你不是当前群成员") { _, _ ->
+            requireParent(chatId, parentId)
+            repository.list(chatId, parentId)
+        }
     }
 
-    fun createFolder(actorUid: String, chatId: String, parentId: String?, name: String): GroupFileEntry {
+    suspend fun createFolder(actorUid: String, chatId: String, parentId: String?, name: String): GroupFileEntry = onIo {
         requireMember(actorUid, chatId)
         requireParent(chatId, parentId)
         val now = System.currentTimeMillis()
@@ -42,16 +45,16 @@ class GroupFileService(
             updatedBy = actorUid,
             updatedAt = now,
         )
-        return repository.create(entry, null, quotaBytes)
+        repository.create(entry, null, quotaBytes)
     }
 
-    fun createFile(
+    suspend fun createFile(
         actorUid: String,
         chatId: String,
         parentId: String?,
         name: String,
         declared: Attachment,
-    ): GroupFileEntry {
+    ): GroupFileEntry = onIo {
         requireMember(actorUid, chatId)
         requireParent(chatId, parentId)
         val attachment = resolveOwnedAttachment(actorUid, declared)
@@ -71,27 +74,27 @@ class GroupFileService(
             updatedBy = actorUid,
             updatedAt = now,
         )
-        return repository.create(
+        repository.create(
             entry,
             GroupFileVersion(entryId, 1, attachment, actorUid, now),
             quotaBytes,
         )
     }
 
-    fun addVersion(
+    suspend fun addVersion(
         actorUid: String,
         chatId: String,
         entryId: String,
         declared: Attachment,
         expectedRevision: Long,
-    ): GroupFileEntry {
+    ): GroupFileEntry = onIo {
         requireMember(actorUid, chatId)
         val entry = requireEntry(chatId, entryId)
         require(entry.kind == GroupFileEntry.KIND_FILE) { "目录不能添加文件版本" }
         val attachment = resolveOwnedAttachment(actorUid, declared)
         requireQuota(chatId, attachment.size)
         val now = System.currentTimeMillis()
-        return repository.appendVersion(
+        repository.appendVersion(
             entryId,
             expectedRevision,
             GroupFileVersion(entryId, entry.contentVersion + 1, attachment, actorUid, now),
@@ -100,20 +103,27 @@ class GroupFileService(
         )
     }
 
-    fun listVersions(actorUid: String, chatId: String, entryId: String): List<GroupFileVersion> {
-        requireMember(actorUid, chatId)
-        val entry = requireEntry(chatId, entryId)
-        require(entry.kind == GroupFileEntry.KIND_FILE) { "目录没有文件版本" }
-        return repository.listVersions(entryId)
+    suspend fun listVersions(actorUid: String, chatId: String, entryId: String): List<GroupFileVersion> = onIo {
+        access.readAsGroupMember(actorUid, chatId, "你不是当前群成员") { _, _ ->
+            val entry = requireEntry(chatId, entryId)
+            require(entry.kind == GroupFileEntry.KIND_FILE) { "目录没有文件版本" }
+            repository.listVersions(entryId)
+        }
     }
 
-    fun rename(actorUid: String, chatId: String, entryId: String, name: String, expectedRevision: Long): GroupFileEntry {
+    suspend fun rename(
+        actorUid: String,
+        chatId: String,
+        entryId: String,
+        name: String,
+        expectedRevision: Long,
+    ): GroupFileEntry = onIo {
         requireMember(actorUid, chatId)
         requireEntry(chatId, entryId)
-        return repository.rename(entryId, expectedRevision, validateName(name), actorUid)
+        repository.rename(entryId, expectedRevision, validateName(name), actorUid)
     }
 
-    fun delete(actorUid: String, chatId: String, entryId: String, expectedRevision: Long) {
+    suspend fun delete(actorUid: String, chatId: String, entryId: String, expectedRevision: Long) = onIo {
         requireMember(actorUid, chatId)
         val entry = requireEntry(chatId, entryId)
         require(entry.kind != GroupFileEntry.KIND_FOLDER || !repository.hasActiveChildren(entryId)) {
@@ -122,7 +132,9 @@ class GroupFileService(
         repository.delete(entryId, expectedRevision, actorUid)
     }
 
-    private fun requireMember(uid: String, chatId: String) {
+    private suspend fun <T> onIo(block: suspend () -> T): T = withContext(Dispatchers.IO) { block() }
+
+    private suspend fun requireMember(uid: String, chatId: String) {
         access.requireGroupMember(uid, chatId, "你不是当前群成员")
     }
 

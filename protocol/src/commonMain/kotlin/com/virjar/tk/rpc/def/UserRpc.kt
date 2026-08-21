@@ -1,5 +1,6 @@
 package com.virjar.tk.rpc.def
 
+import com.virjar.tk.model.ProfilePatch
 import com.virjar.tk.model.User
 import com.virjar.tk.rpc.RpcMethod
 import com.virjar.tk.rpc.RpcService
@@ -11,7 +12,7 @@ interface UserRpc {
     @RpcMethod(1)
     suspend fun getProfile(targetUid: String?): User
     @RpcMethod(2)
-    suspend fun updateProfile(user: User)
+    suspend fun updateProfile(patch: ProfilePatch)
     @RpcMethod(3)
     suspend fun search(keyword: String): List<User>
 }

@@ -5,7 +5,7 @@ import com.virjar.tk.client.AuthenticationFailureKind
 import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.client.EventProcessor
 import com.virjar.tk.client.ImClient
-import com.virjar.tk.client.MessageSender
+import com.virjar.tk.client.OutgoingMessage
 import com.virjar.tk.client.PendingBotMessage
 import com.virjar.tk.client.SessionBoundaryReentrantCloseException
 import com.virjar.tk.client.SessionEndReason
@@ -18,7 +18,6 @@ import com.virjar.tk.client.releaseAllSessionResources
 import com.virjar.tk.body.FileBody
 import com.virjar.tk.body.ImageBody
 import com.virjar.tk.body.buildRichTextBody
-import com.virjar.tk.body.MessageBodyPolicy
 import com.virjar.tk.body.VideoBody
 import com.virjar.tk.body.VoiceBody
 import com.virjar.tk.model.Chat
@@ -215,7 +214,6 @@ class ImBot private constructor(
     private val imClient: ImClient,
     private val session: ClientSession,
     private val userSession: UserSession,
-    private val messageSender: MessageSender,
     private val messageInbox: ImBotMessageInbox,
     private val fileRepository: FileRepository?,
     private val authResultAdmission: ImBotAuthResultAdmission,
@@ -258,6 +256,7 @@ class ImBot private constructor(
      */
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private val eventBuffers = ImBotEventBuffers()
+    private val outgoing = ImBotOutgoing(session) { uid }
 
     init {
         // 这些 flow 是刷新提示而非权威事实：有限 wake-up 满时记数，presence 只保留最新值。
@@ -281,9 +280,16 @@ class ImBot private constructor(
     suspend fun sendText(chatId: String, text: String): MessageAckPayload =
         send(chatId, buildRichTextBody(text))
 
+    /** Stable-id durable admission; returns once SQLite owns the request. */
+    suspend fun enqueueText(chatId: String, clientMsgId: String, text: String): OutgoingMessage =
+        enqueueMessage(chatId, clientMsgId, buildRichTextBody(text))
+
     /** 发送富文本（markdown/mention）消息。 */
     suspend fun sendRichText(chatId: String, markdown: String): MessageAckPayload =
         sendText(chatId, markdown)
+
+    suspend fun enqueueRichText(chatId: String, clientMsgId: String, markdown: String): OutgoingMessage =
+        enqueueText(chatId, clientMsgId, markdown)
 
     /** 发送交互卡片（一期静态展示；二期按钮回调）。 */
     suspend fun sendCard(chatId: String, card: com.virjar.tk.body.CardPayload): MessageAckPayload =
@@ -296,6 +302,19 @@ class ImBot private constructor(
 
     suspend fun sendFile(chatId: String, attachment: Attachment): MessageAckPayload =
         send(chatId, FileBody(attachment))
+
+    suspend fun enqueueFile(
+        chatId: String,
+        clientMsgId: String,
+        attachment: Attachment,
+    ): OutgoingMessage = enqueueMessage(chatId, clientMsgId, FileBody(attachment))
+
+    internal suspend fun enqueueFile(
+        chatId: String,
+        clientMsgId: String,
+        attachment: Attachment,
+        requestFingerprint: ByteArray,
+    ): OutgoingMessage = enqueueMessage(chatId, clientMsgId, FileBody(attachment), requestFingerprint)
 
     suspend fun sendVoice(chatId: String, attachment: Attachment, duration: Int): MessageAckPayload =
         send(chatId, VoiceBody(attachment, duration))
@@ -380,19 +399,32 @@ class ImBot private constructor(
     suspend fun deleteFriend(friendUid: String) = session.contactRepo.deleteFriend(friendUid).getOrThrow()
     suspend fun searchUsers(keyword: String): List<User> = session.userRepo.search(keyword).getOrThrow()
 
-    /** 发送任意 body 消息并等待服务端 ACK；消息类型由 body 唯一推导，调用方不能错配。 */
-    suspend fun send(chatId: String, body: MessageBody): MessageAckPayload {
-        val messageType = MessageBodyPolicy.typeOf(body)
-        val message = MessageBodyPolicy.canonicalize(Message(
-            chatId = chatId,
-            clientMsgId = UUID.randomUUID().toString(),
-            senderUid = uid,
-            messageType = messageType.code,
-            timestamp = System.currentTimeMillis(),
-            body = body,
-        ))
-        return messageSender.sendAndWaitAck(message)
-    }
+    /** Read active, failed or successful durable state without changing queue ownership. */
+    fun outgoingReceipt(chatId: String, clientMsgId: String): OutgoingMessage? =
+        outgoing.receipt(chatId, clientMsgId)
+
+    internal fun outgoingReceipt(
+        chatId: String,
+        clientMsgId: String,
+        requestFingerprint: ByteArray,
+    ): OutgoingMessage? = outgoing.receipt(chatId, clientMsgId, requestFingerprint)
+
+    /** 发送任意 body 并等待 durable queue 到达终态；超时后队列仍继续补发。 */
+    suspend fun send(chatId: String, body: MessageBody): MessageAckPayload = outgoing.send(chatId, body)
+
+    /** Stable-id enqueue used by headless automation and retry-safe integrations. */
+    suspend fun enqueueMessage(
+        chatId: String,
+        clientMsgId: String,
+        body: MessageBody,
+    ): OutgoingMessage = outgoing.enqueue(chatId, clientMsgId, body)
+
+    private suspend fun enqueueMessage(
+        chatId: String,
+        clientMsgId: String,
+        body: MessageBody,
+        requestFingerprint: ByteArray?,
+    ): OutgoingMessage = outgoing.enqueue(chatId, clientMsgId, body, requestFingerprint)
 
     /**
      * 等待一条未确认的持久 delivery。匹配 [predicate] 的消息不会自动删除；业务副作用
@@ -419,7 +451,7 @@ class ImBot private constructor(
 
     /**
      * at-most-once 便利 API：在返回消息前自动确认。执行外部副作用的 bot 应改用
-     * [nextMessageDelivery] + [ackMessage]，并以 `(chatId, serverSeq)` 做业务幂等。
+     * [nextMessageDelivery] + [ackMessage]，并以 delivery eventId 或包含操作类型的业务键做幂等。
      */
     suspend fun nextMessage(timeoutMs: Long = 10_000, predicate: (Message) -> Boolean = { true }): Message {
         val delivery = nextMessageDelivery(timeoutMs, predicate)
@@ -675,7 +707,6 @@ class ImBot private constructor(
                     imClient,
                     session,
                     userSession,
-                    session.messageSender,
                     messageInbox,
                     fileRepository,
                     authResultAdmission,

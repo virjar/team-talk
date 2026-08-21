@@ -95,7 +95,7 @@ private class FakeGroupBotManagement(private val deny: Boolean = false) : GroupB
     var lastName: String? = null
     var removed = false
 
-    override fun listForGroup(actorUid: String, chatId: String): List<GroupBotSummary> {
+    override suspend fun listForGroup(actorUid: String, chatId: String): List<GroupBotSummary> {
         capture(actorUid, chatId)
         return listOf(summary())
     }

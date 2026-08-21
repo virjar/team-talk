@@ -38,8 +38,8 @@ class LocalCacheSchemaEpochTest {
     @Test
     fun `current schema is a migration-free epoch`() {
         assertEquals(1L, AppDatabase.Schema.version)
-        assertEquals("cache_e2.db", localCacheDatabaseFileName())
-        assertEquals("cache_e2_user-1.db", localCacheDatabaseFileName("user-1"))
+        assertEquals("cache_e3.db", localCacheDatabaseFileName())
+        assertEquals("cache_e3_user-1.db", localCacheDatabaseFileName("user-1"))
     }
 
     @Test
@@ -48,7 +48,7 @@ class LocalCacheSchemaEpochTest {
         try {
             val privateData = JvmPrivateDataDirectory.openExisting(dataDir)
             val userDir = privateData.ensureDirectory("users", "u1")
-            val legacyFile = privateData.preparePrivateFile(listOf("users", "u1"), "cache.db")
+            val legacyFile = privateData.preparePrivateFile(listOf("users", "u1"), "cache_e2.db")
             val legacyDriver = JdbcSqliteDriver("jdbc:sqlite:${legacyFile.absolutePath}")
             AppDatabase.Schema.create(legacyDriver)
             AppDatabase(legacyDriver).appDatabaseQueries.upsertUser(
@@ -130,6 +130,37 @@ class LocalCacheSchemaEpochTest {
                 ).value
             }
             assertEquals(1L, userCount)
+        } finally {
+            dataDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `non-empty partially created current schema self-heals on reopen`() {
+        val dataDir = Files.createTempDirectory("tk-cache-partial-schema-").toFile()
+        try {
+            val privateData = JvmPrivateDataDirectory.openExisting(dataDir)
+            val databaseFile = privateData.preparePrivateFile(
+                listOf("users", "partial-user"),
+                localCacheDatabaseFileName(),
+            )
+            JdbcSqliteDriver("jdbc:sqlite:${databaseFile.absolutePath}").use { driver ->
+                driver.execute(
+                    null,
+                    "CREATE TABLE user (uid TEXT PRIMARY KEY NOT NULL, username TEXT NOT NULL, " +
+                        "name TEXT NOT NULL, avatar TEXT, phone TEXT, sex INTEGER DEFAULT 0, " +
+                        "role INTEGER DEFAULT 0, status INTEGER DEFAULT 1)",
+                    0,
+                )
+            }
+            assertTrue(databaseFile.length() > 0L)
+
+            val cache = createDesktopLocalCache("partial-user", dataDir)
+            cache.upsertUser(User(uid = "recovered", username = "recovered", name = "Recovered"))
+            assertNotNull(cache.getUser("recovered"))
+            assertTrue(cache.getConversations().isEmpty())
+            assertTrue(cache.recoverOutgoingMessages(now = 1L).isEmpty())
+            cache.close()
         } finally {
             dataDir.deleteRecursively()
         }

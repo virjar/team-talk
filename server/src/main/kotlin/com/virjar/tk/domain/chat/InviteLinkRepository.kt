@@ -1,12 +1,30 @@
 package com.virjar.tk.domain.chat
 
+import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.model.InviteLink
 
 /** Persistence port for group invite links. */
 interface InviteLinkRepository {
-    fun createInviteLink(chatId: String, creatorUid: String, name: String, maxUses: Int, expiresAt: Long): String
+    fun createInviteLink(
+        transaction: PgTransactionContext,
+        chatId: String,
+        creatorUid: String,
+        name: String,
+        maxUses: Int,
+        expiresAt: Long,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): String = error("Transactional invite creation is not implemented")
+
     fun listInviteLinks(chatId: String): List<InviteLinkRecord>
-    fun revokeInviteLink(token: String)
+    fun revokeInviteLink(
+        transaction: PgTransactionContext,
+        expectedChatId: String,
+        operatorUid: String,
+        token: String,
+        nowMillis: Long,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): InviteLinkRecord = error("Transactional invite revocation is not implemented")
+
     fun getInviteLink(token: String): InviteLinkRecord?
 }
 

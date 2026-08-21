@@ -12,14 +12,24 @@ import kotlinx.serialization.Serializable
  * repeat those projections after this port returns.
  */
 interface ChatRepository {
-    fun createPersonalChat(uid1: String, uid2: String): Chat
+    /**
+     * Command-side creation boundary. Required users, block facts, Chat, memberships and
+     * Conversations are validated/mutated in the caller's PostgreSQL unit of work.
+     */
+    fun createPersonalChat(
+        transaction: PgTransactionContext,
+        uid1: String,
+        uid2: String,
+    ): ChatCreation = error("Transactional personal chat creation is not implemented")
+
+    /** Fresh user-created groups use the documented User -> new Chat lock-order exception. */
     fun createGroupChat(
+        transaction: PgTransactionContext,
         name: String,
         avatar: String?,
         creatorUid: String,
         memberUids: List<String>,
-        requestedChatId: String? = null,
-    ): Chat
+    ): ChatCreation = error("Transactional group chat creation is not implemented")
     /**
      * Atomically validates and consumes an invite, activates the membership and establishes the
      * user's conversation projection. The returned snapshot contains the committed recipients;
@@ -32,9 +42,28 @@ interface ChatRepository {
         nowMillis: Long,
     ): InviteJoinResult
     fun getChat(chatId: String): Chat?
-    fun updateGroup(chatId: String, name: String? = null, avatar: String? = null, notice: String? = null)
-    /** Atomically deactivates chat/members and removes conversation, mute and invite projections. */
-    fun deactivateChat(chatId: String)
+    /** Existing-chat metadata mutation after the managed-chat authority row has been locked. */
+    fun updateGroup(
+        transaction: PgTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        name: String? = null,
+        avatar: String? = null,
+        notice: String? = null,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): ChatMutation = error("Transactional group update is not implemented")
+
+    /**
+     * Lock Chat then the optional human operator and re-read membership authority. Membership
+     * rows are deliberately not locked here: dissolution must lock required User/Bot/grant facts
+     * before Invite/Member/Mute/Conversation projections. Holding Chat keeps correct writers out.
+     */
+    fun lockForDeactivation(
+        transaction: PgTransactionContext,
+        chatId: String,
+        operatorUid: String?,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): Chat = error("Transactional chat deactivation authority is not implemented")
     /**
      * Transaction-bound counterpart used after the caller locks the chat and deactivates required
      * external participants. Implementations return the pre-deactivation recipients for durable
@@ -43,7 +72,6 @@ interface ChatRepository {
     fun deactivateChat(transaction: PgTransactionContext, chatId: String): ChatDeactivation =
         error("Transactional chat deactivation is not implemented")
     fun getMemberUids(chatId: String): List<String>
-    fun updateMaxSeq(chatId: String, seq: Long)
     fun findPersonalChatId(uid1: String, uid2: String): String?
     fun getChatById(chatId: String): Chat?
     fun listGroups(query: String?, page: Int, size: Int): AdminPage<Chat>
@@ -55,6 +83,28 @@ interface ChatRepository {
 data class ChatDeactivation(
     val chat: Chat,
     val memberUids: List<String>,
+)
+
+/** Fresh-create result; retries of an already-created personal pair are explicit event no-ops. */
+data class ChatCreation(
+    val chat: Chat,
+    val created: Boolean,
+    val recipientUids: List<String>,
+)
+
+/** Locked group snapshot supplied to domain authorization before its mutation is applied. */
+data class GroupCommandFacts(
+    val chat: Chat,
+    val operator: Member?,
+    val target: Member? = null,
+    val activeMemberUids: List<String>,
+)
+
+/** Full committed projection snapshot and durable-event recipients for one group command. */
+data class ChatMutation(
+    val chat: Chat,
+    val recipientUids: List<String>,
+    val changed: Boolean = true,
 )
 
 data class InviteJoinResult(

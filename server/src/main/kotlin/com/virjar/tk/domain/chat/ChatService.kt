@@ -1,8 +1,6 @@
 package com.virjar.tk.domain.chat
 
-import com.virjar.tk.domain.conversation.ConversationService
 import com.virjar.tk.domain.contact.ContactStore
-import com.virjar.tk.domain.event.EventPublisher
 import com.virjar.tk.domain.transaction.PgUnitOfWork
 import com.virjar.tk.domain.user.UserStore
 import com.virjar.tk.model.Chat
@@ -10,13 +8,13 @@ import com.virjar.tk.model.Conversation
 import com.virjar.tk.model.Member
 import com.virjar.tk.model.UserRole
 import com.virjar.tk.protocol.NotifyType
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class ChatService(
     private val chatStore: ChatStore,
     private val access: ChatAccess,
     private val userStore: UserStore,
-    private val events: EventPublisher,
-    private val conversationService: ConversationService,
     private val managedChats: ManagedChatPolicy,
     private val contacts: ContactStore,
     private val requiredParticipants: RequiredChatParticipants,
@@ -28,27 +26,44 @@ class ChatService(
 
     suspend fun createPersonalChat(uid: String, targetUid: String): Chat {
         require(uid != targetUid) { "不能和自己创建私聊" }
+        // Fast fail for the common case; the repository repeats this check after locking both
+        // User rows so a concurrent blacklist write cannot race the actual creation.
         require(!contacts.isBlockedEither(uid, targetUid)) { "黑名单关系下不能创建私聊" }
-        val chat = chatStore.createPersonalChat(uid, targetUid)
-        notifyChatCreated(chat, listOf(uid, targetUid))
-        return chat
+        return unitOfWork.write {
+            val creation = chatStore.createPersonalChat(transaction, uid, targetUid)
+            if (creation.created) {
+                creation.recipientUids.forEach { recipient ->
+                    appendEvent(recipient, NotifyType.CHAT_CREATED, creation.chat)
+                }
+                afterCommit { chatStore.invalidateCommittedCommand(creation.chat.chatId) }
+            }
+            creation.chat
+        }
     }
 
     suspend fun createGroup(name: String, avatar: String?, creatorUid: String, memberUids: List<String>): Chat {
         require(name.isNotBlank()) { "群名不能为空" }
-        val chat = chatStore.createGroupChat(name, avatar, creatorUid, memberUids)
-        val allUids = memberUids + creatorUid
-        notifyChatCreated(chat, allUids)
-        return chat
+        return unitOfWork.write {
+            val creation = chatStore.createGroupChat(
+                transaction,
+                name,
+                avatar,
+                creatorUid,
+                memberUids,
+            )
+            creation.recipientUids.forEach { recipient ->
+                appendEvent(recipient, NotifyType.CHAT_CREATED, creation.chat)
+            }
+            afterCommit { chatStore.invalidateCommittedCommand(creation.chat.chatId) }
+            creation.chat
+        }
     }
 
     fun getChat(chatId: String): Chat? = chatStore.getChat(chatId)
 
     /** Client-facing detail lookup. Knowing a chat id must not reveal private/group metadata. */
-    fun getChatFor(uid: String, chatId: String): Chat? {
-        access.requireMember(uid, chatId)
-        return chatStore.getChat(chatId)
-    }
+    suspend fun getChatFor(uid: String, chatId: String): Chat =
+        access.requireMemberChat(uid, chatId)
 
     suspend fun updateGroup(operatorUid: String, chatId: String, name: String? = null, avatar: String? = null, notice: String? = null) =
         lifecycleGate.withChat(chatId) { updateGroupInternal(operatorUid, chatId, name, avatar, notice) }
@@ -60,23 +75,30 @@ class ChatService(
         avatar: String?,
         notice: String?,
     ) {
-        if ((name != null || avatar != null) && managedChats.managedBy(chatId) != null) {
-            throw IllegalArgumentException("受管部门群名称和头像由组织架构维护")
+        unitOfWork.write {
+            val authority = lockReadyAuthority(transaction, chatId)
+            if ((name != null || avatar != null) && authority.managed) {
+                throw IllegalArgumentException("受管部门群名称和头像由组织架构维护")
+            }
+            val mutation = chatStore.updateGroup(
+                transaction,
+                chatId,
+                operatorUid,
+                name,
+                avatar,
+                notice,
+            ) { facts -> requireAdmin(facts.operator) }
+            mutation.recipientUids.forEach { uid ->
+                appendEvent(uid, NotifyType.CHAT_UPDATED, mutation.chat)
+            }
+            afterCommit { chatStore.invalidateCommittedCommand(chatId) }
         }
-        access.requireAdmin(operatorUid, chatId)
-        chatStore.updateGroup(chatId, name, avatar, notice)
-        val chat = chatStore.getChat(chatId) ?: return
-        val memberUids = chatStore.getMemberUids(chatId)
-        events.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
     }
 
     suspend fun dissolveGroup(operatorUid: String, chatId: String) = lifecycleGate.withChat(chatId) {
-        requireUserManaged(chatId)
-        deactivateGroupWithDurableEvents(chatId) { transaction, chat ->
-            require(chat.chatType == 2) { "单聊不能解散，请删除自己的会话视图" }
-            val actor = chatStore.getActiveMember(transaction, chatId, operatorUid)
-                ?: throw IllegalArgumentException("操作者不是群成员")
-            require(actor.role == 2) { "需要群主权限" }
+        deactivateGroupWithDurableEvents(chatId, operatorUid) { facts ->
+            require(facts.chat.chatType == 2) { "单聊不能解散，请删除自己的会话视图" }
+            requireOwner(facts.operator)
         }
     }
 
@@ -90,10 +112,12 @@ class ChatService(
         chatStore.getMembers(chatId).map { it.copy(user = userStore.findByUid(it.uid)) }
 
     /** Client-facing member lookup with the same membership boundary as chat details. */
-    fun getMembersFor(uid: String, chatId: String): List<Member> {
-        access.requireMember(uid, chatId)
-        return getMembers(chatId)
-    }
+    suspend fun getMembersFor(uid: String, chatId: String): List<Member> =
+        withContext(Dispatchers.IO) {
+            access.readMembersFor(uid, chatId) { _, members ->
+                members.map { member -> member.copy(user = userStore.findByUid(member.uid)) }
+            }
+        }
 
     suspend fun addMembers(operatorUid: String, chatId: String, uids: List<String>) =
         lifecycleGate.withChat(chatId) { addMembersInternal(operatorUid, chatId, uids) }
@@ -105,7 +129,12 @@ class ChatService(
         access.requireAdmin(operatorUid, chatId)
         val targets = uids.distinct()
         targets.forEach(::requireHumanMemberTarget)
-        addMembersWithDurableEvents(chatId, operatorUid, targets) { facts ->
+        addMembersWithDurableEvents(
+            chatId = chatId,
+            operatorUid = operatorUid,
+            uids = targets,
+            requiredHumanUids = (targets + operatorUid).toSet(),
+        ) { facts ->
             require(facts.chat.chatType == 2) { "单聊不能添加成员" }
             val operator = facts.operator ?: throw IllegalArgumentException("操作者不是群成员")
             require(operator.role >= 1) { "需要管理员权限" }
@@ -117,14 +146,17 @@ class ChatService(
         chatId: String,
         operatorUid: String,
         uids: List<String>,
+        requiredHumanUids: Set<String> = emptySet(),
         authorize: (GroupMemberAdditionFacts) -> Unit,
     ) {
         unitOfWork.write {
+            requireUserWritableAuthority(transaction, chatId)
             val addition = chatStore.addMembers(
                 transaction = transaction,
                 chatId = chatId,
                 operatorUid = operatorUid,
                 uids = uids,
+                requiredHumanUids = requiredHumanUids,
                 authorize = authorize,
             )
             if (addition.addedUids.isEmpty()) return@write
@@ -143,7 +175,11 @@ class ChatService(
 
     private suspend fun removeMemberInternal(operatorUid: String, chatId: String, targetUid: String) {
         requireUserManaged(chatId)
-        removeMemberWithDurableTombstones(chatId, operatorUid, targetUid) { facts ->
+        removeMemberWithDurableTombstones(
+            chatId = chatId,
+            operatorUid = operatorUid,
+            targetUid = targetUid,
+        ) { facts ->
             require(facts.chat.chatType == 2) { "单聊不能退出，请删除自己的会话视图" }
             val operator = facts.operator
                 ?: throw IllegalArgumentException("操作者不是群成员")
@@ -166,8 +202,8 @@ class ChatService(
 
     /**
      * Membership authority, conversation deletion and every per-user tombstone share one PG
-     * transaction. Internal managed/service-member callers use this boundary too; otherwise a
-     * crash after deactivating the member would leave offline clients permanently authorized.
+     * transaction; otherwise a crash after deactivating the member would leave offline clients
+     * permanently authorized.
      */
     private suspend fun removeMemberWithDurableTombstones(
         chatId: String,
@@ -176,6 +212,7 @@ class ChatService(
         authorize: (GroupMemberRemovalFacts) -> Unit,
     ) {
         unitOfWork.write {
+            requireUserWritableAuthority(transaction, chatId)
             val removal = chatStore.removeMember(
                 transaction = transaction,
                 chatId = chatId,
@@ -210,10 +247,24 @@ class ChatService(
         access.requireOwner(operatorUid, chatId)
         requireHumanMemberTarget(newOwnerUid)
         access.requireGroupMember(newOwnerUid, chatId, "目标不是群成员")
-        chatStore.transferOwner(chatId, operatorUid, newOwnerUid)
-        val chat = chatStore.getChat(chatId) ?: return
-        val memberUids = chatStore.getMemberUids(chatId)
-        events.emitEvents(memberUids, NotifyType.MEMBER_ROLE_CHANGED, chat)
+        unitOfWork.write {
+            requireUserWritableAuthority(transaction, chatId)
+            val mutation = chatStore.transferOwner(
+                transaction,
+                chatId,
+                operatorUid,
+                newOwnerUid,
+            ) { facts ->
+                require(facts.chat.chatType == 2) { "群聊不存在" }
+                requireOwner(facts.operator)
+                require(facts.target != null) { "目标不是群成员" }
+                require(facts.target.role != 2) { "目标已经是群主" }
+            }
+            mutation.recipientUids.forEach { uid ->
+                appendEvent(uid, NotifyType.MEMBER_ROLE_CHANGED, mutation.chat)
+            }
+            afterCommit { chatStore.invalidateCommittedCommand(chatId) }
+        }
     }
 
     suspend fun setRole(operatorUid: String, chatId: String, targetUid: String, role: Int) =
@@ -227,10 +278,25 @@ class ChatService(
         requireHumanMemberTarget(targetUid)
         val target = access.requireGroupMember(targetUid, chatId, "目标不是群成员")
         require(target.role != 2) { "不能直接修改群主角色，请使用转让群主" }
-        chatStore.setRole(chatId, targetUid, role)
-        val chat = chatStore.getChat(chatId) ?: return
-        val memberUids = chatStore.getMemberUids(chatId)
-        events.emitEvents(memberUids, NotifyType.MEMBER_ROLE_CHANGED, chat)
+        unitOfWork.write {
+            requireUserWritableAuthority(transaction, chatId)
+            val mutation = chatStore.setRole(
+                transaction,
+                chatId,
+                operatorUid,
+                targetUid,
+                role,
+            ) { facts ->
+                require(facts.chat.chatType == 2) { "群聊不存在" }
+                requireOwner(facts.operator)
+                require(facts.target != null) { "目标不是群成员" }
+                require(facts.target.role != 2) { "不能直接修改群主角色，请使用转让群主" }
+            }
+            mutation.recipientUids.forEach { uid ->
+                appendEvent(uid, NotifyType.MEMBER_ROLE_CHANGED, mutation.chat)
+            }
+            afterCommit { chatStore.invalidateCommittedCommand(chatId) }
+        }
     }
 
     // ── 禁言 ──
@@ -247,10 +313,7 @@ class ChatService(
         requireCanManageMember(operatorUid, chatId, targetUid)
         require(durationSeconds > 0) { "禁言时长必须大于 0" }
         val expiresAt = System.currentTimeMillis() + durationSeconds * 1000L
-        chatStore.muteMember(chatId, targetUid, operatorUid, expiresAt)
-        val chat = chatStore.getChat(chatId) ?: return
-        val memberUids = chatStore.getMemberUids(chatId)
-        events.emitEvents(memberUids, NotifyType.MEMBER_MUTED, chat)
+        mutateMemberMute(operatorUid, chatId, targetUid, expiresAt, NotifyType.MEMBER_MUTED)
     }
 
     suspend fun unmuteMember(operatorUid: String, chatId: String, targetUid: String) =
@@ -258,26 +321,17 @@ class ChatService(
 
     private suspend fun unmuteMemberInternal(operatorUid: String, chatId: String, targetUid: String) {
         requireCanManageMember(operatorUid, chatId, targetUid)
-        chatStore.unmuteMember(chatId, targetUid)
-        val chat = chatStore.getChat(chatId) ?: return
-        val memberUids = chatStore.getMemberUids(chatId)
-        events.emitEvents(memberUids, NotifyType.MEMBER_UNMUTED, chat)
+        mutateMemberMute(operatorUid, chatId, targetUid, null, NotifyType.MEMBER_UNMUTED)
     }
 
     suspend fun muteAll(operatorUid: String, chatId: String) = lifecycleGate.withChat(chatId) {
         access.requireOwner(operatorUid, chatId)
-        chatStore.setMuteAll(chatId, true)
-        val chat = chatStore.getChat(chatId) ?: return@withChat
-        val memberUids = chatStore.getMemberUids(chatId)
-        events.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
+        mutateMuteAll(operatorUid, chatId, mutedAll = true)
     }
 
     suspend fun unmuteAll(operatorUid: String, chatId: String) = lifecycleGate.withChat(chatId) {
         access.requireOwner(operatorUid, chatId)
-        chatStore.setMuteAll(chatId, false)
-        val chat = chatStore.getChat(chatId) ?: return@withChat
-        val memberUids = chatStore.getMemberUids(chatId)
-        events.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
+        mutateMuteAll(operatorUid, chatId, mutedAll = false)
     }
 
     // ── 邀请链接 ──
@@ -293,21 +347,41 @@ class ChatService(
         require(expiresAt >= 0) { "expiresAt 不能为负数，0 表示永不过期" }
         requireUserManaged(chatId)
         access.requireAdmin(operatorUid, chatId)
-        chatStore.createInviteLink(chatId, operatorUid, name, maxUses, expiresAt)
+        unitOfWork.write {
+            requireUserWritableAuthority(transaction, chatId)
+            chatStore.createInviteLink(
+                transaction,
+                chatId,
+                operatorUid,
+                name,
+                maxUses,
+                expiresAt,
+            ) { facts -> requireAdmin(facts.operator) }
+        }
     }
 
-    fun listInviteLinks(operatorUid: String, chatId: String): List<InviteLinkRecord> {
-        access.requireAdmin(operatorUid, chatId)
-        return chatStore.listInviteLinks(chatId)
-    }
+    suspend fun listInviteLinks(operatorUid: String, chatId: String): List<InviteLinkRecord> =
+        withContext(Dispatchers.IO) {
+            access.readAsAdmin(operatorUid, chatId) { _, _ -> chatStore.listInviteLinks(chatId) }
+        }
 
     suspend fun revokeInviteLink(operatorUid: String, token: String) {
         val link = chatStore.getInviteLink(token) ?: throw IllegalArgumentException("邀请链接不存在")
         lifecycleGate.withChat(link.chatId) {
             val current = chatStore.getInviteLink(token)
                 ?: throw IllegalArgumentException("邀请链接不存在")
+            requireUserManaged(current.chatId)
             access.requireAdmin(operatorUid, current.chatId)
-            chatStore.revokeInviteLink(token)
+            unitOfWork.write {
+                requireUserWritableAuthority(transaction, link.chatId)
+                chatStore.revokeInviteLink(
+                    transaction,
+                    expectedChatId = link.chatId,
+                    operatorUid = operatorUid,
+                    token = token,
+                    nowMillis = System.currentTimeMillis(),
+                ) { facts -> requireAdmin(facts.operator) }
+            }
         }
     }
 
@@ -323,6 +397,7 @@ class ChatService(
             require(currentChatId == chatId) { "邀请链接归属已变更" }
             requireUserManaged(chatId)
             unitOfWork.write {
+                requireUserWritableAuthority(transaction, chatId)
                 val result = chatStore.joinByInvite(
                     transaction = transaction,
                     uid = uid,
@@ -347,143 +422,40 @@ class ChatService(
     // ── 管理端操作（免权限检查，广播链路复用）──
 
     suspend fun adminDissolve(chatId: String) = lifecycleGate.withChat(chatId) {
-        deactivateGroupWithDurableEvents(chatId) { _, _ -> Unit }
+        deactivateGroupWithDurableEvents(chatId, operatorUid = null) { facts ->
+            require(facts.chat.chatType == 2) { "单聊不能解散" }
+        }
     }
 
     /** Chat, bot/grant facts, members, Conversations and tombstones share one commit boundary. */
     private suspend fun deactivateGroupWithDurableEvents(
         chatId: String,
-        authorize: (com.virjar.tk.domain.transaction.PgTransactionContext, Chat) -> Unit,
+        operatorUid: String?,
+        authorize: (GroupCommandFacts) -> Unit,
     ) {
         unitOfWork.write {
-            val chat = chatStore.lockChats(transaction, listOf(chatId), requireActive = true)
-                .getValue(chatId).chat
-            authorize(transaction, chat)
+            requireUserWritableAuthority(transaction, chatId)
+            chatStore.lockForDeactivation(transaction, chatId, operatorUid, authorize)
             requiredParticipants.deactivateForChat(transaction, chatId)
             val deactivation = chatStore.deactivateChat(transaction, chatId)
             deactivation.memberUids.forEach { uid ->
                 appendEvent(uid, NotifyType.CHAT_DELETED, deactivation.chat)
+                appendEvent(
+                    uid,
+                    NotifyType.CONVERSATION_DELETED,
+                    Conversation(chatId = chatId, chatType = 0),
+                )
             }
             afterCommit { chatStore.invalidateCommittedDeactivation(chatId) }
         }
     }
 
     suspend fun adminMuteAll(chatId: String) = lifecycleGate.withChat(chatId) {
-        chatStore.setMuteAll(chatId, true)
-        val memberUids = chatStore.getMemberUids(chatId)
-        val chat = chatStore.getChat(chatId) ?: return@withChat
-        events.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
+        mutateMuteAll(operatorUid = null, chatId = chatId, mutedAll = true)
     }
 
     suspend fun adminUnmuteAll(chatId: String) = lifecycleGate.withChat(chatId) {
-        chatStore.setMuteAll(chatId, false)
-        val memberUids = chatStore.getMemberUids(chatId)
-        val chat = chatStore.getChat(chatId) ?: return@withChat
-        events.emitEvents(memberUids, NotifyType.CHAT_UPDATED, chat)
-    }
-
-    /** 创建或重新激活稳定 ID 的受管群；用于组织领域的可恢复 reconciliation。 */
-    suspend fun adminEnsureManagedGroup(
-        chatId: String,
-        name: String,
-        ownerUid: String,
-        memberUids: List<String>,
-    ): Chat = lifecycleGate.withChat(chatId) {
-        adminEnsureManagedGroupInternal(chatId, name, ownerUid, memberUids)
-    }
-
-    private suspend fun adminEnsureManagedGroupInternal(
-        chatId: String,
-        name: String,
-        ownerUid: String,
-        memberUids: List<String>,
-    ): Chat {
-        val chat = chatStore.createGroupChat(
-            name = name,
-            avatar = null,
-            creatorUid = ownerUid,
-            memberUids = memberUids.filter { it != ownerUid },
-            requestedChatId = chatId,
-        )
-        val allUids = (memberUids + ownerUid).distinct()
-        conversationService.ensureConversations(chat.chatId, chat.chatType, allUids)
-        notifyChatCreated(chat, allUids)
-        return chat
-    }
-
-    /**
-     * 以外部领域的成员集合为唯一事实源收敛受管群。该操作幂等，服务启动时可以安全重放。
-     */
-    suspend fun adminReconcileManagedGroup(chatId: String, name: String, ownerUid: String, desiredUids: Set<String>) {
-        lifecycleGate.withChat(chatId) {
-            reconcileManagedGroupInternal(chatId, name, ownerUid, desiredUids)
-        }
-    }
-
-    private suspend fun reconcileManagedGroupInternal(
-        chatId: String,
-        name: String,
-        ownerUid: String,
-        desiredUids: Set<String>,
-    ) {
-        // Read required service participants under the same lifecycle gate used by bot grants.
-        // A grant created before this snapshot is retained; one created afterwards waits for the
-        // reconciliation to finish and then adds itself, so neither ordering can remove it.
-        val desired = desiredUids + ownerUid + requiredParticipants.forChat(chatId)
-        var chat = chatStore.getChat(chatId)
-            ?: adminEnsureManagedGroupInternal(chatId, name, ownerUid, desired.toList())
-
-        chatStore.updateGroup(chatId, name, null, null)
-
-        val before = chatStore.getMembers(chatId)
-        val currentOwner = before.firstOrNull { it.role == 2 }?.uid
-        if (!chatStore.isMember(chatId, ownerUid)) {
-            addMembersWithDurableEvents(chatId, ownerUid, listOf(ownerUid)) { facts ->
-                require(facts.chat.chatType == 2) { "受管群主只能存在于群聊" }
-            }
-        }
-        if (currentOwner != null && currentOwner != ownerUid) {
-            chatStore.transferOwner(chatId, currentOwner, ownerUid)
-        } else if (currentOwner == null) {
-            chatStore.setRole(chatId, ownerUid, 2)
-        }
-
-        val current = chatStore.getMemberUids(chatId).toSet()
-        val added = desired - current
-        if (added.isNotEmpty()) {
-            addMembersWithDurableEvents(chatId, ownerUid, added.toList()) { facts ->
-                require(facts.chat.chatType == 2) { "受管成员只能存在于群聊" }
-            }
-            chat = chatStore.getChat(chatId) ?: chat
-        }
-
-        val removed = current - desired
-        for (uid in removed) {
-            removeMemberWithDurableTombstones(chatId, uid, uid) { facts ->
-                require(facts.chat.chatType == 2) { "受管成员只能存在于群聊" }
-                val target = facts.target ?: throw IllegalArgumentException("受管成员不是群成员")
-                require(target.role != 2) { "受管群主必须先完成权威转移" }
-            }
-        }
-
-        val updated = chatStore.getChat(chatId) ?: chat
-        events.emitEvents(desired.toList(), NotifyType.CHAT_UPDATED, updated)
-    }
-
-    suspend fun adminDisableManagedGroup(chatId: String) {
-        adminDissolve(chatId)
-    }
-
-    /** 将受治理的服务身份加入群；允许普通群和受管群，调用者必须自行持有应用授权事实。 */
-    suspend fun adminAddServiceMember(chatId: String, uid: String) = lifecycleGate.withChat(chatId) {
-        adminAddServiceMemberWithinLifecycle(chatId, uid)
-    }
-
-    /** Caller must already hold [lifecycleGate] for [chatId]. */
-    internal suspend fun adminAddServiceMemberWithinLifecycle(chatId: String, uid: String) {
-        addMembersWithDurableEvents(chatId, uid, listOf(uid)) { facts ->
-            require(facts.chat.chatType == 2) { "机器人只能授权到群聊" }
-        }
+        mutateMuteAll(operatorUid = null, chatId = chatId, mutedAll = false)
     }
 
     /** Read side used only to reconcile service-domain projections. */
@@ -507,7 +479,17 @@ class ChatService(
         transaction: com.virjar.tk.domain.transaction.PgTransactionContext,
         chatIds: Collection<String>,
         requireActive: Boolean,
-    ): Map<String, LockedChat> = chatStore.lockChats(transaction, chatIds, requireActive)
+    ): Map<String, LockedChat> {
+        val orderedChatIds = chatIds.distinct().sorted()
+        val authorities = managedChats.lockAuthority(transaction, orderedChatIds)
+        authorities.forEach { (_, authority) ->
+            require(authority.ready) { "受管群投影尚未收敛" }
+        }
+        // Existing-chat bot commands share the global projection -> Chat order with every other
+        // managed-chat writer. Cleanup callers may inspect an already inactive Chat, but no caller
+        // can cross a pending organization revision and then mutate Bot/grant/member projections.
+        return chatStore.lockChats(transaction, orderedChatIds, requireActive)
+    }
 
     internal fun getActiveMemberForService(
         transaction: com.virjar.tk.domain.transaction.PgTransactionContext,
@@ -533,22 +515,7 @@ class ChatService(
         authorize = authorize,
     )
 
-    suspend fun adminRemoveServiceMember(chatId: String, uid: String) = lifecycleGate.withChat(chatId) {
-        adminRemoveServiceMemberWithinLifecycle(chatId, uid)
-    }
-
-    /** Caller must already hold [lifecycleGate] for [chatId]. */
-    internal suspend fun adminRemoveServiceMemberWithinLifecycle(chatId: String, uid: String) {
-        chatStore.getChat(chatId) ?: return
-        if (!chatStore.isMember(chatId, uid)) return
-        removeMemberWithDurableTombstones(chatId, uid, uid) { facts ->
-            require(facts.chat.chatType == 2) { "服务身份只能存在于群聊" }
-            val target = facts.target ?: throw IllegalArgumentException("服务身份不是群成员")
-            require(target.role != 2) { "不能移除群主" }
-        }
-    }
-
-    /** Transaction-bound, idempotent counterpart to [adminRemoveServiceMemberWithinLifecycle]. */
+    /** Transaction-bound, idempotent service-member removal used by the bot aggregate. */
     internal fun removeServiceMemberIfPresent(
         transaction: com.virjar.tk.domain.transaction.PgTransactionContext,
         chatId: String,
@@ -581,10 +548,71 @@ class ChatService(
         chatStore.invalidateCommittedMembershipChange(chatId)
     }
 
+    private suspend fun mutateMemberMute(
+        operatorUid: String,
+        chatId: String,
+        targetUid: String,
+        expiresAt: Long?,
+        notifyType: NotifyType,
+    ) {
+        unitOfWork.write {
+            lockReadyAuthority(transaction, chatId)
+            val mutation = chatStore.setMemberMute(
+                transaction,
+                chatId,
+                operatorUid,
+                targetUid,
+                expiresAt,
+            ) { facts ->
+                require(facts.chat.chatType == 2) { "群聊不存在" }
+                requireCanManageLocked(facts.operator, facts.target)
+            }
+            mutation.recipientUids.forEach { uid -> appendEvent(uid, notifyType, mutation.chat) }
+            afterCommit { chatStore.invalidateCommittedCommand(chatId) }
+        }
+    }
+
+    private suspend fun mutateMuteAll(operatorUid: String?, chatId: String, mutedAll: Boolean) {
+        unitOfWork.write {
+            lockReadyAuthority(transaction, chatId)
+            val mutation = chatStore.setMuteAll(
+                transaction,
+                chatId,
+                operatorUid,
+                mutedAll,
+            ) { facts ->
+                require(facts.chat.chatType == 2) { "群聊不存在" }
+                if (operatorUid != null) requireOwner(facts.operator)
+            }
+            mutation.recipientUids.forEach { uid ->
+                appendEvent(uid, NotifyType.CHAT_UPDATED, mutation.chat)
+            }
+            afterCommit { chatStore.invalidateCommittedCommand(chatId) }
+        }
+    }
+
     /** Owner may manage admins/members; admins may only manage ordinary members. */
-    private fun requireCanManageMember(operatorUid: String, chatId: String, targetUid: String) {
+    private suspend fun requireCanManageMember(operatorUid: String, chatId: String, targetUid: String) {
         requireHumanMemberTarget(targetUid)
         access.requireCanManageMember(operatorUid, chatId, targetUid)
+    }
+
+    private fun requireCanManageLocked(operator: Member?, target: Member?) {
+        val actor = operator ?: throw IllegalArgumentException("操作者不是群成员")
+        val subject = target ?: throw IllegalArgumentException("目标不是群成员")
+        require(actor.uid != subject.uid) { "不能管理自己" }
+        require(actor.role >= 1) { "需要管理员权限" }
+        require(actor.role > subject.role) { "不能管理同级或更高角色" }
+    }
+
+    private fun requireAdmin(operator: Member?) {
+        val actor = operator ?: throw IllegalArgumentException("操作者不是群成员")
+        require(actor.role >= 1) { "需要管理员权限" }
+    }
+
+    private fun requireOwner(operator: Member?) {
+        val actor = operator ?: throw IllegalArgumentException("操作者不是群成员")
+        require(actor.role == 2) { "需要群主权限" }
     }
 
     private fun requireHumanMemberTarget(uid: String) {
@@ -599,7 +627,23 @@ class ChatService(
         }
     }
 
-    private suspend fun notifyChatCreated(chat: Chat, uids: List<String>) {
-        events.emitEvents(uids, NotifyType.CHAT_CREATED, chat)
+    private fun requireUserWritableAuthority(
+        transaction: com.virjar.tk.domain.transaction.PgTransactionContext,
+        chatId: String,
+    ) {
+        val authority = lockReadyAuthority(transaction, chatId)
+        require(!authority.managed) {
+            "该群由${authority.ownerLabel ?: "组织架构"}维护，不能手工修改成员或生命周期"
+        }
     }
+
+    private fun lockReadyAuthority(
+        transaction: com.virjar.tk.domain.transaction.PgTransactionContext,
+        chatId: String,
+    ): ManagedChatAuthority {
+        val authority = managedChats.lockAuthority(transaction, listOf(chatId)).getValue(chatId)
+        require(authority.ready) { "受管群投影尚未收敛" }
+        return authority
+    }
+
 }

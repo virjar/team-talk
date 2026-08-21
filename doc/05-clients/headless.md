@@ -59,22 +59,24 @@ while (true) {
 ```
 
 消息先进入普通持久投影，再以 eventId 写入账号 SQLite 的 `bot_message_inbox`，最后才推进 cursor。
-inbox 对 `(chatId, serverSeq)` 另有唯一约束，服务端即使以不同 eventId 重试同一 projection 也只
-产生一条业务 delivery。进程内只有 CONFLATED wake-up，因此大 backlog 不依赖消费者启动时序，
-也不会形成内存队列。崩溃发生在 inbox INSERT 与 cursor 提交之间时，事件会重放但被幂等键吸收；
-cursor 已提交而业务尚未消费时，pending 磁盘行会在重启后继续交付。
+eventId 是重放幂等键；同一 `(chatId, serverSeq)` 的创建、编辑和撤回拥有不同 eventId，因此都会
+形成独立业务 delivery。进程内只有 CONFLATED wake-up，因此大 backlog 不依赖消费者启动时序，
+也不会形成内存队列。崩溃发生在 inbox INSERT 与 cursor 提交之间时，同一 eventId 的重放会被
+主键吸收；cursor 已提交而业务尚未消费时，pending 磁盘行会在重启后继续交付。
 
 `nextMessageDelivery` 是显式 peek/ack：业务成功后才调用 `ackMessage`，未 ack 的 delivery 重启会
 再次出现。`nextMessage` 是兼顾简单脚本的 at-most-once 便利 API，会在返回前自动 ack，不适合直接
-驱动不可重入的外部副作用。tt-agent ack inbox 后，REST `/messages` 与 `/recv-wait` 仍从普通消息
-SQLite 投影读取，而不是以内存 ring 为事实源，所以进程崩溃不会抹掉 REST 可见 recent 历史。
+驱动不可重入的外部副作用。ack 在 SQLite 中只更新 `acked`，不会删除 delivery；因此 tt-agent 的
+REST `/messages` 与 `/recv-wait` 从同一 delivery log 按全局 eventId 查询，进程崩溃或业务 ack 都
+不会抹掉 REST 可见历史。
 `bot.messages` 只是不对 cursor 施加背压的实时广播，不应用作可靠 backlog 队列。
 
 等待 `AUTHENTICATED` 使用 15 秒“无同步进展”窗口，而不是 15 秒总时长；
 `SYNCHRONIZING` cursor 每次持久推进都会续期，因此大历史回放只要持续前进就不会误超时。
 
 磁盘 inbox 提供 at-least-once delivery，不承诺外部副作用 exactly-once；调用方仍应以
-`(chatId, serverSeq)` 或业务幂等键去重。
+delivery `eventId` 或包含操作类型的业务幂等键去重。只有明确希望把创建、编辑、撤回合并成
+“每条消息最多一次副作用”时，才应主动以 `(chatId, serverSeq)` 合并。
 
 MESSAGE_RECV 会发给包含发送者在内的成员，因此 echo bot 必须过滤自己的消息。`shutdown()` 是 ImBot 的生命周期终点，并级联关闭 session 和连接资源。
 ImBot 是可多实例 SDK；创建时把 `fileServerUrl` 固定到自身认证会话，文件上传逐次读取该
@@ -217,8 +219,8 @@ refresh 被服务端明确拒绝时 agent 以 78 退出并停止重启，避免�
 one-shot `--reauth` 步骤恢复后再启动服务。maintenance/connection-limit 等可恢复拒绝仍允许重启，
 但 unit 的 5 次/300 秒启动限流会阻止持续高频重试。
 
-agent 的普通 SQLite 消息投影保存 REST recent 事实，单次最多返回 1000 条；内存只为长轮询提供
-唤醒，不保存业务消息。完整、可分页的服务端历史仍通过 message RPC 查询。
+agent 的 SQLite delivery log 保存 REST cursor 事实，单次最多返回 1000 条；内存只为长轮询提供
+唤醒，不保存业务消息。完整、可分页的服务端聊天历史仍通过 message RPC 查询。
 
 ## 4. 本地 REST
 
@@ -238,8 +240,8 @@ request body 最大 64 KiB；服务先检查 `Content-Length`，并在流式读�
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/v1/status` | 连接状态、uid、username、缓冲数量 |
-| GET | `/v1/messages?chatId=&limit=&afterSeq=` | 读取 SQLite recent 消息投影 |
-| GET | `/v1/recv-wait?chatId=&timeout=` | 等待一条消息 |
+| GET | `/v1/messages?afterEventId=&chatId=&limit=` | 按全局 eventId 正序读取持久 delivery；每项含 eventId，响应含 nextEventId |
+| GET | `/v1/recv-wait?afterEventId=&chatId=&timeout=` | 按全局 eventId 等一条 delivery；chatId 只过滤 |
 | GET/POST | `/v1/conversations` | 会话列表 |
 | GET/POST | `/v1/friends` | 好友列表 |
 | GET/POST | `/v1/friend-pending` | 待处理好友申请 |
@@ -248,18 +250,24 @@ request body 最大 64 KiB；服务先检查 `Content-Length`，并在流式读�
 
 | 方法 | 路径 | body |
 |---|---|---|
-| POST | `/v1/send-text` | `{chatId, text}` |
-| POST | `/v1/send-rich` | `{chatId, markdown}` |
-| POST | `/v1/send-file` | `{chatId, path}`，path 必须位于 `dataDir/outgoing` |
+| POST | `/v1/send-text` | `{chatId, clientMsgId, text}` |
+| POST | `/v1/send-rich` | `{chatId, clientMsgId, markdown}` |
+| POST | `/v1/send-file` | `{chatId, clientMsgId, path}`，path 必须位于 `dataDir/outgoing` |
+| GET | `/v1/outgoing?chatId=&clientMsgId=` | 查询持久发送回执；未知 key 返回 404 |
 | POST | `/v1/upload` | `{path}`，与 send-file 使用同一文件访问策略 |
 | POST | `/v1/history` | `{chatId, fromSeq, limit}` |
 | POST | `/v1/revoke` | `{chatId, serverSeq}` |
 | POST | `/v1/forward` | `{srcChatId, srcSeq, targetChatId}` |
 | POST | `/v1/mark-read` | `{chatId, readSeq}` |
 
-`send-file` 以流式 `File` source 通过 TeamTalk HTTP 端点上传，再用服务端返回的 Attachment 发送
-消息，不把本地附件整体读入内存。REST 返回 200 只表示 agent 调用成功；消息结果仍应检查 data
-中的 ACK code。
+三个发送端点都要求调用方生成稳定 `clientMsgId`，并在超时或 HTTP 响应丢失后原样复用。请求先把
+最终规范 wire payload 提交到账号 SQLite，随即返回 `queued/sending/failed/sent` 回执，HTTP 生命周期不等待 ACK。
+同 `(chatId, clientMsgId)` 且相同请求返回已有回执；不同不可变 payload 返回 409，绝不产生第二条消息。
+`sent` 回执有界保留；超出回执窗口后若同 key 的权威消息仍在本地，重用会 fail closed 而不覆盖正文。
+
+`send-file` 以流式 source 通过 TeamTalk HTTP 端点上传，再用服务端返回的 Attachment 持久入队，
+不把本地附件整体读入内存。同 key 在固定条带锁内先查回执、校验文件快照指纹；已有回执不二次上传。
+如进程恰在远端上传成功、SQLite 入队之前崩溃，允许留下一个可清理的孤儿文件；消息尚未发送，不会重复消息。
 
 文件端点只接受 `dataDir/outgoing` 下可 canonicalize 的普通文件；相对路径以该目录为根。包含
 `..` 的路径、任何符号链接路径、目录、hard link、错误 owner、group/world-writable 文件、dataDir 私密文件
@@ -268,6 +276,9 @@ request body 最大 64 KiB；服务先检查 `Content-Length`，并在流式读�
 上传内容。两个端点都会 best-effort 删除 staging；清理失败会记录不含路径的诊断并保留文件供受控
 清理，但绝不把已经确定的远端成功改成 500、诱发重复发送。调用方应先以最小权限把待上传文件复制
 到 outgoing，上传完成后自行清理原文件。
+Agent 每次启动会在单 owner 边界内清理 `.staging` 下只匹配自身 `.upload-*.partial[.ready]` 命名的
+崩溃遗留；不递归、不跟随符号链接，不删除其他名称。非法或缺失 `send-file` path 固定返回 400，
+错误体不回显调用方本地路径。
 
 ### 联系人与群组
 
@@ -307,9 +318,12 @@ shared/build/headless/bin/tt send <chatId> 'hello'
 shared/build/headless/bin/tt send-rich <chatId> '**hello**'
 shared/build/headless/bin/tt recv --chatId <chatId> --wait 10
 shared/build/headless/bin/tt send-file <chatId> /var/lib/tt-agent/outgoing/report.pdf
+shared/build/headless/bin/tt outgoing-status <chatId> <clientMsgId>
 ```
 
 其他命令包括 `messages`、`history`、`upload`、`revoke`、`forward`、`mark-read`、`friends`、`friend-pending`、`friend-add`、`friend-accept`、`group-create`、`group-members` 和 `group-invite`。`--json` 输出机器可读 data。
+发送命令可用 `--clientMsgId <id>` 显式复用自动化业务键；省略时 CLI 只生成一次，并在打开 HTTP 连接前把最终 ID
+写到 stderr。即使 I/O 或响应 JSON 解析失败，调用方仍可用该 ID 查询/重试。
 
 ## 6. MCP
 
@@ -317,13 +331,14 @@ shared/build/headless/bin/tt send-file <chatId> /var/lib/tt-agent/outgoing/repor
 
 ```text
 status, conversations, friends,
-send_text, send_markdown,
+send_text, send_markdown, send_file, outgoing_status,
 recv, messages, history,
 search_users, chat_with,
 mark_read, revoke
 ```
 
 MCP 是适配层，不是新的权限边界。模型能做什么取决于 agent 账户在 TeamTalk 中的权限；生产化前还需要管理员授权、审计、速率限制和会话白名单。
+MCP 的三个发送工具都把 `clientMsgId` 声明为必填，调用方负责在工具重试时复用。
 
 ## 7. 安全与运行边界
 
@@ -332,8 +347,21 @@ MCP 是适配层，不是新的权限边界。模型能做什么取决于 agent 
 - `credentials.properties` 的 ACTIVE 状态只保存 uid、username、refresh token、API token 与稳定 deviceId；plaintext password 仅允许短暂存在于 REGISTER_PENDING，AUTH 成功即原子删除。目录 `0700`、文件 `0600`、NOFOLLOW 与原子落盘是强制条件。已有账号的 plaintext password 只经受控前台环境传递，systemd unit 不引用任何持久 bootstrap 环境文件。正式产品仍可进一步接入系统密钥库。
 - CLI token 不应出现在命令历史、日志或代码仓库。
 - `send-file` 和 `upload` 只能读取 agent dataDir 的 `outgoing` 子树，并共用同一 canonical/symlink/secret 校验链。
-- agent 的长轮询不是 Webhook；内存唤醒在进程重启时会消失，但消息仍在 SQLite recent 投影中，
-  重连后可通过 `/v1/messages` 读取。需要消费确认、多个订阅者或永久保留时仍应单独设计外部订阅。
+- `/messages` 的 `afterEventId` 与返回项 `eventId` 是跨 chat 的唯一分页游标；不同 chat 的相同
+  `serverSeq` 不冲突。重复同一 cursor 会得到同一页，不能再使用已移除的全局 `afterSeq`。
+- `recv-wait` 传 cursor 时先查持久日志、注册 waiter、再二次查询以封闭竞态；不传 cursor 时先快照
+  当前 maxEventId，只等待下一条而不会无限重复“最新一条”。超时也返回本次有效 baseline 作为
+  `nextEventId`，因此持久化与内存通知的边界竞态不会跳过事件。非法/负 cursor、越界 limit/timeout
+  返回 400。
+- agent 的长轮询不是 Webhook；内存唤醒在进程重启时会消失，但消息仍在 SQLite delivery log 中，
+  重连后可通过 `/v1/messages` 读取。需要外部副作用 exactly-once 时仍须使用业务幂等键。
+- 权威 `CHAT_DELETED` 是授权撤销/隐私删除：即使 eventId 历史和 SUCCESS 回执通常持久，墓碑仍会清理该 chat
+  的 pending/acked delivery、所有 outgoing 回执和本地消息；此后不能再通过 Agent cursor/status 查回。
+
+本地缓存当前从 epoch 2 切到 epoch 3：`cache_e2*.db` 保留但不读取，epoch 3 登录后重同步服务器投影；
+旧草稿和未上服本地状态不迁移。新的 outgoing outbox 与 acked delivery history 从 epoch 3 开始生效。
+每次打开会幂等补齐当前 schema 在首次建库崩溃时缺失的 DDL。但早期未发布 epoch 3 中间构建不属于兼容范围；
+曾运行过这类构建的开发实例必须删除对应 `cache_e3*.db` 再重同步。
 
 无头能力的产品化计划见[路线图](../10-reference/roadmap.md)，当前成熟度见[功能状态](../10-reference/feature-status.md)。
 

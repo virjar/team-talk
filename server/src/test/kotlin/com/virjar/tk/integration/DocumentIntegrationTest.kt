@@ -2,6 +2,7 @@ package com.virjar.tk.integration
 
 import com.virjar.tk.domain.document.DocumentService
 import com.virjar.tk.infra.db.DocumentNodes
+import com.virjar.tk.infra.db.OrganizationUnits
 import com.virjar.tk.model.Document
 import com.virjar.tk.model.DocumentNode
 import com.virjar.tk.model.DocumentSpace
@@ -14,6 +15,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.test.runTest
 import org.jetbrains.exposed.sql.insert
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.update
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -39,9 +42,9 @@ class DocumentIntegrationTest {
         val outsider = ctx.registerUser(uniqueUsername("space-outsider"))
         val root = OrganizationUnit(UUID.randomUUID().toString(), name = "产品中心")
         val child = OrganizationUnit(UUID.randomUUID().toString(), parentId = root.unitId, name = "体验设计组")
-        ctx.organizationRepo.createUnit(root)
-        ctx.organizationRepo.createUnit(child)
-        ctx.organizationRepo.upsertMember(OrganizationMember(child.unitId, departmentMember))
+        ctx.seedOrganizationUnit(root)
+        ctx.seedOrganizationUnit(child)
+        ctx.seedOrganizationMember(OrganizationMember(child.unitId, departmentMember))
 
         val space = ctx.documentService.createSpace(owner, "产品知识库", "跨小组共享的产品资产")
         assertEquals(DocumentSpace.ROLE_OWNER, space.myRole)
@@ -80,7 +83,7 @@ class DocumentIntegrationTest {
         assertEquals(listOf(DocumentNode.TYPE_FOLDER), ctx.documentService.listNodes(departmentMember, space.spaceId, null).map { it.nodeType })
         assertEquals("# 交互原则\n第一版", ctx.documentService.getDocument(departmentMember, space.spaceId, document.documentId).markdown)
 
-        ctx.organizationRepo.removeMember(child.unitId, departmentMember)
+        ctx.organizationService.removeMember(child.unitId, departmentMember)
         assertTrue(ctx.documentService.listSpaces(departmentMember).isEmpty())
         assertFailsWith<IllegalArgumentException> {
             ctx.documentService.getDocument(departmentMember, space.spaceId, document.documentId)
@@ -219,10 +222,10 @@ class DocumentIntegrationTest {
         val root = OrganizationUnit(UUID.randomUUID().toString(), name = "研发中心")
         val child = OrganizationUnit(UUID.randomUUID().toString(), parentId = root.unitId, name = "客户端组")
         val sibling = OrganizationUnit(UUID.randomUUID().toString(), parentId = root.unitId, name = "服务端组")
-        ctx.organizationRepo.createUnit(root)
-        ctx.organizationRepo.createUnit(child)
-        ctx.organizationRepo.createUnit(sibling)
-        ctx.organizationRepo.upsertMember(OrganizationMember(child.unitId, member))
+        ctx.seedOrganizationUnit(root)
+        ctx.seedOrganizationUnit(child)
+        ctx.seedOrganizationUnit(sibling)
+        ctx.seedOrganizationMember(OrganizationMember(child.unitId, member))
 
         val inherited = ctx.documentService.createSpace(owner, "继承授权", null)
         val directUnit = ctx.documentService.createSpace(owner, "直属部门授权", null)
@@ -283,14 +286,22 @@ class DocumentIntegrationTest {
             ctx.documentService.listSpaces(owner).mapTo(mutableSetOf()) { it.spaceId },
         )
 
-        ctx.organizationRepo.archiveUnit(root.unitId)
+        transaction {
+            OrganizationUnits.update({ OrganizationUnits.unitId eq root.unitId }) {
+                it[OrganizationUnits.status] = OrganizationUnit.STATUS_ARCHIVED
+            }
+        }
         assertEquals(
             setOf(directUnit.spaceId, directUser.spaceId),
             ctx.documentService.listSpaces(member).mapTo(mutableSetOf()) { it.spaceId },
         )
 
         // membership 仍在，但已归档的直属部门不再是授权事实。
-        ctx.organizationRepo.archiveUnit(child.unitId)
+        transaction {
+            OrganizationUnits.update({ OrganizationUnits.unitId eq child.unitId }) {
+                it[OrganizationUnits.status] = OrganizationUnit.STATUS_ARCHIVED
+            }
+        }
         assertEquals(listOf(child.unitId), ctx.organizationRepo.listMemberships(member).map { it.unitId })
         assertEquals(listOf(directUser.spaceId), ctx.documentService.listSpaces(member).map { it.spaceId })
     }
@@ -301,9 +312,9 @@ class DocumentIntegrationTest {
         val member = ctx.registerUser(uniqueUsername("cycle-member"))
         val ancestor = OrganizationUnit(UUID.randomUUID().toString(), name = "事业部")
         val direct = OrganizationUnit(UUID.randomUUID().toString(), parentId = ancestor.unitId, name = "小组")
-        ctx.organizationRepo.createUnit(ancestor)
-        ctx.organizationRepo.createUnit(direct)
-        ctx.organizationRepo.upsertMember(OrganizationMember(direct.unitId, member))
+        ctx.seedOrganizationUnit(ancestor)
+        ctx.seedOrganizationUnit(direct)
+        ctx.seedOrganizationMember(OrganizationMember(direct.unitId, member))
 
         val directSpace = ctx.documentService.createSpace(owner, "直属授权空间", null)
         val inheritedSpace = ctx.documentService.createSpace(owner, "继承授权空间", null)
@@ -329,7 +340,11 @@ class DocumentIntegrationTest {
         )
 
         // 模拟并发管理写或历史脏数据造成 direct → ancestor → direct。
-        ctx.organizationRepo.updateUnit(ancestor.copy(parentId = direct.unitId))
+        transaction {
+            OrganizationUnits.update({ OrganizationUnits.unitId eq ancestor.unitId }) {
+                it[OrganizationUnits.parentId] = direct.unitId
+            }
+        }
         assertEquals(listOf(directSpace.spaceId), ctx.documentService.listSpaces(member).map { it.spaceId })
     }
 

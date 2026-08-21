@@ -28,6 +28,10 @@ interface BotGroupMembership {
     fun projectedChatIds(uid: String): Set<String>
     fun projectedChatIds(transaction: PgTransactionContext, uid: String): Set<String>
 
+    /**
+     * Locks managed-chat authority rows first, rejects pending authority, then locks Chats in the
+     * same lexical order. Implementations must never acquire a projection row after a Chat lock.
+     */
     fun lockChats(
         transaction: PgTransactionContext,
         chatIds: Collection<String>,
@@ -68,5 +72,14 @@ interface BotGroupMembership {
 
 /** Message acceptance boundary used by notification bots. */
 fun interface BotMessageSender {
-    suspend fun send(senderUid: String, message: Message): Long
+    /**
+     * [authorizeAfterChatLock] runs in the message admission transaction after managed authority
+     * and Chat are locked, but before member rows. Production adapters must invoke it exactly once
+     * for every new message admission.
+     */
+    suspend fun send(
+        senderUid: String,
+        message: Message,
+        authorizeAfterChatLock: (PgTransactionContext) -> Unit,
+    ): Long
 }

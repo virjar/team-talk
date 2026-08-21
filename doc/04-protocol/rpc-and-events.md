@@ -78,6 +78,11 @@ list/get revision；新增的最近访问与最近创建方法固定为 17/18。
 当次事实对应的路径，供客户端在懒加载目录树中逐层展开。协议限制最多 128 层；服务端解析时对跨空间、
 非文件夹父节点和循环链路执行防御性校验。
 
+`user.updateProfile` 使用 `ProfilePatch`，wire 先写四位字段 presence mask，再按
+`name → avatar → sex → phone` 写入 present 值。缺席字段保持不变；nullable 的 avatar/phone
+仍保留 String 自身的 null marker，因此 `Unchanged` 与 `Set(null)` 含义不同。该变更替换旧的完整
+`User` 请求，属于不兼容 wire 变化，协议版本已推进到 1。
+
 完整方法查询见[RPC 参考](../10-reference/rpc-reference.md)。
 
 `organization.listUnits` 返回带 `directMemberCount` 的 `OrganizationUnit`。

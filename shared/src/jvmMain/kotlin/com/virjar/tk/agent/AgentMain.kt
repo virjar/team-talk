@@ -4,12 +4,15 @@ import com.virjar.tk.bot.ImBot
 import com.virjar.tk.bot.ImBotAuthenticationRejectedException
 import com.virjar.tk.bot.ImBotMessageInbox
 import com.virjar.tk.bot.PersistentImBotCacheOwner
-import com.virjar.tk.model.Message
+import com.virjar.tk.client.PendingBotMessage
+import com.virjar.tk.client.OutgoingMessage
 import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -268,6 +271,18 @@ private data class ConnectedAgent(
     val inbox: ImBotMessageInbox,
 )
 
+private data class AgentMessageWaiter(
+    val afterEventId: Long,
+    val chatId: String?,
+    val channel: Channel<PendingBotMessage>,
+)
+
+data class AgentWaitResult(
+    val delivery: PendingBotMessage?,
+    /** Delivery eventId when present, otherwise the effective baseline snapshotted by this call. */
+    val nextEventId: Long,
+)
+
 private suspend fun connectLogin(
     host: String,
     port: Int,
@@ -339,7 +354,7 @@ private suspend fun connectRefresh(
     return ConnectedAgent(bot, inbox)
 }
 
-/** agent 运行时：bot 会话 + SQLite recent 事实源 + 长轮询唤醒 + REST。 */
+/** agent 运行时：bot 会话 + SQLite eventId delivery 事实源 + 长轮询唤醒 + REST。 */
 class AgentRuntime(
     private val host: String,
     private val port: Int,
@@ -353,8 +368,27 @@ class AgentRuntime(
     lateinit var bot: ImBot
     val apiToken: String = identity.apiToken
     val deviceId: String = identity.deviceId
-    private val waiters = ConcurrentLinkedDeque<Channel<Message>>()
+    private val waiters = ConcurrentLinkedDeque<AgentMessageWaiter>()
+    private val waiterLifecycle = Any()
+    @Volatile
+    private var closed = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val fileSendCoordinator = AgentFileSendCoordinator(
+        findReceipt = { chatId, clientMsgId, fingerprint ->
+            if (fingerprint == null) {
+                bot.outgoingReceipt(chatId, clientMsgId)
+            } else {
+                bot.outgoingReceipt(chatId, clientMsgId, fingerprint)
+            }
+        },
+        stage = fileAccessPolicy::stageUpload,
+        upload = { prepared, contentType ->
+            bot.uploadFile(prepared.source, prepared.originalFileName, contentType)
+        },
+        enqueue = { chatId, clientMsgId, attachment, fingerprint ->
+            bot.enqueueFile(chatId, clientMsgId, attachment, fingerprint)
+        },
+    )
     private var server: HttpServer? = null
     private var serverExecutor: ExecutorService? = null
 
@@ -364,10 +398,9 @@ class AgentRuntime(
         scope.launch {
             while (true) {
                 val pending = messageInbox.receivePendingOrNull() ?: break
-                // MESSAGE_RECV was persisted to the normal message projection before inbox insert.
-                // That SQLite projection is the REST history source, so ack cannot make it vanish.
+                // ACK changes only the delivery row's state; REST cursor history keeps the row.
                 messageInbox.ack(pending.eventId)
-                notifyMessageAvailable(pending.message)
+                notifyMessageAvailable(pending)
             }
         }
     }
@@ -376,8 +409,21 @@ class AgentRuntime(
         this.bot = bot
     }
 
-    private fun notifyMessageAvailable(message: Message) {
-        waiters.forEach { it.trySend(message) }
+    suspend fun enqueueFile(chatId: String, clientMsgId: String, rawPath: String): OutgoingMessage =
+        fileSendCoordinator.enqueueFile(chatId, clientMsgId, rawPath)
+
+    fun outgoingReceipt(chatId: String, clientMsgId: String): OutgoingMessage? =
+        bot.outgoingReceipt(chatId, clientMsgId)
+
+    private fun notifyMessageAvailable(delivery: PendingBotMessage) {
+        waiters.forEach { waiter ->
+            if (
+                delivery.eventId > waiter.afterEventId &&
+                (waiter.chatId == null || delivery.message.chatId == waiter.chatId)
+            ) {
+                waiter.channel.trySend(delivery)
+            }
+        }
     }
 
     fun startHttp(bind: String) {
@@ -390,7 +436,7 @@ class AgentRuntime(
             val api = AgentApi(this)
             for (path in listOf(
                 "/v1/status", "/v1/messages", "/v1/recv-wait", "/v1/send-text", "/v1/send-rich",
-                "/v1/send-file", "/v1/upload", "/v1/history", "/v1/revoke", "/v1/forward",
+                "/v1/send-file", "/v1/outgoing", "/v1/upload", "/v1/history", "/v1/revoke", "/v1/forward",
                 "/v1/mark-read", "/v1/conversations", "/v1/friends", "/v1/friend-apply",
                 "/v1/friend-accept", "/v1/friend-pending", "/v1/users-search", "/v1/group-create",
                 "/v1/group-members", "/v1/group-invite", "/v1/chat-personal",
@@ -408,39 +454,57 @@ class AgentRuntime(
     }
 
     /** 长轮询注册（AgentApi 调）。 */
-    fun waitMessage(chatId: String?, timeoutSec: Int): Message? {
-        val ch = Channel<Message>(1)
-        fun latestPersisted(): Message? =
-            messageInbox.recentMessages(chatId, afterSeq = 0L, limit = 1).lastOrNull()
-        latestPersisted()?.let { return it }
-        waiters.add(ch)
-        return try {
-            // Close the query->waiter registration race with a second persistent read.
-            latestPersisted()?.let { return it }
-            runBlocking {
-                kotlinx.coroutines.withTimeout(timeoutSec * 1000L) {
-                    while (true) {
-                        val message = ch.receive()
-                        if (chatId == null || message.chatId == chatId) return@withTimeout message
-                    }
-                    @Suppress("UNREACHABLE_CODE")
-                    error("unreachable")
-                }
-            }
-        } catch (_: Exception) {
-            null
-        } finally {
-            waiters.remove(ch)
+    fun waitMessage(afterEventId: Long?, chatId: String?, timeoutSec: Int): AgentWaitResult {
+        require(afterEventId == null || afterEventId >= 0L) { "afterEventId must be non-negative" }
+        require(timeoutSec in 1..MAX_WAIT_SECONDS) { "timeout must be between 1 and $MAX_WAIT_SECONDS" }
+        val cursor = afterEventId ?: messageInbox.maxEventId()
+        fun nextPersisted(): PendingBotMessage? =
+            messageInbox.deliveries(cursor, chatId, limit = 1).firstOrNull()
+        if (afterEventId != null) nextPersisted()?.let { return AgentWaitResult(it, it.eventId) }
+        val ch = Channel<PendingBotMessage>(1)
+        val waiter = AgentMessageWaiter(cursor, chatId, ch)
+        synchronized(waiterLifecycle) {
+            if (closed) return AgentWaitResult(null, cursor)
+            waiters.add(waiter)
         }
+        val delivery = try {
+            // Close the query->waiter registration race with a second persistent read.
+            nextPersisted()?.let { return AgentWaitResult(it, it.eventId) }
+            try {
+                runBlocking {
+                    kotlinx.coroutines.withTimeout(timeoutSec * 1000L) { ch.receive() }
+                }
+            } catch (_: TimeoutCancellationException) {
+                // Timeout may race with durable insert before its in-memory notification. This
+                // final read either returns that row or linearizes an empty response at [cursor].
+                nextPersisted()
+            } catch (_: ClosedReceiveChannelException) {
+                // Runtime close owns this channel close. If the inbox remains usable, preserve a
+                // just-persisted row; otherwise the close baseline is the only meaningful result.
+                if (closed) null else nextPersisted()
+            }
+        } finally {
+            waiters.remove(waiter)
+        }
+        return AgentWaitResult(delivery, delivery?.eventId ?: cursor)
     }
 
     val connectionState get() = bot.connectionState.value
-    val bufferedCount get() = messageInbox.recentMessages(null, 0L, MAX_RECENT_MESSAGES).size
+    val bufferedCount get() = messageInbox.deliveries(0L, null, MAX_RECENT_MESSAGES).size
 
-    fun bufferedMessages(chatId: String?, limit: Int, afterSeq: Long): List<Message> =
-        messageInbox.recentMessages(chatId, afterSeq, limit.coerceIn(1, MAX_RECENT_MESSAGES))
+    fun bufferedMessages(chatId: String?, limit: Int, afterEventId: Long): List<PendingBotMessage> {
+        require(afterEventId >= 0L) { "afterEventId must be non-negative" }
+        require(limit in 1..MAX_RECENT_MESSAGES) { "limit must be between 1 and $MAX_RECENT_MESSAGES" }
+        return messageInbox.deliveries(afterEventId, chatId, limit)
+    }
 
     override fun close() {
+        synchronized(waiterLifecycle) {
+            if (closed) return
+            closed = true
+            waiters.forEach { it.channel.close() }
+            waiters.clear()
+        }
         server?.stop(0)
         server = null
         serverExecutor?.let { executor ->
@@ -457,6 +521,7 @@ class AgentRuntime(
 
     private companion object {
         const val MAX_RECENT_MESSAGES = 1000
+        const val MAX_WAIT_SECONDS = 60
 
         fun shutdownExecutor(executor: ExecutorService) {
             executor.shutdownNow()

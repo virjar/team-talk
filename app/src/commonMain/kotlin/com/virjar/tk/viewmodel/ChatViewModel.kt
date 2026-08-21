@@ -4,6 +4,7 @@ import com.virjar.tk.AppError
 import com.virjar.tk.client.EventProcessor
 import com.virjar.tk.client.LocalCache
 import com.virjar.tk.client.MessagePager
+import com.virjar.tk.client.MessagePageLoadResult
 import com.virjar.tk.model.Message
 import com.virjar.tk.repository.MessageRepository
 import kotlinx.coroutines.Job
@@ -109,15 +110,24 @@ class ChatViewModel(
         scope.launch {
             _loadingOlder.value = true
             try {
+                var remoteCursor: Long? = null
                 if (pager.hasMore.value) {
-                    pager.loadMore(HISTORY_PAGE_SIZE)
-                    return@launch
+                    when (val localResult = pager.loadMore(HISTORY_PAGE_SIZE)) {
+                        MessagePageLoadResult.LocalLoaded -> return@launch
+                        MessagePageLoadResult.Exhausted -> Unit
+                        is MessagePageLoadResult.RemoteRequired -> {
+                            remoteCursor = localResult.beforeServerSeq
+                            // This request repairs history deliberately trimmed from a bounded
+                            // authoritative window, even if the preceding RPC reached its end.
+                            _remoteHasMore.value = true
+                        }
+                    }
                 }
                 if (!_remoteHasMore.value) return@launch
                 // MessageWindow atomically anchors the visible list to the newest server page, so
                 // its minimum is the floor of that proven response chain. A stale pre-sync local
                 // tail is deliberately not present here; legal sequence holes inside a page are.
-                val oldestSeq = _messages.value.asSequence()
+                val oldestSeq = remoteCursor ?: _messages.value.asSequence()
                     .map(Message::serverSeq)
                     .filter { it > 0L }
                     .minOrNull()
@@ -162,15 +172,28 @@ class ChatViewModel(
     }
 
     fun sendMessage(message: Message) {
-        // 乐观更新：立即显示为 sending
         val sending = message.copy(sendStatus = Message.SEND_STATUS_SENDING)
-        localCache.insertMessage(sending)
-        // 发送队列路径：断线排队（QUEUED）→ 重连补发，状态机由队列回调推进
+        // The durable queue atomically creates both the optimistic projection and outbox fact.
+        // A separate pre-insert would leave an unsendable SENDING bubble if the process died
+        // between that insert and queue admission.
         val queue = sendQueue
         if (queue != null) {
-            queue.enqueue(sending)
+            try {
+                queue.enqueue(sending)
+            } catch (failure: Exception) {
+                // Media can already own an UPLOADING placeholder. The guarded cache update marks
+                // only a seq=0 optimistic row failed; a same-id server message is never touched.
+                localCache.updateMessageStatus(
+                    sending.chatId,
+                    sending.clientMsgId,
+                    Message.SEND_STATUS_FAILED,
+                )
+                setError("发送失败: ${failure.message ?: "本地队列不可用"}")
+            }
             return
         }
+        // Compatibility path without a queue still owns its optimistic projection directly.
+        localCache.insertMessage(sending)
         scope.launch {
             try {
                 val ack = messageRepo.send(sending).getOrThrow()

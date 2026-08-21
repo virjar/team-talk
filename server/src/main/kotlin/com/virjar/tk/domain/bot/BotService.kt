@@ -17,8 +17,10 @@ import com.virjar.tk.model.Conversation
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.NotifyType
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.serialization.Serializable
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withContext
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
@@ -46,7 +48,7 @@ interface BotMessageDelivery {
 }
 
 interface GroupBotManagement {
-    fun listForGroup(actorUid: String, chatId: String): List<GroupBotSummary>
+    suspend fun listForGroup(actorUid: String, chatId: String): List<GroupBotSummary>
     suspend fun createForGroup(actorUid: String, chatId: String, name: String): GroupBotCredentials
     suspend fun rotateTokenForGroup(actorUid: String, chatId: String, botId: String): GroupBotCredentials
     suspend fun removeFromGroup(actorUid: String, chatId: String, botId: String)
@@ -133,10 +135,17 @@ class BotService(
         }
     }
 
-    override fun listForGroup(actorUid: String, chatId: String): List<GroupBotSummary> {
-        val actorRole = requireGroupMember(actorUid, chatId).role
-        return repository.listForChat(chatId).map { it.toGroupSummary(actorUid, actorRole, chatId) }
-    }
+    override suspend fun listForGroup(actorUid: String, chatId: String): List<GroupBotSummary> =
+        withContext(Dispatchers.IO) {
+            try {
+                access.readAsGroupMember(actorUid, chatId, "不是当前群成员") { _, actor ->
+                    repository.listForChat(chatId).map { it.toGroupSummary(actorUid, actor.role, chatId) }
+                }
+            } catch (error: ChatAccessDeniedException) {
+                val message = if (error.message == "群聊不存在") "机器人只能在群聊中管理" else error.message
+                throw BotAuthorizationException(message ?: "无权管理群机器人")
+            }
+        }
 
     override suspend fun rotateTokenForGroup(
         actorUid: String,
@@ -314,7 +323,9 @@ class BotService(
         markdown: String,
         idempotencyKey: String,
     ): BotDeliveryResult = commandGate.withBot(botId) {
-        val bot = authenticate(botId, token)
+        val presentedToken = token ?: throw BotAuthenticationException()
+        val presentedTokenHash = hashToken(presentedToken)
+        val bot = authenticate(botId, presentedToken)
         if (markdown.isBlank()) throw BotRequestException("markdown 不能为空")
         if (markdown.length > MAX_MARKDOWN_LENGTH) throw BotRequestException("markdown 不能超过 $MAX_MARKDOWN_LENGTH 个字符")
         if (idempotencyKey.length !in 1..MAX_IDEMPOTENCY_KEY_LENGTH) {
@@ -335,12 +346,33 @@ class BotService(
                     timestamp = System.currentTimeMillis(),
                     body = buildRichTextBody(markdown),
                 ),
-            )
+            ) { transaction ->
+                // Message admission already owns projection authority and Chat. Re-read every bot
+                // capability under service User -> Bot/grant locks so a completed rotation,
+                // disable or revoke on another process closes before this request can allocate seq.
+                repository.lockServiceIdentity(transaction, bot.userUid)
+                val current = repository.findForUpdate(transaction, botId)
+                    ?: throw BotAuthenticationException()
+                requireBotIdentity(current, bot.userUid)
+                if (
+                    current.status != AutomationBot.STATUS_ACTIVE ||
+                    !repository.tokenMatches(transaction, botId, presentedTokenHash)
+                ) {
+                    throw BotAuthenticationException()
+                }
+                if (chatId !in current.grantedChatIds) {
+                    throw BotAuthorizationException("机器人未获该群授权")
+                }
+                repository.touch(transaction, botId, System.currentTimeMillis())
+            }
+        } catch (e: BotAuthenticationException) {
+            throw e
+        } catch (e: BotAuthorizationException) {
+            throw e
         } catch (e: IllegalArgumentException) {
             // 通知入口只有富文本，没有附件参数；此处的 MessageService 拒绝来自成员/禁言等群权限。
             throw BotAuthorizationException(e.message ?: "机器人当前不能向该群发送")
         }
-        repository.touch(botId, System.currentTimeMillis())
         BotDeliveryResult(chatId, seq, clientMsgId)
     }
 
@@ -503,7 +535,7 @@ class BotService(
         check(bot.userUid == expectedUserUid) { "机器人服务身份在锁定前发生变化" }
     }
 
-    private fun requireGroupMember(actorUid: String, chatId: String): Member {
+    private suspend fun requireGroupMember(actorUid: String, chatId: String): Member {
         return try {
             access.requireGroupMember(actorUid, chatId, "不是当前群成员")
         } catch (error: ChatAccessDeniedException) {

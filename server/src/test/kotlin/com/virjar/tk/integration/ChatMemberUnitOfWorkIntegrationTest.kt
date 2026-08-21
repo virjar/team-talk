@@ -6,6 +6,7 @@ import com.virjar.tk.infra.db.GroupMembers
 import com.virjar.tk.infra.db.PgUnitOfWorkHooks
 import com.virjar.tk.infra.db.PgUnitOfWorkStage
 import com.virjar.tk.infra.db.SyncEvents
+import com.virjar.tk.infra.db.Users
 import com.virjar.tk.protocol.NotifyType
 import kotlinx.coroutines.test.runTest
 import org.jetbrains.exposed.sql.SortOrder
@@ -104,24 +105,6 @@ class ChatMemberUnitOfWorkIntegrationTest {
         listOf(owner, staleAdmin, target).forEach { uid ->
             assertTrue(eventTypesAfter(uid, baselines.getValue(uid)).isEmpty())
         }
-    }
-
-    @Test
-    fun `service member add uses the same atomic projection boundary`() = runTest {
-        val owner = ctx.registerUser(uniqueUsername("service-add-owner"))
-        val serviceUid = ctx.registerUser(uniqueUsername("service-add-target"))
-        val group = ctx.chatService.createGroup("Service add", null, owner, emptyList())
-        val baselines = listOf(owner, serviceUid).associateWith(::latestEventSeq)
-
-        ctx.chatService.adminAddServiceMember(group.chatId, serviceUid)
-
-        assertEquals(
-            listOf(NotifyType.CHAT_CREATED, NotifyType.MEMBER_ADDED),
-            eventTypesAfter(serviceUid, baselines.getValue(serviceUid)),
-        )
-        assertEquals(listOf(NotifyType.MEMBER_ADDED), eventTypesAfter(owner, baselines.getValue(owner)))
-        assertTrue(isActiveMember(group.chatId, serviceUid))
-        assertTrue(hasConversation(group.chatId, serviceUid))
     }
 
     @Test
@@ -224,6 +207,33 @@ class ChatMemberUnitOfWorkIntegrationTest {
     }
 
     @Test
+    fun `owner can atomically remove a banned human and every durable projection`() = runTest {
+        val owner = ctx.registerUser(uniqueUsername("ban-remove-owner"))
+        val target = ctx.registerUser(uniqueUsername("ban-remove-target"))
+        val observer = ctx.registerUser(uniqueUsername("ban-remove-observer"))
+        val group = ctx.chatService.createGroup("Ban removal", null, owner, listOf(target, observer))
+        val baselines = listOf(owner, target, observer).associateWith(::latestEventSeq)
+        transaction {
+            Users.update({ Users.uid eq target }) { it[Users.status] = 2 }
+        }
+
+        ctx.chatService.removeMember(owner, group.chatId, target)
+
+        assertTrue(!isActiveMember(group.chatId, target))
+        assertTrue(!hasConversation(group.chatId, target))
+        assertEquals(
+            listOf(NotifyType.CHAT_DELETED, NotifyType.CONVERSATION_DELETED),
+            eventTypesAfter(target, baselines.getValue(target)),
+        )
+        listOf(owner, observer).forEach { uid ->
+            assertEquals(
+                listOf(NotifyType.MEMBER_REMOVED),
+                eventTypesAfter(uid, baselines.getValue(uid)),
+            )
+        }
+    }
+
+    @Test
     fun `self leave has the same per-user tombstone contract`() = runTest {
         val owner = ctx.registerUser(uniqueUsername("leave-owner"))
         val leaver = ctx.registerUser(uniqueUsername("leave-target"))
@@ -241,62 +251,6 @@ class ChatMemberUnitOfWorkIntegrationTest {
         assertEquals(listOf(NotifyType.MEMBER_REMOVED), eventTypesAfter(observer, baselines.getValue(observer)))
         assertTrue(!isActiveMember(group.chatId, leaver))
         assertTrue(!hasConversation(group.chatId, leaver))
-    }
-
-    @Test
-    fun `service member removal shares the durable tombstone transaction`() = runTest {
-        val owner = ctx.registerUser(uniqueUsername("service-owner"))
-        val serviceUid = ctx.registerUser(uniqueUsername("service-target"))
-        val observer = ctx.registerUser(uniqueUsername("service-observer"))
-        val group = ctx.chatService.createGroup("Service removal", null, owner, listOf(serviceUid, observer))
-        val baselines = listOf(owner, serviceUid, observer).associateWith(::latestEventSeq)
-
-        ctx.chatService.adminRemoveServiceMember(group.chatId, serviceUid)
-
-        assertEquals(
-            listOf(NotifyType.CHAT_DELETED, NotifyType.CONVERSATION_DELETED),
-            eventTypesAfter(serviceUid, baselines.getValue(serviceUid)),
-        )
-        assertEquals(listOf(NotifyType.MEMBER_REMOVED), eventTypesAfter(owner, baselines.getValue(owner)))
-        assertEquals(listOf(NotifyType.MEMBER_REMOVED), eventTypesAfter(observer, baselines.getValue(observer)))
-        assertTrue(!isActiveMember(group.chatId, serviceUid))
-        assertTrue(!hasConversation(group.chatId, serviceUid))
-    }
-
-    @Test
-    fun `service member removal rolls back membership and tombstones together`() = runTest {
-        val owner = ctx.registerUser(uniqueUsername("service-rollback-owner"))
-        val serviceUid = ctx.registerUser(uniqueUsername("service-rollback-target"))
-        val observer = ctx.registerUser(uniqueUsername("service-rollback-observer"))
-        val group = ctx.chatService.createGroup(
-            "Service removal rollback",
-            null,
-            owner,
-            listOf(serviceUid, observer),
-        )
-        val baselines = listOf(owner, serviceUid, observer).associateWith(::latestEventSeq)
-        val failingService = ctx.freshChatService(
-            ExposedPgUnitOfWork(
-                onEventsCommitted = {},
-                hooks = PgUnitOfWorkHooks { stage ->
-                    if (stage == PgUnitOfWorkStage.AFTER_EVENT_FLUSH_BEFORE_COMMIT) {
-                        throw InjectedMemberRemovalRollback
-                    }
-                },
-            ),
-        )
-
-        assertIs<InjectedMemberRemovalRollbackException>(
-            runCatching {
-                failingService.adminRemoveServiceMember(group.chatId, serviceUid)
-            }.exceptionOrNull(),
-        )
-
-        assertTrue(isActiveMember(group.chatId, serviceUid))
-        assertTrue(hasConversation(group.chatId, serviceUid))
-        listOf(owner, serviceUid, observer).forEach { uid ->
-            assertTrue(eventTypesAfter(uid, baselines.getValue(uid)).isEmpty())
-        }
     }
 
     @Test

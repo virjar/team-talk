@@ -18,7 +18,7 @@ class AttachmentService(
     private val attachmentCatalog: AttachmentCatalog,
     private val attachmentAccess: AttachmentAccess,
 ) {
-    fun resolve(message: Message, actorUid: String): Message {
+    suspend fun resolve(message: Message, actorUid: String): Message {
         // 所有消息先做通用 body/type 校验；Markdown 的派生字段也在此重建。
         // 附件消息随后再做路径格式与 FileStore 存在性校验。
         val canonical = MessageBodyPolicy.canonicalize(AttachmentPolicy.canonicalize(message))
@@ -28,12 +28,10 @@ class AttachmentService(
         return canonical.copy(body = body.withAttachments(attachment, thumbnail))
     }
 
-    private fun resolve(declared: Attachment, actorUid: String): Attachment {
-        require(attachmentAccess.canRead(actorUid, declared.path)) {
-            "附件不存在或无权使用: path=${declared.path}"
-        }
-        val actual = attachmentCatalog.getAttachment(declared.path)
-            ?: throw IllegalArgumentException("附件不存在或已失效: ${declared.path}")
+    private suspend fun resolve(declared: Attachment, actorUid: String): Attachment {
+        val actual = attachmentAccess.readAuthorized(actorUid, declared.path) { canonicalPath ->
+            attachmentCatalog.getAttachment(canonicalPath)
+        } ?: throw IllegalArgumentException("附件不存在或无权使用: path=${declared.path}")
         require(actual == declared) {
             "附件元数据不匹配: path=${declared.path}"
         }

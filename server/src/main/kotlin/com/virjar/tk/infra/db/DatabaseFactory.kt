@@ -22,7 +22,7 @@ object DatabaseFactory {
         Users, Devices, Credentials, Chats, GroupChats, GroupMembers, GroupMemberMutes,
         Conversations, Friends, FriendApplies, GroupInviteLinks, SyncStreams, SyncEvents,
         ExternalProjectionReceipts,
-        OrganizationUnits, OrganizationMemberships,
+        OrganizationState, OrganizationUnits, OrganizationMemberships, OrganizationManagedChatProjections,
         AutomationBots, AutomationBotGrants,
         GroupFileEntries, GroupFileVersions, GroupFileAudits,
         DocumentSpaces, DocumentSpaceGrants, DocumentNodes, DocumentContentRevisions,
@@ -113,6 +113,11 @@ object DatabaseFactory {
             it[epoch] = CURRENT_SCHEMA_EPOCH
             it[createdAt] = System.currentTimeMillis()
         }
+        OrganizationState.insert {
+            it[id] = ORGANIZATION_STATE_ID
+            it[revision] = 0L
+            it[updatedAt] = System.currentTimeMillis()
+        }
     }
 
     private fun Transaction.requireCurrentSchemaEpoch() {
@@ -140,6 +145,7 @@ object DatabaseFactory {
     }
 
     private const val SCHEMA_METADATA_ID = 1
+    private const val ORGANIZATION_STATE_ID = 1
     private val RELATION_IDENTIFIER = Regex("[a-z][a-z0-9_]*")
 }
 

@@ -1,20 +1,30 @@
 package com.virjar.tk.domain.conversation
 
 import com.virjar.tk.body.MessageBodyPolicy
+import com.virjar.tk.domain.chat.ChatAccess
 import com.virjar.tk.domain.chat.ChatLifecycleGate
+import com.virjar.tk.domain.chat.ManagedChatPolicy
+import com.virjar.tk.domain.chat.UnmanagedChatPolicy
+import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.domain.transaction.PgUnitOfWork
 import com.virjar.tk.model.Conversation
 import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.ReadSyncPayload
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class ConversationService(
     private val conversationRepo: ConversationRepository,
     private val lifecycleGate: ChatLifecycleGate,
     private val unitOfWork: PgUnitOfWork,
+    private val managedChats: ManagedChatPolicy = UnmanagedChatPolicy,
+    private val access: ChatAccess,
 ) {
 
-    fun listConversations(uid: String): List<Conversation> {
-        return conversationRepo.listConversations(uid)
+    suspend fun listConversations(uid: String): List<Conversation> = withContext(Dispatchers.IO) {
+        access.readAccessibleChatIds(uid) { allowedChatIds ->
+            conversationRepo.listConversations(uid).filter { it.chatId in allowedChatIds }
+        }
     }
 
     suspend fun setDraft(uid: String, chatId: String, draft: String?) =
@@ -25,6 +35,7 @@ class ConversationService(
         // 无法预览的损坏源码；非法或超限草稿应明确拒绝，由本地缓存保留完整内容。
         val validatedDraft = draft?.let(MessageBodyPolicy::validateMarkdown)
         unitOfWork.write {
+            requireProjectionReady(transaction, chatId)
             val conv = conversationRepo.setDraft(transaction, uid, chatId, validatedDraft)
             appendEvent(uid, NotifyType.CONVERSATION_UPDATED, conv)
         }
@@ -35,6 +46,7 @@ class ConversationService(
 
     private suspend fun setPinInternal(uid: String, chatId: String, pinned: Boolean) {
         unitOfWork.write {
+            requireProjectionReady(transaction, chatId)
             val conv = conversationRepo.setPin(transaction, uid, chatId, pinned)
             appendEvent(uid, NotifyType.CONVERSATION_UPDATED, conv)
         }
@@ -45,6 +57,7 @@ class ConversationService(
 
     private suspend fun setMuteInternal(uid: String, chatId: String, muted: Boolean) {
         unitOfWork.write {
+            requireProjectionReady(transaction, chatId)
             val conv = conversationRepo.setMute(transaction, uid, chatId, muted)
             appendEvent(uid, NotifyType.CONVERSATION_UPDATED, conv)
         }
@@ -52,6 +65,7 @@ class ConversationService(
 
     suspend fun deleteConversation(uid: String, chatId: String) = lifecycleGate.withChat(chatId) {
         unitOfWork.write {
+            requireProjectionReady(transaction, chatId)
             if (conversationRepo.deleteConversation(transaction, uid, chatId)) {
                 appendEvent(uid, NotifyType.CONVERSATION_DELETED, deletedConversation(chatId))
             }
@@ -74,6 +88,7 @@ class ConversationService(
 
     private suspend fun markReadInternal(uid: String, chatId: String, readSeq: Long) {
         unitOfWork.write {
+            requireProjectionReady(transaction, chatId)
             // maxSeq validation, the actor watermark, every peer watermark and all durable events
             // share one locked database snapshot. A concurrent lower cursor therefore cannot win.
             val mutation = conversationRepo.markRead(transaction, uid, chatId, readSeq)
@@ -99,6 +114,11 @@ class ConversationService(
         for (uid in memberUids) {
             conversationRepo.ensureConversation(uid, chatId, chatType)
         }
+    }
+
+    private fun requireProjectionReady(transaction: PgTransactionContext, chatId: String) {
+        val authority = managedChats.lockAuthority(transaction, listOf(chatId)).getValue(chatId)
+        require(authority.ready) { "受管群投影尚未收敛" }
     }
 
     private fun deletedConversation(chatId: String): Conversation {

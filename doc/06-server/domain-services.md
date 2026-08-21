@@ -28,8 +28,10 @@ channel id，而不是 deviceId 或用于日志的短 id，避免误保留同设
 
 ### 资料更新
 
-只能更新允许的个人字段；uid、用户名等身份键不能由普通资料接口覆盖。更新后向用户所有设备发送
-USER_UPDATED。
+只能通过 presence-aware `ProfilePatch` 更新允许的个人字段；缺席字段保持原值，avatar/phone 的
+显式 null 表示清空，uid、用户名等身份键不能由普通资料接口覆盖。服务端锁定 User 行后只写入
+present 且实际变化的字段，并在同一 PostgreSQL 事务追加 USER_UPDATED；无变化不更新
+`updated_at`、也不产生事件。
 
 ## 2. Contact
 

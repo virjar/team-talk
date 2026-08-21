@@ -9,9 +9,12 @@ import com.virjar.tk.domain.attachment.AttachmentCatalog
 import com.virjar.tk.domain.attachment.AttachmentService
 import com.virjar.tk.domain.chat.ChatAccessDeniedException
 import com.virjar.tk.domain.chat.ChatAccessPolicy
+import com.virjar.tk.domain.chat.ChatAccessSnapshot
 import com.virjar.tk.domain.chat.ChatAccessSource
 import com.virjar.tk.domain.chat.ChatLifecycleGate
 import com.virjar.tk.domain.chat.ChatMemberRepository
+import com.virjar.tk.domain.chat.MessageAdmission
+import com.virjar.tk.domain.chat.MessageAdmissionFacts
 import com.virjar.tk.domain.chat.ChatRepository
 import com.virjar.tk.domain.chat.ChatStore
 import com.virjar.tk.domain.chat.InviteLinkRepository
@@ -171,6 +174,29 @@ class MessageServiceLifecycleTest {
                 "getMembers" -> membersByChat[args[0] as String].orEmpty()
                 "getMemberUids" -> membersByChat[args[0] as String].orEmpty().map(Member::uid)
                 "isMuted", "isMember" -> false
+                "admitMessage" -> {
+                    val chatId = args[1] as String
+                    val senderUid = args[2] as String
+                    val members = membersByChat[chatId].orEmpty()
+                    @Suppress("UNCHECKED_CAST")
+                    val afterChatLocked = args[4] as () -> Unit
+                    @Suppress("UNCHECKED_CAST")
+                    val authorize = args[5] as (MessageAdmissionFacts) -> Unit
+                    afterChatLocked()
+                    authorize(
+                        MessageAdmissionFacts(
+                            chat = chats.getValue(chatId).copy(memberCount = members.size),
+                            sender = members.firstOrNull { it.uid == senderUid },
+                            senderMuted = false,
+                            activeMemberUids = members.map(Member::uid),
+                        ),
+                    )
+                    MessageAdmission(
+                        serverSeq = (chats.getValue(chatId).maxSeq + 1L),
+                        chatType = chats.getValue(chatId).chatType,
+                        recipientUids = members.map(Member::uid),
+                    )
+                }
                 else -> UnhandledCall
             }
         }
@@ -269,17 +295,42 @@ class MessageServiceLifecycleTest {
             sourceMemberActive = false
         }
 
-        override fun getChat(chatId: String): Chat? {
+        private fun getChat(chatId: String): Chat? {
             if (chatId == sourceChatId && !sourceChatActive) return null
             return chats[chatId]
         }
 
-        override fun getMember(chatId: String, uid: String): Member? {
+        private fun getMember(chatId: String, uid: String): Member? {
             if (uid != ACTOR_UID || getChat(chatId) == null) return null
             if (chatId == sourceChatId && !sourceMemberActive) return null
             if (chatId != sourceChatId && chatId != targetChatId) return null
             return Member(uid = uid, chatId = chatId, role = 0)
         }
+
+        override suspend fun load(chatId: String, memberUids: Set<String>): ChatAccessSnapshot =
+            ChatAccessSnapshot(
+                chat = getChat(chatId),
+                members = memberUids.mapNotNull { uid -> getMember(chatId, uid) },
+            )
+
+        override suspend fun loadAllMembers(chatId: String): ChatAccessSnapshot =
+            ChatAccessSnapshot(
+                chat = getChat(chatId),
+                members = listOfNotNull(getMember(chatId, ACTOR_UID)),
+            )
+
+        override suspend fun listAccessibleChatIds(uid: String): Set<String> = chats.keys
+            .filterTo(linkedSetOf()) { chatId -> getMember(chatId, uid) != null }
+
+        override suspend fun <T> read(
+            chatId: String,
+            memberUids: Set<String>,
+            includeAllMembers: Boolean,
+            block: (ChatAccessSnapshot) -> T,
+        ): T = block(if (includeAllMembers) loadAllMembers(chatId) else load(chatId, memberUids))
+
+        override suspend fun <T> readAccessibleChatIds(uid: String, block: (Set<String>) -> T): T =
+            block(listAccessibleChatIds(uid))
     }
 
     private companion object {

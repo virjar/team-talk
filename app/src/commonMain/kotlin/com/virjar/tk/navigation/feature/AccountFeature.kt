@@ -9,6 +9,8 @@ import com.virjar.tk.client.ClientSession
 import com.virjar.tk.model.Contact
 import com.virjar.tk.model.ContactApplyRecord
 import com.virjar.tk.model.Device
+import com.virjar.tk.model.ProfilePatch
+import com.virjar.tk.model.ProfilePatchValue
 import com.virjar.tk.model.User
 import com.virjar.tk.viewmodel.ContactViewModel
 import kotlinx.coroutines.CoroutineScope
@@ -368,7 +370,12 @@ class AccountFeature internal constructor(
     }
 
     suspend fun saveProfile(name: String, phone: String?): Boolean = try {
-        session.userRepo.updateProfile(name = name, phone = phone).getOrThrow()
+        session.userRepo.updateProfile(
+            ProfilePatch(
+                name = ProfilePatchValue.Set(name),
+                phone = ProfilePatchValue.Set(phone),
+            ),
+        ).getOrThrow()
         true
     } catch (e: AppError) {
         reportError(e, "保存失败")

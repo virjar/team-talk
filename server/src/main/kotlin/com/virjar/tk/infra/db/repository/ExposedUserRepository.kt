@@ -1,16 +1,29 @@
 package com.virjar.tk.infra.db.repository
 
 import com.virjar.tk.domain.user.UserInternal
+import com.virjar.tk.domain.user.UserProfileMutation
 import com.virjar.tk.domain.user.UserRepository
 import com.virjar.tk.domain.transaction.PgTransactionContext
+import com.virjar.tk.infra.db.USERS_PHONE_UNIQUE_INDEX
 import com.virjar.tk.infra.db.Users
 import com.virjar.tk.infra.db.requireExposedTransaction
+import com.virjar.tk.model.ProfilePatch
 import com.virjar.tk.model.User
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.postgresql.util.PSQLException
 import org.slf4j.LoggerFactory
+import java.sql.SQLException
 
-class ExposedUserRepository : UserRepository {
+/** Internal-only test seam around the exact PostgreSQL row-lock acquisition. Production passes null. */
+internal interface UserProfileLockObserver {
+    fun beforeUserRowLock(uid: String)
+    fun afterUserRowLock(uid: String)
+}
+
+class ExposedUserRepository internal constructor(
+    private val profileLockObserver: UserProfileLockObserver? = null,
+) : UserRepository {
     private val logger = LoggerFactory.getLogger(ExposedUserRepository::class.java)
 
     override fun findByUid(uid: String): User? {
@@ -70,16 +83,46 @@ class ExposedUserRepository : UserRepository {
         )
     }
 
-    override fun updateProfile(uid: String, name: String?, avatar: String?, sex: Int?, phone: String?) {
-        transaction {
+    override fun updateProfile(
+        transaction: PgTransactionContext,
+        uid: String,
+        patch: ProfilePatch,
+    ): UserProfileMutation {
+        transaction.requireExposedTransaction()
+        profileLockObserver?.beforeUserRowLock(uid)
+        val before = Users.selectAll()
+            .where { Users.uid eq uid }
+            .forUpdate()
+            .singleOrNull()
+            ?.toUser()
+            ?: throw IllegalArgumentException("用户不存在")
+        profileLockObserver?.afterUserRowLock(uid)
+
+        val after = before.copy(
+            name = if (patch.name.isPresent) requireNotNull(patch.name.valueOrNull) else before.name,
+            avatar = if (patch.avatar.isPresent) patch.avatar.valueOrNull else before.avatar,
+            sex = if (patch.sex.isPresent) requireNotNull(patch.sex.valueOrNull) else before.sex,
+            phone = if (patch.phone.isPresent) patch.phone.valueOrNull else before.phone,
+        )
+        if (after == before) return UserProfileMutation(user = before, changed = false)
+
+        try {
             Users.update({ Users.uid eq uid }) {
-                name?.let { v -> it[Users.name] = v }
-                avatar?.let { v -> it[Users.avatar] = v }
-                sex?.let { v -> it[Users.sex] = v }
-                phone?.let { v -> it[Users.phone] = v }
+                if (patch.name.isPresent && after.name != before.name) it[Users.name] = after.name
+                if (patch.avatar.isPresent && after.avatar != before.avatar) it[Users.avatar] = after.avatar
+                if (patch.sex.isPresent && after.sex != before.sex) it[Users.sex] = after.sex
+                if (patch.phone.isPresent && after.phone != before.phone) it[Users.phone] = after.phone
                 it[Users.updatedAt] = System.currentTimeMillis()
             }
+        } catch (error: SQLException) {
+            if (error.isPhoneUniqueViolation()) {
+                // Do not retain the driver exception as a cause: PostgreSQL's detail contains the
+                // conflicting value and RpcDispatcher logs business exception messages.
+                throw IllegalArgumentException("手机号已被使用")
+            }
+            throw error
         }
+        return UserProfileMutation(user = after, changed = true)
     }
 
     override fun searchUsers(keyword: String, limit: Int): List<User> {
@@ -140,4 +183,22 @@ class ExposedUserRepository : UserRepository {
         passwordHash = this[Users.passwordHash],
         credentialEpoch = this[Users.credentialEpoch],
     )
+
+    private fun SQLException.isPhoneUniqueViolation(): Boolean {
+        var current: Throwable? = this
+        while (current != null) {
+            if (current is PSQLException &&
+                current.sqlState == POSTGRES_UNIQUE_VIOLATION &&
+                current.serverErrorMessage?.constraint == USERS_PHONE_UNIQUE_INDEX
+            ) {
+                return true
+            }
+            current = current.cause
+        }
+        return false
+    }
+
+    private companion object {
+        const val POSTGRES_UNIQUE_VIOLATION = "23505"
+    }
 }

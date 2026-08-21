@@ -3,12 +3,13 @@ package com.virjar.tk.client
 /**
  * Local-cache schema generation.
  *
- * TeamTalk is still in its pre-release development cycle, so local SQLite data is rebuildable
- * from the server and does not carry an in-place migration contract yet. An incompatible schema
- * change increments this epoch and therefore selects a new database file. This keeps the runtime
- * bootstrap deterministic and prevents historical migration branches from accumulating.
+ * TeamTalk is still in its pre-release development cycle, so an explicitly approved incompatible
+ * change selects a new database file instead of running an in-place migration. Server projections
+ * then rebuild from the server; local-only facts from an older epoch are deliberately not imported.
+ * Epoch 3 adds durable outgoing/delivery facts, so every later epoch switch must make that data-loss
+ * decision explicitly rather than treating the whole database as a disposable projection.
  */
-internal const val LOCAL_CACHE_SCHEMA_EPOCH = 2
+internal const val LOCAL_CACHE_SCHEMA_EPOCH = 3
 
 /** Server identities become local path components on JVM and database names on Android. */
 internal fun validatedLocalCacheOwnerId(ownerUid: String): String {

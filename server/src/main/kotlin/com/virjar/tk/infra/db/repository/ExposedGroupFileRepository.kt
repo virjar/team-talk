@@ -2,6 +2,9 @@ package com.virjar.tk.infra.db.repository
 
 import com.virjar.tk.domain.groupfile.GroupFileRepository
 import com.virjar.tk.domain.groupfile.GroupFileService
+import com.virjar.tk.domain.chat.ManagedChatPolicy
+import com.virjar.tk.domain.chat.UnmanagedChatPolicy
+import com.virjar.tk.infra.db.ExposedPgTransactionContext
 import com.virjar.tk.infra.db.GroupFileAudits
 import com.virjar.tk.infra.db.GroupFileEntries
 import com.virjar.tk.infra.db.GroupFileVersions
@@ -19,9 +22,12 @@ import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.sum
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.transactions.TransactionManager
 import org.jetbrains.exposed.sql.update
 
-class ExposedGroupFileRepository : GroupFileRepository {
+class ExposedGroupFileRepository(
+    private val managedChats: ManagedChatPolicy = UnmanagedChatPolicy,
+) : GroupFileRepository {
     override fun list(chatId: String, parentId: String?): List<GroupFileEntry> = transaction {
         GroupFileEntries.selectAll().where {
             (GroupFileEntries.chatId eq chatId) and
@@ -220,6 +226,11 @@ class ExposedGroupFileRepository : GroupFileRepository {
      * 在上传准备完成后被踢出，或群在请求进入仓储前解散，也不能再提交文件树、版本或审计行。
      */
     private fun requireWritableGroup(chatId: String, actorUid: String) {
+        val authority = managedChats.lockAuthority(
+            ExposedPgTransactionContext(TransactionManager.current()),
+            listOf(chatId),
+        ).getValue(chatId)
+        require(authority.ready) { "受管群投影尚未收敛" }
         val activeGroup = Chats.selectAll().where {
             (Chats.chatId eq chatId) and
                 (Chats.chatType eq 2) and

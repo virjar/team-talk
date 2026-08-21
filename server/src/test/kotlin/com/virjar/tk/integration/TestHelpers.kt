@@ -8,7 +8,6 @@ import com.virjar.tk.application.admin.AdminService
 import com.virjar.tk.domain.bot.BotService
 import com.virjar.tk.domain.chat.ChatRepository
 import com.virjar.tk.domain.chat.ChatAccess
-import com.virjar.tk.domain.chat.ChatAccessPolicy
 import com.virjar.tk.domain.chat.ChatService
 import com.virjar.tk.domain.chat.ChatStore
 import com.virjar.tk.domain.contact.ContactRepository
@@ -26,6 +25,9 @@ import com.virjar.tk.domain.message.MessageProjectionRepository
 import com.virjar.tk.domain.message.MessageProjectionHooks
 import com.virjar.tk.domain.message.MessageSearch
 import com.virjar.tk.domain.organization.OrganizationRepository
+import com.virjar.tk.domain.organization.OrganizationManagedChatProjectionStore
+import com.virjar.tk.domain.organization.OrganizationManagedChatProjector
+import com.virjar.tk.domain.organization.OrganizationProjectionHooks
 import com.virjar.tk.domain.organization.OrganizationService
 import com.virjar.tk.domain.groupfile.GroupFileRepository
 import com.virjar.tk.domain.groupfile.GroupFileService
@@ -67,6 +69,7 @@ class TestEnvironment : AutoCloseable {
     private val msgsDir = File(testRoot, "msgs")
     private val searchDir = File(testRoot, "search")
     private val fileStoreDir = File(testRoot, "file-store")
+    private var fixtureOrganizationRootId: String? = null
 
     // Koin 容器（独立实例，不污染全局）
     private val koinApp = koinApplication {
@@ -126,6 +129,8 @@ class TestEnvironment : AutoCloseable {
     val documentRepo: DocumentRepository get() = koin.get()
     val attachmentAccess: AttachmentAccess get() = koin.get()
     val organizationRepo: OrganizationRepository get() = koin.get()
+    val organizationProjectionStore: OrganizationManagedChatProjectionStore get() = koin.get()
+    val organizationProjector: OrganizationManagedChatProjector get() = koin.get()
     val deviceRepo: DeviceRepository get() = koin.get()
     val userRepo: UserRepository get() = koin.get()
     val userStore: UserStore get() = koin.get()
@@ -142,13 +147,26 @@ class TestEnvironment : AutoCloseable {
     val healthChecker: com.virjar.tk.infra.health.HealthChecker get() = koin.get()
     val fileStore: com.virjar.tk.infra.storage.FileStore get() = koin.get()
 
+    fun freshOrganizationProjector(
+        hooks: OrganizationProjectionHooks = OrganizationProjectionHooks.None,
+        unitOfWork: PgUnitOfWork = pgUnitOfWork,
+        lifecycleGate: com.virjar.tk.domain.chat.ChatLifecycleGate = koin.get(),
+    ): OrganizationManagedChatProjector = OrganizationManagedChatProjector(
+        store = organizationProjectionStore,
+        lifecycleGate = lifecycleGate,
+        unitOfWork = unitOfWork,
+        cache = chatStore,
+        hooks = hooks,
+    )
+
     /** Build the same ChatService graph with a deterministic UoW failpoint for atomicity tests. */
-    fun freshChatService(unitOfWork: PgUnitOfWork): ChatService = ChatService(
-        chatStore = koin.get(),
+    fun freshChatService(
+        unitOfWork: PgUnitOfWork,
+        chatRepository: ChatRepository? = null,
+    ): ChatService = ChatService(
+        chatStore = chatRepository?.let { ChatStore(it, koin.get(), koin.get()) } ?: koin.get(),
         access = koin.get(),
         userStore = koin.get(),
-        events = koin.get(),
-        conversationService = koin.get(),
         managedChats = koin.get(),
         contacts = koin.get(),
         requiredParticipants = koin.get(),
@@ -167,7 +185,7 @@ class TestEnvironment : AutoCloseable {
         return MessageService(
             messages = koin.get(),
             chatStore = coldChatStore,
-            access = ChatAccessPolicy(coldChatStore),
+            access = koin.get(),
             projectionRepository = projectionRepository,
             unitOfWork = unitOfWork,
             projectionReadiness = koin.get(),
@@ -176,6 +194,7 @@ class TestEnvironment : AutoCloseable {
             users = koin.get(),
             contacts = koin.get(),
             lifecycleGate = koin.get(),
+            managedChats = koin.get(),
             projectionHooks = projectionHooks,
         )
     }
@@ -184,6 +203,39 @@ class TestEnvironment : AutoCloseable {
     suspend fun registerUser(username: String = uniqueUsername("user"), password: String = "pass123"): String {
         val user = userService.register(username, password, username)
         return user.uid
+    }
+
+    /**
+     * Document tests share one schema per class but describe independent organization forests.
+     * Keep the production single-root invariant by placing each declared fixture root below one
+     * hidden class-fixture root; declared parent/child ids remain unchanged inside each forest.
+    */
+    suspend fun seedOrganizationUnit(unit: com.virjar.tk.model.OrganizationUnit) {
+        val committedUnit = if (unit.parentId == null) {
+            var fixtureRoot = fixtureOrganizationRootId
+            if (fixtureRoot == null) {
+                val rootId = UUID.randomUUID().toString()
+                pgUnitOfWork.write {
+                    organizationRepo.createUnit(
+                        transaction,
+                        com.virjar.tk.model.OrganizationUnit(rootId, name = "test fixture root"),
+                        enableGroup = false,
+                    )
+                }
+                fixtureOrganizationRootId = rootId
+                fixtureRoot = rootId
+            }
+            unit.copy(parentId = requireNotNull(fixtureRoot))
+        } else {
+            unit
+        }
+        pgUnitOfWork.write {
+            organizationRepo.createUnit(transaction, committedUnit, enableGroup = committedUnit.groupChatId != null)
+        }
+    }
+
+    suspend fun seedOrganizationMember(member: com.virjar.tk.model.OrganizationMember) {
+        pgUnitOfWork.write { organizationRepo.assignMember(transaction, member) }
     }
 
     override fun close() {

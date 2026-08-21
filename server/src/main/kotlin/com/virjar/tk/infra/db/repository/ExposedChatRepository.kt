@@ -3,25 +3,44 @@ package com.virjar.tk.infra.db.repository
 import com.virjar.tk.domain.chat.AdminPage
 import com.virjar.tk.domain.chat.ChatRepository
 import com.virjar.tk.domain.chat.ChatDeactivation
+import com.virjar.tk.domain.chat.ChatCreation
+import com.virjar.tk.domain.chat.ChatMutation
+import com.virjar.tk.domain.chat.GroupCommandFacts
 import com.virjar.tk.domain.chat.InviteJoinResult
 import com.virjar.tk.domain.chat.personalChatKey
 import com.virjar.tk.domain.chat.requireJoinable
 import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.infra.db.Chats
 import com.virjar.tk.infra.db.Conversations
+import com.virjar.tk.infra.db.Friends
 import com.virjar.tk.infra.db.GroupChats
 import com.virjar.tk.infra.db.GroupInviteLinks
 import com.virjar.tk.infra.db.GroupMemberMutes
 import com.virjar.tk.infra.db.GroupMembers
+import com.virjar.tk.infra.db.Users
 import com.virjar.tk.infra.db.requireExposedTransaction
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Member
+import com.virjar.tk.model.UserRole
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.Op
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.like
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.util.UUID
+
+enum class ChatRepositoryStage {
+    BEFORE_CHAT_LOCK,
+}
+
+/** Deterministic test seam for proving commands wait on the authoritative Chat row fence. */
+fun interface ChatRepositoryHooks {
+    fun hit(stage: ChatRepositoryStage, chatId: String)
+
+    object None : ChatRepositoryHooks {
+        override fun hit(stage: ChatRepositoryStage, chatId: String) = Unit
+    }
+}
 
 /**
  * Chats 表访问 + Chat 视图组装。
@@ -31,137 +50,118 @@ import java.util.UUID
  * [createPersonalChat] / [createGroupChat] atomically initialize GroupMembers and Conversations;
  * these rows are required parts of the newly created chat, not best-effort service projections.
  */
-class ExposedChatRepository : ChatRepository {
+class ExposedChatRepository(
+    private val hooks: ChatRepositoryHooks = ChatRepositoryHooks.None,
+) : ChatRepository {
 
     // ── Chat CRUD ──
 
-    override fun createPersonalChat(uid1: String, uid2: String): Chat {
-        val pairKey = personalChatKey(uid1, uid2)
-        return transaction {
-            val existingChatId = findPersonalChatIdInternal(uid1, uid2)
-            if (existingChatId != null) {
-                return@transaction getChatByIdInternal(existingChatId)!!
-            }
+    override fun createPersonalChat(
+        transaction: PgTransactionContext,
+        uid1: String,
+        uid2: String,
+    ): ChatCreation = inWriteTransaction(transaction) {
+        val participants = listOf(uid1, uid2).distinct().sorted()
+        require(participants.size == 2) { "不能和自己创建私聊" }
+        lockRequiredHumanUsers(participants)
+        // Contact writers lock the same sorted User pair before Friends, so these rows cannot
+        // change after the user locks have been acquired.
+        val blocked = Friends.selectAll().where {
+            (((Friends.uid eq uid1) and (Friends.friendUid eq uid2)) or
+                ((Friends.uid eq uid2) and (Friends.friendUid eq uid1))) and
+                (Friends.status eq 2)
+        }.orderBy(Friends.id, SortOrder.ASC).forUpdate().any()
+        require(!blocked) { "黑名单关系下不能创建私聊" }
 
-            val chatId = UUID.randomUUID().toString()
-            val now = System.currentTimeMillis()
-            val inserted = Chats.insertIgnore {
-                it[Chats.chatId] = chatId
-                it[Chats.chatType] = 1
-                it[Chats.personalKey] = pairKey
-                it[Chats.maxSeq] = 0
-                it[Chats.status] = 1
-                it[Chats.createdAt] = now
-                it[Chats.updatedAt] = now
-            }
-            if (inserted.insertedCount == 0) {
-                val winnerChatId = Chats.selectAll()
-                    .where { (Chats.personalKey eq pairKey) and (Chats.status eq 1) }
-                    .singleOrNull()
-                    ?.get(Chats.chatId)
-                    ?: error("私聊唯一键冲突，但未找到已建立的会话")
-                return@transaction getChatByIdInternal(winnerChatId)!!
-            }
-            GroupMembers.insert {
-                it[GroupMembers.chatId] = chatId
-                it[GroupMembers.chatType] = 1
-                it[GroupMembers.uid] = uid1
-                it[GroupMembers.role] = 0
-                it[GroupMembers.status] = 1
-                it[GroupMembers.joinedAt] = now
-            }
-            GroupMembers.insert {
-                it[GroupMembers.chatId] = chatId
-                it[GroupMembers.chatType] = 1
-                it[GroupMembers.uid] = uid2
-                it[GroupMembers.role] = 0
-                it[GroupMembers.status] = 1
-                it[GroupMembers.joinedAt] = now
-            }
-            // 为双方创建 conversation 记录
-            for (uid in listOf(uid1, uid2)) {
-                ensureConversation(uid = uid, chatId = chatId, chatType = 1, now = now)
-            }
-            Chat(chatId = chatId, chatType = 1)
+        val existingChatId = findPersonalChatIdInternal(uid1, uid2)
+        if (existingChatId != null) {
+            val existing = getChatByIdInternal(existingChatId)
+                ?: error("私聊索引指向了不存在的会话")
+            return@inWriteTransaction ChatCreation(
+                chat = existing,
+                created = false,
+                recipientUids = participants,
+            )
         }
+
+        val chatId = UUID.randomUUID().toString()
+        val now = System.currentTimeMillis()
+        Chats.insert {
+            it[Chats.chatId] = chatId
+            it[Chats.chatType] = 1
+            it[Chats.personalKey] = personalChatKey(uid1, uid2)
+            it[Chats.maxSeq] = 0
+            it[Chats.status] = 1
+            it[Chats.createdAt] = now
+            it[Chats.updatedAt] = now
+        }
+        participants.forEach { uid ->
+            GroupMembers.insert {
+                it[GroupMembers.chatId] = chatId
+                it[GroupMembers.chatType] = 1
+                it[GroupMembers.uid] = uid
+                it[GroupMembers.role] = 0
+                it[GroupMembers.status] = 1
+                it[GroupMembers.joinedAt] = now
+            }
+            ensureConversation(uid = uid, chatId = chatId, chatType = 1, now = now)
+        }
+        ChatCreation(
+            chat = Chat(chatId = chatId, chatType = 1),
+            created = true,
+            recipientUids = participants,
+        )
     }
 
+
     override fun createGroupChat(
+        transaction: PgTransactionContext,
         name: String,
         avatar: String?,
         creatorUid: String,
         memberUids: List<String>,
-        requestedChatId: String?,
-    ): Chat {
-        return transaction {
-            val chatId = requestedChatId ?: UUID.randomUUID().toString()
-            val now = System.currentTimeMillis()
-            val existing = Chats.selectAll().where { Chats.chatId eq chatId }.singleOrNull()
-            if (existing != null) {
-                require(existing[Chats.chatType] == 2) { "受管群 ID 与非群聊冲突: $chatId" }
-                Chats.update({ Chats.chatId eq chatId }) {
-                    it[status] = 1
-                    it[updatedAt] = now
-                }
-                GroupChats.update({ GroupChats.chatId eq chatId }) {
-                    it[GroupChats.name] = name
-                    it[GroupChats.avatar] = avatar
-                    it[GroupChats.creator] = creatorUid
-                    it[GroupChats.updatedAt] = now
-                }
-                GroupMembers.update({ GroupMembers.chatId eq chatId }) {
-                    it[role] = 0
-                }
-                ensureActiveGroupMember(chatId, creatorUid, role = 2, now = now)
-                memberUids.filter { it != creatorUid }.forEach {
-                    ensureActiveGroupMember(chatId, it, role = 0, now = now)
-                }
-                return@transaction getChatByIdInternal(chatId)!!
-            }
-            Chats.insert {
-                it[Chats.chatId] = chatId
-                it[Chats.chatType] = 2
-                it[Chats.maxSeq] = 0
-                it[Chats.status] = 1
-                it[Chats.createdAt] = now
-                it[Chats.updatedAt] = now
-            }
-            GroupChats.insert {
-                it[GroupChats.chatId] = chatId
-                it[GroupChats.name] = name
-                it[GroupChats.avatar] = avatar
-                it[GroupChats.creator] = creatorUid
-                it[GroupChats.mutedAll] = false
-                it[GroupChats.updatedAt] = now
-            }
+    ): ChatCreation = inWriteTransaction(transaction) {
+        val recipients = (memberUids + creatorUid).distinct().sorted()
+        // The id does not exist yet, so this is the sole User -> new Chat lock-order exception.
+        lockRequiredHumanUsers(recipients)
+        val chatId = UUID.randomUUID().toString()
+        val now = System.currentTimeMillis()
+        Chats.insert {
+            it[Chats.chatId] = chatId
+            it[Chats.chatType] = 2
+            it[Chats.maxSeq] = 0
+            it[Chats.status] = 1
+            it[Chats.createdAt] = now
+            it[Chats.updatedAt] = now
+        }
+        GroupChats.insert {
+            it[GroupChats.chatId] = chatId
+            it[GroupChats.name] = name
+            it[GroupChats.avatar] = avatar
+            it[GroupChats.creator] = creatorUid
+            it[GroupChats.mutedAll] = false
+            it[GroupChats.updatedAt] = now
+        }
+        recipients.forEach { uid ->
             GroupMembers.insert {
                 it[GroupMembers.chatId] = chatId
                 it[GroupMembers.chatType] = 2
-                it[GroupMembers.uid] = creatorUid
-                it[GroupMembers.role] = 2
+                it[GroupMembers.uid] = uid
+                it[GroupMembers.role] = if (uid == creatorUid) 2 else 0
                 it[GroupMembers.status] = 1
                 it[GroupMembers.joinedAt] = now
             }
-            for (uid in memberUids.distinct()) {
-                GroupMembers.insertIgnore {
-                    it[GroupMembers.chatId] = chatId
-                    it[GroupMembers.chatType] = 2
-                    it[GroupMembers.uid] = uid
-                    it[GroupMembers.role] = 0
-                    it[GroupMembers.status] = 1
-                    it[GroupMembers.joinedAt] = now
-                }
-            }
-            // 为所有成员创建 conversation 记录，确保会话列表能显示群聊
-            val allUids = (memberUids + creatorUid).distinct()
-            for (uid in allUids) {
-                ensureConversation(uid = uid, chatId = chatId, chatType = 2, now = now)
-            }
-            Chat(
-                chatId = chatId, chatType = 2, name = name, avatar = avatar,
-                creator = creatorUid, memberCount = allUids.size,
-            )
+            ensureConversation(uid = uid, chatId = chatId, chatType = 2, now = now)
         }
+        val chat = Chat(
+            chatId = chatId,
+            chatType = 2,
+            name = name,
+            avatar = avatar,
+            creator = creatorUid,
+            memberCount = recipients.size,
+        )
+        ChatCreation(chat = chat, created = true, recipientUids = recipients)
     }
 
     override fun joinByInvite(
@@ -171,7 +171,7 @@ class ExposedChatRepository : ChatRepository {
         nowMillis: Long,
     ): InviteJoinResult = inWriteTransaction(transaction) {
         // Resolve the owning chat without a lock, then acquire the aggregate locks in the global
-        // chat -> invite order also used by dissolution. The locked re-read below is authoritative.
+        // Chat -> User -> Invite -> Member order. The locked re-read below is authoritative.
         val resolvedChatId = GroupInviteLinks.selectAll()
             .where { GroupInviteLinks.token eq token }
             .singleOrNull()
@@ -182,6 +182,7 @@ class ExposedChatRepository : ChatRepository {
             .forUpdate()
             .singleOrNull()
             ?: throw IllegalArgumentException("聊天不存在")
+        lockRequiredHumanUsers(listOf(uid))
         val inviteRow = GroupInviteLinks.selectAll()
             .where { GroupInviteLinks.token eq token }
             .forUpdate()
@@ -244,69 +245,86 @@ class ExposedChatRepository : ChatRepository {
         return block()
     }
 
-    private fun ensureActiveGroupMember(chatId: String, uid: String, role: Int, now: Long) {
-        val existing = GroupMembers.selectAll().where {
-            (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid)
-        }.singleOrNull()
-        if (existing == null) {
-            GroupMembers.insert {
-                it[GroupMembers.chatId] = chatId
-                it[chatType] = 2
-                it[GroupMembers.uid] = uid
-                it[GroupMembers.role] = role
-                it[status] = 1
-                it[joinedAt] = now
-            }
-        } else {
-            GroupMembers.update({
-                (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid)
-            }) {
-                it[GroupMembers.role] = role
-                it[status] = 1
-            }
-        }
-    }
-
     override fun getChat(chatId: String): Chat? {
         return transaction { getChatByIdInternal(chatId) }
     }
 
-    override fun updateGroup(chatId: String, name: String?, avatar: String?, notice: String?) {
-        transaction {
-            require(Chats.selectAll().where {
-                (Chats.chatId eq chatId) and (Chats.status eq 1)
-            }.forUpdate().singleOrNull() != null) { "聊天不存在" }
-            name?.let { v -> GroupChats.update({ GroupChats.chatId eq chatId }) { it[GroupChats.name] = v } }
-            avatar?.let { v -> GroupChats.update({ GroupChats.chatId eq chatId }) { it[GroupChats.avatar] = v } }
-            notice?.let { v -> GroupChats.update({ GroupChats.chatId eq chatId }) { it[GroupChats.notice] = v } }
-            GroupChats.update({ GroupChats.chatId eq chatId }) { it[GroupChats.updatedAt] = System.currentTimeMillis() }
-            Chats.update({ Chats.chatId eq chatId }) { it[Chats.updatedAt] = System.currentTimeMillis() }
+    override fun updateGroup(
+        transaction: PgTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        name: String?,
+        avatar: String?,
+        notice: String?,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): ChatMutation = inWriteTransaction(transaction) {
+        val chatRow = lockActiveChat(chatId)
+        require(chatRow[Chats.chatType] == 2) { "群聊不存在" }
+        lockRequiredHumanUsers(listOf(operatorUid))
+        val members = lockActiveMembers(chatId)
+        val before = buildChatFromRow(chatRow)
+        authorize(
+            GroupCommandFacts(
+                chat = before,
+                operator = members.firstOrNull { it.uid == operatorUid },
+                activeMemberUids = members.map(Member::uid),
+            ),
+        )
+        val now = System.currentTimeMillis()
+        name?.let { value ->
+            GroupChats.update({ GroupChats.chatId eq chatId }) { it[GroupChats.name] = value }
         }
+        avatar?.let { value ->
+            GroupChats.update({ GroupChats.chatId eq chatId }) { it[GroupChats.avatar] = value }
+        }
+        notice?.let { value ->
+            GroupChats.update({ GroupChats.chatId eq chatId }) { it[GroupChats.notice] = value }
+        }
+        check(GroupChats.update({ GroupChats.chatId eq chatId }) {
+            it[GroupChats.updatedAt] = now
+        } == 1) { "群聊数据不完整" }
+        Chats.update({ Chats.chatId eq chatId }) { it[Chats.updatedAt] = now }
+        ChatMutation(
+            chat = buildChatFromRow(chatRow),
+            recipientUids = members.map(Member::uid),
+        )
     }
 
-    override fun deactivateChat(chatId: String) {
-        transaction {
-            deactivateChatInternal(chatId, allowMissing = true)
-        }
+    override fun lockForDeactivation(
+        transaction: PgTransactionContext,
+        chatId: String,
+        operatorUid: String?,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): Chat = inWriteTransaction(transaction) {
+        val chatRow = lockActiveChat(chatId)
+        operatorUid?.let { lockRequiredHumanUsers(listOf(it)) }
+        // Chat is the aggregate fence. Read membership without taking its row lock because Bot
+        // identity/grant locks must be acquired before member projection locks during teardown.
+        val members = activeMembers(chatId, forUpdate = false)
+        val chat = buildChatFromRow(chatRow)
+        authorize(
+            GroupCommandFacts(
+                chat = chat,
+                operator = operatorUid?.let { uid -> members.firstOrNull { it.uid == uid } },
+                activeMemberUids = members.map(Member::uid),
+            ),
+        )
+        chat
     }
 
     override fun deactivateChat(transaction: PgTransactionContext, chatId: String): ChatDeactivation =
         inWriteTransaction(transaction) {
-            deactivateChatInternal(chatId, allowMissing = false)
-                ?: throw IllegalArgumentException("聊天不存在")
+            deactivateChatInternal(chatId)
         }
 
-    private fun deactivateChatInternal(chatId: String, allowMissing: Boolean): ChatDeactivation? {
+    private fun deactivateChatInternal(chatId: String): ChatDeactivation {
         // The caller may already hold this row. Re-locking is safe and documents that no member or
         // Conversation mutation occurs without the chat aggregate fence.
         val chatRow = Chats.selectAll()
             .where { Chats.chatId eq chatId }
             .forUpdate()
             .singleOrNull()
-        if (chatRow == null || chatRow[Chats.status] != 1) {
-            if (allowMissing) return null
-            throw IllegalArgumentException("聊天不存在")
-        }
+        require(chatRow != null && chatRow[Chats.status] == 1) { "聊天不存在" }
         GroupInviteLinks.selectAll()
             .where { GroupInviteLinks.chatId eq chatId }
             .orderBy(GroupInviteLinks.id)
@@ -315,6 +333,16 @@ class ExposedChatRepository : ChatRepository {
         val memberRows = GroupMembers.selectAll()
             .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1) }
             .orderBy(GroupMembers.uid, SortOrder.ASC)
+            .forUpdate()
+            .toList()
+        GroupMemberMutes.selectAll()
+            .where { GroupMemberMutes.chatId eq chatId }
+            .orderBy(GroupMemberMutes.uid, SortOrder.ASC)
+            .forUpdate()
+            .toList()
+        Conversations.selectAll()
+            .where { Conversations.chatId eq chatId }
+            .orderBy(Conversations.uid, SortOrder.ASC)
             .forUpdate()
             .toList()
         val chat = getChatByIdInternal(chatId) ?: throw IllegalStateException("聊天数据不完整")
@@ -327,8 +355,8 @@ class ExposedChatRepository : ChatRepository {
         GroupMembers.update({ GroupMembers.chatId eq chatId }) {
             it[GroupMembers.status] = 0
         }
-        Conversations.deleteWhere { Conversations.chatId eq chatId }
         GroupMemberMutes.deleteWhere { GroupMemberMutes.chatId eq chatId }
+        Conversations.deleteWhere { Conversations.chatId eq chatId }
         GroupInviteLinks.deleteWhere { GroupInviteLinks.chatId eq chatId }
         return ChatDeactivation(chat, memberUids)
     }
@@ -338,15 +366,6 @@ class ExposedChatRepository : ChatRepository {
             GroupMembers.selectAll()
                 .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1) }
                 .map { it[GroupMembers.uid] }
-        }
-    }
-
-    override fun updateMaxSeq(chatId: String, seq: Long) {
-        transaction {
-            Chats.update({ (Chats.chatId eq chatId) and (Chats.maxSeq less seq) }) {
-                it[Chats.maxSeq] = seq
-                it[Chats.updatedAt] = System.currentTimeMillis()
-            }
         }
     }
 
@@ -418,6 +437,40 @@ class ExposedChatRepository : ChatRepository {
             it[Conversations.lastMsgSeq] = 0
             it[Conversations.updatedAt] = now
         }
+    }
+
+    private fun lockActiveChat(chatId: String): ResultRow {
+        hooks.hit(ChatRepositoryStage.BEFORE_CHAT_LOCK, chatId)
+        return Chats.selectAll()
+            .where { Chats.chatId eq chatId }
+            .forUpdate()
+            .singleOrNull()
+            ?.also { require(it[Chats.status] == 1) { "聊天不存在" } }
+            ?: throw IllegalArgumentException("聊天不存在")
+    }
+
+    private fun lockRequiredHumanUsers(uids: Collection<String>) {
+        val required = uids.distinct().sorted()
+        if (required.isEmpty()) return
+        val rows = Users.selectAll().where { Users.uid inList required }
+            .orderBy(Users.uid, SortOrder.ASC)
+            .forUpdate()
+            .toList()
+        require(rows.size == required.size) { "用户不存在" }
+        require(rows.all { it[Users.status] == 1 }) { "用户已停用" }
+        require(rows.all { it[Users.role] == UserRole.HUMAN }) {
+            "机器人或系统成员只能通过对应的管理入口操作"
+        }
+    }
+
+    private fun lockActiveMembers(chatId: String): List<Member> = activeMembers(chatId, forUpdate = true)
+
+    private fun activeMembers(chatId: String, forUpdate: Boolean): List<Member> {
+        val query = GroupMembers.selectAll()
+            .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1) }
+            .orderBy(GroupMembers.uid, SortOrder.ASC)
+        val rows = if (forUpdate) query.forUpdate().toList() else query.toList()
+        return rows.map(ResultRow::toMemberSnapshot)
     }
 
     private fun getChatByIdInternal(chatId: String): Chat? {

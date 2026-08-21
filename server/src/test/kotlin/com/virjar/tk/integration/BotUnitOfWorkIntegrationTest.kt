@@ -4,6 +4,8 @@ import com.virjar.tk.application.bot.ChatServiceBotMembership
 import com.virjar.tk.application.bot.MessageServiceBotSender
 import com.virjar.tk.application.bot.UserServiceBotAccounts
 import com.virjar.tk.domain.bot.AutomationBot
+import com.virjar.tk.domain.bot.BotAuthenticationException
+import com.virjar.tk.domain.bot.BotAuthorizationException
 import com.virjar.tk.domain.bot.BotGroupMembership
 import com.virjar.tk.domain.bot.BotMessageSender
 import com.virjar.tk.domain.bot.BotRepository
@@ -19,6 +21,7 @@ import com.virjar.tk.infra.db.Conversations
 import com.virjar.tk.infra.db.ExposedPgUnitOfWork
 import com.virjar.tk.infra.db.GroupMemberMutes
 import com.virjar.tk.infra.db.GroupMembers
+import com.virjar.tk.infra.db.OrganizationManagedChatProjections
 import com.virjar.tk.infra.db.PgUnitOfWorkHooks
 import com.virjar.tk.infra.db.PgUnitOfWorkStage
 import com.virjar.tk.infra.db.SyncEvents
@@ -403,6 +406,214 @@ class BotUnitOfWorkIntegrationTest {
     }
 
     @Test
+    fun `cross-process capability closure fences new and idempotent delivery admission`() = runTest {
+        val owner = ctx.registerUser(uniqueUsername("bot-delivery-fence-owner"))
+        val group = ctx.chatService.createGroup("Bot delivery fence", null, owner, emptyList())
+        val mutator = freshBotService(ctx.pgUnitOfWork)
+        val created = mutator.create("Delivery fence bot")
+        mutator.grant(created.bot.botId, group.chatId)
+        val realSender = MessageServiceBotSender(ctx.messageService)
+        val baselineSeq = chatMaxSeq(group.chatId)
+
+        fun delayedService(
+            entered: CompletableDeferred<Unit>,
+            release: CompletableDeferred<Unit>,
+        ): BotService = freshBotService(
+            unitOfWork = ctx.pgUnitOfWork,
+            sender = BotMessageSender { senderUid, message, authorizeAfterChatLock ->
+                entered.complete(Unit)
+                release.await()
+                realSender.send(senderUid, message, authorizeAfterChatLock)
+            },
+        )
+
+        val enteredNewAdmission = CompletableDeferred<Unit>()
+        val releaseNewAdmission = CompletableDeferred<Unit>()
+        val delayedNewAdmission = delayedService(enteredNewAdmission, releaseNewAdmission)
+        val staleNewDelivery = async(Dispatchers.Default) {
+            runCatching {
+                delayedNewAdmission.deliver(
+                    created.bot.botId,
+                    created.webhookToken,
+                    group.chatId,
+                    "must not be admitted",
+                    "rotation-new-message",
+                )
+            }
+        }
+        enteredNewAdmission.await()
+        val rotated = mutator.rotateToken(created.bot.botId)
+        releaseNewAdmission.complete(Unit)
+
+        assertIs<BotAuthenticationException>(staleNewDelivery.await().exceptionOrNull())
+        assertEquals(baselineSeq, chatMaxSeq(group.chatId))
+        assertNull(mutator.list().single { it.botId == created.bot.botId }.lastUsedAt)
+
+        val accepted = mutator.deliver(
+            created.bot.botId,
+            rotated.webhookToken,
+            group.chatId,
+            "accepted once",
+            "rotation-existing-message",
+        )
+        val acceptedLastUsedAt = mutator.list().single { it.botId == created.bot.botId }.lastUsedAt
+        assertNotNull(acceptedLastUsedAt)
+
+        val enteredIdempotentRetry = CompletableDeferred<Unit>()
+        val releaseIdempotentRetry = CompletableDeferred<Unit>()
+        val delayedIdempotentRetry = delayedService(enteredIdempotentRetry, releaseIdempotentRetry)
+        val staleIdempotentRetry = async(Dispatchers.Default) {
+            runCatching {
+                delayedIdempotentRetry.deliver(
+                    created.bot.botId,
+                    rotated.webhookToken,
+                    group.chatId,
+                    "accepted once",
+                    "rotation-existing-message",
+                )
+            }
+        }
+        enteredIdempotentRetry.await()
+        val rotatedAgain = mutator.rotateToken(created.bot.botId)
+        releaseIdempotentRetry.complete(Unit)
+
+        assertIs<BotAuthenticationException>(staleIdempotentRetry.await().exceptionOrNull())
+        assertEquals(accepted.serverSeq, chatMaxSeq(group.chatId))
+        assertEquals(
+            acceptedLastUsedAt,
+            mutator.list().single { it.botId == created.bot.botId }.lastUsedAt,
+        )
+
+        val enteredRevokedGrant = CompletableDeferred<Unit>()
+        val releaseRevokedGrant = CompletableDeferred<Unit>()
+        val delayedRevokedGrant = delayedService(enteredRevokedGrant, releaseRevokedGrant)
+        val staleRevokedGrant = async(Dispatchers.Default) {
+            runCatching {
+                delayedRevokedGrant.deliver(
+                    created.bot.botId,
+                    rotatedAgain.webhookToken,
+                    group.chatId,
+                    "must not cross revoked grant",
+                    "revoked-grant-message",
+                )
+            }
+        }
+        enteredRevokedGrant.await()
+        mutator.revokeGrant(created.bot.botId, group.chatId)
+        releaseRevokedGrant.complete(Unit)
+
+        val revokedGrantFailure = assertIs<BotAuthorizationException>(
+            staleRevokedGrant.await().exceptionOrNull(),
+        )
+        assertEquals("机器人未获该群授权", revokedGrantFailure.message)
+        assertEquals(accepted.serverSeq, chatMaxSeq(group.chatId))
+        assertEquals(
+            acceptedLastUsedAt,
+            mutator.list().single { it.botId == created.bot.botId }.lastUsedAt,
+        )
+
+        mutator.grant(created.bot.botId, group.chatId)
+        val enteredDisabledStatus = CompletableDeferred<Unit>()
+        val releaseDisabledStatus = CompletableDeferred<Unit>()
+        val delayedDisabledStatus = delayedService(enteredDisabledStatus, releaseDisabledStatus)
+        val staleDisabledStatus = async(Dispatchers.Default) {
+            runCatching {
+                delayedDisabledStatus.deliver(
+                    created.bot.botId,
+                    rotatedAgain.webhookToken,
+                    group.chatId,
+                    "must not cross disabled status",
+                    "disabled-status-message",
+                )
+            }
+        }
+        enteredDisabledStatus.await()
+        mutator.disable(created.bot.botId)
+        releaseDisabledStatus.complete(Unit)
+
+        assertIs<BotAuthenticationException>(staleDisabledStatus.await().exceptionOrNull())
+        assertEquals(accepted.serverSeq, chatMaxSeq(group.chatId))
+        assertEquals(
+            acceptedLastUsedAt,
+            mutator.list().single { it.botId == created.bot.botId }.lastUsedAt,
+        )
+    }
+
+    @Test
+    fun `pending organization revision fences bot creation grant and token rotation`() = runTest {
+        val leader = ctx.registerUser(uniqueUsername("bot-org-fence-leader"))
+        val revokedMember = ctx.registerUser(uniqueUsername("bot-org-fence-member"))
+        val root = ctx.organizationService.createUnit(null, "Bot authority root", leader)
+        val unit = ctx.organizationService.createUnit(
+            parentId = root.unitId,
+            name = "Bot authority unit",
+            leaderUid = leader,
+            enableGroup = true,
+        )
+        ctx.organizationService.assignMember(unit.unitId, revokedMember, null, primary = false)
+        val ungranted = ctx.botService.create("Pending authority grant candidate")
+        val baselineBotUsers = transaction { Users.selectAll().where { Users.role eq UserRole.BOT }.count() }
+        val baselineBots = transaction { AutomationBots.selectAll().count() }
+        val baselineGrants = transaction { AutomationBotGrants.selectAll().count() }
+        val baselineTokenHash = transaction {
+            AutomationBots.selectAll().where { AutomationBots.botId eq ungranted.bot.botId }
+                .single()[AutomationBots.tokenHash]
+        }
+
+        val pending = ctx.pgUnitOfWork.write {
+            ctx.organizationRepo.removeMember(transaction, unit.unitId, revokedMember)
+        }.projections.single { it.unitId == unit.unitId }
+        transaction {
+            val fence = OrganizationManagedChatProjections.selectAll().where {
+                OrganizationManagedChatProjections.unitId eq unit.unitId
+            }.single()
+            assertTrue(
+                fence[OrganizationManagedChatProjections.desiredRevision] >
+                    fence[OrganizationManagedChatProjections.appliedRevision],
+            )
+        }
+        assertTrue(isActiveChat(unit.unitId))
+        assertTrue(isActiveMember(unit.unitId, revokedMember))
+
+        listOf(
+            runCatching {
+                ctx.botService.createForGroup(revokedMember, unit.unitId, "Must not be created")
+            }.exceptionOrNull(),
+            runCatching {
+                ctx.botService.grant(ungranted.bot.botId, unit.unitId)
+            }.exceptionOrNull(),
+            runCatching {
+                ctx.botService.rotateTokenForGroup(revokedMember, unit.unitId, ungranted.bot.botId)
+            }.exceptionOrNull(),
+        ).forEach { failure ->
+            val rejected = assertIs<IllegalArgumentException>(failure)
+            assertEquals("受管群投影尚未收敛", rejected.message)
+        }
+
+        assertEquals(baselineBotUsers, transaction { Users.selectAll().where { Users.role eq UserRole.BOT }.count() })
+        assertEquals(baselineBots, transaction { AutomationBots.selectAll().count() })
+        assertEquals(baselineGrants, transaction { AutomationBotGrants.selectAll().count() })
+        assertEquals(baselineTokenHash, transaction {
+            AutomationBots.selectAll().where { AutomationBots.botId eq ungranted.bot.botId }
+                .single()[AutomationBots.tokenHash]
+        })
+        assertFalse(hasGrant(ungranted.bot.botId, unit.unitId))
+        assertEquals(0, serviceBotsForCreator(revokedMember, unit.unitId))
+
+        assertTrue(ctx.organizationProjector.project(pending))
+        assertFalse(isActiveMember(unit.unitId, revokedMember))
+        assertFalse(hasGrant(ungranted.bot.botId, unit.unitId))
+        assertEquals(baselineBotUsers, transaction { Users.selectAll().where { Users.role eq UserRole.BOT }.count() })
+        assertEquals(baselineBots, transaction { AutomationBots.selectAll().count() })
+        assertEquals(baselineGrants, transaction { AutomationBotGrants.selectAll().count() })
+        assertEquals(baselineTokenHash, transaction {
+            AutomationBots.selectAll().where { AutomationBots.botId eq ungranted.bot.botId }
+                .single()[AutomationBots.tokenHash]
+        })
+        assertEquals(0, serviceBotsForCreator(revokedMember, unit.unitId))
+    }
+
+    @Test
     fun `bot command gate prevents disable from overtaking admitted delivery`() = runTest {
         val owner = ctx.registerUser(uniqueUsername("bot-gate-owner"))
         val group = ctx.chatService.createGroup("Bot gate", null, owner, emptyList())
@@ -410,7 +621,7 @@ class BotUnitOfWorkIntegrationTest {
         val releaseDelivery = CompletableDeferred<Unit>()
         val service = freshBotService(
             unitOfWork = ctx.pgUnitOfWork,
-            sender = BotMessageSender { _, _ ->
+            sender = BotMessageSender { _, _, _ ->
                 enteredDelivery.complete(Unit)
                 releaseDelivery.await()
                 7L
@@ -499,6 +710,10 @@ class BotUnitOfWorkIntegrationTest {
         Chats.selectAll().where {
             (Chats.chatId eq chatId) and (Chats.status eq 1)
         }.any()
+    }
+
+    private fun chatMaxSeq(chatId: String): Long = transaction {
+        Chats.selectAll().where { Chats.chatId eq chatId }.single()[Chats.maxSeq]
     }
 
     private fun hasConversation(chatId: String, uid: String): Boolean = transaction {

@@ -73,7 +73,7 @@ class PacketCodec(
          * 正式发布前的开发协议基线。以后如果发生不兼容变更，必须从当前值递增，
          * 避免两个不同 wire 共用同一版本号。
          */
-        const val PROTOCOL_VERSION: Byte = 0
+        const val PROTOCOL_VERSION: Byte = 1
 
         /** 单帧 payload 上限（认证后） */
         const val MAX_PAYLOAD_SIZE = 16 * 1024 * 1024  // 16MB

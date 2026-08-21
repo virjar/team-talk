@@ -19,7 +19,7 @@ TCP stream
 协议版本当前由 `PacketCodec.PROTOCOL_VERSION` 定义。AUTH payload 以 `TK + version + tail`
 序言开头；版本不匹配或未知顶层 PacketType 都是连接级错误，应断开而不是猜测解析。
 
-当前是正式发布前的新基线，`PROTOCOL_VERSION = 0`，只定义当前代码中的 wire 格式，
+当前是正式发布前的新基线，`PROTOCOL_VERSION = 1`，只定义当前代码中的 wire 格式，
 不承担开发数据的向后兼容。切换该基线时必须同步更新服务端、所有客户端并重建开发数据。
 以后再发生不兼容 wire 变更时仍递增版本，不在同一版本号下猜测字段。
 

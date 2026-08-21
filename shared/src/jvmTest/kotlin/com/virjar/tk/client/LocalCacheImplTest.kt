@@ -2,6 +2,7 @@ package com.virjar.tk.client
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.cash.turbine.test
+import com.virjar.tk.body.RichTextBody
 import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Contact
 import com.virjar.tk.model.Conversation
@@ -9,12 +10,15 @@ import com.virjar.tk.model.Message
 import com.virjar.tk.model.Member
 import com.virjar.tk.model.User
 import com.virjar.tk.database.AppDatabase
+import com.virjar.tk.protocol.MessageType
+import com.virjar.tk.protocol.payload.MessageAckPayload
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -37,6 +41,618 @@ class LocalCacheImplTest {
     private fun user(i: Int) = User(uid = "u$i", username = "user$i", name = "User$i")
     private fun conv(chatId: String, readSeq: Long = 0, unread: Int = 0, peer: Long = 0, draft: String? = null, ts: Long = System.currentTimeMillis()) =
         Conversation(chatId = chatId, chatType = 1, readSeq = readSeq, unreadCount = unread, peerReadSeq = peer, draft = draft, lastMsgTimestamp = ts)
+
+    private fun outgoing(chatId: String, clientMsgId: String) = Message(
+        chatId = chatId,
+        clientMsgId = clientMsgId,
+        senderUid = "owner",
+        messageType = MessageType.RICH_TEXT.code,
+        timestamp = 1L,
+        body = RichTextBody("hello", plainText = "hello"),
+        sendStatus = Message.SEND_STATUS_SENDING,
+    )
+
+    @Test
+    fun `outgoing ordinal is idempotent FIFO and retry head blocks later rows`() {
+        val cache = newCache()
+        val first = cache.enqueueOutgoingMessage(outgoing("c1", "m1"), now = 1L)
+        val second = cache.enqueueOutgoingMessage(outgoing("c2", "m2"), now = 2L)
+        val duplicate = cache.enqueueOutgoingMessage(outgoing("c1", "m1"), now = 3L)
+
+        assertEquals(first.localOrdinal, duplicate.localOrdinal)
+        assertFailsWith<IllegalArgumentException> {
+            cache.enqueueOutgoingMessage(
+                outgoing("c1", "m1").copy(body = RichTextBody("changed", plainText = "changed")),
+                now = 3L,
+            )
+        }
+        assertTrue(second.localOrdinal > first.localOrdinal)
+        val claimed = cache.claimNextOutgoingMessage(now = 4L)!!
+        assertEquals(first.localOrdinal, claimed.localOrdinal)
+        cache.markOutgoingMessageRetry(claimed.localOrdinal, "network", nextAttemptAt = 100L, now = 5L)
+
+        assertNull(cache.claimNextOutgoingMessage(now = 99L), "future FIFO head must block later ordinals")
+        assertEquals(first.localOrdinal, cache.claimNextOutgoingMessage(now = 100L)?.localOrdinal)
+    }
+
+    @Test
+    fun `explicit cancel wins every late transition`() {
+        val cache = newCache()
+        val admitted = cache.enqueueOutgoingMessage(outgoing("c1", "m1"), now = 1L)
+        cache.claimNextOutgoingMessage(now = 2L)
+        cache.cancelOutgoingMessages("logout", now = 3L)
+
+        cache.markOutgoingMessageRetry(
+            admitted.localOrdinal,
+            error = "late network callback",
+            nextAttemptAt = 100L,
+            now = 4L,
+        )
+        cache.markOutgoingMessageTerminalFailed(
+            admitted.localOrdinal,
+            error = "late rejection",
+            now = 5L,
+        )
+        cache.completeOutgoingMessage(
+            admitted.localOrdinal,
+            MessageAckPayload("m1", serverSeq = 9L, code = 0),
+            now = 6L,
+        )
+
+        val retained = cache.recoverOutgoingMessages(now = 7L).single()
+        assertEquals(OutgoingMessageState.TERMINAL_FAILED, retained.state)
+        assertEquals("logout", retained.lastError)
+        assertEquals(Message.SEND_STATUS_FAILED, cache.getMessages("c1").single().sendStatus)
+        assertEquals(0L, cache.getMessages("c1").single().serverSeq)
+    }
+
+    @Test
+    fun `projection reset rebuilds optimistic messages from immutable outbox`() {
+        val cache = newCache()
+        val failed = cache.enqueueOutgoingMessage(outgoing("c2", "m2"), now = 1L)
+        cache.claimNextOutgoingMessage(now = 2L)
+        cache.markOutgoingMessageTerminalFailed(failed.localOrdinal, "permanent rejection", now = 3L)
+        cache.enqueueOutgoingMessage(outgoing("c1", "m1"), now = 4L)
+
+        cache.resetServerProjection()
+
+        assertEquals("m1", cache.getMessages("c1").single().clientMsgId)
+        assertEquals(Message.SEND_STATUS_QUEUED, cache.getMessages("c1").single().sendStatus)
+        assertEquals("m2", cache.getMessages("c2").single().clientMsgId)
+        assertEquals(Message.SEND_STATUS_FAILED, cache.getMessages("c2").single().sendStatus)
+        val diagnostics = cache.recoverOutgoingMessages(now = 5L)
+        assertEquals("permanent rejection", diagnostics.single { it.localOrdinal == failed.localOrdinal }.lastError)
+        assertEquals("m1", cache.peekNextOutgoingMessage()?.message?.clientMsgId)
+    }
+
+    @Test
+    fun `authoritative echo promotes lost-ack row and restart never overwrites server fields`() {
+        val root = createTempDirectory("outgoing-authority-").toFile()
+        val database = root.resolve("cache.db")
+        try {
+            val firstDriver = JdbcSqliteDriver("jdbc:sqlite:${database.absolutePath}")
+            AppDatabase.Schema.create(firstDriver)
+            val first = LocalCacheImpl(firstDriver)
+            val original = outgoing("c1", "stable-id")
+            first.enqueueOutgoingMessage(original, now = 1L)
+            first.claimNextOutgoingMessage(now = 2L)
+            val authorityInput = original.copy(
+                serverSeq = 19L,
+                timestamp = 99L,
+                flags = Message.FLAG_EDITED,
+                body = RichTextBody("server canonical", plainText = "server canonical"),
+                sendStatus = Message.SEND_STATUS_QUEUED,
+            )
+            val authority = authorityInput.copy(sendStatus = Message.SEND_STATUS_SENT)
+            first.insertMessage(authorityInput)
+            assertEquals(OutgoingMessageState.SUCCESS, first.getOutgoingMessage("c1", "stable-id")?.state)
+            assertEquals(authority, first.getMessages("c1").single())
+            first.close()
+
+            val second = LocalCacheImpl(JdbcSqliteDriver("jdbc:sqlite:${database.absolutePath}"))
+            val receipt = second.recoverOutgoingMessages(now = 3L).single()
+            assertEquals(OutgoingMessageState.SUCCESS, receipt.state)
+            assertEquals(19L, receipt.serverSeq)
+            assertEquals(authority, second.getMessages("c1").single())
+
+            val duplicate = second.enqueueOutgoingMessage(original, now = 4L)
+            assertEquals(receipt.localOrdinal, duplicate.localOrdinal)
+            assertEquals(authority, second.getMessages("c1").single())
+            second.close()
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `authoritative history promotes a matching failed receipt without rewriting server fields`() {
+        val cache = newCache()
+        val admitted = cache.enqueueOutgoingMessage(outgoing("history", "stable-id"), now = 1L)
+        cache.claimNextOutgoingMessage(now = 2L)
+        cache.markOutgoingMessageTerminalFailed(admitted.localOrdinal, "response lost", now = 3L)
+        val serverMessage = outgoing("history", "stable-id").copy(
+            serverSeq = 31L,
+            timestamp = 41L,
+            flags = Message.FLAG_EDITED,
+            body = RichTextBody("server history", plainText = "server history"),
+            sendStatus = Message.SEND_STATUS_FAILED,
+        )
+        val lease = cache.beginMessageHistoryLease("history", resetResidentWindow = true)
+
+        assertTrue(cache.applyMessageHistoryPage(lease, listOf(serverMessage)))
+
+        val receipt = cache.getOutgoingMessage("history", "stable-id")!!
+        assertEquals(OutgoingMessageState.SUCCESS, receipt.state)
+        assertEquals(31L, receipt.serverSeq)
+        assertEquals(
+            serverMessage.copy(sendStatus = Message.SEND_STATUS_SENT),
+            cache.getMessages("history").single(),
+        )
+    }
+
+    @Test
+    fun `restart recovery promotes a preexisting authoritative projection and repairs sent status`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        AppDatabase.Schema.create(driver)
+        val cache = LocalCacheImpl(driver)
+        cache.enqueueOutgoingMessage(outgoing("recovery", "stable-id"), now = 1L)
+        cache.claimNextOutgoingMessage(now = 2L)
+        driver.execute(
+            null,
+            "UPDATE message SET server_seq=33, timestamp=44, flags=${Message.FLAG_EDITED}, " +
+                "send_status=${Message.SEND_STATUS_QUEUED} " +
+                "WHERE chat_id='recovery' AND client_msg_id='stable-id'",
+            0,
+        )
+        assertEquals(Message.SEND_STATUS_QUEUED, cache.getMessages("recovery").single().sendStatus)
+
+        val receipt = cache.recoverOutgoingMessages(now = 3L).single()
+
+        assertEquals(OutgoingMessageState.SUCCESS, receipt.state)
+        assertEquals(33L, receipt.serverSeq)
+        val authority = cache.getMessages("recovery").single()
+        assertEquals(33L, authority.serverSeq)
+        assertEquals(44L, authority.timestamp)
+        assertEquals(Message.FLAG_EDITED, authority.flags)
+        assertEquals(Message.SEND_STATUS_SENT, authority.sendStatus)
+    }
+
+    @Test
+    fun `remote sender id collision is never mutated by local outbox transitions`() {
+        val cache = newCache()
+        val admitted = cache.enqueueOutgoingMessage(outgoing("collision", "same-id"), now = 1L)
+        cache.claimNextOutgoingMessage(now = 2L)
+        val remote = outgoing("collision", "same-id").copy(
+            serverSeq = 70L,
+            senderUid = "remote-user",
+            timestamp = 71L,
+            body = RichTextBody("remote authority", plainText = "remote authority"),
+            sendStatus = Message.SEND_STATUS_SENT,
+        )
+        cache.insertMessage(remote)
+
+        cache.completeOutgoingMessage(
+            admitted.localOrdinal,
+            MessageAckPayload("same-id", serverSeq = 99L, code = 0),
+            now = 3L,
+        )
+
+        assertEquals(remote, cache.getMessages("collision").single())
+        assertEquals(OutgoingMessageState.SUCCESS, cache.getOutgoingMessage("collision", "same-id")?.state)
+    }
+
+    @Test
+    fun `local seq zero insert cannot replace authority and later enqueue fails closed`() {
+        val cache = newCache()
+        val authority = outgoing("authority", "stable-id").copy(
+            serverSeq = 17L,
+            senderUid = "peer",
+            timestamp = 18L,
+            body = RichTextBody("authority", plainText = "authority"),
+            sendStatus = Message.SEND_STATUS_SENT,
+        )
+        cache.insertMessage(authority)
+
+        assertFailsWith<OutgoingMessageConflictException> {
+            cache.insertMessage(outgoing("authority", "stable-id"))
+        }
+        assertEquals(authority, cache.getMessages("authority").single())
+        assertFailsWith<OutgoingMessageConflictException> {
+            cache.enqueueOutgoingMessage(outgoing("authority", "stable-id"), now = 1L)
+        }
+        assertEquals(authority, cache.getMessages("authority").single())
+    }
+
+    @Test
+    fun `success receipt never synthesizes a server message after projection reset`() {
+        val cache = newCache()
+        val admitted = cache.enqueueOutgoingMessage(outgoing("c1", "sent"), now = 1L)
+        cache.claimNextOutgoingMessage(now = 2L)
+        cache.completeOutgoingMessage(admitted.localOrdinal, MessageAckPayload("sent", 7L, 0), now = 3L)
+
+        cache.resetServerProjection()
+
+        assertTrue(cache.getMessages("c1").isEmpty())
+        val receipt = cache.getOutgoingMessage("c1", "sent")
+        assertEquals(OutgoingMessageState.SUCCESS, receipt?.state)
+        assertEquals(7L, receipt?.serverSeq)
+    }
+
+    @Test
+    fun `success GC is bounded and never removes active or failed rows`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        AppDatabase.Schema.create(driver)
+        val cache = LocalCacheImpl(driver, successReceiptLimit = 1)
+
+        fun complete(chatId: String, clientMsgId: String, seq: Long) {
+            val row = cache.enqueueOutgoingMessage(outgoing(chatId, clientMsgId), now = seq)
+            cache.claimNextOutgoingMessage(now = seq)
+            cache.completeOutgoingMessage(row.localOrdinal, MessageAckPayload(clientMsgId, seq, 0), now = seq)
+        }
+        complete("c1", "old-success", 11L)
+        complete("c2", "new-success", 12L)
+        val failed = cache.enqueueOutgoingMessage(outgoing("c3", "failed"), now = 13L)
+        cache.claimNextOutgoingMessage(now = 13L)
+        cache.markOutgoingMessageTerminalFailed(failed.localOrdinal, "rejected", now = 14L, terminalCode = 400)
+        cache.enqueueOutgoingMessage(outgoing("c4", "active"), now = 15L)
+
+        assertNull(cache.getOutgoingMessage("c1", "old-success"))
+        assertEquals(OutgoingMessageState.SUCCESS, cache.getOutgoingMessage("c2", "new-success")?.state)
+        assertEquals(OutgoingMessageState.TERMINAL_FAILED, cache.getOutgoingMessage("c3", "failed")?.state)
+        assertEquals(OutgoingMessageState.PENDING, cache.getOutgoingMessage("c4", "active")?.state)
+        assertFailsWith<OutgoingMessageConflictException> {
+            cache.enqueueOutgoingMessage(outgoing("c1", "old-success"), now = 16L)
+        }
+        assertEquals(11L, cache.getMessages("c1").single().serverSeq)
+    }
+
+    @Test
+    fun `success GC retains the most recently completed receipt rather than highest ordinal`() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        AppDatabase.Schema.create(driver)
+        val cache = LocalCacheImpl(driver, successReceiptLimit = 1)
+        val lowOrdinal = outgoing("c1", "low-ordinal")
+        val highOrdinal = outgoing("c2", "high-ordinal")
+        cache.enqueueOutgoingMessage(lowOrdinal, now = 1L)
+        cache.enqueueOutgoingMessage(highOrdinal, now = 2L)
+
+        cache.insertMessage(highOrdinal.copy(serverSeq = 20L, sendStatus = Message.SEND_STATUS_SENT))
+        cache.insertMessage(lowOrdinal.copy(serverSeq = 21L, sendStatus = Message.SEND_STATUS_SENT))
+
+        assertEquals(OutgoingMessageState.SUCCESS, cache.getOutgoingMessage("c1", "low-ordinal")?.state)
+        assertNull(cache.getOutgoingMessage("c2", "high-ordinal"))
+    }
+
+    @Test
+    fun `process restart recovers a response-lost in-flight send from SQLite`() {
+        val root = createTempDirectory("outgoing-restart-").toFile()
+        val database = root.resolve("cache.db")
+        try {
+            val firstDriver = JdbcSqliteDriver("jdbc:sqlite:${database.absolutePath}")
+            AppDatabase.Schema.create(firstDriver)
+            val first = LocalCacheImpl(firstDriver)
+            first.enqueueOutgoingMessage(outgoing("c1", "m1"), now = 1L)
+            assertEquals(OutgoingMessageState.IN_FLIGHT, first.claimNextOutgoingMessage(2L)?.state)
+            first.insertMessage(outgoing("c2", "orphan-sending"))
+            first.insertMessage(
+                outgoing("c3", "orphan-uploading").copy(sendStatus = Message.SEND_STATUS_UPLOADING),
+            )
+            first.insertMessage(
+                outgoing("c4", "orphan-queued").copy(sendStatus = Message.SEND_STATUS_QUEUED),
+            )
+            first.close()
+
+            val secondDriver = JdbcSqliteDriver("jdbc:sqlite:${database.absolutePath}")
+            val second = LocalCacheImpl(secondDriver)
+            val recovered = second.recoverOutgoingMessages(now = 3L).single()
+            assertEquals(OutgoingMessageState.PENDING, recovered.state)
+            assertEquals(1L, recovered.attemptCount)
+            assertEquals("m1", second.peekNextOutgoingMessage()?.message?.clientMsgId)
+            listOf("c2", "c3", "c4").forEach { chatId ->
+                assertEquals(
+                    Message.SEND_STATUS_FAILED,
+                    second.getMessages(chatId).single().sendStatus,
+                    "local optimistic projection without an outbox must become diagnosable after restart",
+                )
+            }
+            second.close()
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `restart window keeps queued and failed bubbles ahead of fifty plus server messages`() {
+        val root = createTempDirectory("outgoing-window-").toFile()
+        val database = root.resolve("cache.db")
+        try {
+            val firstDriver = JdbcSqliteDriver("jdbc:sqlite:${database.absolutePath}")
+            AppDatabase.Schema.create(firstDriver)
+            val first = LocalCacheImpl(firstDriver)
+            val failed = first.enqueueOutgoingMessage(outgoing("busy", "failed-local"), now = 1L)
+            first.claimNextOutgoingMessage(now = 2L)
+            first.markOutgoingMessageTerminalFailed(failed.localOrdinal, "rejected", now = 3L)
+            first.enqueueOutgoingMessage(
+                outgoing("busy", "queued-local").copy(timestamp = 2L),
+                now = 4L,
+            )
+            (1L..60L).forEach { seq ->
+                first.insertMessage(
+                    Message(
+                        chatId = "busy",
+                        clientMsgId = "server-$seq",
+                        serverSeq = seq,
+                        senderUid = "peer",
+                        messageType = MessageType.RICH_TEXT.code,
+                        timestamp = 100L + seq,
+                        body = RichTextBody("server $seq", plainText = "server $seq"),
+                    ),
+                )
+            }
+            first.close()
+
+            val reopened = LocalCacheImpl(JdbcSqliteDriver("jdbc:sqlite:${database.absolutePath}"))
+            val window = reopened.getMessages("busy", limit = 50)
+
+            assertEquals(50, window.size)
+            assertEquals(setOf("queued-local", "failed-local"), window.take(2).mapTo(mutableSetOf()) { it.clientMsgId })
+            assertEquals(Message.SEND_STATUS_QUEUED, window.single { it.clientMsgId == "queued-local" }.sendStatus)
+            assertEquals(Message.SEND_STATUS_FAILED, window.single { it.clientMsgId == "failed-local" }.sendStatus)
+            assertEquals((13L..60L).toSet(), window.filter { it.serverSeq > 0L }.mapTo(mutableSetOf()) { it.serverSeq })
+            reopened.close()
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `crowded optimistic window stays bounded and retains an authority paging anchor`() = runBlocking {
+        val cache = newCache()
+        (1L..60L).forEach { index ->
+            cache.enqueueOutgoingMessage(
+                outgoing("crowded", "local-$index").copy(timestamp = 1_000L + index),
+                now = index,
+            )
+        }
+        (1L..20L).forEach { seq ->
+            cache.insertMessage(
+                Message(
+                    chatId = "crowded",
+                    clientMsgId = "server-$seq",
+                    serverSeq = seq,
+                    senderUid = "peer",
+                    messageType = MessageType.RICH_TEXT.code,
+                    timestamp = 2_000L + seq,
+                    body = RichTextBody("server $seq", plainText = "server $seq"),
+                ),
+            )
+        }
+        val pager = cache.pager("crowded", windowSize = 10)
+
+        val initial = pager.messages.first()
+        assertEquals(10, initial.size)
+        assertEquals(9, initial.count { it.serverSeq == 0L })
+        assertEquals(listOf(20L), initial.filter { it.serverSeq > 0L }.map { it.serverSeq })
+        assertTrue(pager.hasMore.value)
+
+        pager.loadMore(pageSize = 5)
+        val expanded = pager.messages.first()
+        assertTrue(expanded.size <= 20)
+        assertEquals(9, expanded.count { it.serverSeq == 0L })
+        assertEquals((15L..20L).toList().reversed(), expanded.filter { it.serverSeq > 0L }.map { it.serverSeq })
+        assertTrue(pager.hasMore.value)
+    }
+
+    @Test
+    fun `local paging advances past the two-window cap without repeating its cursor`() = runBlocking {
+        val cache = newCache()
+        (1L..12L).forEach { seq ->
+            cache.insertMessage(
+                Message(
+                    chatId = "bounded-local",
+                    clientMsgId = "m$seq",
+                    serverSeq = seq,
+                    senderUid = "peer",
+                    messageType = MessageType.RICH_TEXT.code,
+                    timestamp = seq,
+                ),
+            )
+        }
+        val pager = cache.pager("bounded-local", windowSize = 3)
+
+        assertEquals(MessagePageLoadResult.LocalLoaded, pager.loadMore(3))
+        assertEquals(MessagePageLoadResult.LocalLoaded, pager.loadMore(3))
+        assertEquals(MessagePageLoadResult.LocalLoaded, pager.loadMore(3))
+
+        val resident = pager.messages.first()
+        assertTrue(resident.size <= 6)
+        assertTrue(resident.any { it.serverSeq == 1L }, "the cursor must progress into the oldest page")
+    }
+
+    @Test
+    fun `local paging evicts optimistic rows when necessary to retain the newly loaded cursor`() = runBlocking {
+        val cache = newCache()
+        (1L..6L).forEach { seq ->
+            cache.insertMessage(
+                Message(
+                    chatId = "optimistic-cap",
+                    clientMsgId = "server-$seq",
+                    serverSeq = seq,
+                    senderUid = "peer",
+                    messageType = MessageType.RICH_TEXT.code,
+                    timestamp = seq,
+                ),
+            )
+        }
+        val pager = cache.pager("optimistic-cap", windowSize = 3)
+        (1L..5L).forEach { index ->
+            cache.enqueueOutgoingMessage(
+                outgoing("optimistic-cap", "local-$index").copy(timestamp = 100L + index),
+                now = index,
+            )
+        }
+        assertEquals(6L, pager.messages.first().single { it.serverSeq > 0L }.serverSeq)
+
+        assertEquals(MessagePageLoadResult.LocalLoaded, pager.loadMore(3))
+        val afterFirstPage = pager.messages.first()
+        assertTrue(afterFirstPage.size <= 6)
+        assertTrue(afterFirstPage.any { it.serverSeq == 3L }, "newly loaded tail must survive trimming")
+
+        assertEquals(MessagePageLoadResult.LocalLoaded, pager.loadMore(3))
+        val afterSecondPage = pager.messages.first()
+        assertTrue(afterSecondPage.size <= 6)
+        assertTrue(afterSecondPage.any { it.serverSeq == 1L }, "cursor must continue past the cap")
+    }
+
+    @Test
+    fun `trimmed anchored history exposes an exact remote refetch cursor`() = runBlocking {
+        val cache = newCache()
+        val pager = cache.pager("bounded-remote", windowSize = 3)
+        fun page(vararg seqs: Long): List<Message> = seqs.map { seq ->
+            Message(
+                chatId = "bounded-remote",
+                clientMsgId = "m$seq",
+                serverSeq = seq,
+                senderUid = "peer",
+                messageType = MessageType.RICH_TEXT.code,
+                timestamp = seq,
+            )
+        }
+        fun apply(reset: Boolean, messages: List<Message>) {
+            val lease = cache.beginMessageHistoryLease("bounded-remote", reset)
+            assertTrue(cache.applyMessageHistoryPage(lease, messages))
+        }
+
+        apply(true, page(12, 11, 10))
+        apply(false, page(9, 8, 7))
+        apply(false, page(6, 5, 4))
+        apply(false, page(3, 2, 1))
+        apply(false, emptyList()) // authoritative end of history
+        assertFalse(pager.hasMore.value)
+
+        cache.insertMessage(page(13).single())
+        assertTrue(pager.messages.first().size <= 6)
+        assertTrue(pager.hasMore.value, "live trim must make the removed authoritative tail reachable")
+        assertEquals(
+            MessagePageLoadResult.RemoteRequired(beforeServerSeq = 2L),
+            pager.loadMore(3),
+        )
+
+        apply(false, page(1))
+        val restored = pager.messages.first()
+        assertTrue(restored.size <= 6)
+        assertTrue(restored.any { it.serverSeq == 1L })
+    }
+
+    @Test
+    fun `window snapshot and registration are linearized with durable message publication`() = runBlocking {
+        val cache = newCache()
+        val snapshotLoaded = CountDownLatch(1)
+        val releaseRegistration = CountDownLatch(1)
+        val writerStarted = CountDownLatch(1)
+        val writerFinished = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        cache.windowSnapshotLoadedHookForTest = {
+            cache.windowSnapshotLoadedHookForTest = null
+            snapshotLoaded.countDown()
+            assertTrue(releaseRegistration.await(5, TimeUnit.SECONDS))
+        }
+        try {
+            val pagerFuture = executor.submit<MessagePager> { cache.pager("window-race", 3) }
+            assertTrue(snapshotLoaded.await(5, TimeUnit.SECONDS))
+            executor.submit {
+                writerStarted.countDown()
+                cache.insertMessage(
+                    Message(
+                        chatId = "window-race",
+                        clientMsgId = "published-after-snapshot",
+                        serverSeq = 1L,
+                        senderUid = "peer",
+                        messageType = MessageType.RICH_TEXT.code,
+                        timestamp = 1L,
+                    ),
+                )
+                writerFinished.countDown()
+            }
+            assertTrue(writerStarted.await(5, TimeUnit.SECONDS))
+            assertFalse(
+                writerFinished.await(100, TimeUnit.MILLISECONDS),
+                "durable writer must wait until the snapshotted window is registered",
+            )
+
+            releaseRegistration.countDown()
+            val pager = pagerFuture.get(5, TimeUnit.SECONDS)
+            assertTrue(writerFinished.await(5, TimeUnit.SECONDS))
+            assertEquals(
+                listOf("published-after-snapshot"),
+                pager.messages.first().map(Message::clientMsgId),
+            )
+        } finally {
+            releaseRegistration.countDown()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `acked bot delivery remains cursor pageable but is not redelivered`() {
+        val cache = newCache()
+        val first = outgoing("c1", "m1").copy(serverSeq = 1L)
+        val second = outgoing("c2", "m2").copy(serverSeq = 1L)
+        cache.enqueueBotMessage(11L, first)
+        cache.enqueueBotMessage(12L, second)
+        cache.enqueueBotMessage(11L, outgoing("c3", "conflicting-event").copy(serverSeq = 3L))
+        cache.ackBotMessage(11L, now = 20L)
+
+        assertEquals(12L, cache.peekBotMessage()?.eventId)
+        assertEquals(listOf(11L, 12L), cache.listBotMessageDeliveries(0L, null, 10).map { it.eventId })
+        assertEquals("m1", cache.listBotMessageDeliveries(0L, null, 1).single().message.clientMsgId)
+        assertEquals(listOf(12L), cache.listBotMessageDeliveries(11L, null, 10).map { it.eventId })
+        assertEquals(listOf(11L), cache.listBotMessageDeliveries(0L, "c1", 10).map { it.eventId })
+        assertEquals(12L, cache.maxBotMessageEventId())
+    }
+
+    @Test
+    fun `bot delivery keeps create edit and revoke events that share one server sequence`() {
+        val cache = newCache()
+        val created = outgoing("c1", "m1").copy(serverSeq = 7L)
+        val edited = created.copy(
+            flags = Message.FLAG_EDITED,
+            body = RichTextBody("edited", plainText = "edited"),
+        )
+        val revoked = created.copy(flags = Message.FLAG_REVOKED, body = null)
+
+        cache.enqueueBotMessage(21L, created)
+        cache.enqueueBotMessage(22L, edited)
+        cache.enqueueBotMessage(23L, revoked)
+
+        val deliveries = cache.listBotMessageDeliveries(0L, "c1", 10)
+        assertEquals(listOf(21L, 22L, 23L), deliveries.map { it.eventId })
+        assertEquals(listOf(0, Message.FLAG_EDITED, Message.FLAG_REVOKED), deliveries.map { it.message.flags })
+        cache.ackBotMessage(21L, now = 30L)
+        assertEquals(22L, cache.peekBotMessage()?.eventId)
+    }
+
+    @Test
+    fun `chat tombstone purges only that chats outgoing and delivery facts`() {
+        val cache = newCache()
+        cache.enqueueOutgoingMessage(outgoing("deleted", "outgoing-deleted"), now = 1L)
+        cache.enqueueOutgoingMessage(outgoing("retained", "outgoing-retained"), now = 2L)
+        cache.enqueueBotMessage(11L, outgoing("deleted", "incoming-deleted").copy(serverSeq = 1L))
+        cache.enqueueBotMessage(12L, outgoing("retained", "incoming-retained").copy(serverSeq = 1L))
+
+        cache.deleteChat("deleted")
+
+        assertEquals(
+            listOf("outgoing-retained"),
+            cache.recoverOutgoingMessages(now = 3L).map { it.message.clientMsgId },
+        )
+        assertEquals(listOf(12L), cache.listBotMessageDeliveries(0L, null, 10).map { it.eventId })
+        assertTrue(cache.getMessages("deleted").isEmpty())
+        assertEquals(
+            listOf("outgoing-retained"),
+            cache.getMessages("retained").map { it.clientMsgId },
+        )
+    }
 
     @Test
     fun `local cache close releases driver idempotently`() {
@@ -131,6 +747,8 @@ class LocalCacheImplTest {
         assertTrue(cache.getPendingConversationDrafts().isEmpty())
         assertEquals(0L, cache.getSyncCursor(EventProcessor.SYNC_CURSOR_KEY))
         assertNull(cache.peekBotMessage())
+        assertTrue(cache.listBotMessageDeliveries(0L, null, 10).isEmpty())
+        assertEquals(0L, cache.maxBotMessageEventId())
         assertTrue(residentMessages.first().isEmpty())
 
         val replayed = message.copy(clientMsgId = "m2", serverSeq = 2)
@@ -603,7 +1221,7 @@ class LocalCacheImplTest {
     }
 
     @Test
-    fun `authoritative history batch extends a full resident window without a cursor hole`() {
+    fun `authoritative history batch advances a bounded resident window without a cursor hole`() {
         val cache = newCache()
         cache.pager("history-capacity", windowSize = 3)
         for (seq in 9 downTo 4) {
@@ -650,7 +1268,10 @@ class LocalCacheImplTest {
         )
         assertTrue(cache.applyMessageHistoryPage(olderLease, olderPage))
 
-        assertEquals((9 downTo 1).map(Int::toLong), cache.getMessages("history-capacity", 20).map { it.serverSeq })
+        val resident = cache.getMessages("history-capacity", 20)
+        assertTrue(resident.size <= 6)
+        assertEquals(9L, resident.first().serverSeq, "retain one newest authority anchor")
+        assertEquals(listOf(3L, 2L, 1L), resident.takeLast(3).map(Message::serverSeq))
     }
 
     @Test

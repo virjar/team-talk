@@ -1,5 +1,7 @@
 package com.virjar.tk.integration
 
+import com.virjar.tk.model.ProfilePatch
+import com.virjar.tk.model.ProfilePatchValue
 import com.virjar.tk.protocol.payload.AuthRequestPayload
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -78,7 +80,13 @@ class AuthIntegrationTest {
     @Test
     fun `update profile`() = runTest {
         val uid = ctx.registerUser()
-        ctx.userService.updateProfile(uid, name = "NewName", sex = 1)
+        ctx.userService.updateProfile(
+            uid,
+            ProfilePatch(
+                name = ProfilePatchValue.Set("NewName"),
+                sex = ProfilePatchValue.Set(1),
+            ),
+        )
         val updated = ctx.userService.getProfile(uid)
         assertEquals("NewName", updated.name)
         assertEquals(1, updated.sex)
@@ -96,7 +104,16 @@ class AuthIntegrationTest {
         assertEquals(user.uid, ctx.userStore.findByUsername(username)?.uid)
         assertEquals(user.uid, ctx.userStore.findByPhone(oldPhone)?.uid)
 
-        ctx.userRepo.updateProfile(user.uid, name = "After", phone = newPhone)
+        ctx.pgUnitOfWork.write {
+            ctx.userRepo.updateProfile(
+                transaction,
+                user.uid,
+                ProfilePatch(
+                    name = ProfilePatchValue.Set("After"),
+                    phone = ProfilePatchValue.Set(newPhone),
+                ),
+            )
+        }
 
         assertEquals("After", ctx.userStore.findByUid(user.uid)?.name)
         assertEquals(newPhone, ctx.userStore.findByUsername(username)?.phone)

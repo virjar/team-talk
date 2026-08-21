@@ -272,9 +272,12 @@ class ProtocolE2eTest {
     @Test
     fun `update profile via RPC`() = runBlocking {
         val session = registerUser("update-${UUID.randomUUID()}")
-        val updatedUser = User("", "", "NewName", null, null, 1)
+        val patch = ProfilePatch(
+            name = ProfilePatchValue.Set("NewName"),
+            sex = ProfilePatchValue.Set(1),
+        )
         val resp = session.invoke("user", UserRpcContract.M_UPDATE_PROFILE,
-            ProtoCodec.encode(updatedUser))
+            ProtoCodec.encode(patch))
         assertEquals(0, resp.status, "Update profile should succeed")
 
         // 验证更新

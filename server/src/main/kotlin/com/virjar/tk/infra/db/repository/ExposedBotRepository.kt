@@ -129,6 +129,16 @@ class ExposedBotRepository : BotRepository {
         row.toBot(listGrantsInternal(row[AutomationBots.botId]))
     }
 
+    override fun tokenMatches(
+        transaction: PgTransactionContext,
+        botId: String,
+        tokenHash: String,
+    ): Boolean = inWriteTransaction(transaction) {
+        AutomationBots.selectAll().where {
+            (AutomationBots.botId eq botId) and (AutomationBots.tokenHash eq tokenHash)
+        }.count() == 1L
+    }
+
     override fun updateTokenHash(transaction: PgTransactionContext, botId: String, tokenHash: String) {
         inWriteTransaction(transaction) {
             check(AutomationBots.update({ AutomationBots.botId eq botId }) {
@@ -147,12 +157,12 @@ class ExposedBotRepository : BotRepository {
         }
     }
 
-    override fun touch(botId: String, timestamp: Long) {
-        transaction {
-            AutomationBots.update({ AutomationBots.botId eq botId }) {
+    override fun touch(transaction: PgTransactionContext, botId: String, timestamp: Long) {
+        inWriteTransaction(transaction) {
+            check(AutomationBots.update({ AutomationBots.botId eq botId }) {
                 it[lastUsedAt] = timestamp
                 it[updatedAt] = timestamp
-            }
+            } == 1) { "Locked bot disappeared during delivery admission" }
         }
     }
 

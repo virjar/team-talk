@@ -19,9 +19,9 @@ import com.virjar.tk.domain.bot.BotGroupMembership
 import com.virjar.tk.domain.bot.BotMessageSender
 import com.virjar.tk.domain.bot.BotService
 import com.virjar.tk.domain.chat.ChatMemberRepository
-import com.virjar.tk.domain.chat.ActiveChatMembership
 import com.virjar.tk.domain.chat.ChatAccess
 import com.virjar.tk.domain.chat.ChatAccessPolicy
+import com.virjar.tk.domain.chat.ChatAccessSource
 import com.virjar.tk.domain.chat.ChatLifecycleGate
 import com.virjar.tk.domain.chat.ChatRepository
 import com.virjar.tk.domain.chat.ChatService
@@ -45,6 +45,9 @@ import com.virjar.tk.domain.message.MessageProjectionRepository
 import com.virjar.tk.domain.message.MessageSearch
 import com.virjar.tk.domain.message.MessageService
 import com.virjar.tk.domain.organization.OrganizationRepository
+import com.virjar.tk.domain.organization.OrganizationManagedChatProjectionStore
+import com.virjar.tk.domain.organization.OrganizationManagedChatProjector
+import com.virjar.tk.domain.organization.OrganizationProjectionReadiness
 import com.virjar.tk.domain.organization.OrganizationService
 import com.virjar.tk.domain.groupfile.GroupFileRepository
 import com.virjar.tk.domain.groupfile.GroupFileService
@@ -79,6 +82,7 @@ import com.virjar.tk.env.Environment
 import com.virjar.tk.infra.search.SearchIndex
 import com.virjar.tk.infra.db.ExposedPgUnitOfWork
 import com.virjar.tk.infra.db.repository.ExposedChatMemberRepository
+import com.virjar.tk.infra.db.repository.ExposedChatAccessSource
 import com.virjar.tk.infra.db.repository.ExposedBotRepository
 import com.virjar.tk.infra.db.repository.ExposedChatRepository
 import com.virjar.tk.infra.db.repository.ExposedContactRepository
@@ -89,6 +93,7 @@ import com.virjar.tk.infra.db.repository.ExposedDocumentRepository
 import com.virjar.tk.infra.db.repository.ExposedInviteLinkRepository
 import com.virjar.tk.infra.db.repository.ExposedMessageProjectionRepository
 import com.virjar.tk.infra.db.repository.ExposedOrganizationRepository
+import com.virjar.tk.infra.db.repository.ExposedOrganizationManagedChatProjectionStore
 import com.virjar.tk.infra.db.repository.ExposedGroupFileRepository
 import com.virjar.tk.infra.db.repository.ExposedUserRepository
 import com.virjar.tk.infra.health.HealthChecker
@@ -134,12 +139,14 @@ fun createServerModule(
     single<ContactRepository> { ExposedContactRepository(get()) }
     single<ChatRepository> { ExposedChatRepository() }
     single<ChatMemberRepository> { ExposedChatMemberRepository() }
+    single<ChatAccessSource> { ExposedChatAccessSource() }
     single<InviteLinkRepository> { ExposedInviteLinkRepository() }
     single<ConversationRepository> { ExposedConversationRepository(get(), get(), get()) }
     single<MessageProjectionRepository> { ExposedMessageProjectionRepository() }
     single<DeviceRepository> { ExposedDeviceRepository() }
     single<OrganizationRepository> { ExposedOrganizationRepository() }
-    single<GroupFileRepository> { ExposedGroupFileRepository() }
+    single<OrganizationManagedChatProjectionStore> { ExposedOrganizationManagedChatProjectionStore() }
+    single<GroupFileRepository> { ExposedGroupFileRepository(get()) }
     single<DocumentRepository> { ExposedDocumentRepository() }
     single<ManagedChatPolicy> { get<OrganizationRepository>() }
     single<BotRepository> { ExposedBotRepository() }
@@ -149,8 +156,7 @@ fun createServerModule(
     single { UserStore(get()) }
     single { ContactStore(get()) }
     single { ChatStore(get(), get(), get()) }
-    single<ActiveChatMembership> { get<ChatStore>() }
-    single<ChatAccess> { ChatAccessPolicy(get<ChatStore>()) }
+    single<ChatAccess> { ChatAccessPolicy(get()) }
     single { ChatLifecycleGate() }
     single { MessageProjectionReadiness() }
 
@@ -158,11 +164,13 @@ fun createServerModule(
     single { SyncEventService(get(), get()) }
     single<EventPublisher> { get<SyncEventService>() }
     single<SyncEventReader> { get<SyncEventService>() }
-    single { UserService(get(), get()) }
+    single { UserService(get(), get<PgUnitOfWork>()) }
     single { AuthService(get(), get(), get()) }
     single { ContactService(get<ContactStore>(), get<PgUnitOfWork>(), get<UserStore>()) }
-    single { ChatService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
-    single { OrganizationService(get(), get(), get()) }
+    single { ChatService(get(), get(), get(), get(), get(), get(), get(), get()) }
+    single { OrganizationManagedChatProjector(get(), get(), get(), get<ChatStore>()) }
+    single { OrganizationProjectionReadiness(get()) }
+    single { OrganizationService(get(), get(), get(), get()) }
     single { GroupFileService(get(), get(), get(), Environment.groupFileQuotaBytes) }
     single {
         DocumentService(
@@ -172,7 +180,7 @@ fun createServerModule(
             unitOfWork = get<PgUnitOfWork>(),
         )
     }
-    single { ConversationService(get(), get(), get()) }
+    single { ConversationService(get(), get(), get(), get(), get()) }
     single { com.virjar.tk.domain.attachment.AttachmentService(get(), get()) }
     single<AttachmentReferences> {
         val messages = get<MessageRepository>()
@@ -195,6 +203,7 @@ fun createServerModule(
             users = get(),
             contacts = get(),
             lifecycleGate = get(),
+            managedChats = get(),
         )
     }
     single<BotAccountProvisioner> { UserServiceBotAccounts(get()) }
@@ -203,7 +212,7 @@ fun createServerModule(
     single { BotService(get(), get(), get(), get(), get(), get(), get<PgUnitOfWork>()) }
     single { PresenceService(get(), get()) }
     single { PresenceCoordinator(get(), get()) }
-    single { HealthChecker(get(), get(), get(), get()) }
+    single { HealthChecker(get(), get(), get(), get(), get()) }
 
     // RPC 注册表（IDL 生成 Stub + 薄壳 Impl；serviceId 字符串注册）
     single {

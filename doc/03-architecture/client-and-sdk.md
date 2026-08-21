@@ -73,6 +73,20 @@ close 取得独占 lease，等待已准入的同步 DB 操作退出，推进历�
 draft、history page 或 pager 的任何迟到写入都会在 SQL 前失败。SendQueue 回调和 EventProcessor 的
 cache/SharedFlow/cursor 发布另带不可复用的停止代次，协程 cancel 只负责回收，不作为安全边界。
 
+发送队列不是会话内存列表：`enqueue` 返回前必须把规范化后的最终 wire Message、单调
+`localOrdinal`、状态、尝试次数与退避时间提交到账号 SQLite。worker 只 claim 最老的非终态 ordinal；
+最老项仍在退避时不得越过它发送后续项。成功 ACK 的 message 序号/状态与 outbox `SUCCESS`
+回执同事务提交；回执按完成时间有界保留，worker 不再 claim。`SUCCESS` 只是幂等查询凭据，绝不用其
+初始 payload 合成或覆盖已确认消息；server echo/history replay 是 `SENT` 正文、时间戳、flags 和附件
+元数据的唯一权威来源。如 echo 先于 ACK 到达，匹配 sender 的 outbox 会在同一投影事务中自愈为
+`SUCCESS`，且不改写服务端字段。
+超时、断线、负码与服务端 5xx 保留同一 `clientMsgId` 退避重试；4xx、ACK 身份错配和无效成功 ACK
+才进入保留诊断的终态失败。
+`USER_LOGOUT`/`AUTH_REVOKED` 以 CANCEL 关闭队列，其他 owner 替换或进程关闭以 PRESERVE 留给同账号
+下次恢复；固定 uid、cache namespace 和 transport owner lease 共同保证旧账号不会借新 token 发送。
+启动恢复还会把没有 matching outbox 的 `serverSeq=0` SENDING/QUEUED/UPLOADING 投影标为 FAILED，
+保留气泡用于诊断或手动重发，避免上传中或兼容直发路径崩溃后永久转圈。
+
 `app` 在 `ClientSession` 之上建立一个会话级组合根，而不是再造一个包含全部业务的“超级
 ViewModel”：
 
@@ -152,7 +166,9 @@ EventProcessor 消费 `NOTIFY`，在 IO 调度器解码和写数据库：
 
 如果服务端以 `SYNC_RESET` 拒绝本地游标，EventProcessor 在 IO dispatcher 上执行一次事务性
 投影重置：清 user/contact/chat/member/message/conversation、draft outbox、sync cursor 和 bot inbox，
-并同步清空既有 StateFlow 与消息窗口；独立文档草稿不受影响。事务成功且返回 cursor 0 后，
+但不清本地 outgoing。重置事务会从 outgoing 的 immutable payload 重建乐观消息投影（active 为
+QUEUED、terminal 为 FAILED），避免之后 ACK 只命中 outbox 却永久丢失消息气泡；独立文档草稿也
+不受影响。事务成功且返回 cursor 0 后，
 ImClient 才在同一认证连接发送 `SYNC_REQUEST(0)`。一次连接只准接受一次 RESET；与页面投影重叠、
 重复 RESET 或本地清理失败都会关闭连接。
 
@@ -160,10 +176,13 @@ ImClient 才在同一认证连接发送 `SYNC_REQUEST(0)`。一次连接只准�
 这些 flow 是可合并/可丢弃的刷新提示，LocalCache 和持久 cursor 才是权威；慢 UI 消费者不得对
 持久事件 replay 施加背压。无头 ImBot 不把 `SharedFlow` 当业务队列：MESSAGE_RECV 先写普通消息
 投影，再 `INSERT OR IGNORE` 到账号 SQLite inbox，最后推进 cursor。eventId 保序，
-`(chatId, serverSeq)` 唯一键吸收服务端不同 eventId 的重复 projection；两个磁盘语句之间崩溃会
-触发安全重放而不是丢消息。进程内仅保留 CONFLATED wake-up。
-直连 ImBot 使用 `nextMessageDelivery` + 显式 ack 获得 at-least-once；tt-agent 的 REST recent/history
-直接查询普通消息 SQLite 投影，内存对象只负责唤醒长轮询，不承担事实源。
+eventId 主键吸收同一持久事件的重放；同一 `(chatId, serverSeq)` 的创建、编辑、撤回事件不会相互
+覆盖。两个磁盘语句之间崩溃会触发安全重放而不是丢消息。进程内仅保留 CONFLATED wake-up。ack 只把精确 eventId 更新为
+acked，不删除历史行；peek 只返回 unacked，而 cursor 分页包含 acked 与 unacked。
+直连 ImBot 使用 `nextMessageDelivery` + 显式 ack 获得 at-least-once；tt-agent 的 REST 按全局
+eventId 查询同一持久 delivery log，内存对象只负责唤醒长轮询，不承担事实源。
+例外是权威 `CHAT_DELETED` 墓碑：它是授权撤销/隐私边界，会原子清理该 chat 的 pending/acked
+delivery、active/terminal/SUCCESS outgoing 回执与消息投影，而不保留为普通历史诊断。
 `CHAT_CREATED` 在投影时只合并 conversation-dirty，先提交 Chat
 与 cursor，再在 `AUTHENTICATED` 后异步重拉会话；重拉失败不回滚 cursor，也不高频自旋。
 每次进入 `AUTHENTICATED` 还会无条件对账一次，以修复“cursor 已提交但 dirty 尚未落地就进程死亡”
@@ -198,6 +217,14 @@ LocalCache 在固定锁序下再次验证 lease，并用一个 SQLite 事务校�
 页内任意一行失败必须整页回滚。MessageRepository 把 stale 映射为 `CancellationException`，
 避免页面把丢弃结果当成业务失败。EventProcessor 的实时单条 `insertMessage` 不参与该 fence，
 也不会使正常在途历史页失效。
+重启后初始驻留窗口先按明确容量读取该 chat 的 `serverSeq=0` QUEUED/SENDING/FAILED 乐观行，
+但已存在权威历史时至少保留一个最新 serverSeq 分页锚，再用最近权威消息填满剩余容量。内存与 Fake
+使用同一“乐观优先、其次 serverSeq 倒序”规则，驻留窗口仍有界且 history cursor 可继续向旧页推进，
+避免 50+ 条历史在 SQL `LIMIT` 前把本地可诊断气泡挤出视图。
+窗口最多驻留配置容量的两倍；向旧页移动时会为刚加载的权威页腾出空间，不能把新页立即裁掉并重复
+同一 cursor。若已到服务端历史末尾后，实时消息又挤出了权威旧页，pager 会返回被裁边界的精确
+serverSeq，ViewModel 必须从服务端重新拉取该边界之前的页面；不能用不属于当前响应链的 SQLite stale tail
+补位。
 
 联系人展示模型由 Contact 关系与 User 资料组合投影；`getContacts` 与 `observeContacts`
 使用同一 projector，`USER_UPDATED` 必须能驱动已展示联系人的姓名更新。平台壳不得直接写
@@ -206,7 +233,12 @@ LocalCache 伪造服务端状态；例如会话置顶必须经过 ConversationRe
 
 当前仍是正式发布前阶段，本地 SQLite 只是可重建投影，不承载兼容性契约。不兼容的
 schema 变化递增 `LOCAL_CACHE_SCHEMA_EPOCH` 并切换数据库文件，登录后由服务端快照和事件重建；
-客户端启动路径不再维护历史增量迁移。正式发布前必须重新评审这一策略。
+客户端启动路径不再维护历史增量迁移。当前 epoch 3 使用 `cache_e3*.db`；旧 `cache_e2*.db` 保留但
+永不读取，服务器投影重新同步，旧草稿和未上服本地状态不迁移。epoch 3 的 outgoing 与 Bot delivery
+log 已属于可靠本地事实，不得再按普通可重建投影随意清除。正式发布前必须重新评审保留与迁移策略。
+建库时每次打开都幂等执行 `Schema.create`，因此当前 schema 的多 DDL 首次创建如果中途崩溃，
+下次打开会补齐缺失表/索引。这不是对未发布中间 schema 的迁移：曾运行过早期 epoch 3 开发构建的
+实例必须删除对应 `cache_e3*.db` 后重同步。
 
 UI 不应绕过 ViewModel 直接把网络响应当作长期状态。任何新增展示数据都需要先回答：它如何进入
 LocalCache、如何从事件恢复、如何在重启后存在。

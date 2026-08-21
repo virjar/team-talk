@@ -93,6 +93,9 @@ class ChatServiceBotMembership(
 class MessageServiceBotSender(
     private val messages: MessageService,
 ) : BotMessageSender {
-    override suspend fun send(senderUid: String, message: Message): Long =
-        messages.sendMessage(senderUid, message)
+    override suspend fun send(
+        senderUid: String,
+        message: Message,
+        authorizeAfterChatLock: (PgTransactionContext) -> Unit,
+    ): Long = messages.sendMessage(senderUid, message, authorizeAfterChatLock)
 }

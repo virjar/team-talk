@@ -1,6 +1,7 @@
 package com.virjar.tk.infra.health
 
 import com.virjar.tk.domain.message.MessageProjectionReadiness
+import com.virjar.tk.domain.organization.OrganizationProjectionReadiness
 import com.virjar.tk.infra.search.SearchIndex
 import com.virjar.tk.infra.storage.FileStore
 import com.virjar.tk.infra.storage.MessageStore
@@ -23,6 +24,7 @@ class HealthChecker(
     private val searchIndex: SearchIndex,
     private val fileStore: FileStore,
     private val messageProjectionReadiness: MessageProjectionReadiness,
+    private val organizationProjectionReadiness: OrganizationProjectionReadiness,
     private val tcpPort: Int = 5100,
 ) {
     suspend fun check(): HealthResponse {
@@ -32,6 +34,9 @@ class HealthChecker(
         components["rocksdb"] = checkRocksDB()
         components["lucene"] = checkLucene()
         components["message-projection"] = checkMessageProjection()
+        components["managed-chat-projection"] = withContext(Dispatchers.IO) {
+            checkManagedChatProjection()
+        }
         components["file-storage"] = checkFileStorage()
         components["tcp"] = withContext(Dispatchers.IO) { checkTcp() }
 
@@ -59,6 +64,21 @@ class HealthChecker(
     private fun checkMessageProjection(): ComponentHealth {
         val failure = messageProjectionReadiness.currentFailure() ?: return ComponentHealth("UP")
         return ComponentHealth("DOWN", "${failure.projectionKey}: ${failure.detail}")
+    }
+
+    private fun checkManagedChatProjection(): ComponentHealth = try {
+        val pending = organizationProjectionReadiness.pendingCount()
+        if (pending == 0L) {
+            ComponentHealth("UP")
+        } else {
+            val failure = organizationProjectionReadiness.currentFailure()
+            val detail = failure?.let {
+                "${it.unitId}@${it.revision} attempt=${it.attemptCount}: ${it.detail}"
+            } ?: "$pending managed-chat projection(s) pending"
+            ComponentHealth("DOWN", detail)
+        }
+    } catch (error: Exception) {
+        ComponentHealth("DOWN", "Managed-chat readiness unavailable: ${error.message}")
     }
 
     private fun checkFileStorage(): ComponentHealth =

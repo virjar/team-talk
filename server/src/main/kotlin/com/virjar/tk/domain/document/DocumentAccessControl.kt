@@ -11,7 +11,7 @@ import com.virjar.tk.model.DocumentSpaceGrant
  *
  * Reads resolve the latest committed organization projection without taking aggregate locks.
  * Writes lock any required user principals first, then the active space before grants,
- * memberships and organization units, and consume the transaction-scoped authority snapshot
+ * organization units and memberships, and consume the transaction-scoped authority snapshot
  * returned by [DocumentRepository.lockWriteAuthority]. Keeping both paths here guarantees that
  * user and organization grants share one effective-role policy without weakening command fences.
  */

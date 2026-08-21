@@ -14,8 +14,14 @@
 
 ## 2. 健康检查
 
-`GET /health` 汇总 PostgreSQL、MessageStore/RocksDB、Lucene、FileStore 和 TCP 监听。所有关键组件
+`GET /health` 汇总 PostgreSQL、MessageStore/RocksDB、Lucene、FileStore、TCP 监听以及
+`message-projection`、`managed-chat-projection` 两个 durable projection readiness。所有关键组件
 UP 才返回 200。外部探针应检查 HTTP status 和结构化 component 结果。
+
+`managed-chat-projection=DOWN` 表示至少一个组织受管群的 desired revision 尚未应用；detail 优先给出
+失败 unit/revision/attempt，否则给出 pending 数量。此时相关聊天权限主动拒绝，不能把旧成员投影视为
+可降级数据。运行期会按持久退避每 5 秒扫描已到期任务；只有 pending 清零才恢复 readiness。若启动时
+完整 drain 仍未收敛，服务会在开放 TCP 前失败，避免带着旧权限投影对外提供服务。
 
 健康检查不执行注册或发送消息，不能作为发布验收。
 

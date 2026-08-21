@@ -139,8 +139,8 @@ class DocumentUnitOfWorkIntegrationTest {
         val owner = ctx.registerUser(uniqueUsername("document-lock-order-owner"))
         val admin = ctx.registerUser(uniqueUsername("document-lock-order-admin"))
         val unit = OrganizationUnit(UUID.randomUUID().toString(), name = "文档管理员组")
-        ctx.organizationRepo.createUnit(unit)
-        ctx.organizationRepo.upsertMember(OrganizationMember(unit.unitId, admin))
+        ctx.seedOrganizationUnit(unit)
+        ctx.seedOrganizationMember(OrganizationMember(unit.unitId, admin))
         val space = ctx.documentService.createSpace(owner, "锁序空间", null)
         ctx.documentService.upsertGrant(
             owner,
@@ -265,8 +265,8 @@ class DocumentUnitOfWorkIntegrationTest {
         val owner = ctx.registerUser(uniqueUsername("document-org-owner"))
         val editor = ctx.registerUser(uniqueUsername("document-org-editor"))
         val unit = OrganizationUnit(UUID.randomUUID().toString(), name = "文档编辑组")
-        ctx.organizationRepo.createUnit(unit)
-        ctx.organizationRepo.upsertMember(OrganizationMember(unit.unitId, editor))
+        ctx.seedOrganizationUnit(unit)
+        ctx.seedOrganizationMember(OrganizationMember(unit.unitId, editor))
         val space = ctx.documentService.createSpace(owner, "组织撤权空间", null)
         ctx.documentService.upsertGrant(
             owner,
@@ -425,13 +425,15 @@ class DocumentUnitOfWorkIntegrationTest {
             requiredUserIds: Set<String>,
         ): DocumentWriteAuthority {
             attempted.countDown()
-            return delegate.lockWriteAuthority(
-                transaction,
-                actorUid,
-                spaceId,
-                requiredOrganizationUnitIds,
-                requiredUserIds,
-            ).also {
+            return try {
+                delegate.lockWriteAuthority(
+                    transaction,
+                    actorUid,
+                    spaceId,
+                    requiredOrganizationUnitIds,
+                    requiredUserIds,
+                )
+            } finally {
                 acquired.countDown()
             }
         }

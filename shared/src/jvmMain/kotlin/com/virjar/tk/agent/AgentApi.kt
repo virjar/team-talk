@@ -2,7 +2,13 @@ package com.virjar.tk.agent
 
 import com.sun.net.httpserver.HttpExchange
 import com.virjar.tk.client.ConnectionState
+import com.virjar.tk.client.OutgoingMessage
+import com.virjar.tk.client.OutgoingMessageConflictException
+import com.virjar.tk.client.OutgoingMessageState
+import com.virjar.tk.client.PendingBotMessage
 import com.virjar.tk.body.markdownContentOrNull
+import com.virjar.tk.body.MessageBodyPolicy
+import com.virjar.tk.model.Message
 import com.virjar.tk.protocol.payload.MessageAckPayload
 import com.virjar.tk.util.PlatformOnlyTkLogger
 import kotlinx.coroutines.runBlocking
@@ -16,6 +22,7 @@ import kotlinx.serialization.json.put
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.security.MessageDigest
+import java.net.URLDecoder
 
 private val agentApiLogger = PlatformOnlyTkLogger("AgentApi")
 
@@ -44,6 +51,7 @@ class AgentApi(private val agent: AgentRuntime) {
                 ex.requestMethod == "GET" && path == "/v1/status" -> status()
                 ex.requestMethod == "GET" && path == "/v1/messages" -> messages(ex)
                 ex.requestMethod == "GET" && path == "/v1/recv-wait" -> recvWait(ex)
+                ex.requestMethod == "GET" && path == "/v1/outgoing" -> outgoing(ex)
                 ex.requestMethod == "POST" -> post(path, body)
                 readonly -> post(path, body)
                 else -> 404 to err("unknown $path")
@@ -51,6 +59,11 @@ class AgentApi(private val agent: AgentRuntime) {
             ex.resp(resp.first, resp.second)
         } catch (e: AgentRequestBodyException) {
             runCatching { ex.resp(e.status, err(e.safeMessage)) }
+        } catch (_: AgentFileRequestException) {
+            val response = agentFileRequestErrorResponse()
+            runCatching { ex.resp(response.first, response.second) }
+        } catch (e: OutgoingMessageConflictException) {
+            runCatching { ex.resp(409, err(e.message ?: "clientMsgId conflict")) }
         } catch (e: Exception) {
             runCatching { ex.resp(500, err(e.message ?: e::class.simpleName ?: "error")) }
         }
@@ -69,41 +82,70 @@ class AgentApi(private val agent: AgentRuntime) {
 
     private fun messages(ex: HttpExchange): Pair<Int, JsonObject> {
         val q = ex.query()
-        val list = agent.bufferedMessages(q["chatId"], q["limit"]?.toIntOrNull() ?: 50, q["afterSeq"]?.toLongOrNull() ?: 0L)
+        if ("afterSeq" in q) return 400 to err("afterSeq is not supported; use afterEventId")
+        val afterEventId = parseAgentCursor(q["afterEventId"], default = 0L)!!
+        val limit = parseAgentBoundedInt(q["limit"], 50, 1..MAX_AGENT_MESSAGE_PAGE, "limit")
+        val chatId = q["chatId"]?.takeIf { it.isNotBlank() }
+        if (q["chatId"] != null && chatId == null) return 400 to err("chatId must not be blank")
+        val list = agent.bufferedMessages(chatId, limit, afterEventId)
         return 200 to ok(buildJsonObject {
             put("messages", buildJsonArray { list.forEach { add(it.toJson()) } })
+            put("nextEventId", list.lastOrNull()?.eventId ?: afterEventId)
         })
     }
 
     private fun recvWait(ex: HttpExchange): Pair<Int, JsonObject> {
         val q = ex.query()
-        val msg = agent.waitMessage(q["chatId"], q["timeout"]?.toIntOrNull() ?: 10)
+        if ("afterSeq" in q) return 400 to err("afterSeq is not supported; use afterEventId")
+        val afterEventId = parseAgentCursor(q["afterEventId"], default = null)
+        val timeout = parseAgentBoundedInt(q["timeout"], 10, 1..MAX_AGENT_WAIT_SECONDS, "timeout")
+        val chatId = q["chatId"]?.takeIf { it.isNotBlank() }
+        if (q["chatId"] != null && chatId == null) return 400 to err("chatId must not be blank")
+        val result = agent.waitMessage(afterEventId, chatId, timeout)
+        val msg = result.delivery
         return 200 to ok(buildJsonObject {
             put("message", msg?.toJson() ?: kotlinx.serialization.json.JsonNull)
+            put("nextEventId", result.nextEventId)
         })
+    }
+
+    private fun outgoing(ex: HttpExchange): Pair<Int, JsonObject> {
+        val q = ex.query()
+        val chatId = q["chatId"]?.let(::requireAgentChatId)
+            ?: return 400 to err("chatId is required")
+        val clientMsgId = q["clientMsgId"]?.let(::requireAgentClientMsgId)
+            ?: return 400 to err("clientMsgId is required")
+        val receipt = agent.outgoingReceipt(chatId, clientMsgId)
+            ?: return 404 to err("outgoing receipt not found")
+        return outgoingReceiptResponse(receipt)
     }
 
     private fun post(path: String, body: String): Pair<Int, JsonObject> = runBlocking {
         val r = parse(body)
         when (path) {
             "/v1/send-text" -> {
-                val ack = agent.bot.sendText(r.req("chatId"), r.req("text"))
-                agentAckResponse(ack)
+                val receipt = agent.bot.enqueueText(
+                    requireAgentChatId(r.req("chatId")),
+                    requireAgentClientMsgId(r.req("clientMsgId")),
+                    r.req("text"),
+                )
+                outgoingReceiptResponse(receipt)
             }
             "/v1/send-rich" -> {
-                val ack = agent.bot.sendRichText(r.req("chatId"), r.req("markdown"))
-                agentAckResponse(ack)
+                val receipt = agent.bot.enqueueRichText(
+                    requireAgentChatId(r.req("chatId")),
+                    requireAgentClientMsgId(r.req("clientMsgId")),
+                    r.req("markdown"),
+                )
+                outgoingReceiptResponse(receipt)
             }
             "/v1/send-file" -> {
-                withStagedUpload(r) { staged ->
-                    val ack = agent.bot.uploadAndSendFile(
-                        r.req("chatId"),
-                        staged.source,
-                        staged.originalFileName,
-                        "application/octet-stream",
-                    )
-                    agentAckResponse(ack)
-                }
+                val receipt = agent.enqueueFile(
+                    requireAgentChatId(r.req("chatId")),
+                    requireAgentClientMsgId(r.req("clientMsgId")),
+                    r.req("path"),
+                )
+                outgoingReceiptResponse(receipt)
             }
             "/v1/upload" -> withStagedUpload(r) { staged ->
                 val attachment = agent.bot.uploadFile(
@@ -236,34 +278,77 @@ class AgentApi(private val agent: AgentRuntime) {
     }
 
     private fun Map<String, String>.req(key: String): String =
-        this[key] ?: throw IllegalArgumentException("missing field: $key")
+        this[key] ?: throw AgentRequestBodyException(400, "missing field: $key")
 
-    private fun com.virjar.tk.model.Message.toJson() = buildJsonObject {
-        put("chatId", chatId); put("seq", serverSeq); put("sender", senderUid)
-        put("text", body.markdownContentOrNull() ?: ""); put("ts", timestamp)
-    }
+    private fun PendingBotMessage.toJson() = pendingBotMessageJson(this)
 
     private fun parse(body: String): Map<String, String> =
         if (body.isBlank()) emptyMap()
         else runCatching {
             json.parseToJsonElement(body).jsonObject.mapValues { it.value.jsonPrimitive.content }
-        }.getOrDefault(emptyMap())
+        }.getOrElse {
+            throw AgentRequestBodyException(400, "invalid JSON request body")
+        }
 
     private fun ok(data: JsonObject) = buildJsonObject { put("ok", true); put("data", data) }
     private fun err(msg: String) = buildJsonObject { put("ok", false); put("error", msg) }
 
-    private fun HttpExchange.query(): Map<String, String> {
-        val q = requestURI.query ?: return emptyMap()
-        return q.split("&").mapNotNull {
-            val i = it.indexOf('='); if (i > 0) it.substring(0, i) to it.substring(i + 1) else null
-        }.toMap()
-    }
+    private fun HttpExchange.query(): Map<String, String> = parseAgentQuery(requestURI.rawQuery)
 
     private fun HttpExchange.resp(code: Int, body: JsonObject) {
         val bytes = body.toString().toByteArray()
         responseHeaders.add("Content-Type", "application/json; charset=utf-8")
         sendResponseHeaders(code, bytes.size.toLong())
         responseBody.use { it.write(bytes) }
+    }
+}
+
+internal fun pendingBotMessageJson(delivery: PendingBotMessage): JsonObject = buildJsonObject {
+    put("eventId", delivery.eventId)
+    val message = delivery.message
+    put("clientMsgId", message.clientMsgId)
+    put("chatId", message.chatId)
+    put("seq", message.serverSeq)
+    put("sender", message.senderUid)
+    put("messageType", message.messageType)
+    put("flags", message.flags)
+    put("edited", message.flags and Message.FLAG_EDITED != 0)
+    put("revoked", message.flags and Message.FLAG_REVOKED != 0)
+    put("forwarded", message.flags and Message.FLAG_FORWARDED != 0)
+    put("text", message.body.markdownContentOrNull() ?: "")
+    put("ts", message.timestamp)
+}
+
+private const val MAX_AGENT_MESSAGE_PAGE = 1000
+internal const val MAX_AGENT_WAIT_SECONDS = 60
+
+internal fun parseAgentCursor(raw: String?, default: Long?): Long? {
+    if (raw == null) return default
+    return raw.toLongOrNull()?.takeIf { it >= 0L }
+        ?: throw AgentRequestBodyException(400, "invalid afterEventId")
+}
+
+internal fun parseAgentBoundedInt(raw: String?, default: Int, range: IntRange, label: String): Int {
+    val value = raw?.toIntOrNull()
+        ?: if (raw == null) default else throw AgentRequestBodyException(400, "invalid $label")
+    if (value !in range) {
+        throw AgentRequestBodyException(400, "$label must be between ${range.first} and ${range.last}")
+    }
+    return value
+}
+
+/** Decode the URI raw query exactly once; decoded `URI.query` would corrupt literal `%xx` IDs. */
+internal fun parseAgentQuery(rawQuery: String?): Map<String, String> {
+    if (rawQuery == null) return emptyMap()
+    return try {
+        rawQuery.split("&").mapNotNull { field ->
+            val separator = field.indexOf('=')
+            if (separator <= 0) return@mapNotNull null
+            URLDecoder.decode(field.substring(0, separator), "UTF-8") to
+                URLDecoder.decode(field.substring(separator + 1), "UTF-8")
+        }.toMap()
+    } catch (_: IllegalArgumentException) {
+        throw AgentRequestBodyException(400, "invalid query encoding")
     }
 }
 
@@ -347,4 +432,56 @@ internal fun agentAckResponse(ack: MessageAckPayload): Pair<Int, JsonObject> {
         put("ok", false)
         put("error", ack.reason?.takeIf { it.isNotBlank() } ?: "消息发送失败（ACK ${ack.code}）")
     }
+}
+
+internal fun outgoingReceiptResponse(receipt: OutgoingMessage): Pair<Int, JsonObject> =
+    200 to buildJsonObject {
+        put("ok", true)
+        put("data", outgoingReceiptJson(receipt))
+    }
+
+internal fun agentFileRequestErrorResponse(): Pair<Int, JsonObject> =
+    400 to buildJsonObject {
+        put("ok", false)
+        put("error", "file path is not allowed")
+    }
+
+internal fun outgoingReceiptJson(receipt: OutgoingMessage): JsonObject = buildJsonObject {
+    put("clientMsgId", receipt.message.clientMsgId)
+    put("chatId", receipt.message.chatId)
+    put("state", when (receipt.state) {
+        OutgoingMessageState.PENDING,
+        OutgoingMessageState.RETRY_WAIT -> "queued"
+        OutgoingMessageState.IN_FLIGHT -> "sending"
+        OutgoingMessageState.TERMINAL_FAILED -> "failed"
+        OutgoingMessageState.SUCCESS -> "sent"
+    })
+    put("attemptCount", receipt.attemptCount)
+    put("nextAttemptAt", receipt.nextAttemptAt)
+    put("createdAt", receipt.createdAt)
+    put("updatedAt", receipt.updatedAt)
+    put("serverSeq", receipt.serverSeq ?: 0L)
+    put("terminalCode", receipt.terminalCode ?: 0)
+    put("lastError", receipt.lastError ?: "")
+    put("completedAt", receipt.completedAt ?: 0L)
+}
+
+internal fun requireAgentClientMsgId(value: String): String {
+    if (
+        value.isBlank() || value.any(Char::isISOControl) ||
+        value.encodeToByteArray().size > MessageBodyPolicy.MAX_CLIENT_MESSAGE_ID_LENGTH
+    ) {
+        throw AgentRequestBodyException(400, "invalid clientMsgId")
+    }
+    return value
+}
+
+internal fun requireAgentChatId(value: String): String {
+    if (
+        value.isBlank() || value.any(Char::isISOControl) ||
+        value.encodeToByteArray().size > MessageBodyPolicy.MAX_CHAT_ID_LENGTH
+    ) {
+        throw AgentRequestBodyException(400, "invalid chatId")
+    }
+    return value
 }

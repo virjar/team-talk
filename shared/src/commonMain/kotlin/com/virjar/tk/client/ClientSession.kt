@@ -29,6 +29,14 @@ enum class SessionEndReason {
     SHUTDOWN,
 }
 
+private fun SessionEndReason.outgoingDisposition(): SendQueueCloseDisposition = when (this) {
+    SessionEndReason.USER_LOGOUT,
+    SessionEndReason.AUTH_REVOKED -> SendQueueCloseDisposition.CANCEL
+    SessionEndReason.PROCESS_REPLACED,
+    SessionEndReason.PROTOCOL_UPGRADE,
+    SessionEndReason.SHUTDOWN -> SendQueueCloseDisposition.PRESERVE
+}
+
 enum class SessionLifecyclePhase { ACTIVE, QUIESCED, CLOSED }
 
 /** Permanently retired on quiesce and held across the EventLoop's actual channel write. */
@@ -221,6 +229,19 @@ class ClientSession internal constructor(
     val messageSender: MessageSender get() = businessResource(ownedMessageSender)
     val sendQueue: SendQueue get() = businessResource(ownedSendQueue)
 
+    /** Stable-id durable admission for headless and SDK integrations. */
+    fun enqueueOutgoing(message: com.virjar.tk.model.Message, requestFingerprint: ByteArray? = null): OutgoingMessage =
+        lifecycle.whileBusinessActive { ownedSendQueue.enqueue(message, requestFingerprint) }
+
+    /** Durable active/failed/success receipt for the fixed authenticated account. */
+    fun outgoingReceipt(
+        chatId: String,
+        clientMsgId: String,
+        requestFingerprint: ByteArray? = null,
+    ): OutgoingMessage? = lifecycle.whileBusinessActive {
+        ownedSendQueue.receipt(chatId, clientMsgId, requestFingerprint)
+    }
+
     private fun <T> businessResource(resource: T): T {
         lifecycle.requireBusinessActive()
         return resource
@@ -253,7 +274,7 @@ class ClientSession internal constructor(
                 stage = "quiesce",
                 "pending ACKs" to { imClient.retireSessionOutbound(outboundLease.ackOwner) },
                 "draft recovery" to { draftRecoveryScope.cancel() },
-                "send queue" to ownedSendQueue::close,
+                "send queue" to { ownedSendQueue.close(reason.outgoingDisposition()) },
                 "event processor" to ownedEventProcessor::stop,
                 // The retirement RPC does not use LocalCache. Closing here fences repositories and
                 // pagers captured by a retiring UI while preserving only the sealed raw RPC owner.
@@ -465,12 +486,11 @@ fun createSession(
 
     // 发送队列：断线排队 → AUTHENTICATED 唤醒补发；状态机回写本地缓存驱动 UI
     val sendQueue = SendQueue(
+        ownerUid = sessionOwnerUid,
+        localCache = cache,
         connectionState = imClient.state,
         sender = messageSender,
         scope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
-        onQueued = { msg -> cache.updateMessageStatus(msg.chatId, msg.clientMsgId, Message.SEND_STATUS_QUEUED) },
-        onSent = { msg, ack -> cache.updateMessage(msg.chatId, msg.clientMsgId, ack.serverSeq) },
-        onFailed = { msg, _ -> cache.updateMessageStatus(msg.chatId, msg.clientMsgId, Message.SEND_STATUS_FAILED) },
     )
     construction.own("send queue", sendQueue::close)
 

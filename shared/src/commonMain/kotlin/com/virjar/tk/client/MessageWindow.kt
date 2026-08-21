@@ -39,6 +39,16 @@ internal class MessageWindow(
      */
     private var serverPageAnchored = false
     private var historyCursor: Long? = null
+    /**
+     * Atomic cursor captured after a live upsert trims server-proven history. `loadMore` consumes
+     * it and asks the ViewModel to refetch from the server. This keeps resident memory bounded
+     * without reviving an unrelated stale SQLite tail.
+     */
+    private var remoteRefetchBeforeSeq: Long? = null
+
+    init {
+        require(windowSize > 0) { "windowSize must be positive" }
+    }
 
     // 消息映射函数（从 LocalCacheImpl 传入，复用 toModel 逻辑）
     private val toModelFn = toModel
@@ -49,7 +59,22 @@ internal class MessageWindow(
 
     private fun loadInitialWindow() = cacheUseGate.use {
         synchronized(stateLock) {
-            val rows = queries.selectMessagesByChat(chatId, windowSize.toLong()).executeAsList()
+            val authorityAnchor = queries.selectLatestAuthoritativeMessagesByChat(chatId, 1L).executeAsList()
+            val optimisticCapacity = windowSize - if (authorityAnchor.isEmpty()) 0 else 1
+            val optimistic = queries.selectOptimisticMessagesByChat(
+                chatId,
+                optimisticCapacity.coerceAtLeast(0).toLong(),
+            ).executeAsList()
+            val authoritativeCapacity = (windowSize - optimistic.size).coerceAtLeast(0)
+            val authoritative = if (authoritativeCapacity == 1 && authorityAnchor.isNotEmpty()) {
+                authorityAnchor
+            } else {
+                queries.selectLatestAuthoritativeMessagesByChat(
+                    chatId,
+                    authoritativeCapacity.toLong(),
+                ).executeAsList()
+            }
+            val rows = optimistic + authoritative
             val msgs = rows.map { toModelFn(it) }.sortedWith(messageOrder)
             _messages.value = msgs
             historyCursor = oldestServerSeq(msgs)
@@ -59,9 +84,7 @@ internal class MessageWindow(
 
     private fun refreshHasMore(currentMsgs: List<Message>) {
         if (serverPageAnchored) {
-            // Local rows outside the authoritative response chain cannot prove continuity. The
-            // ChatViewModel's remoteHasMore drives the next server page instead.
-            _hasMore.value = false
+            _hasMore.value = remoteRefetchBeforeSeq != null
             return
         }
         val cursor = historyCursor ?: oldestServerSeq(currentMsgs)
@@ -69,20 +92,32 @@ internal class MessageWindow(
             queries.selectMessagesByChatBefore(chatId, cursor, 1L).executeAsList().isNotEmpty()
     }
 
-    override fun loadMore(pageSize: Int) = cacheUseGate.use {
+    override fun loadMore(pageSize: Int): MessagePageLoadResult = cacheUseGate.use {
         synchronized(stateLock) {
-            if (serverPageAnchored) return@synchronized
+            require(pageSize > 0) { "pageSize must be positive" }
+            if (serverPageAnchored) {
+                val refetchCursor = remoteRefetchBeforeSeq
+                    ?: return@synchronized MessagePageLoadResult.Exhausted
+                // A failed RPC remains retryable through ChatViewModel.remoteHasMore. Any live
+                // trim after this point installs a new cursor which applyHistoryPage preserves.
+                remoteRefetchBeforeSeq = null
+                refreshHasMore(_messages.value)
+                return@synchronized MessagePageLoadResult.RemoteRequired(refetchCursor)
+            }
             val current = _messages.value
-            val oldestSeq = historyCursor ?: oldestServerSeq(current) ?: return@synchronized
-            if (!_hasMore.value) return@synchronized
+            val oldestSeq = historyCursor ?: oldestServerSeq(current)
+                ?: return@synchronized MessagePageLoadResult.Exhausted
+            if (!_hasMore.value) return@synchronized MessagePageLoadResult.Exhausted
 
             val olderRows = queries.selectMessagesByChatBefore(chatId, oldestSeq, pageSize.toLong()).executeAsList()
             val existingIds = current.asSequence().map(Message::clientMsgId).toHashSet()
             val older = olderRows.map(toModelFn).filter { existingIds.add(it.clientMsgId) }
-            val merged = (current + older).sortedWith(messageOrder)
+            val merged = (current + older).sortedWith(messageOrder).toMutableList()
+            trimForOlderPage(merged, older.mapTo(mutableSetOf(), Message::clientMsgId))
             _messages.value = merged
             historyCursor = oldestServerSeq(merged)
             refreshHasMore(merged)
+            if (older.isEmpty()) MessagePageLoadResult.Exhausted else MessagePageLoadResult.LocalLoaded
         }
     }
 
@@ -101,11 +136,21 @@ internal class MessageWindow(
             } else {
                 _messages.value
             }
-            val merged = mergeByClientId(base, page)
+            val merged = mergeByClientId(base, page).toMutableList()
             serverPageAnchored = true
+            if (startNewChain) {
+                remoteRefetchBeforeSeq = null
+                if (trimOldestForLatestWindow(merged)) {
+                    remoteRefetchBeforeSeq = oldestServerSeq(merged)
+                }
+            } else {
+                // Older authoritative pages move the bounded window backwards. A cursor installed
+                // by a concurrent live upsert is deliberately preserved for the next request.
+                trimForOlderPage(merged, page.mapTo(mutableSetOf(), Message::clientMsgId))
+            }
             historyCursor = oldestServerSeq(merged)
             _messages.value = merged
-            _hasMore.value = false
+            refreshHasMore(merged)
         }
     }
 
@@ -134,7 +179,10 @@ internal class MessageWindow(
             // applyHistoryPage path above; pending local messages (seq=0) remain before confirmed
             // history and are ordered by their local timestamp.
             current.sortWith(messageOrder)
-            trimIfOversized(current)
+            val trimmedAuthority = trimOldestForLatestWindow(current)
+            if (serverPageAnchored && trimmedAuthority) {
+                remoteRefetchBeforeSeq = oldestServerSeq(current)
+            }
             _messages.value = current
             historyCursor = oldestServerSeq(current)
             refreshHasMore(current)
@@ -188,14 +236,69 @@ internal class MessageWindow(
             _hasMore.value = false
             serverPageAnchored = false
             historyCursor = null
+            remoteRefetchBeforeSeq = null
         }
     }
 
-    /** 窗口超过 windowSize * 2 时裁剪最老的消息（保留 hasMore=true）。 */
-    private fun trimIfOversized(list: MutableList<Message>) {
+    /** Latest/live windows retain their newest facts and report whether confirmed history fell out. */
+    private fun trimOldestForLatestWindow(list: MutableList<Message>): Boolean {
+        var trimmedAuthority = false
         if (list.size > maxCapacity) {
-            val dropCount = list.size - windowSize
-            repeat(dropCount) { list.removeAt(list.lastIndex) }
+            var authorityCount = list.count { it.serverSeq > 0L }
+            val dropCount = list.size - maxCapacity
+            repeat(dropCount) {
+                val oldestIndex = list.lastIndex
+                val removalIndex = if (
+                    list[oldestIndex].serverSeq > 0L && authorityCount == 1
+                ) {
+                    list.indexOfLast { it.serverSeq == 0L }.takeIf { it >= 0 } ?: oldestIndex
+                } else {
+                    oldestIndex
+                }
+                if (list[removalIndex].serverSeq > 0L) {
+                    authorityCount -= 1
+                    trimmedAuthority = true
+                }
+                list.removeAt(removalIndex)
+            }
+        }
+        return trimmedAuthority
+    }
+
+    /**
+     * Paging backwards must retain the page just loaded. Once the 2x cap is reached, evict newer
+     * confirmed rows (while preserving one newest authority anchor) instead of deleting the tail
+     * and repeating the same SQLite/server cursor forever. Optimistic rows normally stay visible,
+     * but a saturated window may evict the oldest ones so the newly loaded cursor can advance;
+     * their durable projection remains in SQLite and returns with a fresh resident window.
+     */
+    private fun trimForOlderPage(
+        list: MutableList<Message>,
+        loadedPageIds: Set<String>,
+    ) {
+        while (list.size > maxCapacity) {
+            val firstAuthority = list.indexOfFirst { it.serverSeq > 0L }
+            val unprotectedAuthority = list.indices.firstOrNull { index ->
+                index != firstAuthority &&
+                    list[index].serverSeq > 0L &&
+                    list[index].clientMsgId !in loadedPageIds
+            } ?: -1
+            val oldestLoadedAuthority = list.indexOfLast { message ->
+                message.serverSeq > 0L && message.clientMsgId in loadedPageIds
+            }
+            val newerLoadedAuthority = list.indices.firstOrNull { index ->
+                index != oldestLoadedAuthority &&
+                    list[index].serverSeq > 0L &&
+                    list[index].clientMsgId in loadedPageIds
+            } ?: -1
+            val removalIndex = when {
+                unprotectedAuthority >= 0 -> unprotectedAuthority
+                list.any { it.serverSeq == 0L } -> list.indexOfLast { it.serverSeq == 0L }
+                firstAuthority >= 0 && list[firstAuthority].clientMsgId !in loadedPageIds -> firstAuthority
+                newerLoadedAuthority >= 0 -> newerLoadedAuthority
+                else -> list.lastIndex
+            }
+            list.removeAt(removalIndex)
         }
     }
 

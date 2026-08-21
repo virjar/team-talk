@@ -41,6 +41,8 @@ class SendQueueE2eTest {
                     val states = mutableListOf<Int>()
                     lateinit var queue: com.virjar.tk.client.SendQueue
                     queue = com.virjar.tk.client.SendQueue(
+                        ownerUid = bUid!!,
+                        localCache = com.virjar.tk.testing.FakeLocalCache(),
                         connectionState = b.state,
                         sender = com.virjar.tk.client.MessageSender { msg -> b.sendAndWaitAck(msg) },
                         scope = queueScope,

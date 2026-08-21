@@ -14,6 +14,8 @@ import com.virjar.tk.body.buildMentionMarkdown
 import com.virjar.tk.body.buildRichTextBody
 import com.virjar.tk.domain.message.MessageService
 import com.virjar.tk.model.Message
+import com.virjar.tk.model.ProfilePatch
+import com.virjar.tk.model.ProfilePatchValue
 import com.virjar.tk.protocol.ExtensionType
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.NotifyType
@@ -675,8 +677,10 @@ class MessageIntegrationTest {
         val target = ctx.registerUser()
         ctx.userService.updateProfile(
             target,
-            name = "权威姓名",
-            avatar = "https://im.example.test/avatars/authoritative.png",
+            ProfilePatch(
+                name = ProfilePatchValue.Set("权威姓名"),
+                avatar = ProfilePatchValue.Set("https://im.example.test/avatars/authoritative.png"),
+            ),
         )
         val chat = ctx.chatService.createPersonalChat(sender, target)
         val forged = Message(

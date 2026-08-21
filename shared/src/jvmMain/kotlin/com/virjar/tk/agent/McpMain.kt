@@ -13,6 +13,7 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 import java.io.PrintWriter
+import java.net.URLEncoder
 
 /**
  * tt-mcp：MCP server（doc/05-clients/headless.md）。
@@ -41,16 +42,17 @@ fun main(args: Array<String>) {
     while (true) {
         val line = input.readLine() ?: break
         if (line.isBlank()) continue
-        val resp = runCatching {
-            val req = json.parseToJsonElement(line).jsonObject
-            server.handle(req)
-        }.getOrElse { e ->
-            buildJsonObject {
+        val req = try {
+            json.parseToJsonElement(line).jsonObject
+        } catch (_: Exception) {
+            output.println(buildJsonObject {
                 put("jsonrpc", "2.0"); put("id", JsonNull)
-                put("error", buildJsonObject { put("code", -32603); put("message", e.message ?: "parse error") })
-            }
+                put("error", buildJsonObject { put("code", -32700); put("message", "parse error") })
+            })
+            continue
         }
-        output.println(resp.toString())
+        val resp = server.handle(req)
+        if (resp != null) output.println(resp.toString())
     }
 }
 
@@ -58,19 +60,30 @@ fun main(args: Array<String>) {
 class McpServer(api: String, token: String) {
     private val cli = Cli(api, token)
 
-    fun handle(req: JsonObject): JsonObject {
+    fun handle(req: JsonObject): JsonObject? {
         val id = req["id"]
-        val method = req["method"]?.jsonPrimitive?.content
-        val result: JsonObject = when (method) {
-            "initialize" -> initialize()
-            "notifications/initialized" -> return emptyResult(id) // 通知无响应（但宽容回空）
-            "ping" -> buildJsonObject {}
-            "tools/list" -> toolsList()
-            "tools/call" -> toolsCall(req["params"]?.jsonObject)
-            else -> return error(id, -32601, "method not found: $method")
+        val result: JsonObject = try {
+            val methodElement = req["method"]
+                ?: throw McpRequestException(-32600, "invalid request")
+            val method = runCatching { methodElement.jsonPrimitive.content }.getOrElse {
+                throw McpRequestException(-32600, "invalid request")
+            }
+            when (method) {
+                "initialize" -> initialize()
+                "notifications/initialized" -> buildJsonObject {}
+                "ping" -> buildJsonObject {}
+                "tools/list" -> toolsList()
+                "tools/call" -> toolsCall(req["params"]?.jsonObject)
+                else -> throw McpRequestException(-32601, "method not found: $method")
+            }
+        } catch (failure: McpRequestException) {
+            return if (id == null) null else error(id, failure.code, failure.message)
+        } catch (_: Exception) {
+            return if (id == null) null else error(id, -32603, "internal error")
         }
+        if (id == null) return null
         return buildJsonObject {
-            put("jsonrpc", "2.0"); put("id", id ?: JsonNull)
+            put("jsonrpc", "2.0"); put("id", id)
             put("result", result)
         }
     }
@@ -88,7 +101,8 @@ class McpServer(api: String, token: String) {
     }
 
     private fun toolsCall(params: JsonObject?): JsonObject {
-        val name = params?.get("name")?.jsonPrimitive?.content ?: return error(null, -32602, "missing tool name")
+        val name = params?.get("name")?.jsonPrimitive?.content
+            ?: throw McpRequestException(-32602, "missing tool name")
         val args = params["arguments"]?.jsonObject ?: buildJsonObject {}
         val str = { k: String -> args[k]?.jsonPrimitive?.content }
         return try {
@@ -96,10 +110,35 @@ class McpServer(api: String, token: String) {
                 "status" -> cli.get("/v1/status")
                 "conversations" -> cli.get("/v1/conversations")
                 "friends" -> cli.get("/v1/friends")
-                "send_text" -> cli.post("/v1/send-text", mapOf("chatId" to str("chatId"), "text" to str("text")))
-                "send_markdown" -> cli.post("/v1/send-rich", mapOf("chatId" to str("chatId"), "markdown" to str("markdown")))
-                "recv" -> cli.get("/v1/recv-wait?timeout=${str("timeout") ?: 10}" + (str("chatId")?.let { "&chatId=$it" } ?: ""))
-                "messages" -> cli.get("/v1/messages?limit=${str("limit") ?: 20}")
+                "send_text" -> cli.post("/v1/send-text", mapOf(
+                    "chatId" to str("chatId"),
+                    "clientMsgId" to str("clientMsgId"),
+                    "text" to str("text"),
+                ))
+                "send_markdown" -> cli.post("/v1/send-rich", mapOf(
+                    "chatId" to str("chatId"),
+                    "clientMsgId" to str("clientMsgId"),
+                    "markdown" to str("markdown"),
+                ))
+                "send_file" -> cli.post("/v1/send-file", mapOf(
+                    "chatId" to str("chatId"),
+                    "clientMsgId" to str("clientMsgId"),
+                    "path" to str("path"),
+                ))
+                "outgoing_status" -> cli.get(
+                    "/v1/outgoing?chatId=${urlEncode(str("chatId"))}" +
+                        "&clientMsgId=${urlEncode(str("clientMsgId"))}",
+                )
+                "recv" -> cli.get(
+                    "/v1/recv-wait?timeout=${str("timeout") ?: 10}" +
+                        (str("chatId")?.let { "&chatId=${urlEncode(it)}" } ?: "") +
+                        (str("afterEventId")?.let { "&afterEventId=$it" } ?: ""),
+                )
+                "messages" -> cli.get(
+                    "/v1/messages?limit=${str("limit") ?: 20}" +
+                        (str("chatId")?.let { "&chatId=${urlEncode(it)}" } ?: "") +
+                        (str("afterEventId")?.let { "&afterEventId=$it" } ?: ""),
+                )
                 "history" -> cli.post("/v1/history", mapOf(
                     "chatId" to str("chatId"),
                     "fromSeq" to (str("fromSeq") ?: "0"),
@@ -109,7 +148,7 @@ class McpServer(api: String, token: String) {
                 "chat_with" -> cli.post("/v1/chat-personal", mapOf("targetUid" to str("targetUid")))
                 "mark_read" -> cli.post("/v1/mark-read", mapOf("chatId" to str("chatId"), "readSeq" to str("readSeq")))
                 "revoke" -> cli.post("/v1/revoke", mapOf("chatId" to str("chatId"), "serverSeq" to str("serverSeq")))
-                else -> return error(null, -32602, "unknown tool: $name")
+                else -> throw McpRequestException(-32602, "unknown tool: $name")
             }
             buildJsonObject {
                 put("content", buildJsonArray {
@@ -127,17 +166,18 @@ class McpServer(api: String, token: String) {
         }
     }
 
-    private fun emptyResult(id: kotlinx.serialization.json.JsonElement?) = buildJsonObject {
-        put("jsonrpc", "2.0"); put("id", id ?: JsonNull); put("result", buildJsonObject {})
-    }
-
     private fun error(id: kotlinx.serialization.json.JsonElement?, code: Int, msg: String) = buildJsonObject {
         put("jsonrpc", "2.0"); put("id", id ?: JsonNull)
         put("error", buildJsonObject { put("code", code); put("message", msg) })
     }
 
     companion object {
-        private fun tool(name: String, desc: String, vararg props: Pair<String, String>) = ToolDef(
+        private fun tool(
+            name: String,
+            desc: String,
+            vararg props: Pair<String, String>,
+            required: List<String>? = null,
+        ) = ToolDef(
             buildJsonObject {
                 put("name", name)
                 put("description", desc)
@@ -146,7 +186,12 @@ class McpServer(api: String, token: String) {
                     put("properties", buildJsonObject {
                         props.forEach { (k, d) -> put(k, buildJsonObject { put("type", "string"); put("description", d) }) }
                     })
-                    if (props.isNotEmpty()) put("required", buildJsonArray { props.take(1).forEach { add(kotlinx.serialization.json.JsonPrimitive(it.first)) } })
+                    val requiredProperties = required ?: props.take(1).map { it.first }
+                    if (requiredProperties.isNotEmpty()) {
+                        put("required", buildJsonArray {
+                            requiredProperties.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) }
+                        })
+                    }
                 })
             },
         )
@@ -155,17 +200,79 @@ class McpServer(api: String, token: String) {
             tool("status", "获取 IM 连接状态与当前账号", ),
             tool("conversations", "列出所有会话（含未读数/最后一条消息）"),
             tool("friends", "列出好友"),
-            tool("send_text", "发送纯文本消息", "chatId" to "目标会话 ID（可从 conversations 获取）", "text" to "消息文本"),
-            tool("send_markdown", "发送 markdown 富文本消息", "chatId" to "目标会话 ID", "markdown" to "markdown 内容"),
-            tool("recv", "等待新消息（长轮询）", "chatId" to "可选，只等该会话", "timeout" to "等待秒数默认 10"),
-            tool("messages", "最近收到的消息（环形缓冲）", "limit" to "条数默认 20"),
+            tool(
+                "send_text",
+                "发送纯文本消息",
+                "chatId" to "目标会话 ID（可从 conversations 获取）",
+                "text" to "消息文本",
+                "clientMsgId" to "调用方生成并在重试时复用的稳定消息 ID",
+                required = listOf("chatId", "text", "clientMsgId"),
+            ),
+            tool(
+                "send_markdown",
+                "发送 markdown 富文本消息",
+                "chatId" to "目标会话 ID",
+                "markdown" to "markdown 内容",
+                "clientMsgId" to "调用方生成并在重试时复用的稳定消息 ID",
+                required = listOf("chatId", "markdown", "clientMsgId"),
+            ),
+            tool(
+                "send_file",
+                "上传并持久排队发送文件",
+                "chatId" to "目标会话 ID",
+                "path" to "agent outgoing 目录内的文件路径",
+                "clientMsgId" to "调用方生成并在重试时复用的稳定消息 ID",
+                required = listOf("chatId", "path", "clientMsgId"),
+            ),
+            tool(
+                "outgoing_status",
+                "查询持久发送回执",
+                "chatId" to "目标会话 ID",
+                "clientMsgId" to "发送时使用的稳定消息 ID",
+                required = listOf("chatId", "clientMsgId"),
+            ),
+            tool(
+                "recv",
+                "按全局事件游标等待新消息（长轮询）",
+                "chatId" to "可选，只等该会话",
+                "timeout" to "等待秒数默认 10",
+                "afterEventId" to "可选，全局事件游标",
+                required = emptyList(),
+            ),
+            tool(
+                "messages",
+                "按全局事件游标读取持久消息",
+                "limit" to "条数默认 20",
+                "chatId" to "可选，会话过滤",
+                "afterEventId" to "可选，全局事件游标",
+                required = emptyList(),
+            ),
             tool("history", "拉取服务端历史消息", "chatId" to "会话 ID", "fromSeq" to "起始 seq（0 为最新）", "limit" to "条数"),
             tool("search_users", "按关键词搜索用户", "keyword" to "用户名/昵称关键词"),
             tool("chat_with", "与用户建立私聊会话，返回 chatId", "targetUid" to "目标用户 uid"),
-            tool("mark_read", "标记会话已读", "chatId" to "会话 ID", "readSeq" to "已读水位"),
-            tool("revoke", "撤回自己发的消息", "chatId" to "会话 ID", "serverSeq" to "消息 seq"),
+            tool(
+                "mark_read",
+                "标记会话已读",
+                "chatId" to "会话 ID",
+                "readSeq" to "已读水位",
+                required = listOf("chatId", "readSeq"),
+            ),
+            tool(
+                "revoke",
+                "撤回自己发的消息",
+                "chatId" to "会话 ID",
+                "serverSeq" to "消息 seq",
+                required = listOf("chatId", "serverSeq"),
+            ),
         )
 
         private data class ToolDef(val def: JsonObject)
     }
+
+    private class McpRequestException(
+        val code: Int,
+        override val message: String,
+    ) : IllegalArgumentException(message)
 }
+
+private fun urlEncode(value: String?): String = URLEncoder.encode(value ?: "", "UTF-8")
