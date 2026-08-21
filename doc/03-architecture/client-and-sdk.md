@@ -22,7 +22,7 @@ ImBot/Agent 可以直接依赖 `shared`，不加载 Compose。
 UserSession（uid/token）
  └── ClientSession
       ├── ImClient / RpcClient
-      ├── LocalCache（按 uid 隔离）
+      ├── LocalCache（按 canonical deployment 指纹 + uid 隔离）
       ├── EventProcessor
       ├── Repositories
       ├── GroupBotManagementRepository（session-owned HTTP）
@@ -159,7 +159,8 @@ EventProcessor 消费 `NOTIFY`，在 IO 调度器解码和写数据库：
 4. 以非阻塞 `tryEmit` 发出消息、输入状态或联系人变化提示；它不参与成功语义。
 5. 权威本地投影和可靠 sink 都成功后推进 `lastEventId`。
 
-身份认证成功只进入 `SYNCHRONIZING`。EventProcessor 先订阅入站事件并打开按 uid 的 LocalCache，
+身份认证成功只进入 `SYNCHRONIZING`。EventProcessor 先订阅入站事件并打开按 canonical deployment
+指纹 + uid 隔离的 LocalCache，
 再从持久游标发起 `SYNC_REQUEST`；每一批严格按 eventId 投影并逐条单调落盘，整批完成后才请求
 下一页。任一持久事件失败都立即断开，后续事件不得越过失败项；收到 `SYNC_READY` 后连接才进入
 `AUTHENTICATED` 并承接实时事件。
@@ -197,6 +198,10 @@ delivery、active/terminal/SUCCESS outgoing 回执与消息投影，而不保留
 
 本地缓存由 SQLDelight 持久层与内存 StateFlow 组成。平台实现负责数据库驱动和存储路径，公共接口
 负责：
+
+TCP authority 与 HTTP base 先共同规范化为一个 `DeploymentIdentity`；指纹和 uid 同时构成数据库
+namespace。改变 TCP host/port、HTTP host/port 或 HTTP base path 中任一项都会打开全新 namespace，
+旧部署的 cursor、outgoing 和 delivery 不会进入新部署。
 
 - 用户、联系人、会话和消息的观察流。
 - 消息插入、更新与按会话窗口读取。
@@ -251,7 +256,8 @@ LocalCache、如何从事件恢复、如何在重启后存在。
 - Desktop Window、弹窗/抽屉/任务窗口、系统托盘、文件选择和桌面媒体。
 - token store、SQLite driver、文件下载目录等平台实现。
 
-Desktop 媒体目录按部署服务器与 uid 隔离；图片、视频、语音、普通附件、文本预览和群文件必须走
-同一会话缓存与传输入口，不能各自维护全局目录、匿名协程或重复 HTTP 实现。
+Android 与 Desktop 媒体目录都按 canonical TCP+HTTP deployment 指纹与 uid 隔离；
+图片、视频、语音、普通附件、文本预览和群文件必须走同一会话缓存与传输入口，不能仅用
+HTTP 基址命名目录，也不能各自维护全局目录、匿名协程或重复 HTTP 实现。
 
 “代码能共享”不是共享的充分理由。交互模型不一致时，应共享业务动作和视觉令牌，分别实现容器。

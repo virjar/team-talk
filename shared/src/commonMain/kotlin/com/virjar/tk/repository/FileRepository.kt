@@ -182,7 +182,7 @@ class FileRepository internal constructor(
 
     /** Invalidates credentials first, then disconnects every active HTTP request. */
     override fun close() {
-        if (!credentialGate.close()) return
+        credentialGate.close()
         transport.close()
     }
 }

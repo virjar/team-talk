@@ -1,6 +1,7 @@
 package com.virjar.tk.bot
 
 import com.virjar.tk.client.LocalCache
+import com.virjar.tk.client.DeploymentIdentity
 import com.virjar.tk.client.PendingBotMessage
 import com.virjar.tk.model.Message
 import kotlinx.coroutines.channels.Channel
@@ -12,7 +13,7 @@ import kotlinx.coroutines.channels.Channel
  * 返回的缓存所有权随即移交给 ClientSession，并由 ImBot.shutdown 级联关闭。
  */
 fun interface ImBotCacheOwner {
-    fun open(uid: String): LocalCache
+    fun open(deploymentIdentity: DeploymentIdentity, uid: String): LocalCache
 }
 
 /**
@@ -23,8 +24,14 @@ fun interface ImBotCacheOwner {
  * 边界；同一 `(chatId, serverSeq)` 的创建、编辑和撤回会作为不同事件完整保留。
  */
 class ImBotMessageInbox {
+    private class ChatGate {
+        val monitor = Any()
+        var borrowers: Int = 0
+    }
+
     private val wakeUp = Channel<Unit>(Channel.CONFLATED)
     private val stateLock = Any()
+    private val chatGates = mutableMapOf<String, ChatGate>()
     private var localCache: LocalCache? = null
     private var closed = false
 
@@ -44,7 +51,59 @@ class ImBotMessageInbox {
             check(!closed) { "ImBot inbox is closed" }
             checkNotNull(localCache) { "ImBot inbox is not bound" }
         }
-        cache.enqueueBotMessage(eventId, message)
+        withChatGate(message.chatId) {
+            cache.enqueueBotMessage(eventId, message)
+        }
+        wakeUp.trySend(Unit)
+    }
+
+    /**
+     * Agent-only atomic consume boundary. Candidate discovery is deliberately revalidated after
+     * entering the per-chat gate; a CHAT_DELETED which wins that gate removes the durable row before
+     * [consume] can ack or notify a waiter. A tombstone which loses runs only after that notification.
+     */
+    internal suspend fun consumePendingForAgent(consume: (PendingBotMessage) -> Unit): Boolean {
+        while (true) {
+            val state = synchronized(stateLock) { localCache to closed }
+            if (state.second) return false
+            val cache = state.first
+            if (cache == null) {
+                if (wakeUp.receiveCatching().isClosed) return false
+                continue
+            }
+            val candidate = cache.peekBotMessage()
+            if (candidate != null) {
+                val consumed = withChatGate(candidate.message.chatId) {
+                    val current = cache.peekBotMessage()
+                    if (current?.eventId != candidate.eventId) {
+                        false
+                    } else {
+                        cache.ackBotMessage(current.eventId, System.currentTimeMillis())
+                        consume(current)
+                        true
+                    }
+                }
+                if (consumed) {
+                    // There may already be a following durable row.
+                    wakeUp.trySend(Unit)
+                    return true
+                }
+                // The candidate lost to a same-chat tombstone (or another consumer). Discover the
+                // new global head without sleeping; a different chat remains independently usable.
+                continue
+            }
+            if (wakeUp.receiveCatching().isClosed) return false
+        }
+    }
+
+    /** Hold the same per-chat gate across LocalCache's complete authoritative tombstone. */
+    internal fun applyChatTombstone(chatId: String, tombstone: () -> Unit) {
+        synchronized(stateLock) {
+            check(!closed) { "ImBot inbox is closed" }
+            checkNotNull(localCache) { "ImBot inbox is not bound" }
+        }
+        withChatGate(chatId, tombstone)
+        // Removing the global pending head may expose a row owned by another chat.
         wakeUp.trySend(Unit)
     }
 
@@ -115,5 +174,24 @@ class ImBotMessageInbox {
             localCache = null
         }
         wakeUp.close()
+    }
+
+    private fun <T> withChatGate(chatId: String, block: () -> T): T {
+        require(chatId.isNotBlank()) { "chatId must not be blank" }
+        val gate = synchronized(stateLock) {
+            check(!closed) { "ImBot inbox is closed" }
+            chatGates.getOrPut(chatId, ::ChatGate).also { it.borrowers += 1 }
+        }
+        return try {
+            synchronized(gate.monitor) { block() }
+        } finally {
+            synchronized(stateLock) {
+                check(gate.borrowers > 0) { "ImBot inbox chat gate borrower underflow" }
+                gate.borrowers -= 1
+                if (gate.borrowers == 0 && chatGates[chatId] === gate) {
+                    chatGates.remove(chatId)
+                }
+            }
+        }
     }
 }

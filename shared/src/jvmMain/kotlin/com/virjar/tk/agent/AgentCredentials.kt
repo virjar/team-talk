@@ -1,6 +1,7 @@
 package com.virjar.tk.agent
 
 import com.virjar.tk.auth.AuthRules
+import com.virjar.tk.client.DeploymentIdentity
 import com.virjar.tk.protocol.payload.AuthPayloadPolicy
 import java.io.File
 import java.nio.channels.Channels
@@ -35,12 +36,14 @@ class AgentCredentialRecord(
     val apiToken: String,
     val deviceId: String,
     val state: AgentCredentialState?,
+    val deploymentFingerprint: String,
 ) {
     override fun toString(): String =
         "AgentCredentialRecord(username=$username, uid=$uid, " +
             "password=${if (password == null) "<absent>" else "<redacted>"}, " +
             "refreshToken=${if (refreshToken == null) "<absent>" else "<redacted>"}, " +
-            "apiToken=<redacted>, deviceId=$deviceId, state=$state)"
+            "apiToken=<redacted>, deviceId=$deviceId, state=$state, " +
+            "deploymentFingerprint=$deploymentFingerprint)"
 }
 
 /** Password-free material used for every restart of an ACTIVE agent. */
@@ -84,25 +87,28 @@ object AgentCredentials {
     private val secureRandom = SecureRandom()
 
     @Synchronized
-    fun load(dataDir: File): AgentCredentialRecord? {
+    fun load(dataDir: File, deploymentIdentity: DeploymentIdentity): AgentCredentialRecord? {
         val directory = AgentDataDirectoryPolicy.openRuntime(dataDir)
         val credentialFile = directory.root.resolve(FILE_NAME)
         if (!Files.exists(credentialFile, LinkOption.NOFOLLOW_LINKS)) return null
 
         val properties = readProperties(credentialFile, directory)
-        val parsed = parseAndMigrate(properties)
+        val parsed = parseAndMigrate(properties, deploymentIdentity)
         if (parsed.changed) persist(directory, properties)
         return parsed.record
     }
 
     /** Privileged installer read: the directory owner was already verified by its service plan. */
     @Synchronized
-    internal fun requireActiveForInstall(directory: AgentDataDirectory): AgentCredentialRecord {
+    internal fun requireActiveForInstall(
+        directory: AgentDataDirectory,
+        deploymentIdentity: DeploymentIdentity,
+    ): AgentCredentialRecord {
         val credentialFile = directory.root.resolve(FILE_NAME)
         require(Files.exists(credentialFile, LinkOption.NOFOLLOW_LINKS)) {
             "systemd install requires a foreground-bootstrap ACTIVE dataDir"
         }
-        val parsed = parseAndMigrate(readProperties(credentialFile, directory))
+        val parsed = parseAndMigrate(readProperties(credentialFile, directory), deploymentIdentity)
         require(!parsed.changed && parsed.record.state == AgentCredentialState.ACTIVE) {
             "systemd install requires complete ACTIVE refresh credentials"
         }
@@ -115,7 +121,12 @@ object AgentCredentials {
      * and a different pending identity are never overwritten.
      */
     @Synchronized
-    fun beginRegistration(dataDir: File, username: String, password: String): AgentCredentialRecord {
+    fun beginRegistration(
+        dataDir: File,
+        deploymentIdentity: DeploymentIdentity,
+        username: String,
+        password: String,
+    ): AgentCredentialRecord {
         AuthRules.validateRegister(username, password)
         val directory = AgentDataDirectoryPolicy.openRuntime(dataDir)
         val credentialFile = directory.root.resolve(FILE_NAME)
@@ -124,7 +135,7 @@ object AgentCredentials {
         } else {
             Properties()
         }
-        val parsed = parseAndMigrate(properties)
+        val parsed = parseAndMigrate(properties, deploymentIdentity)
         val current = parsed.record
         when (current.state) {
             AgentCredentialState.ACTIVE -> error("ACTIVE agent dataDir cannot start registration")
@@ -144,7 +155,7 @@ object AgentCredentials {
         properties.remove("refreshToken")
         properties.setProperty(STATE_PROPERTY, AgentCredentialState.REGISTER_PENDING.name)
         persist(directory, properties)
-        return parseAndMigrate(properties).record
+        return parseAndMigrate(properties, deploymentIdentity).record
     }
 
     /**
@@ -155,6 +166,7 @@ object AgentCredentials {
     @Synchronized
     fun recordAuthentication(
         dataDir: File,
+        deploymentIdentity: DeploymentIdentity,
         expectedUsername: String,
         expectedDeviceId: String,
         uid: String,
@@ -187,7 +199,12 @@ object AgentCredentials {
             "Agent runtime identity is missing"
         }
         val properties = readProperties(credentialFile, directory)
-        val parsed = parseAndMigrate(properties)
+        require(
+            properties.getProperty(DEPLOYMENT_FINGERPRINT_PROPERTY) == deploymentIdentity.fingerprint
+        ) {
+            "Agent deployment changed while authentication was in flight"
+        }
+        val parsed = parseAndMigrate(properties, deploymentIdentity)
         val current = parsed.record
         require(current.deviceId == expectedDeviceId) { "Authenticated device identity changed" }
         require(authenticatedUsername == expectedUsername) { "Server authenticated an unexpected username" }
@@ -217,11 +234,11 @@ object AgentCredentials {
         properties.remove("password")
         properties.setProperty(STATE_PROPERTY, AgentCredentialState.ACTIVE.name)
         persist(directory, properties)
-        return parseAndMigrate(properties).record
+        return parseAndMigrate(properties, deploymentIdentity).record
     }
 
     @Synchronized
-    fun ensureIdentity(dataDir: File): AgentRuntimeIdentity {
+    fun ensureIdentity(dataDir: File, deploymentIdentity: DeploymentIdentity): AgentRuntimeIdentity {
         val directory = AgentDataDirectoryPolicy.openRuntime(dataDir)
         val credentialFile = directory.root.resolve(FILE_NAME)
         val properties = if (Files.exists(credentialFile, LinkOption.NOFOLLOW_LINKS)) {
@@ -229,17 +246,26 @@ object AgentCredentials {
         } else {
             Properties()
         }
-        val parsed = parseAndMigrate(properties)
+        val parsed = parseAndMigrate(properties, deploymentIdentity)
         if (parsed.changed || !Files.exists(credentialFile, LinkOption.NOFOLLOW_LINKS)) {
             persist(directory, properties)
         }
         return AgentRuntimeIdentity(parsed.record.apiToken, parsed.record.deviceId)
     }
 
-    private fun parseAndMigrate(properties: Properties): ParsedCredential {
+    private fun parseAndMigrate(
+        properties: Properties,
+        deploymentIdentity: DeploymentIdentity,
+    ): ParsedCredential {
         val unknownProperties = properties.stringPropertyNames() - ALLOWED_PROPERTIES
         require(unknownProperties.isEmpty()) { "Agent credential file contains unknown fields" }
         var changed = false
+        val deploymentFingerprint = deploymentIdentity.fingerprint
+        if (properties.getProperty(DEPLOYMENT_FINGERPRINT_PROPERTY) != deploymentFingerprint) {
+            AUTHENTICATION_PROPERTIES.forEach { name -> properties.remove(name) }
+            properties.setProperty(DEPLOYMENT_FINGERPRINT_PROPERTY, deploymentFingerprint)
+            changed = true
+        }
         val apiToken = properties.getProperty("apiToken")?.also {
             require(isValidApiToken(it)) { "Agent API credential is invalid" }
         } ?: run {
@@ -306,7 +332,16 @@ object AgentCredentials {
             }
         }
         return ParsedCredential(
-            AgentCredentialRecord(username, password, uid, refreshToken, apiToken, deviceId, state),
+            AgentCredentialRecord(
+                username,
+                password,
+                uid,
+                refreshToken,
+                apiToken,
+                deviceId,
+                state,
+                deploymentFingerprint,
+            ),
             changed,
         )
     }
@@ -426,7 +461,16 @@ object AgentCredentials {
         "refreshToken",
         "apiToken",
         "deviceId",
+        DEPLOYMENT_FINGERPRINT_PROPERTY,
         STATE_PROPERTY,
     )
+    private val AUTHENTICATION_PROPERTIES = setOf(
+        "username",
+        "password",
+        "uid",
+        "refreshToken",
+        STATE_PROPERTY,
+    )
+    private const val DEPLOYMENT_FINGERPRINT_PROPERTY = "deploymentFingerprint"
     private const val MAX_CREDENTIAL_FILE_BYTES = 64L * 1024L
 }

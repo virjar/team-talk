@@ -103,7 +103,11 @@ class FileRepositoryTest {
 
         repository.close()
         repository.close()
-        assertEquals(1, transport.closeCount)
+        assertEquals(
+            2,
+            transport.closeCount,
+            "each close must reach the idempotent transport boundary so an earlier reentrant close can finish",
+        )
         assertIs<Outcome.Failure>(
             repository.uploadSmallBytes(byteArrayOf(4), "d.bin", "application/octet-stream"),
         )

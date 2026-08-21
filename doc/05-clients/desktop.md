@@ -65,7 +65,7 @@ macOS 原生红黄绿按钮与应用 Surface 属于同一视觉层，不能再�
 页面打开、进入目录、修改或手动刷新时重新拉取；当前版本不承诺后台实时刷新。
 
 群文件与聊天中的图片、视频、语音、TXT/Markdown 和普通附件共用当前认证会话的媒体资源。缓存按
-服务器和 uid 隔离；退出会取消尚未完成的上传、下载和录音。HTTP 请求逐次读取同账号最新 token，
+canonical TCP+HTTP deployment fingerprint 和 uid 隔离；TCP authority、HTTP base 或账号变化都会切换目录。退出会取消尚未完成的上传、下载和录音。HTTP 请求逐次读取同账号最新 token，
 但 uid 门禁禁止旧会话在切换账号后继续访问或打开原账号缓存。
 
 ## 6. 企业文档工作台

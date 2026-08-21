@@ -106,14 +106,18 @@ internal fun AndroidTextAttachmentPreviewScreen(
 
     fun openExternally() {
         scope.launch {
-            runCatching {
+            try {
                 val cached = downloadAttachmentToCache(
                     cacheRoot = context.cacheDir,
                     mediaSession = mediaSession,
                     attachment = attachment,
                 )
-                if (!mediaSession.isCurrentOwner()) return@runCatching
+                if (!mediaSession.isCurrentOwner()) return@launch
                 MediaHelper.openFile(context.applicationContext, cached, attachment.contentType)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // The preview state already exposes retry/open alternatives; never revive a closed owner.
             }
         }
     }

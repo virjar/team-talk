@@ -10,15 +10,18 @@ import com.virjar.tk.ui.component.FileDownloadController
 import com.virjar.tk.ui.component.FileDownloadState
 import com.virjar.tk.ui.component.textAttachmentPreviewKind
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.net.HttpURLConnection
-import java.net.URL
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Android 文件附件下载控制器：会话隔离缓存 + 气泡进度动画数据源。 */
 class AndroidFileDownloadController(
@@ -36,21 +39,26 @@ class AndroidFileDownloadController(
     private val openAfterDownload = mutableSetOf<String>()
     private val mutex = Mutex()
     private val cacheLease = acquireMediaCacheLease(appContext.cacheDir, mediaSession.cacheNamespace)
+    private val closed = AtomicBoolean(false)
 
     override fun ensure(attachment: Attachment) {
-        if (!mediaSession.isCurrentOwner()) return
+        if (closed.get() || !mediaSession.isCurrentOwner()) return
         if (states.containsKey(attachment.path)) return
-        states[attachment.path] = if (cachedFile(attachment).isFile) FileDownloadState.Done else FileDownloadState.Idle
+        publishState(
+            attachment.path,
+            if (cachedFile(attachment).isFile) FileDownloadState.Done else FileDownloadState.Idle,
+        )
     }
 
     override fun download(attachment: Attachment) {
-        if (!mediaSession.isCurrentOwner()) return
+        if (closed.get() || !mediaSession.isCurrentOwner()) return
         scope.launch { downloadInternal(attachment, openWhenDone = false) }
     }
 
     override fun openOrDownload(attachment: Attachment) {
+        if (closed.get()) return
         if (!mediaSession.isCurrentOwner()) {
-            states[attachment.path] = FileDownloadState.Failed("登录会话已切换")
+            publishState(attachment.path, FileDownloadState.Failed("登录会话已切换"))
             return
         }
         if (onTextAttachmentPreview != null && textAttachmentPreviewKind(attachment) != null) {
@@ -66,6 +74,7 @@ class AndroidFileDownloadController(
     }
 
     override fun close() {
+        if (!closed.compareAndSet(false, true)) return
         // URLConnection 的阻塞读取不一定在 cancel() 当下退出。子任务真正结束后再释放租约；
         // 同账号的其他页面仍持有租约时，关闭本控制器不会删除共享缓存。
         scopeJob.invokeOnCompletion {
@@ -84,34 +93,48 @@ class AndroidFileDownloadController(
 
         val target = cachedFile(attachment)
         try {
-            states[key] = FileDownloadState.Downloading(0f)
+            publishState(key, FileDownloadState.Downloading(0f))
             val cached = downloadAttachmentToCache(
                 cacheRoot = appContext.cacheDir,
                 mediaSession = mediaSession,
                 attachment = attachment,
             ) { progress ->
-                states[key] = FileDownloadState.Downloading(progress)
+                publishState(key, FileDownloadState.Downloading(progress))
             }
-            if (!mediaSession.isCurrentOwner()) return
-            states[key] = FileDownloadState.Done
+            if (closed.get() || !mediaSession.isCurrentOwner()) return
+            publishState(key, FileDownloadState.Done)
             val shouldOpen = mutex.withLock { openAfterDownload.remove(key) }
-            if (shouldOpen) openCached(cached, attachment.contentType)
+            if (shouldOpen && !closed.get()) openCached(cached, attachment.contentType)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
+            if (closed.get() || !mediaSession.isCurrentOwner()) return
             Log.e("FileDownload", "下载失败 path=$key", e)
-            states[key] = FileDownloadState.Failed(e.message)
+            publishState(key, FileDownloadState.Failed(e.message))
             mutex.withLock { openAfterDownload.remove(key) }
         } finally {
-            mutex.withLock { inFlight.remove(key) }
+            mutex.withLock {
+                inFlight.remove(key)
+                if (closed.get()) openAfterDownload.remove(key)
+            }
         }
     }
 
     private fun openCached(file: File, contentType: String) {
+        if (closed.get() || !mediaSession.isCurrentOwner()) return
         runCatching { MediaHelper.openFile(appContext, file, contentType) }
             .onFailure { Log.e("FileDownload", "打开失败 file=${file.name}", it) }
     }
 
     private fun cachedFile(attachment: Attachment): File {
         return attachmentCacheFile(appContext.cacheDir, mediaSession.cacheNamespace, attachment)
+    }
+
+    private fun publishState(key: String, state: FileDownloadState) {
+        if (closed.get()) return
+        mediaSession.runIfOpen {
+            if (!closed.get()) states[key] = state
+        }
     }
 }
 
@@ -138,16 +161,22 @@ internal suspend fun downloadAttachmentToCache(
     attachment: Attachment,
     onProgress: ((Float) -> Unit)? = null,
 ): File {
-    val accessToken = mediaSession.accessTokenForRequest()
+    mediaSession.ensureOpen()
+    val operationContext = currentCoroutineContext()
     val target = attachmentCacheFile(cacheRoot, mediaSession.cacheNamespace, attachment)
-    val cached = materializeMediaCacheFile(target) { partial ->
-        val conn = URL(FileOps.resolveUrl(mediaSession.serverUrl, attachment)).openConnection() as HttpURLConnection
-        conn.connectTimeout = 10_000
-        conn.readTimeout = 120_000
-        conn.setRequestProperty("Authorization", "Bearer $accessToken")
-        try {
+    val cached = materializeMediaCacheFile(
+        target = target,
+        install = mediaSession::installCacheFile,
+    ) { partial ->
+        mediaSession.withAuthenticatedConnection(
+            url = FileOps.resolveUrl(mediaSession.serverUrl, attachment),
+            configure = { conn ->
+                conn.connectTimeout = 10_000
+                conn.readTimeout = 120_000
+            },
+        ) { conn ->
             val code = conn.responseCode
-            if (code !in 200..299) throw IllegalStateException("下载失败 HTTP $code")
+            if (code != HttpURLConnection.HTTP_OK) throw IllegalStateException("下载失败 HTTP $code")
             val total = conn.contentLengthLong
             conn.inputStream.use { input ->
                 partial.outputStream().use { output ->
@@ -155,22 +184,26 @@ internal suspend fun downloadAttachmentToCache(
                     var downloaded = 0L
                     var lastEmit = 0L
                     while (true) {
+                        operationContext.ensureActive()
                         val read = input.read(buffer)
                         if (read < 0) break
+                        operationContext.ensureActive()
+                        mediaSession.ensureOpen()
                         output.write(buffer, 0, read)
                         downloaded += read
                         val now = System.currentTimeMillis()
                         if (now - lastEmit >= 100L) {
                             lastEmit = now
-                            onProgress?.invoke(if (total > 0L) downloaded.toFloat() / total else -1f)
+                            mediaSession.runIfOpen {
+                                onProgress?.invoke(if (total > 0L) downloaded.toFloat() / total else -1f)
+                            }
                         }
                     }
                 }
             }
-        } finally {
-            conn.disconnect()
         }
     }
-    onProgress?.invoke(1f)
+    operationContext.ensureActive()
+    check(mediaSession.runIfOpen { onProgress?.invoke(1f) }) { "媒体会话已经关闭" }
     return cached
 }

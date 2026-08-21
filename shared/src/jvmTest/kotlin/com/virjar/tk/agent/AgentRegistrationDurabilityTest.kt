@@ -21,13 +21,16 @@ class AgentRegistrationDurabilityTest {
     @Test
     fun `pending registration survives commit crash and restart reuses exactly one account`() = runBlocking {
         val dataDir = File(temporaryRoot(), "agent-data")
-        val pending = AgentCredentials.beginRegistration(dataDir, "agent-fixed", "durable-secret")
+        val pending = AgentCredentials.beginRegistration(
+            dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY, "agent-fixed", "durable-secret",
+        )
         val accounts = mutableSetOf<String>()
         var registerCalls = 0
 
         assertFailsWith<SimulatedCrash> {
             AgentRegistration.recover(
                 dataDir = dataDir,
+                deploymentIdentity = TEST_AGENT_DEPLOYMENT_IDENTITY,
                 pending = pending,
                 login = {
                     throw ImBotAuthenticationRejectedException(
@@ -42,13 +45,14 @@ class AgentRegistrationDurabilityTest {
                 },
             )
         }
-        val afterCrash = AgentCredentials.load(dataDir)!!
+        val afterCrash = AgentCredentials.load(dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY)!!
         assertEquals(AgentCredentialState.REGISTER_PENDING, afterCrash.state)
         assertEquals("agent-fixed", afterCrash.username)
         assertEquals(pending.deviceId, afterCrash.deviceId)
 
         val recovered = AgentRegistration.recover(
             dataDir = dataDir,
+            deploymentIdentity = TEST_AGENT_DEPLOYMENT_IDENTITY,
             pending = afterCrash,
             login = {
                 val username = requireNotNull(it.username).takeIf(accounts::contains)
@@ -57,7 +61,8 @@ class AgentRegistrationDurabilityTest {
                         "account does not exist yet",
                     )
                 AgentCredentials.recordAuthentication(
-                    dataDir, username, it.deviceId, "uid-fixed", username, "refresh-after-crash",
+                    dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY,
+                    username, it.deviceId, "uid-fixed", username, "refresh-after-crash",
                 )
                 username
             },
@@ -70,7 +75,7 @@ class AgentRegistrationDurabilityTest {
         assertEquals("agent-fixed", recovered)
         assertEquals(setOf("agent-fixed"), accounts)
         assertEquals(1, registerCalls)
-        val active = AgentCredentials.load(dataDir)!!
+        val active = AgentCredentials.load(dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY)!!
         assertEquals(AgentCredentialState.ACTIVE, active.state)
         assertEquals(null, active.password)
         assertEquals("refresh-after-crash", active.requireActiveRefresh().refreshToken)
@@ -80,12 +85,15 @@ class AgentRegistrationDurabilityTest {
     @Test
     fun `pending registration never falls through to register on transport failure`() = runBlocking {
         val dataDir = File(temporaryRoot(), "agent-data")
-        val pending = AgentCredentials.beginRegistration(dataDir, "agent-fixed", "durable-secret")
+        val pending = AgentCredentials.beginRegistration(
+            dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY, "agent-fixed", "durable-secret",
+        )
         var registerCalls = 0
 
         assertFailsWith<SimulatedTransportFailure> {
             AgentRegistration.recover(
                 dataDir = dataDir,
+                deploymentIdentity = TEST_AGENT_DEPLOYMENT_IDENTITY,
                 pending = pending,
                 login = { throw SimulatedTransportFailure() },
                 registerExact = {
@@ -96,28 +104,31 @@ class AgentRegistrationDurabilityTest {
         }
 
         assertEquals(0, registerCalls)
-        assertEquals(AgentCredentialState.REGISTER_PENDING, AgentCredentials.load(dataDir)?.state)
+        assertEquals(
+            AgentCredentialState.REGISTER_PENDING,
+            AgentCredentials.load(dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY)?.state,
+        )
     }
 
     @Test
     fun `active dataDir rejects registration and account replacement`() {
         val dataDir = File(temporaryRoot(), "agent-data")
-        val identity = AgentCredentials.ensureIdentity(dataDir)
+        val identity = AgentCredentials.ensureIdentity(dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY)
         AgentCredentials.recordAuthentication(
-            dataDir, "existing-agent", identity.deviceId,
+            dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY, "existing-agent", identity.deviceId,
             "uid-existing", "existing-agent", "refresh-existing",
         )
 
         assertFailsWith<IllegalStateException> {
-            AgentRegistration.beginOrResume(dataDir, "new-agent")
+            AgentRegistration.beginOrResume(dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY, "new-agent")
         }
         assertFailsWith<IllegalArgumentException> {
             AgentCredentials.recordAuthentication(
-                dataDir, "different-agent", identity.deviceId,
+                dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY, "different-agent", identity.deviceId,
                 "uid-different", "different-agent", "refresh-different",
             )
         }
-        val active = AgentCredentials.load(dataDir)!!
+        val active = AgentCredentials.load(dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY)!!
         assertEquals("existing-agent", active.username)
         assertEquals(null, active.password)
         assertEquals("refresh-existing", active.refreshToken)
@@ -144,12 +155,12 @@ class AgentRegistrationDurabilityTest {
     @Test
     fun `active credentials require explicit same-account reauth and preserve local identity`() {
         val dataDir = File(temporaryRoot(), "agent-data")
-        val identity = AgentCredentials.ensureIdentity(dataDir)
+        val identity = AgentCredentials.ensureIdentity(dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY)
         AgentCredentials.recordAuthentication(
-            dataDir, "existing-agent", identity.deviceId,
+            dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY, "existing-agent", identity.deviceId,
             "uid-existing", "existing-agent", "refresh-before-revoke",
         )
-        val active = AgentCredentials.load(dataDir)!!
+        val active = AgentCredentials.load(dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY)!!
 
         assertFailsWith<IllegalArgumentException> {
             resolveAgentReauthentication(
@@ -167,7 +178,10 @@ class AgentRegistrationDurabilityTest {
                 suppliedPassword = "controlled-secret",
             )
         }
-        assertEquals("refresh-before-revoke", AgentCredentials.load(dataDir)?.refreshToken)
+        assertEquals(
+            "refresh-before-revoke",
+            AgentCredentials.load(dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY)?.refreshToken,
+        )
         val reauth = requireNotNull(
             resolveAgentReauthentication(
                 requested = true,
@@ -181,10 +195,10 @@ class AgentRegistrationDurabilityTest {
         assertTrue("controlled-secret" !in reauth.toString())
 
         AgentCredentials.recordAuthentication(
-            dataDir, reauth.username, reauth.deviceId,
+            dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY, reauth.username, reauth.deviceId,
             "uid-existing", reauth.username, "refresh-after-reauth",
         )
-        val recovered = AgentCredentials.load(dataDir)!!
+        val recovered = AgentCredentials.load(dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY)!!
         assertEquals(identity.deviceId, recovered.deviceId)
         assertEquals(identity.apiToken, recovered.apiToken)
         assertEquals("refresh-after-reauth", recovered.refreshToken)

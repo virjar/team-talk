@@ -1,5 +1,6 @@
 package com.virjar.tk.media
 
+import com.virjar.tk.http.HttpConnectionOperationGate
 import com.virjar.tk.repository.FileOps
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -25,7 +26,7 @@ internal const val DEFAULT_DESKTOP_MEDIA_QUOTA_BYTES: Long = 500L * 1024L * 1024
 /**
  * 单个认证会话的统一媒体缓存。
  *
- * 缓存根目录已经由 [DesktopSessionResources] 按服务器和 uid 隔离；本类只接受
+ * 缓存根目录已经由 [DesktopSessionResources] 按 canonical TCP+HTTP deployment fingerprint 和 uid 隔离；本类只接受
  * TeamTalk 附件引用，并再次通过 [FileOps.resolveUrl] 绑定当前服务器。缓存文件名
  * 只包含 SHA-256 和经过白名单过滤的扩展名，不信任远端或消息中的原始文件名。
  *
@@ -38,7 +39,7 @@ internal class DesktopMediaCache(
     private val diagnostics: DesktopSessionDiagnostics,
     private val cacheDir: File,
     private val scope: CoroutineScope,
-    private val downloader: DesktopMediaDownloader = HttpDesktopMediaDownloader,
+    private val downloader: DesktopMediaDownloader = HttpDesktopMediaDownloader(),
     private val quotaBytes: Long = DEFAULT_DESKTOP_MEDIA_QUOTA_BYTES,
 ) : Closeable {
 
@@ -134,11 +135,13 @@ internal class DesktopMediaCache(
     }
 
     override fun close() {
-        val shouldClose = synchronized(callbackGate) {
-            closed.compareAndSet(false, true)
+        synchronized(callbackGate) {
+            closed.set(true)
         }
-        if (!shouldClose) return
-        removeAbandonedPartials()
+        // Blocking URLConnection reads are not prompt-cancellable. The session-owned downloader
+        // disconnects every registered connection here; partials are deleted by the unwinding
+        // transfer (or by the next startup if the process is killed mid-unwind).
+        downloader.close()
     }
 
     private suspend fun downloadToCache(
@@ -157,15 +160,19 @@ internal class DesktopMediaCache(
                 resolvedUrl = FileOps.resolveUrl(serverBaseUrl, reference),
                 authorizationToken = credentialGate.requireAccessToken(),
             )
+            val operationContext = coroutineContext
             downloader.download(request, partial, onProgress)
-            coroutineContext.ensureActive()
-            credentialGate.ensureOwner()
+            operationContext.ensureActive()
             require(partial.isFile) { "媒体下载没有生成临时文件" }
-            moveAtomically(partial, target)
-            target.setLastModified(System.currentTimeMillis())
-            onProgress(1f)
-            evictToQuotaPreserving(target)
-            diagnostics.record(DesktopSessionDiagnosticEvent.MEDIA_CACHE_STORED)
+            synchronized(callbackGate) {
+                ensureOpen()
+                operationContext.ensureActive()
+                moveAtomically(partial, target)
+                target.setLastModified(System.currentTimeMillis())
+                runCatching { onProgress(1f) }
+                evictToQuotaPreserving(target)
+                diagnostics.record(DesktopSessionDiagnosticEvent.MEDIA_CACHE_STORED)
+            }
             return target
         } catch (error: Throwable) {
             partial.delete()
@@ -252,28 +259,42 @@ internal data class DesktopMediaDownloadRequest(
     val authorizationToken: String,
 )
 
-internal fun interface DesktopMediaDownloader {
+internal fun interface DesktopMediaDownloader : Closeable {
     suspend fun download(
         request: DesktopMediaDownloadRequest,
         partialFile: File,
         onProgress: (Float) -> Unit,
     ): Long
+
+    override fun close() = Unit
 }
 
 /** 不跟随重定向，避免认证 header 被带到其他主机。 */
-internal object HttpDesktopMediaDownloader : DesktopMediaDownloader {
+internal class HttpDesktopMediaDownloader(
+    private val connectionFactory: (String) -> HttpURLConnection = { raw ->
+        URL(raw).openConnection() as HttpURLConnection
+    },
+    private val beforeFirstIo: () -> Unit = {},
+) : DesktopMediaDownloader {
+    private val operationGate = HttpConnectionOperationGate("Desktop media downloader")
+
     override suspend fun download(
         request: DesktopMediaDownloadRequest,
         partialFile: File,
         onProgress: (Float) -> Unit,
     ): Long {
-        val connection = (URL(request.resolvedUrl).openConnection() as HttpURLConnection).apply {
+        val connection = connectionFactory(request.resolvedUrl).apply {
             connectTimeout = 10_000
             readTimeout = 120_000
             instanceFollowRedirects = false
             setRequestProperty("Authorization", "Bearer ${request.authorizationToken}")
         }
-        try {
+        val operation = operationGate.register(connection) {
+            IllegalStateException("Desktop 媒体下载器已经关闭")
+        }
+        val operationContext = coroutineContext
+        return operation.execute(beforeFirstIoAdmission = beforeFirstIo) {
+            connection.connect()
             val code = connection.responseCode
             check(code == HttpURLConnection.HTTP_OK) { "下载失败 HTTP $code" }
             val total = connection.contentLengthLong
@@ -283,7 +304,7 @@ internal object HttpDesktopMediaDownloader : DesktopMediaDownloader {
                 partialFile.outputStream().buffered().use { output ->
                     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                     while (true) {
-                        coroutineContext.ensureActive()
+                        operationContext.ensureActive()
                         val count = input.read(buffer)
                         if (count < 0) break
                         output.write(buffer, 0, count)
@@ -295,16 +316,18 @@ internal object HttpDesktopMediaDownloader : DesktopMediaDownloader {
                     }
                 }
             }
-            return downloaded
-        } finally {
-            connection.disconnect()
+            downloaded
         }
     }
+
+    override fun close() = operationGate.close()
 
     private fun progress(downloaded: Long, total: Long): Float =
         if (total > 0) (downloaded.toFloat() / total).coerceIn(0f, 1f) else -1f
 
-    private const val PROGRESS_STEP_BYTES = 128L * 1024L
+    private companion object {
+        const val PROGRESS_STEP_BYTES = 128L * 1024L
+    }
 }
 
 internal fun desktopSha256(value: String): String = MessageDigest.getInstance("SHA-256")

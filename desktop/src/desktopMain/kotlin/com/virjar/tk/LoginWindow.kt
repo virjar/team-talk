@@ -72,7 +72,8 @@ internal fun showAlreadyRunningDialog(dataDir: File) = application {
  */
 internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = application {
     val config = defaultServerConfig()
-    val tokenStore = remember { DesktopTokenStore(dataDir) }
+    val deploymentIdentity = remember(config) { config.deploymentIdentity() }
+    val tokenStore = remember(deploymentIdentity) { DesktopTokenStore(dataDir, deploymentIdentity) }
     val deviceId = remember(dataDir) { desktopInstallationDeviceId(dataDir) }
 
     // 启动 UI 自动化测试 HTTP 服务（通过反射隔离，production 打包删除 test 包也不报错）
@@ -81,13 +82,14 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
     // 跨平台认证控制器（app 全局层，管理 UserSession 生命周期）
     val auth = rememberAuthController(
         tokenStore = tokenStore,
+        deploymentIdentity = deploymentIdentity,
         tcpHost = config.tcpHost,
         tcpPort = config.tcpPort,
         deviceId = deviceId,
         deviceName = "Desktop",
         deviceModel = System.getProperty("os.name"),
         deviceFlag = 2,
-        createCache = { uid -> createDesktopLocalCache(uid, dataDir) },
+        createCache = { identity, uid -> createDesktopLocalCache(identity, uid, dataDir) },
     )
 
     // ════════════════════════════════════════════════════════════
@@ -200,7 +202,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
         val desktopResources = remember(session) {
             DesktopSessionResources(
                 ownerUid = session.userSession.uid,
-                serverUrl = config.serverUrl,
+                deploymentIdentity = session.deploymentIdentity,
                 credentialProvider = session::httpCredentialsSnapshot,
                 dataDir = dataDir,
                 diagnosticLogger = session.diagnosticLogger("DesktopSession"),

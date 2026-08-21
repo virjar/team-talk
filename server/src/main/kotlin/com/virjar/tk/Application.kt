@@ -170,22 +170,13 @@ fun Application.module() {
         val msgService = koin.get<MessageService>()
         val chatAccess = koin.get<ChatAccess>()
         val syncEventService = koin.get<SyncEventService>()
-        val recoveredProjections = runBlocking(Dispatchers.IO) { msgService.recoverPendingProjections() }
+        val organizationService = koin.get<OrganizationService>()
+        val botService = koin.get<BotService>()
+        val recoveredProjections = runBlocking(Dispatchers.IO) {
+            recoverStartupProjections(organizationService, botService, msgService)
+        }
         if (recoveredProjections > 0) {
             logger.info("Recovered {} pending message projections", recoveredProjections)
-        }
-        val organizationService = koin.get<OrganizationService>()
-        val organizationFailures = runBlocking(Dispatchers.IO) {
-            organizationService.reconcileAllManagedGroups()
-        }
-        check(organizationFailures.isEmpty()) {
-            "Managed department group startup drain did not converge: $organizationFailures"
-        }
-        // Bot recovery enters every chat through the managed authority fence. Drain organization
-        // revisions first so startup never tries to take Chat behind a deliberately pending row.
-        val botGrantFailures = runBlocking(Dispatchers.IO) { koin.get<BotService>().recoverGrantMemberships() }
-        check(botGrantFailures.isEmpty()) {
-            "Bot grant startup reconciliation did not converge: $botGrantFailures"
         }
 
         val presenceCoordinator = resources.own(
@@ -290,6 +281,28 @@ fun Application.module() {
         resources.close()
         throw error
     }
+}
+
+/**
+ * Converge every PostgreSQL membership authority before replaying the external message outbox.
+ * Organization runs first because Bot recovery enters its managed-authority fence; Bot then repairs
+ * grant/member/Conversation projections so message replay cannot deliver to an orphan or skip a
+ * still-authorized service member.
+ */
+internal suspend fun recoverStartupProjections(
+    organizationService: OrganizationService,
+    botService: BotService,
+    messageService: MessageService,
+): Int {
+    val organizationFailures = organizationService.reconcileAllManagedGroups()
+    check(organizationFailures.isEmpty()) {
+        "Managed department group startup drain did not converge: $organizationFailures"
+    }
+    val botGrantFailures = botService.recoverGrantMemberships()
+    check(botGrantFailures.isEmpty()) {
+        "Bot grant startup reconciliation did not converge: $botGrantFailures"
+    }
+    return messageService.recoverPendingProjections()
 }
 
 private fun resolveStaticDir(): java.io.File {

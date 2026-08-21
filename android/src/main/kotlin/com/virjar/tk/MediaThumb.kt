@@ -10,6 +10,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -29,14 +30,19 @@ fun rememberAsyncThumb(
     val bitmap by produceState<Bitmap?>(null, url, targetSize, mediaSession) {
         if (targetSize.width <= 0 || targetSize.height <= 0) return@produceState
         value = withContext(Dispatchers.IO) {
-            runCatching {
+            try {
                 val file = MediaHelper.downloadToCache(
                     url = url,
                     cacheDir = context.cacheDir,
                     mediaSession = mediaSession,
                 )
                 decodeSampledBitmap(file, targetSize.width, targetSize.height)
-            }.onFailure { Log.e("MediaThumb", "加载失败: $url", it) }.getOrNull()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Log.e("MediaThumb", "加载失败: $url", error)
+                null
+            }
         }
     }
     AndroidView(

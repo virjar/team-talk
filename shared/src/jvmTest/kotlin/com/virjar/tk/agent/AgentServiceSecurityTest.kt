@@ -44,6 +44,8 @@ class AgentServiceSecurityTest {
         assertFalse(lower.contains("--register"))
         assertFalse(lower.contains("--reauth"))
         assertFalse(lower.contains("token"))
+        assertEquals("im.example.com:5100", plan.deploymentIdentity.tcpAuthority)
+        assertEquals("https://im.example.com", plan.deploymentIdentity.httpBaseUrl)
     }
 
     @Test

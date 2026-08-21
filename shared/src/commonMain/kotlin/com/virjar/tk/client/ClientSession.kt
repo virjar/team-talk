@@ -160,6 +160,7 @@ internal class SessionBusinessRpcInvoker(
  */
 class ClientSession internal constructor(
     val deviceId: String,
+    val deploymentIdentity: DeploymentIdentity,
     /** Immutable authenticated identity for every cache, repository and outbound lease below. */
     val ownerUid: String,
     internal val imClient: ImClient,
@@ -439,22 +440,25 @@ internal fun installAppLogOwnershipIfEnabled(
 
 /**
  * 创建完整会话。在认证成功后调用。
- * @param createCache 平台提供的 LocalCache 工厂 (uid) -> LocalCache
+ * @param deploymentIdentity canonical TCP+HTTP deployment shared by cache and HTTP resources
+ * @param createCache 平台提供的 LocalCache 工厂 (deploymentIdentity, uid) -> LocalCache
  * @param deviceId 设备 ID，用于日志上传标识
  */
 fun createSession(
     imClient: ImClient,
     userSession: UserSession,
-    createCache: (String) -> LocalCache,
+    deploymentIdentity: DeploymentIdentity,
+    createCache: (DeploymentIdentity, String) -> LocalCache,
     deviceId: String,
     logUploadEnabled: Boolean = true,  // 无头场景（serverUrl 未知）传 false 免噪音
     durableMessageSink: ((Long, Message) -> Unit)? = null,
+    durableChatTombstoneSink: ((String, () -> Unit) -> Unit)? = null,
 ): ClientSession {
     val sessionOwnerUid = userSession.uid
     require(sessionOwnerUid.isNotBlank()) { "Cannot create a session without an authenticated uid" }
     val construction = SessionConstructionRollback()
     return try {
-    val cache = createCache(sessionOwnerUid)
+    val cache = createCache(deploymentIdentity, sessionOwnerUid)
     construction.own("local cache", cache::close)
     val rpcClient = RpcClient(imClient)
     construction.own("raw RPC", rpcClient::stop)
@@ -470,6 +474,7 @@ fun createSession(
         cache,
         onConversationsDirty = { conversationRepo.listConversations().getOrThrow() },
         durableMessageSink = durableMessageSink,
+        durableChatTombstoneSink = durableChatTombstoneSink,
         ownerUid = sessionOwnerUid,
     )
     construction.own("event processor", ep::stop)
@@ -502,12 +507,12 @@ fun createSession(
     construction.own("draft recovery", draftRecoveryScope::cancel)
 
     // HTTP 日志上传器 + crash 持久化
-    val serverUrl = defaultServerConfig().serverUrl
+    val serverUrl = deploymentIdentity.httpBaseUrl
     val dataDir = platformDataDir()
     val logOwnerUid = sessionOwnerUid
     val crashDumper = if (logUploadEnabled) {
         check(logOwnerUid.isNotBlank()) { "Cannot create HTTP log uploader before authentication" }
-        CrashDumper(dataDir, serverUrl, logOwnerUid)
+        CrashDumper(dataDir, deploymentIdentity, logOwnerUid)
     } else null
     val uploader: HttpLogUploader? = crashDumper?.let { ownedCrashDumper ->
         HttpLogUploader(
@@ -570,6 +575,7 @@ fun createSession(
 
     val result = ClientSession(
         deviceId = deviceId,
+        deploymentIdentity = deploymentIdentity,
         ownerUid = sessionOwnerUid,
         imClient = imClient,
         ownedUserSession = userSession,

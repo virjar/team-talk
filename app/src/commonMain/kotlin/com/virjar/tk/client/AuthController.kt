@@ -65,18 +65,27 @@ class AuthState(
 @Composable
 fun rememberAuthController(
     tokenStore: TokenStore,
+    deploymentIdentity: DeploymentIdentity,
     tcpHost: String,
     tcpPort: Int,
     deviceId: String,
     deviceName: String,
     deviceModel: String? = null,
     deviceFlag: Int = 0,
-    createCache: (uid: String) -> LocalCache,
+    createCache: (deploymentIdentity: DeploymentIdentity, uid: String) -> LocalCache,
     onAuthenticated: ((ClientSession) -> Unit)? = null,
 ): AuthState {
     // claimOwner 是认证根的持久化租约。Android 外部 Activity 返回或窗口重建时，
     // 新 controller 会先接管世代，从此旧 controller 的延迟回调无权改写凭据。
-    val tokenOwner = remember(tokenStore) { tokenStore.claimOwner() }
+    val tokenOwner = remember(tokenStore, deploymentIdentity, tcpHost, tcpPort) {
+        require(tokenStore.deploymentIdentity == deploymentIdentity) {
+            "TokenStore belongs to a different TCP+HTTP deployment"
+        }
+        require(DeploymentIdentity.from(tcpHost, tcpPort, deploymentIdentity.httpBaseUrl) == deploymentIdentity) {
+            "Authentication transport does not match the bound deployment"
+        }
+        tokenStore.claimOwner()
+    }
     val credentialSnapshot = remember(tokenStore, tokenOwner.generation) {
         AuthCredentialSnapshotHolder(tokenOwner.generation, tokenOwner.savedLogin)
     }
@@ -332,6 +341,7 @@ fun rememberAuthController(
             if (
                 persistedLogin == null ||
                 persistedLogin.ownerGeneration != tokenOwner.generation ||
+                persistedLogin.deploymentFingerprint != deploymentIdentity.fingerprint ||
                 persistedLogin.uid != authenticatedUid ||
                 persistedLogin.refreshToken != rotatedRefreshToken ||
                 !tokenStore.isCurrentOwner(tokenOwner.generation)
@@ -348,7 +358,13 @@ fun rememberAuthController(
             }
             if (session == null) {
                 val createdSession = try {
-                    val candidate = createSession(imClient, userSession, createCache, deviceId)
+                    val candidate = createSession(
+                        imClient = imClient,
+                        userSession = userSession,
+                        deploymentIdentity = deploymentIdentity,
+                        createCache = createCache,
+                        deviceId = deviceId,
+                    )
                     try {
                         onAuthenticated?.invoke(candidate)
                         candidate

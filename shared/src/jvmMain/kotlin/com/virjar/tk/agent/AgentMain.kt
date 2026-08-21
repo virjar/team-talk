@@ -6,6 +6,7 @@ import com.virjar.tk.bot.ImBotMessageInbox
 import com.virjar.tk.bot.PersistentImBotCacheOwner
 import com.virjar.tk.client.PendingBotMessage
 import com.virjar.tk.client.OutgoingMessage
+import com.virjar.tk.client.DeploymentIdentity
 import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -77,7 +78,11 @@ private fun runAgent(args: Array<String>) {
     val dataDir = File(opts["data-dir"] ?: env["TK_AGENT_DIR"] ?: "${System.getProperty("user.home")}/.tt-agent")
     // 上传/下载走 HTTP 文件服务的 serverUrl（与 TCP host 区分——HTTPS 域名），
     // 不设则 defaultServerConfig 回退 localhost（曾致 upload 挂死无超时）
-    val serverUrl = opts["server-url"] ?: env["TK_SERVER_URL"] ?: "https://$host"
+    val configuredServerUrl = opts["server-url"] ?: env["TK_SERVER_URL"]
+    val deploymentIdentity = configuredServerUrl?.let { serverUrl ->
+        DeploymentIdentity.from(host, port, serverUrl)
+    } ?: DeploymentIdentity.fromTcpWithDefaultHttp(host, port)
+    val serverUrl = deploymentIdentity.httpBaseUrl
     val explicitRegistration = opts.containsKey("register")
     val explicitReauthentication = opts.containsKey("reauth")
     require(!(explicitRegistration && explicitReauthentication)) {
@@ -94,9 +99,9 @@ private fun runAgent(args: Array<String>) {
     val cacheOwner = PersistentImBotCacheOwner(dataDir)
 
     val credentials = if (explicitRegistration) {
-        AgentRegistration.beginOrResume(dataDir, opts["prefix"] ?: "agent")
+        AgentRegistration.beginOrResume(dataDir, deploymentIdentity, opts["prefix"] ?: "agent")
     } else {
-        AgentCredentials.load(dataDir)
+        AgentCredentials.load(dataDir, deploymentIdentity)
     }
     val reauthentication = resolveAgentReauthentication(
         requested = explicitReauthentication,
@@ -105,7 +110,7 @@ private fun runAgent(args: Array<String>) {
         suppliedPassword = suppliedPassword,
     )
     val identity = credentials?.let { AgentRuntimeIdentity(it.apiToken, it.deviceId) }
-        ?: AgentCredentials.ensureIdentity(dataDir)
+        ?: AgentCredentials.ensureIdentity(dataDir, deploymentIdentity)
     // Validate/create both upload-owned children before any IM network connection.
     val fileAccessPolicy = AgentFileAccessPolicy(dataDir)
 
@@ -115,6 +120,7 @@ private fun runAgent(args: Array<String>) {
     ): (String, String, String) -> Unit = { uid, authenticatedUsername, refreshToken ->
         AgentCredentials.recordAuthentication(
             dataDir = dataDir,
+            deploymentIdentity = deploymentIdentity,
             expectedUsername = expectedUsername,
             expectedDeviceId = expectedDeviceId,
             uid = uid,
@@ -136,6 +142,7 @@ private fun runAgent(args: Array<String>) {
         credentials?.state == AgentCredentialState.REGISTER_PENDING -> runBlocking {
             AgentRegistration.recover(
                 dataDir = dataDir,
+                deploymentIdentity = deploymentIdentity,
                 pending = credentials,
                 login = {
                     connectLogin(
@@ -364,7 +371,8 @@ class AgentRuntime(
     val fileAccessPolicy: AgentFileAccessPolicy = AgentFileAccessPolicy(dataDir),
 ) : AutoCloseable {
 
-    private val identity = AgentCredentials.ensureIdentity(dataDir)
+    private val deploymentIdentity = DeploymentIdentity.from(host, port, serverUrl)
+    private val identity = AgentCredentials.ensureIdentity(dataDir, deploymentIdentity)
     lateinit var bot: ImBot
     val apiToken: String = identity.apiToken
     val deviceId: String = identity.deviceId
@@ -396,11 +404,8 @@ class AgentRuntime(
         // Authentication and replay already published into this same disk-backed inbox. Starting
         // the consumer afterwards is safe: pending rows bridge replay, SYNC_READY and attach gaps.
         scope.launch {
-            while (true) {
-                val pending = messageInbox.receivePendingOrNull() ?: break
-                // ACK changes only the delivery row's state; REST cursor history keeps the row.
-                messageInbox.ack(pending.eventId)
-                notifyMessageAvailable(pending)
+            while (messageInbox.consumePendingForAgent(::notifyMessageAvailable)) {
+                // One chat-keyed atomic consume completed; continue with the next global eventId.
             }
         }
     }
@@ -415,6 +420,7 @@ class AgentRuntime(
     fun outgoingReceipt(chatId: String, clientMsgId: String): OutgoingMessage? =
         bot.outgoingReceipt(chatId, clientMsgId)
 
+    /** Called synchronously while ImBotMessageInbox still owns this delivery's per-chat gate. */
     private fun notifyMessageAvailable(delivery: PendingBotMessage) {
         waiters.forEach { waiter ->
             if (

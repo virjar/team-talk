@@ -1,11 +1,17 @@
 package com.virjar.tk
 
 import com.virjar.tk.client.UserSession
+import com.virjar.tk.client.DeploymentIdentity
 import com.virjar.tk.client.SessionHttpCredentials
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.io.IOException
 import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -122,14 +128,16 @@ class AndroidMediaSafetyTest {
 
     @Test
     fun `media cache namespace is opaque stable across token rotation and isolated by owner`() {
-        val first = mediaCacheNamespace("https://server-a.example", "uid-a")
-        val sameSession = mediaCacheNamespace("https://server-a.example/", "uid-a")
-        val anotherAccount = mediaCacheNamespace("https://server-a.example", "uid-b")
-        val anotherServer = mediaCacheNamespace("https://server-b.example", "uid-a")
+        val first = mediaCacheNamespace(deployment("https://server-a.example"), "uid-a")
+        val sameSession = mediaCacheNamespace(deployment("https://server-a.example/"), "uid-a")
+        val anotherAccount = mediaCacheNamespace(deployment("https://server-a.example"), "uid-b")
+        val anotherServer = mediaCacheNamespace(deployment("https://server-b.example"), "uid-a")
+        val anotherTcp = mediaCacheNamespace(deployment("https://server-a.example", tcpPort = 5200), "uid-a")
 
         assertEquals(first, sameSession)
         assertNotEquals(first, anotherAccount)
         assertNotEquals(first, anotherServer)
+        assertNotEquals(first, anotherTcp)
         assertFalse(first.contains("uid-a"))
     }
 
@@ -139,7 +147,7 @@ class AndroidMediaSafetyTest {
             onAuthSuccess("uid-a", "alice", "Alice", "refresh-a", "token-a1")
         }
         val mediaSession = AndroidMediaSession.create(
-            serverUrl = "https://server.example/",
+            deploymentIdentity = deployment("https://server.example/"),
             ownerUid = "uid-a",
             credentialsProvider = userSession::httpCredentialsSnapshot,
         )
@@ -165,7 +173,7 @@ class AndroidMediaSafetyTest {
     fun `media session rejects same uid replacement epoch`() {
         var credentials = SessionHttpCredentials("uid-a", "old-token", identityEpoch = 4L)
         val mediaSession = AndroidMediaSession.create(
-            serverUrl = "https://server.example",
+            deploymentIdentity = deployment("https://server.example"),
             ownerUid = "uid-a",
             credentialsProvider = { credentials },
         )
@@ -179,10 +187,175 @@ class AndroidMediaSafetyTest {
     }
 
     @Test
+    fun `closing media session drains a registered connection before first network use`() = runBlocking {
+        val registered = CompletableDeferred<Unit>()
+        val disconnected = CompletableDeferred<Unit>()
+        val allowFirstUse = CountDownLatch(1)
+        val firstUse = AtomicBoolean(false)
+        val mediaSession = AndroidMediaSession.create(
+            deploymentIdentity = deployment("https://server.example"),
+            ownerUid = "uid-a",
+            credentialsProvider = { SessionHttpCredentials("uid-a", "token-a", identityEpoch = 9L) },
+            connectionFactory = { raw ->
+                object : HttpURLConnection(URL(raw)) {
+                    override fun disconnect() {
+                        disconnected.complete(Unit)
+                    }
+
+                    override fun usingProxy(): Boolean = false
+                    override fun connect() {
+                        firstUse.set(true)
+                    }
+                }
+            },
+            beforeFirstIo = {
+                registered.complete(Unit)
+                allowFirstUse.await()
+            },
+        )
+        val operation = async(Dispatchers.IO) {
+            runCatching {
+                mediaSession.withAuthenticatedConnection("https://server.example/file") {
+                    Unit
+                }
+            }
+        }
+        registered.await()
+        val closing = async(Dispatchers.IO) { mediaSession.close() }
+        disconnected.await()
+
+        assertFalse(closing.isCompleted, "close 必须等待已经登记但尚未首用的 bearer 操作退出")
+        allowFirstUse.countDown()
+        assertTrue(operation.await().exceptionOrNull() is IllegalStateException)
+        closing.await()
+
+        assertFalse(firstUse.get(), "close 先完成线性化时不得再发起首次 bearer IO")
+    }
+
+    @Test
+    fun `rejected HTTP registration disconnect failure is reported to concurrent close`() = runBlocking {
+        val outerRegistered = CompletableDeferred<Unit>()
+        val gateClosed = CompletableDeferred<Unit>()
+        val allowGateRegistration = CountDownLatch(1)
+        val disconnectFailure = IOException("synthetic disconnect failure")
+        val mediaSession = AndroidMediaSession.create(
+            deploymentIdentity = deployment("https://server.example"),
+            ownerUid = "uid-a",
+            credentialsProvider = { SessionHttpCredentials("uid-a", "token-a", identityEpoch = 9L) },
+            connectionFactory = { raw ->
+                object : HttpURLConnection(URL(raw)) {
+                    override fun disconnect() = throw disconnectFailure
+                    override fun usingProxy(): Boolean = false
+                    override fun connect() = Unit
+                }
+            },
+            beforeHttpGateRegistration = {
+                outerRegistered.complete(Unit)
+                allowGateRegistration.await()
+            },
+            afterHttpGateClose = { gateClosed.complete(Unit) },
+        )
+        val operation = async(Dispatchers.IO) {
+            runCatching {
+                mediaSession.withAuthenticatedConnection("https://server.example/file") { Unit }
+            }
+        }
+        outerRegistered.await()
+        val closing = async(Dispatchers.IO) { runCatching(mediaSession::close) }
+        gateClosed.await()
+
+        assertFalse(closing.isCompleted, "close must join the outer operation registration")
+        allowGateRegistration.countDown()
+
+        val operationFailure = operation.await().exceptionOrNull()
+        assertTrue(operationFailure is IllegalStateException)
+        assertTrue(operationFailure.suppressed.any { it === disconnectFailure })
+        val closeFailure = closing.await().exceptionOrNull()
+        assertTrue(closeFailure is IllegalStateException)
+        assertTrue(closeFailure.suppressed.any { it === disconnectFailure })
+        assertTrue(runCatching(mediaSession::close).exceptionOrNull() === closeFailure)
+    }
+
+    @Test
+    fun `closed media session rejects late atomic cache publication`() = runBlocking {
+        val root = Files.createTempDirectory("teamtalk-media-close-commit").toFile()
+        val mediaSession = AndroidMediaSession.create(
+            deploymentIdentity = deployment("https://server.example"),
+            ownerUid = "uid-a",
+            credentialsProvider = { SessionHttpCredentials("uid-a", "token-a", identityEpoch = 2L) },
+        )
+        try {
+            val target = File(root, "late.bin")
+            val writerStarted = CompletableDeferred<Unit>()
+            val allowWriterToFinish = CompletableDeferred<Unit>()
+            val writer = async<IllegalStateException?>(Dispatchers.Default) {
+                try {
+                    materializeMediaCacheFile(
+                        target = target,
+                        install = mediaSession::installCacheFile,
+                    ) { partial ->
+                        partial.writeText("old-session")
+                        writerStarted.complete(Unit)
+                        allowWriterToFinish.await()
+                    }
+                    null
+                } catch (expected: IllegalStateException) {
+                    expected
+                }
+            }
+            writerStarted.await()
+
+            mediaSession.close()
+            allowWriterToFinish.complete(Unit)
+
+            assertTrue(writer.await() is IllegalStateException)
+            assertFalse(target.exists(), "close 后旧任务不得发布最终缓存文件")
+        } finally {
+            mediaSession.close()
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `cancelling a blocking media operation invokes abort before cancellation completes`() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val releaseBlockingRead = CountDownLatch(1)
+        val aborted = AtomicBoolean(false)
+        val operation = async(Dispatchers.IO) {
+            withCancellationAbort(
+                abort = {
+                    aborted.set(true)
+                    releaseBlockingRead.countDown()
+                },
+            ) {
+                entered.complete(Unit)
+                releaseBlockingRead.await()
+            }
+        }
+        entered.await()
+
+        operation.cancel()
+
+        assertTrue(aborted.get(), "页面任务取消必须同步关闭底层阻塞资源")
+        assertFailsWith<kotlinx.coroutines.CancellationException> { operation.await() }
+        Unit
+    }
+
+    @Test
+    fun `normal media operation completion does not invoke cancellation abort`() = runBlocking {
+        val abortCalls = AtomicInteger()
+
+        val value = withCancellationAbort(abortCalls::incrementAndGet) { "complete" }
+
+        assertEquals("complete", value)
+        assertEquals(0, abortCalls.get())
+    }
+
+    @Test
     fun `session media directories never resolve to legacy global caches`() {
         val root = Files.createTempDirectory("teamtalk-media-path-test").toFile()
         try {
-            val namespace = mediaCacheNamespace("https://server.example", "uid-a")
+            val namespace = mediaCacheNamespace(deployment("https://server.example"), "uid-a")
             val downloads = mediaCacheDirectory(root, namespace, "downloads")
             val attachments = mediaCacheDirectory(root, namespace, "attachments")
 
@@ -207,8 +380,8 @@ class AndroidMediaSafetyTest {
     fun `clearing one media session preserves other sessions and legacy caches`() = runBlocking {
         val root = Files.createTempDirectory("teamtalk-media-clear-test").toFile()
         try {
-            val first = mediaCacheNamespace("https://server.example", "uid-a")
-            val second = mediaCacheNamespace("https://server.example", "uid-b")
+            val first = mediaCacheNamespace(deployment("https://server.example"), "uid-a")
+            val second = mediaCacheNamespace(deployment("https://server.example"), "uid-b")
             val firstFile = File(mediaCacheDirectory(root, first, "downloads"), "first.bin")
             val secondFile = File(mediaCacheDirectory(root, second, "downloads"), "second.bin")
             val firstAttachment = File(mediaCacheDirectory(root, first, "attachments"), "first.txt")
@@ -244,7 +417,7 @@ class AndroidMediaSafetyTest {
     fun `closing one owner never clears another page cache`() = runBlocking {
         val root = Files.createTempDirectory("teamtalk-media-lease-owners").toFile()
         try {
-            val namespace = mediaCacheNamespace("https://server.example", "uid-a")
+            val namespace = mediaCacheNamespace(deployment("https://server.example"), "uid-a")
             val firstPage = acquireMediaCacheLease(root, namespace)
             val secondPage = acquireMediaCacheLease(root, namespace)
             val cached = File(mediaCacheDirectory(root, namespace, "downloads"), "shared.png").apply {
@@ -266,7 +439,7 @@ class AndroidMediaSafetyTest {
     fun `quick page switch cancels queued cleanup while target is being written`() = runBlocking {
         val root = Files.createTempDirectory("teamtalk-media-lease-switch").toFile()
         try {
-            val namespace = mediaCacheNamespace("https://server.example", "uid-a")
+            val namespace = mediaCacheNamespace(deployment("https://server.example"), "uid-a")
             val oldPage = acquireMediaCacheLease(root, namespace)
             val target = File(mediaCacheDirectory(root, namespace, "downloads"), "switch.png")
             val writerStarted = CompletableDeferred<Unit>()
@@ -298,7 +471,7 @@ class AndroidMediaSafetyTest {
     fun `explicit session cleanup waits for an active atomic cache write`() = runBlocking {
         val root = Files.createTempDirectory("teamtalk-media-clear-write-race").toFile()
         try {
-            val namespace = mediaCacheNamespace("https://server.example", "uid-a")
+            val namespace = mediaCacheNamespace(deployment("https://server.example"), "uid-a")
             val target = File(mediaCacheDirectory(root, namespace, "downloads"), "active.png")
             val writerStarted = CompletableDeferred<Unit>()
             val allowWriterToFinish = CompletableDeferred<Unit>()
@@ -469,4 +642,13 @@ class AndroidMediaSafetyTest {
             file.delete()
         }
     }
+
+    private fun deployment(
+        serverUrl: String,
+        tcpPort: Int = 5100,
+    ): DeploymentIdentity = DeploymentIdentity.from(
+        tcpHost = java.net.URI(serverUrl).host,
+        tcpPort = tcpPort,
+        serverUrl = serverUrl,
+    )
 }

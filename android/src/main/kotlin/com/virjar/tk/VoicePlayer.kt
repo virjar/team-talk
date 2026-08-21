@@ -91,6 +91,8 @@ object VoicePlayer {
                 currentPlayer = mp
                 _isLoading = false
                 _isPlaying = true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 Log.e("VoicePlayer", "Failed to play voice: $url", e)
                 if (currentRequestId == requestId) {

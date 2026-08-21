@@ -457,6 +457,14 @@ class MessageService(
                 projectionHooks.hit(MessageProjectionStage.AFTER_LUCENE_BEFORE_POSTGRES, operation)
 
                 unitOfWork.write {
+                    // Every existing-chat writer enters through the managed revision fence before
+                    // the external receipt repository takes Chat. A pending organization revision
+                    // must leave this Rocks operation replayable instead of projecting stale members.
+                    val authority = managedChats.lockAuthority(
+                        transaction,
+                        listOf(message.chatId),
+                    ).getValue(message.chatId)
+                    require(authority.ready) { "受管群投影尚未收敛" }
                     val applied = projectionRepository.apply(transaction, operation, preview)
                     if (applied.applied) {
                         for (recipient in applied.recipients) {

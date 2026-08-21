@@ -56,19 +56,25 @@ class MainActivity : ComponentActivity() {
             AppTheme(touchDensity = true) {
                 TestTagEnabler {
                 val config = remember { defaultServerConfig() }
-                val tokenStore = remember { TokenStore(applicationContext) }
+                val deploymentIdentity = remember(config) { config.deploymentIdentity() }
+                val tokenStore = remember(deploymentIdentity) {
+                    TokenStore(applicationContext, deploymentIdentity)
+                }
                 val deviceId = remember { AndroidDeviceIdentity.getOrCreate(applicationContext) }
                 val deviceName = remember { "${Build.MANUFACTURER} ${Build.MODEL}".trim() }
                 val uiScope = rememberCoroutineScope()
                 val auth = rememberAuthController(
                     tokenStore = tokenStore,
+                    deploymentIdentity = deploymentIdentity,
                     tcpHost = config.tcpHost,
                     tcpPort = config.tcpPort,
                     deviceId = deviceId,
                     deviceName = deviceName,
                     deviceModel = Build.MODEL,
                     deviceFlag = 1,
-                    createCache = { uid -> createAndroidLocalCache(applicationContext, uid) },
+                    createCache = { identity, uid ->
+                        createAndroidLocalCache(applicationContext, identity, uid)
+                    },
                     onAuthenticated = { session ->
                         // 注册/登录后缓存可能还没写入，回退用 UserSession 内存字段构建
                         val us = session.userSession
@@ -307,7 +313,7 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
             }
             if (vm != null) { AndroidChatScreen(chatId, chatName, chatType, vm, dataState.userSession.uid,
                 dataState::httpCredentialsSnapshot,
-                serverUrl = defaultServerConfig().serverUrl,
+                deploymentIdentity = dataState.deploymentIdentity,
                 resolveSender = { uid ->
                     mentionCandidates.firstOrNull { it.uid == uid } ?: dataState.cachedUser(uid)
                 },
@@ -363,7 +369,7 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
                 val ownerUid = sessionUser.uid
                 val mediaSession = remember(ownerUid, dataState) {
                     AndroidMediaSession.create(
-                        serverUrl = defaultServerConfig().serverUrl,
+                        deploymentIdentity = dataState.deploymentIdentity,
                         ownerUid = ownerUid,
                         credentialsProvider = dataState::httpCredentialsSnapshot,
                     )
@@ -537,13 +543,12 @@ private fun AndroidMainApp(dataState: AppDataState, onLogout: () -> Unit) {
         composable(Routes.GROUP_FILES, arguments = listOf(navArgument("chatId"){type=NavType.StringType})) { entry ->
             val chatId = entry.arguments?.getString("chatId") ?: return@composable
             val context = LocalContext.current
-            val config = remember { defaultServerConfig() }
             val routeScope = rememberCoroutineScope()
             val sessionUser = dataState.userSession
             val sessionUid = sessionUser.uid
-            val mediaSession = remember(config.serverUrl, sessionUid, dataState) {
+            val mediaSession = remember(dataState.deploymentIdentity, sessionUid, dataState) {
                 AndroidMediaSession.create(
-                    serverUrl = config.serverUrl,
+                    deploymentIdentity = dataState.deploymentIdentity,
                     ownerUid = sessionUid,
                     credentialsProvider = dataState::httpCredentialsSnapshot,
                 )

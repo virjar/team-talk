@@ -25,7 +25,7 @@ class AuthResultAdmissionGateTest {
                     session.onAuthSuccess("uid-a", "a", "A", "refresh-a", "access-a") {
                         aEntered.countDown()
                         check(releaseA.await(5, TimeUnit.SECONDS))
-                        holder.publish(StoredLogin("uid-a", "refresh-a", 11L))
+                        holder.publish(StoredLogin("uid-a", "refresh-a", 11L, "a".repeat(64)))
                     }
                 }
             } finally {
@@ -56,7 +56,7 @@ class AuthResultAdmissionGateTest {
         assertEquals("", session.uid)
         gate.use {
             session.onAuthSuccess("uid-b", "b", "B", "refresh-b", "access-b") {
-                holder.publish(StoredLogin("uid-b", "refresh-b", 11L))
+                holder.publish(StoredLogin("uid-b", "refresh-b", 11L, "a".repeat(64)))
             }
         }
         assertEquals("uid-b", session.uid)

@@ -44,8 +44,8 @@ KICK、IDLE 和 CLOSE。
 - `fault`：异常、不可恢复状态、事件解码和存储失败。
 
 ClientSession 持有独立环形缓冲。fault 经短 debounce 触发上传；开发构建定期上传 trace。上传失败
-保存 pending。CrashDumper 的 pending 空间固定按 `server identity + uid` 隔离；登录 A 产生的崩溃
-不能由随后登录的 B 读取或上传，A 在同一服务器重新登录后才能处理。认证前无法归属的崩溃写入
+保存 pending。CrashDumper 的 pending 空间固定按 `canonical TCP+HTTP deployment fingerprint + uid`
+隔离；登录 A 产生的崩溃不能由随后登录的 B 读取或上传，只有同一部署、同一账号重新登录后才能处理。认证前无法归属的崩溃写入
 独立 unowned 空间，任何后来账号都不会自动认领。禁用日志上传的无头会话不安装或覆盖进程全局
 AppLog/crash owner，因此同进程多个 ImBot 或图形客户端不会互相接管日志身份。
 认证前的 ImClient/AuthSync/Transport/PacketRouter 与禁用上传的 headless 连接树只写平台诊断，不读取

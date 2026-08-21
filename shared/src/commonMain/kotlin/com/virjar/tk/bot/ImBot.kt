@@ -3,6 +3,7 @@ package com.virjar.tk.bot
 import com.virjar.tk.client.ClientSession
 import com.virjar.tk.client.AuthenticationFailureKind
 import com.virjar.tk.client.ConnectionState
+import com.virjar.tk.client.DeploymentIdentity
 import com.virjar.tk.client.EventProcessor
 import com.virjar.tk.client.ImClient
 import com.virjar.tk.client.OutgoingMessage
@@ -620,6 +621,9 @@ class ImBot private constructor(
             fileServerUrl: String?,
             onRefreshCredentials: ((uid: String, username: String, refreshToken: String) -> Unit)?,
         ): ImBot {
+            val deploymentIdentity = fileServerUrl?.let { serverUrl ->
+                DeploymentIdentity.from(host, port, serverUrl)
+            } ?: DeploymentIdentity.fromTcpWithDefaultHttp(host, port)
             val authResult = CompletableDeferred<Boolean>()
             val userSession = UserSession()
             val authResultAdmission = ImBotAuthResultAdmission()
@@ -687,8 +691,8 @@ class ImBot private constructor(
                 session = createSession(
                     imClient,
                     userSession,
-                    createCache = { uid ->
-                        val cache = cacheOwner.open(uid)
+                    createCache = { identity, uid ->
+                        val cache = cacheOwner.open(identity, uid)
                         try {
                             messageInbox.bind(cache)
                             cache
@@ -697,9 +701,11 @@ class ImBot private constructor(
                             throw failure
                         }
                     },
-                    deviceId,
+                    deploymentIdentity = deploymentIdentity,
+                    deviceId = deviceId,
                     logUploadEnabled = false,
                     durableMessageSink = messageInbox::publish,
+                    durableChatTombstoneSink = messageInbox::applyChatTombstone,
                 )
                 // Construct the owner before awaiting SYNC_READY. Replay may start immediately
                 // after createSession installs EventProcessor, so waiting first would lose backlog.

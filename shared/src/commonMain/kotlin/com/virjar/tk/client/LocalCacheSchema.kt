@@ -19,6 +19,13 @@ internal fun validatedLocalCacheOwnerId(ownerUid: String): String {
     return ownerUid
 }
 
+internal fun validatedDeploymentFingerprint(fingerprint: String): String {
+    require(fingerprint.length == 64 && fingerprint.all { it in '0'..'9' || it in 'a'..'f' }) {
+        "Local-cache deployment fingerprint is invalid"
+    }
+    return fingerprint
+}
+
 internal fun localCacheDatabaseFileName(ownerUid: String? = null): String = buildString {
     append("cache_e")
     append(LOCAL_CACHE_SCHEMA_EPOCH)
@@ -26,5 +33,18 @@ internal fun localCacheDatabaseFileName(ownerUid: String? = null): String = buil
         append('_')
         append(validatedLocalCacheOwnerId(it))
     }
+    append(".db")
+}
+
+internal fun localCacheDatabaseFileName(
+    deploymentFingerprint: String,
+    ownerUid: String,
+): String = buildString {
+    append("cache_e")
+    append(LOCAL_CACHE_SCHEMA_EPOCH)
+    append('_')
+    append(validatedDeploymentFingerprint(deploymentFingerprint))
+    append('_')
+    append(validatedLocalCacheOwnerId(ownerUid))
     append(".db")
 }

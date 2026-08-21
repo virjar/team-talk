@@ -16,11 +16,16 @@ import java.io.File
  *
  * @param dataDir 应用数据目录（由调用方传入，SDK 不感知 Desktop 的目录解析策略）
  */
-fun createDesktopLocalCache(uid: String, dataDir: File): LocalCache {
+fun createDesktopLocalCache(
+    deploymentIdentity: DeploymentIdentity,
+    uid: String,
+    dataDir: File,
+): LocalCache {
     val safeUid = validatedLocalCacheOwnerId(uid)
+    val deploymentNamespace = validatedDeploymentFingerprint(deploymentIdentity.fingerprint)
     val privateData = JvmPrivateDataDirectory.openExisting(dataDir)
     val databaseFile = privateData.preparePrivateFile(
-        privateDirectories = listOf("users", safeUid),
+        privateDirectories = listOf("deployments", deploymentNamespace, "users", safeUid),
         fileName = localCacheDatabaseFileName(),
     )
     val driver = JdbcSqliteDriver("jdbc:sqlite:${databaseFile.absolutePath}")
@@ -30,7 +35,7 @@ fun createDesktopLocalCache(uid: String, dataDir: File): LocalCache {
         // in this fresh-epoch schema is idempotent (`IF NOT EXISTS`); replay it on every open.
         AppDatabase.Schema.create(driver)
         privateData.requirePrivateFile(
-            privateDirectories = listOf("users", safeUid),
+            privateDirectories = listOf("deployments", deploymentNamespace, "users", safeUid),
             fileName = localCacheDatabaseFileName(),
         )
         return LocalCacheImpl(driver)

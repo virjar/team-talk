@@ -2,6 +2,7 @@ package com.virjar.tk
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.virjar.tk.client.DeploymentIdentity
 import com.virjar.tk.client.StoredLogin
 import com.virjar.tk.client.TokenStoreOwner
 
@@ -13,25 +14,35 @@ import com.virjar.tk.client.TokenStoreOwner
  *
  * 清除时机：用户主动登出、token 失效（AUTH_FAILED）、被踢下线。
  */
-class TokenStore(context: Context) : com.virjar.tk.client.TokenStore {
+class TokenStore(
+    context: Context,
+    override val deploymentIdentity: DeploymentIdentity,
+) : com.virjar.tk.client.TokenStore {
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences("teamtalk_auth", Context.MODE_PRIVATE)
 
     override fun claimOwner(): TokenStoreOwner = synchronized(PROCESS_LOCK) {
-        val claimed = claimAndroidAuthOwner(readState())
+        val claimed = claimAndroidAuthOwner(readState(), deploymentIdentity.fingerprint)
         persist(claimed.state)
         claimed.owner
     }
 
     override fun save(ownerGeneration: Long, uid: String, refreshToken: String): StoredLogin? =
         synchronized(PROCESS_LOCK) {
-            val mutation = saveAndroidAuthLogin(readState(), ownerGeneration, uid, refreshToken)
+            val mutation = saveAndroidAuthLogin(
+                readState(),
+                deploymentIdentity.fingerprint,
+                ownerGeneration,
+                uid,
+                refreshToken,
+            )
             if (!mutation.applied) return@synchronized null
             persist(mutation.state)
             mutation.state.toStoredLogin()
         }
 
     override fun compareAndClear(expected: StoredLogin): Boolean = synchronized(PROCESS_LOCK) {
+        if (expected.deploymentFingerprint != deploymentIdentity.fingerprint) return@synchronized false
         val mutation = clearAndroidAuthLogin(readState(), expected)
         if (!mutation.applied) return@synchronized false
         persist(mutation.state)
@@ -39,11 +50,15 @@ class TokenStore(context: Context) : com.virjar.tk.client.TokenStore {
     }
 
     override fun isCurrentOwner(ownerGeneration: Long): Boolean = synchronized(PROCESS_LOCK) {
-        readState().ownerGeneration == ownerGeneration
+        readState().let { state ->
+            state.ownerGeneration == ownerGeneration &&
+                state.deploymentFingerprint == deploymentIdentity.fingerprint
+        }
     }
 
     private fun readState(): AndroidAuthPreferenceState = AndroidAuthPreferenceState(
         ownerGeneration = prefs.getLong(KEY_OWNER_GENERATION, 0L),
+        deploymentFingerprint = prefs.getString(KEY_DEPLOYMENT_FINGERPRINT, null),
         uid = prefs.getString(KEY_UID, null)?.takeIf { it.isNotBlank() },
         refreshToken = prefs.getString(KEY_TOKEN, null)?.takeIf { it.isNotBlank() },
     ).normalized()
@@ -54,6 +69,8 @@ class TokenStore(context: Context) : com.virjar.tk.client.TokenStore {
      */
     private fun persist(state: AndroidAuthPreferenceState) {
         val editor = prefs.edit().putLong(KEY_OWNER_GENERATION, state.ownerGeneration)
+        state.deploymentFingerprint?.let { editor.putString(KEY_DEPLOYMENT_FINGERPRINT, it) }
+            ?: editor.remove(KEY_DEPLOYMENT_FINGERPRINT)
         if (state.uid != null && state.refreshToken != null) {
             editor.putString(KEY_UID, state.uid).putString(KEY_TOKEN, state.refreshToken)
         } else {
@@ -66,6 +83,7 @@ class TokenStore(context: Context) : com.virjar.tk.client.TokenStore {
         /** SharedPreferences 对象可由多个 Activity 各自构造，锁必须是进程级。 */
         private val PROCESS_LOCK = Any()
         private const val KEY_OWNER_GENERATION = "owner_generation"
+        private const val KEY_DEPLOYMENT_FINGERPRINT = "deployment_fingerprint"
         private const val KEY_UID = "uid"
         private const val KEY_TOKEN = "refresh_token"
     }
@@ -74,6 +92,7 @@ class TokenStore(context: Context) : com.virjar.tk.client.TokenStore {
 /** SharedPreferences 的可纯测试状态；所有 owner CAS 规则在真实存储路径中复用。 */
 internal data class AndroidAuthPreferenceState(
     val ownerGeneration: Long = 0L,
+    val deploymentFingerprint: String? = null,
     val uid: String? = null,
     val refreshToken: String? = null,
 ) {
@@ -84,7 +103,8 @@ internal data class AndroidAuthPreferenceState(
     fun toStoredLogin(): StoredLogin? {
         val storedUid = uid ?: return null
         val storedToken = refreshToken ?: return null
-        return StoredLogin(storedUid, storedToken, ownerGeneration)
+        val storedDeployment = deploymentFingerprint ?: return null
+        return StoredLogin(storedUid, storedToken, ownerGeneration, storedDeployment)
     }
 }
 
@@ -98,8 +118,19 @@ internal data class AndroidAuthMutation(
     val applied: Boolean,
 )
 
-internal fun claimAndroidAuthOwner(current: AndroidAuthPreferenceState): AndroidAuthOwnerClaim {
-    val normalized = current.normalized()
+internal fun claimAndroidAuthOwner(
+    current: AndroidAuthPreferenceState,
+    deploymentFingerprint: String,
+): AndroidAuthOwnerClaim {
+    require(deploymentFingerprint.isNotBlank()) { "deployment fingerprint 不能为空" }
+    val normalized = current.normalized().let { state ->
+        if (state.deploymentFingerprint == deploymentFingerprint) state
+        else state.copy(
+            deploymentFingerprint = deploymentFingerprint,
+            uid = null,
+            refreshToken = null,
+        )
+    }
     val nextGeneration = nextAuthOwnerGeneration(normalized.ownerGeneration)
     val claimedState = normalized.copy(ownerGeneration = nextGeneration)
     return AndroidAuthOwnerClaim(
@@ -110,6 +141,7 @@ internal fun claimAndroidAuthOwner(current: AndroidAuthPreferenceState): Android
 
 internal fun saveAndroidAuthLogin(
     current: AndroidAuthPreferenceState,
+    deploymentFingerprint: String,
     ownerGeneration: Long,
     uid: String,
     refreshToken: String,
@@ -117,7 +149,10 @@ internal fun saveAndroidAuthLogin(
     require(uid.isNotBlank()) { "uid 不能为空" }
     require(refreshToken.isNotBlank()) { "refreshToken 不能为空" }
     val normalized = current.normalized()
-    if (normalized.ownerGeneration != ownerGeneration) return AndroidAuthMutation(normalized, false)
+    if (
+        normalized.deploymentFingerprint != deploymentFingerprint ||
+        normalized.ownerGeneration != ownerGeneration
+    ) return AndroidAuthMutation(normalized, false)
     return AndroidAuthMutation(
         normalized.copy(uid = uid, refreshToken = refreshToken),
         true,
@@ -130,6 +165,7 @@ internal fun clearAndroidAuthLogin(
 ): AndroidAuthMutation {
     val normalized = current.normalized()
     val matches = normalized.ownerGeneration == expected.ownerGeneration &&
+        normalized.deploymentFingerprint == expected.deploymentFingerprint &&
         normalized.uid == expected.uid &&
         normalized.refreshToken == expected.refreshToken
     return if (matches) {

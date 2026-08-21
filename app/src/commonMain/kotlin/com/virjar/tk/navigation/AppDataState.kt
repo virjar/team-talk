@@ -41,6 +41,7 @@ open class AppDataState(
     private val onAuthExpired: () -> Unit = { session.close(reason = SessionEndReason.AUTH_REVOKED) },
 ) {
     val userSession get() = session.userSession
+    val deploymentIdentity get() = session.deploymentIdentity
     fun httpCredentialsSnapshot() = session.httpCredentialsSnapshot()
 
     /** Narrow synchronous lookup for platform renderers; the cache itself remains session-owned. */

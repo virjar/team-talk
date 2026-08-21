@@ -3,6 +3,7 @@ package com.virjar.tk.agent
 import com.virjar.tk.auth.AuthRules
 import com.virjar.tk.bot.ImBotAuthenticationRejectedException
 import com.virjar.tk.client.AuthenticationFailureKind
+import com.virjar.tk.client.DeploymentIdentity
 import java.io.File
 import java.security.SecureRandom
 import java.util.Base64
@@ -11,8 +12,12 @@ import java.util.UUID
 internal object AgentRegistration {
     private val secureRandom = SecureRandom()
 
-    fun beginOrResume(dataDir: File, prefix: String): AgentCredentialRecord {
-        AgentCredentials.load(dataDir)?.let { existing ->
+    fun beginOrResume(
+        dataDir: File,
+        deploymentIdentity: DeploymentIdentity,
+        prefix: String,
+    ): AgentCredentialRecord {
+        AgentCredentials.load(dataDir, deploymentIdentity)?.let { existing ->
             when (existing.state) {
                 AgentCredentialState.ACTIVE -> error("ACTIVE agent dataDir cannot start registration")
                 AgentCredentialState.REGISTER_PENDING -> return existing
@@ -27,7 +32,7 @@ internal object AgentRegistration {
         val password = ByteArray(24).also { secureRandom.nextBytes(it) }.let {
             Base64.getUrlEncoder().withoutPadding().encodeToString(it)
         }
-        return AgentCredentials.beginRegistration(dataDir, username, password)
+        return AgentCredentials.beginRegistration(dataDir, deploymentIdentity, username, password)
     }
 
     /**
@@ -37,6 +42,7 @@ internal object AgentRegistration {
      */
     suspend fun <T : Any> recover(
         dataDir: File,
+        deploymentIdentity: DeploymentIdentity,
         pending: AgentCredentialRecord,
         login: suspend (AgentCredentialRecord) -> T,
         registerExact: suspend (AgentCredentialRecord) -> T,
@@ -44,7 +50,7 @@ internal object AgentRegistration {
     ): T {
         require(pending.state == AgentCredentialState.REGISTER_PENDING) { "Registration is not pending" }
         require(pending.username != null && pending.password != null) { "Pending registration is incomplete" }
-        val durable = requireNotNull(AgentCredentials.load(dataDir)) {
+        val durable = requireNotNull(AgentCredentials.load(dataDir, deploymentIdentity)) {
             "Pending registration credentials are missing"
         }
         require(
@@ -52,7 +58,8 @@ internal object AgentRegistration {
                 durable.username == pending.username &&
                 durable.password == pending.password &&
                 durable.deviceId == pending.deviceId &&
-                durable.apiToken == pending.apiToken
+                durable.apiToken == pending.apiToken &&
+                durable.deploymentFingerprint == pending.deploymentFingerprint
         ) {
             "Pending registration does not match durable credentials"
         }
@@ -64,7 +71,7 @@ internal object AgentRegistration {
                 // Maintenance, throttling, version and device policy failures never prove that
                 // the exact durable account is absent, so they must not trigger registration.
                 if (loginFailure.kind != AuthenticationFailureKind.REJECTED) throw loginFailure
-                val afterLogin = AgentCredentials.load(dataDir)
+                val afterLogin = AgentCredentials.load(dataDir, deploymentIdentity)
                 if (afterLogin?.state == AgentCredentialState.ACTIVE) throw loginFailure
                 require(afterLogin.matchesPending(durable)) {
                     "Pending registration changed after failed login"
@@ -76,7 +83,7 @@ internal object AgentRegistration {
                     throw registrationFailure
                 }
             }
-            val active = requireNotNull(AgentCredentials.load(dataDir)) {
+            val active = requireNotNull(AgentCredentials.load(dataDir, deploymentIdentity)) {
                 "Authentication returned without durable ACTIVE credentials"
             }
             require(
@@ -98,5 +105,6 @@ internal object AgentRegistration {
         this != null &&
             state == AgentCredentialState.REGISTER_PENDING &&
             username == expected.username && password == expected.password &&
-            deviceId == expected.deviceId && apiToken == expected.apiToken
+            deviceId == expected.deviceId && apiToken == expected.apiToken &&
+            deploymentFingerprint == expected.deploymentFingerprint
 }

@@ -59,7 +59,7 @@ class AgentFileAccessPolicyTest {
     fun `parent traversal data secrets and broad roots are rejected`() {
         val root = temporaryRoot()
         val dataDir = File(root, "agent-data")
-        AgentCredentials.ensureIdentity(dataDir)
+        AgentCredentials.ensureIdentity(dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY)
         val policy = AgentFileAccessPolicy(dataDir)
 
         assertFailsWith<IllegalArgumentException> {
@@ -85,7 +85,7 @@ class AgentFileAccessPolicyTest {
     fun `symlink and hard-link sources are rejected before staging`() {
         val root = temporaryRoot()
         val dataDir = File(root, "agent-data")
-        AgentCredentials.ensureIdentity(dataDir)
+        AgentCredentials.ensureIdentity(dataDir, TEST_AGENT_DEPLOYMENT_IDENTITY)
         val policy = AgentFileAccessPolicy(dataDir)
         val outgoing = File(dataDir, "outgoing")
         val outside = File(root, "outside.txt").apply { writeText("outside") }

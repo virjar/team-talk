@@ -1,6 +1,5 @@
 package com.virjar.tk.client
 
-import com.virjar.tk.repository.canonicalHttpServerBase
 import com.virjar.tk.util.AppLog
 import com.virjar.tk.util.HttpUtil
 import java.io.File
@@ -16,6 +15,7 @@ private object DefaultCrashUploadTransport : CrashUploadTransport {
 
 private data class CrashOwnerIdentity(
     val serverBaseUrl: String,
+    val deploymentFingerprint: String,
     val uid: String,
 )
 
@@ -25,7 +25,7 @@ private data class CrashOwnerIdentity(
  * A dumper created with only [dataDir] is deliberately unowned. That namespace is never scanned by
  * an authenticated uploader, so a pre-login crash cannot be attributed to whichever account logs
  * in next. Authenticated sessions use the three-argument constructor and can only see their exact
- * server+uid namespace.
+ * canonical TCP+HTTP deployment + uid namespace.
  */
 class CrashDumper private constructor(
     dataDir: File,
@@ -34,25 +34,25 @@ class CrashDumper private constructor(
 ) {
     constructor(dataDir: File) : this(dataDir, null, DefaultCrashUploadTransport)
 
-    constructor(dataDir: File, serverUrl: String, ownerUid: String) : this(
+    constructor(dataDir: File, deploymentIdentity: DeploymentIdentity, ownerUid: String) : this(
         dataDir = dataDir,
-        owner = crashOwnerIdentity(serverUrl, ownerUid),
+        owner = crashOwnerIdentity(deploymentIdentity, ownerUid),
         uploadTransport = DefaultCrashUploadTransport,
     )
 
     internal constructor(
         dataDir: File,
-        serverUrl: String,
+        deploymentIdentity: DeploymentIdentity,
         ownerUid: String,
         uploadTransport: CrashUploadTransport,
-    ) : this(dataDir, crashOwnerIdentity(serverUrl, ownerUid), uploadTransport)
+    ) : this(dataDir, crashOwnerIdentity(deploymentIdentity, ownerUid), uploadTransport)
 
     private val pendingStore = privateAtomicTextFileStore(
         dataDir = dataDir,
         privateDirectories = owner?.let { identity ->
             listOf(
                 CRASH_ROOT,
-                stableCrashNamespace(identity.serverBaseUrl),
+                stableCrashNamespace(identity.deploymentFingerprint),
                 stableCrashNamespace(identity.uid),
             )
         } ?: listOf(CRASH_ROOT, UNOWNED_NAMESPACE),
@@ -116,10 +116,14 @@ class CrashDumper private constructor(
     }
 }
 
-private fun crashOwnerIdentity(serverUrl: String, ownerUid: String): CrashOwnerIdentity {
+private fun crashOwnerIdentity(
+    deploymentIdentity: DeploymentIdentity,
+    ownerUid: String,
+): CrashOwnerIdentity {
     require(ownerUid.isNotBlank()) { "Crash owner uid must not be blank" }
     return CrashOwnerIdentity(
-        serverBaseUrl = canonicalHttpServerBase(serverUrl),
+        serverBaseUrl = deploymentIdentity.httpBaseUrl,
+        deploymentFingerprint = deploymentIdentity.fingerprint,
         uid = ownerUid,
     )
 }

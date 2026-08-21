@@ -118,7 +118,11 @@ class GroupBotManagementRepositoryTest {
 
         repository.close()
         repository.close()
-        assertEquals(1, transport.closeCount, "close 必须幂等且立即下沉到活跃 HTTP transport")
+        assertEquals(
+            2,
+            transport.closeCount,
+            "each close must reach the idempotent transport boundary and join any active drain",
+        )
         lateResponse.complete("[]")
 
         assertIs<Outcome.Failure>(request.await(), "close 后到达的合法 JSON 也不得发布")

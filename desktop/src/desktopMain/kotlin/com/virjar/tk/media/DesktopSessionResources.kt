@@ -3,7 +3,9 @@ package com.virjar.tk.media
 import com.virjar.tk.DesktopFileTransfer
 import com.virjar.tk.DesktopMediaSender
 import com.virjar.tk.DesktopVoiceRecorder
+import com.virjar.tk.client.DeploymentIdentity
 import com.virjar.tk.client.SessionHttpCredentials
+import com.virjar.tk.http.HttpConnectionReentrantCloseFailure
 import com.virjar.tk.log.TkLogger
 import com.virjar.tk.repository.FileRepository
 import kotlinx.coroutines.CoroutineName
@@ -15,6 +17,8 @@ import java.io.Closeable
 import java.io.File
 import java.net.URI
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * Desktop 已认证用户拥有的资源根。
@@ -26,22 +30,28 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 internal class DesktopSessionResources(
     val ownerUid: String,
-    serverUrl: String,
+    deploymentIdentity: DeploymentIdentity,
     credentialProvider: () -> SessionHttpCredentials,
     dataDir: File,
     diagnosticLogger: TkLogger,
     quotaBytes: Long = DEFAULT_DESKTOP_MEDIA_QUOTA_BYTES,
-    downloader: DesktopMediaDownloader = HttpDesktopMediaDownloader,
+    downloader: DesktopMediaDownloader = HttpDesktopMediaDownloader(),
 ) : Closeable {
     private val closed = AtomicBoolean(false)
+    private val lifecycleLock = ReentrantLock()
+    private val closeCompleted = lifecycleLock.newCondition()
+    private var closePhase = DesktopSessionClosePhase.OPEN
+    private var closingThread: Thread? = null
+    private val closeFailures = mutableListOf<Throwable>()
+    private var completedCloseFailure: Throwable? = null
     private val rootJob = SupervisorJob()
     internal val ioScope = CoroutineScope(
         rootJob + Dispatchers.IO + CoroutineName("desktop-session-$ownerUid"),
     )
 
-    val serverBaseUrl: String = canonicalDesktopServerBase(serverUrl)
-    val serverFingerprint: String = desktopSha256(serverBaseUrl)
-    val sessionFingerprint: String = desktopSha256("$serverBaseUrl\n$ownerUid")
+    val serverBaseUrl: String = deploymentIdentity.httpBaseUrl
+    val serverFingerprint: String = deploymentIdentity.fingerprint
+    val sessionFingerprint: String = desktopSha256("${deploymentIdentity.fingerprint}\n$ownerUid")
     internal val credentialGate = DesktopCredentialGate(ownerUid, credentialProvider)
     internal val diagnostics = DesktopSessionDiagnostics(diagnosticLogger)
     val mediaDirectory: File = File(dataDir, "media_e1/$sessionFingerprint")
@@ -73,16 +83,111 @@ internal class DesktopSessionResources(
     }
 
     override fun close() {
-        if (!closed.compareAndSet(false, true)) return
+        while (true) {
+            val role = lifecycleLock.withLock {
+                when (closePhase) {
+                    DesktopSessionClosePhase.OPEN -> {
+                        closePhase = DesktopSessionClosePhase.CLOSING
+                        closingThread = Thread.currentThread()
+                        closed.set(true)
+                        DesktopSessionCloseRole.LEADER
+                    }
+
+                    DesktopSessionClosePhase.CLOSING -> when {
+                        closingThread === Thread.currentThread() -> DesktopSessionCloseRole.REENTRANT
+                        closingThread == null -> {
+                            closingThread = Thread.currentThread()
+                            DesktopSessionCloseRole.LEADER
+                        }
+                        else -> DesktopSessionCloseRole.FOLLOWER
+                    }
+
+                    DesktopSessionClosePhase.CLOSED -> DesktopSessionCloseRole.COMPLETE
+                }
+            }
+
+            when (role) {
+                DesktopSessionCloseRole.LEADER -> return closeAsLeader()
+                DesktopSessionCloseRole.FOLLOWER -> awaitLeaderRelease()
+                DesktopSessionCloseRole.COMPLETE -> {
+                    lifecycleLock.withLock { completedCloseFailure }?.let { throw it }
+                    return
+                }
+                DesktopSessionCloseRole.REENTRANT -> throw DesktopSessionReentrantCloseException()
+            }
+        }
+    }
+
+    private fun closeAsLeader() {
+        val failures = mutableListOf<Throwable>()
+        fun release(action: () -> Unit) {
+            runCatching(action).exceptionOrNull()?.let(failures::add)
+        }
+
         // Close the diagnostic admission before cancelling jobs: retained tasks may unwind later,
         // but none can write after this Desktop owner has crossed its close boundary.
-        diagnostics.close()
-        voiceRecorder.close()
-        mediaSender.close()
-        fileRepository.close()
-        credentialGate.close()
-        rootJob.cancel()
-        mediaCache.close()
+        release(diagnostics::close)
+        release(voiceRecorder::close)
+        release(mediaSender::close)
+        release(fileRepository::close)
+        release(credentialGate::close)
+        // Credentials and diagnostics are already sealed. Mark the complete task tree cancelled
+        // before disconnecting its blocking reads so every resumed transfer observes one stable
+        // CancellationException terminal outcome rather than racing a transport exception.
+        release { rootJob.cancel() }
+        release(mediaCache::close)
+
+        val reentrantFailures = failures.filter { it is HttpConnectionReentrantCloseFailure }
+        val terminalFailures = failures.filterNot { it is HttpConnectionReentrantCloseFailure }
+        val boundaryFailure = reentrantFailures
+            .takeIf(List<*>::isNotEmpty)
+            ?.let { childFailures ->
+                DesktopSessionReentrantCloseException().also { failure ->
+                    childFailures.forEach(failure::addSuppressed)
+                    terminalFailures.forEach(failure::addSuppressed)
+                }
+            }
+        var completedFailure: Throwable? = null
+        lifecycleLock.withLock {
+            terminalFailures.forEach(::recordCloseFailureLocked)
+            closingThread = null
+            if (boundaryFailure == null) {
+                completedCloseFailure = closeFailures
+                    .takeIf(List<*>::isNotEmpty)
+                    ?.let(::DesktopSessionCloseException)
+                completedFailure = completedCloseFailure
+                closePhase = DesktopSessionClosePhase.CLOSED
+            }
+            closeCompleted.signalAll()
+        }
+        boundaryFailure?.let { throw it }
+        completedFailure?.let { throw it }
+    }
+
+    private fun awaitLeaderRelease() = lifecycleLock.withLock {
+        while (closePhase == DesktopSessionClosePhase.CLOSING && closingThread != null) {
+            closeCompleted.awaitUninterruptibly()
+        }
+    }
+
+    private fun recordCloseFailureLocked(failure: Throwable) {
+        if (closeFailures.none { existing -> existing === failure }) closeFailures += failure
+    }
+}
+
+private enum class DesktopSessionClosePhase { OPEN, CLOSING, CLOSED }
+
+private enum class DesktopSessionCloseRole { LEADER, FOLLOWER, COMPLETE, REENTRANT }
+
+private class DesktopSessionReentrantCloseException : IllegalStateException(
+    "Desktop 会话资源不能从正在执行的关闭流程中重入关闭",
+)
+
+private class DesktopSessionCloseException(failures: List<Throwable>) : IllegalStateException(
+    "Desktop 会话关闭时有 ${failures.size} 个资源未能正常释放",
+) {
+    init {
+        failures.forEach(::addSuppressed)
     }
 }
 

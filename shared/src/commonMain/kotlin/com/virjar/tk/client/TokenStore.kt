@@ -3,7 +3,8 @@ package com.virjar.tk.client
 /**
  * 登录态持久化接口（跨平台）。
  *
- * 存储认证成功后的 uid + refreshToken，使 app 重启后能自动登录。
+ * 存储认证成功后的 uid + refreshToken，并与 canonical TCP+HTTP deployment 指纹绑定，使 app
+ * 仅能在同一部署重启自动登录；旧格式或错部署凭据不得进入网络认证。
  *
  * 每个平台 UI 认证根先通过 [claimOwner] 获取持久化世代。新根会接管已有登录态；
  * 旧 Activity/窗口中延迟到达的认证回调不得保存或清除新 owner 的凭据。
@@ -12,6 +13,9 @@ package com.virjar.tk.client
  * - Desktop: Properties 文件（[com.virjar.tk.DesktopTokenStore]）
  */
 interface TokenStore {
+    /** Canonical TCP+HTTP deployment accepted by this store instance. */
+    val deploymentIdentity: DeploymentIdentity
+
     /** 原子接管当前持久化登录态，并返回新 owner 世代及可用的已存凭据。 */
     fun claimOwner(): TokenStoreOwner
 
@@ -33,6 +37,7 @@ data class StoredLogin(
     val uid: String,
     val refreshToken: String,
     val ownerGeneration: Long,
+    val deploymentFingerprint: String,
 )
 
 /** [TokenStore.claimOwner] 的原子结果。 */

@@ -29,9 +29,10 @@
 
 `ImBot` 位于 `shared`，直接复用 ClientSession。登录/注册支持显式注入 `ImBotCacheOwner`；
 `tt-agent` 固定使用 `PersistentImBotCacheOwner(dataDir)`，认证成功取得 uid 后才打开
-`dataDir/users/<uid>/`，因此进程重启会从该账号已提交的 cursor 继续。登录/注册不再提供隐式
+`dataDir/deployments/<fingerprint>/users/<uid>/`，因此进程重启会从同一 TCP+HTTP 部署、同一账号
+已提交的 cursor 继续。登录/注册不再提供隐式
 owner；短生命周期测试也必须显式注入
-`ImBotCacheOwner { FakeLocalCache() }`，避免测试便利路径被常驻机器人误用。
+`ImBotCacheOwner { _, _ -> FakeLocalCache() }`，避免测试便利路径被常驻机器人误用。
 
 主要能力：
 
@@ -123,7 +124,8 @@ symlink 时，agent 才以 POSIX `0700` 创建这一个叶目录；既存目录�
 没有 symlink，且不能对 group/others 可写，避免攻击者在校验后 rename/swap 数据目录。
 预发布旧 dataDir 若没有标记，应显式删除后重新 bootstrap，不能由新进程隐式迁移。
 
-`credentials.properties` 固定为 `0600`，同时保存本地 API token、稳定 `deviceId` 和认证状态。
+`credentials.properties` 固定为 `0600`，同时保存 canonical TCP+HTTP deployment 指纹、本地 API
+token、稳定 `deviceId` 和认证状态。
 只有 `REGISTER_PENDING` 会临时保存 exact username/password；首次 AUTH 成功时会在进入历史同步和
 ready 前原子替换为 `ACTIVE` 的 uid/username/refresh token，并删除 password。后续进程启动只走
 refresh 认证，每次服务端轮换 refresh token 也先完成同一持久化门，再允许连接进入同步。因此同一
@@ -131,6 +133,10 @@ dataDir 不会不断新增设备，也不会长期保存登录密码。凭据更
 原子替换和目录 fsync，并拒绝 symlink、hard link、错误 owner 或过宽权限。非 POSIX 文件系统会
 直接失败，不以宽松权限继续运行。旧 plaintext ACTIVE 格式不再隐式兼容，预发布环境应重新
 bootstrap 专用 dataDir。
+
+deployment 指纹缺失或与本次 `--host`/`--port`/`--server-url` 元组不一致时，旧 ACTIVE refresh 或
+REGISTER_PENDING 密码会在任何 IM 网络连接之前原子失效；同 uid 的新部署也会使用独立缓存目录。
+HTTP 与 TCP 可以部署在不同域名，但两者必须作为同一个不可拆分元组保存和校验。
 
 ### 3.1 systemd 安装
 
@@ -344,7 +350,7 @@ MCP 的三个发送工具都把 `clientMsgId` 声明为必填，调用方负责�
 
 - REST 强制绑定 loopback；通配地址、局域网/公网地址和需要 DNS 解析的主机名都会在启动前被拒绝。当前 HTTP 服务没有 TLS、来源限制或细粒度授权。
 - 所有 REST 端点都校验同一个 agent API token，但 token 永远不进入 ready/journal。读取 token 是一次显式的本机特权操作。
-- `credentials.properties` 的 ACTIVE 状态只保存 uid、username、refresh token、API token 与稳定 deviceId；plaintext password 仅允许短暂存在于 REGISTER_PENDING，AUTH 成功即原子删除。目录 `0700`、文件 `0600`、NOFOLLOW 与原子落盘是强制条件。已有账号的 plaintext password 只经受控前台环境传递，systemd unit 不引用任何持久 bootstrap 环境文件。正式产品仍可进一步接入系统密钥库。
+- `credentials.properties` 的 ACTIVE 状态只保存 deployment 指纹、uid、username、refresh token、API token 与稳定 deviceId；plaintext password 仅允许短暂存在于 REGISTER_PENDING，AUTH 成功即原子删除。目录 `0700`、文件 `0600`、NOFOLLOW 与原子落盘是强制条件。已有账号的 plaintext password 只经受控前台环境传递，systemd unit 不引用任何持久 bootstrap 环境文件。正式产品仍可进一步接入系统密钥库。
 - CLI token 不应出现在命令历史、日志或代码仓库。
 - `send-file` 和 `upload` 只能读取 agent dataDir 的 `outgoing` 子树，并共用同一 canonical/symlink/secret 校验链。
 - `/messages` 的 `afterEventId` 与返回项 `eventId` 是跨 chat 的唯一分页游标；不同 chat 的相同

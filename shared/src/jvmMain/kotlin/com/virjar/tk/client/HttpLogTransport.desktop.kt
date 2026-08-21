@@ -1,5 +1,6 @@
 package com.virjar.tk.client
 
+import com.virjar.tk.http.HttpConnectionOperationGate
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -8,9 +9,7 @@ internal actual fun createPlatformLogHttpTransport(): PlatformLogHttpTransport =
     DesktopLogHttpTransport()
 
 private class DesktopLogHttpTransport : PlatformLogHttpTransport {
-    private val lifecycleLock = Any()
-    private val activeConnections = mutableSetOf<HttpURLConnection>()
-    private var closed = false
+    private val operationGate = HttpConnectionOperationGate("Log HTTP transport")
 
     override fun postGzip(url: String, compressed: ByteArray, headers: Map<String, String>): Int {
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -22,31 +21,16 @@ private class DesktopLogHttpTransport : PlatformLogHttpTransport {
             setFixedLengthStreamingMode(compressed.size)
             headers.forEach(::setRequestProperty)
         }
-        val admitted = synchronized(lifecycleLock) {
-            if (closed) false else {
-                activeConnections += connection
-                true
-            }
+        val operation = operationGate.register(connection) {
+            IOException("Log HTTP transport is closed")
         }
-        if (!admitted) {
-            connection.disconnect()
-            throw IOException("Log HTTP transport is closed")
-        }
-        return try {
+        return operation.execute {
             connection.outputStream.use { it.write(compressed) }
             connection.responseCode
-        } finally {
-            synchronized(lifecycleLock) { activeConnections -= connection }
-            connection.disconnect()
         }
     }
 
     override fun close() {
-        val connections = synchronized(lifecycleLock) {
-            if (closed) return
-            closed = true
-            activeConnections.toList().also { activeConnections.clear() }
-        }
-        connections.forEach(HttpURLConnection::disconnect)
+        operationGate.close()
     }
 }

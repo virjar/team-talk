@@ -30,7 +30,7 @@ class HttpLogUploaderLifecycleTest {
                 reads.incrementAndGet()
                 credentials
             },
-            crashDumper = CrashDumper(dataDir, "https://old.example.test", "same-uid"),
+            crashDumper = CrashDumper(dataDir, TEST_LOG_DEPLOYMENT, "same-uid"),
             intervalMs = Long.MAX_VALUE,
             transport = transport,
         )
@@ -62,7 +62,7 @@ class HttpLogUploaderLifecycleTest {
         val trace = LogBuffer(8)
         val fault = LogBuffer(8)
         val transport = LateFailingLogTransport()
-        val crash = CrashDumper(dataDir, "https://old.example.test", "same-uid")
+        val crash = CrashDumper(dataDir, TEST_LOG_DEPLOYMENT, "same-uid")
         val uploader = HttpLogUploader(
             traceBuffer = trace,
             faultBuffer = fault,
@@ -96,6 +96,12 @@ class HttpLogUploaderLifecycleTest {
         }
     }
 }
+
+private val TEST_LOG_DEPLOYMENT = DeploymentIdentity.from(
+    tcpHost = "old.example.test",
+    tcpPort = 5100,
+    serverUrl = "https://old.example.test",
+)
 
 private class BlockingLogTransport : PlatformLogHttpTransport {
     val entered = CountDownLatch(1)

@@ -108,7 +108,8 @@ Desktop、Android 与 ImBot 共用 SDK 的流式上传契约：本地文件每�
 ### 缓存
 
 Desktop 使用认证会话拥有的统一媒体缓存。目录为
-`<data>/media_e1/<sha256(server-base + uid)>`，因此相同附件在不同账号或不同部署之间不会复用。
+`<data>/media_e1/<sha256(deployment-fingerprint + uid)>`；其中 deployment fingerprint 同时绑定
+canonical TCP authority 与 HTTP base，因此相同附件在不同账号或不同部署之间不会复用。
 缓存文件以附件端点的 SHA-256 命名，mtime 作为 LRU 访问时间并受容量配额约束；同一附件并发下载
 单飞，内容先写入唯一 `.part`，完成后原子发布，失败或退出会清理残片。图片、视频、语音、普通
 附件、TXT/Markdown 预览和群文件共用这一路径。旧的进程级媒体目录不迁移或回退读取。

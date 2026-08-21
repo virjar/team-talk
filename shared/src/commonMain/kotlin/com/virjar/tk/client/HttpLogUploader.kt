@@ -50,6 +50,7 @@ class HttpLogUploader internal constructor(
 
     private val uploadUrl = canonicalHttpServerBase(serverUrl) + "/api/client-logs"
     private val lifecycleLock = Any()
+    private val stopLock = Any()
     private val uploadLock = Any()
     private val workGate = SessionWorkGate("HttpLogUploader")
     private val workLease = workGate.lease()
@@ -79,7 +80,7 @@ class HttpLogUploader internal constructor(
         }
     }
 
-    fun stop() {
+    fun stop() = synchronized(stopLock) {
         var boundaryFailure: SessionWorkGateReentrantCloseException? = null
         val newlyClosed = try {
             workGate.close()
@@ -87,18 +88,22 @@ class HttpLogUploader internal constructor(
             boundaryFailure = failure
             true
         }
-        if (!newlyClosed) return
         val failures = mutableListOf<Throwable>()
-        synchronized(lifecycleLock) {
-            runCatching { timerJob?.cancel() }.exceptionOrNull()?.let(failures::add)
-            runCatching { faultDebounceJob?.cancel() }.exceptionOrNull()?.let(failures::add)
-            timerJob = null
-            faultDebounceJob = null
+        if (newlyClosed) {
+            synchronized(lifecycleLock) {
+                runCatching { timerJob?.cancel() }.exceptionOrNull()?.let(failures::add)
+                runCatching { faultDebounceJob?.cancel() }.exceptionOrNull()?.let(failures::add)
+                timerJob = null
+                faultDebounceJob = null
+            }
+            runCatching { lifecycleJob.cancel() }.exceptionOrNull()?.let(failures::add)
         }
-        runCatching { lifecycleJob.cancel() }.exceptionOrNull()?.let(failures::add)
         // Cancellation cannot interrupt a blocking HttpURLConnection; close is the hard stop.
         runCatching { transport.close() }.exceptionOrNull()?.let(failures::add)
-        boundaryFailure?.let { throw it }
+        boundaryFailure?.let { boundary ->
+            failures.forEach(boundary::addSuppressed)
+            throw boundary
+        }
         if (failures.isNotEmpty()) {
             throw SessionResourceCloseException("HttpLogUploader", failures)
         }

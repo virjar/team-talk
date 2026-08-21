@@ -57,14 +57,14 @@ class AuthControllerUpgradePolicyTest {
 
     @Test
     fun `credential holder only accepts its fixed owner generation and publishes in order`() {
-        val first = StoredLogin("uid", "refresh-1", 7L)
+        val first = StoredLogin("uid", "refresh-1", 7L, "a".repeat(64))
         val holder = AuthCredentialSnapshotHolder(7L, first)
 
-        val second = StoredLogin("uid", "refresh-2", 7L)
+        val second = StoredLogin("uid", "refresh-2", 7L, "a".repeat(64))
         holder.publish(second)
         assertEquals(second, holder.snapshot())
         assertFailsWith<IllegalArgumentException> {
-            holder.publish(StoredLogin("uid", "stale-owner", 8L))
+            holder.publish(StoredLogin("uid", "stale-owner", 8L, "a".repeat(64)))
         }
         assertEquals(second, holder.clear())
         assertNull(holder.snapshot())

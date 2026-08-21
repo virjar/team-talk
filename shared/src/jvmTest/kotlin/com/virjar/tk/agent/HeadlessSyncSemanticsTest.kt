@@ -8,6 +8,7 @@ import com.virjar.tk.client.EventProcessor
 import com.virjar.tk.client.ImClient
 import com.virjar.tk.client.LocalCache
 import com.virjar.tk.client.PendingBotMessage
+import com.virjar.tk.model.Chat
 import com.virjar.tk.model.Message
 import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.ProtoCodec
@@ -24,6 +25,9 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.io.path.createTempDirectory
 import kotlin.test.AfterTest
@@ -31,6 +35,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class HeadlessSyncSemanticsTest {
     private val tempDirs = mutableListOf<File>()
@@ -52,7 +58,7 @@ class HeadlessSyncSemanticsTest {
             payload = ProtoCodec.encode(message),
         )
 
-        val firstCache = owner.open("uid-1")
+        val firstCache = owner.open(TEST_AGENT_DEPLOYMENT_IDENTITY, "uid-1")
         val firstClient = ImClient()
         val firstInbox = ImBotMessageInbox().also { it.bind(firstCache) }
         try {
@@ -69,7 +75,8 @@ class HeadlessSyncSemanticsTest {
             firstClient.destroy()
         }
 
-        val restartedCache = PersistentImBotCacheOwner(dataDir).open("uid-1")
+        val restartedCache = PersistentImBotCacheOwner(dataDir)
+            .open(TEST_AGENT_DEPLOYMENT_IDENTITY, "uid-1")
         val restartedClient = ImClient()
         val restartedInbox = ImBotMessageInbox().also { it.bind(restartedCache) }
         try {
@@ -91,7 +98,8 @@ class HeadlessSyncSemanticsTest {
             restartedClient.destroy()
         }
 
-        val historyCache = PersistentImBotCacheOwner(dataDir).open("uid-1")
+        val historyCache = PersistentImBotCacheOwner(dataDir)
+            .open(TEST_AGENT_DEPLOYMENT_IDENTITY, "uid-1")
         try {
             assertEquals(null, historyCache.peekBotMessage(), "acked delivery must not replay after restart")
             assertEquals(
@@ -267,6 +275,99 @@ class HeadlessSyncSemanticsTest {
             assertEquals(20L, withTimeout(2_000) { blocked.await() }.nextEventId)
         } finally {
             runCatching { runtime.close() }
+        }
+    }
+
+    @Test
+    fun `chat tombstone linearizes stale peek before agent notify without purging another chat`() = runBlocking {
+        val root = createAgentSecurityTestRoot("agent-tombstone-gate-").also(tempDirs::add)
+        val deletedChatId = "deleted-chat"
+        val retainedChatId = "retained-chat"
+        val staleCandidatePeeked = CountDownLatch(1)
+        val waiterRegisteredAfterTombstone = CountDownLatch(1)
+        val releaseStaleCandidate = CountDownLatch(1)
+        val firstDeletedPeek = AtomicBoolean(true)
+        val deletedDeliveryQueries = AtomicInteger()
+        val backing = FakeLocalCache()
+        val cache = object : LocalCache by backing {
+            override fun peekBotMessage(): PendingBotMessage? {
+                val candidate = backing.peekBotMessage()
+                if (
+                    candidate?.message?.chatId == deletedChatId &&
+                    firstDeletedPeek.compareAndSet(true, false)
+                ) {
+                    staleCandidatePeeked.countDown()
+                    check(releaseStaleCandidate.await(5, TimeUnit.SECONDS)) {
+                        "timed out releasing stale durable inbox candidate"
+                    }
+                }
+                return candidate
+            }
+
+            override fun listBotMessageDeliveries(
+                afterEventId: Long,
+                chatId: String?,
+                limit: Int,
+            ): List<PendingBotMessage> {
+                val deliveries = backing.listBotMessageDeliveries(afterEventId, chatId, limit)
+                if (chatId == deletedChatId && deletedDeliveryQueries.incrementAndGet() == 2) {
+                    // waitMessage performs this second read only after its waiter is registered.
+                    waiterRegisteredAfterTombstone.countDown()
+                }
+                return deliveries
+            }
+        }
+        val inbox = ImBotMessageInbox().also { it.bind(cache) }
+        inbox.publish(1L, message("deleted-before-tombstone", 1L, deletedChatId))
+        inbox.publish(2L, message("retained", 1L, retainedChatId))
+        val runtime = AgentRuntime(
+            "127.0.0.1",
+            5100,
+            File(root, "agent-data"),
+            "http://127.0.0.1",
+            inbox,
+        )
+        val client = ImClient()
+        val processor = EventProcessor(
+            client,
+            cache,
+            durableChatTombstoneSink = inbox::applyChatTombstone,
+        )
+        try {
+            assertTrue(staleCandidatePeeked.await(5, TimeUnit.SECONDS))
+            processor.processNotify(
+                NotifyPayload(
+                    eventId = 3L,
+                    notifyType = NotifyType.CHAT_DELETED.code,
+                    payload = ProtoCodec.encode(Chat(chatId = deletedChatId, chatType = 2)),
+                ),
+            )
+
+            val deletedWaiter = async(Dispatchers.Default) {
+                runtime.waitMessage(afterEventId = 0L, chatId = deletedChatId, timeoutSec = 60)
+            }
+            assertTrue(waiterRegisteredAfterTombstone.await(5, TimeUnit.SECONDS))
+            releaseStaleCandidate.countDown()
+
+            withTimeout(2_000) {
+                while (backing.peekBotMessage() != null) delay(1)
+            }
+            assertFalse(deletedWaiter.isCompleted, "post-tombstone waiter received a stale peek notification")
+            assertTrue(runtime.bufferedMessages(deletedChatId, 10, 0L).isEmpty())
+            assertEquals(
+                listOf(2L),
+                runtime.bufferedMessages(retainedChatId, 10, 0L).map { it.eventId },
+                "the tombstone gate must not purge or suppress another chat",
+            )
+            assertEquals(2L, runtime.waitMessage(0L, retainedChatId, 1).delivery?.eventId)
+
+            runtime.close()
+            assertNull(withTimeout(2_000) { deletedWaiter.await() }.delivery)
+        } finally {
+            releaseStaleCandidate.countDown()
+            runCatching { runtime.close() }
+            client.destroy()
+            backing.close()
         }
     }
 

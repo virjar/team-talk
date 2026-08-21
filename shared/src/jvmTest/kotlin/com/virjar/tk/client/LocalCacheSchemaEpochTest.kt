@@ -19,6 +19,11 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LocalCacheSchemaEpochTest {
+    private val deploymentIdentity = DeploymentIdentity.from(
+        tcpHost = "im.test.example",
+        tcpPort = 5100,
+        serverUrl = "https://files.test.example/api",
+    )
 
     @Test
     fun `cache owner cannot escape its account directory`() {
@@ -26,7 +31,7 @@ class LocalCacheSchemaEpochTest {
         try {
             listOf("../other", "user/name", "", ".", "account name").forEach { unsafeUid ->
                 assertFailsWith<IllegalArgumentException> {
-                    createDesktopLocalCache(unsafeUid, dataDir)
+                    createDesktopLocalCache(deploymentIdentity, unsafeUid, dataDir)
                 }
             }
             assertTrue(dataDir.listFiles().isNullOrEmpty())
@@ -40,6 +45,49 @@ class LocalCacheSchemaEpochTest {
         assertEquals(1L, AppDatabase.Schema.version)
         assertEquals("cache_e3.db", localCacheDatabaseFileName())
         assertEquals("cache_e3_user-1.db", localCacheDatabaseFileName("user-1"))
+        assertEquals(
+            "cache_e3_${deploymentIdentity.fingerprint}_user-1.db",
+            localCacheDatabaseFileName(deploymentIdentity.fingerprint, "user-1"),
+        )
+    }
+
+    @Test
+    fun `same uid on different deployments opens isolated databases`() {
+        val dataDir = Files.createTempDirectory("tk-cache-deployments-").toFile()
+        val otherDeployment = DeploymentIdentity.from(
+            tcpHost = deploymentIdentity.tcpHost,
+            tcpPort = deploymentIdentity.tcpPort,
+            serverUrl = "https://other-files.test.example/api",
+        )
+        try {
+            createDesktopLocalCache(deploymentIdentity, "u1", dataDir).let { cache ->
+                try {
+                    cache.upsertUser(User(uid = "only-a", username = "only-a", name = "Only A"))
+                } finally {
+                    cache.close()
+                }
+            }
+
+            createDesktopLocalCache(otherDeployment, "u1", dataDir).let { cache ->
+                try {
+                    assertNull(cache.getUser("only-a"))
+                    cache.upsertUser(User(uid = "only-b", username = "only-b", name = "Only B"))
+                } finally {
+                    cache.close()
+                }
+            }
+
+            createDesktopLocalCache(deploymentIdentity, "u1", dataDir).let { cache ->
+                try {
+                    assertNotNull(cache.getUser("only-a"))
+                    assertNull(cache.getUser("only-b"))
+                } finally {
+                    cache.close()
+                }
+            }
+        } finally {
+            dataDir.deleteRecursively()
+        }
     }
 
     @Test
@@ -47,7 +95,12 @@ class LocalCacheSchemaEpochTest {
         val dataDir = Files.createTempDirectory("tk-cache-epoch-").toFile()
         try {
             val privateData = JvmPrivateDataDirectory.openExisting(dataDir)
-            val userDir = privateData.ensureDirectory("users", "u1")
+            val userDir = privateData.ensureDirectory(
+                "deployments",
+                deploymentIdentity.fingerprint,
+                "users",
+                "u1",
+            )
             val legacyFile = privateData.preparePrivateFile(listOf("users", "u1"), "cache_e2.db")
             val legacyDriver = JdbcSqliteDriver("jdbc:sqlite:${legacyFile.absolutePath}")
             AppDatabase.Schema.create(legacyDriver)
@@ -63,7 +116,7 @@ class LocalCacheSchemaEpochTest {
             )
             legacyDriver.close()
 
-            val cache = createDesktopLocalCache("u1", dataDir)
+            val cache = createDesktopLocalCache(deploymentIdentity, "u1", dataDir)
             assertNull(cache.getUser("legacy-user"), "新 epoch 不得读取旧库数据")
             cache.upsertUser(User(uid = "fresh-user", username = "fresh", name = "Fresh"))
             cache.close()
@@ -95,7 +148,7 @@ class LocalCacheSchemaEpochTest {
                 )
             }
 
-            val reopened = createDesktopLocalCache("u1", dataDir)
+            val reopened = createDesktopLocalCache(deploymentIdentity, "u1", dataDir)
             assertNotNull(reopened.getUser("fresh-user"), "同一 epoch 重启应复用当前库")
             assertNull(reopened.getUser("legacy-user"))
             reopened.close()
@@ -116,7 +169,12 @@ class LocalCacheSchemaEpochTest {
                 sidecars.forEach { sidecar ->
                     assertEquals(userDir.toPath(), sidecar.parent, "SQLite sidecar must stay in the 0700 namespace")
                 }
-                privateData.ensureDirectory("users", "u1")
+                privateData.ensureDirectory(
+                    "deployments",
+                    deploymentIdentity.fingerprint,
+                    "users",
+                    "u1",
+                )
             }
 
             val userCount = JdbcSqliteDriver("jdbc:sqlite:${epochFile.absolutePath}").use { driver ->
@@ -141,7 +199,12 @@ class LocalCacheSchemaEpochTest {
         try {
             val privateData = JvmPrivateDataDirectory.openExisting(dataDir)
             val databaseFile = privateData.preparePrivateFile(
-                listOf("users", "partial-user"),
+                listOf(
+                    "deployments",
+                    deploymentIdentity.fingerprint,
+                    "users",
+                    "partial-user",
+                ),
                 localCacheDatabaseFileName(),
             )
             JdbcSqliteDriver("jdbc:sqlite:${databaseFile.absolutePath}").use { driver ->
@@ -155,7 +218,7 @@ class LocalCacheSchemaEpochTest {
             }
             assertTrue(databaseFile.length() > 0L)
 
-            val cache = createDesktopLocalCache("partial-user", dataDir)
+            val cache = createDesktopLocalCache(deploymentIdentity, "partial-user", dataDir)
             cache.upsertUser(User(uid = "recovered", username = "recovered", name = "Recovered"))
             assertNotNull(cache.getUser("recovered"))
             assertTrue(cache.getConversations().isEmpty())

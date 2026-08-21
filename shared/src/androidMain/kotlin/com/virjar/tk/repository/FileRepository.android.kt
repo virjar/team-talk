@@ -1,6 +1,7 @@
 package com.virjar.tk.repository
 
 import com.virjar.tk.AppError
+import com.virjar.tk.http.HttpConnectionOperationGate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -79,9 +80,7 @@ internal actual fun canonicalHttpServerBase(serverUrl: String): String {
 }
 
 private class AndroidUrlConnectionFileTransport : PlatformFileTransport {
-    private val lifecycleLock = Any()
-    private val activeConnections = mutableSetOf<HttpURLConnection>()
-    private var closed = false
+    private val operationGate = HttpConnectionOperationGate("File HTTP transport")
 
     override suspend fun upload(
         url: String,
@@ -146,12 +145,7 @@ private class AndroidUrlConnectionFileTransport : PlatformFileTransport {
     }
 
     override fun close() {
-        val connections = synchronized(lifecycleLock) {
-            if (closed) return
-            closed = true
-            activeConnections.toList().also { activeConnections.clear() }
-        }
-        connections.forEach(HttpURLConnection::disconnect)
+        operationGate.close()
     }
 
     private fun open(url: String): HttpURLConnection = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -163,29 +157,24 @@ private class AndroidUrlConnectionFileTransport : PlatformFileTransport {
         connection: HttpURLConnection,
         block: suspend () -> T,
     ): T {
-        val accepted = synchronized(lifecycleLock) {
-            if (closed) false else {
-                activeConnections += connection
-                true
+        val operation = operationGate.register(connection) {
+            IllegalStateException("文件传输已经关闭")
+        }
+        return operation.executeSuspending {
+            val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
+                if (cause is CancellationException) operation.abort()
             }
-        }
-        if (!accepted) {
-            connection.disconnect()
-            error("文件传输已经关闭")
-        }
-        val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
-            if (cause is CancellationException) connection.disconnect()
-        }
-        return try {
-            currentCoroutineContext().ensureActive()
-            block()
-        } catch (failure: Throwable) {
-            currentCoroutineContext().ensureActive()
-            throw failure
-        } finally {
-            cancellationHandle?.dispose()
-            synchronized(lifecycleLock) { activeConnections -= connection }
-            connection.disconnect()
+            try {
+                try {
+                    currentCoroutineContext().ensureActive()
+                    block()
+                } catch (failure: Throwable) {
+                    currentCoroutineContext().ensureActive()
+                    throw failure
+                }
+            } finally {
+                cancellationHandle?.dispose()
+            }
         }
     }
 

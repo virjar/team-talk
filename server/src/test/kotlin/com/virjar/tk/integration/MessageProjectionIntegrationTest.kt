@@ -1,6 +1,8 @@
 package com.virjar.tk.integration
 
+import com.virjar.tk.recoverStartupProjections
 import com.virjar.tk.body.buildRichTextBody
+import com.virjar.tk.domain.chat.UnmanagedChatPolicy
 import com.virjar.tk.domain.message.MessageOperationType
 import com.virjar.tk.domain.message.MessageProjectionApplyResult
 import com.virjar.tk.domain.message.MessageProjectionHooks
@@ -13,9 +15,11 @@ import com.virjar.tk.domain.message.MessageSearchPage
 import com.virjar.tk.domain.transaction.PgTransactionContext
 import com.virjar.tk.domain.transaction.PgUnitOfWork
 import com.virjar.tk.domain.transaction.PgWriteScope
+import com.virjar.tk.infra.db.AutomationBotGrants
 import com.virjar.tk.infra.db.Conversations
 import com.virjar.tk.infra.db.ExposedPgUnitOfWork
 import com.virjar.tk.infra.db.ExternalProjectionReceipts
+import com.virjar.tk.infra.db.GroupMembers
 import com.virjar.tk.infra.db.PgUnitOfWorkHooks
 import com.virjar.tk.infra.db.PgUnitOfWorkStage
 import com.virjar.tk.model.Message
@@ -25,15 +29,19 @@ import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.ProtoCodec
 import kotlinx.coroutines.test.runTest
 import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.and
+import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.update
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -199,6 +207,158 @@ class MessageProjectionIntegrationTest {
     }
 
     @Test
+    fun `pending managed revision fences message projection before receipt and events`() = runTest {
+        val owner = ctx.registerUser(uniqueUsername("projection-managed-owner"))
+        val member = ctx.registerUser(uniqueUsername("projection-managed-member"))
+        val rootId = organizationRootId()
+        val unit = ctx.organizationService.createUnit(
+            rootId,
+            "Managed projection fence ${uniqueUsername("unit")}",
+            owner,
+            enableGroup = true,
+        )
+        ctx.organizationService.assignMember(unit.unitId, member, null, primary = false)
+        val message = textMessage(unit.unitId, owner, uniqueUsername("managed-pending"), "pending removal")
+
+        assertFailsWith<InjectedProjectionRollback> {
+            ctx.freshMessageService(unitOfWork = projectionRollbackUnitOfWork()).sendMessage(owner, message)
+        }
+        val operation = pendingOperation(message.clientMsgId)
+        val memberMessageEvents = messageEventIds(member)
+        val removal = ctx.pgUnitOfWork.write {
+            ctx.organizationRepo.removeMember(transaction, unit.unitId, member)
+        }.projections.single { it.unitId == unit.unitId }
+        assertFalse(ctx.organizationRepo.isProjectionReady(unit.unitId))
+
+        val pendingFailure = assertFailsWith<IllegalArgumentException> {
+            ctx.messageService.recoverPendingProjections()
+        }
+        assertEquals("受管群投影尚未收敛", pendingFailure.message)
+        assertEquals(0L, receiptCount(operation.projectionKey, operation.revision))
+        assertTrue(ctx.messageStore.isProjectionPending(operation))
+        assertEquals(memberMessageEvents, messageEventIds(member))
+
+        assertTrue(ctx.organizationProjector.project(removal))
+        assertEquals(1, ctx.messageService.recoverPendingProjections())
+        assertEquals(1L, receiptCount(operation.projectionKey, operation.revision))
+        assertFalse(ctx.messageStore.isProjectionPending(operation))
+        assertEquals(memberMessageEvents, messageEventIds(member))
+    }
+
+    @Test
+    fun `startup recovery converges managed authority before replaying message projections`() = runTest {
+        val owner = ctx.registerUser(uniqueUsername("startup-managed-owner"))
+        val member = ctx.registerUser(uniqueUsername("startup-managed-member"))
+        val rootId = organizationRootId()
+        val unit = ctx.organizationService.createUnit(
+            rootId,
+            "Startup projection order ${uniqueUsername("unit")}",
+            owner,
+            enableGroup = true,
+        )
+        ctx.organizationService.assignMember(unit.unitId, member, null, primary = false)
+        val message = textMessage(unit.unitId, owner, uniqueUsername("startup-pending"), "startup removal")
+
+        assertFailsWith<InjectedProjectionRollback> {
+            ctx.freshMessageService(unitOfWork = projectionRollbackUnitOfWork()).sendMessage(owner, message)
+        }
+        val operation = pendingOperation(message.clientMsgId)
+        val memberMessageEvents = messageEventIds(member)
+        ctx.pgUnitOfWork.write {
+            ctx.organizationRepo.removeMember(transaction, unit.unitId, member)
+        }
+        assertFalse(ctx.organizationRepo.isProjectionReady(unit.unitId))
+        assertEquals(1L, ctx.organizationProjectionStore.countPending())
+
+        assertEquals(1, recoverStartupProjections(ctx.organizationService, ctx.botService, ctx.messageService))
+
+        assertTrue(ctx.organizationRepo.isProjectionReady(unit.unitId))
+        assertEquals(0L, ctx.organizationProjectionStore.countPending())
+        assertFalse(ctx.messageStore.isProjectionPending(operation))
+        assertEquals(1L, receiptCount(operation.projectionKey, operation.revision))
+        assertEquals(memberMessageEvents, messageEventIds(member))
+    }
+
+    @Test
+    fun `startup bot recovery removes no-grant orphan before pending message replay`() = runTest {
+        val owner = ctx.registerUser(uniqueUsername("startup-bot-orphan-owner"))
+        val group = ctx.chatService.createGroup("Startup bot orphan ordering", null, owner, emptyList())
+        val credentials = ctx.botService.createForGroup(owner, group.chatId, "Startup orphan bot")
+        val bot = ctx.botService.list().single { it.botId == credentials.bot.botId }
+        val message = textMessage(
+            group.chatId,
+            owner,
+            uniqueUsername("startup-bot-orphan-pending"),
+            "must not reach revoked bot",
+        )
+
+        assertFailsWith<InjectedProjectionRollback> {
+            ctx.freshMessageService(unitOfWork = projectionRollbackUnitOfWork()).sendMessage(owner, message)
+        }
+        val operation = pendingOperation(message.clientMsgId)
+        val botMessageEvents = messageEventIds(bot.userUid)
+        transaction {
+            AutomationBotGrants.deleteWhere {
+                (AutomationBotGrants.botId eq bot.botId) and
+                    (AutomationBotGrants.chatId eq group.chatId)
+            }
+        }
+        assertFalse(hasGrant(bot.botId, group.chatId))
+        assertTrue(isActiveMember(group.chatId, bot.userUid))
+        assertTrue(hasConversation(group.chatId, bot.userUid))
+
+        assertEquals(1, recoverStartupProjections(ctx.organizationService, ctx.botService, ctx.messageService))
+
+        assertFalse(isActiveMember(group.chatId, bot.userUid))
+        assertFalse(hasConversation(group.chatId, bot.userUid))
+        assertEquals(botMessageEvents, messageEventIds(bot.userUid))
+        assertFalse(ctx.messageStore.isProjectionPending(operation))
+        assertEquals(1L, receiptCount(operation.projectionKey, operation.revision))
+    }
+
+    @Test
+    fun `startup bot recovery restores active grant membership before pending message replay`() = runTest {
+        val owner = ctx.registerUser(uniqueUsername("startup-bot-restore-owner"))
+        val group = ctx.chatService.createGroup("Startup bot restore ordering", null, owner, emptyList())
+        val credentials = ctx.botService.createForGroup(owner, group.chatId, "Startup restored bot")
+        val bot = ctx.botService.list().single { it.botId == credentials.bot.botId }
+        val message = textMessage(
+            group.chatId,
+            owner,
+            uniqueUsername("startup-bot-restore-pending"),
+            "must reach restored bot",
+        )
+
+        assertFailsWith<InjectedProjectionRollback> {
+            ctx.freshMessageService(unitOfWork = projectionRollbackUnitOfWork()).sendMessage(owner, message)
+        }
+        val operation = pendingOperation(message.clientMsgId)
+        val botMessageEvents = messageEventIds(bot.userUid)
+        transaction {
+            GroupMembers.update({
+                (GroupMembers.chatId eq group.chatId) and (GroupMembers.uid eq bot.userUid)
+            }) {
+                it[status] = 0
+            }
+            Conversations.deleteWhere {
+                (Conversations.chatId eq group.chatId) and (Conversations.uid eq bot.userUid)
+            }
+        }
+        assertTrue(hasGrant(bot.botId, group.chatId))
+        assertFalse(isActiveMember(group.chatId, bot.userUid))
+        assertFalse(hasConversation(group.chatId, bot.userUid))
+
+        assertEquals(1, recoverStartupProjections(ctx.organizationService, ctx.botService, ctx.messageService))
+
+        assertTrue(isActiveMember(group.chatId, bot.userUid))
+        assertTrue(hasConversation(group.chatId, bot.userUid))
+        assertEquals(botMessageEvents.size + 1, messageEventIds(bot.userUid).size)
+        assertEquals(operation.message.serverSeq, conversationProjection(bot.userUid, group.chatId).lastMsgSeq)
+        assertFalse(ctx.messageStore.isProjectionPending(operation))
+        assertEquals(1L, receiptCount(operation.projectionKey, operation.revision))
+    }
+
+    @Test
     fun `edit and revoke commit crashes replay without duplicate events or revisions`() = runTest {
         val sender = ctx.registerUser(uniqueUsername("projection-revision-sender"))
         val peer = ctx.registerUser(uniqueUsername("projection-revision-peer"))
@@ -265,6 +425,7 @@ class MessageProjectionIntegrationTest {
                 MessageProjectionApplyResult(applied = false, recipients = emptyList())
             },
             search = NoOpMessageSearch,
+            managedChats = UnmanagedChatPolicy,
         )
 
         assertEquals(preExistingPending + PENDING_OPERATION_COUNT, service.recoverPendingProjections(limit = 1_000))
@@ -290,6 +451,10 @@ class MessageProjectionIntegrationTest {
     private fun pendingOperation(clientMsgId: String): MessageProjectionOperation =
         ctx.messageStore.getPendingProjectionOperations(limit = 100_000)
             .single { it.message.clientMsgId == clientMsgId }
+
+    private suspend fun organizationRootId(): String =
+        ctx.organizationService.listUnits().singleOrNull { it.parentId == null }?.unitId
+            ?: ctx.organizationService.createUnit(null, "Message projection test root", null).unitId
 
     /**
      * A new-message command now has two PostgreSQL units of work: admission/sequence allocation,
@@ -336,6 +501,26 @@ class MessageProjectionIntegrationTest {
                 (ExternalProjectionReceipts.serverSeq eq serverSeq)
         }.orderBy(ExternalProjectionReceipts.revision to SortOrder.ASC)
             .map { it[ExternalProjectionReceipts.revision] }
+    }
+
+    private fun hasGrant(botId: String, chatId: String): Boolean = transaction {
+        AutomationBotGrants.selectAll().where {
+            (AutomationBotGrants.botId eq botId) and (AutomationBotGrants.chatId eq chatId)
+        }.count() == 1L
+    }
+
+    private fun isActiveMember(chatId: String, uid: String): Boolean = transaction {
+        GroupMembers.selectAll().where {
+            (GroupMembers.chatId eq chatId) and
+                (GroupMembers.uid eq uid) and
+                (GroupMembers.status eq 1)
+        }.count() == 1L
+    }
+
+    private fun hasConversation(chatId: String, uid: String): Boolean = transaction {
+        Conversations.selectAll().where {
+            (Conversations.chatId eq chatId) and (Conversations.uid eq uid)
+        }.count() == 1L
     }
 
     private fun conversationProjection(uid: String, chatId: String): ConversationProjection = transaction {

@@ -58,11 +58,11 @@ TopAppBar 入口进入全屏结果页，分类和数据源与 Desktop 一致。
 输入器支持多行、富文本、`@` 和附件。触屏空间不足时可以调整工具栏或使用 bottom sheet，但发送
 出的 Markdown/Attachment 契约必须一致。
 
-受保护媒体在进入会话 UI 时捕获不可变的 `server + owner uid`，并绑定该 `UserSession` 的原子凭据
+受保护媒体在进入会话 UI 时捕获不可变的 `canonical TCP+HTTP deployment + owner uid`，并绑定该 `UserSession` 的原子凭据
 读取器。上传、下载、缩略图、语音/视频播放、文本预览和群文件必须显式传递同一个会话值，不能
 读取全局“当前 token”。同一 uid 重连轮换 token 后，下一个 HTTP 请求立即读取新 token，缓存命名
 空间保持稳定；`UserSession` 后来承载另一 uid 时，旧媒体任务按 owner gate 失败关闭，绝不能借用
-新账号 token。服务器或账号变化会切换缓存目录；页面退出取消自己的任务和租约，进程级媒体资源由
+新账号 token。TCP authority、HTTP base 或账号任一变化都会切换缓存目录；页面退出取消自己的任务和租约，进程级媒体资源由
 `Application` 统一关闭。
 进入语音模式时即预先申请麦克风权限，授权后第一次真正长按直接录音。权限结果本身不得
 续接被系统弹窗取消的指针手势，指针取消、离页或应用进入后台都必须释放并丢弃录音资源。

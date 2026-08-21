@@ -30,7 +30,7 @@ class ImBotIntegrationTest {
     private val port = System.getProperty("tk.botTest.port")?.toInt() ?: 5100
 
     private val bots = mutableListOf<ImBot>()
-    private val cacheOwner = ImBotCacheOwner { FakeLocalCache() }
+    private val cacheOwner = ImBotCacheOwner { _, _ -> FakeLocalCache() }
 
     @AfterTest
     fun tearDown() {

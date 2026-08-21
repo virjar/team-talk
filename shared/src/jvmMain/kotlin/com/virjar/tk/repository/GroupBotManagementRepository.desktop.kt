@@ -1,6 +1,7 @@
 package com.virjar.tk.repository
 
 import com.virjar.tk.AppError
+import com.virjar.tk.http.HttpConnectionOperationGate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -12,9 +13,7 @@ internal actual fun createPlatformGroupBotHttpTransport(): PlatformGroupBotHttpT
     DesktopGroupBotHttpTransport()
 
 private class DesktopGroupBotHttpTransport : PlatformGroupBotHttpTransport {
-    private val lifecycleLock = Any()
-    private val activeConnections = mutableSetOf<HttpURLConnection>()
-    private var closed = false
+    private val operationGate = HttpConnectionOperationGate("Group bot HTTP transport")
 
     override suspend fun request(
         method: String,
@@ -34,17 +33,10 @@ private class DesktopGroupBotHttpTransport : PlatformGroupBotHttpTransport {
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 }
             }
-            val accepted = synchronized(lifecycleLock) {
-                if (closed) false else {
-                    activeConnections += connection
-                    true
-                }
+            val operation = operationGate.register(connection) {
+                IOException("Group bot HTTP transport is closed")
             }
-            if (!accepted) {
-                connection.disconnect()
-                throw IOException("Group bot HTTP transport is closed")
-            }
-            try {
+            operation.executeSuspending {
                 jsonBody?.encodeToByteArray()?.let { bytes -> connection.outputStream.use { it.write(bytes) } }
                 val status = connection.responseCode
                 val body = (if (status in 200..299) connection.inputStream else connection.errorStream)
@@ -58,9 +50,6 @@ private class DesktopGroupBotHttpTransport : PlatformGroupBotHttpTransport {
                     )
                     else -> body
                 }
-            } finally {
-                synchronized(lifecycleLock) { activeConnections -= connection }
-                connection.disconnect()
             }
         } catch (error: IOException) {
             throw AppError.Network
@@ -68,12 +57,7 @@ private class DesktopGroupBotHttpTransport : PlatformGroupBotHttpTransport {
     }
 
     override fun close() {
-        val connections = synchronized(lifecycleLock) {
-            if (closed) return
-            closed = true
-            activeConnections.toList().also { activeConnections.clear() }
-        }
-        connections.forEach(HttpURLConnection::disconnect)
+        operationGate.close()
     }
 }
 

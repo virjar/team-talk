@@ -34,6 +34,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.virjar.tk.body.*
+import com.virjar.tk.client.DeploymentIdentity
 import com.virjar.tk.client.SessionHttpCredentials
 import com.virjar.tk.model.ChatType
 import com.virjar.tk.model.Attachment
@@ -69,7 +70,7 @@ fun AndroidChatScreen(
     onForward: (Message) -> Unit,
     onGroupDetail: () -> Unit,
     onBack: () -> Unit,
-    serverUrl: String = "",
+    deploymentIdentity: DeploymentIdentity,
     resolveSender: ((uid: String) -> User?)? = null,
     mentionCandidates: List<User> = emptyList(),
     onMentionClick: ((uid: String) -> Unit)? = null,
@@ -81,10 +82,9 @@ fun AndroidChatScreen(
     val routeLifecycleOwner = LocalLifecycleOwner.current
     val focusManager = LocalFocusManager.current
     val softwareKeyboardController = LocalSoftwareKeyboardController.current
-    val attachmentServerUrl = serverUrl.ifBlank { com.virjar.tk.client.defaultServerConfig().serverUrl }
-    val mediaSession = remember(attachmentServerUrl, myUid, credentialsProvider) {
+    val mediaSession = remember(deploymentIdentity, myUid, credentialsProvider) {
         AndroidMediaSession.create(
-            serverUrl = attachmentServerUrl,
+            deploymentIdentity = deploymentIdentity,
             ownerUid = myUid,
             credentialsProvider = credentialsProvider,
         )
@@ -440,7 +440,7 @@ fun AndroidChatScreen(
                 composerContextStore = composerContextStore,
                 voicePlayback = rememberAndroidVoicePlayback(
                     context = context,
-                    serverUrl = attachmentServerUrl,
+                    serverUrl = mediaSession.serverUrl,
                     mediaSession = mediaSession,
                 ),
                 mentionCandidates = mentionCandidates,
@@ -457,7 +457,7 @@ fun AndroidChatScreen(
                     onUrlClick = { url -> openSafeExternalLink(context, url) },
                     imageContent = { url, mod ->
                         rememberAsyncThumb(
-                            url = com.virjar.tk.repository.FileOps.resolveUrl(attachmentServerUrl, url),
+                            url = com.virjar.tk.repository.FileOps.resolveUrl(mediaSession.serverUrl, url),
                             mediaSession = mediaSession,
                             modifier = mod,
                             placeholderColor = android.graphics.Color.LTGRAY,
@@ -465,7 +465,7 @@ fun AndroidChatScreen(
                     },
                     videoContent = { url, mod ->
                         rememberAsyncThumb(
-                            url = com.virjar.tk.repository.FileOps.resolveUrl(attachmentServerUrl, url),
+                            url = com.virjar.tk.repository.FileOps.resolveUrl(mediaSession.serverUrl, url),
                             mediaSession = mediaSession,
                             modifier = mod,
                             placeholderColor = android.graphics.Color.DKGRAY,
@@ -476,7 +476,7 @@ fun AndroidChatScreen(
                         actions = object : PlatformMediaActions {
                             override fun playVoice(attachment: com.virjar.tk.model.Attachment) = VoicePlayer.play(
                                 context,
-                                com.virjar.tk.repository.FileOps.resolveUrl(attachmentServerUrl, attachment),
+                                com.virjar.tk.repository.FileOps.resolveUrl(mediaSession.serverUrl, attachment),
                                 mediaSession,
                             )
                             override fun openFile(attachment: com.virjar.tk.model.Attachment) {
@@ -516,7 +516,7 @@ fun AndroidChatScreen(
             onDismiss = { showGallery = false },
             imageRenderer = { url, mod ->
                 rememberAsyncThumb(
-                    url = com.virjar.tk.repository.FileOps.resolveUrl(attachmentServerUrl, url),
+                    url = com.virjar.tk.repository.FileOps.resolveUrl(mediaSession.serverUrl, url),
                     mediaSession = mediaSession,
                     modifier = mod,
                     placeholderColor = android.graphics.Color.BLACK,
@@ -524,7 +524,7 @@ fun AndroidChatScreen(
             },
             videoRenderer = { url, isCurrentPage, mod ->
                 rememberVideoPlayer(
-                    url = com.virjar.tk.repository.FileOps.resolveUrl(attachmentServerUrl, url),
+                    url = com.virjar.tk.repository.FileOps.resolveUrl(mediaSession.serverUrl, url),
                     mediaSession = mediaSession,
                     isCurrentPage = isCurrentPage,
                     modifier = mod,

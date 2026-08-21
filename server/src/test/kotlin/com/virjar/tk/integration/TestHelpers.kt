@@ -8,6 +8,7 @@ import com.virjar.tk.application.admin.AdminService
 import com.virjar.tk.domain.bot.BotService
 import com.virjar.tk.domain.chat.ChatRepository
 import com.virjar.tk.domain.chat.ChatAccess
+import com.virjar.tk.domain.chat.ManagedChatPolicy
 import com.virjar.tk.domain.chat.ChatService
 import com.virjar.tk.domain.chat.ChatStore
 import com.virjar.tk.domain.contact.ContactRepository
@@ -180,6 +181,7 @@ class TestEnvironment : AutoCloseable {
         unitOfWork: PgUnitOfWork = pgUnitOfWork,
         projectionRepository: MessageProjectionRepository = messageProjectionRepository,
         search: MessageSearch = searchIndex,
+        managedChats: ManagedChatPolicy = koin.get(),
     ): MessageService {
         val coldChatStore = ChatStore(koin.get(), koin.get(), koin.get())
         return MessageService(
@@ -194,7 +196,7 @@ class TestEnvironment : AutoCloseable {
             users = koin.get(),
             contacts = koin.get(),
             lifecycleGate = koin.get(),
-            managedChats = koin.get(),
+            managedChats = managedChats,
             projectionHooks = projectionHooks,
         )
     }

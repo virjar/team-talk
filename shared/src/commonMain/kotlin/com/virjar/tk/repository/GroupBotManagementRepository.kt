@@ -82,7 +82,7 @@ class HttpGroupBotManagementRepository internal constructor(
     }
 
     override fun close() {
-        if (!credentialGate.close()) return
+        credentialGate.close()
         transport.close()
     }
 }

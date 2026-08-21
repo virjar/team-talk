@@ -18,15 +18,15 @@ class CrashDumperIdentityTest {
             200
         }
         try {
-            CrashDumper(dataDir, "https://a.example.test/", "uid-a", transport)
+            CrashDumper(dataDir, deployment("https://a.example.test/"), "uid-a", transport)
                 .flushPending("account A crash")
 
-            val accountB = CrashDumper(dataDir, "https://a.example.test", "uid-b", transport)
+            val accountB = CrashDumper(dataDir, deployment("https://a.example.test"), "uid-b", transport)
             assertFalse(accountB.hasPending())
             accountB.uploadPending("token-b")
             assertTrue(uploads.isEmpty())
 
-            val accountARelogin = CrashDumper(dataDir, "https://a.example.test", "uid-a", transport)
+            val accountARelogin = CrashDumper(dataDir, deployment("https://a.example.test"), "uid-a", transport)
             assertTrue(accountARelogin.hasPending())
             accountARelogin.uploadPending("token-a2")
             assertEquals(
@@ -48,14 +48,20 @@ class CrashDumperIdentityTest {
             200
         }
         try {
-            CrashDumper(dataDir, "https://one.example.test", "uid-a", transport).flushPending("server one")
+            CrashDumper(dataDir, deployment("https://one.example.test"), "uid-a", transport)
+                .flushPending("server one")
             CrashDumper(dataDir).flushPending("pre-login crash")
 
-            val otherServer = CrashDumper(dataDir, "https://two.example.test", "uid-a", transport)
+            val otherServer = CrashDumper(dataDir, deployment("https://two.example.test"), "uid-a", transport)
             assertFalse(otherServer.hasPending())
             otherServer.uploadPending("token")
 
-            val accountOnServerOne = CrashDumper(dataDir, "https://one.example.test", "uid-a", transport)
+            val accountOnServerOne = CrashDumper(
+                dataDir,
+                deployment("https://one.example.test"),
+                "uid-a",
+                transport,
+            )
             accountOnServerOne.uploadPending("token")
             assertEquals(listOf("https://one.example.test/api/client-logs"), uploads)
 
@@ -67,10 +73,26 @@ class CrashDumperIdentityTest {
     }
 
     @Test
+    fun `same HTTP base on a different TCP deployment cannot see pending crash`() {
+        val dataDir = Files.createTempDirectory("teamtalk-crash-deployment-").toFile()
+        val transport = CrashUploadTransport { _, _, _ -> 200 }
+        try {
+            val first = deployment("https://shared-files.example.test", tcpPort = 5100)
+            val second = deployment("https://shared-files.example.test", tcpPort = 5200)
+            CrashDumper(dataDir, first, "uid-a", transport).flushPending("deployment A")
+
+            assertFalse(CrashDumper(dataDir, second, "uid-a", transport).hasPending())
+            assertTrue(CrashDumper(dataDir, first, "uid-a", transport).hasPending())
+        } finally {
+            dataDir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `crash namespace and atomic payload are owner private`() {
         val dataDir = Files.createTempDirectory("teamtalk-crash-mode-").toFile()
         try {
-            CrashDumper(dataDir, "https://private.example.test", "uid-a")
+            CrashDumper(dataDir, deployment("https://private.example.test"), "uid-a")
                 .flushPending("private crash")
 
             val pending = findPending(dataDir.toPath())
@@ -95,7 +117,7 @@ class CrashDumperIdentityTest {
     fun `symlink pending payload is rejected without overwriting its target`() {
         val dataDir = Files.createTempDirectory("teamtalk-crash-symlink-").toFile()
         try {
-            val dumper = CrashDumper(dataDir, "https://private.example.test", "uid-a")
+            val dumper = CrashDumper(dataDir, deployment("https://private.example.test"), "uid-a")
             dumper.flushPending("first crash")
             val pending = findPending(dataDir.toPath())
             Files.delete(pending)
@@ -116,7 +138,7 @@ class CrashDumperIdentityTest {
     fun `hard linked payload and overwide namespace both fail closed`() {
         val dataDir = Files.createTempDirectory("teamtalk-crash-hardlink-").toFile()
         try {
-            val dumper = CrashDumper(dataDir, "https://private.example.test", "uid-a")
+            val dumper = CrashDumper(dataDir, deployment("https://private.example.test"), "uid-a")
             dumper.flushPending("first crash")
             val pending = findPending(dataDir.toPath())
             val linked = dataDir.toPath().resolve("linked-crash.log")
@@ -147,4 +169,13 @@ class CrashDumperIdentityTest {
             .findFirst()
             .orElseThrow { AssertionError("pending crash was not created") }
     }
+
+    private fun deployment(
+        serverUrl: String,
+        tcpPort: Int = 5100,
+    ): DeploymentIdentity = DeploymentIdentity.from(
+        tcpHost = java.net.URI(serverUrl).host,
+        tcpPort = tcpPort,
+        serverUrl = serverUrl,
+    )
 }

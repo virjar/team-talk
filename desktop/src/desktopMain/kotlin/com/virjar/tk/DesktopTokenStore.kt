@@ -3,6 +3,7 @@ package com.virjar.tk
 import com.virjar.tk.client.StoredLogin
 import com.virjar.tk.client.TokenStoreOwner
 import com.virjar.tk.client.JvmPrivateDataDirectory
+import com.virjar.tk.client.DeploymentIdentity
 import java.io.File
 import java.io.StringReader
 import java.io.StringWriter
@@ -16,7 +17,10 @@ import java.util.Properties
  *
  * 清除时机：用户主动登出、token 失效（AUTH_FAILED）。
  */
-class DesktopTokenStore(dataDir: File) : com.virjar.tk.client.TokenStore {
+class DesktopTokenStore(
+    dataDir: File,
+    override val deploymentIdentity: DeploymentIdentity,
+) : com.virjar.tk.client.TokenStore {
     private val store = JvmPrivateDataDirectory.openExisting(dataDir).atomicTextFile(
         fileName = "auth.properties",
     )
@@ -25,6 +29,11 @@ class DesktopTokenStore(dataDir: File) : com.virjar.tk.client.TokenStore {
         val props = readProps() ?: Properties()
         val generation = nextOwnerGeneration(props.ownerGeneration())
         props.setProperty(KEY_OWNER_GENERATION, generation.toString())
+        if (props.getProperty(KEY_DEPLOYMENT_FINGERPRINT) != deploymentIdentity.fingerprint) {
+            props.remove(KEY_UID)
+            props.remove(KEY_TOKEN)
+        }
+        props.setProperty(KEY_DEPLOYMENT_FINGERPRINT, deploymentIdentity.fingerprint)
         normalizeCredentials(props)
         writeProps(props)
         TokenStoreOwner(generation, props.toStoredLogin(generation))
@@ -35,16 +44,21 @@ class DesktopTokenStore(dataDir: File) : com.virjar.tk.client.TokenStore {
             require(uid.isNotBlank()) { "uid 不能为空" }
             require(refreshToken.isNotBlank()) { "refreshToken 不能为空" }
             val props = readProps() ?: Properties()
-            if (props.ownerGeneration() != ownerGeneration) return@synchronized null
+            if (
+                props.ownerGeneration() != ownerGeneration ||
+                props.getProperty(KEY_DEPLOYMENT_FINGERPRINT) != deploymentIdentity.fingerprint
+            ) return@synchronized null
             props.setProperty(KEY_UID, uid)
             props.setProperty(KEY_TOKEN, refreshToken)
             writeProps(props)
-            StoredLogin(uid, refreshToken, ownerGeneration)
+            StoredLogin(uid, refreshToken, ownerGeneration, deploymentIdentity.fingerprint)
         }
 
     override fun compareAndClear(expected: StoredLogin): Boolean = synchronized(PROCESS_LOCK) {
         val props = readProps() ?: return@synchronized false
         val matches = props.ownerGeneration() == expected.ownerGeneration &&
+            props.getProperty(KEY_DEPLOYMENT_FINGERPRINT) == expected.deploymentFingerprint &&
+            expected.deploymentFingerprint == deploymentIdentity.fingerprint &&
             props.getProperty(KEY_UID) == expected.uid &&
             props.getProperty(KEY_TOKEN) == expected.refreshToken
         if (!matches) return@synchronized false
@@ -55,7 +69,10 @@ class DesktopTokenStore(dataDir: File) : com.virjar.tk.client.TokenStore {
     }
 
     override fun isCurrentOwner(ownerGeneration: Long): Boolean = synchronized(PROCESS_LOCK) {
-        readProps()?.ownerGeneration() == ownerGeneration
+        readProps()?.let { props ->
+            props.ownerGeneration() == ownerGeneration &&
+                props.getProperty(KEY_DEPLOYMENT_FINGERPRINT) == deploymentIdentity.fingerprint
+        } == true
     }
 
     /** Temp + fsync + atomic replace: refresh token 轮换不能在进程退出时落回旧值。 */
@@ -81,12 +98,16 @@ class DesktopTokenStore(dataDir: File) : com.virjar.tk.client.TokenStore {
     private fun Properties.toStoredLogin(ownerGeneration: Long): StoredLogin? {
         val uid = getProperty(KEY_UID)?.takeIf { it.isNotBlank() } ?: return null
         val token = getProperty(KEY_TOKEN)?.takeIf { it.isNotBlank() } ?: return null
-        return StoredLogin(uid, token, ownerGeneration)
+        val deploymentFingerprint = getProperty(KEY_DEPLOYMENT_FINGERPRINT)
+            ?.takeIf { it == deploymentIdentity.fingerprint }
+            ?: return null
+        return StoredLogin(uid, token, ownerGeneration, deploymentFingerprint)
     }
 
     companion object {
         private val PROCESS_LOCK = Any()
         private const val KEY_OWNER_GENERATION = "owner_generation"
+        private const val KEY_DEPLOYMENT_FINGERPRINT = "deployment_fingerprint"
         private const val KEY_UID = "uid"
         private const val KEY_TOKEN = "refresh_token"
         private const val MAX_AUTH_FILE_BYTES = 64L * 1024L

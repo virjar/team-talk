@@ -40,6 +40,11 @@ class EventProcessor(
      * [messageEvents] remains a non-blocking refresh stream.
      */
     private val durableMessageSink: ((Long, Message) -> Unit)? = null,
+    /**
+     * Optional headless-inbox linearization boundary. The sink must run the tombstone synchronously
+     * while holding its chat-keyed delivery gate; failure aborts cursor advancement and replay retries.
+     */
+    private val durableChatTombstoneSink: ((chatId: String, tombstone: () -> Unit) -> Unit)? = null,
     /** Null is reserved for raw protocol/E2E harnesses; createSession always binds an owner uid. */
     private val ownerUid: String? = null,
 ) {
@@ -400,7 +405,8 @@ class EventProcessor(
             NotifyType.CHAT_DELETED -> {
                 val chat = decodePayload<Chat>(notifyType, payload)
                 publicationGate.use(publicationLease) {
-                    localCache.deleteChat(chat.chatId)
+                    val tombstone = { localCache.deleteChat(chat.chatId) }
+                    durableChatTombstoneSink?.invoke(chat.chatId, tombstone) ?: tombstone()
                     _chatEvents.tryEmit(notifyType to chat)
                 }
             }

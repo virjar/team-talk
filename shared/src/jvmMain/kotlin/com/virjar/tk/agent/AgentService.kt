@@ -1,5 +1,6 @@
 package com.virjar.tk.agent
 
+import com.virjar.tk.client.DeploymentIdentity
 import java.io.File
 import java.net.URI
 import java.nio.file.Files
@@ -11,6 +12,7 @@ data class AgentServiceInstallPlan(
     val unit: String,
     val dataDirectory: String,
     val serviceUser: String,
+    val deploymentIdentity: DeploymentIdentity,
 )
 
 /** Pure preparation result: no unit is written and no authentication material is accepted. */
@@ -38,7 +40,7 @@ object AgentService {
         val plan = buildInstallPlan(args, appHome)
         val identity = validateServiceIdentity(plan.serviceUser, resolveServiceIdentity(plan.serviceUser))
         val dataDirectory = AgentDataDirectoryPolicy.openPreparedForService(File(plan.dataDirectory), identity)
-        AgentCredentials.requireActiveForInstall(dataDirectory)
+        AgentCredentials.requireActiveForInstall(dataDirectory, plan.deploymentIdentity)
         writeUnitAtomically(plan.unit)
         println("[install] unit 已写入 $unitPath（运行用户 ${plan.serviceUser}）")
         println("[install] ACTIVE refresh 凭据已验证；可执行：")
@@ -96,6 +98,9 @@ object AgentService {
         val serviceUser = validateServiceUser(opts["service-user"] ?: DEFAULT_SERVICE_USER)
         val home = validateApplicationHome(resolvedAppHome)
         val serverUrl = opts["server-url"]?.let(::validateServerUrl)
+        val deploymentIdentity = serverUrl?.let { configured ->
+            DeploymentIdentity.from(host, port, configured)
+        } ?: DeploymentIdentity.fromTcpWithDefaultHttp(host, port)
 
         val executableArguments = buildList {
             add("/usr/bin/java")
@@ -170,7 +175,7 @@ WantedBy=multi-user.target
         require(forbiddenUnitFragments.none { it in unit.lowercase() }) {
             "Refusing to persist authentication material in the systemd unit"
         }
-        return AgentServiceInstallPlan(unit, dataDirectory, serviceUser)
+        return AgentServiceInstallPlan(unit, dataDirectory, serviceUser, deploymentIdentity)
     }
 
     fun uninstall() {

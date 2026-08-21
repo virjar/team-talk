@@ -78,8 +78,13 @@ class AppLogOwnershipTest {
         val dataDir = Files.createTempDirectory("teamtalk-disabled-log-owner-").toFile()
         val graphicalTrace = LogBuffer(2)
         val graphicalFault = LogBuffer(2)
-        val graphicalCrash = CrashDumper(dataDir, "https://im.example.test", "graphical")
-        val disabledCrash = CrashDumper(dataDir, "https://im.example.test", "headless")
+        val deploymentIdentity = DeploymentIdentity.from(
+            tcpHost = "im.example.test",
+            tcpPort = 5100,
+            serverUrl = "https://im.example.test",
+        )
+        val graphicalCrash = CrashDumper(dataDir, deploymentIdentity, "graphical")
+        val disabledCrash = CrashDumper(dataDir, deploymentIdentity, "headless")
 
         try {
             val graphicalOwner = checkNotNull(installAppLogOwnershipIfEnabled(

@@ -11,15 +11,15 @@ import android.os.Build
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
-import com.virjar.tk.client.SessionHttpCredentials
 import com.virjar.tk.http.UploadResult
 import com.virjar.tk.model.Attachment
-import com.virjar.tk.repository.FileRepository
 import com.virjar.tk.repository.asUploadSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -28,7 +28,9 @@ import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.HttpURLConnection
-import java.net.URL
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
@@ -42,86 +44,6 @@ import kotlin.concurrent.withLock
  * cacheDir 再流式上传，不会把最多 512 MiB 的视频整体放进 Java 堆。
  */
 internal const val MAX_SELECTED_MEDIA_BYTES: Long = 512L * 1024 * 1024
-
-/**
- * 生成不暴露服务器或 uid 的账号缓存命名空间。Bearer token 轮换不改变同一服务器、同一账号的
- * 缓存身份；跨账号和跨服务器仍严格隔离。
- */
-internal fun mediaCacheNamespace(
-    serverUrl: String,
-    ownerUid: String,
-): String {
-    val serverIdentity = serverUrl.trim().trimEnd('/')
-    require(serverIdentity.isNotBlank()) { "media server identity must not be empty" }
-    require(ownerUid.isNotBlank()) { "media owner uid must not be empty" }
-    return sha256Hex("teamtalk-media-v2\u0000$serverIdentity\u0000uid\u0000$ownerUid").take(32)
-}
-
-/**
- * Immutable credentials captured when an authenticated Android UI session is composed.
- *
- * Passing this value through every protected-media operation makes it impossible to pair account
- * A's cache namespace with a token read later from account B's mutable login state.
- */
-class AndroidMediaSession private constructor(
-    val serverUrl: String,
-    private val ownerUid: String,
-    private val ownerIdentityEpoch: Long,
-    private val credentialsProvider: () -> SessionHttpCredentials,
-    val cacheNamespace: String,
-) : AutoCloseable {
-    private val closed = AtomicBoolean(false)
-    internal val fileRepository = FileRepository(serverUrl, ownerUid, credentialsProvider)
-
-    /**
-     * Reads a reconnect-rotated token while refusing a later login that reused the UserSession
-     * object for another uid. The returned token is fixed by each HTTP request before IO begins.
-     */
-    fun accessTokenForRequest(): String {
-        check(!closed.get()) { "媒体会话已经关闭" }
-        val credentials = credentialsProvider()
-        requireCurrentOwner(credentials)
-        return credentials.accessToken?.takeIf(String::isNotBlank)
-            ?: throw IllegalStateException("认证凭据不可用，请重新登录")
-    }
-
-    fun isCurrentOwner(): Boolean = !closed.get() && runCatching {
-        requireCurrentOwner(credentialsProvider())
-    }.isSuccess
-
-    override fun close() {
-        if (!closed.compareAndSet(false, true)) return
-        fileRepository.close()
-    }
-
-    companion object {
-        fun create(
-            serverUrl: String,
-            ownerUid: String,
-            credentialsProvider: () -> SessionHttpCredentials,
-        ): AndroidMediaSession {
-            val normalizedServerUrl = serverUrl.trim().trimEnd('/')
-            val initial = credentialsProvider()
-            check(initial.uid == ownerUid) { "媒体会话初始认证身份不匹配" }
-            return AndroidMediaSession(
-                serverUrl = normalizedServerUrl,
-                ownerUid = ownerUid,
-                ownerIdentityEpoch = initial.identityEpoch,
-                credentialsProvider = credentialsProvider,
-                cacheNamespace = mediaCacheNamespace(
-                    serverUrl = normalizedServerUrl,
-                    ownerUid = ownerUid,
-                ),
-            )
-        }
-    }
-
-    private fun requireCurrentOwner(credentials: SessionHttpCredentials) {
-        check(credentials.uid == ownerUid && credentials.identityEpoch == ownerIdentityEpoch) {
-            "媒体任务所属登录会话已失效"
-        }
-    }
-}
 
 /** 所有 Android 媒体临时文件与下载缓存都收敛到会话隔离目录。 */
 internal fun mediaCacheDirectory(
@@ -305,6 +227,7 @@ object MediaHelper {
         maxBytes: Long = MAX_SELECTED_MEDIA_BYTES,
     ): PreparedMedia = withContext(Dispatchers.IO) {
         mediaSession.accessTokenForRequest()
+        val operationContext = currentCoroutineContext()
         require(maxBytes > 0) { "maxBytes must be positive" }
         val declaredSize = getFileSizeOrNull(context, uri)
         if (declaredSize != null && declaredSize > maxBytes) {
@@ -320,17 +243,29 @@ object MediaHelper {
         try {
             val input = context.contentResolver.openInputStream(uri)
                 ?: throw IllegalStateException("无法读取所选文件")
-            val size = input.use { source ->
-                target.outputStream().buffered().use { output ->
-                    copyBounded(source, output, maxBytes)
+            val size = mediaSession.withRegisteredOperation(input::close) {
+                withCancellationAbort(input::close) {
+                    input.use { source ->
+                        target.outputStream().buffered().use { output ->
+                            copyBounded(source, output, maxBytes) {
+                                operationContext.ensureActive()
+                                mediaSession.ensureOpen()
+                            }
+                        }
+                    }
                 }
             }
-            PreparedMedia(
-                file = target,
-                fileName = getFileName(context, uri),
-                contentType = getMimeType(context, uri),
-                size = size,
-            )
+            operationContext.ensureActive()
+            var prepared: PreparedMedia? = null
+            check(mediaSession.runIfOpen {
+                prepared = PreparedMedia(
+                    file = target,
+                    fileName = getFileName(context, uri),
+                    contentType = getMimeType(context, uri),
+                    size = size,
+                )
+            }) { "媒体会话已经关闭" }
+            checkNotNull(prepared)
         } catch (error: Throwable) {
             target.delete()
             throw error
@@ -348,19 +283,25 @@ object MediaHelper {
         mediaSession: AndroidMediaSession,
         onProgress: ((Float) -> Unit)? = null,
     ): File = withContext(Dispatchers.IO) {
-        val accessToken = mediaSession.accessTokenForRequest()
+        mediaSession.ensureOpen()
+        val operationContext = currentCoroutineContext()
         val hash = sha256Hex(url)
         val ext = url.substringAfterLast('.', "").let { if (it.length <= 5) it else "mp4" }
         val directory = mediaCacheDirectory(cacheDir, mediaSession.cacheNamespace, "downloads").apply { mkdirs() }
         val file = File(directory, "$hash.$ext")
-        val cached = materializeMediaCacheFile(file) { partial ->
-            val conn = URL(url).openConnection() as HttpURLConnection
-            conn.connectTimeout = 10_000
-            conn.readTimeout = 60_000
-            conn.setRequestProperty("Authorization", "Bearer $accessToken")
-            try {
+        val cached = materializeMediaCacheFile(
+            target = file,
+            install = mediaSession::installCacheFile,
+        ) { partial ->
+            mediaSession.withAuthenticatedConnection(
+                url = url,
+                configure = { conn ->
+                    conn.connectTimeout = 10_000
+                    conn.readTimeout = 60_000
+                },
+            ) { conn ->
                 val responseCode = conn.responseCode
-                if (responseCode !in 200..299) {
+                if (responseCode != HttpURLConnection.HTTP_OK) {
                     error("下载失败 HTTP $responseCode")
                 }
                 val total = conn.contentLengthLong
@@ -370,19 +311,22 @@ object MediaHelper {
                         val buffer = ByteArray(8192)
                         var bytesRead: Int
                         while (input.read(buffer).also { bytesRead = it } != -1) {
+                            operationContext.ensureActive()
+                            mediaSession.ensureOpen()
                             output.write(buffer, 0, bytesRead)
                             downloaded += bytesRead
                             if (total > 0) {
-                                onProgress?.invoke(downloaded.toFloat() / total)
+                                mediaSession.runIfOpen {
+                                    onProgress?.invoke(downloaded.toFloat() / total)
+                                }
                             }
                         }
                     }
                 }
-            } finally {
-                conn.disconnect()
             }
         }
-        onProgress?.invoke(1f)
+        operationContext.ensureActive()
+        check(mediaSession.runIfOpen { onProgress?.invoke(1f) }) { "媒体会话已经关闭" }
         cached
     }
 
@@ -551,8 +495,21 @@ private object MediaCacheWriteCoordinator {
  */
 internal suspend fun materializeMediaCacheFile(
     target: File,
+    install: (partial: File, target: File) -> Unit = { partial, final ->
+        try {
+            Files.move(
+                partial.toPath(),
+                final.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(partial.toPath(), final.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+    },
     writePartial: suspend (File) -> Unit,
 ): File = MediaCacheWriteCoordinator.withTarget(target) {
+    currentCoroutineContext().ensureActive()
     if (target.isFile && target.length() > 0L) return@withTarget target
 
     target.parentFile?.mkdirs()
@@ -562,9 +519,10 @@ internal suspend fun materializeMediaCacheFile(
     val partial = File.createTempFile("${target.name}.", ".part", target.parentFile)
     try {
         writePartial(partial)
+        currentCoroutineContext().ensureActive()
         check(partial.isFile && partial.length() > 0L) { "下载内容为空" }
-        // partial 与 target 在同一目录，rename 不会向读取方暴露半成品。
-        check(partial.renameTo(target)) { "无法原子落盘媒体缓存" }
+        // The session-owned installer shares its close monitor with the final atomic publication.
+        install(partial, target)
         target
     } catch (error: Throwable) {
         partial.delete()
@@ -577,14 +535,17 @@ internal fun copyBounded(
     input: InputStream,
     output: OutputStream,
     maxBytes: Long,
+    ensureActive: () -> Unit = {},
 ): Long {
     require(maxBytes > 0) { "maxBytes must be positive" }
     val buffer = ByteArray(64 * 1024)
     var total = 0L
     while (true) {
+        ensureActive()
         val read = input.read(buffer)
         if (read < 0) return total
         if (read == 0) continue
+        ensureActive()
         if (total > maxBytes - read) throw SelectedMediaTooLargeException(maxBytes)
         output.write(buffer, 0, read)
         total += read
