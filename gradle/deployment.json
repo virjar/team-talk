@@ -5,5 +5,6 @@
   "deployPort": 22,
   "deployUser": "root",
   "deployPath": "/opt/teamtalk",
-  "sslPort": 443
+  "sslPort": 443,
+  "allowCustomServer": true
 }

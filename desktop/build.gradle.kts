@@ -47,6 +47,8 @@ buildConfig {
     buildConfigField("BUILD_TIME", buildTime)
     // 测试 HTTP 服务：开发运行时启用，打包 jar exclude 物理删除 TestHttpServer
     buildConfigField("TEST_HTTP_SERVER", true)
+    // 登录页自定义服务器入口（deployment.json 驱动，编译期定死；生产部署 false）
+    buildConfigField("ALLOW_CUSTOM_SERVER", deploymentConfig.allowCustomServer)
 }
 
 compose.desktop {

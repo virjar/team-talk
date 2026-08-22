@@ -19,6 +19,8 @@ import androidx.compose.ui.window.rememberWindowState
 import com.virjar.tk.client.ConnectionState
 import com.virjar.tk.client.ImClient
 import com.virjar.tk.client.JvmPrivateDataDirectory
+import com.virjar.tk.client.ServerConfig
+import com.virjar.tk.client.configureServerConfig
 import com.virjar.tk.client.createDesktopLocalCache
 import com.virjar.tk.client.defaultServerConfig
 import com.virjar.tk.client.rememberAuthController
@@ -76,7 +78,17 @@ internal fun showAlreadyRunningDialog(dataDir: File) = application {
  * 主 Compose 应用。提取为独立函数，保持 main() 的一次性初始化逻辑清晰。
  */
 internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = application {
-    val config = defaultServerConfig()
+    // 打包默认部署（DeploymentConfig 注入的系统属性），先于任何运行期覆盖取值
+    val packagedConfig = remember { defaultServerConfig() }
+    // 演示站体验入口开关：deployment.json → BuildConfig 编译期常量（生产部署 false）
+    val allowCustomServer = com.virjar.tk.BuildConfig.ALLOW_CUSTOM_SERVER
+    readPersistedCustomServer(dataDir)?.let { configureServerConfig(it) }
+    var activeConfig by remember { mutableStateOf(defaultServerConfig()) }
+
+    // 切换部署（仅登录窗口可见阶段）：整棵认证子树（identity/tokenStore/auth）
+    // 随 key 重建——不同部署的凭据与缓存按 DeploymentIdentity 隔离。
+    key(activeConfig) {
+    val config = activeConfig
     val deploymentIdentity = remember(config) { config.deploymentIdentity() }
     val tokenStore = remember(deploymentIdentity) { DesktopTokenStore(dataDir, deploymentIdentity) }
     val deviceId = remember(dataDir) { desktopInstallationDeviceId(dataDir) }
@@ -193,6 +205,10 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                             error = auth.authError,
                             loading = loginLoading,
                             windowStyle = true,
+                            allowCustomServer = allowCustomServer,
+                            serverUrl = activeConfig.serverUrl,
+                            onServerUrlChange = { raw -> applyCustomServerUrl(raw, activeConfig, dataDir) { activeConfig = it } },
+                            onResetServerUrl = { resetToPackagedServer(packagedConfig, dataDir) { activeConfig = it } },
                         )
                     }
                 }
@@ -339,7 +355,60 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
             }
         }
     }
+    } // key(activeConfig)
 }
+
+// ── 演示站自定义服务器（登录窗口阶段切换部署）──
+
+/** 解析并应用自定义服务器地址：HTTP host 作 TCP host，端口沿用当前配置。 */
+internal fun applyCustomServerUrl(
+    rawUrl: String,
+    current: com.virjar.tk.client.ServerConfig,
+    dataDir: File,
+    apply: (com.virjar.tk.client.ServerConfig) -> Unit,
+) {
+    val normalized = rawUrl.trim().let { if (it.startsWith("http")) it else "https://$it" }.trimEnd('/')
+    val host = runCatching { java.net.URI(normalized).host }.getOrNull()
+    if (host.isNullOrBlank()) return  // 无效输入保持原值
+    val newConfig = com.virjar.tk.client.ServerConfig(
+        serverUrl = normalized,
+        tcpHost = host,
+        tcpPort = current.tcpPort,
+    )
+    configureServerConfig(newConfig)
+    persistCustomServer(dataDir, newConfig)
+    apply(newConfig)
+}
+
+internal fun resetToPackagedServer(
+    packagedConfig: com.virjar.tk.client.ServerConfig,
+    dataDir: File,
+    apply: (com.virjar.tk.client.ServerConfig) -> Unit,
+) {
+    configureServerConfig(packagedConfig)
+    persistCustomServer(dataDir, null)
+    apply(packagedConfig)
+}
+
+private fun customServerStore(dataDir: File) =
+    JvmPrivateDataDirectory.openExisting(dataDir).atomicTextFile(fileName = "custom-server.properties")
+
+private fun persistCustomServer(dataDir: File, config: com.virjar.tk.client.ServerConfig?) {
+    runCatching {
+        val text = config?.let { "${it.serverUrl}\n${it.tcpHost}\n${it.tcpPort}" } ?: ""
+        customServerStore(dataDir).replaceText(text)
+    }
+}
+
+private fun readPersistedCustomServer(dataDir: File): com.virjar.tk.client.ServerConfig? = runCatching {
+    val text = customServerStore(dataDir).readText(MAX_CUSTOM_SERVER_FILE_BYTES) ?: return null
+    val lines = text.lines()
+    if (lines.size < 3) return null
+    val port = lines[2].trim().toIntOrNull() ?: return null
+    com.virjar.tk.client.ServerConfig(serverUrl = lines[0].trim(), tcpHost = lines[1].trim(), tcpPort = port)
+}.getOrNull()
+
+private const val MAX_CUSTOM_SERVER_FILE_BYTES = 2048L
 
 /** One durable identity per Desktop data directory (different profiles remain different devices). */
 internal fun desktopInstallationDeviceId(dataDir: File): String {

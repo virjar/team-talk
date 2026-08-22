@@ -21,6 +21,8 @@ data class DeploymentConfig(
     val deployUser: String = "root",
     val deployPath: String = "/opt/teamtalk",
     val sslPort: Int = 443,
+    /** 登录页自定义服务器入口（演示站体验）。生产部署保持 false——私有化路径是构建期注入地址。 */
+    val allowCustomServer: Boolean = false,
 ) {
     val serverUri: URI = URI(serverUrl)
     val sslEnabled: Boolean get() = serverUri.scheme.equals("https", ignoreCase = true)
@@ -40,6 +42,7 @@ data class DeploymentConfig(
             "deployUser",
             "deployPath",
             "sslPort",
+            "allowCustomServer",
         )
 
         fun load(content: String): DeploymentConfig {
@@ -57,6 +60,9 @@ data class DeploymentConfig(
                 deployUser = value["deployUser"]?.jsonPrimitive?.contentOrNull ?: "root",
                 deployPath = value["deployPath"]?.jsonPrimitive?.contentOrNull ?: "/opt/teamtalk",
                 sslPort = value["sslPort"]?.jsonPrimitive?.intOrNull ?: 443,
+                allowCustomServer = value["allowCustomServer"]?.let {
+                    it.jsonPrimitive.content.toBooleanStrict()
+                } ?: false,
             ).also { config ->
                 require(
                     config.serverUri.scheme.equals("http", ignoreCase = true) ||

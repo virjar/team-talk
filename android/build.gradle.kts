@@ -24,6 +24,7 @@ android {
         buildConfigField("String", "SERVER_BASE_URL", "\"${deploymentConfig.serverUrl}\"")
         buildConfigField("String", "TCP_HOST", "\"${deploymentConfig.tcpHost}\"")
         buildConfigField("int", "TCP_PORT", "${deploymentConfig.tcpPort}")
+        buildConfigField("boolean", "ALLOW_CUSTOM_SERVER", "${deploymentConfig.allowCustomServer}")
         buildConfigField("String", "GIT_COMMIT_ID", "\"$gitCommitId\"")
         buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
     }

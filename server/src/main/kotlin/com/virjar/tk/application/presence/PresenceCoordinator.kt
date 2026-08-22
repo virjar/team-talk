@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * immediately hands work to an independent coroutine so presence delivery can
  * safely query the registry again without self-deadlocking that looper.
  */
-class PresenceCoordinator(
+ class PresenceCoordinator(
     private val clientRegistry: ClientRegistry,
     private val presenceService: PresenceService,
 ) : AutoCloseable {
