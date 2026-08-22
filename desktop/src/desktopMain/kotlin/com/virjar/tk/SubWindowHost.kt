@@ -46,11 +46,8 @@ internal fun SubWindow(
         // 子窗口也带 TeamTalk 图标（与主窗口一致）
         setTeamTalkIcon()
         DisposableEffect(window, integratedMacTitleBar) {
-            if (integratedMacTitleBar) {
-                window.rootPane.putClientProperty("apple.awt.fullWindowContent", true)
-                window.rootPane.putClientProperty("apple.awt.transparentTitleBar", true)
-                window.rootPane.putClientProperty("apple.awt.windowTitleVisible", false)
-            }
+            // applyMacImmersiveChrome 内部已含 hideTitle；非 Mac 平台为 no-op
+            if (integratedMacTitleBar) window.applyMacImmersiveChrome()
             onDispose { }
         }
         AppTheme {

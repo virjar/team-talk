@@ -2,11 +2,24 @@ package com.virjar.tk
 
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.awt.ComposeWindow
 import androidx.compose.ui.awt.awtEventOrNull
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.window.WindowPlacement
 import java.awt.event.MouseEvent
+
+/**
+ * macOS 统一沉浸式窗口：应用 Surface 延伸进标题栏并使其透明（仅保留系统红黄绿按钮
+ * 或完全无装饰）。不设置时 undecorated/decorated 窗口会露出原生标题栏底色
+ * （浅色系统白条 / 深色系统黑条），与 AppTheme 不搭。非 macOS 平台为 no-op。
+ */
+internal fun ComposeWindow.applyMacImmersiveChrome(hideTitle: Boolean = true) {
+    if (!System.getProperty("os.name").contains("Mac", ignoreCase = true)) return
+    rootPane.putClientProperty("apple.awt.fullWindowContent", true)
+    rootPane.putClientProperty("apple.awt.transparentTitleBar", true)
+    if (hideTitle) rootPane.putClientProperty("apple.awt.windowTitleVisible", false)
+}
 
 /**
  * 自绘标题栏双击后的窗口位置。

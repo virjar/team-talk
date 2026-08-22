@@ -38,11 +38,8 @@ fun RegisterScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .then(
-                if (windowStyle) Modifier.background(MaterialTheme.colorScheme.background)
-                else Modifier.background(
-                    Brush.verticalGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.background))
-                )
+            .background(
+                Brush.verticalGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.background))
             )
     ) {
         Column(

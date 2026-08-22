@@ -1,5 +1,6 @@
 package com.virjar.tk
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.window.WindowDraggableArea
 import androidx.compose.material.icons.Icons
@@ -39,6 +40,10 @@ internal fun showAlreadyRunningDialog(dataDir: File) = application {
         state = rememberWindowState(width = 450.dp, height = 220.dp),
     ) {
         setTeamTalkIcon()
+        DisposableEffect(window) {
+            window.applyMacImmersiveChrome()
+            onDispose { }
+        }
         AppTheme {
             Surface(modifier = Modifier.fillMaxSize()) {
                 Column(
@@ -98,11 +103,12 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
     // ════════════════════════════════════════════════════════════
     // 窗口1：登录窗口（app 全局层）
     // 未登录时可见，登录成功后隐藏。登出后重新显示。
-    // §2.3：420×480 无装饰（窗口即卡片），注册态多一字段拉高到 560。
+    // §2.3：420×560 无装饰（窗口即卡片）；登录/注册同尺寸（注册内容更高，
+    // 统一取其所需高度，登录态居中留白），切换不跳动。
     // ════════════════════════════════════════════════════════════
     val loginWindowState = rememberWindowState(
         width = 420.dp,
-        height = 480.dp,
+        height = 560.dp,
         position = WindowPosition(Alignment.Center),
     )
 
@@ -118,18 +124,16 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
         resizable = false,
     ) {
         TestServiceBridge.registerWindowIfEnabled(window)
+        DisposableEffect(window) {
+            // undecorated 窗口同样统一沉浸式处理：消除原生标题栏底色残留
+            window.applyMacImmersiveChrome()
+            onDispose { }
+        }
         setTeamTalkIcon()
 
         var showRegister by remember { mutableStateOf(false) }
         var loginLoading by remember { mutableStateOf(false) }
         var registerLoading by remember { mutableStateOf(false) }
-
-        // 注册模式多一个输入字段：无装饰窗口不可拉伸，按模式切高度
-        LaunchedEffect(showRegister) {
-            val height = if (showRegister) 560.dp else 480.dp
-            // WindowState 使用 dp；AWT setSize 使用逻辑像素。先 roundToPx 会在 Retina 屏上再放大一倍。
-            loginWindowState.size = DpSize(width = 420.dp, height = height)
-        }
 
         // DISCONNECTED 时清 loading 和注册页状态
         val connectionState by auth.connectionState.collectAsState()
@@ -141,9 +145,14 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
 
         AppTheme {
             Column(modifier = Modifier.fillMaxSize()) {
-                // 无装饰窗口顶栏：拖拽区 + 关闭按钮
+                // 无装饰窗口顶栏：拖拽区 + 关闭按钮。
+                // 背景取渐变首色（primary）：与 LoginScreen/RegisterScreen 的
+                // verticalGradient(primary→background) 在 y=0 处无缝衔接
                 Row(
-                    modifier = Modifier.fillMaxWidth().height(36.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(36.dp)
+                        .background(MaterialTheme.colorScheme.primary),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     WindowDraggableArea(modifier = Modifier.weight(1f).fillMaxHeight())
@@ -154,7 +163,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                         },
                         modifier = Modifier.size(36.dp).testTag("login.close"),
                     ) {
-                        Icon(Icons.Filled.Close, contentDescription = "关闭", modifier = Modifier.size(16.dp))
+                        Icon(Icons.Filled.Close, contentDescription = "关闭", tint = androidx.compose.ui.graphics.Color.White, modifier = Modifier.size(16.dp))
                     }
                 }
 
@@ -305,11 +314,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
             // macOS：保留原生红黄绿窗口按钮，但让应用 Surface 延伸进标题栏，
             // 消除“系统灰标题栏 + 应用内容”两套视觉语言的拼接感。
             DisposableEffect(window) {
-                if (System.getProperty("os.name").contains("Mac", ignoreCase = true)) {
-                    window.rootPane.putClientProperty("apple.awt.fullWindowContent", true)
-                    window.rootPane.putClientProperty("apple.awt.transparentTitleBar", true)
-                    window.rootPane.putClientProperty("apple.awt.windowTitleVisible", false)
-                }
+                window.applyMacImmersiveChrome()
                 window.minimumSize = java.awt.Dimension(880, 600)
                 val fullScreenContentSync = installMacFullScreenContentSync(window)
                 onDispose { fullScreenContentSync.close() }
