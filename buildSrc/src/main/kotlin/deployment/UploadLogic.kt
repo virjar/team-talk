@@ -44,11 +44,8 @@ private fun uploadFromStaging(
     port: Int,
     remoteDir: String
 ) {
+    // Desktop 产物统一走 Conveyor 更新站点（uploadDesktopSite）；此处仅 APK。
     val artifacts = mapOf(
-        "teamtalk-desktop-linux" to "TeamTalk-linux.deb",
-        "teamtalk-desktop-windows" to "TeamTalk-windows.msi",
-        "teamtalk-desktop-macos-arm64" to "TeamTalk-macos-arm64.dmg",
-        "teamtalk-desktop-macos-x86_64" to "TeamTalk-macos-x86_64.dmg",
         "teamtalk-android" to "TeamTalk-android.apk"
     )
 
@@ -80,31 +77,8 @@ private fun uploadFromBuildDir(
     port: Int,
     remoteDir: String
 ) {
-    val desktopRename = mapOf(
-        "deb" to "TeamTalk-linux.deb",
-        "msi" to "TeamTalk-windows.msi"
-    )
-    val desktopDir = File(rootDir, "desktop/build/compose/binaries/main-release")
-    if (desktopDir.exists()) {
-        desktopDir.walkTopDown()
-            .filter { it.isFile && (it.extension in desktopRename.keys) }
-            .forEach { pkg ->
-                val remoteName = desktopRename[pkg.extension] ?: pkg.name
-                println("  Uploading ${pkg.name} as $remoteName ...")
-                localExecSilent("scp", "-P", port.toString(), pkg.absolutePath, "$user@$host:$remoteDir/$remoteName")
-            }
-
-        val dmgs = desktopDir.walkTopDown().filter { it.isFile && it.extension == "dmg" }.toList()
-        for (dmg in dmgs) {
-            val arch = when {
-                System.getProperty("os.arch").contains("aarch64") -> "arm64"
-                else -> "x86_64"
-            }
-            val remoteName = "TeamTalk-macos-$arch.dmg"
-            println("  Uploading ${dmg.name} as $remoteName ...")
-            localExecSilent("scp", "-P", port.toString(), dmg.absolutePath, "$user@$host:$remoteDir/$remoteName")
-        }
-    }
+    // Desktop 产物统一走 Conveyor 更新站点（uploadDesktopSite），jpackage 链仅作
+    // 无 Conveyor 环境的后备构建路径，不再上传旧命名产物。
 
     val apkDir = File(rootDir, "android/build/outputs/apk/release")
     if (apkDir.exists()) {
@@ -116,6 +90,27 @@ private fun uploadFromBuildDir(
             localExecSilent("scp", "-P", port.toString(), apk.absolutePath, "$user@$host:$remoteDir/TeamTalk-android.apk")
         }
     }
+}
+
+/**
+ * 上传 Conveyor 更新站点（desktop/output 目录整体 rsync 到 static/downloads/desktop）。
+ * 包含三平台安装包、appcast/appinstaller/apt 索引和下载页；--delete 保持站点与产物一致。
+ */
+fun uploadDesktopSite(rootDir: File, config: DeploymentConfig) {
+    val siteDir = File(rootDir, "desktop/output")
+    if (!siteDir.isDirectory || siteDir.listFiles().isNullOrEmpty()) {
+        throw GradleException(
+            "desktop/output is empty. Run: cd desktop && conveyor make site (see desktop/conveyor.conf)"
+        )
+    }
+    val host = config.deployHost
+    val user = config.deployUser
+    val port = config.deployPort
+    val remoteDir = "${config.deployPath}/static/downloads/desktop"
+    println("Uploading Conveyor site to $user@$host:$remoteDir ...")
+    remoteExec(host, user, "mkdir -p $remoteDir", port)
+    localExecSilent("rsync", "-avz", "--delete", "-e", "ssh -p $port", "${siteDir.absolutePath}/", "$user@$host:$remoteDir/")
+    println("Update site: ${config.serverUrl}/downloads/desktop (appcast + appinstaller + apt repo)")
 }
 
 /**

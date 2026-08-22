@@ -86,6 +86,14 @@ tasks.register("uploadClientArtifacts") {
     }
 }
 
+tasks.register("deployDesktopSite") {
+    group = "deploy"
+    description = "Upload Conveyor output (desktop/output) to the update site (run 'conveyor make site' first)"
+    doLast {
+        deployment.uploadDesktopSite(rootDir, deploymentConfig)
+    }
+}
+
 tasks.register("deployServer") {
     group = "deploy"
     description = "Build and deploy the server configured by gradle/deployment.json"

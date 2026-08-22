@@ -267,6 +267,17 @@ fun Application.module() {
                 val file = java.io.File(downloadsDir, filename)
                 if (file.exists()) call.respond(HttpStatusCode.OK) else call.respond(HttpStatusCode.NotFound)
             }
+
+            // Conveyor 更新站点（进程内静态目录，单进程约束不破）：安装包 + appcast/
+            // appinstaller 更新元数据 + apt 仓库索引 + 下载页。Sparkle/MSIX/apt 直接消费。
+            // 不设 default 兜底：更新元数据（appcast/appinstaller/Packages）命中不了必须
+            // 诚实 404，返回 HTML 会毒死更新客户端；下载页用显式根路由。
+            val desktopSiteDir = java.io.File(downloadsDir, "desktop")
+            get("/downloads/desktop") { call.respondFile(java.io.File(desktopSiteDir, "download.html")) }
+            get("/downloads/desktop/") { call.respondFile(java.io.File(desktopSiteDir, "download.html")) }
+            staticFiles("/downloads/desktop", desktopSiteDir) {
+                enableAutoHeadResponse()
+            }
         }
 
         // 9. Graceful shutdown. ResourceOwner enforces maintenance -> TCP/connections ->

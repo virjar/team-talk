@@ -29,7 +29,7 @@ systemd: teamtalk.service
 
 - [运行配置](configuration.md)：部署 JSON、环境变量、端口和目录。
 - [部署与升级](deployment.md)：首次部署、发布、备份和回滚。
-- [Desktop 交叉打包调研](desktop-cross-build.md)：单机出三平台安装包的可行路径（Conveyor / jlink+launch4j / Docker WiX）。
+- [Desktop 交叉打包](desktop-cross-build.md)：Conveyor 单机出三平台安装包 + 自更新站点（已实施）；deployDesktopSite 一键发布。
 - [可观测性](observability.md)：健康、日志、版本和诊断键。
 - [故障排查](troubleshooting.md)：按症状定位连接、认证、同步、文件和构建问题。
 

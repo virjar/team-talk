@@ -357,7 +357,7 @@ internal object MdParser {
                 is MdSpan.Styled -> trimmed.text.isEmpty()
                 else -> false
             }
-            if (empty) result.removeLast() else {
+            if (empty) result.removeAt(result.size - 1) else {
                 result[result.lastIndex] = trimmed
                 break
             }

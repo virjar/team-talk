@@ -5,12 +5,17 @@ import java.util.jar.JarFile
 import java.util.jar.JarOutputStream
 import java.util.zip.ZipEntry
 
+// Conveyor 打包版本（与 desktop/conveyor.conf 的 app.version 对齐；插件要求 project.version）
+version = "1.0.7"
+
 val deploymentConfig = rootProject.extra.get("deploymentConfig") as DeploymentConfig
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.compose)
     alias(libs.plugins.kotlin.compose)
+    // Conveyor 配置提取：printConveyorConfig 输出依赖/入口（conveyor.conf include 消费）
+    id("dev.hydraulic.conveyor") version "2.0"
     // 生成 BuildConfig 编译期常量
     alias(libs.plugins.buildconfig)
 }
@@ -146,6 +151,26 @@ val sqliteNativeArchDir: String = when (System.getProperty("os.arch")) {
     else -> "x86_64" // x86_64/amd64 统一；ppc64/riscv 等罕见架构走默认
 }
 val sqliteKeepNativePath = "org/sqlite/native/$sqliteNativeOsDir/$sqliteNativeArchDir/"
+
+// 更新站点地址：从 deployment.json 的 serverUrl 推导（私有化构建只改
+// deployment.json 一处，conveyor.conf 无需手改——避免忘改导致客户端指向
+// 他人更新源）。conveyor.conf 通过 #! include 消费本任务输出。
+tasks.register("printSiteConfig") {
+    doLast {
+        println("app.site.base-url = \"${deploymentConfig.serverUrl.trimEnd('/')}/downloads/desktop\"")
+    }
+}
+
+// ── Conveyor 打包输入集（跨平台交叉打包的标准产物）──
+// 主 jar（已物理排除 test 包）+ 全量依赖 jar。sqlite-jdbc 多平台 native 保留
+// （单机出三平台包，各平台 native 都要用——与 jpackage 链的单平台裁剪相反）。
+tasks.register<Copy>("conveyorInputs") {
+    group = "distribution"
+    description = "收集 Conveyor 打包输入：主 jar + 全部运行时依赖（含多平台 native）"
+    from(tasks.named("desktopJar"))
+    from(configurations.getByName("desktopRuntimeClasspath"))
+    into(layout.buildDirectory.dir("conveyor/lib"))
+}
 
 tasks.register("stripSqliteNativeForRelease") {
     group = "compose desktop"

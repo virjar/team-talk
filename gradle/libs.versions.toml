@@ -1,6 +1,6 @@
 [versions]
-kotlin = "2.3.20"
-compose = "1.10.3"
+kotlin = "2.4.10"
+compose = "1.11.1"
 agp = "8.13.2"
 ktor = "3.4.3"
 exposed = "0.61.0"

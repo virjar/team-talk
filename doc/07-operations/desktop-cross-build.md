@@ -1,10 +1,26 @@
-# Desktop 交叉打包调研
+# Desktop 交叉打包（已采用 Conveyor，2026-08-22 实施完成）
 
-> 结论先行：**jpackage 官方不支持交叉打包**（OpenJDK 明确立场，见
-> [JDK-8213087](https://bugs.openjdk.org/browse/JDK-8213087)：每种安装包格式必须在
-> 目标 OS 上构建——MSI 依赖 WiX 的 candle/light.exe（仅 Windows），DMG 依赖 macOS）。
-> 但存在成熟替代：**jlink 可交叉生成任意平台 runtime**，**launch4j 可在任意平台生成
-> Windows exe**，**Hydraulic Conveyor 可以在单机上产出三平台完整安装包**。
+> **当前状态：方案 A 已落地并通过端到端验收**——Mac 单机产出三平台全套
+> （mac 双架构 zip + Sparkle、Windows MSIX + appinstaller、Linux deb + tar.gz +
+> apt 仓库 + 下载页），发布到 demo 服务器进程内静态路由，mac 客户端实测
+> 自更新（1.0.3 检查 → 下载 delta 增量 → 退出自动安装 → 1.0.4 运行）。
+>
+> 使用手册（项目根目录执行）：
+> ```
+> ./gradlew :desktop:desktopJar          # 产物 jar（printConveyorConfig 的输入）
+> cd desktop && conveyor make site       # 三平台 + 更新站点（~6 分钟）
+> cd .. && ./gradlew deployDesktopSite   # rsync 到服务器 static/downloads/desktop
+> ```
+>
+> 两个关键配置陷阱（踩坑实录）：① JVM 应用必须 include 官方
+> `jvm/extract-native-libraries.conf`（缺失时 skiko native 加载挂起，表现为
+> 启动零窗口零异常的静默卡死）；② skiko 0.144 的 MachO 编译基线要求
+> `LSMinimumSystemVersion >= 14.0`。
+>
+> 历史调研记录（jpackage 不支持交叉的依据、方案对比）见下文。
+
+---
+
 
 ## 现状
 

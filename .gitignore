@@ -12,3 +12,5 @@ tools/e2e/__pycache__/
 buildSrc/.gradle/admin/dist/
 server/src/main/resources/static/admin/
 .zcode/
+
+desktop/output/

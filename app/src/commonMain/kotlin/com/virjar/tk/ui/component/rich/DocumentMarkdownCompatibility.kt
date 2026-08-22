@@ -66,7 +66,7 @@ internal data class RichEditorMarkdownCapability(
             val pending = ArrayDeque<Pair<ASTNode, Int>>()
             pending.addLast(this to 0)
             while (pending.isNotEmpty()) {
-                val (node, depth) = pending.removeLast()
+                val (node, depth) = pending.removeAt(pending.size - 1)
                 if (depth > MAX_MARKDOWN_AST_DEPTH) {
                     unsupported += RichEditorUnsupportedMarkdownFeature.EXCESSIVE_NESTING
                     continue
@@ -155,7 +155,7 @@ internal data class RichEditorMarkdownCapability(
             val pending = ArrayDeque<ASTNode>()
             children.asReversed().forEach(pending::addLast)
             while (pending.isNotEmpty()) {
-                val node = pending.removeLast()
+                val node = pending.removeAt(pending.size - 1)
                 if (node.type in targetTypes) return true
                 node.children.asReversed().forEach(pending::addLast)
             }
