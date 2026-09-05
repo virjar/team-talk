@@ -7,6 +7,7 @@
 | 任务 | 结果 |
 |---|---|
 | `verifyRelease` | 架构门禁、统一版本和 clean source identity 校验 |
+| `:server:admin:check` / `:server:admin:build` | 按锁文件安装前端依赖、检查 TypeScript 并生成 Admin 静态资源 |
 | `:server:server:buildServerDist` / `:server:server:installDist` | 构建 Admin 后生成带 identity manifest 的服务端分发 |
 | `deployServer` | clean 工作树本地构建并部署服务端 |
 | `deployStagedServer -PSERVER_DIST_DIR=...` | 只部署 CI 已构建服务端，不重新构建 |
@@ -25,9 +26,12 @@
 Desktop Compose 与 Conveyor 使用同一展示版本。二进制协议另按 major/minor 递增；`verifyRelease`
 检查已提交的 wire 基线。零号切换、数据保留及后续发版步骤见[版本机制](../04-protocol/versioning.md)。
 
-Server 构建通过锁定的 `server/admin/package-lock.json` 执行 Admin build，输出只进入 `server/server/build`；仓库中的
-历史 `server/admin/dist` 已删除并由根 `.gitignore` 忽略，不再是 Server 输入；`checkArchitecture` 会拒绝重新
-跟踪该目录。Conveyor 在 Linux job 交叉生成三平台站点，producer 完成后再写入 identity manifest。
+Admin 的独立 Gradle 模块管理 Node.js、随包 npm 和锁文件安装，在 `server/admin/build/dist` 生成静态资源。
+Server 的资源处理、分发与 `check` 通过任务依赖接入；生成资源复制进类路径与分发包的 `static/admin`。
+`:server:server:buildAdmin` 保留为兼容入口。
+源码旁的 `server/admin/dist` 和 `node_modules` 不是分发输入，也不能提交；
+构建链见[依赖维护](../08-development/dependency-maintenance.md#管理后台的构建链)。
+Conveyor 在 Linux job 交叉生成三平台站点，producer 完成后再写入 identity manifest。
 
 ## 2. 首次部署
 

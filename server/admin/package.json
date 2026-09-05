@@ -9,8 +9,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
-    "build:server": "tsc --noEmit && vite build --emptyOutDir"
+    "build": "tsc --noEmit && vite build --emptyOutDir"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",

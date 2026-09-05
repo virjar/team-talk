@@ -13,6 +13,9 @@
 # 测试夹具只检查编译，不为 Fake 编写自测
 ./gradlew :client:shared-testkit:compileKotlinJvm
 
+# 管理后台：锁文件安装、TypeScript 检查与生产构建
+./gradlew :server:admin:check
+
 # 服务端领域、持久化与进程内集成测试
 ./gradlew :server:server:test
 
@@ -22,6 +25,10 @@
 # 生产代码日志规范
 bash scripts/check-println.sh
 ```
+
+管理后台缺失源码导入、类型错误和静态资源打包失败都会使 `:server:admin:check` 失败；
+`:server:server:check` 也依赖同一构建链。Gradle 自动管理 Node.js 和 npm，详细路径见
+[管理后台构建链](../08-development/dependency-maintenance.md#管理后台的构建链)。该检查不替代浏览器交互验收。
 
 开发中可以只运行受影响模块；准备交付时应扩大到相邻边界。例如修改消息体既影响 `protocol`
 编解码，也影响服务端校验和客户端渲染，不能只跑一个 UI 测试。

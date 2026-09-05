@@ -36,8 +36,10 @@ TeamTalk 是多客户端、长连接、异步同步的业务系统。测试优�
 
 ## CI 的实际覆盖
 
-`ci.yml` 在 push/PR 时运行编译、架构检查、服务端真实 PostgreSQL/TCP 集成、SDK SQLite 及保留的
-协议/客户端局部测试。`acceptance.yml` 是手动触发的远程验收，`release.yml` 在部署后执行同一业务
+`ci.yml` 在 push/PR 时通过 Gradle 运行管理后台生产构建、客户端编译、架构检查、服务端真实
+PostgreSQL/TCP 集成、SDK SQLite 及保留的协议/客户端局部测试。管理后台使用 `:server:admin:check`，
+和本地共用锁文件安装、TypeScript 检查与 Vite 构建链，无需 CI 单独配置 Node.js。
+`acceptance.yml` 是手动触发的远程验收，`release.yml` 在部署后执行同一业务
 验收。Desktop 与 Android 的真实 UI 验收仍需按平台操作流程单独运行；不能把一次人工或任务内 UI
 验收当作每次提交都会运行的自动回归，也不能以 SDK 验收替代输入框、窗口和系统交互。
 

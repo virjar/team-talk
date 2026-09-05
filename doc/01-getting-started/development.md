@@ -9,8 +9,9 @@
 | Android Studio | 当前稳定版 | Android 构建、模拟器和真机调试 |
 | Git | 可读取提交 ID | 构建信息和发布溯源 |
 
-Gradle Wrapper 会下载固定版本的 Gradle；不需要全局安装 Gradle。第一次构建需要访问 Maven
-Central、Google Maven 和 Gradle 分发站点。
+Gradle Wrapper 会下载固定版本的 Gradle；管理后台的 Gradle 模块自动下载固定版本的 Node.js 及随包 npm。
+常规构建不需要全局安装 Gradle、Node.js 或 npm。第一次构建需要访问 Maven Central、Google Maven、
+Gradle 与 Node.js 分发站点，以及 npm 包仓库。
 
 ## 2. 仓库配置
 
@@ -31,7 +32,7 @@ Central、Google Maven 和 Gradle 分发站点。
 字段含义见[运行配置](../07-operations/configuration.md)。部署口令、数据库密码和 SSH 私钥不能写入
 该文件；敏感配置由本地 `gradle/deployment.secrets` 或 CI Secret 提供。
 
-## 3. 两种开发回路
+## 3. 开发回路
 
 ### 3.1 业务与客户端开发：连接配置服务器
 
@@ -68,6 +69,30 @@ docker compose up -d
 
 服务端调试适合领域逻辑、存储、协议分发和迁移问题。涉及多端行为时，最终仍需在配置部署上执行
 真实业务验收。
+
+### 3.3 管理后台开发
+
+从仓库根目录检查 TypeScript 并构建生产静态资源：
+
+```bash
+./gradlew :server:admin:check
+```
+
+`:server:admin:build` 使用同一构建链。Node.js、npm 安装工作区与构建产物均由 Gradle 管理，SPA 输出为
+`server/admin/build/dist/`；服务端资源处理、分发和 `:server:server:check` 都依赖这条链。
+不需要提前运行 npm，也不能用本地残留的 `server/admin/dist/` 代替源码构建。
+
+需要 Vite 热更新时，可自行安装符合 `server/admin/package.json` 中 `engines.node` 范围的 Node.js，
+然后在前端目录运行：
+
+```bash
+cd server/admin
+npm ci
+npm run dev
+```
+
+该开发回路的 `node_modules/` 与 Gradle 构建工作区分开；交付前仍运行 `:server:admin:check`。
+构建依赖图和版本维护规则见[依赖维护](../08-development/dependency-maintenance.md#管理后台的构建链)。
 
 ## 4. 常用任务
 

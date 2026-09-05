@@ -28,11 +28,6 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-      - uses: actions/setup-node@v6.5.0
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: server/admin/package-lock.json
       - uses: gradle/actions/setup-gradle@v5.0.2
       - run: ./gradlew :server:server:installDist --quiet
       - uses: actions/upload-artifact@v7.0.1
@@ -141,11 +136,6 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-      - uses: actions/setup-node@v6.5.0
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: server/admin/package-lock.json
       - uses: gradle/actions/setup-gradle@v5.0.2
       - name: Run business acceptance after artifact-only deploy
         run: ./gradlew :server:server:acceptanceTest

@@ -1,6 +1,4 @@
 import deployment.DeploymentConfig
-import org.gradle.api.tasks.Exec
-import org.gradle.api.tasks.Sync
 import org.gradle.language.jvm.tasks.ProcessResources
 
 plugins {
@@ -26,102 +24,21 @@ val serverProtocolWindow = deployment.ServerProtocolWindow(
     minimumMinor = rootProject.extra.get("minimumProtocolMinor") as Int,
     currentMinor = rootProject.extra.get("protocolMinor") as Int,
 )
-val npmCommand = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
-    "npm.cmd"
-} else {
-    "npm"
+// Admin owns its toolchain and producer tasks; Server consumes only its built artifact.
+val adminDist by configurations.creating {
+    isCanBeResolved = true
+    isCanBeConsumed = false
 }
-val nodeCommand = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
-    "node.exe"
-} else {
-    "node"
+val buildAdmin by tasks.registering {
+    group = "build"
+    description = "Build the Admin frontend consumed by Server (compatibility entry point)"
+    dependsOn(adminDist)
 }
-val adminDirectory = rootProject.layout.projectDirectory.dir("server/admin")
-val adminWorkspaceRoot = layout.buildDirectory.dir("admin-workspace")
-val adminBuildWorkspace = adminWorkspaceRoot.map { it.dir("project") }
-val adminNodeModules = adminWorkspaceRoot.map { it.dir("node_modules") }
-val preparedAdminPackageJson = adminWorkspaceRoot.map { it.file("package.json") }
-val preparedAdminPackageLock = adminWorkspaceRoot.map { it.file("package-lock.json") }
-val generatedAdminDist = layout.buildDirectory.dir("generated/admin")
+
 val generatedBuildIdentityResources = layout.buildDirectory.dir("generated/build-identity/resources")
 val generatedServerManifest = layout.buildDirectory.file(
     "generated/build-identity/distribution/${deployment.RELEASE_ARTIFACT_MANIFEST_FILE}",
 )
-
-val prepareAdminWorkspace by tasks.registering(Sync::class) {
-    group = "build"
-    description = "Copy Admin sources into an isolated build workspace"
-    from(adminDirectory) {
-        include("package.json", "package-lock.json", "index.html", "tsconfig.json", "vite.config.ts")
-        include("src/**")
-    }
-    into(adminBuildWorkspace)
-}
-
-val installAdminDependencies by tasks.registering(Exec::class) {
-    group = "build"
-    description = "Install the locked Admin frontend dependency graph"
-    dependsOn(prepareAdminWorkspace)
-    workingDir(adminWorkspaceRoot.get().asFile)
-    commandLine(npmCommand, "ci", "--no-audit", "--no-fund")
-    inputs.files(
-        adminDirectory.file("package.json"),
-        adminDirectory.file("package-lock.json"),
-    )
-    inputs.property("operatingSystem", System.getProperty("os.name"))
-    inputs.property("architecture", System.getProperty("os.arch"))
-    inputs.property(
-        "nodeVersion",
-        providers.exec { commandLine(nodeCommand, "--version") }.standardOutput.asText.map(String::trim),
-    )
-    inputs.property(
-        "npmVersion",
-        providers.exec { commandLine(npmCommand, "--version") }.standardOutput.asText.map(String::trim),
-    )
-    outputs.files(preparedAdminPackageJson, preparedAdminPackageLock)
-    outputs.dir(adminNodeModules)
-    doFirst {
-        val workspace = adminWorkspaceRoot.get().asFile
-        workspace.mkdirs()
-        adminDirectory.file("package.json").asFile.copyTo(
-            preparedAdminPackageJson.get().asFile,
-            overwrite = true,
-        )
-        adminDirectory.file("package-lock.json").asFile.copyTo(
-            preparedAdminPackageLock.get().asFile,
-            overwrite = true,
-        )
-    }
-}
-
-val buildAdmin by tasks.registering(Exec::class) {
-    group = "build"
-    description = "Build the Admin SPA into the Server build directory"
-    dependsOn(installAdminDependencies)
-    workingDir(adminBuildWorkspace.get().asFile)
-    environment(
-        "PATH",
-        adminNodeModules.get().dir(".bin").asFile.absolutePath +
-            File.pathSeparator + System.getenv("PATH").orEmpty(),
-    )
-    commandLine(
-        npmCommand,
-        "run",
-        "build:server",
-        "--",
-        "--outDir",
-        generatedAdminDist.get().asFile.absolutePath,
-    )
-    inputs.dir(adminBuildWorkspace.map { it.dir("src") })
-    inputs.files(
-        adminBuildWorkspace.map { it.file("index.html") },
-        adminBuildWorkspace.map { it.file("package.json") },
-        adminBuildWorkspace.map { it.file("package-lock.json") },
-        adminBuildWorkspace.map { it.file("tsconfig.json") },
-        adminBuildWorkspace.map { it.file("vite.config.ts") },
-    )
-    outputs.dir(generatedAdminDist)
-}
 
 val generateServerBuildIdentity by tasks.registering {
     group = "build"
@@ -162,7 +79,7 @@ distributions {
                 exclude("admin/**")
                 into("static")
             }
-            from(files(generatedAdminDist).builtBy(buildAdmin)) {
+            from(adminDist) {
                 into("static/admin")
             }
             from(files(generatedServerManifest).builtBy(generateServerBuildIdentity))
@@ -188,6 +105,7 @@ tasks.register("buildServerDist") {
 }
 
 dependencies {
+    add(adminDist.name, project(path = ":server:admin", configuration = "adminDist"))
     // Koin contributes ktor-server-di; it must use the same Ktor release as our HTTP engine.
     implementation(platform(libs.ktor.bom))
     // 媒体缩略图：图片纯 Java2D；视频 javacv JNI（native 内嵌 jar，平台裁剪：服务器 linux + 开发 mac 双架构）
@@ -247,13 +165,15 @@ sourceSets.named("main") {
 
 tasks.named<ProcessResources>("processResources") {
     dependsOn(buildAdmin, generateServerBuildIdentity)
-    from(generatedAdminDist) { into("static/admin") }
+    from(adminDist) { into("static/admin") }
     from(generatedBuildIdentityResources)
 }
 
 tasks.named("installDist") {
     dependsOn(buildAdmin, generateServerBuildIdentity)
 }
+
+tasks.named("check") { dependsOn(buildAdmin) }
 
 tasks.test {
     // CliPeerE2eTest 会启动 shared 的 headless agent；必须与当前协议一起重建，

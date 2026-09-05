@@ -126,7 +126,8 @@ feature controller；`AppDataState` 只做组装、生命周期和分发，不�
 
 ## 8. 管理与部署
 
-- `server/admin/`：React/Vite 管理后台。
+- `server/admin/`：独立 Gradle 模块，构建 React/Vite 管理后台；`:server:admin:check` 检查 TypeScript
+  并生成 SPA，服务端消费其构建产物。流程见[依赖维护](dependency-maintenance.md#管理后台的构建链)。
 - `buildSrc/src/main/kotlin/deployment/`：配置校验、secret、远端 provisioning、上传。
 - `buildSrc/src/main/kotlin/ArchitectureCheckTask.kt`：架构检查任务，与其它根层 Gradle 任务并列。
 - `.github/workflows/`：CI、本地安全网、真实验收与分平台发布。

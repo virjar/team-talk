@@ -74,9 +74,11 @@ android / desktop ──▶ app ──▶ shared ──▶ protocol-netty ──
 ### 前置条件
 
 - JDK 17
-- Node.js 24 LTS 与 npm（本地也支持 Node.js 22.12+ 的 22 LTS；Server 资源图会从锁文件构建 Admin）
 - Docker（本地 PostgreSQL）
 - Android Studio（仅 Android 开发需要）
+
+Gradle 自动下载固定版本的 Node.js，并从锁文件构建管理后台；常规构建不需要全局安装 Node.js 或 npm。
+首次构建需要网络，前端热更新开发见[开发环境](doc/01-getting-started/development.md#33-管理后台开发)。
 
 ### 启动 Desktop 客户端
 
@@ -102,6 +104,7 @@ docker compose up -d
 ```bash
 ./gradlew :protocol:protocol:jvmTest :protocol:protocol-netty:jvmTest :client:shared:jvmTest
 ./gradlew :server:server:test
+./gradlew :server:admin:check
 ./gradlew :client:app:desktopTest :client:desktop:desktopTest
 ./gradlew :client:desktop:compileKotlinDesktop
 ./gradlew :server:server:acceptanceTest

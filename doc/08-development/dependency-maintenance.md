@@ -9,7 +9,7 @@
 | 事实 | 权威入口 |
 |---|---|
 | Gradle 发行包与校验值 | [Wrapper 配置](../../gradle/wrapper/gradle-wrapper.properties) |
-| Kotlin、Compose、Ktor、存储和客户端库 | [版本目录](../../gradle/libs.versions.toml)及各模块构建文件 |
+| Kotlin、Compose、Ktor、存储、客户端库及 Admin Node/Gradle 插件版本 | [版本目录](../../gradle/libs.versions.toml)及各模块构建文件 |
 | buildSrc 独立构建依赖 | [buildSrc 构建文件](../../buildSrc/build.gradle.kts) |
 | Admin 声明、实际安装图和 Node 范围 | [package.json](../../server/admin/package.json)、[锁文件](../../server/admin/package-lock.json) |
 | CI 工具环境 | [.github/workflows](../../.github/workflows) |
@@ -34,19 +34,42 @@ Ktor、Netty 等多模块框架使用相应 BOM/约束保持一致，并查看�
 不要用全局强制版本隐藏不兼容，也不要为升级自动切换传输协议、媒体在线播放或数据存储架构。
 跨代迁移拆分见[路线图](../10-reference/roadmap.md#基础软件的独立迁移)。
 
-Admin 构建优先使用 Node.js 24 LTS；本地允许 Node.js 22.12+ 的 22 LTS。Node.js 20 已结束官方支持，
-不再作为新环境基线。版本生命周期见[Node.js 官方发布表](https://nodejs.org/en/about/previous-releases)。
+Admin 的 Gradle 构建固定 Node.js 版本，并使用该发行包随附的 npm；升级时同时核对
+`package.json` 的 Node 范围。版本生命周期见[Node.js 官方发布表](https://nodejs.org/en/about/previous-releases)。
 Vite 对 Node 和浏览器的要求见[官方迁移指南](https://v7.vite.dev/guide/migration)，产品浏览器范围见
 [管理后台](../06-server/search-and-admin.md#5-管理后台)。Node 只用于构建静态资源，不是服务端运行依赖。
 
 CI 的 Gradle Actions 保留使用 Node 24 的 v5 维护线；v6 将缓存提取为另有使用条款的专有组件，
 缓存默认开启，相关许可取舍单独评估，见[官方 v6 说明](https://github.com/gradle/actions/releases/tag/v6.0.0)。
 
+## 管理后台的构建链
+
+[server/admin/build.gradle.kts](../../server/admin/build.gradle.kts) 使用
+[`com.github.node-gradle.node`](https://github.com/node-gradle/gradle-node-plugin/blob/7.1.0/docs/usage.md)
+管理 Node.js 下载和 npm 执行。插件与 Node.js 的版本从版本目录读取；前端依赖仍由 `package.json`
+声明、`package-lock.json` 锁定。CI 与本地都运行 Gradle，不依赖全局 Node.js 或源码旁的 `node_modules`。
+
+```mermaid
+flowchart LR
+    S["Admin 源码与锁文件"] --> W["server/admin/build 隔离工作区"]
+    N["Gradle 下载固定 Node.js 与随包 npm"] --> W
+    W --> I["npm ci"]
+    I --> T["TypeScript 检查与 Vite 构建"]
+    T --> D["server/admin/build/dist"]
+    D --> C[":server:admin:check / build"]
+    D --> R["Server 资源与分发"]
+    D --> K[":server:server:check"]
+```
+
+安装与编译中任一步失败，消费产物的 Gradle 任务都会失败；不能用旧静态资源绕过缺失导入或类型错误。
+`:server:server:buildAdmin` 是兼容入口，实际构建由 `:server:admin` 负责。首次运行需要联网下载
+Node.js 和锁定 npm 包；Vite 热更新仍可使用独立本地 Node.js，步骤见[开发环境](../01-getting-started/development.md#33-管理后台开发)。
+
 ## 一轮升级如何闭合
 
 1. 记录起点 commit、声明与解析版本；读取官方变更和自身调用点，列出必须保留的数据与配置。
 2. 以一组可回退的改动升级；更新 Wrapper 校验、版本目录和锁文件，保留协议编号、dataset 和 schema 身份。
-3. 运行受影响模块编译、协议生成/基线检查，以及对应的少量集成测试；Admin 使用锁文件安装并生产构建。
+3. 运行受影响模块编译、协议生成/基线检查，以及对应的少量集成测试；Admin 运行 `:server:admin:check`。
 4. 网络组验证 TLS、认证协商、收发与附件；存储组验证旧资料重开和重启；客户端库验证候选客户端短路径。
    普通部署先经过已有 epoch/dataset 预检，保留资料，随后按需运行 `previewSmokeTest`。
 5. 在提交和构建报告记录实际通过项、未验证平台及暂缓原因。打包成功不等于安装通过，本地集成也不等于

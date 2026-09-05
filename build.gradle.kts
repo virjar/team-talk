@@ -90,11 +90,14 @@ subprojects {
 }
 
 val trackedAdminGeneratedPaths = providers.exec {
-    commandLine("git", "ls-files", "--cached", "--", "server/admin/dist", "server/admin/node_modules")
+    commandLine("git", "ls-files", "--cached", "--", "server/admin")
 }.standardOutput.asText.get()
     .lineSequence()
     .map(String::trim)
-    .filter(String::isNotEmpty)
+    .filter {
+        it.startsWith("server/admin/dist/") || it.startsWith("server/admin/node_modules/") ||
+            it.endsWith(".tsbuildinfo")
+    }
     .toList()
 
 val checkArchitecture = tasks.register<ArchitectureCheckTask>("checkArchitecture") {

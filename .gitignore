@@ -8,8 +8,9 @@ local.properties
 .DS_Store
 data/
 logs/
-!admin/src/pages/logs/
-!admin/src/pages/logs/**
+!/server/admin/src/pages/logs/
+!/server/admin/src/pages/logs/**
+*.tsbuildinfo
 scripts/e2e/__pycache__/
 /server/admin/dist/
 /server/admin/node_modules/

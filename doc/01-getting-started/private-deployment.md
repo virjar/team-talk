@@ -3,9 +3,10 @@
 TeamTalk 的部署目标是：一个 fork 可以通过一份公开坐标配置和一组私密凭据，构建自己的客户端、
 部署自己的服务端并对同一目标运行验收。
 
-执行构建/部署的机器需要 JDK 17、Node.js 24 LTS 与 npm；本地也支持 Node.js 22.12+ 的 22 LTS。
-Server distribution 会在隔离的 `server/server/build` 工作区中按 `server/admin/package-lock.json`
-构建管理后台，不读取仓库内的历史 `server/admin/dist`。运行已构建服务端不需要 Node.js。
+执行构建/部署的机器需要 JDK 17。Gradle 自动下载固定版本的 Node.js 及随包 npm，并由
+`:server:admin` 在隔离的 `server/admin/build` 工作区中按锁文件构建管理后台；首次构建需要访问
+Node.js 分发站点和 npm 包仓库。常规构建和运行已构建服务端都不需要全局安装 Node.js。
+构建产物与服务端分发的衔接见[部署与升级](../07-operations/deployment.md#1-部署任务)。
 
 ## 1. 准备服务器
 

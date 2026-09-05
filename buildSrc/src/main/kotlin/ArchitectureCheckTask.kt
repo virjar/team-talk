@@ -293,7 +293,7 @@ abstract class ArchitectureCheckTask : DefaultTask() {
                 ?.readLines()
                 ?.map(String::trim)
                 .orEmpty()
-            for (generatedDirectory in listOf("/server/admin/dist/", "/server/admin/node_modules/")) {
+            for (generatedDirectory in listOf("/server/admin/dist/", "/server/admin/node_modules/", "*.tsbuildinfo")) {
                 if (generatedDirectory !in ignoreRules) {
                     add("Admin producer boundary: .gitignore must retain $generatedDirectory")
                 }
@@ -301,8 +301,8 @@ abstract class ArchitectureCheckTask : DefaultTask() {
             trackedAdminGeneratedFiles.get()
                 .forEach { relativePath ->
                     add(
-                        "$relativePath: Admin producer boundary forbids tracked dist or node_modules; " +
-                            "Server must build Admin from the locked source graph into server/server/build",
+                        "$relativePath: Admin producer boundary forbids tracked dist, node_modules or TypeScript build metadata; " +
+                            "Admin must build its locked source graph into server/admin/build",
                     )
                 }
             addAll(configuredDependencyViolations.get())

@@ -37,8 +37,9 @@
 
 - `protocol ← protocol-netty ← shared ← app ← android/desktop` 单向依赖；`protocol` 禁止 Netty。
 - `server → protocol/protocol-netty` 只复用契约和 TCP 适配；服务端生产代码禁止依赖客户端 SDK `shared`。
-- Admin 只由锁定源码图在 `server/server/build` 中生产；`server/admin/dist` 是忽略的本地产物，禁止重新跟踪或作为
-  Server 资源输入。
+- Admin 由独立 `:server:admin` Gradle 模块在 `server/admin/build` 内按锁文件构建；Node.js 与 npm 也由
+  该模块管理。Server 通过任务产物依赖获取静态资源；`server/admin/dist`、`node_modules` 和 `build`
+  均是本地产物，禁止跟踪或绕过构建链作为分发输入。
 - 服务端 `domain` 不 import `infra`、RPC 生成 Stub 或 transport adapter；外部能力由领域端口注入。
 - 每个长期对象有唯一所有者，owner 销毁时级联销毁。
 - `close/destroy` 幂等。
