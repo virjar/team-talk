@@ -101,8 +101,8 @@ class ReleaseMetadata(private val root: File) {
 
     fun git(vararg args: String): String {
         val result = localChecked(
-        "read release source metadata", listOf("git", *args), workingDirectory = root,
-        outputMode = ProcessOutputMode.CAPTURE,
+            "read release source metadata", listOf("git", *args), workingDirectory = root,
+            outputMode = ProcessOutputMode.CAPTURE,
         )
         check(!result.outputTruncated) { "Git output exceeded the release metadata limit; narrow the commit range" }
         return result.output.trim()

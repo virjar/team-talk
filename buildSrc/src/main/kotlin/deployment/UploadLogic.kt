@@ -1,9 +1,8 @@
 package deployment
 
-/** 客户端产物上传与服务端部署入口。 */
+/** 手动服务端部署入口；客户端发行由 release 包统一管理。 */
 
 import java.io.File
-import java.util.UUID
 import org.gradle.api.GradleException
 
 internal fun requireArtifact(file: File?, description: String): File {
