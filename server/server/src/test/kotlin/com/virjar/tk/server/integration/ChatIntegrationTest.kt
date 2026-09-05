@@ -1,0 +1,277 @@
+package com.virjar.tk.server.integration
+
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.RegisterExtension
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+class ChatIntegrationTest {
+
+    companion object {
+        @JvmField
+        @RegisterExtension
+        val ext = IntegrationTestExtension()
+    }
+
+    private val ctx get() = ext.env
+
+    @Test
+    fun `create personal chat`() = runTest {
+        val uid1 = ctx.registerUser()
+        val uid2 = ctx.registerUser()
+        val chat = ctx.chatService.createPersonalChat(uid1, uid2)
+        assertNotNull(chat.chatId)
+        assertEquals(1, chat.chatType)
+    }
+
+    @Test
+    fun `create personal chat returns same chat for same pair`() = runTest {
+        val uid1 = ctx.registerUser()
+        val uid2 = ctx.registerUser()
+        val chat1 = ctx.chatService.createPersonalChat(uid1, uid2)
+        val chat2 = ctx.chatService.createPersonalChat(uid1, uid2)
+        assertEquals(chat1.chatId, chat2.chatId)
+    }
+
+    @Test
+    fun `create group chat`() = runTest {
+        val creator = ctx.registerUser()
+        val member1 = ctx.registerUser()
+        val member2 = ctx.registerUser()
+        val group = ctx.chatService.createGroup("TestGroup", null, creator, listOf(member1, member2))
+        assertNotNull(group.chatId)
+        assertEquals(2, group.chatType)
+        assertEquals("TestGroup", group.name)
+    }
+
+    @Test
+    fun `get chat by id`() = runTest {
+        val uid1 = ctx.registerUser()
+        val uid2 = ctx.registerUser()
+        val created = ctx.chatService.createPersonalChat(uid1, uid2)
+        val fetched = ctx.chatService.getChat(created.chatId)
+        assertNotNull(fetched)
+        assertEquals(created.chatId, fetched.chatId)
+    }
+
+    @Test
+    fun `update group`() = runTest {
+        val creator = ctx.registerUser()
+        val group = ctx.chatService.createGroup("OldName", null, creator, listOf(creator))
+        ctx.chatService.updateGroup(creator, group.chatId, name = "NewName", notice = "New notice")
+        val updated = ctx.chatService.getChat(group.chatId)
+        assertNotNull(updated)
+        assertEquals("NewName", updated.name)
+        assertEquals("New notice", updated.notice)
+    }
+
+    @Test
+    fun `get group members`() = runTest {
+        val creator = ctx.registerUser()
+        val member1 = ctx.registerUser()
+        val group = ctx.chatService.createGroup("Group", null, creator, listOf(member1))
+        val members = ctx.chatService.getMembers(group.chatId)
+        assertTrue(members.any { it.uid == creator })
+        assertTrue(members.any { it.uid == member1 })
+    }
+
+    @Test
+    fun `non member cannot read chat detail or member profiles`() = runTest {
+        val owner = ctx.registerUser()
+        val member = ctx.registerUser()
+        val outsider = ctx.registerUser()
+        val group = ctx.chatService.createGroup("PrivateGroup", null, owner, listOf(member))
+
+        assertFailsWith<IllegalArgumentException> { ctx.chatService.getChatFor(outsider, group.chatId) }
+        assertFailsWith<IllegalArgumentException> { ctx.chatService.getMembersFor(outsider, group.chatId) }
+        assertEquals(group.chatId, ctx.chatService.getChatFor(member, group.chatId).chatId)
+    }
+
+    @Test
+    fun `add members to group`() = runTest {
+        val creator = ctx.registerUser()
+        val member1 = ctx.registerUser()
+        val newMember = ctx.registerUser()
+        val group = ctx.chatService.createGroup("Group", null, creator, listOf(member1))
+        ctx.chatService.addMembers(creator, group.chatId, listOf(newMember))
+        val members = ctx.chatService.getMembers(group.chatId)
+        assertTrue(members.any { it.uid == newMember })
+    }
+
+    @Test
+    fun `remove member from group`() = runTest {
+        val creator = ctx.registerUser()
+        val member1 = ctx.registerUser()
+        val group = ctx.chatService.createGroup("Group", null, creator, listOf(member1))
+        ctx.chatService.removeMember(creator, group.chatId, member1)
+        val members = ctx.chatService.getMembers(group.chatId)
+        assertTrue(members.none { it.uid == member1 })
+    }
+
+    @Test
+    fun `ordinary add after removal does not restore old admin role`() = runTest {
+        val owner = ctx.registerUser()
+        val member = ctx.registerUser()
+        val group = ctx.chatService.createGroup("RoleResetAdd", null, owner, listOf(member))
+        ctx.chatService.setRole(owner, group.chatId, member, 1)
+        ctx.chatService.addMembers(owner, group.chatId, listOf(member))
+        assertEquals(1, ctx.chatService.getMembers(group.chatId).single { it.uid == member }.role)
+        ctx.chatService.removeMember(owner, group.chatId, member)
+
+        ctx.chatService.addMembers(owner, group.chatId, listOf(member))
+
+        assertEquals(0, ctx.chatService.getMembers(group.chatId).single { it.uid == member }.role)
+    }
+
+    @Test
+    fun `invite rejoin after removal does not restore old admin role`() = runTest {
+        val owner = ctx.registerUser()
+        val member = ctx.registerUser()
+        val group = ctx.chatService.createGroup("RoleResetInvite", null, owner, listOf(member))
+        val token = ctx.chatService.createInviteLink(owner, group.chatId, "rejoin", 0, 0)
+        ctx.chatService.setRole(owner, group.chatId, member, 1)
+        ctx.chatService.removeMember(owner, group.chatId, member)
+
+        ctx.chatService.joinByInvite(member, token)
+
+        assertEquals(0, ctx.chatService.getMembers(group.chatId).single { it.uid == member }.role)
+    }
+
+    @Test
+    fun `set member role`() = runTest {
+        val creator = ctx.registerUser()
+        val member1 = ctx.registerUser()
+        val group = ctx.chatService.createGroup("Group", null, creator, listOf(member1))
+        ctx.chatService.setRole(creator, group.chatId, member1, 1)
+        val members = ctx.chatService.getMembers(group.chatId)
+        val updatedMember = members.first { it.uid == member1 }
+        assertEquals(1, updatedMember.role)
+    }
+
+    @Test
+    fun `owner cannot demote self and admin cannot mute equal or higher roles`() = runTest {
+        val owner = ctx.registerUser()
+        val admin = ctx.registerUser()
+        val member = ctx.registerUser()
+        val group = ctx.chatService.createGroup("Hierarchy", null, owner, listOf(admin, member))
+        ctx.chatService.setRole(owner, group.chatId, admin, 1)
+
+        assertFailsWith<IllegalArgumentException> { ctx.chatService.setRole(owner, group.chatId, owner, 0) }
+        assertFailsWith<IllegalArgumentException> { ctx.chatService.muteMember(admin, group.chatId, owner, 60) }
+        assertFailsWith<IllegalArgumentException> { ctx.chatService.muteMember(admin, group.chatId, admin, 60) }
+        ctx.chatService.muteMember(admin, group.chatId, member, 60)
+        ctx.chatService.unmuteMember(admin, group.chatId, member)
+    }
+
+    @Test
+    fun `transfer ownership`() = runTest {
+        val creator = ctx.registerUser()
+        val member1 = ctx.registerUser()
+        val group = ctx.chatService.createGroup("Group", null, creator, listOf(member1))
+        ctx.chatService.transferOwner(creator, group.chatId, member1)
+        val members = ctx.chatService.getMembers(group.chatId)
+        assertEquals(2, members.first { it.uid == member1 }.role)
+        assertTrue(members.first { it.uid == creator }.role < 2)
+    }
+
+    @Test
+    fun `mute and unmute member`() = runTest {
+        val creator = ctx.registerUser()
+        val member1 = ctx.registerUser()
+        val group = ctx.chatService.createGroup("Group", null, creator, listOf(member1))
+        ctx.chatService.muteMember(creator, group.chatId, member1, 3600)
+        ctx.chatService.unmuteMember(creator, group.chatId, member1)
+        // 如果没有抛异常就算通过
+    }
+
+    @Test
+    fun `mute and unmute all`() = runTest {
+        val creator = ctx.registerUser()
+        val group = ctx.chatService.createGroup("Group", null, creator, listOf(creator))
+        ctx.chatService.muteAll(creator, group.chatId)
+        val muted = ctx.chatService.getChat(group.chatId)
+        assertNotNull(muted)
+        assertTrue(muted.mutedAll)
+        ctx.chatService.unmuteAll(creator, group.chatId)
+        val unmuted = ctx.chatService.getChat(group.chatId)
+        assertNotNull(unmuted)
+        assertTrue(!unmuted.mutedAll)
+    }
+
+    @Test
+    fun `create and list invite links`() = runTest {
+        val creator = ctx.registerUser()
+        val group = ctx.chatService.createGroup("Group", null, creator, listOf(creator))
+        val token = ctx.chatService.createInviteLink(creator, group.chatId, "TestLink", 10, Long.MAX_VALUE)
+        assertNotNull(token)
+        val links = ctx.chatService.listInviteLinks(creator, group.chatId)
+        assertTrue(links.any { it.token == token })
+    }
+
+    @Test
+    fun `join by invite link`() = runTest {
+        val creator = ctx.registerUser()
+        val group = ctx.chatService.createGroup("Group", null, creator, listOf(creator))
+        val token = ctx.chatService.createInviteLink(creator, group.chatId, "TestLink", 10, Long.MAX_VALUE)
+        val joiner = ctx.registerUser()
+        val joined = ctx.chatService.joinByInvite(joiner, token)
+        assertEquals(group.chatId, joined.chatId)
+        val members = ctx.chatService.getMembers(group.chatId)
+        assertTrue(members.any { it.uid == joiner })
+    }
+
+    @Test
+    fun `revoke invite link`() = runTest {
+        val creator = ctx.registerUser()
+        val group = ctx.chatService.createGroup("Group", null, creator, listOf(creator))
+        val token = ctx.chatService.createInviteLink(creator, group.chatId, "TestLink", 10, Long.MAX_VALUE)
+        ctx.chatService.revokeInviteLink(creator, token)
+        val links = ctx.chatService.listInviteLinks(creator, group.chatId)
+        val revoked = links.first { it.token == token }
+        assertTrue(revoked.revokedAt > 0)
+    }
+
+    @Test
+    fun `negative invite limits are rejected without persistence`() = runTest {
+        val owner = ctx.registerUser()
+        val group = ctx.chatService.createGroup("InvalidInvite", null, owner, emptyList())
+
+        assertFailsWith<IllegalArgumentException> {
+            ctx.chatService.createInviteLink(owner, group.chatId, "negative uses", -1, 0)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ctx.chatService.createInviteLink(owner, group.chatId, "negative expiry", 0, -1)
+        }
+        assertTrue(ctx.chatService.listInviteLinks(owner, group.chatId).isEmpty())
+    }
+
+    @Test
+    fun `dissolved chat is no longer active`() = runTest {
+        val creator = ctx.registerUser()
+        val group = ctx.chatService.createGroup("ToDelete", null, creator, listOf(creator))
+        val invite = ctx.chatService.createInviteLink(creator, group.chatId, "deleted with chat", 0, 0)
+        ctx.chatService.dissolveGroup(creator, group.chatId)
+        assertNull(ctx.chatService.getChat(group.chatId))
+        assertTrue(ctx.chatRepo.listUserChats(creator).none { it.chatId == group.chatId })
+        assertTrue(ctx.conversationService.listConversations(creator).none { it.chatId == group.chatId })
+        assertNull(ctx.conversationRepo.getConversation(creator, group.chatId))
+        assertFailsWith<IllegalArgumentException> { ctx.chatService.getInviteInfo(invite) }
+    }
+
+    @Test
+    fun `member can leave without dissolving group`() = runTest {
+        val creator = ctx.registerUser()
+        val member = ctx.registerUser()
+        val group = ctx.chatService.createGroup("LeaveGroup", null, creator, listOf(member))
+
+        ctx.chatService.leaveGroup(member, group.chatId)
+
+        assertNotNull(ctx.chatService.getChat(group.chatId))
+        assertTrue(ctx.chatService.getMembers(group.chatId).none { it.uid == member })
+        assertTrue(ctx.chatService.getMembers(group.chatId).any { it.uid == creator })
+    }
+}

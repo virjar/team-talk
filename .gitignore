@@ -8,5 +8,12 @@ local.properties
 .DS_Store
 data/
 logs/
-tools/e2e/__pycache__/
-buildSrc/.gradle/
+!admin/src/pages/logs/
+!admin/src/pages/logs/**
+scripts/e2e/__pycache__/
+/server/admin/dist/
+/server/admin/node_modules/
+server/server/src/main/resources/static/admin/
+.zcode/
+
+client/desktop/output/

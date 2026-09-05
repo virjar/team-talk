@@ -1,0 +1,1652 @@
+-- 发布前阶段本地库按 schema epoch 整库重建，不维护就地迁移。
+-- 用户
+CREATE TABLE IF NOT EXISTS user (
+    uid TEXT PRIMARY KEY NOT NULL,
+    username TEXT NOT NULL,
+    name TEXT NOT NULL,
+    avatar_path TEXT,
+    avatar_name TEXT,
+    avatar_content_type TEXT,
+    avatar_size INTEGER,
+    phone TEXT,
+    sex INTEGER DEFAULT 0,
+    role INTEGER DEFAULT 0,
+    status INTEGER DEFAULT 1,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),
+    CHECK(
+        (avatar_path IS NULL AND avatar_name IS NULL AND avatar_content_type IS NULL AND avatar_size IS NULL) OR
+        (avatar_path IS NOT NULL AND avatar_name IS NOT NULL AND avatar_content_type IS NOT NULL AND avatar_size >= 0)
+    )
+);
+
+-- 联系人
+CREATE TABLE IF NOT EXISTS contact (
+    uid TEXT NOT NULL,
+    friend_uid TEXT NOT NULL,
+    remark TEXT,
+    status INTEGER DEFAULT 1,
+    PRIMARY KEY (uid, friend_uid)
+);
+
+-- 聊天
+CREATE TABLE IF NOT EXISTS chat (
+    chat_id TEXT PRIMARY KEY NOT NULL,
+    chat_type INTEGER NOT NULL,
+    name TEXT,
+    avatar TEXT,
+    creator TEXT,
+    member_count INTEGER DEFAULT 0,
+    max_seq INTEGER DEFAULT 0,
+    notice TEXT,
+    muted_all INTEGER DEFAULT 0
+);
+
+-- 群成员
+CREATE TABLE IF NOT EXISTS member (
+    chat_id TEXT NOT NULL,
+    uid TEXT NOT NULL,
+    role INTEGER DEFAULT 0,
+    nickname TEXT,
+    joined_at INTEGER DEFAULT 0,
+    PRIMARY KEY (chat_id, uid)
+);
+
+-- 终端用户只读的组织目录。组织单元全量常驻内存；成员只在选中节点时按 unit_id 载入。
+-- OrganizationMember.user 随直属关系快照持久化，避免离线目录依赖另一张用户投影恰好已加载。
+CREATE TABLE IF NOT EXISTS organization_unit (
+    unit_id TEXT PRIMARY KEY NOT NULL,
+    parent_id TEXT,
+    name TEXT NOT NULL,
+    leader_uid TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    group_chat_id TEXT,
+    status INTEGER NOT NULL DEFAULT 1,
+    direct_member_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS organization_member (
+    unit_id TEXT NOT NULL,
+    uid TEXT NOT NULL,
+    title TEXT,
+    is_primary INTEGER NOT NULL DEFAULT 0,
+    joined_at INTEGER NOT NULL DEFAULT 0,
+    user_username TEXT,
+    user_name TEXT,
+    user_avatar_path TEXT,
+    user_avatar_name TEXT,
+    user_avatar_content_type TEXT,
+    user_avatar_size INTEGER,
+    user_phone TEXT,
+    user_sex INTEGER,
+    user_role INTEGER,
+    user_status INTEGER,
+    user_revision INTEGER,
+    CHECK(
+        (user_username IS NULL AND user_name IS NULL AND user_revision IS NULL) OR
+        (user_username IS NOT NULL AND user_name IS NOT NULL AND user_revision > 0)
+    ),
+    CHECK(
+        (user_avatar_path IS NULL AND user_avatar_name IS NULL AND user_avatar_content_type IS NULL AND user_avatar_size IS NULL) OR
+        (user_avatar_path IS NOT NULL AND user_avatar_name IS NOT NULL AND user_avatar_content_type IS NOT NULL AND user_avatar_size >= 0)
+    ),
+    PRIMARY KEY (unit_id, uid)
+);
+CREATE INDEX IF NOT EXISTS idx_organization_member_unit_joined
+ON organization_member(unit_id, joined_at, uid);
+
+-- One row owns the monotonic organization revision boundary. Rows from an older snapshot remain
+-- readable for local-first rendering, but callers only treat them as authoritative when their
+-- snapshot revision reaches required_revision.
+CREATE TABLE IF NOT EXISTS organization_projection_state (
+    singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton = 1),
+    required_revision INTEGER NOT NULL DEFAULT 0 CHECK(required_revision >= 0),
+    unit_snapshot_revision INTEGER NOT NULL DEFAULT 0 CHECK(unit_snapshot_revision >= 0),
+    unit_snapshot_known INTEGER NOT NULL DEFAULT 0 CHECK(unit_snapshot_known IN (0, 1))
+);
+
+-- A row means the direct-member list for this unit completed an authoritative read at revision.
+-- It deliberately survives both an empty result and later invalidation so stale rows remain useful
+-- for offline display without being mistaken for a complete current-revision snapshot.
+CREATE TABLE IF NOT EXISTS organization_member_snapshot (
+    unit_id TEXT PRIMARY KEY NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 0 CHECK(revision >= 0)
+);
+
+-- Enterprise documents are a bounded clean server projection. Every tree row is a document node;
+-- there is deliberately no folder discriminator. A node may have both a cached body and children.
+CREATE TABLE IF NOT EXISTS document_space (
+    space_id TEXT PRIMARY KEY NOT NULL CHECK(length(space_id) BETWEEN 1 AND 128),
+    position INTEGER NOT NULL CHECK(position >= 0),
+    name TEXT NOT NULL,
+    description TEXT,
+    my_role INTEGER NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    owner_principal_type INTEGER NOT NULL CHECK(owner_principal_type IN (1, 2)),
+    owner_principal_id TEXT NOT NULL,
+    steward_uid TEXT NOT NULL,
+    custody_revision INTEGER NOT NULL CHECK(custody_revision > 0),
+    policy_revision INTEGER NOT NULL CHECK(policy_revision > 0)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_space_position
+ON document_space(position);
+
+-- 1=complete visible-space snapshot, 2=recent home, 3=recently-created home. A row is retained for
+-- an authoritative empty snapshot and removed only by the server-projection reset.
+CREATE TABLE IF NOT EXISTS document_projection_marker (
+    projection INTEGER PRIMARY KEY NOT NULL CHECK(projection IN (1, 2, 3))
+);
+
+-- parent_key is the canonical branch identity: an empty key represents the root branch. The
+-- marker survives an authoritative empty response, distinguishing it from an unfetched branch.
+CREATE TABLE IF NOT EXISTS document_branch (
+    space_id TEXT NOT NULL CHECK(length(space_id) BETWEEN 1 AND 128),
+    parent_key TEXT NOT NULL CHECK(length(parent_key) <= 128),
+    PRIMARY KEY (space_id, parent_key)
+);
+
+-- Sibling order is the immutable service tuple (created_at, node_id), not a second mutable rank.
+CREATE TABLE IF NOT EXISTS document_node (
+    space_id TEXT NOT NULL CHECK(length(space_id) BETWEEN 1 AND 128),
+    node_id TEXT NOT NULL CHECK(length(node_id) BETWEEN 1 AND 128),
+    parent_key TEXT NOT NULL CHECK(length(parent_key) <= 128),
+    has_children INTEGER NOT NULL CHECK(has_children IN (0, 1)),
+    name TEXT NOT NULL,
+    excerpt TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    created_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_by TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (space_id, node_id)
+);
+CREATE INDEX IF NOT EXISTS idx_document_node_branch_order
+ON document_node(space_id, parent_key, created_at, node_id);
+
+-- collection: 1=recently accessed, 2=recently created. Each collection is a complete bounded
+-- snapshot; position preserves the service's deterministic rank.
+CREATE TABLE IF NOT EXISTS document_home_item (
+    collection INTEGER NOT NULL CHECK(collection IN (1, 2)),
+    position INTEGER NOT NULL CHECK(position >= 0),
+    document_id TEXT NOT NULL CHECK(length(document_id) BETWEEN 1 AND 128),
+    space_id TEXT NOT NULL CHECK(length(space_id) BETWEEN 1 AND 128),
+    space_name TEXT NOT NULL,
+    title TEXT NOT NULL,
+    excerpt TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    creator_name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    accessed_at INTEGER NOT NULL,
+    PRIMARY KEY (collection, position)
+);
+CREATE INDEX IF NOT EXISTS idx_document_home_identity
+ON document_home_item(collection, space_id, document_id);
+
+-- Only clean server bodies belong here. Editor drafts use their independent dataset/account-scoped
+-- store. cache_ordinal implements deterministic LRU without depending on wall-clock quality.
+CREATE TABLE IF NOT EXISTS document_body (
+    space_id TEXT NOT NULL CHECK(length(space_id) BETWEEN 1 AND 128),
+    document_id TEXT NOT NULL CHECK(length(document_id) BETWEEN 1 AND 128),
+    parent_id TEXT CHECK(parent_id IS NULL OR length(parent_id) BETWEEN 1 AND 128),
+    title TEXT NOT NULL,
+    markdown TEXT NOT NULL,
+    asset_manifest BLOB NOT NULL,
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    created_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_by TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    body_bytes INTEGER NOT NULL CHECK(body_bytes >= 0),
+    cache_ordinal INTEGER NOT NULL CHECK(cache_ordinal > 0),
+    PRIMARY KEY (space_id, document_id)
+);
+CREATE INDEX IF NOT EXISTS idx_document_body_lru
+ON document_body(cache_ordinal, space_id, document_id);
+
+CREATE TABLE IF NOT EXISTS document_body_ancestor (
+    space_id TEXT NOT NULL,
+    document_id TEXT NOT NULL,
+    position INTEGER NOT NULL CHECK(position >= 0),
+    ancestor_id TEXT NOT NULL CHECK(length(ancestor_id) BETWEEN 1 AND 128),
+    PRIMARY KEY (space_id, document_id, position)
+);
+CREATE INDEX IF NOT EXISTS idx_document_body_ancestor_identity
+ON document_body_ancestor(space_id, document_id, position);
+
+-- 消息
+CREATE TABLE IF NOT EXISTS message (
+    chat_id TEXT NOT NULL,
+    client_msg_id TEXT NOT NULL,
+    server_seq INTEGER DEFAULT 0,
+    sender_uid TEXT NOT NULL,
+    message_type INTEGER NOT NULL,
+    timestamp INTEGER NOT NULL,
+    flags INTEGER DEFAULT 0,
+    body BLOB,
+    send_status INTEGER DEFAULT 0,
+    -- Stable recovery authority only; raw ACK/transport diagnostics stay in outgoing_message.
+    outgoing_failure_code INTEGER CHECK(
+        outgoing_failure_code IS NULL OR outgoing_failure_code BETWEEN 1 AND 12
+    ),
+    PRIMARY KEY (chat_id, client_msg_id)
+);
+CREATE INDEX IF NOT EXISTS idx_message_chat_seq ON message(chat_id, server_seq);
+-- Recovery touches only bounded optimistic rows and the exceptional authoritative rows whose
+-- local send status is stale; normal authoritative history does not enter either index.
+CREATE INDEX IF NOT EXISTS idx_message_optimistic_status
+ON message(send_status, chat_id, client_msg_id, sender_uid)
+WHERE server_seq = 0;
+CREATE INDEX IF NOT EXISTS idx_message_authoritative_unsent
+ON message(chat_id, client_msg_id, sender_uid)
+WHERE server_seq > 0 AND send_status != 0;
+
+-- 客户端发送事实源。payload 是入队时规范化后的完整 Message protobuf，之后不可改写。
+-- state: 0=PENDING, 1=IN_FLIGHT, 2=RETRY_WAIT, 3=TERMINAL_FAILED, 4=SUCCESS。
+-- SUCCESS / TERMINAL_FAILED 是合并有界的诊断回执；GC 绝不删除 active 状态。
+CREATE TABLE IF NOT EXISTS outgoing_message (
+    local_ordinal INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+    client_msg_id TEXT NOT NULL,
+    chat_id TEXT NOT NULL,
+    sender_uid TEXT NOT NULL,
+    payload BLOB NOT NULL,
+    request_fingerprint BLOB CHECK(
+        request_fingerprint IS NULL OR length(request_fingerprint) BETWEEN 1 AND 64
+    ),
+    state INTEGER NOT NULL DEFAULT 0,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    failure_code INTEGER CHECK(failure_code IS NULL OR failure_code BETWEEN 1 AND 12),
+    last_error TEXT CHECK(last_error IS NULL OR length(last_error) <= 1000),
+    terminal_code INTEGER,
+    server_seq INTEGER,
+    next_attempt_at INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    completed_at INTEGER,
+    UNIQUE(chat_id, client_msg_id)
+);
+CREATE INDEX IF NOT EXISTS idx_outgoing_ready
+ON outgoing_message(state, next_attempt_at, local_ordinal);
+
+-- 表情回应（CLIENT-05）的行级服务端投影。每行是 (chat, seq, emoji, uid) 的权威 delta 或
+-- 快照结果；聚合计数在展示层由行派生，权威数字永远来自服务端 MessageReactionSummary。
+-- 行只随消息保留窗口存在；消息被权威保留策略回收时，对应回应行一并回收。
+CREATE TABLE IF NOT EXISTS message_reaction (
+    chat_id TEXT NOT NULL,
+    server_seq INTEGER NOT NULL CHECK(server_seq > 0),
+    emoji TEXT NOT NULL CHECK(length(emoji) BETWEEN 1 AND 64),
+    uid TEXT NOT NULL CHECK(length(uid) BETWEEN 1 AND 36),
+    PRIMARY KEY (chat_id, server_seq, emoji, uid)
+);
+CREATE INDEX IF NOT EXISTS idx_message_reaction_chat_seq ON message_reaction(chat_id, server_seq);
+
+-- GUI 建群命令是账号级单槽本地可靠事实。固定主键从 schema 上防止未知结果无界积累；
+-- operation_id + 完整规范 payload 在 RPC 前一次发布，新意图原子替换旧意图。
+CREATE TABLE IF NOT EXISTS pending_group_creation (
+    singleton_id INTEGER PRIMARY KEY NOT NULL CHECK(singleton_id = 1),
+    operation_id TEXT NOT NULL CHECK(length(operation_id) = 36),
+    creator_uid TEXT NOT NULL CHECK(length(creator_uid) BETWEEN 1 AND 36),
+    name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 200),
+    avatar TEXT CHECK(avatar IS NULL OR length(avatar) BETWEEN 1 AND 500),
+    member_uids TEXT NOT NULL CHECK(length(member_uids) BETWEEN 1 AND 36999)
+);
+
+-- Unknown-result social commands are bounded local outboxes. The immutable payload and UUID are
+-- installed in one SQLite transaction before the first RPC; successful exact responses delete the
+-- matching generation. A different decision/payload cannot replace an ambiguous command.
+CREATE TABLE IF NOT EXISTS pending_contact_decision (
+    operation_id TEXT PRIMARY KEY NOT NULL CHECK(length(operation_id) = 36),
+    token TEXT NOT NULL UNIQUE CHECK(length(token) = 36),
+    decision INTEGER NOT NULL CHECK(decision IN (1, 2)),
+    created_at INTEGER NOT NULL CHECK(created_at >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_pending_contact_decision_created
+ON pending_contact_decision(created_at, operation_id);
+
+CREATE TABLE IF NOT EXISTS pending_invite_link_creation (
+    operation_id TEXT PRIMARY KEY NOT NULL CHECK(length(operation_id) = 36),
+    chat_id TEXT NOT NULL UNIQUE CHECK(length(chat_id) = 36),
+    name TEXT NOT NULL CHECK(length(name) <= 200),
+    max_uses INTEGER NOT NULL CHECK(max_uses >= 0),
+    expires_at INTEGER NOT NULL CHECK(expires_at >= 0),
+    created_at INTEGER NOT NULL CHECK(created_at >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_pending_invite_creation_created
+ON pending_invite_link_creation(created_at, operation_id);
+
+-- Group-file mutations can commit even when their response is lost. The full
+-- immutable descriptor is deployment/account scoped by the database filename and is admitted
+-- before RPC. `intent_key` prevents a second generation from replacing an ambiguous resource.
+CREATE TABLE IF NOT EXISTS pending_group_file_command (
+    command_id TEXT PRIMARY KEY NOT NULL CHECK(length(command_id) = 36),
+    intent_key TEXT NOT NULL UNIQUE CHECK(length(intent_key) BETWEEN 1 AND 512),
+    command_kind INTEGER NOT NULL CHECK(command_kind IN (1, 2, 3, 4, 5)),
+    entry_id TEXT NOT NULL CHECK(length(entry_id) = 36),
+    chat_id TEXT NOT NULL CHECK(length(chat_id) = 36),
+    parent_id TEXT CHECK(parent_id IS NULL OR length(parent_id) = 36),
+    name TEXT CHECK(name IS NULL OR length(name) BETWEEN 1 AND 180),
+    attachment_path TEXT CHECK(attachment_path IS NULL OR length(attachment_path) BETWEEN 1 AND 4096),
+    attachment_name TEXT CHECK(attachment_name IS NULL OR length(attachment_name) BETWEEN 1 AND 512),
+    attachment_content_type TEXT CHECK(
+        attachment_content_type IS NULL OR length(attachment_content_type) BETWEEN 1 AND 255
+    ),
+    attachment_size INTEGER CHECK(attachment_size IS NULL OR attachment_size BETWEEN 0 AND 536870912),
+    expected_revision INTEGER CHECK(expected_revision IS NULL OR expected_revision > 0),
+    created_at INTEGER NOT NULL CHECK(created_at >= 0),
+    payload_bytes INTEGER NOT NULL CHECK(payload_bytes BETWEEN 1 AND 24576),
+    CHECK(
+        (command_kind = 1 AND name IS NOT NULL AND
+            attachment_path IS NULL AND attachment_name IS NULL AND
+            attachment_content_type IS NULL AND attachment_size IS NULL AND expected_revision IS NULL) OR
+        (command_kind = 2 AND name IS NOT NULL AND
+            attachment_path IS NOT NULL AND attachment_name IS NOT NULL AND
+            attachment_content_type IS NOT NULL AND attachment_size IS NOT NULL AND expected_revision IS NULL) OR
+        (command_kind = 3 AND parent_id IS NULL AND name IS NULL AND
+            attachment_path IS NOT NULL AND attachment_name IS NOT NULL AND
+            attachment_content_type IS NOT NULL AND attachment_size IS NOT NULL AND expected_revision IS NOT NULL) OR
+        (command_kind = 4 AND name IS NOT NULL AND
+            attachment_path IS NULL AND attachment_name IS NULL AND
+            attachment_content_type IS NULL AND attachment_size IS NULL AND expected_revision IS NOT NULL) OR
+        (command_kind = 5 AND name IS NULL AND
+            attachment_path IS NULL AND attachment_name IS NULL AND
+            attachment_content_type IS NULL AND attachment_size IS NULL AND expected_revision IS NOT NULL)
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_pending_group_file_command_created
+ON pending_group_file_command(created_at, command_id);
+
+-- A document node has one unresolved structural command slot. The complete immutable payload is
+-- committed before RPC; operation_id and issued_at are then replayed verbatim after restart.
+CREATE TABLE IF NOT EXISTS pending_document_move_command (
+    operation_id TEXT PRIMARY KEY NOT NULL CHECK(length(operation_id) = 36),
+    space_id TEXT NOT NULL CHECK(length(space_id) = 36),
+    node_id TEXT NOT NULL CHECK(length(node_id) = 36),
+    old_parent_id TEXT CHECK(old_parent_id IS NULL OR length(old_parent_id) = 36),
+    target_parent_id TEXT CHECK(target_parent_id IS NULL OR length(target_parent_id) = 36),
+    name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 180),
+    expected_revision INTEGER NOT NULL CHECK(expected_revision > 0),
+    issued_at INTEGER NOT NULL CHECK(issued_at >= 0),
+    UNIQUE(space_id, node_id),
+    CHECK(node_id <> target_parent_id)
+);
+CREATE INDEX IF NOT EXISTS idx_pending_document_move_issued
+ON pending_document_move_command(issued_at, operation_id);
+
+-- 群机器人创建/轮换共享一个账号级可靠槽。webhook_token 是客户端持有的唯一可恢复副本；
+-- 服务器只接收它并保存 SHA-256。仅用户确认保存、服务端证明 Token 已终止，或用户风险确认
+-- 后显式放弃恢复时，才可删除这一行；网络/超时/权限/5xx 不得自动清理。
+CREATE TABLE IF NOT EXISTS pending_group_bot_credential_command (
+    singleton_id INTEGER PRIMARY KEY NOT NULL CHECK(singleton_id = 1),
+    operation_id TEXT NOT NULL CHECK(length(operation_id) = 36),
+    owner_uid TEXT NOT NULL CHECK(length(owner_uid) BETWEEN 1 AND 64),
+    command_kind INTEGER NOT NULL CHECK(command_kind IN (1, 2)),
+    chat_id TEXT NOT NULL CHECK(length(chat_id) BETWEEN 1 AND 64),
+    bot_id TEXT CHECK(bot_id IS NULL OR length(bot_id) BETWEEN 1 AND 64),
+    name TEXT CHECK(name IS NULL OR length(name) BETWEEN 1 AND 100),
+    webhook_token TEXT NOT NULL CHECK(length(webhook_token) = 47 AND substr(webhook_token, 1, 4) = 'ttb_'),
+    CHECK(
+        (command_kind = 1 AND bot_id IS NULL AND name IS NOT NULL) OR
+        (command_kind = 2 AND bot_id IS NOT NULL AND name IS NULL)
+    )
+);
+
+-- 会话
+CREATE TABLE IF NOT EXISTS conversation (
+    chat_id TEXT PRIMARY KEY NOT NULL,
+    chat_type INTEGER NOT NULL,
+    peer_uid TEXT,
+    peer_revision INTEGER,
+    chat_name TEXT,
+    chat_avatar_path TEXT,
+    chat_avatar_name TEXT,
+    chat_avatar_content_type TEXT,
+    chat_avatar_size INTEGER,
+    last_message TEXT,
+    last_message_type INTEGER,
+    last_msg_timestamp INTEGER,
+    last_seq INTEGER DEFAULT 0,
+    read_seq INTEGER DEFAULT 0,
+    peer_read_seq INTEGER DEFAULT 0,
+    unread_count INTEGER DEFAULT 0,
+    is_pinned INTEGER DEFAULT 0,
+    is_muted INTEGER DEFAULT 0,
+    draft TEXT,
+    CHECK(peer_revision IS NULL OR peer_revision > 0),
+    CHECK(
+        (chat_avatar_path IS NULL AND chat_avatar_name IS NULL AND chat_avatar_content_type IS NULL AND chat_avatar_size IS NULL) OR
+        (chat_avatar_path IS NOT NULL AND chat_avatar_name IS NOT NULL AND chat_avatar_content_type IS NOT NULL AND chat_avatar_size >= 0)
+    )
+);
+
+-- 草稿本地写入与服务端镜像之间的持久化 outbox。
+-- 表中无行：服务端草稿可以正常进入本地；有行且 draft IS NULL：用户明确清空。
+-- state 0=PENDING（待 RPC），1=ACKED（RPC 成功，等待匹配的权威快照后清理）。
+CREATE TABLE IF NOT EXISTS conversation_draft_outbox (
+    chat_id TEXT PRIMARY KEY NOT NULL,
+    draft TEXT,
+    generation INTEGER NOT NULL,
+    state INTEGER NOT NULL DEFAULT 0
+);
+
+-- 已读水位是单调的本地优先操作。界面先推进 conversation，再由连接恢复任务镜像到服务端；
+-- RPC 成功只能条件确认不大于该 ACK 的水位，不能删除请求期间产生的更新水位。
+CREATE TABLE IF NOT EXISTS conversation_read_outbox (
+    chat_id TEXT PRIMARY KEY NOT NULL,
+    read_seq INTEGER NOT NULL CHECK(read_seq > 0)
+);
+
+-- 当前账号的服务端投影检查点。dataset identity 与 cursor 必须同一行、同一事务提交；
+-- 旧连接只能在 dataset_id 仍匹配时推进 cursor。
+CREATE TABLE IF NOT EXISTS sync_state (
+    singleton_id INTEGER PRIMARY KEY NOT NULL CHECK(singleton_id = 1),
+    dataset_id TEXT NOT NULL CHECK(length(dataset_id) BETWEEN 1 AND 64),
+    cursor INTEGER NOT NULL CHECK(cursor >= 0)
+);
+
+-- 无头客户端的持久业务 inbox。event_id 保持投递顺序；ACK 行回收后，独立 metadata
+-- retained floor 继续承担已退休 event id 的重放幂等边界。
+CREATE TABLE IF NOT EXISTS bot_message_inbox (
+    event_id INTEGER PRIMARY KEY NOT NULL,
+    chat_id TEXT NOT NULL,
+    server_seq INTEGER NOT NULL CHECK(server_seq > 0),
+    payload BLOB NOT NULL,
+    acked INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    acked_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS bot_inbox_metadata (
+    singleton_id INTEGER PRIMARY KEY NOT NULL CHECK(singleton_id = 1),
+    retained_floor_event_id INTEGER NOT NULL DEFAULT 0 CHECK(retained_floor_event_id >= 0)
+);
+-- CREATE / EDIT / REVOKE events deliberately reuse the same chat/server sequence. event_id is
+-- the replay-idempotency key; this index only accelerates chat-scoped diagnostics and cleanup.
+CREATE INDEX IF NOT EXISTS idx_bot_inbox_message ON bot_message_inbox(chat_id, server_seq);
+-- ACK history retention walks one bounded newest prefix; pending delivery lookup uses the same
+-- leading state column and remains ordered by the global event cursor.
+CREATE INDEX IF NOT EXISTS idx_bot_inbox_ack_event ON bot_message_inbox(acked, event_id DESC);
+
+-- 查询
+selectUserByUid:
+SELECT * FROM user WHERE uid = ?;
+
+-- eventId=0 的全局 USER_UPDATED 只允许收敛本账号已经持有的产品关系。判断与后续
+-- upsert 共享 LocalCache stateLock，避免查询后关系被移除的 TOCTOU 窗口。
+isUserLocallyRelevant:
+SELECT CASE WHEN
+    EXISTS(SELECT 1 FROM user WHERE uid = :uid) OR
+    EXISTS(SELECT 1 FROM contact WHERE friend_uid = :uid) OR
+    EXISTS(SELECT 1 FROM conversation WHERE peer_uid = :uid) OR
+    EXISTS(SELECT 1 FROM member WHERE uid = :uid) OR
+    EXISTS(SELECT 1 FROM organization_member WHERE uid = :uid)
+THEN 1 ELSE 0 END;
+
+upsertUser:
+INSERT OR REPLACE INTO user(
+    uid, username, name, avatar_path, avatar_name, avatar_content_type, avatar_size,
+    phone, sex, role, status, revision
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- 联系人是当前产品唯一显式全量常驻的实体投影。一次联表构造展示摘要，避免
+-- cache 打开时先加载整张 user 表，或再为每位联系人执行一次主键查询。
+selectContactsWithUsers:
+SELECT
+    contact.uid AS contact_owner_uid,
+    contact.friend_uid AS contact_friend_uid,
+    contact.remark AS contact_remark,
+    contact.status AS contact_status,
+    user.uid AS user_uid,
+    user.username AS user_username,
+    user.name AS user_name,
+    user.avatar_path AS user_avatar_path,
+    user.avatar_name AS user_avatar_name,
+    user.avatar_content_type AS user_avatar_content_type,
+    user.avatar_size AS user_avatar_size,
+    user.phone AS user_phone,
+    user.sex AS user_sex,
+    user.role AS user_role,
+    user.status AS user_status,
+    user.revision AS user_revision
+FROM contact
+LEFT JOIN user ON user.uid = contact.friend_uid
+WHERE contact.status = 1
+ORDER BY contact.friend_uid ASC;
+
+upsertContact:
+INSERT OR REPLACE INTO contact(uid, friend_uid, remark, status)
+VALUES (?, ?, ?, ?);
+
+deleteContact:
+DELETE FROM contact WHERE friend_uid = ?;
+
+deleteAllContacts:
+DELETE FROM contact;
+
+selectChatById:
+SELECT * FROM chat WHERE chat_id = ?;
+
+upsertChat:
+INSERT OR REPLACE INTO chat(chat_id, chat_type, name, avatar, creator, member_count, max_seq, notice, muted_all)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteChat:
+DELETE FROM chat WHERE chat_id = ?;
+
+-- 群成员只在精确读取或观察一个 chat 时联表装配 User 摘要。没有任何查询会在
+-- cache 启动时遍历 chat 再逐群读取成员。
+selectMembersWithUsersByChat:
+SELECT
+    member.chat_id AS member_chat_id,
+    member.uid AS member_uid,
+    member.role AS member_role,
+    member.nickname AS member_nickname,
+    member.joined_at AS member_joined_at,
+    user.uid AS user_uid,
+    user.username AS user_username,
+    user.name AS user_name,
+    user.avatar_path AS user_avatar_path,
+    user.avatar_name AS user_avatar_name,
+    user.avatar_content_type AS user_avatar_content_type,
+    user.avatar_size AS user_avatar_size,
+    user.phone AS user_phone,
+    user.sex AS user_sex,
+    user.role AS user_role,
+    user.status AS user_status,
+    user.revision AS user_revision
+FROM member
+LEFT JOIN user ON user.uid = member.uid
+WHERE member.chat_id = ?
+ORDER BY member.joined_at ASC, member.uid ASC;
+
+selectMemberWithUser:
+SELECT
+    member.chat_id AS member_chat_id,
+    member.uid AS member_uid,
+    member.role AS member_role,
+    member.nickname AS member_nickname,
+    member.joined_at AS member_joined_at,
+    user.uid AS user_uid,
+    user.username AS user_username,
+    user.name AS user_name,
+    user.avatar_path AS user_avatar_path,
+    user.avatar_name AS user_avatar_name,
+    user.avatar_content_type AS user_avatar_content_type,
+    user.avatar_size AS user_avatar_size,
+    user.phone AS user_phone,
+    user.sex AS user_sex,
+    user.role AS user_role,
+    user.status AS user_status,
+    user.revision AS user_revision
+FROM member
+LEFT JOIN user ON user.uid = member.uid
+WHERE member.chat_id = ? AND member.uid = ?;
+
+upsertMember:
+INSERT OR REPLACE INTO member(chat_id, uid, role, nickname, joined_at)
+VALUES (?, ?, ?, ?, ?);
+
+removeMember:
+DELETE FROM member WHERE chat_id = ? AND uid = ?;
+
+deleteMembersByChat:
+DELETE FROM member WHERE chat_id = ?;
+
+selectAllOrganizationUnits:
+SELECT * FROM organization_unit
+ORDER BY sort_order ASC, name ASC, unit_id ASC;
+
+upsertOrganizationUnit:
+INSERT OR REPLACE INTO organization_unit(
+    unit_id, parent_id, name, leader_uid, sort_order, group_chat_id, status, direct_member_count
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteOrganizationUnit:
+DELETE FROM organization_unit WHERE unit_id = ?;
+
+deleteAllOrganizationUnits:
+DELETE FROM organization_unit;
+
+updateOrganizationUnitDirectMemberCount:
+UPDATE organization_unit SET direct_member_count = ? WHERE unit_id = ?;
+
+selectOrganizationMembersByUnit:
+SELECT * FROM organization_member
+WHERE unit_id = ?
+ORDER BY joined_at ASC, uid ASC;
+
+selectAllOrganizationMembersForCheckpoint:
+SELECT * FROM organization_member
+ORDER BY unit_id ASC, joined_at ASC, uid ASC;
+
+-- Recursive offline ACL fallback reads a bounded set of unit projections in batches. The caller
+-- keeps each IN-list below the oldest supported SQLite bind-variable limit and passes the
+-- remaining global relation budget plus one so a corrupt/oversized cache fails closed without
+-- materializing an unbounded result.
+selectOrganizationMembersByUnits:
+SELECT * FROM organization_member
+WHERE unit_id IN ?
+ORDER BY unit_id ASC, joined_at ASC, uid ASC
+LIMIT ?;
+
+upsertOrganizationMember:
+INSERT OR REPLACE INTO organization_member(
+    unit_id, uid, title, is_primary, joined_at,
+    user_username, user_name,
+    user_avatar_path, user_avatar_name, user_avatar_content_type, user_avatar_size,
+    user_phone, user_sex, user_role, user_status, user_revision
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+updateOrganizationMemberUser:
+UPDATE organization_member SET
+    user_username = ?,
+    user_name = ?,
+    user_avatar_path = ?,
+    user_avatar_name = ?,
+    user_avatar_content_type = ?,
+    user_avatar_size = ?,
+    user_phone = ?,
+    user_sex = ?,
+    user_role = ?,
+    user_status = ?,
+    user_revision = ?
+WHERE uid = ? AND (user_revision IS NULL OR user_revision < ?);
+
+removeOrganizationMember:
+DELETE FROM organization_member WHERE unit_id = ? AND uid = ?;
+
+deleteOrganizationMembersByUnit:
+DELETE FROM organization_member WHERE unit_id = ?;
+
+deleteOrganizationMembersForUnknownUnits:
+DELETE FROM organization_member
+WHERE unit_id NOT IN (SELECT unit_id FROM organization_unit);
+
+deleteAllOrganizationMembers:
+DELETE FROM organization_member;
+
+countOrganizationMembersByUnit:
+SELECT COUNT(*) FROM organization_member WHERE unit_id = ?;
+
+isOrganizationMemberSnapshotCached:
+SELECT COUNT(*) FROM organization_member_snapshot WHERE unit_id = ?;
+
+selectOrganizationMemberSnapshotRevision:
+SELECT revision FROM organization_member_snapshot WHERE unit_id = ?;
+
+markOrganizationMemberSnapshotCached:
+INSERT OR REPLACE INTO organization_member_snapshot(unit_id, revision) VALUES (?, ?);
+
+countOrganizationMemberSnapshots:
+SELECT COUNT(*) FROM organization_member_snapshot;
+
+deleteOrganizationMemberSnapshot:
+DELETE FROM organization_member_snapshot WHERE unit_id = ?;
+
+deleteOrganizationMemberSnapshotsForUnknownUnits:
+DELETE FROM organization_member_snapshot
+WHERE unit_id NOT IN (SELECT unit_id FROM organization_unit);
+
+deleteAllOrganizationMemberSnapshots:
+DELETE FROM organization_member_snapshot;
+
+selectOrganizationRequiredRevision:
+SELECT required_revision FROM organization_projection_state WHERE singleton = 1;
+
+selectOrganizationUnitSnapshotRevision:
+SELECT unit_snapshot_revision FROM organization_projection_state WHERE singleton = 1;
+
+selectOrganizationUnitSnapshotKnown:
+SELECT unit_snapshot_known FROM organization_projection_state WHERE singleton = 1;
+
+setOrganizationProjectionState:
+INSERT OR REPLACE INTO organization_projection_state(
+    singleton, required_revision, unit_snapshot_revision, unit_snapshot_known
+) VALUES (1, ?, ?, ?);
+
+deleteOrganizationProjectionState:
+DELETE FROM organization_projection_state;
+
+selectAllDocumentSpaces:
+SELECT * FROM document_space ORDER BY position ASC;
+
+-- Every clean projection lane which can keep a server-backed space identity resident. A complete
+-- cursor scan freezes this bounded set at request start; only members omitted by its terminal page
+-- chain may be purged.
+selectDocumentProjectionSpaceIds:
+SELECT space_id FROM document_space
+UNION SELECT space_id FROM document_home_item
+UNION SELECT space_id FROM document_branch
+UNION SELECT space_id FROM document_node
+UNION SELECT space_id FROM document_body
+ORDER BY space_id ASC;
+
+isDocumentProjectionCached:
+SELECT COUNT(*) FROM document_projection_marker WHERE projection = ?;
+
+markDocumentProjectionCached:
+INSERT OR IGNORE INTO document_projection_marker(projection) VALUES (?);
+
+upsertDocumentSpace:
+INSERT OR REPLACE INTO document_space(
+    space_id, position, name, description, my_role, created_by, created_at, updated_at,
+    owner_principal_type, owner_principal_id, steward_uid, custody_revision, policy_revision
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteAllDocumentSpaces:
+DELETE FROM document_space;
+
+deleteDocumentSpace:
+DELETE FROM document_space WHERE space_id = ?;
+
+updateDocumentHomeSpaceName:
+UPDATE document_home_item SET space_name = ? WHERE space_id = ?;
+
+selectDocumentHome:
+SELECT * FROM document_home_item
+WHERE collection = ?
+ORDER BY position ASC;
+
+deleteDocumentHome:
+DELETE FROM document_home_item WHERE collection = ?;
+
+insertDocumentHomeItem:
+INSERT INTO document_home_item(
+    collection, position, document_id, space_id, space_name, title, excerpt,
+    created_by, creator_name, created_at, updated_at, accessed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+isDocumentBranchCached:
+SELECT COUNT(*) FROM document_branch WHERE space_id = ? AND parent_key = ?;
+
+countDocumentBranches:
+SELECT COUNT(*) FROM document_branch;
+
+upsertDocumentBranch:
+INSERT OR REPLACE INTO document_branch(space_id, parent_key) VALUES (?, ?);
+
+selectDocumentNodes:
+SELECT * FROM document_node
+WHERE space_id = ? AND parent_key = ?
+ORDER BY created_at ASC, node_id ASC;
+
+selectDocumentNodeById:
+SELECT * FROM document_node WHERE space_id = ? AND node_id = ?;
+
+countDocumentNodes:
+SELECT COUNT(*) FROM document_node;
+
+countDocumentNodesByBranch:
+SELECT COUNT(*) FROM document_node WHERE space_id = ? AND parent_key = ?;
+
+deleteDocumentNodesByBranch:
+DELETE FROM document_node WHERE space_id = ? AND parent_key = ?;
+
+upsertDocumentNode:
+INSERT OR REPLACE INTO document_node(
+    space_id, node_id, parent_key, has_children, name, excerpt, revision,
+    created_by, created_at, updated_by, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+updateDocumentNodeHasChildren:
+UPDATE document_node SET has_children = ? WHERE space_id = ? AND node_id = ?;
+
+deleteDocumentBranch:
+DELETE FROM document_branch WHERE space_id = ? AND parent_key = ?;
+
+updateDocumentHomeDocument:
+UPDATE document_home_item
+SET title = ?, excerpt = ?, updated_at = ?
+WHERE space_id = ? AND document_id = ?;
+
+selectDocumentBody:
+SELECT * FROM document_body WHERE space_id = ? AND document_id = ?;
+
+selectDocumentBodyAncestors:
+SELECT ancestor_id FROM document_body_ancestor
+WHERE space_id = ? AND document_id = ?
+ORDER BY position ASC;
+
+selectDocumentBodyIdsByAncestor:
+SELECT DISTINCT document_id FROM document_body_ancestor
+WHERE space_id = ? AND ancestor_id = ?;
+
+selectMaxDocumentBodyCacheOrdinal:
+SELECT COALESCE(MAX(cache_ordinal), 0) AS max_cache_ordinal FROM document_body;
+
+touchDocumentBody:
+UPDATE document_body SET cache_ordinal = ? WHERE space_id = ? AND document_id = ?;
+
+upsertDocumentBody:
+INSERT OR REPLACE INTO document_body(
+    space_id, document_id, parent_id, title, markdown, asset_manifest, revision, created_by, created_at,
+    updated_by, updated_at, body_bytes, cache_ordinal
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+insertDocumentBodyAncestor:
+INSERT INTO document_body_ancestor(space_id, document_id, position, ancestor_id)
+VALUES (?, ?, ?, ?);
+
+countDocumentBodies:
+SELECT COUNT(*) FROM document_body;
+
+sumDocumentBodyBytes:
+SELECT COALESCE(SUM(body_bytes), 0) AS total_body_bytes FROM document_body;
+
+selectOldestDocumentBodyKey:
+SELECT space_id, document_id, body_bytes FROM document_body
+ORDER BY cache_ordinal ASC, space_id ASC, document_id ASC
+LIMIT 1;
+
+deleteDocumentBodyAncestors:
+DELETE FROM document_body_ancestor WHERE space_id = ? AND document_id = ?;
+
+deleteDocumentBody:
+DELETE FROM document_body WHERE space_id = ? AND document_id = ?;
+
+deleteDocumentNode:
+DELETE FROM document_node WHERE space_id = ? AND node_id = ?;
+
+deleteDocumentHomeItem:
+DELETE FROM document_home_item WHERE space_id = ? AND document_id = ?;
+
+deleteDocumentHomeBySpace:
+DELETE FROM document_home_item WHERE space_id = ?;
+
+deleteDocumentBodyAncestorsBySpace:
+DELETE FROM document_body_ancestor WHERE space_id = ?;
+
+deleteDocumentBodiesBySpace:
+DELETE FROM document_body WHERE space_id = ?;
+
+deleteDocumentNodesBySpace:
+DELETE FROM document_node WHERE space_id = ?;
+
+deleteDocumentBranchesBySpace:
+DELETE FROM document_branch WHERE space_id = ?;
+
+deleteDocumentBodyAncestorsForUnknownSpaces:
+DELETE FROM document_body_ancestor
+WHERE NOT EXISTS (
+    SELECT 1 FROM document_space WHERE document_space.space_id = document_body_ancestor.space_id
+);
+
+deleteDocumentBodiesForUnknownSpaces:
+DELETE FROM document_body
+WHERE NOT EXISTS (
+    SELECT 1 FROM document_space WHERE document_space.space_id = document_body.space_id
+);
+
+deleteDocumentHomeForUnknownSpaces:
+DELETE FROM document_home_item
+WHERE NOT EXISTS (
+    SELECT 1 FROM document_space WHERE document_space.space_id = document_home_item.space_id
+);
+
+deleteDocumentNodesForUnknownSpaces:
+DELETE FROM document_node
+WHERE NOT EXISTS (
+    SELECT 1 FROM document_space WHERE document_space.space_id = document_node.space_id
+);
+
+deleteDocumentBranchesForUnknownSpaces:
+DELETE FROM document_branch
+WHERE NOT EXISTS (
+    SELECT 1 FROM document_space WHERE document_space.space_id = document_branch.space_id
+);
+
+deleteAllDocumentBodyAncestors:
+DELETE FROM document_body_ancestor;
+
+deleteAllDocumentBodies:
+DELETE FROM document_body;
+
+deleteAllDocumentHome:
+DELETE FROM document_home_item;
+
+deleteAllDocumentNodes:
+DELETE FROM document_node;
+
+deleteAllDocumentBranches:
+DELETE FROM document_branch;
+
+deleteAllDocumentProjectionMarkers:
+DELETE FROM document_projection_marker;
+
+-- Initial resident window: optimistic facts are selected first under an explicit memory cap.
+selectOptimisticMessagesByChat:
+SELECT * FROM message
+WHERE chat_id = ? AND server_seq = 0
+ORDER BY timestamp DESC, client_msg_id ASC
+LIMIT ?;
+
+selectLatestAuthoritativeMessagesByChat:
+SELECT * FROM message
+WHERE chat_id = ? AND server_seq > 0
+ORDER BY server_seq DESC
+LIMIT ?;
+
+-- Retention counts only re-fetchable server projections. A non-success outgoing row or stable
+-- local failure code is a recovery fact and pins its projection regardless of the normal budget.
+selectAuthoritativeMessageRetentionCandidates:
+SELECT message.chat_id
+FROM message
+WHERE message.server_seq > 0
+  AND message.outgoing_failure_code IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM outgoing_message
+      WHERE outgoing_message.chat_id = message.chat_id
+        AND outgoing_message.client_msg_id = message.client_msg_id
+        AND outgoing_message.sender_uid = message.sender_uid
+        AND outgoing_message.state != 4
+  )
+GROUP BY message.chat_id
+HAVING COUNT(*) > :retainedCount
+    OR SUM(
+        64 + length(CAST(message.chat_id AS BLOB)) +
+        length(CAST(message.client_msg_id AS BLOB)) +
+        length(CAST(message.sender_uid AS BLOB)) + COALESCE(length(message.body), 0)
+    ) > :retainedBytes
+ORDER BY message.chat_id ASC
+LIMIT :limit;
+
+-- Only count + 1 rows cross the SQL boundary. The fixed 64 bytes estimate the scalar columns and
+-- row framing; text is measured as its stored UTF-8 blob and body is already its encoded blob.
+selectAuthoritativeMessageRetentionMetadata:
+SELECT message.client_msg_id,
+       message.server_seq,
+       64 + length(CAST(message.chat_id AS BLOB)) +
+           length(CAST(message.client_msg_id AS BLOB)) +
+           length(CAST(message.sender_uid AS BLOB)) +
+           COALESCE(length(message.body), 0) AS estimated_bytes
+FROM message
+WHERE message.chat_id = :chatId
+  AND message.server_seq > 0
+  AND message.outgoing_failure_code IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM outgoing_message
+      WHERE outgoing_message.chat_id = message.chat_id
+        AND outgoing_message.client_msg_id = message.client_msg_id
+        AND outgoing_message.sender_uid = message.sender_uid
+        AND outgoing_message.state != 4
+  )
+ORDER BY message.server_seq DESC, message.client_msg_id DESC
+LIMIT :limit;
+
+deleteAllRetainableAuthoritativeMessagesBatch:
+DELETE FROM message
+WHERE message.chat_id = :chatId
+  AND message.client_msg_id IN (
+      SELECT candidate.client_msg_id
+      FROM message AS candidate
+      WHERE candidate.chat_id = :chatId
+        AND candidate.server_seq > 0
+        AND candidate.outgoing_failure_code IS NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM outgoing_message
+            WHERE outgoing_message.chat_id = candidate.chat_id
+              AND outgoing_message.client_msg_id = candidate.client_msg_id
+              AND outgoing_message.sender_uid = candidate.sender_uid
+              AND outgoing_message.state != 4
+        )
+      ORDER BY candidate.server_seq ASC, candidate.client_msg_id ASC
+      LIMIT :limit
+  );
+
+deleteOlderRetainableAuthoritativeMessagesBatch:
+DELETE FROM message
+WHERE message.chat_id = :chatId
+  AND message.client_msg_id IN (
+      SELECT candidate.client_msg_id
+      FROM message AS candidate
+      WHERE candidate.chat_id = :chatId
+        AND candidate.server_seq > 0
+        AND candidate.outgoing_failure_code IS NULL
+        AND (
+            candidate.server_seq < :oldestRetainedServerSeq
+            OR (
+                candidate.server_seq = :oldestRetainedServerSeq
+                AND candidate.client_msg_id < :oldestRetainedClientMsgId
+            )
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM outgoing_message
+            WHERE outgoing_message.chat_id = candidate.chat_id
+              AND outgoing_message.client_msg_id = candidate.client_msg_id
+              AND outgoing_message.sender_uid = candidate.sender_uid
+              AND outgoing_message.state != 4
+        )
+      ORDER BY candidate.server_seq ASC, candidate.client_msg_id ASC
+      LIMIT :limit
+  );
+
+selectMessageById:
+SELECT * FROM message WHERE chat_id = ? AND client_msg_id = ?;
+
+-- 向上翻页：加载某个 seq 之前的更老消息（利用 idx_message_chat_seq 索引）
+-- server_seq > 0 排除正在发送的消息（serverSeq=0 表示尚未服务端确认）
+selectMessagesByChatBefore:
+SELECT * FROM message
+WHERE chat_id = ? AND server_seq < ? AND server_seq > 0
+ORDER BY server_seq DESC
+LIMIT ?;
+
+insertMessage:
+INSERT OR REPLACE INTO message(chat_id, client_msg_id, server_seq, sender_uid, message_type, timestamp, flags, body, send_status)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+insertMessageIfAbsent:
+INSERT OR IGNORE INTO message(chat_id, client_msg_id, server_seq, sender_uid, message_type, timestamp, flags, body, send_status)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+enqueueOutgoingMessage:
+INSERT OR IGNORE INTO outgoing_message(
+    client_msg_id, chat_id, sender_uid, payload, request_fingerprint, state, attempt_count, failure_code, last_error,
+    terminal_code, server_seq, next_attempt_at, created_at, updated_at, completed_at
+) VALUES (?, ?, ?, ?, ?, 0, 0, NULL, NULL, NULL, NULL, 0, ?, ?, NULL);
+
+insertFreshOutgoingReplacement:
+INSERT INTO outgoing_message(
+    client_msg_id, chat_id, sender_uid, payload, request_fingerprint, state, attempt_count,
+    failure_code, last_error, terminal_code, server_seq, next_attempt_at, created_at, updated_at,
+    completed_at
+) VALUES (?, ?, ?, ?, ?, 0, 0, NULL, NULL, NULL, NULL, 0, ?, ?, NULL);
+
+selectPendingGroupCreation:
+SELECT operation_id, creator_uid, name, avatar, member_uids
+FROM pending_group_creation
+WHERE singleton_id = 1;
+
+upsertPendingGroupCreation:
+INSERT OR REPLACE INTO pending_group_creation(
+    singleton_id, operation_id, creator_uid, name, avatar, member_uids
+) VALUES (1, ?, ?, ?, ?, ?);
+
+deletePendingGroupCreation:
+DELETE FROM pending_group_creation
+WHERE singleton_id = 1 AND operation_id = ?;
+
+selectPendingContactDecisions:
+SELECT operation_id, token, decision, created_at
+FROM pending_contact_decision
+ORDER BY created_at ASC, operation_id ASC
+LIMIT 129;
+
+insertPendingContactDecision:
+INSERT INTO pending_contact_decision(operation_id, token, decision, created_at)
+VALUES (?, ?, ?, ?);
+
+deletePendingContactDecision:
+DELETE FROM pending_contact_decision WHERE operation_id = ?;
+
+selectPendingInviteLinkCreations:
+SELECT operation_id, chat_id, name, max_uses, expires_at, created_at
+FROM pending_invite_link_creation
+ORDER BY created_at ASC, operation_id ASC
+LIMIT 129;
+
+insertPendingInviteLinkCreation:
+INSERT INTO pending_invite_link_creation(
+    operation_id, chat_id, name, max_uses, expires_at, created_at
+) VALUES (?, ?, ?, ?, ?, ?);
+
+deletePendingInviteLinkCreation:
+DELETE FROM pending_invite_link_creation WHERE operation_id = ?;
+
+selectPendingGroupFileCommands:
+SELECT command_id, intent_key, command_kind, entry_id, chat_id, parent_id, name,
+       attachment_path, attachment_name, attachment_content_type, attachment_size,
+       expected_revision, created_at, payload_bytes
+FROM pending_group_file_command
+ORDER BY created_at ASC, command_id ASC
+LIMIT 257;
+
+insertPendingGroupFileCommand:
+INSERT INTO pending_group_file_command(
+    command_id, intent_key, command_kind, entry_id, chat_id, parent_id, name,
+    attachment_path, attachment_name, attachment_content_type, attachment_size,
+    expected_revision, created_at, payload_bytes
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deletePendingGroupFileCommand:
+DELETE FROM pending_group_file_command WHERE command_id = ?;
+
+selectPendingDocumentMoveCommands:
+SELECT operation_id, space_id, node_id, old_parent_id, target_parent_id, name,
+       expected_revision, issued_at
+FROM pending_document_move_command
+ORDER BY issued_at ASC, operation_id ASC
+LIMIT 257;
+
+insertPendingDocumentMoveCommand:
+INSERT INTO pending_document_move_command(
+    operation_id, space_id, node_id, old_parent_id, target_parent_id, name,
+    expected_revision, issued_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+deletePendingDocumentMoveCommand:
+DELETE FROM pending_document_move_command WHERE operation_id = ?;
+
+selectPendingGroupBotCredentialCommand:
+SELECT operation_id, owner_uid, command_kind, chat_id, bot_id, name, webhook_token
+FROM pending_group_bot_credential_command
+WHERE singleton_id = 1;
+
+insertPendingGroupBotCredentialCommand:
+INSERT INTO pending_group_bot_credential_command(
+    singleton_id, operation_id, owner_uid, command_kind, chat_id, bot_id, name, webhook_token
+) VALUES (1, ?, ?, ?, ?, ?, ?, ?);
+
+deletePendingGroupBotCredentialCommand:
+DELETE FROM pending_group_bot_credential_command
+WHERE singleton_id = 1 AND operation_id = ?;
+
+selectOutgoingMessageById:
+SELECT * FROM outgoing_message WHERE chat_id = ? AND client_msg_id = ?;
+
+selectOutgoingMessageByOrdinal:
+SELECT * FROM outgoing_message WHERE local_ordinal = ?;
+
+selectAllOutgoingMessages:
+SELECT * FROM outgoing_message ORDER BY local_ordinal ASC;
+
+selectOutgoingQueueSnapshot:
+SELECT
+    COALESCE(SUM(CASE WHEN state = 0 OR state = 1 THEN 1 ELSE 0 END), 0)
+        AS pending_or_inflight_count,
+    COALESCE(SUM(CASE WHEN state = 2 THEN 1 ELSE 0 END), 0) AS retry_wait_count,
+    COALESCE(SUM(CASE WHEN state = 3 THEN 1 ELSE 0 END), 0) AS terminal_failed_count,
+    MIN(CASE WHEN state = 0 OR state = 1 OR state = 2 THEN created_at END)
+        AS oldest_active_created_at,
+    COALESCE(MAX(CASE WHEN state != 4 THEN attempt_count ELSE 0 END), 0) AS max_attempt_count
+FROM outgoing_message;
+
+countActiveOutgoingMessages:
+SELECT COUNT(*) FROM outgoing_message WHERE state = 0 OR state = 1 OR state = 2;
+
+sumActiveOutgoingStorageBytes:
+SELECT COALESCE(SUM(length(payload) + COALESCE(length(request_fingerprint), 0)), 0)
+FROM outgoing_message
+WHERE state = 0 OR state = 1 OR state = 2;
+
+selectActiveOutgoingMessages:
+SELECT * FROM outgoing_message
+WHERE state = 0 OR state = 1 OR state = 2
+ORDER BY local_ordinal ASC;
+
+selectTerminalOutgoingStorageNewestFirst:
+SELECT local_ordinal,
+       length(payload) + COALESCE(length(request_fingerprint), 0) AS stored_bytes
+FROM outgoing_message
+WHERE state = 3 OR state = 4
+ORDER BY completed_at DESC, local_ordinal DESC;
+
+selectMaxOutgoingCompletedAt:
+SELECT MAX(completed_at) AS max_completed_at FROM outgoing_message;
+
+failOrphanedLocalMessages:
+UPDATE message
+SET send_status = 2
+WHERE server_seq = 0
+  AND (send_status = 1 OR send_status = 3 OR send_status = 4)
+  AND NOT EXISTS (
+      SELECT 1 FROM outgoing_message
+      WHERE outgoing_message.chat_id = message.chat_id
+        AND outgoing_message.client_msg_id = message.client_msg_id
+  );
+
+selectNextActiveOutgoingMessage:
+SELECT * FROM outgoing_message
+WHERE state = 0 OR state = 2
+ORDER BY local_ordinal ASC
+LIMIT 1;
+
+recoverInFlightOutgoingMessages:
+UPDATE outgoing_message
+SET state = 0, failure_code = :failureCode, last_error = :diagnostic, next_attempt_at = 0,
+    updated_at = :updatedAt
+WHERE state = 1;
+
+markAuthoritativeMessagesSentForOutgoing:
+UPDATE message
+SET send_status = 0, outgoing_failure_code = NULL
+WHERE server_seq > 0
+  AND send_status != 0
+  AND EXISTS (
+      SELECT 1 FROM outgoing_message
+      WHERE outgoing_message.chat_id = message.chat_id
+        AND outgoing_message.client_msg_id = message.client_msg_id
+        AND outgoing_message.sender_uid = message.sender_uid
+  );
+
+countPromotableOutgoingMessages:
+SELECT COUNT(*) FROM outgoing_message
+WHERE state != 4
+  AND EXISTS (
+      SELECT 1 FROM message
+      WHERE message.chat_id = outgoing_message.chat_id
+        AND message.client_msg_id = outgoing_message.client_msg_id
+        AND message.sender_uid = outgoing_message.sender_uid
+        AND message.server_seq > 0
+  );
+
+promoteOutgoingMessagesFromAuthoritativeProjection:
+UPDATE outgoing_message
+SET state = 4,
+    failure_code = NULL,
+    last_error = NULL,
+    terminal_code = NULL,
+    server_seq = (
+        SELECT message.server_seq FROM message
+        WHERE message.chat_id = outgoing_message.chat_id
+          AND message.client_msg_id = outgoing_message.client_msg_id
+          AND message.sender_uid = outgoing_message.sender_uid
+          AND message.server_seq > 0
+    ),
+    next_attempt_at = 0,
+    updated_at = :updatedAt,
+    completed_at = :completedAt
+WHERE state != 4
+  AND EXISTS (
+      SELECT 1 FROM message
+      WHERE message.chat_id = outgoing_message.chat_id
+        AND message.client_msg_id = outgoing_message.client_msg_id
+        AND message.sender_uid = outgoing_message.sender_uid
+        AND message.server_seq > 0
+  );
+
+reconcileOutgoingProjectionStatuses:
+UPDATE message
+SET send_status = (
+    SELECT CASE outgoing_message.state
+        WHEN 0 THEN 4
+        WHEN 1 THEN 1
+        WHEN 2 THEN 4
+        WHEN 3 THEN 2
+    END
+    FROM outgoing_message
+    WHERE outgoing_message.chat_id = message.chat_id
+      AND outgoing_message.client_msg_id = message.client_msg_id
+      AND outgoing_message.sender_uid = message.sender_uid
+      AND outgoing_message.state != 4
+),
+outgoing_failure_code = (
+    SELECT CASE outgoing_message.state
+        WHEN 3 THEN outgoing_message.failure_code
+        ELSE NULL
+    END
+    FROM outgoing_message
+    WHERE outgoing_message.chat_id = message.chat_id
+      AND outgoing_message.client_msg_id = message.client_msg_id
+      AND outgoing_message.sender_uid = message.sender_uid
+      AND outgoing_message.state != 4
+)
+WHERE server_seq = 0
+  AND EXISTS (
+      SELECT 1 FROM outgoing_message
+      WHERE outgoing_message.chat_id = message.chat_id
+        AND outgoing_message.client_msg_id = message.client_msg_id
+        AND outgoing_message.sender_uid = message.sender_uid
+        AND outgoing_message.state != 4
+  );
+
+selectOutgoingMessagesMissingProjection:
+SELECT * FROM outgoing_message
+WHERE state != 4
+  AND NOT EXISTS (
+      SELECT 1 FROM message
+      WHERE message.chat_id = outgoing_message.chat_id
+        AND message.client_msg_id = outgoing_message.client_msg_id
+  )
+ORDER BY local_ordinal ASC
+LIMIT :limit;
+
+markOutgoingMessageInFlight:
+UPDATE outgoing_message
+SET state = 1, attempt_count = attempt_count + 1, failure_code = NULL, last_error = NULL,
+    updated_at = ?
+WHERE local_ordinal = ? AND (state = 0 OR state = 2);
+
+markOutgoingMessageRetry:
+UPDATE outgoing_message
+SET state = 2, failure_code = ?, last_error = ?, terminal_code = NULL, next_attempt_at = ?,
+    updated_at = ?
+WHERE local_ordinal = ? AND state = 1;
+
+markOutgoingMessageTerminalFailed:
+UPDATE outgoing_message
+SET state = 3, failure_code = ?, last_error = ?, terminal_code = ?, next_attempt_at = 0,
+    updated_at = ?,
+    completed_at = ?
+WHERE local_ordinal = ? AND state = 1;
+
+markOutgoingMessageSucceeded:
+UPDATE outgoing_message
+SET state = 4, failure_code = NULL, last_error = NULL, terminal_code = NULL, server_seq = ?, next_attempt_at = 0,
+    updated_at = ?, completed_at = ?
+WHERE local_ordinal = ? AND state = 1;
+
+promoteOutgoingMessageSucceededFromProjection:
+UPDATE outgoing_message
+SET state = 4, failure_code = NULL, last_error = NULL, terminal_code = NULL, server_seq = ?, next_attempt_at = 0,
+    updated_at = ?, completed_at = ?
+WHERE local_ordinal = ? AND state != 4;
+
+cancelActiveOutgoingMessages:
+UPDATE outgoing_message
+SET state = 3, failure_code = ?, last_error = ?, terminal_code = 499, next_attempt_at = 0,
+    updated_at = ?,
+    completed_at = ?
+WHERE state = 0 OR state = 1 OR state = 2;
+
+deleteOutgoingMessage:
+DELETE FROM outgoing_message WHERE local_ordinal = ?;
+
+deleteOutgoingMessagesByChat:
+DELETE FROM outgoing_message WHERE chat_id = ?;
+
+updateMessageSeqStatus:
+UPDATE message SET server_seq = ?, send_status = 0, outgoing_failure_code = NULL
+WHERE chat_id = ? AND client_msg_id = ? AND server_seq = 0;
+
+updateMessageSendStatus:
+UPDATE message SET send_status = ?, outgoing_failure_code = NULL
+WHERE chat_id = ? AND client_msg_id = ? AND server_seq = 0;
+
+updateMessageTerminalFailure:
+UPDATE message SET send_status = 2, outgoing_failure_code = ?
+WHERE chat_id = ? AND client_msg_id = ? AND server_seq = 0;
+
+markAuthoritativeMessageSent:
+UPDATE message SET send_status = 0, outgoing_failure_code = NULL
+WHERE chat_id = ? AND client_msg_id = ? AND server_seq > 0;
+
+deleteMessage:
+DELETE FROM message WHERE chat_id = ? AND client_msg_id = ?;
+
+deleteFailedOptimisticMessage:
+DELETE FROM message
+WHERE chat_id = ? AND client_msg_id = ? AND sender_uid = ? AND server_seq = 0 AND send_status = 2;
+
+deleteMessagesByChat:
+DELETE FROM message WHERE chat_id = ?;
+
+selectAllConversations:
+SELECT * FROM conversation ORDER BY is_pinned DESC, last_msg_timestamp DESC;
+
+upsertConversation:
+INSERT OR REPLACE INTO conversation(
+    chat_id, chat_type, peer_uid, peer_revision, chat_name,
+    chat_avatar_path, chat_avatar_name, chat_avatar_content_type, chat_avatar_size,
+    last_message, last_message_type, last_msg_timestamp, last_seq, read_seq, peer_read_seq,
+    unread_count, is_pinned, is_muted, draft
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+deleteConversation:
+DELETE FROM conversation WHERE chat_id = ?;
+
+markConversationRead:
+UPDATE conversation
+SET unread_count = MAX(0, last_seq - MAX(read_seq, :readSeq)),
+    read_seq = MAX(read_seq, :readSeq)
+WHERE chat_id = :chatId;
+
+setConversationDraft:
+UPDATE conversation SET draft = ? WHERE chat_id = ?;
+
+selectAllConversationDraftOutbox:
+SELECT * FROM conversation_draft_outbox;
+
+upsertConversationDraftOutbox:
+INSERT OR REPLACE INTO conversation_draft_outbox(chat_id, draft, generation, state)
+VALUES (?, ?, ?, ?);
+
+markConversationDraftOutboxAcked:
+UPDATE conversation_draft_outbox SET state = 1
+WHERE chat_id = ? AND generation = ? AND state = 0;
+
+deleteConversationDraftOutbox:
+DELETE FROM conversation_draft_outbox WHERE chat_id = ?;
+
+selectAllConversationReadOutbox:
+SELECT * FROM conversation_read_outbox ORDER BY chat_id;
+
+ensureConversationReadOutbox:
+INSERT OR IGNORE INTO conversation_read_outbox(chat_id, read_seq)
+VALUES (:chatId, :readSeq);
+
+advanceConversationReadOutbox:
+UPDATE conversation_read_outbox
+SET read_seq = MAX(read_seq, :readSeq)
+WHERE chat_id = :chatId;
+
+ackConversationReadOutbox:
+DELETE FROM conversation_read_outbox
+WHERE chat_id = :chatId AND read_seq <= :readSeq;
+
+deleteConversationReadOutbox:
+DELETE FROM conversation_read_outbox WHERE chat_id = ?;
+
+updatePeerReadSeq:
+UPDATE conversation SET peer_read_seq = ? WHERE chat_id = ?;
+
+selectSyncState:
+SELECT dataset_id, cursor FROM sync_state WHERE singleton_id = 1;
+
+bindSyncDataset:
+INSERT OR IGNORE INTO sync_state(singleton_id, dataset_id, cursor) VALUES (1, :datasetId, 0);
+
+advanceSyncCursor:
+UPDATE sync_state
+SET cursor = CASE WHEN :eventId > cursor THEN :eventId ELSE cursor END
+WHERE singleton_id = 1 AND dataset_id = :expectedDatasetId;
+
+-- A checkpoint replaces the same dataset projection at one exact request cursor. The caller
+-- verifies the affected authority tuple in the surrounding cross-projection transaction.
+applySyncCheckpointCursor:
+UPDATE sync_state
+SET cursor = :baseEventId
+WHERE singleton_id = 1
+  AND dataset_id = :expectedDatasetId
+  AND cursor = :expectedCursor;
+
+resetSyncState:
+INSERT OR REPLACE INTO sync_state(singleton_id, dataset_id, cursor)
+VALUES (1, :datasetId, 0);
+
+ensureBotInboxMetadata:
+INSERT OR IGNORE INTO bot_inbox_metadata(singleton_id, retained_floor_event_id) VALUES (1, 0);
+
+selectBotInboxRetainedFloor:
+SELECT retained_floor_event_id FROM bot_inbox_metadata WHERE singleton_id = 1;
+
+advanceBotInboxRetainedFloor:
+UPDATE bot_inbox_metadata
+SET retained_floor_event_id = MAX(retained_floor_event_id, :eventId)
+WHERE singleton_id = 1;
+
+resetBotInboxMetadata:
+INSERT OR REPLACE INTO bot_inbox_metadata(singleton_id, retained_floor_event_id) VALUES (1, 0);
+
+enqueueBotMessage:
+INSERT OR IGNORE INTO bot_message_inbox(
+    event_id, chat_id, server_seq, payload, acked, created_at, acked_at
+) VALUES (?, ?, ?, ?, 0, ?, NULL);
+
+peekBotMessage:
+SELECT event_id, payload FROM bot_message_inbox
+WHERE acked = 0
+ORDER BY event_id ASC
+LIMIT 1;
+
+ackBotMessage:
+UPDATE bot_message_inbox SET acked = 1, acked_at = ?
+WHERE event_id = ? AND acked = 0;
+
+selectAckedBotMessageStorageNewestFirst:
+SELECT event_id, length(payload) AS payload_bytes
+FROM bot_message_inbox
+WHERE acked = 1
+ORDER BY event_id DESC
+LIMIT :limit;
+
+deleteAckedBotMessagesThrough:
+DELETE FROM bot_message_inbox
+WHERE acked = 1 AND event_id <= :eventId;
+
+selectOldestPendingBotMessageEventId:
+SELECT COALESCE(MIN(event_id), 0) AS min_event_id
+FROM bot_message_inbox
+WHERE acked = 0;
+
+selectNewestAckedBotMessageEventIdThrough:
+SELECT COALESCE(MAX(event_id), 0) AS max_event_id
+FROM bot_message_inbox
+WHERE acked = 1 AND event_id <= :eventId;
+
+selectBotMessageDeliveries:
+SELECT event_id, payload FROM bot_message_inbox
+WHERE event_id > :afterEventId
+  AND (:chatId IS NULL OR chat_id = :chatId)
+ORDER BY event_id ASC
+LIMIT :limit;
+
+selectMaxBotMessageEventId:
+SELECT COALESCE(MAX(event_id), 0) AS max_event_id FROM bot_message_inbox;
+
+deleteBotMessagesByChat:
+DELETE FROM bot_message_inbox WHERE chat_id = ?;
+
+deleteAllUsers:
+DELETE FROM user;
+
+deleteAllChats:
+DELETE FROM chat;
+
+deleteAllMembers:
+DELETE FROM member;
+
+-- Server projection reset must retain the only recovery authority left after terminal receipt GC.
+-- Keep qualifying orphan rows in place so reset does not materialize an unbounded set of message
+-- payloads in Kotlin. Any same-key outbox row is deleted here and rebuilt from its bounded canonical
+-- payload afterwards; NULL/authoritative/non-failed/blank identities fail closed and are removed.
+deleteServerProjectionMessagesPreservingOrphanFailures:
+DELETE FROM message
+WHERE COALESCE(server_seq, -1) != 0
+   OR COALESCE(send_status, -1) != 2
+   OR length(chat_id) = 0
+   OR length(client_msg_id) = 0
+   OR length(sender_uid) = 0
+   OR EXISTS (
+       SELECT 1 FROM outgoing_message
+       WHERE outgoing_message.chat_id = message.chat_id
+         AND outgoing_message.client_msg_id = message.client_msg_id
+   );
+
+deleteAllConversations:
+DELETE FROM conversation;
+
+deleteAllBotMessages:
+DELETE FROM bot_message_inbox;
+
+insertMessageReaction:
+INSERT OR IGNORE INTO message_reaction(chat_id, server_seq, emoji, uid)
+VALUES (?, ?, ?, ?);
+
+deleteMessageReaction:
+DELETE FROM message_reaction
+WHERE chat_id = ? AND server_seq = ? AND emoji = ? AND uid = ?;
+
+deleteMessageReactionsForSeq:
+DELETE FROM message_reaction WHERE chat_id = ? AND server_seq = ?;
+
+deleteMessageReactionsInRange:
+DELETE FROM message_reaction WHERE chat_id = ? AND server_seq >= ? AND server_seq <= ?;
+
+-- 群共享文件的行级本地投影（CONTENT-01）。行来自 GROUP_FILE_CHANGED delta 与目录页快照；
+-- deleted=1 是墓穴行，阻挡乱序迟到 UPSERT 复活已删条目，随目录快照与容量上限回收。
+CREATE TABLE IF NOT EXISTS group_file_entry (
+    chat_id TEXT NOT NULL,
+    entry_id TEXT NOT NULL,
+    parent_id TEXT NOT NULL,
+    kind INTEGER NOT NULL CHECK(kind IN (1, 2)),
+    name TEXT NOT NULL,
+    attachment_path TEXT,
+    attachment_name TEXT,
+    attachment_content_type TEXT,
+    attachment_size INTEGER CHECK(attachment_size IS NULL OR attachment_size >= 0),
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    content_version INTEGER NOT NULL CHECK(content_version >= 0),
+    created_by TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_by TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0 CHECK(deleted IN (0, 1)),
+    PRIMARY KEY (chat_id, entry_id)
+);
+CREATE INDEX IF NOT EXISTS idx_group_file_entry_parent
+ON group_file_entry(chat_id, parent_id, deleted);
+
+upsertGroupFileEntry:
+INSERT OR REPLACE INTO group_file_entry(
+    chat_id, entry_id, parent_id, kind, name, attachment_path, attachment_name,
+    attachment_content_type, attachment_size, revision, content_version,
+    created_by, created_at, updated_by, updated_at, deleted
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0
+);
+
+selectGroupFileEntry:
+SELECT * FROM group_file_entry WHERE chat_id = ? AND entry_id = ?;
+
+selectActiveGroupFileEntries:
+SELECT * FROM group_file_entry
+WHERE chat_id = ? AND parent_id = ? AND deleted = 0
+ORDER BY kind ASC, name ASC;
+
+markGroupFileEntryDeleted:
+UPDATE group_file_entry
+SET deleted = 1, revision = ?, updated_by = ?, updated_at = ?
+WHERE chat_id = ? AND entry_id = ? AND deleted = 0 AND revision <= ?;
+
+insertGroupFileTombstone:
+INSERT OR IGNORE INTO group_file_entry(
+    chat_id, entry_id, parent_id, kind, name, revision, content_version,
+    created_by, created_at, updated_by, updated_at, deleted
+) VALUES (?, ?, '', 0, '', ?, 0, ?, ?, ?, ?, 1);
+
+deleteGroupFileDirectory:
+DELETE FROM group_file_entry WHERE chat_id = ? AND parent_id = ?;
+
+countGroupFileRows:
+SELECT COUNT(*) FROM group_file_entry WHERE chat_id = ?;
+
+pruneOldestGroupFileRows:
+DELETE FROM group_file_entry WHERE chat_id = ? AND deleted = 0 AND entry_id IN (
+    SELECT entry_id FROM group_file_entry WHERE chat_id = ? AND deleted = 0
+    ORDER BY updated_at ASC, entry_id ASC LIMIT ?
+);
+
+deleteAllGroupFileEntriesForChat:
+DELETE FROM group_file_entry WHERE chat_id = ?;
+
+deleteAllGroupFileEntries:
+DELETE FROM group_file_entry;
+
+deleteAllMessageReactionsForChat:
+DELETE FROM message_reaction WHERE chat_id = ?;
+
+deleteAllMessageReactions:
+DELETE FROM message_reaction;
+
+-- 只回收其消息行已被保留策略删除的回应；批删未完成的窗口由下一次 prune 收敛。
+deleteOrphanMessageReactions:
+DELETE FROM message_reaction
+WHERE chat_id = ?
+  AND server_seq NOT IN (
+      SELECT server_seq FROM message WHERE chat_id = message_reaction.chat_id AND server_seq > 0
+  );
+
+selectMessageReactionsForChat:
+SELECT chat_id, server_seq, emoji, uid FROM message_reaction
+WHERE chat_id = ?
+ORDER BY server_seq, emoji, uid;

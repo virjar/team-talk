@@ -1,0 +1,51 @@
+# 术语表
+
+| 术语 | 含义 |
+|---|---|
+| TeamTalk | 本项目及其自有 IM 服务，不包括同级参考工程 |
+| 用户（User） | 全局身份资料；uid 是稳定标识，username 用于登录和搜索 |
+| 组织节点（OrganizationUnit） | 单组织树中的部门节点，可启用稳定 ID 的受管部门群 |
+| 组织成员（OrganizationMember） | 用户在部门中的直接归属，包含职位和主部门标记 |
+| 部门群 | 成员由组织节点子树自动收敛、不能手工改成员的受管群 |
+| 联系人（Contact） | 某个用户视角下的好友、申请或黑名单关系投影 |
+| 聊天（Chat） | 私聊或群聊的共享业务实体，定义成员和权限 |
+| 会话（Conversation） | 某个用户对 Chat 的列表投影，含草稿、置顶、静音、未读和摘要 |
+| 消息（Message） | Chat 内带 `clientMsgId` 和 `serverSeq` 的有序内容记录 |
+| `clientMsgId` | 客户端生成的发送幂等键；重试不得产生第二条消息 |
+| `serverSeq` | 服务器在一个 Chat 内分配的递增消息序号 |
+| `eventId` | 用户事件流的递增游标，用于离线补偿；不等于消息 seq |
+| LocalCache | 客户端本地数据投影，负责即时展示和离线读取，不是权限事实源 |
+| 本地优先 | UI 观察 LocalCache，网络结果和 Notify 使缓存最终收敛的客户端模式 |
+| RPC | 已认证连接上的请求/响应调用，用于用户、好友、群组和会话操作 |
+| Notify | 服务器到客户端的领域变化事件，可持久化补发或临时直发 |
+| ACK | MESSAGE 发送的独立确认；成功表示服务器校验并接受消息 |
+| 附件相对路径 | FileStore 内部可解析路径，不包含部署域名或第三方 URL |
+| 文件端点 | TeamTalk HTTP 服务提供的上传和读取接口 |
+| 群文件条目（GroupFileEntry） | 群共享文件空间中的稳定目录或文件身份，独立于消息附件 |
+| 文件版本（GroupFileVersion） | 群文件不可变的 Attachment 内容快照；追加版本不覆盖历史 |
+| 文档空间（DocumentSpace） | 企业文档的一级权限根；创建来源、可转移归属、人类责任人和用户/组织 grant 相互独立，与群聊生命周期无关 |
+| 空间责任人（steward） | 唯一获得文档空间隐式 Owner 能力的活动普通用户；组织持有不替代这一责任人 |
+| `custodyRevision` | 文档空间归属/责任人交接的乐观锁坐标，与文档节点 revision 独立 |
+| 文档节点（DocumentNode） | 空间文档树中不携带完整正文的有界摘要投影，通过 parentId 组织；每个节点都对应一篇文档 |
+| 文档（Document） | 空间中的稳定办公对象，包含 Markdown 当前快照和 revision，可同时拥有子文档，不是长消息 |
+| 文档修订（DocumentRevision） | 每次成功保存追加的不可变完整标题与 Markdown 快照 |
+| `expectedRevision` | 修改文档或群文件时提交的乐观锁坐标；陈旧值必须拒绝，不能静默覆盖 |
+| ImBot | 基于同一 SDK 的无头 IM 客户端封装 |
+| AutomationBot | 不能密码登录、按群显式授权、通过 HTTP 单向发送通知的服务身份 |
+| `tt-agent` | 常驻持有 ImBot 会话并暴露本地 REST 的进程 |
+| `tt-cli` | 调用 `tt-agent` 的无状态命令行客户端 |
+| 检查器（Inspector） | Desktop 主内容右侧临时抽屉，例如群设置；不是永久第三栏页面 |
+| 任务窗口 | Desktop 为编辑资料、建群等独立任务打开的子窗口 |
+| 模态弹窗 | 阻断背景交互的临时层，例如 Desktop 用户资料 |
+| 测试部署 | `gradle/deployment.json` 指向、供真实业务验收使用的环境 |
+| 私有化部署 | Fork 后由部署者配置地址、数据库、目录和凭据的独立 TeamTalk 实例 |
+
+## 容易混淆的边界
+
+- Chat 是共享对象，Conversation 是用户私有投影。
+- message `serverSeq` 决定聊天内顺序，Notify `eventId` 决定用户事件补发顺序。
+- URL 是客户端访问文件的解析结果，消息事实只保存附件相对路径。
+- Attachment 是物理对象描述，GroupFileEntry 是协作身份；上传和聊天发送都不会自动创建群文件。
+- Markdown 是文档正文格式，DocumentSpace/Document 才是权限、身份和历史事实；群聊只讨论或引用文档。
+- “发送中”是客户端本地状态；只有收到成功 ACK 后才是服务器接受的消息。
+- 群设置抽屉属于聊天上下文；设置一级导航属于当前用户和应用配置，两者不是同一信息域。

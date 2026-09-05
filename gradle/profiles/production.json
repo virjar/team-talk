@@ -1,7 +1,0 @@
-{
-  "name": "production",
-  "serverUrl": "https://your-server.com",
-  "tcpAddress": "your-server.com",
-  "allowCustomServer": false,
-  "deploy": { "host": "your-server.com" }
-}

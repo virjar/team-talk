@@ -1,0 +1,171 @@
+name: Build, Deploy & Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  verify:
+    name: Release Architecture & Identity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - uses: gradle/actions/setup-gradle@v5.0.2
+      - run: ./gradlew verifyRelease --quiet
+
+  server:
+    name: Server Distribution
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: server/admin/package-lock.json
+      - uses: gradle/actions/setup-gradle@v5.0.2
+      - run: ./gradlew :server:server:installDist --quiet
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: teamtalk-server
+          path: server/server/build/install/teamtalk-server/
+          retention-days: 7
+
+  # 单 job 交叉出三平台全套（mac 双架构 zip + Sparkle appcast、Windows MSIX +
+  # appinstaller、Linux deb + tar.gz + apt 仓库 + 下载页），替代原三平台 matrix。
+  # Conveyor 在 Linux 上可产出全部平台安装包（doc/07-operations/desktop-cross-build.md）。
+  desktop-site:
+    name: Desktop Site (Conveyor, all platforms)
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - uses: gradle/actions/setup-gradle@v5.0.2
+      - name: Install Conveyor
+        run: |
+          curl -sL -o "$RUNNER_TEMP/conveyor.deb" https://downloads.hydraulic.dev/conveyor/hydraulic-conveyor_22.1_amd64.deb
+          sudo apt install -y "$RUNNER_TEMP/conveyor.deb"
+          conveyor --version
+      - name: Build desktop jar
+        run: ./gradlew :client:desktop:desktopJar --quiet
+      - name: Build three-platform site
+        env:
+          CONVEYOR_AGREE_TO_LICENSE: "1"
+        working-directory: client/desktop
+        run: conveyor make site --overwrite
+      - name: Stamp verified desktop artifact identity
+        run: ./gradlew writeDesktopSiteManifest --quiet
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: teamtalk-desktop-site
+          path: client/desktop/output/
+          retention-days: 7
+
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - uses: gradle/actions/setup-gradle@v5.0.2
+      - run: ./gradlew :client:android:assembleRelease --quiet
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: teamtalk-android
+          path: client/android/build/outputs/apk/release/*-release.apk
+          retention-days: 7
+
+  deploy:
+    name: Deploy and Verify
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    needs: [server, desktop-site, android]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - uses: gradle/actions/setup-gradle@v5.0.2
+      - uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+      - name: Download server distribution artifact
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: teamtalk-server
+          path: build/ci-artifacts/server
+      - name: Deploy staged server distribution
+        run: ./gradlew deployStagedServer -PSERVER_DIST_DIR="$GITHUB_WORKSPACE/build/ci-artifacts/server"
+      - name: Download desktop site artifact
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: teamtalk-desktop-site
+          path: build/ci-artifacts/desktop-site
+      - name: Upload desktop update site
+        run: ./gradlew uploadDesktopSite -PDESKTOP_SITE_DIR="$GITHUB_WORKSPACE/build/ci-artifacts/desktop-site"
+      - name: Upload APK from CI artifacts
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: teamtalk-android
+          path: build/ci-artifacts/clients/teamtalk-android
+      - name: Upload APK
+        run: ./gradlew uploadClientArtifacts -PARTIFACT_STAGING_DIR="$GITHUB_WORKSPACE/build/ci-artifacts/clients"
+
+  acceptance:
+    name: Verify Deployed Business Flows
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    needs: deploy
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-java@v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: server/admin/package-lock.json
+      - uses: gradle/actions/setup-gradle@v5.0.2
+      - name: Run business acceptance after artifact-only deploy
+        run: ./gradlew :server:server:acceptanceTest
+
+  release:
+    name: Create GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    needs: [server, desktop-site, android]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          path: artifacts
+      - uses: softprops/action-gh-release@v3.0.3
+        with:
+          name: TeamTalk ${{ github.ref_name }}
+          draft: true
+          files: |
+            artifacts/teamtalk-server/**
+            artifacts/teamtalk-desktop-site/**
+            artifacts/teamtalk-android/*.apk

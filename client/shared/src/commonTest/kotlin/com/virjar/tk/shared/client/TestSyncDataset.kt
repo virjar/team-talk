@@ -1,0 +1,4 @@
+package com.virjar.tk.shared.client
+
+internal const val TEST_SYNC_DATASET_ID = "00000000-0000-4000-8000-000000000001"
+internal const val OTHER_TEST_SYNC_DATASET_ID = "00000000-0000-4000-8000-000000000002"

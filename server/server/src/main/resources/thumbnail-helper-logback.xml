@@ -1,0 +1,5 @@
+<configuration>
+    <!-- Helper diagnostics are represented by its bounded exit/result protocol. Never create a
+         second set of server log files or emit decoder/native details from the isolated process. -->
+    <root level="OFF" />
+</configuration>

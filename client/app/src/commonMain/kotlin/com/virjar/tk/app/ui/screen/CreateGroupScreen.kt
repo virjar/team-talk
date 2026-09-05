@@ -1,0 +1,390 @@
+package com.virjar.tk.app.ui.screen
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Group
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.virjar.tk.shared.client.PendingGroupCreationCommand
+import com.virjar.tk.protocol.model.Contact
+import com.virjar.tk.app.ui.component.AvatarPlaceholder
+import com.virjar.tk.app.ui.component.ScreenHeader
+import com.virjar.tk.app.ui.theme.Tk
+import kotlinx.coroutines.launch
+
+/**
+ * 创建群组页面。
+ *
+ * 使用中性信息表面承载群头像与名称，品牌色只用于焦点和选中状态；
+ * 中部是已选成员预览条，底部是联系人列表。可从用户资料页预选发起人。
+ */
+@Composable
+fun CreateGroupScreen(
+    contacts: List<Contact>,
+    pendingGroupCreation: PendingGroupCreationCommand?,
+    groupCreationDraftLoaded: Boolean,
+    groupCreationDraftError: String?,
+    onCreateGroup: suspend (name: String, memberUids: List<String>) -> Result<String>,
+    onDiscardPendingGroupCreation: suspend () -> Boolean,
+    onBack: (() -> Unit)? = null,
+    initialSelectedUids: Set<String> = emptySet(),
+) {
+    var groupName by remember { mutableStateOf("") }
+    var selectedUids by remember { mutableStateOf(emptySet<String>()) }
+    var draftInitialized by remember { mutableStateOf(false) }
+    var isCreating by remember { mutableStateOf(false) }
+    var isDiscarding by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val compactDesktop = Tk.dimens.headerHeight < 56.dp
+    val inputsEnabled = groupCreationDraftLoaded && groupCreationDraftError == null &&
+        !isCreating && !isDiscarding
+
+    // LocalCache 恢复发生在 Main 之外。在完整的冻结命令被恢复或证明不存在之前不要接纳编辑，
+    // 否则快速点击可能覆盖它。
+    LaunchedEffect(groupCreationDraftLoaded) {
+        if (groupCreationDraftLoaded && !draftInitialized) {
+            groupName = pendingGroupCreation?.name.orEmpty()
+            selectedUids = pendingGroupCreation?.targetMemberUids?.toSet() ?: initialSelectedUids
+            draftInitialized = true
+        }
+    }
+
+    // 已选联系人（保持选择顺序，用于预览条）
+    val selectedContacts = remember(contacts, selectedUids) {
+        contacts.filter { it.friendUid in selectedUids }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        ScreenHeader(
+            title = "创建群组",
+            onBack = onBack,
+            trailing = {
+                TextButton(
+                    onClick = {
+                        if (inputsEnabled && groupName.isNotBlank() && selectedUids.isNotEmpty()) {
+                            isCreating = true
+                            scope.launch {
+                                try {
+                                    error = null
+                                    onCreateGroup(groupName, selectedUids.toList())
+                                        .onFailure { error = it.message }
+                                } finally {
+                                    isCreating = false
+                                }
+                            }
+                        }
+                    },
+                    enabled = inputsEnabled && groupName.isNotBlank() && selectedUids.isNotEmpty(),
+                    modifier = Modifier.testTag("group.create"),
+                ) { Text("创建") }
+            },
+        )
+
+        // ── 建群上下文：Desktop 使用横向任务表单；Android 保留触控端纵向引导 ──
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        ) {
+            if (compactDesktop) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    GroupDraftAvatar(size = 48.dp, iconSize = 24.dp)
+                    Spacer(Modifier.width(12.dp))
+                    OutlinedTextField(
+                        value = groupName,
+                        onValueChange = { groupName = it },
+                        placeholder = { Text("群聊名称") },
+                        enabled = inputsEnabled,
+                        modifier = Modifier.weight(1f).testTag("group.name"),
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                    )
+                }
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    GroupDraftAvatar(size = 64.dp, iconSize = 32.dp)
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = groupName,
+                        onValueChange = { groupName = it },
+                        placeholder = { Text("群聊名称") },
+                        enabled = inputsEnabled,
+                        modifier = Modifier.fillMaxWidth().testTag("group.name"),
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                    )
+                }
+            }
+        }
+
+        pendingGroupCreation?.let { pending ->
+            val stillMatches = groupName.trim() == pending.name &&
+                selectedUids.toList().sorted() == pending.targetMemberUids
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        if (stillMatches) {
+                            "已恢复上次未确认的建群操作，直接创建会安全重试"
+                        } else {
+                            "内容已修改，再次创建将使用新的操作标识"
+                        },
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                    TextButton(
+                        enabled = inputsEnabled,
+                        onClick = {
+                            isDiscarding = true
+                            scope.launch {
+                                try {
+                                    error = null
+                                    if (!onDiscardPendingGroupCreation()) {
+                                        error = "放弃待创建群组失败"
+                                    }
+                                } finally {
+                                    isDiscarding = false
+                                }
+                            }
+                        },
+                        modifier = Modifier.testTag("group.pending.discard"),
+                    ) { Text("放弃") }
+                }
+            }
+        }
+
+        // ── 错误提示 / 进度条 ──
+        val visibleError = groupCreationDraftError ?: error
+        AnimatedVisibility(visibleError != null, enter = fadeIn(), exit = fadeOut()) {
+            Text(
+                visibleError ?: "",
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        if (!groupCreationDraftLoaded || isCreating || isDiscarding) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+        }
+
+        // ── 已选成员预览条（头像横滑，点 × 删除）──
+        if (selectedContacts.isNotEmpty()) {
+            LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp),
+            ) {
+                items(selectedContacts, key = { it.friendUid }) { contact ->
+                    val displayName = contact.remark ?: contact.user?.name ?: contact.friendUid
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.width(56.dp),
+                    ) {
+                        Box {
+                            AvatarPlaceholder(
+                                name = displayName,
+                                avatar = contact.user?.avatar,
+                                size = 44,
+                            )
+                            // 删除按钮
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 4.dp, y = (-4).dp)
+                                    .size(18.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.error)
+                                    .clickable(enabled = inputsEnabled) {
+                                        selectedUids = selectedUids - contact.friendUid
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Filled.Close,
+                                    contentDescription = "移除",
+                                    tint = MaterialTheme.colorScheme.onError,
+                                    modifier = Modifier.size(12.dp),
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            displayName.take(4),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        }
+
+        // ── 联系人列表标题 ──
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "选择成员",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Medium,
+            )
+            Spacer(Modifier.width(6.dp))
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.primaryContainer,
+            ) {
+                Text(
+                    "${selectedUids.size}/${contacts.size}",
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 1.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            }
+        }
+
+        // ── 联系人列表（选中态：主题色边框 + 勾选图标）──
+        if (contacts.isEmpty()) {
+            Box(
+                Modifier.fillMaxWidth().weight(1f).padding(32.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "暂无好友，无法创建群组",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else {
+            LazyColumn(modifier = Modifier.weight(1f)) {
+                items(contacts, key = { it.friendUid }) { contact ->
+                    val isSelected = contact.friendUid in selectedUids
+                    val displayName = contact.remark ?: contact.user?.name ?: contact.friendUid
+                    val subName = if (contact.remark != null && contact.user?.name != null)
+                        contact.user?.username else null
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = inputsEnabled) {
+                                selectedUids = if (isSelected) selectedUids - contact.friendUid
+                                else selectedUids + contact.friendUid
+                            }
+                            .testTag("group.member.${contact.friendUid.take(8)}")
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        // 选中态：头像加主题色边框
+                        Box {
+                            AvatarPlaceholder(
+                                name = displayName,
+                                avatar = contact.user?.avatar,
+                                size = 44,
+                                modifier = Modifier.then(
+                                    if (isSelected) Modifier.border(
+                                        width = 2.dp,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        shape = CircleShape,
+                                    ) else Modifier
+                                ),
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                displayName,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            if (subName != null) {
+                                Text(
+                                    "@$subName",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        // 选中态：勾选图标（替代裸 Checkbox）
+                        if (isSelected) {
+                            Box(
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = "已选",
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .clip(CircleShape)
+                                    .border(1.5.dp, MaterialTheme.colorScheme.outline, CircleShape),
+                            )
+                        }
+                    }
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 72.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GroupDraftAvatar(size: androidx.compose.ui.unit.Dp, iconSize: androidx.compose.ui.unit.Dp) {
+    Surface(
+        modifier = Modifier.size(size),
+        shape = RoundedCornerShape(size * 0.28f),
+        color = MaterialTheme.colorScheme.primaryContainer,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                Icons.Filled.Group,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.size(iconSize),
+            )
+        }
+    }
+}

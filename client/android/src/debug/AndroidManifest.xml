@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!--
+      Debug builds may exercise an in-process HTTP fixture. Product URL canonicalization still
+      permits authenticated cleartext endpoints only for explicit loopback hosts.
+    -->
+    <application
+        android:usesCleartextTraffic="true"
+        tools:replace="android:usesCleartextTraffic">
+        <receiver
+            android:name="com.virjar.tk.android.DebugClipboardAssetReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.virjar.tk.android.DEBUG_SET_CLIPBOARD_IMAGE" />
+            </intent-filter>
+        </receiver>
+        <provider
+            android:name="com.virjar.tk.android.DebugActivityRecreationProvider"
+            android:authorities="${applicationId}.debug-activity-recreation"
+            android:exported="false" />
+        <receiver
+            android:name="com.virjar.tk.android.DebugActivityRecreationReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.virjar.tk.android.DEBUG_RECREATE_ACTIVITY" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>
