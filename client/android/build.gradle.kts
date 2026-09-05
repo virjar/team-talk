@@ -1,5 +1,6 @@
 import java.util.Properties
 import deployment.DeploymentConfig
+import release.GenerateAndroidReleaseIdentity
 
 val deploymentConfig = rootProject.extra.get("deploymentConfig") as DeploymentConfig
 val gitCommitId = rootProject.extra.get("gitCommitId") as String
@@ -14,23 +15,20 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-val generatedReleaseIdentity = layout.buildDirectory.dir("generated/release-identity/assets")
-val generateReleaseIdentity by tasks.registering {
-    inputs.property("releaseVersion", releaseVersion)
-    inputs.property("buildIdentity", buildIdentity)
-    outputs.dir(generatedReleaseIdentity)
-    doLast {
-        deployment.writeReleaseArtifactManifestFile(
-            generatedReleaseIdentity.get().file("teamtalk-build.properties").asFile,
-            "android-apk", releaseVersion, buildIdentity,
-        )
+val generateReleaseIdentity = tasks.register<GenerateAndroidReleaseIdentity>("generateReleaseIdentity") {
+    this.releaseVersion.set(rootProject.extra["releaseVersion"] as String)
+    this.buildIdentity.set(rootProject.extra["buildIdentity"] as String)
+    outputDirectory.set(layout.buildDirectory.dir("generated/release-identity/assets"))
+}
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(generateReleaseIdentity, GenerateAndroidReleaseIdentity::outputDirectory)
     }
 }
 
 android {
     namespace = "com.virjar.tk.android"
     compileSdk = 36
-    sourceSets.getByName("main").assets.srcDir(files(generatedReleaseIdentity).builtBy(generateReleaseIdentity))
 
     defaultConfig {
         applicationId = "com.virjar.tk.android"

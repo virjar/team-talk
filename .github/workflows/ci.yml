@@ -33,6 +33,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: .\gradlew.bat -p buildSrc test --tests 'release.*'
+      - name: Download and launch the native Conveyor CLI on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\gradlew.bat :client:desktop:prepareConveyor
       - name: Verify actual release edits before merge
         if: runner.os != 'Windows'
         env:
