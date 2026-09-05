@@ -1,6 +1,11 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.gradle.internal.os.OperatingSystem
 import deployment.DeploymentConfig
+import hydraulic.conveyor.gradle.WriteConveyorConfigTask
+import release.PrepareConveyorTask
+import release.defaultConveyorConfigDirectory
+import release.buildConveyorSite
+import release.requireConveyorSigningConfiguration
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
@@ -219,7 +224,7 @@ plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.compose)
     alias(libs.plugins.kotlin.compose)
-    // Conveyor 配置提取：printConveyorConfig 输出依赖/入口（conveyor.conf include 消费）
+    // 插件负责提取依赖/入口，prepareConveyor 负责管理 CLI，Gradle 统一驱动完整构建。
     id("dev.hydraulic.conveyor") version "2.0"
     // 生成 BuildConfig 编译期常量
     alias(libs.plugins.buildconfig)
@@ -412,6 +417,7 @@ compose.desktop {
 tasks.matching { it.name == "desktopJar" || it.name == "distJar" || it.name == "shadowJar" }.configureEach {
     if (this is Jar) {
         exclude("com/virjar/tk/desktop/test/**")
+        manifest.attributes("TeamTalk-Build-Identity" to buildIdentity)
     }
 }
 
@@ -439,18 +445,74 @@ val sqliteNativeArchDir: String = when (System.getProperty("os.arch")) {
 }
 val sqliteKeepNativePath = "org/sqlite/native/$sqliteNativeOsDir/$sqliteNativeArchDir/"
 
-// 更新站点地址：从 deployment.json 的 serverUrl 推导（私有化构建只改
-// deployment.json 一处，conveyor.conf 无需手改——避免忘改导致客户端指向
-// 他人更新源）。conveyor.conf 通过 #! include 消费本任务输出。
-tasks.register("printSiteConfig") {
+// 配置是 Gradle 任务的产物。Conveyor 只读普通 include，不反向启动另一个 Gradle 进程。
+val generatedConveyorConfig = layout.buildDirectory.file("conveyor/generated.conveyor.conf")
+val generatedSiteConfig = layout.buildDirectory.file("conveyor/site.conveyor.conf")
+val conveyorExecutableDescriptor = layout.buildDirectory.file("conveyor/tool.properties")
+
+tasks.named<WriteConveyorConfigTask>("writeConveyorConfig") {
+    destination.set(generatedConveyorConfig)
+    dependsOn("desktopJar")
+    doFirst { destination.get().asFile.parentFile.mkdirs() }
+}
+
+val writeConveyorSiteConfig by tasks.registering {
+    group = "distribution"
+    description = "Write the update URL and zero-based build-number mapping for Conveyor"
+    inputs.property("serverUrl", deploymentConfig.serverUrl)
+    inputs.property("releaseBuildNumber", releaseBuildNumber)
+    outputs.file(generatedSiteConfig)
     doLast {
         // Conveyor 拒绝全零安装版本；与 Android 一样把零起点构建计数映射为正数。
-        // 展示版本仍由 printConveyorConfig 提供，revision 只参与安装包与更新元数据。
         check(releaseBuildNumber in 0..65534) {
             "Conveyor MSIX revision must fit 1..65535; revise the installation-version mapping before increasing the build number further"
         }
-        println("app.site.base-url = \"${deploymentConfig.serverUrl.trimEnd('/')}/downloads/desktop\"")
-        println("app.revision = ${releaseBuildNumber + 1}")
+        val siteUrl = "${deploymentConfig.serverUrl.trimEnd('/')}/downloads/desktop"
+        val quotedSiteUrl = siteUrl.replace("\\", "\\\\").replace("\"", "\\\"")
+        generatedSiteConfig.get().asFile.apply {
+            parentFile.mkdirs()
+            writeText("app.site.base-url = \"$quotedSiteUrl\"\napp.revision = ${releaseBuildNumber + 1}\n")
+        }
+    }
+}
+
+val prepareConveyorConfig by tasks.registering {
+    group = "distribution"
+    description = "Generate the complete Gradle-owned Conveyor configuration inputs"
+    dependsOn("writeConveyorConfig", writeConveyorSiteConfig)
+}
+
+val prepareConveyor by tasks.registering(PrepareConveyorTask::class) {
+    distributionCatalog.set(rootProject.layout.projectDirectory.file("gradle/conveyor-tools.properties"))
+    cacheDirectory.set(rootProject.layout.dir(provider { gradle.gradleUserHomeDir.resolve("teamtalk-tools/conveyor") }))
+    executableOverride.set(providers.gradleProperty("conveyorExecutable").orElse(providers.environmentVariable("TEAMTALK_CONVEYOR_EXECUTABLE")))
+    downloadBaseUrl.set(providers.gradleProperty("conveyorDownloadBaseUrl")
+        .orElse(providers.environmentVariable("TEAMTALK_CONVEYOR_DOWNLOAD_BASE_URL"))
+        .orElse("https://downloads.hydraulic.dev/conveyor"))
+    executableDescriptor.set(conveyorExecutableDescriptor)
+}
+
+tasks.register("buildConveyorSite") {
+    group = "distribution"
+    description = "Build all Desktop installers and the update site with the Gradle-managed Conveyor CLI"
+    dependsOn(prepareConveyor, prepareConveyorConfig)
+    inputs.files("conveyor.conf", "conveyor/extract-native-libraries.conf", generatedConveyorConfig, generatedSiteConfig)
+    inputs.property("buildIdentity", buildIdentity)
+    outputs.dir(layout.projectDirectory.dir("output"))
+    // Conveyor owns its content-addressed cache; always let it verify all platforms and signing inputs.
+    outputs.upToDateWhen { false }
+    doLast {
+        val configDirectory = providers.gradleProperty("conveyorConfigDir")
+            .orElse(providers.environmentVariable("TEAMTALK_CONVEYOR_CONFIG_DIR"))
+            .orNull?.let { rootProject.file(it) } ?: defaultConveyorConfigDirectory()
+        requireConveyorSigningConfiguration(configDirectory)
+        buildConveyorSite(
+            conveyorExecutableDescriptor.get().asFile,
+            projectDir,
+            configDirectory,
+            releaseVersion,
+            buildIdentity,
+        )
     }
 }
 

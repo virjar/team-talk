@@ -1,161 +1,115 @@
-name: Build, Deploy & Release
+name: Release
 
 on:
-  workflow_dispatch:
   push:
+    branches: [main]
+    paths: [gradle.properties]
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: Client publication destinations (server deployment is always manual)
+        type: choice
+        default: github
+        options: [github, 'site,github']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: teamtalk-release-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
-  verify:
-    name: Release Architecture & Identity
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-java@v5.7.0
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-      - uses: gradle/actions/setup-gradle@v5.0.2
-      - run: ./gradlew verifyRelease --quiet
-
-  server:
-    name: Server Distribution
-    runs-on: ubuntu-latest
-    needs: verify
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-java@v5.7.0
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-      - uses: gradle/actions/setup-gradle@v5.0.2
-      - run: ./gradlew :server:server:installDist --quiet
-      - uses: actions/upload-artifact@v7.0.1
-        with:
-          name: teamtalk-server
-          path: server/server/build/install/teamtalk-server/
-          retention-days: 7
-
-  # 单 job 交叉出三平台全套（mac 双架构 zip + Sparkle appcast、Windows MSIX +
-  # appinstaller、Linux deb + tar.gz + apt 仓库 + 下载页），替代原三平台 matrix。
-  # Conveyor 在 Linux 上可产出全部平台安装包（doc/07-operations/desktop-cross-build.md）。
-  desktop-site:
-    name: Desktop Site (Conveyor, all platforms)
-    runs-on: ubuntu-latest
-    needs: verify
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-java@v5.7.0
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-      - uses: gradle/actions/setup-gradle@v5.0.2
-      - name: Install Conveyor
-        run: |
-          curl -sL -o "$RUNNER_TEMP/conveyor.deb" https://downloads.hydraulic.dev/conveyor/hydraulic-conveyor_22.1_amd64.deb
-          sudo apt install -y "$RUNNER_TEMP/conveyor.deb"
-          conveyor --version
-      - name: Build desktop jar
-        run: ./gradlew :client:desktop:desktopJar --quiet
-      - name: Build three-platform site
-        env:
-          CONVEYOR_AGREE_TO_LICENSE: "1"
-        working-directory: client/desktop
-        run: conveyor make site --overwrite
-      - name: Stamp verified desktop artifact identity
-        run: ./gradlew writeDesktopSiteManifest --quiet
-      - uses: actions/upload-artifact@v7.0.1
-        with:
-          name: teamtalk-desktop-site
-          path: client/desktop/output/
-          retention-days: 7
-
-  android:
-    name: Android APK
-    runs-on: ubuntu-latest
-    needs: verify
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-java@v5.7.0
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-      - uses: gradle/actions/setup-gradle@v5.0.2
-      - run: ./gradlew :client:android:assembleRelease --quiet
-      - uses: actions/upload-artifact@v7.0.1
-        with:
-          name: teamtalk-android
-          path: client/android/build/outputs/apk/release/*-release.apk
-          retention-days: 7
-
-  deploy:
-    name: Deploy and Verify
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    needs: [server, desktop-site, android]
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-java@v5.7.0
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-      - uses: gradle/actions/setup-gradle@v5.0.2
-      - uses: webfactory/ssh-agent@v0.10.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
-      - name: Download server distribution artifact
-        uses: actions/download-artifact@v8.0.1
-        with:
-          name: teamtalk-server
-          path: build/ci-artifacts/server
-      - name: Deploy staged server distribution
-        run: ./gradlew deployStagedServer -PSERVER_DIST_DIR="$GITHUB_WORKSPACE/build/ci-artifacts/server"
-      - name: Download desktop site artifact
-        uses: actions/download-artifact@v8.0.1
-        with:
-          name: teamtalk-desktop-site
-          path: build/ci-artifacts/desktop-site
-      - name: Upload desktop update site
-        run: ./gradlew uploadDesktopSite -PDESKTOP_SITE_DIR="$GITHUB_WORKSPACE/build/ci-artifacts/desktop-site"
-      - name: Upload APK from CI artifacts
-        uses: actions/download-artifact@v8.0.1
-        with:
-          name: teamtalk-android
-          path: build/ci-artifacts/clients/teamtalk-android
-      - name: Upload APK
-        run: ./gradlew uploadClientArtifacts -PARTIFACT_STAGING_DIR="$GITHUB_WORKSPACE/build/ci-artifacts/clients"
-
-  acceptance:
-    name: Verify Deployed Business Flows
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    needs: deploy
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-java@v5.7.0
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-      - uses: gradle/actions/setup-gradle@v5.0.2
-      - name: Run business acceptance after artifact-only deploy
-        run: ./gradlew :server:server:acceptanceTest
-
   release:
-    name: Create GitHub Release
-    if: startsWith(github.ref, 'refs/tags/')
+    name: Build and publish the committed release
     runs-on: ubuntu-latest
-    needs: [server, desktop-site, android]
-    permissions:
-      contents: write
+    env:
+      RELEASE_TARGETS: ${{ inputs.targets || vars.TEAMTALK_RELEASE_TARGETS || 'github' }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TEAMTALK_RELEASE_SSH_PASSPHRASE: ${{ secrets.RELEASE_SSH_PASSPHRASE }}
+      TEAMTALK_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+      TEAMTALK_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      TEAMTALK_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
-      - uses: actions/download-artifact@v8.0.1
+      - uses: actions/checkout@v7.0.1
         with:
-          path: artifacts
-      - uses: softprops/action-gh-release@v3.0.3
+          fetch-depth: 0
+      - uses: actions/setup-java@v5.7.0
         with:
-          name: TeamTalk ${{ github.ref_name }}
-          draft: true
-          files: |
-            artifacts/teamtalk-server/**
-            artifacts/teamtalk-desktop-site/**
-            artifacts/teamtalk-android/*.apk
+          java-version: '17'
+          distribution: temurin
+      - uses: gradle/actions/setup-gradle@v5.0.2
+        with:
+          gradle-home-cache-includes: |
+            caches
+            notifications
+            teamtalk-tools
+      # Hosted Ubuntu runners include the Android SDK. Gradle owns Node and Conveyor.
+      - name: Provide existing signing identities and optional site credentials
+        env:
+          TEAMTALK_CONVEYOR_CONFIG_DIR: ${{ runner.temp }}/teamtalk-conveyor-signing
+          TEAMTALK_RELEASE_SSH_KEY: ${{ runner.temp }}/teamtalk-release-ssh
+          TEAMTALK_RELEASE_KNOWN_HOSTS: ${{ runner.temp }}/teamtalk-known-hosts
+          CONVEYOR_DEFAULTS_CONF: ${{ secrets.CONVEYOR_DEFAULTS_CONF }}
+          RELEASE_SSH_KEY: ${{ secrets.RELEASE_SSH_KEY }}
+          RELEASE_KNOWN_HOSTS: ${{ secrets.RELEASE_KNOWN_HOSTS }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os
+          from pathlib import Path
+          def write_private(path, data):
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_bytes(data)
+              path.chmod(0o600)
+          for secret, destination in (
+              ('CONVEYOR_DEFAULTS_CONF', Path(os.environ['TEAMTALK_CONVEYOR_CONFIG_DIR']) / 'defaults.conf'),
+              ('RELEASE_SSH_KEY', Path(os.environ['TEAMTALK_RELEASE_SSH_KEY'])),
+              ('RELEASE_KNOWN_HOSTS', Path(os.environ['TEAMTALK_RELEASE_KNOWN_HOSTS'])),
+          ):
+              if os.environ.get(secret):
+                  write_private(destination, os.environ[secret].replace('\r\n', '\n').encode())
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              for key in ('TEAMTALK_CONVEYOR_CONFIG_DIR', 'TEAMTALK_RELEASE_SSH_KEY', 'TEAMTALK_RELEASE_KNOWN_HOSTS'):
+                  output.write(f'{key}={os.environ[key]}\n')
+              if os.environ.get('ANDROID_KEYSTORE_BASE64'):
+                  keystore = Path(os.environ['RUNNER_TEMP']) / 'teamtalk-android.jks'
+                  write_private(keystore, base64.b64decode(os.environ['ANDROID_KEYSTORE_BASE64'], validate=True))
+                  output.write(f'TEAMTALK_ANDROID_KEYSTORE={keystore}\n')
+              event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+              if os.environ['GITHUB_EVENT_NAME'] == 'push' and os.environ['GITHUB_REF_TYPE'] == 'branch':
+                  before = event.get('before', '')
+                  if before and before != '0' * 40:
+                      output.write(f'ORG_GRADLE_PROJECT_releaseBase={before}\n')
+          PY
+      - name: Reuse this run's sealed bundle after an interrupted publication
+        if: github.run_attempt != '1'
+        continue-on-error: true
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: release-bundle-${{ github.sha }}
+          path: build/releases
+      - name: Release through the same Gradle entry point as private workstations
+        run: ./gradlew release -PreleaseTargets="$RELEASE_TARGETS"
+      - name: Retain the exact bundle for inspection and publication retries
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-bundle-${{ github.sha }}
+          path: build/releases/
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 14
+      - name: Remove temporary credentials
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os, shutil
+          from pathlib import Path
+          shutil.rmtree(Path(os.environ['RUNNER_TEMP']) / 'teamtalk-conveyor-signing', ignore_errors=True)
+          for key in ('TEAMTALK_RELEASE_SSH_KEY', 'TEAMTALK_RELEASE_KNOWN_HOSTS', 'TEAMTALK_ANDROID_KEYSTORE'):
+              value = os.environ.get(key)
+              if value:
+                  Path(value).unlink(missing_ok=True)
+          PY

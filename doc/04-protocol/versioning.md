@@ -9,7 +9,7 @@ TeamTalk 尚未正式发布，**不对使用者保证版本兼容，未来仍可
 | 身份 | 当前值与来源 | 用途 | 递增时机 |
 |---|---|---|---|
 | 统一展示版本 | `teamtalk.releaseVersion=0.0.0` | Server、SDK、Android、Desktop、MCP 使用同一字符串，配合 commit 排查构建范围 | 需要命名一次发行时；不从它推导协议能力 |
-| 协议数字版本 | `major=0, minor=0`；`id=(major << 16) \| minor`，当前 ID `0` | 连接协商、协议注解、支持窗口与升级提示 | 每次新增 wire 契约递增 minor；明确的大版本收敛才递增 major 并将 minor 归零 |
+| 协议数字版本 | `major=0, minor=0`；`id=(major << 16) \| minor`，当前 ID `0` | 连接协商、协议注解、支持窗口与升级提示 | 开发新增使用临时 minor；发行前把未发布增量合并成紧邻上一发行的一个 minor；明确的新 major 从 minor 0 开始 |
 | 平台安装序号 | `teamtalk.releaseBuildNumber=0` | 安装器识别新包；Android `versionCode` 与 Conveyor `app.revision` 为 `buildNumber+1`，零号为 `1`；macOS jpackage 的系统包版本从 `1.0.0` 映射 | 每次分发新的安装包时独立递增；不参与协议判断 |
 
 事实源均为根 `gradle.properties`。`ProtocolVersions` 与 SDK `TeamTalkBuild` 由构建生成；禁止在业务、
@@ -22,6 +22,41 @@ SDK 或平台壳里另外硬编码一个发行字符串。`major` 范围 `0..327
 数据库自身已有的布局标记不属于本次发行版本重编号。服务端 PostgreSQL/data epoch 继续保持现存值
 `1`，客户端数据库文件仍为 `cache_e0...db`，SQLDelight schema 从 `1` 起步。改写这些已有标记不会产生
 迁移，反而会使同一批数据被误判为不兼容，因此本次原样保留。
+
+## 开发编号与发行契约分开管理
+
+一次发行由根版本配置命名，人工说明写入 `doc/07-operations/releases/<releaseVersion>.md` 并随配置
+一起提交。公开仓库的 `v<releaseVersion>` tag 标记这次源码；私有客户没有 GitHub，也遵守同样的本地记录。
+提交摘要只能帮助核对遗漏，不能覆盖人工撰写的变更、升级步骤和已知限制。
+
+| 文件 | 表达的事实 | 可以怎样修改 |
+|---|---|---|
+| `gradle.properties` | 下一次构建使用的展示版本、安装序号与协议窗口 | 开发时按需要演进，发行前收敛未发布 minor |
+| `protocol/protocol/wire-baseline.tsv` | 当前开发源码的结构清单 | 经显式 `writeProtocolBaseline` 登记；始终受发行快照约束 |
+| `protocol/protocol/releases/<version>/` | 为发行冻结的配置、wire 布局、生命周期及哈希 | 显式准备新版本时新增；既有目录不覆盖、不删除 |
+
+零号发行快照认领已分发的 `0.0.0 / buildNumber=0 / protocol=0.0`，来源为提交
+`5ce355bffe8fb29a47dd03303704b87e61cb201a`。没有历史 tag 不会让这批客户端重新变成可随意修改的试验包。
+**向内测用户、SDK 集成方或任一私有客户分发都算发行**，不能以“没有公开下载”作为回收编号的依据。
+为避免发布中断造成事实不明，发行快照从登记起即保守冻结；重试继续使用该版本，不能先删记录再复用编号。
+
+```mermaid
+flowchart LR
+    Published["最近冻结发行：协议 0.3"] --> Development["尚未分发的试验：0.4 → 0.9"]
+    Development --> Review["逐项审阅新增契约、注解、兼容分支和迁移"]
+    Review --> Consolidate["统一收敛为下一发行协议 0.4"]
+    Consolidate --> Record["登记开发清单 → 准备发行快照 → 提交人工说明"]
+    Record --> Release["Gradle 校验并分发；此后 0.4 永久冻结"]
+```
+
+这里收敛的是未发布的 **minor 计数和对应的生命周期值**，不是把已发行的 RPC methodId 或消息编号重新排序。
+若试验 `0.6` 已经分发，就必须先把这次发行纳入本地记录，此后的代码不得再假装最后发行仍是 `0.3`。
+对既有已分发但漏记的历史必须按真实版本补录和评审，不能使用收敛任务改写事实；正常分发流程禁止漏记。
+
+同一 major 内，有新增 wire 或首次声明退役时，下一发行 minor 恰为上一发行加一；该批新增统一标记为这个
+minor。纯 UI/实现修复与已经声明的实现退役可以保持原协议号，展示版本与安装序号仍递增。提高最低兼容
+版本不能超过当前 minor，也不能回退到先前已经移除的范围。新 major 必须紧邻上一 major，并以 `minor=0`、
+`minimumMinor=0` 开始；这时才允许重整 wire 编号，旧发行记录仍保留。
 
 ## 一次连接怎样协商
 
@@ -60,14 +95,14 @@ sequenceDiagram
 已有账号仍保留离线启动能力：完全离线时无法预知服务端刚提高的下限，但**一旦已知旧客户端被淘汰，
 之后的离线启动也不得绕过该限制**。拒绝旧客户端不删除账号凭据、草稿或发件箱。
 
-## 同一 major 只新增，不修改既有 wire
+## 同一 major 只新增，不修改已发行 wire
 
-1. 已登记 RPC 的 `(serviceId, methodId)`、参数顺序、类型和返回值不变。新签名使用新 methodId，
+1. 已冻结发行 RPC 的 `(serviceId, methodId)`、参数顺序、类型和返回值不变。新签名使用新 methodId，
    新旧入口在同一组代码和 jar 内共存，各自调用明确的兼容业务逻辑。
-2. 已登记 IProto 模型的 wire 字段和编码顺序不变，不能以“字段可空”或“只加在末尾”为理由修改旧布局。
+2. 已冻结发行 IProto 模型的 wire 字段和编码顺序不变，不能以“字段可空”或“只加在末尾”为理由修改旧布局。
    要改变布局就创建新模型，并通过新 RPC/消息/通知入口引入。
-3. 新增 RPC、PacketType、NotifyType、MessageType 或 wire 类型时，递增 minor，并用
-   `@SinceProtocol(minor)` 描述首次支持版本；零号基线中没有注解的已有条目属于 minor 0。
+3. 新增 RPC、PacketType、NotifyType、MessageType 或 wire 类型时，分配开发 minor，并用
+   `@SinceProtocol(minor)` 描述首次支持版本；发行前只收敛未冻结值。零号基线中没有注解的已有条目属于 minor 0。
 4. 同一 major 内退役的编号保留墓碑，不重新使用。一次变更涉及的所有协议新增可共同属于同一个新 minor。
 5. 只改变实现方式、修复保持原契约的缺陷，不要求增加协议版本；不能用“重构”掩盖线上字节或业务语义变化。
 
@@ -92,16 +127,34 @@ suspend fun getProfile(uid: String): UserProfile
 ## 构建怎样发现误改与废弃
 
 ```bash
-# 普通检查，只比较，不重写已登记事实
+# 普通检查，同时对照开发清单和独立的冻结发行快照
 ./gradlew :protocol:protocol:verifyProtocolBaseline
 
-# 有意新增、退役或开始新 major 时，生成可 review 的清单变更
+# 有意新增、退役或收敛未发行 minor 后，生成可 review 的开发清单
 ./gradlew :protocol:protocol:writeProtocolBaseline
+
+# 发版准备：从根版本配置和开发清单新增不可覆盖的发行快照
+./gradlew :protocol:protocol:prepareProtocolRelease
 ```
 
-KSP 登记并校验 `protocol/protocol/wire-baseline.tsv` 中的 ID、RPC 签名、模型字段及生命周期。
-普通编译和 `verifyRelease` 都接入检查；显式写清单也不能把同 major 的旧签名改写或复用墓碑当成合法新增。
-每次审阅应同时看版本计数器、注解、清单 diff 和业务适配，不能只提交生成文件。
+KSP 每次编译都检查最新冻结快照与实际源码，再检查开发清单是否已经登记；即使手工修改开发 TSV，也不能
+掩盖已经发行的签名变化或墓碑复用。显式 `writeProtocolBaseline` 允许相对冻结快照重新登记未发行的工作，
+因此收敛 minor 不会被旧开发计数永久锁死。它不会写入或修改发行历史。
+
+`prepareProtocolRelease` 检查展示版本和安装序号递增、minor 连续、已发行布局与生命周期不被改写，再写入
+新的发行目录。它是发版前的源码编辑操作，**不会由发布任务或 CI 偷偷执行**；维护者必须审阅并提交根配置、
+人工说明、代码与两类清单。客户端发行的 `verifyReleaseMetadata` 要求当前根版本已有匹配的最新发行记录，开发清单与冻结文件
+逐字节一致。普通发行校验和编译均不需要 GitHub，也不查询远端 tag 才决定是否应保护一个契约。
+CI 的 `verifyReleaseChange -PreleaseBase=<比较基点>` 还检查基点已有的发行快照未被修改或删除；
+只有根展示版本或安装序号变化时，才要求本次人工说明和新快照匹配，纯开发 minor 变化不触发发行冻结。
+
+手动服务端开发部署沿用 `verifyRelease` 的干净源码、架构和 wire 校验，可以运行尚未发行的开发 minor，
+不强迫每次调试都登记客户端发行快照。客户端统一 `release` 同时执行这项门禁与发行元数据检查；真正向
+用户分发时仍须先冻结，不能以服务端调试路径绕过发行纪律。
+
+收敛时应先列出所有大于上一发行 minor 的 `@SinceProtocol`、首次声明的 `@RemovedInProtocol`、版本判断、
+迁移和测试，把同一批变更统一指向下一 minor，再登记开发清单。构建会阻止未收敛版本被打包成发行，
+但不会用自动正则替换业务源码。每次审阅应同时看版本计数器、注解、清单 diff 和业务适配，不能只提交生成文件。
 
 结构清单不能证明任意手写 `writeTo/readFrom` 的语义都未变化。例如在方法体里调换两次写入，即使构造
 字段没改也可能破坏 wire；维护者仍须遵守冻结规则，并为实际编码变化保留 round-trip/golden 检查。

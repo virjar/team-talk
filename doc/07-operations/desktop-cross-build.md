@@ -1,179 +1,121 @@
-# 客户端发行与 Desktop 交叉打包
+# Desktop 交叉打包与客户端签名
 
-当前发行链采用 Conveyor：一个构建机生成 Desktop 三平台安装包和更新站点；Android 独立生成签名 APK。
-这里说明开发者预览版怎样出包、交付和识别版本。服务端安装与升级见[部署与升级](deployment.md)，
-测试者从安装到首次登录的步骤见[快速上手](../01-getting-started/README.md)。
+Desktop 使用 Conveyor，在一个构建机上生成 macOS、Windows、Linux 安装包和完整更新站点；Android
+生成独立签名 APK。面向客户的发行入口是根 `release` 任务，版本准备、上传和 CI 见
+[统一发行流程](releasing.md)。本页解释打包输入、工具管理、签名与各平台边界。
 
-平台安装元数据使用独立构建计数的正数映射：Conveyor 的 `app.revision = releaseBuildNumber + 1`，
-避免全零安装版本被拒绝；本机 Compose DMG 的 `jpackage` 另要求安装版本首段为正数。
-应用内展示版本与 Conveyor 的 `app.version` 仍统一；零号版本的对应关系见
-[版本机制](../04-protocol/versioning.md#零号基线的切换边界)。
+## Gradle 与 Conveyor 的分工
 
-## 1. 产物与下载路径
+Conveyor Gradle 插件负责提取 Compose 的运行库、主类和 JVM 参数；真正制作安装器的能力由 Conveyor
+原生 CLI 提供。插件不是完整打包引擎。项目把 CLI 的下载、固定版本、摘要校验和执行也接入 Gradle，
+因此完整流程不要求使用者另外安装二进制或手工敲 Conveyor 命令。
 
 ```mermaid
-flowchart LR
-    Config[deployment.json：HTTP / TCP / 部署坐标]
-    Version[gradle.properties：版本与 Android versionCode]
-    Config --> Desktop[desktopJar + Conveyor]
-    Version --> Desktop
-    Config --> Android[assembleRelease + APK 签名]
-    Version --> Android
-    Desktop --> Site[output：平台包 / 更新元数据 / download.html]
-    Site --> Stamp[writeDesktopSiteManifest：构建身份]
-    Stamp --> Upload[uploadDesktopSite]
-    Android --> APK[android-release.apk]
-    APK --> UploadAPK[releaseAndroid / uploadClientArtifacts]
-    Upload --> Static[服务端 static/downloads]
-    UploadAPK --> Static
-    Static --> Home[首页下载入口]
-    Static --> Update[Sparkle / Windows appinstaller / apt]
+flowchart TD
+    Jar["desktopJar：内嵌源码身份"] --> Extract["writeConveyorConfig：提取 Compose 打包输入"]
+    Version["根版本与 deployment.json"] --> SiteConfig["writeConveyorSiteConfig：更新源与 revision"]
+    Lock["conveyor-tools.properties：版本、各平台包 SHA-256"] --> Tool["prepareConveyor：下载、校验、解压、版本检查"]
+    Extract --> Build["buildConveyorSite：CLI 在独立暂存目录制作完整站点"]
+    SiteConfig --> Build
+    Tool --> Build
+    Signing["已有 defaults.conf：持续签名身份"] --> Build
+    Build --> Output["成功后写构建身份并切换 client/desktop/output"]
+    Output --> Bundle["release：验证并纳入密封目录"]
 ```
 
-| 客户端 | 构建产物 | 发布后的入口 | 更新方式 |
-|---|---|---|---|
-| macOS | Intel / Apple Silicon 分开的 zip，内含 `.app` | `/downloads/desktop/download.html#mac` | Conveyor 打包的 Sparkle 更新元数据 |
-| Windows | 安装引导程序、MSIX / appinstaller、zip | `/downloads/desktop/download.html`；首页链接 `teamtalk.exe` | 通过安装器安装后的系统 appinstaller 更新 |
-| Linux | deb、tar.gz、apt 索引 | `/downloads/desktop/download.html#linux` | 使用生成下载页配置 apt；tar.gz 手动替换 |
-| Android | `client/android/build/outputs/apk/release/android-release.apk` | `/downloads/TeamTalk-android.apk` | 当前手动下载并覆盖安装，没有应用内自动更新 |
-| 无头开发接入 | `client/shared/build/headless/` | 从同版本源码执行 `:client:shared:headlessDist` | 维护者替换自己的分发目录；首页和发行 workflow 尚未分发此目录 |
+`conveyor.conf` 读取 Gradle 事先写好的普通配置文件，不在 CLI 运行中反向启动 Gradle。由此避免父子
+Gradle 进程争用工作目录，也不需要依赖 Windows shell 去执行 Unix shebang。
 
-下载链接均相对于部署服务器，首页与静态路由位于同一 JVM 服务内，不需要额外 Web 服务。
-Desktop 更新站点必须完整上传：只发一个 zip / MSIX 不会同时交付下载页、更新索引和增量包。
-独立解压版也不能据此承诺安装器的更新行为，测试者应遵循生成下载页对应平台的安装步骤。
+Conveyor 工具版本与下载哈希固定在 `gradle/conveyor-tools.properties`，当前为 22.1，配置兼容级别为 22。
+下载工具解压到 Gradle 用户目录下的 `teamtalk-tools/conveyor`；这与打包所用的 JDK 17 是不同配置。
+已经缓存并校验的工具会复用。私有环境可通过下列非秘密参数提供镜像或现成工具：
 
-## 2. 出包前固定版本和服务器
+| 参数 | 等价环境变量 | 用途 |
+|---|---|---|
+| `-PconveyorDownloadBaseUrl` | `TEAMTALK_CONVEYOR_DOWNLOAD_BASE_URL` | 工具归档镜像根地址；文件名和锁定哈希保持不变 |
+| `-PconveyorExecutable` | `TEAMTALK_CONVEYOR_EXECUTABLE` | 管理员准备的可执行文件；仍检查固定版本，不代替归档来源校验 |
+| `-PconveyorConfigDir` | `TEAMTALK_CONVEYOR_CONFIG_DIR` | 存放已有 `defaults.conf` 的私密配置目录 |
 
-- 版本源是 `gradle.properties` 的 `teamtalk.releaseVersion` 与 `teamtalk.releaseBuildNumber`。
-  Android `versionCode` 与 Conveyor `app.revision` 均为 `releaseBuildNumber + 1`；
-  当前 Conveyor 映射要求构建计数不超过 `65534`，满足 MSIX 四段版本各不超过 `65535` 的限制。
-  展示字符串和协议数字版本独立，tag 构建还校验
-  `v<releaseVersion>`。准备新一轮预览时递增版本，避免用户难以区分两份同名包。
-- `gradle/deployment.json` 固定 HTTP 与 TCP 坐标。私有化客户端应为目标服务器重新构建；
-  TCP 登录与 HTTPS 附件通道都必须可达。修改地址不会自动发布客户端。
-- Desktop 更新源也由这份配置推导为 `<serverUrl>/downloads/desktop`，经 `printSiteConfig`
-  注入 Conveyor。Desktop 登录页的临时改服入口不会改变已打包的更新源。
-- `allowCustomServer` 目前仅由 Desktop 登录窗口使用，改服时 HTTP host 同时作为 TCP host，
-  TCP 端口沿用打包值。Android 使用打包坐标，不应向测试者承诺同样的改服入口。
+没有 GitHub 不影响私有发行，但不等于首次构建完全离线。Gradle/Maven、Node/npm、Android SDK、Conveyor
+及其 JDK 和更新组件仍需可达下载源或预热缓存；镜像只替换对应工具下载地址，不自动接管所有外部依赖。
+Conveyor 的使用许可仍由客户按其部署方式确认，自动下载不替代许可配置。
+
+## Desktop 签名必须持续使用同一身份
+
+完整站点构建要求已有、非空的 `defaults.conf`。默认查找平台的 Conveyor 用户配置目录；显式
+`TEAMTALK_CONVEYOR_CONFIG_DIR` 更适合 CI 与客户受控构建机。发行任务不会在缺少配置时自动生成新签名密钥。
+
+同一组织持续交付时应保存原签名材料，在不同构建机恢复同一份配置；CI Secret 只负责分发私密输入。
+不要提交私钥或把 `defaults.conf` 放进产物目录。正式 macOS 签名、公证和 Windows 受信任证书需要另外
+完成配置与目标平台验证；当前预览签名不能被描述成已获得系统信任的正式发行。
+
+为了单独排查打包，可从根目录运行内部生产任务：
 
 ```bash
-./gradlew verifyRelease
+./gradlew :client:desktop:buildConveyorSite
 ```
 
-## 3. Android：生成可以安装的预览 APK
+结果在 `client/desktop/output/`。CLI 失败时不为旧目录重新盖身份，也不把半成品当成完成站点；只有完整
+构建成功，才写入 `teamtalk-release.properties` 并切换生成目录。正式交付继续使用 `release`，由统一
+密封检查确认版本、必需产物与每个文件的 SHA-256。
+
+## 平台产物与更新方式
+
+| 客户端 | 产物 | 现有更新方式 |
+|---|---|---|
+| macOS | Intel / Apple Silicon 分开的 zip，内含 `.app` | Conveyor 生成的 Sparkle 更新元数据 |
+| Windows | 引导 exe、MSIX / appinstaller、zip | 按生成下载页安装后的 appinstaller 更新 |
+| Linux | deb、tar.gz、apt 索引 | 按下载页配置 apt；tar.gz 手动替换 |
+| Android | 签名 APK | 手动下载覆盖安装，尚无应用内自动更新 |
+
+Desktop 的完整站点包含 `download.html`、平台安装文件与更新索引，不能用其中一个 ZIP 替代整站。
+独立解压版也不能被视为已经接通安装器更新路径；遵循生成下载页对应平台的说明。
+
+根 `teamtalk.releaseVersion` 是应用内与 Conveyor 的展示版本。Android `versionCode` 与 Conveyor
+`app.revision` 为 `releaseBuildNumber + 1`，零号均为 `1`；零号 Desktop 安装元数据为 macOS/Windows
+`0.0.0.1`、Linux `0.0.0-1`。同一安装序号不能用于分发不同包，具体边界见
+[版本机制](../04-protocol/versioning.md#零号基线的切换边界)。
+
+Desktop 更新源固定为 `deployment.json` 的 `<serverUrl>/downloads/desktop`。登录页临时改服务器
+不会改变已打包更新源；Android 使用构建时坐标。私有客户须在构建前固定自己的 HTTP/TCP 地址与更新站点。
+
+当前 Android 最低 API 26，macOS 最低 14.0。三平台交叉出包成功不代表各系统都完成实机验收；参与
+本轮内测的平台应从实际交付文件完成安装、启动和登录检查。操作系统的安装提示不能靠关闭全局系统
+安全设置解决。
+
+## Android 签名
+
+Android 优先读取环境变量，其次读取不入库的 `local.properties`：
+
+| 环境变量 | local.properties 字段 |
+|---|---|
+| `TEAMTALK_ANDROID_KEYSTORE` | `release.storeFile` |
+| `TEAMTALK_ANDROID_STORE_PASSWORD` | `release.storePassword` |
+| `TEAMTALK_ANDROID_KEY_ALIAS` | `release.keyAlias` |
+| `TEAMTALK_ANDROID_KEY_PASSWORD` | `release.keyPassword` |
+
+证书文件可用绝对路径或相对仓库根目录的路径。没有配置 keystore 时使用已入库的固定公开预览证书
+`client/android/teamtalk-dev.jks`；该证书用于连续预览包覆盖安装，不用于组织正式私有签名。
+证书缺失或密码错误会让 release 构建失败，不降级为 unsigned APK，也不临时换用另一份密钥。
+
+统一密封流程使用 JVM APK 验签器检查真实签名，并读取 APK 内的构建身份以及 Android 输出元数据，
+在清单中记录签名证书 SHA-256。单独调试构建可运行：
 
 ```bash
 ./gradlew :client:android:assembleRelease
 ```
 
-签名选择只有一条顺序：有 `local.properties` 的 `release.storeFile` 时使用指定证书；否则使用
-已入库的 `client/android/teamtalk-dev.jks`。后者是公开的固定开发证书，仅用于开发者预览，
-能让连续预览包以同一证书覆盖安装。证书缺失或配置错误会让 release 构建失败，不降级为 unsigned APK。
+覆盖安装要求应用 ID 与签名一致。从 debug 或另一证书换装可能要求卸载，影响本地数据；应在首次组织
+内测前固定长期签名。后续每次发行仅增加安装序号，不能把更换签名造成的安装失败当成数据迁移方案。
 
-正式或自有签名配置保存在不入库的 `local.properties`：
+## 本机 DMG 与 SDK 的独立边界
 
-```properties
-release.storeFile=/secure/teamtalk/release.jks
-release.storePassword=<证书库密码>
-release.keyAlias=<别名>
-release.keyPassword=<密钥密码>
-```
+`:client:desktop:packageReleaseDmg` 仍可在 macOS 通过 Compose/JDK jpackage 生成当前架构的 DMG，
+路径为 `client/desktop/build/compose/binaries/main-release/dmg/`。它不包含 Conveyor 的完整更新站点，
+不替代统一发行里的跨平台包；Intel Mac 构建也不证明 Apple Silicon 原生包已验证。
 
-`release.storeFile` 使用绝对路径，或相对仓库根目录的路径。不要把私有证书和密码写入
-`deployment.json`；该文件会随源码分发。现有 CI 没有注入正式证书，使用仓库的预览证书。
+SDK 与无头客户端从同一版本源码接入。`:client:shared:headlessDist` 提供 `tt-agent`、`tt`、`tt-mcp`
+和运行库，需 JDK 17；首次运行和持久数据目录见[无头客户端](../05-clients/headless.md#3-构建与启动-agent)。
 
-交付前，用已安装 Android SDK 的 `build-tools/<版本>/apksigner` 检查真正要交付的文件：
-
-```bash
-apksigner verify --verbose --print-certs client/android/build/outputs/apk/release/android-release.apk
-aapt dump badging client/android/build/outputs/apk/release/android-release.apk
-shasum -a 256 client/android/build/outputs/apk/release/android-release.apk
-```
-
-上述工具不在 PATH 时使用 SDK 中的完整路径。记录 `versionName`、`versionCode`、证书 SHA-256
-和 APK SHA-256，与下载文件一起交给内测负责人。上传任务只选择 APK 文件，**当前没有像 Desktop
-站点一样校验构建身份清单**，因此暂存目录必须来自本次构建，不能混入旧 APK。
-
-当前 Android 最低 API 26（Android 8.0）。测试者允许来源应用安装 APK 后即可安装。
-覆盖安装要求应用 ID 与签名证书一致；从 debug 签名或另一证书切换过来可能需要卸载重装，
-这会丢失本地缓存、登录和待发送内容。连续内测保留同一预览证书，避免把该问题误判为升级故障。
-
-## 4. Desktop：生成三平台与更新站点
-
-构建机需 JDK 17 与 Conveyor。当前 CI 固定安装 Conveyor 22.1；`conveyor.conf` 使用兼容级别 22，
-这与应用字节码和打包 JDK 的版本 17 是两项不同配置。
-
-在仓库根执行：
-
-```bash
-./gradlew :client:desktop:desktopJar
-(cd client/desktop && conveyor make site --overwrite)
-./gradlew writeDesktopSiteManifest
-```
-
-结果位于 `client/desktop/output/`。`teamtalk-release.properties` 记录 artifactType、version
-和 buildIdentity，`uploadDesktopSite` 仅接纳与当前构建身份一致的站点。不要在换版本或切提交后给
-旧 `output/` 重盖清单；它用于关联刚完成的构建，不是对任意历史目录做内容校验。
-
-只在 macOS 做本机安装包检查时，可以缩小目标：
-
-```bash
-(cd client/desktop && conveyor -Kapp.machines=mac.amd64 make unnotarized-mac-zip)
-```
-
-Apple Silicon 对应目标为 `mac.aarch64`。这种局部产物不能替代用于上传的完整 `make site`。
-macOS 最低为 14.0：配置与当前 Skiko、项目内视频 native 库的最低系统版本一致。
-
-没有 Conveyor 时，少量 Mac 内测可使用现有 jpackage 任务先出本机平台的 DMG：
-
-```bash
-./gradlew :client:desktop:packageReleaseDmg
-```
-
-产物位于 `client/desktop/build/compose/binaries/main-release/dmg/`；Intel Mac 构建的是 x86_64 包，
-不代表 Apple Silicon 原生包已验证。检查包内 `TeamTalk.app/Contents/Info.plist` 的
-`LSMinimumSystemVersion=14.0`，从候选包启动并登录后再交付。此 DMG **不含 Conveyor 更新链**，
-后续预览需重新下载并替换应用；它不能上传为完整 Desktop 更新站点。
-
-当前仓库没有完成正式 macOS 公证和 Windows 受信任发行签名的配置与全平台实机验收。
-成功生成三平台包只证明出包能力；开发者预览按下载页说明处理平台安装提示，并对实际参与内测的
-平台各做一次启动和登录检查。不要要求关闭全局系统安全设置。
-
-`conveyor.conf` 已恢复默认的版本一致性检查，不允许用不同二进制静默替换已分发版本。
-正式发行仍需固定签名并验证对应平台更新路径。零号基线与旧开发包换装的边界见[版本说明](../04-protocol/versioning.md#零号基线的切换边界)。
-
-## 5. 上传与 CI 的边界
-
-以下命令会上传文件。先完成构建与检查，再在准备交付时执行：
-
-```bash
-./gradlew uploadDesktopSite -PDESKTOP_SITE_DIR="$PWD/client/desktop/output"
-./gradlew releaseAndroid
-```
-
-`releaseDesktop` 会重新构建 Desktop 站点并上传，`releaseClients` 同时执行两端发行；不要把这些
-命令当成纯本地打包。服务端部署过程保留 `static/downloads/`，客户端发布另行执行。
-Android 上传通过临时文件和 rename 原子替换固定下载名；Desktop 使用 rsync 更新整站，
-上传过程中不保证整目录原子切换，应在上传完成后再通知测试者下载。
-
-现有 [release.yml](../../.github/workflows/release.yml) 使用一个 Linux Desktop job 交叉出包，
-加上独立 Android 和 Server job。手动 workflow 在产物生成后部署并执行远端验收；tag 路径创建
-GitHub Release 草稿。它没有三平台 jpackage matrix，也不等于各平台都已完成安装验收。
-本地 Compose 的 `packageDistributionForCurrentOS` 仍走 jpackage，只产出当前 OS 的包，
-适合本地检查，不是当前站点发行入口。
-
-上传后检查首页下载链接、Android APK、Desktop 下载页、`teamtalk-release.properties` 和实际
-平台安装包均可读取；更新元数据不存在时必须返回 404，不能由 HTML 下载页兜底。保留本次交付的
-版本、buildIdentity、APK 摘要和测试平台记录。下载站点清单描述服务器当前分发版本，不代表
-某台用户设备已经更新成功；反馈问题时同时注明重新安装/覆盖升级、操作系统和复现步骤。
-
-## 6. 开发者接入
-
-SDK 与无头客户端从同一版本源码接入，避免协议和服务端版本混用。`headlessDist` 提供
-`tt-agent`、`tt` 和 `tt-mcp` 启动脚本及运行库，需 JDK 17；认证、首次启动和持久数据目录见
-[无头客户端与自动化接入](../05-clients/headless.md#3-构建与启动-agent)。需要自写客户端时先读
-[协议总览](../04-protocol/README.md)和[客户端 SDK 架构](../03-architecture/client-and-sdk.md)。
-
-打包相关事实源：`client/desktop/conveyor.conf`、`client/desktop/build.gradle.kts`、
-`client/android/build.gradle.kts`、`buildSrc/src/main/kotlin/deployment/UploadLogic.kt`。
-旧的 Conveyor 选型调研和迁移过程保留在 Git 历史；当前维护者按本页操作，不再重复选择已采用的工具。
+打包事实源是 `client/desktop/build.gradle.kts`、`client/desktop/conveyor.conf`、
+`gradle/conveyor-tools.properties`、`client/android/build.gradle.kts` 与 `buildSrc/src/main/kotlin/release/ConveyorTools.kt`。

@@ -29,7 +29,8 @@ systemd: teamtalk.service
 
 - [运行配置](configuration.md)：部署 JSON、环境变量、端口和目录。
 - [部署与升级](deployment.md)：首次部署、发布、备份和回滚。
-- [Desktop 交叉打包](desktop-cross-build.md)：Conveyor 单机出三平台安装包 + 自更新站点；构建、identity stamp 与纯上传分离。
+- [统一发行流程](releasing.md)：根版本、人工说明、密封产物、本机与 GitHub CI 共用的 Gradle 发布入口。
+- [Desktop 交叉打包与签名](desktop-cross-build.md)：Gradle 管理 Conveyor、三平台安装包、Android 与 Desktop 持续签名。
 - [可观测性](observability.md)：健康、日志、版本和诊断键。
 - [故障排查](troubleshooting.md)：按症状定位连接、认证、同步、文件和构建问题。
 

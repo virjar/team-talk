@@ -6,19 +6,23 @@
 
 | 任务 | 结果 |
 |---|---|
-| `verifyRelease` | 架构门禁、统一版本和 clean source identity 校验 |
+| `verifyRelease` | 架构、当前 wire 基线、版本一致性和干净源码身份校验；手动服务端部署沿用此入口 |
+| `verifyReleaseMetadata` | 客户端发行专用：根版本、人工说明与对应冻结协议快照校验 |
+| `verifyReleaseChange -PreleaseBase=...` | 检查旧发行记录未被修改或删除；仅在展示版本/安装序号变化时要求当前发行元数据 |
 | `:server:admin:check` / `:server:admin:build` | 按锁文件安装前端依赖、检查 TypeScript 并生成 Admin 静态资源 |
 | `:server:server:buildServerDist` / `:server:server:installDist` | 构建 Admin 后生成带 identity manifest 的服务端分发 |
 | `deployServer` | clean 工作树本地构建并部署服务端 |
-| `deployStagedServer -PSERVER_DIST_DIR=...` | 只部署 CI 已构建服务端，不重新构建 |
+| `deployStagedServer -PSERVER_DIST_DIR=...` | 人工部署已经解压并匹配源码身份的服务端分发，不重新构建 |
 | `deployServerResetData -Pteamtalk.resetDeployConfirm=<host>:<deployPath>` | **破坏性**：在精确确认的既有完整安装上，以空服务端数据部署 |
-| `releaseAndroid` | APK 构建并上传下载目录 |
-| `releaseClients` | 双端一键同版发布（desktop + apk，常规发版入口） |
-| `buildRelease` | 服务端、Desktop 当前平台与 Android 发布产物 |
-| `releaseDesktop` | Conveyor 三平台安装包构建 + 更新站点上传 |
-| `writeDesktopSiteManifest` | 为已构建 Conveyor site 写入 release identity |
-| `uploadDesktopSite -PDESKTOP_SITE_DIR=...` | 只上传已构建站点，不运行 Conveyor |
-| `uploadClientArtifacts` | CI 上传已分平台构建的产物 |
+| `release` / `buildRelease` | 默认构建并密封本地目录：Android、完整 Desktop 站点、Server ZIP 与发行说明 |
+| `release -PreleaseTargets=site` | 同一流程通过 JVM SFTP 发布双端下载入口，不部署服务端 |
+| `release -PreleaseTargets=github` | 同一流程向 GitHub 发布预览 Release、归档和人工说明 |
+| `release -PreleaseBundle=...` | 复核并复用密封目录，按指定 targets 交付，不重新构建产物 |
+
+客户端只有 `release` 一个发布入口；完整准备、签名、Windows 参数和重试步骤见
+[统一发行流程](releasing.md)。GitHub CI 可以构建 Server ZIP 作为附件，但不会执行本页的服务端部署任务。
+`deployServer` 与 `deployStagedServer` 当前仍依赖管理员本机的 SSH、rsync 和 OpenSSL。
+客户端 `release` 同时执行两类校验；服务端开发调试无需为了运行未发行的协议 minor 而提前冻结下一次客户端发行。
 
 统一展示版本与安装构建计数的事实源是 `gradle.properties` 中的 `teamtalk.releaseVersion` 与
 `teamtalk.releaseBuildNumber`。Android `versionCode` 为构建计数加一，满足平台正整数约束，
@@ -31,7 +35,7 @@ Server 的资源处理、分发与 `check` 通过任务依赖接入；生成资�
 `:server:server:buildAdmin` 保留为兼容入口。
 源码旁的 `server/admin/dist` 和 `node_modules` 不是分发输入，也不能提交；
 构建链见[依赖维护](../08-development/dependency-maintenance.md#管理后台的构建链)。
-Conveyor 在 Linux job 交叉生成三平台站点，producer 完成后再写入 identity manifest。
+Conveyor 的工具下载、配置生成与三平台站点制作均由 Gradle 管理，详情见[Desktop 打包](desktop-cross-build.md)。
 
 ## 2. 首次部署
 

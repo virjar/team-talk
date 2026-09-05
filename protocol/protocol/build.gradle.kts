@@ -34,15 +34,17 @@ val generateProtocolVersions by tasks.registering {
 }
 
 val recordingProtocolBaseline = gradle.startParameter.taskNames.any { it.substringAfterLast(':') == "writeProtocolBaseline" }
+val frozenProtocolRelease = release.ProtocolReleasePolicy.latest(rootDir)
 ksp {
     arg("teamtalk.protocolMajor", protocolMajor.toString())
     arg("teamtalk.protocolMinor", protocolMinor.toString())
     arg("teamtalk.minimumProtocolMinor", minimumProtocolMinor.toString())
     arg("teamtalk.protocolBaseline", layout.projectDirectory.file("wire-baseline.tsv").asFile.absolutePath)
+    arg("teamtalk.publishedProtocolBaseline", frozenProtocolRelease.wireBaseline.absolutePath)
     arg("teamtalk.recordProtocolBaseline", recordingProtocolBaseline.toString())
 }
 
-/** 显式登记当前 schema，必须审阅清单 diff；普通编译永远只校验，不更新基线。 */
+/** 显式登记开发 schema；仍由独立的发行快照保护已经冻结的线上契约。 */
 tasks.register("writeProtocolBaseline") {
     group = "verification"
     description = "Record the current wire schema for explicit review"
@@ -52,6 +54,22 @@ tasks.register("writeProtocolBaseline") {
             include("**/wire-schema.tsv")
         }.files.single()
         generated.copyTo(layout.projectDirectory.file("wire-baseline.tsv").asFile, overwrite = true)
+    }
+}
+
+tasks.register("prepareProtocolRelease") {
+    group = "release preparation"
+    description = "Freeze the reviewed wire schema for the root release version; commit before publishing"
+    dependsOn("verifyProtocolBaseline")
+    doLast {
+        release.ProtocolReleasePolicy.prepare(
+            rootDir,
+            rootProject.extra["releaseVersion"] as String,
+            rootProject.extra["releaseBuildNumber"] as Int,
+            protocolMajor,
+            protocolMinor,
+            minimumProtocolMinor,
+        )
     }
 }
 
@@ -118,5 +136,6 @@ tasks.matching { it.name == "kspCommonMainKotlinMetadata" }.configureEach {
     dependsOn(generateProtocolVersions)
     inputs.files(provider { listOfNotNull(layout.projectDirectory.file("wire-baseline.tsv").asFile.takeIf { it.isFile }) })
         .withPropertyName("committedWireBaseline")
+    inputs.file(frozenProtocolRelease.wireBaseline).withPropertyName("publishedWireBaseline")
 }
 tasks.named("check") { dependsOn("verifyProtocolBaseline") }

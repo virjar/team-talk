@@ -19,6 +19,9 @@ Node.js 分发站点和 npm 包仓库。常规构建和运行已构建服务端�
 - 对客户端开放 HTTPS 端口与 `tcpAddress` 配置的 TLS/TCP 端口（默认 5100）
 - 具备 SSH/rsync 权限的部署账号
 
+服务端安装和运维仍由管理员本机的 SSH、rsync、OpenSSL 完成。Windows 支持统一产物构建与客户端
+SFTP 发布，不代表这些 Linux 服务端运维任务也已移除 Unix 工具依赖。
+
 这里采用当前远程客户端已经接通的 HTTPS + TLS/TCP 安装路径。服务运行时允许明文，但 SDK 和部署
 工具仍有各自限制；选择其他组合前先看[传输配置边界](../07-operations/configuration.md#传输配置边界)。
 
@@ -44,7 +47,7 @@ HTTP 域名、TCP 地址和 SSH 主机可以不同。附件消息只存服务端
 
 ## 3. 提供 Secret
 
-敏感值放在不提交的 `gradle/deployment.secrets` 或 CI Secret 中。至少包括：
+服务端运行凭据放在不提交的 `gradle/deployment.secrets` 中；服务器部署不交给发行 CI。至少包括：
 
 - SSH 私钥或等价认证材料
 - PostgreSQL 口令
@@ -117,15 +120,22 @@ TLS 部署的 `tcp` 健康项会以 keystore 当前叶证书作为唯一信任�
 
 ## 6. 发布客户端
 
+先在根版本配置中命名本次发行，提交人工发布说明与协议发行快照，并准备持续使用的客户端签名。
+没有 GitHub 也遵守这些本地事实，具体步骤见[统一发行流程](../07-operations/releasing.md)。
+
 ```bash
-./gradlew buildRelease
-./gradlew releaseClients
+./gradlew release
+./gradlew release -PreleaseTargets=site
 ```
 
-客户端会内嵌构建时的服务坐标、完整 build identity 和 build time。Desktop 发布使用 Conveyor
-在单个构建机交叉生成三平台站点；Android 独立生成 APK，任务见 `.github/workflows/release.yml`，
-完整操作见[Desktop 制品构建](../07-operations/desktop-cross-build.md)。交叉构建成功不能替代目标平台
-安装检查。少量内测可按[开发者预览版指南](developer-preview.md)先收敛目标平台与短路径验收。
+第一条命令只密封本地发行目录；第二条复用该目录并通过 JVM SFTP 发布两端下载入口，需提前提供
+`TEAMTALK_RELEASE_SSH_KEY` 与 `TEAMTALK_RELEASE_KNOWN_HOSTS` 文件路径。Windows 使用 `.\gradlew.bat`
+同名任务，本机不需要 rsync/scp。站点任务不会部署 Server ZIP 或重启实例。
+
+客户端内嵌构建时的服务坐标和完整 build identity。Gradle 管理 Conveyor 工具，在单个构建机生成三平台
+Desktop 站点，同时构建 Android APK 与 Server ZIP。签名与平台边界见
+[Desktop 制品构建](../07-operations/desktop-cross-build.md)；交叉构建成功不能替代目标平台安装检查。
+少量内测可按[开发者预览版指南](developer-preview.md)先收敛目标平台与短路径验收。
 
 ## 7. 升级与回滚
 

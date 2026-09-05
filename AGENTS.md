@@ -54,6 +54,16 @@
 - 状态和资源遵循单一所有者；短暂断线不能清除用户身份，认证终态失败必须停止重连。
 - RPC methodId、NotifyType、MessageType 和 wire 字段是兼容性契约；修改时遵循
   [协议规则](doc/04-protocol/README.md)并补 round-trip 测试。
+- 根 `gradle.properties` 是展示版本、安装序号和协议版本的唯一配置源；发版同时提交人工撰写的
+  `doc/07-operations/releases/<releaseVersion>.md`，GitHub tag 与生成摘要不能代替这份说明。
+- 协议开发清单 `protocol/protocol/wire-baseline.tsv` 与发行快照 `protocol/protocol/releases/` 分开维护。
+  发版前只收敛**尚未分发、也未冻结进发行快照**的开发 minor 和生命周期注解，例如上一发行是 `0.3`，
+  本地试验累加到 `0.9`，下次新增契约统一归入 `0.4`。逐项审阅兼容分支与迁移，不用全库替换碰运气；
+  不回退已发行 minor、安装序号或已占用的 wire ID，不通过编辑发行快照绕过检查。
+- 向内测用户、SDK 使用者或私有化客户分发也算发行，与是否公开、是否有 GitHub/tag 无关。
+  在分发前运行 `:protocol:protocol:prepareProtocolRelease`，提交不可覆盖的发行快照；普通 `release`
+  只校验已提交事实。发行快照保守地从登记起冻结；不要在发布失败后自行删除快照回收编号。
+  同一 major 的已发行编号及墓碑永久保留，只有明确的新协议 major 才能重整编号空间。
 - 文件消息只保存 TeamTalk FileStore 相对路径。服务器必须在分配序号和成功 ACK 前确认附件及
   元数据真实存在；下载必须携带 access token，并由上传者或当前会话成员权限放行；ImBot 和图形
   客户端不得绕过同一校验链。

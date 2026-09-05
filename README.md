@@ -116,7 +116,8 @@ docker compose up -d
 ## 私有化部署
 
 fork 项目后修改 [`gradle/deployment.json`](gradle/deployment.json) 中的 HTTP、TCP 和 SSH
-坐标，并在本地或 CI 中提供不入库的 `gradle/deployment.secrets`。标准部署流程为：
+坐标，并在管理员本机提供不入库的 `gradle/deployment.secrets`。服务端由人工部署，CI 只构建发行归档和
+发布客户端。完成[版本与签名准备](doc/07-operations/releasing.md)后的标准流程为：
 
 ```bash
 ./gradlew verifyRelease
@@ -124,13 +125,15 @@ fork 项目后修改 [`gradle/deployment.json`](gradle/deployment.json) 中的 H
   -PsslCert=/secure/teamtalk/fullchain.pem \
   -PsslKey=/secure/teamtalk/privkey.pem
 ./gradlew :server:server:acceptanceTest
-./gradlew releaseClients
+./gradlew release -PreleaseTargets=site
 ```
 
 上述示例使用当前远程客户端已经接通的 HTTPS + TLS/TCP 路径；首次 HTTPS 部署需要成对证书参数，
 升级可同时省略以保留现有证书。服务运行时、SDK 与部署工具对明文和证书的支持尚未完全一致，
 具体见[传输配置边界](doc/07-operations/configuration.md#传输配置边界)。
 配置字段、安全边界、首次安装与升级流程见[私有化部署](doc/01-getting-started/private-deployment.md)。
+`./gradlew release` 默认只产生密封本地目录；站点上传需要已有 SSH 私钥和已核验的 known_hosts。
+客户端构建与发布在 Windows 使用 `.\gradlew.bat` 同名任务，参数和 CI 一致，见[统一发行流程](doc/07-operations/releasing.md)。
 
 ## 架构摘要
 

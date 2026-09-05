@@ -14,9 +14,23 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+val generatedReleaseIdentity = layout.buildDirectory.dir("generated/release-identity/assets")
+val generateReleaseIdentity by tasks.registering {
+    inputs.property("releaseVersion", releaseVersion)
+    inputs.property("buildIdentity", buildIdentity)
+    outputs.dir(generatedReleaseIdentity)
+    doLast {
+        deployment.writeReleaseArtifactManifestFile(
+            generatedReleaseIdentity.get().file("teamtalk-build.properties").asFile,
+            "android-apk", releaseVersion, buildIdentity,
+        )
+    }
+}
+
 android {
     namespace = "com.virjar.tk.android"
     compileSdk = 36
+    sourceSets.getByName("main").assets.srcDir(files(generatedReleaseIdentity).builtBy(generateReleaseIdentity))
 
     defaultConfig {
         applicationId = "com.virjar.tk.android"
@@ -42,12 +56,14 @@ android {
 
     signingConfigs {
         create("release") {
-            val storeFilePath = localProps.getProperty("release.storeFile")
+            fun signingValue(property: String, environment: String): String? =
+                providers.environmentVariable(environment).orNull ?: localProps.getProperty(property)
+            val storeFilePath = signingValue("release.storeFile", "TEAMTALK_ANDROID_KEYSTORE")
             if (storeFilePath != null) {
                 storeFile = rootProject.file(storeFilePath)
-                storePassword = localProps.getProperty("release.storePassword") ?: ""
-                keyAlias = localProps.getProperty("release.keyAlias") ?: ""
-                keyPassword = localProps.getProperty("release.keyPassword") ?: ""
+                storePassword = signingValue("release.storePassword", "TEAMTALK_ANDROID_STORE_PASSWORD") ?: ""
+                keyAlias = signingValue("release.keyAlias", "TEAMTALK_ANDROID_KEY_ALIAS") ?: ""
+                keyPassword = signingValue("release.keyPassword", "TEAMTALK_ANDROID_KEY_PASSWORD") ?: ""
             } else {
                 storeFile = file("teamtalk-dev.jks")
                 storePassword = "teamtalk"

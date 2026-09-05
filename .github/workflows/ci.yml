@@ -11,6 +11,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  release-tools:
+    name: Release tooling (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v5.7.0
+        with:
+          java-version: '17'
+          distribution: temurin
+      - uses: gradle/actions/setup-gradle@v5.0.2
+      - name: Exercise release metadata, protocol policy, archives and JVM publishers
+        if: runner.os != 'Windows'
+        run: ./gradlew -p buildSrc test --tests 'release.*'
+      - name: Exercise release tooling through the native Windows wrapper
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\gradlew.bat -p buildSrc test --tests 'release.*'
+      - name: Verify actual release edits before merge
+        if: runner.os != 'Windows'
+        env:
+          RELEASE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -n "$RELEASE_BASE" ] && [ "$RELEASE_BASE" != "0000000000000000000000000000000000000000" ]; then
+            ./gradlew verifyReleaseChange -PreleaseBase="$RELEASE_BASE"
+          else
+            ./gradlew verifyReleaseMetadata
+          fi
+
   compile:
     name: Compile Check
     runs-on: ubuntu-latest
