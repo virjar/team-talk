@@ -10,7 +10,7 @@ TeamTalk 尚未正式发布，**不对使用者保证版本兼容，未来仍可
 |---|---|---|---|
 | 统一展示版本 | `teamtalk.releaseVersion=0.0.0` | Server、SDK、Android、Desktop、MCP 使用同一字符串，配合 commit 排查构建范围 | 需要命名一次发行时；不从它推导协议能力 |
 | 协议数字版本 | `major=0, minor=0`；`id=(major << 16) \| minor`，当前 ID `0` | 连接协商、协议注解、支持窗口与升级提示 | 每次新增 wire 契约递增 minor；明确的大版本收敛才递增 major 并将 minor 归零 |
-| 平台安装序号 | `teamtalk.releaseBuildNumber=0` | 安装器识别新包；Android `versionCode=buildNumber+1`，零号为 `1`；macOS jpackage 的系统包版本从 `1.0.0` 映射 | 每次分发新的安装包时独立递增；不参与协议判断 |
+| 平台安装序号 | `teamtalk.releaseBuildNumber=0` | 安装器识别新包；Android `versionCode` 与 Conveyor `app.revision` 为 `buildNumber+1`，零号为 `1`；macOS jpackage 的系统包版本从 `1.0.0` 映射 | 每次分发新的安装包时独立递增；不参与协议判断 |
 
 事实源均为根 `gradle.properties`。`ProtocolVersions` 与 SDK `TeamTalkBuild` 由构建生成；禁止在业务、
 SDK 或平台壳里另外硬编码一个发行字符串。`major` 范围 `0..32767`，`minor` 范围 `0..65535`，
@@ -160,4 +160,7 @@ Android 的展示版本重置为 `0.0.0`，零号安装序号为 `1`。Android �
 macOS 的 JDK `jpackage` 同样要求包版本首段为正数。Compose DMG 将构建计数 `b` 映射为
 `(b / 1000000 + 1).((b / 1000) % 1000).(b % 1000)`，零号为 `1.0.0`；Finder 的系统包元数据
 可能显示此安装编号，应用内关于页、运行画像、发行清单和分发文件名仍显示 `0.0.0`。
-Conveyor 读取统一展示版本，不使用这项仅供 jpackage 的映射。
+Conveyor 的 `app.version` 读取统一展示版本，不使用这项仅供 jpackage 的映射；
+`app.revision` 由构建计数加一提供，避免 Conveyor 22.1 拒绝全零安装版本。
+因此零号预览的 Linux 包版本为 `0.0.0-1`，Windows 与 macOS 的安装版本为 `0.0.0.1`，
+应用内展示版本仍为 `0.0.0`。后续分发递增构建计数，不能手工归零修订号复用已发布包。

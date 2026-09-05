@@ -444,7 +444,13 @@ val sqliteKeepNativePath = "org/sqlite/native/$sqliteNativeOsDir/$sqliteNativeAr
 // 他人更新源）。conveyor.conf 通过 #! include 消费本任务输出。
 tasks.register("printSiteConfig") {
     doLast {
+        // Conveyor 拒绝全零安装版本；与 Android 一样把零起点构建计数映射为正数。
+        // 展示版本仍由 printConveyorConfig 提供，revision 只参与安装包与更新元数据。
+        check(releaseBuildNumber in 0..65534) {
+            "Conveyor MSIX revision must fit 1..65535; revise the installation-version mapping before increasing the build number further"
+        }
         println("app.site.base-url = \"${deploymentConfig.serverUrl.trimEnd('/')}/downloads/desktop\"")
+        println("app.revision = ${releaseBuildNumber + 1}")
     }
 }
 

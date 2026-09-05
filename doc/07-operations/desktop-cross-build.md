@@ -4,8 +4,10 @@
 这里说明开发者预览版怎样出包、交付和识别版本。服务端安装与升级见[部署与升级](deployment.md)，
 测试者从安装到首次登录的步骤见[快速上手](../01-getting-started/README.md)。
 
-本机 Compose DMG 的 `jpackage` 要求安装版本首段为正数，所以使用独立构建计数的正数映射。
-应用内展示版本与 Conveyor 仍统一；零号版本的对应关系见[版本机制](../04-protocol/versioning.md#零号基线的切换边界)。
+平台安装元数据使用独立构建计数的正数映射：Conveyor 的 `app.revision = releaseBuildNumber + 1`，
+避免全零安装版本被拒绝；本机 Compose DMG 的 `jpackage` 另要求安装版本首段为正数。
+应用内展示版本与 Conveyor 的 `app.version` 仍统一；零号版本的对应关系见
+[版本机制](../04-protocol/versioning.md#零号基线的切换边界)。
 
 ## 1. 产物与下载路径
 
@@ -43,7 +45,9 @@ Desktop 更新站点必须完整上传：只发一个 zip / MSIX 不会同时交
 ## 2. 出包前固定版本和服务器
 
 - 版本源是 `gradle.properties` 的 `teamtalk.releaseVersion` 与 `teamtalk.releaseBuildNumber`。
-  Android `versionCode = releaseBuildNumber + 1`；展示字符串和协议数字版本独立，tag 构建还校验
+  Android `versionCode` 与 Conveyor `app.revision` 均为 `releaseBuildNumber + 1`；
+  当前 Conveyor 映射要求构建计数不超过 `65534`，满足 MSIX 四段版本各不超过 `65535` 的限制。
+  展示字符串和协议数字版本独立，tag 构建还校验
   `v<releaseVersion>`。准备新一轮预览时递增版本，避免用户难以区分两份同名包。
 - `gradle/deployment.json` 固定 HTTP 与 TCP 坐标。私有化客户端应为目标服务器重新构建；
   TCP 登录与 HTTPS 附件通道都必须可达。修改地址不会自动发布客户端。
