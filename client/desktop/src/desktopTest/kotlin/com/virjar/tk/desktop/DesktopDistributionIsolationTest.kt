@@ -1,6 +1,7 @@
 package com.virjar.tk.desktop
 
 import com.virjar.tk.desktop.env.DesktopDataDirectoryInputs
+import com.virjar.tk.desktop.env.DesktopDataDirectoryAdmission
 import com.virjar.tk.desktop.env.DesktopDataDirectoryPolicy
 import com.virjar.tk.desktop.test.testHttpPort
 import com.virjar.tk.shared.client.DeploymentIdentity
@@ -8,6 +9,10 @@ import com.virjar.tk.shared.client.JvmPrivateDataDirectory
 import com.virjar.tk.shared.client.ServerConfig
 import java.io.File
 import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.Path
+import java.nio.file.attribute.PosixFileAttributeView
+import java.nio.file.attribute.PosixFilePermissions
 import java.util.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -18,6 +23,79 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DesktopDistributionIsolationTest {
+    @Test
+    fun `Desktop tightens an owned 0755 data root without changing saved files`() = withPosixDesktopHome { home ->
+        val plan = DesktopDataDirectoryPolicy.resolve(desktopInputs(home))
+        val root = DesktopDataDirectoryAdmission.prepare(plan).toPath()
+        val data = JvmPrivateDataDirectory.openExisting(root.toFile())
+        data.atomicTextFile(fileName = "auth.properties").replaceText("fixture-account-only")
+        data.atomicTextFile(listOf("drafts"), "saved-draft").replaceText("draft must survive startup")
+        val rootKey = Files.readAttributes(root, java.nio.file.attribute.BasicFileAttributes::class.java).fileKey()
+        Files.setPosixFilePermissions(root, PosixFilePermissions.fromString("rwxr-xr-x"))
+
+        // SDK / headless callers remain strict; only Desktop admission performs this migration.
+        assertFailsWith<IllegalArgumentException> { JvmPrivateDataDirectory.openExisting(root.toFile()) }
+        assertEquals(root.toFile(), DesktopDataDirectoryAdmission.prepare(plan))
+        assertEquals(PosixFilePermissions.fromString("rwx------"), Files.getPosixFilePermissions(root))
+        assertEquals(rootKey, Files.readAttributes(root, java.nio.file.attribute.BasicFileAttributes::class.java).fileKey())
+        assertEquals("fixture-account-only", data.atomicTextFile(fileName = "auth.properties").readText())
+        assertEquals("draft must survive startup", data.atomicTextFile(listOf("drafts"), "saved-draft").readText())
+        assertEquals(root.toFile(), DesktopDataDirectoryAdmission.prepare(plan))
+    }
+
+    @Test
+    fun `Desktop can initialize an empty owned 0755 root but cannot adopt unmarked files`() = withPosixDesktopHome { home ->
+        val plan = DesktopDataDirectoryPolicy.resolve(desktopInputs(home))
+        DesktopDataDirectoryPolicy.prepareBaseDirectory(plan)
+        val root = Files.createDirectory(plan.dataDirectory.toPath())
+        Files.setPosixFilePermissions(root, PosixFilePermissions.fromString("rwxr-xr-x"))
+        assertEquals(root.toFile(), DesktopDataDirectoryAdmission.prepare(plan))
+        assertEquals("teamtalk-desktop-data-v1\n", Files.readString(root.resolve(".teamtalk-desktop-data")))
+        assertEquals(PosixFilePermissions.fromString("rwx------"), Files.getPosixFilePermissions(root))
+
+        Files.delete(root.resolve(".teamtalk-desktop-data"))
+        Files.writeString(root.resolve("unrecognized.txt"), "keep this file")
+        assertFailsWith<IllegalArgumentException> { DesktopDataDirectoryAdmission.prepare(plan) }
+        assertEquals("keep this file", Files.readString(root.resolve("unrecognized.txt")))
+    }
+
+    @Test
+    fun `Desktop permission repair rejects writable roots and symlinks without changing their target`() = withPosixDesktopHome { home ->
+        val plan = DesktopDataDirectoryPolicy.resolve(desktopInputs(home))
+        DesktopDataDirectoryPolicy.prepareBaseDirectory(plan)
+        val root = Files.createDirectory(plan.dataDirectory.toPath())
+        for (mode in listOf("rwxrwxr-x", "rwxr-xrwx", "r-xr-xr-x")) {
+            val permissions = PosixFilePermissions.fromString(mode)
+            Files.setPosixFilePermissions(root, permissions)
+            assertFailsWith<IllegalArgumentException> { DesktopDataDirectoryAdmission.prepare(plan) }
+            assertEquals(permissions, Files.getPosixFilePermissions(root))
+        }
+        Files.setPosixFilePermissions(root, PosixFilePermissions.fromString("rwx------"))
+        Files.delete(root)
+        val target = Files.createDirectory(home.resolve("untouched"))
+        Files.setPosixFilePermissions(target, PosixFilePermissions.fromString("rwxr-xr-x"))
+        Files.createSymbolicLink(root, target)
+        assertFailsWith<IllegalArgumentException> { DesktopDataDirectoryAdmission.prepare(plan) }
+        assertTrue(Files.isSymbolicLink(root))
+        assertEquals(PosixFilePermissions.fromString("rwxr-xr-x"), Files.getPosixFilePermissions(target))
+        Files.delete(root)
+    }
+
+    private fun desktopInputs(home: Path) = DesktopDataDirectoryInputs(
+        osName = "Linux", userHome = home.toFile(), environment = emptyMap(), explicitDataDirectory = null,
+    )
+
+    private fun withPosixDesktopHome(action: (Path) -> Unit) {
+        // Standard temp parents can be world-writable; exercise the actual Desktop safe-parent admission.
+        val home = Files.createTempDirectory(Files.createDirectories(Path.of("build")), "desktop-permissions-")
+            .toRealPath(LinkOption.NOFOLLOW_LINKS)
+        try {
+            if (Files.getFileAttributeView(home, PosixFileAttributeView::class.java) != null) action(home)
+        } finally {
+            home.toFile().deleteRecursively()
+        }
+    }
+
     @Test
     fun `public paths stay unchanged and private paths follow installation identity`() {
         val home = File("distribution-test-home").absoluteFile

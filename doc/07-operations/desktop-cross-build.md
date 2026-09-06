@@ -56,7 +56,7 @@ Conveyor 的使用许可仍由客户按其部署方式确认，自动下载不�
 ```
 
 结果在 `client/desktop/output/`。CLI 失败时不为旧目录重新盖身份，也不把半成品当成完成站点；只有完整
-构建成功，才写入 `teamtalk-release.properties` 并切换生成目录。正式交付继续使用 `release`，由统一
+构建成功，才写入 `teamtalk-release.properties` 并切换生成目录。正式发行和内测交付均使用 `release`，由统一
 密封检查确认版本、必需产物与每个文件的 SHA-256。
 
 ## 平台产物与更新方式
@@ -71,12 +71,21 @@ Conveyor 的使用许可仍由客户按其部署方式确认，自动下载不�
 Desktop 的完整站点包含 `download.html`、平台安装文件与更新索引，不能用其中一个 ZIP 替代整站。
 独立解压版也不能被视为已经接通安装器更新路径；遵循生成下载页对应平台的说明。
 
-根 `teamtalk.releaseVersion` 是应用内与 Conveyor 的展示版本。Android `versionCode` 与 Conveyor
+根 `teamtalk.releaseVersion` 是应用内与 Conveyor 的展示版本。Android `versionCode` 与正式发行的 Conveyor
 `app.revision` 为 `releaseBuildNumber + 1`，零号均为 `1`；零号 Desktop 安装元数据为 macOS/Windows
-`0.0.0.1`、Linux `0.0.0-1`。同一安装序号不能用于分发不同包，具体边界见
+`0.0.0.1`、Linux `0.0.0-1`。同一展示版本与 Desktop revision 不能用于分发不同包，具体边界见
 [版本机制](../04-protocol/versioning.md#零号基线的切换边界)。
 独立私有应用可以经用户确认，以当前版本和安装序号完成首次分发；它有自己的安装身份和空更新站点，
-入口见[首次私有安装包分发](releasing.md#保持当前版本的首次私有安装包分发)。这不允许覆盖同一应用已经分发的版本。
+入口见[首次私有安装包分发](releasing.md#保持当前版本的首次私有安装包分发)。后续用户要求更新内测包时，
+使用[内测 snapshot](releasing.md#保持展示版本的内测更新)：提交工作源码后手动运行
+`release -PreleaseMode=snapshot -PreleaseTargets=site`，仅保留本地产物时用 `local`；不修改根版本文件。
+例如展示版本仍为 `0.0.0`、根构建号仍为 `0` 时，Android code 保持 `1`，用户手动覆盖安装；Desktop 的
+`desktopRevision` 自动取完整 Git first-parent 提交数加根构建号再加一，满足 Conveyor 对不同包的要求。
+该计算不依赖 tag；必须使用完整 clone。同一展示版本的后续 snapshot 保留已分发源码及历史，从其后代构建。
+应用身份、签名与数据目录沿用原值，不打 tag，不通过 GitHub 自动交付 snapshot。
+Conveyor 对同一版本与 revision 的字节一致性检查保持有效；原包重试复用密封目录，不靠删除缓存重新制作
+相同 revision 的不同包。正式发行再推进根展示版本与构建号，使 Android code 增加；新的 Desktop 展示版本
+可重新按根构建号映射末位 revision，无须继续上一展示版本的内测提交计数。
 
 Desktop 更新源固定为最终部署配置的 `<serverUrl>/downloads/desktop`。登录页临时改服务器
 不会改变已打包更新源；Android 使用构建时坐标。私有客户须在构建前固定自己的 HTTP/TCP 地址与更新站点。
@@ -109,7 +118,8 @@ Android 优先读取环境变量，其次读取不入库的 `local.properties`�
 ```
 
 覆盖安装要求应用 ID 与签名一致。从 debug 或另一证书换装可能要求卸载，影响本地数据；应在首次组织
-内测前固定长期签名。后续每次发行仅增加安装序号，不能把更换签名造成的安装失败当成数据迁移方案。
+内测前固定长期签名。正式发行推进 Android 安装 code，snapshot 保持当前 code 手动覆盖；两种方式都不能
+把更换签名造成的安装失败当成数据迁移方案。
 
 ## 本机 DMG 与 SDK 的独立边界
 

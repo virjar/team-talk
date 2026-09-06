@@ -59,19 +59,25 @@ class ClientDistributionIntegrationTest {
     }
 
     @Test
-    fun `release consumes renamed Conveyor outputs while retaining public output checks`() {
+    fun `release and snapshot consume private Conveyor outputs with their own installation revision`() {
         val site = Files.createTempDirectory("teamtalk-private-release-").toFile()
         try {
-            site.resolve("metadata.properties").writeText("app.version=0.0.0\napp.revision=1\n")
-            listOf(
-                "download.html", "teamtalkinternal.appinstaller", "teamtalkinternal.exe",
-                "appcast-amd64.rss", "appcast-aarch64.rss", "teamtalkinternal-mac-amd64.zip",
-                "teamtalkinternal-mac-aarch64.zip", "teamtalkinternal-windows-amd64.zip",
-                "teamtalkinternal.msix", "teamtalkinternal-linux-amd64.tar.gz", "teamtalkinternal.deb",
-            ).forEach { site.resolve(it).writeText("fixture") }
             val version = ReleaseVersion("0.0.0", 0, 0, 0, 0)
-            ReleaseBundle.verifyDesktop(site, version, ClientDistributionIdentity("com.example.internal", "内部版", "TeamTalkInternal"))
-            assertFailsWith<IllegalArgumentException> { ReleaseBundle.verifyDesktop(site, version, ClientDistributionIdentity()) }
+            val client = ClientDistributionIdentity("com.example.internal", "内部版", "TeamTalkInternal")
+            listOf(1, 8).forEach { revision ->
+                site.resolve("metadata.properties").writeText("app.version=0.0.0\napp.revision=$revision\n")
+                listOf(
+                    "download.html", "teamtalkinternal.appinstaller", "teamtalkinternal.exe",
+                    "appcast-amd64.rss", "appcast-aarch64.rss", "teamtalkinternal-0.0.0-$revision-mac-amd64.zip",
+                    "teamtalkinternal-0.0.0-$revision-mac-aarch64.zip", "teamtalkinternal-0.0.0-$revision-windows-amd64.zip",
+                    "teamtalkinternal-0.0.0-$revision.x64.msix", "teamtalkinternal-0.0.0-$revision-linux-amd64.tar.gz",
+                    "teamtalkinternal_0.0.0-${revision}_amd64.deb",
+                ).forEach { site.resolve(it).writeText("fixture") }
+                ReleaseBundle.verifyDesktop(site, version, client, revision)
+                if (revision == 1) ReleaseBundle.verifyDesktop(site, version, client)
+                else assertFailsWith<IllegalArgumentException> { ReleaseBundle.verifyDesktop(site, version, client) }
+                assertFailsWith<IllegalArgumentException> { ReleaseBundle.verifyDesktop(site, version, ClientDistributionIdentity(), revision) }
+            }
         } finally {
             site.deleteRecursively()
         }

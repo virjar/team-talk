@@ -333,6 +333,7 @@ val gitCommitId = rootProject.extra.get("gitCommitId") as String
 val buildIdentity = rootProject.extra.get("buildIdentity") as String
 val buildTime = rootProject.extra.get("buildTime") as String
 val releaseBuildNumber = rootProject.extra.get("releaseBuildNumber") as Int
+val desktopRevision = rootProject.extra.get("desktopRevision") as Int
 buildConfig {
     packageName("com.virjar.tk.desktop")
     // 构建溯源：每个产物可回答「我是谁、用什么 commit 构建的」
@@ -478,16 +479,16 @@ tasks.named<WriteConveyorConfigTask>("writeConveyorConfig") {
 
 val writeConveyorSiteConfig by tasks.registering {
     group = "distribution"
-    description = "Write the update URL and zero-based build-number mapping for Conveyor"
+    description = "Write the update URL and resolved installation revision for Conveyor"
     inputs.property("serverUrl", deploymentConfig.serverUrl)
-    inputs.property("releaseBuildNumber", releaseBuildNumber)
+    inputs.property("desktopRevision", desktopRevision)
     inputs.property("clientApplicationId", clientIdentity.applicationId)
     inputs.property("clientDisplayName", clientIdentity.displayName)
     inputs.property("clientDesktopName", clientIdentity.desktopName)
     outputs.file(generatedSiteConfig)
     doLast {
-        // Conveyor 拒绝全零安装版本；与 Android 一样把零起点构建计数映射为正数。
-        check(releaseBuildNumber in 0..65534) {
+        // 正式发行从根构建号映射；内测由提交历史计算，不写回根配置。
+        check(desktopRevision in 1..65535) {
             "Conveyor MSIX revision must fit 1..65535; revise the installation-version mapping before increasing the build number further"
         }
         val siteUrl = "${deploymentConfig.serverUrl.trimEnd('/')}/downloads/desktop"
@@ -499,7 +500,7 @@ val writeConveyorSiteConfig by tasks.registering {
             writeText(
                 """
                 app.site.base-url = ${quoted(siteUrl)}
-                app.revision = ${releaseBuildNumber + 1}
+                app.revision = $desktopRevision
                 app.fsname = ${quoted(clientIdentity.desktopFsName)}
                 app.display-name = ${quoted(clientIdentity.desktopName)}
                 app.rdns-name = ${quoted(clientIdentity.applicationId)}

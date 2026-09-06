@@ -4,6 +4,8 @@ import deployment.ClientDistributionIdentity
 import deployment.DeploymentConfig
 import java.io.File
 import java.nio.file.Files
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -11,6 +13,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -116,15 +119,112 @@ class ReleaseBundleDeploymentTest {
         }
     }
 
+    @Test
+    fun `snapshot advances Desktop revision while preserving the root version and Android build`() = bundle { directory ->
+        val snapshot = identity.copy(distributionKind = "snapshot",
+            protocolContractSha256 = "a".repeat(64), desktopRevision = 8)
+        val snapshotNotes = "# Snapshot 0.0.0 Desktop revision 8\n\nPrivate test update.\n"
+        sealFixture(directory, identity = snapshot, notes = snapshotNotes)
+        val manifest = ReleaseBundle.verify(directory, snapshot, snapshotNotes)
+        assertEquals("snapshot", manifest.getValue("distributionKind").jsonPrimitive.content)
+        assertEquals("0.0.0", manifest.getValue("version").jsonPrimitive.content)
+        assertEquals("0", manifest.getValue("buildNumber").jsonPrimitive.content)
+        assertEquals("8", manifest.getValue("desktopRevision").jsonPrimitive.content)
+        assertFalse("tag" in manifest)
+        listOf(
+            identity,
+            snapshot.copy(version = snapshot.version.copy(buildNumber = 1)),
+            snapshot.copy(desktopRevision = 9),
+            snapshot.copy(distributionKind = "private-first", desktopRevision = 1),
+            snapshot.copy(protocolContractSha256 = "b".repeat(64)),
+        ).forEach { wrongIdentity ->
+            assertFailsWith<IllegalArgumentException> { ReleaseBundle.verify(directory, wrongIdentity, snapshotNotes) }
+        }
+        rewriteManifest(directory) { put("tag", snapshot.version.tag) }
+        assertFailsWith<IllegalArgumentException> { ReleaseBundle.verify(directory, snapshot, snapshotNotes) }
+    }
+
+    @Test
+    fun `snapshot cannot omit its frozen contract or adopt an existing public bundle`() = bundle { directory ->
+        assertFailsWith<IllegalArgumentException> { identity.copy(distributionKind = "snapshot") }
+        val snapshot = identity.copy(distributionKind = "snapshot", protocolContractSha256 = "a".repeat(64))
+        sealFixture(directory)
+        assertFailsWith<IllegalArgumentException> { ReleaseBundle.verify(directory, snapshot, notes) }
+    }
+
+    @Test
+    fun `independent Desktop revision is bounded and only belongs to snapshots`() = bundle { directory ->
+        assertFailsWith<IllegalArgumentException> { identity.copy(desktopRevision = 2) }
+        val snapshot = identity.copy(distributionKind = "snapshot", protocolContractSha256 = "a".repeat(64))
+        listOf(0, 65536).forEach { revision ->
+            assertFailsWith<IllegalArgumentException> { snapshot.copy(desktopRevision = revision) }
+        }
+        sealFixture(directory)
+        assertFalse("desktopRevision" in ReleaseBundle.verify(directory, identity, notes))
+        rewriteManifest(directory) { put("desktopRevision", 1) }
+        assertFailsWith<IllegalArgumentException> { ReleaseBundle.verify(directory, identity, notes) }
+    }
+
+    @Test
+    fun `resealed client metadata cannot disguise a different installation identity`() = bundle { directory ->
+        sealFixture(directory)
+        rewriteManifest(directory) {
+            putJsonObject("client") {
+                put("applicationId", "com.example.other")
+                put("androidApplicationId", "com.example.other.android")
+                put("displayName", "Another app")
+                put("desktopName", "AnotherApp")
+            }
+        }
+        val failure = assertFailsWith<IllegalArgumentException> { ReleaseBundle.verify(directory, identity, notes) }
+        assertEquals("Bundle client identity differs from the effective deployment configuration", failure.message)
+    }
+
+    @Test
+    fun `Conveyor metadata for a newer snapshot cannot relabel previous build packages`() = bundle { directory ->
+        val next = identity.copy(distributionKind = "snapshot", protocolContractSha256 = "a".repeat(64), desktopRevision = 8)
+        val site = File(directory, "desktop")
+        desktopFixture(site, identity)
+        assertFailsWith<IllegalArgumentException> { ReleaseBundle.verifyDesktop(site, next.version, next.client, next.desktopRevision) }
+        File(site, "metadata.properties").writeText("app.version=0.0.0\napp.revision=8\n")
+        val failure = assertFailsWith<IllegalArgumentException> { ReleaseBundle.verifyDesktop(site, next.version, next.client, next.desktopRevision) }
+        assertEquals("Desktop site lacks the current platform package: teamtalk-0.0.0-8-mac-amd64.zip", failure.message)
+        desktopFixture(site, next)
+        ReleaseBundle.verifyDesktop(site, next.version, next.client, next.desktopRevision)
+    }
+
+    @Test
+    fun `sealed snapshot reuse still rejects an older Conveyor installation number`() = bundle { directory ->
+        val snapshot = identity.copy(distributionKind = "snapshot", protocolContractSha256 = "a".repeat(64), desktopRevision = 8)
+        sealFixture(directory, identity = snapshot, desktopIdentity = identity)
+        val failure = assertFailsWith<IllegalArgumentException> { ReleaseBundle.verify(directory, snapshot, notes) }
+        assertEquals("Stale Conveyor version metadata", failure.message)
+    }
+
+    @Test
+    fun `Android snapshot preserves its root installation number but still requires the new APK source`() = bundle { directory ->
+        val snapshot = identity.copy(sourceCommit = "abcdef0123456789", distributionKind = "snapshot",
+            protocolContractSha256 = "a".repeat(64), desktopRevision = 8)
+        androidFixture(directory, snapshot, versionCode = 8)
+        val oldCode = assertFailsWith<IllegalArgumentException> { ReleaseBundle.requireAndroidApk(directory, snapshot) }
+        assertEquals("Stale Android output metadata", oldCode.message)
+        androidFixture(directory, snapshot, apkBuildIdentity = identity.buildIdentity)
+        val oldApk = assertFailsWith<IllegalArgumentException> { ReleaseBundle.requireAndroidApk(directory, snapshot) }
+        assertEquals("APK came from a different source revision", oldApk.message)
+        androidFixture(directory, snapshot)
+        assertEquals(1, snapshot.version.buildNumber + 1)
+        assertEquals(File(directory, "client.apk"), ReleaseBundle.requireAndroidApk(directory, snapshot))
+    }
+
     private fun sealFixture(
         directory: File,
         snapshot: String? = config.toCanonicalJson(),
         identity: BundleIdentity = this.identity,
         notes: String = this.notes,
+        desktopIdentity: BundleIdentity = identity,
     ) {
-        File(directory, "desktop").mkdirs()
+        desktopFixture(File(directory, "desktop"), desktopIdentity)
         File(directory, "assets").mkdirs()
-        File(directory, "desktop/download.html").writeText("Fixture download page")
         listOf("client.apk", "server.zip", "desktop-site.zip").forEach { File(directory, "assets/$it").writeText(it) }
         File(directory, "RELEASE_NOTES.md").writeText(notes)
         File(directory, "COMMITS.md").writeText("# Fixture commits\n")
@@ -143,7 +243,14 @@ class ReleaseBundleDeploymentTest {
                 put("distributionKind", identity.distributionKind)
                 put("protocolContractSha256", identity.protocolContractSha256)
             }
+            if (identity.distributionKind == "snapshot") put("desktopRevision", identity.desktopRevision)
             put("deploymentSha256", identity.deploymentSha256)
+            putJsonObject("client") {
+                put("applicationId", identity.client.applicationId)
+                put("androidApplicationId", identity.client.androidApplicationId)
+                put("displayName", identity.client.displayName)
+                put("desktopName", identity.client.desktopName)
+            }
             put("notesSha256", sha256(File(directory, "RELEASE_NOTES.md")))
             putJsonArray("files") {
                 regularFiles(directory).filterNot { it.name in setOf(ReleaseBundle.MANIFEST, ReleaseBundle.CHECKSUMS) }.forEach { file ->
@@ -156,6 +263,52 @@ class ReleaseBundleDeploymentTest {
             }
         }
         File(directory, ReleaseBundle.MANIFEST).writeText(Json.encodeToString(JsonObject.serializer(), manifest) + "\n")
+        writeChecksums(directory)
+    }
+
+    private fun desktopFixture(site: File, identity: BundleIdentity) {
+        site.mkdirs()
+        val version = identity.version
+        val name = identity.client.desktopFsName
+        val prefix = "$name-${version.name}-${identity.desktopRevision}"
+        File(site, "metadata.properties").writeText("app.version=${version.name}\napp.revision=${identity.desktopRevision}\n")
+        listOf(
+            "download.html", "$name.appinstaller", "$name.exe", "appcast-amd64.rss", "appcast-aarch64.rss",
+            "$prefix-mac-amd64.zip", "$prefix-mac-aarch64.zip", "$prefix-windows-amd64.zip", "$prefix.x64.msix",
+            "$prefix-linux-amd64.tar.gz", "${name}_${version.name}-${identity.desktopRevision}_amd64.deb",
+        ).forEach { File(site, it).writeText("Fixture $it") }
+    }
+
+    private fun androidFixture(
+        outputs: File,
+        identity: BundleIdentity,
+        versionCode: Int = identity.version.buildNumber + 1,
+        apkBuildIdentity: String = identity.buildIdentity,
+    ) {
+        File(outputs, "output-metadata.json").writeText(buildJsonObject {
+            put("applicationId", identity.client.androidApplicationId)
+            putJsonArray("elements") {
+                add(buildJsonObject {
+                    put("versionName", identity.version.name)
+                    put("versionCode", versionCode)
+                    put("outputFile", "client.apk")
+                })
+            }
+        }.toString())
+        ZipOutputStream(File(outputs, "client.apk").outputStream()).use { zip ->
+            zip.putNextEntry(ZipEntry("assets/teamtalk-build.properties"))
+            zip.write("artifactType=android-apk\nversion=${identity.version.name}\nbuildIdentity=$apkBuildIdentity\n".toByteArray())
+            zip.closeEntry()
+        }
+    }
+
+    private fun rewriteManifest(directory: File, edit: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) {
+        val manifestFile = File(directory, ReleaseBundle.MANIFEST)
+        val original = Json.parseToJsonElement(manifestFile.readText()).jsonObject
+        manifestFile.writeText(buildJsonObject {
+            original.forEach { (key, value) -> put(key, value) }
+            edit()
+        }.toString())
         writeChecksums(directory)
     }
 

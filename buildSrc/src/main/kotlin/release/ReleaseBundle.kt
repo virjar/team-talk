@@ -22,12 +22,17 @@ data class BundleIdentity(
     val deployment: DeploymentConfig,
     val distributionKind: String = "release",
     val protocolContractSha256: String? = null,
+    val desktopRevision: Int = version.buildNumber + 1,
 ) {
     init {
-        require(distributionKind in setOf("release", "private-first")) { "Unknown distribution kind" }
-        require(if (distributionKind == "private-first") {
+        require(distributionKind in setOf("release", "private-first", "snapshot")) { "Unknown distribution kind" }
+        require(if (distributionKind != "release") {
             protocolContractSha256?.matches(Regex("[0-9a-f]{64}")) == true
-        } else protocolContractSha256 == null) { "Only private-first distributions require a frozen protocol contract SHA-256" }
+        } else protocolContractSha256 == null) { "Non-release distributions require a frozen protocol contract SHA-256" }
+        require(desktopRevision in 1..65535) { "Desktop installation revision is out of range" }
+        require(distributionKind == "snapshot" || desktopRevision == version.buildNumber + 1) {
+            "Only snapshots may use an independent Desktop installation revision"
+        }
     }
 
     val buildIdentity: String get() = "${version.name}+$sourceCommit"
@@ -57,7 +62,7 @@ object ReleaseBundle {
             return destination
         }
         requireReleaseArtifact(desktopSite, "desktop-site", identity.version.name, identity.buildIdentity)
-        verifyDesktop(desktopSite, identity.version, identity.client)
+        verifyDesktop(desktopSite, identity.version, identity.client, identity.desktopRevision)
         val apk = requireAndroidApk(androidOutputs, identity)
         val apkVerification = ApkVerifier.Builder(apk).build().verify()
         require(apkVerification.isVerified) { "Android APK signature verification failed: ${apkVerification.errors}" }
@@ -95,14 +100,10 @@ object ReleaseBundle {
                     put("distributionKind", identity.distributionKind)
                     put("protocolContractSha256", identity.protocolContractSha256)
                 }
+                if (identity.distributionKind == "snapshot") put("desktopRevision", identity.desktopRevision)
                 put("buildIdentity", identity.buildIdentity)
                 put("deploymentSha256", identity.deploymentSha256)
-                putJsonObject("client") {
-                    put("applicationId", identity.client.applicationId)
-                    put("androidApplicationId", identity.client.androidApplicationId)
-                    put("displayName", identity.client.displayName)
-                    put("desktopName", identity.client.desktopName)
-                }
+                put("client", clientManifest(identity.client))
                 put("notesSha256", sha256(File(temporary, "RELEASE_NOTES.md")))
                 put("conveyorToolsSha256", sha256(toolLock))
                 val tool = Properties().apply { toolDescriptor.reader().use(::load) }
@@ -153,11 +154,17 @@ object ReleaseBundle {
             field("deploymentSha256") == identity.deploymentSha256) {
             "Release bundle belongs to a different version, source, protocol or deployment configuration"
         }
-        // Keep established release manifests unchanged; a private first delivery cannot claim their tag.
+        // Keep established release manifests unchanged; snapshot and private deliveries cannot claim their tag.
         require((manifest["distributionKind"]?.jsonPrimitive?.content ?: "release") == identity.distributionKind &&
             manifest["protocolContractSha256"]?.jsonPrimitive?.content == identity.protocolContractSha256 &&
             if (identity.distributionKind == "release") manifest["tag"]?.jsonPrimitive?.content == identity.version.tag
             else "tag" !in manifest) { "Bundle distribution kind or frozen protocol contract differs" }
+        require(if (identity.distributionKind == "snapshot") {
+            manifest["desktopRevision"]?.jsonPrimitive?.intOrNull == identity.desktopRevision
+        } else "desktopRevision" !in manifest) { "Bundle Desktop installation revision differs" }
+        require(manifest["client"] == clientManifest(identity.client)) {
+            "Bundle client identity differs from the effective deployment configuration"
+        }
         val deploymentSnapshot = File(directory, DEPLOYMENT_CONFIG)
         require(Files.isRegularFile(deploymentSnapshot.toPath(), NOFOLLOW_LINKS) &&
             deploymentSnapshot.readText(Charsets.UTF_8) == identity.deployment.toCanonicalJson()) {
@@ -180,12 +187,13 @@ object ReleaseBundle {
             field("notesSha256") == sha256(File(directory, "RELEASE_NOTES.md"))) { "Bundle notes differ from the distribution description" }
         require(File(directory, CHECKSUMS).readText() == checksumText(directory)) { "SHA256SUMS does not match the bundle" }
         require(File(directory, "desktop/download.html").isFile && assets(directory).size == 3) { "Incomplete release bundle" }
+        verifyDesktop(File(directory, "desktop"), identity.version, identity.client, identity.desktopRevision)
         return manifest
     }
 
     fun assets(directory: File): List<File> = File(directory, "assets").listFiles()?.filter(File::isFile)?.sortedBy(File::getName).orEmpty()
 
-    private fun requireAndroidApk(outputs: File, identity: BundleIdentity): File {
+    internal fun requireAndroidApk(outputs: File, identity: BundleIdentity): File {
         val metadata = Json.parseToJsonElement(File(outputs, "output-metadata.json").readText()).jsonObject
         require(metadata.getValue("applicationId").jsonPrimitive.content == identity.client.androidApplicationId) {
             "Android output belongs to a different applicationId"
@@ -206,17 +214,36 @@ object ReleaseBundle {
         return apk
     }
 
-    internal fun verifyDesktop(site: File, version: ReleaseVersion, client: ClientDistributionIdentity) {
+    internal fun verifyDesktop(
+        site: File,
+        version: ReleaseVersion,
+        client: ClientDistributionIdentity,
+        desktopRevision: Int = version.buildNumber + 1,
+    ) {
         val metadata = Properties().apply { File(site, "metadata.properties").reader().use(::load) }
         require(metadata.getProperty("app.version") == version.name &&
-            metadata.getProperty("app.revision") == (version.buildNumber + 1).toString()) { "Stale Conveyor version metadata" }
+            metadata.getProperty("app.revision") == desktopRevision.toString()) { "Stale Conveyor version metadata" }
         listOf("download.html", "${client.desktopFsName}.appinstaller", "${client.desktopFsName}.exe", "appcast-amd64.rss", "appcast-aarch64.rss").forEach {
             require(File(site, it).isFile && File(site, it).length() > 0) { "Missing Desktop site component: $it" }
         }
-        val paths = regularFiles(site).map { it.name }
-        listOf("-mac-amd64.zip", "-mac-aarch64.zip", "-windows-amd64.zip", ".msix", "-linux-amd64.tar.gz", ".deb").forEach { suffix ->
-            require(paths.any { it.endsWith(suffix) }) { "Desktop site lacks a required platform package: $suffix" }
+        val packagePrefix = "${client.desktopFsName}-${version.name}-$desktopRevision"
+        val requiredPackages = listOf(
+            "$packagePrefix-mac-amd64.zip", "$packagePrefix-mac-aarch64.zip",
+            "$packagePrefix-windows-amd64.zip", "$packagePrefix.x64.msix", "$packagePrefix-linux-amd64.tar.gz",
+            "${client.desktopFsName}_${version.name}-${desktopRevision}_amd64.deb",
+        )
+        val files = regularFiles(site).associateBy(File::getName)
+        // A snapshot can keep the readable version. Suffix-only checks would accept the previous build's packages.
+        requiredPackages.forEach { name ->
+            require(files[name]?.length()?.let { it > 0 } == true) { "Desktop site lacks the current platform package: $name" }
         }
+    }
+
+    private fun clientManifest(client: ClientDistributionIdentity): JsonObject = buildJsonObject {
+        put("applicationId", client.applicationId)
+        put("androidApplicationId", client.androidApplicationId)
+        put("displayName", client.displayName)
+        put("desktopName", client.desktopName)
     }
 
     private fun copyTree(source: File, destination: File) {

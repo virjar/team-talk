@@ -24,8 +24,10 @@ fun registerReleaseTasks(
     fun option(name: String, environment: String? = null): String? =
         project.providers.gradleProperty(name).orNull ?: environment?.let { project.providers.environmentVariable(it).orNull }
     val mode = option("releaseMode") ?: "version"
-    require(mode in setOf("version", "private-first")) { "releaseMode must be version or private-first" }
+    require(mode in setOf("version", "private-first", "snapshot")) { "releaseMode must be version, private-first or snapshot" }
     val privateFirst = mode == "private-first"
+    val snapshot = mode == "snapshot"
+    val privateDistribution = privateFirst || snapshot
     val baseRevision = option("releaseBase")
     val shouldRelease = baseRevision == null || metadata.releaseChangedSince(baseRevision)
     val targets = option("releaseTargets")?.split(',')?.map(String::trim)?.toSet() ?: setOf("local")
@@ -36,26 +38,33 @@ fun registerReleaseTasks(
         "GitHub publication requires the committed buildSrc/deployment/Deployment.kt. " +
             "The local buildSrc/deployment-local/ configuration is supported only for local and site releases."
     }
-    require(!privateFirst || (usingLocalConfig && "github" !in targets && baseRevision == null &&
+    require(!privateDistribution || (usingLocalConfig && "github" !in targets && baseRevision == null &&
         config.client.applicationId != ClientDistributionIdentity().applicationId)) {
-        "private-first requires a local deployment configuration, an independent private applicationId, " +
+        "$mode requires a local deployment configuration, an independent private applicationId, " +
             "local/site targets and no releaseBase; it cannot republish the public application or create GitHub releases"
     }
-    val contract = if (privateFirst) ProtocolContractPolicy.verify(root, version.protocolMajor,
+    val contract = if (privateDistribution) ProtocolContractPolicy.verify(root, version.protocolMajor,
         version.protocolMinor, version.minimumProtocolMinor) else null
+    val desktopRevision = if (snapshot) metadata.snapshotDesktopRevision(version, sourceCommit) else version.buildNumber + 1
+    project.extensions.extraProperties.set("desktopRevision", desktopRevision)
     val identity = BundleIdentity(version, sourceCommit, config,
-        distributionKind = if (privateFirst) "private-first" else "release",
-        protocolContractSha256 = contract?.wireBaseline?.let(::sha256))
-    fun notes(): String {
-        if (!privateFirst) return metadata.verify(version, sourceCommit)
-        metadata.verifySource(version, sourceCommit)
-        return privateInstallationNotes(identity)
-    }
+        distributionKind = if (privateDistribution) mode else "release",
+        protocolContractSha256 = contract?.wireBaseline?.let(::sha256), desktopRevision = desktopRevision)
     val existingBundle = option("releaseBundle")?.let(project::file)
-    val bundle = existingBundle ?: if (privateFirst) {
-        File(root, "build/private-distributions/${config.client.applicationId}/${version.name}/$sourceCommit")
-    } else File(root, "build/releases/${version.name}/$sourceCommit")
+    val bundle = existingBundle ?: when {
+        snapshot -> File(root, "build/snapshots/${config.client.applicationId}/${version.name}/revision-$desktopRevision/$sourceCommit")
+        privateFirst -> File(root, "build/private-distributions/${config.client.applicationId}/${version.name}/$sourceCommit")
+        else -> File(root, "build/releases/${version.name}/$sourceCommit")
+    }
     val reuseBundle = existingBundle != null || bundle.exists()
+    fun notes(): String {
+        if (!privateDistribution) return metadata.verify(version, sourceCommit)
+        metadata.verifySource(version, sourceCommit)
+        // Auto-generated notes are sealed with the build: fetching tags later must not change a retry.
+        if (reuseBundle) return File(bundle, "RELEASE_NOTES.md").readText()
+        return if (snapshot) snapshotNotes(identity) + "\n" + metadata.commitAppendix(version, snapshot = true)
+            else privateInstallationNotes(identity)
+    }
 
     val verifyMetadata = project.tasks.register("verifyReleaseMetadata") {
         val task = this
@@ -73,9 +82,9 @@ fun registerReleaseTasks(
     }
     val verifyPrivateDistribution = project.tasks.register("verifyPrivateDistribution") {
         group = "verification"
-        description = "Verify the first private package distribution without changing the product version"
+        description = "Verify a first private distribution or snapshot without creating a product release"
         doLast {
-            require(privateFirst) { "Use -PreleaseMode=private-first for first private package distribution" }
+            require(privateDistribution) { "Use -PreleaseMode=private-first or snapshot for private package distribution" }
             metadata.verifySource(version, sourceCommit)
             val frozen = ProtocolContractPolicy.verify(root, version.protocolMajor,
                 version.protocolMinor, version.minimumProtocolMinor)
@@ -87,7 +96,7 @@ fun registerReleaseTasks(
     }
     project.tasks.register("verifyReleaseChange") {
         group = "verification"
-        description = "Check immutable release history and require release metadata only when root release counters change"
+        description = "Check immutable release history and require release metadata when root release counters change"
         if (shouldRelease) dependsOn(verifyMetadata)
         doLast {
             baseRevision?.let(metadata::verifyFrozenHistorySince)
@@ -99,10 +108,10 @@ fun registerReleaseTasks(
     val preflight = project.tasks.register("prepareRelease") {
         val task = this
         task.group = "release build"
-        task.dependsOn("verifyRelease", if (privateFirst) verifyPrivateDistribution else verifyMetadata)
+        task.dependsOn("verifyRelease", if (privateDistribution) verifyPrivateDistribution else verifyMetadata)
         task.doLast {
             baseRevision?.let(metadata::verifyFrozenHistorySince)
-            if (!privateFirst && targets.any { it != "local" }) {
+            if (!privateDistribution && targets.any { it != "local" }) {
                 val adopted = Properties().apply {
                     File(root, "protocol/protocol/releases/${version.name}/release.properties").reader().use(::load)
                 }.getProperty("adoptedSourceCommit")
@@ -140,7 +149,7 @@ fun registerReleaseTasks(
                 bundle, identity, File(root, "client/desktop/output"),
                 File(root, "client/android/build/outputs/apk/release"),
                 File(root, "server/server/build/distributions/teamtalk-server-${version.name}.zip"),
-                notes, metadata.commitAppendix(version), File(root, "gradle/conveyor-tools.properties"),
+                notes, metadata.commitAppendix(version, snapshot), File(root, "gradle/conveyor-tools.properties"),
                 File(root, "client/desktop/build/conveyor/tool.properties"),
             )
             project.logger.lifecycle("Sealed release bundle: ${bundle.absolutePath}")
@@ -160,7 +169,7 @@ fun registerReleaseTasks(
     project.tasks.register("release") {
         val task = this
         task.group = "release"
-        task.description = "Release the root-configured version: local bundle, optional site and/or GitHub destinations"
+        task.description = "Distribute the root-configured release or private snapshot through one packaging and upload pipeline"
         if (shouldRelease) task.dependsOn(assemble)
         task.doLast {
             if (!shouldRelease) {
@@ -179,6 +188,8 @@ fun registerReleaseTasks(
                                 "RELEASE_NOTES.md", "COMMITS.md", ReleaseBundle.CHECKSUMS, ReleaseBundle.DEPLOYMENT_CONFIG,
                             ).map { File(bundle, it) },
                             firstPublicationOnly = privateFirst,
+                            distributionKind = identity.distributionKind,
+                            desktopRevision = identity.desktopRevision,
                         ),
                         SiteConnection(
                             host = config.deployHost, port = config.deployPort, user = config.deployUser,
@@ -204,11 +215,30 @@ fun registerReleaseTasks(
                     )
                     project.logger.lifecycle("GitHub publication: $result")
                 }
-                project.logger.lifecycle("${if (privateFirst) "First private package distribution" else "Release"} ${version.name} completed for ${targets.joinToString()}; bundle: ${bundle.absolutePath}")
+                project.logger.lifecycle("${identity.distributionKind} ${version.name} (Android code ${version.buildNumber + 1}, Desktop revision $desktopRevision) completed for ${targets.joinToString()}; bundle: ${bundle.absolutePath}")
             }
         }
     }
 }
+
+/** Snapshot notes describe the actual private build; the maintainer's public release notes stay untouched. */
+private fun snapshotNotes(identity: BundleIdentity): String = """
+    # ${identity.client.displayName} ${identity.version.name} 内测快照
+
+    此包用于持续内测，不创建正式版本、产品 tag 或 GitHub Release。
+
+    - 展示版本：${identity.version.name}；Android versionCode：${identity.version.buildNumber + 1}；Desktop 修订号：${identity.desktopRevision}
+    - 服务器：${identity.deployment.serverUrl}
+    - 应用标识：${identity.client.applicationId}（Android：${identity.client.androidApplicationId}）
+    - 英文安装名称：${identity.client.desktopName}
+    - 源码：${identity.sourceCommit}
+    - 协议：${identity.version.protocolMajor}.${identity.version.protocolMinor}；最低 minor：${identity.version.minimumProtocolMinor}
+    - 已冻结协议契约 SHA-256：${identity.protocolContractSha256}
+
+    管理员手动通知本次内测更新；从本私有站点下载安装包，覆盖升级原私有应用；保留应用身份、签名和资料目录，无需先卸载。
+    Android 下载入口为 `/downloads/TeamTalk-android.apk`，Desktop 更新入口为 `/downloads/desktop/download.html`。
+    当前仍为开发者预览，不保证长期兼容；普通升级保留已有资料，具体变更见本构建的提交记录。
+""".trimIndent() + "\n"
 
 /** Installation facts for an independent private app, separate from the public version's release notes. */
 private fun privateInstallationNotes(identity: BundleIdentity): String = """
@@ -227,7 +257,7 @@ private fun privateInstallationNotes(identity: BundleIdentity): String = """
     Android 安装包入口为 `/downloads/TeamTalk-android.apk`；Desktop 安装说明和更新入口为
     `/downloads/desktop/download.html`，均相对上述服务器地址。
     安装身份与公版独立，首次安装后登录自己的私有节点；后续保留同一应用身份、签名和资料目录。
-    已分发的同版本安装包只允许按原文件重试，后续更新需要另行确认版本与安装序号。
+    同一构建只允许按原文件重试；后续内测更新使用 snapshot，保持根版本配置，由工具计算 Desktop 修订号。
 
     当前仍为开发者预览，不保证长期兼容；Android 最低 8.0，macOS 最低 14.0。
     macOS 公证和 Windows 受信任签名尚未配置，按 Desktop 下载页说明安装。

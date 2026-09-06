@@ -14,7 +14,12 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -37,6 +42,109 @@ import org.apache.sshd.server.keyprovider.SimpleGeneratorHostKeyProvider
 import org.apache.sshd.sftp.server.SftpSubsystemFactory
 
 class SitePublisherIntegrationTest {
+    @Test
+    fun `snapshots advance desktop revision without changing the root build or legacy history`() {
+        SftpFixture().use { fixture ->
+            val first = fixture.publication("0.0.0", 0, "private-first").copy(firstPublicationOnly = true)
+            // The Desktop certificate field is optional in existing sealed manifests.
+            val oldManifest = Json.parseToJsonElement(first.manifest.readText()).jsonObject
+            first.manifest.writeText(JsonObject(oldManifest - "desktopCertificateFileSha256").toString())
+            SitePublisher().publish(first, fixture.connection)
+            val legacyReceipt = File(fixture.downloads, ".teamtalk-client-releases/v0.0.0/receipt.json")
+            val initialReceiptBytes = legacyReceipt.readBytes()
+            val initialReceipt = Json.parseToJsonElement(legacyReceipt.readText()).jsonObject
+            assertFalse("desktopRevision" in initialReceipt)
+            assertFalse("distributionKind" in initialReceipt)
+            val snapshot = fixture.publication("0.0.0", 0, "snapshot", desktopRevision = 8)
+            assertFalse(SitePublisher().publish(snapshot, fixture.connection).alreadyPublished)
+            assertTrue(SitePublisher().publish(snapshot, fixture.connection).alreadyPublished)
+            val snapshotReceipt = File(fixture.downloads, ".teamtalk-client-releases/snapshot/v0.0.0/revision-8/receipt.json")
+            val recordedSnapshot = Json.parseToJsonElement(snapshotReceipt.readText()).jsonObject
+            assertEquals(JsonPrimitive(0), recordedSnapshot["releaseBuildNumber"])
+            assertEquals(JsonPrimitive(8), recordedSnapshot["desktopRevision"])
+            assertTrue(initialReceiptBytes.contentEquals(legacyReceipt.readBytes()))
+
+            snapshot.androidApk.appendText("different bytes")
+            assertFailsWith<IllegalArgumentException> { SitePublisher().publish(snapshot, fixture.connection) }
+            assertFailsWith<IllegalArgumentException> { SitePublisher().publish(first, fixture.connection) }
+            assertFailsWith<IllegalArgumentException> {
+                SitePublisher().publish(fixture.publication("0.0.0", 0, "snapshot", desktopRevision = 7), fixture.connection)
+            }
+            assertFailsWith<IllegalArgumentException> {
+                SitePublisher().publish(fixture.publication("0.0.0", 8), fixture.connection)
+            }
+            val nextSnapshot = fixture.publication("0.0.0", 0, "snapshot", desktopRevision = 9)
+            assertFalse(SitePublisher().publish(nextSnapshot, fixture.connection).alreadyPublished)
+            assertTrue(File(fixture.downloads, ".teamtalk-client-releases/snapshot/v0.0.0/revision-9/receipt.json").isFile)
+            assertTrue(snapshotReceipt.isFile)
+            assertFailsWith<IllegalArgumentException> {
+                SitePublisher().publish(fixture.publication("0.0.1", 0), fixture.connection)
+            }
+            // 0.0.1.2 is newer than 0.0.0.9; Android also advances from versionCode 1 to 2.
+            val nextRelease = fixture.publication("0.0.1", 1)
+            assertFalse(SitePublisher().publish(nextRelease, fixture.connection).alreadyPublished)
+            assertTrue(SitePublisher().publish(nextRelease, fixture.connection).alreadyPublished)
+            assertEquals("new android 0.0.1", File(fixture.downloads, "TeamTalk-android.apk").readText())
+            assertTrue(initialReceiptBytes.contentEquals(legacyReceipt.readBytes()))
+        }
+    }
+
+    @Test
+    fun `snapshot upgrades preserve installation identity signing and the existing update source`() {
+        SftpFixture().use { fixture ->
+            SitePublisher().publish(fixture.publication("0.0.0", 0, "private-first"), fixture.connection)
+            val mutations: List<Pair<String, (SitePublication) -> Unit>> = listOf(
+                "applicationId" to { publication -> changeManifestClient(publication, "applicationId") },
+                "androidApplicationId" to { publication -> changeManifestClient(publication, "androidApplicationId") },
+                "desktopName" to { publication -> changeManifestClient(publication, "desktopName") },
+                "Android signing" to { publication ->
+                    val manifest = Json.parseToJsonElement(publication.manifest.readText()).jsonObject
+                    publication.manifest.writeText(JsonObject(manifest - "androidSigningCertificatesSha256").toString())
+                },
+                "Desktop signing" to { publication ->
+                    val manifest = Json.parseToJsonElement(publication.manifest.readText()).jsonObject
+                    publication.manifest.writeText(JsonObject(manifest + ("desktopCertificateFileSha256" to JsonPrimitive("c".repeat(64)))).toString())
+                },
+                "update source" to { publication ->
+                    val deployment = publication.metadataFiles.single { it.name == "deployment-config.json" }
+                    deployment.writeText("""{"serverUrl":"https://another.example"}""")
+                },
+            )
+            mutations.forEach { (name, mutate) ->
+                val snapshot = fixture.publication("0.0.0", 0, "snapshot", desktopRevision = 8)
+                mutate(snapshot)
+                assertFailsWith<IllegalArgumentException>(name) { SitePublisher().publish(snapshot, fixture.connection) }
+                assertEquals("new android 0.0.0", File(fixture.downloads, "TeamTalk-android.apk").readText())
+                assertFalse(File(fixture.downloads, ".teamtalk-client-transaction.json").exists())
+            }
+            val renamed = fixture.publication("0.0.0", 0, "snapshot", desktopRevision = 8)
+            changeManifestClient(renamed, "displayName")
+            assertFalse(SitePublisher().publish(renamed, fixture.connection).alreadyPublished)
+        }
+    }
+
+    @Test
+    fun `interrupted snapshot restores the previous build before an identical retry`() {
+        SftpFixture().use { fixture ->
+            SitePublisher().publish(fixture.publication("0.0.0", 0, "private-first"), fixture.connection)
+            val current = File(fixture.downloads, ".teamtalk-client-release.json")
+            val previous = current.readBytes()
+            val snapshot = fixture.publication("0.0.0", 0, "snapshot", desktopRevision = 8)
+            snapshot.androidApk.appendText(" snapshot revision 8")
+            File(snapshot.desktopDirectory, "download.html").appendText(" snapshot revision 8")
+            assertFailsWith<IllegalStateException> {
+                SitePublisher { error("snapshot interrupted") }.publish(snapshot, fixture.connection)
+            }
+            assertTrue(previous.contentEquals(current.readBytes()))
+            assertEquals("new android 0.0.0", File(fixture.downloads, "TeamTalk-android.apk").readText())
+            assertEquals("new desktop 0.0.0", File(fixture.downloads, "desktop/download.html").readText())
+            assertFalse(File(fixture.downloads, ".teamtalk-client-releases/snapshot/v0.0.0/revision-8/receipt.json").exists())
+            assertFalse(SitePublisher().publish(snapshot, fixture.connection).alreadyPublished)
+            assertTrue(SitePublisher().publish(snapshot, fixture.connection).alreadyPublished)
+            assertEquals("new android 0.0.0 snapshot revision 8", File(fixture.downloads, "TeamTalk-android.apk").readText())
+        }
+    }
+
     @Test
     fun `private first publication installs once and only identical retry is accepted`() {
         SftpFixture().use { fixture ->
@@ -219,6 +327,12 @@ class SitePublisherIntegrationTest {
     }
 }
 
+private fun changeManifestClient(publication: SitePublication, field: String) {
+    val manifest = Json.parseToJsonElement(publication.manifest.readText()).jsonObject
+    val client = manifest.getValue("client").jsonObject
+    publication.manifest.writeText(JsonObject(manifest + ("client" to JsonObject(client + (field to JsonPrimitive("changed"))))).toString())
+}
+
 /** Real Apache SSHD transport and SFTP filesystem; the remote flock command alone is modelled in JVM. */
 private class SftpFixture(
     val userKey: KeyPair = KeyUtils.generateKeyPair(KeyPairProvider.SSH_RSA, 2048),
@@ -260,14 +374,32 @@ private class SftpFixture(
         File(downloads, "customer.txt").writeText("private unrelated file")
     }
 
-    fun publication(version: String, buildNumber: Int = 1): SitePublication {
-        val desktop = File(local, "desktop-$version").apply { mkdirs() }
+    fun publication(version: String, buildNumber: Int = 1, distributionKind: String = "release", desktopRevision: Int = buildNumber + 1): SitePublication {
+        val bundle = File(local, "$distributionKind-$version-$buildNumber-$desktopRevision").apply { mkdirs() }
+        val desktop = File(bundle, "desktop").apply { mkdirs() }
         File(desktop, "download.html").writeText("new desktop $version")
         File(desktop, "TeamTalk-$version.zip").writeText("new desktop package $version")
-        val apk = File(local, "TeamTalk-$version-android.apk").apply { writeText("new android $version") }
-        val manifest = File(local, "release-manifest.json").apply { writeText("{\"version\":\"$version\"}") }
-        val notes = File(local, "RELEASE_NOTES.md").apply { writeText("人工发布说明 $version") }
-        return SitePublication(desktop, apk, version, buildNumber, manifest, listOf(manifest, notes))
+        val apk = File(bundle, "TeamTalk-$version-android.apk").apply { writeText("new android $version") }
+        val manifest = File(bundle, "release-manifest.json").apply {
+            writeText(buildJsonObject {
+                put("version", version)
+                put("buildNumber", buildNumber)
+                if (distributionKind != "release") put("distributionKind", distributionKind)
+                if (distributionKind == "snapshot") put("desktopRevision", desktopRevision)
+                putJsonObject("client") {
+                    put("applicationId", "com.example.teamtalk")
+                    put("androidApplicationId", "com.example.teamtalk.android")
+                    put("desktopName", "TeamTalkPrivate")
+                    put("displayName", "TeamTalk 私有版")
+                }
+                putJsonArray("androidSigningCertificatesSha256") { add(JsonPrimitive("a".repeat(64))) }
+                put("desktopCertificateFileSha256", "b".repeat(64))
+            }.toString())
+        }
+        val deployment = File(bundle, "deployment-config.json").apply { writeText("""{"serverUrl":"https://private.example"}""") }
+        val notes = File(bundle, "RELEASE_NOTES.md").apply { writeText("人工发布说明 $version") }
+        return SitePublication(desktop, apk, version, buildNumber, manifest, listOf(manifest, notes, deployment),
+            distributionKind = distributionKind, desktopRevision = desktopRevision)
     }
 
     fun disconnectTransports() {

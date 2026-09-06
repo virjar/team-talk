@@ -129,6 +129,37 @@ internal object DesktopDataDirectoryPolicy {
         }
     }
 
+    /** 兼容旧启动器按 umask 创建的 0755 根；只撤销额外读取/遍历权限，不接管可被他人写入的目录。 */
+    fun tightenExistingRootPermissions(plan: DesktopDataDirectoryPlan) {
+        val root = plan.dataDirectory.toPath().toAbsolutePath().normalize()
+        if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) return
+        val before = attributes(root)
+        requireRealDirectory(before, "Desktop app-data directory")
+        val expectedOwner = Files.getOwner(plan.currentUserAnchor.toPath(), LinkOption.NOFOLLOW_LINKS)
+        require(Files.getOwner(root, LinkOption.NOFOLLOW_LINKS) == expectedOwner) {
+            "Desktop app-data directory has the wrong owner"
+        }
+        val posix = Files.getFileAttributeView(root, PosixFileAttributeView::class.java, LinkOption.NOFOLLOW_LINKS)
+            ?: return // Windows 保留原有精确 ACL 校验，不自动重写 ACL。
+        val permissions = posix.readAttributes().permissions()
+        if (permissions == PRIVATE_STANDARD_PARENT_PERMISSIONS) return
+        require(permissions.containsAll(PRIVATE_STANDARD_PARENT_PERMISSIONS) && permissions.none {
+            it == PosixFilePermission.GROUP_WRITE || it == PosixFilePermission.OTHERS_WRITE
+        }) { "Existing Desktop app-data permissions cannot be safely tightened to 0700" }
+        // chmod 不能消除扩展 ACL 的授权；先拒绝不安全 ACL，不清除用户已有 ACL。
+        JvmMacOsAcl.requirePrivateLeaf(root)
+        require(before.fileKey() != null) { "Desktop app-data directory has no stable identity" }
+        posix.setPermissions(PRIVATE_STANDARD_PARENT_PERMISSIONS)
+        val after = attributes(root)
+        require(before.fileKey() == after.fileKey() && !after.isSymbolicLink && after.isDirectory) {
+            "Desktop app-data directory changed while tightening permissions"
+        }
+        require(Files.getOwner(root, LinkOption.NOFOLLOW_LINKS) == expectedOwner &&
+            posix.readAttributes().permissions() == PRIVATE_STANDARD_PARENT_PERMISSIONS) {
+            "Desktop app-data directory permission repair did not preserve its owner"
+        }
+    }
+
     private fun validateStableParent(
         path: Path,
         expectedOwner: UserPrincipal,
@@ -313,6 +344,7 @@ internal object DesktopEnvironment {
 internal object DesktopDataDirectoryAdmission {
     fun prepare(plan: DesktopDataDirectoryPlan): File {
         DesktopDataDirectoryPolicy.prepareBaseDirectory(plan)
+        DesktopDataDirectoryPolicy.tightenExistingRootPermissions(plan)
         val data = JvmPrivateDataDirectory.openOrCreate(plan.dataDirectory, plan.ownerAnchor)
         val marker = data.atomicTextFile(fileName = DATA_MARKER_FILE)
         val existing = marker.readText(MAX_MARKER_BYTES)

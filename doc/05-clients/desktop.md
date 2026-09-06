@@ -303,8 +303,11 @@ Windows 的 `LOCALAPPDATA` 缺失时使用 `~/AppData/Local`；Linux 的 `XDG_DA
 crash pending 必须为 `0600`，同时校验 owner、符号链接和硬链接。SQLite 自建的 journal/WAL/SHM
 sidecar 以账号 namespace 为安全边界，不承诺其单文件 mode 恒为 `0600`，但不得逃出该目录。macOS 还会
 用固定原生命令检查扩展 ACL；Windows 使用当前 owner 的精确 ACL，父目录 ACL 会拒绝 Everyone/Users 等
-非 owner 主体对当前目录或新建子项的创建、写入、删除或改 ACL 权限。已有路径不由启动代码静默
-`chmod`、改 owner、清 ACL 或放宽 ACL，不满足门禁时直接拒绝启动。
+非 owner 主体对当前目录或新建子项的创建、写入、删除或改 ACL 权限。Desktop 启动可兼容当前用户拥有的
+旧 `0755` 等根目录：确认真实目录、安全父链和扩展 ACL，且 owner 已有完整读写遍历权限、group/others
+不可写后，仅移除根目录额外的读取与遍历权限，将其收紧为 `0700`，保留原目录与全部资料。
+该处理不递归改文件、不改 owner、不清除或放宽 ACL；子目录和文件、SDK/无头入口仍执行原有严格检查。
+其他不满足门禁的路径继续拒绝启动。
 
 启动器只打开上述当前用户数据根，不探测、不复制安装目录旁的旧 `data/`，也不会因为无关旧目录存在而
 阻止当前客户端启动。当前根若已经非空却没有正确 marker，则直接拒绝采用，避免把任意目录误认成账号

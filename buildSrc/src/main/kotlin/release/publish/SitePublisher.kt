@@ -9,6 +9,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -24,6 +25,8 @@ data class SitePublication(
     val manifest: File,
     val metadataFiles: List<File> = listOf(manifest),
     val firstPublicationOnly: Boolean = false,
+    val distributionKind: String = "release",
+    val desktopRevision: Int = releaseBuildNumber + 1,
 )
 
 /**
@@ -40,6 +43,11 @@ class SitePublisher internal constructor(private val afterDesktopSwitch: () -> U
         val receipt = buildJsonObject {
             put("version", publication.version)
             put("releaseBuildNumber", publication.releaseBuildNumber)
+            // Preserve established release/private-first receipts byte-for-byte on retries.
+            if (publication.distributionKind == "snapshot") {
+                put("distributionKind", "snapshot")
+                put("desktopRevision", publication.desktopRevision)
+            }
             put("manifestSha256", sha256(publication.manifest))
             put("files", buildJsonObject { payload.forEach { (path, file) -> put(path, sha256(file)) } })
         }
@@ -51,7 +59,7 @@ class SitePublisher internal constructor(private val afterDesktopSwitch: () -> U
                 remote.publicationLease = lease
                 val site = SiteTransaction(remote, lease, root)
                 site.recoverInterruptedPublication()
-                if (site.published(publication.version, receipt)) {
+                if (site.published(publication, receipt)) {
                     return@connect PublicationResult("site:${connection.host}:$root", publication.version, true)
                 }
                 if (publication.firstPublicationOnly) site.requireUnpublished()
@@ -78,6 +86,11 @@ class SitePublisher internal constructor(private val afterDesktopSwitch: () -> U
     private fun localPayload(publication: SitePublication): Map<String, File> {
         requireVersion(publication.version)
         require(publication.releaseBuildNumber >= 0) { "Release build number must not be negative" }
+        require(publication.distributionKind in setOf("release", "private-first", "snapshot")) { "Unknown distribution kind" }
+        require(publication.desktopRevision in 1..65535) { "Desktop installation revision must fit 1..65535" }
+        require(publication.distributionKind == "snapshot" || publication.desktopRevision == publication.releaseBuildNumber + 1) {
+            "Product releases and first private distributions use the root installation revision"
+        }
         requireAsset(publication.androidApk)
         requireAsset(publication.manifest)
         require(publication.desktopDirectory.isDirectory && !Files.isSymbolicLink(publication.desktopDirectory.toPath())) {
@@ -125,28 +138,101 @@ private class SiteTransaction(
         }
     }
 
-    fun published(version: String, expected: JsonObject): Boolean {
+    fun published(publication: SitePublication, expected: JsonObject): Boolean {
+        val version = publication.version
         val currentReceipt = remote.jsonOrNull(current)
         if (currentReceipt != null) {
             val currentNumber = currentReceipt.buildNumber()
             val expectedNumber = expected.buildNumber()
-            val sameVersion = currentReceipt.getValue("version").jsonPrimitive.content == version
-            require(if (sameVersion) expectedNumber == currentNumber else expectedNumber > currentNumber) {
-                "Site releaseBuildNumber must increase for a new version and remain unchanged for the same version; " +
-                    "current=$currentNumber, requested=$expectedNumber. Automatic site downgrade is not supported"
+            val currentVersion = currentReceipt.getValue("version").jsonPrimitive.content
+            requireVersion(currentVersion)
+            val versionOrder = version.split('.').map(String::toBigInteger).zip(currentVersion.split('.').map(String::toBigInteger))
+                .firstOrNull { (next, previous) -> next != previous }?.let { (next, previous) -> next.compareTo(previous) } ?: 0
+            require(versionOrder >= 0 && expectedNumber >= currentNumber) { "Automatic site version/build downgrade is not supported" }
+            if (versionOrder == 0) {
+                val currentRevision = currentReceipt.desktopRevision()
+                val expectedRevision = expected.desktopRevision()
+                require(expectedRevision >= currentRevision) { "Automatic Desktop installation revision downgrade is not supported" }
+                if (expectedRevision == currentRevision) {
+                    require(expected == currentReceipt) {
+                        "The same Desktop installation revision was already published with different bytes or distribution kind; publish newer committed source"
+                    }
+                } else {
+                    require(publication.distributionKind == "snapshot") {
+                        "Only snapshot distributions may update packages without advancing the display version"
+                    }
+                    verifyUpgradeMetadata(currentReceipt, publication)
+                }
+            } else {
+                // Native updaters compare the display version before its final revision component.
+                // A later product version may therefore resume the root revision after many snapshots.
+                require(expectedNumber > currentNumber) {
+                    "A newer display version requires a higher root release build number for Android upgrades"
+                }
+                verifyUpgradeMetadata(currentReceipt, publication)
             }
         }
-        val saved = remote.jsonOrNull("$history/v$version/receipt.json") ?: return false
+        val versionDirectory = historyDirectory(expected)
+        val saved = remote.jsonOrNull("$versionDirectory/receipt.json") ?: return false
         saved.buildNumber()
-        require(saved == expected) { "Site version $version was already published with different bytes; use a new version" }
+        require(saved == expected) { "Site distribution $version revision ${expected.desktopRevision()} was already published with different bytes" }
         require(remote.jsonOrNull(current) == expected) { "Site version $version is historical; refusing to replace the current release with an old version" }
         require(matchesLiveDesktop(expected) && remote.digest("$root/TeamTalk-android.apk") == expected.hash("TeamTalk-android.apk")) {
             "Published site was modified outside the release task; investigate before publishing again"
         }
         expected.getValue("files").jsonObject.filterKeys { it.startsWith("metadata/") }.forEach { (path, hash) ->
-            require(remote.digest("$history/v$version/$path") == hash.jsonPrimitive.content) { "Published release metadata changed: $path" }
+            require(remote.digest("$versionDirectory/$path") == hash.jsonPrimitive.content) { "Published release metadata changed: $path" }
         }
         return true
+    }
+
+    /** Compare the recorded installation, not the user-facing display name or a whole deployment hash. */
+    private fun verifyUpgradeMetadata(previous: JsonObject, publication: SitePublication) {
+        val oldManifest = publishedMetadata(previous, "release-manifest.json") ?: JsonObject(emptyMap())
+        val nextManifest = Json.parseToJsonElement(publication.manifest.readText()).jsonObject
+        val oldClient = oldManifest["client"]?.jsonObject
+        val nextClient = nextManifest["client"]?.jsonObject
+        listOf("applicationId", "androidApplicationId", "desktopName").forEach { key ->
+            oldClient?.get(key)?.let { value ->
+                require(nextClient?.get(key) == value) { "Client installation identity changed: $key" }
+            }
+        }
+        oldManifest["androidSigningCertificatesSha256"]?.let { certificates ->
+            require(nextManifest["androidSigningCertificatesSha256"]?.jsonArray?.toSet() == certificates.jsonArray.toSet()) {
+                "Android signing certificates changed; preserve the existing installation signing identity"
+            }
+        }
+        oldManifest["desktopCertificateFileSha256"]?.let { certificate ->
+            require(nextManifest["desktopCertificateFileSha256"] == certificate) { "Desktop signing certificate changed" }
+        }
+        val oldDeployment = publishedMetadata(previous, "deployment-config.json") ?: return
+        oldDeployment["serverUrl"]?.let { serverUrl ->
+            val nextFile = publication.metadataFiles.singleOrNull { it.name == "deployment-config.json" }
+            val nextDeployment = nextFile?.let { Json.parseToJsonElement(it.readText()).jsonObject }
+            require(nextDeployment?.get("serverUrl")?.jsonPrimitive?.content?.trimEnd('/') == serverUrl.jsonPrimitive.content.trimEnd('/')) {
+                "Client server and Desktop update source changed"
+            }
+        }
+    }
+
+    /** Older receipts may not have a field; recorded facts must remain present and unchanged. */
+    private fun publishedMetadata(receipt: JsonObject, name: String): JsonObject? {
+        val relative = "metadata/$name"
+        val hash = receipt.getValue("files").jsonObject[relative]?.jsonPrimitive?.content ?: return null
+        val path = "${historyDirectory(receipt)}/$relative"
+        remote.requirePublicType(path, directory = false)
+        require(remote.exists(path) && remote.digest(path) == hash) { "Published release metadata changed or is missing: $relative" }
+        return remote.jsonOrNull(path)
+    }
+
+    private fun historyDirectory(receipt: JsonObject): String {
+        val version = receipt.getValue("version").jsonPrimitive.content
+        requireVersion(version)
+        return when (receipt["distributionKind"]?.jsonPrimitive?.content ?: "release") {
+            "snapshot" -> "$history/snapshot/v$version/revision-${receipt.desktopRevision()}"
+            "release", "private-first" -> "$history/v$version"
+            else -> error("Unknown published distribution kind")
+        }
     }
 
     fun activate(staging: String, receipt: JsonObject, afterDesktopSwitch: () -> Unit) {
@@ -247,7 +333,7 @@ private class SiteTransaction(
     private fun finish(transaction: JsonObject) {
         lease.requireHeld()
         val expected = transaction.getValue("receipt").jsonObject
-        val versionDir = "$history/v${expected.getValue("version").jsonPrimitive.content}"
+        val versionDir = historyDirectory(expected)
         val staging = transaction.getValue("staging").jsonPrimitive.content
         remote.mkdirs(versionDir)
         remote.writeJsonAtomic("$versionDir/receipt.json", expected)
@@ -271,6 +357,12 @@ private class SiteTransaction(
     private fun JsonObject.hash(path: String): String = getValue("files").jsonObject.getValue(path).jsonPrimitive.content
     private fun JsonObject.buildNumber(): Int = get("releaseBuildNumber")?.jsonPrimitive?.intOrNull?.takeIf { it >= 0 }
         ?: error("Managed site receipt has no valid releaseBuildNumber; migrate it from the matching sealed release bundle before publishing")
+
+    private fun JsonObject.desktopRevision(): Int {
+        val revision = if (containsKey("desktopRevision")) getValue("desktopRevision").jsonPrimitive.intOrNull else buildNumber() + 1
+        return revision?.takeIf { it in 1..65535 }
+            ?: error("Managed site receipt has no valid Desktop installation revision")
+    }
 }
 
 private class RemoteFiles(private val sftp: SftpClient) {

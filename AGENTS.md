@@ -56,27 +56,36 @@
 - 状态和资源遵循单一所有者；短暂断线不能清除用户身份，认证终态失败必须停止重连。
 - RPC methodId、NotifyType、MessageType 和 wire 字段是兼容性契约；修改时遵循
   [协议规则](doc/04-protocol/README.md)并补 round-trip 测试。
-- 根 `gradle.properties` 是展示版本、安装序号和协议版本的唯一配置源；发版同时提交人工撰写的
+- 根 `gradle.properties` 是展示版本、安装序号和协议版本的唯一配置源；正式产品发行同时提交人工撰写的
   `doc/07-operations/releases/<releaseVersion>.md`，GitHub tag 与生成摘要不能代替这份说明。
-- **版本发布由用户明确确认本次发行。** 开发中的协议 minor 可随新增契约按需递增并登记开发清单；
-  推进 `teamtalk.releaseVersion` / `teamtalk.releaseBuildNumber`、定稿人工发行说明、运行
-  `prepareProtocolRelease` 冻结、打 tag 和发布，均须在这次发行获得用户确认后执行。功能开发、
-  发布工具改造、开发构建、开发服务器部署或 Agent 本机验收，都不自动授权发版；不能为通过构建或
-  发行校验而自行升版、冻结。确认一次发行及其范围后，按已确认范围完成流程，不逐条命令重复询问。
+- **正式产品发行由用户明确确认。** 开发中的协议 minor 可随新增契约按需递增并登记开发清单；推进
+  `teamtalk.releaseVersion`、定稿人工发行说明、运行 `prepareProtocolRelease`、打 tag 与 GitHub 发布，
+  均须获得本次正式发行授权。功能开发、发布工具改造、开发构建、服务器部署或 Agent 本机验收不自动
+  授权交付；不能为通过校验擅自发版。确认范围后继续完成流程，不为每条命令重复询问。
+- 用户要求**更新内测安装包**，即已授权本次手动 snapshot 分发，无须再询问是否正式发版。
+  审阅并提交工作源码后，在完整的独立私有 clone 运行 `release -PreleaseMode=snapshot -PreleaseTargets=local`
+  或 `site`；不为每次刷包修改根 `teamtalk.releaseVersion` 或 `teamtalk.releaseBuildNumber`。该模式要求
+  私有 local 配置及独立应用身份，禁止 GitHub；不定稿正式说明、不打 tag、不运行
+  `prepareProtocolRelease`、不改既有发行快照。协议未变时复用已冻结契约，新增契约须在交付前显式
+  `prepareProtocolContract` 并提交。Android 保持 `versionCode=根构建号+1`，由用户手动覆盖安装；Desktop
+  `desktopRevision=完整 Git first-parent 提交数+根构建号+1`，只在手动交付时用于打包，不写回根配置，
+  不依赖 tag。同一展示版本的后续 snapshot 须保留已分发源码及其历史，并从其后代构建，禁止浅克隆或修订号倒退；
+  原字节重试复用原密封目录。正式发行仍由用户确认并推进根版本与构建号；新展示版本的 Desktop 修订号
+  可重新按根构建号映射。CI 不自动生成 snapshot。
 - 协议开发清单 `protocol/protocol/wire-baseline.tsv` 与发行快照 `protocol/protocol/releases/` 分开维护。
   发版前只收敛**尚未分发、也未冻结进发行快照**的开发 minor 和生命周期注解，例如上一发行是 `0.3`，
   本地试验累加到 `0.9`，下次新增契约统一归入 `0.4`。逐项审阅兼容分支与迁移，不用全库替换碰运气；
   不回退已发行 minor、安装序号或已占用的 wire ID，不通过编辑发行快照绕过检查。
-- 向内测用户、SDK 使用者或私有化客户分发也算发行，与是否公开、是否有 GitHub/tag 无关。
-  须先取得用户对本次发行的确认；常规产品发行在分发前运行 `:protocol:protocol:prepareProtocolRelease`，
+- 向内测用户、SDK 使用者或私有化客户分发都会冻结实际使用的协议，与是否公开、是否有 GitHub/tag 无关。
+  交付须在用户授权范围内；正式产品发行在分发前运行 `:protocol:protocol:prepareProtocolRelease`，
   提交不可覆盖的发行快照；普通 `release`
   只校验已提交事实。发行快照保守地从登记起冻结；不要在发布失败后自行删除快照回收编号。
   同一 major 的已发行编号及墓碑永久保留，只有明确的新协议 major 才能重整编号空间。
 - 用户明确要求**新的私有应用首次分发安装包且保持版本**时，使用统一 `release -PreleaseMode=private-first`
   的 local/site 路径，不自行增加展示版本或安装序号、不打 tag。分发前显式 `prepareProtocolContract` 并提交
   `protocol/protocol/contracts/<major>.<minor>/`，和正式发行快照一起保护已分发协议。该路径只接受新的
-  私有安装身份和空下载入口，或原字节的幂等重试；不能覆盖公版零号历史或已有私有包。后续升级仍须用户
-  确认版本推进。操作说明见[首次私有分发](doc/07-operations/releasing.md#保持当前版本的首次私有安装包分发)。
+  私有安装身份和空下载入口，或原字节的幂等重试；不能覆盖公版零号历史或已有私有包。后续内测更新走
+  `snapshot`，正式产品升级走用户确认的发行流程。见[首次私有分发](doc/07-operations/releasing.md#保持当前版本的首次私有安装包分发)。
 - 文件消息只保存 TeamTalk FileStore 相对路径。服务器必须在分配序号和成功 ACK 前确认附件及
   元数据真实存在；下载必须携带 access token，并由上传者或当前会话成员权限放行；ImBot 和图形
   客户端不得绕过同一校验链。
@@ -97,7 +106,8 @@
   新私有发行不复制公版资料，普通升级保留本安装数据；派生与更新入口见
   [客户端发行身份](doc/07-operations/configuration.md#客户端发行身份)。
 - 发行配置摘要依据最终解析对象，JSON 仅作非敏感 `deployment-config.json` 快照输出，不作部署配置输入。
-  本地/site 发布允许 local 覆写，GitHub 发布拒绝它；源码、根版本、协议快照与人工说明的干净工作树要求仍然有效。
+  本地/site 发布允许 local 覆写，GitHub 发布拒绝它；各模式均要求源码、根版本与协议契约已提交且工作树干净，
+  正式产品发行另校验对应人工说明与发行快照；内测 snapshot 不认领旧正式版本的源码身份。
   私有节点某次初始化或清理的授权仅适用于当次明确范围，不能成为未来默认清空资料的依据。
 
 详细规则见[系统架构](doc/03-architecture/README.md)、[工程约束](doc/08-development/engineering-rules.md)

@@ -86,6 +86,61 @@ class ReleaseMetadataTest {
     }
 
     @Test
+    fun `internal builds derive Desktop revisions without changing Android or root versions`() = repository { repo ->
+        repo.writeVersion("0.0.0", 0)
+        val baseline = repo.commit("Initial release")
+        val rootFile = repo.root.resolve("gradle.properties")
+        val original = rootFile.readText()
+        val metadata = ReleaseMetadata(repo.root)
+        val version = ReleaseVersion.read(repo.root)
+        assertEquals(2, metadata.snapshotDesktopRevision(version, baseline))
+
+        repo.root.resolve("fix.kt").writeText("// Fix the client without changing its product version\n")
+        val fixed = repo.commit("Fix group settings")
+        assertEquals(3, metadata.snapshotDesktopRevision(version, fixed))
+        assertEquals(original, rootFile.readText())
+        assertEquals(0, ReleaseVersion.read(repo.root).buildNumber)
+        assertFalse(metadata.releaseChangedSince(baseline))
+        metadata.verifySource(version, fixed)
+        repo.git("tag", "v0.0.0", baseline)
+        assertEquals(3, metadata.snapshotDesktopRevision(version, fixed))
+        assertEquals("", repo.git("status", "--porcelain"))
+    }
+
+    @Test
+    fun `snapshot revisions reject shallow history and exhausted Conveyor numbers`() = repository { repo ->
+        repo.writeVersion("0.0.0", 65534)
+        val revision = repo.commit("Last supported formal revision")
+        val metadata = ReleaseMetadata(repo.root)
+        assertFailsWith<IllegalArgumentException> {
+            metadata.snapshotDesktopRevision(ReleaseVersion.read(repo.root), revision)
+        }
+        val shallow = Files.createTempDirectory("teamtalk shallow snapshot ").toFile()
+        try {
+            repo.git("clone", "--quiet", "--depth=1", repo.root.toPath().toUri().toString(), shallow.absolutePath)
+            assertFailsWith<IllegalArgumentException> {
+                ReleaseMetadata(shallow).snapshotDesktopRevision(ReleaseVersion.read(shallow).copy(buildNumber = 0), revision)
+            }
+        } finally {
+            shallow.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `snapshot appendix starts at the current product tag without claiming a new tag`() = repository { repo ->
+        repo.writeVersion("0.0.0", 0)
+        repo.commit("BASELINE_OUTSIDE_SNAPSHOT")
+        repo.git("tag", "v0.0.0")
+        repo.root.resolve("fix.kt").writeText("// Fix scrolling\n")
+        val revision = repo.commit("Fix group settings scrolling")
+        val appendix = ReleaseMetadata(repo.root).commitAppendix(ReleaseVersion.read(repo.root), snapshot = true)
+        assertTrue(appendix.contains("Range: v0.0.0 → snapshot 0.0.0 ($revision)"))
+        assertTrue(appendix.contains("Fix group settings scrolling"))
+        assertFalse(appendix.contains("BASELINE_OUTSIDE_SNAPSHOT"))
+        assertEquals("v0.0.0", repo.git("tag", "--list"))
+    }
+
+    @Test
     fun `committed human notes are preserved verbatim and callers cannot override root versions`() = repository { repo ->
         repo.writeVersion("0.1.0", 7)
         val authored = "# TeamTalk 0.1.0\n\n保留草稿与账号；修复重连后的消息状态。\n\n升级影响：无需重新登录。\n"

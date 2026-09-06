@@ -75,6 +75,21 @@ class ReleaseMetadata(private val root: File) {
         return changed
     }
 
+    /** Internal Desktop installers need a newer revision; source history supplies it without editing versions. */
+    fun snapshotDesktopRevision(version: ReleaseVersion, sourceCommit: String): Int {
+        require(sourceCommit.matches(Regex("[0-9a-f]{40}"))) { "Snapshot source must be a full Git commit" }
+        require(git("rev-parse", "--is-shallow-repository") == "false") {
+            "Snapshot packaging requires a complete clone to calculate a stable Desktop revision"
+        }
+        // Do not use tag distance: fetching tags later must not change the same source's installer identity.
+        val commits = git("rev-list", "--count", "--first-parent", sourceCommit).toLong()
+        val revision = version.buildNumber.toLong() + 1 + commits
+        require(commits > 0 && revision in 1..65535) {
+            "Snapshot Desktop revision exceeds Conveyor's supported range"
+        }
+        return revision.toInt()
+    }
+
     fun verifyFrozenHistorySince(baseRevision: String) {
         require(baseRevision.matches(Regex("[0-9a-fA-F]{40}"))) { "releaseBase must be a full Git commit" }
         val rewritten = git("diff", "--name-only", "--diff-filter=DMRT", baseRevision, "HEAD", "--",
@@ -83,10 +98,10 @@ class ReleaseMetadata(private val root: File) {
     }
 
     /** Commit detail is a separate appendix; it never overwrites the maintainer's release text. */
-    fun commitAppendix(version: ReleaseVersion): String {
+    fun commitAppendix(version: ReleaseVersion, snapshot: Boolean = false): String {
         val ancestors = git("tag", "--merged", "HEAD").lineSequence()
-            .filter { it.matches(Regex("v[0-9]+\\.[0-9]+\\.[0-9]+")) && it != version.tag }
-            .filter { compareVersions(it.drop(1), version.name) < 0 }
+            .filter { it.matches(Regex("v[0-9]+\\.[0-9]+\\.[0-9]+")) }
+            .filter { compareVersions(it.drop(1), version.name) < 0 || (snapshot && it == version.tag) }
             .sortedWith { a, b -> compareVersions(a.drop(1), b.drop(1)) }.toList()
         val base = ancestors.lastOrNull()
         val range = base?.let { "$it..HEAD" } ?: "HEAD"
@@ -99,8 +114,9 @@ class ReleaseMetadata(private val root: File) {
         } finally {
             log.delete()
         }
+        val target = if (snapshot) "snapshot ${version.name} (${git("rev-parse", "HEAD")})" else version.tag
         return "# Commit appendix\n\n" +
-            (base?.let { "Range: $it → ${version.tag}.\n\n" }
+            (base?.let { "Range: $it → $target.\n\n" }
                 ?: "No previous release tag is available; this is the reachable source history.\n\n") +
             commits + "\n"
     }

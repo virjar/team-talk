@@ -92,12 +92,16 @@ token 被踢。非 loopback 连接没有明文回退；严格字面量 loopback 
 `pkill -f gradle`，它会杀死所有匹配进程。沙箱环境出现 FileLock 或 SocketException 时，需要给予
 Gradle cache 和本机进程通信权限，而不是删除项目缓存。
 
-若启动前出现“cannot open its private data directory”，先区分：平台默认用户目录被其他用户拥有或可写、
+若旧 Desktop 因“Existing private directory permissions are not 0700”无法启动，新客户端会在校验当前
+用户所有权、安全父链与 ACL 后，将只额外开放读取/遍历的根目录（如 `0755`）收紧为 `0700`，保留资料；
+空目录仍按正常流程建立 marker，非空无 marker 的目录不会被自动接管。
+
+若仍出现“cannot open its private data directory”，先区分：平台默认用户目录被其他用户拥有或可写、
 父链包含符号链接、macOS 扩展 ACL 向其他主体授予访问/修改权限、已有 TeamTalk 根没有 marker、Windows
-ACL 向 Everyone/Users 授予当前目录或继承到新子项的修改权限，或旧
-安装目录与新根形成未知双根冲突。启动器不会自动改 owner/权限，也不会删除旧数据。停止所有新旧客户端，
-备份两处目录，再按[Desktop 私有数据目录](../05-clients/desktop.md#11-私有数据目录)核对默认路径、receipt
-和旧树门禁；不要通过把目录改成 0777 或给 Everyone 完全控制来绕过检查。
+ACL 向 Everyone/Users 授予当前目录或继承到新子项的修改权限。启动器不改 owner、不递归改文件权限、
+不清 ACL，也不会删除旧数据或探测安装目录旁的旧数据根。停止对应客户端并备份当前数据目录，再按
+[Desktop 私有数据目录](../05-clients/desktop.md#11-私有数据目录)核对实际路径、marker 和权限；
+不要通过把目录改成 0777 或给 Everyone 完全控制来绕过检查。
 
 ## 10. 组织永久容量耗尽
 
