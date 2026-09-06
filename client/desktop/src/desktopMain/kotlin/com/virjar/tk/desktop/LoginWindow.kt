@@ -424,20 +424,6 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                         isWindowFocused = windowReadActive,
                     )
                 }
-                LaunchedEffect(Unit) {
-                    trayAvailable = AppTray.create(
-                        onShow = { sessionUiActions.dispatchUi { windowVisible = true } },
-                        onQuit = { applicationExitActions.requestExit() },
-                    )
-                    DesktopNotificationManager.start()
-                }
-                DisposableEffect(Unit) {
-                    onDispose {
-                        AppTray.remove()
-                        DesktopNotificationManager.stop()
-                        DesktopKeepAwake.stop()
-                    }
-                }
                 readyPresentation = DesktopReadyWindowPresentation(
                     resources = desktopResources,
                     navigation = desktopNav,
@@ -460,6 +446,39 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                 state = mainWindowState,
             ) {
                 TestServiceBridge.registerWindowIfEnabled(window)
+                val showMainWindow: () -> Unit = {
+                    sessionUiActions.dispatchUi {
+                        windowVisible = true
+                        mainWindowState.isMinimized = false
+                        // Compose 异步显示隐藏窗口；componentShown 会在真正显示后再次完成激活。
+                        if (window.isVisible) window.bringToForeground()
+                    }
+                }
+                DisposableEffect(window, sessionUiActions) {
+                    val activation = installDesktopWindowActivation(window, onReopen = showMainWindow) {
+                        sessionUiActions.dispatchUi {
+                            if (windowVisible && !mainWindowState.isMinimized && window.isVisible) {
+                                window.bringToForeground()
+                            }
+                        }
+                    }
+                    onDispose { activation.close() }
+                }
+                if (readyPresentation != null) {
+                    DisposableEffect(window, sessionUiActions) {
+                        trayAvailable = AppTray.create(
+                            onShow = showMainWindow,
+                            onQuit = { applicationExitActions.requestExit() },
+                        )
+                        DesktopNotificationManager.start()
+                        onDispose {
+                            trayAvailable = false
+                            AppTray.remove()
+                            DesktopNotificationManager.stop()
+                            DesktopKeepAwake.stop()
+                        }
+                    }
+                }
                 // macOS：保留原生红黄绿窗口按钮，但让应用 Surface 延伸进标题栏，
                 // 消除“系统灰标题栏 + 应用内容”两套视觉语言的拼接感。
                 DisposableEffect(window) {

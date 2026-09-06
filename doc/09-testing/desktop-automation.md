@@ -185,6 +185,11 @@ bounds，不能自行再乘除缩放倍率。完整选择器见[测试选择器�
   `documents.tree.toggle.{nodeId前8}` 只展开或折叠子文档；父文档的正文不因它拥有子节点而不可达；
 - 窗口关闭、ESC 返回和任务栈返回不会残留不可见语义节点。
 - 双击 `app.titleBar.drag.left/right` 后窗口在 `Floating` 与 `Maximized` 间切换，搜索框双击不改变窗口状态。
+- macOS 登录后用原生红色关闭按钮隐藏主窗口，先通过 `/window-state` 确认不可见，再点击该实例的 Dock
+  图标（或向已核对 PID 派发系统 reopen AppleEvent），验证窗口重新可见且 `active=true`。覆盖重复关闭/恢复、
+  最小化后恢复，以及窗口已显示但应用在后台时的聚焦；托盘“打开”应得到相同结果。隐藏和最小化期间
+  只读窗口状态，不调用 `/window-activate` 或 `/screenshot`，这些辅助端点会主动改变窗口状态，可能掩盖
+  唤回缺陷；只有系统事件已恢复窗口后才截图。
 - 打开图片或视频后，后续断言、点击与截图都携带 `window=media-gallery`；切换
   `media.gallery.previous/next` 时页码同步变化，截图中只能出现当前页媒体，非方形图片完整适配而不裁剪。
 - 拉出文档工作台后，`window=documents` 的 macOS 屏幕截图只有一行融合标题栏：红黄绿按钮与应用文档
