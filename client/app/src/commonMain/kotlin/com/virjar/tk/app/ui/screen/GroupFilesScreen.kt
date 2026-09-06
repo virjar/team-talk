@@ -1,6 +1,8 @@
 package com.virjar.tk.app.ui.screen
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -168,28 +170,33 @@ fun GroupFilesScreen(
             }
         }
 
+        // 按钮按内容自适应宽度：均分权重会把"新建文件夹"末字挤到第二行（T006）。
+        // 极窄屏叠加系统字体放大时允许整行横向滚动，保证文案不换行、不裁切。
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             FilledTonalButton(
                 onClick = onUpload,
                 enabled = !uploading,
-                modifier = Modifier.weight(1f).testTag("group.files.upload"),
+                modifier = Modifier.testTag("group.files.upload"),
             ) {
                 if (uploading) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                 else Icon(Icons.Filled.UploadFile, contentDescription = null, Modifier.size(18.dp))
                 Spacer(Modifier.size(6.dp))
-                Text(if (uploading) "上传中" else "上传文件")
+                Text(if (uploading) "上传中" else "上传文件", maxLines = 1, softWrap = false)
             }
             OutlinedButton(
                 onClick = { showCreateFolder = true },
-                modifier = Modifier.weight(1f).testTag("group.files.createFolder"),
+                modifier = Modifier.testTag("group.files.createFolder"),
             ) {
                 Icon(Icons.Filled.Add, contentDescription = null, Modifier.size(18.dp))
                 Spacer(Modifier.size(6.dp))
-                Text("新建文件夹")
+                Text("新建文件夹", maxLines = 1, softWrap = false)
             }
             IconButton(onClick = onRefresh, enabled = !loading) {
                 Icon(Icons.Filled.Refresh, contentDescription = "刷新")
