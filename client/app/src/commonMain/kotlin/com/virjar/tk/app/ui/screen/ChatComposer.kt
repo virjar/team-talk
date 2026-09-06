@@ -6,6 +6,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -13,6 +14,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.TextFieldValue
 import com.mohamedrejeb.richeditor.model.RichTextState
@@ -26,7 +28,9 @@ import com.virjar.tk.app.ui.component.input.AutoCompleteItem
 import com.virjar.tk.app.ui.component.input.AutoCompleteOverlay
 import com.virjar.tk.app.ui.component.input.MentionQuery
 import com.virjar.tk.app.ui.component.input.SlashCommands
+import com.virjar.tk.app.ui.component.input.InlineEmojiPanel
 import com.virjar.tk.app.ui.component.input.SlashQuery
+import com.virjar.tk.app.ui.component.rich.replaceComposerRange
 import com.virjar.tk.app.ui.component.rich.ChatComposerMode
 import com.virjar.tk.app.ui.component.rich.PendingAssetJob
 import com.virjar.tk.app.ui.theme.Tk
@@ -110,6 +114,28 @@ internal fun ChatComposer(
             onShowAttachChange(false)
         }
         showFormatting = next
+    }
+
+    // 表情面板展开期间键盘必须收起，否则软键盘与面板互相顶替；连续插入也不应重新拉起键盘。
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(showEmoji, voiceMode) {
+        if (showEmoji && !voiceMode) keyboard?.hide()
+    }
+
+    fun insertEmoji(emoji: String) {
+        if (composerMode == ChatComposerMode.MARKDOWN) {
+            onSourceInputChange(
+                sourceInput.replaceComposerRange(
+                    sourceInput.selection.min,
+                    sourceInput.selection.max,
+                    emoji,
+                ),
+            )
+        } else {
+            val previousText = richState.annotatedString.text
+            richState.insertAtCaret(emoji)
+            if (richState.annotatedString.text != previousText) onVisualTextChange()
+        }
     }
 
     fun enterVoiceMode() {
@@ -229,7 +255,6 @@ internal fun ChatComposer(
                 inputFocus = inputFocus,
                 showEmoji = showEmoji,
                 onToggleEmoji = ::toggleEmojiPanel,
-                onDismissEmoji = { onShowEmojiChange(false) },
                 onSourceInputChange = onSourceInputChange,
                 onVisualTextChange = onVisualTextChange,
                 hasVoice = effectiveVoiceRecord != null,
@@ -299,7 +324,6 @@ internal fun ChatComposer(
                 onUrlClick = onUrlClick,
                 showEmoji = showEmoji,
                 onToggleEmoji = ::toggleEmojiPanel,
-                onDismissEmoji = { onShowEmojiChange(false) },
                 hasVoice = effectiveVoiceRecord != null,
                 onVoiceClick = if (voiceMode) ::leaveVoiceMode else ::enterVoiceMode,
                 onVoiceRecord = effectiveVoiceRecord,
@@ -337,6 +361,16 @@ internal fun ChatComposer(
                 onVoiceRecordCancel = effectiveVoiceRecordCancel,
                 onMentionClick = onMentionClick,
                 onUrlClick = onUrlClick,
+            )
+        }
+
+        // 表情面板内联在输入行下方参与布局：展开时把输入框推到面板上方，
+        // 草稿始终可见；弹层实现会覆盖输入行，无法确认已插入的表情（T002）。
+        if (showEmoji && !voiceMode && composerMode != ChatComposerMode.PREVIEW) {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            InlineEmojiPanel(
+                onPick = ::insertEmoji,
+                modifier = Modifier.testTag("chat.emoji.inline"),
             )
         }
         }

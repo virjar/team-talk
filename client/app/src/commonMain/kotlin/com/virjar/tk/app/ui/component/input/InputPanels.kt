@@ -2,12 +2,14 @@ package com.virjar.tk.app.ui.component.input
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -16,6 +18,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Image
@@ -32,6 +35,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.virjar.tk.app.ui.component.CHAT_ATTACHMENT_FILE_TEST_TAG
@@ -42,17 +46,21 @@ import com.virjar.tk.app.ui.component.CHAT_ATTACHMENT_VIDEO_TEST_TAG
 import com.virjar.tk.app.ui.theme.Tk
 
 /**
- * 表情面板（输入区弹层）。常用 emoji 网格，点击插入光标处。
- * 内置常用集；自定义表情包与卡片扩展见 doc/05-clients/rich-content.md。
+ * 内联表情面板：作为聊天输入 Column 的普通子项参与布局，展开时把输入行推到面板上方。
+ * 常用 emoji 网格，点击插入光标处；自定义表情包与卡片扩展见 doc/05-clients/rich-content.md。
+ * 以前的弹层实现会把 260dp 的网格盖在输入行上，用户看不到正在输入的草稿（T002）。
  */
 @Composable
-fun EmojiPanel(
+fun InlineEmojiPanel(
     onPick: (String) -> Unit,
-    onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    InputPopupSurface(modifier = modifier, onDismiss = onDismiss) {
-        CommonEmojiGrid(onPick)
+    androidx.compose.material3.Surface(
+        modifier = modifier.fillMaxWidth().testTag("chat.emoji.panel"),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 4.dp,
+    ) {
+        CommonEmojiGrid(onPick, fillMaxWidth = true)
     }
 }
 
@@ -66,11 +74,13 @@ fun EmojiPanel(
 internal fun CommonEmojiGrid(
     onPick: (String) -> Unit,
     itemTestTagPrefix: String? = null,
+    fillMaxWidth: Boolean = false,
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(8),
         modifier = Modifier
-            .size(width = COMMON_EMOJI_GRID_WIDTH, height = 260.dp)
+            .then(if (fillMaxWidth) Modifier.fillMaxWidth() else Modifier.width(COMMON_EMOJI_GRID_WIDTH))
+            .height(260.dp)
             .padding(horizontal = Tk.spacing.sm, vertical = Tk.spacing.sm),
     ) {
         // 最近使用（FIFO，最多 5 个）
@@ -165,9 +175,12 @@ fun AttachmentPanel(
         onDismiss = onDismiss,
     ) {
         BoxWithConstraints {
-            // 四个 64dp 项加间距和内边距需要 336dp。更窄的手机弹层改成两列，不能让
-            // Popup 内容越过屏幕边界或把最后一个入口裁掉。
-            if (maxWidth < 336.dp && actions.size > 2) {
+            // 每项至少 56dp：窄屏下超出可用宽度时改两列排布，绝不挤压末项让图标残缺、
+            // 标签逐字换行（T014）；更宽的面板保持单行并支持横向滑动兜底。
+            val itemWidth = 56.dp
+            val itemSpacing = Tk.spacing.sm
+            val singleRowWidth = itemWidth * actions.size + itemSpacing * (actions.size - 1)
+            if (actions.size > 2 && maxWidth < singleRowWidth) {
                 Column(
                     modifier = Modifier.padding(Tk.spacing.md),
                     verticalArrangement = Arrangement.spacedBy(Tk.spacing.xs),
@@ -180,10 +193,18 @@ fun AttachmentPanel(
                 }
             } else {
                 Row(
-                    modifier = Modifier.padding(Tk.spacing.lg),
-                    horizontalArrangement = Arrangement.spacedBy(Tk.spacing.lg),
+                    modifier = Modifier
+                        .padding(Tk.spacing.md)
+                        .then(
+                            if (singleRowWidth > maxWidth) {
+                                Modifier.horizontalScroll(rememberScrollState())
+                            } else {
+                                Modifier
+                            },
+                        ),
+                    horizontalArrangement = Arrangement.spacedBy(itemSpacing),
                 ) {
-                    actions.forEach { action -> AttachmentItem(action) }
+                    actions.forEach { action -> AttachmentItem(action, itemWidth) }
                 }
             }
         }
@@ -198,11 +219,11 @@ private data class AttachmentPanelAction(
 )
 
 @Composable
-private fun AttachmentItem(action: AttachmentPanelAction) {
+private fun AttachmentItem(action: AttachmentPanelAction, itemWidth: Dp = 64.dp) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .width(64.dp)
+            .width(itemWidth)
             .clip(MaterialTheme.shapes.small)
             .clickable(onClick = action.onClick)
             .testTag(action.testTag)

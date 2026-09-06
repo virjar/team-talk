@@ -42,7 +42,6 @@ internal fun WideComposerToolbar(
     inputFocus: FocusRequester,
     showEmoji: Boolean,
     onToggleEmoji: () -> Unit,
-    onDismissEmoji: () -> Unit,
     onSourceInputChange: (TextFieldValue) -> Unit,
     onVisualTextChange: () -> Unit,
     hasVoice: Boolean,
@@ -65,16 +64,8 @@ internal fun WideComposerToolbar(
         if (!voiceMode) {
             if (composerMode != ChatComposerMode.PREVIEW) {
                 ComposerEmojiAction(
-                    composerMode = composerMode,
                     showEmoji = showEmoji,
                     onToggle = onToggleEmoji,
-                    onDismiss = onDismissEmoji,
-                    richState = richState,
-                    sourceInput = sourceInput,
-                    onSourceInputChange = onSourceInputChange,
-                    onVisualTextChange = onVisualTextChange,
-                    inputFocus = inputFocus,
-                    sourceFocus = sourceFocus,
                 )
             }
             if (composerMode == ChatComposerMode.VISUAL) {
@@ -146,7 +137,6 @@ internal fun CompactChatComposer(
     onUrlClick: ((String) -> Unit)?,
     showEmoji: Boolean,
     onToggleEmoji: () -> Unit,
-    onDismissEmoji: () -> Unit,
     hasVoice: Boolean,
     onVoiceClick: () -> Unit,
     onVoiceRecord: ((Boolean) -> Unit)?,
@@ -240,16 +230,8 @@ internal fun CompactChatComposer(
             ) {
                 if (composerMode != ChatComposerMode.PREVIEW) {
                     ComposerEmojiAction(
-                        composerMode = composerMode,
                         showEmoji = showEmoji,
                         onToggle = onToggleEmoji,
-                        onDismiss = onDismissEmoji,
-                        richState = richState,
-                        sourceInput = sourceInput,
-                        onSourceInputChange = onSourceInputChange,
-                        onVisualTextChange = onVisualTextChange,
-                        inputFocus = inputFocus,
-                        sourceFocus = sourceFocus,
                         compact = true,
                     )
                 }

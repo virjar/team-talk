@@ -55,7 +55,6 @@ import com.virjar.tk.app.ui.component.FileCardWithDownload
 import com.virjar.tk.app.ui.component.ImageThumbCard
 import com.virjar.tk.app.ui.component.RichMessageText
 import com.virjar.tk.app.ui.component.input.AttachmentPanel
-import com.virjar.tk.app.ui.component.input.EmojiPanel
 import com.virjar.tk.app.ui.component.rich.ChatComposerMode
 import com.virjar.tk.app.ui.component.rich.PendingAssetJob
 import com.virjar.tk.app.ui.component.rich.acceptsChatSourceInput
@@ -229,51 +228,19 @@ internal fun ComposerEditor(
 }
 @Composable
 internal fun ComposerEmojiAction(
-    composerMode: ChatComposerMode,
     showEmoji: Boolean,
     onToggle: () -> Unit,
-    onDismiss: () -> Unit,
-    richState: RichTextState,
-    sourceInput: TextFieldValue,
-    onSourceInputChange: (TextFieldValue) -> Unit,
-    onVisualTextChange: () -> Unit,
-    inputFocus: FocusRequester,
-    sourceFocus: FocusRequester,
     compact: Boolean = false,
 ) {
-    Box {
-        IconButton(
-            onClick = onToggle,
-            modifier = Modifier.then(if (compact) Modifier.size(44.dp) else Modifier).testTag("chat.emoji"),
-        ) {
-            Icon(
-                Icons.Filled.SentimentSatisfied,
-                contentDescription = "表情",
-                tint = if (showEmoji) MaterialTheme.colorScheme.primary else Tk.colors.secondaryText,
-            )
-        }
-        if (showEmoji) {
-            EmojiPanel(
-                onPick = {
-                    if (composerMode == ChatComposerMode.MARKDOWN) {
-                        onSourceInputChange(
-                            sourceInput.replaceComposerRange(
-                                sourceInput.selection.min,
-                                sourceInput.selection.max,
-                                it,
-                            ),
-                        )
-                        sourceFocus.requestFocus()
-                    } else {
-                        val previousText = richState.annotatedString.text
-                        richState.insertAtCaret(it)
-                        if (richState.annotatedString.text != previousText) onVisualTextChange()
-                        inputFocus.requestFocus()
-                    }
-                },
-                onDismiss = onDismiss,
-            )
-        }
+    IconButton(
+        onClick = onToggle,
+        modifier = Modifier.then(if (compact) Modifier.size(44.dp) else Modifier).testTag("chat.emoji"),
+    ) {
+        Icon(
+            Icons.Filled.SentimentSatisfied,
+            contentDescription = if (showEmoji) "收起表情" else "表情",
+            tint = if (showEmoji) MaterialTheme.colorScheme.primary else Tk.colors.secondaryText,
+        )
     }
 }
 
