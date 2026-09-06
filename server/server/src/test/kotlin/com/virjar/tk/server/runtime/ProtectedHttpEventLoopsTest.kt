@@ -24,7 +24,7 @@ class ProtectedHttpEventLoopsTest {
 
         try {
             assertTrue(configuration.shareWorkGroup)
-            assertEquals(30, configuration.requestReadTimeoutSeconds)
+            assertEquals(0, configuration.requestReadTimeoutSeconds)
             assertTrue(connectionGroup.javaClass == MultiThreadIoEventLoopGroup::class.java)
             assertTrue(workerGroup.javaClass == MultiThreadIoEventLoopGroup::class.java)
             assertProtected(connectionGroup)

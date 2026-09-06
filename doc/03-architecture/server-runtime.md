@@ -91,6 +91,11 @@ RocksDB、Lucene、TCP 与后台任务都已打开之后，而且该 bind 失败
 这与 SDK 地址校验和部署工具生成配置是不同边界，完整对照见
 [传输配置边界](../07-operations/configuration.md#传输配置边界)。
 
+HTTP 连接连续 30 秒没有读写进展才按空闲关闭，停止发送请求体的上传会因此释放已准入的调用槽。
+`ProtectedHttpEventLoops` 在 Ktor 编解码器和调用 handler 之前安装 Netty 双向空闲检查；大文件下载
+持续写出时不会因为 GET 已读完而被截断。Ktor 的连接级 `requestReadTimeoutSeconds` 不启用，写超时
+仍保留引擎默认值。此处限制的是空闲连接，不是整个上传或下载的总时长。
+
 ## 3. TCP 管线
 
 ```mermaid

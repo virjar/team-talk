@@ -58,6 +58,10 @@ TK_TEST_PG_PASSWORD=your-test-password \
 完整服务端测试仍固定单 fork 并关闭 JUnit 全局并行，以限制 PostgreSQL 连接和 RocksDB/Lucene 原生资源
 占用；这是资源预算，不是数据库正确性所需的进程级互斥。
 
+HTTP 空闲约束可用 `./gradlew :server:server:test --tests '*ProtectedHttpIdleTimeoutTest'` 单独验证，
+不连接数据库。测试启动真实 loopback Ktor/Netty：通过小 socket 缓冲区和节流读取下载静态文件，
+核对超过空闲窗口仍完整返回；另发送未完成的请求体并停止上传，确认连接关闭且 HTTP 调用退出。
+
 ## Linux 媒体测试环境
 
 服务端缩略图测试与 TestPeer 音频元数据读取会加载 JavaCV/FFmpeg JNI。FFmpeg 原生库随 Maven JAR
