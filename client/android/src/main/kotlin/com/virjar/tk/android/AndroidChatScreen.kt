@@ -726,6 +726,7 @@ internal fun AndroidChatScreen(
             onDismiss = { showGallery = false },
             mediaSession = mediaSession,
             telemetry = telemetry,
+            onSaveCurrent = { attachment -> fileDownloads.exportToUserLocation(attachment) },
         )
     }
 

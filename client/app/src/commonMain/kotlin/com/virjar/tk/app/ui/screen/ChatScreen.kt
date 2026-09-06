@@ -28,6 +28,7 @@ import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportEventSink
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportSnapshot
 import com.virjar.tk.app.ui.bridge.reduce
 import com.virjar.tk.app.ui.component.input.detectMentionQuery
+import com.virjar.tk.app.ui.component.messageExportableAttachment
 import com.virjar.tk.app.ui.component.input.detectSlashQuery
 import com.virjar.tk.app.ui.component.input.expandSlashCommand
 import com.virjar.tk.app.ui.component.rich.ChatComposerMode
@@ -719,6 +720,11 @@ fun ChatPanel(
                 onToggleReaction = actionAdmission.guard(viewModel::toggleReaction),
                 onPickReaction = actionAdmission.guard(viewModel::pickReaction),
                 onSaveMessage = onSaveMessage?.let { actionAdmission.guard(it) },
+                onSaveToDevice = actionAdmission.guard { message: Message ->
+                    messageExportableAttachment(message)?.let { attachment ->
+                        fileDownloads.exportToUserLocation(attachment)
+                    }
+                },
                 isSavedChat = chatType == 3, // ChatType.SAVED：saved 会话内不提供保存入口
                 onWindowReactionsConverge = viewModel::refreshReactionsForWindow,
                 myUid = myUid,

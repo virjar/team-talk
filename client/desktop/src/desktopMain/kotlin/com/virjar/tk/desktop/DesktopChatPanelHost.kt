@@ -294,6 +294,7 @@ internal fun ChatPanelWrapper(
         resources = resources,
         telemetry = telemetry,
         onDismiss = presentationGate.guard { showGallery = false },
+        fileDownloads = fileDownloads,
     )
     DesktopTextAttachmentPreviewDialog(
         event = textPreviewEvent,

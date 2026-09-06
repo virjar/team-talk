@@ -33,6 +33,7 @@ import com.virjar.tk.protocol.model.MessageReactionGroup
 import com.virjar.tk.app.ui.platform.rememberClipboardTextWriter
 import com.virjar.tk.app.ui.theme.Tk
 import com.virjar.tk.app.ui.component.MessagePreview
+import com.virjar.tk.app.ui.component.messageExportableAttachment
 
 @Composable
 internal fun ChatMessageList(
@@ -46,8 +47,10 @@ internal fun ChatMessageList(
     reactions: Map<Long, List<MessageReactionGroup>> = emptyMap(),
     onToggleReaction: (serverSeq: Long, emoji: String) -> Unit = { _, _ -> },
     onPickReaction: (serverSeq: Long, emoji: String) -> Unit = { _, _ -> },
-    /** 非 null 且消息已确认时，长按/右键菜单提供"保存"（CLIENT-08）。 */
+    /** 非 null 且消息已确认时，长按/右键菜单提供"收藏"（CLIENT-08）。 */
     onSaveMessage: ((Message) -> Unit)? = null,
+    /** 非 null 时媒体消息菜单提供"保存到设备"（导出附件，T007）。 */
+    onSaveToDevice: ((Message) -> Unit)? = null,
     /** saved 会话内部不再提供"保存"入口，避免自引用。 */
     isSavedChat: Boolean = false,
     /** 消息集变化时收敛一次权威回应快照（VM 内按窗口下界去重）。 */
@@ -190,6 +193,7 @@ internal fun ChatMessageList(
                                 onDiscardFailed = onDiscardFailed,
                                 onRevoke = onRevoke,
                                 onForward = onForward,
+                                onSaveToDevice = onSaveToDevice,
                                 onToggleReaction = onToggleReaction,
                                 onOpenReactionPicker = {
                                     onMenuMessageChange(null)
@@ -239,6 +243,7 @@ private fun messageMenuItems(
     onDiscardFailed: (Message) -> Unit,
     onRevoke: (Long) -> Unit,
     onForward: ((Message) -> Unit)?,
+    onSaveToDevice: ((Message) -> Unit)?,
     onToggleReaction: (serverSeq: Long, emoji: String) -> Unit,
     onOpenReactionPicker: () -> Unit,
     onSaveMessage: ((Message) -> Unit)?,
@@ -310,14 +315,25 @@ private fun messageMenuItems(
     // 撤回时限是防扰动的私聊/群聊 UI 规则；"保存的消息"是自有副本，随时可删除。
     val canRevoke = isMe && msg.serverSeq > 0L &&
         (isSavedChat || System.currentTimeMillis() - msg.timestamp < 2 * 60 * 1000)
+    // "收藏"进入保存的消息；与"保存到设备"（导出文件）是两个动作，文案必须区分（T007）。
     if (onSaveMessage != null && msg.serverSeq > 0L) {
         DropdownMenuItem(
-            text = { Text("保存") },
+            text = { Text("收藏") },
             onClick = {
                 onSaveMessage(msg)
                 onMenuMessageChange(null)
             },
             modifier = Modifier.testTag("chat.save.${msg.clientMsgId.take(12)}"),
+        )
+    }
+    if (onSaveToDevice != null && messageExportableAttachment(msg) != null) {
+        DropdownMenuItem(
+            text = { Text("保存到设备") },
+            onClick = {
+                onSaveToDevice(msg)
+                onMenuMessageChange(null)
+            },
+            modifier = Modifier.testTag("chat.export.${msg.clientMsgId.take(12)}"),
         )
     }
     if (canRevoke) {

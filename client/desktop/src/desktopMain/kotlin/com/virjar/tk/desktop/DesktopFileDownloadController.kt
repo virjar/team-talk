@@ -309,6 +309,61 @@ internal class DesktopFileDownloadController(
         scope.launch { downloadInternal(attachment, PendingOpenMode.EXTERNAL) }
     }
 
+    /**
+     * 另存为：已下载则直接弹保存对话框；未下载先走既有认证下载，完成后弹窗（T007）。
+     * 返回 true 只表示动作被接受；导出结果通过对话框与错误提示呈现。
+     */
+    override fun exportToUserLocation(attachment: Attachment): Boolean {
+        if (closed.get()) return false
+        val cached = exactCachedLease(attachment)
+        if (cached != null) {
+            publishState(attachment.path, FileDownloadState.Done)
+            try {
+                exportCachedFile(cached, attachment)
+            } finally {
+                cached.close()
+            }
+            return true
+        }
+        scope.launch { downloadInternal(attachment, PendingOpenMode.EXPORT) }
+        return true
+    }
+
+    /** 校验缓存完整性后在用户选择的本地路径写出完整副本；文件名冲突由对话框内解决。 */
+    private fun exportCachedFile(lease: DesktopMediaFileLease, attachment: Attachment) {
+        if (!lease.file.isFile || lease.file.length() != attachment.size) {
+            throw DesktopMediaDownloadSizeException("缓存文件大小与附件声明不一致")
+        }
+        val source = lease.file
+        java.awt.EventQueue.invokeLater {
+            val chooser = javax.swing.JFileChooser().apply {
+                dialogTitle = "保存到设备"
+                selectedFile = java.io.File(attachment.name)
+            }
+            val chosen = chooser.showSaveDialog(null)
+            if (chosen != javax.swing.JFileChooser.APPROVE_OPTION) return@invokeLater
+            val target = chooser.selectedFile
+            scope.launch {
+                try {
+                    java.nio.file.Files.copy(
+                        source.toPath(),
+                        target.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    )
+                } catch (e: Exception) {
+                    if (!closed.get() && resources.canDeliverUiResult()) {
+                        javax.swing.JOptionPane.showMessageDialog(
+                            null,
+                            "保存失败：${e.message ?: "无法写入所选位置"}",
+                            "保存到设备",
+                            javax.swing.JOptionPane.ERROR_MESSAGE,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     override fun close() {
         val claimed = synchronized(publicationLock) {
             if (!closed.compareAndSet(false, true)) return@synchronized false
@@ -381,6 +436,7 @@ internal class DesktopFileDownloadController(
                         attachment,
                         operationAlreadyStarted = true,
                     )
+                    PendingOpenMode.EXPORT -> exportCachedFile(lease, attachment)
                 }
             } else {
                 lease.close()
@@ -582,6 +638,8 @@ internal class DesktopFileDownloadController(
             operation = when (mode) {
                 PendingOpenMode.PREVIEW -> MediaOperation.PREVIEW
                 PendingOpenMode.EXTERNAL -> MediaOperation.OPEN
+                // 导出复用下载遥测；导出本身是用户可见文件操作，不占用预览/打开语义。
+                PendingOpenMode.EXPORT -> MediaOperation.DOWNLOAD
             },
             outcome = outcome,
             reason = reason,
@@ -602,7 +660,7 @@ internal class DesktopFileDownloadController(
         )
     }
 
-    private enum class PendingOpenMode { PREVIEW, EXTERNAL }
+    private enum class PendingOpenMode { PREVIEW, EXTERNAL, EXPORT }
 }
 
 /** 仅按类型分类：异常文本、URL 与文件路径绝不会进入 telemetry。 */

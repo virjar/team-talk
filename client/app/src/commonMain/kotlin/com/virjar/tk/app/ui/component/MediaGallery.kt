@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material3.Icon
@@ -72,6 +73,8 @@ fun MediaGallery(
     onToggleFullscreen: (() -> Unit)? = null,
     showPageNavigationControls: Boolean = false,
     animateEnterExit: Boolean = true,
+    /** 当前页媒体"保存到设备"；null 时不显示保存入口（T007）。 */
+    onSaveCurrent: ((Attachment) -> Unit)? = null,
 ) {
     if (!animateEnterExit) {
         if (visible && items.isNotEmpty()) {
@@ -84,6 +87,7 @@ fun MediaGallery(
                 isFullscreen = isFullscreen,
                 onToggleFullscreen = onToggleFullscreen,
                 showPageNavigationControls = showPageNavigationControls,
+                onSaveCurrent = onSaveCurrent,
             )
         }
         return
@@ -103,6 +107,7 @@ fun MediaGallery(
             isFullscreen = isFullscreen,
             onToggleFullscreen = onToggleFullscreen,
             showPageNavigationControls = showPageNavigationControls,
+            onSaveCurrent = onSaveCurrent,
         )
     }
 }
@@ -117,6 +122,7 @@ private fun MediaGalleryContent(
     isFullscreen: Boolean,
     onToggleFullscreen: (() -> Unit)?,
     showPageNavigationControls: Boolean,
+    onSaveCurrent: ((Attachment) -> Unit)?,
 ) {
     if (items.isEmpty()) return
 
@@ -217,6 +223,18 @@ private fun MediaGalleryContent(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (onSaveCurrent != null) {
+                    IconButton(
+                        onClick = { onSaveCurrent(items[pagerState.currentPage].attachment) },
+                        modifier = Modifier.testTag("media.gallery.save"),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Download,
+                            contentDescription = "保存到设备",
+                            tint = Color.White,
+                        )
+                    }
+                }
                 if (onToggleFullscreen != null) {
                     IconButton(
                         onClick = onToggleFullscreen,

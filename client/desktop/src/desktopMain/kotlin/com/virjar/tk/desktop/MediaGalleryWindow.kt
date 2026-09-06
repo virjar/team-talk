@@ -30,6 +30,7 @@ internal fun MediaGalleryWindow(
     resources: DesktopSessionResources,
     telemetry: ClientUiTelemetrySink,
     onDismiss: () -> Unit,
+    fileDownloads: DesktopFileDownloadController? = null,
 ) {
     if (!presentationGate.isOpen || !visible || items.isEmpty()) return
 
@@ -109,6 +110,11 @@ internal fun MediaGalleryWindow(
             items = items,
             initialIndex = initialIndex,
             onDismiss = dismissGallery,
+            onSaveCurrent = fileDownloads?.let { controller ->
+                { attachment: com.virjar.tk.protocol.model.Attachment ->
+                    controller.exportToUserLocation(attachment)
+                }
+            },
             imageRenderer = { attachment, modifier ->
                 // 原图按需：缓存命中直接渲染；未命中画廊内进度覆盖层，下载完成才展示
                 com.virjar.tk.desktop.media.CachedImageContent(

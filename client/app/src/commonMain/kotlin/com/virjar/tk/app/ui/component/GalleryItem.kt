@@ -1,5 +1,7 @@
 package com.virjar.tk.app.ui.component
 
+import com.virjar.tk.protocol.body.AttachmentBody
+import com.virjar.tk.protocol.body.FileBody
 import com.virjar.tk.protocol.body.ImageBody
 import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
 import com.virjar.tk.protocol.body.MarkdownAssetPolicy
@@ -28,6 +30,14 @@ data class GalleryItem(
         sourceAssetId?.let { append(':').append(it) }
         append(':').append(type.name).append(':').append(path)
     }
+}
+
+/** 消息中可导出的主附件（图片/视频/文件）；纯文本与富文本内嵌资源不在此列。 */
+fun messageExportableAttachment(msg: Message): Attachment? = when (val body = msg.body) {
+    is ImageBody -> body.attachment.takeIf { it.path.isNotBlank() }
+    is VideoBody -> body.attachment.takeIf { it.path.isNotBlank() }
+    is FileBody -> body.attachment.takeIf { it.path.isNotBlank() }
+    else -> null
 }
 
 /**

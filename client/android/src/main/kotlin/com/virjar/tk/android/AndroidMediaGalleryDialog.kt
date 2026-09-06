@@ -55,6 +55,7 @@ internal fun AndroidMediaGalleryDialog(
     onDismiss: () -> Unit,
     mediaSession: AndroidMediaSession,
     telemetry: ClientUiTelemetrySink,
+    onSaveCurrent: ((com.virjar.tk.protocol.model.Attachment) -> Unit)? = null,
 ) {
     if (!visible || items.isEmpty()) return
 
@@ -101,6 +102,7 @@ internal fun AndroidMediaGalleryDialog(
                         )
                     },
                     animateEnterExit = policy.animateEnterExit,
+                    onSaveCurrent = onSaveCurrent,
                 )
             }
         }

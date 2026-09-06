@@ -58,7 +58,9 @@ class AndroidFileDownloadController private constructor(
     private val warningLogger: (String, String) -> Unit,
     private val beforeOwnerGenerationClaim: () -> Unit,
     ownerThreadPredicate: () -> Boolean,
-    workerDispatcher: CoroutineDispatcher,
+    private val workerDispatcher: CoroutineDispatcher,
+    /** 应用上下文；仅在真实客户端注入，用于把附件导出到相册/下载（T007）。测试替身保持 null。 */
+    private val appContext: Context? = null,
 ) : FileDownloadController {
     private class FileOperationAdmission(val key: String) {
         val terminalClaimed = AtomicBoolean(false)
@@ -74,6 +76,7 @@ class AndroidFileDownloadController private constructor(
         telemetry: ClientUiTelemetrySink = NoopClientUiTelemetrySink,
         telemetryPage: ClientUiPage = ClientUiPage.CHAT,
     ) : this(
+        appContext = context.applicationContext,
         cacheRootProvider = context.applicationContext.let { applicationContext ->
             { applicationContext.cacheDir }
         },
@@ -464,6 +467,56 @@ class AndroidFileDownloadController private constructor(
                 ClientActionOutcome.SUCCEEDED
             },
         )
+    }
+
+    /**
+     * 保存到设备：已下载直接导出；未下载先完成既有认证下载再导出（T007）。
+     * 返回 true 表示动作已受理；结果通过系统 Toast 呈现。
+     */
+    override fun exportToUserLocation(attachment: Attachment): Boolean {
+        val context = appContext ?: return false
+        if (closed.get() || !mediaSession.isCurrentOwner()) return false
+        launchFileOperation(attachment.path) { admission ->
+            suspend fun pinnedCachedLease(): AndroidMediaCacheFileLease? = try {
+                val root = cacheRoot
+                AndroidMediaCacheCapacityRegistry.cachedLease(
+                    cacheRoot = root,
+                    file = cachedFile(root, attachment),
+                    expectedBytes = attachment.size,
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+
+            var lease = pinnedCachedLease()
+            try {
+                if (lease == null) {
+                    downloadInternal(attachment, openWhenDone = false, admission = admission)
+                    lease = pinnedCachedLease()
+                }
+                val ok = lease != null && exportAndroidAttachmentToUserLocation(
+                    context = context,
+                    file = checkNotNull(lease).file,
+                    attachment = attachment,
+                    workerDispatcher = workerDispatcher,
+                )
+                val message = when {
+                    ok &&
+                        (attachment.contentType.startsWith("image/") ||
+                            attachment.contentType.startsWith("video/")) -> "已保存到相册"
+                    ok -> "已保存到下载"
+                    else -> "保存失败"
+                }
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
+                }
+            } finally {
+                lease?.close()
+            }
+        }
+        return true
     }
 
     private fun cachedFile(cacheRoot: File, attachment: Attachment): File {

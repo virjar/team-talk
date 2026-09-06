@@ -48,6 +48,13 @@ interface FileDownloadController {
     /** 点击行为：已下载 → 系统打开；否则下载，完成后自动打开。 */
     fun openOrDownload(attachment: Attachment)
 
+    /**
+     * 把附件导出到用户可见位置（Android 相册/下载目录；Desktop 用户选择的本地路径）。
+     * 尚未下载时先完成既有认证下载再导出。返回 false 表示平台未提供、用户取消或失败。
+     * 导出的是完整本地文件；应用内缓存不因导出改变（本地优先原则不变）。
+     */
+    fun exportToUserLocation(attachment: Attachment): Boolean = false
+
     /** 释放平台下载 scope；所有者（聊天页面）销毁时调用。 */
     fun close()
 
