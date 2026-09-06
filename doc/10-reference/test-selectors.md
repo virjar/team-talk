@@ -184,7 +184,9 @@
 | testTag | 作用 |
 |---|---|
 | `group.name` / `group.create` | 群名与创建提交 |
-| `group.member.{uid前8}` | 建群候选或群详情成员 |
+| `group.member.{uid前8}` | 建群候选或群详情成员；群详情中点击查看资料，有管理权限时长按打开成员菜单 |
+| `group.detail.content` | Desktop / Android 群设置正文的唯一滚动列表，包含功能入口、成员与末尾危险操作 |
+| `group.detail.editNotice` | 有编辑权限时显示的群公告编辑入口 |
 | `group.detail.invite` | 邀请成员 |
 | `group.detail.inviteLinks` | 邀请链接 |
 | `group.detail.leave` | 退出或解散群 |
@@ -192,6 +194,9 @@
 | `forward.item.{chatId前12}` | 转发目标 |
 | `search.msg.query` / `search.msg.submit` | 消息搜索 |
 | `search.msg.result.{chatId前12}.{serverSeq}` | 消息搜索结果 |
+
+群详情成员采用惰性布局，屏外成员不保证存在于当前语义树。定位成员或末尾操作前，先滚动
+`group.detail.content` 使目标进入视口；不要把语义树中暂未出现的成员判为数据丢失。
 
 ## 群机器人
 

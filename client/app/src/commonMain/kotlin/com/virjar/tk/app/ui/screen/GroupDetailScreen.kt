@@ -1,15 +1,19 @@
 package com.virjar.tk.app.ui.screen
 
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.FolderShared
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.*
@@ -17,11 +21,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.app.ui.component.ScreenHeader
+import com.virjar.tk.app.ui.component.SettingsDangerAction
+import com.virjar.tk.app.ui.component.SettingsEntryRow
+import com.virjar.tk.app.ui.component.SettingsGroupCard
+import com.virjar.tk.app.ui.component.SettingsIconButton
+import com.virjar.tk.app.ui.component.SettingsSectionLabel
 import com.virjar.tk.app.ui.component.AvatarPlaceholder
 import com.virjar.tk.protocol.model.Chat
 import com.virjar.tk.protocol.model.Member
@@ -66,173 +75,121 @@ fun GroupDetailScreen(
     onRemoveMember: ((memberUid: String) -> Unit)? = null,
     onClose: (() -> Unit)? = null,
 ) {
-    var showNoticeEdit by remember { mutableStateOf(false) }
-    var noticeText by remember(chat?.notice) { mutableStateOf(chat?.notice ?: "") }
-    val compactDesktop = Tk.dimens.headerHeight < 56.dp
+    var showNoticeEdit by remember(chat?.chatId) { mutableStateOf(false) }
+    var noticeText by remember(chat?.chatId, chat?.notice) { mutableStateOf(chat?.notice ?: "") }
+    val listState = key(chat?.chatId) { rememberLazyListState() }
     val myRole = members.firstOrNull { it.uid == myUid }?.role ?: -1
     // isOwner 来自平台路由；成员快照也必须确认同一登录者身份，缺任一项时 fail-safe。
     val currentUserIsOwner = isOwner && myRole == 2
     val currentUserCanManage = myRole == 1 || currentUserIsOwner
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier.fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)),
+    ) {
         ScreenHeader(
             title = "群设置",
             onBack = onBack,
             trailing = {
                 if (onBack == null && onClose != null) {
-                    IconButton(
+                    SettingsIconButton(
+                        icon = Icons.Filled.Close,
+                        contentDescription = "关闭群设置",
                         onClick = onClose,
-                        modifier = Modifier.size(40.dp).testTag("chat.inspector.close"),
-                    ) {
-                        Icon(Icons.Filled.Close, contentDescription = "关闭群设置")
-                    }
+                        tag = "chat.inspector.close",
+                    )
                 }
             },
         )
 
-        // 群公告编辑弹窗
-        if (showNoticeEdit) {
-            AlertDialog(
-                onDismissRequest = { showNoticeEdit = false },
-                title = { Text("编辑群公告") },
-                text = {
-                    OutlinedTextField(
-                        value = noticeText,
-                        onValueChange = { noticeText = it },
-                        placeholder = { Text("请输入群公告") },
-                        modifier = Modifier.fillMaxWidth().height(120.dp),
-                    )
-                },
-                confirmButton = {
-                    TextButton(onClick = {
-                        showNoticeEdit = false
-                        onEditNotice?.invoke(noticeText)
-                    }) { Text("保存") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showNoticeEdit = false }) { Text("取消") }
-                },
-            )
-        }
-
         if (chat != null) {
-            // Desktop 检查器使用横向对象摘要；Android 全屏页保留纵向触控布局。
-            if (compactDesktop) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    AvatarPlaceholder(name = chat.name ?: chat.chatId, size = 52)
-                    Spacer(Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            chat.name ?: chat.chatId.take(16),
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+            // 页头之外只有一个滚动所有者；固定设置区不能挤掉成员视口或遮挡退出操作。
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f).fillMaxWidth().testTag("group.detail.content"),
+                contentPadding = PaddingValues(Tk.spacing.lg),
+            ) {
+                item(key = "overview") {
+                    SettingsGroupCard(modifier = Modifier.padding(bottom = Tk.spacing.lg)) {
+                        GroupSummary(chat)
+                        HorizontalDivider(color = Tk.colors.divider, modifier = Modifier.padding(horizontal = Tk.spacing.md))
+                        NoticeSection(
+                            notice = chat.notice,
+                            canEdit = currentUserCanManage && onEditNotice != null,
+                            onClick = { showNoticeEdit = true },
                         )
-                        Text(
-                            "成员 ${chat.memberCount} 人",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        CreatorSection(chat = chat, members = members)
+                    }
+                }
+                item(key = "tools") {
+                    SettingsSectionLabel("群功能")
+                    SettingsGroupCard(modifier = Modifier.padding(bottom = Tk.spacing.lg)) {
+                        SettingsEntryRow(
+                            icon = Icons.Filled.FolderShared,
+                            title = "共享文件",
+                            description = "群成员共同维护的文件和版本",
+                            onClick = onGroupFiles,
+                            modifier = Modifier.heightIn(min = Tk.dimens.headerHeight),
+                            tag = "group.detail.files",
+                        )
+                        SettingsEntryRow(
+                            icon = Icons.Filled.SmartToy,
+                            title = "机器人",
+                            description = "接收来自外部系统的群通知",
+                            onClick = onGroupBots,
+                            modifier = Modifier.heightIn(min = Tk.dimens.headerHeight),
+                            tag = "group.detail.bots",
                         )
                     }
                 }
-            } else {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    AvatarPlaceholder(name = chat.name ?: chat.chatId, size = 64)
-                    Spacer(Modifier.height(8.dp))
-                    Text(chat.name ?: chat.chatId.take(16), style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "成员 ${chat.memberCount} 人",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                if (currentUserCanManage) {
+                    item(key = "invitations") {
+                        SettingsSectionLabel("成员管理")
+                        SettingsGroupCard(modifier = Modifier.padding(bottom = Tk.spacing.lg)) {
+                            SettingsEntryRow(
+                                icon = Icons.Filled.PersonAdd,
+                                title = "邀请成员",
+                                onClick = onInviteMembers,
+                                modifier = Modifier.heightIn(min = Tk.dimens.headerHeight),
+                                tag = "group.detail.invite",
+                            )
+                            SettingsEntryRow(
+                                icon = Icons.Filled.Link,
+                                title = "邀请链接",
+                                onClick = onViewInviteLinks,
+                                modifier = Modifier.heightIn(min = Tk.dimens.headerHeight),
+                                tag = "group.detail.inviteLinks",
+                            )
+                        }
+                    }
                 }
-            }
-
-            HorizontalDivider()
-
-            // 群公告
-            NoticeSection(notice = chat.notice, canEdit = currentUserCanManage && onEditNotice != null,
-                onClick = { showNoticeEdit = true })
-
-            HorizontalDivider()
-
-            ListItem(
-                leadingContent = {
-                    Icon(Icons.Filled.FolderShared, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                },
-                headlineContent = { Text("共享文件") },
-                supportingContent = { Text("群成员共同维护的文件和版本") },
-                modifier = Modifier.clickable(onClick = onGroupFiles).testTag("group.detail.files"),
-            )
-
-            HorizontalDivider()
-
-            ListItem(
-                leadingContent = {
-                    Icon(
-                        Icons.Filled.SmartToy,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                },
-                headlineContent = { Text("机器人") },
-                supportingContent = { Text("接入 CI、监控和审批系统，向本群发送通知") },
-                modifier = Modifier.clickable(onClick = onGroupBots).testTag("group.detail.bots"),
-            )
-
-            HorizontalDivider()
-
-            // 创建者信息
-            CreatorSection(chat = chat, members = members)
-
-            HorizontalDivider()
-
-            if (currentUserCanManage) {
-                ListItem(
-                    headlineContent = { Text("邀请成员") },
-                    modifier = Modifier.clickable(onClick = onInviteMembers).testTag("group.detail.invite"),
-                )
-                ListItem(
-                    headlineContent = { Text("邀请链接") },
-                    modifier = Modifier.clickable(onClick = onViewInviteLinks).testTag("group.detail.inviteLinks"),
-                )
-                HorizontalDivider()
-            }
-
-            Text(
-                "成员列表 (${members.size})",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            )
-
-            LazyColumn(modifier = Modifier.weight(1f)) {
-                items(members, key = { it.uid }) { member ->
-                    val isSelf = member.uid == myUid
+                item(key = "members-title") {
+                    SettingsSectionLabel("成员列表 (${members.size})", modifier = Modifier.padding(bottom = Tk.spacing.xs))
+                }
+                itemsIndexed(members, key = { _, member -> "member.${member.uid}" }, contentType = { _, _ -> "member" }) { index, member ->
                     val canManage = canManageGroupMember(
                         actorRole = myRole,
                         targetRole = member.role,
-                        isSelf = isSelf,
+                        isSelf = member.uid == myUid,
                         targetUserRole = member.user?.role ?: UserRole.SYSTEM,
                     )
                     var showMenu by remember { mutableStateOf(false) }
-
-                    Box {
-                        MemberRow(
-                            member = member,
-                            modifier = Modifier
-                                .testTag("group.member.${member.uid.take(8)}")
-                                .combinedClickable(
-                                onClick = { onMemberClick(member.uid) },
-                                onLongClick = { if (canManage) showMenu = true },
-                            ),
-                        )
+                    // 成员逐项惰性布局，首尾圆角把整份名单连成同一张卡片。
+                    val corners = MaterialTheme.shapes.medium
+                    val square = CornerSize(0.dp)
+                    Box(
+                        modifier = Modifier.testTag("group.member.${member.uid.take(8)}").clip(corners.copy(
+                            topStart = if (index == 0) corners.topStart else square,
+                            topEnd = if (index == 0) corners.topEnd else square,
+                            bottomStart = if (index == members.lastIndex) corners.bottomStart else square,
+                            bottomEnd = if (index == members.lastIndex) corners.bottomEnd else square,
+                        )).combinedClickable(
+                            onClick = { onMemberClick(member.uid) },
+                            onLongClick = { if (canManage) showMenu = true },
+                        ),
+                    ) {
+                        MemberRow(member = member)
                         if (canManage) {
                             MemberContextMenu(
                                 expanded = showMenu,
@@ -252,87 +209,110 @@ fun GroupDetailScreen(
                         }
                     }
                 }
-            }
-
-            HorizontalDivider()
-            if (compactDesktop) {
-                Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
-                    TextButton(
+                item(key = "leave") {
+                    SettingsDangerAction(
+                        text = if (currentUserIsOwner) "解散群组" else "退出群组",
                         onClick = onLeaveGroup,
-                        modifier = Modifier.testTag("group.detail.leave"),
-                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                    ) {
-                        Text(if (currentUserIsOwner) "解散群组" else "退出群组")
-                    }
+                        modifier = Modifier.padding(top = Tk.spacing.lg).heightIn(min = Tk.dimens.headerHeight),
+                        tag = "group.detail.leave",
+                    )
                 }
-            } else {
-                OutlinedButton(
-                    onClick = onLeaveGroup,
-                    modifier = Modifier.fillMaxWidth().padding(16.dp).testTag("group.detail.leave"),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                ) {
-                    Text(if (currentUserIsOwner) "解散群组" else "退出群组")
-                }
+            }
+        }
+    }
+
+    if (showNoticeEdit) {
+        AlertDialog(
+            onDismissRequest = { showNoticeEdit = false },
+            title = { Text("编辑群公告") },
+            text = {
+                OutlinedTextField(
+                    value = noticeText,
+                    onValueChange = { noticeText = it },
+                    placeholder = { Text("请输入群公告") },
+                    modifier = Modifier.fillMaxWidth().height(120.dp),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showNoticeEdit = false
+                    onEditNotice?.invoke(noticeText)
+                }) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNoticeEdit = false }) { Text("取消") }
+            },
+        )
+    }
+}
+
+@Composable
+private fun GroupSummary(chat: Chat) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(Tk.spacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AvatarPlaceholder(name = chat.name ?: chat.chatId, size = Tk.dimens.listAvatar.value.toInt())
+        Spacer(Modifier.width(Tk.spacing.md))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                chat.name ?: chat.chatId.take(16),
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text("成员 ${chat.memberCount} 人", style = MaterialTheme.typography.bodySmall, color = Tk.colors.secondaryText)
+        }
+    }
+}
+
+@Composable
+private fun NoticeSection(notice: String?, canEdit: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(Tk.spacing.md),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Icon(Icons.Filled.Campaign, contentDescription = null, tint = Tk.colors.secondaryText, modifier = Modifier.size(Tk.dimens.iconSize))
+        Spacer(Modifier.width(Tk.spacing.md))
+        Column(modifier = Modifier.weight(1f)) {
+            Text("群公告", style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.height(Tk.spacing.xs))
+            Text(
+                notice?.takeIf { it.isNotBlank() } ?: "暂无公告",
+                style = MaterialTheme.typography.bodySmall,
+                color = Tk.colors.secondaryText,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (canEdit) {
+            TextButton(onClick = onClick, modifier = Modifier.testTag("group.detail.editNotice")) {
+                Text("编辑", style = MaterialTheme.typography.labelMedium)
             }
         }
     }
 }
 
 @Composable
-private fun NoticeSection(notice: String?, canEdit: Boolean = false, onClick: () -> Unit = {}) {
-    ListItem(
-        leadingContent = {
-            Icon(
-                Icons.Filled.Campaign,
-                contentDescription = "群公告",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        },
-        headlineContent = { Text("群公告", style = MaterialTheme.typography.bodyLarge) },
-        supportingContent = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    notice?.takeIf { it.isNotBlank() } ?: "暂无公告",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                if (canEdit) {
-                    TextButton(onClick = onClick) {
-                        Text("编辑", style = MaterialTheme.typography.labelSmall)
-                    }
-                }
-            }
-        },
-    )
-}
-
-@Composable
 private fun CreatorSection(chat: Chat, members: List<Member>) {
-    val creatorUid = chat.creator ?: return
-    val creator = members.firstOrNull { it.uid == creatorUid } ?: return
-    ListItem(
-        leadingContent = {
-            Icon(
-                Icons.Filled.Person,
-                contentDescription = "群主",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        },
-        headlineContent = { Text("群主", style = MaterialTheme.typography.bodyLarge) },
-        supportingContent = {
-            Text(
-                creator.displayName(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        },
-    )
+    val creator = members.firstOrNull { it.uid == chat.creator } ?: return
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(Tk.spacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Filled.Person, contentDescription = null, tint = Tk.colors.secondaryText, modifier = Modifier.size(Tk.dimens.iconSize))
+        Spacer(Modifier.width(Tk.spacing.md))
+        Text("群主", style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.width(Tk.spacing.md))
+        Text(
+            creator.displayName(),
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Tk.colors.secondaryText,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
 }
 
 /**
