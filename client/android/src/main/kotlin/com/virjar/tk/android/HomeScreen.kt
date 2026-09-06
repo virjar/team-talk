@@ -3,12 +3,15 @@ package com.virjar.tk.android
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.outlined.Chat
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.app.navigation.AppDataState
@@ -77,11 +80,13 @@ internal fun HomeScreen(
         }
     }
 
-    val tabIcons: List<Pair<ImageVector, String>> = listOf(
-        Icons.AutoMirrored.Filled.Chat to "会话",
-        Icons.Filled.Contacts to "通讯录",
-        Icons.Filled.Description to "文档",
-        Icons.Filled.Settings to "设置",
+    // 选中用面性（filled）、未选中用线性（outlined），同一功能两套配对图标（T009）。
+    data class TabIcon(val filled: ImageVector, val outlined: ImageVector, val label: String)
+    val tabIcons = listOf(
+        TabIcon(Icons.AutoMirrored.Filled.Chat, Icons.AutoMirrored.Outlined.Chat, "会话"),
+        TabIcon(Icons.Filled.Contacts, Icons.Outlined.Contacts, "通讯录"),
+        TabIcon(Icons.Filled.Description, Icons.Outlined.Description, "文档"),
+        TabIcon(Icons.Filled.Settings, Icons.Outlined.Settings, "设置"),
     )
 
     Scaffold(
@@ -90,7 +95,7 @@ internal fun HomeScreen(
             // 文档拥有自己的首页/空间标题栏；叠加通用 TopAppBar 会形成两个页面标题。
             if (MainTab.entries[selectedTab] != MainTab.DOCUMENTS) {
                 TopAppBar(
-                    title = { Text(tabIcons[selectedTab].second) },
+                    title = { Text(tabIcons[selectedTab].label) },
                     actions = {
                         IconButton(
                             onClick = actionAdmission.guard(onGlobalSearch),
@@ -104,9 +109,10 @@ internal fun HomeScreen(
         },
         bottomBar = {
             NavigationBar {
-                tabIcons.forEachIndexed { index, (icon, label) ->
+                tabIcons.forEachIndexed { index, tab ->
+                    val selected = selectedTab == index
                     NavigationBarItem(
-                        selected = selectedTab == index,
+                        selected = selected,
                         onClick = {
                             actionAdmission.runIfOpen {
                                 if (MainTab.entries[selectedTab] == MainTab.DOCUMENTS && index != selectedTab) {
@@ -117,16 +123,22 @@ internal fun HomeScreen(
                             }
                         },
                         icon = {
-                            if (label == "通讯录" && pendingApplyCount > 0) {
+                            val icon = if (selected) tab.filled else tab.outlined
+                            if (tab.label == "通讯录" && pendingApplyCount > 0) {
                                 BadgedBox(badge = { Badge { Text("$pendingApplyCount") } }) {
-                                    Icon(icon, contentDescription = label)
+                                    Icon(icon, contentDescription = tab.label)
                                 }
                             } else {
-                                Icon(icon, contentDescription = label)
+                                Icon(icon, contentDescription = tab.label)
                             }
                         },
-                        modifier = Modifier.testTag("nav.${label}"),
-                        label = { Text(label) },
+                        modifier = Modifier.testTag("nav.${tab.label}"),
+                        label = {
+                            Text(
+                                tab.label,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                            )
+                        },
                     )
                 }
             }

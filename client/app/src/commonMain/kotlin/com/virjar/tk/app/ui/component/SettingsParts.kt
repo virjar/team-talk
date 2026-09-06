@@ -130,7 +130,7 @@ fun SettingsEntryRow(
             Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
             if (description != null) {
                 Spacer(Modifier.height(1.dp))
-                Text(description, style = MaterialTheme.typography.bodySmall, color = Tk.colors.secondaryText)
+                Text(description, style = MaterialTheme.typography.bodySmall, color = Tk.colors.tertiaryText)
             }
         }
         trailing()

@@ -82,6 +82,8 @@ data class TkColors(
     val bubbleOutgoingContent: Color,
     val metaText: Color,
     val secondaryText: Color,
+    /** 设置项说明等三级文字：比 secondaryText 更弱，但仍保持小字 4.5:1 可读对比度。 */
+    val tertiaryText: Color,
     val online: Color,
     val unreadBadge: Color,
     val pinIcon: Color,
@@ -98,6 +100,7 @@ val LightTkColors = TkColors(
     // 11sp 时间和状态文字仍需通过小字 4.5:1 对比度；保持略弱于 secondaryText。
     metaText = Color(0xFF676D76),
     secondaryText = Color(0xFF646A73),
+    tertiaryText = Color(0xFF757575),
     online = Color(0xFF34C724),
     unreadBadge = Color(0xFFF54A45),
     pinIcon = Color(0xFF8F959E),
@@ -113,6 +116,7 @@ val DarkTkColors = TkColors(
     bubbleOutgoingContent = Color(0xFFEDF3FF),
     metaText = Color(0xFFA0A6B0),
     secondaryText = Color(0xFFA8ABB3),
+    tertiaryText = Color(0xFF8F959E),
     online = Color(0xFF34C724),
     unreadBadge = Color(0xFFE54548),
     pinIcon = Color(0xFF6B6E75),

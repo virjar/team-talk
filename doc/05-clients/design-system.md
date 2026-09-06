@@ -25,6 +25,7 @@ TeamTalk 使用偏中性、信息密度适中的办公产品语言。视觉参�
 | `bubbleIncoming` | `#F2F3F5` | 对方消息 |
 | `bubbleOutgoing` | `#E8F0FF` | 自己消息 |
 | `secondaryText` | `#646A73` | 副标题与预览 |
+| `tertiaryText` | `#757575` | 设置项说明等三级文字（比 secondaryText 弱一级，小字仍满足 4.5:1；暗色 `#8F959E`） |
 | `metaText` | `#676D76` | 时间、占位和系统提示（小字可读对比度） |
 | `online` | `#34C724` | 在线状态 |
 | `unreadBadge` | `#F54A45` | 未读与危险提醒 |

@@ -9,9 +9,13 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.Contacts
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -67,7 +71,8 @@ internal fun SlimNavRail(
 
             // 会话
             RailItem(
-                icon = { Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = MainTab.CONVERSATIONS.label) },
+                filledIcon = Icons.AutoMirrored.Filled.Chat,
+                outlinedIcon = Icons.AutoMirrored.Outlined.Chat,
                 label = MainTab.CONVERSATIONS.label,
                 selected = selectedTab == MainTab.CONVERSATIONS.ordinal,
                 onClick = { onSelectTab(MainTab.CONVERSATIONS.ordinal) },
@@ -75,22 +80,17 @@ internal fun SlimNavRail(
 
             // 通讯录（好友申请红点）
             RailItem(
-                icon = {
-                    if (pendingApplyCount > 0) {
-                        BadgedBox(badge = { UnreadBadge(pendingApplyCount) }) {
-                            Icon(Icons.Filled.Contacts, contentDescription = MainTab.CONTACTS.label)
-                        }
-                    } else {
-                        Icon(Icons.Filled.Contacts, contentDescription = MainTab.CONTACTS.label)
-                    }
-                },
+                filledIcon = Icons.Filled.Contacts,
+                outlinedIcon = Icons.Outlined.Contacts,
+                badgeCount = pendingApplyCount,
                 label = MainTab.CONTACTS.label,
                 selected = selectedTab == MainTab.CONTACTS.ordinal,
                 onClick = { onSelectTab(MainTab.CONTACTS.ordinal) },
             )
 
             RailItem(
-                icon = { Icon(Icons.Filled.Description, contentDescription = MainTab.DOCUMENTS.label) },
+                filledIcon = Icons.Filled.Description,
+                outlinedIcon = Icons.Outlined.Description,
                 label = MainTab.DOCUMENTS.label,
                 selected = selectedTab == MainTab.DOCUMENTS.ordinal,
                 onClick = { onSelectTab(MainTab.DOCUMENTS.ordinal) },
@@ -100,7 +100,8 @@ internal fun SlimNavRail(
 
             // 设置（底部对齐；打开模态，不切换一级栏目）
             RailItem(
-                icon = { Icon(Icons.Filled.Settings, contentDescription = MainTab.SETTINGS.label) },
+                filledIcon = Icons.Filled.Settings,
+                outlinedIcon = Icons.Outlined.Settings,
                 label = MainTab.SETTINGS.label,
                 selected = false,
                 onClick = onOpenSettings,
@@ -109,13 +110,15 @@ internal fun SlimNavRail(
     }
 }
 
-/** 导航栏单项：48dp 高，选中 = 主色图标 + 左侧 3dp 竖条；hover = 灰底圆角。 */
+/** 导航栏单项：44dp 高，选中 = 主色面性图标 + 左侧 3dp 竖条；未选 = 线性图标；hover = 灰底圆角。 */
 @Composable
 private fun RailItem(
-    icon: @Composable () -> Unit,
+    filledIcon: ImageVector,
+    outlinedIcon: ImageVector,
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
+    badgeCount: Int = 0,
 ) {
     val hoverInteraction = remember { MutableInteractionSource() }
     val hovered by hoverInteraction.collectIsHoveredAsState()
@@ -153,7 +156,14 @@ private fun RailItem(
         CompositionLocalProvider(
             LocalContentColor provides if (selected) MaterialTheme.colorScheme.primary else Tk.colors.secondaryText,
         ) {
-            icon()
+            val icon = if (selected) filledIcon else outlinedIcon
+            if (badgeCount > 0) {
+                BadgedBox(badge = { UnreadBadge(badgeCount) }) {
+                    Icon(icon, contentDescription = label)
+                }
+            } else {
+                Icon(icon, contentDescription = label)
+            }
         }
     }
 }
