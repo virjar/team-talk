@@ -255,6 +255,9 @@ internal class FakeOrganizationProjectionStore(
 
     fun residentMemberProjectionCountForTest(): Int = synchronized(lock) { memberFlows.size }
 
+    /** 撤回整个组织目录投影；语义与 LocalOrganizationProjectionStore.withdrawProjection 对齐。 */
+    fun withdrawProjection() = resetServerProjection()
+
     fun resetServerProjection() = synchronized(lock) {
         unitSnapshots.reset()
         memberSnapshots.reset()

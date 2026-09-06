@@ -58,3 +58,7 @@ internal class GenerationGate {
 /** 当持久投影已经可用时，离线/超时刷新是预期内的。 */
 internal fun shouldReportCacheRefreshFailure(error: Throwable, hasLocalProjection: Boolean): Boolean =
     !hasLocalProjection || (error != AppError.Network && error != AppError.Timeout)
+
+/** 服务端对组织目录读取返回的 403 表示账号已无有效组织成员关系（组织访客）。 */
+internal fun isOrganizationAccessRevoked(error: Throwable): Boolean =
+    error is AppError.Business && error.code == 403

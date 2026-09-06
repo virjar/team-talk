@@ -60,6 +60,7 @@ fun DirectoryScreen(
     organizationLoading: Boolean,
     organizationMemberSnapshotKnown: Boolean,
     organizationMembersLoading: Boolean,
+    organizationAccessRevoked: Boolean = false,
     onUnitClick: (String) -> Unit,
     onGroupClick: (chatId: String, chatName: String) -> Unit,
     onUserClick: (String) -> Unit,
@@ -87,6 +88,7 @@ fun DirectoryScreen(
                 loading = organizationLoading,
                 memberSnapshotKnown = organizationMemberSnapshotKnown,
                 membersLoading = organizationMembersLoading,
+                accessRevoked = organizationAccessRevoked,
                 onUnitClick = onUnitClick,
                 onGroupClick = onGroupClick,
                 onUserClick = onUserClick,
@@ -155,6 +157,7 @@ private fun OrganizationDirectory(
     loading: Boolean,
     memberSnapshotKnown: Boolean,
     membersLoading: Boolean,
+    accessRevoked: Boolean,
     onUnitClick: (String) -> Unit,
     onGroupClick: (chatId: String, chatName: String) -> Unit,
     onUserClick: (String) -> Unit,
@@ -163,9 +166,11 @@ private fun OrganizationDirectory(
         hasUnits = units.isNotEmpty(),
         initialized = initialized,
         snapshotKnown = unitSnapshotKnown,
+        accessRevoked = accessRevoked,
     )) {
         OrganizationDirectoryPlaceholder.INITIALIZING,
         OrganizationDirectoryPlaceholder.NOT_CACHED,
+        OrganizationDirectoryPlaceholder.NO_ACCESS,
         OrganizationDirectoryPlaceholder.EMPTY,
         -> OrganizationEmptyState(placeholder, loading)
 
@@ -226,6 +231,11 @@ internal enum class OrganizationDirectoryPlaceholder(
         detail = "连接后将自动同步组织架构",
         testTag = "organization.directory.cache-miss",
     ),
+    NO_ACCESS(
+        message = "未加入组织",
+        detail = "当前账号没有有效的组织成员关系，加入组织后可查看公司架构",
+        testTag = "organization.directory.no-access",
+    ),
     EMPTY(
         message = "组织架构尚未配置",
         detail = "管理员可在管理后台建立部门与部门群",
@@ -238,9 +248,11 @@ internal fun organizationDirectoryPlaceholder(
     hasUnits: Boolean,
     initialized: Boolean,
     snapshotKnown: Boolean,
+    accessRevoked: Boolean = false,
 ): OrganizationDirectoryPlaceholder? = when {
     hasUnits -> null
     !initialized -> OrganizationDirectoryPlaceholder.INITIALIZING
+    accessRevoked -> OrganizationDirectoryPlaceholder.NO_ACCESS
     !snapshotKnown -> OrganizationDirectoryPlaceholder.NOT_CACHED
     else -> OrganizationDirectoryPlaceholder.EMPTY
 }

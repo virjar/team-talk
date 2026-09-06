@@ -37,20 +37,23 @@ class OrganizationRepository(
         localCache.observeOrganizationMemberProjection(unitId)
 
     /** 供交互式刷新/重连路径使用的严格在线刷新。 */
-    suspend fun refreshUnits(): Outcome<List<OrganizationUnit>> = outcome {
-        val lease = localCache.beginOrganizationUnitSnapshot()
-        try {
-            val remote = collectUnitSnapshot()
-            localCache.applyOrganizationUnitSnapshot(lease, remote.items, remote.revision)
-            // 一次更新的请求或本地变更可能已把这笔响应挡在栅栏外。
-            val current = localCache.getOrganizationUnitProjection()
-            check(current.snapshotKnown) {
-                "Organization unit refresh was fenced before a current-revision projection"
+    suspend fun refreshUnits(): Outcome<List<OrganizationUnit>> {
+        val result = outcome {
+            val lease = localCache.beginOrganizationUnitSnapshot()
+            try {
+                val remote = collectUnitSnapshot()
+                localCache.applyOrganizationUnitSnapshot(lease, remote.items, remote.revision)
+                // 一次更新的请求或本地变更可能已把这笔响应挡在栅栏外。
+                val current = localCache.getOrganizationUnitProjection()
+                check(current.snapshotKnown) {
+                    "Organization unit refresh was fenced before a current-revision projection"
+                }
+                current.units
+            } finally {
+                localCache.abandonProjectionSnapshot(lease)
             }
-            current.units
-        } finally {
-            localCache.abandonProjectionSnapshot(lease)
         }
+        return result.also { it.withdrawOnAccessRevoked() }
     }
 
     /**
@@ -62,7 +65,7 @@ class OrganizationRepository(
         unitId: String,
         recursive: Boolean = false,
     ): Outcome<List<OrganizationMember>> = if (recursive) {
-        outcome {
+        val result = outcome {
             val remote = collectMemberSnapshot(unitId, recursive = true)
             val required = localCache.advanceOrganizationRequiredRevision(remote.revision)
             check(remote.revision >= required) {
@@ -70,6 +73,7 @@ class OrganizationRepository(
             }
             remote.items
         }
+        result.also { it.withdrawOnAccessRevoked() }
     } else {
         refreshMemberProjection(unitId).map(OrganizationMemberProjection::members)
     }
@@ -81,23 +85,26 @@ class OrganizationRepository(
      */
     suspend fun refreshMemberProjection(
         unitId: String,
-    ): Outcome<OrganizationMemberProjection> = outcome {
-        val lease = localCache.beginOrganizationMemberSnapshot(unitId)
-        try {
-            val remote = collectMemberSnapshot(unitId, recursive = false)
-            if (!localCache.applyOrganizationMemberSnapshot(lease, remote.items, remote.revision)) {
-                // 一次更新的请求或精确的本地变更把这份租约挡在了栅栏外。它的投影
-                // 是我们唯一可以上报的缓存状态；部分/未知状态不能变成成功。
-                val current = localCache.getOrganizationMemberProjection(unitId)
-                check(current.snapshotKnown) {
-                    "Direct organization member refresh was fenced before a complete projection"
+    ): Outcome<OrganizationMemberProjection> {
+        val result = outcome {
+            val lease = localCache.beginOrganizationMemberSnapshot(unitId)
+            try {
+                val remote = collectMemberSnapshot(unitId, recursive = false)
+                if (!localCache.applyOrganizationMemberSnapshot(lease, remote.items, remote.revision)) {
+                    // 一次更新的请求或精确的本地变更把这份租约挡在了栅栏外。它的投影
+                    // 是我们唯一可以上报的缓存状态；部分/未知状态不能变成成功。
+                    val current = localCache.getOrganizationMemberProjection(unitId)
+                    check(current.snapshotKnown) {
+                        "Direct organization member refresh was fenced before a complete projection"
+                    }
+                    return@outcome current
                 }
-                return@outcome current
+                localCache.getOrganizationMemberProjection(unitId)
+            } finally {
+                localCache.abandonProjectionSnapshot(lease)
             }
-            localCache.getOrganizationMemberProjection(unitId)
-        } finally {
-            localCache.abandonProjectionSnapshot(lease)
         }
+        return result.also { it.withdrawOnAccessRevoked() }
     }
 
     /**
@@ -265,6 +272,17 @@ class OrganizationRepository(
             cached()?.let { Outcome.Success(it) } ?: this
         } else {
             this
+        }
+    }
+
+    /**
+     * 组织目录 RPC 的 403 是服务端的权威裁决：调用者没有有效组织成员关系。
+     * 与普通断网不同，此时必须撤回本地已缓存的组织投影，离线降级也不再展示旧目录。
+     */
+    private fun <T> Outcome<T>.withdrawOnAccessRevoked() {
+        val error = (this as? Outcome.Failure)?.error ?: return
+        if (error is AppError.Business && error.code == 403) {
+            localCache.withdrawOrganizationProjections()
         }
     }
 

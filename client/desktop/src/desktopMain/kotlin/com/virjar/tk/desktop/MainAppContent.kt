@@ -406,6 +406,7 @@ private fun MainListPane(
                             organizationLoading = nav.organization.loading,
                             organizationMemberSnapshotKnown = nav.organization.memberSnapshotKnown,
                             organizationMembersLoading = nav.organization.membersLoading,
+                            organizationAccessRevoked = nav.organization.accessRevoked,
                             onUnitClick = { unitId ->
                                 directoryScope.launch {
                                     nav.runAdmittedUiAction(presentationGate, onClosed = {}) {

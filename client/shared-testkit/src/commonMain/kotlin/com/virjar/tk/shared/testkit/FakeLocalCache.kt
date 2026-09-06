@@ -459,6 +459,7 @@ class FakeLocalCache(
     override fun getOrganizationUnitProjection() = withOrganization { getUnitProjection() }
     override fun observeOrganizationUnitProjection() = withOrganization { observeUnitProjection() }
     override fun advanceOrganizationRequiredRevision(revision: Long) = withOrganization { advanceRequiredRevision(revision) }
+    override fun withdrawOrganizationProjections() = withOrganization { withdrawProjection() }
     override fun upsertOrganizationUnit(unit: OrganizationUnit) = withOrganization { upsertUnit(unit) }
     override fun deleteOrganizationUnit(unitId: String) = withOrganization { deleteUnit(unitId) }
     override fun beginOrganizationUnitSnapshot() = withOrganization { beginUnitSnapshot() }

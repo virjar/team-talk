@@ -321,6 +321,12 @@ interface LocalCache : LocalDocumentProjection {
     /** 单调地使组织权威失效，同时保留过期的展示行。 */
     fun advanceOrganizationRequiredRevision(revision: Long): Long
 
+    /**
+     * 撤回整个组织目录投影（服务端确认本账号已是组织访客后调用）。
+     * 单元树、成员关系与快照状态全部清除并回到 Unfetched；重新获得资格后需全量重建。
+     */
+    fun withdrawOrganizationProjections()
+
     /** 本地事件/测试替身的精确变更入口；会使在途全量单元快照失效。 */
     fun upsertOrganizationUnit(unit: OrganizationUnit)
     fun deleteOrganizationUnit(unitId: String)

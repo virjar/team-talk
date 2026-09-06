@@ -89,6 +89,24 @@ internal class LocalOrganizationProjectionStore(
         }
     }
 
+    /**
+     * 撤回整个组织目录投影：服务端权威裁决本账号已无目录访问资格（组织访客）。
+     * 与普通断网不同，这是确定性的权限终态——缓存回退到 Unfetched，在途快照被围栏挡下；
+     * 之后若重新获得成员资格，只能通过全量刷新重建。
+     */
+    fun withdrawProjection() = cacheUseGate.use {
+        synchronized(stateLock) {
+            resetSnapshotGatesLocked()
+            queries.transaction {
+                queries.deleteAllOrganizationMembers()
+                queries.deleteAllOrganizationMemberSnapshots()
+                queries.deleteAllOrganizationUnits()
+                queries.deleteOrganizationProjectionState()
+            }
+            clearProjectionLocked()
+        }
+    }
+
     fun upsertUnit(unit: OrganizationUnit) = cacheUseGate.use {
         validateUnit(unit)
         synchronized(stateLock) {

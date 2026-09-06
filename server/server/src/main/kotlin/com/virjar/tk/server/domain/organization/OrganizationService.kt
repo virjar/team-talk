@@ -34,7 +34,30 @@ class OrganizationService(
     private val changes: OrganizationChangePublisher,
 ) {
     private val logger = LoggerFactory.getLogger(OrganizationService::class.java)
-    fun listUnitPage(request: OrganizationUnitPageRequest): OrganizationUnitPage {
+
+    /**
+     * 终端 RPC 入口的组织目录访问资格裁决：只有存在有效组织成员关系的账号才是公司成员。
+     * 加入普通聊天群不等于加入组织；失去最后一项归属立即失去目录读取资格。
+     */
+    private fun requireOrganizationMember(uid: String) {
+        if (repository.listMemberships(uid).isEmpty()) {
+            throw OrganizationAccessDeniedException("没有有效的组织成员关系，不能读取组织目录")
+        }
+    }
+
+    /** 终端客户端读取组织节点目录；调用者必须是有效的组织成员。 */
+    fun listUnitPage(callerUid: String, request: OrganizationUnitPageRequest): OrganizationUnitPage {
+        requireOrganizationMember(callerUid)
+        return readUnitPage(request)
+    }
+
+    /** 终端客户端读取组织成员名册；调用者必须是有效的组织成员。 */
+    fun listMemberPage(callerUid: String, request: OrganizationMemberPageRequest): OrganizationMemberPage {
+        requireOrganizationMember(callerUid)
+        return readMemberPage(request)
+    }
+
+    private fun readUnitPage(request: OrganizationUnitPageRequest): OrganizationUnitPage {
         val cursor = OrganizationUnitCursorCodec.decode(request.cursor)
         val page = repository.listUnitPage(
             expectedRevision = cursor?.revision,
@@ -51,7 +74,7 @@ class OrganizationService(
         )
     }
 
-    fun listMemberPage(request: OrganizationMemberPageRequest): OrganizationMemberPage {
+    private fun readMemberPage(request: OrganizationMemberPageRequest): OrganizationMemberPage {
         val cursor = OrganizationMemberCursorCodec.decode(request.cursor)
         if (cursor != null) {
             require(cursor.rootUnitId == request.unitId && cursor.recursive == request.recursive) {
@@ -92,7 +115,7 @@ class OrganizationService(
         maximumItems = OrganizationCapacityPolicy.MAX_ACTIVE_UNITS,
         kind = "组织节点",
     ) { cursor ->
-        val page = listUnitPage(OrganizationUnitPageRequest(cursor))
+        val page = readUnitPage(OrganizationUnitPageRequest(cursor))
         SnapshotPage(page.revision, page.items, page.nextCursor, page.snapshotChanged)
     }
 
@@ -104,7 +127,7 @@ class OrganizationService(
             OrganizationCapacityPolicy.MAX_MEMBERS_PER_UNIT
         }
         return collectStableSnapshot(maximumItems, "组织成员关系") { cursor ->
-            val page = listMemberPage(OrganizationMemberPageRequest(unitId, recursive, cursor))
+            val page = readMemberPage(OrganizationMemberPageRequest(unitId, recursive, cursor))
             SnapshotPage(page.revision, page.items, page.nextCursor, page.snapshotChanged)
         }
     }

@@ -75,6 +75,10 @@ class OrganizationFeature internal constructor(
     var loading by mutableStateOf(false)
         private set
 
+    /** 服务端权威裁决本账号没有有效组织成员关系；目录不可用且本地缓存已被撤回。 */
+    var accessRevoked by mutableStateOf(false)
+        private set
+
     private val refreshGate = GenerationGate()
     private val membersGate = LatestRequestGate<String?>()
     private val refreshMutex = Mutex()
@@ -143,12 +147,18 @@ class OrganizationFeature internal constructor(
                 val target = if (mustRefreshUnits) {
                     when (val result = localData.run { loadUnits() }) {
                         is Outcome.Success -> if (refreshGate.isCurrent(generation)) {
+                            accessRevoked = false
                             applyUnitProjection(localData.run(cachedUnits))
                         } else {
                             return@withLock false
                         }
 
                         is Outcome.Failure -> {
+                            if (isOrganizationAccessRevoked(result.error)) {
+                                // 访客边界是服务端的权威终态而非瞬时失败；缓存已在 SDK 层撤回。
+                                if (refreshGate.isCurrent(generation)) accessRevoked = true
+                                return@withLock false
+                            }
                             if (
                                 refreshGate.isCurrent(generation) &&
                                 reportFailures &&

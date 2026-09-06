@@ -13,11 +13,13 @@ import com.virjar.tk.protocol.model.UserRole
 import kotlinx.coroutines.test.runTest
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.batchInsert
+import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
+import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -37,6 +39,8 @@ class OrganizationPaginationIntegrationTest {
     fun `unit and member keysets are bounded revision fenced and scope bound`() = runTest {
         val root = ctx.organizationService.createUnit(null, "分页公司", null)
         val childIds = List(270) { index -> "page-unit-${index.toString().padStart(3, '0')}" }
+        // 终端读取入口要求有效组织成员关系；分页调用者挂在首个子部门下，不进入 root 直属成员页。
+        val callerUid = UUID.randomUUID().toString()
         transaction(ctx.database) {
             val now = System.currentTimeMillis()
             OrganizationUnits.batchInsert(childIds, shouldReturnGeneratedValues = false) { unitId ->
@@ -50,25 +54,43 @@ class OrganizationPaginationIntegrationTest {
                 this[OrganizationUnits.createdAt] = now
                 this[OrganizationUnits.updatedAt] = now
             }
+            Users.insert {
+                it[uid] = callerUid
+                it[username] = "user-$callerUid"
+                it[name] = "Pagination Caller"
+                it[passwordHash] = "organization-page-fixture"
+                it[role] = UserRole.HUMAN
+                it[status] = 1
+                it[createdAt] = now
+                it[updatedAt] = now
+            }
+            OrganizationMemberships.insert {
+                it[OrganizationMemberships.unitId] = childIds.first()
+                it[OrganizationMemberships.uid] = callerUid
+                it[title] = null
+                it[primary] = false
+                it[joinedAt] = now
+                it[updatedAt] = now
+            }
         }
 
-        val first = ctx.organizationService.listUnitPage(OrganizationUnitPageRequest())
+        val first = ctx.organizationService.listUnitPage(callerUid, OrganizationUnitPageRequest())
         assertEquals(OrganizationUnitPage.MAX_PAGE_SIZE, first.items.size)
         val firstCursor = assertNotNull(first.nextCursor)
-        val second = ctx.organizationService.listUnitPage(OrganizationUnitPageRequest(firstCursor))
+        val second = ctx.organizationService.listUnitPage(callerUid, OrganizationUnitPageRequest(firstCursor))
         assertFalse(second.snapshotChanged)
         assertEquals(first.revision, second.revision)
         assertEquals(271, (first.items + second.items).map { it.unitId }.distinct().size)
         assertEquals(null, second.nextCursor)
 
         ctx.organizationService.createUnit(root.unitId, "revision advance", null)
-        val changed = ctx.organizationService.listUnitPage(OrganizationUnitPageRequest(firstCursor))
+        val changed = ctx.organizationService.listUnitPage(callerUid, OrganizationUnitPageRequest(firstCursor))
         assertTrue(changed.snapshotChanged)
         assertTrue(changed.items.isEmpty())
         assertEquals(null, changed.nextCursor)
         assertTrue(changed.revision > first.revision)
         assertFailsWith<IllegalArgumentException> {
-            ctx.organizationService.listUnitPage(OrganizationUnitPageRequest("AA"))
+            ctx.organizationService.listUnitPage(callerUid, OrganizationUnitPageRequest("AA"))
         }
 
         val memberUids = List(OrganizationMemberPage.MAX_PAGE_SIZE + 1) { index ->
@@ -102,31 +124,39 @@ class OrganizationPaginationIntegrationTest {
         }
 
         val memberFirst = ctx.organizationService.listMemberPage(
+            callerUid,
             OrganizationMemberPageRequest(root.unitId, recursive = false),
         )
         assertEquals(OrganizationMemberPage.MAX_PAGE_SIZE, memberFirst.items.size)
         val memberCursor = assertNotNull(memberFirst.nextCursor)
         assertFailsWith<IllegalArgumentException> {
             ctx.organizationService.listMemberPage(
+                callerUid,
                 OrganizationMemberPageRequest(childIds.first(), recursive = false, cursor = memberCursor),
             )
         }
         val memberSecond = ctx.organizationService.listMemberPage(
+            callerUid,
             OrganizationMemberPageRequest(root.unitId, recursive = false, cursor = memberCursor),
         )
         assertEquals(1, memberSecond.items.size)
         assertEquals(memberUids.toSet(), (memberFirst.items + memberSecond.items).map { it.uid }.toSet())
 
         val recursiveFirst = ctx.organizationService.listMemberPage(
+            callerUid,
             OrganizationMemberPageRequest(root.unitId, recursive = true),
         )
         val recursiveSecond = ctx.organizationService.listMemberPage(
+            callerUid,
             OrganizationMemberPageRequest(
                 root.unitId,
                 recursive = true,
                 cursor = assertNotNull(recursiveFirst.nextCursor),
             ),
         )
-        assertEquals(memberUids.toSet(), (recursiveFirst.items + recursiveSecond.items).map { it.uid }.toSet())
+        assertEquals(
+            (memberUids + callerUid).toSet(),
+            (recursiveFirst.items + recursiveSecond.items).map { it.uid }.toSet(),
+        )
     }
 }

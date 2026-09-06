@@ -275,6 +275,8 @@ class LocalCacheImpl internal constructor(
 
     override fun advanceOrganizationRequiredRevision(revision: Long): Long =
         organization.advanceRequiredRevision(revision)
+
+    override fun withdrawOrganizationProjections() = organization.withdrawProjection()
     override fun upsertOrganizationUnit(unit: OrganizationUnit) = organization.upsertUnit(unit)
     override fun deleteOrganizationUnit(unitId: String) = organization.deleteUnit(unitId)
     override fun beginOrganizationUnitSnapshot(): ProjectionSnapshotLease =

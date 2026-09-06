@@ -10,6 +10,7 @@ import com.virjar.tk.server.domain.document.DocumentCustodyConflictException
 import com.virjar.tk.server.domain.document.DocumentHierarchyConflictException
 import com.virjar.tk.server.domain.document.DocumentNotFoundException
 import com.virjar.tk.server.domain.document.DocumentRevisionConflictException
+import com.virjar.tk.server.domain.organization.OrganizationAccessDeniedException
 import com.virjar.tk.server.protocol.rpc.RpcStubRegistry
 import com.virjar.tk.server.protocol.rpc.RpcSessionContext
 import com.virjar.tk.protocol.payload.InvokePayload
@@ -156,6 +157,14 @@ class RpcDispatcher(
             )
             ResponsePayload(invoke.requestId, 500, "服务器内部错误".encodeToByteArray())
         } catch (e: ChatAccessDeniedException) {
+            logger.info(
+                "RPC permission denied: service={} method={} uid={}",
+                invoke.serviceId,
+                invoke.methodId,
+                uid,
+            )
+            ResponsePayload(invoke.requestId, 403, e.message?.encodeToByteArray())
+        } catch (e: OrganizationAccessDeniedException) {
             logger.info(
                 "RPC permission denied: service={} method={} uid={}",
                 invoke.serviceId,

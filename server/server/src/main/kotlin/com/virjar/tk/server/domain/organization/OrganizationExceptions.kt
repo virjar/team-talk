@@ -4,6 +4,10 @@ package com.virjar.tk.server.domain.organization
 /** Organization 域的类型化异常集合。 */
 
 
+/** 调用者没有有效组织成员关系，无权读取组织目录。 */
+class OrganizationAccessDeniedException(message: String) : IllegalArgumentException(message)
+
+
 /** 移除该成员关系会使组织节点的负责人引用不一致。 */
 class OrganizationMemberRemovalConflictException(message: String) : RuntimeException(message)
 

@@ -158,6 +158,7 @@ internal fun HomeScreen(
                         organizationLoading = dataState.organization.loading,
                         organizationMemberSnapshotKnown = dataState.organization.memberSnapshotKnown,
                         organizationMembersLoading = dataState.organization.membersLoading,
+                        organizationAccessRevoked = dataState.organization.accessRevoked,
                         onUnitClick = { unitId ->
                             dataState.launchAdmittedUiAction {
                                 dataState.organization.selectUnit(unitId)

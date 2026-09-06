@@ -6,7 +6,6 @@ import com.virjar.tk.server.infra.db.ExposedPgUnitOfWork
 import com.virjar.tk.server.infra.db.PgUnitOfWorkHooks
 import com.virjar.tk.server.infra.db.PgUnitOfWorkStage
 import com.virjar.tk.protocol.model.OrganizationUnit
-import com.virjar.tk.protocol.model.OrganizationUnitPageRequest
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -100,7 +99,7 @@ class OrganizationChangePublicationIntegrationTest {
             ?: ctx.organizationService.createUnit(null, uniqueName("root"), null)
 
     private fun currentRevision(): Long =
-        ctx.organizationService.listUnitPage(OrganizationUnitPageRequest(cursor = null)).revision
+        ctx.organizationRepo.listUnitPage(expectedRevision = null, after = null, pageSize = 1).revision
 
     private fun uniqueName(prefix: String): String = "$prefix-${UUID.randomUUID()}"
 

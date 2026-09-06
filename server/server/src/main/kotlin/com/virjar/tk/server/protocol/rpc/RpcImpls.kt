@@ -186,10 +186,10 @@ class DeviceRpcImpl(
 
 class OrganizationRpcImpl(uid: String, private val service: OrganizationService) : OrganizationRpcStub(uid) {
     override suspend fun listUnitPage(request: com.virjar.tk.protocol.model.OrganizationUnitPageRequest) =
-        service.listUnitPage(request)
+        service.listUnitPage(uid, request)
 
     override suspend fun listMemberPage(request: com.virjar.tk.protocol.model.OrganizationMemberPageRequest) =
-        service.listMemberPage(request)
+        service.listMemberPage(uid, request)
 }
 
 class GroupFileRpcImpl(uid: String, private val service: GroupFileService) : GroupFileRpcStub(uid) {
