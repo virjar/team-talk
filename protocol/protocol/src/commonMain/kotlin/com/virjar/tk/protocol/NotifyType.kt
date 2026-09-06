@@ -10,6 +10,9 @@ enum class NotifyType(val code: Int) {
     CONTACT_APPLY(1),
     CONTACT_ACCEPTED(2),
     CONTACT_DELETED(3),
+    /** 本人好友资料变更；完整 Contact 投影同步到本人的所有设备。 */
+    @SinceProtocol(0)
+    CONTACT_UPDATED(4),
 
     // 群组
     CHAT_CREATED(10),

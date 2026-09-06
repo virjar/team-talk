@@ -1,5 +1,7 @@
 package com.virjar.tk.desktop
 
+import com.virjar.tk.app.identity.ClientIdentity
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -59,7 +61,7 @@ internal fun WindowScope.DesktopTitleBar(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            "TeamTalk",
+                            ClientIdentity.DISPLAY_NAME,
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
                         )

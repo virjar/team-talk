@@ -109,6 +109,18 @@ object MarkdownAssetPolicy {
     fun replaceReferencesForPlainText(
         markdown: String,
         canonicalAssets: List<EmbeddedAsset>,
+    ): String = replaceReferences(markdown, canonicalAssets, preserveImageLabels = true)
+
+    /** 只用于读侧摘要，不能写回消息 canonical plainText 或持久投影回执。 */
+    internal fun replaceReferencesForDisplayText(
+        markdown: String,
+        canonicalAssets: List<EmbeddedAsset>,
+    ): String = replaceReferences(markdown, canonicalAssets, preserveImageLabels = false)
+
+    private fun replaceReferences(
+        markdown: String,
+        canonicalAssets: List<EmbeddedAsset>,
+        preserveImageLabels: Boolean,
     ): String {
         val references = references(markdown)
         if (references.isEmpty()) return markdown
@@ -121,7 +133,9 @@ object MarkdownAssetPolicy {
             val decodedLabel = decodeCommonMarkPunctuationEscapes(reference.label).trim()
             output.append(
                 when (reference.presentation) {
-                    EmbeddedAssetPresentation.IMAGE -> decodedLabel.ifBlank { "[图片]" }
+                    // 已发行 plainText 包含 alt，参与消息重试哈希；只能在读侧隐藏图片标签。
+                    EmbeddedAssetPresentation.IMAGE ->
+                        if (preserveImageLabels) decodedLabel.ifBlank { "[图片]" } else "[图片]"
                     EmbeddedAssetPresentation.FILE -> decodedLabel.ifBlank {
                         asset?.attachment?.name ?: "[文件]"
                     }

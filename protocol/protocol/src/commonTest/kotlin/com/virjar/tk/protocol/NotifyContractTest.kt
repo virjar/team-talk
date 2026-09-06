@@ -71,7 +71,7 @@ class NotifyContractTest {
             id = 1, fromUid = "u1", toUid = "u2", token = "tk", remark = "hi",
             status = 0, createdAt = 100L, fromUser = sampleUser,
         )
-        NotifyType.CONTACT_ACCEPTED, NotifyType.CONTACT_DELETED -> Contact(
+        NotifyType.CONTACT_ACCEPTED, NotifyType.CONTACT_DELETED, NotifyType.CONTACT_UPDATED -> Contact(
             uid = "u1", friendUid = "u2", remark = "r", status = 1, user = sampleUser,
         )
         NotifyType.CHAT_CREATED, NotifyType.CHAT_UPDATED, NotifyType.CHAT_DELETED,

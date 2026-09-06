@@ -58,7 +58,7 @@ fun ContactsListScreen(
     val groups = remember(contacts) {
         contacts.mapNotNull { contact ->
             val user = contact.user
-            val displayName = contact.remark ?: user?.name ?: user?.username ?: contact.friendUid
+            val displayName = contactDisplayName(user, contact.remark, contact.friendUid)
             contact to displayName
         }
             .groupBy { (_, name) -> PinyinInitials.initialOf(name) }

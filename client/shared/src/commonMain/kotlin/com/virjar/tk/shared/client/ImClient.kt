@@ -80,6 +80,7 @@ class ImClient(
     private val authenticationAttempts: AuthenticationAttemptAdmission =
         AuthenticationAttemptAdmission(),
     supportedProtocol: ProtocolRange = ProtocolVersions.SUPPORTED,
+    tcpTlsCertificatePem: String? = null,
 ) {
     internal constructor(messageTransport: MessageSendTransport) : this() {
         messageTransportOverride = messageTransport
@@ -128,6 +129,7 @@ class ImClient(
             handleConnectionTraceContext = connectionTraceContextOwner::acceptUpdate,
         )
         transport = TransportConnectionOwner(
+            transportTls = ClientTransportTls(tcpTlsCertificatePem = tcpTlsCertificatePem),
             initialHost = host,
             initialPort = port,
             beginProtocolNegotiation = authSync::beginProtocolNegotiation,

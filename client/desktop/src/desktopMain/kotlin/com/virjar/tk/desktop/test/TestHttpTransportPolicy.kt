@@ -11,6 +11,14 @@ import java.util.concurrent.atomic.AtomicInteger
 
 internal const val MAX_TEST_HTTP_REQUEST_BODY_BYTES = 1_048_576
 
+/** 只改变开发自动化端口；正式安装包不包含测试 HTTP 服务。 */
+internal fun testHttpPort(configured: String?): Int {
+    if (configured == null) return 18080
+    return requireNotNull(configured.toIntOrNull()?.takeIf { it in 1..65535 }) {
+        "tk.desktop.test.port must be a TCP port in 1..65535"
+    }
+}
+
 internal class TestHttpRequestTooLargeException(maxBytes: Int) :
     IllegalArgumentException("request body exceeds $maxBytes bytes")
 

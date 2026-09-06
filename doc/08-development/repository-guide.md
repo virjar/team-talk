@@ -26,7 +26,12 @@ server/admin             React/Vite 管理后台（构建产物由 server 分发
 `com.virjar.tk.desktop`），使 IDE 搜索与导入可按板块直接区分。生成代码位于
 `com.virjar.tk.protocol.rpc.gen`。
 
-根 `build.gradle.kts` 读取 deployment.json、注入构建信息并注册 release/deploy 任务。
+根 `build.gradle.kts` 调用 `buildSrc` 中普通 Kotlin 配置函数、注入构建信息并注册 release/deploy 任务。
+默认配置为 `buildSrc/deployment/Deployment.kt`；Git 忽略的 `buildSrc/deployment-local/` 存在时完整
+替换默认目录，`buildSrc` main 只编译选中的一套配置及辅助文件，与标准源码使用相同的 Kotlin 编译。
+层级 DSL 定义在 `buildSrc/src/main/kotlin/deployment/DeploymentDsl.kt`，按 `server`、`deploy`、`client`
+构造最终不可变 `DeploymentConfig`；所有任务共用这个经校验的对象，JSON 仅输出机器快照。
+目录选择与辅助函数示例见[运行配置](../07-operations/configuration.md)。
 顶层其余目录：`scripts/`（含 e2e 自动化辅助）、`doc/`（文档与设计/演示资料）、
 `buildSrc/`（构建与部署插件）。
 
@@ -126,7 +131,8 @@ feature controller；`AppDataState` 只做组装、生命周期和分发，不�
 
 ## 8. 管理与部署
 
-- `server/admin/`：React/Vite 管理后台。
+- `server/admin/`：独立 Gradle 模块，构建 React/Vite 管理后台；`:server:admin:check` 检查 TypeScript
+  并生成 SPA，服务端消费其构建产物。流程见[依赖维护](dependency-maintenance.md#管理后台的构建链)。
 - `buildSrc/src/main/kotlin/deployment/`：配置校验、secret、远端 provisioning、上传。
 - `buildSrc/src/main/kotlin/ArchitectureCheckTask.kt`：架构检查任务，与其它根层 Gradle 任务并列。
 - `.github/workflows/`：CI、本地安全网、真实验收与分平台发布。

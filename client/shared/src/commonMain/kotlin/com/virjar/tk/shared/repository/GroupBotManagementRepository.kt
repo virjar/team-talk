@@ -49,7 +49,7 @@ class GroupBotManagementRepository(
     private val localCache: LocalCache,
     private val onAuthExpired: (rejectedAccessToken: String) -> Unit = {},
 ) : AutoCloseable {
-    private val baseUrl = canonicalSecureGroupBotServerBase(serverUrl)
+    private val baseUrl = canonicalHttpServerBase(serverUrl)
     private val transport = createPlatformGroupBotHttpTransport()
     private val credentialGate = GroupBotCredentialGate(ownerUid, credentialsProvider)
     private val credentialCommandMutex = Mutex()
@@ -287,9 +287,6 @@ internal interface PlatformGroupBotHttpTransport {
 }
 
 internal expect fun createPlatformGroupBotHttpTransport(): PlatformGroupBotHttpTransport
-
-/** Bearer 凭据与新生成的 bot token 只能经由 TLS 传输，显式 loopback 除外。 */
-internal expect fun canonicalSecureGroupBotServerBase(serverUrl: String): String
 
 /** Android 与 Desktop 共用的 HTTP wire 细节；凭据绝不会被记录到日志。 */
 internal object GroupBotHttpContract {

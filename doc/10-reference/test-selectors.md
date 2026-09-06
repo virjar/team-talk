@@ -104,6 +104,10 @@
 | `settings.logout` | 退出登录（红色描边卡片） |
 | `settings.logout.confirm` / `settings.logout.cancel` | 退出二次确认框 |
 | `profile.name` / `profile.phone` | 编辑资料字段；权威资料到达前不会把临时空值保存回服务端 |
+| `profile.save.error` | 资料保存的具体失败原因，包括手机号格式与占用冲突 |
+| `profile.remark.edit` / `profile.remark.input` | 双端好友资料的备注入口与输入框 |
+| `profile.remark.save` / `profile.remark.cancel` / `profile.remark.error` | 备注保存、取消及失败反馈 |
+| `chat.composer.images` / `chat.composer.image.1` / `chat.composer.image.remove.1` | 发送前图片卡片、正文顺序编号及对应移除动作 |
 | `profile.loading` | 冷启动尚在读取权威个人资料，保存按钮保持不可用；本地已有 revision 时不出现 |
 | `profile.avatar.preview` / `profile.avatar.status` | 当前或待保存头像，以及自动居中裁剪/上传状态 |
 | `profile.avatar.pick` / `profile.avatar.remove` | 系统图片选择与清除头像入口 |

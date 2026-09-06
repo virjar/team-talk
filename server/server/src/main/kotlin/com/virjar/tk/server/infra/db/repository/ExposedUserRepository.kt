@@ -15,6 +15,7 @@ import com.virjar.tk.server.infra.db.USERS_USERNAME_UNIQUE_INDEX
 import com.virjar.tk.server.infra.db.Users
 import com.virjar.tk.server.infra.db.requireExposedTransaction
 import com.virjar.tk.server.infra.db.toUserAvatar
+import com.virjar.tk.protocol.model.MainlandPhoneNumber
 import com.virjar.tk.protocol.model.ProfilePatch
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.protocol.model.UserRole
@@ -99,6 +100,14 @@ class ExposedUserRepository internal constructor(
         command: HumanRegistrationCommand,
     ): User {
         transaction.requireExposedTransaction()
+        val phone = MainlandPhoneNumber.normalize(command.phone)
+        phone?.let {
+            try {
+                transaction.requirePhoneAvailable(it, command.uid)
+            } catch (_: IllegalArgumentException) {
+                throw PhoneAlreadyRegisteredException()
+            }
+        }
         val now = System.currentTimeMillis()
         return try {
             insertUser(
@@ -106,7 +115,7 @@ class ExposedUserRepository internal constructor(
                 username = command.username,
                 name = command.name,
                 passwordHash = command.passwordHash,
-                phone = command.phone,
+                phone = phone,
                 role = UserRole.HUMAN,
                 now = now,
             )
@@ -161,11 +170,18 @@ class ExposedUserRepository internal constructor(
             ?: throw IllegalArgumentException("用户不存在")
         profileLockObserver?.afterUserRowLock(uid)
 
+        val requestedPhone = if (patch.phone.isPresent) MainlandPhoneNumber.normalize(patch.phone.valueOrNull) else before.phone
+        // 既有 +86 与裸号可能已经分别属于两个账号。相同号码保持原存储，不以资料编辑抢占或清理旧资料。
+        val phone = if (patch.phone.isPresent && requestedPhone != null &&
+            MainlandPhoneNumber.normalizeOrNull(before.phone) == requestedPhone
+        ) before.phone else requestedPhone
+        if (phone != null && phone != before.phone) transaction.requirePhoneAvailable(phone, uid)
+
         val visibleAfter = before.copy(
             name = if (patch.name.isPresent) requireNotNull(patch.name.valueOrNull) else before.name,
             avatar = if (patch.avatar.isPresent) patch.avatar.valueOrNull else before.avatar,
             sex = if (patch.sex.isPresent) requireNotNull(patch.sex.valueOrNull) else before.sex,
-            phone = if (patch.phone.isPresent) patch.phone.valueOrNull else before.phone,
+            phone = phone,
         )
         if (visibleAfter == before) return UserProfileMutation(user = before, changed = false)
         check(before.revision < Long.MAX_VALUE) { "User revision exhausted" }

@@ -6,14 +6,17 @@
 2. 检查 DNS、防火墙和 `tcpAddress` 的实际端口；5100 只是默认值。
 3. 检查服务端 `TCP_HOST/TCP_PORT`，以及健康响应中的 `tcp` 项；TLS 模式的该项必须完成叶证书
    pin 的真实 handshake，而不只是 socket connect。
-4. 核对只启用 TLS 1.2/1.3、证书链受系统 WebPKI 信任，并覆盖客户端用于 hostname 校验和 SNI 的主机。
+4. 核对只启用 TLS 1.2/1.3，证书 SAN 覆盖客户端连接的主机/IP。默认信任模式检查系统 WebPKI 证书链；
+   私有固定信任模式核对客户端构建的公共 PEM 与服务器当前证书，并检查有效期。不要关闭证书校验排障。
 5. 查看 ConnectionState：CONNECTING 包含 TCP/TLS 建连，CONNECTED 只在 handshake 后发布，
    SYNCHRONIZING、AUTHENTICATED、AUTH_FAILED 另有独立语义。握手前不应出现 AUTH。
 6. 服务端查 AUTH/CLOSE trace 和协议版本。
 7. AUTH_FAILED 不应重试；普通网络或 TLS 失败才进入既有指数退避。
 
 常见原因：客户端构建指向旧实例、证书链/hostname/SNI 错误、TCP 端口或防火墙错误、协议版本不一致、
-token 被踢。非 loopback 连接没有明文回退；只有严格字面量 loopback 开发/测试地址允许明文。
+token 被踢。非 loopback 连接没有明文回退；严格字面量 loopback 开发/测试地址也只有在未配置公共证书时
+才允许明文。检查最终配置可运行 `./gradlew writeDeploymentConfig` 并读取非敏感快照；私有 clone 应有
+自己的 `buildSrc/deployment-local/Deployment.kt`，不要只看主仓库的默认公版配置。
 
 ## 2. 登录后数据为空
 
@@ -28,7 +31,8 @@ token 被踢。非 loopback 连接没有明文回退；只有严格字面量 loo
   与回收日志。只能删除已完成进程内推送尝试且过期的连续前缀，删行和 floor 必须同一事务完成。
 - 查 EventProcessor 是否解码/写库失败且未推进游标。
 - 权威 list 与持久事件重放是否能恢复 Conversation/Contact。
-- 测试环境若经历过破坏性结构调整，清理对应测试数据库后重验。
+- 若经历过破坏性结构调整，先备份并核对布局、迁移与数据集身份；只有得到当前任务对明确范围的清理授权，
+  才能清理相应测试资料，不能把用户资料为空当作默认重建数据库的理由。
 
 不要只在 UI 层加“重新请求”掩盖游标或契约错误。
 

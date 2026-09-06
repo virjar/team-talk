@@ -172,12 +172,13 @@ internal class DesktopFileTransfer(
         file: File,
         contentType: String,
         identity: AttachmentUploadIdentity,
+        displayName: String = file.name,
         onProgress: (Float) -> Unit = {},
     ): UploadResult {
         resources.ensureOpen()
         require(file.isFile) { "文件不存在: ${file.name}" }
         val result = resources.fileRepository
-            .uploadWithMeta(file.asUploadSource(), file.name, contentType, identity) { progress ->
+            .uploadWithMeta(file.asUploadSource(), displayName, contentType, identity) { progress ->
                 resources.ensureOpen()
                 onProgress(progress)
             }

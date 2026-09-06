@@ -33,6 +33,7 @@ internal object RichTextStateHtmlParser : RichTextStateParser<String> {
         val lineBreakParagraphIndexSet = mutableSetOf<Int>()
         val toKeepEmptyParagraphIndexSet = mutableSetOf<Int>()
         var currentRichSpan: RichSpan? = null
+        var pendingImageFormattingWhitespace = false
         var currentListLevel = 0
         // Tracks the next item number per list nesting level for ordered lists.
         // Key = list level (1-based), Value = next number to assign.
@@ -41,18 +42,20 @@ internal object RichTextStateHtmlParser : RichTextStateParser<String> {
         // Only set when start != 1. Used to propagate startFrom to the first OrderedList item.
         val orderedListStartValues = mutableMapOf<Int, Int>()
 
-        val handler = KsoupHtmlHandler
-            .Builder()
-            .onText {
+        // [TT] Use direct callbacks rather than Ksoup Builder's delegated handler chain.
+        // Android release restoration encountered a null delegate before the first open tag;
+        // these callbacks keep the same HTML format and parsing behavior without that chain.
+        val handler = object : KsoupHtmlHandler {
+            override fun onText(text: String) {
                 // In html text inside ul/ol tags is skipped
                 val lastOpenedTag = openedTags.lastOrNull()?.first
-                if (lastOpenedTag == "ul" || lastOpenedTag == "ol") return@onText
+                if (lastOpenedTag == "ul" || lastOpenedTag == "ol") return
 
-                if (lastOpenedTag in skippedHtmlElements) return@onText
+                if (lastOpenedTag in skippedHtmlElements) return
 
-                val addedText = KsoupEntities.decodeHtml(
+                var addedText = KsoupEntities.decodeHtml(
                     removeHtmlTextExtraSpaces(
-                        input = it,
+                        input = text,
                         // Only trim leading ASCII whitespace if the buffer already ends in a
                         // collapsible whitespace run. Non-breaking spaces (U+00A0) are preserved
                         // and must not trigger a trim, otherwise an `&nbsp;` followed by a real
@@ -61,7 +64,21 @@ internal object RichTextStateHtmlParser : RichTextStateParser<String> {
                     )
                 )
 
-                if (addedText.isEmpty()) return@onText
+                if (addedText.isEmpty()) return
+
+                // [TT] Pretty-printed HTML may end an image-only paragraph with newlines.
+                // Preserve their space only if more inline content follows; explicit spaces
+                // from the compact Saver HTML are content and are appended immediately.
+                if (stringBuilder.lastOrNull() == InlineContentPlaceholder.single() &&
+                    addedText == " " && text.any { it == '\n' || it == '\r' }
+                ) {
+                    pendingImageFormattingWhitespace = true
+                    return
+                }
+                if (pendingImageFormattingWhitespace) {
+                    addedText = " " + addedText.trimStart(::isCollapsibleHtmlWhitespace)
+                    pendingImageFormattingWhitespace = false
+                }
 
                 stringBuilder.append(addedText)
 
@@ -82,13 +99,21 @@ internal object RichTextStateHtmlParser : RichTextStateParser<String> {
                     currentRichParagraph.children.add(safeCurrentRichSpan)
                 }
             }
-            .onOpenTag { name, attributes, _ ->
+
+            override fun onOpenTag(name: String, attributes: Map<String, String>, isImplied: Boolean) {
+                if (pendingImageFormattingWhitespace) {
+                    if (name in htmlBlockElements || name == "body" || name == BrElement) {
+                        pendingImageFormattingWhitespace = false
+                    } else if (name !in skippedHtmlElements) {
+                        onText(" ")
+                    }
+                }
                 val lastOpenedTag = openedTags.lastOrNull()?.first
 
                 openedTags.add(name to attributes)
 
                 if (name in skippedHtmlElements) {
-                    return@onOpenTag
+                    return
                 }
 
                 if (name == "ul" || name == "ol") {
@@ -100,7 +125,7 @@ internal object RichTextStateHtmlParser : RichTextStateParser<String> {
                             orderedListStartValues[currentListLevel] = startAttr
                         }
                     }
-                    return@onOpenTag
+                    return
                 }
 
                 if (name == "body") {
@@ -210,6 +235,9 @@ internal object RichTextStateHtmlParser : RichTextStateParser<String> {
                     // string. See #466.
                     if (richSpanStyle is RichSpanStyle.Image) {
                         newRichSpan.text = InlineContentPlaceholder
+                        // [TT] An image separates surrounding whitespace runs just like text.
+                        // Otherwise restoring "before <img> after" removes the second space.
+                        stringBuilder.append(InlineContentPlaceholder)
                     }
 
                     if (currentRichSpan != null) {
@@ -273,7 +301,11 @@ internal object RichTextStateHtmlParser : RichTextStateParser<String> {
                     }
                 }
             }
-            .onCloseTag { name, _ ->
+
+            override fun onCloseTag(name: String, isImplied: Boolean) {
+                if (name in htmlBlockElements || name == "body") {
+                    pendingImageFormattingWhitespace = false
+                }
                 openedTags.removeLastOrNull()
 
                 val isCurrentRichParagraphBlank = richParagraphList.lastOrNull()?.isBlank() == true
@@ -308,11 +340,11 @@ internal object RichTextStateHtmlParser : RichTextStateParser<String> {
                         orderedListStartValues.remove(currentListLevel)
                     }
                     currentListLevel = (currentListLevel - 1).coerceAtLeast(0)
-                    return@onCloseTag
+                    return
                 }
 
                 if (name in skippedHtmlElements)
-                    return@onCloseTag
+                    return
 
                 // Finalize Token labels: the richSpanStyle was created at open-tag time
                 // with an empty label; fill it now that the inner text has accumulated.
@@ -336,7 +368,7 @@ internal object RichTextStateHtmlParser : RichTextStateParser<String> {
                 if (name != BrElement)
                     currentRichSpan = currentRichSpan?.parent
             }
-            .build()
+        }
 
         val parser = KsoupHtmlParser(
             handler = handler
@@ -715,7 +747,11 @@ internal object RichTextStateHtmlParser : RichTextStateParser<String> {
                         "src" to richSpanStyle.model,
                         "width" to richSpanStyle.width.value.toString(),
                         "height" to richSpanStyle.height.value.toString(),
-                    )
+                    ).let { attributes ->
+                        // [TT] Saver restores through HTML; preserve the image's Markdown label.
+                        val description = richSpanStyle.contentDescription
+                        if (description.isNullOrEmpty()) attributes else attributes + ("alt" to description)
+                    }
                 else
                     "span" to emptyMap()
 

@@ -344,6 +344,7 @@ internal fun SubScreenContent(
         is SubScreen.Forward -> ForwardScreen(
             conversations = conversations,
             peerUsers = conversationPeerUsers,
+            peerRemarks = remember(contacts) { com.virjar.tk.app.ui.screen.contactRemarks(contacts) },
             onForward = { targetChatId ->
                 admittedSuspend(onClosed = { false }) {
                     data.discovery.forwardMessage(

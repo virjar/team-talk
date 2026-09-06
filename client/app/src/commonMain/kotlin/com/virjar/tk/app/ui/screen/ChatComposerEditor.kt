@@ -120,6 +120,7 @@ internal fun ComposerEditor(
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                 onUserTextChange = onVisualTextChange,
+                imagePlaceholder = '图',
             )
             if (richState.annotatedString.text.isEmpty()) Text(
                 if (editingSessionActive) "编辑消息…" else "输入消息…",

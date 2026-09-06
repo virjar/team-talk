@@ -18,7 +18,8 @@
 1. wire、RPC、Notify 和消息体的最终事实源是 `protocol` 中的契约与生成测试；
 2. 服务端权限和持久化语义以领域服务及其测试为准；
 3. UI 选择器以源码中的 `testTag` 为准；
-4. 部署参数以 `gradle/deployment.json` 的 schema 和运行时代码为准；
+4. 部署参数以编译后的 Kotlin 配置函数返回的 `DeploymentConfig`、构造器校验和运行时代码为准；默认/local
+   选择与非敏感快照见[运行配置](../07-operations/configuration.md)；
 5. 发现差异时应修正文档或代码，不能长期保留两套解释。
 
 功能状态是动态快照，允许频繁更新；协议编号和 RPC methodId 是兼容性契约，修改必须遵守[协议演进规则](../04-protocol/README.md)。

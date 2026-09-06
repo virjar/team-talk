@@ -1,6 +1,6 @@
 name: Deployment Business Acceptance
 
-# 验收目标与客户端构建统一读取 gradle/deployment.json。
+# 验收目标与客户端构建统一读取 选中的 buildSrc Kotlin 配置。
 # fork 项目修改该文件即可让 CI 对接自己的私有化部署。
 on:
   workflow_dispatch:
@@ -15,12 +15,13 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-      - uses: actions/setup-node@v6.5.0
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: server/admin/package-lock.json
       - uses: gradle/actions/setup-gradle@v5.0.2
+      # TestPeer probes audio metadata locally through the same JavaCV/FFmpeg runtime.
+      - name: Install FFmpeg native runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2t64 libpulse0 libva-drm2 libva2 libxcb1 libxcb-shm0
       - name: Run business tests against deployment
         run: ./gradlew :server:server:acceptanceTest
       - name: Upload test report on failure

@@ -131,6 +131,13 @@ internal fun DesktopUserProfileDialog(
                                 user = nav.account.profileUser?.takeIf { it.uid == uid },
                                 myUid = nav.userSession.uid,
                                 isFriend = nav.account.isFriend,
+                                remark = nav.account.profileRemark,
+                                onSaveRemark = { remark ->
+                                    nav.runAdmittedUiAction(
+                                        presentationGate,
+                                        onClosed = { com.virjar.tk.shared.Outcome.Failure(com.virjar.tk.shared.AppError.AuthExpired) },
+                                    ) { nav.account.setFriendRemark(uid, remark) }
+                                },
                                 hasPendingApply = nav.account.hasOutgoingFriendApply(uid),
                                 hasIncomingApply = nav.account.hasIncomingFriendApply(uid),
                                 isApplyingFriend = nav.account.isApplyingFriend(uid),

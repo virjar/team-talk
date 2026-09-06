@@ -200,7 +200,14 @@ class SyncEventCompactionIntegrationTest {
     fun `lease pinned low uid does not starve the next cleanup candidate`() = runTest {
         val firstCreated = appendEvents("compact-fair-a", 1)
         val secondCreated = appendEvents("compact-fair-b", 1)
-        val (pinnedUid, eligibleUid) = listOf(firstCreated, secondCreated).sorted()
+        // UID 是大小写混合的 base62。PostgreSQL 的 locale 排序不一定等于 Kotlin 字符码排序；
+        // 必须钉住数据库实际排在首位的候选，否则测试偶尔会先清理未钉住的用户。
+        val (pinnedUid, eligibleUid) = transaction(ctx.database) {
+            SyncStreams.selectAll()
+                .where { SyncStreams.uid inList listOf(firstCreated, secondCreated) }
+                .orderBy(SyncStreams.uid to SortOrder.ASC)
+                .map { it[SyncStreams.uid] }
+        }
         markEvents(pinnedUid, dispatchedThrough = 1L)
         markEvents(eligibleUid, dispatchedThrough = 1L)
         val service = retentionService(maxUsersPerRun = 1)

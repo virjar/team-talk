@@ -36,6 +36,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.jetbrains.exposed.sql.update
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.selectAll
@@ -620,6 +621,38 @@ class UserProfileUnitOfWorkIntegrationTest {
 
     private fun updatedAt(uid: String): Long = transaction(ctx.database) {
         Users.selectAll().where { Users.uid eq uid }.single()[Users.updatedAt]
+    }
+
+    @Test
+    fun `mainland phone accepts bare digits and preserves conflicting legacy owners`() = runTest {
+        val phone = uniquePhone("18")
+        val bareOwner = ctx.registerHuman(uniqueUsername("phone-bare-owner"), "pass123", "Bare", phone)
+        val legacyOwner = ctx.registerUser(uniqueUsername("phone-legacy-owner"))
+        // 模拟预览基线已有的双格式占用，不能通过迁移合并或覆盖任一用户。
+        transaction(ctx.database) {
+            Users.update({ Users.uid eq legacyOwner }) { it[Users.phone] = "+86$phone" }
+        }
+        ctx.userService.updateProfile(legacyOwner, ProfilePatch(
+            name = ProfilePatchValue.Set("Legacy renamed"),
+            phone = ProfilePatchValue.Set(phone),
+        ))
+        assertEquals("+86$phone", ctx.userService.getProfile(legacyOwner).phone)
+        assertEquals(phone, ctx.userService.getProfile(bareOwner.uid).phone)
+        assertEquals("Legacy renamed", ctx.userService.getProfile(legacyOwner).name)
+
+        val other = ctx.registerUser(uniqueUsername("phone-new-owner"))
+        val conflict = assertFailsWith<IllegalArgumentException> {
+            ctx.userService.updateProfile(other, ProfilePatch(phone = ProfilePatchValue.Set("+86$phone")))
+        }
+        assertEquals("手机号已被使用", conflict.message)
+        val fresh = uniquePhone("19")
+        ctx.userService.updateProfile(other, ProfilePatch(phone = ProfilePatchValue.Set("+86$fresh")))
+        assertEquals(fresh, ctx.userService.getProfile(other).phone)
+        val invalid = assertFailsWith<IllegalArgumentException> {
+            ctx.userService.updateProfile(other, ProfilePatch(phone = ProfilePatchValue.Set("12345")))
+        }
+        assertEquals("请输入 11 位中国大陆手机号", invalid.message)
+        assertEquals(fresh, ctx.userService.getProfile(other).phone)
     }
 
     private fun uniquePhone(prefix: String): String =

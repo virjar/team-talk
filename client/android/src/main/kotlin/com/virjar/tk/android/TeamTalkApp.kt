@@ -20,6 +20,9 @@ class TeamTalkApp : Application(), coil3.SingletonImageLoader.Factory {
         serverUrl = BuildConfig.SERVER_BASE_URL,
         tcpHost = BuildConfig.TCP_HOST,
         tcpPort = BuildConfig.TCP_PORT,
+        tcpTlsCertificatePem = com.virjar.tk.shared.client.decodeTcpTlsCertificateBase64(
+            BuildConfig.TCP_TLS_CERTIFICATE_BASE64,
+        ),
     )
 
     /** 进程持有的写入器，被本安装中每个 Activity/会话草稿存储共享。 */

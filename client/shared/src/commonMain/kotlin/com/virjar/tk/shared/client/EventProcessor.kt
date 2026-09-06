@@ -425,8 +425,8 @@ class EventProcessor(
                 }
             }
 
-            NotifyType.CONTACT_ACCEPTED -> {
-                // 契约：ACCEPTED 发各自视角的完整 Contact 快照。
+            NotifyType.CONTACT_ACCEPTED, NotifyType.CONTACT_UPDATED -> {
+                // ACCEPTED/UPDATED 都携带本人视角的完整 Contact；备注更新不会变成好友申请。
                 val contact = decodePayload<Contact>(notifyType, payload)
                 publicationGate.use(publicationLease) {
                     localCache.upsertContact(contact)

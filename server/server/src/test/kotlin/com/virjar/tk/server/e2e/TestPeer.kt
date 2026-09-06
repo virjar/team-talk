@@ -27,6 +27,7 @@ import com.virjar.tk.shared.repository.FileRepository
 import com.virjar.tk.shared.repository.asUploadSource
 import com.virjar.tk.protocol.http.UploadResult
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty
+import org.bytedeco.javacv.FFmpegFrameGrabber
 import java.io.*
 import java.util.UUID
 
@@ -40,13 +41,16 @@ import java.util.UUID
  *
  * 媒体消息（sendFileAsB / sendImageAsB / sendVoiceAsB / sendVideoAsB）：
  * 通过 -Dpeer.file=<本地文件路径> 指定文件，脚本自动上传到服务器再发送消息。
- * 所有文件资源收敛到 im.virjar.com，不依赖外部 URL。
+ * 所有文件资源使用当前验收部署的 FileStore，不依赖外部 URL。
  */
 @EnabledIfSystemProperty(named = "tk.e2e.remote", matches = "true")
 class TestPeer {
 
-    /** 服务器地址，通过系统属性或默认值 */
-    private val serverUrl: String get() = System.getProperty("peer.server") ?: "https://im.virjar.com"
+    /** 显式对端地址优先，否则使用 Gradle 从本仓库有效部署配置注入的 HTTP 地址。 */
+    private val serverUrl: String
+        get() = System.getProperty("peer.server") ?: checkNotNull(System.getProperty("tk.e2e.server")) {
+            "TestPeer requires peer.server or tk.e2e.server; remote Gradle tests provide the configured deployment"
+        }
 
     // ──────────────── 工具方法 ────────────────
 
@@ -597,13 +601,22 @@ class TestPeer {
         val file = File(System.getProperty("peer.file") ?: return@runBlocking)
         if (!file.exists()) { println("[TestPeer] file not found: ${file.absolutePath}"); return@runBlocking }
 
+        // 测试发送方也必须声明真实元数据；固定 12 秒会把测试夹具错误误报为客户端显示错误。
+        val duration = peerAudioDurationSeconds(file)
+        val mimeType = when (file.extension.lowercase()) {
+            "m4a", "mp4" -> "audio/mp4"
+            "mp3" -> "audio/mpeg"
+            "wav" -> "audio/wav"
+            "ogg" -> "audio/ogg"
+            else -> "audio/aac"
+        }
         val session = RemoteAcceptanceSupport.loginUser(username, "password123")
-        val attachment = uploadFile(file, session, "audio/aac")
+        val attachment = uploadFile(file, session, mimeType)
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
             messageType = MessageType.VOICE.code, timestamp = System.currentTimeMillis(),
-            senderUid = session.uid, body = VoiceBody(attachment, duration = 12))
+            senderUid = session.uid, body = VoiceBody(attachment, duration = duration))
         val ack = session.imClient.sendAndWaitAck(msg)
-        println("===SEND_VOICE ${if (ack.code == 0) "SUCCESS" else "FAILED"}=== ack=${ack.code}")
+        println("===SEND_VOICE ${if (ack.code == 0) "SUCCESS" else "FAILED"}=== ack=${ack.code} durationSec=$duration")
         session.close()
     }
 
@@ -623,9 +636,21 @@ class TestPeer {
         val msg = Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(),
             messageType = MessageType.VIDEO.code, timestamp = System.currentTimeMillis(),
             senderUid = session.uid,
-            body = VideoBody(upload.file, duration = 5, width = 960, height = 540, thumbnail = upload.thumbnail))
+            body = VideoBody(upload.file, duration = requireNotNull(upload.durationSec),
+                width = upload.width, height = upload.height, thumbnail = upload.thumbnail))
         val ack = session.imClient.sendAndWaitAck(msg)
         println("===SEND_VIDEO ${if (ack.code == 0) "SUCCESS" else "FAILED"}=== ack=${ack.code} thumb=${upload.thumbnail != null}")
         session.close()
     }
+}
+
+/** 仅验收工具使用本地探测；不改变语音 wire 的秒单位或产品的录音时长来源。 */
+internal fun peerAudioDurationSeconds(file: File): Int = FFmpegFrameGrabber(file).use { grabber ->
+    grabber.start()
+    require(grabber.audioChannels > 0 && grabber.lengthInTime > 0L) {
+        "验收语音文件必须包含可读取时长的音轨"
+    }
+    (grabber.lengthInTime / 1_000_000L).coerceAtLeast(1L).also {
+        require(it <= Int.MAX_VALUE) { "验收语音文件时长超出范围" }
+    }.toInt()
 }

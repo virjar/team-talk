@@ -17,7 +17,7 @@ TeamTalk 选择的是“可理解、可部署、可演进”的单体架构，�
 - PostgreSQL 保存关系数据，RocksDB 保存消息和文件，Lucene 提供全文搜索。
 - 客户端采用本地优先模型：页面观察本地 SQLite，网络写入通过事件同步收敛到本地状态。
 
-项目仍处于正式发布前的快速演进阶段。协议、数据库和客户端缓存可能发生不兼容调整；当前版本
+项目处于开发者预览阶段，尚未进入稳定版本阶段。协议、数据库和客户端缓存可能发生不兼容调整；当前版本
 适合开发、测试和私有化评估，不建议未经评审直接用于生产环境。内部开发从零号预览基线开始按
 [版本与兼容规则](doc/04-protocol/versioning.md)维护短期兼容和数据迁移，普通升级保留既有资料。
 
@@ -53,7 +53,7 @@ team-talk/
 ├── server/                   服务端
 │   ├── server/               Ktor + Netty 单体服务端
 │   └── admin/                管理后台前端
-├── buildSrc/                 部署配置解析、构建与发布任务
+├── buildSrc/                 部署配置 DSL、构建与发布任务
 ├── scripts/                  验收脚本与 e2e 自动化辅助
 └── doc/                      产品、架构、运维、开发和测试文档；design/ 保存品牌与图标素材
 ```
@@ -74,13 +74,15 @@ android / desktop ──▶ app ──▶ shared ──▶ protocol-netty ──
 ### 前置条件
 
 - JDK 17
-- Node.js 24 LTS 与 npm（本地也支持 Node.js 22.12+ 的 22 LTS；Server 资源图会从锁文件构建 Admin）
 - Docker（本地 PostgreSQL）
 - Android Studio（仅 Android 开发需要）
 
+Gradle 自动下载固定版本的 Node.js，并从锁文件构建管理后台；常规构建不需要全局安装 Node.js 或 npm。
+首次构建需要网络，前端热更新开发见[开发环境](doc/01-getting-started/development.md#33-管理后台开发)。
+
 ### 启动 Desktop 客户端
 
-客户端默认读取 [`gradle/deployment.json`](gradle/deployment.json) 中的公开服务器坐标：
+客户端默认读取 [`buildSrc/deployment/Deployment.kt`](buildSrc/deployment/Deployment.kt) 中的公版服务器坐标：
 
 ```bash
 ./gradlew :client:desktop:run
@@ -102,6 +104,7 @@ docker compose up -d
 ```bash
 ./gradlew :protocol:protocol:jvmTest :protocol:protocol-netty:jvmTest :client:shared:jvmTest
 ./gradlew :server:server:test
+./gradlew :server:admin:check
 ./gradlew :client:app:desktopTest :client:desktop:desktopTest
 ./gradlew :client:desktop:compileKotlinDesktop
 ./gradlew :server:server:acceptanceTest
@@ -112,22 +115,33 @@ docker compose up -d
 
 ## 私有化部署
 
-fork 项目后修改 [`gradle/deployment.json`](gradle/deployment.json) 中的 HTTP、TCP 和 SSH
-坐标，并在本地或 CI 中提供不入库的 `gradle/deployment.secrets`。标准部署流程为：
+主仓库的 [`buildSrc/deployment/Deployment.kt`](buildSrc/deployment/Deployment.kt) 保持公版 `im.virjar.com`。
+私有出包和部署使用独立 clone，在其中创建不入库的 `buildSrc/deployment-local/Deployment.kt`，用
+`server`、`deploy`、`client` 三个 DSL 章节描述自己的配置；TCP/SSH 主机默认跟随 HTTP URL，HTTPS 端口也从 URL 推导。
+`buildSrc` 只编译选中的一套配置，普通 Kotlin 函数返回统一校验的对象；新增或切换 local 目录后重新
+同步 Gradle。双端分别保存资料，私有站点提供
+Android 安装包与 Desktop 更新源，具体见[客户端发行身份](doc/07-operations/configuration.md#客户端发行身份)。
+管理员本机提供不入库的 `gradle/deployment.secrets`。服务端由人工部署，CI 只构建发行归档和
+发布客户端。可以用服务器 IP、HTTP 站点与本机生成的 TCP TLS 证书部署，无需先申请域名或购买 HTTPS
+证书。完成[私有配置与证书准备](doc/01-getting-started/private-deployment.md)及
+[版本与签名准备](doc/07-operations/releasing.md)后的标准流程为：
 
 ```bash
 ./gradlew verifyRelease
 ./gradlew deployServer \
-  -PsslCert=/secure/teamtalk/fullchain.pem \
-  -PsslKey=/secure/teamtalk/privkey.pem
+  -PsslCert=gradle/tcp-tls/certificate.pem \
+  -PsslKey=gradle/tcp-tls/private-key.pem
 ./gradlew :server:server:acceptanceTest
-./gradlew releaseClients
+./gradlew release -PreleaseTargets=site
 ```
 
-上述示例使用当前远程客户端已经接通的 HTTPS + TLS/TCP 路径；首次 HTTPS 部署需要成对证书参数，
-升级可同时省略以保留现有证书。服务运行时、SDK 与部署工具对明文和证书的支持尚未完全一致，
-具体见[传输配置边界](doc/07-operations/configuration.md#传输配置边界)。
+首次 TLS/TCP 部署需要成对证书参数，升级可同时省略以保留现有证书；HTTP 与 TCP TLS 独立配置。
+已有受信任证书时也支持 HTTPS + TLS/TCP，具体见[传输配置边界](doc/07-operations/configuration.md#传输配置边界)。
 配置字段、安全边界、首次安装与升级流程见[私有化部署](doc/01-getting-started/private-deployment.md)。
+`./gradlew release` 默认只产生密封本地目录；站点上传需要已有 SSH 私钥和已核验的 known_hosts。
+本地与站点发布支持本机配置覆写；GitHub 发布拒绝 local 覆写，发行目录保留最终非敏感 JSON 快照，
+JSON 不作为下一次构建的配置输入。
+客户端构建与发布在 Windows 使用 `.\gradlew.bat` 同名任务，参数和 CI 一致，见[统一发行流程](doc/07-operations/releasing.md)。
 
 ## 架构摘要
 

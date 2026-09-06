@@ -768,7 +768,7 @@ class ClientTelemetryArchitectureIntegrationTest {
 
     @Test
     fun `device administration resolves phone without persisting it in telemetry`() = runTest {
-        val phone = "1390000${(10_000..99_999).random()}"
+        val phone = "139000${(10_000..99_999).random()}"
         val owner = registerTelemetryOwner("telemetry-phone", "phone-device", phone)
         val uid = owner.uid
         control.refreshDevice(owner.authority, runtime(), System.currentTimeMillis(), null)

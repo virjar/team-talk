@@ -18,7 +18,7 @@ TestPeer 是 Kotlin 测试（server 模块），扮演账号 B 与 UI 操作的�
     # B 给 A 发消息（需要 chatId）
     peer.send_msg(info.username, chat_id, "hello from B")
 
-前置：gradle/deployment.json 指定的服务器在线，TCP 端点可达。
+前置：选中的 buildSrc Kotlin 配置 指定的服务器在线，TCP 端点可达。
 """
 import base64
 import os

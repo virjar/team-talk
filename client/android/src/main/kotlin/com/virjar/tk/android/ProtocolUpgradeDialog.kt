@@ -7,6 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.window.DialogProperties
+import com.virjar.tk.app.identity.ClientIdentity
 
 internal data class ProtocolUpgradeDialogPolicy(
     val title: String,
@@ -18,7 +19,7 @@ internal data class ProtocolUpgradeDialogPolicy(
 
 internal val forceProtocolUpgradeDialogPolicy = ProtocolUpgradeDialogPolicy(
     title = "客户端需要更新",
-    message = "当前版本与服务器不兼容。请更新到最新版本后再继续使用 TeamTalk。",
+    message = "当前版本与服务器不兼容。请更新到最新版本后再继续使用 ${ClientIdentity.DISPLAY_NAME}。",
     confirmLabel = "退出应用",
     dismissOnBackPress = false,
     dismissOnClickOutside = false,

@@ -23,7 +23,8 @@ projection readiness。所有关键组件 UP 才返回 200。响应同时包含�
 但不参与核心 IM overall readiness；它故障时聊天、组织、文件等业务继续承接流量。
 TLS 实例的 `tcp` component 不做普通 socket 冒烟：探针以当前 keystore 叶证书作为唯一信任锚，对由
 `TCP_HOST` 派生的本机连接地址和 `TCP_PORT` 完成一次真实 TLS handshake。它证明本实例正在呈现预期
-叶证书，但客户端侧仍须以系统 WebPKI 验证完整链、hostname 与 SNI。显式 loopback 明文测试实例才
+叶证书，但客户端侧仍须按部署配置选择系统 WebPKI 或专用单证书 TrustStore，并验证 hostname/IP SAN。
+服务自检成功不证明客户端内嵌的证书与当前实例相同。显式 loopback 明文测试实例才
 只检查 socket 连通性。
 
 `sync-event-dispatcher=DOWN` 表示首次 durable scan 尚未成功，或运行期 worker 已不可恢复地终止。

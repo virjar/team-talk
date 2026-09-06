@@ -32,11 +32,12 @@ internal fun desktopEmbeddedAssetSelection(
     presentation: EmbeddedAssetPresentation,
     source: EmbeddedAssetImportSource,
     deleteAfterImport: Boolean = false,
+    displayName: String = file.name,
 ): EmbeddedAssetLocalSelection {
     require(file.isFile) { "文件不存在: ${file.name}" }
     return EmbeddedAssetLocalSelection(
         localReference = file.absolutePath,
-        displayName = file.name,
+        displayName = displayName,
         contentType = desktopContentType(file.name),
         size = file.length(),
         presentation = presentation,
@@ -127,6 +128,7 @@ internal fun importDesktopClipboardAsset(gateway: EmbeddedAssetImportGateway): B
             presentation = EmbeddedAssetPresentation.IMAGE,
             source = EmbeddedAssetImportSource.DESKTOP_CLIPBOARD,
             deleteAfterImport = true,
+            displayName = "剪贴板图片.png",
         ),
     )
     true
@@ -248,6 +250,7 @@ internal class DesktopEmbeddedAssetImportGateway(
                     file = file,
                     contentType = attempt.selection.contentType,
                     identity = attempt.identity,
+                    displayName = attempt.selection.displayName,
                 ) { progress ->
                     val monotonic = progress.coerceIn(latestProgress, 1f)
                     latestProgress = monotonic

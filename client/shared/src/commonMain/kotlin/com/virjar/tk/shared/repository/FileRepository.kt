@@ -612,15 +612,8 @@ internal interface PlatformFileTransport {
 
 internal expect fun createPlatformFileTransport(): PlatformFileTransport
 
+/** HTTP/HTTPS 由部署地址显式选择；文件、机器人和遥测共用此规则，不做隐式降级。 */
 internal expect fun canonicalHttpServerBase(serverUrl: String): String
-
-/** 唯一允许明文 HTTP 的例外是显式的本地开发端点。 */
-internal fun String.isExplicitLoopbackHost(): Boolean =
-    equals("localhost", ignoreCase = true) ||
-        this == "127.0.0.1" ||
-        this == "::1" ||
-        // 在两个 JVM 目标上，java.net.URI 都会在 IPv6 authority 的 host 中保留方括号。
-        this == "[::1]"
 
 private fun createAttachmentUploadIdentity(): AttachmentUploadIdentity = AttachmentUploadIdentity(
     uploadId = UUID.randomUUID().toString(),

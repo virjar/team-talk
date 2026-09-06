@@ -16,6 +16,7 @@ internal class ProtocolBuildPolicy(options: Map<String, String>) {
     val current = options["teamtalk.protocolMinor"]?.toInt() ?: 0
     val minimum = options["teamtalk.minimumProtocolMinor"]?.toInt() ?: 0
     val baseline = options["teamtalk.protocolBaseline"]?.let(::File)
+    val publishedBaseline = options["teamtalk.publishedProtocolBaseline"]?.let(::File)
     val record = options["teamtalk.recordProtocolBaseline"] == "true"
 
     fun availability(node: KSAnnotated, parent: KSAnnotated?, logger: KSPLogger): AvailabilityModel {
@@ -67,7 +68,7 @@ internal data class WireSchema(val major: Int, val minor: Int, val entries: List
     }
 }
 
-/** 即便显式重新登记，也不能在同 major 改写已经冻结的签名或复用墓碑。 */
+/** 比较指定事实源；发行快照不可改，开发清单可通过显式登记收敛未发布增量。 */
 internal fun mergeWireSchema(
     previous: WireSchema?,
     current: WireSchema,
@@ -155,7 +156,9 @@ internal class WireSchemaGenerator(
         if (entries.isEmpty() && policy.baseline == null) return
         val current = WireSchema(policy.major, policy.current, entries)
         val previous = policy.baseline?.takeIf(File::isFile)?.let { WireSchema.parse(it.readText()) }
-        val merged = mergeWireSchema(previous, current, policy.minimum, services.flatMap { service -> service.reservedMethodIds.map { "${service.name}/$it" } }.toSet()) { logger.error(it) }
+        val published = policy.publishedBaseline?.let { WireSchema.parse(it.readText()) }
+        val reservedIds = services.flatMap { service -> service.reservedMethodIds.map { "${service.name}/$it" } }.toSet()
+        val merged = reconcileWireSchema(previous, published, current, policy.minimum, reservedIds, policy.record) { logger.error(it) }
         if (policy.baseline != null && !policy.record && previous?.text() != merged.text()) {
             logger.error("Wire baseline is missing or unregistered; review changes and run :protocol:protocol:writeProtocolBaseline")
         }
@@ -192,4 +195,21 @@ internal class WireSchemaGenerator(
         }
         generator.createNewFileByPath(Dependencies.ALL_FILES, "ProtocolWireRegistry", "kt").use { it.write(source.toByteArray()) }
     }
+}
+
+/** A changed development TSV must never mask a published signature or tombstone. */
+internal fun reconcileWireSchema(
+    development: WireSchema?,
+    published: WireSchema?,
+    current: WireSchema,
+    minimumMinor: Int,
+    reservedRpcIds: Set<String>,
+    recordDevelopment: Boolean,
+    report: (String) -> Unit,
+): WireSchema {
+    // Always protect the frozen release, even if somebody also edited the development baseline.
+    val frozenChecked = mergeWireSchema(published, current, minimumMinor, reservedRpcIds, report)
+    // Explicit recording may reclaim only unpublished work. Ordinary builds still require its review.
+    return if (recordDevelopment && published != null) frozenChecked
+    else mergeWireSchema(development, current, minimumMinor, reservedRpcIds, report)
 }

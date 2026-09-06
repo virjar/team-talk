@@ -2,6 +2,10 @@ package com.virjar.tk.server.media
 
 import com.virjar.tk.server.infra.media.LocalThumbnailGenerator
 import com.virjar.tk.server.infra.storage.ManagedTempResidueException
+import org.bytedeco.ffmpeg.global.avutil.AV_LOG_QUIET
+import org.bytedeco.ffmpeg.global.avutil.av_log_get_level
+import org.bytedeco.ffmpeg.global.avutil.av_log_set_level
+import org.bytedeco.javacv.FFmpegFrameGrabber
 import org.junit.jupiter.api.Test
 import java.awt.image.BufferedImage
 import java.io.File
@@ -208,10 +212,18 @@ class ThumbnailServiceTest {
         try {
             val svc = LocalThumbnailGenerator(fake.parentFile)
             fake.writeBytes(ByteArray(4096) { (it % 251).toByte() })
-            val info = svc.processVideo(fake)
-            println("fake video thumb=${info?.thumbFile != null}")
+            FFmpegFrameGrabber.tryLoad()
+            val previousLogLevel = av_log_get_level()
+            try {
+                // 此用例专门探测损坏视频，moov/low-score 告警是预期输入的结果。
+                // server 测试串行执行；只在这一小段抑制 JNI stderr，并在断言失败时也恢复级别。
+                av_log_set_level(AV_LOG_QUIET)
+                assertNull(svc.processVideo(fake), "无效视频应明确降级，不产生缩略图或伪元数据")
+            } finally {
+                av_log_set_level(previousLogLevel)
+            }
         } finally {
-            fake.delete()
+            assertTrue(fake.delete() || !fake.exists())
         }
     }
 }

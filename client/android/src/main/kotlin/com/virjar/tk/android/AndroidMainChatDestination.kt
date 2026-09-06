@@ -19,6 +19,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -99,15 +100,16 @@ internal fun NavGraphBuilder.chatDestination(
         val viewModel = dataState.chatViewModelFor(chatId)
         val conversations by dataState.conversationViewModel.conversations.collectAsState()
         val peerUsers by dataState.conversationViewModel.peerUsers.collectAsState()
+        val chatContacts by dataState.contactViewModel.contacts.collectAsState()
+        val peerRemarks = remember(chatContacts) { com.virjar.tk.app.ui.screen.contactRemarks(chatContacts) }
         // 路由只携带身份。可变的标题/类型总是来自持久的 LocalCache 投影，
         // 因此恢复出来的返回栈不会冻结元数据。
         val currentConversation = conversations.find { it.chatId == chatId }
         val chatName = currentConversation?.let { conversation ->
-            conversationIdentityPresentation(conversation, conversation.peerUid?.let(peerUsers::get)).name
+            conversationIdentityPresentation(conversation, conversation.peerUid?.let(peerUsers::get), conversation.peerUid?.let(peerRemarks::get)).name
         } ?: chatId.take(16)
         val chatType = currentConversation?.chatType
             ?: com.virjar.tk.protocol.model.ChatType.PERSONAL.code
-        val chatContacts by dataState.contactViewModel.contacts.collectAsState()
         // @ 候选只读 LocalCache 的成员/用户组合投影；路由身份阻止 A→B 串页。
         LaunchedEffect(chatId, chatType) {
             admittedAction(onClosed = {}) {

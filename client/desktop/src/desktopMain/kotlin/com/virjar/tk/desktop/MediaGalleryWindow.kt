@@ -1,5 +1,7 @@
 package com.virjar.tk.desktop
 
+import com.virjar.tk.app.identity.ClientIdentity
+
 import androidx.compose.runtime.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.window.Window
@@ -45,7 +47,7 @@ internal fun MediaGalleryWindow(
 
     Window(
         onCloseRequest = dismissGallery,
-        title = "媒体预览",
+        title = "${ClientIdentity.DISPLAY_NAME} - 媒体预览",
         state = windowState,
         undecorated = true,  // 无边框，沉浸式
     ) {

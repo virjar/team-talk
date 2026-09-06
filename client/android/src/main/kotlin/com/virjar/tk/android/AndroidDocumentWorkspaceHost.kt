@@ -1,7 +1,6 @@
 package com.virjar.tk.android
 
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -88,17 +87,11 @@ internal fun AndroidDocumentWorkspaceHost(
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         imports.completePicker(EmbeddedAssetPresentation.FILE, uri)
     }
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+    val imagePicker = rememberAndroidVisualMediaPicker { uri ->
         imports.completePicker(EmbeddedAssetPresentation.IMAGE, uri)
     }
     SideEffect {
-        selector.pickImage = {
-            imagePicker.launch(
-                PickVisualMediaRequest.Builder()
-                    .setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                    .build(),
-            )
-        }
+        selector.pickImage = imagePicker
         selector.pickFile = { filePicker.launch(arrayOf("*/*")) }
     }
     val media = remember(context.applicationContext, mediaResources, fileDownloads, imports) {

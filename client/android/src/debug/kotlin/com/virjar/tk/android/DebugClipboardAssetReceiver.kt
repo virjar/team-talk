@@ -28,7 +28,7 @@ class DebugClipboardAssetReceiver : BroadcastReceiver() {
     }
 
     companion object {
-        const val ACTION_SET_IMAGE = "com.virjar.tk.android.DEBUG_SET_CLIPBOARD_IMAGE"
+        const val ACTION_SET_IMAGE = BuildConfig.APPLICATION_ID + ".DEBUG_SET_CLIPBOARD_IMAGE"
 
         private const val DEBUG_IMAGE_PNG =
             "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAA/klEQVR42u2aSw7CMAxE01HvRG9Fj8KxuBXsACFoaGKntnhesajEvMjjT9rpdL6VzKGSPAAAAAAAAAAAAAD+GWD+/dHrZaiyZSWFAAjmgYYE3RsNNiOFAOgs0HMQ9c0Mynv2eCDA8R8JYDVZKY76tuao1OqjmLhnMNHhx985VmmkFz1WIg1rorapbwDwKqjK4KS+C+Dt7/emh9VGIcPq8Y3B3LiWJq4yeN9lyLyKV71hu47KoxNtVCfzZVpO3XSMeuNOvK3P6SJDcaaaKLPQRwY/MPlNl8v6/JFvpXyI9k4qlvqS83J38MsOUggAv5j45AwAAAAAAAAAAAAgb9wBwJg/0VNNYxQAAAAASUVORK5CYII="

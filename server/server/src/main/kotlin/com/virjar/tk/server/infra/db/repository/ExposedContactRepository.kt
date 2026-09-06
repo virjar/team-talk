@@ -205,13 +205,16 @@ class ExposedContactRepository internal constructor(
         uid: String,
         friendUid: String,
         remark: String?,
-    ) {
-        inWriteTransaction(transaction) {
-            lockUserPair(uid, friendUid)
-            Friends.update({ (Friends.uid eq uid) and (Friends.friendUid eq friendUid) }) {
-                it[Friends.remark] = remark
-            }
+    ): Contact? = inWriteTransaction(transaction) {
+        lockUserPair(uid, friendUid)
+        val row = friendUserJoin().selectAll().where {
+            (Friends.uid eq uid) and (Friends.friendUid eq friendUid) and (Friends.status eq 1)
+        }.singleOrNull() ?: throw IllegalArgumentException("只能为好友设置备注")
+        if (row[Friends.remark] == remark) return@inWriteTransaction null
+        Friends.update({ (Friends.uid eq uid) and (Friends.friendUid eq friendUid) }) {
+            it[Friends.remark] = remark
         }
+        Contact(uid = uid, friendUid = friendUid, remark = remark, status = 1, user = row.toUser())
     }
 
     override fun blacklist(

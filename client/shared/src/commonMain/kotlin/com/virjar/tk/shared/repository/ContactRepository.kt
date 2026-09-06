@@ -108,7 +108,11 @@ class ContactRepository(
         localCache.deleteContact(friendUid)
     }
 
-    suspend fun setRemark(friendUid: String, remark: String?): Outcome<Unit> = outcome { rpc.setRemark(friendUid, remark) }
+    suspend fun setRemark(friendUid: String, remark: String?): Outcome<Unit> = outcome {
+        rpc.setRemark(friendUid, remark)
+        // ACK 可能早于通知，旧服务器也没有备注事件；通过已有快照合并门禁收敛本机。
+        listFriends().getOrThrow()
+    }
     suspend fun blacklist(targetUid: String): Outcome<Unit> = outcome { rpc.blacklist(targetUid) }
     suspend fun removeFromBlacklist(targetUid: String): Outcome<Unit> = outcome { rpc.removeFromBlacklist(targetUid) }
     suspend fun listBlacklist(): Outcome<List<Contact>> = outcome { rpc.listBlacklist() }

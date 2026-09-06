@@ -52,6 +52,7 @@ internal fun filterConversationsForSearch(
     conversations: List<Conversation>,
     query: String,
     peerUsers: Map<String, User> = emptyMap(),
+    peerRemarks: Map<String, String> = emptyMap(),
 ): List<Conversation> {
     val term = query.trim()
     if (term.isBlank()) return emptyList()
@@ -62,7 +63,7 @@ internal fun filterConversationsForSearch(
         } else {
             listOfNotNull(conversation.chatName)
         }
-        (identityTerms + listOfNotNull(conversation.lastMessage, conversation.chatId))
+        (identityTerms + listOfNotNull(conversation.peerUid?.let(peerRemarks::get), conversation.lastMessage, conversation.chatId))
             .any { it.contains(term, ignoreCase = true) }
     }
 }
@@ -70,10 +71,10 @@ internal fun filterConversationsForSearch(
 internal fun filterContactsForSearch(contacts: List<Contact>, query: String): List<User> {
     val term = query.trim()
     if (term.isBlank()) return emptyList()
-    return contacts.mapNotNull { it.user }.filter { user ->
-        listOf(user.name, user.username, user.phone.orEmpty())
+    return contacts.filter { contact ->
+        listOfNotNull(contact.remark, contact.user?.name, contact.user?.username, contact.user?.phone)
             .any { it.contains(term, ignoreCase = true) }
-    }
+    }.mapNotNull { it.user }
 }
 
 internal fun mergeUsersForSearch(
@@ -243,8 +244,9 @@ fun GlobalSearchScreen(
     val peerUsers = remember(contacts, conversationPeerUsers) {
         conversationPeerUsersForSearch(contacts, conversationPeerUsers)
     }
-    val localConversations = remember(conversations, term, peerUsers) {
-        filterConversationsForSearch(conversations, term, peerUsers)
+    val peerRemarks = remember(contacts) { contactRemarks(contacts) }
+    val localConversations = remember(conversations, term, peerUsers, peerRemarks) {
+        filterConversationsForSearch(conversations, term, peerUsers, peerRemarks)
     }
     val localUsers = remember(contacts, term) {
         filterContactsForSearch(contacts, term)
@@ -321,12 +323,13 @@ fun GlobalSearchScreen(
                 scope = scope,
                 conversations = localConversations,
                 peerUsers = peerUsers,
+                peerRemarks = peerRemarks,
                 messages = remoteMessages,
                 people = people,
                 conversationNames = conversations.associate { conversation ->
                     val peer = conversation.peerUid?.let(peerUsers::get)
                     conversation.chatId to
-                        (conversationIdentityPresentation(conversation, peer).name ?: conversation.chatId.take(12))
+                        (conversationIdentityPresentation(conversation, peer, conversation.peerUid?.let(peerRemarks::get)).name ?: conversation.chatId.take(12))
                 },
                 searching = searching,
                 onConversationClick = onConversationClick,
@@ -358,6 +361,7 @@ private fun SearchResults(
     scope: GlobalSearchScope,
     conversations: List<Conversation>,
     peerUsers: Map<String, User>,
+    peerRemarks: Map<String, String>,
     messages: List<Message>,
     people: List<User>,
     conversationNames: Map<String, String>,
@@ -394,13 +398,14 @@ private fun SearchResults(
                     conversation,
                     conversation.peerUid?.let(peerUsers::get),
                     onConversationClick,
+                    conversation.peerUid?.let(peerRemarks::get),
                 )
             }
         }
         if (showPeople && people.isNotEmpty()) {
             item("people.header") { SearchSectionHeader("联系人与用户") }
             items(people.take(if (scope == GlobalSearchScope.ALL) 6 else 40), key = { "user.${it.uid}" }) { user ->
-                SearchUserRow(user, onUserClick)
+                SearchUserRow(user, onUserClick, peerRemarks[user.uid])
             }
         }
         if (showMessages && messages.isNotEmpty()) {
@@ -441,8 +446,9 @@ private fun SearchConversationRow(
     conversation: Conversation,
     peerUser: User?,
     onClick: (Conversation) -> Unit,
+    remark: String? = null,
 ) {
-    val identity = conversationIdentityPresentation(conversation, peerUser)
+    val identity = conversationIdentityPresentation(conversation, peerUser, remark)
     val displayName = identity.name
     ListItem(
         headlineContent = { Text(displayName ?: conversation.chatId.take(16), maxLines = 1) },
@@ -462,9 +468,9 @@ private fun SearchConversationRow(
 }
 
 @Composable
-private fun SearchUserRow(user: User, onClick: (User) -> Unit) {
+private fun SearchUserRow(user: User, onClick: (User) -> Unit, remark: String? = null) {
     ListItem(
-        headlineContent = { Text(user.name) },
+        headlineContent = { Text(contactDisplayName(user, remark, user.uid)) },
         supportingContent = { Text("@${user.username}") },
         leadingContent = { AvatarPlaceholder(name = user.name, avatar = user.avatar, size = 36) },
         trailingContent = { Text("查看资料", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary) },

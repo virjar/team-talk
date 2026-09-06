@@ -143,6 +143,8 @@ internal fun HomeScreen(
                         dataState.markConversationRead(chatId, lastSeq)
                     },
                     peerUsers = conversationPeerUsers,
+                    peerRemarks = remember(contacts) { com.virjar.tk.app.ui.screen.contactRemarks(contacts) },
+                    loadMessagePreview = dataState.conversationViewModel::messagePreview,
                 )
                 MainTab.CONTACTS -> Column(modifier = Modifier.fillMaxSize()) {
                     DirectoryScreen(

@@ -143,6 +143,19 @@ class EventProcessorTest {
     }
 
     @Test
+    fun `CONTACT_UPDATED converges private remarks and clears them without changing public names`() = runBlocking {
+        val user = User(uid = "u2", username = "u2", name = "公开名字")
+        val contact = Contact(uid = "me", friendUid = "u2", user = user)
+        cache.upsertContact(contact)
+        val updated = contact.copy(remark = "同事")
+        repeat(2) { ep.handleNotifyPayload(NotifyType.CONTACT_UPDATED, ProtoCodec.encode(updated)) }
+        assertEquals(updated, cache.getContacts().single())
+        assertEquals(user.name, cache.getUser(user.uid)?.name)
+        ep.handleNotifyPayload(NotifyType.CONTACT_UPDATED, ProtoCodec.encode(contact))
+        assertEquals(contact, cache.getContacts().single())
+    }
+
+    @Test
     fun `CONTACT_DELETED - 即使 payload status 默认为正常也必须删除好友`() = runBlocking {
         cache.upsertContact(
             Contact(

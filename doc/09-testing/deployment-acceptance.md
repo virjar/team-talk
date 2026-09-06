@@ -1,17 +1,20 @@
 # 真实部署验收
 
-TeamTalk 的主业务验收连接 `gradle/deployment.json` 指向的测试部署。它验证的不是单个类，而是客户端 SDK、TCP 服务、HTTP 文件端点、数据库和搜索索引共同形成的系统行为。
+TeamTalk 的主业务验收连接当前选中部署配置函数的目标。它验证客户端 SDK、TCP 服务、HTTP 文件端点、
+数据库和搜索索引共同形成的系统行为。私有验收在独立 clone 中使用 Git 忽略的
+`buildSrc/deployment-local/Deployment.kt`，主仓库默认 `buildSrc/deployment/Deployment.kt` 保持公版坐标。
 
 ## 前置条件
 
-1. `gradle/deployment.json` 已填写目标服务器参数；当前远程 SDK 验收使用 HTTPS + TLS/TCP 组合，
-   其与服务运行时、部署工具的支持范围见[传输配置边界](../07-operations/configuration.md#传输配置边界)。
-2. HTTPS 健康检查可达，`tcpAddress` 端口与运行时 `TCP_PORT` 一致，公网 IM TCP 可完成 TLS handshake。
+1. 当前选中的部署配置函数已填写目标服务器参数；传输组合与证书要求见
+   [传输配置边界](../07-operations/configuration.md#传输配置边界)。
+2. 配置的 HTTP(S) 健康检查可达，`tcpAddress` 端口与运行时 `TCP_PORT` 一致，公网 IM TCP 可完成 TLS handshake。
 3. 如果服务端代码、数据库结构或静态资源有变化，先部署新版本。
 4. 测试环境允许创建带独立前缀的临时账户和业务数据。
 5. 组织资产归属验收还需要运行机上的 owner-only `gradle/deployment.secrets`，或同时设置
    `TK_E2E_ADMIN_USER` / `TK_E2E_ADMIN_PASSWORD`；`acceptanceTest` 是显式的完整验收入口，缺少管理 fixture
    会带配置提示明确失败，不允许跳过组织治理用例后产生假通过。
+   管理 API 与文件请求使用同一 `serverUrl`，支持配置的 HTTP 或 HTTPS；TCP TLS 验证独立，管理请求不跟随重定向。
 
 ```bash
 ./gradlew deployServer
@@ -23,6 +26,8 @@ TeamTalk 的主业务验收连接 `gradle/deployment.json` 指向的测试部署
 [预览版指南](../01-getting-started/developer-preview.md#轻量业务验收)。
 
 `acceptanceTest` 是完整业务验收入口，只运行 `RemoteAcceptanceTest`，并由构建配置注入远程端点。不要通过手工拼接测试系统属性建立另一套隐含入口。
+需要供脚本查看实际非敏感配置时，运行 `./gradlew writeDeploymentConfig`，读取
+`build/deployment/deployment-config.json`；不要直接解析 Kotlin 或把旧快照当作当前目标。
 
 ## 多设备与精确服务重启
 
@@ -437,21 +442,31 @@ MainPID/cgroup 确实清空；新 build identity 与 9 项健康检查全部通�
 
 ## 传输安全验收门槛
 
-当前 HTTPS + TLS/TCP 部署的发布验收须收集以下证据。结果只证明被测传输组合，不能只因代码或
+HTTPS + TLS/TCP 和 HTTP + 自签 TLS/TCP 部署的发布验收须分别收集以下证据。结果只证明被测传输组合，不能只因代码或
 本地测试存在就标记为真实部署已通过：
 
-1. IM TCP 只协商 TLS 1.2/1.3；客户端使用系统 WebPKI，并严格校验 `tcpAddress` hostname 与 SNI。
+1. IM TCP 只协商 TLS 1.2/1.3；记录客户端使用系统 WebPKI 还是配置证书的专用 TrustStore，严格校验
+   `tcpAddress` 的 hostname/IP 与证书 SAN。自签 IP 场景不要求安装系统 CA。
 2. TLS handshake 成功前客户端不发布 `CONNECTED`、不发送 AUTH；错误主机名、不受信证书和黑洞
    handshake 都只能进入断线/重连路径，报告中不得出现凭据。
 3. 被测 TLS 监听器不接受明文协议帧，SDK 在 TLS 失败后不回退明文。另行配置的明文监听器是不同
    运行模式，不能从这项结果推断它拒绝公网绑定。
-4. 被测 HTTPS 安装只启用 HTTPS connector；当前 SDK 的远程认证 HTTP 基址使用 HTTPS。
+4. 被测 HTTPS 安装只启用 HTTPS connector；该组合的认证 HTTP 基址显式配置为 HTTPS。
+   被测 HTTP + 自签 TLS/TCP 安装则继续使用 HTTP connector，同时配置 TCP keystore；不得把 HTTP 改成
+   HTTPS 或绕过平台信任来掩盖与部署配置不一致。
    文件、群机器人和日志通道不把 3xx 当成功，也不跟随重定向转交凭据。
 5. 部署生成的 `TCP_HOST/TCP_PORT`、实际监听和 `tcpAddress` 一致；`/health` 的 `tcp` 项以当前 keystore
    叶证书作为唯一信任锚完成真实 TLS handshake，而不是只验证 socket 可连接。
 
-HTTP 可选、自签 TCP 与客户端信任的完整组合仍归路线图 [REL-03](../10-reference/roadmap.md)；
-实现后须为该组合补充对应验收，不能由现有 TLS 模式的结果替代。
+Android 发布验收还必须覆盖 **release APK × 非 loopback HTTP 地址**，不能用 debug 清单代替：
+确认安装包清单允许明文，配置 HTTP 服务入口与匹配所选信任方式的 TCP TLS 端点，完成登录、认证文件
+上传/下载和群机器人列表。报告分别记录 HTTP 与 TCP 的目标和信任方式；历史 WebPKI 验收不能替代
+自签 TCP 验收，两者都不能证明远程明文 TCP 可用。认证请求仍不跟随重定向。
+
+自签 IP 部署另须验证：公共 PEM 随部署配置注入 Android、Desktop 和无头 SDK，私钥未进入产物；
+错误证书与错误 SAN 均失败，默认公版仍使用平台 WebPKI；重复生成与普通服务器升级保留原证书私钥，
+升级前后原客户端继续连接。按[连接矩阵](../07-operations/configuration.md#传输配置边界)记录各端实际结果，
+不把证书工具测试写成真实双端验收已通过。
 
 ## 验收范围
 

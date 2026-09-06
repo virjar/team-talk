@@ -34,7 +34,7 @@ internal const val MAX_CHAT_VISUAL_MARKDOWN_LENGTH = 20_000
 
 internal fun canUseChatVisualEditor(markdown: String): Boolean =
     markdown.length <= MAX_CHAT_VISUAL_MARKDOWN_LENGTH &&
-        !RichEditorMarkdownCapability.inspect(markdown).requiresSourceMode
+        !RichEditorMarkdownCapability.inspect(markdown, allowCanonicalAssetImages = true).requiresSourceMode
 
 internal fun acceptsChatSourceInput(candidate: TextFieldValue): Boolean =
     candidate.text.length <= MessageBodyPolicy.MAX_MARKDOWN_LENGTH

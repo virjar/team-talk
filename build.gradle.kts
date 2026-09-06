@@ -1,5 +1,10 @@
-import deployment.DeploymentConfig
+import deployment.deploymentConfiguration
 import org.gradle.api.artifacts.ProjectDependency
+import release.ReleaseVersion
+import release.registerReleaseTasks
+import java.util.Properties
+import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform) apply false
@@ -15,14 +20,15 @@ plugins {
     alias(libs.plugins.ksp) apply false
 }
 
-val releaseVersion = providers.gradleProperty("teamtalk.releaseVersion").orNull?.trim()
+val rootVersionProperties = Properties().apply { file("gradle.properties").reader(Charsets.UTF_8).use(::load) }
+val releaseVersion = rootVersionProperties.getProperty("teamtalk.releaseVersion")?.trim()
     ?.takeIf(String::isNotEmpty)
     ?: throw GradleException("teamtalk.releaseVersion must be set in gradle.properties")
 if (!Regex("(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)").matches(releaseVersion)) {
     throw GradleException("teamtalk.releaseVersion must be a three-part numeric version: $releaseVersion")
 }
-fun versionCounter(name: String, maximum: Int): Int = providers.gradleProperty("teamtalk.$name")
-    .orNull?.toIntOrNull()?.takeIf { it in 0..maximum }
+fun versionCounter(name: String, maximum: Int): Int = rootVersionProperties.getProperty("teamtalk.$name")
+    ?.toIntOrNull()?.takeIf { it in 0..maximum }
     ?: throw GradleException("teamtalk.$name must be an integer in 0..$maximum")
 
 // 展示版本、平台安装序号、协议版本分别按需推进，禁止再由展示字符串猜测协议或数据库格式。
@@ -48,10 +54,38 @@ extra.apply {
 
 // ── 单一部署配置 ──
 
-val deploymentConfigFile = rootProject.file("gradle/deployment.json")
-if (!deploymentConfigFile.isFile) throw GradleException("Deployment config not found: $deploymentConfigFile")
-val deploymentConfig = DeploymentConfig.load(deploymentConfigFile.readText())
-extra.set("deploymentConfig", deploymentConfig)
+val localDeploymentDirectory = rootProject.file("buildSrc/deployment-local")
+val usingLocalDeploymentConfig = Files.exists(localDeploymentDirectory.toPath(), NOFOLLOW_LINKS)
+val deploymentConfigFile = if (usingLocalDeploymentConfig) localDeploymentDirectory.resolve("Deployment.kt")
+    else rootProject.file("buildSrc/deployment/Deployment.kt")
+val deploymentConfig = deploymentConfiguration(rootDir)
+extra["deploymentConfig"] = deploymentConfig
+
+tasks.register("writeDeploymentConfig") {
+    group = "deploy"
+    description = "Write the resolved, non-secret deployment configuration snapshot"
+    val snapshot = layout.buildDirectory.file("deployment/deployment-config.json")
+    inputs.property("deploymentConfig", deploymentConfig.toCanonicalJson())
+    outputs.file(snapshot)
+    doLast {
+        snapshot.get().asFile.apply {
+            parentFile.mkdirs()
+            writeText(deploymentConfig.toCanonicalJson(), Charsets.UTF_8)
+        }
+        logger.lifecycle("Deployment config: {} -> {}", deploymentConfigFile.relativeTo(rootDir), snapshot.get().asFile)
+    }
+}
+
+tasks.register("generateTcpTlsCertificate") {
+    group = "deploy"
+    description = "Generate or validate a persistent self-signed TCP certificate for -PtcpCertificateHost"
+    doLast {
+        val host = findProperty("tcpCertificateHost")?.toString()?.takeIf(String::isNotBlank)
+            ?: throw GradleException("Set -PtcpCertificateHost=<server IP or hostname>")
+        deployment.generateTcpTlsCertificate(file("gradle/tcp-tls"), host)
+        logger.lifecycle("TCP TLS certificate ready: gradle/tcp-tls/certificate.pem (existing keys are preserved)")
+    }
+}
 
 // ── 构建信息 ──
 
@@ -67,9 +101,12 @@ val sourceDirty = providers.exec {
 val gitCommitId = gitRevision.take(12)
 val buildIdentity = "$releaseVersion+$gitRevision${if (sourceDirty) ".dirty" else ""}"
 
-val buildTime = java.time.LocalDateTime.now().format(
-    java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
-)
+// Keep the displayed build time stable when retrying the same source revision.
+val sourceTimestamp = providers.exec {
+    commandLine("git", "show", "-s", "--format=%ct", "HEAD")
+}.standardOutput.asText.get().trim().toLong()
+val buildTime = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'")
+    .withZone(java.time.ZoneOffset.UTC).format(java.time.Instant.ofEpochSecond(sourceTimestamp))
 
 extra.set("gitCommitId", gitCommitId)
 extra.set("gitRevision", gitRevision)
@@ -90,11 +127,14 @@ subprojects {
 }
 
 val trackedAdminGeneratedPaths = providers.exec {
-    commandLine("git", "ls-files", "--cached", "--", "server/admin/dist", "server/admin/node_modules")
+    commandLine("git", "ls-files", "--cached", "--", "server/admin")
 }.standardOutput.asText.get()
     .lineSequence()
     .map(String::trim)
-    .filter(String::isNotEmpty)
+    .filter {
+        it.startsWith("server/admin/dist/") || it.startsWith("server/admin/node_modules/") ||
+            it.endsWith(".tsbuildinfo")
+    }
     .toList()
 
 val checkArchitecture = tasks.register<ArchitectureCheckTask>("checkArchitecture") {
@@ -164,26 +204,11 @@ val verifyRelease by tasks.registering {
     }
 }
 
-tasks.register("buildRelease") {
-    group = "release"
-    description = "Build all release artifacts (desktop via Conveyor jar; jpackage fallback excluded)"
-    dependsOn(verifyRelease, ":server:server:buildServerDist", ":client:desktop:desktopJar", ":client:android:assembleRelease")
-}
-
-// ── 发布任务（deploy 分组，按发布目标组织；配置见 gradle/deployment.json）──
-// deployServer    : 本地构建服务端后部署（发布前必须通过 verifyRelease）
-// deployStagedServer: 部署 CI 已构建并带 identity manifest 的服务端产物
-// deployServerResetData: 显式确认目标后，以空 PostgreSQL 和本地 stores 部署服务端
-// releaseDesktop  : Desktop 三平台安装包 + 更新站点（Conveyor 一键构建上传）
-// uploadDesktopSite: 只上传 CI 已构建的 Desktop site，不运行 Conveyor
-// releaseAndroid  : Android APK 构建 + 上传下载目录
-// releaseClients  : 双端一键（desktop + apk 同版本同时发布——两端共享
-//                   app/shared/protocol 代码，常规发版应同时发布）
-// uploadClientArtifacts: CI staging 产物上传（工作流内部使用）
+// Running server deployment remains an explicit operator action, outside release CI.
 
 tasks.register("deployServer") {
     group = "deploy"
-    description = "Build and deploy the server configured by gradle/deployment.json"
+    description = "Build and deploy the server configured by the selected deployment Kotlin script"
     dependsOn(verifyRelease, ":server:server:buildServerDist")
     doLast {
         deployment.deployServer(
@@ -235,71 +260,10 @@ tasks.register("deployServerResetData") {
     }
 }
 
-tasks.register("releaseDesktop") {
-    group = "deploy"
-    description = "Desktop: build three-platform site with Conveyor and upload the update site"
-    dependsOn(verifyRelease, ":client:desktop:desktopJar")
-    doLast {
-        deployment.buildDesktopSite(rootDir)
-        val siteDir = layout.projectDirectory.dir("client/desktop/output").asFile
-        deployment.writeReleaseArtifactManifest(siteDir, "desktop-site", releaseVersion, buildIdentity)
-        deployment.uploadDesktopSite(siteDir, deploymentConfig, releaseVersion, buildIdentity)
-    }
-}
-
-tasks.register("writeDesktopSiteManifest") {
-    group = "release"
-    description = "Stamp an already-built Conveyor site with the verified release identity"
-    dependsOn(verifyRelease)
-    val manifestFile = layout.projectDirectory.file(
-        "client/desktop/output/${deployment.RELEASE_ARTIFACT_MANIFEST_FILE}",
-    )
-    inputs.property("releaseVersion", releaseVersion)
-    inputs.property("buildIdentity", buildIdentity)
-    outputs.file(manifestFile)
-    doLast {
-        deployment.writeReleaseArtifactManifest(
-            layout.projectDirectory.dir("client/desktop/output").asFile,
-            "desktop-site",
-            releaseVersion,
-            buildIdentity,
-        )
-    }
-}
-
-tasks.register("uploadDesktopSite") {
-    group = "deploy"
-    description = "Upload a prebuilt Conveyor site without rebuilding or modifying it"
-    dependsOn(verifyRelease)
-    doLast {
-        val stagingPath = findProperty("DESKTOP_SITE_DIR")?.toString()
-            ?: throw GradleException("DESKTOP_SITE_DIR property is required")
-        deployment.uploadDesktopSite(file(stagingPath), deploymentConfig, releaseVersion, buildIdentity)
-    }
-}
-
-tasks.register("releaseAndroid") {
-    group = "deploy"
-    description = "Android: build release APK and upload to the downloads directory"
-    dependsOn(verifyRelease, ":client:android:assembleRelease")
-    doLast { deployment.uploadAndroidApk(rootDir, deploymentConfig) }
-}
-
-tasks.register("releaseClients") {
-    group = "deploy"
-    description = "Both clients in lockstep: releaseDesktop + releaseAndroid"
-    dependsOn("releaseDesktop", "releaseAndroid")
-}
-
-tasks.register("uploadClientArtifacts") {
-    group = "deploy"
-    description = "Upload staged client artifacts from CI (APK; desktop ships via releaseDesktop)"
-    dependsOn(verifyRelease)
-    doLast {
-        val stagingPath = project.findProperty("ARTIFACT_STAGING_DIR")?.toString()
-            ?: throw GradleException("ARTIFACT_STAGING_DIR property is required")
-        val stagingDir = File(stagingPath)
-        if (!stagingDir.isDirectory) throw GradleException("Staging directory does not exist: $stagingPath")
-        deployment.uploadAndroidApk(rootDir, deploymentConfig, stagingDir)
-    }
-}
+registerReleaseTasks(
+    project,
+    ReleaseVersion(releaseVersion, releaseBuildNumber, protocolMajor, protocolMinor, minimumProtocolMinor),
+    gitRevision,
+    deploymentConfig,
+    usingLocalConfig = usingLocalDeploymentConfig,
+)

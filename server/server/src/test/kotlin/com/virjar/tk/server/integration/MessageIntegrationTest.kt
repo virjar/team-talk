@@ -20,6 +20,7 @@ import com.virjar.tk.server.domain.message.MessageSearchHit
 import com.virjar.tk.server.domain.message.MessageSearchPage
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.Attachment
+import com.virjar.tk.protocol.model.EmbeddedAsset
 import com.virjar.tk.protocol.model.ProfilePatch
 import com.virjar.tk.protocol.model.ProfilePatchValue
 import com.virjar.tk.protocol.MessageType
@@ -479,6 +480,51 @@ class MessageIntegrationTest {
         val after = ctx.syncEventReader.getEventsAfter(uid2, 0, 1_000)
             .count { it.notifyType == NotifyType.MESSAGE_RECV.code }
         assertEquals(before + 1, after)
+    }
+
+    @Test
+    fun `released image message digest survives preview changes and lost ack retry`() = runTest {
+        val sender = ctx.registerUser(uniqueUsername("legacy-image-sender"))
+        val peer = ctx.registerUser(uniqueUsername("legacy-image-peer"))
+        val chat = ctx.chatService.createPersonalChat(sender, peer)
+        val legacyAlt = "teamtalk-clipboard-123456789.png"
+        val path = ctx.fileStore.store(sender, legacyAlt, "image/png", ByteArrayInputStream(byteArrayOf(1, 2, 3)))
+        val asset = EmbeddedAsset(
+            assetId = UUID.randomUUID().toString(),
+            attachment = assertNotNull(ctx.fileStore.getAttachment(path)),
+        )
+        val markdown = "![${legacyAlt}](${EmbeddedAsset.uri(asset.assetId)})"
+        // 发布 0.0 的 plainText 进入了持久化请求 SHA-256，不能用当前 builder 制造“旧”夹具。
+        val released = Message(
+            chatId = chat.chatId,
+            clientMsgId = "released-image-lost-ack",
+            senderUid = sender,
+            messageType = MessageType.RICH_TEXT.code,
+            timestamp = 1L,
+            body = RichTextBody(markdown, mentions = emptyList(), plainText = legacyAlt, assets = listOf(asset)),
+        )
+        val stored = ctx.messageStore.appendMessage(
+            released,
+            released,
+            MessageProjectionTarget(chat.chatType, listOf(sender, peer).sorted()),
+        )
+        ctx.messageProjector.recoverPendingProjections()
+        val eventsBeforeRetry = ctx.syncEventReader.getEventsAfter(peer, 0L, 1_000)
+            .map { it.eventId to it.notifyType }
+
+        // 模拟客户端在升级后恢复可靠发件箱；只重建派生字段，正文和发送身份保持原值。
+        val resumed = released.copy(body = buildRichTextBody(markdown, listOf(asset)))
+        assertEquals(stored.serverSeq, ctx.freshMessageService().sendMessage(sender, resumed))
+        assertEquals(eventsBeforeRetry, ctx.syncEventReader.getEventsAfter(peer, 0L, 1_000)
+            .map { it.eventId to it.notifyType })
+        val history = ctx.messageService.getHistory(peer, chat.chatId, 0L, 10)
+        assertEquals(1, history.size)
+        assertEquals(legacyAlt, (history.single().body as RichTextBody).plainText)
+
+        val conflict = assertFailsWith<IllegalArgumentException> {
+            ctx.messageService.sendMessage(sender, resumed.copy(body = buildRichTextBody("changed $markdown", listOf(asset))))
+        }
+        assertEquals("clientMsgId 已用于不同消息内容", conflict.message)
     }
 
     @Test

@@ -119,8 +119,12 @@ class ContactService(
     }
 
     suspend fun setRemark(uid: String, friendUid: String, remark: String?) {
+        val normalized = remark?.trim()?.takeIf(String::isNotEmpty)
+        require(normalized == null || normalized.length <= 100) { "好友备注不能超过 100 个字符" }
         unitOfWork.write {
-            contacts.setRemark(transaction, uid, friendUid, remark)
+            val updated = contacts.setRemark(transaction, uid, friendUid, normalized) ?: return@write
+            // 备注是本人的私有资料，与同一事务的事件一起提交，只同步到本人的设备。
+            appendEvent(uid, NotifyType.CONTACT_UPDATED, updated)
         }
     }
 

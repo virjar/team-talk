@@ -1,5 +1,7 @@
 package com.virjar.tk.desktop.tray
 
+import com.virjar.tk.app.identity.ClientIdentity
+
 import java.awt.*
 
 /**
@@ -31,13 +33,13 @@ object AppTray {
 
         val popup = PopupMenu()
 
-        menuShow = MenuItem("打开 TeamTalk").also { popup.add(it) }
+        menuShow = MenuItem("打开 ${ClientIdentity.DISPLAY_NAME}").also { popup.add(it) }
         popup.addSeparator()
         menuStatus = MenuItem("在线").also { popup.add(it); it.isEnabled = false }
         popup.addSeparator()
         val menuQuit = MenuItem("退出").also { popup.add(it) }
 
-        val newTrayIcon = TrayIcon(image, "TeamTalk", popup).apply {
+        val newTrayIcon = TrayIcon(image, ClientIdentity.DISPLAY_NAME, popup).apply {
             isImageAutoSize = true
         }
         // 平台确认的托盘动作才算真实用户动作；通知展示本身不会走这里。

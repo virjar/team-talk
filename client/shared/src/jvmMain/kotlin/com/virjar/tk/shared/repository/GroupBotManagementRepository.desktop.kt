@@ -7,20 +7,10 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
-import java.net.URI
 import java.net.URL
 
 internal actual fun createPlatformGroupBotHttpTransport(): PlatformGroupBotHttpTransport =
     DesktopGroupBotHttpTransport()
-
-internal actual fun canonicalSecureGroupBotServerBase(serverUrl: String): String {
-    val canonical = canonicalHttpServerBase(serverUrl)
-    val parsed = URI(canonical)
-    require(parsed.scheme == "https" || parsed.scheme == "http" && parsed.host.isExplicitLoopbackHost()) {
-        "群机器人凭据管理必须使用 HTTPS（仅显式 loopback 可使用 HTTP）"
-    }
-    return canonical
-}
 
 private class DesktopGroupBotHttpTransport : PlatformGroupBotHttpTransport {
     private val operationGate = HttpConnectionOperationGate("Group bot HTTP transport")

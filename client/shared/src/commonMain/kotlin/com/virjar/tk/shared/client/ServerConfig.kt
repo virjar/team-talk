@@ -1,6 +1,7 @@
 package com.virjar.tk.shared.client
 
 import com.virjar.tk.shared.repository.canonicalHttpServerBase
+import java.util.Base64
 
 /**
  * 服务端连接配置。
@@ -11,6 +12,8 @@ data class ServerConfig(
     val serverUrl: String,
     val tcpHost: String,
     val tcpPort: Int,
+    /** 私有部署分发的公开 TLS 证书；不参与凭据和数据目录的部署身份。 */
+    val tcpTlsCertificatePem: String? = null,
 ) {
     /** 凭据、缓存、TCP 与 HTTP client 共享的一个规范部署元组。 */
     fun deploymentIdentity(): DeploymentIdentity = DeploymentIdentity.from(
@@ -105,5 +108,14 @@ fun defaultServerConfig(): ServerConfig {
         serverUrl = System.getProperty("teamtalk.server.url") ?: "https://im.virjar.com",
         tcpHost = System.getProperty("teamtalk.tcp.host") ?: "im.virjar.com",
         tcpPort = (System.getProperty("teamtalk.tcp.port") ?: "5100").toInt(),
+        tcpTlsCertificatePem = decodeTcpTlsCertificateBase64(
+            System.getProperty("teamtalk.tcp.certificate.base64"),
+        ),
     )
 }
+
+/** 构建参数使用单行 Base64 传递公开证书，避免多行 PEM 被启动器拆开。 */
+fun decodeTcpTlsCertificateBase64(encoded: String?): String? =
+    encoded?.takeIf(String::isNotEmpty)?.let {
+        Base64.getDecoder().decode(it).toString(Charsets.UTF_8)
+    }

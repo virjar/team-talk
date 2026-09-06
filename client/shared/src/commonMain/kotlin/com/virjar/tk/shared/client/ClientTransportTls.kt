@@ -6,29 +6,36 @@ import io.netty.handler.ssl.SslContextBuilder
 import io.netty.handler.ssl.SslHandler
 import io.netty.handler.ssl.SslProvider
 import java.security.KeyStore
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
 import javax.net.ssl.SSLContext as JdkSslContext
 import javax.net.ssl.TrustManagerFactory
 
 /**
  * 面向长连接 IM transport 的 TLS 策略。
  *
- * 生产连接只信任平台 WebPKI，并且始终启用 HTTPS 风格的端点识别。向 [SslContext.newHandler] 提供
+ * 默认信任平台 WebPKI；私有部署显式配置证书时，只信任该证书。始终启用 HTTPS 风格的端点识别。
+ * 向 [SslContext.newHandler] 提供
  * 对端主机同样重要：它把主机名校验身份与 SNI 一起带进引擎。仅测试用的 loopback transport 保持
- * 明文，这样进程内协议 fixture 不需要证书材料。
+ * 明文，这样进程内协议 fixture 不需要证书材料；显式配置证书时 loopback 同样必须使用 TLS。
  */
 internal class ClientTransportTls(
+    private val tcpTlsCertificatePem: String? = null,
     private val requiresTls: (String) -> Boolean = ::requiresClientTransportTls,
-    private val contextFactory: () -> SslContext = ::createSystemWebPkiClientSslContext,
+    private val contextFactory: () -> SslContext = { createClientSslContext(tcpTlsCertificatePem) },
     private val handshakeTimeoutMillis: Long = CLIENT_TLS_HANDSHAKE_TIMEOUT_MILLIS,
 ) {
     init {
         require(handshakeTimeoutMillis > 0L) { "TLS handshake timeout must be positive" }
+        require(tcpTlsCertificatePem == null || tcpTlsCertificatePem.isNotBlank()) {
+            "Configured TCP TLS certificate must not be blank"
+        }
     }
 
     private val context: SslContext by lazy(contextFactory)
 
     fun newHandler(channel: SocketChannel, host: String, port: Int): SslHandler? =
-        if (requiresTls(host)) {
+        if (tcpTlsCertificatePem != null || requiresTls(host)) {
             context.newHandler(channel.alloc(), host, port).apply {
                 setHandshakeTimeoutMillis(this@ClientTransportTls.handshakeTimeoutMillis)
             }
@@ -55,14 +62,27 @@ internal fun isLexicalLoopbackHost(host: String): Boolean {
     }
 }
 
-/** 使用平台根存储；不安装应用自有的 CA 或宽松的 trust manager。 */
-internal fun createSystemWebPkiClientSslContext(): SslContext {
-    val systemTrust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
-        .apply { init(null as KeyStore?) }
+/** 使用平台根存储，不更改 JVM 或操作系统的全局信任配置。 */
+internal fun createSystemWebPkiClientSslContext(): SslContext = createClientSslContext(null)
+
+private fun createClientSslContext(certificatePem: String?): SslContext {
+    val trustStore = certificatePem?.let { pem ->
+        val certificates = CertificateFactory.getInstance("X.509")
+            .generateCertificates(pem.byteInputStream())
+        require(certificates.size == 1) { "Configure exactly one TCP TLS certificate" }
+        val certificate = certificates.single() as X509Certificate
+        certificate.checkValidity()
+        KeyStore.getInstance(KeyStore.getDefaultType()).apply {
+            load(null, null)
+            setCertificateEntry("teamtalk-private-server", certificate)
+        }
+    }
+    val trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
+        .apply { init(trustStore) }
     val platformProtocols = JdkSslContext.getDefault().supportedSSLParameters.protocols.asIterable()
     return SslContextBuilder.forClient()
         .sslProvider(SslProvider.JDK)
-        .trustManager(systemTrust)
+        .trustManager(trust)
         .protocols(selectClientTransportTlsProtocols(platformProtocols))
         // 显式设置，使 Netty 兼容性系统属性无法禁用校验。
         .endpointIdentificationAlgorithm(HOSTNAME_VERIFICATION_ALGORITHM)

@@ -1,5 +1,7 @@
 package com.virjar.tk.app.ui.screen
 
+import com.virjar.tk.app.identity.ClientIdentity
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -236,7 +238,7 @@ private fun DocumentHomeHeader(
         Icon(Icons.Filled.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.width(10.dp))
         Column {
-            Text(if (detached) "TeamTalk 文档" else "文档", style = MaterialTheme.typography.titleLarge)
+            Text(if (detached) "${ClientIdentity.DISPLAY_NAME} 文档" else "文档", style = MaterialTheme.typography.titleLarge)
             Text(
                 statusLabel,
                 modifier = Modifier.testTag("documents.home.status"),

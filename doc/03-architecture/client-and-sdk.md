@@ -370,10 +370,13 @@ Desktop 的媒体缓存扫描与平台资源图在 IO dispatcher 构造候选，
 认证协调器只在 exact attempt lease 内暂存 wire payload，成功后立即把密码/注册材料降级为稳定 refresh，
 终止或替换时释放全部 payload 引用。
 
-非 loopback 的 IM TCP 始终先建立 TLS 1.2/1.3。客户端使用系统 WebPKI，并以目标主机同时执行严格
-hostname 校验和 SNI；pipeline 中 `SslHandler` 位于 `PacketCodec` 之前。只有 TLS handshake 成功后
+非 loopback 的 IM TCP 始终先建立 TLS 1.2/1.3。客户端默认使用系统 WebPKI；私有部署配置公共证书时，
+使用只包含该证书的专用 TrustStore。两条路径都严格验证目标主机/IP 与证书 SAN，不更改系统全局信任，
+域名连接继续使用 SNI；pipeline 中 `SslHandler` 位于 `PacketCodec` 之前。只有 TLS handshake 成功后
 才能发布 `CONNECTED` 并开始版本协商，协商成功后才允许 AUTH 写入，失败或 10 秒超时沿既有断线/重连路径处理且立即释放认证
-payload。严格字面量 loopback 地址才可为进程内测试保留明文；DNS 解析结果是 loopback 不构成例外。
+payload。没有显式公共证书时，严格字面量 loopback 地址可为进程内测试保留明文；配置公共证书后
+loopback 同样走 TLS。DNS 解析结果是 loopback 不构成例外。HTTP scheme 不决定这条链路的信任，
+配置与证书生成见[传输配置边界](../07-operations/configuration.md#传输配置边界)。
 
 ```mermaid
 stateDiagram-v2

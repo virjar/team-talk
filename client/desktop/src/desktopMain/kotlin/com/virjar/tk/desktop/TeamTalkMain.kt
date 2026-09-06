@@ -2,6 +2,8 @@
 
 package com.virjar.tk.desktop
 
+import com.virjar.tk.app.identity.ClientIdentity
+
 import com.virjar.tk.desktop.env.DesktopEnvironment
 import com.virjar.tk.shared.log.AppLog
 import javax.swing.JOptionPane
@@ -20,7 +22,7 @@ import javax.swing.JOptionPane
 fun main() {
     // dev/裸 JVM 启动时 macOS 菜单栏默认显示 "java"；必须在 AWT 初始化前声明应用名。
     // 打包产物由 Conveyor 写入的 Info.plist CFBundleName 决定，此属性不生效也无副作用。
-    System.setProperty("apple.awt.application.name", "TeamTalk")
+    System.setProperty("apple.awt.application.name", ClientIdentity.DISPLAY_NAME)
 
     // ── 1. 数据目录初始化（必须在 logback 初始化前） ──
     val dataDir = try {
@@ -87,9 +89,9 @@ private fun showDataDirectoryFailure(failure: Throwable) {
     runCatching {
         JOptionPane.showMessageDialog(
             null,
-            "TeamTalk cannot open its private data directory.\n\n$detail\n\n" +
+            "${ClientIdentity.DISPLAY_NAME} cannot open its private data directory.\n\n$detail\n\n" +
                 "Startup stopped before opening the workspace. Resolve the data version or directory conflict and start again.",
-            "TeamTalk data directory",
+            "${ClientIdentity.DISPLAY_NAME} data directory",
             JOptionPane.ERROR_MESSAGE,
         )
     }.onFailure {

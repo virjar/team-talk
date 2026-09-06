@@ -265,6 +265,7 @@ internal fun deployResetUpgrade(
     tcpPort: String,
     expectedBuildIdentity: String,
     healthSslPort: Int,
+    tcpTlsEnabled: Boolean = sslEnabled,
 ) {
     requireCanonicalDeployPath(deployPath)
     requireActiveRemoteDeploymentGuard(host, user, deployPort)
@@ -359,13 +360,13 @@ internal fun deployResetUpgrade(
             outputMode = ProcessOutputMode.DISCARD,
         )
         uploadEnvSh(
-            generateEnvShContent(secrets, sslEnabled, sslPort, deployPath, httpPort, tcpPort),
+            generateEnvShContent(secrets, sslEnabled, sslPort, deployPath, httpPort, tcpPort, tcpTlsEnabled = tcpTlsEnabled),
             host,
             user,
             deployPort,
             deployPath,
         )
-        if (sslEnabled && preparedTlsKeystore != null) {
+        if (tcpTlsEnabled && preparedTlsKeystore != null) {
             println("  Updating SSL certificate ...")
             uploadTlsKeystore(host, user, deployPort, deployPath, preparedTlsKeystore)
         }

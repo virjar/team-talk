@@ -1,5 +1,7 @@
 package com.virjar.tk.desktop
 
+import com.virjar.tk.app.identity.ClientIdentity
+
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.SnackbarHost
@@ -45,7 +47,7 @@ internal fun SubWindow(
     }
     Window(
         onCloseRequest = onClose,
-        title = if (integratedMacTitleBar) "" else "TeamTalk",
+        title = if (integratedMacTitleBar) "" else ClientIdentity.DISPLAY_NAME,
         state = rememberWindowState(width = 460.dp, height = screen.windowHeight),
     ) {
         if (!presentationGate.isOpen || !nav.acceptsRendering) return@Window

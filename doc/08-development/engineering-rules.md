@@ -37,8 +37,9 @@
 
 - `protocol ← protocol-netty ← shared ← app ← android/desktop` 单向依赖；`protocol` 禁止 Netty。
 - `server → protocol/protocol-netty` 只复用契约和 TCP 适配；服务端生产代码禁止依赖客户端 SDK `shared`。
-- Admin 只由锁定源码图在 `server/server/build` 中生产；`server/admin/dist` 是忽略的本地产物，禁止重新跟踪或作为
-  Server 资源输入。
+- Admin 由独立 `:server:admin` Gradle 模块在 `server/admin/build` 内按锁文件构建；Node.js 与 npm 也由
+  该模块管理。Server 通过任务产物依赖获取静态资源；`server/admin/dist`、`node_modules` 和 `build`
+  均是本地产物，禁止跟踪或绕过构建链作为分发输入。
 - 服务端 `domain` 不 import `infra`、RPC 生成 Stub 或 transport adapter；外部能力由领域端口注入。
 - 每个长期对象有唯一所有者，owner 销毁时级联销毁。
 - `close/destroy` 幂等。
@@ -124,9 +125,18 @@
 ## 7. 配置
 
 - 默认不增加布尔开关、profile、flavor 或运行时服务器选择。
-- 部署坐标统一从 deployment.json 读取。
+- 部署坐标与客户端发行身份共用 `deploymentConfiguration(rootDir)` 返回的 `DeploymentConfig`。主仓库默认
+  `buildSrc/deployment/Deployment.kt` 保持公版地址；私有独立 clone 使用 Git 忽略的
+  `buildSrc/deployment-local/` 完整替换默认配置目录。配置源码只纳入选中的一套，不叠加、不通过
+  `-P` 选配置。配置使用 `server`、`deploy`、`client` DSL 章节，默认主机与 HTTPS 端口在章节完成后
+  从 HTTP URL 推导；`@DslMarker` 限定作用域，最终对象由构造器统一校验。JSON 只用于最终配置快照
+  输出，不增加第二个加载入口，见[运行配置](../07-operations/configuration.md)。
 - secret 不入库、不写日志。
 - 构建产物内嵌完整 build identity/build time；dirty source 必须显式标记，发布任务必须拒绝 dirty tree。
+- 协议开发 minor 可随实现演进；展示版本与安装序号推进、人工发行说明定稿、协议发行冻结、tag 和发布
+  必须在用户明确确认本次发行后执行。开发构建、开发服务器部署和 Agent 本机验收不自动授权发版，
+  不能为通过工具校验自行升版。确认一次范围后按范围完成流程，不逐条命令重复询问，见
+  [发行决定](../07-operations/releasing.md#谁决定发版)。
 - CI 部署只消费 producer job 已生成并带 identity manifest 的产物，不允许在 deploy job 重新构建。
 - 新配置必须说明所有者、默认值、组合测试和废弃方式。
 - 部署生产代码禁止直接启动外部进程；关键命令使用有总超时、检查退出码的统一执行器，语义探测声明

@@ -105,6 +105,10 @@ object AgentService {
 
         val executableArguments = buildList {
             add("/usr/bin/java")
+            System.getProperty("teamtalk.tcp.certificate.base64")?.takeIf(String::isNotEmpty)?.let { encoded ->
+                com.virjar.tk.shared.client.decodeTcpTlsCertificateBase64(encoded)
+                add("-Dteamtalk.tcp.certificate.base64=$encoded")
+            }
             add("-cp")
             add("$home/lib/*")
             add("com.virjar.tk.shared.agent.AgentMainKt")

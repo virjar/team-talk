@@ -46,7 +46,7 @@ object TestHttpServer {
 
     /** 反射调用的无参入口（供 TestServiceBridge 用，规避 Kotlin 默认参数的方法签名问题）。 */
     @JvmStatic
-    fun startDefault() = start()
+    fun startDefault() = start(testHttpPort(System.getProperty("tk.desktop.test.port")))
 
     /**
      * 本次进程实例的随机令牌：自动化验收用它区分"刚启动的实例"与占用端口的僵尸实例。

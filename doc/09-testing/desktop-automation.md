@@ -1,6 +1,8 @@
 # Desktop 自动化与视觉验收
 
-Desktop 开发构建在应用进程内启动一个只监听 `127.0.0.1:18080` 的测试 HTTP 服务。它导出 Compose 语义树，并通过语义动作完成点击、输入、按键和截图。测试操作因此针对真实 Desktop 客户端，而不是另写一套测试 UI。截图直接读取 Compose 的 Skia 渲染帧，不依赖系统录屏权限，也不受窗口遮挡或 macOS Space 影响。
+Desktop 开发构建在应用进程内启动只监听 loopback 的测试 HTTP 服务，默认地址为 `127.0.0.1:18080`。
+它导出 Compose 语义树，并通过语义动作完成点击、输入、按键和截图。测试操作因此针对真实 Desktop
+客户端。截图直接读取 Compose 的 Skia 渲染帧，不依赖系统录屏权限，也不受窗口遮挡或 macOS Space 影响。
 
 生产打包关闭该能力，并从发布产物中移除测试服务实现。
 
@@ -16,31 +18,53 @@ curl http://127.0.0.1:18080/ping
 curl http://127.0.0.1:18080/semantics
 ```
 
+### 公版与私有版双实例验收
+
+两个发行的数据目录和进程锁独立，测试 HTTP 端口也须分别指定。在私有发行的独立 clone 中启动第二个
+客户端时可以使用：
+
+```bash
+./gradlew :client:desktop:run -Dtk.desktop.test.port=18081 -Ptk.desktop.instanceToken=private-acceptance
+curl http://127.0.0.1:18081/ping
+curl http://127.0.0.1:18081/semantics
+```
+
+`tk.desktop.test.port` 是传给应用 JVM 的测试参数，范围为 1–65535，只改变 loopback 测试服务端口。
+公版继续使用 18080，后续操作分别指向对应端口并核对 `/ping` 的 `pid` 与实例令牌。相同发行需要
+同时运行两个开发实例时，还须用 `-Dteamtalk.data.dir` 指定不同的已准备数据目录；仅改端口不能绕过
+数据目录的单实例锁。共存与用户资料隔离的正式验证应使用不同发行身份的产物。
+
 ### 实例令牌与僵尸实例防护（自动化验收必读）
 
 每次进程启动会生成一个随机实例令牌（可用 `-Ptk.desktop.instanceToken=xxx` 显式指定，
 经 `-Dtk.desktop.instance.token` 传入）。`/ping` 响应体与所有响应的
 `X-Instance-Token` 头都携带该值，`/ping` 同时返回 `pid`。
 
-它解决的问题：残留的 Desktop 进程同时持有数据目录 FileLock（新实例弹
-"Another instance is already running"）和 18080 端口——验收工具会继续与僵尸实例对话，
-把旧代码误当成新代码。注意真实主类是 `com.virjar.tk.desktop.TeamTalkMain`；
-`pkill -f "com.virjar.tk.desktop"` 匹配不到任何进程，是错误的清理模式。
+残留的 Desktop 进程可能同时持有数据目录 FileLock 和测试端口；新的进程无法取得数据目录，验收工具
+却继续与旧端口对话，将旧代码误当成新代码。每次启动都要核对目标端口返回的新 PID 与实例令牌，
+并确认对应当前任务。
 
 客户端构建完成后再启动验收实例。运行中的 JVM 直接读取工作区 JAR；如果期间为了 Android 或测试
 重新构建了公共 `app` / `shared`，必须再次重启 Desktop，不能继续混用已加载的旧类与被覆盖的新 JAR。
 已有按钮动作抛错时，`/click` 返回失败；不能把异常退化为 `focus-action` 并当作按钮已经执行。
 
-自动化验收统一使用确定性的重启脚本（清理 → 启动 → 令牌确认 → 超时诊断）：
+确定性的重启脚本按选定端口执行“识别实例 → 停止该实例 → 启动 → 令牌确认 → 超时诊断”：
 
 ```bash
-scripts/desktop-acceptance.sh        # 杀旧实例 + 启动 + 等待新实例令牌就绪
-scripts/desktop-acceptance.sh kill   # 只清理不启动
+scripts/desktop-acceptance.sh        # 重启 18080 对应的验收实例
+scripts/desktop-acceptance.sh kill   # 只停止 18080 对应的验收实例
+
+# 在私有发行独立 clone 中，选择第二个验收实例的端口
+TEAMTALK_DESKTOP_TEST_PORT=18081 scripts/desktop-acceptance.sh
+TEAMTALK_DESKTOP_TEST_PORT=18081 scripts/desktop-acceptance.sh kill
 ```
 
-脚本退出码：0=就绪；1=超时（附诊断输出）；3=检测到旧令牌仍在响应（僵尸实例）。
-手工清理：`pkill -9 -f "com.virjar.tk.desktop.TeamTalkMain"`，再确认 `lsof -nP -iTCP:18080 -sTCP:LISTEN`
-无占用。
+`TEAMTALK_DESKTOP_TEST_PORT` 默认 18080，脚本将其作为 `-Dtk.desktop.test.port` 传入新进程。脚本同时
+核对 `/ping` 的 PID/令牌、该端口的监听进程以及精确 Java 主类，只停止这个已识别实例；身份不明确时
+拒绝清理，不通过主类扫描停止其他发行。执行前仍须确认选定端口属于本任务。
+脚本退出码：0=就绪或完成停止；1=身份校验、停止失败或启动超时；2=非法端口、缺少依赖或参数错误；
+3=检测到旧令牌仍在响应。每个端口使用独立的 `tk-desktop-acceptance-<port>.log` 临时日志。
+手工操作也应先正常退出，必要时只结束核对后的确切 PID，并确认对应端口已释放；不得全局匹配主类清理。
 
 当前固定端点如下：
 
@@ -65,6 +89,11 @@ scripts/desktop-acceptance.sh kill   # 只清理不启动
 | POST | `/keypress` | 派发 ESCAPE、ENTER 等按键 |
 
 所有端点都可使用 `window` 查询参数；省略时操作 `main`。
+
+`/set-progress` 的 `value` 使用目标节点导出的 `progress.min..max`，不是统一的百分比。
+Desktop 视频滑杆当前范围为 `0..1000`，四分之一处应传 `250`。脚本优先使用
+`DesktopClient.set_progress_fraction(tag, 0.25, window="media-gallery")`，由驱动读取范围并换算。
+验证 seek 时先暂停、提交位置并读取时间，再恢复播放；不要将传错值域后的回零写成产品缺陷。
 
 `/doubleclick` 用于自绘标题栏等必须走真实指针链路的窗口手势。它在一个请求内完成两次点击，避免
 两次网络请求超过操作系统的双击阈值；该端点使用 Robot，macOS 首次运行可能需要辅助功能权限。
@@ -147,7 +176,7 @@ bounds，不能自行再乘除缩放倍率。完整选择器见[测试选择器�
 - 取消或移除富资产后，先断言对应 `pending`、`progress`、`cancel/retry/remove` 节点及 Markdown 内部 URI 消失，
   再离开并重开原会话/文档，确认引用仍未出现；即使上传稍后返回 `READY` 也不得复活节点。Desktop 真实
   验收已经覆盖聊天与文档的上传中取消和重开无引用；Android 必须另走真机验收，不能由本结论替代；
-- 就地重试门禁只停止 `gradle/deployment.json` 指向的 TeamTalk 测试服务触发 FAILED，不关闭宿主机网卡、
+- 就地重试门禁只停止当前部署配置指向的 TeamTalk 测试服务触发 FAILED，不关闭宿主机网卡、
   Wi-Fi、代理或 DNS。FAILED 行必须同时出现“重试”和“移除”；快速双击 retry 后只允许一个 attempt 进入
   PREPARING/UPLOADING。恢复目标服务后应在原 `assetId` 上进入 READY，随后发送消息或保存文档，离开并
   重进后资产仍可见。Desktop 与小米 Android 的聊天和文档都已通过该流程；Android 还必须断言上传期间的
@@ -161,7 +190,7 @@ bounds，不能自行再乘除缩放倍率。完整选择器见[测试选择器�
 - 拉出文档工作台后，`window=documents` 的 macOS 屏幕截图只有一行融合标题栏：红黄绿按钮与应用文档
   标题同层且互不遮挡，不得再出现一条写有 `TeamTalk 文档` 的系统灰色标题栏。
 - 清空目标视频缓存后打开画廊，先观察 `media.gallery.video.downloadProgress`；最终文件完成精确大小校验
-  和原子发布前不得出现 `media.gallery.video.surface`。完成后只停止 `gradle/deployment.json` 指向的
+  和原子发布前不得出现 `media.gallery.video.surface`。完成后只停止当前部署配置指向的
   TeamTalk 测试 unit，或使用目标端点/客户端 transport 范围的故障夹具；宿主机网卡、Wi-Fi、系统网络、
   代理、DNS 和防火墙始终保持不变。服务不可达时再次打开同一视频应直接命中本地缓存，不产生新的
   `.part` / `.partial` 文件或下载请求；验收后恢复目标服务并复验健康状态。

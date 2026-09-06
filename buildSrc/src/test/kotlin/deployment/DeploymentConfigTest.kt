@@ -164,6 +164,24 @@ class DeploymentConfigTest {
     }
 
     @Test
+    fun `HTTP with pinned TCP TLS exposes encrypted TCP without starting an HTTPS listener`() {
+        val secrets = Properties().apply {
+            requiredDeploymentSecretKeys.forEach { setProperty(it, "fixture-secret") }
+        }
+        val env = generateEnvShContent(
+            secrets, sslEnabled = false, sslPort = "443", deployPath = "/opt/teamtalk",
+            httpPort = 18089, tcpPort = "15100", tcpTlsEnabled = true,
+        )
+        assertTrue(env.contains("KTOR_PORT=18089"))
+        assertTrue(env.contains("TCP_HOST=0.0.0.0"))
+        assertTrue(env.contains("TCP_PORT=15100"))
+        assertTrue(env.contains("SSL_KEYSTORE='/opt/teamtalk/conf/ssl/teamtalk.p12'"))
+        assertFalse(env.contains("KTOR_SSL_PORT="))
+        val parsed = parseRequiredUpgradeSecrets(env)
+        requiredDeploymentSecretKeys.forEach { key -> assertEquals(secrets.getProperty(key), parsed.getProperty(key)) }
+    }
+
+    @Test
     fun `rollback listener parser preserves previous http or https endpoint`() {
         assertEquals(
             RemoteHealthEndpoint(sslEnabled = false, httpPort = 8080, sslPort = 443),
@@ -295,19 +313,15 @@ class DeploymentConfigTest {
     }
 
     @Test
-    fun `loads https deployment`() {
-        val config = DeploymentConfig.load(
-            """
-            {
-              "serverUrl": "https://im.example.com",
-              "tcpAddress": "tcp.example.com:5100",
-              "deployHost": "deploy.example.com",
-              "deployPort": 2222,
-              "deployUser": "teamtalk",
-              "deployPath": "/srv/teamtalk",
-              "sslPort": 443
-            }
-            """.trimIndent()
+    fun `constructs https deployment`() {
+        val config = DeploymentConfig(
+            serverUrl = "https://im.example.com",
+            tcpAddress = "tcp.example.com:5100",
+            deployHost = "deploy.example.com",
+            deployPort = 2222,
+            deployUser = "teamtalk",
+            deployPath = "/srv/teamtalk",
+            sslPort = 443,
         )
 
         assertTrue(config.sslEnabled)
@@ -318,16 +332,12 @@ class DeploymentConfigTest {
 
     @Test
     fun `allows http and independent endpoint hosts`() {
-        val config = DeploymentConfig.load(
-            """
-            {
-              "serverUrl": "http://api.internal:8080",
-              "tcpAddress": "tcp.internal:15100",
-              "deployHost": "10.0.0.8",
-              "deployUser": "ops",
-              "deployPath": "/opt/teamtalk"
-            }
-            """.trimIndent()
+        val config = DeploymentConfig(
+            serverUrl = "http://api.internal:8080",
+            tcpAddress = "tcp.internal:15100",
+            deployHost = "10.0.0.8",
+            deployUser = "ops",
+            deployPath = "/opt/teamtalk",
         )
 
         assertFalse(config.sslEnabled)
@@ -338,35 +348,13 @@ class DeploymentConfigTest {
     }
 
     @Test
-    fun `rejects unknown fields`() {
-        assertFailsWith<IllegalArgumentException> {
-            DeploymentConfig.load(
-                """
-                {
-                  "serverUrl": "http://localhost:8080",
-                  "tcpAddress": "localhost:5100",
-                  "deployHost": "localhost",
-                  "deployPath": "/opt/teamtalk",
-                  "environment": "staging"
-                }
-                """.trimIndent()
-            )
-        }
-    }
-
-    @Test
     fun `rejects mismatched https port`() {
         assertFailsWith<IllegalArgumentException> {
-            DeploymentConfig.load(
-                """
-                {
-                  "serverUrl": "https://im.example.com:8443",
-                  "tcpAddress": "im.example.com:5100",
-                  "deployHost": "im.example.com",
-                  "deployPath": "/opt/teamtalk",
-                  "sslPort": 443
-                }
-                """.trimIndent()
+            DeploymentConfig(
+                serverUrl = "https://im.example.com:8443",
+                tcpAddress = "im.example.com:5100",
+                deployHost = "im.example.com",
+                sslPort = 443,
             )
         }
     }
@@ -374,15 +362,11 @@ class DeploymentConfigTest {
     @Test
     fun `rejects root deployment path`() {
         assertFailsWith<IllegalArgumentException> {
-            DeploymentConfig.load(
-                """
-                {
-                  "serverUrl": "http://localhost:8080",
-                  "tcpAddress": "localhost:5100",
-                  "deployHost": "localhost",
-                  "deployPath": "/"
-                }
-                """.trimIndent()
+            DeploymentConfig(
+                serverUrl = "http://localhost:8080",
+                tcpAddress = "localhost:5100",
+                deployHost = "localhost",
+                deployPath = "/",
             )
         }
     }
@@ -390,15 +374,11 @@ class DeploymentConfigTest {
     @Test
     fun `rejects shell syntax in deployment target`() {
         assertFailsWith<IllegalArgumentException> {
-            DeploymentConfig.load(
-                """
-                {
-                  "serverUrl": "http://localhost:8080",
-                  "tcpAddress": "localhost:5100",
-                  "deployHost": "localhost",
-                  "deployPath": "/opt/teamtalk;shutdown"
-                }
-                """.trimIndent()
+            DeploymentConfig(
+                serverUrl = "http://localhost:8080",
+                tcpAddress = "localhost:5100",
+                deployHost = "localhost",
+                deployPath = "/opt/teamtalk;shutdown",
             )
         }
     }
@@ -417,15 +397,11 @@ class DeploymentConfigTest {
         }
 
         assertFailsWith<IllegalArgumentException> {
-            DeploymentConfig.load(
-                """
-                {
-                  "serverUrl": "http://localhost:8080",
-                  "tcpAddress": "localhost:5100",
-                  "deployHost": "localhost",
-                  "deployPath": "/opt/../teamtalk"
-                }
-                """.trimIndent(),
+            DeploymentConfig(
+                serverUrl = "http://localhost:8080",
+                tcpAddress = "localhost:5100",
+                deployHost = "localhost",
+                deployPath = "/opt/../teamtalk",
             )
         }
     }

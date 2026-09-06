@@ -22,7 +22,7 @@ enum class GroupBotCredentialCommandKind(val code: Long) {
  * 等待用户确认的、唯一 deployment/account 范围的群机器人凭据命令。
  *
  * [webhookToken] 用 256 位熵生成，是用于 ACK 丢失重放的唯一可恢复副本。它只持久化在客户端的私有
- * LocalCache 中；服务器经认证 HTTPS 接收它，并且只存储其 SHA-256。[toString] 防御性地脱敏。
+ * LocalCache 中；服务器经认证 HTTP(S) 接收它，并且只存储其 SHA-256。[toString] 防御性地脱敏。
  */
 data class PendingGroupBotCredentialCommand(
     val operationId: String,

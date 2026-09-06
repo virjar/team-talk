@@ -3003,7 +3003,10 @@ class RemoteAcceptanceTest {
         body: String? = null,
     ): AdminHttpResponse = withContext(Dispatchers.IO) {
         val requestUrl = URL("${baseUrl().trimEnd('/')}$path")
-        require(requestUrl.protocol == "https") { "Remote admin fixture requires HTTPS" }
+        // 管理 fixture 跟随部署 HTTP(S) 地址；TCP TLS 的证书配置独立。
+        require(requestUrl.protocol == "http" || requestUrl.protocol == "https") {
+            "Remote admin fixture requires an HTTP(S) deployment URL"
+        }
         val connection = requestUrl.openConnection() as HttpURLConnection
         try {
             connection.requestMethod = method

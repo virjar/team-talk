@@ -90,6 +90,9 @@ private fun runAgent(args: Array<String>) {
         DeploymentIdentity.from(host, port, serverUrl)
     } ?: DeploymentIdentity.fromTcpWithDefaultHttp(host, port)
     val serverUrl = deploymentIdentity.httpBaseUrl
+    val tcpTlsCertificatePem = com.virjar.tk.shared.client.decodeTcpTlsCertificateBase64(
+        System.getProperty("teamtalk.tcp.certificate.base64"),
+    )
     val explicitRegistration = opts.containsKey("register")
     val explicitReauthentication = opts.containsKey("reauth")
     require(!(explicitRegistration && explicitReauthentication)) {
@@ -142,7 +145,7 @@ private fun runAgent(args: Array<String>) {
             reauthentication != null -> {
                 runBlocking {
                     connectLogin(
-                        host, port, serverUrl, cacheOwner,
+                        host, port, serverUrl, tcpTlsCertificatePem, cacheOwner,
                         reauthentication.username, reauthentication.password, reauthentication.deviceId,
                         refreshRecorder(reauthentication.username, reauthentication.deviceId),
                     )
@@ -155,14 +158,14 @@ private fun runAgent(args: Array<String>) {
                     pending = credentials,
                     login = {
                         connectLogin(
-                            host, port, serverUrl, cacheOwner,
+                            host, port, serverUrl, tcpTlsCertificatePem, cacheOwner,
                             requireNotNull(it.username), requireNotNull(it.password), it.deviceId,
                             refreshRecorder(requireNotNull(it.username), it.deviceId),
                         )
                     },
                     registerExact = {
                         connectRegistration(
-                            host, port, serverUrl, cacheOwner, it,
+                            host, port, serverUrl, tcpTlsCertificatePem, cacheOwner, it,
                             refreshRecorder(requireNotNull(it.username), it.deviceId),
                         )
                     },
@@ -174,7 +177,7 @@ private fun runAgent(args: Array<String>) {
                 try {
                     runBlocking {
                         connectRefresh(
-                            host, port, serverUrl, cacheOwner, active,
+                            host, port, serverUrl, tcpTlsCertificatePem, cacheOwner, active,
                             refreshRecorder(active.username, active.deviceId),
                         )
                     }
@@ -188,7 +191,7 @@ private fun runAgent(args: Array<String>) {
             suppliedUser != null && suppliedPassword != null -> {
                 runBlocking {
                     connectLogin(
-                        host, port, serverUrl, cacheOwner,
+                        host, port, serverUrl, tcpTlsCertificatePem, cacheOwner,
                         suppliedUser, suppliedPassword, identity.deviceId,
                         refreshRecorder(suppliedUser, identity.deviceId),
                     )
@@ -327,6 +330,7 @@ private suspend fun connectLogin(
     host: String,
     port: Int,
     serverUrl: String,
+    tcpTlsCertificatePem: String?,
     cacheOwner: PersistentImBotCacheOwner,
     username: String,
     password: String,
@@ -343,6 +347,7 @@ private suspend fun connectLogin(
         cacheOwner = cacheOwner,
         messageInbox = inbox,
         fileServerUrl = serverUrl,
+        tcpTlsCertificatePem = tcpTlsCertificatePem,
         onRefreshCredentials = onRefreshCredentials,
     )
     return ConnectedAgent(bot, inbox)
@@ -352,6 +357,7 @@ private suspend fun connectRegistration(
     host: String,
     port: Int,
     serverUrl: String,
+    tcpTlsCertificatePem: String?,
     cacheOwner: PersistentImBotCacheOwner,
     credentials: AgentCredentialRecord,
     onRefreshCredentials: (String, String, String) -> Unit,
@@ -366,6 +372,7 @@ private suspend fun connectRegistration(
         cacheOwner = cacheOwner,
         messageInbox = inbox,
         fileServerUrl = serverUrl,
+        tcpTlsCertificatePem = tcpTlsCertificatePem,
         onRefreshCredentials = onRefreshCredentials,
     )
     return ConnectedAgent(bot, inbox)
@@ -375,6 +382,7 @@ private suspend fun connectRefresh(
     host: String,
     port: Int,
     serverUrl: String,
+    tcpTlsCertificatePem: String?,
     cacheOwner: PersistentImBotCacheOwner,
     credentials: AgentActiveRefresh,
     onRefreshCredentials: (String, String, String) -> Unit,
@@ -389,6 +397,7 @@ private suspend fun connectRefresh(
         cacheOwner = cacheOwner,
         messageInbox = inbox,
         fileServerUrl = serverUrl,
+        tcpTlsCertificatePem = tcpTlsCertificatePem,
         onRefreshCredentials = onRefreshCredentials,
     )
     return ConnectedAgent(bot, inbox)

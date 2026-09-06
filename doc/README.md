@@ -11,7 +11,7 @@
 |---|---|
 | 组织少量开发者内测 | [预览版范围与最小验收](01-getting-started/developer-preview.md) |
 | 先把项目运行起来 | [快速上手](01-getting-started/README.md) → [开发环境](01-getting-started/development.md) |
-| fork 后部署自己的服务器 | [私有化部署](01-getting-started/private-deployment.md) → [运行配置](07-operations/configuration.md) → [部署与升级](07-operations/deployment.md) |
+| 独立 clone 后部署自己的服务器 | [私有化部署](01-getting-started/private-deployment.md) → [运行配置](07-operations/configuration.md) → [部署与升级](07-operations/deployment.md) |
 | 判断项目是否适合业务 | [产品定位](02-product/README.md) → [为什么是 TeamTalk](02-product/why-teamtalk.md) → [能力模型](02-product/capabilities.md) → [功能状态](10-reference/feature-status.md) |
 | 接手项目、按源码掌握状态与恢复 | [架构入门与阅读练习](03-architecture/architecture-primer.md) → [客户端所有权图](03-architecture/client-and-sdk.md) → [路线图交接切片](10-reference/roadmap.md) |
 | 理解一次消息如何流转 | [系统架构](03-architecture/README.md) → [数据与同步](03-architecture/data-and-sync.md) → [消息与附件](04-protocol/messages-and-attachments.md) |
@@ -91,6 +91,8 @@
 - [运维总览](07-operations/README.md)
 - [运行配置](07-operations/configuration.md)
 - [部署与升级](07-operations/deployment.md)
+- [统一发行流程](07-operations/releasing.md)
+- [Desktop 交叉打包与签名](07-operations/desktop-cross-build.md)
 - [可观测性](07-operations/observability.md)
 - [故障排查](07-operations/troubleshooting.md)
 
@@ -143,7 +145,9 @@
 | 当前完成度、缺口和计划 | `10-reference/` |
 
 代码与文档冲突时：协议字段和 ID 以 `protocol` 中的枚举、模型和生成 Contract 为准；构建任务以
-Gradle 为准；运行配置以 `buildSrc`、`gradle/deployment.json` 和服务端环境读取代码为准。
+Gradle 为准；运行配置以 `buildSrc`、选中的部署 Kotlin 源码和服务端环境读取代码为准。
+默认配置为 `buildSrc/deployment/Deployment.kt`，本机 `buildSrc/deployment-local/` 存在时完整替换默认配置目录，
+详见[运行配置](07-operations/configuration.md)。
 发现冲突必须同时修正文档，不能用“以后再更新”作为长期状态。
 
 ## 文档写作规则
@@ -156,7 +160,7 @@ Gradle 为准；运行配置以 `buildSrc`、`gradle/deployment.json` 和服务�
    才在架构决策中保留背景。
 4. **链接到权威来源。** 不在 README、AGENTS.md 和分册中复制同一张完整表。
 5. **状态必须可验证。** 功能状态使用“已实现/部分实现/未实现”，并给出代码或测试入口。
-6. **示例不包含秘密。** 公开坐标可引用 `deployment.json`，口令、私钥和真实 token 只能写成占位符。
+6. **示例不包含秘密。** 部署 Kotlin 源码只表达非敏感配置；口令、私钥和真实 token 只能写成占位符。
 7. **结构变更要校验链接。** 移动文档后必须扫描仓库内 Markdown 链接和旧路径引用。
 
 ## 生命周期

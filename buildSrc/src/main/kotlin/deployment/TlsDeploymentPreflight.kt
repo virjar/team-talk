@@ -3,6 +3,9 @@ package deployment
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.security.KeyStore
+import java.security.MessageDigest
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
 import java.util.Properties
 import org.gradle.api.GradleException
 
@@ -10,6 +13,19 @@ internal data class TlsPemFiles(
     val certificate: File,
     val privateKey: File,
 )
+
+/** 配置中的证书必须在部署时仍有效且覆盖客户端 TCP 地址；在任何 SSH 或停机操作前调用。 */
+internal fun validateConfiguredTcpTlsCertificate(config: DeploymentConfig): X509Certificate? =
+    config.tcpTlsCertificatePem?.let { pem ->
+        try {
+            readTcpTlsCertificate(pem).also { certificate ->
+                certificate.checkValidity()
+                requireTcpCertificateHost(certificate, config.tcpHost)
+            }
+        } catch (failure: Exception) {
+            throw GradleException("Configured TCP TLS certificate must be valid and include ${config.tcpHost} in its SAN", failure)
+        }
+    }
 
 /**
  * 校验所有无需接触部署目标即可检查的 TLS 属性。
@@ -19,6 +35,7 @@ internal fun validateLocalTlsPemFiles(
     rootDir: File,
     sslCert: String?,
     sslKey: String?,
+    expectedCertificate: X509Certificate? = null,
 ): TlsPemFiles? {
     if ((sslCert == null) != (sslKey == null)) {
         throw GradleException("-PsslCert and -PsslKey must be provided together")
@@ -39,24 +56,52 @@ internal fun validateLocalTlsPemFiles(
     if (!privateKey.isFile) {
         throw GradleException("SSL key file not found or not a regular file: $sslKey")
     }
+    if (expectedCertificate != null) {
+        try {
+            // -PsslCert may contain an HTTPS full chain; the first certificate is the server leaf.
+            val leaf = certificate.inputStream().use {
+                CertificateFactory.getInstance("X.509").generateCertificate(it) as X509Certificate
+            }
+            require(leaf.encoded.contentEquals(expectedCertificate.encoded)) {
+                "The supplied TLS leaf certificate differs from tcpTlsCertificatePem"
+            }
+        } catch (failure: Exception) {
+            throw GradleException("Provided TLS leaf certificate must match the configured TCP TLS certificate", failure)
+        }
+    }
     return TlsPemFiles(certificate, privateKey)
 }
 
 /** 在只读的首次部署探测完成后，应用部署状态规则。 */
 internal fun requireTlsPemFilesForDeployment(
-    sslEnabled: Boolean,
+    tlsEnabled: Boolean,
     isFirstDeploy: Boolean,
     pemFiles: TlsPemFiles?,
 ) {
-    if (!sslEnabled && pemFiles != null) {
-        throw GradleException("-PsslCert and -PsslKey are only valid when serverUrl uses HTTPS")
+    if (!tlsEnabled && pemFiles != null) {
+        throw GradleException("-PsslCert and -PsslKey require HTTPS or tcpTlsCertificatePem")
     }
-    if (sslEnabled && isFirstDeploy && pemFiles == null) {
+    if (tlsEnabled && isFirstDeploy && pemFiles == null) {
         throw GradleException(
-            "First HTTPS deployment requires both -PsslCert=<certificate.pem> and " +
+            "First TLS deployment requires both -PsslCert=<certificate.pem> and " +
                 "-PsslKey=<private-key.pem>"
         )
     }
+}
+
+/** 导出的仅是 leaf 公共证书；密码仍从 stdin 读取，远程只比较 DER 的 SHA-256。 */
+internal fun retainedTlsCertificateCheckCommand(
+    deployPath: String,
+    expectedCertificate: X509Certificate,
+    keytoolExecutable: String = "keytool",
+): String {
+    requireCanonicalDeployPath(deployPath)
+    require(keytoolExecutable.isNotBlank()) { "keytool executable cannot be blank" }
+    val expectedDigest = MessageDigest.getInstance("SHA-256").digest(expectedCertificate.encoded)
+        .joinToString("") { "%02x".format(it) }
+    return "test \"\$(" + posixShellQuote(keytoolExecutable) +
+        " -exportcert -storetype PKCS12 -keystore $deployPath/conf/ssl/teamtalk.p12 -alias mykey " +
+        "-storepass:file /dev/stdin 2>/dev/null | sha256sum | cut -d ' ' -f 1)\" = '$expectedDigest'"
 }
 
 internal fun retainedTlsKeystoreCheckCommand(
@@ -75,7 +120,7 @@ internal fun retainedTlsKeystoreCheckCommand(
 }
 
 /**
- * 只有当远程仍保留着可用的密钥库时，HTTPS 升级才允许省略新的 PEM 密钥对。
+ * 只有当远程仍保留着可用的密钥库时，TLS 升级才允许省略新的 PEM 密钥对。
  * 该检查是只读的，并且在服务停止或文件被覆盖之前执行。
  */
 internal fun preflightRetainedTlsKeystore(
@@ -83,6 +128,7 @@ internal fun preflightRetainedTlsKeystore(
     user: String,
     port: Int,
     deployPath: String,
+    expectedCertificate: X509Certificate? = null,
 ) {
     val secrets = readRequiredUpgradeSecretsFromRemote(host, user, port, deployPath)
     val password = requireCompatibleTlsPasswords(secrets)
@@ -99,10 +145,20 @@ internal fun preflightRetainedTlsKeystore(
             standardInput = standardInput,
             port = port,
         )
+        if (expectedCertificate != null) {
+            remoteSensitiveStdinChecked(
+                label = "verify retained TLS leaf matches the configured TCP certificate",
+                host = host,
+                user = user,
+                command = retainedTlsCertificateCheckCommand(deployPath, expectedCertificate),
+                standardInput = standardInput,
+                port = port,
+            )
+        }
     } catch (failure: ExternalProcessException) {
         throw GradleException(
-            "HTTPS upgrade cannot open the retained $deployPath/conf/ssl/teamtalk.p12 " +
-                "and its private-key entry with the authoritative deployment password. " +
+            "TLS upgrade cannot verify the retained $deployPath/conf/ssl/teamtalk.p12, " +
+                "its private key and the configured TCP certificate with the authoritative deployment password. " +
                 "Provide both -PsslCert and -PsslKey.",
             failure,
         )
@@ -114,10 +170,10 @@ internal fun preflightRetainedTlsKeystore(
 internal fun requireCompatibleTlsPasswords(secrets: Properties): String {
     val keystorePassword = secrets.getProperty("SSL_KEYSTORE_PASSWORD")
         ?.takeIf { it.isNotBlank() && it != "null" }
-        ?: throw GradleException("SSL_KEYSTORE_PASSWORD is required for HTTPS deployment")
+        ?: throw GradleException("SSL_KEYSTORE_PASSWORD is required for TLS deployment")
     val privateKeyPassword = secrets.getProperty("SSL_PRIVATE_KEY_PASSWORD")
         ?.takeIf { it.isNotBlank() && it != "null" }
-        ?: throw GradleException("SSL_PRIVATE_KEY_PASSWORD is required for HTTPS deployment")
+        ?: throw GradleException("SSL_PRIVATE_KEY_PASSWORD is required for TLS deployment")
     if (keystorePassword != privateKeyPassword) {
         throw GradleException(
             "SSL_KEYSTORE_PASSWORD and SSL_PRIVATE_KEY_PASSWORD must be identical for the " +

@@ -72,6 +72,8 @@ import kotlinx.coroutines.CoroutineScope
  * it will be ignored. The default value of this parameter is [Int.MAX_VALUE].
  * @param onUserTextChange callback invoked after a user edit changes the accepted text. Cursor and
  * selection-only changes do not invoke it.
+ * @param imagePlaceholder Optional single-character marker for images in the editable projection.
+ * The host is responsible for presenting the corresponding image preview cards.
  * @param onTextLayout Callback that is executed when a new text layout is calculated. A
  * [TextLayoutResult] object that callback provides contains paragraph information, size of the
  * text, baselines and other details. The callback can be used to add additional decoration or
@@ -105,6 +107,9 @@ public fun BasicRichTextEditor(
     maxLength: Int = Int.MAX_VALUE,
     // [TT] Chat typing signals must observe only accepted user text changes, never selection moves.
     onUserTextChange: () -> Unit = {},
+    // [TT] BasicTextField cannot render inline composables. Hosts with image cards can replace
+    // the raw replacement glyph with a readable, single-character image marker.
+    imagePlaceholder: Char? = null,
     onTextLayout: (TextLayoutResult) -> Unit = {},
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
     cursorBrush: Brush = SolidColor(Color.Black),
@@ -125,6 +130,7 @@ public fun BasicRichTextEditor(
         minLines = minLines,
         maxLength = maxLength,
         onUserTextChange = onUserTextChange,
+        imagePlaceholder = imagePlaceholder,
         onTextLayout = onTextLayout,
         interactionSource = interactionSource,
         cursorBrush = cursorBrush,
@@ -171,6 +177,8 @@ public fun BasicRichTextEditor(
  * it will be ignored. The default value of this parameter is [Int.MAX_VALUE].
  * @param onUserTextChange callback invoked after a user edit changes the accepted text. Cursor and
  * selection-only changes do not invoke it.
+ * @param imagePlaceholder Optional single-character marker for images in the editable projection.
+ * The host is responsible for presenting the corresponding image preview cards.
  * @param onTextLayout Callback that is executed when a new text layout is calculated. A
  * [TextLayoutResult] object that callback provides contains paragraph information, size of the
  * text, baselines and other details. The callback can be used to add additional decoration or
@@ -205,6 +213,8 @@ public fun BasicRichTextEditor(
     maxLength: Int = Int.MAX_VALUE,
     // [TT] Chat typing signals must observe only accepted user text changes, never selection moves.
     onUserTextChange: () -> Unit = {},
+    // [TT] Keep each image's single-character caret/selection contract intact.
+    imagePlaceholder: Char? = null,
     onTextLayout: (TextLayoutResult) -> Unit = {},
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
     cursorBrush: Brush = SolidColor(Color.Black),
@@ -277,6 +287,13 @@ public fun BasicRichTextEditor(
                 }
             }
 
+        // [TT] This is only the editable projection; serialization and the read-only image
+        // renderer continue to use the original image span and its canonical destination.
+        val editorTransformation = remember(state, state.visualTransformation, imagePlaceholder) {
+            imagePlaceholder?.let { marker -> ImageEditorVisualTransformation(state, marker) }
+                ?: state.visualTransformation
+        }
+
         BasicTextField(
             value = state.textFieldValue,
             onValueChange = {
@@ -334,10 +351,10 @@ public fun BasicRichTextEditor(
             maxLines = maxLines,
             minLines = minLines,
             visualTransformation = if (enabled) {
-                state.visualTransformation
+                editorTransformation
             } else {
                 DisabledTextVisualTransformation(
-                    delegate = state.visualTransformation,
+                    delegate = editorTransformation,
                     disabledAlpha = DisabledStateAlpha,
                 )
             },

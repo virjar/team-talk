@@ -61,13 +61,16 @@ fun currentConversationPeerUser(conversation: Conversation, peerUser: User?): Us
 fun conversationIdentityPresentation(
     conversation: Conversation,
     peerUser: User?,
-): ConversationIdentityPresentation = currentConversationPeerUser(conversation, peerUser)?.let { currentPeer ->
-    ConversationIdentityPresentation(
-        name = currentPeer.name.ifBlank { currentPeer.username },
-        avatar = currentPeer.avatar,
+    remark: String? = null,
+): ConversationIdentityPresentation {
+    val currentPeer = currentConversationPeerUser(conversation, peerUser)
+    val privateRemark = remark.takeIf { conversation.chatType == ChatType.PERSONAL.code }
+    return ConversationIdentityPresentation(
+        name = privateRemark?.takeIf(String::isNotBlank)
+            ?: currentPeer?.let { contactDisplayName(it, null, it.uid) }
+            ?: conversation.chatName,
+        avatar = if (currentPeer != null) currentPeer.avatar else conversation.chatAvatar,
     )
-} ?: run {
-    ConversationIdentityPresentation(conversation.chatName, conversation.chatAvatar)
 }
 
 /**
@@ -86,6 +89,8 @@ fun ConversationListScreen(
     selectedChatId: String? = null,
     onMarkRead: ((String, Long) -> Unit)? = null,
     peerUsers: Map<String, User> = emptyMap(),
+    peerRemarks: Map<String, String> = emptyMap(),
+    loadMessagePreview: (suspend (Conversation) -> String?)? = null,
 ) {
     // 首次收藏前不占用会话列表；收藏后与普通会话一起排序，置顶仅由用户决定。
     val sorted = conversations
@@ -114,6 +119,8 @@ fun ConversationListScreen(
             ConversationItem(
                 conversation = conv,
                 peerUser = peerUser,
+                remark = conv.peerUid?.let(peerRemarks::get),
+                loadMessagePreview = loadMessagePreview,
                 selected = conv.chatId == selectedChatId,
                 onClick = { onConversationClick(conv.chatId) },
                 onPinToggle = onPinClick?.let { { onPinClick(conv.chatId, !conv.isPinned) } },
@@ -133,6 +140,8 @@ fun ConversationListScreen(
 private fun ConversationItem(
     conversation: Conversation,
     peerUser: User?,
+    remark: String?,
+    loadMessagePreview: (suspend (Conversation) -> String?)?,
     selected: Boolean,
     onClick: () -> Unit,
     onPinToggle: (() -> Unit)?,
@@ -144,8 +153,13 @@ private fun ConversationItem(
     val hovered by hoverInteraction.collectIsHoveredAsState()
     var menuExpanded by remember { mutableStateOf(false) }
     val muteMenu = conversationMuteMenuPresentation(conversation)
-    val identity = conversationIdentityPresentation(conversation, peerUser)
+    val identity = conversationIdentityPresentation(conversation, peerUser, remark)
     val displayName = identity.name
+    // 只为 LazyColumn 当前可见行读取一条本地消息。新快照先回到自己的摘要，迟到读取不能覆盖另一条。
+    val messagePreview by produceState<String?>(null, conversation, loadMessagePreview) {
+        value = null
+        if (conversation.draft == null) value = loadMessagePreview?.invoke(conversation)
+    }
 
     val bg = when {
         selected -> Tk.colors.selected
@@ -248,9 +262,11 @@ private fun ConversationItem(
                         overflow = TextOverflow.Ellipsis,
                     )
                 } else {
-                    conversation.lastMessage?.let { msg ->
+                    (messagePreview ?: conversation.lastMessage?.let {
+                        lastMessagePreview(it, conversation.lastMessageType)
+                    })?.let { preview ->
                         Text(
-                            text = lastMessagePreview(msg, conversation.lastMessageType),
+                            text = preview,
                             style = MaterialTheme.typography.bodySmall,
                             color = Tk.colors.secondaryText,
                             maxLines = 1,
@@ -292,10 +308,13 @@ private fun ConversationItem(
     }
 }
 
-private fun lastMessagePreview(text: String, type: Int?): String {
+internal fun lastMessagePreview(text: String, type: Int?): String {
     if (type == null) return text
     return when (type) {
-        com.virjar.tk.protocol.MessageType.RICH_TEXT.code -> text
+        // 旧版服务端曾把“仅一张剪贴板图片”的内部名直接保存为摘要。只处理完整受控格式，
+        // 不在普通句子、文件消息或混合正文中猜测/替换用户文字，也不改写历史消息。
+        com.virjar.tk.protocol.MessageType.RICH_TEXT.code ->
+            if (legacyClipboardImagePreview.matches(text)) "[图片]" else text
         com.virjar.tk.protocol.MessageType.FILE.code -> "[文件] $text"
         com.virjar.tk.protocol.MessageType.VOICE.code -> "[语音]"
         com.virjar.tk.protocol.MessageType.IMAGE.code -> "[图片]"
@@ -310,6 +329,8 @@ private fun lastMessagePreview(text: String, type: Int?): String {
         else -> text
     }
 }
+
+private val legacyClipboardImagePreview = Regex("teamtalk-clipboard-[0-9]{6,20}\\.png")
 
 /**
  * 会话列表时间格式：今天 HH:mm；昨天「昨天」；7 天内「周X」；跨年 yyyy/MM/dd；其余 MM/dd。

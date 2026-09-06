@@ -30,6 +30,7 @@ internal fun rememberClaimedAuthController(
     deploymentIdentity: DeploymentIdentity,
     tcpHost: String,
     tcpPort: Int,
+    tcpTlsCertificatePem: String?,
     deviceId: String,
     deviceName: String,
     deviceModel: String?,
@@ -56,6 +57,7 @@ internal fun rememberClaimedAuthController(
     // 连接层（认证结果回调写入 userSession）
     val imClient = remember(credentialOwner) {
         ImClient(
+            tcpTlsCertificatePem = tcpTlsCertificatePem,
             onAuthResult = { success, uid, username, name, refreshToken, accessToken, datasetId, failureReason ->
                 credentialOwner.acceptAuthResult(
                     success = success,
@@ -658,7 +660,7 @@ internal fun rememberClaimedAuthController(
                 ) {
                     "本地登录状态保存失败，当前继续使用离线数据"
                 } else {
-                    userSession.authFailureReason ?: "认证失败"
+                    authenticationFailureMessage(userSession.authFailureReason)
                 }
                 val localOwner = session
                 val mayContinueOffline = retirementCause.mayContinueOffline(

@@ -1,5 +1,7 @@
 package com.virjar.tk.desktop
 
+import com.virjar.tk.app.identity.ClientIdentity
+
 import androidx.compose.foundation.draganddrop.dragAndDropTarget
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -111,7 +113,7 @@ internal fun DocumentWorkspaceWindow(
     }
     Window(
         onCloseRequest = onClose,
-        title = if (integratedMacTitleBar) "" else "TeamTalk 文档",
+        title = if (integratedMacTitleBar) "" else "${ClientIdentity.DISPLAY_NAME} 文档",
         state = rememberWindowState(width = 1280.dp, height = 820.dp),
     ) {
         if (!presentationGate.isOpen || !nav.acceptsRendering) return@Window

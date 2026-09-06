@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.protocol.model.AuthRules
+import com.virjar.tk.app.identity.ClientIdentity
 import com.virjar.tk.app.ui.component.AuthCard
 import com.virjar.tk.app.ui.component.AuthError
 import com.virjar.tk.app.ui.component.AuthField
@@ -68,7 +69,7 @@ fun LoginScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             AuthHeader(
-                title = "TeamTalk",
+                title = ClientIdentity.DISPLAY_NAME,
                 titleColor = if (windowStyle) MaterialTheme.colorScheme.onBackground else Color.White,
             )
             if (allowCustomServer && serverUrl.isNotEmpty()) {
@@ -134,7 +135,7 @@ fun LoginScreen(
             title = { Text("服务器设置") },
             text = {
                 Column {
-                    Text("HTTP 地址（含 https://）", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("服务器地址（含 http:// 或 https://）", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(4.dp))
                     OutlinedTextField(
                         value = editUrl,

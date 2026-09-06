@@ -32,7 +32,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 private const val MESSAGE_CHANNEL = "teamtalk.messages"
-private const val OPEN_MESSAGE_ACTION = "com.virjar.tk.android.OPEN_MESSAGE"
+private const val OPEN_MESSAGE_ACTION = BuildConfig.APPLICATION_ID + ".OPEN_MESSAGE"
 
 /** Activity 的通知入口；等待已认证导航就绪，既支持 onCreate，也支持 onNewIntent。 */
 internal class AndroidNotificationNavigation {
@@ -155,7 +155,7 @@ internal class AndroidMessageNotifications(
         )
         val notification = Notification.Builder(context, MESSAGE_CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(conversation.chatName?.takeIf(String::isNotBlank) ?: "TeamTalk")
+            .setContentTitle(conversation.chatName?.takeIf(String::isNotBlank) ?: context.getString(R.string.app_name))
             .setContentText("${conversation.unreadCount} 条未读消息")
             .setNumber(conversation.unreadCount)
             .setCategory(Notification.CATEGORY_MESSAGE)

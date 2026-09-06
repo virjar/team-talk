@@ -1,5 +1,6 @@
 package com.virjar.tk.server.domain.auth
 
+import com.virjar.tk.protocol.model.MainlandPhoneNumber
 import com.virjar.tk.protocol.model.AuthRules
 import com.virjar.tk.server.domain.transaction.PgUnitOfWork
 import com.virjar.tk.server.domain.user.HumanRegistrationCommand
@@ -48,7 +49,7 @@ class RegistrationService(
             device.deviceModel,
             device.deviceFlag,
         )
-        phone?.let { require(it.length <= MAX_PHONE_LENGTH) { "手机号不能超过 $MAX_PHONE_LENGTH 个字符" } }
+        val normalizedPhone = MainlandPhoneNumber.normalize(phone)
 
         // 慢速的单向密码派生绝不持有 PostgreSQL 连接或行锁。
         val passwordHash = passwordHasher.hash(password)
@@ -66,7 +67,7 @@ class RegistrationService(
                             username = username,
                             name = name,
                             passwordHash = passwordHash,
-                            phone = phone,
+                            phone = normalizedPhone,
                         ),
                     )
                     val issued = initialCredentials.issueInitialCredentials(transaction, user, device)
@@ -82,6 +83,5 @@ class RegistrationService(
 
     companion object {
         const val MAX_UID_ATTEMPTS = 20
-        private const val MAX_PHONE_LENGTH = 20
     }
 }

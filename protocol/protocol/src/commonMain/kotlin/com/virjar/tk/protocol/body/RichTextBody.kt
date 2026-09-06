@@ -206,7 +206,29 @@ fun buildRichTextBody(
         )
     }.toList()
 
-    var text = MarkdownAssetPolicy.replaceReferencesForPlainText(markdown, canonicalAssets)
+    return RichTextBody(
+        markdown = markdown,
+        mentions = mentions,
+        plainText = stripMarkdownForPlainText(
+            MarkdownAssetPolicy.replaceReferencesForPlainText(markdown, canonicalAssets),
+        ),
+        assets = canonicalAssets,
+    )
+}
+
+/**
+ * 读侧图片摘要：保留正文文字，把图片表示为 [图片]，不暴露图片 alt 中的内部文件名。
+ * 不能用此返回值重建待发消息或持久投影：已发行 plainText/投影摘要参与幂等哈希，必须保留旧语义。
+ */
+fun richTextDisplayText(markdown: String, assets: List<EmbeddedAsset> = emptyList()): String {
+    val canonicalAssets = MarkdownAssetPolicy.canonicalize(markdown, assets)
+    return stripMarkdownForPlainText(
+        MarkdownAssetPolicy.replaceReferencesForDisplayText(markdown, canonicalAssets),
+    )
+}
+
+private fun stripMarkdownForPlainText(markdown: String): String {
+    var text = markdown
     val protectedCode = protectMarkdownCodeLiterals(text)
     text = protectedCode.text
     // 剥离顺序：先图片（含 ! 前缀，先于普通链接）、再 mention/链接、后行内标记
@@ -225,14 +247,9 @@ fun buildRichTextBody(
     text = text.replace(Regex("""^([-*+]|\d+\.)\s+""", RegexOption.MULTILINE), "")
     text = text.replace(Regex("""^```.*$""", RegexOption.MULTILINE), "")
 
-    return RichTextBody(
-        markdown = markdown,
-        mentions = mentions,
-        // 代码内容最后还原：字面量内部的链接/图片/转义语法必须保持字面，
-        // 绝不能变成资源标签或外部图片占位符。
-        plainText = protectedCode.restore(protectedEscapes.restore(text)),
-        assets = canonicalAssets,
-    )
+    // 代码内容最后还原：字面量内部的链接/图片/转义语法必须保持字面，
+    // 绝不能变成资源标签或外部图片占位符。
+    return protectedCode.restore(protectedEscapes.restore(text))
 }
 
 private data class ProtectedMarkdownCode(

@@ -1,5 +1,7 @@
 package com.virjar.tk.desktop
 
+import com.virjar.tk.app.identity.ClientIdentity
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.window.WindowDraggableArea
@@ -23,7 +25,6 @@ import com.virjar.tk.shared.client.JvmPrivateDataDirectory
 import com.virjar.tk.shared.client.ServerConfig
 import com.virjar.tk.shared.client.SessionEndReason
 import com.virjar.tk.shared.client.createDesktopLocalCache
-import com.virjar.tk.shared.client.defaultServerConfig
 import com.virjar.tk.app.client.rememberAuthController
 import com.virjar.tk.app.client.AuthFormSubmissionState
 import com.virjar.tk.desktop.media.DesktopSessionResources
@@ -42,7 +43,7 @@ import kotlinx.coroutines.launch
 internal fun showAlreadyRunningDialog(dataDir: File) = application {
     Window(
         onCloseRequest = ::exitApplication,
-        title = "TeamTalk - Already Running",
+        title = "${ClientIdentity.DISPLAY_NAME} - Already Running",
         state = rememberWindowState(width = 450.dp, height = 220.dp),
     ) {
         setTeamTalkIcon()
@@ -83,11 +84,11 @@ internal fun showAlreadyRunningDialog(dataDir: File) = application {
  */
 internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = application {
     // 打包默认部署（DeploymentConfig 注入的系统属性），先于任何运行期覆盖取值
-    val packagedConfig = remember { defaultServerConfig() }
-    // 演示站体验入口开关：deployment.json → BuildConfig 编译期常量（生产部署 false）
+    val packagedConfig = remember { desktopDefaultServerConfig() }
+    // 演示站体验入口开关：选中的 buildSrc Kotlin 配置 → BuildConfig 编译期常量（生产部署 false）
     val allowCustomServer = com.virjar.tk.desktop.BuildConfig.ALLOW_CUSTOM_SERVER
-    var activeConfig by remember(dataDir, packagedConfig) {
-        mutableStateOf(readPersistedCustomServer(dataDir) ?: packagedConfig)
+    var activeConfig by remember(dataDir, packagedConfig, allowCustomServer) {
+        mutableStateOf(restoreDesktopServerConfig(dataDir, packagedConfig, allowCustomServer))
     }
 
     // 切换部署（仅登录窗口可见阶段）：整棵认证子树（identity/tokenStore/auth）
@@ -132,6 +133,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
         deploymentIdentity = deploymentIdentity,
         tcpHost = config.tcpHost,
         tcpPort = config.tcpPort,
+        tcpTlsCertificatePem = config.tcpTlsCertificatePem,
         deviceId = deviceId,
         deviceName = "Desktop",
         deviceModel = System.getProperty("os.name")
@@ -180,7 +182,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
     Window(
         visible = authenticationSurface != DesktopAuthenticationSurface.AUTHENTICATED,
         onCloseRequest = exitUnauthenticatedApplication,
-        title = "TeamTalk",
+        title = ClientIdentity.DISPLAY_NAME,
         state = loginWindowState,
         undecorated = true,
         resizable = false,
@@ -413,7 +415,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                         else -> "离线"
                     }
                     val suffix = if (unreadTotal > 0) " ($unreadTotal 条未读)" else ""
-                    AppTray.setTooltip("TeamTalk - $status$suffix")
+                    AppTray.setTooltip("${ClientIdentity.DISPLAY_NAME} - $status$suffix")
                 }
                 val windowReadActive = isDesktopWindowActive(windowVisible, windowFocused)
                 LaunchedEffect(conversations, windowReadActive) {
@@ -612,13 +614,22 @@ private fun persistCustomServer(dataDir: File, config: com.virjar.tk.shared.clie
     }
 }
 
-private fun readPersistedCustomServer(dataDir: File): com.virjar.tk.shared.client.ServerConfig? = runCatching {
-    val text = customServerStore(dataDir).readText(MAX_CUSTOM_SERVER_FILE_BYTES) ?: return null
-    val lines = text.lines()
-    if (lines.size < 3) return null
-    val port = lines[2].trim().toIntOrNull() ?: return null
-    com.virjar.tk.shared.client.ServerConfig(serverUrl = lines[0].trim(), tcpHost = lines[1].trim(), tcpPort = port)
-}.getOrNull()
+/** 固定部署不采纳历史演示覆盖；同一部署优先使用安装包里的最新证书。 */
+internal fun restoreDesktopServerConfig(
+    dataDir: File,
+    packagedConfig: ServerConfig,
+    allowCustomServer: Boolean,
+): ServerConfig {
+    if (!allowCustomServer) return packagedConfig
+    return runCatching {
+        val text = customServerStore(dataDir).readText(MAX_CUSTOM_SERVER_FILE_BYTES) ?: return packagedConfig
+        val lines = text.lines()
+        if (lines.size < 3) return packagedConfig
+        val port = lines[2].trim().toIntOrNull() ?: return packagedConfig
+        val custom = ServerConfig(serverUrl = lines[0].trim(), tcpHost = lines[1].trim(), tcpPort = port)
+        if (custom.deploymentIdentity() == packagedConfig.deploymentIdentity()) packagedConfig else custom
+    }.getOrDefault(packagedConfig)
+}
 
 private const val MAX_CUSTOM_SERVER_FILE_BYTES = 2048L
 

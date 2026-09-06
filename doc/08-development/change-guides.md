@@ -80,7 +80,7 @@
 
 ## 7. 修改部署配置
 
-1. 在 DeploymentConfig 增加字段和严格校验。
+1. 在 DeploymentConfig 增加字段和严格校验，再在 DeploymentDsl 的所属章节暴露配置，说明默认值推导。
 2. 更新 build task、BuildConfig、验收和运行时消费者。
 3. 说明默认值、secret 边界和升级兼容。
 4. 添加 buildSrc 测试。

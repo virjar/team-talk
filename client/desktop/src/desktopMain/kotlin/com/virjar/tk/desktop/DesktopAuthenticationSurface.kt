@@ -1,5 +1,7 @@
 package com.virjar.tk.desktop
 
+import com.virjar.tk.app.identity.ClientIdentity
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -44,7 +46,7 @@ internal data class DesktopProtocolUpgradeSurfacePolicy(
 
 internal val forceDesktopProtocolUpgradeSurfacePolicy = DesktopProtocolUpgradeSurfacePolicy(
     title = "客户端需要更新",
-    message = "当前版本与服务器不兼容。请更新到最新版本后再继续使用 TeamTalk。",
+    message = "当前版本与服务器不兼容。请更新到最新版本后再继续使用 ${ClientIdentity.DISPLAY_NAME}。",
     actionLabel = "退出应用",
     action = DesktopProtocolUpgradeAction.EXIT_APPLICATION,
 )

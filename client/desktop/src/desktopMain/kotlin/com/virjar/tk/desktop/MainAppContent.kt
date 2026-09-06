@@ -174,15 +174,17 @@ internal fun WindowScope.MainAppContent(
 
     val conversations by nav.conversationViewModel.conversations.collectAsState()
     val conversationPeerUsers by nav.conversationViewModel.peerUsers.collectAsState()
+    val contacts by nav.contactViewModel.contacts.collectAsState()
+    val peerRemarks = remember(contacts) { com.virjar.tk.app.ui.screen.contactRemarks(contacts) }
     val activeConversation = conversations.find { it.chatId == nav.chatId }
     val activeChatName = activeConversation?.let { conversation ->
         conversationIdentityPresentation(
             conversation,
             conversation.peerUid?.let(conversationPeerUsers::get),
+            conversation.peerUid?.let(peerRemarks::get),
         ).name
     } ?: nav.chatId?.take(16).orEmpty()
     val activeChatType = activeConversation?.chatType ?: ChatType.PERSONAL.code
-    val contacts by nav.contactViewModel.contacts.collectAsState()
     val friendPresenceByUid by nav.contactViewModel.friendPresenceByUid.collectAsState()
     val pendingApplyCount by nav.contactViewModel.pendingApplyCount.collectAsState()
     var documentsInitialized by remember { mutableStateOf(false) }
@@ -329,7 +331,7 @@ internal fun WindowScope.MainAppContent(
                 currentUserAvatar = resolveUser(userSession.uid)?.avatar,
             )
 
-            MainListPane(nav, presentationGate, onLogout, conversations, conversationPeerUsers, contacts, friendPresenceByUid, pendingApplyCount)
+            MainListPane(nav, presentationGate, onLogout, conversations, conversationPeerUsers, peerRemarks, contacts, friendPresenceByUid, pendingApplyCount)
             MainContentPane(
                 nav, presentationGate, resources, chatEmbeddedAssetImports, documentEmbeddedAssetImports,
                 documentEmbeddedAssetMedia, resolveUser, mentionCandidates, activeConversation,
@@ -350,6 +352,7 @@ private fun MainListPane(
     onLogout: () -> Unit,
     conversations: List<Conversation>,
     conversationPeerUsers: Map<String, User>,
+    peerRemarks: Map<String, String>,
     contacts: List<Contact>,
     friendPresenceByUid: Map<String, FriendPresence>,
     pendingApplyCount: Int,
@@ -382,6 +385,8 @@ private fun MainListPane(
                                 }
                             },
                             peerUsers = conversationPeerUsers,
+                            peerRemarks = peerRemarks,
+                            loadMessagePreview = nav.conversationViewModel::messagePreview,
                         )
                     }
                 }

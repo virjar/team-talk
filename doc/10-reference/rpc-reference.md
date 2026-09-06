@@ -12,9 +12,10 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 5. 注册、登录和 refresh 属于 TCP AUTH 握手，不属于下列 RPC。
 6. 普通消息发送使用 MESSAGE / MESSAGE_ACK，不通过 `message` RPC。
 
-当前表是尚未正式发布的协议 v22 开发基线，不是“已经发布、永久不可变”的历史登记表。发布前仍可在
-同步更新所有端、协议版本、生成契约、golden test 和本文档的前提下做协调式破坏性调整；首次正式
-发布后，实际发布版本中的编号才进入第 1、2 条兼容性承诺。
+当前表描述开发中的 RPC 契约，不能代替已冻结的发行快照。开发者预览 `0.0.0` 已登记协议基线；
+同一协议 major 内，已冻结契约和编号不得修改或复用，新增契约须递增开发 minor 并登记开发清单。
+只有明确的新协议 major 才能重整编号空间。向内测用户或私有客户分发同样属于发行，须由用户明确
+确认本次发行后冻结契约，不以“尚未正式发布”为由放宽兼容规则。
 
 源文件位于 `protocol/protocol/src/commonMain/kotlin/com/virjar/tk/protocol/rpc/def/`。
 

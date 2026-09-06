@@ -2,6 +2,7 @@ package com.virjar.tk.server.e2e
 
 import com.virjar.tk.shared.client.ConnectionState
 import com.virjar.tk.shared.client.ImClient
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -19,17 +20,14 @@ class BanEnforcementTest {
     fun `封禁覆盖同步中连接且解封不复活旧凭据`() {
         TcpE2eEnvironment().use { env ->
             runBlocking {
-                var failReason: String? = null
                 var registeredUid: String? = null
                 var oldRefresh: String? = null
                 var oldAccess: String? = null
-                val c1 = ImClient(onAuthResult = { ok, uid, _, _, refresh, access, _, reason ->
+                val c1 = ImClient(onAuthResult = { ok, uid, _, _, refresh, access, _, _ ->
                     if (ok) {
                         registeredUid = uid
                         oldRefresh = refresh
                         oldAccess = access
-                    } else {
-                        failReason = reason
                     }
                 })
                 val username = "ban-${System.nanoTime()}"
@@ -54,14 +52,25 @@ class BanEnforcementTest {
                 // 解封只改变账号状态。旧的 access 与 refresh 都不允许复活。
                 env.adminService.unbanUser(uid)
                 assertNull(env.accessTokenValidator.validateAccessToken(access))
-                val c2 = ImClient(onAuthResult = { ok, _, _, _, _, _, _, reason -> if (!ok) failReason = reason })
-                c2.authenticate(uid, refresh, "d1", "T", "127.0.0.1", env.tcpPort)
-                withTimeout(10_000) { c2.state.first { it == ConnectionState.AUTH_FAILED } }
-                assertEquals("Invalid or expired refresh token", failReason)
-                c2.destroy()
+                val rejectedRefresh = CompletableDeferred<String?>()
+                val c2 = ImClient(onAuthResult = { ok, _, _, _, _, _, _, reason ->
+                    if (!ok) rejectedRefresh.complete(reason)
+                })
+                try {
+                    c2.authenticate(uid, refresh, "d1", "T", "127.0.0.1", env.tcpPort)
+                    withTimeout(10_000) { c2.state.first { it == ConnectionState.AUTH_FAILED } }
+                    // AUTH_FAILED 先于 onAuthResult 发布，观察到状态不代表 Netty 线程已经执行回调。
+                    // 等待实际回调完成，同时保留状态与旧凭据拒绝原因两项断言。
+                    assertEquals(
+                        "Invalid or expired refresh token",
+                        withTimeout(10_000) { rejectedRefresh.await() },
+                    )
+                } finally {
+                    c2.destroy()
+                }
 
                 // 密码证明是解封后唯一的恢复路径。
-                val c3 = ImClient(onAuthResult = { ok, _, _, _, _, _, _, reason -> if (!ok) failReason = reason })
+                val c3 = ImClient()
                 val c3Events = c3.installE2eEventProjection(env.syncDatasetId)
                 c3.login(username, "password123", "d1", "T", "127.0.0.1", env.tcpPort)
                 withTimeout(10_000) { c3.state.first { it == ConnectionState.AUTHENTICATED } }

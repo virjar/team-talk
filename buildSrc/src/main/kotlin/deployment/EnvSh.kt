@@ -30,6 +30,7 @@ fun generateEnvShContent(
     httpPort: Int,
     tcpPort: String,
     minimumProtocolMinor: Int? = null,
+    tcpTlsEnabled: Boolean = sslEnabled,
 ): String {
     requireCanonicalDeployPath(deployPath)
     require(tcpPort.matches(Regex("[1-9][0-9]{0,4}")) && tcpPort.toInt() in 1..65535) {
@@ -53,9 +54,8 @@ fun generateEnvShContent(
 
     lines.add("# ── 服务端口 ──")
     if (httpPort != 8080) lines.add("KTOR_PORT=$httpPort")
-    // 对外可访问的 TCP 仅支持 TLS。纯 HTTP 部署有意保留回环地址上的开发监听器，
-    // 而不是默默地在所有网卡上暴露明文。
-    lines.add("TCP_HOST=${if (sslEnabled) "0.0.0.0" else "127.0.0.1"}")
+    // HTTP 站点也可使用固定公共证书的 TCP TLS；没有 TLS 的开发监听器只绑定回环。
+    lines.add("TCP_HOST=${if (tcpTlsEnabled) "0.0.0.0" else "127.0.0.1"}")
     lines.add("TCP_PORT=$tcpPort")
     minimumProtocolMinor?.let { lines.add("MINIMUM_PROTOCOL_MINOR=$it") }
     lines.add("")
@@ -72,6 +72,8 @@ fun generateEnvShContent(
     lines.add("# ── SSL ──")
     if (sslEnabled) {
         lines.add("KTOR_SSL_PORT=$sslPort")
+    }
+    if (tcpTlsEnabled) {
         lines.add("SSL_KEYSTORE=${posixShellQuote("$deployPath/conf/ssl/teamtalk.p12")}")
     }
     // 升级恢复以远程 env.sh 为权威来源，包括在 HTTPS 被禁用期间。

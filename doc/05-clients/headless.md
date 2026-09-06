@@ -46,6 +46,15 @@ AUTH。客户端低于最低 minor、major 不兼容或窗口无交集时返回�
 升级服务器后可用同一客户端显式发起新连接，不能被调用方持久记成必须更换客户端。
 无头入口没有图形横幅或升级弹窗，CLI/MCP 也不拥有第二套兼容判断。
 
+私有 TCP TLS 可通过 `ImBot.login/register/registerExact/authenticate` 的可选
+`tcpTlsCertificatePem` 参数传入公共 PEM；`ServerConfig` 与 `ImClient` 使用同名参数。省略时保留
+系统 WebPKI，显式配置后只信任该证书并继续校验主机/IP 与 TLS 1.2/1.3，loopback 同样启用 TLS。
+证书不是账号数据 namespace 的组成部分，也不会修改系统全局信任。SDK/无头 agent 可通过 JVM 参数
+`teamtalk.tcp.certificate.base64` 显式配置公共证书，agent 服务安装会保留该参数。Android 与 Desktop
+标准构建将公共证书写入生成配置，Desktop 打包与 `run` 不传完整证书启动参数；Desktop 仍支持上述
+运行时显式覆盖。公开证书与服务器坐标的来源见[运行配置](../07-operations/configuration.md#传输配置边界)，
+私钥不能交给 SDK。
+
 SDK 协商与 MCP `initialize.serverInfo.version` 使用生成的 `TeamTalkBuild.RELEASE_VERSION`，
 与服务端和图形客户端保持同一发行字符串。
 发行字符串只用于显示和诊断，版本判断始终使用独立数字协议 ID；不能用字符串排序或发行 patch

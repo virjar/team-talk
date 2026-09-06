@@ -1,5 +1,6 @@
 package com.virjar.tk.app.ui.component
 
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -237,6 +238,7 @@ fun TkFormTextField(
     visualTransformation: VisualTransformation = VisualTransformation.None,
     enabled: Boolean = true,
     tag: String? = null,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
 ) {
     OutlinedTextField(
         value = value,
@@ -245,6 +247,7 @@ fun TkFormTextField(
         singleLine = singleLine,
         enabled = enabled,
         visualTransformation = visualTransformation,
+        keyboardOptions = keyboardOptions,
         shape = MaterialTheme.shapes.small,
         colors = OutlinedTextFieldDefaults.colors(
             unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),

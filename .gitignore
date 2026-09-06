@@ -8,8 +8,9 @@ local.properties
 .DS_Store
 data/
 logs/
-!admin/src/pages/logs/
-!admin/src/pages/logs/**
+!/server/admin/src/pages/logs/
+!/server/admin/src/pages/logs/**
+*.tsbuildinfo
 scripts/e2e/__pycache__/
 /server/admin/dist/
 /server/admin/node_modules/
@@ -17,3 +18,8 @@ server/server/src/main/resources/static/admin/
 .zcode/
 
 client/desktop/output/
+
+# 独立私有 clone 的完整配置覆写与持久 TCP TLS 密钥材料。
+/buildSrc/deployment-local/
+/gradle/tcp-tls/
+/gradle/.tcp-tls-*/

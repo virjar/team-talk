@@ -239,6 +239,36 @@ class ContactUnitOfWorkIntegrationTest {
     }
 
     @Test
+    fun `remark commits a private idempotent projection event and rejects non friends`() = runTest {
+        val owner = ctx.registerUser(uniqueUsername("remark-owner"))
+        val friend = ctx.registerUser(uniqueUsername("remark-friend"))
+        establishFriendship(owner, friend)
+        val ownerBefore = eventCount(owner, NotifyType.CONTACT_UPDATED)
+        val friendBefore = eventCount(friend, NotifyType.CONTACT_UPDATED)
+        ctx.contactService(owner).setRemark(friend, "  工作伙伴  ")
+        ctx.contactService(owner).setRemark(friend, "工作伙伴")
+        assertEquals(ownerBefore + 1, eventCount(owner, NotifyType.CONTACT_UPDATED))
+        assertEquals(friendBefore, eventCount(friend, NotifyType.CONTACT_UPDATED))
+        val payload = transaction(ctx.database) {
+            SyncEvents.selectAll().where {
+                (SyncEvents.uid eq owner) and (SyncEvents.eventType eq NotifyType.CONTACT_UPDATED.code)
+            }.single()[SyncEvents.payload]
+        }
+        val projected = ProtoCodec.decode(Contact, payload)
+        assertEquals(owner, projected.uid)
+        assertEquals(friend, projected.friendUid)
+        assertEquals("工作伙伴", projected.remark)
+        assertEquals(friend, projected.user?.uid)
+        ctx.contactService(owner).setRemark(friend, " ")
+        assertNull(ctx.contactRepo.listFriends(owner).single { it.friendUid == friend }.remark)
+        assertEquals(ownerBefore + 2, eventCount(owner, NotifyType.CONTACT_UPDATED))
+        assertFailsWith<IllegalArgumentException> { ctx.contactService(owner).setRemark(friend, "x".repeat(101)) }
+        ctx.contactService(owner).delete(friend)
+        assertFailsWith<IllegalArgumentException> { ctx.contactService(owner).setRemark(friend, "gone") }
+        assertEquals(ownerBefore + 2, eventCount(owner, NotifyType.CONTACT_UPDATED))
+    }
+
+    @Test
     fun `blacklist and non notifying mutations also roll back at the aggregate boundary`() = runTest {
         val first = ctx.registerUser(uniqueUsername("contact-uow-mutations-first"))
         val second = ctx.registerUser(uniqueUsername("contact-uow-mutations-second"))
@@ -259,10 +289,12 @@ class ContactUnitOfWorkIntegrationTest {
             eventCount(first, NotifyType.CONTACT_DELETED) + eventCount(second, NotifyType.CONTACT_DELETED),
         )
 
+        val remarkEventsBefore = eventCount(first, NotifyType.CONTACT_UPDATED)
         assertIs<InjectedContactRollbackException>(runCatching {
             failing.setRemark(first, second, "after")
         }.exceptionOrNull())
         assertEquals("before", ctx.contactRepo.listFriends(first).single { it.friendUid == second }.remark)
+        assertEquals(remarkEventsBefore, eventCount(first, NotifyType.CONTACT_UPDATED))
 
         val rejectSender = ctx.registerUser(uniqueUsername("contact-uow-reject-sender"))
         val rejectRecipient = ctx.registerUser(uniqueUsername("contact-uow-reject-recipient"))

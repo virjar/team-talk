@@ -15,6 +15,7 @@ import com.virjar.tk.protocol.model.ContactApplyRecord
 import com.virjar.tk.protocol.model.Device
 import com.virjar.tk.protocol.model.ProfilePatch
 import com.virjar.tk.protocol.model.ProfilePatchValue
+import com.virjar.tk.protocol.model.MainlandPhoneNumber
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.app.viewmodel.ContactViewModel
 import kotlinx.coroutines.CoroutineScope
@@ -152,6 +153,8 @@ class AccountFeature internal constructor(
         private set
     var isFriend by mutableStateOf(false)
         private set
+    var profileRemark by mutableStateOf<String?>(null)
+        private set
     var profileFriendApplyState by mutableStateOf(ProfileFriendApplyState.NONE)
         private set
 
@@ -177,7 +180,9 @@ class AccountFeature internal constructor(
         scope.launch {
             contactViewModel.contacts.collect { contacts ->
                 val uid = profileTargetUid ?: return@collect
-                val nowFriend = contacts.any { it.friendUid == uid }
+                val contact = contacts.firstOrNull { it.friendUid == uid }
+                profileRemark = contact?.remark
+                val nowFriend = contact != null
                 if (nowFriend != isFriend) isFriend = nowFriend
                 if (nowFriend) updateFriendApplyState(uid, ProfileFriendApplyState.NONE)
             }
@@ -289,7 +294,9 @@ class AccountFeature internal constructor(
 
     internal suspend fun loadProfile(uid: String) {
         bindProfileProjection(uid)
-        isFriend = contactViewModel.contacts.value.any { it.friendUid == uid }
+        val contact = contactViewModel.contacts.value.firstOrNull { it.friendUid == uid }
+        isFriend = contact != null
+        profileRemark = contact?.remark
         profileFriendApplyState = friendApplyStateByUid[uid] ?: ProfileFriendApplyState.NONE
         if (isFriend) updateFriendApplyState(uid, ProfileFriendApplyState.NONE)
         refreshProfile(uid)
@@ -542,7 +549,9 @@ class AccountFeature internal constructor(
                     ProfilePatch(
                         name = ProfilePatchValue.Set(name),
                         avatar = avatar,
-                        phone = ProfilePatchValue.Set(phone),
+                        phone = if (phone.orEmpty() == MainlandPhoneNumber.display(currentUser?.phone)) {
+                            ProfilePatchValue.Unchanged
+                        } else ProfilePatchValue.Set(phone),
                     ),
                 )
             },
@@ -554,9 +563,16 @@ class AccountFeature internal constructor(
             is Outcome.Success -> true
             is Outcome.Failure -> {
                 reportError(result.error, "保存失败")
-                false
+                // 保留具体业务原因交给表单，不能把手机号冲突折叠成 Boolean 假值。
+                throw result.error
             }
         }
+    }
+
+    suspend fun setFriendRemark(uid: String, remark: String?): Outcome<Unit> {
+        val result = localData.run { session.contactRepo.setRemark(uid, remark) }
+        if (result is Outcome.Failure) reportError(result.error, "保存备注失败")
+        return result
     }
 
     suspend fun changePassword(old: String, new: String): Boolean = try {

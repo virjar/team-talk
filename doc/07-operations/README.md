@@ -19,7 +19,7 @@ systemd: teamtalk.service
 
 - 被选用的 HTTP(S)、TCP 端点与 PostgreSQL 可达；客户端与监听模式满足[传输配置边界](configuration.md#传输配置边界)。
 - `data/`、`conf/` 有持久磁盘和正确权限。
-- TLS 证书、数据库口令和管理凭据不进入仓库。
+- TLS 私钥、数据库口令和管理凭据不进入仓库；客户端固定信任只携带公共证书。
 - `/health` 有外部探测。
 - 服务端主日志、按 DIAGNOSTIC 策略有界启用的连接 trace 和客户端 fault 有容量与保留策略。
 - 升级前有 PostgreSQL 与完整 data/conf 备份。
@@ -27,9 +27,10 @@ systemd: teamtalk.service
 
 ## 分册
 
-- [运行配置](configuration.md)：部署 JSON、环境变量、端口和目录。
+- [运行配置](configuration.md)：部署 Kotlin 源码、默认/local 选择、机器快照、环境变量、端口和目录。
 - [部署与升级](deployment.md)：首次部署、发布、备份和回滚。
-- [Desktop 交叉打包](desktop-cross-build.md)：Conveyor 单机出三平台安装包 + 自更新站点；构建、identity stamp 与纯上传分离。
+- [统一发行流程](releasing.md)：根版本、人工说明、密封产物、本机与 GitHub CI 共用的 Gradle 发布入口。
+- [Desktop 交叉打包与签名](desktop-cross-build.md)：Gradle 管理 Conveyor、三平台安装包、Android 与 Desktop 持续签名。
 - [可观测性](observability.md)：健康、日志、版本和诊断键。
 - [故障排查](troubleshooting.md)：按症状定位连接、认证、同步、文件和构建问题。
 

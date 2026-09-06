@@ -88,8 +88,9 @@ fun rememberAuthController(
     afterSessionRetirement: (ClientSession, SessionEndReason) -> Unit = { _, _ -> },
     runtimeInfo: ClientRuntimeInfo = ClientRuntimeInfo.unknown(),
     telemetrySpoolRoot: File = platformDataDir(),
+    tcpTlsCertificatePem: String? = null,
 ): AuthState {
-    val authenticationAttempts = remember(tokenStore, deploymentIdentity, tcpHost, tcpPort) {
+    val authenticationAttempts = remember(tokenStore, deploymentIdentity, tcpHost, tcpPort, tcpTlsCertificatePem) {
         AuthenticationAttemptAdmission()
     }
     // 预留只是内存操作。claimOwner 执行的 SharedPreferences/properties 比较并交换（CAS）
@@ -148,6 +149,7 @@ fun rememberAuthController(
         deploymentIdentity = deploymentIdentity,
         tcpHost = tcpHost,
         tcpPort = tcpPort,
+        tcpTlsCertificatePem = tcpTlsCertificatePem,
         deviceId = deviceId,
         deviceName = deviceName,
         deviceModel = deviceModel,

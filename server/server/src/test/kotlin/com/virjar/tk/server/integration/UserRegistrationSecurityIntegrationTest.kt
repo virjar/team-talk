@@ -61,12 +61,12 @@ class UserRegistrationSecurityIntegrationTest {
     }
 
     @Test
-    fun `concurrent same phone maps one exact business conflict`() = runTest {
+    fun `concurrent bare and legacy prefixed phone map one exact business conflict`() = runTest {
         val phone = "13${System.nanoTime().toString().takeLast(9).padStart(9, '0')}"
 
         val outcomes = concurrentRegistrations(
             { ctx.registerHuman(uniqueUsername("phone-race-a"), "password-123", "First", phone) },
-            { ctx.registerHuman(uniqueUsername("phone-race-b"), "password-456", "Second", phone) },
+            { ctx.registerHuman(uniqueUsername("phone-race-b"), "password-456", "Second", "+86$phone") },
         )
 
         assertEquals(1, outcomes.count { it is RegistrationOutcome.Success })

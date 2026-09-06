@@ -25,10 +25,11 @@ object NotifyContracts {
 
     /** 有 payload 契约的通知类型；持久化与瞬时事件都必须登记。 */
     val payloads: Map<NotifyType, IProtoReader<out IProto>> = mapOf(
-        // 联系人：APPLY 发 ContactApply；ACCEPTED/DELETED 发各自视角的 Contact
+        // 联系人：APPLY 发 ContactApply；ACCEPTED/DELETED/UPDATED 发各自视角的 Contact
         NotifyType.CONTACT_APPLY to ContactApply,
         NotifyType.CONTACT_ACCEPTED to Contact,
         NotifyType.CONTACT_DELETED to Contact,
+        NotifyType.CONTACT_UPDATED to Contact,
 
         // 群组（含成员变更）：统一发 Chat
         NotifyType.CHAT_CREATED to Chat,

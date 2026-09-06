@@ -58,6 +58,7 @@ internal fun ChatComposer(
     composerMode: ChatComposerMode,
     onComposerModeChange: (ChatComposerMode) -> Unit,
     sourceInput: TextFieldValue,
+    composerMarkdown: String,
     onSourceInputChange: (TextFieldValue) -> Unit,
     onVisualTextChange: () -> Unit,
     inputFocus: FocusRequester,
@@ -251,6 +252,16 @@ internal fun ChatComposer(
             onRetryPendingAsset = onRetryPendingAsset,
             onDiscardPendingAsset = onDiscardPendingAsset,
         )
+
+        if (!voiceMode && composerMode != ChatComposerMode.PREVIEW) {
+            ComposerImageCards(
+                markdown = composerMarkdown,
+                assets = embeddedAssets,
+                pendingJobs = pendingAssetJobs,
+                media = media,
+                onDiscard = onDiscardPendingAsset,
+            )
+        }
 
         val sendEnabled = (when (composerMode) {
             ChatComposerMode.VISUAL -> richState.annotatedString.text.isNotBlank()

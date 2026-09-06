@@ -62,9 +62,6 @@ internal actual fun canonicalHttpServerBase(serverUrl: String): String {
     val scheme = parsed.scheme?.lowercase()
     require(scheme == "http" || scheme == "https") { "文件服务器必须使用 HTTP(S)" }
     require(parsed.host != null) { "文件服务器地址缺少主机" }
-    require(scheme == "https" || parsed.host.isExplicitLoopbackHost()) {
-        "认证 HTTP 端点必须使用 HTTPS（仅显式 loopback 可使用 HTTP）"
-    }
     require(parsed.userInfo == null) { "文件服务器地址不能包含凭据" }
     require(parsed.rawQuery == null && parsed.rawFragment == null) {
         "文件服务器地址不能包含 query 或 fragment"

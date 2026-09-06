@@ -1,5 +1,7 @@
+import java.util.Base64
 import java.util.Properties
 import deployment.DeploymentConfig
+import release.GenerateAndroidReleaseIdentity
 
 val deploymentConfig = rootProject.extra.get("deploymentConfig") as DeploymentConfig
 val gitCommitId = rootProject.extra.get("gitCommitId") as String
@@ -14,12 +16,27 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+val generateReleaseIdentity = tasks.register<GenerateAndroidReleaseIdentity>("generateReleaseIdentity") {
+    this.releaseVersion.set(rootProject.extra["releaseVersion"] as String)
+    this.buildIdentity.set(rootProject.extra["buildIdentity"] as String)
+    outputDirectory.set(layout.buildDirectory.dir("generated/release-identity/assets"))
+}
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(generateReleaseIdentity, GenerateAndroidReleaseIdentity::outputDirectory)
+    }
+}
+
 android {
     namespace = "com.virjar.tk.android"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.virjar.tk.android"
+        // 安装身份可以按私有部署配置，源码 namespace 保持稳定。
+        applicationId = deploymentConfig.client.androidApplicationId
+        // Android 字符串资源外层引号保留显示名里的空格和撇号，内部引号单独转义。
+        val appName = deploymentConfig.client.displayName.replace("\\", "\\\\").replace("\"", "\\\"")
+        resValue("string", "app_name", "\"$appName\"")
         minSdk = 26
         targetSdk = 35
         versionCode = androidVersionCode
@@ -27,6 +44,11 @@ android {
         buildConfigField("String", "SERVER_BASE_URL", "\"${deploymentConfig.serverUrl}\"")
         buildConfigField("String", "TCP_HOST", "\"${deploymentConfig.tcpHost}\"")
         buildConfigField("int", "TCP_PORT", "${deploymentConfig.tcpPort}")
+        buildConfigField(
+            "String",
+            "TCP_TLS_CERTIFICATE_BASE64",
+            "\"${deploymentConfig.tcpTlsCertificatePem?.let { Base64.getEncoder().encodeToString(it.toByteArray(Charsets.UTF_8)) }.orEmpty()}\"",
+        )
         buildConfigField("String", "GIT_COMMIT_ID", "\"$gitCommitId\"")
         buildConfigField("String", "BUILD_IDENTITY", "\"$buildIdentity\"")
         buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
@@ -42,12 +64,14 @@ android {
 
     signingConfigs {
         create("release") {
-            val storeFilePath = localProps.getProperty("release.storeFile")
+            fun signingValue(property: String, environment: String): String? =
+                providers.environmentVariable(environment).orNull ?: localProps.getProperty(property)
+            val storeFilePath = signingValue("release.storeFile", "TEAMTALK_ANDROID_KEYSTORE")
             if (storeFilePath != null) {
                 storeFile = rootProject.file(storeFilePath)
-                storePassword = localProps.getProperty("release.storePassword") ?: ""
-                keyAlias = localProps.getProperty("release.keyAlias") ?: ""
-                keyPassword = localProps.getProperty("release.keyPassword") ?: ""
+                storePassword = signingValue("release.storePassword", "TEAMTALK_ANDROID_STORE_PASSWORD") ?: ""
+                keyAlias = signingValue("release.keyAlias", "TEAMTALK_ANDROID_KEY_ALIAS") ?: ""
+                keyPassword = signingValue("release.keyPassword", "TEAMTALK_ANDROID_KEY_PASSWORD") ?: ""
             } else {
                 storeFile = file("teamtalk-dev.jks")
                 storePassword = "teamtalk"

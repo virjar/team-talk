@@ -9,29 +9,28 @@
 | Android Studio | 当前稳定版 | Android 构建、模拟器和真机调试 |
 | Git | 可读取提交 ID | 构建信息和发布溯源 |
 
-Gradle Wrapper 会下载固定版本的 Gradle；不需要全局安装 Gradle。第一次构建需要访问 Maven
-Central、Google Maven 和 Gradle 分发站点。
+Gradle Wrapper 会下载固定版本的 Gradle；管理后台的 Gradle 模块自动下载固定版本的 Node.js 及随包 npm。
+常规构建不需要全局安装 Gradle、Node.js 或 npm。第一次构建需要访问 Maven Central、Google Maven、
+Gradle 与 Node.js 分发站点，以及 npm 包仓库。
 
 ## 2. 仓库配置
 
-`gradle/deployment.json` 是会进入版本库的非敏感配置：
+`buildSrc/deployment/Deployment.kt` 是提交到仓库的非敏感 Kotlin 配置，主仓库保持连接公版 `im.virjar.com`。
+配置入口是普通 Kotlin 函数 `deploymentConfiguration(rootDir: File): DeploymentConfig`，用
+`deployment { server { ... }; deploy { ... }; client { ... } }` 按职责分章节；TCP/SSH 主机默认跟随
+最终 HTTP URL，也可分别覆写。配置与 `src/main/kotlin` 使用同一 Kotlin 编译和类型检查，根构建
+直接调用它，最终对象仍须通过构造器校验。可以用同目录辅助函数拆分章节，字段与示例见
+[运行配置](../07-operations/configuration.md)。
 
-```json
-{
-  "serverUrl": "https://im.example.com",
-  "tcpAddress": "im.example.com:5100",
-  "deployHost": "im.example.com",
-  "deployPort": 22,
-  "deployUser": "root",
-  "deployPath": "/opt/teamtalk",
-  "sslPort": 443
-}
-```
+私有构建和部署使用独立 clone，在其中创建 `buildSrc/deployment-local/Deployment.kt`，整个 local 目录
+被 Git 忽略。`buildSrc` 的配置源目录只纳入选中的一套：有 local 就完整采用 local，否则采用默认；
+没有配置叠加或 `-P` 选择参数。独立目录用来整套选择配置与辅助文件，不改变普通 Kotlin 源码语义；
+新增或切换 local 目录后重新同步 Gradle，让 IDE 更新源码目录。
+源码更新保留本机部署文件，产品改动仍回到主仓库完成，不需要维护私有源码分支。
+部署口令、数据库密码和 SSH 私钥不能写入任一配置源码，因为最终配置会进入非敏感发行快照；秘密继续
+通过本地 `gradle/deployment.secrets` 或 CI Secret 提供。
 
-字段含义见[运行配置](../07-operations/configuration.md)。部署口令、数据库密码和 SSH 私钥不能写入
-该文件；敏感配置由本地 `gradle/deployment.secrets` 或 CI Secret 提供。
-
-## 3. 两种开发回路
+## 3. 开发回路
 
 ### 3.1 业务与客户端开发：连接配置服务器
 
@@ -68,6 +67,30 @@ docker compose up -d
 
 服务端调试适合领域逻辑、存储、协议分发和迁移问题。涉及多端行为时，最终仍需在配置部署上执行
 真实业务验收。
+
+### 3.3 管理后台开发
+
+从仓库根目录检查 TypeScript 并构建生产静态资源：
+
+```bash
+./gradlew :server:admin:check
+```
+
+`:server:admin:build` 使用同一构建链。Node.js、npm 安装工作区与构建产物均由 Gradle 管理，SPA 输出为
+`server/admin/build/dist/`；服务端资源处理、分发和 `:server:server:check` 都依赖这条链。
+不需要提前运行 npm，也不能用本地残留的 `server/admin/dist/` 代替源码构建。
+
+需要 Vite 热更新时，可自行安装符合 `server/admin/package.json` 中 `engines.node` 范围的 Node.js，
+然后在前端目录运行：
+
+```bash
+cd server/admin
+npm ci
+npm run dev
+```
+
+该开发回路的 `node_modules/` 与 Gradle 构建工作区分开；交付前仍运行 `:server:admin:check`。
+构建依赖图和版本维护规则见[依赖维护](../08-development/dependency-maintenance.md#管理后台的构建链)。
 
 ## 4. 常用任务
 
@@ -115,11 +138,12 @@ data/
 
 ### Desktop
 
-Desktop 的 SQLite、token、device-id、crash pending 和日志位于平台用户应用数据目录：macOS 为
+公版 Desktop 的 SQLite、token、device-id、crash pending 和日志位于平台用户应用数据目录：macOS 为
 `~/Library/Application Support/TeamTalk`，Windows 为 `%LOCALAPPDATA%\TeamTalk`，Linux 为
-`${XDG_DATA_HOME:-~/.local/share}/teamtalk`。目录安全和旧安装目录复制规则见
-[Desktop 私有数据目录](../05-clients/desktop.md#11-私有数据目录)。开发运行也使用平台默认路径；只有显式
-设置绝对 `-Dteamtalk.data.dir=<path>` 才使用独立 profile，不再自动写仓库 `data/desktop`。
+`${XDG_DATA_HOME:-~/.local/share}/teamtalk`。私有发行在相同平台根下按稳定应用标识选择自己的子目录，
+见[客户端发行身份](../07-operations/configuration.md#客户端发行身份)。目录安全和旧安装目录复制规则见
+[Desktop 私有数据目录](../05-clients/desktop.md#11-私有数据目录)。开发运行也使用当前发行的平台默认路径；
+同一发行需要额外隔离开发资料时，显式设置绝对 `-Dteamtalk.data.dir=<path>`，不会自动写仓库 `data/desktop`。
 
 ## 6. 修改后的验证顺序
 

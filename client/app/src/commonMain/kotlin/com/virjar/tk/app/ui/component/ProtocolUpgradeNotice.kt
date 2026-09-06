@@ -1,5 +1,7 @@
 package com.virjar.tk.app.ui.component
 
+import com.virjar.tk.app.identity.ClientIdentity
+
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -37,13 +39,13 @@ fun ProtocolUpgradeBanner(compatibility: ProtocolCompatibility?) {
 
 fun forcedProtocolUpgradeMessage(compatibility: ProtocolCompatibility?): String = when (compatibility?.code) {
     ProtocolNegotiateResponsePayload.CODE_CLIENT_TOO_OLD ->
-        "当前客户端版本低于服务器要求的最低版本。请更新客户端后再继续使用 TeamTalk。"
+        "当前客户端版本低于服务器要求的最低版本。请更新客户端后再继续使用 ${ClientIdentity.DISPLAY_NAME}。"
     ProtocolNegotiateResponsePayload.CODE_SERVER_TOO_OLD ->
         SERVER_UPGRADE_MESSAGE
     ProtocolNegotiateResponsePayload.CODE_MAJOR_UNSUPPORTED ->
         if (compatibility.server.major < compatibility.client.major) SERVER_UPGRADE_MESSAGE
-        else "当前客户端与服务器版本不兼容。请安装兼容的客户端后再继续使用 TeamTalk。"
-    else -> "当前客户端与服务器版本不兼容。请安装兼容的客户端后再继续使用 TeamTalk。"
+        else "当前客户端与服务器版本不兼容。请安装兼容的客户端后再继续使用 ${ClientIdentity.DISPLAY_NAME}。"
+    else -> "当前客户端与服务器版本不兼容。请安装兼容的客户端后再继续使用 ${ClientIdentity.DISPLAY_NAME}。"
 }
 
 private const val SERVER_UPGRADE_MESSAGE =

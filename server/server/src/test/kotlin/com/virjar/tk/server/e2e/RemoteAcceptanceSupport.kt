@@ -24,7 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * 与 [TcpE2eEnvironment] 的区别：不启动任何 in-process 服务端（PG/Koin/TcpServer），
  * 只用真实客户端代码（[ImClient] + [RpcClient]）直连已部署服务器。
  *
- * 连接目标通过系统属性配置（公开任务从 `gradle/deployment.json` 注入）：
+ * 连接目标通过系统属性配置（公开任务从 `选中的 buildSrc Kotlin 配置` 注入）：
  *   - `tk.e2e.host`（默认 `im.virjar.com`）
  *   - `tk.e2e.port`（默认 `5100`）
  *
@@ -240,22 +240,28 @@ object RemoteAcceptanceSupport {
         val userSession = com.virjar.tk.shared.client.UserSession()
         val successfulAuthentications = AtomicInteger()
         lateinit var eventProjection: E2eEventProjection
-        val imClient = ImClient(onAuthResult = {
-                success, uid, username, name, refreshToken, accessToken, datasetId, failureReason ->
-            if (success) {
-                val authoritativeDatasetId = requireNotNull(datasetId) {
-                    "Successful remote AUTH omitted datasetId"
+        val imClient = ImClient(
+            tcpTlsCertificatePem = com.virjar.tk.shared.client.decodeTcpTlsCertificateBase64(
+                System.getProperty("tk.e2e.tcp.certificate.base64"),
+            ),
+            onAuthResult = {
+                    success, uid, username, name, refreshToken, accessToken, datasetId, failureReason ->
+                if (success) {
+                    val authoritativeDatasetId = requireNotNull(datasetId) {
+                        "Successful remote AUTH omitted datasetId"
+                    }
+                    userSession.onAuthSuccess(
+                        uid ?: "", username, name, refreshToken, accessToken, authoritativeDatasetId,
+                    )
+                    // AUTH 回调是凭据/dataset 准入屏障。这里绑定是同步的，
+                    // 因此在 ImClient 首次做出 SYNC_REQUEST 决策前已经就位。
+                    eventProjection.bindDataset(authoritativeDatasetId)
+                    successfulAuthentications.incrementAndGet()
+                } else {
+                    userSession.onAuthFailed(failureReason)
                 }
-                userSession.onAuthSuccess(
-                    uid ?: "", username, name, refreshToken, accessToken, authoritativeDatasetId,
-                )
-                // AUTH 回调是凭据/dataset 准入屏障。这里绑定是同步的，
-                // 因此在 ImClient 首次做出 SYNC_REQUEST 决策之前就已就位。
-                eventProjection.bindDataset(authoritativeDatasetId)
-                successfulAuthentications.incrementAndGet()
-            }
-            else userSession.onAuthFailed(failureReason)
-        })
+            },
+        )
         eventProjection = imClient.installE2eEventProjection()
         var rpc: RpcClient? = null
         try {

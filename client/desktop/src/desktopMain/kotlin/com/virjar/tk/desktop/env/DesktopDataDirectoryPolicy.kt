@@ -1,5 +1,6 @@
 package com.virjar.tk.desktop.env
 
+import com.virjar.tk.app.identity.ClientIdentity
 import com.virjar.tk.shared.client.JvmMacOsAcl
 import com.virjar.tk.shared.client.JvmPrivateDataDirectory
 import kotlinx.coroutines.CancellationException
@@ -24,6 +25,8 @@ internal data class DesktopDataDirectoryInputs(
     val userHome: File,
     val environment: Map<String, String>,
     val explicitDataDirectory: String?,
+    val dataDirectoryName: String = ClientIdentity.DESKTOP_DATA_DIRECTORY_NAME,
+    val linuxDataDirectoryName: String = ClientIdentity.LINUX_DATA_DIRECTORY_NAME,
 )
 
 internal data class DesktopDataDirectoryPlan(
@@ -79,7 +82,11 @@ internal object DesktopDataDirectoryPolicy {
                 ?: home.resolve(".local").resolve("share")
         }
         val dataDirectory = base.resolve(
-            if (desktopHostPlatform(inputs.osName) == DesktopHostPlatform.LINUX) "teamtalk" else "TeamTalk",
+            if (desktopHostPlatform(inputs.osName) == DesktopHostPlatform.LINUX) {
+                inputs.linuxDataDirectoryName
+            } else {
+                inputs.dataDirectoryName
+            },
         ).normalize()
         return DesktopDataDirectoryPlan(
             dataDirectory = dataDirectory.toFile(),

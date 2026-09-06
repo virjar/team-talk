@@ -41,6 +41,8 @@
 | 2026-08-25 | model/RichTextState.kt | 列表前缀测量缓存改为最多 256 项的 FIFO | 防止长生命周期编辑器因任意编号前缀持续占用内存 |
 | 2026-08-27 | model/HeadingStyle.kt | H1-H6 默认段落行高随标题字号按约 1.25 倍缩放 | 防止调用方正文行高压住换行后的大号标题字形 |
 | 2026-09-01 | ui/BasicRichTextEditor.kt | + 可选 `onUserTextChange` 回调，在底层实际接受文字变化后发布 | 聊天 TYPING 只响应用户正文变化，纯光标/选区移动保持静默 |
+| 2026-09-06 | ui/BasicRichTextEditor.kt、ImageEditorVisualTransformation.kt | + 可选单字符 `imagePlaceholder` 可视投影，不改变原始原子图片节点和 offset | BasicTextField 不支持 inlineContent；配合应用提供的认证缩略图卡片，避免图片在输入框显示未知替换字形 |
+| 2026-09-06 | parser/html/RichTextStateHtmlParser.kt | 直接实现 HTML handler 回调，去除 Ksoup Builder 的多层委托链；补齐图片 alt 保存和图片两侧空格边界 | 修复 Android release 返回聊天时 Saver 恢复空指针，并保留恢复草稿中的图片名称与相邻文字 |
 
 ## 上游同步策略
 

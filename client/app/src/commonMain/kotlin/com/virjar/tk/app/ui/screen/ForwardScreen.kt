@@ -18,15 +18,17 @@ import kotlinx.coroutines.launch
 internal fun forwardConversationName(
     conversation: Conversation,
     peerUsers: Map<String, User>,
+    peerRemarks: Map<String, String> = emptyMap(),
 ): String {
     val peer = conversation.peerUid?.let(peerUsers::get)
-    return conversationIdentityPresentation(conversation, peer).name ?: conversation.chatId.take(16)
+    return conversationIdentityPresentation(conversation, peer, conversation.peerUid?.let(peerRemarks::get)).name ?: conversation.chatId.take(16)
 }
 
 @Composable
 fun ForwardScreen(
     conversations: List<Conversation>,
     peerUsers: Map<String, User> = emptyMap(),
+    peerRemarks: Map<String, String> = emptyMap(),
     onForward: suspend (chatId: String) -> Boolean,
     onBack: (() -> Unit)? = null,
 ) {
@@ -45,7 +47,7 @@ fun ForwardScreen(
             items(conversations, key = { it.chatId }) { conv ->
                 val isForwarding = forwarding == conv.chatId
                 ListItem(
-                    headlineContent = { Text(forwardConversationName(conv, peerUsers)) },
+                    headlineContent = { Text(forwardConversationName(conv, peerUsers, peerRemarks)) },
                     modifier = Modifier.clickable {
                         scope.launch {
                             forwarding = conv.chatId

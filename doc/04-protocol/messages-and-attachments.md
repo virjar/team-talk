@@ -76,6 +76,11 @@ MessageBodyPolicy，确保 messageType 与 body 实际类型一致。
 `RichTextBody.markdown + assets`；`REPLY` 的作者正文使用相同 sidecar。兼容保留的旧式
 `EditBody.newContent` 仍只有纯 Markdown 字符串，因此必须拒绝 `teamtalk-asset` 引用。
 
+已发行 `plainText` 及服务端持久会话摘要参与消息/投影幂等校验，不能为了调整显示而改变其派生规则。
+客户端读侧使用 `richTextDisplayText` 将图片统一表示为 `[图片]` 并保留相邻文字；这份摘要不回写消息、
+发件箱或服务端投影。搜索结果、回复预览和会话行复用此展示规则，代码字面量仍保持原文。
+双端系统通知目前只展示未读数量，不展示消息正文。
+
 交互卡片是独立消息类型，不把可执行动作塞进 Markdown。服务端仍需校验 action schema 与权限。
 
 ## 5. Attachment

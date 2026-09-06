@@ -206,7 +206,7 @@ fun CreateGroupScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp),
             ) {
                 items(selectedContacts, key = { it.friendUid }) { contact ->
-                    val displayName = contact.remark ?: contact.user?.name ?: contact.friendUid
+                    val displayName = contactDisplayName(contact.user, contact.remark, contact.friendUid)
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.width(56.dp),
@@ -291,7 +291,7 @@ fun CreateGroupScreen(
             LazyColumn(modifier = Modifier.weight(1f)) {
                 items(contacts, key = { it.friendUid }) { contact ->
                     val isSelected = contact.friendUid in selectedUids
-                    val displayName = contact.remark ?: contact.user?.name ?: contact.friendUid
+                    val displayName = contactDisplayName(contact.user, contact.remark, contact.friendUid)
                     val subName = if (contact.remark != null && contact.user?.name != null)
                         contact.user?.username else null
 

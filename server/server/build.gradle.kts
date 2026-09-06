@@ -1,6 +1,5 @@
+import java.util.Base64
 import deployment.DeploymentConfig
-import org.gradle.api.tasks.Exec
-import org.gradle.api.tasks.Sync
 import org.gradle.language.jvm.tasks.ProcessResources
 
 plugins {
@@ -21,107 +20,31 @@ tasks.named<Jar>("jar") {
 
 val releaseVersion = rootProject.extra.get("releaseVersion") as String
 val buildIdentity = rootProject.extra.get("buildIdentity") as String
+val deploymentConfig = rootProject.extra.get("deploymentConfig") as DeploymentConfig
+val remoteTcpTlsCertificateBase64 = System.getProperty("tk.e2e.tcp.certificate.base64")
+    ?: deploymentConfig.tcpTlsCertificatePem
+        ?.let { Base64.getEncoder().encodeToString(it.toByteArray(Charsets.UTF_8)) }
+        .orEmpty()
 val serverProtocolWindow = deployment.ServerProtocolWindow(
     major = rootProject.extra.get("protocolMajor") as Int,
     minimumMinor = rootProject.extra.get("minimumProtocolMinor") as Int,
     currentMinor = rootProject.extra.get("protocolMinor") as Int,
 )
-val npmCommand = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
-    "npm.cmd"
-} else {
-    "npm"
+// Admin owns its toolchain and producer tasks; Server consumes only its built artifact.
+val adminDist by configurations.creating {
+    isCanBeResolved = true
+    isCanBeConsumed = false
 }
-val nodeCommand = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
-    "node.exe"
-} else {
-    "node"
+val buildAdmin by tasks.registering {
+    group = "build"
+    description = "Build the Admin frontend consumed by Server (compatibility entry point)"
+    dependsOn(adminDist)
 }
-val adminDirectory = rootProject.layout.projectDirectory.dir("server/admin")
-val adminWorkspaceRoot = layout.buildDirectory.dir("admin-workspace")
-val adminBuildWorkspace = adminWorkspaceRoot.map { it.dir("project") }
-val adminNodeModules = adminWorkspaceRoot.map { it.dir("node_modules") }
-val preparedAdminPackageJson = adminWorkspaceRoot.map { it.file("package.json") }
-val preparedAdminPackageLock = adminWorkspaceRoot.map { it.file("package-lock.json") }
-val generatedAdminDist = layout.buildDirectory.dir("generated/admin")
+
 val generatedBuildIdentityResources = layout.buildDirectory.dir("generated/build-identity/resources")
 val generatedServerManifest = layout.buildDirectory.file(
     "generated/build-identity/distribution/${deployment.RELEASE_ARTIFACT_MANIFEST_FILE}",
 )
-
-val prepareAdminWorkspace by tasks.registering(Sync::class) {
-    group = "build"
-    description = "Copy Admin sources into an isolated build workspace"
-    from(adminDirectory) {
-        include("package.json", "package-lock.json", "index.html", "tsconfig.json", "vite.config.ts")
-        include("src/**")
-    }
-    into(adminBuildWorkspace)
-}
-
-val installAdminDependencies by tasks.registering(Exec::class) {
-    group = "build"
-    description = "Install the locked Admin frontend dependency graph"
-    dependsOn(prepareAdminWorkspace)
-    workingDir(adminWorkspaceRoot.get().asFile)
-    commandLine(npmCommand, "ci", "--no-audit", "--no-fund")
-    inputs.files(
-        adminDirectory.file("package.json"),
-        adminDirectory.file("package-lock.json"),
-    )
-    inputs.property("operatingSystem", System.getProperty("os.name"))
-    inputs.property("architecture", System.getProperty("os.arch"))
-    inputs.property(
-        "nodeVersion",
-        providers.exec { commandLine(nodeCommand, "--version") }.standardOutput.asText.map(String::trim),
-    )
-    inputs.property(
-        "npmVersion",
-        providers.exec { commandLine(npmCommand, "--version") }.standardOutput.asText.map(String::trim),
-    )
-    outputs.files(preparedAdminPackageJson, preparedAdminPackageLock)
-    outputs.dir(adminNodeModules)
-    doFirst {
-        val workspace = adminWorkspaceRoot.get().asFile
-        workspace.mkdirs()
-        adminDirectory.file("package.json").asFile.copyTo(
-            preparedAdminPackageJson.get().asFile,
-            overwrite = true,
-        )
-        adminDirectory.file("package-lock.json").asFile.copyTo(
-            preparedAdminPackageLock.get().asFile,
-            overwrite = true,
-        )
-    }
-}
-
-val buildAdmin by tasks.registering(Exec::class) {
-    group = "build"
-    description = "Build the Admin SPA into the Server build directory"
-    dependsOn(installAdminDependencies)
-    workingDir(adminBuildWorkspace.get().asFile)
-    environment(
-        "PATH",
-        adminNodeModules.get().dir(".bin").asFile.absolutePath +
-            File.pathSeparator + System.getenv("PATH").orEmpty(),
-    )
-    commandLine(
-        npmCommand,
-        "run",
-        "build:server",
-        "--",
-        "--outDir",
-        generatedAdminDist.get().asFile.absolutePath,
-    )
-    inputs.dir(adminBuildWorkspace.map { it.dir("src") })
-    inputs.files(
-        adminBuildWorkspace.map { it.file("index.html") },
-        adminBuildWorkspace.map { it.file("package.json") },
-        adminBuildWorkspace.map { it.file("package-lock.json") },
-        adminBuildWorkspace.map { it.file("tsconfig.json") },
-        adminBuildWorkspace.map { it.file("vite.config.ts") },
-    )
-    outputs.dir(generatedAdminDist)
-}
 
 val generateServerBuildIdentity by tasks.registering {
     group = "build"
@@ -162,7 +85,7 @@ distributions {
                 exclude("admin/**")
                 into("static")
             }
-            from(files(generatedAdminDist).builtBy(buildAdmin)) {
+            from(adminDist) {
                 into("static/admin")
             }
             from(files(generatedServerManifest).builtBy(generateServerBuildIdentity))
@@ -188,6 +111,7 @@ tasks.register("buildServerDist") {
 }
 
 dependencies {
+    add(adminDist.name, project(path = ":server:admin", configuration = "adminDist"))
     // Koin contributes ktor-server-di; it must use the same Ktor release as our HTTP engine.
     implementation(platform(libs.ktor.bom))
     // 媒体缩略图：图片纯 Java2D；视频 javacv JNI（native 内嵌 jar，平台裁剪：服务器 linux + 开发 mac 双架构）
@@ -247,13 +171,15 @@ sourceSets.named("main") {
 
 tasks.named<ProcessResources>("processResources") {
     dependsOn(buildAdmin, generateServerBuildIdentity)
-    from(generatedAdminDist) { into("static/admin") }
+    from(adminDist) { into("static/admin") }
     from(generatedBuildIdentityResources)
 }
 
 tasks.named("installDist") {
     dependsOn(buildAdmin, generateServerBuildIdentity)
 }
+
+tasks.named("check") { dependsOn(buildAdmin) }
 
 tasks.test {
     // CliPeerE2eTest 会启动 shared 的 headless agent；必须与当前协议一起重建，
@@ -264,6 +190,10 @@ tasks.test {
     // 本地快速跳过：./gradlew :server:server:test -PskipTests
     onlyIf { !project.hasProperty("skipTests") }
     useJUnitPlatform()
+    testLogging {
+        // 协程测试的简略栈经常只剩 runBlocking/runTest 声明行，必须保留实际断言及 expected/actual。
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
     // Runtime containers bind independent Database/pool instances and isolation is covered with two simultaneous
     // TestEnvironments. Keep one fork to bound PostgreSQL connections and native RocksDB/Lucene resources for the
     // complete suite; this is a resource policy, not a database-ownership correctness requirement.
@@ -281,16 +211,23 @@ tasks.test {
 
     // 远程 E2E 开关透传：默认关闭，仅 -Dtk.e2e.remote=true 时启用远程测试。
     // Gradle 默认不把命令行 -D 转发给测试 JVM，需显式桥接。
-    listOf("tk.e2e.remote", "tk.e2e.host", "tk.e2e.port", "tk.e2e.server", "peer.action", "peer.arg", "peer.username", "peer.password", "peer.file", "peer.url", "peer.server").forEach { key ->
+    // TestPeer 等普通 test 入口也必须使用本仓库的有效部署配置，私有构建不能退回公版服务器。
+    // 先设置部署默认值，再透传显式 -D，让临时验收坐标始终优先；本地 test 不注入远程默认值。
+    if (System.getProperty("tk.e2e.remote") == "true") {
+        systemProperty("tk.e2e.host", deploymentConfig.tcpHost)
+        systemProperty("tk.e2e.port", deploymentConfig.tcpPort)
+        systemProperty("tk.e2e.server", deploymentConfig.serverUrl)
+        systemProperty("tk.e2e.tcp.certificate.base64", remoteTcpTlsCertificateBase64)
+    }
+    listOf("tk.e2e.remote", "tk.e2e.host", "tk.e2e.port", "tk.e2e.server", "tk.e2e.tcp.certificate.base64", "peer.action", "peer.arg", "peer.username", "peer.password", "peer.file", "peer.url", "peer.server").forEach { key ->
         System.getProperty(key)?.let { systemProperty(key, it) }
     }
 }
 
 /**
- * 真实部署验收：始终对接 gradle/deployment.json 指定的服务器。
+ * 真实部署验收：始终对接根项目有效部署配置指定的服务器。
  * 本地 test 保留为快速的协议、存储与算法回归，不代替该任务。
  */
-val deploymentConfig = rootProject.extra.get("deploymentConfig") as DeploymentConfig
 fun Test.configureRemoteBusinessTests() {
     group = "verification"
     dependsOn("testClasses")
@@ -303,6 +240,7 @@ fun Test.configureRemoteBusinessTests() {
     systemProperty("tk.e2e.host", deploymentConfig.tcpHost)
     systemProperty("tk.e2e.port", deploymentConfig.tcpPort)
     systemProperty("tk.e2e.server", deploymentConfig.serverUrl)
+    systemProperty("tk.e2e.tcp.certificate.base64", remoteTcpTlsCertificateBase64)
     maxParallelForks = 1
     systemProperty("junit.jupiter.execution.parallel.enabled", "false")
     outputs.upToDateWhen { false }
@@ -344,6 +282,7 @@ tasks.register<Test>("capacityTest") {
     systemProperty("tk.e2e.host", deploymentConfig.tcpHost)
     systemProperty("tk.e2e.port", deploymentConfig.tcpPort)
     systemProperty("tk.e2e.server", deploymentConfig.serverUrl)
+    systemProperty("tk.e2e.tcp.certificate.base64", remoteTcpTlsCertificateBase64)
 
     val capacityProperties = mapOf(
         "tk.capacity.sender.lanes" to "capacitySenderLanes",
@@ -396,6 +335,7 @@ tasks.register<Test>("connectionCapacityTest") {
     systemProperty("tk.e2e.host", deploymentConfig.tcpHost)
     systemProperty("tk.e2e.port", deploymentConfig.tcpPort)
     systemProperty("tk.e2e.server", deploymentConfig.serverUrl)
+    systemProperty("tk.e2e.tcp.certificate.base64", remoteTcpTlsCertificateBase64)
     systemProperty("tk.e2e.deploy.host", deploymentConfig.deployHost)
     systemProperty("tk.e2e.deploy.user", deploymentConfig.deployUser)
     systemProperty("tk.e2e.deploy.port", deploymentConfig.deployPort)
@@ -465,6 +405,7 @@ val searchCapacityTestTask = tasks.register<Test>("searchCapacityTest") {
     systemProperty("tk.e2e.host", deploymentConfig.tcpHost)
     systemProperty("tk.e2e.port", deploymentConfig.tcpPort)
     systemProperty("tk.e2e.server", deploymentConfig.serverUrl)
+    systemProperty("tk.e2e.tcp.certificate.base64", remoteTcpTlsCertificateBase64)
     systemProperty("tk.e2e.deploy.host", deploymentConfig.deployHost)
     systemProperty("tk.e2e.deploy.user", deploymentConfig.deployUser)
     systemProperty("tk.e2e.deploy.port", deploymentConfig.deployPort)
@@ -539,6 +480,7 @@ val attachmentCapacityTestTask = tasks.register<Test>("attachmentCapacityTest") 
     systemProperty("tk.e2e.host", deploymentConfig.tcpHost)
     systemProperty("tk.e2e.port", deploymentConfig.tcpPort)
     systemProperty("tk.e2e.server", deploymentConfig.serverUrl)
+    systemProperty("tk.e2e.tcp.certificate.base64", remoteTcpTlsCertificateBase64)
     systemProperty("tk.e2e.deploy.host", deploymentConfig.deployHost)
     systemProperty("tk.e2e.deploy.user", deploymentConfig.deployUser)
     systemProperty("tk.e2e.deploy.port", deploymentConfig.deployPort)
@@ -617,6 +559,7 @@ val filesystemTierCapacityTestTask = tasks.register<Test>("filesystemTierCapacit
     systemProperty("tk.e2e.host", deploymentConfig.tcpHost)
     systemProperty("tk.e2e.port", deploymentConfig.tcpPort)
     systemProperty("tk.e2e.server", deploymentConfig.serverUrl)
+    systemProperty("tk.e2e.tcp.certificate.base64", remoteTcpTlsCertificateBase64)
     systemProperty("tk.e2e.deploy.host", deploymentConfig.deployHost)
     systemProperty("tk.e2e.deploy.user", deploymentConfig.deployUser)
     systemProperty("tk.e2e.deploy.port", deploymentConfig.deployPort)
@@ -659,7 +602,7 @@ gradle.taskGraph.whenReady {
  * The implementation lives on the test runtime classpath so it can reuse the public client SDK
  * and the remote-acceptance transport without entering the production server distribution. The
  * main program admits credentials only from its private state directory; this task injects only
- * the non-secret deployment identity selected by gradle/deployment.json.
+ * the non-secret deployment identity selected by the compiled buildSrc deployment configuration.
  */
 tasks.register<JavaExec>("documentFixture") {
     group = "verification"
@@ -671,6 +614,7 @@ tasks.register<JavaExec>("documentFixture") {
     systemProperty("tk.e2e.host", deploymentConfig.tcpHost)
     systemProperty("tk.e2e.port", deploymentConfig.tcpPort)
     systemProperty("tk.e2e.projectRoot", rootProject.projectDir.absolutePath)
+    systemProperty("tk.e2e.tcp.certificate.base64", remoteTcpTlsCertificateBase64)
     outputs.upToDateWhen { false }
 }
 

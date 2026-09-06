@@ -6,7 +6,6 @@ import android.media.MediaRecorder
 import android.os.Build
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -311,23 +310,17 @@ internal fun AndroidChatScreen(
     }
 
     // ── 图片选择器 ──（服务端缩略图/宽高：uploadWithMeta，准确度优于本地解码）
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+    val imagePicker = rememberAndroidVisualMediaPicker { uri ->
         embeddedAssetImports.completePicker(EmbeddedAssetPresentation.IMAGE, uri)
     }
 
     SideEffect {
-        embeddedAssetSelector.pickImage = {
-            imagePicker.launch(
-                PickVisualMediaRequest.Builder()
-                    .setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                    .build(),
-            )
-        }
+        embeddedAssetSelector.pickImage = imagePicker
         embeddedAssetSelector.pickFile = { filePicker.launch(arrayOf("*/*")) }
     }
 
     // ── 视频选择器 ──
-    val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+    val videoPicker = rememberAndroidVisualMediaPicker(ActivityResultContracts.PickVisualMedia.VideoOnly) { uri ->
         if (uri != null) {
             launchAdmittedAction {
                 isUploading = true
@@ -704,7 +697,7 @@ internal fun AndroidChatScreen(
                     } else {
                         null
                     },
-                    onPickVideo = { videoPicker.launch(PickVisualMediaRequest.Builder().setMediaType(ActivityResultContracts.PickVisualMedia.VideoOnly).build()) },
+                    onPickVideo = videoPicker,
                     onVoiceModeEntered = { prepareVoiceMode() },
                     onVoiceRecord = { if (it) startVoice() else stopVoice() },
                     onVoiceRecordCancel = { cancelVoiceRecording() },

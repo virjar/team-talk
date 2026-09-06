@@ -187,12 +187,26 @@ class DesktopClient:
         return code == 200, body
 
     def set_progress(self, tag, value, window=None):
-        """通过 Compose SetProgress 语义设置 Slider，绕过 Robot/辅助功能权限。"""
+        """设置 Slider 原生值域；先读取节点 progress.min/max，不能假定是 0..1。
+
+        需要百分比时使用 set_progress_fraction，例如 0.25 表示四分之一处。
+        """
         params = {"testTag": tag, "value": value}
         if window:
             params["window"] = window
         code, body = self._req("/set-progress", params, method="POST")
         return code == 200, body
+
+    def set_progress_fraction(self, tag, fraction, window=None):
+        """按实际语义值域提交 0..1 比例，避免把 25% 错传成原生滑杆的 0.25。"""
+        if not 0 <= fraction <= 1:
+            raise ValueError("progress fraction must be in 0..1")
+        node = next((n for n in self._flat_nodes(window) if n.get("testTag") == tag), {})
+        progress = node.get("progress")
+        if not progress:
+            raise ValueError(f"Slider range unavailable: {tag}")
+        value = progress["min"] + fraction * (progress["max"] - progress["min"])
+        return self.set_progress(tag, value, window=window)
 
     def get_editable_text(self, test_tag, window=None):
         """读取指定 testTag TextField 的 editableText 值。返回字符串或 None。"""

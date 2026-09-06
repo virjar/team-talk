@@ -1,9 +1,24 @@
+import deployment.DeploymentConfig
+
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.compose)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.android.library)
+    alias(libs.plugins.buildconfig)
+}
+
+// 平台壳和共享 UI 消费同一份编译期身份，避免各自维护名称和本地目录规则。
+val clientIdentity = (rootProject.extra["deploymentConfig"] as DeploymentConfig).client
+buildConfig {
+    packageName("com.virjar.tk.app.identity")
+    className("ClientIdentity")
+    useKotlinOutput { internalVisibility = false }
+    buildConfigField("APPLICATION_ID", clientIdentity.applicationId)
+    buildConfigField("DISPLAY_NAME", clientIdentity.displayName)
+    buildConfigField("DESKTOP_DATA_DIRECTORY_NAME", clientIdentity.desktopDataDirectoryName)
+    buildConfigField("LINUX_DATA_DIRECTORY_NAME", clientIdentity.linuxDataDirectoryName)
 }
 
 /**

@@ -4,45 +4,212 @@
 
 | 层 | 文件/来源 | 内容 | 是否入库 |
 |---|---|---|---|
-| 构建与部署坐标 | `gradle/deployment.json` | HTTP、TCP、SSH、安装路径 | 是 |
+| 公版默认部署配置 | `buildSrc/deployment/Deployment.kt` | 公版 HTTP、TCP、SSH、安装路径、客户端发行身份 | 是 |
+| 本机部署配置 | `buildSrc/deployment-local/Deployment.kt` | 整个 local 目录完整替换默认配置目录；私有发行在独立 clone 中维护 | 否 |
 | 部署 secret | `gradle/deployment.secrets` | 数据库、TLS 等密码 | 否 |
 | 实例环境 | `/opt/teamtalk/conf/env.sh` | systemd/JVM 环境变量 | 否 |
 | 服务默认值 | `server/.../application.conf` | HTTP、数据库、文件上限 | 是 |
-| 客户端默认值 | BuildConfig / ServerConfig | serverUrl、TCP host/port | 构建产物 |
+| 客户端默认值 | 生成配置 / ServerConfig | 应用身份与名称、serverUrl、TCP host/port | 构建产物 |
 
-单一部署配置的目标是让客户端、部署任务和真实验收指向同一实例。secret 与实例运行参数仍然分层，
-不能为了“单一”把密码写进公开 JSON。
+单一部署配置的目标是让客户端、部署任务和真实验收指向同一实例。`buildSrc` 每次只编译选中的一套
+Kotlin 配置源码，按 `server`、`deploy`、`client` 章节描述配置，最终返回经校验的 `DeploymentConfig`
+对象。secret 与实例运行参数仍然分层，不写进部署配置源码。
 
-## 2. deployment.json
+## 2. Kotlin 部署配置
 
-| 字段 | 含义 | 校验 |
+仓库提交的 `buildSrc/deployment/Deployment.kt` 始终保留公版 `im.virjar.com`。私有部署使用独立 clone，
+在其中创建被 Git 忽略的 `buildSrc/deployment-local/` 目录，并提供自己的 `Deployment.kt`。`buildSrc`
+的 main source set 在标准工具源码之外，只额外纳入选中的配置目录：local 目录存在时完整采用 local，
+否则采用默认目录；两套配置不会一起编译或叠加，也没有 `-P` 选择入口。local 目录存在但缺少 `Deployment.kt` 入口，或配置类型、
+语法有误时构建失败，不回退公版。
+
+配置入口仍是 `package deployment` 下的普通 Kotlin 函数
+`fun deploymentConfiguration(rootDir: File): DeploymentConfig`，函数用 `deployment { ... }` 构造配置，
+由根构建直接调用。选中的配置目录与 `src/main/kotlin` 进入同一 main source set，使用相同的 Kotlin
+编译和类型检查；单独放置目录是为了整套选择公版或私版配置及其辅助文件，不是另一种脚本执行方式。
+新增或切换 local 目录后重新同步 Gradle，让 IDE 更新源码目录与类型导航。
+
+DSL 按用途分层：`server` 配置用户访问的 HTTP/TCP，`deploy` 配置管理员的 SSH 与安装目录，`client`
+配置客户端行为与发行身份。所有章节完成后才计算默认值，因此调用顺序不影响主机推导。
+各层使用 `@DslMarker` 限定隐式接收者，避免在内层误改外层同名字段；最终仍构建不可变
+`DeploymentConfig`，由其 `init` 统一检查地址、路径、证书和安装身份。源码入口为
+[DeploymentDsl](../../buildSrc/src/main/kotlin/deployment/DeploymentDsl.kt)。
+
+下表路径表示嵌套 DSL 章节，不是另一份 JSON 输入格式：
+
+| DSL 字段 | 默认值与作用 | 最终配置字段 |
 |---|---|---|
-| `serverUrl` | 客户端 HTTP(S) 根地址 | 部署配置接受绝对 http/https URL；客户端的附加约束见下表 |
-| `tcpAddress` | 客户端 IM TCP 地址 | `host:port`，端口为 1–65535；是否使用 TLS 还取决于对应层的策略 |
-| `deployHost` | SSH 主机 | hostname 或 IPv4 |
-| `deployPort` | SSH 端口 | 1–65535 |
-| `deployUser` | SSH 用户 | 安全用户名格式 |
-| `deployPath` | 远端安装目录 | 安全的非根绝对路径 |
-| `sslPort` | Ktor HTTPS 监听 | HTTPS 配置时须与 serverUrl 显式/默认端口一致 |
+| `server.http.url` | 必填，绝对 HTTP(S) 根地址；HTTPS 监听端口自动取 URL 端口，省略时为 443 | `serverUrl`、`sslPort` |
+| `server.tcp.host` | 默认取最终 HTTP URL 的主机，TCP 入口不同时显式填写 | `tcpAddress` 的主机 |
+| `server.tcp.port` | 默认 5100，范围 1–65535 | `tcpAddress` 的端口 |
+| `server.tcp.tls.certificateFile` | 可选的公共 PEM `File`；未配置时沿用 SDK 默认策略（远端 WebPKI），配置后读取一张 X.509 证书，禁止私钥；文件不可读或格式错误直接失败 | `tcpTlsCertificatePem` |
+| `deploy.directory` | 默认 `/opt/teamtalk`，必须是规范化的非根绝对路径 | `deployPath` |
+| `deploy.ssh.host` | 默认取最终 HTTP URL 的主机，可单独填写 SSH hostname 或 IPv4 | `deployHost` |
+| `deploy.ssh.port` | 默认 22，范围 1–65535 | `deployPort` |
+| `deploy.ssh.user` | 默认 `root`，必须符合安全用户名格式 | `deployUser` |
+| `client.allowCustomServer` | 默认 `false`，控制登录页自定义服务器入口；私有发行通常保持关闭 | `allowCustomServer` |
+| `client.identity` | 默认保留公版身份；内部三个字段见下节 | `client` |
 
-`tcpAddress` 的端口沿部署链写入 `TCP_PORT`，再由 `TcpServer` 与健康探针共同读取；5100 只是默认值，
+`sslPort` 不需要再手填一遍；HTTP 模式不会因其内部默认值启用 HTTPS connector。`server.tcp.port`
+沿部署链写入 `TCP_PORT`，再由 `TcpServer` 与健康探针共同读取；5100 只是默认值，
 不是固定监听。客户端地址、运行时监听和验收目标必须在同一次配置变更中保持一致。
+
+### 客户端发行身份
+
+公版与私有版可以在同一设备分别安装、运行和升级。产品开发在主仓库进行，私有出包和部署在独立
+clone 进行，不需要另建私有源码分支或提交部署坐标。以下是私有 clone 中
+`buildSrc/deployment-local/Deployment.kt` 的完整示例；IP 仅为文档占位，使用前替换为自己的实际部署坐标。
+先按[私有化部署](../01-getting-started/private-deployment.md#2-配置部署坐标与客户端身份)生成或准备 TCP 证书：
+
+```kotlin
+package deployment
+
+import java.io.File
+
+fun deploymentConfiguration(rootDir: File): DeploymentConfig = deployment {
+    server {
+        // TCP 与 SSH 默认使用这个 URL 的主机，不必重复填写。
+        http { url = "http://203.0.113.10" }
+        tcp {
+            port = 5100
+            tls {
+                // 只读取公共证书；private-key.pem 另行提供给部署任务。
+                certificateFile = File(rootDir, "gradle/tcp-tls/certificate.pem")
+            }
+        }
+    }
+    deploy {
+        directory = "/opt/teamtalk"
+        ssh {
+            user = "root"
+            port = 22
+        }
+    }
+    client {
+        allowCustomServer = false
+        identity {
+            // 首次分发后保持安装标识和英文名稳定。
+            applicationId = "com.example.teamtalk.internal"
+            displayName = "TeamTalk 内部版"
+            desktopName = "TeamTalkInternal"
+        }
+    }
+}
+```
+
+| `client.identity` 字段 | 默认值 | 用途与约束 |
+|---|---|---|
+| `applicationId` | `com.virjar.tk` | 稳定的反向域名应用标识；Android 安装 ID 追加 `.android`，Desktop Bundle ID 与私有版数据目录据此生成 |
+| `displayName` | `TeamTalk` | 用户看到的应用名称，可包含中文；用于启动入口、登录界面、窗口、托盘和升级提示 |
+| `desktopName` | `TeamTalk` | 稳定的英文安装名称；只用 ASCII 字母和数字，首字符为字母；用于 `.app` 名称、桌面安装与产物命名 |
+
+```mermaid
+flowchart TD
+    Default["buildSrc/deployment/<br/>公版 im.virjar.com"] --> Select["buildSrc 只编译选中目录<br/>local 存在时完整替换默认"]
+    Local["私有 clone 的 buildSrc/deployment-local/<br/>整个目录 Git 忽略"] --> Select
+    Select --> DSL["deploymentConfiguration(rootDir)<br/>deployment：server / deploy / client"]
+    DSL --> Resolve["完成全部章节后推导默认值<br/>HTTP 主机 → TCP / SSH；URL 端口 → HTTPS 监听"]
+    Resolve --> Config["不可变 DeploymentConfig<br/>统一校验地址、证书与发行身份"]
+    Config --> Gradle["同一组 Gradle 构建与 release 任务"]
+    Config --> Snapshot["规范化 JSON 快照输出<br/>机器读取与发行指纹"]
+    Gradle --> Android["Android：独立 applicationId<br/>独立私有目录与登录"]
+    Gradle --> Desktop["Desktop：独立安装身份与名称<br/>独立数据目录、主题与进程锁"]
+    Config --> Node["该发行自己的服务实例"]
+    Android -->|"配置的 HTTP / TCP"| Node
+    Desktop -->|"配置的 HTTP / TCP"| Node
+    Gradle -->|"site：按 SSH 坐标上传"| Downloads["该实例的 /downloads/"]
+    Node --- Downloads
+    Downloads -->|"用户下载并安装 Android APK"| Android
+    Desktop -->|"Conveyor 更新源由 serverUrl 推导"| Downloads
+```
+
+首次分发前同时选定应用标识、英文安装名称和签名材料，后续普通升级保持三者稳定，只按根
+`gradle.properties` 递增发行版本。`displayName` 可以调整；它不决定本地数据目录。Windows 的安装
+身份由构建配置同步派生，不能仅修改窗口标题或 macOS Bundle ID 就当作完成新发行。
+源码的 Kotlin 包名与 Android `namespace` 保持不变，不需要批量替换源码中的 `com.virjar.tk`。
+
+默认配置保留已有公版的安装身份和数据目录。私有版使用独立应用标识与英文安装名称，第一次打开
+时独立登录，不探测或复制公版资料。之后同一发行的普通升级保留账号、草稿、发件箱和附件缓存。
+改变应用标识会形成另一个安装及数据空间，不能用来给原发行“升级”或绕过迁移。
+桌面私有版目录由稳定的 `applicationId` 派生，服务器域名和显示名称都不参与目录命名；账号内仍按
+部署、dataset 和 uid 隔离，迁移服务器坐标时不能据此宣称旧会话资料会自动合并。
+
+每个私有发行使用自己的服务器。站点在 `serverUrl` 对应根地址的 `/downloads/TeamTalk-android.apk`
+提供 Android 安装包，用户下载后安装；当前 Android 只有协议升级提示与不兼容时的工作区准入限制，
+尚未实现客户端自动下载安装。Desktop 的下载入口为 `/downloads/desktop/download.html`，Conveyor
+更新源由 `serverUrl` 推导，更新元数据也发布在该 Desktop 目录。共享升级横幅只表达协议兼容状态，
+不是自动更新器；这些站点相对路径不需要另配第二个更新源。
+服务器坐标、客户端身份及签名准备好后，继续使用[统一发行流程](releasing.md)；无需额外发布脚本。
+
+### 用辅助函数拆分配置
+
+DSL 是普通 Kotlin，可以在选中目录内新增同包文件，例如 `PrivateEndpoint.kt`，按章节拆分：
+
+```kotlin
+package deployment
+
+import java.io.File
+
+fun ServerDeploymentBuilder.configurePrivateEndpoint(rootDir: File) {
+    http { url = "http://203.0.113.10" }
+    tcp {
+        tls { certificateFile = File(rootDir, "gradle/tcp-tls/certificate.pem") }
+    }
+}
+```
+
+随后在 `Deployment.kt` 的 `deployment { ... }` 中用 `server { configurePrivateEndpoint(rootDir) }`
+替换原 `server` 章节，保留其余 `deploy`、`client` 配置。默认与 local 目录的辅助文件也不会叠加编译；
+两种配置共同使用的 DSL 与校验实现仍放在 `buildSrc/src/main/kotlin/deployment/`。
+
+### 发行快照与秘密
+
+人编辑 Kotlin DSL，机器使用最终对象的规范化 JSON 快照；构建工具不再提供 JSON 配置加载入口。
+发行密封目录中的 `deployment-config.json` 记录最终生效的全部非敏感字段；配置摘要对函数返回的对象
+计算，不对 Kotlin 源码文本计算，因此注释、变量名和等价的函数拆分不会改变配置身份。快照是构建输出，
+不能反过来编辑它配置下一次构建，也不能包含秘密。
+
+local 覆写可以用于本地出包和 `release -PreleaseTargets=site`；GitHub 发布拒绝存在 local 覆写的构建，
+避免将私有配置上传到公开发行。Git 忽略 local 目录不免除源码、根版本、协议快照与人工发布说明的
+干净工作树要求；复用发行目录时仍须匹配当前解析出的配置。签名、SSH 私钥和数据库口令继续通过独立
+secret 文件或受控环境输入提供。
+
+本地脚本需要当前配置时，先运行 `./gradlew writeDeploymentConfig`，再读取
+`build/deployment/deployment-config.json`。Gradle 调用编译后的配置函数，避免工具自行解析 Kotlin 或
+误用上一次构建的目标；该文件与密封目录中的同名快照分别服务于当前构建和已封存发行。
 
 ### 传输配置边界
 
-服务端能监听哪些端口、SDK 接受哪些地址、部署任务能生成哪种安装，是三个不同层面的事实。
-当前实现尚未把可选 HTTP 与低成本 TCP 证书部署完整打通，不能只改一个 `serverUrl` 就宣称双端可用。
+HTTP scheme 与 TCP TLS 分别配置。HTTP 站点可以配合自签 TCP 证书使用 IP 部署，不要求先取得域名或
+购买 HTTPS 证书。TCP 使用 TLS 1.2/1.3；配置公共证书只改变该客户端 TCP 链路的信任源，仍验证
+`tcpAddress` 的主机名或 IP SAN，HTTP 请求和系统全局信任不受它影响。
 
 | 层 | HTTP | IM TCP 与证书 | 代码入口 |
 |---|---|---|---|
 | 服务运行时 | 未启用 HTTPS connector 时，HTTP 监听 `0.0.0.0:KTOR_PORT`；同时配置 HTTPS 端口与可加载 keystore 时只开 HTTPS，关闭 HTTP | 默认 `0.0.0.0:5100`；配置 `SSL_KEYSTORE` 后使用 TLS 1.2/1.3，否则为明文。监听地址本身不强制 TLS | [Application](../../server/server/src/main/kotlin/com/virjar/tk/server/Application.kt)、[ServerTransportConfiguration](../../server/server/src/main/kotlin/com/virjar/tk/server/ServerTransportConfiguration.kt) |
-| 当前 Android/Desktop/无头 SDK | Android、JVM 的 `canonicalHttpServerBase` 均要求远程 HTTPS；明文例外仅为 `localhost`、`127.0.0.1`、`::1`，不跟随认证请求重定向 | 非本地地址强制 TLS，使用平台 WebPKI、主机名校验和 SNI；握手失败不回退明文。TCP 的本地例外为 `localhost`、`::1` 和合法四段 `127.*` 字面地址 | [ClientTransportTls](../../client/shared/src/commonMain/kotlin/com/virjar/tk/shared/client/ClientTransportTls.kt)、[Android HTTP](../../client/shared/src/androidMain/kotlin/com/virjar/tk/shared/repository/FileRepository.android.kt)、[JVM HTTP](../../client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/repository/FileRepository.desktop.kt) |
-| 当前 Gradle 部署工具 | `DeploymentConfig` 接受 http/https；HTTPS 首次安装须提供成对 PEM，HTTP 安装拒绝 PEM 参数 | HTTPS 安装生成 `TCP_HOST=0.0.0.0`，HTTP 安装生成 `TCP_HOST=127.0.0.1`；仅 HTTPS 安装注入 keystore，并让 HTTPS 与 TCP 共用它 | [DeploymentConfig](../../buildSrc/src/main/kotlin/deployment/DeploymentConfig.kt)、[EnvSh](../../buildSrc/src/main/kotlin/deployment/EnvSh.kt)、[TLS 预检](../../buildSrc/src/main/kotlin/deployment/TlsDeploymentPreflight.kt) |
+| 当前 Android/Desktop/无头 SDK | `serverUrl` 显式选择 HTTP 或 HTTPS，允许非本地 HTTP；文件、机器人和遥测共用地址规则，不跟随认证请求重定向。Android debug/release 清单均允许明文 HTTP | 非本地地址强制 TLS；默认平台 WebPKI，配置 `tcpTlsCertificatePem` 时使用只包含该证书的专用 TrustStore。始终校验主机名/IP，握手失败不回退明文。未配置证书时仅 `localhost`、`::1` 和合法四段 `127.*` 字面地址可用明文 | [ClientTransportTls](../../client/shared/src/commonMain/kotlin/com/virjar/tk/shared/client/ClientTransportTls.kt)、[Android HTTP](../../client/shared/src/androidMain/kotlin/com/virjar/tk/shared/repository/FileRepository.android.kt)、[JVM HTTP](../../client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/repository/FileRepository.desktop.kt) |
+| 当前 Gradle 部署工具 | `serverUrl` 选择 HTTP 或 HTTPS connector；HTTP 配置 `tcpTlsCertificatePem` 后允许成对 PEM 参数 | HTTPS 或显式公共 TCP 证书启用 TLS，生成 `TCP_HOST=0.0.0.0` 与 `SSL_KEYSTORE`；HTTPS 另外设置 `KTOR_SSL_PORT`，HTTP 不设置它。无 TLS 的本地开发保留 loopback TCP | [DeploymentConfig](../../buildSrc/src/main/kotlin/deployment/DeploymentConfig.kt)、[EnvSh](../../buildSrc/src/main/kotlin/deployment/EnvSh.kt)、[TLS 预检](../../buildSrc/src/main/kotlin/deployment/TlsDeploymentPreflight.kt) |
 
-因此，当前远程完整客户端的既有路径仍是 HTTPS + TLS/TCP。服务运行时支持远程明文，并不表示现有
-SDK 会连接它；生成一份自签 PKCS12 也不会自动让 SDK 信任它。可选 HTTP、自签 TCP 的生成与信任、
-部署参数解耦归入路线图 [REL-03](../10-reference/roadmap.md)，
-这里记录现有能力，不把这些尚未完成的组合写成部署承诺。
+HTTP 的平台与 SDK 限制已统一；没有额外明文开关，配置 `http://` 就是明确选择，不在 HTTPS 失败时降级。
+HTTP scheme 不决定 TCP 信任。各组合仍须分别判断：
+
+| 连接组合 | 客户端 | 标准部署工具 |
+|---|---|---|
+| 本地 HTTP + loopback 明文 TCP | 支持 | 支持本地开发 |
+| 远程 HTTPS + WebPKI TLS/TCP | 支持 | 支持 |
+| 远程 HTTP + 固定证书 TLS/TCP | 支持自签或 CA 颁发的服务证书；客户端配置该公共证书，主机/IP 必须匹配 SAN | `tcpTlsCertificatePem` 显式启用 TCP TLS；首次部署提供对应 PEM 与私钥。可用 `generateTcpTlsCertificate` 生成或复用自签证书，HTTP connector 继续使用明文 |
+| 远程 HTTP + 明文 TCP | HTTP 支持；非本地 TCP 仍要求 TLS | 不作为当前完整客户端部署路径 |
+
+自签证书生成与客户端信任必须成对准备：服务器持有证书及私钥，客户端只包含公共 PEM。证书生成任务
+在已有文件时检查并复用，不因重建客户端或升级服务器而重新签发。证书过期、主机/SAN 不符或部署了
+另一张证书时连接明确失败，不使用 trust-all，不关闭端点校验，也不回退平台信任或明文来掩盖错误。
+普通升级保留原证书与私钥；确需轮换时先制定客户端信任迁移和回退步骤，不能只更换服务器证书。
+传输组合的验收证据按[传输安全验收门槛](../09-testing/deployment-acceptance.md#传输安全验收门槛)记录，
+不能将构建通过当作所有组合和客户端已实测。
+HTTP 部署只传 `-PsslCert/-PsslKey` 而未配置 `tcpTlsCertificatePem` 会被拒绝；这避免服务端启用一张
+客户端不知道的私有证书。部署预检会验证公共证书有效期、SAN 与上传 PEM 的叶证书一致，普通升级
+省略 PEM 参数时也会核对远端保留的证书。公共证书不参与账号的 `DeploymentIdentity`，不会因替换信任
+材料而自动换数据库 namespace；证书轮换的连接兼容仍须单独安排。
 
 ## 3. 服务端环境变量
 
@@ -144,10 +311,13 @@ Desktop 与 Android 的默认服务器在构建时生成。ServerConfig 的 JVM 
 和构建配置，不要只看当前仓库文件。
 客户端的 HTTP 与 TCP 限制见[传输配置边界](#传输配置边界)。TCP 需要 TLS 时，handshake 成功前
 不发布 `CONNECTED`、不发送 AUTH。
+Android 与 Desktop 构建均将 `tcpTlsCertificatePem` 公共证书写入生成的构建配置；标准 Desktop
+打包与 `run` 直接读取该配置，不通过 JVM 启动参数传递完整证书。需要显式运行时覆盖时，Desktop、
+SDK/无头入口仍可使用 `teamtalk.tcp.certificate.base64`。远程验收由 Gradle 从同一部署配置编码到
+`tk.e2e.tcp.certificate.base64`；常规客户端使用无需手工维护 Base64 或配置系统全局证书。
 
-Desktop 的默认数据根是当前用户的平台 app-data 目录：macOS 为
-`~/Library/Application Support/TeamTalk`，Windows 为 `%LOCALAPPDATA%\TeamTalk`，Linux 为
-`${XDG_DATA_HOME:-~/.local/share}/teamtalk`。`teamtalk.data.dir` 只是 Desktop 的显式、绝对路径覆盖；
-其父目录必须已存在且通过当前用户的安全检查。开发模式也不会默认回退到仓库
-`data/`；如确需隔离 profile，必须显式传入该覆盖。迁移和冲突处理详见
-[桌面端客户端](../05-clients/desktop.md)。
+Desktop 在当前用户的平台 app-data 根下，按[客户端发行身份](#客户端发行身份)选择固定子目录；
+Android 由安装 `applicationId` 获得独立沙箱。普通私有发行不需要配置用户机器的绝对路径。
+`teamtalk.data.dir` 仅作为 Desktop 开发/诊断的显式、绝对路径覆盖；其父目录必须已存在且通过当前
+用户的安全检查。开发模式也不会默认回退到仓库 `data/`。具体平台目录和冲突处理详见
+[桌面端客户端](../05-clients/desktop.md#11-私有数据目录)。

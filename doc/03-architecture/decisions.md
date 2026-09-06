@@ -94,9 +94,18 @@ MVCC snapshot，并发变化由锚定的 tail 最终收敛。这保证当前权�
 
 **上下文**：profile、flavor、命令行开关和运行时服务器选择会产生未经测试的配置组合。
 
-**决定**：客户端默认值、部署和真实验收统一读取 `gradle/deployment.json`；fork 修改该文件。
+**决定**：客户端默认值、部署和真实验收共用普通 Kotlin 函数返回的 `DeploymentConfig`。主仓库提交
+`buildSrc/deployment/Deployment.kt`，保持公版地址；私有发行在独立 clone 维护 Git 忽略的
+`buildSrc/deployment-local/`。`buildSrc` 的配置源目录只纳入选中的一套，存在 local 时完整替换默认目录，
+不叠加，也不通过 `-P` 选配置。选中目录与标准 `src/main/kotlin` 进入同一源码集，使用相同的编译和
+类型检查；目录边界用于选择配置及其辅助文件，新增或切换目录后重新同步 Gradle。
+根构建调用 `deploymentConfiguration(rootDir)`，其内部 `deployment` DSL 按 `server`、`deploy`、`client`
+组织。所有章节完成后，从 HTTP URL 推导未指定的 TCP/SSH 主机及 HTTPS 端口；跨章节隐式调用由
+`@DslMarker` 限定，显式辅助函数可拆文件。DSL 最终构造不可变 `DeploymentConfig`，构造器统一校验，
+业务任务继续只消费这一对象。JSON 只输出最终对象的规范化快照和发行摘要，不再作为配置输入。
 
-**结果**：构建产物目标明确、可复现；同时连接多个组织服务器不在当前产品模型内。
+**结果**：构建产物目标明确，私有坐标不必提交或维护私有分支。不同发行身份允许公版与私有版在同一
+设备独立运行；每个安装连接自己的实例，共存通过安装和数据隔离实现，不需要增加应用内组织切换模型。
 
 ## D11 · 测试以风险分层（轻单元、重集成）
 

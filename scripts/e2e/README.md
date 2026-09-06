@@ -82,8 +82,11 @@ peer.send_msg(other.username, chat_id, "hello from peer")
 
 ## 文档树验收夹具
 
-`document_fixture.py` 只通过 TeamTalk 公共客户端 SDK/RPC 访问 `gradle/deployment.json`
-选定的部署，不读写服务端数据库。它创建 6 个一级文档，每个包含 4 个二级文档，
+`document_fixture.py` 只通过 TeamTalk 公共客户端 SDK/RPC 访问当前部署配置的目标，不读写服务端数据库。
+部署 Kotlin DSL 源码随 `buildSrc` 编译，Gradle 调用配置函数，完成默认主机/端口推导和构造器校验后，
+由 `writeDeploymentConfig` 将最终对象写到 `build/deployment/deployment-config.json` 供机器读取。
+JSON 仅是快照输出，不作为构建配置输入；测试脚本不自行解释 Kotlin 或 DSL。选择规则见
+[运行配置](../../doc/07-operations/configuration.md)。夹具创建 6 个一级文档，每个包含 4 个二级文档，
 每个二级文档再包含 5 个三级文档，共 `6 + 24 + 120 = 150` 篇。一、二级节点都有
 非空正文，因此能验证“同一文档同时承载内容和子页”。
 

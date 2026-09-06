@@ -18,8 +18,8 @@ import kotlin.test.assertTrue
 class ProtocolBaselineTest {
 
     @Test
-    fun `dense current RPC contracts pin the consolidated protocol epoch`() {
-        assertEquals(ProtocolVersion(0, 0), ProtocolVersions.CURRENT)
+    fun `zero baseline synchronization contracts remain available across minor additions`() {
+        assertTrue(ProtocolWireRegistry.supportsPacketType(PacketType.SYNC_RESET.code, ProtocolVersion(0, 0)))
         assertEquals(9, PacketType.SYNC_RESET.code)
         val datasetId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
         val request = SyncRequestPayload(lastEventId = 41L, datasetId = datasetId)

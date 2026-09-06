@@ -82,7 +82,7 @@ class DebugActivityRecreationReceiver : BroadcastReceiver() {
     }
 
     companion object {
-        const val ACTION_RECREATE_ACTIVITY = "com.virjar.tk.android.DEBUG_RECREATE_ACTIVITY"
+        const val ACTION_RECREATE_ACTIVITY = BuildConfig.APPLICATION_ID + ".DEBUG_RECREATE_ACTIVITY"
     }
 }
 

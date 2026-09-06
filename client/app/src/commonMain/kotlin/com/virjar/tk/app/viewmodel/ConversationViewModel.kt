@@ -3,11 +3,15 @@ package com.virjar.tk.app.viewmodel
 import com.virjar.tk.shared.client.ConnectionState
 import com.virjar.tk.shared.client.LocalCache
 import com.virjar.tk.protocol.model.Conversation
+import com.virjar.tk.protocol.MessageType
+import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.User
+import com.virjar.tk.app.ui.component.MessagePreview
 import com.virjar.tk.app.navigation.UiLocalDataBoundary
 import com.virjar.tk.shared.repository.ConversationRepository
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 
 /**
  * 会话列表 ViewModel。
@@ -68,6 +72,21 @@ class ConversationViewModel(
         localData.run { conversationRepo.listConversations().getOrThrow() }
     }
 
+    /** 仅由可见会话行调用：有界读取最后一条已确认消息，不建立消息窗口，也不改写持久摘要。 */
+    suspend fun messagePreview(conversation: Conversation): String? {
+        if (conversation.lastMessageType !in setOf(MessageType.RICH_TEXT.code, MessageType.REPLY.code)) return null
+        return try {
+            localData.run {
+                conversationMessagePreview(conversation, localCache.getMessages(conversation.chatId, limit = 1).singleOrNull())
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: IllegalStateException) {
+            // 账号退出可能关闭本地缓存；过期行只能保留已有快照，不能让读取失败终止界面。
+            null
+        }
+    }
+
     fun deleteConversation(chatId: String) {
         scope.launch {
             runViewModelAction("删除会话失败") {
@@ -100,3 +119,11 @@ class ConversationViewModel(
         }
     }
 }
+
+/** 避免用在途乐观消息或比会话快照更新的正文覆盖这一行的已确认摘要。 */
+internal fun conversationMessagePreview(conversation: Conversation, message: Message?): String? = message
+    ?.takeIf {
+        it.chatId == conversation.chatId && it.serverSeq > 0 && it.serverSeq == conversation.lastSeq &&
+            it.messageType == conversation.lastMessageType
+    }
+    ?.let { MessagePreview.preview(it).take(400) }

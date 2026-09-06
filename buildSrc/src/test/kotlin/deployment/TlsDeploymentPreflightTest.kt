@@ -3,7 +3,19 @@ package deployment
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import java.math.BigInteger
+import java.security.KeyPairGenerator
+import java.security.KeyStore
+import java.security.cert.X509Certificate
+import java.util.Date
 import java.util.Properties
+import org.bouncycastle.asn1.x500.X500Name
+import org.bouncycastle.asn1.x509.Extension
+import org.bouncycastle.asn1.x509.GeneralName
+import org.bouncycastle.asn1.x509.GeneralNames
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
+import org.bouncycastle.openssl.jcajce.JcaPEMWriter
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
 import org.gradle.api.GradleException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -69,7 +81,7 @@ class TlsDeploymentPreflightTest {
 
             val missing = assertFailsWith<GradleException> {
                 requireTlsPemFilesForDeployment(
-                    sslEnabled = true,
+                    tlsEnabled = true,
                     isFirstDeploy = true,
                     pemFiles = null,
                 )
@@ -92,6 +104,52 @@ class TlsDeploymentPreflightTest {
             assertTrue(retainedCheck.contains("-certreq"))
             assertTrue(retainedCheck.contains("-file /dev/null"))
         }
+
+    @Test
+    fun `HTTP pinned TLS validates SAN and local leaf before choosing first deploy or upgrade`() = withTempDirectory { root ->
+        val material = File(root, "tcp-tls")
+        generateTcpTlsCertificate(material, "192.0.2.10")
+        val config = DeploymentConfig(
+            "http://192.0.2.10:8080", "192.0.2.10:5100", "192.0.2.10",
+            tcpTlsCertificatePem = File(material, "certificate.pem").readText(),
+        )
+        val certificate = requireNotNull(validateConfiguredTcpTlsCertificate(config))
+        val files = validateLocalTlsPemFiles(root, "tcp-tls/certificate.pem", "tcp-tls/private-key.pem", certificate)
+        val tlsEnabled = config.sslEnabled || config.tcpTlsCertificatePem != null
+        requireTlsPemFilesForDeployment(tlsEnabled, true, files)
+        requireTlsPemFilesForDeployment(tlsEnabled, false, null)
+        assertFailsWith<GradleException> { requireTlsPemFilesForDeployment(tlsEnabled, true, null) }
+        assertFailsWith<GradleException> {
+            validateConfiguredTcpTlsCertificate(config.copy(tcpAddress = "192.0.2.11:5100"))
+        }
+
+        val otherMaterial = File(root, "other-tcp-tls")
+        generateTcpTlsCertificate(otherMaterial, "192.0.2.10")
+        assertFailsWith<GradleException> {
+            validateLocalTlsPemFiles(root, "other-tcp-tls/certificate.pem", "other-tcp-tls/private-key.pem", certificate)
+        }
+        // HTTPS material may include a chain; its first certificate must remain the configured server leaf.
+        val chain = File(root, "fullchain.pem").apply {
+            writeText(config.tcpTlsCertificatePem + File(otherMaterial, "certificate.pem").readText())
+        }
+        assertEquals(chain, validateLocalTlsPemFiles(root, chain.path, "tcp-tls/private-key.pem", certificate)?.certificate)
+    }
+
+    @Test
+    fun `expired configured TCP certificate is rejected before any deployment side effects`() {
+        val keys = KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
+        val name = X500Name("CN=192.0.2.10")
+        val certificate = JcaX509v3CertificateBuilder(
+            name, BigInteger.ONE, Date(0), Date(1_000L), name, keys.public,
+        ).apply {
+            addExtension(Extension.subjectAlternativeName, false, GeneralNames(GeneralName(GeneralName.iPAddress, "192.0.2.10")))
+        }.build(JcaContentSignerBuilder("SHA256withECDSA").build(keys.private))
+        val pem = java.io.StringWriter().also { text -> JcaPEMWriter(text).use { it.writeObject(certificate) } }.toString()
+        val config = DeploymentConfig(
+            "http://192.0.2.10:8080", "192.0.2.10:5100", "192.0.2.10", tcpTlsCertificatePem = pem,
+        )
+        assertFailsWith<GradleException> { validateConfiguredTcpTlsCertificate(config) }
+    }
 
     @Test
     fun `retained PKCS12 validation opens the private key and rejects wrong password or corruption`() =
@@ -131,10 +189,10 @@ class TlsDeploymentPreflightTest {
             assertFalse(command.contains(password))
             assertFalse(command.contains(wrongPassword))
 
-            fun validate(candidate: String) = runSensitiveStdinCheckedProcess(
+            fun validate(candidate: String, validationCommand: String = command) = runSensitiveStdinCheckedProcess(
                 ProcessSpec(
                     label = "validate retained TLS fixture",
-                    arguments = listOf("/bin/sh", "-c", command),
+                    arguments = listOf("/bin/sh", "-c", validationCommand),
                     outputMode = ProcessOutputMode.DISCARD,
                 ),
                 "$candidate\n".toByteArray(StandardCharsets.UTF_8),
@@ -145,6 +203,15 @@ class TlsDeploymentPreflightTest {
                 validate(wrongPassword)
             }
             assertFailureDoesNotContain(wrongPasswordFailure, wrongPassword)
+
+            val certificate = KeyStore.getInstance("PKCS12").apply {
+                keystore.inputStream().use { load(it, password.toCharArray()) }
+            }.getCertificate("mykey") as X509Certificate
+            val pinnedCheck = retainedTlsCertificateCheckCommand(deployRoot.absolutePath, certificate, keytool.absolutePath)
+            assertFalse(pinnedCheck.contains(password))
+            assertEquals(0, validate(password, pinnedCheck).exitCode)
+            val mismatch = pinnedCheck.replace(Regex("'[0-9a-f]{64}'$"), "'${"0".repeat(64)}'")
+            assertFailsWith<SensitiveProcessExitException> { validate(password, mismatch) }
 
             keystore.writeText("not a PKCS12 keystore")
             val corruptFailure = assertFailsWith<SensitiveProcessExitException> {

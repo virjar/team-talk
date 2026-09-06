@@ -3,6 +3,7 @@ package com.virjar.tk.server.protocol.connection
 import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.ProtocolVersions
+import com.virjar.tk.protocol.ProtocolVersion
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.payload.NotifyPayload
 import com.virjar.tk.protocol.payload.SyncBatchPayload
@@ -12,6 +13,14 @@ import kotlin.test.assertNull
 import kotlin.test.assertSame
 
 class ProtocolEventProjectionTest {
+    @Test
+    fun `contact updates are available in the zero release baseline`() {
+        val event = NotifyPayload(8L, NotifyType.CONTACT_UPDATED.code, byteArrayOf(1, 2, 3))
+        assertSame(event, eventFrameForProtocol(event, ProtocolVersion(0, 0)))
+        val batch = eventFrameForProtocol(SyncBatchPayload(listOf(event)), ProtocolVersion(0, 0)) as SyncBatchPayload
+        assertSame(event, batch.events.single())
+    }
+
     @Test
     fun `unsupported durable events retain every cursor while transient events are dropped`() {
         val unknown = NotifyPayload(eventId = 9L, notifyType = 255, payload = byteArrayOf(1))

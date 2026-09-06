@@ -13,6 +13,9 @@
 # 测试夹具只检查编译，不为 Fake 编写自测
 ./gradlew :client:shared-testkit:compileKotlinJvm
 
+# 管理后台：锁文件安装、TypeScript 检查与生产构建
+./gradlew :server:admin:check
+
 # 服务端领域、持久化与进程内集成测试
 ./gradlew :server:server:test
 
@@ -22,6 +25,10 @@
 # 生产代码日志规范
 bash scripts/check-println.sh
 ```
+
+管理后台缺失源码导入、类型错误和静态资源打包失败都会使 `:server:admin:check` 失败；
+`:server:server:check` 也依赖同一构建链。Gradle 自动管理 Node.js 和 npm，详细路径见
+[管理后台构建链](../08-development/dependency-maintenance.md#管理后台的构建链)。该检查不替代浏览器交互验收。
 
 开发中可以只运行受影响模块；准备交付时应扩大到相邻边界。例如修改消息体既影响 `protocol`
 编解码，也影响服务端校验和客户端渲染，不能只跑一个 UI 测试。
@@ -50,6 +57,24 @@ TK_TEST_PG_PASSWORD=your-test-password \
 它自己的池；实例隔离测试会同时创建两个 `TestEnvironment` 并在关闭其中一个后继续使用另一个。
 完整服务端测试仍固定单 fork 并关闭 JUnit 全局并行，以限制 PostgreSQL 连接和 RocksDB/Lucene 原生资源
 占用；这是资源预算，不是数据库正确性所需的进程级互斥。
+
+## Linux 媒体测试环境
+
+服务端缩略图测试与 TestPeer 音频元数据读取会加载 JavaCV/FFmpeg JNI。FFmpeg 原生库随 Maven JAR
+提供，但仍依赖系统动态库；Ubuntu 24.04 的服务端测试与验收 runner 使用：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends \
+  libasound2t64 libpulse0 libva-drm2 libva2 libxcb1 libxcb-shm0
+```
+
+这些是运行库依赖，不要求实际声卡、运行音频服务或安装系统 `ffmpeg` 命令。其他发行版按本机包名
+提供相同动态库。出现 `libpulse.so.0` 等缺失或 `FFmpegFrameGrabber.tryLoad()` 失败时，先查看首次
+加载异常及最内层 cause，再对 Bytedeco 缓存中实际加载的 `.so` 执行 `ldd`，检查 `not found`。
+JavaCV 会缓存首次加载异常，后续 `tryLoad()` 可能只是重抛；补齐系统库后重新启动测试 JVM，不能将
+后续堆栈中的不同加载入口误判为多个业务故障。JavaCV 与 native 版本对应关系见
+[依赖维护](../08-development/dependency-maintenance.md#按兼容关系成组升级)。
 
 ## 版本与数据兼容的定向验证
 

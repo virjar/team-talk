@@ -3,12 +3,12 @@ package com.virjar.tk.shared.client
 import com.virjar.tk.protocol.PacketBuffer
 import com.virjar.tk.protocol.payload.AuthRequestPayload
 import io.netty.buffer.UnpooledByteBufAllocator
-import io.netty.handler.ssl.SslContext
-import io.netty.handler.ssl.SslContextBuilder
-import io.netty.handler.ssl.SslProvider
 import io.netty.handler.ssl.util.SelfSignedCertificate
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
+import java.io.File
+import java.nio.file.Files
+import java.util.Base64
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -134,7 +134,8 @@ class ClientTransportTlsTest {
     }
 
     @Test
-    fun `AUTH is retained while TLS handshake is incomplete`() = runBlocking {
+    fun `AUTH is retained while private TLS handshake is incomplete`() = runBlocking {
+        val certificate = SelfSignedCertificate(LOOPBACK_DNS_NAME)
         val server = ServerSocket(0, 16, InetAddress.getByName(LOOPBACK))
         val accepted = CountDownLatch(1)
         val releasePeer = CountDownLatch(1)
@@ -157,7 +158,7 @@ class ClientTransportTlsTest {
             }
         }
         val harness = transportHarness(
-            transportTls = ClientTransportTls(requiresTls = { true }),
+            transportTls = ClientTransportTls(tcpTlsCertificatePem = certificate.certificate().readText()),
         )
 
         try {
@@ -175,11 +176,12 @@ class ClientTransportTlsTest {
             releasePeer.countDown()
             runCatching { server.close() }
             executor.shutdownNow()
+            certificate.delete()
         }
     }
 
     @Test
-    fun `trusted matching TLS peer completes handshake before encrypted AUTH`() = runBlocking {
+    fun `configured private certificate completes TLS before encrypted AUTH even on loopback`() = runBlocking {
         val certificate = SelfSignedCertificate(LOOPBACK_DNS_NAME)
         val server = tlsServer(certificate)
         val releasePeer = CountDownLatch(1)
@@ -197,7 +199,7 @@ class ClientTransportTlsTest {
             }
         }
         val harness = transportHarness(
-            transportTls = forcedTls(trustedClientContext(certificate)),
+            transportTls = ClientTransportTls(tcpTlsCertificatePem = certificate.certificate().readText()),
         )
 
         try {
@@ -231,7 +233,7 @@ class ClientTransportTlsTest {
             }
         }
         val harness = transportHarness(
-            transportTls = forcedTls(trustedClientContext(certificate)),
+            transportTls = ClientTransportTls(tcpTlsCertificatePem = certificate.certificate().readText()),
         )
 
         try {
@@ -247,6 +249,85 @@ class ClientTransportTlsTest {
             runCatching { server.close() }
             executor.shutdownNow()
             certificate.delete()
+        }
+    }
+
+    @Test
+    fun `configured private IP certificate survives build encoding and preserves deployment identity`() = runBlocking {
+        val keyStore = ipCertificateKeyStore()
+        val pem = "-----BEGIN CERTIFICATE-----\n" +
+            Base64.getMimeEncoder(64, byteArrayOf(10)).encodeToString(keyStore.getCertificate("server").encoded) +
+            "\n-----END CERTIFICATE-----\n"
+        val config = ServerConfig(
+            serverUrl = "http://$LOOPBACK",
+            tcpHost = LOOPBACK,
+            tcpPort = 5100,
+            tcpTlsCertificatePem = decodeTcpTlsCertificateBase64(
+                Base64.getEncoder().encodeToString(pem.toByteArray()),
+            ),
+        )
+        assertEquals(config.deploymentIdentity(), config.copy(tcpTlsCertificatePem = null).deploymentIdentity())
+        val server = tlsServer(keyStore)
+        val executor = Executors.newSingleThreadExecutor()
+        val releasePeer = CountDownLatch(1)
+        val observed = java.util.concurrent.CompletableFuture<AuthRequestPayload>()
+        executor.submit {
+            try {
+                (server.accept() as SSLSocket).use { socket ->
+                    socket.startHandshake()
+                    observed.complete(readAuth(socket))
+                    releasePeer.await(5, TimeUnit.SECONDS)
+                }
+            } catch (failure: Throwable) {
+                observed.completeExceptionally(failure)
+            }
+        }
+        val harness = transportHarness(
+            transportTls = ClientTransportTls(tcpTlsCertificatePem = config.tcpTlsCertificatePem),
+        )
+        try {
+            harness.owner.connect(config.tcpHost, server.localPort)
+            assertEquals(TEST_AUTH, withTimeout(TEST_TIMEOUT_MS) { observed.awaitPolling() })
+            assertEquals(1, harness.authInvocations.get())
+        } finally {
+            harness.owner.destroy()
+            releasePeer.countDown()
+            runCatching { server.close() }
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `a different certificate for the same host is rejected before AUTH`() = runBlocking {
+        val serverCertificate = SelfSignedCertificate(LOOPBACK_DNS_NAME)
+        val configuredCertificate = SelfSignedCertificate(LOOPBACK_DNS_NAME)
+        val server = tlsServer(serverCertificate)
+        val executor = Executors.newSingleThreadExecutor()
+        val serverHandshake = java.util.concurrent.CompletableFuture<Throwable?>()
+        executor.submit {
+            try {
+                (server.accept() as SSLSocket).use { socket -> socket.startHandshake() }
+                serverHandshake.complete(null)
+            } catch (failure: Throwable) {
+                serverHandshake.complete(failure)
+            }
+        }
+        val harness = transportHarness(
+            transportTls = ClientTransportTls(tcpTlsCertificatePem = configuredCertificate.certificate().readText()),
+        )
+        try {
+            harness.owner.connect(LOOPBACK_DNS_NAME, server.localPort)
+            awaitCondition { harness.endedAttempts.get() == 1 }
+            assertEquals(0, harness.authInvocations.get())
+            assertEquals(ConnectionState.DISCONNECTED, harness.owner.state.value)
+            assertNotNull(withTimeout(TEST_TIMEOUT_MS) { serverHandshake.awaitPolling() })
+            Unit
+        } finally {
+            harness.owner.destroy()
+            runCatching { server.close() }
+            executor.shutdownNow()
+            serverCertificate.delete()
+            configuredCertificate.delete()
         }
     }
 
@@ -406,21 +487,8 @@ class ClientTransportTlsTest {
         return TransportHarness(owner, authInvocations, endedAttempts)
     }
 
-    private fun forcedTls(context: SslContext): ClientTransportTls =
-        ClientTransportTls(
-            requiresTls = { true },
-            contextFactory = { context },
-        )
-
-    private fun trustedClientContext(certificate: SelfSignedCertificate): SslContext =
-        SslContextBuilder.forClient()
-            .sslProvider(SslProvider.JDK)
-            .trustManager(certificate.cert())
-            .endpointIdentificationAlgorithm("HTTPS")
-            .build()
-
     private fun tlsServer(certificate: SelfSignedCertificate): SSLServerSocket {
-        val password = "transport-tls-test".toCharArray()
+        val password = TEST_KEY_PASSWORD.toCharArray()
         val keyStore = KeyStore.getInstance(KeyStore.getDefaultType()).apply {
             load(null, null)
             setKeyEntry(
@@ -430,8 +498,12 @@ class ClientTransportTlsTest {
                 arrayOf(certificate.cert()),
             )
         }
+        return tlsServer(keyStore)
+    }
+
+    private fun tlsServer(keyStore: KeyStore): SSLServerSocket {
         val keyManager = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
-            .apply { init(keyStore, password) }
+            .apply { init(keyStore, TEST_KEY_PASSWORD.toCharArray()) }
         val context = SSLContext.getInstance("TLS").apply {
             init(keyManager.keyManagers, null, SecureRandom())
         }
@@ -440,6 +512,34 @@ class ClientTransportTlsTest {
             16,
             InetAddress.getByName(LOOPBACK),
         ) as SSLServerSocket
+    }
+
+    /** Netty's SelfSignedCertificate lacks SAN; use the JDK tool for the real IP identity case. */
+    private fun ipCertificateKeyStore(): KeyStore {
+        val directory = Files.createTempDirectory("teamtalk-ip-tls-test").toFile()
+        try {
+            val file = File(directory, "server.p12")
+            val executable = if (System.getProperty("os.name").startsWith("Windows")) "keytool.exe" else "keytool"
+            val process = ProcessBuilder(
+                File(System.getProperty("java.home"), "bin/$executable").absolutePath,
+                "-genkeypair", "-alias", "server", "-keyalg", "RSA", "-keysize", "2048",
+                "-validity", "2", "-dname", "CN=$LOOPBACK", "-ext", "SAN=ip:$LOOPBACK",
+                "-storetype", "PKCS12", "-keystore", file.absolutePath,
+                "-storepass", TEST_KEY_PASSWORD, "-keypass", TEST_KEY_PASSWORD,
+            ).redirectErrorStream(true).start()
+            try {
+                check(process.waitFor(20, TimeUnit.SECONDS)) { "IP certificate fixture generation timed out" }
+                check(process.exitValue() == 0) { process.inputStream.bufferedReader().readText() }
+            } finally {
+                if (process.isAlive) process.destroyForcibly().waitFor()
+                process.inputStream.close()
+            }
+            return KeyStore.getInstance("PKCS12").apply {
+                file.inputStream().use { load(it, TEST_KEY_PASSWORD.toCharArray()) }
+            }
+        } finally {
+            directory.deleteRecursively()
+        }
     }
 
     private fun readAuth(socket: Socket): AuthRequestPayload {
@@ -472,6 +572,7 @@ class ClientTransportTlsTest {
         const val TEST_TIMEOUT_MS = 8_000L
         const val TEST_HANDSHAKE_TIMEOUT_MS = 1_000L
         const val STALE_RECONNECT_OBSERVATION_MS = 2_300L
+        const val TEST_KEY_PASSWORD = "transport-tls-test"
 
         val TEST_AUTH = AuthRequestPayload(
             authType = 0,

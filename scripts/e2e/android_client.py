@@ -50,15 +50,19 @@ class AndroidClient:
     所有输入走 set_fastinput_ime(True) + send_keys（绕过 MIUI 安全键盘）。
     """
 
-    PACKAGE = "com.virjar.tk.android"  # applicationId
+    PACKAGE = "com.virjar.tk.android"  # 公版默认 applicationId；私有版通过构造参数传入
     ACTIVITY = "com.virjar.tk.android.MainActivity"  # 主 Activity 全限定名
 
-    def __init__(self, serial=None):
+    def __init__(self, serial=None, *, package=PACKAGE):
+        """连接设备；package 选择安装身份，Activity 的源码类名保持不变。"""
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+", package):
+            raise ValueError("package 必须是 Android applicationId，例如 com.example.teamtalk.android")
         if u2 is None:
             raise ImportError(
                 "uiautomator2 未安装。pip install uiautomator2 && "
                 "python3 -m uiautomator2 init -s <serial>"
             )
+        self.PACKAGE = package
         self.d = u2.connect(serial) if serial else u2.connect()
         self.fastinput_ready = False
 

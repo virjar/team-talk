@@ -1,5 +1,14 @@
 # Android 客户端
 
+安装 `applicationId` 由根部署配置的 `client.applicationId` 追加 `.android` 生成，默认仍是
+`com.virjar.tk.android`。源码 `namespace` 与 Kotlin 包名保持不变；Activity、通知跳转和 FileProvider
+按实际安装身份工作。公版与私有版各有独立沙箱、登录凭据、数据库、草稿和附件，系统入口与登录页
+使用 `client.displayName`，可同时安装在一台设备。配置示例及签名、升级稳定性规则见
+[客户端发行身份](../07-operations/configuration.md#客户端发行身份)。
+
+Android 当前会提示协议版本较旧，并在不兼容时阻止进入工作区；升级由用户从本发行站点下载 APK
+后安装。共享升级横幅不提供自动下载安装功能。
+
 ## 1. 导航模型
 
 Android 使用单 Activity、Compose NavHost 和系统返回栈。一级栏目由底部导航承载；资料、搜索、群
@@ -191,6 +200,10 @@ TopAppBar。Android 明确采用单文档前台模式，手机和平板都按“
 占位和 sidecar 收敛链路。物理键盘 `Ctrl/Meta+V` 只在实际命中二进制资源时消费按键；剪贴板只有
 普通文本时返回给聚焦编辑器执行原生粘贴。预览或只读状态不接受新资源；Android 文档拖放尚未实现。
 
+头像、聊天图片/视频及文档图片共用系统媒体选择入口。Photo Picker Activity 缺失时回退到
+OpenDocument；两个系统入口都不可用时完成取消并显示明确提示，避免退出应用或留下等待中的导入。
+回退仍复用原 URI 处理、认证上传和资源所有权规则。
+
 聊天和文档的系统 picker 在启动时捕获编辑器 owner 与资源类型，并把这个一次性 token 按
 canonical deployment + dataset + uid 绑定在 `rememberSaveable` 中。取消也会消费 token；同一
 Activity 内仍使用启动时的 owner，Activity 重建后则只在当前编辑器 owner 与原 owner 相同时
@@ -204,6 +217,9 @@ adb shell am broadcast \
   -a com.virjar.tk.android.DEBUG_RECREATE_ACTIVITY \
   -n com.virjar.tk.android/com.virjar.tk.DebugActivityRecreationReceiver
 ```
+
+上例使用公版安装 ID；私有构建的 action 前缀和 `-n` 左侧包名替换为实际 `applicationId`，
+右侧接收器源码类名保持不变。
 
 当前这台小米设备及其当前系统构建已确认同一进程内产生新的 Activity 实例，但图片 picker 和文件 picker
 返回时都在 `ActivityThread.deliverResultsIfNeeded` 抛出空指针，本次没有观察到应用 callback 或资源导入。

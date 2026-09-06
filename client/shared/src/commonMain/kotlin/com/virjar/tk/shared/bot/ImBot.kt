@@ -445,6 +445,7 @@ class ImBot private constructor(
             messageInbox: ImBotMessageInbox = ImBotMessageInbox(),
             deviceId: String = "bot-${UUID.randomUUID()}",
             fileServerUrl: String? = null,
+            tcpTlsCertificatePem: String? = null,
             onRefreshCredentials: ((uid: String, username: String, refreshToken: String) -> Unit)? = null,
         ): ImBot = registerExact(
             host = host,
@@ -455,6 +456,7 @@ class ImBot private constructor(
             cacheOwner = cacheOwner,
             messageInbox = messageInbox,
             fileServerUrl = fileServerUrl,
+            tcpTlsCertificatePem = tcpTlsCertificatePem,
             onRefreshCredentials = onRefreshCredentials,
         )
 
@@ -471,12 +473,14 @@ class ImBot private constructor(
             cacheOwner: ImBotCacheOwner,
             messageInbox: ImBotMessageInbox = ImBotMessageInbox(),
             fileServerUrl: String? = null,
+            tcpTlsCertificatePem: String? = null,
             onRefreshCredentials: ((uid: String, username: String, refreshToken: String) -> Unit)? = null,
         ): ImBot = connect(
             host, port, mode = AuthMode.REGISTER,
             username = username,
             password = password, deviceId = deviceId, name = null,
             cacheOwner = cacheOwner, messageInbox = messageInbox, fileServerUrl = fileServerUrl,
+            tcpTlsCertificatePem = tcpTlsCertificatePem,
             onRefreshCredentials = onRefreshCredentials,
         )
 
@@ -490,6 +494,7 @@ class ImBot private constructor(
             messageInbox: ImBotMessageInbox = ImBotMessageInbox(),
             deviceId: String = "bot-${UUID.randomUUID()}",
             fileServerUrl: String? = null,
+            tcpTlsCertificatePem: String? = null,
             onRefreshCredentials: ((uid: String, username: String, refreshToken: String) -> Unit)? = null,
         ): ImBot = connect(
             host = host,
@@ -502,6 +507,7 @@ class ImBot private constructor(
             cacheOwner = cacheOwner,
             messageInbox = messageInbox,
             fileServerUrl = fileServerUrl,
+            tcpTlsCertificatePem = tcpTlsCertificatePem,
             onRefreshCredentials = onRefreshCredentials,
         )
 
@@ -515,6 +521,7 @@ class ImBot private constructor(
             cacheOwner: ImBotCacheOwner,
             messageInbox: ImBotMessageInbox = ImBotMessageInbox(),
             fileServerUrl: String? = null,
+            tcpTlsCertificatePem: String? = null,
             onRefreshCredentials: ((uid: String, username: String, refreshToken: String) -> Unit)? = null,
         ): ImBot = connect(
             host = host,
@@ -529,6 +536,7 @@ class ImBot private constructor(
             cacheOwner = cacheOwner,
             messageInbox = messageInbox,
             fileServerUrl = fileServerUrl,
+            tcpTlsCertificatePem = tcpTlsCertificatePem,
             onRefreshCredentials = onRefreshCredentials,
         )
 
@@ -540,6 +548,7 @@ class ImBot private constructor(
             cacheOwner: ImBotCacheOwner,
             messageInbox: ImBotMessageInbox,
             fileServerUrl: String?,
+            tcpTlsCertificatePem: String?,
             onRefreshCredentials: ((uid: String, username: String, refreshToken: String) -> Unit)?,
         ): ImBot {
             when (mode) {
@@ -566,6 +575,7 @@ class ImBot private constructor(
             var authenticationLifecycle: ImBotAuthenticationLifecycle? = null
             lateinit var imClient: ImClient
             imClient = ImClient(
+                tcpTlsCertificatePem = tcpTlsCertificatePem,
                 onAuthResult = authCallback@{
                         success, uid, uname, dispName, refreshToken, access, datasetId, failureReason ->
                     if (

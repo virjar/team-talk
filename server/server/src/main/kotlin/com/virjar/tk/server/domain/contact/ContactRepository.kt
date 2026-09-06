@@ -73,7 +73,8 @@ interface ContactRepository {
         uid: String,
         friendUid: String,
     ): ContactPairMutationResult
-    fun setRemark(transaction: PgWriteTransactionContext, uid: String, friendUid: String, remark: String?)
+    /** 返回变更后的完整投影；幂等重复返回 null。 */
+    fun setRemark(transaction: PgWriteTransactionContext, uid: String, friendUid: String, remark: String?): Contact?
     fun blacklist(
         transaction: PgWriteTransactionContext,
         uid: String,

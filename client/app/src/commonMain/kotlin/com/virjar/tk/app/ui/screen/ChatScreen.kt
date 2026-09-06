@@ -672,7 +672,11 @@ fun ChatPanel(
         job, composerMarkdownSnapshot(), sourceInput, editingSessionActive,
         updateEditor = { updated ->
             sourceInput = updated
-            composerMode = ChatComposerMode.MARKDOWN
+            if (composerMode == ChatComposerMode.VISUAL && canUseChatVisualEditor(updated.text)) {
+                enterVisualMarkdown(updated.text)
+            } else {
+                composerMode = ChatComposerMode.MARKDOWN
+            }
             showEmoji = false
             showAttach = false
             restoreComposerFocus = true
@@ -771,6 +775,7 @@ fun ChatPanel(
                 composerMode = composerMode,
                 onComposerModeChange = actionAdmission.guard(::changeComposerMode),
                 sourceInput = sourceInput,
+                composerMarkdown = composerMarkdown,
                 onSourceInputChange = actionAdmission.guard { value: TextFieldValue ->
                     val textChanged = value.text != sourceInput.text
                     sourceInput = value

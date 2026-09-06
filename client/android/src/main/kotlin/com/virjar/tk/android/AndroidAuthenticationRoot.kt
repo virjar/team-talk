@@ -57,6 +57,7 @@ internal fun AndroidAppRoot(
         deploymentIdentity = deploymentIdentity,
         tcpHost = deploymentIdentity.tcpHost,
         tcpPort = deploymentIdentity.tcpPort,
+        tcpTlsCertificatePem = serverConfig.tcpTlsCertificatePem,
         deviceId = deviceId,
         deviceName = deviceName,
         deviceModel = deviceModel,

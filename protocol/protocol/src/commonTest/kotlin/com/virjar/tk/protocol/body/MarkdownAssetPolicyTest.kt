@@ -120,6 +120,23 @@ class MarkdownAssetPolicyTest {
     }
 
     @Test
+    fun `display image labels never rewrite released canonical plain text or wire bytes`() {
+        val legacyName = "teamtalk-clipboard-142792303123456789.png"
+        val markdown = "![$legacyName](${EmbeddedAsset.uri(imageId)}) **说明** [需求](${EmbeddedAsset.uri(fileId)})"
+        val body = buildRichTextBody(markdown, listOf(file, image))
+        val before = PacketBuffer().also(body::writeTo).toByteArray().toList()
+
+        assertEquals("$legacyName 说明 需求", body.plainText)
+        assertEquals("[图片] 说明 需求", richTextDisplayText(body.markdown, body.assets))
+        assertEquals("$legacyName 说明 需求", body.plainText)
+        assertEquals(before, PacketBuffer().also(body::writeTo).toByteArray().toList())
+        assertEquals(
+            "![$legacyName](${EmbeddedAsset.uri(imageId)})",
+            richTextDisplayText("`![$legacyName](${EmbeddedAsset.uri(imageId)})`"),
+        )
+    }
+
+    @Test
     fun `recovery scan can find references rejected by the commit budget`() {
         val markdown = List(MarkdownAssetPolicy.MAX_ASSET_REFERENCES + 1) {
             "![photo](${EmbeddedAsset.uri(imageId)})"

@@ -1,5 +1,6 @@
 package com.virjar.tk.server.domain.user
 
+import com.virjar.tk.protocol.model.MainlandPhoneNumber
 import com.virjar.tk.protocol.model.AuthRules
 import com.virjar.tk.server.domain.auth.PasswordHasher
 import com.virjar.tk.server.domain.attachment.AttachmentCatalog
@@ -109,11 +110,14 @@ class UserService(
     }
 
     suspend fun updateProfile(uid: String, patch: ProfilePatch) {
-        validateProfilePatch(patch)
-        val outcome = if (patch.avatar.isPresent) {
-            updateProfileWithAvatar(uid, patch, patch.avatar.valueOrNull)
+        val normalized = if (patch.phone.isPresent) {
+            patch.copy(phone = ProfilePatchValue.Set(MainlandPhoneNumber.normalize(patch.phone.valueOrNull)))
+        } else patch
+        validateProfilePatch(normalized)
+        val outcome = if (normalized.avatar.isPresent) {
+            updateProfileWithAvatar(uid, normalized, normalized.avatar.valueOrNull)
         } else {
-            ProfileMutationOutcome(persistProfilePatch(uid, patch))
+            ProfileMutationOutcome(persistProfilePatch(uid, normalized))
         }
         publishCommittedProfileChange(outcome.committed)
         outcome.avatarPublicationFailure?.let { throw it }
@@ -269,9 +273,6 @@ class UserService(
             require(name.length <= 100) { "显示名不能超过 100 个字符" }
         }
         patch.avatar.valueOrNull?.let(UserAvatarPolicy::requireCanonical)
-        patch.phone.valueOrNull?.let { phone ->
-            require(phone.length <= 20) { "手机号不能超过 20 个字符" }
-        }
     }
 
     /** 仓储 IO 与 CPU 哈希是分开的挂起边界；提交时重新校验快照。 */

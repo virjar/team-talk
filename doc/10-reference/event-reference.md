@@ -15,6 +15,7 @@ eventId(varLong) + notifyType(1B) + payload(bytes?)
 | 1 | `CONTACT_APPLY` | `ContactApply` | 申请双方（新申请仅被申请人） | 新申请或处理状态变化提示；客户端权威刷新历史、资料状态与红点，不直接写好友关系 |
 | 2 | `CONTACT_ACCEPTED` | `Contact` | 双方 | 更新各自视角的好友关系 |
 | 3 | `CONTACT_DELETED` | `Contact` | 双方 | 更新或移除联系人投影 |
+| 4 | `CONTACT_UPDATED` | `Contact` | 仅关系所有者的设备 | 更新自己的好友备注；不改变对方姓名或向对方泄露备注 |
 | 10 | `CHAT_CREATED` | `Chat` | 新会话成员 | 写入 Chat，刷新会话列表 |
 | 11 | `CHAT_UPDATED` | `Chat` | 全体成员 | 更新群资料和权限相关状态 |
 | 12 | `CHAT_DELETED` | `Chat` | 解散时的原成员；成员移除时仅目标用户 | 删除该 chat 的全部本地投影 |

@@ -1,5 +1,7 @@
 package com.virjar.tk.app.ui.screen
 
+import com.virjar.tk.app.identity.ClientIdentity
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -589,7 +591,7 @@ private fun DocumentSpaceHeader(
             Text(space.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 buildString {
-                    if (detached) append("TeamTalk 文档 · ")
+                    if (detached) append("${ClientIdentity.DISPLAY_NAME} 文档 · ")
                     append(documentSpaceWorkspaceRole(space.myRole))
                     statusLabel?.let {
                         append(" · ")

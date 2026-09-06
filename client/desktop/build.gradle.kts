@@ -1,6 +1,12 @@
+import java.util.Base64
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.gradle.internal.os.OperatingSystem
 import deployment.DeploymentConfig
+import hydraulic.conveyor.gradle.WriteConveyorConfigTask
+import release.PrepareConveyorTask
+import release.defaultConveyorConfigDirectory
+import release.buildConveyorSite
+import release.requireConveyorSigningConfiguration
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
@@ -14,6 +20,10 @@ val releaseVersion = rootProject.extra.get("releaseVersion") as String
 version = releaseVersion
 
 val deploymentConfig = rootProject.extra.get("deploymentConfig") as DeploymentConfig
+val clientIdentity = deploymentConfig.client
+val tcpTlsCertificateBase64 = deploymentConfig.tcpTlsCertificatePem
+    ?.let { Base64.getEncoder().encodeToString(it.toByteArray(Charsets.UTF_8)) }
+    .orEmpty()
 
 // ComposeMediaPlayer 0.9.0's macOS backend retains local video descriptors after dispose.
 // TeamTalk ships a narrow, source-auditable local-file replacement at the exact resource
@@ -219,7 +229,7 @@ plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.compose)
     alias(libs.plugins.kotlin.compose)
-    // Conveyor 配置提取：printConveyorConfig 输出依赖/入口（conveyor.conf include 消费）
+    // 插件负责提取依赖/入口，prepareConveyor 负责管理 CLI，Gradle 统一驱动完整构建。
     id("dev.hydraulic.conveyor") version "2.0"
     // 生成 BuildConfig 编译期常量
     alias(libs.plugins.buildconfig)
@@ -287,7 +297,7 @@ tasks.matching { it.name == "createDistributable" || it.name == "createReleaseDi
         val buildKind = if (name == "createReleaseDistributable") "main-release" else "main"
         val appRoot = layout.buildDirectory.dir("compose/binaries/$buildKind/app").get().asFile
         val launcherConfig = checkNotNull(
-            appRoot.walkTopDown().firstOrNull { it.isFile && it.name == "TeamTalk.cfg" },
+            appRoot.walkTopDown().firstOrNull { it.isFile && it.name == "${clientIdentity.desktopName}.cfg" },
         ) { "Cannot locate the packaged TeamTalk launcher config" }
         val firstClasspath = checkNotNull(
             launcherConfig.readLines().firstOrNull { it.startsWith("app.classpath=") },
@@ -334,8 +344,10 @@ buildConfig {
     buildConfigField("BUILD_NUMBER", releaseBuildNumber)
     // 测试 HTTP 服务：开发运行时启用，打包 jar exclude 物理删除 TestHttpServer
     buildConfigField("TEST_HTTP_SERVER", true)
-    // 登录页自定义服务器入口（deployment.json 驱动，编译期定死；生产部署 false）
+    // 登录页自定义服务器入口（选中的 buildSrc Kotlin 配置 驱动，编译期定死；生产部署 false）
     buildConfigField("ALLOW_CUSTOM_SERVER", deploymentConfig.allowCustomServer)
+    // 公共证书直接编译进客户端；JDK 17 jpackage 的递归参数正则无法可靠处理长证书 JVM 参数。
+    buildConfigField("TCP_TLS_CERTIFICATE_BASE64", tcpTlsCertificateBase64)
 }
 
 compose.desktop {
@@ -362,7 +374,7 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            packageName = "TeamTalk"
+            packageName = clientIdentity.desktopName
             packageVersion = releaseVersion
 
             // 部署地址固化进安装包 JVM 启动参数。
@@ -383,6 +395,18 @@ compose.desktop {
 
             // 应用图标：使用 TeamTalk 自有图标素材（doc/design/logo/desktop/）
             macOS {
+                // 旧 Compose DMG 的默认 bundle ID 不同于 Conveyor，普通升级保留它。
+                bundleID = if (clientIdentity.applicationId == "com.virjar.tk") {
+                    "com.virjar.tk.desktop"
+                } else {
+                    clientIdentity.applicationId
+                }
+                dockName = clientIdentity.displayName
+                infoPlist {
+                    val displayNameXml = clientIdentity.displayName
+                        .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                    extraKeysRawXml = "<key>CFBundleDisplayName</key><string>$displayNameXml</string>"
+                }
                 // JDK jpackage 拒绝首段为 0 的 app-version。仅系统安装元数据使用正数映射，
                 // 应用内 APP_VERSION、Conveyor 与发行清单仍使用统一的 releaseVersion。
                 packageVersion = "${releaseBuildNumber / 1_000_000 + 1}.${releaseBuildNumber / 1_000 % 1_000}.${releaseBuildNumber % 1_000}"
@@ -392,12 +416,13 @@ compose.desktop {
                 iconFile.set(rootProject.file("doc/design/logo/desktop/TeamTalk.icns"))
             }
             windows {
-                menuGroup = "TeamTalk"
-                upgradeUuid = "d5e8f9a0-1b2c-3d4e-5f6a-7b8c9d0e1f2a"
+                menuGroup = clientIdentity.displayName
+                upgradeUuid = clientIdentity.windowsUpgradeUuid
                 // Windows: jpackage 从 PNG 自动转 .ico
                 iconFile.set(rootProject.file("doc/design/logo/desktop/icon-256.png"))
             }
             linux {
+                packageName = clientIdentity.desktopFsName
                 // Linux: 直接使用 PNG
                 iconFile.set(rootProject.file("doc/design/logo/desktop/icon-256.png"))
             }
@@ -412,6 +437,7 @@ compose.desktop {
 tasks.matching { it.name == "desktopJar" || it.name == "distJar" || it.name == "shadowJar" }.configureEach {
     if (this is Jar) {
         exclude("com/virjar/tk/desktop/test/**")
+        manifest.attributes("TeamTalk-Build-Identity" to buildIdentity)
     }
 }
 
@@ -439,12 +465,91 @@ val sqliteNativeArchDir: String = when (System.getProperty("os.arch")) {
 }
 val sqliteKeepNativePath = "org/sqlite/native/$sqliteNativeOsDir/$sqliteNativeArchDir/"
 
-// 更新站点地址：从 deployment.json 的 serverUrl 推导（私有化构建只改
-// deployment.json 一处，conveyor.conf 无需手改——避免忘改导致客户端指向
-// 他人更新源）。conveyor.conf 通过 #! include 消费本任务输出。
-tasks.register("printSiteConfig") {
+// 配置是 Gradle 任务的产物。Conveyor 只读普通 include，不反向启动另一个 Gradle 进程。
+val generatedConveyorConfig = layout.buildDirectory.file("conveyor/generated.conveyor.conf")
+val generatedSiteConfig = layout.buildDirectory.file("conveyor/site.conveyor.conf")
+val conveyorExecutableDescriptor = layout.buildDirectory.file("conveyor/tool.properties")
+
+tasks.named<WriteConveyorConfigTask>("writeConveyorConfig") {
+    destination.set(generatedConveyorConfig)
+    dependsOn("desktopJar")
+    doFirst { destination.get().asFile.parentFile.mkdirs() }
+}
+
+val writeConveyorSiteConfig by tasks.registering {
+    group = "distribution"
+    description = "Write the update URL and zero-based build-number mapping for Conveyor"
+    inputs.property("serverUrl", deploymentConfig.serverUrl)
+    inputs.property("releaseBuildNumber", releaseBuildNumber)
+    inputs.property("clientApplicationId", clientIdentity.applicationId)
+    inputs.property("clientDisplayName", clientIdentity.displayName)
+    inputs.property("clientDesktopName", clientIdentity.desktopName)
+    outputs.file(generatedSiteConfig)
     doLast {
-        println("app.site.base-url = \"${deploymentConfig.serverUrl.trimEnd('/')}/downloads/desktop\"")
+        // Conveyor 拒绝全零安装版本；与 Android 一样把零起点构建计数映射为正数。
+        check(releaseBuildNumber in 0..65534) {
+            "Conveyor MSIX revision must fit 1..65535; revise the installation-version mapping before increasing the build number further"
+        }
+        val siteUrl = "${deploymentConfig.serverUrl.trimEnd('/')}/downloads/desktop"
+        fun quoted(value: String): String = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+        generatedSiteConfig.get().asFile.apply {
+            parentFile.mkdirs()
+            // display-name also controls the physical .app directory and Windows executable.
+            // Keep those English names stable; visible UI labels may change independently.
+            writeText(
+                """
+                app.site.base-url = ${quoted(siteUrl)}
+                app.revision = ${releaseBuildNumber + 1}
+                app.fsname = ${quoted(clientIdentity.desktopFsName)}
+                app.display-name = ${quoted(clientIdentity.desktopName)}
+                app.rdns-name = ${quoted(clientIdentity.applicationId)}
+                app.mac.info-plist.CFBundleName = ${quoted(clientIdentity.displayName)}
+                app.mac.info-plist.CFBundleDisplayName = ${quoted(clientIdentity.displayName)}
+                app.windows.manifests.msix.display-name = ${quoted(clientIdentity.displayName)}
+                app.linux.desktop-file."Desktop Entry".Name = ${quoted(clientIdentity.displayName)}
+                """.trimIndent() + "\n",
+            )
+        }
+    }
+}
+
+val prepareConveyorConfig by tasks.registering {
+    group = "distribution"
+    description = "Generate the complete Gradle-owned Conveyor configuration inputs"
+    dependsOn("writeConveyorConfig", writeConveyorSiteConfig)
+}
+
+val prepareConveyor by tasks.registering(PrepareConveyorTask::class) {
+    distributionCatalog.set(rootProject.layout.projectDirectory.file("gradle/conveyor-tools.properties"))
+    cacheDirectory.set(rootProject.layout.dir(provider { gradle.gradleUserHomeDir.resolve("teamtalk-tools/conveyor") }))
+    executableOverride.set(providers.gradleProperty("conveyorExecutable").orElse(providers.environmentVariable("TEAMTALK_CONVEYOR_EXECUTABLE")))
+    downloadBaseUrl.set(providers.gradleProperty("conveyorDownloadBaseUrl")
+        .orElse(providers.environmentVariable("TEAMTALK_CONVEYOR_DOWNLOAD_BASE_URL"))
+        .orElse("https://downloads.hydraulic.dev/conveyor"))
+    executableDescriptor.set(conveyorExecutableDescriptor)
+}
+
+tasks.register("buildConveyorSite") {
+    group = "distribution"
+    description = "Build all Desktop installers and the update site with the Gradle-managed Conveyor CLI"
+    dependsOn(prepareConveyor, prepareConveyorConfig)
+    inputs.files("conveyor.conf", "conveyor/extract-native-libraries.conf", generatedConveyorConfig, generatedSiteConfig)
+    inputs.property("buildIdentity", buildIdentity)
+    outputs.dir(layout.projectDirectory.dir("output"))
+    // Conveyor owns its content-addressed cache; always let it verify all platforms and signing inputs.
+    outputs.upToDateWhen { false }
+    doLast {
+        val configDirectory = providers.gradleProperty("conveyorConfigDir")
+            .orElse(providers.environmentVariable("TEAMTALK_CONVEYOR_CONFIG_DIR"))
+            .orNull?.let { rootProject.file(it) } ?: defaultConveyorConfigDirectory()
+        requireConveyorSigningConfiguration(configDirectory)
+        buildConveyorSite(
+            conveyorExecutableDescriptor.get().asFile,
+            projectDir,
+            configDirectory,
+            releaseVersion,
+            buildIdentity,
+        )
     }
 }
 
@@ -631,7 +736,7 @@ tasks.register("stripRuntimeFonts") {
     group = "compose desktop"
     description = "删除打包产物中捆绑 runtime 的字体文件（IM 客户端用系统字体）"
 
-    val appRoot = layout.buildDirectory.dir("compose/binaries/main-release/app/TeamTalk.app/Contents")
+    val appRoot = layout.buildDirectory.dir("compose/binaries/main-release/app/${clientIdentity.desktopName}.app/Contents")
     inputs.dir(appRoot)
     outputs.upToDateWhen { false }
 
@@ -676,11 +781,14 @@ tasks.withType<JavaExec>().configureEach {
                 ?.takeIf(String::isNotBlank)
                 ?.let { listOf("-Dtk.desktop.instance.token=$it") }
                 .orEmpty()
+            val testPortArg = System.getProperty("tk.desktop.test.port")
+                ?.let { listOf("-Dtk.desktop.test.port=$it") }
+                .orEmpty()
             jvmArgs = listOf(
                 "-Dteamtalk.server.url=${deploymentConfig.serverUrl}",
                 "-Dteamtalk.tcp.host=${deploymentConfig.tcpHost}",
                 "-Dteamtalk.tcp.port=${deploymentConfig.tcpPort}",
-            ) + dataDirectoryArgs + themeArgs + instanceTokenArg
+            ) + dataDirectoryArgs + themeArgs + instanceTokenArg + testPortArg
         }
     }
 }

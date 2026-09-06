@@ -466,6 +466,12 @@ private fun NavGraphBuilder.contactsDestination(
             user = dataState.account.profileUser?.takeIf { it.uid == uid },
             myUid = dataState.userSession.uid,
             isFriend = dataState.account.isFriend,
+            remark = dataState.account.profileRemark,
+            onSaveRemark = { remark ->
+                admittedAction(onClosed = { com.virjar.tk.shared.Outcome.Failure(com.virjar.tk.shared.AppError.AuthExpired) }) {
+                    dataState.account.setFriendRemark(uid, remark)
+                }
+            },
             hasPendingApply = dataState.account.hasOutgoingFriendApply(uid),
             hasIncomingApply = dataState.account.hasIncomingFriendApply(uid),
             isApplyingFriend = dataState.account.isApplyingFriend(uid),
@@ -775,9 +781,11 @@ private fun NavGraphBuilder.inviteDestination(
         val serverSeq = entry.arguments?.getLong("serverSeq") ?: return@composable
         val conversations by dataState.conversationViewModel.conversations.collectAsState()
         val peerUsers by dataState.conversationViewModel.peerUsers.collectAsState()
+        val contacts by dataState.contactViewModel.contacts.collectAsState()
         ForwardScreen(
             conversations = conversations,
             peerUsers = peerUsers,
+            peerRemarks = remember(contacts) { com.virjar.tk.app.ui.screen.contactRemarks(contacts) },
             onForward = { targetChatId ->
                 admittedAction(onClosed = { false }) {
                     dataState.discovery.forwardMessage(chatId, serverSeq, targetChatId)

@@ -9,6 +9,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.protocol.model.User
+import com.virjar.tk.shared.Outcome
 import com.virjar.tk.protocol.model.UserRole
 import com.virjar.tk.app.ui.component.AvatarPlaceholder
 import com.virjar.tk.app.ui.component.ScreenHeader
@@ -68,6 +69,8 @@ fun UserProfileScreen(
     onCreateGroup: (() -> Unit)? = null,
     onDeleteFriend: (() -> Unit)? = null,
     onBlockUser: (() -> Unit)? = null,
+    remark: String? = null,
+    onSaveRemark: (suspend (String?) -> Outcome<Unit>)? = null,
     onBack: (() -> Unit)? = null,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
@@ -85,6 +88,8 @@ fun UserProfileScreen(
             onCreateGroup = onCreateGroup,
             onDeleteFriend = onDeleteFriend,
             onBlockUser = onBlockUser,
+            remark = remark,
+            onSaveRemark = onSaveRemark,
             presentation = UserProfilePresentation.FullPage,
             modifier = Modifier.fillMaxWidth().weight(1f),
         )
@@ -109,6 +114,8 @@ fun UserProfileContent(
     onCreateGroup: (() -> Unit)? = null,
     onDeleteFriend: (() -> Unit)? = null,
     onBlockUser: (() -> Unit)? = null,
+    remark: String? = null,
+    onSaveRemark: (suspend (String?) -> Outcome<Unit>)? = null,
     presentation: UserProfilePresentation = UserProfilePresentation.FullPage,
     modifier: Modifier = Modifier,
 ) {
@@ -170,8 +177,8 @@ fun UserProfileContent(
     if (user != null) {
         Column(modifier = modifier) {
             when (presentation) {
-                UserProfilePresentation.FullPage -> FullPageProfileHero(user)
-                UserProfilePresentation.CompactDialog -> CompactProfileHero(user)
+                UserProfilePresentation.FullPage -> FullPageProfileHero(user, remark)
+                UserProfilePresentation.CompactDialog -> CompactProfileHero(user, remark)
             }
 
             HorizontalDivider()
@@ -184,6 +191,10 @@ fun UserProfileContent(
             ) {
                 when {
                     isFriend -> {
+                        if (onSaveRemark != null) {
+                            key(user.uid) { FriendRemarkEditor(remark = remark, onSave = onSaveRemark) }
+                            Spacer(Modifier.height(8.dp))
+                        }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -278,14 +289,15 @@ fun UserProfileContent(
 }
 
 @Composable
-private fun FullPageProfileHero(user: User) {
+private fun FullPageProfileHero(user: User, remark: String?) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         AvatarPlaceholder(name = user.name, avatar = user.avatar, size = 80)
         Spacer(Modifier.height(16.dp))
-        Text(user.name, style = MaterialTheme.typography.headlineSmall)
+        Text(contactDisplayName(user, remark, user.uid), style = MaterialTheme.typography.headlineSmall)
+        if (!remark.isNullOrBlank()) Text("显示名：${user.name}", style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(4.dp))
         Text(
             "@${user.username}",
@@ -302,7 +314,7 @@ private fun FullPageProfileHero(user: User) {
 }
 
 @Composable
-private fun CompactProfileHero(user: User) {
+private fun CompactProfileHero(user: User, remark: String?) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -311,11 +323,12 @@ private fun CompactProfileHero(user: User) {
         Spacer(Modifier.width(16.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                user.name,
+                contactDisplayName(user, remark, user.uid),
                 style = MaterialTheme.typography.titleLarge,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (!remark.isNullOrBlank()) Text("显示名：${user.name}", style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(4.dp))
             Text(
                 "@${user.username}",

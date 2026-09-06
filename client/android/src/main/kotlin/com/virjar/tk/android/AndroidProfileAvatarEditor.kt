@@ -7,9 +7,6 @@ import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
 import android.util.Log
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -102,7 +99,7 @@ internal fun AndroidEditProfileHost(
         onDispose(routeOwner::close)
     }
 
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+    val picker = rememberAndroidVisualMediaPicker { uri ->
         if (uri != null) {
             actionAdmission.runIfOpen {
                 val protectedFile = selection?.file
@@ -145,11 +142,7 @@ internal fun AndroidEditProfileHost(
         ),
         onChooseAvatar = {
             avatarError = null
-            picker.launch(
-                PickVisualMediaRequest.Builder()
-                    .setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                    .build(),
-            )
+            picker()
         },
         onRemoveAvatar = {
             selectionOwner.clear()

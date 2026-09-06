@@ -1,114 +1,149 @@
 #!/bin/zsh
-# Desktop 验收实例的确定性强杀与重启（CORE 基建）。
-#
-# 背景：`pkill -f "com.virjar.tk.desktop"` 匹配不到任何进程——真实主类是
-# com.virjar.tk.desktop.TeamTalkMain（desktop/build.gradle.kts 的 mainClass）。残留实例同时持有
-# FileLock（新实例弹 "Another instance is already running"）和 18080 端口（验收工具
-# 继续对话僵尸实例，把旧代码误当成新代码）。
-#
-# 本脚本流程：
-#   1. 记录当前 /ping 的实例令牌（若有）；
-#   2. 按正确主类模式与 18080 端口占用者强杀所有 TeamTalk Desktop 进程；
-#   3. 等待端口释放与 FileLock 释放；
-#   4. 以显式随机令牌启动 ./gradlew :client:desktop:run；
-#   5. 轮询 /ping 直到 instanceToken 等于本次令牌（超时则打印诊断并退出 1）。
+# 只重启指定测试端口上的 Desktop 实例，保留其他安装和验收进程。
+# 停止前同时核对 /ping 的 PID/令牌、端口监听者与 Java 主类；身份不明确时拒绝操作。
 #
 # 用法：
-#   scripts/desktop-acceptance.sh            # 杀旧实例 + 启动 + 等待新实例就绪
-#   scripts/desktop-acceptance.sh kill       # 只清理（不启动）
-#   环境变量 TK_DESKTOP_START_TIMEOUT 秒数（默认 120）
+#   scripts/desktop-acceptance.sh             # 停止目标实例、启动并确认新令牌
+#   scripts/desktop-acceptance.sh kill        # 只停止目标实例
+#   TEAMTALK_DESKTOP_TEST_PORT=18081 scripts/desktop-acceptance.sh
+#   TK_DESKTOP_START_TIMEOUT=180 scripts/desktop-acceptance.sh
 
 set -euo pipefail
 
 REPO_ROOT="${0:A:h:h}"
-PORT=18080
-MAIN_CLASS_PATTERN="com.virjar.tk.desktop.TeamTalkMain"
+PORT="${TEAMTALK_DESKTOP_TEST_PORT:-18080}"
+MAIN_CLASS="com.virjar.tk.desktop.TeamTalkMain"
 TOKEN="$(uuidgen | tr -d '-' | cut -c1-12)"
 START_TIMEOUT="${TK_DESKTOP_START_TIMEOUT:-120}"
-LOG_FILE="${TMPDIR:-/tmp}/tk-desktop-acceptance-run.log"
 
-ping_token() {
-  curl -s --max-time 2 "http://127.0.0.1:${PORT}/ping" 2>/dev/null \
+if ! python3 -c 'import sys; p=sys.argv[1]; sys.exit(not (p.isascii() and p.isdigit() and 1 <= int(p) <= 65535))' "${PORT}"; then
+  echo "[desktop-acceptance] ERROR: TEAMTALK_DESKTOP_TEST_PORT must be in 1..65535" >&2
+  exit 2
+fi
+for required in curl lsof ps python3; do
+  command -v "${required}" >/dev/null || { echo "Missing command: ${required}" >&2; exit 2; }
+done
+LOG_FILE="${TMPDIR:-/tmp}/tk-desktop-acceptance-${PORT}.log"
+
+ping_identity() {
+  curl --fail -s --max-time 2 "http://127.0.0.1:${PORT}/ping" 2>/dev/null \
     | python3 -c 'import json,sys
 try:
-    print(json.load(sys.stdin).get("instanceToken", ""))
+    data=json.load(sys.stdin); pid=data.get("pid"); token=data.get("instanceToken")
+    if data.get("status") != "ok" or type(pid) is not int or pid <= 1:
+        raise ValueError("invalid pid")
+    if not isinstance(token,str) or not token or any(ord(c) < 32 or ord(c) == 127 for c in token):
+        raise ValueError("invalid token")
+    print(str(pid)+"\t"+token)
 except Exception:
-    print("")' 2>/dev/null || echo ""
+    sys.exit(1)' 2>/dev/null
+}
+
+ping_token() {
+  local identity
+  identity="$(ping_identity)" || return 1
+  print -r -- "${identity#*$'\t'}"
 }
 
 port_owner_pids() {
   lsof -nP -iTCP:${PORT} -sTCP:LISTEN -t 2>/dev/null | sort -u || true
 }
 
-main_class_pids() {
-  pgrep -f "${MAIN_CLASS_PATTERN}" 2>/dev/null || true
+is_teamtalk_process() {
+  ps -p "$1" -o args= 2>/dev/null | python3 -c 'import shlex,sys
+try:
+    args=shlex.split(sys.stdin.read())
+    valid=bool(args) and args[0].rsplit("/",1)[-1] == "java" and sys.argv[1] in args
+    tokens=[a.split("=",1)[1] for a in args if a.startswith("-Dtk.desktop.instance.token=")]
+    sys.exit(not valid or (bool(tokens) and tokens != [sys.argv[2]]))
+except Exception:
+    sys.exit(1)' "${MAIN_CLASS}" "$2"
 }
 
-kill_all() {
-  local pids
-  pids="$( (port_owner_pids; main_class_pids) | sort -u | tr '\n' ' ' )"
-  if [[ -n "${pids// /}" ]]; then
-    echo "[desktop-acceptance] killing PIDs: ${pids}"
-    # zsh 不做词分割，必须 ${=pids} 展开成多个参数，否则整个串被当成单个 PID。
-    kill -9 ${=pids} 2>/dev/null || true
-    sleep 1
-  fi
-  # 等端口释放（最多 10s）
-  local i=0
-  while (( i < 10 )); do
-    [[ -z "$(port_owner_pids)" ]] && break
-    sleep 1
-    (( i += 1 ))
-  done
-  if [[ -n "$(port_owner_pids)" ]]; then
-    echo "[desktop-acceptance] ERROR: port ${PORT} still held by $(port_owner_pids)" >&2
+stop_instance() {
+  local owners identity target_pid target_token started current_started i
+  owners="$(port_owner_pids)"
+  [[ -z "${owners}" ]] && return 0
+  identity="$(ping_identity)" || {
+    echo "[desktop-acceptance] ERROR: port ${PORT} is occupied but /ping does not identify a Desktop instance; nothing stopped" >&2
+    return 1
+  }
+  target_pid="${identity%%$'\t'*}"
+  target_token="${identity#*$'\t'}"
+  if [[ "${owners}" != "${target_pid}" ]] || ! is_teamtalk_process "${target_pid}" "${target_token}"; then
+    echo "[desktop-acceptance] ERROR: port owner, /ping PID/token and TeamTalk process do not match; nothing stopped" >&2
     return 1
   fi
+  started="$(ps -p "${target_pid}" -o lstart= 2>/dev/null)"
+  # 紧邻停止操作再次确认，防止把端口刚换来的其他实例当成上一步的目标。
+  if [[ -z "${started}" || "$(port_owner_pids)" != "${target_pid}" || "$(ping_identity)" != "${identity}" ]]; then
+    echo "[desktop-acceptance] ERROR: target instance changed during identification; nothing stopped" >&2
+    return 1
+  fi
+  echo "[desktop-acceptance] stopping PID ${target_pid}, instance ${target_token}, port ${PORT}"
+  kill -TERM "${target_pid}" 2>/dev/null || true
+  for i in {1..10}; do
+    current_started="$(ps -p "${target_pid}" -o lstart= 2>/dev/null || true)"
+    [[ "${current_started}" != "${started}" ]] && break
+    sleep 1
+  done
+  current_started="$(ps -p "${target_pid}" -o lstart= 2>/dev/null || true)"
+  if [[ "${current_started}" == "${started}" ]]; then
+    # 优雅退出超时后只强制结束同一 PID、启动时间和已确认主类的进程，绝不按主类批量清理。
+    if ! is_teamtalk_process "${target_pid}" "${target_token}"; then
+      echo "[desktop-acceptance] ERROR: target process identity changed; refusing forced stop" >&2
+      return 1
+    fi
+    kill -KILL "${target_pid}" 2>/dev/null || true
+  fi
+  for i in {1..10}; do
+    [[ -z "$(port_owner_pids)" ]] && return 0
+    sleep 1
+  done
+  echo "[desktop-acceptance] ERROR: port ${PORT} is still occupied; no other process will be stopped" >&2
+  return 1
 }
 
 diagnose() {
   echo "[desktop-acceptance] DIAGNOSIS:" >&2
-  echo "  current /ping token : $(ping_token)" >&2
+  echo "  current /ping token : $(ping_token || true)" >&2
   echo "  expected token      : ${TOKEN}" >&2
   echo "  port ${PORT} owners   : $(port_owner_pids)" >&2
-  echo "  main-class processes: $(main_class_pids | tr '\n' ' ')" >&2
   echo "  run log tail:" >&2
   tail -20 "${LOG_FILE}" >&2 || true
 }
 
 case "${1:-restart}" in
   kill)
-    kill_all
-    echo "[desktop-acceptance] cleanup done"
+    stop_instance
+    echo "[desktop-acceptance] selected port cleanup done"
     exit 0
     ;;
-  restart|"")
-    ;;
+  restart|"") ;;
   *)
     echo "usage: $0 [kill]" >&2
     exit 2
     ;;
 esac
 
-OLD_TOKEN="$(ping_token)"
-echo "[desktop-acceptance] old instance token: ${OLD_TOKEN:-<none>}"
-kill_all
+OLD_TOKEN="$(ping_token || true)"
+echo "[desktop-acceptance] old instance token on ${PORT}: ${OLD_TOKEN:-<none>}"
+stop_instance
 
-echo "[desktop-acceptance] starting :client:desktop:run with token ${TOKEN}"
+echo "[desktop-acceptance] starting :client:desktop:run with token ${TOKEN}, port ${PORT}"
 ( cd "${REPO_ROOT}" && ./gradlew :client:desktop:run -Ptk.desktop.instanceToken="${TOKEN}" \
-    > "${LOG_FILE}" 2>&1 & )
+    -Dtk.desktop.test.port="${PORT}" > "${LOG_FILE}" 2>&1 & )
 
 echo -n "[desktop-acceptance] waiting for instance token"
 waited=0
 while (( waited < START_TIMEOUT )); do
-  CURRENT="$(ping_token)"
+  CURRENT="$(ping_token || true)"
   if [[ "${CURRENT}" == "${TOKEN}" ]]; then
     echo ""
     echo "[desktop-acceptance] READY: instance ${TOKEN} owns 127.0.0.1:${PORT}"
     exit 0
   fi
-  # 明确的僵尸实例：令牌是旧的、端口有人
-  if [[ -n "${CURRENT}" && "${CURRENT}" == "${OLD_TOKEN}" && "${OLD_TOKEN}" != "" ]]; then
+  if [[ -n "${CURRENT}" && "${CURRENT}" == "${OLD_TOKEN}" ]]; then
     echo ""
     echo "[desktop-acceptance] STALE INSTANCE: /ping still reports old token ${OLD_TOKEN}" >&2
     diagnose

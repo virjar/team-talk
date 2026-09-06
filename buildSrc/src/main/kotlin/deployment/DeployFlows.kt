@@ -161,11 +161,12 @@ fun deployNew(
     preparedTlsKeystore: File?,
     httpPort: Int,
     tcpPort: String,
+    tcpTlsEnabled: Boolean = sslEnabled,
 ) {
     requireCanonicalDeployPath(deployPath)
     requireActiveRemoteDeploymentGuard(host, user, deployPort)
-    if (sslEnabled && preparedTlsKeystore == null) {
-        throw GradleException("HTTPS first deployment requires a prepared TLS keystore")
+    if (tcpTlsEnabled && preparedTlsKeystore == null) {
+        throw GradleException("First TLS deployment requires a prepared TLS keystore")
     }
     remoteChecked(
         "create TeamTalk deployment directories",
@@ -196,14 +197,14 @@ fun deployNew(
 
     println("  Generating env.sh ...")
     uploadEnvSh(
-        generateEnvShContent(secrets, sslEnabled, sslPort, deployPath, httpPort, tcpPort),
+        generateEnvShContent(secrets, sslEnabled, sslPort, deployPath, httpPort, tcpPort, tcpTlsEnabled = tcpTlsEnabled),
         host,
         user,
         deployPort,
         deployPath,
     )
 
-    if (sslEnabled) {
+    if (tcpTlsEnabled) {
         uploadTlsKeystore(
             host,
             user,
@@ -249,6 +250,7 @@ fun deployUpgrade(
     expectedBuildIdentity: String,
     healthSslPort: Int,
     protocolWindow: ServerProtocolWindow,
+    tcpTlsEnabled: Boolean = sslEnabled,
 ) {
     requireCanonicalDeployPath(deployPath)
     requireActiveRemoteDeploymentGuard(host, user, deployPort)
@@ -258,7 +260,7 @@ fun deployUpgrade(
     val previousHealthEndpoint = readRemoteHealthEndpoint(host, user, deployPort, deployPath)
     val minimumProtocolMinor = readRemoteMinimumProtocolMinor(host, user, deployPort, deployPath, protocolWindow)
     val upgradedEnv = generateEnvShContent(
-        secrets, sslEnabled, sslPort, deployPath, httpPort, tcpPort, minimumProtocolMinor,
+        secrets, sslEnabled, sslPort, deployPath, httpPort, tcpPort, minimumProtocolMinor, tcpTlsEnabled,
     )
     val transactionId = UUID.randomUUID().toString()
     val stagedPath = "$deployPath/.release-$transactionId"
@@ -336,7 +338,7 @@ fun deployUpgrade(
         )
         ensureDbUser(host, user, deployPort, deployPath, secrets.getProperty("DATABASE_PASSWORD"))
 
-        if (sslEnabled && preparedTlsKeystore != null) {
+        if (tcpTlsEnabled && preparedTlsKeystore != null) {
             println("  Updating SSL certificate ...")
             uploadTlsKeystore(host, user, deployPort, deployPath, preparedTlsKeystore)
         }

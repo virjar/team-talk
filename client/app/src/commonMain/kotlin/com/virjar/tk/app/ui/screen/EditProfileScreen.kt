@@ -1,6 +1,10 @@
 package com.virjar.tk.app.ui.screen
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import com.virjar.tk.protocol.model.MainlandPhoneNumber
+import com.virjar.tk.shared.AppError
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -53,7 +57,7 @@ fun EditProfileScreen(
     onBack: (() -> Unit)? = null,
 ) {
     var name by remember { mutableStateOf(EditProfileDraftField(currentUser?.name.orEmpty())) }
-    var phone by remember { mutableStateOf(EditProfileDraftField(currentUser?.phone.orEmpty())) }
+    var phone by remember { mutableStateOf(EditProfileDraftField(MainlandPhoneNumber.display(currentUser?.phone))) }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -61,7 +65,7 @@ fun EditProfileScreen(
 
     LaunchedEffect(currentUser?.revision, currentUser?.name, currentUser?.phone) {
         name = name.rebase(currentUser?.name)
-        phone = phone.rebase(currentUser?.phone)
+        phone = phone.rebase(MainlandPhoneNumber.display(currentUser?.phone))
     }
 
     val busy = saving || avatarEditState.busy
@@ -174,9 +178,16 @@ fun EditProfileScreen(
                     )
                     TkFormTextField(
                         value = phone.value,
-                        onValueChange = { phone = phone.edit(it) },
-                        label = "手机号",
+                        onValueChange = { input ->
+                            val digits = MainlandPhoneNumber.normalizeOrNull(input) ?: input
+                            if (digits.length <= MainlandPhoneNumber.LENGTH && digits.all { it in '0'..'9' }) {
+                                phone = phone.edit(digits)
+                                error = null
+                            } else error = MainlandPhoneNumber.FORMAT_MESSAGE
+                        },
+                        label = "手机号（11 位，可留空）",
                         tag = "profile.phone",
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                     )
                 }
             }
@@ -187,7 +198,7 @@ fun EditProfileScreen(
                     error!!,
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("profile.save.error"),
                 )
             }
 
@@ -202,11 +213,17 @@ fun EditProfileScreen(
                 text = saveLabel,
                 onClick = {
                     scope.launch {
+                        if (phone.edited && phone.value.isNotBlank() && MainlandPhoneNumber.normalizeOrNull(phone.value) == null) {
+                            error = MainlandPhoneNumber.FORMAT_MESSAGE
+                            return@launch
+                        }
                         saving = true
                         error = null
                         try {
                             val success = onSave(name.value, phone.value.ifBlank { null })
                             if (success) onBack?.invoke() else error = "保存失败，请重试"
+                        } catch (failure: AppError) {
+                            error = profileSaveFailureMessage(failure)
                         } finally {
                             saving = false
                         }
@@ -217,4 +234,12 @@ fun EditProfileScreen(
             )
         }
     }
+}
+
+internal fun profileSaveFailureMessage(failure: AppError): String = when (failure) {
+    is AppError.Business -> if (failure.code in 400..499) failure.message else "保存失败，请稍后重试"
+    AppError.Network -> "网络连接异常，请联网后重试"
+    AppError.Timeout -> "保存请求超时，请重试"
+    AppError.AuthExpired -> "登录已失效，请重新登录后保存"
+    else -> "保存失败，请稍后重试"
 }

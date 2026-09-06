@@ -46,7 +46,7 @@ internal data class RichEditorMarkdownCapability(
     companion object {
         private val parser = MarkdownParser(GFMFlavourDescriptor())
 
-        fun inspect(markdown: String): RichEditorMarkdownCapability {
+        fun inspect(markdown: String, allowCanonicalAssetImages: Boolean = false): RichEditorMarkdownCapability {
             if (markdown.isEmpty()) return RichEditorMarkdownCapability(emptySet())
             if (DocumentMarkdownEditorBudget.exceeds(markdown)) {
                 return RichEditorMarkdownCapability(
@@ -55,13 +55,14 @@ internal data class RichEditorMarkdownCapability(
             }
 
             val unsupported = linkedSetOf<RichEditorUnsupportedMarkdownFeature>()
-            parser.buildMarkdownTreeFromString(markdown).visitIteratively(markdown, unsupported)
+            parser.buildMarkdownTreeFromString(markdown).visitIteratively(markdown, unsupported, allowCanonicalAssetImages)
             return RichEditorMarkdownCapability(unsupported)
         }
 
         private fun ASTNode.visitIteratively(
             markdown: String,
             unsupported: MutableSet<RichEditorUnsupportedMarkdownFeature>,
+            allowCanonicalAssetImages: Boolean,
         ) {
             val pending = ArrayDeque<Pair<ASTNode, Int>>()
             pending.addLast(this to 0)
@@ -71,7 +72,7 @@ internal data class RichEditorMarkdownCapability(
                     unsupported += RichEditorUnsupportedMarkdownFeature.EXCESSIVE_NESTING
                     continue
                 }
-                node.inspectNode(markdown, unsupported)
+                node.inspectNode(markdown, unsupported, allowCanonicalAssetImages)
                 node.children.asReversed().forEach { pending.addLast(it to depth + 1) }
             }
         }
@@ -79,6 +80,7 @@ internal data class RichEditorMarkdownCapability(
         private fun ASTNode.inspectNode(
             markdown: String,
             unsupported: MutableSet<RichEditorUnsupportedMarkdownFeature>,
+            allowCanonicalAssetImages: Boolean,
         ) {
             when (type) {
                 MarkdownElementTypes.CODE_FENCE ->
@@ -96,8 +98,9 @@ internal data class RichEditorMarkdownCapability(
                 GFMTokenTypes.CHECK_BOX ->
                     unsupported += RichEditorUnsupportedMarkdownFeature.TASK_LIST
 
-                MarkdownElementTypes.IMAGE ->
+                MarkdownElementTypes.IMAGE -> if (!allowCanonicalAssetImages || !isPlainCanonicalAssetImage(markdown)) {
                     unsupported += RichEditorUnsupportedMarkdownFeature.IMAGE
+                }
 
                 MarkdownElementTypes.HTML_BLOCK, MarkdownTokenTypes.HTML_TAG ->
                     unsupported += RichEditorUnsupportedMarkdownFeature.RAW_HTML
@@ -136,6 +139,18 @@ internal data class RichEditorMarkdownCapability(
                     unsupported += RichEditorUnsupportedMarkdownFeature.NON_CANONICAL_ORDERED_LIST
                 }
             }
+        }
+
+        /** 只放行简单内部图片和编码器写回的文件名下划线转义；外链、标题、复杂 alt 仍留在源码。 */
+        private fun ASTNode.isPlainCanonicalAssetImage(markdown: String): Boolean {
+            val destination = embeddedAssetLinkDestination(markdown) ?: return false
+            if (embeddedAssetIdOrNull(destination) == null) return false
+            val labelNode = findEmbeddedAssetDescendant(MarkdownElementTypes.LINK_TEXT) ?: return false
+            if (labelNode.hasDescendantOfType(MarkdownElementTypes.EMPH, MarkdownElementTypes.STRONG)) return false
+            val label = labelNode.getTextInNode(markdown).toString().removeSurrounding("[", "]")
+            val plainLabel = label.replace("\\_", "_")
+            if (plainLabel.isBlank() || plainLabel.any { !it.isLetterOrDigit() && it !in " ._-" }) return false
+            return getTextInNode(markdown).toString() == "![$label]($destination)"
         }
 
         /** 当前编辑器只保存 link 的纯 label，内嵌样式会在写回时被压平。 */
