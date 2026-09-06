@@ -87,6 +87,10 @@ Conveyor 对同一版本与 revision 的字节一致性检查保持有效；原�
 相同 revision 的不同包。正式发行再推进根展示版本与构建号，使 Android code 增加；新的 Desktop 展示版本
 可重新按根构建号映射末位 revision，无须继续上一展示版本的内测提交计数。
 
+内测 snapshot 生成完整 macOS 安装包，不生成差量包（`app.mac.deltas=0`），因此不必为计算差量下载旧版
+ZIP；完整安装包和更新索引照常生成。正式发行保持 Conveyor 默认差量策略。该设置遵循
+[Conveyor 的开发/测试构建建议](https://conveyor.hydraulic.dev/22.1/performance/#reduce-the-number-of-deltas-created-for-macos)。
+
 Desktop 更新源固定为最终部署配置的 `<serverUrl>/downloads/desktop`。登录页临时改服务器
 不会改变已打包更新源；Android 使用构建时坐标。私有客户须在构建前固定自己的 HTTP/TCP 地址与更新站点。
 私有坐标在独立 clone 的 `buildSrc/deployment-local/Deployment.kt` 维护，不修改主仓库公版默认配置。

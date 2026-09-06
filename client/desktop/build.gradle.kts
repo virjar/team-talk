@@ -334,6 +334,7 @@ val buildIdentity = rootProject.extra.get("buildIdentity") as String
 val buildTime = rootProject.extra.get("buildTime") as String
 val releaseBuildNumber = rootProject.extra.get("releaseBuildNumber") as Int
 val desktopRevision = rootProject.extra.get("desktopRevision") as Int
+val snapshotDistribution = providers.gradleProperty("releaseMode").orNull == "snapshot"
 buildConfig {
     packageName("com.virjar.tk.desktop")
     // 构建溯源：每个产物可回答「我是谁、用什么 commit 构建的」
@@ -482,6 +483,7 @@ val writeConveyorSiteConfig by tasks.registering {
     description = "Write the update URL and resolved installation revision for Conveyor"
     inputs.property("serverUrl", deploymentConfig.serverUrl)
     inputs.property("desktopRevision", desktopRevision)
+    inputs.property("snapshotDistribution", snapshotDistribution)
     inputs.property("clientApplicationId", clientIdentity.applicationId)
     inputs.property("clientDisplayName", clientIdentity.displayName)
     inputs.property("clientDesktopName", clientIdentity.desktopName)
@@ -501,6 +503,7 @@ val writeConveyorSiteConfig by tasks.registering {
                 """
                 app.site.base-url = ${quoted(siteUrl)}
                 app.revision = $desktopRevision
+                ${if (snapshotDistribution) "app.mac.deltas = 0" else ""}
                 app.fsname = ${quoted(clientIdentity.desktopFsName)}
                 app.display-name = ${quoted(clientIdentity.desktopName)}
                 app.rdns-name = ${quoted(clientIdentity.applicationId)}
