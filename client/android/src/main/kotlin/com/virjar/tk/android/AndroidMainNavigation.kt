@@ -728,12 +728,21 @@ private fun NavGraphBuilder.inviteDestination(
         arguments = listOf(navArgument("chatId") { type = NavType.StringType }),
     ) { entry ->
         val chatId = entry.arguments?.getString("chatId") ?: return@composable
+        LaunchedEffect(chatId) {
+            admittedAction(onClosed = {}) {
+                dataState.loadScreenDataByKey(ScreenDataKey.InviteMembers(chatId))
+            }
+        }
         val contacts by dataState.contactViewModel.contacts.collectAsState()
         InviteMembersScreen(
             friendUids = contacts.map { it.friendUid },
             friendNames = contacts.associate {
                 it.friendUid to (it.remark ?: it.user?.name ?: it.friendUid)
             },
+            memberUids = dataState.groups.members
+                .takeIf { dataState.groups.detailTargetChatId == chatId }
+                ?.mapTo(mutableSetOf()) { it.uid }
+                ?: emptySet(),
             onInvite = { uids ->
                 admittedAction(onClosed = { false }) {
                     dataState.groups.inviteMembers(chatId, uids)

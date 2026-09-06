@@ -65,6 +65,7 @@ sealed class SubScreen {
     fun dataKey(): ScreenDataKey? = when (this) {
         FriendApplies -> ScreenDataKey.FriendApplies
         is GroupDetail -> ScreenDataKey.GroupDetail(chatId)
+        is InviteMembers -> ScreenDataKey.InviteMembers(chatId)
         is InviteLinks -> ScreenDataKey.InviteLinks(chatId)
         is GroupFiles -> ScreenDataKey.GroupFiles(chatId)
         is GroupBots -> ScreenDataKey.GroupBots(chatId)

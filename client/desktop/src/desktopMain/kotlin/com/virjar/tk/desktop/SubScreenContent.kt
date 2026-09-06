@@ -201,6 +201,10 @@ internal fun SubScreenContent(
         is SubScreen.InviteMembers -> InviteMembersScreen(
             friendUids = contacts.map { it.friendUid },
             friendNames = contacts.associate { it.friendUid to (it.remark ?: it.user?.name ?: it.friendUid) },
+            memberUids = data.groups.members
+                .takeIf { data.groups.detailTargetChatId == screen.chatId }
+                ?.mapTo(mutableSetOf()) { it.uid }
+                ?: emptySet(),
             onInvite = { uids ->
                 admittedSuspend(onClosed = { false }) {
                     data.groups.inviteMembers(screen.chatId, uids)
