@@ -68,6 +68,8 @@ internal fun ChatMessageList(
     onDiscardFailed: (Message) -> Unit,
     onRevoke: (Long) -> Unit,
     onForward: ((Message) -> Unit)?,
+    /** 头像点击打开发送者用户详情；复用平台的资料入口（T004）。 */
+    onAvatarClick: ((uid: String) -> Unit)? = null,
     onLoadOlder: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -170,6 +172,7 @@ internal fun ChatMessageList(
                             selectableText = selectableText,
                             menuEpoch = if (menuMessage?.clientMsgId == msg.clientMsgId) msg.hashCode() else 0,
                             onLongClick = { onMenuMessageChange(msg) },
+                            onAvatarClick = onAvatarClick,
                             modifier = focusModifier,
                             menuExpanded = menuMessage?.clientMsgId == msg.clientMsgId,
                             onMenuDismiss = { onMenuMessageChange(null) },

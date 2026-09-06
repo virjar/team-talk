@@ -1,6 +1,7 @@
 package com.virjar.tk.app.ui.screen
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
@@ -53,6 +54,8 @@ internal fun MessageBubble(
     menuExpanded: Boolean = false,
     onMenuDismiss: () -> Unit = {},
     menuItems: @Composable ColumnScope.() -> Unit = {},
+    /** 头像点击打开发送者用户详情；null=不可点击（保持既有占位行为）。 */
+    onAvatarClick: ((uid: String) -> Unit)? = null,
     outgoingFailureCode: OutgoingFailureCode? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -75,7 +78,17 @@ internal fun MessageBubble(
                 AvatarPlaceholder(
                     name = user?.name ?: user?.username ?: msg.senderUid,
                     avatar = user?.avatar,
-                    modifier = Modifier.padding(end = Tk.spacing.sm),
+                    modifier = Modifier
+                        .padding(end = Tk.spacing.sm)
+                        .then(
+                            if (onAvatarClick != null) {
+                                Modifier
+                                    .testTag("chat.avatar.${msg.senderUid.take(8)}")
+                                    .clickable { onAvatarClick(msg.senderUid) }
+                            } else {
+                                Modifier
+                            },
+                        ),
                     size = Tk.dimens.chatAvatar.value.toInt(),
                 )
             }
@@ -223,7 +236,17 @@ internal fun MessageBubble(
                 AvatarPlaceholder(
                     name = user?.name ?: user?.username ?: msg.senderUid,
                     avatar = user?.avatar,
-                    modifier = Modifier.padding(start = Tk.spacing.sm),
+                    modifier = Modifier
+                        .padding(start = Tk.spacing.sm)
+                        .then(
+                            if (onAvatarClick != null) {
+                                Modifier
+                                    .testTag("chat.avatar.${msg.senderUid.take(8)}")
+                                    .clickable { onAvatarClick(msg.senderUid) }
+                            } else {
+                                Modifier
+                            },
+                        ),
                     size = Tk.dimens.chatAvatar.value.toInt(),
                 )
             }

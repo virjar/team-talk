@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -100,9 +100,10 @@ internal fun AndroidChatHeader(
                         onClick = onGroupDetail,
                         modifier = Modifier.testTag("chat.group.detail"),
                     ) {
+                        // 与 Desktop 群设置入口统一使用齿轮语义（T003）。
                         Icon(
-                            Icons.Filled.Info,
-                            contentDescription = "群聊详情",
+                            Icons.Filled.Settings,
+                            contentDescription = "群设置",
                             tint = Tk.colors.secondaryText,
                             modifier = Modifier.size(Tk.dimens.iconSize),
                         )

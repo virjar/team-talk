@@ -740,6 +740,7 @@ fun ChatPanel(
                 onDiscardFailed = actionAdmission.guard(failedMessageDiscard::request),
                 onRevoke = actionAdmission.guard(viewModel::revokeMessage),
                 onForward = onForward?.let { actionAdmission.guard(it) },
+                onAvatarClick = effectiveMentionClick,
                 onLoadOlder = actionAdmission.guard(viewModel::loadOlder),
                 modifier = Modifier.weight(1f).fillMaxWidth(),
             )
