@@ -56,48 +56,51 @@ class WireSchemaTest {
     }
 
     @Test
-    fun `explicit recording consolidates unpublished versions against the released contract`() {
+    fun `development changes share one pending minor until the release freezes them`() {
         val published = WireSchema(0, 0, listOf(history))
-        val experiment = history.copy(key = "message/2", availability = AvailabilityModel(4, null), signature = "search(text:String):List<Message>")
+        val added = history.copy(key = "message/2", availability = AvailabilityModel(1, null))
+        val first = WireSchema(0, 1, listOf(history, added))
+        val changed = first.copy(entries = listOf(history, added.copy(signature = "search(text:String):String")))
+        val removed = first.copy(entries = listOf(history))
+        for (current in listOf(first, changed, removed)) {
+            val errors = mutableListOf<String>()
+            assertEquals(current, reconcileWireSchema(first, published, current, 0, emptySet(), errors::add))
+            assertTrue(errors.isEmpty(), errors.toString())
+        }
+        // After publication, the same modification is a compatibility violation.
+        val errors = mutableListOf<String>()
+        reconcileWireSchema(first, first, changed, 0, emptySet(), errors::add)
+        assertTrue(errors.any { "Existing wire signature cannot change" in it })
+    }
+
+    @Test
+    fun `temporary development counters can consolidate without changing the published contract`() {
+        val published = WireSchema(0, 0, listOf(history))
+        val experiment = history.copy(key = "message/2", availability = AvailabilityModel(4, null))
         val development = WireSchema(0, 4, listOf(history, experiment))
         val compacted = WireSchema(0, 1, listOf(history, experiment.copy(availability = AvailabilityModel(1, null))))
         val errors = mutableListOf<String>()
-
-        reconcileWireSchema(development, published, compacted, 0, emptySet(), false, errors::add)
-        assertTrue(errors.any { "minor must not move backwards" in it })
-        errors.clear()
-        assertEquals(compacted, reconcileWireSchema(development, published, compacted, 0, emptySet(), true, errors::add))
+        assertEquals(compacted, reconcileWireSchema(development, published, compacted, 0, emptySet(), errors::add))
         assertTrue(errors.isEmpty(), errors.toString())
+        // The generator still rejects an unregistered TSV mismatch until writeProtocolBaseline.
+        assertTrue(compacted.text() != development.text())
     }
 
     @Test
     fun `rewriting the development baseline cannot hide a published signature change`() {
         val published = WireSchema(0, 0, listOf(history))
         val corrupted = WireSchema(0, 1, listOf(history.copy(signature = "history(chatId:Long):List<Message>")))
-        for (record in listOf(false, true)) {
-            val errors = mutableListOf<String>()
-            reconcileWireSchema(corrupted, published, corrupted, 0, emptySet(), record, errors::add)
-            assertTrue(errors.any { "Existing wire signature cannot change" in it }, errors.toString())
-        }
+        val errors = mutableListOf<String>()
+        reconcileWireSchema(corrupted, published, corrupted, 0, emptySet(), errors::add)
+        assertTrue(errors.any { "Existing wire signature cannot change" in it }, errors.toString())
     }
 
     @Test
-    fun `successive development minors require registration and then compile against the same release`() {
+    fun `another development commit does not start another protocol version`() {
         val published = WireSchema(0, 0, listOf(history))
-        var development = published
-        for (minor in 1..3) {
-            val added = history.copy(key = "message/${minor + 1}", availability = AvailabilityModel(minor, null))
-            val current = WireSchema(0, minor, development.entries + added)
-            val errors = mutableListOf<String>()
-            val unregistered = reconcileWireSchema(development, published, current, 0, emptySet(), false, errors::add)
-            assertTrue(errors.isEmpty(), errors.toString())
-            // The generator rejects this mismatch until writeProtocolBaseline records it.
-            assertTrue(unregistered.text() != development.text())
-            development = reconcileWireSchema(development, published, current, 0, emptySet(), true, errors::add)
-            assertEquals(development, reconcileWireSchema(development, published, current, 0, emptySet(), false, errors::add))
-            assertTrue(errors.isEmpty(), errors.toString())
-        }
-        assertEquals(0, published.minor)
-        assertEquals(listOf(history), published.entries)
+        val added = history.copy(key = "message/2", availability = AvailabilityModel(2, null))
+        val errors = mutableListOf<String>()
+        reconcileWireSchema(null, published, WireSchema(0, 2, listOf(history, added)), 0, emptySet(), errors::add)
+        assertTrue(errors.any { "share pending minor=1" in it }, errors.toString())
     }
 }

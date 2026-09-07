@@ -10,14 +10,15 @@
 `prepareProtocolRelease`、打 tag 与发布 GitHub Release。用户要求“更新内测安装包”则已授权本次
 手动 snapshot 分发，Agent 提交工作源码后即可刷包，不修改根版本配置，也不要求用户指定安装数字。
 
-两种交付都要求实际使用的协议已冻结、源码可追溯，并保留已安装应用的数据。纯开发、发布工具改造、
+正式发行冻结协议；内测交付相对已发行基线检查本轮待发布协议，保持同一个 minor，记录实际 schema 哈希。
+两种交付都要求源码可追溯，并保留已安装应用的数据。纯开发、发布工具改造、
 服务器部署和 Agent 本机验收不自动授权交付；不能为满足工具校验擅自发包。确认范围后按该范围完成流程，
 不为每条命令重复询问。Android 的 `Release` 构建类型只表示打包方式，不代表正式产品发行。
 
 | 交付方式 | 版本与记录 | 目标 |
 |---|---|---|
 | 正式产品发行（默认模式） | 新展示版本、更高构建号、人工说明与 `releases/<version>/`；公开发行使用对应 tag | `local`、`site`、`github` |
-| 内测更新 `snapshot` | 根展示版本与构建号不变；Desktop revision 从完整 Git 历史推导，Android 保持当前 code 手动覆盖；复用冻结协议或为新增协议登记 `contracts/` | 独立私有应用的 `local`、`site` |
+| 内测更新 `snapshot` | 根展示版本与构建号不变；Desktop revision 从完整 Git 历史推导，Android 保持当前 code 手动覆盖；本轮新增共用一个待发布协议号，不登记冻结契约 | 独立私有应用的 `local`、`site` |
 | 首次私有分发 `private-first` | 新安装身份与空下载入口可保持当前展示版本和构建号 | 独立私有应用的 `local`、`site` |
 
 ## 发行由哪些事实组成
@@ -27,7 +28,7 @@
 | 展示版本、正式构建计数、协议窗口 | 根 `gradle.properties` 的五个 `teamtalk.*` 版本字段 |
 | 内测 Desktop 修订号 | 完整 Git first-parent 提交数 + 根构建号 + 1，由工具计算并记录为 `desktopRevision` |
 | 正式发行的变更、升级影响与已知限制 | `doc/07-operations/releases/<releaseVersion>.md`，首行为 `# TeamTalk <releaseVersion>` |
-| 已冻结的协议契约 | 正式 `protocol/protocol/releases/<releaseVersion>/` 与独立 `protocol/protocol/contracts/<major>.<minor>/` |
+| 已冻结的协议契约 | 正式 `protocol/protocol/releases/<releaseVersion>/`；历史明确冻结的 `contracts/` 继续保护，普通内测不新增 |
 | 源码身份 | 构建时的完整 Git commit；发行要求干净工作树 |
 | 客户端安装身份、名称、服务器坐标和更新源 | 选中部署配置函数产生的 `DeploymentConfig`；local 存在时完整替换默认，见[运行配置](configuration.md#2-kotlin-部署配置) |
 | 本次交付实际使用的部署配置 | 密封目录中的 `deployment-config.json`，只含最终解析出的非敏感字段 |
@@ -41,7 +42,7 @@ tag 之间的提交记录另存为 `COMMITS.md`，没有历史 tag 时记录当�
 flowchart TD
     Approval["用户确认正式产品发行"] --> Root
     Root["展示版本与构建号 + 人工说明 + 协议发行快照"] --> Commit["审阅并提交：固定源码身份"]
-    TestApproval["用户要求更新内测安装包"] --> Snapshot["新增协议才登记契约；根版本配置不变"]
+    TestApproval["用户要求更新内测安装包"] --> Snapshot["本轮共用待发布协议；只登记开发清单"]
     Snapshot --> SnapshotCommit["提交工作源码，保留完整 Git 历史"]
     SnapshotCommit --> SnapshotTask["私有 clone 手动 release snapshot：自动算 Desktop revision"]
     Commit --> Local["客户本机 ./gradlew release"]
@@ -65,7 +66,7 @@ flowchart TD
 1. 增加根配置的 `teamtalk.releaseVersion` 与 `teamtalk.releaseBuildNumber`。展示版本使用数字
    `x.y.z`；安装序号递增，当前 Conveyor 映射要求不超过 `65534`。纯 UI 修复不增加协议版本。
 2. 编写同名人工发布说明，描述用户可见变化、升级与数据影响、已知限制。此文档随版本配置一起提交。
-3. 按[协议发行规则](../04-protocol/versioning.md#开发编号与发行契约分开管理)收敛未发行的开发 minor，
+3. 按[协议发行规则](../04-protocol/versioning.md#开发编号与发行契约分开管理)确认本轮唯一待发布 minor，
    校对生命周期注解、兼容分支和迁移，再登记开发清单与发行快照。
 
 ```bash
@@ -77,7 +78,8 @@ flowchart TD
 ```
 
 准备任务会新增可审阅文件，随后提交根配置、人工说明、源码与快照。普通 `release` 不自动修改这些
-事实源。已登记契约保守冻结，内测交付使用的独立契约也适用；失败重试不能删除快照回收编号。
+事实源。已登记的正式或独立稳定契约保守冻结；失败重试不能删除快照回收编号。
+普通 snapshot 和 private-first 不登记契约，不能把内部试用包当作新的兼容版本。
 客户端发行同时执行 `verifyRelease` 的源码/架构/wire 检查与 `verifyReleaseMetadata` 的发行元数据检查；
 手动服务端开发部署只需要前者，避免每次临时协议调试都占用一个已冻结的客户端发行号。
 
@@ -99,10 +101,10 @@ Conveyor 要求同一展示版本的不同包具有不同 revision。工具从�
 也不依赖 tag。这个修订号用于 Desktop 安装元数据与站点记录，应用展示版本仍保持原值。
 
 ```bash
-# 只有协议新增且尚未冻结时，才显式登记独立契约。
-./gradlew :protocol:protocol:prepareProtocolContract
+# 本轮协议有修改时登记开发清单，保持同一个 pending minor（当前为 1）。
+./gradlew :protocol:protocol:writeProtocolBaseline
 
-# 审阅并提交工作源码和必要的契约，再将同一源码同步到完整的私有 clone。
+# 审阅并提交工作源码和清单，再将同一源码同步到完整的私有 clone。
 # 在已有独立应用身份与 deployment-local 配置的私有 clone 中交付：
 ./gradlew release -PreleaseMode=snapshot -PreleaseTargets=site
 ```
@@ -110,8 +112,9 @@ Conveyor 要求同一展示版本的不同包具有不同 revision。工具从�
 `release` 只在手动调用时构建并交付，不修改或提交根版本。只保留本地产物时改为
 `-PreleaseTargets=local`；Windows 使用 `gradlew.bat`。GitHub CI 不自动生成或上传 snapshot。
 该模式拒绝公版默认配置、GitHub 目标和 `releaseBase`，不需要新的人工发行说明、产品 tag 或 `prepareProtocolRelease`，
-也不认领、改写旧正式发行快照。协议不变时直接复用已冻结契约，仍执行 KSP、wire 与协议兼容检查。
-新增契约一旦登记进 `contracts/` 即不可回收，后续正式产品版本可认领同一契约。
+也不认领、改写旧正式发行快照。无论本轮第几次修改，都相对最近正式冻结基线执行 KSP、wire 与兼容检查，
+不运行 `prepareProtocolContract`；当前全部未发布变动共用协议 1，直到用户确认正式发布 0.0.1。
+同号内测构建以源码 SHA 和清单哈希区分，应按同批服务端/客户端验证，不为中间版本保留额外兼容分支。
 
 必须使用完整 clone。同一展示版本继续刷 snapshot 时，保留已分发源码及其历史，从其后代构建，不对该
 内测基线做 rebase、压缩或重写；浅克隆、旧源码和修订号倒退会使交付失败。尚未分发的工作提交可在交付前
@@ -131,17 +134,17 @@ Conveyor 要求同一展示版本的不同包具有不同 revision。工具从�
 tag 或 GitHub Release。独立安装身份的首次分发使用同一个 `release` 任务的 `private-first` 模式：
 
 ```bash
-# 在主源码中登记并提交本次实际向用户分发的协议；不改变根版本，不覆盖既有发行记录。
-./gradlew :protocol:protocol:prepareProtocolContract
-# 审阅并提交生成的 protocol/protocol/contracts/<major>.<minor>/ 后，同步到私有 clone。
+# 协议有变更时，仅登记本轮开发清单，不为首次测试安装冻结新协议。
+./gradlew :protocol:protocol:writeProtocolBaseline
+# 审阅并提交源码和开发清单后，同步到私有 clone。
 
 # 在具有独立 client.applicationId 和 local 配置的私有 clone 中构建并上传。
 ./gradlew release -PreleaseMode=private-first -PreleaseTargets=site
 ```
 
 该模式要求独立私有应用标识、local 配置和 `local/site` 目标；禁止 GitHub 目标与 `releaseBase`。
-协议仍须预先冻结：`contracts/` 与正式发行的 `releases/` 一起约束后续 KSP 编译，已分发的 minor 不能
-再被收回。正式产品版本日后可以认领同一份协议契约，无须为了补产品发行记录再增加协议号。
+协议与 snapshot 相同：当前开发清单必须登记、相对正式冻结基线兼容，但本次试用不冻结新的 minor。
+正式产品发行时再固定整批变动；已有历史冻结记录保持原样。
 
 站点的 Android/Desktop 下载入口必须为空；已有相同收据只允许原文件的幂等重试，不能借首次分发模式
 替换已有安装包。后续内测更新使用 `snapshot` 手动刷包，正式升级按正式产品发行准备。签名、源码身份、完整 Desktop 站点、APK

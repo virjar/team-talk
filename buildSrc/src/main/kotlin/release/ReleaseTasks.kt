@@ -43,7 +43,7 @@ fun registerReleaseTasks(
         "$mode requires a local deployment configuration, an independent private applicationId, " +
             "local/site targets and no releaseBase; it cannot republish the public application or create GitHub releases"
     }
-    val contract = if (privateDistribution) ProtocolContractPolicy.verify(root, version.protocolMajor,
+    val contract = if (privateDistribution) ProtocolContractPolicy.verifyDevelopment(root, version.protocolMajor,
         version.protocolMinor, version.minimumProtocolMinor) else null
     val desktopRevision = if (snapshot) metadata.snapshotDesktopRevision(version, sourceCommit) else version.buildNumber + 1
     project.extensions.extraProperties.set("desktopRevision", desktopRevision)
@@ -86,10 +86,10 @@ fun registerReleaseTasks(
         doLast {
             require(privateDistribution) { "Use -PreleaseMode=private-first or snapshot for private package distribution" }
             metadata.verifySource(version, sourceCommit)
-            val frozen = ProtocolContractPolicy.verify(root, version.protocolMajor,
+            val checked = ProtocolContractPolicy.verifyDevelopment(root, version.protocolMajor,
                 version.protocolMinor, version.minimumProtocolMinor)
-            require(identity.protocolContractSha256 == sha256(frozen.wireBaseline)) {
-                "Private distribution contract changed during packaging"
+            require(identity.protocolContractSha256 == sha256(checked.wireBaseline)) {
+                "Development protocol changed during packaging"
             }
             require(version.buildNumber in 0..65534) { "Conveyor installation revision exceeds its supported range" }
         }
@@ -233,7 +233,7 @@ private fun snapshotNotes(identity: BundleIdentity): String = """
     - 英文安装名称：${identity.client.desktopName}
     - 源码：${identity.sourceCommit}
     - 协议：${identity.version.protocolMajor}.${identity.version.protocolMinor}；最低 minor：${identity.version.minimumProtocolMinor}
-    - 已冻结协议契约 SHA-256：${identity.protocolContractSha256}
+    - 本次协议清单 SHA-256：${identity.protocolContractSha256}
 
     管理员手动通知本次内测更新；从本私有站点下载安装包，覆盖升级原私有应用；保留应用身份、签名和资料目录，无需先卸载。
     Android 下载入口为 `/downloads/TeamTalk-android.apk`，Desktop 更新入口为 `/downloads/desktop/download.html`。
@@ -252,7 +252,7 @@ private fun privateInstallationNotes(identity: BundleIdentity): String = """
     - 展示版本：${identity.version.name}；平台安装序号：${identity.version.buildNumber + 1}
     - 源码：${identity.sourceCommit}
     - 协议：${identity.version.protocolMajor}.${identity.version.protocolMinor}；最低 minor：${identity.version.minimumProtocolMinor}
-    - 已冻结协议契约 SHA-256：${identity.protocolContractSha256}
+    - 本次协议清单 SHA-256：${identity.protocolContractSha256}
 
     Android 安装包入口为 `/downloads/TeamTalk-android.apk`；Desktop 安装说明和更新入口为
     `/downloads/desktop/download.html`，均相对上述服务器地址。

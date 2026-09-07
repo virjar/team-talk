@@ -50,7 +50,7 @@
 | 13 | STREAM_END | S→C | StreamEndPayload（保留；当前不可用） |
 | 14 | NEGOTIATE | C→S | ProtocolNegotiateRequestPayload，固定 bootstrap |
 | 15 | NEGOTIATE_RESP | S→C | ProtocolNegotiateResponsePayload |
-| 16 | ACCOUNT_BANNED | S→C | AccountBannedPayload，since minor 2，已证明账号的封禁终态 |
+| 16 | ACCOUNT_BANNED | S→C | AccountBannedPayload，since minor 1，已证明账号的封禁终态 |
 | 20 | MESSAGE | C→S | Message |
 | 21 | MESSAGE_ACK | S→C | MessageAckPayload |
 | 30 | NOTIFY | S→C | NotifyPayload |
@@ -135,7 +135,7 @@ connectionTraceContext ConnectionTraceContext?  // has=true 时
 `datasetId` 的可空性只服务于失败分支：`code=0` 时必须存在且必须是 lowercase canonical UUID，
 `code!=0` 时必须缺省。任一交叉状态都属于损坏的 AUTH_RESP，codec 不得把它交给认证状态机。
 
-从协议 `0.2` 起，服务端在验证密码或 refresh 凭据后，对已封禁账号发送独立的 `ACCOUNT_BANNED`：
+从协议 `0.1` 起，服务端在验证密码或 refresh 凭据后，对已封禁账号发送独立的 `ACCOUNT_BANNED`：
 
 ```text
 uid String             // 已通过凭据证明的账号；非空
@@ -143,9 +143,9 @@ datasetId String       // lowercase canonical UUID，当前服务端权威数据
 reason String?
 ```
 
-它不颁发 token、不建立会话，也不提升未认证帧大小上限。客户端仅在当前连接已协商到 minor 2 或更高时
+它不颁发 token、不建立会话，也不提升未认证帧大小上限。客户端仅在当前连接已协商到 minor 1 或更高时
 接受，并交给当前认证尝试的终态处理；未协商或协商旧版本时收到该帧属于协议异常，不触发数据清理。
-服务端对协商 minor 0/1 的旧客户端仍发送 `AUTH_RESP code=6`，不携带 datasetId，保留已冻结的失败布局。
+服务端对协商 minor 0 的旧客户端仍发送 `AUTH_RESP code=6`，不携带 datasetId，保留已冻结的失败布局。
 
 每次物理连接写 AUTH 前都要生成新 `correlationId`，并写入同一 ImClient/进程生命周期内严格递增的本地
 `connectionGeneration`；自动重连不得复用上一条连接的两个字段。进程重启后 generation 可从 1 重新开始，

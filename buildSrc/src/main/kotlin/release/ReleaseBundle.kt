@@ -21,6 +21,7 @@ data class BundleIdentity(
     val sourceCommit: String,
     val deployment: DeploymentConfig,
     val distributionKind: String = "release",
+    // Historical manifest field name; snapshots record the actual development schema, without freezing it.
     val protocolContractSha256: String? = null,
     val desktopRevision: Int = version.buildNumber + 1,
 ) {
@@ -28,7 +29,7 @@ data class BundleIdentity(
         require(distributionKind in setOf("release", "private-first", "snapshot")) { "Unknown distribution kind" }
         require(if (distributionKind != "release") {
             protocolContractSha256?.matches(Regex("[0-9a-f]{64}")) == true
-        } else protocolContractSha256 == null) { "Non-release distributions require a frozen protocol contract SHA-256" }
+        } else protocolContractSha256 == null) { "Non-release distributions require the actual protocol schema SHA-256" }
         require(desktopRevision in 1..65535) { "Desktop installation revision is out of range" }
         require(distributionKind == "snapshot" || desktopRevision == version.buildNumber + 1) {
             "Only snapshots may use an independent Desktop installation revision"
@@ -158,7 +159,7 @@ object ReleaseBundle {
         require((manifest["distributionKind"]?.jsonPrimitive?.content ?: "release") == identity.distributionKind &&
             manifest["protocolContractSha256"]?.jsonPrimitive?.content == identity.protocolContractSha256 &&
             if (identity.distributionKind == "release") manifest["tag"]?.jsonPrimitive?.content == identity.version.tag
-            else "tag" !in manifest) { "Bundle distribution kind or frozen protocol contract differs" }
+            else "tag" !in manifest) { "Bundle distribution kind or protocol schema differs" }
         require(if (identity.distributionKind == "snapshot") {
             manifest["desktopRevision"]?.jsonPrimitive?.intOrNull == identity.desktopRevision
         } else "desktopRevision" !in manifest) { "Bundle Desktop installation revision differs" }

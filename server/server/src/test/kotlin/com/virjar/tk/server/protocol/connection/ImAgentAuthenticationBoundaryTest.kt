@@ -21,16 +21,14 @@ class ImAgentAuthenticationBoundaryTest {
     fun `scoped account ban uses new frame while negotiated legacy clients retain the frozen response`() {
         val denied = AuthResponsePayload(code = AuthResponsePayload.CODE_ACCOUNT_BANNED, uid = "user-1", reason = "Banned")
         val datasetId = "11111111-1111-4111-8111-111111111111"
-        for (minor in 0..1) {
-            val legacy = authenticationResponseForProtocol(denied, ProtocolVersion(0, minor), datasetId)
-            assertEquals(denied, legacy)
-            assertEquals(denied, ProtoCodec.decode(AuthResponsePayload, ProtoCodec.encode(legacy)))
-        }
-        val scoped = authenticationResponseForProtocol(denied, ProtocolVersion(0, 2), datasetId)
+        val legacy = authenticationResponseForProtocol(denied, ProtocolVersion(0, 0), datasetId)
+        assertEquals(denied, legacy)
+        assertEquals(denied, ProtoCodec.decode(AuthResponsePayload, ProtoCodec.encode(legacy)))
+        val scoped = authenticationResponseForProtocol(denied, ProtocolVersion(0, 1), datasetId)
         assertEquals(AccountBannedPayload("user-1", datasetId, "Banned"), scoped)
         assertEquals(scoped, ProtoCodec.decode(AccountBannedPayload, ProtoCodec.encode(scoped)))
         val ordinary = AuthResponsePayload(code = AuthResponsePayload.CODE_AUTH_FAILED)
-        assertSame(ordinary, authenticationResponseForProtocol(ordinary, ProtocolVersion(0, 2), datasetId))
+        assertSame(ordinary, authenticationResponseForProtocol(ordinary, ProtocolVersion(0, 1), datasetId))
     }
 
     @Test

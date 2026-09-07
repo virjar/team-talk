@@ -3,7 +3,7 @@ package release
 import java.io.File
 import java.util.Properties
 
-/** A distributed wire contract has its own identity, independent of a product release or installation. */
+/** An explicitly frozen wire contract, independent of a product installation. */
 data class ProtocolContractSnapshot(
     val protocolMajor: Int,
     val protocolMinor: Int,
@@ -11,7 +11,7 @@ data class ProtocolContractSnapshot(
     val wireBaseline: File,
 )
 
-/** Both public releases and private distributions permanently reserve the same protocol number space. */
+/** Formal releases and any explicitly frozen historical contracts share the same number space. */
 object ProtocolContractPolicy {
     private const val CONTRACTS = "protocol/protocol/contracts"
     private const val DEVELOPMENT_BASELINE = "protocol/protocol/wire-baseline.tsv"
@@ -52,6 +52,16 @@ object ProtocolContractPolicy {
             "Development wire schema differs from frozen protocol $major.$minor; never rewrite or reclaim a distributed contract"
         }
         return recorded
+    }
+
+    /**
+     * 内测包使用本轮待发布契约，不创建兼容历史。只相对正式冻结基线检查，
+     * 同一 pending minor 可继续演进；每次包仍记录实际源码与 TSV 哈希。
+     */
+    fun verifyDevelopment(rootDir: File, major: Int, minor: Int, minimum: Int): ProtocolContractSnapshot {
+        val candidate = ProtocolContractSnapshot(major, minor, minimum, File(rootDir, DEVELOPMENT_BASELINE))
+        validateCandidate(rootDir, candidate)
+        return candidate
     }
 
     /** Explicit source edit only. Ordinary build and publication tasks never freeze a contract implicitly. */

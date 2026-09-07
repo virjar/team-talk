@@ -80,6 +80,9 @@ internal fun mergeWireSchema(
     if (previous.major > current.major) report("Protocol major must not move backwards")
     if (previous.major != current.major) return current
     if (current.minor < previous.minor) report("Protocol minor must not move backwards within a major")
+    if (current.minor > previous.minor + 1) {
+        report("Unreleased changes must share pending minor=${previous.minor + 1}; only a release starts the next protocol version")
+    }
     val oldById = previous.entries.associateBy { it.identity }
     val currentById = current.entries.associateBy { it.identity }
     val retained = mutableListOf<WireSchemaEntry>()
@@ -158,7 +161,7 @@ internal class WireSchemaGenerator(
         val previous = policy.baseline?.takeIf(File::isFile)?.let { WireSchema.parse(it.readText()) }
         val published = policy.publishedBaseline?.let { WireSchema.parse(it.readText()) }
         val reservedIds = services.flatMap { service -> service.reservedMethodIds.map { "${service.name}/$it" } }.toSet()
-        val merged = reconcileWireSchema(previous, published, current, policy.minimum, reservedIds, policy.record) { logger.error(it) }
+        val merged = reconcileWireSchema(previous, published, current, policy.minimum, reservedIds) { logger.error(it) }
         if (policy.baseline != null && !policy.record && previous?.text() != merged.text()) {
             logger.error("Wire baseline is missing or unregistered; review changes and run :protocol:protocol:writeProtocolBaseline")
         }
@@ -197,19 +200,17 @@ internal class WireSchemaGenerator(
     }
 }
 
-/** A changed development TSV must never mask a published signature or tombstone. */
+/**
+ * 兼容事实只来自冻结发行；开发 TSV 只是待审阅源码清单，不是第二条兼容历史。
+ * 同一待发布 minor 内可以继续改新增契约；generate 中的清单比较仍要求显式登记。
+ */
 internal fun reconcileWireSchema(
     development: WireSchema?,
     published: WireSchema?,
     current: WireSchema,
     minimumMinor: Int,
     reservedRpcIds: Set<String>,
-    recordDevelopment: Boolean,
     report: (String) -> Unit,
 ): WireSchema {
-    // Always protect the frozen release, even if somebody also edited the development baseline.
-    val frozenChecked = mergeWireSchema(published, current, minimumMinor, reservedRpcIds, report)
-    // Explicit recording may reclaim only unpublished work. Ordinary builds still require its review.
-    return if (recordDevelopment && published != null) frozenChecked
-    else mergeWireSchema(development, current, minimumMinor, reservedRpcIds, report)
+    return mergeWireSchema(published ?: development, current, minimumMinor, reservedRpcIds, report)
 }

@@ -2,6 +2,8 @@ package com.virjar.tk.shared.client
 
 import com.virjar.tk.shared.log.PlatformOnlyTkLogger
 import com.virjar.tk.protocol.IProto
+import com.virjar.tk.protocol.PacketType
+import com.virjar.tk.protocol.ProtocolWireRegistry
 import com.virjar.tk.protocol.ProtocolNegotiation
 import com.virjar.tk.protocol.ProtocolRange
 import com.virjar.tk.protocol.ProtocolVersions
@@ -345,9 +347,11 @@ internal class AuthSyncCoordinator(
         if (!isConnectionGenerationCurrent(connectionGeneration)) return
         val version = _protocolCompatibility.value?.negotiated
         if (negotiatedConnectionGeneration != connectionGeneration || version == null ||
-            !AccountBannedPayload.availability.supports(version)
+            !ProtocolWireRegistry.supportsPacketType(
+                PacketType.ACCOUNT_BANNED.code.toInt(), version,
+            )
         ) {
-            closeTransport("Account-ban response requires negotiated protocol 0.2 or later", null)
+            closeTransport("Account-ban response is not supported by the negotiated protocol", null)
             return
         }
         // Local adaptation into the existing authentication-attempt terminal path. This synthetic

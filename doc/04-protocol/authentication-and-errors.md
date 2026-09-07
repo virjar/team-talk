@@ -82,8 +82,8 @@ bearer 因而不会被无关的消息、机器人或 UI collector 观察。
 成功响应必须在线协议边界携带 lowercase canonical UUID `datasetId`，失败响应必须省略该字段；成功但
 缺失、失败却携带或格式不 canonical 都是协议损坏，连接在进入认证/同步状态机前关闭。
 
-协议 `0.2` 起，已通过密码或 refresh 凭据证明的封禁账号使用独立 `ACCOUNT_BANNED` 帧，携带当前权威
-`uid`、`datasetId` 和可选原因。协商 minor 0/1 的连接仍走上表 code 6；既有 AUTH_RESP 布局及校验不变。
+协议 `0.1` 起，已通过密码或 refresh 凭据证明的封禁账号使用独立 `ACCOUNT_BANNED` 帧，携带当前权威
+`uid`、`datasetId` 和可选原因。协商 minor 0 的连接仍走上表 code 6；既有 AUTH_RESP 布局及校验不变。
 新帧和 AUTH_RESP 一样只进入当前连接与认证尝试的类型化终态，不进入通用广播；连接没有协商新帧能力时
 拒绝该帧，不能触发删除。账号资料清理由客户端会话所有者在核对范围并停止写入后负责，见
 [客户端所有权](../03-architecture/client-and-sdk.md)。网络断开、错误密码、设备封禁、普通 token 过期均不

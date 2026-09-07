@@ -1,6 +1,6 @@
 # TeamTalk wire schema v1
 major=0
-minor=2
+minor=1
 enum	com.virjar.tk.protocol.MessageType/1	0	-	active	RICH_TEXT
 enum	com.virjar.tk.protocol.MessageType/10	0	-	active	MERGE_FORWARD
 enum	com.virjar.tk.protocol.MessageType/11	0	-	active	REVOKE
@@ -48,7 +48,7 @@ enum	com.virjar.tk.protocol.PacketType/12	0	-	active	STREAM_ITEM
 enum	com.virjar.tk.protocol.PacketType/13	0	-	active	STREAM_END
 enum	com.virjar.tk.protocol.PacketType/14	0	-	active	NEGOTIATE
 enum	com.virjar.tk.protocol.PacketType/15	0	-	active	NEGOTIATE_RESP
-enum	com.virjar.tk.protocol.PacketType/16	2	-	active	ACCOUNT_BANNED
+enum	com.virjar.tk.protocol.PacketType/16	1	-	active	ACCOUNT_BANNED
 enum	com.virjar.tk.protocol.PacketType/2	0	-	active	AUTH_RESP
 enum	com.virjar.tk.protocol.PacketType/20	0	-	active	MESSAGE
 enum	com.virjar.tk.protocol.PacketType/21	0	-	active	MESSAGE_ACK
@@ -237,7 +237,7 @@ type	com.virjar.tk.protocol.model.SyncCheckpointPageRequest	0	-	active	CLASS(che
 type	com.virjar.tk.protocol.model.User	0	-	active	CLASS(uid:kotlin.String,username:kotlin.String,name:kotlin.String,avatar:com.virjar.tk.protocol.model.Attachment?,phone:kotlin.String?,sex:kotlin.Int,role:kotlin.Int,status:kotlin.Int,revision:kotlin.Long)
 type	com.virjar.tk.protocol.model.UserOrganizationPath	1	-	active	CLASS(unitId:kotlin.String,unitName:kotlin.String,pathNames:kotlin.collections.List<kotlin.String>,primary:kotlin.Boolean,title:kotlin.String?)
 type	com.virjar.tk.protocol.model.UserOrganizationSummary	1	-	active	CLASS(uid:kotlin.String,paths:kotlin.collections.List<com.virjar.tk.protocol.model.UserOrganizationPath>)
-type	com.virjar.tk.protocol.payload.AccountBannedPayload	2	-	active	CLASS(uid:kotlin.String,datasetId:kotlin.String,reason:kotlin.String?)
+type	com.virjar.tk.protocol.payload.AccountBannedPayload	1	-	active	CLASS(uid:kotlin.String,datasetId:kotlin.String,reason:kotlin.String?)
 type	com.virjar.tk.protocol.payload.AuthRequestPayload	0	-	active	CLASS(authType:kotlin.Int,username:kotlin.String?,password:kotlin.String?,name:kotlin.String?,refreshToken:kotlin.String?,deviceId:kotlin.String,deviceName:kotlin.String?,deviceModel:kotlin.String?,deviceFlag:kotlin.Int,correlationId:kotlin.String,connectionGeneration:kotlin.Long)
 type	com.virjar.tk.protocol.payload.AuthResponsePayload	0	-	active	CLASS(code:kotlin.Int,reason:kotlin.String?,uid:kotlin.String?,username:kotlin.String?,name:kotlin.String?,accessToken:kotlin.String?,refreshToken:kotlin.String?,expiresIn:kotlin.Long,datasetId:kotlin.String?,connectionTraceContext:com.virjar.tk.protocol.telemetry.ConnectionTraceContext?)
 type	com.virjar.tk.protocol.payload.ConnectionTraceContextPayload	0	-	active	CLASS(correlationId:kotlin.String,connectionGeneration:kotlin.Long,policyRevision:kotlin.Long,context:com.virjar.tk.protocol.telemetry.ConnectionTraceContext?)

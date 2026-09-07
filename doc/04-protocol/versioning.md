@@ -9,7 +9,7 @@ TeamTalk 处于开发者预览阶段，**不对使用者保证版本兼容，未
 | 身份 | 当前值与来源 | 用途 | 递增时机 |
 |---|---|---|---|
 | 统一展示版本 | `teamtalk.releaseVersion=0.0.0` | Server、SDK、Android、Desktop、MCP 使用同一字符串，配合 commit 排查构建范围 | 用户明确确认正式产品发行后推进；内测 snapshot 保持它不变，不从它推导协议能力 |
-| 协议数字版本 | `major=0, minor=0`；`id=(major << 16) \| minor`，ID `0`；初始发行的完整契约冻结为 `0.0` | 连接协商、协议注解、支持窗口与升级提示 | 开发新增使用临时 minor；分发前把未发布增量合并成紧邻上一已冻结契约的一个 minor；明确的新 major 从 minor 0 开始 |
+| 协议数字版本 | 已发行 `0.0`（ID 0），当前开发 `0.1`（ID 1）；`id=(major << 16) \| minor` | 连接协商、协议注解、支持窗口与升级提示 | 同一正式发行周期共用一个待发布 minor；本轮固定为 1，正式发布 0.0.1 后才冻结；新 major 从 minor 0 开始 |
 | 正式构建计数 | 根 `teamtalk.releaseBuildNumber`，初始为 `0` | Android `versionCode=buildNumber+1`；正式 Desktop revision 同样映射为 `buildNumber+1`；macOS jpackage 的系统包版本从 `1.0.0` 映射 | 正式发行时由用户确认推进；内测 snapshot 不修改它，Android 保持当前 code 手动覆盖 |
 | 内测 Desktop 修订号 | `desktopRevision=完整 Git first-parent 提交数+根构建号+1` | 满足 Conveyor 同一展示版本不同安装包的 revision 要求，记录在内测清单与安装元数据中 | 手动 snapshot 交付时自动计算，不写回配置、不依赖 tag；同展示版本的后续 snapshot 从已分发源码的后代构建，原字节重试复用原号 |
 
@@ -30,59 +30,60 @@ Desktop 比较完整安装版本，新展示版本的末位 revision 可按根�
 
 ## 开发编号与发行契约分开管理
 
-开发新增契约可以按实现需要递增协议 minor，并通过开发清单校验；这不要求同时增加展示版本或安装序号。
-展示版本推进、人工说明定稿、`prepareProtocolRelease`、tag 与 GitHub 发布需要用户确认正式产品发行。
-用户要求更新内测安装包，已包含本次手动 snapshot 交付授权；提交工作源码后即可刷包，不修改根版本
-文件，也不需要额外确认正式发版。纯开发、服务器部署和 Agent 本机验收不自动授权交付，
-工具提示版本或快照不匹配也不是自行发包的依据。流程见[发行决定](../07-operations/releasing.md#谁决定发版)。
+协议版本表示两次正式发行之间的整体契约差异，不表示功能数、提交数或 AI 调试次数。
+当前正式基线是 `0.0.0 / protocol 0.0`；自该版本以来新增的组织资料 RPC 和账号封禁帧统一属于
+待发布协议 `0.1`。**在用户正式发布 `0.0.1` 之前，所有新增及修订继续使用 minor 1，不递增到 2。**
+展示版本和根构建号现在仍保持 `0.0.0 / 0`，本规则不自动发版。
 
-正式产品发行由根展示版本命名，人工说明写入 `doc/07-operations/releases/<releaseVersion>.md` 并随配置
-一起提交。公开仓库的 `v<releaseVersion>` tag 标记这次源码；私有客户没有 GitHub，也遵守同样的本地记录。
-提交摘要只能帮助核对遗漏，不能覆盖人工撰写的变更、升级步骤和已知限制。
-
-| 文件 | 表达的事实 | 可以怎样修改 |
+| 阶段 | 协议动作 | 兼容对象 |
 |---|---|---|
-| `gradle.properties` | 下一次构建使用的展示版本、正式构建计数与协议窗口 | 开发协议 minor 按实现演进；正式发行推进展示版本和构建号，内测 snapshot 保持这两项不变 |
-| `protocol/protocol/wire-baseline.tsv` | 当前开发源码的结构清单 | 经显式 `writeProtocolBaseline` 登记；始终受发行快照约束 |
-| `protocol/protocol/releases/<version>/` | 为发行冻结的配置、wire 布局、生命周期及哈希 | 用户确认本次发行后显式准备新版本；既有目录不覆盖、不删除 |
-| `protocol/protocol/contracts/<major>.<minor>/` | 与展示版本无关的已分发 wire 契约 | 获授权的首次私有分发或内测更新使用新契约时显式准备；同样不可覆盖、删除或回收编号 |
-
-初始发行快照记录 `0.0.0 / buildNumber=0 / protocol=0.0` 的完整契约，源码身份由对应 tag 和密封清单固定。
-发行前试验快照不作为本版兼容来源；初始基线确认后，不能再以“没有历史 tag”为理由回收已分发契约。
-**向内测用户、SDK 集成方或任一私有客户分发都会冻结实际协议**。内测交付不必成为正式产品版本，但必须
-在用户授权范围内使用已冻结的契约，不能以“没有公开下载”作为回收编号的依据。
-为避免发布中断造成事实不明，发行快照从登记起即保守冻结；重试继续使用该版本，不能先删记录再复用编号。
-
-用户明确要求新的私有应用保持当前展示版本进行首次分发时，使用 `prepareProtocolContract` 冻结实际协议，
-再通过[首次私有分发入口](../07-operations/releasing.md#保持当前版本的首次私有安装包分发)交付。它不改变
-公版零号记录，也不要求创建产品 tag；协议保护从这次分发前登记开始生效。
-已有私有应用的[内测更新](../07-operations/releasing.md#保持展示版本的内测更新)使用 `releaseMode=snapshot`：
-复用 `ProtocolContractPolicy` 对已冻结契约的校验；协议没变不新建契约，有新增才先收敛、登记并提交
-`contracts/`。它不运行 `prepareProtocolRelease`，不修改 `releases/0.0.0/` 的原构建号或源码认领。
-内测 Desktop revision 依赖完整历史，浅克隆不能用于交付。同一展示版本的后续 snapshot 保留已分发源码
-及其历史，只能从其后代构建，不能压缩、重写该基线来重新使用修订号。正式推进展示版本时可整理开发历史，
-既有正式 tag 和冻结协议记录仍受保护。Android 相同 code 的手动覆盖不豁免协议、
-安装身份、签名和资料保留规则。
+| 正式发行后首次新增契约 | 开启下一 minor；纯实现/UI 修复不增加协议号 | 已正式冻结的版本 |
+| 同一发行周期继续开发 | 新增、修订本轮类型与 RPC，统一使用该 pending minor；审阅并登记开发 TSV | 已正式冻结版本，不为中间提交维护额外分支 |
+| 本机验收、服务端开发部署、私有 snapshot | 保持 pending minor，记录源码 SHA 与实际 TSV 哈希 | 已正式冻结版本；同号开发包按同批源码配套验证 |
+| 用户确认正式发行 | 审阅整批增量，定稿人工说明并冻结 `releases/<version>/` | 此后该协议成为新的不可修改基线 |
 
 ```mermaid
 flowchart LR
-    Published["最近冻结契约：协议 0.3"] --> Development["尚未分发的试验：0.4 → 0.9"]
-    Development --> Review["逐项审阅新增契约、注解、兼容分支和迁移"]
-    Review --> Approval["用户授权本次交付"]
-    Approval --> Consolidate["统一收敛为下一分发协议 0.4"]
-    Consolidate --> Record["登记开发清单与冻结契约；正式发行另备人工说明"]
-    Record --> Release["Gradle 校验并分发；此后 0.4 永久冻结"]
+    Zero["已发布 0.0.0：协议 0 冻结"] --> Pending["待发布协议 1"]
+    Pending --> Changes["组织资料、封禁帧、后续本轮修改"]
+    Changes --> Pending
+    Pending --> QA["本机验收 / 内测包：源码 SHA + schema 哈希"]
+    QA --> Pending
+    Pending --> Approval["用户确认发布 0.0.1"]
+    Approval --> Frozen["协议 1 冻结"]
+    Frozen --> Next["以后有新契约才开启协议 2"]
 ```
 
-这里收敛的是未发布的 **minor 计数和对应的生命周期值**，不是把已发行的 RPC methodId 或消息编号重新排序。
-若试验 `0.6` 已经分发，就必须先把这次发行纳入本地记录，此后的代码不得再假装最后发行仍是 `0.3`。
-对既有已分发但漏记的历史必须按真实版本补录和评审，不能使用收敛任务改写事实；正常分发流程禁止漏记。
+`wire-baseline.tsv` 是当前源码的审阅清单，**不是一份已发行契约**。它的新增条目可以在本轮修订或删除，
+但修改后必须显式 `writeProtocolBaseline`；不能通过改它掩盖协议 0 的变化。构建兼容检查始终以已冻结
+快照为准，并拒绝在同一发行周期累加多个开发 minor。需要测试高版本窗口时，用测试数据构造版本，
+不要为调试修改产品计数或保留只服务于中间状态的适配代码。
 
-同一 major 内，有新增 wire 或首次声明退役时，下次分发的 minor 恰为上一冻结契约加一；该批新增统一标记为这个
-minor。纯 UI/实现修复与已经声明的实现退役可以保持原协议号；正式发行推进根展示版本与构建号，内测
-snapshot 按上述平台规则交付，不为刷包占用协议号。提高最低兼容
-版本不能超过当前 minor，也不能回退到先前已经移除的范围。新 major 必须紧邻上一 major，并以 `minor=0`、
-`minimumMinor=0` 开始；这时才允许重整 wire 编号，旧发行记录仍保留。
+正式发行仍需用户确认后推进根展示版本与构建号，提交人工说明，显式执行 `prepareProtocolRelease`。
+Tag 标记对应源码，GitHub 自动摘要只补充提交信息。已准备的正式快照不可覆盖或删除，发布失败重试也
+不回收已登记的编号。
+
+用户要求刷内测包即授权该次手动 snapshot；它不要求再次确认正式发行，不增加根展示版本或构建号，
+不运行 `prepareProtocolRelease` 或 `prepareProtocolContract`。`private-first` 首次私有测试交付同样使用
+当前待发布契约。两种模式相对正式冻结基线检查兼容，并密封源码与 schema 哈希；后续同号开发包应连同
+服务端更新，不承诺所有中间构建互通，也不因协议同号便认领为同一份字节。数据兼容仍独立维护，
+普通升级不删除草稿、发件箱、凭据或服务器资料。
+
+历史上明确登记的独立稳定契约 `contracts/<major>.<minor>/` 继续受保护；当前仓库没有这类记录。
+`prepareProtocolContract` 只用于用户另行明确要求冻结独立稳定协议的交付，不是普通内测步骤。
+本轮只以已发行协议 0 为兼容基线，不将此前本机试验的 minor 1/2 变成两条历史。
+
+| 文件 | 事实与修改规则 |
+|---|---|
+| 根 `gradle.properties` | 当前展示版本、安装计数、唯一 pending 协议窗口；不随内部小修复递增 |
+| `protocol/protocol/wire-baseline.tsv` | 可审阅的当前开发清单，经 `writeProtocolBaseline` 登记 |
+| `protocol/protocol/releases/<version>/` | 用户确认正式发行后的冻结快照，既有目录不可修改 |
+| `protocol/protocol/contracts/<major>.<minor>/` | 历史或明确独立稳定交付的冻结记录，普通 snapshot 不新增 |
+| 密封产物的 manifest / checksums | 此次实际源码、协议清单哈希、安装身份和文件字节，不作为新的兼容版本 |
+
+内测 Desktop revision 仍依据完整 first-parent 历史推导，以满足安装器的同名版本替换要求；它不是协议号。
+保留已交付源码历史，不通过压缩或重写制造安装修订号倒退。Android 同 code 可手动覆盖安装，
+签名和安装身份保持稳定。完整命令见[内测更新](../07-operations/releasing.md#保持展示版本的内测更新)。
 
 ## 一次连接怎样协商
 
@@ -127,9 +128,9 @@ sequenceDiagram
    新旧入口在同一组代码和 jar 内共存，各自调用明确的兼容业务逻辑。
 2. 已冻结发行 IProto 模型的 wire 字段和编码顺序不变，不能以“字段可空”或“只加在末尾”为理由修改旧布局。
    要改变布局就创建新模型，并通过新 RPC/消息/通知入口引入。
-3. 新增 RPC、PacketType、NotifyType、MessageType 或 wire 类型时，分配开发 minor，并用
-   `@SinceProtocol(minor)` 描述首次支持版本；发行前只收敛未冻结值。零号基线中没有注解的已有条目属于 minor 0。
-4. 同一 major 内退役的编号保留墓碑，不重新使用。一次变更涉及的所有协议新增可共同属于同一个新 minor。
+3. 新增 RPC、PacketType、NotifyType、MessageType 或 wire 类型时，复用本轮待发布 minor，并用
+   `@SinceProtocol(minor)` 描述首次正式支持版本；同批开发不单独递增。零号基线中没有注解的已有条目属于 minor 0。
+4. 同一 major 内退役的编号保留墓碑，不重新使用。两次正式发行之间的所有协议新增共同属于同一个 pending minor。
 5. 只改变实现方式、修复保持原契约的缺陷，不要求增加协议版本；不能用“重构”掩盖线上字节或业务语义变化。
 
 示意（方法编号仅作说明，实施时在所属服务内分配未使用编号）：
@@ -162,13 +163,13 @@ suspend fun getProfile(uid: String): UserProfile
 # 用户明确确认本次发行后：新增不可覆盖的发行快照
 ./gradlew :protocol:protocol:prepareProtocolRelease
 
-# 获授权的内测交付首次使用新协议时：新增独立契约，不创建正式发行快照
+# 仅用户明确要求冻结独立稳定协议时使用；普通内测不运行
 ./gradlew :protocol:protocol:prepareProtocolContract
 ```
 
 KSP 每次编译都从 `releases/` 与 `contracts/` 选择最新冻结契约检查实际源码，再检查开发清单是否已经登记；即使手工修改开发 TSV，也不能
 掩盖已经发行的签名变化或墓碑复用。显式 `writeProtocolBaseline` 允许相对冻结快照重新登记未发行的工作，
-因此收敛 minor 不会被旧开发计数永久锁死。它不会写入或修改发行历史。
+因此修订本轮新增契约不受中间开发记录的兼容约束。它不会写入或修改发行历史。
 
 `prepareProtocolRelease` 检查展示版本和安装序号递增、minor 连续、已发行布局与生命周期不被改写，再写入
 新的发行目录。它是用户确认本次发行后才能执行的源码编辑操作，**不会由发布任务或 CI 偷偷执行**；维护者必须审阅并提交根配置、
@@ -180,7 +181,7 @@ CI 的 `verifyReleaseChange -PreleaseBase=<比较基点>` 还检查基点已有�
 
 手动服务端开发部署沿用 `verifyRelease` 的干净源码、架构和 wire 校验，可以运行尚未发行的开发 minor，
 不强迫每次调试都登记客户端发行快照。客户端统一 `release` 同时执行这项门禁与相应模式的元数据检查；
-首次私有分发与内测 snapshot 使用独立协议契约检查。实际交付仍须在用户授权范围内使用冻结协议，
+首次私有分发与内测 snapshot 相对冻结基线检查当前开发契约，不新增冻结记录。实际交付仍须在用户授权范围内执行，
 不能以服务端调试路径绕过交付纪律。
 
 收敛时应先列出所有大于上一发行 minor 的 `@SinceProtocol`、首次声明的 `@RemovedInProtocol`、版本判断、

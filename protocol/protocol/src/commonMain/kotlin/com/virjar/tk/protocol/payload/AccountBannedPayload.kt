@@ -3,7 +3,6 @@ package com.virjar.tk.protocol.payload
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.IProtoReader
 import com.virjar.tk.protocol.PacketBuffer
-import com.virjar.tk.protocol.ProtocolAvailability
 import com.virjar.tk.protocol.ProtocolCorruptionException
 import com.virjar.tk.protocol.SinceProtocol
 
@@ -12,7 +11,7 @@ import com.virjar.tk.protocol.SinceProtocol
  * This is an authentication terminal, not a successful session or a generic authorization error.
  * A distinct frame preserves AUTH_RESP's frozen rule that failures cannot carry datasetId.
  */
-@SinceProtocol(2)
+@SinceProtocol(1)
 data class AccountBannedPayload(
     val uid: String,
     val datasetId: String,
@@ -32,8 +31,6 @@ data class AccountBannedPayload(
     }
 
     companion object : IProtoReader<AccountBannedPayload> {
-        val availability = ProtocolAvailability(sinceMinor = 2)
-
         override fun readFrom(buf: PacketBuffer) = AccountBannedPayload(
             uid = AuthPayloadPolicy.readRequiredString(buf, AuthPayloadPolicy.MAX_UID_LENGTH, "accountBan.uid").also {
                 if (it.isBlank()) throw ProtocolCorruptionException("accountBan.uid must not be blank")

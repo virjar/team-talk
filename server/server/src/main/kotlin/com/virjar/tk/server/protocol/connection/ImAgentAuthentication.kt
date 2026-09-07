@@ -16,6 +16,8 @@ import com.virjar.tk.server.domain.telemetry.ConnectionTraceOutcome
 import com.virjar.tk.protocol.payload.AuthResponsePayload
 import com.virjar.tk.protocol.payload.AccountBannedPayload
 import com.virjar.tk.protocol.IProto
+import com.virjar.tk.protocol.PacketType
+import com.virjar.tk.protocol.ProtocolWireRegistry
 import com.virjar.tk.protocol.ProtocolVersion
 import kotlinx.coroutines.CancellationException
 import java.util.concurrent.RejectedExecutionException
@@ -83,7 +85,9 @@ internal fun authenticationResponseForProtocol(
     datasetId: String,
 ): IProto = when {
     response.code != AuthResponsePayload.CODE_ACCOUNT_BANNED -> response
-    AccountBannedPayload.availability.supports(version) -> AccountBannedPayload(
+    ProtocolWireRegistry.supportsPacketType(
+        PacketType.ACCOUNT_BANNED.code.toInt(), version,
+    ) -> AccountBannedPayload(
         uid = checkNotNull(response.uid) { "Banned authentication result must identify the proven account" },
         datasetId = datasetId,
         reason = response.reason,

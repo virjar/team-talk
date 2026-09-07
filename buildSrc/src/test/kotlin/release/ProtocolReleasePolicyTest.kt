@@ -61,7 +61,7 @@ class ProtocolReleasePolicyTest {
     }
 
     @Test
-    fun `private distribution freezes wire without changing the public product release`() = fixture { root ->
+    fun `explicit standalone stable contract freezes wire without changing the product release`() = fixture { root ->
         val zero = File(root, "protocol/protocol/releases/0.0.0/release.properties").readText()
         writeDevelopment(root, 0, 1, original + addition)
         assertFailsWith<IllegalStateException> { ProtocolContractPolicy.verify(root, 0, 1, 0) }
@@ -81,7 +81,7 @@ class ProtocolReleasePolicyTest {
     }
 
     @Test
-    fun `a later product release adopts all already distributed private minors`() = fixture { root ->
+    fun `a product release adopts explicitly frozen standalone stable contracts`() = fixture { root ->
         writeDevelopment(root, 0, 1, original + addition)
         ProtocolContractPolicy.prepare(root, 0, 1, 0)
         writeDevelopment(root, 0, 2, original + addition + "rpc\tmessage/3\t2\t-\tactive\tfind(id:String):String\n")
@@ -94,7 +94,7 @@ class ProtocolReleasePolicyTest {
     }
 
     @Test
-    fun `private lifecycle reservations apply to later product retirement`() = fixture { root ->
+    fun `explicit stable lifecycle reservations apply to later product retirement`() = fixture { root ->
         writeDevelopment(root, 0, 1, original.replace("\t-\tactive", "\t1\tactive"))
         ProtocolContractPolicy.prepare(root, 0, 1, 0)
         writeDevelopment(root, 0, 1, original.replace("\t-\tactive", "\t1\tretired"))
@@ -105,7 +105,7 @@ class ProtocolReleasePolicyTest {
     }
 
     @Test
-    fun `private contract preparation consolidates increments and detects corrupted history`() = fixture { root ->
+    fun `explicit stable contract preparation consolidates increments and detects corrupted history`() = fixture { root ->
         writeDevelopment(root, 0, 4, original + addition.replace("\t1\t-", "\t4\t-"))
         assertFailsWith<IllegalStateException> { ProtocolContractPolicy.prepare(root, 0, 4, 0) }
         assertTrue(!File(root, "protocol/protocol/contracts/0.4").exists())
@@ -114,6 +114,35 @@ class ProtocolReleasePolicyTest {
         frozen.wireBaseline.appendText("# changed\n")
         assertFailsWith<IllegalStateException> { ProtocolContractPolicy.latest(root) }
         assertFailsWith<IllegalStateException> { ProtocolReleasePolicy.latest(root) }
+    }
+
+    @Test
+    fun `snapshots share a pending protocol until an explicit product release freezes it`() = fixture { root ->
+        val zero = ProtocolContractPolicy.latest(root)
+        val zeroBytes = zero.wireBaseline.readBytes()
+        writeDevelopment(root, 0, 1, original + addition)
+        val first = ProtocolContractPolicy.verifyDevelopment(root, 0, 1, 0)
+        val firstHash = sha256(first.wireBaseline)
+
+        writeDevelopment(root, 0, 1, original + addition.replace("text:String", "query:String"))
+        val second = ProtocolContractPolicy.verifyDevelopment(root, 0, 1, 0)
+        assertTrue(firstHash != sha256(second.wireBaseline))
+        assertEquals(0, ProtocolContractPolicy.latest(root).protocolMinor)
+        assertTrue(zeroBytes.contentEquals(zero.wireBaseline.readBytes()))
+        assertTrue(!File(root, "protocol/protocol/contracts/0.1").exists())
+
+        prepare(root, "0.0.1", 1, 0, 1)
+        assertEquals(1, ProtocolContractPolicy.latest(root).protocolMinor)
+        writeDevelopment(root, 0, 1, original + addition)
+        assertFailsWith<IllegalStateException> { ProtocolContractPolicy.verifyDevelopment(root, 0, 1, 0) }
+    }
+
+    @Test
+    fun `development verification protects zero and rejects a second unpublished minor`() = fixture { root ->
+        writeDevelopment(root, 0, 1, original.replace("chatId:String", "chatId:Long") + addition)
+        assertFailsWith<IllegalStateException> { ProtocolContractPolicy.verifyDevelopment(root, 0, 1, 0) }
+        writeDevelopment(root, 0, 2, original + addition.replace("\t1\t-", "\t2\t-"))
+        assertFailsWith<IllegalStateException> { ProtocolContractPolicy.verifyDevelopment(root, 0, 2, 0) }
     }
 
     private fun prepare(root: File, version: String, build: Int, major: Int, minor: Int, minimum: Int = 0) =

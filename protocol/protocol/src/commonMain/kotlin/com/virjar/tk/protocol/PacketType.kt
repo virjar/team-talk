@@ -34,7 +34,7 @@ enum class PacketType(val code: Int) {
     NEGOTIATE(14),
     NEGOTIATE_RESP(15),
     /** 已证明凭据所属账号的封禁判定；旧 AUTH_RESP 的失败分支不携带数据集身份。 */
-    @SinceProtocol(2)
+    @SinceProtocol(1)
     ACCOUNT_BANNED(16),
 
     // 消息 (20-21)

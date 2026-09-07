@@ -692,7 +692,7 @@ class ImClientStateOwnersTest {
 
     @Test
     fun `scoped ban requires the current negotiated minor before publishing a cleanup scope`() = runTest {
-        for (minor in 1..2) {
+        for (minor in 0..1) {
             val failures = mutableListOf<AuthenticationFailure>()
             val harness = AuthSyncHarness(this, onFailureObserved = { failures += it })
             harness.coordinator.prepareAuthentication(authRequest())
@@ -710,7 +710,7 @@ class ImClientStateOwnersTest {
             harness.coordinator.handleAccountBanned(2L, payload)
             assertTrue(failures.isEmpty())
             harness.coordinator.handleAccountBanned(1L, payload)
-            if (minor < 2) {
+            if (minor == 0) {
                 assertEquals(1, harness.closes.size)
                 assertTrue(failures.isEmpty())
             } else {

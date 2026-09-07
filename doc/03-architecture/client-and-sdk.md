@@ -383,7 +383,7 @@ Desktop 的媒体缓存扫描与平台资源图在 IO dispatcher 构造候选，
 marker 落盘前，借普通认证退役顺手取消当前数据库中的可靠发件箱。
 密码登录必须先由服务器验证密码，才能返回封禁账号的 uid 与 dataset；错误密码不返回这份身份。
 refresh 认证已有本地身份时，响应 uid 和 deployment 必须与该凭据一致，dataset 采用服务器确认的值。
-协议 0.2 通过 `ACCOUNT_BANNED(16)` 的
+协议 0.1 通过 `ACCOUNT_BANNED(16)` 的
 [AccountBannedPayload](../../protocol/protocol/src/commonMain/kotlin/com/virjar/tk/protocol/payload/AccountBannedPayload.kt)
 携带完整身份，仅向协商 minor ≥ 2 的客户端发送，保持原有认证响应的 wire 布局；对旧服务器没有携带身份的
 封禁拒绝，只能回退到本次 refresh 已持有的同部署精确身份。缺少一半身份、身份不匹配或没有

@@ -5,7 +5,7 @@
 
 ## 1. 新增 RPC
 
-1. 在 `protocol/.../rpc/def/XxxRpc.kt` 增加方法，分配未使用的 `@RpcMethod(id)`，并声明新 minor 的 `@SinceProtocol`。
+1. 在 `protocol/.../rpc/def/XxxRpc.kt` 增加方法，分配未使用的 `@RpcMethod(id)`，并声明本轮待发布 minor 的 `@SinceProtocol`。
 2. 使用已有 IProto 模型；必要时新增模型和 round-trip。
 3. 审阅并登记 `writeProtocolBaseline` 清单变更，编译生成 Contract/Proxy/Stub。
 4. 在服务端实现对应 Stub 接口；如有旧入口，保留实现并通过协商版本选择明确的业务兼容分支。
@@ -17,7 +17,7 @@
 
 ## 2. 新增通知
 
-1. 在 NotifyType 分配新 code，并声明新 minor 的 `@SinceProtocol`。
+1. 在 NotifyType 分配新 code，并声明本轮待发布 minor 的 `@SinceProtocol`。
 2. 决定 payload 是哪个完整快照。
 3. 登记 NotifyContracts。
 4. 服务端在权威状态提交后通过 SyncEventService 发给正确用户。
@@ -30,7 +30,7 @@
 
 ## 3. 新增消息类型
 
-1. 分配 MessageType 新 code，并声明新 minor 的 `@SinceProtocol`。
+1. 分配 MessageType 新 code，并声明本轮待发布 minor 的 `@SinceProtocol`。
 2. 创建实现 MessageBody 的类型和 reader。
 3. 登记 MessageBodyRegistry 与 MessageBodyPolicy。
 4. 服务端增加内容、权限和大小校验。
