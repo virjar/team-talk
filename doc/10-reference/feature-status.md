@@ -29,7 +29,7 @@ TeamTalk 当前处于开发者预览阶段。本文回答“现在究竟能做�
 | 领域 | 状态 | 当前边界 |
 | --- | --- | --- |
 | 注册、登录、凭证恢复、退出 | 可用 | 双端提交有等待反馈，失败可原地重试，Desktop 注册失败保留表单；支持多设备 token；持久凭据可离线恢复本地会话，认证终态失败停止自动重连。Desktop 的 connect completion 固定跨一轮 event-loop 处理，避免同步完成在认证 lease 安装前重入；确定性回归、shared 全测和真实 Desktop 登录已通过 |
-| 账号封禁与本地资料清理 | 可用 | 服务端权威封禁、双端精确账号清理及启动续清已接通；HTTP 401 先经 refresh 重验，密码错误不触发删除。只清理本安装内该 deployment/dataset/uid 的资料和匹配凭据，其他账号、安装配置及系统导出文件保留；双端真机与发行制品封禁验收仍需执行。细节见下方同名说明。 |
+| 账号封禁与本地资料清理 | 可用 | 服务端权威封禁、双端精确账号清理及启动续清已接通；HTTP 401 先经 refresh 重验，密码错误不触发删除。只清理本安装内该 deployment/dataset/uid 的资料和匹配凭据，其他账号、安装配置及系统导出文件保留；Android 16 真机与 macOS 开发构建关键流程已验收，正式发行制品另验。细节见下方同名说明。 |
 | 用户资料 | 可用 | 姓名、手机号等读写和 USER_UPDATED 已接通；手机号入口为大陆 11 位，新增统一存储并保留历史 +86 数据，格式/占用失败给出明确反馈 |
 | 好友申请、接受、删除、备注、黑名单 | 可用 | 双端资料页可设置/清空私人备注，多处展示统一备注优先，CONTACT_UPDATED 同步本人设备；服务端是关系与权限事实源；每人发出/收到 pending 各有 100 条事务硬边界，待处理视图完整；接受/拒绝使用本地持久 operationId/issuedAt 与服务端原子结果收据覆盖 7 天内丢响应重试，收据每 actor 最多 1,024 条且不淘汰未过期身份；双向终态历史至多保留最近 1,000 条并支持游标分页，两人 pending 可精确查询 |
 | 私聊、群聊和群成员管理 | 可用 | 建群和邀请链接创建使用客户端稳定 operationId 与服务端持久收据覆盖丢响应重试；GUI 在 RPC 前按 deployment + uid 持久化冻结命令，可跨进程恢复；邀请回执 7 天内每创建者最多 256 条、不淘汰未过期身份且重放重新校验当前 admin，包含角色、禁言、邀请链接、转让群主 |
@@ -53,8 +53,11 @@ Android 清理失败的退出会终止本应用进程，使重新打开必经 Ap
 用户已经导出到系统相册或文件系统的副本不归应用清理，也不因此删除服务器资产。
 
 测试入口为 `BannedAccountDataOwnerTest`、`AccountDataCleanupTest`、`AccountDataCleanupRecoveryTest`、
-`DesktopAccountDataCleanupTest` 和 `BanEnforcementTest`；这些入口不代表 Android 真机或同批发行制品
-已经通过封禁验收。所有权与恢复图见[客户端与 SDK](../03-architecture/client-and-sdk.md#211-账号封禁与本地资料清理)。
+`DesktopAccountDataCleanupTest` 和 `BanEnforcementTest`。2026-09-07 在 Android 16 真机与 macOS 独立
+开发构建中完成同账号在线封禁、正确密码再次拒绝、注入 pending 后启动续清及其他账号资料保留；
+Android 另核对系统导出副本哈希不变，Desktop 另核对错误密码不清除账号残留。
+这不代表正式发行制品或全部失败交互已验收。所有权与恢复图见
+[客户端与 SDK](../03-architecture/client-and-sdk.md#211-账号封禁与本地资料清理)。
 
 </details>
 

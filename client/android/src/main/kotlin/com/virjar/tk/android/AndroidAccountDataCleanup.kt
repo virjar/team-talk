@@ -16,6 +16,7 @@ internal fun androidAccountDataCleanup(context: Context): AccountDataCleanup {
         val mediaScope = sha256Hex(mediaCacheNamespace(owner.deploymentFingerprint, owner.datasetId, owner.uid)).take(32)
         buildList {
             add(accountAndroidDatabaseCleanupTarget(app.getDatabasePath("unused").parentFile!!, owner))
+            add(accountAndroidDatabaseCleanupTarget(app.cacheDir, owner))
             add(AccountDataCleanupTarget.matchingChildren(
                 app.noBackupFilesDir,
                 listOf(ANDROID_DOCUMENT_DRAFT_DIRECTORY),

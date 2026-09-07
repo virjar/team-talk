@@ -27,8 +27,10 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.IOException
@@ -486,45 +488,50 @@ class AndroidFileDownloadController private constructor(
             }
             mediaSession.ensureOpen()
             if (closed.get()) return@launchFileOperation
-            suspend fun pinnedCachedLease(): AndroidMediaCacheFileLease? = try {
-                val root = cacheRoot
-                AndroidMediaCacheCapacityRegistry.cachedLease(
-                    cacheRoot = root,
-                    file = cachedFile(root, attachment),
-                    expectedBytes = attachment.size,
-                )
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                null
-            }
+            // 本地复制也属于账号操作：退役必须等未完成导出回收后才能清理账号缓存。
+            // 权限等待放在注册前，避免会话关闭等待主线程上的系统权限回调。
+            val exportJob = checkNotNull(currentCoroutineContext()[Job])
+            mediaSession.withRegisteredOperation(abort = { exportJob.cancel() }) {
+                suspend fun pinnedCachedLease(): AndroidMediaCacheFileLease? = try {
+                    val root = cacheRoot
+                    AndroidMediaCacheCapacityRegistry.cachedLease(
+                        cacheRoot = root,
+                        file = cachedFile(root, attachment),
+                        expectedBytes = attachment.size,
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                }
 
-            var lease = pinnedCachedLease()
-            try {
-                if (lease == null) {
-                    downloadInternal(attachment, openWhenDone = false, admission = admission)
-                    lease = pinnedCachedLease()
+                var lease = pinnedCachedLease()
+                try {
+                    if (lease == null) {
+                        downloadInternal(attachment, openWhenDone = false, admission = admission)
+                        lease = pinnedCachedLease()
+                    }
+                    val ok = lease != null && exportAndroidAttachmentToUserLocation(
+                        context = context,
+                        file = checkNotNull(lease).file,
+                        attachment = attachment,
+                        workerDispatcher = workerDispatcher,
+                        ensureOwnerOpen = {
+                            mediaSession.ensureOpen()
+                            check(!closed.get()) { "Attachment controller is closed" }
+                        },
+                    )
+                    val message = when {
+                        ok &&
+                            (attachment.contentType.startsWith("image/") ||
+                                attachment.contentType.startsWith("video/")) -> "已保存到相册"
+                        ok -> "已保存到下载"
+                        else -> "保存失败"
+                    }
+                    showExportFeedback(context, message)
+                } finally {
+                    lease?.close()
                 }
-                val ok = lease != null && exportAndroidAttachmentToUserLocation(
-                    context = context,
-                    file = checkNotNull(lease).file,
-                    attachment = attachment,
-                    workerDispatcher = workerDispatcher,
-                    ensureOwnerOpen = {
-                        mediaSession.ensureOpen()
-                        check(!closed.get()) { "Attachment controller is closed" }
-                    },
-                )
-                val message = when {
-                    ok &&
-                        (attachment.contentType.startsWith("image/") ||
-                            attachment.contentType.startsWith("video/")) -> "已保存到相册"
-                    ok -> "已保存到下载"
-                    else -> "保存失败"
-                }
-                showExportFeedback(context, message)
-            } finally {
-                lease?.close()
             }
         }
         return true

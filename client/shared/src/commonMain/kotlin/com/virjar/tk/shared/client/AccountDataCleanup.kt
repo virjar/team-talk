@@ -164,10 +164,10 @@ fun accountDiagnosticCleanupTargets(dataDir: File, owner: AccountDataOwner): Lis
     )
 }
 
-/** Android 数据库在 databases/ 中按账号命名，含 SQLite sidecar、恢复标记和损坏隔离副本。 */
+/** Android 账号数据库文件族；databases/ 含 sidecar/恢复副本，cache/ 另含同名 .db.lck。 */
 fun accountAndroidDatabaseCleanupTarget(databaseDirectory: File, owner: AccountDataOwner): AccountDataCleanupTarget {
     val identity = "_${Regex.escape(owner.deploymentFingerprint)}_${Regex.escape(owner.datasetId)}_${Regex.escape(owner.uid)}"
-    val lifecycleSuffix = "(?:-wal|-shm|-journal|\\.corruption-reported|\\.integrity-checked|\\.open)?"
+    val lifecycleSuffix = "(?:-wal|-shm|-journal|\\.lck|\\.corruption-reported|\\.integrity-checked|\\.open)?"
     return AccountDataCleanupTarget.matchingChildren(
         databaseDirectory,
         emptyList(),

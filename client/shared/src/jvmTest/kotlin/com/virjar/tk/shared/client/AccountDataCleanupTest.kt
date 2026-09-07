@@ -95,10 +95,18 @@ class AccountDataCleanupTest {
                 "${base}backup",
             )
             (owned + other).forEach { databases.resolve(it).writeText(it) }
-            val cleanup = AccountDataCleanup(directory) { listOf(accountAndroidDatabaseCleanupTarget(databases, it)) }
+            val cache = directory.resolve("cache").apply { mkdirs() }
+            cache.resolve("$base.lck").createNewFile()
+            val otherLock = other.first() + ".lck"
+            cache.resolve(otherLock).createNewFile()
+            val cleanup = AccountDataCleanup(directory) { listOf(
+                accountAndroidDatabaseCleanupTarget(databases, it),
+                accountAndroidDatabaseCleanupTarget(cache, it),
+            ) }
             cleanup.begin(owner)
             cleanup.deleteOwnedData(owner)
             assertEquals(other.toSet(), databases.listFiles()!!.map { it.name }.toSet())
+            assertEquals(setOf(otherLock), cache.listFiles()!!.map { it.name }.toSet())
             cleanup.complete(owner)
         } finally {
             directory.deleteRecursively()
