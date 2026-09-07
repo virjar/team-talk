@@ -119,7 +119,7 @@ fun GroupDetailScreen(
                             canEdit = currentUserCanManage && onEditNotice != null,
                             onClick = { showNoticeEdit = true },
                         )
-                        CreatorSection(chat = chat, members = members)
+                        OwnerSection(members = members)
                     }
                 }
                 item(key = "tools") {
@@ -294,10 +294,11 @@ private fun NoticeSection(notice: String?, canEdit: Boolean, onClick: () -> Unit
 }
 
 @Composable
-private fun CreatorSection(chat: Chat, members: List<Member>) {
-    val creator = members.firstOrNull { it.uid == chat.creator } ?: return
+private fun OwnerSection(members: List<Member>) {
+    // 创建者不会随群主转让改变；当前群主与成员徽标、管理权限共用成员角色快照。
+    val owner = members.firstOrNull { it.role == 2 } ?: return
     Row(
-        modifier = Modifier.fillMaxWidth().padding(Tk.spacing.md),
+        modifier = Modifier.fillMaxWidth().padding(Tk.spacing.md).testTag("group.detail.owner"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(Icons.Filled.Person, contentDescription = null, tint = Tk.colors.secondaryText, modifier = Modifier.size(Tk.dimens.iconSize))
@@ -305,7 +306,7 @@ private fun CreatorSection(chat: Chat, members: List<Member>) {
         Text("群主", style = MaterialTheme.typography.bodyLarge)
         Spacer(Modifier.width(Tk.spacing.md))
         Text(
-            creator.displayName(),
+            owner.displayName(),
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodyMedium,
             color = Tk.colors.secondaryText,
