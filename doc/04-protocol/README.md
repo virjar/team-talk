@@ -20,7 +20,8 @@ TLS 位于 Packet 外层，不通过 PacketType 协商。现有远程 SDK 使用
 见[传输配置](../07-operations/configuration.md#传输配置边界)。TLS 就绪后先协商，再发 AUTH；
 协议协商不携带密码，也不通过降级明文绕过传输失败。
 
-当前协议为 `0.0`，数字 ID `0`，独立于展示版本 `0.0.0`。`ProtocolLimits.AUTH_PREAMBLE_MARKER`
+当前开发协议为 `0.2`，数字 ID `2`，独立于展示版本 `0.0.0`；已有发行/交付的契约仍由不可覆盖快照保护。
+`ProtocolLimits.AUTH_PREAMBLE_MARKER`
 只保留 AUTH 的固定 bootstrap 字节标识；业务版本使用 `ProtocolVersions` 与 `ProtocolVersion`。
 Netty 的 `PacketCodec.PROTOCOL_VERSION` 是当前数字 ID 的兼容别名。
 
