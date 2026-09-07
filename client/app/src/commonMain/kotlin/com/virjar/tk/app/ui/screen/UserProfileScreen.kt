@@ -13,6 +13,7 @@ import com.virjar.tk.shared.Outcome
 import com.virjar.tk.protocol.model.UserRole
 import com.virjar.tk.app.ui.component.AvatarPlaceholder
 import com.virjar.tk.app.ui.component.ScreenHeader
+import com.virjar.tk.app.ui.theme.Tk
 
 enum class UserProfilePresentation {
     FullPage,
@@ -71,6 +72,7 @@ fun UserProfileScreen(
     onBlockUser: (() -> Unit)? = null,
     remark: String? = null,
     onSaveRemark: (suspend (String?) -> Outcome<Unit>)? = null,
+    organization: com.virjar.tk.protocol.model.UserOrganizationSummary? = null,
     onBack: (() -> Unit)? = null,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
@@ -90,6 +92,7 @@ fun UserProfileScreen(
             onBlockUser = onBlockUser,
             remark = remark,
             onSaveRemark = onSaveRemark,
+            organization = organization,
             presentation = UserProfilePresentation.FullPage,
             modifier = Modifier.fillMaxWidth().weight(1f),
         )
@@ -116,6 +119,8 @@ fun UserProfileContent(
     onBlockUser: (() -> Unit)? = null,
     remark: String? = null,
     onSaveRemark: (suspend (String?) -> Outcome<Unit>)? = null,
+    /** 被查看账号的组织归属路径；null 或空 = 查看者无组织访问资格或对方无归属（T008）。 */
+    organization: com.virjar.tk.protocol.model.UserOrganizationSummary? = null,
     presentation: UserProfilePresentation = UserProfilePresentation.FullPage,
     modifier: Modifier = Modifier,
 ) {
@@ -179,6 +184,16 @@ fun UserProfileContent(
             when (presentation) {
                 UserProfilePresentation.FullPage -> FullPageProfileHero(user, remark)
                 UserProfilePresentation.CompactDialog -> CompactProfileHero(user, remark)
+            }
+
+            // 员工组织归属与公司路径是组织目录事实的展示（T008）；数据由服务端按
+            // T001 边界裁决，访客拿不到该字段（organization 为 null）。
+            val orgSummary = organization?.takeIf { it.uid == user.uid }
+            if (orgSummary != null && orgSummary.paths.isNotEmpty()) {
+                ProfileOrganizationSection(
+                    summary = orgSummary,
+                    compact = presentation == UserProfilePresentation.CompactDialog,
+                )
             }
 
             HorizontalDivider()
@@ -284,6 +299,58 @@ fun UserProfileContent(
             contentAlignment = Alignment.Center,
         ) {
             CircularProgressIndicator()
+        }
+    }
+}
+
+@Composable
+private fun ProfileOrganizationSection(
+    summary: com.virjar.tk.protocol.model.UserOrganizationSummary,
+    compact: Boolean,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = if (compact) 16.dp else 16.dp,
+                vertical = 8.dp,
+            )
+            .testTag("profile.organization"),
+    ) {
+        Text(
+            "所属部门",
+            style = MaterialTheme.typography.labelMedium,
+            color = Tk.colors.metaText,
+        )
+        Spacer(Modifier.height(4.dp))
+        summary.paths.forEach { path ->
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    path.pathNames.joinToString(" / "),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (path.primary) {
+                    Text(
+                        "主部门",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                val title = path.title
+                if (!title.isNullOrBlank()) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Tk.colors.secondaryText,
+                    )
+                }
+            }
         }
     }
 }

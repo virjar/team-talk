@@ -4,6 +4,7 @@ import com.virjar.tk.protocol.model.OrganizationMemberPage
 import com.virjar.tk.protocol.model.OrganizationMemberPageRequest
 import com.virjar.tk.protocol.model.OrganizationUnitPage
 import com.virjar.tk.protocol.model.OrganizationUnitPageRequest
+import com.virjar.tk.protocol.model.UserOrganizationSummary
 import com.virjar.tk.protocol.rpc.RpcMethod
 import com.virjar.tk.protocol.rpc.RpcService
 
@@ -15,4 +16,9 @@ interface OrganizationRpc {
     suspend fun listUnitPage(request: OrganizationUnitPageRequest): OrganizationUnitPage
     @RpcMethod(2)
     suspend fun listMemberPage(request: OrganizationMemberPageRequest): OrganizationMemberPage
+
+    /** 查询某账号的有效组织归属与组织路径；查看者需具备组织目录访问资格（T008）。 */
+    @com.virjar.tk.protocol.SinceProtocol(1)
+    @RpcMethod(3)
+    suspend fun getUserOrganization(uid: String): UserOrganizationSummary
 }

@@ -10,6 +10,8 @@ import com.virjar.tk.protocol.model.OrganizationPagePolicy
 import com.virjar.tk.protocol.model.OrganizationUnit
 import com.virjar.tk.protocol.model.OrganizationUnitPage
 import com.virjar.tk.protocol.model.OrganizationUnitPageRequest
+import com.virjar.tk.protocol.model.UserOrganizationPath
+import com.virjar.tk.protocol.model.UserOrganizationSummary
 import com.virjar.tk.protocol.PacketBuffer
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
@@ -55,6 +57,46 @@ class OrganizationService(
     fun listMemberPage(callerUid: String, request: OrganizationMemberPageRequest): OrganizationMemberPage {
         requireOrganizationMember(callerUid)
         return readMemberPage(request)
+    }
+
+    /**
+     * 查询某账号的有效组织归属与组织路径（T008）。查看者同样需要组织目录访问资格：
+     * 组织归属属于组织目录事实，访客不能借用户资料绕过 T001 的边界。
+     * 主部门归属排在前，其余按路径字典序，保证多部门展示稳定。
+     */
+    fun getUserOrganization(viewerUid: String, subjectUid: String): UserOrganizationSummary {
+        requireOrganizationMember(viewerUid)
+        val paths = repository.listMemberships(subjectUid)
+            .mapNotNull { member ->
+                val spine = unitNameSpine(member.unitId) ?: return@mapNotNull null
+                UserOrganizationPath(
+                    unitId = member.unitId,
+                    unitName = spine.last(),
+                    pathNames = spine,
+                    primary = member.primary,
+                    title = member.title,
+                )
+            }
+            .sortedWith(
+                compareByDescending<UserOrganizationPath> { it.primary }
+                    .thenBy { it.pathNames.joinToString("/") }
+                    .thenBy { it.unitId },
+            )
+        return UserOrganizationSummary(uid = subjectUid, paths = paths)
+    }
+
+    /** 从直属节点向上回溯组织根的名称路径；节点缺失（已归档删除）时放弃该归属的展示。 */
+    private fun unitNameSpine(unitId: String): List<String>? {
+        val names = ArrayDeque<String>()
+        var cursor: String? = unitId
+        var depth = 0
+        while (cursor != null) {
+            if (depth++ > MAX_UNIT_SPINE_DEPTH) return null
+            val unit = repository.findUnit(cursor) ?: return null
+            names.addFirst(unit.name)
+            cursor = unit.parentId
+        }
+        return names.toList()
     }
 
     private fun readUnitPage(request: OrganizationUnitPageRequest): OrganizationUnitPage {
@@ -291,6 +333,9 @@ class OrganizationService(
     )
 
     private companion object {
+        /** 组织层级由管理端治理约束；此处仅防御脏数据造成的无限回溯。 */
+        const val MAX_UNIT_SPINE_DEPTH = 32
+
         const val MAX_SNAPSHOT_ATTEMPTS = 3
     }
 }

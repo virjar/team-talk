@@ -1,6 +1,6 @@
 # TeamTalk wire schema v1
 major=0
-minor=0
+minor=1
 enum	com.virjar.tk.protocol.MessageType/1	0	-	active	RICH_TEXT
 enum	com.virjar.tk.protocol.MessageType/10	0	-	active	MERGE_FORWARD
 enum	com.virjar.tk.protocol.MessageType/11	0	-	active	REVOKE
@@ -145,6 +145,7 @@ rpc	message/8	0	-	active	removeReaction(chatId:kotlin.String,serverSeq:kotlin.Lo
 rpc	message/9	0	-	active	listReactions(chatId:kotlin.String,fromSeq:kotlin.Long,toSeq:kotlin.Long):List<com.virjar.tk.protocol.model.MessageReactionSummary>
 rpc	organization/1	0	-	active	listUnitPage(request:com.virjar.tk.protocol.model.OrganizationUnitPageRequest):com.virjar.tk.protocol.model.OrganizationUnitPage
 rpc	organization/2	0	-	active	listMemberPage(request:com.virjar.tk.protocol.model.OrganizationMemberPageRequest):com.virjar.tk.protocol.model.OrganizationMemberPage
+rpc	organization/3	1	-	active	getUserOrganization(uid:kotlin.String):com.virjar.tk.protocol.model.UserOrganizationSummary
 rpc	sync/1	0	-	active	beginCheckpoint(datasetId:kotlin.String):com.virjar.tk.protocol.model.SyncCheckpointHeader
 rpc	sync/2	0	-	active	listCheckpointContacts(request:com.virjar.tk.protocol.model.SyncCheckpointPageRequest):com.virjar.tk.protocol.model.SyncCheckpointContactPage
 rpc	sync/3	0	-	active	listCheckpointChats(request:com.virjar.tk.protocol.model.SyncCheckpointPageRequest):com.virjar.tk.protocol.model.SyncCheckpointChatPage
@@ -233,6 +234,8 @@ type	com.virjar.tk.protocol.model.SyncCheckpointContactPage	0	-	active	CLASS(ite
 type	com.virjar.tk.protocol.model.SyncCheckpointHeader	0	-	active	CLASS(datasetId:kotlin.String,checkpointId:kotlin.String,baseEventId:kotlin.Long,currentUser:com.virjar.tk.protocol.model.User)
 type	com.virjar.tk.protocol.model.SyncCheckpointPageRequest	0	-	active	CLASS(checkpointId:kotlin.String,cursor:kotlin.String?)
 type	com.virjar.tk.protocol.model.User	0	-	active	CLASS(uid:kotlin.String,username:kotlin.String,name:kotlin.String,avatar:com.virjar.tk.protocol.model.Attachment?,phone:kotlin.String?,sex:kotlin.Int,role:kotlin.Int,status:kotlin.Int,revision:kotlin.Long)
+type	com.virjar.tk.protocol.model.UserOrganizationPath	1	-	active	CLASS(unitId:kotlin.String,unitName:kotlin.String,pathNames:kotlin.collections.List<kotlin.String>,primary:kotlin.Boolean,title:kotlin.String?)
+type	com.virjar.tk.protocol.model.UserOrganizationSummary	1	-	active	CLASS(uid:kotlin.String,paths:kotlin.collections.List<com.virjar.tk.protocol.model.UserOrganizationPath>)
 type	com.virjar.tk.protocol.payload.AuthRequestPayload	0	-	active	CLASS(authType:kotlin.Int,username:kotlin.String?,password:kotlin.String?,name:kotlin.String?,refreshToken:kotlin.String?,deviceId:kotlin.String,deviceName:kotlin.String?,deviceModel:kotlin.String?,deviceFlag:kotlin.Int,correlationId:kotlin.String,connectionGeneration:kotlin.Long)
 type	com.virjar.tk.protocol.payload.AuthResponsePayload	0	-	active	CLASS(code:kotlin.Int,reason:kotlin.String?,uid:kotlin.String?,username:kotlin.String?,name:kotlin.String?,accessToken:kotlin.String?,refreshToken:kotlin.String?,expiresIn:kotlin.Long,datasetId:kotlin.String?,connectionTraceContext:com.virjar.tk.protocol.telemetry.ConnectionTraceContext?)
 type	com.virjar.tk.protocol.payload.ConnectionTraceContextPayload	0	-	active	CLASS(correlationId:kotlin.String,connectionGeneration:kotlin.Long,policyRevision:kotlin.Long,context:com.virjar.tk.protocol.telemetry.ConnectionTraceContext?)

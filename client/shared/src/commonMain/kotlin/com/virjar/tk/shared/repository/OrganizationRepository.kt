@@ -12,6 +12,7 @@ import com.virjar.tk.protocol.model.OrganizationMemberPageRequest
 import com.virjar.tk.protocol.model.OrganizationUnit
 import com.virjar.tk.protocol.model.OrganizationUnitPage
 import com.virjar.tk.protocol.model.OrganizationUnitPageRequest
+import com.virjar.tk.protocol.model.UserOrganizationSummary
 import com.virjar.tk.shared.outcome
 import com.virjar.tk.protocol.rpc.RpcInvoker
 import com.virjar.tk.protocol.rpc.gen.OrganizationRpcProxy
@@ -160,6 +161,14 @@ class OrganizationRepository(
             return null
         }
         return localCache.getOrganizationMembersForUnits(subtree)
+    }
+
+    /**
+     * 查询账号的有效组织归属与组织路径（T008）。调用者必须具备组织目录访问资格：
+     * 访客会收到 403 失败，UI 层应把该失败理解为"无组织信息可展示"而不是错误。
+     */
+    suspend fun getUserOrganization(uid: String): Outcome<UserOrganizationSummary> = outcome {
+        rpc.getUserOrganization(uid)
     }
 
     private suspend fun collectUnitSnapshot(): StableSnapshot<OrganizationUnit> = collectStableSnapshot(

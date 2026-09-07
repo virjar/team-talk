@@ -467,6 +467,7 @@ private fun NavGraphBuilder.contactsDestination(
             myUid = dataState.userSession.uid,
             isFriend = dataState.account.isFriend,
             remark = dataState.account.profileRemark,
+            organization = dataState.account.profileOrganization?.takeIf { it.uid == uid },
             onSaveRemark = { remark ->
                 admittedAction(onClosed = { com.virjar.tk.shared.Outcome.Failure(com.virjar.tk.shared.AppError.AuthExpired) }) {
                     dataState.account.setFriendRemark(uid, remark)

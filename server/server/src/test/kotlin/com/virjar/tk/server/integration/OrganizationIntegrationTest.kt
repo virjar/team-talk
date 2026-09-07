@@ -145,4 +145,50 @@ class OrganizationIntegrationTest {
             ctx.organizationService.listUnitPage(otherMember, OrganizationUnitPageRequest())
         }
     }
+
+    @Test
+    fun `user organization paths respect viewer boundary and project department spine`() = runTest {
+        val viewer = ctx.registerUser(uniqueUsername("t008-viewer"))
+        val subject = ctx.registerUser(uniqueUsername("t008-subject"))
+        val guest = ctx.registerUser(uniqueUsername("t008-guest"))
+        val root = ctx.organizationService.listUnits().singleOrNull { it.parentId == null }
+            ?: ctx.organizationService.createUnit(null, uniqueUsername("路径公司"), null)
+        val dept = ctx.organizationService.createUnit(root.unitId, uniqueUsername("研发"), null)
+        val team = ctx.organizationService.createUnit(dept.unitId, uniqueUsername("移动端"), null)
+
+        // 查看者与被查看者都需要有效组织成员关系；访客不能经资料获取组织信息（T001 边界）。
+        assertFailsWith<OrganizationAccessDeniedException> {
+            ctx.organizationService.getUserOrganization(guest, subject)
+        }
+        ctx.organizationService.assignMember(team.unitId, viewer, null, primary = true)
+
+        // 无归属账号返回空 paths，不构造虚构部门。
+        assertTrue(ctx.organizationService.getUserOrganization(viewer, subject).paths.isEmpty())
+
+        ctx.organizationService.assignMember(dept.unitId, subject, "顾问", primary = false)
+        ctx.organizationService.assignMember(team.unitId, subject, null, primary = true)
+
+        val summary = ctx.organizationService.getUserOrganization(viewer, subject)
+        assertEquals(subject, summary.uid)
+        assertEquals(2, summary.paths.size)
+        // 主部门优先；路径从组织根到直属节点。
+        val primaryPath = summary.paths.first()
+        assertTrue(primaryPath.primary)
+        assertEquals(team.unitId, primaryPath.unitId)
+        assertEquals(listOf(root.name, dept.name, team.name), primaryPath.pathNames)
+        val secondary = summary.paths.last()
+        assertFalse(secondary.primary)
+        assertEquals("顾问", secondary.title)
+        assertEquals(listOf(root.name, dept.name), secondary.pathNames)
+
+        // 失去最后一项归属后资料组织信息收敛为空。
+        ctx.organizationService.removeMember(team.unitId, subject)
+        ctx.organizationService.removeMember(dept.unitId, subject)
+        assertTrue(ctx.organizationService.getUserOrganization(viewer, subject).paths.isEmpty())
+
+        // 访客没有资格查看任何人的组织信息。
+        assertFailsWith<OrganizationAccessDeniedException> {
+            ctx.organizationService.getUserOrganization(guest, viewer)
+        }
+    }
 }

@@ -190,6 +190,9 @@ class OrganizationRpcImpl(uid: String, private val service: OrganizationService)
 
     override suspend fun listMemberPage(request: com.virjar.tk.protocol.model.OrganizationMemberPageRequest) =
         service.listMemberPage(uid, request)
+
+    override suspend fun getUserOrganization(subjectUid: String) =
+        service.getUserOrganization(uid, subjectUid)
 }
 
 class GroupFileRpcImpl(uid: String, private val service: GroupFileService) : GroupFileRpcStub(uid) {

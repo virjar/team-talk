@@ -132,6 +132,7 @@ internal fun DesktopUserProfileDialog(
                                 myUid = nav.userSession.uid,
                                 isFriend = nav.account.isFriend,
                                 remark = nav.account.profileRemark,
+                                organization = nav.account.profileOrganization?.takeIf { it.uid == uid },
                                 onSaveRemark = { remark ->
                                     nav.runAdmittedUiAction(
                                         presentationGate,

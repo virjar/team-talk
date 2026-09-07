@@ -158,6 +158,10 @@ class AccountFeature internal constructor(
     var profileFriendApplyState by mutableStateOf(ProfileFriendApplyState.NONE)
         private set
 
+    /** 被查看账号的组织归属路径；null = 查看者无组织访问资格或对方无归属（T008）。 */
+    var profileOrganization by mutableStateOf<com.virjar.tk.protocol.model.UserOrganizationSummary?>(null)
+        private set
+
     private var applyingFriendUids by mutableStateOf(emptySet<String>())
     private var friendApplyStateByUid by mutableStateOf(emptyMap<String, ProfileFriendApplyState>())
     private var friendApplyRecordsGeneration = 0L
@@ -300,6 +304,7 @@ class AccountFeature internal constructor(
         profileFriendApplyState = friendApplyStateByUid[uid] ?: ProfileFriendApplyState.NONE
         if (isFriend) updateFriendApplyState(uid, ProfileFriendApplyState.NONE)
         refreshProfile(uid)
+        refreshProfileOrganization(uid)
     }
 
     private fun bindProfileProjection(uid: String) {
@@ -310,6 +315,18 @@ class AccountFeature internal constructor(
         profileObserverJob = scope.launch {
             localData.projection { cache.observeUser(uid) }.collect { user ->
                 if (profileTargetUid == uid) profileUser = user
+            }
+        }
+    }
+
+    private suspend fun refreshProfileOrganization(uid: String) {
+        profileOrganization = null
+        when (val result = session.organizationRepo.getUserOrganization(uid)) {
+            is com.virjar.tk.shared.Outcome.Success -> profileOrganization = result.value
+            is com.virjar.tk.shared.Outcome.Failure -> {
+                // 访客查看员工资料时服务端按 T001 返回 403：这是权限终态，不是错误。
+                val error = result.error as? com.virjar.tk.shared.AppError.Business
+                profileOrganization = error?.takeIf { it.code == 403 }?.let { null }
             }
         }
     }
