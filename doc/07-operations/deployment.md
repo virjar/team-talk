@@ -44,6 +44,17 @@ Conveyor 的工具下载、配置生成与三平台站点制作均由 Gradle 管
 
 ## 2. 首次部署
 
+服务端需要 Java 21 或更新运行时。普通部署在停止旧服务之前检查升级后的 Java 选择：使用 systemd
+默认 PATH 和 `teamtalk.service` 的 `Environment` 中 `JAVA_HOME` / `PATH`，不借用 SSH 会话的 Java 配置。
+缺少 Java、版本低于 21 或无法判定版本时直接失败，不等新服务启动失败再回滚。
+检查不安装软件，也不修改主机的全局 Java。
+
+同机运行其他 Java 应用时，可以安装独立 JRE，并用 `systemctl edit teamtalk` 添加
+`[Service]` 下的 `Environment=JAVA_HOME=<该 JRE 的绝对目录>`，随后执行 `systemctl daemon-reload`。
+这样只选择 TeamTalk 的运行时，不必切换全局 `java`；普通部署重写主 unit 时保留 systemd drop-in。
+不要把运行时路径写在会被部署重新生成的主 unit 或 `conf/env.sh` 中；旧 `env.sh` 的 Java 配置不会用于
+启动新版本，也不作为升级预检的依据。路径应按目标机器的发行版和 CPU 架构确定。
+
 部署采用编译后的配置函数返回的 `DeploymentConfig`。主仓库默认公版，私有操作在独立 clone 使用
 Git 忽略的 `buildSrc/deployment-local/` 配置源码。HTTP scheme 与 TCP TLS 分别配置：HTTP 站点可以只给 TCP 配置 keystore，
 HTTPS 安装则同时让 HTTP connector 使用它；客户端信任规则见[传输配置边界](configuration.md#传输配置边界)。

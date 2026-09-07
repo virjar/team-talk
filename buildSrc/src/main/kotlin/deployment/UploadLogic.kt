@@ -78,6 +78,7 @@ fun deployServer(
         deploymentLease.withOperationsGuarded {
             val deploymentMode = readRemoteDeploymentMode(host, user, deployPort, deployPath)
             val isFirstDeploy = deploymentMode == DeploymentMode.FIRST_DEPLOY
+            preflightServerJavaRuntime(host, user, deployPort, isFirstDeploy)
             requireTlsPemFilesForDeployment(tcpTlsEnabled, isFirstDeploy, localTlsPemFiles)
 
             val secretsFile = File(rootDir, "gradle/deployment.secrets")
