@@ -27,11 +27,13 @@ internal fun AndroidDocumentWorkspaceHost(
 ) {
     val context = LocalContext.current
     val uiScope = rememberCoroutineScope()
+    val requestExportPermission = rememberAndroidMediaExportPermission()
     val mediaLease = remember(
         context.applicationContext,
         dataState,
         resourceOwner,
         uiScope,
+        requestExportPermission,
     ) {
         resourceOwner.acquire {
             AndroidAuthenticatedMediaResources.create(
@@ -51,6 +53,7 @@ internal fun AndroidDocumentWorkspaceHost(
                         uiScope = uiScope,
                         telemetry = dataState.telemetry,
                         telemetryPage = ClientUiPage.DOCUMENTS,
+                        requestExportPermission = requestExportPermission,
                     )
                 },
             )

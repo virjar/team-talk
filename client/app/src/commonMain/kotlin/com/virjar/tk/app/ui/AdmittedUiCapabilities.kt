@@ -40,6 +40,12 @@ internal class AdmittedFileDownloadController(
         admission.runIfOpen { delegate.openOrDownload(attachment) }
     }
 
+    override fun exportToUserLocation(attachment: Attachment): Boolean {
+        var accepted = false
+        admission.runIfOpen { accepted = delegate.exportToUserLocation(attachment) }
+        return accepted
+    }
+
     /** 这是非持有视图；只有平台/会话 owner 才会关闭真正的 controller。 */
     override fun close() = Unit
 }

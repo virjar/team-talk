@@ -44,6 +44,7 @@ internal fun rememberAndroidChatMediaResources(
 ): AndroidAuthenticatedMediaResources? {
     val latestTextAttachmentPreview = rememberUpdatedState(onTextAttachmentPreview)
     val fileDownloadUiScope = rememberCoroutineScope()
+    val requestExportPermission = rememberAndroidMediaExportPermission()
     val mediaResourcesLease = remember(
         context,
         deploymentIdentity,
@@ -53,6 +54,7 @@ internal fun rememberAndroidChatMediaResources(
         resourceOwner,
         fileDownloadUiScope,
         telemetry,
+        requestExportPermission,
     ) {
         resourceOwner.acquire {
             AndroidAuthenticatedMediaResources.create(
@@ -75,6 +77,7 @@ internal fun rememberAndroidChatMediaResources(
                         },
                         telemetry = telemetry,
                         telemetryPage = ClientUiPage.CHAT,
+                        requestExportPermission = requestExportPermission,
                     )
                 },
                 stopVoice = { mediaSession ->

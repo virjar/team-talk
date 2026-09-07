@@ -61,6 +61,7 @@ class AndroidFileDownloadController private constructor(
     private val workerDispatcher: CoroutineDispatcher,
     /** 应用上下文；仅在真实客户端注入，用于把附件导出到相册/下载（T007）。测试替身保持 null。 */
     private val appContext: Context? = null,
+    private val requestExportPermission: suspend () -> Boolean = { false },
 ) : FileDownloadController {
     private class FileOperationAdmission(val key: String) {
         val terminalClaimed = AtomicBoolean(false)
@@ -75,8 +76,10 @@ class AndroidFileDownloadController private constructor(
         onTextAttachmentPreview: ((Attachment) -> Unit)? = null,
         telemetry: ClientUiTelemetrySink = NoopClientUiTelemetrySink,
         telemetryPage: ClientUiPage = ClientUiPage.CHAT,
+        requestExportPermission: suspend () -> Boolean,
     ) : this(
         appContext = context.applicationContext,
+        requestExportPermission = requestExportPermission,
         cacheRootProvider = context.applicationContext.let { applicationContext ->
             { applicationContext.cacheDir }
         },
@@ -477,6 +480,12 @@ class AndroidFileDownloadController private constructor(
         val context = appContext ?: return false
         if (closed.get() || !mediaSession.isCurrentOwner()) return false
         launchFileOperation(attachment.path) { admission ->
+            if (!requestExportPermission()) {
+                showExportFeedback(context, "未获得存储权限，无法保存；可在系统应用设置中开启")
+                return@launchFileOperation
+            }
+            mediaSession.ensureOpen()
+            if (closed.get()) return@launchFileOperation
             suspend fun pinnedCachedLease(): AndroidMediaCacheFileLease? = try {
                 val root = cacheRoot
                 AndroidMediaCacheCapacityRegistry.cachedLease(
@@ -501,6 +510,10 @@ class AndroidFileDownloadController private constructor(
                     file = checkNotNull(lease).file,
                     attachment = attachment,
                     workerDispatcher = workerDispatcher,
+                    ensureOwnerOpen = {
+                        mediaSession.ensureOpen()
+                        check(!closed.get()) { "Attachment controller is closed" }
+                    },
                 )
                 val message = when {
                     ok &&
@@ -509,14 +522,22 @@ class AndroidFileDownloadController private constructor(
                     ok -> "已保存到下载"
                     else -> "保存失败"
                 }
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
-                }
+                showExportFeedback(context, message)
             } finally {
                 lease?.close()
             }
         }
         return true
+    }
+
+    private fun showExportFeedback(context: Context, message: String) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            mediaSession.runIfOpen {
+                if (!closed.get()) {
+                    android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
     }
 
     private fun cachedFile(cacheRoot: File, attachment: Attachment): File {

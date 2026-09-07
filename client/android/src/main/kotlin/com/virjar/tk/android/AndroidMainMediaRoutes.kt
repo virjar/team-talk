@@ -141,6 +141,7 @@ internal fun NavGraphBuilder.androidGroupFilesRoute(
         val sessionUid = sessionUser.uid
         val telemetry = dataState.telemetry
         val fileDownloadUiScope = rememberCoroutineScope()
+        val requestExportPermission = rememberAndroidMediaExportPermission()
         val mediaResourcesLease = remember(
             dataState.deploymentIdentity,
             dataState.datasetId,
@@ -150,6 +151,7 @@ internal fun NavGraphBuilder.androidGroupFilesRoute(
             context,
             fileDownloadUiScope,
             telemetry,
+            requestExportPermission,
         ) {
             resourceOwner.acquire {
                 AndroidAuthenticatedMediaResources.create(
@@ -169,6 +171,7 @@ internal fun NavGraphBuilder.androidGroupFilesRoute(
                             uiScope = fileDownloadUiScope,
                             telemetry = telemetry,
                             telemetryPage = ClientUiPage.GROUP_FILES,
+                            requestExportPermission = requestExportPermission,
                         )
                     },
                 )
