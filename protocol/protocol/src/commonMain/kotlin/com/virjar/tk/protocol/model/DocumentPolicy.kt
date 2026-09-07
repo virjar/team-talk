@@ -7,6 +7,7 @@ object DocumentPolicy {
     const val MAX_SPACE_NAME_LENGTH = 120
     const val MAX_DESCRIPTION_LENGTH = 500
     const val MAX_NODE_NAME_LENGTH = 180
+    /** String.length 的 UTF-16 code unit 数；合法正文编码为 UTF-8 后最多 3,000,000 字节。 */
     const val MAX_MARKDOWN_LENGTH = 1_000_000
     const val MAX_EXCERPT_LENGTH = 160
     const val EMPTY_DOCUMENT_EXCERPT = "空白文档"

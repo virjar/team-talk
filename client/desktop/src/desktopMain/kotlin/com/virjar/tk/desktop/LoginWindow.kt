@@ -283,23 +283,38 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
             onDispose { sessionUiActions.close() }
         }
         val resourceInstallation = remember(session, dataDir, sessionUiActions) {
-            DesktopSessionResourcesInstallation {
-                DesktopSessionResources(
-                    ownerUid = session.userSession.uid,
-                    datasetId = session.datasetId,
-                    deploymentIdentity = session.deploymentIdentity,
-                    credentialProvider = session::httpCredentialsSnapshot,
-                    dataDir = dataDir,
-                    diagnosticLogger = session.diagnosticLogger("DesktopSession"),
-                    telemetry = SessionClientUiTelemetrySink(session.telemetryRecorder),
-                    onAuthExpired = { rejectedAccessToken ->
-                        sessionUiActions.requestHttpAuthExpired(rejectedAccessToken)
-                    },
-                )
-            }
+            DesktopSessionResourcesInstallation(
+                createResources = {
+                    DesktopSessionResourceCandidate.create(
+                        createMedia = {
+                            DesktopSessionResources(
+                                ownerUid = session.userSession.uid,
+                                datasetId = session.datasetId,
+                                deploymentIdentity = session.deploymentIdentity,
+                                credentialProvider = session::httpCredentialsSnapshot,
+                                dataDir = dataDir,
+                                diagnosticLogger = session.diagnosticLogger("DesktopSession"),
+                                telemetry = SessionClientUiTelemetrySink(session.telemetryRecorder),
+                                onAuthExpired = { rejectedAccessToken ->
+                                    sessionUiActions.requestHttpAuthExpired(rejectedAccessToken)
+                                },
+                            )
+                        },
+                        createDocumentDraftPersistence = {
+                            DesktopDocumentDraftPersistence(
+                                dataDir,
+                                com.virjar.tk.app.navigation.feature.document.DocumentDraftOwnerKey(
+                                    session.deploymentIdentity.fingerprint, session.datasetId, session.ownerUid,
+                                ),
+                            )
+                        },
+                    )
+                },
+                discardUnboundUi = DesktopAuthenticatedUiOwner::discardUnboundUi,
+            )
         }
         var resourceResult by remember(session) {
-            mutableStateOf<DesktopSessionResourcesInstallationResult?>(null)
+            mutableStateOf<DesktopSessionResourcesInstallationResult<DesktopAuthenticatedUiOwner>?>(null)
         }
         var resourceAttempt by remember(session) { mutableStateOf(0) }
         val resourceLogger = remember(session) { session.diagnosticLogger("DesktopSessionMount") }
@@ -312,9 +327,24 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
         }
         LaunchedEffect(resourceInstallation, resourceAttempt) {
             resourceResult = null
-            val result = resourceInstallation.install {
-                auth.session === session && session.isBusinessActive && presentationGate.isOpen
-            }
+            val result = resourceInstallation.install(
+                ownerStillCurrent = {
+                    auth.session === session && session.isBusinessActive && presentationGate.isOpen
+                },
+                createUi = { candidate ->
+                    DesktopAuthenticatedUiOwner(
+                        session = session,
+                        documentDraftPersistence = candidate.documentDraftPersistence,
+                        presentationGate = presentationGate,
+                        closePlatformResources = {
+                            sessionUiActions.close()
+                            resourceInstallation.close()
+                        },
+                        requestAuthExpired = { sessionUiActions.requestAuthExpired() },
+                        requestHttpAuthExpired = sessionUiActions::requestHttpAuthExpired,
+                    )
+                },
+            )
             val ownerCurrent =
                 auth.session === session && session.isBusinessActive && presentationGate.isOpen
             when {
@@ -328,50 +358,35 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                 result is DesktopSessionResourcesInstallationResult.Ready -> resourceResult = result
             }
         }
-        val desktopResources =
-            (resourceResult as? DesktopSessionResourcesInstallationResult.Ready)?.resources
+        val readyResources = resourceResult as? DesktopSessionResourcesInstallationResult.Ready<DesktopAuthenticatedUiOwner>
+        val desktopResources = readyResources?.resources
         var readyPresentation: DesktopReadyWindowPresentation? = null
         if (desktopResources != null) {
-            val authenticatedUi = remember(session, desktopResources, presentationGate) {
-                try {
-                    DesktopAuthenticatedUiOwner(
-                        session = session,
-                        dataDir = dataDir,
-                        presentationGate = presentationGate,
-                        closePlatformResources = {
-                            sessionUiActions.close()
-                            resourceInstallation.close()
-                        },
-                        requestAuthExpired = { sessionUiActions.requestAuthExpired() },
-                        requestHttpAuthExpired = sessionUiActions::requestHttpAuthExpired,
-                    )
-                } catch (failure: Throwable) {
-                    try {
-                        resourceInstallation.close()
-                    } catch (closeFailure: Throwable) {
-                        if (failure !== closeFailure && failure.suppressed.none { it === closeFailure }) {
-                            failure.addSuppressed(closeFailure)
-                        }
-                    }
-                    throw failure
-                }
-            }
+            val authenticatedUi = readyResources.uiOwner
             DisposableEffect(sessionRetirementBridge, session, authenticatedUi, resourceInstallation) {
-                val binding = sessionRetirementBridge.bind(session, authenticatedUi.retirement)
-                val lifecycleBound = resourceInstallation.markLifecycleBound(desktopResources)
-                if (lifecycleBound) {
+                val binding = try {
+                    resourceInstallation.bindLifecycle(desktopResources) {
+                        sessionRetirementBridge.bind(session, authenticatedUi.retirement)
+                    }
+                } catch (failure: Throwable) {
+                    val cleanupFailure = resourceInstallation.abandonIfUnbound()
+                    throw if (cleanupFailure == null) failure else mergeDesktopLifecycleFailures(failure, cleanupFailure)
+                }
+                if (binding != null) {
                     shutdownRetirement.set(authenticatedUi.retirement)
                     authenticatedUi.activateHttpAuthExpiredDelivery()
                 } else {
-                    binding.close()
-                    authenticatedUi.retirement.retireFromComposition(SessionEndReason.SHUTDOWN)
+                    // 安装器已清理未绑定候选，不再用正式退役流程重复处置已封存的 writer。
+                    presentationGate.close()
                 }
                 onDispose {
-                    try {
-                        authenticatedUi.retirement.retireFromComposition(SessionEndReason.SHUTDOWN)
-                    } finally {
-                        shutdownRetirement.compareAndSet(authenticatedUi.retirement, null)
-                        binding.close()
+                    if (binding != null) {
+                        try {
+                            authenticatedUi.retirement.retireFromComposition(SessionEndReason.SHUTDOWN)
+                        } finally {
+                            shutdownRetirement.compareAndSet(authenticatedUi.retirement, null)
+                            binding.close()
+                        }
                     }
                 }
             }

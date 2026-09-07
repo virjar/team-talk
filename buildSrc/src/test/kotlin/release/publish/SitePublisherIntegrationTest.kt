@@ -30,6 +30,7 @@ import kotlin.test.assertTrue
 import org.apache.sshd.common.config.keys.KeyUtils
 import org.apache.sshd.common.config.keys.PublicKeyEntry
 import org.apache.sshd.common.config.keys.writer.openssh.OpenSSHKeyPairResourceWriter
+import org.apache.sshd.common.config.keys.writer.openssh.OpenSSHKeyEncryptionContext
 import org.apache.sshd.common.file.virtualfs.VirtualFileSystemFactory
 import org.apache.sshd.common.keyprovider.KeyPairProvider
 import org.apache.sshd.server.Environment
@@ -38,7 +39,6 @@ import org.apache.sshd.server.SshServer
 import org.apache.sshd.server.channel.ChannelSession
 import org.apache.sshd.server.command.Command
 import org.apache.sshd.server.command.CommandFactory
-import org.apache.sshd.server.keyprovider.SimpleGeneratorHostKeyProvider
 import org.apache.sshd.sftp.server.SftpSubsystemFactory
 
 class SitePublisherIntegrationTest {
@@ -320,7 +320,7 @@ class SitePublisherIntegrationTest {
 
     @Test
     fun `OpenSSH Ed25519 identity works without local SSH binaries`() {
-        SftpFixture(KeyUtils.generateKeyPair(KeyPairProvider.SSH_ED25519, 256)).use { fixture ->
+        SftpFixture(sshFixtureKey(KeyPairProvider.SSH_ED25519)).use { fixture ->
             SitePublisher().publish(fixture.publication("0.0.1"), fixture.connection)
             assertEquals("new android 0.0.1", File(fixture.downloads, "TeamTalk-android.apk").readText())
         }
@@ -334,8 +334,10 @@ private fun changeManifestClient(publication: SitePublication, field: String) {
 }
 
 /** Real Apache SSHD transport and SFTP filesystem; the remote flock command alone is modelled in JVM. */
-private class SftpFixture(
-    val userKey: KeyPair = KeyUtils.generateKeyPair(KeyPairProvider.SSH_RSA, 2048),
+internal class SftpFixture(
+    val userKey: KeyPair = sshFixtureKey(KeyPairProvider.SSH_RSA),
+    hostKey: KeyPair = sshFixtureKey(KeyPairProvider.SSH_RSA),
+    passphrase: String? = null,
 ) : AutoCloseable {
     private val temporary = Files.createTempDirectory("teamtalk-sftp-publication-").toFile()
     val local = File(temporary, "local").apply { mkdirs() }
@@ -348,11 +350,13 @@ private class SftpFixture(
 
     init {
         val privateKey = File(local, "id_test")
-        privateKey.outputStream().use { OpenSSHKeyPairResourceWriter.INSTANCE.writePrivateKey(userKey, "publication-fixture", null, it) }
-        val hostKeys = SimpleGeneratorHostKeyProvider(File(local, "host-key").toPath()).apply { algorithm = "RSA" }
+        val encryption = passphrase?.let {
+            OpenSSHKeyEncryptionContext().apply { password = it; cipherType = "256" }
+        }
+        privateKey.outputStream().use { OpenSSHKeyPairResourceWriter.INSTANCE.writePrivateKey(userKey, "publication-fixture", encryption, it) }
         server.host = "127.0.0.1"
         server.port = 0
-        server.keyPairProvider = hostKeys
+        server.keyPairProvider = KeyPairProvider.wrap(hostKey)
         server.publickeyAuthenticator = org.apache.sshd.server.auth.pubkey.PublickeyAuthenticator { _, key, _ -> KeyUtils.compareKeys(userKey.public, key) }
         server.fileSystemFactory = VirtualFileSystemFactory(remote.toPath())
         server.subsystemFactories = listOf(SftpSubsystemFactory.Builder().build())
@@ -362,9 +366,9 @@ private class SftpFixture(
         }
         server.start()
         val knownHosts = File(local, "known_hosts").apply {
-            writeText("[127.0.0.1]:${server.port} " + PublicKeyEntry.toString(hostKeys.loadKeys(null).first().public) + "\n")
+            writeText("[127.0.0.1]:${server.port} " + PublicKeyEntry.toString(hostKey.public) + "\n")
         }
-        connection = SiteConnection("127.0.0.1", server.port, "fixture", "/opt/teamtalk/static/downloads", privateKey, knownHosts)
+        connection = SiteConnection("127.0.0.1", server.port, "fixture", "/opt/teamtalk/static/downloads", privateKey, knownHosts, passphrase)
     }
 
     fun installPreviousSite() {
@@ -416,6 +420,11 @@ private class SftpFixture(
         server.stop(true)
         temporary.deleteRecursively()
     }
+}
+
+internal fun sshFixtureKey(type: String): KeyPair {
+    SiteSshSecurity.initialize()
+    return KeyUtils.generateKeyPair(type, if (type == KeyPairProvider.SSH_RSA) 2048 else 256)
 }
 
 private class FixtureFlockCommand(

@@ -5,11 +5,17 @@ import com.virjar.tk.server.domain.attachment.AttachmentReferences
 import com.virjar.tk.server.domain.attachment.AttachmentRetentionConfig
 import com.virjar.tk.server.domain.attachment.AttachmentRetentionService
 import com.virjar.tk.server.infra.db.repository.ExposedDocumentAttachmentReferences
+import com.virjar.tk.server.infra.db.DocumentContentRevisions
+import com.virjar.tk.server.infra.db.DocumentEmbeddedAssets
+import com.virjar.tk.server.infra.db.DocumentNodes
 import com.virjar.tk.protocol.model.DocumentContent
 import com.virjar.tk.protocol.model.DocumentSpace
 import com.virjar.tk.protocol.model.DocumentSpaceGrant
 import com.virjar.tk.protocol.model.EmbeddedAsset
 import kotlinx.coroutines.test.runTest
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.transactions.transaction
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import java.io.File
@@ -29,6 +35,72 @@ class DocumentEmbeddedAssetIntegrationTest {
     }
 
     private val ctx get() = ext.env
+
+    @Test
+    fun `oversized markdown leaves documents revisions staging assets and events unchanged`() = runTest {
+        val owner = ctx.registerUser(uniqueUsername("document-body-budget-owner"))
+        val space = ctx.documentService.createSpace(owner, "正文容量", null)
+        val existing = ctx.documentService.createDocument(owner, space.spaceId, null, "保留正文", "# 原正文")
+        val path = store(owner, "staging.png", "image/png", "pending-image")
+        val asset = EmbeddedAsset(
+            assetId = UUID.randomUUID().toString(),
+            attachment = requireNotNull(ctx.fileStore.getAttachment(path)),
+        )
+        val reference = "\n![待绑定](${EmbeddedAsset.uri(asset.assetId)})"
+        val references = ExposedDocumentAttachmentReferences(ctx.database)
+        val eventsBefore = ctx.syncEventReader.getEventsAfter(owner, 0L, 1_000).map { it.eventId }
+
+        listOf("x", "中", "😀").forEach { token ->
+            val rejectedId = UUID.randomUUID().toString()
+            val paddingUnits = 1_000_001 - reference.length
+            val oversized = token.repeat(paddingUnits / token.length) +
+                "x".repeat(paddingUnits % token.length) + reference
+            assertEquals(1_000_001, oversized.length)
+            val content = DocumentContent(oversized, listOf(asset))
+
+            assertFailsWith<IllegalArgumentException> {
+                ctx.documentService.createDocument(
+                    actorUid = owner,
+                    documentId = rejectedId,
+                    spaceId = space.spaceId,
+                    parentId = null,
+                    title = "不得部分创建",
+                    content = content,
+                )
+            }
+            assertFailsWith<IllegalArgumentException> {
+                ctx.documentService.updateDocument(
+                    actorUid = owner,
+                    spaceId = space.spaceId,
+                    documentId = existing.documentId,
+                    content = content,
+                    expectedRevision = existing.revision,
+                )
+            }
+
+            assertEquals(
+                existing,
+                ctx.readDocuments { findDocument(it, space.spaceId, existing.documentId) },
+            )
+            transaction(ctx.database) {
+                assertEquals(0L, DocumentNodes.selectAll().where { DocumentNodes.nodeId eq rejectedId }.count())
+                assertEquals(0L, DocumentContentRevisions.selectAll().where {
+                    DocumentContentRevisions.documentId eq rejectedId
+                }.count())
+                assertEquals(1L, DocumentContentRevisions.selectAll().where {
+                    DocumentContentRevisions.documentId eq existing.documentId
+                }.count())
+                listOf(rejectedId, existing.documentId).forEach { documentId ->
+                    assertEquals(0L, DocumentEmbeddedAssets.selectAll().where {
+                        DocumentEmbeddedAssets.documentId eq documentId
+                    }.count())
+                }
+            }
+            assertEquals(emptySet(), references.getReferencedPaths(setOf(path)))
+            assertNull(assertNotNull(ctx.fileStore.getMeta(path)).businessBoundAt)
+            assertEquals(eventsBefore, ctx.syncEventReader.getEventsAfter(owner, 0L, 1_000).map { it.eventId })
+        }
+    }
 
     @Test
     fun `revision manifests retain history while live ACL and terminal GC govern every object`() = runTest {

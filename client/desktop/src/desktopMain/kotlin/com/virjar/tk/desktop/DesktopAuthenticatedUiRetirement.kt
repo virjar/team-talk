@@ -3,12 +3,10 @@ package com.virjar.tk.desktop
 import androidx.compose.runtime.mutableStateOf
 import com.virjar.tk.shared.client.ClientSession
 import com.virjar.tk.shared.client.SessionEndReason
-import com.virjar.tk.app.navigation.feature.document.DocumentDraftOwnerKey
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftStore
 import com.virjar.tk.app.ui.UiActionAdmission
 import com.virjar.tk.shared.log.AppLog
 import java.io.Closeable
-import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -544,21 +542,12 @@ internal class DesktopRetirementBindingRegistry<K : Any, O : Any>(
  */
 internal class DesktopAuthenticatedUiOwner(
     session: ClientSession,
-    dataDir: File,
+    private val documentDraftPersistence: DesktopDocumentDraftPersistence,
     val presentationGate: DesktopSessionPresentationGate,
     closePlatformResources: () -> Unit,
     requestAuthExpired: () -> Unit,
     requestHttpAuthExpired: (rejectedAccessToken: String) -> Unit,
 ) {
-    private val documentDraftOwnerKey = DocumentDraftOwnerKey(
-        deploymentFingerprint = session.deploymentIdentity.fingerprint,
-        datasetId = session.datasetId,
-        uid = session.ownerUid,
-    )
-    private val documentDraftPersistence = DesktopDocumentDraftPersistence(
-        dataDir = dataDir,
-        ownerKey = documentDraftOwnerKey,
-    )
     private val documentDrafts = DocumentDraftStore(documentDraftPersistence)
     val navigation = DesktopNav(
         session = session,
@@ -607,12 +596,17 @@ internal class DesktopAuthenticatedUiOwner(
     fun activateHttpAuthExpiredDelivery() {
         navigation.activateHttpAuthExpiredDelivery()
     }
+
+    /** 构造后尚未绑定会话的候选：只销毁 UI，writer 仍由安装器 preserve + seal。 */
+    fun discardUnboundUi() {
+        navigation.destroy(clearComposerContexts = true, clearDocumentDrafts = false)
+    }
 }
 
 private fun isFatalDesktopLifecycleFailure(failure: Throwable): Boolean =
     failure is CancellationException || failure !is Exception
 
-private fun mergeDesktopLifecycleFailures(primary: Throwable?, additional: Throwable): Throwable {
+internal fun mergeDesktopLifecycleFailures(primary: Throwable?, additional: Throwable): Throwable {
     if (primary == null || primary === additional) return additional
     return if (!isFatalDesktopLifecycleFailure(primary) && isFatalDesktopLifecycleFailure(additional)) {
         addSuppressedDesktopLifecycleFailure(additional, primary)

@@ -1,7 +1,8 @@
 # 变更指南
 
-以下扩展遵循[版本与兼容机制](../04-protocol/versioning.md)：同一 major 内不修改已登记 wire，
-新增契约递增协议 minor 并声明 `@SinceProtocol`。普通升级必须迁移并保留已有资料。
+以下扩展遵循[版本与兼容机制](../04-protocol/versioning.md)：同一 major 内不修改已发行 wire，
+新增契约使用本轮待发布 minor 并声明 `@SinceProtocol`，同一发行批次不重复递增。
+本轮尚未发行的新增契约可直接修订并更新开发清单；普通升级必须迁移并保留已有资料。
 
 ## 1. 新增 RPC
 

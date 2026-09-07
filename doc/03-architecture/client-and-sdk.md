@@ -982,7 +982,7 @@ Desktop、Android 和 Headless 复用 `shared` 的 `ClientSession` / `LocalCache
 | 关注点 | Desktop | Android | Headless（shared jvmMain） |
 |---|---|---|---|
 | 认证与 UI 所有者 | `LoginWindow` → `AuthController`；`MainAppContent` + `DesktopAuthenticatedUiOwner` 接管 UI | `AndroidAuthenticationRoot` → `AuthController`；`AndroidAppDataStateHolder` 持有会话 UI | 无 UI；`AgentService` 直接组装会话 |
-| 会话资源构造交接 | `DesktopSessionResourcesInstallation`：磁盘资源在 storage dispatcher 构造，回 Main 复验确切会话再发布；候选未发布前由构造者负责关闭 | `AndroidAppDataStateHolder` 持有 `AppDataState` 与草稿上下文；Activity 重建按精确身份决定续接 | `AgentMain` 顺序装配，无候选交接 |
+| 会话资源构造交接 | `DesktopSessionResourcesInstallation`：媒体与草稿 writer 在 storage dispatcher 构造，Main 复验确切会话并组装导航，再发布完整候选；退役绑定接手前由安装器负责失败关闭 | `AndroidAppDataStateHolder` 在 Main 完成 `AppDataState` 与通知资源候选后才发布；失败释放候选，保留同 owner 热草稿和 Application 共享 writer；Activity 重建按精确身份决定续接 | `AgentMain` 顺序装配，无候选交接 |
 | 退休（账号切换/登出） | `DesktopAuthenticatedUiRetirement`：先停再换，绑定安装完成前责任在构造者 | `AndroidUiRetirementPolicy`（DISCARD_DRAFTS / PRESERVE_DURABLE_DRAFTS / PRESERVE_SAME_USER_CONTINUATION）显式选择草稿处置 | `AgentLifecycleDrain`：逐 owner release，普通诊断与致命终局分流上报 |
 | UI↔本地数据边界 | `UiLocalDataBoundary`（app 层唯一边界：UI 协程与阻塞 LocalCache/Repository 工作隔离） | 同左（共享 app 层） | 不适用；agent 只经 Repository |
 | UI 发起的本地修改 | `SessionLocalMutationWriter` 非阻塞准入，session 存储 worker 落库 | 同左 | 无 UI 线程；通过 ImBot / Repository 提交业务 |
@@ -990,3 +990,12 @@ Desktop、Android 和 Headless 复用 `shared` 的 `ClientSession` / `LocalCache
 
 不变式：**会话资源的所有权只存在一个当前位置**——候选期在构造者、发布后在 owner、退休时按
 端各自的 policy 处置草稿与本地事实；迟到候选/迟到 401/旧代际回调都不允许触及新会话。
+
+Desktop 的 IO 候选包含会触及私有目录检查的草稿持久化，而导航和 Compose 状态仍只在 Main 构造。
+导航构造失败会回到既有加载失败/重试表面；取消或会话替换会销毁未交接 UI、保留并排空草稿，最后封存
+writer 租约和关闭媒体。绑定以后，草稿的最终处置回归认证退役流程，不能在媒体关闭时提前封存：先到的
+Compose disposal 仍可能被后到的主动注销升级为丢弃。
+
+Android 没有复制这套后台资源图：草稿 writer 归进程所有，holder 只借用它。候选通知组装失败时先关闭
+已获取的平台资源，再销毁候选 UI；同 owner 的编辑上下文和热草稿留给重试，失败会话与旧会话的回调均不准入。
+两端都不把构造失败当作用户主动退出，也不删除持久草稿。

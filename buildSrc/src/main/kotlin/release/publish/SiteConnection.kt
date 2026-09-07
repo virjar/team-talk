@@ -47,6 +47,7 @@ data class SiteConnection(
 
 internal inline fun <T> SiteConnection.connect(block: (ClientSession, SftpClient) -> T): T {
     validate()
+    SiteSshSecurity.initialize()
     val keys = SecurityUtils.getKeyPairResourceParser().loadKeyPairs(
         null,
         privateKey.toPath(),

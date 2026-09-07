@@ -78,32 +78,46 @@ internal class AndroidAppDataStateHolder(application: Application) : AndroidView
                 composerContexts = ChatComposerContextStore()
                 documentDrafts = newDocumentDraftStore()
             }
-            continuationOwnerKey = null
-            AppDataState(
+            // 从这里起只持有可延续的热草稿，尚无可用 UI。构造失败也保留该 owner key，
+            // 下次重试才能继续借用同一份草稿，而不是把已销毁的旧 state 当作当前会话。
+            dataState = null
+            continuationOwnerKey = nextOwnerKey
+            val resources = AndroidAuthenticatedResourceOwner()
+            val state = AppDataState(
                 session = session,
                 chatComposerContexts = composerContexts,
                 documentDrafts = documentDrafts,
                 onAuthExpired = onAuthExpired,
                 onHttpAuthExpired = onHttpAuthExpired,
-            ).let { state ->
-                val resources = AndroidAuthenticatedResourceOwner()
+            )
+            completeAndroidUiCandidate(
+                state = state,
+                resources = resources,
+                attachResources = {
+                    val cache = session.localCache
+                    resources.acquire {
+                        AndroidMessageNotifications(
+                            context = getApplication<Application>().applicationContext,
+                            deploymentFingerprint = session.deploymentIdentity.fingerprint,
+                            datasetId = session.datasetId,
+                            uid = session.ownerUid,
+                            // 缓存的首帧已经加载完成；ViewModel 初始 emptyList 尚不代表这个事实。
+                            conversations = UiLocalDataBoundary().projection(cache::observeConversations),
+                            connectionState = session.connectionState,
+                            foreground = notificationForeground,
+                            navigation = notificationNavigation,
+                        )
+                    }
+                },
+                discardState = { candidate ->
+                    candidate.destroy(clearComposerContexts = false, clearDocumentDrafts = false)
+                },
+            )
+            AndroidAuthenticatedUiSession(state, resources).also {
+                // 与 replaceOwner 的发布处于同一个 Main 转换中，外界只会取得完整候选。
                 dataState = state
                 authenticatedResources = resources
-                val cache = session.localCache
-                resources.acquire {
-                    AndroidMessageNotifications(
-                        context = getApplication<Application>().applicationContext,
-                        deploymentFingerprint = session.deploymentIdentity.fingerprint,
-                        datasetId = session.datasetId,
-                        uid = session.ownerUid,
-                        // 缓存的首帧已经加载完成；ViewModel 初始 emptyList 尚不代表这个事实。
-                        conversations = UiLocalDataBoundary().projection(cache::observeConversations),
-                        connectionState = session.connectionState,
-                        foreground = notificationForeground,
-                        navigation = notificationNavigation,
-                    )
-                }
-                AndroidAuthenticatedUiSession(state, resources)
+                continuationOwnerKey = null
             }
         }
         // replaceOwner 只会在其状态转换返回之后发布确切的 ClientSession。早期的 HTTP 401

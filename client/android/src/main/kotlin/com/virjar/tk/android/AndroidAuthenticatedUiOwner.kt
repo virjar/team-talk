@@ -25,6 +25,33 @@ internal data class AndroidAuthenticatedUiSession(
 )
 
 /**
+ * state 与通知等平台资源完整组装后才允许 holder 发布。失败时先停资源，再销毁候选 UI；
+ * discardState 只解除本次 UI 绑定，不能清空借用的草稿或关闭 Application 持有的 writer。
+ */
+internal fun <S : Any> completeAndroidUiCandidate(
+    state: S,
+    resources: AndroidAuthenticatedResourceOwner,
+    attachResources: (S) -> Unit,
+    discardState: (S) -> Unit,
+): S = try {
+    attachResources(state)
+    state
+} catch (failure: Throwable) {
+    var terminal = failure
+    try {
+        resources.closeAll().forEach { terminal = mergeAndroidLifecycleFailures(terminal, it) }
+    } catch (cleanupFailure: Throwable) {
+        terminal = mergeAndroidLifecycleFailures(terminal, cleanupFailure)
+    }
+    try {
+        discardState(state)
+    } catch (cleanupFailure: Throwable) {
+        terminal = mergeAndroidLifecycleFailures(terminal, cleanupFailure)
+    }
+    throw terminal
+}
+
+/**
  * 为一次生命周期边界捕获确切的会话 sink，并最多发出一个带类型的故障。
  * 任何异常文本、资源身份或生命周期边界标签都不会越过此适配器。
  */
@@ -68,7 +95,10 @@ internal class AndroidSessionOwnerGate<T : Any> {
     private var owner: T? = null
 
     fun <R> replaceOwner(nextOwner: T, transition: (previousOwner: T?) -> R): R = synchronized(lock) {
-        val result = transition(owner)
+        val previousOwner = owner
+        // 转换会退休旧 UI；失败后也不能再准入旧会话的迟到回调。
+        owner = null
+        val result = transition(previousOwner)
         owner = nextOwner
         result
     }

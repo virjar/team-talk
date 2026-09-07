@@ -2,6 +2,7 @@ package com.virjar.tk.protocol
 
 import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.protocol.model.Document
+import com.virjar.tk.protocol.model.DocumentContent
 import com.virjar.tk.protocol.model.DocumentCreateResult
 import com.virjar.tk.protocol.model.DocumentCustodyTransferResult
 import com.virjar.tk.protocol.model.DocumentHomeItem
@@ -21,11 +22,69 @@ import com.virjar.tk.protocol.model.DOCUMENT_NODE_SIBLING_ORDER
 import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.ProtocolCorruptionException
 import com.virjar.tk.protocol.ProtocolEncodingException
+import com.virjar.tk.protocol.payload.InvokePayload
+import com.virjar.tk.protocol.rpc.gen.DocumentRpcContract
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class DocumentModelTest {
+    @Test
+    fun `million UTF16 unit documents round trip through RPC and current and historical bodies`() {
+        val spaceId = "00000000-0000-4000-8000-000000000101"
+        val documentId = "00000000-0000-4000-8000-000000000102"
+        // 固定产品边界，避免把 UTF-16 长度误改成 UTF-8 字节或 Unicode code point 数。
+        val cases = listOf(
+            Triple("ASCII", "x".repeat(1_000_000), 1_000_000),
+            Triple("中文", "中".repeat(1_000_000), 3_000_000),
+            Triple("emoji", "😀".repeat(500_000), 2_000_000),
+        )
+        cases.forEach { (label, markdown, utf8Bytes) ->
+            assertEquals(1_000_000, markdown.length, label)
+            assertEquals(utf8Bytes, markdown.encodeToByteArray().size, label)
+            val content = DocumentContent(markdown)
+            val request = InvokePayload(
+                requestId = 1,
+                serviceId = "document",
+                methodId = 11,
+                payload = DocumentRpcContract.encodeUpdateDocument(spaceId, documentId, content, 1L),
+            )
+            val decodedRequest = ProtoCodec.decode(InvokePayload, ProtoCodec.encode(request))
+            ProtoCodec.withPayload(decodedRequest.payload) {
+                assertEquals(spaceId, readRequiredString())
+                assertEquals(documentId, readRequiredString())
+                assertTrue(content == DocumentContent.readFrom(this), "$label RPC body was changed")
+                assertEquals(1L, readVarLong())
+            }
+
+            val document = Document(
+                documentId = documentId,
+                spaceId = spaceId,
+                title = label,
+                markdown = markdown,
+                createdBy = "u1",
+                createdAt = 1L,
+                updatedBy = "u1",
+                updatedAt = 1L,
+            )
+            val revision = DocumentRevision(documentId, 1L, label, markdown, "u1", 1L)
+            assertTrue(
+                document == ProtoCodec.decode(Document, ProtoCodec.encode(document)),
+                "$label current body was changed",
+            )
+            assertTrue(
+                revision == ProtoCodec.decode(DocumentRevision, ProtoCodec.encode(revision)),
+                "$label historical body was changed",
+            )
+            assertFailsWith<IllegalArgumentException>("$label must reject one extra UTF-16 unit") {
+                DocumentRpcContract.encodeUpdateDocument(
+                    spaceId, documentId, DocumentContent(markdown + "x"), 1L,
+                )
+            }
+        }
+    }
+
     @Test
     fun `document sibling order is immutable creation time then node id`() {
         val base = DocumentNode(

@@ -226,6 +226,11 @@ APK 内嵌构建身份并校验安装版本与签名，Desktop 检查三平台�
 远端需要 Linux 的 SFTP 服务与 `flock`、`mv`、`rm`、`rmdir` 命令，账号须有该下载目录的写权限；
 不要求 SFTP 提供 POSIX rename 扩展。
 
+SSH 加密由 `SiteSshSecurity` 在每份 buildSrc 中初始化，显式使用该构建自己的 Bouncy Castle
+实例，并保留 JDK 的 AES/HMAC 优先级。公版与私有 clone 可共用 Gradle daemon；构建不会替换
+进程全局的加密 Provider，避免 Ed25519 密钥跨 classloader 类型冲突。隔离回归测试覆盖加密私钥、
+Ed25519 主机校验及真实 SFTP 上传，不需要在客户电脑上更改 SSH 密钥类型。
+
 | 参数 | 等价环境变量 | 内容 |
 |---|---|---|
 | `-PreleaseSshKey` | `TEAMTALK_RELEASE_SSH_KEY` | 已有私钥文件路径 |
