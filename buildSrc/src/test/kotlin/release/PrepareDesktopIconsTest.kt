@@ -72,8 +72,8 @@ class PrepareDesktopIconsTest {
         assertEquals(config.lines().filterIndexed { i, _ -> i != 2 }, rewritten.lines().filterIndexed { i, _ -> i != 2 })
         assertFailsWith<IllegalStateException> { replaceConveyorIconInput(config, "/missing.jar", subset) }
         assertFailsWith<IllegalStateException> { replaceConveyorIconInput(config + "\n" + config.lines()[2], original, subset) }
-        assertEquals(listOf(original, "C:\\user workspace\\app.jar", "/cache/skiko-arm64.jar"),
-            conveyorJarInputs(config).map { it.path })
+        assertEquals(listOf(original, "C:\\user workspace\\app.jar", "/cache/skiko-arm64.jar").map { java.io.File(it) },
+            conveyorJarInputs(config))
     }
 
     private fun bytecode(name: String, vararg references: String, literal: String? = null): ByteArray =
