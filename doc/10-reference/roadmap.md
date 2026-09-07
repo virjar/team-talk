@@ -346,9 +346,9 @@ MCP 权限隔离、审计和部署配置；使用实际发布制品做产品路�
 |---|---|---|
 | `DEP-01` 构建与客户端工具链 | 将 Gradle 9、AGP 9、Kotlin 2.4、Compose 1.12、compileSdk 37 作为一组评估；先列官方兼容矩阵，检查 Android KMP 插件、新 DSL、KSP 和打包任务，不直接绕过版本检查 | 服务端/SDK/双端可构建；协议生成一致；Android release 与 Desktop 候选包可启动并完成短路径；只提高 compileSdk 不自动提高 targetSdk |
 | `DEP-02` Exposed 1 | 从 `DatabaseFactory`、`PgUnitOfWork` 和 Exposed 适配器开始迁移 `v1.core`/`v1.jdbc` 导入、事务及 UUID API；在独立 PG schema 对比新建 DDL 与现有数据读写 | 原 dataset、迁移台账和业务行保留；事务回滚、并行容器隔离及消息/群/文档核心读写通过，不夹带表结构清理 |
-| `DEP-03` Lucene 10 与 JDK 21 | 单独确定服务端 JDK 基线，再处理搜索 API 与分析器兼容；保留旧索引副本，核对重建和回退边界 | 消息与遥测搜索、权限过滤、排序和重开通过；无法原地兼容时从权威事实构建侧目录并原子切换，不能删除权威资料 |
+| `DEP-03` Lucene 10 与 JDK 21 | 服务端 JDK 21 基线已落地（构建 target 21、CI 与部署主机 21，已部署验证）；剩余工作为搜索 API 与分析器兼容；保留旧索引副本，核对重建和回退边界 | 消息与遥测搜索、权限过滤、排序和重开通过；无法原地兼容时从权威事实构建侧目录并原子切换，不能删除权威资料 |
 | `DEP-04` RocksDB 10 | 从 `MessageStore`/`FileStore` 的实际 column family、blob、压缩和 WAL 选项入手，用当前版本产生的独立库验证跨版本读取，不先改存储布局 | 消息、附件、上传事务在升级和重启后完整；flush/compaction 后的格式、JNI 平台支持和回退方案明确，再进入保留资料的部署 |
-| `DEP-05` Desktop 运行时与受控播放器 | 分别评估 JBR 21 运行镜像及 ComposeMediaPlayer 更新，核对 Conveyor、jlink、字体和 Intel macOS 原生覆盖；按目标平台验证 ABI 和随包库，不以新 Maven 版本替代原生来源审计 | 候选包启动、字体、本地文件播放、切换、全屏、关闭/重开及 FD 释放通过；新旧覆盖的许可证与平台范围明确，接收媒体仍完整下载后播放 |
+| `DEP-05` Desktop 运行时与受控播放器 | Conveyor 已接入 JBR 21.0.10（三平台输入均解析为 21.0.10，feature-version 21）；剩余评估 ComposeMediaPlayer 更新，核对 Conveyor、jlink、字体和 Intel macOS 原生覆盖；按目标平台验证 ABI 和随包库，不以新 Maven 版本替代原生来源审计 | 候选包启动、字体、本地文件播放、切换、全屏、关闭/重开及 FD 释放通过；新旧覆盖的许可证与平台范围明确，接收媒体仍完整下载后播放 |
 | `DEP-06` PostgreSQL 维护版与宿主维护 | 在维护窗口核对当前 PostgreSQL 16 补丁、镜像 digest、扩展与系统待重启状态；先保留可恢复备份与旧镜像，再分别执行数据库维护和宿主更新 | 保留原 dataset 和业务资料；数据库重开、TeamTalk 健康与短业务冒烟通过，回退步骤明确；不夹带 PostgreSQL 或操作系统大版本升级 |
 
 官方兼容/迁移依据统一从[依赖维护](../08-development/dependency-maintenance.md)进入；每项完成后移出本表，
