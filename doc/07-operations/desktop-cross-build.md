@@ -101,18 +101,26 @@ Desktop 更新源固定为最终部署配置的 `<serverUrl>/downloads/desktop`�
 
 ## Android 签名
 
-Android 优先读取环境变量，其次读取不入库的 `local.properties`：
+签名身份按以下优先级解析（T012），Debug 与 Release 始终绑定同一身份，满足同包名覆盖安装：
+
+1. **部署 DSL**（推荐入口）：`client { androidSigning { storeFile = ...; keyAlias = ... } }`。
+   密码不属于 DSL，从下表秘密入口解析；配置了 DSL 而密码缺失会明确失败。
+2. **环境变量 / local.properties**（既有私有构建路径，向后兼容）：
 
 | 环境变量 | local.properties 字段 |
 |---|---|
 | `TEAMTALK_ANDROID_KEYSTORE` | `release.storeFile` |
 | `TEAMTALK_ANDROID_STORE_PASSWORD` | `release.storePassword` |
 | `TEAMTALK_ANDROID_KEY_ALIAS` | `release.keyAlias` |
-| `TEAMTALK_ANDROID_KEY_PASSWORD` | `release.keyPassword` |
+| `TEAMTALK_ANDROID_KEY_PASSWORD` | `release.keyPassword`（缺省回退 storePassword） |
 
-证书文件可用绝对路径或相对仓库根目录的路径。没有配置 keystore 时使用已入库的固定公开预览证书
-`client/android/teamtalk-dev.jks`；该证书用于连续预览包覆盖安装，不用于组织正式私有签名。
-证书缺失或密码错误会让 release 构建失败，不降级为 unsigned APK，也不临时换用另一份密钥。
+3. **固定试用证书**：以上都未配置时使用已入库的公开预览证书 `client/android/teamtalk-dev.jks`；
+   该证书用于连续预览包覆盖安装，不用于组织正式私有签名。
+
+证书文件可用绝对路径或相对仓库根目录的路径。显式选择自有证书后，文件缺失、密码缺失、
+密码错误或别名无效应明确失败，不降级为 unsigned APK，也不静默回退默认证书。
+非敏感部署快照只输出签名模式（`default-trial` / `custom`）与证书路径；密码与私钥
+不进入部署配置、发布快照、BuildConfig 或日志。
 
 统一密封流程使用 JVM APK 验签器检查真实签名，并读取 APK 内的构建身份以及 Android 输出元数据，
 在清单中记录签名证书 SHA-256。单独调试构建可运行：

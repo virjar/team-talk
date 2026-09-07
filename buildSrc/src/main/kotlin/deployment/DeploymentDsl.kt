@@ -41,6 +41,9 @@ class DeploymentBuilder internal constructor() {
             } else 443,
             allowCustomServer = clientConfiguration.allowCustomServer,
             client = clientConfiguration.identityConfiguration.build(),
+            androidSigning = clientConfiguration.androidSigningConfiguration
+                .takeIf { it.storeFile.isNotBlank() || it.keyAlias.isNotBlank() }
+                ?.build(),
             tcpTlsCertificatePem = tcp.tlsConfiguration.certificateFile?.readText(Charsets.UTF_8),
         )
     }
@@ -97,8 +100,23 @@ class SshDeploymentBuilder internal constructor() {
 class ClientDeploymentBuilder internal constructor() {
     var allowCustomServer: Boolean = false
     internal val identityConfiguration = ClientIdentityDeploymentBuilder()
+    internal val androidSigningConfiguration = AndroidSigningDeploymentBuilder()
 
     fun identity(configure: ClientIdentityDeploymentBuilder.() -> Unit) { identityConfiguration.apply(configure) }
+
+    /** 可选。配置后 Debug/Release 都用客户证书签名；密码从环境变量或 local.properties 解析。 */
+    fun androidSigning(configure: AndroidSigningDeploymentBuilder.() -> Unit) {
+        androidSigningConfiguration.apply(configure)
+    }
+}
+
+@DeploymentDsl
+class AndroidSigningDeploymentBuilder internal constructor() {
+    /** keystore 文件；相对路径按仓库根目录解析，也允许本机绝对路径。 */
+    var storeFile: String = ""
+    var keyAlias: String = ""
+
+    internal fun build(): AndroidSigningConfig = AndroidSigningConfig(storeFile, keyAlias)
 }
 
 @DeploymentDsl

@@ -25,6 +25,11 @@ data class DeploymentConfig(
     /** 登录页自定义服务器入口（演示站体验）。生产部署保持 false——私有化路径是构建期注入地址。 */
     val allowCustomServer: Boolean = false,
     val client: ClientDistributionIdentity = ClientDistributionIdentity(),
+    /**
+     * Android 签名身份（T012）。null = 使用模块内固定试用证书（快速试用/内测覆盖安装）。
+     * 密码与私钥绝不进入配置或快照，签名时从环境变量或 Git 忽略的 local.properties 解析。
+     */
+    val androidSigning: AndroidSigningConfig? = null,
     /** 私有部署 TCP TLS 的公共证书；允许自签证书，绝不能放入私钥。 */
     val tcpTlsCertificatePem: String? = null,
 ) {
@@ -77,6 +82,14 @@ data class DeploymentConfig(
                 put("applicationId", client.applicationId)
                 put("displayName", client.displayName)
                 put("desktopName", client.desktopName)
+                // 非敏感快照只输出签名模式与证书路径；密码与私钥不进入任何产物或日志。
+                putJsonObject("androidSigning") {
+                    androidSigning?.let {
+                        put("mode", "custom")
+                        put("storeFile", it.storeFile)
+                        put("keyAlias", it.keyAlias)
+                    } ?: put("mode", "default-trial")
+                }
             }
             put("tcpTlsCertificatePem", tcpTlsCertificatePem)
         }
