@@ -2,12 +2,21 @@ package com.virjar.tk.server.integration
 
 import com.virjar.tk.server.domain.organization.OrganizationAccessDeniedException
 import com.virjar.tk.server.domain.organization.OrganizationMemberRemovalConflictException
+import com.virjar.tk.server.domain.organization.OrganizationChangePublisher
+import com.virjar.tk.server.domain.organization.OrganizationRepository
+import com.virjar.tk.server.domain.organization.OrganizationService
+import com.virjar.tk.server.domain.transaction.PgReadTransactionContext
+import com.virjar.tk.protocol.model.OrganizationMember
 import com.virjar.tk.protocol.model.OrganizationMemberPageRequest
 import com.virjar.tk.protocol.model.OrganizationUnitPageRequest
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -27,14 +36,18 @@ class OrganizationIntegrationTest {
     fun `department group follows subtree and directory projects direct member counts`() = runTest {
         val leader = ctx.registerUser(uniqueUsername("org-leader"))
         val engineer = ctx.registerUser(uniqueUsername("org-engineer"))
+        val directoryBeforeInvalidCreate = ctx.organizationService.listUnits()
         assertFailsWith<IllegalArgumentException> {
             ctx.organizationService.createUnit(null, "invalid sort", null, sortOrder = -1)
         }
-        assertTrue(ctx.organizationService.listUnits().isEmpty())
-        val root = ctx.organizationService.createUnit(null, "Example Inc", null)
-        val engineering = ctx.organizationService.createUnit(root.unitId, "研发", leader, enableGroup = true)
+        assertEquals(directoryBeforeInvalidCreate, ctx.organizationService.listUnits(), "拒绝无效创建不能留下组织节点")
+        // 同类用例共享数据库；人数与移树断言只针对本用例拥有的子树，不依赖测试执行顺序。
+        val root = directoryBeforeInvalidCreate.singleOrNull { it.parentId == null }
+            ?: ctx.organizationService.createUnit(null, "Example Inc", null)
+        val division = ctx.organizationService.createUnit(root.unitId, uniqueUsername("部门群测试"), null)
+        val engineering = ctx.organizationService.createUnit(division.unitId, "研发", leader, enableGroup = true)
         val mobile = ctx.organizationService.createUnit(engineering.unitId, "移动端", null)
-        val emptyDepartment = ctx.organizationService.createUnit(root.unitId, "空部门", null)
+        val emptyDepartment = ctx.organizationService.createUnit(division.unitId, "空部门", null)
         assertFailsWith<IllegalArgumentException> {
             ctx.organizationService.updateUnit(mobile.unitId, engineering.unitId, mobile.name, null, sortOrder = -1)
         }
@@ -50,13 +63,13 @@ class OrganizationIntegrationTest {
         ctx.organizationService.assignMember(mobile.unitId, engineer, "客户端工程师", primary = true)
 
         val units = ctx.organizationService.listUnits().associateBy { it.unitId }
-        assertEquals(0, units.getValue(root.unitId).directMemberCount)
+        assertEquals(0, units.getValue(division.unitId).directMemberCount)
         assertEquals(1, units.getValue(engineering.unitId).directMemberCount)
         assertEquals(1, units.getValue(mobile.unitId).directMemberCount)
         assertEquals(0, units.getValue(emptyDepartment.unitId).directMemberCount)
         assertEquals(
             2,
-            ctx.organizationService.listMembers(root.unitId, recursive = true).size,
+            ctx.organizationService.listMembers(division.unitId, recursive = true).size,
             "递归人数仍由显式 recursive 查询提供，目录行只展示直属人数",
         )
 
@@ -71,7 +84,7 @@ class OrganizationIntegrationTest {
         assertTrue(error.message.orEmpty().contains("维护"))
 
         // 子部门移出研发树后，成员和会话自动收敛；再移回时原 membership 无需重写即可恢复。
-        ctx.organizationService.updateUnit(mobile.unitId, root.unitId, "移动端", null, 0)
+        ctx.organizationService.updateUnit(mobile.unitId, division.unitId, "移动端", null, 0)
         assertFalse(ctx.chatService.getMembers(managed.groupChatId!!).any { it.uid == engineer })
         assertEquals(null, ctx.conversationRepo.getConversation(engineer, managed.groupChatId!!))
 
@@ -189,6 +202,62 @@ class OrganizationIntegrationTest {
         // 访客没有资格查看任何人的组织信息。
         assertFailsWith<OrganizationAccessDeniedException> {
             ctx.organizationService.getUserOrganization(guest, viewer)
+        }
+    }
+
+    @Test
+    fun `directory authorization and returned facts share a snapshot during membership revocation`() = runTest {
+        for (query in listOf("units", "members", "profile")) {
+            val viewer = ctx.registerUser(uniqueUsername("org-snapshot-viewer"))
+            val subject = ctx.registerUser(uniqueUsername("org-snapshot-subject"))
+            val root = ctx.organizationService.listUnits().singleOrNull { it.parentId == null }
+                ?: ctx.organizationService.createUnit(null, uniqueUsername("快照公司"), null)
+            val team = ctx.organizationService.createUnit(root.unitId, uniqueUsername("原部门"), null)
+            ctx.organizationService.assignMember(team.unitId, viewer, null, primary = true)
+            ctx.organizationService.assignMember(team.unitId, subject, null, primary = true)
+
+            val membershipRead = CountDownLatch(1)
+            val continueRead = CountDownLatch(1)
+            val repository = object : OrganizationRepository by ctx.organizationRepo {
+                override fun listMemberships(uid: String, transaction: PgReadTransactionContext?): List<OrganizationMember> {
+                    val memberships = ctx.organizationRepo.listMemberships(uid, transaction)
+                    if (uid == viewer) {
+                        membershipRead.countDown()
+                        check(continueRead.await(10, TimeUnit.SECONDS))
+                    }
+                    return memberships
+                }
+            }
+            val service = OrganizationService(
+                repository, ctx.userRepo, ctx.pgUnitOfWork, ctx.organizationProjector,
+                OrganizationChangePublisher { },
+            )
+            val observed = async(Dispatchers.Default) {
+                when (query) {
+                    "units" -> service.listUnitPage(viewer, OrganizationUnitPageRequest())
+                        .items.single { it.unitId == team.unitId }.name
+                    "members" -> service.listMemberPage(viewer, OrganizationMemberPageRequest(team.unitId, false))
+                        .items.single { it.uid == viewer }.uid
+                    else -> service.getUserOrganization(viewer, subject).paths.single().pathNames.last()
+                }
+            }
+            try {
+                check(membershipRead.await(10, TimeUnit.SECONDS))
+                // 权限已读、正文尚未读时提交撤权与改名；正在执行的读取必须完整保留原快照。
+                ctx.organizationService.removeMember(team.unitId, viewer)
+                ctx.organizationService.updateUnit(team.unitId, root.unitId, "${team.name}-updated", null, 0)
+            } finally {
+                continueRead.countDown()
+            }
+            assertEquals(if (query == "members") viewer else team.name, observed.await())
+            // 后来的请求使用新快照，不能沿用上一请求的资格。
+            assertFailsWith<OrganizationAccessDeniedException> {
+                when (query) {
+                    "units" -> ctx.organizationService.listUnitPage(viewer, OrganizationUnitPageRequest())
+                    "members" -> ctx.organizationService.listMemberPage(viewer, OrganizationMemberPageRequest(team.unitId, false))
+                    else -> ctx.organizationService.getUserOrganization(viewer, subject)
+                }
+            }
         }
     }
 }

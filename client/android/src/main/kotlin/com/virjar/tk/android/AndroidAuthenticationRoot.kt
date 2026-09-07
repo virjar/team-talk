@@ -1,7 +1,6 @@
 package com.virjar.tk.android
 
 import android.content.Context
-import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,14 +15,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import com.virjar.tk.protocol.model.AuthRules
 import com.virjar.tk.app.client.AuthState
 import com.virjar.tk.app.client.AuthFormSubmissionState
 import com.virjar.tk.shared.client.ClientSession
 import com.virjar.tk.shared.client.ServerConfig
 import com.virjar.tk.shared.client.SessionEndReason
-import com.virjar.tk.shared.client.createAndroidLocalCache
-import com.virjar.tk.app.client.rememberAuthController
 import com.virjar.tk.app.ui.screen.LoginScreen
 import com.virjar.tk.app.ui.screen.RegisterScreen
 import com.virjar.tk.app.ui.component.forcedProtocolUpgradeMessage
@@ -46,46 +42,11 @@ internal fun AndroidAppRoot(
         )
         return
     }
-    val deploymentIdentity = remember(serverConfig) { serverConfig.deploymentIdentity() }
-    val tokenStore = remember(deploymentIdentity) {
-        TokenStore(applicationContext, deploymentIdentity)
-    }
-    val deviceId = remember { AndroidDeviceIdentity.getOrCreate(applicationContext) }
-    val deviceName = remember {
-        "${Build.MANUFACTURER} ${Build.MODEL}".trim()
-            .takeIf { AuthRules.validateDeviceName(it) == null }
-            ?: "Android"
-    }
-    val deviceModel = remember {
-        Build.MODEL.takeIf { AuthRules.validateDeviceModel(it) == null }
-    }
     val uiScope = rememberCoroutineScope()
-    val auth = rememberAuthController(
-        tokenStore = tokenStore,
-        deploymentIdentity = deploymentIdentity,
-        tcpHost = deploymentIdentity.tcpHost,
-        tcpPort = deploymentIdentity.tcpPort,
-        tcpTlsCertificatePem = serverConfig.tcpTlsCertificatePem,
-        deviceId = deviceId,
-        deviceName = deviceName,
-        deviceModel = deviceModel,
-        deviceFlag = AuthRules.DEVICE_FLAG_ANDROID,
-        createCache = { identity, datasetId, uid ->
-            createAndroidLocalCache(applicationContext, identity, datasetId, uid)
-        },
+    val auth = rememberAndroidAuthentication(
+        applicationContext = applicationContext,
+        serverConfig = serverConfig,
         beforeSessionRetirement = beforeSessionRetirement,
-        runtimeInfo = remember { androidClientRuntimeInfo() },
-        telemetrySpoolRoot = applicationContext.filesDir,
-        accountDataCleanup = remember(application) { androidAccountDataCleanup(application) },
-        beforeAccountDataCleanup = { owner ->
-            val drafts = application.documentDraftPersistence
-            check(drafts.delete(com.virjar.tk.app.navigation.feature.document.DocumentDraftOwnerKey(
-                owner.deploymentFingerprint, owner.datasetId, owner.uid,
-            ))) { "Account draft deletion was not accepted" }
-            check(drafts.requestFlush().get(30, java.util.concurrent.TimeUnit.SECONDS)) {
-                "Account draft writer did not drain"
-            }
-        },
     )
     val sessionSnapshot = auth.session
     when (

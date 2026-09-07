@@ -1,6 +1,7 @@
 package com.virjar.tk.server.domain.organization
 
 import com.virjar.tk.server.domain.chat.ManagedChatPolicy
+import com.virjar.tk.server.domain.transaction.PgReadTransactionContext
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
 import com.virjar.tk.protocol.model.Chat
 import com.virjar.tk.protocol.model.OrganizationMember
@@ -71,13 +72,19 @@ data class ManagedChatProjectionFailure(
     val detail: String,
 )
 
-/** 单一组织目录的 PostgreSQL 支撑端口。 */
+/**
+ * 单一组织目录的 PostgreSQL 支撑端口。
+ *
+ * 终端读取传入同一个只读事务，使成员资格、目录页和祖先路径共享快照。
+ * 不带事务的读取保留给管理端收集器与内部单项查询，由仓储自行打开快照。
+ */
 interface OrganizationRepository : ManagedChatPolicy {
     /** 一个可重复读键集页，在任何目录行返回之前先做修订围栏。 */
     fun listUnitPage(
         expectedRevision: Long?,
         after: OrganizationUnitPageAnchor?,
         pageSize: Int,
+        transaction: PgReadTransactionContext? = null,
     ): OrganizationUnitPageSlice
 
     /**
@@ -90,11 +97,12 @@ interface OrganizationRepository : ManagedChatPolicy {
         expectedRevision: Long?,
         after: OrganizationMemberPageAnchor?,
         pageSize: Int,
+        transaction: PgReadTransactionContext? = null,
     ): OrganizationMemberPageSlice
 
     /** 命令/投影代码使用的内部有界收集器支持；绝不作为单个 RPC 暴露。 */
     fun listUnits(): List<OrganizationUnit>
-    fun findUnit(unitId: String): OrganizationUnit?
+    fun findUnit(unitId: String, transaction: PgReadTransactionContext? = null): OrganizationUnit?
 
     fun createUnit(
         transaction: PgWriteTransactionContext,
@@ -140,7 +148,7 @@ interface OrganizationRepository : ManagedChatPolicy {
     fun listMembers(unitIds: Set<String>): List<OrganizationMember>
     /** 一次查询返回各节点的直属成员数；不存在成员的节点由调用方补零。 */
     fun countDirectMembers(unitIds: Set<String>): Map<String, Int>
-    fun listMemberships(uid: String): List<OrganizationMember>
+    fun listMemberships(uid: String, transaction: PgReadTransactionContext? = null): List<OrganizationMember>
 }
 
 /** 持久化修订 CAS 投影端口。每次变更都必须加入提供的 PG 工作单元。 */

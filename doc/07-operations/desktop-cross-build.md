@@ -123,6 +123,9 @@ Desktop 更新源固定为最终部署配置的 `<serverUrl>/downloads/desktop`�
 
 签名身份按以下优先级解析（T012），Debug 与 Release 始终绑定同一身份，满足同包名覆盖安装：
 
+解析实现集中在 [AndroidSigningResolver](../../buildSrc/src/main/kotlin/deployment/AndroidSigningResolver.kt)，
+Android 模块构建脚本只把解析结果绑定给 AGP。默认身份、参数优先级和密码回退都在同一入口维护。
+
 1. **部署 DSL**（推荐入口）：`client { androidSigning { storeFile = ...; keyAlias = ... } }`。
    密码不属于 DSL，从下表秘密入口解析；配置了 DSL 而密码缺失会明确失败。
 2. **环境变量 / local.properties**（既有私有构建路径，向后兼容）：

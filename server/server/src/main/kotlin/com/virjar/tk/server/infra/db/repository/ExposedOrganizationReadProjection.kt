@@ -4,10 +4,12 @@ import com.virjar.tk.server.domain.organization.OrganizationMemberPageAnchor
 import com.virjar.tk.server.domain.organization.OrganizationMemberPageSlice
 import com.virjar.tk.server.domain.organization.OrganizationUnitPageAnchor
 import com.virjar.tk.server.domain.organization.OrganizationUnitPageSlice
+import com.virjar.tk.server.domain.transaction.PgReadTransactionContext
 import com.virjar.tk.server.infra.db.OrganizationMemberships
 import com.virjar.tk.server.infra.db.OrganizationState
 import com.virjar.tk.server.infra.db.OrganizationUnits
 import com.virjar.tk.server.infra.db.execRawSql
+import com.virjar.tk.server.infra.db.requireExposedReadTransaction
 import com.virjar.tk.protocol.model.OrganizationCapacityPolicy
 import com.virjar.tk.protocol.model.OrganizationMember
 import com.virjar.tk.protocol.model.OrganizationMemberPage
@@ -30,9 +32,9 @@ import java.sql.ResultSet
  * 组织目录的有界读模型。
  *
  * 仓库外观拥有命令锁定与变更；此组件拥有快照
- * 校验、keyset 投影与原始递归查询。每个公共操作仍开启与
- * 原仓库实现相同的事务类型，而辅助函数要求活跃的
- * Exposed 事务，而不是打开隐藏的嵌套快照。
+ * 校验、keyset 投影与原始递归查询。终端查询加入服务传来的只读工作单元，
+ * 使权限与数据处于同一快照；管理端独立读取自行打开快照。
+ * 辅助函数只使用活跃的 Exposed 事务，不另开嵌套快照。
  */
 internal class ExposedOrganizationReadProjection(
     private val database: Database,
@@ -41,16 +43,14 @@ internal class ExposedOrganizationReadProjection(
         expectedRevision: Long?,
         after: OrganizationUnitPageAnchor?,
         pageSize: Int,
-    ): OrganizationUnitPageSlice = transaction(
-        transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ,
-        db = database,
-    ) {
+        transaction: PgReadTransactionContext?,
+    ): OrganizationUnitPageSlice = withReadSnapshot(transaction) {
         require(pageSize in 1..OrganizationUnitPage.MAX_PAGE_SIZE) {
             "Organization unit page size is out of range"
         }
         val revision = currentOrganizationRevision()
         if (expectedRevision != null && revision != expectedRevision) {
-            return@transaction OrganizationUnitPageSlice(
+            return@withReadSnapshot OrganizationUnitPageSlice(
                 revision = revision,
                 items = emptyList(),
                 nextAnchor = null,
@@ -86,16 +86,14 @@ internal class ExposedOrganizationReadProjection(
         expectedRevision: Long?,
         after: OrganizationMemberPageAnchor?,
         pageSize: Int,
-    ): OrganizationMemberPageSlice = transaction(
-        transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ,
-        db = database,
-    ) {
+        transaction: PgReadTransactionContext?,
+    ): OrganizationMemberPageSlice = withReadSnapshot(transaction) {
         require(pageSize in 1..OrganizationMemberPage.MAX_PAGE_SIZE) {
             "Organization member page size is out of range"
         }
         val revision = currentOrganizationRevision()
         if (expectedRevision != null && revision != expectedRevision) {
-            return@transaction OrganizationMemberPageSlice(
+            return@withReadSnapshot OrganizationMemberPageSlice(
                 revision = revision,
                 items = emptyList(),
                 nextAnchor = null,
@@ -133,7 +131,10 @@ internal class ExposedOrganizationReadProjection(
         rows.map(ResultRow::toOrganizationUnit)
     }
 
-    fun findUnit(unitId: String): OrganizationUnit? = transaction(database) {
+    fun findUnit(
+        unitId: String,
+        transaction: PgReadTransactionContext?,
+    ): OrganizationUnit? = withReadSnapshot(transaction) {
         OrganizationUnits.selectAll().where {
             (OrganizationUnits.unitId eq unitId) and
                 (OrganizationUnits.status eq OrganizationUnit.STATUS_ACTIVE)
@@ -157,9 +158,22 @@ internal class ExposedOrganizationReadProjection(
         }
     }
 
-    fun listMemberships(uid: String): List<OrganizationMember> = transaction(database) {
+    fun listMemberships(
+        uid: String,
+        transaction: PgReadTransactionContext?,
+    ): List<OrganizationMember> = withReadSnapshot(transaction) {
         OrganizationMemberships.selectAll().where { OrganizationMemberships.uid eq uid }
             .map(ResultRow::toOrganizationMember)
+    }
+
+    private fun <T> withReadSnapshot(context: PgReadTransactionContext?, read: () -> T): T {
+        if (context != null) {
+            context.requireExposedReadTransaction()
+            return read()
+        }
+        return transaction(transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ, db = database) {
+            read()
+        }
     }
 
     private fun currentOrganizationRevision(): Long = OrganizationState.selectAll()

@@ -189,6 +189,9 @@
 | `group.detail.editNotice` | 有编辑权限时显示的群公告编辑入口 |
 | `group.detail.invite` | 邀请成员 |
 | `group.detail.inviteLinks` | 邀请链接 |
+| `invite.search` / `invite.submit` | 邀请成员搜索与提交；提交按钮在无人可选或请求进行中禁用 |
+| `invite.candidate.{uid前8}` / `invite.selected.{uid前8}` | 可邀请候选和已选人选；成员关系变化后同步排除已入群的人选 |
+| `invite.hint.idle` / `invite.hint.empty` | 未搜索提示与无匹配/无可邀请好友的空状态 |
 | `group.detail.leave` | 退出或解散群 |
 | `member.{uid前8}` | 成员管理列表项 |
 | `forward.item.{chatId前12}` | 转发目标 |

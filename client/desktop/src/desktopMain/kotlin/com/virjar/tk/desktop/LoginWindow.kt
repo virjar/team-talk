@@ -18,14 +18,11 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
-import com.virjar.tk.protocol.model.AuthRules
 import com.virjar.tk.shared.client.ConnectionState
 import com.virjar.tk.shared.client.ImClient
 import com.virjar.tk.shared.client.JvmPrivateDataDirectory
 import com.virjar.tk.shared.client.ServerConfig
 import com.virjar.tk.shared.client.SessionEndReason
-import com.virjar.tk.shared.client.createDesktopLocalCache
-import com.virjar.tk.app.client.rememberAuthController
 import com.virjar.tk.app.client.AuthFormSubmissionState
 import com.virjar.tk.desktop.media.DesktopSessionResources
 import com.virjar.tk.desktop.tray.AppTray
@@ -35,7 +32,6 @@ import com.virjar.tk.app.ui.screen.LoginScreen
 import com.virjar.tk.app.ui.screen.RegisterScreen
 import com.virjar.tk.app.telemetry.SessionClientUiTelemetrySink
 import java.io.File
-import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.launch
 
@@ -95,9 +91,6 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
     // 随 key 重建——不同部署的凭据与缓存按 DeploymentIdentity 隔离。
     key(activeConfig) {
     val config = activeConfig
-    val deploymentIdentity = remember(config) { config.deploymentIdentity() }
-    val tokenStore = remember(deploymentIdentity) { DesktopTokenStore(dataDir, deploymentIdentity) }
-    val deviceId = remember(dataDir) { desktopInstallationDeviceId(dataDir) }
     val sessionRetirementBridge = remember { DesktopAuthenticatedUiRetirementBridge() }
     val composeUiScope = rememberCoroutineScope()
     val desktopUiGate = remember(composeUiScope) {
@@ -127,26 +120,10 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
     // 启动 UI 自动化测试 HTTP 服务（通过反射隔离，production 打包删除 test 包也不报错）
     LaunchedEffect(Unit) { TestServiceBridge.startIfEnabled() }
 
-    // 跨平台认证控制器（app 全局层，管理 UserSession 生命周期）
-    val auth = rememberAuthController(
-        tokenStore = tokenStore,
-        deploymentIdentity = deploymentIdentity,
-        tcpHost = config.tcpHost,
-        tcpPort = config.tcpPort,
-        tcpTlsCertificatePem = config.tcpTlsCertificatePem,
-        deviceId = deviceId,
-        deviceName = "Desktop",
-        deviceModel = System.getProperty("os.name")
-            ?.takeIf { AuthRules.validateDeviceModel(it) == null },
-        deviceFlag = AuthRules.DEVICE_FLAG_DESKTOP,
-        createCache = { identity, datasetId, uid ->
-            createDesktopLocalCache(identity, datasetId, uid, dataDir)
-        },
-        beforeSessionRetirement = sessionRetirementBridge::beforeSessionRetirement,
-        afterSessionRetirement = sessionRetirementBridge::afterSessionRetirement,
-        runtimeInfo = remember { desktopClientRuntimeInfo() },
-        telemetrySpoolRoot = dataDir,
-        accountDataCleanup = remember(dataDir) { desktopAccountDataCleanup(dataDir) },
+    val auth = rememberDesktopAuthentication(
+        dataDir = dataDir,
+        config = config,
+        sessionRetirement = sessionRetirementBridge,
     )
     val session = auth.session
     val authenticationSurface = desktopAuthenticationSurface(
@@ -658,20 +635,3 @@ internal fun restoreDesktopServerConfig(
 }
 
 private const val MAX_CUSTOM_SERVER_FILE_BYTES = 2048L
-
-/** 每个 Desktop 数据目录一个持久身份（不同配置保持为不同设备）。 */
-internal fun desktopInstallationDeviceId(dataDir: File): String {
-    val identityStore = JvmPrivateDataDirectory.openExisting(dataDir).atomicTextFile(fileName = "device-id")
-    identityStore.readText(MAX_DEVICE_ID_FILE_BYTES)?.trim()?.let { stored ->
-        require(AuthRules.validateDeviceId(stored) == null) { "Stored Desktop device identity is invalid" }
-        return stored
-    }
-    val generated = "desktop-${UUID.randomUUID()}"
-    identityStore.replaceText(generated, MAX_DEVICE_ID_FILE_BYTES)
-    check(identityStore.readText(MAX_DEVICE_ID_FILE_BYTES) == generated) {
-        "Desktop device identity was not persisted"
-    }
-    return generated
-}
-
-private const val MAX_DEVICE_ID_FILE_BYTES = 1024L

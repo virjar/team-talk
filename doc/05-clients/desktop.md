@@ -328,6 +328,9 @@ sidecar 以账号 namespace 为安全边界，不承诺其单文件 mode 恒为 
 
 ### 账号封禁清理
 
+[DesktopAuthentication](../../client/desktop/src/desktopMain/kotlin/com/virjar/tk/desktop/DesktopAuthentication.kt)
+集中组装共享认证控制器需要的设备身份、凭据、缓存工厂和清理钩子；`LoginWindow` 负责部署切换、窗口与会话 UI 的挂载，
+按共享 `AuthState` 选择界面。平台资源退役仍由 `DesktopAuthenticatedUiRetirementBridge` 连接到原有关闭流程。
 [DesktopAccountDataCleanup](../../client/desktop/src/desktopMain/kotlin/com/virjar/tk/desktop/DesktopAccountDataCleanup.kt)
 按 deployment + dataset + uid 清理账号数据目录及其损坏隔离副本、`media_e2` 中的媒体 namespace、
 `document-drafts/v3` 中的草稿 owner，以及账号遥测和待上传崩溃资料。安装 marker、设备标识、主题、

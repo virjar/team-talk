@@ -167,7 +167,8 @@ flowchart TD
 
 ```mermaid
 flowchart TB
-    Process["应用进程：配置 / 凭据存储"] --> Auth["app AuthController：登录与资源图切换"]
+    Process["应用进程：配置 / 凭据存储"] --> Adapter["AndroidAuthentication / DesktopAuthentication：平台组装"]
+    Adapter --> Auth["app AuthController：登录与资源图切换"]
     Auth --> Identity["shared UserSession：用户身份"]
     Auth --> Connection["shared ImClient：连接与认证尝试"]
     Auth --> Session["shared ClientSession：账号资源图"]
@@ -181,6 +182,16 @@ flowchart TB
 上图表达生命周期层级；具体对象由 GUI 组装根创建与关闭，并非每条边都意味着构造函数直接调用。
 短暂断网只重建连接，不清空用户身份和 outbox；退出、权威身份失效或数据集切换才退役相应资源图。
 关聊天页应停止其订阅，关账号工作区才关闭该账号资源。
+
+沿登录入口阅读时，先分清三个职责，避免每修一个终态就在窗口中复制业务逻辑：
+
+| 层级 | 负责什么 | 源码入口 |
+|---|---|---|
+| 平台认证适配器 | 把设备身份、TokenStore、缓存工厂、草稿和账号清理钩子交给共享控制器 | [AndroidAuthentication](../../client/android/src/main/kotlin/com/virjar/tk/android/AndroidAuthentication.kt)、[DesktopAuthentication](../../client/desktop/src/desktopMain/kotlin/com/virjar/tk/desktop/DesktopAuthentication.kt) |
+| 共享认证控制器 | 持有认证状态、选择终态、协调账号资源退役与清理 | [AuthController](../../client/app/src/commonMain/kotlin/com/virjar/tk/app/client/AuthController.kt) |
+| 平台窗口或根界面 | 根据 AuthState 显示登录、工作区、升级或封禁提示，处理返回与窗口行为 | [AndroidAuthenticationRoot](../../client/android/src/main/kotlin/com/virjar/tk/android/AndroidAuthenticationRoot.kt)、[LoginWindow](../../client/desktop/src/desktopMain/kotlin/com/virjar/tk/desktop/LoginWindow.kt) |
+
+启动时的 pending 清理先于这三层打开账号资源；它不是等待登录成功后才执行的界面动作。
 
 文档内也有不同范围：切文档使旧导航请求失效，但不应取消已经提交的工作区首页收敛；保存按标签拥有请求，
 草稿 writer 负责把最终编辑内容落盘。不要用一个全局 generation 解释所有“迟到结果”。

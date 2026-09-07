@@ -13,6 +13,7 @@ import com.virjar.tk.server.domain.organization.OrganizationUnitPageSlice
 import com.virjar.tk.server.domain.organization.OrganizationUnitArchiveConflictException
 import com.virjar.tk.server.domain.chat.ManagedChatAuthority
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
+import com.virjar.tk.server.domain.transaction.PgReadTransactionContext
 import com.virjar.tk.server.infra.db.OrganizationManagedChatProjections
 import com.virjar.tk.server.infra.db.OrganizationMemberships
 import com.virjar.tk.server.infra.db.OrganizationState
@@ -73,7 +74,8 @@ internal class ExposedOrganizationRepository(
         expectedRevision: Long?,
         after: OrganizationUnitPageAnchor?,
         pageSize: Int,
-    ): OrganizationUnitPageSlice = readProjection.listUnitPage(expectedRevision, after, pageSize)
+        transaction: PgReadTransactionContext?,
+    ): OrganizationUnitPageSlice = readProjection.listUnitPage(expectedRevision, after, pageSize, transaction)
 
     override fun listMemberPage(
         rootUnitId: String,
@@ -81,12 +83,14 @@ internal class ExposedOrganizationRepository(
         expectedRevision: Long?,
         after: OrganizationMemberPageAnchor?,
         pageSize: Int,
+        transaction: PgReadTransactionContext?,
     ): OrganizationMemberPageSlice =
-        readProjection.listMemberPage(rootUnitId, recursive, expectedRevision, after, pageSize)
+        readProjection.listMemberPage(rootUnitId, recursive, expectedRevision, after, pageSize, transaction)
 
     override fun listUnits(): List<OrganizationUnit> = readProjection.listUnits()
 
-    override fun findUnit(unitId: String): OrganizationUnit? = readProjection.findUnit(unitId)
+    override fun findUnit(unitId: String, transaction: PgReadTransactionContext?): OrganizationUnit? =
+        readProjection.findUnit(unitId, transaction)
 
     override fun createUnit(
         transaction: PgWriteTransactionContext,
@@ -304,8 +308,8 @@ internal class ExposedOrganizationRepository(
     override fun countDirectMembers(unitIds: Set<String>): Map<String, Int> =
         readProjection.countDirectMembers(unitIds)
 
-    override fun listMemberships(uid: String): List<OrganizationMember> =
-        readProjection.listMemberships(uid)
+    override fun listMemberships(uid: String, transaction: PgReadTransactionContext?): List<OrganizationMember> =
+        readProjection.listMemberships(uid, transaction)
 
     override fun authority(chatId: String): ManagedChatAuthority = transaction(database) {
         val row = OrganizationManagedChatProjections.selectAll().where {

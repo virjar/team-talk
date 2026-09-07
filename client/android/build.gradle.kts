@@ -1,6 +1,6 @@
 import java.util.Base64
-import java.util.Properties
 import deployment.DeploymentConfig
+import deployment.resolveAndroidSigning
 import release.GenerateAndroidReleaseIdentity
 
 val deploymentConfig = rootProject.extra.get("deploymentConfig") as DeploymentConfig
@@ -61,54 +61,20 @@ android {
         buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
     }
 
-    // Android 签名身份解析（T012），优先级从高到低：
-    // 1. 部署 DSL client.androidSigning { }（客户自有证书）；
-    // 2. 环境变量/local.properties 的 storeFile 入口（旧私有构建路径）；
-    // 3. 模块内固定试用证书（公版快速试用/内测覆盖安装）。
-    // Debug 与 Release 绑定同一签名身份，保证同包名覆盖安装保留数据。
-    // 密码属于秘密：只从环境变量或 Git 忽略的 local.properties 解析，
-    // 不进入部署配置、发布快照、BuildConfig 或日志；显式选择自有证书时
-    // 缺文件、缺密码、错密码或错别名都必须让构建明确失败，不静默回退默认证书。
-    val localProps = Properties()
-    val localPropsFile = rootProject.file("local.properties")
-    if (localPropsFile.exists()) {
-        localPropsFile.inputStream().use(localProps::load)
-    }
-
+    // buildSrc 统一解析签名配置；这里只将同一身份绑定到 AGP 的 Debug / Release。
+    val signing = resolveAndroidSigning(
+        configured = deploymentConfig.androidSigning,
+        trialKeystore = file("teamtalk-dev.jks"),
+        localPropertiesFile = rootProject.file("local.properties"),
+        environment = { providers.environmentVariable(it).orNull },
+        resolveFile = { rootProject.file(it) },
+    )
     signingConfigs {
         create("release") {
-            fun signingValue(property: String, environment: String): String? =
-                providers.environmentVariable(environment).orNull ?: localProps.getProperty(property)
-
-            val dslSigning = deploymentConfig.androidSigning
-            val storeFilePath = dslSigning?.storeFile
-                ?: signingValue("release.storeFile", "TEAMTALK_ANDROID_KEYSTORE")
-            if (storeFilePath != null) {
-                val storeFileResolved = rootProject.file(storeFilePath)
-                require(storeFileResolved.isFile) {
-                    "Android signing store file is missing: $storeFileResolved（签名配置选择了自有证书，但文件不存在）"
-                }
-                storeFile = storeFileResolved
-                keyAlias = dslSigning?.keyAlias
-                    ?: signingValue("release.keyAlias", "TEAMTALK_ANDROID_KEY_ALIAS")
-                    ?: throw GradleException(
-                        "Android signing keyAlias is missing: 配置了自有证书，需要 release.keyAlias（local.properties）或 TEAMTALK_ANDROID_KEY_ALIAS（环境变量）",
-                    )
-                storePassword = signingValue("release.storePassword", "TEAMTALK_ANDROID_STORE_PASSWORD")
-                    ?: throw GradleException(
-                        "Android signing storePassword is missing: 配置了自有证书，需要 release.storePassword（local.properties）或 TEAMTALK_ANDROID_STORE_PASSWORD（环境变量）",
-                    )
-                keyPassword = signingValue("release.keyPassword", "TEAMTALK_ANDROID_KEY_PASSWORD")
-                    ?: signingValue("release.storePassword", "TEAMTALK_ANDROID_STORE_PASSWORD")
-                    ?: throw GradleException(
-                        "Android signing keyPassword is missing: 配置了自有证书，需要 release.keyPassword（local.properties）或 TEAMTALK_ANDROID_KEY_PASSWORD（环境变量）",
-                    )
-            } else {
-                storeFile = file("teamtalk-dev.jks")
-                storePassword = "teamtalk"
-                keyAlias = "teamtalk"
-                keyPassword = "teamtalk"
-            }
+            storeFile = signing.storeFile
+            keyAlias = signing.keyAlias
+            storePassword = signing.storePassword
+            keyPassword = signing.keyPassword
         }
     }
 

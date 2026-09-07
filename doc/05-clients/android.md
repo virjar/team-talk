@@ -289,6 +289,9 @@ Snackbar 正常展示完成后才确认删除；Activity 重建会释放未完�
 ### 账号封禁清理
 
 认证裁决与凭据证明规则见[账号封禁与本地资料清理](../03-architecture/client-and-sdk.md#211-账号封禁与本地资料清理)。
+[AndroidAuthentication](../../client/android/src/main/kotlin/com/virjar/tk/android/AndroidAuthentication.kt)
+集中组装共享认证控制器需要的设备身份、凭据、缓存工厂和清理钩子；
+`AndroidAuthenticationRoot` 只按共享 `AuthState` 选择登录、工作区或终结界面，不另持封禁状态。
 [AndroidAccountDataCleanup](../../client/android/src/main/kotlin/com/virjar/tk/android/AndroidAccountDataCleanup.kt)
 以 deployment + dataset + uid 列出账号 SQLite 数据库族及损坏隔离副本、`noBackupFilesDir` 中的文档草稿、
 `cacheDir` 中的会话媒体和同名 SQLite `.db.lck`，以及该账号的遥测和待上传崩溃资料。删除覆盖当前账号的已知历史数据库 epoch，
@@ -296,6 +299,7 @@ Snackbar 正常展示完成后才确认删除；Activity 重建会释放未完�
 
 清理 marker 先写入 `noBackupFilesDir`，随后关闭 UI、媒体、SDK 和数据库；进程级草稿单写者先封闭该
 owner 的写入并确认屏障，再执行磁盘删除与匹配凭据清除。发生任何失败都保留 marker 并阻止进入工作区。
+草稿屏障由 `discardBannedAccountDrafts` 承接，和账号目录清单放在同一清理文件，便于一起核对删除范围和写入器顺序。
 保存到设备的下载、复制与缓存 lease 释放均注册到现有媒体会话，退役会取消并等待未完成导出的回收；
 系统权限等待位于注册前，避免账号关闭等待主线程权限回调。
 `TeamTalkApp` 在进程启动时先恢复待清理任务，完成后才允许认证与账号资源打开，因此强停或崩溃后仍能续清。

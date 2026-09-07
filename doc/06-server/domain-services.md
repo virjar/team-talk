@@ -91,7 +91,25 @@ OrganizationService 维护单根无环目录、用户多部门归属和唯一主
 组织成员和群成员读取先取得成员事实，再按去重 uid 分批联结用户展示信息；数据库适配器不得按成员
 逐个打开用户查询。该规则同时覆盖递归部门目录和千人群详情，避免目录宽度直接放大 SQL 往返次数。
 
-普通终端只通过 `OrganizationRpc.listUnitPage/listMemberPage` 的强类型二进制分页读取组织目录；
+普通终端通过 `OrganizationRpc.listUnitPage/listMemberPage` 的强类型二进制分页读取组织目录，
+用户资料的部门路径使用 `getUserOrganization`（本轮待发布协议 1）。三个读取入口都由 `OrganizationService`
+打开既有 `PgUnitOfWork.read`，成员资格、目录修订、成员和祖先名称共用一个 PostgreSQL REPEATABLE_READ
+快照。仓储显式接收 `PgReadTransactionContext`；同一响应不会拼接改名前后的名称或撤权前后的成员行。
+管理员内部单项读取仍可由仓储独立打开快照，不把整个后台扫描变成长事务。
+
+```mermaid
+sequenceDiagram
+    participant RPC as 组织 RPC
+    participant Domain as OrganizationService
+    participant Snapshot as 同一个 PG 只读快照
+    RPC->>Domain: 目录页 / 成员页 / 用户部门路径
+    Domain->>Snapshot: 检查当前调用者的组织归属
+    Domain->>Snapshot: 读取修订、条目、成员和祖先名称
+    Snapshot-->>Domain: 同一时点的一组事实
+    Domain-->>RPC: 完整响应
+    Note over Domain,Snapshot: 并发改名或撤权在下一次读取可见
+```
+
 `/api/admin/organization/**` HTTP 路由只承担管理写控制面。每个成功组织命令先在 PostgreSQL 原子提交
 事实、revision 和待收敛受管群任务，再 best-effort 向 `ClientRegistry` 中已经完成 `SYNC_READY` 的
 连接广播 `ORGANIZATION_CHANGED(revision, eventId = 0)`。单连接或整个提示发布失败不能把已提交管理

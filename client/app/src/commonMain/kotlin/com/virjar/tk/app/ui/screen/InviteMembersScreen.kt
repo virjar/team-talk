@@ -17,6 +17,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.app.ui.component.ScreenHeader
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /**
@@ -32,18 +33,26 @@ fun InviteMembersScreen(
     onBack: (() -> Unit)? = null,
 ) {
     var query by remember { mutableStateOf(TextFieldValue("")) }
-    var selected by remember { mutableStateOf(setOf<String>()) }
+    var selection by remember { mutableStateOf(setOf<String>()) }
     var inviting by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    val candidates = remember(friendUids, friendNames, memberUids, query.text) {
+    val eligibleUids = remember(friendUids, memberUids) {
+        friendUids.filterNot { it in memberUids }.toSet()
+    }
+    // 成员或好友关系更新时，计数、chip 和提交立即使用同一份有效选择。
+    // 同时收回旧选择，避免该用户以后退群时又无意恢复为已选；切换搜索词不清空选择。
+    val selected = selection.intersect(eligibleUids)
+    LaunchedEffect(eligibleUids) {
+        selection = selection.intersect(eligibleUids)
+    }
+    val candidates = remember(eligibleUids, friendNames, query.text) {
         val text = query.text.trim()
         if (text.isEmpty()) {
             emptyList()
         } else {
-            friendUids.asSequence()
-                .filterNot { it in memberUids }
+            eligibleUids.asSequence()
                 .filter { uid ->
                     val name = friendNames[uid].orEmpty()
                     name.contains(text, ignoreCase = true) || uid.contains(text)
@@ -59,16 +68,26 @@ fun InviteMembersScreen(
             trailing = {
                 TextButton(
                     onClick = {
-                        if (selected.isNotEmpty()) {
+                        if (selected.isNotEmpty() && !inviting) {
+                            // 点击时固定本次人选并上锁，不等待协程开始或按钮下一次重组。
+                            val invitees = selected.toList()
+                            inviting = true
+                            error = null
                             scope.launch {
-                                inviting = true
-                                val ok = onInvite(selected.toList())
-                                inviting = false
-                                if (ok) onBack?.invoke() else error = "邀请失败"
+                                try {
+                                    if (onInvite(invitees)) onBack?.invoke() else error = "邀请失败"
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (_: Exception) {
+                                    error = "邀请失败"
+                                } finally {
+                                    inviting = false
+                                }
                             }
                         }
                     },
                     enabled = selected.isNotEmpty() && !inviting,
+                    modifier = Modifier.testTag("invite.submit"),
                 ) { Text("邀请") }
             },
         )
@@ -108,7 +127,7 @@ fun InviteMembersScreen(
                 selected.forEach { uid ->
                     InputChip(
                         selected = true,
-                        onClick = { selected = selected - uid },
+                        onClick = { selection = selection - uid },
                         label = { Text(friendNames[uid] ?: uid.take(12)) },
                         trailingIcon = {
                             Icon(Icons.Filled.Close, contentDescription = "移除 ${friendNames[uid] ?: uid}", Modifier.size(16.dp))
@@ -126,7 +145,7 @@ fun InviteMembersScreen(
                 tag = "invite.hint.idle",
             )
             candidates.isEmpty() -> InviteHint(
-                if (friendUids.any { it in memberUids } && friendUids.isNotEmpty()) "没有可邀请的好友" else "没有匹配的好友",
+                if (eligibleUids.isEmpty()) "没有可邀请的好友" else "没有匹配的好友",
                 tag = "invite.hint.empty",
             )
             else -> LazyColumn {
@@ -139,13 +158,13 @@ fun InviteMembersScreen(
                             Checkbox(
                                 checked = uid in selected,
                                 onCheckedChange = { checked ->
-                                    selected = if (checked) selected + uid else selected - uid
+                                    selection = if (checked) selection + uid else selection - uid
                                 },
                             )
                         },
                         modifier = Modifier
                             .clickable {
-                                selected = if (uid in selected) selected - uid else selected + uid
+                                selection = if (uid in selected) selection - uid else selection + uid
                             }
                             .testTag("invite.candidate.${uid.take(8)}"),
                     )

@@ -1,6 +1,7 @@
 package com.virjar.tk.server.domain.organization
 
 import com.virjar.tk.server.domain.transaction.PgUnitOfWork
+import com.virjar.tk.server.domain.transaction.PgReadTransactionContext
 import com.virjar.tk.server.domain.user.UserRepository
 import com.virjar.tk.protocol.model.OrganizationCapacityPolicy
 import com.virjar.tk.protocol.model.OrganizationMember
@@ -41,22 +42,28 @@ class OrganizationService(
      * 终端 RPC 入口的组织目录访问资格裁决：只有存在有效组织成员关系的账号才是公司成员。
      * 加入普通聊天群不等于加入组织；失去最后一项归属立即失去目录读取资格。
      */
-    private fun requireOrganizationMember(uid: String) {
-        if (repository.listMemberships(uid).isEmpty()) {
+    private fun requireOrganizationMember(uid: String, transaction: PgReadTransactionContext) {
+        if (repository.listMemberships(uid, transaction).isEmpty()) {
             throw OrganizationAccessDeniedException("没有有效的组织成员关系，不能读取组织目录")
         }
     }
 
     /** 终端客户端读取组织节点目录；调用者必须是有效的组织成员。 */
-    fun listUnitPage(callerUid: String, request: OrganizationUnitPageRequest): OrganizationUnitPage {
-        requireOrganizationMember(callerUid)
-        return readUnitPage(request)
+    suspend fun listUnitPage(
+        callerUid: String,
+        request: OrganizationUnitPageRequest,
+    ): OrganizationUnitPage = unitOfWork.read {
+        requireOrganizationMember(callerUid, transaction)
+        readUnitPage(request, transaction)
     }
 
     /** 终端客户端读取组织成员名册；调用者必须是有效的组织成员。 */
-    fun listMemberPage(callerUid: String, request: OrganizationMemberPageRequest): OrganizationMemberPage {
-        requireOrganizationMember(callerUid)
-        return readMemberPage(request)
+    suspend fun listMemberPage(
+        callerUid: String,
+        request: OrganizationMemberPageRequest,
+    ): OrganizationMemberPage = unitOfWork.read {
+        requireOrganizationMember(callerUid, transaction)
+        readMemberPage(request, transaction)
     }
 
     /**
@@ -64,11 +71,14 @@ class OrganizationService(
      * 组织归属属于组织目录事实，访客不能借用户资料绕过 T001 的边界。
      * 主部门归属排在前，其余按路径字典序，保证多部门展示稳定。
      */
-    fun getUserOrganization(viewerUid: String, subjectUid: String): UserOrganizationSummary {
-        requireOrganizationMember(viewerUid)
-        val paths = repository.listMemberships(subjectUid)
+    suspend fun getUserOrganization(
+        viewerUid: String,
+        subjectUid: String,
+    ): UserOrganizationSummary = unitOfWork.read {
+        requireOrganizationMember(viewerUid, transaction)
+        val paths = repository.listMemberships(subjectUid, transaction)
             .mapNotNull { member ->
-                val spine = unitNameSpine(member.unitId) ?: return@mapNotNull null
+                val spine = unitNameSpine(member.unitId, transaction) ?: return@mapNotNull null
                 UserOrganizationPath(
                     unitId = member.unitId,
                     unitName = spine.last(),
@@ -82,29 +92,33 @@ class OrganizationService(
                     .thenBy { it.pathNames.joinToString("/") }
                     .thenBy { it.unitId },
             )
-        return UserOrganizationSummary(uid = subjectUid, paths = paths)
+        UserOrganizationSummary(uid = subjectUid, paths = paths)
     }
 
     /** 从直属节点向上回溯组织根的名称路径；节点缺失（已归档删除）时放弃该归属的展示。 */
-    private fun unitNameSpine(unitId: String): List<String>? {
+    private fun unitNameSpine(unitId: String, transaction: PgReadTransactionContext): List<String>? {
         val names = ArrayDeque<String>()
         var cursor: String? = unitId
         var depth = 0
         while (cursor != null) {
             if (depth++ > MAX_UNIT_SPINE_DEPTH) return null
-            val unit = repository.findUnit(cursor) ?: return null
+            val unit = repository.findUnit(cursor, transaction) ?: return null
             names.addFirst(unit.name)
             cursor = unit.parentId
         }
         return names.toList()
     }
 
-    private fun readUnitPage(request: OrganizationUnitPageRequest): OrganizationUnitPage {
+    private fun readUnitPage(
+        request: OrganizationUnitPageRequest,
+        transaction: PgReadTransactionContext? = null,
+    ): OrganizationUnitPage {
         val cursor = OrganizationUnitCursorCodec.decode(request.cursor)
         val page = repository.listUnitPage(
             expectedRevision = cursor?.revision,
             after = cursor?.anchor,
             pageSize = OrganizationUnitPage.MAX_PAGE_SIZE,
+            transaction = transaction,
         )
         return OrganizationUnitPage(
             revision = page.revision,
@@ -116,7 +130,10 @@ class OrganizationService(
         )
     }
 
-    private fun readMemberPage(request: OrganizationMemberPageRequest): OrganizationMemberPage {
+    private fun readMemberPage(
+        request: OrganizationMemberPageRequest,
+        transaction: PgReadTransactionContext? = null,
+    ): OrganizationMemberPage {
         val cursor = OrganizationMemberCursorCodec.decode(request.cursor)
         if (cursor != null) {
             require(cursor.rootUnitId == request.unitId && cursor.recursive == request.recursive) {
@@ -132,6 +149,7 @@ class OrganizationService(
             expectedRevision = cursor?.revision,
             after = cursor?.anchor,
             pageSize = OrganizationMemberPage.MAX_PAGE_SIZE,
+            transaction = transaction,
         )
         val usersByUid = users.findByUids(page.items.mapTo(linkedSetOf()) { it.uid })
         val items = page.items.map { member ->
