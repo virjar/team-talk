@@ -1,5 +1,6 @@
 package com.virjar.tk.server
 
+import com.virjar.tk.server.api.resolveDirectDownload
 import java.nio.file.Files
 import kotlin.io.path.createDirectory
 import kotlin.io.path.createFile

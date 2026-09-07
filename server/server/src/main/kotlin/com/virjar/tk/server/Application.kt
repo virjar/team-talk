@@ -1,6 +1,7 @@
 package com.virjar.tk.server
 
 import com.virjar.tk.server.api.clientTelemetryRoutes
+import com.virjar.tk.server.api.clientDownloadRoutes
 import com.virjar.tk.server.api.adminRoutes
 import com.virjar.tk.server.api.AttachmentUploadAdmission
 import com.virjar.tk.server.api.fileRoutes
@@ -62,7 +63,6 @@ import kotlinx.coroutines.runBlocking
 import org.koin.ktor.plugin.Koin
 import org.koin.ktor.ext.getKoin
 import org.slf4j.LoggerFactory
-import java.io.File
 import java.util.UUID
 
 private const val ATTACHMENT_RETENTION_INTERVAL_MILLIS = 60L * 60L * 1_000L
@@ -541,30 +541,7 @@ internal fun Application.module(
                 }
             }
 
-            // 客户端下载
-            get("/downloads/{filename}") {
-                val filename = call.parameters["filename"] ?: return@get call.respond(HttpStatusCode.BadRequest)
-                val file = resolveDirectDownload(downloadsDir, filename)
-                    ?: return@get call.respond(HttpStatusCode.NotFound)
-                call.respondFile(file)
-            }
-            head("/downloads/{filename}") {
-                val filename = call.parameters["filename"] ?: return@head call.respond(HttpStatusCode.BadRequest)
-                val file = resolveDirectDownload(downloadsDir, filename)
-                    ?: return@head call.respond(HttpStatusCode.NotFound)
-                call.respond(HttpStatusCode.OK)
-            }
-
-            // Conveyor 更新站点（进程内静态目录，单进程约束不破）：安装包 + appcast/
-            // appinstaller 更新元数据 + apt 仓库索引 + 下载页。Sparkle/MSIX/apt 直接消费。
-            // 不设 default 兜底：更新元数据（appcast/appinstaller/Packages）命中不了必须
-            // 诚实 404，返回 HTML 会毒死更新客户端；下载页用显式根路由。
-            val desktopSiteDir = java.io.File(downloadsDir, "desktop")
-            get("/downloads/desktop") { call.respondFile(java.io.File(desktopSiteDir, "download.html")) }
-            get("/downloads/desktop/") { call.respondFile(java.io.File(desktopSiteDir, "download.html")) }
-            staticFiles("/downloads/desktop", desktopSiteDir) {
-                enableAutoHeadResponse()
-            }
+            clientDownloadRoutes(downloadsDir)
         }
 
         // 9. Graceful shutdown. ResourceOwner enforces maintenance -> TCP/connections ->
@@ -665,25 +642,4 @@ private fun resolveStaticDir(): java.io.File {
     val prodStaticDir = java.io.File(env.runtimeClassPathDir.parent, "static")
     if (prodStaticDir.isDirectory) return prodStaticDir
     return env.dataRoot
-}
-
-/** Only direct regular package files under the trusted downloads root are publicly exposed. */
-internal fun resolveDirectDownload(downloadsDir: File, filename: String): File? {
-    if (
-        filename.length !in 1..255 ||
-        filename == "." ||
-        filename == ".." ||
-        filename.any { it == '/' || it == '\\' || it == '\u0000' }
-    ) {
-        return null
-    }
-    return try {
-        val canonicalRoot = downloadsDir.canonicalFile
-        val candidate = File(canonicalRoot, filename).canonicalFile
-        candidate.takeIf { it.isFile && it.parentFile == canonicalRoot }
-    } catch (_: java.io.IOException) {
-        null
-    } catch (_: SecurityException) {
-        null
-    }
 }

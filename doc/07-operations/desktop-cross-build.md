@@ -91,6 +91,21 @@ Conveyor 的使用许可仍由客户按其部署方式确认，自动下载不�
 Desktop 的完整站点包含 `download.html`、平台安装文件与更新索引，不能用其中一个 ZIP 替代整站。
 独立解压版也不能被视为已经接通安装器更新路径；遵循生成下载页对应平台的说明。
 
+Windows 当前安装包要求 Windows 10 1809（build 17763）或更新版本，具体下限以 MSIX 内的
+`TargetDeviceFamily.MinVersion` 为准。下载页提供的 `.exe` 是引导器，它仍会通过 `.appinstaller`
+下载 MSIX；能在浏览器下载文件不等于 Windows 安装服务能读取它。
+
+安装站点必须提供正确的 `Content-Type`、GET/HEAD 文件长度与字节 Range 响应。TeamTalk 的公共下载
+路由使用 Ktor `PartialContent`，并显式声明 `.appinstaller` 为 `application/appinstaller`、`.msix` 为
+`application/msix`。HTTP 与 HTTPS 均可使用；没有域名不是要求客户购买证书的理由。反向代理或其他
+静态托管也必须保留这些响应语义，不能把 Range 请求退化为完整文件 `200`。微软的
+[BITS 下载要求](https://learn.microsoft.com/en-us/windows/win32/bits/http-requirements-for-bits-downloads)
+与 [App Installer 排障说明](https://learn.microsoft.com/en-us/windows/msix/app-installer/troubleshoot-appinstaller-issues)
+列出了相应约束；包签名信任与 HTTP 下载兼容是两个独立检查。
+
+每次交付在实际站点验证 HEAD、片段下载及不存在文件的 404，再用要分发的引导器在目标 Windows 上
+完成安装；步骤见[客户端安装站点验收](../09-testing/deployment-acceptance.md#客户端安装站点的-http-验收)。
+
 根 `teamtalk.releaseVersion` 是应用内与 Conveyor 的展示版本。Android `versionCode` 与正式发行的 Conveyor
 `app.revision` 为 `releaseBuildNumber + 1`，零号均为 `1`；零号 Desktop 安装元数据为 macOS/Windows
 `0.0.0.1`、Linux `0.0.0-1`。同一展示版本与 Desktop revision 不能用于分发不同包，具体边界见

@@ -131,6 +131,7 @@ dependencies {
     implementation(project(":protocol:protocol"))
     implementation(project(":protocol:protocol-netty"))
     implementation(libs.bundles.ktor.server)
+    implementation(libs.ktor.server.partial.content)
     implementation(libs.bundles.netty)
     implementation(libs.bundles.exposed)
     implementation(libs.postgresql)

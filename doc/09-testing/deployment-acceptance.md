@@ -29,6 +29,26 @@ TeamTalk 的主业务验收连接当前选中部署配置函数的目标。它�
 需要供脚本查看实际非敏感配置时，运行 `./gradlew writeDeploymentConfig`，读取
 `build/deployment/deployment-config.json`；不要直接解析 Kotlin 或把旧快照当作当前目标。
 
+## 客户端安装站点的 HTTP 验收
+
+Windows 的引导器和自动更新服务依赖静态下载契约。对实际部署的 `.appinstaller` 和它引用的 MSIX
+执行以下检查，不能只凭文件存在、浏览器下载或服务端 `/health` 为 UP 就宣布可安装：
+
+| 请求 | 预期 |
+|---|---|
+| GET / HEAD | 200，`Content-Length` 等于真实文件大小，HEAD 没有正文；声明 `Accept-Ranges: bytes` |
+| `.appinstaller` / `.msix` 类型 | 分别为 `application/appinstaller` / `application/msix` |
+| `Range: bytes=0-15` | 206，`Content-Length: 16`，`Content-Range: bytes 0-15/<总大小>`；正文与本地原文件前 16 字节相同 |
+| `Range: bytes=-16` | 206，正文与原文件最后 16 字节相同 |
+| 起始位置超过文件长度 | 416，不能回退为整包 200 |
+| 不存在的安装包或元数据 | 404，不能返回下载首页作为兜底 |
+
+以上应通过用户实际访问的 HTTP(S) 地址验证；如果有代理，验代理后的响应。现有发行包不因修复下载
+服务而换字节、换签名或增加版本。之后在目标 Windows 用原引导器重试，核对安装、启动与原资料保留。
+若仍失败，记录 Windows build、首次/覆盖安装及 AppInstaller 错误；HTTP 修复通过不替代系统侧安装结果。
+
+下载路由回归入口为 `ClientDownloadRoutesTest`，它与业务附件的鉴权和 Range 链路分别验证。
+
 ## 多设备与精确服务重启
 
 多设备收敛使用同一 uid 的两个不同 deviceId 连接和一个对端连接。单设备断线场景只关闭该客户端当前
