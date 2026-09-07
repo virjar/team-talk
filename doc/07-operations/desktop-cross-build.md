@@ -75,6 +75,23 @@ Conveyor 的使用许可仍由客户按其部署方式确认，自动下载不�
 
 这一流程仅删除未用的纯矢量图标类，不启用名称混淆。Compose `packageRelease*` 的
 `desktop-proguard.pro` 仍属于另一条内部打包路径，统一 `release` / Conveyor 没有使用其整应用裁剪结果。
+这条内部路径的 `proguardReleaseJars` 完成后会比较原始依赖与实际输出中 macOS、Windows、Linux 视频桥
+的全部 native 方法签名。三个桥都明确保留 native 方法组：原生库会按名反查部分没有 JVM 调用者的方法，
+仅禁止重命名不能防止它们被删除。检查不加载其他平台的原生库，所以任何构建宿主都能发现这种误裁剪。
+Windows 10 22H2 实机报告曾复现裁剪后的 `nShutdownMediaFoundation` 缺失；该结论针对 Compose
+本地压缩产物，不能据此认定未经过 ProGuard 的 Conveyor 安装包有相同缺陷。
+
+Windows 的进程身份与系统 SID 查询还使用 JNA。压缩规则只为仍被引用的 `Structure` / `NativeMapped`
+类型保留反射字段与构造器，并保存 `FieldOrder` 注解，不整包保留 `jna-platform`。同一打包检查会核对
+实际输出里 `WinNT.PSID` 的 `sid` 指针字段、公开无参构造器与字段顺序；不必在构建机加载 Windows DLL。
+依据见 JNA 5.15 的 [PSID 定义](https://github.com/java-native-access/jna/blob/5.15.0/contrib/platform/src/com/sun/jna/platform/win32/WinNT.java)
+和 [NativeMapped 反射构造](https://github.com/java-native-access/jna/blob/5.15.0/src/com/sun/jna/NativeMappedConverter.java)。
+此外显式保留 JNA 核心 `Native.initIDs` 按名绑定的成员，依据实际解析版本 5.18.1 的
+[JNI 初始化清单](https://github.com/java-native-access/jna/blob/5.18.1/native/dispatch.c#L2862)。这些初始化入口
+即便没有 Java 调用者也不能裁掉；升级实际解析的 JNA 版本时应核对该清单。打包后可在任意平台用输出
+JNA JAR 构造 `WinNT.PSID` 并调用 `size()`，验证核心 JNI 初始化和 Structure 反射，再在 Windows 验证
+真实进程身份/SID 查询；前者不会加载 Windows DLL。
+
 尤其不能将依照构建宿主筛选 SQLite native 库的后处理接到跨平台 Conveyor：各目标 JNI、JBR 模块、字体
 与媒体组件继续由原有平台输入和 native extraction 配置管理。进一步收紧 ProGuard、R8 或运行时模块前，
 须分别验证数据库、反射/SPI、中文字体、媒体与系统集成，并用同一源码和运行时做包体对照。
@@ -176,6 +193,20 @@ Android 模块构建脚本只把解析结果绑定给 AGP。默认身份、参�
 `:client:desktop:packageReleaseDmg` 仍可在 macOS 通过 Compose/JDK jpackage 生成当前架构的 DMG，
 路径为 `client/desktop/build/compose/binaries/main-release/dmg/`。它不包含 Conveyor 的完整更新站点，
 不替代统一发行里的跨平台包；Intel Mac 构建也不证明 Apple Silicon 原生包已验证。
+
+检查这条本机打包路径可运行 `:client:desktop:createReleaseDistributable`，无需 Windows MSI 所需的
+WiX 工具。它会执行 ProGuard 后的 JNI 签名检查，并运行 `stripRuntimeFonts`。字体清理从 Compose
+任务读取实际输出目录与包名，按 jpackage 的布局定位：
+
+| 平台 | app-image 输出目录内的字体路径 |
+|---|---|
+| macOS | `<包名>.app/Contents/runtime/Contents/Home/lib/fonts` |
+| Windows | `<包名>/runtime/lib/fonts` |
+| Linux | `<包名>/lib/runtime/lib/fonts` |
+
+运行时没有附带这组可选字体时跳过清理，不删除系统字体。构建工具的路径与 JNI 回归测试位于
+`buildSrc` 的 `release.DesktopPackageChecksTest`，由现有 Linux/Windows 发行工具 CI 执行；实际出包和
+中文渲染、媒体播放仍须在目标平台验收。Conveyor 使用自己的 JBR 组装流程，不调用这项字体清理。
 
 SDK 与无头客户端从同一版本源码接入。`:client:shared:headlessDist` 提供 `tt-agent`、`tt`、`tt-mcp`
 和运行库，需 JDK 21；首次运行和持久数据目录见[无头客户端](../05-clients/headless.md#3-构建与启动-agent)。

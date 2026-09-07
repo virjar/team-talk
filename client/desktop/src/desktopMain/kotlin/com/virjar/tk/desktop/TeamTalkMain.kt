@@ -6,7 +6,6 @@ import com.virjar.tk.app.identity.ClientIdentity
 
 import com.virjar.tk.desktop.env.DesktopEnvironment
 import com.virjar.tk.shared.log.AppLog
-import javax.swing.JOptionPane
 
 /**
  * Desktop 客户端入口。
@@ -28,7 +27,7 @@ fun main() {
     val dataDir = try {
         DesktopEnvironment.prepareDataDirectory()
     } catch (failure: Throwable) {
-        showDataDirectoryFailure(failure)
+        showDesktopStartupFailure("初始化数据目录", failure)
         return
     }
     System.setProperty("teamtalk.data.dir", dataDir.absolutePath)
@@ -38,7 +37,7 @@ fun main() {
     val lockAcquired = try {
         locker.tryLock()
     } catch (failure: Throwable) {
-        showDataDirectoryFailure(failure)
+        showDesktopStartupFailure("获取数据目录实例锁", failure)
         return
     }
     if (!lockAcquired) {
@@ -55,7 +54,7 @@ fun main() {
         )
     } catch (failure: Throwable) {
         locker.release()
-        showDataDirectoryFailure(failure)
+        showDesktopStartupFailure("检查数据版本并恢复未完成清理", failure)
         return
     }
 
@@ -83,23 +82,4 @@ fun main() {
 
     // ── 5. 进入 Compose ──
     teamTalkApplication(dataDir, locker)
-}
-
-private fun showDataDirectoryFailure(failure: Throwable) {
-    val detail = generateSequence(failure) { it.cause }
-        .mapNotNull(Throwable::message)
-        .firstOrNull()
-        ?: failure::class.simpleName.orEmpty()
-    runCatching {
-        JOptionPane.showMessageDialog(
-            null,
-            "${ClientIdentity.DISPLAY_NAME} cannot open its private data directory.\n\n$detail\n\n" +
-                "Startup stopped before opening the workspace. Resolve the data version or directory conflict and start again.",
-            "${ClientIdentity.DISPLAY_NAME} data directory",
-            JOptionPane.ERROR_MESSAGE,
-        )
-    }.onFailure {
-        System.err.write("TeamTalk data directory error: $detail\n".encodeToByteArray())
-        System.err.flush()
-    }
 }

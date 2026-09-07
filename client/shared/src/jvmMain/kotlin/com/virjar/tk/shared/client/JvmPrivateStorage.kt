@@ -42,12 +42,12 @@ class JvmPrivateDataDirectory private constructor(
             val anchor = ownerAnchor.toPath().toAbsolutePath().normalize()
             val anchorAttributes = basicAttributes(anchor)
             requireRealDirectory(anchorAttributes, "Private data owner anchor")
-            val expectedOwner = Files.getOwner(anchor, LinkOption.NOFOLLOW_LINKS)
+            val expectedOwner = JvmFileSystemIdentity.currentOwner(anchor)
 
             val parent = requireNotNull(root.parent)
             val parentAttributes = basicAttributes(parent)
             requireRealDirectory(parentAttributes, "Private data directory parent")
-            requireSameOwner(parent, expectedOwner, "Private data directory parent")
+            requireSafeParentOwner(parent, expectedOwner)
             requireSafeOwnerChain(anchor, parent, expectedOwner)
             val security = JvmPrivatePathSecurity.forPath(parent, expectedOwner)
 
@@ -93,7 +93,7 @@ class JvmPrivateDataDirectory private constructor(
             val anchor = ownerAnchor.toPath().toAbsolutePath().normalize()
             val anchorAttributes = basicAttributes(anchor)
             requireRealDirectory(anchorAttributes, "Private data owner anchor")
-            val expectedOwner = Files.getOwner(anchor, LinkOption.NOFOLLOW_LINKS)
+            val expectedOwner = JvmFileSystemIdentity.currentOwner(anchor)
             root.parent?.takeIf { it.startsWith(anchor) }?.let { parent ->
                 requireSafeOwnerChain(anchor, parent, expectedOwner)
             }
@@ -261,7 +261,7 @@ class JvmPrivateAtomicTextFile internal constructor(
         }
         val after = dataDirectory.security().requirePrivateFile(target)
         require(
-            expected.fileKey() != null && expected.fileKey() == after.fileKey() &&
+            sameNioFileSnapshotIdentity(expected, after) &&
                 expected.size() == after.size() && expected.lastModifiedTime() == after.lastModifiedTime(),
         ) { "Private text file changed during read" }
         return bytes.decodeToString()

@@ -79,6 +79,55 @@ jobs:
       - name: Compile Android debug
         run: ./gradlew :client:android:compileDebugKotlin
 
+  windows-desktop:
+    name: Windows Desktop storage and release build
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5.7.0
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v5.0.2
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Exercise Windows identity, private storage and reopening
+        shell: pwsh
+        run: |
+          .\gradlew.bat :client:desktop:desktopTest --tests '*WindowsDesktopStartupTest' --stacktrace 2>&1 |
+            Tee-Object -FilePath "$env:RUNNER_TEMP/teamtalk-windows-desktop-tests.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # App-image exercises shrinking, JNI symbol checks and runtime/font packaging.
+      # No MSI/WiX or interactive desktop is required; GUI and tray behavior remain platform acceptance.
+      - name: Build the Windows release app-image
+        shell: pwsh
+        run: |
+          .\gradlew.bat :client:desktop:createReleaseDistributable --stacktrace 2>&1 |
+            Tee-Object -FilePath "$env:RUNNER_TEMP/teamtalk-windows-desktop-package.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Preserve Windows Desktop diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: windows-desktop-diagnostics-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/teamtalk-windows-desktop-*.log
+            client/desktop/build/test-results/desktopTest/
+            client/desktop/build/reports/tests/desktopTest/
+            client/desktop/build/compose/logs/
+          if-no-files-found: ignore
+          retention-days: 14
+
   admin:
     name: Admin Gradle Build
     runs-on: ubuntu-latest

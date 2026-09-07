@@ -88,6 +88,7 @@ kotlin {
         val jvmMain by getting {
             dependencies {
                 implementation(libs.sqldelight.sqlite.driver)
+                implementation(libs.jna.platform)
             }
         }
         val androidMain by getting {

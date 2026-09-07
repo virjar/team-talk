@@ -235,6 +235,8 @@ internal class JvmPrivatePathSecurity private constructor(
 
     /** 新建路径可以被收紧；现有路径仅校验。 */
     private fun normalizeNewWindowsAcl(path: Path, directory: Boolean) {
+        // Windows 新对象的默认 owner 可能是管理员组；只对刚创建的对象明确指定当前用户。
+        Files.setOwner(path, expectedOwner)
         requireSameOwner(path, expectedOwner, "New private path")
         windowsAclView(path).acl = WindowsOwnerOnlyAclPolicy.ownerOnlyAcl(expectedOwner, directory)
     }
@@ -305,12 +307,22 @@ internal fun requireSameOwner(path: Path, expectedOwner: UserPrincipal, label: S
     }
 }
 
-/** NOFOLLOW owner 链；POSIX 父级绝不能被 group 或 other 用户替换。 */
+internal fun requireSafeParentOwner(path: Path, expectedOwner: UserPrincipal) {
+    if (Files.getFileAttributeView(path, PosixFileAttributeView::class.java, LinkOption.NOFOLLOW_LINKS) != null) {
+        requireSameOwner(path, expectedOwner, "Private data directory parent")
+    } else {
+        JvmFileSystemIdentity.requireSafeWindowsParent(
+            path, expectedOwner, JvmFileSystemIdentity.trustedParentOwners(path, expectedOwner),
+        )
+    }
+}
+
+/** NOFOLLOW owner 链；Windows 接受系统创建的 profile 父目录，叶子仍必须属于当前用户。 */
 internal fun requireSafeOwnerChain(anchor: Path, parent: Path, expectedOwner: UserPrincipal) {
     if (!parent.startsWith(anchor)) return
     fun validate(path: Path) {
         requireRealDirectory(basicAttributes(path), "Private data parent chain")
-        requireSameOwner(path, expectedOwner, "Private data parent chain")
+        requireSafeParentOwner(path, expectedOwner)
         val posix = Files.getFileAttributeView(
             path,
             PosixFileAttributeView::class.java,

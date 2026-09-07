@@ -3,17 +3,13 @@ package com.virjar.tk.desktop.env
 import com.virjar.tk.app.identity.ClientIdentity
 import com.virjar.tk.shared.client.JvmMacOsAcl
 import com.virjar.tk.shared.client.JvmPrivateDataDirectory
+import com.virjar.tk.shared.client.JvmFileSystemIdentity
 import kotlinx.coroutines.CancellationException
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.attribute.BasicFileAttributes
-import java.nio.file.attribute.AclEntry
-import java.nio.file.attribute.AclEntryFlag
-import java.nio.file.attribute.AclEntryPermission
-import java.nio.file.attribute.AclEntryType
-import java.nio.file.attribute.AclFileAttributeView
 import java.nio.file.attribute.PosixFileAttributeView
 import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.attribute.PosixFilePermissions
@@ -101,9 +97,9 @@ internal object DesktopDataDirectoryPolicy {
     fun prepareBaseDirectory(plan: DesktopDataDirectoryPlan) {
         val currentUserAnchor = plan.currentUserAnchor.toPath().toAbsolutePath().normalize()
         requireRealDirectory(attributes(currentUserAnchor), "Desktop user home")
-        val expectedOwner = Files.getOwner(currentUserAnchor, LinkOption.NOFOLLOW_LINKS)
+        val expectedOwner = JvmFileSystemIdentity.currentOwner(currentUserAnchor)
         val base = plan.baseDirectory.toPath().toAbsolutePath().normalize()
-        val trustedOwners = trustedOwners(base, expectedOwner)
+        val trustedOwners = JvmFileSystemIdentity.trustedParentOwners(base, expectedOwner)
 
         if (!Files.exists(base, LinkOption.NOFOLLOW_LINKS)) {
             require(!plan.isExplicitOverride && base.startsWith(currentUserAnchor)) {
@@ -119,7 +115,7 @@ internal object DesktopDataDirectoryPolicy {
             if (!Files.exists(child, LinkOption.NOFOLLOW_LINKS)) {
                 require(
                     !plan.isExplicitOverride && child.startsWith(currentUserAnchor) &&
-                        Files.getOwner(current, LinkOption.NOFOLLOW_LINKS) == expectedOwner,
+                        Files.getOwner(current, LinkOption.NOFOLLOW_LINKS) in trustedOwners,
                 ) { "Missing Desktop app-data parents may only be created in a user-owned home chain" }
                 createSafeStandardParent(child, expectedOwner, trustedOwners)
             } else {
@@ -135,7 +131,7 @@ internal object DesktopDataDirectoryPolicy {
         if (!Files.exists(root, LinkOption.NOFOLLOW_LINKS)) return
         val before = attributes(root)
         requireRealDirectory(before, "Desktop app-data directory")
-        val expectedOwner = Files.getOwner(plan.currentUserAnchor.toPath(), LinkOption.NOFOLLOW_LINKS)
+        val expectedOwner = JvmFileSystemIdentity.currentOwner(plan.currentUserAnchor.toPath())
         require(Files.getOwner(root, LinkOption.NOFOLLOW_LINKS) == expectedOwner) {
             "Desktop app-data directory has the wrong owner"
         }
@@ -182,14 +178,7 @@ internal object DesktopDataDirectoryPolicy {
             JvmMacOsAcl.requireSafeParent(path)
             return
         }
-        val acl = Files.getFileAttributeView(
-            path,
-            AclFileAttributeView::class.java,
-            LinkOption.NOFOLLOW_LINKS,
-        ) ?: error("$label requires POSIX permissions or Windows ACL support")
-        require(
-            WindowsSafeParentAclPolicy.isSafe(expectedOwner, trustedOwners, acl.acl),
-        ) { "$label grants mutation rights to another Windows principal" }
+        JvmFileSystemIdentity.requireSafeWindowsParent(path, expectedOwner, trustedOwners)
     }
 
     private fun createSafeStandardParent(
@@ -199,7 +188,7 @@ internal object DesktopDataDirectoryPolicy {
     ) {
         val parent = requireNotNull(path.parent)
         validateStableParent(parent, expectedOwner, trustedOwners, "Desktop app-data parent chain")
-        require(Files.getOwner(parent, LinkOption.NOFOLLOW_LINKS) == expectedOwner) {
+        require(Files.getOwner(parent, LinkOption.NOFOLLOW_LINKS) in trustedOwners) {
             "Desktop app-data parent creation requires a current-user-owned parent"
         }
         val posix = Files.getFileAttributeView(
@@ -217,6 +206,7 @@ internal object DesktopDataDirectoryPolicy {
             } else {
                 Files.createDirectory(path)
                 created = true
+                Files.setOwner(path, expectedOwner)
             }
             require(Files.getOwner(path, LinkOption.NOFOLLOW_LINKS) == expectedOwner) {
                 "New Desktop app-data parent has the wrong owner"
@@ -235,26 +225,6 @@ internal object DesktopDataDirectoryPolicy {
         }
     }
 
-    private fun trustedOwners(path: Path, expectedOwner: UserPrincipal): Set<UserPrincipal> {
-        val filesystemRoot = requireNotNull(path.root) { "Desktop data path has no filesystem root" }
-        val owners = mutableSetOf(expectedOwner, Files.getOwner(filesystemRoot, LinkOption.NOFOLLOW_LINKS))
-        val posix = Files.getFileAttributeView(
-            filesystemRoot,
-            PosixFileAttributeView::class.java,
-            LinkOption.NOFOLLOW_LINKS,
-        )
-        if (posix == null) {
-            WINDOWS_TRUSTED_SYSTEM_SIDS.mapNotNullTo(owners) { sid ->
-                try {
-                    path.fileSystem.userPrincipalLookupService.lookupPrincipalByName(sid)
-                } catch (_: Exception) {
-                    null
-                }
-            }
-        }
-        return owners
-    }
-
     private fun attributes(path: Path): BasicFileAttributes = Files.readAttributes(
         path,
         BasicFileAttributes::class.java,
@@ -271,11 +241,7 @@ internal object DesktopDataDirectoryPolicy {
     private val PRIVATE_STANDARD_PARENT_PERMISSIONS = PosixFilePermissions.fromString("rwx------")
     private val PRIVATE_STANDARD_PARENT_ATTRIBUTE =
         PosixFilePermissions.asFileAttribute(PRIVATE_STANDARD_PARENT_PERMISSIONS)
-    private val WINDOWS_TRUSTED_SYSTEM_SIDS = listOf(
-        "S-1-5-18", // Local System
-        "S-1-5-32-544", // Built-in Administrators
-        "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464", // TrustedInstaller
-    )
+
 }
 
 private fun mergeDesktopPathFailures(primary: Throwable, additional: Throwable): Throwable {
@@ -288,35 +254,6 @@ private fun mergeDesktopPathFailures(primary: Throwable, additional: Throwable):
     } else {
         primary.addSuppressed(additional)
         primary
-    }
-}
-
-/** 纯 Windows ACL 接缝，让 Linux/macOS CI 也能守护父目录策略。 */
-internal object WindowsSafeParentAclPolicy {
-    private val mutationPermissions = setOf(
-        AclEntryPermission.WRITE_DATA,
-        AclEntryPermission.APPEND_DATA,
-        AclEntryPermission.WRITE_NAMED_ATTRS,
-        AclEntryPermission.WRITE_ATTRIBUTES,
-        AclEntryPermission.DELETE,
-        AclEntryPermission.DELETE_CHILD,
-        AclEntryPermission.WRITE_ACL,
-        AclEntryPermission.WRITE_OWNER,
-    )
-
-    fun isSafe(
-        owner: UserPrincipal,
-        trustedSystemPrincipals: Set<UserPrincipal>,
-        entries: List<AclEntry>,
-    ): Boolean = entries.none { entry ->
-        val appliesToThisDirectory = AclEntryFlag.INHERIT_ONLY !in entry.flags()
-        val appliesToCreatedChildren =
-            AclEntryFlag.DIRECTORY_INHERIT in entry.flags() || AclEntryFlag.FILE_INHERIT in entry.flags()
-        entry.type() == AclEntryType.ALLOW &&
-            (appliesToThisDirectory || appliesToCreatedChildren) &&
-            entry.principal() != owner &&
-            entry.principal() !in trustedSystemPrincipals &&
-            entry.permissions().any { it in mutationPermissions }
     }
 }
 

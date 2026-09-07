@@ -1,5 +1,6 @@
 import java.util.Base64
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.jetbrains.compose.desktop.application.tasks.AbstractJPackageTask
 import org.gradle.internal.os.OperatingSystem
 import deployment.DeploymentConfig
 import hydraulic.conveyor.gradle.WriteConveyorConfigTask
@@ -8,6 +9,9 @@ import release.PrepareDesktopIcons
 import release.defaultConveyorConfigDirectory
 import release.buildConveyorSite
 import release.requireConveyorSigningConfiguration
+import release.desktopRuntimeFontsDirectory
+import release.verifyDesktopMediaNativeBridges
+import release.verifyDesktopWindowsIdentityBindings
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
@@ -587,6 +591,19 @@ tasks.register<Copy>("conveyorInputs") {
     into(layout.buildDirectory.dir("conveyor/lib"))
 }
 
+// Native libraries resolve methods that ProGuard cannot see as JVM call sites. Check all three
+// bridges after real shrinking, even on a host that cannot load the other two platforms' libraries.
+tasks.matching { it.name == "proguardReleaseJars" }.configureEach {
+    doLast {
+        val packagedJars = fileTree(layout.buildDirectory.dir("compose/tmp/main-release/proguard")) { include("*.jar") }.files
+        verifyDesktopMediaNativeBridges(
+            configurations.getByName("desktopRuntimeClasspath").files,
+            packagedJars,
+        )
+        verifyDesktopWindowsIdentityBindings(packagedJars)
+    }
+}
+
 tasks.register("stripSqliteNativeForRelease") {
     group = "compose desktop"
     description = "按当前 OS/架构裁剪 proguard 输出的 sqlite-jdbc jar 中的 native 库"
@@ -751,20 +768,28 @@ tasks.matching { it.name == "createReleaseDistributable" || it.name == "createDi
 }
 
 // ── 产物瘦身：移除捆绑 runtime 里的编程字体 ──
-// JBR（JetBrains Runtime）自带 43 个字体文件（9.2M，FiraCode/JetBrainsMono/Inter/DroidSans 等），
-// 这些是 IDE 用的，IM 客户端用系统字体渲染即可。
-// jpackage 把它们打进 runtime/lib/fonts，打包后清理。
-// macOS/Linux/Windows 系统都有完整字体支持，不依赖这些捆绑字体。
+// 沿用本机打包的可选字体清理，只删除 runtime 内的 fonts 目录；系统字体、字体映射与 AWT 库保持原样。
+// jpackage 的字体位置因平台不同而变化，不能用 macOS bundle 路径作为 Windows/Linux 的输入目录。
+// 中文渲染仍须在目标系统验证；这里不参与 Conveyor 的 JBR 组装。
 tasks.register("stripRuntimeFonts") {
     group = "compose desktop"
     description = "删除打包产物中捆绑 runtime 的字体文件（IM 客户端用系统字体）"
 
-    val appRoot = layout.buildDirectory.dir("compose/binaries/main-release/app/${clientIdentity.desktopName}.app/Contents")
-    inputs.dir(appRoot)
+    val appImage = tasks.named<AbstractJPackageTask>("createReleaseDistributable")
+    val destination = appImage.flatMap { it.destinationDir }
+    val packageName = appImage.flatMap { it.packageName }
+    val platform = when {
+        OperatingSystem.current().isMacOsX -> "macos"
+        OperatingSystem.current().isWindows -> "windows"
+        else -> "linux"
+    }
+    inputs.dir(destination)
+    inputs.property("packageName", packageName)
+    inputs.property("platform", platform)
     outputs.upToDateWhen { false }
 
     doLast {
-        val fontsDir = appRoot.get().asFile.resolve("runtime/Contents/Home/lib/fonts")
+        val fontsDir = desktopRuntimeFontsDirectory(destination.get().asFile, packageName.get(), platform)
         if (!fontsDir.isDirectory) {
             logger.lifecycle("[stripRuntimeFonts] runtime 字体目录不存在，跳过: $fontsDir")
             return@doLast

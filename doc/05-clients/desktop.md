@@ -39,6 +39,15 @@ Dock 使用 JDK `AppReopenedListener` 接收系统事件，监听器归属当前
 恢复动作通过既有会话 UI 调度入口更新 Compose 状态；隐藏窗口须等 AWT `componentShown` 确认显示后
 再请求焦点，不能把修改 `visible` 当成窗口已经显示。普通消息通知不会调用这个前台恢复入口。
 
+托盘图标沿用 JDK `SystemTray`。Windows 的右键菜单由
+[WindowsTrayMenu](../../client/desktop/src/desktopMain/kotlin/com/virjar/tk/desktop/tray/WindowsTrayMenu.kt)
+使用 Swing 绘制，避开部分中文系统的 AWT 原生菜单缺字；macOS/Linux 保留原生菜单。
+菜单及承载窗口统一在 EDT 上管理，按鼠标所在屏幕的可用区域定位；点击外部、按 ESC 或选择菜单项后收起，
+登出移除托盘时一起回收承载窗口，不留下额外任务栏窗口。
+Windows 承载窗口必须位于工作区内，不能落在任务栏区域；已失去原生窗口的锚点会重建。
+锚点显示后，菜单在 EDT 下一拍打开，避免主窗口隐藏后的托盘回调内同步弹出失败。
+收起或登出会取消尚未显示的菜单请求，延迟回调不能重新打开已关闭的菜单；失败使用 `AppLog` 记录。
+
 ## 2. 全局搜索
 
 搜索框位于顶栏中央，`Cmd/Ctrl+K` 聚焦。结果在右栏显示，分类为全部、消息、联系人、文件和服务。
@@ -313,8 +322,18 @@ Windows 的 `LOCALAPPDATA` 缺失时使用 `~/AppData/Local`；Linux 的 `XDG_DA
 数据根带固定 marker。POSIX 根和账号 namespace 必须为 `0700`；认证文件、device-id、SQLite 主 DB 与
 crash pending 必须为 `0600`，同时校验 owner、符号链接和硬链接。SQLite 自建的 journal/WAL/SHM
 sidecar 以账号 namespace 为安全边界，不承诺其单文件 mode 恒为 `0600`，但不得逃出该目录。macOS 还会
-用固定原生命令检查扩展 ACL；Windows 使用当前 owner 的精确 ACL，父目录 ACL 会拒绝 Everyone/Users 等
-非 owner 主体对当前目录或新建子项的创建、写入、删除或改 ACL 权限。Desktop 启动可兼容当前用户拥有的
+用固定原生命令检查扩展 ACL。Windows 的当前用户通过系统执行身份取得，不把 `user.home` 的 owner
+当作当前用户；系统创建的 profile 可以属于 SYSTEM，而 AppData 与应用数据属于登录用户。
+SYSTEM / Administrators 的 SID 先解析为本机账户名，再交给 NIO，兼容本地化系统。
+父链逐目录检查实际生效的 ACL：允许盘根的子项创建权及仅向下继承的条目，拒绝其他普通用户对既有
+目录的删除、修改属性或改权限能力。Authenticated Users / Everyone 不属于受信任管理员集合。
+新建私有路径明确设置当前用户 owner 与精确 owner-only ACL；既有叶子仅校验，不改 owner 或 ACL。
+
+Windows 默认 JDK provider 可以不提供 `fileKey`。有界文本读取复用共享的创建时间、修改时间、大小
+快照检查，避免 marker、凭据在二次读取时被错误拒绝；这不替代跨目录回收所需的持久句柄能力。
+实现集中于 `JvmFileSystemIdentity`、`JvmPrivateDataDirectory`，Desktop 与无头 SDK 共用。
+
+Desktop 启动可兼容当前用户拥有的
 旧 `0755` 等根目录：确认真实目录、安全父链和扩展 ACL，且 owner 已有完整读写遍历权限、group/others
 不可写后，仅移除根目录额外的读取与遍历权限，将其收紧为 `0700`，保留原目录与全部资料。
 该处理不递归改文件、不改 owner、不清除或放宽 ACL；子目录和文件、SDK/无头入口仍执行原有严格检查。
@@ -325,6 +344,12 @@ sidecar 以账号 namespace 为安全边界，不承诺其单文件 mode 恒为 
 数据；应先备份并诊断目录来源，再恢复合法目录或实现明确迁移，不能以预发布为由直接删除用户资料。
 公版默认路径和既有身份保持兼容，普通升级保留当前数据；协议 major 的本地重置仍按
 [版本规则](../04-protocol/versioning.md)执行，范围仅限当前安装管理的数据。
+
+工作区打开前发生的目录、实例锁或本地数据恢复失败，由
+[StartupFailureDialog](../../client/desktop/src/desktopMain/kotlin/com/virjar/tk/desktop/StartupFailureDialog.kt)
+提供中文说明、可选中的诊断详情和“复制全部详情”按钮。详情包含失败阶段、构建与 OS/Java 信息及异常链，
+最多约 65,536 个字符；同时写入 stderr，不初始化依赖数据根的日志系统，也不额外创建诊断文件。
+复制不会关闭对话框，剪贴板占用时可重试；诊断中的本机路径应只提供给维护者。
 
 ### 账号封禁清理
 
