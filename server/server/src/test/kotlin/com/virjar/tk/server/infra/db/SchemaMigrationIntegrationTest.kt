@@ -33,7 +33,7 @@ class SchemaMigrationIntegrationTest {
                 assertPreservedDevice(connection, Int.MAX_VALUE)
                 assertEquals(firstReceipt, migrationReceipt(connection))
                 connection.createStatement().use {
-                    it.executeUpdate("INSERT INTO schema_migrations VALUES (1, 'future_migration', 1)")
+                    it.executeUpdate("INSERT INTO schema_migrations VALUES (2, 'future_migration', 1)")
                 }
             }
             assertFailsWith<IllegalStateException> { open(lease).close() }
@@ -132,10 +132,13 @@ class SchemaMigrationIntegrationTest {
     }
 
     private fun migrationReceipt(connection: Connection): Long = connection.createStatement().use { statement ->
-        statement.executeQuery("SELECT version, name, applied_at FROM schema_migrations").use { row ->
+        statement.executeQuery("SELECT version, name, applied_at FROM schema_migrations ORDER BY version").use { row ->
             assertTrue(row.next())
             assertEquals(0, row.getInt(1))
             assertEquals("expand_client_telemetry_protocol_id", row.getString(2))
+            assertTrue(row.next())
+            assertEquals(1, row.getInt(1))
+            assertEquals("create_banned_credential_tombstones", row.getString(2))
             row.getLong(3).also {
                 assertTrue(it > 0L)
                 assertTrue(!row.next())

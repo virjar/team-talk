@@ -26,7 +26,7 @@ object DatabaseFactory {
 
     private val schemaTables = arrayOf(
         SchemaMetadata, SchemaMigrations,
-        Users, Devices, Credentials, Chats, GroupChats, GroupCreationCommands,
+        Users, Devices, Credentials, BannedCredentialTombstones, Chats, GroupChats, GroupCreationCommands,
         GroupMembers, GroupMemberMutes,
         Conversations, ConversationUsages, Friends, FriendApplies, ContactDecisionReceipts,
         GroupInviteLinks, InviteLinkCreationReceipts, SyncStreams, SyncEvents,

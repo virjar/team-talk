@@ -17,6 +17,7 @@ import com.virjar.tk.server.infra.db.Credentials
 import com.virjar.tk.server.infra.db.ClientTelemetryDevices
 import com.virjar.tk.server.infra.db.ClientTelemetryPolicies
 import com.virjar.tk.server.infra.db.Devices
+import com.virjar.tk.server.infra.db.BannedCredentialTombstones
 import com.virjar.tk.server.infra.db.Users
 import com.virjar.tk.server.infra.db.requireExposedTransaction
 import com.virjar.tk.protocol.model.User
@@ -339,8 +340,35 @@ class ExposedCredentialRepository(
         } else {
             currentEpoch
         }
+        // 封禁删除全部凭据行之前保留 refresh token 摘要墓碑（T013）：
+        // 之后持有旧 token 的重连请求可以被权威判定为账号封禁。
+        val tombstonedHashes = Credentials.selectAll().where {
+            (Credentials.uid eq uid) and (Credentials.tokenType eq TYPE_REFRESH)
+        }.map { it[Credentials.tokenHash] }
+        val now = clock()
+        tombstonedHashes.forEach { hash ->
+            BannedCredentialTombstones.insert {
+                it[BannedCredentialTombstones.tokenHash] = hash
+                it[BannedCredentialTombstones.uid] = uid
+                it[bannedAt] = now
+            }
+        }
         Credentials.deleteWhere { Credentials.uid eq uid }
         committedEpoch
+    }
+
+    override suspend fun findBannedOwnerByRefreshToken(refreshToken: String): String? {
+        if (refreshToken.isBlank()) return null
+        val refreshHash = tokenHash(refreshToken)
+        return credentialTransaction {
+            val uid = BannedCredentialTombstones.selectAll()
+                .where { BannedCredentialTombstones.tokenHash eq refreshHash }
+                .singleOrNull()?.get(BannedCredentialTombstones.uid)
+                ?: return@credentialTransaction null
+            val banned = Users.selectAll().where { Users.uid eq uid }.singleOrNull()
+                ?.get(Users.status) != STATUS_ACTIVE
+            uid.takeIf { banned }
+        }
     }
 
     override suspend fun unbanUser(uid: String) {

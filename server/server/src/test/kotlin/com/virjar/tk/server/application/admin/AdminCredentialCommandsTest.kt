@@ -79,6 +79,7 @@ class AdminCredentialCommandsTest {
         private val order: MutableList<String>,
         private val committedEpoch: Long,
     ) : CredentialAdministration {
+        override suspend fun findBannedOwnerByRefreshToken(refreshToken: String): String? = null
         var receivedHash: String? = null
 
         override suspend fun banUser(uid: String): Long = error("not used")

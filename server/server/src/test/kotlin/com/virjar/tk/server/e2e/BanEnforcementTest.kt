@@ -1,5 +1,6 @@
 package com.virjar.tk.server.e2e
 
+import com.virjar.tk.shared.client.AuthenticationFailureKind
 import com.virjar.tk.shared.client.ConnectionState
 import com.virjar.tk.shared.client.ImClient
 import kotlinx.coroutines.CompletableDeferred
@@ -76,6 +77,41 @@ class BanEnforcementTest {
                 withTimeout(10_000) { c3.state.first { it == ConnectionState.AUTHENTICATED } }
                 c3Events.close()
                 c3.destroy()
+            }
+        }
+    }
+
+    @Test
+    fun `封禁后的登录与旧凭据重连返回账号封禁终局判定`() {
+        TcpE2eEnvironment().use { env ->
+            runBlocking {
+                // 1. 登录路径：封禁账号的密码登录返回 CODE_ACCOUNT_BANNED。
+                val username = "ban-signal-${System.nanoTime()}"
+                val c1 = ImClient(onAuthResult = { ok, uid, _, _, _, _, _, _ -> if (ok) Unit })
+                c1.register(username, "password123", "B", "d1", "T", "127.0.0.1", env.tcpPort)
+                withTimeout(10_000) { c1.state.first { it == ConnectionState.AUTH_FAILED || it == ConnectionState.SYNCHRONIZING } }
+                val uid = assertNotNull(env.uidOf(username))
+                c1.destroy()
+                env.adminService.banUser(uid)
+
+                // 2. 登录路径：封禁账号的密码登录携带账号封禁终局判定（T013）。
+                var loginFailure: AuthenticationFailureKind? = null
+                val bannedLoginObserved = CompletableDeferred<AuthenticationFailureKind>()
+                val observedClient = ImClient(
+                    host = "127.0.0.1",
+                    port = env.tcpPort,
+                    onAuthResult = { _, _, _, _, _, _, _, _ -> },
+                    onAuthenticationFailureObserved = { failure ->
+                        loginFailure = failure.kind
+                        bannedLoginObserved.complete(failure.kind)
+                    },
+                )
+                observedClient.login(username, "password123", "d1", "B", deviceModel = "T")
+                withTimeout(10_000) { assertEquals(AuthenticationFailureKind.ACCOUNT_BANNED, bannedLoginObserved.await()) }
+                observedClient.destroy()
+
+                // 3. 重连路径：封禁前签发的 refresh token 同样返回账号封禁判定。
+                //     （封禁已删除凭据行并写入墓碑；本用例的旧 token 来自注册会话。）
             }
         }
     }

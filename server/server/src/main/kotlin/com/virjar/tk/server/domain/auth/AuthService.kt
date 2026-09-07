@@ -20,6 +20,7 @@ class AuthService(
     private val userService: UserService,
     private val registrationService: RegistrationService,
     private val credentials: TokenRepository,
+    private val credentialAdministration: CredentialAdministration,
     private val onlineSessions: OnlineSessions,
 ) {
     companion object {
@@ -28,6 +29,7 @@ class AuthService(
         const val CODE_VERSION_UNSUPPORTED = AuthResponsePayload.CODE_VERSION_UNSUPPORTED
         const val CODE_SERVER_MAINTENANCE = AuthResponsePayload.CODE_SERVER_MAINTENANCE
         const val CODE_DEVICE_BANNED = AuthResponsePayload.CODE_DEVICE_BANNED
+        const val CODE_ACCOUNT_BANNED = AuthResponsePayload.CODE_ACCOUNT_BANNED
         const val CODE_TOO_MANY_CONNECTIONS = AuthResponsePayload.CODE_TOO_MANY_CONNECTIONS
         const val DEVICE_LIMIT_RESPONSE_REASON = "设备数量已达上限"
     }
@@ -63,6 +65,8 @@ class AuthService(
 
         val proof = try {
             userService.authenticateForCredentialIssue(username, password)
+        } catch (e: UserService.AccountBannedException) {
+            return bannedFailure(e.message)
         } catch (e: IllegalArgumentException) {
             return failure(e.message)
         }
@@ -109,7 +113,7 @@ class AuthService(
         val issued = commitCredentialMutationAndFence(
             commit = { credentials.refreshCredentials(refreshToken, payload.toCredentialDevice()) },
             publishFence = { committed -> committed?.let { publishDeviceCredentialFence(it.principal) } },
-        ) ?: return failure("Invalid or expired refresh token")
+        ) ?: return bannedOwnerFailureOrInvalid(refreshToken)
 
         return AuthenticationResult(
             response = successResponse(
@@ -176,6 +180,23 @@ class AuthService(
         response = AuthResponsePayload(code = CODE_AUTH_FAILED, reason = reason),
         principal = null,
     )
+
+    /** 账号封禁是权威终局判定，与普通凭据失败使用不同响应码（T013）。 */
+    private fun bannedFailure(reason: String?) = AuthenticationResult(
+        response = AuthResponsePayload(code = CODE_ACCOUNT_BANNED, reason = reason),
+        principal = null,
+    )
+
+    /**
+     * refresh 失败时，凭据墓碑能把"曾属于仍被封禁的账号"与任意无效令牌区分开：
+     * 前者返回账号封禁终局判定，后者保持普通认证失败语义。
+     */
+    private suspend fun bannedOwnerFailureOrInvalid(refreshToken: String?): AuthenticationResult =
+        if (refreshToken != null && credentialAdministration.findBannedOwnerByRefreshToken(refreshToken) != null) {
+            bannedFailure("账号已被封禁")
+        } else {
+            failure("Invalid or expired refresh token")
+        }
 
     private fun deviceLimitFailure() = AuthenticationResult(
         response = AuthResponsePayload(

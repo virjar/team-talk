@@ -28,6 +28,10 @@ private val schemaMigrations = listOf(
                 "CHECK (protocol_version >= 0)",
         )
     },
+    SchemaMigration("create_banned_credential_tombstones") {
+        // T013：封禁账号的 refresh token 摘要墓碑，支持把旧凭据重连权威判定为账号封禁。
+        SchemaUtils.create(BannedCredentialTombstones)
+    },
 )
 
 /** Caller owns the schema_metadata lock; DDL and its completion receipt commit in the same transaction. */

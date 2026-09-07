@@ -289,6 +289,8 @@ data class AuthResponsePayload(
         const val CODE_SERVER_MAINTENANCE = 3
         const val CODE_DEVICE_BANNED = 4
         const val CODE_TOO_MANY_CONNECTIONS = 5
+        /** 全局账号封禁；区别于设备封禁与普通凭据失效，客户端据此执行账号清理策略（T013）。 */
+        const val CODE_ACCOUNT_BANNED = 6
 
         override fun readFrom(buf: PacketBuffer): AuthResponsePayload {
             val code = buf.readVarInt()

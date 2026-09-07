@@ -124,6 +124,21 @@ object Credentials : Table("credentials") {
     }
 }
 
+
+/**
+ * 封禁账号的凭据墓碑（T013）：封禁删除该账号全部凭据行后，保留
+ * refresh token 摘要到 uid 的映射，使此后持有旧 token 的重连请求能被
+ * 权威地判定为"账号封禁"，而不是与任意无效令牌混为一谈。
+ * 墓碑永久保留：解封不复活旧凭据，因此命中的 uid 只要仍处于封禁状态
+ * 就继续返回封禁判定；解封后的命中按普通无效令牌处理。
+ */
+object BannedCredentialTombstones : Table("banned_credential_tombstones") {
+    val tokenHash = varchar("token_hash", 64)
+    val uid = varchar("uid", 36).index()
+    val bannedAt = long("banned_at")
+
+    override val primaryKey = PrimaryKey(tokenHash)
+}
 object Chats : LongIdTable("chats") {
     val chatId = varchar("chat_id", 36).uniqueIndex()
     val chatType = integer("chat_type")  // 1=personal, 2=group

@@ -47,7 +47,7 @@ class UserServiceAuthenticationPolicyTest {
         val hasher = RecordingPasswordHasher(verificationResult = true)
         val service = service(repository, hasher)
 
-        val banned = assertFailsWith<IllegalArgumentException> {
+        val banned = assertFailsWith<UserService.AccountBannedException> {
             service.authenticateForCredentialIssue("banned-user", "valid-password")
         }
         val serviceAccount = assertFailsWith<IllegalArgumentException> {

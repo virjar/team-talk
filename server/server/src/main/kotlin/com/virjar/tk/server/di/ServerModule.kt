@@ -312,7 +312,7 @@ internal fun createServerModule(
         )
     }
     single { RegistrationService(get(), get<PgUnitOfWork>(), get(), get()) }
-    single { AuthService(get(), get(), get(), get()) }
+    single { AuthService(get(), get(), get(), get(), get()) }
     single { ContactService(get<ContactRepository>(), get<PgUnitOfWork>(), get<UserRepository>()) }
     single { ChatService(get(), get(), get(), get(), get(), get(), get(), get()) }
     single { OrganizationManagedChatProjector(get(), get(), get(), get<ChatStore>()) }

@@ -121,6 +121,12 @@ interface CredentialAdministration {
     suspend fun banUser(uid: String): Long
     suspend fun unbanUser(uid: String)
     suspend fun resetPasswordAndRevoke(uid: String, passwordHash: String): Long
+
+    /**
+     * 用一个已失效的 refresh token 判断其曾属于当前仍处于封禁状态的账号（T013）。
+     * 只有封禁时会写入凭据墓碑；解封后命中墓碑按普通无效令牌处理（返回 null）。
+     */
+    suspend fun findBannedOwnerByRefreshToken(refreshToken: String): String?
 }
 
 data class TokenInfo(

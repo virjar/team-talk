@@ -346,8 +346,9 @@ class CredentialEpochIntegrationTest {
         ctx.adminService.banUser(uid)
         assertEquals(initialRevision + 1L, ctx.userService.getProfile(uid).revision)
         assertNull(ctx.accessTokenValidator.validateAccessToken(oldAccess))
-        assertEquals(1, refresh(beforeBan.refreshToken, "ban-device").code)
-        assertEquals(1, login(username, password, "blocked-device").code)
+        // T013：封禁后的旧凭据重连与密码登录都返回账号封禁终局判定（CODE_ACCOUNT_BANNED=6）。
+        assertEquals(6, refresh(beforeBan.refreshToken, "ban-device").code)
+        assertEquals(6, login(username, password, "blocked-device").code)
 
         ctx.adminService.unbanUser(uid)
         assertEquals(initialRevision + 2L, ctx.userService.getProfile(uid).revision)

@@ -75,7 +75,8 @@ class UserService(
         )
         if (internal == null) throw invalidCredentials()
         if (internal.user.status != STATUS_ACTIVE) {
-            throw IllegalArgumentException("账号已被封禁")
+            // T013：与普通凭据错误区分的终局判定；客户端据此执行封禁处置。
+            throw AccountBannedException("账号已被封禁")
         }
         if (internal.user.role != UserRole.HUMAN) {
             throw IllegalArgumentException("服务账户不能使用客户端密码登录")
@@ -297,6 +298,9 @@ class UserService(
     }
 
     private fun invalidCredentials() = IllegalArgumentException("用户名或密码错误")
+
+    /** 登录判定的账号封禁；不属于无效凭据，客户端不能把它当作普通登录失败重试（T013）。 */
+    class AccountBannedException(message: String) : RuntimeException(message)
 
     private companion object {
         const val USER_AVATAR_MUTATION_KEY_PREFIX = "user-avatar-mutation:"

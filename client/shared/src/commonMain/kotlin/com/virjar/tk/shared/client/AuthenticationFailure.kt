@@ -33,6 +33,8 @@ enum class AuthenticationFailureKind {
     SERVER_MAINTENANCE,
     DEVICE_BANNED,
     TOO_MANY_CONNECTIONS,
+    /** 全局账号封禁的权威终局判定（T013）；不是普通凭据失效，不得自动重试。 */
+    ACCOUNT_BANNED,
 }
 
 /** 保留同一 refresh-auth owner、可通过受限重试收敛的服务器状态。 */
@@ -49,6 +51,8 @@ internal fun AuthResponsePayload.toAuthenticationFailure(): AuthenticationFailur
             AuthenticationFailureKind.SERVER_MAINTENANCE
         AuthResponsePayload.CODE_DEVICE_BANNED ->
             AuthenticationFailureKind.DEVICE_BANNED
+        AuthResponsePayload.CODE_ACCOUNT_BANNED ->
+            AuthenticationFailureKind.ACCOUNT_BANNED
         AuthResponsePayload.CODE_TOO_MANY_CONNECTIONS ->
             AuthenticationFailureKind.TOO_MANY_CONNECTIONS
         else -> AuthenticationFailureKind.REJECTED
