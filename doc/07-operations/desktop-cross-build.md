@@ -27,7 +27,7 @@ flowchart TD
 Gradle 进程争用工作目录，也不需要依赖 Windows shell 去执行 Unix shebang。
 
 Conveyor 工具版本与下载哈希固定在 `gradle/conveyor-tools.properties`，当前为 22.1，配置兼容级别为 22。
-下载工具解压到 Gradle 用户目录下的 `teamtalk-tools/conveyor`；这与打包所用的 JDK 17 是不同配置。
+下载工具解压到 Gradle 用户目录下的 `teamtalk-tools/conveyor`；这与打包所用的 JDK 21 是不同配置。
 已经缓存并校验的工具会复用。私有环境可通过下列非秘密参数提供镜像或现成工具：
 
 | 参数 | 等价环境变量 | 用途 |
@@ -132,7 +132,7 @@ Android 优先读取环境变量，其次读取不入库的 `local.properties`�
 不替代统一发行里的跨平台包；Intel Mac 构建也不证明 Apple Silicon 原生包已验证。
 
 SDK 与无头客户端从同一版本源码接入。`:client:shared:headlessDist` 提供 `tt-agent`、`tt`、`tt-mcp`
-和运行库，需 JDK 17；首次运行和持久数据目录见[无头客户端](../05-clients/headless.md#3-构建与启动-agent)。
+和运行库，需 JDK 21；首次运行和持久数据目录见[无头客户端](../05-clients/headless.md#3-构建与启动-agent)。
 
 打包事实源是 `client/desktop/build.gradle.kts`、`client/desktop/conveyor.conf`、
 `gradle/conveyor-tools.properties`、`client/android/build.gradle.kts` 与 `buildSrc/src/main/kotlin/release/ConveyorTools.kt`。

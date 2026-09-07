@@ -236,7 +236,12 @@ plugins {
 }
 
 kotlin {
-    jvm("desktop")
+    // T011：Gradle 运行 JDK 21，Desktop 产物字节码显式钉 21。
+    jvm("desktop") {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+        }
+    }
 
     sourceSets {
         val desktopMain by getting {

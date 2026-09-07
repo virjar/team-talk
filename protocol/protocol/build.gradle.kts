@@ -95,8 +95,17 @@ tasks.register("verifyProtocolBaseline") {
  * 客户端连接、缓存、Repository、平台实现和服务端基础设施都不得进入本模块。
  */
 kotlin {
-    jvm()
-    androidTarget()
+    // T011：Gradle 运行 JDK 21；JVM 产物显式钉 21，Android 字节码保持 17（设备兼容基线）。
+    jvm() {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+        }
+    }
+    androidTarget() {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
+    }
 
     sourceSets {
         val commonMain by getting {

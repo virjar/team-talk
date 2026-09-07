@@ -171,7 +171,7 @@ keystore 与 Conveyor 签名材料，构建机器更换时恢复原材料，避�
 
 ## 本机构建与交付
 
-构建机需要 Git、JDK 17 与 Android SDK；首次构建需要依赖仓库和工具下载可达。Gradle 管理 Node.js、
+构建机需要 Git、JDK 21 与 Android SDK；首次构建需要依赖仓库和工具下载可达。Gradle 管理 Node.js、
 Conveyor 的固定版本下载、摘要校验与缓存，不要求手工安装全局 Node.js、Conveyor、`gh`、`rsync` 或
 `scp` 来发布客户端。Conveyor 的持续签名配置仍需准备，详见[Desktop 打包](desktop-cross-build.md)。
 

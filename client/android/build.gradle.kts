@@ -16,6 +16,13 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// T011：Android 字节码目标保持 17（设备兼容基线），显式固定避免跟随构建 JDK 漂移。
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
 val generateReleaseIdentity = tasks.register<GenerateAndroidReleaseIdentity>("generateReleaseIdentity") {
     this.releaseVersion.set(rootProject.extra["releaseVersion"] as String)
     this.buildIdentity.set(rootProject.extra["buildIdentity"] as String)

@@ -4,7 +4,7 @@ TeamTalk 的部署目标是：独立 clone 可以通过一份本机部署配置�
 部署自己的服务端并对同一目标运行验收。私有客户端具有自己的安装身份和名称，可以与公版在同一台
 电脑或 Android 设备分别安装、运行和保存资料。
 
-执行构建/部署的机器需要 JDK 17。Gradle 自动下载固定版本的 Node.js 及随包 npm，并由
+执行构建/部署的机器需要 JDK 21。Gradle 自动下载固定版本的 Node.js 及随包 npm，并由
 `:server:admin` 在隔离的 `server/admin/build` 工作区中按锁文件构建管理后台；首次构建需要访问
 Node.js 分发站点和 npm 包仓库。常规构建和运行已构建服务端都不需要全局安装 Node.js。
 构建产物与服务端分发的衔接见[部署与升级](../07-operations/deployment.md#1-部署任务)。
@@ -14,7 +14,7 @@ Node.js 分发站点和 npm 包仓库。常规构建和运行已构建服务端�
 推荐基线：
 
 - Linux x86_64 或 arm64
-- JDK 17
+- JDK 21
 - Docker 与 Docker Compose
 - 客户端可以访问的服务器 IP；已有域名也可使用
 - 对客户端开放配置的 HTTP(S) 端口与 `tcpAddress` 的 TLS/TCP 端口（默认 5100）

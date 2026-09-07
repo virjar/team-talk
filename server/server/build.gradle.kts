@@ -8,6 +8,13 @@ plugins {
     application
 }
 
+// T011：Gradle 运行 JDK 21，服务端字节码显式钉 21（部署主机运行时同步升级）。
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+    }
+}
+
 application {
     mainClass.set("com.virjar.tk.server.ApplicationKt")
     applicationName = "server"

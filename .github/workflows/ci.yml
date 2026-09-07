@@ -23,7 +23,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-java@v5.7.0
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: temurin
       - uses: gradle/actions/setup-gradle@v5.0.2
       - name: Exercise release metadata, protocol policy, archives and JVM publishers
@@ -56,10 +56,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v5.7.0
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
 
       - name: Setup Gradle
@@ -87,7 +87,7 @@ jobs:
 
       - uses: actions/setup-java@v5.7.0
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
 
       - uses: gradle/actions/setup-gradle@v5.0.2
@@ -124,10 +124,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v5.7.0
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
 
       - name: Setup Gradle

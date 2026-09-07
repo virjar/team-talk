@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-java@v5.7.0
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
       - uses: gradle/actions/setup-gradle@v5.0.2
       # TestPeer probes audio metadata locally through the same JavaCV/FFmpeg runtime.
