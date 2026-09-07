@@ -238,6 +238,8 @@ object ReleaseBundle {
         requiredPackages.forEach { name ->
             require(files[name]?.length()?.let { it > 0 } == true) { "Desktop site lacks the current platform package: $name" }
         }
+        verifyMsixDataDirectoryPolicy(files.getValue("$packagePrefix.x64.msix"))
+        requiredPackages.forEach { verifySkikoNativePackage(files.getValue(it)) }
     }
 
     private fun clientManifest(client: ClientDistributionIdentity): JsonObject = buildJsonObject {

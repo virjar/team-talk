@@ -34,13 +34,15 @@ object JvmFileSystemIdentity {
     }
 
     fun requireSafeWindowsParent(path: Path, owner: UserPrincipal, trustedOwners: Set<UserPrincipal>) {
-        require(Files.getOwner(path, LinkOption.NOFOLLOW_LINKS) in trustedOwners) {
+        val actualOwner = Files.getOwner(path, LinkOption.NOFOLLOW_LINKS)
+        require(actualOwner in trustedOwners) {
             "Private data parent has an untrusted Windows owner: $path"
         }
         val acl = Files.getFileAttributeView(path, AclFileAttributeView::class.java, LinkOption.NOFOLLOW_LINKS)
             ?: error("Windows private storage requires an ACL view: $path")
-        require(WindowsSafeParentAclPolicy.isSafe(owner, trustedOwners, acl.acl)) {
-            "Private data parent grants mutation rights to another Windows principal: $path"
+        val entries = acl.acl
+        require(WindowsSafeParentAclPolicy.isSafe(owner, trustedOwners, entries)) {
+            describeWindowsParentAclFailure(path, owner, actualOwner, trustedOwners, entries)
         }
     }
 
@@ -66,10 +68,28 @@ object WindowsSafeParentAclPolicy {
     )
 
     fun isSafe(owner: UserPrincipal, trustedSystemPrincipals: Set<UserPrincipal>, entries: List<AclEntry>): Boolean =
-        entries.none { entry ->
-            entry.type() == AclEntryType.ALLOW &&
-                AclEntryFlag.INHERIT_ONLY !in entry.flags() &&
-                entry.principal() != owner && entry.principal() !in trustedSystemPrincipals &&
-                entry.permissions().any { it in mutationPermissions }
-        }
+        entries.none { evaluateEntry(owner, trustedSystemPrincipals, it) == EntryDecision.REJECT_UNTRUSTED_MUTATION }
+
+    /** 准入与失败报告共用这一个判定；诊断不得维护另一套 ACL 规则。 */
+    internal fun evaluateEntry(
+        owner: UserPrincipal,
+        trustedSystemPrincipals: Set<UserPrincipal>,
+        entry: AclEntry,
+    ): EntryDecision = when {
+        entry.type() != AclEntryType.ALLOW -> EntryDecision.NOT_AN_ALLOW_ENTRY
+        AclEntryFlag.INHERIT_ONLY in entry.flags() -> EntryDecision.INHERIT_ONLY
+        entry.principal() == owner -> EntryDecision.CURRENT_OWNER
+        entry.principal() in trustedSystemPrincipals -> EntryDecision.TRUSTED_PRINCIPAL
+        entry.permissions().none { it in mutationPermissions } -> EntryDecision.NO_PARENT_MUTATION
+        else -> EntryDecision.REJECT_UNTRUSTED_MUTATION
+    }
+
+    internal enum class EntryDecision {
+        NOT_AN_ALLOW_ENTRY,
+        INHERIT_ONLY,
+        CURRENT_OWNER,
+        TRUSTED_PRINCIPAL,
+        NO_PARENT_MUTATION,
+        REJECT_UNTRUSTED_MUTATION,
+    }
 }

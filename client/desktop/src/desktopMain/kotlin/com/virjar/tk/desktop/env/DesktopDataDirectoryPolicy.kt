@@ -277,9 +277,10 @@ internal object DesktopEnvironment {
     )
 }
 
-/** 只打开当前用户数据根；绝不探测与安装位置相关的历史根目录。 */
+/** 只打开当前用户数据根；旧 MSIX 覆盖层只读检查，不认领或合并历史目录。 */
 internal object DesktopDataDirectoryAdmission {
     fun prepare(plan: DesktopDataDirectoryPlan): File {
+        WindowsMsixDataDirectory.checkBeforeOpening(plan)
         DesktopDataDirectoryPolicy.prepareBaseDirectory(plan)
         DesktopDataDirectoryPolicy.tightenExistingRootPermissions(plan)
         val data = JvmPrivateDataDirectory.openOrCreate(plan.dataDirectory, plan.ownerAnchor)

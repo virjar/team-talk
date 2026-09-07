@@ -303,6 +303,10 @@ fun buildConveyorSite(
             "--console=plain", "--conf-dir=${configDirectory.absolutePath}",
             "make", "site", "--output-dir=${staging.toAbsolutePath()}", "--overwrite",
         ))
+        verifyConveyorMsixDataDirectoryPolicy(staging.toFile())
+        staging.toFile().walkTopDown().filter { it.isFile &&
+            (it.extension in setOf("zip", "msix", "deb") || it.name.endsWith(".tar.gz"))
+        }.forEach(::verifySkikoNativePackage)
         writeReleaseArtifactManifest(staging.toFile(), "desktop-site", version, buildIdentity)
         if (Files.exists(previous, NOFOLLOW_LINKS)) check(previous.toFile().deleteRecursively()) {
             "Cannot remove the previous generated Conveyor site backup"

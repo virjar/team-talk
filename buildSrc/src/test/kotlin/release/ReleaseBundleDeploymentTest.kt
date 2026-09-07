@@ -194,6 +194,20 @@ class ReleaseBundleDeploymentTest {
     }
 
     @Test
+    fun `current filenames and metadata do not hide an incompatible MSIX manifest`() = bundle { directory ->
+        val site = File(directory, "desktop")
+        desktopFixture(site, identity)
+        val msix = File(site, "${identity.client.desktopFsName}-${identity.version.name}-${identity.desktopRevision}.x64.msix")
+        writeSkikoPackageFixture(msix, msixManifestFixture(capabilities = listOf("runFullTrust")))
+        val failure = assertFailsWith<IllegalArgumentException> {
+            ReleaseBundle.verifyDesktop(site, identity.version, identity.client)
+        }
+        assertEquals("MSIX requires runFullTrust and unvirtualizedResources capabilities: ${msix.name}", failure.message)
+        writeSkikoPackageFixture(msix)
+        ReleaseBundle.verifyDesktop(site, identity.version, identity.client)
+    }
+
+    @Test
     fun `sealed snapshot reuse still rejects an older Conveyor installation number`() = bundle { directory ->
         val snapshot = identity.copy(distributionKind = "snapshot", protocolContractSha256 = "a".repeat(64), desktopRevision = 8)
         sealFixture(directory, identity = snapshot, desktopIdentity = identity)
@@ -276,7 +290,12 @@ class ReleaseBundleDeploymentTest {
             "download.html", "$name.appinstaller", "$name.exe", "appcast-amd64.rss", "appcast-aarch64.rss",
             "$prefix-mac-amd64.zip", "$prefix-mac-aarch64.zip", "$prefix-windows-amd64.zip", "$prefix.x64.msix",
             "$prefix-linux-amd64.tar.gz", "${name}_${version.name}-${identity.desktopRevision}_amd64.deb",
-        ).forEach { File(site, it).writeText("Fixture $it") }
+        ).forEach {
+            val file = File(site, it)
+            if (file.extension in setOf("zip", "msix", "deb") || it.endsWith(".tar.gz")) {
+                writeSkikoPackageFixture(file)
+            } else file.writeText("Fixture $it")
+        }
     }
 
     private fun androidFixture(

@@ -13,6 +13,7 @@ Conveyor Gradle 插件负责提取 Compose 的运行库、主类和 JVM 参数�
 ```mermaid
 flowchart TD
     Jar["desktopJar：内嵌源码身份"] --> Extract["writeConveyorConfig：提取 Compose 打包输入"]
+    Targets["四个目标配置：mac x64/arm64、Windows x64、Linux x64"] --> Extract
     Version["根版本与最终 DeploymentConfig"] --> SiteConfig["writeConveyorSiteConfig：更新源与 revision"]
     Lock["conveyor-tools.properties：版本、各平台包 SHA-256"] --> Tool["prepareConveyor：下载、校验、解压、版本检查"]
     Extract --> Icons["prepareDesktopIcons：仅保留实际引用的 Material 扩展图标"]
@@ -20,12 +21,23 @@ flowchart TD
     SiteConfig --> Build
     Tool --> Build
     Signing["已有 defaults.conf：持续签名身份"] --> Build
-    Build --> Output["成功后写构建身份并切换 client/desktop/output"]
+    Build --> Check["核对 MSIX 清单及每个安装包的 Skiko native"]
+    Check --> Output["成功后写构建身份并切换 client/desktop/output"]
     Output --> Bundle["release：验证并纳入密封目录"]
 ```
 
 `conveyor.conf` 读取 Gradle 事先写好的普通配置文件，不在 CLI 运行中反向启动 Gradle。由此避免父子
 Gradle 进程争用工作目录，也不需要依赖 Windows shell 去执行 Unix shebang。
+
+`compose.desktop.currentOs` 只提供构建宿主的运行库。交叉打包另在 `linuxAmd64`、`macAmd64`、
+`macAarch64`、`windowsAmd64` 中声明对应的 Compose Desktop 依赖；插件把各目标依赖写入平台输入。
+Skiko API 与 native 版本由同一 Compose 元数据解析，不手写第二份版本，也不把缺失 DLL 塞进其他 JAR。
+配置用法见 [Conveyor Gradle 集成](https://conveyor.hydraulic.dev/22.1/configs/maven-gradle/#gradle)。
+
+Skiko 先查 JVM 的 `bin`（Windows）或 `lib`（macOS/Linux），随后才查 classpath 资源和摘要。
+当前开启原生库提取，因此 Gradle 在切换站点和密封安装包前，检查各归档中的正确 JVM 路径确实包含
+对应平台的 Skiko native。仅看见一个 runtime JAR 文件名不算通过：额外复制的 JAR 未必在启动器的
+classpath 内；Windows ZIP、MSIX 和 Linux 产物都须独立检查。结构检查不代替目标系统上的实际启动。
 
 Conveyor 工具版本与下载哈希固定在 `gradle/conveyor-tools.properties`，当前为 22.1，配置兼容级别为 22。
 下载工具解压到 Gradle 用户目录下的 `teamtalk-tools/conveyor`；这与打包所用的 JDK 21 是不同配置。
@@ -108,9 +120,21 @@ JNA JAR 构造 `WinNT.PSID` 并调用 `size()`，验证核心 JNI 初始化和 S
 Desktop 的完整站点包含 `download.html`、平台安装文件与更新索引，不能用其中一个 ZIP 替代整站。
 独立解压版也不能被视为已经接通安装器更新路径；遵循生成下载页对应平台的说明。
 
-Windows 当前安装包要求 Windows 10 1809（build 17763）或更新版本，具体下限以 MSIX 内的
+Windows 当前安装包要求 Windows 10 1903（build 18362）或更新版本，具体下限以 MSIX 内的
 `TargetDeviceFamily.MinVersion` 为准。下载页提供的 `.exe` 是引导器，它仍会通过 `.appinstaller`
 下载 MSIX；能在浏览器下载文件不等于 Windows 安装服务能读取它。
+
+MSIX 使用真实 AppData 目录，保持与普通 Win32 启动相同的数据路径及目录权限视图。`conveyor.conf`
+通过 `additional-properties-xml` 写入 `desktop6:FileSystemWriteVirtualization=disabled`，并同时声明
+`runFullTrust`、`unvirtualizedResources`；后者及此属性要求 Windows 10 1903。仅有 `runFullTrust`
+仍会启用文件写入虚拟化。注册表策略保持默认，不叠加会在新系统覆盖全局声明的按目录排除配置。
+配置入口见 [Conveyor 22.1 Windows 文档](https://conveyor.hydraulic.dev/22.1/configs/windows/#appwindowsmanifestsmsixadditional-properties-xml)，
+系统行为见 [Microsoft 虚拟化说明](https://learn.microsoft.com/en-us/windows/msix/desktop/flexible-virtualization)。
+
+`buildConveyorSite` 在替换上次产物前读取实际 MSIX 内的 `AppxManifest.xml`，校验能力、关闭属性及系统
+下限；`ReleaseBundle.verifyDesktop` 在封装与复用密封目录时复核当前安装包。检查不修改包字节或签名。
+需要人工核对时，可用 ZIP 工具直接读取 MSIX 内的清单，并在 Windows 上完成真实安装与启动验证。
+关闭虚拟化后，AppData 数据不会随 MSIX 卸载自动删除；升级前已有的虚拟化目录也不能直接清空或覆盖。
 
 安装站点必须提供正确的 `Content-Type`、GET/HEAD 文件长度与字节 Range 响应。TeamTalk 的公共下载
 路由使用 Ktor `PartialContent`，并显式声明 `.appinstaller` 为 `application/appinstaller`、`.msix` 为

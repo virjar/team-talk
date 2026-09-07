@@ -311,6 +311,24 @@ Windows 的 `LOCALAPPDATA` 缺失时使用 `~/AppData/Local`；Linux 的 `XDG_DA
 主题偏好同样按发行隔离；单实例锁跟随数据目录，因此再次打开同一发行会唤醒它自己的窗口，公版与
 私有版不互相抢占。每个目录中的账号、草稿、可靠发件箱和媒体缓存继续遵循现有本地所有权规则。
 
+Conveyor 的 Windows MSIX 从 Windows 10 1903 起支持安装，清单显式声明
+`unvirtualizedResources` 并关闭 AppData 文件写入虚拟化，使默认目录与 ZIP/MSI 使用同一真实位置。
+`runFullTrust` 本身不会关闭虚拟化；机制见
+[微软清单说明](https://learn.microsoft.com/en-us/uwp/schemas/appxpackage/uapmanifestschema/element-desktop6-filesystemwritevirtualization)。
+
+旧 MSIX 可能把资料写在真实 LocalAppData 下的
+`Packages/<当前 PackageFamilyName>/LocalCache/Local/<数据目录名>`。
+创建数据根和 marker 前，`WindowsMsixDataDirectory` 先通过系统 API 取得当前包身份及未重定向的
+LocalAppData，只读检查这个固定旧目录。目录非空（包括只有 marker）、不是普通目录，或读取失败时，
+停止启动并提供诊断；不会新建空登录，也不会覆盖、删除或自动合并两处资料。默认环境路径与系统真实
+路径冲突时同样停止，显示当前路径与系统路径，避免把 `Packages` 再拼进已重定向的路径。
+处理前应退出应用、备份两处目录，不能先卸载旧 MSIX；两边均有资料时须确认来源后迁移。
+
+这项检查只保护当前包身份与当前数据目录名，不搜索其他发行、旧签名身份、Roaming、LocalState 或
+安装目录；已发布的 `0.0.0` 未使用那些位置。普通 ZIP/MSI 进程及显式 `teamtalk.data.dir` 不做默认
+MSIX 旧目录探测。检查不替代迁移：发现旧资料后仍需处理，真实安装的覆盖升级和保留登录、聊天/文档
+草稿应单独验收，不能以普通 Windows JVM 测试或成功出包代替。
+
 `-Dteamtalk.data.dir=<absolute-path>` 只用于显式开发/诊断 profile：路径必须绝对、父目录已存在，父链不能
 经过符号链接或由其他普通用户修改。Gradle `:client:desktop:run` 与安装包使用相同的平台默认路径，不再隐式
 回退到仓库 `data/desktop`。需要隔离开发数据时必须显式传入已准备的私有目录。

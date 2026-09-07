@@ -7,6 +7,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import release.ReleaseBundle
 import release.ReleaseVersion
+import release.writeSkikoPackageFixture
 
 class ClientDistributionIntegrationTest {
     private fun config(
@@ -72,7 +73,12 @@ class ClientDistributionIntegrationTest {
                     "teamtalkinternal-0.0.0-$revision-mac-aarch64.zip", "teamtalkinternal-0.0.0-$revision-windows-amd64.zip",
                     "teamtalkinternal-0.0.0-$revision.x64.msix", "teamtalkinternal-0.0.0-$revision-linux-amd64.tar.gz",
                     "teamtalkinternal_0.0.0-${revision}_amd64.deb",
-                ).forEach { site.resolve(it).writeText("fixture") }
+                ).forEach {
+                    val file = site.resolve(it)
+                    if (file.extension in setOf("zip", "msix", "deb") || it.endsWith(".tar.gz")) {
+                        writeSkikoPackageFixture(file)
+                    } else file.writeText("fixture")
+                }
                 ReleaseBundle.verifyDesktop(site, version, client, revision)
                 if (revision == 1) ReleaseBundle.verifyDesktop(site, version, client)
                 else assertFailsWith<IllegalArgumentException> { ReleaseBundle.verifyDesktop(site, version, client) }

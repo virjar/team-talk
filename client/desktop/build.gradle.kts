@@ -257,6 +257,8 @@ kotlin {
                 implementation(libs.jetbrains.compose.material3)
                 implementation(libs.kotlinx.coroutines.swing)
                 implementation(libs.compose.media.player)
+                // Desktop 直接调用 Windows 包身份和 KnownFolder API，不能依赖 SDK 的 implementation 泄漏。
+                implementation(libs.jna.platform)
             }
         }
         val desktopTest by getting {
@@ -265,6 +267,15 @@ kotlin {
             }
         }
     }
+}
+
+// currentOs 只负责本机运行；Conveyor 必须分别解析每个交付目标的 Compose/Skiko native。
+// 版本由同一 Compose 元数据决定，不能手工复制 DLL 或把宿主 runtime 当成跨平台 runtime。
+dependencies {
+    add("linuxAmd64", compose.desktop.linux_x64)
+    add("macAmd64", compose.desktop.macos_x64)
+    add("macAarch64", compose.desktop.macos_arm64)
+    add("windowsAmd64", compose.desktop.windows_x64)
 }
 
 // Keep ordinary Desktop builds and cross-platform packaging on the audited resource set.

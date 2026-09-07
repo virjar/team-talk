@@ -33,6 +33,8 @@ dependencies {
     // Keep a compatible JSON runtime here; product modules use the newer serialization release.
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
     implementation("org.apache.commons:commons-compress:1.28.0")
+    // Conveyor 的 Debian 包使用 data.tar.xz；制品检查在各宿主直接读取，无需系统 tar/ar。
+    implementation("org.tukaani:xz:1.10")
     implementation("com.typesafe:config:1.4.3")
     // Read references without changing bytecode when selecting Desktop's Material icon subset.
     implementation("org.ow2.asm:asm-commons:9.8")

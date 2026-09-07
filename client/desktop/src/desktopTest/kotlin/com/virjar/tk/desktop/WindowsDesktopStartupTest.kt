@@ -3,6 +3,7 @@ package com.virjar.tk.desktop
 import com.virjar.tk.desktop.env.DesktopDataDirectoryAdmission
 import com.virjar.tk.desktop.env.DesktopDataDirectoryInputs
 import com.virjar.tk.desktop.env.DesktopDataDirectoryPolicy
+import com.virjar.tk.desktop.env.WindowsMsixDataDirectory
 import com.virjar.tk.shared.client.JvmFileSystemIdentity
 import com.virjar.tk.shared.client.JvmPrivateDataDirectory
 import java.io.File
@@ -13,12 +14,17 @@ import org.junit.Assume.assumeTrue
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import kotlin.test.assertNull
 
 /** 必须在 Windows 执行：覆盖真实 SID 查找、默认 profile 父链、marker 与文本状态的二次读取。 */
 class WindowsDesktopStartupTest {
     @Test
     fun `Windows startup and restart preserve the current users private text state`() {
         assumeTrue(System.getProperty("os.name").startsWith("Windows"))
+        // CI 是普通 Java 进程；验证原生绑定的无包分支，不冒充 MSIX 激活验收。
+        assertNull(WindowsMsixDataDirectory.currentPackageFamilyName())
+        val realLocalAppData = WindowsMsixDataDirectory.currentUnvirtualizedLocalAppData()
+        assertTrue(realLocalAppData.isAbsolute && Files.isDirectory(realLocalAppData))
         val home = File(System.getProperty("user.home"))
         val plan = DesktopDataDirectoryPolicy.resolve(DesktopDataDirectoryInputs(
             osName = System.getProperty("os.name"), userHome = home, environment = System.getenv(),
