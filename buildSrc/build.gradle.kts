@@ -34,6 +34,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
     implementation("org.apache.commons:commons-compress:1.28.0")
     implementation("com.typesafe:config:1.4.3")
+    // Read references without changing bytecode when selecting Desktop's Material icon subset.
+    implementation("org.ow2.asm:asm-commons:9.8")
     implementation("org.apache.sshd:sshd-sftp:2.19.0")
     implementation("org.bouncycastle:bcpkix-jdk18on:1.85")
     implementation("org.bouncycastle:bcprov-jdk18on:1.85.2")

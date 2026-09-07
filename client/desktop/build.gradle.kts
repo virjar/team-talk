@@ -4,6 +4,7 @@ import org.gradle.internal.os.OperatingSystem
 import deployment.DeploymentConfig
 import hydraulic.conveyor.gradle.WriteConveyorConfigTask
 import release.PrepareConveyorTask
+import release.PrepareDesktopIcons
 import release.defaultConveyorConfigDirectory
 import release.buildConveyorSite
 import release.requireConveyorSigningConfiguration
@@ -473,14 +474,27 @@ val sqliteNativeArchDir: String = when (System.getProperty("os.arch")) {
 val sqliteKeepNativePath = "org/sqlite/native/$sqliteNativeOsDir/$sqliteNativeArchDir/"
 
 // 配置是 Gradle 任务的产物。Conveyor 只读普通 include，不反向启动另一个 Gradle 进程。
+val extractedConveyorConfig = layout.buildDirectory.file("conveyor/extracted.conveyor.conf")
 val generatedConveyorConfig = layout.buildDirectory.file("conveyor/generated.conveyor.conf")
 val generatedSiteConfig = layout.buildDirectory.file("conveyor/site.conveyor.conf")
 val conveyorExecutableDescriptor = layout.buildDirectory.file("conveyor/tool.properties")
 
 tasks.named<WriteConveyorConfigTask>("writeConveyorConfig") {
-    destination.set(generatedConveyorConfig)
+    destination.set(extractedConveyorConfig)
     dependsOn("desktopJar")
     doFirst { destination.get().asFile.parentFile.mkdirs() }
+}
+
+// Keep the Gradle-resolved platform graph; replace only the pure vector icon JAR with its used
+// class closure. Neither host-native pruning nor Compose's whole-app ProGuard enters this path.
+val prepareDesktopIcons by tasks.registering(PrepareDesktopIcons::class) {
+    group = "distribution"
+    description = "Keep referenced Material icon classes in the actual cross-platform Conveyor inputs"
+    dependsOn("writeConveyorConfig")
+    runtimeClasspath.from(configurations.named("desktopRuntimeClasspath"), tasks.named<Jar>("desktopJar").flatMap { it.archiveFile })
+    originalConfig.set(extractedConveyorConfig)
+    destinationConfig.set(generatedConveyorConfig)
+    subsetDirectory.set(layout.buildDirectory.dir("conveyor/icons"))
 }
 
 val writeConveyorSiteConfig by tasks.registering {
@@ -525,7 +539,7 @@ val writeConveyorSiteConfig by tasks.registering {
 val prepareConveyorConfig by tasks.registering {
     group = "distribution"
     description = "Generate the complete Gradle-owned Conveyor configuration inputs"
-    dependsOn("writeConveyorConfig", writeConveyorSiteConfig)
+    dependsOn(prepareDesktopIcons, writeConveyorSiteConfig)
 }
 
 val prepareConveyor by tasks.registering(PrepareConveyorTask::class) {

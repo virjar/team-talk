@@ -15,7 +15,8 @@ flowchart TD
     Jar["desktopJar：内嵌源码身份"] --> Extract["writeConveyorConfig：提取 Compose 打包输入"]
     Version["根版本与最终 DeploymentConfig"] --> SiteConfig["writeConveyorSiteConfig：更新源与 revision"]
     Lock["conveyor-tools.properties：版本、各平台包 SHA-256"] --> Tool["prepareConveyor：下载、校验、解压、版本检查"]
-    Extract --> Build["buildConveyorSite：CLI 在独立暂存目录制作完整站点"]
+    Extract --> Icons["prepareDesktopIcons：仅保留实际引用的 Material 扩展图标"]
+    Icons --> Build["buildConveyorSite：CLI 在独立暂存目录制作完整站点"]
     SiteConfig --> Build
     Tool --> Build
     Signing["已有 defaults.conf：持续签名身份"] --> Build
@@ -58,6 +59,25 @@ Conveyor 的使用许可仍由客户按其部署方式确认，自动下载不�
 结果在 `client/desktop/output/`。CLI 失败时不为旧目录重新盖身份，也不把半成品当成完成站点；只有完整
 构建成功，才写入 `teamtalk-release.properties` 并切换生成目录。正式发行和内测交付均使用 `release`，由统一
 密封检查确认版本、必需产物与每个文件的 SHA-256。
+
+## 实际发行包的代码裁剪
+
+`prepareConveyorConfig` 先运行插件的 `writeConveyorConfig`，再由 `prepareDesktopIcons` 将其中的
+`material-icons-extended-desktop` 替换为本次构建实际引用的图标集合。编译仍使用完整依赖，开发者照常
+使用 `Icons.Filled`、`Icons.Outlined` 或 `Icons.AutoMirrored`；无需手工登记清单或复制上游矢量源码。
+分析覆盖应用与各目标运行依赖的编译字节码，递归保留图标之间的引用。填充和轮廓图标按真实引用分别保留，
+被保留的 class 字节、图标库非 class 资源及其他依赖均不修改。
+
+裁剪后的 JAR、保留类清单与字节统计位于 `client/desktop/build/conveyor/icons/`，真正供 Conveyor 使用的
+配置为 `build/conveyor/generated.conveyor.conf`；原始解析结果在 `extracted.conveyor.conf`，便于对照。
+新增正常图标引用后下次构建会自动纳入。不要通过拼接类名反射调用图标；这种方式无法静态确定实际图标集合。
+图标库结构或插件输出格式改变时，任务会报错，须审阅适配后继续打包。
+
+这一流程仅删除未用的纯矢量图标类，不启用名称混淆。Compose `packageRelease*` 的
+`desktop-proguard.pro` 仍属于另一条内部打包路径，统一 `release` / Conveyor 没有使用其整应用裁剪结果。
+尤其不能将依照构建宿主筛选 SQLite native 库的后处理接到跨平台 Conveyor：各目标 JNI、JBR 模块、字体
+与媒体组件继续由原有平台输入和 native extraction 配置管理。进一步收紧 ProGuard、R8 或运行时模块前，
+须分别验证数据库、反射/SPI、中文字体、媒体与系统集成，并用同一源码和运行时做包体对照。
 
 ## 平台产物与更新方式
 
