@@ -11,6 +11,9 @@ import kotlinx.coroutines.flow.StateFlow
 /** 调用一个 generation 绑定的 login/register 回调后的平台可见结果。 */
 enum class AuthSubmissionDisposition { ACCEPTED, REJECTED, STALE }
 
+/** 清理完成前保持封禁终结面；失败须在下次进程启动继续，不能回到旧工作区。 */
+enum class AccountBanState { CLEANING, CLEARED, CLEANUP_FAILED }
+
 /** 登录/注册表单的等待反馈；表单去留仍由平台导航决定。 */
 class AuthFormSubmissionState {
     var loading by mutableStateOf(false)
@@ -60,6 +63,8 @@ class AuthState(
     val onHttpAuthExpiredForSession: (ClientSession, rejectedAccessToken: String) -> Boolean,
     val clearError: () -> Unit,
     val protocolCompatibility: ProtocolCompatibility? = null,
+    val accountBanState: AccountBanState? = null,
+    val dismissAccountBan: () -> Unit = {},
 ) {
     /** 一个固定的、活动的 LocalCache 工作区已发布；传输认证可能处于离线状态。 */
     val hasLocalSession: Boolean

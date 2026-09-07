@@ -49,6 +49,11 @@ interface TokenStore {
     /** 仅当 uid/token/owner 世代仍与 [expected] 完全一致时清除。 */
     fun compareAndClear(expected: StoredLogin): Boolean
 
+    /** 封禁清理日志恢复时按完整账号范围清凭据；不得清除其他账号或依赖已丢失的 bearer。 */
+    fun clearBannedAccount(owner: AccountDataOwner) {
+        throw UnsupportedOperationException("This credential store does not support account data cleanup")
+    }
+
     /** 查询世代是否仍拥有存储；用于阻止旧 controller 清理进程级访问令牌。 */
     fun isCurrentOwner(ownerGeneration: Long): Boolean
 

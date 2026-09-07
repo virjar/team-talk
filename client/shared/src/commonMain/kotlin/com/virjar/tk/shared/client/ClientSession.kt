@@ -76,6 +76,10 @@ class ClientSession internal constructor(
     private val ownedDocumentMoveRecoveryCompletions: SharedFlow<DocumentMoveCommandCompletion>,
 ) {
     private val resourceLifecycle = ClientSessionTerminalLifecycle()
+    /** 已知资源排空失败时，封禁清理保留恢复标记，避免在仍有写入器时宣告完成。 */
+    @Volatile
+    var resourceRetirementFailure: Throwable? = null
+        private set
     private val retirementLock = Any()
     private var retirementIssued = false
     private val rawLogoutRpc = AuthRpcProxy(ownedRpcClient)
@@ -336,6 +340,7 @@ class ClientSession internal constructor(
         vararg releases: Pair<String, () -> Unit>,
     ): List<Pair<String, Throwable>> {
         val failures = releaseAllSessionResources(*releases).toMutableList()
+        if (failures.isNotEmpty()) resourceRetirementFailure = failures.first().second
         if (failures.isNotEmpty()) {
             val summary = failures.joinToString { (owner, failure) ->
                 "$owner=${failure::class.simpleName}:${failure.message}"

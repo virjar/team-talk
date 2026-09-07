@@ -119,6 +119,7 @@ class ImClient(
         router = PacketRouter(
             connectionState = { transport.state.value },
             handleAuthResponse = authSync::handleAuthResponse,
+            handleAccountBanned = authSync::handleAccountBanned,
             handleProtocolNegotiationResponse = authSync::handleProtocolNegotiationResponse,
             handleSyncBatch = authSync::handleSyncBatch,
             handleSyncEvent = authSync::handleSyncEvent,

@@ -690,6 +690,38 @@ class ImClientStateOwnersTest {
         collector.cancelAndJoin()
     }
 
+    @Test
+    fun `scoped ban requires the current negotiated minor before publishing a cleanup scope`() = runTest {
+        for (minor in 1..2) {
+            val failures = mutableListOf<AuthenticationFailure>()
+            val harness = AuthSyncHarness(this, onFailureObserved = { failures += it })
+            harness.coordinator.prepareAuthentication(authRequest())
+            harness.coordinator.beginProtocolNegotiation(1L)
+            harness.coordinator.handleProtocolNegotiationResponse(
+                1L,
+                com.virjar.tk.protocol.ProtocolNegotiation.negotiate(
+                    com.virjar.tk.protocol.ProtocolVersions.SUPPORTED,
+                    com.virjar.tk.protocol.ProtocolRange(0, 0, minor),
+                ),
+            )
+            val payload = com.virjar.tk.protocol.payload.AccountBannedPayload(
+                "u1", TEST_SYNC_DATASET_ID, "Banned",
+            )
+            harness.coordinator.handleAccountBanned(2L, payload)
+            assertTrue(failures.isEmpty())
+            harness.coordinator.handleAccountBanned(1L, payload)
+            if (minor < 2) {
+                assertEquals(1, harness.closes.size)
+                assertTrue(failures.isEmpty())
+            } else {
+                assertEquals(AuthenticationFailureKind.ACCOUNT_BANNED, failures.single().kind)
+                assertEquals("u1", failures.single().accountUid)
+                assertEquals(TEST_SYNC_DATASET_ID, failures.single().datasetId)
+                assertEquals(ConnectionState.AUTH_FAILED, harness.state)
+            }
+        }
+    }
+
     private class AuthSyncHarness(
         scope: CoroutineScope,
         onFailureObserved: ((AuthenticationFailure) -> Unit)? = null,

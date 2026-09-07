@@ -32,11 +32,18 @@ internal fun mediaCacheNamespace(
     deploymentIdentity: DeploymentIdentity,
     datasetId: String,
     ownerUid: String,
+): String = mediaCacheNamespace(deploymentIdentity.fingerprint, datasetId, ownerUid)
+
+/** 目录枚举只需要已确认的 owner，不需要重建服务器配置或持有凭据。 */
+internal fun mediaCacheNamespace(
+    deploymentFingerprint: String,
+    datasetId: String,
+    ownerUid: String,
 ): String {
     com.virjar.tk.protocol.payload.SyncDatasetIdPolicy.requireValid(datasetId)
     require(ownerUid.isNotBlank()) { "media owner uid must not be empty" }
     return sha256Hex(
-        "teamtalk-media-v4\u0000${deploymentIdentity.fingerprint}" +
+        "teamtalk-media-v4\u0000$deploymentFingerprint" +
             "\u0000dataset\u0000$datasetId\u0000uid\u0000$ownerUid",
     ).take(32)
 }

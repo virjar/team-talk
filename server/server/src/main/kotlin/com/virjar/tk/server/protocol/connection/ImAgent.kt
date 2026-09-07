@@ -347,6 +347,7 @@ class ImAgent internal constructor(
         val authentication = authService
         val registry = clientRegistry
         val authoritativeDatasetId = syncEvents.datasetId
+        val authenticationProtocolVersion = checkNotNull(negotiatedProtocolVersion)
         val accepted = try {
             ioExecutor.launchWithAgent(
                 agent = this,
@@ -378,7 +379,7 @@ class ImAgent internal constructor(
                     facade.recorder.discardPreAuthentication()
                 }
 
-                facade.send(response)
+                facade.send(authenticationResponseForProtocol(response, authenticationProtocolVersion, authoritativeDatasetId))
             }
         } catch (failure: Throwable) {
             authenticationAdmission.close()

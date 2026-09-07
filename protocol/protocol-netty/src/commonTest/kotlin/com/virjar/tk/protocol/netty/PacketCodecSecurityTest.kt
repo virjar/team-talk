@@ -9,6 +9,7 @@ import com.virjar.tk.protocol.ProtocolLimits
 import com.virjar.tk.protocol.ProtocolCorruptionException
 import com.virjar.tk.protocol.ProtocolEncodingException
 import com.virjar.tk.protocol.payload.AuthResponsePayload
+import com.virjar.tk.protocol.payload.AccountBannedPayload
 import com.virjar.tk.protocol.payload.ConnectionTraceContextPayload
 import com.virjar.tk.protocol.payload.InvokePayload
 import com.virjar.tk.protocol.payload.NotifyPayload
@@ -23,6 +24,33 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class PacketCodecSecurityTest {
+    @Test
+    fun `scoped account ban round trips only server to client and never grants authenticated frame limits`() {
+        val response = AccountBannedPayload("user-1", "11111111-1111-4111-8111-111111111111", "账号已封禁")
+        val frame = encodeFrame(response)
+        val codec = PacketCodec(inboundRole = PacketInboundRole.CLIENT)
+        val client = EmbeddedChannel(codec)
+        val server = serverChannel()
+        try {
+            assertEquals(PacketType.ACCOUNT_BANNED.code, frame[0].toInt())
+            assertTrue(client.writeInbound(Unpooled.wrappedBuffer(frame)))
+            assertEquals(response, client.readInbound())
+            assertEquals(PacketCodec.UNAUTHED_LIMIT, codec.maxPayloadLimit)
+            assertCorrupted { server.writeInbound(Unpooled.wrappedBuffer(frame.copyOf(PacketCodec.HEADER_SIZE))) }
+            // The historical failed AUTH_RESP wire rule remains unchanged.
+            assertFailsWith<ProtocolEncodingException> {
+                ProtoCodec.encode(AuthResponsePayload(
+                    code = AuthResponsePayload.CODE_ACCOUNT_BANNED,
+                    uid = response.uid,
+                    datasetId = response.datasetId,
+                ))
+            }
+        } finally {
+            client.finishAndReleaseAll()
+            server.finishAndReleaseAll()
+        }
+    }
+
     @Test
     fun `bootstrap negotiation frames decode before authentication in their inbound roles`() {
         val request = com.virjar.tk.protocol.payload.ProtocolNegotiateRequestPayload()

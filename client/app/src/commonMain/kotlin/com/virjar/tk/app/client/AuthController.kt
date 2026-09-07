@@ -22,6 +22,10 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import com.virjar.tk.shared.client.AccountDataCleanup
+import com.virjar.tk.shared.client.AccountDataOwner
 import java.io.File
 
 /** 控制器主体只有在阻塞式的持久 owner 认领在 UI 之外完成后才会进入。 */
@@ -49,6 +53,8 @@ internal fun rememberClaimedAuthController(
     sessionConstructionDispatcher: CoroutineDispatcher,
     runtimeInfo: ClientRuntimeInfo,
     telemetrySpoolRoot: File,
+    accountDataCleanup: AccountDataCleanup?,
+    beforeAccountDataCleanup: suspend (AccountDataOwner) -> Unit,
 ): AuthState {
     // 固定的 credential owner 是传输回调、离线缓存引导和最终退役的非 Compose 线性化边界。
     val userSession = credentialOwner.userSession
@@ -94,6 +100,8 @@ internal fun rememberClaimedAuthController(
     }
     var publishedWorkspace by remember(imClient) { mutableStateOf<ClientSession?>(null) }
     var authError by remember(imClient) { mutableStateOf<String?>(null) }
+    var accountBanState by remember(imClient) { mutableStateOf<AccountBanState?>(null) }
+    var accountBanRetirementFailure by remember(imClient) { mutableStateOf<Throwable?>(null) }
     var displayedAuthenticationAttemptFailureReason by remember(imClient) {
         mutableStateOf<String?>(null)
     }
@@ -134,6 +142,7 @@ internal fun rememberClaimedAuthController(
         retirement = retirement,
         after = { afterSessionRetirement(retiring, reason) },
         onHookFailure = { stage, failure ->
+            if (accountBanState == AccountBanState.CLEANING) accountBanRetirementFailure = failure
             retiring.recordRetirementFailure(
                 "Platform $stage session-retirement hook failed",
                 failure,
@@ -188,7 +197,30 @@ internal fun rememberClaimedAuthController(
         message: String?,
         cause: AuthControllerRetirementCause,
         authResultsAlreadyRetired: Boolean = false,
+        bannedOwner: AccountDataOwner? = null,
     ) {
+        val banned = cause == AuthControllerRetirementCause.SERVER_ACCOUNT_BANNED
+        if (banned) {
+            accountBanState = AccountBanState.CLEANING
+            accountBanRetirementFailure = null
+            // 保存清理范围必须先于清凭据。若写标记失败，保留凭据供下次重新确认封禁。
+            val currentOwner = ownerClaimLease.publishIfCurrent {
+                try {
+                    checkNotNull(accountDataCleanup) { "Account cleanup is not configured" }
+                    checkNotNull(bannedOwner) { "Banned account identity is missing" }
+                    accountDataCleanup.begin(bannedOwner)
+                } catch (failure: Exception) {
+                    accountBanRetirementFailure = failure
+                }
+                true
+            }
+            if (!currentOwner) {
+                // 新 Activity 已先接管：旧控制器只退役自身，不能删后继 owner 正在使用的目录。
+                accountBanState = null
+                endAuthenticatedSession(null, AuthControllerRetirementCause.MISSING_DURABLE_IDENTITY)
+                return
+            }
+        }
         val reason = cause.sessionEndReason
         val closingRetiring = retiringSession
         val closingSession = session
@@ -205,7 +237,7 @@ internal fun rememberClaimedAuthController(
             sessionInitialization.forgetAuthenticatedOwner()
             autoLoggingIn = false
             authError = message
-            if (cause == AuthControllerRetirementCause.PROTOCOL_UPGRADE) {
+            if (cause == AuthControllerRetirementCause.PROTOCOL_UPGRADE || banned) {
                 authenticationPresentation.retire()
             } else {
                 authenticationPresentation.showLogin()
@@ -216,8 +248,12 @@ internal fun rememberClaimedAuthController(
                 closingRetiring?.close(reason = reason, disconnectTransport = false)
             }
             drain.release("active session") { closingSession?.close(reason = reason) }
+            if (banned) {
+                accountBanRetirementFailure = accountBanRetirementFailure
+                    ?: closingSession?.resourceRetirementFailure ?: closingRetiring?.resourceRetirementFailure
+            }
             drain.release("stored login") {
-                cause.retireStoredLogin {
+                if (!banned || accountBanRetirementFailure == null) cause.retireStoredLogin {
                     // uid + token + owner generation 全部匹配才会清除。旧 Activity 的
                     // AUTH_FAILED/401 即使延迟到达，也不能删除新 owner 已确认的凭据。
                     credentialOwner.clearStoredLogin()
@@ -235,6 +271,7 @@ internal fun rememberClaimedAuthController(
                 )
             }
             drain.throwIfFatal()
+            if (banned && drain.firstFailure != null) accountBanRetirementFailure = drain.firstFailure
         }
 
         val platformOwner = closingSession ?: closingRetiring
@@ -242,6 +279,28 @@ internal fun rememberClaimedAuthController(
             retireControllerState()
         } else {
             retireWithPlatformBoundary(platformOwner, reason, ::retireControllerState)
+        }
+        if (banned) {
+            val cleanup = accountDataCleanup
+            if (accountBanRetirementFailure != null || cleanup == null || bannedOwner == null) {
+                accountBanState = AccountBanState.CLEANUP_FAILED
+            } else {
+                controllerScope.launch {
+                    val cleared = withContext(NonCancellable + Dispatchers.IO) {
+                        try {
+                            beforeAccountDataCleanup(bannedOwner)
+                            cleanup.deleteOwnedData(bannedOwner)
+                            credentialOwner.clearBannedAccount(bannedOwner)
+                            cleanup.complete(bannedOwner)
+                            true
+                        } catch (failure: Throwable) {
+                            if (isFatalClientLifecycleFailure(failure)) throw failure
+                            false
+                        }
+                    }
+                    accountBanState = if (cleared) AccountBanState.CLEARED else AccountBanState.CLEANUP_FAILED
+                }
+            }
         }
     }
 
@@ -688,6 +747,9 @@ internal fun rememberClaimedAuthController(
                             endAuthenticatedSession(
                                 message = failureMessage,
                                 cause = retirementCause,
+                                bannedOwner = if (retirementCause == AuthControllerRetirementCause.SERVER_ACCOUNT_BANNED) {
+                                    bannedAccountDataOwner(deploymentIdentity, authenticationFailure, credentialOwner.savedLoginSnapshot())
+                                } else null,
                             )
                         },
                         disconnectTransport = imClient::disconnect,
@@ -738,12 +800,30 @@ internal fun rememberClaimedAuthController(
         }
     }
 
-    fun expireAuthentication() {
+    fun endAuthenticationForRecheck(authResultsAlreadyRetired: Boolean = false): com.virjar.tk.shared.client.StoredLogin? {
+        val saved = credentialOwner.savedLoginSnapshot()
         endAuthenticatedSession(
-            message = "认证失效，请重新登录",
-            cause = AuthControllerRetirementCause.SERVER_AUTHENTICATION_REVOKED,
+            message = if (saved == null) "认证失效，请重新登录" else "正在重新确认账号状态",
+            cause = if (saved == null) AuthControllerRetirementCause.SERVER_AUTHENTICATION_REVOKED
+                else AuthControllerRetirementCause.HTTP_AUTHENTICATION_RECHECK,
+            authResultsAlreadyRetired = authResultsAlreadyRetired,
         )
+        return saved
     }
+
+    fun startAuthenticationRecheck(saved: com.virjar.tk.shared.client.StoredLogin?) {
+        // HTTP/RPC 拒绝不能区分封禁、凭据过期等情况。保留 refresh 做一次权威 AUTH；
+        // 只有 AUTH 的明确结果才清凭据或触发账号资料清理。
+        if (saved != null) {
+            autoLoggingIn = true
+            imClient.authenticate(
+                saved.uid, saved.refreshToken, deviceId, deviceName,
+                tcpHost, tcpPort, deviceModel, deviceFlag,
+            )
+        }
+    }
+
+    fun expireAuthentication() = startAuthenticationRecheck(endAuthenticationForRecheck())
 
     val authSubmission = AuthSubmissionCoordinator(
         imClient = imClient,
@@ -759,7 +839,7 @@ internal fun rememberClaimedAuthController(
     val authSubmissionActions = AuthSubmissionActions(
         coordinator = authSubmission,
         presentationSubmission = authenticationPresentation.captureSubmission(),
-        canSubmit = { !requiresProtocolUpgrade },
+        canSubmit = { !requiresProtocolUpgrade && accountBanState == null },
         beginReplacement = ::beginAuthAttempt,
         onReplacementAccepted = { cleanupFailure ->
             displayedAuthenticationAttemptFailureReason = null
@@ -781,6 +861,14 @@ internal fun rememberClaimedAuthController(
         session = presentedSession,
         connectionState = imClient.state,
         protocolCompatibility = protocolCompatibility,
+        accountBanState = accountBanState,
+        dismissAccountBan = {
+            if (accountBanState == AccountBanState.CLEARED) {
+                accountBanState = null
+                authError = "账号已被封禁，本地资料已清理"
+                authenticationPresentation.showLogin()
+            }
+        },
         onLogin = authSubmissionActions::login,
         onRegister = authSubmissionActions::register,
         onLogout = ::logout,
@@ -792,17 +880,17 @@ internal fun rememberClaimedAuthController(
             onCurrentSession(expectedSession) { expireAuthentication(); true }
         },
         onHttpAuthExpiredForSession = { expectedSession, rejectedAccessToken ->
-            credentialOwner.retireForHttpUnauthorized(
+            var saved: com.virjar.tk.shared.client.StoredLogin? = null
+            val retired = credentialOwner.retireForHttpUnauthorized(
                 rejectedAccessToken = rejectedAccessToken,
                 ownerStillCurrent = { ownerClaimLease.isCurrent() && session === expectedSession },
                 retirement = {
-                    endAuthenticatedSession(
-                        message = "认证失效，请重新登录",
-                        cause = AuthControllerRetirementCause.SERVER_AUTHENTICATION_REVOKED,
-                        authResultsAlreadyRetired = true,
-                    )
+                    saved = endAuthenticationForRecheck(authResultsAlreadyRetired = true)
                 },
             )
+            // 新尝试的 reserve 不能在旧 attempt 的 retireIf 回调内重入。
+            if (retired) startAuthenticationRecheck(saved)
+            retired
         },
         clearError = {
             displayedAuthenticationAttemptFailureReason = null

@@ -63,25 +63,21 @@ class UserService(
     suspend fun authenticateForCredentialIssue(username: String, password: String): CredentialLoginProof {
         AuthRules.validateLogin(username, password)
         val internal = users.findInternalByUsername(username)
-        val eligibleHuman = internal?.user?.let { user ->
-            user.status == STATUS_ACTIVE && user.role == UserRole.HUMAN
-        } == true
+        val eligibleHuman = internal?.user?.role == UserRole.HUMAN
 
-        // 策略在 BCrypt 之前选择：缺失、被封禁与服务身份绝不会暴露或测试其存储的校验器，
-        // 但仍消耗一个等效的假 BCrypt 操作。
+        // 封禁判定会触发客户端删除资料，必须先证明密码；缺失及服务身份仍使用等效假校验。
         val passwordMatches = passwordHasher.verify(
             rawPassword = password,
             encodedHash = internal?.passwordHash?.takeIf { eligibleHuman },
         )
         if (internal == null) throw invalidCredentials()
-        if (internal.user.status != STATUS_ACTIVE) {
-            // T013：与普通凭据错误区分的终局判定；客户端据此执行封禁处置。
-            throw AccountBannedException("账号已被封禁")
-        }
         if (internal.user.role != UserRole.HUMAN) {
             throw IllegalArgumentException("服务账户不能使用客户端密码登录")
         }
         if (!passwordMatches) throw invalidCredentials()
+        if (internal.user.status != STATUS_ACTIVE) {
+            throw AccountBannedException(internal.user.uid)
+        }
         return CredentialLoginProof(internal.user, internal.credentialEpoch, internal.passwordHash)
     }
 
@@ -300,7 +296,7 @@ class UserService(
     private fun invalidCredentials() = IllegalArgumentException("用户名或密码错误")
 
     /** 登录判定的账号封禁；不属于无效凭据，客户端不能把它当作普通登录失败重试（T013）。 */
-    class AccountBannedException(message: String) : RuntimeException(message)
+    class AccountBannedException(val uid: String) : RuntimeException("账号已被封禁")
 
     private companion object {
         const val USER_AVATAR_MUTATION_KEY_PREFIX = "user-avatar-mutation:"

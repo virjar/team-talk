@@ -161,6 +161,8 @@ macOS 文档独立窗口与任务窗口采用同一融合标题栏：原生窗�
 明确退出和显式放弃会单调删除对应草稿，迟到的 Compose disposal 不能复活；认证撤销、进程替换、协议
 拒绝和应用关闭保留按 canonical deployment + dataset + uid 隔离的离线工作，重新进入同一部署、dataset 和账号后可恢复。托盘 Quit
 属于应用关闭而不是账号退出。
+权威账号封禁另有显式删除流程，在草稿 writer 与账号资源完全退役后清理同范围资料，见
+[账号封禁清理](#账号封禁清理)。
 
 进入文档工作台时先显示 SQLite 中最近一次成功收敛的空间、首页索引和本机草稿，再在后台刷新；选择
 空间和展开节点同样先使用已缓存分支。已缓存的干净正文立即打开并继续后台校验，离线修改后转入上述
@@ -174,7 +176,8 @@ macOS 文档独立窗口与任务窗口采用同一融合标题栏：原生窗�
 
 服务维护、连接数限制或本地 credential admission 失败不是认证撤销。已有持久账号在这些
 `AUTH_FAILED` 边缘继续挂载 LocalCache，清除连接 Bearer 并显示“离线”；只有服务端权威拒绝、设备封禁
-或 HTTP 401 才退出认证工作区。
+或当前凭据的 HTTP 401 才退出认证工作区。HTTP 401 会保留 refresh、草稿和可靠发件箱，再通过 AUTH
+重验；只有权威账号封禁才进入本机资料清理，普通拒绝返回登录页，不清除账号资料。
 建群任务窗口在 RPC 前把规范 operationId 和完整载荷写入 deployment + uid 隔离的 LocalCache
 单槽。进程重启后再打开建群会恢复群名和成员；直接重试复用 ID，明确修改才换新 ID，成功响应或用户
 显式放弃前不丢弃该本地事实。
@@ -322,6 +325,19 @@ sidecar 以账号 namespace 为安全边界，不承诺其单文件 mode 恒为 
 数据；应先备份并诊断目录来源，再恢复合法目录或实现明确迁移，不能以预发布为由直接删除用户资料。
 公版默认路径和既有身份保持兼容，普通升级保留当前数据；协议 major 的本地重置仍按
 [版本规则](../04-protocol/versioning.md)执行，范围仅限当前安装管理的数据。
+
+### 账号封禁清理
+
+[DesktopAccountDataCleanup](../../client/desktop/src/desktopMain/kotlin/com/virjar/tk/desktop/DesktopAccountDataCleanup.kt)
+按 deployment + dataset + uid 清理账号数据目录及其损坏隔离副本、`media_e2` 中的媒体 namespace、
+`document-drafts/v3` 中的草稿 owner，以及账号遥测和待上传崩溃资料。安装 marker、设备标识、主题、
+其他账号或数据集与用户自行保存到系统目录的文件保留。
+
+清理先在当前数据根写入 `.account-cleanup` marker，再关闭窗口/UI、草稿 writer、媒体和 SDK 数据库，
+最后删除精确资料与匹配凭据；失败保留 marker 并显示阻止进入工作区的专用表面。
+`TeamTalkMain` 在取得数据目录单实例锁后、恢复凭据和账号资源前续清未完成任务；续清失败直接停止启动。
+这与协议 major 重置是不同范围的操作，身份来源、HTTP 401 重验和恢复顺序统一见
+[账号封禁与本地资料清理](../03-architecture/client-and-sdk.md#211-账号封禁与本地资料清理)。
 
 ## 12. 可测试性
 

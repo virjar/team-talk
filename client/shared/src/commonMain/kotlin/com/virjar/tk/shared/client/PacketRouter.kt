@@ -6,6 +6,7 @@ import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.PingSignal
 import com.virjar.tk.protocol.PongSignal
 import com.virjar.tk.protocol.payload.AuthResponsePayload
+import com.virjar.tk.protocol.payload.AccountBannedPayload
 import com.virjar.tk.protocol.payload.ProtocolNegotiateResponsePayload
 import com.virjar.tk.protocol.payload.ConnectionTraceContextPayload
 import com.virjar.tk.protocol.payload.MessageAckPayload
@@ -52,6 +53,9 @@ internal class PacketRouter(
         payload: ConnectionTraceContextPayload,
     ) -> Boolean = { _, _ -> false },
     private val handleProtocolNegotiationResponse: (Long, ProtocolNegotiateResponsePayload) -> Unit = { _, _ -> },
+    private val handleAccountBanned: (Long, AccountBannedPayload) -> Unit = { _, _ ->
+        closeTransport("Account-ban response has no authentication owner")
+    },
     inboundBufferCapacity: Int = DEFAULT_INBOUND_BUFFER_CAPACITY,
 ) {
     init {
@@ -75,6 +79,7 @@ internal class PacketRouter(
         when (proto) {
             is ProtocolNegotiateResponsePayload -> handleProtocolNegotiationResponse(connectionGeneration, proto)
             is AuthResponsePayload -> handleAuthResponse(connectionGeneration, proto)
+            is AccountBannedPayload -> handleAccountBanned(connectionGeneration, proto)
             is ConnectionTraceContextPayload -> {
                 val authenticatedConnection = connectionState() == ConnectionState.SYNCHRONIZING ||
                     connectionState() == ConnectionState.AUTHENTICATED

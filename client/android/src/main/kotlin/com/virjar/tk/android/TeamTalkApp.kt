@@ -15,6 +15,8 @@ import com.virjar.tk.shared.client.ServerConfig
  * - 平台环境和异常边界是进程级单次初始化
  */
 class TeamTalkApp : Application(), coil3.SingletonImageLoader.Factory {
+    internal var accountCleanupFailed: Boolean = false
+        private set
     /** 由本 Android 进程持有的不可变部署配置。 */
     internal val serverConfig = ServerConfig(
         serverUrl = BuildConfig.SERVER_BASE_URL,
@@ -48,6 +50,15 @@ class TeamTalkApp : Application(), coil3.SingletonImageLoader.Factory {
 
         // 在凭据、草稿写入器与任何数据库打开前处理本安装的 major 边界。
         com.virjar.tk.shared.client.prepareAndroidClientDataVersion(this)
+        try {
+            com.virjar.tk.shared.client.resumePendingAccountCleanup(
+                androidAccountDataCleanup(this),
+                TokenStore(this, serverConfig.deploymentIdentity())::clearBannedAccount,
+            )
+        } catch (_: Exception) {
+            // 不进入旧工作区，也不以反复崩溃代替清理失败提示。标记保留到下次启动。
+            accountCleanupFailed = true
+        }
 
         // 初始化 AndroidContext（供 platformDataDir() 使用）
         com.virjar.tk.shared.client.AndroidContext.appContext = this

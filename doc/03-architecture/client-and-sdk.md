@@ -11,6 +11,7 @@
 | 消息为何先入本地队列，再等待服务器确认 | [发送与恢复](#28-发送与恢复) |
 | 事件落库失败后会不会漏消息 | [EventProcessor](#5-eventprocessor) |
 | 缓存里哪些数据可以重建 | [LocalCache](#6-localcache) |
+| 账号被封禁后如何清理本机资料 | [账号封禁与本地资料清理](#211-账号封禁与本地资料清理) |
 
 ## 1. 分层
 
@@ -163,11 +164,16 @@ AUTH。`ClientSession` 绑定这个精确 generation，打开对应 LocalCache �
 仍会被会话凭据门禁拒绝。服务器认证成功后必须确认同一 uid；datasetId 未变化时，在同一 identity
 epoch 内补齐用户名、显示名、新 access token 及服务端确认的稳定 refresh token。datasetId 变化时，
 凭据提交必须在同一用户锁内原子发布已推进的 identity epoch 与新 Bearer，使旧 dataset 的 HTTP/媒体 owner
-立即失效，随后再由认证根完整退役旧资源图。服务器明确拒绝凭据时才终止用户层、关闭本地会话并返回登录页。
+立即失效，随后再由认证根完整退役旧资源图。服务器明确拒绝凭据时才终止用户层并关闭本地会话；
+普通拒绝返回登录页，已确认的账号封禁进入独占清理表面，具体见[封禁清理](#211-账号封禁与本地资料清理)。
 服务维护、连接准入受限或本地 credential commit 失败只清空当前 Bearer，不推进 identity epoch；否则
 仍挂载的附件、媒体、机器人与日志资源会被误判为旧登录，并在同账号重连成功后永久拒绝新 token。
 identity epoch 只在 dataset 替换、登出、权威撤销或明确的账号/进程 owner 替换使整张资源图退休时推进。
 普通 DNS、TCP、超时或断网只改变连接状态，不阻断本地缓存页面，也不清除持久登录态。
+
+HTTP 401 或 RPC 认证失效本身不能证明账号被封禁。控制器先保留当前精确 refresh 凭据，以
+`SHUTDOWN` 原因关闭这张资源图，再通过 AUTH 重验；该过渡保留草稿和可靠发件箱。
+只有重验得到的权威结果才能决定重新建立会话、清除失效登录或执行账号资料清理。
 
 `app` 的 Compose 认证入口只保存需要触发重组的页面状态。固定 `TokenStore` 世代、AUTH 回调准入与
 `UserSession` 由一个非 Compose credential owner 线性化；session initialization gate 明确区分
@@ -348,6 +354,8 @@ disposal 只退休 UI owner，不冒充 session 结束原因；认证
 桥必须完整传递五值 `SessionEndReason`。只有 `USER_LOGOUT` 单调删除；`AUTH_REVOKED`、
 `PROCESS_REPLACED`、`PROTOCOL_UPGRADE`、`SHUTDOWN` 都保留。删除一旦被请求，较早或迟到的 preserve/capture 都不能降级或
 复活它；导航、平台资源和 session 边界各自由一次性门控退休。
+上述是普通会话退役规则；权威账号封禁另有显式清理流程，在 writer 和会话资源退出后删除该账号的草稿，
+不能把所有 `AUTH_REVOKED` 都等同于封禁。
 
 Desktop 的 application composition 与每个原生 `Window` composition 是不同的借用者。每次认证会话
 因此拥有独立 presentation gate：session 退役的第一条同步边先关闭窗口渲染与已排队 UI 回调准入，
@@ -363,6 +371,58 @@ Desktop 的媒体缓存扫描与平台资源图在 IO dispatcher 构造候选，
 复验精确 `ClientSession` 仍是当前 owner 才发布。发布前候选由交接对象拥有；取消、账号
 替换或窗口组合退场会关闭它，只有同步退役 binding 安装成功后才移交所有权。
 资源加载、可重试失败与就绪主界面复用同一个原生主窗口，不用窗口重建代替状态切换。
+
+### 2.11 账号封禁与本地资料清理
+
+本地消息、草稿和应用内附件是账号持有的工作资料。管理员封禁账号后，Android 与 Desktop 在收到
+服务器权威封禁结果时关闭工作区，并清理该账号在本安装内的资料。普通断网、密码错误、HTTP 401、
+设备退出或一般凭据失效都不是删除依据；客户端离线时也不能自行推断服务器已经封禁。
+
+删除范围由不可变的 `AccountDataOwner(deploymentFingerprint, datasetId, uid)` 确定。
+封禁时资源图以 `SHUTDOWN` 排空并关闭，资料删除由精确 owner 的清理器单独执行；不能在范围确认或
+marker 落盘前，借普通认证退役顺手取消当前数据库中的可靠发件箱。
+密码登录必须先由服务器验证密码，才能返回封禁账号的 uid 与 dataset；错误密码不返回这份身份。
+refresh 认证已有本地身份时，响应 uid 和 deployment 必须与该凭据一致，dataset 采用服务器确认的值。
+协议 0.2 通过 `ACCOUNT_BANNED(16)` 的
+[AccountBannedPayload](../../protocol/protocol/src/commonMain/kotlin/com/virjar/tk/protocol/payload/AccountBannedPayload.kt)
+携带完整身份，仅向协商 minor ≥ 2 的客户端发送，保持原有认证响应的 wire 布局；对旧服务器没有携带身份的
+封禁拒绝，只能回退到本次 refresh 已持有的同部署精确身份。缺少一半身份、身份不匹配或没有
+可证明的账号范围时不猜测目录，更不能按用户名查找后删除。
+
+```mermaid
+flowchart TD
+    Rejected[HTTP 401 / RPC 认证失效] --> Recheck[保留 refresh 与可靠本地事实，再次 AUTH]
+    Recheck --> Verdict{服务器结果}
+    Verdict -->|认证成功| Workspace[重新建立工作区]
+    Verdict -->|普通拒绝| Login[清除失效登录，保留账号资料]
+    Verdict -->|权威封禁| Owner[校验 deployment / dataset / uid]
+    Direct[登录或重连收到权威封禁] --> Owner
+    Owner --> Marker[当前认证 owner 先持久化清理 marker]
+    Marker --> Close[关闭 UI、writer、媒体、SDK 与数据库]
+    Close --> Delete[清理精确账号资料与匹配凭据]
+    Delete --> Complete[移除 marker，显示清理完成]
+    Close -->|失败| Pending[保留 marker，阻止进入工作区]
+    Delete -->|失败| Pending
+    Pending --> Restart[下次进程启动先续清，再允许认证与本地恢复]
+```
+
+[AccountDataCleanup](../../client/shared/src/commonMain/kotlin/com/virjar/tk/shared/client/AccountDataCleanup.kt)
+只负责持久 marker 和精确文件删除；[AuthController](../../client/app/src/commonMain/kotlin/com/virjar/tk/app/client/AuthController.kt)
+负责认证裁决与资源退役，两端工厂列出各自拥有的路径。marker 只记录账号范围，不含 token。
+写入 marker 必须仍持有当前认证 owner 的租约，旧 Activity 或窗口的迟到回调不能清理新会话。
+关闭失败和凭据删除失败都会保留 marker；只有资源、磁盘资料与匹配凭据全部处置完成，才能确认清理完成。
+启动恢复在任何账号数据库、草稿 writer 或本地工作区打开前执行，重复删除已不存在的资料是安全的。
+
+| 清理对象 | 保留对象 |
+|---|---|
+| 精确账号数据库及其 sidecar、生命周期文件与损坏隔离副本 | 其他 deployment、dataset 和账号的资料 |
+| 同账号文档草稿、应用内媒体缓存、遥测和待上传崩溃资料 | 安装身份、设备标识、主题及应用配置 |
+| 与被封禁认证对应的持久登录凭据 | 用户已导出到系统相册、下载目录或自选路径的副本与原始文件 |
+
+清理不会跟随符号链接进入其他目录，不执行整个安装的 major 数据重置，也不删除服务器资料。
+Android 与 Desktop 共用“清理中 / 已完成 / 清理失败”表面；清理失败时只能退出并在下一次启动重试。
+平台目录和退出行为分别见 [Android 生命周期](../05-clients/android.md#账号封禁清理) 与
+[Desktop 私有数据目录](../05-clients/desktop.md#账号封禁清理)。
 
 ## 3. ImClient 状态机
 
@@ -905,6 +965,8 @@ HTTP 基址命名目录，也不能各自维护全局目录、匿名协程或重
 错误文本只含状态码，不读取或传播响应体。401 上报携带该请求实际使用的 Bearer，最终由
 `AuthController` 在 AUTH 结果安装的同一准入边界内同时校验精确 `ClientSession` 与当前 Bearer；因此
 令牌轮换前发出的迟到 401 不能退休新凭据。内部下载 controller 必须保留该终态，不能降级为普通失败。
+当前凭据的 401 进入保留 refresh 的 AUTH 重验流程，不直接触发数据删除；封禁身份与清理顺序见
+[账号封禁与本地资料清理](#211-账号封禁与本地资料清理)。
 
 “代码能共享”不是共享的充分理由。交互模型不一致时，应共享业务动作和视觉令牌，分别实现容器。
 

@@ -22,14 +22,17 @@ internal enum class DesktopAuthenticationSurface {
     LOGIN,
     AUTHENTICATED,
     PROTOCOL_UPGRADE,
+    ACCOUNT_BANNED,
 }
 
-/** 协议升级永远优先；已退役的会话绝不能继续占用业务外壳。 */
+/** 封禁清理与协议升级占据终结面；已退役的会话绝不能继续占用业务外壳。 */
 internal fun desktopAuthenticationSurface(
     hasLocalSession: Boolean,
     hasActiveSession: Boolean,
     requiresProtocolUpgrade: Boolean,
+    accountBanned: Boolean = false,
 ): DesktopAuthenticationSurface = when {
+    accountBanned -> DesktopAuthenticationSurface.ACCOUNT_BANNED
     requiresProtocolUpgrade -> DesktopAuthenticationSurface.PROTOCOL_UPGRADE
     hasLocalSession && hasActiveSession -> DesktopAuthenticationSurface.AUTHENTICATED
     else -> DesktopAuthenticationSurface.LOGIN

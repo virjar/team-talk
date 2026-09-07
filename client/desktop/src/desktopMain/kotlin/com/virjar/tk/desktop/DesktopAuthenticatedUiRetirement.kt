@@ -52,6 +52,10 @@ internal class DesktopAuthenticatedUiRetirement(
     private var terminalFailures = emptyList<Throwable>()
     private var terminalFatalFailure: Throwable? = null
 
+    /** 账号资料删除必须确认平台资源已退出，不能把普通关闭诊断当成清理成功。 */
+    val resourceRetirementFailure: Throwable?
+        get() = lifecycleLock.withLock { terminalFailures.firstOrNull() }
+
     fun beforeSessionRetirement(reason: SessionEndReason = SessionEndReason.SHUTDOWN) {
         // Window 拥有独立的组合，可能在 AuthState 移除它之前收到最后一次 flow 失效通知。
         // 在任何 owner 清理或会话静止之前先撤销 presentation。
@@ -399,6 +403,9 @@ internal class DesktopAuthenticatedUiRetirementBridge {
     fun afterSessionRetirement(session: ClientSession, reason: SessionEndReason) {
         val completion = bindings.complete(session) ?: return
         completeDesktopAuthenticatedUiRetirement(completion, reason)
+        completion.owner.resourceRetirementFailure?.let { failure ->
+            throw IllegalStateException("Desktop authenticated resources did not retire cleanly", failure)
+        }
     }
 }
 

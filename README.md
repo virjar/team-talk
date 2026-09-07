@@ -73,7 +73,7 @@ android / desktop ──▶ app ──▶ shared ──▶ protocol-netty ──
 
 ### 前置条件
 
-- JDK 17
+- JDK 21（Gradle、Server 与 Desktop 使用 21；Android 字节码目标仍为 17）
 - Docker（本地 PostgreSQL）
 - Android Studio（仅 Android 开发需要）
 

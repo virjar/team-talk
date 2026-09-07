@@ -149,6 +149,14 @@ Media3 播放器的创建、`prepare` 与 listener 安装按事务移交所有�
 自动关闭，不会成为永久 pin。系统 `FileProvider` 打开异步接管文件，控制器只保留最近一次成功打开的附件租约；
 下一次打开请求在下载预留前先释放旧租约，页面销毁也会释放，避免旧大文件阻塞新文件下载。
 
+“保存到本地”从完整账号缓存导出独立副本，与“收藏消息”分开：图片进入系统 `Pictures`，视频进入
+`Movies`，其他文件进入 `Download`。Android 10 及以上使用 MediaStore 的 pending 条目，完整写入后
+才发布，不申请存储权限；Android 8/9 在取得运行时存储权限后写入相应公共目录。用户拒绝权限时显示
+失败反馈，不假装保存成功。入口为
+[AndroidMediaExporter](../../client/android/src/main/kotlin/com/virjar/tk/android/AndroidMediaExporter.kt) 与
+[AndroidMediaExportPermission](../../client/android/src/main/kotlin/com/virjar/tk/android/AndroidMediaExportPermission.kt)。
+这些已导出到系统的副本不属于账号缓存，账号封禁清理不删除它们。
+
 附件、图片缩略图、语音和视频下载统一在 `Dispatchers.IO` 内执行，调用者即使来自 Compose 主线程
 也不能在主线程触发连接或阻塞读取。缓存命名空间同时绑定 canonical deployment fingerprint、canonical datasetId 和 uid，服务端重建后不得复用旧 dataset 媒体。下载前按 `Attachment.size` 在整个 app cache 媒体根共享的 512 MiB 与 4096 个最终文件上限中，
 同时原子预留字节和一个文件条目；不同身份目录及附件、缩略图、语音、视频并发合计都不能超配额，零字节附件也不能无界占用 inode。首次真实预留前清理所有合法媒体目录中上次进程的无主 `.part`；
@@ -246,7 +254,8 @@ Snackbar 正常展示完成后才确认删除；Activity 重建会释放未完�
   `ABSENT / AVAILABLE / RETRYABLE` 三态；AtomicFile 的 `.bak` 恢复、单记录损坏隔离和上一份完整快照都不能被超时误判为不存在。进程重建后恢复原
   space/document/parent-document/instance 与编辑世代；主动退出、切换账号、保存成功或明确放弃时先使旧写入
   世代失效。明确放弃还必须先写独立取消 tombstone，再移除标签或创建 outbox；主动退出使用 owner 删除封印阻止迟到写复活。
-  认证失效仅撤销凭据并返回登录页，保留 canonical deployment + dataset + uid 隔离的未保存工作供同一账号重新认证；其他账号不会继承该 store。
+  普通认证失效保留 canonical deployment + dataset + uid 隔离的未保存工作供同一账号重新认证；其他账号不会继承该 store。
+  权威账号封禁另走下述显式清理流程，不能套用普通认证失效的保留策略。
 - `onStop` 返回前只保证最后一拍已经进入进程队列，不宣称已经落盘；只有异步 barrier 成功完成才是 durability
   边界。队列饱和或上一队列失败时，最后一拍进入固定的单个合并接管槽，仍由进程单写者在前序任务后
   落盘，Main 不等待、不编码也不写磁盘；接管 barrier 会继续报告被替换队列的失败。正常编辑期间持续
@@ -262,10 +271,12 @@ Snackbar 正常展示完成后才确认删除；Activity 重建会释放未完�
 - logout 和 auth-expired 同时经 holder 当前 owner 与 AuthController 期望 `ClientSession` 两层引用恒等校验，
   旧 Activity 的迟到回调不能退出新 Activity 已安装的账号。
 - 上传和下载遇到 401 时会携带请求实际使用的 Bearer 回到精确会话的认证控制器；最终校验若发现
-  access 已轮换则丢弃迟到结果。403 与其他 HTTP 状态不会触发退出，错误也不会包含服务端响应体。
+  access 已轮换则丢弃迟到结果。当前凭据的 401 先保留 refresh 和可靠本地事实、关闭当前资源图，再走
+  AUTH 重验，由权威结果决定恢复、返回登录或封禁清理；401 本身不删除资料。403 与其他 HTTP 状态不会触发退出，错误也不会包含服务端响应体。
 - 切后台可能影响通知和媒体，但普通暂停不等于登出。
 - `AUTH_FAILED` 必须按类型处理：权威凭据撤销清持久登录并返回登录页；可重试结果只撤销连接 Bearer、
-  保留本地会话；协议拒绝保留账号工作并进入强制升级表面。安装跨 major 新版本的数据重置由启动所有者负责，普通网络断开只触发后台重连。
+  保留本地会话；账号封禁进入独占清理表面；协议拒绝保留账号工作并进入强制升级表面。
+  安装跨 major 新版本的数据重置由启动所有者负责，普通网络断开只触发后台重连。
 - 认证会话上报 Android/系统/ABI/厂商型号、客户端版本、构建 identity 与 git commit。业务状态机持续向
   typed sink 提交页面、系统与办公动作事件，但页面停留、一般前后台和 `ACTION` 仅在 `DIAGNOSTIC`
   策略准入时进入批次；`BASELINE` 只保留允许的故障、提示、关键连接状态和失败媒体事件。隐私边界统一
@@ -275,7 +286,26 @@ Snackbar 正常展示完成后才确认删除；Activity 重建会释放未完�
   先建立本地会话并进入主界面；网络连接和服务端同步随后异步收敛。
 - Android 遥测根固定使用 app-private `filesDir`；external/SAF、网络盘、FUSE 或语义未知 provider 不受支持。
 
+### 账号封禁清理
+
+认证裁决与凭据证明规则见[账号封禁与本地资料清理](../03-architecture/client-and-sdk.md#211-账号封禁与本地资料清理)。
+[AndroidAccountDataCleanup](../../client/android/src/main/kotlin/com/virjar/tk/android/AndroidAccountDataCleanup.kt)
+以 deployment + dataset + uid 列出账号 SQLite 数据库族及损坏隔离副本、`noBackupFilesDir` 中的文档草稿、
+`cacheDir` 中的会话媒体，以及该账号的遥测和待上传崩溃资料。删除覆盖当前账号的已知历史数据库 epoch，
+不扩大到其他账号或数据集，也不移除安装配置、设备标识和系统导出文件。
+
+清理 marker 先写入 `noBackupFilesDir`，随后关闭 UI、媒体、SDK 和数据库；进程级草稿单写者先封闭该
+owner 的写入并确认屏障，再执行磁盘删除与匹配凭据清除。发生任何失败都保留 marker 并阻止进入工作区。
+`TeamTalkApp` 在进程启动时先恢复待清理任务，完成后才允许认证与账号资源打开，因此强停或崩溃后仍能续清。
+
+双端共享“账号已被封禁”的清理中、完成和失败状态；完成后可返回登录，失败时只提供退出。
+Android 的失败退出使用 `MainActivity` 专用 `onAccountCleanupExit`：结束 Activity 后终止本应用进程，
+保证用户再次打开时执行 `Application` 的恢复入口，不能只结束 Activity 后继续复用失败的进程状态。
+该操作不触及设备网络或其他应用。
+
 ## 9. 验证
 
 本地 JVM 测试覆盖共享逻辑，Android 特有行为使用真机/模拟器、ADB 和 uiautomator2 验证。涉及
 服务端或跨客户端的业务结果仍以真实部署验收为准。
+封禁范围与中断恢复有共享层测试入口；Android 真机仍需覆盖在线封禁、旧凭据启动、错误密码不清理、
+清理失败退出后重开，以及其他账号和系统导出文件保留，不能用 JVM 测试代替这些验收。

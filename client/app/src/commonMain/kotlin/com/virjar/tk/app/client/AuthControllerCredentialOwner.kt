@@ -40,6 +40,9 @@ internal class AuthControllerCredentialOwner private constructor(
 
     fun savedLoginSnapshot(): StoredLogin? = credentialSnapshot.snapshot()
 
+    fun clearBannedAccount(owner: com.virjar.tk.shared.client.AccountDataOwner) =
+        tokenStore.clearBannedAccount(owner)
+
     /**
      * 把一次成功的 AUTH 结果作为一个被准入的用户身份事务提交。持久化在 [UserSession]
      * 持有其身份锁期间运行，因此失败/过期的 TokenStore 写入不可能发布一个从未持久化的内存身份。

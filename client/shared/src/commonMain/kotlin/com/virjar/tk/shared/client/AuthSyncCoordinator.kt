@@ -7,6 +7,7 @@ import com.virjar.tk.protocol.ProtocolRange
 import com.virjar.tk.protocol.ProtocolVersions
 import com.virjar.tk.protocol.payload.AuthRequestPayload
 import com.virjar.tk.protocol.payload.AuthResponsePayload
+import com.virjar.tk.protocol.payload.AccountBannedPayload
 import com.virjar.tk.protocol.payload.ProtocolNegotiateRequestPayload
 import com.virjar.tk.protocol.payload.ProtocolNegotiateResponsePayload
 import com.virjar.tk.protocol.payload.NotifyPayload
@@ -338,6 +339,25 @@ internal class AuthSyncCoordinator(
 
     fun closeForEventResync(reason: String, cause: Throwable? = null) {
         closeTransport(reason, cause)
+    }
+
+    fun handleAccountBanned(connectionGeneration: Long, payload: AccountBannedPayload) {
+        if (!isConnectionGenerationCurrent(connectionGeneration)) return
+        val version = _protocolCompatibility.value?.negotiated
+        if (negotiatedConnectionGeneration != connectionGeneration || version == null ||
+            !AccountBannedPayload.availability.supports(version)
+        ) {
+            closeTransport("Account-ban response requires negotiated protocol 0.2 or later", null)
+            return
+        }
+        // Local adaptation into the existing authentication-attempt terminal path. This synthetic
+        // value is never encoded: the frozen AUTH_RESP failure format forbids a dataset identity.
+        handleAuthResponse(connectionGeneration, AuthResponsePayload(
+            code = AuthResponsePayload.CODE_ACCOUNT_BANNED,
+            uid = payload.uid,
+            datasetId = payload.datasetId,
+            reason = payload.reason,
+        ))
     }
 
     fun handleAuthResponse(connectionGeneration: Long, response: AuthResponsePayload) {

@@ -66,10 +66,7 @@ internal class DesktopSessionResources(
     val serverBaseUrl: String = deploymentIdentity.httpBaseUrl
     val serverFingerprint: String = deploymentIdentity.fingerprint
     val datasetId: String = validatedDesktopMediaDatasetId(datasetId)
-    val sessionFingerprint: String = desktopSha256(
-        "teamtalk-media-v2\u0000${deploymentIdentity.fingerprint}" +
-            "\u0000dataset\u0000${this.datasetId}\u0000uid\u0000$ownerUid",
-    )
+    val sessionFingerprint: String = desktopMediaNamespace(deploymentIdentity.fingerprint, this.datasetId, ownerUid)
     internal val credentialGate = DesktopCredentialGate(ownerUid, credentialProvider)
     internal val diagnostics = DesktopSessionDiagnostics(diagnosticLogger)
     val mediaDirectory: File = File(dataDir, "media_e2/$sessionFingerprint")

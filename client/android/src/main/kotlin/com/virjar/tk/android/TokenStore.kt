@@ -71,6 +71,13 @@ class TokenStore(
         true
     }
 
+    override fun clearBannedAccount(owner: com.virjar.tk.shared.client.AccountDataOwner) = synchronized(PROCESS_LOCK) {
+        val state = readState()
+        if (state.deploymentFingerprint == owner.deploymentFingerprint &&
+            state.datasetId == owner.datasetId && state.uid == owner.uid
+        ) persist(state.copy(uid = null, refreshToken = null, datasetId = null))
+    }
+
     override fun isCurrentOwner(ownerGeneration: Long): Boolean = synchronized(PROCESS_LOCK) {
         readState().let { state ->
             state.ownerGeneration == ownerGeneration &&

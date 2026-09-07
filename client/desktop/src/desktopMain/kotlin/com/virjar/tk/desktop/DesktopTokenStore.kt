@@ -121,6 +121,17 @@ class DesktopTokenStore(
         true
     }
 
+    override fun clearBannedAccount(owner: com.virjar.tk.shared.client.AccountDataOwner) = synchronized(PROCESS_LOCK) {
+        val props = readProps() ?: return@synchronized
+        if (props.getProperty(KEY_DEPLOYMENT_FINGERPRINT) != owner.deploymentFingerprint ||
+            props.getProperty(KEY_DATASET_ID) != owner.datasetId || props.getProperty(KEY_UID) != owner.uid
+        ) return@synchronized
+        props.remove(KEY_UID)
+        props.remove(KEY_TOKEN)
+        props.remove(KEY_DATASET_ID)
+        writeProps(props)
+    }
+
     /** 持久化的 generation 是跨实例、跨进程的持有权依据。 */
     override fun isCurrentOwner(ownerGeneration: Long): Boolean = synchronized(PROCESS_LOCK) {
         val props = readProps() ?: return@synchronized false

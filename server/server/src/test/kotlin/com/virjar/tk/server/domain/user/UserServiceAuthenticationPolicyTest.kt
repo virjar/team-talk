@@ -39,7 +39,7 @@ class UserServiceAuthenticationPolicyTest {
     }
 
     @Test
-    fun `banned and service identities never expose stored verifier but still consume dummy work`() = runTest {
+    fun `banned human requires password proof while service identity consumes dummy work`() = runTest {
         val repository = FakeUserRepository().apply {
             internals["banned-user"] = humanInternal(status = 2, passwordHash = "banned-hash")
             internals["service-user"] = humanInternal(role = UserRole.BOT, passwordHash = "service-marker")
@@ -56,7 +56,20 @@ class UserServiceAuthenticationPolicyTest {
 
         assertTrue(requireNotNull(banned.message).contains("封禁"))
         assertTrue(requireNotNull(serviceAccount.message).contains("服务账户"))
-        assertEquals(listOf<String?>(null, null), hasher.verificationTargets)
+        assertEquals(listOf<String?>("banned-hash", null), hasher.verificationTargets)
+    }
+
+    @Test
+    fun `wrong password for banned account cannot authorize client data deletion`() = runTest {
+        val repository = FakeUserRepository().apply {
+            internals["banned-user"] = humanInternal(status = 2, passwordHash = "banned-hash")
+        }
+        val hasher = RecordingPasswordHasher(verificationResult = false)
+        val failure = assertFailsWith<IllegalArgumentException> {
+            service(repository, hasher).authenticateForCredentialIssue("banned-user", "wrong-password")
+        }
+        assertEquals("用户名或密码错误", failure.message)
+        assertEquals(listOf<String?>("banned-hash"), hasher.verificationTargets)
     }
 
     @Test

@@ -92,6 +92,7 @@ class ProtocolBaselineTest {
                 "STREAM_END" to 13,
                 "NEGOTIATE" to 14,
                 "NEGOTIATE_RESP" to 15,
+                "ACCOUNT_BANNED" to 16,
                 "MESSAGE" to 20,
                 "MESSAGE_ACK" to 21,
                 "NOTIFY" to 30,

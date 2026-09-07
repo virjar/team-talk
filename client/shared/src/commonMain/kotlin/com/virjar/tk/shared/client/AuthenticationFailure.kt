@@ -11,6 +11,9 @@ data class AuthenticationFailure(
      * 本次仍阻止工作区，但不能把可由服务器升级恢复的失败永久写成客户端升级围栏。
      */
     val requiresClientUpgrade: Boolean = kind == AuthenticationFailureKind.PROTOCOL_VERSION_UNSUPPORTED,
+    /** 只有权威封禁响应携带；不是登录输入推测的身份。使用现有 AUTH_RESP 字段，不改变 wire。 */
+    val accountUid: String? = null,
+    val datasetId: String? = null,
 )
 
 /**
@@ -60,5 +63,7 @@ internal fun AuthResponsePayload.toAuthenticationFailure(): AuthenticationFailur
     return AuthenticationFailure(
         kind = kind,
         reason = reason ?: "认证失败(code=$code)",
+        accountUid = uid.takeIf { kind == AuthenticationFailureKind.ACCOUNT_BANNED },
+        datasetId = datasetId.takeIf { kind == AuthenticationFailureKind.ACCOUNT_BANNED },
     )
 }

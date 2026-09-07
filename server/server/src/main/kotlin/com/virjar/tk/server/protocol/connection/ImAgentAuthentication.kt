@@ -14,6 +14,9 @@ import com.virjar.tk.protocol.payload.AuthRequestPayload
 import com.virjar.tk.server.domain.telemetry.ConnectionTracePhase
 import com.virjar.tk.server.domain.telemetry.ConnectionTraceOutcome
 import com.virjar.tk.protocol.payload.AuthResponsePayload
+import com.virjar.tk.protocol.payload.AccountBannedPayload
+import com.virjar.tk.protocol.IProto
+import com.virjar.tk.protocol.ProtocolVersion
 import kotlinx.coroutines.CancellationException
 import java.util.concurrent.RejectedExecutionException
 import java.net.InetSocketAddress
@@ -72,6 +75,21 @@ internal fun authenticationGuardDenialResponse() = AuthResponsePayload(
     code = AuthResponsePayload.CODE_SERVER_MAINTENANCE,
     reason = "Authentication temporarily unavailable",
 )
+
+/** Only negotiated clients can receive the new scoped terminal; old AUTH_RESP wire stays frozen. */
+internal fun authenticationResponseForProtocol(
+    response: AuthResponsePayload,
+    version: ProtocolVersion,
+    datasetId: String,
+): IProto = when {
+    response.code != AuthResponsePayload.CODE_ACCOUNT_BANNED -> response
+    AccountBannedPayload.availability.supports(version) -> AccountBannedPayload(
+        uid = checkNotNull(response.uid) { "Banned authentication result must identify the proven account" },
+        datasetId = datasetId,
+        reason = response.reason,
+    )
+    else -> response.copy(datasetId = null)
+}
 
 /** 单连接认证状态机；CAS 保证同一 TCP 连接至多受理一个认证请求。 */
 internal enum class ImAgentAuthAdmission { ACCEPT, REJECT_AND_CLOSE }

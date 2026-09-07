@@ -58,7 +58,7 @@ internal fun androidDocumentDraftStorage(context: Context): DocumentDraftStorage
 private class AtomicFileDocumentDraftStorage(
     context: Context,
 ) : DocumentDraftStorage {
-    private val directory = File(context.noBackupFilesDir, DIRECTORY_NAME)
+    private val directory = File(context.noBackupFilesDir, ANDROID_DOCUMENT_DRAFT_DIRECTORY)
     private val ownerPreferences = context.getSharedPreferences(OWNER_PREFERENCES, Context.MODE_PRIVATE)
     private val ownerLock = Any()
     private var selectedOwnerHash: String? = null
@@ -573,7 +573,7 @@ private fun hexToBytes(value: String): ByteArray {
     }
 }
 
-private const val DIRECTORY_NAME = "document-drafts-v2"
+internal const val ANDROID_DOCUMENT_DRAFT_DIRECTORY = "document-drafts-v2"
 private const val OWNER_PREFERENCES = "teamtalk_document_drafts"
 private const val ACTIVE_OWNER_KEY = "active_owner_hash"
 private const val INDEX_MAGIC = 0x54544433

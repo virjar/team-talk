@@ -34,6 +34,12 @@ class MainActivity : ComponentActivity() {
                         appDataStateHolder = appDataStateHolder,
                         beforeSessionRetirement = beforeSessionRetirement,
                         onProtocolUpgradeExit = { finishAffinity() },
+                        onAccountCleanupExit = {
+                            // 清理失败后必须释放进程内的文件句柄；下次 Application 启动先重放清理日志。
+                            // 仅 finishAffinity 会复用原 Application，无法恢复这个终结状态。
+                            finishAffinity()
+                            android.os.Process.killProcess(android.os.Process.myPid())
+                        },
                     )
                 }
             }

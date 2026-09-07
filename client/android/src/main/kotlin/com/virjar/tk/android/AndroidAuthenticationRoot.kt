@@ -37,7 +37,15 @@ internal fun AndroidAppRoot(
     appDataStateHolder: AndroidAppDataStateHolder,
     beforeSessionRetirement: (ClientSession, SessionEndReason) -> Unit,
     onProtocolUpgradeExit: () -> Unit,
+    onAccountCleanupExit: () -> Unit,
 ) {
+    val application = applicationContext.applicationContext as TeamTalkApp
+    if (application.accountCleanupFailed) {
+        com.virjar.tk.app.ui.component.AccountBanSurface(
+            com.virjar.tk.app.client.AccountBanState.CLEANUP_FAILED, {}, onAccountCleanupExit,
+        )
+        return
+    }
     val deploymentIdentity = remember(serverConfig) { serverConfig.deploymentIdentity() }
     val tokenStore = remember(deploymentIdentity) {
         TokenStore(applicationContext, deploymentIdentity)
@@ -68,6 +76,16 @@ internal fun AndroidAppRoot(
         beforeSessionRetirement = beforeSessionRetirement,
         runtimeInfo = remember { androidClientRuntimeInfo() },
         telemetrySpoolRoot = applicationContext.filesDir,
+        accountDataCleanup = remember(application) { androidAccountDataCleanup(application) },
+        beforeAccountDataCleanup = { owner ->
+            val drafts = application.documentDraftPersistence
+            check(drafts.delete(com.virjar.tk.app.navigation.feature.document.DocumentDraftOwnerKey(
+                owner.deploymentFingerprint, owner.datasetId, owner.uid,
+            ))) { "Account draft deletion was not accepted" }
+            check(drafts.requestFlush().get(30, java.util.concurrent.TimeUnit.SECONDS)) {
+                "Account draft writer did not drain"
+            }
+        },
     )
     val sessionSnapshot = auth.session
     when (
@@ -76,8 +94,12 @@ internal fun AndroidAppRoot(
             hasActiveSession = sessionSnapshot?.isBusinessActive == true,
             autoLoggingIn = auth.autoLoggingIn,
             requiresProtocolUpgrade = auth.requiresProtocolUpgrade,
+            accountBanned = auth.accountBanState != null,
         )
     ) {
+        AndroidAuthenticationSurface.ACCOUNT_BANNED -> com.virjar.tk.app.ui.component.AccountBanSurface(
+            checkNotNull(auth.accountBanState), auth.dismissAccountBan, onAccountCleanupExit,
+        )
         AndroidAuthenticationSurface.PROTOCOL_UPGRADE -> Box(Modifier.fillMaxSize())
         AndroidAuthenticationSurface.LOADING -> {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -137,14 +159,16 @@ internal fun AndroidAppRoot(
     }
 }
 
-internal enum class AndroidAuthenticationSurface { LOADING, LOGIN, AUTHENTICATED, PROTOCOL_UPGRADE }
+internal enum class AndroidAuthenticationSurface { LOADING, LOGIN, AUTHENTICATED, PROTOCOL_UPGRADE, ACCOUNT_BANNED }
 
 internal fun androidAuthenticationSurface(
     hasLocalSession: Boolean,
     hasActiveSession: Boolean,
     autoLoggingIn: Boolean,
     requiresProtocolUpgrade: Boolean = false,
+    accountBanned: Boolean = false,
 ): AndroidAuthenticationSurface = when {
+    accountBanned -> AndroidAuthenticationSurface.ACCOUNT_BANNED
     requiresProtocolUpgrade -> AndroidAuthenticationSurface.PROTOCOL_UPGRADE
     hasLocalSession && hasActiveSession -> AndroidAuthenticationSurface.AUTHENTICATED
     autoLoggingIn -> AndroidAuthenticationSurface.LOADING

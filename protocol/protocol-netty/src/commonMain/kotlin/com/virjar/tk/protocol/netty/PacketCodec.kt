@@ -13,6 +13,7 @@ import com.virjar.tk.protocol.DisconnectSignal
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.payload.AuthRequestPayload
 import com.virjar.tk.protocol.payload.AuthResponsePayload
+import com.virjar.tk.protocol.payload.AccountBannedPayload
 import com.virjar.tk.protocol.payload.ProtocolNegotiateRequestPayload
 import com.virjar.tk.protocol.payload.ProtocolNegotiateResponsePayload
 import com.virjar.tk.protocol.payload.ConnectionTraceContextPayload
@@ -58,6 +59,7 @@ enum class PacketInboundRole {
         val CLIENT_INBOUND_TYPES = setOf(
             PacketType.NEGOTIATE_RESP,
             PacketType.AUTH_RESP,
+            PacketType.ACCOUNT_BANNED,
             PacketType.SYNC_BATCH,
             PacketType.SYNC_READY,
             PacketType.SYNC_RESET,
@@ -179,6 +181,7 @@ class PacketCodec(
             PacketType.NEGOTIATE_RESP -> ProtocolNegotiateResponsePayload.readFrom(buffer)
             PacketType.AUTH -> AuthRequestPayload.readFrom(buffer)
             PacketType.AUTH_RESP -> AuthResponsePayload.readFrom(buffer)
+            PacketType.ACCOUNT_BANNED -> AccountBannedPayload.readFrom(buffer)
             PacketType.SYNC_REQUEST -> SyncRequestPayload.readFrom(buffer)
             PacketType.SYNC_BATCH -> SyncBatchPayload.readFrom(buffer)
             PacketType.SYNC_READY -> SyncReadyPayload.readFrom(buffer)
@@ -203,6 +206,7 @@ class PacketCodec(
         is ProtocolNegotiateResponsePayload -> PacketType.NEGOTIATE_RESP
         is AuthRequestPayload -> PacketType.AUTH
         is AuthResponsePayload -> PacketType.AUTH_RESP
+        is AccountBannedPayload -> PacketType.ACCOUNT_BANNED
         is SyncRequestPayload -> PacketType.SYNC_REQUEST
         is SyncBatchPayload -> PacketType.SYNC_BATCH
         is SyncReadyPayload -> PacketType.SYNC_READY

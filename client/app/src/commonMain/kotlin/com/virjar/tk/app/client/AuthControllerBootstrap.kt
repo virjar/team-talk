@@ -29,7 +29,10 @@ private sealed interface AuthCredentialOwnerBootstrapState {
     data class Ready(val owner: AuthControllerCredentialOwner) : AuthCredentialOwnerBootstrapState
 
     data object Failed : AuthCredentialOwnerBootstrapState
+    data object PendingAccountCleanup : AuthCredentialOwnerBootstrapState
 }
+
+private class PendingAccountCleanupException : IllegalStateException("Account cleanup requires process restart")
 
 internal class AuthControllerLifetime {
     var isActive: Boolean = true
@@ -89,6 +92,8 @@ fun rememberAuthController(
     runtimeInfo: ClientRuntimeInfo = ClientRuntimeInfo.unknown(),
     telemetrySpoolRoot: File = platformDataDir(),
     tcpTlsCertificatePem: String? = null,
+    accountDataCleanup: com.virjar.tk.shared.client.AccountDataCleanup? = null,
+    beforeAccountDataCleanup: suspend (com.virjar.tk.shared.client.AccountDataOwner) -> Unit = {},
 ): AuthState {
     val authenticationAttempts = remember(tokenStore, deploymentIdentity, tcpHost, tcpPort, tcpTlsCertificatePem) {
         AuthenticationAttemptAdmission()
@@ -118,6 +123,10 @@ fun rememberAuthController(
                     lease = ownerClaimLease,
                     blockingDispatcher = Dispatchers.IO,
                     blockingClaim = {
+                        // 进程启动负责重放清理；Activity/窗口替换期间不可绕过尚未完成的标记。
+                        if (accountDataCleanup?.pendingOwners().orEmpty().isNotEmpty()) {
+                            throw PendingAccountCleanupException()
+                        }
                         AuthControllerCredentialOwner.claim(
                             tokenStore = tokenStore,
                             deploymentIdentity = deploymentIdentity,
@@ -137,13 +146,18 @@ fun rememberAuthController(
             ownerClaimLease.close()
             if (isFatalClientLifecycleFailure(failure)) throw failure
             logUnhandledError("CredentialOwnerBootstrap", failure)
-            bootstrapState = AuthCredentialOwnerBootstrapState.Failed
+            bootstrapState = if (failure is PendingAccountCleanupException) {
+                AuthCredentialOwnerBootstrapState.PendingAccountCleanup
+            } else {
+                AuthCredentialOwnerBootstrapState.Failed
+            }
         }
     }
 
     val credentialOwner = (bootstrapState as? AuthCredentialOwnerBootstrapState.Ready)?.owner
         ?: return rememberCredentialOwnerBootstrapAuthState(
             failed = bootstrapState == AuthCredentialOwnerBootstrapState.Failed,
+            pendingAccountCleanup = bootstrapState == AuthCredentialOwnerBootstrapState.PendingAccountCleanup,
         )
     return rememberClaimedAuthController(
         deploymentIdentity = deploymentIdentity,
@@ -164,15 +178,17 @@ fun rememberAuthController(
         sessionConstructionDispatcher = Dispatchers.IO,
         runtimeInfo = runtimeInfo,
         telemetrySpoolRoot = telemetrySpoolRoot,
+        accountDataCleanup = accountDataCleanup,
+        beforeAccountDataCleanup = beforeAccountDataCleanup,
     )
 }
 
 @Composable
-private fun rememberCredentialOwnerBootstrapAuthState(failed: Boolean): AuthState {
+private fun rememberCredentialOwnerBootstrapAuthState(failed: Boolean, pendingAccountCleanup: Boolean): AuthState {
     val connectionState = remember { MutableStateFlow(ConnectionState.DISCONNECTED) }
-    return remember(failed, connectionState) {
+    return remember(failed, pendingAccountCleanup, connectionState) {
         AuthState(
-            autoLoggingIn = !failed,
+            autoLoggingIn = !failed && !pendingAccountCleanup,
             authError = if (failed) "本地登录状态读取失败，请重启应用" else null,
             requiresProtocolUpgrade = false,
             session = null,
@@ -185,6 +201,7 @@ private fun rememberCredentialOwnerBootstrapAuthState(failed: Boolean): AuthStat
             onAuthExpiredForSession = { false },
             onHttpAuthExpiredForSession = { _, _ -> false },
             clearError = {},
+            accountBanState = if (pendingAccountCleanup) AccountBanState.CLEANUP_FAILED else null,
         )
     }
 }

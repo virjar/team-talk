@@ -176,12 +176,17 @@ internal enum class AuthControllerRetirementCause(
     ),
     /**
      * 服务端权威判定账号已被全局封禁（T013）。与普通凭据失效区分：
-     * 凭据必须清除，账号不可继续进入工作区；本地账号数据清理由宿主平台
-     * 在该终局上执行。
+     * 凭据必须清除，账号不可继续进入工作区。先保留并排空现有资源，随后由
+     * 显式清理流程删除已证明的账号范围；不能在标记落盘前取消可靠发件箱，
+     * 也不能把服务器新 dataset 的封禁误用于当前仍挂载的旧 dataset。
      */
     SERVER_ACCOUNT_BANNED(
-        SessionEndReason.AUTH_REVOKED,
+        SessionEndReason.SHUTDOWN,
         StoredLoginRetirementDisposition.CLEAR,
+    ),
+    HTTP_AUTHENTICATION_RECHECK(
+        SessionEndReason.SHUTDOWN,
+        StoredLoginRetirementDisposition.PRESERVE,
     ),
     LOCAL_CREDENTIAL_COMMIT_FAILURE(
         SessionEndReason.SHUTDOWN,
@@ -239,6 +244,7 @@ internal fun AuthControllerRetirementCause.mayContinueOffline(
     AuthControllerRetirementCause.MISSING_DURABLE_IDENTITY,
     AuthControllerRetirementCause.SERVER_AUTHENTICATION_REVOKED,
     AuthControllerRetirementCause.SERVER_ACCOUNT_BANNED,
+    AuthControllerRetirementCause.HTTP_AUTHENTICATION_RECHECK,
     AuthControllerRetirementCause.OFFLINE_SESSION_INITIALIZATION_FAILURE,
     AuthControllerRetirementCause.AUTHENTICATED_SESSION_INITIALIZATION_FAILURE,
     AuthControllerRetirementCause.PLATFORM_AUTHENTICATED_CALLBACK_FAILURE,

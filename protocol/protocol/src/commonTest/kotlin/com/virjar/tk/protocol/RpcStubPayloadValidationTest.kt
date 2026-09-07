@@ -4,6 +4,7 @@ import com.virjar.tk.protocol.model.OrganizationMemberPage
 import com.virjar.tk.protocol.model.OrganizationMemberPageRequest
 import com.virjar.tk.protocol.model.OrganizationUnitPage
 import com.virjar.tk.protocol.model.OrganizationUnitPageRequest
+import com.virjar.tk.protocol.model.UserOrganizationSummary
 import com.virjar.tk.protocol.rpc.gen.OrganizationRpcContract
 import com.virjar.tk.protocol.rpc.gen.OrganizationRpcStub
 import kotlin.coroutines.Continuation
@@ -19,6 +20,7 @@ class RpcStubPayloadValidationTest {
     fun `trailing request bytes are rejected before business method is called`() = runSuspend {
         var businessCalls = 0
         val stub = object : OrganizationRpcStub("actor") {
+            override suspend fun getUserOrganization(uid: String) = UserOrganizationSummary(uid, emptyList())
             override suspend fun listUnitPage(request: OrganizationUnitPageRequest) =
                 OrganizationUnitPage(0, emptyList(), null)
 
@@ -44,6 +46,7 @@ class RpcStubPayloadValidationTest {
     fun `unit page request validates before dispatch`() = runSuspend {
         var businessCalls = 0
         val stub = object : OrganizationRpcStub("actor") {
+            override suspend fun getUserOrganization(uid: String) = UserOrganizationSummary(uid, emptyList())
             override suspend fun listUnitPage(request: OrganizationUnitPageRequest): OrganizationUnitPage {
                 businessCalls++
                 return OrganizationUnitPage(0, emptyList(), null)
@@ -63,6 +66,7 @@ class RpcStubPayloadValidationTest {
     fun `required strings and booleans fail canonically before dispatch`() = runSuspend {
         var businessCalls = 0
         val stub = object : OrganizationRpcStub("actor") {
+            override suspend fun getUserOrganization(uid: String) = UserOrganizationSummary(uid, emptyList())
             override suspend fun listUnitPage(request: OrganizationUnitPageRequest) =
                 OrganizationUnitPage(0, emptyList(), null)
 

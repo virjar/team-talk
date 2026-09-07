@@ -49,6 +49,10 @@ fun main() {
     // 新 major 是本安装的显式重置边界；先持有进程锁，再清理，随后才读取凭据或打开 SQLite。
     try {
         com.virjar.tk.shared.client.prepareJvmClientDataVersion(dataDir)
+        com.virjar.tk.shared.client.resumePendingAccountCleanup(
+            desktopAccountDataCleanup(dataDir),
+            DesktopTokenStore(dataDir, desktopDefaultServerConfig().deploymentIdentity())::clearBannedAccount,
+        )
     } catch (failure: Throwable) {
         locker.release()
         showDataDirectoryFailure(failure)

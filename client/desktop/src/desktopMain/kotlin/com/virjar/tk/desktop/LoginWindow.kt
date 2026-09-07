@@ -146,12 +146,14 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
         afterSessionRetirement = sessionRetirementBridge::afterSessionRetirement,
         runtimeInfo = remember { desktopClientRuntimeInfo() },
         telemetrySpoolRoot = dataDir,
+        accountDataCleanup = remember(dataDir) { desktopAccountDataCleanup(dataDir) },
     )
     val session = auth.session
     val authenticationSurface = desktopAuthenticationSurface(
         hasLocalSession = auth.hasLocalSession,
         hasActiveSession = session?.isBusinessActive == true,
         requiresProtocolUpgrade = auth.requiresProtocolUpgrade,
+        accountBanned = auth.accountBanState != null,
     )
     val exitUnauthenticatedApplication: () -> Unit = {
         applicationExitActions.requestExit()
@@ -218,6 +220,11 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
 
                 Box(modifier = Modifier.weight(1f)) {
                     when (authenticationSurface) {
+                        DesktopAuthenticationSurface.ACCOUNT_BANNED -> {
+                            com.virjar.tk.app.ui.component.AccountBanSurface(
+                                checkNotNull(auth.accountBanState), auth.dismissAccountBan, exitUnauthenticatedApplication,
+                            )
+                        }
                         DesktopAuthenticationSurface.PROTOCOL_UPGRADE -> {
                             DesktopProtocolUpgradeSurface(
                                 onExit = exitUnauthenticatedApplication,
