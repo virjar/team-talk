@@ -29,6 +29,22 @@ TeamTalk 的主业务验收连接当前选中部署配置函数的目标。它�
 需要供脚本查看实际非敏感配置时，运行 `./gradlew writeDeploymentConfig`，读取
 `build/deployment/deployment-config.json`；不要直接解析 Kotlin 或把旧快照当作当前目标。
 
+## 测试数据归属与真人内测实例
+
+`RemoteAcceptanceSupport.registerUser()` 使用 `e2e-<场景>-<8 位随机后缀>` 注册账号。
+`Session.close()` 只释放客户端连接和线程，`previewSmokeTest` 与 `acceptanceTest` 均不会自动删除
+这些账号及其业务数据。因此，真人持续使用的私有内测实例不把远程 E2E 当作每次部署的默认步骤；
+日常核对 `/health`、构建身份、下载制品并由参与用户复验，自动业务场景使用独立可清理测试实例。
+
+在真人实例处理既有测试账号时，前缀只用于生成候选清单。先核对精确 UID、组织成员资格以及与真人
+混合的好友、申请、历史群成员和会话，保存处理前后的清单，保留非目标账号。现有管理入口
+`POST /api/admin/users/{uid}/ban` 会事务撤销凭据并使在线会话失效；停用账号不再进入普通用户搜索，
+但管理台与关联历史仍保留。不要将停用记成物理删除，也不能只删除 PostgreSQL 用户行而留下跨库引用。
+
+账号物理删除目前没有完整维护入口，涉及 PostgreSQL 关系、RocksDB 消息与附件引用、Lucene 投影。
+清理后只做只读检查，不立即重跑会创建账号的远程测试。误选账号需通过原管理入口解封并重新登录，
+不要恢复旧凭据以绕过吊销。
+
 ## 客户端安装站点的 HTTP 验收
 
 Windows 的引导器和自动更新服务依赖静态下载契约。对实际部署的 `.appinstaller` 和它引用的 MSIX
