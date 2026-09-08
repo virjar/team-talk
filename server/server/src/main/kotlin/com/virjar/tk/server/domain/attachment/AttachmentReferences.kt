@@ -32,3 +32,9 @@ fun interface UserAvatarReferences {
 
     fun isCurrentAvatar(path: String): Boolean = path in getReferencedPaths(setOf(path))
 }
+
+/** Unsent ready assets belong to one account, never all members of the draft's chat. */
+interface ChatDraftAttachmentReferences {
+    fun getReferencedPaths(paths: Set<String>): Set<String>
+    fun canRead(uid: String, path: String): Boolean
+}

@@ -32,6 +32,7 @@ eventId(varLong) + notifyType(1B) + payload(bytes?)
 | 25 | `TASK_DUE` | `TaskDuePayload(taskId, revision, remindedAt)` | 到期时的当前执行人 | 持久保存提示，读取当前任务确认提醒有效后呈现；protocol 0.2 |
 | 30 | `CONVERSATION_UPDATED` | `Conversation` | 该用户设备 | upsert 会话投影 |
 | 31 | `CONVERSATION_DELETED` | `Conversation` | 该用户设备 | 仅删除用户主动隐藏的会话视图 |
+| 32 | `CHAT_DRAFT_CHANGED` | `ChatDraftChangedPayload(chatId, revision)` | 仅草稿所有者 uid 的设备 | 失效完整草稿快照，通过 `chatDraft.get` 读取；不直接覆盖本机未确认修改；protocol 0.2 |
 | 40 | `PRESENCE` | `PresencePayload(serverEpoch, revision, uid, status, lastSeenAt)` | 好友在线设备 | 按 epoch/revision 收敛会话内好友在线投影 |
 | 41 | `TYPING` | `Message` | 其他会话成员 | 为 `(chatId, senderUid)` 续期 3 秒临时状态 |
 | 50 | `READ_SYNC` | `ReadSyncPayload` | 其他会话成员 | 更新 `peerReadSeq` |
@@ -60,6 +61,11 @@ kind 为 `NODE_UPSERT(1)`、`NODE_DELETED(2)`、`SPACE_CHANGED(3)`、`SPACE_REVO
 TASK_CHANGED 同事务提交；精确重放不重复发事件。截止扫描在锁内重新判断状态、执行人及截止时间，
 将 remindedAt 与 TASK_DUE 一起提交，服务重启不会重复同一次到期提醒。改派、改期或重新打开会重置
 提醒计划，完成和取消不产生提醒；客户端不直接从旧提示展示内容，而以当前 get/list 结果确认。
+
+`CHAT_DRAFT_CHANGED` 与完整聊天草稿写入同事务提交，revision 为正数。通知不包含正文、附件描述符或
+回复摘要，也不广播给其他聊天成员；接收端从 `chatDraft.get` 获取该 uid 的当前快照。更新和清空均推进
+独立草稿 revision，清空保留墓碑；精确操作重放不重复产生事件。客户端先使旧快照失效再推进持久游标，
+本机未确认修改、未上传源与消息 outbox 独立保留。
 
 ## 持久事件与临时事件
 

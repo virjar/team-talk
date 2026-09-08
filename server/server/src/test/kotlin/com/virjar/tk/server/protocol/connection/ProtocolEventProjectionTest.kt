@@ -14,6 +14,13 @@ import kotlin.test.assertSame
 
 class ProtocolEventProjectionTest {
     @Test
+    fun `private draft changes preserve old cursors without exposing new payloads`() {
+        val event = NotifyPayload(23L, NotifyType.CHAT_DRAFT_CHANGED.code,
+            ProtoCodec.encode(com.virjar.tk.protocol.ChatDraftChangedPayload("chat-a", 1)))
+        assertEquals(NotifyPayload(23L, NotifyType.EVENT_CURSOR_ADVANCED.code, null), eventFrameForProtocol(event, ProtocolVersion(0, 1)))
+        assertSame(event, eventFrameForProtocol(event, ProtocolVersion(0, 2)))
+    }
+    @Test
     fun `task events and references advance old cursors without exposing undecodable bodies`() {
         val taskId = "bb161090-0261-4c0f-9bde-9af48557d3f0"
         val message = Message("chat-a", "message-a", 3L, "user-a", com.virjar.tk.protocol.MessageType.TASK_REF.code, 1L,

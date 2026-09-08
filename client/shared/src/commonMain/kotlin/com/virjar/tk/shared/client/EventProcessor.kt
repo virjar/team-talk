@@ -54,6 +54,7 @@ class EventProcessor(
     private val checkpointLoader: ServerCheckpointLoader? = null,
     /** 只唤醒既有恢复 worker；事件事务内不执行任务 RPC。 */
     private val onTaskReminderDirty: (() -> Unit)? = null,
+    private val onChatDraftDirty: (() -> Unit)? = null,
 ) {
     @Volatile
     private var logger: TkLogger = PlatformOnlyTkLogger("EventProcessor")
@@ -521,9 +522,24 @@ class EventProcessor(
                 }
             }
 
+            NotifyType.CHAT_DRAFT_CHANGED -> {
+                val change = decodePayload<com.virjar.tk.protocol.ChatDraftChangedPayload>(notifyType, payload)
+                publicationGate.use(publicationLease) {
+                    localCache.chatDraftSync.invalidate(change.chatId, change.revision)
+                    onChatDraftDirty?.invoke()
+                }
+            }
+
             NotifyType.CONVERSATION_UPDATED -> {
                 val conv = decodePayload<Conversation>(notifyType, payload)
-                publicationGate.use(publicationLease) { localCache.upsertConversation(conv) }
+                publicationGate.use(publicationLease) {
+                    localCache.upsertConversation(conv)
+                    // revision 0 尚未建立独立行，get 仍以旧 scalar 为兼容来源；正 revision 永不回退。
+                    if (localCache.chatDraftSync.state(conv.chatId).remote?.revision == 0L) {
+                        localCache.chatDraftSync.invalidate(conv.chatId, 0)
+                        onChatDraftDirty?.invoke()
+                    }
+                }
             }
 
             NotifyType.CONVERSATION_DELETED -> {

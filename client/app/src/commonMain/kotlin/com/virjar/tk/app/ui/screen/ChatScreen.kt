@@ -194,6 +194,9 @@ fun ChatPanel(
     }
     var editingSaving by remember(chatId) { mutableStateOf(false) }
     var composerSending by remember(chatId) { mutableStateOf(false) }
+    var resolvingDraftConflict by remember(chatId) { mutableStateOf(false) }
+    val sharedDraftState by viewModel.chatDraftSyncState.collectAsState()
+    val persistedDraftChange by viewModel.chatDraftChanges.collectAsState()
     var composerRecoveryFailed by remember(chatId) { mutableStateOf(false) }
     var composerRecoveryAttempt by remember(chatId) { mutableIntStateOf(0) }
     // WYSIWYG 富文本编辑状态（fork 源码引入，见 richeditor/FORK.md）
@@ -290,6 +293,7 @@ fun ChatPanel(
         }
         return ChatComposerContext(
             draftRevision = composerContextStore.revision(chatId),
+            sharedRevision = composerContextStore.sharedRevision(chatId),
             replyTarget = savedReplyTarget,
             editingSession = editingSession,
             markdown = composerMarkdownSnapshot(),
@@ -473,6 +477,31 @@ fun ChatPanel(
     }
 
     val composerConnection by viewModel.connectionState.collectAsState()
+    LaunchedEffect(chatId, composerReady, persistedDraftChange, resolvingDraftConflict, composerSending) {
+        if (!composerReady || resolvingDraftConflict || composerSending) return@LaunchedEffect
+        val recovered = try {
+            composerContextStore.receivePersisted(chatId, ::captureComposerContext)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            viewModel.onError("读取同步草稿失败，请重新打开会话")
+            null
+        } ?: return@LaunchedEffect
+        if (recovered.editingSession.editingClientMsgId.isNotEmpty()) {
+            editingSession = recovered.editingSession
+        } else {
+            resetChatComposerState(richState)
+            sourceInput = TextFieldValue(recovered.markdown, TextRange(recovered.selectionStart, recovered.selectionEnd))
+            embeddedAssetSnapshot = EmbeddedAssetImportSnapshot(assets = recovered.assets)
+            savedReplyTarget = recovered.replyTarget
+            visualBaseline = recovered.visualBaseline
+            composerMode = recovered.mode
+            if (recovered.mode == ChatComposerMode.VISUAL && canUseChatVisualEditor(recovered.markdown)) {
+                enterVisualMarkdown(recovered.markdown, recovered.visualBaseline, sourceInput.selection)
+            } else if (recovered.mode == ChatComposerMode.VISUAL) composerMode = ChatComposerMode.MARKDOWN
+            draftSync.restoreLocal(recovered.markdown)
+        }
+    }
     LaunchedEffect(chatId, composerReady, savedReplyTarget, composerConnection, replyRecoveryAttempt) {
         recoveredReply = null
         if (!composerReady || savedReplyTarget.clientMsgId.isEmpty() || savedReplyTarget.bind(messages) != null) return@LaunchedEffect
@@ -489,7 +518,7 @@ fun ChatPanel(
     }
     // 只替换未被本机改动的外部镜像。空字符串也是一次更新，不能只处理首次非空 hydrate。
     LaunchedEffect(chatId, composerReady, cachedDraft) {
-        if (!composerReady || cachedDraft == null) return@LaunchedEffect
+        if (!composerReady || cachedDraft == null || composerContextStore.sharedRevision(chatId) != null) return@LaunchedEffect
         val markdown = composerMarkdownSnapshot()
         val replacement = draftSync.receive(
             cachedDraft = cachedDraft,
@@ -718,10 +747,13 @@ fun ChatPanel(
                     return@sendAction
                 }
                 val submission = composerContextStore.beginSend(chatId, revision)
+                val savedCommit = composerContextStore.commitBarrier(chatId, revision)
                 composerSending = true
-                viewModel.sendComposerMessage(validated, revision) { committed ->
+                viewModel.sendComposerMessage(validated, revision,
+                    awaitDraftSaved = { savedCommit.await() }) { committed ->
                     submission.completion.complete(committed)
                     uiResultHandoff.deliver(committed, actionAdmission) { accepted ->
+                        composerContextStore.finishSend(chatId, submission)
                         composerSending = false
                         if (accepted) {
                             val current = captureComposerContext()
@@ -834,6 +866,34 @@ fun ChatPanel(
 
             ChatTypingIndicator(visibleTypingUid, resolveSender)
 
+            if (composerReady && (sharedDraftState.conflict || sharedDraftState.failure != null)) {
+                Column(Modifier.fillMaxWidth().testTag("chat.draft.conflict")) {
+                    Text(sharedDraftState.failure
+                        ?: "其他设备已修改草稿，本机内容已保留。请选择要继续使用的草稿。")
+                    Row {
+                        listOf(true to "保留本机草稿", false to "使用其他设备草稿").forEach { (keepLocal, label) ->
+                            TextButton(
+                                enabled = !resolvingDraftConflict && !composerSending,
+                                onClick = actionAdmission.guard {
+                                    val revision = persistComposerContext() ?: return@guard
+                                    val savedCommit = composerContextStore.commitBarrier(chatId, revision)
+                                    resolvingDraftConflict = true
+                                    viewModel.resolveDraftConflict(keepLocal,
+                                        awaitDraftSaved = { savedCommit.await(); Unit }) { resolved ->
+                                        uiResultHandoff.deliver(resolved, actionAdmission) {
+                                            resolvingDraftConflict = false
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.testTag(if (keepLocal) "chat.draft.keepLocal" else "chat.draft.useRemote"),
+                            ) { Text(label) }
+                        }
+                    }
+                }
+            } else if (composerReady && !sharedDraftState.assetsAvailable) {
+                Text("草稿中的附件已不可用，请移除后重新选择。", Modifier.testTag("chat.draft.assetsUnavailable"))
+            }
+
             if (composerReady && savedReplyTarget.clientMsgId.isNotEmpty() && replyingTo == null) {
                 TextButton(onClick = actionAdmission.guard { replyRecoveryAttempt++ },
                     modifier = Modifier.testTag("chat.draft.reply.retry")) { Text("回复目标暂不可用，点击重试") }
@@ -864,7 +924,7 @@ fun ChatPanel(
                 editingSessionActive = editingSessionActive,
                 editingMessage = editingMessage,
                 editingFailedMessage = editingFailedMessage != null,
-                editingSaving = editingSaving || composerSending,
+                editingSaving = editingSaving || composerSending || resolvingDraftConflict,
                 onCancelEditing = actionAdmission.guard(::cancelEditing),
                 media = admittedMedia,
                 showEmoji = showEmoji,

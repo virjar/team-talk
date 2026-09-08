@@ -48,6 +48,7 @@ internal class SessionReliableCommandFamilies private constructor(
     val documents: DocumentRepository,
     val documentComments: com.virjar.tk.shared.repository.DocumentCommentRepository,
     val tasks: com.virjar.tk.shared.repository.TaskRepository,
+    val chatDrafts: com.virjar.tk.shared.repository.ChatDraftRepository,
     private val localCache: LocalCache,
 ) {
     suspend fun retryPending(): Outcome<Unit> = retryIndependentPendingFamilies(
@@ -57,6 +58,7 @@ internal class SessionReliableCommandFamilies private constructor(
         documents::retryPendingMoveCommands,
         documentComments::retryPending,
         tasks::retryPending,
+        chatDrafts::retryPending,
     )
 
     fun nextExpiryAt(): Long? {
@@ -67,7 +69,7 @@ internal class SessionReliableCommandFamilies private constructor(
         val documentExpiry = nextDocumentMoveCommandExpiryAt(
             localCache.getPendingDocumentMoveCommands(),
         )
-        return listOfNotNull(socialExpiry, documentExpiry, tasks.nextExpiryAt()).minOrNull()
+        return listOfNotNull(socialExpiry, documentExpiry, tasks.nextExpiryAt(), chatDrafts.nextExpiryAt()).minOrNull()
     }
 
     companion object {
@@ -118,6 +120,7 @@ internal class SessionReliableCommandFamilies private constructor(
                 documents = documents,
                 documentComments = com.virjar.tk.shared.repository.DocumentCommentRepository(rpcClient, localCache.documentComments, onPendingCommitted),
                 tasks = com.virjar.tk.shared.repository.TaskRepository(rpcClient, localCache.tasks, ownerUid, onPendingCommitted),
+                chatDrafts = com.virjar.tk.shared.repository.ChatDraftRepository(rpcClient, localCache, onPendingCommitted),
                 localCache = localCache,
             )
         }

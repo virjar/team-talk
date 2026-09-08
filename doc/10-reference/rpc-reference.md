@@ -12,7 +12,7 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 5. 注册、登录和 refresh 属于 TCP AUTH 握手，不属于下列 RPC。
 6. 普通消息发送使用 MESSAGE / MESSAGE_ACK，不通过 `message` RPC。
 
-当前表描述源码契约：0.0.1 已冻结 protocol 0.1，新增文档读取、评论和内容搜索使用待发行 protocol 0.2；正式事实以
+当前表描述源码契约：0.0.1 已冻结 protocol 0.1，新增文档读取、评论、内容搜索、任务和完整聊天草稿使用待发行 protocol 0.2；正式事实以
 不可覆盖的发行快照为准。同一协议 major 内，已发行契约和编号不得修改或复用，同一待发行批次共用 minor 2；
 只有明确的新协议 major 才能重整编号空间。私有 `snapshot` 与 `private-first` 不冻结待发布契约，
 正式产品发行才登记新的不可覆盖快照，流程见[统一发行](../07-operations/releasing.md)。
@@ -183,6 +183,39 @@ payload。服务端在同一事务写邀请链接和回执，同 ID 精确重放
 PERSONAL `Conversation` 必须携带 `peerUid` 与正数 `peerRevision`，`chatAvatar` 是该版本对端的完整用户头像描述符快照；GROUP 和
 删除哨兵的 `peerUid/peerRevision/chatAvatar` 必须为空。客户端以 `peerUid` 和 revision 观察规范 User 并优先展示不旧于快照的当前 name/avatar，
 Conversation 字段只作冷启动快照；因此头像清除后不得复活旧快照。群头像仍由旧 Chat 字符串字段承载且不在本批能力内。
+
+## chatDraft
+
+`ChatDraftRpc` 属于待发行 protocol 0.2，服务名为 `chatDraft`。草稿仅属于当前认证 uid，调用方不能指定
+其他用户；读取和正文修改仍需当前聊天访问权限。已离开聊天的用户仍可对自己已有的草稿或会话记录
+提交无正文 CAS 清理，以释放私有引用。它与已发行的 `conversation.setDraft` 字符串方法分开。
+
+| ID | 方法 | 参数 | 返回 |
+|---:|---|---|---|
+| 1 | `get` | `chatId` | `ChatDraftSnapshot(chatId, revision, updatedAt, content?, assetsAvailable)` |
+| 2 | `mutate` | `ChatDraftCommand(chatId, expectedRevision, operationId, issuedAt, content?, consumedClientMsgId?)` | `ChatDraftMutationResult(applied, operationRevision, current)` |
+
+`ChatDraftContent` 包含 `markdown`、canonical `assets`、`mode`、`replyToClientMsgId?` 和 `replyToServerSeq`。
+mode 为可视编辑 0、Markdown 源码 1、预览 2；回复 ID 与正数 seq 同时存在，无回复时分别为 null/0。
+正文与资产数量复用消息的有界校验，清单必须与 Markdown 规范化结果完全一致。未上传文件、本地路径、
+选区及上传任务不进入该契约；`assetsAvailable` 表示读取时所引用资产是否仍可用，不替代发送前的服务端校验。
+
+没有独立草稿记录时返回 revision 0，并可承接既有 `Conversation.draft` 中合法的普通正文；首次修改产生
+revision 1。清空使用 `content = null` 并保留正 revision 墓碑，此后不再从旧字符串恢复内容。新操作按
+`expectedRevision` 做 CAS，版本不符返回 `applied = false`、`operationRevision = 0` 和当前快照，
+客户端保留本机修改并让用户明确处理冲突。operationId 是首次提交前持久化的 canonical UUID，issuedAt
+与完整命令一同冻结；7 天窗口内重放相同命令复用收据，不能更换字段伪装为同一意图。
+`applied/operationRevision` 是原操作事实，`current` 在重放时可以是更高版本，不能把原成功当旧快照重放。
+离群后的无正文清理只释放已有私有引用，不授予读取权：CAS 冲突或历史收据重放若要返回非空当前草稿，
+仍须通过当前聊天访问校验，否则返回 403。精确版本清空及当前为空墓碑的重放仍可完成。
+服务端每个 uid 最多保留 1,000 份非空草稿、合计 48 MiB 编码正文，清空墓碑保留 revision 且不占非空槽位；
+7 天窗口内的操作收据最多 16,384 条。过期的新命令返回 410，不能换号冒充原操作。
+
+发送消费使用 `content = null` 与 `consumedClientMsgId`。SDK 只有收到成功消息 ACK 后才提交清空，
+服务端也确认该 uid 在此 chat 的精确消息已被接受，再按草稿 CAS 处理；发送期间出现的新草稿不会被旧命令清除。
+普通用户主动清空不带 consumedClientMsgId；删除会话也在同一事务清空完整草稿并推进 revision。
+草稿引用的 READY 文件由服务端保留，仅供该 uid 按当前权限使用；
+变化通知为 [CHAT_DRAFT_CHANGED](event-reference.md#事件表)，不向其他群成员分发草稿正文。
 
 ## device
 

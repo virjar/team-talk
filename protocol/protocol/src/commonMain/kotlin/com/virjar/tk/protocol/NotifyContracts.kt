@@ -53,6 +53,7 @@ object NotifyContracts {
         // 会话
         NotifyType.CONVERSATION_UPDATED to Conversation,
         NotifyType.CONVERSATION_DELETED to Conversation,
+        NotifyType.CHAT_DRAFT_CHANGED to ChatDraftChangedPayload,
 
         // 多端同步
         NotifyType.READ_SYNC to ReadSyncPayload,

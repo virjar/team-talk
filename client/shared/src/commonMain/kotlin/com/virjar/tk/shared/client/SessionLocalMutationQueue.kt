@@ -102,8 +102,10 @@ class SessionLocalMutationQueue internal constructor(
     private val operations: SessionLocalMutationOperations,
     private val executor: SessionLocalMutationExecutor = createSessionLocalMutationExecutor(),
     initialChatDraftRevision: Long = 0,
+    private val reserveChatDraftRevision: (() -> Long)? = null,
 ) : SessionLocalMutationWriter {
     private var chatDraftRevision = initialChatDraftRevision
+    private val committedDraftRevisions = linkedMapOf<Long, Long>()
     private val lock = Any()
     private val pending = ArrayDeque<LocalMutationCommand>()
     private val coalesced = linkedMapOf<LocalMutationKey, LocalMutationCommand>()
@@ -124,7 +126,8 @@ class SessionLocalMutationQueue internal constructor(
         lateinit var command: LocalMutationCommand.ComposerDraft
         val decision = synchronized(lock) {
             check(chatDraftRevision < Long.MAX_VALUE) { "Chat draft revision exhausted" }
-            command = LocalMutationCommand.ComposerDraft(snapshot.copy(revision = ++chatDraftRevision), onCommitted, onFailure)
+            val revision = reserveChatDraftRevision?.invoke() ?: ++chatDraftRevision
+            command = LocalMutationCommand.ComposerDraft(snapshot.copy(revision = revision), onCommitted, onFailure)
             enqueueLocked(command)
         }
         decision.failure?.let { notifyRejected(command, it) }
@@ -440,10 +443,15 @@ class SessionLocalMutationQueue internal constructor(
     private fun execute(command: LocalMutationCommand) {
         when (command) {
             is LocalMutationCommand.ComposerDraft -> notifyResultCallback(command.onCommitted) {
-                operations.saveChatDraft(command.snapshot)
+                operations.saveChatDraft(command.snapshot).also { committed ->
+                    if (committed.revision != command.snapshot.revision) {
+                        committedDraftRevisions[command.snapshot.revision] = committed.revision
+                        while (committedDraftRevisions.size > MAX_PENDING_SESSION_LOCAL_MUTATIONS) committedDraftRevisions.remove(committedDraftRevisions.keys.first())
+                    }
+                }
             }
             is LocalMutationCommand.ComposerSend -> notifyResultCallback(command.onCommitted) {
-                operations.enqueueFromComposer(command.message, command.revision)
+                operations.enqueueFromComposer(command.message, committedDraftRevisions[command.revision] ?: command.revision)
             }
             is LocalMutationCommand.Draft -> {
                 val generation = operations.setDraft(command.chatId, command.draft)

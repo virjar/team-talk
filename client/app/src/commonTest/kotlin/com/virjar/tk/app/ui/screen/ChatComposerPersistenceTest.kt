@@ -18,6 +18,69 @@ import kotlin.test.*
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class ChatComposerPersistenceTest {
     @Test
+    fun `remote full draft replaces a clean editor but unsaved typing keeps its older shared base`() = runTest {
+        val cache = FakeLocalCache()
+        cache.chatDrafts.save(ChatDraftSnapshot(CHAT, revision = 1, markdown = "共同草稿", sharedRevision = 5))
+        val writer = ControlledWriter(cache)
+        val store = newStore(cache, writer)
+        val original = assertNotNull(store.hydrate(CHAT))
+        cache.chatDrafts.save(ChatDraftSnapshot(CHAT, revision = 2, markdown = "其他设备的新稿", mode = 1, sharedRevision = 6))
+        assertNull(store.receivePersisted(CHAT) { original.copy(markdown = "本机尚未防抖保存的输入") })
+        writer.runNext()
+        val retained = assertNotNull(cache.chatDrafts.get(CHAT))
+        assertEquals("本机尚未防抖保存的输入", retained.markdown)
+        assertEquals(5L, retained.sharedRevision, "storage must see the original base to detect the conflict")
+
+        val clean = assertNotNull(store.restore(CHAT))
+        cache.chatDrafts.save(ChatDraftSnapshot(CHAT, revision = retained.revision + 1,
+            markdown = "选用远端草稿", mode = 2, sharedRevision = 7))
+        val received = assertNotNull(store.receivePersisted(CHAT) { clean })
+        assertEquals("选用远端草稿", received.markdown)
+        assertEquals(ChatComposerMode.PREVIEW, received.mode)
+        assertEquals(7L, received.sharedRevision)
+    }
+
+    @Test
+    fun `send preflight waits for the admitted draft write and sees storage failure`() = runTest {
+        val cache = FakeLocalCache()
+        val writer = ControlledWriter(cache)
+        val store = newStore(cache, writer) {}
+        store.hydrate(CHAT)
+        val revision = assertNotNull(store.save(CHAT, ChatComposerContext(markdown = "需要先落盘")))
+        val beforeSend = async { runCatching { store.awaitSaved(CHAT, revision) } }
+        runCurrent()
+        assertFalse(beforeSend.isCompleted)
+        writer.failNext()
+        assertTrue(beforeSend.await().isFailure)
+        assertEquals("需要先落盘", store.restore(CHAT)?.markdown)
+    }
+
+    @Test
+    fun `remote read captures the latest frame after IO and a rejected send releases its observation lease`() = runTest {
+        val cache = FakeLocalCache()
+        cache.chatDrafts.save(ChatDraftSnapshot(CHAT, revision = 1, markdown = "原稿", sharedRevision = 1))
+        val writer = ControlledWriter(cache)
+        val store = newStore(cache, writer)
+        var current = assertNotNull(store.hydrate(CHAT))
+        cache.chatDrafts.save(ChatDraftSnapshot(CHAT, revision = 2, markdown = "远端更新", sharedRevision = 2))
+        val receiving = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            store.receivePersisted(CHAT) { current }
+        }
+        // localData uses a queued dispatcher; this edit happens after the read began and before it resumes.
+        current = current.copy(markdown = "读取期间输入")
+        assertNull(receiving.await())
+        writer.runNext()
+        assertEquals("读取期间输入", cache.chatDrafts.get(CHAT)?.markdown)
+        val local = assertNotNull(store.restore(CHAT))
+        val submission = store.beginSend(CHAT, local.draftRevision)
+        submission.completion.complete(false)
+        store.finishSend(CHAT, submission)
+        cache.chatDrafts.save(ChatDraftSnapshot(CHAT, revision = writer.revision + 1,
+            markdown = "随后选择远端", sharedRevision = 3))
+        assertEquals("随后选择远端", store.receivePersisted(CHAT) { local }?.markdown)
+    }
+
+    @Test
     fun `device A receives device B plain draft before opening and does not restore or echo its older composer`() = runTest {
         val cache = FakeLocalCache()
         cache.chatDrafts.save(ChatDraftSnapshot(CHAT, revision = 1, markdown = "A的旧草稿"))
@@ -158,7 +221,8 @@ class ChatComposerPersistenceTest {
         var revision = cache.chatDrafts.maxRevision()
         private val pending = ArrayDeque<Pair<() -> Unit, (Throwable) -> Unit>>()
         override fun saveChatDraft(snapshot: ChatDraftSnapshot, onCommitted: (ChatDraftSnapshot) -> Unit, onFailure: (Throwable) -> Unit): Long {
-            val accepted = snapshot.copy(revision = ++revision)
+            revision = maxOf(revision, cache.chatDrafts.maxRevision()) + 1
+            val accepted = snapshot.copy(revision = revision)
             pending += ({ onCommitted(cache.chatDrafts.save(accepted)); Unit }) to onFailure
             return accepted.revision
         }

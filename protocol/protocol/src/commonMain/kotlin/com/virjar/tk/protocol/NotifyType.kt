@@ -39,6 +39,8 @@ enum class NotifyType(val code: Int) {
     // 会话
     CONVERSATION_UPDATED(30),
     CONVERSATION_DELETED(31),
+    @SinceProtocol(2)
+    CHAT_DRAFT_CHANGED(32),
 
     // 在线状态
     PRESENCE(40),

@@ -15,8 +15,8 @@ class SchemaMigrationIntegrationTest {
             val datasetId = open(lease).use { it.datasetId }
             lease.openConnection().use { connection -> connection.createStatement().use { statement ->
                 // This isolated fixture emulates the immediately preceding schema, never a live instance.
-                statement.execute("DROP TABLE task_commands, task_audits, work_tasks")
-                statement.execute("DELETE FROM schema_migrations WHERE version = 5")
+                statement.execute("DROP TABLE chat_draft_commands, chat_draft_assets, chat_drafts, task_commands, task_audits, work_tasks")
+                statement.execute("DELETE FROM schema_migrations WHERE version >= 5")
                 statement.execute("INSERT INTO users (uid, username, name, password_hash, created_at, updated_at) " +
                     "VALUES ('kept-task-owner', 'kept-task-owner', 'kept owner', 'fixture-only', 11, 12)")
             } }
@@ -29,6 +29,32 @@ class SchemaMigrationIntegrationTest {
                     assertTrue(it.next()); assertEquals("kept owner", it.getString(1)); assertEquals(11L, it.getLong(2))
                 }
                 listOf("work_tasks", "task_audits", "task_commands").forEach { table ->
+                    statement.executeQuery("SELECT count(*) FROM $table").use { assertTrue(it.next()); assertEquals(0, it.getInt(1)) }
+                }
+            } }
+            open(lease).use { assertEquals(datasetId, it.datasetId) }
+        }
+    }
+
+    @Test
+    fun `ready draft migration preserves existing conversation draft and dataset`() {
+        PostgresSchemaLease.open().use { lease ->
+            val datasetId = open(lease).use { it.datasetId }
+            lease.openConnection().use { connection -> connection.createStatement().use { statement ->
+                statement.execute("DROP TABLE chat_draft_commands, chat_draft_assets, chat_drafts")
+                statement.execute("DELETE FROM schema_migrations WHERE version = 6")
+                statement.execute("INSERT INTO conversations (uid, chat_id, chat_type, draft, version, updated_at) " +
+                    "VALUES ('kept-draft-owner', 'kept-draft-chat', 1, 'existing markdown', 8, 12)")
+            } }
+            open(lease).use { assertEquals(datasetId, it.datasetId) }
+            lease.openConnection().use { connection -> connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT draft, version FROM conversations WHERE uid = 'kept-draft-owner'").use {
+                    assertTrue(it.next()); assertEquals("existing markdown", it.getString(1)); assertEquals(8L, it.getLong(2))
+                }
+                statement.executeQuery("SELECT name FROM schema_migrations WHERE version = 6").use {
+                    assertTrue(it.next()); assertEquals("create_chat_drafts", it.getString(1))
+                }
+                listOf("chat_drafts", "chat_draft_assets", "chat_draft_commands").forEach { table ->
                     statement.executeQuery("SELECT count(*) FROM $table").use { assertTrue(it.next()); assertEquals(0, it.getInt(1)) }
                 }
             } }

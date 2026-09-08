@@ -22,6 +22,8 @@ import com.virjar.tk.shared.client.PendingInviteLinkCreation
 import com.virjar.tk.shared.client.ProjectionSnapshotLease
 import com.virjar.tk.shared.client.ServerProjectionCheckpoint
 import com.virjar.tk.protocol.model.*
+import com.virjar.tk.shared.client.ChatDraftSnapshot
+import com.virjar.tk.protocol.model.ChatDraftSnapshot as SharedChatDraftSnapshot
 import com.virjar.tk.protocol.payload.MessageAckPayload
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
@@ -94,6 +96,39 @@ class FakeLocalCache(
         override fun recoverUploads() { uploads.toMap().forEach { (id, job) -> if (job.state == ChatAssetUploadState.UPLOADING) uploads[id] = job.copy(state = ChatAssetUploadState.QUEUED) }; changes.value++ }
     }
     override val chatDrafts: LocalChatDrafts get() = composerDrafts
+    override val chatDraftSync: LocalChatDraftSync = object : LocalChatDraftSync {
+        override val changes = MutableStateFlow(0L)
+        private val states = linkedMapOf<String, ChatDraftSyncState>()
+        private val stale = linkedSetOf<String>()
+        override fun state(chatId: String) = states[chatId] ?: ChatDraftSyncState()
+        override fun ensure(chatId: String) { if (chatId !in states) { states[chatId] = ChatDraftSyncState(); stale.add(chatId) } }
+        override fun invalidate(chatId: String, revision: Long) { ensure(chatId); stale.add(chatId); changes.value++ }
+        override fun invalidateAll() { stale.addAll(states.keys); changes.value++ }
+        override fun refreshTargets() = stale.toList()
+        override fun applyRemote(snapshot: SharedChatDraftSnapshot): Boolean {
+            states[snapshot.chatId] = ChatDraftSyncState(remote = snapshot, assetsAvailable = snapshot.assetsAvailable)
+            stale.remove(snapshot.chatId); changes.value++
+            return true
+        }
+        override fun readFailed(chatId: String, reason: String) { states[chatId] = state(chatId).copy(failure = reason); stale.remove(chatId); changes.value++ }
+        override fun nextCommand(chatId: String, now: Long): PendingSharedChatDraft? = null
+        override fun workChats(): List<String> = emptyList()
+        override fun acknowledge(pending: PendingSharedChatDraft, result: ChatDraftMutationResult) { applyRemote(result.current) }
+        override fun fail(pending: PendingSharedChatDraft, reason: String) = readFailed(pending.command.chatId, reason)
+        override fun resolve(chatId: String, keepLocal: Boolean) {
+            val remote = state(chatId).remote ?: error("Draft has not been fetched")
+            if (!keepLocal) {
+                val content = remote.content
+                composerDrafts.save(ChatDraftSnapshot(chatId, composerDrafts.maxRevision() + 1,
+                    content?.markdown.orEmpty(), content?.assets.orEmpty(), mode = content?.mode ?: 0,
+                    replyToClientMsgId = content?.replyToClientMsgId, replyToServerSeq = content?.replyToServerSeq ?: 0,
+                    sharedRevision = remote.revision))
+            }
+            changes.value++
+        }
+        override fun nextExpiryAt(): Long? = null
+    }
+
     override val tasks: com.virjar.tk.shared.client.LocalTasks = FakeTasks()
     override val documentComments: com.virjar.tk.shared.client.LocalDocumentComments = FakeDocumentComments()
     // 消息存储：chatId → 按时间倒序的消息列表（最新在前）

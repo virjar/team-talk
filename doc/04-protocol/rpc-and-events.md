@@ -261,6 +261,18 @@ serverSeq 与主附件 canonical path 的 SHA-256 组合，同一消息不重复
 该查询复用文档、群文件、消息和组织的既有变更通知作为失效提示，不增加搜索结果专用持久事件，
 也不通过事件分发全文索引。参数与类型边界见[RPC 参考](../10-reference/rpc-reference.md#contentsearch)。
 
+### 完整聊天草稿
+
+待发行 protocol 0.2 以独立 `chatDraft.get/mutate` 同步同账号的 READY 富资产草稿，不修改已发行的
+`Conversation.draft` 与 `ConversationRpc.setDraft` 字符串 wire。内容由 Markdown、canonical sidecar、
+模式和回复身份组成；本机未上传的源、任务及选区不上传为草稿内容。
+
+变更携带稳定 operationId/issuedAt 与 expectedRevision。CAS 冲突以 `applied = false` 和当前快照返回，
+本机内容保留等待用户选择；精确重放的操作收据与当时读取到的最新快照分别表达，不能将旧内容复活。
+清空保留正 revision 墓碑；发送触发的清空还携带已接受的 consumedClientMsgId，并且只能在成功 ACK 后提交。
+服务端保存草稿的私有文件引用，来源设备离线不会取消其他同账号设备对已就绪草稿的使用。
+字段、返回值和边界见[RPC 参考](../10-reference/rpc-reference.md#chatdraft)。
+
 ## 4. NOTIFY envelope
 
 NOTIFY 表示服务端主动状态变化。概念字段包括：

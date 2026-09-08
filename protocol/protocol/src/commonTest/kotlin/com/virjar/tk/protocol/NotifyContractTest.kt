@@ -111,6 +111,7 @@ class NotifyContractTest {
             unreadCount = 6, isPinned = true, peerReadSeq = 2L,
         )
         NotifyType.CONVERSATION_DELETED -> Conversation(chatId = "c1", chatType = 0)
+        NotifyType.CHAT_DRAFT_CHANGED -> ChatDraftChangedPayload("c1", 1)
         NotifyType.READ_SYNC -> ReadSyncPayload(peerUid = "u2", chatId = "c1", peerReadSeq = 7L)
         NotifyType.MESSAGE_REACTION -> com.virjar.tk.protocol.MessageReactionEventPayload(
             chatId = "c1", serverSeq = 5L, emoji = "👍", actorUid = "u2", action = 1,

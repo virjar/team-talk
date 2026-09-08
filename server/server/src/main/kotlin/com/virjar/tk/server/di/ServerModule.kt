@@ -355,7 +355,18 @@ internal fun createServerModule(
             unitOfWork = get<PgUnitOfWork>(),
         )
     }
-    single { ConversationService(get(), get(), get(), get()) }
+    single { ConversationService(get(), get(), get(), get(), get()) }
+    single<com.virjar.tk.server.domain.conversation.ChatDraftRepository> {
+        com.virjar.tk.server.infra.db.repository.ExposedChatDraftRepository()
+    }
+    single<com.virjar.tk.server.domain.attachment.ChatDraftAttachmentReferences> {
+        com.virjar.tk.server.infra.db.repository.ExposedChatDraftAttachmentReferences(get())
+    }
+    single {
+        val store = get<MessageStore>()
+        com.virjar.tk.server.domain.conversation.ChatDraftService(get(), get(), get(), get(), get(), get(), get(),
+            com.virjar.tk.server.domain.conversation.ChatDraftMessageLookup(store::findCommittedMessage), managedChats = get())
+    }
     single {
         SyncCheckpointService(
             database = get(),
@@ -371,6 +382,7 @@ internal fun createServerModule(
         val groupFiles = get<GroupFileRepository>()
         val documents = get<DocumentAttachmentReferences>()
         val userAvatars = get<UserAvatarReferences>()
+        val drafts = get<com.virjar.tk.server.domain.attachment.ChatDraftAttachmentReferences>()
         object : AttachmentReferences {
             override fun getChatIds(path: String): Set<String> =
                 messages.getAttachmentChatIds(path) + groupFiles.getAttachmentChatIds(path)
@@ -383,10 +395,10 @@ internal fun createServerModule(
                 messages.getReferencedAttachmentPaths(paths) +
                     groupFiles.getReferencedAttachmentPaths(paths) +
                     documents.getReferencedPaths(paths) +
-                    userAvatars.getReferencedPaths(paths)
+                    userAvatars.getReferencedPaths(paths) + drafts.getReferencedPaths(paths)
         }
     }
-    single<AttachmentAccess> { AttachmentAccessService(get(), get(), get(), get(), get()) }
+    single<AttachmentAccess> { AttachmentAccessService(get(), get(), get(), get(), get(), get()) }
     single {
         AttachmentRetentionService(
             files = get(),
@@ -502,6 +514,9 @@ internal fun createServerModule(
             register(MessageRpcContract.SERVICE) { session -> MessageRpcImpl(session.uid, get(), get(), get(), session.protocolVersion) }
             register(com.virjar.tk.protocol.rpc.gen.TaskRpcContract.SERVICE) { session ->
                 com.virjar.tk.server.protocol.rpc.TaskRpcImpl(session.uid, get())
+            }
+            register(com.virjar.tk.protocol.rpc.gen.ChatDraftRpcContract.SERVICE) { session ->
+                com.virjar.tk.server.protocol.rpc.ChatDraftRpcImpl(session.uid, get())
             }
             register(ConversationRpcContract.SERVICE) { session -> ConversationRpcImpl(session.uid, get()) }
             register(DeviceRpcContract.SERVICE) { session -> DeviceRpcImpl(session.uid, get(), get()) }

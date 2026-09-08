@@ -64,6 +64,7 @@ class ClientSession internal constructor(
     private val ownedDocumentCommentRepo: com.virjar.tk.shared.repository.DocumentCommentRepository,
     private val ownedContentSearchRepo: ContentSearchRepository,
     private val ownedTaskRepo: TaskRepository,
+    private val ownedChatDraftRepo: ChatDraftRepository,
     private val ownedHttpAuthExpiredRouter: SessionHttpAuthExpiredRouter,
     private val ownedGroupBotManagementRepo: GroupBotManagementRepository,
     /** 发送队列（断线排队重连补发，状态机回写 localCache） */
@@ -167,6 +168,7 @@ class ClientSession internal constructor(
     val documentCommentRepo: com.virjar.tk.shared.repository.DocumentCommentRepository get() = businessResource(ownedDocumentCommentRepo)
     val contentSearchRepo: ContentSearchRepository get() = businessResource(ownedContentSearchRepo)
     val taskRepo: TaskRepository get() = businessResource(ownedTaskRepo)
+    val chatDraftRepo: ChatDraftRepository get() = businessResource(ownedChatDraftRepo)
     val groupBotManagementRepo: GroupBotManagementRepository get() = businessResource(ownedGroupBotManagementRepo)
     val sendQueue: SendQueue get() = businessResource(ownedSendQueue)
     val outgoingQueueSnapshots: kotlinx.coroutines.flow.StateFlow<OutgoingQueueSnapshot>
@@ -483,6 +485,7 @@ fun createSession(
         onOutgoingProjectionMayHaveChanged = refreshOutgoingProjectionSnapshot,
         checkpointLoader = checkpointLoader,
         onTaskReminderDirty = pendingMirrorWake::pendingCommitted,
+        onChatDraftDirty = pendingMirrorWake::pendingCommitted,
     )
     ep.bindSyncWireAdmission(checkpointAdmission)
     construction.own("event processor", ep::stop)
@@ -520,16 +523,27 @@ fun createSession(
     )
     construction.own("send queue", sendQueue::close)
 
+    // 源上传完成和消息 ACK 都可推进同一持久草稿操作；不依赖页面仍然存在。
     // 日志缓冲区（分级：trace + fault）
     val traceBuffer = LogBuffer(capacity = 2000)
     val faultBuffer = LogBuffer(capacity = 500)
 
     val localMirrorRecoveryScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     construction.own("local mirror recovery", localMirrorRecoveryScope::cancel)
+    cache.chatDrafts.changes.onEach { pendingMirrorWake.pendingCommitted() }.launchIn(localMirrorRecoveryScope)
+    cache.chatDraftSync.changes.onEach { pendingMirrorWake.pendingCommitted() }.launchIn(localMirrorRecoveryScope)
+    sendQueue.queueSnapshots.onEach { pendingMirrorWake.pendingCommitted() }.launchIn(localMirrorRecoveryScope)
+    imClient.state.onEach { state ->
+        if (state == ConnectionState.AUTHENTICATED) kotlinx.coroutines.withContext(Dispatchers.IO) {
+            cache.chatDraftSync.invalidateAll()
+        }
+    }.launchIn(localMirrorRecoveryScope)
+
 
     val localMutations = SessionLocalMutationQueue(
         ownerUid = sessionOwnerUid,
         initialChatDraftRevision = cache.chatDrafts.maxRevision(),
+        reserveChatDraftRevision = (cache as? LocalCacheImpl)?.let { it::reserveChatDraftRevision },
         operations = SessionLocalMutationOperations(
             saveChatDraft = { snapshot ->
                 cache.chatDrafts.save(snapshot).also { conversationRepo.notifyLocalDraftCommitted() }
@@ -752,6 +766,7 @@ fun createSession(
         ownedDocumentRepo = reliableCommandFamilies.documents,
         ownedDocumentCommentRepo = reliableCommandFamilies.documentComments,
         ownedTaskRepo = reliableCommandFamilies.tasks,
+        ownedChatDraftRepo = reliableCommandFamilies.chatDrafts,
         ownedContentSearchRepo = ContentSearchRepository(
             rpcClient = businessRpcClient,
             changes = ep.contentSearchChanges,

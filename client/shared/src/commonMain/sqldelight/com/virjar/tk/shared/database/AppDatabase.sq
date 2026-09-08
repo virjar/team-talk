@@ -1855,3 +1855,18 @@ UPDATE chat_asset_upload SET referenced = 0 WHERE asset_id = ?;
 deleteUnownedChatAsset:
 DELETE FROM chat_asset_upload WHERE asset_id = ? AND referenced = 0
 AND NOT EXISTS(SELECT 1 FROM outgoing_chat_asset o WHERE o.asset_id = chat_asset_upload.asset_id);
+
+CREATE TABLE chat_draft_sync (
+    chat_id TEXT NOT NULL PRIMARY KEY,
+    payload TEXT NOT NULL
+);
+selectChatDraftSync:
+SELECT payload FROM chat_draft_sync WHERE chat_id = ?;
+selectAllChatDraftSync:
+SELECT payload FROM chat_draft_sync ORDER BY chat_id;
+selectChatDraftSyncCapacity:
+SELECT count(*) AS entries, coalesce(sum(length(CAST(payload AS BLOB))), 0) AS bytes FROM chat_draft_sync;
+upsertChatDraftSync:
+INSERT OR REPLACE INTO chat_draft_sync(chat_id, payload) VALUES (?, ?);
+deleteChatDraftSync:
+DELETE FROM chat_draft_sync WHERE chat_id = ?;

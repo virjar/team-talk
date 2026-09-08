@@ -24,6 +24,9 @@ internal class LocalChatDraftStore(
     private val version = MutableStateFlow(0L)
     override val changes = version.asStateFlow()
     private val json = Json { encodeDefaults = true }
+    internal var sharedSync: LocalChatDraftSyncStore? = null
+    private val revisionClock = java.util.concurrent.atomic.AtomicLong(queries.selectMaxChatComposerRevision().executeAsOne())
+    internal fun reserveRevision(): Long = revisionClock.updateAndGet { check(it < Long.MAX_VALUE); it + 1 }
 
     override fun maxRevision(): Long = use { queries.selectMaxChatComposerRevision().executeAsOne() }
 
@@ -37,18 +40,22 @@ internal class LocalChatDraftStore(
         val notReady = jobs.filter { it.state != ChatAssetUploadState.READY }.mapTo(hashSetOf()) { it.assetId }
         val ready = jobs.mapNotNull { it.asset }.filter { it.assetId in references && it.assetId !in notReady }
         val assets = (snapshot.assets.filter { it.assetId !in notReady } + ready).associateBy { it.assetId }
-        return snapshot.copy(
+        return (snapshot.copy(
             assets = references.mapNotNull(assets::get),
             pendingAssetIds = references.filter { it !in assets && (it in snapshot.pendingAssetIds || it in notReady) },
-        )
+        )).let { sharedSync?.decorateLocked(it) ?: it }
     }
 
     override fun save(snapshot: ChatDraftSnapshot): ChatDraftSnapshot = use {
         validate(snapshot)
+        val previous = getLocked(snapshot.chatId)
         val current = queries.selectChatComposerDraft(snapshot.chatId).executeAsOneOrNull()
         if (snapshot.revision <= queries.selectMaxChatComposerRevision().executeAsOne()) {
+            // 远端安装也使用同一个时钟；已准入但尚未持久的编辑仍须保存并检查 sharedRevision。
+            if (sharedSync?.managedLocked(snapshot.chatId) == true) return@use save(snapshot.copy(revision = reserveRevision()))
             return@use getLocked(snapshot.chatId) ?: ChatDraftSnapshot(snapshot.chatId, snapshot.revision)
         }
+        revisionClock.accumulateAndGet(snapshot.revision) { a, b -> maxOf(a, b) }
         val references = referenced(snapshot)
         val bounded = snapshot.copy(
             assets = snapshot.assets.filter { it.assetId in references },
@@ -63,6 +70,7 @@ internal class LocalChatDraftStore(
         }
         var mirror: PendingConversationDraft? = null
         queries.transaction {
+            sharedSync?.savedLocked(bounded, previous)
             val plain = snapshot.markdown.takeIf { MarkdownAssetPolicy.recoveryReferences(it).isEmpty() }?.takeIf { it.isNotEmpty() }
             if (needsMirror(snapshot.chatId, plain)) mirror = writeMirror(snapshot.chatId, plain)
             queries.upsertChatComposerDraft(snapshot.chatId, snapshot.revision, if (isEmpty) 1L else 0L, bytes)
@@ -71,15 +79,33 @@ internal class LocalChatDraftStore(
             reconcileLocked(snapshot.chatId, references)
         }
         mirror?.let(publishMirror)
+        sharedSync?.publishedLocalChange()
         changed()
         checkNotNull(getLocked(snapshot.chatId))
+    }
+
+    internal fun installRemoteLocked(snapshot: ChatDraftSnapshot) {
+        val installed = snapshot.copy(revision = reserveRevision())
+        validate(installed)
+        val bytes = json.encodeToString(installed).encodeToByteArray()
+        val empty = installed.markdown.isEmpty() && installed.replyToClientMsgId == null
+        val existing = queries.selectChatComposerDraft(installed.chatId).executeAsOneOrNull()
+        val capacity = queries.selectChatComposerCapacity().executeAsOne()
+        check(capacity.entries - (if (existing?.is_empty == 0L) 1 else 0) + (if (empty) 0 else 1) <= 1_000 &&
+            capacity.bytes - (if (existing?.is_empty == 0L) existing.payload.size else 0) + (if (empty) 0 else bytes.size) <= 48L * 1024 * 1024) {
+            "聊天草稿存储已满，请先发送或清理现有草稿"
+        }
+        queries.upsertChatComposerDraft(installed.chatId, installed.revision, if (empty) 1 else 0, bytes)
+        queries.advanceChatComposerClock(installed.revision)
+        queries.pruneChatComposerTombstones()
+        reconcileLocked(installed.chatId, referenced(installed))
     }
 
     /** 调用方持有同一 cache lock，且已进入 outgoing 的 SQLite 事务。 */
     internal fun consumeLocked(chatId: String, revision: Long): Boolean {
         val current = queries.selectChatComposerDraft(chatId).executeAsOneOrNull() ?: return false
         if (current.revision != revision) return false
-        val empty = ChatDraftSnapshot(chatId = chatId, revision = revision)
+        val empty = ChatDraftSnapshot(chatId = chatId, revision = revision, sharedRevision = decodeDraft(current.payload).sharedRevision)
         queries.upsertChatComposerDraft(chatId, revision, 1L, json.encodeToString(empty).encodeToByteArray())
         queries.pruneChatComposerTombstones()
         referenced(decodeDraft(current.payload)).forEach(::removeDraftReferenceLocked)
@@ -209,7 +235,11 @@ internal class LocalChatDraftStore(
         val job = decodeJob(row.payload)
         if (job.attempt != attempt || job.state != ChatAssetUploadState.UPLOADING) return@use false
         require(asset.assetId == assetId)
-        writeJobLocked(job.copy(state = ChatAssetUploadState.READY, asset = canonicalAsset(asset), failure = null), row.referenced)
+        queries.transaction {
+            writeJobLocked(job.copy(state = ChatAssetUploadState.READY, asset = canonicalAsset(asset), failure = null), row.referenced)
+            if (row.referenced == 1L) sharedSync?.assetReadyLocked(job.chatId)
+        }
+        sharedSync?.publishedLocalChange()
         changed()
         true
     }

@@ -1,0 +1,4 @@
+CREATE TABLE chat_draft_sync (
+    chat_id TEXT NOT NULL PRIMARY KEY,
+    payload TEXT NOT NULL
+);

@@ -219,6 +219,15 @@ class MessageStore(
         )
     }
 
+    /** Read-only accepted identity lookup for draft consumption and reply targeting. */
+    fun findCommittedMessage(chatId: String, clientMsgId: String): Message? = withDatabaseOrNull { database ->
+        val index = database.get(records.buildClientMsgIdKey(chatId, clientMsgId)) ?: return@withDatabaseOrNull null
+        val identity = records.decodeIdempotencyValue(index)
+        val message = checkNotNull(getMessageFrom(database, chatId, identity.serverSeq)) { "消息幂等索引缺少权威消息" }
+        check(message.clientMsgId == clientMsgId && message.senderUid == identity.senderUid) { "消息幂等索引身份不一致" }
+        message
+    }
+
     private fun findIdempotentMessage(
         database: RocksDB,
         candidate: Message,

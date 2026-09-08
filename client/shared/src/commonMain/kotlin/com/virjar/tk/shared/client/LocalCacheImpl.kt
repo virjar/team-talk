@@ -97,9 +97,19 @@ class LocalCacheImpl internal constructor(
             publishExternalUserProjectionLocked = organization::publishUserLocked,
         )
     }
-    private val chatDraftStore = LocalChatDraftStore(queries, cacheUseGate, stateLock,
-        conversations::writeComposerDraftLocked, conversations::publishComposerDraftLocked, conversations::needsComposerDraftMirrorLocked)
+    private val chatDraftStore: LocalChatDraftStore = LocalChatDraftStore(queries, cacheUseGate, stateLock,
+        { chatId, draft -> if (chatDraftStoreManaged(chatId)) conversations.writeComposerPreviewLocked(chatId, draft)
+            else conversations.writeComposerDraftLocked(chatId, draft) },
+        { preview -> if (preview.generation == 0L) conversations.publishComposerPreviewLocked(preview)
+            else conversations.publishComposerDraftLocked(preview) }, conversations::needsComposerDraftMirrorLocked)
+    private val chatDraftSyncStore: LocalChatDraftSyncStore = LocalChatDraftSyncStore(queries, cacheUseGate, stateLock, chatDraftStore) { chatId, draft ->
+        conversations.publishComposerPreviewLocked(conversations.writeComposerPreviewLocked(chatId, draft))
+    }
+    init { chatDraftStore.sharedSync = chatDraftSyncStore }
+    private fun chatDraftStoreManaged(chatId: String): Boolean = chatDraftSyncStore.managedLocked(chatId)
+    override val chatDraftSync: LocalChatDraftSync get() = chatDraftSyncStore
     override val chatDrafts: LocalChatDrafts get() = chatDraftStore
+    internal fun reserveChatDraftRevision() = chatDraftStore.reserveRevision()
     private val documents = LocalDocumentProjectionStore(queries, cacheUseGate, stateLock)
     override val tasks: LocalTasks = LocalTaskStore(queries, cacheUseGate, stateLock)
     override val documentComments: LocalDocumentComments = LocalDocumentCommentStore(queries, cacheUseGate, stateLock)
@@ -112,8 +122,10 @@ class LocalCacheImpl internal constructor(
         outboxLimits = outboxLimits,
         retentionLimits = messageRetentionLimits,
         refreshReactionsAfterPrune = reactions::refreshResidentAfterPrune,
-        chatAssetsChanged = chatDraftStore::changed,
+        chatAssetsChanged = { chatDraftStore.changed(); chatDraftSyncStore.publishedLocalChange() },
         retainReplacementAssets = { message, now -> chatDraftStore.retainOutgoingLocked(message, now, true) },
+        discardComposer = chatDraftSyncStore::discardedLocked,
+        replaceComposer = chatDraftSyncStore::replacedLocked,
     )
     private val messageProjectionReset = LocalMessageProjectionResetStore(queries)
     private val deliveryLog = LocalDeliveryLogStore(queries, cacheUseGate, stateLock)
@@ -240,6 +252,7 @@ class LocalCacheImpl internal constructor(
         cacheUseGate.use {
             synchronized(stateLock) {
                 queries.transaction {
+                    queries.deleteChatDraftSync(chatId)
                     queries.deleteChatComposerDraft(chatId)
                     queries.deleteOutgoingChatAssetsByChat(chatId)
                     queries.deleteChatAssetUploadsByChat(chatId)
@@ -512,9 +525,14 @@ class LocalCacheImpl internal constructor(
                 val receipt = messages.enqueueFromComposer(message, now) { inserted ->
                     if (inserted) chatDraftStore.retainOutgoingLocked(message, now, true)
                     consumed = chatDraftStore.consumeLocked(message.chatId, expectedDraftRevision)
-                    if (consumed) mirror = conversations.writeComposerDraftLocked(message.chatId, null)
+                    if (consumed) {
+                        chatDraftSyncStore.consumedLocked(message.chatId, message.clientMsgId)
+                        mirror = if (chatDraftSyncStore.managedLocked(message.chatId)) conversations.writeComposerPreviewLocked(message.chatId, null)
+                            else conversations.writeComposerDraftLocked(message.chatId, null)
+                    }
                 }
-                mirror?.let(conversations::publishComposerDraftLocked)
+                mirror?.let { if (it.generation == 0L) conversations.publishComposerPreviewLocked(it) else conversations.publishComposerDraftLocked(it) }
+                chatDraftSyncStore.publishedLocalChange()
                 chatDraftStore.changed()
                 receipt
             }
@@ -810,6 +828,7 @@ class LocalCacheImpl internal constructor(
             documents.resetSnapshotGatesLocked()
             documentComments.invalidate(purge = true)
             tasks.resetProjection()
+            chatDraftSyncStore.invalidateAll()
             conversations.clearServerProjectionLocked()
             reactions.publishServerProjectionResetLocked()
             groupFileEntries.clearAllLocked()

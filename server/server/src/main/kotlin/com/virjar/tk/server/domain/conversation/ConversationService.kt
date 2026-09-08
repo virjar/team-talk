@@ -23,6 +23,7 @@ class ConversationService(
     private val lifecycleGate: ChatLifecycleGate,
     private val unitOfWork: PgUnitOfWork,
     private val managedChats: ManagedChatPolicy = UnmanagedChatPolicy,
+    private val drafts: ChatDraftRepository? = null,
 ) {
 
     suspend fun listConversationPage(
@@ -71,6 +72,17 @@ class ConversationService(
         unitOfWork.write {
             requireProjectionReady(transaction, chatId)
             if (conversationRepo.deleteConversation(transaction, uid, chatId)) {
+                drafts?.let { repository ->
+                    // Deleting a conversation explicitly consumes its draft. Keep a version even if
+                    // only the legacy string existed, so a delayed expectedRevision=0 cannot revive it.
+                    val before = repository.get(transaction, uid, chatId)
+                    check(before.revision < Long.MAX_VALUE) { "草稿版本已达上限" }
+                    val cleared = com.virjar.tk.protocol.model.ChatDraftSnapshot(chatId, before.revision + 1,
+                        maxOf(System.currentTimeMillis(), before.updatedAt), null)
+                    repository.save(transaction, uid, cleared)
+                    appendEvent(uid, NotifyType.CHAT_DRAFT_CHANGED,
+                        com.virjar.tk.protocol.ChatDraftChangedPayload(chatId, cleared.revision))
+                }
                 appendEvent(uid, NotifyType.CONVERSATION_DELETED, deletedConversation(chatId))
             }
         }

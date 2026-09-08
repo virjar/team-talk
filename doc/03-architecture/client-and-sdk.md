@@ -342,8 +342,19 @@ debounce 或 `onDispose` 在 CLOSED 后只能无害失败，不能穿过已 quie
 
 聊天完整草稿由 `LocalChatDrafts` 和账号 SQLite 持有；`ChatComposerContextStore` 只保留 UI 热帧，
 通过 `SessionLocalMutationWriter` 有序保存 Markdown、sidecar、选区、模式和回复目标。恢复经
-`UiLocalDataBoundary` 在 IO 读取，完成前阻止输入/导入，避免空首帧覆盖已有资料。普通会话字符串镜像
-只接收不含内部资产引用的 Markdown，富资产草稿不借该协议传递不完整内容。
+`UiLocalDataBoundary` 在 IO 读取，完成前阻止输入/导入，避免空首帧覆盖已有资料。已 READY 的完整内容
+通过独立 `ChatDraftRpc` 同步到同账号其他设备；服务端快照包含 Markdown、canonical sidecar、模式和
+回复身份，选区及未上传源继续由本安装持有。旧会话字符串 wire 保持兼容，不借它传递缺失 sidecar 的内容。
+
+跨设备快照的服务端 revision 与本机写入 revision 分开。变更使用发送前持久化的 operationId/issuedAt
+和 expectedRevision，未知结果重放相同意图。`CHAT_DRAFT_CHANGED` 只使相应快照失效，读取结果经版本
+检查后交给已驻留编辑器；发生冲突时保留本机内容并提供明确选择，不自动覆盖双方内容或循环重试旧 CAS。
+
+`LocalChatDraftSync` 另在同一账号库保存远端快照、所需 revision、待确认命令和发送后的条件消费记录，
+每个 chat 只允许一条不可变在途命令，新编辑留在本机 composer 中等待；同步记录最多 1,000 个、合计
+64 MiB。容量紧张时可回收远端已清空、且没有本机非空稿、待处理操作、消费记录、冲突或失败的纯投影，
+之后按需重新读取；本机可靠事实不参与回收。普通镜像不能越过已经由完整草稿同步管理的 chat，
+重连和失效提示通过同一持久 owner 收敛。
 
 `ClientSession.createChatAssetUploads` 拥有专用 HTTP repository 和单一上传 worker。Android 的
 `noBackupFilesDir`、Desktop 已认领安装根下的 `chat-assets/<deployment>/<dataset>/<uid>` 保存固定
@@ -356,8 +367,11 @@ debounce 或 `onDispose` 在 CLOSED 后只能无害失败，不能穿过已 quie
 都不再引用后才回收源。普通退出和重启保留这套可靠事实，账号封禁清理包含其精确命名空间。
 
 用户发送时，消息 outbox 插入、乐观消息写入及对应草稿 revision 的消费在同一 SQLite 事务中完成；
-UI 只在提交确认后清空仍匹配的编辑帧。会话关闭先终止并排空上传 worker，再排空已准入本地写入，最后
-关闭 SQLite；平台网关和页面只借用持久上传能力，不拥有它的生命周期。
+UI 只在提交确认后清空仍匹配的编辑帧。跨设备服务端草稿则在消息成功 ACK 后才按捕获的服务端 revision
+清空；失败或未知结果保留远端草稿，较新远端版本不被旧发送消费。服务端草稿对 READY 文件保有独立引用，
+来源设备退出后其他同账号设备仍可读取和发送；接收设备不复制来源设备的私有 spool。
+会话关闭先终止并排空上传 worker，再排空已准入本地写入，最后关闭 SQLite；平台网关和页面只借用持久
+上传能力，不拥有它的生命周期。
 
 Android 的独立文档草稿由进程级单写者写入 `noBackupFilesDir`。草稿、创建命令和破坏性 operation
 outbox 统一按 canonical deployment 指纹 + `datasetId` + uid 的不可变 owner key 合并到固定容量的
@@ -969,8 +983,8 @@ revision CAS、带 canonical 内嵌资产 sidecar 的 ReplyBody 消息字节、�
 不可变 `(createdAt, nodeId)` 同级顺序、文档 move/rename durable outbox、评论分页与待发送意图，以及
 完整聊天草稿、上传命令和待发消息持有的源引用。聊天活跃草稿最多 1,000 个、合计 48 MiB，空草稿
 墓碑只保留最新 128 个，独立 revision clock 保持单调；本机未发送事实不按普通缓存驱逐。
-SQLDelight 连续追加迁移保留原有本地事实，聊天恢复表与 outbox 源引用分别由 `3.sqm`、`4.sqm`
-补入，数据库 schema 为 5。outgoing 回执和本地失败
+SQLDelight 连续追加迁移保留原有本地事实，实际数据库版本以生成的 `AppDatabase.Schema.version`
+和迁移文件为准。完整草稿与消息 outbox 的源引用均属于可靠事实。outgoing 回执和本地失败
 消息投影共用同一稳定失败分类；失败乐观投影在 receipt GC 后保留最小稳定失败结果；发布前的
 Document 客户端权限状态机与撤权墓碑已删除，干净投影从服务端重建。
 群机器人命令在请求前持久化客户端生成的唯一 token，只有用户

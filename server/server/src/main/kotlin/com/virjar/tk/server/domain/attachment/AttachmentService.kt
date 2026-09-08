@@ -39,15 +39,15 @@ class AttachmentService(
                 canonical.copy(body = body.withAttachments(attachment, thumbnail))
             }
             is RichTextBody -> {
-                val assets = resolve(body.assets, actorUid)
+                val assets = resolveAssets(body.assets, actorUid)
                 canonical.copy(body = buildRichTextBody(body.markdown, assets))
             }
-            is ReplyBody -> canonical.copy(body = body.copy(assets = resolve(body.assets, actorUid)))
+            is ReplyBody -> canonical.copy(body = body.copy(assets = resolveAssets(body.assets, actorUid)))
             else -> canonical
         }
     }
 
-    private suspend fun resolve(assets: List<EmbeddedAsset>, actorUid: String): List<EmbeddedAsset> =
+    suspend fun resolveAssets(assets: List<EmbeddedAsset>, actorUid: String): List<EmbeddedAsset> =
         assets.map { asset ->
             asset.copy(
                 attachment = resolve(asset.attachment, actorUid),

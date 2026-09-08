@@ -39,6 +39,7 @@ object DatabaseFactory {
         DocumentCustodyBatchTransfers, DocumentCustodyBatchTransferItems,
         DocumentSpaceGrants, DocumentNodes, DocumentContentRevisions, DocumentEmbeddedAssets,
         DocumentUserRecents, DocumentComments, ContentSearchPending, WorkTasks, TaskAudits, TaskCommands,
+        ChatDrafts, ChatDraftAssets, ChatDraftCommands,
         ClientTelemetryDevices, ClientTelemetryPolicies, ClientTelemetryPolicyAudits,
         ClientTelemetryAdminAudits,
     )

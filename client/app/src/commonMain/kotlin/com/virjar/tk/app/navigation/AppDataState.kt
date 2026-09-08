@@ -294,6 +294,7 @@ open class AppDataState(
             telemetry = telemetry,
             onAuthExpired = { this@AppDataState.onAuthExpired() },
             prepareFailedMessageReplacement = session::prepareChatAssetReplacement,
+            chatDraftRepository = session.chatDraftRepo,
         )
         activeChat.markPrepared(chatId)
     }

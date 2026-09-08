@@ -19,6 +19,8 @@ internal class LocalMessageStore(
     refreshReactionsAfterPrune: (chatId: String) -> Unit = {},
     private val chatAssetsChanged: () -> Unit = {},
     retainReplacementAssets: (Message, Long) -> Unit = { _, _ -> },
+    discardComposer: (String, String) -> Unit = { _, _ -> },
+    replaceComposer: (String, String, String) -> Unit = { _, _, _ -> },
 ) {
     private val historyLeases = MessageHistoryLeaseGate()
     private val projectionPersistence = LocalMessageProjectionPersistence(queries)
@@ -48,6 +50,8 @@ internal class LocalMessageStore(
         },
         assetsChanged = chatAssetsChanged,
         retainReplacementAssets = retainReplacementAssets,
+        discardComposer = discardComposer,
+        replaceComposer = replaceComposer,
         replaceResident = { chatId, clientMsgId, replacement ->
             windowRegistry.residentWindow(chatId)?.replaceMessage(clientMsgId, replacement)
         },

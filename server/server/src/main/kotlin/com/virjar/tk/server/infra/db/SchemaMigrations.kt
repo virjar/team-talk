@@ -44,6 +44,9 @@ private val schemaMigrations = listOf(
     SchemaMigration("create_tasks") {
         SchemaUtils.create(WorkTasks, TaskAudits, TaskCommands)
     },
+    SchemaMigration("create_chat_drafts") {
+        SchemaUtils.create(ChatDrafts, ChatDraftAssets, ChatDraftCommands)
+    },
 )
 
 /** Caller owns the schema_metadata lock; DDL and its completion receipt commit in the same transaction. */

@@ -148,6 +148,9 @@
 | `chat.failed.discard.{clientMsgId前12}` | 发起显式丢弃一条终态失败消息 |
 | `chat.failed.discard.{dialog|confirm|cancel}` | 丢弃失败消息的确认框、确认与取消动作 |
 | `chat.send` | 发送消息 |
+| `chat.draft.conflict` | 完整草稿的跨设备冲突或同步失败提示 |
+| `chat.draft.keepLocal` / `chat.draft.useRemote` | 明确保留本机草稿或使用其他设备草稿 |
+| `chat.draft.assetsUnavailable` | 远端草稿资产不可用，保留输入并阻止提交 |
 | `chat.emoji` | 表情入口 |
 | `chat.fmt.{bold|italic|strike|code|link|bullets|numbered|more}` | 消息输入的轻量格式工具与窄屏更多菜单 |
 | `chat.composer.format.close` | 关闭窄屏已展开的更多格式区 |

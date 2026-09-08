@@ -190,12 +190,17 @@ LocalCache 构造时分别一次性读取 Conversation、草稿 outbox 和已读
 才替换内存状态，最后只生成并排序一次不可变 UI 列表。因此 N 条会话的快照合并为 O(N) keyed merge
 加一次 O(N log N) 排序；置顶、最后消息时间相同时再按 `chatId` 排序，保证重启后的展示顺序确定。
 
-Conversation 草稿的服务端与 LocalCache 契约当前仍只是一个 Markdown 字符串，不能与
-`EmbeddedAsset` sidecar 原子持久化。带 `teamtalk-asset://` 引用的聊天编辑上下文仅在当前已认证
-会话内保留完整 Markdown + sidecar，对外的持久/跨设备草稿镜像写空串，而不是写入失去 sidecar 的裸 URI。
-因此普通文本草稿仍本地优先并跨设备收敛，未发送的富资产聊天草稿则不承诺跨进程或跨设备恢复。
-缓存变化（包括清空）也会更新打开中的未修改输入框；本机编辑上下文的保留规则由共享 UI 处理，见
-[客户端交互状态](../05-clients/README.md#3-交互状态与远端状态)，SDK 不复制编辑器状态。
+聊天完整草稿由账号 SQLite 保存，包含 Markdown、canonical sidecar、待上传资产身份、模式、选区与
+回复目标。跨设备同步使用独立的 `ChatDraftRpc`：同一 uid 的设备读取和修改自己的聊天草稿快照，
+只有全部资产 READY 的内容才可提交。服务端保存 Markdown、完整资产描述符、模式和回复身份，并用
+独立 revision 做 CAS；本机未上传的字节源和上传任务不跨设备传递。已发行的 `Conversation.draft` 与
+`ConversationRpc.setDraft` 字符串 wire 保持原义，不向它写入失去 sidecar 的内部 URI。
+
+`CHAT_DRAFT_CHANGED` 是仅发给该 uid 设备的持久失效提示；客户端通过领域 RPC 读取当前快照，
+不能把通知当正文。打开中的输入框接收远端更新与清空；有未确认本机修改或 revision 冲突时保留本机内容，
+由用户明确选择采用服务器内容或以最新基线继续提交。新输入、未完成上传和消息编辑上下文不被迟到响应覆盖。
+本机消息入队与本地草稿消费保持同一 SQLite 事务；服务端草稿的清空等消息成功 ACK 后才以原 revision
+提交，不能清除发送期间出现的更新草稿。具体交互见[富文本与媒体](../05-clients/rich-content.md#3-markdown-渲染)。
 
 User、Chat 和群成员不沿用会话首页的全量 resident 边界。它们始终完整持久化，但 User/Chat 只按主键
 短读，群成员只按一个 chat 联表读取；仅活跃观察的实体键拥有引用计数 StateFlow。联系人列表是当前

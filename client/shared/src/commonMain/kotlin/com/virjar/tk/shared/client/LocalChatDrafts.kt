@@ -17,6 +17,8 @@ data class ChatDraftSnapshot(
     val selectionEnd: Int = 0,
     val replyToClientMsgId: String? = null,
     val replyToServerSeq: Long = 0,
+    /** 当前编辑帧的服务器草稿基线；不能用本机 revision 代替。 */
+    val sharedRevision: Long? = null,
 )
 
 @Serializable

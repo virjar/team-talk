@@ -598,7 +598,7 @@ MEMBER_REMOVED/CHAT_DELETED 之后收到一条更晚的旧 MESSAGE_RECV；剩余
 | 发行字符串 | `0.0.1` | 用户看到的版本；客户端、SDK、服务端来自同一构建输入，不决定二进制兼容 |
 | 协议 major/minor | 源码待发行 `0.2`，最低 minor 为 `0`；正式 0.0.1 冻结 `0.1` | 每条 TCP 连接协商可使用的契约窗口，不改变已保存的消息和同步游标 |
 | 服务端存储 epoch | **`1`** | 已存在的 PostgreSQL 和本地持久化布局；以 `ServerDataEpoch.CURRENT_EPOCH` 为事实源 |
-| PostgreSQL 迁移版本 | `5`（连续清单 `0..5`） | `schema_migrations` 的连续完成记录；在现有 epoch 内保留数据地推进 SQL 布局 |
+| PostgreSQL 迁移版本 | `6`（连续清单 `0..6`） | `schema_migrations` 的连续完成记录；在现有 epoch 内保留数据地推进 SQL 布局 |
 | dataset ID | 每套数据原有的 canonical UUID | PostgreSQL 与本地存储共同拥有的身份，普通升级保留原值 |
 
 发行与协议版本的变化不改变存储 epoch 或 dataset。标记重编号本身不会迁移数据，反而会让
@@ -625,6 +625,7 @@ dataset ID 和迁移完成记录，只执行尚未完成的已知迁移。不会
 | `3` | `create_document_comments` | 追加文档评论与创建指纹、分页索引，不改写已有文档正文或修订 |
 | `4` | `create_content_search_pending` | 追加文档与群文件每资源单槽的待投影修订表；现有内容保留，索引由当前对象建立 |
 | `5` | `create_tasks` | 追加独立任务、审计与命令收据；保留原用户、消息、文档和 dataset |
+| `6` | `create_chat_drafts` | 追加同账号完整聊天草稿、私有资产引用与命令收据；保留原会话字符串草稿、消息、附件和 dataset |
 
 `DatabaseFactory` 在建立业务容器前完成这一步。已有库的启动事务先锁定 `schema_metadata`，再校验
 布局和读取迁移记录；事务使用 `READ_COMMITTED`，等待另一启动事务结束后能看到它刚提交的记录。

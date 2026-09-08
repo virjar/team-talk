@@ -13,6 +13,8 @@ import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.app.navigation.UiLocalDataBoundary
 import com.virjar.tk.shared.repository.MessageRepository
+import com.virjar.tk.shared.repository.ChatDraftRepository
+import com.virjar.tk.shared.client.ChatDraftSyncState
 import com.virjar.tk.app.telemetry.ClientFaultCode
 import com.virjar.tk.app.telemetry.ClientFaultReason
 import com.virjar.tk.app.telemetry.ClientUiAction
@@ -47,6 +49,7 @@ class ChatViewModel(
     private val localData: UiLocalDataBoundary = UiLocalDataBoundary(),
     private val telemetry: ClientUiTelemetrySink = NoopClientUiTelemetrySink,
     private val prepareFailedMessageReplacement: suspend (String, Message) -> Message = { _, message -> message },
+    private val chatDraftRepository: ChatDraftRepository? = null,
     dispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.Default,
     onAuthExpired: () -> Unit = {},
 ) : BaseViewModel(dispatcher, onAuthExpired) {
@@ -106,6 +109,12 @@ class ChatViewModel(
         rollbackLease = localCache::rollbackOptimisticMessageEdit,
     )
     private val actionTelemetry = ChatActionTelemetryTracker(telemetry)
+
+    val chatDraftChanges = localCache.chatDrafts.changes
+    val chatDraftSyncState: StateFlow<ChatDraftSyncState> = chatDraftRepository?.let { repository ->
+        repository.local.changes.map { localData.run { repository.local.state(chatId) } }
+            .stateIn(scope, SharingStarted.Eagerly, ChatDraftSyncState())
+    } ?: MutableStateFlow(ChatDraftSyncState())
 
     init {
         // 完全在 local-data dispatcher 上获取 SQLite 支撑的 pager 和它的初始快照。
@@ -176,6 +185,12 @@ class ChatViewModel(
         }
 
         reactionOwner.start()
+
+        scope.launch {
+            connectionState.collectLatest { state ->
+                if (state == ConnectionState.AUTHENTICATED) chatDraftRepository?.refresh(chatId)
+            }
+        }
 
         // 本地窗口始终可渲染；认证边界只同步历史，不在后台消费红点。
         scope.launch {
@@ -499,19 +514,54 @@ class ChatViewModel(
     }
 
     /** Completion means outbox + projection + exact draft consumption committed locally, not server ACK. */
-    fun sendComposerMessage(message: Message, draftRevision: Long, onResult: (Boolean) -> Unit) {
+    fun sendComposerMessage(
+        message: Message,
+        draftRevision: Long,
+        awaitDraftSaved: suspend () -> Long = { draftRevision },
+        onResult: (Boolean) -> Unit,
+    ) {
         val sending = message.copy(sendStatus = Message.SEND_STATUS_SENDING)
         actionTelemetry.startSend(sending.clientMsgId)
-        localMutations.enqueueFromComposer(
-            message = sending,
-            expectedDraftRevision = draftRevision,
-            onCommitted = { onResult(true) },
-            onFailure = { failure ->
-                actionTelemetry.failSend(sending.clientMsgId)
-                setError("发送失败，草稿未清空: ${failure.message ?: "本地队列不可用"}")
+        scope.launch {
+            try {
+                val committedRevision = awaitDraftSaved()
+                chatDraftRepository?.validateForSend(chatId, committedRevision)?.getOrThrow()
+                localMutations.enqueueFromComposer(
+                    message = sending,
+                    expectedDraftRevision = committedRevision,
+                    onCommitted = { onResult(true) },
+                    onFailure = { failure ->
+                        actionTelemetry.failSend(sending.clientMsgId)
+                        setError("发送失败，草稿未清空: ${failure.message ?: "本地队列不可用"}")
+                        onResult(false)
+                    },
+                )
+            } catch (cancelled: CancellationException) {
                 onResult(false)
-            },
-        )
+                throw cancelled
+            } catch (failure: Exception) {
+                actionTelemetry.failSend(sending.clientMsgId)
+                setError(failure.message ?: "草稿同步尚未完成，请重试")
+                onResult(false)
+            }
+        }
+    }
+
+    fun resolveDraftConflict(keepLocal: Boolean, awaitDraftSaved: suspend () -> Unit, onResult: (Boolean) -> Unit) {
+        scope.launch {
+            try {
+                awaitDraftSaved()
+                val repository = checkNotNull(chatDraftRepository)
+                (if (keepLocal) repository.keepLocal(chatId) else repository.useRemote(chatId)).getOrThrow()
+                onResult(true)
+            } catch (cancelled: CancellationException) {
+                onResult(false)
+                throw cancelled
+            } catch (failure: Exception) {
+                setError(failure.message ?: "处理草稿冲突失败，请重试")
+                onResult(false)
+            }
+        }
     }
 
     /** Rebind a persisted reply outside the visible page; a server denial never falls back to cached content. */

@@ -38,6 +38,7 @@ enum	com.virjar.tk.protocol.NotifyType/25	2	-	active	TASK_DUE
 enum	com.virjar.tk.protocol.NotifyType/3	0	-	active	CONTACT_DELETED
 enum	com.virjar.tk.protocol.NotifyType/30	0	-	active	CONVERSATION_UPDATED
 enum	com.virjar.tk.protocol.NotifyType/31	0	-	active	CONVERSATION_DELETED
+enum	com.virjar.tk.protocol.NotifyType/32	2	-	active	CHAT_DRAFT_CHANGED
 enum	com.virjar.tk.protocol.NotifyType/4	0	-	active	CONTACT_UPDATED
 enum	com.virjar.tk.protocol.NotifyType/40	0	-	active	PRESENCE
 enum	com.virjar.tk.protocol.NotifyType/41	0	-	active	TYPING
@@ -91,6 +92,8 @@ rpc	chat/6	0	-	active	addMembers(chatId:kotlin.String,uids:kotlin.collections.Li
 rpc	chat/7	0	-	active	removeMembers(chatId:kotlin.String,targetUid:kotlin.String):kotlin.Unit
 rpc	chat/8	0	-	active	getMembers(chatId:kotlin.String):List<com.virjar.tk.protocol.model.Member>
 rpc	chat/9	0	-	active	transferOwner(chatId:kotlin.String,newOwnerUid:kotlin.String):kotlin.Unit
+rpc	chatDraft/1	2	-	active	get(chatId:kotlin.String):com.virjar.tk.protocol.model.ChatDraftSnapshot
+rpc	chatDraft/2	2	-	active	mutate(command:com.virjar.tk.protocol.model.ChatDraftCommand):com.virjar.tk.protocol.model.ChatDraftMutationResult
 rpc	contact/1	0	-	active	list():List<com.virjar.tk.protocol.model.Contact>
 rpc	contact/10	0	-	active	listBlacklist():List<com.virjar.tk.protocol.model.Contact>
 rpc	contact/11	0	-	active	listApplyRecords(beforeId:kotlin.Long,limit:kotlin.Int):List<com.virjar.tk.protocol.model.ContactApplyRecord>
@@ -168,6 +171,7 @@ rpc	task/4	2	-	active	mutate(command:com.virjar.tk.protocol.model.TaskCommand):c
 rpc	user/1	0	-	active	getProfile(targetUid:kotlin.String?):com.virjar.tk.protocol.model.User
 rpc	user/2	0	-	active	updateProfile(patch:com.virjar.tk.protocol.model.ProfilePatch):kotlin.Unit
 rpc	user/3	0	-	active	search(keyword:kotlin.String):List<com.virjar.tk.protocol.model.User>
+type	com.virjar.tk.protocol.ChatDraftChangedPayload	2	-	active	CLASS(chatId:kotlin.String,revision:kotlin.Long)
 type	com.virjar.tk.protocol.DisconnectSignal	0	-	active	OBJECT()
 type	com.virjar.tk.protocol.DocumentChangedPayload	2	-	active	CLASS(spaceId:kotlin.String,nodeId:kotlin.String?,kind:kotlin.Int,revision:kotlin.Long,policyRevision:kotlin.Long)
 type	com.virjar.tk.protocol.GroupFileChangedPayload	0	-	active	CLASS(chatId:kotlin.String,operation:kotlin.Int,entry:com.virjar.tk.protocol.model.GroupFileEntry?,deletedEntryId:kotlin.String,deletedRevision:kotlin.Long)
@@ -204,6 +208,10 @@ type	com.virjar.tk.protocol.body.VideoBody	0	-	active	CLASS(attachment:com.virja
 type	com.virjar.tk.protocol.body.VoiceBody	0	-	active	CLASS(attachment:com.virjar.tk.protocol.model.Attachment,duration:kotlin.Int)
 type	com.virjar.tk.protocol.model.Attachment	0	-	active	CLASS(path:kotlin.String,name:kotlin.String,contentType:kotlin.String,size:kotlin.Long)
 type	com.virjar.tk.protocol.model.Chat	0	-	active	CLASS(chatId:kotlin.String,chatType:kotlin.Int,name:kotlin.String?,avatar:kotlin.String?,creator:kotlin.String?,memberCount:kotlin.Int,maxSeq:kotlin.Long,notice:kotlin.String?,mutedAll:kotlin.Boolean)
+type	com.virjar.tk.protocol.model.ChatDraftCommand	2	-	active	CLASS(chatId:kotlin.String,expectedRevision:kotlin.Long,operationId:kotlin.String,issuedAt:kotlin.Long,content:com.virjar.tk.protocol.model.ChatDraftContent?,consumedClientMsgId:kotlin.String?)
+type	com.virjar.tk.protocol.model.ChatDraftContent	2	-	active	CLASS(markdown:kotlin.String,assets:kotlin.collections.List<com.virjar.tk.protocol.model.EmbeddedAsset>,mode:kotlin.Int,replyToClientMsgId:kotlin.String?,replyToServerSeq:kotlin.Long)
+type	com.virjar.tk.protocol.model.ChatDraftMutationResult	2	-	active	CLASS(applied:kotlin.Boolean,operationRevision:kotlin.Long,current:com.virjar.tk.protocol.model.ChatDraftSnapshot)
+type	com.virjar.tk.protocol.model.ChatDraftSnapshot	2	-	active	CLASS(chatId:kotlin.String,revision:kotlin.Long,updatedAt:kotlin.Long,content:com.virjar.tk.protocol.model.ChatDraftContent?,assetsAvailable:kotlin.Boolean)
 type	com.virjar.tk.protocol.model.Contact	0	-	active	CLASS(uid:kotlin.String,friendUid:kotlin.String,remark:kotlin.String?,status:kotlin.Int,user:com.virjar.tk.protocol.model.User?)
 type	com.virjar.tk.protocol.model.ContactApply	0	-	active	CLASS(id:kotlin.Long,fromUid:kotlin.String,toUid:kotlin.String,token:kotlin.String?,remark:kotlin.String?,status:kotlin.Int,createdAt:kotlin.Long,fromUser:com.virjar.tk.protocol.model.User?)
 type	com.virjar.tk.protocol.model.ContactApplyLookup	0	-	active	CLASS(record:com.virjar.tk.protocol.model.ContactApplyRecord?)

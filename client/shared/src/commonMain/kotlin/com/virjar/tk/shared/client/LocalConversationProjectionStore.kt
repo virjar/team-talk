@@ -291,6 +291,18 @@ internal class LocalConversationProjectionStore(
         }
     }
 
+    internal fun writeComposerPreviewLocked(chatId: String, draft: String?): PendingConversationDraft {
+        queries.deleteConversationDraftOutbox(chatId)
+        queries.setConversationDraft(draft, chatId)
+        return PendingConversationDraft(chatId, draft, 0)
+    }
+    internal fun publishComposerPreviewLocked(preview: PendingConversationDraft) {
+        replaceDraftOverrideLocked(preview.chatId, null)
+        conversationsById[preview.chatId]?.let { conversationsById[preview.chatId] = it.copy(draft = preview.draft) }
+        markConversationMutatedLocked(preview.chatId)
+        publishConversations()
+    }
+
     internal fun needsComposerDraftMirrorLocked(chatId: String, draft: String?): Boolean {
         val current = if (localDraftOverrides.containsKey(chatId)) localDraftOverrides[chatId]?.draft
             else conversationsById[chatId]?.draft

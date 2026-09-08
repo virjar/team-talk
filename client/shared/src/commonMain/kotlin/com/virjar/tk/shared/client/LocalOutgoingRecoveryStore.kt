@@ -22,6 +22,8 @@ internal class LocalOutgoingRecoveryStore(
     private val replaceResident: (chatId: String, clientMsgId: String, replacement: Message) -> Unit,
     private val assetsChanged: () -> Unit,
     private val retainReplacementAssets: (Message, Long) -> Unit,
+    private val discardComposer: (String, String) -> Unit,
+    private val replaceComposer: (String, String, String) -> Unit,
 ) {
     fun enqueue(
         message: Message,
@@ -160,6 +162,7 @@ internal class LocalOutgoingRecoveryStore(
                 source.receipt?.let { queries.deleteOutgoingMessage(it.local_ordinal) }
                 queries.deleteFailedOptimisticMessage(chatId, clientMsgId, ownerUid)
                 releaseOutgoingChatAssets(queries, chatId, clientMsgId)
+                discardComposer(chatId, clientMsgId)
                 discarded = true
             }
             if (discarded) {
@@ -226,6 +229,7 @@ internal class LocalOutgoingRecoveryStore(
                 replacementProjection = persistedReplacement.toProjectionMessage().also(persistMessage)
                 retainReplacementAssets(canonical, now)
                 transferOutgoingChatAssets(queries, clientMsgId, canonical)
+                replaceComposer(chatId, clientMsgId, canonical.clientMsgId)
                 source.receipt?.let { queries.deleteOutgoingMessage(it.local_ordinal) }
                 queries.deleteFailedOptimisticMessage(chatId, clientMsgId, ownerUid)
             }
