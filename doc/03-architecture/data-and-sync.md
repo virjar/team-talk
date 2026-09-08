@@ -307,7 +307,7 @@ sequenceDiagram
 
 群文件目录已进入 LocalCache。领域分页提供完整目录快照，`GROUP_FILE_CHANGED` 提供持久行级变更；
 `LocalGroupFileEntryStore` 按 revision 和删除墓碑合并，页面观察本地投影。离线旧数据可用于展示，
-远端权限仍由当前成员关系裁决；搜索和历史/收据容量治理仍未完成。
+远端权限仍由当前成员关系裁决；文件名搜索通过独立的有界远程查询提供，历史/收据容量治理仍未完成。
 
 图中的 PostgreSQL 派发箭头包含服务端 dispatcher 与客户端 EventProcessor，不是数据库直连客户端。
 服务端的 [GroupFileRepository](../../server/server/src/main/kotlin/com/virjar/tk/server/domain/groupfile/GroupFileRepository.kt)

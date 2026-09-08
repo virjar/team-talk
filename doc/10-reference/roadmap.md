@@ -67,7 +67,6 @@ flowchart TD
     Operate -.-> Verify
     Product -.-> Verify
     Dependencies -.-> Verify
-    Changes["既有 Document 变更流"] --> Search["CONTENT-02：内容搜索"]
 ```
 
 阶段表示默认的投入顺序，不是要求整阶段全部完成才能使用产品。备份、必要维护和已发生的可靠性问题
@@ -155,7 +154,7 @@ RocksDB、FileStore 的一致备份、恢复和演练流程，明确 Lucene 从�
 
 只治理仍会增长的 `group_file_versions`、`group_file_audits`、`group_file_commands` 历史，补用量、
 保留、归档和查询。五类命令的稳定 identity、outbox/receipt、rename/delete 丢响应恢复已完成；
-变更投影已有实现，搜索归 CONTENT-02，不重复列作本项。
+变更投影与文件名搜索已有实现，见[功能状态](feature-status.md#客户端体验)，不重复列作本项。
 
 先统一“原命令已成功”和“当前对象仍可读取”的结果语义，覆盖 ACK 丢失后删除、退群、附件回收与
 进程重启。沿 `GroupFileService` / `ExposedGroupFileRepository` 审阅创建、追加版本和 rename/delete
@@ -207,14 +206,6 @@ p95/p99、资源高水位、错误预算和恢复时间。容量基线不代替 
 ## 阶段三：新增产品能力
 
 这些工作需在当前架构收敛后按真实反馈选择，不为发布现有版本补齐整套办公产品。
-
-### CONTENT-02 · 内容与资产搜索
-
-承接聊天附件、群文件和 Document 搜索；领域维护自己的可重建索引与 revision/outbox，全局入口做
-有界聚合，当前可见范围由服务端领域查询裁决。Document 搜索复用既有变更事件，不扩展全量预取缓存。
-
-完成条件：重试、删除和重放不复活旧 revision；归档或撤权后不返回失效结果；文件类型/范围筛选、
-打开结果与直接下载一致，Desktop/Android 都有真实数据入口。
 
 ### CONTENT-09 · Task MVP
 
