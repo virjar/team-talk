@@ -32,6 +32,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.virjar.tk.app.navigation.feature.document.DocumentCommentsFeature
 import com.virjar.tk.app.navigation.feature.document.DocumentTabState
 import com.virjar.tk.app.ui.UiActionAdmission
+import com.virjar.tk.app.ui.platform.testTagResourceIds
 import com.virjar.tk.protocol.model.DocumentComment
 import com.virjar.tk.protocol.model.DocumentSpace
 import com.virjar.tk.shared.client.PendingDocumentComment
@@ -60,7 +61,7 @@ internal fun DocumentCommentsPanel(
         onDispose { feature.close(tab.spaceId, documentId) }
     }
     Dialog(onDismissRequest = { expanded = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.widthIn(max = 700.dp).fillMaxWidth().fillMaxHeight(0.9f).padding(12.dp),
+        Surface(Modifier.testTagResourceIds().widthIn(max = 700.dp).fillMaxWidth().fillMaxHeight(0.9f).padding(12.dp),
             shape = MaterialTheme.shapes.large) {
             Column(Modifier.padding(16.dp).testTag("documents.comments.panel"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
