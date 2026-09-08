@@ -14,6 +14,11 @@ import com.virjar.tk.protocol.model.Document
 import com.virjar.tk.protocol.model.DocumentNode
 import com.virjar.tk.protocol.model.DocumentPathSpine
 import com.virjar.tk.protocol.model.DocumentSpace
+import com.virjar.tk.protocol.model.DocumentSpacePage
+import com.virjar.tk.protocol.model.DocumentDirectorySnapshotVersion
+import com.virjar.tk.protocol.model.DocumentHomeItem
+import com.virjar.tk.protocol.model.DocumentPolicy
+import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.app.navigation.UiLocalDataBoundary
 import com.virjar.tk.protocol.payload.ResponsePayload
 import com.virjar.tk.shared.repository.DocumentRepository
@@ -38,10 +43,131 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DocumentWorkspaceOfflineRestartTest {
+    @Test
+    fun `referenced document opens from a space outside the loaded first page`() = runTest {
+        val fixture = createFixture()
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val featureScope = CoroutineScope(dispatcher + SupervisorJob())
+        val errors = mutableListOf<Pair<Throwable, String>>()
+        try {
+            fixture.rpc.respond = { method -> referenceNavigationResponse(method) }
+            val feature = DocumentWorkspaceFeature(
+                fixture.session, featureScope, { failure, message -> errors += failure to message },
+                DocumentDraftStore(MemoryDocumentDraftPersistence()), UiLocalDataBoundary(dispatcher),
+            )
+            featureScope.async { feature.open() }.also { advanceUntilIdle(); it.await() }
+            assertTrue(feature.spaces.none { it.spaceId == SPACE_ID })
+            assertTrue(feature.hasMoreSpaces)
+
+            feature.openDocumentRef(SPACE_ID, DOCUMENT_ID)
+            advanceUntilIdle()
+
+            assertTrue(errors.isEmpty(), errors.toString())
+            assertEquals(SPACE_ID, feature.selectedSpaceId)
+            assertEquals(DOCUMENT_ID, feature.activeTab?.documentId, "RPCs: ${fixture.rpc.calls}")
+            assertEquals("服务器正文", feature.activeTab?.draftMarkdown)
+            assertTrue(feature.hasMoreSpaces, "a targeted lookup must retain the list continuation")
+            assertEquals(1, fixture.rpc.calls.count { it.second == DocumentRpcContract.M_LIST_SPACES })
+            assertEquals(1, fixture.rpc.calls.count { it.second == DocumentRpcContract.M_GET_SPACE })
+            assertTrue(errors.isEmpty(), errors.toString())
+        } finally {
+            featureScope.cancel()
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun `late referenced space lookup cannot replace a newer home navigation`() = runTest {
+        val fixture = createFixture()
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val featureScope = CoroutineScope(dispatcher + SupervisorJob())
+        val errors = mutableListOf<Pair<Throwable, String>>()
+        val pendingSpace = CompletableDeferred<ResponsePayload>()
+        try {
+            fixture.rpc.respond = { method ->
+                if (method == DocumentRpcContract.M_GET_SPACE) pendingSpace.await()
+                else referenceNavigationResponse(method)
+            }
+            val feature = DocumentWorkspaceFeature(
+                fixture.session, featureScope, { failure, message -> errors += failure to message },
+                DocumentDraftStore(MemoryDocumentDraftPersistence()), UiLocalDataBoundary(dispatcher),
+            )
+            featureScope.async { feature.open() }.also { advanceUntilIdle(); it.await() }
+            feature.openDocumentRef(SPACE_ID, DOCUMENT_ID)
+            advanceUntilIdle()
+            assertEquals(1, fixture.rpc.calls.count { it.second == DocumentRpcContract.M_GET_SPACE })
+            feature.showHome()
+            pendingSpace.complete(referenceNavigationResponse(DocumentRpcContract.M_GET_SPACE))
+            advanceUntilIdle()
+
+            assertNull(feature.selectedSpaceId)
+            assertNull(feature.activeTab)
+            assertTrue(feature.spaces.none { it.spaceId == SPACE_ID })
+            assertEquals(0, fixture.rpc.calls.count { it.second == DocumentRpcContract.M_GET_DOCUMENT })
+            assertTrue(errors.isEmpty(), errors.toString())
+        } finally {
+            featureScope.cancel()
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun `revoked referenced space rejects an existing cached document body`() = runTest {
+        val fixture = createFixture()
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val featureScope = CoroutineScope(dispatcher + SupervisorJob())
+        val errors = mutableListOf<Pair<Throwable, String>>()
+        try {
+            fixture.rpc.respond = { method ->
+                if (method == DocumentRpcContract.M_GET_SPACE) {
+                    ResponsePayload(1, 403, "space access revoked".encodeToByteArray())
+                } else referenceNavigationResponse(method)
+            }
+            val feature = DocumentWorkspaceFeature(
+                fixture.session, featureScope, { failure, message -> errors += failure to message },
+                DocumentDraftStore(MemoryDocumentDraftPersistence()), UiLocalDataBoundary(dispatcher),
+            )
+            featureScope.async { feature.open() }.also { advanceUntilIdle(); it.await() }
+            val lease = fixture.cache.beginDocumentBodySnapshot(SPACE_ID, DOCUMENT_ID)
+            assertTrue(fixture.cache.applyDocumentBodySnapshot(lease, document()))
+            feature.openDocumentRef(SPACE_ID, DOCUMENT_ID)
+            advanceUntilIdle()
+
+            assertNull(feature.activeTab)
+            assertTrue(feature.spaces.none { it.spaceId == SPACE_ID })
+            assertEquals(0, fixture.rpc.calls.count { it.second == DocumentRpcContract.M_GET_DOCUMENT })
+            assertTrue(errors.any { (it.first as? AppError.Business)?.code == 403 })
+        } finally {
+            featureScope.cancel()
+            fixture.close()
+        }
+    }
+
+    private fun referenceNavigationResponse(method: Int): ResponsePayload {
+        val payload = when (method) {
+            DocumentRpcContract.M_LIST_SPACES -> ProtoCodec.encode(DocumentSpacePage(
+                snapshotVersion = DocumentDirectorySnapshotVersion(1L, 1L, 1L),
+                items = listOf(space().copy(spaceId = "00000000-0000-4000-8000-000000000300")),
+                nextCursor = "remaining-spaces",
+            ))
+            DocumentRpcContract.M_LIST_RECENT_DOCUMENTS,
+            DocumentRpcContract.M_LIST_RECENTLY_CREATED_DOCUMENTS ->
+                ProtoCodec.encodeList(emptyList<DocumentHomeItem>())
+            DocumentRpcContract.M_GET_SPACE -> ProtoCodec.encode(space())
+            DocumentRpcContract.M_LIST_NODES -> ProtoCodec.encodeList(listOf(node(document())))
+            DocumentRpcContract.M_GET_DOCUMENT -> ProtoCodec.encode(document())
+            DocumentRpcContract.M_GET_NODE_PATH_SPINE ->
+                ProtoCodec.encode(DocumentPathSpine(listOf(node(document()))))
+            else -> error("Unexpected document navigation RPC: $method")
+        }
+        return ResponsePayload(1, 0, payload)
+    }
+
     @Test
     fun `cached tree and dirty document survive an offline desktop restart`() = runTest {
         val fixture = createFixture()
@@ -536,6 +662,7 @@ class DocumentWorkspaceOfflineRestartTest {
         parentId = document.parentId,
         hasChildren = false,
         name = document.title,
+        excerpt = DocumentPolicy.markdownExcerpt(document.markdown),
         revision = document.revision,
         createdBy = document.createdBy,
         createdAt = document.createdAt,
@@ -575,6 +702,7 @@ class DocumentWorkspaceOfflineRestartTest {
         private val failure: AppError,
     ) : RpcInvoker {
         val calls = mutableListOf<Pair<String, Int>>()
+        var respond: (suspend (Int) -> ResponsePayload)? = null
 
         override suspend fun invoke(
             service: String,
@@ -582,6 +710,7 @@ class DocumentWorkspaceOfflineRestartTest {
             payload: ByteArray?,
         ): ResponsePayload {
             calls += service to methodId
+            respond?.let { return it(methodId) }
             throw failure
         }
     }

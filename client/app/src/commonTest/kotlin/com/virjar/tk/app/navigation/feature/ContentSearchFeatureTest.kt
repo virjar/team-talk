@@ -3,6 +3,7 @@ package com.virjar.tk.app.navigation.feature
 import com.virjar.tk.protocol.model.ContentSearchHit
 import com.virjar.tk.protocol.model.ContentSearchPage
 import com.virjar.tk.protocol.model.ContentSearchRequest
+import com.virjar.tk.shared.AppError
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
@@ -84,6 +85,27 @@ class ContentSearchFeatureTest {
         assertEquals(listOf(null, "next", "next"), cursors)
         assertEquals(listOf("one", "two"), feature.section(DOCUMENT).items.map { it.title })
         assertNull(feature.section(DOCUMENT).error)
+        feature.close()
+    }
+
+    @Test
+    fun rejectedContinuationDiscardsRowsAndRestartsAtFirstPage() = runTest {
+        val cursors = mutableListOf<String?>()
+        val feature = ContentSearchFeature(this, search = { request ->
+            cursors += request.cursor
+            if (request.cursor != null) throw AppError.Business(403, "scope revoked")
+            ContentSearchPage(listOf(document("one")), "next")
+        }, open = {})
+        feature.activate(request(""), DOCUMENT, 0)
+        advanceUntilIdle()
+        feature.loadMore(DOCUMENT)
+        advanceUntilIdle()
+        assertTrue(feature.section(DOCUMENT).items.isEmpty())
+        assertNull(feature.section(DOCUMENT).nextCursor)
+        assertTrue(feature.section(DOCUMENT).error.orEmpty().contains("范围"))
+        feature.retry(DOCUMENT)
+        advanceUntilIdle()
+        assertEquals(listOf(null, "next", null), cursors)
         feature.close()
     }
 

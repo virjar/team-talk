@@ -189,21 +189,28 @@ internal fun WindowScope.MainAppContent(
     val pendingApplyCount by nav.contactViewModel.pendingApplyCount.collectAsState()
     var documentsInitialized by remember { mutableStateOf(false) }
 
-    LaunchedEffect(nav.selectedTab, nav.documentWindowVisible) {
+    LaunchedEffect(nav.selectedTab, nav.documentWindowVisible, nav.documentOpenRequestId) {
         nav.runAdmittedUiAction(presentationGate, onClosed = {}) {
+            if (MainTab.entries[nav.selectedTab] != MainTab.DOCUMENTS) {
+                nav.cancelDocumentOpenRequest()
+            }
             when (MainTab.entries[nav.selectedTab]) {
                 MainTab.CONTACTS -> {
                     nav.contactViewModel.refreshPendingApplyCount()
                     nav.organization.refresh()
                 }
-                MainTab.DOCUMENTS -> if (!nav.documentWindowVisible) {
-                    if (documentsInitialized) {
-                        // refresh 保留当前首页/空间位置；open 会回到首页，只用于会话内首次进入。
-                        nav.documents.refresh()
-                    } else {
-                        documentsInitialized = true
-                        nav.documents.open()
+                MainTab.DOCUMENTS -> {
+                    val request = nav.documentOpenRequest
+                    if (!nav.documentWindowVisible) {
+                        if (!documentsInitialized) {
+                            nav.documents.open()
+                            documentsInitialized = true
+                        } else if (request == null) {
+                            // 普通栏目切换保留位置；引用导航自行重新读取其确切目标。
+                            nav.documents.refresh()
+                        }
                     }
+                    request?.let(nav::consumeDocumentOpenRequest)
                 }
                 else -> Unit
             }

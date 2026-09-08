@@ -3,10 +3,9 @@ package com.virjar.tk.server.infra.search
 import com.virjar.tk.protocol.model.ContentSearchRequest
 import com.virjar.tk.server.domain.search.*
 import com.virjar.tk.server.domain.command.reliableCommandFingerprint
+import org.apache.lucene.analysis.tokenattributes.CharTermAttribute
 import org.apache.lucene.document.*
 import org.apache.lucene.index.*
-import org.apache.lucene.queryparser.classic.MultiFieldQueryParser
-import org.apache.lucene.queryparser.classic.QueryParser
 import org.apache.lucene.search.*
 import org.apache.lucene.store.FSDirectory
 import org.apache.lucene.util.BytesRef
@@ -160,9 +159,7 @@ class ContentAssetSearchIndex(
                 .add(TermInSetQuery(SCOPE, scopes.map(::BytesRef)), BooleanClause.Occur.FILTER)
             if (request.keyword.isNotEmpty() && (request.kind == 2 || request.keyword.isNotBlank())) {
                 val textQuery = if (request.kind == 1) {
-                    IKAnalyzer(true).use { analyzer ->
-                        MultiFieldQueryParser(arrayOf(TITLE, TEXT), analyzer).parse(QueryParser.escape(request.keyword))
-                    }
+                    documentTextQuery(request.keyword)
                 } else {
                     WildcardQuery(Term(FILE_NAME, "*" + wildcardLiteral(request.keyword.lowercase(Locale.ROOT)) + "*"))
                 }
@@ -186,6 +183,33 @@ class ContentAssetSearchIndex(
                     doc.getField(REVISION).numericValue().toLong(), doc.getField(UPDATED).numericValue().toLong())
             }
         } finally { resources.searchers.release(searcher) }
+    }
+
+    private fun documentTextQuery(keyword: String): Query {
+        val terms = linkedSetOf<String>()
+        // Each term contributes two leaves; leave room for scope and pagination filters.
+        val maxTerms = (IndexSearcher.getMaxClauseCount() - 8).coerceAtLeast(0) / 2
+        IKAnalyzer(true).use { analyzer ->
+            analyzer.tokenStream(TEXT, keyword).use { stream ->
+                val term = stream.addAttribute(CharTermAttribute::class.java)
+                stream.reset()
+                while (stream.incrementToken()) {
+                    terms.add(term.toString())
+                    require(terms.size <= maxTerms) { "文档搜索关键词分词过多" }
+                }
+                stream.end()
+            }
+        }
+        if (terms.isEmpty()) return MatchNoDocsQuery()
+        // Plain text only: every analyzed term must occur in either title or body.
+        return BooleanQuery.Builder().apply {
+            terms.forEach { term ->
+                add(BooleanQuery.Builder()
+                    .add(TermQuery(Term(TITLE, term)), BooleanClause.Occur.SHOULD)
+                    .add(TermQuery(Term(TEXT, term)), BooleanClause.Occur.SHOULD)
+                    .build(), BooleanClause.Occur.MUST)
+            }
+        }.build()
     }
 
     private fun durableRevision(resources: Resources, value: ContentAssetKey): Long {

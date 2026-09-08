@@ -190,6 +190,12 @@ class DocumentWorkspaceFeature internal constructor(
         reportError = reportError,
         port = DocumentWorkspaceNavigationPort(
             spaces = { spaces }, selectedSpaceId = { selectedSpaceId },
+            publishReferencedSpace = { space ->
+                publishSpaceMutation(
+                    updatedSpaces = spaces.filterNot { it.spaceId == space.spaceId } + space,
+                    updatedSpaceId = space.spaceId,
+                )
+            },
             setSelectedSpaceId = { selectedSpaceId = it },
             home = { recentDocuments to recentlyCreatedDocuments },
             setHome = ::publishDocumentHomeProjection,

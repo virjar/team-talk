@@ -613,7 +613,7 @@ ACK 仅在 chat/parent/精确 entry 匹配时刷新，并在恢复的重命名�
 SQLite，按 `(chatId, parentId)` 观察目录；revision 与删除记录吸收重复、迟到事件。
 [GroupFilesFeature](../../client/app/src/commonMain/kotlin/com/virjar/tk/app/navigation/feature/GroupFilesFeature.kt)
 先展示可用的本地列表，再由权威目录页和实时事件收敛。打开、手动刷新、重连和命令 completion
-仍是主动对账入口；已有离线投影不意味着已完成内容搜索或全部发布验收。
+仍是主动对账入口；离线文档投影不承担搜索结果缓存，搜索由独立的远程查询入口提供。
 
 ### 4.5 内容搜索：远程摘要与权威打开
 

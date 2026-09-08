@@ -142,6 +142,9 @@ JavaCV 会缓存首次加载异常，后续 `tryLoad()` 可能只是重抛；补
   引用查询、USER_UPDATED 本人/活动好友 fanout，以及个人会话 `peerUid` 与客户端规范 User 优先展示；
 - `sync_events` 回收只删已完成进程内推送尝试且过期的连续前缀，lease/gate 不得跨过正在 replay/checkpoint 的游标；
 - `ReplyBody.assets` canonical round-trip、有界集合、正文/清单闭包，以及服务端主件/缩略图引用、搜索与撤回释放；
+- 内容搜索 wire、有界分页、领域权限、文件类型筛选和权威打开；`ContentAssetSearchIntegrationTest`
+  覆盖文档/群文件投影与事务恢复，`MessageAttachmentSearchIntegrationTest` 使用真实 PG、消息和
+  FileStore，`SearchIndexAttachmentTest` 覆盖消息修订、墓碑与旧索引重建；SDK 回归覆盖失效和迟到结果；
 - LocalCache 的真实 SQLite 读写、重启和并发边界；
 - 复杂格式解析、溢出或截断等无法由正常业务样例覆盖的输入边界；
 - 服务端真实业务入口的权限结果，不重复对简单角色比较或错误码映射做独立单测；

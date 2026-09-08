@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import com.virjar.tk.protocol.model.ContentSearchHit
 import com.virjar.tk.protocol.model.ContentSearchPage
 import com.virjar.tk.protocol.model.ContentSearchRequest
+import com.virjar.tk.shared.AppError
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -89,10 +90,21 @@ internal class ContentSearchFeature(
                 sections[kind] = previous.copy(items = items, nextCursor = page.nextCursor, loading = false, error = null)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
-                if (owners[kind] === owner) sections[kind] = previous.copy(
-                    loading = false, error = "搜索未完成，请检查连接后重试",
-                )
+            } catch (failure: Exception) {
+                if (owners[kind] === owner) {
+                    val code = (failure as? AppError.Business)?.code
+                    val invalidRequest = code == 400 || code == 403 || code == 404
+                    sections[kind] = previous.copy(
+                        items = if (invalidRequest) emptyList() else previous.items,
+                        nextCursor = if (invalidRequest) null else previous.nextCursor,
+                        loading = false,
+                        error = when (code) {
+                            400 -> "搜索条件无效，请缩短关键词或清除筛选后重试"
+                            403, 404 -> "当前搜索范围已不可访问，请清除范围筛选后重试"
+                            else -> "搜索未完成，请检查连接后重试"
+                        },
+                    )
+                }
             } finally {
                 if (owners[kind] === owner && section(kind).loading) {
                     sections[kind] = section(kind).copy(loading = false)

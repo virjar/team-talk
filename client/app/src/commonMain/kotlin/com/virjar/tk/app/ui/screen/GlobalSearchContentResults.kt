@@ -11,6 +11,9 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
@@ -26,6 +29,15 @@ internal val contentSearchKinds = listOf(
     ContentSearchRequest.KIND_DOCUMENT, ContentSearchRequest.KIND_GROUP_FILE, ContentSearchRequest.KIND_CHAT_ATTACHMENT,
 )
 internal data class ContentSearchScopeFilter(val id: String, val name: String)
+
+internal val contentSearchScopesSaver = listSaver<SnapshotStateMap<Int, ContentSearchScopeFilter>, String>(
+    save = { scopes -> scopes.flatMap { (kind, scope) -> listOf(kind.toString(), scope.id, scope.name) } },
+    restore = { values ->
+        mutableStateMapOf<Int, ContentSearchScopeFilter>().apply {
+            values.chunked(3).forEach { (kind, id, name) -> put(kind.toInt(), ContentSearchScopeFilter(id, name)) }
+        }
+    },
+)
 
 internal fun contentSearchKindLabel(kind: Int): String = when (kind) {
     ContentSearchRequest.KIND_DOCUMENT -> "文档"

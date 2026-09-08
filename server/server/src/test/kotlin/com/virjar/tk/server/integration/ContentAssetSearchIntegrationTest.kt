@@ -84,6 +84,23 @@ class ContentAssetSearchIntegrationTest {
     }
 
     @Test
+    fun `document search requires all analyzed terms across title and body`() = runTest {
+        val owner = ctx.registerUser(uniqueUsername("asset-doc-terms"))
+        val space = documents.createSpace(owner, "检索范围", null)
+        val bodyMatch = documents.createDocument(owner, space.spaceId, null, "正文搜索验收", "星河正文探针")
+        val splitMatch = documents.createDocument(owner, space.spaceId, null, "星河", "正文探针")
+        documents.createDocument(owner, space.spaceId, null, "其他资料", "搜索验收正文")
+        documents.createDocument(owner, space.spaceId, null, "星河", "普通资料")
+
+        val hits = search.search(owner, documentRequest("星河正文探针", space.spaceId)).items
+        assertEquals(setOf(bodyMatch.documentId, splitMatch.documentId), hits.map { it.targetId }.toSet())
+        assertEquals(2, hits.size, "A shared common term cannot satisfy the complete query")
+        val repeated = search.search(owner, documentRequest("星河 星河 正文 探针", space.spaceId)).items
+        assertEquals(hits.map { it.targetId }, repeated.map { it.targetId })
+        assertTrue(search.search(owner, documentRequest("***?+++", space.spaceId)).items.isEmpty())
+    }
+
+    @Test
     fun `organization grants filter global results from current hierarchy without index updates`() = runTest {
         val owner = ctx.registerUser(uniqueUsername("asset-org-owner"))
         val reader = ctx.registerUser(uniqueUsername("asset-org-reader"))

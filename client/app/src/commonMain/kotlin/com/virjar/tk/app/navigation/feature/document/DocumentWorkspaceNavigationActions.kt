@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
 /** 导航、树投影和驻留文档所有权共享的状态边界。 */
 internal class DocumentWorkspaceNavigationPort(
     val spaces: () -> List<DocumentSpace>,
+    val publishReferencedSpace: (DocumentSpace) -> Unit,
     val selectedSpaceId: () -> String?,
     val setSelectedSpaceId: (String?) -> Unit,
     val home: () -> Pair<List<DocumentHomeItem>, List<DocumentHomeItem>>,
@@ -273,7 +274,12 @@ internal class DocumentWorkspaceNavigationActions(
 
     suspend fun selectSpaceNow(spaceId: String, generation: Long): Boolean {
         if (!isCurrent(generation)) return false
-        require(port.spaces().any { it.spaceId == spaceId }) { "文档空间不存在" }
+        if (port.spaces().none { it.spaceId == spaceId }) {
+            // 搜索/引用可以指向尚未分页加载的空间；列表缺项不是权限结论。
+            val remote = readGateway.refreshSpace(spaceId)
+            if (!isCurrent(generation)) return false
+            port.publishReferencedSpace(remote)
+        }
         if (port.isSpaceLocalOnly(spaceId)) {
             return selectLocalOrphanSpaceNow(spaceId, generation)
         }

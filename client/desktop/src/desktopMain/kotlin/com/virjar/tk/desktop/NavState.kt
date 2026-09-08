@@ -81,6 +81,12 @@ enum class SubScreenPresentation {
     CHAT_INSPECTOR,
 }
 
+internal data class DesktopDocumentOpenRequest(
+    val spaceId: String,
+    val documentId: String,
+    val requestId: Long,
+)
+
 /**
  * Desktop 导航状态（数据层继承 [AppDataState]，导航字段仅 Desktop 使用）。
  *
@@ -109,6 +115,11 @@ class DesktopNav(
      * 因而独立窗口独占导航位置；[documents] 中的标签与草稿仍可在收回后连续使用。
      */
     var documentWindowVisible by mutableStateOf(false)
+
+    internal var documentOpenRequest: DesktopDocumentOpenRequest? = null
+        private set
+    internal var documentOpenRequestId by mutableLongStateOf(0L)
+        private set
 
     // 当前聊天只保留稳定身份；名称、类型始终来自 LocalCache 会话投影。
     var chatId by mutableStateOf<String?>(null)
@@ -161,8 +172,20 @@ class DesktopNav(
 
     fun openDocument(spaceId: String, documentId: String) {
         closeMainPane()
+        documentOpenRequestId += 1
+        documentOpenRequest = DesktopDocumentOpenRequest(spaceId, documentId, documentOpenRequestId)
         selectedTab = MainTab.DOCUMENTS.ordinal
-        documents.openDocumentRef(spaceId, documentId)
+    }
+
+    /** 栏目初始化完成后才接续目标，避免 open/refresh 退役这次导航。 */
+    internal fun consumeDocumentOpenRequest(request: DesktopDocumentOpenRequest) {
+        if (documentOpenRequest != request || selectedTab != MainTab.DOCUMENTS.ordinal) return
+        documentOpenRequest = null
+        documents.openDocumentRef(request.spaceId, request.documentId)
+    }
+
+    internal fun cancelDocumentOpenRequest() {
+        documentOpenRequest = null
     }
 
     fun openProfile(uid: String) {
@@ -207,6 +230,7 @@ class DesktopNav(
 
     private fun openChat(chatId: String, messageFocusTarget: MessageFocusTarget?) {
         if (!prepareChat(chatId)) return
+        selectedTab = MainTab.CONVERSATIONS.ordinal
         this.chatId = chatId
         this.messageFocusTarget = messageFocusTarget
         globalSearchQuery = ""

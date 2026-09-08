@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -223,14 +224,14 @@ fun GlobalSearchScreen(
     showHeader: Boolean = true,
     showSearchField: Boolean = true,
 ) {
-    var scope by remember { mutableStateOf(GlobalSearchScope.ALL) }
+    var scope by rememberSaveable { mutableStateOf(GlobalSearchScope.ALL) }
     var remoteMessages by remember { mutableStateOf<List<Message>>(emptyList()) }
     var remoteUsers by remember { mutableStateOf<List<User>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
     val term = remember(query) { query.map { if (it.isISOControl()) ' ' else it }.joinToString("").trim() }
-    var fileSource by remember { mutableIntStateOf(0) }
-    var fileType by remember { mutableIntStateOf(ContentSearchRequest.FILE_TYPE_ALL) }
-    val contentScopes = remember { mutableStateMapOf<Int, ContentSearchScopeFilter>() }
+    var fileSource by rememberSaveable { mutableIntStateOf(0) }
+    var fileType by rememberSaveable { mutableIntStateOf(ContentSearchRequest.FILE_TYPE_ALL) }
+    val contentScopes = rememberSaveable(saver = contentSearchScopesSaver) { mutableStateMapOf<Int, ContentSearchScopeFilter>() }
     val actionScope = rememberCoroutineScope()
     val currentSearchContent by rememberUpdatedState(searchContent)
     val currentOpenContent by rememberUpdatedState(onContentClick)
