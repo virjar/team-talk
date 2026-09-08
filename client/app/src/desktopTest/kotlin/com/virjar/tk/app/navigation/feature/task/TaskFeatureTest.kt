@@ -46,6 +46,7 @@ class TaskFeatureTest {
             assertNull(f.feature.task)
             assertNull(f.feature.detailError)
             assertFalse(f.rpc.calls.contains(TaskRpcContract.M_GET))
+            assertEquals("任务操作已保存，等待同步", f.feature.notice)
             val confirmed = task().copy(taskId = command.taskId, title = "离线创建", description = "本机原意图")
             f.rpc.respond = { method -> response(method, confirmed) }
             f.cache.tasks.acknowledge(command, TaskCommandResult(confirmed), f.cache.tasks.generation(), OWNER)
@@ -53,6 +54,7 @@ class TaskFeatureTest {
             assertTrue(f.feature.pending.isEmpty())
             assertEquals(confirmed, f.feature.task)
             assertNull(f.feature.detailError)
+            assertNull(f.feature.notice, "确认完成后不再提示等待同步")
         }
     }
 
@@ -101,6 +103,7 @@ class TaskFeatureTest {
             f.cache.tasks.fail(ID, "任务已变化，请查看当前内容后重新操作")
             advanceUntilIdle()
             assertNotNull(f.feature.pending.single().failure)
+            assertNull(f.feature.notice, "明确拒绝后由待发送行展示失败原因")
             f.feature.retryPending(ID)
             advanceUntilIdle()
             assertEquals(command, f.cache.tasks.pending().single().command)
@@ -111,6 +114,7 @@ class TaskFeatureTest {
             advanceUntilIdle()
             assertTrue(f.feature.pending.isEmpty())
             assertEquals(current, f.feature.task)
+            assertNull(f.feature.notice, "放弃操作不能被报告为成功")
         }
     }
 

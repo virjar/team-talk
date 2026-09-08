@@ -74,6 +74,7 @@ class TaskFeature internal constructor(
     internal var posting by mutableStateOf(false)
     internal var pendingAction by mutableStateOf<String?>(null)
     internal var notice by mutableStateOf<String?>(null)
+    private var waitingNotice: TaskWaitingNotice? = null
     internal var users by mutableStateOf(emptyMap<String, User>())
     internal var assigneeCandidates by mutableStateOf(emptyList<User>())
     internal var assigneeQuery by mutableStateOf("")
@@ -250,6 +251,7 @@ class TaskFeature internal constructor(
         val listNavigation = listOwner
         val detailNavigation = detailOwner
         val selected = selectedTaskId
+        val observedNotice = waitingNotice
         val snapshot = localData.run {
             val pages = keys.map { repo.local.page(it) }
             val pending = repo.local.pending()
@@ -259,6 +261,14 @@ class TaskFeature internal constructor(
                 reminders.mapNotNull { reminder -> repo.local.task(reminder.taskId)?.let { reminder.taskId to it } }.toMap())
         }
         pending = snapshot.pending
+        if (observedNotice != null && waitingNotice === observedNotice && snapshot.pending.none {
+                it.command.taskId == observedNotice.taskId && it.command.operationId == observedNotice.operationId && it.failure == null
+            }) {
+            // 消失可能是 ACK，也可能是明确放弃；只清理等待提示，不推断操作成功。
+            // 新的分享或其他提示拥有自己的内容，不由旧任务的完成覆盖。
+            if (notice == observedNotice.text) notice = null
+            waitingNotice = null
+        }
         reminders = snapshot.reminders
         reminderTasks = snapshot.reminderTasks
         if (keys == pageKeys && listNavigation == listOwner) {
@@ -302,13 +312,12 @@ class TaskFeature internal constructor(
         val navigation = detailOwner
         scope.launch {
             try {
-                val id = localData.run {
+                val id = recordSubmission("任务操作已保存，等待同步") {
                     if (captured.original == null) repo.create(draft).getOrThrow()
                     else repo.edit(captured.original, draft).getOrThrow()
                 }
                 if (editor === captured) editor = null
                 if (detailOwner == navigation) openTask(id)
-                notice = "任务操作已保存，等待同步"
                 reloadLocal()
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -324,8 +333,7 @@ class TaskFeature internal constructor(
         posting = true
         scope.launch {
             try {
-                localData.run { repo.setStatus(current, status).getOrThrow() }
-                notice = "状态操作已保存，等待同步"
+                recordSubmission("状态操作已保存，等待同步") { repo.setStatus(current, status).getOrThrow() }
                 reloadLocal()
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
@@ -333,6 +341,17 @@ class TaskFeature internal constructor(
             }
             finally { posting = false }
         }
+    }
+
+    private suspend fun recordSubmission(text: String, submit: suspend () -> String): String {
+        val (taskId, operationId) = localData.run {
+            val id = submit()
+            id to repo.local.pending().firstOrNull { it.command.taskId == id }?.command?.operationId
+        }
+        // ACK 可能在提交返回前完成；没有 pending 身份时，随后读取会立即清除等待提示。
+        waitingNotice = TaskWaitingNotice(taskId, operationId, text)
+        notice = text
+        return taskId
     }
 
     internal fun retryPending(id: String) = actOnPending(id, discard = false)
@@ -395,6 +414,8 @@ private data class TaskWorkspaceSnapshot(
     val reminders: List<TaskReminder>,
     val reminderTasks: Map<String, WorkTask>,
 )
+
+private data class TaskWaitingNotice(val taskId: String, val operationId: String?, val text: String)
 
 internal fun taskFailureText(failure: Throwable, fallback: String): String = when ((failure as? AppError.Business)?.code) {
     400 -> "任务信息无效，请检查内容后重试"
