@@ -7,7 +7,7 @@
 ```text
 外部程序 / 人 / AI
        │
-       ├── tt-cli ───────┐
+       ├── tt ───────────┐
        └── tt-mcp ───────┤  loopback HTTP + Bearer token
                           ▼
                       tt-agent
@@ -20,8 +20,8 @@
 |---|---|---|
 | `ImBot` | Kotlin 无头 SDK 入口，提供强类型 API 与事件流 | 是 |
 | `tt-agent` | 常驻进程、凭据、消息缓冲和本地 REST | 是 |
-| `tt-cli` | 面向人和脚本的无状态命令行 | 否 |
-| `tt-mcp` | 把核心 REST 操作映射为 MCP tools | 否 |
+| `tt` | 面向人和脚本的无状态 CLI，使用本地管理员 token | 否 |
+| `tt-mcp` | 把授权的核心 REST 操作映射为 MCP tools，使用独立 scoped token | 否 |
 
 任何层都不能绕过 SDK 直接拼 wire 或写数据库。这样机器人发送文件时仍会经过路径规范化、服务器存在性校验和 ACK 成功语义。
 
@@ -151,29 +151,59 @@ bearer 被 HTTP 401 明确拒绝时，ImBot 会在与 AUTH 结果安装相同的
 
 ## 3. 构建与启动 agent
 
+无头分发需要外部 Java 21 或更高版本，不附带 JDK。Linux/macOS 等 POSIX 环境支持 agent、CLI、MCP
+及便携包安装；Windows 原生只支持 CLI，agent/MCP 的 `.bat` 入口会明确拒绝启动。
+三个入口的 `--version` 均可在没有 Java、源码或网络连接时读取包内身份；它只做版本诊断，不代替完整校验。
+
+源码构建入口：
+
 ```bash
-./gradlew :client:shared:headlessDist
+./gradlew :client:shared:headlessDist :client:shared:verifyHeadlessDist :client:shared:headlessDistZip
+```
+
+解包后的 `tt-headless/` 或构建输出 `client/shared/build/headless/` 是可整体移动的分发目录，包含 `bin/`、
+`lib/`、`LICENSE`、`teamtalk-release.properties` 和 `SHA256SUMS`。ZIP 位于
+`client/shared/build/distributions/TeamTalk-<version>+<完整源码SHA>[.dirty]-headless.zip`。
+launchers 只从该目录加载运行依赖，保持调用者的工作目录，并通过 `JAVA_HOME` 或 `PATH` 查找 Java。
+
+清单记录 `artifactType=headless-distribution`、展示版本、完整源码构建身份、安装序号、数字协议版本和
+最低 Java 版本。`SHA256SUMS` 按相对 POSIX 路径排序，覆盖除自身之外的所有文件。安装和离线 doctor
+校验清单、文件清单及实际 SHA-256，拒绝缺失、额外文件和符号链接；这些摘要用于完整性与构建溯源，
+不代替可信分发来源。统一发行同时交付此 ZIP，见[发行流程](../07-operations/releasing.md#本机构建与交付)。
+
+在分发目录运行以下命令，将私有端点保存在独立 dataDir，随后进行首次前台认证：
+
+```bash
+bin/tt-agent configure --data-dir "$HOME/.tt-agent" \
+  --host im.example.com --port 5100 --server-url https://im.example.com
 
 read -r TK_USER
 read -rs TK_PASS
 export TK_USER TK_PASS
-client/shared/build/headless/bin/tt-agent \
-  --host im.example.com \
-  --port 5100 \
-  --server-url https://im.example.com
+bin/tt-agent --data-dir "$HOME/.tt-agent"
 unset TK_USER TK_PASS
 ```
 
 上例用于前台 bootstrap，秘密不会进入命令参数或 shell history。常驻部署应在首次认证后使用
-`dataDir/credentials.properties`，不要把登录参数长期留在进程命令行。
+`dataDir/credentials.properties`，不要把登录参数长期留在进程命令行。后续启动只需相同 `--data-dir`，
+通过保存的端点与 refresh 凭据恢复；`configure` 本身不联网。
 
-默认值：
+`dataDir/agent-settings.json` 保存 TCP 主机/端口、HTTP 根地址、本地 API 地址和可选公共 TCP 证书。
+私有证书可在 `configure` 追加 `--tcp-certificate /absolute/path/public.pem`，不能传私钥。
+运行时端点按显式参数、对应环境变量、已保存配置、默认值的顺序解析；`--api` 没有环境变量覆盖。
+只改变运行参数不会重写保存的配置。`configure` 显式更新配置，已有凭据的部署元组不同则拒绝，保留原凭据；
+换实例应使用独立 dataDir。HTTP 与 TCP 可以使用不同域名，但属于同一个完整部署身份。
+
+`bin/tt-agent doctor --data-dir "$HOME/.tt-agent"` 离线输出运行版本、协议、Java、分发校验及配置和认证状态，
+不打印密码或 token；不存在的数据目录不会被创建。从源码启动时分发来源显示为 `source`。
+
+未保存或未覆盖时的默认值：
 
 | 参数/环境变量 | 默认 | 作用 |
 |---|---|---|
 | `--host` / `TK_HOST` | `im.virjar.com` | TCP 主机 |
 | `--port` / `TK_PORT` | `5100` | TCP 端口 |
-| `--server-url` / `TK_SERVER_URL` | `https://<host>` | 文件 HTTP 根地址 |
+| `--server-url` / `TK_SERVER_URL` | 由 TCP 地址推导 | 文件 HTTP 根地址；私有部署建议显式保存 |
 | `--api` | `127.0.0.1:8600` | 本地 REST 监听；只接受 `127.0.0.0/8`、`localhost` 或 `[::1]` |
 | `--data-dir` / `TK_AGENT_DIR` | `~/.tt-agent` | 凭据与 API token 目录 |
 | `--user` / `TK_USER` | 无 | 登录用户名 |
@@ -200,15 +230,47 @@ refresh 认证。服务端会回传同一设备级稳定 refresh 并轮换 acces
 直接失败，不以宽松权限继续运行。旧 plaintext ACTIVE 格式不再隐式兼容，预发布环境应重新
 bootstrap 专用 dataDir。
 
-deployment 指纹缺失或与本次 `--host`/`--port`/`--server-url` 元组不一致时，旧 ACTIVE refresh 或
-REGISTER_PENDING 密码会在任何 IM 网络连接之前原子失效；同 uid 的新部署也会使用独立缓存目录。
-HTTP 与 TCP 可以部署在不同域名，但两者必须作为同一个不可拆分元组保存和校验。
+已有 deployment 指纹与本次端点元组不一致时，启动会在 IM 网络连接前拒绝，保留原认证资料；
+缺失必要身份的旧凭据也不能用于连接。新部署即使具有相同 uid，仍使用独立缓存目录。
+
+### 便携包安装、升级与卸载
+
+便携包管理使用安装所有者自己的权限，升级和卸载也必须由该所有者执行，不需要 root 或 systemd。
+`--prefix` 必须是直接父目录已存在的专用
+安装叶目录，不能是整个 home、系统目录、符号链接或混有其他文件的目录。dataDir 与 token 文件应放在
+prefix 之外，安装目录只放本安装管理的分发文件。
+
+```bash
+mkdir -p "$HOME/.local"
+# 从当前解包目录安装；之后使用 prefix/bin 下的稳定入口
+bin/tt-agent install-bundle --prefix "$HOME/.local/tt-headless"
+"$HOME/.local/tt-headless/bin/tt-agent" --data-dir "$HOME/.tt-agent"
+
+# 从新版本解包目录执行
+/absolute/path/new/tt-headless/bin/tt-agent upgrade-bundle --prefix "$HOME/.local/tt-headless"
+
+# 先退出此安装启动的 agent、CLI 和 MCP，再从 prefix 外的解包目录执行
+/absolute/path/new/tt-headless/bin/tt-agent uninstall-bundle --prefix "$HOME/.local/tt-headless"
+```
+
+安装器将完整校验后的负载保存到 `versions/<摘要>/bundle`，同文件系统暂存后原子切换 `current`，
+`prefix/bin/` 始终指向当前版本。升级不删除旧版本：已运行进程继续使用原 classpath，重启后才使用新版。
+中断的已知暂存内容可在重试安装/升级时恢复；若暂存区混入未知文件则拒绝处理。
+卸载只删除通过标记、清单与摘要复核的受管文件；发现运行租约、未知文件、改写的负载或未完成暂存时拒绝，
+也不能从待卸载安装本身执行卸载。prefix 外的 agent dataDir 与 token 文件保留，继续受各自的权限和
+协议迁移规则管理。
 
 ### 3.1 systemd 安装
 
 systemd 服务使用明确的非 root 账号。安装是三步闭环：先由 root 只准备专用
 dataDir，再由服务账号以受控前台输入完成 ACTIVE bootstrap，最后才生成 unit。
 unit 从不引用 EnvironmentFile，也不包含用户名、密码、refresh token 或注册标志。
+
+服务可使用独立解包目录，也可使用便携安装器管理的 prefix。后者的 unit 使用稳定的
+`prefix/bin/tt-agent`，重启时跟随当前版本；prefix 的 UID/GID 必须与服务账号一致，升级也以该账号执行。
+服务安装读取 dataDir 中保存的端点，显式安装参数优先。`ProtectHome`、`PrivateTmp` 与
+`ProtectSystem=strict` 保持启用，因此服务分发不能放在 home 或临时目录下；包目录不需要加入
+`ReadWritePaths`，运行版本租约以只读文件句柄持有。独立解包目录仍使用该分发的 Java classpath 启动。
 
 先创建不可登录账号；它的 home 不应指向整个数据目录，然后显式准备数据目录：
 
@@ -220,6 +282,9 @@ sudo cp -a client/shared/build/headless /opt/tt-agent
 sudo /opt/tt-agent/bin/tt-agent prepare-service-data \
   --service-user tt-agent \
   --data-dir /var/lib/tt-agent
+sudo -u tt-agent /opt/tt-agent/bin/tt-agent configure \
+  --data-dir /var/lib/tt-agent \
+  --host im.example.com --port 5100 --server-url https://im.example.com
 ```
 
 `prepare-service-data` 只解析真实 UID/GID，并创建带标记、owner 和 `0700` 的单一叶目录；
@@ -232,8 +297,6 @@ read -rs TK_PASS
 export TK_USER TK_PASS
 sudo --preserve-env=TK_USER,TK_PASS -u tt-agent \
   /opt/tt-agent/bin/tt-agent \
-  --host im.example.com \
-  --server-url https://im.example.com \
   --data-dir /var/lib/tt-agent
 unset TK_USER TK_PASS
 ```
@@ -246,8 +309,6 @@ login，失败才用同一 exact username 注册，不会制造第二个账号�
 ```bash
 sudo -u tt-agent /opt/tt-agent/bin/tt-agent \
   --register --prefix agent \
-  --host im.example.com \
-  --server-url https://im.example.com \
   --data-dir /var/lib/tt-agent
 ```
 
@@ -387,33 +448,34 @@ Agent 每次启动会在单 owner 边界内清理 `.staging` 下只匹配自身 
 
 ## 5. CLI
 
-本地 API token 生成后只写入 `credentials.properties`，ready 行和 journal 都不会打印它。可由有权
-读取 agent dataDir 的管理员直接写入调用用户的 `~/.tt-cli`，再将文件收紧为 `0600`；也可通过
-`TT_TOKEN` / `--token` 提供（后者可能进入 shell history，不建议用于常驻环境）：
+CLI 的本地管理员 token 生成后写入 `credentials.properties`，ready 行和 journal 都不会打印它。
+完成 `configure` 和首次认证后，由 dataDir 所有者显式导出到独立私有文件：
 
 ```bash
-umask 077
-token_file="$(mktemp "$HOME/.tt-cli.XXXXXX")"
-trap 'rm -f "$token_file"' EXIT
-sudo -u tt-agent sed -n 's/^apiToken=//p' /var/lib/tt-agent/credentials.properties > "$token_file"
-test -s "$token_file"
-chmod 0600 "$token_file"
-mv -f "$token_file" "$HOME/.tt-cli"
-trap - EXIT
+bin/tt-agent export-cli-token --data-dir "$HOME/.tt-agent" --token-file "$HOME/.tt-cli"
+export TT_CLI_CONFIG="$HOME/.tt-cli"
+export TT_API=127.0.0.1:8600
 ```
+
+导出要求目标父目录已存在且属于调用者，文件使用 `0600`；已存在的同 token 文件可复用，不覆盖另一份
+token。命令仅输出保存位置与 API 地址，不输出秘密。CLI 默认读取 `~/.tt-cli`，`TT_CLI_CONFIG` 可选其他
+路径，也支持 `TT_TOKEN` / `--token`（命令行 token 可能进入 shell history，不建议使用）。
+该 token 可调用完整本地 CLI/REST 和 MCP 授权管理，只交给本机管理员；模型配置应使用下一节的独立 token。
 
 ```bash
-client/shared/build/headless/bin/tt status
-client/shared/build/headless/bin/tt conversations
-client/shared/build/headless/bin/tt user-search alice
-client/shared/build/headless/bin/tt chat-with <uid>
-client/shared/build/headless/bin/tt send <chatId> 'hello'
-client/shared/build/headless/bin/tt send-rich <chatId> '**hello**'
-client/shared/build/headless/bin/tt recv --chatId <chatId> --wait 10
-client/shared/build/headless/bin/tt send-file <chatId> /var/lib/tt-agent/outgoing/report.pdf
-client/shared/build/headless/bin/tt outgoing-status <chatId> <clientMsgId>
+bin/tt doctor
+bin/tt status
+bin/tt conversations
+bin/tt user-search alice
+bin/tt chat-with <uid>
+bin/tt send <chatId> 'hello'
+bin/tt send-rich <chatId> '**hello**'
+bin/tt recv --chatId <chatId> --wait 10
+bin/tt send-file <chatId> "$HOME/.tt-agent/outgoing/report.pdf"
+bin/tt outgoing-status <chatId> <clientMsgId>
 ```
 
+`tt doctor` 检查当前 CLI 分发并读取在线 agent 状态；离线配置诊断使用 `tt-agent doctor`。
 其他命令包括 `messages`、`history`、`upload`、`revoke`、`forward`、`mark-read`、`friends`、`friend-pending`、`friend-add`、`friend-accept`、`group-create`、`group-members` 和 `group-invite`。`--json` 输出机器可读 data。
 发送命令可用 `--clientMsgId <id>` 显式复用自动化业务键；省略时 CLI 只生成一次，并在打开 HTTP 连接前把最终 ID
 写到 stderr。即使 I/O 或响应 JSON 解析失败，调用方仍可用该 ID 查询/重试。
@@ -432,13 +494,61 @@ search_users, chat_with,
 mark_read, revoke
 ```
 
-MCP 是适配层，不是新的权限边界。模型能做什么取决于 agent 账户在 TeamTalk 中的权限；生产化前还需要管理员授权、审计、速率限制和会话白名单。
-MCP 的三个发送工具都把 `clientMsgId` 声明为必填，调用方负责在工具重试时复用。
+本地管理员通过 CLI 创建具名授权，同时显式指定工具集合和会话范围：
+
+```bash
+bin/tt mcp grant assistant_read \
+  --tools status,conversations,history,messages \
+  --chats <chatId> --token-file "$HOME/.tt-mcp-assistant"
+bin/tt mcp list
+bin/tt mcp audit --limit 100
+bin/tt mcp revoke assistant_read
+```
+
+MCP 客户端使用安装后的绝对路径与独立 token 文件，例如：
+
+```json
+{
+  "mcpServers": {
+    "teamtalk": {
+      "command": "/home/alice/.local/tt-headless/bin/tt-mcp",
+      "args": ["--api", "127.0.0.1:8600", "--token-file", "/home/alice/.tt-mcp-assistant"]
+    }
+  }
+}
+```
+
+`tt-mcp` 只接受 `--api`、`--token-file`，也可通过 `TT_API`、`TT_MCP_TOKEN_FILE` 配置；不会回退读取
+CLI 的 token、`TT_TOKEN` 或 `~/.tt-cli`。token 文件必须属于调用者、为普通 `0600` 文件，不能是符号
+链接或硬链接。启动时先向 agent 校验授权，管理员 token 不能启动 MCP；`tools/list` 只列出授权工具。
+限定会话时，工具的 `chatId` schema 使用允许会话的枚举，`recv` / `messages` 将该参数标为必填。
+
+授权 ID 使用 1–64 位字母、数字、下划线或连字符。同 ID、同 token、同范围可原样重试；不同内容、已撤销
+ID 或重用其他授权的 token 被拒绝。CLI 在 HTTP 请求之前持久保存 token 文件，响应未知时保留该文件并用
+同一命令重试。调整权限应撤销旧授权并新建 ID。本地 agent 的授权登记只保存 MCP token 摘要，授权绑定
+agent 当前的 deployment、dataset 和 uid，不会跟随同 uid 进入另一份数据集。登记最多保留 128 个 ID
+（含已撤销项），文件上限 1 MiB，达到预算后拒绝新增，不会静默丢弃既有授权。
+
+`--chats` 最多指定 128 个会话；全会话范围须显式使用 `--all-chats`，不能与 `--chats` 同用。
+`chat_with` 只允许全会话授权。限定会话的 `messages` / `recv` 必须指定允许的 chatId，
+`conversations` 只返回允许的会话；`friends`、`search_users` 等账号级工具由工具集合单独授权。
+这些限制在 agent 的 HTTP 入口执行，直接调用 REST 也不能绕过；它们不增加 agent 账号本身的服务器权限。
+撤销后新调用被拒绝，正在等待的接收结果也会在返回前复验授权；已经入队的发送不会因撤销而自动取消。
+MCP 的三个发送工具都要求稳定 `clientMsgId`，未知结果必须原样重试或查询回执。
+
+每个授权每分钟最多接受 120 次业务请求，长轮询最多每授权 2 个、全 agent 8 个，超限返回 429。
+授权创建/撤销和工具调用记录 grant、工具、chat、请求 ID、状态及发送回执状态，不记录 token、消息正文或
+本地文件路径。审计使用 dataDir 中两段有界 JSONL，每段最多 2 MiB；`mcp audit` 读取末尾 1–500 条。
+`status` 记录已执行操作的结果；若返回前因撤销而拒绝响应，另记 `responseStatus`，不把已入队发送
+改写成执行失败。
+操作前审计不能落盘时拒绝新副作用；只有准入记录而缺少终结记录表示结果未知，应按稳定业务 ID 查询，
+不能据此判定失败。它是本实例的有限诊断记录，不是永久合规归档。
 
 ## 7. 安全与运行边界
 
-- REST 强制绑定 loopback；通配地址、局域网/公网地址和需要 DNS 解析的主机名都会在启动前被拒绝。当前 HTTP 服务没有 TLS、来源限制或细粒度授权。
-- 所有 REST 端点都校验同一个 agent API token，但 token 永远不进入 ready/journal。读取 token 是一次显式的本机特权操作。
+- REST 强制绑定 loopback；通配地址、局域网/公网地址和需要 DNS 解析的主机名都会在启动前被拒绝。当前 HTTP 服务没有 TLS，不能将端口暴露给远端调用者。
+- REST 区分本地管理员 token 与 MCP scoped token；前者管理完整本地 API，后者按具名授权检查工具和会话。token 不进入 ready/journal，导出或签发必须由本机管理员显式执行。
+- 工具授权约束通过 API 委托的能力；能够读取 agent dataDir 的操作系统账户仍能取得管理员凭据。给模型同时开放 shell 或文件系统时，必须在其执行环境中隔离这些管理员路径。
 - `credentials.properties` 的 ACTIVE 状态只保存 deployment 指纹、uid、username、refresh token、API token 与稳定 deviceId；plaintext password 仅允许短暂存在于 REGISTER_PENDING，AUTH 成功即原子删除。目录 `0700`、文件 `0600`、NOFOLLOW 与原子落盘是强制条件。已有账号的 plaintext password 只经受控前台环境传递，systemd unit 不引用任何持久 bootstrap 环境文件。正式产品仍可进一步接入系统密钥库。
 - CLI token 不应出现在命令历史、日志或代码仓库。
 - CLI/MCP 只接受字面量本机回环 API 地址，不能把 Bearer token 发送到 DNS、局域网或公网端点；

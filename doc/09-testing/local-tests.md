@@ -98,6 +98,25 @@ App 回归通过真实 TaskRepository 与可控 RPC 检查外部引用冷启动�
 这些测试不证明平台系统通知或真实双端 UI 已通过，仍需执行
 [任务协作场景](scenario-catalog.md#i-任务协作)。
 
+### 无头分发与 MCP 的定向回归
+
+```bash
+./gradlew :client:shared:jvmTest --tests '*HeadlessBundleInstallerIntegrationTest' --tests '*HeadlessConfigurationIntegrationTest'
+./gradlew :client:shared:jvmTest --tests '*AgentMcpAccessTest' --tests '*AgentMcpHttpTest' --tests '*CliMainTest' --tests '*AgentApiTest'
+./gradlew -p buildSrc test --tests '*HeadlessDistributionTest'
+./gradlew :client:shared:verifyHeadlessDist :client:shared:headlessDistZip
+```
+
+安装器回归使用临时分发目录、真实文件锁、子进程和 shell launcher，检查移动路径、调用工作目录、
+不可变版本升级、同时运行的进程租约、损坏/未知文件拒绝、暂存恢复与外部数据保留。配置回归使用专用
+私有目录，验证保存端点、重启读取、错实例拒绝、离线 doctor 和 token 导出，不能操作已有用户 dataDir。
+分发回归检查 ZIP、manifest、逐文件摘要和离开源码的 launcher；`--version` 不依赖 Java 或在线 agent。
+
+MCP 回归通过真实 loopback HTTP 检查管理员与 scoped token 分离、工具和会话范围、直接 REST 绕过拒绝、
+授权持久化与撤销、等待中撤销、限速及审计落盘失败。发送仍需区分持久入队与服务器 ACK，未知结果复用
+原 `clientMsgId`。模块检查不代替真实 MCP 客户端与 TeamTalk 对端验收，完整操作规范见
+[无头分发与授权验收](deployment-acceptance.md#无头分发与授权验收)。
+
 ## Linux 媒体测试环境
 
 服务端缩略图测试与 TestPeer 音频元数据读取会加载 JavaCV/FFmpeg JNI。FFmpeg 原生库随 Maven JAR

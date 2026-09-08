@@ -33,6 +33,12 @@ class CliMainTest {
                 exchange.close()
             }
         }
+        server.createContext("/v1/mcp/access") { exchange ->
+            val response = """{"ok":true,"data":{"tools":["history"]}}""".toByteArray()
+            exchange.sendResponseHeaders(200, response.size.toLong())
+            exchange.responseBody.use { it.write(response) }
+            exchange.close()
+        }
         server.start()
         try {
             val api = "127.0.0.1:${server.address.port}"

@@ -142,7 +142,8 @@ fun registerReleaseTasks(
         val task = this
         task.group = "release build"
         task.dependsOn(preflight)
-        if (!reuseBundle) task.dependsOn(":client:desktop:buildConveyorSite", ":client:android:assembleRelease", ":server:server:distZip")
+        if (!reuseBundle) task.dependsOn(":client:desktop:buildConveyorSite", ":client:android:assembleRelease",
+            ":server:server:distZip", ":client:shared:headlessDistZip")
         task.doLast {
             val notes = notes()
             if (reuseBundle) ReleaseBundle.verify(bundle, identity, notes) else ReleaseBundle.assemble(
@@ -151,6 +152,7 @@ fun registerReleaseTasks(
                 File(root, "server/server/build/distributions/teamtalk-server-${version.name}.zip"),
                 notes, metadata.commitAppendix(version, snapshot), File(root, "gradle/conveyor-tools.properties"),
                 File(root, "client/desktop/build/conveyor/tool.properties"),
+                File(root, "client/shared/build/distributions/${HeadlessDistribution.archiveName(identity.buildIdentity)}"),
             )
             project.logger.lifecycle("Sealed release bundle: ${bundle.absolutePath}")
         }

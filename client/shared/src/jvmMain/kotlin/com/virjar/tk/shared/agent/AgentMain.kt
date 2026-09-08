@@ -44,7 +44,21 @@ internal const val AGENT_REAUTH_REQUIRED_EXIT_CODE = 78
  */
 fun main(args: Array<String>) {
     try {
-        runAgent(args)
+        val command = args.firstOrNull()
+        when (command) {
+            "help", "--help" -> println(AGENT_USAGE)
+            "--version" -> println(HeadlessRuntime.facts())
+            "install-bundle", "upgrade-bundle", "uninstall-bundle" -> {
+                val result = HeadlessBundleInstaller.execute(command, args.drop(1), HeadlessRuntime.currentBundle())
+                println("${result.command}: ${result.prefix.absolutePath}")
+                result.bundle?.let { println("${it.buildIdentity} protocol ${it.protocolMajor}.${it.protocolMinor}") }
+            }
+            else -> HeadlessBundleInstaller.acquireRuntimeLease(HeadlessRuntime.currentBundle()).use {
+                if (command in setOf("configure", "export-cli-token", "doctor")) {
+                    HeadlessConfiguration.execute(requireNotNull(command), args.drop(1))
+                } else runAgent(args)
+            }
+        }
     } catch (_: AgentReauthenticationRequiredException) {
         // 不把被拒绝的 refresh 或服务端给出的原因打印进日志。
         System.err.println("[tt-agent] stored authentication requires operator intervention; follow the recovery runbook")
@@ -59,6 +73,15 @@ fun main(args: Array<String>) {
         // 并且端点/错误细节不会进入日志。
         System.err.println("[tt-agent] authentication transport is unavailable")
         exitProcess(1)
+    } catch (failure: CliException) {
+        System.err.println("[tt-agent] ${failure.message}")
+        exitProcess(2)
+    } catch (failure: IllegalArgumentException) {
+        System.err.println("[tt-agent] ${failure.message}")
+        exitProcess(2)
+    } catch (failure: IllegalStateException) {
+        System.err.println("[tt-agent] ${failure.message}")
+        exitProcess(2)
     }
 }
 
@@ -79,20 +102,7 @@ private fun runAgent(args: Array<String>) {
     val opts = AgentCli.parse(args)
     validateAgentRuntimeOptions(opts)
     val env = System.getenv()
-    val host = opts["host"] ?: env["TK_HOST"] ?: "im.virjar.com"
-    val port = (opts["port"] ?: env["TK_PORT"] ?: "5100").toInt()
-    val apiBind = AgentBindPolicy.parse(opts["api"] ?: "127.0.0.1:8600")
-    val dataDir = File(opts["data-dir"] ?: env["TK_AGENT_DIR"] ?: "${System.getProperty("user.home")}/.tt-agent")
-    // 上传/下载走 HTTP 文件服务的 serverUrl（与 TCP host 区分——HTTPS 域名），
-    // 不设则 defaultServerConfig 回退 localhost（曾致 upload 挂死无超时）
-    val configuredServerUrl = opts["server-url"] ?: env["TK_SERVER_URL"]
-    val deploymentIdentity = configuredServerUrl?.let { serverUrl ->
-        DeploymentIdentity.from(host, port, serverUrl)
-    } ?: DeploymentIdentity.fromTcpWithDefaultHttp(host, port)
-    val serverUrl = deploymentIdentity.httpBaseUrl
-    val tcpTlsCertificatePem = com.virjar.tk.shared.client.decodeTcpTlsCertificateBase64(
-        System.getProperty("teamtalk.tcp.certificate.base64"),
-    )
+    val dataDir = HeadlessConfiguration.dataDir(opts, env)
     val explicitRegistration = opts.containsKey("register")
     val explicitReauthentication = opts.containsKey("reauth")
     require(!(explicitRegistration && explicitReauthentication)) {
@@ -108,6 +118,14 @@ private fun runAgent(args: Array<String>) {
     AgentDataDirectoryPolicy.openRuntime(dataDir)
     com.virjar.tk.shared.client.JvmClientDataLease.acquire(dataDir).use {
         com.virjar.tk.shared.client.prepareJvmClientDataVersion(dataDir)
+        val settings = HeadlessConfiguration.resolve(opts, env, HeadlessConfiguration.load(dataDir))
+        HeadlessConfiguration.requireSameDeployment(dataDir, settings)
+        val host = settings.host
+        val port = settings.port
+        val apiBind = AgentBindPolicy.parse(settings.api)
+        val deploymentIdentity = settings.deployment
+        val serverUrl = settings.serverUrl
+        val tcpTlsCertificatePem = com.virjar.tk.shared.client.decodeTcpTlsCertificateBase64(settings.tcpCertificateBase64)
         val cacheOwner = PersistentImBotCacheOwner(dataDir)
 
         val credentials = if (explicitRegistration) {
@@ -198,8 +216,7 @@ private fun runAgent(args: Array<String>) {
                 }
             }
             else -> {
-                System.err.println("[tt-agent] 缺少登录凭据；请先完成安全 bootstrap 或前台一次性注册")
-                return
+                throw CliException("缺少登录凭据；请先完成安全 bootstrap 或前台一次性注册")
             }
         }
 
@@ -275,6 +292,22 @@ private val AGENT_RUNTIME_OPTIONS = setOf(
     "prefix",
     "reauth",
 )
+
+private val AGENT_USAGE = """
+tt-agent — TeamTalk headless client (Java 21+)
+  configure --data-dir <dir> --host <host> --port <port> --server-url <http-base> [--api 127.0.0.1:8600] [--tcp-certificate <public.pem>]
+  --data-dir <dir>                     Start using saved settings and refresh credentials
+  --data-dir <dir> --register [--prefix <name>]
+  --data-dir <dir> --reauth             Recover authentication with TK_USER/TK_PASS
+  export-cli-token --data-dir <dir> --token-file <private-file>
+  doctor [--data-dir <dir>]             Offline, read-only configuration and bundle diagnostics
+  install-bundle --prefix <new-dir>     Install the extracted distribution (POSIX)
+  upgrade-bundle --prefix <dir>         Atomically switch binaries; retain account data
+  uninstall-bundle --prefix <dir>       Run from an external bundle after stopping installed processes
+  install / uninstall / prepare-service-data  Linux systemd integration
+  --version / --help
+First login uses TK_USER/TK_PASS from controlled foreground input; never put passwords on the command line.
+""".trimIndent()
 
 internal data class AgentReauthentication(
     val username: String,
@@ -418,6 +451,10 @@ class AgentRuntime(
     lateinit var bot: ImBot
     val apiToken: String = identity.apiToken
     val deviceId: String = identity.deviceId
+    private val mcpAccessOwner = lazy {
+        AgentMcpAccess(dataDir, AgentMcpOwner(deploymentIdentity.fingerprint, bot.datasetId, bot.uid), apiToken)
+    }
+    internal val mcpAccess: AgentMcpAccess by mcpAccessOwner
     private val waiters = ConcurrentLinkedDeque<AgentMessageWaiter>()
     private val waiterLifecycle = Any()
     @Volatile
@@ -476,6 +513,7 @@ class AgentRuntime(
 
     fun startHttp(bind: String) {
         check(server == null) { "HTTP server is already started" }
+        mcpAccess // Validate persistent grants before opening the local API.
         val endpoint = AgentBindPolicy.parse(bind)
         val s = HttpServer.create(endpoint.socketAddress(), 0)
         val executor = createAgentHttpExecutor()
@@ -488,6 +526,7 @@ class AgentRuntime(
                 "/v1/mark-read", "/v1/conversations", "/v1/friends", "/v1/friend-apply",
                 "/v1/friend-accept", "/v1/friend-pending", "/v1/users-search", "/v1/group-create",
                 "/v1/group-members", "/v1/group-invite", "/v1/chat-personal",
+                "/v1/mcp/access", "/v1/mcp/grants", "/v1/mcp/revoke", "/v1/mcp/audit",
             )) {
                 s.createContext(path) { ex -> api.handle(ex, path) }
             }
@@ -554,6 +593,7 @@ class AgentRuntime(
                 waiters.clear()
             }
         }
+        if (mcpAccessOwner.isInitialized()) mcpAccess.close()
         val ownedServer = server.also { server = null }
         val ownedExecutor = serverExecutor.also { serverExecutor = null }
         val drain = AgentLifecycleDrain()

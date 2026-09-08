@@ -57,6 +57,7 @@ object ReleaseBundle {
         commits: String,
         toolLock: File,
         toolDescriptor: File,
+        headlessZip: File,
     ): File {
         if (destination.exists()) {
             verify(destination, identity, notes)
@@ -75,6 +76,7 @@ object ReleaseBundle {
             require(props.getProperty("buildIdentity") == identity.buildIdentity &&
                 props.getProperty("artifactType") == "server-distribution") { "Stale server distribution ZIP" }
         }
+        HeadlessDistribution.verifyArchive(headlessZip, identity.version, identity.buildIdentity)
         destination.parentFile.mkdirs()
         val temporary = File(destination.parentFile, ".${destination.name}-${UUID.randomUUID()}.tmp")
         require(temporary.mkdir()) { "Cannot create release staging directory" }
@@ -83,6 +85,8 @@ object ReleaseBundle {
             val assets = File(temporary, "assets").apply { mkdirs() }
             apk.copyTo(File(assets, "${identity.client.desktopName}-${identity.version.name}-android.apk"))
             serverZip.copyTo(File(assets, "TeamTalk-${identity.version.name}-server.zip"))
+            val headlessArtifact = "assets/${HeadlessDistribution.archiveName(identity.buildIdentity)}"
+            headlessZip.copyTo(File(temporary, headlessArtifact))
             zipDirectory(File(temporary, "desktop"), File(assets, "${identity.client.desktopName}-${identity.version.name}-desktop-site.zip"))
             File(temporary, "RELEASE_NOTES.md").writeText(notes)
             File(temporary, "COMMITS.md").writeText(commits)
@@ -103,6 +107,7 @@ object ReleaseBundle {
                 }
                 if (identity.distributionKind == "snapshot") put("desktopRevision", identity.desktopRevision)
                 put("buildIdentity", identity.buildIdentity)
+                put("headlessArtifact", headlessArtifact)
                 put("deploymentSha256", identity.deploymentSha256)
                 put("client", clientManifest(identity.client))
                 put("notesSha256", sha256(File(temporary, "RELEASE_NOTES.md")))
@@ -187,7 +192,16 @@ object ReleaseBundle {
         require(File(directory, "RELEASE_NOTES.md").readText() == notes &&
             field("notesSha256") == sha256(File(directory, "RELEASE_NOTES.md"))) { "Bundle notes differ from the distribution description" }
         require(File(directory, CHECKSUMS).readText() == checksumText(directory)) { "SHA256SUMS does not match the bundle" }
-        require(File(directory, "desktop/download.html").isFile && assets(directory).size == 3) { "Incomplete release bundle" }
+        // Existing sealed format 1/2 bundles predate Headless; retries preserve those exact three assets.
+        val headlessArtifact = manifest["headlessArtifact"]?.jsonPrimitive?.content
+        require(File(directory, "desktop/download.html").isFile &&
+            assets(directory).size == (if (headlessArtifact == null) 3 else 4)) { "Incomplete release bundle" }
+        if (headlessArtifact != null) {
+            require(headlessArtifact == "assets/${HeadlessDistribution.archiveName(identity.buildIdentity)}") {
+                "Unexpected Headless release artifact path"
+            }
+            HeadlessDistribution.verifyArchive(File(directory, headlessArtifact), identity.version, identity.buildIdentity)
+        }
         verifyDesktop(File(directory, "desktop"), identity.version, identity.client, identity.desktopRevision)
         verifyAndroidApkIdentity(
             assets(directory).single { it.extension == "apk" }, identity,

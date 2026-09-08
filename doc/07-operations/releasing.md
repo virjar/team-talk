@@ -199,7 +199,8 @@ APK 身份校验需要已有 Android SDK build-tools 中的 `aapt2`；SDK 通过
 ├── assets/
 │   ├── <desktopName>-<version>-android.apk
 │   ├── <desktopName>-<version>-desktop-site.zip
-│   └── TeamTalk-<version>-server.zip
+│   ├── TeamTalk-<version>-server.zip
+│   └── TeamTalk-<version>+<完整源码SHA>-headless.zip
 ├── desktop/                  完整 Desktop 更新站点
 ├── RELEASE_NOTES.md           已提交的人工说明
 ├── COMMITS.md                 提交记录附录
@@ -208,13 +209,16 @@ APK 身份校验需要已有 Android SDK build-tools 中的 `aapt2`；SDK 通过
 └── SHA256SUMS
 ```
 
-客户端附件前缀来自 `client.desktopName`，默认仍为 `TeamTalk`；Server ZIP 保持 `TeamTalk` 前缀。
+客户端附件前缀来自 `client.desktopName`，默认仍为 `TeamTalk`；Server 与 Headless ZIP 保持 `TeamTalk` 前缀。
 显示名称可以包含中文，不作为这些发行归档的文件名。
 
 新生成 APK 的 `assets/teamtalk-build.properties` 内嵌源码身份、完整非敏感部署配置的摘要，以及应用标识、
 显示名称、英文安装名称和 HTTP/TCP 地址。封包时逐项匹配实际配置，使用 `aapt2` 从 APK 二进制清单与资源
 核对包名、安装版本、默认及各语言的应用名称、非空启动入口名称，并验证 APK 签名。
 Desktop 检查三平台必需文件和 Conveyor 元数据，Server ZIP 包含自身分发身份。
+Headless ZIP 使用 `tt-headless/` 根目录，包含三种入口、完整运行依赖、LICENSE、
+`teamtalk-release.properties` 与逐文件 `SHA256SUMS`。封包核对无头分发的版本、源码身份、协议窗口、
+Java 要求、完整文件清单与摘要，拒绝缺失、额外文件或符号链接。
 密封清单记录源 commit、协议窗口、部署配置摘要、工具清单摘要、签名证书信息、
 文件大小与 SHA-256。同一路径已有密封目录时复核并复用，出现不同身份、文件增删或字节变化立即失败。
 部署摘要依据最终 `DeploymentConfig` 对象的规范化 JSON 计算，不依据配置源码；只改注释、变量名或
@@ -222,16 +226,20 @@ Desktop 检查三平台必需文件和 Conveyor 元数据，Server ZIP 包含自
 
 新密封清单使用 `format=2`，要求 APK 内嵌完整部署身份字段。既有 `format=1` 目录可按原字节复用，
 仍核对 APK 的源码身份及二进制包名、名称和版本；只有整组部署身份字段均缺失时才兼容旧 APK，
-其中任一字段存在就必须全部匹配。复用不重写旧清单或 APK。
+其中任一字段存在就必须全部匹配。新增密封目录同时记录 `headlessArtifact`；既有未记录此字段的
+`format=1/2` 密封目录仍按原来的三个附件复用，不补造或改写旧清单及产物。
 
 这个目录可以复制给没有 GitHub 的客户。解压 Desktop 站点 ZIP 时须保持完整目录；Server ZIP 是可供
-人工部署的分发文件，构建或下载它都不会自动改变运行实例。无头 SDK 分发仍通过
-`:client:shared:headlessDist` 单独构建，尚未列入统一发行附件。
+人工部署的分发文件，构建或下载它都不会自动改变运行实例。Headless ZIP 需要外部 Java 21，不附带 JDK；
+POSIX 支持 agent、CLI、MCP 与用户级便携安装，Windows 原生只支持 CLI。
+独立构建入口为 `:client:shared:headlessDist`、`:client:shared:verifyHeadlessDist` 与
+`:client:shared:headlessDistZip`；配置、安装和升级见[无头客户端](../05-clients/headless.md#3-构建与启动-agent)。
 
 ## 发布到私有站点
 
 `site` 使用当前部署配置函数返回的 SSH 坐标，把双端产物发布到
 `<deployPath>/static/downloads/`。上传由 JVM 内的 SSH/SFTP 实现，Windows 本机不需要 Unix 上传工具。
+站点目标只上传 APK、Desktop 站点与对应发行元数据，不托管 Server 或 Headless ZIP。
 远端需要 Linux 的 SFTP 服务与 `flock`、`mv`、`rm`、`rmdir` 命令，账号须有该下载目录的写权限；
 不要求 SFTP 提供 POSIX rename 扩展。
 
@@ -288,8 +296,8 @@ snapshot 允许 Android 使用相同 code 手动覆盖；同一展示版本的 D
 ```
 
 Gradle 校验已有 tag 是否指向同一 commit，缺失时创建 tag；随后创建或继续未完成的 Release 草稿，
-逐个校验并上传附件，全部齐备后公开为预览 Release。附件包括三个归档、人工说明、提交附录、实际部署
-配置快照及两份校验清单。
+逐个校验并上传附件，全部齐备后公开为预览 Release。新密封目录的附件包括 Android APK、Desktop 站点 ZIP、
+Server ZIP、Headless ZIP、人工说明、提交附录、实际部署配置快照及两份校验清单。
 已经公开的同名版本只接受完全一致的内容，不会被另一份源码或二进制静默覆盖。
 
 同一目录可以顺序发布到两个目标：
@@ -303,7 +311,7 @@ Gradle 校验已有 tag 是否指向同一 commit，缺失时创建 tag；随后
 
 ## 复用密封目录与失败重试
 
-显式指定已有目录可跳过三类产物重建：
+显式指定已有目录可跳过其中各类产物的重建：
 
 ```bash
 ./gradlew release "-PreleaseBundle=build/releases/0.0.1/<完整源码SHA>" -PreleaseTargets=site

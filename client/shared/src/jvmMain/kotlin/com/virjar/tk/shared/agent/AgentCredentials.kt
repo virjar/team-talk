@@ -86,6 +86,29 @@ object AgentCredentials {
     private val fileAttribute = PosixFilePermissions.asFileAttribute(filePermissions)
     private val secureRandom = SecureRandom()
 
+    internal data class Diagnostics(val state: String?, val uid: String?, val deploymentFingerprint: String?)
+
+    /** Read-only: diagnostics must not migrate or invalidate credentials for a guessed endpoint. */
+    @Synchronized
+    internal fun diagnostics(dataDir: File): Diagnostics? {
+        val directory = AgentDataDirectoryPolicy.openRuntime(dataDir)
+        val path = directory.root.resolve(FILE_NAME)
+        if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return null
+        val properties = readProperties(path, directory)
+        return Diagnostics(properties.getProperty(STATE_PROPERTY), properties.getProperty("uid"), properties.getProperty("deploymentFingerprint"))
+    }
+
+    @Synchronized
+    internal fun activeLocalToken(dataDir: File, deploymentIdentity: DeploymentIdentity): String {
+        val directory = AgentDataDirectoryPolicy.openRuntime(dataDir)
+        val path = directory.root.resolve(FILE_NAME)
+        require(Files.exists(path, LinkOption.NOFOLLOW_LINKS)) { "Complete foreground agent authentication first" }
+        val parsed = parseAndMigrate(readProperties(path, directory), deploymentIdentity)
+        require(!parsed.changed && parsed.record.state == AgentCredentialState.ACTIVE) { "Complete foreground agent authentication first" }
+        parsed.record.requireActiveRefresh()
+        return parsed.record.apiToken
+    }
+
     @Synchronized
     fun load(dataDir: File, deploymentIdentity: DeploymentIdentity): AgentCredentialRecord? {
         val directory = AgentDataDirectoryPolicy.openRuntime(dataDir)

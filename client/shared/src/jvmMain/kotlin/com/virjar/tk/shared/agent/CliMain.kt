@@ -37,10 +37,20 @@ import java.util.UUID
  * ```
  */
 fun main(args: Array<String>) {
+    try {
+        HeadlessBundleInstaller.acquireRuntimeLease(HeadlessRuntime.currentBundle()).use { runCli(args) }
+    } catch (failure: Exception) {
+        System.err.println("CLI could not start; check the installation and configuration")
+        kotlin.system.exitProcess(2)
+    }
+}
+
+private fun runCli(args: Array<String>) {
     if (args.isEmpty() || args[0] == "help" || args[0] == "--help") {
         println(USAGE)
         return
     }
+    if (args[0] == "--version") { println(HeadlessRuntime.facts()); return }
     val parsed = try {
         parseCliArguments(args)
     } catch (error: IllegalArgumentException) {
@@ -98,6 +108,11 @@ fun main(args: Array<String>) {
 
     try {
         val out: String = when (cmd) {
+            "mcp" -> runMcpManagement(cli, positional, flagValues).pretty(jsonOut)
+            "doctor" -> buildJsonObject {
+                put("client", HeadlessRuntime.facts())
+                put("agent", Json.parseToJsonElement(cli.get("/v1/status")))
+            }.toString().pretty(jsonOut)
             "status" -> cli.get("/v1/status").pretty(jsonOut)
             "conversations" -> cli.get("/v1/conversations").pretty(jsonOut)
             "friends" -> cli.get("/v1/friends").pretty(jsonOut)
@@ -208,6 +223,11 @@ internal fun parseCliArguments(args: Array<String>): ParsedCliArguments {
                 jsonOutput = true
                 index += 1
             }
+            argument == "--all-chats" -> {
+                require(args.first() == "mcp") { "--all-chats is only valid for MCP grants" }
+                flagValues["all-chats"] = "true"
+                index += 1
+            }
             argument.startsWith("--") -> {
                 val name = argument.removePrefix("--")
                 require(name in CLI_VALUE_FLAGS) { "未知选项: --$name" }
@@ -291,6 +311,9 @@ private val CLI_VALUE_FLAGS = setOf(
     "after",
     "clientMsgId",
     "operationId",
+    "tools",
+    "chats",
+    "token-file",
 )
 
 private val DURABLE_SEND_COMMANDS = setOf("send", "send-rich", "send-file")
@@ -358,6 +381,10 @@ tt — TeamTalk CLI（经本地 tt-agent，见 doc/05-clients/headless.md）
 
 命令：
   status                              连接状态/uid
+  doctor                              本机分发包校验与在线 agent 诊断
+  mcp grant <id> --tools <tool,...> --chats <chatId,...> --token-file <file>
+                                      创建专用 MCP 授权；不限会话须显式使用 --all-chats
+  mcp list | mcp revoke <id> | mcp audit [--limit n]
   send <chatId> <text...>             发文本
   send-rich <chatId> <markdown...>    发富文本
   send-file <chatId> <path>           发文件

@@ -30,61 +30,86 @@ private val agentApiLogger = PlatformOnlyTkLogger("AgentApi")
  * agent REST API（doc/05-clients/headless.md）。仅 loopback + Bearer apiToken。
  * 统一 `{ok, data|error}`；JSON 手工构建（body 多态结构不适合序列化器推断）。
  */
-class AgentApi(private val agent: AgentRuntime) {
+class AgentApi internal constructor(private val agent: AgentRuntime, private val access: AgentMcpAccess = agent.mcpAccess) {
 
     private val json = Json { ignoreUnknownKeys = true }
 
     fun handle(ex: HttpExchange, path: String) {
-        try {
-            val auth = ex.requestHeaders.getFirst("Authorization")
-            if (!isValidAgentAuthorization(auth, agent.apiToken)) {
-                ex.resp(401, err("invalid token"))
-                return
+        var admitted: AgentMcpCall? = null
+        var executed: Pair<Int, JsonObject>? = null
+        val response = try {
+            val principal = access.authenticate(ex.requestHeaders.getFirst("Authorization"))
+            if (ex.requestURI.path != path) throw AgentRequestBodyException(404, "unknown endpoint")
+            val body = readAgentRequestBody(ex.requestBody, ex.requestHeaders.getFirst("Content-Length"))
+            val fields = if (ex.requestMethod == "GET") ex.query() else parse(body)
+            val method = ex.requestMethod
+            val result = if (path.startsWith("/v1/mcp/")) {
+                management(method, path, fields, principal)
+            } else {
+                admitted = access.begin(principal, path, fields)
+                when {
+                    method == "GET" && path == "/v1/status" -> status(principal)
+                    method == "GET" && path == "/v1/messages" -> messages(ex)
+                    method == "GET" && path == "/v1/recv-wait" -> recvWait(ex)
+                    method == "GET" && path == "/v1/outgoing" -> outgoing(ex)
+                    method == "POST" -> post(path, fields, principal)
+                    method == "GET" && path in setOf("/v1/conversations", "/v1/friends", "/v1/friend-pending") -> post(path, fields, principal)
+                    else -> 404 to err("unknown endpoint")
+                }
             }
-            val body = readAgentRequestBody(
-                input = ex.requestBody,
-                declaredLength = ex.requestHeaders.getFirst("Content-Length"),
-            )
-            // 只读端点 GET/POST 双支持（读操作 GET 语义为主，POST 便于 curl 无 -G）
-            val readonly = path == "/v1/conversations" || path == "/v1/friends" || path == "/v1/friend-pending"
-            val resp: Pair<Int, JsonObject> = when {
-                ex.requestMethod == "GET" && path == "/v1/status" -> status()
-                ex.requestMethod == "GET" && path == "/v1/messages" -> messages(ex)
-                ex.requestMethod == "GET" && path == "/v1/recv-wait" -> recvWait(ex)
-                ex.requestMethod == "GET" && path == "/v1/outgoing" -> outgoing(ex)
-                ex.requestMethod == "POST" -> post(path, body)
-                readonly -> post(path, body)
-                else -> 404 to err("unknown $path")
-            }
-            ex.resp(resp.first, resp.second)
-        } catch (e: AgentRequestBodyException) {
-            runCatching { ex.resp(e.status, err(e.safeMessage)) }
+            executed = result
+            // Especially important for recv-wait: the grant may have been revoked during its wait.
+            access.recheck(admitted)
+            result
+        } catch (failure: AgentMcpAccessException) {
+            failure.status to err(failure.safeMessage)
+        } catch (failure: AgentRequestBodyException) {
+            failure.status to err(failure.safeMessage)
         } catch (_: AgentFileRequestException) {
-            val response = agentFileRequestErrorResponse()
-            runCatching { ex.resp(response.first, response.second) }
-        } catch (e: OutgoingMessageConflictException) {
-            runCatching { ex.resp(409, err(e.message ?: "clientMsgId conflict")) }
+            agentFileRequestErrorResponse()
+        } catch (failure: OutgoingMessageConflictException) {
+            409 to err(failure.message ?: "clientMsgId conflict")
         } catch (_: BotDeliveryHistoryCursorExpiredException) {
-            val response = agentDeliveryHistoryCursorExpiredResponse()
-            runCatching { ex.resp(response.first, response.second) }
+            agentDeliveryHistoryCursorExpiredResponse()
         } catch (_: Exception) {
-            // 绝不回显任意的异常消息：它们可能包含路径、payload 或
-            // transport 细节。bearer 调用方收到固定的边界错误；诊断保留为
-            // 不含秘密异常文本的固定本地 fault。
             runCatching { agentApiLogger.fault("Agent API request failed at the internal boundary") }
-            val response = agentInternalErrorResponse()
-            runCatching { ex.resp(response.first, response.second) }
+            agentInternalErrorResponse()
         }
+        // A grant revoked after admission cannot undo a completed enqueue. Preserve its actual result
+        // in the audit even when the response body must be suppressed for the revoked caller.
+        val actual = executed ?: response
+        val state = (actual.second["data"] as? JsonObject)?.get("state")?.jsonPrimitive?.content
+        access.finish(admitted, actual.first, state, response.first)
+        try { ex.resp(response.first, response.second) } finally { ex.close() }
     }
 
-    private fun status(): Pair<Int, JsonObject> {
+    private fun management(method: String, path: String, fields: Map<String, String>, principal: AgentApiPrincipal): Pair<Int, JsonObject> {
+        val data = when {
+            method == "GET" && path == "/v1/mcp/access" -> access.describe(principal)
+            method == "GET" && path == "/v1/mcp/grants" -> access.list(principal)
+            method == "POST" && path == "/v1/mcp/grants" -> access.create(principal, fields)
+            method == "POST" && path == "/v1/mcp/revoke" -> access.revoke(principal, fields.req("id"))
+            method == "GET" && path == "/v1/mcp/audit" -> access.auditTail(principal,
+                parseAgentBoundedInt(fields["limit"], 100, 1..500, "limit"))
+            else -> return 404 to err("unknown endpoint")
+        }
+        return 200 to ok(data)
+    }
+
+    private fun status(principal: AgentApiPrincipal): Pair<Int, JsonObject> {
         val state = agent.connectionState
         return 200 to ok(buildJsonObject {
             put("connected", state == ConnectionState.AUTHENTICATED)
             put("state", state.name)
             put("uid", agent.bot.uid)
             put("username", agent.bot.username ?: "")
-            put("bufferedMessages", agent.bufferedCount)
+            put("datasetId", agent.bot.datasetId)
+            put("buildVersion", com.virjar.tk.shared.TeamTalkBuild.RELEASE_VERSION)
+            put("buildIdentity", com.virjar.tk.shared.TeamTalkBuild.BUILD_IDENTITY)
+            put("releaseBuildNumber", com.virjar.tk.shared.TeamTalkBuild.RELEASE_BUILD_NUMBER)
+            put("protocolMajor", com.virjar.tk.protocol.ProtocolVersions.MAJOR)
+            put("protocolMinor", com.virjar.tk.protocol.ProtocolVersions.MINOR)
+            if (principal == AgentApiPrincipal.Administrator) put("bufferedMessages", agent.bufferedCount)
         })
     }
 
@@ -128,8 +153,7 @@ class AgentApi(private val agent: AgentRuntime) {
         return outgoingReceiptResponse(receipt)
     }
 
-    private fun post(path: String, body: String): Pair<Int, JsonObject> = runBlocking {
-        val r = parse(body)
+    private fun post(path: String, r: Map<String, String>, principal: AgentApiPrincipal): Pair<Int, JsonObject> = runBlocking {
         when (path) {
             "/v1/send-text" -> {
                 val receipt = agent.bot.enqueueText(
@@ -200,7 +224,7 @@ class AgentApi(private val agent: AgentRuntime) {
                 200 to ok(buildJsonObject { put("read", true) })
             }
             "/v1/conversations" -> {
-                val list = agent.bot.listConversations()
+                val list = agent.bot.listConversations().filter { access.allowsChat(principal, it.chatId) }
                 200 to ok(buildJsonObject {
                     put("conversations", buildJsonArray {
                         list.forEach { c -> add(buildJsonObject {

@@ -121,50 +121,50 @@ android {
 }
 
 // ── tt-agent / CLI / MCP 分发包（headless）──
-// application 插件与 android library 冲突，此处手写等价 installDist：
-// jvmJar 带 Main-Class + runtimeClasspath 全量 lib + bin 启动脚本。
+// application 插件与 android library 冲突；使用 JVM 完整 runtimeClasspath 组装可搬移目录。
 val jvmJar by tasks.existing(org.gradle.jvm.tasks.Jar::class) {
     manifest { attributes["Main-Class"] = "com.virjar.tk.shared.agent.AgentMainKt" }
 }
-tasks.register<org.gradle.api.tasks.Sync>("headlessDist") {
+val headlessVersion = release.ReleaseVersion.read(rootDir)
+val headlessDirectory = layout.buildDirectory.dir("headless")
+val headlessDist by tasks.registering(org.gradle.api.tasks.Sync::class) {
     group = "distribution"
-    description = "ImBot 无头 CLI 分发（build/headless/）"
-    into(layout.buildDirectory.dir("headless"))
+    description = "Build the portable Headless SDK directory, launchers, identity and SHA256SUMS (requires JDK 21)"
+    inputs.property("releaseVersion", sdkReleaseVersion)
+    inputs.property("buildIdentity", sdkBuildIdentity)
+    inputs.property("releaseBuildNumber", sdkReleaseBuildNumber)
+    inputs.property("protocolMajor", headlessVersion.protocolMajor)
+    inputs.property("protocolMinor", headlessVersion.protocolMinor)
+    duplicatesStrategy = DuplicatesStrategy.FAIL
+    into(headlessDirectory)
+    from(rootProject.file("LICENSE"))
     into("lib") {
         from(jvmJar)
         from(configurations.getByName("jvmRuntimeClasspath"))
     }
     doLast {
-        val bin = layout.buildDirectory.dir("headless/bin").get().asFile
-        bin.mkdirs()
-        // 同一 jar 提供守护进程、CLI 与 MCP 三个明确入口。
-        File(bin, "tt-mcp").apply {
-            val script = buildString {
-                appendLine("#!/usr/bin/env bash")
-                appendLine("cd \"\$(dirname \"\$0\")/..\"")
-                appendLine("exec java -Djava.net.preferIPv4Stack=true -cp \"lib/*\" com.virjar.tk.shared.agent.McpMainKt \"\$@\"")
-            }
-            writeText(script)
-            setExecutable(true)
-        }
-        File(bin, "tt").apply {
-            val script = buildString {
-                appendLine("#!/usr/bin/env bash")
-                appendLine("cd \"\$(dirname \"\$0\")/..\"")
-                appendLine("exec java -cp \"lib/*\" com.virjar.tk.shared.agent.CliMainKt \"\$@\"")
-            }
-            writeText(script)
-            setExecutable(true)
-        }
-        File(bin, "tt-agent").apply {
-            val script = buildString {
-                appendLine("#!/usr/bin/env bash")
-                appendLine("cd \"\$(dirname \"\$0\")/..\"")
-                appendLine("exec java -cp \"lib/*\" com.virjar.tk.shared.agent.AgentMainKt \"\$@\"")
-            }
-            writeText(script)
-            setExecutable(true)
-        }
+        release.HeadlessDistribution.seal(headlessDirectory.get().asFile, headlessVersion, sdkBuildIdentity)
+    }
+}
+tasks.register("verifyHeadlessDist") {
+    group = "verification"
+    description = "Verify the current Headless directory's exact identity, dependency payload and file checksums"
+    dependsOn(headlessDist)
+    doLast {
+        release.HeadlessDistribution.verify(headlessDirectory.get().asFile, headlessVersion, sdkBuildIdentity)
+    }
+}
+tasks.register("headlessDistZip") {
+    group = "distribution"
+    description = "Archive the verified portable Headless distribution for installation outside the source checkout"
+    dependsOn(headlessDist)
+    inputs.dir(headlessDirectory)
+    inputs.property("buildIdentity", sdkBuildIdentity)
+    val archive = layout.buildDirectory.file("distributions/${release.HeadlessDistribution.archiveName(sdkBuildIdentity)}")
+    outputs.file(archive)
+    doLast {
+        release.HeadlessDistribution.archive(headlessDirectory.get().asFile, archive.get().asFile,
+            headlessVersion, sdkBuildIdentity)
     }
 }
 

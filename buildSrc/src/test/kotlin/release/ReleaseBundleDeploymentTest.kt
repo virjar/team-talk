@@ -63,6 +63,26 @@ class ReleaseBundleDeploymentTest {
     }
 
     @Test
+    fun `headless is a fourth sealed asset while historical bundles keep their original inventory`() = bundle { directory ->
+        sealFixture(directory, headlessIdentity = identity)
+        val manifest = ReleaseBundle.verify(directory, identity, notes)
+        assertEquals(4, ReleaseBundle.assets(directory).size)
+        assertEquals("assets/${HeadlessDistribution.archiveName(identity.buildIdentity)}",
+            manifest.getValue("headlessArtifact").jsonPrimitive.content)
+        val legacy = File(directory, "legacy")
+        sealFixture(legacy)
+        assertEquals(3, ReleaseBundle.assets(legacy).size)
+        assertFalse("headlessArtifact" in ReleaseBundle.verify(legacy, identity, notes))
+    }
+
+    @Test
+    fun `outer checksums cannot make another headless protocol part of this release`() = bundle { directory ->
+        sealFixture(directory, headlessIdentity = identity.copy(version = identity.version.copy(protocolMinor = 1)))
+        val failure = assertFailsWith<IllegalArgumentException> { ReleaseBundle.verify(directory, identity, notes) }
+        assertEquals("Headless artifact belongs to another build, protocol or Java requirement", failure.message)
+    }
+
+    @Test
     fun `legacy bundles without the actual deployment snapshot cannot be reused`() = bundle { directory ->
         sealFixture(directory, snapshot = null)
         val failure = assertFailsWith<IllegalArgumentException> { ReleaseBundle.verify(directory, identity, notes) }
@@ -324,12 +344,23 @@ class ReleaseBundleDeploymentTest {
         legacyProducer: Boolean = false,
         actualApkIdentity: BundleIdentity = identity,
         producerIdentity: BundleIdentity = identity,
+        headlessIdentity: BundleIdentity? = null,
     ) {
         desktopFixture(File(directory, "desktop"), desktopIdentity)
         File(directory, "assets").mkdirs()
         listOf("server.zip", "desktop-site.zip").forEach { File(directory, "assets/$it").writeText(it) }
         writeAndroidApkFixture(File(directory, "assets/client.apk"), producerIdentity, actualApkIdentity,
             legacyProducer = legacyProducer)
+        headlessIdentity?.let {
+            val payload = Files.createTempDirectory("headless-bundle-fixture-").toFile()
+            try {
+                writeHeadlessDistributionFixture(payload, it.version, it.buildIdentity)
+                HeadlessDistribution.archive(payload,
+                    File(directory, "assets/${HeadlessDistribution.archiveName(identity.buildIdentity)}"), it.version, it.buildIdentity)
+            } finally {
+                payload.deleteRecursively()
+            }
+        }
         File(directory, "RELEASE_NOTES.md").writeText(notes)
         File(directory, "COMMITS.md").writeText("# Fixture commits\n")
         snapshot?.let { File(directory, ReleaseBundle.DEPLOYMENT_CONFIG).writeText(it, Charsets.UTF_8) }
@@ -342,6 +373,7 @@ class ReleaseBundleDeploymentTest {
             put("minimumProtocolMinor", identity.version.minimumProtocolMinor)
             put("sourceCommit", identity.sourceCommit)
             put("buildIdentity", identity.buildIdentity)
+            if (headlessIdentity != null) put("headlessArtifact", "assets/${HeadlessDistribution.archiveName(identity.buildIdentity)}")
             if (identity.distributionKind == "release") put("tag", identity.version.tag)
             else {
                 put("distributionKind", identity.distributionKind)
