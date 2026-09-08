@@ -9,7 +9,8 @@
 | 文件小对象、元数据与上传事务收据 | RocksDB | 本地嵌入、低运维成本、对象与精确上传结果共同恢复 |
 | 大文件 | 文件系统 | 避免 KV 大 blob 放大 |
 | 客户端设备画像、采集策略与遥测管理审计 | PostgreSQL | 低频关系控制面、真实管理员 actor 和行政查询审计 |
-| 消息全文索引 | Lucene `lucene-index` | 可从权威消息重建的派生投影 |
+| 消息全文与聊天附件文件名索引 | Lucene `lucene-index` | 共用消息 revision/outbox，可从权威消息重建 |
+| 文档与群文件索引 | Lucene `lucene-index-assets` | 从 PostgreSQL 当前对象及 `content_search_pending` 重建的派生投影 |
 | 7日客户端遥测事件与上传收据 | Lucene `client-telemetry-index` | 可丢失诊断数据；本机全文/过滤查询，避免关系库双写 |
 | 7日服务端连接轨迹 | Lucene `connection-trace-index` | 与消息/客户端遥测隔离；有界、可清空、按精确连接代际联查 |
 | 客户端本地数据 | SQLite/SQLDelight | 离线和 StateFlow 观察 |
@@ -426,7 +427,7 @@ grant 并计算有效角色。它不使用 offset，也不先把全部可访问 
 从第一页重新建立权威投影。
 
 `listRecentDocuments` 与 `listRecentlyCreatedDocuments` 的 SQL 也只负责有界预筛，并为候选空间批量读取 owner/steward、相关 grant 与 actor 组织路径组成
-`DocumentHomeAccessSnapshot`；领域层随后由 `DocumentAuthorizationPolicy` 以 typed `DocumentCapability.READ` 逐项复验，任何 SQL 候选与域权限不一致都失败关闭而不是返回。这不是搜索索引，当前文档搜索仍未实现。
+`DocumentHomeAccessSnapshot`；领域层随后由 `DocumentAuthorizationPolicy` 以 typed `DocumentCapability.READ` 逐项复验，任何 SQL 候选与域权限不一致都失败关闭而不是返回。这不是搜索索引；文档标题与正文搜索使用独立的内容搜索投影和当前领域授权。
 
 祖先链由单条参数绑定、深度受限的 recursive CTE 读取，只返回 direct parent 到 root 的最多 129 个
 小字段探针行，不读取 Markdown。每一步都要求同空间且活动，SQL 路径数组标记循环；适配器随后验证
@@ -462,6 +463,17 @@ document_user_recents 以 `(uid, documentId)` 为主键保存最后访问时间�
 Document 的节点、空间、授权和归属写入也在原事务追加 `DOCUMENT_CHANGED`。读者集合按当前普通用户、
 直接/部门授权去重；访问变化为失去最后授权的用户追加撤权事件。事件内容只负责失效提示，正文和
 评论仍走重新授权的领域查询。事务回滚不会留下通知，重复已确认命令不重复追加事件。
+
+### content_search_pending
+
+`(kind, resource_id)` 是文档或群文件的唯一待投影槽，`revision` 保存相同业务事务中提交的最新资源
+修订。新建、正文更新、改名、移动、追加文件版本和删除只推进对应资源的槽，不追加另一份无限增长的
+事件历史。索引读取当前对象和修订，持久提交后按精确 `(kind, resource_id, revision)` 删除 pending；
+确认旧修订不会删除并发新写入。客户端失效仍复用 Document、群文件和消息的既有事件流。
+
+文档与群文件的派生索引位于 `lucene-index-assets`，聊天附件名称字段保留在消息 `lucene-index`。
+两个目录分别从 PostgreSQL 当前对象和 MessageStore 当前消息恢复；它们不是正文或文件的备份。
+启动核对、运行投影和读取权限见[内容与资产搜索](search-and-admin.md#7-内容与资产搜索)。
 
 ## 3. MessageStore
 
@@ -597,6 +609,7 @@ dataset ID 和迁移完成记录，只执行尚未完成的已知迁移。不会
 | `1` | `create_banned_credential_tombstones` | 追加已封禁账号的 refresh token 摘要墓碑表，保留现有凭据及业务资料 |
 | `2` | `create_admin_security` | 追加单实例管理员凭据和有界操作审计表 |
 | `3` | `create_document_comments` | 追加文档评论与创建指纹、分页索引，不改写已有文档正文或修订 |
+| `4` | `create_content_search_pending` | 追加文档与群文件每资源单槽的待投影修订表；现有内容保留，索引由当前对象建立 |
 
 `DatabaseFactory` 在建立业务容器前完成这一步。已有库的启动事务先锁定 `schema_metadata`，再校验
 布局和读取迁移记录；事务使用 `READ_COMMITTED`，等待另一启动事务结束后能看到它刚提交的记录。

@@ -287,7 +287,7 @@ ACL 重新投影 `effectiveRole/policyRevision`；因此旧命令跨后续 remov
 
 最近访问与最近创建的 SQL 只按 steward 和相关 grant 预筛有界候选；Repository 在同一读快照中批量携带候选空间、相关 grant、直属组织与活动祖先事实，
 DocumentAccessControl 再逐项调用 `DocumentAuthorizationPolicy` 的 typed `DocumentCapability.READ` 做最终裁决。SQL 谓词不是授权来源，候选与域裁决不一致时失败关闭。
-这套首页收敛不能被描述为文档搜索；当前尚未实现文档搜索。
+首页列表与内容搜索分别提供入口。`ContentSearchService` 查询文档索引后，在同一 PostgreSQL 读快照中回读当前节点、空间与 typed READ 权限；归档、撤权、删除以及不匹配的 revision 候选不能成为结果。标题与正文由文档自身的 revision 和同事务 pending 投影维护，详见[内容搜索](search-and-admin.md#7-内容与资产搜索)。
 
 归属交接只对当前 steward 开放。个人 owner 必须与 steward 为同一用户；组织 owner 必须是活动节点，steward 始终必须是活动 HUMAN。
 任何进入写事务的 custody 命令先锁定与组织变更共享的 `OrganizationState` 全局围栏，并在围栏内先复查不可变收据；精确命中立即返回。

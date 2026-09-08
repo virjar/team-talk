@@ -6,6 +6,7 @@ import com.virjar.tk.server.domain.message.MessageArchiveCursor
 import com.virjar.tk.server.domain.message.MessageArchiveEntry
 import com.virjar.tk.server.domain.message.MessageArchiveReader
 import com.virjar.tk.server.domain.message.MessageProjectionOperation
+import com.virjar.tk.server.domain.message.MessageAttachmentSearchPolicy
 import com.virjar.tk.server.runtime.RuntimeFailureCollector
 import com.virjar.tk.server.runtime.mergeRuntimeFailure
 import org.apache.lucene.analysis.Analyzer
@@ -218,6 +219,7 @@ internal class SearchIndexArchiveReconciler(
             return Validation.Invalid("generation-missing")
         }
         singleValuedExactTermMismatch(reader)?.let { return Validation.Invalid(it) }
+        attachmentTermMismatch(reader)?.let { return Validation.Invalid(it) }
 
         val searcher = IndexSearcher(reader)
         val mismatch = arrayOfNulls<String>(1)
@@ -292,7 +294,7 @@ internal class SearchIndexArchiveReconciler(
         // 比较过滤使用的所有精确/点字段，而不只是其已存储的诊断。
         // Lucene 原子地写一个文档，而全文的已存储源在上面已比较；
         // 这些检查合在一起覆盖每个当前字段与时间戳排序值。
-        val indexedFieldsQuery = BooleanQuery.Builder()
+        val indexedFields = BooleanQuery.Builder()
             .add(keyQuery, BooleanClause.Occur.FILTER)
             .add(
                 TermQuery(Term(FIELD_SEARCHABLE, if (searchable) SEARCHABLE_TRUE else SEARCHABLE_FALSE)),
@@ -304,8 +306,16 @@ internal class SearchIndexArchiveReconciler(
             .add(LongPoint.newExactQuery(FIELD_SEQUENCE, message.serverSeq), BooleanClause.Occur.FILTER)
             .add(LongPoint.newExactQuery(FIELD_TIMESTAMP, message.timestamp), BooleanClause.Occur.FILTER)
             .add(IntPoint.newExactQuery(FIELD_MESSAGE_TYPE, message.messageType), BooleanClause.Occur.FILTER)
-            .build()
-        if (searcher.count(indexedFieldsQuery) != 1) return "indexed-field-mismatch"
+            .add(
+                TermQuery(Term(FIELD_ATTACHMENT_MANIFEST, MessageAttachmentSearchPolicy.manifest(message))),
+                BooleanClause.Occur.FILTER,
+            )
+        ATTACHMENT_SEARCH_TYPES.forEach { fileType ->
+            MessageAttachmentSearchPolicy.names(message, fileType).forEach { name ->
+                indexedFields.add(TermQuery(Term(attachmentNameField(fileType), name)), BooleanClause.Occur.FILTER)
+            }
+        }
+        if (searcher.count(indexedFields.build()) != 1) return "indexed-field-mismatch"
 
         val leaves = searcher.indexReader.leaves()
         val leafIndex = ReaderUtil.subIndex(documentId, leaves)
@@ -314,6 +324,36 @@ internal class SearchIndexArchiveReconciler(
         val localDocumentId = documentId - leaf.docBase
         if (!timestampValues.advanceExact(localDocumentId) || timestampValues.longValue() != message.timestamp) {
             return "timestamp-sort-value-mismatch"
+        }
+        val keyValues = DocValues.getSorted(leaf.reader(), FIELD_MESSAGE_KEY_SORT)
+        if (!keyValues.advanceExact(localDocumentId) || keyValues.lookupOrd(keyValues.ordValue()).utf8ToString() != projectionKey) {
+            return "message-key-sort-value-mismatch"
+        }
+        return null
+    }
+
+    /** 每个附加词项必须能在该文档的规范名称集合中找到；不允许非 stored 的污染词项。 */
+    private fun attachmentTermMismatch(reader: DirectoryReader): String? {
+        for (fileType in ATTACHMENT_SEARCH_TYPES) {
+            val field = attachmentNameField(fileType)
+            for (leaf in reader.leaves()) {
+                val leafReader = leaf.reader()
+                val terms = leafReader.terms(field) ?: continue
+                val stored = leafReader.storedFields()
+                val iterator = terms.iterator()
+                while (true) {
+                    val term = iterator.next() ?: break
+                    val expectedName = term.utf8ToString()
+                    val postings = iterator.postings(null, PostingsEnum.NONE.toInt())
+                    var documentId = postings.nextDoc()
+                    while (documentId != DocIdSetIterator.NO_MORE_DOCS) {
+                        if (leafReader.liveDocs?.get(documentId) != false &&
+                            expectedName !in stored.document(documentId, setOf(field)).getValues(field)
+                        ) return "indexed-attachment-name-mismatch"
+                        documentId = postings.nextDoc()
+                    }
+                }
+            }
         }
         return null
     }
@@ -375,6 +415,7 @@ internal class SearchIndexArchiveReconciler(
             FIELD_CLIENT_MESSAGE_ID,
             FIELD_CHAT_ID,
             FIELD_SENDER_UID,
+            FIELD_ATTACHMENT_MANIFEST,
         )
     }
 }

@@ -12,7 +12,7 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 5. 注册、登录和 refresh 属于 TCP AUTH 握手，不属于下列 RPC。
 6. 普通消息发送使用 MESSAGE / MESSAGE_ACK，不通过 `message` RPC。
 
-当前表描述源码契约：0.0.1 已冻结 protocol 0.1，新增文档读取和评论使用待发行 protocol 0.2；正式事实以
+当前表描述源码契约：0.0.1 已冻结 protocol 0.1，新增文档读取、评论和内容搜索使用待发行 protocol 0.2；正式事实以
 不可覆盖的发行快照为准。同一协议 major 内，已发行契约和编号不得修改或复用，同一待发行批次共用 minor 2；
 只有明确的新协议 major 才能重整编号空间。私有 `snapshot` 与 `private-first` 不冻结待发布契约，
 正式产品发行才登记新的不可覆盖快照，流程见[统一发行](../07-operations/releasing.md)。
@@ -323,10 +323,35 @@ regrant、ban 或 archive 复活/删除权限。同 ID 改写 payload、或新 o
 复用 ID 但改写 payload，或以陈旧 custodyRevision 发起新命令，统一返回 `409`。新 operationId 的 owner/steward 与锁内当前事实完全相同时返回 `400` 且不保存收据；修正为真实交接可复用该 ID。组织节点归档时若仍持有活动空间则返回业务拒绝，必须先交接归属。
 
 首页两类列表都限制 `limit` 为 1..50，并只返回调用者当前仍可访问的活动空间与活动文档。SQL 仅预筛候选；同一读快照还会携带批量空间/grant/组织访问快照，并由
-`DocumentAuthorizationPolicy` 以 typed `DocumentCapability.READ` 做最终裁决。它们不是文档搜索，当前协议没有文档搜索 RPC。创建文档时，
+`DocumentAuthorizationPolicy` 以 typed `DocumentCapability.READ` 做最终裁决。它们不是文档搜索；标题和正文检索使用独立的 `contentSearch.search`。创建文档时，
 创建者的最近访问记录与文档、首个修订在同一事务中写入；后续成功打开正文会更新时间，列表按该服务端时间排序。最近创建按所有可访问空间的 `createdAt` 排序，并非“我创建
 的文档”。`DocumentHomeItem` 只携带有界摘要、空间、创建人和时间元数据，正文仍通过 `getDocument`
 按需读取。
+
+## contentSearch
+
+本服务与 `ContentSearchRequest` / `ContentSearchHit` / `ContentSearchPage` 属于待发行 protocol 0.2，
+产品展示版本仍为 0.0.1。
+
+| ID | 方法 | 参数 | 返回 |
+|---:|---|---|---|
+| 1 | `search` | `ContentSearchRequest(kind, keyword, scopeId, fileType, limit, cursor?)` | `ContentSearchPage(items, nextCursor?)` |
+
+`kind` 为文档 `1`、群文件 `2` 或聊天附件 `3`，每次请求只查一个领域。空 `scopeId` 查询当前可访问
+范围，非空则限定到文档空间或聊天。`fileType` 为全部 `0`、图片 `1`、视频 `2`、音频 `3`、其他文件
+`4`，文档只接受全部类型。关键词最多 1,000 字符且不含控制字符；页大小默认 20、上限 50，游标最多
+512 字符，只能原样续查同一账号、领域、关键词、范围与类型。空页可以携带继续游标，不能以空列表
+替代终页判断。
+
+文档检索标题与当前正文；群文件和聊天附件检索不区分大小写的字面文件名片段，文件类型依据当前
+MIME。命中携带有界标题、摘要、来源名称、revision 和时间；文件另有 MIME 与大小，不包含正文或
+FileStore path。文档和群文件 `targetId` 是对象 ID；聊天附件是 canonical path 的 SHA-256 小写
+hex，联合 `scopeId + serverSeq` 定位，每条消息内按 path 去重且不包含缩略图或表情。
+聊天命中的 revision 是消息投影修订，时间沿用不可变的消息时间。
+
+搜索摘要不构成权限凭据。SDK 打开时通过领域 RPC 重新读取当前文档、群文件或精确消息，并核对
+聊天主附件身份；删除、撤回或撤权后拒绝旧结果。下载还需当前 HTTP 附件授权。完整查询、分页和恢复
+边界见[内容与资产搜索](../06-server/search-and-admin.md#7-内容与资产搜索)。
 
 ## documentComment
 

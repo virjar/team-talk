@@ -761,6 +761,15 @@ private object ImmediateNoOpUnitOfWork : PgUnitOfWork {
 }
 
 private object NoOpMessageSearch : MessageSearch {
+    override fun searchAttachments(
+        query: String,
+        chatIds: Set<String>,
+        fileType: Int,
+        limit: Int,
+        after: com.virjar.tk.server.domain.message.MessageAttachmentSearchPosition?,
+        includeAfter: Boolean,
+    ) = com.virjar.tk.server.domain.message.MessageAttachmentSearchPage(emptyList(), false)
+
     override fun applyProjection(
         operation: com.virjar.tk.server.domain.message.MessageProjectionOperation,
         text: String?,

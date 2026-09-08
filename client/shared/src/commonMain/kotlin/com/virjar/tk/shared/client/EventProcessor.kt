@@ -76,6 +76,13 @@ class EventProcessor(
     private val _documentChanges = MutableStateFlow(DocumentProjectionChange())
     val documentChanges: StateFlow<DocumentProjectionChange> = _documentChanges.asStateFlow()
 
+    private val _contentSearchChanges = MutableStateFlow(ContentSearchInvalidation())
+    val contentSearchChanges: StateFlow<ContentSearchInvalidation> = _contentSearchChanges.asStateFlow()
+
+    private fun invalidateContentSearch(vararg kinds: Int) {
+        _contentSearchChanges.value = _contentSearchChanges.value.advance(*kinds)
+    }
+
     private fun publishDocumentChange(change: DocumentChangedPayload? = null) {
         _documentChanges.value = DocumentProjectionChange(_documentChanges.value.sequence + 1L, change)
     }
@@ -283,6 +290,7 @@ class EventProcessor(
             true
         }
         if (!newlyClosed) return
+        invalidateContentSearch()
         stopped = true
         started = false
         // 取消是建议性的；上面的发布代际才是硬边界。
@@ -350,6 +358,7 @@ class EventProcessor(
             _lastEventId.value = applied.cursor
             conversationsDirty.value = false
             publishDocumentChange()
+            invalidateContentSearch()
             _lastEventId.value
         }
     }
@@ -464,6 +473,7 @@ class EventProcessor(
                         markConversationsDirty()
                     }
                     _chatEvents.tryEmit(notifyType to chat)
+                    invalidateContentSearch(ContentSearchRequest.KIND_GROUP_FILE, ContentSearchRequest.KIND_CHAT_ATTACHMENT)
                 }
             }
 
@@ -473,6 +483,7 @@ class EventProcessor(
                     val tombstone = { localCache.deleteChat(chat.chatId) }
                     durableChatTombstoneSink?.invoke(chat.chatId, tombstone) ?: tombstone()
                     _chatEvents.tryEmit(notifyType to chat)
+                    invalidateContentSearch(ContentSearchRequest.KIND_GROUP_FILE, ContentSearchRequest.KIND_CHAT_ATTACHMENT)
                 }
             }
 
@@ -485,6 +496,7 @@ class EventProcessor(
                 publicationGate.use(publicationLease) {
                     localCache.upsertChat(chat)
                     _chatEvents.tryEmit(notifyType to chat)
+                    invalidateContentSearch(ContentSearchRequest.KIND_GROUP_FILE, ContentSearchRequest.KIND_CHAT_ATTACHMENT)
                 }
             }
 
@@ -502,6 +514,8 @@ class EventProcessor(
                         sink(eventId, message)
                     }
                     _messageEvents.tryEmit(message)
+                    // 编辑/撤回可能移除最后一个附件，因此不能只检查当前 body 是否含附件。
+                    invalidateContentSearch(ContentSearchRequest.KIND_CHAT_ATTACHMENT)
                 }
             }
 
@@ -551,6 +565,7 @@ class EventProcessor(
                         )
                     }
                     _groupFileChanges.tryEmit(change)
+                    invalidateContentSearch(ContentSearchRequest.KIND_GROUP_FILE)
                 }
             }
             NotifyType.DOCUMENT_CHANGED -> {
@@ -558,6 +573,9 @@ class EventProcessor(
                 publicationGate.use(publicationLease) {
                     localCache.invalidateDocumentProjection(change)
                     publishDocumentChange(change)
+                    if (change.kind != DocumentChangedPayload.COMMENTS_CHANGED) {
+                        invalidateContentSearch(ContentSearchRequest.KIND_DOCUMENT)
+                    }
                 }
             }
             NotifyType.MESSAGE_REACTION -> {
@@ -589,6 +607,7 @@ class EventProcessor(
                         _organizationEvents.tryEmit(required)
                         localCache.invalidateDocumentProjection()
                         publishDocumentChange()
+                        invalidateContentSearch()
                     }
                 }
             }

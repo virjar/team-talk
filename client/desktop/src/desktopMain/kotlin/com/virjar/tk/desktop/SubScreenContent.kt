@@ -9,6 +9,7 @@ import com.virjar.tk.app.ui.screen.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
+import com.virjar.tk.shared.repository.ResolvedContentSearchHit
 
 /**
  * 单个子屏幕的渲染器（参数驱动，不读写全局导航状态）。
@@ -33,6 +34,7 @@ internal fun SubScreenContent(
     back: () -> Unit,
     openChatAndClose: (chatId: String) -> Unit,
     openMessageAndClose: (chatId: String, serverSeq: Long) -> Unit,
+    openDocumentAndClose: (spaceId: String, documentId: String) -> Unit,
     openUserProfile: (uid: String) -> Unit,
     onLeaveGroup: (chatId: String) -> Unit,
     showBack: Boolean,
@@ -46,6 +48,7 @@ internal fun SubScreenContent(
     val conversations by data.conversationViewModel.conversations.collectAsState()
     val conversationPeerUsers by data.conversationViewModel.peerUsers.collectAsState()
     val globalSearchUsers by data.globalSearchUserViewModel.users.collectAsState()
+    val contentSearchChanges by data.discovery.contentSearchChanges.collectAsState()
     val actionScope = rememberCoroutineScope()
     val textPreviewEventState = remember { mutableStateOf<DesktopTextAttachmentPreviewEvent?>(null) }
     var textPreviewEvent by textPreviewEventState
@@ -380,6 +383,25 @@ internal fun SubScreenContent(
             contacts = contacts,
             conversationPeerUsers = conversationPeerUsers,
             canonicalSearchUsers = globalSearchUsers,
+            contentSearchChanges = contentSearchChanges,
+            searchContent = { request ->
+                admittedSuspend(onClosed = { throw CancellationException("Search view closed") }) {
+                    data.discovery.searchContent(request)
+                }
+            },
+            onContentClick = { hit ->
+                admittedSuspend(onClosed = { throw CancellationException("Search view closed") }) {
+                    when (val resolved = data.discovery.resolveContent(hit)) {
+                        is ResolvedContentSearchHit.Document -> presentationGate.runIfOpen {
+                            openDocumentAndClose(resolved.document.spaceId, resolved.document.documentId)
+                        }
+                        is ResolvedContentSearchHit.GroupFile -> presentationGate.runIfOpen {
+                            fileDownloads.openOrDownload(requireNotNull(resolved.entry.attachment))
+                        }
+                        is ResolvedContentSearchHit.ChatMessage -> openMessageIfOpen(resolved.message.chatId, resolved.message.serverSeq)
+                    }
+                }
+            },
             onDisplayedSearchUserUidsChange = data.globalSearchUserViewModel::bindDisplayedUserUids,
             searchMessages = { query ->
                 admittedSuspend(onClosed = { emptyList() }) {

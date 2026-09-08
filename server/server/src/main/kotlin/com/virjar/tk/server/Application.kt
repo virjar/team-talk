@@ -270,6 +270,9 @@ internal fun Application.module(
         // reader, so start performs the full bounded audit/rebuild before publishing a writer.
         val searchIndex = resources.own("search index", koin.get<SearchIndex>()) { it.stop() }
         searchIndex.start()
+        val contentSearch = resources.own("content asset index", koin.get<com.virjar.tk.server.infra.search.ContentAssetSearchIndex>()) { it.close() }
+        contentSearch.start()
+        contentSearch.recoverBeforeServing()
         val clientTelemetryEvents = resources.own(
             "client telemetry event store",
             koin.get<ClientTelemetryEventStore>(),
@@ -345,6 +348,18 @@ internal fun Application.module(
         )
         maintenance.start(
             listOf(
+                MaintenanceWorker("content-search-projection") {
+                    while (isActive) {
+                        try {
+                            contentSearch.catchUp()
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Exception) {
+                            logger.warn("Content search projection remains pending", failure)
+                        }
+                        delay(1_000L)
+                    }
+                },
                 MaintenanceWorker("sync-event-retention") {
                     while (isActive) {
                         val nextDelayMillis = try {

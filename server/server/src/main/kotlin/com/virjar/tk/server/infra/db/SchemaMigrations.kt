@@ -38,6 +38,9 @@ private val schemaMigrations = listOf(
     SchemaMigration("create_document_comments") {
         SchemaUtils.create(DocumentComments)
     },
+    SchemaMigration("create_content_search_pending") {
+        SchemaUtils.create(ContentSearchPending)
+    },
 )
 
 /** Caller owns the schema_metadata lock; DDL and its completion receipt commit in the same transaction. */

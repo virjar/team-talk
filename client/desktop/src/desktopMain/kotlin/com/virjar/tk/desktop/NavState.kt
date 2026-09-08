@@ -6,6 +6,7 @@ import androidx.compose.ui.unit.dp
 import com.virjar.tk.shared.client.ClientSession
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.app.navigation.AppDataState
+import com.virjar.tk.app.navigation.MainTab
 import com.virjar.tk.app.navigation.ScreenDataKey
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftStore
 import com.virjar.tk.app.viewmodel.MessageFocusTarget
@@ -156,6 +157,12 @@ class DesktopNav(
         inspectorStack = emptyList()
         mainPaneScreen = SubScreen.GlobalSearch
         if (requestFocus) searchFocusNonce++
+    }
+
+    fun openDocument(spaceId: String, documentId: String) {
+        closeMainPane()
+        selectedTab = MainTab.DOCUMENTS.ordinal
+        documents.openDocumentRef(spaceId, documentId)
     }
 
     fun openProfile(uid: String) {

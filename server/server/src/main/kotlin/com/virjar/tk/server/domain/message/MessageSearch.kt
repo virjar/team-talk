@@ -37,7 +37,32 @@ interface MessageSearch {
         limit: Int = 20,
         offset: Int = 0,
     ): MessageSearchPage
+
+    /**
+     * 先按成员范围、文件名和 MIME 分类筛选消息候选，再由领域服务展开当前主附件。
+     * [after] 使用不可变消息时间与身份；[includeAfter] 允许继续同一消息尚未返回的附件。
+     */
+    fun searchAttachments(
+        query: String,
+        chatIds: Set<String>,
+        fileType: Int,
+        limit: Int,
+        after: MessageAttachmentSearchPosition? = null,
+        includeAfter: Boolean = false,
+    ): MessageAttachmentSearchPage
 }
+
+data class MessageAttachmentSearchPosition(val timestamp: Long, val messageKey: String)
+
+data class MessageAttachmentSearchHit(
+    val chatId: String,
+    val seq: Long,
+    val revision: Long,
+    val position: MessageAttachmentSearchPosition,
+    val attachmentManifest: String,
+)
+
+data class MessageAttachmentSearchPage(val hits: List<MessageAttachmentSearchHit>, val hasMore: Boolean)
 
 data class MessageSearchPage(
     val total: Int,

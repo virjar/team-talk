@@ -66,6 +66,8 @@ import com.virjar.tk.app.viewmodel.MessageFocusTarget
 import kotlinx.coroutines.flow.MutableStateFlow
 import com.virjar.tk.protocol.body.OfficeRefBody
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import com.virjar.tk.shared.repository.ResolvedContentSearchHit
 
 /**
  * 已认证状态下的 Android 主导航外壳。
@@ -201,6 +203,8 @@ internal fun AndroidMainAppContent(
                     navController = navController,
                     dataState = dataState,
                     actionAdmission = actionAdmission,
+                    resourceOwner = resourceOwner,
+                    requestedDocument = requestedDocument,
                 )
                 contactsDestination(
                     navController = navController,
@@ -304,6 +308,8 @@ private fun NavGraphBuilder.searchDestination(
     navController: NavHostController,
     dataState: AppDataState,
     actionAdmission: UiActionAdmission,
+    resourceOwner: AndroidAuthenticatedResourceOwner,
+    requestedDocument: MutableStateFlow<OfficeRefBody?>,
 ) {
     suspend fun <T> admittedAction(onClosed: () -> T, action: suspend () -> T): T =
         dataState.runAdmittedUiAction(actionAdmission, onClosed, action)
@@ -312,6 +318,10 @@ private fun NavGraphBuilder.searchDestination(
         val peerUsers by dataState.conversationViewModel.peerUsers.collectAsState()
         val searchUsers by dataState.globalSearchUserViewModel.users.collectAsState()
         val contacts by dataState.contactViewModel.contacts.collectAsState()
+        val contentSearchChanges by dataState.discovery.contentSearchChanges.collectAsState()
+        val downloads = rememberContentSearchDownloads(dataState, resourceOwner) { attachment ->
+            actionAdmission.runIfOpen { navController.navigate(Routes.textAttachmentPreview(attachment)) }
+        }
         var query by rememberSaveable { mutableStateOf("") }
         GlobalSearchScreen(
             query = query,
@@ -320,6 +330,36 @@ private fun NavGraphBuilder.searchDestination(
             contacts = contacts,
             conversationPeerUsers = peerUsers,
             canonicalSearchUsers = searchUsers,
+            contentSearchChanges = contentSearchChanges,
+            searchContent = { request ->
+                admittedAction(onClosed = { throw CancellationException("Search view closed") }) {
+                    dataState.discovery.searchContent(request)
+                }
+            },
+            onContentClick = { hit ->
+                admittedAction(onClosed = { throw CancellationException("Search view closed") }) {
+                    when (val resolved = dataState.discovery.resolveContent(hit)) {
+                        is ResolvedContentSearchHit.Document -> actionAdmission.runIfOpen {
+                            val document = resolved.document
+                            requestedDocument.value = OfficeRefBody(OfficeRefBody.REF_TYPE_DOCUMENT,
+                                document.spaceId, document.documentId, document.title)
+                            navController.navigate(Routes.HOME) {
+                                popUpTo(Routes.HOME) { inclusive = false }
+                                launchSingleTop = true
+                            }
+                        }
+                        is ResolvedContentSearchHit.GroupFile -> actionAdmission.runIfOpen {
+                            checkNotNull(downloads).openOrDownload(requireNotNull(resolved.entry.attachment))
+                        }
+                        is ResolvedContentSearchHit.ChatMessage -> actionAdmission.runIfOpen {
+                            val message = resolved.message
+                            if (dataState.prepareChat(message.chatId)) {
+                                navController.navigate(Routes.chat(message.chatId, message.serverSeq)) { popUpTo(Routes.HOME) }
+                            }
+                        }
+                    }
+                }
+            },
             onDisplayedSearchUserUidsChange =
                 dataState.globalSearchUserViewModel::bindDisplayedUserUids,
             searchMessages = { queryText ->

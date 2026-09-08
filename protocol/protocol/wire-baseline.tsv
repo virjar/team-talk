@@ -101,6 +101,7 @@ rpc	contact/6	0	-	active	setRemark(friendUid:kotlin.String,remark:kotlin.String?
 rpc	contact/7	0	-	active	blacklist(targetUid:kotlin.String):kotlin.Unit
 rpc	contact/8	0	-	active	removeFromBlacklist(targetUid:kotlin.String):kotlin.Unit
 rpc	contact/9	0	-	active	listPendingApplies():List<com.virjar.tk.protocol.model.ContactApply>
+rpc	contentSearch/1	2	-	active	search(request:com.virjar.tk.protocol.model.ContentSearchRequest):com.virjar.tk.protocol.model.ContentSearchPage
 rpc	conversation/1	0	-	active	listPage(request:com.virjar.tk.protocol.model.ConversationPageRequest):com.virjar.tk.protocol.model.ConversationPage
 rpc	conversation/2	0	-	active	setDraft(chatId:kotlin.String,draft:kotlin.String?):kotlin.Unit
 rpc	conversation/3	0	-	active	setPin(chatId:kotlin.String,pinned:kotlin.Boolean):kotlin.Unit
@@ -197,6 +198,9 @@ type	com.virjar.tk.protocol.model.Contact	0	-	active	CLASS(uid:kotlin.String,fri
 type	com.virjar.tk.protocol.model.ContactApply	0	-	active	CLASS(id:kotlin.Long,fromUid:kotlin.String,toUid:kotlin.String,token:kotlin.String?,remark:kotlin.String?,status:kotlin.Int,createdAt:kotlin.Long,fromUser:com.virjar.tk.protocol.model.User?)
 type	com.virjar.tk.protocol.model.ContactApplyLookup	0	-	active	CLASS(record:com.virjar.tk.protocol.model.ContactApplyRecord?)
 type	com.virjar.tk.protocol.model.ContactApplyRecord	0	-	active	CLASS(id:kotlin.Long,fromUid:kotlin.String,toUid:kotlin.String,direction:kotlin.Int,token:kotlin.String?,remark:kotlin.String?,status:kotlin.Int,createdAt:kotlin.Long,updatedAt:kotlin.Long,peerUser:com.virjar.tk.protocol.model.User?)
+type	com.virjar.tk.protocol.model.ContentSearchHit	2	-	active	CLASS(kind:kotlin.Int,scopeId:kotlin.String,targetId:kotlin.String,title:kotlin.String,snippet:kotlin.String,scopeName:kotlin.String,revision:kotlin.Long,updatedAt:kotlin.Long,mimeType:kotlin.String?,size:kotlin.Long?,serverSeq:kotlin.Long)
+type	com.virjar.tk.protocol.model.ContentSearchPage	2	-	active	CLASS(items:kotlin.collections.List<com.virjar.tk.protocol.model.ContentSearchHit>,nextCursor:kotlin.String?)
+type	com.virjar.tk.protocol.model.ContentSearchRequest	2	-	active	CLASS(kind:kotlin.Int,keyword:kotlin.String,scopeId:kotlin.String,fileType:kotlin.Int,limit:kotlin.Int,cursor:kotlin.String?)
 type	com.virjar.tk.protocol.model.Conversation	0	-	active	CLASS(chatId:kotlin.String,chatType:kotlin.Int,peerUid:kotlin.String?,peerRevision:kotlin.Long?,chatName:kotlin.String?,chatAvatar:com.virjar.tk.protocol.model.Attachment?,lastMessage:kotlin.String?,lastMessageType:kotlin.Int?,lastMsgTimestamp:kotlin.Long?,lastSeq:kotlin.Long,readSeq:kotlin.Long,unreadCount:kotlin.Int,isPinned:kotlin.Boolean,isMuted:kotlin.Boolean,peerReadSeq:kotlin.Long,draft:kotlin.String?)
 type	com.virjar.tk.protocol.model.ConversationPage	0	-	active	CLASS(items:kotlin.collections.List<com.virjar.tk.protocol.model.Conversation>,nextCursor:kotlin.String?)
 type	com.virjar.tk.protocol.model.ConversationPageRequest	0	-	active	CLASS(cursor:kotlin.String?)

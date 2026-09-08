@@ -112,7 +112,7 @@ internal class ExposedDocumentReadStore(
         }
         validateOwnedSpaceCapacity(actorUid)
         val actorAccess = ExposedDocumentActorAccess.read(transaction, actorUid)
-        val relevantGrant = relevantGrantCondition(actorUid, actorAccess)
+        val relevantGrant = relevantDocumentGrantCondition(actorUid, actorAccess)
         val rows = documentSpaceGrantJoin()
             .select(DocumentSpaces.columns)
             .where {
@@ -178,31 +178,6 @@ internal class ExposedDocumentReadStore(
 
     fun findUser(transaction: PgReadTransactionContext, uid: String): User? = transaction.inExposedReadTransaction {
         Users.selectAll().where { Users.uid eq uid }.singleOrNull()?.toDocumentAclUser()
-    }
-
-    private fun relevantGrantCondition(
-        actorUid: String,
-        actorAccess: DocumentActorOrganizationAccess,
-    ): Op<Boolean> {
-        var principalMatches: Op<Boolean> =
-            (DocumentSpaceGrants.principalType eq DocumentSpaceGrant.PRINCIPAL_USER) and
-                (DocumentSpaceGrants.principalId eq actorUid)
-        if (actorAccess.directUnitIds.isNotEmpty()) {
-            principalMatches = principalMatches or (
-                (DocumentSpaceGrants.principalType eq DocumentSpaceGrant.PRINCIPAL_ORGANIZATION_UNIT) and
-                    (DocumentSpaceGrants.includeDescendants eq false) and
-                    (DocumentSpaceGrants.principalId inList actorAccess.directUnitIds)
-                )
-        }
-        if (actorAccess.unitAndAncestorIds.isNotEmpty()) {
-            principalMatches = principalMatches or (
-                (DocumentSpaceGrants.principalType eq DocumentSpaceGrant.PRINCIPAL_ORGANIZATION_UNIT) and
-                    (DocumentSpaceGrants.includeDescendants eq true) and
-                    (DocumentSpaceGrants.principalId inList actorAccess.unitAndAncestorIds)
-                )
-        }
-        return (DocumentSpaceGrants.role greaterEq DocumentSpace.ROLE_VIEWER) and
-            (DocumentSpaceGrants.role lessEq DocumentSpace.ROLE_ADMIN) and principalMatches
     }
 
     private fun listRelevantPageGrants(
@@ -391,7 +366,7 @@ internal class ExposedDocumentReadStore(
         limit: Int,
     ): DocumentHomeAccessSnapshot = transaction.inExposedReadTransaction {
         val actorAccess = ExposedDocumentActorAccess.read(transaction, actorUid)
-        val relevantGrant = relevantGrantCondition(actorUid, actorAccess)
+        val relevantGrant = relevantDocumentGrantCondition(actorUid, actorAccess)
         homeAccessSnapshot(
             records = listRecentDocumentsInternal(actorUid, relevantGrant, limit),
             actorAccess = actorAccess,
@@ -436,7 +411,7 @@ internal class ExposedDocumentReadStore(
         limit: Int,
     ): DocumentHomeAccessSnapshot = transaction.inExposedReadTransaction {
         val actorAccess = ExposedDocumentActorAccess.read(transaction, actorUid)
-        val relevantGrant = relevantGrantCondition(actorUid, actorAccess)
+        val relevantGrant = relevantDocumentGrantCondition(actorUid, actorAccess)
         homeAccessSnapshot(
             records = listRecentlyCreatedDocumentsInternal(actorUid, relevantGrant, limit),
             actorAccess = actorAccess,

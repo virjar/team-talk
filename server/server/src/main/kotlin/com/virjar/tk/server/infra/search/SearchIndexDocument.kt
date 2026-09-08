@@ -2,17 +2,22 @@ package com.virjar.tk.server.infra.search
 
 import com.virjar.tk.server.domain.message.MessageProjectionOperation
 import com.virjar.tk.server.domain.message.MessageTextExtractor
+import com.virjar.tk.server.domain.message.MessageAttachmentSearchPolicy
 import com.virjar.tk.protocol.model.Message
+import com.virjar.tk.protocol.model.ContentSearchRequest
 import org.apache.lucene.document.Document
 import org.apache.lucene.document.Field
 import org.apache.lucene.document.IntPoint
 import org.apache.lucene.document.LongPoint
 import org.apache.lucene.document.NumericDocValuesField
+import org.apache.lucene.document.SortedDocValuesField
 import org.apache.lucene.document.StoredField
 import org.apache.lucene.document.StringField
 import org.apache.lucene.document.TextField
+import org.apache.lucene.util.BytesRef
 
 internal const val FIELD_MESSAGE_KEY = "messageKey"
+internal const val FIELD_MESSAGE_KEY_SORT = "messageKeySort"
 internal const val FIELD_PROJECTION_REVISION = "projectionRevision"
 internal const val FIELD_SEARCHABLE = "searchable"
 internal const val FIELD_CLIENT_MESSAGE_ID = "clientMsgId"
@@ -22,9 +27,12 @@ internal const val FIELD_SENDER_UID = "senderUid"
 internal const val FIELD_TEXT = "text"
 internal const val FIELD_TIMESTAMP = "timestamp"
 internal const val FIELD_MESSAGE_TYPE = "messageType"
+internal const val FIELD_ATTACHMENT_MANIFEST = "attachmentManifest"
+internal fun attachmentNameField(fileType: Int): String = "attachmentName$fileType"
+internal val ATTACHMENT_SEARCH_TYPES = ContentSearchRequest.FILE_TYPE_ALL..ContentSearchRequest.FILE_TYPE_OTHER
 internal const val SEARCHABLE_TRUE = "1"
 internal const val SEARCHABLE_FALSE = "0"
-internal const val SEARCH_INDEX_SCHEMA_VERSION = "2"
+internal const val SEARCH_INDEX_SCHEMA_VERSION = "3"
 internal const val SEARCH_COMMIT_SCHEMA_KEY = "teamtalk.search.schema"
 internal const val SEARCH_COMMIT_GENERATION_KEY = "teamtalk.search.generation"
 
@@ -49,6 +57,7 @@ internal fun buildSearchDocument(
         !text.isNullOrBlank()
     return Document().apply {
         add(StringField(FIELD_MESSAGE_KEY, projectionKey, Field.Store.YES))
+        add(SortedDocValuesField(FIELD_MESSAGE_KEY_SORT, BytesRef(projectionKey)))
         add(StoredField(FIELD_PROJECTION_REVISION, revision))
         add(
             StringField(
@@ -68,6 +77,13 @@ internal fun buildSearchDocument(
         add(NumericDocValuesField(FIELD_TIMESTAMP, message.timestamp))
         add(IntPoint(FIELD_MESSAGE_TYPE, message.messageType))
         add(StoredField(FIELD_MESSAGE_TYPE, message.messageType))
+        val attachmentSource = if (forceTombstone) message.copy(flags = message.flags or Message.FLAG_REVOKED) else message
+        add(StringField(FIELD_ATTACHMENT_MANIFEST, MessageAttachmentSearchPolicy.manifest(attachmentSource), Field.Store.YES))
+        ATTACHMENT_SEARCH_TYPES.forEach { fileType ->
+            MessageAttachmentSearchPolicy.names(attachmentSource, fileType).forEach { name ->
+                add(StringField(attachmentNameField(fileType), name, Field.Store.YES))
+            }
+        }
     }
 }
 
@@ -88,6 +104,7 @@ internal fun searchDocumentMismatch(
         FIELD_CLIENT_MESSAGE_ID to message.clientMsgId,
         FIELD_CHAT_ID to message.chatId,
         FIELD_SENDER_UID to message.senderUid,
+        FIELD_ATTACHMENT_MANIFEST to MessageAttachmentSearchPolicy.manifest(message),
     )
     expectedStrings.forEach { (field, expected) ->
         val fields = document.getFields(field)
@@ -110,6 +127,11 @@ internal fun searchDocumentMismatch(
         if (textFields.size != 1 || textFields.single().stringValue() != text) return "field:$FIELD_TEXT"
     } else if (textFields.isNotEmpty()) {
         return "field:$FIELD_TEXT"
+    }
+    ATTACHMENT_SEARCH_TYPES.forEach { fileType ->
+        if (document.getValues(attachmentNameField(fileType)).toList() != MessageAttachmentSearchPolicy.names(message, fileType)) {
+            return "field:${attachmentNameField(fileType)}"
+        }
     }
     return null
 }

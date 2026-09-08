@@ -250,6 +250,17 @@ organization revision，成员 cursor 还绑定根节点和 recursive 语义。
 `ORGANIZATION_CHANGED(61, revision)`；它只携带 revision，不携带行，终端必须继续用上述分页 RPC
 取得权威快照。
 
+### 内容搜索
+
+待发行 protocol 0.2 的 `contentSearch.search(ContentSearchRequest)` 返回有界 `ContentSearchPage`，
+分别查询文档、群文件或聊天附件。每页最多 50 条，不返回全文、附件路径或命中总数；继续游标绑定
+当前账号和查询条件，空页携带游标时仍可继续读取。`ContentSearchHit` 只表达可见摘要，客户端必须
+重新调用领域读取再打开对象，不能从摘要创建授权或下载地址。聊天附件身份使用消息所在 chat、
+serverSeq 与主附件 canonical path 的 SHA-256 组合，同一消息不重复返回相同 path。
+
+该查询复用文档、群文件、消息和组织的既有变更通知作为失效提示，不增加搜索结果专用持久事件，
+也不通过事件分发全文索引。参数与类型边界见[RPC 参考](../10-reference/rpc-reference.md#contentsearch)。
+
 ## 4. NOTIFY envelope
 
 NOTIFY 表示服务端主动状态变化。概念字段包括：

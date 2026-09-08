@@ -296,7 +296,8 @@ data/
 ├── dataset-id               与 PostgreSQL 共享的 canonical dataset 身份
 ├── pgdata/                  PostgreSQL volume（部署模式）
 ├── rocksdb/                 MessageStore
-├── lucene-index/            可重建消息索引
+├── lucene-index/            可重建消息与聊天附件索引
+├── lucene-index-assets/     可重建文档与群文件索引
 ├── client-telemetry-index/  7日可丢失客户端遥测日志
 ├── connection-trace-index/  7日可丢失服务端连接诊断轨迹
 ├── file-store/rocksdb/      文件元数据、小对象与 uploads 上传事务日志

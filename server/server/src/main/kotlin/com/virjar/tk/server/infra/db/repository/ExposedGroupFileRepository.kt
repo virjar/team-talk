@@ -149,6 +149,7 @@ class ExposedGroupFileRepository(
             if (initialVersion == null) "CREATE_FOLDER" else "CREATE_FILE",
             entry.name,
         )
+        if (entry.kind == GroupFileEntry.KIND_FILE) markContentSearchDirty(transaction, 2, entry.entryId, entry.revision)
         GroupFileEntryWriteResult(entry, changed = true)
     }
 
@@ -223,6 +224,7 @@ class ExposedGroupFileRepository(
             activeVersionBytesDelta = command.attachment.size,
         )
         audit(current.chatId, command.entryId, command.actorUid, "ADD_VERSION", "v$nextVersion")
+        markContentSearchDirty(transaction, 2, command.entryId, Math.addExact(command.expectedRevision, 1L))
         GroupFileEntryWriteResult(requireActiveEntry(command.entryId), changed = true)
     }
 
@@ -268,6 +270,7 @@ class ExposedGroupFileRepository(
             resultVersion = null,
             createdAt = command.updatedAt,
         )
+        if (current.kind == GroupFileEntry.KIND_FILE) markContentSearchDirty(transaction, 2, command.entryId, Math.addExact(command.expectedRevision, 1L))
         audit(current.chatId, command.entryId, command.actorUid, "RENAME", "${current.name} -> ${command.name}")
         requireActiveEntry(command.entryId)
     }
@@ -330,6 +333,7 @@ class ExposedGroupFileRepository(
             activeEntryDelta = -1,
             activeVersionBytesDelta = -releasedBytes,
         )
+        if (current.kind == GroupFileEntry.KIND_FILE) markContentSearchDirty(transaction, 2, command.entryId, Math.addExact(command.expectedRevision, 1L))
         audit(current.chatId, command.entryId, command.actorUid, "DELETE", current.name)
         Math.addExact(command.expectedRevision, 1L)
     }

@@ -195,6 +195,12 @@ private fun SubWindowBody(
                         onClose()
                     }
                 },
+                openDocumentAndClose = { spaceId, documentId ->
+                    presentationGate.runIfOpen {
+                        nav.openDocument(spaceId, documentId)
+                        onClose()
+                    }
+                },
                 openUserProfile = { uid ->
                     presentationGate.runIfOpen {
                         onClose()

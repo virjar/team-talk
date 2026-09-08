@@ -475,6 +475,7 @@ private fun RowScope.MainContentPane(
                 back = presentationGate.guard(nav::closeMainPane),
                 openChatAndClose = presentationGate.guard(nav::openChat),
                 openMessageAndClose = presentationGate.guard(nav::openMessage),
+                openDocumentAndClose = presentationGate.guard(nav::openDocument),
                 openUserProfile = presentationGate.guard(nav::openProfile),
                 onLeaveGroup = {},
                 showBack = mainPaneScreen !is SubScreen.GlobalSearch,
@@ -540,8 +541,7 @@ private fun RowScope.MainContentPane(
                                     reference = body,
                                     onOpen = {
                                         if (body.isDocument) {
-                                            nav.selectedTab = MainTab.DOCUMENTS.ordinal
-                                            nav.documents.openDocumentRef(body.spaceId, body.targetId)
+                                            nav.openDocument(body.spaceId, body.targetId)
                                         } else {
                                             nav.openScreen(SubScreen.GroupFiles(body.spaceId))
                                         }
@@ -682,6 +682,7 @@ private fun BoxScope.ChatInspectorHost(
                     back = presentationGate.guard(nav::popInspector),
                     openChatAndClose = presentationGate.guard(nav::openChat),
                     openMessageAndClose = presentationGate.guard(nav::openMessage),
+                    openDocumentAndClose = presentationGate.guard(nav::openDocument),
                     openUserProfile = presentationGate.guard(nav::openProfile),
                     onLeaveGroup = { chatId ->
                         presentationGate.runIfOpen {

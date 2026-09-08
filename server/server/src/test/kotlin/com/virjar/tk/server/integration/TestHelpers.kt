@@ -276,6 +276,7 @@ class TestEnvironment : AutoCloseable {
             koin.get<SyncEventDispatcher>()
             koin.get<MessageStore>().init()
             koin.get<SearchIndex>().start()
+            koin.get<com.virjar.tk.server.infra.search.ContentAssetSearchIndex>().start()
             check(koin.get<ClientTelemetryEventStore>().start())
             check(koin.get<ConnectionTraceEventStore>().start())
             koin.get<com.virjar.tk.server.infra.storage.FileStore>().init()
@@ -302,6 +303,8 @@ class TestEnvironment : AutoCloseable {
     val chatService: ChatService get() = koin.get()
     val chatStore: ChatStore get() = koin.get()
     val chatAccess: ChatAccess get() = koin.get()
+    val contentSearchService: com.virjar.tk.server.domain.search.ContentSearchService get() = koin.get()
+    val contentAssetIndex: com.virjar.tk.server.infra.search.ContentAssetSearchIndex get() = koin.get()
     val messageService: MessageService get() = koin.get()
     val messageProjector: MessageProjector get() = koin.get()
     val messageStore: MessageStore get() = koin.get()
@@ -501,6 +504,7 @@ class TestEnvironment : AutoCloseable {
             cleanUp { maintenance.close() }
             cleanUp { koin.get<ConnectionTraceEventStore>().close() }
             cleanUp { koin.get<ClientTelemetryEventStore>().close() }
+            cleanUp { koin.get<com.virjar.tk.server.infra.search.ContentAssetSearchIndex>().close() }
             cleanUp { koin.get<SearchIndex>().stop() }
             cleanUp { koin.get<MessageStore>().close() }
             cleanUp { koin.get<com.virjar.tk.server.infra.storage.FileStore>().close() }

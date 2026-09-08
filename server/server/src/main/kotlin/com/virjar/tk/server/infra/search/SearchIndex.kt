@@ -8,7 +8,11 @@ import com.virjar.tk.server.domain.message.MessageProjectionOperation
 import com.virjar.tk.server.domain.message.MessageSearch
 import com.virjar.tk.server.domain.message.MessageSearchHit
 import com.virjar.tk.server.domain.message.MessageSearchPage
+import com.virjar.tk.server.domain.message.MessageAttachmentSearchHit
+import com.virjar.tk.server.domain.message.MessageAttachmentSearchPage
+import com.virjar.tk.server.domain.message.MessageAttachmentSearchPosition
 import com.virjar.tk.server.domain.message.requireValidMessageSearchQuery
+import com.virjar.tk.protocol.model.ContentSearchRequest
 import com.virjar.tk.protocol.model.ConversationWirePolicy
 import com.virjar.tk.server.runtime.RuntimeFailureCollector
 import com.virjar.tk.server.runtime.mergeRuntimeFailure
@@ -320,6 +324,88 @@ class SearchIndex : MessageSearch {
             MessageSearchPage(
                 total = topDocs.totalHits.value.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
                 hits = results,
+            )
+        } finally {
+            resources.searchers.release(searcher)
+        }
+    }
+
+    @Synchronized
+    override fun searchAttachments(
+        query: String,
+        chatIds: Set<String>,
+        fileType: Int,
+        limit: Int,
+        after: MessageAttachmentSearchPosition?,
+        includeAfter: Boolean,
+    ): MessageAttachmentSearchPage {
+        requireValidMessageSearchQuery(query)
+        require(fileType in ContentSearchRequest.FILE_TYPE_ALL..ContentSearchRequest.FILE_TYPE_OTHER)
+        require(limit in 1 until MAX_MESSAGE_SEARCH_COLLECTION_WINDOW)
+        require(chatIds.size <= MAX_MESSAGE_SEARCH_CHAT_FILTERS && chatIds.all(::isCanonicalSearchIdentity))
+        require(after == null || after.timestamp >= 0L && after.messageKey.length in 1..128 &&
+            after.messageKey.none(Char::isISOControl))
+        // 这个入口只有终端用户语义；空授权集合绝不复用管理消息搜索的全量含义。
+        if (chatIds.isEmpty()) return MessageAttachmentSearchPage(emptyList(), false)
+        val resources = checkNotNull(opened) { "Search index is not running" }
+        resources.searchers.maybeRefreshBlocking()
+        val searcher = resources.searchers.acquire()
+        return try {
+            val builder = BooleanQuery.Builder()
+                .add(TermInSetQuery(FIELD_CHAT_ID, chatIds.map(::BytesRef)), BooleanClause.Occur.FILTER)
+            val escaped = buildString {
+                append('*')
+                query.lowercase().forEach { character ->
+                    if (character == '*' || character == '?' || character == '\\') append('\\')
+                    append(character)
+                }
+                append('*')
+            }
+            // 每个 MIME 分类拥有独立名称词项，避免 A 附件的名称与 B 附件的 MIME 拼出伪命中。
+            builder.add(WildcardQuery(Term(attachmentNameField(fileType), escaped)), BooleanClause.Occur.FILTER)
+            after?.let { position ->
+                val continuation = BooleanQuery.Builder()
+                if (position.timestamp > 0L) {
+                    continuation.add(
+                        LongPoint.newRangeQuery(FIELD_TIMESTAMP, 0L, position.timestamp - 1L),
+                        BooleanClause.Occur.SHOULD,
+                    )
+                }
+                continuation.add(
+                    BooleanQuery.Builder()
+                        .add(LongPoint.newExactQuery(FIELD_TIMESTAMP, position.timestamp), BooleanClause.Occur.FILTER)
+                        .add(
+                            TermRangeQuery.newStringRange(FIELD_MESSAGE_KEY, position.messageKey, null, includeAfter, false),
+                            BooleanClause.Occur.FILTER,
+                        ).build(),
+                    BooleanClause.Occur.SHOULD,
+                )
+                builder.add(continuation.setMinimumNumberShouldMatch(1).build(), BooleanClause.Occur.FILTER)
+            }
+            val sort = Sort(
+                SortField(FIELD_TIMESTAMP, SortField.Type.LONG, true),
+                SortField(FIELD_MESSAGE_KEY_SORT, SortField.Type.STRING),
+            )
+            val top = searcher.search(builder.build(), limit + 1, sort)
+            val stored = searcher.storedFields()
+            MessageAttachmentSearchPage(
+                top.scoreDocs.take(limit).map { hit ->
+                    val document = stored.document(hit.doc, setOf(
+                        FIELD_CHAT_ID, FIELD_SEQUENCE, FIELD_PROJECTION_REVISION,
+                        FIELD_TIMESTAMP, FIELD_MESSAGE_KEY, FIELD_ATTACHMENT_MANIFEST,
+                    ))
+                    MessageAttachmentSearchHit(
+                        chatId = document.get(FIELD_CHAT_ID),
+                        seq = document.getField(FIELD_SEQUENCE).numericValue().toLong(),
+                        revision = document.getField(FIELD_PROJECTION_REVISION).numericValue().toLong(),
+                        position = MessageAttachmentSearchPosition(
+                            document.getField(FIELD_TIMESTAMP).numericValue().toLong(),
+                            document.get(FIELD_MESSAGE_KEY),
+                        ),
+                        attachmentManifest = document.get(FIELD_ATTACHMENT_MANIFEST),
+                    )
+                },
+                hasMore = top.scoreDocs.size > limit,
             )
         } finally {
             resources.searchers.release(searcher)

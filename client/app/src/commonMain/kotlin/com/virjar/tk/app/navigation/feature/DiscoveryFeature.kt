@@ -4,6 +4,10 @@ import com.virjar.tk.shared.AppError
 import com.virjar.tk.shared.client.ClientSession
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.User
+import com.virjar.tk.protocol.model.ContentSearchHit
+import com.virjar.tk.protocol.model.ContentSearchPage
+import com.virjar.tk.protocol.model.ContentSearchRequest
+import com.virjar.tk.shared.repository.ResolvedContentSearchHit
 import com.virjar.tk.app.navigation.UiLocalDataBoundary
 
 /** 无状态的搜索、单聊和转发用例。 */
@@ -12,6 +16,14 @@ class DiscoveryFeature internal constructor(
     private val reportError: (Throwable, String) -> Unit,
     private val localData: UiLocalDataBoundary,
 ) {
+    val contentSearchChanges get() = session.contentSearchRepo.changes
+
+    suspend fun searchContent(request: ContentSearchRequest): ContentSearchPage =
+        localData.run { session.contentSearchRepo.search(request).getOrThrow() }
+
+    suspend fun resolveContent(hit: ContentSearchHit): ResolvedContentSearchHit =
+        localData.run { session.contentSearchRepo.resolve(hit).getOrThrow() }
+
     suspend fun startPersonalChat(uid: String): String? = try {
         localData.run { session.chatRepo.createPersonalChat(uid).getOrThrow().chatId }
     } catch (e: AppError) {

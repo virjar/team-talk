@@ -139,6 +139,7 @@ import com.virjar.tk.server.infra.db.repository.ExposedContactRepository
 import com.virjar.tk.server.infra.db.repository.ExposedConversationRepository
 import com.virjar.tk.server.infra.db.repository.ExposedCredentialRepository
 import com.virjar.tk.server.infra.db.repository.ExposedDeviceRepository
+import com.virjar.tk.server.infra.db.repository.ExposedContentAssetRepository
 import com.virjar.tk.server.infra.db.repository.ExposedDocumentRepository
 import com.virjar.tk.server.infra.db.repository.ExposedDocumentAttachmentReferences
 import com.virjar.tk.server.infra.db.repository.ExposedDocumentCustodyAdministrationRepository
@@ -178,6 +179,7 @@ internal fun createServerModule(
     tcpHealthProbeConfiguration: TcpHealthProbeConfiguration,
     messageStorePath: String = Environment.rocksdbDir.absolutePath,
     searchIndexPath: File = Environment.luceneIndexDir,
+    contentSearchIndexPath: File = File(searchIndexPath.absolutePath + "-assets"),
     clientTelemetryIndexPath: File = Environment.clientTelemetryIndexDir,
     connectionTraceIndexPath: File = Environment.connectionTraceIndexDir,
     fileStoreDbPath: String = Environment.fileStoreRocksdbDir.absolutePath,
@@ -210,6 +212,12 @@ internal fun createServerModule(
         )
     }
     single { SearchIndex(searchIndexPath, get<MessageArchiveReader>()) }
+    single<com.virjar.tk.server.domain.search.ContentAssetRepository> { ExposedContentAssetRepository(get()) }
+    single { com.virjar.tk.server.infra.search.ContentAssetSearchIndex(contentSearchIndexPath, syncDatasetId, get()) }
+    single<com.virjar.tk.server.domain.search.ContentAssetIndex> { get<com.virjar.tk.server.infra.search.ContentAssetSearchIndex>() }
+    single<com.virjar.tk.server.domain.search.ContentAssetProjectionRecovery> { get<com.virjar.tk.server.infra.search.ContentAssetSearchIndex>() }
+    single { com.virjar.tk.server.domain.search.ContentSearchService(get(), get(), get(), get(), get(), get()) }
+
     single { BCryptPasswordHasher() }
     single { authenticationAttemptGuardFactory() }
     single<PasswordHasher> { get<BCryptPasswordHasher>() }
@@ -495,6 +503,9 @@ internal fun createServerModule(
             register(GroupFileRpcContract.SERVICE) { session -> GroupFileRpcImpl(session.uid, get()) }
             register(com.virjar.tk.protocol.rpc.gen.DocumentCommentRpcContract.SERVICE) { session ->
                 com.virjar.tk.server.protocol.rpc.DocumentCommentRpcImpl(session.uid, get())
+            }
+            register(com.virjar.tk.protocol.rpc.gen.ContentSearchRpcContract.SERVICE) { session ->
+                com.virjar.tk.server.protocol.rpc.ContentSearchRpcImpl(session.uid, get())
             }
             register(DocumentRpcContract.SERVICE) { session -> DocumentRpcImpl(session.uid, get()) }
             register(SyncRpcContract.SERVICE) { session ->

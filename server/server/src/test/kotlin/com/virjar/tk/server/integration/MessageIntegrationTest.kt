@@ -269,7 +269,7 @@ class MessageIntegrationTest {
         val allowedChat = ctx.chatService.createPersonalChat(searchingUser, allowedPeer)
         val secretChat = ctx.chatService.createPersonalChat(secretOwner, secretPeer)
         val secretSeq = sendText(secretOwner, secretChat.chatId, "must stay in the secret chat")
-        val poisonedSearch = object : MessageSearch {
+        val poisonedSearch = object : MessageSearch by ctx.searchIndex {
             override fun applyProjection(operation: MessageProjectionOperation, text: String?): Boolean = false
 
             override fun search(

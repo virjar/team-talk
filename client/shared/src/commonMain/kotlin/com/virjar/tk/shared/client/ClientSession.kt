@@ -61,6 +61,7 @@ class ClientSession internal constructor(
     private val ownedGroupFileRepo: GroupFileRepository,
     private val ownedDocumentRepo: DocumentRepository,
     private val ownedDocumentCommentRepo: com.virjar.tk.shared.repository.DocumentCommentRepository,
+    private val ownedContentSearchRepo: ContentSearchRepository,
     private val ownedHttpAuthExpiredRouter: SessionHttpAuthExpiredRouter,
     private val ownedGroupBotManagementRepo: GroupBotManagementRepository,
     /** 发送队列（断线排队重连补发，状态机回写 localCache） */
@@ -127,6 +128,7 @@ class ClientSession internal constructor(
     val groupFileRepo: GroupFileRepository get() = businessResource(ownedGroupFileRepo)
     val documentRepo: DocumentRepository get() = businessResource(ownedDocumentRepo)
     val documentCommentRepo: com.virjar.tk.shared.repository.DocumentCommentRepository get() = businessResource(ownedDocumentCommentRepo)
+    val contentSearchRepo: ContentSearchRepository get() = businessResource(ownedContentSearchRepo)
     val groupBotManagementRepo: GroupBotManagementRepository get() = businessResource(ownedGroupBotManagementRepo)
     val sendQueue: SendQueue get() = businessResource(ownedSendQueue)
     val outgoingQueueSnapshots: kotlinx.coroutines.flow.StateFlow<OutgoingQueueSnapshot>
@@ -702,6 +704,13 @@ fun createSession(
         ownedGroupFileRepo = reliableCommandFamilies.groupFiles,
         ownedDocumentRepo = reliableCommandFamilies.documents,
         ownedDocumentCommentRepo = reliableCommandFamilies.documentComments,
+        ownedContentSearchRepo = ContentSearchRepository(
+            rpcClient = businessRpcClient,
+            changes = ep.contentSearchChanges,
+            documentRepository = reliableCommandFamilies.documents,
+            groupFileRepository = reliableCommandFamilies.groupFiles,
+            ensureActive = lifecycle::requireBusinessActive,
+        ),
         ownedHttpAuthExpiredRouter = httpAuthExpiredRouter,
         ownedGroupBotManagementRepo = groupBotManagementRepo,
         ownedSendQueue = sendQueue,

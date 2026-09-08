@@ -421,6 +421,7 @@ internal class ExposedDocumentWriteStore(
         }
         insertRevision(initialRevision)
         insertInitialAssetManifest(document.documentId, initialRevision.revision, document.assets)
+        markContentSearchDirty(transaction, 1, document.documentId, document.revision)
         document.copy(ancestorIds = ancestorIds)
     }
 
@@ -496,6 +497,7 @@ internal class ExposedDocumentWriteStore(
             ),
         )
         replaceAssetManifest(documentId, expectedRevision, nextRevision, currentAssets, assets)
+        markContentSearchDirty(transaction, 1, documentId, nextRevision)
         val result = nodeRows.requireActiveContent(spaceId, documentId)
         result.toDocument(
             hierarchy.resolveAncestorIds(
@@ -565,6 +567,7 @@ internal class ExposedDocumentWriteStore(
             it[DocumentNodes.updatedAt] = updatedAt
         }
         if (updated != 1) throwDocumentRevisionConflict()
+        markContentSearchDirty(transaction, 1, nodeId, nextRevision)
         if (titleChanged) {
             val assets = loadDocumentAssetsAtRevision(nodeId, expectedRevision)
             insertRevision(
@@ -615,6 +618,7 @@ internal class ExposedDocumentWriteStore(
                 it[DocumentNodes.updatedAt] = updatedAt
             }
             if (updated != 1) throwDocumentRevisionConflict()
+            markContentSearchDirty(transaction, 1, nodeId, expectedRevision + 1L)
         }
     }
 

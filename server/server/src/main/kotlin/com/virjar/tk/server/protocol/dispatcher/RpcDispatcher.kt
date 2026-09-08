@@ -66,6 +66,8 @@ class RpcDispatcher(
             throw cancelled
         } catch (unsupported: RpcProtocolUnavailableException) {
             ResponsePayload(invoke.requestId, unsupported.status, "RPC is unavailable at the negotiated protocol version".encodeToByteArray())
+        } catch (unavailable: com.virjar.tk.server.domain.search.ContentSearchUnavailableException) {
+            ResponsePayload(invoke.requestId, 503, unavailable.message?.encodeToByteArray())
         } catch (e: DocumentRevisionConflictException) {
             logger.info(
                 "RPC document conflict: service={} method={} uid={}: {}",

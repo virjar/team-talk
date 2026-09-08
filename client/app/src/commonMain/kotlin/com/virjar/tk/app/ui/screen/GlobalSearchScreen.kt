@@ -30,6 +30,12 @@ import com.virjar.tk.protocol.model.Contact
 import com.virjar.tk.protocol.model.Conversation
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.User
+import com.virjar.tk.protocol.model.ContentSearchHit
+import com.virjar.tk.protocol.model.ContentSearchPage
+import com.virjar.tk.protocol.model.ContentSearchRequest
+import com.virjar.tk.app.navigation.feature.ContentSearchFeature
+import com.virjar.tk.app.navigation.feature.ContentSearchSection
+import com.virjar.tk.shared.client.ContentSearchInvalidation
 import com.virjar.tk.app.ui.component.AvatarPlaceholder
 import com.virjar.tk.app.ui.component.ChatAvatar
 import com.virjar.tk.app.ui.component.ScreenHeader
@@ -39,11 +45,12 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 
-/** 全局搜索的产品域。文件与服务先保留入口，待索引能力接入后直接补结果源。 */
+/** 全局搜索的产品域。 */
 enum class GlobalSearchScope(val label: String) {
     ALL("全部"),
     MESSAGES("消息"),
     PEOPLE("联系人"),
+    DOCUMENTS("文档"),
     FILES("文件"),
     SERVICES("服务"),
 }
@@ -115,7 +122,7 @@ fun GlobalSearchField(
     query: String,
     onQueryChange: (String) -> Unit,
     modifier: Modifier = Modifier,
-    placeholder: String = "搜索消息、联系人、文件和服务",
+    placeholder: String = "搜索消息、联系人、文档和文件",
     shortcutLabel: String? = null,
     height: Dp = 36.dp,
     focusRequester: FocusRequester? = null,
@@ -191,10 +198,7 @@ fun GlobalSearchField(
 }
 
 /**
- * 聚合消息、会话和用户的全局搜索结果页。
- *
- * 文件与服务搜索目前没有底层索引，界面保留稳定信息架构并明确标注能力缺口，
- * 不伪造结果，也不让暂未实现的功能挤回各业务页面的标题栏。
+ * 聚合本地身份与服务端当前可读内容；三个内容领域独立分页和失效。
  */
 @Composable
 fun GlobalSearchScreen(
@@ -207,6 +211,9 @@ fun GlobalSearchScreen(
     onDisplayedSearchUserUidsChange: (List<String>) -> Unit = {},
     searchMessages: suspend (String) -> List<Message>,
     searchUsers: suspend (String) -> List<User>,
+    searchContent: suspend (ContentSearchRequest) -> ContentSearchPage,
+    contentSearchChanges: ContentSearchInvalidation,
+    onContentClick: suspend (ContentSearchHit) -> Unit,
     onConversationClick: (Conversation) -> Unit,
     onMessageClick: (Message) -> Unit,
     onUserClick: (User) -> Unit,
@@ -220,10 +227,44 @@ fun GlobalSearchScreen(
     var remoteMessages by remember { mutableStateOf<List<Message>>(emptyList()) }
     var remoteUsers by remember { mutableStateOf<List<User>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
-    val term = query.trim()
+    val term = remember(query) { query.map { if (it.isISOControl()) ' ' else it }.joinToString("").trim() }
+    var fileSource by remember { mutableIntStateOf(0) }
+    var fileType by remember { mutableIntStateOf(ContentSearchRequest.FILE_TYPE_ALL) }
+    val contentScopes = remember { mutableStateMapOf<Int, ContentSearchScopeFilter>() }
+    val actionScope = rememberCoroutineScope()
+    val currentSearchContent by rememberUpdatedState(searchContent)
+    val currentOpenContent by rememberUpdatedState(onContentClick)
+    val contentFeature = remember(actionScope) {
+        ContentSearchFeature(actionScope, { currentSearchContent(it) }, { currentOpenContent(it) })
+    }
+    DisposableEffect(contentFeature) { onDispose(contentFeature::close) }
+    val contentKinds = when (scope) {
+        GlobalSearchScope.ALL -> if (term.isBlank()) emptyList() else contentSearchKinds
+        GlobalSearchScope.DOCUMENTS -> listOf(ContentSearchRequest.KIND_DOCUMENT)
+        GlobalSearchScope.FILES -> if (fileSource == 0) contentSearchKinds.drop(1) else listOf(fileSource)
+        else -> emptyList()
+    }
+    val contentStates = contentSearchKinds.associateWith { kind ->
+        val selectedScope = contentScopes[kind]
+        val request = if (kind in contentKinds && term.length <= ContentSearchRequest.MAX_KEYWORD_LENGTH) {
+            ContentSearchRequest(kind, term, selectedScope?.id.orEmpty(),
+                if (kind == ContentSearchRequest.KIND_DOCUMENT || scope == GlobalSearchScope.ALL) ContentSearchRequest.FILE_TYPE_ALL else fileType)
+        } else null
+        val generation = contentSearchChanges.generation(kind)
+        LaunchedEffect(request, generation) { contentFeature.activate(request, kind, generation) }
+        contentFeature.section(kind).takeIf { it.request == request && it.sourceGeneration == generation }
+            ?: ContentSearchSection(request, generation, loading = request != null)
+    }
+    fun showContentKind(kind: Int) {
+        if (kind == ContentSearchRequest.KIND_DOCUMENT) scope = GlobalSearchScope.DOCUMENTS
+        else { scope = GlobalSearchScope.FILES; fileSource = kind }
+    }
 
-    LaunchedEffect(term) {
-        if (term.isBlank()) {
+    LaunchedEffect(term, scope) {
+        remoteMessages = emptyList()
+        remoteUsers = emptyList()
+        if (term.isBlank() || term.length > ContentSearchRequest.MAX_KEYWORD_LENGTH ||
+            scope !in listOf(GlobalSearchScope.ALL, GlobalSearchScope.MESSAGES, GlobalSearchScope.PEOPLE)) {
             remoteMessages = emptyList()
             remoteUsers = emptyList()
             searching = false
@@ -232,8 +273,8 @@ fun GlobalSearchScreen(
         delay(280)
         searching = true
         val (messages, users) = coroutineScope {
-            val messageRequest = async { searchMessages(term) }
-            val userRequest = async { searchUsers(term) }
+            val messageRequest = async { if (scope != GlobalSearchScope.PEOPLE) searchMessages(term) else emptyList() }
+            val userRequest = async { if (scope != GlobalSearchScope.MESSAGES) searchUsers(term) else emptyList() }
             messageRequest.await() to userRequest.await()
         }
         remoteMessages = messages
@@ -304,15 +345,22 @@ fun GlobalSearchScreen(
             }
         }
         HorizontalDivider(color = Tk.colors.divider)
+        if (scope == GlobalSearchScope.FILES) {
+            ContentSearchFileFilters(fileSource, fileType, { fileSource = it }, { fileType = it })
+        }
+        ContentSearchScopeFilters(contentKinds, contentScopes) { contentScopes.remove(it) }
+        contentFeature.openError?.let { message ->
+            Row(Modifier.padding(horizontal = Tk.spacing.md), verticalAlignment = Alignment.CenterVertically) {
+                Text(message, color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.weight(1f).testTag("global.search.open.error"))
+                TextButton(onClick = { contentKinds.forEach(contentFeature::refresh) },
+                    modifier = Modifier.testTag("global.search.open.refresh")) { Text("刷新结果") }
+            }
+        }
 
         when {
-            term.isBlank() -> SearchLanding(modifier = Modifier.weight(1f))
-            scope == GlobalSearchScope.FILES -> MissingSearchCapability(
-                icon = Icons.AutoMirrored.Filled.InsertDriveFile,
-                title = "文件搜索尚未接入",
-                detail = "需要服务端附件索引与权限过滤；入口已保留，接入后无需调整导航结构。",
-                modifier = Modifier.weight(1f),
-            )
+            term.length > ContentSearchRequest.MAX_KEYWORD_LENGTH -> Text("关键词最多 1000 个字符", modifier = Modifier.padding(Tk.spacing.lg))
+            term.isBlank() && scope != GlobalSearchScope.FILES && scope != GlobalSearchScope.DOCUMENTS -> SearchLanding(modifier = Modifier.weight(1f))
             scope == GlobalSearchScope.SERVICES -> MissingSearchCapability(
                 icon = Icons.Filled.Apps,
                 title = "服务搜索尚未接入",
@@ -335,6 +383,14 @@ fun GlobalSearchScreen(
                 onConversationClick = onConversationClick,
                 onMessageClick = onMessageClick,
                 onUserClick = onUserClick,
+                contentKinds = contentKinds,
+                contentStates = contentStates,
+                contentFeature = contentFeature,
+                onContentScope = { hit ->
+                    contentScopes[hit.kind] = ContentSearchScopeFilter(hit.scopeId, hit.scopeName)
+                    showContentKind(hit.kind)
+                },
+                onShowContentKind = ::showContentKind,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -352,7 +408,7 @@ private fun SearchLanding(modifier: Modifier = Modifier) {
         Spacer(Modifier.height(Tk.spacing.md))
         Text("从一个入口找到需要的内容", style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(Tk.spacing.xs))
-        Text("当前支持消息、会话与用户；文件和服务索引将后续接入。", color = Tk.colors.secondaryText)
+        Text("搜索消息、联系人、文档正文和文件名；选择文档或文件也可浏览可访问的内容。", color = Tk.colors.secondaryText)
     }
 }
 
@@ -369,13 +425,21 @@ private fun SearchResults(
     onConversationClick: (Conversation) -> Unit,
     onMessageClick: (Message) -> Unit,
     onUserClick: (User) -> Unit,
+    contentKinds: List<Int>,
+    contentStates: Map<Int, ContentSearchSection>,
+    contentFeature: ContentSearchFeature,
+    onContentScope: (ContentSearchHit) -> Unit,
+    onShowContentKind: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val showConversations = scope == GlobalSearchScope.ALL
     val showMessages = scope == GlobalSearchScope.ALL || scope == GlobalSearchScope.MESSAGES
     val showPeople = scope == GlobalSearchScope.ALL || scope == GlobalSearchScope.PEOPLE
     val hasResults = (showConversations && conversations.isNotEmpty()) ||
-        (showMessages && messages.isNotEmpty()) || (showPeople && people.isNotEmpty())
+        (showMessages && messages.isNotEmpty()) || (showPeople && people.isNotEmpty()) ||
+        contentKinds.any { contentStates.getValue(it).let { state ->
+            state.items.isNotEmpty() || state.loading || state.error != null || state.nextCursor != null
+        } }
 
     if (searching && !hasResults) {
         Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -390,7 +454,7 @@ private fun SearchResults(
         return
     }
 
-    LazyColumn(modifier = modifier.fillMaxWidth()) {
+    LazyColumn(modifier = modifier.fillMaxWidth().testTag("global.search.results")) {
         if (showConversations && conversations.isNotEmpty()) {
             item("conversation.header") { SearchSectionHeader("会话") }
             items(conversations.take(if (scope == GlobalSearchScope.ALL) 5 else 30), key = { "conv.${it.chatId}" }) { conversation ->
@@ -417,21 +481,16 @@ private fun SearchResults(
                 SearchMessageRow(message, conversationNames[message.chatId], onMessageClick)
             }
         }
-        if (scope == GlobalSearchScope.ALL) {
-            item("missing.capabilities") {
-                Text(
-                    "文件与服务搜索尚未接入",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Tk.colors.metaText,
-                    modifier = Modifier.fillMaxWidth().padding(Tk.spacing.lg),
-                )
-            }
+        contentKinds.forEach { kind ->
+            contentSearchSection(kind, contentStates.getValue(kind), scope == GlobalSearchScope.ALL,
+                contentFeature.openingKey, contentFeature::open, onContentScope,
+                { contentFeature.loadMore(kind) }, { contentFeature.retry(kind) }, { onShowContentKind(kind) })
         }
     }
 }
 
 @Composable
-private fun SearchSectionHeader(title: String) {
+internal fun SearchSectionHeader(title: String) {
     Text(
         title,
         style = MaterialTheme.typography.labelLarge,

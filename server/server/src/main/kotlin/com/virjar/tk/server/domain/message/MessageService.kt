@@ -22,6 +22,8 @@ import com.virjar.tk.server.domain.user.UserRepository
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.Member
 import com.virjar.tk.protocol.model.ConversationWirePolicy
+import com.virjar.tk.protocol.model.ContentSearchRequest
+import com.virjar.tk.protocol.model.ContentSearchPage
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.ProtoCodec
 
@@ -46,6 +48,13 @@ class MessageService(
     private val managedChats: ManagedChatPolicy = UnmanagedChatPolicy,
     private val attachmentLifecycle: AttachmentLifecycleGate = AttachmentLifecycleGate(),
 ) {
+    private val attachmentSearch = MessageAttachmentSearchService(messages, search, access) { chatId ->
+        chatStore.getChat(chatId)?.name.orEmpty()
+    }
+
+    suspend fun searchAttachments(uid: String, request: ContentSearchRequest): ContentSearchPage =
+        attachmentSearch.search(uid, request)
+
     suspend fun sendMessage(senderUid: String, message: Message): Long {
         return sendMessage(senderUid, message, authorizeAfterChatLock = null)
     }

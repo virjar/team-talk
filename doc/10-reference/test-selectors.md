@@ -51,10 +51,18 @@
 | `action.search` | 搜索入口 |
 | `global.search.input` | 全局搜索输入 |
 | `global.search.clear` | 清空搜索 |
-| `global.search.scope.{all|messages|people|files|services}` | 搜索分类 |
+| `global.search.scope.{all\|messages\|people\|documents\|files\|services}` | 搜索分类 |
 | `global.search.conversation.{chatId前12}` | 会话结果 |
 | `global.search.user.{uid前8}` | 用户结果 |
 | `global.search.message.{chatId前10}.{serverSeq}` | 消息结果 |
+| `global.search.file.source.{0\|2\|3}` | 文件来源：全部、群文件、聊天附件 |
+| `global.search.file.type.{0\|1\|2\|3\|4}` | 文件 MIME 分类：全部、图片、视频、音频、其他 |
+| `global.search.content.{kind}.{scopeId}.{serverSeq}.{targetId}` | 文档、群文件或聊天附件结果 |
+| `global.search.container.{kind}.{scopeId}.{serverSeq}.{targetId}` | 将内容搜索限定到该结果的空间或会话 |
+| `global.search.container.clear.{kind}` | 清除该领域的空间/会话范围 |
+| `global.search.content.{loading\|error\|retry\|more\|show-all}.{kind}` | 内容分页状态、重试、加载更多和全部结果入口 |
+
+内容 `kind`：文档为 `1`、群文件为 `2`、聊天附件为 `3`；文档和群文件的 `serverSeq` 为 `0`。
 
 ## 会话、联系人和资料
 
