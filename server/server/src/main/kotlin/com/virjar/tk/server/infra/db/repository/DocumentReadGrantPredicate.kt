@@ -36,4 +36,3 @@ internal fun relevantDocumentGrantCondition(
     return (DocumentSpaceGrants.role greaterEq DocumentSpace.ROLE_VIEWER) and
         (DocumentSpaceGrants.role lessEq DocumentSpace.ROLE_ADMIN) and principalMatches
 }
-
