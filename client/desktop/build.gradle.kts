@@ -814,7 +814,7 @@ tasks.register("stripRuntimeFonts") {
 
 tasks.withType<JavaExec>().configureEach {
     if (name == "run") {
-        description = "Run Desktop against the configured server with the test HTTP service"
+        description = "Run Desktop with an isolated checkout data directory and the test HTTP service"
         // Compose Desktop 1.10 的 run 默认从 desktopJar 启动，而生产 jar 会物理排除 test 包。
         // Compose 插件会在配置后期重写 classpath 和 JVM 参数，因此必须在执行前最后注入。
         doFirst {
@@ -827,10 +827,22 @@ tasks.withType<JavaExec>().configureEach {
                     layout.projectDirectory.dir("src/desktopMain/resources"),
                 ) + classpath
 
-            val dataDirectoryArgs = System.getProperty("teamtalk.data.dir")
-                ?.takeIf(String::isNotBlank)
-                ?.let { listOf("-Dteamtalk.data.dir=$it") }
-                .orEmpty()
+            val developmentDataDirectory = System.getProperty("teamtalk.data.dir") ?: run {
+                // Development must not lock or write an installed client's account directory.
+                // Keep checkout data outside build/ so clean and rebuilds preserve local drafts.
+                val checkout = MessageDigest.getInstance("SHA-256")
+                    .digest(rootProject.rootDir.canonicalPath.toByteArray(Charsets.UTF_8))
+                    .joinToString("") { "%02x".format(it) }.take(24)
+                val parent = File(
+                    System.getProperty("user.home"),
+                    ".teamtalk/desktop-development/${clientIdentity.applicationId}",
+                )
+                check(parent.isDirectory || parent.mkdirs()) { "Cannot create Desktop development data parent: $parent" }
+                // The application owns final-root admission, permissions, markers and locking.
+                File(parent, checkout).absolutePath
+            }
+            val dataDirectoryArgs = listOf("-Dteamtalk.data.dir=$developmentDataDirectory")
+            logger.lifecycle("Desktop development data directory: $developmentDataDirectory")
             val themeArgs = System.getProperty("teamtalk.theme")
                 ?.let { listOf("-Dteamtalk.theme=$it") }
                 .orEmpty()
