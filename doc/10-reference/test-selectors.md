@@ -8,7 +8,7 @@
 
 | ID | 内容 |
 |---|---|
-| `main` | 主窗口、聊天、全局搜索、群设置抽屉、用户资料弹窗、个人设置模态 |
+| `main` | 主窗口、聊天、全局搜索、任务工作台、群设置抽屉、用户资料弹窗、个人设置模态 |
 | `documents` | 企业文档独立工作台 |
 | `media-gallery` | Desktop 图片/视频媒体画廊独立窗口 |
 | `sub-FriendApplies` | 好友申请 |
@@ -46,8 +46,8 @@
 | `app.titleBar` | Desktop 应用级标题栏 |
 | `app.titleBar.drag.left` / `app.titleBar.drag.right` | 顶栏左右空白拖拽与双击缩放区 |
 | `nav.avatar` | 当前用户入口 |
-| `nav.tab.会话` / `nav.tab.通讯录` / `nav.tab.文档` / `nav.tab.设置` | Desktop 一级导航 |
-| `nav.会话` / `nav.通讯录` / `nav.文档` / `nav.设置` | Android 一级导航 |
+| `nav.tab.会话` / `nav.tab.通讯录` / `nav.tab.文档` / `nav.tab.任务` / `nav.tab.设置` | Desktop 一级导航 |
+| `nav.会话` / `nav.通讯录` / `nav.文档` / `nav.任务` / `nav.设置` | Android 一级导航 |
 | `action.search` | 搜索入口 |
 | `global.search.input` | 全局搜索输入 |
 | `global.search.clear` | 清空搜索 |
@@ -284,6 +284,34 @@
 | `documents.mobile.discard.{dialog|confirm|cancel}` | Android 返回文档树或切换文档时的未保存确认 |
 | `documents.detach` / `documents.detached.placeholder` / `documents.detached.bringBack` | 拉出独立窗口、主窗口承接态与收回操作 |
 | `main.error.snackbar` | Android 会话级错误提示，包含文档删除等操作失败 |
+
+## 任务工作台与引用
+
+| testTag | 作用 |
+|---|---|
+| `task.workspace` / `task.list` / `task.detail.{taskId}` | 共享工作台、列表和指定任务详情 |
+| `task.view.{assigned\|created}` / `task.row.{taskId}` / `task.more` | 两种列表、任务项和继续分页 |
+| `task.refresh` / `task.new` / `task.back` / `task.detail.refresh` | 列表刷新、新建、返回列表和详情刷新 |
+| `task.stale` / `task.empty` / `task.list.{loading\|error}` / `task.detail.{loading\|error}` | 本地状态、权威空列表与加载/失败反馈 |
+| `task.title` / `task.description` / `task.status` / `task.assignee` / `task.deadline` / `task.context` | 详情当前标题、描述、状态、执行人、截止和背景关联 |
+| `task.edit` / `task.status.{1\|2\|3\|4}` / `task.cancel.confirm` | 编辑、目标状态与取消确认；1 待处理、2 进行中、3 完成、4 取消，权限不允许的按钮不存在 |
+| `task.editor.{title\|description\|assignee\|date\|time}` | 表单字段；日期与时间使用本地时区 |
+| `task.editor.{save\|cancel\|error\|remoteChanged}` / `task.editor.deadline.clear` | 保存、退出编辑、错误、远端新修订提示及清除截止 |
+| `task.editor.context.{0\|1\|2}` / `task.editor.context.choose` | 无关联、群聊、部门，以及具体对象选择 |
+| `task.assignee.query` / `task.assignee.self` / `task.assignee.{uid}` | 执行人搜索、分配自己及候选成员 |
+| `task.context.query` / `task.context.{contextId}` | 背景对象筛选和选择 |
+| `task.audit.{revision}` / `task.audit.more` | 审计记录及继续分页 |
+| `task.pending.{taskId}` / `task.pending.{retry\|discard\|intent}.{taskId}` | 待发送状态、重试、放弃入口和原内容查看 |
+| `task.pending.intent.content` / `task.pending.discard.confirm` | 可选择复制的原意图与显式放弃确认 |
+| `task.reminder.{taskId}` / `task.reminder.{open\|seen}.{taskId}` | 到期提醒、打开任务和标记已读 |
+| `task.share` / `task.share.query` / `task.share.chat.{chatId}` / `task.share.error` | 从详情分享到会话、筛选、目标和失败 |
+| `chat.attach.task` / `task.reference.picker` / `task.reference.view.{1\|2}` / `task.reference.more` | 聊天附件入口、引用选择器、分配/创建列表和分页 |
+| `chat.taskref.pick.{taskId前12}` / `chat.taskref.{taskId前12}` | 候选选择和消息中的任务引用卡片 |
+| `task.notice` | 本机保存或分享进入发送队列后的反馈，不代表服务端已确认 |
+
+任务工作台使用完整业务 ID；聊天任务卡片沿用消息组件的 12 字符前缀。同一任务的 pending 可能同时
+出现在 Desktop 左侧列表和右侧详情，操作前限定到对应容器。惰性列表需先滚动到目标，不以屏外节点
+暂未出现在语义树中判断数据丢失。
 
 ## 命名规则
 

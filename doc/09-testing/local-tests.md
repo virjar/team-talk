@@ -79,6 +79,25 @@ HTTP 空闲约束可用 `./gradlew :server:server:test --tests '*ProtectedHttpId
 这些入口验证模块契约与持久恢复；真实双端评论交互、跨端可见性和管理台浏览器行为按
 [场景目录](scenario-catalog.md)另外执行，不以构建通过代替界面验收。
 
+### 任务协作的定向回归
+
+```bash
+./gradlew :protocol:protocol:jvmTest --tests '*TaskModelTest'
+./gradlew :server:server:test --tests '*TaskIntegrationTest'
+./gradlew :client:shared:jvmTest --tests '*TaskRecoveryIntegrationTest'
+./gradlew :client:app:desktopTest --tests '*TaskFeatureTest' --tests '*TaskEditorTest'
+```
+
+协议回归验证任务、命令、审计、提醒和独立 TaskRef 的往返与有界解码。服务端使用随机 PostgreSQL
+schema 验证参与者权限、上下文关联、CAS、稳定身份重放、并发提交，以及任务、审计、回执和事件的
+原子性；截止扫描覆盖重启、重新设定提醒与完成竞态。SQLite 回归验证已保存命令的跨进程恢复、拒绝
+保留、投影失效、提醒已读/已展示以及迁移保留已有评论意图。
+
+App 回归通过真实 TaskRepository 与可控 RPC 检查外部引用冷启动、创建未确认不误读 404、撤权不循环
+刷新、脏表单保留与失败处理、分页恢复和迟到读取；日期输入覆盖时区、夏令时缺失时刻与原截止精度。
+这些测试不证明平台系统通知或真实双端 UI 已通过，仍需执行
+[任务协作场景](scenario-catalog.md#i-任务协作)。
+
 ## Linux 媒体测试环境
 
 服务端缩略图测试与 TestPeer 音频元数据读取会加载 JavaCV/FFmpeg JNI。FFmpeg 原生库随 Maven JAR
