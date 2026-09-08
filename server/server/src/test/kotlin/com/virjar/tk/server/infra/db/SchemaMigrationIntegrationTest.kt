@@ -33,7 +33,7 @@ class SchemaMigrationIntegrationTest {
                 assertPreservedDevice(connection, Int.MAX_VALUE)
                 assertEquals(firstReceipt, migrationReceipt(connection))
                 connection.createStatement().use {
-                    it.executeUpdate("INSERT INTO schema_migrations VALUES (2, 'future_migration', 1)")
+                    it.executeUpdate("INSERT INTO schema_migrations SELECT max(version) + 1, 'future_migration', 1 FROM schema_migrations")
                 }
             }
             assertFailsWith<IllegalStateException> { open(lease).close() }
@@ -141,7 +141,13 @@ class SchemaMigrationIntegrationTest {
             assertEquals("create_banned_credential_tombstones", row.getString(2))
             row.getLong(3).also {
                 assertTrue(it > 0L)
-                assertTrue(!row.next())
+                var expectedVersion = 2
+                while (row.next()) {
+                    assertEquals(expectedVersion++, row.getInt(1))
+                    assertTrue(row.getString(2).isNotBlank())
+                    assertTrue(row.getLong(3) > 0L)
+                }
+                assertTrue(expectedVersion >= 3)
             }
         }
     }

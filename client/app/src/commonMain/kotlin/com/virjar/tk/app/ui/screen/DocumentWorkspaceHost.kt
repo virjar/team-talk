@@ -112,6 +112,7 @@ fun DocumentWorkspaceHost(
         detached = detached,
         mobileSingleDocumentMode = mobileSingleDocumentMode,
         draftLifecycleBridge = workspace.draftLifecycleBridge,
+        commentsContent = { tab, role -> DocumentCommentsPanel(workspace.comments, tab, role, actionAdmission) },
         mobileExitCoordinator = mobileExitCoordinator,
     )
     }

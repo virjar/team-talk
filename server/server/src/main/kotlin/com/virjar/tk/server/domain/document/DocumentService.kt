@@ -1,6 +1,7 @@
 package com.virjar.tk.server.domain.document
 
 import com.virjar.tk.server.domain.command.ReliableCommandConflictException
+import com.virjar.tk.protocol.DocumentChangedPayload
 import com.virjar.tk.server.domain.command.reliableCommandFingerprint
 import com.virjar.tk.server.domain.attachment.AttachmentCatalog
 import com.virjar.tk.server.domain.attachment.AttachmentLifecycleGate
@@ -44,6 +45,7 @@ class DocumentService(
 ) {
     private val logger = LoggerFactory.getLogger(DocumentService::class.java)
     private val accessControl = DocumentAccessControl(repository, unitOfWork)
+    private val changes = DocumentChangePublisher(repository)
     private val nodeMoveCommands = DocumentNodeMoveCommandHandler(repository, accessControl, wallClockMillis)
     private val policyMutations = DocumentPolicyMutationService(repository, unitOfWork, wallClockMillis)
     private val embeddedAssets = DocumentEmbeddedAssetCoordinator(attachmentCatalog, attachmentLifecycle)
@@ -64,6 +66,9 @@ class DocumentService(
             snapshotChanged = page.snapshotChanged,
         )
     }
+
+    suspend fun getSpace(actorUid: String, spaceId: String): DocumentSpace =
+        accessControl.readAuthorized(actorUid, spaceId, DocumentCapability.READ) { space, _ -> space }
 
     suspend fun createSpace(
         actorUid: String,
@@ -96,7 +101,7 @@ class DocumentService(
         )
         val now = System.currentTimeMillis()
         return unitOfWork.write {
-            val result = repository.createSpace(
+            val creation = repository.createSpace(
                 transaction,
                 DocumentSpace(
                     spaceId = validatedSpaceId,
@@ -113,6 +118,8 @@ class DocumentService(
                 ),
                 creationFingerprint,
             )
+            val result = creation.result
+            if (creation.created) changes.publishSpaceChange(this, validatedSpaceId)
             check(result.spaceId == validatedSpaceId) {
                 "文档空间创建回执的资源标识不一致"
             }
@@ -124,13 +131,16 @@ class DocumentService(
         val validatedName = validateSpaceName(name)
         val validatedDescription = validateDescription(description)
         return accessControl.writeAuthorized(actorUid, spaceId, DocumentCapability.MANAGE_SPACE) { space, role ->
+            if (space.name == validatedName && space.description == validatedDescription) {
+                return@writeAuthorized space.copy(myRole = role)
+            }
             repository.updateSpace(
                 transaction,
                 space.spaceId,
                 validatedName,
                 validatedDescription,
                 System.currentTimeMillis(),
-            ).copy(myRole = role)
+            ).copy(myRole = role).also { changes.publishSpaceChange(this, space.spaceId) }
         }
     }
 
@@ -148,7 +158,8 @@ class DocumentService(
                     validatedOperationId,
                 )
             },
-        ) { _, _ ->
+        ) { space, _ ->
+            val readersBefore = changes.readers(transaction, spaceId)
             repository.archiveSpace(
                 transaction,
                 actorUid,
@@ -156,6 +167,7 @@ class DocumentService(
                 validatedOperationId,
                 System.currentTimeMillis(),
             )
+            changes.publishSpaceChange(this, spaceId, readersBefore, space.policyRevision + 1L)
         }
     }
 
@@ -241,6 +253,7 @@ class DocumentService(
                     repository.findActiveOrganizationUnitName(transaction, validatedOwnerPrincipalId),
                 ) { "组织节点不存在" }
             }
+            val readersBefore = changes.readers(transaction, spaceId)
             repository.transferSpaceCustody(
                 transaction = transaction,
                 actorUid = actorUid,
@@ -252,7 +265,7 @@ class DocumentService(
                 operationId = validatedOperationId,
                 fingerprint = fingerprint,
                 updatedAt = System.currentTimeMillis(),
-            ).toCustodyTransferResult()
+            ).also { changes.publishSpaceChange(this, spaceId, readersBefore) }.toCustodyTransferResult()
         }
     }
 
@@ -445,6 +458,7 @@ class DocumentService(
                 // 创建与创建者最近可见性是一条持久化命令。任一写入失败都会回滚另一个，
                 // 而不会留下一个已提交文档却缺少首页索引条目。
                 repository.touchRecentDocument(transaction, actorUid, persisted.documentId, now)
+                changes.publishNodeChange(this, spaceId, persisted.documentId, persisted.revision)
                 DocumentCreateResult(validatedDocumentId, persisted)
             }
             result
@@ -519,7 +533,11 @@ class DocumentService(
                     actorUid = actorUid,
                     updatedAt = System.currentTimeMillis(),
                     assets = resolvedAssets,
-                )
+                ).also { document ->
+                    if (document.revision != expectedRevision) {
+                        changes.publishNodeChange(this, spaceId, documentId, document.revision)
+                    }
+                }
             }
             updated
         }
@@ -580,6 +598,7 @@ class DocumentService(
                 actorUid,
                 System.currentTimeMillis(),
             )
+            changes.publishNodeChange(this, spaceId, nodeId, expectedRevision + 1L, DocumentChangedPayload.NODE_DELETED)
         }
     }
 

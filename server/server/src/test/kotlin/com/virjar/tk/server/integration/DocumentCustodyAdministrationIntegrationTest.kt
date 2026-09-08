@@ -165,9 +165,9 @@ class DocumentCustodyAdministrationIntegrationTest {
         )
         custodyOnlySpaces.forEach { custodyOnly ->
             assertEquals(
-                policyRevisionBefore.getValue(custodyOnly.spaceId),
+                policyRevisionBefore.getValue(custodyOnly.spaceId) + 1L,
                 policyRevisionAfterTransfer.getValue(custodyOnly.spaceId),
-                "custody without a removed grant must not advance policyRevision",
+                "custody changes implicit access and must advance policyRevision",
             )
         }
         assertEquals(

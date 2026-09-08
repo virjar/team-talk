@@ -14,6 +14,16 @@ import kotlin.test.assertSame
 
 class ProtocolEventProjectionTest {
     @Test
+    fun `document changes preserve old client cursors and reach minor two clients`() {
+        val event = NotifyPayload(12L, NotifyType.DOCUMENT_CHANGED.code, byteArrayOf(1, 2, 3))
+        assertEquals(
+            NotifyPayload(12L, NotifyType.EVENT_CURSOR_ADVANCED.code, null),
+            eventFrameForProtocol(event, ProtocolVersion(0, 1)),
+        )
+        assertSame(event, eventFrameForProtocol(event, ProtocolVersion(0, 2)))
+    }
+
+    @Test
     fun `contact updates are available in the zero release baseline`() {
         val event = NotifyPayload(8L, NotifyType.CONTACT_UPDATED.code, byteArrayOf(1, 2, 3))
         assertSame(event, eventFrameForProtocol(event, ProtocolVersion(0, 0)))

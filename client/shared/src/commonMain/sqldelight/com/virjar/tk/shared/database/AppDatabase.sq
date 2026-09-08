@@ -1650,3 +1650,49 @@ selectMessageReactionsForChat:
 SELECT chat_id, server_seq, emoji, uid FROM message_reaction
 WHERE chat_id = ?
 ORDER BY server_seq, emoji, uid;
+
+CREATE TABLE document_comment_pages (
+    space_id TEXT NOT NULL,
+    document_id TEXT NOT NULL,
+    before_sequence INTEGER NOT NULL,
+    payload BLOB NOT NULL,
+    touched_at INTEGER NOT NULL,
+    PRIMARY KEY (space_id, document_id, before_sequence)
+);
+CREATE TABLE pending_document_comments (
+    comment_id TEXT NOT NULL PRIMARY KEY,
+    payload TEXT NOT NULL
+);
+
+selectDocumentCommentPage:
+SELECT payload FROM document_comment_pages WHERE space_id = ? AND document_id = ? AND before_sequence = ?;
+
+selectDocumentCommentPages:
+SELECT * FROM document_comment_pages ORDER BY touched_at DESC;
+
+upsertDocumentCommentPage:
+INSERT OR REPLACE INTO document_comment_pages(space_id, document_id, before_sequence, payload, touched_at) VALUES (?, ?, ?, ?, ?);
+
+pruneDocumentCommentPages:
+DELETE FROM document_comment_pages WHERE rowid NOT IN (SELECT rowid FROM document_comment_pages ORDER BY touched_at DESC, rowid DESC LIMIT 32);
+
+deleteDocumentCommentSpace:
+DELETE FROM document_comment_pages WHERE space_id = ?;
+
+deleteDocumentCommentPages:
+DELETE FROM document_comment_pages WHERE space_id = ? AND document_id = ?;
+
+deleteAllDocumentCommentPages:
+DELETE FROM document_comment_pages;
+
+selectPendingDocumentComments:
+SELECT payload FROM pending_document_comments ORDER BY comment_id;
+
+insertPendingDocumentComment:
+INSERT INTO pending_document_comments(comment_id, payload) VALUES (?, ?);
+
+updatePendingDocumentComment:
+UPDATE pending_document_comments SET payload = ? WHERE comment_id = ?;
+
+deletePendingDocumentComment:
+DELETE FROM pending_document_comments WHERE comment_id = ?;

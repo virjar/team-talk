@@ -75,6 +75,9 @@ internal class DocumentWorkspaceReadGateway(
         beginSpaceRefreshCycle()
     }
 
+    suspend fun refreshSpace(spaceId: String): DocumentSpace =
+        repository.call(spaceId = spaceId, notFoundRetiresSpace = true) { getSpace(spaceId).getOrThrow() }
+
     suspend fun refreshSpaces(
         cycle: DocumentSpaceRefreshCycle,
         cursor: String? = null,

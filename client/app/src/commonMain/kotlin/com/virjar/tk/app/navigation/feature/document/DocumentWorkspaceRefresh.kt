@@ -22,6 +22,7 @@ internal fun mergeDocumentRefresh(
             ancestorIds = remote.ancestorIds,
             pathResolved = true,
             remoteMissing = false,
+            remoteChangedRevision = remote.revision.takeIf { it > (current.revision ?: 0L) },
         )
     }
     return DocumentTabState.from(

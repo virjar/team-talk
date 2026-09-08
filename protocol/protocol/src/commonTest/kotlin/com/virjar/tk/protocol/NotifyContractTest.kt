@@ -15,6 +15,7 @@ import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.ReadSyncPayload
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
@@ -25,6 +26,28 @@ import kotlin.test.assertTrue
  * 任何一侧改动 payload 类型而未同步契约表，此测试立即失败。
  */
 class NotifyContractTest {
+
+    @Test
+    fun `document change kinds retain bounded identifiers and revision semantics`() {
+        listOf(
+            DocumentChangedPayload("space", "node", DocumentChangedPayload.NODE_UPSERT, 2, 1),
+            DocumentChangedPayload("space", "node", DocumentChangedPayload.NODE_DELETED, 3, 1),
+            DocumentChangedPayload("space", null, DocumentChangedPayload.SPACE_CHANGED, 0, 2),
+            DocumentChangedPayload("space", null, DocumentChangedPayload.SPACE_REVOKED, 0, 3),
+            DocumentChangedPayload("space", "node", DocumentChangedPayload.COMMENTS_CHANGED, 0, 1),
+        ).forEach { value ->
+            assertEquals(value, ProtoCodec.decode(DocumentChangedPayload, ProtoCodec.encode(value)))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            DocumentChangedPayload("space", null, DocumentChangedPayload.NODE_DELETED, 1, 1)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            DocumentChangedPayload("space", "node", DocumentChangedPayload.SPACE_REVOKED, 1, 1)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            DocumentChangedPayload("space", "node", DocumentChangedPayload.COMMENTS_CHANGED, 1, 1)
+        }
+    }
 
     @Test
     fun `完备性 - 每个 NotifyType 要么有契约要么显式豁免`() {
@@ -103,6 +126,7 @@ class NotifyContractTest {
             deletedEntryId = "", deletedRevision = 0L,
         )
         NotifyType.USER_UPDATED -> sampleUser
+        NotifyType.DOCUMENT_CHANGED -> DocumentChangedPayload("space", "node", DocumentChangedPayload.NODE_UPSERT, 2, 1)
         NotifyType.ORGANIZATION_CHANGED -> OrganizationChangedPayload(revision = 7L)
         NotifyType.PRESENCE -> com.virjar.tk.protocol.PresencePayload(
             uid = "u1",

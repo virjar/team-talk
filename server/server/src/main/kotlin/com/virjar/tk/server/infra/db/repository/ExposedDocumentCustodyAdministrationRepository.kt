@@ -5,6 +5,8 @@ import com.virjar.tk.server.domain.document.DocumentCapacityPolicy
 import com.virjar.tk.server.domain.document.DocumentCustodyAdministrationPolicy
 import com.virjar.tk.server.domain.document.DocumentCustodyAdministrationRepository
 import com.virjar.tk.server.domain.document.DocumentCustodyBatchCommand
+import com.virjar.tk.server.domain.document.DocumentCustodyBatchCommit
+import com.virjar.tk.server.domain.document.DocumentSpaceAudienceChange
 import com.virjar.tk.server.domain.document.DocumentCustodyBatchItem
 import com.virjar.tk.server.domain.document.DocumentCustodyBatchReceipt
 import com.virjar.tk.server.domain.document.DocumentCustodyGrantPlanEntry
@@ -56,7 +58,7 @@ class ExposedDocumentCustodyAdministrationRepository : DocumentCustodyAdministra
         transaction: PgWriteTransactionContext,
         command: DocumentCustodyBatchCommand,
         now: Long,
-    ): DocumentCustodyBatchReceipt = transaction.inExposedTransaction {
+    ): DocumentCustodyBatchCommit = transaction.inExposedTransaction {
         require(now >= 0L) { "文档资产交接时间非法" }
 
         // 固定顺序：OrganizationState -> 源/目标 Users(uid) -> Spaces(spaceId) ->
@@ -67,7 +69,7 @@ class ExposedDocumentCustodyAdministrationRepository : DocumentCustodyAdministra
             if (receipt.requestFingerprint != command.requestFingerprint) {
                 throw ReliableCommandConflictException("文档资产批量交接操作标识已用于不同请求")
             }
-            return@inExposedTransaction receipt.value
+            return@inExposedTransaction DocumentCustodyBatchCommit(receipt.value, emptyList())
         }
 
         val users = readUsers(setOf(command.sourceUid, command.target.stewardUid), lock = true)
@@ -114,6 +116,8 @@ class ExposedDocumentCustodyAdministrationRepository : DocumentCustodyAdministra
         }
 
         requireTargetOwnerCapacity(command.target, spaces)
+        val changedSpaceIds = (spaces.map { it.spaceId } + directGrantSpaceIds).toSortedSet()
+        val readersBefore = changedSpaceIds.associateWith { ExposedDocumentEventAudience.read(transaction, it) }
 
         // 行已经按字典序锁定。这些是本批次事务内部的直接 CAS 更新，
         // 不是对普通单空间交接命令的调用。
@@ -157,22 +161,22 @@ class ExposedDocumentCustodyAdministrationRepository : DocumentCustodyAdministra
         if (revokedGrantCount != directGrantSpaceIds.size) {
             throw DocumentCustodyPlanConflictException()
         }
-        if (directGrantSpaceIds.isNotEmpty()) {
-            val exhaustedRevision = directGrantSpaceIds.firstOrNull { spaceId ->
+        if (changedSpaceIds.isNotEmpty()) {
+            val exhaustedRevision = changedSpaceIds.firstOrNull { spaceId ->
                 lockedSpaceRows.getValue(spaceId)[DocumentSpaces.policyRevision] == Long.MAX_VALUE
             }
             require(exhaustedRevision == null) {
                 "文档空间权限版本已耗尽，无法撤销离职员工授权"
             }
             val revisedSpaces = DocumentSpaces.update({
-                DocumentSpaces.spaceId inList directGrantSpaceIds
+                DocumentSpaces.spaceId inList changedSpaceIds
             }) {
                 with(org.jetbrains.exposed.sql.SqlExpressionBuilder) {
                     it[policyRevision] = policyRevision + 1L
                 }
                 it[updatedAt] = now
             }
-            if (revisedSpaces != directGrantSpaceIds.size) {
+            if (revisedSpaces != changedSpaceIds.size) {
                 throw DocumentCustodyPlanConflictException()
             }
         }
@@ -209,7 +213,7 @@ class ExposedDocumentCustodyAdministrationRepository : DocumentCustodyAdministra
             // 之前持久化。零工作回执与精确重放不会推进目录版本。
             ExposedDocumentDirectoryRevision.advance(transaction, now)
         }
-        DocumentCustodyBatchReceipt(
+        val receipt = DocumentCustodyBatchReceipt(
             operationId = command.operationId,
             adminPrincipal = command.adminPrincipal,
             sourceUid = command.sourceUid,
@@ -220,6 +224,17 @@ class ExposedDocumentCustodyAdministrationRepository : DocumentCustodyAdministra
             revokedGrantCount = revokedGrantCount,
             createdAt = now,
             items = items,
+        )
+        DocumentCustodyBatchCommit(
+            receipt,
+            changedSpaceIds.map { spaceId ->
+                DocumentSpaceAudienceChange(
+                    spaceId = spaceId,
+                    policyRevision = lockedSpaceRows.getValue(spaceId)[DocumentSpaces.policyRevision] + 1L,
+                    readersBefore = readersBefore.getValue(spaceId),
+                    readersAfter = ExposedDocumentEventAudience.read(transaction, spaceId),
+                )
+            },
         )
     }
 

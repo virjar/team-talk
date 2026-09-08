@@ -6,6 +6,7 @@ import com.virjar.tk.protocol.model.DocumentSpaceGrant
 /** 类型化的文档动作；wire 角色整数从不直接充当授权阈值。 */
 internal enum class DocumentCapability {
     READ,
+    COMMENT,
     EDIT_CONTENT,
     MANAGE_SPACE,
     MANAGE_POLICY,
@@ -28,10 +29,12 @@ internal enum class DocumentRole(val wireValue: Int) {
     }
 
     fun allows(capability: DocumentCapability): Boolean = when (this) {
-        VIEWER -> capability == DocumentCapability.READ
+        VIEWER -> capability == DocumentCapability.READ || capability == DocumentCapability.COMMENT
         EDITOR -> capability == DocumentCapability.READ ||
+            capability == DocumentCapability.COMMENT ||
             capability == DocumentCapability.EDIT_CONTENT
         ADMIN -> capability == DocumentCapability.READ ||
+            capability == DocumentCapability.COMMENT ||
             capability == DocumentCapability.EDIT_CONTENT ||
             capability == DocumentCapability.MANAGE_SPACE ||
             capability == DocumentCapability.MANAGE_POLICY

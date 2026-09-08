@@ -54,6 +54,11 @@ class KeyedProjectionSnapshotGate(
         currentRequests.remove(key)
     }
 
+    /** 按已驻留请求的 key 退役一个读取范围，不干扰其他空间的在途工作。 */
+    fun invalidateMatching(matches: (String) -> Boolean) {
+        currentRequests.keys.removeAll(matches)
+    }
+
     fun reset() {
         epoch = next(epoch, "$label epoch")
         currentRequests.clear()

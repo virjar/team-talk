@@ -25,7 +25,7 @@ object DatabaseFactory {
     const val CURRENT_SCHEMA_EPOCH = ServerDataEpoch.CURRENT_EPOCH
 
     private val schemaTables = arrayOf(
-        SchemaMetadata, SchemaMigrations,
+        SchemaMetadata, SchemaMigrations, AdminSecurityCredentials, AdminSecurityAudits,
         Users, Devices, Credentials, BannedCredentialTombstones, Chats, GroupChats, GroupCreationCommands,
         GroupMembers, GroupMemberMutes,
         Conversations, ConversationUsages, Friends, FriendApplies, ContactDecisionReceipts,
@@ -38,7 +38,7 @@ object DatabaseFactory {
         DocumentNodeMoveCommands,
         DocumentCustodyBatchTransfers, DocumentCustodyBatchTransferItems,
         DocumentSpaceGrants, DocumentNodes, DocumentContentRevisions, DocumentEmbeddedAssets,
-        DocumentUserRecents,
+        DocumentUserRecents, DocumentComments,
         ClientTelemetryDevices, ClientTelemetryPolicies, ClientTelemetryPolicyAudits,
         ClientTelemetryAdminAudits,
     )

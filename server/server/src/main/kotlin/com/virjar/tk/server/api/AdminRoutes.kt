@@ -1,12 +1,9 @@
 package com.virjar.tk.server.api
 
+import com.virjar.tk.server.application.admin.AdminSecurityService
 import com.virjar.tk.server.application.admin.AdminService
 import com.virjar.tk.server.application.admin.AdminPageRequest
 import com.virjar.tk.server.application.admin.ClientTelemetryAdminService
-import com.virjar.tk.server.domain.auth.AuthenticationAttempt
-import com.virjar.tk.server.domain.auth.AuthenticationAttemptGuard
-import com.virjar.tk.server.domain.auth.AuthenticationAttemptKeys
-import com.virjar.tk.server.domain.auth.AuthenticationOperation
 import com.virjar.tk.server.domain.command.ReliableCommandConflictException
 import com.virjar.tk.server.domain.document.DocumentCustodyPlanConflictException
 import com.virjar.tk.server.domain.organization.OrganizationMemberRemovalConflictException
@@ -16,20 +13,18 @@ import com.virjar.tk.server.domain.telemetry.TelemetryNumericRange
 import com.virjar.tk.server.domain.telemetry.TelemetryOutgoingQueueQuery
 import io.ktor.http.*
 import io.ktor.server.application.*
+import io.ktor.server.application.hooks.CallFailed
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.util.AttributeKey
 import kotlinx.serialization.Serializable
-import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
-import java.security.SecureRandom
-import java.util.Base64
+import kotlinx.coroutines.CancellationException
 
 /**
  * 管理后台 REST API（/api/admin 前缀）。
  *
- * 鉴权模型（刻意极简）：只有同时显式配置 ADMIN_USER/ADMIN_PASSWORD 才开放登录，
+ * 单实例管理员凭据由 PostgreSQL 保存；环境变量只作初始化或显式恢复输入。
  * POST /login 换随机 token（有界内存，12h 过期）→ 后续请求 Authorization: Bearer。
  * 部署仍应使用强密码，并通过网关/防火墙限制 /api/admin 来源。
  */
@@ -79,123 +74,23 @@ data class CreateBotRequest(val name: String)
 @Serializable
 data class BotGrantRequest(val chatId: String)
 
-/** 鉴权器（独立可单元测试）：显式凭据 + 有界内存 token（12h）。 */
-internal class AdminAuthConfig(
-    username: String? = System.getenv("ADMIN_USER"),
-    password: String? = System.getenv("ADMIN_PASSWORD"),
-    private val clock: () -> Long = System::currentTimeMillis,
-    private val maxActiveTokens: Int = DEFAULT_MAX_ACTIVE_TOKENS,
-    private val authenticationAttempts: AuthenticationAttemptGuard = AuthenticationAttemptGuard(),
-) {
-    private val configuredUsername = username?.takeIf(String::isNotBlank)
-    private val configuredPassword = password?.takeIf(String::isNotBlank)
-    /** 插入顺序即有效管理员超过上限时的吊销顺序。 */
-    private val tokens = LinkedHashMap<String, AdminTokenSession>()
-    private val tokenLock = Any()
-    private val random = SecureRandom()
-
-    init {
-        require(maxActiveTokens > 0) { "maxActiveTokens must be positive" }
-    }
-
-    fun login(
-        user: String,
-        pass: String,
-        sourceKey: String = AuthenticationAttemptKeys.directSource("unattributed-admin-peer"),
-    ): String? {
-        val admission = authenticationAttempts.tryAcquire(
-            AuthenticationAttempt(
-                operation = AuthenticationOperation.ADMIN,
-                sourceKey = sourceKey,
-                accountKey = AuthenticationAttemptKeys.username("admin", user),
-            ),
-        ) ?: return null
-        try {
-            val expectedUser = configuredUsername ?: return null
-            val expectedPassword = configuredPassword ?: return null
-            if (!constantTimeEquals(user, expectedUser) || !constantTimeEquals(pass, expectedPassword)) return null
-            val token = Base64.getUrlEncoder().withoutPadding()
-                .encodeToString(ByteArray(32).also { random.nextBytes(it) })
-            synchronized(tokenLock) {
-                val now = clock()
-                removeExpired(now)
-                while (tokens.size >= maxActiveTokens) {
-                    val oldest = tokens.entries.iterator()
-                    if (!oldest.hasNext()) break
-                    oldest.next()
-                    oldest.remove()
-                }
-                tokens[token] = AdminTokenSession(
-                    principal = expectedUser,
-                    expiresAt = saturatedAdd(now, TOKEN_TTL_MS),
-                )
-            }
-            return token
-        } finally {
-            admission.close()
-        }
-    }
-
-    /** 原子地返回通过校验的已配置管理员身份，同时校验 token 是否过期。 */
-    fun principal(token: String?): String? {
-        if (token.isNullOrBlank()) return null
-        return synchronized(tokenLock) {
-            val session = tokens[token] ?: return@synchronized null
-            if (clock() >= session.expiresAt) {
-                tokens.remove(token)
-                null
-            } else {
-                session.principal
-            }
-        }
-    }
-
-    internal fun activeTokenCount(): Int = synchronized(tokenLock) { tokens.size }
-
-    private fun removeExpired(now: Long) {
-        val iterator = tokens.entries.iterator()
-        while (iterator.hasNext()) {
-            if (now >= iterator.next().value.expiresAt) iterator.remove()
-        }
-    }
-
-    private fun constantTimeEquals(actual: String, expected: String): Boolean = MessageDigest.isEqual(
-        actual.toByteArray(StandardCharsets.UTF_8),
-        expected.toByteArray(StandardCharsets.UTF_8),
-    )
-
-    companion object {
-        internal const val TOKEN_TTL_MS = 12 * 3600 * 1000L
-        internal const val DEFAULT_MAX_ACTIVE_TOKENS = 256
-
-        private fun saturatedAdd(left: Long, right: Long): Long =
-            if (Long.MAX_VALUE - left < right) Long.MAX_VALUE else left + right
-    }
-
-    private data class AdminTokenSession(
-        val principal: String,
-        val expiresAt: Long,
-    )
-}
-
 internal fun Route.adminRoutes(
     adminService: AdminService,
-    authenticationAttempts: AuthenticationAttemptGuard,
+    auth: AdminSecurityService,
     clientTelemetry: ClientTelemetryAdminService? = null,
-    auth: AdminAuthConfig = AdminAuthConfig(authenticationAttempts = authenticationAttempts),
 ) {
     route("/api/admin") {
         post("/login") {
             val req = call.receiveBoundedJsonOrRespond<AdminLoginRequest>() ?: return@post
             // request.local 是连接器的直接 socket 对端。TeamTalk 未安装任何转发头插件，
             // 并且有意在此边界不信任 X-Forwarded-For。
-            val sourceKey = AuthenticationAttemptKeys.directSource(call.request.local.remoteAddress)
-            val token = auth.login(req.username, req.password, sourceKey)
+            val token = auth.login(req.username, req.password, call.request.local.remoteAddress)
                 ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "invalid credentials"))
             call.respond(AdminTokenResponse(token, 12 * 3600))
         }
 
         installAdminAuthorization(auth)
+        adminSecurityRoutes(auth)
 
         get("/overview") {
             call.respond(adminService.overview())
@@ -225,8 +120,12 @@ internal fun Route.adminRoutes(
         }
         post("/users/{uid}/reset-password") {
             val req = call.receiveBoundedJsonOrRespond<AdminMessageRequest>() ?: return@post
-            adminService.resetPassword(call.parameters["uid"]!!, req.password ?: throw IllegalArgumentException("password required"))
-            call.respond(mapOf("ok" to true))
+            try {
+                adminService.resetPassword(call.parameters["uid"]!!, req.password ?: throw IllegalArgumentException("password required"))
+                call.respond(mapOf("ok" to true))
+            } catch (_: IllegalArgumentException) {
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid password reset request"))
+            }
         }
         get("/users/{uid}/document-custody-plan") {
             call.respondDocumentCustody {
@@ -528,14 +427,14 @@ internal fun publicTelemetryAdminBadRequest(
 ): Map<String, String> = mapOf("error" to "invalid telemetry request")
 
 /** 精确的规范化路径匹配使登录路由不受查询字符串和形似后缀的影响。 */
-internal fun Route.installAdminAuthorization(auth: AdminAuthConfig) {
+internal fun Route.installAdminAuthorization(auth: AdminSecurityService) {
     install(AdminAuthorizationPlugin) {
         this.auth = auth
     }
 }
 
 private class AdminAuthorizationConfig {
-    lateinit var auth: AdminAuthConfig
+    lateinit var auth: AdminSecurityService
 }
 
 private val AdminAuthorizationPlugin = createRouteScopedPlugin(
@@ -551,9 +450,37 @@ private val AdminAuthorizationPlugin = createRouteScopedPlugin(
             call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "unauthorized"))
         } else {
             call.attributes.put(ADMIN_PRINCIPAL_KEY, principal)
+            adminAuditAction(call.request.httpMethod, call.request.path())?.let { action ->
+                // Persist admission before a sensitive handler can mutate business state.
+                val target = call.request.path().removePrefix("/api/admin/").filterNot(Char::isISOControl).take(400)
+                call.attributes.put(ADMIN_AUDIT_KEY, auth.beginAudit(principal, action, target))
+            }
+        }
+    }
+    onCallRespond { call, _ ->
+        call.attributes.getOrNull(ADMIN_AUDIT_KEY)?.let { auditId ->
+            call.attributes.remove(ADMIN_AUDIT_KEY)
+            val status = call.response.status()?.value ?: 200
+            val reason = call.attributes.getOrNull(ADMIN_AUDIT_FAILURE_KEY)
+                ?: com.virjar.tk.server.application.admin.AdminAuditFailureReason.forStatus(status)
+            auth.completeAudit(auditId, status, reason)
+        }
+    }
+    on(CallFailed) { call, cause ->
+        // Global StatusPages sends its response outside this route's response hooks. Record only
+        // known handler failures here; cancellation and failed audit completion remain indeterminate.
+        if (cause is CancellationException || call.response.isCommitted) return@on
+        call.attributes.getOrNull(ADMIN_AUDIT_KEY)?.let { auditId ->
+            call.attributes.remove(ADMIN_AUDIT_KEY)
+            auth.completeAudit(auditId, 500)
         }
     }
 }
+
+private val ADMIN_AUDIT_KEY = AttributeKey<Long>("admin-audit")
+
+internal fun ApplicationCall.adminBearerToken(): String =
+    request.header(HttpHeaders.Authorization)?.removePrefix("Bearer ") ?: error("Missing admin session")
 
 internal fun ApplicationCall.requireAdminPrincipal(): String =
     attributes.getOrNull(ADMIN_PRINCIPAL_KEY)

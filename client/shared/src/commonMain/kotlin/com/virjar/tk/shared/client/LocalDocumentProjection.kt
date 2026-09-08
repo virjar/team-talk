@@ -229,11 +229,23 @@ object LocalDocumentProjectionPolicy {
  * 干净投影。
  */
 interface LocalDocumentProjection {
+    /**
+     * 先应用持久事件的失效提示，再允许同步游标前进。普通变化保留离线缓存并退役在途读取；
+     * 删除/撤权清理干净投影。null 表示组织变化或同步重建，需要重查当前工作集的权限。
+     * 评论变化由独立评论投影消费，不使正文读取失效。
+     */
+    fun invalidateDocumentProjection(change: com.virjar.tk.protocol.DocumentChangedPayload? = null)
+
     /** 区分权威空结果与从未拉取过 spaces 的缓存。 */
     fun isDocumentSpaceSnapshotCached(): Boolean
 
     /** 按最后权威顺序的完整缓存 space 投影。 */
     fun getDocumentSpaces(): List<DocumentSpace>
+
+    /** 单空间读取独立于可见列表的分页 cycle，不把它的结果当作完整列表。 */
+    fun beginDocumentSpaceDetailsSnapshot(spaceId: String): ProjectionSnapshotLease
+
+    fun applyDocumentSpaceDetailsSnapshot(lease: ProjectionSnapshotLease, space: DocumentSpace): Boolean
 
     /** 为当前该账号可见的完整 space 集合开始一次请求。 */
     fun beginDocumentSpaceSnapshot(): ProjectionSnapshotLease
@@ -333,7 +345,7 @@ interface LocalDocumentProjection {
 
     fun beginDocumentBodySnapshot(spaceId: String, documentId: String): ProjectionSnapshotLease
 
-    /** 为远程完成的正文/移动变更开始响应后提交通道。 */
+    /** 在正文/移动 RPC 前开始提交通道；终态事件可阻止迟到响应复活已清理的投影。 */
     fun beginDocumentBodyMutationSnapshot(
         spaceId: String,
         documentId: String,

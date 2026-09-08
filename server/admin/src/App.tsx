@@ -1,11 +1,11 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { Layout, Menu, Button, Space, Spin, Typography } from 'antd'
+import { Layout, Menu, Button, Space, Spin, Typography, message } from 'antd'
 import {
   ApartmentOutlined, DashboardOutlined, UserOutlined, MessageOutlined, FileTextOutlined,
-  TeamOutlined, LogoutOutlined, RobotOutlined,
+  TeamOutlined, LogoutOutlined, RobotOutlined, SafetyOutlined,
 } from '@ant-design/icons'
-import { TOKEN_KEY } from './api/client'
+import { api, clearAdminSession, errMsg, TOKEN_KEY } from './api/client'
 
 // Route-level boundaries keep the public login and each operations surface out of the initial
 // bundle. This also prevents a rarely used diagnostics page from delaying every Admin startup.
@@ -17,6 +17,7 @@ const Logs = lazy(() => import('./pages/Logs'))
 const Groups = lazy(() => import('./pages/Groups'))
 const Organization = lazy(() => import('./pages/Organization'))
 const Bots = lazy(() => import('./pages/Bots'))
+const Security = lazy(() => import('./pages/Security'))
 
 const { Header, Sider, Content } = Layout
 
@@ -25,7 +26,13 @@ function Shell() {
   const navigate = useNavigate()
   // BrowserRouter(basename=/admin) 的 useLocation 已剥 basename：pathname 即 '/users' 等
   const selected = loc.pathname === '/' ? '/dashboard' : loc.pathname
-  const logout = () => { localStorage.removeItem(TOKEN_KEY); window.location.href = '/admin/' }
+  const [loggingOut, setLoggingOut] = useState(false)
+  const logout = async () => {
+    setLoggingOut(true)
+    try { await api.post('/logout'); clearAdminSession() }
+    catch (error) { message.error(errMsg(error)) }
+    finally { setLoggingOut(false) }
+  }
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Sider theme="dark">
@@ -38,13 +45,14 @@ function Shell() {
           { key: '/messages', icon: <MessageOutlined />, label: '消息' },
           { key: '/logs', icon: <FileTextOutlined />, label: '日志' },
           { key: '/groups', icon: <TeamOutlined />, label: '群组' },
+          { key: '/security', icon: <SafetyOutlined />, label: '管理安全' },
         ]} onClick={({ key }) => navigate(key)} />
       </Sider>
       <Layout>
         <Header style={{ background: '#fff', display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
           <Space>
             <Typography.Text type="secondary">TeamTalk Admin</Typography.Text>
-            <Button icon={<LogoutOutlined />} onClick={logout}>登出</Button>
+            <Button icon={<LogoutOutlined />} onClick={logout} loading={loggingOut}>登出</Button>
           </Space>
         </Header>
         <Content style={{ margin: 16 }}>
@@ -58,6 +66,7 @@ function Shell() {
               <Route path="messages" element={<Messages />} />
               <Route path="logs" element={<Logs />} />
               <Route path="groups" element={<Groups />} />
+              <Route path="security" element={<Security />} />
               <Route path="*" element={<Navigate to="dashboard" replace />} />
             </Routes>
           </Suspense>

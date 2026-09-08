@@ -15,6 +15,7 @@ internal class LocalDocumentProjectionStore(
     private val stateLock: Any,
 ) {
     private val spaceSnapshots = KeyedProjectionSnapshotGate("document spaces snapshot")
+    private val spaceDetailsSnapshots = KeyedProjectionSnapshotGate("document space details snapshot")
     private val spaceMutationSnapshots = KeyedProjectionSnapshotGate("document space mutation commit")
     private val branchSnapshots = KeyedProjectionSnapshotGate("document branch snapshot")
     private val pathSpineSnapshots = KeyedProjectionSnapshotGate("document path spine snapshot")
@@ -44,6 +45,27 @@ internal class LocalDocumentProjectionStore(
             persistence.loadSpacesLocked()
         }
     }
+
+    fun beginSpaceDetailsSnapshot(spaceId: String): ProjectionSnapshotLease = cacheUseGate.use {
+        val key = LocalDocumentProjectionPolicy.requireKey(spaceId, "spaceId")
+        synchronized(stateLock) { spaceDetailsSnapshots.begin(key) }
+    }
+
+    fun applySpaceDetailsSnapshot(lease: ProjectionSnapshotLease, space: DocumentSpace): Boolean =
+        cacheUseGate.runIfOpen {
+            val validated = LocalDocumentProjectionPolicy.normalizeSpaces(listOf(space)).single()
+            synchronized(stateLock) {
+                if (!spaceDetailsSnapshots.consumeIfCurrent(lease, validated.spaceId)) return@synchronized false
+                val current = persistence.loadSpacesLocked()
+                val merged = if (current.any { it.spaceId == validated.spaceId }) {
+                    current.map { if (it.spaceId == validated.spaceId) validated else it }
+                } else {
+                    (listOf(validated) + current).take(LocalDocumentProjectionLimits.MAX_SPACES)
+                }
+                persistence.replaceSpaceWorkingSetLocked(merged, markCached = false, refreshedRows = listOf(validated))
+                true
+            }
+        }
 
     fun beginSpaceSnapshot(): ProjectionSnapshotLease = cacheUseGate.use {
         synchronized(stateLock) {
@@ -155,6 +177,7 @@ internal class LocalDocumentProjectionStore(
             if (!spaceMutationSnapshots.consumeIfCurrent(projectionLease, validated.spaceId)) {
                 return@synchronized false
             }
+            spaceDetailsSnapshots.invalidate(validated.spaceId)
             spaceSnapshots.invalidate(ALL_SPACES_KEY)
             pruneSpaceSnapshotBoundaryLocked()
             home.reset()
@@ -494,6 +517,33 @@ internal class LocalDocumentProjectionStore(
         }
     }
 
+    fun invalidate(change: com.virjar.tk.protocol.DocumentChangedPayload?) {
+        cacheUseGate.use {
+            synchronized(stateLock) {
+                when (change?.kind) {
+                    com.virjar.tk.protocol.DocumentChangedPayload.COMMENTS_CHANGED -> Unit
+                    com.virjar.tk.protocol.DocumentChangedPayload.SPACE_REVOKED ->
+                        purgeSpaceLocked(change.spaceId)
+                    com.virjar.tk.protocol.DocumentChangedPayload.NODE_DELETED ->
+                        purgeDocumentLocked(normalizedDocumentIdentity(change.spaceId, requireNotNull(change.nodeId)))
+                    null -> resetProjectionSnapshotGatesLocked()
+                    else -> {
+                        // 事件不包含完整父链：同空间的目录/正文读取都可能比这次变化更旧。
+                        // 保留已缓存内容供离线展示，也保留正常写请求的提交通道；自己的 UPSERT
+                        // 通知可以先于 RPC ACK 到达，只有终态删除/撤权才撤销该提交通道。
+                        if (change.kind == com.virjar.tk.protocol.DocumentChangedPayload.SPACE_CHANGED) {
+                            spaceSnapshots.reset()
+                            spaceDetailsSnapshots.invalidate(change.spaceId)
+                            spaceSnapshotBoundary = null
+                        }
+                        home.reset()
+                        invalidateSpaceReadsLocked(change.spaceId)
+                    }
+                }
+            }
+        }
+    }
+
     fun purgeSpace(spaceId: String) {
         cacheUseGate.use {
             val normalizedSpaceId = LocalDocumentProjectionPolicy.requireKey(spaceId, "spaceId")
@@ -517,6 +567,7 @@ internal class LocalDocumentProjectionStore(
             spaceSnapshots.abandon(lease).also { abandoned ->
                 if (abandoned && spaceSnapshotBoundary?.lease === lease) spaceSnapshotBoundary = null
             } ||
+                spaceDetailsSnapshots.abandon(lease) ||
                 spaceMutationSnapshots.abandon(lease) ||
                 home.abandon(lease) ||
                 branchSnapshots.abandon(lease) ||
@@ -540,6 +591,7 @@ internal class LocalDocumentProjectionStore(
 
     /** 调用方持有 [stateLock]。 */
     private fun resetDependentProjectionGatesLocked() {
+        spaceDetailsSnapshots.reset()
         spaceMutationSnapshots.reset()
         home.reset()
         branchSnapshots.reset()
@@ -590,9 +642,7 @@ internal class LocalDocumentProjectionStore(
         // 拥有该响应。任何缓存的后代路径也不再是干净的服务器事实：父级缺失/被删除可能意味着其
         // 子节点在本客户端观察到终态响应之前就已移动。
         home.reset()
-        branchSnapshots.reset()
-        pathSpineSnapshots.reset()
-        bodySnapshots.reset()
+        invalidateSpaceReadsLocked(identity.spaceId)
         queries.transaction {
             affectedIds.forEach { documentId ->
                 queries.deleteDocumentHomeItem(identity.spaceId, documentId)
@@ -605,6 +655,13 @@ internal class LocalDocumentProjectionStore(
                 content.updateParentHasChildrenLocked(normalizedBranch(identity.spaceId, parentId))
             }
         }
+    }
+
+    private fun invalidateSpaceReadsLocked(spaceId: String) {
+        val prefix = "${spaceId.length}:$spaceId:"
+        branchSnapshots.invalidateMatching { it.startsWith(prefix) }
+        pathSpineSnapshots.invalidateMatching { it.startsWith(prefix) }
+        bodySnapshots.invalidateMatching { it.startsWith(prefix) }
     }
 
     private fun beginSpaceSnapshotBoundaryLocked(): DocumentSpaceSnapshotBoundary =

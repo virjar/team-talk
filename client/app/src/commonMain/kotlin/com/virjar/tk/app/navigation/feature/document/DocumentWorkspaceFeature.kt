@@ -33,6 +33,7 @@ class DocumentWorkspaceFeature internal constructor(
     localData: UiLocalDataBoundary,
     telemetry: ClientUiTelemetrySink = NoopClientUiTelemetrySink,
 ) {
+    internal val comments = DocumentCommentsFeature(session, scope, localData, reportError)
     internal val draftLifecycleBridge = DocumentDraftLifecycleBridge()
     internal val draftCollaboration = DocumentWorkspaceDraftCollaboration(
         ownerKey = DocumentDraftOwnerKey(
@@ -296,17 +297,13 @@ class DocumentWorkspaceFeature internal constructor(
         tryApplyDeferredDocumentMoves()
     }
     @Suppress("unused")
-    private val reconnectRefreshes = DocumentWorkspaceReconnectRefreshCoordinator(
-        connectionState = session.connectionState,
-        scope = scope,
-        workspaceOpened = { workspaceOpened },
-        refresh = ::refreshWorkspace,
-    )
+    private val documentChangeObserver = observeDocumentChanges()
 
     suspend fun open() {
         workspaceOpened = true
         openWorkspace()
         tryApplyDeferredDocumentMoves()
+        refreshResidentDocumentWorkset()
     }
 
     private suspend fun acceptRecoveredDocumentMove(completion: DocumentMoveCommandCompletion) {
@@ -785,6 +782,11 @@ class DocumentWorkspaceFeature internal constructor(
     internal fun removeRetiredSpaceFromDocumentHome(spaceId: String) {
         recentDocuments = recentDocuments.filterNot { it.spaceId == spaceId }
         recentlyCreatedDocuments = recentlyCreatedDocuments.filterNot { it.spaceId == spaceId }
+    }
+
+    internal fun removeDeletedNodeFromDocumentHome(spaceId: String, nodeId: String) {
+        recentDocuments = recentDocuments.filterNot { it.spaceId == spaceId && it.documentId == nodeId }
+        recentlyCreatedDocuments = recentlyCreatedDocuments.filterNot { it.spaceId == spaceId && it.documentId == nodeId }
     }
 
 }

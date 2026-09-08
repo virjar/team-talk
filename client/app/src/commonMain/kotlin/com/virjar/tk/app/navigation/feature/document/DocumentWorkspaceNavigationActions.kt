@@ -173,6 +173,34 @@ internal class DocumentWorkspaceNavigationActions(
 
     private var homeProjectionState by mutableStateOf(DocumentWorkspaceProjectionStatus.NOT_LOADED)
 
+    /** 失效只退役普通读取 owner，保留可离线查看的行与独立草稿。 */
+    fun markProjectionsStale(offline: Boolean, spaceId: String? = null) {
+        homeRequests.invalidate()
+        fun stale(status: DocumentWorkspaceProjectionStatus): DocumentWorkspaceProjectionStatus =
+            if (status == DocumentWorkspaceProjectionStatus.LOCAL_ORPHAN ||
+                status == DocumentWorkspaceProjectionStatus.NOT_LOADED ||
+                status == DocumentWorkspaceProjectionStatus.OFFLINE_MISSING
+            ) status else if (offline) DocumentWorkspaceProjectionStatus.OFFLINE_CACHED
+            else DocumentWorkspaceProjectionStatus.CACHED
+        homeProjectionState = stale(homeProjectionState)
+        if (spaceId != null && spaceId != port.selectedSpaceId()) return
+        val staleTree = stale(projectionState.tree)
+        val staleDocument = stale(projectionState.document)
+        if (spaceId == null) {
+            navigationGeneration.next()
+            treeNavigation.invalidateAll()
+            documentNavigation.resetForNavigation()
+        }
+        // 普通节点提示不取消用户正在打开的文档；SDK 的读取租约使旧响应重读/拒绝。
+        projectionState.tree = staleTree
+        projectionState.document = staleDocument
+    }
+
+    fun publishDocumentRefreshStatus(offline: Boolean = false) {
+        projectionState.document = if (offline) DocumentWorkspaceProjectionStatus.OFFLINE_CACHED
+            else DocumentWorkspaceProjectionStatus.CURRENT
+    }
+
     fun beginNavigation(): Long {
         val generation = navigationGeneration.next()
         treeNavigation.invalidateAll()
@@ -184,6 +212,8 @@ internal class DocumentWorkspaceNavigationActions(
     fun isCurrent(generation: Long, spaceId: String? = null): Boolean =
         navigationGeneration.isCurrent(generation) &&
             (spaceId == null || port.selectedSpaceId() == spaceId)
+
+    fun currentNavigation(): Long = navigationGeneration.snapshot()
 
     fun showHome(additionalOwnerIsCurrent: () -> Boolean) {
         val generation = beginNavigation()

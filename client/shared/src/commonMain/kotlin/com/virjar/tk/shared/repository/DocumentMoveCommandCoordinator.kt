@@ -89,6 +89,19 @@ internal class DocumentMoveCommandCoordinator(
         pending: PendingDocumentMoveCommand,
         publishCompletion: Boolean = false,
     ): DocumentMoveResult? {
+        val lease = localCache.beginDocumentBodyMutationSnapshot(pending.spaceId, pending.nodeId)
+        return try {
+            sendWithProjectionLease(pending, publishCompletion, lease)
+        } finally {
+            localCache.abandonProjectionSnapshot(lease)
+        }
+    }
+
+    private suspend fun sendWithProjectionLease(
+        pending: PendingDocumentMoveCommand,
+        publishCompletion: Boolean,
+        projectionLease: com.virjar.tk.shared.client.ProjectionSnapshotLease,
+    ): DocumentMoveResult? {
         val acknowledgement = try {
             rpc.moveNode(
                 pending.spaceId,
@@ -125,7 +138,7 @@ internal class DocumentMoveCommandCoordinator(
                     remote.node.parentId == pending.targetParentId,
             ) { "moveNode response escaped its requested identity" }
         }
-        val projection = projectionConverger.converge(pending, remote)
+        val projection = projectionConverger.converge(pending, remote, projectionLease)
         val cleared = localCache.clearPendingDocumentMoveCommand(pending.operationId)
         if (cleared && publishCompletion) {
             onCommandCompleted(

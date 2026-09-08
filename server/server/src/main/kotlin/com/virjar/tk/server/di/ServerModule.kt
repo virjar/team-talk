@@ -6,6 +6,9 @@ import com.virjar.tk.server.application.admin.AdminChatDirectory
 import com.virjar.tk.server.application.admin.AdminOverviewAssembler
 import com.virjar.tk.server.application.admin.AdminOverviewCounters
 import com.virjar.tk.server.application.admin.AdminCredentialCommands
+import com.virjar.tk.server.application.admin.AdminSecurityService
+import com.virjar.tk.server.application.admin.AdminSecurityStore
+import com.virjar.tk.server.infra.db.repository.ExposedAdminSecurityStore
 import com.virjar.tk.server.application.admin.AdminService
 import com.virjar.tk.server.application.admin.AdminUserDirectory
 import com.virjar.tk.server.application.admin.ClientTelemetryAdminService
@@ -320,6 +323,8 @@ internal fun createServerModule(
     single { OrganizationProjectionReadiness(get()) }
     single { OrganizationService(get(), get(), get(), get(), get()) }
     single { GroupFileService(get(), get(), get(), get(), get()) }
+    single<com.virjar.tk.server.domain.document.DocumentCommentRepository> { com.virjar.tk.server.infra.db.repository.ExposedDocumentCommentRepository() }
+    single { com.virjar.tk.server.domain.document.DocumentCommentService(get(), get(), get()) }
     single {
         DocumentService(
             repository = get(),
@@ -437,6 +442,8 @@ internal fun createServerModule(
     }
     single { AdminOverviewAssembler(get(), get(), get()) }
     single { AdminCredentialCommands(get(), get(), get()) }
+    single<AdminSecurityStore> { ExposedAdminSecurityStore(get()) }
+    single { AdminSecurityService(get(), get(), get()) }
     single {
         val registry = get<ClientRegistry>()
         ClientTelemetryAdminService(
@@ -486,6 +493,9 @@ internal fun createServerModule(
             register(DeviceRpcContract.SERVICE) { session -> DeviceRpcImpl(session.uid, get(), get()) }
             register(OrganizationRpcContract.SERVICE) { session -> OrganizationRpcImpl(session.uid, get()) }
             register(GroupFileRpcContract.SERVICE) { session -> GroupFileRpcImpl(session.uid, get()) }
+            register(com.virjar.tk.protocol.rpc.gen.DocumentCommentRpcContract.SERVICE) { session ->
+                com.virjar.tk.server.protocol.rpc.DocumentCommentRpcImpl(session.uid, get())
+            }
             register(DocumentRpcContract.SERVICE) { session -> DocumentRpcImpl(session.uid, get()) }
             register(SyncRpcContract.SERVICE) { session ->
                 SyncRpcImpl(session.uid, session.sessionId, get())

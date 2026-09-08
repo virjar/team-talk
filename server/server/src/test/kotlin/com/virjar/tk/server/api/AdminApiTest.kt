@@ -1,6 +1,8 @@
 package com.virjar.tk.server.api
 
 import com.virjar.tk.server.domain.auth.AuthenticationAttemptGuard
+import com.virjar.tk.server.application.admin.AdminSecurityService
+import kotlinx.coroutines.test.runTest
 import com.virjar.tk.server.domain.auth.AuthenticationAttemptGuardConfig
 import com.virjar.tk.server.domain.auth.AuthenticationAttemptKeys
 import com.virjar.tk.server.domain.auth.AuthenticationOperation
@@ -81,21 +83,21 @@ class AdminApiTest {
         user: String = "admin",
         pass: String = "test-only-password",
         clock: () -> Long = { 1_000L },
-        maxActiveTokens: Int = AdminAuthConfig.DEFAULT_MAX_ACTIVE_TOKENS,
-    ) = AdminAuthConfig(user, pass, clock, maxActiveTokens)
+        maxActiveTokens: Int = AdminSecurityService.DEFAULT_MAX_ACTIVE_TOKENS,
+    ) = testAdminSecurity(user, pass, clock, maxActiveTokens)
 
     @Test
-    fun `正确凭据换 token，错误凭据 null`() {
+    fun `正确凭据换 token，错误凭据 null`() = runTest {
         val a = auth()
         val token = a.login("admin", "test-only-password")
         assertTrue(!token.isNullOrBlank(), "正确凭据应返回 token")
         assertNull(a.login("admin", "wrong"), "错误密码拒绝")
         assertNull(a.login("nobody", "test-only-password"), "未知用户拒绝")
-        assertNull(AdminAuthConfig(username = null, password = null).login("admin", "admin"))
+        assertNull(testAdminSecurity(username = null, password = null).login("admin", "admin"))
     }
 
     @Test
-    fun `token 校验与拒绝`() {
+    fun `token 校验与拒绝`() = runTest {
         val a = auth()
         val token = a.login("admin", "test-only-password")!!
         assertEquals("admin", a.principal(token), "receipt actor must come from the verified admin session")
@@ -126,16 +128,16 @@ class AdminApiTest {
     }
 
     @Test
-    fun `token 随机不重复`() {
+    fun `token 随机不重复`() = runTest {
         val a = auth()
         val t1 = a.login("admin", "test-only-password")!!
         val t2 = a.login("admin", "test-only-password")!!
         assertNotEquals(t1, t2)
-        assertEquals(AdminAuthConfig.TOKEN_TTL_MS, 12 * 3600 * 1000L, "12h 过期")
+        assertEquals(AdminSecurityService.TOKEN_TTL_MS, 12 * 3600 * 1000L, "12h 过期")
     }
 
     @Test
-    fun `token 有上限且过期后回收`() {
+    fun `token 有上限且过期后回收`() = runTest {
         var now = 10_000L
         val a = auth(clock = { now }, maxActiveTokens = 2)
         val first = a.login("admin", "test-only-password")!!
@@ -147,14 +149,14 @@ class AdminApiTest {
         assertEquals("admin", a.principal(second))
         assertEquals("admin", a.principal(third))
 
-        now += AdminAuthConfig.TOKEN_TTL_MS
+        now += AdminSecurityService.TOKEN_TTL_MS
         assertNull(a.principal(second))
         a.login("admin", "test-only-password")
         assertEquals(1, a.activeTokenCount(), "下一次登录清理其他过期 token")
     }
 
     @Test
-    fun `管理登录复用统一认证门禁且冷却拒绝不泄露原因`() {
+    fun `管理登录复用统一认证门禁且冷却拒绝不泄露原因`() = runTest {
         var now = 0L
         val limits = AuthenticationOperation.entries.associateWith {
             AuthenticationOperationLimits(10, 10, 10)
@@ -173,7 +175,7 @@ class AdminApiTest {
             ),
             monotonicNanos = { now },
         )
-        val auth = AdminAuthConfig(
+        val auth = testAdminSecurity(
             username = "admin",
             password = "test-only-password",
             authenticationAttempts = attempts,

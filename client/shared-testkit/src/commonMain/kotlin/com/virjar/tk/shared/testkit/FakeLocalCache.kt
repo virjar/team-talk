@@ -44,6 +44,7 @@ class FakeLocalCache(
     terminalReceiptLimit: Int = MAX_TERMINAL_OUTGOING_RECEIPTS,
     initialDatasetId: String? = FAKE_SYNC_DATASET_ID,
 ) : LocalCache {
+    override val documentComments: com.virjar.tk.shared.client.LocalDocumentComments = FakeDocumentComments()
     // 消息存储：chatId → 按时间倒序的消息列表（最新在前）
     private val messagesMap = mutableMapOf<String, MutableList<Message>>()
     private val messagesFlows = mutableMapOf<String, MutableStateFlow<List<Message>>>()
@@ -494,6 +495,12 @@ class FakeLocalCache(
     override fun isDocumentSpaceSnapshotCached(): Boolean =
         cacheUseGate.use { documents.isSpaceSnapshotCached() }
 
+    override fun beginDocumentSpaceDetailsSnapshot(spaceId: String): ProjectionSnapshotLease =
+        cacheUseGate.use { documents.beginSpaceDetailsSnapshot(spaceId) }
+
+    override fun applyDocumentSpaceDetailsSnapshot(lease: ProjectionSnapshotLease, space: DocumentSpace): Boolean =
+        cacheUseGate.runIfOpen { documents.applySpaceDetailsSnapshot(lease, space) }
+
     override fun beginDocumentSpaceSnapshot(): ProjectionSnapshotLease =
         cacheUseGate.use { documents.beginSpaceSnapshot() }
 
@@ -617,10 +624,28 @@ class FakeLocalCache(
         documents.applyMove(projectionLease, result)
     }
 
-    override fun purgeDocumentSpace(spaceId: String) = cacheUseGate.use { documents.purgeSpace(spaceId) }
+    override fun invalidateDocumentProjection(change: com.virjar.tk.protocol.DocumentChangedPayload?) =
+        cacheUseGate.use {
+            documents.invalidate(change)
+            when (change?.kind) {
+                null -> documentComments.invalidate(purge = true)
+                com.virjar.tk.protocol.DocumentChangedPayload.COMMENTS_CHANGED,
+                com.virjar.tk.protocol.DocumentChangedPayload.SPACE_CHANGED -> documentComments.invalidate(change.spaceId)
+                com.virjar.tk.protocol.DocumentChangedPayload.SPACE_REVOKED -> documentComments.invalidate(change.spaceId, purge = true)
+                com.virjar.tk.protocol.DocumentChangedPayload.NODE_DELETED -> documentComments.invalidate(change.spaceId, change.nodeId, purge = true)
+            }
+        }
+
+    override fun purgeDocumentSpace(spaceId: String) = cacheUseGate.use {
+        documents.purgeSpace(spaceId)
+        documentComments.invalidate(spaceId, purge = true)
+    }
 
     override fun purgeDocument(spaceId: String, documentId: String) =
-        cacheUseGate.use { documents.purgeDocument(spaceId, documentId) }
+        cacheUseGate.use {
+            documents.purgeDocument(spaceId, documentId)
+            documentComments.invalidate(spaceId, documentId, purge = true)
+        }
 
     fun activeProjectionSnapshotCountForTest(): Int = synchronized(conversationLock) {
         chatSnapshotLeases.size + people.activeSnapshotCount {

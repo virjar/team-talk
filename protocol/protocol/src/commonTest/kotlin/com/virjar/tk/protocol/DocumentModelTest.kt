@@ -2,6 +2,8 @@ package com.virjar.tk.protocol
 
 import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.protocol.model.Document
+import com.virjar.tk.protocol.model.DocumentComment
+import com.virjar.tk.protocol.model.DocumentCommentPage
 import com.virjar.tk.protocol.model.DocumentContent
 import com.virjar.tk.protocol.model.DocumentCreateResult
 import com.virjar.tk.protocol.model.DocumentCustodyTransferResult
@@ -372,5 +374,121 @@ class DocumentModelTest {
         assertFailsWith<ProtocolCorruptionException> {
             ProtoCodec.decode(DocumentPathSpine, malformed)
         }
+    }
+
+    @Test
+    fun `document comments preserve replies revisions and deletion tombstones`() {
+        val comment = sampleComment()
+        listOf(
+            comment,
+            comment.copy(replyToId = "00000000-0000-4000-8000-000000000104", body = "回复\n第二行", revision = 8),
+            comment.copy(body = "", revision = 9, deleted = true),
+        ).forEach { value ->
+            assertEquals(value, ProtoCodec.decode(DocumentComment, ProtoCodec.encode(value)))
+        }
+    }
+
+    @Test
+    fun `document comment body limits count UTF16 units for ASCII Chinese and emoji`() {
+        listOf(
+            "x".repeat(DocumentComment.MAX_BODY_LENGTH),
+            "中".repeat(DocumentComment.MAX_BODY_LENGTH),
+            "😀".repeat(DocumentComment.MAX_BODY_LENGTH / 2),
+        ).forEach { body ->
+            assertEquals(DocumentComment.MAX_BODY_LENGTH, body.length)
+            val comment = sampleComment().copy(body = body)
+            assertEquals(comment, ProtoCodec.decode(DocumentComment, ProtoCodec.encode(comment)))
+            assertFailsWith<IllegalArgumentException> { ProtoCodec.encode(comment.copy(body = body + "x")) }
+            assertFailsWith<IllegalArgumentException> {
+                ProtoCodec.decode(DocumentComment, rawComment(comment.copy(body = body + "x")))
+            }
+        }
+    }
+
+    @Test
+    fun `document comment decoding bounds identifiers author fields and encoded body bytes`() {
+        val comment = sampleComment()
+        listOf(
+            comment.copy(commentId = "x".repeat(37)),
+            comment.copy(spaceId = "x".repeat(37)),
+            comment.copy(documentId = "x".repeat(37)),
+            comment.copy(replyToId = "x".repeat(37)),
+            comment.copy(authorUid = "x".repeat(65)),
+            comment.copy(authorName = "x".repeat(513)),
+            comment.copy(body = "x".repeat(DocumentComment.MAX_BODY_LENGTH * 4 + 1)),
+        ).forEach { oversized ->
+            assertFailsWith<ProtocolCorruptionException> { ProtoCodec.decode(DocumentComment, rawComment(oversized)) }
+        }
+    }
+
+    @Test
+    fun `document comment pages preserve terminal and continuation cursors at the page limit`() {
+        val full = DocumentCommentPage(
+            List(DocumentCommentPage.MAX_PAGE_SIZE) { index ->
+                sampleComment().copy(commentId = index.toString().padStart(36, '0'), sequence = 1_000L - index)
+            },
+            901,
+        )
+        listOf(DocumentCommentPage(emptyList(), 0), DocumentCommentPage(listOf(sampleComment()), 0), full).forEach { page ->
+            assertEquals(page, ProtoCodec.decode(DocumentCommentPage, ProtoCodec.encode(page)))
+        }
+        assertFailsWith<IllegalArgumentException> { ProtoCodec.encode(full.copy(items = full.items + sampleComment())) }
+    }
+
+    @Test
+    fun `document comment pages reject oversized counts and truncated collections before allocation`() {
+        for (count in listOf(DocumentCommentPage.MAX_PAGE_SIZE + 1, Int.MAX_VALUE, DocumentCommentPage.MAX_PAGE_SIZE)) {
+            val malformed = ProtoCodec.encodePayload { writeVarInt(count) }
+            assertFailsWith<ProtocolCorruptionException> { ProtoCodec.decode(DocumentCommentPage, malformed) }
+        }
+        val truncatedItem = ProtoCodec.encodePayload {
+            writeVarInt(2)
+            sampleComment().writeTo(this)
+            writeVarLong(0)
+        }
+        assertFailsWith<ProtocolCorruptionException> { ProtoCodec.decode(DocumentCommentPage, truncatedItem) }
+    }
+
+    @Test
+    fun `document comment and page reject truncation trailing bytes and malformed deletion flags`() {
+        val comment = ProtoCodec.encode(sampleComment())
+        assertFailsWith<ProtocolCorruptionException> { ProtoCodec.decode(DocumentComment, comment.copyOf(comment.size - 1)) }
+        assertFailsWith<ProtocolCorruptionException> { ProtoCodec.decode(DocumentComment, comment + byteArrayOf(0)) }
+        val invalidFlag = comment.copyOf().also { it[it.lastIndex] = 2 }
+        assertFailsWith<ProtocolCorruptionException> { ProtoCodec.decode(DocumentComment, invalidFlag) }
+        val page = ProtoCodec.encode(DocumentCommentPage(listOf(sampleComment()), 0))
+        assertFailsWith<ProtocolCorruptionException> { ProtoCodec.decode(DocumentCommentPage, page.copyOf(page.size - 1)) }
+        assertFailsWith<ProtocolCorruptionException> { ProtoCodec.decode(DocumentCommentPage, page + byteArrayOf(0)) }
+    }
+
+    private fun sampleComment() = DocumentComment(
+        commentId = "00000000-0000-4000-8000-000000000101",
+        spaceId = "00000000-0000-4000-8000-000000000102",
+        documentId = "00000000-0000-4000-8000-000000000103",
+        sequence = 900,
+        authorUid = "comment-author",
+        authorName = "评论作者",
+        replyToId = null,
+        body = "待讨论内容",
+        revision = 7,
+        createdAt = 1_000,
+        updatedAt = 2_000,
+        deleted = false,
+    )
+
+    /** 绕过模型写入校验，为解码预算构造真实 wire 字段。 */
+    private fun rawComment(comment: DocumentComment): ByteArray = ProtoCodec.encodePayload {
+        writeString(comment.commentId)
+        writeString(comment.spaceId)
+        writeString(comment.documentId)
+        writeVarLong(comment.sequence)
+        writeString(comment.authorUid)
+        writeString(comment.authorName)
+        writeString(comment.replyToId)
+        writeString(comment.body)
+        writeVarLong(comment.revision)
+        writeVarLong(comment.createdAt)
+        writeVarLong(comment.updatedAt)
+        writeBoolean(comment.deleted)
     }
 }

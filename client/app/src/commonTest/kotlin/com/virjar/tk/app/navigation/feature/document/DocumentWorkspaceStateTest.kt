@@ -1102,6 +1102,7 @@ class DocumentWorkspaceStateTest {
         assertEquals("旧远端正文", merged.savedMarkdown)
         assertEquals(3L, merged.revision)
         assertEquals(8L, merged.editGeneration)
+        assertEquals(4L, merged.remoteChangedRevision)
         assertTrue(merged.dirty)
     }
 
@@ -1132,7 +1133,27 @@ class DocumentWorkspaceStateTest {
         assertEquals(5L, merged.editGeneration)
         assertEquals(clean.recoveryId, merged.recoveryId)
         assertFalse(merged.dirty)
+        assertNull(merged.remoteChangedRevision)
         assertNull(mergeDocumentRefresh(merged, movedRemote.copy(revision = 2)))
+    }
+
+    @Test
+    fun `remote parent deletion closes clean descendants while preserving unsaved local content`() {
+        val clean = tab("clean", "space-a").copy(ancestorIds = listOf("parent"))
+        val dirty = tab("dirty", "space-a").copy(ancestorIds = listOf("parent"), dirty = true,
+            draftMarkdown = "不能覆盖的本机内容", revision = 3)
+        val other = tab("other", "space-b")
+        val result = reconcileDeletedDocumentTabs(listOf(clean, dirty, other), "space-a", "parent")
+        assertEquals(listOf(dirty.tabId, other.tabId), result.map { it.tabId })
+        assertEquals("不能覆盖的本机内容", result.first().draftMarkdown)
+        assertEquals(3L, result.first().revision)
+        assertTrue(result.first().remoteMissing)
+        assertFalse(result.first().pathResolved)
+        val tree = mapOf(null to listOf(node("parent", null)),
+            "parent" to listOf(node("child", "parent")), "child" to listOf(node("grandchild", "child")))
+        assertEquals(setOf("parent", "child", "grandchild"), documentTreeSubtreeIds(tree, "parent"))
+        assertEquals(mapOf<String?, List<DocumentNode>>(null to emptyList()),
+            removeDeletedDocumentTreeIdentity(tree, "space-a", "parent"))
     }
 
     @Test

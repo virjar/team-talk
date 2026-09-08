@@ -72,6 +72,24 @@ class DocumentRepository(
 
     fun cachedSpaces(): List<DocumentSpace> = localCache.getDocumentSpaces()
 
+    /** 重新校验当前驻留空间，包括第一页之外的权限与元数据，不扫描整份可见空间集合。 */
+    suspend fun getSpace(spaceId: String): Outcome<DocumentSpace> = spaceOutcome(
+        spaceId = spaceId,
+        onNotFound = { localCache.purgeDocumentSpace(spaceId) },
+    ) {
+        val lease = localCache.beginDocumentSpaceDetailsSnapshot(spaceId)
+        try {
+            val remote = rpc.getSpace(spaceId)
+            check(remote.spaceId == spaceId) { "getSpace response escaped its requested identity" }
+            check(localCache.applyDocumentSpaceDetailsSnapshot(lease, remote)) {
+                "document space response was fenced by a newer projection"
+            }
+            projectionMaintenance.requireConvergedSpace(remote)
+        } finally {
+            localCache.abandonProjectionSnapshot(lease)
+        }
+    }
+
     fun isHomeSnapshotCached(collection: DocumentHomeCollection): Boolean =
         localCache.isDocumentHomeSnapshotCached(collection)
 
@@ -198,33 +216,33 @@ class DocumentRepository(
         spaceId = spaceId,
         onNotFound = { localCache.purgeDocumentSpace(spaceId) },
     ) {
-        val remote = rpc.createSpace(spaceId, name, description)
-        check(remote.spaceId == spaceId) { "createSpace response escaped its requested identity" }
-        val projection = remote.space
-        if (projection == null) {
-            // 精确重试可能发生在托管权转移/归档之后。命令已完成，
-            // 但客户端绝不能从旧的确认中伪造出当前投影。
-            projectionMaintenance.runPostCommit("Failed to purge an unavailable created document space") {
-                localCache.purgeDocumentSpace(spaceId)
-            }
-            remote
-        } else {
-            check(projection.spaceId == spaceId) {
-                "createSpace response projection escaped its requested identity"
-            }
-            val accepted = projectionMaintenance.runPostCommit(
-                "Failed to stage a created document space projection",
-                fallback = false,
-            ) {
-                val lease = localCache.beginDocumentSpaceMutationSnapshot(spaceId)
-                try {
+        val lease = localCache.beginDocumentSpaceMutationSnapshot(spaceId)
+        try {
+            val remote = rpc.createSpace(spaceId, name, description)
+            check(remote.spaceId == spaceId) { "createSpace response escaped its requested identity" }
+            val projection = remote.space
+            if (projection == null) {
+                // 精确重试可能发生在托管权转移/归档之后。命令已完成，
+                // 但客户端绝不能从旧的确认中伪造出当前投影。
+                projectionMaintenance.runPostCommit("Failed to purge an unavailable created document space") {
+                    localCache.purgeDocumentSpace(spaceId)
+                }
+                remote
+            } else {
+                check(projection.spaceId == spaceId) {
+                    "createSpace response projection escaped its requested identity"
+                }
+                val accepted = projectionMaintenance.runPostCommit(
+                    "Failed to stage a created document space projection",
+                    fallback = false,
+                ) {
                     localCache.applyDocumentSpaceMutation(lease, projection) &&
                         projectionMaintenance.requireConvergedSpace(projection).let { true }
-                } finally {
-                    localCache.abandonProjectionSnapshot(lease)
                 }
+                remote.copy(space = projection.takeIf { accepted })
             }
-            remote.copy(space = projection.takeIf { accepted })
+        } finally {
+            localCache.abandonProjectionSnapshot(lease)
         }
     }
 
@@ -236,24 +254,24 @@ class DocumentRepository(
         spaceId = spaceId,
         onNotFound = { localCache.purgeDocumentSpace(spaceId) },
     ) {
-        val remote = rpc.updateSpace(spaceId, name, description)
-        check(remote.spaceId == spaceId) { "updateSpace response escaped its requested identity" }
-        val projection = projectionMaintenance.runPostCommit(
-            "Failed to stage an updated document space projection",
-            fallback = null,
-        ) {
-            val lease = localCache.beginDocumentSpaceMutationSnapshot(spaceId)
-            try {
+        val lease = localCache.beginDocumentSpaceMutationSnapshot(spaceId)
+        try {
+            val remote = rpc.updateSpace(spaceId, name, description)
+            check(remote.spaceId == spaceId) { "updateSpace response escaped its requested identity" }
+            val projection = projectionMaintenance.runPostCommit(
+                "Failed to stage an updated document space projection",
+                fallback = null,
+            ) {
                 if (localCache.applyDocumentSpaceMutation(lease, remote)) {
                     projectionMaintenance.requireConvergedSpace(remote)
                 } else {
                     null
                 }
-            } finally {
-                localCache.abandonProjectionSnapshot(lease)
             }
+            DocumentMutationResult(projection)
+        } finally {
+            localCache.abandonProjectionSnapshot(lease)
         }
-        DocumentMutationResult(projection)
     }
 
     suspend fun archiveSpace(spaceId: String, operationId: String): Outcome<Unit> = spaceOutcome(
@@ -446,38 +464,38 @@ class DocumentRepository(
             }
         },
     ) {
-        val result: DocumentCreateResult =
-            rpc.createDocument(documentId, spaceId, parentId, title, canonicalDocumentContent(markdown, assets))
-        check(result.documentId == documentId) {
-            "createDocument acknowledgement escaped its requested identity"
-        }
-        val remote = result.document
-        if (remote == null) {
-            // 精确可靠命令的重放证明最初的创建已提交，但它
-            // 并不能证明当前投影仍然存在或仍然可见。
-            DocumentMutationResult(null)
-        } else {
-            check(
-                remote.documentId == documentId &&
-                    remote.spaceId == spaceId &&
-                    remote.parentId == parentId,
-            ) { "createDocument response escaped its requested identity" }
-            val projection = projectionMaintenance.runPostCommit(
-                "Failed to stage a created document projection",
-                fallback = null,
-            ) {
-                val lease = localCache.beginDocumentBodyMutationSnapshot(spaceId, documentId)
-                try {
+        val lease = localCache.beginDocumentBodyMutationSnapshot(spaceId, documentId)
+        try {
+            val result: DocumentCreateResult =
+                rpc.createDocument(documentId, spaceId, parentId, title, canonicalDocumentContent(markdown, assets))
+            check(result.documentId == documentId) {
+                "createDocument acknowledgement escaped its requested identity"
+            }
+            val remote = result.document
+            if (remote == null) {
+                // 精确可靠命令的重放证明最初的创建已提交，但它
+                // 并不能证明当前投影仍然存在或仍然可见。
+                DocumentMutationResult(null)
+            } else {
+                check(
+                    remote.documentId == documentId &&
+                        remote.spaceId == spaceId &&
+                        remote.parentId == parentId,
+                ) { "createDocument response escaped its requested identity" }
+                val projection = projectionMaintenance.runPostCommit(
+                    "Failed to stage a created document projection",
+                    fallback = null,
+                ) {
                     if (localCache.applyDocumentBodyMutation(lease, remote)) {
                         projectionMaintenance.requireConvergedDocument(remote)
                     } else {
                         null
                     }
-                } finally {
-                    localCache.abandonProjectionSnapshot(lease)
                 }
+                DocumentMutationResult(projection)
             }
-            DocumentMutationResult(projection)
+        } finally {
+            localCache.abandonProjectionSnapshot(lease)
         }
     }
 
@@ -486,19 +504,23 @@ class DocumentRepository(
             spaceId = spaceId,
             onNotFound = { localCache.purgeDocument(spaceId, documentId) },
         ) {
-            val lease = localCache.beginDocumentBodySnapshot(spaceId, documentId)
-            try {
-                val remote = rpc.getDocument(spaceId, documentId)
-                check(remote.spaceId == spaceId && remote.documentId == documentId) {
-                    "getDocument response escaped its requested identity"
+            // 新事件可能在一次正常的打开请求中到达。仅重读一次被失效提示退役的响应，保留用户
+            // 当前打开意图；持续变化仍由下一次事件/手动刷新处理，不能在这里形成无界重试。
+            repeat(2) {
+                val lease = localCache.beginDocumentBodySnapshot(spaceId, documentId)
+                try {
+                    val remote = rpc.getDocument(spaceId, documentId)
+                    check(remote.spaceId == spaceId && remote.documentId == documentId) {
+                        "getDocument response escaped its requested identity"
+                    }
+                    if (localCache.applyDocumentBodySnapshot(lease, remote)) {
+                        return@spaceOutcome projectionMaintenance.requireConvergedDocument(remote)
+                    }
+                } finally {
+                    localCache.abandonProjectionSnapshot(lease)
                 }
-                check(localCache.applyDocumentBodySnapshot(lease, remote)) {
-                    "document body response was fenced by a newer projection"
-                }
-                projectionMaintenance.requireConvergedDocument(remote)
-            } finally {
-                localCache.abandonProjectionSnapshot(lease)
             }
+            error("document body response was fenced by a newer projection")
         }
 
     suspend fun updateDocument(
@@ -511,31 +533,31 @@ class DocumentRepository(
         spaceId = spaceId,
         onNotFound = { localCache.purgeDocument(spaceId, documentId) },
     ) {
-        val remote = rpc.updateDocument(
-            spaceId,
-            documentId,
-            canonicalDocumentContent(markdown, assets),
-            expectedRevision,
-        )
-        check(remote.spaceId == spaceId && remote.documentId == documentId) {
-            "updateDocument response escaped its requested identity"
-        }
-        val projection = projectionMaintenance.runPostCommit(
-            "Failed to stage an updated document projection",
-            fallback = null,
-        ) {
-            val lease = localCache.beginDocumentBodyMutationSnapshot(spaceId, documentId)
-            try {
+        val lease = localCache.beginDocumentBodyMutationSnapshot(spaceId, documentId)
+        try {
+            val remote = rpc.updateDocument(
+                spaceId,
+                documentId,
+                canonicalDocumentContent(markdown, assets),
+                expectedRevision,
+            )
+            check(remote.spaceId == spaceId && remote.documentId == documentId) {
+                "updateDocument response escaped its requested identity"
+            }
+            val projection = projectionMaintenance.runPostCommit(
+                "Failed to stage an updated document projection",
+                fallback = null,
+            ) {
                 if (localCache.applyDocumentBodyMutation(lease, remote)) {
                     projectionMaintenance.requireConvergedDocument(remote)
                 } else {
                     null
                 }
-            } finally {
-                localCache.abandonProjectionSnapshot(lease)
             }
+            DocumentMutationResult(projection)
+        } finally {
+            localCache.abandonProjectionSnapshot(lease)
         }
-        DocumentMutationResult(projection)
     }
 
     suspend fun moveNodeRecoverable(

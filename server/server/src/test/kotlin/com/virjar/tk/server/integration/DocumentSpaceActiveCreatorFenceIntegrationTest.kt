@@ -11,7 +11,6 @@ import com.virjar.tk.server.infra.db.repository.CredentialMutation
 import com.virjar.tk.server.infra.db.repository.CredentialRepositoryHooks
 import com.virjar.tk.server.infra.db.repository.ExposedCredentialRepository
 import com.virjar.tk.protocol.model.DocumentSpace
-import com.virjar.tk.protocol.model.DocumentSpaceCreateResult
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -97,7 +96,7 @@ class DocumentSpaceActiveCreatorFenceIntegrationTest {
                 transaction: PgWriteTransactionContext,
                 space: DocumentSpace,
                 creationFingerprint: String,
-            ): DocumentSpaceCreateResult {
+            ): com.virjar.tk.server.domain.document.DocumentSpaceCreation {
                 createBackendPid.set(transaction.requireExposedTransaction().backendPid())
                 repositoryCallPaused.countDown()
                 check(allowPersistence.await(10, TimeUnit.SECONDS)) {

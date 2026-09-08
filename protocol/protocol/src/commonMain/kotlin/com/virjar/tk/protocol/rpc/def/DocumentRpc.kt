@@ -131,4 +131,9 @@ interface DocumentRpc {
     /** 在一个有界响应中返回完整的活跃根到目标路径。 */
     @RpcMethod(19)
     suspend fun getNodePathSpine(spaceId: String, nodeId: String): DocumentPathSpine
+
+    /** 按当前授权读取单个空间，用于变更事件后的驻留工作集刷新。 */
+    @com.virjar.tk.protocol.SinceProtocol(2)
+    @RpcMethod(20)
+    suspend fun getSpace(spaceId: String): DocumentSpace
 }

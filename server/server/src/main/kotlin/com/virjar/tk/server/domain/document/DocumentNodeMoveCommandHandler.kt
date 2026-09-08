@@ -19,6 +19,7 @@ internal class DocumentNodeMoveCommandHandler(
     private val accessControl: DocumentAccessControl,
     private val wallClockMillis: () -> Long,
 ) {
+    private val changes = DocumentChangePublisher(repository)
     suspend fun execute(
         actorUid: String,
         spaceId: String,
@@ -104,6 +105,9 @@ internal class DocumentNodeMoveCommandHandler(
                 ),
                 committedAt,
             )
+            if (moved.node.revision != expectedRevision) {
+                changes.publishNodeChange(this, validatedSpaceId, validatedNodeId, moved.node.revision)
+            }
             DocumentMoveCommandResult(validatedOperationId, moved)
         }
     }

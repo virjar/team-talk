@@ -3,6 +3,7 @@ package com.virjar.tk.server.infra.db.repository
 import com.virjar.tk.server.domain.document.DocumentAccessDeniedException
 import com.virjar.tk.server.domain.document.DocumentCustodyConflictException
 import com.virjar.tk.server.domain.document.DocumentNotFoundException
+import com.virjar.tk.server.domain.document.DocumentSpaceCreation
 import com.virjar.tk.server.domain.command.ReliableCommandConflictException
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
 import com.virjar.tk.server.infra.db.DocumentContentRevisions
@@ -92,7 +93,7 @@ internal class ExposedDocumentWriteStore(
         transaction: PgWriteTransactionContext,
         space: DocumentSpace,
         creationFingerprint: String,
-    ): DocumentSpaceCreateResult =
+    ): DocumentSpaceCreation =
         transaction.inExposedTransaction {
             requireCreationFingerprint(creationFingerprint)
             require(
@@ -113,12 +114,12 @@ internal class ExposedDocumentWriteStore(
                     existing[DocumentSpaces.creationFingerprint] == creationFingerprint &&
                         existing[DocumentSpaces.createdBy] == space.createdBy,
                 ) { "创建请求标识已用于不同的文档空间" }
-                return@inExposedTransaction existingCreateResult(
+                return@inExposedTransaction DocumentSpaceCreation(existingCreateResult(
                     existing,
                     space.createdBy,
                     creator[Users.status] == USER_STATUS_ACTIVE &&
                         creator[Users.role] == UserRole.HUMAN,
-                )
+                ), created = false)
             }
 
             require(
@@ -149,7 +150,7 @@ internal class ExposedDocumentWriteStore(
                 // 最后的 Document 域锁：新行现在是每个后续目录
                 // 快照的一部分，而下方的精确创建重放刻意不碰此版本。
                 ExposedDocumentDirectoryRevision.advance(transaction, space.updatedAt)
-                return@inExposedTransaction DocumentSpaceCreateResult(space.spaceId, space)
+                return@inExposedTransaction DocumentSpaceCreation(DocumentSpaceCreateResult(space.spaceId, space), true)
             }
 
             val existing = DocumentSpaces.selectAll().where {
@@ -159,7 +160,7 @@ internal class ExposedDocumentWriteStore(
                 existing[DocumentSpaces.creationFingerprint] == creationFingerprint &&
                     existing[DocumentSpaces.createdBy] == space.createdBy,
             ) { "创建请求标识已用于不同的文档空间" }
-            existingCreateResult(existing, space.createdBy, creatorIsActive = true)
+            DocumentSpaceCreation(existingCreateResult(existing, space.createdBy, creatorIsActive = true), false)
         }
 
     /**
@@ -211,6 +212,7 @@ internal class ExposedDocumentWriteStore(
         transaction.inExposedTransaction {
             requireCanonicalOperationId(operationId)
             val space = lockSpace(spaceId)
+            check(space.policyRevision < Long.MAX_VALUE) { "文档空间权限版本已耗尽" }
             if (space.stewardUid != actorUid) {
                 throw DocumentAccessDeniedException("没有文档空间权限")
             }
@@ -223,6 +225,7 @@ internal class ExposedDocumentWriteStore(
                 it[status] = DOCUMENT_STATUS_DELETED
                 it[archiveCommandId] = operationId
                 it[archiveActorUid] = actorUid
+                it[policyRevision] = space.policyRevision + 1L
                 it[DocumentSpaces.updatedAt] = updatedAt
             }
             if (updated != 1) throw DocumentNotFoundException("文档空间不存在")
@@ -257,6 +260,7 @@ internal class ExposedDocumentWriteStore(
             require(ownerPrincipalId == stewardUid) { "个人持有空间必须由本人负责" }
         }
         val current = lockSpace(spaceId)
+        check(current.policyRevision < Long.MAX_VALUE) { "文档空间权限版本已耗尽" }
         if (current.stewardUid != actorUid) {
             throw DocumentAccessDeniedException("没有文档空间权限")
         }
@@ -310,6 +314,7 @@ internal class ExposedDocumentWriteStore(
             it[DocumentSpaces.ownerPrincipalId] = ownerPrincipalId
             it[DocumentSpaces.stewardUid] = stewardUid
             it[DocumentSpaces.custodyRevision] = resultingRevision
+            it[DocumentSpaces.policyRevision] = current.policyRevision + 1L
             it[DocumentSpaces.updatedAt] = updatedAt
         }
         if (updated != 1) throw DocumentCustodyConflictException()

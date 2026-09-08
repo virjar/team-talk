@@ -88,6 +88,12 @@ data class DocumentCustodyBatchCommand(
     val requestFingerprint: String,
 )
 
+/** 首次提交携带受众差量；精确回执重放不重复发布变更事件。 */
+data class DocumentCustodyBatchCommit(
+    val receipt: DocumentCustodyBatchReceipt,
+    val changes: List<DocumentSpaceAudienceChange>,
+)
+
 /** 行政恢复策略所需的最小账户事实。 */
 data class DocumentCustodyUserFact(
     val uid: String,
@@ -119,7 +125,7 @@ interface DocumentCustodyAdministrationRepository {
         transaction: PgWriteTransactionContext,
         command: DocumentCustodyBatchCommand,
         now: Long,
-    ): DocumentCustodyBatchReceipt
+    ): DocumentCustodyBatchCommit
 }
 
 /** 计划在展示给管理员之后发生了变化；不允许提交任何部分交接。 */
@@ -190,7 +196,7 @@ class DocumentCustodyAdministrationService(
             planFingerprint,
         )
         return unitOfWork.write {
-            repository.transfer(
+            val committed = repository.transfer(
                 transaction,
                 DocumentCustodyBatchCommand(
                     operationId = operation,
@@ -202,6 +208,8 @@ class DocumentCustodyAdministrationService(
                 ),
                 System.currentTimeMillis(),
             )
+            committed.changes.forEach { DocumentChangePublisher.emitSpaceChange(this, it) }
+            committed.receipt
         }
     }
 

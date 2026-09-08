@@ -98,6 +98,7 @@ class LocalCacheImpl internal constructor(
         )
     }
     private val documents = LocalDocumentProjectionStore(queries, cacheUseGate, stateLock)
+    override val documentComments: LocalDocumentComments = LocalDocumentCommentStore(queries, cacheUseGate, stateLock)
     private val reactions = LocalMessageReactionStore(queries, cacheUseGate, stateLock)
     internal val groupFileEntries = LocalGroupFileEntryStore(queries, cacheUseGate, stateLock)
     private val messages = LocalMessageStore(
@@ -321,6 +322,12 @@ class LocalCacheImpl internal constructor(
 
     override fun isDocumentSpaceSnapshotCached(): Boolean = documents.isSpaceSnapshotCached()
 
+    override fun beginDocumentSpaceDetailsSnapshot(spaceId: String): ProjectionSnapshotLease =
+        documents.beginSpaceDetailsSnapshot(spaceId)
+
+    override fun applyDocumentSpaceDetailsSnapshot(lease: ProjectionSnapshotLease, space: DocumentSpace): Boolean =
+        documents.applySpaceDetailsSnapshot(lease, space)
+
     override fun beginDocumentSpaceSnapshot(): ProjectionSnapshotLease =
         documents.beginSpaceSnapshot()
 
@@ -426,10 +433,30 @@ class LocalCacheImpl internal constructor(
         result: com.virjar.tk.protocol.model.DocumentMoveResult,
     ): Boolean = documents.applyMove(projectionLease, result)
 
-    override fun purgeDocumentSpace(spaceId: String) = documents.purgeSpace(spaceId)
+    override fun invalidateDocumentProjection(change: com.virjar.tk.protocol.DocumentChangedPayload?) {
+        documents.invalidate(change)
+        when (change?.kind) {
+            null -> documentComments.invalidate(purge = true)
+            com.virjar.tk.protocol.DocumentChangedPayload.COMMENTS_CHANGED ->
+                documentComments.invalidate(change.spaceId, change.nodeId)
+            com.virjar.tk.protocol.DocumentChangedPayload.SPACE_REVOKED ->
+                documentComments.invalidate(change.spaceId, purge = true)
+            com.virjar.tk.protocol.DocumentChangedPayload.NODE_DELETED ->
+                documentComments.invalidate(change.spaceId, change.nodeId, purge = true)
+            com.virjar.tk.protocol.DocumentChangedPayload.SPACE_CHANGED ->
+                documentComments.invalidate(change.spaceId)
+        }
+    }
 
-    override fun purgeDocument(spaceId: String, documentId: String) =
+    override fun purgeDocumentSpace(spaceId: String) {
+        documents.purgeSpace(spaceId)
+        documentComments.invalidate(spaceId, purge = true)
+    }
+
+    override fun purgeDocument(spaceId: String, documentId: String) {
         documents.purgeDocument(spaceId, documentId)
+        documentComments.invalidate(spaceId, documentId, purge = true)
+    }
 
     internal fun residentOrganizationMemberProjectionCountForTest(): Int =
         organization.residentMemberProjectionCountForTest()
@@ -754,6 +781,7 @@ class LocalCacheImpl internal constructor(
             organization.resetSnapshotGatesLocked()
             organization.clearProjectionLocked()
             documents.resetSnapshotGatesLocked()
+            documentComments.invalidate(purge = true)
             conversations.clearServerProjectionLocked()
             reactions.publishServerProjectionResetLocked()
             groupFileEntries.clearAllLocked()

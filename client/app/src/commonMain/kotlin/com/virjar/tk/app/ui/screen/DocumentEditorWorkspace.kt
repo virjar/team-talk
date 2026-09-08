@@ -99,6 +99,7 @@ internal fun DocumentEditorWorkspace(
     mobileSingleDocumentMode: Boolean = false,
     draftLifecycleBridge: DocumentDraftLifecycleBridge,
     onActiveDraftSnapshotChange: ((() -> DocumentEditorDraftSnapshot)?) -> Unit = {},
+    commentsContent: @Composable (DocumentTabState, Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val tabScroll = rememberScrollState()
@@ -176,6 +177,19 @@ internal fun DocumentEditorWorkspace(
             HorizontalDivider()
         }
 
+        if (activeTab != null) {
+            commentsContent(activeTab, spaces.firstOrNull { it.spaceId == activeTab.spaceId }?.myRole ?: 0)
+        }
+        if (activeTab?.remoteChangedRevision != null && activeTab.dirty) {
+            Text(
+                "服务器已有 v${activeTab.remoteChangedRevision}，本机未保存内容已保留。保存时请选择要保留的版本。",
+                modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.secondaryContainer)
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                    .testTag("documents.document.remote-changed"),
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         Box(Modifier.fillMaxSize()) {
             if (activeTab == null) {
                 if (documentProjectionStatus ==

@@ -1,6 +1,8 @@
 package com.virjar.tk.server.integration
 
-import com.virjar.tk.server.api.AdminAuthConfig
+import com.virjar.tk.server.application.admin.AdminBootstrap
+import com.virjar.tk.server.application.admin.AdminSecurityService
+import com.virjar.tk.server.infra.db.repository.ExposedAdminSecurityStore
 import com.virjar.tk.server.api.AdminTokenResponse
 import com.virjar.tk.server.api.adminRoutes
 import com.virjar.tk.server.domain.auth.AuthenticationAttemptGuard
@@ -41,14 +43,14 @@ class OrganizationAdminHttpIntegrationTest {
         val leader = ctx.registerUser(uniqueUsername("org-admin-leader"))
         val root = ctx.organizationService.createUnit(null, "HTTP 组织根", null)
         val unit = ctx.organizationService.createUnit(root.unitId, "HTTP 研发部", leader)
-        val adminAuth = AdminAuthConfig("test-admin", "test-admin-password")
+        val adminAuth = AdminSecurityService(ExposedAdminSecurityStore(ctx.database), ctx.passwordHasher, AuthenticationAttemptGuard(),
+            AdminBootstrap("test-admin", "test-admin-password", null))
 
         application {
             install(ContentNegotiation) { json() }
             routing {
                 adminRoutes(
                     ctx.adminService,
-                    AuthenticationAttemptGuard(),
                     auth = adminAuth,
                 )
             }

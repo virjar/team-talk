@@ -1,39 +1,10 @@
 package com.virjar.tk.app.navigation.feature.document
 
 import com.virjar.tk.shared.AppError
-import com.virjar.tk.shared.client.ConnectionState
 import com.virjar.tk.protocol.model.Document
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-
-/**
- * 在用户打开工作区之前，不启动任何文档工作。之后，每一次转换回 AUTHENTICATED
- * 至多拥有一个刷新 job；更新的重连会取消更旧的那个。
- */
-internal class DocumentWorkspaceReconnectRefreshCoordinator(
-    connectionState: StateFlow<ConnectionState>,
-    scope: CoroutineScope,
-    private val workspaceOpened: () -> Boolean,
-    private val refresh: () -> Job,
-) {
-    private var refreshJob: Job? = null
-
-    @Suppress("unused")
-    private val observerJob = scope.launch {
-        var authenticated = connectionState.value == ConnectionState.AUTHENTICATED
-        connectionState.collect { state ->
-            val nowAuthenticated = state == ConnectionState.AUTHENTICATED
-            if (nowAuthenticated && !authenticated && workspaceOpened()) {
-                refreshJob?.cancel()
-                refreshJob = refresh()
-            }
-            authenticated = nowAuthenticated
-        }
-    }
-}
 
 /** 保存、移动和删除后的首页收敛归工作区请求所有，不因用户切换文档而丢失。 */
 internal suspend fun DocumentWorkspaceFeature.refreshHomeProjection() {

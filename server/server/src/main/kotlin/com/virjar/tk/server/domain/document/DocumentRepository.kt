@@ -10,7 +10,6 @@ import com.virjar.tk.protocol.model.DocumentPathSpine
 import com.virjar.tk.protocol.model.DocumentRevision
 import com.virjar.tk.protocol.model.DocumentRevisionSummary
 import com.virjar.tk.protocol.model.DocumentSpace
-import com.virjar.tk.protocol.model.DocumentSpaceCreateResult
 import com.virjar.tk.protocol.model.DocumentSpaceGrant
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.protocol.model.EmbeddedAsset
@@ -21,6 +20,9 @@ import com.virjar.tk.protocol.model.EmbeddedAsset
  */
 interface DocumentRepository {
     fun findSpace(transaction: PgReadTransactionContext, spaceId: String): DocumentSpace?
+
+    /** 当前活跃空间的有效人类读者，按 uid 去重排序；使用同一事务中的用户、授权和组织事实。 */
+    fun listReadableUserIds(transaction: PgReadTransactionContext, spaceId: String): Set<String>
 
     /**
      * 从单个可重复读 PostgreSQL 快照中捕获一次授权决策所使用的每个组织成员关系与授权
@@ -108,7 +110,7 @@ interface DocumentRepository {
         transaction: PgWriteTransactionContext,
         space: DocumentSpace,
         creationFingerprint: String,
-    ): DocumentSpaceCreateResult
+    ): DocumentSpaceCreation
     fun updateSpace(
         transaction: PgWriteTransactionContext,
         spaceId: String,

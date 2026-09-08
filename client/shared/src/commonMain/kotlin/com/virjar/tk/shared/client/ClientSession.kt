@@ -60,6 +60,7 @@ class ClientSession internal constructor(
     private val ownedOrganizationRepo: OrganizationRepository,
     private val ownedGroupFileRepo: GroupFileRepository,
     private val ownedDocumentRepo: DocumentRepository,
+    private val ownedDocumentCommentRepo: com.virjar.tk.shared.repository.DocumentCommentRepository,
     private val ownedHttpAuthExpiredRouter: SessionHttpAuthExpiredRouter,
     private val ownedGroupBotManagementRepo: GroupBotManagementRepository,
     /** 发送队列（断线排队重连补发，状态机回写 localCache） */
@@ -125,6 +126,7 @@ class ClientSession internal constructor(
     val organizationRepo: OrganizationRepository get() = businessResource(ownedOrganizationRepo)
     val groupFileRepo: GroupFileRepository get() = businessResource(ownedGroupFileRepo)
     val documentRepo: DocumentRepository get() = businessResource(ownedDocumentRepo)
+    val documentCommentRepo: com.virjar.tk.shared.repository.DocumentCommentRepository get() = businessResource(ownedDocumentCommentRepo)
     val groupBotManagementRepo: GroupBotManagementRepository get() = businessResource(ownedGroupBotManagementRepo)
     val sendQueue: SendQueue get() = businessResource(ownedSendQueue)
     val outgoingQueueSnapshots: kotlinx.coroutines.flow.StateFlow<OutgoingQueueSnapshot>
@@ -699,6 +701,7 @@ fun createSession(
         ownedOrganizationRepo = OrganizationRepository(businessRpcClient, cache),
         ownedGroupFileRepo = reliableCommandFamilies.groupFiles,
         ownedDocumentRepo = reliableCommandFamilies.documents,
+        ownedDocumentCommentRepo = reliableCommandFamilies.documentComments,
         ownedHttpAuthExpiredRouter = httpAuthExpiredRouter,
         ownedGroupBotManagementRepo = groupBotManagementRepo,
         ownedSendQueue = sendQueue,

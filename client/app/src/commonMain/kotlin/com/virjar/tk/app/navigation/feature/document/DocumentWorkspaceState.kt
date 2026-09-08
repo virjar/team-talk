@@ -101,6 +101,8 @@ data class DocumentTabState(
     val editGeneration: Long = 0,
     val savedAssets: List<EmbeddedAsset> = emptyList(),
     val draftAssets: List<EmbeddedAsset> = emptyList(),
+    /** 已观察到的远端新版本；保留本地基线，保存时仍由服务器检查 revision。 */
+    val remoteChangedRevision: Long? = null,
 ) {
     companion object {
         fun from(

@@ -205,6 +205,7 @@ internal fun DocumentSpaceWorkspaceScreen(
     mobileSingleDocumentMode: Boolean,
     draftLifecycleBridge: DocumentDraftLifecycleBridge,
     onActiveDraftSnapshotChange: ((() -> DocumentEditorDraftSnapshot)?) -> Unit,
+    commentsContent: @Composable (DocumentTabState, Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     var compactEditor by remember(space.spaceId) {
@@ -453,6 +454,7 @@ internal fun DocumentSpaceWorkspaceScreen(
                         showTabStrip = !mobileSingleDocumentMode,
                         mobileSingleDocumentMode = mobileSingleDocumentMode,
                         draftLifecycleBridge = draftLifecycleBridge,
+                        commentsContent = commentsContent,
                         onActiveDraftSnapshotChange = {
                             activeDraftCapture = it
                             onActiveDraftSnapshotChange(it)
@@ -546,6 +548,7 @@ internal fun DocumentSpaceWorkspaceScreen(
                         onCloseHistory = onCloseHistory,
                         emptyContent = { DocumentSpaceOverview(space) },
                         draftLifecycleBridge = draftLifecycleBridge,
+                        commentsContent = commentsContent,
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                     )
                 }

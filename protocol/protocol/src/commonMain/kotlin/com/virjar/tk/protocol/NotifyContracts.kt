@@ -46,6 +46,7 @@ object NotifyContracts {
         NotifyType.TYPING to Message,
         NotifyType.MESSAGE_REACTION to MessageReactionEventPayload,
         NotifyType.GROUP_FILE_CHANGED to GroupFileChangedPayload,
+        NotifyType.DOCUMENT_CHANGED to DocumentChangedPayload,
 
         // 会话
         NotifyType.CONVERSATION_UPDATED to Conversation,

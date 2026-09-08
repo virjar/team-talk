@@ -174,6 +174,8 @@ interface OptimisticMessageEditLease
  * 按 chatId 推测 owner，也不得驱逐仍有活跃租约的窗口。
  */
 interface LocalCache : LocalDocumentProjection {
+    val documentComments: LocalDocumentComments
+
     // ── 本地可靠业务命令 ──
     /** 唯一可能在无可见响应的情况下就已提交的 GUI 建群命令。 */
     fun getPendingGroupCreation(): PendingGroupCreationCommand?

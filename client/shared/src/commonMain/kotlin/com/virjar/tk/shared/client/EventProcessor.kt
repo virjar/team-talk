@@ -3,6 +3,7 @@ package com.virjar.tk.shared.client
 import com.virjar.tk.protocol.model.*
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.IProtoReader
+import com.virjar.tk.protocol.DocumentChangedPayload
 import com.virjar.tk.protocol.NotifyContracts
 import com.virjar.tk.protocol.OrganizationChangedPayload
 import com.virjar.tk.protocol.PresencePayload
@@ -71,6 +72,13 @@ class EventProcessor(
 
     /** 群文件行级变更事件（GROUP_FILE_CHANGED）；订阅者据此触发投影流收敛。 */
     val groupFileChanges: SharedFlow<com.virjar.tk.protocol.GroupFileChangedPayload> = _groupFileChanges.asSharedFlow()
+
+    private val _documentChanges = MutableStateFlow(DocumentProjectionChange())
+    val documentChanges: StateFlow<DocumentProjectionChange> = _documentChanges.asStateFlow()
+
+    private fun publishDocumentChange(change: DocumentChangedPayload? = null) {
+        _documentChanges.value = DocumentProjectionChange(_documentChanges.value.sequence + 1L, change)
+    }
 
     /**
      * 入站消息的非阻塞广播提示。UI 以 LocalCache 为权威；ImBot.nextMessage
@@ -341,6 +349,7 @@ class EventProcessor(
             _datasetId.value = applied.datasetId
             _lastEventId.value = applied.cursor
             conversationsDirty.value = false
+            publishDocumentChange()
             _lastEventId.value
         }
     }
@@ -544,6 +553,13 @@ class EventProcessor(
                     _groupFileChanges.tryEmit(change)
                 }
             }
+            NotifyType.DOCUMENT_CHANGED -> {
+                val change = decodePayload<DocumentChangedPayload>(notifyType, payload)
+                publicationGate.use(publicationLease) {
+                    localCache.invalidateDocumentProjection(change)
+                    publishDocumentChange(change)
+                }
+            }
             NotifyType.MESSAGE_REACTION -> {
                 val reaction = decodePayload<com.virjar.tk.protocol.MessageReactionEventPayload>(notifyType, payload)
                 // 行级 delta 幂等收敛；聚合快照由 MessageRepository 的主动拉取提供权威计数。
@@ -569,7 +585,11 @@ class EventProcessor(
                     // 在发布提示之前先持久化失效。该处理器刻意绝不发起组织业务 RPC。
                     val required = localCache.advanceOrganizationRequiredRevision(changed.revision)
                     val published = _organizationEvents.replayCache.lastOrNull() ?: 0L
-                    if (required > published) _organizationEvents.tryEmit(required)
+                    if (required > published) {
+                        _organizationEvents.tryEmit(required)
+                        localCache.invalidateDocumentProjection()
+                        publishDocumentChange()
+                    }
                 }
             }
 

@@ -18,6 +18,7 @@ internal class DocumentPolicyMutationService(
     private val unitOfWork: PgUnitOfWork,
     private val wallClockMillis: () -> Long,
 ) {
+    private val changes = DocumentChangePublisher(repository)
     suspend fun upsertGrant(
         actorUid: String,
         spaceId: String,
@@ -154,6 +155,7 @@ internal class DocumentPolicyMutationService(
             )
 
             // 阶段 4：提交并在结果空间上重算操作者可见角色。
+            val readersBefore = if (plan.changed) changes.readers(transaction, validatedSpaceId) else emptySet()
             commitPlannedPolicyMutation(
                 transaction = transaction,
                 actorUid = actorUid,
@@ -167,7 +169,9 @@ internal class DocumentPolicyMutationService(
                 plan = plan,
                 authority = authority,
                 expectedPolicyRevision = expectedPolicyRevision,
-            )
+            ).also {
+                if (plan.changed) changes.publishSpaceChange(this, validatedSpaceId, readersBefore)
+            }
         }
     }
 

@@ -17,6 +17,7 @@ import com.virjar.tk.protocol.model.DOCUMENT_NODE_SIBLING_ORDER
 internal class FakeDocumentProjectionStore {
     private val lock = Any()
     private val spaceSnapshots = KeyedProjectionSnapshotGate("fake document spaces snapshot")
+    private val spaceDetailsSnapshots = KeyedProjectionSnapshotGate("fake document space details snapshot")
     private val spaceMutationSnapshots = KeyedProjectionSnapshotGate("fake document space mutation commit")
     internal val homeSnapshots = KeyedProjectionSnapshotGate("fake document home snapshot")
     internal val branchSnapshots = KeyedProjectionSnapshotGate("fake document branch snapshot")
@@ -45,6 +46,22 @@ internal class FakeDocumentProjectionStore {
     fun getSpaces(): List<DocumentSpace> = synchronized(lock) { spaces }
 
     fun isSpaceSnapshotCached(): Boolean = synchronized(lock) { spaceSnapshotCached }
+
+    fun beginSpaceDetailsSnapshot(spaceId: String): ProjectionSnapshotLease = synchronized(lock) {
+        spaceDetailsSnapshots.begin(LocalDocumentProjectionPolicy.requireKey(spaceId, "spaceId"))
+    }
+
+    fun applySpaceDetailsSnapshot(lease: ProjectionSnapshotLease, candidate: DocumentSpace): Boolean = synchronized(lock) {
+        val space = LocalDocumentProjectionPolicy.normalizeSpaces(listOf(candidate)).single()
+        if (!spaceDetailsSnapshots.consumeIfCurrent(lease, space.spaceId)) return@synchronized false
+        spaces = if (spaces.any { it.spaceId == space.spaceId }) {
+            spaces.map { if (it.spaceId == space.spaceId) space else it }
+        } else {
+            (listOf(space) + spaces).take(LocalDocumentProjectionLimits.MAX_SPACES)
+        }
+        updateHomeSpaceName(space.spaceId, space.name)
+        true
+    }
 
     fun beginSpaceSnapshot(): ProjectionSnapshotLease = synchronized(lock) {
         val initialSpaceIds = knownSpaceIds()
@@ -145,6 +162,7 @@ internal class FakeDocumentProjectionStore {
         if (!spaceMutationSnapshots.consumeIfCurrent(projectionLease, space.spaceId)) {
             return@synchronized false
         }
+        spaceDetailsSnapshots.invalidate(space.spaceId)
         if (spaceMutationSnapshotLeases[space.spaceId] === projectionLease) {
             spaceMutationSnapshotLeases.remove(space.spaceId)
         }
@@ -478,6 +496,36 @@ internal class FakeDocumentProjectionStore {
         true
     }
 
+    fun invalidate(change: com.virjar.tk.protocol.DocumentChangedPayload?) = synchronized(lock) {
+        when (change?.kind) {
+            com.virjar.tk.protocol.DocumentChangedPayload.COMMENTS_CHANGED -> Unit
+            com.virjar.tk.protocol.DocumentChangedPayload.SPACE_REVOKED -> purgeSpace(change.spaceId)
+            com.virjar.tk.protocol.DocumentChangedPayload.NODE_DELETED ->
+                purgeDocument(change.spaceId, requireNotNull(change.nodeId))
+            null -> resetProjectionGates()
+            else -> {
+                if (change.kind == com.virjar.tk.protocol.DocumentChangedPayload.SPACE_CHANGED) {
+                    spaceSnapshots.reset()
+                    spaceDetailsSnapshots.invalidate(change.spaceId)
+                    spaceSnapshotBoundary = null
+                }
+                homeSnapshots.reset()
+                invalidateSpaceReads(change.spaceId)
+                homeSnapshotLeases.clear()
+            }
+        }
+    }
+
+    private fun invalidateSpaceReads(spaceId: String) {
+        val prefix = "${spaceId.length}:$spaceId:"
+        branchSnapshots.invalidateMatching { it.startsWith(prefix) }
+        pathSpineSnapshots.invalidateMatching { it.startsWith(prefix) }
+        bodySnapshots.invalidateMatching { it.startsWith(prefix) }
+        branchSnapshotLeases.keys.removeAll { it.spaceId == spaceId }
+        pathSpineSnapshotLeases.keys.removeAll { it.spaceId == spaceId }
+        bodySnapshotLeases.keys.removeAll { it.spaceId == spaceId }
+    }
+
     fun purgeSpace(spaceId: String) = synchronized(lock) {
         val normalized = LocalDocumentProjectionPolicy.requireKey(spaceId, "spaceId")
         resetProjectionGates()
@@ -523,12 +571,8 @@ internal class FakeDocumentProjectionStore {
             nodesById[DocumentKey(key.spaceId, documentId)]?.parentId
         }
         homeSnapshots.reset()
-        branchSnapshots.reset()
-        resetPathSpineSnapshots()
-        bodySnapshots.reset()
+        invalidateSpaceReads(key.spaceId)
         homeSnapshotLeases.clear()
-        branchSnapshotLeases.clear()
-        bodySnapshotLeases.clear()
         home.keys.toList().forEach { collection ->
             home[collection] = home[collection].orEmpty().filterNot {
                 it.spaceId == key.spaceId && it.documentId in affectedIds
@@ -553,6 +597,7 @@ internal class FakeDocumentProjectionStore {
 
     fun abandonSnapshot(lease: ProjectionSnapshotLease): Boolean = synchronized(lock) {
         val abandoned = spaceSnapshots.abandon(lease) ||
+            spaceDetailsSnapshots.abandon(lease) ||
             spaceMutationSnapshots.abandon(lease) ||
             homeSnapshots.abandon(lease) ||
             branchSnapshots.abandon(lease) ||
@@ -595,6 +640,7 @@ internal class FakeDocumentProjectionStore {
     }
 
     private fun resetDependentProjectionGates() {
+        spaceDetailsSnapshots.reset()
         spaceMutationSnapshots.reset()
         homeSnapshots.reset()
         branchSnapshots.reset()

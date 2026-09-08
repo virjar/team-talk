@@ -238,13 +238,27 @@ internal fun removeDeletedDocumentTreeIdentity(
     documentId: String,
 ): Map<String?, List<DocumentNode>> {
     require(spaceId.isNotBlank() && documentId.isNotBlank()) { "待删除文档身份非法" }
+    val removed = documentTreeSubtreeIds(treeChildren, documentId)
     return treeChildren.mapValues { (_, children) ->
         children.filterNot { node ->
-            if (node.nodeId != documentId) return@filterNot false
+            if (node.nodeId !in removed) return@filterNot false
             check(node.spaceId == spaceId) { "待删除文档缓存属于错误空间" }
             true
         }
-    } - documentId
+    } - removed
+}
+
+/** 只遍历已经驻留的树；已删除父节点下的旧后代路径不能继续充当导航事实。 */
+internal fun documentTreeSubtreeIds(tree: Map<String?, List<DocumentNode>>, nodeId: String): Set<String> {
+    val identities = linkedSetOf(nodeId)
+    val pending = mutableListOf(nodeId)
+    var index = 0
+    while (index < pending.size) {
+        tree[pending[index++]].orEmpty().forEach { node ->
+            if (identities.add(node.nodeId)) pending += node.nodeId
+        }
+    }
+    return identities
 }
 
 /** 在任何旧/新 parent 刷新被允许挂起之前产生的不可变工作计划。 */

@@ -2,6 +2,11 @@ import axios from 'axios'
 
 export const TOKEN_KEY = 'tt-admin-token'
 
+export function clearAdminSession() {
+  localStorage.removeItem(TOKEN_KEY)
+  window.location.href = '/admin/'
+}
+
 export const api = axios.create({ baseURL: '/api/admin' })
 
 api.interceptors.request.use((cfg) => {
@@ -17,8 +22,7 @@ api.interceptors.response.use(
     // 401 才视为 token 失效——整页跳转会吞掉 antd message 提示（SPA 也不应刷新）。
     const isLoginCall = err.config?.url?.includes('/login')
     if (err.response?.status === 401 && !isLoginCall) {
-      localStorage.removeItem(TOKEN_KEY)
-      window.location.href = '/admin/'
+      clearAdminSession()
     }
     return Promise.reject(err)
   },

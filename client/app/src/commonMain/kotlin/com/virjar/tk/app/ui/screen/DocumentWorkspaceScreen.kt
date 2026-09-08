@@ -144,6 +144,7 @@ internal fun DocumentWorkspaceScreen(
     detached: Boolean = false,
     mobileSingleDocumentMode: Boolean = false,
     draftLifecycleBridge: DocumentDraftLifecycleBridge,
+    commentsContent: @Composable (DocumentTabState, Int) -> Unit = { _, _ -> },
     mobileExitCoordinator: MobileDocumentExitCoordinator? = null,
 ) {
     var createSpaceDialog by remember { mutableStateOf(false) }
@@ -477,6 +478,7 @@ internal fun DocumentWorkspaceScreen(
                 onDetach = onDetach,
                 mobileSingleDocumentMode = mobileSingleDocumentMode,
                 draftLifecycleBridge = draftLifecycleBridge,
+                commentsContent = commentsContent,
                 onActiveDraftSnapshotChange = { mobileDraftCapture = it },
                 modifier = Modifier.fillMaxSize(),
             )

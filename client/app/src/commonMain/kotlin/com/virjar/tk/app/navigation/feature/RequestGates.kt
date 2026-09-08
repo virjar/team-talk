@@ -53,6 +53,9 @@ internal class GenerationGate {
     }
 
     fun isCurrent(generation: Long): Boolean = !exhausted && generation == current
+
+    /** 观察后台刷新开始时的导航，不取消已经由用户发起的动作。 */
+    fun snapshot(): Long = current.also { check(!exhausted) { "Request generation exhausted" } }
 }
 
 /** 当持久投影已经可用时，离线/超时刷新是预期内的。 */

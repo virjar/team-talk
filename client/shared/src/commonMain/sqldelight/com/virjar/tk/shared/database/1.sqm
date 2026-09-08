@@ -1,0 +1,12 @@
+CREATE TABLE document_comment_pages (
+    space_id TEXT NOT NULL,
+    document_id TEXT NOT NULL,
+    before_sequence INTEGER NOT NULL,
+    payload BLOB NOT NULL,
+    touched_at INTEGER NOT NULL,
+    PRIMARY KEY (space_id, document_id, before_sequence)
+);
+CREATE TABLE pending_document_comments (
+    comment_id TEXT NOT NULL PRIMARY KEY,
+    payload TEXT NOT NULL
+);

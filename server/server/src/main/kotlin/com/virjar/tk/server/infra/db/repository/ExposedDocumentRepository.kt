@@ -10,6 +10,7 @@ import com.virjar.tk.server.domain.document.DocumentPolicyMutationKind
 import com.virjar.tk.server.domain.document.DocumentPolicyMutationReceipt
 import com.virjar.tk.server.domain.document.DocumentNodeMoveReceipt
 import com.virjar.tk.server.domain.document.DocumentRepository
+import com.virjar.tk.server.domain.document.DocumentSpaceCreation
 import com.virjar.tk.server.domain.document.DocumentReadAccessSnapshot
 import com.virjar.tk.server.domain.document.DocumentSpaceAccessPage
 import com.virjar.tk.server.domain.document.DocumentSpacePageAnchor
@@ -23,7 +24,6 @@ import com.virjar.tk.protocol.model.DocumentNode
 import com.virjar.tk.protocol.model.DocumentRevision
 import com.virjar.tk.protocol.model.DocumentRevisionSummary
 import com.virjar.tk.protocol.model.DocumentSpace
-import com.virjar.tk.protocol.model.DocumentSpaceCreateResult
 import com.virjar.tk.protocol.model.DocumentSpaceGrant
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.protocol.model.EmbeddedAsset
@@ -46,6 +46,9 @@ class ExposedDocumentRepository : DocumentRepository {
 
     override fun findSpace(transaction: PgReadTransactionContext, spaceId: String): DocumentSpace? =
         reads.findSpace(transaction, spaceId)
+
+    override fun listReadableUserIds(transaction: PgReadTransactionContext, spaceId: String): Set<String> =
+        ExposedDocumentEventAudience.read(transaction, spaceId)
 
     override fun readAccessSnapshot(
         transaction: PgReadTransactionContext,
@@ -114,7 +117,7 @@ class ExposedDocumentRepository : DocumentRepository {
         transaction: PgWriteTransactionContext,
         space: DocumentSpace,
         creationFingerprint: String,
-    ): DocumentSpaceCreateResult = writes.createSpace(transaction, space, creationFingerprint)
+    ): DocumentSpaceCreation = writes.createSpace(transaction, space, creationFingerprint)
 
     override fun updateSpace(
         transaction: PgWriteTransactionContext,

@@ -75,7 +75,7 @@ class DocumentPolicyMutationReplayIntegrationTest {
             operationId = upsertOperationId,
             issuedAt = upsertIssuedAt,
         )
-        assertEquals(removed.policyRevision, replayAfterArchive.policyRevision)
+        assertEquals(removed.policyRevision + 1L, replayAfterArchive.policyRevision)
         assertEquals(DocumentSpace.ROLE_NONE, replayAfterArchive.effectiveRole)
     }
 

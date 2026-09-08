@@ -3,6 +3,7 @@ package com.virjar.tk.shared.repository
 import com.virjar.tk.shared.AppError
 import com.virjar.tk.shared.client.LocalCache
 import com.virjar.tk.shared.client.PendingDocumentMoveCommand
+import com.virjar.tk.shared.client.ProjectionSnapshotLease
 import com.virjar.tk.protocol.model.Document
 import com.virjar.tk.protocol.model.DocumentMoveResult
 import com.virjar.tk.protocol.model.DocumentNode
@@ -19,21 +20,14 @@ internal class DocumentMoveProjectionConverger(
     suspend fun converge(
         pending: PendingDocumentMoveCommand,
         remote: DocumentMoveResult?,
+        projectionLease: ProjectionSnapshotLease,
     ): DocumentMoveResult? {
         val stagedRemote = remote?.let { move ->
             projectionMaintenance.runPostCommit(
                 "Failed to stage a moved document projection",
                 fallback = null,
             ) {
-                val lease = localCache.beginDocumentBodyMutationSnapshot(
-                    pending.spaceId,
-                    pending.nodeId,
-                )
-                try {
-                    move.takeIf { localCache.applyDocumentMove(lease, move) }
-                } finally {
-                    localCache.abandonProjectionSnapshot(lease)
-                }
+                move.takeIf { localCache.applyDocumentMove(projectionLease, move) }
             }
         }
         if (stagedRemote != null) return stagedRemote
