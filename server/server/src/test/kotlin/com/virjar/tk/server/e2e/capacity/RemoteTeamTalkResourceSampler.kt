@@ -337,11 +337,12 @@ private const val BYTES_PER_KIBIBYTE = 1024L
 private const val MAX_SAMPLE_TIMEOUT_MILLIS = 30_000L
 private const val MAX_CAPTURED_OUTPUT_CHARS = 32 * 1024
 private val INVOCATION_ID_PATTERN = Regex("[0-9a-fA-F]{32}")
-private val REQUIRED_HEALTH_COMPONENTS = setOf(
+internal val REQUIRED_HEALTH_COMPONENTS = setOf(
     "postgres",
     "rocksdb",
     "lucene",
     "sync-event-dispatcher",
+    "maintenance",
     "message-projection",
     "managed-chat-projection",
     "client-telemetry",

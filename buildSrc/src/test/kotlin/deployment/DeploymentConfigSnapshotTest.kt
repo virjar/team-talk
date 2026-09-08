@@ -75,7 +75,7 @@ class DeploymentConfigSnapshotTest {
         assertEquals(443, objectValue.getValue("sslPort").jsonPrimitive.int)
         assertFalse(objectValue.getValue("allowCustomServer").jsonPrimitive.boolean)
         val client = objectValue.getValue("client").jsonObject
-        assertEquals(listOf("applicationId", "displayName", "desktopName"), client.keys.toList())
+        assertEquals(listOf("applicationId", "displayName", "desktopName", "androidSigning"), client.keys.toList())
         assertEquals("com.virjar.tk", client.getValue("applicationId").jsonPrimitive.content)
         assertEquals("TeamTalk", client.getValue("displayName").jsonPrimitive.content)
         assertEquals("TeamTalk", client.getValue("desktopName").jsonPrimitive.content)

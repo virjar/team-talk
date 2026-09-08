@@ -12,14 +12,14 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 5. 注册、登录和 refresh 属于 TCP AUTH 握手，不属于下列 RPC。
 6. 普通消息发送使用 MESSAGE / MESSAGE_ACK，不通过 `message` RPC。
 
-当前表描述开发中的 RPC 契约，不能代替已冻结的发行快照。开发者预览 `0.0.0` 已登记协议基线；
-同一协议 major 内，已冻结契约和编号不得修改或复用，新增契约须递增开发 minor 并登记开发清单。
-只有明确的新协议 major 才能重整编号空间。向内测用户或私有客户分发同样属于发行，须由用户明确
-确认本次发行后冻结契约，不以“尚未正式发布”为由放宽兼容规则。
+当前表描述 0.0.1 / protocol 0.1 的 RPC 契约，正式事实以不可覆盖的发行快照为准。同一协议 major 内，
+已发行契约和编号不得修改或复用。后续第一次新增契约时开启下一待发布 minor，同一发行批次共用该版本；
+只有明确的新协议 major 才能重整编号空间。私有 `snapshot` 与 `private-first` 不冻结待发布契约，
+正式产品发行才登记新的不可覆盖快照，流程见[统一发行](../07-operations/releasing.md)。
 
 源文件位于 `protocol/protocol/src/commonMain/kotlin/com/virjar/tk/protocol/rpc/def/`。
 
-版本支持窗、退役与编号冻结见[版本机制](../04-protocol/versioning.md)。旧 generic 预留已在零号基线删除。
+版本支持窗、退役与编号冻结见[版本机制](../04-protocol/versioning.md)。
 
 ## sync
 
@@ -124,6 +124,7 @@ epoch 是规范 UUID，首次快照允许 `revision = 0`。
 | 18 | `joinByInvite` | `token` | `Chat` |
 | 19 | `getInviteInfo` | `token` | `InviteLink` |
 | 20 | `leaveGroup` | `chatId` | `Unit` |
+| 21 | `getOrCreateSavedChat` | — | `Chat`（当前用户唯一的保存会话） |
 
 `createGroup.memberUids` 与 `addMembers.uids` 在去重前最多各 1,000 项；creator 占群容量名额。群内所有
 HUMAN/BOT/SYSTEM 活跃身份合计最多 1,000，超限返回固定“群成员数量已达上限”且不泄露人数或目标状态。
@@ -154,6 +155,7 @@ payload。服务端在同一事务写邀请链接和回执，同 ID 精确重放
 | 7 | `addReaction` | `chatId`, `serverSeq`, `emoji` | `Unit` |
 | 8 | `removeReaction` | `chatId`, `serverSeq`, `emoji` | `Unit` |
 | 9 | `listReactions` | `chatId`, `fromSeq`, `toSeq` | `List<MessageReactionSummary>` |
+| 10 | `saveMessage` | `srcChatId`, `srcSeq`, `operationId` | `Message`（同 operationId 重试返回原保存副本） |
 
 回应增删是 row-keyed `(chatId, serverSeq, emoji, uid)` 幂等命令：重复 add/remove 第二次成功且不产生
 事件；操作者必须是当前聊天成员，目标消息必须存在且未撤回，每用户每消息至多 12 个不同 emoji。聚合
@@ -197,8 +199,9 @@ Conversation 字段只作冷启动快照；因此头像清除后不得复活旧�
 |---:|---|---|---|---|
 | 1 | `listUnitPage` | `OrganizationUnitPageRequest` | `OrganizationUnitPage` | revision 绑定的活动节点 keyset 页，最多 256 条 |
 | 2 | `listMemberPage` | `OrganizationMemberPageRequest` | `OrganizationMemberPage` | 直属或子树关系 keyset 页，最多 256 条 |
+| 3 | `getUserOrganization` | `uid: String` | `UserOrganizationSummary` | protocol 0.1；查询有效组织归属与路径，查看者须有组织目录访问资格 |
 
-普通客户端只有读取能力；上述两个方法都通过长连接上的强类型二进制 RPC 执行，不走 JSON/HTTP。
+普通客户端只有读取能力；上述方法都通过长连接上的强类型二进制 RPC 执行，不走 JSON/HTTP。
 组织结构、成员归属和部门群启停通过独立的 `/api/admin/organization/**` HTTP 控制面执行。管理写与
 终端读是有意分离的两个入口，不能因为控制面使用 HTTP 就把终端目录回读改成 HTTP。
 `OrganizationUnit.directMemberCount` 与 `listMemberPage(unitId, recursive = false)` 的直属成员口径一致，

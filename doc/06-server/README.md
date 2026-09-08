@@ -83,13 +83,13 @@ ACK 表示服务端已接受消息并完成上述投影，**不表示所有设�
 5. [ExposedMessageProjectionRepository](../../server/server/src/main/kotlin/com/virjar/tk/server/infra/db/repository/ExposedMessageProjectionRepository.kt)
    与 [ExposedPgUnitOfWork](../../server/server/src/main/kotlin/com/virjar/tk/server/infra/db/ExposedPgUnitOfWork.kt)：
    前者更新聊天/会话，后者把事件和这些变化一起提交。会话列表、操作响应与消息通知共用
-   `ExposedConversationRepository.kt` 中的 `ResultRow.toConversation`，不再各维护一份字段映射。
+   `ExposedConversationRepository.kt` 中的 `ResultRow.toConversation`。
 6. [SyncEventDispatcher](../../server/server/src/main/kotlin/com/virjar/tk/server/infra/sync/SyncEventDispatcher.kt)：
    读提交后的实际投递；想看掉线后的补发，再读同目录的 `SyncEventService`。
 
 会话列表与草稿、置顶、免打扰、已读操作从
 [ConversationService](../../server/server/src/main/kotlin/com/virjar/tk/server/domain/conversation/ConversationService.kt)
-进入：每个操作直接写出聊天串行化、PG 事务、仓储变更和事件追加，不再经过一次性的内部转发方法。
+进入：每个操作依次完成聊天串行化、PG 事务、仓储变更和事件追加。
 分页的客户端游标只在服务入口编解码；仓储接收 `afterChatId`、返回 `nextChatId`，没有单字段锚点模型。
 `ExposedConversationRepository.readableConversations` 统一列表和单条读取的查询条件，
 调用方只追加分页或目标 chatId；消息正文历史则看 `MessageStore.getHistory` 中的一条双向扫描循环。

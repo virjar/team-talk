@@ -69,8 +69,8 @@ application 边界解析为 uid，不进入画像、策略目标或 Lucene 文�
 与 Lucene 168 小时物理清理是两个隔离的 maintenance step，前者失败不能阻断后者删除诊断正文。
 
 画像与遥测事件中的 `protocolVersion` 保存独立协议数字 ID：`(major << 16) | minor`，范围为
-`0..Int.MAX_VALUE`。PostgreSQL 的 `INTEGER` 与 Lucene 的整数 StoredField 原本就能表示这个范围，
-本次只放宽旧的 `<=255` 约束和入库校验，保留已有字段及记录；已有关系库通过下述 0 号迁移升级，
+`0..Int.MAX_VALUE`。PostgreSQL 的 `INTEGER` 与 Lucene 的整数 StoredField 均使用这个范围，
+已有关系库通过下述 0 号迁移放宽 `<=255` 约束并保留已有字段及记录，
 不改变 dataset 或存储 epoch，也不为此重建 Lucene。
 
 每条客户端遥测事件可额外保存一个完整或完全缺省的连接上下文：correlationId、traceId、sessionId、
@@ -148,7 +148,7 @@ Contact 是首个完整迁入 `PgUnitOfWork` 的关系聚合。apply、accept、
 视角，随后 durable event intents 才按 uid 排序取得 stream 锁并提交。这样故障只会得到“关系事实和
 全部事件都提交”或“全部回滚”，不会留下已接受但无通知、单边删除事件等永久裂缝。
 
-领域服务直接通过 `ContactRepository` 读取 PostgreSQL，不再经过无状态转发层，也不缓存好友 UID。
+领域服务直接通过 `ContactRepository` 读取 PostgreSQL，不缓存好友 UID。
 好友关系同时参与聊天授权；直接读取权威事实避免 load 与 mutation 并发时回填旧集合，
 因此没有需要在事务前更新的本地投影或 after-commit write-through。好友、黑名单、待处理
 申请和申请历史都以单次联表/有界分页加载资料，不允许逐 uid 再开事务。好友上限 4,000、黑名单上限
@@ -175,7 +175,7 @@ Contact 是首个完整迁入 `PgUnitOfWork` 的关系聚合。apply、accept、
 
 `chats.personal_key` 保存排序后的私聊用户对并全局唯一；群聊该列为 null。`group_members` 以部分唯一索引
 保证每个 Chat 最多一个活跃 owner，`group_member_mutes` 以 `(chat_id, uid)` 唯一并使用 upsert 刷新禁言。
-邀请加入的链接额度、成员行和 Conversation 是同一聚合事务，不再由领域服务分步投影。
+邀请加入的链接额度、成员行和 Conversation 在同一聚合事务中提交。
 
 群容量不是单行数据库约束：所有现有群成员写适配器必须先锁同一 `chats` 行，再在事务快照中用
 `status = 1` 的数量加上去重后待新增/复活目标执行 `GroupPolicy.MAX_MEMBERS` 判定。新建群在首个写入前
@@ -187,7 +187,7 @@ Contact 是首个完整迁入 `PgUnitOfWork` 的关系聚合。apply、accept、
 
 `sync_streams(uid, last_seq, compacted_through)` 为每个账号分配连续序号并保存已物理删除的前缀
 水位；`sync_events` 以 `(uid, stream_seq)` 为复合主键保存 NotifyType、payload bytes 与 live dispatcher
-重试状态。事件表不再保存 `dedupe_key`，也不是第二个可靠命令收据库：消息投影依赖同一事务的
+重试状态。事件表只拥有事件流；消息投影的幂等判断依赖同一事务的
 projection receipt，受管组织群投影依赖同一事务的 applied revision；重试只有在这些权威幂等事实首次
 应用时才 append event。`stream_seq` 继续使用现有 wire `eventId`，不是跨账号全局 ID。
 认证后由已就绪客户端显式请求 `stream_seq > lastEventId` 的升序有界批次；游标仅在
@@ -330,7 +330,7 @@ document_spaces 保存空间元数据和归档状态；`created_by` 是不可变
 `owner_principal_type + owner_principal_id` 是可转移的 USER/ORGANIZATION_UNIT 资产归属，`steward_uid` 是唯一隐式 Owner，
 `custody_revision` 是正整数交接 CAS，`policy_revision` 是正整数显式 ACL CAS；后者只在 grant 事实真实变化时推进。
 数据库约束个人 owner 与 steward 必须为同一 ID，并对归属主体和 steward 建立活动空间索引。
-归档还原子保存 `archive_actor_uid`，不再用创建者猜测后来的责任人。
+归档同时原子保存 `archive_actor_uid`，用于确定归档操作的责任人。
 
 document_space_grants 以 `(spaceId, principalType, principalId)` 唯一，保存用户或组织部门的 viewer/editor/admin
 角色以及是否包含下级部门；数据库 check 拒绝未知主体类型和 Owner/越界角色。它不复制部门成员，实时有效能力由领域服务计算。每位用户跨空间
@@ -354,7 +354,7 @@ document_space_custody_transfers 以全局唯一 operationId 保存 actor、spac
 任何进入写事务的归属命令都先锁 `OrganizationState` 全局围栏，再检查该不可变收据；未命中才继续按
 `State → User → Space → Unit` 锁序解析实时权限和目标主体。收据检查不得后移到当前 steward 鉴权之后。未命中的新命令在锁内确认 owner/steward 完全不变时返回 400，既不更新空间也不插入收据；修正后的真实交接可复用该 operationId。
 
-该表在当前预发布阶段是只追加的无界审计与重放身份表：不能简单用 TTL 或硬删除回收，否则历史 `operationId`
+该表是只追加的无界审计与重放身份表：不能简单用 TTL 或硬删除回收，否则历史 `operationId`
 可被重新使用；空交接等未产生业务事实的廉价请求不得写入该表。生产化前必须增加每 actor/空间限速与审计分区/归档，或先把可回收的有限重放收据与长期审计记录拆分后再定义过期语义。
 任何容量拒绝都必须在精确重放检查之后执行，避免已提交命令在容量满后无法收敛。
 
@@ -376,7 +376,7 @@ recursive CTE，只以当前 actor 的活动直属 membership 为锚点，沿主
 ### document_nodes / document_content_revisions
 
 document_nodes 同时保存文档树、每个节点的当前 Markdown 快照、有界 excerpt 投影、revision 和创建/修改身份。
-每个活动节点都是完整文档，即使正文为空也有自己的初始修订；不再使用节点类型或 nullable Markdown 表示文件夹。文档树和首页查询必须
+每个活动节点都是完整文档，即使正文为空也有自己的初始修订；节点统一保存非空值的 Markdown 正文，空正文使用空字符串。文档树和首页查询必须
 只投影 excerpt，不能用 `selectAll` 把正文载入内存。parentId 必须指向同空间的活动文档。从空间根到直接父文档最多包含
 128 个祖先 ID。创建、移动和删除在同一
 PostgreSQL 事务中锁定 document_spaces 行，然后复验父文档、环、整个活动子树深度和“含子文档的节点不可删除”约束；
@@ -546,13 +546,13 @@ MEMBER_REMOVED/CHAT_DELETED 之后收到一条更晚的旧 MESSAGE_RECV；剩余
 
 | 标记 | 当前基线 | 负责什么 |
 |---|---|---|
-| 发行字符串 | `0.0.0` | 用户看到的版本；客户端、SDK、服务端来自同一构建输入，不决定二进制兼容 |
-| 协议 major/minor | `0.0`，数字 ID 为 `0` | 每条 TCP 连接协商可使用的契约窗口，不改变已保存的消息和同步游标 |
+| 发行字符串 | `0.0.1` | 用户看到的版本；客户端、SDK、服务端来自同一构建输入，不决定二进制兼容 |
+| 协议 major/minor | `0.1`，数字 ID 为 `1`，最低 minor 为 `0` | 每条 TCP 连接协商可使用的契约窗口，不改变已保存的消息和同步游标 |
 | 服务端存储 epoch | **`1`** | 已存在的 PostgreSQL 和本地持久化布局；以 `ServerDataEpoch.CURRENT_EPOCH` 为事实源 |
 | PostgreSQL 迁移版本 | `0` | `schema_migrations` 的连续完成记录；在现有 epoch 内保留数据地推进 SQL 布局 |
 | dataset ID | 每套数据原有的 canonical UUID | PostgreSQL 与本地存储共同拥有的身份，普通升级保留原值 |
 
-新发行和协议从 0 建立基线，已有存储标记 **不从 1 改为 0**。标记重编号本身不会迁移数据，反而会让
+发行与协议版本的变化不改变存储 epoch 或 dataset。标记重编号本身不会迁移数据，反而会让
 本可继续读取的部署被拒绝启动。对外仍不保证兼容，未来允许设计破坏性变更；内部同一协议 major 的
 普通升级必须保留现有业务数据，需要变更存储时先提供明确的迁移与恢复方案。协议 major 改变也不等于
 获得清空服务端数据的授权。
@@ -592,8 +592,8 @@ canonical UUID。消息 RocksDB、Lucene、FileStore RocksDB 与大文件目录�
 的消息、文件与索引不能拼接使用。Message 正文和持久同步 payload 使用协议编码，修改既有 wire
 字段或重用 MessageType 会同时影响历史解码；不能寄望 epoch 校验自动发现这种源码变更。
 
-已有数据的 epoch 缺失或不匹配、dataset 无法核实，都会阻止启动。历史异常类名
-`SchemaResetRequiredException` / `DataResetRequiredException` 仍保留，但只表示存储不受当前实现支持，
+已有数据的 epoch 缺失或不匹配、dataset 无法核实，都会阻止启动。
+`SchemaResetRequiredException` / `DataResetRequiredException` 只表示存储不受当前实现支持，
 不是自动重置指令。处理顺序是停止接入、保留 PostgreSQL 与完整 data 目录、核实原布局与 dataset，
 再选择兼容构建、显式迁移或经过验证的恢复；不能通过删表、修改 marker 或换一个 dataset UUID
 “修复”升级。普通部署不清库，确实需要破坏性重建时必须另外明确范围、数据损失和授权。
@@ -606,9 +606,9 @@ canonical UUID。消息 RocksDB、Lucene、FileStore RocksDB 与大文件目录�
 documentId、revision、title、contentLength、editedBy、editedAt，并按 revision 独占游标有界分页；只有
 `getRevision` 可以读取完整 Markdown。该字段属于当前 epoch schema，不在启动时回填旧正文。
 
-当前好友申请的“同方向只能有一条 pending”直接由最终 schema 的部分唯一索引保证，发出/收到 pending
-分别通过部分索引在双方 User 行锁内计数；终态行只保留有界交互历史且不再保存处理 token。草稿正文
-从建库起就是文本列。启动流程不再识别、修补或标记旧重复、超额或旧 token 生命周期申请。
+当前好友申请的“同方向只能有一条 pending”由 schema 的部分唯一索引保证，发出/收到 pending
+分别通过部分索引在双方 User 行锁内计数；终态行只保留有界交互历史，不保存处理 token。草稿正文
+使用文本列。启动只运行已声明的迁移，不自动修补重复、超额或不支持的 token 生命周期申请。
 
 `document_spaces.creation_fingerprint` 与 `document_nodes.creation_fingerprint` 保存 64 位小写 SHA-256
 十六进制值，是客户端资源 ID 的不可变创建收据。指纹只用于判定同一创建意图，不随空间改名、文档编辑

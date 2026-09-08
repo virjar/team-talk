@@ -791,7 +791,7 @@ data class AttachmentResourceResult(
 ) {
     init {
         require(requiredHealthyComponents == REQUIRED_HEALTHY_COMPONENTS) {
-            "attachment resources require the complete nine-component health set"
+            "attachment resources require the complete expected health component set"
         }
         require(sampleCount == snapshots.size && sampleCount >= 2) {
             "attachment resources require matching baseline and final samples"
@@ -808,7 +808,7 @@ data class AttachmentResourceResult(
             "attachment stable build flag is inconsistent with its snapshots"
         }
         require(allHealthy == facts.allHealthy) {
-            "attachment nine-component health flag is inconsistent with its snapshots"
+            "attachment complete health flag is inconsistent with its snapshots"
         }
         require(cpuTicksMonotonic == facts.cpuTicksMonotonic) {
             "attachment CPU monotonic flag is inconsistent with its snapshots"
@@ -1151,4 +1151,4 @@ private fun requireTransferShape(
 }
 
 private val SHA256_HEX = Regex("[0-9a-fA-F]{64}")
-private const val REQUIRED_HEALTHY_COMPONENTS = 9
+private val REQUIRED_HEALTHY_COMPONENTS = REQUIRED_HEALTH_COMPONENTS.size

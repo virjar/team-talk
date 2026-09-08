@@ -141,17 +141,19 @@ PKCS12 会在上传或部署失败后清理。
 
 ## 5. 验收
 
-先检查健康状态，再跑业务验收：
+先检查目标实例健康状态：
 
 ```bash
 curl http://203.0.113.10/health
-./gradlew :server:server:acceptanceTest
 ```
 
+真人使用的实例随后核对下载入口并复验约定的用户流程，不自动注册验收账号。
+`./gradlew :server:server:acceptanceTest` 在独立测试实例执行；实例选择与测试资料处理见
+[测试数据归属](../09-testing/deployment-acceptance.md#测试数据归属与真人内测实例)。
 验收目标同样使用部署配置函数返回的对象，因此不会出现“部署到 A、测试 B”的配置漂移。失败时不要
-只看 HTTP 200；部署任务本身还要求总体状态和 postgres、rocksdb、lucene、sync-event-dispatcher、
-message-projection、managed-chat-projection、client-telemetry、file-storage、tcp 固定 9 项全部为 `UP`。随后应结合验收报告、服务端 trace、
-客户端 fault 和目标实例数据判断。
+只看 HTTP 200；部署任务要求总体状态及所有关键组件全部为 `UP`，包括后台维护任务的存活状态。
+关键维护任务意外退出时 `/health` 返回 `DOWN` / HTTP 503，具体组件见[健康检查](../07-operations/observability.md)。
+随后应结合验收报告、服务端 trace、客户端 fault 和目标实例数据判断。
 上面的 IP 仍是文档占位，实际使用自己的 `serverUrl`。TLS 部署的 `tcp` 健康项会以 keystore 当前叶证书
 作为唯一信任锚，对实际监听端口执行真实 TLS 握手（通配 bind 从本机 loopback 回连）；它不是只检查
 socket 可连接。客户端另行使用系统 WebPKI 或配置的单证书 TrustStore，并严格校验主机/IP，
@@ -160,10 +162,10 @@ socket 可连接。客户端另行使用系统 WebPKI 或配置的单证书 Trus
 ## 6. 发布客户端
 
 新的私有应用如果只需要以当前版本提供首批测试安装包，使用[首次私有分发](../07-operations/releasing.md#保持当前版本的首次私有安装包分发)：
-先登记并提交独立协议契约，再在私有 clone 运行 `release -PreleaseMode=private-first -PreleaseTargets=site`。
-这保留根版本和公版发行记录，适用于空下载入口；不能用来覆盖已有私有安装包。
+审阅并提交源码，在私有 clone 运行 `release -PreleaseMode=private-first -PreleaseTargets=site`。
+这保留根版本和公版发行记录，不冻结待发布 minor，适用于独立安装身份和空下载入口；已有私有包的手动更新走 snapshot。
 
-先在根版本配置中命名本次发行，提交人工发布说明与协议发行快照，并准备持续使用的客户端签名。
+正式产品发行时，在根版本配置中设置发行版本，提交人工发布说明与协议发行快照，并准备持续使用的客户端签名。
 没有 GitHub 也遵守这些本地事实，具体步骤见[统一发行流程](../07-operations/releasing.md)。
 
 ```bash
@@ -212,5 +214,4 @@ HTTP + TLS/TCP 和 HTTPS 升级均遵循以下 TLS 参数规则：
 
 仅有明确实例与资料范围授权的独立重建任务才可清理对应测试数据；内测与生产资料都不依赖清库升级。详细运行
 步骤见[部署与升级](../07-operations/deployment.md)。
-某次首次接管私有服务器时允许清理旧安装，不代表后续可随意清理该节点。邀请长期使用者后，普通升级
-仍须保留资料；未来重建需要重新明确实例、数据范围和恢复方案。
+重建授权只适用于明确的实例和资料范围；后续普通升级仍保留资料，每次破坏性重建独立核对范围与恢复方案。

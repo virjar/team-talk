@@ -16,15 +16,15 @@ flowchart TD
     Auth --> Message["MESSAGE / ACK：消息与持久发送结果"]
 ```
 
-TLS 位于 Packet 外层，不通过 PacketType 协商。现有远程 SDK 使用 HTTPS + TLS/TCP，配置组合的边界
+TLS 位于 Packet 外层，不通过 PacketType 协商。远程 TCP 使用 TLS，HTTP(S) 地址由部署显式配置；组合边界
 见[传输配置](../07-operations/configuration.md#传输配置边界)。TLS 就绪后先协商，再发 AUTH；
 协议协商不携带密码，也不通过降级明文绕过传输失败。
 
-当前开发协议为 `0.1`，数字 ID `1`，独立于展示版本 `0.0.0`；本轮所有变动共用协议 1，直到正式发布
-`0.0.1`。正式发行和明确冻结的契约由不可覆盖快照保护，普通内测包不形成额外兼容版本。
-`ProtocolLimits.AUTH_PREAMBLE_MARKER`
-只保留 AUTH 的固定 bootstrap 字节标识；业务版本使用 `ProtocolVersions` 与 `ProtocolVersion`。
-Netty 的 `PacketCodec.PROTOCOL_VERSION` 是当前数字 ID 的兼容别名。
+当前发行协议为 `0.1`，数字 ID `1`，独立于展示版本 `0.0.1`；最低支持协议为 `0.0`。
+协议 0.0 与 0.1 都受正式快照保护。下一次新增契约时才开启下一 minor，同一发行周期共用该 minor，
+纯实现修复不增加协议号。版本、兼容窗口和数据迁移规则见[版本机制](versioning.md)。
+`ProtocolLimits.AUTH_PREAMBLE_MARKER` 只保留 AUTH 的固定 bootstrap 字节标识；业务版本使用
+`ProtocolVersions` 与 `ProtocolVersion`。Netty 的 `PacketCodec.PROTOCOL_VERSION` 是当前数字 ID 的兼容别名。
 
 ## 规范与代码的关系
 

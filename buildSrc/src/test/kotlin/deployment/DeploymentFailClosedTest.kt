@@ -77,6 +77,24 @@ class DeploymentFailClosedTest {
     }
 
     @Test
+    fun `maintenance is required for new releases while rollback retains the zero release health contract`() {
+        val current = "0.0.1+" + "a".repeat(40)
+        assertFailsWith<GradleException> {
+            requireHealthyResponse("${healthJson(omitted = "maintenance", buildIdentity = current)}\n200", current)
+        }
+        assertFailsWith<GradleException> {
+            requireHealthyResponse(
+                "${healthJson(overrides = mapOf("maintenance" to "DOWN"), buildIdentity = current)}\n200", current,
+            )
+        }
+        val previous = "0.0.0+" + "b".repeat(40)
+        val restored = requireHealthyResponse(
+            "${healthJson(omitted = "maintenance", buildIdentity = previous)}\n200", previous,
+        )
+        assertEquals(requiredHealthComponents.filterNot { it == "maintenance" }, restored.components)
+    }
+
+    @Test
     fun `required artifact rejects missing empty and ambiguous selections`() = withTempDirectory { root ->
         assertFailsWith<GradleException> { requireArtifact(null, "APK") }
         val empty = File(root, "empty.apk").apply { createNewFile() }

@@ -163,6 +163,7 @@ import com.virjar.tk.server.infra.sync.SyncReplayLeaseRegistry
 import com.virjar.tk.server.protocol.TcpServer
 import com.virjar.tk.server.protocol.TcpServerConfiguration
 import com.virjar.tk.server.protocol.dispatcher.*
+import com.virjar.tk.server.runtime.MaintenanceRuntime
 import org.jetbrains.exposed.sql.Database
 import org.koin.dsl.module
 import java.io.File
@@ -447,6 +448,7 @@ internal fun createServerModule(
             policyRefresher = registry::refreshConnectionTracePolicy,
         )
     }
+    single { MaintenanceRuntime() }
     single {
         HealthChecker(
             database = get(),
@@ -457,6 +459,7 @@ internal fun createServerModule(
             organizationProjectionReadiness = get(),
             syncEventDispatcher = get(),
             clientTelemetryEvents = get<ClientTelemetryEventStore>(),
+            maintenance = get(),
             tcpProbeConfiguration = tcpHealthProbeConfiguration,
         )
     }

@@ -283,5 +283,6 @@ root 到直接父文档的祖先路径。该投影用于断网读取，不是继
 `document_node_move_commands`、`document_nodes`、
 `document_content_revisions` 和 `document_user_recents` 组成，不保留群 scope 双写或兼容转换。
 `document_nodes` 中的每个活动节点都是可打开、可修订的文档，`excerpt` 是首页和文档树的读取投影；
-同级顺序直接由 `created_at, node_id` 推导，不另存 position。当前开发部署切换不兼容 schema 时直接重建
-测试数据；正式发布后必须改用版本化迁移和摘要回填。
+同级顺序直接由 `created_at, node_id` 推导，不另存 position。schema 变更通过版本化迁移与所需投影回填
+保留现有资料；部署校验 epoch/dataset，不能通过重建测试数据绕过迁移。破坏性重建须另行明确实例、
+数据范围和恢复方案，见[版本与迁移规则](../04-protocol/versioning.md)。

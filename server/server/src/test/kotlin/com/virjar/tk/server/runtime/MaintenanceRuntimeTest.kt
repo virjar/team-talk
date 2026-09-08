@@ -22,6 +22,7 @@ class MaintenanceRuntimeTest {
         val closed = mutableListOf<String>()
         val dispatcher = daemonDispatcher("maintenance-cooperative-worker")
         val runtime = MaintenanceRuntime(dispatcher, shutdownTimeoutMillis = 1_000L)
+        assertFalse(runtime.isRunning)
         val owner = ServerResourceOwner { _, _ -> }
         owner.own("database") { closed += "database" }
         owner.ownDependencyBarrier(
@@ -44,10 +45,12 @@ class MaintenanceRuntimeTest {
 
         try {
             assertTrue(entered.await(5, TimeUnit.SECONDS))
+            assertTrue(runtime.isRunning)
 
             owner.close()
 
             assertTrue(runtime.workersTerminated)
+            assertFalse(runtime.isRunning)
             assertEquals(listOf("maintenance", "database"), closed)
             owner.close()
         } finally {
@@ -122,6 +125,7 @@ class MaintenanceRuntimeTest {
             releaseWorker.countDown()
             assertTrue(workerExited.await(5, TimeUnit.SECONDS), "worker did not exit after test release")
             assertTrue(awaitCondition { runtime.workersTerminated })
+            assertFalse(runtime.isRunning)
             first.join(5_000L)
             follower.join(5_000L)
             dispatcher.close()
@@ -154,6 +158,7 @@ class MaintenanceRuntimeTest {
 
         try {
             assertTrue(awaitCondition { runtime.workersTerminated })
+            assertFalse(runtime.isRunning, "a failed worker must make maintenance unavailable")
 
             val ownerTerminal = assertIs<ServerResourceCloseException>(
                 runCatching { owner.close() }.exceptionOrNull(),

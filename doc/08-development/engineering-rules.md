@@ -54,7 +54,7 @@
 - RPC IDL 是 method 编解码的唯一入口；每个方法必须显式声明唯一 `@RpcMethod(id)`。
 - 新 NotifyType 登记 NotifyContracts。
 - 新 MessageType 登记 body registry 和 policy。
-- 同一协议 major 内保留已发行 wire；新签名/类型用新编号和本轮待发布 minor 的 since 注解。同一发行批次不重复递增 minor，也不为中间提交增加兼容分支；清单、最低支持版本与退役检查见[版本规则](../04-protocol/versioning.md)。手写 codec 仍须核对 golden tests，不能靠重写清单掩盖已发行布局变更。
+- 同一协议 major 内保留已发行 wire；新签名/类型用新编号和对应发行批次待发布 minor 的 since 注解。同一发行批次不重复递增 minor，也不为中间提交增加兼容分支；清单、最低支持版本与退役检查见[版本规则](../04-protocol/versioning.md)。手写 codec 仍须核对 golden tests，不能靠重写清单掩盖已发行布局变更。
 - 优先传稳定模型，不手写重复 payload。
 
 ## 3. 本地优先

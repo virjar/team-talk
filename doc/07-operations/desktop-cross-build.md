@@ -148,14 +148,14 @@ MSIX 使用真实 AppData 目录，保持与普通 Win32 启动相同的数据�
 完成安装；步骤见[客户端安装站点验收](../09-testing/deployment-acceptance.md#客户端安装站点的-http-验收)。
 
 根 `teamtalk.releaseVersion` 是应用内与 Conveyor 的展示版本。Android `versionCode` 与正式发行的 Conveyor
-`app.revision` 为 `releaseBuildNumber + 1`，零号均为 `1`；零号 Desktop 安装元数据为 macOS/Windows
-`0.0.0.1`、Linux `0.0.0-1`。同一展示版本与 Desktop revision 不能用于分发不同包，具体边界见
-[版本机制](../04-protocol/versioning.md#零号基线的切换边界)。
+`app.revision` 为 `releaseBuildNumber + 1`，当前均为 `2`；`0.0.1` 的 Desktop 安装元数据为 macOS/Windows
+`0.0.1.2`、Linux `0.0.1-2`。同一展示版本与 Desktop revision 不能用于分发不同包，具体边界见
+[版本机制](../04-protocol/versioning.md#安装版本与升级边界)。
 独立私有应用可以经用户确认，以当前版本和安装序号完成首次分发；它有自己的安装身份和空更新站点，
 入口见[首次私有安装包分发](releasing.md#保持当前版本的首次私有安装包分发)。后续用户要求更新内测包时，
 使用[内测 snapshot](releasing.md#保持展示版本的内测更新)：提交工作源码后手动运行
 `release -PreleaseMode=snapshot -PreleaseTargets=site`，仅保留本地产物时用 `local`；不修改根版本文件。
-例如展示版本仍为 `0.0.0`、根构建号仍为 `0` 时，Android code 保持 `1`，用户手动覆盖安装；Desktop 的
+例如展示版本为 `0.0.1`、根构建号为 `1` 时，Android code 保持 `2`，用户手动覆盖安装；Desktop 的
 `desktopRevision` 自动取完整 Git first-parent 提交数加根构建号再加一，满足 Conveyor 对不同包的要求。
 该计算不依赖 tag；必须使用完整 clone。同一展示版本的后续 snapshot 保留已分发源码及历史，从其后代构建。
 应用身份、签名与数据目录沿用原值，不打 tag，不通过 GitHub 自动交付 snapshot。

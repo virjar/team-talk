@@ -174,12 +174,12 @@ bounds，不能自行再乘除缩放倍率。完整选择器见[测试选择器�
   `chat.asset.retry.{assetId}` / `documents.asset.retry.{assetId}` 就地重试，同时保留
   `chat.asset.remove.{assetId}` / `documents.asset.remove.{assetId}` 移除；
 - 取消或移除富资产后，先断言对应 `pending`、`progress`、`cancel/retry/remove` 节点及 Markdown 内部 URI 消失，
-  再离开并重开原会话/文档，确认引用仍未出现；即使上传稍后返回 `READY` 也不得复活节点。Desktop 真实
-  验收已经覆盖聊天与文档的上传中取消和重开无引用；Android 必须另走真机验收，不能由本结论替代；
+  再离开并重开原会话/文档，确认引用仍未出现；即使上传稍后返回 `READY` 也不得复活节点。Desktop 与 Android
+  必须分别执行真实客户端验收，不能互相替代；
 - 就地重试门禁只停止当前部署配置指向的 TeamTalk 测试服务触发 FAILED，不关闭宿主机网卡、
   Wi-Fi、代理或 DNS。FAILED 行必须同时出现“重试”和“移除”；快速双击 retry 后只允许一个 attempt 进入
   PREPARING/UPLOADING。恢复目标服务后应在原 `assetId` 上进入 READY，随后发送消息或保存文档，离开并
-  重进后资产仍可见。Desktop 与小米 Android 的聊天和文档都已通过该流程；Android 还必须断言上传期间的
+  重进后资产仍可见。Android 还必须断言上传期间的
   同 owner access token 轮换不会把成功回执改写为 FAILED，transport failure 的自动精确重放最多一次；
 - 文档树中点击 `documents.node.{nodeId前8}` 打开该文档正文，点击
   `documents.tree.toggle.{nodeId前8}` 只展开或折叠子文档；父文档的正文不因它拥有子节点而不可达；
@@ -209,7 +209,7 @@ bounds，不能自行再乘除缩放倍率。完整选择器见[测试选择器�
   交替切换至少 12 次并以当前 Desktop PID 的精确媒体路径 `lsof` 断言始终只有一个 FD；每段视频再连续
   开关 4 次，关闭后等待可观察的 FD 归零；再覆盖进入画廊后立即关闭和音频播放后关闭。
   这些场景必须通过运行中的真实 Desktop 验证，不能以单元测试代替。
-  该开发构建门禁不能标记签名、公证安装包已通过。
+  开发构建结果不能替代签名、公证安装包的验收。
 
 ## 截图闭环
 

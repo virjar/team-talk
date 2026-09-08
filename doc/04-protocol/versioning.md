@@ -8,9 +8,9 @@ TeamTalk 处于开发者预览阶段，**不对使用者保证版本兼容，未
 
 | 身份 | 当前值与来源 | 用途 | 递增时机 |
 |---|---|---|---|
-| 统一展示版本 | `teamtalk.releaseVersion=0.0.0` | Server、SDK、Android、Desktop、MCP 使用同一字符串，配合 commit 排查构建范围 | 用户明确确认正式产品发行后推进；内测 snapshot 保持它不变，不从它推导协议能力 |
-| 协议数字版本 | 已发行 `0.0`（ID 0），当前开发 `0.1`（ID 1）；`id=(major << 16) \| minor` | 连接协商、协议注解、支持窗口与升级提示 | 同一正式发行周期共用一个待发布 minor；本轮固定为 1，正式发布 0.0.1 后才冻结；新 major 从 minor 0 开始 |
-| 正式构建计数 | 根 `teamtalk.releaseBuildNumber`，初始为 `0` | Android `versionCode=buildNumber+1`；正式 Desktop revision 同样映射为 `buildNumber+1`；macOS jpackage 的系统包版本从 `1.0.0` 映射 | 正式发行时由用户确认推进；内测 snapshot 不修改它，Android 保持当前 code 手动覆盖 |
+| 统一展示版本 | `teamtalk.releaseVersion=0.0.1` | Server、SDK、Android、Desktop、MCP 使用同一字符串，配合 commit 排查构建范围 | 用户明确确认正式产品发行后推进；内测 snapshot 保持它不变，不从它推导协议能力 |
+| 协议数字版本 | 当前发行 `0.1`（ID 1），最低支持 `0.0`（ID 0）；`id=(major << 16) \| minor` | 连接协商、协议注解、支持窗口与升级提示 | 同一正式发行周期共用一个待发布 minor；已冻结 minor 1，有新契约才开启下一 minor；新 major 从 minor 0 开始 |
+| 正式构建计数 | 根 `teamtalk.releaseBuildNumber=1` | Android `versionCode=buildNumber+1`；正式 Desktop revision 同样映射为 `buildNumber+1`；macOS jpackage 的系统包版本从 `1.0.0` 映射 | 正式发行时由用户确认推进；内测 snapshot 不修改它，Android 保持当前 code 手动覆盖 |
 | 内测 Desktop 修订号 | `desktopRevision=完整 Git first-parent 提交数+根构建号+1` | 满足 Conveyor 同一展示版本不同安装包的 revision 要求，记录在内测清单与安装元数据中 | 手动 snapshot 交付时自动计算，不写回配置、不依赖 tag；同展示版本的后续 snapshot 从已分发源码的后代构建，原字节重试复用原号 |
 
 人工版本配置均来自根 `gradle.properties`；内测 Desktop revision 另外依据完整 Git 历史推导。
@@ -18,11 +18,11 @@ TeamTalk 处于开发者预览阶段，**不对使用者保证版本兼容，未
 SDK 或平台壳里另外硬编码一个发行字符串。`major` 范围 `0..32767`，`minor` 范围 `0..65535`，
 打包后的 ID 是非负递增整数。不能因为客户端显示版本字符串更大就推定它支持某个 RPC。
 
-例如：纯 UI 修复可从展示版本 `0.0.0` 发布为 `0.0.1`，协议仍为 `0.0`；增加一个 RPC 可将协议升为
-`0.1`，而展示版本由该批发行决定。展示版本的大号变化也不触发本地清理，**协议 major 变化才触发**。
-同一修复也可先作为私有内测 snapshot 交付：展示版本保持 `0.0.0`、根构建号保持 `0`、Android code
-保持 `1`，仅 Desktop revision 随已提交源码自动计算。正式发行继续增加根构建号使 Android code 升级；
-Desktop 比较完整安装版本，新展示版本的末位 revision 可按根构建号重新映射。
+纯 UI 修复可以只推进展示版本与正式构建计数，协议保持不变；新增 RPC 则需要开启下一协议 minor，
+展示版本由该批发行决定。展示版本的大号变化不触发本地清理，**协议 major 变化才触发**。
+私有内测 snapshot 保持当前展示版本和根构建号，Android code 保持 `buildNumber+1`，仅 Desktop revision
+随已提交源码自动计算。正式发行增加根构建号使 Android code 升级；Desktop 比较完整安装版本，
+新展示版本的末位 revision 可按根构建号重新映射。
 
 数据库自身的布局标记与发行版本分别管理。服务端 PostgreSQL/data epoch 保持现存值
 `1`，客户端数据库文件仍为 `cache_e0...db`，SQLDelight schema 从 `1` 起步。改写这些已有标记不会产生
@@ -31,9 +31,9 @@ Desktop 比较完整安装版本，新展示版本的末位 revision 可按根�
 ## 开发编号与发行契约分开管理
 
 协议版本表示两次正式发行之间的整体契约差异，不表示功能数、提交数或 AI 调试次数。
-当前正式基线是 `0.0.0 / protocol 0.0`；自该版本以来新增的组织资料 RPC 和账号封禁帧统一属于
-待发布协议 `0.1`。**在用户正式发布 `0.0.1` 之前，所有新增及修订继续使用 minor 1，不递增到 2。**
-展示版本和根构建号现在仍保持 `0.0.0 / 0`，本规则不自动发版。
+当前正式基线是 `0.0.1 / protocol 0.1`，组织资料 RPC 和账号封禁帧属于协议 `0.1`。
+`0.0.0 / protocol 0.0` 与 `0.0.1 / protocol 0.1` 的快照都不可修改。首次新增契约时开启
+minor 2，同一后续发行周期继续共用它；仅修复实现时保留当前协议号。
 
 | 阶段 | 协议动作 | 兼容对象 |
 |---|---|---|
@@ -44,18 +44,17 @@ Desktop 比较完整安装版本，新展示版本的末位 revision 可按根�
 
 ```mermaid
 flowchart LR
-    Zero["已发布 0.0.0：协议 0 冻结"] --> Pending["待发布协议 1"]
-    Pending --> Changes["组织资料、封禁帧、后续本轮修改"]
-    Changes --> Pending
-    Pending --> QA["本机验收 / 内测包：源码 SHA + schema 哈希"]
+    Frozen["当前发行：协议 0.1 冻结"] --> New{"是否新增契约"}
+    New -->|否| Fix["实现修复：保留协议号"]
+    New -->|是| Pending["开启下一 minor，同批共用"]
+    Pending --> QA["开发与内测：源码 SHA + schema 哈希"]
     QA --> Pending
-    Pending --> Approval["用户确认发布 0.0.1"]
-    Approval --> Frozen["协议 1 冻结"]
-    Frozen --> Next["以后有新契约才开启协议 2"]
+    Pending --> Approval["用户确认正式发行"]
+    Approval --> Next["新增不可覆盖的发行快照"]
 ```
 
-`wire-baseline.tsv` 是当前源码的审阅清单，**不是一份已发行契约**。它的新增条目可以在本轮修订或删除，
-但修改后必须显式 `writeProtocolBaseline`；不能通过改它掩盖协议 0 的变化。构建兼容检查始终以已冻结
+`wire-baseline.tsv` 是当前源码的审阅清单，**不是一份已发行契约**。其中尚未正式发行的新增条目可以在同一周期修订或删除，
+但修改后必须显式 `writeProtocolBaseline`；不能通过改它掩盖已发行协议的变化。构建兼容检查始终以已冻结
 快照为准，并拒绝在同一发行周期累加多个开发 minor。需要测试高版本窗口时，用测试数据构造版本，
 不要为调试修改产品计数或保留只服务于中间状态的适配代码。
 
@@ -71,11 +70,10 @@ Tag 标记对应源码，GitHub 自动摘要只补充提交信息。已准备的
 
 历史上明确登记的独立稳定契约 `contracts/<major>.<minor>/` 继续受保护；当前仓库没有这类记录。
 `prepareProtocolContract` 只用于用户另行明确要求冻结独立稳定协议的交付，不是普通内测步骤。
-本轮只以已发行协议 0 为兼容基线，不将此前本机试验的 minor 1/2 变成两条历史。
 
 | 文件 | 事实与修改规则 |
 |---|---|
-| 根 `gradle.properties` | 当前展示版本、安装计数、唯一 pending 协议窗口；不随内部小修复递增 |
+| 根 `gradle.properties` | 当前展示版本、安装计数与协议窗口；不随内部小修复递增 |
 | `protocol/protocol/wire-baseline.tsv` | 可审阅的当前开发清单，经 `writeProtocolBaseline` 登记 |
 | `protocol/protocol/releases/<version>/` | 用户确认正式发行后的冻结快照，既有目录不可修改 |
 | `protocol/protocol/contracts/<major>.<minor>/` | 历史或明确独立稳定交付的冻结记录，普通 snapshot 不新增 |
@@ -204,8 +202,7 @@ CI 的 `verifyReleaseChange -PreleaseBase=<比较基点>` 还检查基点已有�
 - 当前 Message body 没有独立长度信封，历史列表中的未知消息类型不能安全跳过。新增消息类型必须提供
   明确的历史/同步兼容适配，或提高最低协议版本；只给枚举加 since 注解不等于完成整条业务兼容。
 
-原来的 `ExtensionType`、`generic` RPC、`GENERIC(99)` 消息/通知和 `GenericPayload` 没有注册的业务实现，
-已在零号基线移除。明确的新 ID 和版本窗承担演进职责，不另建 opaque payload 逃生入口。
+协议演进使用明确的新 ID 和版本窗，不提供 generic RPC 或 opaque payload 扩展入口。
 
 ## 数据随版本怎样处理
 
@@ -233,26 +230,20 @@ flowchart TD
   保留原行和 dataset。未来跨存储布局变化仍须提供明确迁移与恢复步骤，epoch 预检不代替迁移。跨 major 的协议编号
   重整也不自动授权删除服务端资料，重置需要明确实例、范围和影响。
 
-## 零号基线的切换边界
+## 安装版本与升级边界
 
-初始 `0.0.0` 以完整现行契约建立协议 `0.0`。发行前的开发包、临时零号包和私有试验契约不属于本版
-兼容来源；本次经用户确认重新初始化的测试实例不提供旧资料的原地迁移，使用者需换用本版客户端，
-按新实例重新注册、登录。切换前自行保存本地草稿、待发消息与附件原件；不能仅凭相同展示版本混用旧包。
+普通升级保留同一安装的资料、身份与签名。`0.0.1` 的展示版本为 `0.0.1`，根构建号为 `1`，
+Android `versionCode` 与正式 Conveyor revision 均为 `2`；macOS/Windows Conveyor 安装版本为
+`0.0.1.2`，Linux 为 `0.0.1-2`。从 `0.0.0` 正式版或同展示版本的私有 snapshot 升级时，
+应先更新服务端再分发客户端；不同私有应用各自沿用原安装身份和签名，不迁入公版资料。
 
-这次初始化只用于建立首个公开开发者预览基线。基线建立后，普通升级继续保留数据；既有发行记录、
-独立分发契约与安装序号均按前述规则保护，不能把初始清理当作日后再次清库、降号或覆盖版本的授权。
+macOS 的 JDK `jpackage` 要求包版本首段为正数。Compose DMG 将构建计数 `b` 映射为
+`(b / 1000000 + 1).((b / 1000) % 1000).(b % 1000)`；当前映射为 `1.0.1`。
+这只影响 jpackage 的系统包元数据，应用内展示、发行清单和文件名仍使用根展示版本。
+Conveyor 的 `app.version` 直接使用根展示版本，正式 `app.revision` 使用根构建号加一；
+snapshot 使用完整 first-parent 提交数加根构建号再加一。同一展示版本不能降低修订号或改写已分发历史，
+正式推进展示版本时可重新使用根构建号映射末位 revision。
 
-Android 的展示版本重置为 `0.0.0`，零号安装序号为 `1`。Android 系统不会把它当作已安装的旧开发包
-`versionCode=1000008` 的升级：旧开发安装需要单独处理换装，不能以静默清数据掩盖安装降级。
-新预览基线之后，正式发行的 Android 安装 code 递增；私有内测 snapshot 可沿用当前 code 手动覆盖。
-展示版本、协议版本与 Desktop revision 分别按前述规则推进。
-
-macOS 的 JDK `jpackage` 同样要求包版本首段为正数。Compose DMG 将构建计数 `b` 映射为
-`(b / 1000000 + 1).((b / 1000) % 1000).(b % 1000)`，零号为 `1.0.0`；Finder 的系统包元数据
-可能显示此安装编号，应用内关于页、运行画像、发行清单和分发文件名仍显示 `0.0.0`。
-Conveyor 的 `app.version` 读取统一展示版本，不使用这项仅供 jpackage 的映射；
-正式发行的 `app.revision` 由根构建计数加一提供，避免 Conveyor 22.1 拒绝全零安装版本；snapshot 使用
-完整 first-parent 提交数加根构建号再加一，同一展示版本下不能用浅克隆或重写已分发历史制造另一个修订号。
-因此零号预览的 Linux 包版本为 `0.0.0-1`，Windows 与 macOS 的安装版本为 `0.0.0.1`，
-应用内展示版本仍为 `0.0.0`。同一展示版本不得归零 Desktop 修订号来复用已分发包；正式推进展示版本时，
-新版本可重新使用由根构建号推导的末位 revision。
+发行前试验包不属于正式兼容来源；初始基线的换装边界见
+[0.0.0 发行说明](../07-operations/releases/0.0.0.md#初始兼容基线)。既有发行快照、安装序号和密封产物
+保持不可覆盖；初始实例重建的授权不适用于普通升级。

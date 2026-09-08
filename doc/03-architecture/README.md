@@ -87,7 +87,7 @@ token；同一设备的新登录只保留最新 credential pair 并替换旧连�
 - 服务端是权限、成员、消息序列、附件存在性和已读水位的权威。
 - 客户端 UI 观察本地缓存，写操作经服务端后由事件收敛。
 - 事件采用 at-least-once；完整快照 + upsert 使重复处理幂等。
-- 消息以 `clientMsgId` 去重，以 `serverSeq` 排序和恢复。
+- 消息以 `chatId + clientMsgId` 复合身份去重，以会话内 `serverSeq` 排序和恢复。
 - 已读以单调水位表示，不追踪每条消息的独立已读布尔值。
 
 详细时序见[数据与同步](data-and-sync.md)。

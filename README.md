@@ -18,7 +18,8 @@ TeamTalk 选择的是“可理解、可部署、可演进”的单体架构，�
 - 客户端采用本地优先模型：页面观察本地 SQLite，网络写入通过事件同步收敛到本地状态。
 
 项目处于开发者预览阶段，尚未进入稳定版本阶段。协议、数据库和客户端缓存可能发生不兼容调整；当前版本
-适合开发、测试和私有化评估，不建议未经评审直接用于生产环境。内部开发从零号预览基线开始按
+适合开发、测试和私有化评估，不建议未经评审直接用于生产环境。当前发行是
+[0.0.1](doc/07-operations/releases/0.0.1.md)，协议为 0.1。内部开发按
 [版本与兼容规则](doc/04-protocol/versioning.md)维护短期兼容和数据迁移，普通升级保留既有资料。
 
 ## 核心能力
@@ -131,10 +132,12 @@ Android 安装包与 Desktop 更新源，具体见[客户端发行身份](doc/07
 ./gradlew deployServer \
   -PsslCert=gradle/tcp-tls/certificate.pem \
   -PsslKey=gradle/tcp-tls/private-key.pem
-./gradlew :server:server:acceptanceTest
 ./gradlew release -PreleaseTargets=site
 ```
 
+部署后先检查 `/health` 与安装站点，并按目标平台复验实际用户流程。会创建验收账号的
+`acceptanceTest` / `previewSmokeTest` 仅在独立测试实例运行；真人使用的私有实例遵循
+[测试数据归属](doc/09-testing/deployment-acceptance.md#测试数据归属与真人内测实例)。
 首次 TLS/TCP 部署需要成对证书参数，升级可同时省略以保留现有证书；HTTP 与 TCP TLS 独立配置。
 已有受信任证书时也支持 HTTPS + TLS/TCP，具体见[传输配置边界](doc/07-operations/configuration.md#传输配置边界)。
 配置字段、安全边界、首次安装与升级流程见[私有化部署](doc/01-getting-started/private-deployment.md)。

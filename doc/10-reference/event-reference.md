@@ -26,6 +26,7 @@ eventId(varLong) + notifyType(1B) + payload(bytes?)
 | 17 | `MEMBER_ROLE_CHANGED` | `Chat` | 群成员 | 刷新角色与管理权限 |
 | 20 | `MESSAGE_RECV` | `Message` | 会话成员 | 写本地消息并发布消息流 |
 | 21 | `MESSAGE_REACTION` | `MessageReactionEventPayload(chatId, serverSeq, emoji, actorUid, action)` | 会话成员 | 行级 upsert/delete 本地回应投影；重放收敛到同一状态，聚合快照以 `listReactions` 为权威 |
+| 22 | `GROUP_FILE_CHANGED` | `GroupFileChangedPayload(chatId, operation, entry?, deletedEntryId, deletedRevision)` | 当前群成员 | 按条目与 revision 幂等合并 UPSERT/DELETE；更新已加载目录，完整目录仍通过列表 RPC 对账 |
 | 30 | `CONVERSATION_UPDATED` | `Conversation` | 该用户设备 | upsert 会话投影 |
 | 31 | `CONVERSATION_DELETED` | `Conversation` | 该用户设备 | 仅删除用户主动隐藏的会话视图 |
 | 40 | `PRESENCE` | `PresencePayload(serverEpoch, revision, uid, status, lastSeenAt)` | 好友在线设备 | 按 epoch/revision 收敛会话内好友在线投影 |

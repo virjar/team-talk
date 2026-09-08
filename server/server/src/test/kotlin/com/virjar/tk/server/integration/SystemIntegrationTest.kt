@@ -1,7 +1,9 @@
 package com.virjar.tk.server.integration
 
 import com.virjar.tk.server.infra.db.PostgresHealthProbePolicy
+import com.virjar.tk.server.runtime.MaintenanceWorker
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -25,6 +27,8 @@ class SystemIntegrationTest {
 
     @Test
     fun `health check returns response with components`() = runTest {
+        assertEquals("DOWN", ctx.healthChecker.check().components["maintenance"]?.status)
+        ctx.maintenance.start(listOf(MaintenanceWorker("health-test") { awaitCancellation() }))
         ctx.syncEventDispatcher.start()
         withContext(Dispatchers.IO) {
             withTimeout(5_000L) { ctx.syncEventDispatcher.awaitStartupScan() }
@@ -39,6 +43,7 @@ class SystemIntegrationTest {
                 "message-projection",
                 "managed-chat-projection",
                 "sync-event-dispatcher",
+                "maintenance",
                 "client-telemetry",
                 "file-storage",
                 "tcp",
@@ -50,8 +55,11 @@ class SystemIntegrationTest {
         assertEquals("UP", result.components["lucene"]?.status)
         assertEquals("UP", result.components["message-projection"]?.status)
         assertEquals("UP", result.components["sync-event-dispatcher"]?.status)
+        assertEquals("UP", result.components["maintenance"]?.status)
         assertEquals("UP", result.components["client-telemetry"]?.status)
         assertEquals("UP", result.components["file-storage"]?.status)
+        ctx.maintenance.close()
+        assertEquals("DOWN", ctx.healthChecker.check().components["maintenance"]?.status)
     }
 
     @Test

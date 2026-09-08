@@ -64,6 +64,10 @@ internal class MaintenanceRuntime(
     val workersTerminated: Boolean
         get() = lifecycleFinished.count == 0L
 
+    /** 健康检查读取同一个生命周期；任一 worker 意外终止后不能继续宣称维护可用。 */
+    val isRunning: Boolean
+        get() = synchronized(lifecycleLock) { phase == Phase.RUNNING && lifecycle.isActive }
+
     init {
         lifecycle.invokeOnCompletion { lifecycleFinished.countDown() }
     }

@@ -19,6 +19,7 @@ internal val requiredHealthComponents = listOf(
     "message-projection",
     "managed-chat-projection",
     "client-telemetry",
+    "maintenance",
     "file-storage",
     "tcp",
 )
@@ -191,8 +192,14 @@ internal fun requireHealthyResponse(
         null
     } ?: throw GradleException("Health endpoint components object is missing")
 
-    val missing = requiredHealthComponents.filterNot(components::containsKey)
-    val unhealthy = requiredHealthComponents.mapNotNull { name ->
+    // 升级失败回滚到 0.0.0 时，按该旧分发实际提供的健康契约检查，不能要求新组件。
+    val required = if (expectedBuildIdentity.startsWith("0.0.0+")) {
+        requiredHealthComponents.filterNot { it == "maintenance" }
+    } else {
+        requiredHealthComponents
+    }
+    val missing = required.filterNot(components::containsKey)
+    val unhealthy = required.mapNotNull { name ->
         val status = try {
             components[name]?.jsonObject?.get("status")?.jsonPrimitive?.contentOrNull
         } catch (_: Exception) {
@@ -205,12 +212,12 @@ internal fun requireHealthyResponse(
             if (missing.isNotEmpty()) add("missing=${missing.joinToString()}")
             if (unhealthy.isNotEmpty()) add("not-UP=${unhealthy.joinToString()}")
         }.joinToString("; ")
-        val expectedCount = requiredHealthComponents.size
+        val expectedCount = required.size
         throw GradleException(
             "Health endpoint failed required $expectedCount/$expectedCount component contract: $details",
         )
     }
-    return ValidatedHealth(httpStatus, requiredHealthComponents.toList(), buildIdentity)
+    return ValidatedHealth(httpStatus, required.toList(), buildIdentity)
 }
 
 fun healthCheck(
@@ -273,7 +280,7 @@ fun healthCheck(
     val validated = requireHealthyResponse(healthOutput, expectedBuildIdentity)
     println(
         "  All required components healthy " +
-            "(${validated.components.size}/${requiredHealthComponents.size}):",
+            "(${validated.components.size}/${validated.components.size}):",
     )
     validated.components.forEach { println("    - $it: UP") }
     println("  Verified build identity: ${validated.buildIdentity}")

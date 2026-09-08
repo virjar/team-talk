@@ -11,6 +11,7 @@ import com.virjar.tk.server.infra.storage.FileStore
 import com.virjar.tk.server.infra.storage.MessageStore
 import com.virjar.tk.server.infra.sync.SyncEventDispatcher
 import com.virjar.tk.server.infra.sync.SyncEventDispatcherSnapshot
+import com.virjar.tk.server.runtime.MaintenanceRuntime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -55,6 +56,7 @@ class HealthChecker internal constructor(
     private val organizationProjectionReadiness: OrganizationProjectionReadiness,
     private val syncEventDispatcher: SyncEventDispatcher,
     private val clientTelemetryEvents: ClientTelemetryEventStore,
+    private val maintenance: MaintenanceRuntime,
     tcpProbeConfiguration: TcpHealthProbeConfiguration,
     private val buildIdentity: String = ServerBuildIdentity.current.buildIdentity,
 ) {
@@ -80,6 +82,11 @@ class HealthChecker internal constructor(
             "message-projection" to checkMessageProjection(),
             "managed-chat-projection" to external.managedChatProjection,
             "sync-event-dispatcher" to syncEventDispatcherHealth(syncEventDispatcher.snapshot()),
+            "maintenance" to if (maintenance.isRunning) {
+                ComponentHealth("UP")
+            } else {
+                ComponentHealth("DOWN", "Server maintenance is not running")
+            },
             "client-telemetry" to runCatching {
                 clientTelemetryHealth(
                     available = clientTelemetryEvents.isAvailable(),

@@ -16,7 +16,8 @@
 
 `GET /health` 汇总 PostgreSQL、MessageStore/RocksDB、Lucene、FileStore、TCP 监听以及
 `sync-event-dispatcher`、`message-projection`、`managed-chat-projection` 三个 durable runtime /
-projection readiness。所有关键组件 UP 才返回 200。响应同时包含从 Server artifact 内嵌 manifest
+projection readiness，以及后台维护任务的运行状态 `maintenance`。维护任务未启动、意外停止或正在关闭时，
+该组件返回 DOWN，整体健康响应为 503；运行中返回 UP。所有关键组件 UP 才返回 200。响应同时包含从 Server artifact 内嵌 manifest
 读取的完整 `buildIdentity`；部署探针必须检查 HTTP status、结构化 component 和与 staged artifact
 完全相同的 identity。
 `client-telemetry` 作为低价值、可丢失诊断子系统仍独立报告 UP/DOWN、retention backlog 与 overdue，

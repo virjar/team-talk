@@ -55,8 +55,8 @@ internal fun nextPendingMirrorTransientFailureCount(current: Int): Int {
 /**
  * 一次合并协程唤醒周围的无损元数据。
  *
- * 普通合并 `Unit` channel 可能用一次后续提交擦除一条认证边。epoch 让两个事实保持单调，同时仍
- * 允许任意突发本地写入占用一个 channel 槽。
+ * channel 只负责合并唤醒，元数据由同一把锁独立保存。消费者被唤醒后读取完整快照，生产者即使
+ * 在释放锁后逆序发送信号，也不能用旧快照擦除认证边或定时器到期代次。
  */
 internal class SessionPendingMirrorWake : AutoCloseable {
     internal data class Snapshot(
@@ -67,7 +67,7 @@ internal class SessionPendingMirrorWake : AutoCloseable {
     )
 
     private val lock = Any()
-    private val signal = Channel<Snapshot>(Channel.CONFLATED)
+    private val signal = Channel<Unit>(Channel.CONFLATED)
     private var closed = false
     private var commitEpoch = 0L
     private var authenticatedEpoch = 0L
@@ -98,40 +98,23 @@ internal class SessionPendingMirrorWake : AutoCloseable {
      * 接收一次唤醒，并把已缓冲的尾部折叠进同一次恢复趟次。
      *
      * 等待中的接收者可以被第一个生产者直接恢复，而同步提交突发的其余部分落入合并槽。只读一次
-     * 就会把一次 UI 突发变成两次完整可靠发件箱扫描。max 合并也使发布顺序在 [lock] 下获取快照后
-     * 竞争的不同生产者线程之间无关紧要。
+     * 就会把一次 UI 突发变成两次完整可靠发件箱扫描。信号排空后从唯一元数据所有者取得快照，
+     * 避免合并槽内的最后一个信号携带过期状态。
      */
     suspend fun await(): Snapshot {
-        var latest = signal.receive()
-        while (true) {
-            val buffered = signal.tryReceive().getOrNull() ?: return latest
-            latest = Snapshot(
-                commitEpoch = maxOf(latest.commitEpoch, buffered.commitEpoch),
-                authenticatedEpoch = maxOf(
-                    latest.authenticatedEpoch,
-                    buffered.authenticatedEpoch,
-                ),
-                retryGeneration = maxOf(latest.retryGeneration, buffered.retryGeneration),
-                reliableExpiryGeneration = maxOf(
-                    latest.reliableExpiryGeneration,
-                    buffered.reliableExpiryGeneration,
-                ),
-            )
+        signal.receive()
+        while (signal.tryReceive().isSuccess) Unit
+        return synchronized(lock) {
+            Snapshot(commitEpoch, authenticatedEpoch, retryGeneration, reliableExpiryGeneration)
         }
     }
 
     private fun publish(update: () -> Unit) {
-        val snapshot = synchronized(lock) {
+        synchronized(lock) {
             if (closed) return
             update()
-            Snapshot(
-                commitEpoch,
-                authenticatedEpoch,
-                retryGeneration,
-                reliableExpiryGeneration,
-            )
         }
-        signal.trySend(snapshot)
+        signal.trySend(Unit)
     }
 
     override fun close() {

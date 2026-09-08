@@ -132,9 +132,9 @@ JavaCV 会缓存首次加载异常，后续 `tryLoad()` 可能只是重抛；补
 
 ### LocalCache clean-close checkpoint
 
-提交 `35a700ec` 将 LocalCache 的 clean close 收敛为单一维护动作：`CacheUseGate` 先拒绝新访问并等待已经
+LocalCache 的 clean close 只有一个维护动作：`CacheUseGate` 先拒绝新访问并等待已经
 准入的 SQL 离开，resident 释放后执行一次 `PRAGMA wal_checkpoint(PASSIVE)`，最后无条件关闭 driver。
-提交 `a15d3c5a` 继续固定失败优先级；确定性 JVM 测试覆盖：
+失败优先级与执行顺序由确定性 JVM 测试覆盖：
 
 - 活动 SQL 尚未离开 gate 时 close 已经开始，但 checkpoint 不得提前进入；排空后严格按 checkpoint、driver
   close 顺序各执行一次，重复 close 不重复维护；
@@ -145,7 +145,7 @@ JavaCV 会缓存首次加载异常，后续 `tryLoad()` 可能只是重抛；补
   outbox 精确恢复且 `quick_check=ok`。
 
 该切片不运行 `VACUUM`、`optimize`、离线 compaction 或跨 namespace 扫描，也不把 Desktop 当前
-`journal_mode=delete` 的 UI 验收冒充 WAL 覆盖。两次提交后的完整门禁共 213 个 Gradle task 成功。
+`journal_mode=delete` 的 UI 验收冒充 WAL 覆盖。
 
 Desktop 草稿生命周期优先用纯 JVM 门控测试覆盖，不要求构造真实 `ClientSession`：泛型 binding
 registry 验证 Compose detach 后仍能交付原 reason，owner gate 验证普通 disposal 与 reasoned

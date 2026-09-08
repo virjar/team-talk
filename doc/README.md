@@ -13,7 +13,7 @@
 | 先把项目运行起来 | [快速上手](01-getting-started/README.md) → [开发环境](01-getting-started/development.md) |
 | 独立 clone 后部署自己的服务器 | [私有化部署](01-getting-started/private-deployment.md) → [运行配置](07-operations/configuration.md) → [部署与升级](07-operations/deployment.md) |
 | 判断项目是否适合业务 | [产品定位](02-product/README.md) → [为什么是 TeamTalk](02-product/why-teamtalk.md) → [能力模型](02-product/capabilities.md) → [功能状态](10-reference/feature-status.md) |
-| 接手项目、按源码掌握状态与恢复 | [架构入门与阅读练习](03-architecture/architecture-primer.md) → [客户端所有权图](03-architecture/client-and-sdk.md) → [路线图交接切片](10-reference/roadmap.md) |
+| 接手项目、按源码掌握状态与恢复 | [架构入门与阅读练习](03-architecture/architecture-primer.md) → [客户端所有权图](03-architecture/client-and-sdk.md) → [后续工作边界](10-reference/roadmap.md) |
 | 理解一次消息如何流转 | [系统架构](03-architecture/README.md) → [数据与同步](03-architecture/data-and-sync.md) → [消息与附件](04-protocol/messages-and-attachments.md) |
 | 编写另一个客户端或 SDK | [协议总览](04-protocol/README.md) → [Wire Format](04-protocol/wire-format.md) → [RPC 与事件](04-protocol/rpc-and-events.md) |
 | 修改 Desktop 或 Android | [客户端架构](05-clients/README.md) → 对应平台文档 → [设计系统](05-clients/design-system.md) |
@@ -39,6 +39,7 @@
 - [为什么是 TeamTalk：与主流办公平台的选择逻辑](02-product/why-teamtalk.md)
 - [领域模型](02-product/domain-model.md)
 - [能力模型](02-product/capabilities.md)
+- [企业文档](02-product/documents.md)
 
 ### 03 · 系统架构
 
@@ -71,6 +72,7 @@
 - [Desktop](05-clients/desktop.md)
 - [Android](05-clients/android.md)
 - [无头客户端](05-clients/headless.md)
+- [受控通知机器人](05-clients/notification-bots.md)
 - [设计系统](05-clients/design-system.md)
 - [富文本与媒体](05-clients/rich-content.md)
 
@@ -159,7 +161,7 @@ Gradle 为准；运行配置以 `buildSrc`、选中的部署 Kotlin 源码和服
 3. **正文使用现在时。** “本轮改了”“曾经出过问题”属于提交记录；只有理解取舍确实必要时，
    才在架构决策中保留背景。
 4. **链接到权威来源。** 不在 README、AGENTS.md 和分册中复制同一张完整表。
-5. **状态必须可验证。** 功能状态使用“已实现/部分实现/未实现”，并给出代码或测试入口。
+5. **状态必须可验证。** 功能状态统一使用“可用/部分/计划/边界外”，并链接到实现说明或测试入口。
 6. **示例不包含秘密。** 部署 Kotlin 源码只表达非敏感配置；口令、私钥和真实 token 只能写成占位符。
 7. **结构变更要校验链接。** 移动文档后必须扫描仓库内 Markdown 链接和旧路径引用。
 

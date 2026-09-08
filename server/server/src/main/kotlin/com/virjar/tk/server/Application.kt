@@ -339,7 +339,7 @@ internal fun Application.module(
         // an independent receivedAt-based 168-hour Lucene authority; PostgreSQL owns only control facts.
         val maintenance = resources.ownDependencyBarrier(
             name = "server maintenance",
-            resource = MaintenanceRuntime(),
+            resource = koin.get<MaintenanceRuntime>(),
             close = MaintenanceRuntime::close,
             dependenciesMayClose = MaintenanceRuntime::workersTerminated,
         )

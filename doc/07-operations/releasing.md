@@ -83,25 +83,24 @@ flowchart TD
 客户端发行同时执行 `verifyRelease` 的源码/架构/wire 检查与 `verifyReleaseMetadata` 的发行元数据检查；
 手动服务端开发部署只需要前者，避免每次临时协议调试都占用一个已冻结的客户端发行号。
 
-初始 `0.0.0` 发行从完整现行契约建立协议 `0.0` 基线，人工说明描述第一版能力、安装方式和限制，
-不认领发行前的临时测试包。用户对初始实例重建、历史整理和编号归零的确认只适用于这一次初始化。
-首次公开后，tag、发行快照与密封产物保持不可覆盖。后续正式发行推进展示版本和根构建号；私有内测
-更新保持两者不变，按源码生成独立 Desktop revision。Conveyor 对相同版本与修订号的字节一致性保护
-仍有效，不能用清理缓存或删除收据绕过。正式发行继续推进根构建号使 Android 安装 code 增加；Desktop
-升级比较完整版本，新展示版本的末位 revision 可重新按根构建号映射，不必追赶上一展示版本的内测计数。
+当前发行是 `0.0.1 / protocol 0.1`，根构建号为 `1`。正式 tag、发行快照与密封产物不可覆盖。
+后续正式发行推进展示版本和根构建号；私有内测更新保持两者不变，按源码生成独立 Desktop revision。
+Conveyor 对相同版本与修订号的字节一致性保护不能通过清理缓存或删除收据绕过。正式发行提高根构建号
+使 Android 安装 code 增加；Desktop 比较完整版本，新展示版本的末位 revision 按根构建号映射，
+不必追赶上一展示版本的内测计数。
 
 ### 保持展示版本的内测更新
 
 已有私有应用更新给内测用户时，使用 `snapshot`。提交工作源码后手动运行交付任务，不必每刷一次包就
-修改根文件。例如展示版本仍为 `0.0.0`、根构建号仍为 `0`，Android `versionCode` 保持 `1`，用户下载后
-手动覆盖安装。应用身份、签名、数据目录和更新源保持原值；正式 `0.0.0` 的历史产物不被改写。
+修改根文件。例如展示版本为 `0.0.1`、根构建号为 `1`，Android `versionCode` 保持 `2`，用户下载后
+手动覆盖安装。应用身份、签名、数据目录和更新源保持原值；既有正式产物不被改写。
 
 Conveyor 要求同一展示版本的不同包具有不同 revision。工具从完整 Git 历史执行
 `git rev-list --first-parent --count HEAD`，加上根构建号和 `1` 得到 `desktopRevision`，无需修改配置，
 也不依赖 tag。这个修订号用于 Desktop 安装元数据与站点记录，应用展示版本仍保持原值。
 
 ```bash
-# 本轮协议有修改时登记开发清单，保持同一个 pending minor（当前为 1）。
+# 新增契约开启下一 minor 后，同一发行周期共用该 minor 并登记开发清单。
 ./gradlew :protocol:protocol:writeProtocolBaseline
 
 # 审阅并提交工作源码和清单，再将同一源码同步到完整的私有 clone。
@@ -113,7 +112,7 @@ Conveyor 要求同一展示版本的不同包具有不同 revision。工具从�
 `-PreleaseTargets=local`；Windows 使用 `gradlew.bat`。GitHub CI 不自动生成或上传 snapshot。
 该模式拒绝公版默认配置、GitHub 目标和 `releaseBase`，不需要新的人工发行说明、产品 tag 或 `prepareProtocolRelease`，
 也不认领、改写旧正式发行快照。无论本轮第几次修改，都相对最近正式冻结基线执行 KSP、wire 与兼容检查，
-不运行 `prepareProtocolContract`；当前全部未发布变动共用协议 1，直到用户确认正式发布 0.0.1。
+不运行 `prepareProtocolContract`；已发行协议保持冻结，新增契约共用下一待发布 minor，直到正式发行。
 同号内测构建以源码 SHA 和清单哈希区分，应按同批服务端/客户端验证，不为中间版本保留额外兼容分支。
 
 必须使用完整 clone。同一展示版本继续刷 snapshot 时，保留已分发源码及其历史，从其后代构建，不对该

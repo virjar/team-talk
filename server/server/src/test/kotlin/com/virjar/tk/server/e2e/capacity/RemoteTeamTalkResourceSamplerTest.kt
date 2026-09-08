@@ -41,8 +41,8 @@ class RemoteTeamTalkResourceSamplerTest {
         assertEquals(8_192L * 1024L, snapshot.memAvailableBytes)
         assertEquals("UP", snapshot.healthStatus)
         assertEquals(BUILD_IDENTITY, snapshot.buildIdentity)
-        assertEquals(9, snapshot.healthyComponents)
-        assertEquals(9, snapshot.totalComponents)
+        assertEquals(10, snapshot.healthyComponents)
+        assertEquals(10, snapshot.totalComponents)
     }
 
     @Test
@@ -142,6 +142,7 @@ class RemoteTeamTalkResourceSamplerTest {
                         "DOWN",
                         "DOWN",
                         "DOWN",
+                        "DOWN",
                     ),
                 ),
             ),
@@ -151,7 +152,7 @@ class RemoteTeamTalkResourceSamplerTest {
 
         assertEquals("DOWN", snapshot.healthStatus)
         assertEquals(1, snapshot.healthyComponents)
-        assertEquals(9, snapshot.totalComponents)
+        assertEquals(10, snapshot.totalComponents)
         assertEquals(BUILD_IDENTITY, snapshot.buildIdentity)
     }
 
@@ -204,6 +205,7 @@ class RemoteTeamTalkResourceSamplerTest {
                 "\"components\":{",
                 "\"components\":{\"unexpected\":{\"status\":\"UP\"},",
             ),
+            completeHealth.replace("\"maintenance\":{\"status\":\"UP\"},", ""),
         ).forEach { invalidHealth ->
             assertFailsWith<IllegalArgumentException>(invalidHealth) {
                 parseTeamTalkResourceSample(
@@ -321,6 +323,7 @@ class RemoteTeamTalkResourceSamplerTest {
             "rocksdb",
             "lucene",
             "sync-event-dispatcher",
+            "maintenance",
             "message-projection",
             "managed-chat-projection",
             "client-telemetry",

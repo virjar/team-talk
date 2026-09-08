@@ -30,8 +30,8 @@ resolve Environment/dataRoot
   → expose health status
 ```
 
-新发行和连接协议以 `0.0.0` / `0.0` 为基线，服务端现有存储 epoch 继续是 **1**，原 dataset ID
-保持不变。连接协商不能代替存储迁移；不支持的 schema、epoch、dataset 或迁移记录会阻止启动，普通
+当前发行版本为 `0.0.1`，连接协议窗口为 `0.0` 至 `0.1`；服务端存储 epoch 是 **1**，普通升级保留
+原 dataset ID。连接协商不能代替存储迁移；不支持的 schema、epoch、dataset 或迁移记录会阻止启动，普通
 升级不清空业务数据。当前 PostgreSQL 0 号迁移在原 epoch 内放宽遥测协议 ID 的旧 byte 约束；DDL 与
 `schema_migrations` 收据处于同一启动事务，失败共同回滚，完成后重启不重复执行。具体顺序和后续
 迁移边界见[持久化生命周期](../06-server/persistence.md#6-schema-epoch-与生命周期)。
@@ -45,7 +45,7 @@ metadata 扫描与 orphan 删除采用受固定文件数/批次约束的流式�
 读取/标记边界无未处理失败；逐 uid 异常不能被后台重试策略吞掉后仍宣称 READY。首次 sync 扫描成功前不能开放 TCP 或宣称 ready；后台 dispatcher 此后若因不可恢复
 异常终止，则保留进程内 liveness/readiness 终态并让 `/health` 持续失败。公开健康详情只报告固定阶段，
 内部异常仅进入服务日志和关闭终态，不能把 SQL、连接信息或异常正文返回给探针。`/health` 只有在
-PostgreSQL、RocksDB、Lucene、sync-event-dispatcher、message-projection readiness、文件存储和 TCP
+PostgreSQL、RocksDB、Lucene、sync-event-dispatcher、maintenance、message-projection、managed-chat-projection、文件存储和 TCP
 均可用时返回成功。
 TLS 模式的 TCP 健康项以当前 keystore 叶证书作为唯一信任锚，对本机监听端点执行真实 TLS handshake；
 明文模式使用 socket 连通检查。
@@ -66,8 +66,10 @@ stopped”。唯一例外是显式 dependency-quiescence barrier：普通 closer
 释放并被拒绝。若启动本身已失败，清理
 中的普通错误作为 suppressed failure 附着在原始启动异常上；清理阶段的取消或 VM fatal error 仍以
 原对象优先，启动错误成为它的 suppressed cause。
-后台 maintenance 由一个运行时一次性安装固定上限内的 worker，启动后不能动态追加；意外 worker
-终止会取消同组 worker，并在关闭时重放同一个异常终态。取消等待使用所有并发/重复关闭者共享的单调
+后台 maintenance 由一个 Application-owned 运行时一次性安装固定上限内的 worker，启动后不能动态追加。
+Application 资源 owner 与健康检查共用容器中的同一个实例；尚未启动、意外 worker 终止或开始关闭时，
+`/health` 的 `maintenance` 项为 DOWN，并使总体就绪检查失败。意外终止还会取消同组 worker，关闭时
+重放同一个异常终态；公共健康详情只返回固定状态文本。取消等待使用所有并发/重复关闭者共享的单调
 时钟上限。若阻塞式驱动无视协程取消，到期后关闭会稳定失败，但“关闭尝试已到期”和“worker 已退出”
 是两个独立事实：dependency barrier 只有在根 Job 真实完成后才允许 owner 继续释放依赖，否则把剩余
 资源留给进程级 fail-stop（例如服务管理器最终强制终止），而不是制造 use-after-close。进程退出后不得
@@ -133,9 +135,9 @@ major 且有交集的窗口，选择双方 `currentMinor` 的较小值作为本�
 `ServerProtocolConfiguration` 在打开存储前读取 `MINIMUM_PROTOCOL_MINOR`。运营配置只能把最低
 minor 从构建的 `ProtocolVersions.MINIMUM_MINOR` 向上提高，且不能超过当前 minor；非法配置阻止
 启动。部署工具另在停服前按目标产物清单检查并保留远端的显式最低 minor，配置格式与升级行为见
-[服务端环境变量](../07-operations/configuration.md#3-服务端环境变量)。当前 `0.0` 基线的最低值也是 0。
+[服务端环境变量](../07-operations/configuration.md#3-服务端环境变量)。当前构建最低 minor 为 0、最高 minor 为 1。
 外部仍不承诺跨发行兼容，兼容窗口表达的是服务端实际保留并
-允许访问的实现；此前 `1.0.8` 客户端不属于这次新窗口。未协商而直接 AUTH 的客户端仍能收到原格式
+允许访问的实现。未协商而直接 AUTH 的客户端收到原格式
 `AUTH_RESP / CODE_VERSION_UNSUPPORTED` 和升级原因，之后断连，不会因旧版号相同而被默许进入。
 
 协商在每条连接只成功执行一次，`ImAgent.negotiatedProtocolVersion` 随连接固定，通过
@@ -144,7 +146,8 @@ minor 从构建的 `ProtocolVersions.MINIMUM_MINOR` 向上提高，且不能超�
 由现有 RPC 工厂选择或组装相应业务实现。所有版本仍共享同一个 service/method ID 空间与一套构建
 产物，领域服务不直接持有连接。普通 MESSAGE 另在业务处理前检查正文类型的可用窗口。
 
-同 major 的扩展只能追加契约并递增 minor，既有方法、模型字段和编号不能原地改义。注解负责可用
+同 major 的扩展只能追加契约，minor 按正式发行批次递增，既有方法、模型字段和编号不能原地改义。
+`0.0.1` 已冻结协议 `0.1`；后续首次新增契约才开启下一个 minor。注解负责可用
 范围，业务作者仍须保留窗口内各版本的行为；方法可调用并不证明所有返回模型都能被旧端解码。
 实现入口是 [ImAgent](../../server/server/src/main/kotlin/com/virjar/tk/server/protocol/connection/ImAgent.kt)、
 [RpcDispatcher](../../server/server/src/main/kotlin/com/virjar/tk/server/protocol/dispatcher/RpcDispatcher.kt)

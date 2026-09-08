@@ -336,6 +336,7 @@ class TestEnvironment : AutoCloseable {
     val syncEventDispatcher: SyncEventDispatcher get() = koin.get()
     val searchIndex: SearchIndex get() = koin.get()
     val healthChecker: com.virjar.tk.server.infra.health.HealthChecker get() = koin.get()
+    internal val maintenance: com.virjar.tk.server.runtime.MaintenanceRuntime get() = koin.get()
     val fileStore: com.virjar.tk.server.infra.storage.FileStore get() = koin.get()
     val database: Database get() = postgresDatabase.database
     val clientTelemetryControl: ClientTelemetryControlRepository get() = koin.get()
@@ -497,6 +498,7 @@ class TestEnvironment : AutoCloseable {
             }
         }
         if (::koin.isInitialized) {
+            cleanUp { maintenance.close() }
             cleanUp { koin.get<ConnectionTraceEventStore>().close() }
             cleanUp { koin.get<ClientTelemetryEventStore>().close() }
             cleanUp { koin.get<SearchIndex>().stop() }

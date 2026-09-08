@@ -212,7 +212,7 @@ class AttachmentCapacityStatisticsTest {
     }
 
     @Test
-    fun `resources gate stable process nine-part health and monotonic CPU only`() {
+    fun `resources gate stable process complete health and monotonic CPU only`() {
         val baseline = resourceSnapshot(phase = "baseline", cpuTicks = 10)
         val peak = resourceSnapshot(
             phase = "burst",
@@ -228,7 +228,7 @@ class AttachmentCapacityStatisticsTest {
         val healthy = summarizeAttachmentResources(listOf(baseline, peak, final))
 
         assertTrue(healthy.passed)
-        assertEquals(9, healthy.requiredHealthyComponents)
+        assertEquals(10, healthy.requiredHealthyComponents)
         assertEquals(30, healthy.cpuTicksDelta)
         assertEquals(Long.MAX_VALUE, healthy.maxRssBytes)
         assertEquals(Int.MAX_VALUE, healthy.maxThreadCount)
@@ -237,7 +237,7 @@ class AttachmentCapacityStatisticsTest {
         assertEquals(0, healthy.minMemAvailableBytes)
         assertFailsWith<IllegalArgumentException> {
             healthy.copy(
-                snapshots = listOf(baseline, peak, final.copy(healthyComponents = 8)),
+                snapshots = listOf(baseline, peak, final.copy(healthyComponents = 9)),
                 passed = false,
             )
         }
@@ -247,8 +247,8 @@ class AttachmentCapacityStatisticsTest {
             listOf(baseline, final.copy(mainPid = 43)),
             listOf(baseline, final.copy(buildIdentity = "another")),
             listOf(baseline, final.copy(healthStatus = "DOWN")),
-            listOf(baseline, final.copy(healthyComponents = 8)),
-            listOf(baseline, final.copy(totalComponents = 10, healthyComponents = 10)),
+            listOf(baseline, final.copy(healthyComponents = 9)),
+            listOf(baseline, final.copy(totalComponents = 11, healthyComponents = 11)),
             listOf(baseline.copy(cpuTicks = 20), final.copy(cpuTicks = 10)),
         ).forEach { snapshots ->
             assertFalse(summarizeAttachmentResources(snapshots).passed)
@@ -729,8 +729,8 @@ class AttachmentCapacityStatisticsTest {
         memAvailableBytes: Long = 4_096,
         healthStatus: String = "UP",
         buildIdentity: String = "build-1",
-        healthyComponents: Int = 9,
-        totalComponents: Int = 9,
+        healthyComponents: Int = 10,
+        totalComponents: Int = 10,
     ) = TeamTalkResourceSnapshot(
         phase = phase,
         capturedAt = "2026-01-01T00:00:00Z",

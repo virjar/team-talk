@@ -76,7 +76,7 @@ HTTPS 安装则同时让 HTTP connector 使用它；客户端信任规则见[传
    HTTP + TLS/TCP 设置 `SSL_KEYSTORE`，不设置 `KTOR_SSL_PORT`；HTTP 站点与加密 TCP 同时可用。
 6. 启动 PostgreSQL并确认数据库用户。
 7. 注册/更新 systemd 服务。
-8. 启动 TeamTalk；只有 `/health` 返回 HTTP 200、总体 `UP`、固定 9 个必需组件全部为 `UP`，且
+8. 启动 TeamTalk；只有 `/health` 返回 HTTP 200、总体 `UP`、所有必需组件（含 `maintenance`）全部为 `UP`，且
    `buildIdentity` 与 staged server manifest 精确相同后才输出部署完成。
 
 首次自动生成的数据库、管理后台和 TLS secret 会完整写入本地不入库文件，并以 owner-only、拒绝
@@ -97,10 +97,10 @@ PostgreSQL schema marker 与当前源码声明的服务端 epoch。
 预检通过后，升级以同一个远端独占锁执行完整事务边界：先上传到唯一 `.release-<uuid>` 目录并验证
 可执行入口、server jar 与精确 build identity，再把当前分发、env、TLS、compose 和 systemd unit 快照到
 唯一 `.rollback-<uuid>`；运行数据、日志和客户端下载不复制。随后只通过 systemd 停止服务，并确认该
-unit 的 MainPID 为 0 且 cgroup 不再活动，才把已验证分发发布到 live 目录。新实例必须通过固定 9 项
+unit 的 MainPID 为 0 且 cgroup 不再活动，才把已验证分发发布到 live 目录。新实例必须通过所有必需组件
 健康契约和精确新 build identity 后才提交并删除回滚快照。停服后的任何配置、启动或健康失败都会
 恢复旧分发、env、TLS、compose 与 unit，并以切换前捕获的 HTTP/HTTPS 端口和旧 build identity 验证
-旧实例重新健康；若回滚健康无法证明，则保留快照并明确失败，不会宣称部署完成。
+旧实例重新健康（`0.0.0` 使用其原有健康组件集合）；若回滚健康无法证明，则保留快照并明确失败，不会宣称部署完成。
 
 运行态路径必须排除覆盖/删除：
 

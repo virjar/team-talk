@@ -92,7 +92,7 @@ OrganizationService 维护单根无环目录、用户多部门归属和唯一主
 逐个打开用户查询。该规则同时覆盖递归部门目录和千人群详情，避免目录宽度直接放大 SQL 往返次数。
 
 普通终端通过 `OrganizationRpc.listUnitPage/listMemberPage` 的强类型二进制分页读取组织目录，
-用户资料的部门路径使用 `getUserOrganization`（本轮待发布协议 1）。三个读取入口都由 `OrganizationService`
+用户资料的部门路径使用 `getUserOrganization`（协议 `0.1`）。三个读取入口都由 `OrganizationService`
 打开既有 `PgUnitOfWork.read`，成员资格、目录修订、成员和祖先名称共用一个 PostgreSQL REPEATABLE_READ
 快照。仓储显式接收 `PgReadTransactionContext`；同一响应不会拼接改名前后的名称或撤权前后的成员行。
 管理员内部单项读取仍可由仓储独立打开快照，不把整个后台扫描变成长事务。
@@ -226,8 +226,8 @@ durable event 在同一 `PgUnitOfWork` 中提交。事件 payload 必须从该�
 
 ## 7. GroupFile
 
-GroupFileService 通过统一 `ChatAccess` 只接受当前群成员访问，并拒绝在私聊上创建文件空间；它不再
-通过“先列出用户全部会话再查包含关系”的旁路判断权限。创建文件或新版本时，服务端重新
+GroupFileService 通过统一 `ChatAccess` 只接受当前群成员访问，并拒绝在私聊上创建文件空间。
+创建文件或新版本时，服务端重新
 查询 FileStore，要求 Attachment 元数据完全匹配且调用者就是该次上传者；因此不能抢占其他成员尚未
 发布的上传。Repository 在一个事务中更新条目、追加不可变版本并写审计。
 服务层的成员检查只用于提前返回友好错误；每个尚未命中精确收据的新建、追加版本、重命名和删除命令

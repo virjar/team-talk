@@ -34,7 +34,7 @@
 4. 创建成功后，页面会显示已经绑定当前群的入站通知 URL 和以 `ttb_` 开头的 Bearer token。
 5. 立即把 URL 和 token 保存到调用系统的密钥库。确认已安全保存后再关闭凭据弹窗。
 
-token 只在创建或轮换时显示一次。客户端在首次 HTTPS 请求前先把 operationId 和 token 写入当前账号
+token 只在创建或轮换时显示一次。客户端在首次管理请求前先把 operationId 和 token 写入当前账号
 的私有本地库；服务端把机器人变更、token 哈希和不含 secret 的命令收据放在同一事务提交。响应丢失、
 断网或进程重启后，客户端会用完全相同的 operationId 和 token 恢复，不会重复创建、重复占用配额，
 也不会因轮换响应丢失而遗失唯一有效 token。成功恢复出可用凭据后，只有用户点击“我已安全保存”才
@@ -67,7 +67,7 @@ token 仍可能有效，因此与网络、超时、`403`、`429`、`5xx` 和本�
 
 ## 3. HTTP 请求契约
 
-页面给出的 URL 应当是完整的 TeamTalk HTTPS 地址，形如：
+页面给出的 URL 是跟随当前部署 HTTP 基址的完整 TeamTalk 地址，形如：
 
 ```text
 https://im.example.com/api/v1/groups/<chatId>/bots/<botId>/messages
@@ -270,7 +270,8 @@ key 长度为 1–120 个字符，应由调用方使用稳定的业务事件 ID 
 
 ## 11. 安全边界
 
-- 只通过 HTTPS 向入站通知 URL 发送 Bot token。
+- 入站通知 URL 跟随部署的 HTTP/HTTPS 配置；HTTP 会明文传输 token 与正文，适用边界见
+  [传输配置边界](../07-operations/configuration.md#传输配置边界)。
 - token 只放在 `Authorization` Header，不放在 URL、代码、日志、报错或截图中。
 - 群成员创建的机器人固定授权给创建时所在群；URL 中的目标群由服务端生成并校验，请求正文不能
   指定或改写目标。系统下发机器人同样必须具备服务端显式群授权。

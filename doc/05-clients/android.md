@@ -222,8 +222,8 @@ OpenDocument；两个系统入口都不可用时完成取消并显示明确提�
 canonical deployment + dataset + uid 绑定在 `rememberSaveable` 中。取消也会消费 token；同一
 Activity 内仍使用启动时的 owner，Activity 重建后则只在当前编辑器 owner 与原 owner 相同时
 接收返回结果，不把迟到资源交给另一篇文档或另一个会话。provider 的 MIME、显示名和大小在
-`Dispatchers.IO` 解析，然后才进入共用的有界复制和上传链路。小米真机已完成系统 picker
-选图、上传、保存、强停重开和预览验收。debug 构建可在 picker 保持打开时执行下面的定向夹具；它只重建
+`Dispatchers.IO` 解析，然后才进入共用的有界复制和上传链路。验收需覆盖系统 picker
+选图、上传、保存、强停重开和预览。debug 构建可在 picker 保持打开时执行下面的定向夹具；它只重建
 `MainActivity`，不会断开宿主机或设备网络：
 
 ```bash
@@ -235,10 +235,10 @@ adb shell am broadcast \
 上例使用公版安装 ID；私有构建的 action 前缀和 `-n` 左侧包名替换为实际 `applicationId`，
 右侧接收器源码类名保持不变。
 
-当前这台小米设备及其当前系统构建已确认同一进程内产生新的 Activity 实例，但图片 picker 和文件 picker
-返回时都在 `ActivityThread.deliverResultsIfNeeded` 抛出空指针，本次没有观察到应用 callback 或资源导入。
-应用内 token、callback 先于 owner 重绑、不同 owner 拒绝和 exactly-once 已由确定性测试覆盖；真实平台门禁
-仍需在不会丢失 ActivityResult 的 AOSP/emulator 或另一台设备补证，不能把状态机单测写成真机通过。
+Activity 重建后的 picker 验收必须同时观察系统 ActivityResult、应用 callback 和资源导入结果，
+并覆盖 callback 先于 owner 重绑、不同 owner 拒绝和一次性消费。若系统在
+`ActivityThread.deliverResultsIfNeeded` 崩溃而没有交付结果，该场景尚未完成，须在可交付 ActivityResult
+的目标设备或模拟器补验；不能用应用内状态机测试代替真实平台结果。
 
 断网进入文档页时先显示本机草稿以及 SQLite 中最近一次成功收敛的空间、首页和已读取树分支；已缓存
 干净正文可立即打开，开始修改后交给独立草稿续写层。已确认为空的分支有持久 marker，从未读取的分支
@@ -320,6 +320,5 @@ Android 的失败退出使用 `MainActivity` 专用 `onAccountCleanupExit`：结
 本地 JVM 测试覆盖共享逻辑，Android 特有行为使用真机/模拟器、ADB 和 uiautomator2 验证。涉及
 服务端或跨客户端的业务结果仍以真实部署验收为准。
 封禁验收应覆盖在线封禁、旧凭据启动、错误密码不清理、清理失败退出后重开，以及其他账号和系统导出
-文件保留。2026-09-07 已在 Android 16 独立开发安装中验证在线封禁、正确密码拒绝、精确资料删除、
-注入 pending 状态后的冷启动续清，以及另一账号缓存与系统导出副本保留；错误密码的真机交互、
-清理失败退出按钮和正式发行制品仍需各自验证，不能用 JVM 测试代替。
+文件保留，并验证正确密码得到权威拒绝后的资料删除，以及存在待清理 marker 时的冷启动续清。
+错误密码交互、清理失败退出按钮和最终发行制品均须在目标设备验证，不能用 JVM 测试代替。

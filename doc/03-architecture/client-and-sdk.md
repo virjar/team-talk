@@ -239,9 +239,10 @@ HTTP 附件上传由会话拥有的 `FileRepository` 统一协调。Repository �
 `server + owner uid + identity epoch`，每个请求读取同一 `UserSession` 的最新原子凭据，任一 owner
 字段变化立即失败；quiesce
 会先关闭发布 gate，再断开所有活跃连接，因此迟到响应不能回写退出后的页面状态。
-所有携带 Bearer 或会话凭据的远程 HTTP 基址都必须是 HTTPS；只有严格字面量 loopback 测试地址可用
-明文 HTTP。文件传输、群机器人管理和遥测上传不跟随重定向，避免凭据被 3xx 转交给另一个来源或
-明文端点。
+文件传输、群机器人管理和遥测共用部署配置中的 HTTP 基址，支持显式配置的 HTTP 或 HTTPS，
+不会根据 TCP TLS 状态推导或替换 HTTP 协议。HTTP 部署的 Bearer 与正文也通过明文传输；具体适用
+边界见[传输配置边界](../07-operations/configuration.md#传输配置边界)。上述客户端不跟随重定向，
+避免凭据被 3xx 转交给另一个来源或隐式降级端点。
 
 ### 2.6 关闭与资源回收
 
@@ -741,6 +742,11 @@ TERMINAL_FAILED 共享回执预算，按 `completedAt/localOrdinal` 保留最新
 1000 字符，当前 epoch 持久化稳定失败分类。草稿与已读 outbox 各最多 1000 个 chat；草稿正文合计同时受 1200 万字符和
 48 MiB UTF-8 约束，更新已有 chat 使用旧值与新值的精确增量准入，拒绝时 generation、SQLite
 和内存投影都保持原状。重连单 chat 镜像走 O(1) 精确读取，批量重试只扫描一次有界快照。
+
+草稿、已读镜像与可靠命令共用会话恢复 worker；提交、认证恢复和到期定时器只向一个合并信号槽
+唤醒。各类单调代次由 `SessionPendingMirrorWake` 在同锁下保存，worker 收到信号后读取最新完整
+快照；通知发布次序不决定恢复事实，突发提交也不绕过网络失败退避。
+
 GUI 建群是账号级单槽命令：固定 `singleton_id=1` 从 schema 上防止无界积累，保存规范
 operationId、creator 和完整规范 payload。`UiLocalDataBoundary` 在 IO dispatcher 上完成
 SQLite 提交后才发 RPC；精确载荷重试复用 ID，修改载荷原子换新 ID，成功回复只按精确
@@ -904,7 +910,7 @@ opaque cursor 同时绑定该 revision 与成员查询范围；服务端 revisio
 | [Desktop/JVM 工厂](../../client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/client/LocalCacheFactory.desktop.kt) | `deployments/<fingerprint>/datasets/<datasetId>/users/<uid>/cache_e0.db` |
 | [Android 工厂](../../client/shared/src/androidMain/kotlin/com/virjar/tk/shared/client/AndroidLocalCache.kt) | 应用私有 databases 中的 `cache_e0_<fingerprint>_<datasetId>_<uid>.db` |
 
-此前按 epoch 自动删除旧数据库族的入口已移除。未知 namespace 与损坏隔离库保持原样，不能由
+客户端不按 epoch 自动删除旧数据库族。未知 namespace 与损坏隔离库保持原样，不能由
 “服务器投影可重建”推导出可以清空整份账号数据。当前完成度与恢复工具缺口见
 [功能状态中的本地缓存生命周期](../10-reference/feature-status.md)。
 

@@ -170,7 +170,7 @@ Wi-Fi、代理、DNS 和防火墙始终不变。16 个目标必须各自精确�
 nearest-rank p95 等于最慢值，因此当前默认门槛实际更严格。
 
 每个服务端快照通过一次只读 SSH 固定同一个 `teamtalk` systemd InvocationID/MainPID，记录 RSS、线程、
-文件描述符、CPU ticks、主机 load1、MemAvailable、build identity 和 9 项健康状态。运行期间服务不能重启、
+文件描述符、CPU ticks、主机 load1、MemAvailable、build identity 和 所有关键组件健康状态。运行期间服务不能重启、
 build identity 不能变化、所有健康项必须为 `UP`；线程高水位不超过基线 +32，文件描述符高水位不超过
 基线 + `2 × 客户数 + 64`，关闭全部客户端并等待 30 秒后两者都应回到基线 +16 以内。CPU、RSS、load 和
 可用内存只记录实测趋势，尚无足够样本时不设置虚假的 SLO。默认报告写入
@@ -195,27 +195,6 @@ build identity 不能变化、所有健康项必须为 `UP`；线程高水位不
 该任务给出当前单实例测试部署的连接/认证/重连开发基线，不代表万级在线承诺，也不替代附件、
 后台维护、慢 PostgreSQL、磁盘压力和长时间 soak。
 
-2026-08-31 使用客户端 `2d59e4ff`、服务端
-`1.0.7+1796f4ec3506cd609793f7eda5301aa50dcc8c8f` 在同一测试实例连续运行两轮默认配置，结果如下：
-
-| 指标 | 第一轮 | 第二轮 |
-|---|---:|---:|
-| ramp / hold | 64/64；60 秒零掉线、零认证变化 | 64/64；60 秒零掉线、零认证变化 |
-| ramp p95 / p99 | 660.501 / 671.619 ms | 566.546 / 686.320 ms |
-| 目标重连 / 精确认证 `+1` | 16/16 / 16 | 16/16 / 16 |
-| 对照连接稳定 | 48/48 | 48/48 |
-| 重连 p95 / 最慢 | 2,978.330 / 2,978.330 ms | 2,980.341 / 2,980.341 ms |
-| thread 基线 / 峰值 / 清理后 | 59 / 64 / 62 | 60 / 64 / 62 |
-| FD 基线 / 峰值 / 清理后 | 158 / 222 / 158 | 158 / 222 / 158 |
-| 最大 RSS（仅记录） | 356,552,704 B | 357,601,280 B |
-
-两轮均保持同一 systemd InvocationID/MainPID、同一 build identity 与 9/9 健康项。JSON SHA-256 分别为
-`826025d3a28dafee1ad58aa89a9a53f02829691d1a6e91ae6d29d23478646f0a`、
-`d704d6132e87a4adf0fbbee04c450ab7bb5f50f88b86791dd9c18103bbb1e38e`；JUnit XML SHA-256 分别为
-`c2d284b32534c6fdbfa90fd58b0b7961e41035ef1a0c14de1469426b691d5c16`、
-`22b0bdba81bc65eff8c1c6dbd7bc5475ab1ef6910bf127c0fadf312a367a7099`。该记录只冻结当前开发基线，不能外推
-为更高连接规模或正式发布 SLO。
-
 ## 搜索容量基线入口
 
 搜索容量使用真实客户端二进制 `message/search` 与 `user/search` RPC，不直接调用 Lucene、PostgreSQL 或
@@ -234,7 +213,7 @@ build identity 不能变化、所有健康项必须为 `UP`；线程高水位不
 每 5 次包含 1 次确定 miss；突发阶段执行 100 个完整 UI cycle、并发度 16，每个 cycle 同时发起消息与用户
 搜索。负载后再发送一条新消息，必须已收到 ACK，并在 30 秒有界窗口内分别从 scoped/global 搜索精确出现
 一次。全部查询会话必须持续认证且认证次数不变；资源采样固定同一个 systemd InvocationID/MainPID 与
-build identity，要求健康始终 9/9、CPU ticks 单调。RSS、线程、FD、load 与 p50/p95/p99 只记录，不在首轮
+build identity，要求所有关键组件始终健康、CPU ticks 单调。RSS、线程、FD、load 与 p50/p95/p99 只记录，不在首轮
 样本上伪造正式 SLO。
 
 默认报告位于 `server/server/build/reports/capacity/search-capacity.json`。Gradle 在任务图开始执行前清除旧报告；
@@ -260,29 +239,6 @@ build identity，要求健康始终 9/9、CPU ticks 单调。RSS、线程、FD�
   -PsearchCapacityReport=/absolute/path/search-capacity.json
 ```
 
-2026-08-31 使用测试驱动 `c859fab0`、服务端
-`1.0.7+1796f4ec3506cd609793f7eda5301aa50dcc8c8f` 在同一测试实例连续运行两轮默认配置，结果如下：
-
-| 指标 | 第一轮 | 第二轮 |
-|---|---:|---:|
-| 夹具用户 / 群 / 已确认消息 | 4 / 16 / 256 | 4 / 16 / 256 |
-| 稳态成功 / 吞吐 | 200/200 / 11.533 cycle/s | 200/200 / 11.531 cycle/s |
-| 稳态消息 p50 / p95 / p99 / max | 60.205 / 107.740 / 167.816 / 168.130 ms | 56.220 / 106.217 / 188.951 / 189.050 ms |
-| UI burst 成功 / 吞吐 | 100/100 / 156.864 cycle/s | 100/100 / 163.717 cycle/s |
-| UI cycle p50 / p95 / p99 / max | 78.995 / 140.454 / 160.873 / 162.984 ms | 81.401 / 134.037 / 145.504 / 220.202 ms |
-| 新消息 scoped/global 投影 | 1/1；206.999 ms | 1/1；200.525 ms |
-| 会话稳定 / 掉线 / 认证变化 | 4/4 / 0 / 0 | 4/4 / 0 / 0 |
-| thread 基线 / 峰值 / 清理后 | 62 / 63 / 63 | 62 / 63 / 63 |
-| FD 基线 / 峰值 / 清理后 | 163 / 163 / 158 | 163 / 163 / 158 |
-| 最大 RSS（仅记录） | 401,907,712 B | 407,310,336 B |
-
-两轮都完成 64/16/4/81/5/4 的 scoped/global/user/ordering/isolation/miss 矩阵且零失败，并保持同一
-systemd InvocationID/MainPID、同一 build identity 与 9/9 健康项。JSON SHA-256 分别为
-`5046ae8548fae7f16e6638c693b13ceacf7c2baf11e2a92b73b845b8af32dc15`、
-`dad6f77dd708f00bc75c41e98239472b8603a4d3d29f7c00d2a6c1661b13d230`；JUnit XML SHA-256 分别为
-`137d88608e853c27f3a7b802fed056abb74733f5acefeec360aa45f05a44a8cc`、
-`be663dc34af5564983c22f313050f40b3503f65ee5771de9abe0b2f9d4b4063b`。
-
 该门禁只证明当前协议的首屏消息与用户搜索，不覆盖文件、文档或服务搜索，也不代表任意更大索引规模、
 固定参考硬件或正式发布 SLO。它也不替代下文独立的附件容量门禁。
 
@@ -304,7 +260,7 @@ warmup 对象（合计 4 个），再每用户上传 8 个稳态对象（合计 
 GroupFile 当前附件元数据、下载长度和 SHA-256。最后删除每个 GroupFile 逻辑条目，再通过完整目录列表确认
 36 条业务引用全部消失。这个 cleanup 不会伪装成物理文件已立即删除：无其他引用的载荷仍按默认 7 天保留期由 GC
 回收。两个会话在全程中必须保持认证且不增加认证次数；服务资源采样必须固定同一 systemd InvocationID/MainPID、
-build identity，保持 9/9 健康和 CPU ticks 单调。
+build identity，保持所有关键组件健康和 CPU ticks 单调。
 
 默认报告位于 `server/server/build/reports/capacity/attachment-capacity.json`。Gradle 在任务图开始时删除旧报告；
 测试在配置解析前先原子发布带 `runId` 的 `started` 状态，失败时原子替换为带 phase、异常类型和有界消息的
@@ -341,28 +297,6 @@ TeamTalk systemd unit、确认 InvocationID/MainPID 已更换并等待原 SDK �
   -PattachmentCapacityReport=/absolute/path/attachment-capacity.json
 ```
 
-2026-09-01（报告 UTC 时间为 2026-08-31）使用测试驱动 `7e444902`、服务端
-`1.0.7+1796f4ec3506cd609793f7eda5301aa50dcc8c8f` 在同一测试实例连续运行两轮默认配置，结果如下：
-
-| 指标 | 第一轮 `e0600060bb96` | 第二轮 `7afa3c98cba1` |
-|---|---:|---:|
-| warmup / 稳态 / burst 上传 | 4/4 / 16/16 / 16/16 | 4/4 / 16/16 / 16/16 |
-| 稳态 / burst 上传 p95 | 865.700 / 1,255.103 ms | 753.412 / 1,678.293 ms |
-| 另一成员鉴权下载 / p95 | 36/36 / 2,326.689 ms | 36/36 / 2,109.684 ms |
-| 唯一路径 / descriptor / 长度 / SHA-256 / 引用 | 36/36 / 36/36 / 36/36 / 36/36 / 36/36 | 36/36 / 36/36 / 36/36 / 36/36 / 36/36 |
-| GroupFile 引用清理 | 36/36 | 36/36 |
-| 会话稳定 / 重新认证 | 2/2 / 0 | 2/2 / 0 |
-| RSS 基线 / 峰值 / 清理后 | 442,003,456 / 471,232,512 / 471,232,512 B | 472,412,160 / 488,796,160 / 488,796,160 B |
-| thread 基线 / 峰值 / 清理后 | 62 / 64 / 64 | 63 / 64 / 64 |
-| FD 基线 / 峰值 / 清理后 | 162 / 164 / 158 | 162 / 164 / 158 |
-
-两轮都保持 InvocationID `12acf726677146e9a561bfc56c55dc48`、同一 MainPID/build identity 与
-9/9 健康项。JSON SHA-256 分别为
-`550e92e37ba5393a7b96a2dc116deac13027195a8a2aaa3612ba97e9f1769c8e`、
-`478e5cb713e58bdaaea8075c79057b14917e28a7e1c0bf750f614c9ee651d76d`；JUnit XML SHA-256 分别为
-`5b2ebf8d23a1cee463ea392fdc5328353c47f1b1216411fa1deed773d2f877db`、
-`f790681039d8436659ddb8ec138104384f410f53549777612f88ab43c13bd963`。
-
 该门禁只覆盖 512 KiB 小对象在当前 RocksDB 存储层的容量链路，实测延迟、RSS 和资源高水位不是带宽或
 SLO 承诺。它不替代下文大于 32 MiB 的 FileStore 文件系统层门禁，也不替代随后独立执行的
 Desktop/Android 本地优先媒体门禁；慢 PostgreSQL/磁盘压力、后台维护、长时间 soak、固定参考硬件和正式
@@ -392,74 +326,44 @@ descriptor，目标大小的文件数量和总字节不能增加；另一成员�
   -PfilesystemTierCapacityReport=/absolute/path/filesystem-tier-capacity.json
 ```
 
-2026-09-01 在服务端 `1.0.7+432c8cbaf92e98125509599bc36c0d1f20c12827` 上运行默认配置通过：
-33,619,968 字节对象两次下载均得到 SHA-256
-`a5b18068b45bedbdd7978bd98c93a2ca5e2627b260d6745609809dff8959e6a5`；目标大小文件在上传后由 0 增至 1，
-重启和重放后仍为 1，存储字节保持 33,619,968。InvocationID 从
-`650f390bdb56418f9287f9b36c93b6b5` 变为 `18ef979f149f48e1a3eb587f2c1dd8d5`，MainPID 从 2632614
-变为 2633572；两个会话认证次数均精确 `1 -> 2`。业务引用清理成功，服务随后保持同一 build identity 与
-9/9 健康。报告和 JUnit XML 分别保存在
-`build/e2e-artifacts/epoch32/filesystem-tier-capacity-432c8cba.json` 与
-`build/e2e-artifacts/epoch32/filesystem-tier-capacity-432c8cba.xml`，SHA-256 分别为
-`f2605b6d8ee22bef2664135a3991fb92ca90e0adbfcc33982daa4f42601824b1`、
-`d141f0e6b569898407522bcd8bbcca87391b7fc2e017508e31c5ab82bfb00ba7`。
-路径中的 `epoch32` 是该次历史制品的证据目录，不是当前服务端数据基线；当前
-产物与部署的 epoch/dataset 身份必须与当前服务端一致（见部署文档的数据代际纪律）。
-
 该门禁证明的是单个大对象在当前文件系统层的流式转移、服务重启恢复和精确重放，不是并发带宽或磁盘容量
 SLO；Desktop/Android 本地缓存原子发布与离线播放由下文真实双端门禁独立证明，正式发布物晋级仍归
 REL-05。
 
 ### Desktop/Android 本地优先媒体门禁
 
-2026-09-01 使用客户端提交 `ab19631c`、Desktop 全屏修复 `d03cd3ae` 和服务端
-`1.0.7+c08ac4eae78a5246e1ac2ee49cb86e245a7064d5` 完成一次真实双端视频门禁：
+使用同一批待分发客户端，在 Android 真机和对应 Desktop 平台分别验证：
 
-- Desktop 冷缓存打开 5,286,805 字节视频后，0.131 秒只出现
-  `media.gallery.video.downloadProgress`，4.862 秒才出现 `media.gallery.video.surface` 与控制条；下载
-  进度和播放器没有同时存在。最终缓存文件精确为 5,286,805 字节，随后通过 seek、播放/暂停和原生全屏。
-  macOS 全屏另以最终代码覆盖两轮正常切换、稳定后立即退出、快速反转与重复操作、系统原生退出、进入中
-  关闭重开及全屏中关闭重开；系统、屏幕模式与 Skia 截图一致覆盖 3840×2160 物理屏，退出后收敛到
-  `1920×1050 @ y=30` 的 Maximized 状态；
-- 2026-09-02 当前 Intel macOS（x86_64）本地媒体覆盖再用一段横屏和一段竖屏视频完成真实 Desktop 上传、播放/暂停、
-  seek 与完整全屏尺寸链；两段视频交替切换 12 次时当前进程始终只持有一个目标媒体 FD，各自连续开关
-  4 次后目标媒体 FD 都回到零。配套 `desktopTest` 通过 8 轮视频、32 次创建后立即销毁和 4 轮纯音频
-  生命周期，均以当前 PID 的精确文件路径 `lsof` 归零为释放条件；
-- 小米真机冷缓存打开 23,303,457 字节视频时，14% 和 27% 两个下载采样都只有
-  `media.gallery.video.downloadProgress`，语义树中没有任何 Media3 `exo_*` 控件；完整文件原子发布后才出现
-  本地播放器，并通过 seek、播放/暂停和全屏交互；
-- 离线夹具只执行 `systemctl stop teamtalk`，宿主机和手机的网卡、Wi-Fi、系统网络、代理、DNS 与防火墙
-  全程不变。服务停止后 Desktop 在“离线”状态仍从缓存打开并可 seek/暂停，Android 无下载进度帧即进入
-  本地 Media3，播放按钮语义按真实点击从“暂停”变为“播放”，离线 seek 仍有效；
-- 双端最终文件大小都与声明一致，缓存目录没有遗留 `.part` / `.partial`。验收后 TeamTalk unit 已恢复
-  active，`/health` 的 9/9 项全部为 UP。证据保存在 `build/acceptance/file12-local-first/`。
+1. 清空本任务视频的精确缓存后打开画廊，下载阶段只能出现 `media.gallery.video.downloadProgress`，
+   完整校验和原子发布后才出现 `media.gallery.video.surface` 及播放器控件；两者不能同时存在。
+2. 核对缓存文件大小与附件声明一致，测试 seek、播放/暂停和全屏。macOS 同时核对系统屏幕与 Skia 绘制，
+   覆盖正常切换、快速反转、系统退出、进入中关闭及全屏中关闭重开，不能只看窗口 placement。
+3. 使用横屏和竖屏视频交替切换至少 12 次，按当前 Desktop PID 与精确媒体路径确认只有当前播放器持有 FD；
+   每段连续开关 4 次后 FD 归零，并覆盖立即销毁及纯音频关闭。其他系统使用对应文件句柄观测方法。
+4. 只停止目标 TeamTalk 测试服务或隔离被测客户端到该端点的连接，保持宿主机和设备网络服务不变。
+   两端再次打开缓存视频应直接进入本地播放器，seek/暂停继续可用，无新的下载请求。
+5. 核对缓存没有 `.part` / `.partial` 残留，恢复目标服务并确认全部健康项为 `UP`。
 
-这些结果证明当前应用代码不存在服务器 URL 在线拉流旁路，并覆盖了冷缓存发布顺序、离线缓存命中和 Intel
-macOS 本地媒体 FD 释放；它们不把开发运行冒充正式发布物，也不扩张为新的 Android 或 Apple Silicon 结果。
-Compose 的 `createDistributable` / `createReleaseDistributable` 已在 x86_64 生成未签名 `.app` app image，
-但尚未用 Conveyor 生成可分发安装包或更新站点。REL-05 仍需用未经重建的同批 Desktop/Android release
-artifacts 重复门禁，并完成首个正式发布物、签名、公证、项目许可证随包和第三方归属审计。
+报告记录客户端制品哈希、服务器身份、设备/系统/架构、语义树、截图与文件句柄结果。Apple Silicon、
+Android 和各 Desktop 系统分别核对；构建成功或其他架构实测不能替代目标设备运行。同批制品要求见
+[REL-05](../10-reference/roadmap.md#rel-05--发布物晋级门禁)，系统信任签名、公证及许可随包核对另按发行流程执行。
 
 ### Desktop/Android 本地 SQLite clean-close 门禁
 
-2026-09-02 使用提交 `35a700ec` 与测试加固 `a15d3c5a` 完成 LocalCache clean-close 验收；同批完整
-Gradle 门禁共 213 个 task 成功。真实客户端证据分别为：
+验收前写入可辨识草稿并记录实际 `journal_mode`，按平台标准退出流程关闭本任务客户端：
 
-- Desktop 当前账号数据库实际为 `journal_mode=delete`。macOS 原生红色关闭键只隐藏到托盘，不是进程
-  clean exit；使用标准 `Cmd+Q` 退出后，账号库 `quick_check=ok`，目录没有 `-wal` / `-shm`，重新启动后
-  会话输入框精确恢复退出前的草稿。该结果只证明标准退出、driver 关闭和可靠事实重开，不声称 Desktop UI
-  命中过 WAL；
-- Android 使用 USB 小米 `2312DRA50C` 验收，APK SHA-256 为
-  `cff8f02668738b35b98d83c77ca62a322b6b2d7666fe87f406d65fe9c56cd343`。Activity 运行期间当前账号 namespace
-  存在 `.open` marker；执行真实系统 Back 结束 Activity 后 marker 删除。复制出的数据库
-  `quick_check=ok`，再次启动后聊天输入框恢复退出前草稿。
+- Desktop 使用正常退出操作；macOS 红色关闭键只隐藏窗口，不能代替进程 clean exit。退出后只读核对
+  数据库完整性与 WAL/SHM 状态，再启动并确认草稿恢复。若实际模式为 `delete`，结果只证明标准退出、
+  driver 关闭和可靠事实重开，不称为 WAL 覆盖。
+- Android 确认运行中的账号 namespace 存在 `.open` marker；正常退出后 marker 清理，数据库
+  `quick_check=ok`，再次启动恢复草稿。force-stop 是独立的非正常关闭场景，不能冒充 clean close。
 
 `PRAGMA wal_checkpoint(PASSIVE)` 的 WAL 行为由 xerial SQLite 真实文件测试覆盖：独立 reader transaction
 钉住旧 snapshot 时 clean close 有界返回并留下未 checkpoint 的 frame；释放 reader 后新 driver 精确恢复
-草稿与 outbox。这个确定性证据与上面的真实客户端退出/重开证据互补，不能互相冒充。
+草稿与 outbox。这个确定性证据与真实客户端退出/重开证据互补，不能互相冒充。
 
 部署链本身还必须证明：半安装目标和并发部署被拒绝；升级前分发在 live 目录外完成校验；systemd 停止后
-MainPID/cgroup 确实清空；新 build identity 与 9 项健康检查全部通过才提交。故障注入验收应至少覆盖一次
+MainPID/cgroup 确实清空；新 build identity 与 所有关键组件健康检查全部通过才提交。故障注入验收应至少覆盖一次
 停服后启动/健康失败，并确认旧分发、env、TLS、unit、旧监听端口与旧 build identity 恢复健康。任何
 密码不得出现在进程参数、测试报告或异常文本中。
 
@@ -473,7 +377,7 @@ MainPID/cgroup 确实清空；新 build identity 与 9 项健康检查全部通�
 停服前完成 staging identity 校验；systemd 停止和 compose down 后只能删除该 target 的 `data/`，并同时
 得到空 PostgreSQL bind mount 与空本地 stores。故障注入分为删除前、删除中/后两组：前者验证旧实例可
 恢复，后者只允许验证“旧二进制在再次清空的数据上健康”，测试名称、日志和异常不得声称恢复了旧数据。
-最终仍须断言 9 项健康状态和精确 build identity。fixture 数据丢失是此验收的预期结果，不应用真实备份
+最终仍须断言 所有关键组件健康状态和精确 build identity。fixture 数据丢失是此验收的预期结果，不应用真实备份
 恢复测试替代。
 
 ## 传输安全验收门槛
@@ -534,7 +438,7 @@ Android 发布验收还必须覆盖 **release APK × 非 loopback HTTP 地址**�
 
 ## 同步事件保留的加速验收
 
-默认 30 天保留不能靠每次验收真实等待 30 个墙钟日。预发布可丢弃实例允许使用时间加速夹具，但夹具
+默认 30 天保留不能靠每次验收真实等待 30 个墙钟日。明确用于故障测试的可丢弃实例允许使用时间加速夹具，但夹具
 只能改变目标事件是否越过保留 cutoff，不能替 compactor、checkpoint 或客户端制造结果。可重复流程如下：
 
 1. 通过真实产品路径为目标账号建立投影和连续事件，让待验收客户端持久化一个正数旧游标；退出该精确
@@ -563,9 +467,7 @@ Android 发布验收还必须覆盖 **release APK × 非 loopback HTTP 地址**�
    checkpoint 覆盖。Bot 的超长离线语义另按场景目录 `SYNC-03` 验证，不由 GUI 双端夹具补造历史回调。
 
 门禁证据必须同时保留旧 cursor、压缩前后 floor/物理行、checkpoint base、tail 范围和客户端最终 cursor；
-该 build/deployment 还必须保留至少一轮第二次服务启动后的同一 floor。已通过基线分两轮覆盖 Desktop
-`12 → floor/base 15 → 第二次启动仍为 15 → tail 16–18 → 18`，以及 Android
-`28 → floor/base 32 → tail 33–35 + 已读事件 36 → 36`。
+该 build/deployment 还必须保留至少一轮第二次服务启动后的同一 floor。
 
 这个夹具证明默认 cutoff 下的年龄判定、真实物理压缩、floor 持久化以及双端 checkpoint + tail 恢复，
 不证明服务曾连续运行或真实等待 30 天，也不替代长时间 soak、调度漂移和运维告警验收。报告必须写明
@@ -604,33 +506,36 @@ Markdown 上下文资产验收还必须证明：
 3. 文档每个修订读回各自的 Markdown + sidecar，新资产只接受调用者本人未绑定 staging，只有同一文档历史已知资产可复用；把其他可读消息/群文件/文档资产重绑进本文档必须拒绝；
 4. 上传中或失败 job 、正文/sidecar 不一致均阻止发送/保存；A 发起上传后切到 B，READY 只能在返回 A 时交付，用户已删除的引用不因 READY 复活。
 
-阶段一不把以下能力伪造成已验收：跨进程/跨设备富资产聊天草稿、持久本地源文件并断网续传的附件 outbox、
+当前不把以下未实现能力列为已验收：跨进程/跨设备富资产聊天草稿、持久本地源文件并断网续传的附件 outbox、
 Android 文档拖放。上传失败的就地重试/取消以及回复消息内嵌资产按各自后续门禁验收。
 
 ### 聊天可视光标内嵌资产双端门禁
 
-2026-09-02 在提交 `c24fed23` 上，Desktop 与 USB 小米 Android 都以 `before  after` 为可视草稿，用真实
-指针/键盘事件把选区放在两段文字中间，再经各自系统 picker 连续导入一张图片和一个 Markdown 文件。
-两端导入后都仍是可视编辑器，切到源码后都得到连续且顺序正确的两个 `teamtalk-asset://asset/<uuid>`
-引用。发送后气泡子节点依次为前置文字、图片、文件和后置文字；离开会话再进入后，两个资产节点及顺序仍在。
+Desktop 与 Android 都以 `before  after` 为可视草稿，用真实指针/键盘事件把选区放在两段文字中间，
+再经系统 picker 连续导入一张图片和一个 Markdown 文件。导入后仍为可视编辑器；切到源码后应得到
+连续且顺序正确的两个 `teamtalk-asset://asset/<uuid>` 引用。发送后气泡子节点依次为前置文字、图片、
+文件和后置文字；离开会话再进入后，两个资产节点及顺序保持。
 
-该记录只关闭“聊天可视光标插入”这一切片；不替代文档编辑器门禁，也不证明跨进程草稿、本地源文件
-spool/outbox、断网续传或失败重试的跨进程恢复。
+该门禁覆盖聊天可视光标插入；文档编辑器、跨进程草稿、源文件 spool/outbox 与断网续传各有独立范围。
 
 ### 文档可视光标内嵌资产双端门禁
 
-2026-09-02 在提交 `2b5e57d6` 上，Desktop 与 USB 小米 Android 都以 `before  after` 为可视正文，先用
-真实指针/方向键及字符探针确认光标位于两段文字之间，再经 macOS 与 MIUI 的真实系统 picker 连续导入
-一张横图和一个 Markdown 文件。两端导入后都仍是可视编辑器；源码依次为前置文字、图片 URI、文件 URI
-和后置文字。Desktop 保存为版本 1 后关闭标签并从文档树重开；Android 保存为版本 1 后进入预览、返回
-目录并重开。两端最终都保留“文字 → 图片 → 文件 → 文字”的顺序及 READY sidecar。
+Desktop 与 Android 都以 `before  after` 为可视正文，先用真实指针/方向键及字符探针确认光标位于
+两段文字之间，再经系统 picker 连续导入一张图片和一个 Markdown 文件。导入后保持可视编辑器，
+源码依次为前置文字、图片 URI、文件 URI 和后置文字。保存后关闭标签或返回目录并重开，另切换预览，
+两端均保留上述顺序与 READY sidecar。
 
-实现回归还覆盖：READY 紧邻最近 250 ms 输入时先同步捕获当前富文本；资产 sidecar 触发 block list 重建
-后投影绑定新列表；controller 尚未挂载时 LOCAL/READY 保序重放；预览或切页销毁时按块边界同步写入草稿，
-且后续 READY 不读取已卸载 controller 的旧快照。该记录关闭文档 WYSIWYG 光标插入切片，但不证明
-跨进程草稿、本地源文件 spool/outbox、断网续传、失败重试的跨进程恢复或 Android 文档拖放。
+确定性回归覆盖 READY 紧邻输入时同步捕获富文本、sidecar 触发 block list 重建后的重新绑定、controller
+未挂载时 LOCAL/READY 保序重放，以及预览/切页销毁时草稿写入。迟到 READY 不能读取已卸载 controller
+的旧快照。本门禁不证明跨进程源文件恢复、断网续传或 Android 文档拖放。
 
 ### 回复消息内嵌资产双端门禁
+
+分别以 Android → Desktop 和 Desktop → Android 发送含图片与文件的回复正文，验证上传屏障、回复引用、
+对端认证渲染和资产顺序。两端离开会话再进入，核对历史 sidecar、图片画廊与文件预览；缓存命中不重复下载。
+失败或取消不能发送残缺引用，原消息和其他消息不受影响。离线缓存场景另按本地优先媒体门禁核对。
+
+## 群文件与文档业务验收
 
 群文件验收额外证明：聊天中没有发送过该附件时，发布群文件也能为当前成员建立下载权限；非成员不能
 列目录；成员可以用自己上传的附件追加版本；删除逻辑条目后，若没有其他业务引用，成员下载立即得到
@@ -661,24 +566,18 @@ force-stop/relaunch 后仍按原 identity 重放收敛、outbox 归零，且排�
 PostgreSQL 集成验收还必须证明：新 operationId 的 owner/steward 完全不变时返回 400 且不写收据；用同一个 operationId 修正为真实交接随后成功，并继续支持精确重放。
 
 两端先创建名称顺序与创建顺序相反的同级文档，确认改名、刷新和重启后仍按 `(createdAt, nodeId)` 保持
-创建顺序。离线夹具只停止目标 TeamTalk 服务，宿主机网络、手机网络、代理、DNS 与防火墙均未改变：
+创建顺序。离线夹具只停止目标 TeamTalk 测试服务，保持宿主机网络、手机网络、代理、DNS 与防火墙不变：
 
-- Desktop 分别完成离线 rename 和跨 parent move，正常退出再启动后仍显示待确认结构命令、缓存树和对应
-  草稿；Android 完成同样流程，并以 force-stop/relaunch 验证进程边界；
-- 服务恢复后，两端 outbox 自动收敛，旧/新分支、标题、父级、revision 与 path spine 一致。重命名时一并
-  持久化的正文草稿继续保持 dirty，并由用户在结构命令收敛后显式再次保存，没有伪装成结构 ACK 的附带写入；
-- move 完成后再次只停止 TeamTalk 服务并重启客户端，两端都能从缓存进入空间、展开目标父级并读取移动后
-  文档；Desktop 首次回归发现“标签恢复但树为空”，`7c017d15` 修复为先发布缓存 root/spine、再独立校验正文；
-- PostgreSQL 验收观测中，Android 对同一节点刻意发出的 rename 与 move 使 receipt 行数从 2 增至 4；此前
-  Desktop move 节点在后续重启与恢复中始终保持 1 行。最终干净制品冒烟中的 Desktop/Android rename 又各
-  增加 1 行，和用户实际发出的结构命令数一致。这是数据库旁证，不把停服场景包装成 ACK-loss 故障注入。
+- 分别离线 rename 与跨 parent move，正常退出及 force-stop/relaunch 后仍显示待确认结构命令、缓存树和草稿；
+- 服务恢复后 outbox 收敛，旧/新分支、标题、父级、revision 与 path spine 一致；结构命令同时记录的正文草稿
+  保持 dirty，只有用户显式保存后才更新正文，不能成为结构 ACK 的附带写入；
+- move 完成后再次离线并重启，两端应先显示缓存 root/spine，再独立校验正文，能展开目标父级并读取移动后文档；
+- 对照实际发送的唯一 commandId 核对 receipt，重启与恢复不增加重复行；服务恢复后本地 outbox 归零。
 
-真实 UI 门禁证明的是“首个 RPC 前服务不可用”时 durable outbox、pending 提示、跨进程恢复与服务恢复后的
-最终收敛。服务端已经提交但客户端丢失 ACK 的 exact receipt replay、同 identity 不重复推进 revision，则由
-协议、临时 SQLite 和 PostgreSQL 确定性自动化覆盖，两层证据不能互相替代。Desktop 截图保存在
-`build/acceptance/content04-reliable-mutation/desktop/`，Android 截图保存在
-`build/acceptance/content04-reliable-mutation/android/`；该 `build/` 目录为本机忽略的验收产物，不作为
-长期版本控制记录。
+首个 RPC 前服务不可用的 UI 场景验证排队提示、跨进程恢复与最终收敛。提交后 ACK 丢失的精确收据重放、
+同 identity 不重复推进 revision 由协议、临时 SQLite 和 PostgreSQL 的确定性测试补齐，两层证据互补。
+报告与截图保存在任务或 CI 产物中，不把本机 `build/` 路径、单次行数和修复提交写成长期系统约束。
+
 事务验收还要直接断言 `PgUnitOfWork.write` 使用 JDBC `READ_COMMITTED`、只读事务使用 `REPEATABLE_READ`；并发精确交接重试必须等待同一 State 围栏，在首个事务提交后看到其不可变 receipt 并返回完全相同的结果，不能受数据库或 role 默认隔离级别影响。
 客户端不维护服务端权限的 lease、generation、watermark 或撤权墓碑；运行本验收前，应先通过
 [本地测试](local-tests.md) 中的单 mutex 缓存提交、普通 latest projection、明确 403/根 404/完整终页
@@ -690,8 +589,8 @@ omission 清理、网络失败保留、脏草稿孤儿化、孤儿远端入口�
 成员 Conversation 与 CHAT_CREATED 事件都只产生一次；复用该 ID 改写群名或成员必须稳定返回 409。
 组织目录远程验收消费的 `ORGANIZATION_CHANGED` 只是在线 wire 证据，不把它误写成 durable fanout；
 `EventProcessor` 先持久提升 requiredRevision、保留 stale nonempty 行，以及认证恢复兜底由本地确定性测试
-覆盖。任何非当前版本客户端都必须在认证时被当前协议服务端明确拒绝，不能进入组织、文档或会话 RPC
-后猜测语义。
+覆盖。低于服务端最低支持 minor 或 major 不匹配的客户端必须在协商阶段明确拒绝；兼容窗口内旧客户端
+只使用其声明版本支持的 RPC 与字段，不能把最低支持版本误写成必须精确匹配当前 minor。
 
 真实客户端验收使用至少 100–200 篇、包含多层子文档的空间，同时核对“文档首页 → 空间工作区”两级导航、Desktop 约 30–32dp 的紧凑行与 Android 约 44dp 的触控行、
 标题打开正文与展开按钮加载子文档的独立命中区、新建落点、标题截断与滚动、富文本输入、上下文资产 picker/预览和未保存确认。树中不应出现大文件夹图标或
@@ -719,6 +618,6 @@ Android 真机覆盖系统 picker 和二进制 clipboard；文档 Desktop 在主
 4. 区分部署陈旧、配置错误、环境故障与产品回归；
 5. 在修复产品问题后，把最小复现保留为稳定验收场景。
 
-测试部署只清理本任务明确创建的测试资料，普通升级保留内测用户数据。项目尚未发布仍不保证对外兼容，
-但内部遵循[版本与迁移规则](../04-protocol/versioning.md)；破坏性重建必须另有明确实例与数据范围授权，
+测试部署只清理本任务明确创建的测试资料，普通升级保留内测用户数据。项目处于开发者预览阶段，对外尚不承诺稳定版兼容，
+内部遵循[版本与迁移规则](../04-protocol/versioning.md)；破坏性重建必须另有明确实例与数据范围授权，
 并记录影响和恢复方案，不能用清库掩盖兼容缺陷。
