@@ -5,6 +5,7 @@ import com.virjar.tk.protocol.http.AttachmentUploadIdentity
 import com.virjar.tk.desktop.media.DesktopSessionResources
 import com.virjar.tk.protocol.model.EmbeddedAsset
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportBinding
+import com.virjar.tk.app.ui.bridge.ChatAssetImportDelegate
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportBindingRouter
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportEvent
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportEventSink
@@ -15,6 +16,7 @@ import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportSource
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetLocalSelection
 import com.virjar.tk.app.ui.component.rich.PendingAssetJob
 import com.virjar.tk.app.ui.component.rich.PendingAssetJobState
+import com.virjar.tk.shared.repository.asUploadSource
 import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
 import java.awt.image.BufferedImage
@@ -139,6 +141,7 @@ internal class DesktopEmbeddedAssetImportGateway(
     private val resources: DesktopSessionResources,
     private val transfer: DesktopFileTransfer,
     private val publishOnUi: (() -> Unit) -> Unit,
+    private val durableImports: ChatAssetImportDelegate? = null,
 ) : EmbeddedAssetImportGateway, Closeable {
     private val scope = resources.childScope("embedded-asset-import")
     private val bindings = EmbeddedAssetImportBindingRouter()
@@ -152,10 +155,18 @@ internal class DesktopEmbeddedAssetImportGateway(
         acceptNewImports: Boolean,
     ): EmbeddedAssetImportRegistration {
         val registration = bindings.bind(ownerKey, sink, acceptNewImports)
+        val binding = checkNotNull(bindings.capture())
+        val durableRegistration = durableImports?.takeIf { it.handles(ownerKey) }?.bind(
+            ownerKey,
+            EmbeddedAssetImportEventSink { event -> publishTerminal(binding, event) },
+        )
         retryStore.replay(ownerKey).forEach { job ->
             sink.publish(EmbeddedAssetImportEvent.StateChanged(job = job, placement = null))
         }
-        return registration
+        return EmbeddedAssetImportRegistration {
+            durableRegistration?.close()
+            registration.close()
+        }
     }
 
     override fun select(presentation: EmbeddedAssetPresentation) {
@@ -183,7 +194,7 @@ internal class DesktopEmbeddedAssetImportGateway(
     }
 
     override fun cancel(jobId: String): Boolean {
-        val cancelled = retryStore.cancel(jobId) ?: return false
+        val cancelled = retryStore.cancel(jobId) ?: return durableImports?.cancel(jobId) == true
         publishTerminal(
             cancelled.binding,
             EmbeddedAssetImportEvent.StateChanged(cancelled.job, placement = null),
@@ -192,6 +203,7 @@ internal class DesktopEmbeddedAssetImportGateway(
     }
 
     override fun retry(jobId: String): Boolean {
+        if (retryStore.state(jobId) == null) return durableImports?.retry(jobId) == true
         val attempt = retryStore.retry(jobId) ?: return when (retryStore.state(jobId)) {
             PendingAssetJobState.PREPARING,
             PendingAssetJobState.UPLOADING,
@@ -207,6 +219,10 @@ internal class DesktopEmbeddedAssetImportGateway(
         selection: EmbeddedAssetLocalSelection,
         binding: EmbeddedAssetImportBinding,
     ) {
+        durableImports?.takeIf { it.handles(binding.ownerKey) }?.let { durable ->
+            beginDurableImport(binding, selection, durable)
+            return
+        }
         val assetId = UUID.randomUUID().toString()
         val job = PendingAssetJob(jobId = UUID.randomUUID().toString(), assetId = assetId)
         val placement = com.virjar.tk.app.ui.bridge.EmbeddedAssetImportPlacement(
@@ -228,6 +244,40 @@ internal class DesktopEmbeddedAssetImportGateway(
         }
         publishInitial(binding, EmbeddedAssetImportEvent.StateChanged(job, placement))
         launchAttempt(attempt)
+    }
+
+    private fun beginDurableImport(
+        binding: EmbeddedAssetImportBinding,
+        selection: EmbeddedAssetLocalSelection,
+        durable: ChatAssetImportDelegate,
+    ) {
+        val assetId = UUID.randomUUID().toString()
+        val preparation = scope.launch {
+            try {
+                resources.ensureOpen()
+                // Freeze once. All HTTP retries use the private spool, never this mutable user path.
+                durable.prepare(
+                    binding.ownerKey, assetId, File(selection.localReference).asUploadSource(), selection,
+                )
+                publishInitial(
+                    binding,
+                    EmbeddedAssetImportEvent.StateChanged(
+                        PendingAssetJob(assetId, assetId),
+                        com.virjar.tk.app.ui.bridge.EmbeddedAssetImportPlacement(
+                            selection.displayName, selection.presentation,
+                        ),
+                    ),
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                publishOnUi {
+                    if (resources.canDeliverUiResult()) durable.preparationFailed(binding.ownerKey)
+                }
+            }
+        }
+        // Also runs if session shutdown cancels this job before its first instruction.
+        preparation.invokeOnCompletion { releaseDesktopEmbeddedAssetSelection(selection) }
     }
 
     private fun launchAttempt(attempt: EmbeddedAssetImportRetryStore.Attempt<Unit>) {

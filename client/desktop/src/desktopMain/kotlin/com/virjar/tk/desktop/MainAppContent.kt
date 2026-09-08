@@ -90,6 +90,7 @@ internal fun WindowScope.MainAppContent(
             publishOnUi = { action ->
                 documentAssetUiScope.launch { presentationGate.runIfOpen(action) }
             },
+            durableImports = nav.chatAssetImports(resources::createChatAssetSpool),
         )
     }
     val documentFileDownloads = remember(resources, presentationGate, documentAssetUiScope) {

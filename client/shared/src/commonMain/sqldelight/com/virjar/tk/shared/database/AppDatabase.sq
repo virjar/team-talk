@@ -1774,3 +1774,84 @@ markTaskReminderNotified:
 UPDATE task_reminders SET notified = 1 WHERE task_id = ? AND reminded_at = ?;
 pruneTaskReminders:
 DELETE FROM task_reminders WHERE task_id NOT IN (SELECT task_id FROM task_reminders ORDER BY seen ASC, reminded_at DESC, task_id LIMIT 512);
+
+CREATE TABLE chat_composer_clock (id INTEGER NOT NULL PRIMARY KEY CHECK (id = 1), revision INTEGER NOT NULL);
+INSERT INTO chat_composer_clock(id, revision) VALUES (1, 0);
+CREATE TABLE chat_composer_draft (
+    chat_id TEXT NOT NULL PRIMARY KEY,
+    revision INTEGER NOT NULL,
+    is_empty INTEGER NOT NULL,
+    payload BLOB NOT NULL
+);
+CREATE TABLE chat_asset_upload (
+    asset_id TEXT NOT NULL PRIMARY KEY,
+    chat_id TEXT NOT NULL,
+    source_id TEXT NOT NULL UNIQUE,
+    referenced INTEGER NOT NULL DEFAULT 0,
+    payload BLOB NOT NULL
+);
+CREATE INDEX chat_asset_upload_chat ON chat_asset_upload(chat_id);
+
+selectChatComposerDraft:
+SELECT * FROM chat_composer_draft WHERE chat_id = ?;
+selectMaxChatComposerRevision:
+SELECT revision FROM chat_composer_clock WHERE id = 1;
+selectChatComposerCapacity:
+SELECT count(*) AS entries, coalesce(sum(length(payload)), 0) AS bytes FROM chat_composer_draft WHERE is_empty = 0;
+upsertChatComposerDraft:
+INSERT OR REPLACE INTO chat_composer_draft(chat_id, revision, is_empty, payload) VALUES (?, ?, ?, ?);
+advanceChatComposerClock:
+UPDATE chat_composer_clock SET revision = max(revision, ?) WHERE id = 1;
+pruneChatComposerTombstones:
+DELETE FROM chat_composer_draft WHERE is_empty = 1 AND chat_id NOT IN
+(SELECT chat_id FROM chat_composer_draft WHERE is_empty = 1 ORDER BY revision DESC LIMIT 128);
+deleteChatComposerDraft:
+DELETE FROM chat_composer_draft WHERE chat_id = ?;
+selectChatAssetUploads:
+SELECT * FROM chat_asset_upload ORDER BY asset_id;
+selectChatAssetUploadsByChat:
+SELECT * FROM chat_asset_upload WHERE chat_id = ? ORDER BY asset_id;
+selectChatAssetUpload:
+SELECT * FROM chat_asset_upload WHERE asset_id = ?;
+upsertChatAssetUpload:
+INSERT OR REPLACE INTO chat_asset_upload(asset_id, chat_id, source_id, referenced, payload) VALUES (?, ?, ?, ?, ?);
+markChatAssetUploadReferenced:
+UPDATE chat_asset_upload SET referenced = 1 WHERE asset_id = ?;
+deleteChatAssetUpload:
+DELETE FROM chat_asset_upload WHERE asset_id = ?;
+deleteChatAssetUploadsByChat:
+DELETE FROM chat_asset_upload WHERE chat_id = ?;
+
+CREATE TABLE outgoing_chat_asset (
+    chat_id TEXT NOT NULL,
+    client_msg_id TEXT NOT NULL,
+    sender_uid TEXT NOT NULL,
+    asset_id TEXT NOT NULL,
+    PRIMARY KEY (chat_id, client_msg_id, asset_id)
+);
+CREATE INDEX outgoing_chat_asset_source ON outgoing_chat_asset(asset_id);
+
+selectOutgoingChatAssets:
+SELECT u.* FROM chat_asset_upload u JOIN outgoing_chat_asset o ON o.asset_id = u.asset_id
+WHERE o.chat_id = ? AND o.client_msg_id = ? ORDER BY u.asset_id;
+selectOutgoingChatAssetLinks:
+SELECT * FROM outgoing_chat_asset WHERE chat_id = ? AND client_msg_id = ?;
+selectAllOutgoingChatAssetLinks:
+SELECT * FROM outgoing_chat_asset;
+selectConfirmedOutgoingChatAssetLinks:
+SELECT o.* FROM outgoing_chat_asset o WHERE EXISTS
+(SELECT 1 FROM message m WHERE m.chat_id = o.chat_id AND m.client_msg_id = o.client_msg_id AND m.sender_uid = o.sender_uid AND m.server_seq > 0)
+OR EXISTS(SELECT 1 FROM outgoing_message m WHERE m.chat_id = o.chat_id AND m.client_msg_id = o.client_msg_id AND m.sender_uid = o.sender_uid AND m.state = 4);
+retainOutgoingChatAsset:
+INSERT OR IGNORE INTO outgoing_chat_asset(chat_id, client_msg_id, sender_uid, asset_id) VALUES (?, ?, ?, ?);
+countOutgoingChatAssetLinks:
+SELECT count(*) FROM outgoing_chat_asset;
+deleteOutgoingChatAssets:
+DELETE FROM outgoing_chat_asset WHERE chat_id = ? AND client_msg_id = ?;
+deleteOutgoingChatAssetsByChat:
+DELETE FROM outgoing_chat_asset WHERE chat_id = ?;
+removeChatAssetDraftReference:
+UPDATE chat_asset_upload SET referenced = 0 WHERE asset_id = ?;
+deleteUnownedChatAsset:
+DELETE FROM chat_asset_upload WHERE asset_id = ? AND referenced = 0
+AND NOT EXISTS(SELECT 1 FROM outgoing_chat_asset o WHERE o.asset_id = chat_asset_upload.asset_id);

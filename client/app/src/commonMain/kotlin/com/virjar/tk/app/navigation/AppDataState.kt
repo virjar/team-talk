@@ -23,6 +23,9 @@ import com.virjar.tk.app.ui.UiActionAdmission
 import com.virjar.tk.app.ui.SessionUiActionExecutor
 import com.virjar.tk.app.ui.screen.ChatComposerContextStore
 import com.virjar.tk.app.ui.screen.ChatDraftLifecycleBridge
+import com.virjar.tk.app.ui.bridge.ChatAssetImportDelegate
+import com.virjar.tk.app.ui.bridge.DurableChatAssetImports
+import com.virjar.tk.shared.repository.ChatAssetSpool
 import com.virjar.tk.app.telemetry.ClientUiTelemetrySink
 import com.virjar.tk.app.telemetry.ClientUiAction
 import com.virjar.tk.app.telemetry.ClientUiPage
@@ -43,6 +46,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
 /**
@@ -127,6 +131,30 @@ open class AppDataState(
     // 启动其收集器时，重放的完成可能立即发布。
     private val uiErrors = UiEventMailbox<String>()
     private val uiNotices = UiEventMailbox<UserFeedbackNotice>()
+    private var chatAssetImports: ChatAssetImportDelegate? = null
+
+    init {
+        chatComposerContexts.bindPersistence(
+            localCache = session.localCache,
+            localMutations = localMutations,
+            localData = localData,
+            onFailure = { reportLocalMutationFailure(it, "保存聊天草稿失败") },
+        )
+    }
+
+    /** Platform supplies its private storage root; the session owns the durable upload worker. */
+    fun chatAssetImports(createSpool: () -> ChatAssetSpool): ChatAssetImportDelegate =
+        checkNotNull(destroyGate.readIfOpen {
+            chatAssetImports ?: DurableChatAssetImports(
+                local = session.localCache.chatDrafts,
+                coordinator = actionScope.async(Dispatchers.IO) {
+                    session.createChatAssetUploads(createSpool())
+                },
+                scope = actionScope,
+                localData = localData,
+                reportFailure = ::handleError,
+            ).also { chatAssetImports = it }
+        }) { "Chat asset owner has retired" }
 
     val errorSignal: UiEventSignal?
         get() = uiErrors.signal
@@ -265,6 +293,7 @@ open class AppDataState(
             localData = localData,
             telemetry = telemetry,
             onAuthExpired = { this@AppDataState.onAuthExpired() },
+            prepareFailedMessageReplacement = session::prepareChatAssetReplacement,
         )
         activeChat.markPrepared(chatId)
     }

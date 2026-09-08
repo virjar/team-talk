@@ -27,6 +27,9 @@ internal fun androidAccountDataCleanup(context: Context): AccountDataCleanup {
         val draftHash = AndroidDocumentDraftPersistence.draftFileName(draftOwner).removeSuffix(".json")
         val mediaScope = sha256Hex(mediaCacheNamespace(owner.deploymentFingerprint, owner.datasetId, owner.uid)).take(32)
         buildList {
+            add(AccountDataCleanupTarget.tree(
+                app.noBackupFilesDir, *com.virjar.tk.shared.repository.chatAssetSpoolDirectories(owner).toTypedArray(),
+            ))
             add(accountAndroidDatabaseCleanupTarget(app.getDatabasePath("unused").parentFile!!, owner))
             add(accountAndroidDatabaseCleanupTarget(app.cacheDir, owner))
             add(AccountDataCleanupTarget.matchingChildren(

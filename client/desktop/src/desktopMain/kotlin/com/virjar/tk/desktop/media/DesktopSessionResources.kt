@@ -44,7 +44,7 @@ internal class DesktopSessionResources(
     datasetId: String,
     deploymentIdentity: DeploymentIdentity,
     credentialProvider: () -> SessionHttpCredentials,
-    dataDir: File,
+    private val dataDir: File,
     diagnosticLogger: TkLogger,
     val telemetry: ClientUiTelemetrySink = NoopClientUiTelemetrySink,
     private val onAuthExpired: (rejectedAccessToken: String) -> Unit = {},
@@ -75,6 +75,12 @@ internal class DesktopSessionResources(
     val fileTransfer: DesktopFileTransfer
     val videoSender: DesktopVideoSender
     val voiceRecorder: DesktopVoiceRecorder
+
+    /** Called on IO by the chat session; source files outlive these platform media resources. */
+    fun createChatAssetSpool() = com.virjar.tk.shared.repository.createChatAssetSpool(
+        dataDir,
+        com.virjar.tk.shared.client.AccountDataOwner(serverFingerprint, datasetId, ownerUid),
+    )
 
     init {
         var cacheCandidate: DesktopMediaCache? = null

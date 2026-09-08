@@ -58,6 +58,16 @@ internal fun rememberAndroidChatEmbeddedAssetImportHost(
                 dataState.launchCancellableAdmittedUiAction(action = action)
             },
             deliverIfOpen = dataState.uiActionAdmission::runIfOpen,
+            durableImports = dataState.chatAssetImports {
+                com.virjar.tk.shared.repository.createChatAssetSpool(
+                    applicationContext.noBackupFilesDir,
+                    com.virjar.tk.shared.client.AccountDataOwner(
+                        dataState.deploymentIdentity.fingerprint,
+                        dataState.datasetId,
+                        dataState.userSession.uid,
+                    ),
+                )
+            },
         )
     }
     DisposableEffect(gateway, mediaLease) {

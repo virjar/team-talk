@@ -12,6 +12,9 @@ internal fun desktopAccountDataCleanup(dataDir: File): AccountDataCleanup = Acco
     val users = listOf("deployments", owner.deploymentFingerprint, "datasets", owner.datasetId, "users")
     val draftOwner = DocumentDraftOwnerKey(owner.deploymentFingerprint, owner.datasetId, owner.uid)
     buildList {
+        add(AccountDataCleanupTarget.tree(
+            dataDir, *com.virjar.tk.shared.repository.chatAssetSpoolDirectories(owner).toTypedArray(),
+        ))
         add(AccountDataCleanupTarget.tree(dataDir, *(users + owner.uid).toTypedArray()))
         add(AccountDataCleanupTarget.matchingChildren(
             dataDir, users, Regex("${Regex.escape(owner.uid)}\\.corrupt-[A-Za-z0-9-]+"),

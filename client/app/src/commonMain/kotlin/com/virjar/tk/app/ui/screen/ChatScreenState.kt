@@ -34,9 +34,8 @@ internal fun canonicalizeChatMessageForSend(message: Message): Message =
     MessageBodyPolicy.canonicalize(message)
 
 /**
- * 持久会话草稿后端目前只存储一个 Markdown 字符串。在它能够原子持久化带作用域的
- * 描述符 sidecar 之前，绝不要把裸内部 URI 镜像进 SQLite 或跨设备草稿流。完整正文在
- * 已认证客户端会话的整个生命周期内仍可从 ChatComposerContextStore 获得。
+ * 普通跨设备镜像只接受独立 Markdown 字符串，不发布缺少 sidecar 的内部 URI。
+ * 完整本机正文与资产由 ChatDraftSnapshot 持久化，此函数同时服务尚无持久适配器的展示夹具。
  */
 internal fun durableChatDraftMirrorPayload(markdown: String): String =
     runCatching {
@@ -70,6 +69,15 @@ internal class ChatDraftSync(cachedDraft: String?, restored: ChatComposerContext
         onDraftChange?.invoke(durableChatDraftMirrorPayload(markdown))
         lastPublishedDraft = markdown
     }
+
+    /** The composer send transaction already committed the empty mirror. Do not queue another clear. */
+    fun acceptCommittedClear() {
+        lastPublishedDraft = ""
+    }
+
+    fun restoreLocal(markdown: String) {
+        lastPublishedDraft = markdown
+    }
 }
 
 /**
@@ -95,17 +103,20 @@ internal fun hasReferencedIncompleteEmbeddedAssetJob(
 internal fun Message.confirmedReplyToMsgIdOrNull(): String? =
     serverSeq.takeIf { it > 0L }?.toString()
 
-/** Activity 重建只保存稳定标识；Message 实例始终来自当前会话的 messages 流。 */
-internal data class SavedChatReplyTarget(val clientMsgId: String = "") {
+/** 只保存稳定引用；Message 由当前窗口或独立的权威单条读取恢复。 */
+internal data class SavedChatReplyTarget(val clientMsgId: String = "", val serverSeq: Long = 0L) {
     internal fun bind(messages: List<Message>): Message? =
         clientMsgId.takeIf(String::isNotEmpty)?.let { targetId ->
-            messages.firstOrNull { it.clientMsgId == targetId }
+            messages.firstOrNull {
+                it.clientMsgId == targetId && (serverSeq == 0L || it.serverSeq == serverSeq) &&
+                    it.flags and Message.FLAG_REVOKED == 0
+            }
         }
 }
 
 internal val SavedChatReplyTargetSaver = listSaver<SavedChatReplyTarget, String>(
-    save = { target -> listOf(target.clientMsgId) },
-    restore = { values -> SavedChatReplyTarget(values.firstOrNull().orEmpty()) },
+    save = { target -> listOf(target.clientMsgId, target.serverSeq.toString()) },
+    restore = { values -> SavedChatReplyTarget(values.firstOrNull().orEmpty(), values.getOrNull(1)?.toLongOrNull() ?: 0L) },
 )
 
 /**
@@ -125,6 +136,7 @@ internal data class SavedChatEditingSession(
     val selectionStart: Int = 0,
     val selectionEnd: Int = 0,
     val replyingClientMsgId: String = "",
+    val replyingServerSeq: Long = 0L,
     val suspendedAssets: List<EmbeddedAsset> = emptyList(),
 )
 
@@ -209,6 +221,7 @@ internal fun savedChatEditingSessionSaver(chatId: String, store: ChatComposerCon
                 session.replyingClientMsgId,
                 assetsInline,
                 assetsOrToken,
+                session.replyingServerSeq,
             )
         },
         restore = { values ->
@@ -256,6 +269,7 @@ internal fun savedChatEditingSessionSaver(chatId: String, store: ChatComposerCon
                 selectionStart = (values[6] as Int).coerceIn(0, suspendedMarkdown.length),
                 selectionEnd = (values[7] as Int).coerceIn(0, suspendedMarkdown.length),
                 replyingClientMsgId = values[8] as String,
+                replyingServerSeq = (values.getOrNull(11) as? Long) ?: 0L,
                 suspendedAssets = suspendedAssets,
             )
         },

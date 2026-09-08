@@ -8,6 +8,7 @@ import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
 import com.virjar.tk.protocol.http.AttachmentUploadIdentity
 import com.virjar.tk.protocol.model.EmbeddedAsset
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportBinding
+import com.virjar.tk.app.ui.bridge.ChatAssetImportDelegate
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportBindingRouter
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportEvent
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportEventSink
@@ -19,6 +20,7 @@ import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportSource
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetLocalSelection
 import com.virjar.tk.app.ui.component.rich.PendingAssetJob
 import com.virjar.tk.app.ui.component.rich.PendingAssetJobState
+import com.virjar.tk.shared.repository.asUploadSource
 import java.io.Closeable
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -28,6 +30,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 /** Activity 结果启动器归 Compose 所有；这个稳定持有者让网关可以选择其一。 */
 internal class AndroidEmbeddedAssetSelector {
@@ -171,6 +175,7 @@ internal class AndroidEmbeddedAssetImportGateway(
     private val launchAdmittedAction: (suspend () -> Unit) -> Boolean,
     private val launchCancellableAdmittedAction: (suspend () -> Unit) -> Job?,
     private val deliverIfOpen: (() -> Unit) -> Boolean,
+    private val durableImports: ChatAssetImportDelegate? = null,
 ) : EmbeddedAssetImportGateway, Closeable {
     private val bindings = EmbeddedAssetImportBindingRouter()
     private val pickerLock = Any()
@@ -179,6 +184,9 @@ internal class AndroidEmbeddedAssetImportGateway(
         releaseSource = PreparedMedia::delete,
     )
     private val returnedPickerSelections = AndroidEmbeddedAssetReturnedPickerSelections()
+    // A URI with unknown length needs one temporary snapshot before the shared durable stage.
+    // Only one such cache copy may exist per chat importer; durable sources have their own quota.
+    private val durablePreparation = Semaphore(1)
 
     override fun bind(
         ownerKey: String,
@@ -186,11 +194,19 @@ internal class AndroidEmbeddedAssetImportGateway(
         acceptNewImports: Boolean,
     ): EmbeddedAssetImportRegistration {
         val registration = bindings.bind(ownerKey, sink, acceptNewImports)
+        val binding = checkNotNull(bindings.capture())
+        val durableRegistration = durableImports?.takeIf { it.handles(ownerKey) }?.bind(
+            ownerKey,
+            EmbeddedAssetImportEventSink { event -> publish(binding, event) },
+        )
         retryStore.replay(ownerKey).forEach { job ->
             sink.publish(EmbeddedAssetImportEvent.StateChanged(job = job, placement = null))
         }
         drainReturnedPickerSelection()
-        return registration
+        return EmbeddedAssetImportRegistration {
+            durableRegistration?.close()
+            registration.close()
+        }
     }
 
     override fun select(presentation: EmbeddedAssetPresentation) {
@@ -218,12 +234,13 @@ internal class AndroidEmbeddedAssetImportGateway(
     }
 
     override fun cancel(jobId: String): Boolean {
-        val cancelled = retryStore.cancel(jobId) ?: return false
+        val cancelled = retryStore.cancel(jobId) ?: return durableImports?.cancel(jobId) == true
         publishTerminal(cancelled.binding, EmbeddedAssetImportEvent.StateChanged(cancelled.job))
         return true
     }
 
     override fun retry(jobId: String): Boolean {
+        if (retryStore.state(jobId) == null) return durableImports?.retry(jobId) == true
         val attempt = retryStore.retry(jobId) ?: return when (retryStore.state(jobId)) {
             PendingAssetJobState.PREPARING,
             PendingAssetJobState.UPLOADING,
@@ -307,6 +324,10 @@ internal class AndroidEmbeddedAssetImportGateway(
         binding: EmbeddedAssetImportBinding,
         selection: EmbeddedAssetLocalSelection,
     ) {
+        durableImports?.takeIf { it.handles(binding.ownerKey) }?.let { durable ->
+            beginDurableImport(binding, selection, durable)
+            return
+        }
         val assetId = UUID.randomUUID().toString()
         val job = PendingAssetJob(UUID.randomUUID().toString(), assetId)
         val placement = EmbeddedAssetImportPlacement(selection.displayName, selection.presentation)
@@ -324,6 +345,43 @@ internal class AndroidEmbeddedAssetImportGateway(
             return
         }
         launchAttempt(attempt)
+    }
+
+    /** The picker grant is consumed now; only an immutable private source survives this call. */
+    private fun beginDurableImport(
+        binding: EmbeddedAssetImportBinding,
+        selection: EmbeddedAssetLocalSelection,
+        durable: ChatAssetImportDelegate,
+    ) {
+        val assetId = UUID.randomUUID().toString()
+        val admitted = launchCancellableAdmittedAction {
+            durablePreparation.withPermit {
+                var prepared: PreparedMedia? = null
+                try {
+                    val candidate = MediaHelper.prepareSelectedMedia(
+                        context, Uri.parse(selection.localReference), mediaSession,
+                    )
+                    prepared = candidate
+                    val source = withContext(Dispatchers.IO) { candidate.file.asUploadSource() }
+                    durable.prepare(binding.ownerKey, assetId, source, selection)
+                    publish(
+                        binding,
+                        EmbeddedAssetImportEvent.StateChanged(
+                            PendingAssetJob(assetId, assetId),
+                            EmbeddedAssetImportPlacement(selection.displayName, selection.presentation),
+                        ),
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    deliverIfOpen { durable.preparationFailed(binding.ownerKey) }
+                } finally {
+                    // This cache copy is ours. The durable queue has its own committed spool copy.
+                    prepared?.delete()
+                }
+            }
+        }
+        if (admitted == null) durable.preparationFailed(binding.ownerKey)
     }
 
     /**

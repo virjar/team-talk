@@ -97,6 +97,9 @@ class LocalCacheImpl internal constructor(
             publishExternalUserProjectionLocked = organization::publishUserLocked,
         )
     }
+    private val chatDraftStore = LocalChatDraftStore(queries, cacheUseGate, stateLock,
+        conversations::writeComposerDraftLocked, conversations::publishComposerDraftLocked, conversations::needsComposerDraftMirrorLocked)
+    override val chatDrafts: LocalChatDrafts get() = chatDraftStore
     private val documents = LocalDocumentProjectionStore(queries, cacheUseGate, stateLock)
     override val tasks: LocalTasks = LocalTaskStore(queries, cacheUseGate, stateLock)
     override val documentComments: LocalDocumentComments = LocalDocumentCommentStore(queries, cacheUseGate, stateLock)
@@ -109,6 +112,8 @@ class LocalCacheImpl internal constructor(
         outboxLimits = outboxLimits,
         retentionLimits = messageRetentionLimits,
         refreshReactionsAfterPrune = reactions::refreshResidentAfterPrune,
+        chatAssetsChanged = chatDraftStore::changed,
+        retainReplacementAssets = { message, now -> chatDraftStore.retainOutgoingLocked(message, now, true) },
     )
     private val messageProjectionReset = LocalMessageProjectionResetStore(queries)
     private val deliveryLog = LocalDeliveryLogStore(queries, cacheUseGate, stateLock)
@@ -235,6 +240,9 @@ class LocalCacheImpl internal constructor(
         cacheUseGate.use {
             synchronized(stateLock) {
                 queries.transaction {
+                    queries.deleteChatComposerDraft(chatId)
+                    queries.deleteOutgoingChatAssetsByChat(chatId)
+                    queries.deleteChatAssetUploadsByChat(chatId)
                     queries.deleteConversationDraftOutbox(chatId)
                     queries.deleteConversationReadOutbox(chatId)
                     queries.deleteBotMessagesByChat(chatId)
@@ -245,6 +253,7 @@ class LocalCacheImpl internal constructor(
                     queries.deleteConversation(chatId)
                     queries.deleteChat(chatId)
                 }
+                chatDraftStore.changed()
                 messages.invalidateChatHistoryLocked(chatId)
                 entities.invalidateChatAndRemoveChatLocked(chatId)
                 conversations.removeChatProjectionLocked(chatId)
@@ -493,6 +502,23 @@ class LocalCacheImpl internal constructor(
 
     override fun rollbackOptimisticMessageEdit(lease: OptimisticMessageEditLease): Boolean =
         messages.rollbackOptimisticMessageEdit(lease)
+
+    override fun enqueueFromComposer(message: Message, expectedDraftRevision: Long, now: Long): OutgoingMessage =
+        cacheUseGate.use {
+            require(expectedDraftRevision > 0)
+            synchronized(stateLock) {
+                var mirror: PendingConversationDraft? = null
+                var consumed = false
+                val receipt = messages.enqueueFromComposer(message, now) { inserted ->
+                    if (inserted) chatDraftStore.retainOutgoingLocked(message, now, true)
+                    consumed = chatDraftStore.consumeLocked(message.chatId, expectedDraftRevision)
+                    if (consumed) mirror = conversations.writeComposerDraftLocked(message.chatId, null)
+                }
+                mirror?.let(conversations::publishComposerDraftLocked)
+                chatDraftStore.changed()
+                receipt
+            }
+        }
 
     override fun enqueueOutgoingMessage(
         message: Message,

@@ -69,8 +69,8 @@ Android 清理失败的退出会终止本应用进程，使重新打开必经 Ap
 
 Desktop 右键与 Android 长按会话菜单均可切换免打扰。普通 Markdown 草稿与已读先落本地持久 outbox，
 断网立即生效，认证恢复后同步到同账号其他设备；打开中的输入框消费远端草稿更新与清空，同时保留回复和
-消息编辑上下文。含内部资产 URI 的未发送聊天草稿因无 sidecar 草稿契约而只保留当前会话，
-不向 SQLite 或跨设备同步写入裸 URI。权威会话全量投影按有界 keyset 页收齐后原子替换，
+消息编辑上下文。富资产聊天草稿在本机 SQLite 保存完整 Markdown + sidecar、模式、光标及回复目标；私有有界源文件和
+上传命令支持强杀后恢复，联网继续上传。跨设备富资产草稿尚无 sidecar 契约，不向字符串镜像写裸 URI。权威会话全量投影按有界 keyset 页收齐后原子替换，
 其余服务端事实由事件收敛。实现与恢复顺序见[数据与同步](../03-architecture/data-and-sync.md)。
 
 </details>
@@ -104,7 +104,7 @@ PostgreSQL 的 `Chat.maxSeq` 只在 receipt/Conversation/事件事务中连续�
 | 普通文件下载策略 | 可用 | 小文件静默下载，大文件点击后下载，气泡展示传输状态 |
 | 图片、语音、视频与缩略图 | 部分 | 完整下载后在有界账号缓存播放，支持离线缓存命中；平台覆盖与系统信任签名、公证边界见下方说明 |
 | Markdown 富文本、mention、代码块 | 可用 | 输入和展示以 `RICH_TEXT` 为主；跨端渲染需持续回归 |
-| Markdown 上下文图片/文件 | 部分 | 聊天/回复/文档共用 sidecar 与上传屏障，同进程取消、重试和双端导入已落地；聊天富资产跨进程 spool/outbox 未完成。细节见下方同名说明。 |
+| Markdown 上下文图片/文件 | 部分 | 聊天/回复/文档共用 sidecar 与上传屏障；聊天具备本机跨进程草稿、私有源文件及上传 outbox，跨设备富资产草稿仍未完成。细节见下方同名说明。 |
 | 交互卡片 | 部分 | 发送、协议和基础渲染存在，动作回调、权限与业务路由尚未产品化 |
 | 表情回应 | 可用 | 双端回应操作、行级事件与聚合计数已实现；范围快照、实时增量和恢复共享本地回应投影。细节见下方同名说明。 |
 
@@ -116,7 +116,8 @@ HTTP 端点与 IM 服务同一部署，消息保存相对路径。两端按附�
 字节与对象槽；FileStore 持久 `STARTED` / `COMPLETED` 收据，使相同 identity 在响应丢失或服务重启后
 返回原 descriptor，改写 payload 返回 `409`。未引用上传默认 7 天后经有界扫描回收。
 大小对象容量、重启与重放入口见[部署验收](../09-testing/deployment-acceptance.md#附件容量基线入口)；
-GUI 跨进程附件 outbox 仍属[可恢复富资产创作](roadmap.md#client-04--可恢复富资产创作)。
+聊天 GUI 通过账号 SQLite 和私有 spool 恢复上传，消息入队与草稿消费使用同一事务；
+上传完成后仍由用户显式发送。边界见[富资产创作](../05-clients/rich-content.md)。
 
 </details>
 
@@ -138,10 +139,12 @@ Apple Silicon 原生媒体的完整实机矩阵和系统信任签名、公证仍
 scope-local URI + canonical sidecar 覆盖普通消息、回复作者正文和文档；服务端统一校验与索引引用，
 客户端复用上传屏障、认证渲染和画廊链路。聊天 Desktop 支持 picker/drop/binary paste，Android 支持
 picker/clipboard；文档 Desktop 支持 picker/drop/binary paste，Android 支持 picker、显式粘贴和物理键盘粘贴。
-Chat/Document 的有界待处理列表支持当前进程取消、失败重试和移除，稳定保留 `jobId`、`assetId` 与上传 identity；
+Chat/Document 共用有界待处理列表。聊天取消、失败重试和移除使用持久上传命令，文档导入仍为当前进程任务；
 迟到结果不会复活已删除引用。可视编辑器按当前选区连续插入图片/文件并保留正文顺序。
 
-尚不支持跨进程/跨设备富资产聊天草稿、持久本地源文件与有界 spool/outbox、断网续传和 Android 文档拖放。
+聊天在本机持久化完整草稿及最多 128 个、合计 512 MiB 的私有附件源，重启后继续上传；
+发送将不可变消息入队并原子消费对应草稿，持久确认前不清空输入。尚不支持跨设备富资产聊天草稿、
+文档未完成上传的跨进程恢复和 Android 文档拖放。
 Android 系统 picker 打开期间 Activity 重建的设备覆盖仍需补齐。真实导入、保存/发送、重进与回复双向互发
 按[附件验收](../09-testing/deployment-acceptance.md#聊天可视光标内嵌资产双端门禁)核对。
 

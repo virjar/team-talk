@@ -12,6 +12,22 @@ import kotlin.test.assertFailsWith
 
 class SessionLocalMutationQueueTest {
     @Test
+    fun `draft clearing never coalesces backwards across a send barrier`() {
+        val executor = ManualLocalMutationExecutor()
+        val calls = mutableListOf<String>()
+        val queue = queue(executor, operations(
+            setDraft = { _, draft -> calls += "draft:$draft"; 1L },
+            enqueueOutgoing = { calls += "send" },
+        ))
+        queue.setDraft("chat", "recover me")
+        queue.enqueueOutgoing(message("outgoing")) { throw it }
+        queue.setDraft("chat", null)
+        executor.runAll()
+        assertEquals(listOf("draft:recover me", "send", "draft:null"), calls)
+        queue.closeAndDrain()
+    }
+
+    @Test
     fun `admission is non-inline and FIFO coalescing retains the latest local facts`() {
         val executor = ManualLocalMutationExecutor()
         val calls = mutableListOf<String>()

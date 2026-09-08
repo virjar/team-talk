@@ -37,7 +37,7 @@ class ChatViewModel(
     private val messageRepo: MessageRepository,
     eventProcessor: EventProcessor,
     typingEvents: Flow<Pair<String, String>> = eventProcessor.typingEvents,
-    private val connectionState: StateFlow<ConnectionState>,
+    val connectionState: StateFlow<ConnectionState>,
     private val myUid: String = "",
     /** 每一个 UI 发起的本地修改的确切 session 非阻塞准入。 */
     private val localMutations: SessionLocalMutationWriter,
@@ -46,6 +46,7 @@ class ChatViewModel(
     private val monotonicNowMillis: () -> Long = { System.nanoTime() / 1_000_000L },
     private val localData: UiLocalDataBoundary = UiLocalDataBoundary(),
     private val telemetry: ClientUiTelemetrySink = NoopClientUiTelemetrySink,
+    private val prepareFailedMessageReplacement: suspend (String, Message) -> Message = { _, message -> message },
     dispatcher: kotlinx.coroutines.CoroutineDispatcher = kotlinx.coroutines.Dispatchers.Default,
     onAuthExpired: () -> Unit = {},
 ) : BaseViewModel(dispatcher, onAuthExpired) {
@@ -497,6 +498,44 @@ class ChatViewModel(
         if (!admitted) actionTelemetry.failSend(sending.clientMsgId)
     }
 
+    /** Completion means outbox + projection + exact draft consumption committed locally, not server ACK. */
+    fun sendComposerMessage(message: Message, draftRevision: Long, onResult: (Boolean) -> Unit) {
+        val sending = message.copy(sendStatus = Message.SEND_STATUS_SENDING)
+        actionTelemetry.startSend(sending.clientMsgId)
+        localMutations.enqueueFromComposer(
+            message = sending,
+            expectedDraftRevision = draftRevision,
+            onCommitted = { onResult(true) },
+            onFailure = { failure ->
+                actionTelemetry.failSend(sending.clientMsgId)
+                setError("发送失败，草稿未清空: ${failure.message ?: "本地队列不可用"}")
+                onResult(false)
+            },
+        )
+    }
+
+    /** Rebind a persisted reply outside the visible page; a server denial never falls back to cached content. */
+    suspend fun recoverComposerReply(clientMsgId: String, serverSeq: Long): Message? {
+        val cached = localData.run { localCache.findMessage(chatId, clientMsgId) }
+        val sequence = serverSeq.takeIf { it > 0L } ?: cached?.serverSeq ?: return null
+        val message = try {
+            messageRepo.getMessage(chatId, sequence).getOrThrow()
+        } catch (_: AppError.Network) {
+            cached
+        } catch (_: AppError.Timeout) {
+            cached
+        } catch (_: AppError.AuthExpired) {
+            handleAuthExpired()
+            null
+        } catch (_: AppError) {
+            null
+        }
+        return message?.takeIf {
+            it.clientMsgId == clientMsgId && it.serverSeq == sequence && it.serverSeq > 0L &&
+                it.flags and Message.FLAG_REVOKED == 0
+        }
+    }
+
     private fun probeSendTerminal(clientMsgId: String) {
         scope.launch {
             try {
@@ -575,6 +614,25 @@ class ChatViewModel(
         onResult: (Boolean) -> Unit = {},
     ) {
         actionTelemetry.startSend(replacement.clientMsgId)
+        scope.launch {
+            try {
+                val prepared = prepareFailedMessageReplacement(failedClientMsgId, replacement)
+                enqueueFailedReplacement(failedClientMsgId, prepared, onResult)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                actionTelemetry.failSend(replacement.clientMsgId)
+                setError(failure.message ?: "重发附件准备失败，请重试")
+                onResult(false)
+            }
+        }
+    }
+
+    private fun enqueueFailedReplacement(
+        failedClientMsgId: String,
+        replacement: Message,
+        onResult: (Boolean) -> Unit,
+    ) {
         val admitted = localMutations.replaceTerminalFailure(
             chatId = chatId,
             clientMsgId = failedClientMsgId,

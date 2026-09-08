@@ -24,6 +24,8 @@ internal interface SessionLocalMutationExecutor {
 internal expect fun createSessionLocalMutationExecutor(): SessionLocalMutationExecutor
 
 internal class SessionLocalMutationOperations(
+    val saveChatDraft: (ChatDraftSnapshot) -> ChatDraftSnapshot = { error("Chat drafts unavailable") },
+    val enqueueFromComposer: (Message, Long) -> OutgoingMessage = { _, _ -> error("Composer submission unavailable") },
     val setDraft: (String, String?) -> Long,
     val draftCommitted: (String, Long) -> Unit,
     val markRead: (String, Long) -> Long,
@@ -46,6 +48,18 @@ internal class SessionLocalMutationOperations(
  * 已被通知。
  */
 interface SessionLocalMutationWriter {
+    fun saveChatDraft(
+        snapshot: ChatDraftSnapshot,
+        onCommitted: (ChatDraftSnapshot) -> Unit = {},
+        onFailure: (Throwable) -> Unit = {},
+    ): Long? { onFailure(LocalMutationRejectedException("Chat drafts unavailable")); return null }
+    fun enqueueFromComposer(
+        message: Message,
+        expectedDraftRevision: Long,
+        onCommitted: (OutgoingMessage) -> Unit,
+        onFailure: (Throwable) -> Unit,
+    ): Boolean { onFailure(LocalMutationRejectedException("Composer submission unavailable")); return false }
+
     fun setDraft(chatId: String, draft: String?, onFailure: (Throwable) -> Unit = {}): Boolean
     fun markRead(chatId: String, readSeq: Long, onFailure: (Throwable) -> Unit = {}): Boolean
     fun insertUploadingPlaceholder(
@@ -87,7 +101,9 @@ class SessionLocalMutationQueue internal constructor(
     private val ownerUid: String,
     private val operations: SessionLocalMutationOperations,
     private val executor: SessionLocalMutationExecutor = createSessionLocalMutationExecutor(),
+    initialChatDraftRevision: Long = 0,
 ) : SessionLocalMutationWriter {
+    private var chatDraftRevision = initialChatDraftRevision
     private val lock = Any()
     private val pending = ArrayDeque<LocalMutationCommand>()
     private val coalesced = linkedMapOf<LocalMutationKey, LocalMutationCommand>()
@@ -98,6 +114,32 @@ class SessionLocalMutationQueue internal constructor(
 
     init {
         require(ownerUid.isNotBlank()) { "Local mutation owner uid must not be blank" }
+    }
+
+    override fun saveChatDraft(
+        snapshot: ChatDraftSnapshot,
+        onCommitted: (ChatDraftSnapshot) -> Unit,
+        onFailure: (Throwable) -> Unit,
+    ): Long? {
+        lateinit var command: LocalMutationCommand.ComposerDraft
+        val decision = synchronized(lock) {
+            check(chatDraftRevision < Long.MAX_VALUE) { "Chat draft revision exhausted" }
+            command = LocalMutationCommand.ComposerDraft(snapshot.copy(revision = ++chatDraftRevision), onCommitted, onFailure)
+            enqueueLocked(command)
+        }
+        decision.failure?.let { notifyRejected(command, it) }
+        return if (decision.accepted) command.snapshot.revision else null
+    }
+
+    override fun enqueueFromComposer(
+        message: Message,
+        expectedDraftRevision: Long,
+        onCommitted: (OutgoingMessage) -> Unit,
+        onFailure: (Throwable) -> Unit,
+    ): Boolean {
+        requireOwnedMessage(message)
+        require(expectedDraftRevision > 0)
+        return enqueueOrdered(LocalMutationCommand.ComposerSend(message, expectedDraftRevision, onCommitted, onFailure))
     }
 
     override fun setDraft(
@@ -304,6 +346,8 @@ class SessionLocalMutationQueue internal constructor(
     private fun enqueueLocked(command: LocalMutationCommand): AdmissionDecision {
         admissionFailureLocked()?.let { return AdmissionDecision.rejected(it) }
         capacityFailureLocked()?.let { return AdmissionDecision.rejected(it) }
+        // 一个有序命令是草稿合并屏障，后续空稿不能覆盖它前面的旧队列位置。
+        coalesced.entries.removeAll { it.key.kind == LocalMutationKind.DRAFT }
         pending.addLast(command)
         return scheduleWorkerLocked(command)
     }
@@ -395,6 +439,12 @@ class SessionLocalMutationQueue internal constructor(
 
     private fun execute(command: LocalMutationCommand) {
         when (command) {
+            is LocalMutationCommand.ComposerDraft -> notifyResultCallback(command.onCommitted) {
+                operations.saveChatDraft(command.snapshot)
+            }
+            is LocalMutationCommand.ComposerSend -> notifyResultCallback(command.onCommitted) {
+                operations.enqueueFromComposer(command.message, command.revision)
+            }
             is LocalMutationCommand.Draft -> {
                 val generation = operations.setDraft(command.chatId, command.draft)
                 operations.draftCommitted(command.chatId, generation)
@@ -431,6 +481,8 @@ class SessionLocalMutationQueue internal constructor(
 
     private fun commandFailure(command: LocalMutationCommand, failure: Throwable) {
         when (command) {
+            is LocalMutationCommand.ComposerDraft -> notifyCallback(command.onFailure, failure)
+            is LocalMutationCommand.ComposerSend -> notifyCallback(command.onFailure, failure)
             is LocalMutationCommand.Draft -> notifyCallback(command.onFailure, failure)
             is LocalMutationCommand.Read -> notifyCallback(command.onFailure, failure)
             is LocalMutationCommand.InsertMessage -> notifyCallback(command.onFailure, failure)
@@ -488,6 +540,9 @@ private data class AdmissionDecision(val accepted: Boolean, val failure: Throwab
 }
 
 private sealed interface LocalMutationCommand {
+    data class ComposerDraft(val snapshot: ChatDraftSnapshot, val onCommitted: (ChatDraftSnapshot) -> Unit, val onFailure: (Throwable) -> Unit) : LocalMutationCommand
+    data class ComposerSend(val message: Message, val revision: Long, val onCommitted: (OutgoingMessage) -> Unit, val onFailure: (Throwable) -> Unit) : LocalMutationCommand
+
     data class Draft(
         val chatId: String,
         val draft: String?,

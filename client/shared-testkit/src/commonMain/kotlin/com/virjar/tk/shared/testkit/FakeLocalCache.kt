@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.testkit
 
+import com.virjar.tk.shared.client.*
 import com.virjar.tk.shared.client.MAX_TERMINAL_OUTGOING_RECEIPTS
 import com.virjar.tk.shared.client.LocalCache
 import com.virjar.tk.protocol.MessageReactionEventPayload
@@ -44,6 +45,55 @@ class FakeLocalCache(
     terminalReceiptLimit: Int = MAX_TERMINAL_OUTGOING_RECEIPTS,
     initialDatasetId: String? = FAKE_SYNC_DATASET_ID,
 ) : LocalCache {
+    private val composerDrafts = object : LocalChatDrafts {
+        override val changes = MutableStateFlow(0L)
+        private val drafts = linkedMapOf<String, ChatDraftSnapshot>()
+        private val uploads = linkedMapOf<String, ChatAssetUpload>()
+        override fun get(chatId: String) = drafts[chatId]
+        override fun maxRevision() = drafts.values.maxOfOrNull { it.revision } ?: 0L
+        override fun save(snapshot: ChatDraftSnapshot): ChatDraftSnapshot {
+            if ((drafts[snapshot.chatId]?.revision ?: -1) < snapshot.revision) {
+                drafts[snapshot.chatId] = snapshot
+                changes.value++
+            }
+            return checkNotNull(drafts[snapshot.chatId])
+        }
+        fun consume(chatId: String, revision: Long): Boolean {
+            if (drafts[chatId]?.revision != revision) return false
+            drafts[chatId] = ChatDraftSnapshot(chatId, revision)
+            uploads.entries.removeAll { it.value.chatId == chatId }
+            changes.value++
+            return true
+        }
+        override fun retainedSourceIds() = uploads.values.mapTo(hashSetOf()) { it.sourceId }
+        override fun upload(assetId: String) = uploads[assetId]
+        override fun nextUploadWakeAt(includeRetries: Boolean): Long? = null
+        override fun outgoingAssets(chatId: String, clientMsgId: String): List<ChatAssetUpload> = emptyList()
+        override fun prepareReplacement(ownerUid: String, chatId: String, clientMsgId: String, assetIds: Set<String>?): List<ChatAssetUpload> = emptyList()
+        override fun jobs(chatId: String?) = uploads.values.filter { chatId == null || it.chatId == chatId }
+        override fun register(job: ChatAssetUpload): ChatAssetUpload = uploads.getOrPut(job.assetId) { job.also { changes.value++ } }
+        override fun claimNext(now: Long): ChatAssetUpload? {
+            val selected = uploads.values.firstOrNull { it.state == ChatAssetUploadState.QUEUED && it.nextAttemptAt <= now } ?: return null
+            return selected.copy(state = ChatAssetUploadState.UPLOADING, attempt = selected.attempt + 1).also { uploads[it.assetId] = it; changes.value++ }
+        }
+        override fun complete(assetId: String, attempt: Long, asset: EmbeddedAsset): Boolean {
+            val previous = uploads[assetId]?.takeIf { it.attempt == attempt && it.state == ChatAssetUploadState.UPLOADING } ?: return false
+            uploads[assetId] = previous.copy(state = ChatAssetUploadState.READY, asset = asset)
+            changes.value++
+            return true
+        }
+        override fun fail(assetId: String, attempt: Long, reason: String, retryAt: Long): Boolean {
+            val previous = uploads[assetId]?.takeIf { it.attempt == attempt && it.state == ChatAssetUploadState.UPLOADING } ?: return false
+            uploads[assetId] = previous.copy(state = if (retryAt > 0) ChatAssetUploadState.QUEUED else ChatAssetUploadState.FAILED, failure = reason, nextAttemptAt = retryAt)
+            changes.value++
+            return true
+        }
+        override fun retry(assetId: String) { uploads[assetId]?.let { uploads[assetId] = it.copy(state = ChatAssetUploadState.QUEUED, failure = null); changes.value++ } }
+        override fun remove(assetId: String) { uploads.remove(assetId); changes.value++ }
+        override fun expireUploads(now: Long) = Unit
+        override fun recoverUploads() { uploads.toMap().forEach { (id, job) -> if (job.state == ChatAssetUploadState.UPLOADING) uploads[id] = job.copy(state = ChatAssetUploadState.QUEUED) }; changes.value++ }
+    }
+    override val chatDrafts: LocalChatDrafts get() = composerDrafts
     override val tasks: com.virjar.tk.shared.client.LocalTasks = FakeTasks()
     override val documentComments: com.virjar.tk.shared.client.LocalDocumentComments = FakeDocumentComments()
     // 消息存储：chatId → 按时间倒序的消息列表（最新在前）
@@ -165,6 +215,12 @@ class FakeLocalCache(
 
     override fun rollbackOptimisticMessageEdit(lease: OptimisticMessageEditLease): Boolean =
         cacheUseGate.use { optimisticMessageEdits.rollback(lease) }
+
+    override fun enqueueFromComposer(message: Message, expectedDraftRevision: Long, now: Long): OutgoingMessage {
+        val receipt = enqueueOutgoingMessage(message, now)
+        if (composerDrafts.consume(message.chatId, expectedDraftRevision)) setConversationDraft(message.chatId, null)
+        return receipt
+    }
 
     override fun enqueueOutgoingMessage(
         message: Message,

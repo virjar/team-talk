@@ -291,6 +291,31 @@ internal class LocalConversationProjectionStore(
         }
     }
 
+    internal fun needsComposerDraftMirrorLocked(chatId: String, draft: String?): Boolean {
+        val current = if (localDraftOverrides.containsKey(chatId)) localDraftOverrides[chatId]?.draft
+            else conversationsById[chatId]?.draft
+        return current != draft
+    }
+
+    /** 数据库写入加入调用方的 outgoing 事务；内存投影只在该事务成功之后发布。 */
+    internal fun writeComposerDraftLocked(chatId: String, draft: String?): PendingConversationDraft {
+        admitConversationDraftLocked(chatId, draft)
+        check(draftOperationGeneration < Long.MAX_VALUE)
+        val generation = ++draftOperationGeneration
+        queries.upsertConversationDraftOutbox(chatId, draft, generation, DRAFT_MIRROR_PENDING)
+        queries.setConversationDraft(draft, chatId)
+        return PendingConversationDraft(chatId, draft, generation)
+    }
+
+    internal fun publishComposerDraftLocked(clear: PendingConversationDraft) {
+        replaceDraftOverrideLocked(clear.chatId, LocalDraftOverride(clear.draft, clear.generation, DRAFT_MIRROR_PENDING))
+        conversationsById[clear.chatId]?.let { conversation ->
+            conversationsById[clear.chatId] = conversation.copy(draft = clear.draft)
+            publishConversations()
+        }
+        markConversationMutatedLocked(clear.chatId)
+    }
+
     fun getPendingConversationDrafts(): List<PendingConversationDraft> = cacheUseGate.use {
         synchronized(stateLock) {
             localDraftOverrides.mapNotNull { (chatId, override) ->

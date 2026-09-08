@@ -17,6 +17,8 @@ internal class LocalMessageStore(
     private val outboxLimits: LocalOutboxLimits,
     private val retentionLimits: LocalMessageRetentionLimits,
     refreshReactionsAfterPrune: (chatId: String) -> Unit = {},
+    private val chatAssetsChanged: () -> Unit = {},
+    retainReplacementAssets: (Message, Long) -> Unit = { _, _ -> },
 ) {
     private val historyLeases = MessageHistoryLeaseGate()
     private val projectionPersistence = LocalMessageProjectionPersistence(queries)
@@ -44,6 +46,8 @@ internal class LocalMessageStore(
         deleteResident = { chatId, clientMsgId ->
             windowRegistry.residentWindow(chatId)?.deleteMessage(clientMsgId)
         },
+        assetsChanged = chatAssetsChanged,
+        retainReplacementAssets = retainReplacementAssets,
         replaceResident = { chatId, clientMsgId, replacement ->
             windowRegistry.residentWindow(chatId)?.replaceMessage(clientMsgId, replacement)
         },
@@ -192,6 +196,9 @@ internal class LocalMessageStore(
             true
         }
     }
+
+    fun enqueueFromComposer(message: Message, now: Long, commit: (Boolean) -> Unit): OutgoingMessage =
+        outgoingRecovery.enqueue(message, now, null, commit)
 
     fun enqueueOutgoingMessage(
         message: Message,
@@ -380,10 +387,12 @@ internal class LocalMessageStore(
                         nextOutgoingCompletionTime(queries, now),
                         localOrdinal,
                     )
+                    releaseOutgoingChatAssets(queries, row.chat_id, row.client_msg_id)
                     pruneTerminalOutgoingReceiptsLocked()
                     completed = row
                 }
                 completed?.let { row ->
+                    chatAssetsChanged()
                     // 防止更旧的在途最新页移除这条已确认的常驻行。
                     historyLeases.recordLiveAuthoritativeMutation(row.chat_id, row.client_msg_id)
                     updateResidentOptimisticMessage(
@@ -672,6 +681,8 @@ internal class LocalMessageStore(
     private fun promoteOutgoingFromAuthoritativeProjection(message: Message, now: Long) {
         if (message.serverSeq <= 0L) return
         queries.markAuthoritativeMessageSent(message.chatId, message.clientMsgId)
+        releaseConfirmedOutgoingChatAssets(queries)
+        chatAssetsChanged()
         val row = queries.selectOutgoingMessageById(message.chatId, message.clientMsgId)
             .executeAsOneOrNull() ?: return
         if (row.state == OutgoingMessageState.SUCCESS.code) return
@@ -707,6 +718,7 @@ internal class LocalMessageStore(
                 )
             }
             queries.reconcileOutgoingProjectionStatuses()
+            releaseConfirmedOutgoingChatAssets(queries)
 
             // 现有的乐观投影已由上面的集合更新修复。只有真正缺失的非成功投影需要
             // protobuf 解码并重新插入。
@@ -733,6 +745,7 @@ internal class LocalMessageStore(
             }
             pruneTerminalOutgoingReceiptsLocked()
         }
+        chatAssetsChanged()
         repairedProjection.forEach { message ->
             windowRegistry.residentWindow(message.chatId)?.upsert(message)
         }

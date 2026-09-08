@@ -65,6 +65,8 @@ class ConversationRepository internal constructor(
      * LocalCache 同时写入持久化 outbox，因此进程重建也能区分“未操作”
      * 与“明确清空”，不会让服务端旧草稿复活。
     */
+    internal fun notifyLocalDraftCommitted() = onPendingMirrorCommitted()
+
     fun setDraftLocal(chatId: String, draft: String?): Long {
         val generation = localCache.setConversationDraft(chatId, draft)
         onPendingMirrorCommitted()

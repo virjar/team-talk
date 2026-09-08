@@ -126,6 +126,16 @@ class SendQueue(
             receipt
         }
 
+    internal fun enqueueFromComposer(message: Message, expectedDraftRevision: Long): OutgoingMessage =
+        callbackGate.use(callbackLease) {
+            requireWorkerActive()
+            require(message.senderUid == ownerUid)
+            val receipt = localCache.enqueueFromComposer(canonicalizeOutboundMessage(message), expectedDraftRevision, clock())
+            refreshSnapshot()
+            wake.trySend(Unit)
+            receipt
+        }
+
     /** 读取回执而不触及 worker 状态；期望的指纹在失配时按失败关闭处理。 */
     fun receipt(
         chatId: String,

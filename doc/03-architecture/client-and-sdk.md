@@ -340,6 +340,25 @@ Compose 或原生平台回调不直接持有 session 业务 owner。同步动作
 CLOSING，同步捕获最后一帧并注销 capture handle，然后才销毁 feature/repository；迟到的
 debounce 或 `onDispose` 在 CLOSED 后只能无害失败，不能穿过已 quiesce 的 session。
 
+聊天完整草稿由 `LocalChatDrafts` 和账号 SQLite 持有；`ChatComposerContextStore` 只保留 UI 热帧，
+通过 `SessionLocalMutationWriter` 有序保存 Markdown、sidecar、选区、模式和回复目标。恢复经
+`UiLocalDataBoundary` 在 IO 读取，完成前阻止输入/导入，避免空首帧覆盖已有资料。普通会话字符串镜像
+只接收不含内部资产引用的 Markdown，富资产草稿不借该协议传递不完整内容。
+
+`ClientSession.createChatAssetUploads` 拥有专用 HTTP repository 和单一上传 worker。Android 的
+`noBackupFilesDir`、Desktop 已认领安装根下的 `chat-assets/<deployment>/<dataset>/<uid>` 保存固定
+字节源，源文件及上传命令各自有条目/容量上限。worker 在认证恢复后处理仍被草稿引用的命令，以及
+用户明确启动的失败消息附件重传；READY 先持久保存描述符，页面观察只负责呈现。删除引用先释放
+草稿的持有关系；如果 outbox 仍持有该资产，
+上传记录和源继续保留。没有持有方的上传记录才会移除，迟到完成通过记录存在性与 attempt CAS 被拒绝。
+消息准入在同一事务内把源引用交给 outbox，服务端成功确认或显式丢弃才删除该引用。终止性失败
+保留源，允许新身份替换的消息重发前从固定源重新上传；结果不确定的原消息保持冻结。草稿和 outbox
+都不再引用后才回收源。普通退出和重启保留这套可靠事实，账号封禁清理包含其精确命名空间。
+
+用户发送时，消息 outbox 插入、乐观消息写入及对应草稿 revision 的消费在同一 SQLite 事务中完成；
+UI 只在提交确认后清空仍匹配的编辑帧。会话关闭先终止并排空上传 worker，再排空已准入本地写入，最后
+关闭 SQLite；平台网关和页面只借用持久上传能力，不拥有它的生命周期。
+
 Android 的独立文档草稿由进程级单写者写入 `noBackupFilesDir`。草稿、创建命令和破坏性 operation
 outbox 统一按 canonical deployment 指纹 + `datasetId` + uid 的不可变 owner key 合并到固定容量的
 串行队列，生命周期 barrier 只记录已接收的任务序号，不占队列槽；删除/清空会先使旧代次失效，再
@@ -349,7 +368,7 @@ outbox 统一按 canonical deployment 指纹 + `datasetId` + uid 的不可变 ow
 barrier/close 同时覆盖接管任务并保留前序失败；接管可以在新的健康队列世代继续落盘，但不会抹去
 诊断，后台 `flush`/恢复读取明确观察失败后才确认该失败已经交付。
 
-Desktop 的草稿也使用同一 deployment + dataset + uid owner 语义，把编辑帧限制为固定容量的单写
+Desktop 的独立文档草稿也使用同一 deployment + dataset + uid owner 语义，把编辑帧限制为固定容量的单写
 合并队列；正文使用独立内容寻址记录，原子文件只发布小型 manifest 与 tombstone。普通 Compose
 disposal 只退休 UI owner，不冒充 session 结束原因；认证
 桥必须完整传递五值 `SessionEndReason`。只有 `USER_LOGOUT` 单调删除；`AUTH_REVOKED`、
@@ -947,8 +966,11 @@ outgoing/Bot delivery log、已读镜像 outbox、会话预览元组、组织单
 有界投影、GUI 建群/好友/邀请链接/群机器人凭据/群文件五类可靠命令的持久 outbox（各自有界）、
 dataset + cursor 绑定的 sync state、完整认证 Attachment 描述符与 personal peer uid、
 revision CAS、带 canonical 内嵌资产 sidecar 的 ReplyBody 消息字节、表情回应的行级服务端投影、
-不可变 `(createdAt, nodeId)` 同级顺序、文档 move/rename durable outbox，以及评论分页与待发送意图。
-SQLDelight `1.sqm` 在现有数据库内追加评论表，保留原有本地事实。outgoing 回执和本地失败
+不可变 `(createdAt, nodeId)` 同级顺序、文档 move/rename durable outbox、评论分页与待发送意图，以及
+完整聊天草稿、上传命令和待发消息持有的源引用。聊天活跃草稿最多 1,000 个、合计 48 MiB，空草稿
+墓碑只保留最新 128 个，独立 revision clock 保持单调；本机未发送事实不按普通缓存驱逐。
+SQLDelight 连续追加迁移保留原有本地事实，聊天恢复表与 outbox 源引用分别由 `3.sqm`、`4.sqm`
+补入，数据库 schema 为 5。outgoing 回执和本地失败
 消息投影共用同一稳定失败分类；失败乐观投影在 receipt GC 后保留最小稳定失败结果；发布前的
 Document 客户端权限状态机与撤权墓碑已删除，干净投影从服务端重建。
 群机器人命令在请求前持久化客户端生成的唯一 token，只有用户

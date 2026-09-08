@@ -4,6 +4,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
@@ -13,6 +15,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import com.mohamedrejeb.richeditor.model.rememberRichTextState
 import com.virjar.tk.protocol.body.RichTextBody
+import com.virjar.tk.protocol.body.MarkdownAssetPolicy
 import com.virjar.tk.protocol.body.buildMentionMarkdown
 import com.virjar.tk.protocol.body.markdownContentOrNull
 import com.virjar.tk.protocol.model.ChatType
@@ -171,7 +174,11 @@ fun ChatPanel(
         mutableStateOf(restoredComposerContext?.replyTarget ?: SavedChatReplyTarget())
     }
     // Message 属于 messages 流，不进入 Saver；流刷新或 Activity 重建后按稳定 clientMsgId 重绑定。
-    val replyingTo = savedReplyTarget.bind(messages)
+    var recoveredReply by remember(chatId) { mutableStateOf<Message?>(null) }
+    var replyRecoveryAttempt by remember(chatId) { mutableIntStateOf(0) }
+    val replyingTo = savedReplyTarget.bind(messages) ?: recoveredReply?.takeIf {
+        it.clientMsgId == savedReplyTarget.clientMsgId
+    }
     val editingSessionSaver = remember(chatId, composerContextStore) {
         savedChatEditingSessionSaver(chatId, composerContextStore)
     }
@@ -186,6 +193,9 @@ fun ChatPanel(
         message.serverSeq == 0L && message.sendStatus == Message.SEND_STATUS_FAILED
     }
     var editingSaving by remember(chatId) { mutableStateOf(false) }
+    var composerSending by remember(chatId) { mutableStateOf(false) }
+    var composerRecoveryFailed by remember(chatId) { mutableStateOf(false) }
+    var composerRecoveryAttempt by remember(chatId) { mutableIntStateOf(0) }
     // WYSIWYG 富文本编辑状态（fork 源码引入，见 richeditor/FORK.md）
     // 按 chatId 隔离，确保切换会话时旧 DisposableEffect 仍能读取旧会话的最后一帧草稿。
     val richState = key(chatId) { rememberRichTextState() }
@@ -279,6 +289,7 @@ fun ChatPanel(
             ChatComposerMode.MARKDOWN, ChatComposerMode.PREVIEW -> sourceInput.selection
         }
         return ChatComposerContext(
+            draftRevision = composerContextStore.revision(chatId),
             replyTarget = savedReplyTarget,
             editingSession = editingSession,
             markdown = composerMarkdownSnapshot(),
@@ -287,6 +298,11 @@ fun ChatPanel(
             assets = runCatching {
                 projectEmbeddedAssetManifest(composerMarkdownSnapshot(), embeddedAssetSnapshot.assets)
             }.getOrDefault(emptyList()),
+            pendingAssetIds = runCatching {
+                val ready = embeddedAssetSnapshot.assets.map { it.assetId }.toSet()
+                MarkdownAssetPolicy.references(composerMarkdownSnapshot()).mapNotNull { it.assetId }
+                    .filter { it !in ready }.distinct()
+            }.getOrDefault(emptyList()),
             mode = composerMode,
             selectionStart = selection.start,
             selectionEnd = selection.end,
@@ -294,8 +310,11 @@ fun ChatPanel(
         )
     }
 
-    fun persistComposerContext() {
-        composerContextStore.save(chatId, captureComposerContext())
+    fun persistComposerContext(): Long? {
+        if (!composerReady) return null
+        var revision: Long? = null
+        draftLifecycleBridge.publishIfOpen { revision = composerContextStore.save(chatId, captureComposerContext()) }
+        return revision
     }
 
     fun captureEditingSession(editingClientMsgId: String): SavedChatEditingSession {
@@ -315,6 +334,7 @@ fun ChatPanel(
             selectionStart = selection.start,
             selectionEnd = selection.end,
             replyingClientMsgId = savedReplyTarget.clientMsgId,
+            replyingServerSeq = savedReplyTarget.serverSeq,
         )
     }
 
@@ -348,13 +368,13 @@ fun ChatPanel(
             }
             ChatComposerMode.MARKDOWN, ChatComposerMode.PREVIEW -> composerMode = suspended.suspendedMode
         }
-        savedReplyTarget = SavedChatReplyTarget(suspended.replyingClientMsgId)
+        savedReplyTarget = SavedChatReplyTarget(suspended.replyingClientMsgId, suspended.replyingServerSeq)
         restoreComposerFocus = suspended.suspendedMode != ChatComposerMode.PREVIEW
         persistComposerContext()
     }
 
     fun beginEditing(message: Message) {
-        if (editingSaving) return
+        if (editingSaving || composerSending || !composerReady) return
         if (
             hasReferencedIncompleteEmbeddedAssetJob(
                 composerMarkdownSnapshot(),
@@ -364,8 +384,12 @@ fun ChatPanel(
             viewModel.onError("附件仍在上传或等待处理，请完成或删除后再编辑消息")
             return
         }
-        if (!editingSessionActive) editingSession = captureEditingSession(message.clientMsgId)
+        if (!editingSessionActive) {
+            if (persistComposerContext() == null) return
+            editingSession = captureEditingSession(message.clientMsgId)
+        }
         savedReplyTarget = SavedChatReplyTarget()
+        persistComposerContext()
     }
 
     fun cancelEditing() {
@@ -388,8 +412,8 @@ fun ChatPanel(
 
     val embeddedAssetImports = admittedMedia.embeddedAssetImports
     val embeddedAssetImportOwnerKey = chatEmbeddedAssetImportOwnerKey(chatId, editingSession)
-    DisposableEffect(embeddedAssetImportOwnerKey, embeddedAssetImports, actionAdmission) {
-        val registration = embeddedAssetImports?.bind(
+    DisposableEffect(embeddedAssetImportOwnerKey, embeddedAssetImports, actionAdmission, composerReady) {
+        val registration = if (!composerReady) null else embeddedAssetImports?.bind(
             ownerKey = embeddedAssetImportOwnerKey,
             sink = EmbeddedAssetImportEventSink { event ->
                 actionAdmission.runIfOpen {
@@ -404,7 +428,29 @@ fun ChatPanel(
 
     // 首次进入会话使用 cachedDraft；Android 重建时 TextFieldValue/Mode 由 Saver 恢复。
     // 只在每个 ChatPanel 实例挂载时恢复 WYSIWYG 内部状态，不让后到的草稿回显覆盖用户输入。
-    LaunchedEffect(chatId) {
+    LaunchedEffect(chatId, composerRecoveryAttempt) {
+        composerRecoveryFailed = false
+        val recovered = try {
+            composerContextStore.hydrate(chatId)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            composerRecoveryFailed = true
+            viewModel.onError("恢复聊天草稿失败，请重试")
+            return@LaunchedEffect
+        }
+        if (recovered != null && recovered != restoredComposerContext) {
+            // Disk is authoritative after process death, including an empty consumed revision.
+            resetChatComposerState(richState)
+            sourceInput = TextFieldValue(recovered.markdown, TextRange(recovered.selectionStart, recovered.selectionEnd))
+            embeddedAssetSnapshot = EmbeddedAssetImportSnapshot(assets = recovered.assets)
+            composerMode = recovered.mode
+            savedReplyTarget = recovered.replyTarget
+            editingSession = recovered.editingSession
+            visualBaseline = recovered.visualBaseline
+            draftSync.restoreLocal(recovered.markdown)
+            composerHydrated = false
+        }
         if (!composerHydratedState.value) {
             val restoredMarkdown = sourceInputState.value.text
             val restoredMode = composerModeState.value
@@ -412,7 +458,7 @@ fun ChatPanel(
                 restoredMode == ChatComposerMode.VISUAL && canUseChatVisualEditor(restoredMarkdown) -> {
                     enterVisualMarkdown(
                         markdown = restoredMarkdown,
-                        preservedBaseline = restoredComposerContext?.visualBaseline,
+                        preservedBaseline = recovered?.visualBaseline ?: restoredComposerContext?.visualBaseline,
                         selection = sourceInputState.value.selection,
                     )
                 }
@@ -426,12 +472,21 @@ fun ChatPanel(
         composerReady = true
     }
 
+    val composerConnection by viewModel.connectionState.collectAsState()
+    LaunchedEffect(chatId, composerReady, savedReplyTarget, composerConnection, replyRecoveryAttempt) {
+        recoveredReply = null
+        if (!composerReady || savedReplyTarget.clientMsgId.isEmpty() || savedReplyTarget.bind(messages) != null) return@LaunchedEffect
+        recoveredReply = viewModel.recoverComposerReply(savedReplyTarget.clientMsgId, savedReplyTarget.serverSeq)
+    }
+
     // callback holder 必须按 chatId 隔离。同一 composition slot 从 A 切到 B 时，
     // A 的 onDispose 仍应写回 A，不能读到 B 刚更新进去的 callback。
     val latestDraftChangeState = key(chatId) { rememberUpdatedState(onDraftChange) }
 
-    fun publishOrdinaryDraft(markdown: String) =
-        draftSync.publish(markdown, latestDraftChangeState.value)
+    fun publishOrdinaryDraft(markdown: String) {
+        if (composerContextStore.hasPersistence) draftSync.restoreLocal(markdown)
+        else draftSync.publish(markdown, latestDraftChangeState.value)
+    }
     // 只替换未被本机改动的外部镜像。空字符串也是一次更新，不能只处理首次非空 hydrate。
     LaunchedEffect(chatId, composerReady, cachedDraft) {
         if (!composerReady || cachedDraft == null) return@LaunchedEffect
@@ -452,16 +507,17 @@ fun ChatPanel(
 
     // 可视编辑的 saveable 镜像 + 草稿防抖。离开页面时 DisposableEffect 仍会立即 flush。
     val richTextSignal = richState.annotatedString
-    LaunchedEffect(composerReady, composerMode, sourceInput.text, richTextSignal, editingSessionActive) {
+    LaunchedEffect(composerReady, composerMode, sourceInput, richTextSignal, richState.selection,
+        editingSessionActive, savedReplyTarget, embeddedAssetSnapshot) {
         // “编辑已发消息”是临时会话，不得覆盖普通聊天草稿。
         if (!composerReady || editingSessionActive) return@LaunchedEffect
         val draft = composerMarkdownSnapshot()
         if (composerMode == ChatComposerMode.VISUAL && sourceInput.text != draft) {
             sourceInput = TextFieldValue(draft, TextRange(draft.length))
         }
-        if (draft == draftSync.lastPublishedDraft) return@LaunchedEffect
         delay(350)
         publishOrdinaryDraft(draft)
+        persistComposerContext()
     }
 
     // @ / / 补全查询（从光标上下文推导；语音模式或浮层打开时抑制）
@@ -487,13 +543,15 @@ fun ChatPanel(
     }
 
     /** 清空正文、撤销/重做栈和外部草稿；焦点只在编辑器挂载时恢复。 */
-    fun resetComposer(requestFocus: Boolean = true) {
+    fun resetComposer(requestFocus: Boolean = true, committedSend: Boolean = false) {
         resetChatComposerState(richState)
         sourceInput = TextFieldValue("")
         embeddedAssetSnapshot = EmbeddedAssetImportSnapshot()
         visualBaseline = ChatVisualMarkdownBaseline("", "")
         composerMode = ChatComposerMode.VISUAL
-        draftSync.publish("", latestDraftChangeState.value, force = true)
+        if (committedSend) draftSync.acceptCommittedClear()
+        else if (composerContextStore.hasPersistence) draftSync.restoreLocal("")
+        else draftSync.publish("", latestDraftChangeState.value, force = true)
         if (requestFocus && !voiceMode) restoreComposerFocus = true
     }
 
@@ -539,6 +597,7 @@ fun ChatPanel(
     val isPersonal = ChatType.fromCode(chatType) == ChatType.PERSONAL
 
     fun captureFinalComposerFrame() {
+        if (!composerReadyState.value) return
         // 消息编辑只保存挂起的普通草稿，不把临时编辑正文发布出去。
         val draft = finalChatDraftSnapshot(
             editingSession = editingSession,
@@ -588,7 +647,7 @@ fun ChatPanel(
     fun validatedMessageOrReport(message: Message) = canonicalizeChatMessageOrReport(message, viewModel::onError)
     val performSend: () -> Unit = sendAction@{
         // 语音模式没有挂载编辑器，也不能发送不可见的文字草稿。
-        if (voiceMode) return@sendAction
+        if (voiceMode || !composerReady || composerSending) return@sendAction
         // 可视编辑与源码编辑最终都只发送同一份权威 Markdown。
         // Markdown 是权威源。不能 trim：开头缩进、空行和结尾换行都可能有语义。
         val rawText = composerMarkdownSnapshot()
@@ -652,10 +711,31 @@ fun ChatPanel(
                     buildRichTextBody = { m, a -> buildChatRichTextBodyOrReport(m, a, viewModel::onError) },
                 ) ?: return@sendAction
                 val validated = validatedMessageOrReport(message) ?: return@sendAction
-                viewModel.sendMessage(validated)
-                resetComposer()
-                savedReplyTarget = SavedChatReplyTarget()
-                persistComposerContext()
+                val submittedContext = captureComposerContext()
+                val revision = composerContextStore.save(chatId, submittedContext) ?: return@sendAction
+                if (revision <= 0L) {
+                    viewModel.onError("聊天草稿存储尚未准备好")
+                    return@sendAction
+                }
+                val submission = composerContextStore.beginSend(chatId, revision)
+                composerSending = true
+                viewModel.sendComposerMessage(validated, revision) { committed ->
+                    submission.completion.complete(committed)
+                    uiResultHandoff.deliver(committed, actionAdmission) { accepted ->
+                        composerSending = false
+                        if (accepted) {
+                            val current = captureComposerContext()
+                            if (current.toDraftSnapshot(chatId) == submittedContext.toDraftSnapshot(chatId) &&
+                                composerContextStore.acceptSent(chatId, revision)) {
+                                resetComposer(committedSend = true)
+                                savedReplyTarget = SavedChatReplyTarget()
+                            } else if (composerContextStore.revision(chatId) == revision) {
+                                // Input entered while SQLite was committing belongs to the next draft.
+                                persistComposerContext()
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -740,7 +820,8 @@ fun ChatPanel(
                 editingSessionActive = editingSessionActive,
                 onCancelEditing = actionAdmission.guard(::cancelEditing),
                 onReply = actionAdmission.guard { message: Message ->
-                    savedReplyTarget = SavedChatReplyTarget(message.clientMsgId)
+                    savedReplyTarget = SavedChatReplyTarget(message.clientMsgId, message.serverSeq)
+                    persistComposerContext()
                 },
                 onBeginEditing = actionAdmission.guard(::beginEditing),
                 onDiscardFailed = actionAdmission.guard(failedMessageDiscard::request),
@@ -753,7 +834,19 @@ fun ChatPanel(
 
             ChatTypingIndicator(visibleTypingUid, resolveSender)
 
-            ChatComposer(
+            if (composerReady && savedReplyTarget.clientMsgId.isNotEmpty() && replyingTo == null) {
+                TextButton(onClick = actionAdmission.guard { replyRecoveryAttempt++ },
+                    modifier = Modifier.testTag("chat.draft.reply.retry")) { Text("回复目标暂不可用，点击重试") }
+            }
+
+            if (!composerReady) {
+                if (composerRecoveryFailed) {
+                    TextButton(onClick = actionAdmission.guard { composerRecoveryAttempt++ },
+                        modifier = Modifier.testTag("chat.draft.retry")) { Text("重试恢复草稿") }
+                } else {
+                    Text("正在恢复草稿…", modifier = Modifier.testTag("chat.draft.loading"))
+                }
+            } else ChatComposer(
                 myUid = myUid,
                 mentionQuery = mentionQuery,
                 mentionCandidates = mentionCandidates,
@@ -771,7 +864,7 @@ fun ChatPanel(
                 editingSessionActive = editingSessionActive,
                 editingMessage = editingMessage,
                 editingFailedMessage = editingFailedMessage != null,
-                editingSaving = editingSaving,
+                editingSaving = editingSaving || composerSending,
                 onCancelEditing = actionAdmission.guard(::cancelEditing),
                 media = admittedMedia,
                 showEmoji = showEmoji,

@@ -174,6 +174,9 @@ interface OptimisticMessageEditLease
  * 按 chatId 推测 owner，也不得驱逐仍有活跃租约的窗口。
  */
 interface LocalCache : LocalDocumentProjection {
+    val chatDrafts: LocalChatDrafts
+    fun enqueueFromComposer(message: Message, expectedDraftRevision: Long, now: Long): OutgoingMessage
+
     val tasks: LocalTasks
     val documentComments: LocalDocumentComments
 

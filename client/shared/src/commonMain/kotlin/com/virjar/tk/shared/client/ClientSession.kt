@@ -9,6 +9,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -86,6 +87,41 @@ class ClientSession internal constructor(
     private val retirementLock = Any()
     private var retirementIssued = false
     private val rawLogoutRpc = AuthRpcProxy(ownedRpcClient)
+
+    private val chatAssetLock = Any()
+    private var ownedChatAssetUploads: ChatAssetUploadCoordinator? = null
+
+    /** 会话拥有专用 HTTP transport；页面切换不退役持久上传 worker。 */
+    fun createChatAssetUploads(spool: ChatAssetSpool): ChatAssetUploadCoordinator = lifecycle.whileBusinessActive {
+        synchronized(chatAssetLock) {
+            ownedChatAssetUploads ?: run {
+                val repository = FileRepository(deploymentIdentity.httpBaseUrl, ownerUid,
+                    ::httpCredentialsSnapshot) { rejectedToken ->
+                        localMirrorRecoveryScope.launch(Dispatchers.IO) { ownedHttpAuthExpiredRouter.report(rejectedToken) }
+                    }
+                try {
+                    ChatAssetUploadCoordinator(ownedLocalCache.chatDrafts, repository, spool, connectionState)
+                        .also { ownedChatAssetUploads = it }
+                } catch (failure: Throwable) {
+                    repository.close()
+                    throw failure
+                }
+            }
+        }
+    }
+
+    suspend fun prepareChatAssetReplacement(failedClientMsgId: String, replacement: Message): Message {
+        lifecycle.requireBusinessActive()
+        require(replacement.senderUid == ownerUid && replacement.clientMsgId != failedClientMsgId)
+        return kotlinx.coroutines.withContext(Dispatchers.IO) {
+            if (ownedLocalCache.chatDrafts.outgoingAssets(replacement.chatId, failedClientMsgId).isEmpty()) replacement
+            else {
+                val uploads = synchronized(chatAssetLock) { ownedChatAssetUploads }
+                    ?: error("附件恢复尚未就绪，请重新打开会话后重试")
+                uploads.prepareFailedReplacement(ownerUid, failedClientMsgId, replacement)
+            }
+        }
+    }
 
     val lifecyclePhase: SessionLifecyclePhase get() = lifecycle.phase
     val endReason: SessionEndReason? get() = lifecycle.endReason
@@ -236,6 +272,7 @@ class ClientSession internal constructor(
                 "pending ACKs" to { imClient.retireSessionOutbound(outboundLease.ackOwner) },
                 // AppDataState 在进入此边界前捕获其最终编辑帧。在 SendQueue 与 SQLite driver
                 // 都还存活时排空每一个已接受的本地命令。
+                "chat asset uploads" to { synchronized(chatAssetLock) { ownedChatAssetUploads }?.close() },
                 "local UI mutations" to ownedLocalMutations::closeAndDrain,
                 "local mirror recovery" to { localMirrorRecoveryScope.cancel() },
                 // 该仓库拥有在途 HTTP 工作与一个 LocalCache 支撑的凭据槽，因此要先于其 auth
@@ -492,7 +529,14 @@ fun createSession(
 
     val localMutations = SessionLocalMutationQueue(
         ownerUid = sessionOwnerUid,
+        initialChatDraftRevision = cache.chatDrafts.maxRevision(),
         operations = SessionLocalMutationOperations(
+            saveChatDraft = { snapshot ->
+                cache.chatDrafts.save(snapshot).also { conversationRepo.notifyLocalDraftCommitted() }
+            },
+            enqueueFromComposer = { message, revision ->
+                sendQueue.enqueueFromComposer(message, revision).also { conversationRepo.notifyLocalDraftCommitted() }
+            },
             setDraft = conversationRepo::setDraftLocal,
             // setDraftLocal 已经将持久提交发布给会话恢复 worker。
             draftCommitted = { _, _ -> },

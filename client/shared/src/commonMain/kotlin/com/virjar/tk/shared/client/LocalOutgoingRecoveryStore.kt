@@ -20,11 +20,14 @@ internal class LocalOutgoingRecoveryStore(
     private val upsertResident: (Message) -> Unit,
     private val deleteResident: (chatId: String, clientMsgId: String) -> Unit,
     private val replaceResident: (chatId: String, clientMsgId: String, replacement: Message) -> Unit,
+    private val assetsChanged: () -> Unit,
+    private val retainReplacementAssets: (Message, Long) -> Unit,
 ) {
     fun enqueue(
         message: Message,
         now: Long,
         requestFingerprint: ByteArray?,
+        commitComposer: (Boolean) -> Unit = {},
     ): OutgoingMessage = cacheUseGate.use {
         val canonical = canonicalizeOutboundMessage(message)
         require(canonical.serverSeq == 0L) { "Only unacknowledged messages can enter the outbox" }
@@ -33,12 +36,14 @@ internal class LocalOutgoingRecoveryStore(
         synchronized(stateLock) {
             lateinit var persisted: com.virjar.tk.shared.database.Outgoing_message
             var projection: Message? = null
+            var inserted = false
             queries.transaction {
                 val existing = queries.selectOutgoingMessageById(
                     canonical.chatId,
                     canonical.clientMsgId,
                 ).executeAsOneOrNull()
                 if (existing == null) {
+                    inserted = true
                     val authoritative = queries.selectMessageById(
                         canonical.chatId,
                         canonical.clientMsgId,
@@ -91,6 +96,7 @@ internal class LocalOutgoingRecoveryStore(
                         }
                     }
                 }
+                commitComposer(inserted)
             }
             projection?.let(upsertResident)
             persisted.toLocalModel()
@@ -153,9 +159,11 @@ internal class LocalOutgoingRecoveryStore(
                     ?: return@transaction
                 source.receipt?.let { queries.deleteOutgoingMessage(it.local_ordinal) }
                 queries.deleteFailedOptimisticMessage(chatId, clientMsgId, ownerUid)
+                releaseOutgoingChatAssets(queries, chatId, clientMsgId)
                 discarded = true
             }
             if (discarded) {
+                assetsChanged()
                 supersedeOptimisticEdit(chatId, clientMsgId)
                 deleteResident(chatId, clientMsgId)
             }
@@ -216,10 +224,13 @@ internal class LocalOutgoingRecoveryStore(
                 persistedReplacement.requireSameOutgoingRequest(payload, requestFingerprint)
                 replacementRow = persistedReplacement
                 replacementProjection = persistedReplacement.toProjectionMessage().also(persistMessage)
+                retainReplacementAssets(canonical, now)
+                transferOutgoingChatAssets(queries, clientMsgId, canonical)
                 source.receipt?.let { queries.deleteOutgoingMessage(it.local_ordinal) }
                 queries.deleteFailedOptimisticMessage(chatId, clientMsgId, ownerUid)
             }
             replacementProjection?.let { projection ->
+                assetsChanged()
                 supersedeOptimisticEdit(chatId, clientMsgId)
                 supersedeOptimisticEdit(chatId, projection.clientMsgId)
                 replaceResident(chatId, clientMsgId, projection)
