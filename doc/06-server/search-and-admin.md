@@ -79,7 +79,7 @@ Lucene 的 analyzer、directory、writer 和 searcher manager 先在局部启动
 
 `admin/` 是 React/Vite 前端，调用服务端管理 API。管理能力至少包括：
 
-- 管理员认证与会话。
+- 单实例管理员认证、密码轮换、单会话/全部会话吊销与操作审计。
 - 用户查询和状态查看。
 - 封禁/解封，以及对活动连接与 token 的联动。
 - Document 资产责任盘点与已封禁 steward 的受审计批量交接。
@@ -99,11 +99,21 @@ JSON 响应，而是走 `OrganizationRpc` 的二进制 revision-fenced 分页。
 删除当前负责人的直属归属会返回 409 且不修改任何事实；管理员必须先编辑组织节点变更或清空负责人，
 再重试成员删除，不允许留下指向非成员的 `leaderUid`。
 
-管理认证必须与普通用户 token 隔离。MVP 的固定凭据或简单模型只能用于测试实例；正式部署需要
-可轮换 secret、TLS、审计和最小权限。
+管理认证与普通用户 token 隔离。单实例管理员用户名和密码 verifier 由 PostgreSQL 保存；环境变量只用于
+首次初始化或显式恢复，不会在每次重启覆盖已轮换凭据。恢复步骤见[配置](../07-operations/configuration.md#管理员凭据与恢复)。
+管理台“管理安全”页可修改密码、查看活动会话、吊销指定会话或全部会话，并按 ID 倒序分页查看审计。
+密码轮换先验证当前密码，新密码须不同、至少 6 个字符且不超过 72 个 UTF-8 字节；成功后全部管理员
+会话失效。logout 在服务端撤销当前会话。会话只驻留当前进程，最长 12 小时、最多 256 个，超过容量
+时淘汰最早会话，服务重启后需重新登录。当前没有多管理员角色或通用权限平台。
+
+审计保存 actor、固定动作、目标、时间、结果、HTTP 状态及固定失败分类，不写密码、token、请求正文、
+查询字符串或异常正文。ban、用户凭据重置、组织变更、资产交接和管理员安全操作都通过已知路由登记。
+普通管理写先落 STARTED 再执行业务；结束后记录 SUCCESS、REJECTED 或 FAILED，终态保存失败时保留
+STARTED，不能据此断言业务未执行。凭据初始化、恢复、轮换及其成功审计在同一事务提交。
+审计保留最多 10,000 条本实例的 PostgreSQL 记录，每页默认 50、最大 100 条；它不是外部长期审计归档。
 登录鉴权豁免只匹配 Ktor 规范化后的精确 path `/api/admin/login`；query string 不影响合法登录，其他
 仅以该字符串结尾的路径不能借 suffix 规则绕过 Bearer 校验。
-成功登录的 token 会绑定配置中的管理员用户名；管理交接收据使用该经验证 principal，不能把普通 uid
+成功登录的 token 会绑定持久凭据中的管理员用户名；管理交接收据使用该经验证 principal，不能把普通 uid
 伪造成操作者。`GET /api/admin/users/{uid}/document-custody-plan` 要求显式目标 owner/steward 并返回计划
 指纹，`POST /api/admin/users/{uid}/document-custody-transfer` 携带该指纹与稳定 operationId 执行。当前
 不接受省略目标后猜测父部门或 leader；缺失目标返回 400，计划或 operation 冲突返回 409。

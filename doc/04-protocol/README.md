@@ -21,7 +21,7 @@ TLS 位于 Packet 外层，不通过 PacketType 协商。远程 TCP 使用 TLS�
 协议协商不携带密码，也不通过降级明文绕过传输失败。
 
 当前发行协议为 `0.1`，数字 ID `1`，独立于展示版本 `0.0.1`；最低支持协议为 `0.0`。
-协议 0.0 与 0.1 都受正式快照保护。下一次新增契约时才开启下一 minor，同一发行周期共用该 minor，
+协议 0.0 与 0.1 都受正式快照保护；源码新增文档契约使用待发行 0.2，同一发行周期共用 minor 2，
 纯实现修复不增加协议号。版本、兼容窗口和数据迁移规则见[版本机制](versioning.md)。
 `ProtocolLimits.AUTH_PREAMBLE_MARKER` 只保留 AUTH 的固定 bootstrap 字节标识；业务版本使用
 `ProtocolVersions` 与 `ProtocolVersion`。Netty 的 `PacketCodec.PROTOCOL_VERSION` 是当前数字 ID 的兼容别名。

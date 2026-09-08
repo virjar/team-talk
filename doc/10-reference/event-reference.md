@@ -27,6 +27,7 @@ eventId(varLong) + notifyType(1B) + payload(bytes?)
 | 20 | `MESSAGE_RECV` | `Message` | 会话成员 | 写本地消息并发布消息流 |
 | 21 | `MESSAGE_REACTION` | `MessageReactionEventPayload(chatId, serverSeq, emoji, actorUid, action)` | 会话成员 | 行级 upsert/delete 本地回应投影；重放收敛到同一状态，聚合快照以 `listReactions` 为权威 |
 | 22 | `GROUP_FILE_CHANGED` | `GroupFileChangedPayload(chatId, operation, entry?, deletedEntryId, deletedRevision)` | 当前群成员 | 按条目与 revision 幂等合并 UPSERT/DELETE；更新已加载目录，完整目录仍通过列表 RPC 对账 |
+| 23 | `DOCUMENT_CHANGED` | `DocumentChangedPayload(spaceId, nodeId?, kind, revision, policyRevision)` | 当前可读成员；撤权变化包含失去权限的原读者 | 失效对应投影、退休旧读取并通过领域 RPC 刷新有界驻留工作集；protocol 0.2 |
 | 30 | `CONVERSATION_UPDATED` | `Conversation` | 该用户设备 | upsert 会话投影 |
 | 31 | `CONVERSATION_DELETED` | `Conversation` | 该用户设备 | 仅删除用户主动隐藏的会话视图 |
 | 40 | `PRESENCE` | `PresencePayload(serverEpoch, revision, uid, status, lastSeenAt)` | 好友在线设备 | 按 epoch/revision 收敛会话内好友在线投影 |
@@ -42,6 +43,16 @@ eventId(varLong) + notifyType(1B) + payload(bytes?)
 `CONVERSATION_DELETED` 仅用于账号主动删除某个会话视图，不与授权撤销叠加。客户端处理 `CHAT_DELETED` 时会在一个
 SQLite 事务中清除 chat、conversation、草稿 outbox、member、message、该 chat 的 outgoing 和机器人 inbox，已被
 界面持有的消息 Flow 保持原对象但立即变空，后续合法重放仍写回同一 Flow。
+
+`DOCUMENT_CHANGED` 属于 protocol 0.2 的持久失效事件，与文档/评论命令在同一 PostgreSQL 事务提交。
+kind 为 `NODE_UPSERT(1)`、`NODE_DELETED(2)`、`SPACE_CHANGED(3)`、`SPACE_REVOKED(4)` 或
+`COMMENTS_CHANGED(5)`；节点变化带正 revision，空间变化不带 nodeId，评论变化带 documentId 且 revision=0。
+全部类型携带正 policyRevision，不含正文、标题或评论内容。当前读者去重后各追加一次；权限变化为
+失去最后授权的旧读者追加撤权事件。精确命令重放不重复通知。
+
+客户端先使旧读取失效再持久推进游标，普通变更保留离线副本，删除/撤权清理相应干净投影。当前工作台
+用领域 RPC 对账，不从事件拼造正文或权限；提示序号跳跃、组织提示、reset 和重连重新校验有界驻留
+工作集。未保存正文和已提交评论 pending 独立保留；未读取的页面不被全空间预取。
 
 ## 持久事件与临时事件
 

@@ -211,6 +211,11 @@ method 18 `transferSpaceCustody` 的参数顺序固定为
 当前路径，不能从原请求补造。
 若目标父文档在移动期间消失，服务端返回层级冲突 409 并保留仍存在的移动节点；只有移动节点本体不存在才返回 404。
 
+待发行 protocol 0.2 追加 `document.getSpace(20)`，用于独立重新校验当前驻留空间，不消耗空间列表游标。
+同版本的 `documentComment` 提供 list/create/update/delete，评论有稳定 UUID、同文档回复关系、独立
+revision 与无正文删除墓碑；创建重放和陈旧写入边界见[评论 RPC](../10-reference/rpc-reference.md#documentcomment)。
+评论不改变文档正文 revision，所有调用仍核对当前空间权限和文档活动状态。
+
 `conversation.listPage` 使用强类型 `ConversationPageRequest`，因此请求解码在构造游标字符串前
 就限制最多 128 个 base64url 字节。`ConversationPage` 最多 16 条，只有完整 16 条的非末页才能
 携带 `nextCursor`，页内编码预算为 8 MiB。游标按不可变 `chatId DESC` 排序，是 exclusive cursor；

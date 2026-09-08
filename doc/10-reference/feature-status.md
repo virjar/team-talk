@@ -1,6 +1,6 @@
 # 功能状态
 
-TeamTalk 当前发行版本为 0.0.1，处于开发者预览阶段。本文回答“现在究竟能做什么”，避免把规划中的 UI、已有数据结构和真正完成的业务闭环混为一谈。
+TeamTalk 当前发行版本为 0.0.1，处于开发者预览阶段。本文描述当前源码能力，包含待发行 protocol 0.2 的文档变更与评论；已发布 0.0.1 的范围以[发行说明](../07-operations/releases/0.0.1.md)为准。本文区分规划、实现与实际验证范围。
 
 少量技术内测的范围和最小分发检查见[开发者预览版指南](../01-getting-started/developer-preview.md)，
 本页不把候选包构建或轻量冒烟等同于正式发布。
@@ -18,7 +18,7 @@ TeamTalk 当前发行版本为 0.0.1，处于开发者预览阶段。本文回�
 
 | 能力 | 状态 | 当前边界 |
 |---|---|---|
-| 数字协议版本与兼容窗口 | 可用 | 当前协议 0.1、最低支持 0.0，独立于统一展示版本 0.0.1；TCP 先协商再 AUTH，服务端最低版本可提高；旧客户端横幅提示或强制拒绝工作区。协议 0.1 新增携带账号范围的封禁帧，保留原认证响应布局 |
+| 数字协议版本与兼容窗口 | 可用 | 源码待发行协议 0.2、最低支持 0.0，正式 0.0.1 冻结协议 0.1；TCP 先协商再 AUTH，服务端最低版本可提高；旧客户端横幅提示或强制拒绝工作区。协议 0.1 新增携带账号范围的封禁帧，保留原认证响应布局 |
 | 协议生命周期与构建检查 | 可用 | since/removed 注解、生成版本窗和提交的 wire 签名清单；同 major 新增编号、退役留墓碑。手写 codec 语义仍须审阅和 golden 检查 |
 | 数据升级机制 | 部分 | 客户端 minor 走 SQLDelight 事务迁移，major 在启动前清本安装数据并重新登录；PostgreSQL 已有从 0 起的顺序迁移台账，现有资料保留；跨存储迁移与完整备份恢复仍需逐项补齐 |
 
@@ -225,12 +225,12 @@ LocalCache 在 gate 排空后的 clean close 只做一次非阻塞 `PRAGMA wal_c
 | PostgreSQL、RocksDB、Lucene 组合存储 | 可用 | 权威消息、关系/事件和搜索投影职责分开，跨存储有持久恢复路径。见[持久化](../06-server/persistence.md)。细节见下方同名说明。 |
 | 单实例容量基线 | 部分 | 连接、消息、搜索与大小附件具备可重复容量验收入口；固定参考硬件、慢数据库、磁盘压力、长期 soak 和发布级 SLO 未完成 |
 | 后台维护与健康检查 | 可用 | `MaintenanceRuntime` 统一持有定期维护任务；关键任务意外停止使 `/health` 返回 `DOWN` / HTTP 503。任务归属与诊断见[可观测性](../07-operations/observability.md) |
-| 管理后台 | 部分 | 用户、群、消息、日志、组织架构和通知机器人可管理；认证、审计和权限模型仍是测试环境级别 |
+| 管理后台 | 可用 | 用户、群、消息、日志、组织与机器人管理；单实例管理员凭据持久化、主动轮换、会话吊销/服务端退出和有界必要审计，支持显式受控恢复。真实 PostgreSQL/HTTP 回归覆盖轮换、重启、拒绝分类和审计失败；浏览器验证登录、凭据表单、会话与审计展示、退出，未覆盖浏览器内密码轮换。没有多管理员角色或长期审计归档，见[搜索与管理](../06-server/search-and-admin.md#5-管理后台)。 |
 | 管理台构建输入 | 可用 | Git 只保留管理台源码、依赖清单与锁文件；node_modules/dist 不参与源码跟踪，Server 在隔离 build 工作区构建。`checkArchitecture` 拒绝重新跟踪产物。 |
 | 统一发行工具链 | 部分 | 根版本、人工说明和冻结协议快照进入 Gradle 校验；`release` 密封 Android、三平台 Desktop 站点与 Server ZIP，可向本地、SFTP 站点和 GitHub 交付；服务器仍人工部署。私有首次分发可用 `private-first`；后续手动 `snapshot` 不改根展示版本或构建号，Android 保持 code 手动覆盖，Desktop revision 从完整 first-parent 历史自动计算，仅向 local/site 交付并复用冻结契约。内测收据按类型、版本和 Desktop revision 保留，同展示版本的后续 snapshot 须从已分发源码的后代构建，禁止相同修订换包或倒退。CI 要求展示版本与根构建号一起推进才正式发行，不自动刷 snapshot。Windows 使用同一任务，完整跨平台安装与更新验收仍需按参与平台执行，见[发行流程](../07-operations/releasing.md)。 |
 | 公版与私有客户端共存 | 可用 | `DeploymentConfig.client` 统一生成 Android 安装 ID、Desktop 安装身份与名称；主仓库默认公版，私有独立 clone 使用 Git 忽略的完整 local 配置目录，随 `buildSrc` 编译。双端数据、登录与主题独立，Desktop 单实例锁跟随数据目录。私有站点提供 Android APK，Desktop Conveyor 更新源从各自 `serverUrl` 推导；Android 暂无自动下载安装。默认公版保留原身份与目录。层级 `DeploymentDsl` 构造 `DeploymentConfig` 供双端 Gradle 使用；目标平台安装、通知跳转与连续升级仍须按发行实际验收，见[客户端发行身份](../07-operations/configuration.md#客户端发行身份)。 |
 | 客户端结构化遥测与定向诊断 | 可用 | 有界客户端遥测、设备策略与定向诊断已接通；诊断数据不作为消息可靠事实。细节见下方同名说明。 |
-| 私有化部署参数 | 可用 | Kotlin 配置统一生成客户端、部署和验收坐标；HTTP 与 TCP TLS 独立，支持 IP + HTTP + 自签 TCP 证书。Gradle 生成并复用证书，客户端使用专用证书信任并验证 SAN；普通升级保留数据、证书与私钥。配置与 TLS 测试入口为 `TcpTlsCertificatesTest`、`TlsDeploymentPreflightTest` 与 `ClientTransportTlsTest`。具体见[传输配置边界](../07-operations/configuration.md#传输配置边界)；目标实例和同批发行制品仍须实际验收，证书及其他 secret 轮换归 REL-03，迁移、备份与管理治理另列发布基线。 |
+| 私有化部署参数 | 可用 | Kotlin 配置统一生成客户端、部署和验收坐标；HTTP 与 TCP TLS 独立，支持 IP + HTTP + 自签 TCP 证书。Gradle 生成并复用证书，客户端使用专用证书信任并验证 SAN；普通升级保留数据、证书与私钥。配置与 TLS 测试入口为 `TcpTlsCertificatesTest`、`TlsDeploymentPreflightTest` 与 `ClientTransportTlsTest`。具体见[传输配置边界](../07-operations/configuration.md#传输配置边界)；目标实例和同批发行制品仍须实际验收，证书及其他 secret 轮换归 REL-03，迁移、备份与完整发行验收仍按发布基线执行。 |
 | 数据库迁移、备份与恢复 | 部分 | 已有 PostgreSQL 顺序迁移、客户端 minor 迁移及部署 epoch/dataset 预检；完整备份、跨存储恢复与演练流程仍需闭合，见[部署与升级](../07-operations/deployment.md)。 |
 | 高可用与水平扩展 | 边界外 | 当前明确以单实例私有化部署为边界；只有容量、可用性和运维指标满足进入条件后才立多节点 ADR，不在当前执行队列 |
 
@@ -287,7 +287,9 @@ MessageStore 原子拥有 chat 消息序号与权威消息，PostgreSQL 保存�
 | 能力 | 状态 | 当前边界 |
 | --- | --- | --- |
 | 群共享文件空间 | 部分 | 目录、版本、权限、配额、五命令 outbox/receipt 和持久变更投影已落地；历史/收据治理、搜索、离职资产接入未完成。细节见下方同名说明。 |
-| 企业文档 | 部分 | 多空间、权限、树、正文/修订、离线投影与可靠移动已实现；变更事件、评论、搜索和图形化资产交接仍缺。细节见下方同名说明。 |
+| 企业文档 | 部分 | 多空间、权限、树、正文/修订、离线投影、可靠移动、持久变更事件与文档级评论已实现；搜索、图形化资产交接仍缺。Desktop 客户端与 Android 模拟器已验证文档创建和打开；细节见下方同名说明。 |
+| 文档协作更新 | 可用 | `DOCUMENT_CHANGED` 与写入同事务，SDK 先失效再推进游标；工作台按空间刷新有界驻留内容并保留脏草稿。权限撤销、reset、重启与漏提示由 PostgreSQL/SQLite/App 回归覆盖；Android 模拟器保存后，Desktop 脏草稿保留、远端修订提示、409 双选展示及采用服务器版本已验证。不提供 CRDT 或全空间预取。 |
+| 文档评论 | 可用 | 同文档回复、作者编辑、作者/空间管理员删除、独立修订与墓碑；已提交意图进入持久队列，403/409 保留到显式处理，普通关闭保留缓存。未提交输入只在当前工作台会话保留；协议、真实 PostgreSQL、SQLite 恢复已覆盖；Desktop 客户端与 Android 模拟器验证创建、同文档回复、编辑、删除墓碑的双端自动同步；服务与 Desktop 重启后，离线评论保留原身份和正文，恢复连接自动补发、清理 pending 并同步到 Android 模拟器，服务端同 ID 只保存一条。物理真机评论未覆盖；场景见[验收目录](../09-testing/scenario-catalog.md)。 |
 | 类型化办公对象引用 | 可用 | 消息可引用 Document 与群文件；发送与打开按服务端当前权限裁决，冻结预览不等于对象授权。细节见下方同名说明。 |
 | 待办与任务 | 计划 | 尚无任务责任人、状态、截止时间、提醒和消息引用领域 |
 | 日历与会议 | 计划 | 尚无日历事件、参会人、时区、重复规则、会议状态和提醒领域 |
@@ -304,7 +306,7 @@ MessageStore 原子拥有 chat 消息序号与权威消息，PostgreSQL 保存�
 <details>
 <summary>企业文档：实现边界与验收入口</summary>
 
-两级资产首页/空间工作区、多空间 ACL、文档可同时承载正文与子文档的紧凑懒加载文档树、Markdown 无损块级编辑、不可变修订、持久化小字段与游标分页历史、干净文档的懒加载“移动到…”、409 保存冲突双选择恢复、按标签/编辑世代竞态防护、历史恢复、Desktop 跨空间多标签与独立窗口、Android 单文档前台已完成。RPC 19 以一条有界递归查询返回最多 129 个 root→target 节点；SDK 持久化 partial spine 而不伪造完整分支，客户端的普通打开、跨空间标签、草稿恢复、关闭替补和工作区刷新统一使用缓存 spine + 至多一次远端 spine。当前代码已把同级顺序收敛为不可变 `(createdAt, nodeId)`，无手动 rank/CRDT；method 11 为 content-only，move/rename 由 method 12 的稳定 operationId + issuedAt 独占。服务端 7 天、每 actor 1,024 条有限 receipt 与本地缓存当前 epoch 的每节点单槽/最多 256 条 durable outbox 已落地，精确重放空投影 ACK 会在当前正文或 path spine 收敛后才清命令；协议、服务端、SDK 和持久化确定性测试已覆盖 wire、并发、过期、跨重启和改名不换序。离线 move/rename 先持久排队，进程重启后恢复，并在网络恢复后按原 identity 收敛。服务端/协议/SDK 已将不可变 createdBy、用户/组织 owner principal、唯一人类 steward 与 grant 分离，提供 RPC 18 的 custodyRevision CAS 与不可变收据；管理 HTTP 控制面可盘点并原子交接已 ban steward 的全部 DocumentSpace。LocalCache 只持久化有界空间/首页/分支/partial spine/干净正文投影；空间 403、根分支 404、完整终页 omission 和 `effectiveRole = NONE` 清理干净投影，网络失败保留缓存，脏草稿转为可强杀恢复的本地孤儿。其余真实缺口是变更事件、评论、搜索、图形化交接和 GroupFile 离职资产接入。客户端保持有界工作集，不做全空间预取；正文并发边界仍是 expectedRevision + 409，节点级 ACL 与 CRDT 暂不进入执行队列
+两级资产首页/空间工作区、多空间 ACL、文档可同时承载正文与子文档的紧凑懒加载文档树、Markdown 无损块级编辑、不可变修订、持久化小字段与游标分页历史、干净文档的懒加载“移动到…”、409 保存冲突双选择恢复、按标签/编辑世代竞态防护、历史恢复、Desktop 跨空间多标签与独立窗口、Android 单文档前台已完成。RPC 19 以一条有界递归查询返回最多 129 个 root→target 节点；SDK 持久化 partial spine 而不伪造完整分支，客户端的普通打开、跨空间标签、草稿恢复、关闭替补和工作区刷新统一使用缓存 spine + 至多一次远端 spine。当前代码已把同级顺序收敛为不可变 `(createdAt, nodeId)`，无手动 rank/CRDT；method 11 为 content-only，move/rename 由 method 12 的稳定 operationId + issuedAt 独占。服务端 7 天、每 actor 1,024 条有限 receipt 与本地缓存当前 epoch 的每节点单槽/最多 256 条 durable outbox 已落地，精确重放空投影 ACK 会在当前正文或 path spine 收敛后才清命令；协议、服务端、SDK 和持久化确定性测试已覆盖 wire、并发、过期、跨重启和改名不换序。离线 move/rename 先持久排队，进程重启后恢复，并在网络恢复后按原 identity 收敛。服务端/协议/SDK 已将不可变 createdBy、用户/组织 owner principal、唯一人类 steward 与 grant 分离，提供 RPC 18 的 custodyRevision CAS 与不可变收据；管理 HTTP 控制面可盘点并原子交接已 ban steward 的全部 DocumentSpace。LocalCache 只持久化有界空间/首页/分支/partial spine/干净正文投影；空间 403、根分支 404、完整终页 omission 和 `effectiveRole = NONE` 清理干净投影，网络失败保留缓存，脏草稿转为可强杀恢复的本地孤儿。持久 `DOCUMENT_CHANGED` 使驻留内容按空间自动对账；评论使用独立 revision 与 SQLite 待发送队列，撤权清理评论投影而保留未确认意图。其余真实缺口是搜索、图形化交接和 GroupFile 离职资产接入。客户端保持有界工作集，不做全空间预取；正文并发边界仍是 expectedRevision + 409，节点级 ACL 与 CRDT 暂不进入执行队列
 
 </details>
 

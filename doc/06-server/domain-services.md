@@ -257,7 +257,7 @@ HTTP 文件端点不感知具体业务域。
 ## 8. Authorization
 
 当前只有 Document 需要资产角色到操作能力的映射，因此矩阵直接归 Document 域所有，不提前维护通用
-授权内核。Document 能力分为 READ、EDIT_CONTENT、MANAGE_SPACE、MANAGE_POLICY、ARCHIVE_SPACE 和
+授权内核。Document 能力分为 READ、COMMENT、EDIT_CONTENT、MANAGE_SPACE、MANAGE_POLICY、ARCHIVE_SPACE 和
 TRANSFER_CUSTODY；未知角色没有能力。实时所有权、grant 和组织成员事实仍在 Document 的读快照或写
 事务中读取和裁决。其他资产、搜索和管理控制面必须各自完成真实领域闭环，不能复用一个类型名就宣称
 已完成授权。
@@ -354,6 +354,17 @@ actor/space/creationFingerprint 精确收据；未精确命中的命令继续走
 创建者最近访问仍在同一事务提交。文档移动首次结果返回节点和事务内解析的权威祖先路径，客户端不能
 继续采用请求前缓存的路径；精确重放的空投影只确认已提交，当前路径必须另行读取。
 
+DocumentChangePublisher 在原 `PgUnitOfWork` 写事务中向去重后的当前可读用户追加 `DOCUMENT_CHANGED`。
+空间授权和归属变化同时比较变更前后的读者集合，失去最后一条授权的用户收到 `SPACE_REVOKED`；
+其余接收者只收到不含正文的失效提示。回滚不会留下事件，已提交命令的精确重放不重复发布。
+
+DocumentCommentService 复用实时空间授权和聚合写锁。VIEWER 的 COMMENT 能力允许创建、回复和修改自己的
+评论；作者或空间 ADMIN 可删除，ADMIN 不能代改他人正文。commentId 是全局稳定 UUID，创建指纹绑定
+actor、空间、文档、回复目标和正文；精确重试返回当前评论或墓碑，改变意图返回 `409`。回复目标必须
+位于同一文档。评论 revision 独立于文档 revision；相邻修订的精确编辑重试不再次写入，其他陈旧写入
+返回 `DocumentRevisionConflictException`。删除清空正文并保留身份和回复上下文。每次真实变更与
+`COMMENTS_CHANGED` 在同一事务提交；包括精确重放在内的评论调用均重新验证当前权限和文档活动状态。
+
 ## 10. Bot
 
 BotService 为每个通知应用创建 `UserRole.BOT` 服务账户。账户在 Bot 聚合 PostgreSQL 事务内直接写入
@@ -396,3 +407,7 @@ Presence 增量仍是 `eventId = 0` 的瞬时状态，不进入长期离线事�
 先在有界 CPU owner 生成 verifier，再进入 PostgreSQL。封禁与密码重置在 PostgreSQL 事务内推进用户级 credential
 epoch 并失效已有 credential；事务提交后在不可取消的清理阶段更新 ClientRegistry fence、关闭所有
 较旧 epoch 连接。解除封禁只恢复账号可登录状态，不回退 epoch，也不会让任何旧 token 复活。
+
+AdminSecurityService 单独拥有持久管理员凭据和有界进程内会话，提供密码轮换、单会话/全部会话吊销和
+服务端 logout。凭据轮换与成功审计同事务提交，之后撤销全部管理员会话；常规管理写在业务执行前保存
+STARTED，结束后补结果与固定失败分类。详细边界及恢复配置见[搜索与管理](search-and-admin.md#5-管理后台)。

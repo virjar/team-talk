@@ -62,6 +62,23 @@ HTTP 空闲约束可用 `./gradlew :server:server:test --tests '*ProtectedHttpId
 不连接数据库。测试启动真实 loopback Ktor/Netty：通过小 socket 缓冲区和节流读取下载静态文件，
 核对超过空闲窗口仍完整返回；另发送未完成的请求体并停止上传，确认连接关闭且 HTTP 调用退出。
 
+### 文档协作与管理安全的定向回归
+
+```bash
+./gradlew :protocol:protocol:jvmTest --tests 'com.virjar.tk.protocol.DocumentModelTest'
+./gradlew :server:server:test --tests '*DocumentChangeEventIntegrationTest' --tests '*DocumentCommentIntegrationTest' --tests '*AdminSecurityIntegrationTest'
+./gradlew :client:shared:jvmTest --tests '*DocumentChangeProjectionIntegrationTest' --tests '*DocumentCommentRecoveryIntegrationTest'
+./gradlew :client:app:desktopTest --tests '*DocumentWorkspaceStateTest'
+```
+
+服务端用随机 PostgreSQL schema 验证文档/评论与事件的同事务关系、实时权限、稳定身份重放、修订冲突、
+分页和删除墓碑；管理安全使用真实 PostgreSQL 与 HTTP 路由验证轮换、会话吊销、重启恢复、审计拒绝
+分类与存储故障。SQLite 回归验证评论创建/编辑/删除意图跨关闭重开、未知结果原字节重放、403/409
+保留到显式 retry/discard、reset/撤权不删除 pending、关闭或失效后的晚到结果不复活缓存。
+协议测试覆盖回复和墓碑往返、4,000 UTF-16 单元正文、100 条分页及截断/超量解码拒绝。
+这些入口验证模块契约与持久恢复；真实双端评论交互、跨端可见性和管理台浏览器行为按
+[场景目录](scenario-catalog.md)另外执行，不以构建通过代替界面验收。
+
 ## Linux 媒体测试环境
 
 服务端缩略图测试与 TestPeer 音频元数据读取会加载 JavaCV/FFmpeg JNI。FFmpeg 原生库随 Maven JAR

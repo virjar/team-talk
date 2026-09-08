@@ -67,8 +67,7 @@ flowchart TD
     Operate -.-> Verify
     Product -.-> Verify
     Dependencies -.-> Verify
-    Changes["CONTENT-01：Document 变更流"] --> Search["CONTENT-02：内容搜索"]
-    Changes --> Comments["CONTENT-05：文档评论"]
+    Changes["既有 Document 变更流"] --> Search["CONTENT-02：内容搜索"]
 ```
 
 阶段表示默认的投入顺序，不是要求整阶段全部完成才能使用产品。备份、必要维护和已发生的可靠性问题
@@ -114,18 +113,6 @@ Push 只带必要的有界唤醒身份，消息仍通过权威同步获取；通
 完成条件：维护者能辨别可重拉投影与未上服事实；旧 namespace 和隔离库有明确处置，compaction 不丢
 草稿/outbox。普通凭据失效或容量回收不能扩大成清库；封禁交付复验只在 REL-05 记录。
 
-### CONTENT-01 · 内容变更流与本地增量投影
-
-GroupFile 的持久变更事件、实时行级投影和 stale 展示已完成；剩余实现是 Document 的持久变更流与
-SDK 增量投影，替代目前需要主动刷新的协作路径。GroupFile 双端完整断网恢复的剩余证据归 REL-05。
-
-先沿 `DocumentService`、`DocumentPolicyMutationService`、`PgUnitOfWork`、`NotifyContracts`、
-`DocumentRepository` 和 `LocalDocumentProjectionStore`，定义空间失效、树节点变化与正文 revision 的
-最小事件契约，事件与领域写同事务，再接重复/乱序/漏事件恢复；未来评论载荷留给 CONTENT-05。
-
-完成条件：两个账号保存、改名、删除、撤权及断连后重放都收敛；reset、权威撤权或当前请求的 403/404
-清理失效干净投影，离线旧缓存明确为 stale。客户端不做全空间预取；SDK 集成通过后接双端真实短路径。
-
 ## 阶段二：长期运行与维护
 
 本阶段补齐持续保存资料的能力，优先处理实际实例需要的备份与维护；长期容量、历史回执治理和多角色
@@ -145,14 +132,6 @@ RocksDB、FileStore 的一致备份、恢复和演练流程，明确 Lucene 从�
 完成条件：一条受控流程能在同一停写点备份并恢复完整实例，识别并拒绝不匹配的部分恢复；恢复后登录、
 消息、附件、群文件和文档可用。涉及存储迁移的后续发行完成一次 N→N+1 与回退演练，保留账号、草稿和
 发件箱。破坏性变更另行说明数据范围与方案，普通升级不清库。
-
-### REL-02 · 管理后台治理边界
-
-把现有管理后台补齐到可长期维护的单实例管理员模型：凭据轮换/吊销和 ban、凭据重置、组织变更、
-资产交接等动作的必要审计。服务端作为唯一权威入口；普通读取和天然幂等修改不复制命令收据框架。
-
-完成条件：管理员凭据可轮换与主动吊销；审计可说明 actor、目标、结果和失败原因且不记录秘密；
-实际会重试的破坏性命令按稳定 operationId 收敛。只有出现真实职责分离需求后才扩角色，不预建 capability 平台。
 
 ### REL-03 · 证书与 secret 轮换
 
@@ -176,7 +155,7 @@ RocksDB、FileStore 的一致备份、恢复和演练流程，明确 Lucene 从�
 
 只治理仍会增长的 `group_file_versions`、`group_file_audits`、`group_file_commands` 历史，补用量、
 保留、归档和查询。五类命令的稳定 identity、outbox/receipt、rename/delete 丢响应恢复已完成；
-变更投影归 CONTENT-01，搜索归 CONTENT-02，不重复列作本项。
+变更投影已有实现，搜索归 CONTENT-02，不重复列作本项。
 
 先统一“原命令已成功”和“当前对象仍可读取”的结果语义，覆盖 ACK 丢失后删除、退群、附件回收与
 进程重启。沿 `GroupFileService` / `ExposedGroupFileRepository` 审阅创建、追加版本和 rename/delete
@@ -232,18 +211,10 @@ p95/p99、资源高水位、错误预算和恢复时间。容量基线不代替 
 ### CONTENT-02 · 内容与资产搜索
 
 承接聊天附件、群文件和 Document 搜索；领域维护自己的可重建索引与 revision/outbox，全局入口做
-有界聚合，当前可见范围由服务端领域查询裁决。Document 依赖 CONTENT-01，不扩展全量预取缓存。
+有界聚合，当前可见范围由服务端领域查询裁决。Document 搜索复用既有变更事件，不扩展全量预取缓存。
 
 完成条件：重试、删除和重放不复活旧 revision；归档或撤权后不返回失效结果；文件类型/范围筛选、
 打开结果与直接下载一致，Desktop/Android 都有真实数据入口。
-
-### CONTENT-05 · Document 评论协作
-
-在 CONTENT-01 的事件基础上增加稳定评论身份、创建/编辑/删除、实时/离线恢复及双端定位交互。
-正文仍采用 expectedRevision + 409 冲突恢复，不因评论引入 CRDT 或节点级 ACL。
-
-完成条件：断网重试、多设备和服务重启后操作收敛；文档删除或不可见后评论不独立泄漏或复活；
-双端可从正文定位评论并完成基本操作。
 
 ### CONTENT-09 · Task MVP
 

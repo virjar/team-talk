@@ -431,9 +431,12 @@ ACL mutation 不等待 Notify，而以 `expectedPolicyRevision + operationId` �
 显示 ADMIN 时重拉 grants，不能用旧缓存 `copy` 出 role/policyRevision 组合对象。迟到 exact replay 可以
 返回后续 mutation 形成的当前 revision，但客户端仍只接受服务端返回的完整新行。
 
-当前仍没有 document Notify。进入工作台、导航到空间/分支/正文、显式刷新、成功写操作，以及工作台
-已经打开后的重认证边沿负责有界收敛；仅停留在页面时，其他设备的修改不会实时推送。若两个成员从同一
-revision 保存，只有先到达者成功，失败者本地编辑内容不应被清空。
+`DOCUMENT_CHANGED` 与领域变更同事务写入用户持久流。客户端在推进事件游标前使旧读取失效，再刷新
+受影响空间的已驻留标签和已加载分支；组织、reset、重认证或本地提示序号跳跃触发有界工作集对账。
+事件不携带正文或完整父链，不引入全空间预取。远端 revision 变高时保留本地脏草稿和原 CAS 基线；
+两个成员从同一 revision 保存仍只有一个成功，失败者选择服务器版本或基于新 revision 继续。
+评论使用同一事件中的 `COMMENTS_CHANGED` 失效提示，分页缓存与待发送队列的边界见
+[客户端文档投影](client-and-sdk.md#66-文档投影与草稿)。
 
 未保存正文使用独立于 LocalCache 的本地续写存储，不扩大服务器事实边界。一个小型原子 manifest 只列出
 脏/新建标签、待确认创建命令、破坏性操作意图及活动标签/空间提示；每个标签和命令按 recovery key 独立、受限编码，平台逐条安装

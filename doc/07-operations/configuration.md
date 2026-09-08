@@ -231,8 +231,9 @@ HTTP 部署只传 `-PsslCert/-PsslKey` 而未配置 `tcpTlsCertificatePem` 会�
 | `TEAMTALK_FILE_STORE_QUOTA_BYTES` | 10737418240 | 普通附件 FileStore 全局持久容量硬上限；系统属性 `teamtalk.fileStore.quotaBytes` 优先 |
 | `TEAMTALK_UNREFERENCED_ATTACHMENT_TTL_HOURS` | 168 | 上传成功但没有当前用户头像、消息、活动群文件或活动文档修订引用的对象租约；必须为 1–8760 的整数，过期后由小时级有界扫描回收 |
 | `TEAMTALK_GROUP_FILE_QUOTA_BYTES` | 1073741824 | 每个群共享文件空间配额；系统属性 `teamtalk.groupFile.quotaBytes` 优先 |
-| `ADMIN_USER` | 无（管理登录关闭） | 管理后台用户名；必须与密码同时显式配置 |
-| `ADMIN_PASSWORD` | 无（管理登录关闭） | 管理后台密码；必须与用户名同时显式配置 |
+| `ADMIN_USER` | 无 | 管理员首次初始化或显式恢复的用户名；与密码成对配置，已有持久凭据时不自动覆盖 |
+| `ADMIN_PASSWORD` | 无 | 管理员首次初始化或显式恢复的密码；不是每次启动的密码权威 |
+| `ADMIN_CREDENTIAL_RESET_ID` | 无 | canonical UUID；不同于已保存恢复 ID 时，用成对配置的用户名/密码执行一次受审计恢复 |
 | `TEAMTALK_AUTH_GUARD_WINDOW_SECONDS` | 10 | 认证尝试计数窗口；必须为 1–86400 的整数 |
 | `TEAMTALK_AUTH_GUARD_COOLDOWN_SECONDS` | 30 | 认证维度超限后的冷却时间；必须为 1–86400 的整数 |
 | `TEAMTALK_AUTH_GUARD_GLOBAL_ATTEMPTS` | 1024 | 单窗口全部认证尝试硬上限；必须为 1–1000000 的整数 |
@@ -263,6 +264,21 @@ TeamTalk 的部署任务生成单密码 PKCS12，因此 HTTPS 实例的
 TCP 入口还会取该配置与实际 `IOExecutor` worker 半数中的较小值，始终保留至少一半 worker 给已认证业务。
 配置非法时服务启动直接失败。来源/账号表满且没有过期
 桶可回收时拒绝新 key，不通过淘汰活动桶放宽限速。
+
+### 管理员凭据与恢复
+
+数据库还没有管理员凭据时，只有同时配置非空 `ADMIN_USER` 与 `ADMIN_PASSWORD` 才初始化管理登录；
+已有凭据以后，以 PostgreSQL 中的 verifier 为准，移除或修改上述环境变量不会关闭登录或替换密码。
+日常轮换使用管理台“管理安全”页，成功后所有管理员会话立即失效。
+
+忘记密码时，在本实例受控启动环境中设置目标 `ADMIN_USER`、`ADMIN_PASSWORD` 和一个新生成的
+canonical UUID `ADMIN_CREDENTIAL_RESET_ID`，重启服务。初始化在发布 HTTP 前把新凭据与恢复审计一起
+提交；同一个恢复 ID 再次启动不会重复重置，也不会覆盖之后在管理台轮换的密码。恢复后移除这次
+恢复配置，下一次需要恢复时使用新的 UUID。ID 格式错误或恢复时缺少成对凭据会阻止启动。
+
+首次初始化和受控恢复保留非空旧密码的兼容性；超过 72 个 UTF-8 字节的密码先做 SHA-256 摘要再经
+Base64 和 BCrypt，不截断原密码。日常轮换仍执行至少 6 个字符、最多 72 个 UTF-8 字节的新密码规则。
+数据库只保存 verifier，审计不记录环境中的明文密码或秘密；管理员用户名可作为已验证 actor 保存。会话和审计边界见[搜索与管理](../06-server/search-and-admin.md#5-管理后台)。
 
 ## 4. JVM 系统属性
 

@@ -12,8 +12,8 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 5. 注册、登录和 refresh 属于 TCP AUTH 握手，不属于下列 RPC。
 6. 普通消息发送使用 MESSAGE / MESSAGE_ACK，不通过 `message` RPC。
 
-当前表描述 0.0.1 / protocol 0.1 的 RPC 契约，正式事实以不可覆盖的发行快照为准。同一协议 major 内，
-已发行契约和编号不得修改或复用。后续第一次新增契约时开启下一待发布 minor，同一发行批次共用该版本；
+当前表描述源码契约：0.0.1 已冻结 protocol 0.1，新增文档读取和评论使用待发行 protocol 0.2；正式事实以
+不可覆盖的发行快照为准。同一协议 major 内，已发行契约和编号不得修改或复用，同一待发行批次共用 minor 2；
 只有明确的新协议 major 才能重整编号空间。私有 `snapshot` 与 `private-first` 不冻结待发布契约，
 正式产品发行才登记新的不可覆盖快照，流程见[统一发行](../07-operations/releasing.md)。
 
@@ -259,6 +259,7 @@ createFolder/createFile 的 `entryId`、五类变更的 `commandId` 都必须是
 | 17 | `listRecentlyCreatedDocuments` | `limit` | `List<DocumentHomeItem>` |
 | 18 | `transferSpaceCustody` | `spaceId`, `ownerPrincipalType`, `ownerPrincipalId`, `stewardUid`, `expectedCustodyRevision`, `operationId` | `DocumentCustodyTransferResult` |
 | 19 | `getNodePathSpine` | `spaceId`, `nodeId` | `DocumentPathSpine(nodes: root → target)` |
+| 20 | `getSpace` | `spaceId` | `DocumentSpace`（protocol 0.2；重新校验单个驻留空间的当前权限） |
 
 `listSpaces` 的 `limit` 范围是 1..64；游标是不透明、版本化的独占 `spaceId` 锚点。单页最多 64 个互异
 空间，精确协议编码不得超过 256 KiB。调用方不得解释或拼接游标，也不得把某空间不在第一页解释为撤权。
@@ -326,6 +327,26 @@ regrant、ban 或 archive 复活/删除权限。同 ID 改写 payload、或新 o
 创建者的最近访问记录与文档、首个修订在同一事务中写入；后续成功打开正文会更新时间，列表按该服务端时间排序。最近创建按所有可访问空间的 `createdAt` 排序，并非“我创建
 的文档”。`DocumentHomeItem` 只携带有界摘要、空间、创建人和时间元数据，正文仍通过 `getDocument`
 按需读取。
+
+## documentComment
+
+本服务及 `DocumentComment` / `DocumentCommentPage` 自待发行 protocol 0.2 可用。
+
+| ID | 方法 | 参数 | 返回 |
+|---:|---|---|---|
+| 1 | `list` | `spaceId`, `documentId`, `beforeSequence`, `limit` | `DocumentCommentPage(items, nextBeforeSequence)` |
+| 2 | `create` | `spaceId`, `documentId`, `commentId`, `replyToId?`, `body` | `DocumentComment` |
+| 3 | `update` | `spaceId`, `documentId`, `commentId`, `body`, `expectedRevision` | `DocumentComment` |
+| 4 | `delete` | `spaceId`, `documentId`, `commentId`, `expectedRevision` | `DocumentComment`（无正文墓碑） |
+
+所有方法重新检查当前空间权限和文档活动状态。VIEWER 可评论，作者可编辑或删除，空间 ADMIN 可删除
+他人评论；回复只指向同一文档。创建使用 canonical UUID，同 ID/相同意图精确重放，改变正文、作者、
+文档或回复目标返回 `409`。评论自身 revision 与文档正文无关；相邻修订的精确编辑重试不重复更新，
+其他陈旧写入返回 `409`。删除保留身份、sequence 和回复上下文，精确创建重试不能复活墓碑。
+
+正文最多 4,000 个 UTF-16 单元，每篇最多 10,000 条（含墓碑）。分页按 sequence 倒序，`beforeSequence=0`
+请求首页，后续使用返回的独占游标，`nextBeforeSequence=0` 表示末页；limit 为 1..100，SDK 默认 50。
+编辑和删除不改变 sequence。评论变化以 `DOCUMENT_CHANGED / COMMENTS_CHANGED` 提示刷新，不在事件中传正文。
 
 ## 状态与错误
 

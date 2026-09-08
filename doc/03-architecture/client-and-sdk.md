@@ -886,15 +886,27 @@ opaque cursor 同时绑定该 revision 与成员查询范围；服务端 revisio
 文档及本地已知子树。组织 ACL 选择器可继续复用组织目录缓存作只读降级，但旧角色、grant 或正文都
 不是服务端授权凭据。
 
-当前没有 document Notify。用户进入工作台、打开空间/分支/正文、手动刷新和成功 RPC 会使投影收敛；
-工作台首次打开后，每次连接重新进入 `AUTHENTICATED` 还会启动一个 latest-wins 刷新任务。未曾读取的
-页面不会被整空间预取，另一设备的修改也不会仅因页面停留而实时出现。
+`DOCUMENT_CHANGED` 由 EventProcessor 先失效投影，再推进持久游标，随后发布带单调序号的会话内提示。
+普通节点变化按空间撤销在途目录/正文读取并保留离线副本，工作台刷新该空间已驻留标签与已加载分支；
+删除清理目标及本地已知子树上下文，撤权清理空间，晚到结果不能重新写回。事件不携带完整父链，活动
+文档跨分支移动后可再用一次既有 path spine RPC 补齐导航。其他空间的读取与用户导航不因节点事件被取消。
+组织、空间权限、reset、重新进入 `AUTHENTICATED` 或提示序号跳跃会合并触发有界工作集对账；`getSpace`
+只校验驻留空间，不消耗空间列表分页周期。未读取的正文和子树不会预取。远端高 revision 只提示本地
+dirty 标签存在新版本，保留原正文和 CAS 基线，交给保存冲突流程决定。
 
 文档 move/rename 是 LocalCache 中独立的可靠命令 lane：每个 `spaceId + nodeId` 只有一个未决槽，全局最多
 256 条，完整冻结原/目标 parent、名称、expectedRevision、canonical operationId 与 issuedAt。Repository
 在首次 RPC 前完成 SQLite durability barrier；连接恢复或进程重启后仍用原 identity 重放。服务端精确
 重放可能只返回 operationId 和空投影，SDK 会先用当前正文或 path spine 收敛本地名称、位置与 revision，
 然后才清 outbox。工作台的恢复完成事件必须越过草稿恢复屏障，不能让启动期结构 ACK 抢先覆盖草稿。
+
+`DocumentCommentRepository` 与会话后台共用一个评论发送 owner。`LocalDocumentComments` 在同一 SQLite
+保存最多 32 个服务端评论页和最多 256 条不可变待发送意图；创建、编辑、删除均在首次 RPC 前入队。
+网络或结果未知失败继续原 ID 重放；明确的 403/404/409 等操作拒绝保存失败提示，显式 retry 才恢复发送，
+只有明确拒绝的意图可以 discard。`COMMENTS_CHANGED` 撤销旧分页读取并触发当前评论区刷新；reset、撤权
+或删除清理对应页，保留 pending。分页与 ACK 通过缓存 owner 的关闭门禁和 generation 发布，确认成功可清
+原意图，但不能把撤权或关闭前的旧页写回。普通 close 保留已缓存页与 pending，供同账号重新打开。
+评论框未提交输入由工作台会话按文档保存，最多 32 篇，与可跨进程恢复的待发送队列分开。
 
 ### 6.7 Schema、损坏隔离与回收
 
@@ -919,7 +931,8 @@ outgoing/Bot delivery log、已读镜像 outbox、会话预览元组、组织单
 有界投影、GUI 建群/好友/邀请链接/群机器人凭据/群文件五类可靠命令的持久 outbox（各自有界）、
 dataset + cursor 绑定的 sync state、完整认证 Attachment 描述符与 personal peer uid、
 revision CAS、带 canonical 内嵌资产 sidecar 的 ReplyBody 消息字节、表情回应的行级服务端投影、
-不可变 `(createdAt, nodeId)` 同级顺序与文档 move/rename durable outbox。outgoing 回执和本地失败
+不可变 `(createdAt, nodeId)` 同级顺序、文档 move/rename durable outbox，以及评论分页与待发送意图。
+SQLDelight `1.sqm` 在现有数据库内追加评论表，保留原有本地事实。outgoing 回执和本地失败
 消息投影共用同一稳定失败分类；失败乐观投影在 receipt GC 后保留最小稳定失败结果；发布前的
 Document 客户端权限状态机与撤权墓碑已删除，干净投影从服务端重建。
 群机器人命令在请求前持久化客户端生成的唯一 token，只有用户

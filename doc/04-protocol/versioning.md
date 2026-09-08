@@ -9,7 +9,7 @@ TeamTalk 处于开发者预览阶段，**不对使用者保证版本兼容，未
 | 身份 | 当前值与来源 | 用途 | 递增时机 |
 |---|---|---|---|
 | 统一展示版本 | `teamtalk.releaseVersion=0.0.1` | Server、SDK、Android、Desktop、MCP 使用同一字符串，配合 commit 排查构建范围 | 用户明确确认正式产品发行后推进；内测 snapshot 保持它不变，不从它推导协议能力 |
-| 协议数字版本 | 当前发行 `0.1`（ID 1），最低支持 `0.0`（ID 0）；`id=(major << 16) \| minor` | 连接协商、协议注解、支持窗口与升级提示 | 同一正式发行周期共用一个待发布 minor；已冻结 minor 1，有新契约才开启下一 minor；新 major 从 minor 0 开始 |
+| 协议数字版本 | 当前发行 `0.1`（ID 1），源码待发行 `0.2`（ID 2），最低支持 `0.0`（ID 0）；`id=(major << 16) \| minor` | 连接协商、协议注解、支持窗口与升级提示 | 同一正式发行周期共用一个待发布 minor；已冻结 minor 1，当前新增契约共用 minor 2；新 major 从 minor 0 开始 |
 | 正式构建计数 | 根 `teamtalk.releaseBuildNumber=1` | Android `versionCode=buildNumber+1`；正式 Desktop revision 同样映射为 `buildNumber+1`；macOS jpackage 的系统包版本从 `1.0.0` 映射 | 正式发行时由用户确认推进；内测 snapshot 不修改它，Android 保持当前 code 手动覆盖 |
 | 内测 Desktop 修订号 | `desktopRevision=完整 Git first-parent 提交数+根构建号+1` | 满足 Conveyor 同一展示版本不同安装包的 revision 要求，记录在内测清单与安装元数据中 | 手动 snapshot 交付时自动计算，不写回配置、不依赖 tag；同展示版本的后续 snapshot 从已分发源码的后代构建，原字节重试复用原号 |
 
@@ -32,8 +32,8 @@ SDK 或平台壳里另外硬编码一个发行字符串。`major` 范围 `0..327
 
 协议版本表示两次正式发行之间的整体契约差异，不表示功能数、提交数或 AI 调试次数。
 当前正式基线是 `0.0.1 / protocol 0.1`，组织资料 RPC 和账号封禁帧属于协议 `0.1`。
-`0.0.0 / protocol 0.0` 与 `0.0.1 / protocol 0.1` 的快照都不可修改。首次新增契约时开启
-minor 2，同一后续发行周期继续共用它；仅修复实现时保留当前协议号。
+`0.0.0 / protocol 0.0` 与 `0.0.1 / protocol 0.1` 的快照都不可修改。当前文档变更事件、单空间读取和
+评论契约使用待发行 minor 2，同一发行周期继续共用它；仅修复实现时保留当前协议号。
 
 | 阶段 | 协议动作 | 兼容对象 |
 |---|---|---|

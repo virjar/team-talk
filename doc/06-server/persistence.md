@@ -4,7 +4,7 @@
 
 | 数据 | 存储 | 原因 |
 |---|---|---|
-| 用户、设备、凭据哈希、组织、机器人授权、好友、群、成员、会话、申请、邀请、同步事件、群文件、文档与修订 | PostgreSQL | 关系、约束、事务和查询 |
+| 用户、设备、凭据哈希、管理员凭据/审计、组织、机器人授权、好友、群、成员、会话、申请、邀请、同步事件、群文件、文档/修订/评论 | PostgreSQL | 关系、约束、事务和查询 |
 | 消息序号高水位、正文、幂等索引与投影 outbox | RocksDB | 按 chat/seq 顺序读写、单批原子 KV |
 | 文件小对象、元数据与上传事务收据 | RocksDB | 本地嵌入、低运维成本、对象与精确上传结果共同恢复 |
 | 大文件 | 文件系统 | 避免 KV 大 blob 放大 |
@@ -125,6 +125,17 @@ hash；认证策略不会把该 marker 交给密码适配器。
 16 条全部 active 则明确失败关闭。所有设备登录、refresh 与撤销都从 users 上的全局序列分配新 epoch，
 所以 revoked 槽被回收、旧 deviceId 日后再次出现也不会低于进程内已有 fence。账号行锁同时覆盖空集
 检查、回收与插入，并发新设备登录不能各自看到“还有最后一个槽”。
+
+### admin_security_credentials / admin_security_audits
+
+`admin_security_credentials` 只有 singleton=1 的管理员记录，保存用户名、密码 verifier、更新时间和已使用的
+恢复 ID，不保存环境密码或 Bearer token。凭据初始化、显式恢复、轮换与成功审计在同一个 PostgreSQL
+事务内完成；失败时保留原凭据。会话由进程内有界 owner 管理，服务重启即失效。
+
+`admin_security_audits` 按单调 ID 保存已知管理动作的 actor、目标、开始/完成时间、结果、HTTP 状态及
+固定失败原因。常规操作先单独落 STARTED，再执行业务并补终态，未完成记录不等于业务回滚；密码
+verifier 变更的成功审计则与凭据同事务。保留最多 10,000 条、每页最多 100 条，不承担长期归档。
+管理行为与恢复方式见[搜索与管理](search-and-admin.md#5-管理后台)。
 
 ### chats / group_chats / group_members
 
@@ -440,6 +451,18 @@ document_user_recents 以 `(uid, documentId)` 为主键保存最后访问时间�
 读取正文后的访问更新是辅助索引，失败不得把已授权正文伪装成读取失败。最近列表单次最多返回 50 行，仍需实时过滤空间 ACL、空间归档和节点删除；
 历史访问记录本身不是权限凭据，这 1,000 行是最近工作集而非完整访问日志。
 
+### document_comments
+
+评论使用稳定 `comment_id` 主键，保存空间/文档、不可变自增 `sequence`、作者与显示名快照、回复目标、
+正文、自身 revision、时间和删除标记；`creation_fingerprint` 绑定首次创建意图。分页索引为
+`(space_id, document_id, sequence)`，按 sequence 倒序进行独占游标读取。每篇最多 10,000 条，墓碑也
+计入容量；删除清空正文但保留身份和回复关系。评论写入与 `COMMENTS_CHANGED` 用户事件共用原
+`PgUnitOfWork` 事务，正文修订表不因评论变化新增版本。
+
+Document 的节点、空间、授权和归属写入也在原事务追加 `DOCUMENT_CHANGED`。读者集合按当前普通用户、
+直接/部门授权去重；访问变化为失去最后授权的用户追加撤权事件。事件内容只负责失效提示，正文和
+评论仍走重新授权的领域查询。事务回滚不会留下通知，重复已确认命令不重复追加事件。
+
 ## 3. MessageStore
 
 消息主键按类型前缀、chatId 长度和值及 big-endian serverSeq 编码，使 RocksDB 范围扫描天然按序：
@@ -547,9 +570,9 @@ MEMBER_REMOVED/CHAT_DELETED 之后收到一条更晚的旧 MESSAGE_RECV；剩余
 | 标记 | 当前基线 | 负责什么 |
 |---|---|---|
 | 发行字符串 | `0.0.1` | 用户看到的版本；客户端、SDK、服务端来自同一构建输入，不决定二进制兼容 |
-| 协议 major/minor | `0.1`，数字 ID 为 `1`，最低 minor 为 `0` | 每条 TCP 连接协商可使用的契约窗口，不改变已保存的消息和同步游标 |
+| 协议 major/minor | 源码待发行 `0.2`，最低 minor 为 `0`；正式 0.0.1 冻结 `0.1` | 每条 TCP 连接协商可使用的契约窗口，不改变已保存的消息和同步游标 |
 | 服务端存储 epoch | **`1`** | 已存在的 PostgreSQL 和本地持久化布局；以 `ServerDataEpoch.CURRENT_EPOCH` 为事实源 |
-| PostgreSQL 迁移版本 | `0` | `schema_migrations` 的连续完成记录；在现有 epoch 内保留数据地推进 SQL 布局 |
+| PostgreSQL 迁移版本 | `3`（连续清单 `0..3`） | `schema_migrations` 的连续完成记录；在现有 epoch 内保留数据地推进 SQL 布局 |
 | dataset ID | 每套数据原有的 canonical UUID | PostgreSQL 与本地存储共同拥有的身份，普通升级保留原值 |
 
 发行与协议版本的变化不改变存储 epoch 或 dataset。标记重编号本身不会迁移数据，反而会让
@@ -566,11 +589,14 @@ dataset ID 和迁移完成记录，只执行尚未完成的已知迁移。不会
 
 [SchemaMigrations](../../server/server/src/main/kotlin/com/virjar/tk/server/infra/db/SchemaMigrations.kt)
 维护一份短的追加式 SQL 清单；`schema_migrations(version, name, applied_at)` 记录每条迁移的完成事实，
-编号从 0 开始，已经发布的顺序、名称和 SQL 不得原地修改。当前只有：
+编号从 0 开始，已经发布的顺序、名称和 SQL 不得原地修改。当前清单为：
 
 | 版本 | 名称 | 变化及数据影响 |
 |---|---|---|
 | `0` | `expand_client_telemetry_protocol_id` | 把已有 `client_telemetry_devices.protocol_version` CHECK 从 `0..255` 放宽为非负 PostgreSQL INTEGER；保留每行内容、主键、时间和 dataset |
+| `1` | `create_banned_credential_tombstones` | 追加已封禁账号的 refresh token 摘要墓碑表，保留现有凭据及业务资料 |
+| `2` | `create_admin_security` | 追加单实例管理员凭据和有界操作审计表 |
+| `3` | `create_document_comments` | 追加文档评论与创建指纹、分页索引，不改写已有文档正文或修订 |
 
 `DatabaseFactory` 在建立业务容器前完成这一步。已有库的启动事务先锁定 `schema_metadata`，再校验
 布局和读取迁移记录；事务使用 `READ_COMMITTED`，等待另一启动事务结束后能看到它刚提交的记录。
