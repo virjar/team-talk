@@ -86,6 +86,7 @@ internal fun AndroidMainAppContent(
     if (!dataState.acceptsRendering) return
     val navController = rememberNavController()
     val requestedDocument = remember { MutableStateFlow<OfficeRefBody?>(null) }
+    val requestedTask = remember { MutableStateFlow<String?>(null) }
     val currentBackStackEntry by navController.currentBackStackEntryAsState()
     var homeTelemetryPage by remember { mutableStateOf(ClientUiPage.CONVERSATIONS) }
     val currentTelemetryPage = if (currentBackStackEntry?.destination?.route == Routes.HOME) {
@@ -111,6 +112,14 @@ internal fun AndroidMainAppContent(
         // 冷启动点击先等待认证与 NavHost 首帧；intent 的账号字段只用于比对当前所有者。
         val currentEntry = currentBackStackEntry ?: return@LaunchedEffect
         actionAdmission.runIfOpen {
+            if (target.taskId != null) {
+                requestedTask.value = target.taskId
+                navController.navigate(Routes.HOME) {
+                    popUpTo(Routes.HOME) { inclusive = false }
+                    launchSingleTop = true
+                }
+                return@runIfOpen
+            }
             val alreadyOpen = currentEntry.destination.route == Routes.CHAT &&
                 currentEntry.arguments?.getString("chatId") == target.chatId
             if (!alreadyOpen && dataState.prepareChat(target.chatId)) {
@@ -182,6 +191,7 @@ internal fun AndroidMainAppContent(
                     actionAdmission = actionAdmission,
                     launchAdmittedAction = ::launchAdmittedAction,
                     requestedDocument = requestedDocument,
+                    requestedTask = requestedTask,
                     onHomeTelemetryPageChange = { homeTelemetryPage = it },
                     onLogout = onLogout,
                 )
@@ -191,6 +201,7 @@ internal fun AndroidMainAppContent(
                     resourceOwner = resourceOwner,
                     actionAdmission = actionAdmission,
                     requestedDocument = requestedDocument,
+                    requestedTask = requestedTask,
                     chatEmbeddedAssetImports = chatEmbeddedAssetImports,
                     chatEmbeddedAssetSelector = chatEmbeddedAssetSelector,
                 )
@@ -255,6 +266,7 @@ private fun NavGraphBuilder.homeDestination(
     actionAdmission: UiActionAdmission,
     launchAdmittedAction: (suspend () -> Unit) -> Boolean,
     requestedDocument: MutableStateFlow<OfficeRefBody?>,
+    requestedTask: MutableStateFlow<String?>,
     onHomeTelemetryPageChange: (ClientUiPage) -> Unit,
     onLogout: () -> Unit,
 ) {
@@ -264,6 +276,7 @@ private fun NavGraphBuilder.homeDestination(
             resourceOwner = resourceOwner,
             launchAdmittedAction = launchAdmittedAction,
             requestedDocument = requestedDocument,
+            requestedTask = requestedTask,
             onSelectedTabChanged = { tab ->
                 onHomeTelemetryPageChange(androidHomeTabTelemetryPage(tab))
             },

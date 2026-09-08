@@ -99,6 +99,7 @@ object MessageBodyPolicy {
             is StickerBody -> validateSticker(body)
             is ReactionBody -> validateReaction(body)
             is OfficeRefBody -> validateOfficeRef(body)
+            is TaskRefBody -> body
             // extensionType 是否已登记是服务端创建权限，不是接收/缓存解码条件；
             // 未知扩展消息必须能跨版本原样保存和转发。
         }
@@ -541,6 +542,7 @@ object MessageBodyPolicy {
         is StickerBody -> MessageType.STICKER
         is ReactionBody -> MessageType.REACTION
         is OfficeRefBody -> MessageType.OFFICE_REF
+        is TaskRefBody -> MessageType.TASK_REF
     }
 
     private const val MARKDOWN_STRUCTURE_CHARACTERS = "#>*_~`[]()|!"

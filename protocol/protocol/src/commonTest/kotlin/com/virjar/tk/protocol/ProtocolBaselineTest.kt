@@ -122,7 +122,7 @@ class ProtocolBaselineTest {
     fun `markdown is the only text message wire type`() {
         assertEquals(1, MessageType.RICH_TEXT.code)
         assertEquals(16, MessageType.INTERACTIVE_CARD.code)
-        assertEquals((1..17).toList(), MessageType.entries.map(MessageType::code))
+        assertEquals((1..18).toList(), MessageType.entries.map(MessageType::code))
         assertEquals(MessageType.entries.size, MessageType.entries.map(MessageType::code).toSet().size)
     }
 

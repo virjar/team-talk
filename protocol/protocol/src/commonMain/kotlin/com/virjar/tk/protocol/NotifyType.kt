@@ -31,6 +31,10 @@ enum class NotifyType(val code: Int) {
     /** 文档工作集的持久化失效提示，正文仍通过授权 RPC 按需读取。 */
     @SinceProtocol(2)
     DOCUMENT_CHANGED(23),
+    @SinceProtocol(2)
+    TASK_CHANGED(24),
+    @SinceProtocol(2)
+    TASK_DUE(25),
 
     // 会话
     CONVERSATION_UPDATED(30),

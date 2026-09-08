@@ -42,13 +42,19 @@ internal fun HomeScreen(
     onBlacklist: () -> Unit,
     /** 聊天引用交给首页消费的完整目标；打开后清空，避免下次返回首页再次跳转。 */
     requestedDocument: MutableStateFlow<OfficeRefBody?>,
+    requestedTask: MutableStateFlow<String?>,
 ) {
     if (!dataState.acceptsRendering) return
     val actionAdmission = dataState.uiActionAdmission
     var homeTab by rememberSaveable { mutableIntStateOf(0) }
     val documentReference by requestedDocument.collectAsState()
+    val taskReference by requestedTask.collectAsState()
     // 从聊天返回首页时，引用目标优先于上次保存的栏目。消费后仍留在文档，不触发第二次初始化。
-    val selectedTab = if (documentReference != null) MainTab.DOCUMENTS.ordinal else homeTab
+    val selectedTab = when {
+        taskReference != null -> MainTab.TASKS.ordinal
+        documentReference != null -> MainTab.DOCUMENTS.ordinal
+        else -> homeTab
+    }
     val conversations by dataState.conversationViewModel.conversations.collectAsState()
     val conversationPeerUsers by dataState.conversationViewModel.peerUsers.collectAsState()
     val contacts by dataState.contactViewModel.contacts.collectAsState()
@@ -57,7 +63,7 @@ internal fun HomeScreen(
     val documentExitCoordinator = remember { MobileDocumentExitCoordinator() }
 
     // 切换标签时刷新待处理申请数
-    LaunchedEffect(selectedTab) {
+    LaunchedEffect(selectedTab, taskReference) {
         onSelectedTabChanged(MainTab.entries[selectedTab])
         dataState.runAdmittedUiAction(actionAdmission, onClosed = {}) {
             when (MainTab.entries[selectedTab]) {
@@ -75,6 +81,14 @@ internal fun HomeScreen(
                         requestedDocument.compareAndSet(reference, null)
                     }
                 }
+                MainTab.TASKS -> {
+                    dataState.tasks.open()
+                    requestedTask.value?.let { taskId ->
+                        dataState.tasks.openTask(taskId)
+                        homeTab = MainTab.TASKS.ordinal
+                        requestedTask.compareAndSet(taskId, null)
+                    }
+                }
                 else -> Unit
             }
         }
@@ -86,6 +100,7 @@ internal fun HomeScreen(
         TabIcon(Icons.AutoMirrored.Filled.Chat, Icons.AutoMirrored.Outlined.Chat, "会话"),
         TabIcon(Icons.Filled.Contacts, Icons.Outlined.Contacts, "通讯录"),
         TabIcon(Icons.Filled.Description, Icons.Outlined.Description, "文档"),
+        TabIcon(Icons.Filled.Assignment, Icons.Outlined.Assignment, "任务"),
         TabIcon(Icons.Filled.Settings, Icons.Outlined.Settings, "设置"),
     )
 
@@ -93,7 +108,7 @@ internal fun HomeScreen(
         modifier = Modifier.testTag("main.home"),
         topBar = {
             // 文档拥有自己的首页/空间标题栏；叠加通用 TopAppBar 会形成两个页面标题。
-            if (MainTab.entries[selectedTab] != MainTab.DOCUMENTS) {
+            if (MainTab.entries[selectedTab] !in setOf(MainTab.DOCUMENTS, MainTab.TASKS)) {
                 TopAppBar(
                     title = { Text(tabIcons[selectedTab].label) },
                     actions = {
@@ -195,6 +210,18 @@ internal fun HomeScreen(
                         homeTab = MainTab.CONVERSATIONS.ordinal
                     },
                 )
+                MainTab.TASKS -> {
+                    androidx.activity.compose.BackHandler {
+                        actionAdmission.runIfOpen {
+                            if (!dataState.tasks.handleBack()) homeTab = MainTab.CONVERSATIONS.ordinal
+                        }
+                    }
+                    com.virjar.tk.app.ui.screen.TaskWorkspaceScreen(
+                        feature = dataState.tasks,
+                        actionAdmission = actionAdmission,
+                        compactMode = true,
+                    )
+                }
                 MainTab.SETTINGS -> MeScreen(
                     currentUser = dataState.account.currentUser,
                     onLogout = actionAdmission.guard(onLogout),

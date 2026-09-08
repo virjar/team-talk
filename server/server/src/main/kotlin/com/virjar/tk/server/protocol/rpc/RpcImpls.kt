@@ -126,15 +126,16 @@ class MessageRpcImpl(
     private val messageService: MessageService,
     private val conversationService: ConversationService,
     private val reactionService: MessageReactionService,
+    private val protocolVersion: com.virjar.tk.protocol.ProtocolVersion = com.virjar.tk.protocol.ProtocolVersions.CURRENT,
 ) : MessageRpcStub(uid) {
     override suspend fun getHistory(chatId: String, fromSeq: Long, limit: Int) =
-        messageService.getHistory(uid, chatId, fromSeq, limit)
+        messageService.getHistory(uid, chatId, fromSeq, limit).map { it.forProtocol(protocolVersion) }
     override suspend fun search(chatId: String, keyword: String, limit: Int) =
-        messageService.searchMessages(uid, chatId, keyword, limit)
+        messageService.searchMessages(uid, chatId, keyword, limit).map { it.forProtocol(protocolVersion) }
     override suspend fun revoke(chatId: String, serverSeq: Long) = messageService.revokeMessage(uid, chatId, serverSeq)
     override suspend fun edit(msg: com.virjar.tk.protocol.model.Message) = messageService.editMessage(uid, msg.chatId, msg.serverSeq, msg)
     override suspend fun forward(srcChatId: String, srcSeq: Long, targetChatId: String) =
-        messageService.forwardMessage(uid, srcChatId, srcSeq, targetChatId)
+        messageService.forwardMessage(uid, srcChatId, srcSeq, targetChatId).forProtocol(protocolVersion)
     override suspend fun markRead(chatId: String, readSeq: Long) = conversationService.markRead(uid, chatId, readSeq)
     override suspend fun addReaction(chatId: String, serverSeq: Long, emoji: String) =
         reactionService.addReaction(uid, chatId, serverSeq, emoji)
@@ -143,7 +144,7 @@ class MessageRpcImpl(
     override suspend fun listReactions(chatId: String, fromSeq: Long, toSeq: Long) =
         reactionService.listReactions(uid, chatId, fromSeq, toSeq)
     override suspend fun saveMessage(srcChatId: String, srcSeq: Long, operationId: String) =
-        messageService.saveMessage(uid, srcChatId, srcSeq, operationId)
+        messageService.saveMessage(uid, srcChatId, srcSeq, operationId).forProtocol(protocolVersion)
 }
 
 class ConversationRpcImpl(uid: String, private val service: ConversationService) : ConversationRpcStub(uid) {

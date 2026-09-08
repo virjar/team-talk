@@ -41,6 +41,9 @@ private val schemaMigrations = listOf(
     SchemaMigration("create_content_search_pending") {
         SchemaUtils.create(ContentSearchPending)
     },
+    SchemaMigration("create_tasks") {
+        SchemaUtils.create(WorkTasks, TaskAudits, TaskCommands)
+    },
 )
 
 /** Caller owns the schema_metadata lock; DDL and its completion receipt commit in the same transaction. */

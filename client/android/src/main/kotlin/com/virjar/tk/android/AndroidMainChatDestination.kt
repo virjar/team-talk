@@ -70,6 +70,7 @@ internal fun NavGraphBuilder.chatDestination(
     resourceOwner: AndroidAuthenticatedResourceOwner,
     actionAdmission: UiActionAdmission,
     requestedDocument: MutableStateFlow<OfficeRefBody?>,
+    requestedTask: MutableStateFlow<String?>,
     chatEmbeddedAssetImports: AndroidEmbeddedAssetImportGateway,
     chatEmbeddedAssetSelector: AndroidEmbeddedAssetSelector,
 ) {
@@ -178,6 +179,19 @@ internal fun NavGraphBuilder.chatDestination(
                     dataState.messageActions.save(message.chatId, message.serverSeq)
                 },
                 officeRefHost = dataState,
+                onOpenTaskRef = actionAdmission.guard { body: com.virjar.tk.protocol.body.TaskRefBody, onDenied ->
+                    dataState.messageActions.openTaskReference(
+                        body,
+                        onOpen = {
+                            requestedTask.value = body.taskId
+                            navController.navigate(Routes.HOME) {
+                                popUpTo(Routes.HOME) { inclusive = false }
+                                launchSingleTop = true
+                            }
+                        },
+                        onDenied = onDenied,
+                    )
+                },
                 onOpenOfficeRef = actionAdmission.guard {
                         body: OfficeRefBody, onDenied ->
                     dataState.messageActions.openReference(

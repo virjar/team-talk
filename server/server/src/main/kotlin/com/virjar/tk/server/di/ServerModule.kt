@@ -333,6 +333,8 @@ internal fun createServerModule(
     single { GroupFileService(get(), get(), get(), get(), get()) }
     single<com.virjar.tk.server.domain.document.DocumentCommentRepository> { com.virjar.tk.server.infra.db.repository.ExposedDocumentCommentRepository() }
     single { com.virjar.tk.server.domain.document.DocumentCommentService(get(), get(), get()) }
+    single<com.virjar.tk.server.domain.task.TaskRepository> { com.virjar.tk.server.infra.db.repository.ExposedTaskRepository() }
+    single { com.virjar.tk.server.domain.task.TaskService(get(), get()) }
     single {
         DocumentService(
             repository = get(),
@@ -421,6 +423,7 @@ internal fun createServerModule(
             users = get(),
             contacts = get(),
             officeRefs = OfficeRefResolver(get(), get()),
+            taskRefs = com.virjar.tk.server.domain.message.TaskRefResolver(get()),
             managedChats = get(),
             attachmentLifecycle = get(),
         )
@@ -496,7 +499,10 @@ internal fun createServerModule(
                 ContactRpcImpl(session.uid, get(), get(), get())
             }
             register(ChatRpcContract.SERVICE) { session -> ChatRpcImpl(session.uid, get()) }
-            register(MessageRpcContract.SERVICE) { session -> MessageRpcImpl(session.uid, get(), get(), get()) }
+            register(MessageRpcContract.SERVICE) { session -> MessageRpcImpl(session.uid, get(), get(), get(), session.protocolVersion) }
+            register(com.virjar.tk.protocol.rpc.gen.TaskRpcContract.SERVICE) { session ->
+                com.virjar.tk.server.protocol.rpc.TaskRpcImpl(session.uid, get())
+            }
             register(ConversationRpcContract.SERVICE) { session -> ConversationRpcImpl(session.uid, get()) }
             register(DeviceRpcContract.SERVICE) { session -> DeviceRpcImpl(session.uid, get(), get()) }
             register(OrganizationRpcContract.SERVICE) { session -> OrganizationRpcImpl(session.uid, get()) }

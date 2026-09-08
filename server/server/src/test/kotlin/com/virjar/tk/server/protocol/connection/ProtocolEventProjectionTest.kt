@@ -14,6 +14,23 @@ import kotlin.test.assertSame
 
 class ProtocolEventProjectionTest {
     @Test
+    fun `task events and references advance old cursors without exposing undecodable bodies`() {
+        val taskId = "bb161090-0261-4c0f-9bde-9af48557d3f0"
+        val message = Message("chat-a", "message-a", 3L, "user-a", com.virjar.tk.protocol.MessageType.TASK_REF.code, 1L,
+            body = com.virjar.tk.protocol.body.TaskRefBody(taskId, "任务标题", "任务 · 待处理"))
+        val events = listOf(
+            NotifyPayload(20L, NotifyType.TASK_CHANGED.code, ProtoCodec.encode(com.virjar.tk.protocol.TaskChangedPayload(taskId, 1L, 1))),
+            NotifyPayload(21L, NotifyType.TASK_DUE.code, ProtoCodec.encode(com.virjar.tk.protocol.TaskDuePayload(taskId, 1L, 100L))),
+            NotifyPayload(22L, NotifyType.MESSAGE_RECV.code, ProtoCodec.encode(message)),
+        )
+        val old = eventFrameForProtocol(SyncBatchPayload(events), ProtocolVersion(0, 1)) as SyncBatchPayload
+        assertEquals(listOf(20L, 21L, 22L), old.events.map { it.eventId })
+        old.events.forEach { assertEquals(NotifyType.EVENT_CURSOR_ADVANCED.code, it.notifyType); assertNull(it.payload) }
+        val current = eventFrameForProtocol(SyncBatchPayload(events), ProtocolVersion(0, 2)) as SyncBatchPayload
+        assertEquals(events, current.events)
+    }
+
+    @Test
     fun `document changes preserve old client cursors and reach minor two clients`() {
         val event = NotifyPayload(12L, NotifyType.DOCUMENT_CHANGED.code, byteArrayOf(1, 2, 3))
         assertEquals(

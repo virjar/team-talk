@@ -33,6 +33,7 @@ import kotlinx.coroutines.launch
 
 private const val MESSAGE_CHANNEL = "teamtalk.messages"
 private const val OPEN_MESSAGE_ACTION = BuildConfig.APPLICATION_ID + ".OPEN_MESSAGE"
+private const val OPEN_TASK_ACTION = BuildConfig.APPLICATION_ID + ".OPEN_TASK"
 
 /** Activity 的通知入口；等待已认证导航就绪，既支持 onCreate，也支持 onNewIntent。 */
 internal class AndroidNotificationNavigation {
@@ -40,13 +41,16 @@ internal class AndroidNotificationNavigation {
     val target: StateFlow<AndroidNotificationTarget?> = pending.asStateFlow()
 
     fun accept(intent: Intent?): Boolean {
-        if (intent?.action != OPEN_MESSAGE_ACTION) return false
+        if (intent?.action != OPEN_MESSAGE_ACTION && intent?.action != OPEN_TASK_ACTION) return false
+        val isTask = intent.action == OPEN_TASK_ACTION
         val uri = intent.data ?: return false
-        if (uri.scheme != "teamtalk-local" || uri.authority != "message") return false
+        if (uri.scheme != "teamtalk-local" || uri.authority != if (isTask) "task" else "message") return false
         val parts = uri.pathSegments
         if (parts.size != 4 || parts.any { it.isBlank() || it.length > 256 }) return false
         if (parts[3].length > ConversationWirePolicy.MAX_CHAT_ID_LENGTH) return false
-        pending.value = AndroidNotificationTarget(parts[0], parts[1], parts[2], parts[3])
+        if (isTask && parts[3].length > 36) return false
+        pending.value = AndroidNotificationTarget(parts[0], parts[1], parts[2],
+            chatId = if (isTask) "" else parts[3], taskId = parts[3].takeIf { isTask })
         return true
     }
 
@@ -65,15 +69,16 @@ internal data class AndroidNotificationTarget(
     val datasetId: String,
     val uid: String,
     val chatId: String,
+    val taskId: String? = null,
 ) {
     fun belongsTo(deploymentFingerprint: String, datasetId: String, uid: String): Boolean =
         this.deploymentFingerprint == deploymentFingerprint && this.datasetId == datasetId && this.uid == uid
 
     fun intent(context: Context): Intent = Intent(context, MainActivity::class.java).apply {
-        action = OPEN_MESSAGE_ACTION
+        action = if (taskId != null) OPEN_TASK_ACTION else OPEN_MESSAGE_ACTION
         // data 参与 PendingIntent 身份比较；不同会话不会互相覆盖点击目的地。
-        data = Uri.Builder().scheme("teamtalk-local").authority("message")
-            .appendPath(deploymentFingerprint).appendPath(datasetId).appendPath(uid).appendPath(chatId)
+        data = Uri.Builder().scheme("teamtalk-local").authority(if (taskId != null) "task" else "message")
+            .appendPath(deploymentFingerprint).appendPath(datasetId).appendPath(uid).appendPath(taskId ?: chatId)
             .build()
         flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
     }

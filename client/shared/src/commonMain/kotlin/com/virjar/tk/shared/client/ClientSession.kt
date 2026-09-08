@@ -62,6 +62,7 @@ class ClientSession internal constructor(
     private val ownedDocumentRepo: DocumentRepository,
     private val ownedDocumentCommentRepo: com.virjar.tk.shared.repository.DocumentCommentRepository,
     private val ownedContentSearchRepo: ContentSearchRepository,
+    private val ownedTaskRepo: TaskRepository,
     private val ownedHttpAuthExpiredRouter: SessionHttpAuthExpiredRouter,
     private val ownedGroupBotManagementRepo: GroupBotManagementRepository,
     /** 发送队列（断线排队重连补发，状态机回写 localCache） */
@@ -129,6 +130,7 @@ class ClientSession internal constructor(
     val documentRepo: DocumentRepository get() = businessResource(ownedDocumentRepo)
     val documentCommentRepo: com.virjar.tk.shared.repository.DocumentCommentRepository get() = businessResource(ownedDocumentCommentRepo)
     val contentSearchRepo: ContentSearchRepository get() = businessResource(ownedContentSearchRepo)
+    val taskRepo: TaskRepository get() = businessResource(ownedTaskRepo)
     val groupBotManagementRepo: GroupBotManagementRepository get() = businessResource(ownedGroupBotManagementRepo)
     val sendQueue: SendQueue get() = businessResource(ownedSendQueue)
     val outgoingQueueSnapshots: kotlinx.coroutines.flow.StateFlow<OutgoingQueueSnapshot>
@@ -443,6 +445,7 @@ fun createSession(
         ownerUid = sessionOwnerUid,
         onOutgoingProjectionMayHaveChanged = refreshOutgoingProjectionSnapshot,
         checkpointLoader = checkpointLoader,
+        onTaskReminderDirty = pendingMirrorWake::pendingCommitted,
     )
     ep.bindSyncWireAdmission(checkpointAdmission)
     construction.own("event processor", ep::stop)
@@ -704,6 +707,7 @@ fun createSession(
         ownedGroupFileRepo = reliableCommandFamilies.groupFiles,
         ownedDocumentRepo = reliableCommandFamilies.documents,
         ownedDocumentCommentRepo = reliableCommandFamilies.documentComments,
+        ownedTaskRepo = reliableCommandFamilies.tasks,
         ownedContentSearchRepo = ContentSearchRepository(
             rpcClient = businessRpcClient,
             changes = ep.contentSearchChanges,

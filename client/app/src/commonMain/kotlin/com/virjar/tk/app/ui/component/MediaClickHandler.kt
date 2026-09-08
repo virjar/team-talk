@@ -34,6 +34,9 @@ interface PlatformMediaActions {
      * 默认实现表示平台尚未接线（卡片不可点击之外的最后防线）。
      */
     fun openOfficeRef(message: Message, body: com.virjar.tk.protocol.body.OfficeRefBody) {}
+
+    /** 任务引用只包含预览，平台先读取当前任务并校验参与者权限后导航。 */
+    fun openTaskRef(message: Message, body: com.virjar.tk.protocol.body.TaskRefBody) {}
 }
 
 /**
@@ -74,6 +77,8 @@ fun rememberMediaClickHandler(
                 is FileBody -> actions.openFile((msg.body as FileBody).attachment)
                 is com.virjar.tk.protocol.body.OfficeRefBody ->
                     actions.openOfficeRef(msg, msg.body as com.virjar.tk.protocol.body.OfficeRefBody)
+                is com.virjar.tk.protocol.body.TaskRefBody ->
+                    actions.openTaskRef(msg, msg.body as com.virjar.tk.protocol.body.TaskRefBody)
                 else -> {}
             }
         }

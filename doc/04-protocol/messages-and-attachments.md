@@ -31,7 +31,7 @@ body fields（当 hasBody=1）
 
 当前协议分配 RICH_TEXT、IMAGE、VOICE、VIDEO、FILE、LOCATION、CARD、REPLY、FORWARD、
 MERGE_FORWARD、REVOKE、EDIT、STICKER、REACTION、TYPING、
-INTERACTIVE_CARD。是否有完整产品入口以[功能状态](../10-reference/feature-status.md)为准，
+INTERACTIVE_CARD、OFFICE_REF，以及待发行 protocol 0.2 的 TASK_REF。是否有完整产品入口以[功能状态](../10-reference/feature-status.md)为准，
 枚举存在不等于所有客户端已经完成体验。
 
 MessageBodyRegistry 是 `MessageType → reader` 的唯一解码入口。发送前与服务端落库前都调用
@@ -52,6 +52,11 @@ MessageBodyPolicy，确保 messageType 与 body 实际类型一致。
 消息类型按数字协议版本追加；零号基线已经移除未注册的通用扩展消息。
 当前 body 没有独立长度，历史列表不能安全跳过未知类型。新增类型必须同时提供版本适配或提高
 最低支持版本，不能把未知字节当 Markdown 或静默丢弃，详见[演进边界](versioning.md#兼容分支不是任意新业务的自动翻译器)。
+
+`TASK_REF(18)` 的 `TaskRefBody(taskId, title, subtitle)` 保存独立任务引用与发送时预览，服务端从当前
+有权读取的任务重建预览，点击仍调用任务 RPC。它不扩展已经发行的 `OFFICE_REF(17)` 子类型。
+向旧协议连接返回历史和搜索消息时，服务端保留原消息定位并投影为升级提示；持久消息保持原类型。
+旧端的实时事件沿协议能力门禁推进游标，不尝试解码未知任务 body。
 
 ## 4. 富文本
 

@@ -52,6 +52,8 @@ class EventProcessor(
     private val onOutgoingProjectionMayHaveChanged: (() -> Unit)? = null,
     /** 生产检查点收集器；从不接收 RESET 的裸协议测试台可以省略它。 */
     private val checkpointLoader: ServerCheckpointLoader? = null,
+    /** 只唤醒既有恢复 worker；事件事务内不执行任务 RPC。 */
+    private val onTaskReminderDirty: (() -> Unit)? = null,
 ) {
     @Volatile
     private var logger: TkLogger = PlatformOnlyTkLogger("EventProcessor")
@@ -576,6 +578,20 @@ class EventProcessor(
                     if (change.kind != DocumentChangedPayload.COMMENTS_CHANGED) {
                         invalidateContentSearch(ContentSearchRequest.KIND_DOCUMENT)
                     }
+                }
+            }
+            NotifyType.TASK_CHANGED -> {
+                val change = decodePayload<com.virjar.tk.protocol.TaskChangedPayload>(notifyType, payload)
+                publicationGate.use(publicationLease) {
+                    localCache.tasks.invalidate(change)
+                    onTaskReminderDirty?.invoke()
+                }
+            }
+            NotifyType.TASK_DUE -> {
+                val change = decodePayload<com.virjar.tk.protocol.TaskDuePayload>(notifyType, payload)
+                publicationGate.use(publicationLease) {
+                    localCache.tasks.due(change)
+                    onTaskReminderDirty?.invoke()
                 }
             }
             NotifyType.MESSAGE_REACTION -> {

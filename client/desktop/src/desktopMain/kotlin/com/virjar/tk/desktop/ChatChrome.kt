@@ -12,9 +12,11 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.Contacts
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Assignment
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -94,6 +96,14 @@ internal fun SlimNavRail(
                 label = MainTab.DOCUMENTS.label,
                 selected = selectedTab == MainTab.DOCUMENTS.ordinal,
                 onClick = { onSelectTab(MainTab.DOCUMENTS.ordinal) },
+            )
+
+            RailItem(
+                filledIcon = Icons.Filled.Assignment,
+                outlinedIcon = Icons.Outlined.Assignment,
+                label = MainTab.TASKS.label,
+                selected = selectedTab == MainTab.TASKS.ordinal,
+                onClick = { onSelectTab(MainTab.TASKS.ordinal) },
             )
 
             Spacer(Modifier.weight(1f))

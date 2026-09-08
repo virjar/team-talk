@@ -44,6 +44,7 @@ class FakeLocalCache(
     terminalReceiptLimit: Int = MAX_TERMINAL_OUTGOING_RECEIPTS,
     initialDatasetId: String? = FAKE_SYNC_DATASET_ID,
 ) : LocalCache {
+    override val tasks: com.virjar.tk.shared.client.LocalTasks = FakeTasks()
     override val documentComments: com.virjar.tk.shared.client.LocalDocumentComments = FakeDocumentComments()
     // 消息存储：chatId → 按时间倒序的消息列表（最新在前）
     private val messagesMap = mutableMapOf<String, MutableList<Message>>()

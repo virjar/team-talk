@@ -57,6 +57,7 @@ object MessageTextExtractor {
             MessageType.OFFICE_REF -> (body as? com.virjar.tk.protocol.body.OfficeRefBody)?.let { ref ->
                 (if (ref.isDocument) "[文档] " else "[群文件] ") + ref.title
             }
+            MessageType.TASK_REF -> (body as? TaskRefBody)?.let { "[任务] " + it.title }
             MessageType.TYPING, null -> null
         }
     }

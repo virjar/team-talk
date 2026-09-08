@@ -417,6 +417,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                     AppTray.setTooltip("${ClientIdentity.DISPLAY_NAME} - $status$suffix")
                 }
                 val windowReadActive = isDesktopWindowActive(windowVisible, windowFocused)
+                DesktopTaskNotifications(desktopNav, presentationGate, windowReadActive, connectionState)
                 LaunchedEffect(conversations, windowReadActive) {
                     DesktopNotificationManager.onConversationsChanged(
                         conversations = conversations,

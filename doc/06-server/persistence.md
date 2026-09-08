@@ -475,6 +475,20 @@ Document 的节点、空间、授权和归属写入也在原事务追加 `DOCUME
 两个目录分别从 PostgreSQL 当前对象和 MessageStore 当前消息恢复；它们不是正文或文件的备份。
 启动核对、运行投影和读取权限见[内容与资产搜索](search-and-admin.md#7-内容与资产搜索)。
 
+### work_tasks / task_audits / task_commands
+
+`work_tasks` 拥有独立任务身份、创建人、当前执行人、内容、状态、可选上下文及截止时间。列表使用
+不可变 createdAt/taskId 键分页；编辑不把任务移出正在续查的位置。任务读权由创建人或当前执行人
+裁决，群和部门关联不能扩大参与者集合。
+
+创建、编辑与状态修改在同一 PostgreSQL 事务保存任务、以 taskId/revision 唯一的审计、命令指纹
+收据和接收者事件。收据遵循可靠命令的有限重放窗口；过期身份拒绝执行，清理不会把迟到命令变成新
+操作。改派为旧执行人发撤权提示，为新执行人和创建人发更新提示；审计不保存描述副本。
+
+到期任务由带条件索引的有界扫描选择，重新加任务锁后校验状态与截止时间，再把提醒标记与当前
+执行人的 TASK_DUE 一起提交。提醒不推进业务 revision，服务重启可以补发未处理到期项；没有每任务
+内存定时器。客户端 SQLite 不承担服务端调度，也不能作为任务共享事实源。
+
 ## 3. MessageStore
 
 消息主键按类型前缀、chatId 长度和值及 big-endian serverSeq 编码，使 RocksDB 范围扫描天然按序：
@@ -584,7 +598,7 @@ MEMBER_REMOVED/CHAT_DELETED 之后收到一条更晚的旧 MESSAGE_RECV；剩余
 | 发行字符串 | `0.0.1` | 用户看到的版本；客户端、SDK、服务端来自同一构建输入，不决定二进制兼容 |
 | 协议 major/minor | 源码待发行 `0.2`，最低 minor 为 `0`；正式 0.0.1 冻结 `0.1` | 每条 TCP 连接协商可使用的契约窗口，不改变已保存的消息和同步游标 |
 | 服务端存储 epoch | **`1`** | 已存在的 PostgreSQL 和本地持久化布局；以 `ServerDataEpoch.CURRENT_EPOCH` 为事实源 |
-| PostgreSQL 迁移版本 | `3`（连续清单 `0..3`） | `schema_migrations` 的连续完成记录；在现有 epoch 内保留数据地推进 SQL 布局 |
+| PostgreSQL 迁移版本 | `5`（连续清单 `0..5`） | `schema_migrations` 的连续完成记录；在现有 epoch 内保留数据地推进 SQL 布局 |
 | dataset ID | 每套数据原有的 canonical UUID | PostgreSQL 与本地存储共同拥有的身份，普通升级保留原值 |
 
 发行与协议版本的变化不改变存储 epoch 或 dataset。标记重编号本身不会迁移数据，反而会让
@@ -610,6 +624,7 @@ dataset ID 和迁移完成记录，只执行尚未完成的已知迁移。不会
 | `2` | `create_admin_security` | 追加单实例管理员凭据和有界操作审计表 |
 | `3` | `create_document_comments` | 追加文档评论与创建指纹、分页索引，不改写已有文档正文或修订 |
 | `4` | `create_content_search_pending` | 追加文档与群文件每资源单槽的待投影修订表；现有内容保留，索引由当前对象建立 |
+| `5` | `create_tasks` | 追加独立任务、审计与命令收据；保留原用户、消息、文档和 dataset |
 
 `DatabaseFactory` 在建立业务容器前完成这一步。已有库的启动事务先锁定 `schema_metadata`，再校验
 布局和读取迁移记录；事务使用 `READ_COMMITTED`，等待另一启动事务结束后能看到它刚提交的记录。

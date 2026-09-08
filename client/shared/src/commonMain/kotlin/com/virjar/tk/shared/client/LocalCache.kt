@@ -174,6 +174,7 @@ interface OptimisticMessageEditLease
  * 按 chatId 推测 owner，也不得驱逐仍有活跃租约的窗口。
  */
 interface LocalCache : LocalDocumentProjection {
+    val tasks: LocalTasks
     val documentComments: LocalDocumentComments
 
     // ── 本地可靠业务命令 ──

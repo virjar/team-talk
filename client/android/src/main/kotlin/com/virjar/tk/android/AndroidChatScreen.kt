@@ -87,6 +87,7 @@ internal fun AndroidChatScreen(
     onSaveMessage: ((Message) -> Unit)? = null,
     /** 类型化引用打开：读取由 MessageActionsFeature 完成，平台只做导航与降级提示。 */
     onOpenOfficeRef: ((com.virjar.tk.protocol.body.OfficeRefBody, onDenied: (String) -> Unit) -> Unit)? = null,
+    onOpenTaskRef: ((com.virjar.tk.protocol.body.TaskRefBody, onDenied: (String) -> Unit) -> Unit)? = null,
     /** 提供引用候选；null 时附件面板不显示文档/群文件入口。 */
     officeRefHost: com.virjar.tk.app.navigation.AppDataState? = null,
     onGroupDetail: () -> Unit,
@@ -184,7 +185,18 @@ internal fun AndroidChatScreen(
     }
 
     var officePickerKind by remember(chatId) { mutableStateOf<OfficeReferenceKind?>(null) }
+    var taskPickerVisible by remember(chatId) { mutableStateOf(false) }
     officeRefHost?.let { host ->
+        if (taskPickerVisible) {
+            com.virjar.tk.app.ui.component.TaskRefPickerDialog(
+                chatId = chatId,
+                myUid = myUid,
+                actions = host.messageActions,
+                onSend = viewModel::sendMessage,
+                onDismiss = { taskPickerVisible = false },
+                modifier = Modifier.semantics { testTagsAsResourceId = true },
+            )
+        }
         officePickerKind?.let { kind ->
             OfficeRefPickerDialog(
                 kind = kind,
@@ -212,8 +224,12 @@ internal fun AndroidChatScreen(
         softwareKeyboardController,
         activity,
         onOpenOfficeRef,
+        onOpenTaskRef,
     ) {
         object : PlatformMediaActions {
+            override fun openTaskRef(message: Message, body: com.virjar.tk.protocol.body.TaskRefBody) {
+                onOpenTaskRef?.invoke(body, viewModel::onError)
+            }
             override fun openOfficeRef(message: Message, body: com.virjar.tk.protocol.body.OfficeRefBody) {
                 onOpenOfficeRef?.invoke(body, viewModel::onError)
             }
@@ -692,6 +708,7 @@ internal fun AndroidChatScreen(
                         importAndroidClipboardAsset(context, embeddedAssetImports)
                     },
                     onPickDocument = officeRefHost?.let { { officePickerKind = OfficeReferenceKind.DOCUMENT } },
+                    onPickTask = officeRefHost?.let { { taskPickerVisible = true } },
                     onPickGroupFile = if (officeRefHost != null && chatType == 2) {
                         { officePickerKind = OfficeReferenceKind.GROUP_FILE }
                     } else {

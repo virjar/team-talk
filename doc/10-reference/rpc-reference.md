@@ -374,6 +374,27 @@ hex，联合 `scopeId + serverSeq` 定位，每条消息内按 path 去重且不
 请求首页，后续使用返回的独占游标，`nextBeforeSequence=0` 表示末页；limit 为 1..100，SDK 默认 50。
 编辑和删除不改变 sequence。评论变化以 `DOCUMENT_CHANGED / COMMENTS_CHANGED` 提示刷新，不在事件中传正文。
 
+## task
+
+任务契约属于待发行 protocol 0.2，与文档和内容搜索共用同一发行批次。
+
+| ID | 方法 | 参数 | 返回 |
+|---:|---|---|---|
+| 1 | `list` | `view`, `cursor?`, `limit` | `TaskPage(items, nextCursor?)` |
+| 2 | `get` | `taskId` | `WorkTask` |
+| 3 | `audit` | `taskId`, `cursor?`, `limit` | `TaskAuditPage` |
+| 4 | `mutate` | `TaskCommand` | `TaskCommandResult(task?)` |
+
+view 为分配给我 `1` 或我创建的 `2`；每页默认 20、最多 50 项，游标最多 512 字符。只返回当前创建人
+或执行人有权读取的任务，列表不是全组织任务目录。任务标题最多 256 个 UTF-16 单元、描述最多
+10,000 个；状态为待处理 `1`、进行中 `2`、完成 `3`、取消 `4`。上下文为空 `0`、群 `1` 或组织 `2`，
+上下文 ID 不产生任务访问权。时间为 UTC epoch 毫秒，截止时间可以为空。
+
+`TaskCommand` 冻结 `operationId`、`issuedAt`、`taskId`、`expectedRevision` 及 CREATE/EDIT/STATUS
+载荷；操作首次发送前落本地可靠队列。相同命令精确重放只确认原结果，读权已失去时 task 为空；
+相同身份不同载荷、过期命令或陈旧 revision 不重新执行。取消及取消后重新打开仅创建人可以操作。
+审计返回操作者、动作、时间、状态及执行人变化，不返回历史描述副本。
+
 ## 状态与错误
 
 | status | 语义 | 客户端处理 |
@@ -381,7 +402,7 @@ hex，联合 `scopeId + serverSeq` 定位，每条消息内按 path 去重且不
 | 0 | 成功 | 解码 result |
 | 400 | 参数或业务规则拒绝 | 显示可理解业务错误，不自动重试 |
 | 401 | 认证失效 | 结束当前会话并回到登录流程 |
-| 403 | 活动文档空间的实时 ACL 不足 | 停止被拒操作并刷新权限事实；不结束登录会话 |
+| 403 | 当前领域的读取或修改权限不足 | 停止被拒操作并刷新权限事实；不结束登录会话 |
 | 404 | 指定空间不存在/已归档，或空间内精确文档节点不可见 | 停止精确操作并刷新活动投影；本地草稿按产品策略保留 |
 | 409 | 文档节点 revision、空间 custodyRevision/policyRevision 或可靠 operationId/payload 冲突 | 保留本地意图，读取最新事实；未知结果只重放原 operationId 和原 payload |
 | 410 | 有限期可靠命令已超过重试窗口 | 终止该旧命令，刷新当前权威事实，不生成同 payload 的新 operationId |

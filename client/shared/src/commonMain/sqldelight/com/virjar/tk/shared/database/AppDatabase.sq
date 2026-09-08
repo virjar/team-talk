@@ -1696,3 +1696,81 @@ UPDATE pending_document_comments SET payload = ? WHERE comment_id = ?;
 
 deletePendingDocumentComment:
 DELETE FROM pending_document_comments WHERE comment_id = ?;
+
+CREATE TABLE task_projection (
+    task_id TEXT NOT NULL PRIMARY KEY,
+    payload BLOB NOT NULL,
+    touched_at INTEGER NOT NULL
+);
+CREATE TABLE task_pages (
+    view INTEGER NOT NULL,
+    cursor TEXT NOT NULL,
+    payload BLOB NOT NULL,
+    stale INTEGER NOT NULL DEFAULT 0,
+    touched_at INTEGER NOT NULL,
+    PRIMARY KEY (view, cursor)
+);
+CREATE TABLE pending_task_commands (
+    task_id TEXT NOT NULL PRIMARY KEY,
+    operation_id TEXT NOT NULL UNIQUE,
+    payload TEXT NOT NULL
+);
+CREATE TABLE task_reminders (
+    task_id TEXT NOT NULL PRIMARY KEY,
+    revision INTEGER NOT NULL,
+    reminded_at INTEGER NOT NULL,
+    seen INTEGER NOT NULL DEFAULT 0,
+    notified INTEGER NOT NULL DEFAULT 0,
+    confirmed INTEGER NOT NULL DEFAULT 0
+);
+
+selectTask:
+SELECT payload FROM task_projection WHERE task_id = ?;
+upsertTask:
+INSERT OR REPLACE INTO task_projection(task_id, payload, touched_at) VALUES (?, ?, ?);
+deleteTask:
+DELETE FROM task_projection WHERE task_id = ?;
+deleteAllTasks:
+DELETE FROM task_projection;
+pruneTasks:
+DELETE FROM task_projection WHERE rowid NOT IN (SELECT rowid FROM task_projection ORDER BY touched_at DESC, rowid DESC LIMIT 256);
+selectTaskPage:
+SELECT * FROM task_pages WHERE view = ? AND cursor = ?;
+selectTaskPages:
+SELECT * FROM task_pages;
+deleteTaskPage:
+DELETE FROM task_pages WHERE view = ? AND cursor = ?;
+upsertTaskPage:
+INSERT OR REPLACE INTO task_pages(view, cursor, payload, stale, touched_at) VALUES (?, ?, ?, 0, ?);
+staleTaskPages:
+UPDATE task_pages SET stale = 1;
+deleteAllTaskPages:
+DELETE FROM task_pages;
+pruneTaskPages:
+DELETE FROM task_pages WHERE rowid NOT IN (SELECT rowid FROM task_pages ORDER BY touched_at DESC, rowid DESC LIMIT 16);
+selectPendingTasks:
+SELECT payload FROM pending_task_commands ORDER BY rowid;
+insertPendingTask:
+INSERT INTO pending_task_commands(task_id, operation_id, payload) VALUES (?, ?, ?);
+updatePendingTask:
+UPDATE pending_task_commands SET payload = ? WHERE task_id = ?;
+deletePendingTask:
+DELETE FROM pending_task_commands WHERE task_id = ? AND operation_id = ?;
+selectTaskReminders:
+SELECT * FROM task_reminders ORDER BY reminded_at DESC, task_id;
+selectTaskReminder:
+SELECT * FROM task_reminders WHERE task_id = ?;
+upsertTaskReminder:
+INSERT OR REPLACE INTO task_reminders(task_id, revision, reminded_at, seen, notified, confirmed) VALUES (?, ?, ?, ?, ?, ?);
+unconfirmTaskReminder:
+UPDATE task_reminders SET confirmed = 0 WHERE task_id = ?;
+unconfirmAllTaskReminders:
+UPDATE task_reminders SET confirmed = 0;
+deleteTaskReminder:
+DELETE FROM task_reminders WHERE task_id = ?;
+markTaskReminderSeen:
+UPDATE task_reminders SET seen = 1 WHERE task_id = ? AND reminded_at = ?;
+markTaskReminderNotified:
+UPDATE task_reminders SET notified = 1 WHERE task_id = ? AND reminded_at = ?;
+pruneTaskReminders:
+DELETE FROM task_reminders WHERE task_id NOT IN (SELECT task_id FROM task_reminders ORDER BY seen ASC, reminded_at DESC, task_id LIMIT 512);

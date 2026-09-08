@@ -389,6 +389,7 @@ class TestEnvironment : AutoCloseable {
             access = koin.get(),
             chatService = koin.get<ChatService>(),
             officeRefs = OfficeRefResolver(koin.get(), koin.get()),
+            taskRefs = com.virjar.tk.server.domain.message.TaskRefResolver(koin.get()),
             projector = freshMessageProjector(
                 messages = messages,
                 chatStore = coldChatStore,

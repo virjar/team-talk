@@ -68,6 +68,12 @@ class RpcDispatcher(
             ResponsePayload(invoke.requestId, unsupported.status, "RPC is unavailable at the negotiated protocol version".encodeToByteArray())
         } catch (unavailable: com.virjar.tk.server.domain.search.ContentSearchUnavailableException) {
             ResponsePayload(invoke.requestId, 503, unavailable.message?.encodeToByteArray())
+        } catch (e: com.virjar.tk.server.domain.task.TaskRevisionConflictException) {
+            ResponsePayload(invoke.requestId, 409, e.message?.encodeToByteArray())
+        } catch (e: com.virjar.tk.server.domain.task.TaskAccessDeniedException) {
+            ResponsePayload(invoke.requestId, 403, e.message?.encodeToByteArray())
+        } catch (e: com.virjar.tk.server.domain.task.TaskNotFoundException) {
+            ResponsePayload(invoke.requestId, 404, e.message?.encodeToByteArray())
         } catch (e: DocumentRevisionConflictException) {
             logger.info(
                 "RPC document conflict: service={} method={} uid={}: {}",

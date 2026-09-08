@@ -23,7 +23,9 @@ enum class MessageType(val code: Int) {
     REACTION(14),
     TYPING(15),
     INTERACTIVE_CARD(16),
-    OFFICE_REF(17);
+    OFFICE_REF(17),
+    @SinceProtocol(2)
+    TASK_REF(18);
 
     companion object {
         private val codeMap = entries.associateBy { it.code }

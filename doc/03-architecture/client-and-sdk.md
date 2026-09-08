@@ -984,6 +984,25 @@ AndroidSqliteDriver 使用同一 SQLDelight schema 的升级回调；同 major �
 UI 不应绕过 ViewModel 直接把网络响应当作长期状态。任何新增展示数据都需要先回答：它如何进入
 LocalCache、如何从事件恢复、如何在重启后存在。
 
+### 6.8 任务投影、可靠操作与提醒
+
+`ClientSession.taskRepo` 通过 `LocalTasks` 保存任务与列表投影、待确认命令和提醒。任务详情最多驻留
+256 项，分页最多 16 页、每页 20 项，提醒工作集最多 512 项；它们都可从领域 RPC 重建。创建、编辑
+和状态操作最多保留 256 条待确认意图，每个 taskId 只接纳一个在途操作，超限明确拒绝新意图，不驱逐
+尚未确认的事实。SQLite schema 3 的追加迁移保留已有账号、文档评论及其他 pending。
+
+提交先持久保存完整 `TaskCommand`，复用会话唯一的 `SessionPendingMirrorRecovery` worker。网络
+未知结果重放原 operationId、issuedAt、expectedRevision 和载荷；确定拒绝保留原意图供显式处理，
+不自动换号覆盖冲突。服务端精确 ACK 即使不携带当前任务也可以清除原命令，不能把 ACK 当作读权限。
+
+TASK_CHANGED 先使页面及旧请求失效，TASK_DUE 先保存提醒提示，再提交事件游标。恢复 worker 和
+当前页面通过 get/list 回读确认任务、执行人、活动状态及 remindedAt；旧提示不能直接弹通知。
+本地只对相同 taskId/remindedAt 保留已读和已展示标记，系统展示不等于用户已读。权限撤销清理干净
+投影，已提交命令独立保留；普通断线允许阅读已缓存任务，未缓存详情仍需连接。
+
+共享 `TaskFeature` 拥有分页、当前详情、表单、审计和分享流程。两端壳只负责主栏目、返回导航、
+任务引用及系统通知。打开任务引用先调用领域读取，不从聊天冻结预览还原权威对象。
+
 ## 7. 平台边界
 
 `app` 共享领域屏幕、消息渲染、ViewModel 和主题令牌，`shared` 共享 Repository 与 SDK。平台层必须拥有：

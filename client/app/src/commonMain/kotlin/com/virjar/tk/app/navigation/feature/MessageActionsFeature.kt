@@ -1,7 +1,11 @@
 package com.virjar.tk.app.navigation.feature
 
 import com.virjar.tk.protocol.body.OfficeRefBody
+import com.virjar.tk.protocol.body.TaskRefBody
 import com.virjar.tk.protocol.model.GroupFileEntry
+import com.virjar.tk.protocol.model.TaskPage
+import com.virjar.tk.shared.client.TaskPageKey
+import com.virjar.tk.app.navigation.UiLocalDataBoundary
 import com.virjar.tk.shared.client.ClientSession
 import com.virjar.tk.shared.log.AppLog
 import java.util.UUID
@@ -17,6 +21,7 @@ enum class OfficeReferenceKind { DOCUMENT, GROUP_FILE }
  */
 class MessageActionsFeature internal constructor(
     private val session: ClientSession,
+    private val localData: UiLocalDataBoundary = UiLocalDataBoundary(),
     private val launchAction: (suspend () -> Unit) -> Boolean,
 ) {
     // 同一源消息失败后重试复用 operationId，成功后才移除；切换聊天不丢失待确认命令。
@@ -85,6 +90,26 @@ class MessageActionsFeature internal constructor(
             } catch (failure: Throwable) {
                 if (failure is CancellationException) throw failure
                 onDenied("内容不可访问或已被删除")
+            }
+        }
+        if (!launched) onDenied("会话已关闭")
+    }
+
+    /** 分页候选与任务工作台共用 SDK 投影，读取失败由选择器明确呈现。 */
+    suspend fun loadTaskReferences(view: Int, cursor: String? = null): TaskPage = localData.run {
+        val key = TaskPageKey(view, cursor)
+        check(session.taskRepo.refresh(key).getOrThrow()) { "任务列表已变化，请重新加载" }
+        checkNotNull(session.taskRepo.local.page(key)) { "任务列表已变化，请重新加载" }
+    }
+
+    fun openTaskReference(reference: TaskRefBody, onOpen: () -> Unit, onDenied: (String) -> Unit) {
+        val launched = launchAction {
+            try {
+                localData.run { session.taskRepo.get(reference.taskId).getOrThrow() }
+                onOpen()
+            } catch (failure: Throwable) {
+                if (failure is CancellationException) throw failure
+                onDenied("任务不可访问或已删除")
             }
         }
         if (!launched) onDenied("会话已关闭")

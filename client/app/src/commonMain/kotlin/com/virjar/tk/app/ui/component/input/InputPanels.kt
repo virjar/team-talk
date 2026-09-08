@@ -146,6 +146,7 @@ fun AttachmentPanel(
     modifier: Modifier = Modifier,
     onPickDocument: (() -> Unit)? = null,
     onPickGroupFile: (() -> Unit)? = null,
+    onPickTask: (() -> Unit)? = null,
 ) {
     val actions = buildList {
         add(AttachmentPanelAction(Icons.Filled.Image, "图片", CHAT_ATTACHMENT_IMAGE_TEST_TAG, onPickImage))
@@ -154,6 +155,9 @@ fun AttachmentPanel(
         }
         onPickDocument?.let {
             add(AttachmentPanelAction(Icons.AutoMirrored.Filled.InsertDriveFile, "文档", "chat.attach.document", it))
+        }
+        onPickTask?.let {
+            add(AttachmentPanelAction(Icons.AutoMirrored.Filled.InsertDriveFile, "任务", "chat.attach.task", it))
         }
         onPickGroupFile?.let {
             add(AttachmentPanelAction(Icons.AutoMirrored.Filled.InsertDriveFile, "群文件", "chat.attach.groupfile", it))

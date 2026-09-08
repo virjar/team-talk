@@ -39,6 +39,7 @@ class MessageService(
     private val access: ChatAccess,
     private val chatService: ChatService,
     private val officeRefs: OfficeRefResolver,
+    private val taskRefs: TaskRefResolver,
     private val projector: MessageProjector,
     private val unitOfWork: PgUnitOfWork,
     private val search: MessageSearch,
@@ -471,6 +472,9 @@ class MessageService(
             is OfficeRefBody -> MessageBodyPolicy.canonicalize(
                 message.copy(body = officeRefs.resolve(message.senderUid, body)),
             )
+            is com.virjar.tk.protocol.body.TaskRefBody -> MessageBodyPolicy.canonicalize(
+                message.copy(body = taskRefs.resolve(message.senderUid, body)),
+            )
             else -> message
         }
     }
@@ -562,6 +566,7 @@ class MessageService(
             MessageType.MERGE_FORWARD,
             MessageType.STICKER,
             MessageType.OFFICE_REF,
+            MessageType.TASK_REF,
         )
 
         private val EDITABLE_MESSAGE_TYPES = setOf(MessageType.RICH_TEXT)

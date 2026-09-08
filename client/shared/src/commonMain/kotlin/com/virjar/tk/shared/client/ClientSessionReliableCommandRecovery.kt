@@ -47,6 +47,7 @@ internal class SessionReliableCommandFamilies private constructor(
     val groupFiles: GroupFileRepository,
     val documents: DocumentRepository,
     val documentComments: com.virjar.tk.shared.repository.DocumentCommentRepository,
+    val tasks: com.virjar.tk.shared.repository.TaskRepository,
     private val localCache: LocalCache,
 ) {
     suspend fun retryPending(): Outcome<Unit> = retryIndependentPendingFamilies(
@@ -55,6 +56,7 @@ internal class SessionReliableCommandFamilies private constructor(
         groupFiles::retryPendingCommands,
         documents::retryPendingMoveCommands,
         documentComments::retryPending,
+        tasks::retryPending,
     )
 
     fun nextExpiryAt(): Long? {
@@ -65,7 +67,7 @@ internal class SessionReliableCommandFamilies private constructor(
         val documentExpiry = nextDocumentMoveCommandExpiryAt(
             localCache.getPendingDocumentMoveCommands(),
         )
-        return listOfNotNull(socialExpiry, documentExpiry).minOrNull()
+        return listOfNotNull(socialExpiry, documentExpiry, tasks.nextExpiryAt()).minOrNull()
     }
 
     companion object {
@@ -115,6 +117,7 @@ internal class SessionReliableCommandFamilies private constructor(
                 groupFiles = groupFiles,
                 documents = documents,
                 documentComments = com.virjar.tk.shared.repository.DocumentCommentRepository(rpcClient, localCache.documentComments, onPendingCommitted),
+                tasks = com.virjar.tk.shared.repository.TaskRepository(rpcClient, localCache.tasks, ownerUid, onPendingCommitted),
                 localCache = localCache,
             )
         }

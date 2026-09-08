@@ -29,6 +29,8 @@ data class ChatMediaConfig(
     val onPickDocument: (() -> Unit)? = null,
     /** 打开当前群的群文件引用选择器。null 或非群聊=不显示群文件项。 */
     val onPickGroupFile: (() -> Unit)? = null,
+    /** 打开参与者可读任务的引用选择器。null=不显示任务项。 */
+    val onPickTask: (() -> Unit)? = null,
     /** 语音录制：true=开始，false=停止发送。 */
     val onVoiceRecord: ((Boolean) -> Unit)? = null,
     /** 进入语音模式；Android 用于在用户真正长按前申请麦克风权限。 */

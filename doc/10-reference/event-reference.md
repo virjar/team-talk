@@ -28,6 +28,8 @@ eventId(varLong) + notifyType(1B) + payload(bytes?)
 | 21 | `MESSAGE_REACTION` | `MessageReactionEventPayload(chatId, serverSeq, emoji, actorUid, action)` | 会话成员 | 行级 upsert/delete 本地回应投影；重放收敛到同一状态，聚合快照以 `listReactions` 为权威 |
 | 22 | `GROUP_FILE_CHANGED` | `GroupFileChangedPayload(chatId, operation, entry?, deletedEntryId, deletedRevision)` | 当前群成员 | 按条目与 revision 幂等合并 UPSERT/DELETE；更新已加载目录，完整目录仍通过列表 RPC 对账 |
 | 23 | `DOCUMENT_CHANGED` | `DocumentChangedPayload(spaceId, nodeId?, kind, revision, policyRevision)` | 当前可读成员；撤权变化包含失去权限的原读者 | 失效对应投影、退休旧读取并通过领域 RPC 刷新有界驻留工作集；protocol 0.2 |
+| 24 | `TASK_CHANGED` | `TaskChangedPayload(taskId, revision, kind)` | 创建人和当前执行人；改派同时通知旧执行人撤权 | 失效任务及列表，保留待确认命令；protocol 0.2 |
+| 25 | `TASK_DUE` | `TaskDuePayload(taskId, revision, remindedAt)` | 到期时的当前执行人 | 持久保存提示，读取当前任务确认提醒有效后呈现；protocol 0.2 |
 | 30 | `CONVERSATION_UPDATED` | `Conversation` | 该用户设备 | upsert 会话投影 |
 | 31 | `CONVERSATION_DELETED` | `Conversation` | 该用户设备 | 仅删除用户主动隐藏的会话视图 |
 | 40 | `PRESENCE` | `PresencePayload(serverEpoch, revision, uid, status, lastSeenAt)` | 好友在线设备 | 按 epoch/revision 收敛会话内好友在线投影 |
@@ -53,6 +55,11 @@ kind 为 `NODE_UPSERT(1)`、`NODE_DELETED(2)`、`SPACE_CHANGED(3)`、`SPACE_REVO
 客户端先使旧读取失效再持久推进游标，普通变更保留离线副本，删除/撤权清理相应干净投影。当前工作台
 用领域 RPC 对账，不从事件拼造正文或权限；提示序号跳跃、组织提示、reset 和重连重新校验有界驻留
 工作集。未保存正文和已提交评论 pending 独立保留；未读取的页面不被全空间预取。
+
+任务变更的 kind 为 `UPDATED(1)` 或 `REVOKED(2)`，不含标题或描述。任务、审计、命令收据与
+TASK_CHANGED 同事务提交；精确重放不重复发事件。截止扫描在锁内重新判断状态、执行人及截止时间，
+将 remindedAt 与 TASK_DUE 一起提交，服务重启不会重复同一次到期提醒。改派、改期或重新打开会重置
+提醒计划，完成和取消不产生提醒；客户端不直接从旧提示展示内容，而以当前 get/list 结果确认。
 
 ## 持久事件与临时事件
 

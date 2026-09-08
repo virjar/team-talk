@@ -108,6 +108,9 @@ internal class AndroidAppDataStateHolder(application: Application) : AndroidView
                             navigation = notificationNavigation,
                         )
                     }
+                    resources.acquire {
+                        AndroidTaskNotifications(getApplication<Application>().applicationContext, session, notificationForeground)
+                    }
                 },
                 discardState = { candidate ->
                     candidate.destroy(clearComposerContexts = false, clearDocumentDrafts = false)

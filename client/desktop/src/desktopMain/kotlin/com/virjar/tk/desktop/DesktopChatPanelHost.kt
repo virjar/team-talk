@@ -71,6 +71,7 @@ internal fun ChatPanelWrapper(
     onSaveMessage: ((Message) -> Unit)? = null,
     /** 类型化引用打开：MainAppContent 负责权限重校验与导航；onDenied 走聊天页错误提示。 */
     onOpenOfficeRef: ((Message, com.virjar.tk.protocol.body.OfficeRefBody, onDenied: (String) -> Unit) -> Unit)? = null,
+    onOpenTaskRef: ((Message, com.virjar.tk.protocol.body.TaskRefBody, onDenied: (String) -> Unit) -> Unit)? = null,
     /** 提供引用候选；null 时附件面板不显示文档/群文件入口。 */
     officeRefHost: com.virjar.tk.app.navigation.AppDataState? = null,
     onGroupSettings: () -> Unit,
@@ -127,7 +128,17 @@ internal fun ChatPanelWrapper(
     }
     // 类型化引用选择器状态：null 关闭；DOCUMENT/GROUP_FILE 打开对应候选。
     var officePickerKind by remember(chatId) { mutableStateOf<OfficeReferenceKind?>(null) }
+    var taskPickerVisible by remember(chatId) { mutableStateOf(false) }
     officeRefHost?.let { host ->
+        if (taskPickerVisible) {
+            com.virjar.tk.app.ui.component.TaskRefPickerDialog(
+                chatId = chatId,
+                myUid = myUid,
+                actions = host.messageActions,
+                onSend = viewModel::sendMessage,
+                onDismiss = { taskPickerVisible = false },
+            )
+        }
         officePickerKind?.let { kind ->
             OfficeRefPickerDialog(
                 kind = kind,
@@ -145,8 +156,11 @@ internal fun ChatPanelWrapper(
     var galleryItems by remember(chatId) { mutableStateOf<List<GalleryItem>>(emptyList()) }
     var galleryIndex by remember(chatId) { mutableIntStateOf(0) }
 
-    val mediaActions = remember(chatId, fileDownloads, telemetry, onOpenOfficeRef) {
+    val mediaActions = remember(chatId, fileDownloads, telemetry, onOpenOfficeRef, onOpenTaskRef) {
         object : PlatformMediaActions {
+            override fun openTaskRef(message: Message, body: com.virjar.tk.protocol.body.TaskRefBody) {
+                onOpenTaskRef?.invoke(message, body, viewModel::onError)
+            }
             override fun openOfficeRef(message: Message, body: com.virjar.tk.protocol.body.OfficeRefBody) {
                 onOpenOfficeRef?.invoke(message, body, viewModel::onError)
             }
@@ -254,6 +268,7 @@ internal fun ChatPanelWrapper(
                 onPasteEmbeddedAsset = { importDesktopClipboardAsset(embeddedAssetImports) },
                 onPickVideo = { resources.videoSender.pickAndSendVideo(chatId, myUid, viewModel) },
                 onPickDocument = officeRefHost?.let { { officePickerKind = OfficeReferenceKind.DOCUMENT } },
+                onPickTask = officeRefHost?.let { { taskPickerVisible = true } },
                 onPickGroupFile = if (officeRefHost != null && chatType == 2) {
                     { officePickerKind = OfficeReferenceKind.GROUP_FILE }
                 } else {

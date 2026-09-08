@@ -53,6 +53,7 @@ object MessagePreview {
         is ReactionBody -> "[表情回应]"
         is com.virjar.tk.protocol.body.OfficeRefBody ->
             (if (body.isDocument) "[文档] " else "[群文件] ") + body.title
+        is TaskRefBody -> "[任务] " + body.title
         null -> if (messageType == MessageType.TYPING.code) "正在输入..." else "[未知消息]"
     }
 }

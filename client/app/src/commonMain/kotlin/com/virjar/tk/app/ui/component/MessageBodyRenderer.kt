@@ -185,6 +185,13 @@ fun MessageBodyRenderer(
             // 打开走共享媒体点击链路；MediaClickHandler 分发到平台的 openOfficeRef 重校验。
             onClick = { onMediaClick?.invoke(message) },
         )
+        is com.virjar.tk.protocol.body.TaskRefBody -> ObjectReferenceCard(
+            title = body.title,
+            subtitle = body.subtitle.ifBlank { "任务" },
+            iconLabel = "任",
+            tag = "chat.taskref.${body.taskId.take(12)}",
+            onClick = onMediaClick?.let { callback -> { callback(message) } },
+        )
         is ForwardBody -> ForwardView(body)
         is MergeForwardBody -> MediaIconCard(title = "合并转发", subtitle = "${body.messageCount} 条消息")
         is RevokeBody -> SystemHintText("撤回了一条消息")
@@ -393,6 +400,18 @@ private fun UploadingIndicator(progress: Float, modifier: Modifier = Modifier) {
 private fun OfficeRefCard(
     body: com.virjar.tk.protocol.body.OfficeRefBody,
     onClick: (() -> Unit)?,
+) = ObjectReferenceCard(
+    body.title, body.subtitle, if (body.isDocument) "文" else "档",
+    "chat.officeref.${body.targetId.take(12)}", onClick,
+)
+
+@Composable
+private fun ObjectReferenceCard(
+    title: String,
+    subtitle: String,
+    iconLabel: String,
+    tag: String,
+    onClick: (() -> Unit)?,
 ) {
     Row(
         modifier = Modifier
@@ -400,7 +419,7 @@ private fun OfficeRefCard(
             .clip(MaterialTheme.shapes.small)
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
             .let { base -> if (onClick != null) base.clickable(onClick = onClick) else base }
-            .testTag("chat.officeref.${body.targetId.take(12)}")
+            .testTag(tag)
             .padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.sm),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -412,7 +431,7 @@ private fun OfficeRefCard(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                if (body.isDocument) "文" else "档",
+                iconLabel,
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
@@ -420,14 +439,14 @@ private fun OfficeRefCard(
         Spacer(Modifier.width(Tk.spacing.md))
         Column(Modifier.weight(1f)) {
             Text(
-                body.title,
+                title,
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             )
-            if (body.subtitle.isNotBlank()) {
+            if (subtitle.isNotBlank()) {
                 Text(
-                    body.subtitle,
+                    subtitle,
                     style = MaterialTheme.typography.labelSmall,
                     color = Tk.colors.metaText,
                     maxLines = 1,

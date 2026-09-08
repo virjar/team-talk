@@ -54,6 +54,7 @@ internal fun WideComposerToolbar(
     onPickVideo: (() -> Unit)?,
     onPickDocument: (() -> Unit)? = null,
     onPickGroupFile: (() -> Unit)? = null,
+    onPickTask: (() -> Unit)? = null,
     onPickFile: (() -> Unit)?,
     onPasteAsset: (() -> Boolean)?,
 ) {
@@ -106,6 +107,7 @@ internal fun WideComposerToolbar(
                 onPickFile = onPickFile,
                 onPickDocument = onPickDocument,
                 onPickGroupFile = onPickGroupFile,
+                onPickTask = onPickTask,
                 onPasteAsset = onPasteAsset,
             )
         }
@@ -149,6 +151,7 @@ internal fun CompactChatComposer(
     onPickVideo: (() -> Unit)?,
     onPickDocument: (() -> Unit)? = null,
     onPickGroupFile: (() -> Unit)? = null,
+    onPickTask: (() -> Unit)? = null,
     onPickFile: (() -> Unit)?,
     onPasteAsset: (() -> Boolean)?,
 ) {
@@ -174,6 +177,7 @@ internal fun CompactChatComposer(
                     onPickFile = onPickFile,
                 onPickDocument = onPickDocument,
                 onPickGroupFile = onPickGroupFile,
+                onPickTask = onPickTask,
                     onPasteAsset = onPasteAsset,
                     compact = true,
                 )
@@ -260,6 +264,7 @@ internal fun CompactChatComposer(
                         onPickFile = onPickFile,
                 onPickDocument = onPickDocument,
                 onPickGroupFile = onPickGroupFile,
+                onPickTask = onPickTask,
                         onPasteAsset = onPasteAsset,
                         compact = true,
                     )

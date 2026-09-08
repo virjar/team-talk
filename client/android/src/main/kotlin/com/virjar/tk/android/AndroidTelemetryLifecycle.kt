@@ -119,6 +119,7 @@ internal fun androidHomeTabTelemetryPage(tab: MainTab): ClientUiPage = when (tab
     MainTab.CONVERSATIONS -> ClientUiPage.CONVERSATIONS
     MainTab.CONTACTS -> ClientUiPage.CONTACTS
     MainTab.DOCUMENTS -> ClientUiPage.DOCUMENTS
+    MainTab.TASKS -> ClientUiPage.TASKS
     MainTab.SETTINGS -> ClientUiPage.SETTINGS
 }
 

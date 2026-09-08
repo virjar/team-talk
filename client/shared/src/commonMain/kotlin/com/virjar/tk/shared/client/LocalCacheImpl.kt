@@ -98,6 +98,7 @@ class LocalCacheImpl internal constructor(
         )
     }
     private val documents = LocalDocumentProjectionStore(queries, cacheUseGate, stateLock)
+    override val tasks: LocalTasks = LocalTaskStore(queries, cacheUseGate, stateLock)
     override val documentComments: LocalDocumentComments = LocalDocumentCommentStore(queries, cacheUseGate, stateLock)
     private val reactions = LocalMessageReactionStore(queries, cacheUseGate, stateLock)
     internal val groupFileEntries = LocalGroupFileEntryStore(queries, cacheUseGate, stateLock)
@@ -782,6 +783,7 @@ class LocalCacheImpl internal constructor(
             organization.clearProjectionLocked()
             documents.resetSnapshotGatesLocked()
             documentComments.invalidate(purge = true)
+            tasks.resetProjection()
             conversations.clearServerProjectionLocked()
             reactions.publishServerProjectionResetLocked()
             groupFileEntries.clearAllLocked()

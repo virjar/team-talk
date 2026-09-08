@@ -244,6 +244,9 @@ DocumentSpace 1 ──1 owner principal ── User / OrganizationUnit
 DocumentSpace 1 ──1 steward ── User(HUMAN)
 DocumentSpace 1 ──* DocumentNode(document summary)
 Document(document node, optional children) 1 ──* DocumentRevision
+User(creator) 1 ──* WorkTask *──1 User(current assignee)
+WorkTask 1 ──* TaskAudit
+Message 0 ──1 TaskRefBody ──1 WorkTask
 User 1 ──* Notify
 AutomationBot 1 ──1 User(service identity)
 AutomationBot * ──* Chat  通过 explicit grant
@@ -251,3 +254,29 @@ AutomationBot * ──* Chat  通过 explicit grant
 
 理解这些边界是修改业务的前提：Chat 与 Conversation、远端事实与本地缓存、附件路径与 HTTP URL
 不可互换。
+
+## 11. 任务
+
+### WorkTask
+
+WorkTask 是独立办公资产，以稳定 `taskId` 标识。不可变 `creatorUid` 是创建来源与管理者，
+`assigneeUid` 是唯一当前执行人；两者可以相同。任务保存标题、描述、状态、可选 UTC 截止时间、
+可选群/组织上下文、业务 `revision` 及创建和修改时间。上下文只关联现有对象，不授予读取权，
+退出关联群不改变任务参与者。只有新增或更换关联时验证操作者当前对该上下文的访问。
+
+创建人可编辑内容、改派和取消；创建人及执行人可在待处理、进行中与完成之间流转，取消只由创建人
+发起，取消后也仅创建人可重新打开。每次修改使用原 `expectedRevision`，成功后追加独立审计记录；描述不在审计中重复保存。
+改派的通知同时覆盖新旧执行人，旧执行人的干净投影会失效，待确认意图独立保留。
+
+### TaskCommand / TaskReminder
+
+创建、编辑与状态修改使用稳定 `operationId + issuedAt`。服务端在同一事务保存任务、审计、命令
+收据和变更事件；精确重放不重新执行，已失去读取权时只确认命令，不返回任务内容。客户端以
+deployment、dataset、账号隔离的 SQLite 保存命令，在连接恢复后继续提交，拒绝结果由用户显式处理。
+
+提醒由服务端的到期扫描与事务内 `remindedAt` 标记拥有。它不推进业务 revision；只向当前执行人
+发布一次持久事件。客户端先读取当前任务确认提醒仍有效，再保存应用内未读状态；已读与系统已展示
+使用 `taskId + remindedAt` 精确区分。变更旧计划不会复活过期提醒，也不依赖每端各自启动计时器。
+
+任务消息采用 `TaskRefBody`，只含任务身份与发送时预览，不携带描述、执行人权限或完整对象。
+引用不会把任务授权给会话成员。旧协议客户端显示升级提示并保留消息定位，原任务和消息事实不变。

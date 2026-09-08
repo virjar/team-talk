@@ -268,6 +268,7 @@ internal fun ChatComposer(
                 onPickFile = effectivePickFile,
                 onPickDocument = media.onPickDocument,
                 onPickGroupFile = media.onPickGroupFile,
+                onPickTask = media.onPickTask,
                 onPasteAsset = media.onPasteEmbeddedAsset,
             )
         }
@@ -337,6 +338,7 @@ internal fun ChatComposer(
                 onPickFile = effectivePickFile,
                 onPickDocument = media.onPickDocument,
                 onPickGroupFile = media.onPickGroupFile,
+                onPickTask = media.onPickTask,
                 onPasteAsset = media.onPasteEmbeddedAsset,
             )
             ChatComposerLayout.WIDE -> WideComposerInput(

@@ -63,6 +63,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         appDataStateHolder.setNotificationForeground(true)
         clearAndroidMessageNotifications(this)
+        clearAndroidTaskNotifications(this)
     }
 
     override fun onStop() {

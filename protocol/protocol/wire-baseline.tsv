@@ -10,6 +10,7 @@ enum	com.virjar.tk.protocol.MessageType/14	0	-	active	REACTION
 enum	com.virjar.tk.protocol.MessageType/15	0	-	active	TYPING
 enum	com.virjar.tk.protocol.MessageType/16	0	-	active	INTERACTIVE_CARD
 enum	com.virjar.tk.protocol.MessageType/17	0	-	active	OFFICE_REF
+enum	com.virjar.tk.protocol.MessageType/18	2	-	active	TASK_REF
 enum	com.virjar.tk.protocol.MessageType/2	0	-	active	IMAGE
 enum	com.virjar.tk.protocol.MessageType/3	0	-	active	VOICE
 enum	com.virjar.tk.protocol.MessageType/4	0	-	active	VIDEO
@@ -32,6 +33,8 @@ enum	com.virjar.tk.protocol.NotifyType/20	0	-	active	MESSAGE_RECV
 enum	com.virjar.tk.protocol.NotifyType/21	0	-	active	MESSAGE_REACTION
 enum	com.virjar.tk.protocol.NotifyType/22	0	-	active	GROUP_FILE_CHANGED
 enum	com.virjar.tk.protocol.NotifyType/23	2	-	active	DOCUMENT_CHANGED
+enum	com.virjar.tk.protocol.NotifyType/24	2	-	active	TASK_CHANGED
+enum	com.virjar.tk.protocol.NotifyType/25	2	-	active	TASK_DUE
 enum	com.virjar.tk.protocol.NotifyType/3	0	-	active	CONTACT_DELETED
 enum	com.virjar.tk.protocol.NotifyType/30	0	-	active	CONVERSATION_UPDATED
 enum	com.virjar.tk.protocol.NotifyType/31	0	-	active	CONVERSATION_DELETED
@@ -158,6 +161,10 @@ rpc	sync/1	0	-	active	beginCheckpoint(datasetId:kotlin.String):com.virjar.tk.pro
 rpc	sync/2	0	-	active	listCheckpointContacts(request:com.virjar.tk.protocol.model.SyncCheckpointPageRequest):com.virjar.tk.protocol.model.SyncCheckpointContactPage
 rpc	sync/3	0	-	active	listCheckpointChats(request:com.virjar.tk.protocol.model.SyncCheckpointPageRequest):com.virjar.tk.protocol.model.SyncCheckpointChatPage
 rpc	sync/4	0	-	active	listCheckpointConversations(request:com.virjar.tk.protocol.model.SyncCheckpointPageRequest):com.virjar.tk.protocol.model.ConversationPage
+rpc	task/1	2	-	active	list(view:kotlin.Int,cursor:kotlin.String?,limit:kotlin.Int):com.virjar.tk.protocol.model.TaskPage
+rpc	task/2	2	-	active	get(taskId:kotlin.String):com.virjar.tk.protocol.model.WorkTask
+rpc	task/3	2	-	active	audit(taskId:kotlin.String,cursor:kotlin.String?,limit:kotlin.Int):com.virjar.tk.protocol.model.TaskAuditPage
+rpc	task/4	2	-	active	mutate(command:com.virjar.tk.protocol.model.TaskCommand):com.virjar.tk.protocol.model.TaskCommandResult
 rpc	user/1	0	-	active	getProfile(targetUid:kotlin.String?):com.virjar.tk.protocol.model.User
 rpc	user/2	0	-	active	updateProfile(patch:com.virjar.tk.protocol.model.ProfilePatch):kotlin.Unit
 rpc	user/3	0	-	active	search(keyword:kotlin.String):List<com.virjar.tk.protocol.model.User>
@@ -173,6 +180,8 @@ type	com.virjar.tk.protocol.PresencePayload	0	-	active	CLASS(uid:kotlin.String,s
 type	com.virjar.tk.protocol.ProtocolRange	0	-	active	CLASS(major:kotlin.Int,minimumMinor:kotlin.Int,currentMinor:kotlin.Int)
 type	com.virjar.tk.protocol.ProtocolVersion	0	-	active	CLASS(major:kotlin.Int,minor:kotlin.Int)
 type	com.virjar.tk.protocol.ReadSyncPayload	0	-	active	CLASS(peerUid:kotlin.String,chatId:kotlin.String,peerReadSeq:kotlin.Long)
+type	com.virjar.tk.protocol.TaskChangedPayload	2	-	active	CLASS(taskId:kotlin.String,revision:kotlin.Long,kind:kotlin.Int)
+type	com.virjar.tk.protocol.TaskDuePayload	2	-	active	CLASS(taskId:kotlin.String,revision:kotlin.Long,remindedAt:kotlin.Long)
 type	com.virjar.tk.protocol.body.AttachmentBody	0	-	active	INTERFACE()
 type	com.virjar.tk.protocol.body.CardBody	0	-	active	CLASS(targetUid:kotlin.String,targetName:kotlin.String,targetAvatar:com.virjar.tk.protocol.model.Attachment?)
 type	com.virjar.tk.protocol.body.EditBody	0	-	active	CLASS(editedMsgId:kotlin.String,newContent:kotlin.String)
@@ -190,6 +199,7 @@ type	com.virjar.tk.protocol.body.RevokeBody	0	-	active	CLASS(revokedMsgId:kotlin
 type	com.virjar.tk.protocol.body.RichTextBody	0	-	active	CLASS(markdown:kotlin.String,mentions:kotlin.collections.List<com.virjar.tk.protocol.body.RichTextBody.Mention>,plainText:kotlin.String,assets:kotlin.collections.List<com.virjar.tk.protocol.model.EmbeddedAsset>)
 type	com.virjar.tk.protocol.body.RichTextBody.Mention	0	-	active	CLASS(uid:kotlin.String,displayName:kotlin.String,offset:kotlin.Int,length:kotlin.Int)
 type	com.virjar.tk.protocol.body.StickerBody	0	-	active	CLASS(attachment:com.virjar.tk.protocol.model.Attachment,width:kotlin.Int,height:kotlin.Int)
+type	com.virjar.tk.protocol.body.TaskRefBody	2	-	active	CLASS(taskId:kotlin.String,title:kotlin.String,subtitle:kotlin.String)
 type	com.virjar.tk.protocol.body.VideoBody	0	-	active	CLASS(attachment:com.virjar.tk.protocol.model.Attachment,duration:kotlin.Int,width:kotlin.Int,height:kotlin.Int,thumbnail:com.virjar.tk.protocol.model.Attachment?)
 type	com.virjar.tk.protocol.body.VoiceBody	0	-	active	CLASS(attachment:com.virjar.tk.protocol.model.Attachment,duration:kotlin.Int)
 type	com.virjar.tk.protocol.model.Attachment	0	-	active	CLASS(path:kotlin.String,name:kotlin.String,contentType:kotlin.String,size:kotlin.Long)
@@ -247,9 +257,16 @@ type	com.virjar.tk.protocol.model.SyncCheckpointChatPage	0	-	active	CLASS(items:
 type	com.virjar.tk.protocol.model.SyncCheckpointContactPage	0	-	active	CLASS(items:kotlin.collections.List<com.virjar.tk.protocol.model.Contact>,nextCursor:kotlin.String?)
 type	com.virjar.tk.protocol.model.SyncCheckpointHeader	0	-	active	CLASS(datasetId:kotlin.String,checkpointId:kotlin.String,baseEventId:kotlin.Long,currentUser:com.virjar.tk.protocol.model.User)
 type	com.virjar.tk.protocol.model.SyncCheckpointPageRequest	0	-	active	CLASS(checkpointId:kotlin.String,cursor:kotlin.String?)
+type	com.virjar.tk.protocol.model.TaskAudit	2	-	active	CLASS(taskId:kotlin.String,revision:kotlin.Long,actorUid:kotlin.String,action:kotlin.Int,createdAt:kotlin.Long,fromStatus:kotlin.Int?,toStatus:kotlin.Int?,previousAssigneeUid:kotlin.String?,assigneeUid:kotlin.String?)
+type	com.virjar.tk.protocol.model.TaskAuditPage	2	-	active	CLASS(items:kotlin.collections.List<com.virjar.tk.protocol.model.TaskAudit>,nextCursor:kotlin.String?)
+type	com.virjar.tk.protocol.model.TaskCommand	2	-	active	CLASS(operationId:kotlin.String,issuedAt:kotlin.Long,taskId:kotlin.String,expectedRevision:kotlin.Long,kind:kotlin.Int,draft:com.virjar.tk.protocol.model.TaskDraft?,status:kotlin.Int?)
+type	com.virjar.tk.protocol.model.TaskCommandResult	2	-	active	CLASS(task:com.virjar.tk.protocol.model.WorkTask?)
+type	com.virjar.tk.protocol.model.TaskDraft	2	-	active	CLASS(title:kotlin.String,description:kotlin.String,assigneeUid:kotlin.String,contextKind:kotlin.Int,contextId:kotlin.String,dueAt:kotlin.Long?)
+type	com.virjar.tk.protocol.model.TaskPage	2	-	active	CLASS(items:kotlin.collections.List<com.virjar.tk.protocol.model.WorkTask>,nextCursor:kotlin.String?)
 type	com.virjar.tk.protocol.model.User	0	-	active	CLASS(uid:kotlin.String,username:kotlin.String,name:kotlin.String,avatar:com.virjar.tk.protocol.model.Attachment?,phone:kotlin.String?,sex:kotlin.Int,role:kotlin.Int,status:kotlin.Int,revision:kotlin.Long)
 type	com.virjar.tk.protocol.model.UserOrganizationPath	1	-	active	CLASS(unitId:kotlin.String,unitName:kotlin.String,pathNames:kotlin.collections.List<kotlin.String>,primary:kotlin.Boolean,title:kotlin.String?)
 type	com.virjar.tk.protocol.model.UserOrganizationSummary	1	-	active	CLASS(uid:kotlin.String,paths:kotlin.collections.List<com.virjar.tk.protocol.model.UserOrganizationPath>)
+type	com.virjar.tk.protocol.model.WorkTask	2	-	active	CLASS(taskId:kotlin.String,creatorUid:kotlin.String,assigneeUid:kotlin.String,title:kotlin.String,description:kotlin.String,status:kotlin.Int,contextKind:kotlin.Int,contextId:kotlin.String,dueAt:kotlin.Long?,remindedAt:kotlin.Long?,revision:kotlin.Long,createdAt:kotlin.Long,updatedAt:kotlin.Long)
 type	com.virjar.tk.protocol.payload.AccountBannedPayload	1	-	active	CLASS(uid:kotlin.String,datasetId:kotlin.String,reason:kotlin.String?)
 type	com.virjar.tk.protocol.payload.AuthRequestPayload	0	-	active	CLASS(authType:kotlin.Int,username:kotlin.String?,password:kotlin.String?,name:kotlin.String?,refreshToken:kotlin.String?,deviceId:kotlin.String,deviceName:kotlin.String?,deviceModel:kotlin.String?,deviceFlag:kotlin.Int,correlationId:kotlin.String,connectionGeneration:kotlin.Long)
 type	com.virjar.tk.protocol.payload.AuthResponsePayload	0	-	active	CLASS(code:kotlin.Int,reason:kotlin.String?,uid:kotlin.String?,username:kotlin.String?,name:kotlin.String?,accessToken:kotlin.String?,refreshToken:kotlin.String?,expiresIn:kotlin.Long,datasetId:kotlin.String?,connectionTraceContext:com.virjar.tk.protocol.telemetry.ConnectionTraceContext?)

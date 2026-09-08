@@ -334,6 +334,7 @@ internal fun Application.module(
         // 7. Health Checker
         val healthChecker = koin.get<HealthChecker>()
         val attachmentRetention = koin.get<AttachmentRetentionService>()
+        val tasks = koin.get<com.virjar.tk.server.domain.task.TaskService>()
         val reliableCommandReceiptMaintenance = ReliableCommandReceiptMaintenance(koin.get())
         var reliableCommandReceiptBacklogReported = false
 
@@ -348,6 +349,21 @@ internal fun Application.module(
         )
         maintenance.start(
             listOf(
+                MaintenanceWorker("task-due-reminders") {
+                    while (isActive) {
+                        val delayMillis = try {
+                            val reminded = tasks.remindDue()
+                            tasks.cleanupReceipts()
+                            if (reminded == 100) 1_000L else 30_000L
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Exception) {
+                            logger.warn("Task reminder maintenance remains pending", failure)
+                            30_000L
+                        }
+                        delay(delayMillis)
+                    }
+                },
                 MaintenanceWorker("content-search-projection") {
                     while (isActive) {
                         try {

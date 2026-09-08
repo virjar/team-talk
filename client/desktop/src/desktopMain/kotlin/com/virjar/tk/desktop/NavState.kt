@@ -108,6 +108,8 @@ class DesktopNav(
     onHttpAuthExpired = onHttpAuthExpired,
 ) {
 
+    internal val taskRepository = session.taskRepo
+
     var selectedTab by mutableIntStateOf(0)
 
     /**
@@ -175,6 +177,14 @@ class DesktopNav(
         documentOpenRequestId += 1
         documentOpenRequest = DesktopDocumentOpenRequest(spaceId, documentId, documentOpenRequestId)
         selectedTab = MainTab.DOCUMENTS.ordinal
+    }
+
+    fun openTask(taskId: String) {
+        closeMainPane()
+        windowScreen = null
+        inspectorStack = emptyList()
+        selectedTab = MainTab.TASKS.ordinal
+        tasks.openTask(taskId)
     }
 
     /** 栏目初始化完成后才接续目标，避免 open/refresh 退役这次导航。 */

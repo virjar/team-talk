@@ -275,6 +275,7 @@ internal fun ComposerAttachmentAction(
     compact: Boolean = false,
     onPickDocument: (() -> Unit)? = null,
     onPickGroupFile: (() -> Unit)? = null,
+    onPickTask: (() -> Unit)? = null,
 ) {
     Box {
         IconButton(
@@ -309,6 +310,12 @@ internal fun ComposerAttachmentAction(
                     }
                 },
                 onPickDocument = onPickDocument?.let { pick ->
+                    {
+                        onDismiss()
+                        pick()
+                    }
+                },
+                onPickTask = onPickTask?.let { pick ->
                     {
                         onDismiss()
                         pick()

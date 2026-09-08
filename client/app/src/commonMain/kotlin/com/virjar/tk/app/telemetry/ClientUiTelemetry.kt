@@ -9,6 +9,7 @@ enum class ClientUiPage(val code: String) {
     CONVERSATIONS("conversations"),
     CONTACTS("contacts"),
     DOCUMENTS("documents"),
+    TASKS("tasks"),
     SETTINGS("settings"),
     CHAT("chat"),
     SEARCH_MESSAGES("search_messages"),

@@ -27,6 +27,7 @@ object MessageBodyRegistry {
         MessageType.STICKER to StickerBody,
         MessageType.REACTION to ReactionBody,
         MessageType.OFFICE_REF to OfficeRefBody,
+        MessageType.TASK_REF to TaskRefBody,
     )
 
     fun decode(messageType: MessageType?, buf: PacketBuffer): MessageBody? {

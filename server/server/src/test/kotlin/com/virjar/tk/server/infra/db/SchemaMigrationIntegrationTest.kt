@@ -10,6 +10,33 @@ import kotlin.test.assertTrue
 
 class SchemaMigrationIntegrationTest {
     @Test
+    fun `task migration appends tables without changing the existing dataset or users`() {
+        PostgresSchemaLease.open().use { lease ->
+            val datasetId = open(lease).use { it.datasetId }
+            lease.openConnection().use { connection -> connection.createStatement().use { statement ->
+                // This isolated fixture emulates the immediately preceding schema, never a live instance.
+                statement.execute("DROP TABLE task_commands, task_audits, work_tasks")
+                statement.execute("DELETE FROM schema_migrations WHERE version = 5")
+                statement.execute("INSERT INTO users (uid, username, name, password_hash, created_at, updated_at) " +
+                    "VALUES ('kept-task-owner', 'kept-task-owner', 'kept owner', 'fixture-only', 11, 12)")
+            } }
+            open(lease).use { assertEquals(datasetId, it.datasetId) }
+            lease.openConnection().use { connection -> connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT name FROM schema_migrations WHERE version = 5").use {
+                    assertTrue(it.next()); assertEquals("create_tasks", it.getString(1))
+                }
+                statement.executeQuery("SELECT name, created_at FROM users WHERE uid = 'kept-task-owner'").use {
+                    assertTrue(it.next()); assertEquals("kept owner", it.getString(1)); assertEquals(11L, it.getLong(2))
+                }
+                listOf("work_tasks", "task_audits", "task_commands").forEach { table ->
+                    statement.executeQuery("SELECT count(*) FROM $table").use { assertTrue(it.next()); assertEquals(0, it.getInt(1)) }
+                }
+            } }
+            open(lease).use { assertEquals(datasetId, it.datasetId) }
+        }
+    }
+
+    @Test
     fun `existing byte protocol constraint upgrades without replacing rows or dataset and reopens idempotently`() {
         PostgresSchemaLease.open().use { lease ->
             val datasetId = open(lease).use { it.datasetId }

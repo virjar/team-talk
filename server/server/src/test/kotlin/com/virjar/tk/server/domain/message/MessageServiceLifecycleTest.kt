@@ -252,6 +252,8 @@ class MessageServiceLifecycleTest {
             projectionHooks = MessageProjectionHooks.None,
         )
         val service = MessageService(
+            taskRefs = com.virjar.tk.server.domain.message.TaskRefResolver(com.virjar.tk.server.domain.task.TaskService(
+                interfaceStub<com.virjar.tk.server.domain.task.TaskRepository>(), ImmediatePgUnitOfWork)),
             messages = messages,
             chatStore = chatStore,
             access = access,

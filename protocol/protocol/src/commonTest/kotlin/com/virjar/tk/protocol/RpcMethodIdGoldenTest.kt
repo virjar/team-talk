@@ -175,6 +175,16 @@ class RpcMethodIdGoldenTest {
         assertEquals("document", DocumentRpcContract.SERVICE)
     }
 
+    @Test
+    fun taskMvpMethodIds() {
+        val contract = com.virjar.tk.protocol.rpc.gen.TaskRpcContract
+        assertEquals("task", contract.SERVICE)
+        assertEquals(1, contract.M_LIST)
+        assertEquals(2, contract.M_GET)
+        assertEquals(3, contract.M_AUDIT)
+        assertEquals(4, contract.M_MUTATE)
+    }
+
     // 占位 map 防误用（golden 以字面断言为准）
     @Suppress("unused")
     private val unused: Unit = Unit

@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Assignment
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -199,6 +200,7 @@ internal fun WindowScope.MainAppContent(
                     nav.contactViewModel.refreshPendingApplyCount()
                     nav.organization.refresh()
                 }
+                MainTab.TASKS -> nav.tasks.open()
                 MainTab.DOCUMENTS -> {
                     val request = nav.documentOpenRequest
                     if (!nav.documentWindowVisible) {
@@ -365,7 +367,8 @@ private fun MainListPane(
     pendingApplyCount: Int,
 ) {
     val directoryScope = rememberCoroutineScope()
-    val expandedWorkspace = MainTab.entries[nav.selectedTab] == MainTab.DOCUMENTS || nav.mainPaneScreen != null
+    val expandedWorkspace = MainTab.entries[nav.selectedTab] in setOf(MainTab.DOCUMENTS, MainTab.TASKS) ||
+        nav.mainPaneScreen != null
     // 三级层次：rail(surfaceVariant 深灰) → 列表(background 浅灰) → 内容(白)
     if (!expandedWorkspace) {
         Surface(
@@ -436,6 +439,7 @@ private fun MainListPane(
                 }
 
                 MainTab.DOCUMENTS -> Unit
+                MainTab.TASKS -> Unit
 
                 // 个人设置已改为居中模态（DesktopSettingsDialog），不再占用中栏；
                 // 该分支仅为枚举穷尽保留，正常路径 selectedTab 不会停在 SETTINGS。
@@ -491,6 +495,11 @@ private fun RowScope.MainContentPane(
                     nav.globalSearchQuery = query
                 },
             )
+        } else if (MainTab.entries[nav.selectedTab] == MainTab.TASKS) {
+            com.virjar.tk.app.ui.screen.TaskWorkspaceScreen(
+                feature = nav.tasks,
+                actionAdmission = presentationGate,
+            )
         } else if (MainTab.entries[nav.selectedTab] == MainTab.DOCUMENTS) {
             if (nav.documentWindowVisible) {
                 DocumentDetachedPlaceholder(
@@ -543,6 +552,9 @@ private fun RowScope.MainContentPane(
                                 nav.messageActions.save(msg.chatId, msg.serverSeq)
                             },
                             officeRefHost = nav,
+                            onOpenTaskRef = presentationGate.guard { _, body, onDenied ->
+                                nav.messageActions.openTaskReference(body, { nav.openTask(body.taskId) }, onDenied)
+                            },
                             onOpenOfficeRef = presentationGate.guard { msg, body, onDenied ->
                                 nav.messageActions.openReference(
                                     reference = body,
@@ -719,6 +731,7 @@ private fun MainPaneEmptyState(tab: MainTab) {
         MainTab.CONVERSATIONS -> Triple(Icons.AutoMirrored.Filled.Chat, "选择一个会话", "从会话列表继续沟通，或使用顶部搜索查找内容")
         MainTab.CONTACTS -> Triple(Icons.Filled.Contacts, "选择一个联系人", "查看资料、发送消息或从资料页发起群聊")
         MainTab.DOCUMENTS -> Triple(Icons.Filled.Description, "打开企业文档", "从独立文档入口访问空间、目录和协作文档")
+        MainTab.TASKS -> Triple(Icons.Filled.Assignment, "打开任务", "查看分配给你的任务与创建的任务")
         // 正常路径不会停在设置（设置是模态）；若出现则指向正确的入口。
         MainTab.SETTINGS -> Triple(Icons.Filled.Settings, "账号与设置", "点击左下角的设置图标管理个人资料、安全与外观")
     }
@@ -787,6 +800,7 @@ internal fun desktopMainWindowTelemetryPage(
         MainTab.CONVERSATIONS -> ClientUiPage.CONVERSATIONS
         MainTab.CONTACTS -> ClientUiPage.CONTACTS
         MainTab.DOCUMENTS -> ClientUiPage.DOCUMENTS
+        MainTab.TASKS -> ClientUiPage.TASKS
         MainTab.SETTINGS -> ClientUiPage.SETTINGS
         null -> ClientUiPage.CONVERSATIONS
     }

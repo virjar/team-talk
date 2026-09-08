@@ -65,7 +65,7 @@
 - **正式产品发行由用户明确确认。** 展示版本、构建号、人工发行说明、`prepareProtocolRelease`、tag 和
   GitHub 发布都属于正式发行。开发、服务器部署、Agent 本机验收不自动授权客户端交付。
 - **协议按发行批次演进，不按功能或提交递增。** 当前发行 `0.0.1 / protocol 0.1`；协议 0.0 与
-  0.1 均受正式快照保护。当前待发行文档与内容搜索契约共用 minor 2 与 `@SinceProtocol(2)`，
+  0.1 均受正式快照保护。当前待发行文档、内容搜索与任务契约共用 minor 2 与 `@SinceProtocol(2)`，
   同一发行周期不再按功能累加 minor；纯实现或 UI 修复不增加协议号。
 - 开发清单 `protocol/protocol/wire-baseline.tsv` 只记录当前源码，不冻结兼容历史。修改待发布新增契约后
   仍需审阅并运行 `writeProtocolBaseline`；兼容校验只针对 `releases/` 中的正式快照和已有的明确冻结契约。

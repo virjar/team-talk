@@ -18,6 +18,7 @@ import com.virjar.tk.app.navigation.feature.document.DocumentDraftStore
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftOwnerKey
 import com.virjar.tk.app.navigation.feature.document.DocumentWorkspaceFeature
 import com.virjar.tk.app.navigation.feature.MessageActionsFeature
+import com.virjar.tk.app.navigation.feature.task.TaskFeature
 import com.virjar.tk.app.ui.UiActionAdmission
 import com.virjar.tk.app.ui.SessionUiActionExecutor
 import com.virjar.tk.app.ui.screen.ChatComposerContextStore
@@ -160,7 +161,7 @@ open class AppDataState(
     val account = AccountFeature(session, contactViewModel, actionScope, ::handleError, localData)
     val groups = GroupFeature(session, actionScope, ::handleError, localData, telemetry)
     val discovery = DiscoveryFeature(session, ::handleError, localData)
-    val messageActions = MessageActionsFeature(session) { action ->
+    val messageActions = MessageActionsFeature(session, localData) { action ->
         launchAdmittedUiAction(action = action)
     }
     val organization = OrganizationFeature(session, actionScope, ::handleError, localData)
@@ -180,6 +181,7 @@ open class AppDataState(
         localData,
         telemetry,
     )
+    val tasks = TaskFeature(session, actionScope, localData, conversationViewModel)
 
     fun destroy(
         clearComposerContexts: Boolean = true,
