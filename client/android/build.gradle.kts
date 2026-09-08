@@ -26,6 +26,7 @@ kotlin {
 val generateReleaseIdentity = tasks.register<GenerateAndroidReleaseIdentity>("generateReleaseIdentity") {
     this.releaseVersion.set(rootProject.extra["releaseVersion"] as String)
     this.buildIdentity.set(rootProject.extra["buildIdentity"] as String)
+    deploymentConfigJson.set(deploymentConfig.toCanonicalJson())
     outputDirectory.set(layout.buildDirectory.dir("generated/release-identity/assets"))
 }
 androidComponents {

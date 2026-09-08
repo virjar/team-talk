@@ -45,6 +45,8 @@ jobs:
             caches
             notifications
             teamtalk-tools
+      - name: Ensure Android tools for APK assembly and sealed bundle verification
+        run: sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0'
       - name: Resolve release comparison and preserve tagged protocol history
         env:
           RELEASE_BASE: ${{ github.event_name == 'push' && github.ref_type == 'branch' && github.event.before || '' }}
@@ -53,7 +55,7 @@ jobs:
           if [ -n "$RELEASE_BASE" ]; then
             echo "ORG_GRADLE_PROJECT_releaseBase=$RELEASE_BASE" >> "$GITHUB_ENV"
           fi
-      # Hosted Ubuntu runners include the Android SDK. Gradle owns Node and Conveyor.
+      # Android tools are prepared above. Gradle owns Node and Conveyor.
       - name: Provide existing signing identities and optional site credentials
         env:
           TEAMTALK_CONVEYOR_CONFIG_DIR: ${{ runner.temp }}/teamtalk-conveyor-signing

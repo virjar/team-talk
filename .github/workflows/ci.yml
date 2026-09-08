@@ -26,6 +26,13 @@ jobs:
           java-version: '21'
           distribution: temurin
       - uses: gradle/actions/setup-gradle@v5.0.2
+      - name: Ensure Android tools for real APK identity tests
+        if: runner.os != 'Windows'
+        run: sdkmanager --install 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Ensure Android tools for real APK identity tests on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: sdkmanager.bat --install 'platforms;android-36' 'build-tools;36.0.0'
       - name: Exercise release metadata, protocol policy, archives and JVM publishers
         if: runner.os != 'Windows'
         run: ./gradlew -p buildSrc test --tests 'release.*'

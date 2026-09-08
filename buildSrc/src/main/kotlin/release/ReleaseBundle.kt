@@ -88,7 +88,7 @@ object ReleaseBundle {
             File(temporary, "COMMITS.md").writeText(commits)
             File(temporary, DEPLOYMENT_CONFIG).writeText(identity.deployment.toCanonicalJson(), Charsets.UTF_8)
             val manifest = buildJsonObject {
-                put("format", 1)
+                put("format", 2)
                 put("version", identity.version.name)
                 put("buildNumber", identity.version.buildNumber)
                 put("protocolMajor", identity.version.protocolMajor)
@@ -146,7 +146,7 @@ object ReleaseBundle {
         require(Files.isRegularFile(manifestFile.toPath(), NOFOLLOW_LINKS)) { "Release bundle manifest is missing" }
         val manifest = Json.parseToJsonElement(manifestFile.readText()).jsonObject
         fun field(name: String): String = manifest.getValue(name).jsonPrimitive.content
-        require(field("format") == "1" && field("version") == identity.version.name &&
+        require(field("format") in setOf("1", "2") && field("version") == identity.version.name &&
             field("buildNumber") == identity.version.buildNumber.toString() &&
             field("protocolMajor") == identity.version.protocolMajor.toString() &&
             field("protocolMinor") == identity.version.protocolMinor.toString() &&
@@ -189,6 +189,10 @@ object ReleaseBundle {
         require(File(directory, CHECKSUMS).readText() == checksumText(directory)) { "SHA256SUMS does not match the bundle" }
         require(File(directory, "desktop/download.html").isFile && assets(directory).size == 3) { "Incomplete release bundle" }
         verifyDesktop(File(directory, "desktop"), identity.version, identity.client, identity.desktopRevision)
+        verifyAndroidApkIdentity(
+            assets(directory).single { it.extension == "apk" }, identity,
+            allowLegacyProducer = field("format") == "1",
+        )
         return manifest
     }
 
@@ -205,13 +209,7 @@ object ReleaseBundle {
         val name = element.getValue("outputFile").jsonPrimitive.content
         require(name == File(name).name && name.endsWith(".apk")) { "Invalid APK output path" }
         val apk = File(outputs, name)
-        ZipFile(apk).use { zip ->
-            val entry = zip.getEntry("assets/teamtalk-build.properties") ?: error("APK lacks its producer build identity")
-            val props = Properties().apply { zip.getInputStream(entry).reader().use(::load) }
-            require(props.getProperty("buildIdentity") == identity.buildIdentity &&
-                props.getProperty("version") == identity.version.name &&
-                props.getProperty("artifactType") == "android-apk") { "APK came from a different source revision" }
-        }
+        verifyAndroidApkIdentity(apk, identity)
         return apk
     }
 

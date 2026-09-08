@@ -1,6 +1,5 @@
 package release
 
-import deployment.writeReleaseArtifactManifestFile
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.Property
@@ -12,13 +11,15 @@ import org.gradle.api.tasks.TaskAction
 abstract class GenerateAndroidReleaseIdentity : DefaultTask() {
     @get:Input abstract val releaseVersion: Property<String>
     @get:Input abstract val buildIdentity: Property<String>
+    /** Canonical effective configuration includes every client and endpoint value. */
+    @get:Input abstract val deploymentConfigJson: Property<String>
     @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
 
     @TaskAction
     fun generate() {
-        writeReleaseArtifactManifestFile(
+        writeAndroidReleaseIdentity(
             outputDirectory.get().file("teamtalk-build.properties").asFile,
-            "android-apk", releaseVersion.get(), buildIdentity.get(),
+            releaseVersion.get(), buildIdentity.get(), deploymentConfigJson.get(),
         )
     }
 }

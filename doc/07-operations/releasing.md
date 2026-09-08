@@ -176,6 +176,8 @@ keystore 与 Conveyor 签名材料，构建机器更换时恢复原材料，避�
 构建机需要 Git、JDK 21 与 Android SDK；首次构建需要依赖仓库和工具下载可达。Gradle 管理 Node.js、
 Conveyor 的固定版本下载、摘要校验与缓存，不要求手工安装全局 Node.js、Conveyor、`gh`、`rsync` 或
 `scp` 来发布客户端。Conveyor 的持续签名配置仍需准备，详见[Desktop 打包](desktop-cross-build.md)。
+APK 身份校验需要已有 Android SDK build-tools 中的 `aapt2`；SDK 通过 `local.properties` 的 `sdk.dir`、
+`ANDROID_HOME` 或 `ANDROID_SDK_ROOT` 定位。复用密封目录也需要此工具，校验阶段不自动安装它。
 
 从干净工作树运行：
 
@@ -208,11 +210,18 @@ Conveyor 的固定版本下载、摘要校验与缓存，不要求手工安装�
 客户端附件前缀来自 `client.desktopName`，默认仍为 `TeamTalk`；Server ZIP 保持 `TeamTalk` 前缀。
 显示名称可以包含中文，不作为这些发行归档的文件名。
 
-APK 内嵌构建身份并校验安装版本与签名，Desktop 检查三平台必需文件和 Conveyor 元数据，Server ZIP
-包含自身分发身份。密封清单记录源 commit、协议窗口、部署配置摘要、工具清单摘要、签名证书信息、
+新生成 APK 的 `assets/teamtalk-build.properties` 内嵌源码身份、完整非敏感部署配置的摘要，以及应用标识、
+显示名称、英文安装名称和 HTTP/TCP 地址。封包时逐项匹配实际配置，使用 `aapt2` 从 APK 二进制清单与资源
+核对包名、安装版本、默认及各语言的应用名称、非空启动入口名称，并验证 APK 签名。
+Desktop 检查三平台必需文件和 Conveyor 元数据，Server ZIP 包含自身分发身份。
+密封清单记录源 commit、协议窗口、部署配置摘要、工具清单摘要、签名证书信息、
 文件大小与 SHA-256。同一路径已有密封目录时复核并复用，出现不同身份、文件增删或字节变化立即失败。
 部署摘要依据最终 `DeploymentConfig` 对象的规范化 JSON 计算，不依据配置源码；只改注释、变量名或
 等价函数拆分不会改变配置身份。密封的 `deployment-config.json` 用于交付溯源和复核，不接受手工修改。
+
+新密封清单使用 `format=2`，要求 APK 内嵌完整部署身份字段。既有 `format=1` 目录可按原字节复用，
+仍核对 APK 的源码身份及二进制包名、名称和版本；只有整组部署身份字段均缺失时才兼容旧 APK，
+其中任一字段存在就必须全部匹配。复用不重写旧清单或 APK。
 
 这个目录可以复制给没有 GitHub 的客户。解压 Desktop 站点 ZIP 时须保持完整目录；Server ZIP 是可供
 人工部署的分发文件，构建或下载它都不会自动改变运行实例。无头 SDK 分发仍通过
@@ -242,10 +251,20 @@ Ed25519 主机校验及真实 SFTP 上传，不需要在客户电脑上更改 SS
 ./gradlew release -PreleaseTargets=site
 ```
 
-每个发行的 `serverUrl` 对应站点提供这些下载入口：Android 为 `/downloads/TeamTalk-android.apk`，Desktop 为
-`/downloads/desktop/download.html` 及同目录的安装包、更新元数据。这些相对入口不因应用名称变化而
-变化；Desktop Conveyor 更新源由同一 `serverUrl` 推导，不需要配置第二个更新源。Android 用户从站点
-下载安装包，当前应用不自动下载安装。上传先写独立暂存目录并校验摘要，
+每个发行的 `serverUrl` 对应站点通过 `/downloads/android.json` 提供当前 Android 包的显示名称、版本、
+文件名与相对下载 URL。首页下载按钮显示应用名称和版本，按钮与二维码使用
+`/downloads/<desktopName>-<version>-<APK SHA-256前12位>-android.apk`，下载文件名保持一致。
+服务端将站点收据、密封清单中的 APK 记录和实际文件的摘要与大小交叉核对，再返回下载身份与字节。
+校验和传输使用同一个已打开文件，避免发布切换时把另一份 APK 放到旧文件名下。
+
+`/downloads/TeamTalk-android.apk` 保留为兼容入口，`Content-Disposition` 指定同一个明确文件名；
+Android 元数据与 APK 响应均为 `Cache-Control: no-store`。仅当前包的身份 URL 可用，其他身份 URL 返回
+404；收据或清单与 APK 不一致时返回 503 和 `Retry-After: 1`。没有发行收据的手工下载目录仍可通过
+兼容入口下载，文件名使用 `Android-<APK SHA-256前12位>.apk`，首页显示通用名称，不声明未经核对的版本。
+
+Desktop 为 `/downloads/desktop/download.html` 及同目录的安装包、更新元数据。Conveyor 更新源由同一
+`serverUrl` 推导，不需要配置第二个更新源。Android 用户从站点下载安装包，当前应用不自动下载安装。
+上传先写独立暂存目录并校验摘要，
 最终 rename/remove 由持有 `flock` 的同一个远程进程顺序执行，SFTP 负责暂存上传与回读校验；
 Android 保持普通文件，Desktop 保持真实目录，符合现有 HTTP 静态服务路径校验。
 

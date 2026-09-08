@@ -186,6 +186,7 @@
             <p class="qr-label">扫描二维码下载 Android 版本</p>
             <div id="android-qrcode"></div>
             <p class="apk-link"><a href="/downloads/TeamTalk-android.apk">直接下载 APK</a></p>
+            <p id="android-package-name" class="plat-desc"></p>
         </div>
     </div>
 </section>
@@ -217,8 +218,17 @@
 
     var apkLink = window.location.origin + '/downloads/TeamTalk-android.apk';
     var apkAvailable = false;
-    fetch('/downloads/TeamTalk-android.apk', { method: 'HEAD' }).then(function(r) {
-        apkAvailable = r.ok;
+    fetch('/downloads/android.json', { cache: 'no-store' }).then(function(r) {
+        if (!r.ok) throw new Error('Android download unavailable');
+        return r.json();
+    }).then(function(info) {
+        apkLink = window.location.origin + info.url;
+        apkAvailable = true;
+        var link = document.querySelector('.android-qr .apk-link a');
+        link.href = info.url;
+        link.setAttribute('download', info.filename);
+        document.getElementById('android-package-name').textContent =
+            info.version ? info.displayName + ' ' + info.version + ' · Android' : 'Android 安装包';
         updateAndroidSection();
     }).catch(function() {
         updateAndroidSection();
@@ -228,14 +238,19 @@
         var section = document.querySelector('.android-qr');
         if (!section) return;
         if (apkAvailable) {
-            var qr = qrcode(0, 'M');
-            qr.addData(apkLink);
-            qr.make();
-            document.getElementById('android-qrcode').innerHTML = qr.createImgTag(4, 8);
+            if (typeof qrcode === 'function') {
+                var qr = qrcode(0, 'M');
+                qr.addData(apkLink);
+                qr.make();
+                document.getElementById('android-qrcode').innerHTML = qr.createImgTag(4, 8);
+            } else {
+                section.querySelector('.qr-label').textContent = '直接下载 Android 安装包';
+                document.getElementById('android-qrcode').style.display = 'none';
+            }
         } else {
             section.classList.add('unavailable');
             var label = section.querySelector('.qr-label');
-            if (label) label.textContent = 'Android 版本即将上线';
+            if (label) label.textContent = 'Android 安装包暂不可用，请稍后重试';
             var link = section.querySelector('.apk-link');
             if (link) link.style.display = 'none';
             var qrcodeEl = document.getElementById('android-qrcode');

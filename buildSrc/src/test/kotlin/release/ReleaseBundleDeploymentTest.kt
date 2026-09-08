@@ -4,8 +4,6 @@ import deployment.ClientDistributionIdentity
 import deployment.DeploymentConfig
 import java.io.File
 import java.nio.file.Files
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -20,7 +18,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertFalse
 
-/** Small sealed fixtures exercise reuse checks without building or signing any platform package. */
+/** Small sealed fixtures use real APK manifest/resources; no application compilation or signing. */
 class ReleaseBundleDeploymentTest {
     private val config = DeploymentConfig("https://im.example.com", "im.example.com:5100", "im.example.com")
     private val identity = BundleIdentity(ReleaseVersion("0.0.0", 0, 0, 0, 0), "0123456789abcdef", config)
@@ -230,21 +228,113 @@ class ReleaseBundleDeploymentTest {
         assertEquals(File(directory, "client.apk"), ReleaseBundle.requireAndroidApk(directory, snapshot))
     }
 
+    @Test
+    fun `correct external metadata cannot hide a different APK package label or version`() = bundle { directory ->
+        val privateClient = ClientDistributionIdentity("com.example.internal", "内部版", "Internal")
+        val wrongPackages = listOf(
+            identity.copy(deployment = config.copy(client = privateClient)),
+            identity.copy(deployment = config.copy(client = identity.client.copy(displayName = "另一应用"))),
+            identity.copy(version = identity.version.copy(buildNumber = 1), desktopRevision = 2),
+            identity.copy(version = identity.version.copy(name = "0.0.1")),
+        )
+        wrongPackages.forEach { actual ->
+            // Both producer properties and AGP's external metadata claim the expected identity.
+            androidFixture(directory, identity, actualApkIdentity = actual)
+            assertFailsWith<IllegalArgumentException> { ReleaseBundle.requireAndroidApk(directory, identity) }
+        }
+    }
+
+    @Test
+    fun `newly assembled APKs and format two reuse require complete producer deployment fields`() = bundle { directory ->
+        androidFixture(directory, identity, legacyProducer = true)
+        val missing = assertFailsWith<IllegalArgumentException> { ReleaseBundle.requireAndroidApk(directory, identity) }
+        assertEquals("APK producer deployment identity differs from the effective configuration", missing.message)
+        sealFixture(directory, legacyProducer = true)
+        assertFailsWith<IllegalArgumentException> { ReleaseBundle.verify(directory, identity, notes) }
+    }
+
+    @Test
+    fun `format one original public private and snapshot bytes remain reusable without new producer fields`() = bundle { directory ->
+        val privateConfig = config.copy(client = ClientDistributionIdentity("com.example.internal", "内部版", "Internal"))
+        val privateIdentity = identity.copy(deployment = privateConfig, distributionKind = "private-first",
+            protocolContractSha256 = "a".repeat(64))
+        val snapshotIdentity = privateIdentity.copy(distributionKind = "snapshot", desktopRevision = 8)
+        listOf(identity, privateIdentity, snapshotIdentity).forEachIndexed { index, existing ->
+            val sealed = File(directory, "old-$index").apply { mkdirs() }
+            sealFixture(sealed, snapshot = existing.deployment.toCanonicalJson(), identity = existing,
+                format = 1, legacyProducer = true)
+            val before = regularFiles(sealed).associate { it.relativeTo(sealed).path to sha256(it) }
+            assertEquals("1", ReleaseBundle.verify(sealed, existing, notes).getValue("format").jsonPrimitive.content)
+            assertEquals(before, regularFiles(sealed).associate { it.relativeTo(sealed).path to sha256(it) })
+        }
+    }
+
+    @Test
+    fun `format one compatibility still rejects real private APK bytes under a public sealed manifest`() = bundle { directory ->
+        val actual = identity.copy(deployment = config.copy(
+            client = ClientDistributionIdentity("com.example.internal", "内部版", "Internal")))
+        sealFixture(directory, format = 1, legacyProducer = true, actualApkIdentity = actual)
+        val failure = assertFailsWith<IllegalArgumentException> { ReleaseBundle.verify(directory, identity, notes) }
+        assertEquals("APK manifest package or version differs from the effective configuration", failure.message)
+    }
+
+    @Test
+    fun `format one compatibility cannot ignore present but mismatched producer deployment fields`() = bundle { directory ->
+        val wrongProducer = identity.copy(deployment = config.copy(serverUrl = "https://other.example.com"))
+        sealFixture(directory, format = 1, producerIdentity = wrongProducer)
+        val failure = assertFailsWith<IllegalArgumentException> { ReleaseBundle.verify(directory, identity, notes) }
+        assertEquals("APK producer deployment identity differs from the effective configuration", failure.message)
+    }
+
+    @Test
+    fun `APK inspection checks localized and launcher labels as well as the default name`() = bundle { directory ->
+        val apk = File(directory, "client.apk")
+        writeAndroidApkFixture(apk, identity, localizedLabel = "另一应用")
+        assertEquals("APK application label differs from the effective configuration",
+            assertFailsWith<IllegalArgumentException> { verifyAndroidApkIdentity(apk, identity) }.message)
+        writeAndroidApkFixture(apk, identity, launcherLabel = "另一应用")
+        assertEquals("APK launcher label differs from the effective configuration",
+            assertFailsWith<IllegalArgumentException> { verifyAndroidApkIdentity(apk, identity) }.message)
+    }
+
+    @Test
+    fun `producer properties preserve Unicode and escapes with stable bytes`() = bundle { directory ->
+        val custom = identity.copy(deployment = config.copy(client = ClientDistributionIdentity(
+            "com.example.internal", "研发 O'Brien \"测试\\包\"", "Internal")))
+        val properties = File(directory, "producer.properties")
+        writeAndroidReleaseIdentity(properties, custom.version.name, custom.buildIdentity, custom.deployment.toCanonicalJson())
+        val first = properties.readText()
+        val decoded = java.util.Properties().apply { properties.reader(Charsets.UTF_8).use(::load) }
+        assertEquals(custom.client.displayName, decoded.getProperty("displayName"))
+        assertEquals(custom.deploymentSha256, decoded.getProperty("deploymentSha256"))
+        writeAndroidReleaseIdentity(properties, custom.version.name, custom.buildIdentity, custom.deployment.toCanonicalJson())
+        assertEquals(first, properties.readText())
+        val apk = File(directory, "client.apk")
+        writeAndroidApkFixture(apk, custom)
+        verifyAndroidApkIdentity(apk, custom)
+    }
+
     private fun sealFixture(
         directory: File,
         snapshot: String? = config.toCanonicalJson(),
         identity: BundleIdentity = this.identity,
         notes: String = this.notes,
         desktopIdentity: BundleIdentity = identity,
+        format: Int = 2,
+        legacyProducer: Boolean = false,
+        actualApkIdentity: BundleIdentity = identity,
+        producerIdentity: BundleIdentity = identity,
     ) {
         desktopFixture(File(directory, "desktop"), desktopIdentity)
         File(directory, "assets").mkdirs()
-        listOf("client.apk", "server.zip", "desktop-site.zip").forEach { File(directory, "assets/$it").writeText(it) }
+        listOf("server.zip", "desktop-site.zip").forEach { File(directory, "assets/$it").writeText(it) }
+        writeAndroidApkFixture(File(directory, "assets/client.apk"), producerIdentity, actualApkIdentity,
+            legacyProducer = legacyProducer)
         File(directory, "RELEASE_NOTES.md").writeText(notes)
         File(directory, "COMMITS.md").writeText("# Fixture commits\n")
         snapshot?.let { File(directory, ReleaseBundle.DEPLOYMENT_CONFIG).writeText(it, Charsets.UTF_8) }
         val manifest = buildJsonObject {
-            put("format", 1)
+            put("format", format)
             put("version", identity.version.name)
             put("buildNumber", identity.version.buildNumber)
             put("protocolMajor", identity.version.protocolMajor)
@@ -303,6 +393,8 @@ class ReleaseBundleDeploymentTest {
         identity: BundleIdentity,
         versionCode: Int = identity.version.buildNumber + 1,
         apkBuildIdentity: String = identity.buildIdentity,
+        actualApkIdentity: BundleIdentity = identity,
+        legacyProducer: Boolean = false,
     ) {
         File(outputs, "output-metadata.json").writeText(buildJsonObject {
             put("applicationId", identity.client.androidApplicationId)
@@ -314,11 +406,8 @@ class ReleaseBundleDeploymentTest {
                 })
             }
         }.toString())
-        ZipOutputStream(File(outputs, "client.apk").outputStream()).use { zip ->
-            zip.putNextEntry(ZipEntry("assets/teamtalk-build.properties"))
-            zip.write("artifactType=android-apk\nversion=${identity.version.name}\nbuildIdentity=$apkBuildIdentity\n".toByteArray())
-            zip.closeEntry()
-        }
+        writeAndroidApkFixture(File(outputs, "client.apk"), identity, actualApkIdentity,
+            buildIdentity = apkBuildIdentity, legacyProducer = legacyProducer)
     }
 
     private fun rewriteManifest(directory: File, edit: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) {
