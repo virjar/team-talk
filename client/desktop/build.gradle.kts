@@ -137,7 +137,7 @@ val rebuildMacVideoPlayerOverride = tasks.register<Exec>("rebuildMacVideoPlayerO
     outputs.file(macVideoPlayerOverrideManifest)
     doFirst {
         check(OperatingSystem.current().isMacOsX) {
-            "rebuildMacVideoPlayerOverride requires macOS with Xcode and JDK 17"
+            "rebuildMacVideoPlayerOverride requires macOS with Xcode and JDK 21"
         }
     }
     commandLine(macVideoPlayerOverrideSourceDir.file("build.sh").asFile.absolutePath)
@@ -369,7 +369,7 @@ buildConfig {
     buildConfigField("TEST_HTTP_SERVER", true)
     // 登录页自定义服务器入口（选中的 buildSrc Kotlin 配置 驱动，编译期定死；生产部署 false）
     buildConfigField("ALLOW_CUSTOM_SERVER", deploymentConfig.allowCustomServer)
-    // 公共证书直接编译进客户端；JDK 17 jpackage 的递归参数正则无法可靠处理长证书 JVM 参数。
+    // 公共证书直接编译进客户端，避免将长证书内容放入打包后的 JVM 启动参数。
     buildConfigField("TCP_TLS_CERTIFICATE_BASE64", tcpTlsCertificateBase64)
 }
 

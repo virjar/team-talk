@@ -4,7 +4,7 @@
 
 | 工具 | 要求 | 用途 |
 |---|---|---|
-| JDK | 17 | Gradle、服务端和 Desktop |
+| JDK | 21 | Gradle、服务端和 Desktop；Android 字节码目标保持 17 |
 | Docker | 可运行 Compose | 本地 PostgreSQL |
 | Android Studio | 当前稳定版 | Android 构建、模拟器和真机调试 |
 | Git | 可读取提交 ID | 构建信息和发布溯源 |
@@ -142,8 +142,10 @@ data/
 `~/Library/Application Support/TeamTalk`，Windows 为 `%LOCALAPPDATA%\TeamTalk`，Linux 为
 `${XDG_DATA_HOME:-~/.local/share}/teamtalk`。私有发行在相同平台根下按稳定应用标识选择自己的子目录，
 见[客户端发行身份](../07-operations/configuration.md#客户端发行身份)。目录安全和旧安装目录复制规则见
-[Desktop 私有数据目录](../05-clients/desktop.md#11-私有数据目录)。开发运行也使用当前发行的平台默认路径；
-同一发行需要额外隔离开发资料时，显式设置绝对 `-Dteamtalk.data.dir=<path>`，不会自动写仓库 `data/desktop`。
+[Desktop 私有数据目录](../05-clients/desktop.md#11-私有数据目录)。Gradle `:client:desktop:run` 默认使用
+`~/.teamtalk/desktop-development/<applicationId>/<checkoutHash>/`，按应用身份和仓库的规范路径隔离，
+可与安装版同时运行；`checkoutHash` 为该路径 SHA-256 的前 24 位。需要指定其他开发目录时，设置绝对
+`-Dteamtalk.data.dir=<path>`；开发数据不会写入仓库 `build/` 或 `data/desktop`，也不受 `clean` 影响。
 
 ## 6. 修改后的验证顺序
 
