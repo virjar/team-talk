@@ -20,12 +20,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.virjar.tk.app.ui.component.GroupAvatarCollage
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.virjar.tk.shared.client.PendingGroupCreationCommand
 import com.virjar.tk.protocol.model.Contact
+import com.virjar.tk.protocol.model.User
 import com.virjar.tk.app.ui.component.AvatarPlaceholder
 import com.virjar.tk.app.ui.component.ScreenHeader
 import com.virjar.tk.app.ui.theme.Tk
@@ -73,6 +75,9 @@ fun CreateGroupScreen(
     val selectedContacts = remember(contacts, selectedUids) {
         contacts.filter { it.friendUid in selectedUids }
     }
+    val draftMemberUsers = remember(selectedContacts) {
+        selectedContacts.mapNotNull { it.user }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         ScreenHeader(
@@ -110,7 +115,7 @@ fun CreateGroupScreen(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    GroupDraftAvatar(size = 48.dp, iconSize = 24.dp)
+                    GroupDraftAvatar(size = 48.dp, iconSize = 24.dp, members = draftMemberUsers, groupName = groupName)
                     Spacer(Modifier.width(12.dp))
                     OutlinedTextField(
                         value = groupName,
@@ -127,7 +132,7 @@ fun CreateGroupScreen(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    GroupDraftAvatar(size = 64.dp, iconSize = 32.dp)
+                    GroupDraftAvatar(size = 64.dp, iconSize = 32.dp, members = draftMemberUsers, groupName = groupName)
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
                         value = groupName,
@@ -372,7 +377,16 @@ fun CreateGroupScreen(
 }
 
 @Composable
-private fun GroupDraftAvatar(size: androidx.compose.ui.unit.Dp, iconSize: androidx.compose.ui.unit.Dp) {
+private fun GroupDraftAvatar(
+    size: androidx.compose.ui.unit.Dp,
+    iconSize: androidx.compose.ui.unit.Dp,
+    members: List<User> = emptyList(),
+    groupName: String? = null,
+) {
+    if (members.isNotEmpty()) {
+        GroupAvatarCollage(chatName = groupName ?: "群聊", members = members, size = size.value.toInt())
+        return
+    }
     Surface(
         modifier = Modifier.size(size),
         shape = RoundedCornerShape(size * 0.28f),

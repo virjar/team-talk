@@ -32,6 +32,9 @@ import com.virjar.tk.app.ui.component.SettingsGroupCard
 import com.virjar.tk.app.ui.component.SettingsIconButton
 import com.virjar.tk.app.ui.component.SettingsSectionLabel
 import com.virjar.tk.app.ui.component.AvatarPlaceholder
+import com.virjar.tk.app.ui.component.ChatAvatar
+import com.virjar.tk.app.ui.component.groupAvatarCellUsers
+import com.virjar.tk.protocol.model.ChatType
 import com.virjar.tk.protocol.model.Chat
 import com.virjar.tk.protocol.model.Member
 import com.virjar.tk.protocol.model.UserRole
@@ -112,7 +115,7 @@ fun GroupDetailScreen(
             ) {
                 item(key = "overview") {
                     SettingsGroupCard(modifier = Modifier.padding(bottom = Tk.spacing.lg)) {
-                        GroupSummary(chat)
+                        GroupSummary(chat, members)
                         HorizontalDivider(color = Tk.colors.divider, modifier = Modifier.padding(horizontal = Tk.spacing.md))
                         NoticeSection(
                             notice = chat.notice,
@@ -247,12 +250,17 @@ fun GroupDetailScreen(
 }
 
 @Composable
-private fun GroupSummary(chat: Chat) {
+private fun GroupSummary(chat: Chat, members: List<Member>) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(Tk.spacing.md),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AvatarPlaceholder(name = chat.name ?: chat.chatId, size = Tk.dimens.listAvatar.value.toInt())
+        ChatAvatar(
+            chatType = ChatType.GROUP.code,
+            chatName = chat.name ?: chat.chatId,
+            size = Tk.dimens.listAvatar.value.toInt(),
+            groupMembers = groupAvatarCellUsers(members),
+        )
         Spacer(Modifier.width(Tk.spacing.md))
         Column(modifier = Modifier.weight(1f)) {
             Text(

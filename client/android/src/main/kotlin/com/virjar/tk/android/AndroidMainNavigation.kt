@@ -335,6 +335,7 @@ private fun NavGraphBuilder.searchDestination(
     composable(Routes.SEARCH_MESSAGES) {
         val conversations by dataState.conversationViewModel.conversations.collectAsState()
         val peerUsers by dataState.conversationViewModel.peerUsers.collectAsState()
+        val groupMemberUsers by dataState.conversationViewModel.groupAvatarMembers.collectAsState()
         val searchUsers by dataState.globalSearchUserViewModel.users.collectAsState()
         val contacts by dataState.contactViewModel.contacts.collectAsState()
         val contentSearchChanges by dataState.discovery.contentSearchChanges.collectAsState()
@@ -348,6 +349,7 @@ private fun NavGraphBuilder.searchDestination(
             conversations = conversations,
             contacts = contacts,
             conversationPeerUsers = peerUsers,
+            groupMemberUsers = groupMemberUsers,
             canonicalSearchUsers = searchUsers,
             contentSearchChanges = contentSearchChanges,
             searchContent = { request ->

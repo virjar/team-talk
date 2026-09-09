@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Bookmark
 import com.virjar.tk.protocol.model.ChatType
 import com.virjar.tk.protocol.model.Attachment
+import com.virjar.tk.protocol.model.User
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -22,6 +23,7 @@ import androidx.compose.ui.unit.dp
  *
  * 角标表达会话类型；保存的消息是个人系统服务，不伪造一个对端用户。
  * Chat.avatar 仍是旧字符串投影，不把它当作可下载身份资产；群聊和未解析私聊均显示占位。
+ * 群聊传入 [groupMembers] 时渲染成员头像拼图；空列表（冷启动/未接线）回退首字母占位。
  */
 @Composable
 fun ChatAvatar(
@@ -30,6 +32,7 @@ fun ChatAvatar(
     modifier: Modifier = Modifier,
     size: Int = 48,
     avatar: Attachment? = null,
+    groupMembers: List<User> = emptyList(),
 ) {
     val type = ChatType.fromCode(chatType)
     val badge = when (type) {
@@ -39,11 +42,19 @@ fun ChatAvatar(
     }
 
     Box(modifier = modifier.size(size.dp)) {
-        AvatarPlaceholder(
-            name = chatName,
-            size = size,
-            avatar = avatar.takeIf { type == ChatType.PERSONAL },
-        )
+        if (type == ChatType.GROUP && groupMembers.isNotEmpty()) {
+            GroupAvatarCollage(
+                chatName = chatName,
+                members = groupMembers,
+                size = size,
+            )
+        } else {
+            AvatarPlaceholder(
+                name = chatName,
+                size = size,
+                avatar = avatar.takeIf { type == ChatType.PERSONAL },
+            )
+        }
 
         if (badge != null) {
             val badgeSize = (size * 0.45f).dp

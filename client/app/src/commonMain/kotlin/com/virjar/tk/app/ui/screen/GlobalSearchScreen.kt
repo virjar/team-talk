@@ -208,6 +208,7 @@ fun GlobalSearchScreen(
     conversations: List<Conversation>,
     contacts: List<Contact>,
     conversationPeerUsers: Map<String, User> = emptyMap(),
+    groupMemberUsers: Map<String, List<User>> = emptyMap(),
     canonicalSearchUsers: Map<String, User?> = emptyMap(),
     onDisplayedSearchUserUidsChange: (List<String>) -> Unit = {},
     searchMessages: suspend (String) -> List<Message>,
@@ -373,6 +374,7 @@ fun GlobalSearchScreen(
                 conversations = localConversations,
                 peerUsers = peerUsers,
                 peerRemarks = peerRemarks,
+                groupMemberUsers = groupMemberUsers,
                 messages = remoteMessages,
                 people = people,
                 conversationNames = conversations.associate { conversation ->
@@ -419,6 +421,7 @@ private fun SearchResults(
     conversations: List<Conversation>,
     peerUsers: Map<String, User>,
     peerRemarks: Map<String, String>,
+    groupMemberUsers: Map<String, List<User>>,
     messages: List<Message>,
     people: List<User>,
     conversationNames: Map<String, String>,
@@ -464,6 +467,7 @@ private fun SearchResults(
                     conversation.peerUid?.let(peerUsers::get),
                     onConversationClick,
                     conversation.peerUid?.let(peerRemarks::get),
+                    groupMemberUsers[conversation.chatId].orEmpty(),
                 )
             }
         }
@@ -507,6 +511,7 @@ private fun SearchConversationRow(
     peerUser: User?,
     onClick: (Conversation) -> Unit,
     remark: String? = null,
+    groupMembers: List<User> = emptyList(),
 ) {
     val identity = conversationIdentityPresentation(conversation, peerUser, remark)
     val displayName = identity.name
@@ -519,6 +524,7 @@ private fun SearchConversationRow(
                 chatName = displayName,
                 avatar = identity.avatar,
                 size = 36,
+                groupMembers = groupMembers,
             )
         },
         modifier = Modifier

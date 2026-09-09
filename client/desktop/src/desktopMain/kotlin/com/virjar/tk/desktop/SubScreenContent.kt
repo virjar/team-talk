@@ -47,6 +47,7 @@ internal fun SubScreenContent(
     val contacts by data.contactViewModel.contacts.collectAsState()
     val conversations by data.conversationViewModel.conversations.collectAsState()
     val conversationPeerUsers by data.conversationViewModel.peerUsers.collectAsState()
+    val groupMemberUsers by data.conversationViewModel.groupAvatarMembers.collectAsState()
     val globalSearchUsers by data.globalSearchUserViewModel.users.collectAsState()
     val contentSearchChanges by data.discovery.contentSearchChanges.collectAsState()
     val actionScope = rememberCoroutineScope()
@@ -382,6 +383,7 @@ internal fun SubScreenContent(
             conversations = conversations,
             contacts = contacts,
             conversationPeerUsers = conversationPeerUsers,
+            groupMemberUsers = groupMemberUsers,
             canonicalSearchUsers = globalSearchUsers,
             contentSearchChanges = contentSearchChanges,
             searchContent = { request ->

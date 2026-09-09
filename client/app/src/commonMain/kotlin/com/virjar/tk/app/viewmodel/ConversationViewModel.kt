@@ -2,11 +2,13 @@ package com.virjar.tk.app.viewmodel
 
 import com.virjar.tk.shared.client.ConnectionState
 import com.virjar.tk.shared.client.LocalCache
+import com.virjar.tk.protocol.model.ChatType
 import com.virjar.tk.protocol.model.Conversation
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.app.ui.component.MessagePreview
+import com.virjar.tk.app.ui.component.groupAvatarCellUsers
 import com.virjar.tk.app.navigation.UiLocalDataBoundary
 import com.virjar.tk.shared.repository.ConversationRepository
 import kotlinx.coroutines.flow.*
@@ -31,6 +33,9 @@ class ConversationViewModel(
     private val _peerUsers = MutableStateFlow<Map<String, User>>(emptyMap())
     /** 个人行的存活规范化用户；Conversation 字段保持冷启动快照。 */
     val peerUsers: StateFlow<Map<String, User>> = _peerUsers.asStateFlow()
+    private val _groupAvatarMembers = MutableStateFlow<Map<String, List<User>>>(emptyMap())
+    /** 群行的拼图成员（前 N 个去重用户投影），与 peerUsers 同为本地缓存观察。 */
+    val groupAvatarMembers: StateFlow<Map<String, List<User>>> = _groupAvatarMembers.asStateFlow()
 
     init {
         scope.launch {
@@ -42,6 +47,13 @@ class ConversationViewModel(
                 .distinctUntilChanged()
                 .flatMapLatest(::observePeerUsers)
                 .collect { _peerUsers.value = it }
+        }
+        scope.launch {
+            conversations
+                .map { items -> items.filter { it.chatType == ChatType.GROUP.code }.map(Conversation::chatId).distinct() }
+                .distinctUntilChanged()
+                .flatMapLatest(::observeGroupAvatarMembers)
+                .collect { _groupAvatarMembers.value = it }
         }
         scope.launch {
             connectionState.collectLatest { state ->
@@ -61,6 +73,15 @@ class ConversationViewModel(
                 values.forEach { (uid, user) -> if (user != null) put(uid, user) }
             }
         }
+    }
+
+    private fun observeGroupAvatarMembers(chatIds: List<String>): Flow<Map<String, List<User>>> {
+        if (chatIds.isEmpty()) return flowOf(emptyMap())
+        val flows = chatIds.map { chatId ->
+            localData.projection { localCache.observeMembers(chatId) }
+                .map { members -> chatId to groupAvatarCellUsers(members) }
+        }
+        return combine(flows) { values -> values.toMap() }
     }
 
     fun refresh() {

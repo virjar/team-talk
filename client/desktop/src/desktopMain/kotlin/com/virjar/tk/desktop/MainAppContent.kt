@@ -178,6 +178,7 @@ internal fun WindowScope.MainAppContent(
     val conversations by nav.conversationViewModel.conversations.collectAsState()
     val mentionedChatIds by nav.mentionedChatIds.collectAsState()
     val conversationPeerUsers by nav.conversationViewModel.peerUsers.collectAsState()
+    val groupAvatarMembers by nav.conversationViewModel.groupAvatarMembers.collectAsState()
     val contacts by nav.contactViewModel.contacts.collectAsState()
     val peerRemarks = remember(contacts) { com.virjar.tk.app.ui.screen.contactRemarks(contacts) }
     val activeConversation = conversations.find { it.chatId == nav.chatId }
@@ -343,17 +344,12 @@ internal fun WindowScope.MainAppContent(
                 currentUserAvatar = resolveUser(userSession.uid)?.avatar,
             )
 
-            MainListPane(nav, presentationGate, onLogout, conversations, mentionedChatIds, conversationPeerUsers, peerRemarks, contacts, friendPresenceByUid, pendingApplyCount)
+            MainListPane(nav, presentationGate, onLogout, conversations, mentionedChatIds, conversationPeerUsers, peerRemarks, contacts, friendPresenceByUid, pendingApplyCount, groupAvatarMembers)
             MainContentPane(
                 nav, presentationGate, resources, chatEmbeddedAssetImports, documentEmbeddedAssetImports,
-<<<<<<< HEAD
-                documentEmbeddedAssetMedia, resolveUser, mentionCandidates, activeConversation,
-                activeChatName, activeChatType, mainWindowReadActive, mainWindowFullscreen,
-=======
                 documentEmbeddedAssetMedia, resolveUser, mentionCandidates, contacts.mapNotNull { it.user },
                 activeConversation,
-                activeChatName, activeChatType, mainWindowReadActive,
->>>>>>> 570a0ce (feat(documents): 文档编辑器支持 @ 提及好友)
+                activeChatName, activeChatType, mainWindowReadActive, mainWindowFullscreen,
             )
         }
         }
@@ -377,6 +373,7 @@ private fun MainListPane(
     contacts: List<Contact>,
     friendPresenceByUid: Map<String, FriendPresence>,
     pendingApplyCount: Int,
+    groupMembers: Map<String, List<User>>,
 ) {
     val directoryScope = rememberCoroutineScope()
     val expandedWorkspace = MainTab.entries[nav.selectedTab] in setOf(MainTab.DOCUMENTS, MainTab.TASKS) ||
@@ -409,6 +406,7 @@ private fun MainListPane(
                             },
                             peerUsers = conversationPeerUsers,
                             peerRemarks = peerRemarks,
+                            groupMembers = groupMembers,
                             loadMessagePreview = nav.conversationViewModel::messagePreview,
                         )
                     }

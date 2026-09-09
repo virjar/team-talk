@@ -67,6 +67,7 @@ internal fun HomeScreen(
     val conversations by dataState.conversationViewModel.conversations.collectAsState()
     val mentionedChatIds by dataState.mentionedChatIds.collectAsState()
     val conversationPeerUsers by dataState.conversationViewModel.peerUsers.collectAsState()
+    val groupAvatarMembers by dataState.conversationViewModel.groupAvatarMembers.collectAsState()
     val contacts by dataState.contactViewModel.contacts.collectAsState()
     val friendPresenceByUid by dataState.contactViewModel.friendPresenceByUid.collectAsState()
     val pendingApplyCount by dataState.contactViewModel.pendingApplyCount.collectAsState()
@@ -182,6 +183,7 @@ internal fun HomeScreen(
                     },
                     peerUsers = conversationPeerUsers,
                     peerRemarks = remember(contacts) { com.virjar.tk.app.ui.screen.contactRemarks(contacts) },
+                    groupMembers = groupAvatarMembers,
                     loadMessagePreview = dataState.conversationViewModel::messagePreview,
                 )
                 MainTab.CONTACTS -> Column(modifier = Modifier.fillMaxSize()) {

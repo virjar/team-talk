@@ -90,6 +90,7 @@ fun ConversationListScreen(
     onMarkRead: ((String, Long) -> Unit)? = null,
     peerUsers: Map<String, User> = emptyMap(),
     peerRemarks: Map<String, String> = emptyMap(),
+    groupMembers: Map<String, List<User>> = emptyMap(),
     loadMessagePreview: (suspend (Conversation) -> String?)? = null,
     /** 存在未读 @我 提示的会话集合（MENTION_SYNC 进程内投影）。 */
     mentionedChatIds: Set<String> = emptySet(),
@@ -123,6 +124,7 @@ fun ConversationListScreen(
                 mentioned = conv.chatId in mentionedChatIds,
                 peerUser = peerUser,
                 remark = conv.peerUid?.let(peerRemarks::get),
+                groupMembers = groupMembers[conv.chatId].orEmpty(),
                 loadMessagePreview = loadMessagePreview,
                 selected = conv.chatId == selectedChatId,
                 onClick = { onConversationClick(conv.chatId) },
@@ -145,6 +147,7 @@ private fun ConversationItem(
     mentioned: Boolean,
     peerUser: User?,
     remark: String?,
+    groupMembers: List<User> = emptyList(),
     loadMessagePreview: (suspend (Conversation) -> String?)?,
     selected: Boolean,
     onClick: () -> Unit,
@@ -204,6 +207,7 @@ private fun ConversationItem(
                 chatName = displayName,
                 avatar = identity.avatar,
                 size = Tk.dimens.listAvatar.value.toInt(),
+                groupMembers = groupMembers,
             )
 
             Spacer(Modifier.width(Tk.spacing.md))
