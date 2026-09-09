@@ -3,10 +3,10 @@ package com.virjar.tk.shared.client
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.intOrNull
 import java.io.File
-import java.nio.file.Files
-import java.nio.file.LinkOption.NOFOLLOW_LINKS
-import java.nio.file.Path
 import java.util.UUID
 
 @Serializable
@@ -51,45 +51,11 @@ object LocalCacheArchive {
 
     fun export(root: File, quarantinePath: String, destination: File,
                layout: LocalCacheDiagnosticLayout = LocalCacheDiagnosticLayout.JVM): LocalCacheArchiveReport = guarded {
-        val source = archiveRoot(root)
-        val plan = localCacheArchivePlan(layout, quarantinePath)
-        val parent = destination.toPath().toAbsolutePath().normalize().parent ?: archiveFailure("INVALID_DESTINATION")
-        val target = parent.toRealPath().resolve(destination.name)
-        if (target.startsWith(source)) archiveFailure("DESTINATION_INSIDE_SOURCE")
-        if (Files.exists(target, NOFOLLOW_LINKS)) archiveFailure("DESTINATION_EXISTS")
-        val lease = if (layout == LocalCacheDiagnosticLayout.JVM) {
-            val privateSource = JvmPrivateDataDirectory.openExisting(source.toFile())
-            // Do not create a missing source lock or adopt/reset an installation during preservation.
-            privateSource.requirePrivateFile(emptyList(), ".lock")
-            try { JvmClientDataLease.acquire(source.toFile()) }
-            catch (_: Exception) { archiveFailure("CLIENT_LOCK_UNAVAILABLE") }
-        } else null
-        lease.use {
-            val before = captureArchiveInventory(source, plan)
-            if (quarantinePath !in before.files) archiveFailure("QUARANTINE_MAIN_MISSING")
-            val output = JvmPrivateDataDirectory.createNew(target.toFile(), parent.toRealPath().toFile())
-            // The manifest is the sole completion record. On failure retain this private incomplete
-            // output for explicit disposal; never overwrite or recursively remove a caller's directory.
-            val files = before.files.map { (relative, state) ->
-                val parts = relative.split('/')
-                val copy = output.preparePrivateFile(listOf("payload") + parts.dropLast(1), parts.last()).toPath()
-                LocalCacheArchiveFile(relative, state.category, state.bytes,
-                    digestArchiveFile(source, source.resolve(relative), state.bytes, copy))
-            }
-            if (captureArchiveInventory(source, plan) != before || files.any { file ->
-                    digestArchiveFile(source, source.resolve(file.path), file.bytes) != file.sha256
-                } || captureArchiveInventory(source, plan) != before) archiveFailure("SOURCE_CHANGED_DURING_CAPTURE")
-            // Flush the new payload tree before publishing its completion record.
-            forceArchiveDirectories(output)
-            if (files.any { file ->
-                    digestArchiveFile(output.root, output.root.resolve("payload").resolve(file.path), file.bytes) != file.sha256
-                }) archiveFailure("PAYLOAD_DIGEST_MISMATCH")
-            val manifest = LocalCacheArchiveManifest(1, UUID.randomUUID().toString(), layout, plan.owner,
-                quarantinePath, before.scopes, files, limitations)
-            val encoded = json.encodeToString(manifest)
-            if (encoded.toByteArray(Charsets.UTF_8).size > MAX_MANIFEST_BYTES) archiveFailure("MANIFEST_SIZE_LIMIT")
-            output.atomicTextFile(fileName = "manifest.json").replaceText(encoded, MAX_MANIFEST_BYTES)
-            verify(target.toFile())
+        writeLocalCacheArchive(root, destination, layout, { localCacheArchivePlan(layout, quarantinePath) }, {
+            if (quarantinePath !in it.files) archiveFailure("QUARANTINE_MAIN_MISSING")
+        }) { plan, before, files ->
+            json.encodeToString(LocalCacheArchiveManifest(1, UUID.randomUUID().toString(), layout, plan.owner,
+                quarantinePath, before.scopes, files, limitations))
         }
     }
 
@@ -98,41 +64,14 @@ object LocalCacheArchive {
         val privateArchive = JvmPrivateDataDirectory.openExisting(root.toFile())
         val manifestFile = privateArchive.requirePrivateFile(emptyList(), "manifest.json").toPath()
         val encoded = readArchiveManifest(manifestFile)
+        val version = json.parseToJsonElement(encoded).jsonObject["formatVersion"]?.jsonPrimitive?.intOrNull
+        if (version == 2) return@guarded LocalCacheNamespaceArchive.verify(root, encoded)
+        if (version != 1) archiveFailure("UNSUPPORTED_ARCHIVE_FORMAT")
         val manifest = json.decodeFromString<LocalCacheArchiveManifest>(encoded)
-        if (manifest.formatVersion != 1) archiveFailure("UNSUPPORTED_ARCHIVE_FORMAT")
-        if (runCatching { UUID.fromString(manifest.archiveId).toString() == manifest.archiveId }.getOrDefault(false).not())
-            archiveFailure("INVALID_ARCHIVE_ID")
         val plan = localCacheArchivePlan(manifest.layout, manifest.quarantinePath)
         if (manifest.owner != plan.owner || manifest.limitations != limitations) archiveFailure("MANIFEST_SCOPE_MISMATCH")
-        if (manifest.scopes.map { it.path to it.category } != plan.scopes.map { it.path to it.category })
-            archiveFailure("MANIFEST_SCOPE_MISMATCH")
-        if (manifest.files.isEmpty() || manifest.files.size > MAX_FILES ||
-            manifest.files.map { it.path }.toSet().size != manifest.files.size) archiveFailure("INVALID_FILE_INVENTORY")
-        var total = 0L
-        for (file in manifest.files) {
-            requireArchiveRelativePath(file.path)
-            if (file.bytes !in 0..MAX_FILE_BYTES || file.bytes > MAX_TOTAL_BYTES - total ||
-                !file.sha256.matches(Regex("[0-9a-f]{64}"))) archiveFailure("INVALID_FILE_INVENTORY")
-            total += file.bytes
-            val scopeIndex = plan.scopes.indexOfFirst { it.includes(file.path) && it.category == file.category }
-            if (scopeIndex < 0 || !manifest.scopes[scopeIndex].present) archiveFailure("MANIFEST_SCOPE_MISMATCH")
-        }
-        for ((index, scope) in plan.scopes.withIndex()) {
-            if (scope.kind != ArchiveScopeKind.DIRECTORY && manifest.scopes[index].present !=
-                manifest.files.any { scope.includes(it.path) && it.category == scope.category })
-                archiveFailure("MANIFEST_SCOPE_MISMATCH")
-        }
         if (manifest.files.none { it.path == manifest.quarantinePath }) archiveFailure("QUARANTINE_MAIN_MISSING")
-        val actual = archivePayloadFiles(root)
-        if (actual.keys != manifest.files.map { it.path }.toSet()) archiveFailure("PAYLOAD_INVENTORY_MISMATCH")
-        for (file in manifest.files) {
-            if (actual.getValue(file.path).bytes != file.bytes ||
-                digestArchiveFile(root, root.resolve("payload").resolve(file.path), file.bytes) != file.sha256)
-                archiveFailure("PAYLOAD_DIGEST_MISMATCH")
-        }
-        if (archivePayloadFiles(root) != actual || readArchiveManifest(manifestFile) != encoded)
-            archiveFailure("ARCHIVE_CHANGED_DURING_VERIFICATION")
-        LocalCacheArchiveReport(root.toString(), manifest.files.size, total, archiveSha256(encoded.toByteArray(Charsets.UTF_8)))
+        verifyLocalCacheArchivePayload(root, encoded, manifest.archiveId, plan, manifest.scopes, manifest.files)
     }
 
     private inline fun <T> guarded(action: () -> T): T = try { action() }
@@ -172,6 +111,10 @@ internal fun localCacheArchivePlan(layout: LocalCacheDiagnosticLayout, quarantin
         databaseScopes = listOf(ArchiveScopePlan(quarantinePath, "QUARANTINE", ArchiveScopeKind.DATABASE_FAMILY),
             ArchiveScopePlan("databases/${match.groupValues[1]}", "ACTIVE_DATABASE", ArchiveScopeKind.DATABASE_FAMILY))
     }
+    return LocalCacheArchivePlan(owner, databaseScopes + localCacheOwnerArchiveScopes(layout, owner))
+}
+
+internal fun localCacheOwnerArchiveScopes(layout: LocalCacheDiagnosticLayout, owner: LocalCacheDiagnosticOwner): List<ArchiveScopePlan> {
     validatedDeploymentFingerprint(owner.deploymentFingerprint)
     validatedLocalCacheDatasetId(owner.datasetId)
     validatedLocalCacheOwnerId(owner.uid)
@@ -188,5 +131,5 @@ internal fun localCacheArchivePlan(layout: LocalCacheDiagnosticLayout, quarantin
             "DOCUMENT_DRAFTS", ArchiveScopeKind.ANDROID_DOCUMENTS),
         ArchiveScopePlan("shared_prefs/teamtalk_document_drafts.xml", "DOCUMENT_OWNER_STATE", ArchiveScopeKind.OWNER_PREFERENCES),
     )
-    return LocalCacheArchivePlan(owner, databaseScopes + extra)
+    return extra
 }

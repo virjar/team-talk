@@ -3,11 +3,9 @@ package com.virjar.tk.shared.client
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
-import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
-import java.nio.file.StandardOpenOption.WRITE
 
 @Serializable
 data class LocalCacheQuarantineDiscardReport(
@@ -64,7 +62,8 @@ object LocalCacheQuarantineDisposition {
             // Recheck the backup immediately before deletion. Neither the source nor archive may be
             // concurrently edited; Android accepts an offline app-data export, never a running device.
             verifiedManifest(archived, expectedManifestSha256)
-            forceVerifiedArchive(archived, manifest)
+            try { forceVerifiedLocalCacheArchive(archived, manifest.files) }
+            catch (_: Exception) { fail("ARCHIVE_FLUSH_FAILED") }
             val remaining = before.files
             val security = privateSource?.security()
                 ?: JvmPrivatePathSecurity.forPath(source, Files.getOwner(source, NOFOLLOW_LINKS))
@@ -114,24 +113,10 @@ object LocalCacheQuarantineDisposition {
         if (report.manifestSha256 != expectedHash) fail("ARCHIVE_CONFIRMATION_MISMATCH")
         val encoded = readArchiveManifest(directory.resolve("manifest.json"))
         if (archiveSha256(encoded.toByteArray(Charsets.UTF_8)) != expectedHash) fail("ARCHIVE_INVALID_OR_CHANGED")
-        return Json.decodeFromString<LocalCacheArchiveManifest>(encoded)
-    }
-
-    private fun forceVerifiedArchive(root: Path, manifest: LocalCacheArchiveManifest) {
-        try {
-            val archive = JvmPrivateDataDirectory.openExisting(root.toFile())
-            // A valid archive may have been copied or moved since export. Flush that new copy before
-            // making deletion of its source durable; hashing alone only proves readable bytes.
-            for (relative in manifest.files.map { "payload/${it.path}" } + "manifest.json") {
-                val parts = relative.split('/')
-                val file = archive.requirePrivateFile(parts.dropLast(1), parts.last()).toPath()
-                FileChannel.open(file, WRITE, NOFOLLOW_LINKS).use { it.force(true) }
-            }
-            forceArchiveDirectories(archive)
-            archive.security().forceDirectory(root.parent)
-        } catch (_: Exception) {
-            fail("ARCHIVE_FLUSH_FAILED")
-        }
+        val manifest = try { Json.decodeFromString<LocalCacheArchiveManifest>(encoded) }
+        catch (_: Exception) { fail("ARCHIVE_SELECTION_MISMATCH") }
+        if (manifest.formatVersion != 1) fail("ARCHIVE_SELECTION_MISMATCH")
+        return manifest
     }
 
     private fun requireMatchingSource(root: Path, current: ArchiveInventory, manifest: LocalCacheArchiveManifest) {

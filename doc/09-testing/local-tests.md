@@ -237,6 +237,29 @@ Android 用例另检查非目录 scope 的存在标记与文件清单一致。
 验收，不能由定向测试入口或基础 CLI smoke 推定覆盖。Android 操作限于导出副本，不证明手机容量回收。
 人工入口与后续正常附件源回收的影响见[无头客户端](../05-clients/headless.md)。
 
+### 账号 namespace 处置
+
+```bash
+./gradlew :client:shared:jvmTest --tests '*LocalCacheNamespaceIntegrationTest' --tests '*HeadlessConfigurationIntegrationTest'
+```
+
+namespace 集成夹具覆盖真实 SQLite 的完整 owner、多 epoch 与隔离、只有独立草稿的账号、邻居保留、
+归档用途隔离、锁和摘要拒绝、归档或源增改拒绝、部分删除续跑、headless 当前凭据保护及 Android 导出布局。
+CLI 参数夹具检查缺少明确 owner 时拒绝且不创建目录；完整制品命令仍须用下面的 CLI 方式复验。
+
+仅使用专用临时 JVM 安装根、Android 停止进程后的完整导出夹具与新归档。按部署指纹、datasetId、uid
+显式选择 owner，核对同一 owner 的多 epoch 数据库族、隔离副本、附件源及独立文档草稿一同保全；
+其他 owner、登录凭据、媒体、telemetry 和未知 legacy 保留，Android 共享文档 preferences 只归档不删除。
+当前凭据仍引用目标或损坏、无法确认时应拒绝放弃，headless 同部署与 uid 的其他 dataset 也受保护。
+
+真实 CLI 验收从生成的 `headless/bin/tt-agent` 执行导出、校验及摘要确认放弃，核对输出不含正文或 token、
+未选中的 agent 数据目录不被创建、原始归档与非目标文件不变。需覆盖 owner/布局/摘要不匹配、缺失确认、
+锁占用、归档增删改，以及 format 1 隔离归档与 format 2 namespace 归档互不授权删除。
+
+验收结论区分原字节保全、显式资料放弃与可执行救援。校验成功不能宣称导入或重放完成，Android 导出
+夹具不能代替手机端删除与恢复；容量极限、实时并发、磁盘故障及断电持久性另需专用故障验证。
+操作示例见[账号 namespace 保全与放弃](../05-clients/headless.md#账号-namespace-保全与放弃)。
+
 ### JVM 离线单库压缩
 
 ```bash

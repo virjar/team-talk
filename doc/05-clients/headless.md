@@ -316,6 +316,45 @@ bootstrap 专用 dataDir。
 已有 deployment 指纹与本次端点元组不一致时，启动会在 IM 网络连接前拒绝，保留原认证资料；
 缺失必要身份的旧凭据也不能用于连接。新部署即使具有相同 uid，仍使用独立缓存目录。
 
+### 账号 namespace 保全与放弃
+
+不再使用某个部署、dataset 与账号的本地资料时，先明确核对三个 owner 字段；已有数据库可从 doctor 的
+`owner` 取得，再显式导出整个 namespace。此范围包含该 owner 的全部 epoch 数据库族、隔离副本、聊天附件源、独立文档草稿与操作，
+不只是一份数据库文件。输出必须是源安装之外、父目录已存在的新私有目录：
+
+```bash
+bin/tt-agent export-namespace --cache-root /path/to/desktop-or-headless-data \
+  --deployment-fingerprint '<fingerprint>' --dataset-id '<datasetId>' --uid '<uid>' \
+  --output /private/path/new-namespace-archive
+bin/tt-agent verify-cache-archive --archive /private/path/new-namespace-archive
+```
+
+仅在明确决定放弃所选 namespace 中尚未发送的消息、草稿与命令后，提供校验报告中的原始
+`manifestSha256`：
+
+```bash
+bin/tt-agent discard-namespace --cache-root /path/to/desktop-or-headless-data \
+  --deployment-fingerprint '<fingerprint>' --dataset-id '<datasetId>' --uid '<uid>' \
+  --archive /private/path/new-namespace-archive --confirm-manifest-sha256 '<manifestSha256>'
+```
+
+JVM 导出与放弃都要求对应安装的客户端已退出，并取得现存根锁。放弃还会核对当前凭据：仍引用目标，
+或凭据损坏、无法确认时拒绝。headless 凭据按部署指纹与 uid 保护所有 dataset；仅停止进程不代表凭据
+已经不再引用目标。不要删除凭据来绕过保护。归档、登录凭据、可回拉媒体、telemetry、其他账号及未知
+legacy 资料保持原样。目标 namespace 在归档后新增或修改资料会拒绝删除；只允许原归档字节一致的
+剩余子集。先删除数据库，再处理附件源与独立文档资料；中断后保留原归档与命令，在保护条件满足时继续，
+不自动回滚或重建账号库。
+
+Android 两条命令均另传 `--cache-layout android`，只操作停止进程后取得的完整应用数据导出目录，
+不控制设备、不直接回灌，也不表示手机空间已释放。放弃会同时核对导出的认证 preferences 主文件及备份，
+任一仍引用目标都拒绝；共享文档 owner preferences 只保全、不删除。
+未知 owner 或旧布局不能借此归入某个账号。namespace 归档为 format 2、`purpose=NAMESPACE`；
+既有 format 1 隔离归档仍能校验，两种归档不能互相用于另一种放弃命令。
+
+保全目录包含私人正文和可靠命令凭据，不作为脱敏诊断附件分享。校验成功不证明资料可恢复；默认保留旧
+namespace，不按年龄或零计数自动删除。范围和保护条件见
+[账号 namespace 架构](../03-architecture/client-and-sdk.md#账号-namespace-保全与显式放弃)。
+
 ### 便携包安装、升级与卸载
 
 便携包管理使用安装所有者自己的权限，升级和卸载也必须由该所有者执行，不需要 root 或 systemd。

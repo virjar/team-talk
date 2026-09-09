@@ -58,6 +58,32 @@ class HeadlessConfigurationIntegrationTest {
         assertEquals("a".repeat(43), readMcpTokenFile(different))
     }
 
+    @Test
+    fun `namespace commands require the full owner and explicit archive confirmation before touching storage`() = withRoot { root ->
+        val missing = File(root, "not-created")
+        val prefix = listOf("--cache-root", missing.path, "--deployment-fingerprint", "a".repeat(64),
+            "--dataset-id", "11111111-1111-4111-8111-111111111111")
+        assertEquals("--uid is required", assertFailsWith<IllegalArgumentException> {
+            HeadlessConfiguration.execute("export-namespace", prefix + listOf("--output", File(root, "archive").path))
+        }.message)
+        val owner = prefix + listOf("--uid", "alice")
+        assertEquals("--output is required and must be a new directory", assertFailsWith<IllegalArgumentException> {
+            HeadlessConfiguration.execute("export-namespace", owner)
+        }.message)
+        val unconfirmed = assertFailsWith<IllegalArgumentException> {
+            HeadlessConfiguration.execute("discard-namespace", owner + listOf("--archive", File(root, "archive").path))
+        }
+        assertTrue(unconfirmed.message.orEmpty().startsWith("--confirm-manifest-sha256 is required"))
+        assertEquals("Unknown configuration option", assertFailsWith<IllegalArgumentException> {
+            HeadlessConfiguration.execute("export-namespace", owner + listOf("--database", "cache_e0.db"))
+        }.message)
+        assertEquals("--cache-layout must be jvm or android", assertFailsWith<IllegalStateException> {
+            HeadlessConfiguration.execute("export-namespace", owner + listOf("--cache-layout", "device"))
+        }.message)
+        assertFalse(missing.exists())
+        assertFalse(File(root, "archive").exists())
+    }
+
     private fun configure(data: File) = HeadlessConfiguration.execute("configure", listOf(
         "--data-dir", data.path, "--host", "127.0.0.1", "--port", "5100", "--server-url", "http://127.0.0.1:18088", "--api", "127.0.0.1:18600",
     ))

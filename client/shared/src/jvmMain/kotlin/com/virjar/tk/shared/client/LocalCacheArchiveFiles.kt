@@ -27,7 +27,7 @@ internal fun requireArchiveRelativePath(path: String) {
 }
 
 /** Source paths are read-only. Validate all existing parents without creating missing components. */
-private fun sourcePath(root: Path, relative: String): Path {
+internal fun sourcePath(root: Path, relative: String): Path {
     requireArchiveRelativePath(relative)
     var current = root
     val parts = relative.split('/')

@@ -757,7 +757,9 @@ delivery、active/terminal/SUCCESS outgoing 回执与消息投影，而不保留
 
 TCP authority 与 HTTP base 先共同规范化为一个 `DeploymentIdentity`；指纹、服务端 datasetId 和 uid 共同构成数据库
 namespace。改变 TCP host/port、HTTP host/port 或 HTTP base path 中任一项都会打开全新 namespace，
-旧部署的 cursor、outgoing 和 delivery 不会进入新部署。
+旧部署的 cursor、outgoing 和 delivery 不会进入新部署。schema epoch 是该 owner 中的数据库文件代，
+不改变 owner，也不能据此判定整份资料可丢弃。旧 namespace 默认保留，是否不再使用由维护者明确选择，
+不能由文件年龄、非当前 epoch 或可靠队列零计数推断。
 
 缓存不是一种统一可丢弃的数据。先辨别事实来源，再决定能否清理或重建：
 
@@ -1041,8 +1043,8 @@ AndroidSqliteDriver 使用同一 SQLDelight schema 的升级回调；同 major �
 推荐退出客户端后检查；文件稳定窗口不能证明在线原子快照，也不能证明所有外部资料齐备。
 独立文档草稿/操作与附件 spool 不属于 SQLite 表，在报告 `uninspected` 中标为未检查，必须随数据库族
 一同保留。零计数不授权删除 namespace。CLI 入口见[无头客户端](../05-clients/headless.md)；
-救援导入与旧 namespace 处置仍在[CORE-06](../10-reference/roadmap.md#core-06--本地缓存生命周期)；
-隔离副本的显式放弃与数据库整理使用下方独立入口。
+账号 namespace 与隔离副本的显式放弃、数据库整理使用下方各自独立入口；救援导入仍在
+[CORE-06](../10-reference/roadmap.md#core-06--本地缓存生命周期)。
 
 #### 隔离资料保全归档
 
@@ -1098,6 +1100,42 @@ JVM 隔离目录最后非递归移除。
 引用的来源可能被回收。独立文档草稿不由该源扫描删除；归档中的历史保全资料仍由维护者保管。
 此入口不恢复或重放隔离事实，也不提供旧 namespace 自动回收。CLI 见[无头客户端](../05-clients/headless.md)，
 定向入口见[隔离副本显式放弃](../09-testing/local-tests.md#隔离副本显式放弃)。
+
+#### 账号 namespace 保全与显式放弃
+
+[LocalCacheNamespaceArchive](../../client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/client/LocalCacheNamespaceArchive.kt)
+为 `export-namespace` 按显式 `deploymentFingerprint + datasetId + uid` 选择一个完整账号 namespace，
+不以某个 `cache_e*.db` 文件代替账号范围。按当前已知布局保全同一 owner 的全部 epoch 数据库族及隔离
+副本、聊天附件源、独立文档草稿与操作；不读取 SQLite 或解码、迁移、重放可靠命令。损坏库、未知 schema
+仍按原始文件保全。即使数据库已不存在，仍会检查该 owner 的附件源与独立文档资料；只有共享 preferences
+而无账号资料时拒绝生成空归档。目录和哈希规则与平台存储共用；无法确认归属的 legacy 文件继续保留，
+不假定已经导出。
+
+JVM 操作取得现存安装根锁；Android 只处理停止进程后取得的完整应用数据导出目录，不操作设备或把修改
+回灌到手机。Android 共享的文档 owner preferences 只归档、不删除。登录凭据、可回拉媒体、telemetry、
+其他 owner 与未知 legacy 均不在 namespace 删除范围内。
+
+namespace 归档使用 format 2 和 `purpose=NAMESPACE`，记录精确 owner、布局、范围及完整文件清单。
+`verify-cache-archive` 同时接受既有 format 1 隔离归档；两种用途互不授权对方的删除命令。
+归档沿用私有目录、原始相对路径、大小与 SHA-256 校验和最后发布清单的保全规则；归档含私人正文、
+草稿及可靠命令中的秘密，完整校验不等于可恢复，也不自动授权删除源。
+
+[LocalCacheNamespaceDisposition](../../client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/client/LocalCacheNamespaceDisposition.kt)
+为 `discard-namespace` 核对同一 owner、布局、完整归档及操作者显式确认的原始清单摘要；该命令表示放弃所选
+账号 namespace 中尚未发送的消息、草稿和命令，而不是仅清除可回拉投影。当前凭据仍引用目标，或凭据
+状态损坏、无法确认时拒绝放弃。headless 凭据只有 deployment fingerprint 与 uid，因此保护该组合的全部
+dataset。Android 同时检查导出目录中的认证 preferences 主文件与 `.bak`，任一仍引用目标都拒绝。
+此保护只读当前凭据，不输出秘密、不认领或修改 token owner，不要手工删除凭据绕过此检查。
+
+待删范围须为归档中原字节一致的子集；同 namespace 新增或修改资料、出现链接或新增范围时拒绝，不能用
+旧归档放弃归档后产生的新事实。归档完整校验并刷盘后，先删数据库族，再删其附件源与独立文档资料，最后
+非递归移除空的已知目录。中断后可在同一保护条件下用原归档继续处理剩余子集，不自动回滚或重新建库；
+已全部删除可幂等结束。归档自身及排除项不变，Android 共享文档 preferences 的当前变化不属于待删范围。
+
+默认仍不自动回收旧 namespace，不按年龄扫描删除，不跨 owner 合并或重归属资料。显式放弃与账号封禁
+清理、救援导入及 `VACUUM` 保持独立；它不使隔离库中的可靠事实重新进入发送队列。操作示例见
+[无头客户端](../05-clients/headless.md#账号-namespace-保全与放弃)，验收边界见
+[账号 namespace 处置](../09-testing/local-tests.md#账号-namespace-处置)。
 
 #### 当前会话数据库整理
 
