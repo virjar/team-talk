@@ -22,6 +22,7 @@ internal fun rememberAndroidAuthentication(
     applicationContext: Context,
     serverConfig: ServerConfig,
     beforeSessionRetirement: (ClientSession, SessionEndReason) -> Unit,
+    afterSessionRetirement: (ClientSession, SessionEndReason) -> Unit = { _, _ -> },
 ): AuthState {
     val application = applicationContext.applicationContext as TeamTalkApp
     val deploymentIdentity = remember(serverConfig) { serverConfig.deploymentIdentity() }
@@ -51,6 +52,7 @@ internal fun rememberAndroidAuthentication(
             createAndroidLocalCache(applicationContext, identity, datasetId, uid)
         },
         beforeSessionRetirement = beforeSessionRetirement,
+        afterSessionRetirement = afterSessionRetirement,
         runtimeInfo = remember { androidClientRuntimeInfo() },
         telemetrySpoolRoot = applicationContext.filesDir,
         accountDataCleanup = remember(application) { androidAccountDataCleanup(application) },

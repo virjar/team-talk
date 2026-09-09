@@ -1041,8 +1041,8 @@ AndroidSqliteDriver 使用同一 SQLDelight schema 的升级回调；同 major �
 推荐退出客户端后检查；文件稳定窗口不能证明在线原子快照，也不能证明所有外部资料齐备。
 独立文档草稿/操作与附件 spool 不属于 SQLite 表，在报告 `uninspected` 中标为未检查，必须随数据库族
 一同保留。零计数不授权删除 namespace。CLI 入口见[无头客户端](../05-clients/headless.md)；
-救援导入、旧 namespace 处置与 Android 原机离线压缩仍在
-[CORE-06](../10-reference/roadmap.md#core-06--本地缓存生命周期)；隔离副本的显式放弃使用下方独立入口。
+救援导入与旧 namespace 处置仍在[CORE-06](../10-reference/roadmap.md#core-06--本地缓存生命周期)；
+隔离副本的显式放弃与数据库整理使用下方独立入口。
 
 #### 隔离资料保全归档
 
@@ -1098,6 +1098,45 @@ JVM 隔离目录最后非递归移除。
 引用的来源可能被回收。独立文档草稿不由该源扫描删除；归档中的历史保全资料仍由维护者保管。
 此入口不恢复或重放隔离事实，也不提供旧 namespace 自动回收。CLI 见[无头客户端](../05-clients/headless.md)，
 定向入口见[隔离副本显式放弃](../09-testing/local-tests.md#隔离副本显式放弃)。
+
+#### 当前会话数据库整理
+
+[LocalCache.compactStorage()](../../client/shared/src/commonMain/kotlin/com/virjar/tk/shared/client/LocalCache.kt)
+整理工厂为当前账号打开的数据库，是 SDK 的同步维护接口。它在同一 `CacheUseGate` 与 `stateLock`
+内串行执行：等待已准入操作结束，整理期间后续数据库操作等待，关闭也必须等整理离开 gate。保持原
+SQL driver，不替换数据库，也不清理聊天记录、草稿、待发消息、可靠命令、Bot inbox、独立文档资料或
+附件源。调用方须在存储线程执行，并避免在主线程同步关闭正在整理的缓存。
+
+[LocalCacheStorageMaintenance](../../client/shared/src/commonMain/kotlin/com/virjar/tk/shared/client/LocalCacheStorageMaintenance.kt)
+要求当前 schema（现为 6）和完整性检查通过，当前账号有未处理隔离副本时拒绝。
+Android 的数据库族与逻辑库各最多 64 MiB，超限在 `VACUUM` 前明确拒绝；JVM 各最多 512 MiB。
+Android 的较低上限用于限制原生 `VACUUM` 临时数据库的内存占用，当前 LocalCache 与独立维护入口使用
+同一限制。[AOSP SQLite 构建](https://android.googlesource.com/platform/external/sqlite/+/d11514d85b96ef33b1a78080246df7df2cf5d9ea/dist/Android.bp)
+可用 `SQLITE_TEMP_STORE=3` 强制临时库驻留内存，不能靠 `temp_store=FILE` 覆盖；此上限不保证所有设备
+在任意内存压力下都能完成整理。可用磁盘空间仍须满足
+`2 × max(数据库族字节, 页数 × 页大小) + 16 MiB`；空间只预检，不预留，也不能证明设备内存充足。
+已有 SQL 事务中不能调用此操作，SDK 不在 `VACUUM` 外再包事务，也不修改 Android 池化连接的锁模式或
+同步参数；重写由 `VACUUM` 自身的 SQLite 事务完成。随后复查完整性与 schema，并执行
+`wal_checkpoint(TRUNCATE)`，检查成功后才返回报告。
+
+报告给出数据库族字节、逻辑页数与空闲页数的前后值，`reclaimedBytes` 为前后字节差的非负值。
+没有空闲页时不保证缩小。隔离、版本不符、完整性失败、超限、空间不足、占用、checkpoint 未完成和存储
+I/O 失败均返回固定失败分类，不删除资料或触发修复。失败不保证物理字节完全未变：后置检查失败时，
+SQLite 可能已经完成重写或 checkpoint；不能据此清库或重建身份。
+
+Android 产品入口由进程级
+[AndroidStorageMaintenanceOwner](../../client/android/src/main/kotlin/com/virjar/tk/android/AndroidStorageMaintenanceOwner.kt)
+持有状态与任务。进入维护页先捕获精确部署、dataset 与 uid，再移除认证界面；现有 `SHUTDOWN` 边界捕获
+草稿、排空写入并关闭会话，保留登录信息与待发内容。确认旧会话关闭后，才在 IO 调用
+[compactAndroidLocalCacheStorage](../../client/shared/src/androidMain/kotlin/com/virjar/tk/shared/client/AndroidLocalCacheStorageMaintenance.kt)
+打开该账号的现存数据库执行独立维护，完成并关闭维护 driver 后允许恢复认证界面。此过程不使用正常缓存
+工厂，不迁移、隔离、创建替代库或启动网络同步；整理期间也不存在会在 Main 等待 `VACUUM` 的活动会话退役链。
+
+维护期间应用显示独立页面，不能进入聊天或退出登录；可切到系统后台，Activity 重建或结束后重开只观察
+Application 中的同一任务，不重复执行。完成或普通失败后点击“返回应用”恢复原登录，无需重新输入密码；
+会话或维护句柄未能确认关闭时禁止重开数据库，只提供用户主动“关闭应用”后重新启动的出口。
+维护结果不作为新会话的数据投影。UI 用法见[Android 本地存储](../05-clients/android.md#本地存储整理)，定向验证见
+[会话内数据库整理](../09-testing/local-tests.md#会话内数据库整理)。下面的 JVM CLI 是退出客户端后的独立维护入口。
 
 #### JVM 离线单库压缩
 

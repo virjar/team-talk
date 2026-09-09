@@ -27,6 +27,13 @@ class TeamTalkApp : Application(), coil3.SingletonImageLoader.Factory {
         ),
     )
 
+    /** Activity 退役后继续整理；完成并关闭独立 driver 之前，不准入新的认证工作区。 */
+    internal val localStorageMaintenance by lazy {
+        AndroidStorageMaintenanceOwner(serverConfig.deploymentIdentity()) { identity, datasetId, uid ->
+            com.virjar.tk.shared.client.compactAndroidLocalCacheStorage(this, identity, datasetId, uid)
+        }
+    }
+
     /** 进程持有的写入器，被本安装中每个 Activity/会话草稿存储共享。 */
     internal lateinit var documentDraftPersistence: AndroidDocumentDraftPersistence
         private set

@@ -10,6 +10,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -42,6 +43,7 @@ fun MeScreen(
     onChangePassword: () -> Unit = {},
     onDeviceManagement: () -> Unit = {},
     onBlacklist: () -> Unit = {},
+    onLocalStorage: (() -> Unit)? = null,
     buildInfoText: String = "",
     modifier: Modifier = Modifier,
 ) {
@@ -126,6 +128,15 @@ fun MeScreen(
             Spacer(Modifier.height(10.dp))
             SettingsSectionLabel("通用")
             SettingsGroupCard {
+                if (onLocalStorage != null) {
+                    SettingsEntryRow(
+                        icon = Icons.Filled.Storage,
+                        title = "本地存储",
+                        description = "整理当前账号的数据库空间",
+                        onClick = onLocalStorage,
+                        tag = "settings.storage",
+                    )
+                }
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(

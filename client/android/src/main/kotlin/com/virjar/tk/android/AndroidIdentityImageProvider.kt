@@ -23,11 +23,13 @@ internal fun AndroidMainApp(
     protocolCompatibility: ProtocolCompatibility?,
     notificationNavigation: AndroidNotificationNavigation,
     onLogout: () -> Unit,
+    onLocalStorage: () -> Unit,
 ) {
     if (!dataState.acceptsRendering) return
     AndroidIdentityImageProvider(dataState, resourceOwner) {
         AndroidMainAppContent(
             dataState, resourceOwner, connectionState, protocolCompatibility, notificationNavigation, onLogout,
+            onLocalStorage,
         )
     }
 }

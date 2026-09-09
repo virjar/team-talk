@@ -252,6 +252,37 @@ schema/epoch、非法或链接路径、安装 major 不兼容/重置中。实际
 仅在本任务创建的库或一致副本
 上执行 CLI smoke；不能用用户正在使用的原库验收。此入口不覆盖 Android 原地压缩、救援或放弃。
 
+### 会话内数据库整理
+
+```bash
+./gradlew :client:shared:jvmTest --tests '*LocalCacheStorageCompactionIntegrationTest'
+```
+
+该入口用真实临时 SQLite 与工厂创建的 LocalCache 检查 `compactStorage()`：整理前后逐表、逐列与 BLOB
+保持一致，草稿、附件任务、outgoing、可靠命令、Bot inbox、时钟及自增身份保留；同一 owner 继续读写，
+关闭重开后可靠事实仍在。独立文档资料、spool 与其他账号文件不应改动。
+门控夹具覆盖整理等待已准入读取、后续读取等待整理、close 等待同一 driver，以及普通维护失败后继续使用。
+不支持的存储、schema 变化、完整性失败、现存事务与隔离副本拒绝维护。
+
+```bash
+./gradlew :client:android:testDebugUnitTest --tests '*AndroidStorageMaintenanceOwnerTest'
+```
+
+Android 维护 owner 的定向夹具检查：未确认旧会话退役时不打开维护库、观察者离开不等待或取消阻塞维护、
+重复准入与提前返回被拒绝、普通失败可重试、句柄关闭失败继续阻止新认证。它不运行 Activity 或真实 Android
+SQLite 驱动。
+
+Android 的数据库族与逻辑库分别受 64 MiB 整理上限约束，JVM 保持 512 MiB；平台验收需分别检查超限
+明确拒绝、未执行 `VACUUM` 且可靠资料保留。该限制用于收窄 Android 原生临时库内存占用，不能据此认定
+所有设备和内存压力组合均已覆盖。
+
+Android 必须另用实际应用在“设置 → 本地存储”操作，检查整理中、成功前后大小、失败提示及重复点击；
+进入维护后先确认会话关闭、凭据保留，再开始整理；维护期间主线程继续响应，切换后台、Activity 重建或
+结束后重开保留同一任务，不能提前打开账号库。完成后“返回应用”无需重新输入密码，草稿与待发身份不变，
+继续聊天并重启复验。普通失败可重试或返回；会话或维护句柄关闭失败只能明确退出进程后重开。
+只用专用验收资料，不在用户原库注入故障。JVM 驱动测试不代替 Android 原生连接池与文件系统验证；
+容量极限、实际磁盘耗尽和断电恢复需专用故障验收，不能由上述入口推定覆盖。
+
 ### LocalCache clean-close checkpoint
 
 LocalCache 的 clean close 只有一个维护动作：`CacheUseGate` 先拒绝新访问并等待已经

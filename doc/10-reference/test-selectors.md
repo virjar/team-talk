@@ -109,6 +109,13 @@
 | `settings.{入口标题}` | 设置功能入口，例如 `settings.编辑资料`（入口行 = 图标 + 标题 + 描述） |
 | `settings.avatar.edit` | 设置头部的头像；点击进入编辑资料（头像更换入口） |
 | `settings.appearance.{SYSTEM\|LIGHT\|DARK}` | 外观内联分段选择器，点击立即切换主题 |
+| `settings.storage` | Android 设置中的本地存储入口 |
+| `storage.compact` | 整理数据库或失败后重试；执行中禁用 |
+| `storage.running` | 保存草稿、暂停会话或整理中的进度与提示 |
+| `storage.result` | 整理成功与前后大小、回收空间 |
+| `storage.error` | 当前整理失败原因，包括 Android 超过 64 MiB 整理上限的明确拒绝 |
+| `storage.back` / `storage.return` | 返回应用并恢复登录；准备或整理中禁用 |
+| `storage.exit` | 会话或维护句柄关闭失败后，主动关闭本应用进程 |
 | `settings.logout` | 退出登录（红色描边卡片） |
 | `settings.logout.confirm` / `settings.logout.cancel` | 退出二次确认框 |
 | `profile.name` / `profile.phone` | 编辑资料字段；权威资料到达前不会把临时空值保存回服务端 |

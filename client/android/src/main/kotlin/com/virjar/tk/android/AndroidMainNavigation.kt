@@ -82,6 +82,7 @@ internal fun AndroidMainAppContent(
     protocolCompatibility: ProtocolCompatibility?,
     notificationNavigation: AndroidNotificationNavigation,
     onLogout: () -> Unit,
+    onLocalStorage: () -> Unit,
 ) {
     if (!dataState.acceptsRendering) return
     val navController = rememberNavController()
@@ -194,6 +195,7 @@ internal fun AndroidMainAppContent(
                     requestedTask = requestedTask,
                     onHomeTelemetryPageChange = { homeTelemetryPage = it },
                     onLogout = onLogout,
+                    onLocalStorage = onLocalStorage,
                 )
                 chatDestination(
                     navController = navController,
@@ -269,6 +271,7 @@ private fun NavGraphBuilder.homeDestination(
     requestedTask: MutableStateFlow<String?>,
     onHomeTelemetryPageChange: (ClientUiPage) -> Unit,
     onLogout: () -> Unit,
+    onLocalStorage: () -> Unit,
 ) {
     composable(Routes.HOME) {
         HomeScreen(
@@ -312,6 +315,7 @@ private fun NavGraphBuilder.homeDestination(
             },
             onDevices = actionAdmission.guard { navController.navigate(Routes.DEVICES) },
             onBlacklist = actionAdmission.guard { navController.navigate(Routes.BLACKLIST) },
+            onLocalStorage = actionAdmission.guard(onLocalStorage),
         )
     }
 }

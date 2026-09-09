@@ -48,8 +48,10 @@ internal fun createJvmLocalCache(
         corruptionPolicy = corruptionPolicy,
     )
     // 检查必须在打开完成之后：这次打开本身也可能刚创建隔离副本。
-    return createLocalCacheWithOwnedDriver(driver, orphanSourceCleanupAllowed = {
-        val userDirectory = privateDirectories.fold(privateData.root.toFile()) { parent, name -> File(parent, name) }
-        !hasRetainedJvmLocalCacheQuarantine(userDirectory)
-    })
+    val userDirectory = privateDirectories.fold(privateData.root.toFile()) { parent, name -> File(parent, name) }
+    return createLocalCacheWithOwnedDriver(
+        driver = driver,
+        orphanSourceCleanupAllowed = { !hasRetainedJvmLocalCacheQuarantine(userDirectory) },
+        storageMaintenance = LocalCacheStorageMaintenance(userDirectory.resolve(localCacheDatabaseFileName())),
+    )
 }

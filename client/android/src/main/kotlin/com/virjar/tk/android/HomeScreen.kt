@@ -40,6 +40,7 @@ internal fun HomeScreen(
     onChangePassword: () -> Unit,
     onDevices: () -> Unit,
     onBlacklist: () -> Unit,
+    onLocalStorage: () -> Unit,
     /** 聊天引用交给首页消费的完整目标；打开后清空，避免下次返回首页再次跳转。 */
     requestedDocument: MutableStateFlow<OfficeRefBody?>,
     requestedTask: MutableStateFlow<String?>,
@@ -229,6 +230,7 @@ internal fun HomeScreen(
                     onChangePassword = actionAdmission.guard(onChangePassword),
                     onDeviceManagement = actionAdmission.guard(onDevices),
                     onBlacklist = actionAdmission.guard(onBlacklist),
+                    onLocalStorage = actionAdmission.guard(onLocalStorage),
                     buildInfoText = "Git: ${com.virjar.tk.android.BuildConfig.BUILD_IDENTITY.substringAfter('+').take(8)}" +
                         "${if (com.virjar.tk.android.BuildConfig.BUILD_IDENTITY.endsWith(".dirty")) "-dirty" else ""}" +
                         "  |  Build: ${com.virjar.tk.android.BuildConfig.BUILD_TIME}",

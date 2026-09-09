@@ -42,11 +42,38 @@ internal fun AndroidAppRoot(
         )
         return
     }
+    val storageMaintenance = application.localStorageMaintenance
+    val storageState by storageMaintenance.state.collectAsState()
+    if (storageState.phase != AndroidStorageMaintenancePhase.IDLE) {
+        AndroidLocalStorageScreen(
+            preparing = storageState.phase == AndroidStorageMaintenancePhase.PREPARING,
+            running = storageState.phase == AndroidStorageMaintenancePhase.RUNNING,
+            canCompact = storageState.phase == AndroidStorageMaintenancePhase.READY ||
+                storageState.phase == AndroidStorageMaintenancePhase.FINISHED,
+            canReturn = storageState.phase == AndroidStorageMaintenancePhase.READY ||
+                storageState.phase == AndroidStorageMaintenancePhase.FINISHED,
+            requiresRestart = storageState.phase == AndroidStorageMaintenancePhase.RETIREMENT_FAILED,
+            result = storageState.result,
+            errorMessage = storageState.errorMessage,
+            onCompact = { storageMaintenance.compact() },
+            onBack = { storageMaintenance.finish() },
+            onExit = onAccountCleanupExit,
+        )
+        return
+    }
     val uiScope = rememberCoroutineScope()
     val auth = rememberAndroidAuthentication(
         applicationContext = applicationContext,
         serverConfig = serverConfig,
-        beforeSessionRetirement = beforeSessionRetirement,
+        beforeSessionRetirement = { session, reason ->
+            try {
+                beforeSessionRetirement(session, reason)
+            } catch (failure: Throwable) {
+                storageMaintenance.onRetirementFailed(session)
+                throw failure
+            }
+        },
+        afterSessionRetirement = storageMaintenance::onSessionRetired,
     )
     val sessionSnapshot = auth.session
     when (
@@ -105,7 +132,14 @@ internal fun AndroidAppRoot(
                     notificationNavigation = appDataStateHolder.notificationNavigation,
                     onLogout = {
                         appDataStateHolder.runIfSessionOwner(authenticatedSession) {
-                            auth.onLogoutForSession(authenticatedSession)
+                            if (storageMaintenance.state.value.phase == AndroidStorageMaintenancePhase.IDLE) {
+                                auth.onLogoutForSession(authenticatedSession)
+                            }
+                        }
+                    },
+                    onLocalStorage = {
+                        appDataStateHolder.runIfSessionOwner(authenticatedSession) {
+                            storageMaintenance.request(authenticatedSession)
                         }
                     },
                 )

@@ -26,9 +26,15 @@ internal fun createLocalCacheWithOwnedDriver(
     driver: SqlDriver,
     terminalReceiptLimit: Int = MAX_TERMINAL_OUTGOING_RECEIPTS,
     orphanSourceCleanupAllowed: () -> Boolean = { true },
+    storageMaintenance: LocalCacheStorageMaintenance? = null,
 ): LocalCacheImpl {
     try {
-        return LocalCacheImpl(driver, terminalReceiptLimit, orphanSourceCleanupAllowed())
+        return LocalCacheImpl(
+            driver = driver,
+            outboxLimits = DEFAULT_LOCAL_OUTBOX_LIMITS.copy(terminalOutgoingCount = terminalReceiptLimit),
+            orphanSourceCleanupAllowed = orphanSourceCleanupAllowed(),
+            storageMaintenance = storageMaintenance,
+        )
     } catch (constructionFailure: Throwable) {
         closeOwnedDriverAfterFailure(driver, constructionFailure)
     }
@@ -58,6 +64,7 @@ class LocalCacheImpl internal constructor(
     private val messageRetentionLimits: LocalMessageRetentionLimits =
         DEFAULT_LOCAL_MESSAGE_RETENTION_LIMITS,
     orphanSourceCleanupAllowed: Boolean = true,
+    private val storageMaintenance: LocalCacheStorageMaintenance? = null,
 ) : LocalCache {
     constructor(
         driver: SqlDriver,
@@ -73,6 +80,19 @@ class LocalCacheImpl internal constructor(
     private val queries = database.appDatabaseQueries
     private val stateLock = Any()
     private val cacheUseGate = CacheUseGate()
+
+    override fun compactStorage(): LocalCacheStorageCompactionReport = cacheUseGate.use {
+        synchronized(stateLock) {
+            if (!chatDrafts.orphanSourceCleanupAllowed) {
+                throw LocalCacheStorageCompactionException(
+                    LocalCacheStorageCompactionFailure.QUARANTINE_REQUIRES_DISPOSITION,
+                )
+            }
+            val maintenance = storageMaintenance
+                ?: throw LocalCacheStorageCompactionException(LocalCacheStorageCompactionFailure.UNSUPPORTED_STORAGE)
+            maintenance.compact(driver)
+        }
+    }
 
     private val entities: LocalEntityProjectionStore
     private val conversations = LocalConversationProjectionStore(
