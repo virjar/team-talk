@@ -8,12 +8,13 @@ import java.io.File
 /** Maintenance is selected before default data-root, logging, AWT, credentials or version initialization. */
 internal fun runDesktopDocumentDraftRescueCommand(args: Array<String>, output: (String) -> Unit): Int? {
     val command = args.firstOrNull()
+    val spaceCreate = command in setOf("list-document-space-create-rescue", "preview-document-space-create-rescue", "import-document-space-create-rescue")
     val kind = when (command) {
         "list-document-draft-rescue", "preview-document-draft-rescue", "import-document-draft-rescue" -> DesktopDocumentRescueKind.DRAFT
         "list-document-create-rescue", "preview-document-create-rescue", "import-document-create-rescue" -> DesktopDocumentRescueKind.CREATE
-        else -> return null
+        else -> if (spaceCreate) null else return null
     }
-    val action = command.substringBefore('-')
+    val action = checkNotNull(command).substringBefore('-')
     return try {
         val keys = if (action == "list") setOf("archive") else
             setOf("cache-root", "database", "archive", "record-key") +
@@ -31,22 +32,30 @@ internal fun runDesktopDocumentDraftRescueCommand(args: Array<String>, output: (
         require(options.keys == keys)
         val json = Json { encodeDefaults = true; prettyPrint = true }
         if (action == "list") {
-            output(json.encodeToString(DesktopDocumentDraftRescue.listRecords(File(options.getValue("archive")), kind)))
+            val archive = File(options.getValue("archive"))
+            output(json.encodeToString(if (spaceCreate) DesktopDocumentSpaceCreateRescue.listRecords(archive)
+                else DesktopDocumentDraftRescue.listRecords(archive, checkNotNull(kind))))
             return 0
         }
         val root = File(options.getValue("cache-root"))
         val archive = File(options.getValue("archive"))
         val database = options.getValue("database")
         val recordKey = options.getValue("record-key")
-        val report = if (action == "preview") {
-            DesktopDocumentDraftRescue.preview(root, database, archive, recordKey, kind)
-        } else {
+        val confirmation = if (action == "import") {
             val digest = options.getValue("confirm-manifest-sha256")
             val state = options.getValue("expected-target-state-sha256")
             require(digest.matches(Regex("[0-9a-f]{64}")) && state.matches(Regex("[0-9a-f]{64}")))
-            DesktopDocumentDraftRescue.importDraft(root, database, archive, recordKey, digest, state, kind)
+            digest to state
+        } else null
+        if (spaceCreate) {
+            val report = if (confirmation == null) DesktopDocumentSpaceCreateRescue.preview(root, database, archive, recordKey)
+                else DesktopDocumentSpaceCreateRescue.importRecords(root, database, archive, recordKey, confirmation.first, confirmation.second)
+            output(json.encodeToString(report))
+        } else {
+            val report = if (confirmation == null) DesktopDocumentDraftRescue.preview(root, database, archive, recordKey, checkNotNull(kind))
+                else DesktopDocumentDraftRescue.importDraft(root, database, archive, recordKey, confirmation.first, confirmation.second, checkNotNull(kind))
+            output(json.encodeToString(report))
         }
-        output(json.encodeToString(report))
         0
     } catch (failure: Exception) {
         // Never print parser/IO exception details: they can contain archived document bodies or paths.

@@ -80,11 +80,11 @@ class DocumentDraftRescueException internal constructor(val reason: String) :
     IllegalStateException("Document draft rescue failed: $reason")
 
 private fun rescueFailed(reason: String): Nothing = throw DocumentDraftRescueException(reason)
-private fun requireRescue(condition: Boolean, reason: String) {
+internal fun requireRescue(condition: Boolean, reason: String) {
     if (!condition) rescueFailed(reason)
 }
 
-private inline fun <T> documentDraftRescueGuarded(action: () -> T): T = try {
+internal fun <T> documentDraftRescueGuarded(action: () -> T): T = try {
     action()
 } catch (cancelled: CancellationException) {
     throw cancelled
@@ -111,7 +111,7 @@ private fun readRescueRecordKeys(source: DocumentDraftRecordSource): List<String
     return manifest.tabRecordKeys.filterNot(tombstones::contains)
 }
 
-private inline fun <reified T> decodeRescueRecord(encoded: String, maximumBytes: Int): T {
+internal inline fun <reified T> decodeRescueRecord(encoded: String, maximumBytes: Int): T {
     requireRescue(encoded.length <= maximumBytes &&
         encoded.encodeToByteArray(throwOnInvalidSequence = true).size <= maximumBytes, "SOURCE_SIZE_LIMIT")
     requireUnambiguousRecoveryJson(encoded)
@@ -122,6 +122,7 @@ private inline fun <reified T> decodeRescueRecord(encoded: String, maximumBytes:
         documentDraftPayloadJson.encodeToJsonElement(decoded), "INVALID_JSON_SHAPE")
     return decoded
 }
+
 private data class CreateRescuePair(val tab: DocumentTabState, val command: PendingDocumentCreateCommand)
 
 private fun readCreateRescuePair(source: DocumentDraftRecordSource, selectedKey: String?): CreateRescuePair {
@@ -141,13 +142,7 @@ private fun readCreateRescuePair(source: DocumentDraftRecordSource, selectedKey:
     requireRescue(selectedKey == null || selectedKey in tabKeys, "RECORD_UNAVAILABLE_OR_RETIRED")
     // The source may retain unrelated ordinary tabs. Their identities must be readable before
     // selecting a pair; a damaged neighbor must not conceal a competing create or parent intent.
-    var totalBytes = 0L
-    for (key in tabKeys + commandKeys) {
-        val size = source.recordByteCount(key)
-        requireRescue(size != null && size in 1L..MAX_DOCUMENT_DRAFT_RECORD_BYTES.toLong(), "RECORD_UNAVAILABLE")
-        totalBytes += checkNotNull(size)
-        requireRescue(totalBytes <= MAX_TOTAL_DOCUMENT_DRAFT_RECORD_BYTES, "SOURCE_SIZE_LIMIT")
-    }
+    requireRescueRecordBudget(source, tabKeys + commandKeys)
     val tabs = tabKeys.map { key -> readRescueTab(source, key).also { validateRescueTab(it, includeContent = false) } }
     requireRescue(tabs.map { it.instanceId }.distinct().size == tabs.size &&
         tabs.map { it.tabId }.distinct().size == tabs.size && tabs.map { it.recoveryId }.distinct().size == tabs.size,
@@ -157,18 +152,11 @@ private fun readCreateRescuePair(source: DocumentDraftRecordSource, selectedKey:
     val tab = creating.single()
     requireRescue(selectedKey == null || tab.draftRecoveryKey() == selectedKey, "CREATE_TAB_MISMATCH")
     val commandKey = commandKeys.single()
-    val command = decodeRescueRecord<PersistedDocumentCreateCommand>(readRescueRecord(source, commandKey),
-        MAX_DOCUMENT_DRAFT_RECORD_BYTES).toCommand()
-    requireRescue(command.draftRecoveryKey() == commandKey, "RECORD_IDENTITY_MISMATCH")
+    val command = readRescueCreateCommand(source, commandKey)
     requireRescue(command.normalized() == command && command.matches(tab), "INVALID_CREATE_PAIR")
     requireRescue(command.parentId != command.documentId && command.documentId !in tab.ancestorIds &&
         tabs.none { it !== tab && it.documentId == command.documentId }, "CREATE_PARENT_OR_IDENTITY_DEPENDENCY")
-    // At the admitted generation an unequal payload would be overwritten by the normal ACK merge.
-    // A later generation is user work and must stay separate from the immutable request.
-    requireRescue(tab.editGeneration != command.admittedEditGeneration ||
-        PendingDocumentCreateCommand.capture(tab) == command, "CREATE_GENERATION_PAYLOAD_MISMATCH")
-    validateRescueTab(tab, includeContent = true)
-    MarkdownAssetPolicy.requireCanonical(command.markdown, command.assets)
+    validateRescueCreatePayload(tab, command)
     return CreateRescuePair(tab, command)
 }
 
@@ -181,13 +169,13 @@ private fun readRescueRecord(source: DocumentDraftRecordSource, key: String): St
     return encoded
 }
 
-private fun readRescueTab(source: DocumentDraftRecordSource, key: String): DocumentTabState {
+internal fun readRescueTab(source: DocumentDraftRecordSource, key: String): DocumentTabState {
     val tab = decodeRescueRecord<PersistedDocumentTabDraft>(readRescueRecord(source, key), MAX_DOCUMENT_DRAFT_RECORD_BYTES).toTab()
     requireRescue(tab.draftRecoveryKey() == key, "RECORD_IDENTITY_MISMATCH")
     return tab
 }
 
-private fun validateRescueTab(tab: DocumentTabState, includeContent: Boolean) {
+internal fun validateRescueTab(tab: DocumentTabState, includeContent: Boolean) {
     val snapshot = DocumentWorkspaceDraftSnapshot(listOf(tab), tab.instanceId, tab.spaceId)
     requireRescue(snapshot.normalized() == snapshot && snapshot.hasBoundedPersistenceShape(), "INVALID_DRAFT")
     requireRescue(tab.editGeneration in 0L until Long.MAX_VALUE &&
@@ -200,4 +188,30 @@ private fun validateRescueTab(tab: DocumentTabState, includeContent: Boolean) {
         MarkdownAssetPolicy.requireCanonical(tab.savedMarkdown, tab.savedAssets)
         MarkdownAssetPolicy.requireCanonical(tab.draftMarkdown, tab.draftAssets)
     }
+}
+
+internal fun requireRescueRecordBudget(source: DocumentDraftRecordSource, keys: List<String>) {
+    var totalBytes = 0L
+    for (key in keys) {
+        val size = source.recordByteCount(key)
+        requireRescue(size != null && size in 1L..MAX_DOCUMENT_DRAFT_RECORD_BYTES.toLong(), "RECORD_UNAVAILABLE")
+        totalBytes += checkNotNull(size)
+        requireRescue(totalBytes <= MAX_TOTAL_DOCUMENT_DRAFT_RECORD_BYTES, "SOURCE_SIZE_LIMIT")
+    }
+}
+
+internal fun readRescueCreateCommand(source: DocumentDraftRecordSource, key: String): PendingDocumentCreateCommand {
+    val command = decodeRescueRecord<PersistedDocumentCreateCommand>(readRescueRecord(source, key),
+        MAX_DOCUMENT_DRAFT_RECORD_BYTES).toCommand()
+    requireRescue(command.draftRecoveryKey() == key, "RECORD_IDENTITY_MISMATCH")
+    return command
+}
+
+internal fun validateRescueCreatePayload(tab: DocumentTabState, command: PendingDocumentCreateCommand) {
+    // At the admitted generation an unequal payload would be overwritten by the normal ACK merge.
+    // A later generation is user work and must stay separate from the immutable request.
+    requireRescue(tab.editGeneration != command.admittedEditGeneration ||
+        PendingDocumentCreateCommand.capture(tab) == command, "CREATE_GENERATION_PAYLOAD_MISMATCH")
+    validateRescueTab(tab, includeContent = true)
+    MarkdownAssetPolicy.requireCanonical(command.markdown, command.assets)
 }

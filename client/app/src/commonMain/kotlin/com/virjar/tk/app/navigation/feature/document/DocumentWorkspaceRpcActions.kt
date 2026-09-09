@@ -105,6 +105,7 @@ internal class DocumentWorkspaceSpaceActions(
     private val awaitDraftDurability: suspend () -> Boolean,
     private val tombstoneDrafts: suspend (Set<String>) -> Boolean,
     private val onPendingCreatesChanged: () -> Unit,
+    private val onCreatedSpacePublished: (DocumentSpace) -> Unit,
 ) {
     private val createOperationLock = Any()
     private val createOperations = mutableMapOf<String, DocumentSpaceCreateOperation>()
@@ -197,6 +198,9 @@ internal class DocumentWorkspaceSpaceActions(
                 created.spaceId,
             )
             if (!published) return
+            // Bootstrap may have observed an empty space page before this acknowledgement.
+            // Resume only already admitted children after their space is durable and authoritative.
+            onCreatedSpacePublished(created)
             operation.navigationGeneration?.let { generation ->
                 if (isCurrentNavigation(generation)) selectSpace(created.spaceId, generation)
             }

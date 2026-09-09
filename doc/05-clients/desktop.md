@@ -333,6 +333,35 @@ manifest 中所选的标签标识。在仓库内运行预览：
 原归档和隔离资料保持不变；其余文档操作、未完成上传及 Android 来源/原机导入仍不支持。
 完整边界见[可靠文档创建救援](../03-architecture/client-and-sdk.md#可靠文档创建救援)。
 
+### 空间创建救援
+
+归档中有冻结空间创建请求时，可将它与同空间草稿、直属 creating 标签及全部已准入文档创建命令
+一起导入。该入口沿用上方 JVM 来源、同 owner 健康目标库、客户端退出和空文档 namespace 要求；
+不接收 Android 来源，也不覆盖目标工作区。
+
+先列出空间创建标识，再使用 `space-command-<UUID>` 预览：
+
+```bash
+./gradlew :client:desktop:run --args='list-document-space-create-rescue --archive /private/path/cache-archive'
+./gradlew :client:desktop:run --args='preview-document-space-create-rescue --cache-root /path/to/desktop-data --database <relative-current-database> --archive /private/path/cache-archive --record-key space-command-<UUID>'
+```
+
+核对不含正文的身份、范围与执行后果后，确认预览返回的归档清单及目标状态摘要：
+
+```bash
+./gradlew :client:desktop:run --args='import-document-space-create-rescue --cache-root /path/to/desktop-data --database <relative-current-database> --archive /private/path/cache-archive --record-key space-command-<UUID> --confirm-manifest-sha256 <manifestSha256> --expected-target-state-sha256 <targetStateSha256>'
+```
+
+来源须只有一个未退役空间创建请求，拒绝其他空间的创建待办或 creating 标签、删除/归档、移动/改名
+及 creating 父节点/祖先依赖；其他空间的普通草稿留在原归档。所选空间的原请求、原 ID、子文档冻结
+请求和后继草稿分别保留，不把后继修改替换进已提交请求。
+
+确认导入后，正常启动可重放空间请求；当前可见的同 ID 空间直接收尾，不回滚已改过的名称。空间
+当前投影成功发布后才衔接冻结子文档，空投影不会触发子文档续发，也不会强制切走用户选择的页面。
+未提交草稿和后继修改仍须手动保存。权限、归档或附件失效可使待办保留，导入不保证业务完成；
+原资料不删除，嵌套文档依赖及其他结构操作仍不支持。完整范围见
+[空间创建与直属文档救援](../03-architecture/client-and-sdk.md#空间创建与直属文档救援)。
+
 ## 7. 用户资料
 
 资料是主窗口内 440dp 的紧凑模态对象预览：横向头像与身份信息、主要动作、少量次要动作和低强调危险

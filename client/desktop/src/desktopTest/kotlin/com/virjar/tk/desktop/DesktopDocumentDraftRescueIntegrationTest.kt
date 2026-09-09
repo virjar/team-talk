@@ -53,6 +53,63 @@ import kotlin.test.assertTrue
 /** Real archive, SQLite and product Desktop record format, without starting an application owner. */
 class DesktopDocumentDraftRescueIntegrationTest {
     @Test
+    fun `space rescue publishes the exact space intent with its own drafts and admitted children`() = workspace { workspace ->
+        for (withChildren in listOf(false, true)) {
+            val scenario = directory(workspace, "space-$withChildren")
+            val source = root(scenario, "source")
+            val spaceKey = "space-command-$SPACE"
+            val pending = buildJsonArray {
+                add(buildJsonObject { put("name", PRIVATE_TITLE); put("description", "private space description"); put("spaceId", SPACE) })
+            }
+            val selected = tab(creating = true, title = "")
+            val ordinary = tab(recoveryId = OTHER_RECOVERY, instanceId = 12, documentId = OTHER_DOCUMENT)
+            val tabs = if (withChildren) listOf(selected, ordinary) else emptyList()
+            val command = if (withChildren) createCommand() else null
+            storage(source).replace(payload(tabs, pendingSpaces = pending, command = command), LIMITS)
+            val archived = archive(scenario, source)
+            val target = root(scenario, "target")
+            val sourceBefore = inventory(source)
+            val archiveBefore = inventory(archived.directory)
+            val targetBefore = inventory(target)
+            assertEquals(listOf(spaceKey), DesktopDocumentSpaceCreateRescue.listRecords(archived.directory).recordKeys)
+            val preview = DesktopDocumentSpaceCreateRescue.preview(target, DATABASE, archived.directory, spaceKey)
+            assertEquals(SPACE, preview.selection.spaceId)
+            assertEquals(tabs.size, preview.selection.tabCount)
+            assertEquals(if (withChildren) 1 else 0, preview.selection.pendingDocumentCount)
+            assertEquals(targetBefore, inventory(target))
+            assertFalse(Json.encodeToString(preview).contains(PRIVATE_TITLE))
+            assertFalse(Json.encodeToString(preview).contains(PRIVATE_BODY))
+            val base = arrayOf("--cache-root", target.path, "--database", DATABASE, "--archive", archived.directory.path, "--record-key", spaceKey)
+            val output = mutableListOf<String>()
+            assertEquals(2, runDesktopDocumentDraftRescueCommand(arrayOf("import-document-space-create-rescue") + base, output::add))
+            assertEquals(targetBefore, inventory(target))
+            assertEquals(0, runDesktopDocumentDraftRescueCommand(arrayOf("import-document-space-create-rescue") + base + arrayOf(
+                "--confirm-manifest-sha256", preview.manifestSha256, "--expected-target-state-sha256", preview.targetStateSha256,
+            ), output::add))
+            assertEquals(DesktopDocumentDraftStorageReadStatus.AVAILABLE, storage(target).read(LIMITS) { restored ->
+                val manifest = Json.parseToJsonElement(restored.manifest).jsonObject
+                assertEquals(pending, manifest.getValue("pendingSpaceCreates"))
+                assertEquals(tabs.size, manifest.getValue("tabRecordKeys").jsonArray.size)
+                for (tab in tabs) {
+                    val key = "tab-" + (tab.getValue("recoveryId") as JsonPrimitive).content
+                    assertEquals(tab, Json.parseToJsonElement(assertNotNull(restored.readRecord(key))))
+                }
+                val commands = manifest.getValue("pendingDocumentRecordKeys").jsonArray
+                assertEquals(if (withChildren) 1 else 0, commands.size)
+                if (command != null) assertEquals(command,
+                    Json.parseToJsonElement(assertNotNull(restored.readRecord("document-command-$DOCUMENT"))))
+            })
+            assertNoCommands(target)
+            assertEquals(sourceBefore, inventory(source))
+            assertEquals(archiveBefore, inventory(archived.directory))
+            failure("TARGET_DOCUMENT_DRAFTS_NOT_EMPTY") {
+                DesktopDocumentSpaceCreateRescue.importRecords(target, DATABASE, archived.directory, spaceKey,
+                    preview.manifestSha256, preview.targetStateSha256)
+            }
+        }
+    }
+
+    @Test
     fun `explicit create rescue restores the original admitted request and later blank title edits as one pair`() = workspace { workspace ->
         for (quarantine in listOf(true, false)) {
             val scenario = directory(workspace, "create-$quarantine")

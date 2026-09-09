@@ -16,6 +16,7 @@ import com.virjar.tk.protocol.model.DocumentCreateResult
 import com.virjar.tk.protocol.model.DocumentNode
 import com.virjar.tk.protocol.model.DocumentPathSpine
 import com.virjar.tk.protocol.model.DocumentSpace
+import com.virjar.tk.protocol.model.DocumentSpaceCreateResult
 import com.virjar.tk.protocol.model.DocumentSpacePage
 import com.virjar.tk.protocol.model.DocumentDirectorySnapshotVersion
 import com.virjar.tk.protocol.model.DocumentHomeItem
@@ -53,6 +54,148 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DocumentWorkspaceOfflineRestartTest {
+    @Test
+    fun `space acknowledgement resumes admitted children without saving ordinary drafts or taking navigation`() = runTest {
+        for (availableProjection in listOf(true, false)) {
+            val fixture = createFixture()
+            val persistence = MemoryDocumentDraftPersistence()
+            val dispatcher = StandardTestDispatcher(testScheduler)
+            val scopes = mutableListOf<CoroutineScope>()
+            val errors = mutableListOf<Pair<Throwable, String>>()
+            try {
+                val owner = DocumentDraftOwnerKey(fixture.deploymentIdentity.fingerprint, DATASET_ID, OWNER_UID)
+                val spaceCommand = DocumentSpaceCreateRequest(DocumentSpaceCreateIntent("恢复空间", "冻结说明"), SPACE_ID)
+                val admitted = DocumentTabState(
+                    tabId = DOCUMENT_ID, instanceId = 17L, documentId = null, spaceId = SPACE_ID,
+                    parentId = null, ancestorIds = emptyList(), savedTitle = "", savedMarkdown = "",
+                    draftTitle = "创建标题 A", draftMarkdown = "创建正文 A", revision = null,
+                    dirty = true, creating = true, editGeneration = 3L,
+                )
+                val command = requireNotNull(PendingDocumentCreateCommand.capture(admitted))
+                val successor = admitted.copy(draftTitle = "", draftMarkdown = "后继正文 B", editGeneration = 4L)
+                val ordinary = admitted.copy(tabId = LOCAL_DOCUMENT_ID, instanceId = 18L,
+                    recoveryId = ROOT_ID, draftTitle = "仅本机草稿", draftMarkdown = "没有创建命令", editGeneration = 0L)
+                val beforeRestart = DocumentDraftStore(persistence)
+                assertTrue(beforeRestart.save(owner, listOf(successor, ordinary), DOCUMENT_ID, SPACE_ID,
+                    pendingSpaceCreates = listOf(spaceCommand), pendingDocumentCreates = listOf(command)))
+                assertTrue(beforeRestart.flush())
+
+                val spaceRequested = CompletableDeferred<Unit>()
+                val spaceAcknowledgement = CompletableDeferred<ResponsePayload>()
+                val createdSpace = space().copy(name = spaceCommand.intent.name, description = spaceCommand.intent.description)
+                val createdDocument = document().copy(title = command.title, markdown = command.markdown, revision = 1L)
+                var spaceExists = false
+                var documentExists = false
+                fixture.rpc.respond = { method ->
+                    if (method == DocumentRpcContract.M_CREATE_SPACE) {
+                        spaceRequested.complete(Unit)
+                        spaceAcknowledgement.await()
+                    } else {
+                        val payload = when (method) {
+                            DocumentRpcContract.M_LIST_SPACES -> ProtoCodec.encode(DocumentSpacePage(
+                                snapshotVersion = DocumentDirectorySnapshotVersion(1L, 1L, 1L),
+                                items = if (spaceExists) listOf(createdSpace) else emptyList(), nextCursor = null,
+                            ))
+                            DocumentRpcContract.M_LIST_RECENT_DOCUMENTS,
+                            DocumentRpcContract.M_LIST_RECENTLY_CREATED_DOCUMENTS -> ProtoCodec.encodeList(emptyList<DocumentHomeItem>())
+                            DocumentRpcContract.M_LIST_NODES -> ProtoCodec.encodeList(
+                                if (documentExists) listOf(node(createdDocument)) else emptyList<DocumentNode>())
+                            DocumentRpcContract.M_GET_SPACE -> ProtoCodec.encode(createdSpace)
+                            DocumentRpcContract.M_GET_DOCUMENT -> ProtoCodec.encode(createdDocument)
+                            DocumentRpcContract.M_GET_NODE_PATH_SPINE -> ProtoCodec.encode(DocumentPathSpine(listOf(node(createdDocument))))
+                            DocumentRpcContract.M_CREATE_DOCUMENT -> {
+                                assertTrue(availableProjection, "a receipt without a space projection cannot admit children")
+                                val durable = requireNotNull(DocumentDraftStore(persistence).restore(owner))
+                                assertTrue(durable.pendingSpaceCreates.isEmpty(), "space retirement must precede a child RPC")
+                                assertEquals(listOf(command), durable.pendingDocumentCreates)
+                                documentExists = true
+                                ProtoCodec.encode(DocumentCreateResult(DOCUMENT_ID, createdDocument))
+                            }
+                            else -> error("Unexpected space recovery RPC: $method")
+                        }
+                        ResponsePayload(1, 0, payload)
+                    }
+                }
+
+                repeat(2) { restart ->
+                    val featureScope = CoroutineScope(dispatcher + SupervisorJob()).also(scopes::add)
+                    val feature = DocumentWorkspaceFeature(fixture.session, featureScope,
+                        { failure, message -> errors += failure to message }, DocumentDraftStore(persistence), UiLocalDataBoundary(dispatcher))
+                    val observers = featureScope.coroutineContext[Job]!!.children.toSet()
+                    val opening = featureScope.async { feature.open() }
+                    advanceUntilIdle()
+                    if (restart == 0) {
+                        // The create owns the repository's existing request gate. Bootstrap may
+                        // still be waiting to read home, so release the RPC before awaiting open.
+                        spaceRequested.await()
+                        assertEquals(0, fixture.rpc.calls.count { it.second == DocumentRpcContract.M_CREATE_DOCUMENT })
+                        feature.showHome()
+                        assertNull(feature.selectedSpaceId)
+                        spaceExists = availableProjection
+                        spaceAcknowledgement.complete(ResponsePayload(1, 0, ProtoCodec.encode(
+                            DocumentSpaceCreateResult(SPACE_ID, createdSpace.takeIf { availableProjection }))))
+                    }
+                    opening.await()
+                    // The space continuation launches a child save on the same existing scope.
+                    while (true) {
+                        val work = featureScope.coroutineContext[Job]!!.children.filterNot { it in observers }.toList()
+                        if (work.isEmpty()) break
+                        work.joinAll()
+                    }
+                    val restored = feature.tabs.single { it.tabId == DOCUMENT_ID }
+                    assertEquals("", restored.draftTitle)
+                    assertEquals(successor.draftMarkdown, restored.draftMarkdown)
+                    assertEquals(successor.editGeneration, restored.editGeneration)
+                    assertTrue(restored.dirty)
+                    assertEquals(!availableProjection, restored.creating)
+                    assertEquals(if (availableProjection) 1L else null, restored.revision)
+                    assertTrue(feature.tabs.single { it.tabId == LOCAL_DOCUMENT_ID }.creating)
+                    if (restart == 0) {
+                        assertNull(feature.selectedSpaceId, "a late space or child ACK must retain the user's home navigation")
+                        assertEquals(DOCUMENT_ID, feature.activeTabId, "home retains the last tab without displaying its space")
+                    } else {
+                        // Home retains the last tab identity. A new process deliberately reveals
+                        // that recoverable draft; this is separate from a late ACK navigating.
+                        assertEquals(SPACE_ID, feature.selectedSpaceId)
+                        assertEquals(DOCUMENT_ID, feature.activeTabId)
+                    }
+                    val durable = requireNotNull(DocumentDraftStore(persistence).restore(owner))
+                    if (restart == 0) {
+                        assertNull(durable.selectedSpaceId)
+                        assertEquals(admitted.instanceId, durable.activeTabInstanceId)
+                    }
+                    assertTrue(durable.pendingSpaceCreates.isEmpty())
+                    assertEquals(if (availableProjection) emptyList() else listOf(command), durable.pendingDocumentCreates)
+                    assertEquals(2, durable.tabs.size)
+                    assertEquals(1, fixture.rpc.calls.count { it.second == DocumentRpcContract.M_CREATE_SPACE })
+                    assertEquals(if (availableProjection) 1 else 0,
+                        fixture.rpc.calls.count { it.second == DocumentRpcContract.M_CREATE_DOCUMENT })
+                    assertEquals(0, fixture.rpc.calls.count { it.second == DocumentRpcContract.M_UPDATE_DOCUMENT })
+                    assertTrue(errors.isEmpty(), errors.toString())
+                    featureScope.cancel()
+                    advanceUntilIdle()
+                }
+                ProtoCodec.withPayload(fixture.rpc.payloads.single { it.first == DocumentRpcContract.M_CREATE_SPACE }.second) {
+                    assertEquals(spaceCommand.spaceId, readString())
+                    assertEquals(spaceCommand.intent.name, readString())
+                    assertEquals(spaceCommand.intent.description, readString())
+                }
+                fixture.rpc.payloads.filter { it.first == DocumentRpcContract.M_CREATE_DOCUMENT }.forEach { (_, payload) ->
+                    ProtoCodec.withPayload(payload) {
+                        assertEquals(command.documentId, readString())
+                        assertEquals(command.spaceId, readString())
+                        assertNull(readString())
+                        assertEquals(command.title, readString())
+                        assertEquals(DocumentContent(command.markdown, command.assets), DocumentContent.readFrom(this))
+                    }
+                }
+            } finally {
+                scopes.forEach { it.cancel() }
+                fixture.close()
+            }
+        }
+    }
+
     @Test
     fun `restarted create replays its frozen title and preserves a blank successor after a receipt only acknowledgement`() = runTest {
         val fixture = createFixture()

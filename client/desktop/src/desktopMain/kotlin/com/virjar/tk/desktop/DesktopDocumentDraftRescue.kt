@@ -61,9 +61,7 @@ internal object DesktopDocumentDraftRescue {
     fun preview(root: File, database: String, archive: File, recordKey: String,
                 kind: DesktopDocumentRescueKind = DesktopDocumentRescueKind.DRAFT): DesktopDocumentDraftRescuePreview {
         val source = readSource(archive, recordKey, kind)
-        return LocalCacheDocumentDraftRescueAccess.withTarget(root, database, source.owner) { directory ->
-            runCatching { source.preview(directory, database, emptyTargetState(directory, source.owner)) }
-        }.getOrThrow()
+        return previewTarget(root, database, source.owner) { directory, state -> source.preview(directory, database, state) }
     }
 
     fun importDraft(
@@ -72,19 +70,32 @@ internal object DesktopDocumentDraftRescue {
         kind: DesktopDocumentRescueKind = DesktopDocumentRescueKind.DRAFT,
     ): DesktopDocumentDraftRescuePreview {
         val source = readSource(archive, recordKey, kind, expectedManifestSha256)
-        return LocalCacheDocumentDraftRescueAccess.withTarget(root, database, source.owner) { directory ->
-            runCatching {
-                val state = emptyTargetState(directory, source.owner)
-                checkRescue(state == expectedTargetStateSha256, "TARGET_DOCUMENT_DRAFTS_CHANGED")
-                checkRescue(LocalCacheArchive.verify(archive).manifestSha256 == expectedManifestSha256, "ARCHIVE_CHANGED")
-                // Only an empty namespace is admitted. The existing writer publishes immutable records
-                // before its atomic manifest; no normal target read may clean up unreviewed files.
-                desktopDocumentDraftStorage(directory.root.toFile(), source.owner.draftOwner())
-                    .replace(source.prepared.payload, rescueLimits)
-                source.preview(directory, database, state)
-            }
-        }.getOrThrow()
+        return importTarget(root, database, archive, source.owner, expectedManifestSha256,
+            expectedTargetStateSha256, source.prepared.payload) { directory, state -> source.preview(directory, database, state) }
     }
+
+    internal fun <T> previewTarget(
+        root: File, database: String, owner: LocalCacheDiagnosticOwner,
+        report: (JvmPrivateDataDirectory, String) -> T,
+    ): T = LocalCacheDocumentDraftRescueAccess.withTarget(root, database, owner) { directory ->
+        runCatching { report(directory, emptyTargetState(directory, owner)) }
+    }.getOrThrow()
+
+    internal fun <T> importTarget(
+        root: File, database: String, archive: File, owner: LocalCacheDiagnosticOwner,
+        expectedManifestSha256: String, expectedTargetStateSha256: String, payload: DocumentDraftPayload,
+        report: (JvmPrivateDataDirectory, String) -> T,
+    ): T = LocalCacheDocumentDraftRescueAccess.withTarget(root, database, owner) { directory ->
+        runCatching {
+            val state = emptyTargetState(directory, owner)
+            checkRescue(state == expectedTargetStateSha256, "TARGET_DOCUMENT_DRAFTS_CHANGED")
+            checkRescue(LocalCacheArchive.verify(archive).manifestSha256 == expectedManifestSha256, "ARCHIVE_CHANGED")
+            // Only an empty namespace is admitted. The existing writer publishes immutable records
+            // before its atomic manifest; no normal target read may clean up unreviewed files.
+            desktopDocumentDraftStorage(directory.root.toFile(), owner.draftOwner()).replace(payload, rescueLimits)
+            report(directory, state)
+        }
+    }.getOrThrow()
 
     private fun readSource(archive: File, recordKey: String, kind: DesktopDocumentRescueKind, expected: String? = null): Source =
         readDocumentSource(archive, expected) { source, owner, sha ->
@@ -94,7 +105,7 @@ internal object DesktopDocumentDraftRescue {
             })
         }
 
-    private fun <T> readDocumentSource(
+    internal fun <T> readDocumentSource(
         archive: File, expected: String? = null,
         read: (DocumentDraftRecordSource, LocalCacheDiagnosticOwner, String) -> T,
     ): T =

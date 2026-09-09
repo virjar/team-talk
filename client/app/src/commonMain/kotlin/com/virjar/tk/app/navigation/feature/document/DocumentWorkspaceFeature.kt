@@ -173,6 +173,7 @@ class DocumentWorkspaceFeature internal constructor(
         awaitDraftDurability = draftCollaboration::flush,
         tombstoneDrafts = draftCollaboration::tombstone,
         onPendingCreatesChanged = ::publishPendingSpaceCreates,
+        onCreatedSpacePublished = { created -> saveCoordinator.replayPendingCreates(listOf(created)) },
     )
     internal val historyActions = DocumentWorkspaceHistoryActions(
         repositoryBoundary,

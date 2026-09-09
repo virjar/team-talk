@@ -832,6 +832,7 @@ tasks.withType<JavaExec>().configureEach {
             if (args?.firstOrNull() in setOf(
                     "list-document-draft-rescue", "preview-document-draft-rescue", "import-document-draft-rescue",
                     "list-document-create-rescue", "preview-document-create-rescue", "import-document-create-rescue",
+                    "list-document-space-create-rescue", "preview-document-space-create-rescue", "import-document-space-create-rescue",
                 )) {
                 // Offline maintenance supplies its own existing root. Do not create even the
                 // development data parent or provision a UI test instance for these commands.
