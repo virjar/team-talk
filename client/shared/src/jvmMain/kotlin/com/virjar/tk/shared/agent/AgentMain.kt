@@ -54,7 +54,7 @@ fun main(args: Array<String>) {
                 result.bundle?.let { println("${it.buildIdentity} protocol ${it.protocolMajor}.${it.protocolMinor}") }
             }
             else -> HeadlessBundleInstaller.acquireRuntimeLease(HeadlessRuntime.currentBundle()).use {
-                if (command in setOf("configure", "export-cli-token", "doctor", "compact-cache", "export-quarantine", "verify-cache-archive")) {
+                if (command in setOf("configure", "export-cli-token", "doctor", "compact-cache", "export-quarantine", "verify-cache-archive", "discard-quarantine")) {
                     HeadlessConfiguration.execute(requireNotNull(command), args.drop(1))
                 } else runAgent(args)
             }
@@ -309,6 +309,9 @@ tt-agent — TeamTalk headless client (Java 21+)
                     [--cache-layout jvm|android]
                                        Preserve quarantined and shared owner files without modifying them
   verify-cache-archive --archive <dir>  Verify the complete file inventory and SHA-256 manifest
+  discard-quarantine --cache-root <dir> --database <relative-path> --archive <dir>
+                     --confirm-manifest-sha256 <sha256> [--cache-layout jvm|android]
+                                       Explicitly abandon only the archived quarantine; normal orphan-source GC may resume
   install-bundle --prefix <new-dir>     Install the extracted distribution (POSIX)
   upgrade-bundle --prefix <dir>         Atomically switch binaries; retain account data
   uninstall-bundle --prefix <dir>       Run from an external bundle after stopping installed processes

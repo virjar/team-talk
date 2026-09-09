@@ -6,6 +6,7 @@ import com.virjar.tk.shared.client.LocalCacheDiagnostics
 import com.virjar.tk.shared.client.LocalCacheDiagnosticLayout
 import com.virjar.tk.shared.client.LocalCacheCompaction
 import com.virjar.tk.shared.client.LocalCacheArchive
+import com.virjar.tk.shared.client.LocalCacheQuarantineDisposition
 import com.virjar.tk.shared.client.decodeTcpTlsCertificateBase64
 import com.virjar.tk.shared.client.prepareJvmClientDataVersion
 import com.virjar.tk.shared.client.privateAtomicTextFileStore
@@ -73,9 +74,20 @@ internal object HeadlessConfiguration {
             "compact-cache" -> setOf("cache-root", "database")
             "export-quarantine" -> setOf("cache-root", "database", "output", "cache-layout")
             "verify-cache-archive" -> setOf("archive")
+            "discard-quarantine" -> setOf("cache-root", "database", "archive", "confirm-manifest-sha256", "cache-layout")
             else -> error("Unknown configuration command")
         }
         require(options.keys.all { it in allowed }) { "Unknown configuration option" }
+        if (command == "discard-quarantine") {
+            val root = requireNotNull(options["cache-root"]) { "--cache-root is required" }
+            val database = requireNotNull(options["database"]) { "--database is required; select one archived quarantine" }
+            val archive = requireNotNull(options["archive"]) { "--archive is required; preserve and verify the data before discarding it" }
+            val digest = requireNotNull(options["confirm-manifest-sha256"]) {
+                "--confirm-manifest-sha256 is required; this command abandons the selected quarantine and allows normal orphan-source GC"
+            }
+            println(Json.encodeToString(LocalCacheQuarantineDisposition.discard(File(root), database, File(archive), digest, cacheLayout(options))))
+            return
+        }
         if (command == "export-quarantine") {
             val root = requireNotNull(options["cache-root"]) { "--cache-root is required" }
             val database = requireNotNull(options["database"]) { "--database is required; select a quarantine path from doctor" }

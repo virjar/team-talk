@@ -237,6 +237,30 @@ Android 另保留文档 owner preferences。旧布局和无法确认归属的旧
 稳定复制与校验成功只证明归档符合清单，不证明资料可恢复、Android 原始导出完整或可删除源。
 范围与限制见[隔离资料保全归档](../03-architecture/client-and-sdk.md#隔离资料保全归档)。
 
+决定放弃已归档隔离副本中的本地事实时，使用独立删除入口，并明确提供 `verify-cache-archive` 报告中的
+`manifestSha256`：
+
+```bash
+bin/tt-agent discard-quarantine --cache-root /path/to/desktop-or-headless-data \
+  --database 'deployments/<fingerprint>/datasets/<datasetId>/users/<uid>.corrupt-<id>/cache_e0.db' \
+  --archive /private/path/new-cache-archive \
+  --confirm-manifest-sha256 '<manifestSha256>'
+```
+
+此操作删除选定隔离范围，不能代替救援导入。JVM 必须退出对应安装的客户端并保留现存 `.lock`；
+Android 另传 `--cache-layout android`，只修改已经导出的应用数据副本，不操作手机或释放手机容量。
+命令先完整校验归档，确认布局、隔离路径与清单摘要，再要求待删除文件与归档原字节一致；允许已删除
+部分文件后使用同一归档重试。选定范围内新增文件、内容变化、链接或归档不完整时拒绝，不递归清扫未知内容。
+Android 仅删除固定数据库族；其他隔离族和未知后缀保留，可能继续维持孤儿源保护。
+首次删除前对已校验归档执行刷盘；`ARCHIVE_FLUSH_FAILED` 表示本次尚未删除源文件，排查见
+[本地资料保留与只读诊断](../07-operations/troubleshooting.md#本地资料保留与只读诊断)。
+
+归档、替代库、共享附件源及独立文档资料保持原状；这些共享资料继续使用后的变化不会阻断放弃操作，
+命令也不读取它们的当前内容。删除期间中断不会自动回滚，保留原归档和命令用于续跑；结果给出本次删除
+文件数、字节数及执行前目标是否已不存在。最后一个隔离副本移除后，下次客户端启动会恢复正常孤儿源回收，
+仅被已放弃资料引用的附件源可能被回收；归档中的保全副本仍需妥善保存。完整边界见
+[显式放弃隔离副本](../03-architecture/client-and-sdk.md#显式放弃隔离副本)。
+
 Desktop/headless 的健康当前库可以在退出客户端后显式离线压缩。先运行上述诊断，从报告中选取目标库的
 相对路径；`compact-cache` 只操作这一份 JVM 账号库：
 
