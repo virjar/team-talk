@@ -54,12 +54,19 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.mohamedrejeb.richeditor.model.RichTextState
 import com.mohamedrejeb.richeditor.ui.BasicRichTextEditor
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import com.virjar.tk.app.ui.component.input.AutoCompleteOverlay
+import com.virjar.tk.app.ui.component.input.detectMentionQuery
+import com.virjar.tk.app.ui.component.input.filterMentionCandidates
+import com.virjar.tk.app.ui.component.input.mentionAutoCompleteItems
+import com.virjar.tk.app.ui.component.input.pickMentionIntoRichState
 import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
+import com.virjar.tk.protocol.model.User
 
 /**
  * RichTextState 限定在 UI 线程，因此它的 Markdown projection 必须在 UI 调度器上运行。
@@ -150,6 +157,35 @@ private fun DocumentRichMarkdownProjection(
     }
 }
 
+/**
+ * 文档块内的 @ 补全层：仅当编辑器持焦且光标处于 @ 查询上下文时出现；选中后把
+ * mention 链接写回该块的 [state]。检测/过滤/回填与聊天输入器共用同一实现。
+ */
+@Composable
+private fun DocumentMentionCompleteLayer(
+    state: RichTextState,
+    editorFocused: Boolean,
+    sessionReady: Boolean,
+    mentionCandidates: List<User>,
+    modifier: Modifier = Modifier,
+) {
+    if (!sessionReady || !editorFocused || mentionCandidates.isEmpty()) return
+    val field = TextFieldValue(state.annotatedString.text, state.selection)
+    val mentionQuery = detectMentionQuery(field) ?: return
+    val candidates = filterMentionCandidates(mentionCandidates, mentionQuery, myUid = null)
+    if (candidates.isEmpty()) return
+    AutoCompleteOverlay(
+        title = "提及成员",
+        items = mentionAutoCompleteItems(candidates).take(5),
+        modifier = modifier,
+        onPick = { item ->
+            candidates.find { it.uid == item.payload }?.let { user ->
+                pickMentionIntoRichState(state, mentionQuery, field.selection.min, user)
+            }
+        },
+    )
+}
+
 @Composable
 internal fun DocumentRichRunEditor(
     block: DocumentRichRun,
@@ -157,6 +193,7 @@ internal fun DocumentRichRunEditor(
     initiallyActive: Boolean,
     pendingActivation: Boolean,
     pendingFocus: Boolean,
+    mentionCandidates: List<User> = emptyList(),
     onActivate: (RichTextState, () -> Unit) -> Unit,
     onConsumePendingActivation: (RichTextState, () -> Unit) -> Unit,
     onSnapshot: ((DocumentMarkdownBlock) -> DocumentMarkdownBlock) -> Unit,
@@ -210,27 +247,37 @@ internal fun DocumentRichRunEditor(
         }
     }
 
-    Box(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)) {
-        BasicRichTextEditor(
-            state = state,
-            enabled = session.ready,
-            minLines = 2,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp)
-                .focusRequester(focusRequester)
-                .onFocusChanged { focus ->
-                    if (session.ready && focus.isFocused) onActivate(state) { focusRequester.requestFocus() }
-                }
-                .testTag("documents.editor.rich.${block.key}"),
-            textStyle = MaterialTheme.typography.bodyLarge.copy(color = LocalContentColor.current),
-            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-        )
-        if (session.ready && state.annotatedString.text.isEmpty()) {
-            Text(
-                "输入正文，或从工具栏插入引用、代码块和表格…",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+    var editorFocused by remember(block.key) { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)) {
+        Box(Modifier.fillMaxWidth()) {
+            BasicRichTextEditor(
+                state = state,
+                enabled = session.ready,
+                minLines = 2,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp)
+                    .focusRequester(focusRequester)
+                    .onFocusChanged { focus ->
+                        editorFocused = focus.isFocused
+                        if (session.ready && focus.isFocused) onActivate(state) { focusRequester.requestFocus() }
+                    }
+                    .testTag("documents.editor.rich.${block.key}"),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = LocalContentColor.current),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
             )
+            if (session.ready && state.annotatedString.text.isEmpty()) {
+                Text(
+                    "输入正文，或从工具栏插入引用、代码块和表格…",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
+        DocumentMentionCompleteLayer(
+            state = state,
+            editorFocused = editorFocused,
+            sessionReady = session.ready,
+            mentionCandidates = mentionCandidates,
+        )
     }
 }
 
@@ -243,6 +290,7 @@ internal fun DocumentQuoteBlockEditor(
     initiallyActive: Boolean,
     pendingActivation: Boolean,
     pendingFocus: Boolean,
+    mentionCandidates: List<User> = emptyList(),
     onActivate: (RichTextState, () -> Unit) -> Unit,
     onConsumePendingActivation: (RichTextState, () -> Unit) -> Unit,
     onActivateSource: () -> Unit,
@@ -294,6 +342,7 @@ internal fun DocumentQuoteBlockEditor(
                         initiallyActive = initiallyActive,
                         pendingActivation = pendingActivation,
                         pendingFocus = pendingFocus,
+                        mentionCandidates = mentionCandidates,
                         onActivate = onActivate,
                         onConsumePendingActivation = onConsumePendingActivation,
                         onSnapshot = onSnapshot,
@@ -312,6 +361,7 @@ private fun DocumentQuoteRichEditor(
     initiallyActive: Boolean,
     pendingActivation: Boolean,
     pendingFocus: Boolean,
+    mentionCandidates: List<User> = emptyList(),
     onActivate: (RichTextState, () -> Unit) -> Unit,
     onConsumePendingActivation: (RichTextState, () -> Unit) -> Unit,
     onSnapshot: ((DocumentMarkdownBlock) -> DocumentMarkdownBlock) -> Unit,
@@ -363,23 +413,33 @@ private fun DocumentQuoteRichEditor(
             onConsumePendingActivation(state) { focusRequester.requestFocus() }
         }
     }
-    Box(Modifier.fillMaxWidth()) {
-        BasicRichTextEditor(
-            state = state,
-            enabled = session.ready,
-            minLines = 2,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp)
-                .focusRequester(focusRequester)
-                .onFocusChanged {
-                    if (session.ready && it.isFocused) onActivate(state) { focusRequester.requestFocus() }
-                }
-                .testTag("documents.editor.quote.body.${block.key}"),
-            textStyle = MaterialTheme.typography.bodyLarge.copy(color = LocalContentColor.current),
-            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-        )
-        if (session.ready && state.annotatedString.text.isEmpty()) {
-            Text("输入引用内容…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    var editorFocused by remember(block.key) { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth()) {
+            BasicRichTextEditor(
+                state = state,
+                enabled = session.ready,
+                minLines = 2,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp)
+                    .focusRequester(focusRequester)
+                    .onFocusChanged {
+                        editorFocused = it.isFocused
+                        if (session.ready && it.isFocused) onActivate(state) { focusRequester.requestFocus() }
+                    }
+                    .testTag("documents.editor.quote.body.${block.key}"),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = LocalContentColor.current),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            )
+            if (session.ready && state.annotatedString.text.isEmpty()) {
+                Text("输入引用内容…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
+        DocumentMentionCompleteLayer(
+            state = state,
+            editorFocused = editorFocused,
+            sessionReady = session.ready,
+            mentionCandidates = mentionCandidates,
+        )
     }
 }
 

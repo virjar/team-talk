@@ -5,10 +5,13 @@ import androidx.compose.runtime.CompositionLocalProvider
 import com.virjar.tk.app.navigation.feature.document.DocumentWorkspaceFeature
 import com.virjar.tk.app.navigation.feature.document.loadMoreSpaces
 import com.virjar.tk.app.ui.UiActionAdmission
+import com.virjar.tk.app.ui.bridge.DocumentMentionSupport
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportGateway
+import com.virjar.tk.app.ui.bridge.LocalDocumentMentionSupport
 import com.virjar.tk.app.ui.bridge.LocalEmbeddedAssetImportGateway
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetMediaConfig
 import com.virjar.tk.app.ui.bridge.LocalEmbeddedAssetMediaConfig
+import com.virjar.tk.protocol.model.User
 
 /**
  * 文档工作台的平台无关装配点。Android 主入口与 Desktop 主窗口/独立窗口共享同一份状态，
@@ -25,10 +28,16 @@ fun DocumentWorkspaceHost(
     mobileExitCoordinator: MobileDocumentExitCoordinator? = null,
     embeddedAssetImports: EmbeddedAssetImportGateway? = null,
     embeddedAssetMedia: EmbeddedAssetMediaConfig? = null,
+    mentionCandidates: List<User> = emptyList(),
+    onMentionProfileOpen: ((String) -> Unit)? = null,
 ) {
     CompositionLocalProvider(
         LocalEmbeddedAssetImportGateway provides embeddedAssetImports,
         LocalEmbeddedAssetMediaConfig provides embeddedAssetMedia,
+        LocalDocumentMentionSupport provides DocumentMentionSupport(
+            candidates = mentionCandidates,
+            onMentionProfileOpen = onMentionProfileOpen ?: {},
+        ),
     ) {
     DocumentWorkspaceScreen(
         shareToChat = workspace.shareToChat,

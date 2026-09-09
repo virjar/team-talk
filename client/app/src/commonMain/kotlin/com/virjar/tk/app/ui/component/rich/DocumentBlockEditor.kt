@@ -40,6 +40,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
 import com.mohamedrejeb.richeditor.model.RichTextState
 import com.virjar.tk.protocol.model.EmbeddedAsset
+import com.virjar.tk.protocol.model.User
 
 /**
  * 文档专属的块编辑器。
@@ -213,6 +214,8 @@ internal fun DocumentBlockEditor(
     embeddedAssetContent: EmbeddedAssetMarkdownContent? = null,
     modifier: Modifier = Modifier,
 ) {
+    // @ 提及候选由平台宿主通过 CompositionLocal 注入；未注入时补全层静默关闭。
+    val mentionCandidates = com.virjar.tk.app.ui.bridge.LocalDocumentMentionSupport.current.candidates
     val blocks = remember(documentKey, assets) {
         mutableStateListOf<DocumentMarkdownBlock>().apply {
             addAll(DocumentMarkdownBlockCodec.parse(initialMarkdown, assets))
@@ -515,8 +518,7 @@ internal fun DocumentBlockEditor(
                 is DocumentSingleBlockGroup -> {
                     val index = group.index
                     val block = group.block
-                    DocumentSingleBlockGroupEditor(
-                        block = block,
+                    DocumentSingleBlockGroupEditor(                        block = block,
                         index = index,
                         totalBlocks = blocks.size,
                         initialActiveKey = initialActiveKey,
@@ -622,6 +624,7 @@ private fun DocumentSingleBlockGroupEditor(
     controller: DocumentBlockEditorController,
     richSnapshots: MutableMap<String, (DocumentMarkdownBlock) -> DocumentMarkdownBlock>,
     richSessions: MutableMap<String, DocumentRichEditorSession>,
+    mentionCandidates: List<User>,
     embeddedAssetContent: EmbeddedAssetMarkdownContent?,
     replaceBlock: (DocumentMarkdownBlock) -> Unit,
     moveBlock: (Int, Int) -> Unit,
@@ -642,6 +645,7 @@ private fun DocumentSingleBlockGroupEditor(
                     initiallyActive = block.key == initialActiveKey,
                     pendingActivation = controller.pendingActivationKey == block.key,
                     pendingFocus = controller.pendingFocusKey == block.key,
+                    mentionCandidates = mentionCandidates,
                     onActivate = { state, focus -> controller.activate(block.key, state, focus) },
                     onConsumePendingActivation = { state, focus ->
                         controller.consumePendingRichActivation(block.key, state, focus)
@@ -682,6 +686,7 @@ private fun DocumentSingleBlockGroupEditor(
                     initiallyActive = block.key == initialActiveKey,
                     pendingActivation = controller.pendingActivationKey == block.key,
                     pendingFocus = controller.pendingFocusKey == block.key,
+                    mentionCandidates = mentionCandidates,
                     onActivate = { state, focus -> controller.activate(block.key, state, focus) },
                     onConsumePendingActivation = { state, focus ->
                         controller.consumePendingRichActivation(block.key, state, focus)

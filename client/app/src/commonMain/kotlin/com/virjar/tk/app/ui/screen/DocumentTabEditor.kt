@@ -233,6 +233,7 @@ internal fun DocumentTabEditor(
     modifier: Modifier = Modifier,
 ) {
     val uriHandler = LocalUriHandler.current
+    val documentMentionSupport = com.virjar.tk.app.ui.bridge.LocalDocumentMentionSupport.current
     val editorKey = "${tab.instanceId}:${tab.recoveryId}:${tab.tabId}:${tab.revision ?: 0}"
     var showSharePicker by remember(editorKey) { mutableStateOf(false) }
     var shareNotice by remember(editorKey) { mutableStateOf<String?>(null) }
@@ -845,6 +846,9 @@ internal fun DocumentTabEditor(
                         assets = currentAssetManifest(currentMarkdown),
                         modifier = Modifier.fillMaxSize(),
                         onUrlClick = { url -> normalizeRichTextLink(url)?.let { runCatching { uriHandler.openUri(it) } } },
+                        onMentionClick = { uid ->
+                            if (uid.isNotBlank()) documentMentionSupport.onMentionProfileOpen(uid)
+                        },
                         embeddedAssetContent = embeddedAssetContent,
                     )
                 }

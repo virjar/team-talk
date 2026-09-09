@@ -30,6 +30,8 @@ import com.virjar.tk.app.ui.component.input.MentionQuery
 import com.virjar.tk.app.ui.component.input.SlashCommands
 import com.virjar.tk.app.ui.component.input.InlineEmojiPanel
 import com.virjar.tk.app.ui.component.input.SlashQuery
+import com.virjar.tk.app.ui.component.input.filterMentionCandidates
+import com.virjar.tk.app.ui.component.input.mentionAutoCompleteItems
 import com.virjar.tk.app.ui.component.rich.replaceComposerRange
 import com.virjar.tk.app.ui.component.rich.ChatComposerMode
 import com.virjar.tk.app.ui.component.rich.PendingAssetJob
@@ -159,22 +161,11 @@ internal fun ChatComposer(
 
         // @ 补全层（内嵌展开于输入行上方）：按名字/uid 过滤候选，排除自己
         mentionQuery?.let { q ->
-            val candidates = (mentionCandidates ?: emptyList())
-                .filter { it.uid != myUid }
-                .filter { u ->
-                    val name = u.name.ifBlank { u.username.ifBlank { u.uid } }
-                    q.text.isEmpty() || name.contains(q.text, ignoreCase = true) || u.uid.contains(q.text)
-                }
+            val candidates = filterMentionCandidates(mentionCandidates.orEmpty(), q, myUid)
             if (candidates.isNotEmpty()) {
                 AutoCompleteOverlay(
                     title = "提及成员",
-                    items = candidates.take(5).map { u ->
-                        AutoCompleteItem(
-                            label = u.name.ifBlank { u.username.ifBlank { u.uid } },
-                            hint = "@" + u.username.ifBlank { u.uid },
-                            payload = u.uid,
-                        )
-                    },
+                    items = mentionAutoCompleteItems(candidates).take(5),
                     onPick = { item -> candidates.find { it.uid == item.payload }?.let { onPickMention(it) } },
                 )
             }

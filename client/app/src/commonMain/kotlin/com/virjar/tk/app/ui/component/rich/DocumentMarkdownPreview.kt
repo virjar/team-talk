@@ -39,6 +39,7 @@ internal fun DocumentMarkdownPreview(
     assets: List<EmbeddedAsset> = emptyList(),
     modifier: Modifier = Modifier,
     onUrlClick: (String) -> Unit = {},
+    onMentionClick: (String) -> Unit = {},
     embeddedAssetContent: EmbeddedAssetMarkdownContent? = null,
 ) {
     val previewNodes = remember(markdown, assets) {
@@ -77,6 +78,7 @@ internal fun DocumentMarkdownPreview(
                                                 node = previewNodes.first { it.block === block },
                                                 assets = assets,
                                                 onUrlClick = onUrlClick,
+                                                onMentionClick = onMentionClick,
                                                 embeddedAssetContent = embeddedAssetContent,
                                             )
                                         }
@@ -103,11 +105,11 @@ internal fun DocumentMarkdownPreview(
                                 node = singleNode,
                                 assets = assets,
                                 onUrlClick = onUrlClick,
+                                onMentionClick = onMentionClick,
                                 embeddedAssetContent = embeddedAssetContent,
                             )
                         }
-                    }
-                }
+                    }                }
             }
         }
     }
@@ -118,6 +120,7 @@ private fun DocumentMarkdownBlockPreview(
     node: DocumentMarkdownPreviewNode,
     assets: List<EmbeddedAsset>,
     onUrlClick: (String) -> Unit,
+    onMentionClick: (String) -> Unit,
     embeddedAssetContent: EmbeddedAssetMarkdownContent?,
 ) {
     val block = node.block
@@ -126,6 +129,7 @@ private fun DocumentMarkdownBlockPreview(
             content = block.markdown,
             modifier = Modifier.fillMaxWidth(),
             onUrlClick = onUrlClick,
+            onMentionClick = onMentionClick,
             embeddedAssets = EmbeddedAssetRenderScope(assets),
             embeddedAssetContent = embeddedAssetContent,
         )
@@ -158,6 +162,7 @@ private fun DocumentMarkdownBlockPreview(
                                     node = nested,
                                     assets = assets,
                                     onUrlClick = onUrlClick,
+                                    onMentionClick = onMentionClick,
                                     embeddedAssetContent = embeddedAssetContent,
                                 )
                             }
@@ -168,7 +173,7 @@ private fun DocumentMarkdownBlockPreview(
         }
         is DocumentCodeFenceBlock -> DocumentCodePreview(block)
         is DocumentGfmTableBlock -> when (DocumentMarkdownPreviewBudget.tableViolation(block)) {
-            null -> DocumentTablePreview(block, onUrlClick)
+            null -> DocumentTablePreview(block, onUrlClick, onMentionClick)
             TableViolation.TOO_MANY_COLUMNS -> DocumentSourcePreview(
                 title = "表格超过 ${DocumentMarkdownPreviewBudget.MAX_TABLE_COLUMNS} 列，已显示源码",
                 source = block.localPreviewSource(),
@@ -253,7 +258,11 @@ private fun DocumentCodePreview(block: DocumentCodeFenceBlock) {
 }
 
 @Composable
-private fun DocumentTablePreview(block: DocumentGfmTableBlock, onUrlClick: (String) -> Unit) {
+private fun DocumentTablePreview(
+    block: DocumentGfmTableBlock,
+    onUrlClick: (String) -> Unit,
+    onMentionClick: (String) -> Unit,
+) {
     val columnCount = maxOf(
         1,
         block.headers.size,
@@ -269,13 +278,14 @@ private fun DocumentTablePreview(block: DocumentGfmTableBlock, onUrlClick: (Stri
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(12.dp)) {
-            DocumentTablePreviewRow(headers, alignments, header = true, onUrlClick = onUrlClick)
+            DocumentTablePreviewRow(headers, alignments, header = true, onUrlClick = onUrlClick, onMentionClick = onMentionClick)
             block.rows.forEach { row ->
                 DocumentTablePreviewRow(
                     row + List((columnCount - row.size).coerceAtLeast(0)) { "" },
                     alignments = alignments,
                     header = false,
                     onUrlClick = onUrlClick,
+                    onMentionClick = onMentionClick,
                 )
             }
         }
@@ -288,6 +298,7 @@ private fun DocumentTablePreviewRow(
     alignments: List<DocumentTableAlignment>,
     header: Boolean,
     onUrlClick: (String) -> Unit,
+    onMentionClick: (String) -> Unit,
 ) {
     Row {
         cells.forEachIndexed { index, value ->
@@ -310,6 +321,7 @@ private fun DocumentTablePreviewRow(
                         content = decodeDocumentTableCellForVisual(value),
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
                         onUrlClick = onUrlClick,
+                        onMentionClick = onMentionClick,
                     )
                 }
             }

@@ -9,7 +9,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draganddrop.DragAndDropEvent
@@ -33,6 +38,7 @@ import com.virjar.tk.app.ui.bridge.EmbeddedAssetMediaConfig
 import com.virjar.tk.app.navigation.feature.document.DocumentWorkspaceFeature
 import com.virjar.tk.app.telemetry.ClientUiPage
 import com.virjar.tk.app.ui.component.LocalScreenHeaderLeadingInset
+import com.virjar.tk.protocol.model.User
 
 /** 处理文件选择、文件拖放与二进制剪贴板导入的 Desktop 文档外壳。 */
 @OptIn(ExperimentalComposeUiApi::class)
@@ -42,6 +48,8 @@ internal fun DesktopDocumentWorkspaceHost(
     presentationGate: DesktopSessionPresentationGate,
     embeddedAssetImports: EmbeddedAssetImportGateway,
     embeddedAssetMedia: EmbeddedAssetMediaConfig,
+    mentionCandidates: List<User> = emptyList(),
+    onMentionProfileOpen: ((String) -> Unit)? = null,
     detached: Boolean = false,
     onDetach: (() -> Unit)? = null,
 ) {
@@ -87,6 +95,8 @@ internal fun DesktopDocumentWorkspaceHost(
             actionAdmission = presentationGate,
             embeddedAssetImports = embeddedAssetImports,
             embeddedAssetMedia = embeddedAssetMedia,
+            mentionCandidates = mentionCandidates,
+            onMentionProfileOpen = onMentionProfileOpen,
             detached = detached,
             mobileSingleDocumentMode = false,
             onDetach = onDetach,
@@ -107,6 +117,11 @@ internal fun DocumentWorkspaceWindow(
     onClose: () -> Unit,
 ) {
     if (!presentationGate.isOpen || !nav.acceptsRendering) return
+
+    // 独立文档窗口的 @ 资料卡是窗口内模态：uid 由本窗口持有，不写回主窗口的
+    // nav.profileUid，避免两扇窗口同时弹同一张资料卡。
+    var mentionProfileUid by remember { mutableStateOf<String?>(null) }
+    val contacts by nav.contactViewModel.contacts.collectAsState()
 
     val integratedMacTitleBar = remember {
         System.getProperty("os.name").contains("Mac", ignoreCase = true)
@@ -144,9 +159,22 @@ internal fun DocumentWorkspaceWindow(
                         presentationGate = presentationGate,
                         embeddedAssetImports = embeddedAssetImports,
                         embeddedAssetMedia = embeddedAssetMedia,
+                        mentionCandidates = contacts.mapNotNull { it.user },
+                        onMentionProfileOpen = presentationGate.guard { uid: String -> mentionProfileUid = uid },
                         detached = true,
                     )
                 }
+            }
+        }
+        mentionProfileUid?.let { uid ->
+            key(uid) {
+                DesktopUserProfileDialog(
+                    uid = uid,
+                    nav = nav,
+                    ownerWindow = window,
+                    presentationGate = presentationGate,
+                    onDismiss = presentationGate.guard { mentionProfileUid = null },
+                )
             }
         }
     }

@@ -34,6 +34,7 @@ import com.virjar.tk.app.ui.component.input.detectMentionQuery
 import com.virjar.tk.app.ui.component.messageExportableAttachment
 import com.virjar.tk.app.ui.component.input.detectSlashQuery
 import com.virjar.tk.app.ui.component.input.expandSlashCommand
+import com.virjar.tk.app.ui.component.input.pickMentionIntoRichState
 import com.virjar.tk.app.ui.component.rich.ChatComposerMode
 import com.virjar.tk.app.ui.component.rich.ChatVisualMarkdownBaseline
 import com.virjar.tk.app.ui.component.rich.PendingAssetJob
@@ -594,13 +595,12 @@ fun ChatPanel(
             sourceInput = sourceInput.replaceComposerRange(q.atIndex, inputView.selection.min, syntax)
             sourceFocus.requestFocus()
         } else {
-            val displayText = "@$displayName "
-            richState.replaceRange(q.atIndex, inputView.selection.min, displayText)
-            richState.addLinkToTextRange(
-                url = "mention://${user.uid}",
-                textRange = TextRange(q.atIndex + 1, q.atIndex + 1 + displayName.length),
+            pickMentionIntoRichState(
+                state = richState,
+                query = q,
+                cursor = inputView.selection.min,
+                user = user,
             )
-            richState.selection = TextRange(q.atIndex + displayText.length)
             inputFocus.requestFocus()
         }
         if (composerMarkdownSnapshot() != previousMarkdown) publishUserTextChange()

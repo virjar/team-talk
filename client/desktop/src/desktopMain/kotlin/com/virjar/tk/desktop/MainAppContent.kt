@@ -346,8 +346,14 @@ internal fun WindowScope.MainAppContent(
             MainListPane(nav, presentationGate, onLogout, conversations, mentionedChatIds, conversationPeerUsers, peerRemarks, contacts, friendPresenceByUid, pendingApplyCount)
             MainContentPane(
                 nav, presentationGate, resources, chatEmbeddedAssetImports, documentEmbeddedAssetImports,
+<<<<<<< HEAD
                 documentEmbeddedAssetMedia, resolveUser, mentionCandidates, activeConversation,
                 activeChatName, activeChatType, mainWindowReadActive, mainWindowFullscreen,
+=======
+                documentEmbeddedAssetMedia, resolveUser, mentionCandidates, contacts.mapNotNull { it.user },
+                activeConversation,
+                activeChatName, activeChatType, mainWindowReadActive,
+>>>>>>> 570a0ce (feat(documents): 文档编辑器支持 @ 提及好友)
             )
         }
         }
@@ -470,6 +476,7 @@ private fun RowScope.MainContentPane(
     documentEmbeddedAssetMedia: com.virjar.tk.app.ui.bridge.EmbeddedAssetMediaConfig,
     resolveUser: (String) -> User?,
     mentionCandidates: List<User>,
+    documentMentionCandidates: List<User>,
     activeConversation: Conversation?,
     activeChatName: String,
     activeChatType: Int,
@@ -519,6 +526,8 @@ private fun RowScope.MainContentPane(
                     presentationGate = presentationGate,
                     embeddedAssetImports = documentEmbeddedAssetImports,
                     embeddedAssetMedia = documentEmbeddedAssetMedia,
+                    mentionCandidates = documentMentionCandidates,
+                    onMentionProfileOpen = presentationGate.guard(nav::openProfile),
                     onDetach = presentationGate.guard { nav.documentWindowVisible = true },
                 )
             }
