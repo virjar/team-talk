@@ -1,6 +1,7 @@
 package com.virjar.tk.desktop
 
 import com.virjar.tk.shared.client.JvmPrivateDataDirectory
+import com.virjar.tk.shared.client.DocumentDraftStoragePaths
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftOwnerKey
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftPayload
 import com.virjar.tk.app.navigation.feature.document.MAX_DOCUMENT_DRAFT_MANIFEST_BYTES
@@ -22,13 +23,10 @@ internal fun desktopDocumentDraftStorage(
     ownerKey: DocumentDraftOwnerKey,
 ): DesktopDocumentDraftStorage {
     val directory = JvmPrivateDataDirectory.openExisting(dataDir)
-    val namespace = listOf(
-        DesktopDocumentDraftPersistence.DRAFTS_DIRECTORY,
-        DesktopDocumentDraftPersistence.STORAGE_VERSION_DIRECTORY,
-        DesktopDocumentDraftPersistence.DEPLOYMENTS_DIRECTORY,
+    val namespace = DocumentDraftStoragePaths.jvmDirectories(
         ownerKey.deploymentFingerprint,
-        DesktopDocumentDraftPersistence.OWNERS_DIRECTORY,
-        desktopDocumentDraftOwnerNamespace(ownerKey),
+        ownerKey.datasetId,
+        ownerKey.uid,
     )
     val identity = namespace.fold(directory.root) { path, component -> path.resolve(component) }
         .normalize()
@@ -608,25 +606,5 @@ private const val UTF8_DIGEST_BUFFER_BYTES = 64 * 1024
 internal val DOCUMENT_DRAFT_RECORD_KEY = Regex("[a-z0-9-]{1,128}")
 private val DESKTOP_SHA256_PATTERN = Regex("[0-9a-f]{64}")
 
-internal fun desktopDocumentDraftOwnerNamespace(ownerKey: DocumentDraftOwnerKey): String {
-    val digest = MessageDigest.getInstance("SHA-256").digest(
-        buildString {
-            append("teamtalk-desktop-document-draft-owner-v2\u0000")
-            append(ownerKey.deploymentFingerprint)
-            append('\u0000')
-            append(ownerKey.datasetId)
-            append('\u0000')
-            append(ownerKey.uid)
-        }
-            .toByteArray(StandardCharsets.UTF_8),
-    )
-    val hex = "0123456789abcdef"
-    return buildString(2 + digest.size * 2) {
-        append("u-")
-        digest.forEach { byte ->
-            val value = byte.toInt() and 0xff
-            append(hex[value ushr 4])
-            append(hex[value and 0x0f])
-        }
-    }
-}
+internal fun desktopDocumentDraftOwnerNamespace(ownerKey: DocumentDraftOwnerKey): String =
+    DocumentDraftStoragePaths.jvmOwnerNamespace(ownerKey.deploymentFingerprint, ownerKey.datasetId, ownerKey.uid)

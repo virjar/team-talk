@@ -11,6 +11,7 @@ import com.virjar.tk.app.navigation.feature.document.MAX_DOCUMENT_DRAFT_MANIFEST
 import com.virjar.tk.app.navigation.feature.document.MAX_DOCUMENT_DRAFT_RECORD_BYTES
 import com.virjar.tk.app.navigation.feature.document.MAX_DOCUMENT_DRAFT_RECORDS
 import com.virjar.tk.app.navigation.feature.document.MAX_TOTAL_DOCUMENT_DRAFT_RECORD_BYTES
+import com.virjar.tk.shared.client.DocumentDraftStoragePaths
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
@@ -573,7 +574,7 @@ private fun hexToBytes(value: String): ByteArray {
     }
 }
 
-internal const val ANDROID_DOCUMENT_DRAFT_DIRECTORY = "document-drafts-v2"
+internal const val ANDROID_DOCUMENT_DRAFT_DIRECTORY = DocumentDraftStoragePaths.ANDROID_DIRECTORY
 private const val OWNER_PREFERENCES = "teamtalk_document_drafts"
 private const val ACTIVE_OWNER_KEY = "active_owner_hash"
 private const val INDEX_MAGIC = 0x54544433

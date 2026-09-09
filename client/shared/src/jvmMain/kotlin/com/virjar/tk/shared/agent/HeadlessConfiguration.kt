@@ -5,6 +5,7 @@ import com.virjar.tk.shared.client.JvmClientDataLease
 import com.virjar.tk.shared.client.LocalCacheDiagnostics
 import com.virjar.tk.shared.client.LocalCacheDiagnosticLayout
 import com.virjar.tk.shared.client.LocalCacheCompaction
+import com.virjar.tk.shared.client.LocalCacheArchive
 import com.virjar.tk.shared.client.decodeTcpTlsCertificateBase64
 import com.virjar.tk.shared.client.prepareJvmClientDataVersion
 import com.virjar.tk.shared.client.privateAtomicTextFileStore
@@ -70,9 +71,23 @@ internal object HeadlessConfiguration {
             "export-cli-token" -> setOf("data-dir", "token-file")
             "doctor" -> setOf("data-dir", "cache-root", "cache-layout")
             "compact-cache" -> setOf("cache-root", "database")
+            "export-quarantine" -> setOf("cache-root", "database", "output", "cache-layout")
+            "verify-cache-archive" -> setOf("archive")
             else -> error("Unknown configuration command")
         }
         require(options.keys.all { it in allowed }) { "Unknown configuration option" }
+        if (command == "export-quarantine") {
+            val root = requireNotNull(options["cache-root"]) { "--cache-root is required" }
+            val database = requireNotNull(options["database"]) { "--database is required; select a quarantine path from doctor" }
+            val output = requireNotNull(options["output"]) { "--output is required and must be a new directory" }
+            println(Json.encodeToString(LocalCacheArchive.export(File(root), database, File(output), cacheLayout(options))))
+            return
+        }
+        if (command == "verify-cache-archive") {
+            val archive = requireNotNull(options["archive"]) { "--archive is required" }
+            println(Json.encodeToString(LocalCacheArchive.verify(File(archive))))
+            return
+        }
         if (command == "compact-cache") {
             val root = requireNotNull(options["cache-root"]) { "--cache-root is required" }
             val database = requireNotNull(options["database"]) { "--database is required; select its relative path from doctor" }
@@ -85,12 +100,7 @@ internal object HeadlessConfiguration {
             require(cacheRoot != null || "cache-layout" !in options) { "--cache-layout requires --cache-root" }
             require(cacheRoot == null || "data-dir" !in options) { "Use either --data-dir or --cache-root" }
             if (cacheRoot != null) {
-                val layout = when (options["cache-layout"] ?: "jvm") {
-                    "jvm" -> LocalCacheDiagnosticLayout.JVM
-                    "android" -> LocalCacheDiagnosticLayout.ANDROID
-                    else -> error("--cache-layout must be jvm or android")
-                }
-                println(Json.encodeToString(LocalCacheDiagnostics.inspect(File(cacheRoot), layout)))
+                println(Json.encodeToString(LocalCacheDiagnostics.inspect(File(cacheRoot), cacheLayout(options))))
             } else println(doctor(dataDir))
             return
         }
@@ -124,6 +134,12 @@ internal object HeadlessConfiguration {
             store(dataDir).replaceText(Json.encodeToString(AgentLaunchSettings.serializer(), settings), MAX_BYTES)
             println("Agent configuration saved to ${File(dataDir, FILE_NAME).absolutePath}")
         }
+    }
+
+    private fun cacheLayout(options: Map<String, String>): LocalCacheDiagnosticLayout = when (options["cache-layout"] ?: "jvm") {
+        "jvm" -> LocalCacheDiagnosticLayout.JVM
+        "android" -> LocalCacheDiagnosticLayout.ANDROID
+        else -> error("--cache-layout must be jvm or android")
     }
 
     fun doctor(dataDir: File) = buildJsonObject {

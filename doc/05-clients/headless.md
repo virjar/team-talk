@@ -213,6 +213,30 @@ UNKNOWN，稳定检查也不等于在线原子快照。独立文档草稿/命令
 未检查资料，必须一同保留。容量、未知 schema 与失败语义见
 [只读资料诊断](../03-architecture/client-and-sdk.md#只读本地资料诊断)。此入口不迁移、重放、清理或修复资料。
 
+保全隔离资料时，从 doctor 报告中选择隔离数据库的相对路径，导出到源安装根之外、尚不存在的新目录；
+输出父目录必须已存在，导出后再校验完整归档：
+
+```bash
+bin/tt-agent export-quarantine --cache-root /path/to/desktop-or-headless-data \
+  --database 'deployments/<fingerprint>/datasets/<datasetId>/users/<uid>.corrupt-<id>/cache_e0.db' \
+  --output /private/path/new-cache-archive
+bin/tt-agent verify-cache-archive --archive /private/path/new-cache-archive
+```
+
+替换示例路径后执行。JVM 导出要求客户端退出，并取得安装根已有的 `.lock`；不会创建缺失锁文件、
+初始化安装版本、打开 SQLite 或读取登录凭据。Android 使用已经导出的应用数据根，传
+`--cache-layout android`，`--database` 取其 doctor 报告中的隔离路径；该命令不直接操作运行中的设备。
+
+归档保留指定隔离库、同账号替代库、完整附件源及独立文档草稿/命令的当前已知路径，含尚未发布的临时文件；
+Android 另保留文档 owner preferences。旧布局和无法确认归属的旧文档哈希目录不在自动导出范围。
+`manifest.json` 最后发布，`payload/` 保持源相对路径；
+校验逐文件检查集合、大小和 SHA-256，拒绝增删改与链接。缺失 manifest 表示导出未完成；复制失败时保留
+未完成输出供明确处理，不覆盖已有输出或删除源。单文件最多 512 MiB、总计 2 GiB、最多 4,096 个文件。
+
+归档含私人正文、草稿及可靠命令中的凭据，必须按私有资料保管，不能作为脱敏诊断文件分享。
+稳定复制与校验成功只证明归档符合清单，不证明资料可恢复、Android 原始导出完整或可删除源。
+范围与限制见[隔离资料保全归档](../03-architecture/client-and-sdk.md#隔离资料保全归档)。
+
 Desktop/headless 的健康当前库可以在退出客户端后显式离线压缩。先运行上述诊断，从报告中选取目标库的
 相对路径；`compact-cache` 只操作这一份 JVM 账号库：
 

@@ -1044,6 +1044,34 @@ AndroidSqliteDriver 使用同一 SQLDelight schema 的升级回调；同 major �
 显式救援、放弃、旧 namespace 处置与 Android 离线压缩仍在
 [CORE-06](../10-reference/roadmap.md#core-06--本地缓存生命周期)。
 
+#### 隔离资料保全归档
+
+[LocalCacheArchive](../../client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/client/LocalCacheArchive.kt)
+按 doctor 报告中的隔离数据库相对路径，保全同一 deployment + dataset + uid 的原始资料。
+JVM 导出取得安装根现存 `.lock` 的租约，不初始化锁、版本或账号库；Android 只接受已导出的应用数据根。
+两种布局均不打开 SQLite、草稿 reader、spool 或凭据 store，不执行修复、重放、迁移或源清理。
+保全不以当前 major/schema 或 SQLite 健康为前提，损坏库及未知 schema 仍按原始文件复制。
+
+JVM 保全所选隔离 owner 与当前 owner 两个目录中的文件，Android 保全指定隔离库及对应替代库的数据库族。
+两端另包含整个聊天附件源目录（含 `.partial`），以及独立文档的清单、墓碑、
+记录和临时文件。Android 还保全文档 owner preferences；登录凭据、其他账号和可回拉媒体缓存不在范围内。
+文档路径与平台存储共用 `DocumentDraftStoragePaths`；即使版本目录名相同，无法确认归属的旧 owner 哈希
+资料也不自动纳入。当前已知布局以外的旧资料必须另行保留，不被假定已包含。
+
+目标父目录必须已存在，目标必须是源根之外的全新私有目录。`payload/` 保留相对路径，最后发布的
+`manifest.json` 格式版本为 1，
+记录 owner、布局、隔离路径、各范围是否存在及每个文件的相对路径、大小、SHA-256。
+源扫描最多 4,096 个目录项，归档最多 4,096 个文件；单文件最多 512 MiB、合计最多 2 GiB，清单最多 4 MiB。
+复制前后的文件集合、状态和摘要需一致；失败不删除源，也不覆盖或自动清理未完成目标。没有清单的目标
+不能当作完整归档，已有清单仍须通过校验。
+
+`verify` 检查格式与固定范围、完整文件集合、逐文件大小和摘要，拒绝增删改、链接及校验期间可检测到的变化；
+结果只给文件数、总字节和清单摘要。校验不证明来源真实性、与当前源仍相同、资料可恢复或原始 Android
+导出一致；稳定窗口也不是在线原子快照。归档文件含正文、草稿和可靠命令中的秘密，必须保留私有权限。
+它不是脱敏诊断报告，不构成重放或删除源资料的许可。救援导入、显式放弃与旧 namespace 处置仍未实现。
+CLI 见[无头客户端](../05-clients/headless.md)，测试入口见
+[隔离资料保全与校验](../09-testing/local-tests.md#隔离资料保全与校验)。
+
 #### JVM 离线单库压缩
 
 [LocalCacheCompaction.compact(root, databasePath)](../../client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/client/LocalCacheCompaction.kt)

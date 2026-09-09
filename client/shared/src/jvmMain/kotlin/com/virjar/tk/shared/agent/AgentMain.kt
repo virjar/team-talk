@@ -54,7 +54,7 @@ fun main(args: Array<String>) {
                 result.bundle?.let { println("${it.buildIdentity} protocol ${it.protocolMajor}.${it.protocolMinor}") }
             }
             else -> HeadlessBundleInstaller.acquireRuntimeLease(HeadlessRuntime.currentBundle()).use {
-                if (command in setOf("configure", "export-cli-token", "doctor", "compact-cache")) {
+                if (command in setOf("configure", "export-cli-token", "doctor", "compact-cache", "export-quarantine", "verify-cache-archive")) {
                     HeadlessConfiguration.execute(requireNotNull(command), args.drop(1))
                 } else runAgent(args)
             }
@@ -305,6 +305,10 @@ tt-agent — TeamTalk headless client (Java 21+)
                                        Read-only SQLite diagnostics for an installation or Android app-data export
   compact-cache --cache-root <dir> --database <relative-path>
                                        Offline VACUUM of one current JVM account database; close its clients first
+  export-quarantine --cache-root <dir> --database <relative-path> --output <new-dir>
+                    [--cache-layout jvm|android]
+                                       Preserve quarantined and shared owner files without modifying them
+  verify-cache-archive --archive <dir>  Verify the complete file inventory and SHA-256 manifest
   install-bundle --prefix <new-dir>     Install the extracted distribution (POSIX)
   upgrade-bundle --prefix <dir>         Atomically switch binaries; retain account data
   uninstall-bundle --prefix <dir>       Run from an external bundle after stopping installed processes

@@ -52,10 +52,16 @@ token 被踢。非 loopback 连接没有明文回退；严格字面量 loopback 
 并暂停孤儿源扫描删除；容量满时新导入会明确失败。不要删除隔离库或 spool 来绕过限制，现有诊断入口
 不提供救援、放弃或 compaction。
 
+需要保全隔离资料时，使用[`export-quarantine` 与 `verify-cache-archive`](../05-clients/headless.md)
+将指定隔离库、同账号替代库、附件源和独立文档资料复制到新的私有目录。JVM 先退出客户端并保留现存
+`.lock`；Android 先取得完整应用数据导出，再指定 `--cache-layout android`。
+复制失败留下的无清单目录属于未完成输出，应单独保留并明确处置，不在该目录重试覆盖。
+校验成功不等于修复完成或源可删除；归档可能包含可靠命令凭据，不能当脱敏诊断附件上传。
+
 健康的当前 Desktop/headless 账号库需要释放 SQLite 空闲页时，先退出该安装下的客户端，再使用
 [`tt-agent compact-cache`](../05-clients/headless.md) 指定诊断报告中的一条数据库相对路径。
 该入口原地 `VACUUM`，保留可靠事实；锁占用、隔离副本、非当前 schema/epoch、安装 major 不兼容和空间
-不足会拒绝执行，不应删除锁或资料来绕过。Android 原库与导出布局仍仅支持只读诊断。
+不足会拒绝执行，不应删除锁或资料来绕过。Android 导出布局支持只读诊断与保全导出，尚无原地压缩。
 
 ## 3. 消息显示发送成功但对端没有
 

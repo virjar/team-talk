@@ -7,7 +7,7 @@ import com.virjar.tk.app.navigation.feature.document.DocumentDraftPayload
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftReadRetryableException
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftReadStatus
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftRecordSource
-import java.security.MessageDigest
+import com.virjar.tk.shared.client.DocumentDraftStoragePaths
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.ExecutionException
@@ -596,18 +596,9 @@ internal class AndroidDocumentDraftPersistence internal constructor(
         private const val DEFAULT_TASK_QUEUE_CAPACITY = 64
         private const val FLUSH_TIMEOUT_SECONDS = 5L
 
-        internal fun draftFileName(ownerKey: DocumentDraftOwnerKey): String {
-            val digest = MessageDigest.getInstance("SHA-256").digest(
-                buildString {
-                    append("teamtalk-android-document-draft-owner-v3\u0000")
-                    append(ownerKey.deploymentFingerprint)
-                    append('\u0000')
-                    append(ownerKey.datasetId)
-                    append('\u0000')
-                    append(ownerKey.uid)
-                }.toByteArray(Charsets.UTF_8),
-            )
-            return digest.joinToString(separator = "") { byte -> "%02x".format(byte.toInt() and 0xff) } + ".json"
-        }
+        internal fun draftFileName(ownerKey: DocumentDraftOwnerKey): String =
+            DocumentDraftStoragePaths.androidOwnerPrefix(
+                ownerKey.deploymentFingerprint, ownerKey.datasetId, ownerKey.uid,
+            ) + ".json"
     }
 }
