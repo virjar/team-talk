@@ -53,6 +53,56 @@ import kotlin.test.assertTrue
 /** Real archive, SQLite and product Desktop record format, without starting an application owner. */
 class DesktopDocumentDraftRescueIntegrationTest {
     @Test
+    fun `explicit create rescue restores the original admitted request and later blank title edits as one pair`() = workspace { workspace ->
+        for (quarantine in listOf(true, false)) {
+            val scenario = directory(workspace, "create-$quarantine")
+            val source = root(scenario, "source")
+            val selected = tab(creating = true, title = "")
+            val command = createCommand()
+            val other = tab(recoveryId = OTHER_RECOVERY, instanceId = 12, documentId = OTHER_DOCUMENT)
+            storage(source).replace(payload(listOf(selected, other), command = command), LIMITS)
+            if (quarantine) corruptUnrelatedMessageIndex(source)
+            val archived = archive(scenario, source, quarantine)
+            val target = root(scenario, "target")
+            val sourceBefore = inventory(source)
+            val archiveBefore = inventory(archived.directory)
+            val targetBefore = inventory(target)
+            assertEquals(listOf(RECORD_KEY), DesktopDocumentDraftRescue.listRecords(archived.directory, DesktopDocumentRescueKind.CREATE).recordKeys)
+            val preview = DesktopDocumentDraftRescue.preview(target, DATABASE, archived.directory, RECORD_KEY, DesktopDocumentRescueKind.CREATE)
+            assertEquals(targetBefore, inventory(target))
+            assertEquals(DOCUMENT, preview.documentId)
+            assertEquals("document-command-$DOCUMENT", preview.commandRecordKey)
+            assertEquals(2L, preview.admittedEditGeneration)
+            assertEquals(3L, preview.currentEditGeneration)
+            assertTrue(preview.consequence.contains("retries that exact request"))
+            assertFalse(Json.encodeToString(preview).contains(PRIVATE_BODY))
+            assertFalse(Json.encodeToString(preview).contains(PRIVATE_TITLE))
+            failure("Document draft rescue failed: PENDING_OPERATIONS") { preview(target, archived) }
+            val base = arrayOf("--cache-root", target.path, "--database", DATABASE, "--archive", archived.directory.path, "--record-key", RECORD_KEY)
+            val output = mutableListOf<String>()
+            assertEquals(2, runDesktopDocumentDraftRescueCommand(arrayOf("import-document-create-rescue") + base, output::add))
+            assertEquals(targetBefore, inventory(target))
+            assertEquals(0, runDesktopDocumentDraftRescueCommand(arrayOf("import-document-create-rescue") + base + arrayOf(
+                "--confirm-manifest-sha256", preview.manifestSha256, "--expected-target-state-sha256", preview.targetStateSha256,
+            ), output::add))
+            assertEquals(DesktopDocumentDraftStorageReadStatus.AVAILABLE, storage(target).read(LIMITS) { restored ->
+                val manifest = Json.parseToJsonElement(restored.manifest).jsonObject
+                assertEquals(JsonArray(listOf(JsonPrimitive(RECORD_KEY))), manifest.getValue("tabRecordKeys"))
+                assertEquals(JsonArray(listOf(JsonPrimitive("document-command-$DOCUMENT"))), manifest.getValue("pendingDocumentRecordKeys"))
+                assertEquals(selected, Json.parseToJsonElement(assertNotNull(restored.readRecord(RECORD_KEY))))
+                assertEquals(command, Json.parseToJsonElement(assertNotNull(restored.readRecord("document-command-$DOCUMENT"))))
+            })
+            assertNoCommands(target)
+            assertEquals(sourceBefore, inventory(source))
+            assertEquals(archiveBefore, inventory(archived.directory))
+            failure("TARGET_DOCUMENT_DRAFTS_NOT_EMPTY") {
+                DesktopDocumentDraftRescue.importDraft(target, DATABASE, archived.directory, RECORD_KEY,
+                    preview.manifestSha256, preview.targetStateSha256, DesktopDocumentRescueKind.CREATE)
+            }
+        }
+    }
+
+    @Test
     fun `verified v1 and v2 archives restore only the selected tab with its exact baseline and assets`() = workspace { workspace ->
         for (quarantine in listOf(true, false)) {
             val scenario = directory(workspace, "format-$quarantine")
@@ -284,15 +334,17 @@ class DesktopDocumentDraftRescueIntegrationTest {
             assertEquals(0L, scalar(File(root, DATABASE), "SELECT count(*) FROM $table"))
     }
 
-    private fun payload(tabs: List<JsonObject>, pendingSpaces: JsonArray = JsonArray(emptyList())): DocumentDraftPayload {
-        val records = tabs.map { tab ->
+    private fun payload(tabs: List<JsonObject>, pendingSpaces: JsonArray = JsonArray(emptyList()), command: JsonObject? = null): DocumentDraftPayload {
+        val tabsRecords = tabs.map { tab ->
             val key = "tab-" + (tab.getValue("recoveryId") as JsonPrimitive).content
             DocumentDraftRecord(key) { tab.toString() }
         }
+        val commands = command?.let { listOf(DocumentDraftRecord("document-command-$DOCUMENT") { it.toString() }) }.orEmpty()
+        val records = tabsRecords + commands
         val manifest = buildJsonObject {
             put("schemaVersion", 11)
-            put("tabRecordKeys", JsonArray(records.map { JsonPrimitive(it.key) }))
-            put("pendingDocumentRecordKeys", JsonArray(emptyList()))
+            put("tabRecordKeys", JsonArray(tabsRecords.map { JsonPrimitive(it.key) }))
+            put("pendingDocumentRecordKeys", JsonArray(commands.map { JsonPrimitive(it.key) }))
             put("activeTabInstanceId", 11)
             put("selectedSpaceId", SPACE)
             put("pendingSpaceCreates", pendingSpaces)
@@ -301,6 +353,17 @@ class DesktopDocumentDraftRescueIntegrationTest {
         val identities = records.mapTo(linkedSetOf()) { it.key }
         if (pendingSpaces.isNotEmpty()) identities += "space-command-$SPACE"
         return DocumentDraftPayload(manifest.toString(), records, identities)
+    }
+
+    private fun createCommand() = buildJsonObject {
+        put("documentId", DOCUMENT)
+        put("tabInstanceId", 11)
+        put("spaceId", SPACE)
+        put("parentId", JsonNull)
+        put("title", PRIVATE_TITLE)
+        put("markdown", "original admitted body")
+        put("admittedEditGeneration", 2)
+        put("assets", JsonArray(emptyList()))
     }
 
     private fun tab(

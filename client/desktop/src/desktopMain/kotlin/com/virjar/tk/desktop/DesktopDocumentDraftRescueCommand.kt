@@ -8,11 +8,16 @@ import java.io.File
 /** Maintenance is selected before default data-root, logging, AWT, credentials or version initialization. */
 internal fun runDesktopDocumentDraftRescueCommand(args: Array<String>, output: (String) -> Unit): Int? {
     val command = args.firstOrNull()
-    if (command !in setOf("list-document-draft-rescue", "preview-document-draft-rescue", "import-document-draft-rescue")) return null
+    val kind = when (command) {
+        "list-document-draft-rescue", "preview-document-draft-rescue", "import-document-draft-rescue" -> DesktopDocumentRescueKind.DRAFT
+        "list-document-create-rescue", "preview-document-create-rescue", "import-document-create-rescue" -> DesktopDocumentRescueKind.CREATE
+        else -> return null
+    }
+    val action = command.substringBefore('-')
     return try {
-        val keys = if (command == "list-document-draft-rescue") setOf("archive") else
+        val keys = if (action == "list") setOf("archive") else
             setOf("cache-root", "database", "archive", "record-key") +
-            if (command == "import-document-draft-rescue") setOf("confirm-manifest-sha256", "expected-target-state-sha256") else emptySet()
+            if (action == "import") setOf("confirm-manifest-sha256", "expected-target-state-sha256") else emptySet()
         val options = linkedMapOf<String, String>()
         require((args.size - 1) % 2 == 0)
         var index = 1
@@ -25,21 +30,21 @@ internal fun runDesktopDocumentDraftRescueCommand(args: Array<String>, output: (
         }
         require(options.keys == keys)
         val json = Json { encodeDefaults = true; prettyPrint = true }
-        if (command == "list-document-draft-rescue") {
-            output(json.encodeToString(DesktopDocumentDraftRescue.listRecords(File(options.getValue("archive")))))
+        if (action == "list") {
+            output(json.encodeToString(DesktopDocumentDraftRescue.listRecords(File(options.getValue("archive")), kind)))
             return 0
         }
         val root = File(options.getValue("cache-root"))
         val archive = File(options.getValue("archive"))
         val database = options.getValue("database")
         val recordKey = options.getValue("record-key")
-        val report = if (command == "preview-document-draft-rescue") {
-            DesktopDocumentDraftRescue.preview(root, database, archive, recordKey)
+        val report = if (action == "preview") {
+            DesktopDocumentDraftRescue.preview(root, database, archive, recordKey, kind)
         } else {
             val digest = options.getValue("confirm-manifest-sha256")
             val state = options.getValue("expected-target-state-sha256")
             require(digest.matches(Regex("[0-9a-f]{64}")) && state.matches(Regex("[0-9a-f]{64}")))
-            DesktopDocumentDraftRescue.importDraft(root, database, archive, recordKey, digest, state)
+            DesktopDocumentDraftRescue.importDraft(root, database, archive, recordKey, digest, state, kind)
         }
         output(json.encodeToString(report))
         0

@@ -181,6 +181,169 @@ class DocumentDraftRescueTest {
         }
     }
 
+    @Test
+    fun `admitted create rescue restores only the exact pair through the ordinary store and outbox`() {
+        val selected = creatingTab()
+        val command = assertNotNull(PendingDocumentCreateCommand.capture(selected))
+        val neighbor = tab().copy(tabId = OTHER, documentId = OTHER, instanceId = 2, recoveryId = OTHER)
+        val source = createSource(listOf(selected, neighbor), listOf(command))
+        val originalRecords = source.records.toMap()
+        assertEquals(listOf(selected.draftRecoveryKey()), DocumentDraftRescue.createRecordKeys(source))
+
+        val prepared = DocumentDraftRescue.prepareCreate(source, selected.draftRecoveryKey())
+        val restored = restore(prepared.payload)
+        assertEquals(listOf(selected.copy(pathResolved = false)), restored.tabs)
+        assertEquals(listOf(command), restored.pendingDocumentCreates)
+        assertTrue(restored.pendingSpaceCreates.isEmpty())
+        assertTrue(restored.pendingDestructiveIntents.isEmpty())
+        assertEquals(setOf(selected.draftRecoveryKey(), command.draftRecoveryKey()), prepared.payload.activeRecoveryKeys)
+        val outbox = DocumentDurableCreateOutbox()
+        outbox.restore(restored.pendingSpaceCreates, restored.pendingDocumentCreates)
+        assertEquals(command, outbox.acquireDocument(restored.tabs.single()))
+        assertEquals(listOf(PendingDocumentCreateReplay(command, restored.tabs.single())),
+            outbox.replayableDocuments(restored.tabs, setOf(SPACE)))
+        assertTrue(outbox.replayableDocuments(restored.tabs, emptySet()).isEmpty())
+        assertEquals(originalRecords, source.records)
+        assertEquals(command.draftRecoveryKey(), prepared.metadata.commandRecordKey)
+        assertEquals(command.title.length, prepared.metadata.frozenTitleCharacters)
+        assertEquals(command.markdown.length, prepared.metadata.frozenMarkdownCharacters)
+        val metadata = documentDraftPayloadJson.encodeToString(prepared.metadata)
+        assertFalse(metadata.contains(command.title))
+        assertFalse(metadata.contains("private draft"))
+        assertFalse(metadata.contains("2026/09/private.txt"))
+        assertEquals("PENDING_OPERATIONS", assertFailsWith<DocumentDraftRescueException> {
+            DocumentDraftRescue.prepare(source, selected.draftRecoveryKey())
+        }.reason)
+    }
+
+    @Test
+    fun `later empty title and replacement assets survive beside the original frozen create request`() {
+        val admitted = creatingTab()
+        val command = assertNotNull(PendingDocumentCreateCommand.capture(admitted))
+        val nextAsset = EmbeddedAsset(OTHER, Attachment("2026/09/later.txt", "later.txt", "text/plain", 5))
+        val successor = admitted.copy(editGeneration = admitted.editGeneration + 1, draftTitle = "",
+            draftMarkdown = "later body [later](${EmbeddedAsset.uri(OTHER)})", draftAssets = listOf(nextAsset))
+        val prepared = DocumentDraftRescue.prepareCreate(createSource(listOf(successor), listOf(command)), successor.draftRecoveryKey())
+        val restored = restore(prepared.payload)
+        assertEquals(listOf(successor.copy(pathResolved = false)), restored.tabs)
+        assertEquals(listOf(command), restored.pendingDocumentCreates)
+        assertEquals(admitted.editGeneration, prepared.metadata.admittedEditGeneration)
+        assertEquals(successor.editGeneration, prepared.metadata.currentEditGeneration)
+        val outbox = DocumentDurableCreateOutbox()
+        outbox.restore(emptyList(), restored.pendingDocumentCreates)
+        // Capture of the blank successor is invalid. Replay must still return the original A.
+        assertEquals(null, PendingDocumentCreateCommand.capture(restored.tabs.single()))
+        assertEquals(command, outbox.acquireDocument(restored.tabs.single()))
+        assertEquals(admitted.draftAssets, outbox.pendingDocuments().single().assets)
+        assertEquals(listOf(nextAsset), restored.tabs.single().draftAssets)
+    }
+
+    @Test
+    fun `same generation payload disagreement and incompatible create identities cannot be normalized away`() {
+        val admitted = creatingTab()
+        val command = assertNotNull(PendingDocumentCreateCommand.capture(admitted))
+        for (changed in listOf(
+            admitted.copy(draftTitle = "different title"),
+            admitted.copy(draftMarkdown = "different body", draftAssets = emptyList()),
+            admitted.copy(draftAssets = admitted.draftAssets.map { it.copy(attachment = it.attachment.copy(size = 99)) }),
+        )) {
+            assertEquals("CREATE_GENERATION_PAYLOAD_MISMATCH", assertFailsWith<DocumentDraftRescueException> {
+                DocumentDraftRescue.prepareCreate(createSource(listOf(changed), listOf(command)), changed.draftRecoveryKey())
+            }.reason)
+        }
+        for (changedCommand in listOf(
+            command.copy(tabInstanceId = 2), command.copy(spaceId = OTHER),
+            command.copy(parentId = OTHER), command.copy(admittedEditGeneration = admitted.editGeneration + 1),
+            command.copy(title = "  ${command.title}  "),
+        )) {
+            assertEquals("INVALID_CREATE_PAIR", assertFailsWith<DocumentDraftRescueException> {
+                DocumentDraftRescue.prepareCreate(createSource(listOf(admitted), listOf(changedCommand)), admitted.draftRecoveryKey())
+            }.reason)
+        }
+    }
+
+    @Test
+    fun `retired pairs and other pending or creating dependencies reject before any command can replay`() {
+        val selected = creatingTab()
+        val command = assertNotNull(PendingDocumentCreateCommand.capture(selected))
+        val source = createSource(listOf(selected), listOf(command))
+        for ((key, reason) in listOf(command.draftRecoveryKey() to "CREATE_COMMAND_NOT_UNIQUE",
+            selected.draftRecoveryKey() to "RECORD_UNAVAILABLE_OR_RETIRED")) {
+            val retired = Source(source.manifest, source.records, setOf(key))
+            assertEquals(reason, assertFailsWith<DocumentDraftRescueException> {
+                DocumentDraftRescue.prepareCreate(retired, selected.draftRecoveryKey())
+            }.reason)
+            assertTrue(retired.reads.isEmpty())
+        }
+        val manifest = documentDraftPayloadJson.decodeFromString<PersistedDocumentWorkspaceManifest>(source.manifest)
+        for (pending in listOf(
+            manifest.copy(pendingSpaceCreates = listOf(PersistedDocumentSpaceCreateRequest("pending", spaceId = SPACE))),
+            manifest.copy(pendingDestructiveIntents = listOf(PersistedDocumentDestructiveIntent.from(PendingDocumentSpaceArchiveIntent(OTHER, SPACE)))),
+        )) {
+            val candidate = Source(documentDraftPayloadJson.encodeToString(pending), source.records)
+            assertEquals("PENDING_OPERATIONS", assertFailsWith<DocumentDraftRescueException> {
+                DocumentDraftRescue.createRecordKeys(candidate)
+            }.reason)
+            assertTrue(candidate.reads.isEmpty())
+        }
+        val other = selected.copy(tabId = OTHER, instanceId = 2, recoveryId = OTHER)
+        assertEquals("CREATE_TAB_NOT_UNIQUE", assertFailsWith<DocumentDraftRescueException> {
+            DocumentDraftRescue.prepareCreate(createSource(listOf(selected, other), listOf(command)), selected.draftRecoveryKey())
+        }.reason)
+        assertEquals("CREATE_COMMAND_NOT_UNIQUE", assertFailsWith<DocumentDraftRescueException> {
+            DocumentDraftRescue.prepareCreate(createSource(listOf(selected, other),
+                listOf(command, assertNotNull(PendingDocumentCreateCommand.capture(other)))), selected.draftRecoveryKey())
+        }.reason)
+        val alias = tab().copy(tabId = OTHER, instanceId = 2, recoveryId = OTHER)
+        assertEquals("CREATE_PARENT_OR_IDENTITY_DEPENDENCY", assertFailsWith<DocumentDraftRescueException> {
+            DocumentDraftRescue.prepareCreate(createSource(listOf(selected, alias), listOf(command)), selected.draftRecoveryKey())
+        }.reason)
+        assertEquals("CREATE_PARENT_OR_IDENTITY_DEPENDENCY", assertFailsWith<DocumentDraftRescueException> {
+            DocumentDraftRescue.prepareCreate(createSource(listOf(selected.copy(parentId = DOCUMENT)),
+                listOf(command.copy(parentId = DOCUMENT))), selected.draftRecoveryKey())
+        }.reason)
+    }
+
+    @Test
+    fun `create rescue strictly decodes commands and requires complete canonical frozen and successor assets`() {
+        val selected = creatingTab()
+        val command = assertNotNull(PendingDocumentCreateCommand.capture(selected))
+        val source = createSource(listOf(selected), listOf(command))
+        val key = command.draftRecoveryKey()
+        val encoded = source.records.getValue(key)
+        val json = documentDraftPayloadJson.parseToJsonElement(encoded) as JsonObject
+        for (invalid in listOf(
+            "{\"title\":\"hidden command\"," + encoded.drop(1),
+            JsonObject(json - "assets").toString(),
+            JsonObject(json + ("admittedEditGeneration" to JsonPrimitive("4"))).toString(),
+            documentDraftPayloadJson.encodeToString(PersistedDocumentCreateCommand.from(command.copy(assets = emptyList()))),
+        )) {
+            assertFailsWith<DocumentDraftRescueException> {
+                DocumentDraftRescue.prepareCreate(Source(source.manifest, source.records + (key to invalid)), selected.draftRecoveryKey())
+            }
+        }
+        val brokenSuccessor = selected.copy(editGeneration = 5, draftAssets = emptyList())
+        assertFailsWith<DocumentDraftRescueException> {
+            DocumentDraftRescue.prepareCreate(createSource(listOf(brokenSuccessor), listOf(command)), selected.draftRecoveryKey())
+        }
+        val manifest = documentDraftPayloadJson.decodeFromString<PersistedDocumentWorkspaceManifest>(source.manifest)
+        assertEquals("UNSUPPORTED_SCHEMA", assertFailsWith<DocumentDraftRescueException> {
+            DocumentDraftRescue.prepareCreate(Source(documentDraftPayloadJson.encodeToString(manifest.copy(schemaVersion = 10)), source.records),
+                selected.draftRecoveryKey())
+        }.reason)
+    }
+
+    private fun creatingTab() = tab().copy(documentId = null, revision = null, creating = true,
+        savedTitle = "", savedMarkdown = "", savedAssets = emptyList(), draftTitle = "frozen title")
+
+    private fun createSource(tabs: List<DocumentTabState>, commands: List<PendingDocumentCreateCommand>): Source {
+        // Encode the raw current format, including inconsistent fixtures: normal restore must not
+        // filter malformed identities or commands before the rescue reader can reject them.
+        val payload = encodeDocumentDraftPayload(DocumentWorkspaceDraftSnapshot(tabs, tabs.first().instanceId, SPACE,
+            pendingDocumentCreates = commands))
+        return Source(payload.manifest, payload.records.associate { it.key to it.payload() })
+    }
+
     private fun source(vararg tabs: DocumentTabState): Source {
         val persistence = MemoryPersistence()
         assertTrue(DocumentDraftStore(persistence).save(OWNER, tabs.toList(), tabs.first().tabId, SPACE))

@@ -432,6 +432,8 @@ bin/tt-agent import-outgoing-rescue --cache-root /path/to/desktop-or-headless-da
 
 独立文档的未保存标签由 [Desktop 离线文档救援入口](desktop.md#独立文档草稿救援)处理，命令通过
 Desktop 启动程序执行，不属于 `tt-agent` 或 SDK 文档业务接口。
+已有冻结创建请求及配对 creating 标签使用 [Desktop 可靠文档创建救援](desktop.md#可靠文档创建救援)；
+确认导入后可由正常客户端重放原请求，后继草稿仍须手动保存。
 
 ### 便携包安装、升级与卸载
 

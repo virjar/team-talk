@@ -231,14 +231,14 @@ internal class DocumentWorkspaceSaveCoordinator(
         workspace.navigationActions.invalidateBranch(current.spaceId, current.parentId)
         val job = scope.launch {
             try {
-                val canonicalTitle = try {
-                    DocumentPolicy.normalizeNodeName(current.draftTitle)
-                } catch (failure: IllegalArgumentException) {
-                    attempt?.fail()
-                    reportError(failure, "文档标题不符合保存要求")
-                    return@launch
-                }
                 val prepared = if (createCommand == null) {
+                    val canonicalTitle = try {
+                        DocumentPolicy.normalizeNodeName(current.draftTitle)
+                    } catch (failure: IllegalArgumentException) {
+                        attempt?.fail()
+                        reportError(failure, "文档标题不符合保存要求")
+                        return@launch
+                    }
                     try {
                         prepareTitleForContentWrite(
                             tab = current,
@@ -266,6 +266,7 @@ internal class DocumentWorkspaceSaveCoordinator(
                         return@launch
                     }
                 } else {
+                    // 创建只重放已准入的冻结载荷；后继编辑可以暂时没有合法标题。
                     TitlePreparation.Ready(current, mutation.request, renamed = false)
                 }
                 val ready = when (prepared) {

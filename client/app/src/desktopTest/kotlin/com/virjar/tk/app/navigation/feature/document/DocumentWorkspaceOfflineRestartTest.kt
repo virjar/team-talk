@@ -11,6 +11,8 @@ import com.virjar.tk.shared.client.SessionEndReason
 import com.virjar.tk.shared.client.UserSession
 import com.virjar.tk.shared.client.createSession
 import com.virjar.tk.protocol.model.Document
+import com.virjar.tk.protocol.model.DocumentContent
+import com.virjar.tk.protocol.model.DocumentCreateResult
 import com.virjar.tk.protocol.model.DocumentNode
 import com.virjar.tk.protocol.model.DocumentPathSpine
 import com.virjar.tk.protocol.model.DocumentSpace
@@ -31,9 +33,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -44,10 +48,120 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DocumentWorkspaceOfflineRestartTest {
+    @Test
+    fun `restarted create replays its frozen title and preserves a blank successor after a receipt only acknowledgement`() = runTest {
+        val fixture = createFixture()
+        val persistence = MemoryDocumentDraftPersistence()
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val scopes = mutableListOf<CoroutineScope>()
+        val errors = mutableListOf<Pair<Throwable, String>>()
+        try {
+            val admittedTab = DocumentTabState(
+                tabId = DOCUMENT_ID,
+                instanceId = 17L,
+                documentId = null,
+                spaceId = SPACE_ID,
+                parentId = null,
+                ancestorIds = emptyList(),
+                savedTitle = "",
+                savedMarkdown = "",
+                draftTitle = "已准入标题 A",
+                draftMarkdown = "已准入正文 A",
+                revision = null,
+                dirty = true,
+                creating = true,
+                editGeneration = 3L,
+            )
+            val command = requireNotNull(PendingDocumentCreateCommand.capture(admittedTab))
+            val successor = admittedTab.copy(
+                draftTitle = "",
+                draftMarkdown = "尚未提交的后继正文 B",
+                editGeneration = 4L,
+            )
+            val owner = DocumentDraftOwnerKey(fixture.deploymentIdentity.fingerprint, DATASET_ID, OWNER_UID)
+            val beforeRestart = DocumentDraftStore(persistence)
+            assertTrue(beforeRestart.save(
+                key = owner,
+                tabs = listOf(successor),
+                activeTabId = DOCUMENT_ID,
+                selectedSpaceId = SPACE_ID,
+                pendingDocumentCreates = listOf(command),
+            ))
+            assertTrue(beforeRestart.flush())
+
+            val committed = document().copy(title = command.title, markdown = command.markdown, revision = 1L)
+            fixture.rpc.respond = { method ->
+                val payload = when (method) {
+                    DocumentRpcContract.M_LIST_SPACES -> ProtoCodec.encode(DocumentSpacePage(
+                        snapshotVersion = DocumentDirectorySnapshotVersion(1L, 1L, 1L),
+                        items = listOf(space()),
+                        nextCursor = null,
+                    ))
+                    DocumentRpcContract.M_LIST_RECENT_DOCUMENTS,
+                    DocumentRpcContract.M_LIST_RECENTLY_CREATED_DOCUMENTS -> ProtoCodec.encodeList(emptyList<DocumentHomeItem>())
+                    DocumentRpcContract.M_LIST_NODES -> ProtoCodec.encodeList(listOf(node(committed)))
+                    DocumentRpcContract.M_GET_DOCUMENT -> ProtoCodec.encode(committed)
+                    DocumentRpcContract.M_GET_NODE_PATH_SPINE -> ProtoCodec.encode(DocumentPathSpine(listOf(node(committed))))
+                    DocumentRpcContract.M_CREATE_DOCUMENT -> ProtoCodec.encode(DocumentCreateResult(DOCUMENT_ID, null))
+                    else -> error("Unexpected create recovery RPC: $method")
+                }
+                ResponsePayload(1, 0, payload)
+            }
+
+            repeat(2) { restart ->
+                val featureScope = CoroutineScope(dispatcher + SupervisorJob()).also(scopes::add)
+                val feature = DocumentWorkspaceFeature(
+                    fixture.session, featureScope, { failure, message -> errors += failure to message },
+                    DocumentDraftStore(persistence), UiLocalDataBoundary(dispatcher),
+                )
+                val observers = featureScope.coroutineContext[Job]!!.children.toSet()
+                val opening = featureScope.async { feature.open() }
+                advanceUntilIdle()
+                opening.await()
+                // Bootstrap launches the save separately; wait for its persistence barriers too.
+                featureScope.coroutineContext[Job]!!.children.filterNot { it in observers }.toList().joinAll()
+
+                val restored = requireNotNull(feature.activeTab)
+                assertEquals(DOCUMENT_ID, restored.documentId)
+                assertFalse(restored.creating)
+                assertTrue(restored.dirty)
+                assertEquals(1L, restored.revision)
+                assertEquals(command.title, restored.savedTitle)
+                assertEquals("", restored.draftTitle)
+                assertEquals(successor.draftMarkdown, restored.draftMarkdown)
+                assertEquals(successor.editGeneration, restored.editGeneration)
+                assertNotEquals(successor.recoveryId, restored.recoveryId)
+                val durable = requireNotNull(DocumentDraftStore(persistence).restore(owner))
+                assertTrue(durable.pendingDocumentCreates.isEmpty())
+                assertEquals("", durable.tabs.single().draftTitle)
+                assertEquals(successor.draftMarkdown, durable.tabs.single().draftMarkdown)
+                assertEquals(1, fixture.rpc.calls.count { it.second == DocumentRpcContract.M_CREATE_DOCUMENT },
+                    "restart $restart must only acknowledge the original creation")
+                assertEquals(0, fixture.rpc.calls.count { it.second == DocumentRpcContract.M_UPDATE_DOCUMENT })
+                assertTrue(errors.isEmpty(), errors.toString())
+                featureScope.cancel()
+                advanceUntilIdle()
+            }
+
+            val sent = fixture.rpc.payloads.single { it.first == DocumentRpcContract.M_CREATE_DOCUMENT }.second
+            ProtoCodec.withPayload(sent) {
+                assertEquals(command.documentId, readString())
+                assertEquals(command.spaceId, readString())
+                assertNull(readString())
+                assertEquals(command.title, readString())
+                assertEquals(DocumentContent(command.markdown, command.assets), DocumentContent.readFrom(this))
+            }
+        } finally {
+            scopes.forEach { it.cancel() }
+            fixture.close()
+        }
+    }
+
     @Test
     fun `referenced document opens from a space outside the loaded first page`() = runTest {
         val fixture = createFixture()
@@ -702,6 +816,7 @@ class DocumentWorkspaceOfflineRestartTest {
         private val failure: AppError,
     ) : RpcInvoker {
         val calls = mutableListOf<Pair<String, Int>>()
+        val payloads = mutableListOf<Pair<Int, ByteArray?>>()
         var respond: (suspend (Int) -> ResponsePayload)? = null
 
         override suspend fun invoke(
@@ -710,6 +825,7 @@ class DocumentWorkspaceOfflineRestartTest {
             payload: ByteArray?,
         ): ResponsePayload {
             calls += service to methodId
+            payloads += methodId to payload?.copyOf()
             respond?.let { return it(methodId) }
             throw failure
         }

@@ -6,6 +6,18 @@ import kotlinx.serialization.Serializable
 import java.io.File
 import java.security.MessageDigest
 
+internal enum class DesktopDocumentRescueKind(val consequence: String) {
+    DRAFT("Restore one unsaved document tab with its original identity and revision. " +
+        "Opening the client does not save it. Saving requires an explicit action and current server validation; " +
+        "remote changes can cause a revision conflict. No pending document operation or unfinished attachment upload is restored. " +
+        "The archive and original files remain unchanged"),
+    CREATE("Restore one creating tab and its original admitted creation request. " +
+        "Opening the client retries that exact request when its space is available. " +
+        "Later local edits remain unsaved and require an explicit save. An accepted request is only acknowledged, never recreated; " +
+        "unavailable spaces or invalid assets can leave the request pending. No other operation or unfinished attachment upload is restored. " +
+        "The archive and original files remain unchanged"),
+}
+
 @Serializable
 internal data class DesktopDocumentDraftRescuePreview(
     val root: String,
@@ -20,10 +32,12 @@ internal data class DesktopDocumentDraftRescuePreview(
     val attachmentCount: Int,
     val manifestSha256: String,
     val targetStateSha256: String,
-    val consequence: String = "Restore one unsaved document tab with its original identity and revision. " +
-        "Opening the client does not save it. Saving requires an explicit action and current server validation; " +
-        "remote changes can cause a revision conflict. No pending document operation or unfinished attachment upload is restored. " +
-        "The archive and original files remain unchanged",
+    val consequence: String,
+    val commandRecordKey: String?,
+    val frozenTitleCharacters: Int?,
+    val frozenMarkdownCharacters: Int?,
+    val admittedEditGeneration: Long?,
+    val currentEditGeneration: Long?,
 )
 
 @Serializable
@@ -36,13 +50,17 @@ internal data class DesktopDocumentDraftRescueRecords(
 
 /** Reuses the product's record reader/writer and app codec without starting a UI or client session. */
 internal object DesktopDocumentDraftRescue {
-    fun listRecords(archive: File): DesktopDocumentDraftRescueRecords =
+    fun listRecords(archive: File, kind: DesktopDocumentRescueKind = DesktopDocumentRescueKind.DRAFT): DesktopDocumentDraftRescueRecords =
         readDocumentSource(archive) { source, owner, sha ->
-            DesktopDocumentDraftRescueRecords(owner, sha, DocumentDraftRescue.recordKeys(source))
+            DesktopDocumentDraftRescueRecords(owner, sha, when (kind) {
+                DesktopDocumentRescueKind.DRAFT -> DocumentDraftRescue.recordKeys(source)
+                DesktopDocumentRescueKind.CREATE -> DocumentDraftRescue.createRecordKeys(source)
+            })
         }
 
-    fun preview(root: File, database: String, archive: File, recordKey: String): DesktopDocumentDraftRescuePreview {
-        val source = readSource(archive, recordKey)
+    fun preview(root: File, database: String, archive: File, recordKey: String,
+                kind: DesktopDocumentRescueKind = DesktopDocumentRescueKind.DRAFT): DesktopDocumentDraftRescuePreview {
+        val source = readSource(archive, recordKey, kind)
         return LocalCacheDocumentDraftRescueAccess.withTarget(root, database, source.owner) { directory ->
             runCatching { source.preview(directory, database, emptyTargetState(directory, source.owner)) }
         }.getOrThrow()
@@ -51,8 +69,9 @@ internal object DesktopDocumentDraftRescue {
     fun importDraft(
         root: File, database: String, archive: File, recordKey: String,
         expectedManifestSha256: String, expectedTargetStateSha256: String,
+        kind: DesktopDocumentRescueKind = DesktopDocumentRescueKind.DRAFT,
     ): DesktopDocumentDraftRescuePreview {
-        val source = readSource(archive, recordKey, expectedManifestSha256)
+        val source = readSource(archive, recordKey, kind, expectedManifestSha256)
         return LocalCacheDocumentDraftRescueAccess.withTarget(root, database, source.owner) { directory ->
             runCatching {
                 val state = emptyTargetState(directory, source.owner)
@@ -67,9 +86,12 @@ internal object DesktopDocumentDraftRescue {
         }.getOrThrow()
     }
 
-    private fun readSource(archive: File, recordKey: String, expected: String? = null): Source =
+    private fun readSource(archive: File, recordKey: String, kind: DesktopDocumentRescueKind, expected: String? = null): Source =
         readDocumentSource(archive, expected) { source, owner, sha ->
-            Source(owner, sha, DocumentDraftRescue.prepare(source, recordKey))
+            Source(owner, sha, kind, when (kind) {
+                DesktopDocumentRescueKind.DRAFT -> DocumentDraftRescue.prepare(source, recordKey)
+                DesktopDocumentRescueKind.CREATE -> DocumentDraftRescue.prepareCreate(source, recordKey)
+            })
         }
 
     private fun <T> readDocumentSource(
@@ -97,13 +119,17 @@ internal object DesktopDocumentDraftRescue {
     private data class Source(
         val owner: LocalCacheDiagnosticOwner,
         val manifestSha256: String,
+        val kind: DesktopDocumentRescueKind,
         val prepared: DocumentDraftRescuePrepared,
     ) {
         fun preview(directory: JvmPrivateDataDirectory, database: String, targetState: String): DesktopDocumentDraftRescuePreview {
             val metadata = prepared.metadata
             return DesktopDocumentDraftRescuePreview(directory.root.toString(), database, owner, metadata.recordKey,
-                metadata.documentId, metadata.spaceId, metadata.baseRevision, metadata.creating,
-                metadata.markdownCharacters, metadata.attachmentCount, manifestSha256, targetState)
+                if (kind == DesktopDocumentRescueKind.CREATE) metadata.tabId else metadata.documentId,
+                metadata.spaceId, metadata.baseRevision, metadata.creating,
+                metadata.markdownCharacters, metadata.attachmentCount, manifestSha256, targetState, kind.consequence,
+                metadata.commandRecordKey, metadata.frozenTitleCharacters, metadata.frozenMarkdownCharacters,
+                metadata.admittedEditGeneration, metadata.currentEditGeneration)
         }
     }
 }

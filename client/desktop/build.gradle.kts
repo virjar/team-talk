@@ -829,7 +829,10 @@ tasks.withType<JavaExec>().configureEach {
                     layout.projectDirectory.dir("src/desktopMain/resources"),
                 ) + classpath
 
-            if (args?.firstOrNull() in setOf("list-document-draft-rescue", "preview-document-draft-rescue", "import-document-draft-rescue")) {
+            if (args?.firstOrNull() in setOf(
+                    "list-document-draft-rescue", "preview-document-draft-rescue", "import-document-draft-rescue",
+                    "list-document-create-rescue", "preview-document-create-rescue", "import-document-create-rescue",
+                )) {
                 // Offline maintenance supplies its own existing root. Do not create even the
                 // development data parent or provision a UI test instance for these commands.
                 jvmArgs = listOf("-Djava.awt.headless=true")

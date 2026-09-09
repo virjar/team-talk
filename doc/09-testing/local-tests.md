@@ -326,6 +326,28 @@ SQLite schema、dataset 不符、依赖查询失败、Android 来源和非空目
 服务端 CAS 与幂等边界由 `DocumentIntegrationTest`、`DocumentNodeMoveReliabilityIntegrationTest` 检查。
 命令见 [Desktop 独立文档草稿救援](../05-clients/desktop.md#独立文档草稿救援)。
 
+### 可靠文档创建救援
+
+定向入口沿用 `DocumentDraftRescueTest`、`DesktopDocumentDraftRescueIntegrationTest` 与
+`DocumentWorkspaceOfflineRestartTest`，分别检查配对记录校验、离线导入，以及重启后冻结请求重放与
+后继草稿保留。
+
+使用真实 Desktop 文档记录存储与临时 SQLite，构造单个 creating 标签、冻结创建请求及在请求之后
+产生的后继草稿。列举、预览和确认导入使用任务专属 JVM 归档与同 owner 的空目标 namespace；
+检查原标签/文档 ID、冻结正文/资产、本机后继修改均保持，两个记录安装完成后才由 manifest 发布。
+操作前后的原归档、隔离资料、邻居 owner 和目标无关事实保持不变，命令不初始化默认资料目录或网络。
+
+拒绝场景应包含多条创建、标签/命令身份或位置不匹配、墓碑、非法 JSON、缺失或未完成上传的资产描述符、空间
+创建/删除/归档，以及归档任一数据库或目标库中的待确认移动/改名；非空目标和过期目标摘要不被覆盖。
+普通无 pending 草稿与可靠创建入口不能互换；每个结论按实际测试断言或独立验收证据记录，不宣称
+通用文档操作救援、Android 来源或磁盘故障已覆盖。
+
+真实客户端验收分别构造“请求未到达服务器”和“服务器已接受但 ACK 丢失”。确认导入后在当前可见
+空间观察原请求重放，服务端只能有同一个文档 ID；已接受请求的无正文 ACK 只绑定身份，不回滚服务器
+后续正文。后继草稿保持 dirty 且不自动保存，用户再次保存时仍接受 revision/权限检查。另核对空间
+撤权/归档和首次附件失效时待办与草稿保留，不把导入成功当作业务完成。
+命令见[Desktop 可靠文档创建救援](../05-clients/desktop.md#可靠文档创建救援)。
+
 ### JVM 离线单库压缩
 
 ```bash

@@ -298,6 +298,41 @@ manifest 中所选的标签标识。在仓库内运行预览：
 文档操作和 Android 应用内导入不在此入口范围；完整边界见
 [独立文档单标签救援](../03-architecture/client-and-sdk.md#独立文档单标签救援)。
 
+### 可靠文档创建救援
+
+归档里有已冻结但尚未确认的文档创建请求时，使用独立的 create 救援命令，同时恢复 creating 标签和
+原请求。确认导入后，正常启动会在当前可见空间中重放原创建意图；它与上方打开后不自动保存的普通
+草稿入口有不同的提交语义。原文档 ID、冻结正文/资产和标签里的后继修改分别保留，不拼成新的请求。
+
+先列出创建命令对应的候选标签：
+
+```bash
+./gradlew :client:desktop:run --args='list-document-create-rescue --archive /private/path/cache-archive'
+```
+
+选中 `tab-<recoveryId>` 后，退出目标安装的客户端，按目标 doctor 数据库相对路径预览：
+
+```bash
+./gradlew :client:desktop:run --args='preview-document-create-rescue --cache-root /path/to/desktop-data --database <relative-current-database> --archive /private/path/cache-archive --record-key tab-<recoveryId>'
+```
+
+预览不输出冻结正文或本机后继草稿。核对身份、执行后果及来源/目标范围，明确要恢复原创建请求后，
+原样提供 `manifestSha256` 和 `targetStateSha256`：
+
+```bash
+./gradlew :client:desktop:run --args='import-document-create-rescue --cache-root /path/to/desktop-data --database <relative-current-database> --archive /private/path/cache-archive --record-key tab-<recoveryId> --confirm-manifest-sha256 <manifestSha256> --expected-target-state-sha256 <targetStateSha256>'
+```
+
+来源仅支持当前格式的 JVM 归档，未退役记录中必须恰有一条待确认文档创建和一个完整的配对 creating 标签；任何空间
+创建、删除/归档或移动/改名依赖都会拒绝。目标仍须是同 owner 的健康当前库和空文档 namespace，
+不覆盖已有草稿或操作。命令在默认资料目录、UI、凭据和网络初始化前执行，不通过 `tt-agent`。
+
+重启后重放原请求；已被服务端接受的请求通过无正文 ACK 绑定原文档，后继修改仍待用户显式保存。
+空间撤权、归档或暂不可见时待办可能继续保留，首次创建的附件失效也可能被拒绝；不要改原 ID 或删除
+待办来把未知结果变成另一条创建。导入成功不等于服务端创建完成，不保证重新获得空间或附件权限。
+原归档和隔离资料保持不变；其余文档操作、未完成上传及 Android 来源/原机导入仍不支持。
+完整边界见[可靠文档创建救援](../03-architecture/client-and-sdk.md#可靠文档创建救援)。
+
 ## 7. 用户资料
 
 资料是主窗口内 440dp 的紧凑模态对象预览：横向头像与身份信息、主要动作、少量次要动作和低强调危险
