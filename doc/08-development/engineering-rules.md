@@ -60,7 +60,8 @@
 ## 3. 本地优先
 
 - ViewModel 不把一次网络响应作为长期页面状态。
-- 新数据必须有 LocalCache/事件/恢复路径。
+- 需要离线保留的业务状态复用既有 LocalCache 与恢复链；瞬时查询按使用期持有，不为每种新数据
+  预建持久化、事件或归档导入机制。
 - 服务端写操作大多通过 NOTIFY 收敛客户端。
 - readSeq、serverSeq、version 等单调字段用 max 合并。
 - EventProcessor 成功后才推进游标。

@@ -68,7 +68,7 @@ HTTP 空闲约束可用 `./gradlew :server:server:test --tests '*ProtectedHttpId
 ./gradlew :protocol:protocol:jvmTest --tests 'com.virjar.tk.protocol.DocumentModelTest'
 ./gradlew :server:server:test --tests '*DocumentChangeEventIntegrationTest' --tests '*DocumentCommentIntegrationTest' --tests '*AdminSecurityIntegrationTest'
 ./gradlew :client:shared:jvmTest --tests '*DocumentChangeProjectionIntegrationTest' --tests '*DocumentCommentRecoveryIntegrationTest'
-./gradlew :client:app:desktopTest --tests '*DocumentWorkspaceStateTest'
+./gradlew :client:app:desktopTest --tests '*DocumentWorkspaceStateTest' --tests '*DocumentWorkspaceOfflineRestartTest'
 ```
 
 服务端用随机 PostgreSQL schema 验证文档/评论与事件的同事务关系、实时权限、稳定身份重放、修订冲突、
@@ -76,6 +76,8 @@ HTTP 空闲约束可用 `./gradlew :server:server:test --tests '*ProtectedHttpId
 分类与存储故障。SQLite 回归验证评论创建/编辑/删除意图跨关闭重开、未知结果原字节重放、403/409
 保留到显式 retry/discard、reset/撤权不删除 pending、关闭或失效后的晚到结果不复活缓存。
 协议测试覆盖回复和墓碑往返、4,000 UTF-16 单元正文、100 条分页及截断/超量解码拒绝。
+工作区重启回归保留原创建 ID、冻结请求与后继草稿，检查创建祖先确认后只续发依赖已满足的相关命令，
+包括已有中间父节点的后代；未提交草稿不自动保存，失败或空投影不越过依赖。
 这些入口验证模块契约与持久恢复；真实双端评论交互、跨端可见性和管理台浏览器行为按
 [场景目录](scenario-catalog.md)另外执行，不以构建通过代替界面验收。
 
@@ -204,7 +206,7 @@ JavaCV 会缓存首次加载异常，后续 `tryLoad()` 可能只是重抛；补
 
 附件恢复回归应保留同账号隔离副本和冻结源，重新创建替代库并启动协调器，验证未知旧引用不会触发
 孤儿源删除，重新打开后保护仍有效；其他账号及无隔离副本的正常回收保持原有语义。不得用删除真实
-隔离库来完成验证，也不能把配额限制绕过为无界保留。上述入口不验证资料救援、放弃或 compaction。
+隔离库来完成验证，也不能把配额限制绕过为无界保留。上述入口不验证损坏修复、资料放弃或 compaction。
 
 ### 隔离资料保全与校验
 
@@ -219,7 +221,7 @@ Android 用例另检查非目录 scope 的存在标记与文件清单一致。
 
 容量上限、复制期间并发源变化、复制中断或磁盘满，以及这些故障后的未完成输出保留，属于后续故障
 注入验收场景，不由上述自动化或基础 CLI 验收证明。
-实际 CLI 验收仅使用本任务创建的资料或保留一致性的副本，不以校验成功宣称救援导入、原始导出一致性
+实际 CLI 验收仅使用本任务创建的资料或保留一致性的副本，不以校验成功宣称业务恢复、原始导出一致性
 或用户资料可删除。归档中的测试正文和命令凭据不得进入日志或提交。
 
 ### 隔离副本显式放弃
@@ -256,144 +258,9 @@ CLI 参数夹具检查缺少明确 owner 时拒绝且不创建目录；完整制
 未选中的 agent 数据目录不被创建、原始归档与非目标文件不变。需覆盖 owner/布局/摘要不匹配、缺失确认、
 锁占用、归档增删改，以及 format 1 隔离归档与 format 2 namespace 归档互不授权删除。
 
-验收结论区分原字节保全、显式资料放弃与可执行救援。校验成功不能宣称导入或重放完成，Android 导出
+验收结论区分原字节保全与显式资料放弃；当前不支持从归档导入或重放业务。Android 导出
 夹具不能代替手机端删除与恢复；容量极限、实时并发、磁盘故障及断电持久性另需专用故障验证。
 操作示例见[账号 namespace 保全与放弃](../05-clients/headless.md#账号-namespace-保全与放弃)。
-
-### 单聊天草稿救援
-
-```bash
-./gradlew :client:shared:jvmTest --tests '*LocalCacheChatDraftRescueIntegrationTest' \
-  --tests '*ChatDraftSyncRecoveryIntegrationTest'
-```
-
-使用真实临时 SQLite 和私有源文件，检查 format 1/2 归档及 Android 来源到同 owner JVM 目标的单聊天
-导入；预览不安装草稿，提交使用新本机 revision，保留归档、其他聊天和独立资料。重启后权威读取服务器
-草稿，再分别检查保留本机和使用其他设备的选择；带源 READY 任务转为失败，只有显式重试才继续原上传
-identity。已有同步恢复测试负责 CAS、未知结果与 ACK 后清稿的普通链路。
-
-拒绝场景覆盖目标非空/可靠工作、预览后 composer 时钟变化、源待确认变更或消费依赖、归档/源摘要变化、
-owner 不匹配、根锁占用及目标 schema 不支持。以定向测试实际断言为自动化覆盖范围，不能据此宣称所有
-损坏形态、磁盘故障或中断窗口均可恢复。
-
-真实 Desktop 验收须使用专用安装根和归档，先退出客户端执行打包 CLI 预览及确认导入，再打开同账号
-目标会话；确认草稿与模式/回复/附件对应、未自动发送、冲突选择和手动附件重试可用。最终只主动发送
-一次，检查 ACK、草稿清空及重启无重复；不以 SQLite 断言代替界面验收，也不对用户原库制造故障。
-命令和限制见[单聊天草稿救援](../05-clients/headless.md#单聊天草稿救援)。
-
-### 单条 outgoing 救援
-
-```bash
-./gradlew :client:shared:jvmTest --tests '*LocalCacheOutgoingRescueIntegrationTest' \
-  --tests '*HeadlessConfigurationIntegrationTest'
-```
-
-使用真实临时 SQLite 与归档，核对原 payload/fingerprint/消息身份续发、权威编辑快照回流、终态失败
-保持停止、附件源仅在明确失败后用于修复，以及精确消费关联不清除新远端版本。拒绝场景包含未知草稿
-变更或后继稿、两个目标时钟变化、已有权威身份、SUCCESS 回执及非规范 payload。
-CLI 回归核对消息选择、三项确认及非法参数拒绝，不创建无关目录。其他来源布局与容量、锁、摘要和
-损坏形态的验收分别记录，以测试实际断言为自动化覆盖范围。
-
-真实 Desktop 验收在专用安装根执行打包 CLI 预览和导入；确认活跃消息在认证后自动续发原 clientMsgId，
-取得 ACK 后只出现一条消息，重启不重复；终态失败保持可见且不自动发送。原 ACK 丢失场景应返回原
-serverSeq，首次发送附件失效场景应进入明确失败并保留恢复入口。导入成功与消息送达分别判定，不对
-用户原库制造故障，不把定向用例扩大成通用损坏修复或断电保证。
-命令与边界见[单条 outgoing 救援](../05-clients/headless.md#单条-outgoing-救援)。
-
-### 独立文档单标签救援
-
-```bash
-./gradlew :client:desktop:desktopTest --tests '*DesktopDocumentDraftRescueIntegrationTest' \
-  :client:app:desktopTest --tests '*DocumentDraftRescueTest'
-```
-
-使用任务专属临时安装根、真实 SQLite 与 Desktop 文档记录存储，检查 format 1/2 JVM 归档中单个
-未保存标签的列举、预览与导入。列举不解析或输出标签正文，也不承诺可恢复；维护入口不初始化默认
-资料目录或网络。预览不能安装记录或启动登录；导入保留原 tab/document/recovery 身份、旧
-saved 基线与 revision、本机正文和完整 sidecar，记录写入完成后才发布 manifest。核对原资料、归档和
-其他 owner 字节不变，以及目标状态摘要变化后旧确认失效。
-
-拒绝场景应涵盖源记录退役、非法或缺失正文/资产清单、旧文档 schema、manifest 待确认操作，以及
-归档内任一数据库中的待确认移动/改名；空替代库不能掩盖隔离库中的命令。无主库、孤立 sidecar、旧
-SQLite schema、dataset 不符、依赖查询失败、Android 来源和非空目标均须保持资料不变。
-
-真实 Desktop 验收使用任务账号：保存 revision 1 后留下本机修改，另一客户端提交 revision 2，再从
-归档救到空文档 namespace。打开工作台应显示原本稿且不自动保存；显式保存得到冲突，选择保留本稿
-后仍须再次保存。已有缓存不代表已重取最新正文，验收需核对权威结果；另检查删除或撤权后本稿保留、
-原地写入受拒，以及关闭重开不丢稿。未完成附件上传和 Android 应用内导入不由这些测试覆盖。
-
-既有工作区恢复和冲突回归位于 `DocumentWorkspaceOfflineRestartTest`、`DocumentWorkspaceStateTest`，
-服务端 CAS 与幂等边界由 `DocumentIntegrationTest`、`DocumentNodeMoveReliabilityIntegrationTest` 检查。
-命令见 [Desktop 独立文档草稿救援](../05-clients/desktop.md#独立文档草稿救援)。
-
-### 可靠文档创建救援
-
-定向入口沿用 `DocumentDraftRescueTest`、`DesktopDocumentDraftRescueIntegrationTest` 与
-`DocumentWorkspaceOfflineRestartTest`，分别检查配对记录校验、离线导入，以及重启后冻结请求重放与
-后继草稿保留。
-
-使用真实 Desktop 文档记录存储与临时 SQLite，构造单个 creating 标签、冻结创建请求及在请求之后
-产生的后继草稿。列举、预览和确认导入使用任务专属 JVM 归档与同 owner 的空目标 namespace；
-检查原标签/文档 ID、冻结正文/资产、本机后继修改均保持，两个记录安装完成后才由 manifest 发布。
-操作前后的原归档、隔离资料、邻居 owner 和目标无关事实保持不变，命令不初始化默认资料目录或网络。
-
-拒绝场景应包含多条创建、标签/命令身份或位置不匹配、墓碑、非法 JSON、缺失或未完成上传的资产描述符、空间
-创建/删除/归档，以及归档任一数据库或目标库中的待确认移动/改名；非空目标和过期目标摘要不被覆盖。
-普通无 pending 草稿与可靠创建入口不能互换；每个结论按实际测试断言或独立验收证据记录，不宣称
-通用文档操作救援、Android 来源或磁盘故障已覆盖。
-
-真实客户端验收分别构造“请求未到达服务器”和“服务器已接受但 ACK 丢失”。确认导入后在当前可见
-空间观察原请求重放，服务端只能有同一个文档 ID；已接受请求的无正文 ACK 只绑定身份，不回滚服务器
-后续正文。后继草稿保持 dirty 且不自动保存，用户再次保存时仍接受 revision/权限检查。另核对空间
-撤权/归档和首次附件失效时待办与草稿保留，不把导入成功当作业务完成。
-命令见[Desktop 可靠文档创建救援](../05-clients/desktop.md#可靠文档创建救援)。
-
-### 空间创建与文档树救援
-
-沿用文档救援与工作区重启夹具，在任务专属 JVM 安装根构造唯一冻结空间请求、同空间普通草稿和
-多层 creating 文档，其中祖先保留已准入创建命令，叶节点同时包含已准入命令及尚无命令的草稿。
-列举返回空间命令标识，
-预览不写目标；确认导入后核对原空间/文档 ID、冻结 payload、后继草稿与全部同空间依赖保持一致。
-其他空间普通草稿不带入，原归档、源资料与其他 owner 不变；记录安装完成后才发布 manifest。
-
-拒绝场景应涵盖多空间创建、其他空间 creating 标签或文档命令、未准入父/祖先、非规范 UUID、超过
-128 项的祖先链、重复或自身 ID、非法 parent、创建依赖图中的环、删除/归档、任一源库或目标库的待确认移动、
-损坏或缺失记录，以及非空目标、owner/schema 不符和
-过期目标摘要。不把普通草稿入口或单文档创建入口的拒绝当作可删除依赖的理由。
-另检查无待确认空间请求、仅有多个 creating 文档的普通空间归档仍被此入口拒绝，应使用下方独立
-文档树入口，不能从单文档入口绕过唯一命令限制。
-
-真实 Desktop 验收分别检查空间尚未创建、空间已被接受但 ACK 丢失，以及接受后改名、归档或失权。
-启动按当前可见 ID 收尾；需要重放时，取得当前空间投影后只发送依赖已满足的原命令，父文档确认
-持久收尾并发布有效投影后，只续发依赖刚确认祖先且其余依赖已满足的既有命令。检查父/子/孙的请求
-顺序、原 ID/payload 和后继草稿保持，
-以及父失败、未准入祖先、空投影时当次不会越过依赖发送后代；后续刷新或显式保存仍由服务端裁决。
-远端已有父节点的引用可保留，但服务端当前父链或权限变化仍能拒绝首次创建。已接受空间不回滚当前
-名称，衔接不改变用户随后选择的导航；无命令叶草稿与后继修改不自动保存，失败保留待办，不把导入
-成功等同于业务完成。覆盖结论按实际测试断言和独立验收证据记录。
-另构造父文档已接受后被其他客户端移动、旧 ACK 尚未收尾时创建子文档的归档，核对父子不同时刻的
-合法路径原样保留，不因旧路径前缀不同被拒绝；重放仍使用各自原请求，由服务端当前父链裁决。
-再构造 P 创建仍 pending、其下已有远端中间父 B、C 在 B 下等待 P 的场景：P 获得有效确认后，C
-应沿原命令续发，不因直接父 B 无 pending 而遗漏；同时检查无关失败兄弟不被这次确认重新触发。
-命令见[Desktop 空间创建与文档树救援](../05-clients/desktop.md#空间创建与文档树救援)。
-
-### 已有空间文档树创建救援
-
-使用真实 Desktop 文档记录与临时 SQLite，构造无任何待确认空间创建或删除/归档意图的归档：选中
-空间包含父/子/孙冻结创建、无命令叶草稿、普通脏稿和请求之后的修改；其他空间另有独立 creating
-工作。列举应返回可选择的空间，预览不写目标，确认导入只恢复选中空间全部未退役草稿与原命令。
-核对原 ID、冻结 payload、路径与后继稿保持，其他空间留源，原归档、源库和邻居 owner 不变。
-
-拒绝场景应包括全局身份重复、邻居草稿正文/资产或冻结内容损坏、任意待确认空间创建/删除/归档、选中空间无 live 冻结
-命令、选中链指向归档内已知其他空间节点、未准入祖先或有环依赖、源/目标待确认移动、旧 schema、
-owner 不符、非空目标 namespace 与过期摘要。不能通过空间选择跳过坏冻结命令，也不能因目标某个
-空间为空而合并已有目标资料。
-
-真实客户端验收在已有可用空间内观察父/子/孙沿原身份及依赖顺序重放，不发送空间创建请求；祖先
-确认后仅衔接相关且其余依赖满足的已有命令。后继修改和无命令叶草稿不自动保存；权限、父链或附件
-失效导致失败时保留待办与本稿。保留旧单文档和待创建空间入口的拒绝回归，覆盖范围以实际测试断言
-和验收证据为准，不把独立入口完成当作通用文档恢复。
-命令见[Desktop 已有空间文档树创建救援](../05-clients/desktop.md#已有空间文档树创建救援)。
 
 ### JVM 离线单库压缩
 
@@ -408,7 +275,7 @@ owner 不符、非空目标 namespace 与过期摘要。不能通过空间选择
 拒绝场景应覆盖已持有安装锁、外部 SQLite 连接占用、隔离库或同账号隔离副本、损坏库、非当前
 schema/epoch、非法或链接路径、安装 major 不兼容/重置中。实际磁盘耗尽与进程中断需在专用存储环境补验。
 仅在本任务创建的库或一致副本
-上执行 CLI smoke；不能用用户正在使用的原库验收。此入口不覆盖 Android 原地压缩、救援或放弃。
+上执行 CLI smoke；不能用用户正在使用的原库验收。此入口不覆盖 Android 原地压缩、损坏修复或资料放弃。
 
 ### 会话内数据库整理
 

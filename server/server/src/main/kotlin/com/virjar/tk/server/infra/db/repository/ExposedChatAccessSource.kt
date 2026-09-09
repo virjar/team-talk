@@ -40,9 +40,6 @@ class ExposedChatAccessSource(
     override suspend fun load(chatId: String, memberUids: Set<String>): ChatAccessSnapshot =
         authorizationRead { readSnapshot(chatId, memberUids) }
 
-    override suspend fun listAccessibleChatIds(uid: String): Set<String> =
-        authorizationRead { accessibleChatIds(uid) }
-
     override suspend fun <T> read(
         chatId: String,
         memberUids: Set<String>,

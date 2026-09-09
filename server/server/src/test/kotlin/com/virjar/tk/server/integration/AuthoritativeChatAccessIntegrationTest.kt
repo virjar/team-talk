@@ -140,7 +140,7 @@ class AuthoritativeChatAccessIntegrationTest {
             maxAccessibleChats = 1,
         )
         assertFailsWith<IllegalStateException> {
-            deliberatelyTightSource.listAccessibleChatIds(owner)
+            deliberatelyTightSource.readAccessibleChatIds(owner) { it }
         }
     }
 

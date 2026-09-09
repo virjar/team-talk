@@ -14,9 +14,9 @@ import kotlinx.serialization.json.Json
 import java.util.UUID
 
 @Serializable
-internal data class StoredChatDraftConsumption(val clientMsgId: String?, val expectedRevision: Long, val afterOperationId: String? = null)
+private data class StoredChatDraftConsumption(val clientMsgId: String?, val expectedRevision: Long, val afterOperationId: String? = null)
 @Serializable
-internal data class StoredChatDraftSyncRecord(
+private data class StoredChatDraftSyncRecord(
     val chatId: String,
     val remote: SharedChatDraftSnapshot? = null,
     val stale: Boolean = true,

@@ -18,8 +18,7 @@ import com.virjar.tk.shared.log.AppLog
  *
  * 然后进入 Compose application {} 渲染窗口（[teamTalkApplication]）。
  */
-fun main(args: Array<String>) {
-    runDesktopDocumentDraftRescueCommand(args, System.out::println)?.let { kotlin.system.exitProcess(it) }
+fun main() {
     // dev/裸 JVM 启动时 macOS 菜单栏默认显示 "java"；必须在 AWT 初始化前声明应用名。
     // 打包产物由 Conveyor 写入的 Info.plist CFBundleName 决定，此属性不生效也无副作用。
     System.setProperty("apple.awt.application.name", ClientIdentity.DISPLAY_NAME)

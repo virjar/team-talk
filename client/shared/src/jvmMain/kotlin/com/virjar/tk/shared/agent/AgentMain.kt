@@ -54,7 +54,7 @@ fun main(args: Array<String>) {
                 result.bundle?.let { println("${it.buildIdentity} protocol ${it.protocolMajor}.${it.protocolMinor}") }
             }
             else -> HeadlessBundleInstaller.acquireRuntimeLease(HeadlessRuntime.currentBundle()).use {
-                if (command in setOf("configure", "export-cli-token", "doctor", "compact-cache", "export-quarantine", "verify-cache-archive", "discard-quarantine", "export-namespace", "discard-namespace", "preview-draft-rescue", "import-draft-rescue", "preview-outgoing-rescue", "import-outgoing-rescue")) {
+                if (command in setOf("configure", "export-cli-token", "doctor", "compact-cache", "export-quarantine", "verify-cache-archive", "discard-quarantine", "export-namespace", "discard-namespace")) {
                     HeadlessConfiguration.execute(requireNotNull(command), args.drop(1))
                 } else runAgent(args)
             }
@@ -99,6 +99,7 @@ private fun runAgent(args: Array<String>) {
         AgentService.prepareData(args.drop(1))
         return
     }
+    require(args.firstOrNull()?.startsWith("--") != false) { "Unknown tt-agent command; use --help" }
     val opts = AgentCli.parse(args)
     validateAgentRuntimeOptions(opts)
     val env = System.getenv()
@@ -318,20 +319,6 @@ tt-agent — TeamTalk headless client (Java 21+)
   discard-namespace --cache-root <dir> --deployment-fingerprint <sha256> --dataset-id <uuid> --uid <uid>
                     --archive <dir> --confirm-manifest-sha256 <sha256> [--cache-layout jvm|android]
                                        Abandon only that verified namespace; current login credentials must no longer select it
-  preview-draft-rescue --cache-root <dir> --database <relative-path> --archive <dir>
-                       --source-database <archive-relative-path> --chat-id <chat-id>
-                                       Check one archived chat draft for explicit recovery into a stopped JVM client
-  import-draft-rescue --cache-root <dir> --database <relative-path> --archive <dir>
-                      --source-database <archive-relative-path> --chat-id <chat-id>
-                      --confirm-manifest-sha256 <sha256> --expected-composer-revision <revision>
-                                       Install the selected draft for confirmation in the client; never send it automatically
-  preview-outgoing-rescue --cache-root <dir> --database <relative-path> --archive <dir>
-                          --source-database <archive-relative-path> --chat-id <chat-id> --client-msg-id <client-msg-id>
-                                       Check one archived outgoing message and whether import will resume sending
-  import-outgoing-rescue --cache-root <dir> --database <relative-path> --archive <dir>
-                         --source-database <archive-relative-path> --chat-id <chat-id> --client-msg-id <client-msg-id>
-                         --confirm-manifest-sha256 <sha256> --expected-composer-revision <revision> --expected-outgoing-ordinal <ordinal>
-                                       Resume the original active send intent after authentication; terminal failures remain stopped
   install-bundle --prefix <new-dir>     Install the extracted distribution (POSIX)
   upgrade-bundle --prefix <dir>         Atomically switch binaries; retain account data
   uninstall-bundle --prefix <dir>       Run from an external bundle after stopping installed processes

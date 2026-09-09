@@ -336,9 +336,6 @@ class MessageServiceLifecycleTest {
                 members = memberUids.mapNotNull { uid -> getMember(chatId, uid) },
             )
 
-        override suspend fun listAccessibleChatIds(uid: String): Set<String> = chats.keys
-            .filterTo(linkedSetOf()) { chatId -> getMember(chatId, uid) != null }
-
         override suspend fun <T> read(
             chatId: String,
             memberUids: Set<String>,
@@ -347,7 +344,7 @@ class MessageServiceLifecycleTest {
         ): T = block(load(chatId, if (includeAllMembers) setOf(ACTOR_UID) else memberUids))
 
         override suspend fun <T> readAccessibleChatIds(uid: String, block: (Set<String>) -> T): T =
-            block(listAccessibleChatIds(uid))
+            block(chats.keys.filterTo(linkedSetOf()) { chatId -> getMember(chatId, uid) != null })
     }
 
     private companion object {

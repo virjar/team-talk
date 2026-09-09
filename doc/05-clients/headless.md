@@ -247,7 +247,7 @@ bin/tt-agent discard-quarantine --cache-root /path/to/desktop-or-headless-data \
   --confirm-manifest-sha256 '<manifestSha256>'
 ```
 
-此操作删除选定隔离范围，不能代替救援导入。JVM 必须退出对应安装的客户端并保留现存 `.lock`；
+此操作只删除选定隔离范围，不恢复其中的业务。JVM 必须退出对应安装的客户端并保留现存 `.lock`；
 Android 另传 `--cache-layout android`，只修改已经导出的应用数据副本，不操作手机或释放手机容量。
 命令先完整校验归档，确认布局、隔离路径与清单摘要，再要求待删除文件与归档原字节一致；允许已删除
 部分文件后使用同一归档重试。选定范围内新增文件、内容变化、链接或归档不完整时拒绝，不递归清扫未知内容。
@@ -351,95 +351,9 @@ Android 两条命令均另传 `--cache-layout android`，只操作停止进程�
 未知 owner 或旧布局不能借此归入某个账号。namespace 归档为 format 2、`purpose=NAMESPACE`；
 既有 format 1 隔离归档仍能校验，两种归档不能互相用于另一种放弃命令。
 
-保全目录包含私人正文和可靠命令凭据，不作为脱敏诊断附件分享。校验成功不证明资料可恢复；默认保留旧
-namespace，不按年龄或零计数自动删除。范围和保护条件见
+保全目录包含私人正文和可靠命令凭据，不作为脱敏诊断附件分享。校验成功只证明文件与清单一致，
+当前不支持从归档导入或重放业务。默认保留旧 namespace，不按年龄或零计数自动删除。范围和保护条件见
 [账号 namespace 架构](../03-architecture/client-and-sdk.md#账号-namespace-保全与显式放弃)。
-
-### 单聊天草稿救援
-
-`preview-draft-rescue` 从已完整校验的归档中预览一个聊天的完整草稿及其本机附件源；
-`import-draft-rescue` 将它写入同部署指纹、datasetId、uid 的现存 JVM 账号库。
-来源接受 format 1 隔离归档、format 2 namespace 归档及其中的 JVM/Android 布局，源草稿链与目标库均须
-为当前 schema（现为 6）。这不是 Android 原机导入或向手机回灌，也不恢复消息 outbox、业务命令、Bot
-队列或独立文档草稿。
-
-先退出目标安装的客户端，保留其登录信息和全部资料；目标须有现存根锁、当前 major 的 ready 标记、
-健康当前库及指定会话。`--database` 使用目标 doctor 报告中的普通数据库相对路径；`--source-database`
-使用归档清单 `files[].path` 中选定主库的路径，不加 `payload/`，不能选择 WAL 等旁文件：
-
-```bash
-bin/tt-agent preview-draft-rescue --cache-root /path/to/desktop-or-headless-data \
-  --database '<target-database-path>' --archive /private/path/cache-archive \
-  --source-database '<manifest-main-database-path>' --chat-id '<chatId>'
-```
-
-核对预览中的 owner、`chatId`、附件数量与源字节摘要，再原样提供 `manifestSha256` 与 `composerRevision`：
-
-```bash
-bin/tt-agent import-draft-rescue --cache-root /path/to/desktop-or-headless-data \
-  --database '<target-database-path>' --archive /private/path/cache-archive \
-  --source-database '<manifest-main-database-path>' --chat-id '<chatId>' \
-  --confirm-manifest-sha256 '<manifestSha256>' --expected-composer-revision '<composerRevision>'
-```
-
-导入会重新校验归档、目标时钟、草稿与可靠工作；预览后其他聊天的新输入也会使时钟确认失效，需要重新
-预览。目标非空草稿、待发工作或身份冲突不会被覆盖。源有未确认的草稿变更/消息消费、未成功发送消息、
-仅本机回复或不完整附件依赖时拒绝；不可读草稿链不靠迁移或猜测补齐。两条命令均不接受 `--cache-layout`，
-来源布局从清单读取，目标固定为 JVM。
-
-成功报告含 `installedRevision` 和 `attachmentRetriesRequired`。重开客户端后，导入内容作为本机冲突稿
-保留，取得当前服务器草稿后选择“保留本机”或“使用其他设备”；内容完全相同时可自然收敛。
-带本机源的附件全部标为待手动重试，包括归档中的 READY 任务；重试沿用原上传 identity，过期时按既有
-规则换号。导入不自动发送或同步草稿，消息仍须全部附件 READY 后由用户主动发送。
-归档、隔离副本、其他聊天和独立文档资料保持原样；不要把导入成功当作可删除其他可靠事实的依据。
-完整边界见[单聊天草稿救援架构](../03-architecture/client-and-sdk.md#单聊天草稿救援)。
-
-### 单条 outgoing 救援
-
-`preview-outgoing-rescue` 与 `import-outgoing-rescue` 选择归档中的一条已持久提交发送意图，按原消息身份
-恢复到精确同部署、dataset 与 uid 的 JVM 账号库。来源接受 format 1/2 的 JVM/Android 归档，目标须为
-现存健康当前库且客户端已退出；路径选择沿用上方草稿救援规则，不接受 `--cache-layout`。
-
-```bash
-bin/tt-agent preview-outgoing-rescue --cache-root /path/to/desktop-or-headless-data \
-  --database '<target-database-path>' --archive /private/path/cache-archive \
-  --source-database '<manifest-main-database-path>' --chat-id '<chatId>' --client-msg-id '<clientMsgId>'
-```
-
-先核对 `sourceState` 与 `willResumeSending`：活跃发送状态导入后归为 PENDING，客户端认证后自动续发
-原 `clientMsgId`、原 payload 和 fingerprint；确认导入就是明确恢复这一发送意图。
-`TERMINAL_FAILED` 保留终态失败，不自动续发，也不换成新消息身份；SUCCESS 回执不支持重新入队。
-预览同时给出 payload 字节、附件数和本机源大小，不输出正文。
-确认导入必须原样提供预览中的清单摘要、composer 时钟与 outgoing 序号：
-
-```bash
-bin/tt-agent import-outgoing-rescue --cache-root /path/to/desktop-or-headless-data \
-  --database '<target-database-path>' --archive /private/path/cache-archive \
-  --source-database '<manifest-main-database-path>' --chat-id '<chatId>' --client-msg-id '<clientMsgId>' \
-  --confirm-manifest-sha256 '<manifestSha256>' --expected-composer-revision '<composerRevision>' \
-  --expected-outgoing-ordinal '<outgoingOrdinal>'
-```
-
-提交时重新核对时钟与依赖；目标已有同身份消息（包括权威历史）、该聊天有非空草稿或可靠工作、
-源有未知依赖时拒绝，不覆盖现有事实。成功报告含 `installedLocalOrdinal`，保留原归档、源资料及其他聊天。
-精确关联的草稿消费只在权威读取和消息 ACK 后按原版本清理，不恢复未知草稿 SET、Bot 或业务命令。
-有本机源的附件任务仅作为失败修复来源保留，不自动重传；续发使用原消息内的远端附件描述符。
-
-原消息曾被服务端接受时，原身份及内容的幂等重放可取得原 `serverSeq`；尚未被接受的消息仍须通过当前
-权限和附件校验，附件过期或不可读可能明确失败。此时使用现有失败恢复入口，不把未知结果直接换号重发，
-也不把导入成功当作送达成功。此入口不提供通用队列恢复或 Android 原机导入，完整边界见
-[单条 outgoing 救援](../03-architecture/client-and-sdk.md#单条-outgoing-救援)。
-
-独立文档的未保存标签由 [Desktop 离线文档救援入口](desktop.md#独立文档草稿救援)处理，命令通过
-Desktop 启动程序执行，不属于 `tt-agent` 或 SDK 文档业务接口。
-已有冻结创建请求及配对 creating 标签使用 [Desktop 可靠文档创建救援](desktop.md#可靠文档创建救援)；
-确认导入后可由正常客户端重放原请求，后继草稿仍须手动保存。
-冻结空间创建及同空间文档树使用 [Desktop 空间创建与文档树救援](desktop.md#空间创建与文档树救援)，按
-`space-command-<UUID>` 列举、预览与导入；嵌套 creating 祖先须有完整、无环的准入依赖，未提交草稿不自动保存。
-祖先确认后只衔接依赖它且其余依赖已满足的既有命令，不重试无关失败兄弟。
-没有待确认空间请求的文档树使用 [Desktop 已有空间文档树创建救援](desktop.md#已有空间文档树创建救援)，
-按 `--space-id` 选择一个空间；其他空间的独立创建工作留在来源，整个目标文档 namespace 仍须为空。
-这些文档救援命令均由 Desktop 启动程序提供。
 
 ### 便携包安装、升级与卸载
 

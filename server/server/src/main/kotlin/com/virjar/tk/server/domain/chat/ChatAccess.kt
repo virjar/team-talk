@@ -18,7 +18,6 @@ data class ChatAccessSnapshot(
  */
 interface ChatAccessSource {
     suspend fun load(chatId: String, memberUids: Set<String>): ChatAccessSnapshot
-    suspend fun listAccessibleChatIds(uid: String): Set<String>
 
     /**
      * 在产生 [ChatAccessSnapshot] 的同一个可重复读 PostgreSQL 事务中，运行一个有界的、
@@ -95,9 +94,6 @@ class ChatAccess(
         if (actor.role <= target.role) throw ChatAccessDeniedException("不能管理同级或更高角色")
         return actor to target
     }
-
-    suspend fun listAccessibleChatIds(uid: String): Set<String> =
-        source.listAccessibleChatIds(uid)
 
     suspend fun <T> readAsMember(
         uid: String,

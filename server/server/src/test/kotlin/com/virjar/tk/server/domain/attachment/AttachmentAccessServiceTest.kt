@@ -114,9 +114,6 @@ class AttachmentAccessServiceTest {
 private class AccessibleChatsSource : ChatAccessSource {
     override suspend fun load(chatId: String, memberUids: Set<String>) = ChatAccessSnapshot(null)
 
-    override suspend fun listAccessibleChatIds(uid: String): Set<String> =
-        if (uid == "owner" || uid == "member") setOf("chat-private") else emptySet()
-
     override suspend fun <T> read(
         chatId: String,
         memberUids: Set<String>,
@@ -125,5 +122,5 @@ private class AccessibleChatsSource : ChatAccessSource {
     ): T = block(load(chatId, memberUids))
 
     override suspend fun <T> readAccessibleChatIds(uid: String, block: (Set<String>) -> T): T =
-        block(listAccessibleChatIds(uid))
+        block(if (uid == "owner" || uid == "member") setOf("chat-private") else emptySet())
 }

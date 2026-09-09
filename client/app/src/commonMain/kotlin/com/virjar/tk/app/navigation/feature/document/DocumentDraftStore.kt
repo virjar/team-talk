@@ -80,7 +80,7 @@ const val MAX_DOCUMENT_DRAFT_RECORD_BYTES = 16 * 1024 * 1024
 const val MAX_TOTAL_DOCUMENT_DRAFT_RECORD_BYTES = 32L * 1024 * 1024
 const val MAX_DOCUMENT_DRAFT_MANIFEST_BYTES = 2 * 1024 * 1024
 private val DOCUMENT_DRAFT_RECORD_KEY = Regex("[a-z0-9-]{1,128}")
-internal fun String.isDocumentDraftRecordKey(): Boolean = matches(DOCUMENT_DRAFT_RECORD_KEY)
+private fun String.isDocumentDraftRecordKey(): Boolean = matches(DOCUMENT_DRAFT_RECORD_KEY)
 
 internal fun DocumentTabState.draftRecoveryKey(): String = "tab-$recoveryId"
 
@@ -432,7 +432,7 @@ internal data class DocumentWorkspaceDraftSnapshot(
  * 是一个保守的上界，可以从 String.length 计算，而无需在每次按键时扫描
  * 数 MB 的编辑器正文。平台存储仍然会在顺序编码每条记录时校验确切的 UTF-8 字节数。
  */
-internal fun DocumentWorkspaceDraftSnapshot.hasBoundedPersistenceShape(): Boolean {
+private fun DocumentWorkspaceDraftSnapshot.hasBoundedPersistenceShape(): Boolean {
     val identityCount = tabs.size + pendingSpaceCreates.size + pendingDocumentCreates.size +
         pendingDestructiveIntents.size
     if (identityCount > MAX_DOCUMENT_DRAFT_RECORDS) return false
