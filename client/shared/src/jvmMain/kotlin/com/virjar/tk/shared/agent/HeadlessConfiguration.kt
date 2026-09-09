@@ -11,6 +11,7 @@ import com.virjar.tk.shared.client.LocalCacheQuarantineDisposition
 import com.virjar.tk.shared.client.LocalCacheNamespaceArchive
 import com.virjar.tk.shared.client.LocalCacheNamespaceDisposition
 import com.virjar.tk.shared.client.LocalCacheChatDraftRescue
+import com.virjar.tk.shared.client.LocalCacheOutgoingRescue
 import com.virjar.tk.shared.client.decodeTcpTlsCertificateBase64
 import com.virjar.tk.shared.client.prepareJvmClientDataVersion
 import com.virjar.tk.shared.client.privateAtomicTextFileStore
@@ -83,9 +84,30 @@ internal object HeadlessConfiguration {
             "discard-namespace" -> setOf("cache-root", "deployment-fingerprint", "dataset-id", "uid", "archive", "confirm-manifest-sha256", "cache-layout")
             "preview-draft-rescue" -> setOf("cache-root", "database", "archive", "source-database", "chat-id")
             "import-draft-rescue" -> setOf("cache-root", "database", "archive", "source-database", "chat-id", "confirm-manifest-sha256", "expected-composer-revision")
+            "preview-outgoing-rescue" -> setOf("cache-root", "database", "archive", "source-database", "chat-id", "client-msg-id")
+            "import-outgoing-rescue" -> setOf("cache-root", "database", "archive", "source-database", "chat-id", "client-msg-id", "confirm-manifest-sha256", "expected-composer-revision", "expected-outgoing-ordinal")
             else -> error("Unknown configuration command")
         }
         require(options.keys.all { it in allowed }) { "Unknown configuration option" }
+        if (command == "preview-outgoing-rescue" || command == "import-outgoing-rescue") {
+            val root = File(requireNotNull(options["cache-root"]) { "--cache-root is required" })
+            val database = requireNotNull(options["database"]) { "--database is required; select the current JVM account database" }
+            val archive = File(requireNotNull(options["archive"]) { "--archive is required" })
+            val sourceDatabase = requireNotNull(options["source-database"]) { "--source-database is required; select a database from the verified archive" }
+            val chatId = requireNotNull(options["chat-id"]) { "--chat-id is required" }
+            val clientMsgId = requireNotNull(options["client-msg-id"]) { "--client-msg-id is required" }
+            if (command == "preview-outgoing-rescue") {
+                println(Json.encodeToString(LocalCacheOutgoingRescue.preview(root, database, archive, sourceDatabase, chatId, clientMsgId)))
+            } else {
+                val digest = requireNotNull(options["confirm-manifest-sha256"]) { "--confirm-manifest-sha256 is required; use the digest from preview-outgoing-rescue" }
+                val revision = requireNotNull(options["expected-composer-revision"]) { "--expected-composer-revision is required; use the revision from preview-outgoing-rescue" }
+                    .toLongOrNull()?.takeIf { it >= 0 } ?: error("Invalid --expected-composer-revision")
+                val ordinal = requireNotNull(options["expected-outgoing-ordinal"]) { "--expected-outgoing-ordinal is required; use the ordinal from preview-outgoing-rescue" }
+                    .toLongOrNull()?.takeIf { it >= 0 } ?: error("Invalid --expected-outgoing-ordinal")
+                println(Json.encodeToString(LocalCacheOutgoingRescue.importMessage(root, database, archive, sourceDatabase, chatId, clientMsgId, digest, revision, ordinal)))
+            }
+            return
+        }
         if (command == "preview-draft-rescue" || command == "import-draft-rescue") {
             val root = File(requireNotNull(options["cache-root"]) { "--cache-root is required" })
             val database = requireNotNull(options["database"]) { "--database is required; select the current JVM account database" }

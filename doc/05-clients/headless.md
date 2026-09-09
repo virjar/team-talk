@@ -394,6 +394,42 @@ bin/tt-agent import-draft-rescue --cache-root /path/to/desktop-or-headless-data 
 归档、隔离副本、其他聊天和独立文档资料保持原样；不要把导入成功当作可删除其他可靠事实的依据。
 完整边界见[单聊天草稿救援架构](../03-architecture/client-and-sdk.md#单聊天草稿救援)。
 
+### 单条 outgoing 救援
+
+`preview-outgoing-rescue` 与 `import-outgoing-rescue` 选择归档中的一条已持久提交发送意图，按原消息身份
+恢复到精确同部署、dataset 与 uid 的 JVM 账号库。来源接受 format 1/2 的 JVM/Android 归档，目标须为
+现存健康当前库且客户端已退出；路径选择沿用上方草稿救援规则，不接受 `--cache-layout`。
+
+```bash
+bin/tt-agent preview-outgoing-rescue --cache-root /path/to/desktop-or-headless-data \
+  --database '<target-database-path>' --archive /private/path/cache-archive \
+  --source-database '<manifest-main-database-path>' --chat-id '<chatId>' --client-msg-id '<clientMsgId>'
+```
+
+先核对 `sourceState` 与 `willResumeSending`：活跃发送状态导入后归为 PENDING，客户端认证后自动续发
+原 `clientMsgId`、原 payload 和 fingerprint；确认导入就是明确恢复这一发送意图。
+`TERMINAL_FAILED` 保留终态失败，不自动续发，也不换成新消息身份；SUCCESS 回执不支持重新入队。
+预览同时给出 payload 字节、附件数和本机源大小，不输出正文。
+确认导入必须原样提供预览中的清单摘要、composer 时钟与 outgoing 序号：
+
+```bash
+bin/tt-agent import-outgoing-rescue --cache-root /path/to/desktop-or-headless-data \
+  --database '<target-database-path>' --archive /private/path/cache-archive \
+  --source-database '<manifest-main-database-path>' --chat-id '<chatId>' --client-msg-id '<clientMsgId>' \
+  --confirm-manifest-sha256 '<manifestSha256>' --expected-composer-revision '<composerRevision>' \
+  --expected-outgoing-ordinal '<outgoingOrdinal>'
+```
+
+提交时重新核对时钟与依赖；目标已有同身份消息（包括权威历史）、该聊天有非空草稿或可靠工作、
+源有未知依赖时拒绝，不覆盖现有事实。成功报告含 `installedLocalOrdinal`，保留原归档、源资料及其他聊天。
+精确关联的草稿消费只在权威读取和消息 ACK 后按原版本清理，不恢复未知草稿 SET、Bot 或业务命令。
+有本机源的附件任务仅作为失败修复来源保留，不自动重传；续发使用原消息内的远端附件描述符。
+
+原消息曾被服务端接受时，原身份及内容的幂等重放可取得原 `serverSeq`；尚未被接受的消息仍须通过当前
+权限和附件校验，附件过期或不可读可能明确失败。此时使用现有失败恢复入口，不把未知结果直接换号重发，
+也不把导入成功当作送达成功。此入口不提供通用队列恢复或 Android 原机导入，完整边界见
+[单条 outgoing 救援](../03-architecture/client-and-sdk.md#单条-outgoing-救援)。
+
 ### 便携包安装、升级与卸载
 
 便携包管理使用安装所有者自己的权限，升级和卸载也必须由该所有者执行，不需要 root 或 systemd。

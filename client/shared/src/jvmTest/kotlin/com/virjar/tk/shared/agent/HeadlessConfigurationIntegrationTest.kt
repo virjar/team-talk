@@ -112,6 +112,47 @@ class HeadlessConfigurationIntegrationTest {
         assertFalse(File(root, "archive").exists())
     }
 
+    @Test
+    fun `outgoing rescue requires one message and all preview confirmations before opening files`() = withRoot { root ->
+        val missing = File(root, "not-created")
+        val archive = File(root, "archive")
+        val args = listOf("--cache-root", missing.path, "--database", "target.db", "--archive", archive.path,
+            "--source-database", "source.db", "--chat-id", "chat")
+        for (command in listOf("preview-outgoing-rescue", "import-outgoing-rescue")) {
+            assertEquals("--client-msg-id is required", assertFailsWith<IllegalArgumentException> {
+                HeadlessConfiguration.execute(command, args)
+            }.message)
+        }
+        val selected = args + listOf("--client-msg-id", "message")
+        assertTrue(assertFailsWith<IllegalArgumentException> {
+            HeadlessConfiguration.execute("import-outgoing-rescue", selected)
+        }.message.orEmpty().startsWith("--confirm-manifest-sha256 is required"))
+        val confirmed = selected + listOf("--confirm-manifest-sha256", "a".repeat(64))
+        assertTrue(assertFailsWith<IllegalArgumentException> {
+            HeadlessConfiguration.execute("import-outgoing-rescue", confirmed)
+        }.message.orEmpty().startsWith("--expected-composer-revision is required"))
+        val withRevision = confirmed + listOf("--expected-composer-revision", "0")
+        assertTrue(assertFailsWith<IllegalArgumentException> {
+            HeadlessConfiguration.execute("import-outgoing-rescue", withRevision)
+        }.message.orEmpty().startsWith("--expected-outgoing-ordinal is required"))
+        for (invalid in listOf("-1", "not-a-number", "9223372036854775808")) {
+            assertEquals("Invalid --expected-composer-revision", assertFailsWith<IllegalStateException> {
+                HeadlessConfiguration.execute("import-outgoing-rescue", confirmed + listOf(
+                    "--expected-composer-revision", invalid, "--expected-outgoing-ordinal", "0"))
+            }.message)
+            assertEquals("Invalid --expected-outgoing-ordinal", assertFailsWith<IllegalStateException> {
+                HeadlessConfiguration.execute("import-outgoing-rescue", withRevision + listOf("--expected-outgoing-ordinal", invalid))
+            }.message)
+        }
+        for (command in listOf("preview-outgoing-rescue", "import-outgoing-rescue")) {
+            assertEquals("Unknown configuration option", assertFailsWith<IllegalArgumentException> {
+                HeadlessConfiguration.execute(command, selected + listOf("--cache-layout", "android"))
+            }.message)
+        }
+        assertFalse(missing.exists())
+        assertFalse(archive.exists())
+    }
+
     private fun configure(data: File) = HeadlessConfiguration.execute("configure", listOf(
         "--data-dir", data.path, "--host", "127.0.0.1", "--port", "5100", "--server-url", "http://127.0.0.1:18088", "--api", "127.0.0.1:18600",
     ))

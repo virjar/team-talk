@@ -7,7 +7,6 @@ import com.virjar.tk.protocol.body.MessageBodyPolicy
 import com.virjar.tk.protocol.http.AttachmentUploadIdentity
 import com.virjar.tk.protocol.model.EmbeddedAsset
 import com.virjar.tk.protocol.model.requireChatDraftChatId
-import com.virjar.tk.shared.database.AppDatabase
 import com.virjar.tk.shared.repository.chatAssetSpoolDirectories
 import com.virjar.tk.shared.repository.sanitizeMultipartContentType
 import com.virjar.tk.shared.repository.sanitizeMultipartFileName
@@ -18,16 +17,10 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.longOrNull
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.intOrNull
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
-import java.nio.file.Files
-import java.nio.file.Path
 import java.sql.Connection
-import java.sql.DriverManager
-import java.sql.ResultSet
 
 internal data class ChatDraftRescueSource(
     val owner: LocalCacheDiagnosticOwner,
@@ -39,76 +32,13 @@ internal data class ChatDraftRescueSource(
     val sources: List<LocalCacheArchiveFile>,
 )
 
-/** Read an explicitly selected draft; neither the archive nor its source installation enters JDBC. */
+/** Read the complete draft graph without opening the original installation in SQLite. */
 internal fun readChatDraftRescueSource(
-    archive: File,
-    sourceDatabase: String,
-    chatId: String,
-    expectedManifestSha256: String? = null,
+    archive: File, sourceDatabase: String, chatId: String, expectedManifestSha256: String? = null,
 ): ChatDraftRescueSource {
-    var temporary: Path? = null
-    try {
-        requireChatDraftChatId(chatId)
-        val root = archiveRoot(archive)
-        val verified = LocalCacheArchive.verify(archive)
-        if (expectedManifestSha256 != null && verified.manifestSha256 != expectedManifestSha256)
-            rescueFailure("ARCHIVE_CONFIRMATION_MISMATCH")
-        val encoded = readArchiveManifest(root.resolve("manifest.json"))
-        if (archiveSha256(encoded.toByteArray(Charsets.UTF_8)) != verified.manifestSha256)
-            rescueFailure("ARCHIVE_CHANGED_DURING_RESCUE")
-        val version = rescueJson.parseToJsonElement(encoded).let { it as? JsonObject }
-            ?.get("formatVersion")?.jsonPrimitive?.intOrNull
-        val (owner, layout, files) = when (version) {
-            1 -> rescueJson.decodeFromString<LocalCacheArchiveManifest>(encoded).let { Triple(it.owner, it.layout, it.files) }
-            2 -> rescueJson.decodeFromString<LocalCacheNamespaceArchiveManifest>(encoded).let { Triple(it.owner, it.layout, it.files) }
-            else -> rescueFailure("UNSUPPORTED_ARCHIVE_FORMAT")
-        }
-        val main = files.singleOrNull { it.path == sourceDatabase && it.category in DATABASE_CATEGORIES }
-            ?: rescueFailure("SOURCE_DATABASE_NOT_IN_ARCHIVE")
-        val mainName = sourceDatabase.substringAfterLast('/')
-        val databaseName = if (layout == LocalCacheDiagnosticLayout.JVM) Regex("cache_e[0-9]+\\.db") else
-            Regex("cache_e[0-9]+" + Regex.escape("_${owner.deploymentFingerprint}_${owner.datasetId}_${owner.uid}.db") +
-                "(?:\\.corrupt-[A-Za-z0-9-]+)?")
-        if (!databaseName.matches(mainName)) rescueFailure("SOURCE_SELECTION_NOT_DATABASE_MAIN")
-        val family = listOf("", "-wal", "-journal").mapNotNull { suffix ->
-            files.singleOrNull { it.path == sourceDatabase + suffix }?.also {
-                if (it.category != main.category) rescueFailure("SOURCE_DATABASE_FAMILY_INVALID")
-            }
-        }
-        if (family.sumOf { it.bytes } > LocalCacheDiagnostics.MAX_DATABASE_BYTES)
-            rescueFailure("SOURCE_DATABASE_SIZE_LIMIT")
-        temporary = Files.createTempDirectory("teamtalk-draft-rescue-")
-        val security = JvmPrivatePathSecurity.forPath(temporary, JvmFileSystemIdentity.currentOwner(temporary))
-        for (file in family) {
-            val copy = temporary.resolve("cache.db" + file.path.removePrefix(sourceDatabase))
-            security.createEmptyFile(copy)
-            if (digestArchiveFile(root, root.resolve("payload").resolve(file.path), file.bytes, copy) != file.sha256)
-                rescueFailure("ARCHIVE_CHANGED_DURING_RESCUE")
-        }
-        Class.forName("org.sqlite.JDBC")
-        // Recovery/checkpoint may affect only this disposable family. Do not use immutable=1 (which
-        // ignores WAL) or a normal cache factory (which can migrate or garbage-collect local facts).
-        val result = DriverManager.getConnection("jdbc:sqlite:${temporary.resolve("cache.db").toUri()}?mode=rw").use { connection ->
-            connection.createStatement().use { statement ->
-                statement.execute("PRAGMA query_only = ON")
-                statement.execute("PRAGMA trusted_schema = OFF")
-                statement.execute("PRAGMA busy_timeout = 1000")
-            }
-            connection.readRescueDraft(owner, layout, verified.manifestSha256, sourceDatabase, chatId, files)
-        }
-        if (LocalCacheArchive.verify(archive).manifestSha256 != verified.manifestSha256)
-            rescueFailure("ARCHIVE_CHANGED_DURING_RESCUE")
-        return result
-    } catch (failure: LocalCacheChatDraftRescueFailure) {
-        throw failure
-    } catch (_: Exception) {
-        // SQL, decoder and filesystem exception messages can contain private text or paths.
-        rescueFailure("SOURCE_DRAFT_UNREADABLE_OR_INVALID")
-    } finally {
-        temporary?.let { directory ->
-            try { Files.walk(directory).use { it.sorted(Comparator.reverseOrder()).forEach(Files::delete) } }
-            catch (_: Exception) { rescueFailure("PRIVATE_TEMP_CLEANUP_FAILED") }
-        }
+    requireChatDraftChatId(chatId)
+    return readCacheRescueArchiveDatabase(archive, sourceDatabase, expectedManifestSha256) { connection, source ->
+        connection.readRescueDraft(source.owner, source.layout, source.manifestSha256, source.sourceDatabase, chatId, source.files)
     }
 }
 
@@ -120,25 +50,7 @@ private fun Connection.readRescueDraft(
     chatId: String,
     files: List<LocalCacheArchiveFile>,
 ): ChatDraftRescueSource {
-    val schema = createStatement().use { it.executeQuery("PRAGMA user_version").use { row ->
-        if (!row.next()) rescueFailure("SOURCE_SCHEMA_UNREADABLE")
-        row.rescueLong(1)
-    } }
-    if (schema != AppDatabase.Schema.version) rescueFailure("SOURCE_SCHEMA_UNSUPPORTED")
-    // Do not gate healthy draft pages on unrelated message/history corruption. These fixed queries
-    // deliberately bypass indexes so a damaged index cannot make a dependency appear absent.
-    for (table in REQUIRED_TABLES) {
-        val kind = rescueRows("SELECT type, CASE WHEN length(CAST(sql AS BLOB)) <= 65536 THEN sql END FROM sqlite_master WHERE name = ? LIMIT 2", listOf(table)) { row ->
-            row.rescueText(1) to row.rescueText(2)
-        }.singleOrNull() ?: rescueFailure("SOURCE_SCHEMA_UNSUPPORTED")
-        if (kind.first != "table" || kind.second.trimStart().startsWith("CREATE VIRTUAL", ignoreCase = true))
-            rescueFailure("SOURCE_SCHEMA_UNSUPPORTED")
-    }
-    val datasets = rescueRows("SELECT singleton_id, dataset_id, cursor FROM sync_state NOT INDEXED LIMIT 2") { row ->
-        Triple(row.rescueLong(1), row.rescueText(2), row.rescueLong(3))
-    }
-    if (datasets.size != 1 || datasets.single().let { it.first != 1L || it.second != owner.datasetId || it.third < 0 })
-        rescueFailure("SOURCE_DATASET_MISMATCH")
+    requireRescueSourceSchema(owner, REQUIRED_TABLES)
     val snapshots = rescueRows(
         "SELECT chat_id, revision, is_empty, CASE WHEN length(payload) <= $MAX_DRAFT_BYTES THEN payload END " +
             "FROM chat_composer_draft NOT INDEXED WHERE CAST(chat_id AS TEXT) = ? LIMIT 2", listOf(chatId),
@@ -180,11 +92,10 @@ private fun Connection.readRescueDraft(
         "SELECT asset_id, chat_id, source_id, referenced, CASE WHEN length(payload) <= $MAX_JOB_BYTES THEN payload END " +
             "FROM chat_asset_upload NOT INDEXED WHERE CAST(chat_id AS TEXT) = ?$placeholders LIMIT 129", listOf(chatId) + ids,
     ) { row ->
-        val job = rescueDecode<ChatAssetUpload>(row.rescueBlob(5, MAX_JOB_BYTES), UPLOAD_REQUIRED)
+        val job = decodeRescueUpload(row.rescueBlob(5, MAX_JOB_BYTES))
         if (row.rescueText(1) != job.assetId || row.rescueText(2) != chatId || job.chatId != chatId ||
             row.rescueText(3) != job.sourceId || row.rescueLong(4) != 1L || job.assetId !in ids)
             rescueFailure("SOURCE_UPLOAD_REFERENCE_MISMATCH")
-        validateRescueUpload(job)
         job
     }
     if (uploads.size > 128 || uploads.map { it.assetId }.distinct().size != uploads.size ||
@@ -244,6 +155,9 @@ private fun validateRescueSnapshot(snapshot: ChatDraftSnapshot) {
     snapshot.pendingAssetIds.forEach(EmbeddedAsset::requireCanonicalAssetId)
 }
 
+internal fun decodeRescueUpload(bytes: ByteArray): ChatAssetUpload =
+    rescueDecode<ChatAssetUpload>(bytes, UPLOAD_REQUIRED).also(::validateRescueUpload)
+
 private fun validateRescueUpload(job: ChatAssetUpload) {
     EmbeddedAsset.requireCanonicalAssetId(job.assetId)
     EmbeddedAsset.requireCanonicalAssetId(job.sourceId)
@@ -267,29 +181,10 @@ private fun validateRescueUploadedMetadata(job: ChatAssetUpload, asset: Embedded
         asset.attachment.contentType != sanitizeMultipartContentType(job.contentType)) rescueFailure("SOURCE_READY_DESCRIPTOR_MISMATCH")
 }
 
-private fun validateRescueAsset(asset: EmbeddedAsset) {
+internal fun validateRescueAsset(asset: EmbeddedAsset) {
     if (MarkdownAssetPolicy.canonicalize("[asset](${EmbeddedAsset.uri(asset.assetId)})", listOf(asset)) != listOf(asset))
         rescueFailure("SOURCE_ASSET_DESCRIPTOR_INVALID")
 }
-
-private fun <T> Connection.rescueRows(sql: String, values: List<String> = emptyList(), read: (ResultSet) -> T): List<T> =
-    prepareStatement(sql).use { statement ->
-        values.forEachIndexed { index, value -> statement.setString(index + 1, value) }
-        statement.executeQuery().use { rows -> buildList { while (rows.next()) add(read(rows)) } }
-    }
-
-private fun ResultSet.rescueLong(index: Int): Long = when (val value = getObject(index)) {
-    is Int -> value.toLong()
-    is Long -> value
-    else -> rescueFailure("SOURCE_SQL_VALUE_INVALID")
-}
-private fun ResultSet.rescueText(index: Int): String = strictRescueUtf8(rescueTextBytes(index, MAX_SYNC_BYTES))
-private fun ResultSet.rescueTextBytes(index: Int, max: Int): ByteArray {
-    if (getObject(index) !is String) rescueFailure("SOURCE_SQL_VALUE_INVALID")
-    return getBytes(index).also { if (it.size > max) rescueFailure("SOURCE_PAYLOAD_SIZE_LIMIT") }
-}
-private fun ResultSet.rescueBlob(index: Int, max: Int): ByteArray = (getObject(index) as? ByteArray)
-    ?.also { if (it.size > max) rescueFailure("SOURCE_PAYLOAD_SIZE_LIMIT") } ?: rescueFailure("SOURCE_SQL_VALUE_INVALID")
 
 private inline fun <reified T> rescueDecode(bytes: ByteArray, required: Set<String>): T {
     val encoded = strictRescueUtf8(bytes)
@@ -366,11 +261,10 @@ private fun rejectDuplicateRescueJsonKeys(encoded: String) {
     }
 }
 
-private fun strictRescueUtf8(bytes: ByteArray): String = Charsets.UTF_8.newDecoder()
+internal fun strictRescueUtf8(bytes: ByteArray): String = Charsets.UTF_8.newDecoder()
     .onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString()
 
 private val rescueJson = Json { encodeDefaults = true }
-private val DATABASE_CATEGORIES = setOf("QUARANTINE", "ACTIVE_DATABASE", "DATABASES")
 private val REQUIRED_TABLES = setOf("sync_state", "chat_composer_draft", "chat_asset_upload", "chat_draft_sync",
     "outgoing_chat_asset", "conversation_draft_outbox", "outgoing_message")
 private val SNAPSHOT_REQUIRED = setOf("chatId", "revision", "markdown", "assets", "pendingAssetIds", "mode",
@@ -380,5 +274,5 @@ private val UPLOAD_REQUIRED = setOf("assetId", "chatId", "sourceId", "length", "
 private val SYNC_REQUIRED = setOf("chatId", "remote", "stale", "requiredRevision", "localRevision", "dirty", "pending",
     "consume", "conflict", "failure", "pendingRejected")
 private const val MAX_DRAFT_BYTES = 8 * 1024 * 1024
-private const val MAX_SYNC_BYTES = 16 * 1024 * 1024
+internal const val MAX_SYNC_BYTES = 16 * 1024 * 1024
 private const val MAX_JOB_BYTES = 64 * 1024

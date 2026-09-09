@@ -13,8 +13,8 @@ import java.sql.DriverManager
 import java.sql.SQLException
 
 /** The root lease and this dedicated exclusive SQLite transaction own all target-side changes. */
-internal fun <T> withChatDraftRescueTarget(
-    root: File, databasePath: String, owner: LocalCacheDiagnosticOwner, action: (ChatDraftRescueTarget) -> T,
+internal fun <T> withCacheRescueTarget(
+    root: File, databasePath: String, owner: LocalCacheDiagnosticOwner, action: (CacheRescueTarget) -> T,
 ): T {
     requireArchiveRelativePath(databasePath)
     val parts = databasePath.split('/')
@@ -58,7 +58,7 @@ internal fun <T> withChatDraftRescueTarget(
                     if (size > LocalCacheArchive.MAX_FILE_BYTES) rescueFailure("TARGET_DATABASE_SIZE_LIMIT")
                     if (connection.rescueText("SELECT dataset_id FROM sync_state WHERE singleton_id=1") != owner.datasetId)
                         rescueFailure("TARGET_DATASET_MISMATCH")
-                    return action(ChatDraftRescueTarget(directory, connection))
+                    return action(CacheRescueTarget(directory, connection))
                 } finally {
                     // A read-only preview or rejected import rolls back. COMMIT has already ended a
                     // successful import, so ROLLBACK's 'no transaction' is harmless in that case.
@@ -76,14 +76,13 @@ internal fun <T> withChatDraftRescueTarget(
     }
 }
 
-internal class ChatDraftRescueTarget(val directory: JvmPrivateDataDirectory, private val db: Connection) {
+internal class CacheRescueTarget(val directory: JvmPrivateDataDirectory, val db: Connection) {
     private val json = Json { encodeDefaults = true }
     fun composerRevision(): Long = db.rescueLong("SELECT revision FROM chat_composer_clock WHERE id=1").also {
         if (it < 0 || it == Long.MAX_VALUE) rescueFailure("TARGET_COMPOSER_CHANGED")
     }
 
-    fun checkEmptyComposer(candidate: ChatDraftRescueSource): Long {
-        val chat = candidate.snapshot.chatId
+    fun checkEmptyComposer(chat: String, uploads: List<ChatAssetUpload>): Long {
         // A damaged BLOB key with identical text must not make a reliable row appear absent.
         for (table in listOf("conversation", "chat_composer_draft", "chat_draft_sync", "conversation_draft_outbox",
             "chat_asset_upload", "outgoing_chat_asset", "outgoing_message", "message")) {
@@ -115,7 +114,7 @@ internal class ChatDraftRescueTarget(val directory: JvmPrivateDataDirectory, pri
             "SELECT count(*) FROM message WHERE chat_id=? AND server_seq=0")) {
             if (db.rescueLong(sql, chat) != 0L) rescueFailure("TARGET_RELIABLE_WORK_EXISTS")
         }
-        for (job in candidate.uploads) {
+        for (job in uploads) {
             if (db.rescueLong("SELECT count(*) FROM chat_asset_upload WHERE CAST(asset_id AS TEXT)=? OR CAST(source_id AS TEXT)=?", job.assetId, job.sourceId) != 0L ||
                 db.rescueLong("SELECT count(*) FROM outgoing_chat_asset WHERE CAST(asset_id AS TEXT)=?", job.assetId) != 0L)
                 rescueFailure("TARGET_ASSET_ID_CONFLICT")
@@ -157,11 +156,11 @@ internal fun Connection.rescueText(sql: String, vararg parameters: Any?): String
     rescueOptionalText(sql, *parameters) ?: rescueFailure("TARGET_ROW_MISSING")
 internal fun Connection.rescueLong(sql: String, vararg parameters: Any?): Long =
     rescueText(sql, *parameters).toLong()
-private fun Connection.rescueOptionalText(sql: String, vararg parameters: Any?): String? = prepareStatement(sql).use { statement ->
+internal fun Connection.rescueOptionalText(sql: String, vararg parameters: Any?): String? = prepareStatement(sql).use { statement ->
     parameters.forEachIndexed { index, value -> statement.setObject(index + 1, value) }
     statement.executeQuery().use { if (it.next()) it.getString(1) else null }
 }
-private fun Connection.rescueBlob(sql: String, parameter: String): ByteArray? = prepareStatement(sql).use { statement ->
+internal fun Connection.rescueBlob(sql: String, parameter: String): ByteArray? = prepareStatement(sql).use { statement ->
     statement.setString(1, parameter)
     statement.executeQuery().use { rows ->
         if (!rows.next()) null else rows.getBinaryStream(1).use { stream ->
@@ -169,7 +168,7 @@ private fun Connection.rescueBlob(sql: String, parameter: String): ByteArray? = 
         }
     }
 }
-private fun Connection.rescueUpdate(sql: String, vararg parameters: Any?) = prepareStatement(sql).use { statement ->
+internal fun Connection.rescueUpdate(sql: String, vararg parameters: Any?) = prepareStatement(sql).use { statement ->
     parameters.forEachIndexed { index, value -> statement.setObject(index + 1, value) }
     if (statement.executeUpdate() != 1) rescueFailure("TARGET_WRITE_FAILED")
 }

@@ -281,6 +281,25 @@ owner 不匹配、根锁占用及目标 schema 不支持。以定向测试实际
 一次，检查 ACK、草稿清空及重启无重复；不以 SQLite 断言代替界面验收，也不对用户原库制造故障。
 命令和限制见[单聊天草稿救援](../05-clients/headless.md#单聊天草稿救援)。
 
+### 单条 outgoing 救援
+
+```bash
+./gradlew :client:shared:jvmTest --tests '*LocalCacheOutgoingRescueIntegrationTest' \
+  --tests '*HeadlessConfigurationIntegrationTest'
+```
+
+使用真实临时 SQLite 与归档，核对原 payload/fingerprint/消息身份续发、权威编辑快照回流、终态失败
+保持停止、附件源仅在明确失败后用于修复，以及精确消费关联不清除新远端版本。拒绝场景包含未知草稿
+变更或后继稿、两个目标时钟变化、已有权威身份、SUCCESS 回执及非规范 payload。
+CLI 回归核对消息选择、三项确认及非法参数拒绝，不创建无关目录。其他来源布局与容量、锁、摘要和
+损坏形态的验收分别记录，以测试实际断言为自动化覆盖范围。
+
+真实 Desktop 验收在专用安装根执行打包 CLI 预览和导入；确认活跃消息在认证后自动续发原 clientMsgId，
+取得 ACK 后只出现一条消息，重启不重复；终态失败保持可见且不自动发送。原 ACK 丢失场景应返回原
+serverSeq，首次发送附件失效场景应进入明确失败并保留恢复入口。导入成功与消息送达分别判定，不对
+用户原库制造故障，不把定向用例扩大成通用损坏修复或断电保证。
+命令与边界见[单条 outgoing 救援](../05-clients/headless.md#单条-outgoing-救援)。
+
 ### JVM 离线单库压缩
 
 ```bash

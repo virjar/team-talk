@@ -54,7 +54,7 @@ fun main(args: Array<String>) {
                 result.bundle?.let { println("${it.buildIdentity} protocol ${it.protocolMajor}.${it.protocolMinor}") }
             }
             else -> HeadlessBundleInstaller.acquireRuntimeLease(HeadlessRuntime.currentBundle()).use {
-                if (command in setOf("configure", "export-cli-token", "doctor", "compact-cache", "export-quarantine", "verify-cache-archive", "discard-quarantine", "export-namespace", "discard-namespace", "preview-draft-rescue", "import-draft-rescue")) {
+                if (command in setOf("configure", "export-cli-token", "doctor", "compact-cache", "export-quarantine", "verify-cache-archive", "discard-quarantine", "export-namespace", "discard-namespace", "preview-draft-rescue", "import-draft-rescue", "preview-outgoing-rescue", "import-outgoing-rescue")) {
                     HeadlessConfiguration.execute(requireNotNull(command), args.drop(1))
                 } else runAgent(args)
             }
@@ -325,6 +325,13 @@ tt-agent — TeamTalk headless client (Java 21+)
                       --source-database <archive-relative-path> --chat-id <chat-id>
                       --confirm-manifest-sha256 <sha256> --expected-composer-revision <revision>
                                        Install the selected draft for confirmation in the client; never send it automatically
+  preview-outgoing-rescue --cache-root <dir> --database <relative-path> --archive <dir>
+                          --source-database <archive-relative-path> --chat-id <chat-id> --client-msg-id <client-msg-id>
+                                       Check one archived outgoing message and whether import will resume sending
+  import-outgoing-rescue --cache-root <dir> --database <relative-path> --archive <dir>
+                         --source-database <archive-relative-path> --chat-id <chat-id> --client-msg-id <client-msg-id>
+                         --confirm-manifest-sha256 <sha256> --expected-composer-revision <revision> --expected-outgoing-ordinal <ordinal>
+                                       Resume the original active send intent after authentication; terminal failures remain stopped
   install-bundle --prefix <new-dir>     Install the extracted distribution (POSIX)
   upgrade-bundle --prefix <dir>         Atomically switch binaries; retain account data
   uninstall-bundle --prefix <dir>       Run from an external bundle after stopping installed processes

@@ -1045,7 +1045,7 @@ AndroidSqliteDriver 使用同一 SQLDelight schema 的升级回调；同 major �
 推荐退出客户端后检查；文件稳定窗口不能证明在线原子快照，也不能证明所有外部资料齐备。
 独立文档草稿/操作与附件 spool 不属于 SQLite 表，在报告 `uninspected` 中标为未检查，必须随数据库族
 一同保留。零计数不授权删除 namespace。CLI 入口见[无头客户端](../05-clients/headless.md)；
-账号 namespace 与隔离副本的显式放弃、单聊天草稿救援和数据库整理使用下方各自独立入口；
+账号 namespace 与隔离副本的显式放弃、单聊天草稿/单条 outgoing 救援和数据库整理使用下方各自独立入口；
 其他可靠事实的救援仍在 [CORE-06](../10-reference/roadmap.md#core-06--本地缓存生命周期)。
 
 #### 隔离资料保全归档
@@ -1171,6 +1171,37 @@ dataset。Android 同时检查导出目录中的认证 preferences 主文件与 
 此入口不恢复 outgoing、业务命令、Bot 队列或独立文档资料，不跨 dataset 重放，也不授权删除原归档。
 命令见[单聊天草稿救援](../05-clients/headless.md#单聊天草稿救援)，回归入口见
 [单聊天草稿救援](../09-testing/local-tests.md#单聊天草稿救援)。
+
+#### 单条 outgoing 救援
+
+[LocalCacheOutgoingRescue](../../client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/client/LocalCacheOutgoingRescue.kt)
+从经过完整校验的 format 1/2 JVM 或 Android 归档中，按主数据库、chatId 与 clientMsgId 选择一条
+已持久化的发送意图。目标仅为精确同部署指纹、datasetId 与 uid 的健康当前 JVM 账号库，复用现存
+安装根锁、ready 标记与 SQLite 排他事务，不用缓存工厂迁移、登录或读取其他 owner 的事实。
+源发送链须为当前 schema（现为 6）；`LocalCacheRescueArchive` 只在经过校验的临时副本中读取，
+与草稿救援共用目标库维护和附件源复制。已记录 SUCCESS 的发送回执不重新进入待发队列。
+
+预览报告 `sourceState`、`willResumeSending`、payload 字节、附件数和源字节，以及清单摘要、
+全账号 composer 时钟与 outgoing 序号；不输出正文或秘密。导入须确认三项预览值并重新核对全部依赖。
+目标已有同身份消息（含权威历史）、该聊天有非空草稿或可靠工作、附件身份冲突时拒绝；源有不能完整
+证明的提交依赖时拒绝，不从残缺队列猜测新的发送意图。待确认的草稿 SET、与消费关联相连的后继稿、
+同聊天附件修复任务和仍被其他草稿或消息持有的附件源不能拆开导入。
+
+活跃状态归一为 PENDING，重新分配目标本机 `localOrdinal`，保留原 clientMsgId、payload 和 fingerprint；
+用户确认导入即授权客户端在认证后通过既有 outbox 自动续发。TERMINAL_FAILED 保留终态失败，不自动
+续发或更换消息身份。选定消息关联的本机上传任务转为 FAILED，仅由 outbox 持有其源；自动续发直接
+使用原 payload 中的远端描述符，不自动重传本机源或替换附件。明确失败后可由既有失败消息修复入口
+使用这些源。精确草稿消费关联只在取得当前服务器草稿与消息 ACK 后，按原 revision 清空所消费的旧稿，
+不复制未知草稿 SET、Bot 或业务命令。
+没有该消费关联时，不创建或改写目标 composer 和同步记录。
+
+服务端普通用户消息的幂等查找先于新消息的成员/附件校验；曾成功接受的原身份和内容可返回原 serverSeq。
+首次发送仍受当前权限与附件可用性约束，已过期或无权附件可能明确失败，再由现有失败恢复入口处理；
+未知结果仍保持原身份，不因救援自动换号。导入成功只证明本机事实安装，不保证服务端接受。
+
+原归档、隔离副本及其他聊天保持不变；此入口不是通用可靠命令或独立文档恢复，也不跨 dataset 重放或
+向 Android 原机导入。命令见[单条 outgoing 救援](../05-clients/headless.md#单条-outgoing-救援)，
+验收入口见[单条 outgoing 救援](../09-testing/local-tests.md#单条-outgoing-救援)。
 
 #### 当前会话数据库整理
 
