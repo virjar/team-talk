@@ -195,7 +195,23 @@ unset TK_USER TK_PASS
 换实例应使用独立 dataDir。HTTP 与 TCP 可以使用不同域名，但属于同一个完整部署身份。
 
 `bin/tt-agent doctor --data-dir "$HOME/.tt-agent"` 离线输出运行版本、协议、Java、分发校验及配置和认证状态，
-不打印密码或 token；不存在的数据目录不会被创建。从源码启动时分发来源显示为 `source`。
+并附带该目录的 JVM LocalCache 诊断，不打印密码或 token；不存在的数据目录不会被创建。
+从源码启动时分发来源显示为 `source`。
+
+仅检查本地 SQLite 资料时，显式指定安装数据根或 Android 导出的完整应用数据根；此入口不读取 agent
+配置或凭据，也不启动会话：
+
+```bash
+bin/tt-agent doctor --cache-root /path/to/desktop-or-headless-data --cache-layout jvm
+bin/tt-agent doctor --cache-root /path/to/exported-android-app-data --cache-layout android
+```
+
+`--cache-layout` 默认 `jvm`；Android 根下应保留 `databases/`。诊断只读取私有临时副本中的 SQLite，
+报告 namespace、数据库族文件大小、schema 与可读取的可靠队列计数，不输出正文或 token。
+建议先退出对应客户端，再保留主库及 WAL/SHM/journal 后执行；检测到复制期间源变化时，计数标为
+UNKNOWN，稳定检查也不等于在线原子快照。独立文档草稿/命令和附件 spool 在 `uninspected` 中明确列为
+未检查资料，必须一同保留。容量、未知 schema 与失败语义见
+[只读资料诊断](../03-architecture/client-and-sdk.md#只读本地资料诊断)。此入口不迁移、重放、清理或修复资料。
 
 未保存或未覆盖时的默认值：
 

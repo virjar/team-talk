@@ -2,12 +2,16 @@ package com.virjar.tk.shared.agent
 
 import com.virjar.tk.shared.client.DeploymentIdentity
 import com.virjar.tk.shared.client.JvmClientDataLease
+import com.virjar.tk.shared.client.LocalCacheDiagnostics
+import com.virjar.tk.shared.client.LocalCacheDiagnosticLayout
 import com.virjar.tk.shared.client.decodeTcpTlsCertificateBase64
 import com.virjar.tk.shared.client.prepareJvmClientDataVersion
 import com.virjar.tk.shared.client.privateAtomicTextFileStore
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.put
 import java.io.File
 import java.nio.file.Files
@@ -63,13 +67,23 @@ internal object HeadlessConfiguration {
         val allowed = when (command) {
             "configure" -> setOf("data-dir", "host", "port", "server-url", "api", "tcp-certificate")
             "export-cli-token" -> setOf("data-dir", "token-file")
-            "doctor" -> setOf("data-dir")
+            "doctor" -> setOf("data-dir", "cache-root", "cache-layout")
             else -> error("Unknown configuration command")
         }
         require(options.keys.all { it in allowed }) { "Unknown configuration option" }
         val dataDir = dataDir(options)
         if (command == "doctor") {
-            println(doctor(dataDir))
+            val cacheRoot = options["cache-root"]
+            require(cacheRoot != null || "cache-layout" !in options) { "--cache-layout requires --cache-root" }
+            require(cacheRoot == null || "data-dir" !in options) { "Use either --data-dir or --cache-root" }
+            if (cacheRoot != null) {
+                val layout = when (options["cache-layout"] ?: "jvm") {
+                    "jvm" -> LocalCacheDiagnosticLayout.JVM
+                    "android" -> LocalCacheDiagnosticLayout.ANDROID
+                    else -> error("--cache-layout must be jvm or android")
+                }
+                println(Json.encodeToString(LocalCacheDiagnostics.inspect(File(cacheRoot), layout)))
+            } else println(doctor(dataDir))
             return
         }
         if (command == "export-cli-token") {
@@ -107,6 +121,7 @@ internal object HeadlessConfiguration {
     fun doctor(dataDir: File) = buildJsonObject {
         put("client", HeadlessRuntime.facts())
         put("dataDir", dataDir.absolutePath)
+        put("localCacheDiagnostics", Json.encodeToJsonElement(LocalCacheDiagnostics.inspect(dataDir)))
         if (!Files.exists(dataDir.toPath(), NOFOLLOW_LINKS)) {
             put("configuration", "not-configured")
             put("authentication", "not-configured")

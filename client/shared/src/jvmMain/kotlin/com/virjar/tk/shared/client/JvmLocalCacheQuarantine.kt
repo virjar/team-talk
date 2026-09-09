@@ -27,16 +27,23 @@ internal fun quarantineJvmLocalCacheUserDirectory(
     require(quarantineId.isNotBlank() && quarantineId.all { it.isLetterOrDigit() || it == '-' }) {
         "JVM local-cache quarantine id is invalid"
     }
+    if (hasRetainedJvmLocalCacheQuarantine(userDirectory)) {
+        throw IOException("An unprocessed JVM local-cache quarantine already exists")
+    }
+    val parent = checkNotNull(userDirectory.parentFile)
+    val prefix = "${userDirectory.name}.corrupt-"
+    val target = File(parent, prefix + quarantineId)
+    if (target.exists()) throw IOException("JVM local-cache quarantine target already exists")
+    Files.move(userDirectory.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
+    return JvmLocalCacheQuarantine(target)
+}
+
+/** 每次打开重新识别同一 owner 的未处理副本，不以新建空库证明旧引用不存在。 */
+internal fun hasRetainedJvmLocalCacheQuarantine(userDirectory: File): Boolean {
     val parent = userDirectory.parentFile
         ?: throw IOException("JVM local-cache user directory has no parent")
     val prefix = "${userDirectory.name}.corrupt-"
     val entries = parent.listFiles()
         ?: throw IOException("Cannot inspect JVM local-cache users directory")
-    if (entries.any { it.name.startsWith(prefix) }) {
-        throw IOException("An unprocessed JVM local-cache quarantine already exists")
-    }
-    val target = File(parent, prefix + quarantineId)
-    if (target.exists()) throw IOException("JVM local-cache quarantine target already exists")
-    Files.move(userDirectory.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
-    return JvmLocalCacheQuarantine(target)
+    return entries.any { it.name.startsWith(prefix) }
 }

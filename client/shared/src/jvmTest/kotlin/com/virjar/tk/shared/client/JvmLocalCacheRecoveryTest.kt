@@ -24,6 +24,7 @@ class JvmLocalCacheRecoveryTest {
         val dataDir = Files.createTempDirectory("tk-jvm-cache-recovery-").toFile()
         try {
             createDesktopLocalCache(deployment, TEST_SYNC_DATASET_ID, "damaged", dataDir).useCache { cache ->
+                assertTrue(cache.chatDrafts.orphanSourceCleanupAllowed)
                 cache.upsertUser(User(uid = "lost-projection", username = "lost", name = "Lost"))
             }
             createDesktopLocalCache(deployment, TEST_SYNC_DATASET_ID, "healthy", dataDir).useCache { cache ->
@@ -35,6 +36,7 @@ class JvmLocalCacheRecoveryTest {
             damagedFile.writeBytes(corruptedBytes)
 
             createDesktopLocalCache(deployment, TEST_SYNC_DATASET_ID, "damaged", dataDir).useCache { replacement ->
+                assertFalse(replacement.chatDrafts.orphanSourceCleanupAllowed)
                 assertNull(replacement.getUser("lost-projection"))
                 replacement.upsertUser(User(uid = "rebuilt", username = "rebuilt", name = "Rebuilt"))
             }
@@ -49,9 +51,11 @@ class JvmLocalCacheRecoveryTest {
             assertTrue(damagedFile.isFile)
 
             createDesktopLocalCache(deployment, TEST_SYNC_DATASET_ID, "damaged", dataDir).useCache { reopened ->
+                assertFalse(reopened.chatDrafts.orphanSourceCleanupAllowed)
                 assertNotNull(reopened.getUser("rebuilt"))
             }
             createDesktopLocalCache(deployment, TEST_SYNC_DATASET_ID, "healthy", dataDir).useCache { healthy ->
+                assertTrue(healthy.chatDrafts.orphanSourceCleanupAllowed)
                 assertNotNull(healthy.getUser("healthy-projection"))
                 assertNull(healthy.getUser("rebuilt"))
             }

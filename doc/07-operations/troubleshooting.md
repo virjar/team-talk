@@ -36,6 +36,22 @@ token 被踢。非 loopback 连接没有明文回退；严格字面量 loopback 
 
 不要只在 UI 层加“重新请求”掩盖游标或契约错误。
 
+### 本地资料保留与只读诊断
+
+先退出对应客户端，保留完整安装数据根；Android 导出应包含 `databases/` 中的主库及 WAL/SHM/journal，
+并一同保留 `no_backup/` 中的独立文档草稿和附件源。使用
+[`tt-agent doctor --cache-root`](../05-clients/headless.md) 检查 Desktop/headless 安装根，Android 导出根另传
+`--cache-layout android`。此模式不读取 agent 凭据，不启动客户端，不改原库或执行恢复。
+
+报告的 namespace、数据库族、schema 和队列计数用于区分当前可读取事实与 UNKNOWN。
+坏库、缺表、未知 schema、读取限制或复制期间源变化不能记作零；`uninspected` 列出的独立文档草稿/操作
+和附件 spool 未被诊断。即使所有已读计数为零，也不能据此删除资料。数据库副本的稳定检查不保证在线
+原子快照，完整边界见[只读本地资料诊断](../03-architecture/client-and-sdk.md#只读本地资料诊断)。
+
+损坏隔离后，替代库只重建服务端可回拉投影。尚有隔离副本的账号会保留可能仍被旧库引用的附件源，
+并暂停孤儿源扫描删除；容量满时新导入会明确失败。不要删除隔离库或 spool 来绕过限制，现有诊断入口
+不提供救援、放弃或 compaction。
+
 ## 3. 消息显示发送成功但对端没有
 
 按 clientMsgId 查询：

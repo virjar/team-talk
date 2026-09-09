@@ -301,6 +301,8 @@ tt-agent — TeamTalk headless client (Java 21+)
   --data-dir <dir> --reauth             Recover authentication with TK_USER/TK_PASS
   export-cli-token --data-dir <dir> --token-file <private-file>
   doctor [--data-dir <dir>]             Offline, read-only configuration and bundle diagnostics
+  doctor --cache-root <dir> [--cache-layout jvm|android]
+                                       Read-only SQLite diagnostics for an installation or Android app-data export
   install-bundle --prefix <new-dir>     Install the extracted distribution (POSIX)
   upgrade-bundle --prefix <dir>         Atomically switch binaries; retain account data
   uninstall-bundle --prefix <dir>       Run from an external bundle after stopping installed processes

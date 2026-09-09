@@ -15,10 +15,12 @@ import com.virjar.tk.protocol.payload.MessageAckPayload
 import com.virjar.tk.shared.client.*
 import com.virjar.tk.shared.database.AppDatabase
 import java.io.File
+import java.io.ByteArrayOutputStream
 import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.UUID
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.encodeToString
@@ -27,6 +29,66 @@ import kotlin.test.*
 
 /** 真实 HTTP + 私有文件 + SQLite 重开；不让 stub 掩盖上传请求身份或源文件交接。 */
 class ChatAssetUploadRecoveryIntegrationTest {
+    @Test
+    fun `quarantined cache keeps its private source across replacement restarts without disabling other owners cleanup`() = runBlocking {
+        fixture(firstStatus = 200) { f ->
+            val deployment = DeploymentIdentity.from("cache-quarantine.test.example", 5100, "https://cache-quarantine.test.example/api")
+            val owner = AccountDataOwner(deployment.fingerprint, "00000000-0000-4000-8000-000000000099", "damaged")
+            val sourceBytes = "unuploaded private draft".encodeToByteArray()
+            fun spool(account: AccountDataOwner = owner) = createChatAssetSpool(f.root, account,
+                quotaBytes = sourceBytes.size.toLong(), maxEntries = 1)
+            fun cache(account: AccountDataOwner = owner) = createDesktopLocalCache(deployment, account.datasetId, account.uid, f.root)
+            fun coordinator(cache: LocalCache, spool: ChatAssetSpool) = ChatAssetUploadCoordinator(cache.chatDrafts,
+                FileRepository("http://127.0.0.1:${f.server.address.port}", owner.uid,
+                    { SessionHttpCredentials(owner.uid, "fixture-token") }),
+                spool, MutableStateFlow(ConnectionState.DISCONNECTED))
+
+            val staged = spool().stage(sourceBytes.asSmallUploadSource())
+            val original = cache()
+            try {
+                original.chatDrafts.save(f.draft())
+                original.chatDrafts.register(ChatAssetUpload(ID, "chat", staged.sourceId, staged.length, staged.sha256,
+                    "draft.txt", "text/plain", false, UUID.randomUUID().toString(), System.currentTimeMillis()))
+                assertTrue(original.chatDrafts.orphanSourceCleanupAllowed)
+            } finally { original.close() }
+            val database = File(f.root, "deployments/${owner.deploymentFingerprint}/datasets/${owner.datasetId}/users/${owner.uid}/cache_e0.db")
+            val damagedBytes = "not-a-sqlite-database".encodeToByteArray()
+            database.writeBytes(damagedBytes)
+
+            repeat(2) {
+                val replacement = cache()
+                val retained = spool()
+                val uploads = coordinator(replacement, retained)
+                try {
+                    assertFalse(replacement.chatDrafts.orphanSourceCleanupAllowed)
+                    assertTrue(replacement.chatDrafts.jobs().isEmpty(), "quarantine must not be replayed into the replacement")
+                    assertNull(replacement.chatDrafts.get("chat"))
+                    uploads.remove(ID) // Await a cleanup attempt; no scheduler delay is needed to prove retention.
+                    assertEquals(listOf(staged), retained.list())
+                    val bytes = ByteArrayOutputStream()
+                    retained.open(staged.sourceId).writeTo(UploadSink { chunk, offset, length -> bytes.write(chunk, offset, length) })
+                    assertContentEquals(sourceBytes, bytes.toByteArray())
+                    assertFailsWith<IllegalStateException> { retained.stage(byteArrayOf(1).asSmallUploadSource()) }
+                } finally { uploads.close(); replacement.close() }
+            }
+            val quarantine = database.parentFile.parentFile.listFiles().orEmpty().single { it.name.startsWith("${owner.uid}.corrupt-") }
+            assertContentEquals(damagedBytes, File(quarantine, database.name).readBytes())
+
+            val other = owner.copy(uid = "healthy")
+            val healthy = cache(other)
+            val otherSpool = spool(other)
+            otherSpool.stage(sourceBytes.asSmallUploadSource())
+            val uploads = coordinator(healthy, otherSpool)
+            try {
+                assertTrue(healthy.chatDrafts.orphanSourceCleanupAllowed)
+                uploads.remove(ID)
+                assertTrue(otherSpool.list().isEmpty())
+                assertEquals(listOf(staged), spool().list())
+                assertTrue(f.requests.isEmpty(), "preservation and cleanup must not upload quarantined data")
+            } finally { uploads.close(); healthy.close() }
+        }
+    }
+
     @Test
     fun `failed HTTP upload resumes exact identity after restart and only explicit send consumes source`() = runBlocking {
         fixture(firstStatus = 503) { f ->

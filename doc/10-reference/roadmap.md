@@ -92,11 +92,14 @@ Push 只带必要的有界唤醒身份，消息仍通过权威同步获取；通
 
 消息/媒体有界回收、损坏库隔离、clean close checkpoint、小版本事务迁移以及精确账号封禁清理已落地，
 实现见[本地缓存状态](feature-status.md#客户端体验)与[账号清理架构](../03-architecture/client-and-sdk.md#211-账号封禁与本地资料清理)。
-剩余为旧 namespace 的保留/回收策略、离线 SQLite compaction，以及隔离库的显式诊断、恢复或放弃工具。
+同账号隔离副本存在期间保留可能被旧库引用的附件源；只读 SQLite 诊断提供 namespace、数据库族、schema、
+大小与可读取的可靠队列计数，缺失或不支持的部分保持 UNKNOWN，不读取正文凭据，也不重放或修改原库。
+独立文档草稿/操作与 spool 明确列为未检查资料；入口和限制见
+[只读本地资料诊断](../03-architecture/client-and-sdk.md#只读本地资料诊断)。
 
-可先交接只读诊断：沿两端 LocalCacheFactory、`JvmLocalCacheRecovery` 和 `LocalCacheSchema` 列出
-精确 namespace、数据库族、隔离原因、能读取的 pending/outbox 数量及无法读取的部分。不以写方式打开
-原库，也不自动重放或把读取失败记为零项。恢复/放弃、跨 namespace 回收和 VACUUM 分开实施。
+剩余为旧 namespace 的保留/回收策略、隔离资料的显式救援或放弃工具，以及离线 SQLite compaction。
+处置必须连同独立文档草稿/操作和附件源核对所有权，不以替代库的零计数推断旧资料可删除。
+恢复/放弃、跨 namespace 回收和 VACUUM 分开实施。
 
 完成条件：维护者能辨别可重拉投影与未上服事实；旧 namespace 和隔离库有明确处置，compaction 不丢
 草稿/outbox。普通凭据失效或容量回收不能扩大成清库；封禁交付复验只在 REL-05 记录。

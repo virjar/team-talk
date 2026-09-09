@@ -24,7 +24,11 @@ class AndroidLocalCacheQuarantineTest {
             val neighbour = File(directory, "cache_e27_other.db").withText("other")
             val lookalike = File(database.path + "-wal.backup").withText("lookalike")
 
+            assertFalse(hasRetainedAndroidLocalCacheQuarantine(database))
             val result = quarantineAndroidLocalCacheDatabase(database, quarantineId = "test")
+            assertTrue(hasRetainedAndroidLocalCacheQuarantine(database))
+            assertFalse(hasRetainedAndroidLocalCacheQuarantine(neighbour))
+            assertTrue(hasRetainedAndroidLocalCacheQuarantine(File(directory, database.name)), "restart must rediscover the retained family")
 
             assertEquals("main", result.quarantinedMainFile.readText())
             assertEquals("wal", File(result.quarantinedMainFile.path + "-wal").readText())
@@ -57,6 +61,7 @@ class AndroidLocalCacheQuarantineTest {
         withTempDirectory { directory ->
             val database = File(directory, "cache.db").withText("main")
             File(directory, "cache.db.corrupt-same-wal").withText("occupied")
+            assertTrue(hasRetainedAndroidLocalCacheQuarantine(database), "a retained sidecar is not proof of missing source ownership")
 
             assertFailsWith<IOException> {
                 quarantineAndroidLocalCacheDatabase(database, quarantineId = "next")

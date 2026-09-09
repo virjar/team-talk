@@ -1008,14 +1008,40 @@ headless JVM 的账号库承载可靠 inbox/outbox，因此确认损坏时保留
 内容寻址文件名，再跨身份目录按 mtime 回收零租约的最旧可回拉媒体。录音源文件、上传 spool、未知文件、子目录和符号链接
 不是该 LRU 的数据；正在下载的最终文件在网络前预留空间。播放、图片解码、预览和附件打开等消费路径在原子发布后于同一容量锁内完成租约交接，不留可被另一账号驱逐的裸文件窗口；普通只下载缓存完成后立即释放租约，文件可继续参与 LRU。
 
-Android 与 Desktop GUI 的隔离库都可能包含未上服事实，因此最多保留一份且不自动删除；在显式诊断、恢复或
-放弃工具落地前，再次损坏会明确失败，不制造第二份无界副本。新替代库中的服务端投影由快照、事件和各领域 RPC
+Android 与 Desktop GUI 的隔离库都可能包含未上服事实，因此最多保留一份且不自动删除；在显式恢复或
+放弃现有副本前，再次损坏会明确失败，不制造第二份无界副本。新替代库中的服务端投影由快照、事件和各领域 RPC
 重新收敛，隔离库中的本地可靠事实不会被伪装成已经恢复。
+
+同一账号尚有未处理的 SQLite 隔离副本时，`LocalChatDrafts.orphanSourceCleanupAllowed` 为 false，
+上传协调器暂停该 owner 的孤儿源扫描删除；每次重新打开都检查现存隔离副本，不能从替代空库推断旧源
+已无引用。其他账号不受影响。保留的源仍计入既有 512 MiB/128 条 spool 配额，满额时拒绝新导入；
+该保护不恢复隔离库的命令，也不自动处置副本。完成显式处置并重新打开后，才按完整引用事实恢复扫描。
 
 Desktop/JVM 在完整性检查后读取 `PRAGMA user_version`。新库在单一事务内创建；未标记但已存在的
 旧库认领为 schema 1 后执行连续迁移，成功才写新版本，失败同时回滚 DDL/数据/版本。
 AndroidSqliteDriver 使用同一 SQLDelight schema 的升级回调；同 major 的应用更新不清账号、草稿与发件箱。
 排查不兼容时先核对版本和精确 namespace，不套用历史构建的删库指令。
+
+#### 只读本地资料诊断
+
+[LocalCacheDiagnostics](../../client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/client/LocalCacheDiagnostics.kt)
+沿固定布局检查 Desktop/headless 安装数据根或 Android 导出的应用数据根，识别当前库、旧 epoch 与
+隔离数据库族。它不打开 LocalCache 工厂、执行迁移或读取凭据；盘点主库、WAL/SHM/journal 和生命周期
+文件，将主库及存在的 WAL/journal 复制到私有临时目录。SQLite 仅打开副本并启用 `query_only`；
+副本连接使用 `mode=rw`，让 SQLite 完整性检查包含 CHECK 约束，原库不经 SQLite 打开，SHM 只在副本侧重建。
+检查最多 128 个数据库、每个数据库族
+512 MiB、总复制量 2 GiB 和 4,096 个目录项；达到边界时报告未检查部分，不把截断结果当作完整盘点。
+
+报告包含 namespace、文件大小、schema、白名单可靠队列聚合与问题分类。outgoing 按发送状态区分
+活跃、失败与成功回执；已 ACK 的 Bot inbox 历史、空草稿墓碑和等待权威回流的草稿镜像各有独立含义，
+不能用总行数代替待发送数量。损坏、缺表、未知更新 schema、容量超限、不可读取或复制期间源变化均
+保留 UNKNOWN；不输出消息、草稿正文、命令载荷、原始错误文本或 token。隔离命名只能证明发生过
+损坏隔离，原始原因仍需对应客户端日志。
+
+推荐退出客户端后检查；文件稳定窗口不能证明在线原子快照，也不能证明所有外部资料齐备。
+独立文档草稿/操作与附件 spool 不属于 SQLite 表，在报告 `uninspected` 中标为未检查，必须随数据库族
+一同保留。零计数不授权删除 namespace。CLI 入口见[无头客户端](../05-clients/headless.md)；
+显式救援、放弃、旧 namespace 处置和离线 compaction 仍在 [CORE-06](../10-reference/roadmap.md#core-06--本地缓存生命周期)。
 
 UI 不应绕过 ViewModel 直接把网络响应当作长期状态。任何新增展示数据都需要先回答：它如何进入
 LocalCache、如何从事件恢复、如何在重启后存在。

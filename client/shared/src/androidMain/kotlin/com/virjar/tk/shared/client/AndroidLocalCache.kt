@@ -16,7 +16,9 @@ fun createAndroidLocalCache(
     val databaseName = localCacheDatabaseFileName(deploymentIdentity.fingerprint, datasetId, uid)
     val databaseFile = context.getDatabasePath(databaseName)
     val driver = openCheckedAndroidLocalCacheDriver(context, databaseName, databaseFile)
-    return createLocalCacheWithOwnedDriver(driver)
+    return createLocalCacheWithOwnedDriver(driver, orphanSourceCleanupAllowed = {
+        !hasRetainedAndroidLocalCacheQuarantine(databaseFile)
+    })
 }
 
 /**

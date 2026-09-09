@@ -188,6 +188,24 @@ JavaCV 会缓存首次加载异常，后续 `tryLoad()` 可能只是重抛；补
 - 服务端真实业务入口的权限结果，不重复对简单角色比较或错误码映射做独立单测；
 - 有真实故障依据、且从 UI 难以精确控制时序的状态回归。
 
+### LocalCache 隔离与只读诊断
+
+```bash
+./gradlew :client:shared:jvmTest --tests '*LocalCacheDiagnosticsIntegrationTest' --tests '*JvmLocalCacheRecoveryTest' --tests '*ChatAssetUploadRecoveryIntegrationTest'
+./gradlew :client:shared:testDebugUnitTest --tests '*AndroidLocalCacheQuarantineTest'
+```
+
+使用临时目录与真实 SQLite 数据库族验证，不打开已有用户资料。诊断回归应检查 JVM 安装布局、Android
+导出布局、隔离副本、WAL 中尚未 checkpoint 的可靠事实，以及诊断前后原文件和生命周期 marker 不变。
+坏库、缺表、未知更新 schema、容量边界和复制期间源变化必须给出 UNKNOWN；输出只含白名单聚合和
+固定分类，不含消息、草稿、命令正文或 token。独立文档草稿/操作与 spool 保持未检查，不能把空计数
+解释为可安全删除。稳定窗口检查不代替在线原子快照，人工执行入口见
+[本地资料诊断](../05-clients/headless.md)。
+
+附件恢复回归应保留同账号隔离副本和冻结源，重新创建替代库并启动协调器，验证未知旧引用不会触发
+孤儿源删除，重新打开后保护仍有效；其他账号及无隔离副本的正常回收保持原有语义。不得用删除真实
+隔离库来完成验证，也不能把配额限制绕过为无界保留。上述入口不验证资料救援、放弃或 compaction。
+
 ### LocalCache clean-close checkpoint
 
 LocalCache 的 clean close 只有一个维护动作：`CacheUseGate` 先拒绝新访问并等待已经

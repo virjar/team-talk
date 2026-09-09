@@ -58,7 +58,9 @@ internal fun quarantineAndroidLocalCacheDatabase(
     if (!databaseFile.isFile) {
         throw FileNotFoundException("Corrupt Android local-cache main file is missing")
     }
-    requireNoRetainedAndroidLocalCacheQuarantine(databaseFile)
+    if (hasRetainedAndroidLocalCacheQuarantine(databaseFile)) {
+        throw IOException("An unprocessed Android local-cache quarantine already exists; refusing another copy")
+    }
     val quarantinedMain = nextAndroidLocalCacheQuarantineMain(databaseFile, quarantineId)
     val markers = androidLocalCacheLifecycleMarkers(databaseFile)
     val moves = buildList {
@@ -101,17 +103,14 @@ private fun MutableList<Pair<File, File>>.addMarkerMove(
     if (marker.exists()) add(marker to File(quarantinedMain.path + suffix))
 }
 
-private fun requireNoRetainedAndroidLocalCacheQuarantine(databaseFile: File) {
+/** 包含残留侧车的同 owner 隔离族也会暂停源清理，不能依赖损坏主库可读取。 */
+internal fun hasRetainedAndroidLocalCacheQuarantine(databaseFile: File): Boolean {
     val parent = databaseFile.parentFile
         ?: throw IOException("Android local-cache database has no parent directory")
     val prefix = "${databaseFile.name}.corrupt-"
     val entries = parent.listFiles()
         ?: throw IOException("Cannot inspect Android local-cache quarantine directory")
-    if (entries.any { it.name.startsWith(prefix) }) {
-        throw IOException(
-            "An unprocessed Android local-cache quarantine already exists; refusing another copy",
-        )
-    }
+    return entries.any { it.name.startsWith(prefix) }
 }
 
 private fun nextAndroidLocalCacheQuarantineMain(databaseFile: File, quarantineId: String): File {
