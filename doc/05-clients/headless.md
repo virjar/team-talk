@@ -430,6 +430,9 @@ bin/tt-agent import-outgoing-rescue --cache-root /path/to/desktop-or-headless-da
 也不把导入成功当作送达成功。此入口不提供通用队列恢复或 Android 原机导入，完整边界见
 [单条 outgoing 救援](../03-architecture/client-and-sdk.md#单条-outgoing-救援)。
 
+独立文档的未保存标签由 [Desktop 离线文档救援入口](desktop.md#独立文档草稿救援)处理，命令通过
+Desktop 启动程序执行，不属于 `tt-agent` 或 SDK 文档业务接口。
+
 ### 便携包安装、升级与卸载
 
 便携包管理使用安装所有者自己的权限，升级和卸载也必须由该所有者执行，不需要 root 或 systemd。

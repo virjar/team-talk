@@ -232,6 +232,7 @@ val verifyMacVideoPlayerOverride = tasks.register("verifyMacVideoPlayerOverride"
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.compose)
     alias(libs.plugins.kotlin.compose)
     // 插件负责提取依赖/入口，prepareConveyor 负责管理 CLI，Gradle 统一驱动完整构建。
@@ -256,6 +257,7 @@ kotlin {
                 implementation(compose.desktop.currentOs)
                 implementation(libs.jetbrains.compose.material3)
                 implementation(libs.kotlinx.coroutines.swing)
+                implementation(libs.kotlinx.serialization.json)
                 implementation(libs.compose.media.player)
                 // Desktop 直接调用 Windows 包身份和 KnownFolder API，不能依赖 SDK 的 implementation 泄漏。
                 implementation(libs.jna.platform)
@@ -826,6 +828,13 @@ tasks.withType<JavaExec>().configureEach {
                     layout.buildDirectory.dir("classes/kotlin/desktop/main"),
                     layout.projectDirectory.dir("src/desktopMain/resources"),
                 ) + classpath
+
+            if (args?.firstOrNull() in setOf("list-document-draft-rescue", "preview-document-draft-rescue", "import-document-draft-rescue")) {
+                // Offline maintenance supplies its own existing root. Do not create even the
+                // development data parent or provision a UI test instance for these commands.
+                jvmArgs = listOf("-Djava.awt.headless=true")
+                return@doFirst
+            }
 
             val developmentDataDirectory = System.getProperty("teamtalk.data.dir") ?: run {
                 // Development must not lock or write an installed client's account directory.

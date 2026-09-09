@@ -20,6 +20,31 @@ internal data class CacheRescueArchive(
     val files: List<LocalCacheArchiveFile>,
 )
 
+internal data class CacheRescueArchiveMetadata(
+    val owner: LocalCacheDiagnosticOwner,
+    val layout: LocalCacheDiagnosticLayout,
+    val manifestSha256: String,
+    val files: List<LocalCacheArchiveFile>,
+)
+
+internal fun readCacheRescueArchiveMetadata(archive: File, expectedManifestSha256: String? = null): CacheRescueArchiveMetadata {
+    val root = archiveRoot(archive)
+    val verified = LocalCacheArchive.verify(archive)
+    if (expectedManifestSha256 != null && verified.manifestSha256 != expectedManifestSha256)
+        rescueFailure("ARCHIVE_CONFIRMATION_MISMATCH")
+    val encoded = readArchiveManifest(root.resolve("manifest.json"))
+    if (archiveSha256(encoded.toByteArray(Charsets.UTF_8)) != verified.manifestSha256)
+        rescueFailure("ARCHIVE_CHANGED_DURING_RESCUE")
+    val version = archiveRescueJson.parseToJsonElement(encoded).let { it as? JsonObject }
+        ?.get("formatVersion")?.jsonPrimitive?.intOrNull
+    val (owner, layout, files) = when (version) {
+        1 -> archiveRescueJson.decodeFromString<LocalCacheArchiveManifest>(encoded).let { Triple(it.owner, it.layout, it.files) }
+        2 -> archiveRescueJson.decodeFromString<LocalCacheNamespaceArchiveManifest>(encoded).let { Triple(it.owner, it.layout, it.files) }
+        else -> rescueFailure("UNSUPPORTED_ARCHIVE_FORMAT")
+    }
+    return CacheRescueArchiveMetadata(owner, layout, verified.manifestSha256, files)
+}
+
 internal class LocalCacheRescueFailure(val reason: String) : IllegalStateException(reason)
 internal fun rescueFailure(reason: String): Nothing = throw LocalCacheRescueFailure(reason)
 
@@ -37,19 +62,8 @@ internal fun <T> readCacheRescueArchiveDatabase(
     var temporary: Path? = null
     try {
         val root = archiveRoot(archive)
-        val verified = LocalCacheArchive.verify(archive)
-        if (expectedManifestSha256 != null && verified.manifestSha256 != expectedManifestSha256)
-            rescueFailure("ARCHIVE_CONFIRMATION_MISMATCH")
-        val encoded = readArchiveManifest(root.resolve("manifest.json"))
-        if (archiveSha256(encoded.toByteArray(Charsets.UTF_8)) != verified.manifestSha256)
-            rescueFailure("ARCHIVE_CHANGED_DURING_RESCUE")
-        val version = archiveRescueJson.parseToJsonElement(encoded).let { it as? JsonObject }
-            ?.get("formatVersion")?.jsonPrimitive?.intOrNull
-        val (owner, layout, files) = when (version) {
-            1 -> archiveRescueJson.decodeFromString<LocalCacheArchiveManifest>(encoded).let { Triple(it.owner, it.layout, it.files) }
-            2 -> archiveRescueJson.decodeFromString<LocalCacheNamespaceArchiveManifest>(encoded).let { Triple(it.owner, it.layout, it.files) }
-            else -> rescueFailure("UNSUPPORTED_ARCHIVE_FORMAT")
-        }
+        val metadata = readCacheRescueArchiveMetadata(archive, expectedManifestSha256)
+        val (owner, layout, manifestSha256, files) = metadata
         val main = files.singleOrNull { it.path == sourceDatabase && it.category in DATABASE_CATEGORIES }
             ?: rescueFailure("SOURCE_DATABASE_NOT_IN_ARCHIVE")
         val mainName = sourceDatabase.substringAfterLast('/')
@@ -81,9 +95,9 @@ internal fun <T> readCacheRescueArchiveDatabase(
                 statement.execute("PRAGMA trusted_schema = OFF")
                 statement.execute("PRAGMA busy_timeout = 1000")
             }
-            read(connection, CacheRescueArchive(owner, layout, verified.manifestSha256, sourceDatabase, files))
+            read(connection, CacheRescueArchive(owner, layout, manifestSha256, sourceDatabase, files))
         }
-        if (LocalCacheArchive.verify(archive).manifestSha256 != verified.manifestSha256)
+        if (LocalCacheArchive.verify(archive).manifestSha256 != manifestSha256)
             rescueFailure("ARCHIVE_CHANGED_DURING_RESCUE")
         return result
     } catch (failure: LocalCacheRescueFailure) {

@@ -300,6 +300,32 @@ serverSeq，首次发送附件失效场景应进入明确失败并保留恢复�
 用户原库制造故障，不把定向用例扩大成通用损坏修复或断电保证。
 命令与边界见[单条 outgoing 救援](../05-clients/headless.md#单条-outgoing-救援)。
 
+### 独立文档单标签救援
+
+```bash
+./gradlew :client:desktop:desktopTest --tests '*DesktopDocumentDraftRescueIntegrationTest' \
+  :client:app:desktopTest --tests '*DocumentDraftRescueTest'
+```
+
+使用任务专属临时安装根、真实 SQLite 与 Desktop 文档记录存储，检查 format 1/2 JVM 归档中单个
+未保存标签的列举、预览与导入。列举不解析或输出标签正文，也不承诺可恢复；维护入口不初始化默认
+资料目录或网络。预览不能安装记录或启动登录；导入保留原 tab/document/recovery 身份、旧
+saved 基线与 revision、本机正文和完整 sidecar，记录写入完成后才发布 manifest。核对原资料、归档和
+其他 owner 字节不变，以及目标状态摘要变化后旧确认失效。
+
+拒绝场景应涵盖源记录退役、非法或缺失正文/资产清单、旧文档 schema、manifest 待确认操作，以及
+归档内任一数据库中的待确认移动/改名；空替代库不能掩盖隔离库中的命令。无主库、孤立 sidecar、旧
+SQLite schema、dataset 不符、依赖查询失败、Android 来源和非空目标均须保持资料不变。
+
+真实 Desktop 验收使用任务账号：保存 revision 1 后留下本机修改，另一客户端提交 revision 2，再从
+归档救到空文档 namespace。打开工作台应显示原本稿且不自动保存；显式保存得到冲突，选择保留本稿
+后仍须再次保存。已有缓存不代表已重取最新正文，验收需核对权威结果；另检查删除或撤权后本稿保留、
+原地写入受拒，以及关闭重开不丢稿。未完成附件上传和 Android 应用内导入不由这些测试覆盖。
+
+既有工作区恢复和冲突回归位于 `DocumentWorkspaceOfflineRestartTest`、`DocumentWorkspaceStateTest`，
+服务端 CAS 与幂等边界由 `DocumentIntegrationTest`、`DocumentNodeMoveReliabilityIntegrationTest` 检查。
+命令见 [Desktop 独立文档草稿救援](../05-clients/desktop.md#独立文档草稿救援)。
+
 ### JVM 离线单库压缩
 
 ```bash

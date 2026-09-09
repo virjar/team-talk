@@ -188,7 +188,8 @@ internal fun validateRescueAsset(asset: EmbeddedAsset) {
 
 private inline fun <reified T> rescueDecode(bytes: ByteArray, required: Set<String>): T {
     val encoded = strictRescueUtf8(bytes)
-    rejectDuplicateRescueJsonKeys(encoded)
+    try { requireUnambiguousRecoveryJson(encoded) }
+    catch (_: Exception) { rescueFailure("SOURCE_JSON_SHAPE_INVALID") }
     val objectValue = rescueJson.parseToJsonElement(encoded) as? JsonObject ?: rescueFailure("SOURCE_JSON_SHAPE_INVALID")
     if (!objectValue.keys.containsAll(required)) rescueFailure("SOURCE_JSON_SHAPE_INVALID")
     validateRescueJsonTypes(objectValue)
@@ -229,35 +230,6 @@ private fun validateRescueJsonTypes(value: JsonObject) {
             else -> element == JsonNull || element is JsonPrimitive && element.isString
         }
         if (!valid) rescueFailure("SOURCE_JSON_SHAPE_INVALID")
-    }
-}
-
-/** Strict decoding also rejects duplicate keys, which otherwise silently keep only the last value. */
-private fun rejectDuplicateRescueJsonKeys(encoded: String) {
-    val frames = mutableListOf<MutableSet<String>?>()
-    var index = 0
-    while (index < encoded.length) {
-        when (encoded[index]) {
-            '{', '[' -> { frames.add(if (encoded[index] == '{') mutableSetOf() else null)
-                if (frames.size > 64) rescueFailure("SOURCE_JSON_SHAPE_INVALID") }
-            '}', ']' -> { if (frames.isEmpty()) rescueFailure("SOURCE_JSON_SHAPE_INVALID"); frames.removeAt(frames.lastIndex) }
-            '"' -> {
-                val start = index++
-                while (index < encoded.length && encoded[index] != '"') {
-                    if (encoded[index] == '\\') index++
-                    index++
-                }
-                if (index >= encoded.length) rescueFailure("SOURCE_JSON_SHAPE_INVALID")
-                var next = index + 1
-                while (next < encoded.length && encoded[next].isWhitespace()) next++
-                if (encoded.getOrNull(next) == ':') {
-                    val keys = frames.lastOrNull() ?: rescueFailure("SOURCE_JSON_SHAPE_INVALID")
-                    if (!keys.add(rescueJson.decodeFromString<String>(encoded.substring(start, index + 1))))
-                        rescueFailure("SOURCE_JSON_SHAPE_INVALID")
-                }
-            }
-        }
-        index++
     }
 }
 

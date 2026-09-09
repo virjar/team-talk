@@ -258,6 +258,46 @@ presentation lease 内同步执行，close 的 CAS 败者也必须等待已准�
 菜单再回到“文档”不会把独立窗口推回首页。两个宿主仍复用同一个 session-scoped 文档状态，关闭或
 收回独立窗口后，空间位置、标签和草稿继续留在主窗口。
 
+### 独立文档草稿救援
+
+Desktop 提供离线维护命令，将已校验归档中的一个未保存标签恢复到同部署指纹、datasetId、uid 的
+现存健康当前 JVM 账号库。先退出目标安装的客户端，保留其 `.lock`；命令由 `TeamTalkMain.main(args)`
+在初始化默认资料目录、UI、凭据或网络之前处理，只使用显式指定的路径。它不经过 `tt-agent` 或
+文档业务 RPC。
+
+先列出归档中的未退役标签标识：
+
+```bash
+./gradlew :client:desktop:run --args='list-document-draft-rescue --archive /private/path/cache-archive'
+```
+
+列举只返回 `owner`、`manifestSha256`、`recordKeys` 和范围说明，不解析或输出标签正文，不保证所列
+标签可恢复。选定一个 `tab-<recoveryId>` 后再预览；`--database` 指向目标安装根内的当前数据库相对路径，例如
+`deployments/<fingerprint>/datasets/<datasetId>/users/<uid>/cache_e0.db`；`--record-key` 是归档文档
+manifest 中所选的标签标识。在仓库内运行预览：
+
+```bash
+./gradlew :client:desktop:run --args='preview-document-draft-rescue --cache-root /path/to/desktop-data --database <relative-current-database> --archive /private/path/cache-archive --record-key tab-<recoveryId>'
+```
+
+预览只输出身份、基线 revision、正文字符数与附件数等摘要，不输出标题、正文或附件路径。核对来源与
+目标后，将预览中的 `manifestSha256` 和 `targetStateSha256` 原样用于确认导入：
+
+```bash
+./gradlew :client:desktop:run --args='import-document-draft-rescue --cache-root /path/to/desktop-data --database <relative-current-database> --archive /private/path/cache-archive --record-key tab-<recoveryId> --confirm-manifest-sha256 <manifestSha256> --expected-target-state-sha256 <targetStateSha256>'
+```
+
+来源只接受 format 1/2 JVM 归档及文档草稿 schema 11；选中标签必须完整、未退役，manifest 不得含
+待确认创建、删除或归档。归档内所有账号库须为 SQLite schema 6、dataset 一致且无待确认移动/改名，
+不能用空替代库证明隔离库无命令。目标文档 namespace 仅允许不存在、空目录或规范的 `DELETED`
+状态；现有记录、操作、待确认移动或摘要变化都会拒绝导入，不覆盖已有工作。
+
+重新进入同账号的文档工作台后，本机标题、正文、资产清单和旧 saved/revision 基线继续保留。
+打开不会自动保存；启动可能使用缓存，显式保存仍由服务端检查当前权限、附件和 revision，冲突时先
+选择采用服务器版本或保留本稿，再显式保存。归档与原资料保持不变。Android 来源、未完成附件上传、
+文档操作和 Android 应用内导入不在此入口范围；完整边界见
+[独立文档单标签救援](../03-architecture/client-and-sdk.md#独立文档单标签救援)。
+
 ## 7. 用户资料
 
 资料是主窗口内 440dp 的紧凑模态对象预览：横向头像与身份信息、主要动作、少量次要动作和低强调危险

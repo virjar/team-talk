@@ -1,6 +1,8 @@
 package com.virjar.tk.app.navigation.feature.document
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 internal const val DOCUMENT_DRAFT_SCHEMA_VERSION = 11
 
@@ -198,4 +200,44 @@ internal data class PersistedDocumentTabDraft(
             draftAssets = tab.draftAssets,
         )
     }
+}
+
+internal val documentDraftPayloadJson = Json { encodeDefaults = true }
+
+internal fun encodeDocumentDraftPayload(value: DocumentWorkspaceDraftSnapshot): DocumentDraftPayload {
+    val tabRecords = value.tabs.map { tab ->
+        val persisted = PersistedDocumentTabDraft.from(tab)
+        DocumentDraftRecord(tab.draftRecoveryKey()) {
+            documentDraftPayloadJson.encodeToString(persisted)
+        }
+    }
+    val documentCommandRecords = value.pendingDocumentCreates.map { command ->
+        val persisted = PersistedDocumentCreateCommand.from(command)
+        DocumentDraftRecord(command.draftRecoveryKey()) {
+            documentDraftPayloadJson.encodeToString(persisted)
+        }
+    }
+    val spaceRequests = value.pendingSpaceCreates.map(PersistedDocumentSpaceCreateRequest::from)
+    val destructiveIntents = value.pendingDestructiveIntents
+        .map(PersistedDocumentDestructiveIntent::from)
+    val manifest = PersistedDocumentWorkspaceManifest(
+        schemaVersion = DOCUMENT_DRAFT_SCHEMA_VERSION,
+        tabRecordKeys = tabRecords.map(DocumentDraftRecord::key),
+        pendingDocumentRecordKeys = documentCommandRecords.map(DocumentDraftRecord::key),
+        activeTabInstanceId = value.activeTabInstanceId,
+        selectedSpaceId = value.selectedSpaceId,
+        pendingSpaceCreates = spaceRequests,
+        pendingDestructiveIntents = destructiveIntents,
+    )
+    val records = tabRecords + documentCommandRecords
+    val activeKeys = buildSet {
+        records.forEach { add(it.key) }
+        value.pendingSpaceCreates.forEach { add(it.draftRecoveryKey()) }
+        value.pendingDestructiveIntents.forEach { add(it.draftRecoveryKey()) }
+    }
+    return DocumentDraftPayload(
+        manifest = documentDraftPayloadJson.encodeToString(manifest),
+        records = records,
+        activeRecoveryKeys = activeKeys,
+    )
 }

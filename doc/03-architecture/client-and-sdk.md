@@ -1045,7 +1045,7 @@ AndroidSqliteDriver 使用同一 SQLDelight schema 的升级回调；同 major �
 推荐退出客户端后检查；文件稳定窗口不能证明在线原子快照，也不能证明所有外部资料齐备。
 独立文档草稿/操作与附件 spool 不属于 SQLite 表，在报告 `uninspected` 中标为未检查，必须随数据库族
 一同保留。零计数不授权删除 namespace。CLI 入口见[无头客户端](../05-clients/headless.md)；
-账号 namespace 与隔离副本的显式放弃、单聊天草稿/单条 outgoing 救援和数据库整理使用下方各自独立入口；
+账号 namespace 与隔离副本的显式放弃、单聊天草稿/单条 outgoing/独立文档草稿救援和数据库整理使用下方各自独立入口；
 其他可靠事实的救援仍在 [CORE-06](../10-reference/roadmap.md#core-06--本地缓存生命周期)。
 
 #### 隔离资料保全归档
@@ -1202,6 +1202,36 @@ dataset。Android 同时检查导出目录中的认证 preferences 主文件与 
 原归档、隔离副本及其他聊天保持不变；此入口不是通用可靠命令或独立文档恢复，也不跨 dataset 重放或
 向 Android 原机导入。命令见[单条 outgoing 救援](../05-clients/headless.md#单条-outgoing-救援)，
 验收入口见[单条 outgoing 救援](../09-testing/local-tests.md#单条-outgoing-救援)。
+
+#### 独立文档单标签救援
+
+[DesktopDocumentDraftRescue](../../client/desktop/src/desktopMain/kotlin/com/virjar/tk/desktop/DesktopDocumentDraftRescue.kt)
+由 Desktop 启动入口提供离线列举、预览与导入，复用 App 文档记录编解码和 Desktop 持久化写入器；
+它不是 headless CLI 或 SDK 的文档业务调用。命令在默认资料目录、UI、凭据和网络初始化之前执行，
+只访问显式路径；预览和导入要求目标客户端已退出。列举返回 owner、清单摘要、未退役标签标识和范围
+说明，不解析标签正文，也不证明标签可恢复；选择标识后仍须预览校验来源与目标。
+
+来源限定经过完整校验的 format 1/2 JVM 归档，从当前文档草稿 schema 11 的 manifest 中显式选择一个
+`tab-<recoveryId>`。选中记录须身份规范、正文与 saved/draft 资产清单完整且未被墓碑退役；manifest
+不得带任何待确认文档创建、空间创建、删除或归档。归档内同 owner 的全部数据库主文件均须为当前
+SQLite schema 6、dataset 匹配，且 `pending_document_move_command` 的直接表扫描为空；缺少主库、
+孤立 sidecar、旧 schema、不可读或存在待确认移动/改名时拒绝，不能只检查空替代库而忽略隔离库。
+文档 storage reader 和 SQLite 都只读取私有临时副本，原安装资料与归档不变。
+
+目标为精确同 deployment + dataset + uid 的健康当前 JVM 库，取得现存安装锁和维护事务；当前库不得
+有待确认文档移动。该 owner 的独立文档 namespace 必须不存在、为空，或只有规范的 `DELETED` 清单，
+不合并已有标签、记录或操作。预览输出清单 SHA-256、目标 namespace 状态摘要和不含正文的记录摘要；
+导入须确认两项摘要并重新核对条件。记录先安装，manifest 最后原子发布；发布前失败可能留下记录文件，
+不会把它们当成已恢复的工作区，也不能覆盖重试时发现的非空目标。
+
+导入保留原 tab/document/recovery 身份、saved 基线、服务器 revision、本机标题、Markdown 与完整
+资产清单，恢复路径保持待校验。救援命令不启动登录或上传；重新打开工作台不会自动保存恢复的标签，
+启动可能命中本地正文缓存，不保证立即重取最新正文。显式保存仍受服务端当前权限、附件可用性和
+revision CAS 约束，远端已更新时保留本稿进入冲突选择。不能将恢复的旧 revision 自动替换成最新版本后写入。
+
+Android 来源、未完成的本机附件上传、文档操作救援和 Android 应用内导入仍不支持。命令见
+[Desktop 独立文档草稿救援](../05-clients/desktop.md#独立文档草稿救援)，定向入口见
+[独立文档单标签救援](../09-testing/local-tests.md#独立文档单标签救援)。
 
 #### 当前会话数据库整理
 

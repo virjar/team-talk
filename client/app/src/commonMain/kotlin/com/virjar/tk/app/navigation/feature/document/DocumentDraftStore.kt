@@ -4,8 +4,6 @@ import com.virjar.tk.protocol.payload.SyncDatasetIdPolicy
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 
 enum class DocumentDraftReadStatus { ABSENT, AVAILABLE, RETRYABLE }
 
@@ -82,7 +80,7 @@ const val MAX_DOCUMENT_DRAFT_RECORD_BYTES = 16 * 1024 * 1024
 const val MAX_TOTAL_DOCUMENT_DRAFT_RECORD_BYTES = 32L * 1024 * 1024
 const val MAX_DOCUMENT_DRAFT_MANIFEST_BYTES = 2 * 1024 * 1024
 private val DOCUMENT_DRAFT_RECORD_KEY = Regex("[a-z0-9-]{1,128}")
-private fun String.isDocumentDraftRecordKey(): Boolean = matches(DOCUMENT_DRAFT_RECORD_KEY)
+internal fun String.isDocumentDraftRecordKey(): Boolean = matches(DOCUMENT_DRAFT_RECORD_KEY)
 
 internal fun DocumentTabState.draftRecoveryKey(): String = "tab-$recoveryId"
 
@@ -173,7 +171,7 @@ class DocumentDraftStore(
             }
             decoded?.requiresRewrite == true || restored != raw -> {
                 knownEmptyOwnerKey = null
-                safely { persistence.write(key) { encodeSnapshot(restored) } }
+                safely { persistence.write(key) { encodeDocumentDraftPayload(restored) } }
             }
             else -> knownEmptyOwnerKey = null
         }
@@ -229,7 +227,7 @@ class DocumentDraftStore(
         knownEmptyOwnerKey = null
         snapshot = candidate
         val persistedSnapshot = requireNotNull(snapshot)
-        safely { persistence.write(key) { encodeSnapshot(persistedSnapshot) } } == true
+        safely { persistence.write(key) { encodeDocumentDraftPayload(persistedSnapshot) } } == true
     }
 
     /** 在其可见状态被显式丢弃之前，持久地压制身份。 */
@@ -285,47 +283,9 @@ class DocumentDraftStore(
         }
     }
 
-    private fun encodeSnapshot(value: DocumentWorkspaceDraftSnapshot): DocumentDraftPayload {
-        val tabRecords = value.tabs.map { tab ->
-            val persisted = PersistedDocumentTabDraft.from(tab)
-            DocumentDraftRecord(tab.draftRecoveryKey()) {
-                payloadJson.encodeToString(persisted)
-            }
-        }
-        val documentCommandRecords = value.pendingDocumentCreates.map { command ->
-            val persisted = PersistedDocumentCreateCommand.from(command)
-            DocumentDraftRecord(command.draftRecoveryKey()) {
-                payloadJson.encodeToString(persisted)
-            }
-        }
-        val spaceRequests = value.pendingSpaceCreates.map(PersistedDocumentSpaceCreateRequest::from)
-        val destructiveIntents = value.pendingDestructiveIntents
-            .map(PersistedDocumentDestructiveIntent::from)
-        val manifest = PersistedDocumentWorkspaceManifest(
-            schemaVersion = DOCUMENT_DRAFT_SCHEMA_VERSION,
-            tabRecordKeys = tabRecords.map(DocumentDraftRecord::key),
-            pendingDocumentRecordKeys = documentCommandRecords.map(DocumentDraftRecord::key),
-            activeTabInstanceId = value.activeTabInstanceId,
-            selectedSpaceId = value.selectedSpaceId,
-            pendingSpaceCreates = spaceRequests,
-            pendingDestructiveIntents = destructiveIntents,
-        )
-        val records = tabRecords + documentCommandRecords
-        val activeKeys = buildSet {
-            records.forEach { add(it.key) }
-            value.pendingSpaceCreates.forEach { add(it.draftRecoveryKey()) }
-            value.pendingDestructiveIntents.forEach { add(it.draftRecoveryKey()) }
-        }
-        return DocumentDraftPayload(
-            manifest = payloadJson.encodeToString(manifest),
-            records = records,
-            activeRecoveryKeys = activeKeys,
-        )
-    }
-
     private fun decodeSnapshot(source: DocumentDraftRecordSource): DecodedDocumentDraft? {
         val manifest = safely {
-            payloadJson.decodeFromString<PersistedDocumentWorkspaceManifest>(source.manifest)
+            documentDraftPayloadJson.decodeFromString<PersistedDocumentWorkspaceManifest>(source.manifest)
         } ?: return null
         if (manifest.schemaVersion != DOCUMENT_DRAFT_SCHEMA_VERSION || !manifest.hasBoundedIdentityCount()) {
             return null
@@ -428,7 +388,7 @@ class DocumentDraftStore(
         } catch (failure: Exception) {
             throw DocumentDraftReadRetryableException(failure)
         } ?: return null
-        return safely { payloadJson.decodeFromString<T>(payload) }
+        return safely { documentDraftPayloadJson.decodeFromString<T>(payload) }
     }
 
     private fun recordByteCount(source: DocumentDraftRecordSource, recordKey: String): Long? = try {
@@ -447,12 +407,6 @@ class DocumentDraftStore(
         throw cancelled
     } catch (_: Exception) {
         null
-    }
-
-    private companion object {
-        val payloadJson = Json {
-            encodeDefaults = true
-        }
     }
 }
 
@@ -478,7 +432,7 @@ internal data class DocumentWorkspaceDraftSnapshot(
  * 是一个保守的上界，可以从 String.length 计算，而无需在每次按键时扫描
  * 数 MB 的编辑器正文。平台存储仍然会在顺序编码每条记录时校验确切的 UTF-8 字节数。
  */
-private fun DocumentWorkspaceDraftSnapshot.hasBoundedPersistenceShape(): Boolean {
+internal fun DocumentWorkspaceDraftSnapshot.hasBoundedPersistenceShape(): Boolean {
     val identityCount = tabs.size + pendingSpaceCreates.size + pendingDocumentCreates.size +
         pendingDestructiveIntents.size
     if (identityCount > MAX_DOCUMENT_DRAFT_RECORDS) return false
