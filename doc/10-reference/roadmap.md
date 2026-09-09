@@ -97,7 +97,10 @@ Push 只带必要的有界唤醒身份，消息仍通过权威同步获取；通
 独立文档草稿/操作与 spool 明确列为未检查资料；入口和限制见
 [只读本地资料诊断](../03-architecture/client-and-sdk.md#只读本地资料诊断)。
 
-剩余为旧 namespace 的保留/回收策略、隔离资料的显式救援或放弃工具，以及离线 SQLite compaction。
+Desktop/headless 已提供显式指定健康当前库的离线单库 `VACUUM`，安装锁与 SQLite 排他锁保护压缩过程，
+保留可靠事实；入口与限制见[JVM 离线单库压缩](../03-architecture/client-and-sdk.md#jvm-离线单库压缩)。
+
+剩余为 Android 离线压缩、旧 namespace 的保留/回收策略，以及隔离资料的显式救援或放弃工具。
 处置必须连同独立文档草稿/操作和附件源核对所有权，不以替代库的零计数推断旧资料可删除。
 恢复/放弃、跨 namespace 回收和 VACUUM 分开实施。
 

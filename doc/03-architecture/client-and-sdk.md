@@ -1041,7 +1041,37 @@ AndroidSqliteDriver 使用同一 SQLDelight schema 的升级回调；同 major �
 推荐退出客户端后检查；文件稳定窗口不能证明在线原子快照，也不能证明所有外部资料齐备。
 独立文档草稿/操作与附件 spool 不属于 SQLite 表，在报告 `uninspected` 中标为未检查，必须随数据库族
 一同保留。零计数不授权删除 namespace。CLI 入口见[无头客户端](../05-clients/headless.md)；
-显式救援、放弃、旧 namespace 处置和离线 compaction 仍在 [CORE-06](../10-reference/roadmap.md#core-06--本地缓存生命周期)。
+显式救援、放弃、旧 namespace 处置与 Android 离线压缩仍在
+[CORE-06](../10-reference/roadmap.md#core-06--本地缓存生命周期)。
+
+#### JVM 离线单库压缩
+
+[LocalCacheCompaction.compact(root, databasePath)](../../client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/client/LocalCacheCompaction.kt)
+只接受已存在的 Desktop/headless 安装数据根，
+以及诊断报告中的当前 epoch 账号库相对路径。调用方主动选择一库；它不扫描批量压缩，不通过 LocalCache
+工厂打开资料，不迁移 schema、读取凭据、登录或联网。Android 原库及导出布局不属于此写入接口。
+
+执行前先要求对应客户端退出，复用安装 `.lock`；SQLite 使用 `locking_mode=EXCLUSIVE`，取得排他锁后
+一直持有至连接关闭，行为遵循 [SQLite 锁模式](https://www.sqlite.org/pragma.html#pragma_locking_mode)。
+安装 `.client-data-version` 必须已存在并为当前 major 的 `ready` 状态，工具不初始化版本或账号库；
+既有租约机制在锁文件缺失时可创建空 `.lock`。
+目标必须通过路径与文件检查、完整性检查和当前 schema/epoch 校验；隔离库、同 owner 尚有未处理隔离
+副本、正在使用的数据库、非法或链接路径均拒绝。未知或损坏资料应先保留并诊断，不能通过压缩尝试修复。
+
+数据库族（主库与 WAL/SHM/journal）和逻辑库各最多 512 MiB。可用空间预检要求至少
+`2 × max(数据库族字节, 页数 × 页大小) + 16 MiB`；这只是估算，不预留空间，执行期间磁盘满或 I/O
+失败仍会终止维护。失败不代表数据库族字节完全未变：打开已有 WAL/journal 后，SQLite 自身可能完成恢复
+或 checkpoint；工具不会据此重置、隔离或替换原库，维护者应保留整个数据库族并重新诊断。
+
+压缩以 `synchronous=FULL` 在指定原库执行 `VACUUM`，由 SQLite 的 journal/WAL 事务管理重写，
+应用不另建文件复制、替换或删除 sidecar 的状态机，具体语义见 [SQLite VACUUM](https://sqlite.org/lang_vacuum.html)。
+维护保留表中消息、可靠 outbox/命令、草稿、Bot inbox、回收水位与同步游标，不删除独立文档草稿或 spool；
+完成后检查完整性与 schema，执行 checkpoint 并关闭连接，再读取数据库族大小。
+结果的 `bytesBefore/bytesAfter` 是整个数据库族大小，`pagesBefore/pagesAfter` 与
+`freePagesBefore/freePagesAfter` 是逻辑页数及空闲页数；不输出正文或 token。
+没有可回收空闲页时不保证明显缩小。该操作不提供旧 namespace 回收、隔离救援或放弃能力。CLI 用法见
+[无头客户端](../05-clients/headless.md)，定向回归见
+[JVM 离线单库压缩测试](../09-testing/local-tests.md#jvm-离线单库压缩)。
 
 UI 不应绕过 ViewModel 直接把网络响应当作长期状态。任何新增展示数据都需要先回答：它如何进入
 LocalCache、如何从事件恢复、如何在重启后存在。

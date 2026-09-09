@@ -213,6 +213,22 @@ UNKNOWN，稳定检查也不等于在线原子快照。独立文档草稿/命令
 未检查资料，必须一同保留。容量、未知 schema 与失败语义见
 [只读资料诊断](../03-architecture/client-and-sdk.md#只读本地资料诊断)。此入口不迁移、重放、清理或修复资料。
 
+Desktop/headless 的健康当前库可以在退出客户端后显式离线压缩。先运行上述诊断，从报告中选取目标库的
+相对路径；`compact-cache` 只操作这一份 JVM 账号库：
+
+```bash
+bin/tt-agent compact-cache --cache-root /path/to/desktop-or-headless-data \
+  --database 'deployments/<fingerprint>/datasets/<datasetId>/users/<uid>/cache_e0.db'
+```
+
+将示例相对路径替换为诊断报告中的实际 `path`。该命令取得安装目录与 SQLite 排他锁后，原地执行
+`VACUUM`，输出压缩前后整个 SQLite 数据库族的字节数、逻辑页数与空闲页数。
+正在使用、隔离库或同账号尚有隔离副本、非当前 schema/epoch、不安全路径、安装 major 不兼容或重置中、
+空间不足或数据库超过维护容量上限均拒绝执行。它不迁移 schema、不登录联网、不删除可靠队列、独立
+草稿或附件源，也不批量遍历压缩。空间预检不预留磁盘，执行期间的 I/O 或磁盘满仍可能使维护失败。
+Android 应用数据及其导出副本不支持此写入入口；完整条件见
+[JVM 离线单库压缩](../03-architecture/client-and-sdk.md#jvm-离线单库压缩)。
+
 未保存或未覆盖时的默认值：
 
 | 参数/环境变量 | 默认 | 作用 |

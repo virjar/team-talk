@@ -180,7 +180,7 @@ Android 系统 picker 打开期间 Activity 重建的设备覆盖仍需补齐。
 | 文件搜索 | 可用 | 群文件与聊天主附件按不区分大小写的字面文件名片段检索，支持来源、MIME 类型、范围筛选和分页；当前成员权限与对象身份在查询、打开和下载时复验。细节与验证范围见下方内容搜索说明。 |
 | 服务搜索 | 边界外 | 当前只有受控通知机器人入口；第二个命名外部应用出现并证明需要统一发现前，不建设应用/服务注册表或全局服务搜索 |
 | 客户端资源换代与首帧 | 可用 | Desktop 在 IO 创建媒体与草稿候选、Main 组装导航；Android 完整组装后发布。失败、取消和会话替换均由单一 owner 清理或交接，详见下方说明 |
-| 本地缓存生命周期 | 部分 | 消息/媒体有界回收、损坏隔离、隔离期间附件源保留与只读 SQLite 诊断已实现；旧 namespace 处置、显式救援/放弃及离线 compaction 仍缺。细节见下方同名说明。 |
+| 本地缓存生命周期 | 部分 | 消息/媒体有界回收、损坏隔离、隔离期间附件源保留、只读 SQLite 诊断与 JVM 离线单库压缩已实现；Android 压缩、旧 namespace 处置及显式救援/放弃仍缺。细节见下方同名说明。 |
 | Android 专项体验 | 部分 | 核心业务及文档图片/文件的系统 picker、二进制粘贴和物理键盘粘贴可用；系统 picker/权限/返回路径、最低无障碍语义和发行制品真机矩阵仍须按目标设备覆盖 |
 | Android 后台 Push 与系统通知 | 部分 | 已接进程存活且系统允许后台联网时的新未读通知、Android 13 权限申请及通知点击回到会话；前台/静音/历史同步不提醒，退出清理。尚无设备 endpoint、国产 Provider、服务端 wake outbox 和后台网络受限/进程回收后的唤醒闭环，详见[Android 通知](../05-clients/android.md#消息通知的当前范围) |
 | 保存的消息 | 可用 | 每用户唯一私有会话，支持消息副本、稳定命令幂等、历史/搜索及多设备同步；首次收藏前不占会话列表，有内容后按普通会话排序，支持用户主动置顶/取消。系统服务身份不等于对端用户账号。服务端入口为 SavedMessageIntegrationTest 与 RemoteAcceptanceTest 的 saved messages 场景；图形端复用 ConversationListScreen 与现有聊天页面 |
@@ -240,7 +240,10 @@ LocalCache 在 gate 排空后的 clean close 只做一次非阻塞 `PRAGMA wal_c
 只读 SQLite 诊断列出精确 namespace、数据库族、schema、大小与可靠队列计数；只打开私有临时副本，
 不读取凭据或输出正文。损坏、缺表、未知 schema、超限及复制期间源变化保留 UNKNOWN，独立文档草稿/操作
 与 spool 明确列为未检查，零计数不授权删除。建议退出客户端后执行，不能把稳定窗口当作在线原子快照。
-仍缺旧 namespace 保留/回收策略、显式救援/放弃与离线 compaction。定向验证入口见
+Desktop/headless 支持显式指定健康当前库离线 `VACUUM`，复用安装锁与 SQLite 排他锁，保留可靠事实，
+报告前后字节、页数与空闲页数；正在使用、隔离副本、非当前 schema/epoch、安装 major 不兼容及空间
+不足均拒绝。Android 仍只有只读诊断，旧 namespace 保留/回收、显式救援/放弃尚未完成。定向验证入口见
+[JVM 离线单库压缩](../09-testing/local-tests.md#jvm-离线单库压缩)、
 [LocalCache 隔离与只读诊断](../09-testing/local-tests.md#localcache-隔离与只读诊断)及
 [LocalCache clean-close](../09-testing/local-tests.md#localcache-clean-close-checkpoint)。
 

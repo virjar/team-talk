@@ -4,6 +4,7 @@ import com.virjar.tk.shared.client.DeploymentIdentity
 import com.virjar.tk.shared.client.JvmClientDataLease
 import com.virjar.tk.shared.client.LocalCacheDiagnostics
 import com.virjar.tk.shared.client.LocalCacheDiagnosticLayout
+import com.virjar.tk.shared.client.LocalCacheCompaction
 import com.virjar.tk.shared.client.decodeTcpTlsCertificateBase64
 import com.virjar.tk.shared.client.prepareJvmClientDataVersion
 import com.virjar.tk.shared.client.privateAtomicTextFileStore
@@ -68,9 +69,16 @@ internal object HeadlessConfiguration {
             "configure" -> setOf("data-dir", "host", "port", "server-url", "api", "tcp-certificate")
             "export-cli-token" -> setOf("data-dir", "token-file")
             "doctor" -> setOf("data-dir", "cache-root", "cache-layout")
+            "compact-cache" -> setOf("cache-root", "database")
             else -> error("Unknown configuration command")
         }
         require(options.keys.all { it in allowed }) { "Unknown configuration option" }
+        if (command == "compact-cache") {
+            val root = requireNotNull(options["cache-root"]) { "--cache-root is required" }
+            val database = requireNotNull(options["database"]) { "--database is required; select its relative path from doctor" }
+            println(Json.encodeToString(LocalCacheCompaction.compact(File(root), database)))
+            return
+        }
         val dataDir = dataDir(options)
         if (command == "doctor") {
             val cacheRoot = options["cache-root"]

@@ -52,6 +52,11 @@ token 被踢。非 loopback 连接没有明文回退；严格字面量 loopback 
 并暂停孤儿源扫描删除；容量满时新导入会明确失败。不要删除隔离库或 spool 来绕过限制，现有诊断入口
 不提供救援、放弃或 compaction。
 
+健康的当前 Desktop/headless 账号库需要释放 SQLite 空闲页时，先退出该安装下的客户端，再使用
+[`tt-agent compact-cache`](../05-clients/headless.md) 指定诊断报告中的一条数据库相对路径。
+该入口原地 `VACUUM`，保留可靠事实；锁占用、隔离副本、非当前 schema/epoch、安装 major 不兼容和空间
+不足会拒绝执行，不应删除锁或资料来绕过。Android 原库与导出布局仍仅支持只读诊断。
+
 ## 3. 消息显示发送成功但对端没有
 
 按 clientMsgId 查询：

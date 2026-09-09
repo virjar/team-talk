@@ -206,6 +206,21 @@ JavaCV 会缓存首次加载异常，后续 `tryLoad()` 可能只是重抛；补
 孤儿源删除，重新打开后保护仍有效；其他账号及无隔离副本的正常回收保持原有语义。不得用删除真实
 隔离库来完成验证，也不能把配额限制绕过为无界保留。上述入口不验证资料救援、放弃或 compaction。
 
+### JVM 离线单库压缩
+
+```bash
+./gradlew :client:shared:jvmTest --tests '*LocalCacheCompactionIntegrationTest'
+```
+
+使用专用临时安装根与真实 SQLite，先写入可靠事实并制造可回收空闲页，再调用单库压缩；核对消息、
+草稿、outbox/命令、Bot inbox、水位和 schema 保留，`quick_check` 正常，压缩前后页数与字节摘要准确。
+同时核对独立文档草稿、spool、其他账号与安装 marker 未被清理。
+
+拒绝场景应覆盖已持有安装锁、外部 SQLite 连接占用、隔离库或同账号隔离副本、损坏库、非当前
+schema/epoch、非法或链接路径、安装 major 不兼容/重置中。实际磁盘耗尽与进程中断需在专用存储环境补验。
+仅在本任务创建的库或一致副本
+上执行 CLI smoke；不能用用户正在使用的原库验收。此入口不覆盖 Android 原地压缩、救援或放弃。
+
 ### LocalCache clean-close checkpoint
 
 LocalCache 的 clean close 只有一个维护动作：`CacheUseGate` 先拒绝新访问并等待已经
@@ -220,7 +235,7 @@ LocalCache 的 clean close 只有一个维护动作：`CacheUseGate` 先拒绝�
   message。PASSIVE checkpoint 必须有界返回并留下未推进完的 frame；释放 reader、创建新 driver 后，草稿与
   outbox 精确恢复且 `quick_check=ok`。
 
-该切片不运行 `VACUUM`、`optimize`、离线 compaction 或跨 namespace 扫描，也不把 Desktop 当前
+clean close 不运行 `VACUUM`、`optimize`、离线 compaction 或跨 namespace 扫描，也不把 Desktop 当前
 `journal_mode=delete` 的 UI 验收冒充 WAL 覆盖。
 
 Desktop 草稿生命周期优先用纯 JVM 门控测试覆盖，不要求构造真实 `ClientSession`：泛型 binding
