@@ -364,8 +364,36 @@ creating 祖先必须已有原准入命令，各标签路径独立合法且整�
 节点的后代，不重试无关失败兄弟，也不强制切走用户选择的页面。空投影当次不衔接后代，
 后续刷新或显式保存仍用原命令，由服务端裁决。未提交叶草稿和后继修改仍须手动保存。
 权限、归档或附件失效可使待办保留，导入不保证业务完成；原资料不删除，外部未提交创建依赖及其他
-结构操作仍不支持。没有待确认空间创建请求的普通空间多文档组合不能使用本入口，单文档入口也仍须
+结构操作仍不支持。没有待确认空间创建请求的普通空间多文档组合使用下方独立入口，单文档入口仍须
 恰有一对标签与命令。完整范围见[空间创建与文档树救援](../03-architecture/client-and-sdk.md#空间创建与文档树救援)。
+
+### 已有空间文档树创建救援
+
+归档中的空间没有待确认创建请求、但文档树仍有冻结创建命令时，按空间 ID 选择整组工作。来源不能
+带任何待确认空间创建或删除/归档意图，选中空间至少有一条未退役冻结文档命令；其他空间的独立
+creating 工作可以留在来源。先列出候选空间，再按返回的空间 ID 预览：
+
+```bash
+./gradlew :client:desktop:run --args='list-document-tree-create-rescue --archive /private/path/cache-archive'
+./gradlew :client:desktop:run --args='preview-document-tree-create-rescue --cache-root /path/to/desktop-data --database <relative-current-database> --archive /private/path/cache-archive --space-id <UUID>'
+```
+
+确认选中空间和恢复范围，原样提供预览的两项摘要：
+
+```bash
+./gradlew :client:desktop:run --args='import-document-tree-create-rescue --cache-root /path/to/desktop-data --database <relative-current-database> --archive /private/path/cache-archive --space-id <UUID> --confirm-manifest-sha256 <manifestSha256> --expected-target-state-sha256 <targetStateSha256>'
+```
+
+导入保留选中空间全部未退役草稿和原冻结命令。选择前仍全局检查身份、草稿正文/资产与冻结内容。
+按空间筛选时仍依据归档中的已知身份检查跨空间依赖；选中链引用已知其他空间节点时拒绝，不因其他
+空间不导入就跳过这项检查。JVM 来源、客户端退出、同 owner 健康目标、现存锁
+与当前 schema 要求沿用文档救援；目标整个文档 namespace 必须为空或规范删除，不合并其他空间的
+已有目标资料。两项摘要不匹配时拒绝，不覆盖已经包含记录的目标。
+
+正常启动在当前可用空间内按原 ID、原 payload 和祖先依赖重放，不生成空间创建请求；后继修改与
+无命令草稿不自动保存。当前父链、权限或附件可能使重放失败，原资料和待办保留。一次多空间导入、
+非空目标合并、移动/删除、未完成上传和 Android 文档救援仍不支持，完整范围见
+[已有空间文档树创建救援](../03-architecture/client-and-sdk.md#已有空间文档树创建救援)。
 
 ## 7. 用户资料
 

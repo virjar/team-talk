@@ -53,6 +53,153 @@ import kotlin.test.assertTrue
 /** Real archive, SQLite and product Desktop record format, without starting an application owner. */
 class DesktopDocumentDraftRescueIntegrationTest {
     @Test
+    fun `tree rescue selects one existing space from v1 and v2 archives and preserves every frozen and local record`() = workspace { workspace ->
+        for (quarantine in listOf(true, false)) {
+            val scenario = directory(workspace, "tree-format-$quarantine")
+            val source = root(scenario, "source")
+            val tree = treeFixture()
+            storage(source).replace(tree.payload(), LIMITS)
+            if (quarantine) corruptUnrelatedMessageIndex(source)
+            val archived = archive(scenario, source, quarantine)
+            assertEquals(JsonPrimitive(if (quarantine) 1 else 2),
+                Json.parseToJsonElement(File(archived.directory, "manifest.json").readText()).jsonObject.getValue("formatVersion"))
+            val target = root(scenario, "target")
+            val sourceBefore = inventory(source)
+            val archiveBefore = inventory(archived.directory)
+            val targetBefore = inventory(target)
+            val listed = DesktopDocumentTreeCreateRescue.listSpaces(archived.directory)
+            assertEquals(OWNER, listed.owner)
+            assertEquals(archived.report.manifestSha256, listed.manifestSha256)
+            assertEquals(setOf(SPACE, OTHER_SPACE), listed.spaceIds.toSet())
+            val preview = DesktopDocumentTreeCreateRescue.preview(target, DATABASE, archived.directory, SPACE)
+            assertEquals(SPACE, preview.selection.spaceId)
+            assertEquals(tree.tabs.size, preview.selection.tabCount)
+            assertEquals(tree.commands.size, preview.selection.pendingDocumentCount)
+            assertEquals(targetBefore, inventory(target))
+            for (secret in listOf(PRIVATE_BODY, PRIVATE_TITLE, ASSET_DESCRIPTOR.attachment.path)) {
+                assertFalse(Json.encodeToString(preview).contains(secret))
+                assertFalse(Json.encodeToString(listed).contains(secret))
+            }
+            // Existing narrower entries retain their original admission rules.
+            failure("Document draft rescue failed: PENDING_OPERATIONS") { preview(target, archived) }
+            failure("Document draft rescue failed: CREATE_COMMAND_NOT_UNIQUE") {
+                DesktopDocumentDraftRescue.preview(target, DATABASE, archived.directory, RECORD_KEY, DesktopDocumentRescueKind.CREATE)
+            }
+            failure("Document draft rescue failed: SPACE_CREATE_NOT_UNIQUE") {
+                DesktopDocumentSpaceCreateRescue.listRecords(archived.directory)
+            }
+            val lines = mutableListOf<String>()
+            assertEquals(0, runDesktopDocumentDraftRescueCommand(arrayOf("list-document-tree-create-rescue", "--archive", archived.directory.path), lines::add))
+            val base = arrayOf("--cache-root", target.path, "--database", DATABASE, "--archive", archived.directory.path, "--space-id", SPACE)
+            assertEquals(0, runDesktopDocumentDraftRescueCommand(arrayOf("preview-document-tree-create-rescue") + base, lines::add))
+            assertEquals(targetBefore, inventory(target))
+            assertEquals(0, runDesktopDocumentDraftRescueCommand(arrayOf("import-document-tree-create-rescue") + base + arrayOf(
+                "--confirm-manifest-sha256", preview.manifestSha256, "--expected-target-state-sha256", preview.targetStateSha256,
+            ), lines::add))
+            assertTreeRecords(target, tree)
+            assertTreeRecords(target, tree) // A separately acquired reader sees the same complete manifest.
+            assertNoCommands(target)
+            assertEquals(sourceBefore, inventory(source))
+            assertEquals(archiveBefore, inventory(archived.directory))
+            assertEquals(archived.report, LocalCacheArchive.verify(archived.directory))
+            assertTrue(lines.none { PRIVATE_BODY in it || PRIVATE_TITLE in it })
+        }
+    }
+
+    @Test
+    fun `tree selection cannot bypass raw foreign space operations or any source and target database move`() = workspace { workspace ->
+        for (kind in listOf("space", "destructive", "source-move", "target-move")) {
+            val scenario = directory(workspace, "tree-refusal-$kind")
+            val source = root(scenario, "source")
+            val tree = treeFixture()
+            val pendingSpaces = if (kind == "space") buildJsonArray {
+                add(buildJsonObject { put("name", "other pending space"); put("description", JsonNull); put("spaceId", OTHER_SPACE) })
+            } else JsonArray(emptyList())
+            val pendingDestructive = if (kind == "destructive") buildJsonArray {
+                add(buildJsonObject {
+                    put("kind", 1); put("operationId", "99999999-9999-4999-8999-999999999999")
+                    put("spaceId", OTHER_SPACE); put("documentId", JsonNull); put("parentId", JsonNull); put("expectedRevision", JsonNull)
+                })
+            } else JsonArray(emptyList())
+            storage(source).replace(payload(tree.tabs + tree.otherTab, pendingSpaces,
+                createCommands = tree.commands + tree.otherCommand, pendingDestructive = pendingDestructive), LIMITS)
+            if (kind == "source-move") {
+                privateFile(source, QUARANTINE, File(source, DATABASE).readBytes())
+                insertMove(File(source, QUARANTINE))
+                assertEquals(0L, scalar(File(source, DATABASE), "SELECT count(*) FROM pending_document_move_command"))
+            }
+            val archived = archive(scenario, source)
+            val target = root(scenario, "target")
+            if (kind == "target-move") insertMove(File(target, DATABASE))
+            val sourceBefore = inventory(source)
+            val archiveBefore = inventory(archived.directory)
+            val targetBefore = inventory(target)
+            val expected = when (kind) {
+                "source-move" -> "Local cache document draft rescue failed: SOURCE_DOCUMENT_OPERATION_PENDING"
+                "target-move" -> "Local cache document draft rescue failed: TARGET_DOCUMENT_OPERATION_PENDING"
+                else -> "Document draft rescue failed: PENDING_OPERATIONS"
+            }
+            failure(expected) { DesktopDocumentTreeCreateRescue.preview(target, DATABASE, archived.directory, SPACE) }
+            assertEquals(sourceBefore, inventory(source))
+            assertEquals(archiveBefore, inventory(archived.directory))
+            assertEquals(targetBefore, inventory(target))
+        }
+    }
+
+    @Test
+    fun `tree import requires exact confirmation and an entirely empty owner namespace`() = workspace { workspace ->
+        val source = root(workspace, "source")
+        val tree = treeFixture()
+        storage(source).replace(tree.payload(), LIMITS)
+        val archived = archive(workspace, source)
+        val target = root(workspace, "target")
+        val preview = DesktopDocumentTreeCreateRescue.preview(target, DATABASE, archived.directory, SPACE)
+        val before = inventory(target)
+        JvmClientDataLease.acquire(target).use {
+            failure("Local cache document draft rescue failed: CLIENT_LOCK_UNAVAILABLE") {
+                DesktopDocumentTreeCreateRescue.preview(target, DATABASE, archived.directory, SPACE)
+            }
+        }
+        failure("Local cache document draft rescue failed: OWNER_MISMATCH") {
+            DesktopDocumentTreeCreateRescue.preview(target, database(OWNER.copy(uid = "bob")), archived.directory, SPACE)
+        }
+        failure("Local cache document draft rescue failed: ARCHIVE_CONFIRMATION_MISMATCH") {
+            DesktopDocumentTreeCreateRescue.importRecords(target, DATABASE, archived.directory, SPACE, "0".repeat(64), preview.targetStateSha256)
+        }
+        assertEquals(before, inventory(target))
+        val defaultProperty = System.getProperty("teamtalk.data.dir")
+        val missingRoot = File(workspace, "must-not-initialize-tree")
+        val lines = mutableListOf<String>()
+        val base = arrayOf("--cache-root", missingRoot.path, "--database", DATABASE, "--archive", archived.directory.path, "--space-id", SPACE)
+        val invalid = listOf(
+            arrayOf("import-document-tree-create-rescue") + base,
+            arrayOf("preview-document-tree-create-rescue") + base + arrayOf("--space-id", OTHER_SPACE),
+            arrayOf("preview-document-tree-create-rescue") + base.dropLast(2) + arrayOf("--record-key", RECORD_KEY),
+            arrayOf("import-document-tree-create-rescue") + base + arrayOf("--confirm-manifest-sha256", "invalid", "--expected-target-state-sha256", "0".repeat(64)),
+        )
+        invalid.forEach { assertEquals(2, runDesktopDocumentDraftRescueCommand(it, lines::add)) }
+        assertFalse(missingRoot.exists())
+        assertEquals(defaultProperty, System.getProperty("teamtalk.data.dir"))
+        assertTrue(lines.none { PRIVATE_BODY in it || PRIVATE_TITLE in it || archived.directory.path in it })
+        write(target, listOf(tree.otherTab))
+        val occupied = inventory(target)
+        failure("TARGET_DOCUMENT_DRAFTS_NOT_EMPTY") {
+            DesktopDocumentTreeCreateRescue.importRecords(target, DATABASE, archived.directory, SPACE, preview.manifestSha256, preview.targetStateSha256)
+        }
+        assertEquals(occupied, inventory(target), "an unselected space's target draft must not be overwritten")
+        storage(target).delete(LIMITS)
+        val deleted = inventory(target)
+        failure("TARGET_DOCUMENT_DRAFTS_CHANGED") {
+            DesktopDocumentTreeCreateRescue.importRecords(target, DATABASE, archived.directory, SPACE, preview.manifestSha256, preview.targetStateSha256)
+        }
+        assertEquals(deleted, inventory(target))
+        val current = DesktopDocumentTreeCreateRescue.preview(target, DATABASE, archived.directory, SPACE)
+        assertNotEquals(preview.targetStateSha256, current.targetStateSha256)
+        DesktopDocumentTreeCreateRescue.importRecords(target, DATABASE, archived.directory, SPACE, current.manifestSha256, current.targetStateSha256)
+        assertTreeRecords(target, tree)
+    }
+
+    @Test
     fun `space rescue publishes the exact space intent with its own drafts and admitted children`() = workspace { workspace ->
         for (withChildren in listOf(false, true)) {
             val scenario = directory(workspace, "space-$withChildren")
@@ -352,6 +499,62 @@ class DesktopDocumentDraftRescueIntegrationTest {
 
     private data class Archived(val directory: File, val report: LocalCacheArchiveReport)
 
+    private data class TreeFixture(
+        val tabs: List<JsonObject>,
+        val commands: List<JsonObject>,
+        val otherTab: JsonObject,
+        val otherCommand: JsonObject,
+    )
+
+    private fun TreeFixture.payload() = payload(tabs + otherTab, createCommands = commands + otherCommand)
+
+    private fun treeFixture(): TreeFixture {
+        val childId = "12345678-0000-4000-8000-000000000001"
+        val grandchildId = "12345678-0000-4000-8000-000000000002"
+        val unsentId = "12345678-0000-4000-8000-000000000003"
+        val foreignId = "12345678-0000-4000-8000-000000000004"
+        fun nested(id: String, instance: Long, parent: String, ancestors: List<String>, title: String = PRIVATE_TITLE) = JsonObject(
+            tab(recoveryId = id, instanceId = instance, documentId = id, creating = true, title = title) + mapOf(
+                "parentId" to JsonPrimitive(parent), "ancestorIds" to JsonArray(ancestors.map(::JsonPrimitive))))
+        fun command(id: String, instance: Long, parent: String) = JsonObject(createCommand() + mapOf(
+            "documentId" to JsonPrimitive(id), "tabInstanceId" to JsonPrimitive(instance), "parentId" to JsonPrimitive(parent)))
+        val frozenParent = JsonObject(createCommand() + mapOf(
+            "markdown" to JsonPrimitive("original admitted body [source](${EmbeddedAsset.uri(ASSET)})"),
+            "assets" to JsonArray(listOf(Json { encodeDefaults = true }.encodeToJsonElement(ASSET_DESCRIPTOR)))))
+        return TreeFixture(
+            tabs = listOf(
+                nested(grandchildId, 14, childId, listOf(DOCUMENT, childId)),
+                nested(childId, 13, DOCUMENT, listOf(DOCUMENT)),
+                tab(creating = true, title = "", withAsset = true),
+                nested(unsentId, 15, grandchildId, listOf(DOCUMENT, childId, grandchildId), title = ""),
+                tab(recoveryId = OTHER_RECOVERY, instanceId = 12, documentId = OTHER_DOCUMENT),
+            ),
+            commands = listOf(command(grandchildId, 14, childId), command(childId, 13, DOCUMENT), frozenParent),
+            otherTab = JsonObject(tab(recoveryId = foreignId, instanceId = 31, documentId = foreignId, creating = true) +
+                ("spaceId" to JsonPrimitive(OTHER_SPACE))),
+            otherCommand = JsonObject(createCommand() + mapOf("documentId" to JsonPrimitive(foreignId),
+                "tabInstanceId" to JsonPrimitive(31), "spaceId" to JsonPrimitive(OTHER_SPACE))),
+        )
+    }
+
+    private fun assertTreeRecords(target: File, tree: TreeFixture) {
+        assertEquals(DesktopDocumentDraftStorageReadStatus.AVAILABLE, storage(target).read(LIMITS) { restored ->
+            val manifest = Json.parseToJsonElement(restored.manifest).jsonObject
+            assertEquals(JsonPrimitive(SPACE), manifest.getValue("selectedSpaceId"))
+            assertEquals(JsonArray(emptyList()), manifest.getValue("pendingSpaceCreates"), "tree rescue cannot create a space")
+            assertEquals(JsonArray(emptyList()), manifest.getValue("pendingDestructiveIntents"))
+            val tabKeys = tree.tabs.map { "tab-" + (it.getValue("recoveryId") as JsonPrimitive).content }
+            val commandKeys = tree.commands.map { "document-command-" + (it.getValue("documentId") as JsonPrimitive).content }
+            assertEquals(JsonArray(tabKeys.map(::JsonPrimitive)), manifest.getValue("tabRecordKeys"))
+            assertEquals(JsonArray(commandKeys.map(::JsonPrimitive)), manifest.getValue("pendingDocumentRecordKeys"))
+            for ((key, record) in (tabKeys.zip(tree.tabs) + commandKeys.zip(tree.commands))) {
+                assertEquals(record, Json.parseToJsonElement(assertNotNull(restored.readRecord(key))),
+                    "the selected local tab and immutable request must retain their own complete payloads")
+            }
+            assertTrue(restored.tombstones.isEmpty())
+        })
+    }
+
     private fun preview(root: File, archive: Archived) = DesktopDocumentDraftRescue.preview(root, DATABASE, archive.directory, RECORD_KEY)
     private fun install(root: File, archive: Archived, preview: DesktopDocumentDraftRescuePreview) =
         DesktopDocumentDraftRescue.importDraft(root, DATABASE, archive.directory, RECORD_KEY, preview.manifestSha256, preview.targetStateSha256)
@@ -404,7 +607,8 @@ class DesktopDocumentDraftRescueIntegrationTest {
     }
 
     private fun payload(tabs: List<JsonObject>, pendingSpaces: JsonArray = JsonArray(emptyList()), command: JsonObject? = null,
-                        createCommands: List<JsonObject> = listOfNotNull(command)): DocumentDraftPayload {
+                        createCommands: List<JsonObject> = listOfNotNull(command),
+                        pendingDestructive: JsonArray = JsonArray(emptyList())): DocumentDraftPayload {
         val tabsRecords = tabs.map { tab ->
             val key = "tab-" + (tab.getValue("recoveryId") as JsonPrimitive).content
             DocumentDraftRecord(key) { tab.toString() }
@@ -421,10 +625,13 @@ class DesktopDocumentDraftRescueIntegrationTest {
             put("activeTabInstanceId", 11)
             put("selectedSpaceId", SPACE)
             put("pendingSpaceCreates", pendingSpaces)
-            put("pendingDestructiveIntents", JsonArray(emptyList()))
+            put("pendingDestructiveIntents", pendingDestructive)
         }
         val identities = records.mapTo(linkedSetOf()) { it.key }
-        if (pendingSpaces.isNotEmpty()) identities += "space-command-$SPACE"
+        pendingSpaces.forEach { identities += "space-command-" + (it.jsonObject.getValue("spaceId") as JsonPrimitive).content }
+        pendingDestructive.forEach {
+            identities += "document-destructive-command-" + (it.jsonObject.getValue("operationId") as JsonPrimitive).content
+        }
         return DocumentDraftPayload(manifest.toString(), records, identities)
     }
 
@@ -517,6 +724,7 @@ class DesktopDocumentDraftRescueIntegrationTest {
         const val DATASET = "11111111-1111-4111-8111-111111111111"
         const val UID = "alice"
         const val SPACE = "22222222-2222-4222-8222-222222222222"
+        const val OTHER_SPACE = "88888888-8888-4888-8888-888888888888"
         const val DOCUMENT = "33333333-3333-4333-8333-333333333333"
         const val OTHER_DOCUMENT = "44444444-4444-4444-8444-444444444444"
         const val RECOVERY = "55555555-5555-4555-8555-555555555555"
