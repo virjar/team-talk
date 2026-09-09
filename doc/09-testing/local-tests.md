@@ -260,6 +260,27 @@ CLI 参数夹具检查缺少明确 owner 时拒绝且不创建目录；完整制
 夹具不能代替手机端删除与恢复；容量极限、实时并发、磁盘故障及断电持久性另需专用故障验证。
 操作示例见[账号 namespace 保全与放弃](../05-clients/headless.md#账号-namespace-保全与放弃)。
 
+### 单聊天草稿救援
+
+```bash
+./gradlew :client:shared:jvmTest --tests '*LocalCacheChatDraftRescueIntegrationTest' \
+  --tests '*ChatDraftSyncRecoveryIntegrationTest'
+```
+
+使用真实临时 SQLite 和私有源文件，检查 format 1/2 归档及 Android 来源到同 owner JVM 目标的单聊天
+导入；预览不安装草稿，提交使用新本机 revision，保留归档、其他聊天和独立资料。重启后权威读取服务器
+草稿，再分别检查保留本机和使用其他设备的选择；带源 READY 任务转为失败，只有显式重试才继续原上传
+identity。已有同步恢复测试负责 CAS、未知结果与 ACK 后清稿的普通链路。
+
+拒绝场景覆盖目标非空/可靠工作、预览后 composer 时钟变化、源待确认变更或消费依赖、归档/源摘要变化、
+owner 不匹配、根锁占用及目标 schema 不支持。以定向测试实际断言为自动化覆盖范围，不能据此宣称所有
+损坏形态、磁盘故障或中断窗口均可恢复。
+
+真实 Desktop 验收须使用专用安装根和归档，先退出客户端执行打包 CLI 预览及确认导入，再打开同账号
+目标会话；确认草稿与模式/回复/附件对应、未自动发送、冲突选择和手动附件重试可用。最终只主动发送
+一次，检查 ACK、草稿清空及重启无重复；不以 SQLite 断言代替界面验收，也不对用户原库制造故障。
+命令和限制见[单聊天草稿救援](../05-clients/headless.md#单聊天草稿救援)。
+
 ### JVM 离线单库压缩
 
 ```bash

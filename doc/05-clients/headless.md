@@ -355,6 +355,45 @@ Android 两条命令均另传 `--cache-layout android`，只操作停止进程�
 namespace，不按年龄或零计数自动删除。范围和保护条件见
 [账号 namespace 架构](../03-architecture/client-and-sdk.md#账号-namespace-保全与显式放弃)。
 
+### 单聊天草稿救援
+
+`preview-draft-rescue` 从已完整校验的归档中预览一个聊天的完整草稿及其本机附件源；
+`import-draft-rescue` 将它写入同部署指纹、datasetId、uid 的现存 JVM 账号库。
+来源接受 format 1 隔离归档、format 2 namespace 归档及其中的 JVM/Android 布局，源草稿链与目标库均须
+为当前 schema（现为 6）。这不是 Android 原机导入或向手机回灌，也不恢复消息 outbox、业务命令、Bot
+队列或独立文档草稿。
+
+先退出目标安装的客户端，保留其登录信息和全部资料；目标须有现存根锁、当前 major 的 ready 标记、
+健康当前库及指定会话。`--database` 使用目标 doctor 报告中的普通数据库相对路径；`--source-database`
+使用归档清单 `files[].path` 中选定主库的路径，不加 `payload/`，不能选择 WAL 等旁文件：
+
+```bash
+bin/tt-agent preview-draft-rescue --cache-root /path/to/desktop-or-headless-data \
+  --database '<target-database-path>' --archive /private/path/cache-archive \
+  --source-database '<manifest-main-database-path>' --chat-id '<chatId>'
+```
+
+核对预览中的 owner、`chatId`、附件数量与源字节摘要，再原样提供 `manifestSha256` 与 `composerRevision`：
+
+```bash
+bin/tt-agent import-draft-rescue --cache-root /path/to/desktop-or-headless-data \
+  --database '<target-database-path>' --archive /private/path/cache-archive \
+  --source-database '<manifest-main-database-path>' --chat-id '<chatId>' \
+  --confirm-manifest-sha256 '<manifestSha256>' --expected-composer-revision '<composerRevision>'
+```
+
+导入会重新校验归档、目标时钟、草稿与可靠工作；预览后其他聊天的新输入也会使时钟确认失效，需要重新
+预览。目标非空草稿、待发工作或身份冲突不会被覆盖。源有未确认的草稿变更/消息消费、未成功发送消息、
+仅本机回复或不完整附件依赖时拒绝；不可读草稿链不靠迁移或猜测补齐。两条命令均不接受 `--cache-layout`，
+来源布局从清单读取，目标固定为 JVM。
+
+成功报告含 `installedRevision` 和 `attachmentRetriesRequired`。重开客户端后，导入内容作为本机冲突稿
+保留，取得当前服务器草稿后选择“保留本机”或“使用其他设备”；内容完全相同时可自然收敛。
+带本机源的附件全部标为待手动重试，包括归档中的 READY 任务；重试沿用原上传 identity，过期时按既有
+规则换号。导入不自动发送或同步草稿，消息仍须全部附件 READY 后由用户主动发送。
+归档、隔离副本、其他聊天和独立文档资料保持原样；不要把导入成功当作可删除其他可靠事实的依据。
+完整边界见[单聊天草稿救援架构](../03-architecture/client-and-sdk.md#单聊天草稿救援)。
+
 ### 便携包安装、升级与卸载
 
 便携包管理使用安装所有者自己的权限，升级和卸载也必须由该所有者执行，不需要 root 或 systemd。

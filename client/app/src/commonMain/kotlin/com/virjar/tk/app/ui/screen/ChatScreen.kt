@@ -869,7 +869,7 @@ fun ChatPanel(
             if (composerReady && (sharedDraftState.conflict || sharedDraftState.failure != null)) {
                 Column(Modifier.fillMaxWidth().testTag("chat.draft.conflict")) {
                     Text(sharedDraftState.failure
-                        ?: "其他设备已修改草稿，本机内容已保留。请选择要继续使用的草稿。")
+                        ?: "本机草稿已保留，请确认要继续使用的草稿。")
                     Row {
                         listOf(true to "保留本机草稿", false to "使用其他设备草稿").forEach { (keepLocal, label) ->
                             TextButton(

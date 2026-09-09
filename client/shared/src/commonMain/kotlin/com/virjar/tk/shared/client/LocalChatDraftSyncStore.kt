@@ -13,6 +13,25 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.UUID
 
+@Serializable
+internal data class StoredChatDraftConsumption(val clientMsgId: String?, val expectedRevision: Long, val afterOperationId: String? = null)
+@Serializable
+internal data class StoredChatDraftSyncRecord(
+    val chatId: String,
+    val remote: SharedChatDraftSnapshot? = null,
+    val stale: Boolean = true,
+    val requiredRevision: Long = 0,
+    val localRevision: Long = 0,
+    val dirty: Boolean = false,
+    val pending: PendingSharedChatDraft? = null,
+    val consume: StoredChatDraftConsumption? = null,
+    val conflict: Boolean = false,
+    val failure: String? = null,
+    val pendingRejected: Boolean = false,
+    // 自有连续 ACK 可推进热编辑帧的旧基线；外部变更绝不扩展这个区间。
+    val acceptedBaseFloor: Long = 0,
+)
+
 /** 一个 chat 只有一个不可变在途操作；新的编辑合并在本机 composer 中，不覆盖在途字节。 */
 internal class LocalChatDraftSyncStore(
     private val queries: AppDatabaseQueries,
@@ -23,28 +42,10 @@ internal class LocalChatDraftSyncStore(
 ) : LocalChatDraftSync {
     override val changes = MutableStateFlow(0L)
     private val json = Json { encodeDefaults = true }
-    @Serializable
-    private data class Consumption(val clientMsgId: String?, val expectedRevision: Long, val afterOperationId: String? = null)
-    @Serializable
-    private data class Record(
-        val chatId: String,
-        val remote: SharedChatDraftSnapshot? = null,
-        val stale: Boolean = true,
-        val requiredRevision: Long = 0,
-        val localRevision: Long = 0,
-        val dirty: Boolean = false,
-        val pending: PendingSharedChatDraft? = null,
-        val consume: Consumption? = null,
-        val conflict: Boolean = false,
-        val failure: String? = null,
-        val pendingRejected: Boolean = false,
-        // 自有连续 ACK 可推进热编辑帧的旧基线；外部变更绝不扩展这个区间。
-        val acceptedBaseFloor: Long = 0,
-    )
     private fun <T> use(block: () -> T): T = gate.use { synchronized(lock) { block() } }
-    private fun read(chatId: String): Record? = queries.selectChatDraftSync(chatId).executeAsOneOrNull()?.let { json.decodeFromString<Record>(it) }
-    private fun all(): List<Record> = queries.selectAllChatDraftSync().executeAsList().map { json.decodeFromString<Record>(it) }
-    private fun write(record: Record) {
+    private fun read(chatId: String): StoredChatDraftSyncRecord? = queries.selectChatDraftSync(chatId).executeAsOneOrNull()?.let { json.decodeFromString<StoredChatDraftSyncRecord>(it) }
+    private fun all(): List<StoredChatDraftSyncRecord> = queries.selectAllChatDraftSync().executeAsList().map { json.decodeFromString<StoredChatDraftSyncRecord>(it) }
+    private fun write(record: StoredChatDraftSyncRecord) {
         val payload = json.encodeToString(record)
         val existing = queries.selectChatDraftSync(record.chatId).executeAsOneOrNull()
         var capacity = queries.selectChatDraftSyncCapacity().executeAsOne()
@@ -82,7 +83,7 @@ internal class LocalChatDraftSyncStore(
                     draft = drafts.get(chatId)
                 }
             }
-            write(Record(chatId, localRevision = draft?.revision ?: 0,
+            write(StoredChatDraftSyncRecord(chatId, localRevision = draft?.revision ?: 0,
                 dirty = legacyPending != null || (draft != null && !empty(draft))))
             // 此后只有新 CAS 契约负责出站，旧 scalar 覆盖层不能越过它。
             if (draft != null) publishPreview(chatId, draft.markdown.takeIf { MarkdownAssetPolicy.recoveryReferences(it).isEmpty() && it.isNotEmpty() })
@@ -103,7 +104,7 @@ internal class LocalChatDraftSyncStore(
     override fun workChats(): List<String> = use { all().filter { it.pending != null || it.dirty || it.consume != null }.map { it.chatId } }
 
     internal fun savedLocked(snapshot: ChatDraftSnapshot, previous: ChatDraftSnapshot?) {
-        var record = read(snapshot.chatId) ?: if (snapshot.sharedRevision != null) Record(snapshot.chatId) else return
+        var record = read(snapshot.chatId) ?: if (snapshot.sharedRevision != null) StoredChatDraftSyncRecord(snapshot.chatId) else return
         val semanticChange = previous == null || !sameContent(previous, snapshot)
         if (semanticChange) {
             val base = snapshot.sharedRevision ?: 0L
@@ -129,7 +130,7 @@ internal class LocalChatDraftSyncStore(
     internal fun consumedLocked(chatId: String, clientMsgId: String) {
         val record = read(chatId) ?: return
         val pending = record.pending
-        val consumption = record.consume ?: Consumption(clientMsgId, record.remote?.revision ?: 0,
+        val consumption = record.consume ?: StoredChatDraftConsumption(clientMsgId, record.remote?.revision ?: 0,
             pending?.takeIf { it.command.content != null }?.command?.operationId)
         write(record.copy(dirty = false, consume = consumption, conflict = false, failure = null))
     }
@@ -223,7 +224,7 @@ internal class LocalChatDraftSyncStore(
         }
         prepareLocked(record, ChatDraftCommand(chatId, remote.revision, id(), now, content))
     }
-    private fun prepareLocked(record: Record, command: ChatDraftCommand): PendingSharedChatDraft {
+    private fun prepareLocked(record: StoredChatDraftSyncRecord, command: ChatDraftCommand): PendingSharedChatDraft {
         val pending = PendingSharedChatDraft(command, record.localRevision)
         write(record.copy(pending = pending)); changed(); return pending
     }

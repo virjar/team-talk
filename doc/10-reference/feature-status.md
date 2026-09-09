@@ -180,7 +180,7 @@ Android 系统 picker 打开期间 Activity 重建的设备覆盖仍需补齐。
 | 文件搜索 | 可用 | 群文件与聊天主附件按不区分大小写的字面文件名片段检索，支持来源、MIME 类型、范围筛选和分页；当前成员权限与对象身份在查询、打开和下载时复验。细节与验证范围见下方内容搜索说明。 |
 | 服务搜索 | 边界外 | 当前只有受控通知机器人入口；第二个命名外部应用出现并证明需要统一发现前，不建设应用/服务注册表或全局服务搜索 |
 | 客户端资源换代与首帧 | 可用 | Desktop 在 IO 创建媒体与草稿候选、Main 组装导航；Android 完整组装后发布。失败、取消和会话替换均由单一 owner 清理或交接，详见下方说明 |
-| 本地缓存生命周期 | 部分 | 消息/媒体有界回收、损坏隔离、隔离期间附件源保留、只读 SQLite 诊断、隔离资料保全归档/校验、显式放弃隔离副本、Android 应用内整理与 JVM 离线单库压缩已实现；已知账号 namespace 可保全并显式放弃；Android 放弃仅支持导出副本，救援导入仍缺。细节见下方同名说明。 |
+| 本地缓存生命周期 | 部分 | 消息/媒体有界回收、损坏隔离、附件源保留、只读诊断、资料保全/校验、隔离与 namespace 显式放弃、Android 应用内整理及 JVM 离线压缩已实现；归档单聊天草稿可救到同 owner JVM 库并待用户确认。Android 放弃仅支持导出副本，其他可靠事实的救援仍缺。细节见下方同名说明。 |
 | Android 专项体验 | 部分 | 核心业务及文档图片/文件的系统 picker、二进制粘贴和物理键盘粘贴可用；系统 picker/权限/返回路径、最低无障碍语义和发行制品真机矩阵仍须按目标设备覆盖 |
 | Android 后台 Push 与系统通知 | 部分 | 已接进程存活且系统允许后台联网时的新未读通知、Android 13 权限申请及通知点击回到会话；前台/静音/历史同步不提醒，退出清理。尚无设备 endpoint、国产 Provider、服务端 wake outbox 和后台网络受限/进程回收后的唤醒闭环，详见[Android 通知](../05-clients/android.md#消息通知的当前范围) |
 | 保存的消息 | 可用 | 每用户唯一私有会话，支持消息副本、稳定命令幂等、历史/搜索及多设备同步；首次收藏前不占会话列表，有内容后按普通会话排序，支持用户主动置顶/取消。系统服务身份不等于对端用户账号。服务端入口为 SavedMessageIntegrationTest 与 RemoteAcceptanceTest 的 saved messages 场景；图形端复用 ConversationListScreen 与现有聊天页面 |
@@ -260,9 +260,14 @@ Android“设置 → 本地存储”保留登录信息，先保存草稿并暂�
 隔离副本、附件源及独立文档资料。当前凭据仍引用目标或状态无法确认时拒绝；headless 按部署指纹与 uid
 保护全部 dataset。Android 仅处理离线导出目录，共享文档 preferences 只归档保留；凭据、媒体、telemetry、
 其他 owner 与未知 legacy 不删除。namespace format 2 与隔离 format 1 归档均可校验，但不能互相授权
-另一种放弃操作；默认不按年龄或零计数自动回收。救援导入仍未实现，边界见
+另一种放弃操作；默认不按年龄或零计数自动回收，边界见
 [账号 namespace 保全与显式放弃](../03-architecture/client-and-sdk.md#账号-namespace-保全与显式放弃)。
-定向验证入口见[账号 namespace 处置](../09-testing/local-tests.md#账号-namespace-处置)、
+单聊天草稿可从完整校验的 JVM/Android 归档救到精确同 owner 的健康当前 JVM 库，预览确认后在排他事务中
+写入新本机 revision；目标非空或有可靠工作时拒绝。导入先保留为冲突稿，权威读取当前服务器内容后按
+现有选择收敛，带本机源的附件须显式重试，不自动发送。outgoing、业务命令、Bot 队列和独立文档资料
+不在救援范围内，不跨 dataset 重放；边界见[单聊天草稿救援](../03-architecture/client-and-sdk.md#单聊天草稿救援)。
+定向验证入口见[单聊天草稿救援](../09-testing/local-tests.md#单聊天草稿救援)、
+[账号 namespace 处置](../09-testing/local-tests.md#账号-namespace-处置)、
 [会话内数据库整理](../09-testing/local-tests.md#会话内数据库整理)、
 [隔离副本显式放弃](../09-testing/local-tests.md#隔离副本显式放弃)、
 [隔离资料保全与校验](../09-testing/local-tests.md#隔离资料保全与校验)、

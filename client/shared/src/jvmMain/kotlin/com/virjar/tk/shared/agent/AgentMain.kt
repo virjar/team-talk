@@ -54,7 +54,7 @@ fun main(args: Array<String>) {
                 result.bundle?.let { println("${it.buildIdentity} protocol ${it.protocolMajor}.${it.protocolMinor}") }
             }
             else -> HeadlessBundleInstaller.acquireRuntimeLease(HeadlessRuntime.currentBundle()).use {
-                if (command in setOf("configure", "export-cli-token", "doctor", "compact-cache", "export-quarantine", "verify-cache-archive", "discard-quarantine", "export-namespace", "discard-namespace")) {
+                if (command in setOf("configure", "export-cli-token", "doctor", "compact-cache", "export-quarantine", "verify-cache-archive", "discard-quarantine", "export-namespace", "discard-namespace", "preview-draft-rescue", "import-draft-rescue")) {
                     HeadlessConfiguration.execute(requireNotNull(command), args.drop(1))
                 } else runAgent(args)
             }
@@ -318,6 +318,13 @@ tt-agent — TeamTalk headless client (Java 21+)
   discard-namespace --cache-root <dir> --deployment-fingerprint <sha256> --dataset-id <uuid> --uid <uid>
                     --archive <dir> --confirm-manifest-sha256 <sha256> [--cache-layout jvm|android]
                                        Abandon only that verified namespace; current login credentials must no longer select it
+  preview-draft-rescue --cache-root <dir> --database <relative-path> --archive <dir>
+                       --source-database <archive-relative-path> --chat-id <chat-id>
+                                       Check one archived chat draft for explicit recovery into a stopped JVM client
+  import-draft-rescue --cache-root <dir> --database <relative-path> --archive <dir>
+                      --source-database <archive-relative-path> --chat-id <chat-id>
+                      --confirm-manifest-sha256 <sha256> --expected-composer-revision <revision>
+                                       Install the selected draft for confirmation in the client; never send it automatically
   install-bundle --prefix <new-dir>     Install the extracted distribution (POSIX)
   upgrade-bundle --prefix <dir>         Atomically switch binaries; retain account data
   uninstall-bundle --prefix <dir>       Run from an external bundle after stopping installed processes

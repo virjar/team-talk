@@ -349,6 +349,8 @@ debounce 或 `onDispose` 在 CLOSED 后只能无害失败，不能穿过已 quie
 跨设备快照的服务端 revision 与本机写入 revision 分开。变更使用发送前持久化的 operationId/issuedAt
 和 expectedRevision，未知结果重放相同意图。`CHAT_DRAFT_CHANGED` 只使相应快照失效，读取结果经版本
 检查后交给已驻留编辑器；发生冲突时保留本机内容并提供明确选择，不自动覆盖双方内容或循环重试旧 CAS。
+从保全归档导入的单聊天草稿也复用该冲突入口，先读取当前服务器快照；其本机附件源须显式重试，
+不因救援导入自动上传或发送，见[单聊天草稿救援](#单聊天草稿救援)。
 
 `LocalChatDraftSync` 另在同一账号库保存远端快照、所需 revision、待确认命令和发送后的条件消费记录，
 每个 chat 只允许一条不可变在途命令，新编辑留在本机 composer 中等待；同步记录最多 1,000 个、合计
@@ -1043,8 +1045,8 @@ AndroidSqliteDriver 使用同一 SQLDelight schema 的升级回调；同 major �
 推荐退出客户端后检查；文件稳定窗口不能证明在线原子快照，也不能证明所有外部资料齐备。
 独立文档草稿/操作与附件 spool 不属于 SQLite 表，在报告 `uninspected` 中标为未检查，必须随数据库族
 一同保留。零计数不授权删除 namespace。CLI 入口见[无头客户端](../05-clients/headless.md)；
-账号 namespace 与隔离副本的显式放弃、数据库整理使用下方各自独立入口；救援导入仍在
-[CORE-06](../10-reference/roadmap.md#core-06--本地缓存生命周期)。
+账号 namespace 与隔离副本的显式放弃、单聊天草稿救援和数据库整理使用下方各自独立入口；
+其他可靠事实的救援仍在 [CORE-06](../10-reference/roadmap.md#core-06--本地缓存生命周期)。
 
 #### 隔离资料保全归档
 
@@ -1136,6 +1138,39 @@ dataset。Android 同时检查导出目录中的认证 preferences 主文件与 
 清理、救援导入及 `VACUUM` 保持独立；它不使隔离库中的可靠事实重新进入发送队列。操作示例见
 [无头客户端](../05-clients/headless.md#账号-namespace-保全与放弃)，验收边界见
 [账号 namespace 处置](../09-testing/local-tests.md#账号-namespace-处置)。
+
+#### 单聊天草稿救援
+
+[LocalCacheChatDraftRescue](../../client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/client/LocalCacheChatDraftRescue.kt)
+从完整校验的 format 1 隔离归档或 format 2 namespace 归档中，显式选择一个数据库主文件和一个 chat。
+源可来自 JVM 或 Android 导出布局，但草稿链须为当前 schema（现为 6）。选定数据库族复制到私有临时
+目录后读取，不用正常缓存工厂迁移或修复原库；整库其他部分损坏不直接否决可读的选定草稿链，链自身
+不可读取或不能证明依赖完整时拒绝。归档和原始隔离资料保持不变。
+
+目标仅为 JVM 安装中现存、完整性正常的当前 epoch/schema 账号库；部署指纹、datasetId 与 uid 必须
+和归档精确一致，且目标会话已存在。操作取得现存安装根 `.lock`，核对当前 major 的 ready 标记，
+在专用 SQLite 排他事务中检查和写入，不启动登录或网络。Android 来源可救到同 owner 的 JVM 目标，
+不提供 Android 原机导入或导出目录回灌。
+
+救援内容为单个完整 composer 的 Markdown、sidecar、模式、选区和已接受消息的回复身份，以及仍被它
+引用的本机上传任务与源。源草稿存在待确认变更、发送消费关联、非 SUCCESS outgoing、旧草稿镜像待发、
+仅本机回复、无引用上传任务或失败消息修复依赖时拒绝，不把可能已经提交的意图改成新消息。
+目标 chat 有非空草稿或未完成可靠工作、资产/源身份冲突时同样拒绝；其他 chat 的资料不被覆盖。
+
+预览给出 owner、清单摘要、目标 `composerRevision`、正文字符数和附件/源大小摘要，不输出正文或秘密。
+导入必须确认同一清单摘要和预览的全账号 composer 时钟，提交时重新核对时钟及全部依赖、容量和源身份；
+期间任一聊天保存了新草稿也会使旧预览失效。源先校验并复制到私有 spool，再由一个事务发布新草稿、
+同步状态、上传任务与时钟；提交失败可能留下已校验但尚无引用的源，不会发布半份草稿。
+
+导入使用新的本机 revision，`sharedRevision=0`，同步状态为 dirty/conflict/stale、`remote=null`。
+重启后先权威读取当前服务器草稿，再由用户选择保留本机或使用其他设备内容；内容完全相同时可自然收敛。
+导入本身不发送消息或提交远端草稿。所有带本机源的上传任务，包括原 READY 任务，均转为 FAILED 并保留
+上传 identity，只有用户显式重试后才继续；已过期 identity 按既有重试规则换号。远端描述符仍须通过
+当前权限与附件可用性检查。最终发送继续使用普通上传屏障、可靠消息 outbox 和 ACK 后条件清稿。
+
+此入口不恢复 outgoing、业务命令、Bot 队列或独立文档资料，不跨 dataset 重放，也不授权删除原归档。
+命令见[单聊天草稿救援](../05-clients/headless.md#单聊天草稿救援)，回归入口见
+[单聊天草稿救援](../09-testing/local-tests.md#单聊天草稿救援)。
 
 #### 当前会话数据库整理
 
