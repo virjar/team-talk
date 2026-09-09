@@ -5,6 +5,7 @@
 
 # ── 应用入口 ──
 -keep class com.virjar.tk.android.MainActivity { *; }
+-keep class com.virjar.tk.android.XiaomiPushReceiver { *; }
 
 # ── Compose / Kotlin ──
 -keep class androidx.compose.** { *; }

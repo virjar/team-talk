@@ -15,6 +15,7 @@ import com.virjar.tk.shared.client.ServerConfig
  * - 平台环境和异常边界是进程级单次初始化
  */
 class TeamTalkApp : Application(), coil3.SingletonImageLoader.Factory {
+    internal val xiaomiPush by lazy { AndroidXiaomiPushSettings(this) }
     internal var accountCleanupFailed: Boolean = false
         private set
     /** 由本 Android 进程持有的不可变部署配置。 */
@@ -54,6 +55,12 @@ class TeamTalkApp : Application(), coil3.SingletonImageLoader.Factory {
 
     override fun onCreate() {
         super.onCreate()
+        // 厂商 SDK 的 :pushservice 不拥有 TeamTalk 账号、数据库或草稿写入器。
+        val currentProcess = if (android.os.Build.VERSION.SDK_INT >= 28) getProcessName() else {
+            getSystemService(android.app.ActivityManager::class.java).runningAppProcesses
+                ?.firstOrNull { it.pid == android.os.Process.myPid() }?.processName
+        }
+        if (currentProcess != packageName) return
 
         // 在凭据、草稿写入器与任何数据库打开前处理本安装的 major 边界。
         com.virjar.tk.shared.client.prepareAndroidClientDataVersion(this)

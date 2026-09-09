@@ -174,15 +174,24 @@ class SyncRpcImpl(
         service.listConversations(uid, sessionId, request)
 }
 
-class DeviceRpcImpl(
+internal class DeviceRpcImpl(
     uid: String,
     private val deviceRepo: DeviceRepository,
     private val authService: AuthService,
+    private val deviceId: String,
+    private val deviceCredentialEpoch: Long,
+    private val xiaomiPush: com.virjar.tk.server.infra.push.XiaomiPushNotifications,
 ) : DeviceRpcStub(uid) {
     override suspend fun listDevices() = deviceRepo.getDevices(uid)
     override suspend fun kickDevice(deviceId: String) {
         authService.revokeDevice(uid, deviceId)
     }
+    override suspend fun setXiaomiPushRegistration(
+        registrationId: String,
+        packageName: String,
+        deploymentFingerprint: String,
+    ): Boolean = xiaomiPush.register(uid, deviceId, deviceCredentialEpoch,
+        registrationId, packageName, deploymentFingerprint)
 }
 
 class OrganizationRpcImpl(uid: String, private val service: OrganizationService) : OrganizationRpcStub(uid) {

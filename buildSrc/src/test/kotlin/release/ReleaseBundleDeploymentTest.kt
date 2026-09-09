@@ -265,6 +265,52 @@ class ReleaseBundleDeploymentTest {
     }
 
     @Test
+    fun `explicit Android package is sealed and checked independently from the Desktop identity`() = bundle { directory ->
+        val client = ClientDistributionIdentity("com.example.internal", "内部版", "Internal",
+            androidApplicationId = "com.example.internal")
+        val explicit = identity.copy(deployment = config.copy(client = client))
+        androidFixture(directory, explicit)
+        assertEquals(File(directory, "client.apk"), ReleaseBundle.requireAndroidApk(directory, explicit))
+        val sealed = File(directory, "sealed")
+        sealFixture(sealed, snapshot = explicit.deployment.toCanonicalJson(), identity = explicit)
+        val manifest = ReleaseBundle.verify(sealed, explicit, notes)
+        assertEquals("com.example.internal", manifest.getValue("client").jsonObject
+            .getValue("androidApplicationId").jsonPrimitive.content)
+        val derived = explicit.copy(deployment = explicit.deployment.copy(
+            client = client.copy(androidApplicationId = "com.example.internal.android")))
+        assertNotEquals(explicit.deploymentSha256, derived.deploymentSha256)
+        assertFailsWith<IllegalArgumentException> { ReleaseBundle.verify(sealed, derived, notes) }
+        androidFixture(directory, explicit, actualApkIdentity = derived)
+        assertEquals("APK manifest package or version differs from the effective configuration",
+            assertFailsWith<IllegalArgumentException> { ReleaseBundle.requireAndroidApk(directory, explicit) }.message)
+    }
+
+    @Test
+    fun `existing sealed deployment snapshots may omit only the historically derived Android package`() = bundle { directory ->
+        val privateIdentity = identity.copy(deployment = config.copy(
+            client = ClientDistributionIdentity("com.example.internal", "内部版", "Internal")))
+        listOf(identity, privateIdentity).forEachIndexed { index, existing ->
+            val current = Json.parseToJsonElement(existing.deployment.toCanonicalJson()).jsonObject
+            val legacy = Json { prettyPrint = true }.encodeToString(JsonObject.serializer(), buildJsonObject {
+                current.forEach { (key, value) ->
+                    put(key, if (key == "client") JsonObject(value.jsonObject - "androidApplicationId") else value)
+                }
+            }) + "\n"
+            listOf(1, 2).forEach { format ->
+                val sealed = File(directory, "$index-$format")
+                sealFixture(sealed, snapshot = legacy, identity = existing, format = format,
+                    legacyProducer = format == 1, producerConfig = legacy)
+                val before = regularFiles(sealed).associate { it.relativeTo(sealed).path to sha256(it) }
+                assertEquals(sha256(legacy.toByteArray(Charsets.UTF_8)), ReleaseBundle.verify(sealed, existing, notes)
+                    .getValue("deploymentSha256").jsonPrimitive.content)
+                assertEquals(before, regularFiles(sealed).associate { it.relativeTo(sealed).path to sha256(it) })
+                val changed = existing.copy(deployment = existing.deployment.copy(deployHost = "other.example.com"))
+                assertFailsWith<IllegalArgumentException> { ReleaseBundle.verify(sealed, changed, notes) }
+            }
+        }
+    }
+
+    @Test
     fun `newly assembled APKs and format two reuse require complete producer deployment fields`() = bundle { directory ->
         androidFixture(directory, identity, legacyProducer = true)
         val missing = assertFailsWith<IllegalArgumentException> { ReleaseBundle.requireAndroidApk(directory, identity) }
@@ -345,12 +391,13 @@ class ReleaseBundleDeploymentTest {
         actualApkIdentity: BundleIdentity = identity,
         producerIdentity: BundleIdentity = identity,
         headlessIdentity: BundleIdentity? = null,
+        producerConfig: String = producerIdentity.deployment.toCanonicalJson(),
     ) {
         desktopFixture(File(directory, "desktop"), desktopIdentity)
         File(directory, "assets").mkdirs()
         listOf("server.zip", "desktop-site.zip").forEach { File(directory, "assets/$it").writeText(it) }
         writeAndroidApkFixture(File(directory, "assets/client.apk"), producerIdentity, actualApkIdentity,
-            legacyProducer = legacyProducer)
+            legacyProducer = legacyProducer, canonicalConfig = producerConfig)
         headlessIdentity?.let {
             val payload = Files.createTempDirectory("headless-bundle-fixture-").toFile()
             try {
@@ -380,7 +427,7 @@ class ReleaseBundleDeploymentTest {
                 put("protocolContractSha256", identity.protocolContractSha256)
             }
             if (identity.distributionKind == "snapshot") put("desktopRevision", identity.desktopRevision)
-            put("deploymentSha256", identity.deploymentSha256)
+            put("deploymentSha256", sha256((snapshot ?: identity.deployment.toCanonicalJson()).toByteArray(Charsets.UTF_8)))
             putJsonObject("client") {
                 put("applicationId", identity.client.applicationId)
                 put("androidApplicationId", identity.client.androidApplicationId)

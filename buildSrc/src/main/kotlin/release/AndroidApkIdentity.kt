@@ -19,7 +19,8 @@ internal fun androidDeploymentIdentity(canonicalConfig: String): Map<String, Str
     return linkedMapOf(
         "deploymentSha256" to sha256(canonicalConfig.toByteArray(Charsets.UTF_8)),
         "applicationId" to clientField("applicationId"),
-        "androidApplicationId" to "${clientField("applicationId")}.android",
+        "androidApplicationId" to (client["androidApplicationId"]?.jsonPrimitive?.content
+            ?: "${clientField("applicationId")}.android"),
         "displayName" to clientField("displayName"),
         "desktopName" to clientField("desktopName"),
         "serverUrl" to config.getValue("serverUrl").jsonPrimitive.content,
@@ -50,14 +51,19 @@ internal fun writeAndroidReleaseIdentity(
  * format 1 bundles predate embedded deployment fields. Their sealed original bytes remain reusable,
  * with actual manifest/resources checked below. Every newly assembled format 2 bundle requires them.
  */
-internal fun verifyAndroidApkIdentity(apk: File, identity: BundleIdentity, allowLegacyProducer: Boolean = false) {
+internal fun verifyAndroidApkIdentity(
+    apk: File,
+    identity: BundleIdentity,
+    allowLegacyProducer: Boolean = false,
+    canonicalConfig: String = identity.deployment.toCanonicalJson(),
+) {
     ZipFile(apk).use { zip ->
         val entry = zip.getEntry("assets/teamtalk-build.properties") ?: error("APK lacks its producer build identity")
         val props = Properties().apply { zip.getInputStream(entry).reader(Charsets.UTF_8).use(::load) }
         require(props.getProperty("buildIdentity") == identity.buildIdentity &&
             props.getProperty("version") == identity.version.name &&
             props.getProperty("artifactType") == "android-apk") { "APK came from a different source revision" }
-        val expected = androidDeploymentIdentity(identity.deployment.toCanonicalJson())
+        val expected = androidDeploymentIdentity(canonicalConfig)
         if (!allowLegacyProducer || expected.keys.any(props::containsKey)) {
             require(expected.all { (key, value) -> props.getProperty(key) == value }) {
                 "APK producer deployment identity differs from the effective configuration"

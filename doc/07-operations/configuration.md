@@ -48,7 +48,8 @@ DSL 按用途分层：`server` 配置用户访问的 HTTP/TCP，`deploy` 配置�
 | `deploy.ssh.port` | 默认 22，范围 1–65535 | `deployPort` |
 | `deploy.ssh.user` | 默认 `root`，必须符合安全用户名格式 | `deployUser` |
 | `client.allowCustomServer` | 默认 `false`，控制登录页自定义服务器入口；私有发行通常保持关闭 | `allowCustomServer` |
-| `client.identity` | 默认保留公版身份；内部三个字段见下节 | `client` |
+| `client.identity` | 默认保留公版身份；字段见下节 | `client` |
+| `client.xiaomiPush` | 可选的小米大陆官方推送；未配置时不打包厂商 SDK，服务端关闭该通道 | `xiaomiPush` |
 
 `sslPort` 不需要再手填一遍；HTTP 模式不会因其内部默认值启用 HTTPS connector。`server.tcp.port`
 沿部署链写入 `TCP_PORT`，再由 `TcpServer` 与健康探针共同读取；5100 只是默认值，
@@ -90,6 +91,7 @@ fun deploymentConfiguration(rootDir: File): DeploymentConfig = deployment {
         identity {
             // 首次分发后保持安装标识和英文名稳定。
             applicationId = "com.example.teamtalk.internal"
+            androidApplicationId = "com.example.teamtalk.internal"
             displayName = "TeamTalk 内部版"
             desktopName = "TeamTalkInternal"
         }
@@ -99,7 +101,8 @@ fun deploymentConfiguration(rootDir: File): DeploymentConfig = deployment {
 
 | `client.identity` 字段 | 默认值 | 用途与约束 |
 |---|---|---|
-| `applicationId` | `com.virjar.tk` | 稳定的反向域名应用标识；Android 安装 ID 追加 `.android`，Desktop Bundle ID 与私有版数据目录据此生成 |
+| `applicationId` | `com.virjar.tk` | 稳定的反向域名应用标识；Desktop Bundle ID 与私有版数据目录据此生成 |
+| `androidApplicationId` | 未填写时为 `applicationId + ".android"` | 最终 Android 安装包名，可显式填写不带后缀的包名；公版固定为 `com.virjar.tk.android`，新私有部署建议明确填写并与渠道登记包名一致 |
 | `displayName` | `TeamTalk` | 用户看到的应用名称，可包含中文；用于启动入口、登录界面、窗口、托盘和升级提示 |
 | `desktopName` | `TeamTalk` | 稳定的英文安装名称；只用 ASCII 字母和数字，首字符为字母；用于 `.app` 名称、桌面安装与产物命名 |
 
@@ -123,10 +126,14 @@ flowchart TD
     Desktop -->|"Conveyor 更新源由 serverUrl 推导"| Downloads
 ```
 
-首次分发前同时选定应用标识、英文安装名称和签名材料，后续普通升级保持三者稳定，只按根
+首次分发前同时选定应用标识、Android 包名、英文安装名称和签名材料，后续普通升级保持它们稳定，只按根
 `gradle.properties` 递增发行版本。`displayName` 可以调整；它不决定本地数据目录。Windows 的安装
 身份由构建配置同步派生，不能仅修改窗口标题或 macOS Bundle ID 就当作完成新发行。
 源码的 Kotlin 包名与 Android `namespace` 保持不变，不需要批量替换源码中的 `com.virjar.tk`。
+已有私有配置未填写 `androidApplicationId` 时保留 `.android` 派生规则；要补成显式配置，应填当前已安装的
+完整包名。去掉已分发包名的后缀会成为另一应用，无法覆盖安装或自动沿用原沙箱内的账号与草稿。
+发行快照、APK 内嵌身份和真实 Manifest 校验均使用最终包名。旧密封快照缺少该字段时，只允许按历史
+派生规则复用原始字节与摘要，不重写旧包。
 
 默认配置保留已有公版的安装身份和数据目录。私有版使用独立应用标识与英文安装名称，第一次打开
 时独立登录，不探测或复制公版资料。之后同一发行的普通升级保留账号、草稿、发件箱和附件缓存。
@@ -143,6 +150,66 @@ flowchart TD
 更新源由 `serverUrl` 推导，更新元数据也发布在该 Desktop 目录。共享升级横幅只表达协议兼容状态，
 不是自动更新器；这些站点相对路径不需要另配第二个更新源。
 服务器坐标、客户端身份及签名准备好后，继续使用[统一发行流程](releasing.md)；无需额外发布脚本。
+
+### 小米大陆官方推送
+
+每个私有安装包使用自己在小米平台登记的包名与推送参数。先按
+[小米推送服务启用指南](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1542)注册开发者账号，
+为实际 `client.identity.androidApplicationId` 创建应用并启用推送，取得 App ID、App Key 和 App Secret。
+私有应用也须满足小米的安全审核与上架要求，单独创建 App ID 不代表持续拥有推送权限；符合资格的企业
+可选择非公开上架，具体见[未上架应用限制](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=2057)
+和[企业内部分发](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1993)。
+选择应用的私信通知类别并完成审核，配置可用于该通道的模板；通道和模板要求以
+[小米模板接入指南](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=2314)为准。
+
+从[小米官方 SDK 下载页](https://admin.xmpush.xiaomi.com/zh_CN/mipush/downpage)获取**中国大陆版 Android AAR**，
+按[官方 AAR 指南](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1544)核对所用版本。
+把文件留在独立私有 clone 的被忽略目录中，使用固定的实际文件名；SDK 不进入源码仓库，不从第三方镜像取包。
+SDK 需要通过当前 Android 工具链的 release/R8 构建与真实推送验证；若出现厂商代码类型检查失败或
+被视为不可达的方法，不能仅凭 APK 构建成功交付，应向厂商取得兼容制品。
+在已有 `deployment { client { ... } }` 中添加：
+
+```kotlin
+xiaomiPush {
+    appId = "123456789" // 替换为这个 Android 包名对应的 App ID
+    channelId = "12345" // 平台审核通过的私信通道
+    templateId = "67890" // 与下面固定通知内容相符的零变量模板
+    sdkFile = File(rootDir, "buildSrc/deployment-local/vendor/MiPush_SDK_Client_<version>.aar")
+    credentialsFile = File(rootDir, "gradle/xiaomi-push.secrets")
+}
+```
+
+示例 ID 是占位符。`sdkFile` 与 `credentialsFile` 均为必填的 `File`，相对位置用 `rootDir` 明确解析。
+构建读取本地 AAR 并在非敏感快照中记录路径及 `sdkSha256`；调整 SDK 文件需要重新构建客户端。
+服务端发送固定正文“你有新的未读消息，点击查看”，标题取应用显示名，`template_param` 为 `{}`。
+启用小米推送时，应用显示名须少于 50 个字符，以符合通知标题限制。
+因此所选模板必须支持这组固定标题/正文和零变量；带变量的模板不能只填 ID 使用。平台是否接受该模板及
+实际下发须用自己的开发者账号验证，不能把本地 HTTP 回归视为厂商送达证据。
+`credentialsFile` 使用 UTF-8 Java properties，仅填写：
+
+```properties
+appKey=<该应用的 App Key>
+appSecret=<该应用的 App Secret>
+```
+
+`*.secrets` 已被 Git 忽略，仍需按本机秘密文件管理，不把其内容粘贴进 Kotlin、日志或发行说明。
+App ID 与 App Key 只供 Android SDK 注册；App Secret 只通过部署流程写入服务端私有环境。
+`deployment-config.json` 只记录公开参数、文件位置与 SDK 摘要，不包含两项凭据。服务端变量对应如下：
+
+| 环境变量 | 来源 |
+|---|---|
+| `XIAOMI_PUSH_ENABLED` | 是否配置 `client.xiaomiPush`；缺省 `false` |
+| `XIAOMI_PUSH_APP_SECRET` | 凭据文件的 `appSecret`，不把 `appKey` 传给服务端 |
+| `XIAOMI_PUSH_PACKAGE_NAME` | 最终 `client.identity.androidApplicationId` |
+| `XIAOMI_PUSH_CHANNEL_ID` / `XIAOMI_PUSH_TEMPLATE_ID` | 配置的通道与模板 |
+| `XIAOMI_PUSH_TITLE` | `client.identity.displayName` |
+
+Android 登录后由用户选择是否启用小米推送，授权前不初始化厂商 SDK；“暂不”不影响聊天。
+部署运营者应在自己的隐私说明中披露该 SDK 并提供可访问的说明入口，具体要求见
+[小米推送开发者应用合规指南](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1535)。
+这项授权与 Android 系统通知权限是两回事，系统通知关闭时不会因同意 SDK 授权而自动开启。
+配置与编译成功不代表通道审核、厂商实际投递或锁屏/进程回收场景已通过验收；实际状态见
+[功能状态](../10-reference/feature-status.md)，发送与点击行为见[Android 通知边界](../05-clients/android.md#消息通知的当前范围)。
 
 ### 用辅助函数拆分配置
 

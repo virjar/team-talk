@@ -32,6 +32,7 @@ data class DeploymentConfig(
     val androidSigning: AndroidSigningConfig? = null,
     /** 私有部署 TCP TLS 的公共证书；允许自签证书，绝不能放入私钥。 */
     val tcpTlsCertificatePem: String? = null,
+    val xiaomiPush: XiaomiPushConfig? = null,
 ) {
     val serverUri: URI = URI(serverUrl)
     val sslEnabled: Boolean get() = serverUri.scheme.equals("https", ignoreCase = true)
@@ -50,6 +51,9 @@ data class DeploymentConfig(
         require(deployPort in 1..65535) { "Invalid deployPort" }
         require(deployUser.matches(deployUserPattern)) { "Invalid deployUser" }
         requireCanonicalDeployPath(deployPath)
+        require(xiaomiPush == null || client.displayName.length < 50) {
+            "Xiaomi push notification title (client.displayName) must be shorter than 50 characters"
+        }
         require(sslPort in 1..65535) { "Invalid sslPort" }
         if (sslEnabled) {
             val publicSslPort = serverUri.port.takeIf { it != -1 } ?: 443
@@ -80,8 +84,19 @@ data class DeploymentConfig(
             put("allowCustomServer", allowCustomServer)
             putJsonObject("client") {
                 put("applicationId", client.applicationId)
+                put("androidApplicationId", client.androidApplicationId)
                 put("displayName", client.displayName)
                 put("desktopName", client.desktopName)
+                xiaomiPush?.let { push ->
+                    putJsonObject("xiaomiPush") {
+                        put("appId", push.appId)
+                        put("channelId", push.channelId)
+                        put("templateId", push.templateId)
+                        put("credentialsFile", push.credentialsFile.path)
+                        put("sdkFile", push.sdkFile.path)
+                        put("sdkSha256", push.sdkSha256)
+                    }
+                }
                 // 非敏感快照只输出签名模式与证书路径；密码与私钥不进入任何产物或日志。
                 putJsonObject("androidSigning") {
                     androidSigning?.let {

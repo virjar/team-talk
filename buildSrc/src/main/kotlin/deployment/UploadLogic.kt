@@ -42,6 +42,8 @@ fun deployServer(
     expectedVersion: String,
     expectedBuildIdentity: String,
 ) {
+    // 在任何远程部署变更之前校验当前 Profile 的推送凭据。
+    val pushEnvironment = config.xiaomiPushEnvironment()
     val artifactIdentity = requireReleaseArtifact(
         artifactDirectory = serverDistribution,
         expectedArtifactType = "server-distribution",
@@ -94,6 +96,7 @@ fun deployServer(
                 )
             }
             if (tcpTlsEnabled) requireCompatibleTlsPasswords(secrets)
+            secrets.putAll(pushEnvironment)
             if (tcpTlsEnabled && !isFirstDeploy && localTlsPemFiles == null) {
                 preflightRetainedTlsKeystore(host, user, deployPort, deployPath, pinnedCertificate)
             }
@@ -159,6 +162,7 @@ fun deployServerResetData(
     expectedBuildIdentity: String,
     resetConfirmation: String?,
 ) {
+    val pushEnvironment = config.xiaomiPushEnvironment()
     requireResetDeploymentConfirmation(
         suppliedConfirmation = resetConfirmation,
         host = config.deployHost,
@@ -211,6 +215,7 @@ fun deployServerResetData(
                 deployPort,
                 deployPath,
             )
+            secrets.putAll(pushEnvironment)
             if (tcpTlsEnabled) requireCompatibleTlsPasswords(secrets)
             if (tcpTlsEnabled && localTlsPemFiles == null) {
                 preflightRetainedTlsKeystore(host, user, deployPort, deployPath, pinnedCertificate)

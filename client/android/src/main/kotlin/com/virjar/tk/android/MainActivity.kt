@@ -64,6 +64,8 @@ class MainActivity : ComponentActivity() {
         appDataStateHolder.setNotificationForeground(true)
         clearAndroidMessageNotifications(this)
         clearAndroidTaskNotifications(this)
+        (application as TeamTalkApp).xiaomiPush.notificationSettingsChanged()
+        if ((application as TeamTalkApp).xiaomiPush.enabled.value) XiaomiPushSdk.clearNotifications(this)
     }
 
     override fun onStop() {

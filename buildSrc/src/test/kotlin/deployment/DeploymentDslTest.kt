@@ -55,6 +55,33 @@ class DeploymentDslTest {
     }
 
     @Test
+    fun `Android package can be explicit while omitted profiles retain the final base identifier suffix`() {
+        fun configured(androidId: String?) = deployment {
+            server { http { url = "https://private.example.com" } }
+            client {
+                identity { androidApplicationId = androidId }
+                identity {
+                    applicationId = "com.example.internal"
+                    displayName = "内部版"
+                    desktopName = "Internal"
+                }
+            }
+        }.client
+        val legacy = configured(null)
+        val explicit = configured("com.example.internal")
+        assertEquals("com.example.internal.android", legacy.androidApplicationId)
+        assertEquals("com.example.internal", explicit.androidApplicationId)
+        assertEquals(legacy.desktopDataDirectoryName, explicit.desktopDataDirectoryName)
+        assertEquals(legacy.windowsUpgradeUuid, explicit.windowsUpgradeUuid)
+        listOf("", "com.example.bad-id", "com.virjar.tk.android").forEach { invalid ->
+            assertFailsWith<IllegalArgumentException> { configured(invalid) }
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ClientDistributionIdentity(androidApplicationId = "com.virjar.tk")
+        }
+    }
+
+    @Test
     fun `private DSL resolves the certificate and preserves the canonical deployment snapshot`() {
         val root = Files.createTempDirectory("teamtalk-deployment-dsl-").toFile()
         try {

@@ -171,6 +171,8 @@ import com.virjar.tk.server.runtime.MaintenanceRuntime
 import org.jetbrains.exposed.sql.Database
 import org.koin.dsl.module
 import java.io.File
+import com.virjar.tk.server.infra.push.XiaomiPushConfiguration
+import com.virjar.tk.server.infra.push.XiaomiPushNotifications
 
 internal fun createServerModule(
     database: Database,
@@ -192,12 +194,17 @@ internal fun createServerModule(
     authenticationAttemptGuardFactory: () -> AuthenticationAttemptGuard = {
         AuthenticationAttemptGuard(AuthenticationAttemptGuardConfig.fromEnvironment())
     },
+    xiaomiPushConfiguration: XiaomiPushConfiguration = XiaomiPushConfiguration.fromEnvironment(),
 ) = module {
     // 基础设施 — Database 与本地存储路径均由当前容器所有者显式传入。
     single { database }
     single { ExposedCredentialRepository(database = get()) }
     single { ClientRegistry(get(), get()) }
-    single { SyncEventDispatcher(database = get(), sink = get<ClientRegistry>()) }
+    single { XiaomiPushNotifications(get(), xiaomiPushConfiguration, syncDatasetId, get()) }
+    single {
+        SyncEventDispatcher(database = get(), sink = get<ClientRegistry>(),
+            onDispatched = get<XiaomiPushNotifications>()::recordDispatchedEvent)
+    }
     single<PgUnitOfWork> {
         val dispatcher = get<SyncEventDispatcher>()
         ExposedPgUnitOfWork(database = get(), onEventsCommitted = dispatcher::signal)
@@ -519,7 +526,9 @@ internal fun createServerModule(
                 com.virjar.tk.server.protocol.rpc.ChatDraftRpcImpl(session.uid, get())
             }
             register(ConversationRpcContract.SERVICE) { session -> ConversationRpcImpl(session.uid, get()) }
-            register(DeviceRpcContract.SERVICE) { session -> DeviceRpcImpl(session.uid, get(), get()) }
+            register(DeviceRpcContract.SERVICE) { session ->
+                DeviceRpcImpl(session.uid, get(), get(), session.deviceId, session.deviceCredentialEpoch, get())
+            }
             register(OrganizationRpcContract.SERVICE) { session -> OrganizationRpcImpl(session.uid, get()) }
             register(GroupFileRpcContract.SERVICE) { session -> GroupFileRpcImpl(session.uid, get()) }
             register(com.virjar.tk.protocol.rpc.gen.DocumentCommentRpcContract.SERVICE) { session ->

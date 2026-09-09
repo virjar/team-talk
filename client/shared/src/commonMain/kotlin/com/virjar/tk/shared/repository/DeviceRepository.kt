@@ -11,4 +11,12 @@ class DeviceRepository(rpcClient: RpcInvoker) {
 
     suspend fun listDevices(): Outcome<List<Device>> = outcome { rpc.listDevices() }
     suspend fun kickDevice(deviceId: String): Outcome<Unit> = outcome { rpc.kickDevice(deviceId) }
+
+    suspend fun setXiaomiPushRegistration(
+        registrationId: String,
+        packageName: String,
+        deploymentFingerprint: String,
+    ): Outcome<Boolean> = outcome {
+        rpc.setXiaomiPushRegistration(registrationId, packageName, deploymentFingerprint)
+    }
 }

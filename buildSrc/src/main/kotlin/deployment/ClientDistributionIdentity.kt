@@ -8,6 +8,8 @@ data class ClientDistributionIdentity(
     val applicationId: String = "com.virjar.tk",
     val displayName: String = "TeamTalk",
     val desktopName: String = "TeamTalk",
+    /** Final Android installation ID; omitted values preserve the established deployment convention. */
+    val androidApplicationId: String = "$applicationId.android",
 ) {
     init {
         require(applicationId.length <= 128 && applicationId.split('.').all { it.length <= 63 } &&
@@ -17,6 +19,10 @@ data class ClientDistributionIdentity(
         require(displayName.isNotBlank() && displayName == displayName.trim() &&
             displayName.length <= 80 && displayName.none(Char::isISOControl)) {
             "client.displayName must be a non-blank, single-line name of at most 80 characters"
+        }
+        require(androidApplicationId.length <= 256 && androidApplicationId.split('.').all { it.length <= 63 } &&
+            androidApplicationId.matches(Regex("[a-z][a-z0-9]*(?:\\.[a-z][a-z0-9]*)+"))) {
+            "client.androidApplicationId must be a lower-case reverse-DNS Android installation identifier"
         }
         require(desktopName.matches(Regex("[A-Za-z][A-Za-z0-9]{0,47}")) &&
             !desktopName.matches(Regex("(?i:con|prn|aux|nul|com[0-9]|lpt[0-9])"))) {
@@ -28,9 +34,11 @@ data class ClientDistributionIdentity(
         require(applicationId != "com.virjar.tk" || desktopName == "TeamTalk") {
             "Keep the public desktopName exactly TeamTalk to preserve installed applications"
         }
+        require((applicationId == "com.virjar.tk") == (androidApplicationId == "com.virjar.tk.android")) {
+            "Keep com.virjar.tk.android reserved for the public installation; private clients need their own Android ID"
+        }
     }
 
-    val androidApplicationId: String get() = "$applicationId.android"
     val desktopFsName: String get() = desktopName.lowercase(Locale.ROOT)
     val desktopDataDirectoryName: String get() = if (applicationId == "com.virjar.tk") "TeamTalk" else applicationId
     val linuxDataDirectoryName: String get() = if (applicationId == "com.virjar.tk") "teamtalk" else applicationId

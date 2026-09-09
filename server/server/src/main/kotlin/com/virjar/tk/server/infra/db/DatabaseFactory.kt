@@ -39,7 +39,7 @@ object DatabaseFactory {
         DocumentCustodyBatchTransfers, DocumentCustodyBatchTransferItems,
         DocumentSpaceGrants, DocumentNodes, DocumentContentRevisions, DocumentEmbeddedAssets,
         DocumentUserRecents, DocumentComments, ContentSearchPending, WorkTasks, TaskAudits, TaskCommands,
-        ChatDrafts, ChatDraftAssets, ChatDraftCommands,
+        ChatDrafts, ChatDraftAssets, ChatDraftCommands, XiaomiPushRegistrations,
         ClientTelemetryDevices, ClientTelemetryPolicies, ClientTelemetryPolicyAudits,
         ClientTelemetryAdminAudits,
     )

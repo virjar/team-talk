@@ -27,6 +27,8 @@ class SyncEventDispatcher(
     private val sink: LiveEventSink,
     private val clock: () -> Long = System::currentTimeMillis,
     private val scanIntervalMillis: Long = DEFAULT_SCAN_INTERVAL_MILLIS,
+    /** Optional OEM queue append; it commits atomically with dispatched_at and performs no network IO. */
+    private val onDispatched: (String, Long, Int, ByteArray) -> Unit = { _, _, _, _ -> },
 ) : AutoCloseable {
     private val logger = LoggerFactory.getLogger(SyncEventDispatcher::class.java)
     private val signaledUids = DurableUidSignalMailbox(MAX_SIGNALLED_UIDS)
@@ -228,6 +230,7 @@ class SyncEventDispatcher(
 
     private fun markDispatched(event: PendingEvent, now: Long) {
         transaction(database) {
+            onDispatched(event.uid, event.streamSeq, event.eventType, event.payload)
             SyncEvents.update({
                 (SyncEvents.uid eq event.uid) and
                     (SyncEvents.streamSeq eq event.streamSeq) and

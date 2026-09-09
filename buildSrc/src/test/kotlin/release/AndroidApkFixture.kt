@@ -15,6 +15,7 @@ internal fun writeAndroidApkFixture(
     legacyProducer: Boolean = false,
     localizedLabel: String? = null,
     launcherLabel: String? = null,
+    canonicalConfig: String = producer.deployment.toCanonicalJson(),
 ) {
     val temporary = Files.createTempDirectory("teamtalk-apk-fixture-").toFile()
     try {
@@ -28,7 +29,7 @@ internal fun writeAndroidApkFixture(
         if (legacyProducer) {
             properties.writeText("artifactType=android-apk\nversion=${producer.version.name}\nbuildIdentity=$buildIdentity\n")
         } else {
-            writeAndroidReleaseIdentity(properties, producer.version.name, buildIdentity, producer.deployment.toCanonicalJson())
+            writeAndroidReleaseIdentity(properties, producer.version.name, buildIdentity, canonicalConfig)
         }
         fun labelResource(folder: String, label: String) {
             val escaped = label.replace("\\", "\\\\").replace("\"", "\\\"").xmlText()

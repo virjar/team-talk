@@ -156,8 +156,7 @@ object ReleaseBundle {
             field("protocolMajor") == identity.version.protocolMajor.toString() &&
             field("protocolMinor") == identity.version.protocolMinor.toString() &&
             field("minimumProtocolMinor") == identity.version.minimumProtocolMinor.toString() &&
-            field("sourceCommit") == identity.sourceCommit && field("buildIdentity") == identity.buildIdentity &&
-            field("deploymentSha256") == identity.deploymentSha256) {
+            field("sourceCommit") == identity.sourceCommit && field("buildIdentity") == identity.buildIdentity) {
             "Release bundle belongs to a different version, source, protocol or deployment configuration"
         }
         // Keep established release manifests unchanged; snapshot and private deliveries cannot claim their tag.
@@ -172,9 +171,13 @@ object ReleaseBundle {
             "Bundle client identity differs from the effective deployment configuration"
         }
         val deploymentSnapshot = File(directory, DEPLOYMENT_CONFIG)
-        require(Files.isRegularFile(deploymentSnapshot.toPath(), NOFOLLOW_LINKS) &&
-            deploymentSnapshot.readText(Charsets.UTF_8) == identity.deployment.toCanonicalJson()) {
+        val snapshotText = deploymentSnapshot.takeIf { Files.isRegularFile(it.toPath(), NOFOLLOW_LINKS) }
+            ?.readText(Charsets.UTF_8)
+        require(snapshotText != null && matchesDeploymentSnapshot(snapshotText, identity.deployment)) {
             "Release bundle deployment snapshot is missing or differs from the effective deployment configuration"
+        }
+        require(field("deploymentSha256") == sha256(snapshotText.toByteArray(Charsets.UTF_8))) {
+            "Release bundle deployment digest differs from its sealed snapshot"
         }
         val records = manifest.getValue("files").jsonArray.map(JsonElement::jsonObject)
         val paths = records.map { it.getValue("path").jsonPrimitive.content }
@@ -206,6 +209,7 @@ object ReleaseBundle {
         verifyAndroidApkIdentity(
             assets(directory).single { it.extension == "apk" }, identity,
             allowLegacyProducer = field("format") == "1",
+            canonicalConfig = snapshotText,
         )
         return manifest
     }
@@ -259,6 +263,18 @@ object ReleaseBundle {
         put("androidApplicationId", client.androidApplicationId)
         put("displayName", client.displayName)
         put("desktopName", client.desktopName)
+    }
+
+    private fun matchesDeploymentSnapshot(snapshot: String, deployment: DeploymentConfig): Boolean {
+        val current = deployment.toCanonicalJson()
+        if (snapshot == current) return true
+        // Existing seals omitted the final Android ID. Only the historical derivation is compatible;
+        // preserve their exact canonical bytes and hashes instead of rewriting the sealed directory.
+        if (deployment.client.androidApplicationId != "${deployment.client.applicationId}.android") return false
+        val values = Json.parseToJsonElement(current).jsonObject.toMutableMap()
+        values["client"] = JsonObject(values.getValue("client").jsonObject - "androidApplicationId")
+        val legacy = Json { prettyPrint = true }.encodeToString(JsonObject.serializer(), JsonObject(values)) + "\n"
+        return snapshot == legacy
     }
 
     private fun copyTree(source: File, destination: File) {

@@ -30,6 +30,7 @@ fun deploymentConfiguration(rootDir: File): DeploymentConfig = deployment {
         allowCustomServer = true
         identity {
             applicationId = "com.virjar.tk"
+            androidApplicationId = "com.virjar.tk.android"
             displayName = "TeamTalk"
             desktopName = "TeamTalk"
         }

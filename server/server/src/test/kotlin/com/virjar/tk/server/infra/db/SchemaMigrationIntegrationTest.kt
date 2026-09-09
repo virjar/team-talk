@@ -42,7 +42,7 @@ class SchemaMigrationIntegrationTest {
             val datasetId = open(lease).use { it.datasetId }
             lease.openConnection().use { connection -> connection.createStatement().use { statement ->
                 statement.execute("DROP TABLE chat_draft_commands, chat_draft_assets, chat_drafts")
-                statement.execute("DELETE FROM schema_migrations WHERE version = 6")
+                statement.execute("DELETE FROM schema_migrations WHERE version >= 6")
                 statement.execute("INSERT INTO conversations (uid, chat_id, chat_type, draft, version, updated_at) " +
                     "VALUES ('kept-draft-owner', 'kept-draft-chat', 1, 'existing markdown', 8, 12)")
             } }
@@ -56,6 +56,35 @@ class SchemaMigrationIntegrationTest {
                 }
                 listOf("chat_drafts", "chat_draft_assets", "chat_draft_commands").forEach { table ->
                     statement.executeQuery("SELECT count(*) FROM $table").use { assertTrue(it.next()); assertEquals(0, it.getInt(1)) }
+                }
+            } }
+            open(lease).use { assertEquals(datasetId, it.datasetId) }
+        }
+    }
+
+    @Test
+    fun `xiaomi registration migration preserves credentials and dataset`() {
+        PostgresSchemaLease.open().use { lease ->
+            val datasetId = open(lease).use { it.datasetId }
+            lease.openConnection().use { connection -> connection.createStatement().use { statement ->
+                statement.execute("DROP TABLE xiaomi_push_registrations")
+                statement.execute("DELETE FROM schema_migrations WHERE version = 7")
+                statement.execute("INSERT INTO users (uid, username, name, password_hash, created_at, updated_at) " +
+                    "VALUES ('push-kept-user', 'push-kept-user', 'kept', 'fixture-only', 11, 12)")
+                statement.execute("INSERT INTO credentials (token_hash, token_type, uid, device_id, device_flag, " +
+                    "user_credential_epoch, device_credential_epoch, created_at, expires_at) " +
+                    "VALUES ('fixture-refresh-hash', 2, 'push-kept-user', 'device', 1, 1, 1, 11, 99)")
+            } }
+            open(lease).use { assertEquals(datasetId, it.datasetId) }
+            lease.openConnection().use { connection -> connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT name FROM schema_migrations WHERE version = 7").use {
+                    assertTrue(it.next()); assertEquals("create_xiaomi_push_registrations", it.getString(1))
+                }
+                statement.executeQuery("SELECT expires_at FROM credentials WHERE token_hash = 'fixture-refresh-hash'").use {
+                    assertTrue(it.next()); assertEquals(99L, it.getLong(1))
+                }
+                statement.executeQuery("SELECT count(*) FROM xiaomi_push_registrations").use {
+                    assertTrue(it.next()); assertEquals(0, it.getInt(1))
                 }
             } }
             open(lease).use { assertEquals(datasetId, it.datasetId) }

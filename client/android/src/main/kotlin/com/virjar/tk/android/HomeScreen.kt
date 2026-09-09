@@ -46,6 +46,10 @@ internal fun HomeScreen(
     requestedTask: MutableStateFlow<String?>,
 ) {
     if (!dataState.acceptsRendering) return
+    val processOwner = androidx.compose.ui.platform.LocalContext.current.applicationContext as TeamTalkApp
+    val pushSettings = processOwner.xiaomiPush
+    var showNotifications by remember { mutableStateOf(pushSettings.needsConsent) }
+    if (showNotifications) AndroidXiaomiPushDialog(pushSettings) { showNotifications = false }
     val actionAdmission = dataState.uiActionAdmission
     var homeTab by rememberSaveable { mutableIntStateOf(0) }
     val documentReference by requestedDocument.collectAsState()
@@ -231,6 +235,9 @@ internal fun HomeScreen(
                     onDeviceManagement = actionAdmission.guard(onDevices),
                     onBlacklist = actionAdmission.guard(onBlacklist),
                     onLocalStorage = actionAdmission.guard(onLocalStorage),
+                    onNotificationSettings = if (pushSettings.available) {
+                        actionAdmission.guard { showNotifications = true }
+                    } else null,
                     buildInfoText = "Git: ${com.virjar.tk.android.BuildConfig.BUILD_IDENTITY.substringAfter('+').take(8)}" +
                         "${if (com.virjar.tk.android.BuildConfig.BUILD_IDENTITY.endsWith(".dirty")) "-dirty" else ""}" +
                         "  |  Build: ${com.virjar.tk.android.BuildConfig.BUILD_TIME}",

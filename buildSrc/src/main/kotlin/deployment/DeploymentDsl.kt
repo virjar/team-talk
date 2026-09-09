@@ -45,6 +45,7 @@ class DeploymentBuilder internal constructor() {
                 .takeIf { it.storeFile.isNotBlank() || it.keyAlias.isNotBlank() }
                 ?.build(),
             tcpTlsCertificatePem = tcp.tlsConfiguration.certificateFile?.readText(Charsets.UTF_8),
+            xiaomiPush = clientConfiguration.xiaomiPushConfiguration,
         )
     }
 }
@@ -101,6 +102,12 @@ class ClientDeploymentBuilder internal constructor() {
     var allowCustomServer: Boolean = false
     internal val identityConfiguration = ClientIdentityDeploymentBuilder()
     internal val androidSigningConfiguration = AndroidSigningDeploymentBuilder()
+    internal var xiaomiPushConfiguration: XiaomiPushConfig? = null
+
+    /** 可选；未配置的 APK 不包含小米 SDK，服务端也不调用外部推送。 */
+    fun xiaomiPush(configure: XiaomiPushDeploymentBuilder.() -> Unit) {
+        xiaomiPushConfiguration = XiaomiPushDeploymentBuilder().apply(configure).build()
+    }
 
     fun identity(configure: ClientIdentityDeploymentBuilder.() -> Unit) { identityConfiguration.apply(configure) }
 
@@ -123,8 +130,12 @@ class AndroidSigningDeploymentBuilder internal constructor() {
 class ClientIdentityDeploymentBuilder internal constructor() {
     private val defaults = ClientDistributionIdentity()
     var applicationId: String = defaults.applicationId
+    /** Set the final package registered with Android distribution/push services; null preserves older profiles. */
+    var androidApplicationId: String? = null
     var displayName: String = defaults.displayName
     var desktopName: String = defaults.desktopName
 
-    internal fun build(): ClientDistributionIdentity = ClientDistributionIdentity(applicationId, displayName, desktopName)
+    internal fun build(): ClientDistributionIdentity = ClientDistributionIdentity(
+        applicationId, displayName, desktopName, androidApplicationId ?: "$applicationId.android",
+    )
 }

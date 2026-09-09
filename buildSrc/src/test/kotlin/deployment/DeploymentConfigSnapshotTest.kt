@@ -75,8 +75,9 @@ class DeploymentConfigSnapshotTest {
         assertEquals(443, objectValue.getValue("sslPort").jsonPrimitive.int)
         assertFalse(objectValue.getValue("allowCustomServer").jsonPrimitive.boolean)
         val client = objectValue.getValue("client").jsonObject
-        assertEquals(listOf("applicationId", "displayName", "desktopName", "androidSigning"), client.keys.toList())
+        assertEquals(listOf("applicationId", "androidApplicationId", "displayName", "desktopName", "androidSigning"), client.keys.toList())
         assertEquals("com.virjar.tk", client.getValue("applicationId").jsonPrimitive.content)
+        assertEquals("com.virjar.tk.android", client.getValue("androidApplicationId").jsonPrimitive.content)
         assertEquals("TeamTalk", client.getValue("displayName").jsonPrimitive.content)
         assertEquals("TeamTalk", client.getValue("desktopName").jsonPrimitive.content)
         assertEquals(JsonNull, objectValue.getValue("tcpTlsCertificatePem"))
@@ -85,13 +86,15 @@ class DeploymentConfigSnapshotTest {
     @Test
     fun `snapshot preserves escaped private names and public TCP certificate bytes without requiring HTTPS`() {
         val configured = config().copy(
-            client = ClientDistributionIdentity("com.example.internal", "内部版 \"研发\\测试\"", "TeamTalkInternal"),
+            client = ClientDistributionIdentity("com.example.internal", "内部版 \"研发\\测试\"", "TeamTalkInternal",
+                androidApplicationId = "com.example.internal"),
             tcpTlsCertificatePem = publicCertificatePem,
         )
         assertFalse(configured.sslEnabled)
         val snapshot = Json.parseToJsonElement(configured.toCanonicalJson()).jsonObject
         val client = snapshot.getValue("client").jsonObject
         assertEquals("com.example.internal", client.getValue("applicationId").jsonPrimitive.content)
+        assertEquals("com.example.internal", client.getValue("androidApplicationId").jsonPrimitive.content)
         assertEquals("内部版 \"研发\\测试\"", client.getValue("displayName").jsonPrimitive.content)
         assertEquals("TeamTalkInternal", client.getValue("desktopName").jsonPrimitive.content)
         assertEquals(publicCertificatePem, snapshot.getValue("tcpTlsCertificatePem").jsonPrimitive.content)

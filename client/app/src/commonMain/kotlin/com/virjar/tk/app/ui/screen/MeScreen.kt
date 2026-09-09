@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -44,6 +45,7 @@ fun MeScreen(
     onDeviceManagement: () -> Unit = {},
     onBlacklist: () -> Unit = {},
     onLocalStorage: (() -> Unit)? = null,
+    onNotificationSettings: (() -> Unit)? = null,
     buildInfoText: String = "",
     modifier: Modifier = Modifier,
 ) {
@@ -135,6 +137,15 @@ fun MeScreen(
                         description = "整理当前账号的数据库空间",
                         onClick = onLocalStorage,
                         tag = "settings.storage",
+                    )
+                }
+                if (onNotificationSettings != null) {
+                    SettingsEntryRow(
+                        icon = Icons.Filled.Notifications,
+                        title = "消息通知",
+                        description = "系统通知权限与小米推送",
+                        onClick = onNotificationSettings,
+                        tag = "settings.notifications",
                     )
                 }
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {

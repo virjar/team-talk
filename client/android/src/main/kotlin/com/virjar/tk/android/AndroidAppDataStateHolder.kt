@@ -95,6 +95,11 @@ internal class AndroidAppDataStateHolder(application: Application) : AndroidView
                 resources = resources,
                 attachResources = {
                     val cache = session.localCache
+                    val push = resources.acquire {
+                        AndroidXiaomiPushRegistration(
+                            getApplication(), session, getApplication<TeamTalkApp>().xiaomiPush, notificationForeground,
+                        )
+                    }
                     resources.acquire {
                         AndroidMessageNotifications(
                             context = getApplication<Application>().applicationContext,
@@ -106,6 +111,7 @@ internal class AndroidAppDataStateHolder(application: Application) : AndroidView
                             connectionState = session.connectionState,
                             foreground = notificationForeground,
                             navigation = notificationNavigation,
+                            vendorNotifications = checkNotNull(push.resourceOrNull()).usesVendorNotifications,
                         )
                     }
                     resources.acquire {
@@ -132,6 +138,9 @@ internal class AndroidAppDataStateHolder(application: Application) : AndroidView
     /** AuthController 会在匹配的会话有机会关闭 LocalCache 之前同步调用此方法。 */
     fun beforeSessionRetirement(session: ClientSession, reason: SessionEndReason) {
         sessionOwner.retireIfOwner(session) {
+            if (reason == SessionEndReason.USER_LOGOUT || reason == SessionEndReason.AUTH_REVOKED) {
+                getApplication<TeamTalkApp>().xiaomiPush.logout()
+            }
             val failures = mutableListOf<Pair<String, Throwable>>()
             fun release(owner: String, block: () -> Unit) {
                 try {

@@ -67,14 +67,17 @@ cp buildSrc/deployment/Deployment.kt buildSrc/deployment-local/Deployment.kt
   每个路径段都必须是普通安全名称，`.`、`..`、重复分隔符和尾随 `/` 会在任何远端操作前被拒绝。
 - `server.tcp.tls.certificateFile`：指向公共 `certificate.pem` 的 `File`，不要指向私钥；构建时读取并验证，
   文件不存在或不可读时直接失败。
-- `client.identity`：私有客户端的稳定应用标识、显示名称和英文安装名称；与公版共存时三者一起配置，
+- `client.identity`：私有客户端的稳定应用标识、最终 Android 包名、显示名称和英文安装名称；与公版共存时一起配置，
   完整示例和派生规则见[客户端发行身份](../07-operations/configuration.md#客户端发行身份)。
 
 HTTPS 监听端口从 `server.http.url` 自动推导，不再单独填写 `sslPort`；HTTP 模式不启用 HTTPS connector。
-首次分发前选定 `client.identity.applicationId`、`client.identity.desktopName` 和持续使用的签名，后续升级保持它们
+首次分发前选定 `client.identity.applicationId`、`client.identity.androidApplicationId`、`client.identity.desktopName`
+和持续使用的签名，后续升级保持它们
 稳定；显示名称可以调整。新私有版首次安装后独立登录，Android 沙箱与 Desktop 数据根均独立，
 无需让每位用户手动指定工作目录，也不把公版数据复制过去。私有 clone 继续从同一套 Gradle 任务出包；
 展示版本与安装序号仍只在根 `gradle.properties` 维护，不能通过本地部署配置临时改写版本。
+新部署可显式选择不带 `.android` 后缀的 Android 包名；已有配置不填新字段仍使用历史派生包名。
+已分发应用不能通过去掉后缀进行升级，补填时应使用原完整包名。
 
 HTTP 地址、TCP 地址和 SSH 主机可以不同，分别用 `server.tcp.host`、`deploy.ssh.host` 覆写后两者。
 附件消息只存服务端相对路径；客户端用最终 `serverUrl`

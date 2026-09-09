@@ -103,13 +103,15 @@ internal fun AndroidMainAppContent(
     )
     val actionAdmission = dataState.uiActionAdmission
     val notificationTarget by notificationNavigation.target.collectAsState()
-    LaunchedEffect(notificationTarget, dataState, currentBackStackEntry) {
+    LaunchedEffect(notificationTarget, dataState, currentBackStackEntry, connectionState) {
         val target = notificationTarget ?: return@LaunchedEffect
         val owner = dataState.documentDraftOwnerKey
         if (!target.belongsTo(owner.deploymentFingerprint, owner.datasetId, owner.uid)) {
             notificationNavigation.consume(target)
             return@LaunchedEffect
         }
+        // 厂商通知可能指向本机尚未同步的新会话，不能在离线首帧查无会话后消费点击。
+        if (target.taskId == null && connectionState != ConnectionState.AUTHENTICATED) return@LaunchedEffect
         // 冷启动点击先等待认证与 NavHost 首帧；intent 的账号字段只用于比对当前所有者。
         val currentEntry = currentBackStackEntry ?: return@LaunchedEffect
         actionAdmission.runIfOpen {

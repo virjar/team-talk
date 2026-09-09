@@ -113,6 +113,7 @@ internal class AndroidMessageNotifications(
     connectionState: StateFlow<ConnectionState>,
     foreground: StateFlow<Boolean>,
     private val navigation: AndroidNotificationNavigation,
+    private val vendorNotifications: StateFlow<Boolean> = MutableStateFlow(false),
 ) : AutoCloseable {
     private val manager = checkNotNull(context.getSystemService(NotificationManager::class.java))
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -132,8 +133,8 @@ internal class AndroidMessageNotifications(
                 val tracker = AndroidUnreadNotificationTracker()
                 // AUTHENTICATED 在同步完成后发布。每次重新收集的首个缓存快照只作基线，
                 // 因此冷启动和离线重放不会被误认为这一在线阶段的新消息。
-                combine(conversations, foreground) { items, active -> items to active }
-                    .collect { (items, active) ->
+                combine(conversations, foreground, vendorNotifications) { items, active, vendor -> Triple(items, active, vendor) }
+                    .collect { (items, active, vendor) ->
                         val additions = tracker.update(items, active)
                         synchronized(lock) {
                             if (closed) return@synchronized
@@ -141,8 +142,8 @@ internal class AndroidMessageNotifications(
                             val currentlyForeground = foreground.value
                             val eligible = items.filter { !it.isMuted && it.unreadCount > 0 }
                                 .mapTo(mutableSetOf(), Conversation::chatId)
-                            posted.toList().filter { currentlyForeground || it !in eligible }.forEach(::cancel)
-                            if (!currentlyForeground && connectionState.value == ConnectionState.AUTHENTICATED &&
+                            posted.toList().filter { currentlyForeground || vendor || it !in eligible }.forEach(::cancel)
+                            if (!vendorNotifications.value && !currentlyForeground && connectionState.value == ConnectionState.AUTHENTICATED &&
                                 manager.areNotificationsEnabled()
                             ) additions.forEach(::show)
                         }
@@ -201,7 +202,9 @@ internal fun clearAndroidMessageNotifications(context: Context) {
 @Composable
 internal fun RequestAndroidMessageNotificationPermission() {
     val context = LocalContext.current
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        (context.applicationContext as TeamTalkApp).xiaomiPush.notificationSettingsChanged()
+    }
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return@LaunchedEffect
         if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {

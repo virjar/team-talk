@@ -2,6 +2,7 @@ import java.util.Base64
 import deployment.DeploymentConfig
 import deployment.resolveAndroidSigning
 import release.GenerateAndroidReleaseIdentity
+import kotlinx.serialization.json.JsonPrimitive
 
 val deploymentConfig = rootProject.extra.get("deploymentConfig") as DeploymentConfig
 val gitCommitId = rootProject.extra.get("gitCommitId") as String
@@ -60,6 +61,15 @@ android {
         buildConfigField("String", "GIT_COMMIT_ID", "\"$gitCommitId\"")
         buildConfigField("String", "BUILD_IDENTITY", "\"$buildIdentity\"")
         buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
+        buildConfigField("String", "XIAOMI_PUSH_APP_ID", JsonPrimitive(deploymentConfig.xiaomiPush?.appId.orEmpty()).toString())
+        buildConfigField("String", "XIAOMI_PUSH_APP_KEY", JsonPrimitive(deploymentConfig.xiaomiPush?.readCredential("appKey").orEmpty()).toString())
+        manifestPlaceholders["xiaomiPushEnabled"] = (deploymentConfig.xiaomiPush != null).toString()
+    }
+
+    // 单一可选接入；未配置的公版/私有版不打包厂商 SDK、服务与权限。
+    sourceSets.getByName("main") {
+        val pushDirectory = if (deploymentConfig.xiaomiPush == null) "src/noPush" else "src/xiaomi"
+        java.srcDir("$pushDirectory/kotlin")
     }
 
     // buildSrc 统一解析签名配置；这里只将同一身份绑定到 AGP 的 Debug / Release。
@@ -136,6 +146,7 @@ android {
 }
 
 dependencies {
+    deploymentConfig.xiaomiPush?.let { implementation(files(it.sdkFile)) }
     implementation(project(":client:shared"))
     implementation(project(":client:app"))
     implementation(libs.kotlinx.coroutines.core)

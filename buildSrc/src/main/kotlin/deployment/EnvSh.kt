@@ -85,6 +85,16 @@ fun generateEnvShContent(
     )
     lines.add("")
 
+    lines.add("# ── 小米官方推送 ──")
+    lines.add("XIAOMI_PUSH_ENABLED=${if (secrets.getProperty("XIAOMI_PUSH_ENABLED") == "true") "true" else "false"}")
+    if (secrets.getProperty("XIAOMI_PUSH_ENABLED") == "true") {
+        listOf("APP_SECRET", "PACKAGE_NAME", "CHANNEL_ID", "TEMPLATE_ID", "TITLE").forEach { name ->
+            val key = "XIAOMI_PUSH_$name"
+            lines.add("$key=${posixShellQuote(requiredSecret(secrets, key))}")
+        }
+    }
+    lines.add("")
+
     return lines.joinToString("\n")
 }
 

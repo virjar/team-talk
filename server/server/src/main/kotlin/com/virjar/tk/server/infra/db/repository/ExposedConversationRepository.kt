@@ -329,7 +329,7 @@ internal class ExposedConversationRepository(
     }
 
     /** 列表与单条读取共用同一组可见行条件；调用方只追加游标或 chatId。 */
-    private fun readableConversations(uid: String): Query = Conversations.join(
+    internal fun readableConversations(uid: String): Query = Conversations.join(
         otherTable = GroupMembers,
         joinType = JoinType.INNER,
         onColumn = Conversations.chatId,
