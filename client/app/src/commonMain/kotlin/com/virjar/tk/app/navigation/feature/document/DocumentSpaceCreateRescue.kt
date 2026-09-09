@@ -1,6 +1,8 @@
 package com.virjar.tk.app.navigation.feature.document
 
+import com.virjar.tk.protocol.model.Document
 import kotlinx.serialization.Serializable
+import java.util.UUID
 
 /** Counts describe the retained tabs; no private name, description, body or descriptor is reported. */
 @Serializable
@@ -21,7 +23,7 @@ class DocumentSpaceCreateRescuePrepared(
     val payload: DocumentDraftPayload,
 )
 
-/** Restores one admitted space request and its independent direct document work without replaying it. */
+/** Restores one admitted space request and its document creation dependencies without replaying them. */
 object DocumentSpaceCreateRescue {
     /** Listing validates the complete selected workset, including frozen document requests. */
     fun recordKeys(source: DocumentDraftRecordSource): List<String> = documentDraftRescueGuarded {
@@ -89,8 +91,6 @@ private fun readSpaceCreateRescue(source: DocumentDraftRecordSource, selectedKey
         allTabs.map { it.documentId ?: it.tabId }.distinct().size == allTabs.size, "AMBIGUOUS_TAB_IDENTITY")
     requireRescue(allTabs.none { it.creating && it.spaceId != request.spaceId }, "OTHER_SPACE_CREATE_DEPENDENCY")
     val tabs = allTabs.filter { it.spaceId == request.spaceId }
-    requireRescue(tabs.none { it.creating && (it.parentId != null || it.ancestorIds.isNotEmpty()) },
-        "CREATE_PARENT_DEPENDENCY")
     // A retired frozen request cannot become an apparently new unsent draft with the same ID.
     requireRescue(tabs.none { it.creating && "document-command-${it.tabId}" in tombstones }, "RETIRED_CREATE_DEPENDENCY")
     tabs.forEach { validateRescueTab(it, includeContent = true) }
@@ -105,6 +105,7 @@ private fun readSpaceCreateRescue(source: DocumentDraftRecordSource, selectedKey
         requireRescue(tab != null, "INVALID_CREATE_PAIR")
         validateRescueCreatePayload(checkNotNull(tab), command)
     }
+    validateSpaceCreateDependencies(tabs, commands)
     val snapshot = DocumentWorkspaceDraftSnapshot(
         tabs = tabs,
         activeTabInstanceId = manifest.activeTabInstanceId?.takeIf { id -> tabs.any { it.instanceId == id } }
@@ -115,4 +116,30 @@ private fun readSpaceCreateRescue(source: DocumentDraftRecordSource, selectedKey
     )
     requireRescue(snapshot.normalized() == snapshot && snapshot.hasBoundedPersistenceShape(), "INVALID_SPACE_WORKSET")
     return SpaceCreateRescue(request, snapshot)
+}
+
+private fun validateSpaceCreateDependencies(tabs: List<DocumentTabState>, commands: List<PendingDocumentCreateCommand>) {
+    val creatingById = tabs.filter { it.creating }.associateBy { it.tabId }
+    val admittedIds = commands.mapTo(hashSetOf()) { it.documentId }
+    val dependencies = mutableMapOf<String, Set<String>>()
+    for (tab in creatingById.values) {
+        val ancestors = tab.ancestorIds
+        requireRescue(ancestors.size <= Document.MAX_ANCESTOR_DEPTH &&
+            ancestors.all { runCatching { UUID.fromString(it).toString() == it }.getOrDefault(false) } &&
+            ancestors.distinct().size == ancestors.size && tab.tabId !in ancestors &&
+            (if (tab.parentId == null) ancestors.isEmpty() else ancestors.lastOrNull() == tab.parentId),
+            "CREATE_PARENT_DEPENDENCY")
+        val localAncestors = ancestors.filterTo(hashSetOf()) { it in creatingById }
+        requireRescue(localAncestors.all { it in admittedIds }, "UNSUBMITTED_CREATE_PARENT")
+        dependencies[tab.tabId] = localAncestors
+    }
+    // Paths may describe different moments: a committed parent can move before its local
+    // create acknowledgement completes. Preserve those paths, but reject a dependency cycle
+    // that would make the existing replay coordinator wait forever. Remote ancestors remain
+    // subject to the server's current path checks when the original request is submitted.
+    while (dependencies.isNotEmpty()) {
+        val ready = dependencies.filterValues { it.none(dependencies::containsKey) }.keys
+        requireRescue(ready.isNotEmpty(), "CREATE_PARENT_DEPENDENCY")
+        ready.forEach(dependencies::remove)
+    }
 }

@@ -63,9 +63,20 @@ class DesktopDocumentDraftRescueIntegrationTest {
             }
             val selected = tab(creating = true, title = "")
             val ordinary = tab(recoveryId = OTHER_RECOVERY, instanceId = 12, documentId = OTHER_DOCUMENT)
-            val tabs = if (withChildren) listOf(selected, ordinary) else emptyList()
-            val command = if (withChildren) createCommand() else null
-            storage(source).replace(payload(tabs, pendingSpaces = pending, command = command), LIMITS)
+            val childId = "12345678-0000-4000-8000-000000000001"
+            val grandchildId = "12345678-0000-4000-8000-000000000002"
+            fun nestedTab(id: String, instance: Long, parent: String, ancestors: List<String>) = JsonObject(
+                tab(recoveryId = id, instanceId = instance, documentId = id, creating = true) + mapOf(
+                    "parentId" to JsonPrimitive(parent), "ancestorIds" to JsonArray(ancestors.map(::JsonPrimitive))))
+            fun nestedCommand(id: String, instance: Long, parent: String) = JsonObject(createCommand() + mapOf(
+                "documentId" to JsonPrimitive(id), "tabInstanceId" to JsonPrimitive(instance), "parentId" to JsonPrimitive(parent)))
+            val tabs = if (withChildren) listOf(
+                nestedTab(grandchildId, 14, childId, listOf(DOCUMENT, childId)),
+                nestedTab(childId, 13, DOCUMENT, listOf(DOCUMENT)), selected, ordinary,
+            ) else emptyList()
+            val commands = if (withChildren) listOf(nestedCommand(grandchildId, 14, childId),
+                nestedCommand(childId, 13, DOCUMENT), createCommand()) else emptyList()
+            storage(source).replace(payload(tabs, pendingSpaces = pending, createCommands = commands), LIMITS)
             val archived = archive(scenario, source)
             val target = root(scenario, "target")
             val sourceBefore = inventory(source)
@@ -75,7 +86,7 @@ class DesktopDocumentDraftRescueIntegrationTest {
             val preview = DesktopDocumentSpaceCreateRescue.preview(target, DATABASE, archived.directory, spaceKey)
             assertEquals(SPACE, preview.selection.spaceId)
             assertEquals(tabs.size, preview.selection.tabCount)
-            assertEquals(if (withChildren) 1 else 0, preview.selection.pendingDocumentCount)
+            assertEquals(commands.size, preview.selection.pendingDocumentCount)
             assertEquals(targetBefore, inventory(target))
             assertFalse(Json.encodeToString(preview).contains(PRIVATE_TITLE))
             assertFalse(Json.encodeToString(preview).contains(PRIVATE_BODY))
@@ -94,10 +105,11 @@ class DesktopDocumentDraftRescueIntegrationTest {
                     val key = "tab-" + (tab.getValue("recoveryId") as JsonPrimitive).content
                     assertEquals(tab, Json.parseToJsonElement(assertNotNull(restored.readRecord(key))))
                 }
-                val commands = manifest.getValue("pendingDocumentRecordKeys").jsonArray
-                assertEquals(if (withChildren) 1 else 0, commands.size)
-                if (command != null) assertEquals(command,
-                    Json.parseToJsonElement(assertNotNull(restored.readRecord("document-command-$DOCUMENT"))))
+                assertEquals(commands.size, manifest.getValue("pendingDocumentRecordKeys").jsonArray.size)
+                for (command in commands) {
+                    val id = (command.getValue("documentId") as JsonPrimitive).content
+                    assertEquals(command, Json.parseToJsonElement(assertNotNull(restored.readRecord("document-command-$id"))))
+                }
             })
             assertNoCommands(target)
             assertEquals(sourceBefore, inventory(source))
@@ -391,12 +403,16 @@ class DesktopDocumentDraftRescueIntegrationTest {
             assertEquals(0L, scalar(File(root, DATABASE), "SELECT count(*) FROM $table"))
     }
 
-    private fun payload(tabs: List<JsonObject>, pendingSpaces: JsonArray = JsonArray(emptyList()), command: JsonObject? = null): DocumentDraftPayload {
+    private fun payload(tabs: List<JsonObject>, pendingSpaces: JsonArray = JsonArray(emptyList()), command: JsonObject? = null,
+                        createCommands: List<JsonObject> = listOfNotNull(command)): DocumentDraftPayload {
         val tabsRecords = tabs.map { tab ->
             val key = "tab-" + (tab.getValue("recoveryId") as JsonPrimitive).content
             DocumentDraftRecord(key) { tab.toString() }
         }
-        val commands = command?.let { listOf(DocumentDraftRecord("document-command-$DOCUMENT") { it.toString() }) }.orEmpty()
+        val commands = createCommands.map { value ->
+            val id = (value.getValue("documentId") as JsonPrimitive).content
+            DocumentDraftRecord("document-command-$id") { value.toString() }
+        }
         val records = tabsRecords + commands
         val manifest = buildJsonObject {
             put("schemaVersion", 11)

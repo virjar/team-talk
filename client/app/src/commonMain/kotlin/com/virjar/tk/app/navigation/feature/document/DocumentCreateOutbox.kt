@@ -167,16 +167,34 @@ internal class DocumentDurableCreateOutbox(
         documentsById.values.toList()
     }
 
+    /** A local ancestor may still be an unsent draft, so an absent command does not make it ready. */
+    fun hasPendingAncestor(tab: DocumentTabState, tabs: List<DocumentTabState>): Boolean = synchronized(lock) {
+        hasPendingAncestorLocked(tab, tabs)
+    }
+
     fun replayableDocuments(
         tabs: List<DocumentTabState>,
         availableSpaceIds: Set<String>,
+        /** A completed ancestor wakes only dependent commands, without retrying unrelated failures. */
+        completedAncestorId: String? = null,
     ): List<PendingDocumentCreateReplay> = synchronized(lock) {
         documentsById.values.mapNotNull { command ->
             if (command.spaceId !in availableSpaceIds) return@mapNotNull null
             tabs.firstOrNull(command::matches)?.let { tab ->
-                PendingDocumentCreateReplay(command, tab)
+                if (completedAncestorId != null && tab.parentId != completedAncestorId &&
+                    completedAncestorId !in tab.ancestorIds
+                ) null
+                else if (hasPendingAncestorLocked(tab, tabs)) null
+                else PendingDocumentCreateReplay(command, tab)
             }
         }
+    }
+
+    private fun hasPendingAncestorLocked(tab: DocumentTabState, tabs: List<DocumentTabState>): Boolean {
+        val ancestors = tab.ancestorIds.toMutableSet().also { ids -> tab.parentId?.let(ids::add) }
+        if (ancestors.isEmpty()) return false
+        return documentsById.values.any { it.spaceId == tab.spaceId && it.documentId in ancestors } ||
+            tabs.any { it.spaceId == tab.spaceId && it.creating && it.tabId in ancestors }
     }
 
     private companion object {

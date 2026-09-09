@@ -88,6 +88,76 @@ class DocumentSpaceCreateRescueTest {
     }
 
     @Test
+    fun `nested creation retains reversed records frozen requests and unsent leaves`() {
+        val parent = creatingTab()
+        val child = parent.copy(tabId = SECOND_DOCUMENT, instanceId = 2, recoveryId = SECOND_DOCUMENT,
+            parentId = parent.tabId, ancestorIds = listOf(parent.tabId))
+        val grandchild = parent.copy(tabId = THIRD_DOCUMENT, instanceId = 3, recoveryId = THIRD_DOCUMENT,
+            parentId = child.tabId, ancestorIds = listOf(parent.tabId, child.tabId))
+        val unsent = grandchild.copy(tabId = FOURTH_DOCUMENT, instanceId = 4, recoveryId = FOURTH_DOCUMENT,
+            parentId = grandchild.tabId, ancestorIds = grandchild.ancestorIds + grandchild.tabId, draftTitle = "")
+        val commands = listOf(grandchild, child, parent).map { assertNotNull(PendingDocumentCreateCommand.capture(it)) }
+        val laterChild = child.copy(draftTitle = "", draftMarkdown = "later child edit", draftAssets = emptyList(),
+            editGeneration = child.editGeneration + 1)
+        val tabs = listOf(grandchild, unsent, laterChild, parent)
+        val original = snapshot().copy(tabs = tabs, activeTabInstanceId = child.instanceId, pendingDocumentCreates = commands)
+        val prepared = DocumentSpaceCreateRescue.prepare(source(original), spaceRequest().draftRecoveryKey())
+        val restored = restore(prepared.payload)
+        assertEquals(tabs.map { it.copy(pathResolved = false) }, restored.tabs)
+        assertEquals(commands, restored.pendingDocumentCreates)
+        assertEquals(child.instanceId, restored.activeTabInstanceId)
+        assertEquals(4, prepared.metadata.tabCount)
+        assertEquals(3, prepared.metadata.pendingDocumentCount)
+        assertFalse(restored.pendingDocumentCreates.any { it.documentId == unsent.tabId })
+
+        // The original single-create entry already allows a remote parent. A space rescue
+        // keeps that reference too; an archived path does not grant current server access.
+        val remoteChild = child.copy(parentId = PARENT, ancestorIds = listOf(PARENT))
+        val remoteCommand = assertNotNull(PendingDocumentCreateCommand.capture(remoteChild))
+        val remote = snapshot().copy(tabs = listOf(remoteChild), pendingDocumentCreates = listOf(remoteCommand))
+        assertEquals(listOf(remoteCommand), restore(DocumentSpaceCreateRescue.prepare(source(remote),
+            spaceRequest().draftRecoveryKey()).payload).pendingDocumentCreates)
+
+        // A parent may already have committed and then moved before its original ACK arrives.
+        // Its child's newer path must not be rewritten to the parent's older path hint.
+        val childAfterMove = child.copy(ancestorIds = listOf(PARENT, parent.tabId))
+        val moved = snapshot().copy(tabs = listOf(childAfterMove, parent), pendingDocumentCreates = listOf(
+            assertNotNull(PendingDocumentCreateCommand.capture(childAfterMove)), commands.last()))
+        val movedRestored = restore(DocumentSpaceCreateRescue.prepare(source(moved), spaceRequest().draftRecoveryKey()).payload)
+        assertEquals(childAfterMove.ancestorIds, movedRestored.tabs.first().ancestorIds)
+        assertEquals(parent.ancestorIds, movedRestored.tabs.last().ancestorIds)
+    }
+
+    @Test
+    fun `nested creation rejects unsent parents cycles and malformed ancestor paths`() {
+        val parent = creatingTab()
+        val child = parent.copy(tabId = SECOND_DOCUMENT, instanceId = 2, recoveryId = SECOND_DOCUMENT,
+            parentId = parent.tabId, ancestorIds = listOf(parent.tabId))
+        val parentCommand = assertNotNull(PendingDocumentCreateCommand.capture(parent))
+        val childCommand = assertNotNull(PendingDocumentCreateCommand.capture(child))
+        val original = snapshot().copy(tabs = listOf(child, parent), pendingDocumentCreates = listOf(childCommand, parentCommand))
+        assertEquals("UNSUBMITTED_CREATE_PARENT", failure(source(original.copy(pendingDocumentCreates = listOf(childCommand)))))
+        assertEquals("RETIRED_CREATE_DEPENDENCY", failure(source(original, setOf(parentCommand.draftRecoveryKey()))))
+        assertEquals("INVALID_CREATE_PAIR", failure(source(original, setOf(parent.draftRecoveryKey()))))
+        for (wrongAncestors in listOf(listOf(child.tabId, parent.tabId), listOf(parent.tabId, parent.tabId),
+            listOf("invalid-id", parent.tabId), emptyList())) {
+            assertEquals("CREATE_PARENT_DEPENDENCY", failure(source(original.copy(
+                tabs = listOf(child.copy(ancestorIds = wrongAncestors), parent)))))
+        }
+        val cyclicParent = parent.copy(parentId = child.tabId, ancestorIds = listOf(child.tabId))
+        assertEquals("CREATE_PARENT_DEPENDENCY", failure(source(original.copy(tabs = listOf(child, cyclicParent),
+            pendingDocumentCreates = listOf(childCommand, assertNotNull(PendingDocumentCreateCommand.capture(cyclicParent)))))))
+        val cyclicHint = parent.copy(parentId = PARENT, ancestorIds = listOf(child.tabId, PARENT))
+        assertEquals("CREATE_PARENT_DEPENDENCY", failure(source(original.copy(tabs = listOf(child, cyclicHint),
+            pendingDocumentCreates = listOf(childCommand, assertNotNull(PendingDocumentCreateCommand.capture(cyclicHint)))))))
+        val tooDeep = child.copy(parentId = PARENT, ancestorIds = (1..128).map {
+            "10000000-0000-4000-8000-" + it.toString().padStart(12, '0')
+        } + PARENT)
+        assertEquals("CREATE_PARENT_DEPENDENCY", failure(source(snapshot().copy(tabs = listOf(tooDeep),
+            pendingDocumentCreates = listOf(assertNotNull(PendingDocumentCreateCommand.capture(tooDeep)))))))
+    }
+
+    @Test
     fun `noncanonical multiple or retired space requests and destructive intents cannot enter restoration`() {
         val original = snapshot()
         for (request in listOf(spaceRequest().copy(intent = DocumentSpaceCreateIntent(" private space ", null)),
@@ -117,7 +187,8 @@ class DocumentSpaceCreateRescueTest {
         assertEquals("OTHER_SPACE_CREATE_DEPENDENCY", failure(source(original.copy(
             pendingDocumentCreates = listOf(command.copy(spaceId = OTHER_SPACE))))))
         for (child in listOf(selected.copy(parentId = PARENT), selected.copy(ancestorIds = listOf(PARENT)))) {
-            assertEquals("CREATE_PARENT_DEPENDENCY", failure(source(original.copy(tabs = listOf(child)))))
+            assertEquals("CREATE_PARENT_DEPENDENCY", failure(source(original.copy(tabs = listOf(child),
+                pendingDocumentCreates = listOf(command.copy(parentId = child.parentId))))))
         }
         assertEquals("RETIRED_CREATE_DEPENDENCY", failure(source(original, setOf(command.draftRecoveryKey()))))
         assertEquals("INVALID_CREATE_PAIR", failure(source(original, setOf(selected.draftRecoveryKey()))))

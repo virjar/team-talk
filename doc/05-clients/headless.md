@@ -434,8 +434,10 @@ bin/tt-agent import-outgoing-rescue --cache-root /path/to/desktop-or-headless-da
 Desktop 启动程序执行，不属于 `tt-agent` 或 SDK 文档业务接口。
 已有冻结创建请求及配对 creating 标签使用 [Desktop 可靠文档创建救援](desktop.md#可靠文档创建救援)；
 确认导入后可由正常客户端重放原请求，后继草稿仍须手动保存。
-冻结空间创建及同空间直属文档使用 [Desktop 空间创建救援](desktop.md#空间创建救援)，按
-`space-command-<UUID>` 列举、预览与导入；这些文档救援命令均由 Desktop 启动程序提供。
+冻结空间创建及同空间文档树使用 [Desktop 空间创建与文档树救援](desktop.md#空间创建与文档树救援)，按
+`space-command-<UUID>` 列举、预览与导入；嵌套 creating 祖先须有完整、无环的准入依赖，未提交草稿不自动保存。
+祖先确认后只衔接依赖它且其余依赖已满足的既有命令，不重试无关失败兄弟。
+这些文档救援命令均由 Desktop 启动程序提供。
 
 ### 便携包安装、升级与卸载
 

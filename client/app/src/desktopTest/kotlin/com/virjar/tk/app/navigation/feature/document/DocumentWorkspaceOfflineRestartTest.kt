@@ -40,6 +40,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
@@ -54,6 +55,190 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DocumentWorkspaceOfflineRestartTest {
+    @Test
+    fun `nested create recovery waits for durable parent acknowledgements and preserves later drafts across restart`() = runTest {
+        verifyNestedCreateRecovery(parentReceiptOnly = false)
+    }
+
+    @Test
+    fun `receipt only parent acknowledgement retires the parent without immediately sending dependent creates`() = runTest {
+        verifyNestedCreateRecovery(parentReceiptOnly = true)
+    }
+
+    @Test
+    fun `confirmed ancestor resumes dependent creates through an existing remote parent without creating that parent`() = runTest {
+        verifyNestedCreateRecovery(parentReceiptOnly = false, throughExistingParent = true)
+    }
+
+    private suspend fun TestScope.verifyNestedCreateRecovery(
+        parentReceiptOnly: Boolean,
+        throughExistingParent: Boolean = false,
+    ) {
+        val fixture = createFixture()
+        val persistence = MemoryDocumentDraftPersistence()
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val scopes = mutableListOf<CoroutineScope>()
+        val errors = mutableListOf<Pair<Throwable, String>>()
+        try {
+            val owner = DocumentDraftOwnerKey(fixture.deploymentIdentity.fingerprint, DATASET_ID, OWNER_UID)
+            fun admitted(id: String, instance: Long, parent: String?, ancestors: List<String>) = DocumentTabState(
+                tabId = id, instanceId = instance, recoveryId = id, documentId = null, spaceId = SPACE_ID,
+                parentId = parent, ancestorIds = ancestors, savedTitle = "", savedMarkdown = "",
+                draftTitle = "冻结标题 $instance", draftMarkdown = "冻结正文 A $instance", revision = null,
+                dirty = true, creating = true, editGeneration = 3L,
+            )
+            val parent = admitted(ROOT_ID, 21L, null, emptyList())
+            val existingParentId = "00000000-0000-4000-8000-000000000307"
+            val childAncestors = if (throughExistingParent) listOf(ROOT_ID, existingParentId) else listOf(ROOT_ID)
+            val child = admitted(DOCUMENT_ID, 22L, childAncestors.last(), childAncestors)
+            val grandchild = admitted(LOCAL_DOCUMENT_ID, 23L, DOCUMENT_ID, childAncestors + DOCUMENT_ID)
+            val lineage = listOf(parent, child, grandchild)
+            val commands = lineage.map { requireNotNull(PendingDocumentCreateCommand.capture(it)) }
+            val byId = commands.associateBy { it.documentId }
+            val successors = lineage.map { it.copy(draftTitle = "", draftMarkdown = "后继正文 B ${it.instanceId}", editGeneration = 4L) }
+            val ordinary = admitted(OPERATION_ID, 24L, DOCUMENT_ID, childAncestors + DOCUMENT_ID)
+                .copy(draftTitle = "未提交草稿", draftMarkdown = "没有创建命令", editGeneration = 0L)
+            // Both record and command order oppose dependency order. No request may rely on
+            // LinkedHashMap insertion order, nor acquire a new command for the ordinary draft.
+            assertTrue(DocumentDraftStore(persistence).save(owner, successors.reversed() + ordinary,
+                ROOT_ID, SPACE_ID, pendingDocumentCreates = commands.reversed()))
+            val committed = linkedMapOf<String, Document>()
+            fun remoteNode(remote: Document) = node(remote).copy(
+                hasChildren = committed.values.any { it.parentId == remote.documentId },
+            )
+            val sentIds = mutableListOf<String>()
+            val restarts = if (parentReceiptOnly) 1 else 3
+            repeat(restarts) { restart ->
+                val parentFails = !parentReceiptOnly && restart == 0
+                val parentRequested = CompletableDeferred<Unit>()
+                val releaseParent = CompletableDeferred<Unit>()
+                fixture.rpc.respond = { method ->
+                    val request = fixture.rpc.payloads.last { it.first == method }.second
+                    val payload = when (method) {
+                        DocumentRpcContract.M_LIST_SPACES -> ProtoCodec.encode(DocumentSpacePage(
+                            snapshotVersion = DocumentDirectorySnapshotVersion(1L, 1L, 1L),
+                            items = listOf(space()), nextCursor = null,
+                        ))
+                        DocumentRpcContract.M_LIST_RECENT_DOCUMENTS,
+                        DocumentRpcContract.M_LIST_RECENTLY_CREATED_DOCUMENTS -> ProtoCodec.encodeList(emptyList<DocumentHomeItem>())
+                        DocumentRpcContract.M_GET_SPACE -> ProtoCodec.encode(space())
+                        DocumentRpcContract.M_LIST_NODES -> ProtoCodec.withPayload(request) {
+                            assertEquals(SPACE_ID, readString())
+                            val requestedParent = readString()
+                            ProtoCodec.encodeList(committed.values.filter { it.parentId == requestedParent }.map(::remoteNode))
+                        }
+                        DocumentRpcContract.M_GET_DOCUMENT,
+                        DocumentRpcContract.M_GET_NODE_PATH_SPINE -> ProtoCodec.withPayload(request) {
+                            assertEquals(SPACE_ID, readString())
+                            val remote = committed.getValue(requireNotNull(readString()))
+                            if (method == DocumentRpcContract.M_GET_DOCUMENT) ProtoCodec.encode(remote)
+                            else ProtoCodec.encode(DocumentPathSpine((remote.ancestorIds + remote.documentId)
+                                .map { remoteNode(committed.getValue(it)) }))
+                        }
+                        DocumentRpcContract.M_CREATE_DOCUMENT -> {
+                            val command = ProtoCodec.withPayload(request) {
+                                val selected = byId.getValue(requireNotNull(readString()))
+                                assertEquals(selected.spaceId, readString())
+                                assertEquals(selected.parentId, readString())
+                                assertEquals(selected.title, readString())
+                                assertEquals(DocumentContent(selected.markdown, selected.assets), DocumentContent.readFrom(this))
+                                selected
+                            }
+                            sentIds += command.documentId
+                            if (command.documentId == ROOT_ID) {
+                                parentRequested.complete(Unit)
+                                releaseParent.await()
+                                if (parentFails) throw AppError.Network
+                            } else {
+                                assertFalse(parentReceiptOnly, "a receipt alone cannot publish a writable parent")
+                                assertTrue(command.parentId in committed, "a child must not precede its parent commit")
+                                val durable = requireNotNull(DocumentDraftStore(persistence).restore(owner))
+                                val ancestors = lineage.single { it.tabId == command.documentId }.ancestorIds
+                                assertTrue(durable.pendingDocumentCreates.none { it.documentId in ancestors },
+                                    "every pending ancestor must be durably retired before a dependent RPC")
+                            }
+                            val original = lineage.single { it.tabId == command.documentId }
+                            val remote = document().copy(documentId = command.documentId, parentId = command.parentId,
+                                ancestorIds = original.ancestorIds, title = command.title, markdown = command.markdown,
+                                revision = 1L, assets = command.assets)
+                            committed[command.documentId] = remote
+                            if (throughExistingParent && command.documentId == ROOT_ID) {
+                                // The remote parent is present before P's first successful reply
+                                // reaches this client. It has no local create command or draft.
+                                committed[existingParentId] = document().copy(documentId = existingParentId,
+                                    parentId = ROOT_ID, ancestorIds = listOf(ROOT_ID), title = "已有远端父文档",
+                                    markdown = "独立远端内容", revision = 1L)
+                            }
+                            ProtoCodec.encode(DocumentCreateResult(command.documentId, remote.takeUnless { parentReceiptOnly }))
+                        }
+                        else -> error("Unexpected nested create recovery RPC: $method")
+                    }
+                    ResponsePayload(1, 0, payload)
+                }
+                val featureScope = CoroutineScope(dispatcher + SupervisorJob()).also(scopes::add)
+                val feature = DocumentWorkspaceFeature(fixture.session, featureScope,
+                    { failure, message -> errors += failure to message }, DocumentDraftStore(persistence), UiLocalDataBoundary(dispatcher))
+                val observers = featureScope.coroutineContext[Job]!!.children.toSet()
+                val opening = featureScope.async { feature.open() }
+                advanceUntilIdle()
+                if (restart < 2) {
+                    parentRequested.await()
+                    assertEquals(List(restart + 1) { ROOT_ID }, sentIds, "only pending roots may reach the RPC boundary")
+                    feature.showHome()
+                    assertNull(feature.selectedSpaceId)
+                    releaseParent.complete(Unit)
+                }
+                opening.await()
+                while (true) {
+                    val work = featureScope.coroutineContext[Job]!!.children.filterNot { it in observers }.toList()
+                    if (work.isEmpty()) break
+                    work.joinAll()
+                }
+                val remaining = when {
+                    parentFails -> commands.reversed()
+                    parentReceiptOnly -> commands.reversed().filterNot { it.documentId == ROOT_ID }
+                    else -> emptyList()
+                }
+                val durable = requireNotNull(DocumentDraftStore(persistence).restore(owner))
+                assertEquals(remaining, durable.pendingDocumentCreates)
+                assertEquals(4, durable.tabs.size)
+                successors.forEach { successor ->
+                    val restored = feature.tabs.single { it.tabId == successor.tabId }
+                    val completed = !parentFails && (!parentReceiptOnly || successor.tabId == ROOT_ID)
+                    assertEquals(!completed, restored.creating)
+                    assertEquals(if (completed) 1L else null, restored.revision)
+                    assertEquals(successor.draftTitle, restored.draftTitle)
+                    assertEquals(successor.draftMarkdown, restored.draftMarkdown)
+                    assertEquals(successor.editGeneration, restored.editGeneration)
+                    assertTrue(restored.dirty)
+                }
+                assertTrue(feature.tabs.single { it.tabId == OPERATION_ID }.creating)
+                assertEquals(0, fixture.rpc.calls.count { it.second == DocumentRpcContract.M_UPDATE_DOCUMENT })
+                if (restart < 2) {
+                    assertNull(feature.selectedSpaceId, "background recovery must retain the user's newer home navigation")
+                    assertNull(durable.selectedSpaceId)
+                }
+                if (parentFails) {
+                    assertEquals(listOf(ROOT_ID), sentIds)
+                    assertEquals(listOf("重试创建文档失败，草稿已保留"), errors.map { it.second })
+                } else {
+                    assertEquals(if (parentReceiptOnly) listOf(ROOT_ID) else listOf(ROOT_ID, ROOT_ID, DOCUMENT_ID, LOCAL_DOCUMENT_ID), sentIds)
+                    if (throughExistingParent) {
+                        assertEquals("独立远端内容", committed.getValue(existingParentId).markdown)
+                        assertTrue(existingParentId !in sentIds, "the remote intermediate parent must never be recreated")
+                    }
+                    assertTrue(errors.isEmpty(), errors.toString())
+                }
+                errors.clear()
+                featureScope.cancel()
+                advanceUntilIdle()
+            }
+        } finally {
+            scopes.forEach { it.cancel() }
+            fixture.close()
+        }
+    }
+
     @Test
     fun `space acknowledgement resumes admitted children without saving ordinary drafts or taking navigation`() = runTest {
         for (availableProjection in listOf(true, false)) {

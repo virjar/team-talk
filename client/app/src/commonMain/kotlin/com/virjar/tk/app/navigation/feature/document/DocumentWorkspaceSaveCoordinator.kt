@@ -111,6 +111,12 @@ internal class DocumentWorkspaceSaveCoordinator(
         )
         workspace.revisionConflictActions.clearConflict()
         val createCommand = if (current.creating || current.documentId == null) {
+            if (createOutbox.hasPendingAncestor(current, workspace.tabs)) {
+                attempt.fail()
+                reportError(IllegalStateException("Document create has an unfinished local ancestor"),
+                    "父文档仍有未完成的创建，请先保存或重试父文档")
+                return
+            }
             if (createOutbox.pendingDocuments().none { it.matches(current) } &&
                 !workspace.hasDocumentDraftRecoveryCapacity(1)
             ) {
@@ -133,11 +139,15 @@ internal class DocumentWorkspaceSaveCoordinator(
 
     /** 恢复的稳定 ID 创建只有在空间成员关系再次权威之后才恢复。 */
     fun replayPendingCreates(loadedSpaces: List<DocumentSpace>) {
+        replayPendingCreates(loadedSpaces, completedAncestorId = null)
+    }
+
+    private fun replayPendingCreates(loadedSpaces: List<DocumentSpace>, completedAncestorId: String?) {
         val availableSpaceIds = loadedSpaces.asSequence()
             .map(DocumentSpace::spaceId)
             .filterNot { it in workspace.retiringSpaceIds || it in workspace.offlineDraftSpaceIds }
             .toHashSet()
-        createOutbox.replayableDocuments(workspace.tabs, availableSpaceIds).forEach { replay ->
+        createOutbox.replayableDocuments(workspace.tabs, availableSpaceIds, completedAncestorId).forEach { replay ->
             startSave(replay.tab, replay.command, "重试创建文档失败，草稿已保留")
         }
     }
@@ -214,6 +224,10 @@ internal class DocumentWorkspaceSaveCoordinator(
         failureMessage: String,
         attempt: ClientActionAttempt? = null,
     ) {
+        if (createCommand != null && createOutbox.hasPendingAncestor(current, workspace.tabs)) {
+            attempt?.queue()
+            return
+        }
         val mutation = beginMutation(current, createCommand?.admittedEditGeneration) ?: run {
             attempt?.cancel()
             return
@@ -304,6 +318,10 @@ internal class DocumentWorkspaceSaveCoordinator(
                             attempt?.cancel()
                             return@launch
                         }
+                        if (createOutbox.hasPendingAncestor(current, workspace.tabs)) {
+                            attempt?.queue()
+                            return@launch
+                        }
                         gateway.create(createCommand)
                     } else {
                         gateway.update(writeTab)
@@ -363,7 +381,15 @@ internal class DocumentWorkspaceSaveCoordinator(
                     }
                     if (merge != null) {
                         val published = publishSaveMerge(merge, createCommand)
-                        if (!published && createCommand != null) {
+                        if (published && createCommand != null) {
+                            // The original parent request has completed durably and its current
+                            // projection is published. Resume only admitted commands that depended
+                            // on it, including descendants through an existing remote parent.
+                            // Receipt-only completion deliberately leaves children for a later
+                            // refresh or explicit save, whose original request the server validates.
+                            replayPendingCreates(workspace.spaces.filter { it.spaceId == saved.spaceId },
+                                completedAncestorId = saved.documentId)
+                        } else if (!published && createCommand != null) {
                             completeCommittedCreateAfterLatestDraftCapture(
                                 request = mutation.request,
                                 command = createCommand,
