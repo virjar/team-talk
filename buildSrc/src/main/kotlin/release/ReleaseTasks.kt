@@ -38,7 +38,12 @@ fun registerReleaseTasks(
         "GitHub publication requires the committed buildSrc/deployment/Deployment.kt. " +
             "The local buildSrc/deployment-local/ configuration is supported only for local and site releases."
     }
-    require(!privateDistribution || (usingLocalConfig && "github" !in targets && baseRevision == null &&
+    // 公版快照覆盖（内测 T030）：im.virjar.com 等部署不承诺稳定，允许不推进展示版本的覆盖发布。
+    val publicSnapshot = snapshot && !usingLocalConfig
+    require(!publicSnapshot || ("github" !in targets && baseRevision == null)) {
+        "Public snapshot distribution requires local/site targets and no releaseBase"
+    }
+    require(!privateFirst || (usingLocalConfig && "github" !in targets && baseRevision == null &&
         config.client.applicationId != ClientDistributionIdentity().applicationId)) {
         "$mode requires a local deployment configuration, an independent private applicationId, " +
             "local/site targets and no releaseBase; it cannot republish the public application or create GitHub releases"
