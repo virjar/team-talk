@@ -100,6 +100,11 @@ Conveyor 要求同一展示版本的不同包具有不同 revision。工具从�
 `git rev-list --first-parent --count HEAD`，加上根构建号和 `1` 得到 `desktopRevision`，无需修改配置，
 也不依赖 tag。这个修订号用于 Desktop 安装元数据与站点记录，应用展示版本仍保持原值。
 
+内测快照站点只发**全量包**，不生成也不引用增量更新（构建以 `app.mac.deltas = 0` 关闭 Sparkle
+增量，并在密封快照包时拒绝任何 `.delta` 产物或更新源引用）。跨修订的增量链只属于正式发行与
+私有化内部预览的规范版本机制；快照覆盖发布按"每次都是完整包"理解，避免维护中间修订间的增量
+兼容负担。老用户升级经更新源下载新全量包，安装结果与增量路径一致。
+
 ```bash
 # 新增契约开启下一 minor 后，同一发行周期共用该 minor 并登记开发清单。
 ./gradlew :protocol:protocol:writeProtocolBaseline

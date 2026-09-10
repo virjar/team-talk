@@ -537,6 +537,8 @@ val writeConveyorSiteConfig by tasks.registering {
                 """
                 app.site.base-url = ${quoted(siteUrl)}
                 app.revision = $desktopRevision
+                // 快照覆盖发布只发全量包：关闭 Sparkle 增量；增量更新仅用于正式发行
+                // 与私有化内部预览的规范版本机制。打包门禁会在快照包内拒绝任何 .delta。
                 ${if (snapshotDistribution) "app.mac.deltas = 0" else ""}
                 app.fsname = ${quoted(clientIdentity.desktopFsName)}
                 app.display-name = ${quoted(clientIdentity.desktopName)}

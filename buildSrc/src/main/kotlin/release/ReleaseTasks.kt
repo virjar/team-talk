@@ -159,6 +159,21 @@ fun registerReleaseTasks(
                 File(root, "client/desktop/build/conveyor/tool.properties"),
                 File(root, "client/shared/build/distributions/${HeadlessDistribution.archiveName(identity.buildIdentity)}"),
             )
+            // 快照覆盖发布只发全量包：增量更新（macOS Sparkle delta 等）属于正式发行
+            // 与私有化内部预览的规范版本机制，内测覆盖刷包不维护跨修订的增量链。
+            if (snapshot) {
+                val desktopDirectory = File(bundle, "desktop")
+                val deltaPackages = desktopDirectory.walkTopDown()
+                    .filter { it.isFile && it.extension == "delta" }.map { it.name }.toList()
+                require(deltaPackages.isEmpty()) {
+                    "Snapshot distributions ship full packages only; found incremental packages: $deltaPackages"
+                }
+                desktopDirectory.listFiles { file -> file.name.startsWith("appcast") }?.forEach { appcast ->
+                    require(".delta" !in appcast.readText()) {
+                        "Snapshot update feed ${appcast.name} must not reference incremental packages"
+                    }
+                }
+            }
             project.logger.lifecycle("Sealed release bundle: ${bundle.absolutePath}")
         }
     }
