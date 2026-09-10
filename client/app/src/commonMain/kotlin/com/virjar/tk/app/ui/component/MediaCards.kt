@@ -279,8 +279,9 @@ internal fun VoiceCard(
             color = barColor,
             playedColor = playedColor,
             progress = progress,
-            // 固定宽（14 根×3dp+13 间×2dp=68dp）：weight 在气泡无界约束下塌缩（曾两次重叠/折叠）
-            modifier = Modifier.width(68.dp).height(20.dp),
+            // 固定宽（14 根×3dp+13 间×2dp=68dp）：weight 在气泡无界约束下塌缩（曾两次重叠/折叠）。
+            // 高度 16dp 与文本气泡同高，避免语音气泡比文本明显更粗（内测 T025）。
+            modifier = Modifier.width(68.dp).height(16.dp),
         )
         Spacer(Modifier.width(Tk.spacing.sm))
         Text(
@@ -309,9 +310,9 @@ private fun VoiceWave(
         val playedBars = (progress * barCount).toInt()
         var s = seed.toLong() and 0x7FFFFFFFL
         repeat(barCount) { i ->
-            // LCG：确定性伪随机 0.25..1.0
+            // LCG：确定性伪随机 0.25..0.75；振幅留白让波形不顶满气泡（内测 T025 视觉减重）
             s = (s * 48271) % 0x7FFFFFFFL
-            val level = 0.25f + (s % 100) / 100f * 0.75f
+            val level = 0.25f + (s % 100) / 100f * 0.5f
             val h = size.height * level
             drawRoundRect(
                 color = if (i < playedBars && progress > 0f) playedColor else color,

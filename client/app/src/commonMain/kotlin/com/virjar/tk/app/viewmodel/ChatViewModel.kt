@@ -61,6 +61,11 @@ class ChatViewModel(
     private val _messages = MutableStateFlow<List<Message>>(emptyList())
     val messages: StateFlow<List<Message>> = _messages.asStateFlow()
 
+    /** 对方已读水位：READ_SYNC 推进、全量投影校正；私聊送达/已读勾的唯一事实来源。 */
+    val peerReadSeq: StateFlow<Long> = localCache.observeConversation(chatId)
+        .map { it?.peerReadSeq ?: 0L }
+        .stateIn(scope, SharingStarted.Eagerly, 0L)
+
     /** 当前存在于驻留窗口中的失败乐观行的安全、稳定原因。 */
     private val _outgoingFailureCodes = MutableStateFlow<Map<String, OutgoingFailureCode>>(emptyMap())
     val outgoingFailureCodes: StateFlow<Map<String, OutgoingFailureCode>> = _outgoingFailureCodes.asStateFlow()

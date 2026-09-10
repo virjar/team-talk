@@ -72,7 +72,8 @@ internal fun MessageBubble(
         // 对方头像（左）
         if (!isMe) {
             if (isContinuation) {
-                Spacer(Modifier.width(Tk.dimens.chatAvatar))
+                // 占位宽度必须与头像实际占位一致（头像 + 尾随间距），否则同组气泡左右参差
+                Spacer(Modifier.padding(end = Tk.spacing.sm).width(Tk.dimens.chatAvatar))
             } else {
                 val user = resolveSender?.invoke(msg.senderUid)
                 AvatarPlaceholder(
@@ -190,15 +191,20 @@ internal fun MessageBubble(
                     onMore = reactions.onOpenPicker,
                 )
             }
-            // 已读水位线指示：私聊中我方最后一条消息下方（飞书「已读/未读」文字范式）
+            // 送达/已读状态：私聊我方消息逐条渲染单勾双钩（办公场景的状态证据）
             if (showReadIndicator) {
-                val isRead = peerReadSeq > 0 && msg.serverSeq <= peerReadSeq
-                Text(
-                    text = if (isRead) "已读" else "未读",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (isRead) Tk.colors.secondaryText else Tk.colors.metaText,
-                    modifier = Modifier.padding(top = 1.dp, end = Tk.spacing.xs),
-                )
+                val delivered = msg.serverSeq > 0
+                val isRead = delivered && peerReadSeq > 0 && msg.serverSeq <= peerReadSeq
+                if (delivered) {
+                    Text(
+                        text = if (isRead) "✓✓" else "✓",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isRead) Tk.colors.secondaryText else Tk.colors.metaText,
+                        modifier = Modifier
+                            .padding(top = 1.dp, end = Tk.spacing.xs)
+                            .testTag("chat.message.readState.${msg.clientMsgId.take(12)}"),
+                    )
+                }
             }
             if (isMe && msg.sendStatus == Message.SEND_STATUS_FAILED) {
                 Text(
@@ -230,7 +236,8 @@ internal fun MessageBubble(
         // 自己头像（右）
         if (isMe) {
             if (isContinuation) {
-                Spacer(Modifier.width(Tk.dimens.chatAvatar))
+                // 与左侧同理：占位对齐头像实际占位（间距 + 头像）
+                Spacer(Modifier.padding(start = Tk.spacing.sm).width(Tk.dimens.chatAvatar))
             } else {
                 val user = resolveSender?.invoke(msg.senderUid)
                 AvatarPlaceholder(

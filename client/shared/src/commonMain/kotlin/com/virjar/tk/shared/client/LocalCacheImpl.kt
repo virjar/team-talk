@@ -729,6 +729,7 @@ class LocalCacheImpl internal constructor(
 
     override fun getConversations(): List<Conversation> = conversations.getConversations()
     override fun observeConversations(): Flow<List<Conversation>> = conversations.observeConversations()
+    override fun observeConversation(chatId: String): Flow<Conversation?> = conversations.observeConversation(chatId)
     override fun upsertConversation(conv: Conversation) = conversations.upsertConversation(conv)
     override fun deleteConversation(chatId: String) = conversations.deleteConversation(chatId)
     override fun beginConversationSnapshot(): Long = conversations.beginConversationSnapshot()

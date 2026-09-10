@@ -3,6 +3,7 @@ package com.virjar.tk.shared.client
 import com.virjar.tk.shared.database.AppDatabaseQueries
 import com.virjar.tk.protocol.model.Conversation
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 
 internal data class ServerCheckpointConversationPlan(
     val conversations: LinkedHashMap<String, Conversation>,
@@ -74,6 +75,13 @@ internal class LocalConversationProjectionStore(
 
     fun observeConversations(): Flow<List<Conversation>> = cacheUseGate.use {
         conversationsFlow.observe()
+    }
+
+    /** 观察单个会话的当前投影；列表排序变化不会扰动该会话的下游收集。 */
+    fun observeConversation(chatId: String): Flow<Conversation?> = cacheUseGate.use {
+        conversationsFlow.observe().map { conversations ->
+            conversations.firstOrNull { it.chatId == chatId }
+        }
     }
 
     fun upsertConversation(conversation: Conversation) = cacheUseGate.use {

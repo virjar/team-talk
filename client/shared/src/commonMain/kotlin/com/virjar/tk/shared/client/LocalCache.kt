@@ -574,6 +574,8 @@ interface LocalCache : LocalDocumentProjection {
     // ── 会话 ──
     fun getConversations(): List<Conversation>
     fun observeConversations(): Flow<List<Conversation>>
+    /** 观察单个会话投影；聊天页据此渲染对方的已读水位（READ_SYNC 推进）。 */
+    fun observeConversation(chatId: String): Flow<Conversation?>
     fun upsertConversation(conv: Conversation)
     fun deleteConversation(chatId: String)
 

@@ -109,22 +109,23 @@ internal fun ChatMessageList(
                     Modifier
                 }
 
-                // 连续消息判断（reverseLayout: index+1 是时间更早的消息）
+                // 连续消息判断（reverseLayout: index+1 是时间更早的消息）。
+                // 撤回行替换了原气泡且不带头像槽，前一条被撤回时必须重新展示头像，
+                // 否则该发送者的头像组随撤回整段消失。
                 val prevMsg = messages.getOrNull(index + 1)
                 val isContinuation = prevMsg != null
                     && prevMsg.senderUid == msg.senderUid
                     && (msg.timestamp - prevMsg.timestamp) < CONTINUATION_THRESHOLD_MS
                     && (msg.flags and Message.FLAG_REVOKED) == 0
+                    && (prevMsg.flags and Message.FLAG_REVOKED) == 0
 
                 // 时间分隔判断（reverseLayout: index-1 是时间更晚的消息）
                 val nextMsg = messages.getOrNull(index - 1)
                 val showTimeSeparator = nextMsg == null
                     || (nextMsg.timestamp - msg.timestamp) > TIME_SEPARATOR_THRESHOLD_MS
 
-                // 是否是我最后一条已送达消息（已读水位线指示只挂在这里，飞书范式）
-                val isMyLastMsg = isMe
-                    && msg.serverSeq > 0
-                    && (nextMsg == null || nextMsg.senderUid != myUid)
+                // 私聊我方消息逐条渲染送达/已读状态（单勾双钩），不再只挂最后一条
+                val showReadIndicator = isPersonal && isMe
 
                 // 撤回消息走系统提示（居中裸文字），不走气泡
                 if (msg.flags and Message.FLAG_REVOKED != 0) {
@@ -160,7 +161,7 @@ internal fun ChatMessageList(
                             isMe = isMe,
                             isContinuation = isContinuation,
                             showSenderName = !isPersonal && !isMe,
-                            showReadIndicator = isPersonal && isMyLastMsg,
+                            showReadIndicator = showReadIndicator,
                             reactions = MessageReactions(
                                 groups = if (msg.serverSeq > 0L) reactions[msg.serverSeq].orEmpty() else emptyList(),
                                 myUid = myUid,

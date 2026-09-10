@@ -28,13 +28,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+
+/** 工具栏右侧的追加动作（如插入图片/文件）；宽屏渲染为按钮，窄屏并入「插入」菜单。 */
+internal data class DocumentToolbarAction(
+    val label: String,
+    val testTag: String,
+    val icon: ImageVector,
+    val onClick: () -> Unit,
+)
 
 @Composable
 internal fun DocumentBlockFormattingToolbar(
     controller: DocumentBlockEditorController,
     modifier: Modifier = Modifier,
+    extraActions: List<DocumentToolbarAction> = emptyList(),
 ) {
     BoxWithConstraints(modifier) {
         val compact = maxWidth < 720.dp
@@ -82,6 +92,14 @@ internal fun DocumentBlockFormattingToolbar(
                             onCode = { insertMenu = false; controller.insertCodeFence() },
                             onTable = { insertMenu = false; controller.insertTable() },
                         )
+                        extraActions.forEach { action ->
+                            DropdownMenuItem(
+                                text = { Text(action.label) },
+                                leadingIcon = { Icon(action.icon, null) },
+                                onClick = { insertMenu = false; action.onClick() },
+                                modifier = Modifier.testTag(action.testTag),
+                            )
+                        }
                     }
                 }
             } else {
@@ -109,6 +127,14 @@ internal fun DocumentBlockFormattingToolbar(
                     testTag = "documents.editor.block.table",
                     onClick = controller::insertTable,
                 )
+                extraActions.forEach { action ->
+                    DocumentBlockInsertButton(
+                        label = action.label,
+                        icon = { Icon(action.icon, null) },
+                        testTag = action.testTag,
+                        onClick = action.onClick,
+                    )
+                }
             }
         }
     }

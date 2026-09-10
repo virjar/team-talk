@@ -751,6 +751,11 @@ class FakeLocalCache(
     // ── 会话 ──
     override fun getConversations() = cacheUseGate.use { conversationProjection.get() }
     override fun observeConversations() = cacheUseGate.use { conversationProjection.observe() }
+    override fun observeConversation(chatId: String) = cacheUseGate.use {
+        conversationProjection.observe().map { conversations ->
+            conversations.firstOrNull { it.chatId == chatId }
+        }
+    }
     override fun upsertConversation(conv: Conversation) =
         cacheUseGate.use { conversationProjection.upsert(conv) }
     override fun beginConversationSnapshot() = cacheUseGate.use { conversationProjection.beginSnapshot() }

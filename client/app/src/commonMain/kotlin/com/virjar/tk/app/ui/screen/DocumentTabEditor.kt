@@ -14,6 +14,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.IconButton
@@ -62,6 +66,7 @@ import com.virjar.tk.app.ui.component.FileCardWithDownload
 import com.virjar.tk.app.ui.component.ImageThumbCard
 import com.virjar.tk.app.ui.component.rich.DocumentBlockEditor
 import com.virjar.tk.app.ui.component.rich.DocumentBlockFormattingToolbar
+import com.virjar.tk.app.ui.component.rich.DocumentToolbarAction
 import com.virjar.tk.app.ui.component.rich.DocumentMarkdownPreview
 import com.virjar.tk.app.ui.component.rich.EmbeddedAssetCommitBlocker
 import com.virjar.tk.app.ui.component.rich.EmbeddedAssetMarkdownContent
@@ -668,9 +673,37 @@ internal fun DocumentTabEditor(
             modifier = Modifier.fillMaxWidth(),
         ) {
             if (canEdit && !previewMode && !sourceMode) {
+                // 插入图片/文件并入工具栏行，不再单独占一行（内测 T034）
+                val assetActions = if (embeddedAssetImportEnabled && embeddedAssetImports != null) {
+                    buildList {
+                        add(DocumentToolbarAction(
+                            label = "插入图片",
+                            testTag = "documents.asset.pick.image",
+                            icon = Icons.Filled.Image,
+                            onClick = { embeddedAssetImports.select(EmbeddedAssetPresentation.IMAGE) },
+                        ))
+                        add(DocumentToolbarAction(
+                            label = "插入文件",
+                            testTag = "documents.asset.pick.file",
+                            icon = Icons.Filled.AttachFile,
+                            onClick = { embeddedAssetImports.select(EmbeddedAssetPresentation.FILE) },
+                        ))
+                        onPasteEmbeddedAsset?.let { paste ->
+                            add(DocumentToolbarAction(
+                                label = "粘贴",
+                                testTag = "documents.asset.paste",
+                                icon = Icons.Filled.ContentPaste,
+                                onClick = { paste() },
+                            ))
+                        }
+                    }
+                } else {
+                    emptyList()
+                }
                 DocumentBlockFormattingToolbar(
                     controller = blockController,
                     modifier = Modifier.fillMaxWidth().padding(4.dp),
+                    extraActions = assetActions,
                 )
             } else {
                 Text(
@@ -685,28 +718,6 @@ internal fun DocumentTabEditor(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
                 )
-            }
-        }
-        if (embeddedAssetImportEnabled && embeddedAssetImports != null) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TextButton(
-                    onClick = { embeddedAssetImports.select(EmbeddedAssetPresentation.IMAGE) },
-                    modifier = Modifier.testTag("documents.asset.pick.image"),
-                ) { Text("插入图片") }
-                TextButton(
-                    onClick = { embeddedAssetImports.select(EmbeddedAssetPresentation.FILE) },
-                    modifier = Modifier.testTag("documents.asset.pick.file"),
-                ) { Text("插入文件") }
-                onPasteEmbeddedAsset?.let { paste ->
-                    TextButton(
-                        onClick = { paste() },
-                        modifier = Modifier.testTag("documents.asset.paste"),
-                    ) { Text("粘贴") }
-                }
             }
         }
         PendingAssetRows(

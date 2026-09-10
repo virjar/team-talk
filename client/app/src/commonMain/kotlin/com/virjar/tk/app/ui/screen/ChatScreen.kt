@@ -79,7 +79,6 @@ fun ChatPanel(
     composerContextStore: ChatComposerContextStore,
     /** 平台媒体能力的唯一入口；平台壳负责构造，聊天 UI 不再维护平行回调。 */
     media: ChatMediaConfig,
-    peerReadSeq: Long = 0,
     /** 当前认证会话的语音应用内播放控制器。 */
     voicePlayback: com.virjar.tk.app.ui.component.VoicePlaybackController,
     /** @ 补全候选（群成员/私聊对方）；null=禁用 @ 补全 */
@@ -841,7 +840,7 @@ fun ChatPanel(
                 onWindowReactionsConverge = viewModel::refreshReactionsForWindow,
                 myUid = myUid,
                 isPersonal = isPersonal,
-                peerReadSeq = peerReadSeq,
+                peerReadSeq = viewModel.peerReadSeq.collectAsState().value,
                 content = messageContent,
                 selectableText = selectableText,
                 menuMessage = menuMessage,
