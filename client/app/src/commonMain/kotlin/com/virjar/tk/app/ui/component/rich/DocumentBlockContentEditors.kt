@@ -2,6 +2,7 @@ package com.virjar.tk.app.ui.component.rich
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +15,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -530,28 +534,133 @@ internal fun DocumentEmbeddedAssetBlockEditor(
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onDelete: () -> Unit,
+    modifier: Modifier = Modifier.fillMaxWidth(),
 ) {
-    val presentation = when (block) {
-        is DocumentEmbeddedImageBlock -> EmbeddedAssetPresentation.IMAGE
-        is DocumentEmbeddedFileBlock -> EmbeddedAssetPresentation.FILE
+    when (block) {
+        // 图片走无容器渲染（内测 T032）：默认只显示图片本体，hover/菜单时浮出操作。
+        is DocumentEmbeddedImageBlock -> DocumentEmbeddedImageBlockEditor(
+            block = block,
+            canMoveUp = canMoveUp,
+            canMoveDown = canMoveDown,
+            embeddedAssetContent = embeddedAssetContent,
+            onMoveUp = onMoveUp,
+            onMoveDown = onMoveDown,
+            onDelete = onDelete,
+            modifier = modifier,
+        )
+        is DocumentEmbeddedFileBlock -> DocumentEmbeddedFileBlockEditor(
+            block = block,
+            canMoveUp = canMoveUp,
+            canMoveDown = canMoveDown,
+            embeddedAssetContent = embeddedAssetContent,
+            onActivate = onActivate,
+            onMoveUp = onMoveUp,
+            onMoveDown = onMoveDown,
+            onDelete = onDelete,
+            modifier = modifier,
+        )
     }
-    val prefix = "documents.editor.asset.${presentation.name.lowercase()}.${block.asset.assetId}"
+}
+
+/**
+ * 文档内嵌图片块（内测 T032 重构）：文档以内容展示为核心——默认不渲染卡片容器与
+ * 操作头栏，只在 hover 时浮出操作工具条；点击图片进入全幅查看。
+ */
+@Composable
+internal fun DocumentEmbeddedImageBlockEditor(
+    block: DocumentEmbeddedImageBlock,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    embeddedAssetContent: EmbeddedAssetMarkdownContent?,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier.fillMaxWidth(),
+) {
+    var hovered by remember { mutableStateOf(false) }
+    var menuExpanded by remember { mutableStateOf(false) }
+    Box(
+        modifier
+            .testTag("documents.editor.asset.image.${block.asset.assetId}")
+            .clickable { com.virjar.tk.app.ui.screen.DocumentImageFullscreenHost.show(block.asset) {} }
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        when (event.type) {
+                            PointerEventType.Enter -> hovered = true
+                            PointerEventType.Exit -> hovered = false
+                            else -> {}
+                        }
+                    }
+                }
+            },
+    ) {
+        if (embeddedAssetContent != null) {
+            embeddedAssetContent(
+                block.asset,
+                EmbeddedAssetPresentation.IMAGE,
+                Modifier.fillMaxWidth(),
+            )
+        } else {
+            Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+                Text(block.label.ifBlank { block.asset.attachment.name })
+                Text(
+                    block.asset.attachment.contentType,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (hovered || menuExpanded) {
+            Row(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .clip(MaterialTheme.shapes.small)
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                DocumentBlockMenu(
+                    canMoveUp = canMoveUp,
+                    canMoveDown = canMoveDown,
+                    onMoveUp = onMoveUp,
+                    onMoveDown = onMoveDown,
+                    onDelete = onDelete,
+                    testTagPrefix = "documents.editor.asset.image.${block.asset.assetId}",
+                    compactIcon = true,
+                    expanded = menuExpanded,
+                    onExpandedChange = { menuExpanded = it },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DocumentEmbeddedFileBlockEditor(
+    block: DocumentEmbeddedFileBlock,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    embeddedAssetContent: EmbeddedAssetMarkdownContent?,
+    onActivate: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier.fillMaxWidth(),
+) {
+    val presentation = EmbeddedAssetPresentation.FILE
+    val prefix = "documents.editor.asset.file.${block.asset.assetId}"
     Surface(
         shape = MaterialTheme.shapes.medium,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().testTag(prefix),
+        modifier = modifier.testTag(prefix),
         onClick = onActivate,
     ) {
         Column {
             DocumentBlockHeader(
-                icon = {
-                    Icon(
-                        if (presentation == EmbeddedAssetPresentation.IMAGE) Icons.Filled.Image
-                        else Icons.Filled.AttachFile,
-                        null,
-                    )
-                },
-                label = if (presentation == EmbeddedAssetPresentation.IMAGE) "内嵌图片" else "内嵌文件",
+                icon = { Icon(Icons.Filled.AttachFile, null) },
+                label = "内嵌文件",
                 canMoveUp = canMoveUp,
                 canMoveDown = canMoveDown,
                 onMoveUp = onMoveUp,
@@ -589,14 +698,17 @@ internal fun DocumentBlockHeader(
     onMoveDown: () -> Unit,
     onDelete: () -> Unit,
     testTagPrefix: String,
+    compact: Boolean = false,
 ) {
     Row(
-        Modifier.fillMaxWidth().padding(start = 12.dp, top = 4.dp, end = 4.dp, bottom = 2.dp),
+        Modifier.fillMaxWidth().padding(start = if (compact) 8.dp else 12.dp, top = 4.dp, end = 4.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) { icon() }
-        Spacer(Modifier.width(7.dp))
-        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (!compact) {
+            Spacer(Modifier.width(7.dp))
+            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Spacer(Modifier.weight(1f))
         DocumentBlockMenu(
             canMoveUp = canMoveUp,
@@ -617,30 +729,39 @@ private fun DocumentBlockMenu(
     onMoveDown: () -> Unit,
     onDelete: () -> Unit,
     testTagPrefix: String,
+    /** 图片块 hover 工具条模式：受控展开、紧凑图标（内测 T032）。 */
+    compactIcon: Boolean = false,
+    expanded: Boolean = false,
+    onExpandedChange: (Boolean) -> Unit = {},
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    val isOpen = if (compactIcon) expanded else expanded || run {
+        var state by remember { mutableStateOf(false) }
+        state
+    }
     Box {
         IconButton(
-            onClick = { expanded = true },
-            modifier = Modifier.size(36.dp).testTag("$testTagPrefix.more"),
-        ) { Icon(Icons.Filled.MoreVert, contentDescription = "内容块操作", Modifier.size(19.dp)) }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            onClick = {
+                if (compactIcon) onExpandedChange(!isOpen) else onExpandedChange(true)
+            },
+            modifier = Modifier.size(if (compactIcon) 26.dp else 36.dp).testTag("$testTagPrefix.more"),
+        ) { Icon(Icons.Filled.MoreVert, contentDescription = "内容块操作", Modifier.size(if (compactIcon) 17.dp else 19.dp)) }
+        DropdownMenu(expanded = isOpen, onDismissRequest = { onExpandedChange(false) }) {
             DropdownMenuItem(
                 text = { Text("上移") },
                 leadingIcon = { Icon(Icons.Filled.ArrowUpward, null) },
                 enabled = canMoveUp,
-                onClick = { expanded = false; onMoveUp() },
+                onClick = { onExpandedChange(false); onMoveUp() },
             )
             DropdownMenuItem(
                 text = { Text("下移") },
                 leadingIcon = { Icon(Icons.Filled.ArrowDownward, null) },
                 enabled = canMoveDown,
-                onClick = { expanded = false; onMoveDown() },
+                onClick = { onExpandedChange(false); onMoveDown() },
             )
             DropdownMenuItem(
                 text = { Text("删除内容块", color = MaterialTheme.colorScheme.error) },
                 leadingIcon = { Icon(Icons.Filled.DeleteOutline, null, tint = MaterialTheme.colorScheme.error) },
-                onClick = { expanded = false; onDelete() },
+                onClick = { onExpandedChange(false); onDelete() },
                 modifier = Modifier.testTag("$testTagPrefix.delete"),
             )
         }

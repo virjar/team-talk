@@ -1,7 +1,13 @@
 package com.virjar.tk.app.ui.screen
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -18,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material3.Icon
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.IconButton
@@ -152,6 +159,50 @@ internal fun shouldStartDocumentInPreview(
     creating: Boolean,
 ): Boolean = !canEdit || (mobileSingleDocumentMode && !creating)
 
+/**
+ * 文档图片全屏查看覆盖层宿主（内测 T032）：大截图在文档渲染宽度下被缩小，
+ * 点击图片进入全幅查看；覆盖层只在当前文档窗口内，Esc/点击背景/关闭按钮退出。
+ */
+internal class DocumentImageFullscreenRequest(
+    val asset: EmbeddedAsset,
+    val onDismiss: () -> Unit,
+)
+
+/** 文档图片内容渲染：按内容列宽铺满、已知宽高比时按比例撑高，超长图限高后由 Fit 居中。 */
+@Composable
+internal fun DocumentDocumentImageContent(
+    asset: EmbeddedAsset,
+    imageContent: @Composable (com.virjar.tk.protocol.model.Attachment, Modifier) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val ratio = asset.width.takeIf { it > 0 }?.let { width ->
+        asset.height.takeIf { it > 0 }?.let { height -> width.toFloat() / height }
+    }
+    androidx.compose.foundation.layout.Box(
+        modifier
+            .clip(MaterialTheme.shapes.medium)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .then(if (ratio != null) Modifier.aspectRatio(ratio) else Modifier.heightIn(min = 140.dp))
+            .heightIn(max = 720.dp),
+        contentAlignment = androidx.compose.ui.Alignment.Center,
+    ) {
+        imageContent(asset.attachment, Modifier.fillMaxSize())
+    }
+}
+
+internal object DocumentImageFullscreenHost {
+    var request by mutableStateOf<DocumentImageFullscreenRequest?>(null)
+        private set
+
+    fun show(asset: EmbeddedAsset, onDismiss: () -> Unit) {
+        request = DocumentImageFullscreenRequest(asset, onDismiss)
+    }
+
+    fun dismiss() {
+        request = null
+    }
+}
+
 @Composable
 internal fun DocumentTabEditor(
     shareToChat: DocumentShareToChatAction?,
@@ -196,12 +247,9 @@ internal fun DocumentTabEditor(
     val embeddedAssetContent: EmbeddedAssetMarkdownContent? = embeddedAssetMedia?.let { media ->
         { asset, presentation, assetModifier ->
             when (presentation) {
-                EmbeddedAssetPresentation.IMAGE -> ImageThumbCard(
-                    attachment = asset.thumbnail ?: asset.attachment,
+                EmbeddedAssetPresentation.IMAGE -> DocumentDocumentImageContent(
+                    asset = asset,
                     imageContent = media.imageContent,
-                    imgWidth = asset.width,
-                    imgHeight = asset.height,
-                    onClick = null,
                     modifier = assetModifier,
                 )
                 EmbeddedAssetPresentation.FILE -> FileCardWithDownload(
@@ -555,7 +603,8 @@ internal fun DocumentTabEditor(
         referencedPendingAssetJobs(currentMarkdown, embeddedAssetSnapshot.jobs)
     }
 
-    Column(modifier.padding(horizontal = 22.dp, vertical = 14.dp)) {
+    Box(modifier) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 14.dp)) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val compactHeader = maxWidth < 620.dp
             if (compactHeader) {
@@ -835,7 +884,32 @@ internal fun DocumentTabEditor(
             }
         }
     }
-}
+    }
+    // 文档图片全屏查看覆盖层（内测 T032）：只在当前文档窗口内全幅展示。
+    DocumentImageFullscreenHost.request?.let { request ->
+        val media = embeddedAssetMedia
+        Box(
+            Modifier.fillMaxSize()
+                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.92f))
+                .clickable { DocumentImageFullscreenHost.dismiss() },
+            contentAlignment = Alignment.Center,
+        ) {
+            if (media != null) {
+                media.imageContent(
+                    request.asset.attachment,
+                    Modifier.fillMaxSize().padding(28.dp),
+                )
+            } else {
+                Text(request.asset.attachment.name, color = androidx.compose.ui.graphics.Color.White)
+            }
+            IconButton(
+                onClick = { DocumentImageFullscreenHost.dismiss() },
+                modifier = Modifier.align(Alignment.TopEnd).padding(16.dp).testTag("documents.image.fullscreen.close"),
+            ) { Icon(Icons.Filled.Close, "关闭全屏", tint = androidx.compose.ui.graphics.Color.White) }
+        }
+    }
+    }
+
 
 /** 会话展示名兜底：与 ChatPickerDialog 保持一致的标签推断。 */
 private fun conversationLabel(conversation: com.virjar.tk.protocol.model.Conversation): String =

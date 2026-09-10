@@ -2,6 +2,7 @@ package com.virjar.tk.app.ui.component.rich
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -489,119 +491,42 @@ internal fun DocumentBlockEditor(
     }
     LaunchedEffect(currentMarkdown) { onMarkdownChange(currentMarkdown) }
 
+    val displayGroups = remember(documentKey, blocks.size) {
+        derivedStateOf { blocks.toDocumentDisplayGroups() }
+    }
+
     LazyColumn(
         modifier = modifier.fillMaxSize().testTag("documents.editor.blocks"),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        itemsIndexed(blocks, key = { _, block -> block.key }) { index, block ->
-            DisposableEffect(block.key) {
-                onDispose { controller.deactivate(block.key) }
-            }
-            Box(Modifier.fillMaxWidth().widthIn(max = 920.dp)) {
-                when (block) {
-                    is DocumentRichRun -> {
-                        val session = richSessions.getOrPut(block.key) {
-                            DocumentRichEditorSession(RichTextState(), block)
-                        }
-                        DocumentRichRunEditor(
-                            block = block,
-                            session = session,
-                            initiallyActive = block.key == initialActiveKey,
-                            pendingActivation = controller.pendingActivationKey == block.key,
-                            pendingFocus = controller.pendingFocusKey == block.key,
-                            onActivate = { state, focus -> controller.activate(block.key, state, focus) },
-                            onConsumePendingActivation = { state, focus ->
-                                controller.consumePendingRichActivation(block.key, state, focus)
-                            },
-                            onSnapshot = { provider -> richSnapshots[block.key] = provider },
-                            onChange = ::replaceBlock,
-                        )
-                    }
-                    is DocumentQuoteBlock -> {
-                        val useRichEditor = remember(block.key, block.innerMarkdown) {
-                            !RichEditorMarkdownCapability.inspect(block.innerMarkdown)
-                                .requiresSourceMode
-                        }
-                        val session = if (useRichEditor) {
-                            richSessions.getOrPut(block.key) {
-                                DocumentRichEditorSession(RichTextState(), block)
-                            }
-                        } else {
-                            richSnapshots.remove(block.key)
-                            richSessions.remove(block.key)
-                            null
-                        }
-                        LaunchedEffect(block.key, useRichEditor) {
-                            if (
-                                !useRichEditor && controller.activeBlockKey == block.key &&
-                                controller.activeRichState != null
-                            ) {
-                                // 该引用刚切换到它的块内源码编辑器。
-                                // 立即丢弃现在已卸载的 RichTextState/FocusRequester。
-                                controller.activate(block.key)
-                            }
-                        }
-                        DocumentQuoteBlockEditor(
-                            block = block,
-                            session = session,
-                            canMoveUp = index > 0,
-                            canMoveDown = index < blocks.lastIndex,
-                            initiallyActive = block.key == initialActiveKey,
-                            pendingActivation = controller.pendingActivationKey == block.key,
-                            pendingFocus = controller.pendingFocusKey == block.key,
-                            onActivate = { state, focus -> controller.activate(block.key, state, focus) },
-                            onConsumePendingActivation = { state, focus ->
-                                controller.consumePendingRichActivation(block.key, state, focus)
-                            },
-                            onSnapshot = { provider -> richSnapshots[block.key] = provider },
-                            onActivateSource = { controller.activate(block.key) },
-                            onChange = ::replaceBlock,
-                            onMoveUp = { moveBlock(index, -1) },
-                            onMoveDown = { moveBlock(index, 1) },
-                            onDelete = { deleteBlock(index) },
-                        )
-                    }
-                    is DocumentCodeFenceBlock -> DocumentCodeBlockEditor(
+        items(displayGroups.value, key = { group -> group.key }) { group ->
+            when (group) {
+                is DocumentImageGridGroup -> DocumentImageGridGroupEditor(
+                    group = group,
+                    totalBlocks = blocks.size,
+                    controller = controller,
+                    embeddedAssetContent = embeddedAssetContent,
+                    onMoveUp = ::moveBlock,
+                    onMoveDown = ::moveBlock,
+                    onDelete = ::deleteBlock,
+                )
+                is DocumentSingleBlockGroup -> {
+                    val index = group.index
+                    val block = group.block
+                    DocumentSingleBlockGroupEditor(
                         block = block,
-                        canMoveUp = index > 0,
-                        canMoveDown = index < blocks.lastIndex,
-                        onActivate = { controller.activate(block.key) },
-                        onChange = ::replaceBlock,
-                        onMoveUp = { moveBlock(index, -1) },
-                        onMoveDown = { moveBlock(index, 1) },
-                        onDelete = { deleteBlock(index) },
-                    )
-                    is DocumentGfmTableBlock -> DocumentTableBlockEditor(
-                        block = block,
-                        canMoveUp = index > 0,
-                        canMoveDown = index < blocks.lastIndex,
-                        onActivate = { controller.activate(block.key) },
-                        onChange = ::replaceBlock,
-                        onMoveUp = { moveBlock(index, -1) },
-                        onMoveDown = { moveBlock(index, 1) },
-                        onDelete = { deleteBlock(index) },
-                    )
-                    is DocumentEmbeddedAssetBlock -> DocumentEmbeddedAssetBlockEditor(
-                        block = block,
-                        canMoveUp = index > 0,
-                        canMoveDown = index < blocks.lastIndex,
+                        index = index,
+                        totalBlocks = blocks.size,
+                        initialActiveKey = initialActiveKey,
+                        controller = controller,
+                        richSnapshots = richSnapshots,
+                        richSessions = richSessions,
                         embeddedAssetContent = embeddedAssetContent,
-                        onActivate = { controller.activate(block.key) },
-                        onMoveUp = { moveBlock(index, -1) },
-                        onMoveDown = { moveBlock(index, 1) },
-                        onDelete = { deleteBlock(index) },
-                    )
-                    is DocumentOpaqueRawBlock -> DocumentRawBlockEditor(
-                        block = block,
-                        canMoveUp = index > 0,
-                        canMoveDown = index < blocks.lastIndex,
-                        onActivate = { controller.activate(block.key) },
-                        onChange = ::replaceBlock,
-                        onMoveUp = { moveBlock(index, -1) },
-                        onMoveDown = { moveBlock(index, 1) },
-                        onDelete = { deleteBlock(index) },
+                        replaceBlock = ::replaceBlock,
+                        moveBlock = ::moveBlock,
+                        deleteBlock = ::deleteBlock,
                     )
                 }
             }
@@ -684,5 +609,176 @@ internal fun DocumentMarkdownBlock.withDocumentLayout(
             leadingMarkdown = leadingMarkdown,
             trailingMarkdown = trailingMarkdown,
         )
+    }
+}
+
+/** 单块展示组：沿用逐块编辑渲染（分组改造只影响连续图片块的视觉并排）。 */
+@Composable
+private fun DocumentSingleBlockGroupEditor(
+    block: DocumentMarkdownBlock,
+    index: Int,
+    totalBlocks: Int,
+    initialActiveKey: String?,
+    controller: DocumentBlockEditorController,
+    richSnapshots: MutableMap<String, (DocumentMarkdownBlock) -> DocumentMarkdownBlock>,
+    richSessions: MutableMap<String, DocumentRichEditorSession>,
+    embeddedAssetContent: EmbeddedAssetMarkdownContent?,
+    replaceBlock: (DocumentMarkdownBlock) -> Unit,
+    moveBlock: (Int, Int) -> Unit,
+    deleteBlock: (Int) -> Unit,
+) {
+    DisposableEffect(block.key) {
+        onDispose { controller.deactivate(block.key) }
+    }
+    Box(Modifier.fillMaxWidth().widthIn(max = 920.dp)) {
+        when (block) {
+            is DocumentRichRun -> {
+                val session = richSessions.getOrPut(block.key) {
+                    DocumentRichEditorSession(RichTextState(), block)
+                }
+                DocumentRichRunEditor(
+                    block = block,
+                    session = session,
+                    initiallyActive = block.key == initialActiveKey,
+                    pendingActivation = controller.pendingActivationKey == block.key,
+                    pendingFocus = controller.pendingFocusKey == block.key,
+                    onActivate = { state, focus -> controller.activate(block.key, state, focus) },
+                    onConsumePendingActivation = { state, focus ->
+                        controller.consumePendingRichActivation(block.key, state, focus)
+                    },
+                    onSnapshot = { provider -> richSnapshots[block.key] = provider },
+                    onChange = replaceBlock,
+                )
+            }
+            is DocumentQuoteBlock -> {
+                val useRichEditor = remember(block.key, block.innerMarkdown) {
+                    !RichEditorMarkdownCapability.inspect(block.innerMarkdown)
+                        .requiresSourceMode
+                }
+                val session = if (useRichEditor) {
+                    richSessions.getOrPut(block.key) {
+                        DocumentRichEditorSession(RichTextState(), block)
+                    }
+                } else {
+                    richSnapshots.remove(block.key)
+                    richSessions.remove(block.key)
+                    null
+                }
+                LaunchedEffect(block.key, useRichEditor) {
+                    if (
+                        !useRichEditor && controller.activeBlockKey == block.key &&
+                        controller.activeRichState != null
+                    ) {
+                        // 该引用刚切换到它的块内源码编辑器。
+                        // 立即丢弃现在已卸载的 RichTextState/FocusRequester。
+                        controller.activate(block.key)
+                    }
+                }
+                DocumentQuoteBlockEditor(
+                    block = block,
+                    session = session,
+                    canMoveUp = index > 0,
+                    canMoveDown = index < totalBlocks - 1,
+                    initiallyActive = block.key == initialActiveKey,
+                    pendingActivation = controller.pendingActivationKey == block.key,
+                    pendingFocus = controller.pendingFocusKey == block.key,
+                    onActivate = { state, focus -> controller.activate(block.key, state, focus) },
+                    onConsumePendingActivation = { state, focus ->
+                        controller.consumePendingRichActivation(block.key, state, focus)
+                    },
+                    onSnapshot = { provider -> richSnapshots[block.key] = provider },
+                    onActivateSource = { controller.activate(block.key) },
+                    onChange = replaceBlock,
+                    onMoveUp = { moveBlock(index, -1) },
+                    onMoveDown = { moveBlock(index, 1) },
+                    onDelete = { deleteBlock(index) },
+                )
+            }
+            is DocumentCodeFenceBlock -> DocumentCodeBlockEditor(
+                block = block,
+                canMoveUp = index > 0,
+                canMoveDown = index < totalBlocks - 1,
+                onActivate = { controller.activate(block.key) },
+                onChange = replaceBlock,
+                onMoveUp = { moveBlock(index, -1) },
+                onMoveDown = { moveBlock(index, 1) },
+                onDelete = { deleteBlock(index) },
+            )
+            is DocumentGfmTableBlock -> DocumentTableBlockEditor(
+                block = block,
+                canMoveUp = index > 0,
+                canMoveDown = index < totalBlocks - 1,
+                onActivate = { controller.activate(block.key) },
+                onChange = replaceBlock,
+                onMoveUp = { moveBlock(index, -1) },
+                onMoveDown = { moveBlock(index, 1) },
+                onDelete = { deleteBlock(index) },
+            )
+            is DocumentEmbeddedAssetBlock -> DocumentEmbeddedAssetBlockEditor(
+                block = block,
+                canMoveUp = index > 0,
+                canMoveDown = index < totalBlocks - 1,
+                embeddedAssetContent = embeddedAssetContent,
+                onActivate = { controller.activate(block.key) },
+                onMoveUp = { moveBlock(index, -1) },
+                onMoveDown = { moveBlock(index, 1) },
+                onDelete = { deleteBlock(index) },
+            )
+            is DocumentOpaqueRawBlock -> DocumentRawBlockEditor(
+                block = block,
+                canMoveUp = index > 0,
+                canMoveDown = index < totalBlocks - 1,
+                onActivate = { controller.activate(block.key) },
+                onChange = replaceBlock,
+                onMoveUp = { moveBlock(index, -1) },
+                onMoveDown = { moveBlock(index, 1) },
+                onDelete = { deleteBlock(index) },
+            )
+        }
+    }
+}
+
+/** 连续图片块的网格组（内测 T032）：每行最多 [DOCUMENT_IMAGE_GRID_COLUMNS] 张并排等宽。 */
+@Composable
+private fun DocumentImageGridGroupEditor(
+    group: DocumentImageGridGroup,
+    totalBlocks: Int,
+    controller: DocumentBlockEditorController,
+    embeddedAssetContent: EmbeddedAssetMarkdownContent?,
+    onMoveUp: (Int, Int) -> Unit,
+    onMoveDown: (Int, Int) -> Unit,
+    onDelete: (Int) -> Unit,
+) {
+    group.entries.forEach { (index, block) ->
+        DisposableEffect(block.key) {
+            onDispose { controller.deactivate(block.key) }
+        }
+    }
+    Box(Modifier.fillMaxWidth().widthIn(max = 920.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            group.entries.chunked(DOCUMENT_IMAGE_GRID_COLUMNS).forEach { rowEntries ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    rowEntries.forEach { (index, block) ->
+                        DocumentEmbeddedAssetBlockEditor(
+                            block = block,
+                            modifier = Modifier.weight(1f),
+                            canMoveUp = index > 0,
+                            canMoveDown = index < totalBlocks - 1,
+                            embeddedAssetContent = embeddedAssetContent,
+                            onActivate = {},
+                            onMoveUp = { onMoveUp(index, -1) },
+                            onMoveDown = { onMoveDown(index, 1) },
+                            onDelete = { onDelete(index) },
+                        )
+                    }
+                    repeat(DOCUMENT_IMAGE_GRID_COLUMNS - rowEntries.size) {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+        }
     }
 }

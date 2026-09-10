@@ -120,3 +120,52 @@ internal data class DocumentOpaqueRawBlock(
     override val trailingMarkdown: String = "",
     override val dirty: Boolean = true,
 ) : DocumentMarkdownBlock
+
+/** 图片网格每行并排的最大张数（内测 T032）。 */
+internal const val DOCUMENT_IMAGE_GRID_COLUMNS = 3
+
+/**
+ * 编辑/预览共享的展示分组（内测 T032）：连续的内嵌图片块合并为一个横排网格组，
+ * 其余块逐块展示。合并只影响视觉布局，块的 key、移动、删除与激活仍按原块粒度工作。
+ */
+internal sealed interface DocumentBlockDisplayGroup {
+    val key: String
+}
+
+internal data class DocumentSingleBlockGroup(
+    val index: Int,
+    val block: DocumentMarkdownBlock,
+) : DocumentBlockDisplayGroup {
+    override val key: String get() = block.key
+}
+
+internal data class DocumentImageGridGroup(
+    val entries: List<Pair<Int, DocumentEmbeddedImageBlock>>,
+) : DocumentBlockDisplayGroup {
+    override val key: String
+        get() = "image-grid-${entries.first().second.key}-${entries.last().second.key}-${entries.size}"
+}
+
+internal fun List<DocumentMarkdownBlock>.toDocumentDisplayGroups(): List<DocumentBlockDisplayGroup> {
+    val groups = mutableListOf<DocumentBlockDisplayGroup>()
+    val imageRun = mutableListOf<Pair<Int, DocumentEmbeddedImageBlock>>()
+    fun flushImages() {
+        if (imageRun.isEmpty()) return
+        if (imageRun.size == 1) {
+            groups += DocumentSingleBlockGroup(imageRun[0].first, imageRun[0].second)
+        } else {
+            groups += DocumentImageGridGroup(imageRun.toList())
+        }
+        imageRun.clear()
+    }
+    forEachIndexed { index, block ->
+        if (block is DocumentEmbeddedImageBlock) {
+            imageRun += index to block
+        } else {
+            flushImages()
+            groups += DocumentSingleBlockGroup(index, block)
+        }
+    }
+    flushImages()
+    return groups
+}

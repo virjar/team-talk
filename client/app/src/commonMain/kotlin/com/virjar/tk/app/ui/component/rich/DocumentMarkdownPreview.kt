@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,7 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
@@ -46,6 +47,10 @@ internal fun DocumentMarkdownPreview(
             assets = assets,
         )
     }
+    // 连续内嵌图片按行列网格并排（内测 T032），其余块逐块预览。
+    val displayGroups = remember(previewNodes) {
+        previewNodes.map { it.block }.toDocumentDisplayGroups()
+    }
     SelectionContainer {
         LazyColumn(
             modifier = modifier.testTag("documents.editor.preview.blocks"),
@@ -53,14 +58,55 @@ internal fun DocumentMarkdownPreview(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            itemsIndexed(previewNodes, key = { _, node -> node.block.key }) { _, node ->
-                Box(Modifier.fillMaxWidth().widthIn(max = 920.dp)) {
-                    DocumentMarkdownBlockPreview(
-                        node = node,
-                        assets = assets,
-                        onUrlClick = onUrlClick,
-                        embeddedAssetContent = embeddedAssetContent,
-                    )
+            items(displayGroups, key = { group -> group.key }) { group ->
+                when (group) {
+                    is DocumentImageGridGroup -> Box(Modifier.fillMaxWidth().widthIn(max = 920.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            group.entries.chunked(DOCUMENT_IMAGE_GRID_COLUMNS).forEach { rowEntries ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    rowEntries.forEach { (_, block) ->
+                                        Box(
+                                            Modifier.weight(1f).clickable {
+                                                com.virjar.tk.app.ui.screen.DocumentImageFullscreenHost.show(block.asset) {}
+                                            },
+                                        ) {
+                                            DocumentMarkdownBlockPreview(
+                                                node = previewNodes.first { it.block === block },
+                                                assets = assets,
+                                                onUrlClick = onUrlClick,
+                                                embeddedAssetContent = embeddedAssetContent,
+                                            )
+                                        }
+                                    }
+                                    repeat(DOCUMENT_IMAGE_GRID_COLUMNS - rowEntries.size) {
+                                        Spacer(Modifier.weight(1f))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    is DocumentSingleBlockGroup -> Box(Modifier.fillMaxWidth().widthIn(max = 920.dp)) {
+                        val singleNode = previewNodes.first { it.block === group.block }
+                        val previewModifier = if (group.block is DocumentEmbeddedImageBlock) {
+                            // 阅读视图点击图片直接全幅查看（内测 T032）。
+                            Modifier.clickable {
+                                com.virjar.tk.app.ui.screen.DocumentImageFullscreenHost.show(group.block.asset) {}
+                            }
+                        } else {
+                            Modifier
+                        }
+                        Box(previewModifier.fillMaxWidth().widthIn(max = 920.dp)) {
+                            DocumentMarkdownBlockPreview(
+                                node = singleNode,
+                                assets = assets,
+                                onUrlClick = onUrlClick,
+                                embeddedAssetContent = embeddedAssetContent,
+                            )
+                        }
+                    }
                 }
             }
         }
