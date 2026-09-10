@@ -6,6 +6,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Row
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.draw.clip
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.LazyColumn
@@ -73,6 +81,8 @@ internal fun ChatMessageList(
     onForward: ((Message) -> Unit)?,
     /** 头像点击打开发送者用户详情；复用平台的资料入口（T004）。 */
     onAvatarClick: ((uid: String) -> Unit)? = null,
+    /** 长按/右键头像把该成员以 mention 插入输入框（T026）；非 null 时仅对他人消息生效。 */
+    onAvatarMention: ((uid: String) -> Unit)? = null,
     onLoadOlder: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -83,8 +93,17 @@ internal fun ChatMessageList(
             CircularProgressIndicator()
         }
     } else {
+        // 内测 T027：离开最新消息且有新消息时提示，点击回到底部。
+        val newestSeq = messages.firstOrNull()?.serverSeq ?: 0L
+        var seenNewestSeq by remember { mutableStateOf<Long?>(null) }
+        val atLatest by remember(state) { derivedStateOf { state.firstVisibleItemIndex == 0 } }
+        LaunchedEffect(newestSeq, atLatest) {
+            if (atLatest || seenNewestSeq == null) seenNewestSeq = newestSeq
+        }
+        val showNewPill = !loading && seenNewestSeq != null && newestSeq > seenNewestSeq!! && !atLatest
+        Box(modifier) {
         LazyColumn(
-            modifier = modifier.padding(horizontal = Tk.spacing.md),
+            modifier = Modifier.fillMaxSize().padding(horizontal = Tk.spacing.md),
             state = state,
             reverseLayout = true,
         ) {
@@ -177,6 +196,7 @@ internal fun ChatMessageList(
                             menuEpoch = if (menuMessage?.clientMsgId == msg.clientMsgId) msg.hashCode() else 0,
                             onLongClick = { onMenuMessageChange(msg) },
                             onAvatarClick = onAvatarClick,
+                            onAvatarMention = onAvatarMention,
                             modifier = focusModifier,
                             menuExpanded = menuMessage?.clientMsgId == msg.clientMsgId,
                             onMenuDismiss = { onMenuMessageChange(null) },
@@ -228,8 +248,32 @@ internal fun ChatMessageList(
                 }
             }
         }
+        }
+        if (showNewPill) {
+            val listScope = rememberCoroutineScope()
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.BottomCenter,
+            ) {
+            Row(
+                modifier = Modifier
+                    .padding(bottom = Tk.spacing.sm)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer)
+                    .clickable { listScope.launch { state.animateScrollToItem(0) } }
+                    .padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.xs)
+                    .testTag("chat.newMessagesPill"),
+            ) {
+                Text(
+                    "有新消息",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            }
+            }
+        }
+        }
     }
-}
 
 private fun messageMenuItems(
     msg: Message,

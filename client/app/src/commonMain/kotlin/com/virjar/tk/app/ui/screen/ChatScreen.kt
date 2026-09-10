@@ -606,6 +606,32 @@ fun ChatPanel(
         if (composerMarkdownSnapshot() != previousMarkdown) publishUserTextChange()
     }
 
+    /** 长按/右键消息头像：把该成员以 mention 语法插入当前光标处（内测 T026）。 */
+    fun insertMention(uid: String) {
+        if (voiceMode || composerMode == ChatComposerMode.PREVIEW) return
+        val user = resolveSender?.invoke(uid)
+        val displayName = user?.name?.takeIf(String::isNotEmpty)
+            ?: user?.username?.takeIf(String::isNotEmpty)
+            ?: uid
+        val previousMarkdown = composerMarkdownSnapshot()
+        val at = inputView.selection.min.coerceAtLeast(0)
+        if (composerMode == ChatComposerMode.MARKDOWN) {
+            val syntax = buildMentionMarkdown(displayName, uid) + " "
+            sourceInput = sourceInput.replaceComposerRange(at, at, syntax)
+            sourceFocus.requestFocus()
+        } else {
+            val displayText = "@$displayName "
+            richState.replaceRange(at, at, displayText)
+            richState.addLinkToTextRange(
+                url = "mention://$uid",
+                textRange = TextRange(at + 1, at + 1 + displayName.length),
+            )
+            richState.selection = TextRange(at + displayText.length)
+            inputFocus.requestFocus()
+        }
+        if (composerMarkdownSnapshot() != previousMarkdown) publishUserTextChange()
+    }
+
     /** 选中 / 指令候选：把行首不完整 token（如 /s）回填为完整命令 + 空格；发送时再展开 */
     fun pickSlash(cmd: String) {
         if (voiceMode || composerMode == ChatComposerMode.PREVIEW) return
@@ -859,6 +885,11 @@ fun ChatPanel(
                 onRevoke = actionAdmission.guard(viewModel::revokeMessage),
                 onForward = onForward?.let { actionAdmission.guard(it) },
                 onAvatarClick = effectiveMentionClick,
+                onAvatarMention = if (mentionCandidates != null && !voiceMode &&
+                    composerMode != ChatComposerMode.PREVIEW
+                ) {
+                    { uid -> insertMention(uid) }
+                } else null,
                 onLoadOlder = actionAdmission.guard(viewModel::loadOlder),
                 modifier = Modifier.weight(1f).fillMaxWidth(),
             )

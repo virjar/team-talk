@@ -56,6 +56,8 @@ internal fun MessageBubble(
     menuItems: @Composable ColumnScope.() -> Unit = {},
     /** 头像点击打开发送者用户详情；null=不可点击（保持既有占位行为）。 */
     onAvatarClick: ((uid: String) -> Unit)? = null,
+    /** 长按/右键头像把该成员以 mention 插入输入框（内测 T026）。 */
+    onAvatarMention: ((uid: String) -> Unit)? = null,
     outgoingFailureCode: OutgoingFailureCode? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -76,20 +78,23 @@ internal fun MessageBubble(
                 Spacer(Modifier.padding(end = Tk.spacing.sm).width(Tk.dimens.chatAvatar))
             } else {
                 val user = resolveSender?.invoke(msg.senderUid)
+                val avatarInteraction = when {
+                    onAvatarClick != null && onAvatarMention != null -> Modifier
+                        .testTag("chat.avatar.${msg.senderUid.take(8)}")
+                        .clickable { onAvatarClick(msg.senderUid) }
+                        .contextLongPress { onAvatarMention(msg.senderUid) }
+                        .secondaryClick { onAvatarMention(msg.senderUid) }
+                    onAvatarClick != null -> Modifier
+                        .testTag("chat.avatar.${msg.senderUid.take(8)}")
+                        .clickable { onAvatarClick(msg.senderUid) }
+                    else -> Modifier
+                }
                 AvatarPlaceholder(
                     name = user?.name ?: user?.username ?: msg.senderUid,
                     avatar = user?.avatar,
                     modifier = Modifier
                         .padding(end = Tk.spacing.sm)
-                        .then(
-                            if (onAvatarClick != null) {
-                                Modifier
-                                    .testTag("chat.avatar.${msg.senderUid.take(8)}")
-                                    .clickable { onAvatarClick(msg.senderUid) }
-                            } else {
-                                Modifier
-                            },
-                        ),
+                        .then(avatarInteraction),
                     size = Tk.dimens.chatAvatar.value.toInt(),
                 )
             }
