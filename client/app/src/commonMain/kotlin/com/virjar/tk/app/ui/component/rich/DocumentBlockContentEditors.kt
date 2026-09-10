@@ -186,6 +186,29 @@ private fun DocumentMentionCompleteLayer(
     )
 }
 
+/**
+ * 文档块编辑器的链接路由：`mention://uid` 点击打开用户资料卡，其余协议交给
+ * 平台默认处理器。编辑器内点击链接走 fork 的 LocalUriHandler 管道，系统不认识
+ * mention 协议会静默失败，因此必须在块编辑组合内替换为感知 mention 的实现。
+ */
+@Composable
+private fun rememberDocumentEditorUriHandler(): androidx.compose.ui.platform.UriHandler {
+    val parentUriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    val onMentionProfileOpen = com.virjar.tk.app.ui.bridge.LocalDocumentMentionSupport.current.onMentionProfileOpen
+    return remember(parentUriHandler, onMentionProfileOpen) {
+        object : androidx.compose.ui.platform.UriHandler {
+            override fun openUri(uri: String) {
+                if (uri.startsWith("mention://")) {
+                    val uid = uri.removePrefix("mention://")
+                    if (uid.isNotBlank()) onMentionProfileOpen(uid)
+                    return
+                }
+                runCatching { parentUriHandler.openUri(uri) }
+            }
+        }
+    }
+}
+
 @Composable
 internal fun DocumentRichRunEditor(
     block: DocumentRichRun,
@@ -248,22 +271,28 @@ internal fun DocumentRichRunEditor(
     }
 
     var editorFocused by remember(block.key) { mutableStateOf(false) }
+    val editorUriHandler = rememberDocumentEditorUriHandler()
     Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)) {
         Box(Modifier.fillMaxWidth()) {
-            BasicRichTextEditor(
-                state = state,
-                enabled = session.ready,
-                minLines = 2,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp)
-                    .focusRequester(focusRequester)
-                    .onFocusChanged { focus ->
-                        editorFocused = focus.isFocused
-                        if (session.ready && focus.isFocused) onActivate(state) { focusRequester.requestFocus() }
-                    }
-                    .testTag("documents.editor.rich.${block.key}"),
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = LocalContentColor.current),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-            )
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalUriHandler provides editorUriHandler,
+            ) {
+                BasicRichTextEditor(
+                    state = state,
+                    enabled = session.ready,
+                    minLines = 2,
+                    onLinkClick = editorUriHandler::openUri,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp)
+                        .focusRequester(focusRequester)
+                        .onFocusChanged { focus ->
+                            editorFocused = focus.isFocused
+                            if (session.ready && focus.isFocused) onActivate(state) { focusRequester.requestFocus() }
+                        }
+                        .testTag("documents.editor.rich.${block.key}"),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = LocalContentColor.current),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                )
+            }
             if (session.ready && state.annotatedString.text.isEmpty()) {
                 Text(
                     "输入正文，或从工具栏插入引用、代码块和表格…",
@@ -414,22 +443,28 @@ private fun DocumentQuoteRichEditor(
         }
     }
     var editorFocused by remember(block.key) { mutableStateOf(false) }
+    val editorUriHandler = rememberDocumentEditorUriHandler()
     Column(Modifier.fillMaxWidth()) {
         Box(Modifier.fillMaxWidth()) {
-            BasicRichTextEditor(
-                state = state,
-                enabled = session.ready,
-                minLines = 2,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp)
-                    .focusRequester(focusRequester)
-                    .onFocusChanged {
-                        editorFocused = it.isFocused
-                        if (session.ready && it.isFocused) onActivate(state) { focusRequester.requestFocus() }
-                    }
-                    .testTag("documents.editor.quote.body.${block.key}"),
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = LocalContentColor.current),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-            )
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalUriHandler provides editorUriHandler,
+            ) {
+                BasicRichTextEditor(
+                    state = state,
+                    enabled = session.ready,
+                    minLines = 2,
+                    onLinkClick = editorUriHandler::openUri,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp)
+                        .focusRequester(focusRequester)
+                        .onFocusChanged {
+                            editorFocused = it.isFocused
+                            if (session.ready && it.isFocused) onActivate(state) { focusRequester.requestFocus() }
+                        }
+                        .testTag("documents.editor.quote.body.${block.key}"),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = LocalContentColor.current),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                )
+            }
             if (session.ready && state.annotatedString.text.isEmpty()) {
                 Text("输入引用内容…", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }

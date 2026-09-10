@@ -107,6 +107,9 @@ public fun BasicRichTextEditor(
     maxLength: Int = Int.MAX_VALUE,
     // [TT] Chat typing signals must observe only accepted user text changes, never selection moves.
     onUserTextChange: () -> Unit = {},
+    // [TT] Document editors route mention:// links to the profile card. When provided, tapping
+    // a link span invokes this callback and the press is consumed instead of moving the caret.
+    onLinkClick: ((String) -> Unit)? = null,
     // [TT] BasicTextField cannot render inline composables. Hosts with image cards can replace
     // the raw replacement glyph with a readable, single-character image marker.
     imagePlaceholder: Char? = null,
@@ -130,6 +133,7 @@ public fun BasicRichTextEditor(
         minLines = minLines,
         maxLength = maxLength,
         onUserTextChange = onUserTextChange,
+        onLinkClick = onLinkClick,
         imagePlaceholder = imagePlaceholder,
         onTextLayout = onTextLayout,
         interactionSource = interactionSource,
@@ -213,6 +217,9 @@ public fun BasicRichTextEditor(
     maxLength: Int = Int.MAX_VALUE,
     // [TT] Chat typing signals must observe only accepted user text changes, never selection moves.
     onUserTextChange: () -> Unit = {},
+    // [TT] Document editors route mention:// links to the profile card. When provided, tapping
+    // a link span invokes this callback and the press is consumed instead of moving the caret.
+    onLinkClick: ((String) -> Unit)? = null,
     // [TT] Keep each image's single-character caret/selection contract intact.
     imagePlaceholder: Char? = null,
     onTextLayout: (TextLayoutResult) -> Unit = {},
@@ -261,6 +268,29 @@ public fun BasicRichTextEditor(
                         startPadding = startPadding,
                     )
                 }
+            }
+        }
+    }
+
+    // [TT] Document editors route mention:// link taps to the profile card. Presses are observed
+    // through the field's interactionSource (the same channel the text-indicator adjustment
+    // uses), so link hit-testing works on desktop without pointer-input pass games.
+    val currentOnLinkClick by rememberUpdatedState(onLinkClick)
+    LaunchedEffect(interactionSource, state) {
+        if (onLinkClick == null) return@LaunchedEffect
+        var pressPosition: Offset? = null
+        interactionSource.interactions.collect { interaction ->
+            when (interaction) {
+                is PressInteraction.Press -> pressPosition = interaction.pressPosition
+                is PressInteraction.Release -> {
+                    val position = pressPosition
+                    pressPosition = null
+                    if (position != null) {
+                        state.getLinkByOffset(position)?.let { url -> currentOnLinkClick?.invoke(url) }
+                    }
+                }
+                is PressInteraction.Cancel -> pressPosition = null
+                else -> {}
             }
         }
     }

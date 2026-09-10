@@ -43,6 +43,7 @@
 | 2026-09-01 | ui/BasicRichTextEditor.kt | + 可选 `onUserTextChange` 回调，在底层实际接受文字变化后发布 | 聊天 TYPING 只响应用户正文变化，纯光标/选区移动保持静默 |
 | 2026-09-06 | ui/BasicRichTextEditor.kt、ImageEditorVisualTransformation.kt | + 可选单字符 `imagePlaceholder` 可视投影，不改变原始原子图片节点和 offset | BasicTextField 不支持 inlineContent；配合应用提供的认证缩略图卡片，避免图片在输入框显示未知替换字形 |
 | 2026-09-06 | parser/html/RichTextStateHtmlParser.kt | 直接实现 HTML handler 回调，去除 Ksoup Builder 的多层委托链；补齐图片 alt 保存和图片两侧空格边界 | 修复 Android release 返回聊天时 Saver 恢复空指针，并保留恢复草稿中的图片名称与相邻文字 |
+| 2026-09-10 | ui/BasicRichTextEditor.kt | + 可选 `onLinkClick` 回调：Initial pass 拦截落在链接 span 上的按压（消费掉，不移动光标），抬起后回调链接 URL | 文档编辑器中点击 mention:// 链接打开用户资料卡；上游编辑器没有任何链接点击处理，只读视图的 Main pass 检测会被文本框选中逻辑消费 |
 
 ## 上游同步策略
 
