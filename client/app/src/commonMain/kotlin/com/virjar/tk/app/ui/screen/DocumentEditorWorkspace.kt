@@ -1,5 +1,7 @@
 package com.virjar.tk.app.ui.screen
 
+import com.virjar.tk.app.navigation.feature.document.DocumentShareToChatAction
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -68,6 +70,7 @@ internal fun canOpenDocumentRevisionHistory(
 /** 多空间标签和编辑器画布；首页与目录树由外层页面负责。 */
 @Composable
 internal fun DocumentEditorWorkspace(
+    shareToChat: DocumentShareToChatAction?,
     spaces: List<DocumentSpace>,
     tabs: List<DocumentTabState>,
     activeTab: DocumentTabState?,
@@ -232,6 +235,7 @@ internal fun DocumentEditorWorkspace(
                     onLoadMoreRevisions = onLoadMoreRevisions,
                     onOpenRevision = onOpenRevision,
                     onRestoreRevision = onRestoreRevision,
+                    shareToChat = shareToChat,
                     onCloseRevisionPreview = onCloseRevisionPreview,
                     onCloseHistory = onCloseHistory,
                     modifier = Modifier.fillMaxSize(),

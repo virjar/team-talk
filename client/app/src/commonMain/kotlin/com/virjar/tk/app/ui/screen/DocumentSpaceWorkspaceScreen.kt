@@ -2,6 +2,8 @@ package com.virjar.tk.app.ui.screen
 
 import com.virjar.tk.app.identity.ClientIdentity
 
+import com.virjar.tk.app.navigation.feature.document.DocumentShareToChatAction
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -161,6 +163,7 @@ private data class MobileDiscardRequest(
 /** 进入某个文档空间后的工作区：紧凑目录树 + 空间概览或多标签编辑器。 */
 @Composable
 internal fun DocumentSpaceWorkspaceScreen(
+    shareToChat: DocumentShareToChatAction?,
     spaces: List<DocumentSpace>,
     space: DocumentSpace,
     treeRows: List<DocumentTreeRow>,
@@ -448,6 +451,7 @@ internal fun DocumentSpaceWorkspaceScreen(
                         onLoadMoreRevisions = onLoadMoreRevisions,
                         onOpenRevision = onOpenRevision,
                         onRestoreRevision = onRestoreRevision,
+                        shareToChat = shareToChat,
                         onCloseRevisionPreview = onCloseRevisionPreview,
                         onCloseHistory = onCloseHistory,
                         emptyContent = { DocumentSpaceOverview(space) },
@@ -544,6 +548,7 @@ internal fun DocumentSpaceWorkspaceScreen(
                         onLoadMoreRevisions = onLoadMoreRevisions,
                         onOpenRevision = onOpenRevision,
                         onRestoreRevision = onRestoreRevision,
+                        shareToChat = shareToChat,
                         onCloseRevisionPreview = onCloseRevisionPreview,
                         onCloseHistory = onCloseHistory,
                         emptyContent = { DocumentSpaceOverview(space) },

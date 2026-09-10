@@ -31,6 +31,7 @@ fun DocumentWorkspaceHost(
         LocalEmbeddedAssetMediaConfig provides embeddedAssetMedia,
     ) {
     DocumentWorkspaceScreen(
+        shareToChat = workspace.shareToChat,
         spaces = workspace.spaces,
         recentDocuments = workspace.recentDocuments,
         recentlyCreatedDocuments = workspace.recentlyCreatedDocuments,

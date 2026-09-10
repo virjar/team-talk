@@ -1,5 +1,7 @@
 package com.virjar.tk.app.ui.screen
 
+import com.virjar.tk.app.navigation.feature.document.DocumentShareToChatAction
+
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.AlertDialog
@@ -65,6 +67,7 @@ private data class MobileWorkspaceDiscardRequest(
  */
 @Composable
 internal fun DocumentWorkspaceScreen(
+    shareToChat: DocumentShareToChatAction?,
     spaces: List<DocumentSpace>,
     recentDocuments: List<DocumentHomeItem>,
     recentlyCreatedDocuments: List<DocumentHomeItem>,
@@ -422,6 +425,7 @@ internal fun DocumentWorkspaceScreen(
             )
         } else {
             DocumentSpaceWorkspaceScreen(
+                shareToChat = shareToChat,
                 spaces = spaces,
                 space = selectedSpace,
                 treeRows = treeRows,

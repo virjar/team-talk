@@ -26,6 +26,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import com.virjar.tk.protocol.body.OfficeRefBody
+import com.virjar.tk.app.ui.component.ChatPickerDialog
+import com.virjar.tk.app.navigation.feature.document.DocumentShareToChatAction
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -150,6 +154,7 @@ internal fun shouldStartDocumentInPreview(
 
 @Composable
 internal fun DocumentTabEditor(
+    shareToChat: DocumentShareToChatAction?,
     tab: DocumentTabState,
     revisions: List<DocumentRevisionSummary>,
     revisionPreview: DocumentRevision?,
@@ -178,6 +183,8 @@ internal fun DocumentTabEditor(
 ) {
     val uriHandler = LocalUriHandler.current
     val editorKey = "${tab.instanceId}:${tab.recoveryId}:${tab.tabId}:${tab.revision ?: 0}"
+    var showSharePicker by remember(editorKey) { mutableStateOf(false) }
+    var shareNotice by remember(editorKey) { mutableStateOf<String?>(null) }
     val embeddedAssetOwnerKey = "document:${tab.instanceId}:${tab.recoveryId}"
     val blockController = rememberDocumentBlockEditorController(editorKey)
     val baselineTitle = remember(editorKey) { tab.savedTitle }
@@ -629,6 +636,9 @@ internal fun DocumentTabEditor(
                         onDismissDocumentMenu = { documentMenu = false },
                         onMove = { documentMenu = false; requestMove() },
                         onDelete = { documentMenu = false; deleteDialog = true },
+                        onShareToChat = if (shareToChat != null && !tab.creating && !tab.remoteMissing) {
+                            { documentMenu = false; showSharePicker = true }
+                        } else null,
                     )
                     if (canEdit) DocumentSaveAction(
                         saving = saving,
@@ -649,6 +659,43 @@ internal fun DocumentTabEditor(
                 modifier = Modifier
                     .testTag("documents.editor.structurePending")
                     .padding(top = 8.dp),
+            )
+        }
+        shareNotice?.let { notice ->
+            Text(
+                text = notice,
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier
+                    .testTag("documents.editor.shareNotice")
+                    .padding(top = 8.dp),
+            )
+        }
+        if (showSharePicker && shareToChat != null) {
+            val conversations by shareToChat.conversations().collectAsState(emptyList())
+            ChatPickerDialog(
+                conversations = conversations,
+                title = "分享到会话",
+                onPick = { conversation ->
+                    showSharePicker = false
+                    val documentId = tab.documentId
+                    if (documentId != null) {
+                        val ref = OfficeRefBody(
+                            refType = OfficeRefBody.REF_TYPE_DOCUMENT,
+                            spaceId = tab.spaceId,
+                            targetId = documentId,
+                            title = title.ifBlank { "未命名文档" },
+                            subtitle = "文档",
+                        )
+                        val admitted = shareToChat.send(conversation.chatId, ref)
+                        shareNotice = if (admitted) {
+                            "已分享到「${conversationLabel(conversation)}」"
+                        } else {
+                            "分享未完成，请稍后重试"
+                        }
+                    }
+                },
+                onDismiss = { showSharePicker = false },
             )
         }
         if (tab.remoteMissing) {
@@ -789,3 +836,9 @@ internal fun DocumentTabEditor(
         }
     }
 }
+
+/** 会话展示名兜底：与 ChatPickerDialog 保持一致的标签推断。 */
+private fun conversationLabel(conversation: com.virjar.tk.protocol.model.Conversation): String =
+    conversation.chatName?.trim()?.takeIf(String::isNotEmpty)
+        ?: conversation.peerUid?.take(8)
+        ?: conversation.chatId.take(8)

@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.History
@@ -121,6 +122,8 @@ internal fun DocumentHeaderActions(
     onDismissDocumentMenu: () -> Unit,
     onMove: () -> Unit,
     onDelete: () -> Unit,
+    /** 非空时在文档菜单内提供「分享到会话」（内测 T023）。 */
+    onShareToChat: (() -> Unit)? = null,
 ) {
     if (canEdit) {
         if (!previewMode) TextButton(
@@ -167,6 +170,14 @@ internal fun DocumentHeaderActions(
                     onClick = onMove,
                     modifier = Modifier.testTag("documents.document.move"),
                 )
+                onShareToChat?.let { share ->
+                    DropdownMenuItem(
+                        text = { Text("分享到会话…") },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.Send, null) },
+                        onClick = share,
+                        modifier = Modifier.testTag("documents.document.share"),
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text("删除文档", color = MaterialTheme.colorScheme.error) },
                     leadingIcon = { Icon(Icons.Filled.DeleteOutline, null, tint = MaterialTheme.colorScheme.error) },

@@ -34,6 +34,7 @@ class DocumentWorkspaceFeature internal constructor(
     telemetry: ClientUiTelemetrySink = NoopClientUiTelemetrySink,
 ) {
     internal val comments = DocumentCommentsFeature(session, scope, localData, reportError)
+    internal val shareToChat = DocumentShareToChatAction(session)
     internal val draftLifecycleBridge = DocumentDraftLifecycleBridge()
     internal val draftCollaboration = DocumentWorkspaceDraftCollaboration(
         ownerKey = DocumentDraftOwnerKey(
