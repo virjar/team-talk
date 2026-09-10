@@ -597,6 +597,7 @@ private val BASELINE_MEDIA_REASON_CODES = setOf(
     "size_validation",
     "network",
     "io",
+    "decode",
     "session",
     "permission",
     "unsupported",

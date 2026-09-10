@@ -103,6 +103,8 @@ enum class MediaFailureReason(val code: String) {
     SIZE_VALIDATION("size_validation"),
     NETWORK("network"),
     IO("io"),
+    /** 图片/媒体内容解码失败：文件本身损坏或格式不受支持（内测 T036）。 */
+    DECODE("decode"),
     SESSION("session"),
     PERMISSION("permission"),
     UNSUPPORTED("unsupported"),
@@ -116,6 +118,7 @@ val MediaFailureReason.downloadFeedbackCode: UserFeedbackCode
         MediaFailureReason.CACHE_QUOTA -> UserFeedbackCode.MEDIA_CACHE_FULL
         MediaFailureReason.SIZE_VALIDATION -> UserFeedbackCode.MEDIA_SIZE_INVALID
         MediaFailureReason.NETWORK -> UserFeedbackCode.MEDIA_NETWORK_FAILED
+        MediaFailureReason.DECODE,
         MediaFailureReason.IO -> UserFeedbackCode.MEDIA_IO_FAILED
         MediaFailureReason.SESSION -> UserFeedbackCode.MEDIA_SESSION_CHANGED
         MediaFailureReason.PERMISSION,
@@ -132,6 +135,7 @@ val MediaFailureReason.uploadFeedbackCode: UserFeedbackCode
         MediaFailureReason.CACHE_QUOTA -> UserFeedbackCode.MEDIA_CACHE_FULL
         MediaFailureReason.SIZE_VALIDATION -> UserFeedbackCode.MEDIA_SIZE_INVALID
         MediaFailureReason.NETWORK -> UserFeedbackCode.MEDIA_NETWORK_FAILED
+        MediaFailureReason.DECODE,
         MediaFailureReason.IO -> UserFeedbackCode.MEDIA_IO_FAILED
         MediaFailureReason.SESSION -> UserFeedbackCode.MEDIA_SESSION_CHANGED
         MediaFailureReason.PERMISSION,

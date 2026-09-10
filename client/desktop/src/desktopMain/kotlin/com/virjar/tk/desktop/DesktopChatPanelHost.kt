@@ -78,7 +78,8 @@ internal fun ChatPanelWrapper(
     resolveSender: ((uid: String) -> User?)? = null,
     voicePlayback: VoicePlaybackController,
     onMentionClick: ((uid: String) -> Unit)? = null,
-    mentionCandidates: List<User> = emptyList(),
+    /** null 表示该会话不启用 @ 候选（如保存的消息，内测 T038）。 */
+    mentionCandidates: List<User>? = emptyList(),
     chatForegroundActive: Boolean,
     /** 主窗口是否处于原生全屏（内测 T020）：全屏 Space 显示不了独立画廊窗口，须走主窗口内覆盖层。 */
     mainWindowFullscreen: Boolean,

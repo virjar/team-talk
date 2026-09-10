@@ -101,7 +101,8 @@ internal fun AndroidChatScreen(
     telemetry: ClientUiTelemetrySink,
     onAuthExpired: (rejectedAccessToken: String) -> Unit,
     resolveSender: ((uid: String) -> User?)? = null,
-    mentionCandidates: List<User> = emptyList(),
+    /** null 表示该会话不启用 @ 候选（如保存的消息，内测 T038）。 */
+    mentionCandidates: List<User>? = emptyList(),
     onMentionClick: ((uid: String) -> Unit)? = null,
     onTextAttachmentPreview: ((Attachment) -> Unit)? = null,
     messageFocusTarget: MessageFocusTarget? = null,

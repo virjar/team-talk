@@ -86,7 +86,7 @@ export default function Bots() {
         <Table rowKey="botId" loading={loading} dataSource={bots} columns={[
           { title: '机器人', render: (_: unknown, bot: Bot) => <Space><RobotOutlined /><strong>{bot.name}</strong></Space> },
           { title: '状态', dataIndex: 'status', width: 90, render: status => status === 1 ? <Tag color="green">启用</Tag> : <Tag>停用</Tag> },
-          { title: '群授权', dataIndex: 'grantedChatIds', width: 100, render: grants => `${grants.length} 个` },
+          { title: '群授权', dataIndex: 'grantedChatIds', width: 100, render: (grants?: string[]) => `${grants?.length ?? 0} 个` },
           { title: '最近调用', dataIndex: 'lastUsedAt', render: value => value ? new Date(value).toLocaleString() : '从未调用' },
           { title: '操作', width: 300, render: (_: unknown, bot: Bot) => <Space>
             <Button size="small" onClick={() => setManagedBotId(bot.botId)}>管理授权</Button>

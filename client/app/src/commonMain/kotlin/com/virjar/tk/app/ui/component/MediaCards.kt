@@ -14,6 +14,9 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material.icons.filled.SaveAlt
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.platform.testTag
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -350,6 +353,8 @@ internal fun FileCard(
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     downloadState: FileDownloadState? = null,
+    /** 已下载后的“保存到文件系统”入口（内测 T042）：渲染类附件（markdown/ppt 等）无法靠复制留存。 */
+    onSave: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val iconColor = fileIconColor(fileName)
@@ -431,6 +436,20 @@ internal fun FileCard(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                }
+                if (onSave != null && downloadState is FileDownloadState.Done) {
+                    // 保存到文件系统（内测 T042）：下载完成后可用；渲染类附件（markdown 等）靠复制无法留存原文件。
+                    IconButton(
+                        onClick = onSave,
+                        modifier = Modifier.size(28.dp).testTag("file.card.save"),
+                    ) {
+                        Icon(
+                            Icons.Filled.SaveAlt,
+                            contentDescription = "保存到文件系统",
+                            modifier = Modifier.size(17.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                 }
             }
         }

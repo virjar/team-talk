@@ -130,7 +130,10 @@ internal fun NavGraphBuilder.chatDestination(
                 }
             }
         }
-        val mentionCandidates = if (chatType == com.virjar.tk.protocol.model.ChatType.GROUP.code) {
+        // 保存的消息没有对端账号实体，@ 候选不启用（第二期 T038）。
+        val mentionCandidates = if (chatType == com.virjar.tk.protocol.model.ChatType.SAVED.code) {
+            null
+        } else if (chatType == com.virjar.tk.protocol.model.ChatType.GROUP.code) {
             dataState.groups.mentionUsers.takeIf {
                 dataState.groups.mentionTargetChatId == chatId
             }.orEmpty()
@@ -153,7 +156,7 @@ internal fun NavGraphBuilder.chatDestination(
                 telemetry = dataState.telemetry,
                 onAuthExpired = dataState::reportHttpAuthExpired,
                 resolveSender = { uid ->
-                    mentionCandidates.firstOrNull { it.uid == uid } ?: dataState.residentChatUser(uid)
+                    mentionCandidates?.firstOrNull { it.uid == uid } ?: dataState.residentChatUser(uid)
                 },
                 mentionCandidates = mentionCandidates,
                 onMentionClick = actionAdmission.guard { uid: String ->

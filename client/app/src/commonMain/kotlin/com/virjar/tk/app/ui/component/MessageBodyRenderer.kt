@@ -101,6 +101,8 @@ fun MessageBodyRenderer(
                 attachment = body.attachment,
                 onLongClick = onMessageLongClick,
                 modifier = mediaModifier,
+                // 保存原文件（内测 T042）：markdown/ppt 等渲染类附件无法靠复制留存。
+                onSave = { attachment -> fileDownloads.exportToUserLocation(attachment) },
             )
         }
 
@@ -243,12 +245,16 @@ private fun EmbeddedAssetMessageText(
                     onLongClick = onMessageLongClick,
                     modifier = modifier,
                 )
-                EmbeddedAssetPresentation.FILE -> FileCardWithDownload(
-                    controller = LocalFileDownloads.current,
-                    attachment = asset.attachment,
-                    onLongClick = onMessageLongClick,
-                    modifier = modifier,
-                )
+                EmbeddedAssetPresentation.FILE -> {
+                    val fileDownloads = LocalFileDownloads.current
+                    FileCardWithDownload(
+                        controller = fileDownloads,
+                        attachment = asset.attachment,
+                        onLongClick = onMessageLongClick,
+                        modifier = modifier,
+                        onSave = { attachment -> fileDownloads.exportToUserLocation(attachment) },
+                    )
+                }
             }
         },
     )

@@ -89,9 +89,9 @@ class UserService(
     ): User {
         require(role == UserRole.BOT || role == UserRole.SYSTEM) { "非法服务账户类型" }
         require(name.isNotBlank()) { "服务账户名称不能为空" }
-        // UUID 熵使预读变得不必要。仓储在现有机器人聚合事务内写入一个随机的非 BCrypt
-        // 凭证标记；没有密码工作或嵌套事务能进入该锁序列。
-        val uid = UUID.randomUUID().toString()
+        // 服务账号 uid 与人类用户同源短 id（8 位 base62），带 "bot" 前缀以标识机器
+        // 人身份（内测 T040）；前缀收窄了随机空间，唯一性仍由数据库约束兜底。
+        val uid = "bot" + ShortUidGenerator.next()
         val username = "bot-$uid"
         return users.createServiceAccount(
             transaction = transaction,

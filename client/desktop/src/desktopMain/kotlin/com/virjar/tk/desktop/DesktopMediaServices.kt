@@ -1,5 +1,7 @@
 package com.virjar.tk.desktop
 
+import com.virjar.tk.shared.log.AppLog
+
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import com.virjar.tk.protocol.body.VideoBody
@@ -127,7 +129,9 @@ internal object DesktopImageCodec {
                 }
             }
         }
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+        // 本地日志保留完整异常上下文（文件名/异常消息/堆栈）；遥测只上报稳定的失败码（内测 T036）。
+        AppLog.fault("ImageCodec", "image decode failed: ${file.name} (${e.javaClass.simpleName}: ${e.message})", e)
         diagnostics.record(DesktopSessionDiagnosticEvent.IMAGE_DECODE_FAILED)
         null
     }

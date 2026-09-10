@@ -304,6 +304,8 @@ internal fun WindowScope.MainAppContent(
     }
     val mentionCandidates = when {
         nav.chatId == null -> emptyList()
+        // 保存的消息没有对端账号实体，@ 候选与头像长按 @ 一律不启用（第二期 T038）。
+        activeChatType == ChatType.SAVED.code -> null
         activeChatType == ChatType.GROUP.code && nav.groups.mentionTargetChatId == nav.chatId -> {
             nav.groups.mentionUsers
         }
@@ -475,7 +477,7 @@ private fun RowScope.MainContentPane(
     documentEmbeddedAssetImports: DesktopEmbeddedAssetImportGateway,
     documentEmbeddedAssetMedia: com.virjar.tk.app.ui.bridge.EmbeddedAssetMediaConfig,
     resolveUser: (String) -> User?,
-    mentionCandidates: List<User>,
+    mentionCandidates: List<User>?,
     documentMentionCandidates: List<User>,
     activeConversation: Conversation?,
     activeChatName: String,
@@ -555,7 +557,7 @@ private fun RowScope.MainContentPane(
                             cachedDraft = activeConversation?.let { it.draft.orEmpty() },
                             composerContextStore = nav.chatComposerContexts,
                             resolveSender = { uid ->
-                                mentionCandidates.firstOrNull { it.uid == uid } ?: resolveUser(uid)
+                                mentionCandidates?.firstOrNull { it.uid == uid } ?: resolveUser(uid)
                             },
                             voicePlayback = voicePlayback,
                             onMentionClick = presentationGate.guard(nav::openProfile),

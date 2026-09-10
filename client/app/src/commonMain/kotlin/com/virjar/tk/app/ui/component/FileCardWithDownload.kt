@@ -15,6 +15,8 @@ internal fun FileCardWithDownload(
     attachment: Attachment,
     onLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    /** 下载完成后的“保存到文件系统”入口（内测 T042）；null 时隐藏按钮。 */
+    onSave: ((Attachment) -> Unit)? = null,
 ) {
     val state = controller.states[attachment.path] ?: FileDownloadState.Checking
 
@@ -45,6 +47,7 @@ internal fun FileCardWithDownload(
         onClick = { controller.openOrDownload(attachment) },
         onLongClick = onLongClick,
         downloadState = state,
+        onSave = onSave?.let { handler -> { handler(attachment) } },
         modifier = modifier,
     )
 }

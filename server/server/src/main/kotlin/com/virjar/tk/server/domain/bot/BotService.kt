@@ -1,6 +1,7 @@
 package com.virjar.tk.server.domain.bot
 
 import com.virjar.tk.protocol.body.buildRichTextBody
+import com.virjar.tk.server.domain.user.ShortUidGenerator
 import com.virjar.tk.server.domain.chat.ChatAccess
 import com.virjar.tk.server.domain.chat.ChatAccessDeniedException
 import com.virjar.tk.server.domain.chat.ChatLifecycleGate
@@ -345,7 +346,7 @@ class BotService(
         repository.lockServiceIdentity(transaction, account.uid)
         val now = System.currentTimeMillis()
         val bot = AutomationBot(
-            botId = UUID.randomUUID().toString(),
+            botId = "bot" + ShortUidGenerator.next(),
             userUid = account.uid,
             name = account.name,
             status = AutomationBot.STATUS_ACTIVE,

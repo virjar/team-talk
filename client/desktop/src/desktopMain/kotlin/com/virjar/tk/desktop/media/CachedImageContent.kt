@@ -1,6 +1,11 @@
 package com.virjar.tk.desktop.media
 
 import androidx.compose.foundation.Image
+import com.virjar.tk.app.telemetry.ClientActionOutcome
+import com.virjar.tk.app.telemetry.ClientMediaKind
+import com.virjar.tk.app.telemetry.ClientUiPage
+import com.virjar.tk.app.telemetry.MediaFailureReason
+import com.virjar.tk.app.telemetry.MediaOperation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -107,6 +112,14 @@ private fun CachedImageRequestContent(
                 }
             }
             val result = if (bitmap == null) {
+                // 解码失败上报遥测（内测 T036）：细节已由 ImageCodec 写入本地日志。
+                resources.telemetry.recordMedia(
+                    page = ClientUiPage.CHAT,
+                    mediaKind = ClientMediaKind.IMAGE,
+                    operation = MediaOperation.OPEN,
+                    outcome = ClientActionOutcome.FAILED,
+                    reason = MediaFailureReason.DECODE,
+                )
                 CachedImageState.Failed("decode failed")
             } else {
                 resources.ensureOpen()
