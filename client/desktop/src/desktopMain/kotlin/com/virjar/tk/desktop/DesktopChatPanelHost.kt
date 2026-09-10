@@ -80,6 +80,8 @@ internal fun ChatPanelWrapper(
     onMentionClick: ((uid: String) -> Unit)? = null,
     mentionCandidates: List<User> = emptyList(),
     chatForegroundActive: Boolean,
+    /** 主窗口是否处于原生全屏（内测 T020）：全屏 Space 显示不了独立画廊窗口，须走主窗口内覆盖层。 */
+    mainWindowFullscreen: Boolean,
     messageFocusTarget: MessageFocusTarget? = null,
     messageFocusRequestId: Long = 0L,
 ) {
@@ -156,7 +158,7 @@ internal fun ChatPanelWrapper(
     var galleryItems by remember(chatId) { mutableStateOf<List<GalleryItem>>(emptyList()) }
     var galleryIndex by remember(chatId) { mutableIntStateOf(0) }
 
-    val mediaActions = remember(chatId, fileDownloads, telemetry, onOpenOfficeRef, onOpenTaskRef) {
+    val mediaActions = remember(chatId, fileDownloads, telemetry, onOpenOfficeRef, onOpenTaskRef, mainWindowFullscreen) {
         object : PlatformMediaActions {
             override fun openTaskRef(message: Message, body: com.virjar.tk.protocol.body.TaskRefBody) {
                 onOpenTaskRef?.invoke(message, body, viewModel::onError)
@@ -184,7 +186,22 @@ internal fun ChatPanelWrapper(
                 )
                 galleryIndex = index.coerceIn(items.indices)
                 galleryItems = items
-                showGallery = true
+                if (mainWindowFullscreen) {
+                    // 原生全屏独占 Space：独立窗口不可见，改走主窗口内覆盖层。
+                    DesktopGalleryOverlayHost.show(
+                        DesktopGalleryOverlayRequest(
+                            items = items,
+                            initialIndex = galleryIndex,
+                            presentationGate = presentationGate,
+                            resources = resources,
+                            telemetry = telemetry,
+                            fileDownloads = fileDownloads,
+                            onDismiss = { showGallery = false },
+                        ),
+                    )
+                } else {
+                    showGallery = true
+                }
                 telemetry.recordMedia(
                     ClientUiPage.CHAT,
                     mediaKind,
@@ -300,9 +317,9 @@ internal fun ChatPanelWrapper(
         )
     }
 
-    // 全屏媒体画廊（独立窗口）
+    // 全屏媒体画廊（独立窗口）；主窗口全屏期间由 DesktopGalleryOverlay 承接
     MediaGalleryWindow(
-        visible = showGallery,
+        visible = showGallery && !mainWindowFullscreen,
         items = galleryItems,
         initialIndex = galleryIndex,
         presentationGate = presentationGate,

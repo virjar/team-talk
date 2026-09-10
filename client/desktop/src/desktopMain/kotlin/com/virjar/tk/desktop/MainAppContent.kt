@@ -63,6 +63,7 @@ internal fun WindowScope.MainAppContent(
     resources: DesktopSessionResources,
     mainWindow: java.awt.Window,
     mainWindowReadActive: Boolean,
+    mainWindowFullscreen: Boolean,
     connectionState: ConnectionState,
     protocolCompatibility: com.virjar.tk.shared.client.ProtocolCompatibility?,
     onToggleWindowZoom: () -> Unit,
@@ -346,13 +347,15 @@ internal fun WindowScope.MainAppContent(
             MainContentPane(
                 nav, presentationGate, resources, chatEmbeddedAssetImports, documentEmbeddedAssetImports,
                 documentEmbeddedAssetMedia, resolveUser, mentionCandidates, activeConversation,
-                activeChatName, activeChatType, mainWindowReadActive,
+                activeChatName, activeChatType, mainWindowReadActive, mainWindowFullscreen,
             )
         }
         }
 
         MainOverlayLayers(nav, mainWindow, presentationGate, resources, onLogout)
-    }
+            // 主窗口原生全屏时的画廊覆盖层（内测 T020）：必须最后声明以处于最顶层。
+        DesktopGalleryOverlay()
+}
 }
 
 /** 中栏列表区：按当前 tab 分流会话/通讯录/设置（300dp，规格 §1.5），展开态整体让位。 */
@@ -471,6 +474,7 @@ private fun RowScope.MainContentPane(
     activeChatName: String,
     activeChatType: Int,
     mainWindowReadActive: Boolean,
+    mainWindowFullscreen: Boolean,
 ) {
     // 语音应用内播放（native 引擎，聊天面板级共享：切会话即静音）
     val voicePlayback = rememberDesktopVoicePlayback(resources, presentationGate)
@@ -546,6 +550,7 @@ private fun RowScope.MainContentPane(
                             onMentionClick = presentationGate.guard(nav::openProfile),
                             mentionCandidates = mentionCandidates,
                             chatForegroundActive = mainWindowReadActive,
+                            mainWindowFullscreen = mainWindowFullscreen,
                             messageFocusTarget = nav.messageFocusTarget
                                 ?.takeIf { target -> target.chatId == activeChatId },
                             messageFocusRequestId = nav.messageFocusRequestId,

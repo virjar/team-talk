@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
+import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.rememberWindowState
 import com.virjar.tk.shared.client.ConnectionState
 import com.virjar.tk.shared.client.ImClient
@@ -513,6 +514,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                                 resources = ready.resources,
                                 mainWindow = window,
                                 mainWindowReadActive = ready.windowReadActive,
+                                mainWindowFullscreen = mainWindowState.placement == WindowPlacement.Fullscreen,
                                 connectionState = ready.connectionState,
                                 protocolCompatibility = auth.protocolCompatibility,
                                 onToggleWindowZoom = {
