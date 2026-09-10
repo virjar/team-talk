@@ -4,7 +4,6 @@ import com.virjar.tk.protocol.model.DocumentSpace
 import com.virjar.tk.protocol.model.EmbeddedAsset
 import com.virjar.tk.server.domain.transaction.PgReadTransactionContext
 import com.virjar.tk.server.domain.transaction.PgUnitOfWork
-import com.virjar.tk.server.infra.storage.FileStore
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.OutputStream
@@ -43,15 +42,15 @@ internal data class DocumentSpaceExportPlan(
 internal class DocumentSpaceExportService(
     private val repository: DocumentRepository,
     private val unitOfWork: PgUnitOfWork,
-    private val fileStore: FileStore,
-    private val exportPolicy: DocumentExportPolicy,
+    private val objects: DocumentExportObjectSource,
+    private val exportGate: DocumentExportGate,
     private val wallClockMillis: () -> Long = System::currentTimeMillis,
 ) {
     private val accessControl = DocumentAccessControl(repository, unitOfWork)
 
     /** 空间责任人入口：后台开关关闭或非 OWNER（含空间 ADMIN 授权）一律拒绝。 */
     suspend fun buildStewardPlan(actorUid: String, spaceId: String): DocumentSpaceExportPlan? {
-        if (!exportPolicy.isEnabled()) throw DocumentAccessDeniedException("文档空间导出未开放")
+        if (!exportGate.isEnabled()) throw DocumentAccessDeniedException("文档空间导出未开放")
         return accessControl.readAuthorized(actorUid, spaceId, DocumentCapability.EXPORT_SPACE) { space, _ ->
             planFromSpace(transaction, space)
         }
@@ -87,13 +86,12 @@ internal class DocumentSpaceExportService(
                 assets.forEach { asset ->
                     // 跨文档去重：同一资产只落盘一次；链接改写永远指向同一个 assets 路径。
                     if (!assetsOnDisk.add(asset.assetId)) return@forEach
-                    val meta = fileStore.getMeta(asset.attachment.path)
-                    if (meta == null) {
+                    if (!objects.hasExportObject(asset.attachment.path)) {
                         missingAssets.add(asset.assetId)
                         return@forEach
                     }
                     zip.putNextEntry(ZipEntry("${plan.spaceName}/assets/${assetEntryName(asset)}"))
-                    fileStore.copyTo(meta, zip)
+                    check(objects.copyExportObject(asset.attachment.path, zip)) { "asset vanished during export: ${asset.assetId}" }
                     zip.closeEntry()
                 }
             }

@@ -5,8 +5,8 @@ import com.virjar.tk.protocol.model.DocumentSpace
 import com.virjar.tk.protocol.model.DocumentSpaceGrant
 import com.virjar.tk.protocol.model.EmbeddedAsset
 import com.virjar.tk.server.domain.document.DocumentAccessDeniedException
-import com.virjar.tk.server.domain.document.DocumentExportPolicy
 import com.virjar.tk.server.domain.document.DocumentSpaceExportService
+import com.virjar.tk.server.infra.db.AdminFeatureSettingsStore
 import com.virjar.tk.server.infra.db.repository.ExposedDocumentAttachmentReferences
 import kotlinx.coroutines.test.runTest
 import org.jetbrains.exposed.sql.transactions.transaction
@@ -33,11 +33,11 @@ class DocumentSpaceExportIntegrationTest {
     private fun exportService() = DocumentSpaceExportService(
         repository = ctx.documentRepo,
         unitOfWork = ctx.pgUnitOfWork,
-        fileStore = ctx.fileStore,
-        exportPolicy = exportPolicy(),
+        objects = ctx.fileStore,
+        exportGate = exportPolicy(),
     )
 
-    private fun exportPolicy() = DocumentExportPolicy(ctx.database)
+    private fun exportPolicy() = AdminFeatureSettingsStore(ctx.database)
 
     private fun store(uid: String, name: String, contentType: String, body: String): String {
         val source = File.createTempFile("export-asset-", ".tmp").apply { writeText(body) }

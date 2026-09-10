@@ -202,14 +202,11 @@ internal fun createServerModule(
     single { ClientRegistry(get(), get()) }
     single { OemPushNotifications(get(), oemPushConfiguration, syncDatasetId, get()) }
     single {
-        com.virjar.tk.server.domain.document.DocumentExportPolicy(get())
-    }
-    single {
         com.virjar.tk.server.domain.document.DocumentSpaceExportService(
             repository = get(),
             unitOfWork = get(),
-            fileStore = get(),
-            exportPolicy = get(),
+            objects = get(),
+            exportGate = get(),
         )
     }
     single {
@@ -253,6 +250,8 @@ internal fun createServerModule(
     single<MessageArchiveReader> { get<MessageStore>() }
     single<AttachmentCatalog> { get<FileStore>() }
     single<AttachmentRetirementStore> { get<FileStore>() }
+    single<com.virjar.tk.server.domain.document.DocumentExportObjectSource> { get<FileStore>() }
+    single<com.virjar.tk.server.domain.document.DocumentExportGate> { com.virjar.tk.server.infra.db.AdminFeatureSettingsStore(get()) }
     single<MessageSearch> { get<SearchIndex>() }
     single<ClientTelemetryControlRepository> { ExposedClientTelemetryControlRepository(database = get()) }
     single<ClientTelemetryAdminAuditRepository> {

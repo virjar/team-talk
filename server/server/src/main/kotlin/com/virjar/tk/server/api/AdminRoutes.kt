@@ -82,7 +82,7 @@ internal fun Route.adminRoutes(
     auth: AdminSecurityService,
     clientTelemetry: ClientTelemetryAdminService? = null,
     documentExport: com.virjar.tk.server.domain.document.DocumentSpaceExportService? = null,
-    documentExportPolicy: com.virjar.tk.server.domain.document.DocumentExportPolicy? = null,
+    documentExportPolicy: com.virjar.tk.server.infra.db.AdminFeatureSettingsStore? = null,
 ) {
     route("/api/admin") {
         post("/login") {

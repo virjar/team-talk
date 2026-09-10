@@ -5,7 +5,7 @@ import com.virjar.tk.server.domain.document.DocumentAccessDeniedException
 import com.virjar.tk.server.domain.document.DocumentNotFoundException
 import com.virjar.tk.server.domain.document.DocumentSpaceExportPlan
 import com.virjar.tk.server.domain.document.DocumentSpaceExportService
-import com.virjar.tk.server.domain.document.DocumentExportPolicy
+import com.virjar.tk.server.infra.db.AdminFeatureSettingsStore
 import io.ktor.http.ContentDisposition
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -46,7 +46,7 @@ internal suspend fun ApplicationCall.respondSpaceExportZip(
  */
 internal fun Route.documentExportRoutes(
     exportService: DocumentSpaceExportService,
-    exportPolicy: DocumentExportPolicy,
+    exportPolicy: AdminFeatureSettingsStore,
     accessTokens: AccessTokenValidator,
 ) {
     get("/api/v1/documents/spaces/{spaceId}/export") {

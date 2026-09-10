@@ -5,6 +5,7 @@ import com.virjar.tk.server.domain.attachment.AttachmentCatalog
 import com.virjar.tk.server.domain.attachment.AttachmentRetirementCandidate
 import com.virjar.tk.server.domain.attachment.AttachmentRetirementScanPage
 import com.virjar.tk.server.domain.attachment.AttachmentRetirementStore
+import com.virjar.tk.server.domain.document.DocumentExportObjectSource
 import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.server.runtime.RuntimeFailureCollector
 import com.virjar.tk.server.runtime.mergeRuntimeFailure
@@ -53,7 +54,7 @@ private val directFileStoreNativeResourceCloser = FileStoreNativeResourceCloser 
  * 多级文件存储：小文件（<=32MB）存 RocksDB，大文件存文件系统。
  * 元数据统一存在 RocksDB meta column family。
  */
-class FileStore : AttachmentCatalog, AttachmentRetirementStore {
+class FileStore : AttachmentCatalog, AttachmentRetirementStore, DocumentExportObjectSource {
     private val dbPath: String
     private val fsRoot: String
     private val tmpRoot: File
@@ -737,6 +738,14 @@ class FileStore : AttachmentCatalog, AttachmentRetirementStore {
             StorageTier.ROCKSDB -> rocksDbTier!!.copyTo(meta, out)
             StorageTier.FILESYSTEM -> fsTier!!.copyTo(meta, out)
         }
+    }
+
+    override fun hasExportObject(path: String): Boolean = getMeta(path) != null
+
+    override suspend fun copyExportObject(path: String, out: java.io.OutputStream): Boolean {
+        val meta = getMeta(path) ?: return false
+        copyTo(meta, out)
+        return true
     }
 
     /**
