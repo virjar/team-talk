@@ -49,7 +49,7 @@ DSL 按用途分层：`server` 配置用户访问的 HTTP/TCP，`deploy` 配置�
 | `deploy.ssh.user` | 默认 `root`，必须符合安全用户名格式 | `deployUser` |
 | `client.allowCustomServer` | 默认 `false`，控制登录页自定义服务器入口；私有发行通常保持关闭 | `allowCustomServer` |
 | `client.identity` | 默认保留公版身份；字段见下节 | `client` |
-| `client.xiaomiPush` | 可选的小米大陆官方推送；未配置时不打包厂商 SDK，服务端关闭该通道 | `xiaomiPush` |
+| `client.xiaomiPush` / `huaweiPush` / `honorPush` / `oppoPush` / `vivoPush` / `meizuPush` | 可选的大陆厂商官方推送，每家独立配置；未配置的厂商不打包 SDK，服务端关闭该通道 | `oemPush` |
 
 `sslPort` 不需要再手填一遍；HTTP 模式不会因其内部默认值启用 HTTPS connector。`server.tcp.port`
 沿部署链写入 `TCP_PORT`，再由 `TcpServer` 与健康探针共同读取；5100 只是默认值，
@@ -151,7 +151,14 @@ flowchart TD
 不是自动更新器；这些站点相对路径不需要另配第二个更新源。
 服务器坐标、客户端身份及签名准备好后，继续使用[统一发行流程](releasing.md)；无需额外发布脚本。
 
-### 小米大陆官方推送
+### 大陆厂商官方推送
+
+大陆 Android 部署可选接入厂商官方通知通道，覆盖小米、华为、荣耀、OPPO、vivo 和魅族六家；
+不接 Google/FCM。每个厂商在 `deployment { client { ... } }` 中单独配置，互不依赖：只配置
+实际目标用户使用的厂商，未配置的厂商不打包对应 SDK，服务端关闭该通道并拒绝相应注册。
+全部厂商共用同一套客户端授权、注册与合并唤醒机制（见[Android 通知边界](../05-clients/android.md#消息通知的当前范围)）。
+
+#### 小米
 
 每个私有安装包使用自己在小米平台登记的包名与推送参数。先按
 [小米推送服务启用指南](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1542)注册开发者账号，
@@ -182,7 +189,7 @@ xiaomiPush {
 示例 ID 是占位符。`sdkFile` 与 `credentialsFile` 均为必填的 `File`，相对位置用 `rootDir` 明确解析。
 构建读取本地 AAR 并在非敏感快照中记录路径及 `sdkSha256`；调整 SDK 文件需要重新构建客户端。
 服务端发送固定正文“你有新的未读消息，点击查看”，标题取应用显示名，`template_param` 为 `{}`。
-启用小米推送时，应用显示名须少于 50 个字符，以符合通知标题限制。
+启用任一厂商推送时，应用显示名须少于 50 个字符，以符合通知标题限制（vivo 通道要求不超过 20 个字符）。
 因此所选模板必须支持这组固定标题/正文和零变量；带变量的模板不能只填 ID 使用。平台是否接受该模板及
 实际下发须用自己的开发者账号验证，不能把本地 HTTP 回归视为厂商送达证据。
 `credentialsFile` 使用 UTF-8 Java properties，仅填写：
@@ -204,12 +211,100 @@ App ID 与 App Key 只供 Android SDK 注册；App Secret 只通过部署流程�
 | `XIAOMI_PUSH_CHANNEL_ID` / `XIAOMI_PUSH_TEMPLATE_ID` | 配置的通道与模板 |
 | `XIAOMI_PUSH_TITLE` | `client.identity.displayName` |
 
-Android 登录后由用户选择是否启用小米推送，授权前不初始化厂商 SDK；“暂不”不影响聊天。
-部署运营者应在自己的隐私说明中披露该 SDK 并提供可访问的说明入口，具体要求见
-[小米推送开发者应用合规指南](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1535)。
+#### 华为 / 荣耀
+
+在 [AppGallery Connect](https://developer.huawei.com/consumer/cn/service/josp/agc/index.html) 与
+[荣耀开发者服务平台](https://developer.honor.com/)分别为实际包名创建应用并开通 Push Kit，取得
+App ID 与 App Secret；客户端从官方渠道获取 Push Kit AAR（华为发行包通常包含多个 AAR，用 `sdkFiles`
+逐个登记，荣耀同理）。华为/荣耀的通知栏消息走官方审核的应用通知类别，`channelId` 填平台创建的
+通知通道 ID。两家服务端接口同构：OAuth2 换取 access token 后调用下行消息接口，通知点击使用与
+小米相同的 intent 定位。配置示例：
+
+```kotlin
+huaweiPush {
+    appId = "111222333"
+    channelId = "hw-notify-channel"
+    sdkFiles += File(rootDir, "buildSrc/deployment-local/vendor/huawei/push-6.x.aar")
+    credentialsFile = File(rootDir, "gradle/huawei-push.secrets")
+}
+honorPush {
+    appId = "444555666"
+    channelId = "honor-notify-channel"
+    sdkFile = File(rootDir, "buildSrc/deployment-local/vendor/honor/push-7.x.aar")
+    credentialsFile = File(rootDir, "gradle/honor-push.secrets")
+}
+```
+
+`credentialsFile` 只需要 `appSecret=<App Secret>`。服务端环境变量为
+`HUAWEI_PUSH_ENABLED / _APP_ID / _APP_SECRET / _PACKAGE_NAME / _CHANNEL_ID / _TITLE`，
+荣耀同名替换前缀为 `HONOR_PUSH_`。
+
+#### OPPO
+
+在 [OPPO 开放平台](https://open.oppomobile.com/)为实际包名创建应用、开通 PUSH 服务并申请
+**私信通道**（通知栏消息需要审核通过的 ChannelID）。取得 App Key 与 App Secret；OPPO 官方注册接口要求
+客户端同时持有两者。配置示例：
+
+```kotlin
+oppoPush {
+    appKey = "8899aa"
+    channelId = "oppo-private-channel"
+    sdkFile = File(rootDir, "buildSrc/deployment-local/vendor/oppo/mcss_sdk.aar")
+    credentialsFile = File(rootDir, "gradle/oppo-push.secrets")
+}
+```
+
+`credentialsFile` 只需要 `appSecret=<App Secret>`（appKey 已在配置中公开登记）。服务端环境变量为
+`OPPO_PUSH_ENABLED / _APP_KEY / _APP_SECRET / _PACKAGE_NAME / _CHANNEL_ID / _TITLE`。
+
+#### vivo
+
+在 [vivo 开放平台](https://dev.vivo.com.cn/)创建应用并开通推送服务，取得 App ID、App Key 与 App Secret，
+并申请审核通过的消息分类（IM 类目）；`category` 填审核返回的分类值。vivo 通知标题上限为 20 个汉字，
+`client.identity.displayName` 超过时构建会直接失败。配置示例：
+
+```kotlin
+vivoPush {
+    appId = "10004"
+    appKey = "25509283-3767-4b9e-83fe-b6e55ac6243e"
+    category = "IM"
+    sdkFile = File(rootDir, "buildSrc/deployment-local/vendor/vivo/vivo_push_v4.0.4.0_504.aar")
+    credentialsFile = File(rootDir, "gradle/vivo-push.secrets")
+}
+```
+
+`credentialsFile` 只需要 `appSecret=<App Secret>`。服务端环境变量为
+`VIVO_PUSH_ENABLED / _APP_ID / _APP_KEY / _APP_SECRET / _PACKAGE_NAME / _CATEGORY / _TITLE`。
+
+#### 魅族
+
+在[魅族开放平台](https://open.flyme.cn/)为实际包名开通推送（选择**私信**消息类型），取得 App ID 与
+App Key。配置示例：
+
+```kotlin
+meizuPush {
+    appId = "10000"
+    appKey = "meizu-app-key"
+    sdkFile = File(rootDir, "buildSrc/deployment-local/vendor/meizu/push-internal-4.3.0.aar")
+    credentialsFile = File(rootDir, "gradle/meizu-push.secrets")
+}
+```
+
+`credentialsFile` 只需要 `appSecret=<App Secret>`。服务端环境变量为
+`MEIZU_PUSH_ENABLED / _APP_ID / _APP_KEY / _APP_SECRET / _PACKAGE_NAME / _TITLE`。
+魅族官方已停用 clickType=3 的自定义点击，通知点击固定为打开应用，再由客户端定位会话。
+
+#### 共同边界
+
+Android 登录后由用户选择是否启用本机厂商推送，授权前不初始化厂商 SDK；“暂不”不影响聊天。
+部署运营者应在自己的隐私说明中披露所集成的厂商 SDK 并提供可访问的说明入口（小米另见
+[推送开发者应用合规指南](https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1535)）。
 这项授权与 Android 系统通知权限是两回事，系统通知关闭时不会因同意 SDK 授权而自动开启。
-配置与编译成功不代表通道审核、厂商实际投递或锁屏/进程回收场景已通过验收；实际状态见
-[功能状态](../10-reference/feature-status.md)，发送与点击行为见[Android 通知边界](../05-clients/android.md#消息通知的当前范围)。
+配置与编译成功不代表通道审核、厂商实际投递或锁屏/进程回收场景已通过验收；上述华为/荣耀/OPPO/vivo/
+魅族通道尚未经真实设备验收，端点与参数以编写时的官方文档为准，接入账号后如厂商拒绝应按错误码
+（`PROVIDER_CONFIGURATION_REJECTED` 等，记录在注册行的 `lastFailure`）对照平台配置核对。
+实际状态见[功能状态](../10-reference/feature-status.md)，发送与点击行为见
+[Android 通知边界](../05-clients/android.md#消息通知的当前范围)。
 
 ### 用辅助函数拆分配置
 

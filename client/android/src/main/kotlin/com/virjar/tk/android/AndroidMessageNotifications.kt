@@ -31,7 +31,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
-private const val MESSAGE_CHANNEL = "teamtalk.messages"
+internal const val MESSAGE_CHANNEL = "teamtalk.messages"
 private const val OPEN_MESSAGE_ACTION = BuildConfig.APPLICATION_ID + ".OPEN_MESSAGE"
 private const val OPEN_TASK_ACTION = BuildConfig.APPLICATION_ID + ".OPEN_TASK"
 
@@ -203,7 +203,7 @@ internal fun clearAndroidMessageNotifications(context: Context) {
 internal fun RequestAndroidMessageNotificationPermission() {
     val context = LocalContext.current
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-        (context.applicationContext as TeamTalkApp).xiaomiPush.notificationSettingsChanged()
+        (context.applicationContext as TeamTalkApp).oemPush.notificationSettingsChanged()
     }
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return@LaunchedEffect

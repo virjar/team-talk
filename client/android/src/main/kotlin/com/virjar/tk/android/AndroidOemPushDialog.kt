@@ -20,8 +20,9 @@ import androidx.compose.ui.semantics.testTagsAsResourceId
 
 /** 单一厂商接入的用户授权与关闭入口，拒绝不影响正常聊天。 */
 @Composable
-internal fun AndroidXiaomiPushDialog(settings: AndroidXiaomiPushSettings, onDismiss: () -> Unit) {
+internal fun AndroidOemPushDialog(settings: AndroidOemPushSettings, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val channel = settings.channel
     val enabled by settings.enabled.collectAsState()
     val pendingUnregister by settings.pendingUnregister.collectAsState()
     val status by settings.status.collectAsState()
@@ -35,11 +36,18 @@ internal fun AndroidXiaomiPushDialog(settings: AndroidXiaomiPushSettings, onDism
         title = { Text("消息通知") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text(if (enabled || pendingUnregister) status else "开启小米推送后，应用关闭时也可接收消息通知。通知只提示有新消息，点击后连接服务器查看。")
-                Text("小米推送服务会处理应用及设备标识、推送标识和通知投递信息，用于将通知送达这台手机。")
-                TextButton(onClick = {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1534")))
-                }) { Text("小米推送隐私政策") }
+                val vendor = channel?.displayName.orEmpty()
+                Text(
+                    if (enabled || pendingUnregister) status else
+                        if (channel == null) status
+                        else "开启${vendor}推送后，应用关闭时也可接收消息通知。通知只提示有新消息，点击后连接服务器查看。",
+                )
+                Text("${vendor}推送服务会处理应用及设备标识、推送标识和通知投递信息，用于将通知送达这台手机。")
+                channel?.privacyUrl?.let { url ->
+                    TextButton(onClick = {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    }) { Text("${vendor}推送隐私政策") }
+                }
                 TextButton(onClick = {
                     context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
                         .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
@@ -50,7 +58,7 @@ internal fun AndroidXiaomiPushDialog(settings: AndroidXiaomiPushSettings, onDism
             TextButton(
                 onClick = { settings.setEnabled(!enabled); onDismiss() },
                 modifier = Modifier.testTag("settings.notifications.toggle"),
-            ) { Text(if (enabled) "关闭小米推送" else "同意并开启") }
+            ) { Text(if (enabled) "关闭${channel?.displayName.orEmpty()}推送" else "同意并开启") }
         },
         dismissButton = {
             TextButton(onClick = {

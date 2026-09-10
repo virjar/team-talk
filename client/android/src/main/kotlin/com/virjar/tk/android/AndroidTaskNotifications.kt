@@ -19,7 +19,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private const val TASK_CHANNEL = "teamtalk.tasks"
+internal const val TASK_CHANNEL = "teamtalk.tasks"
 
 internal fun clearAndroidTaskNotifications(context: Context) {
     val manager = checkNotNull(context.getSystemService(NotificationManager::class.java))

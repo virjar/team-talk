@@ -19,11 +19,13 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class XiaomiPushHttpClientTest {
-    private val configuration = XiaomiPushConfiguration(
-        true, "fixture-secret", "com.example.privateapp", "private-chat", "fixed-template", "私有 TeamTalk",
+    private val configuration = OemPushVendorConfiguration(
+        OemPushVendors.XIAOMI, "fixture-secret", "com.example.privateapp", "私有 TeamTalk",
+        channelId = "private-chat", templateId = "fixed-template",
     )
-    private val notification = XiaomiPushNotification(
-        "registration+with/slash=", "a".repeat(64), "dataset-identity", "user-identity", "chat-identity", "fixture_job-1",
+    private val notification = OemPushNotification(
+        OemPushVendors.XIAOMI, "registration+with/slash=", "a".repeat(64), "dataset-identity",
+        "user-identity", "chat-identity", "fixture_job-1",
     )
 
     @Test

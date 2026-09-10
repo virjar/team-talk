@@ -1,5 +1,6 @@
 import java.util.Base64
 import deployment.DeploymentConfig
+import deployment.GenerateOemPushChannels
 import deployment.resolveAndroidSigning
 import release.GenerateAndroidReleaseIdentity
 import kotlinx.serialization.json.JsonPrimitive
@@ -30,9 +31,14 @@ val generateReleaseIdentity = tasks.register<GenerateAndroidReleaseIdentity>("ge
     deploymentConfigJson.set(deploymentConfig.toCanonicalJson())
     outputDirectory.set(layout.buildDirectory.dir("generated/release-identity/assets"))
 }
+val generateOemPushChannels = tasks.register<GenerateOemPushChannels>("generateOemPushChannels") {
+    vendors.set(deploymentConfig.oemPush.keys.toList())
+    outputDirectory.set(layout.buildDirectory.dir("generated/oem-push-channels/kotlin"))
+}
 androidComponents {
     onVariants(selector().all()) { variant ->
         variant.sources.assets?.addGeneratedSourceDirectory(generateReleaseIdentity, GenerateAndroidReleaseIdentity::outputDirectory)
+        variant.sources.java?.addGeneratedSourceDirectory(generateOemPushChannels, GenerateOemPushChannels::outputDirectory)
     }
 }
 
@@ -61,15 +67,41 @@ android {
         buildConfigField("String", "GIT_COMMIT_ID", "\"$gitCommitId\"")
         buildConfigField("String", "BUILD_IDENTITY", "\"$buildIdentity\"")
         buildConfigField("String", "BUILD_TIME", "\"$buildTime\"")
-        buildConfigField("String", "XIAOMI_PUSH_APP_ID", JsonPrimitive(deploymentConfig.xiaomiPush?.appId.orEmpty()).toString())
-        buildConfigField("String", "XIAOMI_PUSH_APP_KEY", JsonPrimitive(deploymentConfig.xiaomiPush?.readCredential("appKey").orEmpty()).toString())
-        manifestPlaceholders["xiaomiPushEnabled"] = (deploymentConfig.xiaomiPush != null).toString()
+        // 每个厂商的客户端注册参数只在该厂商配置后进入 APK；服务端密钥绝不写入 BuildConfig。
+        // OPPO 官方注册接口在客户端同时要求 appKey 与 appSecret。
+        for (vendor in deployment.OemPushVendors.ALL) {
+            val push = deploymentConfig.oemPush[vendor]
+            manifestPlaceholders["${vendor}PushEnabled"] = (push != null).toString()
+            when (vendor) {
+                deployment.OemPushVendors.XIAOMI -> {
+                    buildConfigField("String", "XIAOMI_PUSH_APP_ID", JsonPrimitive(push?.appId.orEmpty()).toString())
+                    buildConfigField("String", "XIAOMI_PUSH_APP_KEY", JsonPrimitive(push?.readCredential("appKey").orEmpty()).toString())
+                }
+                deployment.OemPushVendors.HUAWEI, deployment.OemPushVendors.HONOR -> {
+                    buildConfigField("String", "${vendor.uppercase()}_PUSH_APP_ID", JsonPrimitive(push?.appId.orEmpty()).toString())
+                    manifestPlaceholders["${vendor}PushAppId"] = push?.appId.orEmpty()
+                }
+                deployment.OemPushVendors.OPPO -> {
+                    buildConfigField("String", "OPPO_PUSH_APP_KEY", JsonPrimitive(push?.appKey.orEmpty()).toString())
+                    buildConfigField("String", "OPPO_PUSH_APP_SECRET", JsonPrimitive(push?.readCredential("appSecret").orEmpty()).toString())
+                }
+                deployment.OemPushVendors.VIVO -> {
+                    buildConfigField("String", "VIVO_PUSH_APP_ID", JsonPrimitive(push?.appId.orEmpty()).toString())
+                    buildConfigField("String", "VIVO_PUSH_APP_KEY", JsonPrimitive(push?.appKey.orEmpty()).toString())
+                    manifestPlaceholders["vivoPushAppId"] = push?.appId.orEmpty()
+                    manifestPlaceholders["vivoPushAppKey"] = push?.appKey.orEmpty()
+                }
+                deployment.OemPushVendors.MEIZU -> {
+                    buildConfigField("String", "MEIZU_PUSH_APP_ID", JsonPrimitive(push?.appId.orEmpty()).toString())
+                    buildConfigField("String", "MEIZU_PUSH_APP_KEY", JsonPrimitive(push?.appKey.orEmpty()).toString())
+                }
+            }
+        }
     }
 
-    // 单一可选接入；未配置的公版/私有版不打包厂商 SDK、服务与权限。
+    // 每个厂商一个可选源集；聚合表与未配置厂商的清单占位组件由 generateOemPushChannels 生成。
     sourceSets.getByName("main") {
-        val pushDirectory = if (deploymentConfig.xiaomiPush == null) "src/noPush" else "src/xiaomi"
-        java.srcDir("$pushDirectory/kotlin")
+        deploymentConfig.oemPush.keys.forEach { vendor -> java.srcDir("src/$vendor/kotlin") }
     }
 
     // buildSrc 统一解析签名配置；这里只将同一身份绑定到 AGP 的 Debug / Release。
@@ -146,7 +178,8 @@ android {
 }
 
 dependencies {
-    deploymentConfig.xiaomiPush?.let { implementation(files(it.sdkFile)) }
+    // 已配置厂商的官方 AAR 逐个登记；华为/荣耀可能包含多个文件。
+    deploymentConfig.oemPush.values.forEach { push -> implementation(files(push.sdkFiles)) }
     implementation(project(":client:shared"))
     implementation(project(":client:app"))
     implementation(libs.kotlinx.coroutines.core)

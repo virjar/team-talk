@@ -47,9 +47,9 @@ internal fun HomeScreen(
 ) {
     if (!dataState.acceptsRendering) return
     val processOwner = androidx.compose.ui.platform.LocalContext.current.applicationContext as TeamTalkApp
-    val pushSettings = processOwner.xiaomiPush
+    val pushSettings = processOwner.oemPush
     var showNotifications by remember { mutableStateOf(pushSettings.needsConsent) }
-    if (showNotifications) AndroidXiaomiPushDialog(pushSettings) { showNotifications = false }
+    if (showNotifications) AndroidOemPushDialog(pushSettings) { showNotifications = false }
     val actionAdmission = dataState.uiActionAdmission
     var homeTab by rememberSaveable { mutableIntStateOf(0) }
     val documentReference by requestedDocument.collectAsState()

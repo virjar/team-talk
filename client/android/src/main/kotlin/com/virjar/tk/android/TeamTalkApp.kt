@@ -15,7 +15,7 @@ import com.virjar.tk.shared.client.ServerConfig
  * - 平台环境和异常边界是进程级单次初始化
  */
 class TeamTalkApp : Application(), coil3.SingletonImageLoader.Factory {
-    internal val xiaomiPush by lazy { AndroidXiaomiPushSettings(this) }
+    internal val oemPush by lazy { AndroidOemPushSettings(this) }
     internal var accountCleanupFailed: Boolean = false
         private set
     /** 由本 Android 进程持有的不可变部署配置。 */

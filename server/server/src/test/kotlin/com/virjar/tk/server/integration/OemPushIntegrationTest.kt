@@ -27,7 +27,7 @@ import org.junit.jupiter.api.extension.RegisterExtension
 import java.util.UUID
 import kotlin.test.*
 
-class XiaomiPushIntegrationTest {
+class OemPushIntegrationTest {
     companion object {
         @JvmField @RegisterExtension val ext = IntegrationTestExtension()
         private val FP = "a".repeat(64)
@@ -35,10 +35,17 @@ class XiaomiPushIntegrationTest {
     }
     private val ctx get() = ext.env
     private var now = System.currentTimeMillis()
-    private val configuration = XiaomiPushConfiguration(true, "fixture-secret", PACKAGE, "channel", "template", "TeamTalk")
+    private val configuration = OemPushConfiguration(
+        mapOf(
+            OemPushVendors.XIAOMI to OemPushVendorConfiguration(
+                OemPushVendors.XIAOMI, "xiaomi-secret", PACKAGE, "TeamTalk", channelId = "channel", templateId = "template"),
+            OemPushVendors.HUAWEI to OemPushVendorConfiguration(
+                OemPushVendors.HUAWEI, "huawei-secret", PACKAGE, "TeamTalk", appId = "123456789", channelId = "channel"),
+        )
+    )
 
     @BeforeEach fun resetRegistrations() {
-        transaction(ctx.database) { XiaomiPushRegistrations.deleteAll() }
+        transaction(ctx.database) { OemPushRegistrations.deleteAll() }
     }
 
     @Test fun `registered RPC uses authenticated installation preserves refresh and cascades revocation`() = runTest {
@@ -52,59 +59,72 @@ class XiaomiPushIntegrationTest {
         }
         val dispatcher = RpcDispatcher(registry)
         suspend fun register(principal: TokenInfo = user.principal, version: ProtocolVersion = ProtocolVersion(0, 2),
-            registration: String = "registration-one", fingerprint: String = FP) = dispatcher.dispatch(
-            principal.uid, principal.deviceId, principal.deviceCredentialEpoch, "xiaomi-fixture",
-            InvokePayload(1, DeviceRpcContract.SERVICE, DeviceRpcContract.M_SET_XIAOMI_PUSH_REGISTRATION,
-                DeviceRpcContract.encodeSetXiaomiPushRegistration(registration, PACKAGE, fingerprint)), version)
+            registration: String = "registration-one", fingerprint: String = FP,
+            vendor: String = OemPushVendors.XIAOMI) = dispatcher.dispatch(
+            principal.uid, principal.deviceId, principal.deviceCredentialEpoch, "oem-push-fixture",
+            InvokePayload(1, DeviceRpcContract.SERVICE, DeviceRpcContract.M_SET_OEM_PUSH_REGISTRATION,
+                DeviceRpcContract.encodeSetOemPushRegistration(vendor, registration, PACKAGE, fingerprint)), version)
         assertNotEquals(0, register(version = ProtocolVersion(0, 1)).status)
         assertTrue(rows().isEmpty())
         assertNotEquals(0, register(fingerprint = "not-an-owner").status)
-        val accepted = register()
-        assertEquals(0, accepted.status)
-        assertTrue(ProtoCodec.withPayload(accepted.payload) { readBoolean() })
+        assertEquals(0, register().status)
+        assertTrue(ProtoCodec.withPayload(register().payload) { readBoolean() })
         val first = rows().single()
+        assertEquals(OemPushVendors.XIAOMI, first[OemPushRegistrations.vendor])
         val refresh = ctx.authService.handleAuth(AuthRequestPayload(authType = 2, refreshToken = user.login.refreshToken,
             deviceId = user.principal.deviceId, deviceFlag = 1, correlationId = id(), connectionGeneration = 2))
         assertEquals(0, refresh.code)
         val next = assertNotNull(ctx.accessTokenValidator.validateAccessToken(assertNotNull(refresh.accessToken)))
         assertTrue(next.deviceCredentialEpoch > user.principal.deviceCredentialEpoch)
-        assertEquals(first[XiaomiPushRegistrations.generation], rows().single()[XiaomiPushRegistrations.generation])
+        assertEquals(first[OemPushRegistrations.generation], rows().single()[OemPushRegistrations.generation])
         assertFalse(ProtoCodec.withPayload(register().payload) { readBoolean() }, "old authenticated epoch cannot replace registration")
         assertTrue(ProtoCodec.withPayload(register(next).payload) { readBoolean() })
-        assertEquals(first[XiaomiPushRegistrations.generation], rows().single()[XiaomiPushRegistrations.generation])
+        assertEquals(first[OemPushRegistrations.generation], rows().single()[OemPushRegistrations.generation])
         ctx.authService.revokeDevice(next.uid, next.deviceId)
         assertTrue(rows().isEmpty(), "credential deletion cascades pending notifications")
         assertFalse(ProtoCodec.withPayload(register(next).payload) { readBoolean() })
     }
 
+    @Test fun `unknown or disabled vendors never create a registration`() = runTest {
+        val user = user()
+        val service = service()
+        assertFalse(register(service, user, vendor = "samsung"))
+        assertFalse(register(service, user, vendor = OemPushVendors.VIVO))
+        assertTrue(register(service, user, vendor = OemPushVendors.HUAWEI))
+        val row = rows().single()
+        assertEquals(OemPushVendors.HUAWEI, row[OemPushRegistrations.vendor])
+        assertTrue(rows().all { it[OemPushRegistrations.vendor] == OemPushVendors.HUAWEI })
+    }
+
     @Test fun `coalesced durable hints survive restart and provider retry uses stable job key`() = runTest {
         val receiver = user(); val sender = ctx.registerUser()
         val chat = ctx.chatService.createPersonalChat(sender, receiver.principal.uid)
-        val attempts = mutableListOf<XiaomiPushNotification>()
-        val failing = service { _, notification ->
+        val attempts = mutableListOf<OemPushNotification>()
+        val failing = service { _, _, notification ->
             attempts += notification
-            XiaomiPushDeliveryResult(false, "PROVIDER_BUSY")
+            OemPushDeliveryResult(false, "PROVIDER_BUSY")
         }
-        register(failing, receiver)
+        register(failing, receiver, vendor = OemPushVendors.HUAWEI)
         send(sender, chat.chatId); send(sender, chat.chatId)
         dispatch(failing, receiver.principal.uid)
         assertEquals(1, rows().size)
         assertEquals(1, failing.drainDue())
         assertEquals(0, failing.drainDue())
         val pending = rows().single()
-        assertEquals(1, pending[XiaomiPushRegistrations.attempts])
-        assertEquals("PROVIDER_BUSY", pending[XiaomiPushRegistrations.lastFailure])
+        assertEquals(1, pending[OemPushRegistrations.attempts])
+        assertEquals("PROVIDER_BUSY", pending[OemPushRegistrations.lastFailure])
         now += 5_000
-        val restarted = service { _, notification -> attempts += notification; XiaomiPushDeliveryResult(true) }
+        val restarted = service { _, _, notification -> attempts += notification; OemPushDeliveryResult(true) }
         assertEquals(1, restarted.drainDue())
         assertEquals(2, attempts.size)
         assertEquals(attempts[0].jobKey, attempts[1].jobKey)
+        assertEquals(OemPushVendors.HUAWEI, attempts.last().vendor)
         assertEquals(receiver.principal.uid, attempts.last().uid)
         assertEquals(chat.chatId, attempts.last().chatId)
         assertEquals(FP, attempts.last().deploymentFingerprint)
         assertEquals("fixture-dataset", attempts.last().datasetId)
         assertEquals(0, restarted.drainDue())
-        assertEquals(rows().single()[XiaomiPushRegistrations.pendingEventId], rows().single()[XiaomiPushRegistrations.deliveredEventId])
+        assertEquals(rows().single()[OemPushRegistrations.pendingEventId], rows().single()[OemPushRegistrations.deliveredEventId])
 
         val newerSender = ctx.registerUser()
         val newerChat = ctx.chatService.createPersonalChat(newerSender, receiver.principal.uid)
@@ -127,15 +147,15 @@ class XiaomiPushIntegrationTest {
             retired[UUID.nameUUIDFromBytes("retired-push-$it".encodeToByteArray()).toString()] = 1L
         }
         transaction(ctx.database) {
-            XiaomiPushRegistrations.update({ XiaomiPushRegistrations.refreshTokenHash eq
-                pending[XiaomiPushRegistrations.refreshTokenHash] }) {
+            OemPushRegistrations.update({ OemPushRegistrations.refreshTokenHash eq
+                pending[OemPushRegistrations.refreshTokenHash] }) {
                 it[pendingChats] = Json.encodeToString(retired)
             }
         }
         send(sender, chat.chatId)
         dispatch(restarted, receiver.principal.uid)
         assertEquals(setOf(chat.chatId), Json.decodeFromString<Map<String, Long>>(
-            rows().single()[XiaomiPushRegistrations.pendingChats]).keys)
+            rows().single()[OemPushRegistrations.pendingChats]).keys)
         assertTrue(transaction(ctx.database) {
             SyncEvents.selectAll().where { SyncEvents.uid eq receiver.principal.uid }
                 .all { it[SyncEvents.dispatchedAt] != null }
@@ -158,13 +178,13 @@ class XiaomiPushIntegrationTest {
         try {
             assertFailsWith<IllegalStateException> { broken.dispatchPendingForUid(receiver.principal.uid) }
         } finally { broken.close() }
-        assertEquals(0L, rows().single()[XiaomiPushRegistrations.pendingEventId])
+        assertEquals(0L, rows().single()[OemPushRegistrations.pendingEventId])
         assertTrue(transaction(ctx.database) {
             SyncEvents.selectAll().where { (SyncEvents.uid eq receiver.principal.uid) and
                 (SyncEvents.eventType eq NotifyType.MESSAGE_RECV.code) }.all { it[SyncEvents.dispatchedAt] == null }
         })
         dispatch(service, receiver.principal.uid)
-        assertTrue(rows().single()[XiaomiPushRegistrations.pendingEventId] > 0)
+        assertTrue(rows().single()[OemPushRegistrations.pendingEventId] > 0)
         assertEquals(1, service.drainDue())
     }
 
@@ -172,7 +192,7 @@ class XiaomiPushIntegrationTest {
         val receiver = user(); val sender = ctx.registerUser()
         val chat = ctx.chatService.createGroup(id(), "Push fixture", null, sender, listOf(receiver.principal.uid))
         var delivered = 0
-        val service = service { _, _ -> delivered++; XiaomiPushDeliveryResult(true) }
+        val service = service { _, _, _ -> delivered++; OemPushDeliveryResult(true) }
         register(service, receiver)
         send(receiver.principal.uid, chat.chatId)
         dispatch(service, receiver.principal.uid)
@@ -203,63 +223,63 @@ class XiaomiPushIntegrationTest {
     @Test fun `provider results preserve newer work and replacement registrations while retaining failure backoff`() = runTest {
         val receiver = user(); val sender = ctx.registerUser()
         val chat = ctx.chatService.createPersonalChat(sender, receiver.principal.uid)
-        val notifications = mutableListOf<XiaomiPushNotification>()
-        lateinit var service: XiaomiPushNotifications
-        service = service { _, notification ->
+        val notifications = mutableListOf<OemPushNotification>()
+        lateinit var service: OemPushNotifications
+        service = service { _, _, notification ->
             notifications += notification
             if (notifications.size == 1) {
                 send(sender, chat.chatId)
                 dispatch(service, receiver.principal.uid)
             }
-            XiaomiPushDeliveryResult(true)
+            OemPushDeliveryResult(true)
         }
         register(service, receiver)
         send(sender, chat.chatId); dispatch(service, receiver.principal.uid)
         service.drainDue()
-        assertTrue(rows().single()[XiaomiPushRegistrations.pendingEventId] > rows().single()[XiaomiPushRegistrations.deliveredEventId])
+        assertTrue(rows().single()[OemPushRegistrations.pendingEventId] > rows().single()[OemPushRegistrations.deliveredEventId])
         service.drainDue()
         assertEquals(2, notifications.size)
         assertNotEquals(notifications[0].jobKey, notifications[1].jobKey)
 
-        val replacing = service { _, _ ->
+        val replacing = service { _, _, _ ->
             register(service, receiver, "replacement-registration")
-            XiaomiPushDeliveryResult(false, "INVALID_REGISTRATION", invalidRegistration = true)
+            OemPushDeliveryResult(false, "INVALID_REGISTRATION", invalidRegistration = true)
         }
         send(sender, chat.chatId); dispatch(replacing, receiver.principal.uid)
         replacing.drainDue()
-        assertEquals("replacement-registration", rows().single()[XiaomiPushRegistrations.registrationId])
+        assertEquals("replacement-registration", rows().single()[OemPushRegistrations.registrationId])
 
         var failureCalls = 0
         var newerMessageSeq = 0L
-        lateinit var failing: XiaomiPushNotifications
-        failing = service { _, _ ->
+        lateinit var failing: OemPushNotifications
+        failing = service { _, _, _ ->
             failureCalls++
             newerMessageSeq = send(sender, chat.chatId)
             dispatch(failing, receiver.principal.uid)
-            XiaomiPushDeliveryResult(false, "PROVIDER_RATE_LIMITED")
+            OemPushDeliveryResult(false, "PROVIDER_RATE_LIMITED")
         }
         send(sender, chat.chatId); dispatch(failing, receiver.principal.uid)
-        val beforeFailure = rows().single()[XiaomiPushRegistrations.pendingEventId]
+        val beforeFailure = rows().single()[OemPushRegistrations.pendingEventId]
         assertEquals(1, failing.drainDue())
         val failed = rows().single()
-        assertTrue(failed[XiaomiPushRegistrations.pendingEventId] > beforeFailure)
-        assertTrue(failed[XiaomiPushRegistrations.deliveredEventId] < failed[XiaomiPushRegistrations.pendingEventId])
+        assertTrue(failed[OemPushRegistrations.pendingEventId] > beforeFailure)
+        assertTrue(failed[OemPushRegistrations.deliveredEventId] < failed[OemPushRegistrations.pendingEventId])
         assertEquals(newerMessageSeq, Json.decodeFromString<Map<String, Long>>(
-            failed[XiaomiPushRegistrations.pendingChats])[chat.chatId])
-        assertEquals(1, failed[XiaomiPushRegistrations.attempts])
-        assertEquals("PROVIDER_RATE_LIMITED", failed[XiaomiPushRegistrations.lastFailure])
-        assertEquals(now + 5_000L, failed[XiaomiPushRegistrations.nextAttemptAt])
+            failed[OemPushRegistrations.pendingChats])[chat.chatId])
+        assertEquals(1, failed[OemPushRegistrations.attempts])
+        assertEquals("PROVIDER_RATE_LIMITED", failed[OemPushRegistrations.lastFailure])
+        assertEquals(now + 5_000L, failed[OemPushRegistrations.nextAttemptAt])
         assertEquals(0, failing.drainDue())
         assertEquals(1, failureCalls, "new incoming messages must not bypass the provider backoff")
 
         now += 5_000L
-        val invalid = service { _, _ ->
+        val invalid = service { _, _, _ ->
             send(sender, chat.chatId)
             dispatch(failing, receiver.principal.uid)
-            XiaomiPushDeliveryResult(false, "INVALID_REGISTRATION", invalidRegistration = true)
+            OemPushDeliveryResult(false, "INVALID_REGISTRATION", invalidRegistration = true)
         }
         assertEquals(1, invalid.drainDue())
-        assertTrue(rows().isEmpty(), "66007 retires this registration even when another message arrived in flight")
+        assertTrue(rows().isEmpty(), "invalid token retires this registration even when another message arrived in flight")
     }
 
     @Test fun `unregister disabled profile package mismatch desktop and account switch keep exact binding`() = runTest {
@@ -268,24 +288,27 @@ class XiaomiPushIntegrationTest {
         assertFalse(register(service, desktop))
         assertTrue(register(service, first))
         assertTrue(register(service, second))
-        val hash = rows().single()[XiaomiPushRegistrations.refreshTokenHash]
+        val hash = rows().single()[OemPushRegistrations.refreshTokenHash]
         assertEquals(second.principal.uid, transaction(ctx.database) {
             Credentials.selectAll().where { Credentials.tokenHash eq hash }.single()[Credentials.uid]
         })
         assertFalse(service.register(first.principal.uid, first.principal.deviceId, first.principal.deviceCredentialEpoch,
-            "another-registration", "com.other.app", FP))
+            OemPushVendors.XIAOMI, "another-registration", "com.other.app", FP))
         assertEquals(1, rows().size, "another account cannot remove this binding")
         assertFalse(register(service, second, "")); assertTrue(rows().isEmpty())
-        assertFalse(register(XiaomiPushNotifications(ctx.database, XiaomiPushConfiguration(), "fixture-dataset", ctx.messageStore), first))
+        assertFalse(register(OemPushNotifications(ctx.database, OemPushConfiguration(), "fixture-dataset", ctx.messageStore), first))
         assertTrue(rows().isEmpty())
     }
 
-    private fun service(send: suspend (XiaomiPushConfiguration, XiaomiPushNotification) -> XiaomiPushDeliveryResult = { _, _ -> XiaomiPushDeliveryResult(true) }) =
-        XiaomiPushNotifications(ctx.database, configuration, "fixture-dataset", ctx.messageStore, { now }, send)
-    private fun register(service: XiaomiPushNotifications, user: Login, token: String = "registration-one") =
-        service.register(user.principal.uid, user.principal.deviceId, user.principal.deviceCredentialEpoch, token, PACKAGE, FP)
-    private fun rows() = transaction(ctx.database) { XiaomiPushRegistrations.selectAll().toList() }
-    private suspend fun dispatch(service: XiaomiPushNotifications, uid: String) {
+    private fun service(
+        send: suspend (String, OemPushVendorConfiguration, OemPushNotification) -> OemPushDeliveryResult =
+            { _, _, _ -> OemPushDeliveryResult(true) },
+    ) = OemPushNotifications(ctx.database, configuration, "fixture-dataset", ctx.messageStore, { now }, send)
+    private fun register(service: OemPushNotifications, user: Login, token: String = "registration-one",
+        vendor: String = OemPushVendors.XIAOMI) =
+        service.register(user.principal.uid, user.principal.deviceId, user.principal.deviceCredentialEpoch, vendor, token, PACKAGE, FP)
+    private fun rows() = transaction(ctx.database) { OemPushRegistrations.selectAll().toList() }
+    private suspend fun dispatch(service: OemPushNotifications, uid: String) {
         val dispatcher = SyncEventDispatcher(ctx.database, LiveEventSink { _, _ -> }, onDispatched = service::recordDispatchedEvent)
         try { dispatcher.dispatchPendingForUid(uid) } finally { dispatcher.close() }
     }
@@ -294,7 +317,7 @@ class XiaomiPushIntegrationTest {
         timestamp = System.currentTimeMillis(), body = buildRichTextBody("Private fixture text must never enter OEM payload")))
     private class Login(val principal: TokenInfo, val login: AuthResponsePayload)
     private suspend fun user(deviceFlag: Int = 1): Login {
-        val username = uniqueUsername("xiaomi-push")
+        val username = uniqueUsername("oem-push")
         ctx.registerUser(username, "pass123")
         val response = ctx.authService.handleAuth(AuthRequestPayload(authType = 0, username = username, password = "pass123",
             deviceId = id(), deviceFlag = deviceFlag, correlationId = id(), connectionGeneration = 1))

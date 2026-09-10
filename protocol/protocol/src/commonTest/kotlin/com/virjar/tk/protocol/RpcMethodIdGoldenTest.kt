@@ -116,7 +116,7 @@ class RpcMethodIdGoldenTest {
     fun `device methodId 稳定`() {
         assertEquals(1, DeviceRpcContract.M_LIST_DEVICES)
         assertEquals(2, DeviceRpcContract.M_KICK_DEVICE)
-        assertEquals(3, DeviceRpcContract.M_SET_XIAOMI_PUSH_REGISTRATION)
+        assertEquals(3, DeviceRpcContract.M_SET_OEM_PUSH_REGISTRATION)
     }
 
     @Test

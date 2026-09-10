@@ -85,17 +85,21 @@ fun generateEnvShContent(
     )
     lines.add("")
 
-    lines.add("# ── 小米官方推送 ──")
-    lines.add("XIAOMI_PUSH_ENABLED=${if (secrets.getProperty("XIAOMI_PUSH_ENABLED") == "true") "true" else "false"}")
-    if (secrets.getProperty("XIAOMI_PUSH_ENABLED") == "true") {
-        listOf("APP_SECRET", "PACKAGE_NAME", "CHANNEL_ID", "TEMPLATE_ID", "TITLE").forEach { name ->
-            val key = "XIAOMI_PUSH_$name"
-            lines.add("$key=${posixShellQuote(requiredSecret(secrets, key))}")
+    for (vendor in OemPushVendors.ALL) {
+        val prefix = "${vendor.uppercase()}_PUSH"
+        val enabled = secrets.getProperty("${prefix}_ENABLED") == "true"
+        lines.add("# ── ${OemPushVendors.display(vendor)}官方推送 ──")
+        lines.add("${prefix}_ENABLED=${if (enabled) "true" else "false"}")
+        if (enabled) {
+            secrets.stringPropertyNames()
+                .filter { it.startsWith("${prefix}_") && it != "${prefix}_ENABLED" }
+                .sorted()
+                .forEach { name -> lines.add("$name=${posixShellQuote(requiredSecret(secrets, name))}") }
         }
+        lines.add("")
     }
-    lines.add("")
 
-    return lines.joinToString("\n")
+    return lines.joinToString("\n").trimEnd('\n') + "\n"
 }
 
 /** Only a single canonical assignment is accepted; absence keeps the target build's default. */

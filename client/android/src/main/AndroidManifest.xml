@@ -51,5 +51,52 @@
                 <action android:name="com.xiaomi.mipush.ERROR" />
             </intent-filter>
         </receiver>
+        <!-- 各厂商 SDK 参数与组件只在对应厂商配置时启用；未配置的组件保持禁用。 -->
+        <meta-data
+            android:name="com.huawei.hms.client.appid"
+            android:value="appid=${huaweiPushAppId}" />
+        <service
+            android:name="com.virjar.tk.android.HuaweiPushService"
+            android:enabled="${huaweiPushEnabled}"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.huawei.push.action.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <meta-data
+            android:name="com.hihonor.push.app_id"
+            android:value="${honorPushAppId}" />
+        <service
+            android:name="com.virjar.tk.android.HonorPushService"
+            android:enabled="${honorPushEnabled}"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.hihonor.push.action.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <meta-data
+            android:name="com.vivo.push.app_id"
+            android:value="${vivoPushAppId}" />
+        <meta-data
+            android:name="com.vivo.push.api_key"
+            android:value="${vivoPushAppKey}" />
+        <receiver
+            android:name="com.virjar.tk.android.VivoPushReceiver"
+            android:enabled="${vivoPushEnabled}"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.vivo.pushclient.action.RECEIVE" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name="com.virjar.tk.android.MeizuPushReceiver"
+            android:enabled="${meizuPushEnabled}"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.meizu.flyme.push.intent.MESSAGE" />
+                <action android:name="com.meizu.flyme.push.intent.REGISTER.FEEDBACK" />
+                <action android:name="com.meizu.flyme.push.intent.UNREGISTER.FEEDBACK" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

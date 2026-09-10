@@ -45,7 +45,7 @@ class DeploymentBuilder internal constructor() {
                 .takeIf { it.storeFile.isNotBlank() || it.keyAlias.isNotBlank() }
                 ?.build(),
             tcpTlsCertificatePem = tcp.tlsConfiguration.certificateFile?.readText(Charsets.UTF_8),
-            xiaomiPush = clientConfiguration.xiaomiPushConfiguration,
+            oemPush = clientConfiguration.oemPushConfigurations,
         )
     }
 }
@@ -102,11 +102,38 @@ class ClientDeploymentBuilder internal constructor() {
     var allowCustomServer: Boolean = false
     internal val identityConfiguration = ClientIdentityDeploymentBuilder()
     internal val androidSigningConfiguration = AndroidSigningDeploymentBuilder()
-    internal var xiaomiPushConfiguration: XiaomiPushConfig? = null
+    internal val oemPushConfigurations = linkedMapOf<String, OemPushVendorDeployment>()
 
-    /** 可选；未配置的 APK 不包含小米 SDK，服务端也不调用外部推送。 */
+    /** 可选；未配置任何厂商的 APK 不包含厂商 SDK，服务端也不调用外部推送。 */
     fun xiaomiPush(configure: XiaomiPushDeploymentBuilder.() -> Unit) {
-        xiaomiPushConfiguration = XiaomiPushDeploymentBuilder().apply(configure).build()
+        oemPushConfigurations[OemPushVendors.XIAOMI] = XiaomiPushDeploymentBuilder().apply(configure).build()
+    }
+
+    /** 可选；华为 Push Kit，需要 AGC 开通推送服务的 appId 与官方 AAR。 */
+    fun huaweiPush(configure: HuaweiStylePushDeploymentBuilder.() -> Unit) {
+        oemPushConfigurations[OemPushVendors.HUAWEI] =
+            HuaweiStylePushDeploymentBuilder(OemPushVendors.HUAWEI).apply(configure).build()
+    }
+
+    /** 可选；荣耀 Push Kit，镜像华为接入形态。 */
+    fun honorPush(configure: HuaweiStylePushDeploymentBuilder.() -> Unit) {
+        oemPushConfigurations[OemPushVendors.HONOR] =
+            HuaweiStylePushDeploymentBuilder(OemPushVendors.HONOR).apply(configure).build()
+    }
+
+    /** 可选；OPPO PUSH，需要审核通过的私信通道 channelId。 */
+    fun oppoPush(configure: OppoPushDeploymentBuilder.() -> Unit) {
+        oemPushConfigurations[OemPushVendors.OPPO] = OppoPushDeploymentBuilder().apply(configure).build()
+    }
+
+    /** 可选；vivo 推送，需要审核通过的消息分类 category。 */
+    fun vivoPush(configure: VivoPushDeploymentBuilder.() -> Unit) {
+        oemPushConfigurations[OemPushVendors.VIVO] = VivoPushDeploymentBuilder().apply(configure).build()
+    }
+
+    /** 可选；魅族 Flyme 推送。 */
+    fun meizuPush(configure: MeizuPushDeploymentBuilder.() -> Unit) {
+        oemPushConfigurations[OemPushVendors.MEIZU] = MeizuPushDeploymentBuilder().apply(configure).build()
     }
 
     fun identity(configure: ClientIdentityDeploymentBuilder.() -> Unit) { identityConfiguration.apply(configure) }

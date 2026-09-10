@@ -43,7 +43,7 @@ fun deployServer(
     expectedBuildIdentity: String,
 ) {
     // 在任何远程部署变更之前校验当前 Profile 的推送凭据。
-    val pushEnvironment = config.xiaomiPushEnvironment()
+    val pushEnvironment = config.oemPushEnvironment()
     val artifactIdentity = requireReleaseArtifact(
         artifactDirectory = serverDistribution,
         expectedArtifactType = "server-distribution",
@@ -162,7 +162,7 @@ fun deployServerResetData(
     expectedBuildIdentity: String,
     resetConfirmation: String?,
 ) {
-    val pushEnvironment = config.xiaomiPushEnvironment()
+    val pushEnvironment = config.oemPushEnvironment()
     requireResetDeploymentConfirmation(
         suppliedConfirmation = resetConfirmation,
         host = config.deployHost,

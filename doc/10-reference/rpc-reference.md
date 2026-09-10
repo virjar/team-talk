@@ -223,10 +223,11 @@ revision 1。清空使用 `content = null` 并保留正 revision 墓碑，此后
 |---:|---|---|---|
 | 1 | `listDevices` | — | `List<Device>` |
 | 2 | `kickDevice` | `deviceId` | `Unit` |
-| 3 | `setXiaomiPushRegistration` | `registrationId, packageName, deploymentFingerprint` | `Boolean`（待发行 minor 2） |
+| 3 | `setOemPushRegistration` | `vendor, registrationId, packageName, deploymentFingerprint` | `Boolean`（待发行 minor 2） |
 
-踢出设备同时吊销该设备凭证并关闭活跃连接。小米注册使用当前认证连接的 uid、deviceId 和凭据；不接受
-客户端指定其他账号。空 `registrationId` 取消注册；服务端未配置或包名不匹配返回 `false`。
+踢出设备同时吊销该设备凭证并关闭活跃连接。厂商注册使用当前认证连接的 uid、deviceId 和凭据；不接受
+客户端指定其他账号。`vendor` 为设备厂商通道标识（xiaomi/huawei/honor/oppo/vivo/meizu），由客户端按
+设备制造商选择。空 `registrationId` 取消注册；服务端未配置该厂商或包名不匹配返回 `false`。
 正常 refresh 保留绑定，退出、踢设备及凭据撤销随 refresh 凭据删除注册与待通知记录。
 
 ## organization

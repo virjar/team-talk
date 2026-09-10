@@ -335,7 +335,7 @@ internal fun Application.module(
         val healthChecker = koin.get<HealthChecker>()
         val attachmentRetention = koin.get<AttachmentRetentionService>()
         val tasks = koin.get<com.virjar.tk.server.domain.task.TaskService>()
-        val xiaomiPush = koin.get<com.virjar.tk.server.infra.push.XiaomiPushNotifications>()
+        val oemPush = koin.get<com.virjar.tk.server.infra.push.OemPushNotifications>()
         val reliableCommandReceiptMaintenance = ReliableCommandReceiptMaintenance(koin.get())
         var reliableCommandReceiptBacklogReported = false
 
@@ -350,15 +350,15 @@ internal fun Application.module(
         )
         maintenance.start(
             listOf(
-                MaintenanceWorker("xiaomi-push") {
+                MaintenanceWorker("oem-push") {
                     while (isActive) {
                         try {
-                            xiaomiPush.drainDue()
+                            oemPush.drainDue()
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (_: Exception) {
                             // Provider responses and registration credentials never enter logs.
-                            logger.warn("Xiaomi push maintenance remains pending")
+                            logger.warn("OEM push maintenance remains pending")
                         }
                         delay(1_000L)
                     }

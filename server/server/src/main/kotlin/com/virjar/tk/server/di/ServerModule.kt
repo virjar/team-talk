@@ -171,8 +171,8 @@ import com.virjar.tk.server.runtime.MaintenanceRuntime
 import org.jetbrains.exposed.sql.Database
 import org.koin.dsl.module
 import java.io.File
-import com.virjar.tk.server.infra.push.XiaomiPushConfiguration
-import com.virjar.tk.server.infra.push.XiaomiPushNotifications
+import com.virjar.tk.server.infra.push.OemPushConfiguration
+import com.virjar.tk.server.infra.push.OemPushNotifications
 
 internal fun createServerModule(
     database: Database,
@@ -194,16 +194,16 @@ internal fun createServerModule(
     authenticationAttemptGuardFactory: () -> AuthenticationAttemptGuard = {
         AuthenticationAttemptGuard(AuthenticationAttemptGuardConfig.fromEnvironment())
     },
-    xiaomiPushConfiguration: XiaomiPushConfiguration = XiaomiPushConfiguration.fromEnvironment(),
+    oemPushConfiguration: OemPushConfiguration = OemPushConfiguration.fromEnvironment(),
 ) = module {
     // 基础设施 — Database 与本地存储路径均由当前容器所有者显式传入。
     single { database }
     single { ExposedCredentialRepository(database = get()) }
     single { ClientRegistry(get(), get()) }
-    single { XiaomiPushNotifications(get(), xiaomiPushConfiguration, syncDatasetId, get()) }
+    single { OemPushNotifications(get(), oemPushConfiguration, syncDatasetId, get()) }
     single {
         SyncEventDispatcher(database = get(), sink = get<ClientRegistry>(),
-            onDispatched = get<XiaomiPushNotifications>()::recordDispatchedEvent)
+            onDispatched = get<OemPushNotifications>()::recordDispatchedEvent)
     }
     single<PgUnitOfWork> {
         val dispatcher = get<SyncEventDispatcher>()

@@ -180,18 +180,19 @@ internal class DeviceRpcImpl(
     private val authService: AuthService,
     private val deviceId: String,
     private val deviceCredentialEpoch: Long,
-    private val xiaomiPush: com.virjar.tk.server.infra.push.XiaomiPushNotifications,
+    private val oemPush: com.virjar.tk.server.infra.push.OemPushNotifications,
 ) : DeviceRpcStub(uid) {
     override suspend fun listDevices() = deviceRepo.getDevices(uid)
     override suspend fun kickDevice(deviceId: String) {
         authService.revokeDevice(uid, deviceId)
     }
-    override suspend fun setXiaomiPushRegistration(
+    override suspend fun setOemPushRegistration(
+        vendor: String,
         registrationId: String,
         packageName: String,
         deploymentFingerprint: String,
-    ): Boolean = xiaomiPush.register(uid, deviceId, deviceCredentialEpoch,
-        registrationId, packageName, deploymentFingerprint)
+    ): Boolean = oemPush.register(uid, deviceId, deviceCredentialEpoch,
+        vendor, registrationId, packageName, deploymentFingerprint)
 }
 
 class OrganizationRpcImpl(uid: String, private val service: OrganizationService) : OrganizationRpcStub(uid) {

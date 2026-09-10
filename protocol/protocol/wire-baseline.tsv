@@ -115,7 +115,7 @@ rpc	conversation/4	0	-	active	setMute(chatId:kotlin.String,muted:kotlin.Boolean)
 rpc	conversation/5	0	-	active	delete(chatId:kotlin.String):kotlin.Unit
 rpc	device/1	0	-	active	listDevices():List<com.virjar.tk.protocol.model.Device>
 rpc	device/2	0	-	active	kickDevice(deviceId:kotlin.String):kotlin.Unit
-rpc	device/3	2	-	active	setXiaomiPushRegistration(registrationId:kotlin.String,packageName:kotlin.String,deploymentFingerprint:kotlin.String):kotlin.Boolean
+rpc	device/3	2	-	active	setOemPushRegistration(vendor:kotlin.String,registrationId:kotlin.String,packageName:kotlin.String,deploymentFingerprint:kotlin.String):kotlin.Boolean
 rpc	document/1	0	-	active	listSpaces(request:com.virjar.tk.protocol.model.DocumentSpacePageRequest):com.virjar.tk.protocol.model.DocumentSpacePage
 rpc	document/10	0	-	active	getDocument(spaceId:kotlin.String,documentId:kotlin.String):com.virjar.tk.protocol.model.Document
 rpc	document/11	0	-	active	updateDocument(spaceId:kotlin.String,documentId:kotlin.String,content:com.virjar.tk.protocol.model.DocumentContent,expectedRevision:kotlin.Long):com.virjar.tk.protocol.model.Document

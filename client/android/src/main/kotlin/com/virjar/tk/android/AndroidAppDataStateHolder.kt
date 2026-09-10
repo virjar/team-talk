@@ -96,8 +96,8 @@ internal class AndroidAppDataStateHolder(application: Application) : AndroidView
                 attachResources = {
                     val cache = session.localCache
                     val push = resources.acquire {
-                        AndroidXiaomiPushRegistration(
-                            getApplication(), session, getApplication<TeamTalkApp>().xiaomiPush, notificationForeground,
+                        AndroidOemPushRegistration(
+                            getApplication(), session, getApplication<TeamTalkApp>().oemPush, notificationForeground,
                         )
                     }
                     resources.acquire {
@@ -139,7 +139,7 @@ internal class AndroidAppDataStateHolder(application: Application) : AndroidView
     fun beforeSessionRetirement(session: ClientSession, reason: SessionEndReason) {
         sessionOwner.retireIfOwner(session) {
             if (reason == SessionEndReason.USER_LOGOUT || reason == SessionEndReason.AUTH_REVOKED) {
-                getApplication<TeamTalkApp>().xiaomiPush.logout()
+                getApplication<TeamTalkApp>().oemPush.logout()
             }
             val failures = mutableListOf<Pair<String, Throwable>>()
             fun release(owner: String, block: () -> Unit) {

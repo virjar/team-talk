@@ -18,10 +18,14 @@ interface DeviceRpc {
     @RpcMethod(2)
     suspend fun kickDevice(deviceId: String)
 
-    /** 当前已认证 Android 安装的小米通知注册；空 registrationId 注销。 */
+    /**
+     * 当前已认证 Android 安装的厂商通知注册；vendor 取设备厂商通道标识
+     * （xiaomi/huawei/honor/oppo/vivo/meizu），空 registrationId 注销。
+     */
     @com.virjar.tk.protocol.SinceProtocol(2)
     @RpcMethod(3)
-    suspend fun setXiaomiPushRegistration(
+    suspend fun setOemPushRegistration(
+        vendor: String,
         registrationId: String,
         packageName: String,
         deploymentFingerprint: String,

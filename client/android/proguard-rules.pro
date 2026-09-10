@@ -5,7 +5,12 @@
 
 # ── 应用入口 ──
 -keep class com.virjar.tk.android.MainActivity { *; }
+# 厂商推送组件经系统广播/服务反射拉起；未配置厂商的生成占位类同样保留可执行形态。
 -keep class com.virjar.tk.android.XiaomiPushReceiver { *; }
+-keep class com.virjar.tk.android.HuaweiPushService { *; }
+-keep class com.virjar.tk.android.HonorPushService { *; }
+-keep class com.virjar.tk.android.VivoPushReceiver { *; }
+-keep class com.virjar.tk.android.MeizuPushReceiver { *; }
 
 # ── Compose / Kotlin ──
 -keep class androidx.compose.** { *; }

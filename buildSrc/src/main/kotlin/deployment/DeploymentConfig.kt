@@ -32,7 +32,8 @@ data class DeploymentConfig(
     val androidSigning: AndroidSigningConfig? = null,
     /** 私有部署 TCP TLS 的公共证书；允许自签证书，绝不能放入私钥。 */
     val tcpTlsCertificatePem: String? = null,
-    val xiaomiPush: XiaomiPushConfig? = null,
+    /** 厂商推送部署（按厂商键控）；空表示该安装包不带任何厂商通道。 */
+    val oemPush: Map<String, OemPushVendorDeployment> = emptyMap(),
 ) {
     val serverUri: URI = URI(serverUrl)
     val sslEnabled: Boolean get() = serverUri.scheme.equals("https", ignoreCase = true)
@@ -51,8 +52,11 @@ data class DeploymentConfig(
         require(deployPort in 1..65535) { "Invalid deployPort" }
         require(deployUser.matches(deployUserPattern)) { "Invalid deployUser" }
         requireCanonicalDeployPath(deployPath)
-        require(xiaomiPush == null || client.displayName.length < 50) {
-            "Xiaomi push notification title (client.displayName) must be shorter than 50 characters"
+        require(oemPush.values.none { it.vendor == OemPushVendors.VIVO } || client.displayName.length <= 20) {
+            "vivo push notification title (client.displayName) must be at most 20 characters"
+        }
+        require(oemPush.isEmpty() || client.displayName.length < 50) {
+            "OEM push notification title (client.displayName) must be shorter than 50 characters"
         }
         require(sslPort in 1..65535) { "Invalid sslPort" }
         if (sslEnabled) {
@@ -82,21 +86,29 @@ data class DeploymentConfig(
             put("deployPath", deployPath)
             put("sslPort", sslPort)
             put("allowCustomServer", allowCustomServer)
-            putJsonObject("client") {
-                put("applicationId", client.applicationId)
-                put("androidApplicationId", client.androidApplicationId)
-                put("displayName", client.displayName)
-                put("desktopName", client.desktopName)
-                xiaomiPush?.let { push ->
-                    putJsonObject("xiaomiPush") {
-                        put("appId", push.appId)
-                        put("channelId", push.channelId)
-                        put("templateId", push.templateId)
-                        put("credentialsFile", push.credentialsFile.path)
-                        put("sdkFile", push.sdkFile.path)
-                        put("sdkSha256", push.sdkSha256)
+                putJsonObject("client") {
+                    put("applicationId", client.applicationId)
+                    put("androidApplicationId", client.androidApplicationId)
+                    put("displayName", client.displayName)
+                    put("desktopName", client.desktopName)
+                    if (oemPush.isNotEmpty()) {
+                        putJsonObject("oemPush") {
+                            for (vendor in OemPushVendors.ALL) {
+                                oemPush[vendor]?.let { push ->
+                                    putJsonObject(vendor) {
+                                        if (push.appId.isNotEmpty()) put("appId", push.appId)
+                                        if (push.appKey.isNotEmpty()) put("appKey", push.appKey)
+                                        if (push.channelId.isNotEmpty()) put("channelId", push.channelId)
+                                        if (push.templateId.isNotEmpty()) put("templateId", push.templateId)
+                                        if (push.category.isNotEmpty()) put("category", push.category)
+                                        put("credentialsFile", push.credentialsFile.path)
+                                        put("sdkFiles", push.sdkFiles.joinToString(",") { it.path })
+                                        put("sdkSha256", push.sdkSha256)
+                                    }
+                                }
+                            }
+                        }
                     }
-                }
                 // 非敏感快照只输出签名模式与证书路径；密码与私钥不进入任何产物或日志。
                 putJsonObject("androidSigning") {
                     androidSigning?.let {

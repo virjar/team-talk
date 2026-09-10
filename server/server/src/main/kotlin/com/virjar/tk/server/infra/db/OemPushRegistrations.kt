@@ -3,10 +3,14 @@ package com.virjar.tk.server.infra.db
 import org.jetbrains.exposed.sql.ReferenceOption
 import org.jetbrains.exposed.sql.Table
 
-/** One coalesced wake-up per authenticated Android installation; refresh preserves this FK. */
-internal object XiaomiPushRegistrations : Table("xiaomi_push_registrations") {
+/**
+ * 每个已认证 Android 安装一条合并唤醒记录；refresh 保留此 FK。
+ * vendor 是设备厂商通道标识（xiaomi/huawei/honor/oppo/vivo/meizu），由客户端按制造商注册。
+ */
+internal object OemPushRegistrations : Table("oem_push_registrations") {
     val refreshTokenHash = varchar("refresh_token_hash", 64)
         .references(Credentials.tokenHash, onDelete = ReferenceOption.CASCADE)
+    val vendor = varchar("vendor", 16)
     val registrationId = varchar("registration_id", 4096)
     val registrationHash = varchar("registration_hash", 64).uniqueIndex()
     val generation = varchar("generation", 36)
@@ -22,6 +26,6 @@ internal object XiaomiPushRegistrations : Table("xiaomi_push_registrations") {
     override val primaryKey = PrimaryKey(refreshTokenHash)
 
     init {
-        index("idx_xiaomi_push_due", false, nextAttemptAt)
+        index("idx_oem_push_due", false, nextAttemptAt)
     }
 }
