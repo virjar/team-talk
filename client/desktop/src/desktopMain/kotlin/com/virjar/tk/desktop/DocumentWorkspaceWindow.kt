@@ -8,6 +8,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -35,17 +39,30 @@ import com.virjar.tk.app.ui.AppTheme
 import com.virjar.tk.app.ui.screen.DocumentWorkspaceHost
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportGateway
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetMediaConfig
+import com.virjar.tk.desktop.media.DesktopSessionResources
 import com.virjar.tk.app.navigation.feature.document.DocumentWorkspaceFeature
 import com.virjar.tk.app.telemetry.ClientUiPage
 import com.virjar.tk.app.ui.component.LocalScreenHeaderLeadingInset
 import com.virjar.tk.protocol.model.User
 
 /** 处理文件选择、文件拖放与二进制剪贴板导入的 Desktop 文档外壳。 */
+/** 文档图片画廊窗口的请求状态（内测 T032）：desktop 以独立画廊窗口呈现文档图片。 */
+internal class DesktopDocumentGalleryRequest(
+    val items: List<com.virjar.tk.app.ui.component.GalleryItem>,
+    val initialIndex: Int,
+)
+
+internal object DesktopDocumentGalleryHost {
+    var request by mutableStateOf<DesktopDocumentGalleryRequest?>(null)
+}
+
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 internal fun DesktopDocumentWorkspaceHost(
     workspace: DocumentWorkspaceFeature,
     presentationGate: DesktopSessionPresentationGate,
+    resources: DesktopSessionResources,
+    telemetry: com.virjar.tk.app.telemetry.ClientUiTelemetrySink,
     embeddedAssetImports: EmbeddedAssetImportGateway,
     embeddedAssetMedia: EmbeddedAssetMediaConfig,
     mentionCandidates: List<User> = emptyList(),
@@ -90,17 +107,39 @@ internal fun DesktopDocumentWorkspaceHost(
                 target = dropTarget,
             ),
     ) {
-        DocumentWorkspaceHost(
-            workspace = workspace,
-            actionAdmission = presentationGate,
-            embeddedAssetImports = embeddedAssetImports,
-            embeddedAssetMedia = embeddedAssetMedia,
-            mentionCandidates = mentionCandidates,
-            onMentionProfileOpen = onMentionProfileOpen,
-            detached = detached,
-            mobileSingleDocumentMode = false,
-            onDetach = onDetach,
-        )
+        CompositionLocalProvider(
+            com.virjar.tk.app.ui.component.rich.LocalDocumentImageGalleryOpener provides { items, index ->
+                DesktopDocumentGalleryHost.request = DesktopDocumentGalleryRequest(items, index)
+            },
+        ) {
+            DocumentWorkspaceHost(
+                workspace = workspace,
+                actionAdmission = presentationGate,
+                embeddedAssetImports = embeddedAssetImports,
+                embeddedAssetMedia = embeddedAssetMedia,
+                mentionCandidates = mentionCandidates,
+                onMentionProfileOpen = onMentionProfileOpen,
+                onOpenImageGallery = { items, index ->
+                    DesktopDocumentGalleryHost.request = DesktopDocumentGalleryRequest(items, index)
+                },
+                detached = detached,
+                mobileSingleDocumentMode = false,
+                onDetach = onDetach,
+            )
+        }
+        // 文档图片的画廊窗口：与聊天画廊同一渲染链路（内测 T032）。
+        DesktopDocumentGalleryHost.request?.let { request ->
+            MediaGalleryWindow(
+                visible = true,
+                items = request.items,
+                initialIndex = request.initialIndex,
+                presentationGate = presentationGate,
+                resources = resources,
+                telemetry = telemetry,
+                onDismiss = { DesktopDocumentGalleryHost.request = null },
+            )
+        }
+
     }
 }
 
@@ -112,6 +151,8 @@ internal fun DesktopDocumentWorkspaceHost(
 internal fun DocumentWorkspaceWindow(
     nav: DesktopNav,
     presentationGate: DesktopSessionPresentationGate,
+    resources: DesktopSessionResources,
+    telemetry: com.virjar.tk.app.telemetry.ClientUiTelemetrySink,
     embeddedAssetImports: EmbeddedAssetImportGateway,
     embeddedAssetMedia: EmbeddedAssetMediaConfig,
     onClose: () -> Unit,
@@ -157,6 +198,8 @@ internal fun DocumentWorkspaceWindow(
                     DesktopDocumentWorkspaceHost(
                         workspace = nav.documents,
                         presentationGate = presentationGate,
+                        resources = resources,
+                        telemetry = telemetry,
                         embeddedAssetImports = embeddedAssetImports,
                         embeddedAssetMedia = embeddedAssetMedia,
                         mentionCandidates = contacts.mapNotNull { it.user },

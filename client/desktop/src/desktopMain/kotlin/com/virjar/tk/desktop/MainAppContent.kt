@@ -283,6 +283,8 @@ internal fun WindowScope.MainAppContent(
         DocumentWorkspaceWindow(
             nav = nav,
             presentationGate = presentationGate,
+            resources = resources,
+            telemetry = nav.telemetry,
             embeddedAssetImports = documentEmbeddedAssetImports,
             embeddedAssetMedia = documentEmbeddedAssetMedia,
             onClose = presentationGate.guard { nav.documentWindowVisible = false },
@@ -522,6 +524,8 @@ private fun RowScope.MainContentPane(
                 DesktopDocumentWorkspaceHost(
                     workspace = nav.documents,
                     presentationGate = presentationGate,
+                    resources = resources,
+                    telemetry = nav.telemetry,
                     embeddedAssetImports = documentEmbeddedAssetImports,
                     embeddedAssetMedia = documentEmbeddedAssetMedia,
                     mentionCandidates = documentMentionCandidates,

@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import com.virjar.tk.app.ui.component.GalleryItem
+import com.virjar.tk.app.ui.component.GalleryMediaType
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -497,6 +499,12 @@ internal fun DocumentBlockEditor(
     val displayGroups = remember(documentKey, blocks.size) {
         derivedStateOf { blocks.toDocumentDisplayGroups() }
     }
+    // 文档全部图片的画廊条目：点击图片按平台形态打开画廊（窗口/全屏），定位到所点项。
+    val galleryItems = remember(blocks.size) {
+        blocks.filterIsInstance<DocumentEmbeddedImageBlock>().map { block ->
+            GalleryItem(attachment = block.asset.attachment, type = GalleryMediaType.IMAGE, sourceAssetId = block.asset.assetId)
+        }
+    }
 
     LazyColumn(
         modifier = modifier.fillMaxSize().testTag("documents.editor.blocks"),
@@ -511,6 +519,7 @@ internal fun DocumentBlockEditor(
                     totalBlocks = blocks.size,
                     controller = controller,
                     embeddedAssetContent = embeddedAssetContent,
+                    galleryItems = galleryItems,
                     onMoveUp = ::moveBlock,
                     onMoveDown = ::moveBlock,
                     onDelete = ::deleteBlock,
@@ -528,6 +537,7 @@ internal fun DocumentBlockEditor(
                         richSnapshots = richSnapshots,
                         richSessions = richSessions,
                         embeddedAssetContent = embeddedAssetContent,
+                        galleryItems = galleryItems,
                         replaceBlock = ::replaceBlock,
                         moveBlock = ::moveBlock,
                         deleteBlock = ::deleteBlock,
@@ -628,6 +638,7 @@ private fun DocumentSingleBlockGroupEditor(
     richSessions: MutableMap<String, DocumentRichEditorSession>,
     mentionCandidates: List<User>,
     embeddedAssetContent: EmbeddedAssetMarkdownContent?,
+    galleryItems: List<GalleryItem>,
     replaceBlock: (DocumentMarkdownBlock) -> Unit,
     moveBlock: (Int, Int) -> Unit,
     deleteBlock: (Int) -> Unit,
@@ -721,7 +732,18 @@ private fun DocumentSingleBlockGroupEditor(
                 onMoveDown = { moveBlock(index, 1) },
                 onDelete = { deleteBlock(index) },
             )
-            is DocumentEmbeddedAssetBlock -> DocumentEmbeddedAssetBlockEditor(
+            is DocumentEmbeddedImageBlock -> DocumentEmbeddedImageBlockEditor(
+                block = block,
+                canMoveUp = index > 0,
+                canMoveDown = index < totalBlocks - 1,
+                embeddedAssetContent = embeddedAssetContent,
+                galleryItems = galleryItems,
+                galleryIndex = galleryItems.indexOfFirst { it.sourceAssetId == block.asset.assetId },
+                onMoveUp = { moveBlock(index, -1) },
+                onMoveDown = { moveBlock(index, 1) },
+                onDelete = { deleteBlock(index) },
+            )
+            is DocumentEmbeddedFileBlock -> DocumentEmbeddedFileBlockEditor(
                 block = block,
                 canMoveUp = index > 0,
                 canMoveDown = index < totalBlocks - 1,
@@ -752,6 +774,7 @@ private fun DocumentImageGridGroupEditor(
     totalBlocks: Int,
     controller: DocumentBlockEditorController,
     embeddedAssetContent: EmbeddedAssetMarkdownContent?,
+    galleryItems: List<GalleryItem>,
     onMoveUp: (Int, Int) -> Unit,
     onMoveDown: (Int, Int) -> Unit,
     onDelete: (Int) -> Unit,
@@ -769,13 +792,14 @@ private fun DocumentImageGridGroupEditor(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     rowEntries.forEach { (index, block) ->
-                        DocumentEmbeddedAssetBlockEditor(
+                        DocumentEmbeddedImageBlockEditor(
                             block = block,
                             modifier = Modifier.weight(1f),
                             canMoveUp = index > 0,
                             canMoveDown = index < totalBlocks - 1,
                             embeddedAssetContent = embeddedAssetContent,
-                            onActivate = {},
+                            galleryItems = galleryItems,
+                            galleryIndex = galleryItems.indexOfFirst { it.sourceAssetId == block.asset.assetId },
                             onMoveUp = { onMoveUp(index, -1) },
                             onMoveDown = { onMoveDown(index, 1) },
                             onDelete = { onDelete(index) },

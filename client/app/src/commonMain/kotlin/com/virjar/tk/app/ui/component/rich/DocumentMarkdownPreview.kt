@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import com.virjar.tk.app.ui.component.GalleryItem
+import com.virjar.tk.app.ui.component.GalleryMediaType
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -48,6 +50,12 @@ internal fun DocumentMarkdownPreview(
             assets = assets,
         )
     }
+    // 文档全部图片的画廊条目（内测 T032）：点击图片按平台形态打开画廊并定位。
+    val documentGalleryItems = remember(previewNodes) {
+        previewNodes.map { it.block }.filterIsInstance<DocumentEmbeddedImageBlock>().map { block ->
+            GalleryItem(attachment = block.asset.attachment, type = GalleryMediaType.IMAGE, sourceAssetId = block.asset.assetId)
+        }
+    }
     // 连续内嵌图片按行列网格并排（内测 T032），其余块逐块预览。
     val displayGroups = remember(previewNodes) {
         previewNodes.map { it.block }.toDocumentDisplayGroups()
@@ -60,6 +68,7 @@ internal fun DocumentMarkdownPreview(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             items(displayGroups, key = { group -> group.key }) { group ->
+                val openGallery = LocalDocumentImageGalleryOpener.current
                 when (group) {
                     is DocumentImageGridGroup -> Box(Modifier.fillMaxWidth().widthIn(max = 920.dp)) {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -71,7 +80,10 @@ internal fun DocumentMarkdownPreview(
                                     rowEntries.forEach { (_, block) ->
                                         Box(
                                             Modifier.weight(1f).clickable {
-                                                com.virjar.tk.app.ui.screen.DocumentImageFullscreenHost.show(block.asset) {}
+                                                openGallery?.invoke(
+                                                    documentGalleryItems,
+                                                    documentGalleryItems.indexOfFirst { it.sourceAssetId == block.asset.assetId },
+                                                )
                                             },
                                         ) {
                                             DocumentMarkdownBlockPreview(
@@ -95,7 +107,10 @@ internal fun DocumentMarkdownPreview(
                         val previewModifier = if (group.block is DocumentEmbeddedImageBlock) {
                             // 阅读视图点击图片直接全幅查看（内测 T032）。
                             Modifier.clickable {
-                                com.virjar.tk.app.ui.screen.DocumentImageFullscreenHost.show(group.block.asset) {}
+                                openGallery?.invoke(
+                                documentGalleryItems,
+                                documentGalleryItems.indexOfFirst { it.sourceAssetId == group.block.asset.assetId },
+                            )
                             }
                         } else {
                             Modifier

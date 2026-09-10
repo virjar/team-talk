@@ -44,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -159,16 +160,10 @@ internal fun shouldStartDocumentInPreview(
     creating: Boolean,
 ): Boolean = !canEdit || (mobileSingleDocumentMode && !creating)
 
-/**
- * 文档图片全屏查看覆盖层宿主（内测 T032）：大截图在文档渲染宽度下被缩小，
- * 点击图片进入全幅查看；覆盖层只在当前文档窗口内，Esc/点击背景/关闭按钮退出。
- */
-internal class DocumentImageFullscreenRequest(
-    val asset: EmbeddedAsset,
-    val onDismiss: () -> Unit,
-)
-
 /** 文档图片内容渲染：按内容列宽铺满、已知宽高比时按比例撑高，超长图限高后由 Fit 居中。 */
+/** 移动端文档编辑态上报（内测 T029）：编辑时宿主隐藏底部导航等壳层元素，给输入法与富文本菜单腾出空间。 */
+val LocalDocumentEditingActiveReporter = staticCompositionLocalOf<((Boolean) -> Unit)?> { null }
+
 @Composable
 internal fun DocumentDocumentImageContent(
     asset: EmbeddedAsset,
@@ -187,19 +182,6 @@ internal fun DocumentDocumentImageContent(
         contentAlignment = androidx.compose.ui.Alignment.Center,
     ) {
         imageContent(asset.attachment, Modifier.fillMaxSize())
-    }
-}
-
-internal object DocumentImageFullscreenHost {
-    var request by mutableStateOf<DocumentImageFullscreenRequest?>(null)
-        private set
-
-    fun show(asset: EmbeddedAsset, onDismiss: () -> Unit) {
-        request = DocumentImageFullscreenRequest(asset, onDismiss)
-    }
-
-    fun dismiss() {
-        request = null
     }
 }
 
@@ -283,6 +265,13 @@ internal fun DocumentTabEditor(
                 creating = tab.creating,
             )
         )
+    }
+    val reportEditingActive = LocalDocumentEditingActiveReporter.current
+    LaunchedEffect(previewMode, canEdit) {
+        reportEditingActive?.invoke(canEdit && !previewMode)
+    }
+    DisposableEffect(Unit) {
+        onDispose { reportEditingActive?.invoke(false) }
     }
     var historyDialog by remember(editorKey) { mutableStateOf(false) }
     var deleteDialog by remember(editorKey) { mutableStateOf(false) }
@@ -888,29 +877,6 @@ internal fun DocumentTabEditor(
             }
         }
     }
-    }
-    // 文档图片全屏查看覆盖层（内测 T032）：只在当前文档窗口内全幅展示。
-    DocumentImageFullscreenHost.request?.let { request ->
-        val media = embeddedAssetMedia
-        Box(
-            Modifier.fillMaxSize()
-                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.92f))
-                .clickable { DocumentImageFullscreenHost.dismiss() },
-            contentAlignment = Alignment.Center,
-        ) {
-            if (media != null) {
-                media.imageContent(
-                    request.asset.attachment,
-                    Modifier.fillMaxSize().padding(28.dp),
-                )
-            } else {
-                Text(request.asset.attachment.name, color = androidx.compose.ui.graphics.Color.White)
-            }
-            IconButton(
-                onClick = { DocumentImageFullscreenHost.dismiss() },
-                modifier = Modifier.align(Alignment.TopEnd).padding(16.dp).testTag("documents.image.fullscreen.close"),
-            ) { Icon(Icons.Filled.Close, "关闭全屏", tint = androidx.compose.ui.graphics.Color.White) }
-        }
     }
     }
 

@@ -2,6 +2,7 @@
 
 package com.virjar.tk.app.ui.component.rich
 
+import com.virjar.tk.app.ui.component.GalleryItem
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -45,6 +46,7 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -677,47 +679,15 @@ internal fun DocumentRawBlockEditor(
     }
 }
 
-@Composable
-internal fun DocumentEmbeddedAssetBlockEditor(
-    block: DocumentEmbeddedAssetBlock,
-    canMoveUp: Boolean,
-    canMoveDown: Boolean,
-    embeddedAssetContent: EmbeddedAssetMarkdownContent?,
-    onActivate: () -> Unit,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
-    onDelete: () -> Unit,
-    modifier: Modifier = Modifier.fillMaxWidth(),
-) {
-    when (block) {
-        // 图片走无容器渲染（内测 T032）：默认只显示图片本体，hover/菜单时浮出操作。
-        is DocumentEmbeddedImageBlock -> DocumentEmbeddedImageBlockEditor(
-            block = block,
-            canMoveUp = canMoveUp,
-            canMoveDown = canMoveDown,
-            embeddedAssetContent = embeddedAssetContent,
-            onMoveUp = onMoveUp,
-            onMoveDown = onMoveDown,
-            onDelete = onDelete,
-            modifier = modifier,
-        )
-        is DocumentEmbeddedFileBlock -> DocumentEmbeddedFileBlockEditor(
-            block = block,
-            canMoveUp = canMoveUp,
-            canMoveDown = canMoveDown,
-            embeddedAssetContent = embeddedAssetContent,
-            onActivate = onActivate,
-            onMoveUp = onMoveUp,
-            onMoveDown = onMoveDown,
-            onDelete = onDelete,
-            modifier = modifier,
-        )
-    }
-}
+/**
+ * 文档图片画廊开启回调：平台各自决定呈现形态（desktop 画廊窗口 / Android 全屏画廊），
+ * commonMain 只声明意图（内测 T032）。
+ */
+val LocalDocumentImageGalleryOpener = staticCompositionLocalOf<((items: List<GalleryItem>, index: Int) -> Unit)?> { null }
 
 /**
  * 文档内嵌图片块（内测 T032 重构）：文档以内容展示为核心——默认不渲染卡片容器与
- * 操作头栏，只在 hover 时浮出操作工具条；点击图片进入全幅查看。
+ * 操作头栏，只在 hover 时浮出操作工具条；点击图片打开平台画廊（全屏/窗口）。
  */
 @Composable
 internal fun DocumentEmbeddedImageBlockEditor(
@@ -725,6 +695,8 @@ internal fun DocumentEmbeddedImageBlockEditor(
     canMoveUp: Boolean,
     canMoveDown: Boolean,
     embeddedAssetContent: EmbeddedAssetMarkdownContent?,
+    galleryItems: List<GalleryItem>,
+    galleryIndex: Int,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onDelete: () -> Unit,
@@ -732,10 +704,11 @@ internal fun DocumentEmbeddedImageBlockEditor(
 ) {
     var hovered by remember { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
+    val openGallery = LocalDocumentImageGalleryOpener.current
     Box(
         modifier
             .testTag("documents.editor.asset.image.${block.asset.assetId}")
-            .clickable { com.virjar.tk.app.ui.screen.DocumentImageFullscreenHost.show(block.asset) {} }
+            .clickable { openGallery?.invoke(galleryItems, galleryIndex) }
             .pointerInput(Unit) {
                 awaitPointerEventScope {
                     while (true) {
@@ -791,7 +764,7 @@ internal fun DocumentEmbeddedImageBlockEditor(
 }
 
 @Composable
-private fun DocumentEmbeddedFileBlockEditor(
+internal fun DocumentEmbeddedFileBlockEditor(
     block: DocumentEmbeddedFileBlock,
     canMoveUp: Boolean,
     canMoveDown: Boolean,

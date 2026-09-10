@@ -115,6 +115,9 @@ internal fun HomeScreen(
         TabIcon(Icons.Filled.Settings, Icons.Outlined.Settings, "设置"),
     )
 
+    // 文档编辑模式（内测 T029）：编辑态隐藏底部导航，把整屏让给编辑器/输入法。
+    val documentEditingActive = remember { mutableStateOf(false) }
+
     Scaffold(
         modifier = Modifier.testTag("main.home"),
         topBar = {
@@ -134,6 +137,7 @@ internal fun HomeScreen(
             }
         },
         bottomBar = {
+            if (documentEditingActive.value) return@Scaffold
             NavigationBar {
                 tabIcons.forEachIndexed { index, tab ->
                     val selected = selectedTab == index
@@ -214,6 +218,7 @@ internal fun HomeScreen(
                     )
                 }
                 MainTab.DOCUMENTS -> AndroidDocumentWorkspaceHost(
+                    onEditingActive = { documentEditingActive.value = it },
                     dataState = dataState,
                     resourceOwner = resourceOwner,
                     launchAdmittedAction = launchAdmittedAction,

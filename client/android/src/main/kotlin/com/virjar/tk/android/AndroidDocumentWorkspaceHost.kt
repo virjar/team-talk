@@ -8,7 +8,10 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import com.virjar.tk.app.ui.component.GalleryItem
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalContext
 import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
@@ -26,6 +29,8 @@ internal fun AndroidDocumentWorkspaceHost(
     launchAdmittedAction: (suspend () -> Unit) -> Boolean,
     mobileExitCoordinator: MobileDocumentExitCoordinator,
     onExitDocuments: () -> Unit,
+    /** 文档进入/退出编辑态（内测 T029）：宿主据此隐藏底部导航等壳层元素。 */
+    onEditingActive: (Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current
     val uiScope = rememberCoroutineScope()
@@ -118,6 +123,8 @@ internal fun AndroidDocumentWorkspaceHost(
 
     val mentionCandidates by dataState.contactViewModel.contacts.collectAsState()
 
+    // 文档图片点击 → 全屏画廊 Dialog（内测 T032）：Android 以全屏形态呈现，定位到所点图片。
+    var documentGallery by remember { mutableStateOf<DocumentGalleryRequest?>(null) }
     DocumentWorkspaceHost(
         workspace = dataState.documents,
         actionAdmission = dataState.uiActionAdmission,
@@ -127,5 +134,27 @@ internal fun AndroidDocumentWorkspaceHost(
         embeddedAssetMedia = media,
         onExitDocuments = onExitDocuments,
         mentionCandidates = mentionCandidates.mapNotNull { it.user },
+        onOpenImageGallery = { items, index ->
+            documentGallery = DocumentGalleryRequest(items, index)
+        },
+        onMobileEditingActive = onEditingActive,
     )
+
+    documentGallery?.let { request ->
+        AndroidMediaGalleryDialog(
+            visible = true,
+            items = request.items,
+            initialIndex = request.initialIndex,
+            onDismiss = { documentGallery = null },
+            mediaSession = mediaResources.mediaSession,
+            telemetry = dataState.telemetry,
+            onSaveCurrent = { attachment -> fileDownloads.exportToUserLocation(attachment) },
+        )
+    }
 }
+
+/** 文档图片画廊的打开请求（内测 T032）。 */
+private data class DocumentGalleryRequest(
+    val items: List<GalleryItem>,
+    val initialIndex: Int,
+)

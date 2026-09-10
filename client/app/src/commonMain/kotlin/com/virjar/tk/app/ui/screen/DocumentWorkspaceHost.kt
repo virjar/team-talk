@@ -30,6 +30,10 @@ fun DocumentWorkspaceHost(
     embeddedAssetMedia: EmbeddedAssetMediaConfig? = null,
     mentionCandidates: List<User> = emptyList(),
     onMentionProfileOpen: ((String) -> Unit)? = null,
+    /** 文档图片点击后的画廊呈现（内测 T032）：desktop 画廊窗口 / Android 全屏画廊。 */
+    onOpenImageGallery: ((items: List<com.virjar.tk.app.ui.component.GalleryItem>, index: Int) -> Unit)? = null,
+    /** 移动端文档进入/退出编辑态上报（内测 T029）：宿主隐藏底部导航等壳层元素。 */
+    onMobileEditingActive: ((Boolean) -> Unit)? = null,
 ) {
     CompositionLocalProvider(
         LocalEmbeddedAssetImportGateway provides embeddedAssetImports,
@@ -38,6 +42,8 @@ fun DocumentWorkspaceHost(
             candidates = mentionCandidates,
             onMentionProfileOpen = onMentionProfileOpen ?: {},
         ),
+        com.virjar.tk.app.ui.component.rich.LocalDocumentImageGalleryOpener provides onOpenImageGallery,
+        com.virjar.tk.app.ui.screen.LocalDocumentEditingActiveReporter provides onMobileEditingActive,
     ) {
     DocumentWorkspaceScreen(
         shareToChat = workspace.shareToChat,
