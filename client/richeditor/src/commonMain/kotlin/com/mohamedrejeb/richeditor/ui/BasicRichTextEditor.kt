@@ -37,6 +37,8 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import com.mohamedrejeb.richeditor.clipboard.ClipboardEventEffect
 import com.mohamedrejeb.richeditor.clipboard.createRichTextClipboardManager
+import com.mohamedrejeb.richeditor.model.RichSpan
+import com.mohamedrejeb.richeditor.model.RichSpanStyle
 import com.mohamedrejeb.richeditor.model.RichTextState
 import kotlinx.coroutines.CoroutineScope
 
@@ -281,7 +283,10 @@ public fun BasicRichTextEditor(
     // observed through the field's interactionSource (the same channel the text-indicator
     // adjustment uses), so token/link hit-testing works on desktop without pass games.
     val currentOnLinkClick by rememberUpdatedState(onLinkClick)
-    LaunchedEffect(interactionSource, state) {
+    // [TT] Hit-tested position shared with the hover-cursor logic below.
+    val lastPointerPosition = remember { mutableStateOf(Offset.Zero) }
+    val editorTextLayout = remember { mutableStateOf<TextLayoutResult?>(null) }
+    LaunchedEffect(interactionSource, state, editorTextLayout) {
         if (onLinkClick == null) return@LaunchedEffect
         var pressPosition: Offset? = null
         interactionSource.interactions.collect { interaction ->
@@ -291,12 +296,15 @@ public fun BasicRichTextEditor(
                     val position = pressPosition
                     pressPosition = null
                     if (position != null) {
-                        val token = state.getTokenByOffset(position)
-                        when {
-                            token != null -> currentOnLinkClick?.invoke("mention://${token.id}")
-                            else -> state.getLinkByOffset(position)?.let { url ->
-                                currentOnLinkClick?.invoke(url)
-                            }
+                        lastPointerPosition.value = position
+                        when (val hit = hitTestInteractiveSpan(state, position, editorTextLayout.value)) {
+                            is InteractiveSpanHit.Token ->
+                                currentOnLinkClick?.invoke("mention://${hit.token.id}")
+                            is InteractiveSpanHit.Link ->
+                                state.getLinkByOffset(position)?.let { url ->
+                                    currentOnLinkClick?.invoke(url)
+                                }
+                            InteractiveSpanHit.None -> {}
                         }
                     }
                 }
@@ -310,7 +318,6 @@ public fun BasicRichTextEditor(
     // (click to view profile) instead of the text I-beam; http links show the hand cursor;
     // plain body text keeps the text caret.
     val hoverPointerIcon = remember { mutableStateOf(PointerIcon.Text) }
-    val editorTextLayout = remember { mutableStateOf<TextLayoutResult?>(null) }
 
     CompositionLocalProvider(LocalClipboard provides richClipboardManager) {
         // Capture position on the innerTextField (the actual text content composable),
@@ -384,10 +391,11 @@ public fun BasicRichTextEditor(
                                     val event = awaitPointerEvent()
                                     val position = event.changes.first().position
                                     val exited = event.type == PointerEventType.Exit
+                                    lastPointerPosition.value = position
                                     hoverPointerIcon.value = when {
                                         exited -> PointerIcon.Text
-                                        state.isToken(position) -> PointerIcon.Default
-                                        state.isLink(position) -> PointerIcon.Hand
+                                        hitTestInteractiveSpan(state, position, editorTextLayout.value) != null ->
+                                            PointerIcon.Default
                                         isPositionOnTextInputLine(position, editorTextLayout.value) ->
                                             PointerIcon.Text
                                         else -> PointerIcon.Default
@@ -482,6 +490,69 @@ private fun isPositionOnTextInputLine(position: Offset, layout: TextLayoutResult
     val line = runCatching { layout.getLineForVerticalPosition(position.y) }.getOrNull()
         ?: return false
     return position.y <= layout.getLineBottom(line)
+}
+
+/** 命中结果：Token（携带 token 定义）或普通链接。 */
+private sealed interface InteractiveSpanHit {
+    data class Token(val token: RichSpanStyle.Token) : InteractiveSpanHit
+    data object Link : InteractiveSpanHit
+    data object None : InteractiveSpanHit
+}
+
+/**
+ * [TT] Interactive span hit-testing with geometric verification: getRichSpanByOffset clamps
+ * far-away coordinates to the nearest character (the field's caret-placement semantics), so
+ * a press/hover well outside a token/link span must be rejected by checking that the
+ * position actually falls inside the span's laid-out line rects.
+ */
+private fun hitTestInteractiveSpan(
+    state: RichTextState,
+    position: Offset,
+    layout: TextLayoutResult?,
+): InteractiveSpanHit {
+    var span: RichSpan? = state.getRichSpanByOffset(position)
+    while (
+        span != null &&
+        span.richSpanStyle !is RichSpanStyle.Token &&
+        span.richSpanStyle !is RichSpanStyle.Link
+    ) {
+        span = span.parent
+    }
+    span ?: return InteractiveSpanHit.None
+    if (layout != null && !isPositionInSpanRects(position, layout, span)) {
+        return InteractiveSpanHit.None
+    }
+    return when (val style = span.richSpanStyle) {
+        is RichSpanStyle.Token -> InteractiveSpanHit.Token(style)
+        is RichSpanStyle.Link -> InteractiveSpanHit.Link
+        else -> InteractiveSpanHit.None
+    }
+}
+
+private fun isPositionInSpanRects(
+    position: Offset,
+    layout: TextLayoutResult,
+    span: RichSpan,
+): Boolean {
+    val start = span.textRange.min.coerceIn(0, layout.layoutInput.text.length)
+    val end = span.textRange.max.coerceIn(start, layout.layoutInput.text.length)
+    val startLine = layout.getLineForOffset(start)
+    val endLine = layout.getLineForOffset(end)
+    if (position.y < layout.getLineTop(startLine) || position.y > layout.getLineBottom(endLine)) {
+        return false
+    }
+    val line = layout.getLineForVerticalPosition(position.y)
+    val left = if (line == startLine) {
+        layout.getHorizontalPosition(start, usePrimaryDirection = true)
+    } else {
+        0f
+    }
+    val right = if (line == endLine) {
+        layout.getHorizontalPosition(end, usePrimaryDirection = true)
+    } else {
+        layout.size.width.toFloat()
+    }
+    return position.x >= left && position.x <= right
 }
 
 public typealias RichTextChangedListener = (RichTextState) -> Unit

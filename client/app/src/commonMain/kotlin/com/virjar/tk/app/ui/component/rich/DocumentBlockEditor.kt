@@ -518,7 +518,9 @@ internal fun DocumentBlockEditor(
                 is DocumentSingleBlockGroup -> {
                     val index = group.index
                     val block = group.block
-                    DocumentSingleBlockGroupEditor(                        block = block,
+                    DocumentSingleBlockGroupEditor(
+                        block = block,
+                        mentionCandidates = mentionCandidates,
                         index = index,
                         totalBlocks = blocks.size,
                         initialActiveKey = initialActiveKey,
