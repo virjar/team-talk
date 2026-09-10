@@ -240,9 +240,11 @@ internal fun ChatComposer(
         }
 
         val effectivePickVideo = media.onPickVideo
+        val effectiveCaptureVideo = media.onCaptureVideo
         // 编辑已发消息只允许修改文本 body，不制造“附件会并入原消息”的错觉。
         val hasAttachment = !editingSessionActive &&
-            (effectivePickImage != null || effectivePickFile != null || effectivePickVideo != null)
+            (effectivePickImage != null || effectivePickFile != null || effectivePickVideo != null ||
+                effectiveCaptureVideo != null)
         if (layout == ChatComposerLayout.WIDE) {
             WideComposerToolbar(
                 voiceMode = voiceMode,
@@ -265,6 +267,7 @@ internal fun ChatComposer(
                 onDismissAttach = { onShowAttachChange(false) },
                 onPickImage = effectivePickImage,
                 onPickVideo = effectivePickVideo,
+                onCaptureVideo = effectiveCaptureVideo,
                 onPickFile = effectivePickFile,
                 onPickDocument = media.onPickDocument,
                 onPickGroupFile = media.onPickGroupFile,
@@ -335,6 +338,7 @@ internal fun ChatComposer(
                 onDismissAttach = { onShowAttachChange(false) },
                 onPickImage = effectivePickImage,
                 onPickVideo = effectivePickVideo,
+                onCaptureVideo = effectiveCaptureVideo,
                 onPickFile = effectivePickFile,
                 onPickDocument = media.onPickDocument,
                 onPickGroupFile = media.onPickGroupFile,

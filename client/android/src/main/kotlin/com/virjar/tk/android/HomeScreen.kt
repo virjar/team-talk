@@ -49,7 +49,11 @@ internal fun HomeScreen(
     val processOwner = androidx.compose.ui.platform.LocalContext.current.applicationContext as TeamTalkApp
     val pushSettings = processOwner.oemPush
     var showNotifications by remember { mutableStateOf(pushSettings.needsConsent) }
+    var showAppUpgrade by remember { mutableStateOf(false) }
     if (showNotifications) AndroidOemPushDialog(pushSettings) { showNotifications = false }
+    if (showAppUpgrade) {
+        AndroidUpgradeDialog(serverBaseUrl = BuildConfig.SERVER_BASE_URL) { showAppUpgrade = false }
+    }
     val actionAdmission = dataState.uiActionAdmission
     var homeTab by rememberSaveable { mutableIntStateOf(0) }
     val documentReference by requestedDocument.collectAsState()
@@ -237,6 +241,7 @@ internal fun HomeScreen(
                     onDeviceManagement = actionAdmission.guard(onDevices),
                     onBlacklist = actionAdmission.guard(onBlacklist),
                     onLocalStorage = actionAdmission.guard(onLocalStorage),
+                    onCheckAppUpgrade = { showAppUpgrade = true },
                     onNotificationSettings = if (pushSettings.available) {
                         actionAdmission.guard { showNotifications = true }
                     } else null,

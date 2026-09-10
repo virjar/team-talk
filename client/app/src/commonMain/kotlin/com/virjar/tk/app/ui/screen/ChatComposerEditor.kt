@@ -270,6 +270,7 @@ internal fun ComposerAttachmentAction(
     onDismiss: () -> Unit,
     onPickImage: (() -> Unit)?,
     onPickVideo: (() -> Unit)?,
+    onCaptureVideo: (() -> Unit)? = null,
     onPickFile: (() -> Unit)?,
     onPasteAsset: (() -> Boolean)?,
     compact: Boolean = false,
@@ -298,6 +299,12 @@ internal fun ComposerAttachmentAction(
                     {
                         onDismiss()
                         pick()
+                    }
+                },
+                onCaptureVideo = onCaptureVideo?.let { capture ->
+                    {
+                        onDismiss()
+                        capture()
                     }
                 },
                 onPickFile = {

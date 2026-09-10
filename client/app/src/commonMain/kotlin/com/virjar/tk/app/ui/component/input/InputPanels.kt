@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.OndemandVideo
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -140,6 +141,7 @@ private fun EmojiCell(
 fun AttachmentPanel(
     onPickImage: () -> Unit,
     onPickVideo: (() -> Unit)?,
+    onCaptureVideo: (() -> Unit)? = null,
     onPickFile: () -> Unit,
     onPasteAsset: (() -> Unit)?,
     onDismiss: () -> Unit,
@@ -152,6 +154,9 @@ fun AttachmentPanel(
         add(AttachmentPanelAction(Icons.Filled.Image, "图片", CHAT_ATTACHMENT_IMAGE_TEST_TAG, onPickImage))
         onPickVideo?.let {
             add(AttachmentPanelAction(Icons.Filled.OndemandVideo, "视频", CHAT_ATTACHMENT_VIDEO_TEST_TAG, it))
+        }
+        onCaptureVideo?.let {
+            add(AttachmentPanelAction(Icons.Filled.PhotoCamera, "拍摄视频", "chat.attach.captureVideo", it))
         }
         onPickDocument?.let {
             add(AttachmentPanelAction(Icons.AutoMirrored.Filled.InsertDriveFile, "文档", "chat.attach.document", it))

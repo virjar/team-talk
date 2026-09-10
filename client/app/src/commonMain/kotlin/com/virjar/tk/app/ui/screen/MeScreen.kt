@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -45,6 +46,8 @@ fun MeScreen(
     onDeviceManagement: () -> Unit = {},
     onBlacklist: () -> Unit = {},
     onLocalStorage: (() -> Unit)? = null,
+    /** Android 专属：应用内检查并安装升级（内测 T024）。 */
+    onCheckAppUpgrade: (() -> Unit)? = null,
     onNotificationSettings: (() -> Unit)? = null,
     buildInfoText: String = "",
     modifier: Modifier = Modifier,
@@ -137,6 +140,15 @@ fun MeScreen(
                         description = "整理当前账号的数据库空间",
                         onClick = onLocalStorage,
                         tag = "settings.storage",
+                    )
+                }
+                if (onCheckAppUpgrade != null) {
+                    SettingsEntryRow(
+                        icon = Icons.Filled.SystemUpdate,
+                        title = "检查更新",
+                        description = "下载并安装最新版本",
+                        onClick = onCheckAppUpgrade,
+                        tag = "settings.upgrade",
                     )
                 }
                 if (onNotificationSettings != null) {

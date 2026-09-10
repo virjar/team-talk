@@ -3,6 +3,7 @@ package com.virjar.tk.android
 import android.Manifest
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
+import android.net.Uri
 import android.os.Build
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -335,84 +336,112 @@ internal fun AndroidChatScreen(
         embeddedAssetSelector.pickFile = { filePicker.launch(arrayOf("*/*")) }
     }
 
-    // ── 视频选择器 ──
-    val videoPicker = rememberAndroidVisualMediaPicker(ActivityResultContracts.PickVisualMedia.VideoOnly) { uri ->
-        if (uri != null) {
-            launchAdmittedAction {
-                isUploading = true
-                var selected: PreparedMedia? = null
-                try {
-                    telemetry.recordMedia(
-                        ClientUiPage.CHAT,
-                        ClientMediaKind.VIDEO,
-                        MediaOperation.UPLOAD,
-                        ClientActionOutcome.STARTED,
-                    )
-                    selected = MediaHelper.prepareSelectedMedia(
-                        context,
-                        uri,
-                        mediaSession = mediaSession,
-                    )
-                    val selectedFile = selected.file
-                    // 服务端生成缩略图和元数据；字段缺失时再回退本地 MediaMetadataRetriever。
-                    val up = MediaHelper.uploadWithMeta(
-                        selectedFile,
-                        selected.fileName,
-                        selected.contentType,
-                        mediaSession,
-                    )
-                    val attachment = up.file
-                    var w = up.width
-                    var h = up.height
-                    var duration = up.durationSec ?: 0
-                    var thumbnail = up.thumbnail
-                    if (w == 0 || thumbnail == null) {
-                        val local = withContext(Dispatchers.IO) { MediaHelper.getVideoMetadata(context, uri) }
-                        duration = local?.first ?: duration
-                        w = local?.second ?: w
-                        h = local?.third ?: h
-                        if (thumbnail == null) {
-                            withContext(Dispatchers.IO) {
-                                MediaHelper.extractVideoThumbnail(
-                                    context,
-                                    selectedFile,
-                                    mediaSession = mediaSession,
-                                )
-                            }
-                                ?.let { thumbnailFile ->
-                                    try {
-                                        thumbnail = MediaHelper.uploadFile(
-                                            thumbnailFile,
-                                            "thumb.jpg",
-                                            "image/jpeg",
-                                            mediaSession,
-                                        )
-                                    } finally {
-                                        thumbnailFile.delete()
-                                    }
-                                }
+    // ── 视频选择器 / 相机直录（内测 T022）──
+
+    fun sendVideoFromUri(uri: Uri) {
+        launchAdmittedAction {
+            isUploading = true
+            var selected: PreparedMedia? = null
+            try {
+                telemetry.recordMedia(
+                    ClientUiPage.CHAT,
+                    ClientMediaKind.VIDEO,
+                    MediaOperation.UPLOAD,
+                    ClientActionOutcome.STARTED,
+                )
+                selected = MediaHelper.prepareSelectedMedia(
+                    context,
+                    uri,
+                    mediaSession = mediaSession,
+                )
+                val selectedFile = selected.file
+                // 服务端生成缩略图和元数据；字段缺失时再回退本地 MediaMetadataRetriever。
+                val up = MediaHelper.uploadWithMeta(
+                    selectedFile,
+                    selected.fileName,
+                    selected.contentType,
+                    mediaSession,
+                )
+                val attachment = up.file
+                var w = up.width
+                var h = up.height
+                var duration = up.durationSec ?: 0
+                var thumbnail = up.thumbnail
+                if (w == 0 || thumbnail == null) {
+                    val local = withContext(Dispatchers.IO) { MediaHelper.getVideoMetadata(context, uri) }
+                    duration = local?.first ?: duration
+                    w = local?.second ?: w
+                    h = local?.third ?: h
+                    if (thumbnail == null) {
+                        withContext(Dispatchers.IO) {
+                            MediaHelper.extractVideoThumbnail(
+                                context,
+                                selectedFile,
+                                mediaSession = mediaSession,
+                            )
                         }
+                            ?.let { thumbnailFile ->
+                                try {
+                                    thumbnail = MediaHelper.uploadFile(
+                                        thumbnailFile,
+                                        "thumb.jpg",
+                                        "image/jpeg",
+                                        mediaSession,
+                                    )
+                                } finally {
+                                    thumbnailFile.delete()
+                                }
+                            }
                     }
-                    currentCoroutineContext().ensureActive()
-                    viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.VIDEO.code, System.currentTimeMillis(), body = VideoBody(attachment, duration, w, h, thumbnail)))
-                    telemetry.recordMedia(
-                        ClientUiPage.CHAT,
-                        ClientMediaKind.VIDEO,
-                        MediaOperation.UPLOAD,
-                        ClientActionOutcome.SUCCEEDED,
-                    )
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (error: Exception) {
-                    actionAdmission.runIfOpen {
-                        reportMediaFailure(ClientMediaKind.VIDEO, MediaOperation.UPLOAD, error)
-                    }
-                } finally {
-                    selected?.delete()
-                    actionAdmission.runIfOpen { isUploading = false }
                 }
+                currentCoroutineContext().ensureActive()
+                viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.VIDEO.code, System.currentTimeMillis(), body = VideoBody(attachment, duration, w, h, thumbnail)))
+                telemetry.recordMedia(
+                    ClientUiPage.CHAT,
+                    ClientMediaKind.VIDEO,
+                    MediaOperation.UPLOAD,
+                    ClientActionOutcome.SUCCEEDED,
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                actionAdmission.runIfOpen {
+                    reportMediaFailure(ClientMediaKind.VIDEO, MediaOperation.UPLOAD, error)
+                }
+            } finally {
+                selected?.delete()
+                actionAdmission.runIfOpen { isUploading = false }
             }
         }
+    }
+
+    val videoPicker = rememberAndroidVisualMediaPicker(ActivityResultContracts.PickVisualMedia.VideoOnly) { uri ->
+        if (uri != null) sendVideoFromUri(uri)
+    }
+
+    /** 相机直录：录制的视频写入应用缓存，不落入系统相册，直接发送。 */
+    var pendingCaptureFile by remember { mutableStateOf<java.io.File?>(null) }
+    val videoCaptureLauncher = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CaptureVideo(),
+    ) { recorded ->
+        val target = pendingCaptureFile
+        pendingCaptureFile = null
+        if (recorded && target != null && target.length() > 0L) {
+            sendVideoFromUri(androidx.core.content.FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", target,
+            ))
+        } else {
+            target?.delete()
+        }
+    }
+
+    fun startVideoCapture() {
+        val directory = java.io.File(context.cacheDir, "teamtalk-media/captured").apply { mkdirs() }
+        val target = java.io.File(directory, "capture-${System.currentTimeMillis()}.mp4")
+        pendingCaptureFile = target
+        videoCaptureLauncher.launch(
+            androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", target),
+        )
     }
 
     fun startVoiceRecording() {
@@ -715,6 +744,7 @@ internal fun AndroidChatScreen(
                         null
                     },
                     onPickVideo = videoPicker,
+                    onCaptureVideo = { startVideoCapture() },
                     onVoiceModeEntered = { prepareVoiceMode() },
                     onVoiceRecord = { if (it) startVoice() else stopVoice() },
                     onVoiceRecordCancel = { cancelVoiceRecording() },

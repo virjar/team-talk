@@ -10,6 +10,8 @@
 <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 应用内升级：弹出系统安装器需要声明；系统会引导用户授予本应用的安装授权。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <application
         android:name="com.virjar.tk.android.TeamTalkApp"
         android:allowBackup="false"

@@ -25,6 +25,8 @@ data class ChatMediaConfig(
     val onPasteEmbeddedAsset: (() -> Boolean)? = null,
     /** 选择视频发送。null=附件面板不显示视频项。 */
     val onPickVideo: (() -> Unit)? = null,
+    /** 相机直录视频（内测 T022）；仅提供系统相机能力的平台为非 null。 */
+    val onCaptureVideo: (() -> Unit)? = null,
     /** 打开文档引用选择器（类型化办公对象引用）。null=不显示文档项。 */
     val onPickDocument: (() -> Unit)? = null,
     /** 打开当前群的群文件引用选择器。null 或非群聊=不显示群文件项。 */
