@@ -251,7 +251,8 @@ internal fun createServerModule(
     single<AttachmentCatalog> { get<FileStore>() }
     single<AttachmentRetirementStore> { get<FileStore>() }
     single<com.virjar.tk.server.domain.document.DocumentExportObjectSource> { get<FileStore>() }
-    single<com.virjar.tk.server.domain.document.DocumentExportGate> { com.virjar.tk.server.infra.db.AdminFeatureSettingsStore(get()) }
+    single { com.virjar.tk.server.infra.db.AdminFeatureSettingsStore(get()) }
+    single<com.virjar.tk.server.domain.document.DocumentExportGate> { get<com.virjar.tk.server.infra.db.AdminFeatureSettingsStore>() }
     single<MessageSearch> { get<SearchIndex>() }
     single<ClientTelemetryControlRepository> { ExposedClientTelemetryControlRepository(database = get()) }
     single<ClientTelemetryAdminAuditRepository> {
