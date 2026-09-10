@@ -1786,6 +1786,39 @@ public class RichTextState internal constructor(
         if (event.type != KeyEventType.KeyDown)
             return false
 
+        // [TT] Atomic tokens: Backspace/Delete at a token edge removes the whole token chip
+        // (+ the trailing space inserted by insertToken) in one edit, matching
+        // WeChat/DingTalk mention chip behavior.
+        if (!event.isMetaPressed && !event.isCtrlPressed && !event.isAltPressed) {
+            when (event.key) {
+                Key.Backspace -> if (selection.collapsed && selection.min > 0) {
+                    val range = tokenChipRangeEndingAt(selection.min)
+                    if (range != null) {
+                        onTextFieldValueChange(
+                            TextFieldValue(
+                                text = textFieldValue.text.removeRange(range.min, range.max),
+                                selection = TextRange(range.min),
+                            )
+                        )
+                        return true
+                    }
+                }
+                Key.Delete -> if (selection.collapsed && selection.min < textFieldValue.text.length) {
+                    val range = tokenChipRangeStartingAt(selection.min)
+                    if (range != null) {
+                        onTextFieldValueChange(
+                            TextFieldValue(
+                                text = textFieldValue.text.removeRange(range.min, range.max),
+                                selection = TextRange(range.min),
+                            )
+                        )
+                        return true
+                    }
+                }
+                else -> {}
+            }
+        }
+
         if (event.key != Key.Tab)
             return false
 
@@ -4227,6 +4260,39 @@ public class RichTextState internal constructor(
         val linkRichSpan = getLinkRichSpan(richSpan)
 
         return (linkRichSpan?.richSpanStyle as? RichSpanStyle.Link)?.url
+    }
+
+    /**
+     * [TT] WeChat/DingTalk-style atomic deletion: selects the whole token chip (plus the
+     * trailing space inserted by [insertToken]) at the given text index, or null when the
+     * span under the index is not a token. The text field then deletes the selection natively.
+     */
+    internal fun tokenChipRangeEndingAt(caret: Int): TextRange? =
+        tokenChipRange(getRichSpanByTextIndex(caret - 1, ignoreCustomFiltering = true), backward = true)
+
+    internal fun tokenChipRangeStartingAt(caret: Int): TextRange? =
+        tokenChipRange(getRichSpanByTextIndex(caret, ignoreCustomFiltering = true), backward = false)
+
+    private fun tokenChipRange(span: RichSpan?, backward: Boolean): TextRange? {
+        var current: RichSpan? = span
+        while (current != null && current.richSpanStyle !is RichSpanStyle.Token) {
+            current = current.parent
+        }
+        val tokenSpan = current ?: return null
+        var min = tokenSpan.textRange.min
+        var max = tokenSpan.textRange.max
+        val siblings = tokenSpan.parent?.children
+        val index = siblings?.indexOf(tokenSpan)?.takeIf { it >= 0 }
+        val neighbour = index?.let { siblings.getOrNull(if (backward) it + 1 else it - 1) }
+        if (
+            neighbour != null &&
+            neighbour.richSpanStyle is RichSpanStyle.Default &&
+            neighbour.children.isEmpty() &&
+            neighbour.text == " "
+        ) {
+            if (backward) max += 1 else min -= 1
+        }
+        return TextRange(min, max)
     }
 
     internal fun isLink(offset: Offset): Boolean {

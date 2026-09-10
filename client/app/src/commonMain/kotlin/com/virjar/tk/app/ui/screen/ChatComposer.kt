@@ -161,7 +161,7 @@ internal fun ChatComposer(
 
         // @ 补全层（内嵌展开于输入行上方）：按名字/uid 过滤候选，排除自己
         mentionQuery?.let { q ->
-            val candidates = filterMentionCandidates(mentionCandidates.orEmpty(), q, myUid)
+            val candidates = filterMentionCandidates(mentionCandidates.orEmpty(), q.text, myUid)
             if (candidates.isNotEmpty()) {
                 AutoCompleteOverlay(
                     title = "提及成员",

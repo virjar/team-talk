@@ -8,6 +8,8 @@ import com.virjar.tk.app.ui.component.input.filterMentionCandidates
 import com.virjar.tk.app.ui.component.input.pickMentionIntoRichState
 import com.virjar.tk.app.ui.component.rich.DocumentMarkdownBlockCodec
 import com.virjar.tk.app.ui.component.rich.RichEditorMarkdownCapability
+import com.virjar.tk.app.ui.component.rich.markdownWithEditorMentionTokens
+import com.virjar.tk.app.ui.component.rich.markdownWithMentionLinks
 import com.virjar.tk.protocol.model.User
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -54,15 +56,21 @@ class DocumentMentionCompletionTest {
     @Test
     fun `candidate filter excludes self and matches by name or uid`() {
         val termAl = detectMentionQuery(TextFieldValue("@al", TextRange(3)))
-        assertEquals(listOf("uid-alice"), filterMentionCandidates(users(), termAl, myUid = "uid-other").map { it.uid })
+        assertEquals(
+            listOf("uid-alice"),
+            filterMentionCandidates(users(), termAl?.text, myUid = "uid-other").map { it.uid },
+        )
 
         // 自己不在候选里
         val empty = detectMentionQuery(TextFieldValue("@", TextRange(1)))
-        assertEquals(listOf("uid-bob"), filterMentionCandidates(users(), empty, myUid = "uid-alice").map { it.uid })
+        assertEquals(
+            listOf("uid-bob"),
+            filterMentionCandidates(users(), empty?.text, myUid = "uid-alice").map { it.uid },
+        )
 
         val byUid = filterMentionCandidates(
             users(),
-            detectMentionQuery(TextFieldValue("@uid-bob", TextRange(8))),
+            detectMentionQuery(TextFieldValue("@uid-bob", TextRange(8)))?.text,
             myUid = null,
         )
         assertEquals(listOf(bob.uid), byUid.map { it.uid })
@@ -91,5 +99,16 @@ class DocumentMentionCompletionTest {
         val markdown = "> 引用 [Bob](mention://uid-bob) 到场"
         val encoded = DocumentMarkdownBlockCodec.encode(DocumentMarkdownBlockCodec.parse(markdown, emptyList()))
         assertTrue(encoded.contains("(mention://uid-bob)"), encoded)
+    }
+
+    @Test
+    fun `authority mention markdown converts to editor token syntax and back`() {
+        val authority = "你好 [@Alice](mention://uid-alice) 到场"
+        val editorForm = markdownWithEditorMentionTokens(authority)
+        assertTrue("[@Alice](trigger:mention:uid-alice)" in editorForm, editorForm)
+        assertEquals(authority, markdownWithMentionLinks(editorForm))
+        // 正文中的其他链接不受转换影响
+        val mixed = markdownWithEditorMentionTokens("看 [文档](https://example.com) 和 [@Bob](mention://uid-bob)")
+        assertTrue("(https://example.com)" in mixed && "(trigger:mention:uid-bob)" in mixed, mixed)
     }
 }

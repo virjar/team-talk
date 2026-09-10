@@ -1,5 +1,6 @@
 package com.mohamedrejeb.richeditor.ui
 
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
@@ -17,6 +18,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.positionInWindow
@@ -272,9 +277,9 @@ public fun BasicRichTextEditor(
         }
     }
 
-    // [TT] Document editors route mention:// link taps to the profile card. Presses are observed
-    // through the field's interactionSource (the same channel the text-indicator adjustment
-    // uses), so link hit-testing works on desktop without pointer-input pass games.
+    // [TT] Document editors route mention token/link taps to the profile card. Presses are
+    // observed through the field's interactionSource (the same channel the text-indicator
+    // adjustment uses), so token/link hit-testing works on desktop without pass games.
     val currentOnLinkClick by rememberUpdatedState(onLinkClick)
     LaunchedEffect(interactionSource, state) {
         if (onLinkClick == null) return@LaunchedEffect
@@ -286,7 +291,13 @@ public fun BasicRichTextEditor(
                     val position = pressPosition
                     pressPosition = null
                     if (position != null) {
-                        state.getLinkByOffset(position)?.let { url -> currentOnLinkClick?.invoke(url) }
+                        val token = state.getTokenByOffset(position)
+                        when {
+                            token != null -> currentOnLinkClick?.invoke("mention://${token.id}")
+                            else -> state.getLinkByOffset(position)?.let { url ->
+                                currentOnLinkClick?.invoke(url)
+                            }
+                        }
                     }
                 }
                 is PressInteraction.Cancel -> pressPosition = null
@@ -294,6 +305,10 @@ public fun BasicRichTextEditor(
             }
         }
     }
+
+    // [TT] Hand cursor over token/link spans in the editable surface, mirroring the
+    // read-only BasicRichText hover behavior so atomic mentions feel clickable.
+    val hoverPointerIcon = remember { mutableStateOf(PointerIcon.Default) }
 
     CompositionLocalProvider(LocalClipboard provides richClipboardManager) {
         // Capture position on the innerTextField (the actual text content composable),
@@ -350,6 +365,27 @@ public fun BasicRichTextEditor(
                     richTextState = state,
                     topPadding = with(density) { contentPadding.calculateTopPadding().toPx() },
                     startPadding = with(density) { contentPadding.calculateStartPadding(layoutDirection).toPx() },
+                )
+                .then(
+                    // [TT] Hand cursor over token/link spans so atomic mentions feel clickable
+                    // in the editable surface (mirrors BasicRichText's hover behavior).
+                    if (onLinkClick == null)
+                        Modifier
+                    else
+                        Modifier
+                            .pointerHoverIcon(hoverPointerIcon.value)
+                            .pointerInput(state) {
+                                awaitEachGesture {
+                                    val event = awaitPointerEvent()
+                                    val position = event.changes.first().position
+                                    val exited = event.type == PointerEventType.Exit
+                                    val interactive = !exited && (
+                                        state.isLink(position) || state.isToken(position)
+                                    )
+                                    hoverPointerIcon.value =
+                                        if (interactive) PointerIcon.Hand else PointerIcon.Default
+                                }
+                            }
                 )
                 .then(
                     if (!readOnly)

@@ -1,3 +1,5 @@
+@file:OptIn(com.mohamedrejeb.richeditor.annotation.ExperimentalRichTextApi::class)
+
 package com.virjar.tk.app.ui.component.rich
 
 import androidx.compose.foundation.BorderStroke
@@ -53,20 +55,48 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.mohamedrejeb.richeditor.model.RichTextState
+import com.mohamedrejeb.richeditor.model.trigger.Trigger
+import com.mohamedrejeb.richeditor.model.trigger.TriggerQuery
 import com.mohamedrejeb.richeditor.ui.BasicRichTextEditor
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import com.virjar.tk.app.ui.component.input.AutoCompleteOverlay
-import com.virjar.tk.app.ui.component.input.detectMentionQuery
-import com.virjar.tk.app.ui.component.input.filterMentionCandidates
 import com.virjar.tk.app.ui.component.input.mentionAutoCompleteItems
-import com.virjar.tk.app.ui.component.input.pickMentionIntoRichState
+import com.virjar.tk.app.ui.component.input.filterMentionCandidates
+import com.virjar.tk.app.ui.component.input.mentionDisplayName
 import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
 import com.virjar.tk.protocol.model.User
+
+/** 文档 @ 提及在编辑器内部使用的 Trigger id（Token 序列化会带上它）。 */
+internal const val DOCUMENT_MENTION_TRIGGER_ID = "mention"
+
+/**
+ * 文档正文以 `mention://uid` 为权威 Markdown；编辑器内部 Token 序列化为
+ * `trigger:mention:uid`。两组语法在块编辑器边界互转，保存/预览永远只见权威形态。
+ */
+private val MENTION_LINK_DESTINATION = Regex("""\]\(mention://([^)\s]+)\)""")
+private val MENTION_TOKEN_DESTINATION = Regex("""\]\(trigger:mention:([^)\s]+)\)""")
+
+/** 权威 Markdown → 编辑器内部形态（mention:// 转为 Token 语法）。 */
+internal fun markdownWithEditorMentionTokens(markdown: String): String =
+    markdown.replace(MENTION_LINK_DESTINATION, "](trigger:mention:$1)")
+
+/** 编辑器内部形态 → 权威 Markdown（Token 语法转回 mention://）。 */
+internal fun markdownWithMentionLinks(markdown: String): String =
+    markdown.replace(MENTION_TOKEN_DESTINATION, "](mention://$1)")
+
+/** 文档 @ 提及的 Trigger：`@` 触发、空白取消、词边界生效。Token 仅着主题色——
+ * 附加字重/背景会被 Markdown 序列化成粗体等包裹语法，污染权威正文。 */
+internal val DocumentMentionTrigger = Trigger(
+    id = DOCUMENT_MENTION_TRIGGER_ID,
+    char = '@',
+    style = { SpanStyle(color = it.linkColor) },
+)
 
 /**
  * RichTextState 限定在 UI 线程，因此它的 Markdown projection 必须在 UI 调度器上运行。
@@ -158,8 +188,9 @@ private fun DocumentRichMarkdownProjection(
 }
 
 /**
- * 文档块内的 @ 补全层：仅当编辑器持焦且光标处于 @ 查询上下文时出现；选中后把
- * mention 链接写回该块的 [state]。检测/过滤/回填与聊天输入器共用同一实现。
+ * 文档块内的 @ 补全层：Trigger 查询活跃（编辑器持焦且光标处于 @ 查询上下文）时出现；
+ * 选中候选以原子 Token（`insertToken`）写回该块的 [state]——退格整体删除、
+ * 悬停手型光标、点击打开资料卡。候选过滤与聊天共用同一实现。
  */
 @Composable
 private fun DocumentMentionCompleteLayer(
@@ -169,10 +200,10 @@ private fun DocumentMentionCompleteLayer(
     mentionCandidates: List<User>,
     modifier: Modifier = Modifier,
 ) {
-    if (!sessionReady || !editorFocused || mentionCandidates.isEmpty()) return
-    val field = TextFieldValue(state.annotatedString.text, state.selection)
-    val mentionQuery = detectMentionQuery(field) ?: return
-    val candidates = filterMentionCandidates(mentionCandidates, mentionQuery, myUid = null)
+    if (!sessionReady || mentionCandidates.isEmpty()) return
+    val triggerQuery = if (editorFocused) state.activeTriggerQuery else null
+    if (triggerQuery == null || triggerQuery.triggerId != DOCUMENT_MENTION_TRIGGER_ID) return
+    val candidates = filterMentionCandidates(mentionCandidates, triggerQuery.query, myUid = null)
     if (candidates.isEmpty()) return
     AutoCompleteOverlay(
         title = "提及成员",
@@ -180,7 +211,12 @@ private fun DocumentMentionCompleteLayer(
         modifier = modifier,
         onPick = { item ->
             candidates.find { it.uid == item.payload }?.let { user ->
-                pickMentionIntoRichState(state, mentionQuery, field.selection.min, user)
+                // 原子 Token：随后的退格/删除按整体处理，序列化回 mention:// 权威语法。
+                state.insertToken(
+                    triggerId = DOCUMENT_MENTION_TRIGGER_ID,
+                    id = user.uid,
+                    label = "@" + mentionDisplayName(user),
+                )
             }
         },
     )
@@ -228,7 +264,8 @@ internal fun DocumentRichRunEditor(
 
     LaunchedEffect(session) {
         if (!session.ready) {
-            state.setMarkdown(initialBlock.markdown)
+            runCatching { state.registerTrigger(DocumentMentionTrigger) }
+            state.setMarkdown(markdownWithEditorMentionTokens(initialBlock.markdown))
             withFrameNanos { }
             withFrameNanos { }
             session.normalizedBaseline = state.toMarkdown()
@@ -249,7 +286,10 @@ internal fun DocumentRichRunEditor(
                     leadingMarkdown = current.leadingMarkdown,
                     trailingMarkdown = current.trailingMarkdown,
                 )
-                else -> current.copy(markdown = requireNotNull(markdown), dirty = true)
+                else -> current.copy(
+                    markdown = markdownWithMentionLinks(requireNotNull(markdown)),
+                    dirty = true,
+                )
             }
         }
     }
@@ -261,7 +301,7 @@ internal fun DocumentRichRunEditor(
                     trailingMarkdown = block.trailingMarkdown,
                 ) as DocumentRichRun
             }
-            else block.copy(markdown = markdown, dirty = true)
+            else block.copy(markdown = markdownWithMentionLinks(markdown), dirty = true)
         )
     }
     LaunchedEffect(session.ready, pendingActivation, pendingFocus) {
@@ -401,7 +441,8 @@ private fun DocumentQuoteRichEditor(
     val focusRequester = remember(block.key) { FocusRequester() }
     LaunchedEffect(session) {
         if (!session.ready) {
-            state.setMarkdown(initialBlock.innerMarkdown)
+            runCatching { state.registerTrigger(DocumentMentionTrigger) }
+            state.setMarkdown(markdownWithEditorMentionTokens(initialBlock.innerMarkdown))
             withFrameNanos { }
             withFrameNanos { }
             session.normalizedBaseline = state.toMarkdown()
@@ -422,7 +463,10 @@ private fun DocumentQuoteRichEditor(
                     leadingMarkdown = current.leadingMarkdown,
                     trailingMarkdown = current.trailingMarkdown,
                 )
-                else -> current.copy(innerMarkdown = requireNotNull(markdown), dirty = true)
+                else -> current.copy(
+                    innerMarkdown = markdownWithMentionLinks(requireNotNull(markdown)),
+                    dirty = true,
+                )
             }
         }
     }
@@ -434,7 +478,7 @@ private fun DocumentQuoteRichEditor(
                     trailingMarkdown = block.trailingMarkdown,
                 ) as DocumentQuoteBlock
             }
-            else block.copy(innerMarkdown = markdown, dirty = true)
+            else block.copy(innerMarkdown = markdownWithMentionLinks(markdown), dirty = true)
         )
     }
     LaunchedEffect(session.ready, pendingActivation, pendingFocus) {

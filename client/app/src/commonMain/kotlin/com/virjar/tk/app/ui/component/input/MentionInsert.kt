@@ -17,10 +17,10 @@ fun mentionDisplayName(user: User): String = user.name.ifBlank { user.username.i
 /** 按查询词过滤候选：排除自己，名字/username/uid 大小写不敏感包含；查询为空时全量给出。 */
 fun filterMentionCandidates(
     candidates: List<User>,
-    query: MentionQuery?,
+    queryText: String?,
     myUid: String?,
 ): List<User> {
-    val term = query?.text.orEmpty().trim()
+    val term = queryText.orEmpty().trim()
     return candidates
         .filter { it.uid != myUid }
         .filter { u ->
