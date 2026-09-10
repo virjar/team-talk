@@ -201,9 +201,22 @@ private fun DocumentMentionCompleteLayer(
     modifier: Modifier = Modifier,
 ) {
     if (!sessionReady || mentionCandidates.isEmpty()) return
-    val triggerQuery = if (editorFocused) state.activeTriggerQuery else null
-    if (triggerQuery == null || triggerQuery.triggerId != DOCUMENT_MENTION_TRIGGER_ID) return
-    val candidates = filterMentionCandidates(mentionCandidates, triggerQuery.query, myUid = null)
+
+    // 弹层一旦显示就闩锁住查询：桌面端按下弹层行会让编辑器失焦，若随失焦即时隐藏，
+    // 行节点在抬起前被移出组合、点击手势被取消，onPick 永远不会执行。闩锁保证
+    // 按下→抬起全程行仍在组合中；插入成功或失焦超时（点击外的失焦）后清除。
+    var latchedQuery by remember(state) { mutableStateOf<TriggerQuery?>(null) }
+    val liveQuery = if (editorFocused) state.activeTriggerQuery else null
+    if (liveQuery != null) latchedQuery = liveQuery
+    LaunchedEffect(editorFocused) {
+        if (!editorFocused && latchedQuery != null) {
+            delay(400)
+            if (!editorFocused) latchedQuery = null
+        }
+    }
+    val activeQuery = liveQuery ?: latchedQuery
+    if (activeQuery == null || activeQuery.triggerId != DOCUMENT_MENTION_TRIGGER_ID) return
+    val candidates = filterMentionCandidates(mentionCandidates, activeQuery.query, myUid = null)
     if (candidates.isEmpty()) return
     AutoCompleteOverlay(
         title = "提及成员",
@@ -217,6 +230,7 @@ private fun DocumentMentionCompleteLayer(
                     id = user.uid,
                     label = "@" + mentionDisplayName(user),
                 )
+                latchedQuery = null
             }
         },
     )
