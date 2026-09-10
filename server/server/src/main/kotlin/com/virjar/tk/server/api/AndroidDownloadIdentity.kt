@@ -28,6 +28,7 @@ internal class AndroidDownloadSnapshot(
     val filename: String,
     val displayName: String?,
     val version: String?,
+    val channelKind: String?,
 ) : Closeable {
     val managed: Boolean get() = version != null
     val url: String get() = "/downloads/${if (managed) filename else ANDROID_DOWNLOAD_ALIAS}"
@@ -59,7 +60,7 @@ internal fun openAndroidDownload(downloads: File): AndroidDownloadSnapshot? {
         val hash = digest.digest().joinToString("") { "%02x".format(it) }
         if (receiptBytes == null) {
             check(!Files.exists(receiptFile.toPath(), NOFOLLOW_LINKS)) { "Android publication changed while reading" }
-            return AndroidDownloadSnapshot(channel, size, hash, "Android-${hash.take(12)}.apk", null, null)
+            return AndroidDownloadSnapshot(channel, size, hash, "Android-${hash.take(12)}.apk", null, null, channelKind = null)
         }
 
         val receipt = Json.parseToJsonElement(receiptBytes.toString(Charsets.UTF_8)).jsonObject
@@ -67,7 +68,8 @@ internal fun openAndroidDownload(downloads: File): AndroidDownloadSnapshot? {
         check(version.matches(Regex("(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)"))) { "Invalid publication version" }
         val files = receipt.getValue("files").jsonObject
         check(files.string(ANDROID_DOWNLOAD_ALIAS) == hash) { "Published Android APK checksum mismatch" }
-        val history = when (receipt["distributionKind"]?.jsonPrimitive?.content ?: "release") {
+        val kind = receipt["distributionKind"]?.jsonPrimitive?.content ?: "release"
+        val history = when (kind) {
             "release", "private-first" -> "v$version"
             "snapshot" -> {
                 val revision = receipt.getValue("desktopRevision").jsonPrimitive.int
@@ -97,7 +99,12 @@ internal fun openAndroidDownload(downloads: File): AndroidDownloadSnapshot? {
             "Published Android APK differs from the manifest's installation identity"
         }
         check(readDownloadMetadata(receiptFile).contentEquals(receiptBytes)) { "Android publication changed while reading" }
-        return AndroidDownloadSnapshot(channel, size, hash, "$desktopName-$version-${hash.take(12)}-android.apk", displayName, version)
+        return AndroidDownloadSnapshot(channel, size, hash, "$desktopName-$version-${hash.take(12)}-android.apk",
+            displayName, version, channelKind = when (kind) {
+                "release" -> "stable"
+                "private-first" -> "preview"
+                else -> kind
+            })
     } catch (failure: Throwable) {
         channel.close()
         throw failure

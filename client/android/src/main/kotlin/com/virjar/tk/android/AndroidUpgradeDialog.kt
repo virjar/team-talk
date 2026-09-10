@@ -99,7 +99,8 @@ internal fun AndroidUpgradeDialog(
                         Text("当前已是最新版本（$currentVersion）")
                     }
                     is AndroidUpgradeUiState.Available -> {
-                        Text("发现新版本 ${current.info.version}，当前版本 $currentVersion")
+                        val channelMark = current.info.channelLabel?.let { "（$it）" } ?: ""
+                        Text("发现新版本 ${current.info.version}$channelMark，当前版本 $currentVersion")
                         Spacer(Modifier.height(4.dp))
                         Text(
                             "下载完成后将弹出安装确认。",

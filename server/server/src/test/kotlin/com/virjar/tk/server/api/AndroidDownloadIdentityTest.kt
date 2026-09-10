@@ -37,6 +37,7 @@ class AndroidDownloadIdentityTest {
             val identity = Json.parseToJsonElement(metadata.bodyAsText()).jsonObject
             assertEquals("TK苹果版", identity.getValue("displayName").jsonPrimitive.content)
             assertEquals("0.0.1", identity.getValue("version").jsonPrimitive.content)
+            assertEquals("snapshot", identity.getValue("channel").jsonPrimitive.content)
             assertEquals(name, identity.getValue("filename").jsonPrimitive.content)
             assertEquals("/downloads/$name", identity.getValue("url").jsonPrimitive.content)
             for (url in listOf("/downloads/$name", "/downloads/$ANDROID_DOWNLOAD_ALIAS")) {
@@ -64,6 +65,7 @@ class AndroidDownloadIdentityTest {
     fun `old identity URLs cannot return a newer same version package`() = withDownloads { downloads ->
         publishFixture(downloads, "old-package")
         val oldName = openAndroidDownload(downloads)!!.use { it.filename }
+        assertEquals("stable", openAndroidDownload(downloads)!!.use { it.channelKind })
         testApplication {
             application { routing { clientDownloadRoutes(downloads) } }
             assertEquals("old-package", client.get("/downloads/$oldName").bodyAsText())
@@ -84,6 +86,7 @@ class AndroidDownloadIdentityTest {
             application { routing { clientDownloadRoutes(downloads) } }
             val metadata = Json.parseToJsonElement(client.get("/downloads/android.json").bodyAsText()).jsonObject
             assertEquals("null", metadata.getValue("version").toString())
+            assertNull(metadata["channel"])
             assertEquals("/downloads/$ANDROID_DOWNLOAD_ALIAS", metadata.getValue("url").jsonPrimitive.content)
             val response = client.get("/downloads/$ANDROID_DOWNLOAD_ALIAS")
             assertEquals("legacy-package", response.bodyAsText())

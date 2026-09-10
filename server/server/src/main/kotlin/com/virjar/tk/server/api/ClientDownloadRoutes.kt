@@ -39,6 +39,8 @@ internal fun Route.clientDownloadRoutes(downloadsDir: File) {
                 call.respondText(buildJsonObject {
                     put("displayName", download.displayName ?: "Android")
                     put("version", download.version)
+                    // 发布通道标记（T030）：stable/preview/snapshot；无收据的历史目录不声明通道。
+                    download.channelKind?.let { put("channel", it) }
                     put("filename", download.filename)
                     put("url", download.url)
                 }.toString(), ContentType.Application.Json)

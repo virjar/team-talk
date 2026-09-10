@@ -19,7 +19,15 @@ internal data class AndroidUpgradeInfo(
     val version: String,
     val filename: String,
     val url: String,
-)
+    val channel: String? = null,
+) {
+    /** 通道展示名：快照/预览会标注，正式（stable 或旧服务端缺省）不额外标注。 */
+    val channelLabel: String? get() = when (channel) {
+        "snapshot" -> "内测快照"
+        "preview" -> "预览版"
+        else -> null
+    }
+}
 
 /**
  * 应用内升级闭环（内测 T024）：检查 android.json → DownloadManager 下载 → 弹出安装。
@@ -49,6 +57,7 @@ internal object AndroidAppUpgrade {
             version = obj.getValue("version").jsonPrimitive.content,
             filename = obj.getValue("filename").jsonPrimitive.content,
             url = obj.getValue("url").jsonPrimitive.content,
+            channel = obj["channel"]?.jsonPrimitive?.content,
         )
     }.getOrNull()
 
