@@ -36,6 +36,7 @@ eventId(varLong) + notifyType(1B) + payload(bytes?)
 | 40 | `PRESENCE` | `PresencePayload(serverEpoch, revision, uid, status, lastSeenAt)` | 好友在线设备 | 按 epoch/revision 收敛会话内好友在线投影 |
 | 41 | `TYPING` | `Message` | 其他会话成员 | 为 `(chatId, senderUid)` 续期 3 秒临时状态 |
 | 50 | `READ_SYNC` | `ReadSyncPayload` | 其他会话成员 | 更新 `peerReadSeq` |
+| 63 | `MENTION_SYNC` | `MentionSyncPayload(chatId, mentioned)` | 新消息提及的接收者（置位）；已读推进的本人（清除） | 维护会话「@我」未读提示；发送与已读同一投影事务，不进消息正文 |
 | 60 | `USER_UPDATED` | `User` | durable：本人和提交时的活动好友；transient：其余 SYNC_READY 会话 | durable 与资料事实同事务；其余在线会话收到 `eventId=0` best-effort 完整 User，按正数单调 revision 丢弃跨通道旧值，并排除 durable 收件人避免重复 |
 | 61 | `ORGANIZATION_CHANGED` | `OrganizationChangedPayload(revision)` | 已完成 `SYNC_READY` 的在线终端 | 持久提升组织 `requiredRevision`，将旧快照标为非权威并合并触发二进制 RPC 对账 |
 | 62 | `EVENT_CURSOR_ADVANCED` | 无 payload | 连接输出投影 | 仅推进对应持久 eventId；不创建业务事实，不进入领域持久事件发布入口 |

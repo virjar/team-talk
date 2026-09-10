@@ -206,6 +206,8 @@ object Conversations : LongIdTable("conversations") {
     val peerReadSeq = long("peer_read_seq").default(0)
     val isMuted = bool("is_muted").default(false)
     val isPinned = bool("is_pinned").default(false)
+    /** 存在未读的提及我的消息（仅消息投影置位，actor 已读即清除）。 */
+    val mentioned = bool("mentioned").default(false)
     /** 用户拥有的列表可见性；活跃成员资格保持该持久容量槽被预留。 */
     val isHidden = bool("is_hidden").default(false)
     // Markdown 源码草稿必须与可发送正文使用同一容量契约；VARCHAR(500) 会静默截断

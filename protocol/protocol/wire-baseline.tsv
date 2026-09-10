@@ -46,6 +46,7 @@ enum	com.virjar.tk.protocol.NotifyType/50	0	-	active	READ_SYNC
 enum	com.virjar.tk.protocol.NotifyType/60	0	-	active	USER_UPDATED
 enum	com.virjar.tk.protocol.NotifyType/61	0	-	active	ORGANIZATION_CHANGED
 enum	com.virjar.tk.protocol.NotifyType/62	0	-	active	EVENT_CURSOR_ADVANCED
+enum	com.virjar.tk.protocol.NotifyType/63	2	-	active	MENTION_SYNC
 enum	com.virjar.tk.protocol.PacketType/1	0	-	active	AUTH
 enum	com.virjar.tk.protocol.PacketType/10	0	-	active	INVOKE
 enum	com.virjar.tk.protocol.PacketType/11	0	-	active	RESPONSE
@@ -177,6 +178,7 @@ type	com.virjar.tk.protocol.DisconnectSignal	0	-	active	OBJECT()
 type	com.virjar.tk.protocol.DocumentChangedPayload	2	-	active	CLASS(spaceId:kotlin.String,nodeId:kotlin.String?,kind:kotlin.Int,revision:kotlin.Long,policyRevision:kotlin.Long)
 type	com.virjar.tk.protocol.GroupFileChangedPayload	0	-	active	CLASS(chatId:kotlin.String,operation:kotlin.Int,entry:com.virjar.tk.protocol.model.GroupFileEntry?,deletedEntryId:kotlin.String,deletedRevision:kotlin.Long)
 type	com.virjar.tk.protocol.IProto	0	-	active	INTERFACE()
+type	com.virjar.tk.protocol.MentionSyncPayload	2	-	active	CLASS(chatId:kotlin.String,mentioned:kotlin.Boolean)
 type	com.virjar.tk.protocol.MessageReactionEventPayload	0	-	active	CLASS(chatId:kotlin.String,serverSeq:kotlin.Long,emoji:kotlin.String,actorUid:kotlin.String,action:kotlin.Int)
 type	com.virjar.tk.protocol.OrganizationChangedPayload	0	-	active	CLASS(revision:kotlin.Long)
 type	com.virjar.tk.protocol.PingSignal	0	-	active	OBJECT()

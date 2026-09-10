@@ -224,6 +224,11 @@ durable event 在同一 `PgUnitOfWork` 中提交。事件 payload 必须从该�
 邀请加入、受管群和服务成员增删都在同一 `PgUnitOfWork` 内更新 Member/Conversation 并写收件人事件；
 提交后先失效 ChatStore 热缓存再唤醒事件分发。创建完成后不能再重复写一轮相同投影。
 
+会话行携带 per-uid 的 `mentioned` 提示位：新消息投影时按消息体 mentions 侧信道（Reply 以 Markdown 现场解析）
+为被提及且非发送者的接收者置位，仅在消息确为该会话最新序号时生效；actor 的已读水位推进即清除。
+置位与清除均随投影/已读事务追加 `MENTION_SYNC`（protocol 0.2），供列表「@我」红点跨设备实时更新。
+
+
 ## 7. GroupFile
 
 GroupFileService 通过统一 `ChatAccess` 只接受当前群成员访问，并拒绝在私聊上创建文件空间。

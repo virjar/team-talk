@@ -81,6 +81,10 @@ open class AppDataState(
     private val activeChat = ActiveChatBinding()
     private val destroyGate = AppDataStateDestroyGate()
     private val localMutations = session.localMutations
+
+    /** 存在未读 @我 提示的会话集合（MENTION_SYNC 驱动的进程内投影）。 */
+    val mentionedChatIds: kotlinx.coroutines.flow.StateFlow<Set<String>>
+        get() = session.eventProcessor.mentionedChatIds
     /** Android/common UI 执行围栏；Desktop 提供它更早的呈现围栏。 */
     val uiActionAdmission = UiActionAdmission(destroyGate::runIfOpen)
 

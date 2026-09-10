@@ -61,6 +61,7 @@ internal fun HomeScreen(
         else -> homeTab
     }
     val conversations by dataState.conversationViewModel.conversations.collectAsState()
+    val mentionedChatIds by dataState.mentionedChatIds.collectAsState()
     val conversationPeerUsers by dataState.conversationViewModel.peerUsers.collectAsState()
     val contacts by dataState.contactViewModel.contacts.collectAsState()
     val friendPresenceByUid by dataState.contactViewModel.friendPresenceByUid.collectAsState()
@@ -168,6 +169,7 @@ internal fun HomeScreen(
             when (MainTab.entries[selectedTab]) {
                 MainTab.CONVERSATIONS -> ConversationListScreen(
                     conversations = conversations,
+                    mentionedChatIds = mentionedChatIds,
                     onConversationClick = actionAdmission.guard(onConversationClick),
                     onPinClick = actionAdmission.guard(dataState.conversationViewModel::setPinned),
                     onMuteClick = actionAdmission.guard(dataState.conversationViewModel::setMuted),

@@ -97,6 +97,12 @@ class ConversationService(
             val authoritativeReadSeq = mutation.conversation.readSeq
             if (mutation.actorChanged) {
                 appendEvent(uid, NotifyType.CONVERSATION_UPDATED, mutation.conversation)
+                // 打开会话即清除 @ 提示（与主流 IM 一致）。
+                appendEvent(
+                    uid,
+                    NotifyType.MENTION_SYNC,
+                    com.virjar.tk.protocol.MentionSyncPayload(chatId, false),
+                )
             }
             mutation.advancedPeerUids.forEach { memberUid ->
                 appendEvent(

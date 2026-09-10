@@ -55,6 +55,8 @@ enum class NotifyType(val code: Int) {
     // 组织目录（瞬时失效提示；重连后的全量 RPC 刷新是最终兜底）
     ORGANIZATION_CHANGED(61),
 
+    @SinceProtocol(2)
+    MENTION_SYNC(63),
     /** 连接降级投影保留原 eventId 的无 payload 标记；禁止把它持久化为新业务事件。 */
     EVENT_CURSOR_ADVANCED(62);
 

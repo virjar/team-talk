@@ -38,6 +38,15 @@ class MessageProjector(
     private val projectionLocks = Array(PROJECTION_LOCK_STRIPES) { Mutex() }
     private val recoveryMutex = Mutex()
 
+    /** 消息体中的提及目标；RichText 走 sidecar，Reply 以 Markdown 为事实源现场解析。 */
+    private fun mentionedUids(message: com.virjar.tk.protocol.model.Message): Set<String> =
+        when (val body = message.body) {
+            is com.virjar.tk.protocol.body.RichTextBody -> body.mentions.map { it.uid }.toSet()
+            is com.virjar.tk.protocol.body.ReplyBody ->
+                com.virjar.tk.protocol.body.buildRichTextBody(body.content, body.assets).mentions.map { it.uid }.toSet()
+            else -> emptySet()
+        }
+
     /**
      * 重放完整的持久化操作可靠发件箱，而不仅仅是一个启动页。只有经过两次全局空观察、
      * 且这两次观察之间没有并发失败改变代号（generation）时，就绪状态才被清除。
@@ -165,6 +174,7 @@ class MessageProjector(
                                 message.serverSeq,
                             )
                         }
+                        val mentionedRecipients = mentionedUids(message)
                         for (recipient in applied.recipients) {
                             appendEvent(
                                 recipient.uid,
@@ -176,6 +186,16 @@ class MessageProjector(
                                     recipient.uid,
                                     NotifyType.CONVERSATION_UPDATED,
                                     conversation,
+                                )
+                            }
+                            if (operation.operation == MessageOperationType.CREATE &&
+                                recipient.uid != message.senderUid &&
+                                recipient.uid in mentionedRecipients
+                            ) {
+                                appendEvent(
+                                    recipient.uid,
+                                    NotifyType.MENTION_SYNC,
+                                    com.virjar.tk.protocol.MentionSyncPayload(message.chatId, true),
                                 )
                             }
                         }

@@ -71,6 +71,10 @@ class EventProcessor(
     private val _typingEvents = MutableSharedFlow<Pair<String, String>>(extraBufferCapacity = 8)
     val typingEvents: SharedFlow<Pair<String, String>> = _typingEvents.asSharedFlow()
 
+    /** 存在未读 @我 提示的会话集合；MENTION_SYNC 置位、已读清除（进程内状态）。 */
+    private val _mentionedChatIds = MutableStateFlow<Set<String>>(emptySet())
+    val mentionedChatIds: StateFlow<Set<String>> = _mentionedChatIds.asStateFlow()
+
     private val _groupFileChanges = MutableSharedFlow<com.virjar.tk.protocol.GroupFileChangedPayload>(extraBufferCapacity = 64)
 
     /** 群文件行级变更事件（GROUP_FILE_CHANGED）；订阅者据此触发投影流收敛。 */
@@ -522,6 +526,12 @@ class EventProcessor(
                 }
             }
 
+            NotifyType.MENTION_SYNC -> {
+                val sync = decodePayload<com.virjar.tk.protocol.MentionSyncPayload>(notifyType, payload)
+                _mentionedChatIds.update { current ->
+                    if (sync.mentioned) current + sync.chatId else current - sync.chatId
+                }
+            }
             NotifyType.CHAT_DRAFT_CHANGED -> {
                 val change = decodePayload<com.virjar.tk.protocol.ChatDraftChangedPayload>(notifyType, payload)
                 publicationGate.use(publicationLease) {

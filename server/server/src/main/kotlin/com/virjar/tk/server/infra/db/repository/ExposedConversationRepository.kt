@@ -190,6 +190,8 @@ internal class ExposedConversationRepository(
             }) {
                 it[Conversations.readSeq] = authoritativeReadSeq
                 it[Conversations.isHidden] = false
+                // 打开会话即视为看到 @ 提示（与主流 IM 一致），无需逐条比对位置。
+                it[Conversations.mentioned] = false
                 it[Conversations.version] = actor[Conversations.version] + 1L
                 it[Conversations.updatedAt] = now
             }

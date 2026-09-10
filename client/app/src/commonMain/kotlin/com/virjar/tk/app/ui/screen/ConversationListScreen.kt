@@ -91,6 +91,8 @@ fun ConversationListScreen(
     peerUsers: Map<String, User> = emptyMap(),
     peerRemarks: Map<String, String> = emptyMap(),
     loadMessagePreview: (suspend (Conversation) -> String?)? = null,
+    /** 存在未读 @我 提示的会话集合（MENTION_SYNC 进程内投影）。 */
+    mentionedChatIds: Set<String> = emptySet(),
 ) {
     // 首次收藏前不占用会话列表；收藏后与普通会话一起排序，置顶仅由用户决定。
     val sorted = conversations
@@ -118,6 +120,7 @@ fun ConversationListScreen(
             val peerUser = conv.peerUid?.let(peerUsers::get)
             ConversationItem(
                 conversation = conv,
+                mentioned = conv.chatId in mentionedChatIds,
                 peerUser = peerUser,
                 remark = conv.peerUid?.let(peerRemarks::get),
                 loadMessagePreview = loadMessagePreview,
@@ -139,6 +142,7 @@ fun ConversationListScreen(
 @Composable
 private fun ConversationItem(
     conversation: Conversation,
+    mentioned: Boolean,
     peerUser: User?,
     remark: String?,
     loadMessagePreview: (suspend (Conversation) -> String?)?,
@@ -246,6 +250,15 @@ private fun ConversationItem(
                         color = Tk.colors.metaText,
                         maxLines = 1,
                     )
+                    if (mentioned) {
+                        Spacer(Modifier.width(Tk.spacing.sm))
+                        Text(
+                            "@我",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.testTag("conv.mention.${conversation.chatId.take(12)}"),
+                        )
+                    }
                     if (conversation.unreadCount > 0) {
                         Spacer(Modifier.width(Tk.spacing.sm))
                         UnreadBadge(conversation.unreadCount)

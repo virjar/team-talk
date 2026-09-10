@@ -15,8 +15,12 @@ import com.virjar.tk.server.infra.db.Users
 import com.virjar.tk.server.infra.db.toUserAvatar
 import com.virjar.tk.server.infra.db.execRawSql
 import com.virjar.tk.server.infra.db.requireExposedTransaction
+import com.virjar.tk.protocol.body.ReplyBody
+import com.virjar.tk.protocol.body.RichTextBody
+import com.virjar.tk.protocol.body.buildRichTextBody
 import com.virjar.tk.protocol.model.Conversation
 import com.virjar.tk.protocol.model.GroupPolicy
+import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.ProtoCodec
 import org.jetbrains.exposed.sql.*
@@ -95,6 +99,7 @@ class ExposedMessageProjectionRepository : MessageProjectionRepository {
                     operation,
                     lastMessagePreview,
                     now,
+                    mentionedRecipients(operation.message, activeRecipients),
                 )
                 // 每次全新 CREATE 都是连续的，并发出当前可见的 Conversation。
                 // 回执重放已在上面返回，因此此分支绝不会重新发布重复项。
@@ -177,6 +182,21 @@ class ExposedMessageProjectionRepository : MessageProjectionRepository {
         return activeRecipients
     }
 
+    /**
+     * 新消息投影的 per-recipient 提及标记：仅计入本会话活动接收者，发送者自身永不置位。
+     * mentions 侧信道已在发送准入时校验过成员资格。
+     */
+    private fun mentionedRecipients(message: Message, recipients: List<String>): Set<String> {
+        val mentionedUids = when (val body = message.body) {
+            is RichTextBody -> body.mentions.map { it.uid }
+            is ReplyBody -> buildRichTextBody(body.content, body.assets).mentions.map { it.uid }
+            else -> emptyList()
+        }
+        if (mentionedUids.isEmpty()) return emptySet()
+        val recipientSet = recipients.toHashSet()
+        return mentionedUids.filterTo(mutableSetOf()) { it != message.senderUid && it in recipientSet }
+    }
+
     private fun loadExistingConversationUids(chatId: String, uids: List<String>): Set<String> {
         val existing = linkedSetOf<String>()
         uids.chunked(PROJECTION_SQL_BATCH_SIZE).forEach { uidBatch ->
@@ -195,12 +215,16 @@ class ExposedMessageProjectionRepository : MessageProjectionRepository {
         operation: MessageProjectionOperation,
         preview: String?,
         now: Long,
+        mentionedRecipients: Set<String>,
     ) {
         val message = operation.message
         uids.chunked(PROJECTION_SQL_BATCH_SIZE).forEach { uidBatch ->
-            val recipientRows = uidBatch.joinToString(", ") { "(?::varchar)" }
+            val recipientRows = uidBatch.joinToString(", ") { "(?::varchar, ?::boolean)" }
             val args = buildList<Pair<IColumnType<*>, Any?>> {
-                uidBatch.forEach { uid -> add(Conversations.uid.columnType to uid) }
+                uidBatch.forEach { uid ->
+                    add(Conversations.uid.columnType to uid)
+                    add(Conversations.mentioned.columnType to (uid in mentionedRecipients))
+                }
                 add(Conversations.chatId.columnType to message.chatId)
                 add(Conversations.chatType.columnType to chatType)
                 add(Conversations.lastMsgSeq.columnType to message.serverSeq)
@@ -212,7 +236,7 @@ class ExposedMessageProjectionRepository : MessageProjectionRepository {
             }
             transaction.execRawSql(
                 stmt = """
-                    WITH recipients(uid) AS (VALUES $recipientRows),
+                    WITH recipients(uid, is_mentioned) AS (VALUES $recipientRows),
                     projection(chat_id, chat_type, server_seq, preview, message_type, message_timestamp, sender_uid, now_ms) AS (
                         VALUES (
                             ?::varchar,
@@ -233,6 +257,7 @@ class ExposedMessageProjectionRepository : MessageProjectionRepository {
                         last_message,
                         last_message_type,
                         last_msg_timestamp,
+                        mentioned,
                         read_seq,
                         version,
                         updated_at
@@ -244,6 +269,7 @@ class ExposedMessageProjectionRepository : MessageProjectionRepository {
                            projection.preview,
                            projection.message_type,
                            projection.message_timestamp,
+                           recipient.is_mentioned,
                            CASE WHEN recipient.uid = projection.sender_uid
                                THEN projection.server_seq ELSE 0 END,
                            CASE WHEN recipient.uid = projection.sender_uid THEN 2 ELSE 1 END,
@@ -288,7 +314,34 @@ class ExposedMessageProjectionRepository : MessageProjectionRepository {
                 args = args,
                 explicitStatementType = StatementType.INSERT,
             )
+            armMentionedFlags(transaction, message.chatId, message.serverSeq, uidBatch.filter { it in mentionedRecipients })
         }
+    }
+
+    /** 提及置位只在消息确为最新一条时生效；已读清除归 markRead。 */
+    private fun armMentionedFlags(
+        transaction: Transaction,
+        chatId: String,
+        messageSeq: Long,
+        mentionedUids: List<String>,
+    ) {
+        if (mentionedUids.isEmpty()) return
+        val placeholders = mentionedUids.joinToString(", ") { "?::varchar" }
+        transaction.execRawSql(
+            stmt = """
+                UPDATE conversations
+                SET mentioned = TRUE, updated_at = updated_at
+                WHERE chat_id = ?::varchar
+                  AND last_msg_seq >= ?::bigint
+                  AND uid IN ($placeholders)
+            """.trimIndent(),
+            args = buildList<Pair<IColumnType<*>, Any?>> {
+                add(Conversations.chatId.columnType to chatId)
+                add(Conversations.lastMsgSeq.columnType to messageSeq)
+                mentionedUids.forEach { uid -> add(Conversations.uid.columnType to uid) }
+            },
+            explicitStatementType = StatementType.UPDATE,
+        )
     }
 
     private fun projectChangeBatched(

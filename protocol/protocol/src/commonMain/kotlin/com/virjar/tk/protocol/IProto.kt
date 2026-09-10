@@ -19,6 +19,26 @@ interface IProtoReader<T> {
  * 已读同步通知 payload。
  * 客户端 B 收到 READ_SYNC 后：peerUid 已读到 peerReadSeq。
  */
+/** 会话内是否存在未读的提及我的消息（T031）：置位随消息投影，清除随已读。 */
+@com.virjar.tk.protocol.SinceProtocol(2)
+data class MentionSyncPayload(
+    val chatId: String,
+    val mentioned: Boolean,
+) : IProto {
+    override fun writeTo(buf: PacketBuffer) {
+        buf.writeString(chatId)
+        buf.writeBoolean(mentioned)
+    }
+
+    companion object : IProtoReader<MentionSyncPayload> {
+        override fun readFrom(buf: PacketBuffer): MentionSyncPayload {
+            val chatId = buf.readRequiredString()
+            val mentioned = buf.readBoolean("mention sync mentioned")
+            return MentionSyncPayload(chatId, mentioned)
+        }
+    }
+}
+
 data class ReadSyncPayload(
     val peerUid: String,
     val chatId: String,

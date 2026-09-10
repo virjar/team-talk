@@ -92,6 +92,9 @@ private val schemaMigrations = listOf(
     SchemaMigration("create_admin_feature_settings") {
         SchemaUtils.create(AdminFeatureSettings)
     },
+    SchemaMigration("add_conversations_mentioned") {
+        exec("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS mentioned boolean NOT NULL DEFAULT FALSE")
+    },
 )
 
 /** Caller owns the schema_metadata lock; DDL and its completion receipt commit in the same transaction. */

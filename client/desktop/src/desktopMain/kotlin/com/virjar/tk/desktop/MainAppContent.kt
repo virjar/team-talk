@@ -175,6 +175,7 @@ internal fun WindowScope.MainAppContent(
     }
 
     val conversations by nav.conversationViewModel.conversations.collectAsState()
+    val mentionedChatIds by nav.mentionedChatIds.collectAsState()
     val conversationPeerUsers by nav.conversationViewModel.peerUsers.collectAsState()
     val contacts by nav.contactViewModel.contacts.collectAsState()
     val peerRemarks = remember(contacts) { com.virjar.tk.app.ui.screen.contactRemarks(contacts) }
@@ -341,7 +342,7 @@ internal fun WindowScope.MainAppContent(
                 currentUserAvatar = resolveUser(userSession.uid)?.avatar,
             )
 
-            MainListPane(nav, presentationGate, onLogout, conversations, conversationPeerUsers, peerRemarks, contacts, friendPresenceByUid, pendingApplyCount)
+            MainListPane(nav, presentationGate, onLogout, conversations, mentionedChatIds, conversationPeerUsers, peerRemarks, contacts, friendPresenceByUid, pendingApplyCount)
             MainContentPane(
                 nav, presentationGate, resources, chatEmbeddedAssetImports, documentEmbeddedAssetImports,
                 documentEmbeddedAssetMedia, resolveUser, mentionCandidates, activeConversation,
@@ -361,6 +362,7 @@ private fun MainListPane(
     presentationGate: DesktopSessionPresentationGate,
     onLogout: () -> Unit,
     conversations: List<Conversation>,
+    mentionedChatIds: Set<String>,
     conversationPeerUsers: Map<String, User>,
     peerRemarks: Map<String, String>,
     contacts: List<Contact>,
@@ -382,6 +384,7 @@ private fun MainListPane(
                         ListHeader(title = "会话")
                         ConversationListScreen(
                             conversations = conversations,
+                            mentionedChatIds = mentionedChatIds,
                             selectedChatId = nav.chatId,
                             onConversationClick = { chatId ->
                                 presentationGate.runIfOpen {
