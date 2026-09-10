@@ -216,6 +216,7 @@ enum class TelemetryFeedbackCode(
     MEDIA_CACHE_FULL("media_cache_full", "本地缓存空间不足，请清理后重试"),
     MEDIA_SIZE_INVALID("media_size_invalid", "附件校验失败，无法打开"),
     MEDIA_IO_FAILED("media_io_failed", "本地文件处理失败，请检查存储空间"),
+    MEDIA_DECODE_FAILED("media_decode_failed", "图片解码失败，文件可能已损坏或格式不支持"),
     MEDIA_SESSION_CHANGED("media_session_changed", "登录状态已变化，请重新打开页面"),
     MEDIA_OPEN_FAILED("media_open_failed", "无法打开文件，请检查是否安装了可处理此格式的应用"),
     MICROPHONE_PERMISSION_REQUIRED("microphone_permission_required", "需要麦克风权限才能发送语音"),
