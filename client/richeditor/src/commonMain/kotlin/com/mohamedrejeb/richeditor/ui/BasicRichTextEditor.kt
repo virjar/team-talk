@@ -306,9 +306,10 @@ public fun BasicRichTextEditor(
         }
     }
 
-    // [TT] Hand cursor over token/link spans in the editable surface, mirroring the
-    // read-only BasicRichText hover behavior so atomic mentions feel clickable.
-    val hoverPointerIcon = remember { mutableStateOf(PointerIcon.Default) }
+    // [TT] Document mention tokens are view entities: hovering one shows the arrow cursor
+    // (click to view profile) instead of the text I-beam; http links show the hand cursor;
+    // plain body text keeps the text caret.
+    val hoverPointerIcon = remember { mutableStateOf(PointerIcon.Text) }
 
     CompositionLocalProvider(LocalClipboard provides richClipboardManager) {
         // Capture position on the innerTextField (the actual text content composable),
@@ -367,8 +368,8 @@ public fun BasicRichTextEditor(
                     startPadding = with(density) { contentPadding.calculateStartPadding(layoutDirection).toPx() },
                 )
                 .then(
-                    // [TT] Hand cursor over token/link spans so atomic mentions feel clickable
-                    // in the editable surface (mirrors BasicRichText's hover behavior).
+                    // [TT] Cursor reflects span semantics: arrow over mention tokens (view
+                    // entity), hand over http links, text caret over plain body text.
                     if (onLinkClick == null)
                         Modifier
                     else
@@ -379,11 +380,12 @@ public fun BasicRichTextEditor(
                                     val event = awaitPointerEvent()
                                     val position = event.changes.first().position
                                     val exited = event.type == PointerEventType.Exit
-                                    val interactive = !exited && (
-                                        state.isLink(position) || state.isToken(position)
-                                    )
-                                    hoverPointerIcon.value =
-                                        if (interactive) PointerIcon.Hand else PointerIcon.Default
+                                    hoverPointerIcon.value = when {
+                                        exited -> PointerIcon.Text
+                                        state.isToken(position) -> PointerIcon.Default
+                                        state.isLink(position) -> PointerIcon.Hand
+                                        else -> PointerIcon.Text
+                                    }
                                 }
                             }
                 )
