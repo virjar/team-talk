@@ -12,6 +12,8 @@ internal enum class DocumentCapability {
     MANAGE_POLICY,
     ARCHIVE_SPACE,
     TRANSFER_CUSTODY,
+    /** 整空间导出为 markdown 归档；只有空间责任人（OWNER）允许。 */
+    EXPORT_SPACE,
 }
 
 internal enum class DocumentRole(val wireValue: Int) {

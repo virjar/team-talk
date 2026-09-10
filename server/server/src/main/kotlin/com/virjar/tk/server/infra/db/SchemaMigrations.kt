@@ -89,6 +89,9 @@ private val schemaMigrations = listOf(
         )
         exec("ALTER TABLE oem_push_registrations ADD COLUMN IF NOT EXISTS vendor varchar(16) NOT NULL DEFAULT 'xiaomi'")
     },
+    SchemaMigration("create_admin_feature_settings") {
+        SchemaUtils.create(AdminFeatureSettings)
+    },
 )
 
 /** Caller owns the schema_metadata lock; DDL and its completion receipt commit in the same transaction. */

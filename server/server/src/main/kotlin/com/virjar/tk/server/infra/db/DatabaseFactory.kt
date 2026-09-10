@@ -41,7 +41,7 @@ object DatabaseFactory {
         DocumentUserRecents, DocumentComments, ContentSearchPending, WorkTasks, TaskAudits, TaskCommands,
         ChatDrafts, ChatDraftAssets, ChatDraftCommands, OemPushRegistrations,
         ClientTelemetryDevices, ClientTelemetryPolicies, ClientTelemetryPolicyAudits,
-        ClientTelemetryAdminAudits,
+        ClientTelemetryAdminAudits, AdminFeatureSettings,
     )
 
     /**

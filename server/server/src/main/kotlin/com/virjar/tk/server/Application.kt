@@ -4,6 +4,7 @@ import com.virjar.tk.server.api.clientTelemetryRoutes
 import com.virjar.tk.server.api.clientDownloadRoutes
 import com.virjar.tk.server.api.adminRoutes
 import com.virjar.tk.server.api.AttachmentUploadAdmission
+import com.virjar.tk.server.api.documentExportRoutes
 import com.virjar.tk.server.api.fileRoutes
 import com.virjar.tk.server.api.botRoutes
 import com.virjar.tk.server.application.PresenceCoordinator
@@ -568,7 +569,12 @@ internal fun Application.module(
                 uploadAdmission = attachmentUploadAdmission,
             )
             botRoutes(koin.get(), accessTokens)
-            adminRoutes(koin.get(), koin.get(), koin.get())
+            documentExportRoutes(
+                exportService = koin.get(),
+                exportPolicy = koin.get(),
+                accessTokens = accessTokens,
+            )
+            adminRoutes(koin.get(), koin.get(), koin.get(), koin.get(), koin.get())
             clientTelemetryRoutes(
                 control = koin.get(),
                 events = clientTelemetryEvents,

@@ -95,4 +95,6 @@ private val auditRoutes = listOf(
     *listOf("dissolve", "mute-all", "unmute-all").map {
         Triple(HttpMethod.Post, Regex("/api/admin/groups/[^/]+/$it"), "group.$it")
     }.toTypedArray(),
+    Triple(HttpMethod.Put, Regex("/api/admin/settings/document-export"), "document.export.setting"),
+    Triple(HttpMethod.Get, Regex("/api/admin/documents/spaces/[^/]+/export"), "document.space.export"),
 )

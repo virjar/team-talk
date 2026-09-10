@@ -48,6 +48,13 @@ class RocksDbTier(db: RocksDB, dataCf: ColumnFamilyHandle) : StorageTierBackend(
         batch.put(dataCf, meta.path.toByteArray(StandardCharsets.UTF_8), data)
     }
 
+    /** 对象字节本就整体驻留于 RocksDB 值中，导出时一次性取出。 */
+    suspend fun copyTo(meta: FileMetadata, out: java.io.OutputStream) {
+        val data = db.get(dataCf, meta.path.toByteArray(StandardCharsets.UTF_8))
+            ?: throw IllegalStateException("File data missing: ${meta.path}")
+        out.write(data)
+    }
+
     internal fun deleteFromBatch(batch: WriteBatch, path: String) {
         batch.delete(dataCf, path.toByteArray(StandardCharsets.UTF_8))
     }

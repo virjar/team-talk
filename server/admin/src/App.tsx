@@ -18,6 +18,7 @@ const Groups = lazy(() => import('./pages/Groups'))
 const Organization = lazy(() => import('./pages/Organization'))
 const Bots = lazy(() => import('./pages/Bots'))
 const Security = lazy(() => import('./pages/Security'))
+const Settings = lazy(() => import('./pages/Settings'))
 
 const { Header, Sider, Content } = Layout
 
@@ -46,6 +47,7 @@ function Shell() {
           { key: '/logs', icon: <FileTextOutlined />, label: '日志' },
           { key: '/groups', icon: <TeamOutlined />, label: '群组' },
           { key: '/security', icon: <SafetyOutlined />, label: '管理安全' },
+          { key: '/settings', icon: <FileTextOutlined />, label: '系统设置' },
         ]} onClick={({ key }) => navigate(key)} />
       </Sider>
       <Layout>
@@ -67,6 +69,7 @@ function Shell() {
               <Route path="logs" element={<Logs />} />
               <Route path="groups" element={<Groups />} />
               <Route path="security" element={<Security />} />
+              <Route path="settings" element={<Settings />} />
               <Route path="*" element={<Navigate to="dashboard" replace />} />
             </Routes>
           </Suspense>

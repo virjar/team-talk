@@ -28,6 +28,20 @@ class FileSystemTier(
         streamFilesystemEntry(file, meta.storageKey, channel, range)
     }
 
+    /** 导出打包：文件系统对象直接流向输出流，恒定 64KB 缓冲。 */
+    suspend fun copyTo(meta: FileMetadata, out: java.io.OutputStream) {
+        val file = resolveFile(meta.storageKey)
+        if (!file.exists()) throw IllegalStateException("File data missing for key: ${meta.storageKey}")
+        file.inputStream().buffered().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val read = input.read(buf)
+                if (read == -1) break
+                out.write(buf, 0, read)
+            }
+        }
+    }
+
     fun moveFrom(storageKey: String, sourceFile: File) {
         val target = resolveFile(storageKey)
         check((target.parentFile.isDirectory || target.parentFile.mkdirs()) && target.parentFile.isDirectory) {

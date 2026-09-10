@@ -69,6 +69,9 @@ internal data class OrganizationReconcileResponse(
 )
 
 @Serializable
+data class ExportSettingRequest(val enabled: Boolean)
+
+@Serializable
 data class CreateBotRequest(val name: String)
 
 @Serializable
@@ -78,6 +81,8 @@ internal fun Route.adminRoutes(
     adminService: AdminService,
     auth: AdminSecurityService,
     clientTelemetry: ClientTelemetryAdminService? = null,
+    documentExport: com.virjar.tk.server.domain.document.DocumentSpaceExportService? = null,
+    documentExportPolicy: com.virjar.tk.server.domain.document.DocumentExportPolicy? = null,
 ) {
     route("/api/admin") {
         post("/login") {
@@ -94,6 +99,28 @@ internal fun Route.adminRoutes(
 
         get("/overview") {
             call.respond(adminService.overview())
+        }
+
+        // ── 文档空间导出（超级管理员）与后台开关 ──
+        get("/settings/document-export") {
+            call.respond(mapOf("enabled" to requireNotNull(documentExportPolicy).isEnabled()))
+        }
+        put("/settings/document-export") {
+            val req = call.receiveBoundedJsonOrRespond<ExportSettingRequest>() ?: return@put
+            requireNotNull(documentExportPolicy).setEnabled(req.enabled, call.requireAdminPrincipal())
+            call.respond(mapOf("enabled" to req.enabled))
+        }
+        get("/documents/spaces/{spaceId}/export") {
+            val export = requireNotNull(documentExport) {
+                "Document space export service is not wired into this deployment"
+            }
+            val spaceId = call.parameters["spaceId"] ?: return@get call.respond(
+                HttpStatusCode.NotFound, mapOf("error" to "document space not found"),
+            )
+            val plan = export.buildAdminPlan(spaceId) ?: return@get call.respond(
+                HttpStatusCode.NotFound, mapOf("error" to "document space not found"),
+            )
+            call.respondSpaceExportZip(plan) { p, out -> export.writeZip(p, out) }
         }
 
         // ── 用户 ──

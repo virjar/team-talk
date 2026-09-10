@@ -731,6 +731,14 @@ class FileStore : AttachmentCatalog, AttachmentRetirementStore {
         }
     }
 
+    /** 空间导出等打包场景：把对象完整拷贝到任意 Java 输出流，不做范围读取。 */
+    suspend fun copyTo(meta: FileMetadata, out: java.io.OutputStream) {
+        when (meta.tier) {
+            StorageTier.ROCKSDB -> rocksDbTier!!.copyTo(meta, out)
+            StorageTier.FILESYSTEM -> fsTier!!.copyTo(meta, out)
+        }
+    }
+
     /**
      * 获取文件系统存储的实际 File 对象（仅 FILESYSTEM tier）。
      */

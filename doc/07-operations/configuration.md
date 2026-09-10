@@ -427,6 +427,20 @@ TCP 入口还会取该配置与实际 `IOExecutor` worker 半数中的较小值�
 配置非法时服务启动直接失败。来源/账号表满且没有过期
 桶可回收时拒绝新 key，不通过淘汰活动桶放宽限速。
 
+### 文档空间导出开关
+
+文档空间导出（markdown + 资产 zip）默认关闭。超级管理员在管理后台「系统设置」页或经 API 翻转：
+
+```http
+GET /api/admin/settings/document-export
+PUT /api/admin/settings/document-export   {"enabled": true}
+```
+
+开启后，每个空间的责任人（唯一管理员）经 `GET /api/v1/documents/spaces/{spaceId}/export`
+（Bearer 访问令牌）导出本空间；超级管理员经 `GET /api/admin/documents/spaces/{spaceId}/export`
+导出任意空间，不受开关约束。开关状态持久于 `admin_feature_settings`，两类动作均写入管理审计。
+导出包含全部活跃文档与内嵌图片/文件，markdown 内资产链接改写为相对路径。
+
 ### 管理员凭据与恢复
 
 数据库还没有管理员凭据时，只有同时配置非空 `ADMIN_USER` 与 `ADMIN_PASSWORD` 才初始化管理登录；

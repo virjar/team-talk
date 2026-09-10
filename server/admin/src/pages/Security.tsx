@@ -44,6 +44,8 @@ const actions: Record<string, string> = {
   'bot.disable': '停用机器人', 'bot.grants': '授权机器人', 'bot.grant.revoke': '取消机器人授权',
   'message.revoke': '撤回消息', 'group.dissolve': '解散群组', 'group.mute-all': '全员禁言',
   'group.unmute-all': '解除全员禁言',
+  'document.export.setting': '文档导出开关',
+  'document.space.export': '导出文档空间',
 }
 const failureReasons: Record<string, string> = {
   INVALID_CREDENTIALS: '凭据不正确', RATE_LIMITED: '请求过于频繁', UNAUTHENTICATED: '管理会话已失效',

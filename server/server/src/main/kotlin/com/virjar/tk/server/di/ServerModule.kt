@@ -202,6 +202,17 @@ internal fun createServerModule(
     single { ClientRegistry(get(), get()) }
     single { OemPushNotifications(get(), oemPushConfiguration, syncDatasetId, get()) }
     single {
+        com.virjar.tk.server.domain.document.DocumentExportPolicy(get())
+    }
+    single {
+        com.virjar.tk.server.domain.document.DocumentSpaceExportService(
+            repository = get(),
+            unitOfWork = get(),
+            fileStore = get(),
+            exportPolicy = get(),
+        )
+    }
+    single {
         SyncEventDispatcher(database = get(), sink = get<ClientRegistry>(),
             onDispatched = get<OemPushNotifications>()::recordDispatchedEvent)
     }

@@ -305,6 +305,15 @@ custodyRevision、policyRevision、目标或待撤授权变化都令 CAS 返回 
 admin principal、撤授权数量和逐空间旧/新 revision。source 可以已被 ban，但目标必须是活动 HUMAN；ban 仍不调用交接。空计划也可提交零条目
 收据并精确重放，明确表示管理员审阅并执行了当时的零资产/零授权事实。
 
+整空间导出：`DocumentSpaceExportService` 把一个空间打包为 zip——`<空间名>/` 下按文档树生成
+`<名称>.md` 与同名子目录，活跃内嵌资产（图片与文件）收敛到 `<空间名>/assets/<assetId>-<原始文件名>`，
+markdown 内 `teamtalk-asset://asset/<id>` 链接改写为相对路径，并附 `manifest.json`；缩略图不参与导出。
+两个入口共享同一引擎：空间责任人（steward/OWNER，`EXPORT_SPACE` 能力）走认证用户 HTTP
+`GET /api/v1/documents/spaces/{spaceId}/export`，受后台开关约束；超级管理员走
+`GET /api/admin/documents/spaces/{spaceId}/export`，不受开关约束但写入管理审计。开关持久于
+`admin_feature_settings`（缺省关闭），经 `GET/PUT /api/admin/settings/document-export` 管理。
+打包按文档分批短事务读取正文与资产字节，不在内存中缓存整个空间；开关与导出动作均入管理审计。
+
 服务负责空间元数据与归档、grant 管理、文档树无环约束、含子文档节点的删除保护，以及每个节点的正文与历史。
 树中没有独立文件夹类型；任一活动文档都可作为另一篇文档的父节点，且成为内节点不得丢失已有正文、身份或修订历史。
 活动容量统一限制为每个 owner principal 128 个空间、每个 HUMAN 128 个活动 stewardship、每位用户跨空间最多 1,000 条直接 USER grant、
