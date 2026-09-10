@@ -310,6 +310,7 @@ public fun BasicRichTextEditor(
     // (click to view profile) instead of the text I-beam; http links show the hand cursor;
     // plain body text keeps the text caret.
     val hoverPointerIcon = remember { mutableStateOf(PointerIcon.Text) }
+    val editorTextLayout = remember { mutableStateOf<TextLayoutResult?>(null) }
 
     CompositionLocalProvider(LocalClipboard provides richClipboardManager) {
         // Capture position on the innerTextField (the actual text content composable),
@@ -369,12 +370,15 @@ public fun BasicRichTextEditor(
                 )
                 .then(
                     // [TT] Cursor reflects span semantics: arrow over mention tokens (view
-                    // entity), hand over http links, text caret over plain body text.
+                    // entity), hand over http links, text caret over laid-out text lines,
+                    // arrow over the empty remainder of the field. overrideDescendants is
+                    // required: the text field core sets its own Text icon deeper in the
+                    // chain and would otherwise always win.
                     if (onLinkClick == null)
                         Modifier
                     else
                         Modifier
-                            .pointerHoverIcon(hoverPointerIcon.value)
+                            .pointerHoverIcon(hoverPointerIcon.value, overrideDescendants = true)
                             .pointerInput(state) {
                                 awaitEachGesture {
                                     val event = awaitPointerEvent()
@@ -384,7 +388,9 @@ public fun BasicRichTextEditor(
                                         exited -> PointerIcon.Text
                                         state.isToken(position) -> PointerIcon.Default
                                         state.isLink(position) -> PointerIcon.Hand
-                                        else -> PointerIcon.Text
+                                        isPositionOnTextInputLine(position, editorTextLayout.value) ->
+                                            PointerIcon.Text
+                                        else -> PointerIcon.Default
                                     }
                                 }
                             }
@@ -431,6 +437,7 @@ public fun BasicRichTextEditor(
                     textLayoutResult = it,
                     density = density,
                 )
+                editorTextLayout.value = it
                 onTextLayout(it)
             },
             interactionSource = interactionSource,
@@ -464,6 +471,17 @@ internal suspend fun adjustTextIndicatorOffset(
             y = pressPosition.y - topPadding
         ),
     )
+}
+
+// [TT] The editing I-beam is bounded to laid-out text lines: the empty remainder of a taller
+// field shows the arrow instead of a multi-row text caret area. Layout unknown (first frame)
+// keeps the text caret as the field default.
+private fun isPositionOnTextInputLine(position: Offset, layout: TextLayoutResult?): Boolean {
+    layout ?: return true
+    if (position.y < 0) return false
+    val line = runCatching { layout.getLineForVerticalPosition(position.y) }.getOrNull()
+        ?: return false
+    return position.y <= layout.getLineBottom(line)
 }
 
 public typealias RichTextChangedListener = (RichTextState) -> Unit
