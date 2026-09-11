@@ -1,7 +1,15 @@
 package com.virjar.tk.server.api
 
 import com.virjar.tk.server.domain.auth.AccessTokenValidator
+import com.virjar.tk.server.infra.diagnostics.TelemetryPayloadTooLargeException
+import com.virjar.tk.server.infra.diagnostics.decodeUtf8Strict
+import com.virjar.tk.server.infra.diagnostics.decompressTelemetryBody
+import com.virjar.tk.server.infra.diagnostics.sha256Hex
 import com.virjar.tk.server.domain.telemetry.ClientTelemetryControlRepository
+import com.virjar.tk.server.domain.telemetry.baselineEventName
+import com.virjar.tk.server.domain.telemetry.hasAcceptableClientTimes
+import com.virjar.tk.server.domain.telemetry.isApprovedBaselineEvent
+import com.virjar.tk.server.domain.telemetry.toWirePolicy
 import com.virjar.tk.server.domain.telemetry.ClientTelemetryEventStore
 import com.virjar.tk.server.domain.telemetry.ConnectionTraceContext
 import com.virjar.tk.server.domain.telemetry.ClientTelemetryPolicy
@@ -113,7 +121,7 @@ internal fun Route.clientTelemetryRoutes(
             return@post call.respond(HttpStatusCode.PayloadTooLarge, mapOf("error" to "telemetry payload too large"))
         }
         val payloadBytes = try {
-            decompressTelemetryBody(compressed)
+            decompressTelemetryBody(compressed, CLIENT_TELEMETRY_MAX_DECOMPRESSED_BYTES)
         } catch (_: TelemetryPayloadTooLargeException) {
             return@post call.respond(HttpStatusCode.PayloadTooLarge, mapOf("error" to "telemetry payload too large"))
         } catch (_: Exception) {
@@ -261,57 +269,6 @@ private fun TelemetryBatch.response(sequence: Long?, policy: TelemetryPolicy) =
         ack = TelemetryAck(batchId = batchId, acceptedThroughSequence = sequence),
         policy = policy,
     ).also { ClientTelemetryValidation.requireValid(it, this) }
-
-private fun TelemetryBatch.hasAcceptableClientTimes(receivedAt: Long): Boolean {
-    val oldest = receivedAt - TelemetryStoragePolicy.RETENTION_MILLIS
-    val newest = receivedAt + MAX_CLIENT_CLOCK_SKEW_MILLIS
-    return createdAtEpochMs in oldest..newest &&
-        events.all { it.occurredAtEpochMs in oldest..newest }
-}
-
-private fun ClientTelemetryPolicy.toWirePolicy(): TelemetryPolicy {
-    val activeDiagnostic = mode == TelemetryCollectionMode.DIAGNOSTIC && expiresAt != null
-    if (!activeDiagnostic && revision == 0L) return TelemetryPolicy.baseline()
-    return TelemetryPolicy(
-        revision = "server-${revision.coerceAtLeast(1L)}",
-        mode = if (activeDiagnostic) TelemetryPolicyMode.DIAGNOSTIC else TelemetryPolicyMode.BASELINE,
-        issuedAtEpochMs = updatedAt.coerceAtLeast(0L),
-        expiresAtEpochMs = if (activeDiagnostic) checkNotNull(expiresAt) else Long.MAX_VALUE,
-        maxEventsPerMinute = if (activeDiagnostic) DIAGNOSTIC_EVENTS_PER_MINUTE else BASELINE_EVENTS_PER_MINUTE,
-        maxBytesPerDay = if (activeDiagnostic) DIAGNOSTIC_BYTES_PER_DAY else BASELINE_BYTES_PER_DAY,
-        maxBatchEvents = if (activeDiagnostic) DIAGNOSTIC_BATCH_EVENTS else BASELINE_BATCH_EVENTS,
-        uploadIntervalSeconds = if (activeDiagnostic) DIAGNOSTIC_UPLOAD_INTERVAL_SECONDS else BASELINE_UPLOAD_INTERVAL_SECONDS,
-    ).also(ClientTelemetryValidation::requireValid)
-}
-
-private fun TelemetryEvent.isApprovedBaselineEvent(): Boolean = when (val body = payload) {
-    is TelemetryFaultPayload ->
-        body.faultCode in BASELINE_FAULT_CODES &&
-            body.page.isNullOrIn(BASELINE_PAGE_CODES) &&
-            body.action.isNullOrIn(BASELINE_ACTION_CODES) &&
-            body.origin.isNullOrIn(BASELINE_FAULT_ORIGINS) &&
-            body.reasonCode.isNullOrIn(BASELINE_FAULT_REASON_CODES) &&
-            eventName == body.baselineEventName()
-    is TelemetryUserNoticePayload ->
-        TelemetryFeedbackCode.fromCode(body.feedbackCode) != null &&
-            body.page.isNullOrIn(BASELINE_PAGE_CODES) &&
-            body.action.isNullOrIn(BASELINE_ACTION_CODES) &&
-            eventName == body.feedbackCode
-    is TelemetrySystemPayload ->
-        body.critical &&
-            body.name == BASELINE_SYSTEM_EVENT &&
-            body.state in BASELINE_SYSTEM_STATES &&
-            eventName == body.name
-    is TelemetryMediaPayload ->
-        body.outcome == TelemetryActionOutcome.FAILED &&
-            body.reasonCode.isNullOrIn(BASELINE_MEDIA_REASON_CODES) &&
-            eventName == body.baselineEventName()
-    is TelemetryOutgoingQueuePayload -> false
-    is TelemetryLogPayload,
-    is TelemetryPageDwellPayload,
-    is TelemetryActionPayload,
-    -> false
-}
 
 private fun TelemetryBatch.toDraft(
     payloadSha256: String,
@@ -482,29 +439,6 @@ private fun TelemetryBatch.toDraft(
     },
 )
 
-private fun TelemetryEvent.baselineEventName(): String? = when (val body = payload) {
-    is TelemetryFaultPayload -> body.baselineEventName()
-    is TelemetryUserNoticePayload -> body.feedbackCode
-    is TelemetrySystemPayload -> body.name
-    is TelemetryMediaPayload -> body.baselineEventName()
-    is TelemetryOutgoingQueuePayload -> null
-    is TelemetryLogPayload,
-    is TelemetryPageDwellPayload,
-    is TelemetryActionPayload,
-    -> null
-}
-
-private fun TelemetryFaultPayload.baselineEventName(): String? = when (faultCode) {
-    "legacy.app_log" -> "fault.reported"
-    "process.uncaught_exception" -> "fault.uncaught"
-    in BASELINE_FAULT_CODES -> faultCode
-    else -> null
-}
-
-private fun TelemetryMediaPayload.baselineEventName(): String =
-    reasonCode ?: "media.${operation.name.lowercase()}.${outcome.name.lowercase()}"
-
-private fun String?.isNullOrIn(allowed: Set<String>): Boolean = this == null || this in allowed
 
 private fun ClientRuntimeInfo.toSafeSnapshot(): TelemetryRuntimeSnapshot {
     val normalizedGitCommit = gitCommit.safeBuildFact(
@@ -560,92 +494,7 @@ internal const val CLIENT_TELEMETRY_MAX_COMPRESSED_BYTES = 1024 * 1024
 internal const val CLIENT_TELEMETRY_MAX_DECOMPRESSED_BYTES = 8 * 1024 * 1024
 internal const val CLIENT_TELEMETRY_BODY_TIMEOUT_MILLIS = 15_000L
 private const val BEARER_PREFIX = "Bearer "
-private const val BASELINE_EVENTS_PER_MINUTE = 120
-private const val BASELINE_BYTES_PER_DAY = 8L * 1024L * 1024L
-private const val BASELINE_BATCH_EVENTS = 64
-private const val BASELINE_UPLOAD_INTERVAL_SECONDS = 300
-private const val DIAGNOSTIC_EVENTS_PER_MINUTE = 1_200
-private const val DIAGNOSTIC_BYTES_PER_DAY = 64L * 1024L * 1024L
-private const val DIAGNOSTIC_BATCH_EVENTS = 256
-private const val DIAGNOSTIC_UPLOAD_INTERVAL_SECONDS = 30
-private const val MAX_CLIENT_CLOCK_SKEW_MILLIS = 10L * 60L * 1_000L
-private const val BASELINE_SYSTEM_EVENT = "connection_state"
 private const val UNKNOWN_BASELINE_NOTICE = "客户端展示了未识别提示"
-private val BASELINE_SYSTEM_STATES = setOf("disconnected", "authentication_failed")
-private val BASELINE_FAULT_CODES = setOf(
-    "mark_read_local_failure",
-    "media_failure",
-    "platform_lifecycle_failure",
-    "legacy.app_log",
-    "process.uncaught_exception",
-)
-private val BASELINE_FAULT_ORIGINS = setOf(
-    "toast",
-    "snackbar",
-    "dialog",
-    "inline",
-    "system",
-    "app_log",
-    "platform",
-)
-private val BASELINE_FAULT_REASON_CODES = setOf("sqlite", "local_data", "lifecycle", "unknown")
-private val BASELINE_MEDIA_REASON_CODES = setOf(
-    "http_denied",
-    "http_missing",
-    "http_status",
-    "cache_quota",
-    "size_validation",
-    "network",
-    "io",
-    "decode",
-    "session",
-    "permission",
-    "unsupported",
-    "unknown",
-)
-private val BASELINE_PAGE_CODES = setOf(
-    "login",
-    "register",
-    "conversations",
-    "contacts",
-    "documents",
-    "settings",
-    "chat",
-    "search_messages",
-    "search_users",
-    "create_group",
-    "friend_applies",
-    "user_profile",
-    "edit_profile",
-    "change_password",
-    "devices",
-    "blacklist",
-    "group_detail",
-    "group_files",
-    "group_bots",
-    "invite_members",
-    "invite_links",
-    "forward",
-    "text_attachment_preview",
-    "document_window",
-    "media_gallery",
-)
-private val BASELINE_ACTION_CODES = setOf(
-    "show_feedback",
-    "open_page",
-    "send_message",
-    "upload_media",
-    "download_media",
-    "open_media",
-    "start_voice_recording",
-    "send_voice_recording",
-    "mark_read",
-    "create_group",
-    "create_invite_link",
-    "publish_group_file",
-    "save_document",
-    "logout",
-)
 private val TELEMETRY_APP_VERSION_PATTERN = Regex("(?:unknown|(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*))")
 private val TELEMETRY_BUILD_NUMBER_PATTERN = Regex("(?:unknown|0|[1-9]\\d*)")
 private val TELEMETRY_GIT_COMMIT_PATTERN = Regex("(?i)(?:unknown|[0-9a-f]{12})")
@@ -660,7 +509,6 @@ private val TELEMETRY_DISTRIBUTION_PATTERN = Regex(
     "(?:unknown|compose-desktop|android-(?:debug|release)|headless)",
 )
 
-private class TelemetryPayloadTooLargeException : IllegalArgumentException()
 
 private suspend fun ByteReadChannel.readTelemetryBody(maxBytes: Int): ByteArray {
     val output = ByteArrayOutputStream(minOf(maxBytes, 8192))
@@ -676,36 +524,3 @@ private suspend fun ByteReadChannel.readTelemetryBody(maxBytes: Int): ByteArray 
     return output.toByteArray()
 }
 
-private fun decompressTelemetryBody(compressed: ByteArray): ByteArray {
-    val output = ByteArrayOutputStream(minOf(CLIENT_TELEMETRY_MAX_DECOMPRESSED_BYTES, 8192))
-    GZIPInputStream(ByteArrayInputStream(compressed)).use { gzip ->
-        val buffer = ByteArray(8192)
-        var total = 0
-        while (true) {
-            val count = gzip.read(buffer)
-            if (count == -1) break
-            total += count
-            if (total > CLIENT_TELEMETRY_MAX_DECOMPRESSED_BYTES) throw TelemetryPayloadTooLargeException()
-            output.write(buffer, 0, count)
-        }
-    }
-    return output.toByteArray()
-}
-
-private fun ByteArray.decodeUtf8Strict(): String = Charsets.UTF_8.newDecoder()
-    .onMalformedInput(CodingErrorAction.REPORT)
-    .onUnmappableCharacter(CodingErrorAction.REPORT)
-    .decode(ByteBuffer.wrap(this))
-    .toString()
-
-private fun sha256Hex(bytes: ByteArray): String {
-    val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
-    val digits = "0123456789abcdef"
-    return buildString(digest.size * 2) {
-        digest.forEach { byte ->
-            val value = byte.toInt() and 0xff
-            append(digits[value ushr 4])
-            append(digits[value and 0x0f])
-        }
-    }
-}
