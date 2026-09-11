@@ -6,8 +6,10 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
@@ -15,14 +17,17 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -77,8 +82,14 @@ import com.mohamedrejeb.richeditor.platform.currentPlatform
  * (e.g. `OutlinedRichTextEditor` needs more space than `BasicRichTextEditor`).
  * @param containerColor Popup background. Defaults to [MaterialTheme.colorScheme.surface].
  * @param contentColor Text color for rows. Defaults to [MaterialTheme.colorScheme.onSurface].
- * @param highlightColor Background of the currently-highlighted row. Defaults to a translucent
- * `surfaceVariant`.
+ * @param highlightColor Background of the currently-highlighted row. Defaults to
+ * `secondaryContainer` - a full-strength container color that stays clearly distinct from the
+ * `surface` popup background in both light and dark themes (unlike `surfaceVariant`, which is
+ * nearly invisible against `surface`).
+ * @param highlightedContentColor Content color for the highlighted row. Defaults to
+ * [MaterialTheme.colorScheme.onSecondaryContainer]; pair it with a custom [highlightColor].
+ * The highlighted row also gets a `primary` leading accent bar, so selection survives even
+ * low-contrast color pairings.
  * @param shape Shape of the popup container.
  * @param maxVisibleItems Soft cap on rendered rows; content scrolls past this count.
  * @param item Row composable for a single suggestion.
@@ -94,7 +105,8 @@ public fun <T> TriggerSuggestions(
     verticalOffset: Dp = 4.dp,
     containerColor: Color = MaterialTheme.colorScheme.surface,
     contentColor: Color = MaterialTheme.colorScheme.onSurface,
-    highlightColor: Color = MaterialTheme.colorScheme.surfaceVariant,
+    highlightColor: Color = MaterialTheme.colorScheme.secondaryContainer,
+    highlightedContentColor: Color = MaterialTheme.colorScheme.onSecondaryContainer,
     shape: Shape = RoundedCornerShape(8.dp),
     maxVisibleItems: Int = 5,
     item: @Composable (T) -> Unit,
@@ -257,6 +269,7 @@ public fun <T> TriggerSuggestions(
                     .clip(shape)
                     .verticalScroll(scrollState),
             ) {
+                val accentColor = MaterialTheme.colorScheme.primary
                 items.forEachIndexed { index, value ->
                     val isHighlighted = index == safeHighlighted
                     val interaction = remember(index) { MutableInteractionSource() }
@@ -278,7 +291,23 @@ public fun <T> TriggerSuggestions(
                             }
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                     ) {
-                        item(value)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            // 选中指示条：槽位始终保留（条 + 间距），高亮移动时行内容不横移。
+                            // 颜色之外的第二重选中信号，低对比配色下也能一眼定位选中行。
+                            Box(
+                                modifier = Modifier
+                                    .padding(end = 8.dp)
+                                    .width(3.dp)
+                                    .height(18.dp)
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(if (isHighlighted) accentColor else Color.Transparent),
+                            )
+                            CompositionLocalProvider(
+                                LocalContentColor provides if (isHighlighted) highlightedContentColor else contentColor,
+                            ) {
+                                item(value)
+                            }
+                        }
                     }
                 }
             }

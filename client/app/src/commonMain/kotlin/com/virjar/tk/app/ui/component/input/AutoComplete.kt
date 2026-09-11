@@ -229,7 +229,9 @@ internal fun MentionCandidateRow(user: com.virjar.tk.protocol.model.User) {
             Text(
                 "@" + user.username,
                 style = MaterialTheme.typography.labelSmall,
-                color = Tk.colors.metaText,
+                // 次级文字跟随 LocalContentColor（弹层高亮行会切换为 onSecondaryContainer），
+                // 固定灰色在高亮底色上对比度不可控。
+                color = androidx.compose.material3.LocalContentColor.current.copy(alpha = 0.62f),
             )
         }
     }
