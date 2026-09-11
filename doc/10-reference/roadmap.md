@@ -100,14 +100,12 @@ v0.0.1 后的功能快速演进沉淀了一批结构性负债；第一轮清理�
 词汇、下沉两端壳重复的遥测映射/媒体失败分类/任务提醒过滤，并修复了自第一条 .sqm 迁移起就未随
 功能更新的过期测试（细节见相应提交）。本轮明确遗留、按收益排序：
 
-- **Chat 域 feature 化**：`AppDataState` 仍持有 `chatComposerContexts`、`chatDraftLifecycle`、
-  `chatAssetImports`、`saveDraft`、`markConversationRead` 与 chat ViewModel 管理，违反
-  “业务状态进入 navigation/feature”的分层约定；且 `navigation` 仍 import `ui.screen`
-  （`ChatComposerContextStore` 与 `ChatScreenState.SavedChatEditingSession`、
-  `durableChatDraftMirrorPayload` 交织，必须连同编辑会话模型一起迁移，不能只搬文件）。
-- **双草稿管道合并**：legacy 标量草稿 outbox（`ConversationRepository.mirrorDraft` +
-  `rpc.setDraft`）与 CAS 富草稿同步（`ChatDraftRepository`）并存，GUI 两条路都在走；
-  收敛方向是 CAS 为唯一权威、legacy 降级为会话列表预览投影，wire 契约不动。
+- ~~Chat 域 feature 化~~：已完成。`ChatFeature` 持有编辑器热上下文、草稿生命周期、附件导入
+  worker 与 chat ViewModel 管理；composer/编辑会话模型迁入 `navigation/feature/chat`，
+  消除 navigation→ui.screen 反向依赖。
+- ~~双草稿管道合并~~：已完成。CAS 接管的会话普通输入只写本地预览，不再进入 legacy
+  setDraft 镜像 outbox；服务端兼容投影由 ChatDraftService 从 CAS 提交派生，接管时采纳
+  并退役既有 legacy 待发行行；wire 契约不变。
 - **五份可靠命令 outbox store**（groupCreation/social/botCredential/groupFile/documentMove）
   同构复制，可收敛为一个泛型 PendingCommandSlot；LocalCache 接口与恢复族随之减面。
 - **服务端 reliable-command 回执**：9+ 张回执表容量/清理样板漂移（10_000 vs 16_384 vs

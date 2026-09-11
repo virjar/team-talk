@@ -66,6 +66,9 @@ internal class LocalChatDraftSyncStore(
     }
     private fun changed() { changes.value += 1 }
     internal fun managedLocked(chatId: String) = read(chatId) != null
+
+    /** 出站归属判定：已接管的会话不再写 legacy 草稿镜像 outbox。 */
+    internal fun managed(chatId: String) = use { managedLocked(chatId) }
     override fun state(chatId: String): ChatDraftSyncState = use {
         val record = read(chatId) ?: return@use ChatDraftSyncState()
         ChatDraftSyncState(record.remote, record.dirty || record.pending != null || record.consume != null,
@@ -85,7 +88,9 @@ internal class LocalChatDraftSyncStore(
             }
             write(StoredChatDraftSyncRecord(chatId, localRevision = draft?.revision ?: 0,
                 dirty = legacyPending != null || (draft != null && !empty(draft))))
-            // 此后只有新 CAS 契约负责出站，旧 scalar 覆盖层不能越过它。
+            // 此后只有新 CAS 契约负责出站，旧 scalar 覆盖层不能越过它；被采纳的
+            // 待发行行随之退役，避免同一文本经两条管道各推一次。
+            if (legacyPending != null) queries.deleteConversationDraftOutbox(chatId)
             if (draft != null) publishPreview(chatId, draft.markdown.takeIf { MarkdownAssetPolicy.recoveryReferences(it).isEmpty() && it.isNotEmpty() })
             changed()
         }

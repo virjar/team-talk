@@ -353,8 +353,10 @@ debounce 或 `onDispose` 在 CLOSED 后只能无害失败，不能穿过已 quie
 `LocalChatDraftSync` 另在同一账号库保存远端快照、所需 revision、待确认命令和发送后的条件消费记录，
 每个 chat 只允许一条不可变在途命令，新编辑留在本机 composer 中等待；同步记录最多 1,000 个、合计
 64 MiB。容量紧张时可回收远端已清空、且没有本机非空稿、待处理操作、消费记录、冲突或失败的纯投影，
-之后按需重新读取；本机可靠事实不参与回收。普通镜像不能越过已经由完整草稿同步管理的 chat，
-重连和失效提示通过同一持久 owner 收敛。
+之后按需重新读取；本机可靠事实不参与回收。已经由完整草稿同步接管的 chat，普通输入只更新本地
+列表预览，不再进入 legacy setDraft 镜像 outbox；服务端的 `Conversation.draft` 兼容投影由
+ChatDraftService 从 CAS 提交统一派生。首次接管时既有的待发行 legacy 行被采纳进 CAS 记录并随之
+退役，重连和失效提示通过同一持久 owner 收敛。
 
 `ClientSession.createChatAssetUploads` 拥有专用 HTTP repository 和单一上传 worker。Android 的
 `noBackupFilesDir`、Desktop 已认领安装根下的 `chat-assets/<deployment>/<dataset>/<uid>` 保存固定

@@ -875,7 +875,21 @@ class LocalCacheImpl internal constructor(
 
     override fun maxBotMessageEventId(): Long = deliveryLog.maxBotMessageEventId()
     override fun setConversationDraft(chatId: String, draft: String?): Long =
-        conversations.setConversationDraft(chatId, draft)
+        if (chatDraftSyncStore.managed(chatId)) {
+            // CAS 已接管出站的会话：普通输入只更新本地列表预览，不再写 legacy
+            // setDraft 镜像 outbox；服务端 Conversations.draft 兼容投影由 ChatDraftService
+            // 从 CAS 提交派生。未接管的会话保持 legacy 全量路径。
+            cacheUseGate.use {
+                synchronized(stateLock) {
+                    conversations.publishComposerPreviewLocked(
+                        conversations.writeComposerPreviewLocked(chatId, draft),
+                    )
+                }
+            }
+            0L
+        } else {
+            conversations.setConversationDraft(chatId, draft)
+        }
 
     override fun getPendingConversationDrafts(): List<PendingConversationDraft> =
         conversations.getPendingConversationDrafts()
