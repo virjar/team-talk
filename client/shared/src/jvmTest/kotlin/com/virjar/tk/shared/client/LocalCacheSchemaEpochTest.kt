@@ -42,7 +42,8 @@ class LocalCacheSchemaEpochTest {
 
     @Test
     fun `zero baseline retains stable filenames and starts SQLDelight migrations at schema one`() {
-        assertEquals(1L, AppDatabase.Schema.version)
+        // SQLDelight 版本号从零号基线的 1 起编号并随 .sqm 递增；不允许出现 0 号或负版本。
+        assertTrue(AppDatabase.Schema.version >= 1L)
         assertEquals(0, LOCAL_CACHE_SCHEMA_EPOCH)
         assertEquals("cache_e0.db", localCacheDatabaseFileName())
         assertEquals("cache_e0_user-1.db", localCacheDatabaseFileName("user-1"))

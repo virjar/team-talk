@@ -12,7 +12,7 @@ import kotlin.test.assertFailsWith
 
 class JvmLocalCacheMigrationTest {
     @Test
-    fun `unversioned existing data is adopted as schema one then migrated without losing drafts`() {
+    fun `unversioned existing data is completed then migrated from schema one without losing drafts`() {
         val directory = Files.createTempDirectory("tk-schema-migration-").toFile()
         val driver = JdbcSqliteDriver("jdbc:sqlite:${directory.resolve("cache.db").absolutePath}")
         try {
@@ -52,7 +52,15 @@ class JvmLocalCacheMigrationTest {
 
     private fun migrationSchema(apply: (SqlDriver) -> Unit) = object : SqlSchema<QueryResult.Value<Unit>> {
         override val version = 2L
-        override fun create(driver: SqlDriver): QueryResult.Value<Unit> = error("must not create over existing data")
+        // 幂等的基线 create：只为缺失对象补建终态定义，绝不改写既有表（由 .sqm 迁移负责演进）。
+        override fun create(driver: SqlDriver): QueryResult.Value<Unit> {
+            driver.execute(
+                null,
+                "CREATE TABLE IF NOT EXISTS draft (body TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0)",
+                0,
+            )
+            return QueryResult.Unit
+        }
         override fun migrate(driver: SqlDriver, oldVersion: Long, newVersion: Long, vararg callbacks: AfterVersion): QueryResult.Value<Unit> {
             assertEquals(1L, oldVersion)
             assertEquals(2L, newVersion)
