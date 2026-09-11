@@ -10,6 +10,7 @@ import com.virjar.tk.protocol.model.DocumentPolicyMutationResult
 import com.virjar.tk.protocol.model.DocumentSpace
 import com.virjar.tk.protocol.model.DocumentSpaceGrant
 import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.isActiveHuman
 import java.util.UUID
 
 /** 显式 Document ACL 变更的、可靠的、按操作者限定作用域的命令边界。 */
@@ -262,7 +263,7 @@ internal class DocumentPolicyMutationService(
             requiredUserIds = addressedUserIds,
         )
         val actor = authority.actor
-        if (actor?.role != UserRole.HUMAN || actor.status != USER_STATUS_ACTIVE) {
+        if (actor?.isActiveHuman != true) {
             throw DocumentAccessDeniedException("没有文档空间权限")
         }
         val authorization = DocumentAuthorizationPolicy.resolve(
@@ -318,7 +319,7 @@ internal class DocumentPolicyMutationService(
                 DocumentSpaceGrant.PRINCIPAL_USER -> {
                     val user = repository.findUser(transaction, principalId)
                         ?: throw IllegalArgumentException("用户不存在")
-                    require(user.role == UserRole.HUMAN && user.status == USER_STATUS_ACTIVE) {
+                    require(user.isActiveHuman) {
                         "只能向活动普通用户授予文档空间"
                     }
                 }
@@ -447,7 +448,6 @@ internal class DocumentPolicyMutationService(
     }
 
     private companion object {
-        const val USER_STATUS_ACTIVE = 1
         const val UUID_TEXT_LENGTH = 36
     }
 }

@@ -13,9 +13,6 @@ import com.virjar.tk.server.application.admin.AdminService
 import com.virjar.tk.server.application.admin.AdminUserDirectory
 import com.virjar.tk.server.application.admin.ClientTelemetryAdminService
 import com.virjar.tk.server.application.admin.DomainAdminOverviewCounters
-import com.virjar.tk.server.application.ChatServiceBotMembership
-import com.virjar.tk.server.application.MessageServiceBotSender
-import com.virjar.tk.server.application.UserServiceBotAccounts
 import com.virjar.tk.server.application.PresenceCoordinator
 import com.virjar.tk.server.domain.attachment.AttachmentCatalog
 import com.virjar.tk.server.domain.attachment.AttachmentAccess
@@ -39,9 +36,8 @@ import com.virjar.tk.server.domain.auth.AuthenticationAttemptGuardConfig
 import com.virjar.tk.server.domain.auth.RegistrationService
 import com.virjar.tk.server.domain.auth.TokenRepository
 import com.virjar.tk.server.domain.bot.BotRepository
-import com.virjar.tk.server.domain.bot.BotAccountProvisioner
-import com.virjar.tk.server.domain.bot.BotGroupMembership
 import com.virjar.tk.server.domain.bot.BotMessageSender
+import com.virjar.tk.server.domain.bot.MessageServiceBotSender
 import com.virjar.tk.server.domain.bot.BotService
 import com.virjar.tk.server.domain.chat.ChatMemberRepository
 import com.virjar.tk.server.domain.chat.ChatAccess
@@ -469,8 +465,6 @@ internal fun createServerModule(
             managedChats = get(),
         )
     }
-    single<BotAccountProvisioner> { UserServiceBotAccounts(get()) }
-    single<BotGroupMembership> { ChatServiceBotMembership(get()) }
     single<BotMessageSender> { MessageServiceBotSender(get()) }
     single { BotService(get(), get(), get(), get(), get(), get(), get<PgUnitOfWork>()) }
     single { PresenceService(get(), get()) }

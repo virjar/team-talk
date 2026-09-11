@@ -8,6 +8,8 @@ import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
 import com.virjar.tk.protocol.model.DocumentSpaceGrant
 import com.virjar.tk.protocol.model.OrganizationUnit
 import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.UserStatus
+import com.virjar.tk.protocol.model.isActiveHuman
 import kotlinx.serialization.Serializable
 
 /** 一次管理型 Document 归属批量操作（custody batch）的显式目的地。 */
@@ -254,7 +256,7 @@ internal object DocumentCustodyAdministrationPolicy {
         require(source.role == UserRole.HUMAN) { "Document 资产只能从普通用户交接" }
 
         val steward = snapshot.targetSteward ?: throw IllegalArgumentException("目标责任人不存在")
-        require(steward.role == UserRole.HUMAN && steward.status == USER_STATUS_ACTIVE) {
+        require(steward.role == UserRole.HUMAN && steward.status == UserStatus.ACTIVE) {
             "目标责任人必须是活动普通用户"
         }
         if (target.ownerPrincipalType == DocumentSpaceGrant.PRINCIPAL_ORGANIZATION_UNIT) {
@@ -317,7 +319,6 @@ internal object DocumentCustodyAdministrationPolicy {
         return reliableCommandFingerprint(*fields.toTypedArray())
     }
 
-    private const val USER_STATUS_ACTIVE = 1
 }
 
 private fun DocumentCustodySnapshot.toPlan(

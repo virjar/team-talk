@@ -30,7 +30,7 @@ internal class OemPushNotifications(
     private val datasetId: String,
     private val messages: MessageRepository,
     private val clock: () -> Long = System::currentTimeMillis,
-    private val send: suspend (String, OemPushVendorConfiguration, OemPushNotification) -> OemPushDeliveryResult = ::sendOemPush,
+    private val send: suspend (OemPushVendorConfiguration, OemPushNotification) -> OemPushDeliveryResult = ::sendOemPush,
 ) {
     private val conversations = ExposedConversationRepository(database)
     private val deliveryGate = Mutex()
@@ -165,7 +165,7 @@ internal class OemPushNotifications(
                 OemPushDeliveryResult(accepted = true)
             } else {
                 try {
-                    send(notification.vendor, vendorConfiguration, notification)
+                    send(vendorConfiguration, notification)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {

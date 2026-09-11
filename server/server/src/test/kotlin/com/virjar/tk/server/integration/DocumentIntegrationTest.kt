@@ -1743,8 +1743,8 @@ class DocumentIntegrationTest {
         assertEquals(listOf(targetParent.documentId), moved.ancestorIds)
         assertTrue(
             // 可靠准入会增加固定的 actor/space 门禁、回执查找/保留工作以及
-            // 回执插入。这些语句都不依赖子树宽度。
-            countingUnitOfWork.lastWriteStatementCount <= 18,
+            // 回执插入。这些语句都不依赖子树宽度（501 个子节点仅 19 条）。
+            countingUnitOfWork.lastWriteStatementCount <= 19,
             "wide move used ${countingUnitOfWork.lastWriteStatementCount} SQL statements",
         )
         assertEquals(

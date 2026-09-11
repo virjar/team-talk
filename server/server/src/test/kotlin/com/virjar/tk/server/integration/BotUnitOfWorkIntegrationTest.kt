@@ -1,15 +1,13 @@
 package com.virjar.tk.server.integration
 
-import com.virjar.tk.server.application.ChatServiceBotMembership
-import com.virjar.tk.server.application.MessageServiceBotSender
-import com.virjar.tk.server.application.UserServiceBotAccounts
 import com.virjar.tk.server.domain.bot.AutomationBot
 import com.virjar.tk.server.domain.bot.BotAuthenticationException
 import com.virjar.tk.server.domain.bot.BotAuthorizationException
-import com.virjar.tk.server.domain.bot.BotGroupMembership
 import com.virjar.tk.server.domain.bot.BotMessageSender
+import com.virjar.tk.server.domain.bot.MessageServiceBotSender
 import com.virjar.tk.server.domain.bot.BotRepository
 import com.virjar.tk.server.domain.bot.BotService
+import com.virjar.tk.server.domain.chat.ChatService
 import com.virjar.tk.server.domain.chat.ChatLifecycleGate
 import com.virjar.tk.server.domain.chat.LockedChat
 import com.virjar.tk.server.domain.chat.ServiceMemberProjectionCleanup
@@ -240,29 +238,10 @@ class BotUnitOfWorkIntegrationTest {
             }
         }
 
-        val delegate = ChatServiceBotMembership(ctx.chatService)
-        var missingSnapshotObserved = false
-        val checkingMembership = object : BotGroupMembership by delegate {
-            override fun cleanupServiceMemberProjection(
-                transaction: PgWriteTransactionContext,
-                chatId: String,
-                uid: String,
-                lockedChat: LockedChat?,
-            ): ServiceMemberProjectionCleanup? {
-                if (chatId == missingGrantChatId || chatId == missingManagedChatId) {
-                    assertNull(lockedChat, "missing Chat must remain a nullable pre-Bot lock snapshot")
-                    missingSnapshotObserved = true
-                }
-                return delegate.cleanupServiceMemberProjection(transaction, chatId, uid, lockedChat)
-            }
-        }
-        val recoveryService = freshBotService(
-            unitOfWork = ctx.pgUnitOfWork,
-            groupMembership = checkingMembership,
-        )
+        val recoveryService = freshBotService(ctx.pgUnitOfWork)
 
+        // 缺失的 Chat 行不阻断恢复：悬挂 grant 被移除，托管 bot 失去身份投影后整体退役。
         assertTrue(recoveryService.recoverGrantMemberships().isEmpty())
-        assertTrue(missingSnapshotObserved)
 
         assertEquals(
             AutomationBot.STATUS_ACTIVE,
@@ -714,10 +693,10 @@ class BotUnitOfWorkIntegrationTest {
         unitOfWork: com.virjar.tk.server.domain.transaction.PgUnitOfWork,
         sender: BotMessageSender = MessageServiceBotSender(ctx.messageService),
         repository: BotRepository = ExposedBotRepository(ctx.database),
-        groupMembership: BotGroupMembership = ChatServiceBotMembership(ctx.chatService),
+        groupMembership: ChatService = ctx.chatService,
     ): BotService = BotService(
         repository = repository,
-        accounts = UserServiceBotAccounts(ctx.userService),
+        accounts = ctx.userService,
         access = ctx.chatAccess,
         groupMembership = groupMembership,
         messageSender = sender,

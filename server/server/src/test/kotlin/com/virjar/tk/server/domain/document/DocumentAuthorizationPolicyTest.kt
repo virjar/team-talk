@@ -10,14 +10,20 @@ import kotlin.test.assertTrue
 class DocumentAuthorizationPolicyTest {
     @Test
     fun `document role capability matrix remains explicit`() {
+        // 查看者可以评论：COMMENT 自评论功能起就是 VIEWER 级能力。
         val expected = mapOf(
-            DocumentRole.VIEWER to setOf(DocumentCapability.READ),
+            DocumentRole.VIEWER to setOf(
+                DocumentCapability.READ,
+                DocumentCapability.COMMENT,
+            ),
             DocumentRole.EDITOR to setOf(
                 DocumentCapability.READ,
+                DocumentCapability.COMMENT,
                 DocumentCapability.EDIT_CONTENT,
             ),
             DocumentRole.ADMIN to setOf(
                 DocumentCapability.READ,
+                DocumentCapability.COMMENT,
                 DocumentCapability.EDIT_CONTENT,
                 DocumentCapability.MANAGE_SPACE,
                 DocumentCapability.MANAGE_POLICY,

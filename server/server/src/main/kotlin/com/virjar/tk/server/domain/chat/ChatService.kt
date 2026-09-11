@@ -588,23 +588,23 @@ class ChatService(
     }
 
     /** 仅用于对账服务领域投影的读侧。 */
-    internal fun activeChatIdsForServiceMember(uid: String): Set<String> =
+    internal fun activeChatIds(uid: String): Set<String> =
         chatStore.getActiveChatIds(uid)
 
-    internal fun activeChatIdsForServiceMember(
+    internal fun activeChatIds(
         transaction: com.virjar.tk.server.domain.transaction.PgReadTransactionContext,
         uid: String,
     ): Set<String> = chatStore.getActiveChatIds(transaction, uid)
 
-    internal fun projectedChatIdsForServiceMember(uid: String): Set<String> =
+    internal fun projectedChatIds(uid: String): Set<String> =
         chatStore.getProjectedChatIds(uid)
 
-    internal fun projectedChatIdsForServiceMember(
+    internal fun projectedChatIds(
         transaction: com.virjar.tk.server.domain.transaction.PgReadTransactionContext,
         uid: String,
     ): Set<String> = chatStore.getProjectedChatIds(transaction, uid)
 
-    internal fun lockChatsForServiceMember(
+    internal fun lockChats(
         transaction: com.virjar.tk.server.domain.transaction.PgWriteTransactionContext,
         chatIds: Collection<String>,
         requireActive: Boolean,
@@ -620,7 +620,7 @@ class ChatService(
         return chatStore.lockChats(transaction, orderedChatIds, requireActive)
     }
 
-    internal fun getActiveMemberForService(
+    internal fun getActiveMember(
         transaction: com.virjar.tk.server.domain.transaction.PgReadTransactionContext,
         chatId: String,
         uid: String,
@@ -673,7 +673,7 @@ class ChatService(
         lockedChat,
     )
 
-    internal fun invalidateCommittedServiceMembershipChange(chatId: String) {
+    internal fun invalidateCommittedMembershipChange(chatId: String) {
         chatStore.invalidateCommittedMembershipChange(chatId)
     }
 

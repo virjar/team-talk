@@ -25,6 +25,7 @@ import com.virjar.tk.protocol.model.DocumentSpacePage
 import com.virjar.tk.protocol.model.DocumentSpacePageRequest
 import com.virjar.tk.protocol.model.DocumentSpaceGrant
 import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.isActiveHuman
 import com.virjar.tk.protocol.model.EmbeddedAsset
 import kotlinx.coroutines.CancellationException
 import org.slf4j.LoggerFactory
@@ -244,7 +245,7 @@ class DocumentService(
         ) { _ ->
             val steward = repository.findUser(transaction, validatedStewardUid)
                 ?: throw IllegalArgumentException("用户不存在")
-            require(steward.role == UserRole.HUMAN && steward.status == USER_STATUS_ACTIVE) {
+            require(steward.isActiveHuman) {
                 "空间责任人必须是活动普通用户"
             }
             when (ownerPrincipalType) {
@@ -774,6 +775,5 @@ class DocumentService(
         const val MAX_MARKDOWN_LINES = 20_000
         const val MAX_MARKDOWN_RENDERABLE_BLOCKS = 4_096
         const val MAX_HOME_DOCUMENTS = 50
-        private const val USER_STATUS_ACTIVE = 1
     }
 }

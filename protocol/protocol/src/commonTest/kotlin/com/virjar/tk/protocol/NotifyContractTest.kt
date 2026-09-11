@@ -130,6 +130,7 @@ class NotifyContractTest {
         NotifyType.DOCUMENT_CHANGED -> DocumentChangedPayload("space", "node", DocumentChangedPayload.NODE_UPSERT, 2, 1)
         NotifyType.TASK_CHANGED -> TaskChangedPayload("00000000-0000-4000-8000-000000000001", 1, TaskChangedPayload.UPDATED)
         NotifyType.TASK_DUE -> TaskDuePayload("00000000-0000-4000-8000-000000000001", 1, 1)
+        NotifyType.MENTION_SYNC -> MentionSyncPayload(chatId = "c1", mentioned = true)
         NotifyType.ORGANIZATION_CHANGED -> OrganizationChangedPayload(revision = 7L)
         NotifyType.PRESENCE -> com.virjar.tk.protocol.PresencePayload(
             uid = "u1",

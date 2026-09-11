@@ -2,7 +2,9 @@ package com.virjar.tk.server.domain.bot
 
 import com.virjar.tk.protocol.body.buildRichTextBody
 import com.virjar.tk.server.domain.user.ShortUidGenerator
+import com.virjar.tk.server.domain.user.UserService
 import com.virjar.tk.server.domain.chat.ChatAccess
+import com.virjar.tk.server.domain.chat.ChatService
 import com.virjar.tk.server.domain.chat.ChatAccessDeniedException
 import com.virjar.tk.server.domain.chat.ChatLifecycleGate
 import com.virjar.tk.server.domain.chat.LockedChat
@@ -78,9 +80,9 @@ interface GroupBotManagement {
 /** 受治理通知机器人：服务身份、群白名单、不可恢复 token 与幂等消息发送。 */
 class BotService(
     private val repository: BotRepository,
-    private val accounts: BotAccountProvisioner,
+    private val accounts: UserService,
     private val access: ChatAccess,
-    private val groupMembership: BotGroupMembership,
+    private val groupMembership: ChatService,
     private val messageSender: BotMessageSender,
     private val lifecycleGate: ChatLifecycleGate,
     private val unitOfWork: PgUnitOfWork,

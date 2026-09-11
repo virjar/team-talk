@@ -7,6 +7,7 @@ import com.virjar.tk.server.infra.db.Users
 import com.virjar.tk.server.infra.db.execRawSql
 import com.virjar.tk.server.infra.db.requireExposedTransaction
 import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.UserStatus
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.Transaction
@@ -32,7 +33,7 @@ internal class ExposedDocumentRecentWriteStore {
         val exposedTransaction = transaction.requireExposedTransaction()
         val actor = Users.select(Users.uid, Users.role, Users.status).where { Users.uid eq actorUid }
             .forUpdate().singleOrNull() ?: throw IllegalArgumentException("用户不存在")
-        require(actor[Users.role] == UserRole.HUMAN && actor[Users.status] == USER_STATUS_ACTIVE) {
+        require(actor[Users.role] == UserRole.HUMAN && actor[Users.status] == UserStatus.ACTIVE) {
             "只有活动普通用户可以更新文档最近访问记录"
         }
 
@@ -153,5 +154,3 @@ internal class ExposedDocumentRecentWriteStore {
         val latestAccess: Long,
     )
 }
-
-private const val USER_STATUS_ACTIVE = 1

@@ -100,7 +100,7 @@ class OemPushIntegrationTest {
         val receiver = user(); val sender = ctx.registerUser()
         val chat = ctx.chatService.createPersonalChat(sender, receiver.principal.uid)
         val attempts = mutableListOf<OemPushNotification>()
-        val failing = service { _, _, notification ->
+        val failing = service { _, notification ->
             attempts += notification
             OemPushDeliveryResult(false, "PROVIDER_BUSY")
         }
@@ -114,7 +114,7 @@ class OemPushIntegrationTest {
         assertEquals(1, pending[OemPushRegistrations.attempts])
         assertEquals("PROVIDER_BUSY", pending[OemPushRegistrations.lastFailure])
         now += 5_000
-        val restarted = service { _, _, notification -> attempts += notification; OemPushDeliveryResult(true) }
+        val restarted = service { _, notification -> attempts += notification; OemPushDeliveryResult(true) }
         assertEquals(1, restarted.drainDue())
         assertEquals(2, attempts.size)
         assertEquals(attempts[0].jobKey, attempts[1].jobKey)
@@ -192,7 +192,7 @@ class OemPushIntegrationTest {
         val receiver = user(); val sender = ctx.registerUser()
         val chat = ctx.chatService.createGroup(id(), "Push fixture", null, sender, listOf(receiver.principal.uid))
         var delivered = 0
-        val service = service { _, _, _ -> delivered++; OemPushDeliveryResult(true) }
+        val service = service { _, _ -> delivered++; OemPushDeliveryResult(true) }
         register(service, receiver)
         send(receiver.principal.uid, chat.chatId)
         dispatch(service, receiver.principal.uid)
@@ -225,7 +225,7 @@ class OemPushIntegrationTest {
         val chat = ctx.chatService.createPersonalChat(sender, receiver.principal.uid)
         val notifications = mutableListOf<OemPushNotification>()
         lateinit var service: OemPushNotifications
-        service = service { _, _, notification ->
+        service = service { _, notification ->
             notifications += notification
             if (notifications.size == 1) {
                 send(sender, chat.chatId)
@@ -241,7 +241,7 @@ class OemPushIntegrationTest {
         assertEquals(2, notifications.size)
         assertNotEquals(notifications[0].jobKey, notifications[1].jobKey)
 
-        val replacing = service { _, _, _ ->
+        val replacing = service { _, _ ->
             register(service, receiver, "replacement-registration")
             OemPushDeliveryResult(false, "INVALID_REGISTRATION", invalidRegistration = true)
         }
@@ -252,7 +252,7 @@ class OemPushIntegrationTest {
         var failureCalls = 0
         var newerMessageSeq = 0L
         lateinit var failing: OemPushNotifications
-        failing = service { _, _, _ ->
+        failing = service { _, _ ->
             failureCalls++
             newerMessageSeq = send(sender, chat.chatId)
             dispatch(failing, receiver.principal.uid)
@@ -273,7 +273,7 @@ class OemPushIntegrationTest {
         assertEquals(1, failureCalls, "new incoming messages must not bypass the provider backoff")
 
         now += 5_000L
-        val invalid = service { _, _, _ ->
+        val invalid = service { _, _ ->
             send(sender, chat.chatId)
             dispatch(failing, receiver.principal.uid)
             OemPushDeliveryResult(false, "INVALID_REGISTRATION", invalidRegistration = true)
@@ -301,8 +301,8 @@ class OemPushIntegrationTest {
     }
 
     private fun service(
-        send: suspend (String, OemPushVendorConfiguration, OemPushNotification) -> OemPushDeliveryResult =
-            { _, _, _ -> OemPushDeliveryResult(true) },
+        send: suspend (OemPushVendorConfiguration, OemPushNotification) -> OemPushDeliveryResult =
+            { _, _ -> OemPushDeliveryResult(true) },
     ) = OemPushNotifications(ctx.database, configuration, "fixture-dataset", ctx.messageStore, { now }, send)
     private fun register(service: OemPushNotifications, user: Login, token: String = "registration-one",
         vendor: String = OemPushVendors.XIAOMI) =

@@ -97,3 +97,12 @@ object UserRole {
     const val BOT = 10
     const val SYSTEM = 20
 }
+
+/** 用户账号状态；服务端是唯一权威，客户端只消费投影。 */
+object UserStatus {
+    const val ACTIVE = 1
+}
+
+/** 各业务入口共用的“活动普通用户”判定；封禁或服务身份都不是有效业务 actor。 */
+val User.isActiveHuman: Boolean
+    get() = role == UserRole.HUMAN && status == UserStatus.ACTIVE

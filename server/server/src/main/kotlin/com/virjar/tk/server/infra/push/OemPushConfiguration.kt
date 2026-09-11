@@ -10,15 +10,6 @@ internal object OemPushVendors {
     const val MEIZU = "meizu"
     val ALL = setOf(XIAOMI, HUAWEI, HONOR, OPPO, VIVO, MEIZU)
 
-    fun display(vendor: String): String = when (vendor) {
-        XIAOMI -> "小米"
-        HUAWEI -> "华为"
-        HONOR -> "荣耀"
-        OPPO -> "OPPO"
-        VIVO -> "vivo"
-        MEIZU -> "魅族"
-        else -> vendor
-    }
 }
 
 /** 每个厂商单独开通；密钥不进入诊断输出或 data-class toString。 */

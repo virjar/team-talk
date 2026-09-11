@@ -24,6 +24,7 @@ import com.virjar.tk.protocol.model.DocumentSpaceCreateResult
 import com.virjar.tk.protocol.model.DocumentSpaceGrant
 import com.virjar.tk.protocol.model.EmbeddedAsset
 import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.UserStatus
 import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.Transaction
@@ -117,13 +118,13 @@ internal class ExposedDocumentWriteStore(
                 return@inExposedTransaction DocumentSpaceCreation(existingCreateResult(
                     existing,
                     space.createdBy,
-                    creator[Users.status] == USER_STATUS_ACTIVE &&
+                    creator[Users.status] == UserStatus.ACTIVE &&
                         creator[Users.role] == UserRole.HUMAN,
                 ), created = false)
             }
 
             require(
-                creator[Users.status] == USER_STATUS_ACTIVE && creator[Users.role] == UserRole.HUMAN,
+                creator[Users.status] == UserStatus.ACTIVE && creator[Users.role] == UserRole.HUMAN,
             ) { "只有活动普通用户可以创建文档空间" }
 
             ExposedDocumentCapacity.requireOwnerSpaceSlot(
@@ -712,7 +713,6 @@ internal class ExposedDocumentWriteStore(
     }
 }
 
-private const val USER_STATUS_ACTIVE = 1
 
 internal inline fun <T> PgWriteTransactionContext.inExposedTransaction(block: () -> T): T {
     requireExposedTransaction()

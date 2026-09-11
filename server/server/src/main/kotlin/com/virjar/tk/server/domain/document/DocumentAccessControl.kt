@@ -7,6 +7,7 @@ import com.virjar.tk.protocol.model.DocumentSpace
 import com.virjar.tk.protocol.model.DocumentSpaceGrant
 import com.virjar.tk.protocol.model.DocumentCustodyTransferResult
 import com.virjar.tk.protocol.model.User
+import com.virjar.tk.protocol.model.isActiveHuman
 import com.virjar.tk.protocol.model.UserRole
 
 /**
@@ -249,7 +250,7 @@ internal class DocumentAccessControl(
     }
 
     private fun requireActiveHumanActor(actor: User?) {
-        if (actor == null || actor.role != UserRole.HUMAN || actor.status != USER_STATUS_ACTIVE) {
+        if (actor == null || !actor.isActiveHuman) {
             throw DocumentAccessDeniedException("没有文档空间权限")
         }
     }
@@ -277,9 +278,7 @@ internal class DocumentAccessControl(
         val unitAndAncestorIds: Set<String>,
     )
 
-    private companion object {
-        const val USER_STATUS_ACTIVE = 1
-    }
+
 }
 
 internal data class ResolvedDocumentSpacePage(

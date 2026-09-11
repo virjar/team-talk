@@ -3,6 +3,7 @@ package com.virjar.tk.server.domain.document
 import com.virjar.tk.server.domain.attachment.DocumentAttachmentAccess
 import com.virjar.tk.server.domain.transaction.PgUnitOfWork
 import com.virjar.tk.protocol.model.UserRole
+import com.virjar.tk.protocol.model.isActiveHuman
 
 /** 从同一个文档/ACL PostgreSQL 快照解析附件下载权限。 */
 class DocumentEmbeddedAssetAccessService(
@@ -11,7 +12,7 @@ class DocumentEmbeddedAssetAccessService(
 ) : DocumentAttachmentAccess {
     override suspend fun canRead(uid: String, path: String): Boolean = unitOfWork.read {
         val actor = repository.findUser(transaction, uid)
-        if (actor == null || actor.role != UserRole.HUMAN || actor.status != USER_STATUS_ACTIVE) {
+        if (actor == null || !actor.isActiveHuman) {
             return@read false
         }
         val spaceIds = repository.findActiveEmbeddedAssetSpaceIds(
@@ -37,7 +38,6 @@ class DocumentEmbeddedAssetAccessService(
     }
 
     private companion object {
-        const val USER_STATUS_ACTIVE = 1
         const val MAX_POLICY_ROOTS_PER_PATH = 4_096
     }
 }
