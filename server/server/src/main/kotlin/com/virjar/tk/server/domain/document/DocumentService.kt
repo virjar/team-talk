@@ -237,14 +237,11 @@ class DocumentService(
         ) { _ ->
             val steward = repository.findUser(transaction, validatedStewardUid)
                 ?: throw IllegalArgumentException("用户不存在")
-            require(steward.isActiveHuman) {
-                "空间责任人必须是活动普通用户"
-            }
-            when (ownerPrincipalType) {
-                DocumentSpaceGrant.PRINCIPAL_USER -> Unit
-                DocumentSpaceGrant.PRINCIPAL_ORGANIZATION_UNIT -> requireNotNull(
-                    repository.findActiveOrganizationUnitName(transaction, validatedOwnerPrincipalId),
-                ) { "组织节点不存在" }
+            DocumentCustodyTargetPolicy.requireActiveSteward(steward.role, steward.status)
+            if (ownerPrincipalType == DocumentSpaceGrant.PRINCIPAL_ORGANIZATION_UNIT) {
+                DocumentCustodyTargetPolicy.requireOwnerUnitActive(
+                    repository.findActiveOrganizationUnitName(transaction, validatedOwnerPrincipalId) != null,
+                )
             }
             val readersBefore = changes.readers(transaction, spaceId)
             repository.transferSpaceCustody(

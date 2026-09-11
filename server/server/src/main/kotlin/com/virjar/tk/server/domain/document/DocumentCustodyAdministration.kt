@@ -221,16 +221,10 @@ class DocumentCustodyAdministrationService(
         stewardUid: String,
         sourceUid: String,
     ): DocumentCustodyTarget {
-        require(
-            ownerPrincipalType == DocumentSpaceGrant.PRINCIPAL_USER ||
-                ownerPrincipalType == DocumentSpaceGrant.PRINCIPAL_ORGANIZATION_UNIT,
-        ) { "目标归属主体类型非法" }
         val owner = validatePrincipalId(ownerPrincipalId, "目标归属主体标识")
         val steward = validatePrincipalId(stewardUid, "目标责任人标识")
         require(steward != sourceUid) { "目标责任人不能仍是离职员工" }
-        if (ownerPrincipalType == DocumentSpaceGrant.PRINCIPAL_USER) {
-            require(owner == steward) { "个人持有空间必须由本人负责" }
-        }
+        DocumentCustodyTargetPolicy.requireValidOwner(ownerPrincipalType, owner, steward)
         return DocumentCustodyTarget(ownerPrincipalType, owner, steward)
     }
 
@@ -256,13 +250,11 @@ internal object DocumentCustodyAdministrationPolicy {
         require(source.role == UserRole.HUMAN) { "Document 资产只能从普通用户交接" }
 
         val steward = snapshot.targetSteward ?: throw IllegalArgumentException("目标责任人不存在")
-        require(steward.role == UserRole.HUMAN && steward.status == UserStatus.ACTIVE) {
-            "目标责任人必须是活动普通用户"
-        }
+        DocumentCustodyTargetPolicy.requireActiveSteward(steward.role, steward.status)
         if (target.ownerPrincipalType == DocumentSpaceGrant.PRINCIPAL_ORGANIZATION_UNIT) {
-            require(snapshot.targetOwnerUnitStatus == OrganizationUnit.STATUS_ACTIVE) {
-                "目标归属组织节点不存在或已归档"
-            }
+            DocumentCustodyTargetPolicy.requireOwnerUnitActive(
+                snapshot.targetOwnerUnitStatus == OrganizationUnit.STATUS_ACTIVE,
+            )
         }
         require(snapshot.spaces.size <= DocumentCapacityPolicy.MAX_ACTIVE_STEWARDSHIPS_PER_USER) {
             "单次 Document 资产交接超过 ${DocumentCapacityPolicy.MAX_ACTIVE_STEWARDSHIPS_PER_USER} 个空间的安全上限"
