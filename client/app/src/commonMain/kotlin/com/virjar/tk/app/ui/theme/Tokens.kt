@@ -42,7 +42,8 @@ data class TkDimens(
 )
 
 val DesktopDimens = TkDimens(
-    railWidth = 56.dp,
+    // 一级导航横向"图标+文字"行（钉钉/飞书桌面范式）；56dp 纯图标栏辨识度差（内测反馈）
+    railWidth = 148.dp,
     listPaneWidth = 300.dp,
     listItemHeight = 64.dp,
     listAvatar = 40.dp,

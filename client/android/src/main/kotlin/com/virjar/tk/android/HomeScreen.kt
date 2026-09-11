@@ -18,6 +18,7 @@ import com.virjar.tk.app.navigation.AppDataState
 import com.virjar.tk.app.navigation.MainTab
 import com.virjar.tk.protocol.body.OfficeRefBody
 import kotlinx.coroutines.flow.MutableStateFlow
+import com.virjar.tk.app.ui.component.TkNavIcons
 import com.virjar.tk.app.ui.screen.DirectoryScreen
 import com.virjar.tk.app.ui.screen.ConversationListScreen
 import com.virjar.tk.app.ui.screen.DocumentWorkspaceHost
@@ -106,12 +107,13 @@ internal fun HomeScreen(
     }
 
     // 选中用面性（filled）、未选中用线性（outlined），同一功能两套配对图标（T009）。
+    // 一级导航用专属矢量 TkNavIcons——通用图标会话/文档/任务剪影雷同（内测反馈）；设置仍是通用齿轮。
     data class TabIcon(val filled: ImageVector, val outlined: ImageVector, val label: String)
     val tabIcons = listOf(
-        TabIcon(Icons.AutoMirrored.Filled.Chat, Icons.AutoMirrored.Outlined.Chat, "会话"),
-        TabIcon(Icons.Filled.Contacts, Icons.Outlined.Contacts, "通讯录"),
-        TabIcon(Icons.Filled.Description, Icons.Outlined.Description, "文档"),
-        TabIcon(Icons.Filled.Assignment, Icons.Outlined.Assignment, "任务"),
+        TabIcon(TkNavIcons.ChatsFilled, TkNavIcons.ChatsOutlined, "会话"),
+        TabIcon(TkNavIcons.ContactsFilled, TkNavIcons.ContactsOutlined, "通讯录"),
+        TabIcon(TkNavIcons.DocumentsFilled, TkNavIcons.DocumentsOutlined, "文档"),
+        TabIcon(TkNavIcons.TasksFilled, TkNavIcons.TasksOutlined, "任务"),
         TabIcon(Icons.Filled.Settings, Icons.Outlined.Settings, "设置"),
     )
 
