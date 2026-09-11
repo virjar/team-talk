@@ -642,6 +642,10 @@ internal fun DocumentTabEditor(
                                 onDismissDocumentMenu = { documentMenu = false },
                                 onMove = { documentMenu = false; requestMove() },
                                 onDelete = { documentMenu = false; deleteDialog = true },
+                                // 紧凑头部同样接通分享入口；漏传会让窄窗口（<620dp）丢失"分享到会话"（T023 验收发现）
+                                onShareToChat = if (shareToChat != null && !tab.creating && !tab.remoteMissing) {
+                                    { documentMenu = false; showSharePicker = true }
+                                } else null,
                             )
                         }
                     }
