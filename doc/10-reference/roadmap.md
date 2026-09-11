@@ -126,11 +126,14 @@ protocol、下载状态发布器下沉 app 层（顺带修复 Desktop 压力驱�
 （Android 视频获得上传占位）、custody 目标校验合一、遥测基线策略下沉 domain 与编解码器入
 infra、9 处 Compose 判空强解修复。剩余按收益排序：
 
-- **AuthController 900 行单 Composable**：封禁清理编排与数据集切换/准入分派提为可测协调器
-  （已有 AuthUserLogoutRetirement 先例）；认证凭据 owner 世代是全客户端最敏感路径，须整段
-  上下文仔细迁移，不可局部机械替换。
+- ~~AuthController 封禁清理编排~~：已完成。AuthBannedAccountCleaner 收纳 begin 标记守卫与
+  不可取消删除序列（begin 失败保留凭据、删除失败保留标记），带真实 AccountDataCleanup 的
+  单元测试覆盖四条路径；AuthController 主体与三条退役 drain 保留原位——它们是真实不同的
+  owner 序列，表格化是伪收敛。
 - **ChatScreen 1013 行 / ChatViewModel 847 行**：发送事务（performSend 96 行）提为
-  ChatComposerSubmitActions、消息聚焦状态机与失败码探测拆 owner 文件。
+  ChatComposerSubmitActions 仍是候选。消息聚焦状态机与失败码探测经评估不再拆：前者依赖
+  pager/mutex/历史链/错误处理等 10+ 内部状态；后者与发送遥测探测共享同一次 probeSendTerminal
+  遍历——强行抽出都是参数搬运，不减少调用方复杂度。
 - **DocumentDraftPersistence 双内核**：Android/Desktop 两套 600+ 行并发机制抽共享
   SerialDraftWriteCoordinator（generation + coalescing + flush 栅栏）。
 - **DocumentRepository 43 方法端口**按消费者切 Read/Write/CommandReceipt 三片。

@@ -124,6 +124,13 @@ internal fun rememberClaimedAuthController(
             disconnectTransport = imClient::disconnect,
         )
     }
+    val bannedAccountCleaner = remember(credentialOwner, imClient) {
+        AuthBannedAccountCleaner(
+            cleanup = accountDataCleanup,
+            clearBannedCredentials = credentialOwner::clearBannedAccount,
+            beforeDelete = beforeAccountDataCleanup,
+        )
+    }
 
     fun publishWorkspace(activeSession: ClientSession) {
         publishedWorkspace = publishAuthenticationWorkspace(
@@ -205,12 +212,10 @@ internal fun rememberClaimedAuthController(
             accountBanRetirementFailure = null
             // 保存清理范围必须先于清凭据。若写标记失败，保留凭据供下次重新确认封禁。
             val currentOwner = ownerClaimLease.publishIfCurrent {
-                try {
-                    checkNotNull(accountDataCleanup) { "Account cleanup is not configured" }
-                    checkNotNull(bannedOwner) { "Banned account identity is missing" }
-                    accountDataCleanup.begin(bannedOwner)
-                } catch (failure: Exception) {
-                    accountBanRetirementFailure = failure
+                accountBanRetirementFailure = if (bannedOwner == null) {
+                    IllegalStateException("Banned account identity is missing")
+                } else {
+                    bannedAccountCleaner.begin(bannedOwner)
                 }
                 true
             }
@@ -281,23 +286,10 @@ internal fun rememberClaimedAuthController(
             retireWithPlatformBoundary(platformOwner, reason, ::retireControllerState)
         }
         if (banned) {
-            val cleanup = accountDataCleanup
-            if (accountBanRetirementFailure != null || cleanup == null || bannedOwner == null) {
+            if (accountBanRetirementFailure != null || bannedOwner == null) {
                 accountBanState = AccountBanState.CLEANUP_FAILED
             } else {
-                controllerScope.launch {
-                    val cleared = withContext(NonCancellable + Dispatchers.IO) {
-                        try {
-                            beforeAccountDataCleanup(bannedOwner)
-                            cleanup.deleteOwnedData(bannedOwner)
-                            credentialOwner.clearBannedAccount(bannedOwner)
-                            cleanup.complete(bannedOwner)
-                            true
-                        } catch (failure: Throwable) {
-                            if (isFatalClientLifecycleFailure(failure)) throw failure
-                            false
-                        }
-                    }
+                bannedAccountCleaner.launchDelete(controllerScope, bannedOwner) { cleared ->
                     accountBanState = if (cleared) AccountBanState.CLEARED else AccountBanState.CLEANUP_FAILED
                 }
             }
