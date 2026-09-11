@@ -15,6 +15,7 @@ import com.virjar.tk.app.telemetry.ClientActionOutcome
 import com.virjar.tk.app.telemetry.ClientPageExitReason
 import com.virjar.tk.app.telemetry.ClientSystemEvent
 import com.virjar.tk.app.telemetry.ClientSystemState
+import com.virjar.tk.app.telemetry.connectionTelemetryState
 import com.virjar.tk.app.telemetry.ClientUiAction
 import com.virjar.tk.app.telemetry.ClientUiPage
 import com.virjar.tk.app.telemetry.ClientUiTelemetrySink
@@ -46,7 +47,7 @@ internal fun AndroidTelemetryLifecycle(
     LaunchedEffect(connectionState) {
         telemetry.recordSystem(
             ClientSystemEvent.CONNECTION_STATE,
-            androidConnectionTelemetryState(connectionState),
+            connectionTelemetryState(connectionState),
         )
     }
     DisposableEffect(lifecycleOwner, pageDwell) {
@@ -106,14 +107,6 @@ internal fun androidTelemetryPage(route: String?): ClientUiPage = when (route) {
     else -> ClientUiPage.CONVERSATIONS
 }
 
-internal fun androidConnectionTelemetryState(state: ConnectionState): ClientSystemState = when (state) {
-    ConnectionState.DISCONNECTED -> ClientSystemState.DISCONNECTED
-    ConnectionState.CONNECTING -> ClientSystemState.CONNECTING
-    ConnectionState.CONNECTED -> ClientSystemState.CONNECTED
-    ConnectionState.SYNCHRONIZING -> ClientSystemState.SYNCHRONIZING
-    ConnectionState.AUTHENTICATED -> ClientSystemState.AUTHENTICATED
-    ConnectionState.AUTH_FAILED -> ClientSystemState.AUTHENTICATION_FAILED
-}
 
 internal fun androidHomeTabTelemetryPage(tab: MainTab): ClientUiPage = when (tab) {
     MainTab.CONVERSATIONS -> ClientUiPage.CONVERSATIONS

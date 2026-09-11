@@ -10,7 +10,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import com.virjar.tk.app.telemetry.ClientUiTelemetrySink
 import com.virjar.tk.app.ui.component.GalleryItem
 import com.virjar.tk.app.ui.component.MediaGallery
 import com.virjar.tk.desktop.media.DesktopSessionResources
@@ -41,7 +40,6 @@ internal class DesktopGalleryOverlayRequest(
     val initialIndex: Int,
     val presentationGate: DesktopSessionPresentationGate,
     val resources: DesktopSessionResources,
-    val telemetry: ClientUiTelemetrySink,
     val fileDownloads: DesktopFileDownloadController?,
     val onDismiss: () -> Unit,
 )

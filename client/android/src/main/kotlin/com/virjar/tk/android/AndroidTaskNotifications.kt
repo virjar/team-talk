@@ -5,8 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
-import com.virjar.tk.protocol.model.TaskPolicy
-import com.virjar.tk.shared.Outcome
+import com.virjar.tk.app.navigation.feature.task.forEachDueTaskReminder
 import com.virjar.tk.shared.client.ClientSession
 import com.virjar.tk.shared.client.ConnectionState
 import kotlinx.coroutines.CoroutineScope
@@ -49,11 +48,9 @@ internal class AndroidTaskNotifications(
                     val eligible = reminders.filterNot { it.seen }.mapTo(mutableSetOf()) { it.taskId }
                     posted.toList().filter { active || it !in eligible }.forEach(::cancel)
                     if (connection != ConnectionState.AUTHENTICATED || active || !manager.areNotificationsEnabled()) return@collect
-                    for (reminder in reminders.filterNot { it.seen || it.notified }) {
-                        val task = (withContext(Dispatchers.IO) { session.taskRepo.get(reminder.taskId) } as? Outcome.Success)?.value ?: continue
-                        if (task.assigneeUid != session.ownerUid || task.remindedAt != reminder.remindedAt ||
-                            task.status !in setOf(TaskPolicy.TODO, TaskPolicy.IN_PROGRESS)) continue
-                        if (closed || foreground.value || session.connectionState.value != ConnectionState.AUTHENTICATED) break
+                    forEachDueTaskReminder(session.taskRepo, session.ownerUid, stillEligible = {
+                        !closed && !foreground.value && session.connectionState.value == ConnectionState.AUTHENTICATED
+                    }) { task, remindedAt ->
                         val target = AndroidNotificationTarget(session.deploymentIdentity.fingerprint, session.datasetId,
                             session.ownerUid, chatId = "", taskId = task.taskId)
                         val pendingIntent = PendingIntent.getActivity(context, 0, target.intent(context),
@@ -68,7 +65,7 @@ internal class AndroidTaskNotifications(
                         try {
                             manager.notify(prefix + task.taskId, 0, notification)
                             posted += task.taskId
-                            withContext(Dispatchers.IO) { local.markReminderNotified(task.taskId, reminder.remindedAt) }
+                            withContext(Dispatchers.IO) { local.markReminderNotified(task.taskId, remindedAt) }
                         } catch (_: SecurityException) {
                             // 权限拒绝后仍保留应用内未读提醒。
                         }

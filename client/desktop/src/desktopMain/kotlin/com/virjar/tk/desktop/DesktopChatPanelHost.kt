@@ -195,7 +195,6 @@ internal fun ChatPanelWrapper(
                             initialIndex = galleryIndex,
                             presentationGate = presentationGate,
                             resources = resources,
-                            telemetry = telemetry,
                             fileDownloads = fileDownloads,
                             onDismiss = { showGallery = false },
                         ),

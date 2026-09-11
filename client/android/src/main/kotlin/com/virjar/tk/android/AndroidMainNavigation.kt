@@ -134,10 +134,6 @@ internal fun AndroidMainAppContent(
         }
         notificationNavigation.consume(target)
     }
-    suspend fun <T> admittedAction(
-        onClosed: () -> T,
-        action: suspend () -> T,
-    ): T = dataState.runAdmittedUiAction(actionAdmission, onClosed, action)
     fun launchAdmittedAction(action: suspend () -> Unit): Boolean =
         dataState.launchAdmittedUiAction(actionAdmission, action)
     val chatEmbeddedAssets = rememberAndroidChatEmbeddedAssetImportHost(dataState, resourceOwner)

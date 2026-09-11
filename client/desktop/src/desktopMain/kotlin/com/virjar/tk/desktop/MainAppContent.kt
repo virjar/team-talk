@@ -35,6 +35,7 @@ import com.virjar.tk.protocol.model.Conversation
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.app.navigation.MainTab
 import com.virjar.tk.app.telemetry.ClientUiPage
+import com.virjar.tk.app.telemetry.connectionTelemetryState
 import com.virjar.tk.app.telemetry.ClientUiAction
 import com.virjar.tk.app.telemetry.ClientActionOutcome
 import com.virjar.tk.app.telemetry.ClientSystemEvent
@@ -162,7 +163,7 @@ internal fun WindowScope.MainAppContent(
     LaunchedEffect(connectionState) {
         nav.telemetry.recordSystem(
             ClientSystemEvent.CONNECTION_STATE,
-            desktopConnectionTelemetryState(connectionState),
+            connectionTelemetryState(connectionState),
         )
     }
     DisposableEffect(pageDwell) {
@@ -802,18 +803,14 @@ internal fun desktopTelemetryPage(nav: DesktopNav): ClientUiPage = desktopMainWi
     chatOpen = nav.chatId != null,
     mainPaneScreen = nav.mainPaneScreen,
     inspectorScreen = nav.inspectorStack.lastOrNull(),
-    independentlyTrackedWindowScreen = nav.windowScreen,
-    independentlyTrackedProfileOpen = nav.profileUid != null,
 )
 
-/** 独立任务窗口与资料弹窗永远不会替换主窗口当前可见的页面。 */
+/** 独立任务窗口与资料弹窗拥有独立页面遥测，永远不替换主窗口当前可见的页面。 */
 internal fun desktopMainWindowTelemetryPage(
     selectedTab: MainTab?,
     chatOpen: Boolean,
     mainPaneScreen: SubScreen?,
     inspectorScreen: SubScreen?,
-    @Suppress("UNUSED_PARAMETER") independentlyTrackedWindowScreen: SubScreen?,
-    @Suppress("UNUSED_PARAMETER") independentlyTrackedProfileOpen: Boolean,
 ): ClientUiPage = when {
     inspectorScreen != null -> desktopTelemetryPage(inspectorScreen)
     mainPaneScreen != null -> desktopTelemetryPage(mainPaneScreen)
@@ -841,13 +838,4 @@ internal fun desktopTelemetryPage(screen: SubScreen): ClientUiPage = when (scree
     is SubScreen.InviteLinks -> ClientUiPage.INVITE_LINKS
     is SubScreen.GroupFiles -> ClientUiPage.GROUP_FILES
     is SubScreen.GroupBots -> ClientUiPage.GROUP_BOTS
-}
-
-internal fun desktopConnectionTelemetryState(state: ConnectionState): ClientSystemState = when (state) {
-    ConnectionState.DISCONNECTED -> ClientSystemState.DISCONNECTED
-    ConnectionState.CONNECTING -> ClientSystemState.CONNECTING
-    ConnectionState.CONNECTED -> ClientSystemState.CONNECTED
-    ConnectionState.SYNCHRONIZING -> ClientSystemState.SYNCHRONIZING
-    ConnectionState.AUTHENTICATED -> ClientSystemState.AUTHENTICATED
-    ConnectionState.AUTH_FAILED -> ClientSystemState.AUTHENTICATION_FAILED
 }

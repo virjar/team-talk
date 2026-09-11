@@ -1,6 +1,14 @@
 package com.virjar.tk.app.telemetry
 
 import com.virjar.tk.protocol.telemetry.TelemetryFeedbackCode
+import com.virjar.tk.shared.AppError
+import com.virjar.tk.shared.client.ConnectionState
+import java.io.IOException
+import java.net.UnknownHostException
+import java.net.SocketTimeoutException
+import java.net.SocketException
+import java.net.NoRouteToHostException
+import java.net.ConnectException
 
 /** 图形客户端共享的、稳定的、无参数的页面身份。 */
 enum class ClientUiPage(val code: String) {
@@ -111,6 +119,31 @@ enum class MediaFailureReason(val code: String) {
     UNKNOWN("unknown"),
 }
 
+/** 跨端共享的失败分类核心；平台专属异常先经 [platformReason] 判定，其余按类型统一分类。 */
+fun classifyMediaFailure(
+    failure: Throwable,
+    platformReason: (Throwable) -> MediaFailureReason?,
+): MediaFailureReason = platformReason(failure) ?: when (failure) {
+    is AppError.AuthExpired -> MediaFailureReason.SESSION
+    is AppError.Business -> when (failure.code) {
+        403 -> MediaFailureReason.HTTP_DENIED
+        404 -> MediaFailureReason.HTTP_MISSING
+        else -> MediaFailureReason.HTTP_STATUS
+    }
+    is AppError.Network,
+    is AppError.Timeout,
+    is ConnectException,
+    is NoRouteToHostException,
+    is SocketTimeoutException,
+    is UnknownHostException,
+    is SocketException,
+    -> MediaFailureReason.NETWORK
+    is IOException -> MediaFailureReason.IO
+    is AppError.Unknown -> classifyMediaFailure(failure.cause, platformReason)
+    else -> MediaFailureReason.UNKNOWN
+}
+
+
 val MediaFailureReason.downloadFeedbackCode: UserFeedbackCode
     get() = when (this) {
         MediaFailureReason.HTTP_DENIED -> UserFeedbackCode.MEDIA_HTTP_DENIED
@@ -162,6 +195,16 @@ enum class ClientSystemEvent(val code: String) {
 }
 
 /** 系统状态的封闭词汇表。绝不传递主机名或框架生成的值。 */
+/** 连接层状态到系统遥测状态的唯一映射；两端壳共用，不各自维护副本。 */
+fun connectionTelemetryState(state: ConnectionState): ClientSystemState = when (state) {
+    ConnectionState.DISCONNECTED -> ClientSystemState.DISCONNECTED
+    ConnectionState.CONNECTING -> ClientSystemState.CONNECTING
+    ConnectionState.CONNECTED -> ClientSystemState.CONNECTED
+    ConnectionState.SYNCHRONIZING -> ClientSystemState.SYNCHRONIZING
+    ConnectionState.AUTHENTICATED -> ClientSystemState.AUTHENTICATED
+    ConnectionState.AUTH_FAILED -> ClientSystemState.AUTHENTICATION_FAILED
+}
+
 enum class ClientSystemState(val code: String) {
     CONNECTING("connecting"),
     CONNECTED("connected"),

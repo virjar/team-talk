@@ -24,6 +24,7 @@ import com.virjar.tk.app.telemetry.NoopClientUiTelemetrySink
 import com.virjar.tk.app.telemetry.UserFeedbackCode
 import com.virjar.tk.app.telemetry.UserFeedbackNotice
 import com.virjar.tk.app.telemetry.downloadFeedbackCode
+import com.virjar.tk.app.telemetry.classifyMediaFailure
 import com.virjar.tk.app.ui.component.AutomaticFileDownloadLedger
 import com.virjar.tk.app.ui.component.FileDownloadController
 import com.virjar.tk.app.ui.component.FileDownloadState
@@ -663,30 +664,17 @@ internal class DesktopFileDownloadController(
     private enum class PendingOpenMode { PREVIEW, EXTERNAL, EXPORT }
 }
 
-/** 仅按类型分类：异常文本、URL 与文件路径绝不会进入 telemetry。 */
-internal fun classifyDesktopMediaFailure(failure: Throwable): MediaFailureReason = when (failure) {
-    is DesktopMediaCacheQuotaException -> MediaFailureReason.CACHE_QUOTA
-    is DesktopMediaDownloadSizeException -> MediaFailureReason.SIZE_VALIDATION
-    is DesktopSessionUnavailableException,
-    is DesktopMediaSupersededCredentialException,
-    is AppError.AuthExpired,
-    -> MediaFailureReason.SESSION
-    is AppError.Business -> when (failure.code) {
-        403 -> MediaFailureReason.HTTP_DENIED
-        404 -> MediaFailureReason.HTTP_MISSING
-        else -> MediaFailureReason.HTTP_STATUS
+/** 仅按类型分类：异常文本、URL 与文件路径绝不会进入 telemetry；公共分类核心在 app 层共享。 */
+internal fun classifyDesktopMediaFailure(failure: Throwable): MediaFailureReason = classifyMediaFailure(failure) { error ->
+    when (error) {
+        is DesktopMediaCacheQuotaException -> MediaFailureReason.CACHE_QUOTA
+        is DesktopMediaDownloadSizeException -> MediaFailureReason.SIZE_VALIDATION
+        is DesktopSessionUnavailableException,
+        is DesktopMediaSupersededCredentialException,
+        is AppError.AuthExpired,
+        -> MediaFailureReason.SESSION
+        else -> null
     }
-    is AppError.Network,
-    is AppError.Timeout,
-    is ConnectException,
-    is NoRouteToHostException,
-    is SocketTimeoutException,
-    is UnknownHostException,
-    is SocketException,
-    -> MediaFailureReason.NETWORK
-    is IOException -> MediaFailureReason.IO
-    is AppError.Unknown -> classifyDesktopMediaFailure(failure.cause)
-    else -> MediaFailureReason.UNKNOWN
 }
 
 /** Desktop 下载层只负责把现有缓存文件交给预览窗口；内容分类和解码由 commonMain 统一。 */

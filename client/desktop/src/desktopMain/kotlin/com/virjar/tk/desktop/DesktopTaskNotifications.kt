@@ -5,9 +5,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
+import com.virjar.tk.app.navigation.feature.task.forEachDueTaskReminder
 import com.virjar.tk.desktop.tray.AppTray
-import com.virjar.tk.protocol.model.TaskPolicy
-import com.virjar.tk.shared.Outcome
 import com.virjar.tk.shared.client.ConnectionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
@@ -28,14 +27,11 @@ internal fun DesktopTaskNotifications(
         combine(repo.local.changes, snapshotFlow { presentation }) { _, state -> state }.collect { (active, connection) ->
             if (active || connection != ConnectionState.AUTHENTICATED || !AppTray.isActive) return@collect
             nav.runAdmittedUiAction(presentationGate, onClosed = {}) {
-                val reminders = withContext(Dispatchers.IO) { repo.local.reminders().filterNot { it.seen || it.notified } }
-                for (reminder in reminders) {
-                    val task = (withContext(Dispatchers.IO) { repo.get(reminder.taskId) } as? Outcome.Success)?.value ?: continue
-                    if (task.assigneeUid != nav.userSession.uid || task.remindedAt != reminder.remindedAt ||
-                        task.status !in setOf(TaskPolicy.TODO, TaskPolicy.IN_PROGRESS)) continue
-                    if (!presentationGate.isOpen || presentation.first || presentation.second != ConnectionState.AUTHENTICATED) break
+                forEachDueTaskReminder(repo, nav.userSession.uid, stillEligible = {
+                    presentationGate.isOpen && !presentation.first && presentation.second == ConnectionState.AUTHENTICATED
+                }) { task, remindedAt ->
                     AppTray.showNotification("任务已到截止时间", task.title)
-                    withContext(Dispatchers.IO) { repo.local.markReminderNotified(task.taskId, reminder.remindedAt) }
+                    withContext(Dispatchers.IO) { repo.local.markReminderNotified(task.taskId, remindedAt) }
                 }
             }
         }

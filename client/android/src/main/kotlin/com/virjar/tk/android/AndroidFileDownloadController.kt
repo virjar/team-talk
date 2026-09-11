@@ -18,6 +18,7 @@ import com.virjar.tk.app.telemetry.NoopClientUiTelemetrySink
 import com.virjar.tk.app.telemetry.UserFeedbackCode
 import com.virjar.tk.app.telemetry.UserFeedbackNotice
 import com.virjar.tk.app.telemetry.downloadFeedbackCode
+import com.virjar.tk.app.telemetry.classifyMediaFailure
 import com.virjar.tk.app.ui.component.AutomaticFileDownloadLedger
 import com.virjar.tk.app.ui.component.FileDownloadController
 import com.virjar.tk.app.ui.component.FileDownloadState
@@ -750,29 +751,12 @@ class AndroidFileDownloadController private constructor(
     }
 }
 
-/** 仅按类型分类：不观察异常消息、URI 或本地文件名。 */
-internal fun classifyAndroidMediaFailure(failure: Throwable): MediaFailureReason = when (failure) {
-    is MediaCacheQuotaException -> MediaFailureReason.CACHE_QUOTA
-    is MediaDownloadSizeException,
-    is SelectedMediaTooLargeException,
-    -> MediaFailureReason.SIZE_VALIDATION
-    is AndroidMediaSupersededCredentialException,
-    is AppError.AuthExpired,
-    -> MediaFailureReason.SESSION
-    is AppError.Business -> when (failure.code) {
-        403 -> MediaFailureReason.HTTP_DENIED
-        404 -> MediaFailureReason.HTTP_MISSING
-        else -> MediaFailureReason.HTTP_STATUS
+/** 仅按类型分类：不观察异常消息、URI 或本地文件名；公共分类核心在 app 层共享。 */
+internal fun classifyAndroidMediaFailure(failure: Throwable): MediaFailureReason = classifyMediaFailure(failure) { error ->
+    when (error) {
+        is MediaCacheQuotaException -> MediaFailureReason.CACHE_QUOTA
+        is MediaDownloadSizeException, is SelectedMediaTooLargeException -> MediaFailureReason.SIZE_VALIDATION
+        is AndroidMediaSupersededCredentialException, is AppError.AuthExpired -> MediaFailureReason.SESSION
+        else -> null
     }
-    is AppError.Network,
-    is AppError.Timeout,
-    is ConnectException,
-    is NoRouteToHostException,
-    is SocketTimeoutException,
-    is UnknownHostException,
-    is SocketException,
-    -> MediaFailureReason.NETWORK
-    is IOException -> MediaFailureReason.IO
-    is AppError.Unknown -> classifyAndroidMediaFailure(failure.cause)
-    else -> MediaFailureReason.UNKNOWN
 }
