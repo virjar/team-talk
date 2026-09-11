@@ -58,9 +58,7 @@ internal fun quarantineAndroidLocalCacheDatabase(
     if (!databaseFile.isFile) {
         throw FileNotFoundException("Corrupt Android local-cache main file is missing")
     }
-    if (hasRetainedAndroidLocalCacheQuarantine(databaseFile)) {
-        throw IOException("An unprocessed Android local-cache quarantine already exists; refusing another copy")
-    }
+    sweepAndroidLocalCacheQuarantines(databaseFile)
     val quarantinedMain = nextAndroidLocalCacheQuarantineMain(databaseFile, quarantineId)
     val markers = androidLocalCacheLifecycleMarkers(databaseFile)
     val moves = buildList {
@@ -103,14 +101,18 @@ private fun MutableList<Pair<File, File>>.addMarkerMove(
     if (marker.exists()) add(marker to File(quarantinedMain.path + suffix))
 }
 
-/** 包含残留侧车的同 owner 隔离族也会暂停源清理，不能依赖损坏主库可读取。 */
-internal fun hasRetainedAndroidLocalCacheQuarantine(databaseFile: File): Boolean {
-    val parent = databaseFile.parentFile
-        ?: throw IOException("Android local-cache database has no parent directory")
-    val prefix = "${databaseFile.name}.corrupt-"
-    val entries = parent.listFiles()
-        ?: throw IOException("Cannot inspect Android local-cache quarantine directory")
-    return entries.any { it.name.startsWith(prefix) }
+/** 尽力删除历史恢复残留的隔离族；它们是不再被任何打开路径引用的弃用数据。 */
+internal fun sweepAndroidLocalCacheQuarantines(databaseFile: File) {
+    val parent = databaseFile.parentFile ?: return
+    parent.listFiles()?.forEach { entry ->
+        if (!entry.name.contains(".corrupt-")) return@forEach
+        runCatching { entry.delete() }
+    }
+}
+
+/** 替换库验证健康后删除隔离族；失败只忽略，残留由下一次恢复清扫。 */
+internal fun deleteAndroidLocalCacheQuarantine(quarantine: AndroidLocalCacheQuarantine) {
+    quarantine.quarantinedFiles.forEach { file -> runCatching { file.delete() } }
 }
 
 private fun nextAndroidLocalCacheQuarantineMain(databaseFile: File, quarantineId: String): File {

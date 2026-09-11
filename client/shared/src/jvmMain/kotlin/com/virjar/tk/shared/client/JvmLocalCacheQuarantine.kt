@@ -11,11 +11,11 @@ internal data class JvmLocalCacheQuarantine(
 )
 
 /**
- * 在原路径旁原子保留精确的已关闭 `users/<uid>` 命名空间。
+ * 在原路径旁原子移出精确的已关闭 `users/<uid>` 命名空间，为重建腾出规范路径。
  *
- * Desktop 的 uid 目录只归本地缓存工厂所有，因此一次目录重命名让主 DB、WAL/SHM/journal、生命周期
- * 标记与更旧 epoch 保持在一起。隔离名包含一个点，因此不会与合法 uid 冲突。在显式恢复或丢弃工具
- * 处理第一个之前，拒绝保留第二份副本。
+ * 服务器是唯一可靠信息源：损坏旧库在替换库验证健康后即被删除，不保留待处置副本。
+ * 隔离名包含一个点，因此不会与合法 uid 冲突；上一次恢复中途崩溃残留的旧隔离族
+ * 在移出前先被尽力清扫，不会阻塞本次重建。
  */
 internal fun quarantineJvmLocalCacheUserDirectory(
     userDirectory: File,
@@ -27,23 +27,34 @@ internal fun quarantineJvmLocalCacheUserDirectory(
     require(quarantineId.isNotBlank() && quarantineId.all { it.isLetterOrDigit() || it == '-' }) {
         "JVM local-cache quarantine id is invalid"
     }
-    if (hasRetainedJvmLocalCacheQuarantine(userDirectory)) {
-        throw IOException("An unprocessed JVM local-cache quarantine already exists")
-    }
     val parent = checkNotNull(userDirectory.parentFile)
-    val prefix = "${userDirectory.name}.corrupt-"
-    val target = File(parent, prefix + quarantineId)
+    sweepJvmLocalCacheQuarantines(parent)
+    val target = File(parent, "${userDirectory.name}.corrupt-$quarantineId")
     if (target.exists()) throw IOException("JVM local-cache quarantine target already exists")
     Files.move(userDirectory.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
     return JvmLocalCacheQuarantine(target)
 }
 
-/** 每次打开重新识别同一 owner 的未处理副本，不以新建空库证明旧引用不存在。 */
-internal fun hasRetainedJvmLocalCacheQuarantine(userDirectory: File): Boolean {
-    val parent = userDirectory.parentFile
-        ?: throw IOException("JVM local-cache user directory has no parent")
-    val prefix = "${userDirectory.name}.corrupt-"
-    val entries = parent.listFiles()
-        ?: throw IOException("Cannot inspect JVM local-cache users directory")
-    return entries.any { it.name.startsWith(prefix) }
+/** 替换库验证健康后删除隔离目录；失败只记录，残留由下一次恢复清扫。 */
+internal fun deleteJvmLocalCacheQuarantine(quarantine: JvmLocalCacheQuarantine): Exception? = try {
+    quarantine.quarantinedUserDirectory.deleteRecursively()
+    null
+} catch (failure: Exception) {
+    failure
+}
+
+/** 尽力删除历史恢复残留的隔离族；它们是不再被任何打开路径引用的弃用数据。 */
+internal fun sweepJvmLocalCacheQuarantines(parent: File): List<Exception> {
+    val failures = mutableListOf<Exception>()
+    parent.listFiles()?.forEach { entry ->
+        if (!entry.name.contains(".corrupt-")) return@forEach
+        try {
+            if (!entry.deleteRecursively()) {
+                failures += IOException("JVM local-cache quarantine leftover could not be deleted: ${entry.name}")
+            }
+        } catch (failure: Exception) {
+            failures += failure
+        }
+    }
+    return failures
 }

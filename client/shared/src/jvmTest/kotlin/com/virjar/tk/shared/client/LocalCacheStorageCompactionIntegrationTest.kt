@@ -237,20 +237,16 @@ class LocalCacheStorageCompactionIntegrationTest {
     }
 
     @Test
-    fun `retained quarantine refuses maintenance while current account remains usable`() = workspace { root ->
-        val retained = privateFile(root, "deployments/${deployment.fingerprint}/datasets/$DATASET/users/$UID.corrupt-retained/cache_e0.db", PAYLOAD)
+    fun `leftover quarantine family does not block maintenance`() = workspace { root ->
+        privateFile(root, "deployments/${deployment.fingerprint}/datasets/$DATASET/users/$UID.corrupt-leftover/cache_e0.db", PAYLOAD)
         withFactoryCache(root) { cache ->
             cache.enqueueOutgoingMessage(message("current"), 1)
             val before = contents(databaseFile(root))
-            assertFalse(cache.chatDrafts.orphanSourceCleanupAllowed)
 
-            rejected(LocalCacheStorageCompactionFailure.QUARANTINE_REQUIRES_DISPOSITION) { cache.compactStorage() }
+            cache.compactStorage()
 
             assertEquals(before, contents(databaseFile(root)))
-            assertContentEquals(PAYLOAD, retained.readBytes())
             assertNotNull(cache.getOutgoingMessage("chat", "current"))
-            cache.upsertUser(User("kept", "kept", name = "Kept"))
-            assertNotNull(cache.getUser("kept"))
         }
     }
 

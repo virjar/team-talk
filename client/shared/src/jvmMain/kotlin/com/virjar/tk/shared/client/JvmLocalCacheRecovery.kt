@@ -14,20 +14,11 @@ private class JvmLocalCacheIntegrityFailure : IllegalStateException(
 
 private val jvmLocalCacheRecoveryLogger = PlatformOnlyTkLogger("JvmLocalCache")
 
-internal enum class JvmLocalCacheCorruptionPolicy {
-    /** Desktop GUI 可以重建服务器投影，同时为诊断保留仅本地事实。 */
-    QUARANTINE_AND_REBUILD,
-
-    /** 无头 inbox/outbox owner 绝不能静默替换其可靠本地事实。 */
-    FAIL_PRESERVING,
-}
-
-/** 打开一个 JVM 账号缓存，在创建干净投影之前保留已确认的损坏。 */
+/** 打开一个 JVM 账号缓存；确认损坏时移出旧库并用干净重建恢复，替换验证健康后删除旧库。 */
 internal fun openCheckedJvmLocalCacheDriver(
     privateData: JvmPrivateDataDirectory,
     privateDirectories: List<String>,
     databaseFileName: String,
-    corruptionPolicy: JvmLocalCacheCorruptionPolicy,
 ): SqlDriver {
     val userDirectory = privateData.ensureDirectory(privateDirectories).toFile()
     val databaseFile = privateData.preparePrivateFile(privateDirectories, databaseFileName)
@@ -44,11 +35,7 @@ internal fun openCheckedJvmLocalCacheDriver(
     } catch (failure: Throwable) {
         val confirmedCorruption =
             failure is JvmLocalCacheIntegrityFailure || failure.hasJvmSqliteCorruptionCause()
-        if (
-            !confirmedCorruption ||
-            corruptionPolicy == JvmLocalCacheCorruptionPolicy.FAIL_PRESERVING ||
-            isFatalSessionLifecycleFailure(failure)
-        ) {
+        if (!confirmedCorruption || isFatalSessionLifecycleFailure(failure)) {
             firstDriver?.let { closeOwnedDriverAfterFailure(it, failure) }
             throw failure
         }
@@ -69,8 +56,7 @@ internal fun openCheckedJvmLocalCacheDriver(
             throw mergeSessionLifecycleFailures(failure, quarantineFailure)
         }
         jvmLocalCacheRecoveryLogger.fault(
-            "Corrupt account cache quarantined; local-only facts remain in the retained " +
-                "database family while a clean projection is created",
+            "Corrupt account cache moved aside; a clean projection is rebuilt from the server",
             failure,
         )
 
@@ -85,13 +71,20 @@ internal fun openCheckedJvmLocalCacheDriver(
                 privateDirectories = privateDirectories,
                 databaseFileName = databaseFileName,
             )
+            deleteJvmLocalCacheQuarantine(quarantine)?.let { sweepFailure ->
+                jvmLocalCacheRecoveryLogger.fault(
+                    "Corrupt local-cache family could not be deleted after recovery; it will be swept next time",
+                    sweepFailure,
+                )
+            }
             return replacementDriver
         } catch (replacementFailure: Throwable) {
             addSuppressedDistinct(replacementFailure, failure)
             addSuppressedDistinct(
                 replacementFailure,
                 IllegalStateException(
-                    "Corrupt local cache was retained as ${quarantine.quarantinedUserDirectory.name}",
+                    "Corrupt local cache family was moved aside as ${quarantine.quarantinedUserDirectory.name} " +
+                        "and will be swept by the next recovery",
                 ),
             )
             replacement?.let { closeOwnedDriverAfterFailure(it, replacementFailure) }

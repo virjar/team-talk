@@ -20,11 +20,10 @@ class JvmLocalCacheRecoveryTest {
     )
 
     @Test
-    fun `confirmed corruption retains exact account family and opens a clean replacement`() {
+    fun `confirmed corruption reopens a clean replacement and deletes the corrupt family`() {
         val dataDir = Files.createTempDirectory("tk-jvm-cache-recovery-").toFile()
         try {
             createDesktopLocalCache(deployment, TEST_SYNC_DATASET_ID, "damaged", dataDir).useCache { cache ->
-                assertTrue(cache.chatDrafts.orphanSourceCleanupAllowed)
                 cache.upsertUser(User(uid = "lost-projection", username = "lost", name = "Lost"))
             }
             createDesktopLocalCache(deployment, TEST_SYNC_DATASET_ID, "healthy", dataDir).useCache { cache ->
@@ -32,30 +31,23 @@ class JvmLocalCacheRecoveryTest {
             }
 
             val damagedFile = cacheFile(dataDir, "damaged")
-            val corruptedBytes = "not-a-sqlite-database".encodeToByteArray()
-            damagedFile.writeBytes(corruptedBytes)
+            damagedFile.writeBytes("not-a-sqlite-database".encodeToByteArray())
 
             createDesktopLocalCache(deployment, TEST_SYNC_DATASET_ID, "damaged", dataDir).useCache { replacement ->
-                assertFalse(replacement.chatDrafts.orphanSourceCleanupAllowed)
                 assertNull(replacement.getUser("lost-projection"))
                 replacement.upsertUser(User(uid = "rebuilt", username = "rebuilt", name = "Rebuilt"))
             }
 
-            val quarantinedUserDirectory = damagedFile.parentFile.parentFile.listFiles().orEmpty()
-                .single { candidate ->
-                    candidate.name.startsWith("damaged.corrupt-") &&
-                        candidate.name.substringAfter(".corrupt-").all { it.isLetterOrDigit() || it == '-' }
-            }
-            val quarantinedDatabase = File(quarantinedUserDirectory, localCacheDatabaseFileName())
-            assertContentEquals(corruptedBytes, quarantinedDatabase.readBytes())
+            // 服务器是唯一可靠信息源：替换库验证健康后损坏族立即删除，不再保留待处置副本。
             assertTrue(damagedFile.isFile)
+            damagedFile.parentFile.parentFile.listFiles().orEmpty()
+                .filter { it.name.startsWith("damaged.corrupt-") }
+                .forEach { assertFalse(it.exists(), "quarantine family must be deleted: ${it.name}") }
 
             createDesktopLocalCache(deployment, TEST_SYNC_DATASET_ID, "damaged", dataDir).useCache { reopened ->
-                assertFalse(reopened.chatDrafts.orphanSourceCleanupAllowed)
                 assertNotNull(reopened.getUser("rebuilt"))
             }
             createDesktopLocalCache(deployment, TEST_SYNC_DATASET_ID, "healthy", dataDir).useCache { healthy ->
-                assertTrue(healthy.chatDrafts.orphanSourceCleanupAllowed)
                 assertNotNull(healthy.getUser("healthy-projection"))
                 assertNull(healthy.getUser("rebuilt"))
             }
@@ -99,7 +91,7 @@ class JvmLocalCacheRecoveryTest {
     }
 
     @Test
-    fun `headless policy preserves a corrupt reliable cache in place`() {
+    fun `headless corrupt cache also rebuilds from the server`() {
         val dataDir = Files.createTempDirectory("tk-jvm-cache-headless-usage-").toFile()
         try {
             createJvmLocalCache(
@@ -107,51 +99,49 @@ class JvmLocalCacheRecoveryTest {
                 datasetId = TEST_SYNC_DATASET_ID,
                 uid = "bot-owner",
                 dataDir = dataDir,
-                corruptionPolicy = JvmLocalCacheCorruptionPolicy.FAIL_PRESERVING,
             ).useCache { cache ->
                 cache.upsertUser(User(uid = "reliable", username = "reliable", name = "Reliable"))
             }
             val database = cacheFile(dataDir, "bot-owner")
-            val corruptedBytes = "reliable-cache-corruption".encodeToByteArray()
-            database.writeBytes(corruptedBytes)
+            database.writeBytes("reliable-cache-corruption".encodeToByteArray())
 
-            val failure = kotlin.runCatching {
-                createJvmLocalCache(
-                    deploymentIdentity = deployment,
-                    datasetId = TEST_SYNC_DATASET_ID,
-                    uid = "bot-owner",
-                    dataDir = dataDir,
-                    corruptionPolicy = JvmLocalCacheCorruptionPolicy.FAIL_PRESERVING,
-                )
-            }.exceptionOrNull()
+            createJvmLocalCache(
+                deploymentIdentity = deployment,
+                datasetId = TEST_SYNC_DATASET_ID,
+                uid = "bot-owner",
+                dataDir = dataDir,
+            ).useCache { rebuilt ->
+                assertNull(rebuilt.getUser("reliable"))
+                rebuilt.upsertUser(User(uid = "rebuilt", username = "rebuilt", name = "Rebuilt"))
+            }
 
-            assertNotNull(failure)
-            assertContentEquals(corruptedBytes, database.readBytes())
-            assertTrue(
-                database.parentFile.parentFile.listFiles().orEmpty()
-                    .none { it.name.startsWith("bot-owner.corrupt-") },
-            )
+            createJvmLocalCache(
+                deploymentIdentity = deployment,
+                datasetId = TEST_SYNC_DATASET_ID,
+                uid = "bot-owner",
+                dataDir = dataDir,
+            ).useCache { reopened ->
+                assertNotNull(reopened.getUser("rebuilt"))
+            }
         } finally {
             dataDir.deleteRecursively()
         }
     }
 
     @Test
-    fun `existing quarantine prevents an unbounded second retained copy`() {
-        val directory = Files.createTempDirectory("tk-jvm-cache-quarantine-limit-").toFile()
+    fun `leftover quarantine from an interrupted recovery is swept before the next one`() {
+        val directory = Files.createTempDirectory("tk-jvm-cache-quarantine-sweep-").toFile()
         try {
             val usersDirectory = File(directory, "users").apply { mkdir() }
             val userDirectory = File(usersDirectory, "target").apply { mkdir() }
             File(userDirectory, "cache.db").withText("main")
-            File(usersDirectory, "target.corrupt-existing").apply { mkdir() }
+            val leftover = File(usersDirectory, "target.corrupt-existing").apply { mkdir() }
+            File(leftover, "cache.db").withText("stale")
 
-            val failure = kotlin.runCatching {
-                quarantineJvmLocalCacheUserDirectory(userDirectory, "next")
-            }.exceptionOrNull()
+            val quarantine = quarantineJvmLocalCacheUserDirectory(userDirectory, "next")
 
-            assertNotNull(failure)
-            assertEquals("main", File(userDirectory, "cache.db").readText())
-            assertFalse(File(usersDirectory, "target.corrupt-next").exists())
+            assertFalse(leftover.exists(), "interrupted-recovery leftover must be swept")
+            assertEquals("main", File(quarantine.quarantinedUserDirectory, "cache.db").readText())
         } finally {
             directory.deleteRecursively()
         }
@@ -169,6 +159,22 @@ class JvmLocalCacheRecoveryTest {
         )
         assertFalse(SQLException("busy", "", 5).hasJvmSqliteCorruptionCause())
         assertFalse(IllegalStateException("ordinary failure").hasJvmSqliteCorruptionCause())
+    }
+
+    @Test
+    fun `quarantine delete reports failure without throwing`() {
+        val directory = Files.createTempDirectory("tk-jvm-cache-quarantine-delete-").toFile()
+        try {
+            val usersDirectory = File(directory, "users").apply { mkdir() }
+            val userDirectory = File(usersDirectory, "target").apply { mkdir() }
+            File(userDirectory, "cache.db").withText("main")
+            val quarantine = quarantineJvmLocalCacheUserDirectory(userDirectory, "del")
+
+            assertNull(deleteJvmLocalCacheQuarantine(quarantine))
+            assertFalse(quarantine.quarantinedUserDirectory.exists())
+        } finally {
+            directory.deleteRecursively()
+        }
     }
 
     private fun cacheFile(dataDir: File, uid: String): File = File(

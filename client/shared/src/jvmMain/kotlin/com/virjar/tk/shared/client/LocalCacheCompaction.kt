@@ -56,7 +56,6 @@ object LocalCacheCompaction {
                 val marker = privateData.atomicTextFile(fileName = ".client-data-version").readText(128)?.trim()
                 if (marker != "ready:${ProtocolVersions.MAJOR}") fail("INSTALLATION_VERSION_NOT_READY")
                 val database = privateData.requirePrivateFile(directories, components.last()).toPath()
-                if (hasRetainedJvmLocalCacheQuarantine(database.parent.toFile())) fail("QUARANTINE_REQUIRES_DISPOSITION")
                 val bytesBefore = familyBytes(database)
                 if (bytesBefore > MAX_DATABASE_BYTES) fail("DATABASE_SIZE_LIMIT")
                 Class.forName("org.sqlite.JDBC")

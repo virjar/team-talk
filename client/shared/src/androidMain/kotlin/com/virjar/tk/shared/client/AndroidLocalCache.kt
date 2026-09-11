@@ -18,7 +18,6 @@ fun createAndroidLocalCache(
     val driver = openCheckedAndroidLocalCacheDriver(context, databaseName, databaseFile)
     return createLocalCacheWithOwnedDriver(
         driver = driver,
-        orphanSourceCleanupAllowed = { !hasRetainedAndroidLocalCacheQuarantine(databaseFile) },
         storageMaintenance = LocalCacheStorageMaintenance(databaseFile, MAX_ANDROID_LOCAL_CACHE_COMPACTION_BYTES),
     )
 }

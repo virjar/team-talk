@@ -72,8 +72,7 @@ internal fun openCheckedAndroidLocalCacheDriver(
             throw mergeSessionLifecycleFailures(failure, quarantineFailure)
         }
         androidLocalCacheRecoveryLogger.fault(
-            "Corrupt account cache quarantined; local-only facts remain in the retained " +
-                "database family while a replacement is created",
+            "Corrupt account cache moved aside; a clean projection is rebuilt from the server",
             failure,
         )
 
@@ -90,13 +89,15 @@ internal fun openCheckedAndroidLocalCacheDriver(
                 runQuickCheck = true,
             )
             recordSuccessfulAndroidLocalCacheQuickCheck(markers.integrity, replacementCheckAt)
+            deleteAndroidLocalCacheQuarantine(quarantine)
             return publishOpenAndroidLocalCacheDriver(replacement.driver, markers.open)
         } catch (replacementFailure: Throwable) {
             addSuppressedDistinct(replacementFailure, failure)
             addSuppressedDistinct(
                 replacementFailure,
                 IllegalStateException(
-                    "Corrupt local cache was retained as ${quarantine.quarantinedMainFile.name}",
+                    "Corrupt local cache family was moved aside as ${quarantine.quarantinedMainFile.name} " +
+                        "and will be swept by the next recovery",
                 ),
             )
             closeOwnedDriverAfterFailure(replacement.driver, replacementFailure)

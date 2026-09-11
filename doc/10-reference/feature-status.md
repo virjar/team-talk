@@ -256,29 +256,15 @@ Android“设置 → 本地存储”保留登录信息，先保存草稿并暂�
 内存占用，不保证任意设备内存始终充足；句柄关闭失败要求明确退出本应用进程后重开。
 实现及边界见[当前会话数据库整理](../03-architecture/client-and-sdk.md#当前会话数据库整理)。
 
-隔离资料可按精确 owner 导出指定隔离库、替代库、附件源和独立文档资料，并以清单校验完整文件集合、
-大小与 SHA-256。JVM 导出复用现存安装锁，Android 处理已导出的应用根；不读取 SQLite、不修复或删除源。
-归档含私有正文及可靠命令凭据，校验只证明与清单一致，不代表恢复完成或源可删除。
-显式放弃要求完整归档及清单摘要确认，只删除与归档原字节一致的选定隔离文件，可按同一归档续跑；
-替代库、共享附件源、独立文档资料和归档不动；替代库及共享资料在归档后的正常更新不阻断操作，归档仍须
-完整通过校验。JVM 持现存安装锁，Android 只处理离线导出副本，不代表手机容量释放。最后一个隔离副本消失后，下次启动可正常回收旧库独占来源。
-已知账号 namespace 按部署指纹、datasetId 与 uid 显式保全并放弃，覆盖同 owner 全部 epoch 数据库族、
-隔离副本、附件源及独立文档资料。当前凭据仍引用目标或状态无法确认时拒绝；headless 按部署指纹与 uid
-保护全部 dataset。Android 仅处理离线导出目录，共享文档 preferences 只归档保留；凭据、媒体、telemetry、
-其他 owner 与未知 legacy 不删除。namespace format 2 与隔离 format 1 归档均可校验，但不能互相授权
-另一种放弃操作；默认不按年龄或零计数自动回收，边界见
-[账号 namespace 保全与显式放弃](../03-architecture/client-and-sdk.md#账号-namespace-保全与显式放弃)。
-
-归档、隔离与未知资料按各自保留规则处理，不以零计数授权清理。正常账号库中的草稿、outbox、业务
-命令和上传恢复仍由原生命周期承接，不从归档或隔离库自动重建待发业务。
+缓存损坏由客户端自动恢复：损坏库族原子移出原路径，干净替代库重建服务端可回拉投影，验证健康后
+损坏族删除；恢复中途崩溃残留的 `.corrupt-*` 目录在下一次恢复前自动清扫。服务器是唯一可靠信息源，
+不承诺恢复损坏瞬间的未发送本地事实。历史版本的隔离/账号归档与显式放弃命令已移除，
+边界见[损坏隔离与回收](../03-architecture/client-and-sdk.md#67-schema损坏隔离与回收)。
 
 交付制品的故障恢复、设备与平台复验统一见[REL-05](roadmap.md#rel-05--发布物晋级门禁)，按实际承诺
 范围执行；既有定向测试不等于磁盘耗尽、断电和广泛真机组合均已验证。
 
-定向验证入口见[账号 namespace 处置](../09-testing/local-tests.md#账号-namespace-处置)、
-[会话内数据库整理](../09-testing/local-tests.md#会话内数据库整理)、
-[隔离副本显式放弃](../09-testing/local-tests.md#隔离副本显式放弃)、
-[隔离资料保全与校验](../09-testing/local-tests.md#隔离资料保全与校验)、
+定向验证入口见[会话内数据库整理](../09-testing/local-tests.md#会话内数据库整理)、
 [JVM 离线单库压缩](../09-testing/local-tests.md#jvm-离线单库压缩)、
 [LocalCache 隔离与只读诊断](../09-testing/local-tests.md#localcache-隔离与只读诊断)及
 [LocalCache clean-close](../09-testing/local-tests.md#localcache-clean-close-checkpoint)。

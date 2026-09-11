@@ -166,7 +166,6 @@ class ChatAssetUploadCoordinator internal constructor(
     }
 
     private fun cleanupSources() {
-        if (!local.orphanSourceCleanupAllowed) return
         val referenced = local.retainedSourceIds()
         spool.list().filter { it.sourceId !in referenced }.forEach { spool.delete(it.sourceId) }
     }

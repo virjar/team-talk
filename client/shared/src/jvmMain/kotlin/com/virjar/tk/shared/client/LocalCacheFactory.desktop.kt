@@ -24,7 +24,6 @@ fun createDesktopLocalCache(
     datasetId = datasetId,
     uid = uid,
     dataDir = dataDir,
-    corruptionPolicy = JvmLocalCacheCorruptionPolicy.QUARANTINE_AND_REBUILD,
 )
 
 internal fun createJvmLocalCache(
@@ -32,7 +31,6 @@ internal fun createJvmLocalCache(
     datasetId: String,
     uid: String,
     dataDir: File,
-    corruptionPolicy: JvmLocalCacheCorruptionPolicy,
 ): LocalCache {
     val safeUid = validatedLocalCacheOwnerId(uid)
     val datasetNamespace = validatedLocalCacheDatasetId(datasetId)
@@ -45,13 +43,11 @@ internal fun createJvmLocalCache(
         privateData = privateData,
         privateDirectories = privateDirectories,
         databaseFileName = localCacheDatabaseFileName(),
-        corruptionPolicy = corruptionPolicy,
     )
-    // 检查必须在打开完成之后：这次打开本身也可能刚创建隔离副本。
+    // 检查必须在打开完成之后：这次打开本身也可能刚移出隔离副本。
     val userDirectory = privateDirectories.fold(privateData.root.toFile()) { parent, name -> File(parent, name) }
     return createLocalCacheWithOwnedDriver(
         driver = driver,
-        orphanSourceCleanupAllowed = { !hasRetainedJvmLocalCacheQuarantine(userDirectory) },
         storageMaintenance = LocalCacheStorageMaintenance(userDirectory.resolve(localCacheDatabaseFileName())),
     )
 }

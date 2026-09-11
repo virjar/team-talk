@@ -32,9 +32,6 @@ fun compactAndroidLocalCacheStorage(
     if (!Files.isRegularFile(databaseFile.toPath(), NOFOLLOW_LINKS)) {
         throw LocalCacheStorageCompactionException(LocalCacheStorageCompactionFailure.STORAGE_IO_FAILED)
     }
-    if (hasRetainedAndroidLocalCacheQuarantine(databaseFile)) {
-        throw LocalCacheStorageCompactionException(LocalCacheStorageCompactionFailure.QUARANTINE_REQUIRES_DISPOSITION)
-    }
     if (androidLocalCacheLifecycleMarkers(databaseFile).corruption.exists()) {
         throw LocalCacheStorageCompactionException(LocalCacheStorageCompactionFailure.INTEGRITY_CHECK_FAILED)
     }

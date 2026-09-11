@@ -20,7 +20,6 @@ internal class LocalChatDraftStore(
     private val writeMirror: (String, String?) -> PendingConversationDraft,
     private val publishMirror: (PendingConversationDraft) -> Unit,
     private val needsMirror: (String, String?) -> Boolean,
-    override val orphanSourceCleanupAllowed: Boolean,
 ) : LocalChatDrafts {
     private val version = MutableStateFlow(0L)
     override val changes = version.asStateFlow()

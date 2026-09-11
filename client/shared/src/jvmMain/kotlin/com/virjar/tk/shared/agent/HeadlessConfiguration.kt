@@ -6,10 +6,6 @@ import com.virjar.tk.shared.client.LocalCacheDiagnostics
 import com.virjar.tk.shared.client.LocalCacheDiagnosticLayout
 import com.virjar.tk.shared.client.LocalCacheDiagnosticOwner
 import com.virjar.tk.shared.client.LocalCacheCompaction
-import com.virjar.tk.shared.client.LocalCacheArchive
-import com.virjar.tk.shared.client.LocalCacheQuarantineDisposition
-import com.virjar.tk.shared.client.LocalCacheNamespaceArchive
-import com.virjar.tk.shared.client.LocalCacheNamespaceDisposition
 import com.virjar.tk.shared.client.decodeTcpTlsCertificateBase64
 import com.virjar.tk.shared.client.prepareJvmClientDataVersion
 import com.virjar.tk.shared.client.privateAtomicTextFileStore
@@ -75,56 +71,9 @@ internal object HeadlessConfiguration {
             "export-cli-token" -> setOf("data-dir", "token-file")
             "doctor" -> setOf("data-dir", "cache-root", "cache-layout")
             "compact-cache" -> setOf("cache-root", "database")
-            "export-quarantine" -> setOf("cache-root", "database", "output", "cache-layout")
-            "verify-cache-archive" -> setOf("archive")
-            "discard-quarantine" -> setOf("cache-root", "database", "archive", "confirm-manifest-sha256", "cache-layout")
-            "export-namespace" -> setOf("cache-root", "deployment-fingerprint", "dataset-id", "uid", "output", "cache-layout")
-            "discard-namespace" -> setOf("cache-root", "deployment-fingerprint", "dataset-id", "uid", "archive", "confirm-manifest-sha256", "cache-layout")
             else -> error("Unknown configuration command")
         }
         require(options.keys.all { it in allowed }) { "Unknown configuration option" }
-        if (command == "export-namespace" || command == "discard-namespace") {
-            val root = File(requireNotNull(options["cache-root"]) { "--cache-root is required" })
-            val owner = LocalCacheDiagnosticOwner(
-                requireNotNull(options["deployment-fingerprint"]) { "--deployment-fingerprint is required" },
-                requireNotNull(options["dataset-id"]) { "--dataset-id is required" },
-                requireNotNull(options["uid"]) { "--uid is required" },
-            )
-            val layout = cacheLayout(options)
-            if (command == "export-namespace") {
-                val output = File(requireNotNull(options["output"]) { "--output is required and must be a new directory" })
-                println(Json.encodeToString(LocalCacheNamespaceArchive.export(root, owner, output, layout)))
-            } else {
-                val archive = File(requireNotNull(options["archive"]) { "--archive is required; preserve and verify the namespace before discarding it" })
-                val digest = requireNotNull(options["confirm-manifest-sha256"]) {
-                    "--confirm-manifest-sha256 is required; this command abandons all archived data for the selected namespace"
-                }
-                println(Json.encodeToString(LocalCacheNamespaceDisposition.discard(root, owner, archive, digest, layout)))
-            }
-            return
-        }
-        if (command == "discard-quarantine") {
-            val root = requireNotNull(options["cache-root"]) { "--cache-root is required" }
-            val database = requireNotNull(options["database"]) { "--database is required; select one archived quarantine" }
-            val archive = requireNotNull(options["archive"]) { "--archive is required; preserve and verify the data before discarding it" }
-            val digest = requireNotNull(options["confirm-manifest-sha256"]) {
-                "--confirm-manifest-sha256 is required; this command abandons the selected quarantine and allows normal orphan-source GC"
-            }
-            println(Json.encodeToString(LocalCacheQuarantineDisposition.discard(File(root), database, File(archive), digest, cacheLayout(options))))
-            return
-        }
-        if (command == "export-quarantine") {
-            val root = requireNotNull(options["cache-root"]) { "--cache-root is required" }
-            val database = requireNotNull(options["database"]) { "--database is required; select a quarantine path from doctor" }
-            val output = requireNotNull(options["output"]) { "--output is required and must be a new directory" }
-            println(Json.encodeToString(LocalCacheArchive.export(File(root), database, File(output), cacheLayout(options))))
-            return
-        }
-        if (command == "verify-cache-archive") {
-            val archive = requireNotNull(options["archive"]) { "--archive is required" }
-            println(Json.encodeToString(LocalCacheArchive.verify(File(archive))))
-            return
-        }
         if (command == "compact-cache") {
             val root = requireNotNull(options["cache-root"]) { "--cache-root is required" }
             val database = requireNotNull(options["database"]) { "--database is required; select its relative path from doctor" }

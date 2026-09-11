@@ -2,7 +2,6 @@ package com.virjar.tk.shared.bot
 
 import com.virjar.tk.shared.client.LocalCache
 import com.virjar.tk.shared.client.DeploymentIdentity
-import com.virjar.tk.shared.client.JvmLocalCacheCorruptionPolicy
 import com.virjar.tk.shared.client.createJvmLocalCache
 import java.io.File
 
@@ -27,7 +26,6 @@ class PersistentImBotCacheOwner(
             datasetId = datasetId,
             uid = uid,
             dataDir = dataDir,
-            corruptionPolicy = JvmLocalCacheCorruptionPolicy.FAIL_PRESERVING,
         )
     }
 }

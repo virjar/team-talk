@@ -25,15 +25,13 @@ import kotlinx.coroutines.flow.Flow
 internal fun createLocalCacheWithOwnedDriver(
     driver: SqlDriver,
     terminalReceiptLimit: Int = MAX_TERMINAL_OUTGOING_RECEIPTS,
-    orphanSourceCleanupAllowed: () -> Boolean = { true },
     storageMaintenance: LocalCacheStorageMaintenance? = null,
 ): LocalCacheImpl {
     try {
         return LocalCacheImpl(
             driver = driver,
             outboxLimits = DEFAULT_LOCAL_OUTBOX_LIMITS.copy(terminalOutgoingCount = terminalReceiptLimit),
-            orphanSourceCleanupAllowed = orphanSourceCleanupAllowed(),
-            storageMaintenance = storageMaintenance,
+                storageMaintenance = storageMaintenance,
         )
     } catch (constructionFailure: Throwable) {
         closeOwnedDriverAfterFailure(driver, constructionFailure)
@@ -63,17 +61,14 @@ class LocalCacheImpl internal constructor(
     private val outboxLimits: LocalOutboxLimits,
     private val messageRetentionLimits: LocalMessageRetentionLimits =
         DEFAULT_LOCAL_MESSAGE_RETENTION_LIMITS,
-    orphanSourceCleanupAllowed: Boolean = true,
     private val storageMaintenance: LocalCacheStorageMaintenance? = null,
 ) : LocalCache {
     constructor(
         driver: SqlDriver,
         terminalReceiptLimit: Int = MAX_TERMINAL_OUTGOING_RECEIPTS,
-        orphanSourceCleanupAllowed: Boolean = true,
     ) : this(
         driver = driver,
         outboxLimits = DEFAULT_LOCAL_OUTBOX_LIMITS.copy(terminalOutgoingCount = terminalReceiptLimit),
-        orphanSourceCleanupAllowed = orphanSourceCleanupAllowed,
     )
 
     private val database = AppDatabase(driver)
@@ -83,11 +78,6 @@ class LocalCacheImpl internal constructor(
 
     override fun compactStorage(): LocalCacheStorageCompactionReport = cacheUseGate.use {
         synchronized(stateLock) {
-            if (!chatDrafts.orphanSourceCleanupAllowed) {
-                throw LocalCacheStorageCompactionException(
-                    LocalCacheStorageCompactionFailure.QUARANTINE_REQUIRES_DISPOSITION,
-                )
-            }
             val maintenance = storageMaintenance
                 ?: throw LocalCacheStorageCompactionException(LocalCacheStorageCompactionFailure.UNSUPPORTED_STORAGE)
             maintenance.compact(driver)
@@ -125,8 +115,7 @@ class LocalCacheImpl internal constructor(
         { chatId, draft -> if (chatDraftStoreManaged(chatId)) conversations.writeComposerPreviewLocked(chatId, draft)
             else conversations.writeComposerDraftLocked(chatId, draft) },
         { preview -> if (preview.generation == 0L) conversations.publishComposerPreviewLocked(preview)
-            else conversations.publishComposerDraftLocked(preview) }, conversations::needsComposerDraftMirrorLocked,
-        orphanSourceCleanupAllowed)
+            else conversations.publishComposerDraftLocked(preview) }, conversations::needsComposerDraftMirrorLocked)
     private val chatDraftSyncStore: LocalChatDraftSyncStore = LocalChatDraftSyncStore(queries, cacheUseGate, stateLock, chatDraftStore) { chatId, draft ->
         conversations.publishComposerPreviewLocked(conversations.writeComposerPreviewLocked(chatId, draft))
     }

@@ -980,8 +980,8 @@ dirty 标签存在新版本，保留原正文和 CAS 基线，交给保存冲突
 | [Desktop/JVM 工厂](../../client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/client/LocalCacheFactory.desktop.kt) | `deployments/<fingerprint>/datasets/<datasetId>/users/<uid>/cache_e0.db` |
 | [Android 工厂](../../client/shared/src/androidMain/kotlin/com/virjar/tk/shared/client/AndroidLocalCache.kt) | 应用私有 databases 中的 `cache_e0_<fingerprint>_<datasetId>_<uid>.db` |
 
-客户端不按 epoch 自动删除旧数据库族。未知 namespace 与损坏隔离库保持原样，不能由
-“服务器投影可重建”推导出可以清空整份账号数据。当前能力与维护边界见
+客户端不按 epoch 自动删除旧数据库族。损坏库族在替换库验证健康后立即删除（见下文），
+服务器是唯一可靠信息源，不承诺恢复损坏瞬间的未发送本地事实。当前能力与维护边界见
 [功能状态中的本地缓存生命周期](../10-reference/feature-status.md)。
 
 当前 epoch 承载全部本地持久事实：
@@ -1008,23 +1008,18 @@ Android 打开账号 SQLite 时使用不删库的 corruption callback。首次�
 
 Desktop GUI 每次打开都先执行 `PRAGMA quick_check`，对已存在的数据库会在任何幂等 DDL 之前完成检查；这比在 JVM
 再引入一套原生损坏回调和 marker 状态机更直接。只有 `quick_check` 失败或 JDBC 返回 SQLite `CORRUPT / FORMAT / NOTADB`
-结果码才确认损坏，普通 I/O、目录或 schema 错误不会触发隔离。确认损坏后先关闭 JDBC driver，再原子保留
+结果码才确认损坏，普通 I/O、目录或 schema 错误不会触发隔离。确认损坏后先关闭 JDBC driver，再原子移出
 当前 deployment + dataset + uid 的私有账号 namespace，并创建干净替代库；其他账号和 deployment 不受影响。
-headless JVM 的账号库承载可靠 inbox/outbox，因此确认损坏时保留原库并明确失败，不自动替换。
+headless JVM 的账号库与 GUI 使用同一恢复路径：确认损坏时移出旧库并重建。
 
 媒体缓存使用与 SQLite 不同的生命周期：deployment + dataset + uid 仍决定命中目录，但同一物理媒体根只有一份
 字节与条目预算、一组并发 reservation 和一张按规范化绝对路径计数的 consumer pin 表。容量扫描只识别平台生产者的固定目录深度和
 内容寻址文件名，再跨身份目录按 mtime 回收零租约的最旧可回拉媒体。录音源文件、上传 spool、未知文件、子目录和符号链接
 不是该 LRU 的数据；正在下载的最终文件在网络前预留空间。播放、图片解码、预览和附件打开等消费路径在原子发布后于同一容量锁内完成租约交接，不留可被另一账号驱逐的裸文件窗口；普通只下载缓存完成后立即释放租约，文件可继续参与 LRU。
 
-Android 与 Desktop GUI 的隔离库都可能包含未上服事实，因此最多保留一份且不自动删除；在显式
-处置现有副本前，再次损坏会明确失败，不制造第二份无界副本。新替代库中的服务端投影由快照、事件和各领域 RPC
-重新收敛，隔离库中的本地可靠事实不会被伪装成已经恢复。
-
-同一账号尚有未处理的 SQLite 隔离副本时，`LocalChatDrafts.orphanSourceCleanupAllowed` 为 false，
-上传协调器暂停该 owner 的孤儿源扫描删除；每次重新打开都检查现存隔离副本，不能从替代空库推断旧源
-已无引用。其他账号不受影响。保留的源仍计入既有 512 MiB/128 条 spool 配额，满额时拒绝新导入；
-该保护不恢复隔离库的命令，也不自动处置副本。完成显式处置并重新打开后，才按完整引用事实恢复扫描。
+移出的损坏族在替换库验证健康后随即删除；删除失败只记录，残留的 `.corrupt-*` 目录由下一次恢复
+在移出新副本前尽力清扫，不阻塞重建。新替代库中的服务端投影由快照、事件和各领域 RPC 重新收敛，
+上传协调器按替代库的引用事实正常执行孤儿源扫描删除。
 
 Desktop/JVM 在完整性检查后读取 `PRAGMA user_version`。新库在单一事务内创建；未标记但已存在的
 旧库先用幂等 create 补齐缺失的基线对象（基线建表与 .sqm 均为 `IF NOT EXISTS`，迁移不得直接
@@ -1049,102 +1044,9 @@ AndroidSqliteDriver 使用同一 SQLDelight schema 的升级回调；同 major �
 损坏隔离，原始原因仍需对应客户端日志。
 
 推荐退出客户端后检查；文件稳定窗口不能证明在线原子快照，也不能证明所有外部资料齐备。
-独立文档草稿/操作与附件 spool 不属于 SQLite 表，在报告 `uninspected` 中标为未检查，必须随数据库族
-一同保留。零计数不授权删除 namespace。CLI 入口见[无头客户端](../05-clients/headless.md)；
-资料保全归档、账号 namespace 与隔离副本的显式放弃、数据库整理使用下方各自独立入口。
-当前不支持从归档导入草稿、消息或业务命令，也不重放隔离库中的业务；正常账号库的草稿、outbox
-与上传恢复遵循各自现有生命周期。
-
-#### 隔离资料保全归档
-
-[LocalCacheArchive](../../client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/client/LocalCacheArchive.kt)
-按 doctor 报告中的隔离数据库相对路径，保全同一 deployment + dataset + uid 的原始资料。
-JVM 导出取得安装根现存 `.lock` 的租约，不初始化锁、版本或账号库；Android 只接受已导出的应用数据根。
-两种布局均不打开 SQLite、草稿 reader、spool 或凭据 store，不执行修复、重放、迁移或源清理。
-保全不以当前 major/schema 或 SQLite 健康为前提，损坏库及未知 schema 仍按原始文件复制。
-
-JVM 保全所选隔离 owner 与当前 owner 两个目录中的文件，Android 保全指定隔离库及对应替代库的数据库族。
-两端另包含整个聊天附件源目录（含 `.partial`），以及独立文档的清单、墓碑、
-记录和临时文件。Android 还保全文档 owner preferences；登录凭据、其他账号和可回拉媒体缓存不在范围内。
-文档路径与平台存储共用 `DocumentDraftStoragePaths`；即使版本目录名相同，无法确认归属的旧 owner 哈希
-资料也不自动纳入。当前已知布局以外的旧资料必须另行保留，不被假定已包含。
-
-目标父目录必须已存在，目标必须是源根之外的全新私有目录。`payload/` 保留相对路径，最后发布的
-`manifest.json` 格式版本为 1，
-记录 owner、布局、隔离路径、各范围是否存在及每个文件的相对路径、大小、SHA-256。
-源扫描最多 4,096 个目录项，归档最多 4,096 个文件；单文件最多 512 MiB、合计最多 2 GiB，清单最多 4 MiB。
-复制前后的文件集合、状态和摘要需一致；失败不删除源，也不覆盖或自动清理未完成目标。没有清单的目标
-不能当作完整归档，已有清单仍须通过校验。
-
-`verify` 检查格式与固定范围、完整文件集合、逐文件大小和摘要，拒绝增删改、链接及校验期间可检测到的变化；
-结果只给文件数、总字节和清单摘要。校验不证明来源真实性、与当前源仍相同、资料可恢复或原始 Android
-导出一致；稳定窗口也不是在线原子快照。归档文件含正文、草稿和可靠命令中的秘密，必须保留私有权限。
-它不是脱敏诊断报告，不构成重放或删除源资料的许可；决定放弃隔离副本时，须使用独立的显式删除入口。
-CLI 见[无头客户端](../05-clients/headless.md)，测试入口见
-[隔离资料保全与校验](../09-testing/local-tests.md#隔离资料保全与校验)。
-
-#### 显式放弃隔离副本
-
-[LocalCacheQuarantineDisposition.discard](../../client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/client/LocalCacheQuarantineDisposition.kt)
-接受安装根、精确隔离库相对路径、保全归档及明确确认的清单 SHA-256。归档先经完整校验，布局与隔离路径
-必须匹配；所选范围内的当前隔离文件必须是归档 `QUARANTINE` 清单中原字节一致的子集，范围内新增文件、
-内容变化与链接均拒绝。无需打开 SQLite、判定 schema、迁移或解码可靠命令，因此破损库仍可按原始文件放弃。
-
-删除集合仅为所选隔离范围：JVM 为该隔离 owner 目录中的全部平铺文件，包含旧 epoch；Android 仅为
-指定主库及固定已知后缀组成的数据库族。同 owner 的其他 Android 隔离族和未知后缀文件保留，仍可能使
-孤儿源保护持续生效，完成单次操作不代表该账号全部隔离资料均已处置。
-替代库、共享 spool、独立文档资料和凭据不属于删除集合，不读取或修改这些源，
-其归档后产生的新资料不会阻断操作。归档本身保持不变，不使用会清理整个账号的封禁 marker。
-
-JVM 复用安装根现存 `.lock`，对应客户端必须退出；不会创建缺失锁或初始化安装。
-Android 只支持已离线导出的应用根，不操作运行设备，不代表原手机释放容量。
-首次删除前再次校验完整归档，再对其载荷与清单文件执行 `force(true)`，并按现有平台机制刷盘归档内
-目录、根目录及根的父目录；不改归档内容。刷盘失败以 `ARCHIVE_FLUSH_FAILED` 结束，本次尚未删除源文件。
-这不代表断电实测通过或存储硬件保证。待删除范围完整核对后，逐文件复验并删除；主库最后删除，
-JVM 隔离目录最后非递归移除。
-中断后残留文件或空目录可用同一归档重试，全部不存在时可幂等结束；不自动回滚或创建替代数据库。
-
-结果给出本次删除文件数、字节数与执行前目标是否已不存在，不输出正文或凭据。最后一个隔离副本消失后，
-下次打开账号缓存会恢复正常孤儿源扫描，当前库仍持有的草稿/发送引用继续保留来源，仅由已放弃资料
-引用的来源可能被回收。独立文档草稿不由该源扫描删除；归档中的历史保全资料仍由维护者保管。
-此入口不恢复或重放隔离事实，也不提供旧 namespace 自动回收。CLI 见[无头客户端](../05-clients/headless.md)，
-定向入口见[隔离副本显式放弃](../09-testing/local-tests.md#隔离副本显式放弃)。
-
-#### 账号 namespace 保全与显式放弃
-
-[LocalCacheNamespaceArchive](../../client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/client/LocalCacheNamespaceArchive.kt)
-为 `export-namespace` 按显式 `deploymentFingerprint + datasetId + uid` 选择一个完整账号 namespace，
-不以某个 `cache_e*.db` 文件代替账号范围。按当前已知布局保全同一 owner 的全部 epoch 数据库族及隔离
-副本、聊天附件源、独立文档草稿与操作；不读取 SQLite 或解码、迁移、重放可靠命令。损坏库、未知 schema
-仍按原始文件保全。即使数据库已不存在，仍会检查该 owner 的附件源与独立文档资料；只有共享 preferences
-而无账号资料时拒绝生成空归档。目录和哈希规则与平台存储共用；无法确认归属的 legacy 文件继续保留，
-不假定已经导出。
-
-JVM 操作取得现存安装根锁；Android 只处理停止进程后取得的完整应用数据导出目录，不操作设备或把修改
-回灌到手机。Android 共享的文档 owner preferences 只归档、不删除。登录凭据、可回拉媒体、telemetry、
-其他 owner 与未知 legacy 均不在 namespace 删除范围内。
-
-namespace 归档使用 format 2 和 `purpose=NAMESPACE`，记录精确 owner、布局、范围及完整文件清单。
-`verify-cache-archive` 同时接受既有 format 1 隔离归档；两种用途互不授权对方的删除命令。
-归档沿用私有目录、原始相对路径、大小与 SHA-256 校验和最后发布清单的保全规则；归档含私人正文、
-草稿及可靠命令中的秘密，完整校验不等于可恢复，也不自动授权删除源。
-
-[LocalCacheNamespaceDisposition](../../client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/client/LocalCacheNamespaceDisposition.kt)
-为 `discard-namespace` 核对同一 owner、布局、完整归档及操作者显式确认的原始清单摘要；该命令表示放弃所选
-账号 namespace 中尚未发送的消息、草稿和命令，而不是仅清除可回拉投影。当前凭据仍引用目标，或凭据
-状态损坏、无法确认时拒绝放弃。headless 凭据只有 deployment fingerprint 与 uid，因此保护该组合的全部
-dataset。Android 同时检查导出目录中的认证 preferences 主文件与 `.bak`，任一仍引用目标都拒绝。
-此保护只读当前凭据，不输出秘密、不认领或修改 token owner，不要手工删除凭据绕过此检查。
-
-待删范围须为归档中原字节一致的子集；同 namespace 新增或修改资料、出现链接或新增范围时拒绝，不能用
-旧归档放弃归档后产生的新事实。归档完整校验并刷盘后，先删数据库族，再删其附件源与独立文档资料，最后
-非递归移除空的已知目录。中断后可在同一保护条件下用原归档继续处理剩余子集，不自动回滚或重新建库；
-已全部删除可幂等结束。归档自身及排除项不变，Android 共享文档 preferences 的当前变化不属于待删范围。
-
-默认仍不自动回收旧 namespace，不按年龄扫描删除，不跨 owner 合并或重归属资料。显式放弃与账号封禁
-清理与 `VACUUM` 保持独立；它不使隔离库中的可靠事实重新进入发送队列。操作示例见
-[无头客户端](../05-clients/headless.md#账号-namespace-保全与放弃)，验收边界见
-[账号 namespace 处置](../09-testing/local-tests.md#账号-namespace-处置)。
+独立文档草稿/操作与附件 spool 不属于 SQLite 表，在报告 `uninspected` 中标为未检查。零计数不授权
+删除 namespace。CLI 入口见[无头客户端](../05-clients/headless.md)；数据库整理见下一节。正常账号库的
+草稿、outbox 与上传恢复遵循各自现有生命周期。
 
 #### 当前会话数据库整理
 

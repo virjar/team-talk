@@ -142,15 +142,11 @@ class LocalCacheCompactionIntegrationTest {
     }
 
     @Test
-    fun `retained quarantine and noncurrent paths cannot be compacted`() = root { directory ->
-        val active = database(directory, "retained-owner")
-        val quarantine = database(directory, "retained-owner.corrupt-kept")
+    fun `noncurrent and unsafe paths cannot be compacted`() = root { directory ->
+        val active = database(directory, "current-owner")
         val obsolete = privateFile(directory, ownerDirectories("old-epoch"), "cache_e1.db")
-        listOf(active, quarantine, obsolete).forEach(::createDatabase)
-        val targets = listOf(
-            relative(directory, active) to "QUARANTINE_REQUIRES_DISPOSITION",
-            relative(directory, quarantine) to "Local-cache owner uid is not a safe identifier",
-        ) + listOf(relative(directory, obsolete), "cache_e0.db", "databases/cache_e0.db", "../outside.db",
+        listOf(active, obsolete).forEach(::createDatabase)
+        val targets = listOf(relative(directory, obsolete), "cache_e0.db", "databases/cache_e0.db", "../outside.db",
             relative(directory, active).replace("users/", "users/./")).map {
             it to "--database must name one current JVM account database from the doctor report"
         }

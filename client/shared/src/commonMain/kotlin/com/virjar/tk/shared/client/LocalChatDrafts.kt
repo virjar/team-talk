@@ -49,7 +49,6 @@ data class ChatAssetUpload(
 interface LocalChatDrafts {
     val changes: StateFlow<Long>
     /** 隔离库可能仍拥有源文件；只有完整的本机引用事实可授权孤儿源扫描删除。 */
-    val orphanSourceCleanupAllowed: Boolean get() = false
     fun get(chatId: String): ChatDraftSnapshot?
     fun maxRevision(): Long
     fun save(snapshot: ChatDraftSnapshot): ChatDraftSnapshot

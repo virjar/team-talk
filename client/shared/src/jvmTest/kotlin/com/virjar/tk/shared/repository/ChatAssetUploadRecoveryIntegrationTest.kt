@@ -30,7 +30,7 @@ import kotlin.test.*
 /** 真实 HTTP + 私有文件 + SQLite 重开；不让 stub 掩盖上传请求身份或源文件交接。 */
 class ChatAssetUploadRecoveryIntegrationTest {
     @Test
-    fun `quarantined cache keeps its private source across replacement restarts without disabling other owners cleanup`() = runBlocking {
+    fun `corrupt cache rebuilds clean and orphaned sources are collected without touching other owners`() = runBlocking {
         fixture(firstStatus = 200) { f ->
             val deployment = DeploymentIdentity.from("cache-quarantine.test.example", 5100, "https://cache-quarantine.test.example/api")
             val owner = AccountDataOwner(deployment.fingerprint, "00000000-0000-4000-8000-000000000099", "damaged")
@@ -49,43 +49,34 @@ class ChatAssetUploadRecoveryIntegrationTest {
                 original.chatDrafts.save(f.draft())
                 original.chatDrafts.register(ChatAssetUpload(ID, "chat", staged.sourceId, staged.length, staged.sha256,
                     "draft.txt", "text/plain", false, UUID.randomUUID().toString(), System.currentTimeMillis()))
-                assertTrue(original.chatDrafts.orphanSourceCleanupAllowed)
             } finally { original.close() }
             val database = File(f.root, "deployments/${owner.deploymentFingerprint}/datasets/${owner.datasetId}/users/${owner.uid}/cache_e0.db")
-            val damagedBytes = "not-a-sqlite-database".encodeToByteArray()
-            database.writeBytes(damagedBytes)
+            database.writeBytes("not-a-sqlite-database".encodeToByteArray())
 
-            repeat(2) {
-                val replacement = cache()
-                val retained = spool()
-                val uploads = coordinator(replacement, retained)
-                try {
-                    assertFalse(replacement.chatDrafts.orphanSourceCleanupAllowed)
-                    assertTrue(replacement.chatDrafts.jobs().isEmpty(), "quarantine must not be replayed into the replacement")
-                    assertNull(replacement.chatDrafts.get("chat"))
-                    uploads.remove(ID) // Await a cleanup attempt; no scheduler delay is needed to prove retention.
-                    assertEquals(listOf(staged), retained.list())
-                    val bytes = ByteArrayOutputStream()
-                    retained.open(staged.sourceId).writeTo(UploadSink { chunk, offset, length -> bytes.write(chunk, offset, length) })
-                    assertContentEquals(sourceBytes, bytes.toByteArray())
-                    assertFailsWith<IllegalStateException> { retained.stage(byteArrayOf(1).asSmallUploadSource()) }
-                } finally { uploads.close(); replacement.close() }
-            }
-            val quarantine = database.parentFile.parentFile.listFiles().orEmpty().single { it.name.startsWith("${owner.uid}.corrupt-") }
-            assertContentEquals(damagedBytes, File(quarantine, database.name).readBytes())
+            // 服务器是唯一可靠信息源：替换库从零重建，损坏族删除，无主源文件随之回收。
+            val replacement = cache()
+            val retained = spool()
+            val uploads = coordinator(replacement, retained)
+            try {
+                assertTrue(replacement.chatDrafts.jobs().isEmpty(), "quarantine must not be replayed into the replacement")
+                assertNull(replacement.chatDrafts.get("chat"))
+                uploads.remove(ID) // Await a cleanup attempt; the orphaned source is no longer referenced.
+                assertTrue(retained.list().isEmpty(), "orphaned source of the deleted corrupt family is collected")
+            } finally { uploads.close(); replacement.close() }
+            database.parentFile.parentFile.listFiles().orEmpty()
+                .filter { it.name.startsWith("${owner.uid}.corrupt-") }
+                .forEach { assertFalse(it.exists(), "corrupt family must be deleted: ${it.name}") }
+            assertTrue(f.requests.isEmpty(), "recovery and cleanup must not upload quarantined data")
 
             val other = owner.copy(uid = "healthy")
             val healthy = cache(other)
             val otherSpool = spool(other)
             otherSpool.stage(sourceBytes.asSmallUploadSource())
-            val uploads = coordinator(healthy, otherSpool)
+            val uploads2 = coordinator(healthy, otherSpool)
             try {
-                assertTrue(healthy.chatDrafts.orphanSourceCleanupAllowed)
-                uploads.remove(ID)
+                uploads2.remove(ID)
                 assertTrue(otherSpool.list().isEmpty())
-                assertEquals(listOf(staged), spool().list())
-                assertTrue(f.requests.isEmpty(), "preservation and cleanup must not upload quarantined data")
-            } finally { uploads.close(); healthy.close() }
+            } finally { uploads2.close(); healthy.close() }
         }
     }
 

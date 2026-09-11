@@ -144,8 +144,6 @@ internal class AndroidStorageMaintenanceOwner(
 
 private fun LocalCacheStorageCompactionFailure.userMessage(): String = when (this) {
     LocalCacheStorageCompactionFailure.UNSUPPORTED_STORAGE -> "当前本地存储不支持整理。"
-    LocalCacheStorageCompactionFailure.QUARANTINE_REQUIRES_DISPOSITION ->
-        "发现保留的隔离副本。请先导出并明确处置隔离副本，再整理数据库。"
     LocalCacheStorageCompactionFailure.DATABASE_IN_USE -> "数据库仍在使用中，请稍后重试。"
     LocalCacheStorageCompactionFailure.UNSUPPORTED_SCHEMA_VERSION -> "数据库版本不适用于当前应用，无法整理。"
     LocalCacheStorageCompactionFailure.INTEGRITY_CHECK_FAILED -> "数据库完整性检查未通过，请先保全本地资料。"
