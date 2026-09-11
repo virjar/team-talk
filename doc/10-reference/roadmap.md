@@ -94,6 +94,34 @@ flowchart TD
 
 按实际实例需要选择备份与维护工作；长期容量、历史回执治理和多角色权限不一起压到当前内测。工具必须在保留既有数据、低版本客户端及安装身份的前提下推进。
 
+### CODE-01 · 功能冻结期的代码结构收敛
+
+v0.0.1 后的功能快速演进沉淀了一批结构性负债；第一轮清理已删除 Bot 适配层、统一活动用户判定
+词汇、下沉两端壳重复的遥测映射/媒体失败分类/任务提醒过滤，并修复了自第一条 .sqm 迁移起就未随
+功能更新的过期测试（细节见相应提交）。本轮明确遗留、按收益排序：
+
+- **Chat 域 feature 化**：`AppDataState` 仍持有 `chatComposerContexts`、`chatDraftLifecycle`、
+  `chatAssetImports`、`saveDraft`、`markConversationRead` 与 chat ViewModel 管理，违反
+  “业务状态进入 navigation/feature”的分层约定；且 `navigation` 仍 import `ui.screen`
+  （`ChatComposerContextStore` 与 `ChatScreenState.SavedChatEditingSession`、
+  `durableChatDraftMirrorPayload` 交织，必须连同编辑会话模型一起迁移，不能只搬文件）。
+- **双草稿管道合并**：legacy 标量草稿 outbox（`ConversationRepository.mirrorDraft` +
+  `rpc.setDraft`）与 CAS 富草稿同步（`ChatDraftRepository`）并存，GUI 两条路都在走；
+  收敛方向是 CAS 为唯一权威、legacy 降级为会话列表预览投影，wire 契约不动。
+- **五份可靠命令 outbox store**（groupCreation/social/botCredential/groupFile/documentMove）
+  同构复制，可收敛为一个泛型 PendingCommandSlot；LocalCache 接口与恢复族随之减面。
+- **服务端 reliable-command 回执**：9+ 张回执表容量/清理样板漂移（10_000 vs 16_384 vs
+  常量），先统一容量与维护循环语义，不动表结构。
+- **ClientRegistry** 798 行混合连接准入与 connection-trace 策略发布，telemetry 专属回调
+  应抽为独立协作者。
+- **telemetry/connection-trace 两套手写 Lucene 异步引擎**（800+531 行，Channel vs 阻塞队列
+  两种并发风格无需求差异），可参数化为一个索引引擎。
+- 归档/隔离 CLI 子系统内部仍有 v1/v2 双格式验证路径与 discard 三重校验；命令本身是已交付
+  运维能力（troubleshooting 手册），是否简化为单一格式需要产品决策。
+
+最小验证：每项独立提交，相关模块编译 + 既有定向测试；Chat 域拆分需 Android/Desktop 短路径
+真机复验。
+
 ### REL-01 · 数据发布基线、备份与恢复
 
 在现有协议兼容窗口、PostgreSQL 顺序迁移台账、dataset 预检和客户端事务迁移之上，补齐 PostgreSQL、

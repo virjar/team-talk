@@ -1025,7 +1025,8 @@ Android 与 Desktop GUI 的隔离库都可能包含未上服事实，因此最�
 该保护不恢复隔离库的命令，也不自动处置副本。完成显式处置并重新打开后，才按完整引用事实恢复扫描。
 
 Desktop/JVM 在完整性检查后读取 `PRAGMA user_version`。新库在单一事务内创建；未标记但已存在的
-旧库认领为 schema 1 后执行连续迁移，成功才写新版本，失败同时回滚 DDL/数据/版本。
+旧库先用幂等 create 补齐缺失的基线对象（基线建表与 .sqm 均为 `IF NOT EXISTS`，迁移不得直接
+ALTER 既有表），再认领为 schema 1 执行连续迁移，成功才写新版本，失败同时回滚 DDL/数据/版本。
 AndroidSqliteDriver 使用同一 SQLDelight schema 的升级回调；同 major 的应用更新不清账号、草稿与发件箱。
 排查不兼容时先核对版本和精确 namespace，不套用历史构建的删库指令。
 
