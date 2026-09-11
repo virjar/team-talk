@@ -276,7 +276,7 @@ internal data class DocumentTableEditorState(
         val insertIndex = when {
             validActiveCell == null -> normalizedRows.size
             validActiveCell.isHeader -> 0
-            else -> validActiveCell.rowIndex!! + 1
+            else -> validActiveCell.rowIndex?.plus(1) ?: normalizedRows.size
         }
         val rows = normalizedRows.toMutableList().apply {
             add(insertIndex, List(columnCount) { "" })

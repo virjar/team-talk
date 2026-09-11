@@ -107,7 +107,10 @@ fun SearchUsersScreen(
                 }
             }
             error != null -> {
-                Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+                val message = error
+                if (message != null) {
+                    Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+                }
             }
             hasSearched && results.isEmpty() -> {
                 Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {

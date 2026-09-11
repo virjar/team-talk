@@ -85,7 +85,12 @@ fun SearchMessagesScreen(
 
         when {
             isSearching -> Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-            error != null -> Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+            error != null -> {
+                val message = error
+                if (message != null) {
+                    Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+                }
+            }
             hasSearched && results.isEmpty() -> Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) { Text("未找到消息") }
             else -> LazyColumn {
                 items(results, key = ::messageSearchResultKey) { msg ->

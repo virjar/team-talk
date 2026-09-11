@@ -22,6 +22,7 @@ import com.virjar.tk.app.telemetry.classifyMediaFailure
 import com.virjar.tk.app.ui.component.AutomaticFileDownloadLedger
 import com.virjar.tk.app.ui.component.FileDownloadController
 import com.virjar.tk.app.ui.component.FileDownloadState
+import com.virjar.tk.app.ui.component.FileDownloadStatePublisher
 import com.virjar.tk.app.ui.component.textAttachmentPreviewKind
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -160,7 +161,7 @@ class AndroidFileDownloadController private constructor(
     /** 所有者认领与最终 Snapshot 写入的加锁顺序为 publicationLock -> downloadLock。 */
     private val publicationLock = Any()
     private var externalOpenLease: AndroidMediaCacheFileLease? = null
-    private val statePublisher = AndroidFileDownloadStatePublisher(
+    private val statePublisher = FileDownloadStatePublisher(
         ownerScope = uiScope,
         publicationGate = { publication ->
             mediaSession.runIfOpen {

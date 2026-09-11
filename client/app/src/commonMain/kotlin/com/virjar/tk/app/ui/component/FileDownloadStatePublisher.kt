@@ -1,6 +1,5 @@
-package com.virjar.tk.android
+package com.virjar.tk.app.ui.component
 
-import android.os.Looper
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import com.virjar.tk.app.ui.component.FileDownloadState
@@ -16,29 +15,28 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /** 待处理键的压力阈值；为满足该阈值，正确性终态绝不会被丢弃。 */
-internal const val MAX_ANDROID_FILE_DOWNLOAD_PENDING_KEYS = 64
+const val MAX_FILE_DOWNLOAD_PENDING_KEYS = 64
 /**
  * ChatFileDownloadEffect 最多只能看到默认分页器常驻的 200 行 FileBody。另外，
  * 一个富文本或文档内容最多准入 256 个唯一资源。此上限足以覆盖任意一种完整的调用方批次；
  * 它与更大的持久消息保留策略有意无关。
  */
-internal const val MAX_ANDROID_FILE_DOWNLOAD_RESIDENT_STATES = 256
+const val MAX_FILE_DOWNLOAD_RESIDENT_STATES = 256
 
 /**
- * 把工作线程的下载结果串行化到组合持有的调度器上。
+ * 把工作线程的下载结果串行化到组合持有的调度器上；Android/Desktop 共用，仅线程归属
+ * 谓词不同（主线程 Looper vs AWT EventQueue）。
  *
  * 进度按附件键合并，且最多只调度一次排空。在压力之下，可替换的 Downloading 采样会被丢弃
  * 或拒绝；Checking/Idle/Done/Failed 是正确性状态，会保持排队直到所有者排空它们。
  * 调用方准入有界的 UI 批次，而可观察表本身也有 LRU 上限。
  */
-internal class AndroidFileDownloadStatePublisher(
+class FileDownloadStatePublisher(
     ownerScope: CoroutineScope,
     private val publicationGate: ((() -> Unit) -> Boolean),
-    private val maxPendingKeys: Int = MAX_ANDROID_FILE_DOWNLOAD_PENDING_KEYS,
-    private val maxResidentStates: Int = MAX_ANDROID_FILE_DOWNLOAD_RESIDENT_STATES,
-    private val ownerThreadPredicate: () -> Boolean = {
-        Looper.myLooper() === Looper.getMainLooper()
-    },
+    private val maxPendingKeys: Int = MAX_FILE_DOWNLOAD_PENDING_KEYS,
+    private val maxResidentStates: Int = MAX_FILE_DOWNLOAD_RESIDENT_STATES,
+    private val ownerThreadPredicate: () -> Boolean,
 ) : AutoCloseable {
     private class PendingPublication(
         val state: FileDownloadState,
@@ -58,12 +56,12 @@ internal class AndroidFileDownloadStatePublisher(
 
     private val ownerContext = ownerScope.coroutineContext.also { context ->
         requireNotNull(context[ContinuationInterceptor] as? CoroutineDispatcher) {
-            "Android file download UI scope must have a dispatcher"
+            "File download UI scope must have a dispatcher"
         }
     }
     private val publicationJob = SupervisorJob(ownerContext[Job])
     private val publicationScope = CoroutineScope(
-        ownerContext.minusKey(Job) + publicationJob + CoroutineName("android-file-download-state"),
+        ownerContext.minusKey(Job) + publicationJob + CoroutineName("file-download-state"),
     )
     private val lock = Any()
     private val pending = linkedMapOf<String, PendingPublication>()
@@ -72,8 +70,8 @@ internal class AndroidFileDownloadStatePublisher(
     private var closed = false
 
     init {
-        require(maxPendingKeys > 0) { "Android file download pending capacity must be positive" }
-        require(maxResidentStates > 0) { "Android file download state capacity must be positive" }
+        require(maxPendingKeys > 0) { "File download pending capacity must be positive" }
+        require(maxResidentStates > 0) { "File download state capacity must be positive" }
         publicationJob.invokeOnCompletion {
             val discarded = synchronized(lock) {
                 closed = true
@@ -160,7 +158,7 @@ internal class AndroidFileDownloadStatePublisher(
 
     private fun drainOnOwnerDispatcher(releaseScheduleWhenEmpty: Boolean) {
         check(isOnOwnerThread()) {
-            "Android file download state drain escaped its composition owner thread"
+            "File download state drain escaped its composition owner thread"
         }
         try {
             while (true) {

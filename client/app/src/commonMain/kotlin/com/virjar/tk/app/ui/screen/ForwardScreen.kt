@@ -39,8 +39,8 @@ fun ForwardScreen(
     Column(modifier = Modifier.fillMaxSize()) {
         ScreenHeader(title = "转发到...", onBack = onBack)
 
-        if (error != null) {
-            Text(error!!, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
+        error?.let { message ->
+            Text(message, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall)
         }
 
         LazyColumn {

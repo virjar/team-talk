@@ -79,9 +79,9 @@ fun ChangePasswordScreen(
                 }
             }
 
-            if (error != null) {
+            error?.let { message ->
                 Text(
-                    error!!,
+                    message,
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                 )

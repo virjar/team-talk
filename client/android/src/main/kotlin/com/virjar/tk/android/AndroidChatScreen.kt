@@ -44,6 +44,8 @@ import com.virjar.tk.app.ui.component.PlatformMediaActions
 import com.virjar.tk.app.ui.component.rememberEmbeddedMediaClickHandler
 import com.virjar.tk.app.ui.component.rememberMediaClickHandler
 import com.virjar.tk.app.ui.screen.ChatPanel
+import com.virjar.tk.app.navigation.feature.chat.OutgoingMediaSender
+import com.virjar.tk.app.navigation.feature.chat.UploadedVideoMedia
 import com.virjar.tk.app.navigation.feature.chat.ChatComposerContextStore
 import com.virjar.tk.app.navigation.feature.chat.ChatDraftLifecycleBridge
 import com.virjar.tk.app.telemetry.ClientUiPage
@@ -341,29 +343,26 @@ internal fun AndroidChatScreen(
 
     fun sendVideoFromUri(uri: Uri) {
         launchAdmittedAction {
-            isUploading = true
             var selected: PreparedMedia? = null
-            try {
-                telemetry.recordMedia(
-                    ClientUiPage.CHAT,
-                    ClientMediaKind.VIDEO,
-                    MediaOperation.UPLOAD,
-                    ClientActionOutcome.STARTED,
-                )
-                selected = MediaHelper.prepareSelectedMedia(
-                    context,
-                    uri,
-                    mediaSession = mediaSession,
-                )
-                val selectedFile = selected.file
+            OutgoingMediaSender(telemetry).sendVideo(
+                chatId = chatId,
+                myUid = myUid,
+                viewModel = viewModel,
+                onUploadingChanged = { value -> actionAdmission.runIfOpen { isUploading = value } },
+                classifyFailure = ::classifyAndroidMediaFailure,
+                reportFailure = { error, _ ->
+                    reportMediaFailure(ClientMediaKind.VIDEO, MediaOperation.UPLOAD, error)
+                },
+            ) {
+                selected = MediaHelper.prepareSelectedMedia(context, uri, mediaSession = mediaSession)
+                val prepared = selected ?: error("视频源准备失败")
                 // 服务端生成缩略图和元数据；字段缺失时再回退本地 MediaMetadataRetriever。
                 val up = MediaHelper.uploadWithMeta(
-                    selectedFile,
-                    selected.fileName,
-                    selected.contentType,
+                    prepared.file,
+                    prepared.fileName,
+                    prepared.contentType,
                     mediaSession,
                 )
-                val attachment = up.file
                 var w = up.width
                 var h = up.height
                 var duration = up.durationSec ?: 0
@@ -375,47 +374,26 @@ internal fun AndroidChatScreen(
                     h = local?.third ?: h
                     if (thumbnail == null) {
                         withContext(Dispatchers.IO) {
-                            MediaHelper.extractVideoThumbnail(
-                                context,
-                                selectedFile,
-                                mediaSession = mediaSession,
-                            )
-                        }
-                            ?.let { thumbnailFile ->
-                                try {
-                                    thumbnail = MediaHelper.uploadFile(
-                                        thumbnailFile,
-                                        "thumb.jpg",
-                                        "image/jpeg",
-                                        mediaSession,
-                                    )
-                                } finally {
-                                    thumbnailFile.delete()
-                                }
+                            MediaHelper.extractVideoThumbnail(context, prepared.file, mediaSession = mediaSession)
+                        }?.let { thumbnailFile ->
+                            try {
+                                thumbnail = MediaHelper.uploadFile(
+                                    thumbnailFile,
+                                    "thumb.jpg",
+                                    "image/jpeg",
+                                    mediaSession,
+                                )
+                            } finally {
+                                thumbnailFile.delete()
                             }
+                        }
                     }
                 }
-                currentCoroutineContext().ensureActive()
-                viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.VIDEO.code, System.currentTimeMillis(), body = VideoBody(attachment, duration, w, h, thumbnail)))
-                telemetry.recordMedia(
-                    ClientUiPage.CHAT,
-                    ClientMediaKind.VIDEO,
-                    MediaOperation.UPLOAD,
-                    ClientActionOutcome.SUCCEEDED,
-                )
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                actionAdmission.runIfOpen {
-                    reportMediaFailure(ClientMediaKind.VIDEO, MediaOperation.UPLOAD, error)
-                }
-            } finally {
-                selected?.delete()
-                actionAdmission.runIfOpen { isUploading = false }
+                UploadedVideoMedia(up.file, duration, w, h, thumbnail)
             }
+            selected?.delete()
         }
     }
-
     val videoPicker = rememberAndroidVisualMediaPicker(ActivityResultContracts.PickVisualMedia.VideoOnly) { uri ->
         if (uri != null) sendVideoFromUri(uri)
     }
@@ -601,42 +579,24 @@ internal fun AndroidChatScreen(
         )
         val duration = (durationMillis / 1_000L).toInt().coerceAtLeast(1)
         launchAdmittedAction {
-            isUploading = true
-            try {
-                telemetry.recordMedia(
-                    ClientUiPage.CHAT,
-                    ClientMediaKind.AUDIO,
-                    MediaOperation.UPLOAD,
-                    ClientActionOutcome.STARTED,
-                )
-                if (file.length() > MAX_SELECTED_MEDIA_BYTES) throw SelectedMediaTooLargeException(MAX_SELECTED_MEDIA_BYTES)
-                val attachment = MediaHelper.uploadFile(
-                    file,
-                    file.name,
-                    "audio/aac",
-                    mediaSession,
-                )
-                currentCoroutineContext().ensureActive()
-                viewModel.sendMessage(Message(chatId, UUID.randomUUID().toString(), 0L, myUid, MessageType.VOICE.code, System.currentTimeMillis(), body = VoiceBody(attachment, duration)))
-                telemetry.recordMedia(
-                    ClientUiPage.CHAT,
-                    ClientMediaKind.AUDIO,
-                    MediaOperation.UPLOAD,
-                    ClientActionOutcome.SUCCEEDED,
-                )
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                actionAdmission.runIfOpen {
+            OutgoingMediaSender(telemetry).sendVoice(
+                chatId = chatId,
+                myUid = myUid,
+                viewModel = viewModel,
+                durationSeconds = duration,
+                onUploadingChanged = { value -> actionAdmission.runIfOpen { isUploading = value } },
+                classifyFailure = ::classifyAndroidMediaFailure,
+                reportFailure = { error, _ ->
                     reportMediaFailure(ClientMediaKind.AUDIO, MediaOperation.UPLOAD, error)
-                }
-            } finally {
-                actionAdmission.runIfOpen { isUploading = false }
-                try {
-                    deleteVoiceRecordingFile(file)
-                } catch (error: Exception) {
-                    Log.w("Chat", "Voice recording temporary file cleanup failed", error)
-                }
+                },
+            ) {
+                if (file.length() > MAX_SELECTED_MEDIA_BYTES) throw SelectedMediaTooLargeException(MAX_SELECTED_MEDIA_BYTES)
+                MediaHelper.uploadFile(file, file.name, "audio/aac", mediaSession)
+            }
+            try {
+                deleteVoiceRecordingFile(file)
+            } catch (error: Exception) {
+                Log.w("Chat", "Voice recording temporary file cleanup failed", error)
             }
         }
     }

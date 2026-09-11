@@ -16,6 +16,8 @@ import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.shared.repository.asUploadSource
 import com.virjar.tk.app.viewmodel.ChatViewModel
+import com.virjar.tk.app.navigation.feature.chat.UploadedVideoMedia
+import com.virjar.tk.app.navigation.feature.chat.OutgoingMediaSender
 import com.virjar.tk.app.telemetry.ClientActionOutcome
 import com.virjar.tk.app.telemetry.ClientMediaKind
 import com.virjar.tk.app.telemetry.ClientUiPage
@@ -198,107 +200,34 @@ internal class DesktopVideoSender(
     private val transfer: DesktopFileTransfer,
 ) : Closeable {
     private val scope: CoroutineScope = resources.childScope("media-send")
+    private val mediaSender = OutgoingMediaSender(resources.telemetry)
 
     fun pickAndSendVideo(chatId: String, myUid: String, viewModel: ChatViewModel) {
         val file = DesktopFilePicker.chooseVideo() ?: return
         check(myUid == resources.ownerUid) { "媒体发送账号与认证会话不一致" }
         scope.launch {
-            try {
-                resources.ensureOpen()
-                coroutineContext.ensureActive()
-                val contentType = desktopContentType(file.name)
-                uploadAndSendWithPlaceholder(
-                    chatId = chatId,
-                    myUid = myUid,
-                    viewModel = viewModel,
-                    file = file,
-                    contentType = contentType,
-                )
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                if (!resources.canDeliverUiResult()) return@launch
-                val reason = classifyDesktopMediaFailure(error)
-                resources.telemetry.recordMedia(
-                    ClientUiPage.CHAT,
-                    ClientMediaKind.VIDEO,
-                    MediaOperation.UPLOAD,
-                    ClientActionOutcome.FAILED,
-                    reason,
-                )
-                viewModel.onError(UserFeedbackCode.MEDIA_UPLOAD_FAILED.publicMessage)
-            }
-        }
-    }
-
-    private suspend fun uploadAndSendWithPlaceholder(
-        chatId: String,
-        myUid: String,
-        viewModel: ChatViewModel,
-        file: File,
-        contentType: String,
-    ) {
-        val clientMsgId = UUID.randomUUID().toString()
-        val pendingAttachment = Attachment("", file.name, contentType, file.length())
-        val placeholder = Message(
-            chatId = chatId,
-            clientMsgId = clientMsgId,
-            serverSeq = 0L,
-            senderUid = myUid,
-            messageType = MessageType.VIDEO.code,
-            timestamp = System.currentTimeMillis(),
-            body = VideoBody(attachment = pendingAttachment),
-            sendStatus = Message.SEND_STATUS_UPLOADING,
-        )
-        viewModel.insertUploadingPlaceholder(placeholder)
-
-        try {
-            resources.telemetry.recordMedia(
-                ClientUiPage.CHAT,
-                ClientMediaKind.VIDEO,
-                MediaOperation.UPLOAD,
-                ClientActionOutcome.STARTED,
-            )
-            val metadata = transfer.uploadWithMeta(file, contentType) { progress ->
-                viewModel.updateUploadProgress(chatId, clientMsgId, progress)
-            }
             resources.ensureOpen()
-            val body = VideoBody(
-                attachment = metadata.file,
-                duration = metadata.durationSec ?: 0,
-                width = metadata.width,
-                height = metadata.height,
-                thumbnail = metadata.thumbnail,
-            )
-            viewModel.sendMessage(
-                placeholder.copy(
-                    body = body,
-                    sendStatus = Message.SEND_STATUS_SENDING,
-                    uploadProgress = 0f,
-                ),
-            )
-            resources.telemetry.recordMedia(
-                ClientUiPage.CHAT,
-                ClientMediaKind.VIDEO,
-                MediaOperation.UPLOAD,
-                ClientActionOutcome.SUCCEEDED,
-            )
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            if (!resources.canDeliverUiResult()) return
-            val reason = classifyDesktopMediaFailure(error)
-            resources.telemetry.recordMedia(
-                ClientUiPage.CHAT,
-                ClientMediaKind.VIDEO,
-                MediaOperation.UPLOAD,
-                ClientActionOutcome.FAILED,
-                reason,
-            )
-            viewModel.onError(UserFeedbackCode.MEDIA_UPLOAD_FAILED.publicMessage)
-            viewModel.markUploadFailed(chatId, clientMsgId)
+            coroutineContext.ensureActive()
+            val contentType = desktopContentType(file.name)
+            mediaSender.sendVideo(
+                chatId = chatId,
+                myUid = myUid,
+                viewModel = viewModel,
+                classifyFailure = ::classifyDesktopMediaFailure,
+            ) { onProgress ->
+                val metadata = transfer.uploadWithMeta(file, contentType, onProgress)
+                resources.ensureOpen()
+                UploadedVideoMedia(
+                    attachment = metadata.file,
+                    durationSec = metadata.durationSec ?: 0,
+                    width = metadata.width,
+                    height = metadata.height,
+                    thumbnail = metadata.thumbnail,
+                )
+            }
         }
     }
+
 
     override fun close() {
         scope.cancel()
@@ -453,42 +382,21 @@ internal class DesktopVoiceRecorder(
                     return@launch
                 }
                 recordTerminalOnce(recording, ClientActionOutcome.SUCCEEDED)
-                resources.telemetry.recordMedia(
-                    ClientUiPage.CHAT,
-                    ClientMediaKind.AUDIO,
-                    MediaOperation.UPLOAD,
-                    ClientActionOutcome.STARTED,
-                )
-                val attachment = transfer.upload(recording.file, "audio/wav")
-                resources.ensureOpen()
-                viewModel.sendMessage(
-                    Message(
-                        chatId = chatId,
-                        clientMsgId = UUID.randomUUID().toString(),
-                        serverSeq = 0L,
-                        senderUid = myUid,
-                        messageType = MessageType.VOICE.code,
-                        timestamp = System.currentTimeMillis(),
-                        body = VoiceBody(attachment, duration = durationSeconds),
-                    ),
-                )
-                resources.telemetry.recordMedia(
-                    ClientUiPage.CHAT,
-                    ClientMediaKind.AUDIO,
-                    MediaOperation.UPLOAD,
-                    ClientActionOutcome.SUCCEEDED,
-                )
+                OutgoingMediaSender(resources.telemetry).sendVoice(
+                    chatId = chatId,
+                    myUid = myUid,
+                    viewModel = viewModel,
+                    durationSeconds = durationSeconds,
+                    classifyFailure = ::classifyDesktopMediaFailure,
+                ) {
+                    val attachment = transfer.upload(recording.file, "audio/wav")
+                    resources.ensureOpen()
+                    attachment
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 if (!resources.canDeliverUiResult()) return@launch
-                resources.telemetry.recordMedia(
-                    ClientUiPage.CHAT,
-                    ClientMediaKind.AUDIO,
-                    MediaOperation.UPLOAD,
-                    ClientActionOutcome.FAILED,
-                    classifyDesktopMediaFailure(error),
-                )
                 viewModel.onError(UserFeedbackCode.MEDIA_UPLOAD_FAILED.publicMessage)
             } finally {
                 recording.file.delete()

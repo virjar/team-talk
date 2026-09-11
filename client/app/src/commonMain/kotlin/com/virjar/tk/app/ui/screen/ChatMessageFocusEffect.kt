@@ -57,14 +57,15 @@ private fun MessageFocusIntentEffect(
     actionAdmission: UiActionAdmission,
 ) {
     DisposableEffect(viewModel, target, requestId) {
-        var ownedGeneration: Long? = null
+        var ownedFocus: Pair<MessageFocusTarget, Long>? = null
         if (target == null) {
             viewModel.clearMessageFocus()
         } else {
-            actionAdmission.runIfOpen { ownedGeneration = viewModel.focusMessage(target) }
+            val ownedTarget = target
+            actionAdmission.runIfOpen { ownedFocus = ownedTarget to viewModel.focusMessage(ownedTarget) }
         }
         onDispose {
-            ownedGeneration?.let { generation -> viewModel.clearMessageFocus(target!!, generation) }
+            ownedFocus?.let { (ownedTarget, generation) -> viewModel.clearMessageFocus(ownedTarget, generation) }
         }
     }
 }

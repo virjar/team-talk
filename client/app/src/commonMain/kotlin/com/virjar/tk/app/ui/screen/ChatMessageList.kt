@@ -100,7 +100,8 @@ internal fun ChatMessageList(
         LaunchedEffect(newestSeq, atLatest) {
             if (atLatest || seenNewestSeq == null) seenNewestSeq = newestSeq
         }
-        val showNewPill = !loading && seenNewestSeq != null && newestSeq > seenNewestSeq!! && !atLatest
+        val seen = seenNewestSeq
+        val showNewPill = !loading && seen != null && newestSeq > seen && !atLatest
         Box(modifier) {
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(horizontal = Tk.spacing.md),

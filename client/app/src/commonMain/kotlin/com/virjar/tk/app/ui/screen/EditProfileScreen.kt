@@ -130,8 +130,14 @@ fun EditProfileScreen(
             }
             val avatarStatus = when {
                 avatarEditState.processing -> "正在生成方形头像…"
-                avatarEditState.uploadProgress != null ->
-                    "正在上传处理后的头像 ${(avatarEditState.uploadProgress!!.coerceIn(0f, 1f) * 100).toInt()}%"
+                avatarEditState.uploadProgress != null -> {
+                    val progress = avatarEditState.uploadProgress
+                    if (progress != null) {
+                        "正在上传处理后的头像 ${(progress.coerceIn(0f, 1f) * 100).toInt()}%"
+                    } else {
+                        "正在上传处理后的头像…"
+                    }
+                }
                 avatarEditState.removeRequested -> "保存后将移除当前头像"
                 avatarEditState.hasReplacement ->
                     "已生成不超过 ${PROFILE_AVATAR_OUTPUT_SIZE}×${PROFILE_AVATAR_OUTPUT_SIZE} 的方形头像"
@@ -192,10 +198,10 @@ fun EditProfileScreen(
                 }
             }
 
-            if (error != null) {
+            error?.let { message ->
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    error!!,
+                    message,
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.fillMaxWidth().testTag("profile.save.error"),

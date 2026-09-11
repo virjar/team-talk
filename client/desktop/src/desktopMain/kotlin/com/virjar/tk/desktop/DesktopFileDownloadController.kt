@@ -28,6 +28,7 @@ import com.virjar.tk.app.telemetry.classifyMediaFailure
 import com.virjar.tk.app.ui.component.AutomaticFileDownloadLedger
 import com.virjar.tk.app.ui.component.FileDownloadController
 import com.virjar.tk.app.ui.component.FileDownloadState
+import com.virjar.tk.app.ui.component.FileDownloadStatePublisher
 import com.virjar.tk.app.ui.component.TextAttachmentPreviewPlan
 import com.virjar.tk.app.ui.component.textAttachmentPreviewPlan
 import com.virjar.tk.app.ui.UiActionAdmission
@@ -58,170 +59,6 @@ import kotlin.coroutines.ContinuationInterceptor
 
 internal const val DESKTOP_ATTACHMENT_EXTERNAL_OPEN_FAILURE_MESSAGE =
     "无法打开文件，请检查是否安装了可处理此格式的应用"
-internal const val MAX_DESKTOP_FILE_DOWNLOAD_PENDING_KEYS = 64
-internal const val MAX_DESKTOP_FILE_DOWNLOAD_RESIDENT_STATES = 256
-
-/**
- * 把 worker 结果串行化发布到组合 owner。进度按附件 key 合并，待处理的去重 key 数量有上限，
- * 可观测状态表也有自己的 LRU 上限。线程归属是显式声明的，因为 dispatcher 的调度策略
- * 并不能判定线程身份：生产环境 Compose Desktop 状态归属于 AWT 事件分发线程，而测试
- * 注入一个确定性的 owner 判定谓词。
- */
-internal class DesktopFileDownloadStatePublisher(
-    ownerScope: CoroutineScope,
-    private val publicationGate: ((() -> Unit) -> Boolean),
-    private val maxPendingKeys: Int = MAX_DESKTOP_FILE_DOWNLOAD_PENDING_KEYS,
-    private val maxResidentStates: Int = MAX_DESKTOP_FILE_DOWNLOAD_RESIDENT_STATES,
-    private val ownerThreadPredicate: () -> Boolean = EventQueue::isDispatchThread,
-) : AutoCloseable {
-    private data class PendingPublication(
-        val state: FileDownloadState,
-        val onPublished: (() -> Unit)?,
-    )
-
-    val states: SnapshotStateMap<String, FileDownloadState> = mutableStateMapOf()
-
-    private val ownerContext = ownerScope.coroutineContext.also { context ->
-        requireNotNull(context[ContinuationInterceptor] as? CoroutineDispatcher) {
-            "Desktop file download UI scope must have a dispatcher"
-        }
-    }
-    private val publicationJob = SupervisorJob(ownerContext[Job])
-    private val publicationScope = CoroutineScope(
-        ownerContext.minusKey(Job) + publicationJob + CoroutineName("desktop-file-download-state"),
-    )
-    private val lock = Any()
-    private val pending = linkedMapOf<String, PendingPublication>()
-    private val residentOrder = linkedSetOf<String>()
-    private var drainScheduled = false
-    private var closed = false
-
-    init {
-        require(maxPendingKeys > 0) { "Desktop file download pending capacity must be positive" }
-        require(maxResidentStates > 0) { "Desktop file download state capacity must be positive" }
-        publicationJob.invokeOnCompletion {
-            synchronized(lock) {
-                closed = true
-                pending.clear()
-                drainScheduled = false
-            }
-        }
-    }
-
-    /** 既可能从组合 dispatcher 调用，也可能从媒体 worker 调用。 */
-    fun publish(
-        key: String,
-        state: FileDownloadState,
-        onPublished: (() -> Unit)? = null,
-    ): Boolean {
-        if (key.isBlank()) return false
-        var accepted = true
-        val shouldSchedule = synchronized(lock) {
-            if (closed) return false
-            pending.remove(key)
-            if (pending.size >= maxPendingKeys) {
-                val progressKey = pending.entries
-                    .firstOrNull { it.value.state is FileDownloadState.Downloading }
-                    ?.key
-                when {
-                    progressKey != null -> pending.remove(progressKey)
-                    state is FileDownloadState.Downloading -> {
-                        accepted = false
-                        return@synchronized false
-                    }
-                    else -> {
-                        val oldest = pending.entries.iterator()
-                        oldest.next()
-                        oldest.remove()
-                    }
-                }
-            }
-            pending[key] = PendingPublication(state, onPublished)
-            if (drainScheduled) {
-                false
-            } else {
-                drainScheduled = true
-                true
-            }
-        }
-        if (!accepted) return false
-
-        // FileCard 在组合 dispatcher 上初始化并立即读取状态。
-        if (isOnOwnerThread()) {
-            drainOnOwnerDispatcher(releaseScheduleWhenEmpty = shouldSchedule)
-        } else if (shouldSchedule) {
-            publicationScope.launch(start = CoroutineStart.DEFAULT) {
-                drainOnOwnerDispatcher(releaseScheduleWhenEmpty = true)
-            }
-        }
-        return true
-    }
-
-    private fun drainOnOwnerDispatcher(releaseScheduleWhenEmpty: Boolean) {
-        check(isOnOwnerThread()) {
-            "Desktop file download state drain escaped its composition dispatcher"
-        }
-        try {
-            while (true) {
-                val batch = synchronized(lock) {
-                    if (closed) {
-                        pending.clear()
-                        drainScheduled = false
-                        return
-                    }
-                    if (pending.isEmpty()) {
-                        if (releaseScheduleWhenEmpty) drainScheduled = false
-                        return
-                    }
-                    pending.entries.map { it.key to it.value }.also { pending.clear() }
-                }
-                batch.forEach { (key, publication) ->
-                    publishOneOnOwnerDispatcher(key, publication)
-                }
-            }
-        } catch (failure: Throwable) {
-            synchronized(lock) {
-                pending.clear()
-                if (releaseScheduleWhenEmpty) drainScheduled = false
-            }
-            throw failure
-        }
-    }
-
-    private fun publishOneOnOwnerDispatcher(key: String, publication: PendingPublication) {
-        publicationGate {
-            var published = false
-            synchronized(lock) {
-                if (!closed) {
-                    states[key] = publication.state
-                    residentOrder.remove(key)
-                    residentOrder.add(key)
-                    while (residentOrder.size > maxResidentStates) {
-                        val oldest = residentOrder.iterator().next()
-                        residentOrder.remove(oldest)
-                        states.remove(oldest)
-                    }
-                    published = true
-                }
-            }
-            if (published) publication.onPublished?.invoke()
-        }
-    }
-
-    private fun isOnOwnerThread(): Boolean = ownerThreadPredicate()
-
-    override fun close() {
-        val shouldCancel = synchronized(lock) {
-            if (closed) return@synchronized false
-            closed = true
-            pending.clear()
-            drainScheduled = false
-            true
-        }
-        if (shouldCancel) publicationJob.cancel()
-    }
-}
-
 /** Desktop 文件附件控制器：只管理页面状态，网络与落盘统一委托给会话媒体缓存。 */
 internal class DesktopFileDownloadController(
     private val resources: DesktopSessionResources,
@@ -241,7 +78,7 @@ internal class DesktopFileDownloadController(
     private val mutex = Mutex()
     private val closed = AtomicBoolean(false)
     private val publicationLock = Any()
-    private val statePublisher = DesktopFileDownloadStatePublisher(
+    private val statePublisher = FileDownloadStatePublisher(
         ownerScope = uiScope,
         publicationGate = { publication ->
             actionAdmission.runIfOpen {
@@ -627,7 +464,7 @@ internal class DesktopFileDownloadController(
         onPublished: (() -> Unit)? = null,
     ) {
         if (closed.get()) return
-        statePublisher.publish(key, state, onPublished)
+        statePublisher.publish(key, state, onPublished = onPublished)
     }
 
     private fun recordView(
