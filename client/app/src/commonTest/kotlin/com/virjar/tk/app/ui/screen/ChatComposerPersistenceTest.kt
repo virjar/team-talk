@@ -13,6 +13,12 @@ import com.virjar.tk.shared.testkit.FakeLocalCache
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.*
 import kotlin.test.*
+import com.virjar.tk.app.navigation.feature.chat.ChatComposerContextStore
+import com.virjar.tk.app.navigation.feature.chat.toDraftSnapshot
+import com.virjar.tk.app.navigation.feature.chat.toComposerContext
+import com.virjar.tk.app.navigation.feature.chat.ChatComposerContext
+import com.virjar.tk.app.navigation.feature.chat.SavedChatReplyTarget
+import com.virjar.tk.app.navigation.feature.chat.SavedChatEditingSession
 
 /** App ownership tests control the commit boundary; SDK integration tests own actual SQLite recovery. */
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)

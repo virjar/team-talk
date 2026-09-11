@@ -11,6 +11,7 @@ import com.virjar.tk.shared.testkit.FakeLocalCache
 import com.virjar.tk.shared.testkit.FakeRpcInvoker
 import kotlinx.coroutines.test.runTest
 import kotlin.test.*
+import com.virjar.tk.app.navigation.feature.chat.SavedChatReplyTarget
 
 class ChatReplyReferenceTest {
     @Test

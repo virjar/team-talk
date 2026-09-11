@@ -92,7 +92,7 @@ internal fun WindowScope.MainAppContent(
             publishOnUi = { action ->
                 documentAssetUiScope.launch { presentationGate.runIfOpen(action) }
             },
-            durableImports = nav.chatAssetImports(resources::createChatAssetSpool),
+            durableImports = nav.chat.chatAssetImports(resources::createChatAssetSpool),
         )
     }
     val documentFileDownloads = remember(resources, presentationGate, documentAssetUiScope) {
@@ -177,7 +177,7 @@ internal fun WindowScope.MainAppContent(
     }
 
     val conversations by nav.conversationViewModel.conversations.collectAsState()
-    val mentionedChatIds by nav.mentionedChatIds.collectAsState()
+    val mentionedChatIds by nav.chat.mentionedChatIds.collectAsState()
     val conversationPeerUsers by nav.conversationViewModel.peerUsers.collectAsState()
     val groupAvatarMembers by nav.conversationViewModel.groupAvatarMembers.collectAsState()
     val contacts by nav.contactViewModel.contacts.collectAsState()
@@ -256,7 +256,7 @@ internal fun WindowScope.MainAppContent(
     // 渲染路径不读 SQLite；自动登录初始投影尚未发布时，自己的消息仍有稳定兜底。
     val userSession = nav.userSession
     val resolveUser: (String) -> User? = { uid ->
-        nav.residentChatUser(uid)
+        nav.chat.residentChatUser(uid)
             ?: nav.account.currentUser?.takeIf { it.uid == uid }
             ?: if (uid == userSession.uid) {
                 User(
@@ -406,7 +406,7 @@ private fun MainListPane(
                             onMuteClick = presentationGate.guard(nav.conversationViewModel::setMuted),
                             onMarkRead = { chatId, lastSeq ->
                                 presentationGate.runIfOpen {
-                                    nav.markConversationRead(chatId, lastSeq)
+                                    nav.chat.markConversationRead(chatId, lastSeq)
                                 }
                             },
                             peerUsers = conversationPeerUsers,
@@ -539,7 +539,7 @@ private fun RowScope.MainContentPane(
         } else {
             Box(modifier = Modifier.fillMaxSize()) {
                 val activeChatId = nav.chatId
-                val activeChatViewModel = activeChatId?.let(nav::chatViewModelFor)
+                val activeChatViewModel = activeChatId?.let(nav.chat::chatViewModelFor)
                 when {
                     activeChatId != null && activeChatViewModel != null -> {
                         ChatPanelWrapper(
@@ -552,11 +552,11 @@ private fun RowScope.MainContentPane(
                             resources = resources,
                             embeddedAssetImports = chatEmbeddedAssetImports,
                             telemetry = nav.telemetry,
-                            saveDraft = nav::saveDraft,
-                            draftLifecycleBridge = nav.chatDraftLifecycle,
+                            saveDraft = nav.chat::saveDraft,
+                            draftLifecycleBridge = nav.chat.draftLifecycle,
                             // null 表示会话尚未加载；已知没有草稿以空字符串交给编辑器。
                             cachedDraft = activeConversation?.let { it.draft.orEmpty() },
-                            composerContextStore = nav.chatComposerContexts,
+                            composerContextStore = nav.chat.composerContexts,
                             resolveSender = { uid ->
                                 mentionCandidates?.firstOrNull { it.uid == uid } ?: resolveUser(uid)
                             },

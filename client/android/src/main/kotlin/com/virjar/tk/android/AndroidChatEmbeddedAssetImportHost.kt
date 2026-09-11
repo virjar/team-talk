@@ -58,7 +58,7 @@ internal fun rememberAndroidChatEmbeddedAssetImportHost(
                 dataState.launchCancellableAdmittedUiAction(action = action)
             },
             deliverIfOpen = dataState.uiActionAdmission::runIfOpen,
-            durableImports = dataState.chatAssetImports {
+            durableImports = dataState.chat.chatAssetImports {
                 com.virjar.tk.shared.repository.createChatAssetSpool(
                     applicationContext.noBackupFilesDir,
                     com.virjar.tk.shared.client.AccountDataOwner(

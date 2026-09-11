@@ -66,7 +66,7 @@ internal fun HomeScreen(
         else -> homeTab
     }
     val conversations by dataState.conversationViewModel.conversations.collectAsState()
-    val mentionedChatIds by dataState.mentionedChatIds.collectAsState()
+    val mentionedChatIds by dataState.chat.mentionedChatIds.collectAsState()
     val conversationPeerUsers by dataState.conversationViewModel.peerUsers.collectAsState()
     val groupAvatarMembers by dataState.conversationViewModel.groupAvatarMembers.collectAsState()
     val contacts by dataState.contactViewModel.contacts.collectAsState()
@@ -185,7 +185,7 @@ internal fun HomeScreen(
                     onPinClick = actionAdmission.guard(dataState.conversationViewModel::setPinned),
                     onMuteClick = actionAdmission.guard(dataState.conversationViewModel::setMuted),
                     onMarkRead = actionAdmission.guard { chatId: String, lastSeq: Long ->
-                        dataState.markConversationRead(chatId, lastSeq)
+                        dataState.chat.markConversationRead(chatId, lastSeq)
                     },
                     peerUsers = conversationPeerUsers,
                     peerRemarks = remember(contacts) { com.virjar.tk.app.ui.screen.contactRemarks(contacts) },

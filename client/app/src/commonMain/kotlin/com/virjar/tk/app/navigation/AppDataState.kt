@@ -3,6 +3,7 @@ package com.virjar.tk.app.navigation
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+
 import com.virjar.tk.shared.AppError
 import com.virjar.tk.shared.client.ClientSession
 import com.virjar.tk.shared.client.SessionEndReason
@@ -10,6 +11,8 @@ import com.virjar.tk.app.client.collapseClientLifecycleFailures
 import com.virjar.tk.app.client.isFatalClientLifecycleFailure
 import com.virjar.tk.shared.client.logUnhandledError
 import com.virjar.tk.app.navigation.feature.AccountFeature
+import com.virjar.tk.app.navigation.feature.chat.ChatComposerContextStore
+import com.virjar.tk.app.navigation.feature.chat.ChatFeature
 import com.virjar.tk.app.navigation.feature.DiscoveryFeature
 import com.virjar.tk.app.navigation.feature.GroupFeature
 import com.virjar.tk.app.navigation.feature.OrganizationFeature
@@ -21,11 +24,6 @@ import com.virjar.tk.app.navigation.feature.MessageActionsFeature
 import com.virjar.tk.app.navigation.feature.task.TaskFeature
 import com.virjar.tk.app.ui.UiActionAdmission
 import com.virjar.tk.app.ui.SessionUiActionExecutor
-import com.virjar.tk.app.ui.screen.ChatComposerContextStore
-import com.virjar.tk.app.ui.screen.ChatDraftLifecycleBridge
-import com.virjar.tk.app.ui.bridge.ChatAssetImportDelegate
-import com.virjar.tk.app.ui.bridge.DurableChatAssetImports
-import com.virjar.tk.shared.repository.ChatAssetSpool
 import com.virjar.tk.app.telemetry.ClientUiTelemetrySink
 import com.virjar.tk.app.telemetry.ClientUiAction
 import com.virjar.tk.app.telemetry.ClientUiPage
@@ -35,7 +33,6 @@ import com.virjar.tk.app.telemetry.UserFeedbackCode
 import com.virjar.tk.app.telemetry.UserFeedbackNotice
 import com.virjar.tk.app.telemetry.UserFeedbackReporter
 import com.virjar.tk.shared.log.AppLog
-import com.virjar.tk.app.viewmodel.ChatViewModel
 import com.virjar.tk.app.viewmodel.ContactViewModel
 import com.virjar.tk.app.viewmodel.ConversationViewModel
 import com.virjar.tk.app.viewmodel.GlobalSearchUserViewModel
@@ -46,7 +43,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
 /**
@@ -58,8 +54,7 @@ import kotlinx.coroutines.launch
  */
 open class AppDataState(
     private val session: ClientSession,
-    val chatComposerContexts: ChatComposerContextStore = ChatComposerContextStore(),
-    val chatDraftLifecycle: ChatDraftLifecycleBridge = ChatDraftLifecycleBridge(),
+    chatComposerContexts: ChatComposerContextStore = ChatComposerContextStore(),
     val documentDrafts: DocumentDraftStore,
     private val onAuthExpired: () -> Unit = { session.close(reason = SessionEndReason.AUTH_REVOKED) },
     private val onHttpAuthExpired: (rejectedAccessToken: String) -> Unit = { onAuthExpired() },
@@ -78,23 +73,14 @@ open class AppDataState(
     fun httpCredentialsSnapshot() = session.httpCredentialsSnapshot()
     val feedbackReporter = UserFeedbackReporter(telemetry)
 
-    private val activeChat = ActiveChatBinding()
     private val destroyGate = AppDataStateDestroyGate()
     private val localMutations = session.localMutations
 
-    /** 存在未读 @我 提示的会话集合（MENTION_SYNC 驱动的进程内投影）。 */
-    val mentionedChatIds: kotlinx.coroutines.flow.StateFlow<Set<String>>
-        get() = session.eventProcessor.mentionedChatIds
     /** Android/common UI 执行围栏；Desktop 提供它更早的呈现围栏。 */
     val uiActionAdmission = UiActionAdmission(destroyGate::runIfOpen)
 
     /** 退役一开始就变为 false；过期的平台组合绝不能渲染任何业务 UI。 */
     val acceptsRendering: Boolean get() = destroyGate.acceptsWork
-
-    /** 供平台渲染器使用的纯驻留查询；它绝不在 Compose/Main 上执行 SQLite 工作。 */
-    fun residentChatUser(uid: String) = destroyGate.readIfOpen {
-        chatViewModel?.residentSender(uid)
-    }
 
     /**
      * 在 [admission] 仍然租用期间，于 session 拥有的 scope 中启动一个挂起的 UI 命令。
@@ -135,30 +121,6 @@ open class AppDataState(
     // 启动其收集器时，重放的完成可能立即发布。
     private val uiErrors = UiEventMailbox<String>()
     private val uiNotices = UiEventMailbox<UserFeedbackNotice>()
-    private var chatAssetImports: ChatAssetImportDelegate? = null
-
-    init {
-        chatComposerContexts.bindPersistence(
-            localCache = session.localCache,
-            localMutations = localMutations,
-            localData = localData,
-            onFailure = { reportLocalMutationFailure(it, "保存聊天草稿失败") },
-        )
-    }
-
-    /** Platform supplies its private storage root; the session owns the durable upload worker. */
-    fun chatAssetImports(createSpool: () -> ChatAssetSpool): ChatAssetImportDelegate =
-        checkNotNull(destroyGate.readIfOpen {
-            chatAssetImports ?: DurableChatAssetImports(
-                local = session.localCache.chatDrafts,
-                coordinator = actionScope.async(Dispatchers.IO) {
-                    session.createChatAssetUploads(createSpool())
-                },
-                scope = actionScope,
-                localData = localData,
-                reportFailure = ::handleError,
-            ).also { chatAssetImports = it }
-        }) { "Chat asset owner has retired" }
 
     val errorSignal: UiEventSignal?
         get() = uiErrors.signal
@@ -187,8 +149,16 @@ open class AppDataState(
         localCache = session.localCache,
         localData = localData,
     )
-    var chatViewModel by mutableStateOf<ChatViewModel?>(null)
-        private set
+    val chat = ChatFeature(
+        session = session,
+        scope = actionScope,
+        composerContexts = chatComposerContexts,
+        destroyGate = destroyGate,
+        localData = localData,
+        telemetry = telemetry,
+        reportError = ::handleError,
+        onAuthExpired = onAuthExpired,
+    )
 
     val account = AccountFeature(session, contactViewModel, actionScope, ::handleError, localData)
     val groups = GroupFeature(session, actionScope, ::handleError, localData, telemetry)
@@ -232,7 +202,7 @@ open class AppDataState(
             // 当前 Compose 编辑器拥有的帧比 350 ms 防抖更新。在 ConversationRepository
             // 仍被准入时发布它，并退役桥接，这样延迟的 Window/Dialog 销毁
             // 就不可能穿透一个已经静默的 ClientSession 写入。
-            release("chat draft capture", chatDraftLifecycle::captureAndRetire)
+            release("chat draft capture", chat::captureAndRetireDraftCapture)
             release("HTTP auth expiry binding", httpAuthExpiredBinding::close)
             release("document draft capture") {
                 check(documents.retireDraftCapture()) { "Document editor final-frame capture failed" }
@@ -240,12 +210,10 @@ open class AppDataState(
             release("conversation ViewModel", conversationViewModel::destroy)
             release("contact ViewModel", contactViewModel::destroy)
             release("global search user ViewModel", globalSearchUserViewModel::destroy)
-            val closingChat = chatViewModel
-            chatViewModel = null
-            release("chat ViewModel") { closingChat?.destroy() }
-            release("active chat binding", activeChat::clear)
+            chat.destroyViewModel()
+            release("active chat binding", chat::clearActiveChat)
             if (clearComposerContexts) {
-                release("chat composer contexts", chatComposerContexts::clear)
+                release("chat composer contexts", chat::clearComposerContexts)
             }
             // 平台持久化拥有它自己的异步落盘队列。保留草稿在这里不需要阻塞工作；
             // Android 捕获编辑器并在 destroy 之前调度一个屏障。
@@ -270,44 +238,6 @@ open class AppDataState(
             }
         }
     }
-
-    fun prepareChat(chatId: String): Boolean = ensureChat(chatId)
-
-    /**
-     * 确保 session 作用域的 chat ViewModel 属于正在渲染的 route。
-     *
-     * Android 可以恢复 CHAT 返回栈条目，而无需重放最初导航到那里的点击。
-     * 保持这个操作幂等让目的地拥有准备工作，同时在正常进入时保留一个已经存活的
-     * ViewModel（及其已加载的消息窗口）。
-     */
-    fun ensureChat(chatId: String): Boolean = destroyGate.runIfOpen { ensureChatWhileOpen(chatId) }
-
-    private fun ensureChatWhileOpen(chatId: String) {
-        if (!activeChat.needsPreparation(chatId, chatViewModel != null)) return
-        chatViewModel?.destroy()
-        chatViewModel = ChatViewModel(
-            chatId = chatId,
-            localCache = session.localCache,
-            messageRepo = session.messageRepo,
-            eventProcessor = session.eventProcessor,
-            connectionState = session.connectionState,
-            myUid = userSession.uid,
-            localMutations = localMutations,
-            trySendTyping = session::trySendTyping,
-            localData = localData,
-            telemetry = telemetry,
-            onAuthExpired = { this@AppDataState.onAuthExpired() },
-            prepareFailedMessageReplacement = session::prepareChatAssetReplacement,
-            chatDraftRepository = session.chatDraftRepo,
-        )
-        activeChat.markPrepared(chatId)
-    }
-
-    /** 绝不在导航/返回栈转换期间暴露另一条 route 的 ViewModel。 */
-    fun chatViewModelFor(chatId: String): ChatViewModel? =
-        destroyGate.readIfOpen {
-            chatViewModel.takeIf { activeChat.matches(chatId, it != null) }
-        }
 
     /** 为某个可见宿主保留最旧的错误，直到该宿主完成或释放它。 */
     fun acquireError(owner: Any): UiEventLease<String>? =
@@ -362,27 +292,6 @@ open class AppDataState(
             is ScreenDataKey.GroupFiles -> groupFiles.open(key.chatId)
             is ScreenDataKey.GroupBots -> groups.loadGroupBots(key.chatId)
             ScreenDataKey.Documents -> documents.open()
-        }
-    }
-
-    fun saveDraft(chatId: String, draft: String?) {
-        val normalized = draft?.takeIf { it.isNotBlank() }
-        chatDraftLifecycle.publishIfOpen {
-            // Main 只准入每个会话最新的命令。确切 session 的单一写者在 LocalCache
-            // 退役之前提交它，然后调度现有的持久镜像路径。
-            localMutations.setDraft(chatId, normalized) { failure ->
-                reportLocalMutationFailure(failure, "保存草稿失败")
-            }
-        }
-    }
-
-    /** 在每一台设备上持久化显式的会话列表"标记已读"动作。 */
-    fun markConversationRead(chatId: String, readSeq: Long) {
-        if (readSeq <= 0L) return
-        destroyGate.runIfOpen {
-            localMutations.markRead(chatId, readSeq) { failure ->
-                reportLocalMutationFailure(failure, "标记已读失败")
-            }
         }
     }
 
@@ -518,7 +427,7 @@ internal class UiEventMailbox<T : Any> {
  * 会自然地加入领导者；同一线程的可重入 destroy 会看到 CLOSING 并直接无操作，
  * 而不是使自己死锁。
  */
-internal class AppDataStateDestroyGate {
+class AppDataStateDestroyGate {
     private val lock = Any()
     private var phase = AppDataStateDestroyPhase.OPEN
     private var terminalFailures = emptyList<Pair<String, Throwable>>()
@@ -592,31 +501,12 @@ internal class AppDataStateDestroyGate {
     }
 }
 
-internal data class AppDataStateDestroyCompletion(
+data class AppDataStateDestroyCompletion(
     val completedNow: Boolean,
     val failures: List<Pair<String, Throwable>>,
 )
 
 private enum class AppDataStateDestroyPhase { OPEN, CLOSING, CLOSED }
-
-/** 纯 route 到 owner 的绑定保持分离，这样生命周期/幂等规则可以单元测试。 */
-internal class ActiveChatBinding {
-    private var preparedChatId: String? = null
-
-    fun needsPreparation(routeChatId: String, hasViewModel: Boolean): Boolean =
-        !hasViewModel || preparedChatId != routeChatId
-
-    fun matches(routeChatId: String, hasViewModel: Boolean): Boolean =
-        hasViewModel && preparedChatId == routeChatId
-
-    fun markPrepared(chatId: String) {
-        preparedChatId = chatId
-    }
-
-    fun clear() {
-        preparedChatId = null
-    }
-}
 
 sealed class ScreenDataKey {
     data object Devices : ScreenDataKey()

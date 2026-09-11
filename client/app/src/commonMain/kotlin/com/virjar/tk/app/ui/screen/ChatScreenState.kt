@@ -17,6 +17,12 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import com.virjar.tk.app.navigation.feature.chat.SavedChatEditingSession
+import com.virjar.tk.app.navigation.feature.chat.SavedChatReplyTarget
+import com.virjar.tk.app.navigation.feature.chat.durableChatDraftMirrorPayload
+import com.virjar.tk.app.navigation.feature.chat.ChatComposerContext
+import com.virjar.tk.app.navigation.feature.chat.ChatComposerContextStore
+import com.virjar.tk.app.navigation.feature.chat.RetainedTextSlot
 
 internal fun visibleChatReadTarget(
     readReceiptsEnabled: Boolean,
@@ -33,14 +39,6 @@ internal fun resetChatComposerState(state: RichTextState) {
 internal fun canonicalizeChatMessageForSend(message: Message): Message =
     MessageBodyPolicy.canonicalize(message)
 
-/**
- * 普通跨设备镜像只接受独立 Markdown 字符串，不发布缺少 sidecar 的内部 URI。
- * 完整本机正文与资产由 ChatDraftSnapshot 持久化，此函数同时服务尚无持久适配器的展示夹具。
- */
-internal fun durableChatDraftMirrorPayload(markdown: String): String =
-    runCatching {
-        markdown.takeIf { MarkdownAssetPolicy.references(it).isEmpty() }.orEmpty()
-    }.getOrDefault("")
 
 /**
  * 输入框的普通草稿同步。缓存观察值判断能否替换正文，发布值只控制防抖/离开补写的去重。
@@ -103,56 +101,13 @@ internal fun hasReferencedIncompleteEmbeddedAssetJob(
 internal fun Message.confirmedReplyToMsgIdOrNull(): String? =
     serverSeq.takeIf { it > 0L }?.toString()
 
-/** 只保存稳定引用；Message 由当前窗口或独立的权威单条读取恢复。 */
-internal data class SavedChatReplyTarget(val clientMsgId: String = "", val serverSeq: Long = 0L) {
-    internal fun bind(messages: List<Message>): Message? =
-        clientMsgId.takeIf(String::isNotEmpty)?.let { targetId ->
-            messages.firstOrNull {
-                it.clientMsgId == targetId && (serverSeq == 0L || it.serverSeq == serverSeq) &&
-                    it.flags and Message.FLAG_REVOKED == 0
-            }
-        }
-}
 
 internal val SavedChatReplyTargetSaver = listSaver<SavedChatReplyTarget, String>(
     save = { target -> listOf(target.clientMsgId, target.serverSeq.toString()) },
     restore = { values -> SavedChatReplyTarget(values.firstOrNull().orEmpty(), values.getOrNull(1)?.toLongOrNull() ?: 0L) },
 )
 
-/**
- * 编辑已发消息时的可恢复会话。这里只保存平台 Saver 支持的稳定值；目标消息和回复消息
- * 均用 clientMsgId 在当前消息流中重新绑定，Activity 重建不会把被编辑正文误当普通草稿。
- */
-internal data class SavedChatEditingSession(
-    val editingClientMsgId: String = "",
-    val targetLoaded: Boolean = false,
-    /**
-     * 仅对本次编辑尝试稳定。普通草稿与编辑尝试启动的内嵌资源上传必须使用不同的 owner，
-     * 否则迟到的 READY 帧可能被错误的编辑器上下文消费，使挂起的草稿缺少其描述符。
-     */
-    val assetImportOwnerId: String = "",
-    val suspendedMarkdown: String = "",
-    val suspendedMode: ChatComposerMode = ChatComposerMode.VISUAL,
-    val selectionStart: Int = 0,
-    val selectionEnd: Int = 0,
-    val replyingClientMsgId: String = "",
-    val replyingServerSeq: Long = 0L,
-    val suspendedAssets: List<EmbeddedAsset> = emptyList(),
-)
 
-internal fun chatEmbeddedAssetImportOwnerKey(
-    chatId: String,
-    editingSession: SavedChatEditingSession,
-): String = if (editingSession.editingClientMsgId.isEmpty()) {
-    "chat:$chatId:draft"
-} else {
-    val editAttemptId = editingSession.assetImportOwnerId.ifEmpty {
-        // 对内部畸形的恢复状态失败关闭（fail closed），且不会回退到普通草稿 owner。
-        // 新的编辑尝试总是携带随机 owner id。
-        "invalid-${editingSession.editingClientMsgId}"
-    }
-    "chat:$chatId:edit:$editAttemptId"
-}
 
 /** 在限制每个内联 SavedState 字符串的同时，保持常规旋转恢复的便利性。 */
 internal const val MAX_CHAT_SAVED_STATE_INLINE_TEXT_LENGTH = 8_192

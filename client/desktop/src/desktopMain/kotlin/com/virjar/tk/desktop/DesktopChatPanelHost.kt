@@ -42,8 +42,8 @@ import com.virjar.tk.app.ui.component.PlatformMediaActions
 import com.virjar.tk.app.ui.component.VoicePlaybackController
 import com.virjar.tk.app.ui.component.rememberMediaClickHandler
 import com.virjar.tk.app.ui.component.rememberEmbeddedMediaClickHandler
-import com.virjar.tk.app.ui.screen.ChatComposerContextStore
-import com.virjar.tk.app.ui.screen.ChatDraftLifecycleBridge
+import com.virjar.tk.app.navigation.feature.chat.ChatComposerContextStore
+import com.virjar.tk.app.navigation.feature.chat.ChatDraftLifecycleBridge
 import com.virjar.tk.app.ui.screen.ChatPanel
 import com.virjar.tk.app.ui.theme.Tk
 import com.virjar.tk.app.viewmodel.ChatViewModel

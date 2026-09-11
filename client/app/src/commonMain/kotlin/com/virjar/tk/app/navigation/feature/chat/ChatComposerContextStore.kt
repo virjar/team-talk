@@ -1,4 +1,4 @@
-package com.virjar.tk.app.ui.screen
+package com.virjar.tk.app.navigation.feature.chat
 
 import com.virjar.tk.protocol.model.EmbeddedAsset
 import com.virjar.tk.app.ui.component.rich.ChatComposerMode

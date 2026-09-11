@@ -239,7 +239,7 @@ class DesktopNav(
     }
 
     private fun openChat(chatId: String, messageFocusTarget: MessageFocusTarget?) {
-        if (!prepareChat(chatId)) return
+        if (!chat.prepareChat(chatId)) return
         selectedTab = MainTab.CONVERSATIONS.ordinal
         this.chatId = chatId
         this.messageFocusTarget = messageFocusTarget

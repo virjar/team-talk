@@ -52,6 +52,15 @@ import com.virjar.tk.app.telemetry.NoopClientUiTelemetrySink
 import com.virjar.tk.app.telemetry.UserFeedbackReporter
 import java.util.UUID
 import kotlinx.coroutines.delay
+import com.virjar.tk.app.navigation.feature.chat.ChatComposerContextStore
+import com.virjar.tk.app.navigation.feature.chat.ChatDraftLifecycleBridge
+import com.virjar.tk.app.navigation.feature.chat.ChatDraftCaptureHandle
+import com.virjar.tk.app.navigation.feature.chat.ChatComposerContext
+import com.virjar.tk.app.navigation.feature.chat.toDraftSnapshot
+import com.virjar.tk.app.navigation.feature.chat.SavedChatEditingSession
+import com.virjar.tk.app.navigation.feature.chat.SavedChatReplyTarget
+import com.virjar.tk.app.navigation.feature.chat.chatEmbeddedAssetImportOwnerKey
+import com.virjar.tk.app.navigation.feature.chat.durableChatDraftMirrorPayload
 
 /**
  * 共享聊天面板。包含消息列表和输入栏，不含 Scaffold/TopAppBar。

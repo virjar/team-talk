@@ -4,6 +4,12 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertNotNull
+import com.virjar.tk.app.navigation.feature.chat.ChatComposerContextStore
+import com.virjar.tk.app.navigation.feature.chat.toComposerContext
+import com.virjar.tk.app.navigation.feature.chat.toDraftSnapshot
+import com.virjar.tk.app.navigation.feature.chat.ChatComposerContext
+import com.virjar.tk.app.navigation.feature.chat.SavedChatReplyTarget
+import com.virjar.tk.app.navigation.feature.chat.SavedChatEditingSession
 
 /** 真机回归：另一设备发送后，打开中的输入框必须消费清空，同时保留本机新输入。 */
 class ChatDraftSynchronizationTest {

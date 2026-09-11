@@ -11,7 +11,7 @@ import com.virjar.tk.app.navigation.feature.document.DocumentDraftStore
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftOwnerKey
 import com.virjar.tk.app.telemetry.ClientUiTelemetrySink
 import com.virjar.tk.app.telemetry.NoopClientUiTelemetrySink
-import com.virjar.tk.app.ui.screen.ChatComposerContextStore
+import com.virjar.tk.app.navigation.feature.chat.ChatComposerContextStore
 import java.util.concurrent.CompletionStage
 import kotlinx.coroutines.flow.MutableStateFlow
 

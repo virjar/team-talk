@@ -94,11 +94,11 @@ internal fun NavGraphBuilder.chatDestination(
         // 并不属于 Android 保存状态恢复的一部分。
         LaunchedEffect(chatId) {
             actionAdmission.runIfOpen {
-                dataState.ensureChat(chatId)
+                dataState.chat.prepareChat(chatId)
             }
         }
         // 在返回栈转场期间，绝不能用路由 B 的 ViewModel 渲染路由 A。
-        val viewModel = dataState.chatViewModelFor(chatId)
+        val viewModel = dataState.chat.chatViewModelFor(chatId)
         val conversations by dataState.conversationViewModel.conversations.collectAsState()
         val peerUsers by dataState.conversationViewModel.peerUsers.collectAsState()
         val chatContacts by dataState.contactViewModel.contacts.collectAsState()
@@ -156,7 +156,7 @@ internal fun NavGraphBuilder.chatDestination(
                 telemetry = dataState.telemetry,
                 onAuthExpired = dataState::reportHttpAuthExpired,
                 resolveSender = { uid ->
-                    mentionCandidates?.firstOrNull { it.uid == uid } ?: dataState.residentChatUser(uid)
+                    mentionCandidates?.firstOrNull { it.uid == uid } ?: dataState.chat.residentChatUser(uid)
                 },
                 mentionCandidates = mentionCandidates,
                 onMentionClick = actionAdmission.guard { uid: String ->
@@ -166,15 +166,15 @@ internal fun NavGraphBuilder.chatDestination(
                 },
                 // null 表示会话尚未加载；已知没有草稿以空字符串交给编辑器。
                 cachedDraft = currentConversation?.let { it.draft.orEmpty() },
-                composerContextStore = dataState.chatComposerContexts,
-                draftLifecycleBridge = dataState.chatDraftLifecycle,
+                composerContextStore = dataState.chat.composerContexts,
+                draftLifecycleBridge = dataState.chat.draftLifecycle,
                 actionAdmission = dataState.uiActionAdmission,
                 launchAdmittedAction = { action ->
                     dataState.launchAdmittedUiAction(action = action)
                 },
                 // ChatPanel 已防抖并在离开时同步 flush；单一出口避免父子
                 // DisposableEffect 销毁顺序不确定时，旧草稿在最后一帧反向覆盖新草稿。
-                onDraftChange = { dataState.saveDraft(chatId, it) },
+                onDraftChange = { dataState.chat.saveDraft(chatId, it) },
                 onForward = actionAdmission.guard { message: com.virjar.tk.protocol.model.Message ->
                     navController.navigate(Routes.forward(message.chatId, message.serverSeq))
                 },

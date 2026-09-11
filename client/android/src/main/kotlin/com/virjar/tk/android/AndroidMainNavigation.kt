@@ -125,7 +125,7 @@ internal fun AndroidMainAppContent(
             }
             val alreadyOpen = currentEntry.destination.route == Routes.CHAT &&
                 currentEntry.arguments?.getString("chatId") == target.chatId
-            if (!alreadyOpen && dataState.prepareChat(target.chatId)) {
+            if (!alreadyOpen && dataState.chat.prepareChat(target.chatId)) {
                 navController.navigate(Routes.chat(Uri.encode(target.chatId))) {
                     popUpTo(Routes.HOME)
                     launchSingleTop = true
@@ -291,7 +291,7 @@ private fun NavGraphBuilder.homeDestination(
             },
             onConversationClick = { cid ->
                 actionAdmission.runIfOpen {
-                    if (dataState.prepareChat(cid)) {
+                    if (dataState.chat.prepareChat(cid)) {
                         navController.navigate(Routes.chat(cid))
                     }
                 }
@@ -370,7 +370,7 @@ private fun NavGraphBuilder.searchDestination(
                         }
                         is ResolvedContentSearchHit.ChatMessage -> actionAdmission.runIfOpen {
                             val message = resolved.message
-                            if (dataState.prepareChat(message.chatId)) {
+                            if (dataState.chat.prepareChat(message.chatId)) {
                                 navController.navigate(Routes.chat(message.chatId, message.serverSeq)) { popUpTo(Routes.HOME) }
                             }
                         }
@@ -390,7 +390,7 @@ private fun NavGraphBuilder.searchDestination(
                 }
             },
             onConversationClick = actionAdmission.guard { conversation: com.virjar.tk.protocol.model.Conversation ->
-                if (dataState.prepareChat(conversation.chatId)) {
+                if (dataState.chat.prepareChat(conversation.chatId)) {
                     navController.navigate(
                         Routes.chat(conversation.chatId),
                     ) {
@@ -399,7 +399,7 @@ private fun NavGraphBuilder.searchDestination(
                 }
             },
             onMessageClick = actionAdmission.guard { message: com.virjar.tk.protocol.model.Message ->
-                if (dataState.prepareChat(message.chatId)) {
+                if (dataState.chat.prepareChat(message.chatId)) {
                     navController.navigate(Routes.chat(message.chatId, message.serverSeq)) {
                         popUpTo(Routes.HOME)
                     }
@@ -462,7 +462,7 @@ private fun NavGraphBuilder.contactsDestination(
                     val chatId = dataState.groups.create(name, uids)
                     if (chatId != null) {
                         val navigated = actionAdmission.runIfOpen {
-                            if (dataState.prepareChat(chatId)) {
+                            if (dataState.chat.prepareChat(chatId)) {
                                 navController.navigate(Routes.chat(chatId)) {
                                     popUpTo(Routes.CREATE_GROUP) { inclusive = true }
                                 }
@@ -542,7 +542,7 @@ private fun NavGraphBuilder.contactsDestination(
                     val chatId = dataState.discovery.startPersonalChat(uid)
                     if (chatId != null) {
                         actionAdmission.runIfOpen {
-                            if (dataState.prepareChat(chatId)) {
+                            if (dataState.chat.prepareChat(chatId)) {
                                 navController.navigate(Routes.chat(chatId)) {
                                     popUpTo(Routes.HOME)
                                 }
