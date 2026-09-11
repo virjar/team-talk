@@ -111,6 +111,14 @@ internal fun DocumentEditorWorkspace(
     var activeDraftSnapshot by remember {
         mutableStateOf<(() -> DocumentEditorDraftSnapshot)?>(null)
     }
+    // 评论触发按钮内联进 DocumentTabEditor 的标题行，不再独占整行（内测反馈）
+    val currentTab = activeTab
+    val commentsTrigger: @Composable () -> Unit = if (currentTab != null) {
+        val commentsRole = spaces.firstOrNull { it.spaceId == currentTab.spaceId }?.myRole ?: 0
+        { commentsContent(currentTab, commentsRole) }
+    } else {
+        {}
+    }
     val canEdit = !destructiveOperationPending && (
         spaces.firstOrNull { it.spaceId == activeTab?.spaceId }
             ?.myRole?.let { it >= DocumentSpace.ROLE_EDITOR } ?: false
@@ -180,9 +188,6 @@ internal fun DocumentEditorWorkspace(
             HorizontalDivider()
         }
 
-        if (activeTab != null) {
-            commentsContent(activeTab, spaces.firstOrNull { it.spaceId == activeTab.spaceId }?.myRole ?: 0)
-        }
         if (activeTab?.remoteChangedRevision != null && activeTab.dirty) {
             Text(
                 "服务器已有 v${activeTab.remoteChangedRevision}，本机未保存内容已保留。保存时请选择要保留的版本。",
@@ -238,6 +243,7 @@ internal fun DocumentEditorWorkspace(
                     shareToChat = shareToChat,
                     onCloseRevisionPreview = onCloseRevisionPreview,
                     onCloseHistory = onCloseHistory,
+                    commentsTrigger = commentsTrigger,
                     modifier = Modifier.fillMaxSize(),
                 )
             }

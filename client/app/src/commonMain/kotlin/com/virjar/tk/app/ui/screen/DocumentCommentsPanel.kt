@@ -51,10 +51,9 @@ internal fun DocumentCommentsPanel(
     var expanded by remember(tab.instanceId) { mutableStateOf(false) }
     val documentId = tab.documentId
     val available = documentId != null && tab.revision != null && !tab.creating && !tab.remoteMissing && role >= DocumentSpace.ROLE_VIEWER
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-        TextButton(onClick = admission.guard { expanded = true }, enabled = available,
-            modifier = Modifier.testTag("documents.comments.open")) { Text("评论") }
-    }
+    // 内联触发按钮：由宿主放进标题行等已有行内，不独占整行（内测反馈：整行只有一枚按钮太浪费）
+    TextButton(onClick = admission.guard { expanded = true }, enabled = available,
+        modifier = Modifier.testTag("documents.comments.open")) { Text("评论") }
     if (!expanded || documentId == null) return
     DisposableEffect(tab.spaceId, documentId) {
         feature.open(tab.spaceId, documentId)

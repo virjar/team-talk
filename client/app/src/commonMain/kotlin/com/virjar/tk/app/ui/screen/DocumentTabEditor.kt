@@ -212,6 +212,8 @@ internal fun DocumentTabEditor(
     onRestoreRevision: () -> Unit,
     onCloseRevisionPreview: () -> Unit,
     onCloseHistory: () -> Unit,
+    /** 评论入口（内联触发按钮，放进标题行；避免独占整行——内测反馈）。 */
+    commentsTrigger: @Composable () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val uriHandler = LocalUriHandler.current
@@ -618,6 +620,7 @@ internal fun DocumentTabEditor(
                             saveAsNew = tab.remoteMissing,
                             onSave = saveDocument,
                         )
+                        commentsTrigger()
                     }
                     if (canEdit || !tab.creating) {
                         Row(
@@ -691,6 +694,7 @@ internal fun DocumentTabEditor(
                         saveAsNew = tab.remoteMissing,
                         onSave = saveDocument,
                     )
+                    commentsTrigger()
                 }
             }
         }
