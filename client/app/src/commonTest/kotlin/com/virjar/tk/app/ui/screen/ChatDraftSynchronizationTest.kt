@@ -77,4 +77,24 @@ class ChatDraftSynchronizationTest {
         contexts.save("chat", ChatComposerContext(previousCachedDraft = ""))
         assertNull(contexts.restore("chat"), "缓存已追上清空后不再保留空上下文")
     }
+
+    /** 真机回归（内测 T043）：冷恢复的草稿清空后不得被 baseline 复活为旧正文。 */
+    @Test
+    fun `cold hydrated baseline never resurrects a cleared editor`() {
+        val context = com.virjar.tk.shared.client.ChatDraftSnapshot(chatId = "chat", markdown = "@")
+            .toComposerContext()
+        // 未编辑时保留持久化的原始写法；用户清空编辑器后快照必须是空，而不是旧草稿。
+        assertEquals("@", context.visualBaseline.snapshot("@"))
+        assertEquals("", context.visualBaseline.snapshot(""))
+        // 编辑后的内容原样透传，不受 baseline 干扰。
+        assertEquals("@小张", context.visualBaseline.snapshot("@小张"))
+    }
+
+    /** 空草稿快照的 baseline 恒等，恢复后清空仍是空。 */
+    @Test
+    fun `cold hydrated empty draft stays empty after restore`() {
+        val context = com.virjar.tk.shared.client.ChatDraftSnapshot(chatId = "chat")
+            .toComposerContext()
+        assertEquals("", context.visualBaseline.snapshot(""))
+    }
 }

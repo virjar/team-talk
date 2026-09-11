@@ -457,7 +457,10 @@ internal fun ChatDraftSnapshot.toComposerContext(): ChatComposerContext = ChatCo
     mode = ChatComposerMode.entries.getOrElse(mode) { ChatComposerMode.MARKDOWN },
     selectionStart = selectionStart,
     selectionEnd = selectionEnd,
-    visualBaseline = ChatVisualMarkdownBaseline(markdown, ""),
+    // 持久化快照没有经过 WYSIWYG 往返，真实规范化形态未知；只能认定 markdown 是它自己的
+    // 规范化形态。绝不能写 ("", markdown)：那会把"用户清空编辑器"误判为"内容未编辑"，
+    // snapshot() 便永远用旧草稿复活空输入框——@ 草稿清不掉的根因（内测 T043）。
+    visualBaseline = ChatVisualMarkdownBaseline(markdown, markdown),
     lastPublishedDraft = markdown,
 )
 
