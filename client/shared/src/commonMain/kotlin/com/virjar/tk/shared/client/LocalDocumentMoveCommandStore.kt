@@ -8,11 +8,12 @@ internal class LocalDocumentMoveCommandStore(
     private val cacheUseGate: CacheUseGate,
     private val stateLock: Any,
 ) {
-    private var state: DocumentMoveStoreState = loadState()
+    private val slot =
+        PendingCommandSlot(load = ::loadSlot, corrupt = ::CorruptDocumentMoveCommandOutboxException)
 
     fun prepare(candidate: PendingDocumentMoveCommand): PendingDocumentMoveCommand = cacheUseGate.use {
         synchronized(stateLock) {
-            val healthy = healthyLocked()
+            val healthy = slot.healthy()
             val canonical = candidate.requireCanonical()
             healthy.byTarget[canonical.targetKey]?.let { existing ->
                 if (!existing.hasSamePayload(canonical)) {
@@ -45,12 +46,12 @@ internal class LocalDocumentMoveCommandStore(
     }
 
     fun snapshot(): List<PendingDocumentMoveCommand> = cacheUseGate.use {
-        synchronized(stateLock) { healthyLocked().byOperation.values.toList() }
+        synchronized(stateLock) { slot.healthy().byOperation.values.toList() }
     }
 
     fun clear(operationId: String): Boolean = cacheUseGate.use {
         synchronized(stateLock) {
-            val healthy = healthyLocked()
+            val healthy = slot.healthy()
             val existing = healthy.byOperation[operationId] ?: return@synchronized false
             queries.deletePendingDocumentMoveCommand(operationId)
             healthy.byOperation.remove(operationId)
@@ -59,7 +60,7 @@ internal class LocalDocumentMoveCommandStore(
         }
     }
 
-    private fun loadState(): DocumentMoveStoreState = try {
+    private fun loadSlot(): DocumentMoveSlot {
         val commands = queries.selectPendingDocumentMoveCommands().executeAsList().map { row ->
             PendingDocumentMoveCommand.restore(
                 operationId = row.operation_id,
@@ -82,16 +83,7 @@ internal class LocalDocumentMoveCommandStore(
             PendingDocumentMoveCommand::operationId,
         )
         check(byOperation.size == commands.size) { "Persisted document move operation ids are duplicated" }
-        DocumentMoveStoreState.Healthy(byTarget, byOperation)
-    } catch (corrupt: IllegalArgumentException) {
-        DocumentMoveStoreState.Poisoned(CorruptDocumentMoveCommandOutboxException(corrupt))
-    } catch (corrupt: IllegalStateException) {
-        DocumentMoveStoreState.Poisoned(CorruptDocumentMoveCommandOutboxException(corrupt))
-    }
-
-    private fun healthyLocked(): DocumentMoveStoreState.Healthy = when (val current = state) {
-        is DocumentMoveStoreState.Healthy -> current
-        is DocumentMoveStoreState.Poisoned -> throw current.failure
+        return DocumentMoveSlot(byTarget, byOperation)
     }
 }
 
@@ -100,13 +92,7 @@ internal class CorruptDocumentMoveCommandOutboxException(cause: Throwable) : Ill
     cause,
 )
 
-private sealed interface DocumentMoveStoreState {
-    data class Healthy(
-        val byTarget: LinkedHashMap<String, PendingDocumentMoveCommand>,
-        val byOperation: LinkedHashMap<String, PendingDocumentMoveCommand>,
-    ) : DocumentMoveStoreState
-
-    data class Poisoned(
-        val failure: CorruptDocumentMoveCommandOutboxException,
-    ) : DocumentMoveStoreState
-}
+private class DocumentMoveSlot(
+    val byTarget: LinkedHashMap<String, PendingDocumentMoveCommand>,
+    val byOperation: LinkedHashMap<String, PendingDocumentMoveCommand>,
+)

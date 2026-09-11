@@ -10,11 +10,12 @@ internal class LocalGroupFileCommandStore(
     private val stateLock: Any,
     private val limits: LocalOutboxLimits,
 ) {
-    private var state: StoreState = loadState()
+    private val slot =
+        PendingCommandSlot(load = ::loadSlot, corrupt = ::CorruptGroupFileCommandOutboxException)
 
     fun prepare(candidate: PendingGroupFileCommand): PendingGroupFileCommand = cacheUseGate.use {
         synchronized(stateLock) {
-            val healthy = healthyLocked()
+            val healthy = slot.healthy()
             val canonical = candidate.requireCanonical()
             healthy.byIntent[canonical.intentKey]?.let { existing ->
                 if (!existing.hasSameIntentPayload(canonical)) {
@@ -66,12 +67,12 @@ internal class LocalGroupFileCommandStore(
     }
 
     fun snapshot(): List<PendingGroupFileCommand> = cacheUseGate.use {
-        synchronized(stateLock) { healthyLocked().byCommand.values.toList() }
+        synchronized(stateLock) { slot.healthy().byCommand.values.toList() }
     }
 
     fun clear(commandId: String): Boolean = cacheUseGate.use {
         synchronized(stateLock) {
-            val healthy = healthyLocked()
+            val healthy = slot.healthy()
             val existing = healthy.byCommand[commandId] ?: return@synchronized false
             queries.deletePendingGroupFileCommand(commandId)
             healthy.byCommand.remove(commandId)
@@ -82,57 +83,46 @@ internal class LocalGroupFileCommandStore(
         }
     }
 
-    private fun loadState(): StoreState {
+    private fun loadSlot(): GroupFileSlot {
         val rows = queries.selectPendingGroupFileCommands().executeAsList()
-        return try {
-            check(rows.size <= MAX_PENDING_GROUP_FILE_COMMANDS) {
-                "Persisted group-file command outbox exceeds its fixed capacity"
-            }
-            val commands = rows.map { row ->
-                val attachment = row.attachment_path?.let { path ->
-                    Attachment(
-                        path = path,
-                        name = checkNotNull(row.attachment_name),
-                        contentType = checkNotNull(row.attachment_content_type),
-                        size = checkNotNull(row.attachment_size),
-                    )
-                }
-                check((attachment == null) == (row.attachment_name == null)) {
-                    "Persisted group-file attachment fields are incomplete"
-                }
-                PendingGroupFileCommand.restore(
-                    commandId = row.command_id,
-                    intentKey = row.intent_key,
-                    kind = PendingGroupFileCommandKind.fromCode(row.command_kind),
-                    entryId = row.entry_id,
-                    chatId = row.chat_id,
-                    parentId = row.parent_id,
-                    name = row.name,
-                    attachment = attachment,
-                    expectedRevision = row.expected_revision,
-                    createdAt = row.created_at,
-                    payloadBytes = row.payload_bytes,
+        check(rows.size <= MAX_PENDING_GROUP_FILE_COMMANDS) {
+            "Persisted group-file command outbox exceeds its fixed capacity"
+        }
+        val commands = rows.map { row ->
+            val attachment = row.attachment_path?.let { path ->
+                Attachment(
+                    path = path,
+                    name = checkNotNull(row.attachment_name),
+                    contentType = checkNotNull(row.attachment_content_type),
+                    size = checkNotNull(row.attachment_size),
                 )
             }
-            val byIntent = commands.associateByTo(linkedMapOf(), PendingGroupFileCommand::intentKey)
-            check(byIntent.size == commands.size) { "Persisted group-file intents are duplicated" }
-            val byCommand = commands.associateByTo(linkedMapOf(), PendingGroupFileCommand::commandId)
-            check(byCommand.size == commands.size) { "Persisted group-file command ids are duplicated" }
-            val totalBytes = commands.sumOf(PendingGroupFileCommand::payloadBytes)
-            check(totalBytes <= MAX_PENDING_GROUP_FILE_COMMAND_STORED_BYTES) {
-                "Persisted group-file command outbox exceeds its byte capacity"
+            check((attachment == null) == (row.attachment_name == null)) {
+                "Persisted group-file attachment fields are incomplete"
             }
-            StoreState.Healthy(byIntent, byCommand, totalBytes)
-        } catch (corrupt: IllegalArgumentException) {
-            StoreState.Poisoned(CorruptGroupFileCommandOutboxException(corrupt))
-        } catch (corrupt: IllegalStateException) {
-            StoreState.Poisoned(CorruptGroupFileCommandOutboxException(corrupt))
+            PendingGroupFileCommand.restore(
+                commandId = row.command_id,
+                intentKey = row.intent_key,
+                kind = PendingGroupFileCommandKind.fromCode(row.command_kind),
+                entryId = row.entry_id,
+                chatId = row.chat_id,
+                parentId = row.parent_id,
+                name = row.name,
+                attachment = attachment,
+                expectedRevision = row.expected_revision,
+                createdAt = row.created_at,
+                payloadBytes = row.payload_bytes,
+            )
         }
-    }
-
-    private fun healthyLocked(): StoreState.Healthy = when (val current = state) {
-        is StoreState.Healthy -> current
-        is StoreState.Poisoned -> throw current.failure
+        val byIntent = commands.associateByTo(linkedMapOf(), PendingGroupFileCommand::intentKey)
+        check(byIntent.size == commands.size) { "Persisted group-file intents are duplicated" }
+        val byCommand = commands.associateByTo(linkedMapOf(), PendingGroupFileCommand::commandId)
+        check(byCommand.size == commands.size) { "Persisted group-file command ids are duplicated" }
+        val totalBytes = commands.sumOf(PendingGroupFileCommand::payloadBytes)
+        check(totalBytes <= MAX_PENDING_GROUP_FILE_COMMAND_STORED_BYTES) {
+            "Persisted group-file command outbox exceeds its byte capacity"
+        }
+        return GroupFileSlot(byIntent, byCommand, totalBytes)
     }
 }
 
@@ -141,12 +131,8 @@ internal class CorruptGroupFileCommandOutboxException(cause: Throwable) : Illega
     cause,
 )
 
-private sealed interface StoreState {
-    data class Healthy(
-        val byIntent: LinkedHashMap<String, PendingGroupFileCommand>,
-        val byCommand: LinkedHashMap<String, PendingGroupFileCommand>,
-        var totalPayloadBytes: Long,
-    ) : StoreState
-
-    data class Poisoned(val failure: CorruptGroupFileCommandOutboxException) : StoreState
-}
+private class GroupFileSlot(
+    val byIntent: LinkedHashMap<String, PendingGroupFileCommand>,
+    val byCommand: LinkedHashMap<String, PendingGroupFileCommand>,
+    var totalPayloadBytes: Long,
+)
