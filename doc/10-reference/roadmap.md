@@ -106,14 +106,17 @@ v0.0.1 后的功能快速演进沉淀了一批结构性负债；第一轮清理�
 - ~~双草稿管道合并~~：已完成。CAS 接管的会话普通输入只写本地预览，不再进入 legacy
   setDraft 镜像 outbox；服务端兼容投影由 ChatDraftService 从 CAS 提交派生，接管时采纳
   并退役既有 legacy 待发行行；wire 契约不变。
-- **五份可靠命令 outbox store**（groupCreation/social/botCredential/groupFile/documentMove）
-  同构复制，可收敛为一个泛型 PendingCommandSlot；LocalCache 接口与恢复族随之减面。
-- **服务端 reliable-command 回执**：9+ 张回执表容量/清理样板漂移（10_000 vs 16_384 vs
-  常量），先统一容量与维护循环语义，不动表结构。
-- **ClientRegistry** 798 行混合连接准入与 connection-trace 策略发布，telemetry 专属回调
-  应抽为独立协作者。
-- **telemetry/connection-trace 两套手写 Lucene 异步引擎**（800+531 行，Channel vs 阻塞队列
-  两种并发风格无需求差异），可参数化为一个索引引擎。
+- ~~五份可靠命令 outbox store~~：已完成。Healthy/Poisoned 骨架收敛为共享 PendingCommandSlot，
+  各族保留类型化 SQL 与冲突规则。
+- ~~服务端 reliable-command 回执~~：已完成。容量检查收敛为 ReliableCommandReceiptWindows
+  统一语义（先清理过期再按族窗口拒绝，归一 off-by-one），维护循环收敛为 TableSweep 驱动
+  + 两个按主键形态的泛型批次助手；表结构不变。
+- ~~ClientRegistry 职责~~：评估后不再动。通用 trace 控制助手已在 ConnectionTraceControl.kt，
+  registry 内剩余的是必须持有其连接索引与 Looper 的最小协调胶水；再抽协作者只是参数搬运。
+- **telemetry/connection-trace 两套 Lucene 引擎**：已评估。openRuntime/closeRuntime 生命周期
+  ~90% 结构相同，正确的第一步是抽共享 LuceneIndexRuntime（四件套字段 + 开/关级联 + 回滚次序，
+  约省 120 行×2）；但两引擎存在真实并发不对称（telemetry 有 searchMutationGate、trace 手动
+  删文件重置），完整合一为一个引擎不划算，需要专门一轮仔细阅读生命周期后实施。
 - 归档/隔离 CLI 子系统内部仍有 v1/v2 双格式验证路径与 discard 三重校验；命令本身是已交付
   运维能力（troubleshooting 手册），是否简化为单一格式需要产品决策。
 
