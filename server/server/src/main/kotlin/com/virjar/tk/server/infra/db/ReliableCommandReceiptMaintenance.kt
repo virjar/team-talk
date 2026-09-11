@@ -3,11 +3,13 @@ package com.virjar.tk.server.infra.db
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.yield
-import org.jetbrains.exposed.dao.id.EntityID
+import org.jetbrains.exposed.dao.id.LongIdTable
+import org.jetbrains.exposed.sql.Column
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.SortOrder
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.inList
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
+import org.jetbrains.exposed.sql.Table
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.transactions.transaction
@@ -65,144 +67,114 @@ internal class ReliableCommandReceiptMaintenance(
 ) {
     private data class BatchResult(val scanned: Int, val deleted: Int)
 
+    private class TableSweep(val batch: (Long) -> BatchResult) {
+        var deleted = 0
+        var complete = false
+    }
+
     private val runMutex = Mutex()
 
     suspend fun cleanupExpiredReceipts(): ReliableCommandReceiptCleanupResult = runMutex.withLock {
         val nowMillis = wallClockMillis()
         require(nowMillis >= 0L) { "Reliable-command cleanup clock is invalid" }
-        var contactDeleted = 0
-        var inviteDeleted = 0
-        var documentPolicyDeleted = 0
-        var documentNodeMoveDeleted = 0
-        var contactComplete = false
-        var inviteComplete = false
-        var documentPolicyComplete = false
-        var documentNodeMoveComplete = false
+        val contact = TableSweep(::cleanupExpiredContactBatch)
+        val invite = TableSweep(::cleanupExpiredInviteBatch)
+        val documentPolicy = TableSweep(::cleanupExpiredDocumentPolicyBatch)
+        val documentNodeMove = TableSweep(::cleanupExpiredDocumentNodeMoveBatch)
+        val sweeps = listOf(contact, invite, documentPolicy, documentNodeMove)
 
         repeat(config.maxBatchesPerTablePerRun) {
-            if (!contactComplete) {
-                val batch = cleanupExpiredContactBatch(nowMillis)
-                contactDeleted += batch.deleted
-                contactComplete = batch.scanned < config.batchSize
+            for (sweep in sweeps) {
+                if (sweep.complete) continue
+                val batch = sweep.batch(nowMillis)
+                sweep.deleted += batch.deleted
+                sweep.complete = batch.scanned < config.batchSize
             }
-            if (!inviteComplete) {
-                val batch = cleanupExpiredInviteBatch(nowMillis)
-                inviteDeleted += batch.deleted
-                inviteComplete = batch.scanned < config.batchSize
-            }
-            if (!documentPolicyComplete) {
-                val batch = cleanupExpiredDocumentPolicyBatch(nowMillis)
-                documentPolicyDeleted += batch.deleted
-                documentPolicyComplete = batch.scanned < config.batchSize
-            }
-            if (!documentNodeMoveComplete) {
-                val batch = cleanupExpiredDocumentNodeMoveBatch(nowMillis)
-                documentNodeMoveDeleted += batch.deleted
-                documentNodeMoveComplete = batch.scanned < config.batchSize
-            }
-            if (contactComplete && inviteComplete && documentPolicyComplete && documentNodeMoveComplete) {
-                return@withLock ReliableCommandReceiptCleanupResult(
-                    contactReceiptsDeleted = contactDeleted,
-                    inviteReceiptsDeleted = inviteDeleted,
-                    documentPolicyReceiptsDeleted = documentPolicyDeleted,
-                    documentNodeMoveReceiptsDeleted = documentNodeMoveDeleted,
-                    contactBacklogMayRemain = false,
-                    inviteBacklogMayRemain = false,
-                    documentPolicyBacklogMayRemain = false,
-                    documentNodeMoveBacklogMayRemain = false,
-                )
+            if (sweeps.all(TableSweep::complete)) {
+                return@withLock result(contact, invite, documentPolicy, documentNodeMove, backlog = false)
             }
             yield()
         }
-        ReliableCommandReceiptCleanupResult(
-            contactReceiptsDeleted = contactDeleted,
-            inviteReceiptsDeleted = inviteDeleted,
-            documentPolicyReceiptsDeleted = documentPolicyDeleted,
-            documentNodeMoveReceiptsDeleted = documentNodeMoveDeleted,
-            contactBacklogMayRemain = !contactComplete,
-            inviteBacklogMayRemain = !inviteComplete,
-            documentPolicyBacklogMayRemain = !documentPolicyComplete,
-            documentNodeMoveBacklogMayRemain = !documentNodeMoveComplete,
-        )
+        result(contact, invite, documentPolicy, documentNodeMove, backlog = true)
     }
 
-    private fun cleanupExpiredContactBatch(nowMillis: Long): BatchResult = transaction(database) {
-        val ids = ContactDecisionReceipts.select(ContactDecisionReceipts.id)
-            .where { ContactDecisionReceipts.expiresAt less nowMillis }
+    private fun result(
+        contact: TableSweep,
+        invite: TableSweep,
+        documentPolicy: TableSweep,
+        documentNodeMove: TableSweep,
+        backlog: Boolean,
+    ) = ReliableCommandReceiptCleanupResult(
+        contactReceiptsDeleted = contact.deleted,
+        inviteReceiptsDeleted = invite.deleted,
+        documentPolicyReceiptsDeleted = documentPolicy.deleted,
+        documentNodeMoveReceiptsDeleted = documentNodeMove.deleted,
+        contactBacklogMayRemain = backlog && !contact.complete,
+        inviteBacklogMayRemain = backlog && !invite.complete,
+        documentPolicyBacklogMayRemain = backlog && !documentPolicy.complete,
+        documentNodeMoveBacklogMayRemain = backlog && !documentNodeMove.complete,
+    )
+
+    private fun cleanupExpiredContactBatch(nowMillis: Long): BatchResult =
+        cleanupExpiredEntityIdBatch(ContactDecisionReceipts, ContactDecisionReceipts.expiresAt, nowMillis)
+
+    private fun cleanupExpiredInviteBatch(nowMillis: Long): BatchResult =
+        cleanupExpiredEntityIdBatch(InviteLinkCreationReceipts, InviteLinkCreationReceipts.expiresAt, nowMillis)
+
+    private fun cleanupExpiredDocumentPolicyBatch(nowMillis: Long): BatchResult =
+        cleanupExpiredLongIdBatch(
+            DocumentSpacePolicyCommands,
+            DocumentSpacePolicyCommands.retentionId,
+            DocumentSpacePolicyCommands.expiresAt,
+            nowMillis,
+        )
+
+    private fun cleanupExpiredDocumentNodeMoveBatch(nowMillis: Long): BatchResult =
+        cleanupExpiredLongIdBatch(
+            DocumentNodeMoveCommands,
+            DocumentNodeMoveCommands.retentionId,
+            DocumentNodeMoveCommands.expiresAt,
+            nowMillis,
+        )
+
+    /** 主键即保留身份的回执表（LongIdTable 形态）。 */
+    private fun cleanupExpiredEntityIdBatch(
+        table: LongIdTable,
+        expiresAt: Column<Long>,
+        nowMillis: Long,
+    ): BatchResult = transaction(database) {
+        val ids = table.select(table.id)
+            .where { expiresAt less nowMillis }
             .orderBy(
-                ContactDecisionReceipts.expiresAt to SortOrder.ASC,
-                ContactDecisionReceipts.id to SortOrder.ASC,
+                expiresAt to SortOrder.ASC,
+                table.id to SortOrder.ASC,
             )
             .limit(config.batchSize)
-            .map { it[ContactDecisionReceipts.id] }
+            .map { it[table.id] }
         BatchResult(
             scanned = ids.size,
-            deleted = deleteContactReceipts(ids),
+            deleted = if (ids.isEmpty()) 0 else table.deleteWhere { table.id inList ids },
         )
     }
 
-    private fun cleanupExpiredInviteBatch(nowMillis: Long): BatchResult = transaction(database) {
-        val ids = InviteLinkCreationReceipts.select(InviteLinkCreationReceipts.id)
-            .where { InviteLinkCreationReceipts.expiresAt less nowMillis }
+    /** 以独立列保存保留身份的回执表（retentionId 形态）。 */
+    private fun cleanupExpiredLongIdBatch(
+        table: Table,
+        retentionId: Column<Long>,
+        expiresAt: Column<Long>,
+        nowMillis: Long,
+    ): BatchResult = transaction(database) {
+        val ids = table.select(retentionId)
+            .where { expiresAt less nowMillis }
             .orderBy(
-                InviteLinkCreationReceipts.expiresAt to SortOrder.ASC,
-                InviteLinkCreationReceipts.id to SortOrder.ASC,
+                expiresAt to SortOrder.ASC,
+                retentionId to SortOrder.ASC,
             )
             .limit(config.batchSize)
-            .map { it[InviteLinkCreationReceipts.id] }
+            .map { it[retentionId] }
         BatchResult(
             scanned = ids.size,
-            deleted = deleteInviteReceipts(ids),
+            deleted = if (ids.isEmpty()) 0 else table.deleteWhere { retentionId inList ids },
         )
     }
-
-    private fun cleanupExpiredDocumentPolicyBatch(nowMillis: Long): BatchResult = transaction(database) {
-        val ids = DocumentSpacePolicyCommands.select(DocumentSpacePolicyCommands.retentionId)
-            .where { DocumentSpacePolicyCommands.expiresAt less nowMillis }
-            .orderBy(
-                DocumentSpacePolicyCommands.expiresAt to SortOrder.ASC,
-                DocumentSpacePolicyCommands.retentionId to SortOrder.ASC,
-            )
-            .limit(config.batchSize)
-            .map { it[DocumentSpacePolicyCommands.retentionId] }
-        BatchResult(
-            scanned = ids.size,
-            deleted = deleteDocumentPolicyReceipts(ids),
-        )
-    }
-
-    private fun cleanupExpiredDocumentNodeMoveBatch(nowMillis: Long): BatchResult = transaction(database) {
-        val ids = DocumentNodeMoveCommands.select(DocumentNodeMoveCommands.retentionId)
-            .where { DocumentNodeMoveCommands.expiresAt less nowMillis }
-            .orderBy(
-                DocumentNodeMoveCommands.expiresAt to SortOrder.ASC,
-                DocumentNodeMoveCommands.retentionId to SortOrder.ASC,
-            )
-            .limit(config.batchSize)
-            .map { it[DocumentNodeMoveCommands.retentionId] }
-        BatchResult(
-            scanned = ids.size,
-            deleted = deleteDocumentNodeMoveReceipts(ids),
-        )
-    }
-
-    private fun deleteContactReceipts(ids: List<EntityID<Long>>): Int =
-        if (ids.isEmpty()) 0 else ContactDecisionReceipts.deleteWhere {
-            ContactDecisionReceipts.id inList ids
-        }
-
-    private fun deleteInviteReceipts(ids: List<EntityID<Long>>): Int =
-        if (ids.isEmpty()) 0 else InviteLinkCreationReceipts.deleteWhere {
-            InviteLinkCreationReceipts.id inList ids
-        }
-
-    private fun deleteDocumentPolicyReceipts(ids: List<Long>): Int =
-        if (ids.isEmpty()) 0 else DocumentSpacePolicyCommands.deleteWhere {
-            DocumentSpacePolicyCommands.retentionId inList ids
-        }
-
-    private fun deleteDocumentNodeMoveReceipts(ids: List<Long>): Int =
-        if (ids.isEmpty()) 0 else DocumentNodeMoveCommands.deleteWhere {
-            DocumentNodeMoveCommands.retentionId inList ids
-        }
 }

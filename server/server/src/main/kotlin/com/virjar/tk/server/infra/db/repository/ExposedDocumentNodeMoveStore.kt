@@ -10,6 +10,7 @@ import com.virjar.tk.server.domain.document.DocumentNotFoundException
 import com.virjar.tk.server.domain.transaction.PgReadTransactionContext
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
 import com.virjar.tk.server.infra.db.DocumentNodeMoveCommands
+import com.virjar.tk.server.infra.db.ReliableCommandReceiptWindows
 import com.virjar.tk.server.infra.db.DocumentSpaces
 import com.virjar.tk.server.infra.db.Users
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
@@ -66,16 +67,12 @@ internal class ExposedDocumentNodeMoveStore {
         nowMillis: Long,
     ) = transaction.inExposedTransaction {
         require(nowMillis >= 0L) { "服务器时钟非法" }
-        DocumentNodeMoveCommands.deleteWhere {
-            (DocumentNodeMoveCommands.actorUid eq actorUid) and
-                (DocumentNodeMoveCommands.expiresAt less nowMillis)
-        }
-        val retained = DocumentNodeMoveCommands.select(DocumentNodeMoveCommands.operationId).where {
-            DocumentNodeMoveCommands.actorUid eq actorUid
-        }.count()
-        if (retained >= DocumentCapacityPolicy.MAX_NODE_MOVE_RECEIPTS_PER_ACTOR.toLong()) {
-            throw ReliableCommandCapacityException("文档移动可靠重试窗口已满")
-        }
+        ReliableCommandReceiptWindows.require(
+            DocumentNodeMoveCommands, DocumentNodeMoveCommands.actorUid,
+            DocumentNodeMoveCommands.expiresAt, actorUid, nowMillis,
+            failureMessage = "文档移动可靠重试窗口已满",
+            window = DocumentCapacityPolicy.MAX_NODE_MOVE_RECEIPTS_PER_ACTOR.toLong(),
+        )
     }
 
     fun append(

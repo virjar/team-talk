@@ -10,6 +10,7 @@ import com.virjar.tk.server.domain.command.ReliableCommandCapacityException
 import com.virjar.tk.server.domain.command.ReliableCommandPolicy
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
 import com.virjar.tk.server.infra.db.Chats
+import com.virjar.tk.server.infra.db.ReliableCommandReceiptWindows
 import com.virjar.tk.server.infra.db.GroupChats
 import com.virjar.tk.server.infra.db.GroupInviteLinks
 import com.virjar.tk.server.infra.db.InviteLinkCreationReceipts
@@ -103,8 +104,8 @@ class ExposedInviteLinkRepository internal constructor(
             wallClockMillis(),
             "邀请链接创建",
         )
-        requireCreationReceiptCapacity(command.creatorUid)
         val now = wallClockMillis()
+        requireCreationReceiptCapacity(command.creatorUid, now)
         // 锁定的 Chat 行是 create/join/revoke 使用的聚合 fence。在检查固定基数预算
         // 之前，先退掉不能再接纳成员的链接；无需整行
         // 锁定或物化。
@@ -183,13 +184,13 @@ class ExposedInviteLinkRepository internal constructor(
     }
 
     /** 先检查精确重放；只有全新的预留才会在硬上限处被拒绝。 */
-    private fun requireCreationReceiptCapacity(creatorUid: String) {
-        val retained = InviteLinkCreationReceipts.selectAll().where {
-            InviteLinkCreationReceipts.actorUid eq creatorUid
-        }.count()
-        if (retained > InviteLinkPolicy.MAX_CREATION_RECEIPTS_PER_ACTOR.toLong()) {
-            throw ReliableCommandCapacityException("邀请链接可靠重试窗口已满")
-        }
+    private fun requireCreationReceiptCapacity(creatorUid: String, nowMillis: Long) {
+        ReliableCommandReceiptWindows.require(
+            InviteLinkCreationReceipts, InviteLinkCreationReceipts.actorUid,
+            InviteLinkCreationReceipts.expiresAt, creatorUid, nowMillis,
+            failureMessage = "邀请链接可靠重试窗口已满",
+            window = InviteLinkPolicy.MAX_CREATION_RECEIPTS_PER_ACTOR.toLong(),
+        )
     }
 
     private fun requireCanonicalCreationCommand(command: InviteLinkCreationCommand) {

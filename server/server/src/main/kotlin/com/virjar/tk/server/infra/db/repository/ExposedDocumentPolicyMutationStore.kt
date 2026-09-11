@@ -10,6 +10,7 @@ import com.virjar.tk.server.domain.document.DocumentPolicyMutationReceipt
 import com.virjar.tk.server.domain.transaction.PgReadTransactionContext
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
 import com.virjar.tk.server.infra.db.DocumentSpacePolicyCommands
+import com.virjar.tk.server.infra.db.ReliableCommandReceiptWindows
 import com.virjar.tk.server.infra.db.DocumentSpaces
 import com.virjar.tk.server.infra.db.Users
 import com.virjar.tk.protocol.model.UserRole
@@ -83,16 +84,12 @@ internal class ExposedDocumentPolicyMutationStore {
         nowMillis: Long,
     ) = transaction.inExposedTransaction {
         require(nowMillis >= 0L) { "服务器时钟非法" }
-        DocumentSpacePolicyCommands.deleteWhere {
-            (DocumentSpacePolicyCommands.actorUid eq actorUid) and
-                (DocumentSpacePolicyCommands.expiresAt less nowMillis)
-        }
-        val retained = DocumentSpacePolicyCommands.selectAll().where {
-            DocumentSpacePolicyCommands.actorUid eq actorUid
-        }.count()
-        if (retained >= DocumentCapacityPolicy.MAX_POLICY_MUTATION_RECEIPTS_PER_ACTOR.toLong()) {
-            throw ReliableCommandCapacityException("文档权限可靠重试窗口已满")
-        }
+        ReliableCommandReceiptWindows.require(
+            DocumentSpacePolicyCommands, DocumentSpacePolicyCommands.actorUid,
+            DocumentSpacePolicyCommands.expiresAt, actorUid, nowMillis,
+            failureMessage = "文档权限可靠重试窗口已满",
+            window = DocumentCapacityPolicy.MAX_POLICY_MUTATION_RECEIPTS_PER_ACTOR.toLong(),
+        )
     }
 
     /** 调用方已在此同一事务内应用了授权增量。 */

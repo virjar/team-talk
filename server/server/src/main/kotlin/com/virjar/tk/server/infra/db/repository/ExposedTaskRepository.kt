@@ -9,6 +9,7 @@ import com.virjar.tk.server.domain.task.*
 import com.virjar.tk.server.domain.transaction.PgReadTransactionContext
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
 import com.virjar.tk.server.infra.db.*
+import com.virjar.tk.server.infra.db.ReliableCommandReceiptWindows
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
@@ -114,10 +115,10 @@ class ExposedTaskRepository : TaskRepository {
 
     override fun requireReceiptCapacity(transaction: PgWriteTransactionContext, actorUid: String, now: Long) {
         transaction.requireExposedTransaction()
-        TaskCommands.deleteWhere { (TaskCommands.actorUid eq actorUid) and (expiresAt less now) }
-        if (TaskCommands.select(TaskCommands.operationId).where { TaskCommands.actorUid eq actorUid }.count() >= 10_000L) {
-            throw ReliableCommandCapacityException("任务可靠重试窗口已满")
-        }
+        ReliableCommandReceiptWindows.require(
+            TaskCommands, TaskCommands.actorUid, TaskCommands.expiresAt, actorUid, now,
+            failureMessage = "任务可靠重试窗口已满",
+        )
     }
 
     override fun appendReceipt(transaction: PgWriteTransactionContext, receipt: TaskCommandReceipt) {

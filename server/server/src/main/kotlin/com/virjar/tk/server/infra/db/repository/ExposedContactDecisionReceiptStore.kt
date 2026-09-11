@@ -6,6 +6,7 @@ import com.virjar.tk.server.domain.command.ReliableCommandPolicy
 import com.virjar.tk.server.domain.contact.ContactDecisionCommand
 import com.virjar.tk.server.domain.contact.ContactPolicy
 import com.virjar.tk.server.infra.db.ContactDecisionReceipts
+import com.virjar.tk.server.infra.db.ReliableCommandReceiptWindows
 import com.virjar.tk.protocol.model.ContactApply
 import com.virjar.tk.protocol.ProtoCodec
 import org.jetbrains.exposed.sql.*
@@ -104,16 +105,12 @@ internal class ExposedContactDecisionReceiptStore(
      * 可能仍在等待 ACK 的身份。
      */
     fun pruneExpiredAndRequireCapacity(receiverUid: String, nowMillis: Long) {
-        ContactDecisionReceipts.deleteWhere {
-            (ContactDecisionReceipts.actorUid eq receiverUid) and
-                (ContactDecisionReceipts.expiresAt less nowMillis)
-        }
-        val retained = ContactDecisionReceipts.selectAll().where {
-            ContactDecisionReceipts.actorUid eq receiverUid
-        }.count()
-        if (retained > ContactPolicy.MAX_DECISION_RECEIPTS_PER_ACTOR.toLong()) {
-            throw ReliableCommandCapacityException("好友申请可靠重试窗口已满")
-        }
+        ReliableCommandReceiptWindows.require(
+            ContactDecisionReceipts, ContactDecisionReceipts.actorUid, ContactDecisionReceipts.expiresAt,
+            receiverUid, nowMillis,
+            failureMessage = "好友申请可靠重试窗口已满",
+            window = ContactPolicy.MAX_DECISION_RECEIPTS_PER_ACTOR.toLong(),
+        )
     }
 
     private companion object {

@@ -8,6 +8,7 @@ import com.virjar.tk.server.domain.command.ReliableCommandPolicy
 import com.virjar.tk.server.domain.conversation.*
 import com.virjar.tk.server.domain.transaction.*
 import com.virjar.tk.server.infra.db.*
+import com.virjar.tk.server.infra.db.ReliableCommandReceiptWindows
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.less
@@ -62,10 +63,11 @@ class ExposedChatDraftRepository(private val maxActiveDrafts: Int = 1_000) : Cha
 
     override fun requireReceiptCapacity(transaction: PgWriteTransactionContext, uid: String, now: Long) {
         transaction.requireExposedTransaction()
-        ChatDraftCommands.deleteWhere { (ChatDraftCommands.uid eq uid) and (expiresAt less now) }
-        if (ChatDraftCommands.select(ChatDraftCommands.operationId).where { ChatDraftCommands.uid eq uid }.count() >= 16_384) {
-            throw ReliableCommandCapacityException("草稿同步操作已达上限，请保留本地草稿稍后重试")
-        }
+        ReliableCommandReceiptWindows.require(
+            ChatDraftCommands, ChatDraftCommands.uid, ChatDraftCommands.expiresAt, uid, now,
+            failureMessage = "草稿同步操作已达上限，请保留本地草稿稍后重试",
+            window = ReliableCommandReceiptWindows.CHAT_DRAFT_WINDOW,
+        )
     }
 
     override fun record(transaction: PgWriteTransactionContext, uid: String, operationId: String, issuedAt: Long, receipt: ChatDraftReceipt) {
