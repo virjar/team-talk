@@ -51,7 +51,7 @@ internal fun AndroidUpgradeDialog(
             val info = AndroidAppUpgrade.fetchLatest(serverBaseUrl)
             when {
                 info == null -> AndroidUpgradeUiState.Failed
-                AndroidAppUpgrade.isNewer(info.version, BuildConfig.VERSION_NAME) ->
+                info.version?.let { remote -> AndroidAppUpgrade.isNewer(remote, BuildConfig.VERSION_NAME) } == true ->
                     AndroidUpgradeUiState.Available(info)
                 else -> AndroidUpgradeUiState.UpToDate
             }

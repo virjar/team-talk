@@ -39,7 +39,7 @@ internal fun Route.clientDownloadRoutes(downloadsDir: File) {
                 // 发布通道标记（T030）：stable/preview/snapshot；无收据的历史目录不声明通道。
                 val manifest = AndroidReleaseManifest(
                     displayName = download.displayName ?: "Android",
-                    version = download.version.orEmpty(),
+                    version = download.version,
                     channel = download.channelKind,
                     filename = download.filename,
                     url = download.url,

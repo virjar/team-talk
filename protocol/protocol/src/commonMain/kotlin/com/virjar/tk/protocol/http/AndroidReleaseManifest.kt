@@ -7,12 +7,13 @@ import kotlinx.serialization.json.Json
  * `/downloads/android.json` 的公开发行信息契约。
  *
  * 服务端和 Android 客户端共享该 DTO 与通道词汇；客户端只负责执行 HTTP，不拥有响应格式。
- * [channel] 缺省表示无收据的历史目录，不声明通道。
+ * [channel] 缺省表示无收据的历史目录，不声明通道；[version] 为 null 表示无收据的
+ * legacy 制品，客户端不得据此提示升级。
  */
 @Serializable
 data class AndroidReleaseManifest(
     val displayName: String = "Android",
-    val version: String,
+    val version: String?,
     val channel: String? = null,
     val filename: String,
     val url: String,

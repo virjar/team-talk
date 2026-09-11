@@ -121,8 +121,25 @@ v0.0.1 后的功能快速演进沉淀了一批结构性负债；第一轮清理�
   工程化：损坏缓存改为自动重建并删除损坏族，v1/v2 归档、校验与显式放弃命令（export/discard/
   verify 五条）及三重校验/凭据引用检查机制全部删除，压缩不再被隔离副本阻塞。
 
-最小验证：每项独立提交，相关模块编译 + 既有定向测试；Chat 域拆分需 Android/Desktop 短路径
-真机复验。
+第二轮清理已落地：DocumentService 测试包装删除、遥测入口限流骨架合一、android.json 契约入
+protocol、下载状态发布器下沉 app 层（顺带修复 Desktop 压力驱逐缺陷）、视频/语音发送编排统一
+（Android 视频获得上传占位）、custody 目标校验合一、遥测基线策略下沉 domain 与编解码器入
+infra、9 处 Compose 判空强解修复。剩余按收益排序：
+
+- **AuthController 900 行单 Composable**：封禁清理编排与数据集切换/准入分派提为可测协调器
+  （已有 AuthUserLogoutRetirement 先例）；认证凭据 owner 世代是全客户端最敏感路径，须整段
+  上下文仔细迁移，不可局部机械替换。
+- **ChatScreen 1013 行 / ChatViewModel 847 行**：发送事务（performSend 96 行）提为
+  ChatComposerSubmitActions、消息聚焦状态机与失败码探测拆 owner 文件。
+- **DocumentDraftPersistence 双内核**：Android/Desktop 两套 600+ 行并发机制抽共享
+  SerialDraftWriteCoordinator（generation + coalescing + flush 栅栏）。
+- **DocumentRepository 43 方法端口**按消费者切 Read/Write/CommandReceipt 三片。
+- **AdminRoutes 48 端点单文件** + AdminService 17 依赖拆用例类。
+- **headless agent 5500 行独立 client/headless 模块**（全仓零反向引用，条件成熟）。
+- **双 Lucene 引擎**：LuceneIndexRuntime + 队列预算合一 + 写循环统一到协程版。
+
+最小验证：每项独立提交，相关模块编译 + 既有定向测试；Chat/Auth 域拆分需 Android/Desktop
+短路径真机复验。
 
 ### REL-01 · 数据发布基线、备份与恢复
 

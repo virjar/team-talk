@@ -57,7 +57,7 @@ internal object AndroidAppUpgrade {
     fun enqueueDownload(context: Context, serverBaseUrl: String, info: AndroidUpgradeInfo): Long {
         val request = DownloadManager.Request(Uri.parse(serverBaseUrl.trimEnd('/') + info.url))
             .setTitle(info.filename)
-            .setDescription("${info.displayName} ${info.version}")
+            .setDescription("${info.displayName} ${info.version ?: "未知版本"}")
             .setMimeType("application/vnd.android.package-archive")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             .setAllowedOverMetered(true)
