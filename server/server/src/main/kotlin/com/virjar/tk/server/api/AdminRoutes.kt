@@ -6,11 +6,6 @@ import com.virjar.tk.server.application.admin.AdminPageRequest
 import com.virjar.tk.server.application.admin.ClientTelemetryAdminService
 import com.virjar.tk.server.domain.command.ReliableCommandConflictException
 import com.virjar.tk.server.domain.document.DocumentCustodyPlanConflictException
-import com.virjar.tk.server.domain.organization.OrganizationMemberRemovalConflictException
-import com.virjar.tk.server.domain.organization.OrganizationUnitArchiveConflictException
-import com.virjar.tk.server.domain.telemetry.TelemetrySearchUnavailableException
-import com.virjar.tk.server.domain.telemetry.TelemetryNumericRange
-import com.virjar.tk.server.domain.telemetry.TelemetryOutgoingQueueQuery
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.application.hooks.CallFailed
@@ -47,28 +42,6 @@ data class DocumentCustodyTransferRequest(
 )
 
 @Serializable
-data class OrganizationUnitRequest(
-    val parentId: String? = null,
-    val name: String,
-    val leaderUid: String? = null,
-    val sortOrder: Int = 0,
-    val enableGroup: Boolean = false,
-)
-
-@Serializable
-data class OrganizationMemberRequest(
-    val uid: String,
-    val title: String? = null,
-    val primary: Boolean = false,
-)
-
-@Serializable
-internal data class OrganizationReconcileResponse(
-    val ok: Boolean,
-    val failedUnitIds: List<String>,
-)
-
-@Serializable
 data class ExportSettingRequest(val enabled: Boolean)
 
 @Serializable
@@ -96,6 +69,8 @@ internal fun Route.adminRoutes(
 
         installAdminAuthorization(auth)
         adminSecurityRoutes(auth)
+        adminOrganizationRoutes(adminService)
+        clientTelemetry?.let(::adminTelemetryRoutes)
 
         get("/overview") {
             call.respond(adminService.overview())
@@ -186,65 +161,6 @@ internal fun Route.adminRoutes(
             }
         }
 
-        // ── 组织架构 ──
-        get("/organization/units") {
-            call.respond(adminService.listOrganizationUnits())
-        }
-        post("/organization/units") {
-            val req = call.receiveBoundedJsonOrRespond<OrganizationUnitRequest>() ?: return@post
-            call.respond(adminService.createOrganizationUnit(
-                req.parentId, req.name, req.leaderUid, req.sortOrder, req.enableGroup,
-            ))
-        }
-        put("/organization/units/{unitId}") {
-            val req = call.receiveBoundedJsonOrRespond<OrganizationUnitRequest>() ?: return@put
-            call.respond(adminService.updateOrganizationUnit(
-                call.parameters["unitId"]!!, req.parentId, req.name, req.leaderUid, req.sortOrder,
-            ))
-        }
-        delete("/organization/units/{unitId}") {
-            try {
-                adminService.archiveOrganizationUnit(call.parameters["unitId"]!!)
-                call.respond(mapOf("ok" to true))
-            } catch (_: OrganizationUnitArchiveConflictException) {
-                call.respond(
-                    HttpStatusCode.Conflict,
-                    mapOf("error" to "organization unit still owns active document spaces"),
-                )
-            }
-        }
-        get("/organization/units/{unitId}/members") {
-            val recursive = call.request.queryParameters["recursive"]?.toBooleanStrictOrNull() ?: false
-            call.respond(adminService.listOrganizationMembers(call.parameters["unitId"]!!, recursive))
-        }
-        post("/organization/units/{unitId}/members") {
-            val req = call.receiveBoundedJsonOrRespond<OrganizationMemberRequest>() ?: return@post
-            call.respond(adminService.assignOrganizationMember(
-                call.parameters["unitId"]!!, req.uid, req.title, req.primary,
-            ))
-        }
-        delete("/organization/units/{unitId}/members/{uid}") {
-            try {
-                adminService.removeOrganizationMember(call.parameters["unitId"]!!, call.parameters["uid"]!!)
-                call.respond(mapOf("ok" to true))
-            } catch (_: OrganizationMemberRemovalConflictException) {
-                call.respond(
-                    HttpStatusCode.Conflict,
-                    mapOf("error" to "请先在编辑组织节点时变更部门负责人"),
-                )
-            }
-        }
-        post("/organization/units/{unitId}/group/enable") {
-            call.respond(adminService.enableDepartmentGroup(call.parameters["unitId"]!!))
-        }
-        post("/organization/units/{unitId}/group/disable") {
-            call.respond(adminService.disableDepartmentGroup(call.parameters["unitId"]!!))
-        }
-        post("/organization/reconcile") {
-            val failures = adminService.reconcileDepartmentGroups()
-            call.respond(OrganizationReconcileResponse(failures.isEmpty(), failures))
-        }
-
         // ── 通知机器人 ──
         get("/bots") {
             call.respond(adminService.listBots())
@@ -305,88 +221,6 @@ internal fun Route.adminRoutes(
                 call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "bad request")))
             }
         }
-        // ── 客户端遥测（PostgreSQL 控制面 + Lucene 七天可丢事实存储）──
-        clientTelemetry?.let { telemetry ->
-            get("/telemetry/events") {
-                val q = call.request.queryParameters
-                val pagination = call.adminPageRequestOrRespond(requireSearchOffset = true) ?: return@get
-                call.respondTelemetry(
-                    block = {
-                        telemetry.searchEvents(
-                            actor = call.requireAdminPrincipal(),
-                            keyword = q["keyword"],
-                            uid = q["uid"],
-                            deviceId = q["deviceId"],
-                            phone = q["phone"],
-                            platform = q["platform"],
-                            osName = q["osName"],
-                            osVersion = q["osVersion"],
-                            appVersion = q["appVersion"],
-                            gitCommit = q["gitCommit"],
-                            category = q["category"],
-                            eventName = q["eventName"],
-                            start = q.optionalLong("start"),
-                            end = q.optionalLong("end"),
-                            pagination = pagination,
-                            outgoingQueue = q.outgoingQueueQueryOrNull(),
-                        )
-                    },
-                )
-            }
-            get("/telemetry/events/{eventRecordId}/connection-traces") {
-                val actor = call.requireAdminPrincipal()
-                val eventRecordId = call.parameters["eventRecordId"]?.toLongOrNull()
-                    ?: return@get call.respond(
-                        HttpStatusCode.BadRequest,
-                        mapOf("error" to "invalid telemetry request"),
-                    )
-                val response = try {
-                    telemetry.connectionTraces(eventRecordId, actor)
-                } catch (_: TelemetrySearchUnavailableException) {
-                    return@get call.respond(
-                        HttpStatusCode.ServiceUnavailable,
-                        mapOf("error" to "telemetry search unavailable"),
-                    )
-                } catch (error: IllegalArgumentException) {
-                    return@get call.respond(HttpStatusCode.BadRequest, publicTelemetryAdminBadRequest(error))
-                }
-                if (response == null) {
-                    call.respond(HttpStatusCode.NotFound, mapOf("error" to "telemetry event not found"))
-                } else {
-                    call.respond(response)
-                }
-            }
-            get("/telemetry/devices") {
-                call.requireAdminPrincipal()
-                val pagination = call.adminPageRequestOrRespond() ?: return@get
-                val q = call.request.queryParameters
-                call.respondTelemetry {
-                    telemetry.pageDevices(q["query"], q["phone"], pagination)
-                }
-            }
-            get("/telemetry/policies") {
-                call.requireAdminPrincipal()
-                val pagination = call.adminPageRequestOrRespond() ?: return@get
-                call.respondTelemetry { telemetry.pagePolicies(pagination) }
-            }
-            post("/telemetry/policies") {
-                val request = call.receiveBoundedJsonOrRespond<ClientTelemetryAdminService.EnablePolicyRequest>()
-                    ?: return@post
-                call.respondTelemetry { telemetry.enablePolicy(request, call.requireAdminPrincipal()) }
-            }
-            delete("/telemetry/policies/{policyId}") {
-                try {
-                    val policy = telemetry.disablePolicy(
-                        call.parameters["policyId"] ?: throw IllegalArgumentException("policyId required"),
-                        call.requireAdminPrincipal(),
-                    ) ?: return@delete call.respond(HttpStatusCode.NotFound, mapOf("error" to "policy not found"))
-                    call.respond(policy)
-                } catch (error: IllegalArgumentException) {
-                    call.respond(HttpStatusCode.BadRequest, publicTelemetryAdminBadRequest(error))
-                }
-            }
-        }
-
         // ── 群 ──
         get("/groups") {
             val query = call.request.queryParameters["query"]
@@ -410,48 +244,6 @@ internal fun Route.adminRoutes(
         }
     }
 }
-
-private fun Parameters.optionalLong(name: String): Long? {
-    val raw = this[name] ?: return null
-    return raw.toLongOrNull() ?: throw IllegalArgumentException("$name must be an integer timestamp")
-}
-
-internal fun Parameters.outgoingQueueQueryOrNull(): TelemetryOutgoingQueueQuery? {
-    fun range(name: String): TelemetryNumericRange? {
-        val minimum = optionalLong("${name}Min")
-        val maximum = optionalLong("${name}Max")
-        return if (minimum == null && maximum == null) null else TelemetryNumericRange(minimum, maximum)
-    }
-    val query = TelemetryOutgoingQueueQuery(
-        pendingCount = range("pendingCount"),
-        retryWaitCount = range("retryWaitCount"),
-        terminalFailedCount = range("terminalFailedCount"),
-        oldestActiveAgeMillis = range("oldestActiveAgeMillis"),
-        maxAttemptCount = range("maxAttemptCount"),
-    )
-    return query.takeIf {
-        it.pendingCount != null || it.retryWaitCount != null || it.terminalFailedCount != null ||
-            it.oldestActiveAgeMillis != null || it.maxAttemptCount != null
-    }
-}
-
-private suspend inline fun <reified T : Any> ApplicationCall.respondTelemetry(block: suspend () -> T) {
-    val response = try {
-        block()
-    } catch (error: TelemetrySearchUnavailableException) {
-        respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to "telemetry search unavailable"))
-        return
-    } catch (error: IllegalArgumentException) {
-        respond(HttpStatusCode.BadRequest, publicTelemetryAdminBadRequest(error))
-        return
-    }
-    respond(response)
-}
-
-/** 遥测适配器可能把请求或存储细节附加到校验失败信息上；绝不能把这些细节回显给客户端。 */
-internal fun publicTelemetryAdminBadRequest(
-    @Suppress("UNUSED_PARAMETER") error: IllegalArgumentException,
-): Map<String, String> = mapOf("error" to "invalid telemetry request")
 
 /** 精确的规范化路径匹配使登录路由不受查询字符串和形似后缀的影响。 */
 internal fun Route.installAdminAuthorization(auth: AdminSecurityService) {
