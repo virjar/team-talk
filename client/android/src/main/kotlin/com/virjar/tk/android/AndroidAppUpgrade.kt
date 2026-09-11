@@ -11,23 +11,11 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.net.HttpURLConnection
+import com.virjar.tk.protocol.http.AndroidReleaseManifest
 import java.net.URL
 
-/** 服务端 /downloads/android.json 的公开发行信息。 */
-internal data class AndroidUpgradeInfo(
-    val displayName: String,
-    val version: String,
-    val filename: String,
-    val url: String,
-    val channel: String? = null,
-) {
-    /** 通道展示名：快照/预览会标注，正式（stable 或旧服务端缺省）不额外标注。 */
-    val channelLabel: String? get() = when (channel) {
-        "snapshot" -> "内测快照"
-        "preview" -> "预览版"
-        else -> null
-    }
-}
+/** 服务端 /downloads/android.json 的公开发行信息；契约由共享的 AndroidReleaseManifest 定义。 */
+internal typealias AndroidUpgradeInfo = AndroidReleaseManifest
 
 /**
  * 应用内升级闭环（内测 T024）：检查 android.json → DownloadManager 下载 → 弹出安装。
@@ -50,16 +38,7 @@ internal object AndroidAppUpgrade {
         }
     }
 
-    internal fun parse(body: String): AndroidUpgradeInfo? = runCatching {
-        val obj = Json.parseToJsonElement(body).jsonObject
-        AndroidUpgradeInfo(
-            displayName = obj["displayName"]?.jsonPrimitive?.content ?: "Android",
-            version = obj.getValue("version").jsonPrimitive.content,
-            filename = obj.getValue("filename").jsonPrimitive.content,
-            url = obj.getValue("url").jsonPrimitive.content,
-            channel = obj["channel"]?.jsonPrimitive?.content,
-        )
-    }.getOrNull()
+    internal fun parse(body: String): AndroidUpgradeInfo? = AndroidReleaseManifest.decode(body)
 
     /** 段级数字比较：0.0.2 > 0.0.1；忽略 v 前缀与非数字后缀。 */
     fun isNewer(remote: String, current: String): Boolean {

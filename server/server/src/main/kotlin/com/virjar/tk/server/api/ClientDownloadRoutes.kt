@@ -3,6 +3,7 @@ package com.virjar.tk.server.api
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import com.virjar.tk.protocol.http.AndroidReleaseManifest
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.defaultForFile
 import io.ktor.http.headersOf
@@ -24,8 +25,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
+import kotlinx.serialization.json.Json
 import java.io.File
 import java.nio.ByteBuffer
 
@@ -36,14 +36,15 @@ internal fun Route.clientDownloadRoutes(downloadsDir: File) {
 
         get("/android.json") {
             call.withAndroidDownload(downloadsDir) { download ->
-                call.respondText(buildJsonObject {
-                    put("displayName", download.displayName ?: "Android")
-                    put("version", download.version)
-                    // 发布通道标记（T030）：stable/preview/snapshot；无收据的历史目录不声明通道。
-                    download.channelKind?.let { put("channel", it) }
-                    put("filename", download.filename)
-                    put("url", download.url)
-                }.toString(), ContentType.Application.Json)
+                // 发布通道标记（T030）：stable/preview/snapshot；无收据的历史目录不声明通道。
+                val manifest = AndroidReleaseManifest(
+                    displayName = download.displayName ?: "Android",
+                    version = download.version.orEmpty(),
+                    channel = download.channelKind,
+                    filename = download.filename,
+                    url = download.url,
+                )
+                call.respondText(Json.encodeToString(manifest), ContentType.Application.Json)
             }
         }
 

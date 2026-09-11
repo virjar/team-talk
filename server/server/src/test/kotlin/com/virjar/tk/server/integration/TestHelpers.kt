@@ -23,7 +23,12 @@ import com.virjar.tk.server.domain.conversation.ConversationRepository
 import com.virjar.tk.server.domain.conversation.ConversationService
 import com.virjar.tk.server.domain.auth.DeviceRepository
 import com.virjar.tk.server.domain.document.DocumentRepository
+import com.virjar.tk.server.domain.document.DocumentAccessDeniedException
 import com.virjar.tk.server.domain.document.DocumentService
+import com.virjar.tk.protocol.model.Document
+import com.virjar.tk.protocol.model.DocumentContent
+import com.virjar.tk.protocol.model.DocumentCreateResult
+import com.virjar.tk.protocol.model.DocumentSpace
 import com.virjar.tk.server.domain.event.SyncEventReader
 import com.virjar.tk.server.domain.message.MessageReactionService
 import com.virjar.tk.server.domain.message.MessageService
@@ -92,21 +97,67 @@ fun uniqueUsername(base: String): String {
     return base.take(prefixBudget) + suffix
 }
 
-/** 测试便捷方法：生产调用方必须持久化并复用客户端提供的资源 id。 */
+/**
+ * 测试便捷方法族：生产入口只有可靠的 Command 变体；这些包装提供夹具常用的
+ * "创建即投影"语义（创建后立即读回），生产调用方必须持久化并复用客户端提供的资源 id。
+ */
+suspend fun DocumentService.createSpace(
+    actorUid: String,
+    spaceId: String,
+    name: String,
+    description: String?,
+): DocumentSpace = createSpaceCommand(actorUid, spaceId, name, description).space
+    ?: throw DocumentAccessDeniedException("文档空间创建已提交，但当前已无访问权")
+
 suspend fun DocumentService.createSpace(
     actorUid: String,
     name: String,
     description: String?,
-) = createSpace(actorUid, UUID.randomUUID().toString(), name, description)
+): DocumentSpace = createSpace(actorUid, UUID.randomUUID().toString(), name, description)
 
-/** 测试便捷方法：每个独立的夹具创建都获得一个全新的稳定资源 id。 */
+suspend fun DocumentService.createDocument(
+    actorUid: String,
+    documentId: String,
+    spaceId: String,
+    parentId: String?,
+    title: String,
+    content: DocumentContent,
+): Document = createDocumentCommand(actorUid, documentId, spaceId, parentId, title, content)
+    .document ?: getDocument(actorUid, spaceId, documentId)
+
+suspend fun DocumentService.createDocument(
+    actorUid: String,
+    documentId: String,
+    spaceId: String,
+    parentId: String?,
+    title: String,
+    markdown: String,
+): Document = createDocument(actorUid, documentId, spaceId, parentId, title, DocumentContent(markdown))
+
 suspend fun DocumentService.createDocument(
     actorUid: String,
     spaceId: String,
     parentId: String?,
     title: String,
     markdown: String,
-) = createDocument(actorUid, UUID.randomUUID().toString(), spaceId, parentId, title, markdown)
+): Document = createDocument(actorUid, UUID.randomUUID().toString(), spaceId, parentId, title, markdown)
+
+suspend fun DocumentService.createDocumentCommand(
+    actorUid: String,
+    documentId: String,
+    spaceId: String,
+    parentId: String?,
+    title: String,
+    markdown: String,
+): DocumentCreateResult = createDocumentCommand(actorUid, documentId, spaceId, parentId, title, DocumentContent(markdown))
+
+suspend fun DocumentService.updateDocument(
+    actorUid: String,
+    spaceId: String,
+    documentId: String,
+    markdown: String,
+    expectedRevision: Long,
+): Document = updateDocument(actorUid, spaceId, documentId, DocumentContent(markdown), expectedRevision)
 
 /** 一次性 move/rename 的测试便捷方法，不覆盖 ACK 丢失重放。 */
 suspend fun DocumentService.moveNode(

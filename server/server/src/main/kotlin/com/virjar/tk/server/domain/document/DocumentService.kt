@@ -71,14 +71,6 @@ class DocumentService(
     suspend fun getSpace(actorUid: String, spaceId: String): DocumentSpace =
         accessControl.readAuthorized(actorUid, spaceId, DocumentCapability.READ) { space, _ -> space }
 
-    suspend fun createSpace(
-        actorUid: String,
-        spaceId: String,
-        name: String,
-        description: String?,
-    ): DocumentSpace = createSpaceCommand(actorUid, spaceId, name, description).space
-        ?: throw DocumentAccessDeniedException("文档空间创建已提交，但当前已无访问权")
-
     /**
      * 面向协议的可靠创建确认。
      *
@@ -330,55 +322,7 @@ class DocumentService(
             repository.findPathSpine(transaction, spaceId, nodeId)
         }
 
-    suspend fun createDocument(
-        actorUid: String,
-        documentId: String,
-        spaceId: String,
-        parentId: String?,
-        title: String,
-        markdown: String,
-    ): Document = createDocument(
-        actorUid,
-        documentId,
-        spaceId,
-        parentId,
-        title,
-        DocumentContent(markdown),
-    )
-
-    suspend fun createDocument(
-        actorUid: String,
-        documentId: String,
-        spaceId: String,
-        parentId: String?,
-        title: String,
-        content: DocumentContent,
-    ): Document = createDocumentCommand(
-        actorUid,
-        documentId,
-        spaceId,
-        parentId,
-        title,
-        content,
-    ).document ?: getDocument(actorUid, spaceId, documentId)
-
     /** 面向协议的、针对一个稳定文档创建身份的可靠确认。 */
-    suspend fun createDocumentCommand(
-        actorUid: String,
-        documentId: String,
-        spaceId: String,
-        parentId: String?,
-        title: String,
-        markdown: String,
-    ): DocumentCreateResult = createDocumentCommand(
-        actorUid,
-        documentId,
-        spaceId,
-        parentId,
-        title,
-        DocumentContent(markdown),
-    )
-
     suspend fun createDocumentCommand(
         actorUid: String,
         documentId: String,
@@ -490,20 +434,6 @@ class DocumentService(
             logger.warn("Failed to update document recent access uid={} documentId={}", actorUid, documentId, error)
         }
     }
-
-    suspend fun updateDocument(
-        actorUid: String,
-        spaceId: String,
-        documentId: String,
-        markdown: String,
-        expectedRevision: Long,
-    ): Document = updateDocument(
-        actorUid,
-        spaceId,
-        documentId,
-        DocumentContent(markdown),
-        expectedRevision,
-    )
 
     suspend fun updateDocument(
         actorUid: String,

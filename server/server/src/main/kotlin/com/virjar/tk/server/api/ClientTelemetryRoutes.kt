@@ -73,7 +73,7 @@ private val telemetryJson = Json {
 }
 
 /** 已鉴权、保护身份的客户端结构化遥测上传边界。 */
-fun Route.clientTelemetryRoutes(
+internal fun Route.clientTelemetryRoutes(
     control: ClientTelemetryControlRepository,
     events: ClientTelemetryEventStore,
     accessTokens: AccessTokenValidator,
