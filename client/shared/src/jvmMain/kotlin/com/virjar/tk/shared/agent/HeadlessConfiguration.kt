@@ -4,7 +4,6 @@ import com.virjar.tk.shared.client.DeploymentIdentity
 import com.virjar.tk.shared.client.JvmClientDataLease
 import com.virjar.tk.shared.client.LocalCacheDiagnostics
 import com.virjar.tk.shared.client.LocalCacheDiagnosticLayout
-import com.virjar.tk.shared.client.LocalCacheDiagnosticOwner
 import com.virjar.tk.shared.client.LocalCacheCompaction
 import com.virjar.tk.shared.client.decodeTcpTlsCertificateBase64
 import com.virjar.tk.shared.client.prepareJvmClientDataVersion

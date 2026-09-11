@@ -43,18 +43,21 @@ internal fun deleteJvmLocalCacheQuarantine(quarantine: JvmLocalCacheQuarantine):
     failure
 }
 
-/** 尽力删除历史恢复残留的隔离族；它们是不再被任何打开路径引用的弃用数据。 */
-internal fun sweepJvmLocalCacheQuarantines(parent: File): List<Exception> {
-    val failures = mutableListOf<Exception>()
+private val jvmQuarantineSweepLogger = com.virjar.tk.shared.log.PlatformOnlyTkLogger("JvmLocalCache")
+
+/** 尽力删除历史恢复残留的隔离族；失败只记录，不阻断重建。 */
+internal fun sweepJvmLocalCacheQuarantines(parent: File) {
     parent.listFiles()?.forEach { entry ->
         if (!entry.name.contains(".corrupt-")) return@forEach
         try {
             if (!entry.deleteRecursively()) {
-                failures += IOException("JVM local-cache quarantine leftover could not be deleted: ${entry.name}")
+                jvmQuarantineSweepLogger.fault(
+                    "Quarantine leftover could not be deleted; doctor will keep reporting it",
+                    IOException("deleteRecursively returned false for ${entry.name}"),
+                )
             }
         } catch (failure: Exception) {
-            failures += failure
+            jvmQuarantineSweepLogger.fault("Quarantine leftover could not be deleted; doctor will keep reporting it", failure)
         }
     }
-    return failures
 }

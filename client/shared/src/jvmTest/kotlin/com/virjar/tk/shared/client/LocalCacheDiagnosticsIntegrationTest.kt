@@ -54,7 +54,7 @@ class LocalCacheDiagnosticsIntegrationTest {
         assertEquals(3L, result.counts["pendingOutgoing"])
         assertEquals(1L, result.counts["failedOutgoing"])
         assertEquals(1L, result.counts["completedOutgoing"])
-        assertEquals(1L, result.counts["legacyDraftMirrors"])
+        assertEquals(1L, result.counts["conversationDraftMirrors"])
         assertEquals(1L, result.counts["chatDrafts"])
         assertEquals(1L, result.counts["chatUploads"])
         assertEquals(1L, result.counts["outgoingAssets"])

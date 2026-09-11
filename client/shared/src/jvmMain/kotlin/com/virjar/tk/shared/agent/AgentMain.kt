@@ -54,7 +54,7 @@ fun main(args: Array<String>) {
                 result.bundle?.let { println("${it.buildIdentity} protocol ${it.protocolMajor}.${it.protocolMinor}") }
             }
             else -> HeadlessBundleInstaller.acquireRuntimeLease(HeadlessRuntime.currentBundle()).use {
-                if (command in setOf("configure", "export-cli-token", "doctor", "compact-cache", "export-quarantine", "verify-cache-archive", "discard-quarantine", "export-namespace", "discard-namespace")) {
+                if (command in setOf("configure", "export-cli-token", "doctor", "compact-cache")) {
                     HeadlessConfiguration.execute(requireNotNull(command), args.drop(1))
                 } else runAgent(args)
             }
@@ -306,19 +306,6 @@ tt-agent — TeamTalk headless client (Java 21+)
                                        Read-only SQLite diagnostics for an installation or Android app-data export
   compact-cache --cache-root <dir> --database <relative-path>
                                        Offline VACUUM of one current JVM account database; close its clients first
-  export-quarantine --cache-root <dir> --database <relative-path> --output <new-dir>
-                    [--cache-layout jvm|android]
-                                       Preserve quarantined and shared owner files without modifying them
-  verify-cache-archive --archive <dir>  Verify the complete file inventory and SHA-256 manifest
-  discard-quarantine --cache-root <dir> --database <relative-path> --archive <dir>
-                     --confirm-manifest-sha256 <sha256> [--cache-layout jvm|android]
-                                       Explicitly abandon only the archived quarantine; normal orphan-source GC may resume
-  export-namespace --cache-root <dir> --deployment-fingerprint <sha256> --dataset-id <uuid> --uid <uid>
-                   --output <new-dir> [--cache-layout jvm|android]
-                                       Preserve all known database epochs, quarantines, draft and source files of one exact owner
-  discard-namespace --cache-root <dir> --deployment-fingerprint <sha256> --dataset-id <uuid> --uid <uid>
-                    --archive <dir> --confirm-manifest-sha256 <sha256> [--cache-layout jvm|android]
-                                       Abandon only that verified namespace; current login credentials must no longer select it
   install-bundle --prefix <new-dir>     Install the extracted distribution (POSIX)
   upgrade-bundle --prefix <dir>         Atomically switch binaries; retain account data
   uninstall-bundle --prefix <dir>       Run from an external bundle after stopping installed processes
