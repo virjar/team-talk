@@ -57,9 +57,15 @@ import com.virjar.tk.app.ui.component.RichMessageText
 import com.virjar.tk.app.ui.component.input.AttachmentPanel
 import com.virjar.tk.app.ui.component.rich.ChatComposerMode
 import com.virjar.tk.app.ui.component.rich.PendingAssetJob
+import com.virjar.tk.app.ui.component.input.CHAT_MENTION_TRIGGER_ID
+import com.virjar.tk.app.ui.component.input.MentionCandidate
+import com.virjar.tk.app.ui.component.input.MentionCandidateRow
+import com.virjar.tk.app.ui.component.input.filterMentionCandidates
+import com.virjar.tk.app.ui.component.input.mentionDisplayName
 import com.virjar.tk.app.ui.component.rich.acceptsChatSourceInput
 import com.virjar.tk.app.ui.component.rich.replaceComposerRange
 import com.virjar.tk.app.ui.component.rich.wrapComposerSelection
+import com.virjar.tk.protocol.model.User
 import com.virjar.tk.app.ui.theme.Tk
 
 @Composable
@@ -80,6 +86,9 @@ internal fun ComposerEditor(
     toggleItalic: () -> Unit,
     onMentionClick: ((uid: String) -> Unit)?,
     onUrlClick: ((String) -> Unit)?,
+    /** null 表示该会话不启用 @ 候选（如保存的消息，内测 T038）。 */
+    mentionCandidates: List<User>? = null,
+    myUid: String = "",
 ) {
     when (composerMode) {
         ChatComposerMode.VISUAL -> Box {
@@ -121,6 +130,28 @@ internal fun ComposerEditor(
                 onUserTextChange = onVisualTextChange,
                 imagePlaceholder = '图',
             )
+            // @ 补全（内测 T037）：richeditor Trigger 弹层——光标处锚定、↑↓/Enter/Esc
+            // 键盘导航、原子 Token 插入（退格整体删除、序列化回 mention:// 语法）。
+            if (mentionCandidates != null) {
+                com.mohamedrejeb.richeditor.ui.material3.TriggerSuggestions(
+                    state = richState,
+                    triggerId = CHAT_MENTION_TRIGGER_ID,
+                    suggestions = { query ->
+                        filterMentionCandidates(mentionCandidates, query, myUid)
+                            .map { MentionCandidate(it) }
+                    },
+                    onSelect = { candidate ->
+                        com.mohamedrejeb.richeditor.model.RichSpanStyle.Token(
+                            triggerId = CHAT_MENTION_TRIGGER_ID,
+                            id = candidate.user.uid,
+                            label = "@" + mentionDisplayName(candidate.user),
+                        )
+                    },
+                    item = { candidate ->
+                        MentionCandidateRow(candidate.user)
+                    },
+                )
+            }
             if (richState.annotatedString.text.isEmpty()) Text(
                 if (editingSessionActive) "编辑消息…" else "输入消息…",
                 style = MaterialTheme.typography.bodyMedium,

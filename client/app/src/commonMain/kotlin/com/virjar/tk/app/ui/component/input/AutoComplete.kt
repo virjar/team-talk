@@ -193,6 +193,48 @@ fun AutoCompleteOverlay(
 
 data class AutoCompleteItem(val label: String, val hint: String? = null, val payload: String)
 
+
+// ── 聊天 @ 的富文本 Trigger（内测 T037）：光标处弹出 + 键盘导航 + 原子 Token ──
+
+/** 聊天 @ 补全的 trigger id；Token 的 markdown 往返形式为 [名](trigger:chat-mention:uid)。 */
+internal const val CHAT_MENTION_TRIGGER_ID = "chat-mention"
+
+internal val CHAT_MENTION_TRIGGER = com.mohamedrejeb.richeditor.model.trigger.Trigger(
+    id = CHAT_MENTION_TRIGGER_ID,
+    char = '@',
+)
+
+
+/** Trigger suggestions 的候选包装：泛型条目需要稳定引用同一 User（内测 T037）。 */
+internal class MentionCandidate(val user: com.virjar.tk.protocol.model.User)
+
+/** 画廊/弹层行：头像 + 显示名 + uid 提示（内测 T037 视觉升级）。 */
+@Composable
+internal fun MentionCandidateRow(user: com.virjar.tk.protocol.model.User) {
+    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        com.virjar.tk.app.ui.component.ChatAvatar(
+            chatType = com.virjar.tk.protocol.model.ChatType.PERSONAL.code,
+            chatName = mentionDisplayName(user),
+            avatar = user.avatar,
+            size = 26,
+        )
+        Spacer(Modifier.width(Tk.spacing.sm))
+        Text(
+            mentionDisplayName(user),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+        )
+        if (user.username.isNotBlank()) {
+            Spacer(Modifier.width(Tk.spacing.sm))
+            Text(
+                "@" + user.username,
+                style = MaterialTheme.typography.labelSmall,
+                color = Tk.colors.metaText,
+            )
+        }
+    }
+}
+
 // ── / 指令注册表（本地指令；未识别的 / 消息原样透传，未来服务端/bot 解析） ──
 
 data class SlashCommand(val command: String, val desc: String, val expansion: String? = null)

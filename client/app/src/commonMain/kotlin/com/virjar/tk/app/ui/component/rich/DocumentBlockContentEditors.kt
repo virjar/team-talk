@@ -190,10 +190,11 @@ private fun DocumentRichMarkdownProjection(
 }
 
 /**
- * 文档块内的 @ 补全层：Trigger 查询活跃（编辑器持焦且光标处于 @ 查询上下文）时出现；
- * 选中候选以原子 Token（`insertToken`）写回该块的 [state]——退格整体删除、
- * 悬停手型光标、点击打开资料卡。候选过滤与聊天共用同一实现。
+ * 文档块内的 @ 补全层（内测 T037）：richeditor 原生 Trigger 弹层——光标处锚定、
+ * ↑↓/Enter/Esc 键盘导航、原子 Token 插入（退格整体删除、序列化回 mention://
+ * 权威语法）。Popup 不持有焦点，编辑器失焦问题与旧的显示闩锁一并消除。
  */
+@OptIn(com.mohamedrejeb.richeditor.annotation.ExperimentalRichTextApi::class)
 @Composable
 private fun DocumentMentionCompleteLayer(
     state: RichTextState,
@@ -203,37 +204,24 @@ private fun DocumentMentionCompleteLayer(
     modifier: Modifier = Modifier,
 ) {
     if (!sessionReady || mentionCandidates.isEmpty()) return
-
-    // 弹层一旦显示就闩锁住查询：桌面端按下弹层行会让编辑器失焦，若随失焦即时隐藏，
-    // 行节点在抬起前被移出组合、点击手势被取消，onPick 永远不会执行。闩锁保证
-    // 按下→抬起全程行仍在组合中；插入成功或失焦超时（点击外的失焦）后清除。
-    var latchedQuery by remember(state) { mutableStateOf<TriggerQuery?>(null) }
-    val liveQuery = if (editorFocused) state.activeTriggerQuery else null
-    if (liveQuery != null) latchedQuery = liveQuery
-    LaunchedEffect(editorFocused) {
-        if (!editorFocused && latchedQuery != null) {
-            delay(400)
-            if (!editorFocused) latchedQuery = null
-        }
-    }
-    val activeQuery = liveQuery ?: latchedQuery
-    if (activeQuery == null || activeQuery.triggerId != DOCUMENT_MENTION_TRIGGER_ID) return
-    val candidates = filterMentionCandidates(mentionCandidates, activeQuery.query, myUid = null)
-    if (candidates.isEmpty()) return
-    AutoCompleteOverlay(
-        title = "提及成员",
-        items = mentionAutoCompleteItems(candidates).take(5),
+    com.mohamedrejeb.richeditor.ui.material3.TriggerSuggestions(
+        state = state,
+        triggerId = DOCUMENT_MENTION_TRIGGER_ID,
+        suggestions = { query -> filterMentionCandidates(mentionCandidates, query, myUid = null) },
+        onSelect = { user ->
+            com.mohamedrejeb.richeditor.model.RichSpanStyle.Token(
+                triggerId = DOCUMENT_MENTION_TRIGGER_ID,
+                id = user.uid,
+                label = "@" + mentionDisplayName(user),
+            )
+        },
         modifier = modifier,
-        onPick = { item ->
-            candidates.find { it.uid == item.payload }?.let { user ->
-                // 原子 Token：随后的退格/删除按整体处理，序列化回 mention:// 权威语法。
-                state.insertToken(
-                    triggerId = DOCUMENT_MENTION_TRIGGER_ID,
-                    id = user.uid,
-                    label = "@" + mentionDisplayName(user),
-                )
-                latchedQuery = null
-            }
+        item = { user ->
+            Text(
+                mentionDisplayName(user),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(2.dp),
+            )
         },
     )
 }

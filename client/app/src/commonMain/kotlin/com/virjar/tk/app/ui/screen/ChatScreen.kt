@@ -13,6 +13,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import com.mohamedrejeb.richeditor.model.RichTextState
 import com.mohamedrejeb.richeditor.model.rememberRichTextState
 import com.virjar.tk.protocol.body.RichTextBody
 import com.virjar.tk.protocol.body.MarkdownAssetPolicy
@@ -30,6 +31,7 @@ import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportEvent
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportEventSink
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportSnapshot
 import com.virjar.tk.app.ui.bridge.reduce
+import com.virjar.tk.app.ui.component.input.CHAT_MENTION_TRIGGER
 import com.virjar.tk.app.ui.component.input.detectMentionQuery
 import com.virjar.tk.app.ui.component.messageExportableAttachment
 import com.virjar.tk.app.ui.component.input.detectSlashQuery
@@ -58,8 +60,13 @@ import kotlinx.coroutines.delay
  * @param chatType 1=私聊 2=群聊（私聊不显示对方昵称行；已读回执仅私聊）
  * @param resolveSender 通过 uid 解析发送者 User（取昵称/头像），平台注入 LocalCache.getUser
  */
+/** 富文本原子 Token 的 markdown 形式是 [名](trigger:chat-mention:uid)；发送/草稿统一桥接回聊天的 mention:// 权威语法（内测 T037）。 */
+private fun RichTextState.toChatMarkdown(): String =
+    toMarkdown().replace(Regex("""\]\(trigger:chat-mention:([^)]+)\)"""), "](mention://$1)")
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
+
 fun ChatPanel(
     chatId: String,
     chatName: String,
@@ -202,6 +209,8 @@ fun ChatPanel(
     // WYSIWYG 富文本编辑状态（fork 源码引入，见 richeditor/FORK.md）
     // 按 chatId 隔离，确保切换会话时旧 DisposableEffect 仍能读取旧会话的最后一帧草稿。
     val richState = key(chatId) { rememberRichTextState() }
+    // 聊天 @ 补全的富文本 Trigger（内测 T037）：@ 触发、空白取消、词边界生效。
+    runCatching { richState.registerTrigger(CHAT_MENTION_TRIGGER) }
     val sourceInputSaver = remember(chatId, composerContextStore) {
         chatSourceInputSaver(chatId, composerContextStore)
     }
@@ -243,7 +252,7 @@ fun ChatPanel(
         selection: TextRange? = null,
     ) {
         richState.setMarkdown(markdown)
-        val normalized = richState.toMarkdown()
+        val normalized = richState.toChatMarkdown()
         visualBaseline = preservedBaseline
             ?.takeIf { it.snapshot(normalized) == markdown }
             ?: ChatVisualMarkdownBaseline(
@@ -278,7 +287,7 @@ fun ChatPanel(
     }
 
     fun composerMarkdownSnapshot(): String = when (composerMode) {
-        ChatComposerMode.VISUAL -> visualBaseline.snapshot(richState.toMarkdown())
+        ChatComposerMode.VISUAL -> visualBaseline.snapshot(richState.toChatMarkdown())
         ChatComposerMode.MARKDOWN, ChatComposerMode.PREVIEW -> sourceInput.text
     }
 
@@ -659,7 +668,7 @@ fun ChatPanel(
             preHydrationSource = sourceInputState.value.text,
             composerMode = composerModeState.value,
             visualMarkdown = {
-                visualBaselineState.value.snapshot(richState.toMarkdown())
+                visualBaselineState.value.snapshot(richState.toChatMarkdown())
             },
             sourceMarkdown = sourceInputState.value.text,
         )

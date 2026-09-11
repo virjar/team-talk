@@ -159,15 +159,18 @@ internal fun ChatComposer(
         Column {
         HorizontalDivider(color = Tk.colors.divider)
 
-        // @ 补全层（内嵌展开于输入行上方）：按名字/uid 过滤候选，排除自己
-        mentionQuery?.let { q ->
-            val candidates = filterMentionCandidates(mentionCandidates.orEmpty(), q.text, myUid)
-            if (candidates.isNotEmpty()) {
-                AutoCompleteOverlay(
-                    title = "提及成员",
-                    items = mentionAutoCompleteItems(candidates).take(5),
-                    onPick = { item -> candidates.find { it.uid == item.payload }?.let { onPickMention(it) } },
-                )
+        // @ 补全层（内测 T037）：VISUAL 模式已迁移到 richeditor Trigger 弹层
+        //（光标处锚定 + 键盘导航 + 原子 Token）；MARKDOWN 源码输入仍用内嵌展开层。
+        if (composerMode == ChatComposerMode.MARKDOWN) {
+            mentionQuery?.let { q ->
+                val candidates = filterMentionCandidates(mentionCandidates.orEmpty(), q.text, myUid)
+                if (candidates.isNotEmpty()) {
+                    AutoCompleteOverlay(
+                        title = "提及成员",
+                        items = mentionAutoCompleteItems(candidates).take(5),
+                        onPick = { item -> candidates.find { it.uid == item.payload }?.let { onPickMention(it) } },
+                    )
+                }
             }
         }
 
@@ -309,6 +312,8 @@ internal fun ChatComposer(
                 sourceFocus = sourceFocus,
                 embeddedAssets = embeddedAssets,
                 media = media,
+                mentionCandidates = mentionCandidates,
+                myUid = myUid,
                 editingSaving = editingSaving,
                 editingFailedMessage = editingFailedMessage,
                 sendEnabled = sendEnabled,
@@ -347,6 +352,8 @@ internal fun ChatComposer(
                 sourceFocus = sourceFocus,
                 embeddedAssets = embeddedAssets,
                 media = media,
+                mentionCandidates = mentionCandidates,
+                myUid = myUid,
                 editingSessionActive = editingSessionActive,
                 editingSaving = editingSaving,
                 editingFailedMessage = editingFailedMessage,

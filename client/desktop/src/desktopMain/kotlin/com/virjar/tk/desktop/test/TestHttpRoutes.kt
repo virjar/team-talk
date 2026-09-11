@@ -654,6 +654,8 @@ internal class TestHttpRoutes(
             "TAB" -> KeyEvent.VK_TAB
             "BACKSPACE" -> KeyEvent.VK_BACK_SPACE
             "SPACE" -> KeyEvent.VK_SPACE
+            "UP" -> KeyEvent.VK_UP
+            "DOWN" -> KeyEvent.VK_DOWN
             else -> KeyEvent.getExtendedKeyCodeForChar(keyName.firstOrNull()?.code ?: ' '.code)
         }
         val modifiers = if (meta) {

@@ -1,5 +1,7 @@
 package com.virjar.tk.app.ui.screen
 
+import com.virjar.tk.protocol.model.User
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -139,6 +141,9 @@ internal fun CompactChatComposer(
     toggleItalic: () -> Unit,
     onMentionClick: ((uid: String) -> Unit)?,
     onUrlClick: ((String) -> Unit)?,
+    /** null 表示该会话不启用 @ 候选（如保存的消息，内测 T038）。 */
+    mentionCandidates: List<User>? = null,
+    myUid: String = "", 
     showEmoji: Boolean,
     onToggleEmoji: () -> Unit,
     hasVoice: Boolean,
@@ -213,6 +218,8 @@ internal fun CompactChatComposer(
                 toggleItalic = toggleItalic,
                 onMentionClick = onMentionClick,
                 onUrlClick = onUrlClick,
+                mentionCandidates = mentionCandidates,
+                myUid = myUid,
             )
             if (showFormatting) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -320,6 +327,9 @@ internal fun WideComposerInput(
     onVoiceRecordCancel: (() -> Unit)?,
     onMentionClick: ((uid: String) -> Unit)?,
     onUrlClick: ((String) -> Unit)?,
+    /** null 表示该会话不启用 @ 候选（如保存的消息，内测 T038）。 */
+    mentionCandidates: List<User>? = null,
+    myUid: String = "", 
 ) {
     Row(
         modifier = Modifier.padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.sm),
@@ -354,6 +364,8 @@ internal fun WideComposerInput(
                     toggleItalic = toggleItalic,
                     onMentionClick = onMentionClick,
                     onUrlClick = onUrlClick,
+                    mentionCandidates = mentionCandidates,
+                    myUid = myUid,
                 )
             }
             Spacer(Modifier.width(Tk.spacing.sm))
