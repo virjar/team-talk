@@ -80,13 +80,7 @@ class ClientTelemetrySearchIndex(
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
 
     @Volatile
-    private var analyzer: Analyzer? = null
-    @Volatile
-    private var directory: Directory? = null
-    @Volatile
-    private var writer: IndexWriter? = null
-    @Volatile
-    private var searchers: SearcherManager? = null
+    private var runtime: LuceneIndexRuntimeOpened<Map<String, String>>? = null
     @Volatile
     private var nextRecordId: Long = 1L
     @Volatile
@@ -118,7 +112,7 @@ class ClientTelemetrySearchIndex(
     override fun start(): Boolean = synchronized(lifecycleLock) {
         check(!closed.get()) { "client telemetry event store is closed" }
         if (terminalFailure.get() != null) return@synchronized false
-        if (writer != null && searchers != null) return@synchronized true
+        if (runtime != null) return@synchronized true
         val reopened = try {
             openRuntime(reset = false)
             logger.info(
@@ -226,14 +220,14 @@ class ClientTelemetrySearchIndex(
         // 把它们留在 withSearcher 之外，使坏的管理员查询无法终结事件存储。
         requireValidOutgoingQueueQuery(query)
         return withSearcher { searcher ->
-            val openedAnalyzer = analyzer ?: throw TelemetrySearchUnavailableException()
+            val openedAnalyzer = runtime?.analyzer ?: throw TelemetrySearchUnavailableException()
             searchLeaseHookForTest?.invoke()
             searchTelemetryEvents(searcher, openedAnalyzer, query, offset, limit)
         }
     }
 
     override fun isAvailable(): Boolean =
-        accepting.get() && writer != null && searchers != null && !closed.get()
+        accepting.get() && runtime != null && !closed.get()
 
     override fun close() {
         synchronized(lifecycleLock) {
@@ -328,7 +322,7 @@ class ClientTelemetrySearchIndex(
             candidateDocuments = documents.eventDocuments.size.toLong() + documents.receiptDocuments.size,
         ) ?: return
 
-        val openedWriter = writer ?: throw TelemetrySearchUnavailableException()
+        val openedWriter = runtime?.writer ?: throw TelemetrySearchUnavailableException()
         searchMutationGate.write {
             terminalFailure.get()?.let { throw it }
             documents.receiptDocuments.forEach { candidate ->
@@ -540,7 +534,7 @@ class ClientTelemetrySearchIndex(
         }
 
         try {
-            val openedWriter = writer ?: throw TelemetrySearchUnavailableException()
+            val openedWriter = runtime?.writer ?: throw TelemetrySearchUnavailableException()
             searchMutationGate.write {
                 if (expired.documents > 0L) openedWriter.deleteDocuments(query)
                 openedWriter.forceMergeDeletes(true)
@@ -607,7 +601,7 @@ class ClientTelemetrySearchIndex(
             telemetryCommitMetadata(committedNextRecordId, committedBytes, committedDocuments).entries,
         )
         openedWriter.commit()
-        searchers?.maybeRefreshBlocking() ?: throw TelemetrySearchUnavailableException()
+        runtime?.searchers?.maybeRefreshBlocking() ?: throw TelemetrySearchUnavailableException()
         if (currentPhysicalBytes() > maxPhysicalBytes) {
             throw TelemetrySearchUnavailableException(
                 IllegalStateException("client telemetry index exceeded its physical capacity fence"),
@@ -623,89 +617,50 @@ class ClientTelemetrySearchIndex(
         withSearcher { searcher -> collectTelemetryStats(searcher, query) }
 
     private fun openRuntime(reset: Boolean) {
-        indexDir.mkdirs()
-        var openedAnalyzer: Analyzer? = null
-        var openedDirectory: Directory? = null
-        var openedWriter: IndexWriter? = null
-        var openedSearchers: SearcherManager? = null
-        try {
-            openedDirectory = PhysicalQuotaDirectory(
-                delegateDirectory = FSDirectory.open(indexDir.toPath()),
-                indexRoot = indexDir,
-                maxPhysicalBytes = maxPhysicalBytes,
-            )
-            openedAnalyzer = IKAnalyzer(true)
-            if (reset) {
+        val opened = openLuceneIndexRuntime(
+            indexDir = indexDir,
+            maxPhysicalBytes = maxPhysicalBytes,
+            label = "telemetry",
+            analyzerFactory = { IKAnalyzer(true) },
+            reset = reset,
+            resetBlock = { directory, analyzer ->
                 val resetMetadata = telemetryCommitMetadata(1L, 0L, 0L)
                 IndexWriter(
-                    openedDirectory,
-                    telemetryWriterConfig(openedAnalyzer, IndexWriterConfig.OpenMode.CREATE),
+                    directory,
+                    telemetryWriterConfig(analyzer, IndexWriterConfig.OpenMode.CREATE),
                 ).use { resetWriter ->
                     resetWriter.setLiveCommitData(resetMetadata.entries)
                     resetWriter.commit()
                 }
-            }
-            if (!DirectoryReader.indexExists(openedDirectory)) error("telemetry index is missing")
-            val commit = DirectoryReader.listCommits(openedDirectory).maxByOrNull { it.generation }
-                ?: error("telemetry commit is missing")
-            val metadata = requireValidTelemetryCommit(commit.userData)
-            validateCommittedTelemetryIndex(
-                openedDirectory,
-                metadata,
-                maxDocuments,
-                maxAccountedBytes,
-                maxPhysicalBytes,
-            )
-            openedWriter = IndexWriter(
-                openedDirectory,
-                telemetryWriterConfig(openedAnalyzer, IndexWriterConfig.OpenMode.CREATE_OR_APPEND),
-            )
-            openedSearchers = SearcherManager(openedDirectory, SearcherFactory())
-            analyzer = openedAnalyzer
-            directory = openedDirectory
-            writer = openedWriter
-            searchers = openedSearchers
-            nextRecordId = telemetryNextRecordId(metadata)
-            accountedBytes = telemetryAccountedBytes(metadata)
-            documentCount = telemetryDocumentCount(metadata)
-        } catch (failure: Exception) {
-            runCatching { openedSearchers?.close() }.exceptionOrNull()?.let(failure::addSuppressed)
-            runCatching { openedWriter?.rollback() }.exceptionOrNull()?.let(failure::addSuppressed)
-            runCatching { openedDirectory?.close() }.exceptionOrNull()?.let(failure::addSuppressed)
-            runCatching { openedAnalyzer?.close() }.exceptionOrNull()?.let(failure::addSuppressed)
-            throw failure
-        }
+            },
+            validateBlock = { directory, commit ->
+                val metadata = requireValidTelemetryCommit(commit.userData)
+                validateCommittedTelemetryIndex(
+                    directory,
+                    metadata,
+                    maxDocuments,
+                    maxAccountedBytes,
+                    maxPhysicalBytes,
+                )
+                metadata
+            },
+        )
+        runtime = opened
+        nextRecordId = telemetryNextRecordId(opened.loaded)
+        accountedBytes = telemetryAccountedBytes(opened.loaded)
+        documentCount = telemetryDocumentCount(opened.loaded)
     }
 
     private fun closeRuntime(rollback: Boolean): Throwable? = searchMutationGate.write {
-        val openedSearchers = searchers
-        val openedWriter = writer
-        val openedDirectory = directory
-        val openedAnalyzer = analyzer
-        searchers = null
-        writer = null
-        directory = null
-        analyzer = null
-        var closeFailure: Throwable? = null
-        fun capture(failure: Throwable) {
-            val previous = closeFailure
-            if (previous == null) closeFailure = failure else previous.addSuppressed(failure)
-        }
-        runCatching { openedSearchers?.close() }.exceptionOrNull()?.let(::capture)
-        if (rollback) {
-            runCatching { openedWriter?.rollback() }.exceptionOrNull()?.let(::capture)
-        } else {
-            runCatching { openedWriter?.close() }.exceptionOrNull()?.let(::capture)
-        }
-        runCatching { openedDirectory?.close() }.exceptionOrNull()?.let(::capture)
-        runCatching { openedAnalyzer?.close() }.exceptionOrNull()?.let(::capture)
-        closeFailure
+        val opened = runtime
+        runtime = null
+        closeLuceneIndexRuntime(opened, rollback)
     }
 
     private fun <T> withSearcher(block: (org.apache.lucene.search.IndexSearcher) -> T): T =
         searchMutationGate.read {
             terminalFailure.get()?.let { throw it }
-            val openedSearchers = searchers ?: throw TelemetrySearchUnavailableException()
+            val openedSearchers = runtime?.searchers ?: throw TelemetrySearchUnavailableException()
             var searcher: org.apache.lucene.search.IndexSearcher? = null
             var primaryFailure: Throwable? = null
             try {
@@ -742,7 +697,7 @@ class ClientTelemetrySearchIndex(
         } else {
             TelemetrySearchUnavailableException(failure)
         }
-        if (searchers !== openedSearchers || closed.get()) return unavailable
+        if (runtime?.searchers !== openedSearchers || closed.get()) return unavailable
         return publishTerminalFailure(unavailable)
     }
 
@@ -785,7 +740,7 @@ class ClientTelemetrySearchIndex(
     }
 
     private fun currentPhysicalBytes(openedDirectory: Directory =
-        directory ?: throw TelemetrySearchUnavailableException()
+        runtime?.directory ?: throw TelemetrySearchUnavailableException()
     ): Long = telemetryPhysicalBytes(openedDirectory)
 
     companion object {

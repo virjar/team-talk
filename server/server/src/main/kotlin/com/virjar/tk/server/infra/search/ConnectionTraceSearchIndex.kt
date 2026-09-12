@@ -60,13 +60,7 @@ class ConnectionTraceSearchIndex(
     private val queue = ArrayBlockingQueue<TraceCommand>(maxQueuedEvents)
 
     @Volatile
-    private var directory: Directory? = null
-    @Volatile
-    private var analyzer: Analyzer? = null
-    @Volatile
-    private var writer: IndexWriter? = null
-    @Volatile
-    private var searchers: SearcherManager? = null
+    private var runtime: LuceneIndexRuntimeOpened<ConnectionTraceCommitState>? = null
     @Volatile
     private var writerThread: Thread? = null
     @Volatile
@@ -131,7 +125,7 @@ class ConnectionTraceSearchIndex(
     override fun query(query: ConnectionTraceQuery): ConnectionTracePage = searchMutationGate.read {
         if (!isAvailable()) throw TelemetrySearchUnavailableException()
         try {
-            val manager = searchers ?: throw TelemetrySearchUnavailableException()
+            val manager = runtime?.searchers ?: throw TelemetrySearchUnavailableException()
             manager.maybeRefreshBlocking()
             val searcher = manager.acquire()
             try {
@@ -206,13 +200,13 @@ class ConnectionTraceSearchIndex(
         queuedBytes = queueBudget.current(),
         documentCount = state.documentCount,
         accountedBytes = state.accountedBytes,
-        physicalBytes = runCatching { directory?.let(::telemetryPhysicalBytes) ?: 0L }.getOrDefault(0L),
+        physicalBytes = runCatching { runtime?.directory?.let(::telemetryPhysicalBytes) ?: 0L }.getOrDefault(0L),
         droppedEvents = droppedEvents.get(),
         lastRetentionSuccessAt = lastRetentionSuccessAt,
     )
 
     override fun isAvailable(): Boolean =
-        accepting.get() && !closed.get() && !terminal.get() && writer != null && searchers != null
+        accepting.get() && !closed.get() && !terminal.get() && runtime != null
 
     override fun close() {
         synchronized(lifecycleLock) {
@@ -288,7 +282,7 @@ class ConnectionTraceSearchIndex(
             droppedEvents.addAndGet(candidateDocuments)
             return
         }
-        val openedWriter = writer ?: throw IllegalStateException("connection trace writer is unavailable")
+        val openedWriter = runtime?.writer ?: throw IllegalStateException("connection trace writer is unavailable")
         searchMutationGate.write {
             appendHookForTest?.invoke()
             documents.forEach { openedWriter.addDocument(it.document) }
@@ -318,12 +312,12 @@ class ConnectionTraceSearchIndex(
             LongPoint.newRangeQuery(TRACE_FIELD_OCCURRED_AT, Long.MIN_VALUE, occurredBefore - 1L)
         }
         try {
-            val openedWriter = writer ?: return false
+            val openedWriter = runtime?.writer ?: return false
             searchMutationGate.write {
                 openedWriter.deleteDocuments(range)
                 openedWriter.forceMergeDeletes(true)
                 openedWriter.commit()
-                searchers?.maybeRefreshBlocking()
+                runtime?.searchers?.maybeRefreshBlocking()
                 val stats = calculateLiveState(state.nextId)
                 commit(stats)
             }
@@ -344,7 +338,7 @@ class ConnectionTraceSearchIndex(
     }
 
     private fun calculateLiveState(nextId: Long): ConnectionTraceCommitState {
-        val manager = searchers ?: throw IllegalStateException("connection trace searcher is unavailable")
+        val manager = runtime?.searchers ?: throw IllegalStateException("connection trace searcher is unavailable")
         manager.maybeRefreshBlocking()
         val searcher = manager.acquire()
         return try {
@@ -369,11 +363,11 @@ class ConnectionTraceSearchIndex(
     }
 
     private fun commit(next: ConnectionTraceCommitState) {
-        val openedWriter = writer ?: throw IllegalStateException("connection trace writer is unavailable")
+        val openedWriter = runtime?.writer ?: throw IllegalStateException("connection trace writer is unavailable")
         openedWriter.setLiveCommitData(connectionTraceCommitMetadata(next).entries)
         openedWriter.commit()
-        searchers?.maybeRefreshBlocking()
-        require((directory?.let(::telemetryPhysicalBytes) ?: Long.MAX_VALUE) <= maxPhysicalBytes) {
+        runtime?.searchers?.maybeRefreshBlocking()
+        require((runtime?.directory?.let(::telemetryPhysicalBytes) ?: Long.MAX_VALUE) <= maxPhysicalBytes) {
             "connection trace physical capacity fence was exceeded"
         }
         state = next
@@ -383,84 +377,45 @@ class ConnectionTraceSearchIndex(
         if (candidateBytes > maxAccountedBytes || candidateDocuments > maxDocuments) return false
         if (state.accountedBytes > maxAccountedBytes - candidateBytes) return false
         if (state.documentCount > maxDocuments - candidateDocuments) return false
-        val openedDirectory = directory ?: return false
+        val openedDirectory = runtime?.directory ?: return false
         val currentPhysical = telemetryPhysicalBytes(openedDirectory)
         return telemetryHasPhysicalCapacity(currentPhysical, candidateBytes, maxPhysicalBytes) &&
             telemetryHasDiskCapacity(indexDir, currentPhysical, candidateBytes)
     }
 
     private fun openRuntime(reset: Boolean) {
-        indexDir.mkdirs()
-        var openedAnalyzer: Analyzer? = null
-        var openedDirectory: Directory? = null
-        var openedWriter: IndexWriter? = null
-        var openedSearchers: SearcherManager? = null
-        try {
-            openedDirectory = PhysicalQuotaDirectory(
-                FSDirectory.open(indexDir.toPath()),
-                indexDir,
-                maxPhysicalBytes,
-            )
-            openedAnalyzer = StandardAnalyzer()
-            if (reset) {
-                openedDirectory.listAll().forEach(openedDirectory::deleteFile)
+        val opened = openLuceneIndexRuntime(
+            indexDir = indexDir,
+            maxPhysicalBytes = maxPhysicalBytes,
+            label = "connection trace",
+            analyzerFactory = { StandardAnalyzer() },
+            reset = reset,
+            resetBlock = { directory, analyzer ->
+                directory.listAll().forEach(directory::deleteFile)
                 IndexWriter(
-                    openedDirectory,
-                    telemetryWriterConfig(openedAnalyzer, IndexWriterConfig.OpenMode.CREATE),
+                    directory,
+                    telemetryWriterConfig(analyzer, IndexWriterConfig.OpenMode.CREATE),
                 ).use { resetWriter ->
                     resetWriter.setLiveCommitData(
                         connectionTraceCommitMetadata(ConnectionTraceCommitState(1L, 0L, 0L)).entries,
                     )
                     resetWriter.commit()
                 }
-            }
-            require(DirectoryReader.indexExists(openedDirectory)) { "connection trace index is missing" }
-            val commit = DirectoryReader.listCommits(openedDirectory).maxByOrNull { it.generation }
-                ?: error("connection trace commit is missing")
-            val loadedState = requireConnectionTraceCommit(commit.userData, maxDocuments, maxAccountedBytes)
-            validateConnectionTraceIndex(openedDirectory, loadedState, maxPhysicalBytes)
-            openedWriter = IndexWriter(
-                openedDirectory,
-                telemetryWriterConfig(openedAnalyzer, IndexWriterConfig.OpenMode.CREATE_OR_APPEND),
-            )
-            openedSearchers = SearcherManager(openedDirectory, SearcherFactory())
-            analyzer = openedAnalyzer
-            directory = openedDirectory
-            writer = openedWriter
-            searchers = openedSearchers
-            state = loadedState
-        } catch (failure: Exception) {
-            runCatching { openedSearchers?.close() }.exceptionOrNull()?.let(failure::addSuppressed)
-            runCatching { openedWriter?.rollback() }.exceptionOrNull()?.let(failure::addSuppressed)
-            runCatching { openedDirectory?.close() }.exceptionOrNull()?.let(failure::addSuppressed)
-            runCatching { openedAnalyzer?.close() }.exceptionOrNull()?.let(failure::addSuppressed)
-            throw failure
-        }
+            },
+            validateBlock = { directory, commit ->
+                val loadedState = requireConnectionTraceCommit(commit.userData, maxDocuments, maxAccountedBytes)
+                validateConnectionTraceIndex(directory, loadedState, maxPhysicalBytes)
+                loadedState
+            },
+        )
+        runtime = opened
+        state = opened.loaded
     }
 
     private fun closeRuntime(rollback: Boolean): Throwable? {
-        val openedSearchers = searchers
-        val openedWriter = writer
-        val openedDirectory = directory
-        val openedAnalyzer = analyzer
-        searchers = null
-        writer = null
-        directory = null
-        analyzer = null
-        var closeFailure: Throwable? = null
-        fun capture(failure: Throwable) {
-            val previous = closeFailure
-            if (previous == null) closeFailure = failure else previous.addSuppressed(failure)
-        }
-        runCatching { openedSearchers?.close() }.exceptionOrNull()?.let(::capture)
-        if (rollback) {
-            runCatching { openedWriter?.rollback() }.exceptionOrNull()?.let(::capture)
-        } else {
-            runCatching { openedWriter?.close() }.exceptionOrNull()?.let(::capture)
-        }
-        runCatching { openedDirectory?.close() }.exceptionOrNull()?.let(::capture)
-        runCatching { openedAnalyzer?.close() }.exceptionOrNull()?.let(::capture)
-        return closeFailure
+        val opened = runtime
+        runtime = null
+        return closeLuceneIndexRuntime(opened, rollback)
     }
 
     private fun terminalize(failure: Exception) {

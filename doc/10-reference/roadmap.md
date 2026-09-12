@@ -150,11 +150,12 @@ infra、9 处 Compose 判空强解修复。剩余按收益排序：
   升为公开 SDK API（生命周期失败合并/会话认证协调器及其租约类型/EventProcessor 低层
   processNotify·processBatch/私有原子文件存储/JVM 缓存工厂/部署身份工厂等）；LocalCache 的
   bot 收件箱 API 本就公开、存储与 schema 保留在 shared。
-- **双 Lucene 引擎**：队列预算已合一（TraceQueueBudget 删除，共享 TelemetryQueueBudget
-  并补齐 current() 与非正数守卫）。剩余两步：①LuceneIndexRuntime——两引擎 openRuntime/
-  closeRuntime 的四件套（analyzer/directory/writer/searchers）与回滚级联逐字近同（约
-  120 行×2，回滚次序 bug 只需修一处），参数化 analyzer 工厂、reset 提交块与校验块即可，
-  风险有界；②写循环统一（Channel vs 裸 Thread）风险较高，建议随 ① 单独一轮。
+- ~~双 Lucene 引擎~~：生命周期与队列预算已合一——openLuceneIndexRuntime/closeLucene
+  IndexRuntime 收纳四件套装配次序、失败回滚级联与固定释放次序（searchers→writer
+  rollback/close→directory→analyzer），两引擎的四个 @Volatile 字段收敛为单一 runtime
+  持有者，reset 提交块与 commit 校验块由引擎注入；TraceQueueBudget 删除共享
+  TelemetryQueueBudget。唯一遗留的写循环统一（Channel vs 裸 Thread）收益有限且风险高，
+  不再排期：两种并发风格各有其稳定性历史，强统一属为对称而对称。
 
 最小验证：每项独立提交，相关模块编译 + 既有定向测试；Chat/Auth 域拆分需 Android/Desktop
 短路径真机复验。
