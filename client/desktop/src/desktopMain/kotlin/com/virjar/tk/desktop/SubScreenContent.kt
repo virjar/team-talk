@@ -134,6 +134,7 @@ internal fun SubScreenContent(
             pendingGroupCreation = data.groups.pendingGroupCreation,
             groupCreationDraftLoaded = data.groups.groupCreationDraftLoaded,
             groupCreationDraftError = data.groups.groupCreationDraftError,
+            onSearchUsers = { query -> data.discovery.searchUsers(query) },
             onCreateGroup = { name, uids ->
                 admittedSuspend(
                     onClosed = { Result.failure(Exception("会话已关闭")) },

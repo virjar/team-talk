@@ -453,6 +453,7 @@ private fun NavGraphBuilder.contactsDestination(
             pendingGroupCreation = dataState.groups.pendingGroupCreation,
             groupCreationDraftLoaded = dataState.groups.groupCreationDraftLoaded,
             groupCreationDraftError = dataState.groups.groupCreationDraftError,
+            onSearchUsers = { query -> dataState.discovery.searchUsers(query) },
             onCreateGroup = { name, uids ->
                 admittedAction(
                     onClosed = {
