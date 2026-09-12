@@ -122,6 +122,11 @@ internal fun HomeScreen(
 
     Scaffold(
         modifier = Modifier.testTag("main.home"),
+        // 顶部 inset 取状态栏与挖孔/灵动岛的最大值：全屏编辑页等内容首行必须避开
+        // 屏上相机；底部与水平方向维持默认（底部导航与输入法各自处理）。
+        contentWindowInsets = ScaffoldDefaults.contentWindowInsets
+            .only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)
+            .union(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
         topBar = {
             // 文档拥有自己的首页/空间标题栏；叠加通用 TopAppBar 会形成两个页面标题。
             if (MainTab.entries[selectedTab] !in setOf(MainTab.DOCUMENTS, MainTab.TASKS)) {
