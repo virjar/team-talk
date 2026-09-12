@@ -71,9 +71,17 @@ import com.virjar.tk.app.navigation.feature.chat.durableChatDraftMirrorPayload
  * @param chatType 1=私聊 2=群聊（私聊不显示对方昵称行；已读回执仅私聊）
  * @param resolveSender 通过 uid 解析发送者 User（取昵称/头像），平台注入 LocalCache.getUser
  */
-/** 富文本原子 Token 的 markdown 形式是 [名](trigger:chat-mention:uid)；发送/草稿统一桥接回聊天的 mention:// 权威语法（内测 T037）。 */
+/**
+ * 富文本原子 Token 的 markdown 形式是 [名](trigger:chat-mention:uid)；发送/草稿统一桥接回聊天的
+ * mention:// 权威语法（内测 T037）。协议侧信道的内联语法是 `@[名](mention://uid)`——@ 必须在方括号外，
+ * 否则 buildRichTextBody 提取不到 mentions，服务端提及投影（含 T056 的 all）整体失效。
+ * Token 的 label 自带 "@"，桥接时把它移出括号。
+ */
 private fun RichTextState.toChatMarkdown(): String =
-    toMarkdown().replace(Regex("""\]\(trigger:chat-mention:([^)]+)\)"""), "](mention://$1)")
+    toMarkdown().replace(Regex("""\[([^\]]*)\]\(trigger:chat-mention:([^)]+)\)""")) { match ->
+        val label = match.groupValues[1].removePrefix("@")
+        "@[${label}](mention://${match.groupValues[2]})"
+    }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
