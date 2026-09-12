@@ -93,13 +93,22 @@ internal fun ComposerEditor(
     mentionCandidates: List<User>? = null,
     myUid: String = "",
 ) {
+    // 桌面端可在输入区上沿拖动调整最大高度（内测反馈，对齐其他 IM）；拖到底值随偏好持久化。
+    var editorMaxHeight by remember { mutableStateOf(savedComposerMaxHeight() ?: 200.dp) }
+    if (composerMode == ChatComposerMode.VISUAL && composerManualResizeSupported && !compact) {
+        ComposerResizeHandle(
+            onDelta = { dy -> editorMaxHeight = (editorMaxHeight - dy.dp).coerceIn(96.dp, 480.dp) },
+            onDragEnd = { persistComposerMaxHeight(editorMaxHeight) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
     when (composerMode) {
         ChatComposerMode.VISUAL -> Box {
             BasicRichTextEditor(
                 state = richState,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = if (compact) 48.dp else 72.dp, max = if (compact) 160.dp else 200.dp)
+                    .heightIn(min = if (compact) 48.dp else 72.dp, max = if (compact) 160.dp else editorMaxHeight)
                     .testTag("chat.input")
                     .focusRequester(inputFocus)
                     .onPreviewKeyEvent { event ->
@@ -438,3 +447,19 @@ internal fun PendingComposerAssets(
         modifier = Modifier.padding(horizontal = Tk.spacing.md),
     )
 }
+
+/** 输入区手动最大高度的本地持久化；不支持的平台返回 null。 */
+internal expect fun savedComposerMaxHeight(): androidx.compose.ui.unit.Dp?
+
+internal expect fun persistComposerMaxHeight(value: androidx.compose.ui.unit.Dp)
+
+/** 平台是否提供输入区拖拽手柄（Android 由输入法与内容自适应，不提供）。 */
+internal expect val composerManualResizeSupported: Boolean
+
+/** 输入区上沿的拖拽手柄；[onDelta] 为向下拖动的像素增量（向上为负即增高）。 */
+@Composable
+internal expect fun ComposerResizeHandle(
+    onDelta: (Float) -> Unit,
+    onDragEnd: () -> Unit,
+    modifier: Modifier = Modifier,
+)

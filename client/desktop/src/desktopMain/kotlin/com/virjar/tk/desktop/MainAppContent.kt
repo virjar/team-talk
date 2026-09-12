@@ -9,6 +9,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -23,8 +24,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import java.awt.Cursor
 import androidx.compose.ui.window.WindowScope
 import com.virjar.tk.shared.client.ConnectionState
 import com.virjar.tk.shared.client.FriendPresence
@@ -386,12 +392,14 @@ private fun MainListPane(
     groupMembers: Map<String, List<User>>,
 ) {
     val directoryScope = rememberCoroutineScope()
+    // 会话列表栏宽度可拖动（内测反馈，对齐其他 IM）；边界 240–480dp，随偏好持久化。
+    var listPaneWidth by remember { mutableStateOf(savedListPaneWidth().dp) }
     val expandedWorkspace = MainTab.entries[nav.selectedTab] in setOf(MainTab.DOCUMENTS, MainTab.TASKS) ||
         nav.mainPaneScreen != null
     // 三级层次：rail(surfaceVariant 深灰) → 列表(background 浅灰) → 内容(白)
     if (!expandedWorkspace) {
         Surface(
-            modifier = Modifier.width(Tk.dimens.listPaneWidth).fillMaxHeight(),
+            modifier = Modifier.width(listPaneWidth).fillMaxHeight(),
             color = MaterialTheme.colorScheme.background,
         ) {
             when (MainTab.entries[nav.selectedTab]) {
@@ -467,6 +475,10 @@ private fun MainListPane(
                 MainTab.SETTINGS -> Unit
             }
         }
+        ListPaneResizeHandle(
+            onDelta = { drag -> listPaneWidth = (listPaneWidth + drag.dp).coerceIn(240.dp, 480.dp) },
+            onDragEnd = { persistListPaneWidth(listPaneWidth) },
+        )
     }
 }
 
@@ -843,4 +855,45 @@ internal fun desktopTelemetryPage(screen: SubScreen): ClientUiPage = when (scree
     is SubScreen.InviteLinks -> ClientUiPage.INVITE_LINKS
     is SubScreen.GroupFiles -> ClientUiPage.GROUP_FILES
     is SubScreen.GroupBots -> ClientUiPage.GROUP_BOTS
+}
+
+/** 会话列表栏右缘的拖拽分割条：悬停/拖动高亮，边界 240–480dp，拖完持久化。 */
+@Composable
+private fun ListPaneResizeHandle(
+    onDelta: (Float) -> Unit,
+    onDragEnd: () -> Unit,
+) {
+    var dragging by remember { mutableStateOf(false) }
+    androidx.compose.foundation.layout.Box(
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(6.dp)
+            .pointerHoverIcon(PointerIcon(Cursor(Cursor.E_RESIZE_CURSOR)))
+            .background(
+                when {
+                    dragging -> MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                    else -> Color.Transparent
+                },
+            )
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragStart = { dragging = true },
+                    onDragEnd = { dragging = false; onDragEnd() },
+                    onDragCancel = { dragging = false },
+                ) { change, dragAmount ->
+                    change.consume()
+                    onDelta(dragAmount)
+                }
+            },
+    )
+}
+
+private val paneLayoutPreferences: java.util.prefs.Preferences
+    get() = java.util.prefs.Preferences.userRoot().node("/com/virjar/tk/teamtalk/desktop/layout")
+
+internal fun savedListPaneWidth(): Float =
+    runCatching { paneLayoutPreferences.getFloat("listPane", 300f) }.getOrDefault(300f)
+
+internal fun persistListPaneWidth(value: androidx.compose.ui.unit.Dp) {
+    runCatching { paneLayoutPreferences.putFloat("listPane", value.value) }
 }
