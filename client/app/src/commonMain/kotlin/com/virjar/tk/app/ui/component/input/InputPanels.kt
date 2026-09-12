@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.virjar.tk.app.ui.component.CHAT_ATTACHMENT_FILE_TEST_TAG
+import com.virjar.tk.app.ui.platform.testTagResourceIds
 import com.virjar.tk.app.ui.component.CHAT_ATTACHMENT_IMAGE_TEST_TAG
 import com.virjar.tk.app.ui.component.CHAT_ATTACHMENT_PANEL_TEST_TAG
 import com.virjar.tk.app.ui.component.CHAT_ATTACHMENT_PASTE_TEST_TAG
@@ -271,7 +272,9 @@ internal fun InputPopupSurface(
         properties = androidx.compose.ui.window.PopupProperties(focusable = true),
     ) {
         androidx.compose.material3.Surface(
-            modifier = modifier,
+            // Popup 在 Android 上是独立窗口，需在本语义根重新启用 testTag → resource-id，
+            // 否则无障碍自动化拿不到 chat.attach.* / chat.emoji.panel 等 resource-id。
+            modifier = modifier.testTagResourceIds(),
             shape = MaterialTheme.shapes.medium,
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 4.dp,
