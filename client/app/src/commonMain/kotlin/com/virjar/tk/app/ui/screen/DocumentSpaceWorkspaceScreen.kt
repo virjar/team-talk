@@ -387,20 +387,11 @@ internal fun DocumentSpaceWorkspaceScreen(
             documentProjectionStatus = documentProjectionStatus,
         )
         val mobileEditorVisible = mobileSingleDocumentMode && compactDocumentSurfaceVisible
-        // 移动端编辑态收窄头部（内测反馈）：编辑器上报编辑激活时，空间标题/刷新/设置
-        // 整行让位，仅保留返回入口（系统返回手势同样可退）。
+        // 移动端编辑态是独立全屏页（内测反馈）：整行头部与分隔线全部让位给编辑器，
+        // 返回走系统返回手势（编辑态先回预览，预览态再退目录）。
         var mobileEditorInEditMode by remember { mutableStateOf(false) }
         val upstreamEditingActiveReporter = LocalDocumentEditingActiveReporter.current
-        if (mobileEditorVisible && mobileEditorInEditMode) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(
-                    onClick = { requestMobileDestination(MobileDocumentDestination.Directory) },
-                    modifier = Modifier.testTag("documents.editor.back"),
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回目录")
-                }
-            }
-        } else {
+        if (!mobileEditorVisible || !mobileEditorInEditMode) {
             DocumentSpaceHeader(
             space = space,
             detached = detached,
@@ -419,8 +410,8 @@ internal fun DocumentSpaceWorkspaceScreen(
             onManageSpace = onManageSpace,
             onDetach = onDetach,
         )
+            HorizontalDivider()
         }
-        HorizontalDivider()
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val compact = mobileSingleDocumentMode || maxWidth < 700.dp
             TkBackHandler {

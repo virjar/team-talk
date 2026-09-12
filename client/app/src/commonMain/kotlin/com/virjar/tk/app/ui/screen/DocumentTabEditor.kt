@@ -65,6 +65,7 @@ import com.virjar.tk.protocol.model.DocumentRevisionSummary
 import com.virjar.tk.protocol.model.EmbeddedAsset
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftCaptureOwner
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftLifecycleBridge
+import com.virjar.tk.app.ui.platform.TkBackHandler
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftUpdate
 import com.virjar.tk.app.navigation.feature.document.DocumentTabState
 import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
@@ -561,6 +562,11 @@ internal fun DocumentTabEditor(
             if (!sourceMode) publishDraft(latest)
         }
         previewMode = !previewMode
+    }
+    // 两级导航（内测反馈）：移动端编辑态是独立全屏页，系统返回/手势先退回预览页；
+    // 预览页再按返回才离开文档（该处理器由外层空间页注册）。后注册的处理器优先生效。
+    if (mobileSingleDocumentMode && canEdit && !previewMode) {
+        TkBackHandler { togglePreviewMode() }
     }
     val saveDocument: () -> Unit = saveDocument@{
         val latest = if (sourceMode) sourceMarkdown else latestVisualMarkdown()
