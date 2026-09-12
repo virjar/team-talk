@@ -30,7 +30,7 @@ internal class TelemetryQueueBudget(private val maxBytes: Long) {
     private var reservedBytes = 0L
 
     fun reserve(bytes: Long): Boolean = synchronized(lock) {
-        if (bytes > maxBytes || reservedBytes > maxBytes - bytes) return@synchronized false
+        if (bytes <= 0L || bytes > maxBytes || reservedBytes > maxBytes - bytes) return@synchronized false
         reservedBytes += bytes
         true
     }
@@ -38,6 +38,8 @@ internal class TelemetryQueueBudget(private val maxBytes: Long) {
     fun release(bytes: Long) = synchronized(lock) {
         reservedBytes = (reservedBytes - bytes).coerceAtLeast(0L)
     }
+
+    fun current(): Long = synchronized(lock) { reservedBytes }
 }
 
 internal sealed interface WriteCommand {

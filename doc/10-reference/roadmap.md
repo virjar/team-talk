@@ -130,12 +130,17 @@ infra、9 处 Compose 判空强解修复。剩余按收益排序：
   不可取消删除序列（begin 失败保留凭据、删除失败保留标记），带真实 AccountDataCleanup 的
   单元测试覆盖四条路径；AuthController 主体与三条退役 drain 保留原位——它们是真实不同的
   owner 序列，表格化是伪收敛。
-- **ChatScreen 1013 行 / ChatViewModel 847 行**：发送事务（performSend 96 行）提为
-  ChatComposerSubmitActions 仍是候选。消息聚焦状态机与失败码探测经评估不再拆：前者依赖
-  pager/mutex/历史链/错误处理等 10+ 内部状态；后者与发送遥测探测共享同一次 probeSendTerminal
-  遍历——强行抽出都是参数搬运，不减少调用方复杂度。
-- **DocumentDraftPersistence 双内核**：Android/Desktop 两套 600+ 行并发机制抽共享
-  SerialDraftWriteCoordinator（generation + coalescing + flush 栅栏）。
+- **ChatScreen 1013 行 / ChatViewModel 847 行**：发送事务（performSend 96 行）经第二语料
+  评估后不再拆：该 lambda 捕获约 25 个组合局部状态（编辑会话、草稿屏障、发送提交、UI 交接），
+  提为顶层函数需穿 15-25 个参数，正是参数搬运；当前闭包的可读性来自局部性。消息聚焦状态机与
+  失败码探测同此（前者依赖 10+ 内部状态；后者与发送遥测共享同一次探测遍历）。三个巨型
+  Composable 的真正解法是架构级状态提升，属新功能轮次而非债务清理。
+- ~~DocumentDraftPersistence 双内核~~：经全文比对（Android 604 行 vs Desktop 720 行）评估
+  不合一。两者是刻意不同的并发设计而非重复实现：Android=有界队列+饱和交接+队列失败替换
+  （多 Activity 共享进程级存储）；Desktop=进程级租约栅栏+单写者+retire/seal 生命周期
+  （多窗口/实例互相 fencing）。真正重复的 generation/latest-wins/按代结算核心每侧仅约
+  80 行且已与饱和策略、租约权威、终态失败分类深度咬合；共享协调器需 6-8 个语义互异钩子，
+  概念数超过任一文件。原扫描"可收敛"判断在未读全两文件时做出，予以修正。
 - **DocumentRepository 43 方法端口**按消费者切 Read/Write/CommandReceipt 三片。
 - **AdminRoutes 48 端点单文件** + AdminService 17 依赖拆用例类。
 - ~~headless 独立 client/headless 模块~~：已按方案 B 完成。ImBot bot 运行时（认证准入/事件
@@ -145,7 +150,11 @@ infra、9 处 Compose 判空强解修复。剩余按收益排序：
   升为公开 SDK API（生命周期失败合并/会话认证协调器及其租约类型/EventProcessor 低层
   processNotify·processBatch/私有原子文件存储/JVM 缓存工厂/部署身份工厂等）；LocalCache 的
   bot 收件箱 API 本就公开、存储与 schema 保留在 shared。
-- **双 Lucene 引擎**：LuceneIndexRuntime + 队列预算合一 + 写循环统一到协程版。
+- **双 Lucene 引擎**：队列预算已合一（TraceQueueBudget 删除，共享 TelemetryQueueBudget
+  并补齐 current() 与非正数守卫）。剩余两步：①LuceneIndexRuntime——两引擎 openRuntime/
+  closeRuntime 的四件套（analyzer/directory/writer/searchers）与回滚级联逐字近同（约
+  120 行×2，回滚次序 bug 只需修一处），参数化 analyzer 工厂、reset 提交块与校验块即可，
+  风险有界；②写循环统一（Channel vs 裸 Thread）风险较高，建议随 ① 单独一轮。
 
 最小验证：每项独立提交，相关模块编译 + 既有定向测试；Chat/Auth 域拆分需 Android/Desktop
 短路径真机复验。

@@ -56,7 +56,7 @@ class ConnectionTraceSearchIndex(
     private val closed = AtomicBoolean(false)
     private val terminal = AtomicBoolean(false)
     private val droppedEvents = AtomicLong(0L)
-    private val queueBudget = TraceQueueBudget(maxQueuedBytes)
+    private val queueBudget = TelemetryQueueBudget(maxQueuedBytes)
     private val queue = ArrayBlockingQueue<TraceCommand>(maxQueuedEvents)
 
     @Volatile
@@ -497,23 +497,6 @@ class ConnectionTraceSearchIndex(
             val occurredBefore: Long,
             val completion: CompletableFuture<Boolean>,
         ) : TraceCommand
-    }
-
-    private class TraceQueueBudget(private val maxBytes: Long) {
-        private val lock = Any()
-        private var bytes = 0L
-
-        fun reserve(candidate: Long): Boolean = synchronized(lock) {
-            if (candidate <= 0L || candidate > maxBytes || bytes > maxBytes - candidate) return false
-            bytes += candidate
-            true
-        }
-
-        fun release(released: Long) = synchronized(lock) {
-            bytes = (bytes - released).coerceAtLeast(0L)
-        }
-
-        fun current(): Long = synchronized(lock) { bytes }
     }
 
     companion object {
