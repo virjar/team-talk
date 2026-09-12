@@ -32,6 +32,8 @@ internal class DesktopWindowPlacementOwner(
     private var phase = DesktopPlacementPhase.Idle
     private var phaseTicks = 0
     private var stableTicks = 0
+    private var cachedScreenBounds: Rectangle? = null
+    private var cachedMaximizedBounds: Rectangle? = null
 
     var placement: WindowPlacement = state.placement
         private set
@@ -49,6 +51,7 @@ internal class DesktopWindowPlacementOwner(
             window.rootPane.putClientProperty("apple.awt.fullscreenable", true)
         }
         timer.start()
+        refreshCachedBoundsIfIdle()
         tick()
     }
 
@@ -126,6 +129,7 @@ internal class DesktopWindowPlacementOwner(
     }
 
     private fun observeIdlePlacement() {
+        refreshCachedBoundsIfIdle()
         val observed = window.placement
         if (placement == WindowPlacement.Fullscreen && observed != WindowPlacement.Fullscreen) {
             publish(WindowPlacement.Maximized)
@@ -260,7 +264,25 @@ internal class DesktopWindowPlacementOwner(
         if (window.bounds != expected) window.bounds = expected
     }
 
+    /**
+     * 只在 Idle 相位刷新屏幕工作区缓存：`getScreenInsets` 是原生调用，在全屏
+     * Space 过渡期间发起会与 AppKit 线程互等（曾把整个 EDT 卡死在
+     * setExtendedState → nativeGetScreenInsets 上）。过渡期一律使用缓存。
+     */
+    private fun refreshCachedBoundsIfIdle() {
+        if (phase != DesktopPlacementPhase.Idle) return
+        val config = window.graphicsConfiguration
+        val screen = config.bounds
+        if (cachedScreenBounds == screen && cachedMaximizedBounds != null) return
+        cachedScreenBounds = Rectangle(screen)
+        cachedMaximizedBounds = desktopScreenWorkArea(
+            Rectangle(screen),
+            Toolkit.getDefaultToolkit().getScreenInsets(config),
+        )
+    }
+
     private fun maximizedBounds(): Rectangle {
+        cachedMaximizedBounds?.let { return Rectangle(it) }
         val config = window.graphicsConfiguration
         return desktopScreenWorkArea(
             config.bounds,
@@ -270,6 +292,11 @@ internal class DesktopWindowPlacementOwner(
 
     private fun applyPlacement(value: WindowPlacement) {
         state.placement = value
+        if (value == WindowPlacement.Maximized) {
+            // 预设 maximizedBounds 后，AWT 最大化直接使用该矩形，
+            // 不再在持锁路径里发原生 insets 查询（过渡期死锁根因）。
+            cachedMaximizedBounds?.let { window.maximizedBounds = Rectangle(it) }
+        }
         window.placement = value
     }
     private fun isStable(condition: Boolean, requiredTicks: Int): Boolean {
