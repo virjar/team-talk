@@ -68,4 +68,12 @@ tasks.register("headlessDistZip") {
     group = "distribution"
     description = "Archive the verified portable Headless distribution for installation outside the source checkout"
     dependsOn(headlessDist)
+    inputs.dir(headlessDirectory)
+    inputs.property("buildIdentity", sdkBuildIdentity)
+    val archive = layout.buildDirectory.file("distributions/${release.HeadlessDistribution.archiveName(sdkBuildIdentity)}")
+    outputs.file(archive)
+    doLast {
+        release.HeadlessDistribution.archive(headlessDirectory.get().asFile, archive.get().asFile,
+            headlessVersion, sdkBuildIdentity)
+    }
 }

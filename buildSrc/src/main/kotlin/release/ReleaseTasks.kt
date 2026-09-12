@@ -157,7 +157,7 @@ fun registerReleaseTasks(
                 File(root, "server/server/build/distributions/teamtalk-server-${version.name}.zip"),
                 notes, metadata.commitAppendix(version, snapshot), File(root, "gradle/conveyor-tools.properties"),
                 File(root, "client/desktop/build/conveyor/tool.properties"),
-                File(root, "client/shared/build/distributions/${HeadlessDistribution.archiveName(identity.buildIdentity)}"),
+                File(root, "client/headless/build/distributions/${HeadlessDistribution.archiveName(identity.buildIdentity)}"),
             )
             // 快照覆盖发布只发全量包：增量更新（macOS Sparkle delta 等）属于正式发行
             // 与私有化内部预览的规范版本机制，内测覆盖刷包不维护跨修订的增量链。
