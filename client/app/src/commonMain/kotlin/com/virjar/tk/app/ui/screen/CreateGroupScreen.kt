@@ -80,10 +80,11 @@ fun CreateGroupScreen(
         }
         searching = true
         kotlinx.coroutines.delay(250)
+        // 搜索结果不过滤好友：搜索态下好友列表被替换，匹配到的好友也应可直接勾选；
+        // addedUsers 只存非好友（预览条按 uid 去重，好友 chip 由 selectedContacts 渲染）。
         val result = runCatching { onSearchUsers(query) }.getOrDefault(emptyList())
-            .filter { it.uid !in friendUids }
         searchResults = result
-        addedUsers = addedUsers + result.associateBy { it.uid }
+        addedUsers = addedUsers + result.filter { it.uid !in friendUids }.associateBy { it.uid }
         searching = false
     }
 
@@ -101,9 +102,10 @@ fun CreateGroupScreen(
     val selectedContacts = remember(contacts, selectedUids) {
         contacts.filter { it.friendUid in selectedUids }
     }
-    // 已选的非好友（T046）：仅用于预览条与草稿头像渲染
-    val selectedNonFriends = remember(addedUsers, selectedUids) {
-        addedUsers.values.filter { it.uid in selectedUids }
+    // 已选的非好友（T046）：仅用于预览条与草稿头像渲染；好友由 selectedContacts 渲染，避免同 uid 重复
+    val selectedNonFriends = remember(addedUsers, selectedUids, contacts) {
+        val friends = contacts.mapTo(HashSet()) { it.friendUid }
+        addedUsers.values.filter { it.uid in selectedUids && it.uid !in friends }
     }
     val draftMemberUsers = remember(selectedContacts, selectedNonFriends) {
         selectedContacts.mapNotNull { it.user } + selectedNonFriends
