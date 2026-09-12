@@ -36,10 +36,13 @@ import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
@@ -378,6 +381,9 @@ internal fun VoiceRecordSurface(
     modifier: Modifier = Modifier,
 ) {
     var isRecording by remember { mutableStateOf(false) }
+    // 录音时手机常贴在嘴边，屏幕状态感知弱（内测反馈）：按下立即轻震一下，
+    // 同时按钮换色，用触觉+高对比双色确认"已经在录"。
+    val haptics = LocalHapticFeedback.current
     Surface(
         modifier = modifier.height(48.dp).testTag(CHAT_VOICE_RECORD_TEST_TAG)
             .pointerInput(onVoiceRecord, onVoiceRecordCancel) {
@@ -388,6 +394,7 @@ internal fun VoiceRecordSurface(
                     try {
                         isRecording = true
                         started = true
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         onVoiceRecord?.invoke(true)
                         val up = waitForUpOrCancellation()
                         if (up != null) {
@@ -401,12 +408,17 @@ internal fun VoiceRecordSurface(
                 }
             },
         shape = MaterialTheme.shapes.small,
-        color = Tk.colors.bubbleIncoming,
+        color = if (isRecording) MaterialTheme.colorScheme.primaryContainer else Tk.colors.bubbleIncoming,
     ) {
         Box(contentAlignment = Alignment.Center) {
             Text(
                 if (isRecording) "松开发送" else "按住说话",
-                color = MaterialTheme.colorScheme.onSurface,
+                color = if (isRecording) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+                fontWeight = if (isRecording) FontWeight.SemiBold else null,
             )
         }
     }
