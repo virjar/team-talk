@@ -17,9 +17,9 @@ object HeadlessDistribution {
     const val CHECKSUMS = "SHA256SUMS"
     const val ARCHIVE_ROOT = "tt-headless"
     private val entryPoints = linkedMapOf(
-        "tt-agent" to "com.virjar.tk.shared.agent.AgentMainKt",
-        "tt" to "com.virjar.tk.shared.agent.CliMainKt",
-        "tt-mcp" to "com.virjar.tk.shared.agent.McpMainKt",
+        "tt-agent" to "com.virjar.tk.headless.agent.AgentMainKt",
+        "tt" to "com.virjar.tk.headless.agent.CliMainKt",
+        "tt-mcp" to "com.virjar.tk.headless.agent.McpMainKt",
     )
 
     fun archiveName(buildIdentity: String): String {

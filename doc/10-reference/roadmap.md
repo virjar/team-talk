@@ -138,12 +138,13 @@ infra、9 处 Compose 判空强解修复。剩余按收益排序：
   SerialDraftWriteCoordinator（generation + coalescing + flush 栅栏）。
 - **DocumentRepository 43 方法端口**按消费者切 Read/Write/CommandReceipt 三片。
 - **AdminRoutes 48 端点单文件** + AdminService 17 依赖拆用例类。
-- **headless agent 5500 行独立 client/headless 模块**：文件级零反向引用，但试拆发现 agent 实际
-  使用 shared 约 10 个 `internal` 符号（ImBot 的 enqueueFile/outgoingReceipt/consumePendingForAgent
-  outbox 原语、PrivateAtomicTextFileStore、PlatformOnlyTkLogger、collapse/isFatal/mergeSession
-  LifecycleFailures、DeploymentIdentity.fromTcpWithDefaultHttp 等）——agent 是 shared 的内部使用者。
-  拆分前须先做"无头 SDK 公开面"决策：哪些内部符号升级为受支持的跨模块接缝（涉及 SDK 公共
-  契约，需要产品确认），或把 bot 运行时随 agent 一起外迁并同步修订 shared 的模块定位文档。
+- ~~headless 独立 client/headless 模块~~：已按方案 B 完成。ImBot bot 运行时（认证准入/事件
+  缓冲/收件箱/outgoing）与 agent/CLI/MCP/运维面整体外迁至 `client/headless`（包名
+  `com.virjar.tk.headless.*`，27 主文件+18 测试文件），shared 回归纯 SDK；headlessDist 分发任务
+  与 buildSrc 主类标识随迁，服务端 e2e 改依赖新模块。shared 中被跨模块真实使用的最小工具集
+  升为公开 SDK API（生命周期失败合并/会话认证协调器及其租约类型/EventProcessor 低层
+  processNotify·processBatch/私有原子文件存储/JVM 缓存工厂/部署身份工厂等）；LocalCache 的
+  bot 收件箱 API 本就公开、存储与 schema 保留在 shared。
 - **双 Lucene 引擎**：LuceneIndexRuntime + 队列预算合一 + 写循环统一到协程版。
 
 最小验证：每项独立提交，相关模块编译 + 既有定向测试；Chat/Auth 域拆分需 Android/Desktop

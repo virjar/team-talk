@@ -1,7 +1,7 @@
 package com.virjar.tk.server.e2e
 
 import com.virjar.tk.shared.AppError
-import com.virjar.tk.shared.bot.ImBot
+import com.virjar.tk.headless.bot.ImBot
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals

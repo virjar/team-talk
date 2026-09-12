@@ -323,7 +323,7 @@ class EventProcessor(
      * 按 event-id 顺序投影一个服务器页。每个成功条目都独立推进持久游标；第一个失败立即逃逸，
      * 后续条目保持不动。
      */
-    internal suspend fun processBatch(
+    suspend fun processBatch(
         events: List<NotifyPayload>,
         reportProgress: (Long) -> Unit = {},
     ): Long {
@@ -370,7 +370,7 @@ class EventProcessor(
         }
     }
 
-    internal suspend fun processNotify(notify: NotifyPayload) =
+    suspend fun processNotify(notify: NotifyPayload) =
         projectionMutex.withLock { processNotifyLocked(notify) }
 
     /**

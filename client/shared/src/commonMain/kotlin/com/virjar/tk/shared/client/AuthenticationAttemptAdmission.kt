@@ -112,7 +112,7 @@ internal class AuthenticationAttemptReentrantRetirementException :
     )
 
 /** 从提交一路携带到 AUTH 响应的、带代际资格的不透明能力凭证。 */
-internal class AuthenticationAttemptLease(
+class AuthenticationAttemptLease(
     private val admission: AuthenticationAttemptAdmission,
     private val generation: Long,
 ) {

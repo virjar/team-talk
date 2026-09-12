@@ -88,7 +88,7 @@ class DeploymentIdentity private constructor(
         }
 
         /** 未显式提供 HTTP base 时的无头 SDK 默认值。 */
-        internal fun fromTcpWithDefaultHttp(tcpHost: String, tcpPort: Int): DeploymentIdentity {
+        fun fromTcpWithDefaultHttp(tcpHost: String, tcpPort: Int): DeploymentIdentity {
             val canonicalHost = canonicalDeploymentTcpHost(tcpHost)
             val httpAuthority = if (':' in canonicalHost) "[$canonicalHost]" else canonicalHost
             return from(canonicalHost, tcpPort, "https://$httpAuthority")

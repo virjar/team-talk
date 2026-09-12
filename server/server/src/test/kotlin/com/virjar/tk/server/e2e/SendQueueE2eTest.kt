@@ -32,7 +32,7 @@ class SendQueueE2eTest {
                 b.register("sq-b-${System.nanoTime()}", "password123", "B", "dev-b", "Test", "127.0.0.1", env.tcpPort)
                 withTimeout(10_000) { b.state.first { it == ConnectionState.AUTHENTICATED } }
 
-                val a = com.virjar.tk.shared.bot.ImBot.register(
+                val a = com.virjar.tk.headless.bot.ImBot.register(
                     "127.0.0.1", env.tcpPort, "sq-a", TEST_IM_BOT_PASSWORD, testImBotCacheOwner,
                 )
                 try {

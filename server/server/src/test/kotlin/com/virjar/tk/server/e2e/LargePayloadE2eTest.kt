@@ -1,6 +1,6 @@
 package com.virjar.tk.server.e2e
 
-import com.virjar.tk.shared.bot.ImBot
+import com.virjar.tk.headless.bot.ImBot
 import com.virjar.tk.shared.client.ConnectionState
 import com.virjar.tk.shared.client.ImClient
 import kotlinx.coroutines.delay

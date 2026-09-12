@@ -11,7 +11,8 @@ TeamTalk 是全栈 Kotlin 的模块化单体：服务端部署为一个进程，
 
 ```mermaid
 flowchart LR
-    Clients["Android / Desktop / ImBot"] --> SDK["shared SDK"]
+    Clients["Android / Desktop"] --> SDK["shared SDK"]
+    Headless["tt-agent / ImBot"] --> SDK
     SDK -- "TCP 命令、消息与事件" --> Server["TeamTalk 服务进程"]
     SDK -- "HTTP 文件传输" --> Server
     Admin["管理台"] -- "管理 HTTP" --> Server
@@ -29,7 +30,8 @@ flowchart LR
 |---|---|---|
 | `protocol` | 纯 Kotlin wire 原语、传输模型、消息体、RPC IDL/生成物和跨端纯规则 | Netty、连接、缓存、UI、服务端存储 |
 | `protocol-netty` | ByteBuf 帧累积、方向校验及有界 payload 适配 | 模型、领域规则、连接所有权 |
-| `shared` | 客户端连接、认证会话、事件、缓存、Repository、ImBot | Compose UI、服务端实现 |
+| `shared` | 客户端连接、认证会话、事件、缓存、Repository | Compose UI、服务端实现、bot 运行时 |
+| `headless` | tt-agent/CLI/MCP 无头客户端、ImBot bot 运行时与便携分发包 | Compose UI、图形端平台壳 |
 | `shared-testkit` | 供各模块 test 源集复用的 SDK 测试替身 | 任何产品 main 依赖或 SDK 发布内容 |
 | `rpc-processor` | 从 RPC IDL 生成 Contract/Stub/Proxy | 运行时业务 |
 | `app` | 共享 Compose 内容、ViewModel、业务 UI 状态 | TCP 细节、平台窗口 |

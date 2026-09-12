@@ -149,6 +149,7 @@ dependencies {
     testImplementation(kotlin("test"))
     // E2E 对端使用产品客户端 SDK 和独立 testkit；生产服务端不依赖两者。
     testImplementation(project(":client:shared"))
+    testImplementation(project(":client:headless"))
     testImplementation(project(":client:shared-testkit"))
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation("io.ktor:ktor-server-test-host:${libs.versions.ktor.get()}")
@@ -190,9 +191,9 @@ tasks.named("installDist") {
 tasks.named("check") { dependsOn(buildAdmin) }
 
 tasks.test {
-    // CliPeerE2eTest 会启动 shared 的 headless agent；必须与当前协议一起重建，
+    // CliPeerE2eTest 会启动 headless 模块的 tt-agent；必须与当前协议一起重建，
     // 否则工作区残留的旧分发包会用旧 PROTOCOL_VERSION 无限重连。
-    dependsOn(":client:shared:headlessDist")
+    dependsOn(":client:headless:headlessDist")
 
     // 默认运行集成测试；PostgreSQL 连接由 TK_TEST_PG_* 提供，每个环境只使用自己的临时 schema。
     // 本地快速跳过：./gradlew :server:server:test -PskipTests

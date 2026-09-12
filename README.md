@@ -49,7 +49,8 @@ team-talk/
 │   ├── protocol-netty/       Netty 帧适配器
 │   └── rpc-processor/        RPC IDL 的 KSP 代码生成器
 ├── client/                   客户端
-│   ├── shared/               客户端 SDK：连接、事件、缓存、Repository、ImBot
+│   ├── shared/               客户端 SDK：连接、事件、缓存、Repository
+│   ├── headless/             tt-agent/CLI/MCP 无头客户端与 ImBot bot 运行时
 │   ├── shared-testkit/       E2E 测试夹具（FakeLocalCache 等）
 │   ├── richeditor/           Compose 富文本编辑器 fork
 │   ├── app/                  Compose 共享 UI、ViewModel

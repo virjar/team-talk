@@ -41,7 +41,7 @@ internal interface RpcRequestTransport {
 }
 
 /** 把不可逆退役与 EventLoop 的实际通道写入串行化。 */
-internal interface WireSendAdmission {
+interface WireSendAdmission {
     fun isActive(): Boolean
     fun use(block: () -> Boolean): Boolean
 }

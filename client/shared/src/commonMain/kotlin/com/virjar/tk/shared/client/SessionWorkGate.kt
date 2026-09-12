@@ -66,8 +66,8 @@ internal class SessionWorkGate(private val ownerName: String) {
 }
 
 /** 硬边界不能从它正在等待排空的回调内部成功返回。 */
-internal open class SessionBoundaryReentrantCloseException(message: String) : IllegalStateException(message)
+open class SessionBoundaryReentrantCloseException(message: String) : IllegalStateException(message)
 
-internal class SessionWorkGateReentrantCloseException(ownerName: String) : SessionBoundaryReentrantCloseException(
+class SessionWorkGateReentrantCloseException(ownerName: String) : SessionBoundaryReentrantCloseException(
     "$ownerName cannot close reentrantly from an admitted callback",
 )

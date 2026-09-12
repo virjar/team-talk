@@ -3,7 +3,7 @@ package com.virjar.tk.shared.client
 import com.virjar.tk.protocol.payload.AuthRequestPayload
 
 /** 不含任何可复用物理连接关联字段的敏感重连凭据。 */
-internal data class PendingAuthenticationCredentials(
+data class PendingAuthenticationCredentials(
     val authType: Int,
     val username: String?,
     val password: String?,

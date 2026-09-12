@@ -1,6 +1,6 @@
 package com.virjar.tk.server.e2e
 
-import com.virjar.tk.shared.bot.ImBotCacheOwner
+import com.virjar.tk.headless.bot.ImBotCacheOwner
 import com.virjar.tk.shared.testkit.FakeLocalCache
 
 internal const val TEST_IM_BOT_PASSWORD = "test-only-im-bot-password"

@@ -26,7 +26,7 @@ fun createDesktopLocalCache(
     dataDir = dataDir,
 )
 
-internal fun createJvmLocalCache(
+fun createJvmLocalCache(
     deploymentIdentity: DeploymentIdentity,
     datasetId: String,
     uid: String,

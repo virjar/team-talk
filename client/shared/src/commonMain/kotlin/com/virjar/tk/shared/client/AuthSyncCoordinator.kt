@@ -30,7 +30,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * 可以用单线程测试作用域驱动同一状态机。认证材料与终态存放在这里；投影 ownership 与游标状态
  * 存放在 [EventSyncCoordinator]。transport 与包路由保留单一门面，只接收只读回调。
  */
-internal class AuthSyncCoordinator(
+class AuthSyncCoordinator(
     private val connectionState: () -> ConnectionState,
     private val isConnectionGenerationCurrent: (Long) -> Boolean,
     private val transitionTo: (ConnectionState) -> Unit,
@@ -129,7 +129,7 @@ internal class AuthSyncCoordinator(
         startTransport = startTransport,
     )
 
-    internal fun prepareAuthentication(
+    fun prepareAuthentication(
         credentials: PendingAuthenticationCredentials,
         expectedUid: String?,
         attempt: AuthenticationAttemptLease,

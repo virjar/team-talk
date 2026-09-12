@@ -41,7 +41,7 @@ enum class AuthenticationFailureKind {
 }
 
 /** 保留同一 refresh-auth owner、可通过受限重试收敛的服务器状态。 */
-internal val AuthenticationFailureKind.isRetryableServerState: Boolean
+val AuthenticationFailureKind.isRetryableServerState: Boolean
     get() = this == AuthenticationFailureKind.SERVER_MAINTENANCE ||
         this == AuthenticationFailureKind.TOO_MANY_CONNECTIONS
 

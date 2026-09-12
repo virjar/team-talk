@@ -92,7 +92,7 @@ private class FixedOwnerTkLogger(
  * 树在已认证的 ClientSession 存在之前使用它，禁用/无头的客户端
  * 在其整个生命周期内保留它，因此它们无法借用其他账号的缓冲区或 fault 处理器。
  */
-internal class PlatformOnlyTkLogger(private val name: String) : TkLogger {
+class PlatformOnlyTkLogger(private val name: String) : TkLogger {
     override fun trace(msg: String) = platformLog("trace", name, msg, null)
     override fun fault(msg: String, t: Throwable?) = platformLog("fault", name, msg, t)
 }

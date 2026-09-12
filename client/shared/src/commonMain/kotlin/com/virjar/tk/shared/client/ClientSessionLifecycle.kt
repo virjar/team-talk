@@ -28,7 +28,7 @@ internal fun SessionEndReason.outgoingDisposition(): SendQueueCloseDisposition =
 enum class SessionLifecyclePhase { ACTIVE, QUIESCED, CLOSED }
 
 /** 在 quiesce 时永久退役，并跨 EventLoop 的实际通道写入被持有。 */
-internal class SessionOutboundLease : WireSendAdmission {
+class SessionOutboundLease : WireSendAdmission {
     private val lock = Any()
     val ackOwner: Any = Any()
     @Volatile
@@ -211,7 +211,7 @@ internal class ClientSessionTerminalLifecycle {
 }
 
 /** 即使任意关闭钩子失败，也按声明顺序执行每一个退役动作。 */
-internal fun releaseAllSessionResources(
+fun releaseAllSessionResources(
     vararg releases: Pair<String, () -> Unit>,
 ): List<Pair<String, Throwable>> {
     val failures = mutableListOf<Pair<String, Throwable>>()
@@ -232,11 +232,11 @@ internal fun releaseAllSessionResources(
 }
 
 /** 取消与非 [Exception] 失败绝不能被降级为清理诊断。 */
-internal fun isFatalSessionLifecycleFailure(failure: Throwable): Boolean =
+fun isFatalSessionLifecycleFailure(failure: Throwable): Boolean =
     failure is CancellationException || failure !is Exception
 
 /** 选择致命失败而非普通失败，并把每个被挤出的原因保留为 suppressed。 */
-internal fun mergeSessionLifecycleFailures(primary: Throwable?, additional: Throwable): Throwable {
+fun mergeSessionLifecycleFailures(primary: Throwable?, additional: Throwable): Throwable {
     if (primary == null || primary === additional) return additional
     return if (!isFatalSessionLifecycleFailure(primary) && isFatalSessionLifecycleFailure(additional)) {
         addSuppressedDistinct(additional, primary)
@@ -247,7 +247,7 @@ internal fun mergeSessionLifecycleFailures(primary: Throwable?, additional: Thro
     }
 }
 
-internal fun collapseSessionLifecycleFailures(failures: List<Throwable>): Throwable? {
+fun collapseSessionLifecycleFailures(failures: List<Throwable>): Throwable? {
     if (failures.isEmpty()) return null
     val primary = failures.firstOrNull(::isFatalSessionLifecycleFailure) ?: failures.first()
     failures.forEach { failure -> addSuppressedDistinct(primary, failure) }

@@ -38,9 +38,9 @@ val generateTeamTalkBuild by tasks.registering {
  * IM SDK 模块（= shared）。
  *
  * 完整客户端 SDK 闭环：ImClient/RpcClient（连接层）
- * + Repository + LocalCache + EventProcessor（数据层）+ 无头入口。
+ * + Repository + LocalCache + EventProcessor（数据层）。
  * wire、模型和 RPC IDL 由独立 :protocol:protocol 模块提供。
- * UI（:client:app）只消费本模块公开 API；无头客户端/AI bot 可直接依赖本模块运行。
+ * UI（:client:app）只消费本模块公开 API；无头客户端/AI bot 运行时在 :client:headless。
  *
  * 分层（单向依赖）：protocol ← protocol-netty ← shared(SDK) ← app(UI) ← android/desktop(shell)。
  */
@@ -120,53 +120,6 @@ android {
     }
 }
 
-// ── tt-agent / CLI / MCP 分发包（headless）──
-// application 插件与 android library 冲突；使用 JVM 完整 runtimeClasspath 组装可搬移目录。
-val jvmJar by tasks.existing(org.gradle.jvm.tasks.Jar::class) {
-    manifest { attributes["Main-Class"] = "com.virjar.tk.shared.agent.AgentMainKt" }
-}
-val headlessVersion = release.ReleaseVersion.read(rootDir)
-val headlessDirectory = layout.buildDirectory.dir("headless")
-val headlessDist by tasks.registering(org.gradle.api.tasks.Sync::class) {
-    group = "distribution"
-    description = "Build the portable Headless SDK directory, launchers, identity and SHA256SUMS (requires JDK 21)"
-    inputs.property("releaseVersion", sdkReleaseVersion)
-    inputs.property("buildIdentity", sdkBuildIdentity)
-    inputs.property("releaseBuildNumber", sdkReleaseBuildNumber)
-    inputs.property("protocolMajor", headlessVersion.protocolMajor)
-    inputs.property("protocolMinor", headlessVersion.protocolMinor)
-    duplicatesStrategy = DuplicatesStrategy.FAIL
-    into(headlessDirectory)
-    from(rootProject.file("LICENSE"))
-    into("lib") {
-        from(jvmJar)
-        from(configurations.getByName("jvmRuntimeClasspath"))
-    }
-    doLast {
-        release.HeadlessDistribution.seal(headlessDirectory.get().asFile, headlessVersion, sdkBuildIdentity)
-    }
-}
-tasks.register("verifyHeadlessDist") {
-    group = "verification"
-    description = "Verify the current Headless directory's exact identity, dependency payload and file checksums"
-    dependsOn(headlessDist)
-    doLast {
-        release.HeadlessDistribution.verify(headlessDirectory.get().asFile, headlessVersion, sdkBuildIdentity)
-    }
-}
-tasks.register("headlessDistZip") {
-    group = "distribution"
-    description = "Archive the verified portable Headless distribution for installation outside the source checkout"
-    dependsOn(headlessDist)
-    inputs.dir(headlessDirectory)
-    inputs.property("buildIdentity", sdkBuildIdentity)
-    val archive = layout.buildDirectory.file("distributions/${release.HeadlessDistribution.archiveName(sdkBuildIdentity)}")
-    outputs.file(archive)
-    doLast {
-        release.HeadlessDistribution.archive(headlessDirectory.get().asFile, archive.get().asFile,
-            headlessVersion, sdkBuildIdentity)
-    }
-}
 
 // bot 集成测试开关透传：默认跳过，仅 -Dtk.botTest.host=... 时启用（见 ImBotIntegrationTest）。
 // Gradle 默认不把命令行 -D 转发给测试 JVM，需显式桥接（与 server 的 tk.e2e.* 同模式）。

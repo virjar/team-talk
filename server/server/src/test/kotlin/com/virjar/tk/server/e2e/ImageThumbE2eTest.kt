@@ -1,7 +1,7 @@
 package com.virjar.tk.server.e2e
 
 import com.virjar.tk.protocol.body.ImageBody
-import com.virjar.tk.shared.bot.ImBot
+import com.virjar.tk.headless.bot.ImBot
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test

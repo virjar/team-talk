@@ -2,7 +2,7 @@ package com.virjar.tk.shared.client
 
 import java.io.File
 
-internal actual fun privateAtomicTextFileStore(
+actual fun privateAtomicTextFileStore(
     dataDir: File,
     privateDirectories: List<String>,
     fileName: String,

@@ -104,9 +104,9 @@ App 回归通过真实 TaskRepository 与可控 RPC 检查外部引用冷启动�
 
 ```bash
 ./gradlew :client:shared:jvmTest --tests '*HeadlessBundleInstallerIntegrationTest' --tests '*HeadlessConfigurationIntegrationTest'
-./gradlew :client:shared:jvmTest --tests '*AgentMcpAccessTest' --tests '*AgentMcpHttpTest' --tests '*CliMainTest' --tests '*AgentApiTest'
+./gradlew :client:headless:test --tests '*AgentMcpAccessTest' --tests '*AgentMcpHttpTest' --tests '*CliMainTest' --tests '*AgentApiTest'
 ./gradlew -p buildSrc test --tests '*HeadlessDistributionTest'
-./gradlew :client:shared:verifyHeadlessDist :client:shared:headlessDistZip
+./gradlew :client:headless:verifyHeadlessDist :client:headless:headlessDistZip
 ```
 
 安装器回归使用临时分发目录、真实文件锁、子进程和 shell launcher，检查移动路径、调用工作目录、

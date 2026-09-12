@@ -161,9 +161,9 @@ bearer 被 HTTP 401 明确拒绝时，ImBot 会在与 AUTH 结果安装相同的
 ./gradlew :client:shared:headlessDist :client:shared:verifyHeadlessDist :client:shared:headlessDistZip
 ```
 
-解包后的 `tt-headless/` 或构建输出 `client/shared/build/headless/` 是可整体移动的分发目录，包含 `bin/`、
+解包后的 `tt-headless/` 或构建输出 `client/headless/build/headless/` 是可整体移动的分发目录，包含 `bin/`、
 `lib/`、`LICENSE`、`teamtalk-release.properties` 和 `SHA256SUMS`。ZIP 位于
-`client/shared/build/distributions/TeamTalk-<version>+<完整源码SHA>[.dirty]-headless.zip`。
+`client/headless/build/distributions/TeamTalk-<version>+<完整源码SHA>[.dirty]-headless.zip`。
 launchers 只从该目录加载运行依赖，保持调用者的工作目录，并通过 `JAVA_HOME` 或 `PATH` 查找 Java。
 
 清单记录 `artifactType=headless-distribution`、展示版本、完整源码构建身份、安装序号、数字协议版本和
@@ -262,7 +262,7 @@ unit 从不引用 EnvironmentFile，也不包含用户名、密码、refresh tok
 sudo groupadd --system tt-agent
 sudo useradd --system --gid tt-agent --home-dir /nonexistent --no-create-home \
   --shell /usr/sbin/nologin tt-agent
-sudo cp -a client/shared/build/headless /opt/tt-agent
+sudo cp -a client/headless/build/headless /opt/tt-agent
 sudo /opt/tt-agent/bin/tt-agent prepare-service-data \
   --service-user tt-agent \
   --data-dir /var/lib/tt-agent

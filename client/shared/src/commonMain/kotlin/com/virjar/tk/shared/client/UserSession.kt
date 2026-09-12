@@ -1,6 +1,6 @@
 package com.virjar.tk.shared.client
 
-internal const val LOCAL_CREDENTIAL_COMMIT_FAILURE_REASON = "本地登录状态保存失败"
+const val LOCAL_CREDENTIAL_COMMIT_FAILURE_REASON = "本地登录状态保存失败"
 
 /** 会话拥有的平台适配器使用的原子 HTTP 身份。 */
 data class SessionHttpCredentials(

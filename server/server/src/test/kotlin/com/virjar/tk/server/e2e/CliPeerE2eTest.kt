@@ -83,7 +83,7 @@ class CliPeerE2eTest {
                 val bUid = status["uid"]!!
 
                 // A 注册并私聊 B（agent 账号）
-                val a = com.virjar.tk.shared.bot.ImBot.register(
+                val a = com.virjar.tk.headless.bot.ImBot.register(
                     "127.0.0.1", env.tcpPort, "clipeer-a", TEST_IM_BOT_PASSWORD, testImBotCacheOwner,
                 )
                 try {

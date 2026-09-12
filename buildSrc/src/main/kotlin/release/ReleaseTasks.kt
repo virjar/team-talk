@@ -148,7 +148,7 @@ fun registerReleaseTasks(
         task.group = "release build"
         task.dependsOn(preflight)
         if (!reuseBundle) task.dependsOn(":client:desktop:buildConveyorSite", ":client:android:assembleRelease",
-            ":server:server:distZip", ":client:shared:headlessDistZip")
+            ":server:server:distZip", ":client:headless:headlessDistZip")
         task.doLast {
             val notes = notes()
             if (reuseBundle) ReleaseBundle.verify(bundle, identity, notes) else ReleaseBundle.assemble(

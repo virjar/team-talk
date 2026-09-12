@@ -56,7 +56,7 @@ internal interface PlatformTelemetryHttpIoWorker {
 
 internal expect fun createPlatformTelemetryHttpIoWorker(): PlatformTelemetryHttpIoWorker
 
-internal class SessionResourceCloseException(
+class SessionResourceCloseException(
     owner: String,
     val failures: List<Throwable>,
 ) : IllegalStateException("$owner close failed in ${failures.size} operation(s)", failures.firstOrNull())

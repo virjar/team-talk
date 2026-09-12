@@ -15,7 +15,7 @@ import java.nio.file.attribute.PosixFileAttributeView
 import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.attribute.PosixFilePermissions
 
-internal actual fun privateAtomicTextFileStore(
+actual fun privateAtomicTextFileStore(
     dataDir: File,
     privateDirectories: List<String>,
     fileName: String,
