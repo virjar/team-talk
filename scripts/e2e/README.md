@@ -10,6 +10,7 @@
 | `android_client.py` | 通过 uiautomator2 操作真实 Android Debug APK |
 | `peer.py` | 驱动第二个真实协议账户，用于好友、双向消息和群组场景 |
 | `document_fixture.py` | 为 Desktop/Android 文档 UI 验收幂等生成或归档 150 篇三层真实文档 |
+| `desktop_popup_menu_check.py` | 桌面消息气泡右键 popup 菜单回归用例：只走真实鼠标右键（/rightclick），断言应用菜单（快捷回应栏+回复/转发）弹出且可达；未跑通时退出码非 0。需先启动 desktop 验收实例并登录一个存在会话的账号 |
 
 这些工具只负责执行和观察，不定义产品预期。预期行为来自业务场景、客户端规范和协议契约。
 
