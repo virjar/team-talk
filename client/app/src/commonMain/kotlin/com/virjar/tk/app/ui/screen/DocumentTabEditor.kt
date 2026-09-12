@@ -602,13 +602,22 @@ internal fun DocumentTabEditor(
     }
 
     Box(modifier) {
-    Column(Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 14.dp)) {
+    // 移动端编辑态顶部不留白：标题行已折叠，顶边距一并清零（内测反馈）。
+    val mobileEditHidesTitleRow = mobileSingleDocumentMode && canEdit && !previewMode &&
+        !tab.creating && !tab.remoteMissing
+    val editorTopPadding = if (mobileEditHidesTitleRow) 0.dp else 14.dp
+    Column(
+        Modifier.fillMaxSize().padding(
+            start = 22.dp,
+            top = editorTopPadding,
+            end = 22.dp,
+            bottom = 14.dp,
+        )
+    ) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val compactHeader = maxWidth < 620.dp
             // 移动端编辑态把标题整行让给正文（内测反馈）：标题块/保存/评论折叠进动作行。
             // 新建与远端缺失草稿必须保留标题输入，不参与折叠。
-            val mobileEditHidesTitleRow = mobileSingleDocumentMode && canEdit && !previewMode &&
-                !tab.creating && !tab.remoteMissing
             if (compactHeader) {
                 Column(Modifier.fillMaxWidth()) {
                     if (!mobileEditHidesTitleRow) {
