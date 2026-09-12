@@ -19,6 +19,7 @@ import com.mohamedrejeb.richeditor.paragraph.type.ParagraphType
 import com.mohamedrejeb.richeditor.paragraph.type.UnorderedList
 import com.mohamedrejeb.richeditor.parser.RichTextStateParser
 import com.mohamedrejeb.richeditor.parser.html.BrElement
+import com.mohamedrejeb.richeditor.parser.html.brTagPattern
 import com.mohamedrejeb.richeditor.parser.html.RichTextStateHtmlParser
 import com.mohamedrejeb.richeditor.parser.html.htmlElementsSpanStyleEncodeMap
 import com.mohamedrejeb.richeditor.parser.utils.*
@@ -348,15 +349,15 @@ internal object RichTextStateMarkdownParser : RichTextStateParser<String> {
             onHtmlBlock = {
                 var html = it
 
+                // 逐个消费块首的换行标签（<br>、<br/>、<br />，大小写不敏感；内测反馈 T052）。
+                // 块首不是 br 时交回 HTML 解析器，保持原行为。
                 while (true) {
-                    val brIndex = html.indexOf("<br>")
-
-                    if (brIndex == -1)
-                        break
-
-                    html = html.substring(brIndex + 4)
+                    val trimmed = html.trimStart()
+                    val match = brTagPattern.find(trimmed) ?: break
+                    if (match.range.first != 0) break
 
                     onAddLineBreak()
+                    html = trimmed.substring(match.range.last + 1)
                 }
 
                 if (html.isNotBlank())

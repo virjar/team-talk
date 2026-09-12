@@ -81,3 +81,6 @@ internal val skippedHtmlElements = setOf(
 )
 
 internal const val BrElement = "br"
+
+/** Markdown 块中的换行标签：`<br>`、`<br/>`、`<br />`（大小写不敏感）。 */
+internal val brTagPattern = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)

@@ -537,6 +537,15 @@ internal object MdParser {
                         if (node.type !in markerTokens || !inStructure) {
                             val text = decodeCommonMarkPunctuationEscapes(node.getTextInNode(src).toString())
                             if (text.isNotEmpty()) {
+                                // <br>/<br/> 渲染为换行（内测反馈 T052）；其余 HTML 保持惰性字面量
+                                if (node.type == MarkdownElementTypes.HTML_BLOCK ||
+                                    node.type == MarkdownTokenTypes.HTML_TAG
+                                ) {
+                                    if (RichEditorMarkdownCapability.isLineBreakOnlyHtml(text)) {
+                                        out += MdSpan.Text("\n")
+                                        return
+                                    }
+                                }
                                 out += if (style.bold || style.italic || style.strike || style.code) {
                                     style.copy(text = text)
                                 } else {

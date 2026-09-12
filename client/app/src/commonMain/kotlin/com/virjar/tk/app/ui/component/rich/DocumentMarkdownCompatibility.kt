@@ -46,6 +46,18 @@ internal data class RichEditorMarkdownCapability(
     companion object {
         private val parser = MarkdownParser(GFMFlavourDescriptor())
 
+        /** `<br>`、`<br/>`、`<br />`（大小写不敏感）。 */
+        internal val LINE_BREAK_TAG = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
+
+        /**
+         * 文本是否只由换行标签组成（渲染为换行，不按 HTML 处理）。按行切分——标签内部的
+         * 空格属于 `<br />` 语法，不能当分隔符；空串不是换行。
+         */
+        internal fun isLineBreakOnlyHtml(text: String): Boolean {
+            val lines = text.split(Regex("\\r?\\n")).map { it.trim() }.filter { it.isNotEmpty() }
+            return lines.isNotEmpty() && lines.all { LINE_BREAK_TAG.matches(it) }
+        }
+
         fun inspect(markdown: String, allowCanonicalAssetImages: Boolean = false): RichEditorMarkdownCapability {
             if (markdown.isEmpty()) return RichEditorMarkdownCapability(emptySet())
             if (DocumentMarkdownEditorBudget.exceeds(markdown)) {
@@ -102,8 +114,14 @@ internal data class RichEditorMarkdownCapability(
                     unsupported += RichEditorUnsupportedMarkdownFeature.IMAGE
                 }
 
-                MarkdownElementTypes.HTML_BLOCK, MarkdownTokenTypes.HTML_TAG ->
-                    unsupported += RichEditorUnsupportedMarkdownFeature.RAW_HTML
+                MarkdownElementTypes.HTML_BLOCK, MarkdownTokenTypes.HTML_TAG -> {
+                    // 纯换行标签（<br>/<br/>/<br />）放行：编辑器与气泡渲染都把它处理为
+                    // 换行（内测反馈 T052）；其余 HTML 仍视为未建模结构留在源码。
+                    val text = getTextInNode(markdown).toString()
+                    if (!isLineBreakOnlyHtml(text)) {
+                        unsupported += RichEditorUnsupportedMarkdownFeature.RAW_HTML
+                    }
+                }
 
                 MarkdownElementTypes.SETEXT_1, MarkdownElementTypes.SETEXT_2 ->
                     unsupported += RichEditorUnsupportedMarkdownFeature.SETEXT_HEADING
