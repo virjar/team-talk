@@ -2,6 +2,7 @@ package com.virjar.tk.app.ui.screen
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -22,6 +23,7 @@ import com.virjar.tk.protocol.body.markdownContentOrNull
 import com.virjar.tk.protocol.model.ChatType
 import com.virjar.tk.protocol.model.EmbeddedAsset
 import com.virjar.tk.protocol.model.Message
+import com.virjar.tk.protocol.model.MentionPolicy
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.app.ui.UiActionAdmission
@@ -114,13 +116,27 @@ fun ChatPanel(
     val uiResultHandoff = remember(uiResultScope) { UiResultHandoff(uiResultScope) }
     val admittedMedia = rememberAdmittedChatMedia(media, actionAdmission)
     val admittedVoicePlayback = rememberAdmittedVoicePlayback(voicePlayback, actionAdmission)
-    val effectiveMentionClick = admittedMedia.onMentionClick
-    val effectiveUrlClick = admittedMedia.onUrlClick
+    // `all` 是保留提及身份（T056），不对应真实账号，点击不进入资料卡。
+    val mentionSafeMedia = admittedMedia.copy(
+        onMentionClick = admittedMedia.onMentionClick?.let { callback ->
+            { uid: String -> if (uid != MentionPolicy.ALL) callback(uid) }
+        },
+    )
+    val effectiveMentionClick = mentionSafeMedia.onMentionClick
+    val effectiveUrlClick = mentionSafeMedia.onUrlClick
+    // 群聊 @ 全体（内测反馈 T056）：合成保留身份 `all` 的候选行；点击该提及不做资料卡跳转。
+    val groupMentionCandidates = remember(mentionCandidates, chatType) {
+        if (chatType == ChatType.GROUP.code && mentionCandidates != null) {
+            listOf(MentionPolicy.allCandidate()) + mentionCandidates
+        } else {
+            mentionCandidates
+        }
+    }
     // 会话级正文展示上下文：整个会话内不变，作为单一参数下传消息列表与气泡。
     val messageContent = rememberMessageContentContext(
         resolveSender = resolveSender,
         admittedVoicePlayback = admittedVoicePlayback,
-        admittedMedia = admittedMedia,
+        admittedMedia = mentionSafeMedia,
     )
     val messages by viewModel.messages.collectAsState()
     val loading by viewModel.loading.collectAsState()
@@ -132,8 +148,15 @@ fun ChatPanel(
     val snackbarHostState = remember { SnackbarHostState() }
     val feedbackReporter = remember(telemetry) { UserFeedbackReporter(telemetry) }
     // Desktop 在 A -> B 切换时复用此组合槽位。给状态设置 key 可防止另一个会话的位置
-    // 成为本聊天的初始锚点。
-    val messageListState = key(chatId) { rememberLazyListState() }
+    // 成为本聊天的初始锚点。saveable 版本让 Android 推入附件预览等子页面后返回时
+    // 恢复原视口（反向布局 index 0 是最新边界；内测反馈 T049：预览返回不得重置到最新）。
+    val messageListState = key(chatId) {
+        rememberSaveable(key = chatId, saver = LazyListState.Saver) { LazyListState() }
+    }
+    // 从 SavedState 恢复在历史位置（非 0/0）说明用户此前正在翻历史：抑制最新锚定，
+    // 让恢复的位置保持原样；最新消息跟随也会因不在边界而自然停用。
+    val restoredMidHistory = messageListState.firstVisibleItemIndex > 0 ||
+        messageListState.firstVisibleItemScrollOffset > 0
 
     val visibleTypingUid = chatTypingPresentationUid(chatId, viewModel, chatForegroundActive)
 
@@ -151,7 +174,7 @@ fun ChatPanel(
         chatId = chatId,
         messages = messages,
         messageListState = messageListState,
-        suppressInitialAnchor = messageFocusTarget != null,
+        suppressInitialAnchor = messageFocusTarget != null || restoredMidHistory,
         suppressLatestFollow = messageFocusTarget != null &&
             (messageFocusState == MessageFocusState.Idle ||
                 messageFocusState.isLoadingOrAwaitingPosition()),
@@ -957,7 +980,7 @@ fun ChatPanel(
             } else ChatComposer(
                 myUid = myUid,
                 mentionQuery = mentionQuery,
-                mentionCandidates = mentionCandidates,
+                mentionCandidates = groupMentionCandidates,
                 onPickMention = actionAdmission.guard(::pickMention),
                 slashQuery = slashQuery,
                 onPickSlash = actionAdmission.guard(::pickSlash),
