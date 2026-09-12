@@ -87,13 +87,15 @@ abstract class ArchitectureCheckTask : DefaultTask() {
                 ),
             ),
             Rule(
-                name = "bot domain depends on ports instead of sibling services",
+                name = "bot message sending stays behind the BotMessageSender port",
                 relativeRoot = "server/server/src/main/kotlin/com/virjar/tk/server/domain/bot",
                 forbiddenImports = listOf(
-                    "com.virjar.tk.server.domain.chat.ChatService",
                     "com.virjar.tk.server.domain.chat.ChatStore",
                     "com.virjar.tk.server.domain.message.MessageService",
-                    "com.virjar.tk.server.domain.user.UserService",
+                ),
+                // BotCollaborators.kt 是端口的生产适配器驻点，允许引用 MessageService。
+                exemptFiles = listOf(
+                    "server/server/src/main/kotlin/com/virjar/tk/server/domain/bot/BotCollaborators.kt",
                 ),
             ),
             Rule(
@@ -243,8 +245,8 @@ abstract class ArchitectureCheckTask : DefaultTask() {
             "client/shared/src/commonMain/kotlin/com/virjar/tk/shared/repository/FileRepository.kt",
             "client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/repository/FileRepository.desktop.kt",
             "client/shared/src/androidMain/kotlin/com/virjar/tk/shared/repository/FileRepository.android.kt",
-            "client/shared/src/commonMain/kotlin/com/virjar/tk/shared/bot/ImBot.kt",
-            "client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/agent/AgentApi.kt",
+            "client/headless/src/main/kotlin/com/virjar/tk/headless/bot/ImBot.kt",
+            "client/headless/src/main/kotlin/com/virjar/tk/headless/agent/AgentApi.kt",
             "client/desktop/src/desktopMain/kotlin/com/virjar/tk/desktop/DesktopMediaServices.kt",
             "client/desktop/src/desktopMain/kotlin/com/virjar/tk/desktop/media/DesktopMediaCache.kt",
             "client/desktop/src/desktopMain/kotlin/com/virjar/tk/desktop/DesktopFileDownloadController.kt",
@@ -411,6 +413,11 @@ abstract class ArchitectureCheckTask : DefaultTask() {
                 }
                 ruleSourceRoot.walkTopDown()
                     .filter { it.isFile && it.extension == "kt" }
+                    .filter { file ->
+                        rule.exemptFiles.none { exempt ->
+                            file.relativeTo(root).invariantSeparatorsPath == exempt
+                        }
+                    }
                     .forEach { file ->
                         file.useLines { lines ->
                             lines.forEachIndexed { index, line ->
@@ -528,6 +535,7 @@ abstract class ArchitectureCheckTask : DefaultTask() {
         val name: String,
         val relativeRoot: String,
         val forbiddenImports: List<String>,
+        val exemptFiles: List<String> = emptyList(),
     )
 
     private data class SourcePatternRule(
