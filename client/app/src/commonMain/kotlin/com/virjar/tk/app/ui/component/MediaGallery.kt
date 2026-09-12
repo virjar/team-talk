@@ -6,6 +6,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
@@ -26,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -216,12 +218,20 @@ private fun MediaGalleryContent(
         ) {
             Text(
                 "${pagerState.currentPage + 1} / ${items.size}",
-                color = Color.White.copy(alpha = 0.8f),
+                color = Color.White.copy(alpha = 0.9f),
                 style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
-                modifier = Modifier.testTag("media.gallery.pageCounter"),
+                modifier = Modifier
+                    .testTag("media.gallery.pageCounter")
+                    // 半透明深色底：任何亮色内容上页码和按钮都可辨（内测反馈：白底上隐形）
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
             )
             Row(
                 verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(Color.Black.copy(alpha = 0.45f)),
             ) {
                 if (onSaveCurrent != null) {
                     IconButton(
