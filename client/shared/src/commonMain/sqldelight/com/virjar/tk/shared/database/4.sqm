@@ -1,8 +1,0 @@
-CREATE TABLE IF NOT EXISTS outgoing_chat_asset (
-    chat_id TEXT NOT NULL,
-    client_msg_id TEXT NOT NULL,
-    sender_uid TEXT NOT NULL,
-    asset_id TEXT NOT NULL,
-    PRIMARY KEY (chat_id, client_msg_id, asset_id)
-);
-CREATE INDEX IF NOT EXISTS outgoing_chat_asset_source ON outgoing_chat_asset(asset_id);

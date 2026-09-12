@@ -152,36 +152,20 @@ class ChatDraftRecoveryIntegrationTest {
     }
 
     @Test
-    fun `schema three upgrade preserves existing conversation draft and outgoing`() = database { file ->
+    fun `legacy schema one upgrade preserves existing conversation draft and outgoing`() = database { file ->
         cache(file, true) {
             it.setConversationDraft("chat", "原有草稿")
             it.enqueueOutgoingMessage(message("previous"), 1)
         }
         val driver = JdbcSqliteDriver("jdbc:sqlite:${file.path}")
         try {
-            listOf("outgoing_chat_asset", "chat_composer_clock", "chat_composer_draft", "chat_asset_upload").forEach { driver.execute(null, "DROP TABLE $it", 0) }
-            AppDatabase.Schema.migrate(driver, 3, 5)
+            V002_MIGRATION_TABLES.forEach { driver.execute(null, "DROP TABLE $it", 0) }
+            AppDatabase.Schema.migrate(driver, 1, 2)
         } finally { driver.close() }
         cache(file) {
             assertEquals("原有草稿", it.getPendingConversationDraft("chat")?.draft)
             assertNotNull(it.getOutgoingMessage("chat", "previous"))
             assertTrue(it.chatAssetUploads.jobs().isEmpty())
-        }
-    }
-
-    @Test
-    fun `schema four upgrade retains rich draft upload source and identity`() = database { file ->
-        val job = upload()
-        cache(file, true) { it.chatDrafts.save(draft()); it.chatAssetUploads.register(job) }
-        val driver = JdbcSqliteDriver("jdbc:sqlite:${file.path}")
-        try {
-            driver.execute(null, "DROP TABLE outgoing_chat_asset", 0)
-            AppDatabase.Schema.migrate(driver, 4, 5)
-        } finally { driver.close() }
-        cache(file) {
-            assertEquals(draft(), it.chatDrafts.get("chat"))
-            assertEquals(job, it.chatAssetUploads.jobs().single())
-            assertEquals(setOf(job.sourceId), it.chatAssetUploads.retainedSourceIds())
         }
     }
 
@@ -252,5 +236,13 @@ class ChatDraftRecoveryIntegrationTest {
         try { block(cache) } finally { cache.close() }
     }
     private fun id(value: Long) = UUID(0, value).toString()
-    companion object { private const val ID = "00000000-0000-4000-8000-000000000001" }
+    companion object {
+        private const val ID = "00000000-0000-4000-8000-000000000001"
+        private val V002_MIGRATION_TABLES = listOf(
+            "document_comment_pages", "pending_document_comments",
+            "task_projection", "task_pages", "pending_task_commands", "task_reminders",
+            "chat_composer_clock", "chat_composer_draft", "chat_asset_upload",
+            "outgoing_chat_asset", "chat_draft_sync",
+        )
+    }
 }

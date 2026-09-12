@@ -621,11 +621,7 @@ dataset ID 和迁移完成记录，只执行尚未完成的已知迁移。不会
 |---|---|---|
 | `0` | `expand_client_telemetry_protocol_id` | 把已有 `client_telemetry_devices.protocol_version` CHECK 从 `0..255` 放宽为非负 PostgreSQL INTEGER；保留每行内容、主键、时间和 dataset |
 | `1` | `create_banned_credential_tombstones` | 追加已封禁账号的 refresh token 摘要墓碑表，保留现有凭据及业务资料 |
-| `2` | `create_admin_security` | 追加单实例管理员凭据和有界操作审计表 |
-| `3` | `create_document_comments` | 追加文档评论与创建指纹、分页索引，不改写已有文档正文或修订 |
-| `4` | `create_content_search_pending` | 追加文档与群文件每资源单槽的待投影修订表；现有内容保留，索引由当前对象建立 |
-| `5` | `create_tasks` | 追加独立任务、审计与命令收据；保留原用户、消息、文档和 dataset |
-| `6` | `create_chat_drafts` | 追加同账号完整聊天草稿、私有资产引用与命令收据；保留原会话字符串草稿、消息、附件和 dataset |
+| `2` | `create_v0_0_2_tables` | v0.0.2 发布批次的单条增量：追加管理员凭据/审计、文档评论、内容搜索待投影、任务三表、聊天草稿三表、多厂商推送注册表与管理功能开关表，并为 `conversations` 补 `mentioned` 列；全部为新增对象与 `IF NOT EXISTS` 列追加，保留既有数据与 dataset |
 
 `DatabaseFactory` 在建立业务容器前完成这一步。已有库的启动事务先锁定 `schema_metadata`，再校验
 布局和读取迁移记录；事务使用 `READ_COMMITTED`，等待另一启动事务结束后能看到它刚提交的记录。

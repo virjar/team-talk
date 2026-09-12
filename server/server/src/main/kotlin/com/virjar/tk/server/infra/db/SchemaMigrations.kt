@@ -17,28 +17,8 @@ internal object SchemaMigrations : Table("schema_migrations") {
 
 private class SchemaMigration(val name: String, val apply: Transaction.() -> Unit)
 
-/** 历史账目 create_xiaomi_push_registrations 引用的原始表定义；现行表对象为 [OemPushRegistrations]。 */
-private object XiaomiPushRegistrations : Table("xiaomi_push_registrations") {
-    val refreshTokenHash = varchar("refresh_token_hash", 64)
-    val registrationId = varchar("registration_id", 4096)
-    val registrationHash = varchar("registration_hash", 64).uniqueIndex()
-    val generation = varchar("generation", 36)
-    val packageName = varchar("package_name", 255)
-    val deploymentFingerprint = varchar("deployment_fingerprint", 64)
-    val pendingEventId = long("pending_event_id").default(0)
-    val deliveredEventId = long("delivered_event_id").default(0)
-    val pendingChats = text("pending_chats").default("{}")
-    val attempts = integer("attempts").default(0)
-    val nextAttemptAt = long("next_attempt_at").default(0)
-    val lastFailure = varchar("last_failure", 40).nullable()
-    override val primaryKey = PrimaryKey(refreshTokenHash)
-
-    init {
-        index("idx_xiaomi_push_due", false, nextAttemptAt)
-    }
-}
-
 // Append only. Retain the order, name and SQL of already released migrations.
+// v0.0.2 开发期的全部表结构增量按发布批次收敛为一条：未发行中间态（含小米单厂商表）不再保留账目。
 private val schemaMigrations = listOf(
     SchemaMigration("expand_client_telemetry_protocol_id") {
         // PostgreSQL INTEGER already has Int.MAX_VALUE as its upper bound. Keep rejecting negatives.
@@ -53,46 +33,16 @@ private val schemaMigrations = listOf(
         // T013：封禁账号的 refresh token 摘要墓碑，支持把旧凭据重连权威判定为账号封禁。
         SchemaUtils.create(BannedCredentialTombstones)
     },
-    SchemaMigration("create_admin_security") {
-        SchemaUtils.create(AdminSecurityCredentials, AdminSecurityAudits)
-    },
-    SchemaMigration("create_document_comments") {
-        SchemaUtils.create(DocumentComments)
-    },
-    SchemaMigration("create_content_search_pending") {
-        SchemaUtils.create(ContentSearchPending)
-    },
-    SchemaMigration("create_tasks") {
-        SchemaUtils.create(WorkTasks, TaskAudits, TaskCommands)
-    },
-    SchemaMigration("create_chat_drafts") {
-        SchemaUtils.create(ChatDrafts, ChatDraftAssets, ChatDraftCommands)
-    },
-    SchemaMigration("create_xiaomi_push_registrations") {
-        SchemaUtils.create(XiaomiPushRegistrations)
-    },
-    SchemaMigration("generalize_oem_push_registrations") {
-        // 单一小米通道扩展为多厂商注册表。全新库已按最终布局建表且账目回放会重建空的小米旧表，
-        // 此时直接丢弃回放产物；历史库则保留数据改名。
-        exec(
-            """
-            DO $$ BEGIN
-                IF to_regclass('xiaomi_push_registrations') IS NOT NULL THEN
-                    IF to_regclass('oem_push_registrations') IS NOT NULL THEN
-                        DROP TABLE xiaomi_push_registrations;
-                    ELSE
-                        ALTER TABLE xiaomi_push_registrations RENAME TO oem_push_registrations;
-                    END IF;
-                END IF;
-            END $$;
-            """.trimIndent(),
+    SchemaMigration("create_v0_0_2_tables") {
+        SchemaUtils.create(
+            AdminSecurityCredentials, AdminSecurityAudits,
+            DocumentComments,
+            ContentSearchPending,
+            WorkTasks, TaskAudits, TaskCommands,
+            ChatDrafts, ChatDraftAssets, ChatDraftCommands,
+            OemPushRegistrations,
+            AdminFeatureSettings,
         )
-        exec("ALTER TABLE oem_push_registrations ADD COLUMN IF NOT EXISTS vendor varchar(16) NOT NULL DEFAULT 'xiaomi'")
-    },
-    SchemaMigration("create_admin_feature_settings") {
-        SchemaUtils.create(AdminFeatureSettings)
-    },
-    SchemaMigration("add_conversations_mentioned") {
         exec("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS mentioned boolean NOT NULL DEFAULT FALSE")
     },
 )

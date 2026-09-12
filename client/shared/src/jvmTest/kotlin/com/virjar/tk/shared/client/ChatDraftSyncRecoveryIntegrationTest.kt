@@ -317,7 +317,7 @@ class ChatDraftSyncRecoveryIntegrationTest {
     }
 
     @Test
-    fun `schema five migration preserves rich draft upload and queued source ownership`() = runBlocking {
+    fun `single step migration replay preserves rich draft upload and queued source ownership`() = runBlocking {
         database { file ->
             cache(file, true) { cache ->
                 cache.chatDrafts.save(ChatDraftSnapshot(CHAT, 1, markdown(), listOf(asset())))
@@ -325,10 +325,11 @@ class ChatDraftSyncRecoveryIntegrationTest {
                 cache.enqueueFromComposer(message("pending", markdown()).copy(body = RichTextBody(markdown(), plainText = "file", assets = listOf(asset()))), 1, System.currentTimeMillis())
                 cache.chatDrafts.save(ChatDraftSnapshot(CHAT, 2, "new local draft"))
             }
+            // 旧库认领路径会在已有部分 v0.0.2 对象的库上重放整条迁移；重放必须幂等。
             val driver = JdbcSqliteDriver("jdbc:sqlite:${file.path}")
             try {
                 driver.execute(null, "DROP TABLE chat_draft_sync", 0)
-                AppDatabase.Schema.migrate(driver, 5, 6)
+                AppDatabase.Schema.migrate(driver, 1, 2)
             } finally { driver.close() }
             cache(file) { cache ->
                 assertEquals("new local draft", cache.chatDrafts.get(CHAT)?.markdown)

@@ -6,29 +6,40 @@ import java.sql.SQLException
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SchemaMigrationIntegrationTest {
     @Test
-    fun `task migration appends tables without changing the existing dataset or users`() {
+    fun `v0_0_2 migration recreates dropped tables without changing the existing dataset or users`() {
         PostgresSchemaLease.open().use { lease ->
             val datasetId = open(lease).use { it.datasetId }
             lease.openConnection().use { connection -> connection.createStatement().use { statement ->
                 // This isolated fixture emulates the immediately preceding schema, never a live instance.
-                statement.execute("DROP TABLE chat_draft_commands, chat_draft_assets, chat_drafts, task_commands, task_audits, work_tasks")
-                statement.execute("DELETE FROM schema_migrations WHERE version >= 5")
+                statement.execute(
+                    "DROP TABLE admin_security_audits, admin_security_credentials, document_comments, " +
+                        "content_search_pending, task_commands, task_audits, work_tasks, " +
+                        "chat_draft_commands, chat_draft_assets, chat_drafts, " +
+                        "oem_push_registrations, admin_feature_settings",
+                )
+                statement.execute("DELETE FROM schema_migrations WHERE version >= 2")
                 statement.execute("INSERT INTO users (uid, username, name, password_hash, created_at, updated_at) " +
-                    "VALUES ('kept-task-owner', 'kept-task-owner', 'kept owner', 'fixture-only', 11, 12)")
+                    "VALUES ('kept-table-owner', 'kept-table-owner', 'kept owner', 'fixture-only', 11, 12)")
             } }
             open(lease).use { assertEquals(datasetId, it.datasetId) }
             lease.openConnection().use { connection -> connection.createStatement().use { statement ->
-                statement.executeQuery("SELECT name FROM schema_migrations WHERE version = 5").use {
-                    assertTrue(it.next()); assertEquals("create_tasks", it.getString(1))
+                statement.executeQuery("SELECT name FROM schema_migrations WHERE version = 2").use {
+                    assertTrue(it.next()); assertEquals("create_v0_0_2_tables", it.getString(1))
                 }
-                statement.executeQuery("SELECT name, created_at FROM users WHERE uid = 'kept-task-owner'").use {
+                statement.executeQuery("SELECT name, created_at FROM users WHERE uid = 'kept-table-owner'").use {
                     assertTrue(it.next()); assertEquals("kept owner", it.getString(1)); assertEquals(11L, it.getLong(2))
                 }
-                listOf("work_tasks", "task_audits", "task_commands").forEach { table ->
+                listOf(
+                    "admin_security_credentials", "admin_security_audits", "document_comments",
+                    "content_search_pending", "work_tasks", "task_audits", "task_commands",
+                    "chat_drafts", "chat_draft_assets", "chat_draft_commands",
+                    "oem_push_registrations", "admin_feature_settings",
+                ).forEach { table ->
                     statement.executeQuery("SELECT count(*) FROM $table").use { assertTrue(it.next()); assertEquals(0, it.getInt(1)) }
                 }
             } }
@@ -37,22 +48,24 @@ class SchemaMigrationIntegrationTest {
     }
 
     @Test
-    fun `ready draft migration preserves existing conversation draft and dataset`() {
+    fun `v0_0_2 migration preserves existing conversation draft rows and restores the mentioned column`() {
         PostgresSchemaLease.open().use { lease ->
             val datasetId = open(lease).use { it.datasetId }
             lease.openConnection().use { connection -> connection.createStatement().use { statement ->
                 statement.execute("DROP TABLE chat_draft_commands, chat_draft_assets, chat_drafts")
-                statement.execute("DELETE FROM schema_migrations WHERE version >= 6")
+                statement.execute("ALTER TABLE conversations DROP COLUMN mentioned")
+                statement.execute("DELETE FROM schema_migrations WHERE version >= 2")
                 statement.execute("INSERT INTO conversations (uid, chat_id, chat_type, draft, version, updated_at) " +
                     "VALUES ('kept-draft-owner', 'kept-draft-chat', 1, 'existing markdown', 8, 12)")
             } }
             open(lease).use { assertEquals(datasetId, it.datasetId) }
             lease.openConnection().use { connection -> connection.createStatement().use { statement ->
-                statement.executeQuery("SELECT draft, version FROM conversations WHERE uid = 'kept-draft-owner'").use {
+                statement.executeQuery("SELECT draft, version, mentioned FROM conversations WHERE uid = 'kept-draft-owner'").use {
                     assertTrue(it.next()); assertEquals("existing markdown", it.getString(1)); assertEquals(8L, it.getLong(2))
+                    assertFalse(it.getBoolean(3))
                 }
-                statement.executeQuery("SELECT name FROM schema_migrations WHERE version = 6").use {
-                    assertTrue(it.next()); assertEquals("create_chat_drafts", it.getString(1))
+                statement.executeQuery("SELECT name FROM schema_migrations WHERE version = 2").use {
+                    assertTrue(it.next()); assertEquals("create_v0_0_2_tables", it.getString(1))
                 }
                 listOf("chat_drafts", "chat_draft_assets", "chat_draft_commands").forEach { table ->
                     statement.executeQuery("SELECT count(*) FROM $table").use { assertTrue(it.next()); assertEquals(0, it.getInt(1)) }
@@ -63,13 +76,12 @@ class SchemaMigrationIntegrationTest {
     }
 
     @Test
-    fun `xiaomi registration migration preserves credentials and dataset`() {
+    fun `v0_0_2 migration recreates oem push registrations and preserves credentials`() {
         PostgresSchemaLease.open().use { lease ->
             val datasetId = open(lease).use { it.datasetId }
             lease.openConnection().use { connection -> connection.createStatement().use { statement ->
-                // 全新库按最终布局建表；回滚到迁移 7 之前需删除现行表，由账目重建小米旧表。
                 statement.execute("DROP TABLE oem_push_registrations")
-                statement.execute("DELETE FROM schema_migrations WHERE version >= 7")
+                statement.execute("DELETE FROM schema_migrations WHERE version >= 2")
                 statement.execute("INSERT INTO users (uid, username, name, password_hash, created_at, updated_at) " +
                     "VALUES ('push-kept-user', 'push-kept-user', 'kept', 'fixture-only', 11, 12)")
                 statement.execute("INSERT INTO credentials (token_hash, token_type, uid, device_id, device_flag, " +
@@ -78,64 +90,14 @@ class SchemaMigrationIntegrationTest {
             } }
             open(lease).use { assertEquals(datasetId, it.datasetId) }
             lease.openConnection().use { connection -> connection.createStatement().use { statement ->
-                statement.executeQuery("SELECT name FROM schema_migrations WHERE version = 7").use {
-                    assertTrue(it.next()); assertEquals("create_xiaomi_push_registrations", it.getString(1))
-                }
-                statement.executeQuery("SELECT name FROM schema_migrations WHERE version = 8").use {
-                    assertTrue(it.next()); assertEquals("generalize_oem_push_registrations", it.getString(1))
+                statement.executeQuery("SELECT name FROM schema_migrations WHERE version = 2").use {
+                    assertTrue(it.next()); assertEquals("create_v0_0_2_tables", it.getString(1))
                 }
                 statement.executeQuery("SELECT expires_at FROM credentials WHERE token_hash = 'fixture-refresh-hash'").use {
                     assertTrue(it.next()); assertEquals(99L, it.getLong(1))
                 }
-                // 迁移 8 把小米表改名为多厂商表；行数断言针对最终表名。
                 statement.executeQuery("SELECT count(*) FROM oem_push_registrations").use {
                     assertTrue(it.next()); assertEquals(0, it.getInt(1))
-                }
-            } }
-            open(lease).use { assertEquals(datasetId, it.datasetId) }
-        }
-    }
-
-    @Test
-    fun `oem registration migration renames the xiaomi table and preserves its rows`() {
-        PostgresSchemaLease.open().use { lease ->
-            val datasetId = open(lease).use { it.datasetId }
-            lease.openConnection().use { connection -> connection.createStatement().use { statement ->
-                // Emulate the layout right after migration 7: only the xiaomi table exists, with one row.
-                statement.execute("DROP TABLE oem_push_registrations")
-                statement.execute("DELETE FROM schema_migrations WHERE version >= 7")
-                statement.execute("INSERT INTO users (uid, username, name, password_hash, created_at, updated_at) " +
-                    "VALUES ('oem-kept-user', 'oem-kept-user', 'kept', 'fixture-only', 11, 12)")
-                statement.execute("INSERT INTO credentials (token_hash, token_type, uid, device_id, device_flag, " +
-                    "user_credential_epoch, device_credential_epoch, created_at, expires_at) " +
-                    "VALUES ('oem-fixture-refresh', 2, 'oem-kept-user', 'device', 1, 1, 1, 11, 99)")
-                statement.execute(
-                    "CREATE TABLE xiaomi_push_registrations (" +
-                        "refresh_token_hash varchar(64) PRIMARY KEY REFERENCES credentials(token_hash) ON DELETE CASCADE, " +
-                        "registration_id varchar(4096), registration_hash varchar(64), generation varchar(36), " +
-                        "package_name varchar(255), deployment_fingerprint varchar(64), " +
-                        "pending_event_id bigint DEFAULT 0, delivered_event_id bigint DEFAULT 0, " +
-                        "pending_chats text DEFAULT '{}', attempts integer DEFAULT 0, " +
-                        "next_attempt_at bigint DEFAULT 0, last_failure varchar(40))",
-                )
-                statement.execute(
-                    "INSERT INTO xiaomi_push_registrations (refresh_token_hash, registration_id, registration_hash, " +
-                        "generation, package_name, deployment_fingerprint) VALUES " +
-                        "('oem-fixture-refresh', 'fixture-reg', 'hash', 'gen', 'com.example', '" + "a".repeat(64) + "')",
-                )
-            } }
-            open(lease).use { assertEquals(datasetId, it.datasetId) }
-            lease.openConnection().use { connection -> connection.createStatement().use { statement ->
-                statement.executeQuery("SELECT name FROM schema_migrations WHERE version = 8").use {
-                    assertTrue(it.next()); assertEquals("generalize_oem_push_registrations", it.getString(1))
-                }
-                statement.executeQuery(
-                    "SELECT vendor, registration_id FROM oem_push_registrations",
-                ).use {
-                    assertTrue(it.next())
-                    assertEquals("xiaomi", it.getString(1))
-                    assertEquals("fixture-reg", it.getString(2))
-                    assertTrue(!it.next())
                 }
             } }
             open(lease).use { assertEquals(datasetId, it.datasetId) }

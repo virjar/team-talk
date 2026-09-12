@@ -203,17 +203,18 @@ class TaskRecoveryIntegrationTest {
     }
 
     @Test
-    fun `task schema migration preserves existing pending comments`() = runBlocking {
+    fun `task tables survive single step migration replay beside pending comments`() = runBlocking {
         database { file ->
             cache(file, true) { cache ->
                 cache.documentComments.prepare(PendingDocumentComment(ID, ID, ID, PendingDocumentComment.CREATE, "保留旧资料"))
             }
+            // 旧库认领路径会在已有部分 v0.0.2 对象的库上重放整条迁移；重放必须幂等。
             val driver = JdbcSqliteDriver("jdbc:sqlite:${file.path}")
             try {
                 listOf("task_projection", "task_pages", "pending_task_commands", "task_reminders").forEach {
                     driver.execute(null, "DROP TABLE $it", 0)
                 }
-                AppDatabase.Schema.migrate(driver, 2, 3)
+                AppDatabase.Schema.migrate(driver, 1, 2)
             } finally { driver.close() }
             cache(file) { cache ->
                 assertEquals("保留旧资料", cache.documentComments.pending().single().body)

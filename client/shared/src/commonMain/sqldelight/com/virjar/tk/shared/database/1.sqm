@@ -1,3 +1,5 @@
+-- v0.0.2 单步迁移：文档评论、任务、富聊天草稿/上传、外发资产与草稿同步全部为新增对象，
+-- 全程 IF NOT EXISTS / INSERT OR IGNORE，旧库认领重放与新库直建互不冲突。
 CREATE TABLE IF NOT EXISTS document_comment_pages (
     space_id TEXT NOT NULL,
     document_id TEXT NOT NULL,
@@ -8,5 +10,59 @@ CREATE TABLE IF NOT EXISTS document_comment_pages (
 );
 CREATE TABLE IF NOT EXISTS pending_document_comments (
     comment_id TEXT NOT NULL PRIMARY KEY,
+    payload TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS task_projection (
+    task_id TEXT NOT NULL PRIMARY KEY,
+    payload BLOB NOT NULL,
+    touched_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS task_pages (
+    view INTEGER NOT NULL,
+    cursor TEXT NOT NULL,
+    payload BLOB NOT NULL,
+    stale INTEGER NOT NULL DEFAULT 0,
+    touched_at INTEGER NOT NULL,
+    PRIMARY KEY (view, cursor)
+);
+CREATE TABLE IF NOT EXISTS pending_task_commands (
+    task_id TEXT NOT NULL PRIMARY KEY,
+    operation_id TEXT NOT NULL UNIQUE,
+    payload TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS task_reminders (
+    task_id TEXT NOT NULL PRIMARY KEY,
+    revision INTEGER NOT NULL,
+    reminded_at INTEGER NOT NULL,
+    seen INTEGER NOT NULL DEFAULT 0,
+    notified INTEGER NOT NULL DEFAULT 0,
+    confirmed INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS chat_composer_clock (id INTEGER NOT NULL PRIMARY KEY CHECK (id = 1), revision INTEGER NOT NULL);
+INSERT OR IGNORE INTO chat_composer_clock(id, revision) VALUES (1, 0);
+CREATE TABLE IF NOT EXISTS chat_composer_draft (
+    chat_id TEXT NOT NULL PRIMARY KEY,
+    revision INTEGER NOT NULL,
+    is_empty INTEGER NOT NULL,
+    payload BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chat_asset_upload (
+    asset_id TEXT NOT NULL PRIMARY KEY,
+    chat_id TEXT NOT NULL,
+    source_id TEXT NOT NULL UNIQUE,
+    referenced INTEGER NOT NULL DEFAULT 0,
+    payload BLOB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS chat_asset_upload_chat ON chat_asset_upload(chat_id);
+CREATE TABLE IF NOT EXISTS outgoing_chat_asset (
+    chat_id TEXT NOT NULL,
+    client_msg_id TEXT NOT NULL,
+    sender_uid TEXT NOT NULL,
+    asset_id TEXT NOT NULL,
+    PRIMARY KEY (chat_id, client_msg_id, asset_id)
+);
+CREATE INDEX IF NOT EXISTS outgoing_chat_asset_source ON outgoing_chat_asset(asset_id);
+CREATE TABLE IF NOT EXISTS chat_draft_sync (
+    chat_id TEXT NOT NULL PRIMARY KEY,
     payload TEXT NOT NULL
 );
