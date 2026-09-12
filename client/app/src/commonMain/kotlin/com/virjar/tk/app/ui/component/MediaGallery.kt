@@ -8,7 +8,10 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -31,13 +34,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.virjar.tk.protocol.model.Attachment
 import kotlinx.coroutines.launch
-import androidx.compose.foundation.gestures.rememberTransformableState
-import androidx.compose.foundation.gestures.transformable
+import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 
 /**
  * 全屏沉浸式媒体画廊（对标 Telegram/Signal）。
@@ -301,10 +306,11 @@ private fun GalleryPageButton(
 /**
  * 可缩放图片页。
  *
- * 关键设计：缩放手势只在 scale > 1 时激活。
- * scale == 1 时，单指滑动穿透到 HorizontalPager 做切页，
- * 单击穿透到 onSingleTap 关闭画廊。
- * 只有双指 pinch 或已放大后的拖拽才被此处消费。
+ * 手势语义（内测反馈 T050）：
+ * - scale == 1 且单指：不消费任何事件——横滑穿透到 HorizontalPager 切页，单击关闭画廊；
+ * - 双指 pinch 或 scale > 1 后的单指拖动：消费并做缩放/平移（平移按缩放余量钳制）；
+ * - 缩回 1x：复位到居中，单指横滑恢复切页。
+ * 因此不能用 transformable（它对单指拖动同样消费，会永久吃掉 Pager 的切页手势）。
  */
 @Composable
 private fun ZoomableImagePage(
@@ -315,17 +321,23 @@ private fun ZoomableImagePage(
 ) {
     var scale by remember(attachment.path) { mutableFloatStateOf(1f) }
     var offset by remember(attachment.path) { mutableStateOf(Offset.Zero) }
+    var viewport by remember { mutableStateOf(IntSize.Zero) }
 
-    // 捏合缩放（多指）+ 双击缩放；单指拖拽仅在放大后生效，否则穿透到 Pager 翻页。
-    val transformState = rememberTransformableState { zoomChange, panChange, _ ->
-        val newScale = (scale * zoomChange).coerceIn(1f, 5f)
+    fun applyTransform(zoom: Float, pan: Offset) {
+        val newScale = (scale * zoom).coerceIn(1f, 5f)
         scale = newScale
-        offset = if (newScale <= 1.01f) Offset.Zero else offset + panChange
+        if (newScale <= 1.01f) {
+            offset = Offset.Zero
+            return
+        }
+        val maxX = (newScale - 1f) * viewport.width / 2f
+        val maxY = (newScale - 1f) * viewport.height / 2f
+        offset = Offset(
+            (offset.x + pan.x).coerceIn(-maxX, maxX),
+            (offset.y + pan.y).coerceIn(-maxY, maxY),
+        )
     }
 
-    // 双击：1x ↔ 2.5x
-    // 拖拽平移：仅放大后生效；未放大时手势穿透到 Pager 翻页
-    // 硬裁剪：放大后的位图绝不绘制到相邻 pager 页上
     Box(
         modifier = modifier.clipToBounds(),
         contentAlignment = Alignment.Center,
@@ -333,6 +345,26 @@ private fun ZoomableImagePage(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .onSizeChanged { viewport = it }
+                .pointerInput(attachment.path) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val pressed = event.changes.count { it.pressed }
+                            if (pressed == 0) break
+                            val zoom = event.calculateZoom()
+                            val pan = event.calculatePan()
+                            // 仅在多指或已放大时接管；1x 单指放行给 Pager 切页与单击关闭
+                            if (pressed > 1 || scale > 1.01f) {
+                                if (zoom != 1f || pan != Offset.Zero) {
+                                    event.changes.forEach { if (it.positionChanged()) it.consume() }
+                                    applyTransform(zoom, pan)
+                                }
+                            }
+                        }
+                    }
+                }
                 .pointerInput(attachment.path) {
                     detectTapGestures(
                         onTap = { onSingleTap() },
@@ -345,7 +377,6 @@ private fun ZoomableImagePage(
                         },
                     )
                 }
-                .transformable(transformState)
                 .graphicsLayer {
                     scaleX = scale; scaleY = scale
                     translationX = offset.x; translationY = offset.y
