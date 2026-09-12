@@ -38,7 +38,7 @@ class ChatAssetUploadRecoveryIntegrationTest {
             fun spool(account: AccountDataOwner = owner) = createChatAssetSpool(f.root, account,
                 quotaBytes = sourceBytes.size.toLong(), maxEntries = 1)
             fun cache(account: AccountDataOwner = owner) = createDesktopLocalCache(deployment, account.datasetId, account.uid, f.root)
-            fun coordinator(cache: LocalCache, spool: ChatAssetSpool) = ChatAssetUploadCoordinator(cache.chatDrafts,
+            fun coordinator(cache: LocalCache, spool: ChatAssetSpool) = ChatAssetUploadCoordinator(cache.chatAssetUploads,
                 FileRepository("http://127.0.0.1:${f.server.address.port}", owner.uid,
                     { SessionHttpCredentials(owner.uid, "fixture-token") }),
                 spool, MutableStateFlow(ConnectionState.DISCONNECTED))
@@ -47,7 +47,7 @@ class ChatAssetUploadRecoveryIntegrationTest {
             val original = cache()
             try {
                 original.chatDrafts.save(f.draft())
-                original.chatDrafts.register(ChatAssetUpload(ID, "chat", staged.sourceId, staged.length, staged.sha256,
+                original.chatAssetUploads.register(ChatAssetUpload(ID, "chat", staged.sourceId, staged.length, staged.sha256,
                     "draft.txt", "text/plain", false, UUID.randomUUID().toString(), System.currentTimeMillis()))
             } finally { original.close() }
             val database = File(f.root, "deployments/${owner.deploymentFingerprint}/datasets/${owner.datasetId}/users/${owner.uid}/cache_e0.db")
@@ -58,7 +58,7 @@ class ChatAssetUploadRecoveryIntegrationTest {
             val retained = spool()
             val uploads = coordinator(replacement, retained)
             try {
-                assertTrue(replacement.chatDrafts.jobs().isEmpty(), "quarantine must not be replayed into the replacement")
+                assertTrue(replacement.chatAssetUploads.jobs().isEmpty(), "quarantine must not be replayed into the replacement")
                 assertNull(replacement.chatDrafts.get("chat"))
                 uploads.remove(ID) // Await a cleanup attempt; the orphaned source is no longer referenced.
                 assertTrue(retained.list().isEmpty(), "orphaned source of the deleted corrupt family is collected")
@@ -88,22 +88,22 @@ class ChatAssetUploadRecoveryIntegrationTest {
             try {
                 cache.chatDrafts.save(f.draft())
                 val original = uploads.registerPrepared("chat", ID, "frozen-source".encodeToByteArray().asSmallUploadSource(), "draft.txt", "text/plain", false)
-                eventually { cache.chatDrafts.jobs().singleOrNull()?.state == ChatAssetUploadState.QUEUED && f.requests.size == 1 }
+                eventually { cache.chatAssetUploads.jobs().singleOrNull()?.state == ChatAssetUploadState.QUEUED && f.requests.size == 1 }
                 uploads.close()
                 cache.close()
                 cache = f.cache()
                 uploads = f.coordinator(cache)
-                eventually { cache.chatDrafts.jobs().singleOrNull()?.state == ChatAssetUploadState.READY }
+                eventually { cache.chatAssetUploads.jobs().singleOrNull()?.state == ChatAssetUploadState.READY }
                 assertEquals(2, f.requests.size)
                 assertEquals(f.requests[0], f.requests[1])
-                assertEquals(original.uploadId, cache.chatDrafts.jobs().single().uploadId)
+                assertEquals(original.uploadId, cache.chatAssetUploads.jobs().single().uploadId)
                 assertEquals(1, f.spool().list().size)
                 assertNull(cache.getOutgoingMessage("chat", "send"))
                 val restored = checkNotNull(cache.chatDrafts.get("chat"))
                 cache.enqueueFromComposer(Message(chatId = "chat", clientMsgId = "send", senderUid = "owner",
                     messageType = MessageType.RICH_TEXT.code, timestamp = 1,
                     body = buildRichTextBody(restored.markdown, restored.assets)), restored.revision, 1)
-                assertTrue(cache.chatDrafts.jobs().isEmpty(), "Outbox-owned imports must not replay into the composer")
+                assertTrue(cache.chatAssetUploads.jobs().isEmpty(), "Outbox-owned imports must not replay into the composer")
                 assertEquals(1, f.spool().list().size)
                 uploads.close()
                 cache.close()
@@ -126,13 +126,13 @@ class ChatAssetUploadRecoveryIntegrationTest {
             try {
                 cache.chatDrafts.save(f.draft())
                 val original = uploads.registerPrepared("chat", ID, "frozen-source".encodeToByteArray().asSmallUploadSource(), "draft.txt", "text/plain", false)
-                eventually { cache.chatDrafts.jobs().singleOrNull()?.state == ChatAssetUploadState.FAILED }
-                assertEquals(original.sourceId, cache.chatDrafts.jobs().single().sourceId)
+                eventually { cache.chatAssetUploads.jobs().singleOrNull()?.state == ChatAssetUploadState.FAILED }
+                assertEquals(original.sourceId, cache.chatAssetUploads.jobs().single().sourceId)
                 uploads.retry(ID)
-                eventually { cache.chatDrafts.jobs().singleOrNull()?.state == ChatAssetUploadState.READY }
+                eventually { cache.chatAssetUploads.jobs().singleOrNull()?.state == ChatAssetUploadState.READY }
                 assertEquals(2, f.requests.size)
                 assertNotEquals(f.requests[0].first, f.requests[1].first)
-                assertEquals(original.sourceId, cache.chatDrafts.jobs().single().sourceId)
+                assertEquals(original.sourceId, cache.chatAssetUploads.jobs().single().sourceId)
                 assertNull(cache.getOutgoingMessage("chat", "send"))
             } finally { uploads.close(); cache.close() }
         }
@@ -159,7 +159,7 @@ class ChatAssetUploadRecoveryIntegrationTest {
                 override suspend fun downloadTo(url: String, bearerToken: String, expectedBytes: Long, sink: DownloadSink) = error("unused")
                 override fun close() = Unit
             }
-            val uploads = ChatAssetUploadCoordinator(cache.chatDrafts,
+            val uploads = ChatAssetUploadCoordinator(cache.chatAssetUploads,
                 FileRepository("http://127.0.0.1:${f.server.address.port}", "owner", { SessionHttpCredentials("owner", "fixture-token") }, transport),
                 f.spool(), MutableStateFlow(ConnectionState.AUTHENTICATED))
             try {
@@ -170,8 +170,8 @@ class ChatAssetUploadRecoveryIntegrationTest {
                 cache.chatDrafts.save(ChatDraftSnapshot("chat", 2, "[next](${EmbeddedAsset.uri(next)})", pendingAssetIds = listOf(next)))
                 withTimeout(5_000) { cancelled.await() }
                 uploads.registerPrepared("chat", next, "frozen-source".encodeToByteArray().asSmallUploadSource(), "draft.txt", "text/plain", false)
-                eventually { cache.chatDrafts.jobs().singleOrNull()?.state == ChatAssetUploadState.READY }
-                assertEquals(next, cache.chatDrafts.jobs().single().assetId)
+                eventually { cache.chatAssetUploads.jobs().singleOrNull()?.state == ChatAssetUploadState.READY }
+                assertEquals(next, cache.chatAssetUploads.jobs().single().assetId)
                 eventually { f.spool().list().none { it.sourceId == first.sourceId } }
                 assertEquals(2, calls)
             } finally { uploads.close(); cache.close() }
@@ -186,7 +186,7 @@ class ChatAssetUploadRecoveryIntegrationTest {
             try {
                 cache.chatDrafts.save(f.draft())
                 uploads.registerPrepared("chat", ID, "frozen-source".encodeToByteArray().asSmallUploadSource(), "draft.txt", "text/plain", false)
-                eventually { cache.chatDrafts.jobs().singleOrNull()?.state == ChatAssetUploadState.READY }
+                eventually { cache.chatAssetUploads.jobs().singleOrNull()?.state == ChatAssetUploadState.READY }
                 val draft = checkNotNull(cache.chatDrafts.get("chat"))
                 val original = Message(chatId = "chat", clientMsgId = "failed", senderUid = "owner", messageType = MessageType.RICH_TEXT.code,
                     timestamp = 1, body = buildRichTextBody(draft.markdown, draft.assets))
@@ -198,9 +198,9 @@ class ChatAssetUploadRecoveryIntegrationTest {
                 assertNotEquals(f.requests[1].first, f.requests[2].first)
                 assertEquals(admitted.message, cache.getOutgoingMessage("chat", "failed")?.message)
                 val replacement = checkNotNull(cache.replaceTerminalFailure("owner", "chat", "failed", readyReplacement, System.currentTimeMillis()))
-                assertTrue(cache.chatDrafts.outgoingAssets("chat", "failed").isEmpty())
-                assertEquals(1, cache.chatDrafts.outgoingAssets("chat", "replacement").size)
-                assertTrue(cache.chatDrafts.jobs().isEmpty())
+                assertTrue(cache.chatAssetUploads.outgoingAssets("chat", "failed").isEmpty())
+                assertEquals(1, cache.chatAssetUploads.outgoingAssets("chat", "replacement").size)
+                assertTrue(cache.chatAssetUploads.jobs().isEmpty())
                 assertEquals(1, f.spool().list().size)
                 cache.claimNextOutgoingMessage(System.currentTimeMillis())
                 cache.completeOutgoingMessage(replacement.localOrdinal, MessageAckPayload("chat", "replacement", 1, 0), System.currentTimeMillis())
@@ -241,7 +241,7 @@ class ChatAssetUploadRecoveryIntegrationTest {
             if (create) AppDatabase.Schema.create(driver)
             return LocalCacheImpl(driver)
         }
-        fun coordinator(cache: LocalCacheImpl) = ChatAssetUploadCoordinator(cache.chatDrafts,
+        fun coordinator(cache: LocalCacheImpl) = ChatAssetUploadCoordinator(cache.chatAssetUploads,
             FileRepository("http://127.0.0.1:${server.address.port}", "owner", { SessionHttpCredentials("owner", "fixture-token") }),
             spool(), MutableStateFlow(ConnectionState.AUTHENTICATED))
         fun draft() = ChatDraftSnapshot("chat", 1, "[file](${EmbeddedAsset.uri(ID)})", pendingAssetIds = listOf(ID))

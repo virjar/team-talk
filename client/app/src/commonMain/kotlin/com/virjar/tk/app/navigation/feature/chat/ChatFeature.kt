@@ -61,7 +61,8 @@ class ChatFeature(
     fun chatAssetImports(createSpool: () -> ChatAssetSpool): ChatAssetImportDelegate =
         checkNotNull(destroyGate.readIfOpen {
             assetImports ?: DurableChatAssetImports(
-                local = session.localCache.chatDrafts,
+                drafts = session.localCache.chatDrafts,
+                uploads = session.localCache.chatAssetUploads,
                 coordinator = scope.async(Dispatchers.IO) {
                     session.createChatAssetUploads(createSpool())
                 },

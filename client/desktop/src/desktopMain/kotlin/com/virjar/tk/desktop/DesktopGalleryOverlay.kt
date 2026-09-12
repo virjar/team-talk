@@ -20,6 +20,9 @@ import com.virjar.tk.desktop.media.DesktopSessionResources
  * 独立画廊窗口会以 Maximized 落在原普通 Space，而原生全屏主窗口独占另一个 Space，
  * 用户点击图片后画廊永远不可见。因此全屏期间画廊改为主窗口内全幅覆盖层：
  * 与聊天同窗口、同 Space，随主窗口退出全屏一并恢复。
+ *
+ * 请求持有认证会话资源（presentationGate/resources/下载控制器），因此随会话内容组合的
+ * 销毁一并清空：会话退役后下一个会话绝不渲染已死会话的资源。
  */
 internal object DesktopGalleryOverlayHost {
     var request by mutableStateOf<DesktopGalleryOverlayRequest?>(null)

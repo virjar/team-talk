@@ -51,7 +51,7 @@ class ChatDraftRepository(
                 check(before.revision == expectedLocalRevision) { "草稿已变化，请重新发送" }
                 check(local.state(chatId).failure == null) { "草稿同步有待处理的问题，请先选择保留的草稿" }
                 check(!local.state(chatId).conflict) { "其他设备已修改草稿，请先选择保留哪一份" }
-                val remoteAssets = before.assets.filter { cache.chatDrafts.upload(it.assetId)?.asset != it }
+                val remoteAssets = before.assets.filter { cache.chatAssetUploads.upload(it.assetId)?.asset != it }
                 if (remoteAssets.isNotEmpty()) {
                     val remote = refreshLocked(chatId)
                     check(remote.assetsAvailable && remoteAssets.all { it in remote.content?.assets.orEmpty() }) {

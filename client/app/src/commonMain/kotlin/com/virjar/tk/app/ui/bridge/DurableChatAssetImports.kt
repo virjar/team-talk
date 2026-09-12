@@ -8,6 +8,7 @@ import com.virjar.tk.protocol.body.MarkdownAssetPolicy
 import com.virjar.tk.shared.client.ChatAssetUpload
 import com.virjar.tk.shared.repository.ChatAssetUploadCoordinator
 import com.virjar.tk.shared.client.ChatAssetUploadState
+import com.virjar.tk.shared.client.LocalChatAssetUploads
 import com.virjar.tk.shared.client.LocalChatDrafts
 import com.virjar.tk.shared.repository.UploadSource
 import kotlinx.coroutines.CancellationException
@@ -17,7 +18,8 @@ import kotlinx.coroutines.launch
 
 /** Projects account-owned upload commands into the existing editor import events on Main. */
 internal class DurableChatAssetImports(
-    private val local: LocalChatDrafts,
+    private val drafts: LocalChatDrafts,
+    private val uploads: LocalChatAssetUploads,
     private val coordinator: Deferred<ChatAssetUploadCoordinator>,
     private val scope: CoroutineScope,
     private val localData: UiLocalDataBoundary,
@@ -36,8 +38,8 @@ internal class DurableChatAssetImports(
             try {
                 coordinator.await()
                 val delivered = mutableMapOf<String, ChatAssetUpload>()
-                local.changes.collect {
-                    val (draft, jobs) = localData.run { local.get(id) to local.jobs(id) }
+                drafts.changes.collect {
+                    val (draft, jobs) = localData.run { drafts.get(id) to uploads.jobs(id) }
                     val references = runCatching {
                         MarkdownAssetPolicy.recoveryReferences(draft?.markdown.orEmpty()).mapNotNull { it.assetId }.toSet()
                     }.getOrDefault(emptySet())

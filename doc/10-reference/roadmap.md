@@ -157,6 +157,12 @@ infra、9 处 Compose 判空强解修复。剩余按收益排序：
   TelemetryQueueBudget。唯一遗留的写循环统一（Channel vs 裸 Thread）收益有限且风险高，
   不再排期：两种并发风格各有其稳定性历史，强统一属为对称而对称。
 
+第三批清理（CODE-01 收官后）：GlobalSearch 世代门（消息/用户搜索接入 LatestSearchRequestGate，
+迟到响应不可发布）与激活副作用移出 associateWith lambda（显式 key 循环）；Desktop 全屏画廊
+覆盖层请求随会话组合销毁清空，后继会话不再可能渲染已退役会话资源；LocalChatDrafts 混装接口
+拆分为草稿（3 方法）与 LocalChatAssetUploads 上传引擎（14 方法）两个视图，上传协调器/桥/
+会话恢复全部改依赖上传视图，接口不再强迫消费者看见不相关的 14 个上传方法。
+
 最小验证：每项独立提交，相关模块编译 + 既有定向测试；Chat/Auth 域拆分需 Android/Desktop
 短路径真机复验。
 

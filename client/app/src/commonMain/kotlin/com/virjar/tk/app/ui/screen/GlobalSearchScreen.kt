@@ -229,6 +229,7 @@ fun GlobalSearchScreen(
     var remoteMessages by remember { mutableStateOf<List<Message>>(emptyList()) }
     var remoteUsers by remember { mutableStateOf<List<User>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
+    val remoteSearchGate = remember { LatestSearchRequestGate() }
     val term = remember(query) { query.map { if (it.isISOControl()) ' ' else it }.joinToString("").trim() }
     var fileSource by rememberSaveable { mutableIntStateOf(0) }
     var fileType by rememberSaveable { mutableIntStateOf(ContentSearchRequest.FILE_TYPE_ALL) }
@@ -246,6 +247,18 @@ fun GlobalSearchScreen(
         GlobalSearchScope.FILES -> if (fileSource == 0) contentSearchKinds.drop(1) else listOf(fileSource)
         else -> emptyList()
     }
+    contentSearchKinds.forEach { kind ->
+        key(kind) {
+            val selectedScope = contentScopes[kind]
+            val request = if (kind in contentKinds && term.length <= ContentSearchRequest.MAX_KEYWORD_LENGTH) {
+                ContentSearchRequest(kind, term, selectedScope?.id.orEmpty(),
+                    if (kind == ContentSearchRequest.KIND_DOCUMENT || scope == GlobalSearchScope.ALL) ContentSearchRequest.FILE_TYPE_ALL else fileType)
+            } else null
+            val generation = contentSearchChanges.generation(kind)
+            LaunchedEffect(request, generation) { contentFeature.activate(request, kind, generation) }
+        }
+    }
+    // 纯投影：激活副作用在上方显式 key 循环中发生，这里只读取当前分区状态。
     val contentStates = contentSearchKinds.associateWith { kind ->
         val selectedScope = contentScopes[kind]
         val request = if (kind in contentKinds && term.length <= ContentSearchRequest.MAX_KEYWORD_LENGTH) {
@@ -253,7 +266,6 @@ fun GlobalSearchScreen(
                 if (kind == ContentSearchRequest.KIND_DOCUMENT || scope == GlobalSearchScope.ALL) ContentSearchRequest.FILE_TYPE_ALL else fileType)
         } else null
         val generation = contentSearchChanges.generation(kind)
-        LaunchedEffect(request, generation) { contentFeature.activate(request, kind, generation) }
         contentFeature.section(kind).takeIf { it.request == request && it.sourceGeneration == generation }
             ?: ContentSearchSection(request, generation, loading = request != null)
     }
@@ -262,26 +274,33 @@ fun GlobalSearchScreen(
         else { scope = GlobalSearchScope.FILES; fileSource = kind }
     }
 
+    DisposableEffect(remoteSearchGate) {
+        onDispose { remoteSearchGate.invalidate() }
+    }
+
     LaunchedEffect(term, scope) {
         remoteMessages = emptyList()
         remoteUsers = emptyList()
         if (term.isBlank() || term.length > ContentSearchRequest.MAX_KEYWORD_LENGTH ||
-            scope !in listOf(GlobalSearchScope.ALL, GlobalSearchScope.MESSAGES, GlobalSearchScope.PEOPLE)) {
-            remoteMessages = emptyList()
-            remoteUsers = emptyList()
+            scope !in listOf(GlobalSearchScope.ALL, GlobalSearchScope.MESSAGES, GlobalSearchScope.PEOPLE)
+        ) {
             searching = false
             return@LaunchedEffect
         }
         delay(280)
+        // token 在首次挂起前固定本次查询与代际；迟到响应即使不理会取消也无法发布。
+        val token = remoteSearchGate.begin(term)
         searching = true
         val (messages, users) = coroutineScope {
             val messageRequest = async { if (scope != GlobalSearchScope.PEOPLE) searchMessages(term) else emptyList() }
             val userRequest = async { if (scope != GlobalSearchScope.MESSAGES) searchUsers(term) else emptyList() }
             messageRequest.await() to userRequest.await()
         }
-        remoteMessages = messages
-        remoteUsers = users
-        searching = false
+        if (remoteSearchGate.isCurrent(token)) {
+            remoteMessages = messages
+            remoteUsers = users
+            searching = false
+        }
     }
 
     val peerUsers = remember(contacts, conversationPeerUsers) {

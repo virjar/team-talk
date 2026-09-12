@@ -362,6 +362,11 @@ internal fun WindowScope.MainAppContent(
         MainOverlayLayers(nav, mainWindow, presentationGate, resources, onLogout)
             // 主窗口原生全屏时的画廊覆盖层（内测 T020）：必须最后声明以处于最顶层。
         DesktopGalleryOverlay()
+        // 覆盖层请求持有本会话的 presentationGate/resources；会话组合销毁时一并清空，
+        // 后继会话绝不渲染已退役会话的资源。
+        DisposableEffect(Unit) {
+            onDispose { DesktopGalleryOverlayHost.clear() }
+        }
 }
 }
 

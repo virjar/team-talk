@@ -123,6 +123,7 @@ class LocalCacheImpl internal constructor(
     private fun chatDraftStoreManaged(chatId: String): Boolean = chatDraftSyncStore.managedLocked(chatId)
     override val chatDraftSync: LocalChatDraftSync get() = chatDraftSyncStore
     override val chatDrafts: LocalChatDrafts get() = chatDraftStore
+    override val chatAssetUploads: LocalChatAssetUploads get() = chatDraftStore
     internal fun reserveChatDraftRevision() = chatDraftStore.reserveRevision()
     private val documents = LocalDocumentProjectionStore(queries, cacheUseGate, stateLock)
     override val tasks: LocalTasks = LocalTaskStore(queries, cacheUseGate, stateLock)

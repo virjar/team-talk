@@ -23,25 +23,25 @@ class ChatDraftRecoveryIntegrationTest {
         val original = upload()
         cache(file, true) {
             it.chatDrafts.save(snapshot)
-            it.chatDrafts.register(original)
+            it.chatAssetUploads.register(original)
             assertNull(it.getPendingConversationDraft("chat")?.draft)
-            assertNotNull(it.chatDrafts.claimNext(System.currentTimeMillis()))
+            assertNotNull(it.chatAssetUploads.claimNext(System.currentTimeMillis()))
         }
         cache(file) {
             assertEquals(snapshot, it.chatDrafts.get("chat"))
-            it.chatDrafts.recoverUploads()
-            val retry = checkNotNull(it.chatDrafts.claimNext(System.currentTimeMillis()))
+            it.chatAssetUploads.recoverUploads()
+            val retry = checkNotNull(it.chatAssetUploads.claimNext(System.currentTimeMillis()))
             assertEquals(original.uploadId, retry.uploadId)
             assertEquals(original.issuedAt, retry.issuedAt)
             assertEquals(original.sourceId, retry.sourceId)
             assertEquals(2L, retry.attempt)
-            it.chatDrafts.complete(retry.assetId, retry.attempt, asset())
+            it.chatAssetUploads.complete(retry.assetId, retry.attempt, asset())
         }
         cache(file) {
             val restored = checkNotNull(it.chatDrafts.get("chat"))
             assertEquals(listOf(asset()), restored.assets)
             assertTrue(restored.pendingAssetIds.isEmpty())
-            assertEquals(original.sourceId, it.chatDrafts.jobs().single().sourceId, "READY keeps source ownership")
+            assertEquals(original.sourceId, it.chatAssetUploads.jobs().single().sourceId, "READY keeps source ownership")
         }
     }
 
@@ -49,14 +49,14 @@ class ChatDraftRecoveryIntegrationTest {
     fun `removed reference rejects late READY and never recreates draft`() = database { file ->
         cache(file, true) {
             it.chatDrafts.save(draft())
-            it.chatDrafts.register(upload())
-            val inFlight = checkNotNull(it.chatDrafts.claimNext(System.currentTimeMillis()))
+            it.chatAssetUploads.register(upload())
+            val inFlight = checkNotNull(it.chatAssetUploads.claimNext(System.currentTimeMillis()))
             it.chatDrafts.save(ChatDraftSnapshot("chat", 2, "继续写字"))
-            assertFalse(it.chatDrafts.complete(ID, inFlight.attempt, asset()))
+            assertFalse(it.chatAssetUploads.complete(ID, inFlight.attempt, asset()))
         }
         cache(file) {
             assertEquals("继续写字", it.chatDrafts.get("chat")?.markdown)
-            assertTrue(it.chatDrafts.jobs().isEmpty())
+            assertTrue(it.chatAssetUploads.jobs().isEmpty())
         }
     }
 
@@ -64,24 +64,24 @@ class ChatDraftRecoveryIntegrationTest {
     fun `outbox admission consumes exact revision and preserves not yet placed import`() = database { file ->
         cache(file, true) {
             it.chatDrafts.save(draft().copy(assets = listOf(asset()), pendingAssetIds = emptyList()))
-            it.chatDrafts.register(upload().copy(state = ChatAssetUploadState.READY, asset = asset()))
+            it.chatAssetUploads.register(upload().copy(state = ChatAssetUploadState.READY, asset = asset()))
             val unplaced = upload().copy(assetId = id(9), sourceId = id(10), uploadId = id(11))
-            it.chatDrafts.register(unplaced)
+            it.chatAssetUploads.register(unplaced)
             val first = it.enqueueFromComposer(message("send", withAsset = true), 1, 1)
             assertEquals(first, it.enqueueFromComposer(message("send", withAsset = true), 1, 2))
             assertEquals("", it.chatDrafts.get("chat")?.markdown)
-            assertEquals(listOf(unplaced), it.chatDrafts.jobs())
+            assertEquals(listOf(unplaced), it.chatAssetUploads.jobs())
         }
         cache(file) {
             assertNotNull(it.getOutgoingMessage("chat", "send"))
             assertEquals("", it.chatDrafts.get("chat")?.markdown)
             assertNull(it.getPendingConversationDraft("chat")?.draft)
-            assertEquals(id(9), it.chatDrafts.jobs().single().assetId)
-            assertEquals(ID, it.chatDrafts.outgoingAssets("chat", "send").single().assetId)
+            assertEquals(id(9), it.chatAssetUploads.jobs().single().assetId)
+            assertEquals(ID, it.chatAssetUploads.outgoingAssets("chat", "send").single().assetId)
             val sending = checkNotNull(it.claimNextOutgoingMessage(System.currentTimeMillis()))
             it.completeOutgoingMessage(sending.localOrdinal, MessageAckPayload("chat", "send", 1, 0), System.currentTimeMillis())
-            assertTrue(it.chatDrafts.outgoingAssets("chat", "send").isEmpty())
-            assertEquals(setOf(id(10)), it.chatDrafts.retainedSourceIds())
+            assertTrue(it.chatAssetUploads.outgoingAssets("chat", "send").isEmpty())
+            assertEquals(setOf(id(10)), it.chatAssetUploads.retainedSourceIds())
         }
     }
 
@@ -107,12 +107,12 @@ class ChatDraftRecoveryIntegrationTest {
         try {
             cache.enqueueOutgoingMessage(message("occupy"), 1)
             cache.chatDrafts.save(draft())
-            cache.chatDrafts.register(upload())
+            cache.chatAssetUploads.register(upload())
             assertFailsWith<LocalOutboxCapacityExceededException> { cache.enqueueFromComposer(message("blocked"), 1, 1) }
         } finally { cache.close() }
         cache(file) {
             assertEquals(draft(), it.chatDrafts.get("chat"))
-            assertEquals(1, it.chatDrafts.jobs().size)
+            assertEquals(1, it.chatAssetUploads.jobs().size)
             assertNull(it.getOutgoingMessage("chat", "blocked"))
         }
     }
@@ -123,14 +123,14 @@ class ChatDraftRecoveryIntegrationTest {
             state = ChatAssetUploadState.READY, asset = asset())
         cache(file, true) {
             it.chatDrafts.save(draft().copy(assets = listOf(asset()), pendingAssetIds = emptyList()))
-            it.chatDrafts.register(old)
-            it.chatDrafts.expireUploads(System.currentTimeMillis())
+            it.chatAssetUploads.register(old)
+            it.chatAssetUploads.expireUploads(System.currentTimeMillis())
             assertTrue(checkNotNull(it.chatDrafts.get("chat")).assets.isEmpty())
             assertEquals(listOf(ID), it.chatDrafts.get("chat")?.pendingAssetIds)
-            it.chatDrafts.retry(ID)
+            it.chatAssetUploads.retry(ID)
         }
         cache(file) {
-            val fresh = it.chatDrafts.jobs().single()
+            val fresh = it.chatAssetUploads.jobs().single()
             assertEquals(old.sourceId, fresh.sourceId)
             assertNotEquals(old.uploadId, fresh.uploadId)
             assertTrue(fresh.issuedAt > old.issuedAt)
@@ -165,14 +165,14 @@ class ChatDraftRecoveryIntegrationTest {
         cache(file) {
             assertEquals("原有草稿", it.getPendingConversationDraft("chat")?.draft)
             assertNotNull(it.getOutgoingMessage("chat", "previous"))
-            assertTrue(it.chatDrafts.jobs().isEmpty())
+            assertTrue(it.chatAssetUploads.jobs().isEmpty())
         }
     }
 
     @Test
     fun `schema four upgrade retains rich draft upload source and identity`() = database { file ->
         val job = upload()
-        cache(file, true) { it.chatDrafts.save(draft()); it.chatDrafts.register(job) }
+        cache(file, true) { it.chatDrafts.save(draft()); it.chatAssetUploads.register(job) }
         val driver = JdbcSqliteDriver("jdbc:sqlite:${file.path}")
         try {
             driver.execute(null, "DROP TABLE outgoing_chat_asset", 0)
@@ -180,8 +180,8 @@ class ChatDraftRecoveryIntegrationTest {
         } finally { driver.close() }
         cache(file) {
             assertEquals(draft(), it.chatDrafts.get("chat"))
-            assertEquals(job, it.chatDrafts.jobs().single())
-            assertEquals(setOf(job.sourceId), it.chatDrafts.retainedSourceIds())
+            assertEquals(job, it.chatAssetUploads.jobs().single())
+            assertEquals(setOf(job.sourceId), it.chatAssetUploads.retainedSourceIds())
         }
     }
 
@@ -191,13 +191,13 @@ class ChatDraftRecoveryIntegrationTest {
             val old = upload().copy(state = ChatAssetUploadState.READY, asset = asset(),
                 issuedAt = System.currentTimeMillis() - ReliableCommandContract.RETRY_HORIZON_MILLIS - 10_000)
             it.chatDrafts.save(draft().copy(assets = listOf(asset()), pendingAssetIds = emptyList()))
-            it.chatDrafts.register(old)
+            it.chatAssetUploads.register(old)
             assertFailsWith<IllegalStateException> { it.enqueueFromComposer(message("expired", true), 1, System.currentTimeMillis()) }
             assertNotNull(it.chatDrafts.get("chat"))
-            assertEquals(setOf(old.sourceId), it.chatDrafts.retainedSourceIds())
-            it.chatDrafts.retry(ID)
-            val active = checkNotNull(it.chatDrafts.claimNext(System.currentTimeMillis()))
-            it.chatDrafts.complete(ID, active.attempt, asset().copy(attachment = asset().attachment.copy(path = "2026/09/new.txt")))
+            assertEquals(setOf(old.sourceId), it.chatAssetUploads.retainedSourceIds())
+            it.chatAssetUploads.retry(ID)
+            val active = checkNotNull(it.chatAssetUploads.claimNext(System.currentTimeMillis()))
+            it.chatAssetUploads.complete(ID, active.attempt, asset().copy(attachment = asset().attachment.copy(path = "2026/09/new.txt")))
             assertFailsWith<IllegalStateException> { it.enqueueFromComposer(message("stale", true), 1, System.currentTimeMillis()) }
             assertNull(it.getOutgoingMessage("chat", "expired"))
             assertNull(it.getOutgoingMessage("chat", "stale"))
@@ -209,18 +209,18 @@ class ChatDraftRecoveryIntegrationTest {
         cache(file, true) {
             it.chatDrafts.save(draft().copy(assets = listOf(asset()), pendingAssetIds = emptyList()))
             val original = upload().copy(state = ChatAssetUploadState.READY, asset = asset())
-            it.chatDrafts.register(original)
+            it.chatAssetUploads.register(original)
             val outgoing = it.enqueueFromComposer(message("uncertain", true), 1, System.currentTimeMillis())
-            assertFailsWith<IllegalStateException> { it.chatDrafts.prepareReplacement("owner", "chat", "uncertain") }
-            assertEquals(original, it.chatDrafts.outgoingAssets("chat", "uncertain").single())
+            assertFailsWith<IllegalStateException> { it.chatAssetUploads.prepareReplacement("owner", "chat", "uncertain") }
+            assertEquals(original, it.chatAssetUploads.outgoingAssets("chat", "uncertain").single())
             it.claimNextOutgoingMessage(System.currentTimeMillis())
             it.markOutgoingMessageTerminalFailed(outgoing.localOrdinal, "rejected", System.currentTimeMillis(), 404)
-            val prepared = it.chatDrafts.prepareReplacement("owner", "chat", "uncertain").single()
-            val again = it.chatDrafts.prepareReplacement("owner", "chat", "uncertain").single()
+            val prepared = it.chatAssetUploads.prepareReplacement("owner", "chat", "uncertain").single()
+            val again = it.chatAssetUploads.prepareReplacement("owner", "chat", "uncertain").single()
             assertNotEquals(original.uploadId, prepared.uploadId)
             assertEquals(prepared.uploadId, again.uploadId)
             assertTrue(it.discardTerminalFailure("owner", "chat", "uncertain"))
-            assertTrue(it.chatDrafts.retainedSourceIds().isEmpty())
+            assertTrue(it.chatAssetUploads.retainedSourceIds().isEmpty())
         }
     }
 

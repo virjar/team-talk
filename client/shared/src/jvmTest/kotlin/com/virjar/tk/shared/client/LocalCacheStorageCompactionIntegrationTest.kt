@@ -42,7 +42,7 @@ class LocalCacheStorageCompactionIntegrationTest {
             val valuesBefore = contents(file)
             val outgoingBefore = assertNotNull(cache.getOutgoingMessage("chat", "pending", FINGERPRINT))
             val draftBefore = assertNotNull(cache.chatDrafts.get("draft"))
-            val uploadBefore = assertNotNull(cache.chatDrafts.upload(ASSET_ID))
+            val uploadBefore = assertNotNull(cache.chatAssetUploads.upload(ASSET_ID))
             val commandBefore = cache.getPendingContactDecisions().single()
             val botBefore = assertNotNull(cache.peekBotMessage())
             try {
@@ -56,7 +56,7 @@ class LocalCacheStorageCompactionIntegrationTest {
                 assertEquals(valuesBefore, contents(file), "every column, BLOB, durable ID, clock and sqlite_sequence must survive")
                 assertEquals(outgoingBefore, cache.getOutgoingMessage("chat", "pending", FINGERPRINT))
                 assertEquals(draftBefore, cache.chatDrafts.get("draft"))
-                assertEquals(uploadBefore, cache.chatDrafts.upload(ASSET_ID))
+                assertEquals(uploadBefore, cache.chatAssetUploads.upload(ASSET_ID))
                 assertEquals(listOf(commandBefore), cache.getPendingContactDecisions())
                 assertEquals(botBefore, cache.peekBotMessage())
                 assertEquals(outsideBefore, outsideBefore.keys.associateWith(::hash))
@@ -256,7 +256,7 @@ class LocalCacheStorageCompactionIntegrationTest {
         cache.preparePendingContactDecision(PendingContactDecision(OPERATION_ID, TOKEN_ID, PendingContactDecisionType.ACCEPT, 1))
         cache.bindSyncDataset(DATASET)
         cache.enqueueBotMessage(19, message("inbox").copy(serverSeq = 9))
-        cache.chatDrafts.register(ChatAssetUpload(ASSET_ID, "draft", SOURCE_ID, PAYLOAD.size.toLong(), PAYLOAD_SHA256,
+        cache.chatAssetUploads.register(ChatAssetUpload(ASSET_ID, "draft", SOURCE_ID, PAYLOAD.size.toLong(), PAYLOAD_SHA256,
             "pending.txt", "text/plain", false, UPLOAD_ID, System.currentTimeMillis()))
         val markdown = "# local draft\n[file](teamtalk-asset://$ASSET_ID)"
         cache.chatDrafts.save(ChatDraftSnapshot("draft", revision = 41, markdown = markdown, pendingAssetIds = listOf(ASSET_ID),

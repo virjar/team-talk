@@ -184,6 +184,7 @@ interface LocalCache : LocalDocumentProjection {
 
     val chatDraftSync: LocalChatDraftSync
     val chatDrafts: LocalChatDrafts
+    val chatAssetUploads: LocalChatAssetUploads
     fun enqueueFromComposer(message: Message, expectedDraftRevision: Long, now: Long): OutgoingMessage
 
     val tasks: LocalTasks

@@ -12,7 +12,7 @@ import com.virjar.tk.shared.Outcome
 import com.virjar.tk.shared.client.ChatAssetUpload
 import com.virjar.tk.shared.client.ChatAssetUploadState
 import com.virjar.tk.shared.client.ConnectionState
-import com.virjar.tk.shared.client.LocalChatDrafts
+import com.virjar.tk.shared.client.LocalChatAssetUploads
 import java.util.UUID
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -23,7 +23,7 @@ import kotlinx.coroutines.sync.withLock
 
 /** 一个已认证会话拥有的单上传 worker。HTTP 与源文件副本从不依赖聊天页面生命周期。 */
 class ChatAssetUploadCoordinator internal constructor(
-    private val local: LocalChatDrafts,
+    private val local: LocalChatAssetUploads,
     private val fileRepository: FileRepository,
     private val spool: ChatAssetSpool,
     private val connectionState: StateFlow<ConnectionState>,

@@ -101,7 +101,7 @@ class ClientSession internal constructor(
                         localMirrorRecoveryScope.launch(Dispatchers.IO) { ownedHttpAuthExpiredRouter.report(rejectedToken) }
                     }
                 try {
-                    ChatAssetUploadCoordinator(ownedLocalCache.chatDrafts, repository, spool, connectionState)
+                    ChatAssetUploadCoordinator(ownedLocalCache.chatAssetUploads, repository, spool, connectionState)
                         .also { ownedChatAssetUploads = it }
                 } catch (failure: Throwable) {
                     repository.close()
@@ -115,7 +115,7 @@ class ClientSession internal constructor(
         lifecycle.requireBusinessActive()
         require(replacement.senderUid == ownerUid && replacement.clientMsgId != failedClientMsgId)
         return kotlinx.coroutines.withContext(Dispatchers.IO) {
-            if (ownedLocalCache.chatDrafts.outgoingAssets(replacement.chatId, failedClientMsgId).isEmpty()) replacement
+            if (ownedLocalCache.chatAssetUploads.outgoingAssets(replacement.chatId, failedClientMsgId).isEmpty()) replacement
             else {
                 val uploads = synchronized(chatAssetLock) { ownedChatAssetUploads }
                     ?: error("附件恢复尚未就绪，请重新打开会话后重试")

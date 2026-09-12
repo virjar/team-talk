@@ -65,7 +65,7 @@ class ChatDraftSyncRecoveryIntegrationTest {
                 val draft = checkNotNull(cache.chatDrafts.get(CHAT))
                 assertEquals(content.markdown, draft.markdown); assertEquals(content.assets, draft.assets)
                 assertEquals(2, draft.mode); assertEquals("reply-id", draft.replyToClientMsgId); assertEquals(15L, draft.replyToServerSeq)
-                assertTrue(cache.chatDrafts.jobs().isEmpty())
+                assertTrue(cache.chatAssetUploads.jobs().isEmpty())
                 assertNull(cache.getPendingConversationDraft(CHAT), "new protocol must not enqueue scalar mirror")
             }
             cache(file) { cache ->
@@ -84,24 +84,24 @@ class ChatDraftSyncRecoveryIntegrationTest {
             cache.chatDraftSync.applyRemote(remote(1, "base"))
             val pending = ChatDraftSnapshot(CHAT, cache.reserveChatDraftRevision(), markdown(), pendingAssetIds = listOf(ASSET), sharedRevision = 1)
             cache.chatDrafts.save(pending)
-            cache.chatDrafts.register(upload())
+            cache.chatAssetUploads.register(upload())
             assertNull(cache.chatDraftSync.nextCommand(CHAT, 100))
             cache.chatDraftSync.applyRemote(remote(2, "other device"))
             assertTrue(cache.chatDraftSync.state(CHAT).conflict)
             assertEquals(markdown(), cache.chatDrafts.get(CHAT)?.markdown)
-            assertEquals(setOf(SOURCE), cache.chatDrafts.retainedSourceIds())
+            assertEquals(setOf(SOURCE), cache.chatAssetUploads.retainedSourceIds())
             cache.chatDraftSync.resolve(CHAT, true)
             assertFalse(cache.chatDraftSync.state(CHAT).conflict)
             assertNull(cache.chatDraftSync.nextCommand(CHAT, 100))
-            val claimed = checkNotNull(cache.chatDrafts.claimNext(System.currentTimeMillis()))
-            assertTrue(cache.chatDrafts.complete(ASSET, claimed.attempt, asset()))
+            val claimed = checkNotNull(cache.chatAssetUploads.claimNext(System.currentTimeMillis()))
+            assertTrue(cache.chatAssetUploads.complete(ASSET, claimed.attempt, asset()))
             val command = checkNotNull(cache.chatDraftSync.nextCommand(CHAT, 100))
             assertEquals(2L, command.command.expectedRevision)
             assertEquals(listOf(asset()), command.command.content?.assets)
             cache.chatDraftSync.acknowledge(command, ChatDraftMutationResult(false, 0, remote(3, "newer")))
             cache.chatDraftSync.resolve(CHAT, false)
             assertEquals("newer", cache.chatDrafts.get(CHAT)?.markdown)
-            assertTrue(cache.chatDrafts.retainedSourceIds().isEmpty())
+            assertTrue(cache.chatAssetUploads.retainedSourceIds().isEmpty())
         }
     }
 
@@ -158,7 +158,7 @@ class ChatDraftSyncRecoveryIntegrationTest {
                 fun editSuccessor() {
                     successor = cache.chatDrafts.save(ChatDraftSnapshot(CHAT, cache.reserveChatDraftRevision(),
                         "draft B ${markdown()}", listOf(asset()), mode = 2, sharedRevision = 1))
-                    cache.chatDrafts.register(upload().copy(state = ChatAssetUploadState.READY, asset = asset()))
+                    cache.chatAssetUploads.register(upload().copy(state = ChatAssetUploadState.READY, asset = asset()))
                 }
                 if (editBeforeClear) editSuccessor()
                 assertNull(cache.chatDraftSync.nextCommand(CHAT, 150), "clear must wait for A's message ACK")
@@ -172,8 +172,8 @@ class ChatDraftSyncRecoveryIntegrationTest {
                 assertEquals(clear, cache.chatDraftSync.nextCommand(CHAT, 250), "restart must retain the exact clear command")
                 cache.chatDraftSync.acknowledge(clear, ChatDraftMutationResult(true, 2, remote(2)))
                 assertEquals(successor.copy(sharedRevision = 2), cache.chatDrafts.get(CHAT))
-                assertEquals(setOf(SOURCE), cache.chatDrafts.retainedSourceIds())
-                assertEquals(listOf(ASSET), cache.chatDrafts.jobs(CHAT).map { it.assetId })
+                assertEquals(setOf(SOURCE), cache.chatAssetUploads.retainedSourceIds())
+                assertEquals(listOf(ASSET), cache.chatAssetUploads.jobs(CHAT).map { it.assetId })
                 assertTrue(cache.chatDraftSync.state(CHAT).pending)
                 assertFalse(cache.chatDraftSync.state(CHAT).conflict)
                 val publish = checkNotNull(cache.chatDraftSync.nextCommand(CHAT, 300))
@@ -259,20 +259,20 @@ class ChatDraftSyncRecoveryIntegrationTest {
             val rpc = FakeRpcInvoker().apply { throwOnInvoke = AppError.Network }
             val repo = ChatDraftRepository(rpc, cache)
             assertIs<Outcome.Failure>(repo.validateForSend(CHAT, revision))
-            cache.chatDrafts.register(upload().copy(state = ChatAssetUploadState.READY, asset = asset()))
+            cache.chatAssetUploads.register(upload().copy(state = ChatAssetUploadState.READY, asset = asset()))
             repo.validateForSend(CHAT, revision).getOrThrow()
             assertEquals(1, rpc.calls.size)
-            cache.chatDrafts.remove(ASSET)
+            cache.chatAssetUploads.remove(ASSET)
             rpc.throwOnInvoke = null
             rpc.enqueueOk(ProtoCodec.encode(remote.copy(assetsAvailable = false)))
             assertIs<Outcome.Failure>(repo.validateForSend(CHAT, revision))
             assertFalse(cache.chatDraftSync.state(CHAT).assetsAvailable)
 
             // READY 修复会改变 get 的覆盖层，必须由上传完成事务触发同步，不依赖页面再保存。
-            cache.chatDrafts.register(upload())
-            val claim = checkNotNull(cache.chatDrafts.claimNext(System.currentTimeMillis()))
+            cache.chatAssetUploads.register(upload())
+            val claim = checkNotNull(cache.chatAssetUploads.claimNext(System.currentTimeMillis()))
             val repaired = asset().copy(attachment = asset().attachment.copy(path = "2026/09/repaired.txt"))
-            cache.chatDrafts.complete(ASSET, claim.attempt, repaired)
+            cache.chatAssetUploads.complete(ASSET, claim.attempt, repaired)
             val updated = checkNotNull(cache.chatDraftSync.nextCommand(CHAT, 300))
             assertEquals(listOf(repaired), updated.command.content?.assets)
             assertTrue(checkNotNull(cache.chatDrafts.get(CHAT)).revision > revision)
@@ -284,9 +284,9 @@ class ChatDraftSyncRecoveryIntegrationTest {
             val receipt = cache.enqueueFromComposer(outgoing, draft.revision, System.currentTimeMillis())
             cache.claimNextOutgoingMessage(System.currentTimeMillis())
             cache.markOutgoingMessageTerminalFailed(receipt.localOrdinal, "rejected", System.currentTimeMillis(), 404)
-            cache.chatDrafts.prepareReplacement("owner", CHAT, outgoing.clientMsgId)
-            val repair = checkNotNull(cache.chatDrafts.claimNext(System.currentTimeMillis()))
-            cache.chatDrafts.complete(ASSET, repair.attempt, repaired.copy(attachment = repaired.attachment.copy(path = "2026/09/outbox-only.txt")))
+            cache.chatAssetUploads.prepareReplacement("owner", CHAT, outgoing.clientMsgId)
+            val repair = checkNotNull(cache.chatAssetUploads.claimNext(System.currentTimeMillis()))
+            cache.chatAssetUploads.complete(ASSET, repair.attempt, repaired.copy(attachment = repaired.attachment.copy(path = "2026/09/outbox-only.txt")))
             assertEquals("", cache.chatDrafts.get(CHAT)?.markdown)
             assertNull(cache.chatDraftSync.nextCommand(CHAT, 400), "outbox repair must not dirty or clear the shared draft")
         }
@@ -321,7 +321,7 @@ class ChatDraftSyncRecoveryIntegrationTest {
         database { file ->
             cache(file, true) { cache ->
                 cache.chatDrafts.save(ChatDraftSnapshot(CHAT, 1, markdown(), listOf(asset())))
-                cache.chatDrafts.register(upload().copy(state = ChatAssetUploadState.READY, asset = asset()))
+                cache.chatAssetUploads.register(upload().copy(state = ChatAssetUploadState.READY, asset = asset()))
                 cache.enqueueFromComposer(message("pending", markdown()).copy(body = RichTextBody(markdown(), plainText = "file", assets = listOf(asset()))), 1, System.currentTimeMillis())
                 cache.chatDrafts.save(ChatDraftSnapshot(CHAT, 2, "new local draft"))
             }
@@ -332,9 +332,9 @@ class ChatDraftSyncRecoveryIntegrationTest {
             } finally { driver.close() }
             cache(file) { cache ->
                 assertEquals("new local draft", cache.chatDrafts.get(CHAT)?.markdown)
-                assertEquals(setOf(SOURCE), cache.chatDrafts.retainedSourceIds())
+                assertEquals(setOf(SOURCE), cache.chatAssetUploads.retainedSourceIds())
                 assertNotNull(cache.getOutgoingMessage(CHAT, "pending"))
-                assertEquals(listOf(asset()), cache.chatDrafts.outgoingAssets(CHAT, "pending").mapNotNull { it.asset })
+                assertEquals(listOf(asset()), cache.chatAssetUploads.outgoingAssets(CHAT, "pending").mapNotNull { it.asset })
                 assertNull(cache.chatDraftSync.state(CHAT).remote)
             }
         }

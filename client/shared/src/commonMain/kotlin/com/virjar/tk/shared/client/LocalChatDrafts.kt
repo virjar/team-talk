@@ -45,12 +45,21 @@ data class ChatAssetUpload(
     val repairForClientMsgId: String? = null,
 )
 
-/** 同一账号 SQLite 拥有草稿和上传意图；所有同步 API 在 storage dispatcher 调用。 */
+/** 完整聊天草稿的读取与保存；所有同步 API 在 storage dispatcher 调用。 */
 interface LocalChatDrafts {
     val changes: StateFlow<Long>
     fun get(chatId: String): ChatDraftSnapshot?
     fun maxRevision(): Long
     fun save(snapshot: ChatDraftSnapshot): ChatDraftSnapshot
+}
+
+/**
+ * 聊天内嵌资产上传引擎的持久化意图：注册、认领、终态与恢复全部在此闭环，
+ * 与草稿正文是两个独立的生命周期。所有同步 API 在 storage dispatcher 调用。
+ */
+interface LocalChatAssetUploads {
+    /** 与草稿视图共享同一存储的变更流；单一实现同时满足两个接口的同名声明。 */
+    val changes: StateFlow<Long>
     fun jobs(chatId: String? = null): List<ChatAssetUpload>
     fun retainedSourceIds(): Set<String>
     fun upload(assetId: String): ChatAssetUpload?

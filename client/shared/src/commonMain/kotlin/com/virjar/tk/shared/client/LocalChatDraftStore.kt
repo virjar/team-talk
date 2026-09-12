@@ -20,7 +20,7 @@ internal class LocalChatDraftStore(
     private val writeMirror: (String, String?) -> PendingConversationDraft,
     private val publishMirror: (PendingConversationDraft) -> Unit,
     private val needsMirror: (String, String?) -> Boolean,
-) : LocalChatDrafts {
+) : LocalChatDrafts, LocalChatAssetUploads {
     private val version = MutableStateFlow(0L)
     override val changes = version.asStateFlow()
     private val json = Json { encodeDefaults = true }
