@@ -159,6 +159,17 @@ internal fun ChatComposer(
         Column {
         HorizontalDivider(color = Tk.colors.divider)
 
+        // 输入区上沿拖拽手柄（内测反馈）：向上拖增大输入区，最小 96dp、最大 480dp，随偏好持久化。
+        if (composerManualResizeSupported) {
+            ComposerResizeHandle(
+                onDelta = { dy ->
+                    composerHeightState.value = (composerHeightState.value - dy.dp).coerceIn(96.dp, 480.dp)
+                },
+                onDragEnd = { persistComposerMaxHeight(composerHeightState.value) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+
         // @ 补全层（内测 T037）：VISUAL 模式已迁移到 richeditor Trigger 弹层
         //（光标处锚定 + 键盘导航 + 原子 Token）；MARKDOWN 源码输入仍用内嵌展开层。
         if (composerMode == ChatComposerMode.MARKDOWN) {
