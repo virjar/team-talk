@@ -154,7 +154,8 @@ private fun RailItem(
             )
         }
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp),
+            // 12dp：116dp 栏宽下仍容纳三字标签不截断（内测反馈 T054）
+            modifier = Modifier.padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             CompositionLocalProvider(
