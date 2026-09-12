@@ -39,6 +39,10 @@ internal class AndroidRichTextClipboardManager(
                 val htmlText = clipData.getItemAt(0).htmlText
                 if (htmlText != null) {
                     richTextState.pendingClipboardHtml = htmlText
+                } else {
+                    // 纯文本裸 URL 粘贴自动成链（内测反馈 T048）
+                    val plainText = clipData.getItemAt(0).text?.toString()
+                    synthesizedLinkHtmlIfBareUrl(plainText)?.let { richTextState.pendingClipboardHtml = it }
                 }
             }
             return entry

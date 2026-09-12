@@ -202,22 +202,26 @@ internal fun RichTextFormattingToolbar(
             ) { state.toggleCodeSpan(); onRequestFocus() }
         }
         ToolbarDivider()
-        RichTextToolButton(
-            icon = { Icon(Icons.Filled.Link, null) },
-            description = "链接",
-            selected = state.isLink && state.selectedLinkUrl?.let(::normalizeRichTextLink) != null,
-            enabled = !isMentionLink,
-            testTag = "$testTagPrefix.link",
-        ) {
-            val selection = state.selection
-            val selected = state.annotatedString.text.substring(selection.min, selection.max)
-            val existingUrl = state.selectedLinkUrl?.let(::normalizeRichTextLink)
-            linkDialog = LinkDialogState(
-                selection = selection,
-                text = state.selectedLinkText ?: selected,
-                url = existingUrl.orEmpty(),
-                editing = existingUrl != null,
-            )
+        // 链接弹窗只在文档模式提供。聊天中粘贴 http(s) 链接已自动成链（内测反馈 T048），
+        // 需要编辑显示文案时转 Markdown 源码模式。
+        if (mode == RichTextToolbarMode.DOCUMENT) {
+            RichTextToolButton(
+                icon = { Icon(Icons.Filled.Link, null) },
+                description = "链接",
+                selected = state.isLink && state.selectedLinkUrl?.let(::normalizeRichTextLink) != null,
+                enabled = !isMentionLink,
+                testTag = "$testTagPrefix.link",
+            ) {
+                val selection = state.selection
+                val selected = state.annotatedString.text.substring(selection.min, selection.max)
+                val existingUrl = state.selectedLinkUrl?.let(::normalizeRichTextLink)
+                linkDialog = LinkDialogState(
+                    selection = selection,
+                    text = state.selectedLinkText ?: selected,
+                    url = existingUrl.orEmpty(),
+                    editing = existingUrl != null,
+                )
+            }
         }
         if (!compactMessage) {
             RichTextToolButton(

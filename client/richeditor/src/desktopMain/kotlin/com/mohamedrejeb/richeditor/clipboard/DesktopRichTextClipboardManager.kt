@@ -46,6 +46,13 @@ internal class DesktopRichTextClipboardManager(
                         transferable.getTransferData(DataFlavor.fragmentHtmlFlavor)
                     } as String
                 richTextState.pendingClipboardHtml = rawHtmlText
+            } else if (transferable != null && transferable.isDataFlavorSupported(DataFlavor.stringFlavor)) {
+                // 纯文本裸 URL 粘贴自动成链（内测反馈 T048）
+                val text =
+                    withContext(Dispatchers.IO) {
+                        transferable.getTransferData(DataFlavor.stringFlavor)
+                    } as? String
+                synthesizedLinkHtmlIfBareUrl(text)?.let { richTextState.pendingClipboardHtml = it }
             }
         } catch (e: Exception) {
             e.printStackTrace()
