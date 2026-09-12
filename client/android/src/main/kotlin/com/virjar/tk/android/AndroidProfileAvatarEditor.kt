@@ -7,6 +7,7 @@ import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
 import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -130,6 +131,50 @@ internal fun AndroidEditProfileHost(
         }
     }
 
+    // 相机拍照设头像（内测反馈 T057）：照片写入应用缓存（FileProvider，不落系统相册），
+    // 成功后走与相册选图完全相同的处理/上传管线。
+    var pendingCaptureFile by remember { mutableStateOf<java.io.File?>(null) }
+    val captureLauncher = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.TakePicture(),
+    ) { captured ->
+        val target = pendingCaptureFile
+        pendingCaptureFile = null
+        if (captured && target != null && target.length() > 0L) {
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", target,
+            )
+            actionAdmission.runIfOpen {
+                val protectedFile = selection?.file
+                routeOwner.launch {
+                    processing = true
+                    avatarError = null
+                    try {
+                        val prepared = AndroidProfileAvatarProcessor.prepare(
+                            context = context.applicationContext,
+                            source = uri,
+                            mediaSession = mediaSession,
+                            protectedFile = protectedFile,
+                        ) { candidate ->
+                            mediaSession.ensureOpen()
+                            selectionOwner.replace(candidate)
+                        } ?: return@launch
+                        selection = prepared
+                        removeRequested = false
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        avatarError = androidAvatarFailureMessage(failure, processing = true)
+                    } finally {
+                        processing = false
+                        target.delete()
+                    }
+                }
+            }
+        } else {
+            target?.delete()
+        }
+    }
+
     EditProfileScreen(
         currentUser = dataState.account.currentUser,
         avatarEditState = ProfileAvatarEditState(
@@ -143,6 +188,17 @@ internal fun AndroidEditProfileHost(
         onChooseAvatar = {
             avatarError = null
             picker()
+        },
+        onCaptureAvatar = {
+            avatarError = null
+            val directory = java.io.File(context.cacheDir, "teamtalk-media/photos").apply { mkdirs() }
+            val target = java.io.File(directory, "photo-${System.currentTimeMillis()}.jpg")
+            pendingCaptureFile = target
+            captureLauncher.launch(
+                androidx.core.content.FileProvider.getUriForFile(
+                    context, "${context.packageName}.fileprovider", target,
+                ),
+            )
         },
         onRemoveAvatar = {
             selectionOwner.clear()

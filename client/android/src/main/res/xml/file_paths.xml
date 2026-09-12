@@ -2,4 +2,5 @@
 <paths>
     <cache-path name="session_attachments" path="teamtalk-media/attachments/" />
     <cache-path name="captured_videos" path="teamtalk-media/captured/" />
+    <cache-path name="captured_photos" path="teamtalk-media/photos/" />
 </paths>

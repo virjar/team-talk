@@ -53,6 +53,8 @@ fun EditProfileScreen(
     onSave: suspend (name: String, phone: String?) -> Boolean,
     avatarEditState: ProfileAvatarEditState = ProfileAvatarEditState(),
     onChooseAvatar: (() -> Unit)? = null,
+    /** 相机拍照设头像（内测反馈 T057）；null 表示平台不提供该入口。 */
+    onCaptureAvatar: (() -> Unit)? = null,
     onRemoveAvatar: (() -> Unit)? = null,
     onBack: (() -> Unit)? = null,
 ) {
@@ -105,6 +107,16 @@ fun EditProfileScreen(
             }
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (onCaptureAvatar != null) {
+                    TextButton(
+                        onClick = onCaptureAvatar,
+                        enabled = !busy,
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        modifier = Modifier.testTag("profile.avatar.capture"),
+                    ) {
+                        Text("拍照", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
                 if (onChooseAvatar != null) {
                     TextButton(
                         onClick = onChooseAvatar,
