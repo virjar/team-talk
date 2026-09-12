@@ -17,7 +17,7 @@ import time
 from desktop_client import DesktopClient
 
 
-def flat(client):
+def flat(tree):
     out = []
 
     def walk(node):
@@ -25,7 +25,7 @@ def flat(client):
         for child in node.get("children", []):
             walk(child)
 
-    walk(client.semantics())
+    walk(tree)
     return out
 
 
@@ -37,7 +37,7 @@ def main() -> int:
         return 2
 
     conversations = sorted({
-        n.get("testTag") for n in flat(client)
+        n.get("testTag") for n in flat(client.semantics())
         if (n.get("testTag") or "").startswith("conv.item.")
     })
     if not conversations:
@@ -47,7 +47,7 @@ def main() -> int:
     time.sleep(2)
 
     messages = sorted({
-        n.get("testTag") for n in flat(client)
+        n.get("testTag") for n in flat(client.semantics())
         if (n.get("testTag") or "").startswith("chat.message.seq")
         and (n.get("testTag") or "").endswith(".body")
     }, key=lambda tag: int(tag.removeprefix("chat.message.seq.").removesuffix(".body")))
@@ -57,7 +57,7 @@ def main() -> int:
 
     # 优先选文本气泡：语音/媒体卡的右键菜单能力由各自渲染路径决定，不作为本用例目标。
     def has_text(tag):
-        for n in flat(client):
+        for n in flat(client.semantics()):
             if n.get("testTag") == tag and (n.get("text") or "").strip():
                 return True
         return False
@@ -70,18 +70,21 @@ def main() -> int:
                           method="POST")
     time.sleep(1)
 
-    texts = [n.get("text") for n in flat(client) if n.get("text")]
+    texts = [n.get("text") for n in flat(client.semantics()) if n.get("text")]
     menu_open = any(t in texts for t in ("回复", "转发")) and "👍" in texts
     if not menu_open:
         print("FAIL: 右键未弹出应用菜单（若只有'复制'，即平台文本菜单抢占回归）")
         return 1
 
-    client.click_text("回复")
-    time.sleep(1)
-    reply_engaged = any("回复" in (n.get("text") or "") for n in flat(client)
-                        if (n.get("testTag") or "").startswith("chat.message."))
-    client.keypress("ESCAPE")
-    print("PASS: 右键弹出应用菜单" + ("，回复入口可达" if reply_engaged else ""))
+    # 菜单项可达性：走"转发"打开选择转发目标窗口（确定性窗口 ID），ESC 关闭。
+    client.click_text("转发")
+    time.sleep(1.5)
+    forward_nodes = flat(client.semantics(window="sub-Forward"))
+    forward_open = any((n.get("testTag") or "").startswith("forward.item")
+                       for n in forward_nodes)
+    client.keypress("ESCAPE", window="sub-Forward")
+    time.sleep(0.5)
+    print("PASS: 右键弹出应用菜单" + ("，转发入口可达" if forward_open else ""))
     return 0
 
 
