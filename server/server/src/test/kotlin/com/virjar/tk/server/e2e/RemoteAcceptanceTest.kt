@@ -1053,6 +1053,19 @@ class RemoteAcceptanceTest {
                 adminToken,
                 OrganizationUnitRequest(name = "远程验收组织-${UUID.randomUUID().toString().take(8)}"),
             ).also { rootToArchive = it.unitId }
+            // 组织目录读取要求有效组织成员关系：未加入组织的账号必须被明确拒绝，
+            // 目录收敛断言只能在管理员授权成员关系之后执行。
+            val deniedBeforeMembership = creatorOrganization.refreshUnits()
+            assertTrue(
+                deniedBeforeMembership is Outcome.Failure &&
+                    (deniedBeforeMembership.error as? AppError.Business)?.code == 403,
+                "没有组织成员关系的账号不能读取组织目录",
+            )
+            adminAssignMember(
+                adminToken,
+                root.unitId,
+                OrganizationMemberRequest(creator.uid, title = "验收创建者"),
+            )
             val unitsBeforeMutation = creatorOrganization.refreshUnits().getOrThrow()
             assertTrue(
                 unitsBeforeMutation.any { it.unitId == root.unitId },
@@ -1156,13 +1169,16 @@ class RemoteAcceptanceTest {
                 message = "没有显式 grant 时组织 owner 的直属成员不能读取文档",
             )
 
+            // 责任人交接每次都会推进空间的 policyRevision，授权 CAS 必须使用重读后的当前基线。
+            val policyBaselineAfterTransfers =
+                stewardDocs.getSpace(created.spaceId).getOrThrow().policyRevision
             val directUnitGrant = stewardDocs.upsertGrant(
                 spaceId = created.spaceId,
                 principalType = DocumentSpaceGrant.PRINCIPAL_ORGANIZATION_UNIT,
                 principalId = owningUnit.unitId,
                 role = DocumentSpace.ROLE_VIEWER,
                 includeDescendants = false,
-                expectedPolicyRevision = created.policyRevision,
+                expectedPolicyRevision = policyBaselineAfterTransfers,
                 operationId = UUID.randomUUID().toString(),
                 issuedAt = System.currentTimeMillis(),
             ).getOrThrow()
@@ -1228,11 +1244,14 @@ class RemoteAcceptanceTest {
                 operationId = UUID.randomUUID().toString(),
             ).getOrThrow()
             assertEquals(4L, returnedToUser.custodyRevision)
+            // 归还个人持有同样推进 policyRevision，撤销授权前必须重读当前基线。
+            val policyBaselineAfterReturn =
+                stewardDocs.getSpace(created.spaceId).getOrThrow().policyRevision
             stewardDocs.removeGrant(
                 created.spaceId,
                 DocumentSpaceGrant.PRINCIPAL_ORGANIZATION_UNIT,
                 owningUnit.unitId,
-                expectedPolicyRevision = inheritedUnitGrant.policyRevision,
+                expectedPolicyRevision = policyBaselineAfterReturn,
                 operationId = UUID.randomUUID().toString(),
                 issuedAt = System.currentTimeMillis(),
             ).getOrThrow()
