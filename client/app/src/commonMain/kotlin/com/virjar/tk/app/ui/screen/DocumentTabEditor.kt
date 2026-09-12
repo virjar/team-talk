@@ -599,28 +599,34 @@ internal fun DocumentTabEditor(
     Column(Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 14.dp)) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val compactHeader = maxWidth < 620.dp
+            // 移动端编辑态把标题整行让给正文（内测反馈）：标题块/保存/评论折叠进动作行。
+            // 新建与远端缺失草稿必须保留标题输入，不参与折叠。
+            val mobileEditHidesTitleRow = mobileSingleDocumentMode && canEdit && !previewMode &&
+                !tab.creating && !tab.remoteMissing
             if (compactHeader) {
                 Column(Modifier.fillMaxWidth()) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        DocumentTitleBlock(
-                            title = title,
-                            onTitleChange = { title = it },
-                            canEdit = canEdit,
-                            creating = tab.creating,
-                            remoteMissing = tab.remoteMissing,
-                            revision = tab.revision,
-                            dirty = dirty,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (canEdit) DocumentSaveAction(
-                            saving = saving,
-                            enabled = title.isNotBlank() && !saving && !moving &&
+                    if (!mobileEditHidesTitleRow) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            DocumentTitleBlock(
+                                title = title,
+                                onTitleChange = { title = it },
+                                canEdit = canEdit,
+                                creating = tab.creating,
+                                remoteMissing = tab.remoteMissing,
+                                revision = tab.revision,
+                                dirty = dirty,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (canEdit) DocumentSaveAction(
+                                saving = saving,
+                                enabled = title.isNotBlank() && !saving && !moving &&
                                 (dirty || tab.creating || tab.remoteMissing),
                             compact = true,
                             saveAsNew = tab.remoteMissing,
                             onSave = saveDocument,
                         )
                         commentsTrigger()
+                        }
                     }
                     if (canEdit || !tab.creating) {
                         Row(
@@ -650,6 +656,18 @@ internal fun DocumentTabEditor(
                                     { documentMenu = false; showSharePicker = true }
                                 } else null,
                             )
+                            if (mobileEditHidesTitleRow) {
+                                // 标题行折叠后，保存与评论入口并到动作行尾部，能力不丢。
+                                if (canEdit) DocumentSaveAction(
+                                    saving = saving,
+                                    enabled = title.isNotBlank() && !saving && !moving &&
+                                        (dirty || tab.creating || tab.remoteMissing),
+                                    compact = true,
+                                    saveAsNew = tab.remoteMissing,
+                                    onSave = saveDocument,
+                                )
+                                commentsTrigger()
+                            }
                         }
                     }
                 }
@@ -799,7 +817,9 @@ internal fun DocumentTabEditor(
                     modifier = Modifier.fillMaxWidth().padding(4.dp),
                     extraActions = assetActions,
                 )
-            } else {
+            } else if (destructiveOperationPending || !(previewMode && mobileSingleDocumentMode)) {
+                // 移动端预览屏寸寸金："Markdown 预览"标签行不渲染（内测反馈）；
+                // 只读告警与桌面/源码模式的模式说明保留。
                 Text(
                     if (destructiveOperationPending) {
                         "删除或归档结果待确认，当前只读"

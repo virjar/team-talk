@@ -34,6 +34,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -386,7 +387,21 @@ internal fun DocumentSpaceWorkspaceScreen(
             documentProjectionStatus = documentProjectionStatus,
         )
         val mobileEditorVisible = mobileSingleDocumentMode && compactDocumentSurfaceVisible
-        DocumentSpaceHeader(
+        // 移动端编辑态收窄头部（内测反馈）：编辑器上报编辑激活时，空间标题/刷新/设置
+        // 整行让位，仅保留返回入口（系统返回手势同样可退）。
+        var mobileEditorInEditMode by remember { mutableStateOf(false) }
+        val upstreamEditingActiveReporter = LocalDocumentEditingActiveReporter.current
+        if (mobileEditorVisible && mobileEditorInEditMode) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = { requestMobileDestination(MobileDocumentDestination.Directory) },
+                    modifier = Modifier.testTag("documents.editor.back"),
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回目录")
+                }
+            }
+        } else {
+            DocumentSpaceHeader(
             space = space,
             detached = detached,
             onBack = if (mobileEditorVisible) {
@@ -404,6 +419,7 @@ internal fun DocumentSpaceWorkspaceScreen(
             onManageSpace = onManageSpace,
             onDetach = onDetach,
         )
+        }
         HorizontalDivider()
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val compact = mobileSingleDocumentMode || maxWidth < 700.dp
@@ -419,6 +435,12 @@ internal fun DocumentSpaceWorkspaceScreen(
             }
             if (compact) {
                 if (compactDocumentSurfaceVisible) {
+                    CompositionLocalProvider(
+                        LocalDocumentEditingActiveReporter provides { active: Boolean ->
+                            mobileEditorInEditMode = active
+                            upstreamEditingActiveReporter?.invoke(active)
+                        },
+                    ) {
                     DocumentEditorWorkspace(
                         spaces = spaces,
                         tabs = tabs,
@@ -465,6 +487,7 @@ internal fun DocumentSpaceWorkspaceScreen(
                         },
                         modifier = Modifier.fillMaxSize(),
                     )
+                    }
                 } else {
                     DocumentTreePane(
                         space = space,
