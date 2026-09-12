@@ -2,6 +2,9 @@ package com.virjar.tk.android
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
@@ -13,6 +16,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.virjar.tk.app.ui.component.GalleryItem
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
 import com.virjar.tk.app.navigation.AppDataState
@@ -125,20 +129,22 @@ internal fun AndroidDocumentWorkspaceHost(
 
     // 文档图片点击 → 全屏画廊 Dialog（内测 T032）：Android 以全屏形态呈现，定位到所点图片。
     var documentGallery by remember { mutableStateOf<DocumentGalleryRequest?>(null) }
-    DocumentWorkspaceHost(
-        workspace = dataState.documents,
-        actionAdmission = dataState.uiActionAdmission,
-        mobileSingleDocumentMode = true,
-        mobileExitCoordinator = mobileExitCoordinator,
-        embeddedAssetImports = imports,
-        embeddedAssetMedia = media,
-        onExitDocuments = onExitDocuments,
-        mentionCandidates = mentionCandidates.mapNotNull { it.user },
-        onOpenImageGallery = { items, index ->
-            documentGallery = DocumentGalleryRequest(items, index)
-        },
-        onMobileEditingActive = onEditingActive,
-    )
+    Box(modifier = Modifier.fillMaxSize().imePadding()) {
+        DocumentWorkspaceHost(
+            workspace = dataState.documents,
+            actionAdmission = dataState.uiActionAdmission,
+            mobileSingleDocumentMode = true,
+            mobileExitCoordinator = mobileExitCoordinator,
+            embeddedAssetImports = imports,
+            embeddedAssetMedia = media,
+            onExitDocuments = onExitDocuments,
+            mentionCandidates = mentionCandidates.mapNotNull { it.user },
+            onOpenImageGallery = { items, index ->
+                documentGallery = DocumentGalleryRequest(items, index)
+            },
+            onMobileEditingActive = onEditingActive,
+        )
+    }
 
     documentGallery?.let { request ->
         AndroidMediaGalleryDialog(
