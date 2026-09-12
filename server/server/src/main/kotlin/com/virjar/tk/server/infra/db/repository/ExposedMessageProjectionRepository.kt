@@ -6,6 +6,7 @@ import com.virjar.tk.server.domain.message.MessageProjectionOperation
 import com.virjar.tk.server.domain.message.MessageProjectionRecipient
 import com.virjar.tk.server.domain.message.MessageProjectionRepository
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
+import com.virjar.tk.protocol.model.MentionPolicy
 import com.virjar.tk.server.infra.db.Chats
 import com.virjar.tk.server.infra.db.Conversations
 import com.virjar.tk.server.infra.db.ExternalProjectionReceipts
@@ -185,6 +186,7 @@ class ExposedMessageProjectionRepository : MessageProjectionRepository {
     /**
      * 新消息投影的 per-recipient 提及标记：仅计入本会话活动接收者，发送者自身永不置位。
      * mentions 侧信道已在发送准入时校验过成员资格。
+     * 保留 uid `all`（群 @ 全体，内测反馈 T056）展开为除发送者外的全部接收者。
      */
     private fun mentionedRecipients(message: Message, recipients: List<String>): Set<String> {
         val mentionedUids = when (val body = message.body) {
@@ -194,6 +196,9 @@ class ExposedMessageProjectionRepository : MessageProjectionRepository {
         }
         if (mentionedUids.isEmpty()) return emptySet()
         val recipientSet = recipients.toHashSet()
+        if (mentionedUids.any { it == MentionPolicy.ALL }) {
+            return recipientSet.filterTo(mutableSetOf()) { it != message.senderUid }
+        }
         return mentionedUids.filterTo(mutableSetOf()) { it != message.senderUid && it in recipientSet }
     }
 

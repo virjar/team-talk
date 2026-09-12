@@ -5,6 +5,7 @@ import com.virjar.tk.protocol.body.CardBody
 import com.virjar.tk.protocol.body.MessageBodyPolicy
 import com.virjar.tk.protocol.body.OfficeRefBody
 import com.virjar.tk.protocol.body.ReplyBody
+import com.virjar.tk.protocol.model.MentionPolicy
 import com.virjar.tk.protocol.body.RichTextBody
 import com.virjar.tk.protocol.body.buildRichTextBody
 import com.virjar.tk.server.domain.attachment.AttachmentService
@@ -483,13 +484,14 @@ class MessageService(
      * mention 会驱动通知与成员定位，因此不能把非会话成员的 uid 带入已成功消息。
      * RichTextBody 使用 canonical mentions；ReplyBody 的 content 仍是 Markdown 事实源，
      * 在服务端现场解析，不信任任何客户端侧信道。
+     * 保留 uid `all`（群 @ 全体，内测反馈 T056）豁免成员校验，投影时展开为全体接收者。
      */
     private fun validateMentionMembership(message: Message, activeMemberUids: Collection<String>) {
         val mentionedUids = when (val body = message.body) {
             is RichTextBody -> body.mentions.map { it.uid }
             is ReplyBody -> buildRichTextBody(body.content, body.assets).mentions.map { it.uid }
             else -> emptyList()
-        }
+        }.filter { it != MentionPolicy.ALL }
         if (mentionedUids.isEmpty()) return
 
         val memberUids = activeMemberUids.toHashSet()

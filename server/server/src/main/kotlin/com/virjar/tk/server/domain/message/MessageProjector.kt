@@ -175,6 +175,8 @@ class MessageProjector(
                             )
                         }
                         val mentionedRecipients = mentionedUids(message)
+                        // 保留 uid all（群 @ 全体，内测反馈 T056）：展开为除发送者外的全部接收者。
+                        val mentionAll = com.virjar.tk.protocol.model.MentionPolicy.ALL in mentionedRecipients
                         for (recipient in applied.recipients) {
                             appendEvent(
                                 recipient.uid,
@@ -190,7 +192,7 @@ class MessageProjector(
                             }
                             if (operation.operation == MessageOperationType.CREATE &&
                                 recipient.uid != message.senderUid &&
-                                recipient.uid in mentionedRecipients
+                                (mentionAll || recipient.uid in mentionedRecipients)
                             ) {
                                 appendEvent(
                                     recipient.uid,

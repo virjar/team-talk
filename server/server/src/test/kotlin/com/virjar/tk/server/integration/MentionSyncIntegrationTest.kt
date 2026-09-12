@@ -6,6 +6,7 @@ import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.body.RichTextBody
 import com.virjar.tk.protocol.body.buildRichTextBody
 import com.virjar.tk.protocol.model.Message
+import com.virjar.tk.protocol.model.MentionPolicy
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
@@ -68,6 +69,30 @@ class MentionSyncIntegrationTest {
         val cleared = mentionEvents(bob)
         assertEquals(2, cleared.size)
         assertTrue(!cleared.last().mentioned)
+        assertTrue(mentionEvents(alice).isEmpty())
+    }
+
+    @Test
+    fun `mention all arms every recipient except the sender and is exempt from membership check`() = runTest {
+        val alice = ctx.registerUser(uniqueUsername("mentionall-alice"))
+        val bob = ctx.registerUser(uniqueUsername("mentionall-bob"))
+        val carol = ctx.registerUser(uniqueUsername("mentionall-carol"))
+        val chat = ctx.chatService.createGroup(id(), "全体提及群", null, alice, listOf(bob, carol))
+
+        // @所有人：保留 uid all 不是聊天成员，发送准入必须放行（内测反馈 T056）。
+        ctx.messageService.sendMessage(
+            alice,
+            mentionMessage(alice, chat.chatId, mentionedUid = MentionPolicy.ALL, displayName = "所有人"),
+        )
+        ctx.messageProjector.recoverPendingProjections()
+
+        fun mentionEvents(uid: String) = ctx.syncEventReader.getEventsAfter(uid, 0L, 1_000)
+            .filter { it.notifyType == NotifyType.MENTION_SYNC.code }
+            .map { com.virjar.tk.protocol.ProtoCodec.decode(MentionSyncPayload, requireNotNull(it.payload)) }
+
+        // 除发送者外的全部成员被置位。
+        assertTrue(mentionEvents(bob).single().mentioned)
+        assertTrue(mentionEvents(carol).single().mentioned)
         assertTrue(mentionEvents(alice).isEmpty())
     }
 
