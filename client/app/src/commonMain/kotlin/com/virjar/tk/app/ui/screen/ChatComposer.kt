@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.input.TextFieldValue
 import com.mohamedrejeb.richeditor.model.RichTextState
 import com.virjar.tk.protocol.model.Message
