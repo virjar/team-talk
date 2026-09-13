@@ -26,17 +26,5 @@ internal class OemPushTokenCache(private val refreshMarginMillis: Long = 60_000L
         cached?.first
     }
 
-    fun invalidate() { cached = null }
+    suspend fun invalidate() = mutex.withLock { cached = null }
 }
-
-private val oemPushTokenCaches = OemPushVendors.ALL.associateWith { OemPushTokenCache() }
-
-internal fun oemPushTokenCache(vendor: String): OemPushTokenCache =
-    checkNotNull(oemPushTokenCaches[vendor]) { "Unknown OEM push vendor" }
-
-internal suspend fun cachedOemPushToken(
-    vendor: String,
-    fetch: suspend () -> Pair<String, Long>?,
-): String? = oemPushTokenCache(vendor).accessToken { fetch() }
-
-internal fun invalidateOemPushToken(vendor: String) = oemPushTokenCache(vendor).invalidate()

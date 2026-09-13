@@ -30,7 +30,7 @@ internal class OemPushNotifications(
     private val datasetId: String,
     private val messages: MessageRepository,
     private val clock: () -> Long = System::currentTimeMillis,
-    private val send: suspend (OemPushVendorConfiguration, OemPushNotification) -> OemPushDeliveryResult = ::sendOemPush,
+    private val send: suspend (OemPushVendorConfiguration, OemPushNotification) -> OemPushDeliveryResult,
 ) {
     private val conversations = ExposedConversationRepository(database)
     private val deliveryGate = Mutex()

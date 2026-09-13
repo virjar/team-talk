@@ -296,7 +296,8 @@ class OemPushIntegrationTest {
             OemPushVendors.XIAOMI, "another-registration", "com.other.app", FP))
         assertEquals(1, rows().size, "another account cannot remove this binding")
         assertFalse(register(service, second, "")); assertTrue(rows().isEmpty())
-        assertFalse(register(OemPushNotifications(ctx.database, OemPushConfiguration(), "fixture-dataset", ctx.messageStore), first))
+        assertFalse(register(OemPushNotifications(ctx.database, OemPushConfiguration(), "fixture-dataset", ctx.messageStore,
+            send = { _, _ -> error("Disabled vendors must not send") }), first))
         assertTrue(rows().isEmpty())
     }
 

@@ -281,6 +281,7 @@ class TcpE2eEnvironment(
         }
         tcpServer?.let { server -> cleanUp { server.stop() } }
         cleanUp { syncEventDispatcher?.close() }
+        if (::koin.isInitialized) cleanUp { koin.get<com.virjar.tk.server.infra.push.OemPushSender>().close() }
         if (::koin.isInitialized) {
             cleanUp { koin.get<SearchIndex>().stop() }
             cleanUp { koin.get<ConnectionTraceEventStore>().close() }

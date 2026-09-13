@@ -8,6 +8,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import java.net.InetSocketAddress
 import java.net.URI
@@ -28,6 +29,11 @@ class XiaomiPushHttpClientTest {
         "user-identity", "chat-identity", "fixture_job-1",
     )
 
+    private val sender = OemPushSender(OemPushConfiguration(mapOf(configuration.vendor to configuration)))
+
+    @AfterEach
+    fun closeSender() { sender.close() }
+
     @Test
     fun `real HTTP request uses fixed generic content and explicit private application intent`() = runBlocking {
         val request = CompletableDeferred<Pair<String?, Map<String, String>>>()
@@ -35,7 +41,7 @@ class XiaomiPushHttpClientTest {
             request.complete(exchange.requestHeaders.getFirst("Authorization") to readForm(exchange))
             respond(exchange, 200, """{"result":"ok","code":0,"data":{"id":"fixture-message"}}""")
         }.use { server ->
-            assertTrue(sendXiaomiPushRequest(configuration, notification, server.endpoint).accepted)
+            assertTrue(sender.sendXiaomiPushRequest(configuration, notification, server.endpoint).accepted)
             val (authorization, fields) = request.await()
             assertEquals("key=fixture-secret", authorization)
             assertEquals(notification.registrationId, fields["registration_id"])
@@ -78,7 +84,7 @@ class XiaomiPushHttpClientTest {
                 if (status == 302) exchange.responseHeaders.add("Location", "http://127.0.0.1:1/must-not-follow")
                 respond(exchange, status, body)
             }.use { server ->
-                val result = sendXiaomiPushRequest(configuration, notification, server.endpoint)
+                val result = sender.sendXiaomiPushRequest(configuration, notification, server.endpoint)
                 assertFalse(result.accepted)
                 assertEquals(expectedReason, result.reason)
                 assertEquals(expectedReason == "INVALID_REGISTRATION", result.invalidRegistration)
@@ -93,7 +99,7 @@ class XiaomiPushHttpClientTest {
             exchange.sendResponseHeaders(200, 0)
             exchange.responseBody.use { it.write(ByteArray(32 * 1024) { 'x'.code.toByte() }) }
         }.use { server ->
-            val result = sendXiaomiPushRequest(configuration, notification, server.endpoint)
+            val result = sender.sendXiaomiPushRequest(configuration, notification, server.endpoint)
             assertFalse(result.accepted)
             assertEquals("RESPONSE_TOO_LARGE", result.reason)
             assertFalse(result.invalidRegistration)
@@ -113,7 +119,7 @@ class XiaomiPushHttpClientTest {
             release.await(5, TimeUnit.SECONDS)
         }.use { server ->
             val request = async(Dispatchers.Default) {
-                sendXiaomiPushRequest(configuration, notification, server.endpoint)
+                sender.sendXiaomiPushRequest(configuration, notification, server.endpoint)
             }
             try {
                 withTimeout(5_000) { receiving.await() }

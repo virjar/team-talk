@@ -11,13 +11,13 @@ import java.time.Duration
 
 private val xiaomiPushEndpoint = URI("https://api.xmpush.xiaomi.com/v3/message/regid")
 
-internal suspend fun sendXiaomiPush(
+internal suspend fun OemPushSender.sendXiaomiPush(
     configuration: OemPushVendorConfiguration,
     notification: OemPushNotification,
 ): OemPushDeliveryResult = sendXiaomiPushRequest(configuration, notification, xiaomiPushEndpoint)
 
 /** The endpoint is fixed in production; the argument permits a real local HTTP fixture. */
-internal suspend fun sendXiaomiPushRequest(
+internal suspend fun OemPushSender.sendXiaomiPushRequest(
     configuration: OemPushVendorConfiguration,
     notification: OemPushNotification,
     endpoint: URI,

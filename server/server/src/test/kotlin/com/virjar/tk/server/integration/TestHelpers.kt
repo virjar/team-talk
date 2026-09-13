@@ -564,6 +564,7 @@ class TestEnvironment : AutoCloseable {
         }
         if (::koin.isInitialized) {
             cleanUp { maintenance.close() }
+            cleanUp { koin.get<com.virjar.tk.server.infra.push.OemPushSender>().close() }
             cleanUp { koin.get<com.virjar.tk.server.runtime.SystemCommandRouter>().close() }
             cleanUp { koin.get<ConnectionTraceEventStore>().close() }
             cleanUp { koin.get<ClientTelemetryEventStore>().close() }

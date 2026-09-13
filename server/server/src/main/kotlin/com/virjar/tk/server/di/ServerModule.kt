@@ -172,6 +172,7 @@ import org.koin.dsl.module
 import java.io.File
 import com.virjar.tk.server.infra.push.OemPushConfiguration
 import com.virjar.tk.server.infra.push.OemPushNotifications
+import com.virjar.tk.server.infra.push.OemPushSender
 
 internal fun createServerModule(
     database: Database,
@@ -199,7 +200,8 @@ internal fun createServerModule(
     single { database }
     single { ExposedCredentialRepository(database = get()) }
     single { ClientRegistry(get(), get()) }
-    single { OemPushNotifications(get(), oemPushConfiguration, syncDatasetId, get()) }
+    single { OemPushSender(oemPushConfiguration) }
+    single { OemPushNotifications(get(), oemPushConfiguration, syncDatasetId, get(), send = get<OemPushSender>()::send) }
     single {
         com.virjar.tk.server.domain.document.DocumentSpaceExportService(
             repository = get(),

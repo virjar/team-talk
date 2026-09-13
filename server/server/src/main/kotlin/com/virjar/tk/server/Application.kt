@@ -259,6 +259,9 @@ internal fun Application.module(
         // Resolve from this Application's Ktor-owned container. Process-global Koin lookup makes
         // two embedded server instances steal each other's resources and breaks parallel tests.
         val koin = getKoin()
+        // Register before resolving the dispatcher, which also resolves OEM notifications.
+        // Reverse shutdown stops maintenance before its outbound pool and token owner.
+        resources.own("OEM push sender", koin.get<com.virjar.tk.server.infra.push.OemPushSender>()) { it.close() }
         resources.own(
             "password hashing executor",
             koin.get<com.virjar.tk.server.infra.security.BCryptPasswordHasher>(),

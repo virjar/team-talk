@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import java.net.InetSocketAddress
 import java.net.URI
@@ -45,6 +46,13 @@ class OemPushHttpClientsTest {
         "user-identity", "chat-identity", "fixture_job-1",
     )
 
+    private val sender = OemPushSender(OemPushConfiguration(
+        listOf(huawei, honor, oppo, vivo, meizu).associateBy { it.vendor },
+    ))
+
+    @AfterEach
+    fun closeSender() { sender.close() }
+
     private data class Case(val body: String, val reason: String, val invalid: Boolean, val refresh: Boolean)
 
     @Test
@@ -54,7 +62,7 @@ class OemPushHttpClientsTest {
             send.complete(exchange.requestHeaders.getFirst("Authorization") to exchange.requestBody.readBytes().decodeToString())
             respond(exchange, 200, """{"code":"80000000","msg":"success","requestId":"fixture"}""")
         }.use { server ->
-            val result = sendHuaweiStylePushRequest(
+            val result = sender.sendHuaweiStylePushRequest(
                 huawei, notification, server.endpoint, server.endpoint,
             ) { "fixture-oauth-token" }
             assertTrue(result.accepted)
@@ -79,7 +87,7 @@ class OemPushHttpClientsTest {
             send.complete(exchange.requestBody.readBytes().decodeToString())
             respond(exchange, 200, """{"code":"80000000","msg":"success"}""")
         }.use { server ->
-            val result = sendHuaweiStylePushRequest(
+            val result = sender.sendHuaweiStylePushRequest(
                 honor, notification(OemPushVendors.HONOR), server.endpoint, server.endpoint,
             ) { "fixture-oauth-token" }
             assertTrue(result.accepted)
@@ -107,7 +115,7 @@ class OemPushHttpClientsTest {
                 exchange.requestBody.readBytes()
                 respond(exchange, 200, fixtureCase.body)
             }.use { server ->
-                val result = sendHuaweiStylePushRequest(huawei, notification, server.endpoint, server.endpoint) { "t" }
+                val result = sender.sendHuaweiStylePushRequest(huawei, notification, server.endpoint, server.endpoint) { "t" }
                 assertFalse(result.accepted)
                 assertEquals(fixtureCase.reason, result.reason)
                 assertEquals(fixtureCase.invalid, result.invalidRegistration)
@@ -123,7 +131,7 @@ class OemPushHttpClientsTest {
             request.complete(readForm(exchange))
             respond(exchange, 200, """{"access_token":"fixture-token","expires_in":3600}""")
         }.use { server ->
-            assertEquals("fixture-token", fetchHuaweiStyleAccessToken(huawei, server.endpoint)?.first)
+            assertEquals("fixture-token", sender.fetchHuaweiStyleAccessToken(huawei, server.endpoint)?.first)
             val fields = request.await()
             assertEquals("client_credentials", fields["grant_type"])
             assertEquals("123456789", fields["client_id"])
@@ -146,13 +154,13 @@ class OemPushHttpClientsTest {
         }
         server.start()
         try {
-            val token = fetchOppoAuthToken(oppo, URI("http://127.0.0.1:${server.address.port}/auth"))
+            val token = sender.fetchOppoAuthToken(oppo, URI("http://127.0.0.1:${server.address.port}/auth"))
             assertEquals("fixture-oppo-token", token?.first)
             val (timestamp, sign) = auth.await().let { it.getValue("timestamp") to it.getValue("sign") }
             assertEquals("8899aa", auth.await()["app_key"])
             assertEquals(sha256Hex("8899aa$timestamp${oppo.appSecret}"), sign)
 
-            val result = sendOppoPushRequest(
+            val result = sender.sendOppoPushRequest(
                 oppo, notification(OemPushVendors.OPPO),
                 URI("http://127.0.0.1:${server.address.port}/auth"),
                 URI("http://127.0.0.1:${server.address.port}/unicast"),
@@ -186,7 +194,7 @@ class OemPushHttpClientsTest {
         }
         server.start()
         try {
-            val token = fetchVivoAuthToken(vivo, URI("http://127.0.0.1:${server.address.port}/auth"))
+            val token = sender.fetchVivoAuthToken(vivo, URI("http://127.0.0.1:${server.address.port}/auth"))
             assertEquals("fixture-vivo-token", token?.first)
             val authBody = auth.await()
             assertTrue(authBody.contains("\"appId\":10004"))
@@ -194,7 +202,7 @@ class OemPushHttpClientsTest {
             val timestamp = Regex("\"timestamp\":(\\d+)").find(authBody)!!.groupValues[1].toLong()
             assertEquals(md5Hex("10004${vivo.appKey}$timestamp${vivo.appSecret}"), Regex("\"sign\":\"([a-f0-9]{32})\"").find(authBody)!!.groupValues[1])
 
-            val result = sendVivoPushRequest(
+            val result = sender.sendVivoPushRequest(
                 vivo, notification(OemPushVendors.VIVO),
                 URI("http://127.0.0.1:${server.address.port}/auth"),
                 URI("http://127.0.0.1:${server.address.port}/send"),
@@ -224,7 +232,7 @@ class OemPushHttpClientsTest {
                 exchange.requestBody.readBytes()
                 respond(exchange, 200, body)
             }.use { server ->
-                val result = sendVivoPushRequest(vivo, notification(OemPushVendors.VIVO), server.endpoint, server.endpoint) { "t" }
+                val result = sender.sendVivoPushRequest(vivo, notification(OemPushVendors.VIVO), server.endpoint, server.endpoint) { "t" }
                 assertFalse(result.accepted)
                 assertEquals(reason, result.reason)
             }
@@ -238,7 +246,7 @@ class OemPushHttpClientsTest {
             request.complete(readForm(exchange))
             respond(exchange, 200, """{"code":"200","message":"","value":{},"redirect":""}""")
         }.use { server ->
-            val result = sendMeizuPushRequest(
+            val result = sender.sendMeizuPushRequest(
                 meizu, notification(OemPushVendors.MEIZU), server.endpoint,
             )
             assertTrue(result.accepted, "reason=${result.reason}")
@@ -272,7 +280,7 @@ class OemPushHttpClientsTest {
                 exchange.requestBody.readBytes()
                 respond(exchange, 200, body)
             }.use { server ->
-                val result = sendMeizuPushRequest(meizu, notification(OemPushVendors.MEIZU), server.endpoint)
+                val result = sender.sendMeizuPushRequest(meizu, notification(OemPushVendors.MEIZU), server.endpoint)
                 if (reason == null) assertTrue(result.accepted) else {
                     assertFalse(result.accepted)
                     assertEquals(reason, result.reason)
@@ -307,7 +315,7 @@ class OemPushHttpClientsTest {
             exchange.requestBody.readBytes()
             respond(exchange, 200, """{"result":0}""")
         }.use { server ->
-            val result = sendVivoPushRequest(vivo, notification(OemPushVendors.VIVO), server.endpoint, server.endpoint) { null }
+            val result = sender.sendVivoPushRequest(vivo, notification(OemPushVendors.VIVO), server.endpoint, server.endpoint) { null }
             assertFalse(result.accepted)
             assertEquals("PROVIDER_AUTH_TOKEN_UNAVAILABLE", result.reason)
         }

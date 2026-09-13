@@ -26,20 +26,22 @@ internal object HuaweiStylePush {
     }
 }
 
-internal suspend fun sendHuaweiStylePush(
+internal suspend fun OemPushSender.sendHuaweiStylePush(
     configuration: OemPushVendorConfiguration,
     notification: OemPushNotification,
+    tokenEndpoint: URI = HuaweiStylePush.tokenEndpoint(configuration.vendor),
+    sendEndpoint: URI = HuaweiStylePush.sendEndpoint(configuration.vendor, configuration.appId),
 ): OemPushDeliveryResult {
+    val cache = tokenCache(configuration)
     val result = sendHuaweiStylePushRequest(
         configuration, notification,
-        HuaweiStylePush.tokenEndpoint(configuration.vendor),
-        HuaweiStylePush.sendEndpoint(configuration.vendor, configuration.appId),
-    ) { cachedOemPushToken(configuration.vendor) { fetchHuaweiStyleAccessToken(configuration, HuaweiStylePush.tokenEndpoint(configuration.vendor)) } }
-    if (result.refreshToken) invalidateOemPushToken(configuration.vendor)
+        tokenEndpoint, sendEndpoint,
+    ) { cache.accessToken { fetchHuaweiStyleAccessToken(configuration, tokenEndpoint) } }
+    if (result.refreshToken) cache.invalidate()
     return result
 }
 
-internal suspend fun sendHuaweiStylePushRequest(
+internal suspend fun OemPushSender.sendHuaweiStylePushRequest(
     configuration: OemPushVendorConfiguration,
     notification: OemPushNotification,
     tokenEndpoint: URI,
@@ -75,7 +77,7 @@ internal suspend fun sendHuaweiStylePushRequest(
     }
 }
 
-internal suspend fun fetchHuaweiStyleAccessToken(
+internal suspend fun OemPushSender.fetchHuaweiStyleAccessToken(
     configuration: OemPushVendorConfiguration,
     tokenEndpoint: URI,
 ): Pair<String, Long>? {

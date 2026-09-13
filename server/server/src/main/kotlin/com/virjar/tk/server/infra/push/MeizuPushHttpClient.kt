@@ -18,12 +18,12 @@ internal object MeizuPush {
     val sendEndpoint: URI = URI("https://server-api-push.meizu.com/garcia/api/server/push/varnished/pushByPushId")
 }
 
-internal suspend fun sendMeizuPush(
+internal suspend fun OemPushSender.sendMeizuPush(
     configuration: OemPushVendorConfiguration,
     notification: OemPushNotification,
 ): OemPushDeliveryResult = sendMeizuPushRequest(configuration, notification, MeizuPush.sendEndpoint)
 
-internal suspend fun sendMeizuPushRequest(
+internal suspend fun OemPushSender.sendMeizuPushRequest(
     configuration: OemPushVendorConfiguration,
     notification: OemPushNotification,
     endpoint: URI,

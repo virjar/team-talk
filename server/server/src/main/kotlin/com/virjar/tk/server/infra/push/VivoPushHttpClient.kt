@@ -19,18 +19,19 @@ internal object VivoPush {
     val sendEndpoint: URI = URI("https://api-push.vivo.com.cn/message/send")
 }
 
-internal suspend fun sendVivoPush(
+internal suspend fun OemPushSender.sendVivoPush(
     configuration: OemPushVendorConfiguration,
     notification: OemPushNotification,
 ): OemPushDeliveryResult {
+    val cache = tokenCache(configuration)
     val result = sendVivoPushRequest(configuration, notification, VivoPush.authEndpoint, VivoPush.sendEndpoint) {
-        cachedOemPushToken(OemPushVendors.VIVO) { fetchVivoAuthToken(configuration, VivoPush.authEndpoint) }
+        cache.accessToken { fetchVivoAuthToken(configuration, VivoPush.authEndpoint) }
     }
-    if (result.refreshToken) invalidateOemPushToken(OemPushVendors.VIVO)
+    if (result.refreshToken) cache.invalidate()
     return result
 }
 
-internal suspend fun sendVivoPushRequest(
+internal suspend fun OemPushSender.sendVivoPushRequest(
     configuration: OemPushVendorConfiguration,
     notification: OemPushNotification,
     authEndpoint: URI,
@@ -63,7 +64,7 @@ internal suspend fun sendVivoPushRequest(
     }
 }
 
-internal suspend fun fetchVivoAuthToken(
+internal suspend fun OemPushSender.fetchVivoAuthToken(
     configuration: OemPushVendorConfiguration,
     authEndpoint: URI,
 ): Pair<String, Long>? {

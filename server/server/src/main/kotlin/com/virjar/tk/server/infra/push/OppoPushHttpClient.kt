@@ -19,18 +19,19 @@ internal object OppoPush {
     val sendEndpoint: URI = URI("https://api.push.oppomobile.com/server/v1/message/notification/unicast")
 }
 
-internal suspend fun sendOppoPush(
+internal suspend fun OemPushSender.sendOppoPush(
     configuration: OemPushVendorConfiguration,
     notification: OemPushNotification,
 ): OemPushDeliveryResult {
+    val cache = tokenCache(configuration)
     val result = sendOppoPushRequest(configuration, notification, OppoPush.authEndpoint, OppoPush.sendEndpoint) {
-        cachedOemPushToken(OemPushVendors.OPPO) { fetchOppoAuthToken(configuration, OppoPush.authEndpoint) }
+        cache.accessToken { fetchOppoAuthToken(configuration, OppoPush.authEndpoint) }
     }
-    if (result.refreshToken) invalidateOemPushToken(OemPushVendors.OPPO)
+    if (result.refreshToken) cache.invalidate()
     return result
 }
 
-internal suspend fun sendOppoPushRequest(
+internal suspend fun OemPushSender.sendOppoPushRequest(
     configuration: OemPushVendorConfiguration,
     notification: OemPushNotification,
     authEndpoint: URI,
@@ -64,7 +65,7 @@ internal suspend fun sendOppoPushRequest(
     }
 }
 
-internal suspend fun fetchOppoAuthToken(
+internal suspend fun OemPushSender.fetchOppoAuthToken(
     configuration: OemPushVendorConfiguration,
     authEndpoint: URI,
 ): Pair<String, Long>? {
