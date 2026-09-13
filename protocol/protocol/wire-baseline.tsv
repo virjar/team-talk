@@ -89,6 +89,7 @@ rpc	chat/20	0	-	active	leaveGroup(chatId:kotlin.String):kotlin.Unit
 rpc	chat/21	0	-	active	getOrCreateSavedChat():com.virjar.tk.protocol.model.Chat
 rpc	chat/22	3	-	active	setGroupAvatar(avatar:com.virjar.tk.protocol.model.GroupAvatar):kotlin.Unit
 rpc	chat/23	3	-	active	getGroupAvatars(chatIds:kotlin.collections.List):List<com.virjar.tk.protocol.model.GroupAvatar>
+rpc	chat/24	3	-	active	getOrCreateSystemChat(systemUid:kotlin.String):com.virjar.tk.protocol.model.Chat
 rpc	chat/3	0	-	active	get(chatId:kotlin.String):com.virjar.tk.protocol.model.Chat
 rpc	chat/4	0	-	active	update(chatId:kotlin.String,name:kotlin.String?,avatar:kotlin.String?,notice:kotlin.String?):kotlin.Unit
 rpc	chat/5	0	-	active	delete(chatId:kotlin.String):kotlin.Unit

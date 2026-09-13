@@ -172,6 +172,30 @@ class ChatFeature(
         }
     }
 
+    /** 系统账号会话（内测反馈 T058）是否已在本会话拉起。 */
+    private var systemChatsEnsured = false
+
+    /**
+     * 登录后拉起固定系统账号会话（文件传输助手/服务号）：幂等 RPC，已存在时不产生事件。
+     * 失败静默（网络/旧服务端 minor 2 协商下会被本地拒绝），下次登录重试。
+     */
+    fun ensureSystemChats() {
+        if (systemChatsEnsured) return
+        systemChatsEnsured = true
+        destroyGate.runIfOpen {
+            scope.launch {
+                for (systemUid in listOf("sys_assistant", "sys_service")) {
+                    runCatching { session.chatRepo.getOrCreateSystemChat(systemUid) }
+                        .onFailure { failure ->
+                            if (failure !is kotlinx.coroutines.CancellationException) {
+                                reportError(failure, "拉起系统会话失败")
+                            }
+                        }
+                }
+            }
+        }
+    }
+
     /** 在每一台设备上持久化显式的会话列表"标记已读"动作。 */
     fun markConversationRead(chatId: String, readSeq: Long) {
         if (readSeq <= 0L) return

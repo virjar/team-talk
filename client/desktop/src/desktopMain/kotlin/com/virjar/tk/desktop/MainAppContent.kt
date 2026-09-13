@@ -404,6 +404,8 @@ private fun MainListPane(
         ) {
             when (MainTab.entries[nav.selectedTab]) {
                 MainTab.CONVERSATIONS -> {
+                    // 固定系统账号会话拉起（内测反馈 T058）：幂等，失败静默重试下次登录。
+                    LaunchedEffect(Unit) { nav.chat.ensureSystemChats() }
                     // 群头像懒加载（内测反馈 T053）：对本轮可见的群补齐解析。
                     LaunchedEffect(conversations) {
                         nav.chat.ensureGroupAvatars(

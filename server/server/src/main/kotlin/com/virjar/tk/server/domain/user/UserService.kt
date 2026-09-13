@@ -106,6 +106,27 @@ class UserService(
         return users.findByUid(uid) ?: throw IllegalArgumentException("用户不存在")
     }
 
+    /**
+     * 启动时幂等引导固定系统账号（内测反馈 T058，设计稿 §14）：SYSTEM 角色 +
+     * 不可登录凭据标记（createServiceAccount 内部写入），uid/用户名/展示名固定。
+     * 服务器每次启动都调用；已存在的账号原样保留。
+     */
+    suspend fun ensureSystemAccounts() {
+        unitOfWork.write {
+            com.virjar.tk.server.domain.user.SystemAccountUids.DISPLAY_NAMES.forEach { (uid, name) ->
+                if (users.findByUid(uid) == null) {
+                    users.createServiceAccount(
+                        transaction = transaction,
+                        uid = uid,
+                        username = uid.replace('_', '-'),
+                        name = name,
+                        role = UserRole.SYSTEM,
+                    )
+                }
+            }
+        }
+    }
+
     suspend fun updateProfile(uid: String, patch: ProfilePatch) {
         val normalized = if (patch.phone.isPresent) {
             patch.copy(phone = ProfilePatchValue.Set(MainlandPhoneNumber.normalize(patch.phone.valueOrNull)))

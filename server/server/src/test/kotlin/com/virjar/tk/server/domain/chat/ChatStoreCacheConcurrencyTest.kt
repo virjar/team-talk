@@ -133,6 +133,16 @@ class ChatStoreCacheConcurrencyTest {
 }
 
 private class CountingChatRepository : ImmediateChatRepository() {
+    override fun getOrCreateSystemPersonalChat(
+        transaction: PgWriteTransactionContext,
+        uid: String,
+        systemUid: String,
+    ): ChatCreation = ChatCreation(
+        chat = com.virjar.tk.protocol.model.Chat(chatId = systemUid, chatType = 1),
+        created = false,
+        recipientUids = listOf(uid, systemUid),
+    )
+
 
     override fun updateGroupAvatar(
         transaction: PgWriteTransactionContext,
@@ -155,6 +165,16 @@ private class CountingChatRepository : ImmediateChatRepository() {
 }
 
 private open class ImmediateChatRepository : ChatRepository {
+    override fun getOrCreateSystemPersonalChat(
+        transaction: PgWriteTransactionContext,
+        uid: String,
+        systemUid: String,
+    ): ChatCreation = ChatCreation(
+        chat = com.virjar.tk.protocol.model.Chat(chatId = systemUid, chatType = 1),
+        created = false,
+        recipientUids = listOf(uid, systemUid),
+    )
+
 
     override fun updateGroupAvatar(
         transaction: PgWriteTransactionContext,
@@ -222,6 +242,16 @@ private open class ImmediateChatRepository : ChatRepository {
 }
 
 private class BlockingChatRepository : ImmediateChatRepository() {
+    override fun getOrCreateSystemPersonalChat(
+        transaction: PgWriteTransactionContext,
+        uid: String,
+        systemUid: String,
+    ): ChatCreation = ChatCreation(
+        chat = com.virjar.tk.protocol.model.Chat(chatId = systemUid, chatType = 1),
+        created = false,
+        recipientUids = listOf(uid, systemUid),
+    )
+
 
     override fun updateGroupAvatar(
         transaction: PgWriteTransactionContext,

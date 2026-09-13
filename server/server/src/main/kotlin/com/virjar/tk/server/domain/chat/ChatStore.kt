@@ -205,6 +205,13 @@ class ChatStore(
         authorize,
     )
 
+    /** 用户与系统账号的幂等私聊（内测反馈 T058）。 */
+    internal fun getOrCreateSystemPersonalChat(
+        transaction: PgWriteTransactionContext,
+        uid: String,
+        systemUid: String,
+    ): ChatCreation = repo.getOrCreateSystemPersonalChat(transaction, uid, systemUid)
+
     /** 群头像全有或全无替换（内测反馈 T053）。 */
     internal fun updateGroupAvatar(
         transaction: PgWriteTransactionContext,

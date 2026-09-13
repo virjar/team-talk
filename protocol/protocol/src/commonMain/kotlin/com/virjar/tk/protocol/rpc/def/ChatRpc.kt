@@ -78,4 +78,12 @@ interface ChatRpc {
     @com.virjar.tk.protocol.SinceProtocol(3)
     @RpcMethod(23)
     suspend fun getGroupAvatars(chatIds: List<String>): List<GroupAvatar>
+
+    /**
+     * 幂等取回（必要时创建）登录者与固定系统账号的私聊（内测反馈 T058）。
+     * systemUid 仅接受服务器白名单内的系统账号（sys_assistant/sys_service）。
+     */
+    @com.virjar.tk.protocol.SinceProtocol(3)
+    @RpcMethod(24)
+    suspend fun getOrCreateSystemChat(systemUid: String): Chat
 }

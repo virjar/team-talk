@@ -184,6 +184,8 @@ internal fun HomeScreen(
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             when (MainTab.entries[selectedTab]) {
                 MainTab.CONVERSATIONS -> {
+                    // 固定系统账号会话拉起（内测反馈 T058）：幂等，失败静默重试下次登录。
+                    LaunchedEffect(Unit) { dataState.chat.ensureSystemChats() }
                     // 群头像懒加载（内测反馈 T053）
                     LaunchedEffect(conversations) {
                         dataState.chat.ensureGroupAvatars(

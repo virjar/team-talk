@@ -21,6 +21,17 @@ interface ChatRepository {
     ): ChatCreation
 
     /**
+     * 用户与固定系统账号（内测反馈 T058）的幂等私聊：uid 必须是人类，systemUid 必须在
+     * 白名单内（sys_assistant/sys_service）。锁定双方行（系统行只查 status 不查 role），
+     * 复用 personalChatKey 幂等身份与黑名单围栏。
+     */
+    fun getOrCreateSystemPersonalChat(
+        transaction: PgWriteTransactionContext,
+        uid: String,
+        systemUid: String,
+    ): ChatCreation
+
+    /**
      * 幂等地获取或创建用户私有的"保存的消息"聊天（chatType 3，恰好一个成员）。唯一的
      * Chats.personalKey 行是重放围栏；调用方仅在 [ChatCreation.created] 为真时发出
      * CHAT_CREATED。

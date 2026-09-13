@@ -35,6 +35,11 @@ class ChatRepository(
         rpc.getOrCreateSavedChat().also(localCache::upsertChat)
     }
 
+    /** 幂等取回（必要时创建）登录者与固定系统账号的私聊（内测反馈 T058）。 */
+    suspend fun getOrCreateSystemChat(systemUid: String): Outcome<Chat> = outcome {
+        rpc.getOrCreateSystemChat(systemUid).also(localCache::upsertChat)
+    }
+
     /**
      * 群头像设置（内测反馈 T053）：本地投影即时更新；权威事件随后回推全量成员。
      * 失败时本地投影回滚到 null（重试可再设置）。

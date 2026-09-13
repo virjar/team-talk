@@ -122,6 +122,7 @@ class ChatRpcImpl(uid: String, private val service: ChatService) : ChatRpcStub(u
     override suspend fun setGroupAvatar(avatar: com.virjar.tk.protocol.model.GroupAvatar) =
         service.setGroupAvatar(uid, avatar)
     override suspend fun getGroupAvatars(chatIds: List<String>) = service.getGroupAvatars(uid, chatIds)
+    override suspend fun getOrCreateSystemChat(systemUid: String) = service.getOrCreateSystemChat(uid, systemUid)
 }
 
 class MessageRpcImpl(

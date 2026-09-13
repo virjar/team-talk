@@ -550,6 +550,8 @@ internal fun Application.module(
         )
         installHttpBlockingBoundary(httpBlockingExecutor)
         runBlocking(Dispatchers.IO) { koin.get<com.virjar.tk.server.application.admin.AdminSecurityService>().initialize() }
+        // 固定系统账号幂等引导（内测反馈 T058）：sys_assistant / sys_service。
+        runBlocking(Dispatchers.IO) { koin.get<com.virjar.tk.server.domain.user.UserService>().ensureSystemAccounts() }
         val attachmentUploadAdmission = AttachmentUploadAdmission()
         routing {
             // 管理后台 SPA（/admin）：静态资源 + 前端路由 fallback 到 index.html
