@@ -395,6 +395,15 @@ private fun FullPageProfileHero(
         )
         Spacer(Modifier.height(16.dp))
         Text(contactDisplayName(user, remark, user.uid), style = MaterialTheme.typography.headlineSmall)
+        if (user.role == UserRole.SYSTEM) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "系统服务",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.testTag("profile.system.badge"),
+            )
+        }
         if (!remark.isNullOrBlank()) Text("显示名：${user.name}", style = MaterialTheme.typography.bodyMedium)
         Spacer(Modifier.height(4.dp))
         Text(
