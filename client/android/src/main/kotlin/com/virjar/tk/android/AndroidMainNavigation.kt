@@ -20,6 +20,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -68,6 +69,7 @@ import com.virjar.tk.protocol.body.OfficeRefBody
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 import com.virjar.tk.shared.repository.ResolvedContentSearchHit
+import com.virjar.tk.shared.repository.asUploadSource
 
 /**
  * 已认证状态下的 Android 主导航外壳。
@@ -234,6 +236,7 @@ internal fun AndroidMainAppContent(
                     dataState = dataState,
                     actionAdmission = actionAdmission,
                     launchAdmittedAction = ::launchAdmittedAction,
+                    resourceOwner = resourceOwner,
                 )
                 androidGroupFilesRoute(
                     navController = navController,
@@ -646,6 +649,7 @@ private fun NavGraphBuilder.groupAdminDestination(
     dataState: AppDataState,
     actionAdmission: UiActionAdmission,
     launchAdmittedAction: (suspend () -> Unit) -> Boolean,
+    resourceOwner: AndroidAuthenticatedResourceOwner,
 ) {
     suspend fun <T> admittedAction(onClosed: () -> T, action: suspend () -> T): T =
         dataState.runAdmittedUiAction(actionAdmission, onClosed, action)
@@ -668,12 +672,73 @@ private fun NavGraphBuilder.groupAdminDestination(
             .firstOrNull { it.uid == dataState.userSession.uid }
             ?.role ?: -1
         val currentUserIsOwner = currentRole == 2
-        val groupAvatar by dataState.chat.chatAvatars.collectAsState()
+        val groupAvatarMap by dataState.chat.chatAvatars.collectAsState()
+
+        // 群头像修改（内测反馈 T053）：相册选图 → 方形裁剪 → staging 上传 → setGroupAvatar。
+        val avatarEditContext = androidx.compose.ui.platform.LocalContext.current
+        val avatarEditScope = rememberCoroutineScope()
+        var avatarEditBusy by remember { mutableStateOf(false) }
+        var pendingAvatarUri by remember { mutableStateOf<android.net.Uri?>(null) }
+        val avatarMediaLease = remember(dataState, resourceOwner) {
+            resourceOwner.acquire {
+                AndroidMediaSession.create(
+                    deploymentIdentity = dataState.deploymentIdentity,
+                    datasetId = dataState.datasetId,
+                    ownerUid = dataState.userSession.uid,
+                    credentialsProvider = dataState::httpCredentialsSnapshot,
+                    onAuthExpired = dataState::reportHttpAuthExpired,
+                )
+            }
+        }
+        androidx.compose.runtime.DisposableEffect(avatarMediaLease) {
+            onDispose { avatarMediaLease.close() }
+        }
+        val avatarSession = avatarMediaLease.resourceOrNull()
+        LaunchedEffect(pendingAvatarUri, avatarSession) {
+            val uri = pendingAvatarUri ?: return@LaunchedEffect
+            val session = avatarSession ?: return@LaunchedEffect
+            pendingAvatarUri = null
+            avatarEditBusy = true
+            try {
+                val prepared = AndroidProfileAvatarProcessor.prepare(
+                    context = avatarEditContext.applicationContext,
+                    source = uri,
+                    mediaSession = session,
+                    protectedFile = null,
+                ) { _ -> true } ?: return@LaunchedEffect
+                val uploaded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    session.fileRepository.uploadWithMeta(
+                        source = prepared.file.asUploadSource(),
+                        fileName = prepared.file.name,
+                        contentType = "image/png",
+                    ) { }.getOrThrow().file
+                }
+                prepared.file.delete()
+                dataState.chat.setGroupAvatar(chatId, uploaded)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // 错误经 ChatFeature.reportError 统一提示
+            } finally {
+                avatarEditBusy = false
+            }
+        }
+        val avatarPicker = rememberAndroidVisualMediaPicker { uri ->
+            if (uri != null) pendingAvatarUri = uri
+        }
         GroupDetailScreen(
             chat = detailChat,
             members = detailMembers,
             isOwner = currentUserIsOwner,
-            groupAvatar = detailChat?.chatId?.let { chatId -> groupAvatar[chatId] },
+            groupAvatar = detailChat?.chatId?.let { chatId -> groupAvatarMap[chatId] },
+            onEditGroupAvatar = if (currentRole >= 1) {
+                {
+                    if (!avatarEditBusy) {
+                        pendingAvatarUri = null
+                        avatarPicker()
+                    }
+                }
+            } else null,
             myUid = dataState.userSession.uid,
             onMemberClick = actionAdmission.guard { uid: String ->
                 navController.navigate(Routes.userProfile(uid))

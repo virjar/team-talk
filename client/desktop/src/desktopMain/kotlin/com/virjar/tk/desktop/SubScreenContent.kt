@@ -162,11 +162,51 @@ internal fun SubScreenContent(
             val detailChat = data.groups.detailChat?.takeIf { detailReady && it.chatId == screen.chatId }
             val detailMembers = data.groups.members.takeIf { detailReady }.orEmpty()
             val groupAvatars by data.chat.chatAvatars.collectAsState()
+            // 群头像修改（内测反馈 T053）：选图 → 方形裁剪 → staging 上传 → setGroupAvatar。
+            var avatarEditBusy by remember { mutableStateOf(false) }
+            val avatarEditScope = rememberCoroutineScope()
+            val currentUserCanManageGroup = detailMembers.any {
+                it.uid == data.userSession.uid && it.role >= 1
+            }
+            val onEditGroupAvatar: (() -> Unit)? = if (!currentUserCanManageGroup) null else {
+                {
+                    if (!avatarEditBusy) {
+                        val source = DesktopFilePicker.chooseImage()
+                        if (source != null) {
+                            avatarEditBusy = true
+                            avatarEditScope.launch {
+                                try {
+                                    val prepared = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                        DesktopProfileAvatarProcessor.prepare(
+                                            source = source,
+                                            outputDirectory = java.io.File(resources.mediaDirectory, "outgoing-group-avatar"),
+                                            protectedFile = null,
+                                        )
+                                    }
+                                    val uploaded = resources.fileTransfer.uploadWithMeta(
+                                        file = prepared.file,
+                                        contentType = "image/png",
+                                    ).file
+                                    prepared.file.delete()
+                                    data.chat.setGroupAvatar(screen.chatId, uploaded)
+                                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                    throw cancelled
+                                } catch (_: Exception) {
+                                    // 错误经 ChatFeature.reportError 统一提示
+                                } finally {
+                                    avatarEditBusy = false
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             GroupDetailScreen(
                 chat = detailChat,
                 members = detailMembers,
                 isOwner = detailMembers.any { it.uid == data.userSession.uid && it.role == 2 },
                 groupAvatar = detailChat?.chatId?.let { chatId -> groupAvatars[chatId] },
+                onEditGroupAvatar = onEditGroupAvatar,
                 myUid = data.userSession.uid,
                 onMemberClick = openProfileIfOpen,
                 onInviteMembers = presentationGate.guard {
