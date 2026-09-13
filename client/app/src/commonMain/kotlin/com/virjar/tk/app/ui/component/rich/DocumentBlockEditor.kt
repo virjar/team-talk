@@ -523,6 +523,7 @@ internal fun DocumentBlockEditor(
                     onMoveUp = ::moveBlock,
                     onMoveDown = ::moveBlock,
                     onDelete = ::deleteBlock,
+                    onReplace = ::replaceBlock,
                 )
                 is DocumentSingleBlockGroup -> {
                     val index = group.index
@@ -742,6 +743,7 @@ private fun DocumentSingleBlockGroupEditor(
                 onMoveUp = { moveBlock(index, -1) },
                 onMoveDown = { moveBlock(index, 1) },
                 onDelete = { deleteBlock(index) },
+                onSetScale = { scale -> replaceBlock(block.withScale(scale)) },
             )
             is DocumentEmbeddedFileBlock -> DocumentEmbeddedFileBlockEditor(
                 block = block,
@@ -778,6 +780,7 @@ private fun DocumentImageGridGroupEditor(
     onMoveUp: (Int, Int) -> Unit,
     onMoveDown: (Int, Int) -> Unit,
     onDelete: (Int) -> Unit,
+    onReplace: (DocumentMarkdownBlock) -> Unit,
 ) {
     group.entries.forEach { (index, block) ->
         DisposableEffect(block.key) {
@@ -803,6 +806,7 @@ private fun DocumentImageGridGroupEditor(
                             onMoveUp = { onMoveUp(index, -1) },
                             onMoveDown = { onMoveDown(index, 1) },
                             onDelete = { onDelete(index) },
+                            onSetScale = { scale -> onReplace(block.withScale(scale)) },
                         )
                     }
                     repeat(DOCUMENT_IMAGE_GRID_COLUMNS - rowEntries.size) {

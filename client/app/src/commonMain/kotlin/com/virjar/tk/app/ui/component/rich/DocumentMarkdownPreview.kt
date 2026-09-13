@@ -202,6 +202,7 @@ private fun DocumentMarkdownBlockPreview(
             block = block,
             presentation = EmbeddedAssetPresentation.IMAGE,
             embeddedAssetContent = embeddedAssetContent,
+            widthFraction = block.displayScale ?: 1f,
         )
         is DocumentEmbeddedFileBlock -> DocumentEmbeddedAssetPreview(
             block = block,
@@ -217,12 +218,13 @@ private fun DocumentEmbeddedAssetPreview(
     block: DocumentEmbeddedAssetBlock,
     presentation: EmbeddedAssetPresentation,
     embeddedAssetContent: EmbeddedAssetMarkdownContent?,
+    widthFraction: Float = 1f,
 ) {
     if (embeddedAssetContent != null) {
         embeddedAssetContent(
             block.asset,
             presentation,
-            Modifier.fillMaxWidth().testTag(
+            Modifier.fillMaxWidth(widthFraction).testTag(
                 "documents.preview.asset.${presentation.name.lowercase()}.${block.asset.assetId}",
             ),
         )

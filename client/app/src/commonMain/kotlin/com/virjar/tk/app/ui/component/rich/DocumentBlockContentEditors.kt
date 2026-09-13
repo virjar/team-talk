@@ -23,6 +23,7 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -715,6 +716,8 @@ internal fun DocumentEmbeddedImageBlockEditor(
     onMoveDown: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier.fillMaxWidth(),
+    /** 设置显示分级（内测反馈 T055）；null=原图。为空表示当前用户无编辑权。 */
+    onSetScale: ((Float?) -> Unit)? = null,
 ) {
     var hovered by remember { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
@@ -740,7 +743,7 @@ internal fun DocumentEmbeddedImageBlockEditor(
             embeddedAssetContent(
                 block.asset,
                 EmbeddedAssetPresentation.IMAGE,
-                Modifier.fillMaxWidth(),
+                Modifier.fillMaxWidth(block.displayScale ?: 1f),
             )
         } else {
             Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
@@ -771,6 +774,12 @@ internal fun DocumentEmbeddedImageBlockEditor(
                     compactIcon = true,
                     expanded = menuExpanded,
                     onExpandedChange = { menuExpanded = it },
+                    scaleLevels = if (onSetScale != null) DocumentImageScale.LEVELS else emptyList(),
+                    currentScale = block.displayScale,
+                    onSetScale = { scale ->
+                        menuExpanded = false
+                        onSetScale?.invoke(scale)
+                    },
                 )
             }
         }
@@ -873,6 +882,10 @@ private fun DocumentBlockMenu(
     compactIcon: Boolean = false,
     expanded: Boolean = false,
     onExpandedChange: (Boolean) -> Unit = {},
+    /** 显示分级菜单（内测反馈 T055）：仅图片块提供。 */
+    scaleLevels: List<Pair<String, Float?>> = emptyList(),
+    currentScale: Float? = null,
+    onSetScale: (Float?) -> Unit = {},
 ) {
     val isOpen = if (compactIcon) expanded else expanded || run {
         var state by remember { mutableStateOf(false) }
@@ -886,6 +899,19 @@ private fun DocumentBlockMenu(
             modifier = Modifier.size(if (compactIcon) 26.dp else 36.dp).testTag("$testTagPrefix.more"),
         ) { Icon(Icons.Filled.MoreVert, contentDescription = "内容块操作", Modifier.size(if (compactIcon) 17.dp else 19.dp)) }
         DropdownMenu(expanded = isOpen, onDismissRequest = { onExpandedChange(false) }) {
+            scaleLevels.forEach { (labelText, scale) ->
+                DropdownMenuItem(
+                    text = { Text(labelText) },
+                    trailingIcon = {
+                        if (currentScale == scale) {
+                            Icon(Icons.Filled.Check, contentDescription = "当前显示大小")
+                        }
+                    },
+                    onClick = { onSetScale(scale) },
+                    modifier = Modifier.testTag("$testTagPrefix.scale.$labelText"),
+                )
+            }
+            if (scaleLevels.isNotEmpty()) HorizontalDivider()
             DropdownMenuItem(
                 text = { Text("上移") },
                 leadingIcon = { Icon(Icons.Filled.ArrowUpward, null) },

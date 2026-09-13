@@ -97,7 +97,76 @@ internal data class DocumentEmbeddedImageBlock(
     override val leadingMarkdown: String = "",
     override val trailingMarkdown: String = "",
     override val dirty: Boolean = true,
-) : DocumentEmbeddedAssetBlock
+    /** 显示宽度分级（内测反馈 T055）：null=原图，0.7/0.5/0.2 为列宽百分比。 */
+    val displayScale: Float? = DocumentImageScale.parseScale(label),
+) : DocumentEmbeddedAssetBlock {
+    /** 返回应用了新显示分级的块；alt 后缀同步改写，保持 Markdown 无损往返。 */
+    fun withScale(scale: Float?): DocumentEmbeddedImageBlock {
+        if (displayScale == scale) return this
+        val newLabel = DocumentImageScale.withScale(label, scale)
+        if (newLabel == label) return this
+        return copy(
+            label = newLabel,
+            sourceMarkdown = DocumentImageScale.rewriteLabelInSource(sourceMarkdown, newLabel),
+            displayScale = scale,
+            dirty = true,
+        )
+    }
+}
+
+/**
+ * 文档图片显示分级（内测反馈 T055）：以 alt 后缀 `|<级别>` 表达，如 `![photo|70%](…)`.
+ * 原图即无后缀；策略层对 label 是自由文本，因此协议 canonical 校验无需改动。
+ */
+internal object DocumentImageScale {
+    val LEVELS: List<Pair<String, Float?>> = listOf(
+        "原图" to null,
+        "70%" to 0.7f,
+        "50%" to 0.5f,
+        "20%" to 0.2f,
+    )
+
+    private val SUFFIX = Regex("""\|(原图|100%|70%|50%|20%)$""", RegexOption.IGNORE_CASE)
+
+    /** 从 label 解析显示分级；无法识别时为原图。 */
+    fun parseScale(label: String): Float? = when (SUFFIX.find(label)?.groupValues?.get(1)?.lowercase()) {
+        "70%" -> 0.7f
+        "50%" -> 0.5f
+        "20%" -> 0.2f
+        else -> null
+    }
+
+    /** 去掉分级后缀的基础 label。 */
+    fun stripScale(label: String): String = SUFFIX.replace(label, "")
+
+    /** 生成带指定分级的 label。 */
+    fun withScale(label: String, scale: Float?): String {
+        val base = stripScale(label)
+        return if (scale == null) base else "$base|${levelText(scale)}"
+    }
+
+    /** 对图片语法源码做 label 手术（首个 `![..]` 区间，尊重反斜杠转义）。 */
+    fun rewriteLabelInSource(markdown: String, newLabel: String): String {
+        val open = markdown.indexOf("![")
+        if (open < 0) return markdown
+        var cursor = open + 2
+        while (cursor < markdown.length) {
+            when (markdown[cursor]) {
+                '\\' -> cursor += 2
+                ']' -> return markdown.substring(0, open + 2) + newLabel + markdown.substring(cursor)
+                else -> cursor++
+            }
+        }
+        return markdown
+    }
+
+    private fun levelText(scale: Float): String = when (scale) {
+        0.7f -> "70%"
+        0.5f -> "50%"
+        0.2f -> "20%"
+        else -> "原图"
+    }
+}
 
 internal data class DocumentEmbeddedFileBlock(
     override val key: String,
