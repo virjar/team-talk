@@ -40,6 +40,13 @@ TeamTalk 是多客户端、长连接、异步同步的业务系统。测试优�
 PostgreSQL/TCP 集成、SDK SQLite 及保留的协议/客户端局部测试。管理后台使用 `:server:admin:check`，
 和本地共用锁文件安装、TypeScript 检查与 Vite 构建链，无需 CI 单独配置 Node.js。
 
+管理后台另通过 `:server:admin:browserTest` 在 Chromium 中运行真实生产页面，使用仅限 loopback 的
+HTTP 夹具控制列表、详情和写入响应的完成顺序，覆盖搜索重置页码、过时结果/错误不覆盖当前状态、
+关闭详情后迟到结果不重开，以及写操作后按当前筛选刷新。首次使用先运行
+`:server:admin:installBrowser`；本机已有 Chrome 时可设置 `TEAMTALK_ADMIN_BROWSER_CHANNEL=chrome`
+直接运行浏览器测试。CI 自动安装浏览器并保留 `server/admin/build/reports/browser-tests/` 的截图和
+失败 trace。这些用例验证前端查询生命周期，不替代管理 HTTP 服务的鉴权与数据库集成测试。
+
 发行工具 job 在 Linux、Windows 上运行 `buildSrc` 的发行集成测试。Linux job 安装 NSIS 后运行
 `:client:desktop:assembleDesktopShells`，生成四目标首装包并用 `dpkg-deb` 检查实际 deb。Windows job
 运行 `:client:desktop:packageWindowsPortableWindowsAmd64`，覆盖 JBR、bootstrap、Launch4j exe 和

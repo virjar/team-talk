@@ -155,7 +155,7 @@ jobs:
           retention-days: 14
 
   admin:
-    name: Admin Gradle Build
+    name: Admin Build and Browser Regressions
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -171,6 +171,18 @@ jobs:
 
       - name: Check and build admin application
         run: ./gradlew :server:admin:check
+
+      - name: Install browser and verify asynchronous page queries
+        run: ./gradlew :server:admin:installBrowser :server:admin:browserTest
+
+      - name: Preserve browser failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: admin-browser-diagnostics-${{ github.run_attempt }}
+          path: server/admin/build/reports/browser-tests/
+          if-no-files-found: ignore
+          retention-days: 14
 
   test:
     # 包括真实 PostgreSQL/TCP/SQLite 集成，不只是内部单元测试。

@@ -1,45 +1,49 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { Button, Drawer, Descriptions, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, message } from 'antd'
 import { api, errMsg } from '../api/client'
+import { useRemoteQuery } from '../api/useRemoteQuery'
 
 interface U { uid: string; username: string; name: string; phone?: string; status: number; createdAt?: number }
 interface Detail { user: U; devices: any[]; friends: any[]; groups: any[]; online: boolean }
 
 export default function Users() {
-  const [data, setData] = useState<{ total: number; items: U[] }>({ total: 0, items: [] })
-  const [query, setQuery] = useState('')
-  const [page, setPage] = useState(1)
-  const [loading, setLoading] = useState(false)
-  const [detail, setDetail] = useState<Detail | null>(null)
+  const [search, setSearch] = useState({ query: '', page: 1 })
+  const [detailTarget, setDetailTarget] = useState<{ uid: string } | null>(null)
   const [resetUid, setResetUid] = useState<string | null>(null)
   const [newPwd, setNewPwd] = useState('')
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const { data } = await api.get('/users', { params: { query: query || undefined, page, size: 20 } })
-      setData(data)
-    } catch (e) { message.error(errMsg(e)) } finally { setLoading(false) }
-  }, [query, page])
-  useEffect(() => { load() }, [load])
+  const users = useRemoteQuery(useCallback(async (signal: AbortSignal) => {
+    const response = await api.get<{ total: number; items: U[] }>('/users', {
+      params: { query: search.query || undefined, page: search.page, size: 20 }, signal,
+    })
+    return response.data
+  }, [search]))
+  const loadDetail = useCallback(async (signal: AbortSignal) =>
+    (await api.get<Detail>(`/users/${detailTarget!.uid}`, { signal })).data, [detailTarget])
+  const details = useRemoteQuery(detailTarget ? loadDetail : null)
+  const data = users.data ?? { total: 0, items: [] }
+  const detail = details.data
+  const changeSearch = (next: typeof search) => { users.cancel(); setSearch(next) }
+  const selectDetail = (next: typeof detailTarget) => { details.cancel(); setDetailTarget(next) }
 
   const act = async (uid: string, op: string, body?: object) => {
     try {
       await api.post(`/users/${uid}/${op}`, body ?? {})
       message.success(`${op} 成功`)
-      load()
-      if (detail?.user.uid === uid) setDetail(await (await api.get(`/users/${uid}`)).data)
-    } catch (e) { message.error(errMsg(e)) }
+      void users.reload()
+      void details.reload()
+      return true
+    } catch (e) { message.error(errMsg(e)); return false }
   }
 
   return (
     <div>
       <Space style={{ marginBottom: 16 }}>
-        <Input.Search placeholder="用户名/昵称/UID" value={query}
-          onChange={e => setQuery(e.target.value)} onSearch={() => { setPage(1); load() }} style={{ width: 260 }} />
+        <Input.Search placeholder="用户名/昵称/UID" value={search.query}
+          onChange={e => changeSearch({ query: e.target.value, page: 1 })}
+          onSearch={() => changeSearch({ ...search, page: 1 })} style={{ width: 260 }} />
       </Space>
-      <Table rowKey="uid" loading={loading}
-        pagination={{ total: data.total, current: page, pageSize: 20, onChange: setPage }}
+      <Table rowKey="uid" loading={users.loading}
+        pagination={{ total: data.total, current: search.page, pageSize: 20, onChange: page => changeSearch({ ...search, page }) }}
         columns={[
           { title: 'UID', dataIndex: 'uid', width: 120 },
           { title: '用户名', dataIndex: 'username' },
@@ -49,7 +53,7 @@ export default function Users() {
             s === 2 ? <Tag color="red">封禁</Tag> : <Tag color="green">正常</Tag> },
           { title: '操作', width: 320, render: (_: any, u: U) => (
             <Space>
-              <Button size="small" onClick={async () => setDetail((await api.get(`/users/${u.uid}`)).data)}>详情</Button>
+              <Button size="small" onClick={() => selectDetail({ uid: u.uid })}>详情</Button>
               {u.status === 2
                 ? <Popconfirm title="解封该用户？" onConfirm={() => act(u.uid, 'unban')}><Button size="small">解封</Button></Popconfirm>
                 : <Popconfirm title="封禁将踢全部设备并吊销 token" onConfirm={() => act(u.uid, 'ban')}><Button size="small" danger>封禁</Button></Popconfirm>}
@@ -58,7 +62,7 @@ export default function Users() {
             </Space>) },
         ]}
         dataSource={data.items} />
-      <Drawer open={!!detail} onClose={() => setDetail(null)} width={560} title="用户详情">
+      <Drawer open={!!detailTarget} loading={details.loading} onClose={() => selectDetail(null)} width={560} title="用户详情">
         {detail && (
           <Tabs items={[
             { key: 'base', label: '基本', children: (
@@ -85,7 +89,7 @@ export default function Users() {
         )}
       </Drawer>
       <Modal open={!!resetUid} title="重置密码" onCancel={() => setResetUid(null)}
-        onOk={async () => { if (resetUid) { await act(resetUid, 'reset-password', { password: newPwd }); setResetUid(null) } }}>
+        onOk={async () => { if (resetUid && await act(resetUid, 'reset-password', { password: newPwd })) setResetUid(null) }}>
         <Input.Password placeholder="新密码（≥6位，重置后全设备踢线）" value={newPwd} onChange={e => setNewPwd(e.target.value)} />
       </Modal>
     </div>

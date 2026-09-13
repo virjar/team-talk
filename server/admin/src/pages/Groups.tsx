@@ -1,43 +1,41 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { Button, Drawer, Descriptions, Input, Popconfirm, Space, Table, Tag, message } from 'antd'
 import { api, errMsg } from '../api/client'
+import { useRemoteQuery } from '../api/useRemoteQuery'
 
 interface G { chatId: string; name?: string; memberCount: number; mutedAll: boolean }
 interface MemberRow { uid: string; role: number; nickname?: string; user?: { name?: string } }
 
 export default function Groups() {
-  const [data, setData] = useState<{ total: number; items: G[] }>({ total: 0, items: [] })
-  const [query, setQuery] = useState('')
-  const [page, setPage] = useState(1)
-  const [loading, setLoading] = useState(false)
-  const [detail, setDetail] = useState<{ chat: G; members: MemberRow[] } | null>(null)
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const { data } = await api.get('/groups', { params: { query: query || undefined, page, size: 20 } })
-      setData(data)
-    } catch (e) { message.error(errMsg(e)) } finally { setLoading(false) }
-  }, [query, page])
-  useEffect(() => { load() }, [load])
+  const [search, setSearch] = useState({ query: '', page: 1 })
+  const [detailTarget, setDetailTarget] = useState<{ chatId: string } | null>(null)
+  const groups = useRemoteQuery(useCallback(async (signal: AbortSignal) => {
+    const response = await api.get<{ total: number; items: G[] }>('/groups', {
+      params: { query: search.query || undefined, page: search.page, size: 20 }, signal,
+    })
+    return response.data
+  }, [search]))
+  const loadDetail = useCallback(async (signal: AbortSignal) =>
+    (await api.get<{ chat: G; members: MemberRow[] }>(`/groups/${detailTarget!.chatId}`, { signal })).data, [detailTarget])
+  const details = useRemoteQuery(detailTarget ? loadDetail : null)
+  const data = groups.data ?? { total: 0, items: [] }
+  const detail = details.data
+  const changeSearch = (next: typeof search) => { groups.cancel(); setSearch(next) }
+  const selectDetail = (next: typeof detailTarget) => { details.cancel(); setDetailTarget(next) }
 
   const act = async (chatId: string, op: string) => {
-    try { await api.post(`/groups/${chatId}/${op}`); message.success(`${op} 成功`); load() }
-    catch (e) { message.error(errMsg(e)) }
-  }
-  const openDetail = async (chatId: string) => {
-    try { const { data } = await api.get(`/groups/${chatId}`); setDetail(data) }
+    try { await api.post(`/groups/${chatId}/${op}`); message.success(`${op} 成功`); void groups.reload(); void details.reload() }
     catch (e) { message.error(errMsg(e)) }
   }
 
   return (
     <div>
       <Space style={{ marginBottom: 16 }}>
-        <Input.Search placeholder="群名" value={query} onChange={e => setQuery(e.target.value)}
-          onSearch={() => { setPage(1); load() }} style={{ width: 240 }} />
+        <Input.Search placeholder="群名" value={search.query} onChange={e => changeSearch({ query: e.target.value, page: 1 })}
+          onSearch={() => changeSearch({ ...search, page: 1 })} style={{ width: 240 }} />
       </Space>
-      <Table rowKey="chatId" loading={loading} size="small"
-        pagination={{ total: data.total, current: page, pageSize: 20, onChange: setPage }}
+      <Table rowKey="chatId" loading={groups.loading} size="small"
+        pagination={{ total: data.total, current: search.page, pageSize: 20, onChange: page => changeSearch({ ...search, page }) }}
         columns={[
           { title: '群名', dataIndex: 'name' },
           { title: 'chatId', dataIndex: 'chatId', ellipsis: true },
@@ -45,7 +43,7 @@ export default function Groups() {
           { title: '全员禁言', dataIndex: 'mutedAll', width: 90, render: (m: boolean) => m ? <Tag color="orange">是</Tag> : <Tag>否</Tag> },
           { title: '操作', width: 300, render: (_: any, g: G) => (
             <Space>
-              <Button size="small" onClick={() => openDetail(g.chatId)}>成员</Button>
+              <Button size="small" onClick={() => selectDetail({ chatId: g.chatId })}>成员</Button>
               {g.mutedAll
                 ? <Button size="small" onClick={() => act(g.chatId, 'unmute-all')}>解除全员禁言</Button>
                 : <Button size="small" onClick={() => act(g.chatId, 'mute-all')}>全员禁言</Button>}
@@ -55,7 +53,7 @@ export default function Groups() {
             </Space>) },
         ]}
         dataSource={data.items} />
-      <Drawer open={!!detail} onClose={() => setDetail(null)} width={480} title={`群成员（${detail?.chat.name ?? ''}）`}>
+      <Drawer open={!!detailTarget} loading={details.loading} onClose={() => selectDetail(null)} width={480} title={`群成员（${detail?.chat.name ?? ''}）`}>
         <Table rowKey="uid" size="small" pagination={false}
           columns={[
             { title: '成员', render: (_: any, m: MemberRow) => m.user?.name ?? m.nickname ?? m.uid },

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import {
   Badge, Button, Card, Input, Modal, Popconfirm, Select, Space, Spin, Switch,
   Table, Tag, Typography, message,
 } from 'antd'
 import { UploadOutlined } from '@ant-design/icons'
 import { api, errMsg, TOKEN_KEY } from '../api/client'
+import { useRemoteQuery } from '../api/useRemoteQuery'
 
 // 客户端发布注册中心：发布列表、通道指向/回滚/停用、CI 上传。
 // 发布上传端点在 /api/v1/client/releases（同时接受管理会话与 CI 发布令牌）。
@@ -61,10 +62,7 @@ function targetKey(row: { clientType: string; platform: string; arch: string }):
 }
 
 export default function Releases() {
-  const [releases, setReleases] = useState<ReleaseRow[]>([])
-  const [channels, setChannels] = useState<ChannelRow[]>([])
   const [clientFilter, setClientFilter] = useState<string | undefined>(undefined)
-  const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [pointerTarget, setPointerTarget] = useState<ChannelRow | null>(null)
   const [pointerReleaseId, setPointerReleaseId] = useState<number | null>(null)
@@ -72,23 +70,19 @@ export default function Releases() {
   const [disableFallback, setDisableFallback] = useState<number | null>(null)
   const fileInput = useRef<HTMLInputElement | null>(null)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const [relResp, chResp] = await Promise.all([
-        api.get('/client-releases', { params: clientFilter ? { client: clientFilter } : undefined }),
-        api.get('/client-channels'),
-      ])
-      setReleases(relResp.data?.releases ?? [])
-      setChannels(chResp.data?.channels ?? [])
-    } catch (error) {
-      message.error(errMsg(error))
-    } finally {
-      setLoading(false)
-    }
-  }, [clientFilter])
-
-  useEffect(() => { load() }, [load])
+  const listing = useRemoteQuery(useCallback(async (signal: AbortSignal) => {
+    const [relResp, chResp] = await Promise.all([
+      api.get<{ releases: ReleaseRow[] }>('/client-releases', {
+        params: clientFilter ? { client: clientFilter } : undefined, signal,
+      }),
+      api.get<{ channels: ChannelRow[] }>('/client-channels', { signal }),
+    ])
+    return { releases: relResp.data.releases, channels: chResp.data.channels }
+  }, [clientFilter]))
+  const releases = listing.data?.releases ?? []
+  const channels = listing.data?.channels ?? []
+  const loading = listing.loading
+  const load = listing.reload
 
   const releasesByTarget = useMemo(() => {
     const map = new Map<string, ReleaseRow[]>()
@@ -278,7 +272,7 @@ export default function Releases() {
               placeholder="全部端"
               style={{ width: 140 }}
               value={clientFilter}
-              onChange={setClientFilter}
+              onChange={value => { if (value !== clientFilter) { listing.cancel(); setClientFilter(value) } }}
               options={Object.entries(CLIENT_LABEL).map(([value, label]) => ({ value, label }))}
             />
             <input

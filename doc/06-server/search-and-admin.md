@@ -92,6 +92,11 @@ Lucene 的 analyzer、directory、writer 和 searcher manager 先在局部启动
 - 基础运行指标和版本信息。
 - 客户端遥测全文检索、设备运行信息，以及按 uid/deviceId/phone 启停限时诊断采集。
 
+用户、群组和客户端发布页面的查询由 `useRemoteQuery` 统一管理。筛选与页码一起更新，搜索回到第一页；
+条件变化、关闭详情或离开页面时取消旧请求，迟到的结果、错误和结束信号均不能覆盖当前查询。写操作
+结束后的刷新读取当前筛选和当前详情目标，避免操作开始时的旧闭包把页面拉回先前条件。浏览器中的
+倒序响应回归入口见[测试与验收](../09-testing/README.md)。
+
 管理后台采用 Vite 7 的浏览器构建目标：Chrome/Edge 107、Firefox 104、Safari 16 及以上；更旧浏览器
 不在支持范围内。这是构建目标，不代表已在每种浏览器完成验收；依据见
 [Vite 7 迁移说明](https://v7.vite.dev/guide/migration#default-browser-target-change)。

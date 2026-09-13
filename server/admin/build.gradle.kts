@@ -32,8 +32,8 @@ val preparePackageFiles by tasks.registering {
 
 val prepareSources by tasks.registering(Sync::class) {
     from(layout.projectDirectory) {
-        include("package.json", "package-lock.json", "index.html", "tsconfig.json", "vite.config.ts")
-        include("src/**", "public/**")
+        include("package.json", "package-lock.json", "index.html", "tsconfig.json", "vite.config.ts", "playwright.config.ts")
+        include("src/**", "public/**", "tests/**")
     }
     into(sourceWorkspace)
 }
@@ -59,6 +59,21 @@ val buildFrontend by tasks.registering(NpmTask::class) {
 
 tasks.named("check") { dependsOn(buildFrontend) }
 tasks.named("assemble") { dependsOn(buildFrontend) }
+
+val installBrowser by tasks.registering(NpmTask::class) {
+    group = "verification"
+    description = "Install Chromium and its OS dependencies for the Admin browser regressions"
+    dependsOn(npmInstall)
+    args.set(listOf("exec", "--", "playwright", "install", "--with-deps", "chromium"))
+}
+
+val browserTest by tasks.registering(NpmTask::class) {
+    group = "verification"
+    description = "Exercise actual Admin pages with deterministically delayed HTTP responses"
+    dependsOn(buildFrontend)
+    workingDir.fileProvider(sourceWorkspace.map { it.asFile })
+    args.set(listOf("exec", "--", "playwright", "test"))
+}
 
 // Server consumes this directory as a Gradle artifact. Resolving it also builds it,
 // so run, check and distributions cannot silently package a stale frontend.
