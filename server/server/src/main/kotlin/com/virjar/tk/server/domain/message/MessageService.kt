@@ -11,6 +11,7 @@ import com.virjar.tk.protocol.body.buildRichTextBody
 import com.virjar.tk.server.domain.attachment.AttachmentService
 import com.virjar.tk.server.domain.attachment.AttachmentLifecycleGate
 import com.virjar.tk.server.domain.chat.ChatAccess
+import kotlinx.coroutines.launch
 import com.virjar.tk.server.domain.chat.ManagedChatPolicy
 import com.virjar.tk.server.domain.chat.MessageAdmission
 import com.virjar.tk.server.domain.chat.ChatService
@@ -19,6 +20,8 @@ import com.virjar.tk.server.domain.chat.UnmanagedChatPolicy
 import com.virjar.tk.server.domain.contact.ContactRepository
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
 import com.virjar.tk.server.domain.transaction.PgUnitOfWork
+import org.slf4j.LoggerFactory
+import com.virjar.tk.server.domain.user.SystemAccountUids
 import com.virjar.tk.server.domain.user.UserRepository
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.Member
@@ -39,6 +42,8 @@ class MessageService(
     private val chatStore: ChatStore,
     private val access: ChatAccess,
     private val chatService: ChatService,
+    /** 服务号指令消费（内测反馈 T058）；未接线时发往 sys_service 的消息只投递不回复。 */
+    internal var systemCommandHandler: SystemCommandHandler? = null,
     private val officeRefs: OfficeRefResolver,
     private val taskRefs: TaskRefResolver,
     private val projector: MessageProjector,
@@ -59,6 +64,19 @@ class MessageService(
 
     suspend fun sendMessage(senderUid: String, message: Message): Long {
         return sendMessage(senderUid, message, authorizeAfterChatLock = null)
+    }
+
+    /** 服务号回复入口（内测反馈 T058）：默认构造消息后走普通发送链。 */
+    suspend fun sendServiceReply(chatId: String, clientMsgId: String, markdown: String): Long {
+        val reply = Message(
+            chatId = chatId,
+            clientMsgId = clientMsgId,
+            senderUid = com.virjar.tk.server.domain.user.SystemAccountUids.SERVICE,
+            messageType = MessageType.RICH_TEXT.code,
+            timestamp = System.currentTimeMillis(),
+            body = com.virjar.tk.protocol.body.buildRichTextBody(markdown),
+        )
+        return sendMessage(senderUid = com.virjar.tk.server.domain.user.SystemAccountUids.SERVICE, message = reply)
     }
 
     /** 机器人可附加凭据校验；回调在聊天锁内同步执行，普通用户传 null。 */
@@ -120,6 +138,7 @@ class MessageService(
         // 消息契约：发送成功 = 引用的附件真实存在（文件只走本服务端文件存储，
         // 不存在三方文件服务；完整 http URL 只是客户端/外部 SDK 对接形态）。
         // 断链消息在服务端拒绝，不能等对端点击才发现打不开。
+        var targetedService = false
         val committedMessage = withAttachmentReferenceMutation(declaredMessage) {
             val canonicalMessage = attachmentService.resolve(declaredMessage, senderUid)
             attachmentService.markReferenced(canonicalMessage)
@@ -129,6 +148,7 @@ class MessageService(
                 canonicalMessage,
                 authorizeAfterChatLock,
             )
+            targetedService = SystemAccountUids.SERVICE in admission.recipientUids
 
             // 客户端只声明 chatId/clientMsgId/type/body；消息身份、时间和状态位全部由服务端重建。
             val candidate = canonicalMessage.copy(
@@ -148,8 +168,34 @@ class MessageService(
             )
         }
         projector.drainPendingForMessageLocked(chatId, committedMessage.serverSeq)
+        maybeDispatchSystemCommand(senderUid, chatId, message, targetedService)
 
         return committedMessage.serverSeq
+    }
+
+    /**
+     * 服务号指令路由（内测反馈 T058）：发往 sys_service 的消息在其投影提交后进入异步
+     * 指令处理，回复以 sys_service 身份走正常发送链路；回复 clientMsgId 由原消息
+     * clientMsgId 派生，幂等重放不会产生重复回复。
+     */
+    private fun maybeDispatchSystemCommand(
+        senderUid: String,
+        chatId: String,
+        message: Message,
+        targetedService: Boolean,
+    ) {
+        val handler = systemCommandHandler ?: return
+        if (!targetedService || senderUid == SystemAccountUids.SERVICE) return
+        val text = when (val body = message.body) {
+            is com.virjar.tk.protocol.body.RichTextBody -> body.plainText
+            is com.virjar.tk.protocol.body.ReplyBody ->
+                com.virjar.tk.protocol.body.buildRichTextBody(body.content, body.assets).plainText
+            else -> return
+        }
+        commandScope.launch {
+            runCatching { handler.onServiceMessage(senderUid, chatId, message.clientMsgId, text) }
+                .onFailure { commandLogger.warn("服务号指令处理失败", it) }
+        }
     }
 
     suspend fun getHistory(uid: String, chatId: String, fromSeq: Long, limit: Int): List<Message> {
@@ -573,4 +619,10 @@ class MessageService(
 
         private val EDITABLE_MESSAGE_TYPES = setOf(MessageType.RICH_TEXT)
     }
-}
+}    /** 指令回复的异步派发域；失败仅记日志，不影响发送方已提交的消息。 */
+    private val commandScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default,
+    )
+    private val commandLogger = LoggerFactory.getLogger(MessageService::class.java)
+
+

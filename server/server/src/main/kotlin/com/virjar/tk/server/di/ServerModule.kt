@@ -476,7 +476,12 @@ internal fun createServerModule(
             taskRefs = com.virjar.tk.server.domain.message.TaskRefResolver(get()),
             managedChats = get(),
             attachmentLifecycle = get(),
-        )
+        ).apply {
+            // 服务号指令路由（内测反馈 T058）：回复经自身发送链路，避免构造期自引用
+            systemCommandHandler = com.virjar.tk.server.domain.message.SystemCommandRouter { chatId, clientMsgId, markdown ->
+                sendServiceReply(chatId, clientMsgId, markdown)
+            }
+        }
     }
     single {
         MessageReactionService(
