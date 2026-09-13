@@ -124,6 +124,7 @@ class RpcCollectionBoundsTest {
         override suspend fun createPersonal(targetUid: String): Chat = unexpected()
         override suspend fun setGroupAvatar(avatar: GroupAvatar) = unexpected()
         override suspend fun getGroupAvatars(chatIds: List<String>): List<GroupAvatar> = unexpected()
+        override suspend fun getOrCreateSystemChat(systemUid: String) = unexpected()
         override suspend fun getOrCreateSavedChat(): Chat = unexpected()
         override suspend fun createGroup(
             operationId: String,
