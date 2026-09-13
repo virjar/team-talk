@@ -21,10 +21,12 @@ class DocumentCommentRepository(
     private val onPendingCommitted: () -> Unit = {},
 ) {
     private val rpc = DocumentCommentRpcProxy(rpcClient)
-    private val requests = Mutex()
+    // 读之间保持顺序；命令 ACK 推进投影 generation，无需占读锁等待网络。
+    private val readMutex = Mutex()
+    private val commandMutex = Mutex()
 
     suspend fun refresh(key: DocumentCommentPageKey): Outcome<Boolean> = outcome {
-        requests.withLock {
+        readMutex.withLock {
             val generation = local.generation()
             val response = try {
                 rpc.list(key.spaceId, key.documentId, key.beforeSequence, DocumentCommentPage.DEFAULT_PAGE_SIZE)
@@ -58,7 +60,7 @@ class DocumentCommentRepository(
     fun retry(commentId: String) { local.retry(commentId); onPendingCommitted() }
 
     /** 只有确定拒绝的意图可丢弃；结果未知的在途评论保留原身份等待确认。 */
-    suspend fun discardRejected(commentId: String) = requests.withLock {
+    suspend fun discardRejected(commentId: String) = commandMutex.withLock {
         val command = local.pending(commentId) ?: return@withLock
         check(command.failure != null) { "评论仍在等待服务端确认" }
         local.discard(commentId)
@@ -66,7 +68,7 @@ class DocumentCommentRepository(
 
     internal suspend fun retryPending(): Outcome<Unit> = retryPendingMirrors(local.pending().filter { it.failure == null }) { command ->
         outcome {
-            requests.withLock {
+            commandMutex.withLock {
                 if (local.pending(command.commentId) != command) return@withLock
                 val generation = local.generation()
                 val response = try {

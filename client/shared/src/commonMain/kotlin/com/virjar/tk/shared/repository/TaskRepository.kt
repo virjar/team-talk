@@ -10,7 +10,6 @@ import com.virjar.tk.shared.Outcome
 import com.virjar.tk.shared.client.LocalTasks
 import com.virjar.tk.shared.client.TaskPageKey
 import com.virjar.tk.shared.outcome
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.UUID
@@ -23,10 +22,12 @@ class TaskRepository(
     private val onPendingCommitted: () -> Unit = {},
 ) {
     private val rpc = TaskRpcProxy(rpcClient)
-    private val requests = Mutex()
+    // 读之间保持顺序；网络读取不占可靠命令通道，投影 generation 拒收 ACK 之前的旧页。
+    private val readMutex = Mutex()
+    private val commandMutex = Mutex()
 
     suspend fun refresh(key: TaskPageKey): Outcome<Boolean> = outcome {
-        requests.withLock {
+        readMutex.withLock {
             val generation = local.generation()
             val page = rpc.list(key.view, key.cursor, TaskPolicy.DEFAULT_PAGE_SIZE)
             require(page.items.size <= TaskPolicy.DEFAULT_PAGE_SIZE)
@@ -37,7 +38,7 @@ class TaskRepository(
 
     suspend fun get(taskId: String): Outcome<WorkTask> = outcome {
         TaskPolicy.requireId(taskId)
-        requests.withLock {
+        readMutex.withLock {
             repeat(2) {
                 val generation = local.generation()
                 val task = try { rpc.get(taskId) } catch (failure: Exception) {
@@ -53,7 +54,7 @@ class TaskRepository(
 
     suspend fun audit(taskId: String, cursor: String? = null, limit: Int = TaskPolicy.DEFAULT_PAGE_SIZE): Outcome<TaskAuditPage> = outcome {
         TaskPolicy.requireId(taskId); TaskPolicy.requireCursor(cursor); require(limit in 1..TaskPolicy.MAX_PAGE_SIZE)
-        requests.withLock {
+        readMutex.withLock {
             val generation = local.generation()
             val page = try { rpc.audit(taskId, cursor, limit) } catch (failure: Exception) {
                 invalidateRejectedRead(taskId, failure)
@@ -61,7 +62,7 @@ class TaskRepository(
             }
             require(page.items.size <= limit && page.items.all { it.taskId == taskId })
             require(page.nextCursor == null || page.nextCursor != cursor)
-            if (generation != local.generation()) throw CancellationException("任务审计在读取期间已变化")
+            if (generation != local.generation()) throw TaskProjectionInvalidatedException()
             page
         }
     }
@@ -82,7 +83,7 @@ class TaskRepository(
         command.taskId
     }
     fun retry(taskId: String) { local.retry(taskId); onPendingCommitted() }
-    suspend fun discardRejected(taskId: String) = requests.withLock { local.discard(taskId) }
+    suspend fun discardRejected(taskId: String) = commandMutex.withLock { local.discard(taskId) }
 
     internal fun nextExpiryAt(): Long? = local.pending().filter { it.failure == null }
         .minOfOrNull { ReliableCommandContract.firstExpiredAt(it.command.issuedAt) }
@@ -92,7 +93,7 @@ class TaskRepository(
     )
     private suspend fun retryCommands(): Outcome<Unit> = retryPendingMirrors(local.pending().filter { it.failure == null }) { record ->
         outcome {
-            requests.withLock {
+            commandMutex.withLock {
                 if (local.pending(record.command.taskId) != record) return@withLock
                 val command = record.command
                 val generation = local.generation()

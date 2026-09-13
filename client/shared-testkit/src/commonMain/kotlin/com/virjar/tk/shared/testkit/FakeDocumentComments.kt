@@ -53,6 +53,7 @@ internal class FakeDocumentComments : LocalDocumentComments {
                 }
             }
         }
+        this.generation++
         discard(command.commentId)
     }
 }

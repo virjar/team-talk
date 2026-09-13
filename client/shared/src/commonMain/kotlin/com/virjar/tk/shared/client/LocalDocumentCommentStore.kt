@@ -110,6 +110,8 @@ internal class LocalDocumentCommentStore(
             }
             queries.deletePendingDocumentComment(command.commentId)
         }
+        // ACK 与读取可以并行；旧 list 不能覆盖刚确认的正文或重新放回已删除评论。
+        currentGeneration += 1
         changed()
         true
         } }
