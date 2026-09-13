@@ -362,7 +362,8 @@ class LocalCacheImpl internal constructor(
         entities.abandonProjectionSnapshot(lease) ||
             organization.abandonSnapshot(lease) ||
             documents.abandonSnapshot(lease) ||
-            reactions.abandonSnapshot(lease)
+            reactions.abandonSnapshot(lease) ||
+            groupFileEntries.abandonSnapshot(lease)
 
     override fun getDocumentSpaces(): List<DocumentSpace> = documents.getSpaces()
 
@@ -679,11 +680,15 @@ class LocalCacheImpl internal constructor(
         updatedAt: Long,
     ) = groupFileEntries.applyDelete(chatId, entryId, tombstoneRevision, updatedBy, updatedAt)
 
-    override fun replaceGroupFileDirectory(
+    override fun beginGroupFileDirectorySnapshot(chatId: String, parentId: String?): ProjectionSnapshotLease =
+        groupFileEntries.beginSnapshot(chatId, parentId)
+
+    override fun applyGroupFileDirectorySnapshot(
+        lease: ProjectionSnapshotLease,
         chatId: String,
         parentId: String?,
         entries: List<com.virjar.tk.protocol.model.GroupFileEntry>,
-    ) = groupFileEntries.replaceDirectory(chatId, parentId, entries)
+    ) = groupFileEntries.applySnapshot(lease, chatId, parentId, entries)
 
     override fun activeGroupFileEntries(chatId: String, parentId: String?) =
         groupFileEntries.activeEntries(chatId, parentId)

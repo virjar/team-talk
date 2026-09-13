@@ -636,8 +636,16 @@ interface LocalCache : LocalDocumentProjection {
     /** GROUP_FILE_CHANGED DELETE delta；墓穴行阻挡迟到 UPSERT 复活。 */
     fun applyGroupFileDelete(chatId: String, entryId: String, tombstoneRevision: Long, updatedBy: String, updatedAt: Long)
 
-    /** 目录页快照原子替换该 parent 的全部行。 */
-    fun replaceGroupFileDirectory(chatId: String, parentId: String?, entries: List<com.virjar.tk.protocol.model.GroupFileEntry>)
+    /** 在 list RPC 之前取得目录租约；delta、群投影清理和更新请求使旧租约失效。 */
+    fun beginGroupFileDirectorySnapshot(chatId: String, parentId: String?): ProjectionSnapshotLease
+
+    /** 当前完整快照原子替换该 parent 的全部行；失效响应不写入并返回 false。 */
+    fun applyGroupFileDirectorySnapshot(
+        lease: ProjectionSnapshotLease,
+        chatId: String,
+        parentId: String?,
+        entries: List<com.virjar.tk.protocol.model.GroupFileEntry>,
+    ): Boolean
 
     /** 读取一个目录的当前活动条目。 */
     fun activeGroupFileEntries(chatId: String, parentId: String?): List<com.virjar.tk.protocol.model.GroupFileEntry>

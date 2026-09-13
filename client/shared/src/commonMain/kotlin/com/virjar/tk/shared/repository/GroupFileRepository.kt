@@ -70,9 +70,26 @@ class GroupFileRepository internal constructor(
      */
     suspend fun list(chatId: String, parentId: String? = null): Outcome<List<GroupFileEntry>> =
         outcome {
-            val page = rpc.list(chatId, parentId)
-            localCache?.replaceGroupFileDirectory(chatId, parentId, page)
-            page
+            val cache = localCache ?: return@outcome readDirectory(chatId, parentId)
+            repeat(2) {
+                val lease = cache.beginGroupFileDirectorySnapshot(chatId, parentId)
+                try {
+                    val page = readDirectory(chatId, parentId)
+                    if (cache.applyGroupFileDirectorySnapshot(lease, chatId, parentId, page)) {
+                        return@outcome cache.activeGroupFileEntries(chatId, parentId)
+                    }
+                } finally {
+                    cache.abandonProjectionSnapshot(lease)
+                }
+            }
+            // 在途 delta 可能只补齐一条记录，不能把当前局部缓存当作完整目录的成功响应。
+            throw com.virjar.tk.shared.AppError.Business(503, "群文件目录正在变化，请稍后刷新")
+        }
+
+    private suspend fun readDirectory(chatId: String, parentId: String?): List<GroupFileEntry> =
+        rpc.list(chatId, parentId).also { entries ->
+            require(entries.all { it.chatId == chatId && it.parentId == parentId }) { "群文件响应身份不匹配" }
+            require(entries.map(GroupFileEntry::entryId).toSet().size == entries.size) { "群文件目录包含重复条目" }
         }
 
     /** 本地目录投影（stale 展示与缓存首帧）；无缓存返回 null。 */

@@ -26,7 +26,7 @@ import kotlinx.coroutines.launch
 
 internal data class GroupFileLocation(val chatId: String, val parentId: String?)
 
-/** 群文件页面状态。当前实现采用打开/修改后拉取，不伪装成实时同步。 */
+/** 群文件页面观察当前目录的本地投影；刷新完整目录，事件与可靠命令确认使其收敛。 */
 class GroupFilesFeature internal constructor(
     private val session: ClientSession,
     private val scope: CoroutineScope,
@@ -54,8 +54,9 @@ class GroupFilesFeature internal constructor(
 
     private val entriesGate = LatestRequestGate<GroupFileLocation>()
 
-    /** 当前 chat 根目录的投影流收集；切换/关闭 chat 时取消。 */
+    /** 列表内容只有这个当前目录观察者发布；RPC 返回仅确认刷新状态。 */
     private var projectionJob: kotlinx.coroutines.Job? = null
+    private var observedLocation: GroupFileLocation? = null
     private val versionsGate = LatestRequestGate<Pair<String, String>>()
 
     init {
@@ -74,26 +75,25 @@ class GroupFilesFeature internal constructor(
         versions = emptyList()
         loading = false
         versionsGate.invalidate()
-        // CONTENT-01：缓存优先。离线旧缓存立即渲染（stale 指示由 stale 标志暴露），
-        // 权威页随后原子替换投影并收敛 entries。
-        entries = session.groupFileRepo.cachedDirectory(chatId, null).orEmpty()
-        observeProjection(chatId)
         refresh()
     }
 
     /**
-     * CONTENT-01：行级投影流实时更新根目录列表——GROUP_FILE_CHANGED 事件与目录
+     * 行级投影流实时更新当前目录列表——GROUP_FILE_CHANGED 事件与目录
      * 快照都通过同一投影发布；权威页刷新仍负责 stale 清除。
      */
-    private fun observeProjection(chatId: String) {
+    private fun observeProjection(location: GroupFileLocation) {
+        if (observedLocation == location && projectionJob?.isActive == true) return
         projectionJob?.cancel()
+        observedLocation = location
+        entries = emptyList()
+        stale = true
         projectionJob = scope.launch {
             try {
                 localData.projection {
-                    session.localCache.observeGroupFileEntries(chatId, null)
+                    session.localCache.observeGroupFileEntries(location.chatId, location.parentId)
                 }.collect { projected ->
-                    // 只在仍停留根目录且同一 chat 时应用（子目录导航由快照路径管理）。
-                    if (this@GroupFilesFeature.chatId == chatId && path.isEmpty()) {
+                    if (currentLocation() == location) {
                         entries = projected
                     }
                 }
@@ -115,17 +115,12 @@ class GroupFilesFeature internal constructor(
 
     private suspend fun refresh(location: GroupFileLocation) {
         if (currentLocation() != location) return
+        observeProjection(location)
         val token = entriesGate.begin(location)
         loading = true
-        val hasCachedEntries = entries.isNotEmpty()
         try {
-            val loaded = session.groupFileRepo.list(location.chatId, location.parentId).getOrThrow()
+            localData.run { session.groupFileRepo.list(location.chatId, location.parentId).getOrThrow() }
             if (!entriesGate.isCurrent(token) || currentLocation() != location) return
-            if (loaded.any { it.chatId != location.chatId || it.parentId != location.parentId }) {
-                reportError(IllegalStateException("群文件响应身份不匹配"), "加载群文件失败")
-                return
-            }
-            entries = loaded
             stale = false
         } catch (cancelled: CancellationException) {
             if (entriesGate.isCurrent(token)) entriesGate.invalidate()
@@ -135,21 +130,23 @@ class GroupFilesFeature internal constructor(
                 when ((e as? com.virjar.tk.shared.AppError.Business)?.code) {
                     403, 404 -> {
                         // 权威 403/404：原子清空投影与页面（成员资格/群已不存在）。
-                        session.groupFileRepo.purgeProjectionAfterFailure(location.chatId)
+                        localData.run { session.groupFileRepo.purgeProjectionAfterFailure(location.chatId) }
+                        if (!entriesGate.isCurrent(token) || currentLocation() != location) return
                         entries = emptyList()
                         path = emptyList()
+                        observeProjection(GroupFileLocation(location.chatId, null))
                         stale = false
                         reportFeedback(UserFeedbackCode.OPERATION_FAILED)
                         reportError(e, "群文件不可访问")
                     }
                     else -> {
-                        if (hasCachedEntries) {
+                        stale = true
+                        if (entries.isNotEmpty()) {
                             // 离线/网络失败：保留缓存做 stale 展示，不作为远端操作依据。
                             com.virjar.tk.shared.log.AppLog.trace(
                                 "GroupFilesFeature",
                                 "directory refresh stale: ${e::class.simpleName}: ${e.message}",
                             )
-                            stale = true
                         } else {
                             reportError(e, "加载群文件失败")
                         }
@@ -169,7 +166,6 @@ class GroupFilesFeature internal constructor(
         scope.launch {
             if (currentLocation() != location) return@launch
             path = path + folder
-            entries = emptyList()
             selectedFile = null
             versions = emptyList()
             versionsGate.invalidate()
@@ -184,7 +180,6 @@ class GroupFilesFeature internal constructor(
         scope.launch {
             if (currentLocation() != location) return@launch
             path = targetPath
-            entries = emptyList()
             selectedFile = null
             versions = emptyList()
             versionsGate.invalidate()
@@ -258,7 +253,7 @@ class GroupFilesFeature internal constructor(
             } else if (currentLocation() == location) {
                 attempt.succeed()
                 refresh(location)
-                showVersions(entries.firstOrNull { it.entryId == entry.entryId })
+                showCurrentVersions(location, entry.entryId)
             } else {
                 attempt.succeed()
             }
@@ -395,7 +390,6 @@ class GroupFilesFeature internal constructor(
                 val deletedIndex = path.indexOfFirst { it.entryId == completion.entryId }
                 if (deletedIndex < 0) return
                 path = path.take(deletedIndex)
-                entries = emptyList()
                 selectedFile = null
                 versions = emptyList()
                 versionsGate.invalidate()
@@ -415,7 +409,7 @@ class GroupFilesFeature internal constructor(
         val restoreVersions = selectedFile?.entryId == completion.entryId
         refresh(location)
         if (restoreVersions && currentLocation() == location) {
-            showVersions(entries.firstOrNull { it.entryId == completion.entryId })
+            showCurrentVersions(location, completion.entryId)
         }
     }
 
@@ -424,12 +418,8 @@ class GroupFilesFeature internal constructor(
         val pathIndex = originalPathIds.indexOf(completion.entryId)
         if (pathIndex < 0) return
         try {
-            val siblings = session.groupFileRepo.list(completion.chatId, completion.parentId).getOrThrow()
+            val siblings = localData.run { session.groupFileRepo.list(completion.chatId, completion.parentId).getOrThrow() }
             if (chatId != completion.chatId || path.map(GroupFileEntry::entryId) != originalPathIds) return
-            if (siblings.any { it.chatId != completion.chatId || it.parentId != completion.parentId }) {
-                reportError(IllegalStateException("群文件路径响应身份不匹配"), "刷新群文件路径失败")
-                return
-            }
             val renamed = siblings.firstOrNull {
                 it.entryId == completion.entryId && it.kind == GroupFileEntry.KIND_FOLDER
             }
@@ -440,7 +430,6 @@ class GroupFilesFeature internal constructor(
                 // 重命名 ACK 可能在另一个参与者删除该文件夹之后到达。
                 // 不要把用户留在服务器不再暴露的分支里。
                 path = path.take(pathIndex)
-                entries = emptyList()
                 selectedFile = null
                 versions = emptyList()
                 versionsGate.invalidate()
@@ -453,6 +442,15 @@ class GroupFilesFeature internal constructor(
                 reportError(e, "刷新群文件路径失败")
             }
         }
+    }
+
+    /** 刷新返回时 UI flow 可能尚未调度；版本面板读取同一个已收敛缓存，不借用旧页面列表。 */
+    private suspend fun showCurrentVersions(location: GroupFileLocation, entryId: String) {
+        val entry = localData.run {
+            session.localCache.activeGroupFileEntries(location.chatId, location.parentId)
+                .firstOrNull { it.entryId == entryId }
+        }
+        if (currentLocation() == location) showVersions(entry)
     }
 
     private fun currentLocation(): GroupFileLocation? = chatId?.let { GroupFileLocation(it, parentId) }

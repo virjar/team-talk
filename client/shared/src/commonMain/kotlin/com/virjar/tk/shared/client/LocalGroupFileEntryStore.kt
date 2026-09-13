@@ -8,7 +8,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
-import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
  * 群共享文件的行级本地投影（CONTENT-01）。
@@ -29,12 +28,25 @@ internal class LocalGroupFileEntryStore(
         val flow: MutableStateFlow<List<GroupFileEntry>>,
     )
 
-    private val observers = LinkedHashMap<String, ConcurrentLinkedQueue<DirectoryObserver>>()
+    private val observers = LinkedHashMap<String, MutableList<DirectoryObserver>>()
+    private val snapshots = KeyedProjectionSnapshotGate("group file directory")
+
+    private fun <T> locked(block: () -> T): T = cacheUseGate.use {
+        synchronized(stateLock) { block() }
+    }
+
+    private fun directoryKey(chatId: String, parentId: String?) = "${chatId.length}:$chatId:${parentId.orEmpty()}"
+
+    private fun invalidateChatLocked(chatId: String) {
+        val prefix = "${chatId.length}:$chatId:"
+        snapshots.invalidateMatching { it.startsWith(prefix) }
+    }
 
     /** GROUP_FILE_CHANGED UPSERT delta；重复/迟到低 revision 是无操作。 */
     fun applyUpsert(entry: GroupFileEntry) {
         cacheUseGate.use {
             synchronized(stateLock) {
+                invalidateChatLocked(entry.chatId)
                 queries.transaction {
                     val existing = queries.selectGroupFileEntry(entry.chatId, entry.entryId)
                         .executeAsOneOrNull()
@@ -45,9 +57,8 @@ internal class LocalGroupFileEntryStore(
                     upsertRow(entry)
                     pruneLocked(entry.chatId)
                 }
-                Unit
+                publishLocked(entry.chatId)
             }
-            publish(entry.chatId)
         }
     }
 
@@ -55,6 +66,7 @@ internal class LocalGroupFileEntryStore(
     fun applyDelete(chatId: String, entryId: String, tombstoneRevision: Long, updatedBy: String, updatedAt: Long) {
         cacheUseGate.use {
             synchronized(stateLock) {
+                invalidateChatLocked(chatId)
                 queries.transaction {
                     val existing = queries.selectGroupFileEntry(chatId, entryId).executeAsOneOrNull()
                     if (existing == null) {
@@ -78,46 +90,61 @@ internal class LocalGroupFileEntryStore(
                         )
                     }
                 }
-                Unit
+                publishLocked(chatId)
             }
-            publish(chatId)
         }
     }
 
-    /** 目录页快照原子替换该 parent 的全部行（含清走墓穴）；快照是权威页，条目可重新拉取。 */
-    fun replaceDirectory(chatId: String, parentId: String?, entries: List<GroupFileEntry>) {
-        cacheUseGate.use {
-            synchronized(stateLock) {
-                queries.transaction {
-                    queries.deleteGroupFileDirectory(chatId, parentId.orEmpty())
-                    entries.forEach(::upsertRow)
-                }
-                Unit
+    fun beginSnapshot(chatId: String, parentId: String?): ProjectionSnapshotLease = locked {
+        snapshots.begin(directoryKey(chatId, parentId))
+    }
+
+    fun abandonSnapshot(lease: ProjectionSnapshotLease): Boolean = cacheUseGate.runIfOpen {
+        synchronized(stateLock) { snapshots.abandon(lease) }
+    }
+
+    /** 只有请求期间没有 delta/reset 或更新请求的完整目录页可以清走墓穴和缺席条目。 */
+    fun applySnapshot(
+        lease: ProjectionSnapshotLease,
+        chatId: String,
+        parentId: String?,
+        entries: List<GroupFileEntry>,
+    ): Boolean = cacheUseGate.runIfOpen {
+        require(entries.all { it.chatId == chatId && it.parentId == parentId }) { "群文件响应身份不匹配" }
+        require(entries.map(GroupFileEntry::entryId).toSet().size == entries.size) { "群文件目录包含重复条目" }
+        synchronized(stateLock) {
+            if (!snapshots.consumeIfCurrent(lease, directoryKey(chatId, parentId))) return@synchronized false
+            queries.transaction {
+                queries.deleteGroupFileDirectory(chatId, parentId.orEmpty())
+                entries.forEach(::upsertRow)
             }
-            publish(chatId)
+            publishLocked(chatId)
+            true
         }
     }
 
     /** 当前活动条目（确定性读取，供快照首帧与测试断言）。 */
-    fun activeEntries(chatId: String, parentId: String?): List<GroupFileEntry> = cacheUseGate.use {
-        synchronized(stateLock) {
-            queries.selectActiveGroupFileEntries(chatId, parentId.orEmpty()).executeAsList()
-                .map(::toEntry)
-        }
+    fun activeEntries(chatId: String, parentId: String?): List<GroupFileEntry> = locked {
+        activeEntriesLocked(chatId, parentId.orEmpty())
     }
 
+    private fun activeEntriesLocked(chatId: String, parentKey: String): List<GroupFileEntry> =
+        queries.selectActiveGroupFileEntries(chatId, parentKey).executeAsList().map(::toEntry)
+
     /** 观察一个目录的活动条目；delta 与快照写入都实时发布。 */
-    fun observe(chatId: String, parentId: String?): Flow<List<GroupFileEntry>> = cacheUseGate.use {
-        flow {
-            val state = MutableStateFlow(activeEntries(chatId, parentId))
-            val observer = DirectoryObserver(parentId.orEmpty(), state)
+    fun observe(chatId: String, parentId: String?): Flow<List<GroupFileEntry>> = flow {
+        val observer = locked {
+            DirectoryObserver(parentId.orEmpty(), MutableStateFlow(activeEntriesLocked(chatId, parentId.orEmpty())))
+                .also { observers.getOrPut(chatId) { mutableListOf() }.add(it) }
+        }
+        try {
+            emitAll(observer.flow)
+        } finally {
             synchronized(stateLock) {
-                observers.getOrPut(chatId) { ConcurrentLinkedQueue() }.add(observer)
-            }
-            try {
-                emitAll(state)
-            } finally {
-                synchronized(stateLock) { observers[chatId]?.remove(observer) }
+                observers[chatId]?.let { registered ->
+                    registered.remove(observer)
+                    if (registered.isEmpty()) observers.remove(chatId)
+                }
             }
         }
     }
@@ -126,24 +153,26 @@ internal class LocalGroupFileEntryStore(
     fun purgeChat(chatId: String) {
         cacheUseGate.use {
             synchronized(stateLock) {
+                invalidateChatLocked(chatId)
                 queries.deleteAllGroupFileEntriesForChat(chatId)
-                Unit
+                publishLocked(chatId)
             }
-            publish(chatId)
         }
     }
 
     /** 调用方在服务器投影 reset 期间持有 [stateLock]。 */
     fun clearAllLocked() {
+        snapshots.reset()
         queries.deleteAllGroupFileEntries()
         val chats = observers.keys.toList()
         chats.forEach { chatId ->
-            observers[chatId]?.forEach { it.flow.value = emptyList() }
+            observers[chatId]?.toList()?.forEach { it.flow.value = emptyList() }
         }
     }
 
     /** 调用方在缓存退役期间持有 [stateLock]。 */
     fun closeObserversLocked() {
+        snapshots.reset()
         observers.clear()
     }
 
@@ -174,11 +203,9 @@ internal class LocalGroupFileEntryStore(
         }
     }
 
-    private fun publish(chatId: String) {
-        val directoryObservers = synchronized(stateLock) { observers[chatId]?.toList() } ?: return
-        directoryObservers.forEach { observer ->
-            observer.flow.value = queries.selectActiveGroupFileEntries(chatId, observer.parentKey)
-                .executeAsList().map(::toEntry)
+    private fun publishLocked(chatId: String) {
+        observers[chatId]?.toList()?.forEach { observer ->
+            observer.flow.value = activeEntriesLocked(chatId, observer.parentKey)
         }
     }
 

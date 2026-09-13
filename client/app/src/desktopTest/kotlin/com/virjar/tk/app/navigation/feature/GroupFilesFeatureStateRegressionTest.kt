@@ -3,6 +3,7 @@ package com.virjar.tk.app.navigation.feature
 import com.virjar.tk.shared.client.ClientSession
 import com.virjar.tk.shared.client.DeploymentIdentity
 import com.virjar.tk.shared.client.ImClient
+import com.virjar.tk.shared.client.LocalCache
 import com.virjar.tk.shared.client.PendingGroupFileCommandKind
 import com.virjar.tk.shared.client.SessionEndReason
 import com.virjar.tk.shared.client.UserSession
@@ -21,12 +22,17 @@ import com.virjar.tk.protocol.rpc.gen.GroupFileRpcContract
 import com.virjar.tk.shared.testkit.FakeLocalCache
 import com.virjar.tk.app.telemetry.UserFeedbackCode
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -44,6 +50,77 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalCoroutinesApi::class)
 class GroupFilesFeatureStateRegressionTest {
     @Test
+    fun `accepted list returning after a newer observed delta cannot overwrite the page`() = runTest {
+        val original = folder()
+        val updated = original.copy(name = "较新的事件", revision = 2)
+        val captured = CompletableDeferred<Unit>()
+        val releaseReturn = CountDownLatch(1)
+        val backing = FakeLocalCache(initialDatasetId = DATASET_ID)
+        val cache = object : LocalCache by backing {
+            override fun activeGroupFileEntries(chatId: String, parentId: String?): List<GroupFileEntry> {
+                val result = backing.activeGroupFileEntries(chatId, parentId)
+                captured.complete(Unit)
+                check(releaseReturn.await(10, TimeUnit.SECONDS)) { "list return was not released" }
+                return result
+            }
+        }
+        val rpc = ControlledRpcInvoker().apply { enqueueOk(entriesPayload(original)) }
+        val harness = createHarness(rpc, cache, Dispatchers.IO)
+        try {
+            val opening = async { harness.feature.open(CHAT_ID) }
+            withContext(Dispatchers.Default) { withTimeout(10_000) { captured.await() } }
+            backing.applyGroupFileUpsert(updated)
+            withContext(Dispatchers.Default) {
+                withTimeout(10_000) { while (harness.feature.entries != listOf(updated)) delay(5) }
+            }
+            releaseReturn.countDown()
+            opening.await()
+            runCurrent()
+            assertEquals(listOf(updated), harness.feature.entries)
+            assertFalse(harness.feature.stale)
+        } finally {
+            releaseReturn.countDown()
+            harness.close()
+        }
+    }
+
+    @Test
+    fun `first directory keeps newer deltas stale when both full snapshots are invalidated`() = runTest {
+        val first = CompletableDeferred<ResponsePayload>()
+        val retry = CompletableDeferred<ResponsePayload>()
+        val rpc = ControlledRpcInvoker().apply {
+            enqueueDeferred(first)
+            enqueueDeferred(retry)
+        }
+        val harness = createHarness(rpc)
+        try {
+            val opening = async { harness.feature.open(CHAT_ID) }
+            runCurrent()
+            val updated = folder(name = "实时目录", revision = 2)
+            harness.session.localCache.applyGroupFileUpsert(updated)
+            runCurrent()
+            assertEquals(listOf(updated), harness.feature.entries)
+
+            first.complete(ok(entriesPayload(folder())))
+            runCurrent()
+            val newest = updated.copy(name = "再次更新", revision = 3)
+            harness.session.localCache.applyGroupFileUpsert(newest)
+            runCurrent()
+            retry.complete(ok(entriesPayload(folder())))
+            advanceUntilIdle()
+            opening.await()
+
+            assertEquals(listOf(newest), harness.feature.entries)
+            assertTrue(harness.feature.stale, "一条 delta 不能证明首次目录已完整加载")
+            assertFalse(harness.feature.loading)
+            assertEquals(2, rpc.listParentIds().size)
+            assertTrue(harness.errors.isEmpty())
+        } finally {
+            harness.close()
+        }
+    }
+
+    @Test
     fun `enter clears previous entries when child refresh fails`() = runTest {
         val rpc = ControlledRpcInvoker().apply {
             enqueueOk(entriesPayload(folder(), file(ROOT_FILE_ID, null, "根文件")))
@@ -51,6 +128,7 @@ class GroupFilesFeatureStateRegressionTest {
         val harness = createHarness(rpc)
         try {
             harness.feature.open(CHAT_ID)
+            runCurrent()
             assertEquals(listOf(FOLDER_ID, ROOT_FILE_ID), harness.feature.entries.map { it.entryId })
 
             val childResponse = CompletableDeferred<ResponsePayload>()
@@ -75,7 +153,7 @@ class GroupFilesFeatureStateRegressionTest {
     }
 
     @Test
-    fun `up clears child entries when parent refresh fails`() = runTest {
+    fun `up restores only parent cache and keeps it stale when refresh fails`() = runTest {
         val child = file(CHILD_FILE_ID, FOLDER_ID, "目录文件")
         val rpc = ControlledRpcInvoker().apply {
             enqueueOk(entriesPayload(folder()))
@@ -84,6 +162,7 @@ class GroupFilesFeatureStateRegressionTest {
         val harness = createHarness(rpc)
         try {
             harness.feature.open(CHAT_ID)
+            runCurrent()
             harness.feature.enter(folder())
             advanceUntilIdle()
             assertEquals(listOf(CHILD_FILE_ID), harness.feature.entries.map { it.entryId })
@@ -94,16 +173,18 @@ class GroupFilesFeatureStateRegressionTest {
             runCurrent()
 
             assertTrue(harness.feature.path.isEmpty())
-            assertTrue(harness.feature.entries.isEmpty())
+            assertEquals(listOf(folder()), harness.feature.entries)
+            assertTrue(harness.feature.stale)
             assertTrue(harness.feature.loading)
             assertEquals(listOf(null, FOLDER_ID, null), rpc.listParentIds())
 
             parentResponse.complete(rpcError(503, "offline"))
             advanceUntilIdle()
 
-            assertTrue(harness.feature.entries.isEmpty())
+            assertEquals(listOf(folder()), harness.feature.entries)
+            assertTrue(harness.feature.stale)
             assertFalse(harness.feature.loading)
-            assertTrue(harness.errors.contains("加载群文件失败"))
+            assertTrue(harness.errors.isEmpty())
         } finally {
             harness.close()
         }
@@ -120,6 +201,7 @@ class GroupFilesFeatureStateRegressionTest {
         val harness = createHarness(rpc)
         try {
             harness.feature.open(CHAT_ID)
+            runCurrent()
             harness.feature.enter(folder(name = "旧目录名"))
             advanceUntilIdle()
 
@@ -172,6 +254,7 @@ class GroupFilesFeatureStateRegressionTest {
         val harness = createHarness(rpc)
         try {
             harness.feature.open(CHAT_ID)
+            runCurrent()
             harness.feature.enter(folder())
             advanceUntilIdle()
             harness.feature.showVersions(child)
@@ -194,7 +277,8 @@ class GroupFilesFeatureStateRegressionTest {
             runCurrent()
 
             assertTrue(harness.feature.path.isEmpty())
-            assertTrue(harness.feature.entries.isEmpty())
+            assertEquals(listOf(folder()), harness.feature.entries)
+            assertTrue(harness.feature.stale)
             assertNull(harness.feature.selectedFile)
             assertTrue(harness.feature.versions.isEmpty())
             assertTrue(harness.feature.loading)
@@ -220,6 +304,7 @@ class GroupFilesFeatureStateRegressionTest {
         val harness = createHarness(rpc)
         try {
             harness.feature.open(CHAT_ID)
+            runCurrent()
             assertEquals(listOf(original), harness.feature.entries)
 
             val refreshResponse = CompletableDeferred<ResponsePayload>()
@@ -277,6 +362,7 @@ class GroupFilesFeatureStateRegressionTest {
         val harness = createHarness(rpc)
         try {
             harness.feature.open(CHAT_ID)
+            runCurrent()
             harness.feature.enter(parentFolder)
             advanceUntilIdle()
             harness.feature.enter(vanishedFolder)
@@ -305,7 +391,7 @@ class GroupFilesFeatureStateRegressionTest {
             runCurrent()
 
             assertEquals(listOf(FOLDER_ID), harness.feature.path.map { it.entryId })
-            assertTrue(harness.feature.entries.isEmpty())
+            assertEquals(listOf(validParentEntry), harness.feature.entries)
             assertNull(harness.feature.selectedFile)
             assertTrue(harness.feature.versions.isEmpty())
             assertTrue(harness.feature.loading)
@@ -325,13 +411,16 @@ class GroupFilesFeatureStateRegressionTest {
         }
     }
 
-    private suspend fun TestScope.createHarness(rpc: ControlledRpcInvoker): Harness {
+    private suspend fun TestScope.createHarness(
+        rpc: ControlledRpcInvoker,
+        cache: LocalCache = FakeLocalCache(initialDatasetId = DATASET_ID),
+        storageDispatcher: CoroutineDispatcher? = null,
+    ): Harness {
         val client = ImClient()
         val telemetrySpoolRoot = File(
             System.getProperty("java.io.tmpdir"),
             "teamtalk-group-files-state-test-${System.nanoTime()}",
         ).apply { mkdirs() }
-        val cache = FakeLocalCache(initialDatasetId = DATASET_ID)
         val user = UserSession().apply {
             restorePersistedLogin(OWNER_UID, "offline-refresh", DATASET_ID)
         }
@@ -371,7 +460,7 @@ class GroupFilesFeatureStateRegressionTest {
                 session = createdSession,
                 scope = featureScope,
                 reportError = { _, fallback -> errors += fallback },
-                localData = UiLocalDataBoundary(dispatcher),
+                localData = UiLocalDataBoundary(storageDispatcher ?: dispatcher),
                 reportFeedback = feedback::add,
             )
             @Suppress("UNCHECKED_CAST")

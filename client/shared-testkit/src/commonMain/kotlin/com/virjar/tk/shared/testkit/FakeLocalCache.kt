@@ -393,8 +393,16 @@ class FakeLocalCache(
     override fun applyGroupFileDelete(chatId: String, entryId: String, tombstoneRevision: Long, updatedBy: String, updatedAt: Long) =
         groupFileProjection.applyDelete(chatId, entryId, tombstoneRevision)
 
-    override fun replaceGroupFileDirectory(chatId: String, parentId: String?, entries: List<com.virjar.tk.protocol.model.GroupFileEntry>) =
-        groupFileProjection.replaceDirectory(chatId, parentId, entries)
+    override fun beginGroupFileDirectorySnapshot(chatId: String, parentId: String?) = cacheUseGate.use {
+        groupFileProjection.beginSnapshot(chatId, parentId)
+    }
+
+    override fun applyGroupFileDirectorySnapshot(
+        lease: ProjectionSnapshotLease,
+        chatId: String,
+        parentId: String?,
+        entries: List<com.virjar.tk.protocol.model.GroupFileEntry>,
+    ) = cacheUseGate.runIfOpen { groupFileProjection.applySnapshot(lease, chatId, parentId, entries) }
 
     override fun activeGroupFileEntries(chatId: String, parentId: String?) =
         groupFileProjection.activeEntries(chatId, parentId)
@@ -606,7 +614,8 @@ class FakeLocalCache(
                 if (chatAbandoned) removeCurrentFakeLease(chatSnapshotLeases, lease)
                 chatAbandoned || people.abandonSnapshot(lease) {
                     organization.abandonSnapshot(lease)
-                } || documents.abandonSnapshot(lease) || reactionProjection.abandonSnapshot(lease)
+                } || documents.abandonSnapshot(lease) || reactionProjection.abandonSnapshot(lease) ||
+                    groupFileProjection.abandonSnapshot(lease)
             }
         }
 
@@ -884,6 +893,7 @@ class FakeLocalCache(
                                 }
                                 conversationProjection.resetServerProjectionLocked()
                                 reactionProjection.reset()
+                                groupFileProjection.reset()
                                 // 草稿/已读可靠发件箱属于本地可靠事实。保留它们（以及草稿
                                 // 高水位），使重放能够安全地重新叠加它们。
                             }
@@ -908,6 +918,7 @@ class FakeLocalCache(
                 documents.close()
                 optimisticMessageEdits.close()
                 reactionProjection.reset()
+                groupFileProjection.close()
                 synchronized(pagerLock) {
                     activePagers.forEach { pager -> pager.retireFromCache() }
                     activePagers.clear()

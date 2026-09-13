@@ -92,7 +92,7 @@ class LocalGroupFileEntryStoreTest {
         store.applyUpsert(entry("e2", name = "旧B", revision = 1))
         store.applyDelete("chat-1", "e2", tombstoneRevision = 2, updatedBy = "u2", updatedAt = 5L)
 
-        store.replaceDirectory("chat-1", null, listOf(entry("e1", name = "新A", revision = 2)))
+        store.applySnapshot(store.beginSnapshot("chat-1", null), "chat-1", null, listOf(entry("e1", name = "新A", revision = 2)))
         val rows = store.activeEntries("chat-1", null)
         assertEquals(listOf("新A"), rows.map { it.name }, "快照替换整目录并清走墓穴/缺席条目")
     }
@@ -102,7 +102,7 @@ class LocalGroupFileEntryStoreTest {
         val store = newStore()
         store.applyUpsert(entry("dir", name = "目录", revision = 1))
         store.applyUpsert(entry("child", parentId = "dir", name = "子项", revision = 1))
-        store.replaceDirectory("chat-1", null, listOf(entry("dir", name = "目录", revision = 1)))
+        store.applySnapshot(store.beginSnapshot("chat-1", null), "chat-1", null, listOf(entry("dir", name = "目录", revision = 1)))
         assertEquals(1, store.activeEntries("chat-1", "dir").size, "子目录行不受父目录快照影响")
     }
 
