@@ -132,12 +132,20 @@ fun ChatPanel(
     )
     val effectiveMentionClick = mentionSafeMedia.onMentionClick
     val effectiveUrlClick = mentionSafeMedia.onUrlClick
+    // @ 可见性（内测反馈 T047）：私聊最多只能 @ 对方；群聊候选即群成员（宿主加载）。
+    val chatPeerUid by viewModel.chatPeerUid.collectAsState()
     // 群聊 @ 全体（内测反馈 T056）：合成保留身份 `all` 的候选行；点击该提及不做资料卡跳转。
-    val groupMentionCandidates = remember(mentionCandidates, chatType) {
-        if (chatType == ChatType.GROUP.code && mentionCandidates != null) {
-            listOf(MentionPolicy.allCandidate()) + mentionCandidates
+    val groupMentionCandidates = remember(mentionCandidates, chatType, chatPeerUid) {
+        val scoped = when {
+            mentionCandidates == null -> null
+            chatType == ChatType.PERSONAL.code ->
+                chatPeerUid?.let { peer -> mentionCandidates.filter { it.uid == peer } } ?: emptyList()
+            else -> mentionCandidates
+        }
+        if (scoped != null && chatType == ChatType.GROUP.code) {
+            listOf(MentionPolicy.allCandidate()) + scoped
         } else {
-            mentionCandidates
+            scoped
         }
     }
     // 会话级正文展示上下文：整个会话内不变，作为单一参数下传消息列表与气泡。

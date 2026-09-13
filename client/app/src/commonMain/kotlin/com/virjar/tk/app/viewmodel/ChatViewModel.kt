@@ -66,6 +66,11 @@ class ChatViewModel(
         .map { it?.peerReadSeq ?: 0L }
         .stateIn(scope, SharingStarted.Eagerly, 0L)
 
+    /** 私聊对端 uid（仅 chatType=1 非空）；@ 可见性按会话范围过滤候选（内测 T047）。 */
+    val chatPeerUid: StateFlow<String?> = localCache.observeConversation(chatId)
+        .map { conversation -> conversation?.takeIf { it.chatType == 1 }?.peerUid }
+        .stateIn(scope, SharingStarted.Eagerly, null)
+
     /** 当前存在于驻留窗口中的失败乐观行的安全、稳定原因。 */
     private val _outgoingFailureCodes = MutableStateFlow<Map<String, OutgoingFailureCode>>(emptyMap())
     val outgoingFailureCodes: StateFlow<Map<String, OutgoingFailureCode>> = _outgoingFailureCodes.asStateFlow()
