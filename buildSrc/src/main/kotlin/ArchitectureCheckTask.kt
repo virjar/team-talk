@@ -243,8 +243,7 @@ abstract class ArchitectureCheckTask : DefaultTask() {
 
         val attachmentTransferFiles = listOf(
             "client/shared/src/commonMain/kotlin/com/virjar/tk/shared/repository/FileRepository.kt",
-            "client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/repository/FileRepository.desktop.kt",
-            "client/shared/src/androidMain/kotlin/com/virjar/tk/shared/repository/FileRepository.android.kt",
+            "client/shared/src/jvmAndAndroidMain/kotlin/com/virjar/tk/shared/repository/FileRepository.jvmAndAndroid.kt",
             "client/headless/src/main/kotlin/com/virjar/tk/headless/bot/ImBot.kt",
             "client/headless/src/main/kotlin/com/virjar/tk/headless/agent/AgentApi.kt",
             "client/desktop/src/desktopMain/kotlin/com/virjar/tk/desktop/DesktopMediaServices.kt",
