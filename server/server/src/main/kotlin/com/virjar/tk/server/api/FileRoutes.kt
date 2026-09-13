@@ -4,16 +4,10 @@ import com.virjar.tk.server.infra.storage.FileStore
 import com.virjar.tk.server.infra.storage.FileStoreCapacityExceededException
 import com.virjar.tk.server.infra.storage.FileStoreUploadExpiredException
 import com.virjar.tk.server.infra.storage.FileStoreUploadConflictException
-import com.virjar.tk.server.infra.storage.FileStoreUploadDeliveryLease
 import com.virjar.tk.server.infra.storage.FileStoreUploadInProgressException
-import com.virjar.tk.server.infra.storage.FileStoreUploadReplayCandidate
 import com.virjar.tk.server.infra.storage.FileStoreUploadStaleAttemptException
-import com.virjar.tk.server.infra.storage.FileStoreUploadTransaction
 import com.virjar.tk.server.infra.storage.BeginFileStoreUploadResult
-import com.virjar.tk.server.infra.storage.ManagedTempResidueException
 import com.virjar.tk.server.infra.storage.ReadRange
-import com.virjar.tk.server.infra.storage.STAGING_TEMP_SUFFIX
-import com.virjar.tk.server.infra.storage.UPLOAD_STAGING_TEMP_PREFIX
 import com.virjar.tk.protocol.body.AttachmentPolicy
 import com.virjar.tk.server.domain.attachment.AttachmentAccess
 import com.virjar.tk.server.domain.auth.AccessTokenValidator
@@ -22,7 +16,6 @@ import com.virjar.tk.protocol.http.ATTACHMENT_UPLOAD_ISSUED_AT_HEADER
 import com.virjar.tk.protocol.http.AttachmentUploadIdentity
 import com.virjar.tk.protocol.http.UploadResult
 import com.virjar.tk.protocol.http.parseAttachmentUploadIdentityHeaders
-import com.virjar.tk.protocol.ReliableCommandContract
 import io.ktor.http.*
 import io.ktor.http.content.*
 import io.ktor.server.request.*
@@ -32,7 +25,6 @@ import io.ktor.utils.io.*
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
-import java.io.File
 import java.security.MessageDigest
 
 private val responseJson = Json { encodeDefaults = true }
@@ -179,14 +171,7 @@ fun Route.fileRoutes(
                 )
             }
 
-            var uploadTransaction: FileStoreUploadTransaction? = null
-            var uploadDeliveryLease: FileStoreUploadDeliveryLease? = null
-            var uploadReplayCandidate: FileStoreUploadReplayCandidate? = null
-            var stagedFile: File? = null
-            var mediaInfo: com.virjar.tk.server.infra.media.ThumbnailService.MediaInfo? = null
-            var terminalFailure: Throwable? = null
-            val retirementCandidates = LinkedHashSet<File>()
-            var hasUnlocatedResidue = false
+            val upload = AttachmentUploadRequest(fileStore, uploadLease)
             try {
                 val staged = try {
                     withTimeout(uploadStagingTimeoutMillis) {
@@ -194,24 +179,8 @@ fun Route.fileRoutes(
                             envelope,
                             maxUploadBytes,
                         ) { multipartFile ->
-                            val begin = fileStore.beginUploadTransaction(
-                                uid = uid,
-                                uploadId = identity.uploadId,
-                                payloadLength = multipartFile.payloadLength,
-                                receiptLeaseExpiresAt = ReliableCommandContract.lastActiveAt(identity.issuedAt),
-                            )
-                            if (begin is BeginFileStoreUploadResult.Started) {
-                                uploadTransaction = begin.transaction
-                            } else if (begin is BeginFileStoreUploadResult.ReplayCandidate) {
-                                // 从 begin 起就持有持久回执及其底层对象，直到
-                                // 重放响应完成投递或投递失败。
-                                uploadReplayCandidate = begin.candidate
-                            }
-                            val tempFile = fileStore.createTemporaryFile(
-                                UPLOAD_STAGING_TEMP_PREFIX,
-                                STAGING_TEMP_SUFFIX,
-                            )
-                            stagedFile = tempFile
+                            val begin = upload.begin(uid, identity, multipartFile.payloadLength)
+                            val tempFile = upload.createStagingFile()
                             StrictMultipartStagingTarget(tempFile, begin)
                         }
                     }
@@ -246,14 +215,10 @@ fun Route.fileRoutes(
                 }
 
                 val requestFingerprint = attachmentUploadFingerprint(uid, identity, staged)
-                when (val begin = staged.owner) {
+                val transaction = when (val begin = staged.owner) {
                     is BeginFileStoreUploadResult.ReplayCandidate -> {
-                        val candidate = checkNotNull(uploadReplayCandidate)
-                        check(candidate === begin.candidate) {
-                            "Multipart replay owner changed during staging"
-                        }
                         val receipt = try {
-                            candidate.requireSameFingerprint(requestFingerprint)
+                            begin.candidate.requireSameFingerprint(requestFingerprint)
                         } catch (_: FileStoreUploadConflictException) {
                             return@post call.respond(
                                 HttpStatusCode.Conflict,
@@ -278,10 +243,9 @@ fun Route.fileRoutes(
                         return@post call.respondText(receipt.encodedReceipt, ContentType.Application.Json)
                     }
 
-                    is BeginFileStoreUploadResult.Started -> Unit
+                    is BeginFileStoreUploadResult.Started -> begin.transaction
                 }
 
-                val transaction = checkNotNull(uploadTransaction)
                 try {
                     transaction.bindFingerprint(requestFingerprint)
                 } catch (_: FileStoreUploadConflictException) {
@@ -293,10 +257,12 @@ fun Route.fileRoutes(
 
                 val isImage = staged.contentType.startsWith("image/")
                 val isVideo = staged.contentType.startsWith("video/")
-                if (isImage || isVideo) {
-                    mediaInfo = if (isImage) thumbnailService.processImage(staged.file)
-                    else thumbnailService.processVideo(staged.file)
+                val mediaInfo = when {
+                    isImage -> thumbnailService.processImage(staged.file)
+                    isVideo -> thumbnailService.processVideo(staged.file)
+                    else -> null
                 }
+                mediaInfo?.thumbFile?.let(upload::ownTemporaryFile)
 
                 val encodedResponse = try {
                     val thumbnail = mediaInfo?.thumbFile
@@ -313,7 +279,6 @@ fun Route.fileRoutes(
                             file,
                         )
                     }
-                    val mi = mediaInfo
                     responseJson.encodeToString(
                         UploadResult(
                             file = fileStore.getAttachment(storedPath)
@@ -322,9 +287,9 @@ fun Route.fileRoutes(
                                 fileStore.getAttachment(path)
                                     ?: error("Stored thumbnail metadata missing")
                             },
-                            width = mi?.width ?: 0,
-                            height = mi?.height ?: 0,
-                            durationSec = mi?.durationSec,
+                            width = mediaInfo?.width ?: 0,
+                            height = mediaInfo?.height ?: 0,
+                            durationSec = mediaInfo?.durationSec,
                         ),
                     )
                 } catch (capacity: FileStoreCapacityExceededException) {
@@ -337,18 +302,11 @@ fun Route.fileRoutes(
                 // 临时文件回收是成功发布边界的一部分：如果无法确认回收完成，
                 // 仍处于打开状态的事务会回滚其对象，而不是为
                 // 一个操作上不完整的请求保存回执。
-                retireUploadTemporaryFiles(
-                    fileStore,
-                    listOfNotNull(staged.file, mediaInfo?.thumbFile),
-                )
+                upload.retireTemporaryFiles()
                 // 在尝试 HTTP 投递之前先持久化精确的响应。断开的调用方
                 // 可以重放相同的请求体并收到这份字节完全一致的回执。
                 try {
-                    val completion = transaction.complete(encodedResponse)
-                    // complete() 在写入持久回执的同时原子地激活这个钉住。一直保留它
-                    // 直到 respondText 完成或失败，这样第一份投递出的回执
-                    // 永远不会引用在其自身响应窗口期内被回收的底层对象。
-                    uploadDeliveryLease = completion.deliveryLease
+                    upload.complete(encodedResponse)
                 } catch (_: FileStoreUploadExpiredException) {
                     return@post call.respond(
                         HttpStatusCode.Gone,
@@ -360,71 +318,10 @@ fun Route.fileRoutes(
                 beforeUploadResponseDelivery(encodedResponse)
                 call.respondText(encodedResponse, ContentType.Application.Json)
             } catch (failure: Throwable) {
-                terminalFailure = failure
-                hasUnlocatedResidue = failure.collectManagedTempResidues(retirementCandidates) ||
-                    hasUnlocatedResidue
+                upload.recordFailure(failure)
                 throw failure
             } finally {
-                stagedFile?.let(retirementCandidates::add)
-                mediaInfo?.thumbFile?.let(retirementCandidates::add)
-                var transactionCleanupConfirmed = false
-                var cleanupFailure: Throwable? = null
-                try {
-                    uploadTransaction?.close()
-                    transactionCleanupConfirmed = true
-                } catch (transactionFailure: Throwable) {
-                    cleanupFailure = transactionFailure
-                    hasUnlocatedResidue = transactionFailure.collectManagedTempResidues(retirementCandidates) ||
-                        hasUnlocatedResidue
-                }
-                var deliveryLeaseCleanupConfirmed = false
-                try {
-                    uploadDeliveryLease?.close()
-                    deliveryLeaseCleanupConfirmed = true
-                } catch (deliveryLeaseFailure: Throwable) {
-                    val firstCleanup = cleanupFailure
-                    if (firstCleanup == null) cleanupFailure = deliveryLeaseFailure
-                    else if (firstCleanup !== deliveryLeaseFailure) firstCleanup.addSuppressed(deliveryLeaseFailure)
-                    hasUnlocatedResidue = deliveryLeaseFailure.collectManagedTempResidues(retirementCandidates) ||
-                        hasUnlocatedResidue
-                }
-                var replayCandidateCleanupConfirmed = false
-                try {
-                    uploadReplayCandidate?.close()
-                    replayCandidateCleanupConfirmed = true
-                } catch (candidateFailure: Throwable) {
-                    val firstCleanup = cleanupFailure
-                    if (firstCleanup == null) cleanupFailure = candidateFailure
-                    else if (firstCleanup !== candidateFailure) firstCleanup.addSuppressed(candidateFailure)
-                    hasUnlocatedResidue = candidateFailure.collectManagedTempResidues(retirementCandidates) ||
-                        hasUnlocatedResidue
-                }
-                var finalRetirementConfirmed = false
-                try {
-                    retireUploadTemporaryFiles(fileStore, retirementCandidates)
-                    finalRetirementConfirmed = true
-                } catch (retirementFailure: Throwable) {
-                    val firstCleanup = cleanupFailure
-                    if (firstCleanup == null) cleanupFailure = retirementFailure
-                    else if (firstCleanup !== retirementFailure) firstCleanup.addSuppressed(retirementFailure)
-                    hasUnlocatedResidue = retirementFailure.collectManagedTempResidues(retirementCandidates) ||
-                        hasUnlocatedResidue
-                } finally {
-                    if (
-                        transactionCleanupConfirmed &&
-                        deliveryLeaseCleanupConfirmed &&
-                        replayCandidateCleanupConfirmed &&
-                        finalRetirementConfirmed &&
-                        !hasUnlocatedResidue
-                    ) {
-                        uploadLease.close()
-                    }
-                }
-                cleanupFailure?.let { cleanup ->
-                    val first = terminalFailure
-                    if (first == null) throw cleanup
-                    if (first !== cleanup) first.addSuppressed(cleanup)
-                }
+                upload.close()
             }
         }
     }
@@ -537,36 +434,4 @@ private fun MessageDigest.updateLengthPrefixedUtf8(value: String) {
     update((bytes.size ushr 8).toByte())
     update(bytes.size.toByte())
     update(bytes)
-}
-
-private fun retireUploadTemporaryFiles(fileStore: FileStore, files: Collection<File>) {
-    var failure: Throwable? = null
-    files.distinctBy { it.absoluteFile.normalize().path }.forEach { file ->
-        try {
-            fileStore.retireTemporaryFile(file)
-        } catch (error: Throwable) {
-            val first = failure
-            if (first == null) failure = error else if (first !== error) first.addSuppressed(error)
-        }
-    }
-    failure?.let { throw it }
-}
-
-private fun Throwable.collectManagedTempResidues(
-    files: MutableSet<File>,
-    seen: MutableSet<Throwable> = HashSet(),
-): Boolean {
-    if (!seen.add(this)) return false
-    var hasUnlocatedResidue = false
-    if (this is ManagedTempResidueException) {
-        val residue = entry
-        if (residue == null) hasUnlocatedResidue = true else files += residue.toFile()
-    }
-    cause?.let { cause ->
-        hasUnlocatedResidue = cause.collectManagedTempResidues(files, seen) || hasUnlocatedResidue
-    }
-    suppressed.forEach { suppressedFailure ->
-        hasUnlocatedResidue = suppressedFailure.collectManagedTempResidues(files, seen) || hasUnlocatedResidue
-    }
-    return hasUnlocatedResidue
 }
