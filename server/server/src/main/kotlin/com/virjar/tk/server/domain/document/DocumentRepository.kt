@@ -162,6 +162,9 @@ interface DocumentRepository {
      */
     fun listGrants(transaction: PgReadTransactionContext, spaceId: String): List<DocumentSpaceGrant>
 
+    /** 空间 USER 授权人 uid 列表（内测反馈 T047 文档 @ 候选）；不区分角色，含只读授权。 */
+    fun listGrantedUserIds(transaction: PgReadTransactionContext, spaceId: String): List<String>
+
     /**
      * 按字典序锁定每个被寻址的 User，然后锁定任意状态的空间聚合。
      *

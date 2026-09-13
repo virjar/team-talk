@@ -20,6 +20,9 @@ import com.virjar.tk.server.infra.db.OrganizationState
 import com.virjar.tk.server.infra.db.OrganizationUnits
 import com.virjar.tk.server.infra.db.DocumentSpaces
 import com.virjar.tk.server.infra.db.Users
+import com.virjar.tk.server.infra.db.toUserAvatar
+import com.virjar.tk.protocol.model.User
+import org.jetbrains.exposed.sql.Op
 import com.virjar.tk.server.infra.db.requireExposedTransaction
 import com.virjar.tk.protocol.model.OrganizationMember
 import com.virjar.tk.protocol.model.OrganizationCapacityPolicy
@@ -34,6 +37,9 @@ import org.jetbrains.exposed.sql.count
 import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.JoinType
+import org.jetbrains.exposed.sql.or
+import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
 
@@ -88,6 +94,44 @@ internal class ExposedOrganizationRepository(
         readProjection.listMemberPage(rootUnitId, recursive, expectedRevision, after, pageSize, transaction)
 
     override fun listUnits(): List<OrganizationUnit> = readProjection.listUnits()
+
+    override fun searchMemberUsers(callerUid: String, query: String, limit: Int): List<com.virjar.tk.protocol.model.User> =
+        transaction(database) {
+            val isMember = OrganizationMemberships.selectAll()
+                .where { OrganizationMemberships.uid eq callerUid }
+                .limit(1)
+                .count() > 0
+            if (!isMember) return@transaction emptyList()
+            val pattern = "%${escapePostgresLikeLiteral(query.trim())}%"
+            Users
+                .join(OrganizationMemberships, JoinType.INNER, additionalConstraint = {
+                    Users.uid eq OrganizationMemberships.uid
+                })
+                .selectAll()
+                .where {
+                    val nameMatch = if (query.isBlank()) {
+                        Op.TRUE
+                    } else {
+                        (Users.name like pattern) or (Users.username like pattern)
+                    }
+                    nameMatch
+                }
+                .orderBy(Users.name, SortOrder.ASC)
+                .limit(limit)
+                .map { row ->
+                    com.virjar.tk.protocol.model.User(
+                        uid = row[Users.uid],
+                        username = row[Users.username],
+                        name = row[Users.name],
+                        avatar = row.toUserAvatar(),
+                        phone = row[Users.phone],
+                        sex = row[Users.sex],
+                        role = row[Users.role],
+                        status = row[Users.status],
+                        revision = row[Users.revision],
+                    )
+                }
+        }
 
     override fun findUnit(unitId: String, transaction: PgReadTransactionContext?): OrganizationUnit? =
         readProjection.findUnit(unitId, transaction)

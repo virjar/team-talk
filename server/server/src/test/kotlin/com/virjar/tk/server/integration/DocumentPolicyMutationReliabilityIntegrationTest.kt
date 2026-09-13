@@ -37,7 +37,7 @@ class DocumentPolicyMutationReliabilityIntegrationTest {
         val principal = ctx.registerUser(uniqueUsername("document-policy-capacity-principal"))
         val space = ctx.documentService.createSpace(owner, "权限可靠容量空间", null)
         val now = System.currentTimeMillis()
-        val service = DocumentService(ctx.documentRepo, ctx.pgUnitOfWork) { now }
+        val service = DocumentService(ctx.documentRepo, ctx.pgUnitOfWork, wallClockMillis = { now })
         val operationId = UUID.randomUUID().toString()
         val granted = service.upsertGrant(
             owner,
@@ -109,7 +109,7 @@ class DocumentPolicyMutationReliabilityIntegrationTest {
         val principal = ctx.registerUser(uniqueUsername("document-policy-expiry-principal"))
         val space = ctx.documentService.createSpace(owner, "权限可靠过期空间", null)
         var now = System.currentTimeMillis()
-        val service = DocumentService(ctx.documentRepo, ctx.pgUnitOfWork) { now }
+        val service = DocumentService(ctx.documentRepo, ctx.pgUnitOfWork, wallClockMillis = { now })
         val oldOperationId = UUID.randomUUID().toString()
         val oldIssuedAt = now
         val granted = service.upsertGrant(

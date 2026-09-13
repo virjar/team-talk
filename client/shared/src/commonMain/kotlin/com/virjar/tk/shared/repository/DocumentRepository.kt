@@ -6,6 +6,7 @@ import com.virjar.tk.protocol.body.MarkdownAssetPolicy
 import com.virjar.tk.shared.client.DocumentHomeCollection
 import com.virjar.tk.shared.client.LocalCache
 import com.virjar.tk.shared.client.PendingDocumentMoveCommand
+import com.virjar.tk.protocol.model.User
 import com.virjar.tk.protocol.model.Document
 import com.virjar.tk.protocol.model.DocumentContent
 import com.virjar.tk.protocol.model.DocumentPolicy
@@ -330,6 +331,14 @@ class DocumentRepository(
                 "listGrants response escaped its requested space"
             }
         }
+    }
+
+    /** 文档 @ 候选（内测反馈 T047 第二阶段）：空间任意参与者可调用；query 过滤服务端执行。 */
+    suspend fun mentionCandidates(spaceId: String, query: String): Outcome<List<User>> = spaceOutcome(
+        spaceId = spaceId,
+        onNotFound = { localCache.purgeDocumentSpace(spaceId) },
+    ) {
+        rpc.mentionCandidates(spaceId, query)
     }
 
     suspend fun upsertGrant(

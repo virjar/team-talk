@@ -133,6 +133,7 @@ rpc	document/18	0	-	active	transferSpaceCustody(spaceId:kotlin.String,ownerPrinc
 rpc	document/19	0	-	active	getNodePathSpine(spaceId:kotlin.String,nodeId:kotlin.String):com.virjar.tk.protocol.model.DocumentPathSpine
 rpc	document/2	0	-	active	createSpace(spaceId:kotlin.String,name:kotlin.String,description:kotlin.String?):com.virjar.tk.protocol.model.DocumentSpaceCreateResult
 rpc	document/20	2	-	active	getSpace(spaceId:kotlin.String):com.virjar.tk.protocol.model.DocumentSpace
+rpc	document/21	3	-	active	mentionCandidates(spaceId:kotlin.String,query:kotlin.String):List<com.virjar.tk.protocol.model.User>
 rpc	document/3	0	-	active	updateSpace(spaceId:kotlin.String,name:kotlin.String,description:kotlin.String?):com.virjar.tk.protocol.model.DocumentSpace
 rpc	document/4	0	-	active	archiveSpace(spaceId:kotlin.String,operationId:kotlin.String):kotlin.Unit
 rpc	document/5	0	-	active	listGrants(spaceId:kotlin.String):com.virjar.tk.protocol.model.DocumentSpaceGrantPage

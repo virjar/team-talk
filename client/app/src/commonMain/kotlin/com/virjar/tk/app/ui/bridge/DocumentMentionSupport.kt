@@ -12,6 +12,8 @@ import com.virjar.tk.protocol.model.User
 data class DocumentMentionSupport(
     val candidates: List<User> = emptyList(),
     val onMentionProfileOpen: (uid: String) -> Unit = {},
+    /** 文档 @ 候选搜索（内测反馈 T047 第二阶段）：服务端按名/账号搜索组织成员与授权人。 */
+    val onMentionSearch: (suspend (String) -> List<User>)? = null,
 )
 
 val LocalDocumentMentionSupport = staticCompositionLocalOf { DocumentMentionSupport() }

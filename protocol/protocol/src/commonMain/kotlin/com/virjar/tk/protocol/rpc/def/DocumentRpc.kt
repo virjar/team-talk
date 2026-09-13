@@ -136,4 +136,13 @@ interface DocumentRpc {
     @com.virjar.tk.protocol.SinceProtocol(2)
     @RpcMethod(20)
     suspend fun getSpace(spaceId: String): DocumentSpace
+
+    /**
+     * 文档 @ 候选（内测反馈 T047 第二阶段）：空间任意参与者可调用。
+     * 候选 = 空间 USER 授权人 + （调用者为组织成员时）组织成员按名/账号搜索；
+     * query 为空只返回授权人窗口，非空时并入组织搜索结果。有界 20 条。
+     */
+    @com.virjar.tk.protocol.SinceProtocol(3)
+    @RpcMethod(21)
+    suspend fun mentionCandidates(spaceId: String, query: String): List<com.virjar.tk.protocol.model.User>
 }

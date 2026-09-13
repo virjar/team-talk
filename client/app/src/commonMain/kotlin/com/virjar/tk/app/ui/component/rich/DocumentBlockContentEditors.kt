@@ -40,6 +40,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateListOf
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
@@ -203,11 +206,34 @@ private fun DocumentMentionCompleteLayer(
     mentionCandidates: List<User>,
     modifier: Modifier = Modifier,
 ) {
-    if (!sessionReady || mentionCandidates.isEmpty()) return
+    val onMentionSearch = com.virjar.tk.app.ui.bridge.LocalDocumentMentionSupport.current.onMentionSearch
+    if (!sessionReady || (mentionCandidates.isEmpty() && onMentionSearch == null)) return
+    // 服务端 @ 候选搜索（内测反馈 T047 第二阶段）：按 query 缓存结果，未命中时异步拉取。
+    val searchCache = remember { androidx.compose.runtime.mutableStateMapOf<String, List<User>>() }
+    val inFlightQueries = remember { mutableStateListOf<String>() }
+    val searchScope = rememberCoroutineScope()
     com.mohamedrejeb.richeditor.ui.material3.TriggerSuggestions(
         state = state,
         triggerId = DOCUMENT_MENTION_TRIGGER_ID,
-        suggestions = { query -> filterMentionCandidates(mentionCandidates, query, myUid = null) },
+        suggestions = { query ->
+            val base = filterMentionCandidates(mentionCandidates, query, myUid = null)
+            if (onMentionSearch == null) {
+                base
+            } else {
+                val key = query.trim()
+                if (key.isNotEmpty() && key !in searchCache && key !in inFlightQueries) {
+                    inFlightQueries.add(key)
+                    searchScope.launch {
+                        val result = runCatching { onMentionSearch(key) }.getOrDefault(emptyList())
+                        searchCache[key] = result
+                        inFlightQueries.remove(key)
+                    }
+                }
+                val extra = searchCache[key].orEmpty()
+                    .filter { user -> base.none { it.uid == user.uid } }
+                (base + extra).distinctBy { it.uid }
+            }
+        },
         onSelect = { user ->
             com.mohamedrejeb.richeditor.model.RichSpanStyle.Token(
                 triggerId = DOCUMENT_MENTION_TRIGGER_ID,

@@ -371,6 +371,8 @@ internal fun createServerModule(
             unitOfWork = get<PgUnitOfWork>(),
             attachmentCatalog = get(),
             attachmentLifecycle = get(),
+            users = get(),
+            organizationRepository = get(),
         )
     }
     single<DocumentAttachmentAccess> {

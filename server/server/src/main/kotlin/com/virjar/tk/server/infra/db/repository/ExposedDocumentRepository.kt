@@ -178,6 +178,11 @@ class ExposedDocumentRepository : DocumentRepository {
         spaceId: String,
     ): List<DocumentSpaceGrant> = reads.listGrants(transaction, spaceId)
 
+    override fun listGrantedUserIds(
+        transaction: PgReadTransactionContext,
+        spaceId: String,
+    ): List<String> = reads.listGrantedUserIds(transaction, spaceId)
+
     override fun lockPolicyMutationFence(
         transaction: PgWriteTransactionContext,
         actorUid: String,

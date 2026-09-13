@@ -146,6 +146,12 @@ interface OrganizationRepository : ManagedChatPolicy {
     ): OrganizationCommandResult<OrganizationUnit>
 
     fun listMembers(unitIds: Set<String>): List<OrganizationMember>
+
+    /**
+     * 组织成员按名/账号搜索（内测反馈 T047 文档 @ 候选）：调用者必须是组织成员，
+     * 访客 fail-closed 返回空。query 为空时返回按姓名排序的有界窗口。
+     */
+    fun searchMemberUsers(callerUid: String, query: String, limit: Int): List<com.virjar.tk.protocol.model.User>
     /** 一次查询返回各节点的直属成员数；不存在成员的节点由调用方补零。 */
     fun countDirectMembers(unitIds: Set<String>): Map<String, Int>
     fun listMemberships(uid: String, transaction: PgReadTransactionContext? = null): List<OrganizationMember>

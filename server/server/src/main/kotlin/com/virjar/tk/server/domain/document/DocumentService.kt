@@ -43,6 +43,8 @@ class DocumentService(
     attachmentCatalog: AttachmentCatalog? = null,
     attachmentLifecycle: AttachmentLifecycleGate = AttachmentLifecycleGate(),
     private val wallClockMillis: () -> Long = System::currentTimeMillis,
+    private val users: com.virjar.tk.server.domain.user.UserRepository? = null,
+    private val organizationRepository: com.virjar.tk.server.domain.organization.OrganizationRepository? = null,
 ) {
     private val logger = LoggerFactory.getLogger(DocumentService::class.java)
     private val accessControl = DocumentAccessControl(repository, unitOfWork)
@@ -256,6 +258,39 @@ class DocumentService(
                 fingerprint = fingerprint,
                 updatedAt = System.currentTimeMillis(),
             ).also { changes.publishSpaceChange(this, spaceId, readersBefore) }.toCustodyTransferResult()
+        }
+    }
+
+    /**
+     * 文档 @ 候选（内测反馈 T047 第二阶段）：任何空间参与者可调用。
+     * 候选 = 空间 USER 授权人 + （调用者为组织成员时）组织成员按名/账号搜索；
+     * query 为空只返回授权人窗口（组织全量靠翻页不现实，交给有 query 的搜索）。
+     */
+    suspend fun mentionCandidates(actorUid: String, spaceId: String, query: String): List<com.virjar.tk.protocol.model.User> {
+        val trimmed = query.trim()
+        require(trimmed.length <= MAX_MENTION_QUERY_LENGTH) { "搜索关键词过长" }
+        val orgRepository = requireNotNull(organizationRepository) { "组织名录未接线" }
+        val users = requireNotNull(users) { "用户目录未接线" }
+        return accessControl.readAuthorized(actorUid, spaceId, DocumentCapability.READ) { _, _ ->
+            val grantedUsers = users.findByUids(
+                repository.listGrantedUserIds(transaction, spaceId)
+                    .filter { it != actorUid }
+                    .toSet(),
+            ).values.filter { granted ->
+                trimmed.isEmpty() || granted.name.contains(trimmed, ignoreCase = true) ||
+                    granted.username.contains(trimmed, ignoreCase = true)
+            }
+            val orgMembers = if (trimmed.isEmpty()) {
+                emptyList()
+            } else {
+                orgRepository.searchMemberUsers(actorUid, trimmed, MENTION_CANDIDATE_LIMIT)
+            }
+            (grantedUsers.asSequence() + orgMembers.asSequence())
+                .filter { it.uid != actorUid }
+                .distinctBy { it.uid }
+                .take(MENTION_CANDIDATE_LIMIT)
+                .sortedBy { it.name }
+                .toList()
         }
     }
 
@@ -693,6 +728,8 @@ class DocumentService(
 
     companion object {
         const val MAX_SPACE_NAME_LENGTH = DocumentPolicy.MAX_SPACE_NAME_LENGTH
+        const val MAX_MENTION_QUERY_LENGTH = 50
+        const val MENTION_CANDIDATE_LIMIT = 20
         const val MAX_DESCRIPTION_LENGTH = DocumentPolicy.MAX_DESCRIPTION_LENGTH
         const val MAX_NODE_NAME_LENGTH = DocumentPolicy.MAX_NODE_NAME_LENGTH
         const val MAX_MARKDOWN_LENGTH = DocumentPolicy.MAX_MARKDOWN_LENGTH

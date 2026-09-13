@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.virjar.tk.shared.client.ClientSession
+import com.virjar.tk.protocol.model.User
 import com.virjar.tk.shared.client.MAX_PENDING_DOCUMENT_MOVE_COMMANDS
 import com.virjar.tk.protocol.model.DocumentHomeItem
 import com.virjar.tk.protocol.model.DocumentNode
@@ -752,6 +753,17 @@ class DocumentWorkspaceFeature internal constructor(
     }
 
     fun searchGrantMembers(query: String) = grantActions.searchMembers(query)
+
+    /**
+     * 文档 @ 候选搜索（内测反馈 T047 第二阶段）：服务端组合空间授权人与组织成员。
+     * 以当前选中空间为边界；失败静默降级为空（静态候选仍可用）。
+     */
+    suspend fun searchMentionCandidates(query: String): List<User> {
+        val spaceId = selectedSpaceId ?: return emptyList()
+        return runCatching {
+            session.documentRepo.mentionCandidates(spaceId, query).getOrThrow()
+        }.getOrDefault(emptyList())
+    }
 
     fun closeGrantMemberSearch() = grantActions.closeMemberSearch()
 

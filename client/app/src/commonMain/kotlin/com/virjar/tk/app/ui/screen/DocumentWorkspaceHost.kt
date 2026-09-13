@@ -41,6 +41,7 @@ fun DocumentWorkspaceHost(
         LocalDocumentMentionSupport provides DocumentMentionSupport(
             candidates = mentionCandidates,
             onMentionProfileOpen = onMentionProfileOpen ?: {},
+            onMentionSearch = workspace::searchMentionCandidates,
         ),
         com.virjar.tk.app.ui.component.rich.LocalDocumentImageGalleryOpener provides onOpenImageGallery,
         com.virjar.tk.app.ui.screen.LocalDocumentEditingActiveReporter provides onMobileEditingActive,

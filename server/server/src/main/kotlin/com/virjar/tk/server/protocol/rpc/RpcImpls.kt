@@ -251,6 +251,8 @@ class GroupFileRpcImpl(uid: String, private val service: GroupFileService) : Gro
 
 class DocumentRpcImpl(uid: String, private val service: DocumentService) : DocumentRpcStub(uid) {
     override suspend fun getSpace(spaceId: String) = service.getSpace(uid, spaceId)
+    override suspend fun mentionCandidates(spaceId: String, query: String) =
+        service.mentionCandidates(uid, spaceId, query)
     override suspend fun listSpaces(request: com.virjar.tk.protocol.model.DocumentSpacePageRequest) =
         service.listSpaces(uid, request)
     override suspend fun createSpace(spaceId: String, name: String, description: String?) =

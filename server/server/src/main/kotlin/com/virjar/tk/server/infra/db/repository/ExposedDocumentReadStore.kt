@@ -216,6 +216,16 @@ internal class ExposedDocumentReadStore(
     fun listGrants(transaction: PgReadTransactionContext, spaceId: String): List<DocumentSpaceGrant> =
         transaction.inExposedReadTransaction { listResolvedGrantsInternal(spaceId) }
 
+    /** 空间 USER 授权人 uid 列表（内测反馈 T047 文档 @ 候选）。 */
+    fun listGrantedUserIds(transaction: PgReadTransactionContext, spaceId: String): List<String> =
+        transaction.inExposedReadTransaction {
+            DocumentSpaceGrants.select(DocumentSpaceGrants.principalId).where {
+                (DocumentSpaceGrants.spaceId eq spaceId) and
+                    (DocumentSpaceGrants.principalType eq DocumentSpaceGrant.PRINCIPAL_USER)
+            }.orderBy(DocumentSpaceGrants.principalId, SortOrder.ASC)
+                .map { it[DocumentSpaceGrants.principalId] }
+        }
+
     fun findCustodyTransferReceipt(
         transaction: PgReadTransactionContext,
         operationId: String,
