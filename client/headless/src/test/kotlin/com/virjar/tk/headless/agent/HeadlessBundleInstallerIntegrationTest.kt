@@ -1,6 +1,15 @@
 package com.virjar.tk.headless.agent
 
+import com.sun.net.httpserver.HttpServer
+import com.virjar.tk.protocol.http.ClientReleaseInfo
+import com.virjar.tk.protocol.http.ClientUpdateCheckResponse
+import com.virjar.tk.protocol.http.ClientUpdateContracts
 import java.io.File
+import java.net.InetSocketAddress
+import java.net.URLDecoder
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
@@ -171,6 +180,74 @@ class HeadlessBundleInstallerIntegrationTest {
         }
     }
 
+    @Test
+    fun `online upgrade detects same version snapshot identity and installs verified bundle without etag`() = workspace { root ->
+        val first = distribution(root.resolve("first"), 'a')
+        val second = distribution(root.resolve("second"), 'b')
+        val prefix = root.resolve("installed")
+        val old = assertNotNull(execute("install-bundle", prefix, first).bundle).directory
+        val archive = archive(second, root.resolve("incoming.zip"))
+        val requests = CopyOnWriteArrayList<String>()
+        updateServer(archive, hash(archive), requests) { server ->
+            HeadlessBundleInstaller.acquireRuntimeLease(old).use {
+                HeadlessUpgrade.execute(listOf("--server-url", server), old)
+                assertEquals("a", File(old, "lib/sdk.jar").readText())
+                assertLauncher(prefix, root, 'b')
+            }
+        }
+        val check = requests.single { it.startsWith("/api/v1/client/updates/check") }
+        assertTrue(check.contains("channel=snapshot"), check)
+        assertTrue(URLDecoder.decode(check, "UTF-8").contains("buildIdentity=0.0.1+" + "a".repeat(40)), check)
+        assertEquals(1, requests.count { it.startsWith("/api/v1/client/files/") })
+        assertEquals(2, Files.list(prefix.resolve("versions")).use { it.count().toInt() })
+    }
+
+    @Test
+    fun `online upgrade rejects corrupted download and leaves installation running`() = workspace { root ->
+        val first = distribution(root.resolve("first"), 'a')
+        val second = distribution(root.resolve("second"), 'b')
+        val prefix = root.resolve("installed")
+        val old = assertNotNull(execute("install-bundle", prefix, first).bundle).directory
+        val archive = archive(second, root.resolve("incoming.zip"))
+        updateServer("corrupt".toByteArray(), hash(archive), CopyOnWriteArrayList()) { server ->
+            assertFailsWith<IllegalArgumentException> { HeadlessUpgrade.execute(listOf("--server-url", server), old) }
+        }
+        assertLauncher(prefix, root, 'a')
+        assertEquals(old, prefix.resolve("current").toRealPath().toFile())
+        assertEquals(1, Files.list(prefix.resolve("versions")).use { it.count().toInt() })
+    }
+
+    private fun archive(source: Path, output: Path): ByteArray {
+        ZipOutputStream(Files.newOutputStream(output)).use { zip ->
+            Files.walk(source).use { paths ->
+                paths.filter { Files.isRegularFile(it) }.forEach { file ->
+                    zip.putNextEntry(ZipEntry("headless/" + source.relativize(file).joinToString("/")))
+                    Files.copy(file, zip)
+                    zip.closeEntry()
+                }
+            }
+        }
+        return Files.readAllBytes(output)
+    }
+
+    private fun updateServer(body: ByteArray, sha: String, requests: MutableList<String>, block: (String) -> Unit) {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { exchange ->
+            requests += exchange.requestURI.toString()
+            val bytes = if (exchange.requestURI.path.endsWith("/updates/check")) {
+                ClientUpdateContracts.json.encodeToString(ClientUpdateCheckResponse.serializer(), ClientUpdateCheckResponse(
+                    status = ClientUpdateContracts.STATUS_UPDATE_AVAILABLE,
+                    release = ClientReleaseInfo(1, "headless", "any", "any", "0.0.1", 1, "snapshot",
+                        bundleUrl = "/api/v1/client/files/$sha", buildIdentity = "0.0.1+" + "b".repeat(40)),
+                )).toByteArray()
+            } else body
+            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.responseBody.use { it.write(bytes) }
+        }
+        server.start()
+        try { block("http://127.0.0.1:${server.address.port}") } finally { server.stop(0) }
+    }
+
     private fun childClasspath(): String = listOf(
         HeadlessBundleLeaseProbe::class.java, HeadlessBundleInstaller::class.java, kotlin.Unit::class.java,
     ).map { File(it.protectionDomain.codeSource.location.toURI()).absolutePath }.distinct().joinToString(File.pathSeparator)
@@ -183,6 +260,7 @@ class HeadlessBundleInstallerIntegrationTest {
         Files.writeString(path.resolve("teamtalk-release.properties"), """
             artifactType=headless-distribution
             version=0.0.1
+            channel=snapshot
             buildIdentity=0.0.1+${identity.toString().repeat(40)}
             releaseBuildNumber=1
             protocolMajor=0

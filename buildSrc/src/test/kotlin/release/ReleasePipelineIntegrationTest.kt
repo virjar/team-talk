@@ -47,6 +47,14 @@ class ReleasePipelineIntegrationTest {
                     File(shells, "$key/installer/build-script.nsi").writeText("build input, not an installer")
                 }
             }
+            val firstPayload = File(payloads, "macos-aarch64/payload.zip")
+            val originalPayload = firstPayload.readBytes()
+            zip(firstPayload, mapOf("payload.properties" to
+                "version=0.0.2\nbuild=42\nminShellAbi=1\nbuildIdentity=0.0.2+wrong-source\n"))
+            assertFailsWith<IllegalArgumentException> {
+                ReleaseBundle.verifyDesktopArtifacts(shells, payloads, identity)
+            }
+            firstPayload.writeBytes(originalPayload)
             val apkDir = File(root, "android").apply { mkdirs() }
             val unsigned = File(root, "unsigned.apk")
             writeAndroidApkFixture(unsigned, identity)

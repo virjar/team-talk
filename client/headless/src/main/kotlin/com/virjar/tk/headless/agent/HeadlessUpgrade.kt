@@ -74,7 +74,7 @@ internal object HeadlessUpgrade {
         val selectedChannel = channel ?: props.getProperty("channel") ?: "stable"
         val release = checkForUpdate(server, selectedChannel, version, build, identity)
         if (release == null) {
-            println("已是最新版本（$version build $build，通道 $channel）。")
+            println("当前通道暂无更新（$version build $build，通道 $selectedChannel）。")
             return
         }
         require(release.clientType == ClientUpdateContracts.CLIENT_HEADLESS &&
@@ -133,9 +133,11 @@ internal object HeadlessUpgrade {
             response.body(),
         )
         return when (decision.status) {
-            ClientUpdateContracts.STATUS_UPDATE_AVAILABLE -> decision.release
-            ClientUpdateContracts.STATUS_SHELL_UPDATE_REQUIRED -> decision.release
-            else -> null
+            ClientUpdateContracts.STATUS_UPDATE_AVAILABLE,
+            ClientUpdateContracts.STATUS_SHELL_UPDATE_REQUIRED -> requireNotNull(decision.release) { "更新响应缺少发布信息" }
+            ClientUpdateContracts.STATUS_UP_TO_DATE,
+            ClientUpdateContracts.STATUS_CHANNEL_DISABLED -> null
+            else -> error("未知更新状态：${decision.status}")
         }
     }
 

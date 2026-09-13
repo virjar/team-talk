@@ -47,7 +47,7 @@ TeamTalk 的主业务验收连接当前选中部署配置函数的目标。它�
 
 ## 客户端安装站点的 HTTP 验收
 
-Windows 的引导器和自动更新服务依赖静态下载契约。对实际部署的 `.appinstaller` 和它引用的 MSIX
+历史 Conveyor Windows 包的引导器和自动更新服务依赖静态下载契约。对仍保留的 `.appinstaller` 和它引用的 MSIX
 执行以下检查，不能只凭文件存在、浏览器下载或服务端 `/health` 为 UP 就宣布可安装：
 
 | 请求 | 预期 |
@@ -66,7 +66,7 @@ Windows 的引导器和自动更新服务依赖静态下载契约。对实际部
 下载路由回归入口为 `ClientDownloadRoutesTest`，它与业务附件的鉴权和 Range 链路分别验证。
 
 
-## 客户端发布注册中心与更新闭环（新）
+## 客户端发布注册中心与更新闭环
 
 ### HTTP 端点
 
@@ -75,24 +75,25 @@ Windows 的引导器和自动更新服务依赖静态下载契约。对实际部
   发布后返回 UPDATE_AVAILABLE + manifestUrl/installers。
 - `GET /api/v1/client/files/<sha256>`：200 + `ETag="<sha>"` + immutable 缓存头；
   `Range: bytes=0-15` → 206；未知 sha → 404 不兜底。
-- 兼容层：注册中心为空且旧收据存在时 `/downloads/android.json` 仍可用（version=null 兜底）；
-  首次 `release -PreleaseTargets=site` 后返回注册中心身份。
+- 兼容层：Android 通道尚未接入时 `/downloads/android.json` 仍可读旧收据；只有无收据的历史静态包不声明版本。
+  首次按当前发行模式上传后返回注册中心身份；之后停用或关闭通道不能回落旧静态包。
 
 ### 管理面
 
 - 未携带管理会话访问 `/api/admin/client-releases*` → 401。
-- 上传（X-Publish-Token 或管理会话）→ 200 releaseId；stable 同身份重复 → 409；
-  snapshot 同身份覆盖 → 200 且 manifest 反映新内容。
+- 上传（X-Publish-Token 或管理会话）→ 200 releaseId；同身份原字节重试仍返回原 ID，不改变运维状态；
+  同身份不同字节 → 409。snapshot 新源码身份创建新记录，旧 manifest 与对象仍可读。
 - 通道回滚/停用/kill-switch 立即反映到 check 结果；操作进审计台账。
 
 ### 桌面更新闭环（真机）
 
 1. 安装首装包（mac zip / Windows setup.exe 或便携 zip / Linux deb）。
 2. 服务端发布仅改动少量 jar 的新 build。
-3. 客户端「设置 → 通用 → 检查更新」：显示新版本与增量体积；确认下载 → 进度 →
+3. 客户端「设置 → 通用 → 检查更新」：显示新版本；确认下载 → 实际传输进度 →
    「重启后生效」；重启后 `~/.teamtalk-client/<appId>/versions/current.properties`
    指向新 build，`设置` 内版本号一致。
-4. 网络摘除后取消下载：客户端回 Idle，无残留 `.staging-*`。
+4. 仅隔离测试客户端到 TeamTalk 端点的请求后取消下载：客户端回 Idle，旧指针不变，无本次残留 `.staging-*`；
+   不关闭宿主机网络、全局代理、DNS 或 Agent 控制链路。
 5. dev/裸 JVM 运行（`./gradlew :client:desktop:run`）：设置面板不显示检查更新入口。
 
 ### 无头在线升级

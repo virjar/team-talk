@@ -30,9 +30,9 @@ resolve Environment/dataRoot
   → expose health status
 ```
 
-当前发行版本为 `0.0.1`、冻结协议 `0.1`，源码的待发行协议窗口为 `0.0` 至 `0.2`；服务端存储 epoch 是 **1**，普通升级保留
+当前发行版本为 `0.0.2`、冻结协议 `0.2`，源码的待发行协议窗口为 `0.0` 至 `0.3`；服务端存储 epoch 是 **1**，普通升级保留
 原 dataset ID。连接协商不能代替存储迁移；不支持的 schema、epoch、dataset 或迁移记录会阻止启动，普通
-升级不清空业务数据。当前 PostgreSQL 连续迁移 0..3 覆盖遥测协议 ID、封禁凭据墓碑、管理安全与文档评论；DDL 与
+升级不清空业务数据。PostgreSQL 按源码清单依次迁移，覆盖遥测协议 ID、封禁凭据墓碑、办公协作与客户端发布注册等布局；DDL 与
 `schema_migrations` 收据处于同一启动事务，失败共同回滚，完成后重启不重复执行。具体顺序和后续
 迁移边界见[持久化生命周期](../06-server/persistence.md#6-schema-epoch-与生命周期)。
 
@@ -66,6 +66,14 @@ stopped”。唯一例外是显式 dependency-quiescence barrier：普通 closer
 释放并被拒绝。若启动本身已失败，清理
 中的普通错误作为 suppressed failure 附着在原始启动异常上；清理阶段的取消或 VM fatal error 仍以
 原对象优先，启动错误成为它的 suppressed cause。
+
+服务号的 `SystemCommandRouter` 属于 Application 运行时，领域 `MessageService` 只经不可变端口派发
+已提交的文本消息。Router 拥有回复协程，保留取消语义；关闭先撤销后续派发，再沿有界关闭规则等待全部
+回复退出。它在 TCP 之后、同步分发与消息存储之前释放，并以实际 worker 终止状态保护底层资源。
+回复仍使用普通消息发送链：短原消息 ID 沿用 `svc-` 身份，超长 ID 使用独立前缀与完整 SHA-256 摘要。
+原消息成功 ACK 不等待回复，普通回复失败只记日志；进程死亡或回复失败后的持久重试尚未实现，不能将
+原消息幂等 ACK 理解为回复也一定完成。恢复语义的后续边界见[CODE-01](../10-reference/roadmap.md#code-01--代码结构与所有权收敛)。
+
 后台 maintenance 由一个 Application-owned 运行时一次性安装固定上限内的 worker，启动后不能动态追加。
 Application 资源 owner 与健康检查共用容器中的同一个实例；尚未启动、意外 worker 终止或开始关闭时，
 `/health` 的 `maintenance` 项为 DOWN，并使总体就绪检查失败。意外终止还会取消同组 worker，关闭时
@@ -147,7 +155,7 @@ minor 从构建的 `ProtocolVersions.MINIMUM_MINOR` 向上提高，且不能超�
 产物，领域服务不直接持有连接。普通 MESSAGE 另在业务处理前检查正文类型的可用窗口。
 
 同 major 的扩展只能追加契约，minor 按正式发行批次递增，既有方法、模型字段和编号不能原地改义。
-`0.0.1` 已冻结协议 `0.1`；当前新增契约统一使用待发行 minor 2。注解负责可用
+`0.0.2` 已冻结协议 `0.2`；当前新增契约统一使用待发行 minor 3。注解负责可用
 范围，业务作者仍须保留窗口内各版本的行为；方法可调用并不证明所有返回模型都能被旧端解码。
 实现入口是 [ImAgent](../../server/server/src/main/kotlin/com/virjar/tk/server/protocol/connection/ImAgent.kt)、
 [RpcDispatcher](../../server/server/src/main/kotlin/com/virjar/tk/server/protocol/dispatcher/RpcDispatcher.kt)

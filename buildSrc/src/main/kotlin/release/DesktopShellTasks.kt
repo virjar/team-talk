@@ -25,6 +25,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.Properties
+import java.util.jar.JarFile
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -227,6 +228,7 @@ abstract class AssembleDesktopPayloadTask : DefaultTask() {
         val lib = File(dir, "lib").apply { mkdirs() }
 
         val seen = HashMap<String, String>()
+        val classOwners = HashMap<String, String>()
         for (jar in jarFiles) {
             require(jar.isFile) { "payload jar missing: $jar" }
             val previous = seen[jar.name]
@@ -234,6 +236,17 @@ abstract class AssembleDesktopPayloadTask : DefaultTask() {
                 "payload jar name collision: ${jar.name} appears as both $previous and ${jar.path}"
             }
             seen[jar.name] = jar.path
+            // URLClassLoader 按顺序取首个同名类；重复版本不能靠文件名排序决定实际运行代码。
+            JarFile(jar).use { archive ->
+                archive.entries().asSequence()
+                    .filter { it.name.endsWith(".class") && !it.name.endsWith("module-info.class") }
+                    .forEach { entry ->
+                        val owner = classOwners.putIfAbsent(entry.name, jar.name)
+                        check(owner == null || owner == jar.name) {
+                            "Duplicate payload class ${entry.name} in $owner and ${jar.name}; align runtime dependency versions"
+                        }
+                    }
+            }
             jar.copyTo(File(lib, jar.name), overwrite = true)
         }
         overlayFiles.forEach { file ->
@@ -426,7 +439,10 @@ abstract class AssembleDesktopShellTask : DefaultTask() {
 
     private fun archiveTarGz(staging: File, name: String, vararg entries: String) {
         val tarFile = File(outputDir.get().asFile, name)
-        runCommand(staging, listOf("tar", "--format=pax", "-czf", tarFile.absolutePath) + entries.toList())
+        // Linux 包不携带 macOS 宿主扩展属性或 AppleDouble；保留原文件、权限与符号链接。
+        runCommand(staging, listOf("tar", "--no-xattrs", "--owner=0", "--group=0", "--numeric-owner",
+            "--format=pax", "-czf", tarFile.absolutePath) + entries.toList(),
+            mapOf("COPYFILE_DISABLE" to "1"))
         logger.lifecycle("assembled {}", tarFile)
     }
 

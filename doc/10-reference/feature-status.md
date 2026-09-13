@@ -34,7 +34,7 @@ TeamTalk 当前发行版本为 0.0.2，处于开发者预览阶段。本文描�
 | 用户资料 | 可用 | 姓名、手机号等读写和 USER_UPDATED 已接通；手机号入口为大陆 11 位，统一存储格式并兼容已有 +86 数据，格式/占用失败给出明确反馈 |
 | 好友申请、接受、删除、备注、黑名单 | 可用 | 双端资料页可设置/清空私人备注，多处展示统一备注优先，CONTACT_UPDATED 同步本人设备；服务端是关系与权限事实源；每人发出/收到 pending 各有 100 条事务硬边界，待处理视图完整；接受/拒绝使用本地持久 operationId/issuedAt 与服务端原子结果收据覆盖 7 天内丢响应重试，收据每 actor 最多 1,024 条且不淘汰未过期身份；双向终态历史至多保留最近 1,000 条并支持游标分页，两人 pending 可精确查询 |
 | 私聊、群聊和群成员管理 | 可用 | 建群和邀请链接创建使用客户端稳定 operationId 与服务端持久收据覆盖丢响应重试；GUI 在 RPC 前按 deployment + uid 持久化冻结命令，可跨进程恢复；邀请回执 7 天内每创建者最多 256 条、不淘汰未过期身份且重放重新校验当前 admin，包含角色、禁言、邀请链接、转让群主 |
-| 固定系统账号与服务号 | 部分 | 文件传输助手/服务号账号幂等引导、系统私聊与帮助回复已有实现；服务号回复的生命周期与恢复、全局系统账号的会话容量归属仍待闭合，见 [CODE-01](roadmap.md#code-01--代码结构与所有权收敛) |
+| 固定系统账号与服务号 | 部分 | 文件传输助手/服务号账号幂等引导、系统私聊与帮助回复已有实现；服务号任务由运行时统一关闭；回复的持久恢复、全局系统账号的会话容量归属仍待闭合，见 [CODE-01](roadmap.md#code-01--代码结构与所有权收敛) |
 | 组织架构与成员归属 | 可用 | 单组织树、多部门归属与受管群已接通；目录按 revision 分页收敛，支持离线旧投影，权限仍由服务端裁决。细节见下方同名说明。 |
 | 受管部门群 | 可用 | 节点子树是成员事实源；组织变更和启动恢复自动收敛，拒绝手工成员修改 |
 | 会话列表、草稿、置顶、静音、已读 | 可用 | 会话设置多设备同步；草稿与已读支持本地 outbox 和恢复；READY 完整草稿使用独立版本契约同步，未上传源只在本机恢复。细节见下方同名说明。 |
@@ -169,7 +169,7 @@ Android 系统 picker 打开期间 Activity 重建的设备覆盖仍需补齐。
 
 | 能力 | 状态 | 当前边界 |
 | --- | --- | --- |
-| Desktop 应用壳与三栏布局 | 可用 | 应用级标题栏、全局搜索、聊天主体和临时右侧检查器分别管理；macOS 关闭隐藏后点击 Dock 可恢复并聚焦主窗口。Windows 支持本地安装身份、中文托盘菜单与 MSIX 数据目录，打包包含 Skiko 原生库；启动失败可复制诊断详情。Linux、DPI/多屏组合及发行包验收按实际交付范围执行 |
+| Desktop 应用壳与三栏布局 | 可用 | 应用级标题栏、全局搜索、聊天主体和临时右侧检查器分别管理；macOS 关闭隐藏后点击 Dock 可恢复并聚焦主窗口。Windows 支持本地安装身份、中文托盘菜单与历史 MSIX 数据目录保护，打包包含 Skiko 原生库；启动失败可复制诊断详情。Linux、DPI/多屏组合及发行包验收按实际交付范围执行 |
 | 用户资料 | 可用 | Desktop 使用模态弹窗；Android 使用页面导航 |
 | 群设置 | 可用 | Desktop 从聊天栏打开右侧抽屉，点击外部或关闭按钮收回；Android 使用详情页。两端固定页头，正文与成员列表统一滚动，成员逐项惰性布局，退出或解散操作位于末尾并避让底部安全区；设置组件共用明暗主题令牌 |
 | 富文本输入 | 可用 | 文档支持标题、撤销重做、链接、列表与缩进，并以可视块编辑引用、代码围栏和 GFM 表格；未知扩展仅局部保留源码；聊天与文档的图片/文件都可在当前可视选区后连续插入且不切换模式。文档顶层正文按字符选区精确插入，引用、代码、表格等结构块按相邻块边界插入 |
@@ -284,7 +284,7 @@ Android“设置 → 本地存储”保留登录信息，先保存草稿并暂�
 | 后台维护与健康检查 | 可用 | `MaintenanceRuntime` 统一持有定期维护任务；关键任务意外停止使 `/health` 返回 `DOWN` / HTTP 503。任务归属与诊断见[可观测性](../07-operations/observability.md) |
 | 管理后台 | 可用 | 用户、群、消息、日志、组织与机器人管理；单实例管理员凭据持久化、主动轮换、会话吊销/服务端退出和有界必要审计，支持显式受控恢复。真实 PostgreSQL/HTTP 回归覆盖轮换、重启、拒绝分类和审计失败；浏览器验证登录、凭据表单、会话与审计展示、退出，未覆盖浏览器内密码轮换。没有多管理员角色或长期审计归档，见[搜索与管理](../06-server/search-and-admin.md#5-管理后台)。 |
 | 管理台构建输入 | 可用 | Git 只保留管理台源码、依赖清单与锁文件；node_modules/dist 不参与源码跟踪，Server 在隔离 build 工作区构建。`checkArchitecture` 拒绝重新跟踪产物。 |
-| 统一发行工具链（含客户端发布注册中心） | 部分 | 根版本、人工说明和冻结协议快照进入 Gradle 校验；`release` 密封 Android、四目标桌面产物（壳/负载/安装器）、Server 与 Headless ZIP，可向本地、注册中心 API（`site`，`CLIENT_RELEASE_PUBLISH_TOKEN`）和 GitHub 交付；服务器仍人工部署。服务端发布注册中心提供通道（stable/preview/snapshot）、停用、回滚与 kill-switch，中文下载页 `/downloads` 由注册中心驱动，`android.json` 兼容旧客户端。桌面应用内更新为文件级增量（壳/负载分离，`client/desktop-bootstrap` + `client/shared` 更新器）；无头 `tt-agent upgrade` 在线升级。私有首次分发可用 `private-first`；`snapshot` 同身份经注册中心覆盖，desktopRevision 从完整 first-parent 历史自动计算。CI 要求展示版本与根构建号一起推进才正式发行，不自动刷 snapshot。Conveyor 与 jpackage 路径已移除；Windows/Linux 产物与 GUI 连续升级仍需按平台实际验收，见[客户端发布与更新体系](../07-operations/client-releases.md)。 |
+| 统一发行工具链（含客户端发布注册中心） | 部分 | 根版本、人工说明和冻结协议快照进入 Gradle 校验；`release` 密封 Android、四目标桌面产物（壳/负载/安装器）、Server 与 Headless ZIP，可向本地、注册中心 API（`site`，`CLIENT_RELEASE_PUBLISH_TOKEN`）和 GitHub 交付；服务器仍人工部署。服务端发布注册中心提供通道（stable/preview/snapshot）、停用、回滚与 kill-switch，中文下载页 `/downloads` 由注册中心驱动，`android.json` 兼容旧客户端。桌面应用内更新为文件级增量（壳/负载分离，`client/desktop-bootstrap` + `client/shared` 更新器）；无头 `tt-agent upgrade` 在线升级。私有首次分发可用 `private-first`；`snapshot` 按源码身份保留不可变发布，通道指针切换到新记录，desktopRevision 从完整 first-parent 历史自动计算。CI 要求展示版本与根构建号一起推进才正式发行，不自动刷 snapshot。Conveyor 与 jpackage 路径已移除；Windows/Linux 产物与 GUI 连续升级仍需按平台实际验收，见[客户端发布与更新体系](../07-operations/client-releases.md)。 |
 | 公版与私有客户端共存 | 可用 | `DeploymentConfig.client` 统一生成 Android 安装 ID、Desktop 安装身份与名称；主仓库默认公版，私有独立 clone 使用 Git 忽略的完整 local 配置目录，随 `buildSrc` 编译。双端数据、登录与主题独立，Desktop 单实例锁跟随数据目录。私有站点提供 Android APK，桌面/无头更新经各自 `serverUrl` 的发布注册中心（应用内增量 / tt-agent upgrade）。默认公版保留原身份与目录。层级 `DeploymentDsl` 构造 `DeploymentConfig` 供双端 Gradle 使用；目标平台安装、通知跳转与连续升级仍须按发行实际验收，见[客户端发行身份](../07-operations/configuration.md#客户端发行身份)。 |
 | 客户端结构化遥测与定向诊断 | 可用 | 有界客户端遥测、设备策略与定向诊断已接通；诊断数据不作为消息可靠事实。细节见下方同名说明。 |
 | 私有化部署参数 | 可用 | Kotlin 配置统一生成客户端、部署和验收坐标；HTTP 与 TCP TLS 独立，支持 IP + HTTP + 自签 TCP 证书。Gradle 生成并复用证书，客户端使用专用证书信任并验证 SAN；普通升级保留数据、证书与私钥。配置与 TLS 测试入口为 `TcpTlsCertificatesTest`、`TlsDeploymentPreflightTest` 与 `ClientTransportTlsTest`。具体见[传输配置边界](../07-operations/configuration.md#传输配置边界)；目标实例和同批发行制品仍须实际验收，证书及其他 secret 轮换归 REL-03，迁移、备份与完整发行验收仍按发布基线执行。 |

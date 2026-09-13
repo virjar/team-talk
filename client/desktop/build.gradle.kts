@@ -256,34 +256,20 @@ kotlin {
     }
 }
 
-// Compose 1.11 把跨目标坐标访问器标记为弃用（KTS 按编译错误呈现）；
-// 显式抑制并继续使用同一来源，不在构建脚本里手工复制带版本的模块坐标。
-val desktopDependenciesExtension =
-    extensions.getByType(org.jetbrains.compose.ComposeExtension::class.java).dependencies.desktop
-
-@Suppress("DEPRECATION")
-fun composeDesktopNotation(property: String): String = with(desktopDependenciesExtension) {
-    when (property) {
-        "currentOs" -> currentOs
-        "linux_x64" -> linux_x64
-        "macos_x64" -> macos_x64
-        "macos_arm64" -> macos_arm64
-        "windows_x64" -> windows_x64
-        else -> error("unknown compose desktop notation: $property")
+// 四个交叉目标只决定平台工件；共同依赖版本以实际应用 runtime 的解析结果为准。
+// 独立解析后直接拼接会同时带入多个 coroutines / serialization 版本。
+val desktopRuntime = configurations.getByName("desktopRuntimeClasspath")
+listOf("linuxAmd64", "macAmd64", "macAarch64", "windowsAmd64").forEach { name ->
+    configurations.maybeCreate(name).apply {
+        isCanBeConsumed = false
+        shouldResolveConsistentlyWith(desktopRuntime)
     }
 }
-
-// currentOs 只负责本机运行；交叉负载必须分别解析每个交付目标的 Compose/Skiko native。
-// 版本由同一 Compose 元数据决定，不能手工复制 DLL 或把宿主 runtime 当成跨平台 runtime。
-// 这四个交叉目标配置原由 Conveyor 插件隐式创建；移除 Conveyor 后由本仓库显式声明。
-listOf("linuxAmd64", "macAmd64", "macAarch64", "windowsAmd64").forEach { name ->
-    configurations.maybeCreate(name)
-}
 dependencies {
-    add("linuxAmd64", composeDesktopNotation("linux_x64"))
-    add("macAmd64", composeDesktopNotation("macos_x64"))
-    add("macAarch64", composeDesktopNotation("macos_arm64"))
-    add("windowsAmd64", composeDesktopNotation("windows_x64"))
+    add("linuxAmd64", "org.jetbrains.compose.desktop:desktop-jvm-linux-x64:${libs.versions.compose.asProvider().get()}")
+    add("macAmd64", "org.jetbrains.compose.desktop:desktop-jvm-macos-x64:${libs.versions.compose.asProvider().get()}")
+    add("macAarch64", "org.jetbrains.compose.desktop:desktop-jvm-macos-arm64:${libs.versions.compose.asProvider().get()}")
+    add("windowsAmd64", "org.jetbrains.compose.desktop:desktop-jvm-windows-x64:${libs.versions.compose.asProvider().get()}")
 }
 
 // Keep ordinary Desktop builds and cross-platform packaging on the audited resource set.
@@ -425,8 +411,11 @@ val desktopReleaseChannel = rootProject.extra.get("clientReleaseChannel") as Str
 val desktopIconDir = layout.projectDirectory.dir("packaging/icons")
 
 // 宿主 currentOs 的 Compose/Skiko 工件只服务本机 dev 运行；交叉负载需换成目标架构工件。
-val desktopHostOsConfiguration =
-    configurations.detachedConfiguration(dependencies.create(composeDesktopNotation("currentOs")))
+val desktopHostOsConfiguration = configurations.detachedConfiguration(
+    dependencies.create(extensions.getByType(org.jetbrains.compose.ComposeExtension::class.java).dependencies.desktop.currentOs),
+).apply {
+    shouldResolveConsistentlyWith(desktopRuntime)
+}
 
 data class DesktopShellTarget(
     val key: String,
@@ -461,7 +450,7 @@ val desktopDeploymentJvmOptions = listOf(
 
 // Material icons 裁剪：负载用“被引用闭包子集”替换 material-icons-extended 胖 jar。
 val desktopPayloadBase: org.gradle.api.file.FileCollection =
-    (configurations.getByName("desktopRuntimeClasspath") as org.gradle.api.file.FileCollection)
+    (desktopRuntime as org.gradle.api.file.FileCollection)
         .minus(desktopHostOsConfiguration)
 val desktopIconsOriginal = desktopPayloadBase.filter { it.name.startsWith("material-icons-extended-desktop-") }
 val pruneDesktopIcons = tasks.register<release.PruneDesktopMaterialIconsTask>("pruneDesktopMaterialIcons") {

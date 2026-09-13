@@ -296,9 +296,8 @@ export default function Releases() {
         )}
       >
         <Typography.Paragraph type="secondary">
-          发布包是构建侧密封的 zip（release.json + payload/ + bundle/ + installers/）。stable/preview
-          发布不可变；snapshot 同版本可覆盖。停用可选择回退目标；通道开关是运维总闸，
-          关闭后该端点的客户端检查更新一律返回 CHANNEL_DISABLED。
+          每次发布保留原始文件；snapshot 允许同一展示版本发布新的构建，已有构建不会被覆盖。
+          通过切换通道选择用户收到的版本，停用时可指定回退版本；关闭通道后暂停提供更新。
         </Typography.Paragraph>
         {loading ? <Spin /> : (
           <Table

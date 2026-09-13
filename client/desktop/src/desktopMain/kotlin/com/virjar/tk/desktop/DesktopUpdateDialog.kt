@@ -86,7 +86,7 @@ internal fun DesktopUpdateDialog(
                             if (s.shellUpdateRequired) {
                                 "本次更新包含底层组件调整，需要下载新的安装包完成升级。"
                             } else {
-                                "增量更新约需下载 ${formatBytes(s.totalBytes)}（共 ${s.fileCount} 个文件）。"
+                                "实际更新仅下载变化的文件，下载时显示进度。"
                             },
                             style = MaterialTheme.typography.bodySmall,
                         )

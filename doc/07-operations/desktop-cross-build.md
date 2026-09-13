@@ -1,239 +1,158 @@
 # Desktop 交叉打包与客户端签名
 
-Desktop 使用 Conveyor，在一个构建机上生成 macOS、Windows、Linux 安装包和完整更新站点；Android
-生成独立签名 APK。面向客户的发行入口是根 `release` 任务，版本准备、上传和 CI 见
-[统一发行流程](releasing.md)。本页解释打包输入、工具管理、签名与各平台边界。
+Desktop 由仓库内的 Gradle 任务组装 JBR、bootstrap 和应用负载，在一台 macOS 或 Linux 构建机上生成
+四个目标的首装包。Android 独立生成签名 APK，无头客户端生成需要 Java 21 的发行 ZIP。对外交付使用
+根 `release` 任务；发行决定、密封与上传见[统一发行流程](releasing.md)，更新契约见
+[客户端发布与更新体系](client-releases.md)。
 
-## Gradle 与 Conveyor 的分工
+## 构建输入与产物
 
-Conveyor Gradle 插件负责提取 Compose 的运行库、主类和 JVM 参数；真正制作安装器的能力由 Conveyor
-原生 CLI 提供。插件不是完整打包引擎。项目把 CLI 的下载、固定版本、摘要校验和执行也接入 Gradle，
-因此完整流程不要求使用者另外安装二进制或手工敲 Conveyor 命令。
+| 目标 key | 首装包 | 包内启动入口 |
+|---|---|---|
+| `macos-aarch64` | Apple Silicon `.app` ZIP | `<desktopName>.app/Contents/MacOS/<desktopName>` |
+| `macos-amd64` | Intel `.app` ZIP | 同上，随包 JBR 和 Skiko 为 x64 |
+| `windows-amd64` | NSIS `setup.exe`、便携 ZIP | `<desktopName>/<desktopName>.exe` |
+| `linux-amd64` | `.deb`、`.tar.gz` | `<desktopName>/bin/<desktopFsName>` |
+
+每个目标另外生成一个 `payload.zip`，供 bootstrap 首次安装及发布注册中心的文件级更新使用。
+首装包包含运行时、启动器与种子负载；单独下载 `payload.zip` 不能替代首装包。
 
 ```mermaid
 flowchart TD
-    Jar["desktopJar：内嵌源码身份"] --> Extract["writeConveyorConfig：提取 Compose 打包输入"]
-    Targets["四个目标配置：mac x64/arm64、Windows x64、Linux x64"] --> Extract
-    Version["根版本与最终 DeploymentConfig"] --> SiteConfig["writeConveyorSiteConfig：更新源与 revision"]
-    Lock["conveyor-tools.properties：版本、各平台包 SHA-256"] --> Tool["prepareConveyor：下载、校验、解压、版本检查"]
-    Extract --> Icons["prepareDesktopIcons：仅保留实际引用的 Material 扩展图标"]
-    Icons --> Build["buildConveyorSite：CLI 在独立暂存目录制作完整站点"]
-    SiteConfig --> Build
-    Tool --> Build
-    Signing["已有 defaults.conf：持续签名身份"] --> Build
-    Build --> Check["核对 MSIX 清单及每个安装包的 Skiko native"]
-    Check --> Output["成功后写构建身份并切换 client/desktop/output"]
-    Output --> Bundle["release：验证并纳入密封目录"]
+    App["desktopJar + 应用运行依赖"] --> Payload["assembleDesktopPayload：文件清单 + payload.zip"]
+    Native["目标 Compose/Skiko native"] --> Payload
+    Icons["pruneDesktopMaterialIcons：图标引用闭包"] --> Payload
+    Identity["最终 DeploymentConfig + 根发行身份"] --> Payload
+    JBR["ensureJbr：固定 SHA-256 的目标运行时"] --> Shell["assembleDesktopShell：运行时 + bootstrap + 种子"]
+    Bootstrap["desktop-bootstrap.jar"] --> Shell
+    Payload --> Shell
+    Shell --> Installers["macOS ZIP / Windows exe、ZIP、NSIS / Linux tar.gz、deb"]
+    Installers --> Release["release：核对、密封、上传注册中心或 GitHub"]
 ```
 
-`conveyor.conf` 读取 Gradle 事先写好的普通配置文件，不在 CLI 运行中反向启动 Gradle。由此避免父子
-Gradle 进程争用工作目录，也不需要依赖 Windows shell 去执行 Unix shebang。
+`:client:desktop:run` 仍使用宿主的 Compose runtime；交叉打包分别解析四个目标的 native 工件。
+应用依赖的版本选择必须一致，不能把几个独立 runtime 图直接拼接，导致同一个协程或序列化类从不同
+版本 JAR 重复加载。只替换宿主相关的 Compose/Skiko 工件，SQLite、JNA、媒体库及其资源继续保留。
 
-`compose.desktop.currentOs` 只提供构建宿主的运行库。交叉打包另在 `linuxAmd64`、`macAmd64`、
-`macAarch64`、`windowsAmd64` 中声明对应的 Compose Desktop 依赖；插件把各目标依赖写入平台输入。
-Skiko API 与 native 版本由同一 Compose 元数据解析，不手写第二份版本，也不把缺失 DLL 塞进其他 JAR。
-配置用法见 [Conveyor Gradle 集成](https://conveyor.hydraulic.dev/22.1/configs/maven-gradle/#gradle)。
+图标裁剪只删除 `material-icons-extended` 中没有被负载字节码引用的图标类，保留被引用类的闭包、
+原始 class 字节和非 class 资源。输出位于 `client/desktop/build/desktop-payload/icons-subset/`，报告位于
+相邻的 `icons-report/`。正常使用 `Icons.*` 无须维护人工清单；动态拼接图标类名不属于支持的引用方式。
+当前发行链没有整应用 ProGuard/R8 混淆，不应照搬旧 jpackage 路径的裁剪规则。
 
-Skiko 先查 JVM 的 `bin`（Windows）或 `lib`（macOS/Linux），随后才查 classpath 资源和摘要。
-当前开启原生库提取，因此 Gradle 在切换站点和密封安装包前，检查各归档中的正确 JVM 路径确实包含
-对应平台的 Skiko native。仅看见一个 runtime JAR 文件名不算通过：额外复制的 JAR 未必在启动器的
-classpath 内；Windows ZIP、MSIX 和 Linux 产物都须独立检查。结构检查不代替目标系统上的实际启动。
+## 工具与本机构建
 
-Conveyor 工具版本与下载哈希固定在 `gradle/conveyor-tools.properties`，当前为 22.1，配置兼容级别为 22。
-下载工具解压到 Gradle 用户目录下的 `teamtalk-tools/conveyor`；这与打包所用的 JDK 21 是不同配置。
-已经缓存并校验的工具会复用。私有环境可通过下列非秘密参数提供镜像或现成工具：
-
-| 参数 | 等价环境变量 | 用途 |
-|---|---|---|
-| `-PconveyorDownloadBaseUrl` | `TEAMTALK_CONVEYOR_DOWNLOAD_BASE_URL` | 工具归档镜像根地址；文件名和锁定哈希保持不变 |
-| `-PconveyorExecutable` | `TEAMTALK_CONVEYOR_EXECUTABLE` | 管理员准备的可执行文件；仍检查固定版本，不代替归档来源校验 |
-| `-PconveyorConfigDir` | `TEAMTALK_CONVEYOR_CONFIG_DIR` | 存放已有 `defaults.conf` 的私密配置目录 |
-
-没有 GitHub 不影响私有发行，但不等于首次构建完全离线。Gradle/Maven、Node/npm、Android SDK、Conveyor
-及其 JDK 和更新组件仍需可达下载源或预热缓存；镜像只替换对应工具下载地址，不自动接管所有外部依赖。
-Conveyor 的使用许可仍由客户按其部署方式确认，自动下载不替代许可配置。
-
-## Desktop 签名必须持续使用同一身份
-
-完整站点构建要求已有、非空的 `defaults.conf`。默认查找平台的 Conveyor 用户配置目录；显式
-`TEAMTALK_CONVEYOR_CONFIG_DIR` 更适合 CI 与客户受控构建机。发行任务不会在缺少配置时自动生成新签名密钥。
-
-同一组织持续交付时应保存原签名材料，在不同构建机恢复同一份配置；CI Secret 只负责分发私密输入。
-不要提交私钥或把 `defaults.conf` 放进产物目录。正式 macOS 签名、公证和 Windows 受信任证书需要另外
-完成配置与目标平台验证；当前预览签名不能被描述成已获得系统信任的正式发行。
-
-为了单独排查打包，可从根目录运行内部生产任务：
+构建机需要 JDK 21。Gradle 管理 Maven 依赖、Launch4j 和固定版本的 JBR；完整交叉安装器构建还需要
+系统 `tar`（含 gzip/xz 支持）及 NSIS 的 `makensis`：
 
 ```bash
-./gradlew :client:desktop:buildConveyorSite
+# macOS
+brew install makensis
+
+# Debian/Ubuntu 构建机
+sudo apt-get install nsis
+
+# 单独调试四目标首装包与负载，不上传
+./gradlew :client:desktop:assembleDesktopShells
 ```
 
-结果在 `client/desktop/output/`。CLI 失败时不为旧目录重新盖身份，也不把半成品当成完成站点；只有完整
-构建成功，才写入 `teamtalk-release.properties` 并切换生成目录。正式发行和内测交付均使用 `release`，由统一
-密封检查确认版本、必需产物与每个文件的 SHA-256。
+macOS 上 Launch4j 的工具为 Intel 二进制，Apple Silicon 构建机需要可运行它们的 Rosetta 环境。
+Linux CI 使用同一任务生成四目标产物。Windows CI 验证 Windows 自身的便携包；目前没有验证 Windows
+宿主完整交叉生成 macOS/Linux 包，不能由 Windows 客户端可用推导出该宿主构建矩阵已覆盖。
 
-## 实际发行包的代码裁剪
+只调试一个目标时使用对应任务，例如：
 
-`prepareConveyorConfig` 先运行插件的 `writeConveyorConfig`，再由 `prepareDesktopIcons` 将其中的
-`material-icons-extended-desktop` 替换为本次构建实际引用的图标集合。编译仍使用完整依赖，开发者照常
-使用 `Icons.Filled`、`Icons.Outlined` 或 `Icons.AutoMirrored`；无需手工登记清单或复制上游矢量源码。
-分析覆盖应用与各目标运行依赖的编译字节码，递归保留图标之间的引用。填充和轮廓图标按真实引用分别保留，
-被保留的 class 字节、图标库非 class 资源及其他依赖均不修改。
+```bash
+./gradlew :client:desktop:assembleDesktopShellMacosAarch64
+./gradlew :client:desktop:packageWindowsPortableWindowsAmd64
+./gradlew :client:desktop:buildWindowsInstallerWindowsAmd64
+./gradlew :client:desktop:buildLinuxDebLinuxAmd64
+```
 
-裁剪后的 JAR、保留类清单与字节统计位于 `client/desktop/build/conveyor/icons/`，真正供 Conveyor 使用的
-配置为 `build/conveyor/generated.conveyor.conf`；原始解析结果在 `extracted.conveyor.conf`，便于对照。
-新增正常图标引用后下次构建会自动纳入。不要通过拼接类名反射调用图标；这种方式无法静态确定实际图标集合。
-图标库结构或插件输出格式改变时，任务会报错，须审阅适配后继续打包。
+Windows 用 `.\gradlew.bat` 调用同名任务。`assembleDesktopShellWindowsAmd64` 只准备运行时和种子树；
+生成可运行 `.exe` 需 `wrapWindowsBootstrapWindowsAmd64`，通常直接使用上面的便携包或安装器任务。
+`-Pteamtalk.skipWindowsInstaller=true` 仅允许本地调试跳过 NSIS；完整发行仍必须具有必需安装器。
 
-这一流程仅删除未用的纯矢量图标类，不启用名称混淆。Compose `packageRelease*` 的
-`desktop-proguard.pro` 仍属于另一条内部打包路径，统一 `release` / Conveyor 没有使用其整应用裁剪结果。
-这条内部路径的 `proguardReleaseJars` 完成后会比较原始依赖与实际输出中 macOS、Windows、Linux 视频桥
-的全部 native 方法签名。三个桥都明确保留 native 方法组：原生库会按名反查部分没有 JVM 调用者的方法，
-仅禁止重命名不能防止它们被删除。检查不加载其他平台的原生库，所以任何构建宿主都能发现这种误裁剪。
-Windows 10 22H2 实机报告曾复现裁剪后的 `nShutdownMediaFoundation` 缺失；该结论针对 Compose
-本地压缩产物，不能据此认定未经过 ProGuard 的 Conveyor 安装包有相同缺陷。
+首装包位于 `client/desktop/build/desktop-shell/<target>/`，NSIS/deb 位于其 `installer/` 子目录；
+各负载位于 `client/desktop/build/desktop-payload/<target>/`。内部构建任务允许开发中的代码，不能代替
+统一 `release` 对干净源码、版本、协议、身份及完整产物的校验。
 
-Windows 的进程身份与系统 SID 查询还使用 JNA。压缩规则只为仍被引用的 `Structure` / `NativeMapped`
-类型保留反射字段与构造器，并保存 `FieldOrder` 注解，不整包保留 `jna-platform`。同一打包检查会核对
-实际输出里 `WinNT.PSID` 的 `sid` 指针字段、公开无参构造器与字段顺序；不必在构建机加载 Windows DLL。
-依据见 JNA 5.15 的 [PSID 定义](https://github.com/java-native-access/jna/blob/5.15.0/contrib/platform/src/com/sun/jna/platform/win32/WinNT.java)
-和 [NativeMapped 反射构造](https://github.com/java-native-access/jna/blob/5.15.0/src/com/sun/jna/NativeMappedConverter.java)。
-此外显式保留 JNA 核心 `Native.initIDs` 按名绑定的成员，依据实际解析版本 5.18.1 的
-[JNI 初始化清单](https://github.com/java-native-access/jna/blob/5.18.1/native/dispatch.c#L2862)。这些初始化入口
-即便没有 Java 调用者也不能裁掉；升级实际解析的 JNA 版本时应核对该清单。打包后可在任意平台用输出
-JNA JAR 构造 `WinNT.PSID` 并调用 `size()`，验证核心 JNI 初始化和 Structure 反射，再在 Windows 验证
-真实进程身份/SID 查询；前者不会加载 Windows DLL。
+### JBR 固定版本与离线输入
 
-尤其不能将依照构建宿主筛选 SQLite native 库的后处理接到跨平台 Conveyor：各目标 JNI、JBR 模块、字体
-与媒体组件继续由原有平台输入和 native extraction 配置管理。进一步收紧 ProGuard、R8 或运行时模块前，
-须分别验证数据库、反射/SPI、中文字体、媒体与系统集成，并用同一源码和运行时做包体对照。
+`gradle/jbr.properties` 固定各目标归档地址及 SHA-256。归档缓存位于
+`~/.gradle/teamtalk-tools/jbr/archives/`，解压缓存按目标和摘要分目录；更新 pin 后使用新目录，
+不能仅凭旧 `.complete` 文件继续使用旧 JBR。该配置文件是 Gradle 任务输入。
 
-## 平台产物与更新方式
+离线构建可设置 `TEAMTALK_JBR_DIR`，布局为 `<目录>/<target>/<归档顶层目录>/…`。
+macOS 归档顶层包含 `Contents/Home/bin/java`，Linux 包含 `bin/java`，Windows 包含 `bin/java.exe`。
+离线目录由维护者准备，任务检查实际 Java 入口并直接消费所选目录；它不代替管理员对离线运行时来源的确认。
+其他 Gradle/Maven、Node/npm、Android SDK 依赖仍需预热，提供 JBR 不表示整个工程可以首次离线构建。
 
-| 客户端 | 产物 | 现有更新方式 |
-|---|---|---|
-| macOS | Intel / Apple Silicon 分开的 zip，内含 `.app` | Conveyor 生成的 Sparkle 更新元数据 |
-| Windows | 引导 exe、MSIX / appinstaller、zip | 按生成下载页安装后的 appinstaller 更新 |
-| Linux | deb、tar.gz、apt 索引 | 按下载页配置 apt；tar.gz 手动替换 |
-| Android | 签名 APK | 手动下载覆盖安装，尚无应用内自动更新 |
+Linux tar/deb 统一记录数字所有者 `0:0`，不带构建机的扩展属性、AppleDouble 或用户名称。
+运行时复制与 ZIP 归档保留符号链接和执行权限。特别是 macOS JBR 的签名资源包含链接，不能展开成
+普通文件后宣称签名仍然有效。ZIP 使用 JVM 写入器重建，避免更新旧 ZIP 时残留已经删除的文件。
 
-Desktop 的完整站点包含 `download.html`、平台安装文件与更新索引，不能用其中一个 ZIP 替代整站。
-独立解压版也不能被视为已经接通安装器更新路径；遵循生成下载页对应平台的说明。
+## 安装身份、签名与升级边界
 
-Windows 当前安装包要求 Windows 10 1903（build 18362）或更新版本，具体下限以 MSIX 内的
-`TargetDeviceFamily.MinVersion` 为准。下载页提供的 `.exe` 是引导器，它仍会通过 `.appinstaller`
-下载 MSIX；能在浏览器下载文件不等于 Windows 安装服务能读取它。
+安装身份来自最终 `DeploymentConfig.client`：`applicationId` 隔离客户端及负载数据，`desktopName`
+是稳定的英文安装名称，`displayName` 用于界面。私有构建必须沿用已分发的身份和签名；改显示名称或
+服务器地址不能改变数据根。配置入口见[客户端发行身份](configuration.md#客户端发行身份)。
 
-MSIX 使用真实 AppData 目录，保持与普通 Win32 启动相同的数据路径及目录权限视图。`conveyor.conf`
-通过 `additional-properties-xml` 写入 `desktop6:FileSystemWriteVirtualization=disabled`，并同时声明
-`runFullTrust`、`unvirtualizedResources`；后者及此属性要求 Windows 10 1903。仅有 `runFullTrust`
-仍会启用文件写入虚拟化。注册表策略保持默认，不叠加会在新系统覆盖全局声明的按目录排除配置。
-配置入口见 [Conveyor 22.1 Windows 文档](https://conveyor.hydraulic.dev/22.1/configs/windows/#appwindowsmanifestsmsixadditional-properties-xml)，
-系统行为见 [Microsoft 虚拟化说明](https://learn.microsoft.com/en-us/windows/msix/desktop/flexible-virtualization)。
+Linux deb 的包名和 `/opt/` 目录使用 `desktopFsName`，提供 `/usr/bin/<desktopFsName>` 与桌面菜单
+入口。NSIS 使用稳定安装名称注册安装目录、快捷方式和卸载项，不用可变的中文显示名称作为路径身份。
+应用数据仍由客户端数据目录策略管理，安装器更新不清理账号、草稿和可靠发件箱。
 
-`buildConveyorSite` 在替换上次产物前读取实际 MSIX 内的 `AppxManifest.xml`，校验能力、关闭属性及系统
-下限；`ReleaseBundle.verifyDesktop` 在封装与复用密封目录时复核当前安装包。检查不修改包字节或签名。
-需要人工核对时，可用 ZIP 工具直接读取 MSIX 内的清单，并在 Windows 上完成真实安装与启动验证。
-关闭虚拟化后，AppData 数据不会随 MSIX 卸载自动删除；升级前已有的虚拟化目录也不能直接清空或覆盖。
+根展示版本与 `desktopRevision` 同时进入桌面安装元数据：macOS `CFBundleVersion` 为
+`<version>.<revision>`，deb 为 `<version>-<revision>`。正式发行、private-first、snapshot 的 revision
+与通道规则由统一发行入口决定，见[内测 snapshot](releasing.md#保持展示版本的内测更新)。负载清单同时
+携带 `buildIdentity`，不能用同一展示版本掩盖不同源码。
 
-安装站点必须提供正确的 `Content-Type`、GET/HEAD 文件长度与字节 Range 响应。TeamTalk 的公共下载
-路由使用 Ktor `PartialContent`，并显式声明 `.appinstaller` 为 `application/appinstaller`、`.msix` 为
-`application/msix`。HTTP 与 HTTPS 均可使用；没有域名不是要求客户购买证书的理由。反向代理或其他
-静态托管也必须保留这些响应语义，不能把 Range 请求退化为完整文件 `200`。微软的
-[BITS 下载要求](https://learn.microsoft.com/en-us/windows/win32/bits/http-requirements-for-bits-downloads)
-与 [App Installer 排障说明](https://learn.microsoft.com/en-us/windows/msix/app-installer/troubleshoot-appinstaller-issues)
-列出了相应约束；包签名信任与 HTTP 下载兼容是两个独立检查。
+当前首装包没有接入完整的 macOS Developer ID 签名、公证或 Windows Authenticode 签名流水线。
+保留 JBR 原签名不等于整个应用获得系统信任；对外扩大分发前须在实际目标系统确认安装提示及正式签名
+流程。旧 Conveyor `defaults.conf` 不再是新打包任务输入，但应保留既有发行记录和签名材料。
 
-每次交付在实际站点验证 HEAD、片段下载及不存在文件的 404，再用要分发的引导器在目标 Windows 上
-完成安装；步骤见[客户端安装站点验收](../09-testing/deployment-acceptance.md#客户端安装站点的-http-验收)。
+新桌面安装器与便携包均经 bootstrap 加载用户目录中的应用负载，应用内更新只替换负载；JBR、启动器
+或壳 ABI 变化需要新首装包。旧 Sparkle、AppInstaller/MSIX、apt 更新链不会自动转换为新体系：首次迁移
+需要手动安装新包，旧下载目录保留；具体用户迁移边界见[从 Conveyor 迁移](client-releases.md#7-迁移说明从-conveyor)。
 
-根 `teamtalk.releaseVersion` 是应用内与 Conveyor 的展示版本。Android `versionCode` 与正式发行的 Conveyor
-`app.revision` 为 `releaseBuildNumber + 1`，当前均为 `2`；`0.0.1` 的 Desktop 安装元数据为 macOS/Windows
-`0.0.1.2`、Linux `0.0.1-2`。同一展示版本与 Desktop revision 不能用于分发不同包，具体边界见
-[版本机制](../04-protocol/versioning.md#安装版本与升级边界)。
-独立私有应用可以经用户确认，以当前版本和安装序号完成首次分发；它有自己的安装身份和空更新站点，
-入口见[首次私有安装包分发](releasing.md#保持当前版本的首次私有安装包分发)。后续用户要求更新内测包时，
-使用[内测 snapshot](releasing.md#保持展示版本的内测更新)：提交工作源码后手动运行
-`release -PreleaseMode=snapshot -PreleaseTargets=site`，仅保留本地产物时用 `local`；不修改根版本文件。
-例如展示版本为 `0.0.1`、根构建号为 `1` 时，Android code 保持 `2`，用户手动覆盖安装；Desktop 的
-`desktopRevision` 自动取完整 Git first-parent 提交数加根构建号再加一，满足 Conveyor 对不同包的要求。
-该计算不依赖 tag；必须使用完整 clone。同一展示版本的后续 snapshot 保留已分发源码及历史，从其后代构建。
-应用身份、签名与数据目录沿用原值，不打 tag，不通过 GitHub 自动交付 snapshot。
-Conveyor 对同一版本与 revision 的字节一致性检查保持有效；原包重试复用密封目录，不靠删除缓存重新制作
-相同 revision 的不同包。正式发行再推进根展示版本与构建号，使 Android code 增加；新的 Desktop 展示版本
-可重新按根构建号映射末位 revision，无须继续上一展示版本的内测提交计数。
+## 原生库与目标平台验收
 
-内测 snapshot 生成完整 macOS 安装包，不生成差量包（`app.mac.deltas=0`），因此不必为计算差量下载旧版
-ZIP；完整安装包和更新索引照常生成。正式发行保持 Conveyor 默认差量策略。该设置遵循
-[Conveyor 的开发/测试构建建议](https://conveyor.hydraulic.dev/22.1/performance/#reduce-the-number-of-deltas-created-for-macos)。
+Skiko 的 JAR 及其目标 native 资源必须一致；仅在包名中出现平台名称不能证明可以加载。macOS 本地文件
+播放器覆盖由 `verifyMacVideoPlayerOverride` 核对源码摘要、Mach-O 架构、最低系统版本和签名边界，
+`desktopJar` 再核对实际资源。重新生成该覆盖需在 macOS 显式运行 `rebuildMacVideoPlayerOverride`，
+其他构建宿主消费已提交、可审阅的双架构产物。
 
-Desktop 更新源固定为最终部署配置的 `<serverUrl>/downloads/desktop`。登录页临时改服务器
-不会改变已打包更新源；Android 使用构建时坐标。私有客户须在构建前固定自己的 HTTP/TCP 地址与更新站点。
-私有坐标在独立 clone 的 `buildSrc/deployment-local/Deployment.kt` 维护，不修改主仓库公版默认配置。
+打包保留 JNA、SQLite 和媒体运行库的 JNI/SPI/反射资源。接收媒体仍先完整下载到本地再播放；原生播放器
+能力不改变这一产品边界。Linux 播放器使用 ComposeMediaPlayer 0.9.0 的 GStreamer 后端；deb 声明 JBR 图形依赖、
+GStreamer 核心、base/good 插件和 libav 解码器。tar.gz 使用者需要自行准备同等系统依赖。实际图形、
+字体、音频和媒体能力仍需在目标发行版验证；不能用容器中成功解压替代桌面会话验收。
 
-当前 Android 最低 API 26，macOS 最低 14.0。三平台交叉出包成功不代表各系统都完成实机验收；参与
-本轮内测的平台应从实际交付文件完成安装、启动和登录检查。操作系统的安装提示不能靠关闭全局系统
-安全设置解决。
+`buildSrc` 的 `DesktopShellPackagingTest` 执行生成的 POSIX 启动脚本、编译 NSIS、读取实际 deb 的
+压缩成员，并验证私有路径、执行位和符号链接。Linux CI 生成全部首装包并运行 `dpkg-deb` 检查；Windows
+CI 生成 Launch4j 便携包并运行当前用户身份与私有存储测试。
+
+交付前仍需从要交付的原文件完成安装、启动、登录、中文字体、托盘、本地图片/音视频、检查更新及更新后
+重启，覆盖旧版本账号、草稿和发件箱保留。三平台交叉构建成功不代表三平台真实客户端都已经验收。
+操作流程见[Desktop 自动化](../09-testing/desktop-automation.md)及
+[部署验收](../09-testing/deployment-acceptance.md)。
 
 ## Android 签名
 
-签名身份按以下优先级解析（T012），Debug 与 Release 始终绑定同一身份，满足同包名覆盖安装：
+Android 签名由 [AndroidSigningResolver](../../buildSrc/src/main/kotlin/deployment/AndroidSigningResolver.kt)
+集中解析，Debug 与 Release 使用同一身份以支持同包名覆盖安装：
 
-解析实现集中在 [AndroidSigningResolver](../../buildSrc/src/main/kotlin/deployment/AndroidSigningResolver.kt)，
-Android 模块构建脚本只把解析结果绑定给 AGP。默认身份、参数优先级和密码回退都在同一入口维护。
+1. 部署 DSL 的 `client { androidSigning { storeFile = …; keyAlias = … } }` 优先；密码从秘密入口读取。
+2. 未配置 DSL 时使用环境变量或 `local.properties` 的既有签名字段。
+3. 均未配置时使用仓库的公开预览证书 `client/android/teamtalk-dev.jks`，不用于组织正式私有签名。
 
-1. **部署 DSL**（推荐入口）：`client { androidSigning { storeFile = ...; keyAlias = ... } }`。
-   密码不属于 DSL，从下表秘密入口解析；配置了 DSL 而密码缺失会明确失败。
-2. **环境变量 / local.properties**（既有私有构建路径，向后兼容）：
-
-| 环境变量 | local.properties 字段 |
+| 环境变量 | `local.properties` |
 |---|---|
 | `TEAMTALK_ANDROID_KEYSTORE` | `release.storeFile` |
 | `TEAMTALK_ANDROID_STORE_PASSWORD` | `release.storePassword` |
 | `TEAMTALK_ANDROID_KEY_ALIAS` | `release.keyAlias` |
-| `TEAMTALK_ANDROID_KEY_PASSWORD` | `release.keyPassword`（缺省回退 storePassword） |
+| `TEAMTALK_ANDROID_KEY_PASSWORD` | `release.keyPassword`，缺省回退 storePassword |
 
-3. **固定试用证书**：以上都未配置时使用已入库的公开预览证书 `client/android/teamtalk-dev.jks`；
-   该证书用于连续预览包覆盖安装，不用于组织正式私有签名。
+显式选用自有证书后，路径、密码或别名错误会失败，不回退默认证书。密码与私钥不进入部署快照或产物日志。
+`:client:android:assembleRelease` 可单独构建 APK；统一密封流程验证实际 APK 签名与构建身份，并记录证书
+SHA-256。覆盖安装要求应用 ID 和签名一致，不能以卸载导致的数据丢失代替升级迁移。
 
-证书文件可用绝对路径或相对仓库根目录的路径。显式选择自有证书后，文件缺失、密码缺失、
-密码错误或别名无效应明确失败，不降级为 unsigned APK，也不静默回退默认证书。
-非敏感部署快照只输出签名模式（`default-trial` / `custom`）与证书路径；密码与私钥
-不进入部署配置、发布快照、BuildConfig 或日志。
-
-统一密封流程使用 JVM APK 验签器检查真实签名，并读取 APK 内的构建身份以及 Android 输出元数据，
-在清单中记录签名证书 SHA-256。单独调试构建可运行：
-
-```bash
-./gradlew :client:android:assembleRelease
-```
-
-覆盖安装要求应用 ID 与签名一致。从 debug 或另一证书换装可能要求卸载，影响本地数据；应在首次组织
-内测前固定长期签名。正式发行推进 Android 安装 code，snapshot 保持当前 code 手动覆盖；两种方式都不能
-把更换签名造成的安装失败当成数据迁移方案。
-
-## 本机 DMG 与 SDK 的独立边界
-
-`:client:desktop:packageReleaseDmg` 仍可在 macOS 通过 Compose/JDK jpackage 生成当前架构的 DMG，
-路径为 `client/desktop/build/compose/binaries/main-release/dmg/`。它不包含 Conveyor 的完整更新站点，
-不替代统一发行里的跨平台包；Intel Mac 构建也不证明 Apple Silicon 原生包已验证。
-
-检查这条本机打包路径可运行 `:client:desktop:createReleaseDistributable`，无需 Windows MSI 所需的
-WiX 工具。它会执行 ProGuard 后的 JNI 签名检查，并运行 `stripRuntimeFonts`。字体清理从 Compose
-任务读取实际输出目录与包名，按 jpackage 的布局定位：
-
-| 平台 | app-image 输出目录内的字体路径 |
-|---|---|
-| macOS | `<包名>.app/Contents/runtime/Contents/Home/lib/fonts` |
-| Windows | `<包名>/runtime/lib/fonts` |
-| Linux | `<包名>/lib/runtime/lib/fonts` |
-
-运行时没有附带这组可选字体时跳过清理，不删除系统字体。构建工具的路径与 JNI 回归测试位于
-`buildSrc` 的 `release.DesktopPackageChecksTest`，由现有 Linux/Windows 发行工具 CI 执行；实际出包和
-中文渲染、媒体播放仍须在目标平台验收。Conveyor 使用自己的 JBR 组装流程，不调用这项字体清理。
-
-SDK 与无头客户端从同一版本源码接入。`:client:shared:headlessDist` 提供 `tt-agent`、`tt`、`tt-mcp`
-和运行库，需 JDK 21；首次运行和持久数据目录见[无头客户端](../05-clients/headless.md#3-构建与启动-agent)。
-
-打包事实源是 `client/desktop/build.gradle.kts`、`client/desktop/conveyor.conf`、
-`gradle/conveyor-tools.properties`、`client/android/build.gradle.kts` 与 `buildSrc/src/main/kotlin/release/ConveyorTools.kt`。
+无头客户端的分发、安装与 Java 21 运行边界见[无头客户端](../05-clients/headless.md)。

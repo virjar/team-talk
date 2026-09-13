@@ -5,7 +5,7 @@
 
 ## 1. 体系总览
 
-2026-09 起客户端发布从「Conveyor 静态更新站点 + SFTP 直写」迁移为**服务端发布注册中心**：
+客户端发布由**服务端发布注册中心**管理：
 
 ```
 构建机（CI/本机）                TeamTalk 服务端（单体）                 客户端
@@ -16,29 +16,32 @@
                                └──────────────────────────┘                  └──────────┘
 ```
 
-- **发布注册中心**（服务端 `application/clientrelease`）：`client_release` /
+- **发布注册中心**（服务端 `infra/clientrelease`）：`client_release` /
   `client_release_file` / `client_channel` 三张表 + 内容寻址文件仓
-  `data/release-store/<sha前2位>/<sha>`。发布行不可变（snapshot 同身份原地覆盖），
+  `data/release-store/<sha前2位>/<sha>`。发布行与文件清单不可变，
   通道（stable/preview/snapshot）是独立指针，停用/回滚只改指针或状态。
+  通道晋级不会重写安装包：已有 Desktop 客户端更新后继续订阅请求时的通道；首次安装仍订阅包内构建通道。
+  因此把 snapshot 指向 stable 不能替代正式安装包的构建与验收。
 - **覆盖面**：desktop（mac 双架构 / windows-amd64 / linux-amd64）、android、
   headless（tt-agent / tt / tt-mcp）。schema 预留 ios/server。
 - **版本语义**：`gradle.properties` 仍是唯一事实源。desktop 负载构建号 = desktopRevision
-  （正式 = buildNumber+1；snapshot = 提交历史推导，保证通道内单调）；android =
-  versionCode（buildNumber+1）；headless = releaseBuildNumber。
+  （正式 = buildNumber+1；snapshot = 提交历史推导，区分同展示版本的源码构建）；android =
+  versionCode（buildNumber+1）；headless = releaseBuildNumber。`buildIdentity` 记录展示版本与完整源码 SHA；同号 snapshot
+  仍能被识别为新的更新，不能只比较 version/build。
 
 ## 2. 公开端点（只读，与旧静态下载同级信任）
 
 | 端点 | 用途 |
 |---|---|
-| `GET /api/v1/client/updates/check?client=&platform=&arch=&channel=&version=&build=&shellAbi=` | 更新检查；返回 UP_TO_DATE / UPDATE_AVAILABLE / SHELL_UPDATE_REQUIRED / CHANNEL_DISABLED + 发布信息 |
+| `GET /api/v1/client/updates/check?client=&platform=&arch=&channel=&version=&build=&shellAbi=&buildIdentity=` | 更新检查；返回 UP_TO_DATE / UPDATE_AVAILABLE / SHELL_UPDATE_REQUIRED / CHANNEL_DISABLED + 发布信息 |
 | `GET /api/v1/client/releases/{id}/manifest.json` | 负载文件清单（path/sha256/size） |
 | `GET /api/v1/client/files/{sha256}` | 内容寻址制品（Range 断点续传、immutable 缓存） |
 | `GET /api/v1/public/downloads` | 中文下载页数据源 |
 | `GET /downloads` | 中文「下载与更新」页（注册中心数据，风格与首页一致） |
-| `GET /downloads/android.json`、`/downloads/TeamTalk-android.apk` | **兼容层**：注册中心优先，旧收据目录兜底（存量 Android 客户端无感） |
+| `GET /downloads/android.json`、`/downloads/TeamTalk-android.apk` | **兼容层**：注册中心接管前兼容旧收据；接管后停用/缺文件返回 404 |
 | `/downloads/desktop/**` | 冻结的 Conveyor 遗留站点（只读保留，存量桌面客户端链接不断） |
 
-更新检查不比较语义化版本：服务端下发目标（version+build），客户端服从指令——
+更新检查不比较语义化版本：服务端下发目标（version+build+buildIdentity），客户端服从指令——
 **回滚=把通道指针切回旧版**，客户端会按指令降级。
 
 ## 3. 发布通道与运维管控
@@ -47,26 +50,28 @@
 
 - **上传发布包**（zip：`release.json` + `payload/` + `bundle/<file>` + `installers/`）；
   与 CI 的 `ClientReleasePublisher` 同一端点、同一格式。
-- **启停/删除**：停用可指定回退目标；删除仅限已停用且无通道引用（清理未共享对象）。
+- **启停/删除**：停用可指定回退目标；删除仅限已停用且无通道引用。内容对象保留，不在删除记录时物理回收，以免删除并发导入已复用的文件。
 - **通道切换/回滚**：每 端×平台×架构×通道 一个指针；清空指针 = 该通道停发。
 - **通道 kill-switch**：`enabled=false` 后该端点所有客户端收到 CHANNEL_DISABLED，
   不提示不更新（重大故障总闸）。
 - 全部 mutation 走管理鉴权 + 审计台账。
 
-通道语义沿用 T030：stable/preview 发布不可变；**snapshot 同 version+build 可覆盖发布**
-（内测刷包），覆盖后旧内容寻址对象不受影响。
+以 stable/preview 上传的发布行，其相同版本与构建号不接受不同字节；snapshot 的新 `buildIdentity` 新建发布行，
+激活时仅切换通道指针。相同上传原字节可幂等重试，不会重新启用已停用的通道或覆盖人工回滚。
+Desktop 客户端继续跟随自己查询的通道；把 preview 发布晋级到 stable 不会把已有 stable 桌面客户端改订 preview。
+显式切换通道可以选择已有发布，不会将 snapshot 的上传身份改写为正式发行。
 
 ## 4. 发布流程（构建侧）
 
 ```
 ./gradlew release -PreleaseTargets=site          # 需 TEAMTALK_CLIENT_RELEASE_TOKEN
-./gradlew buildRelease                           # 仅本地密封目录（验证用）
+./gradlew buildRelease -PreleaseMode=snapshot     # 开发期仅本地密封目录（不冻结协议）
 ./gradlew release -PreleaseMode=snapshot -PreleaseTargets=site   # 内测快照
 ```
 
 `site` 目标现在经 HTTP API 上传（`ClientReleasePublisher`），不再 SFTP 直写下载目录；
-服务端自身部署仍是 SFTP（`deployServer`，见 deployment.md）。发布令牌在服务端
-`CLIENT_RELEASE_PUBLISH_TOKEN` 环境变量配置（≥16 字符，哈希存储），CI 走
+服务端自身部署仍使用 SSH/rsync（`deployServer`，见 deployment.md）。发布令牌在服务端
+`CLIENT_RELEASE_PUBLISH_TOKEN` 环境变量配置（≥16 字符，进程内仅持有用于校验的摘要），CI 走
 Secret `CLIENT_RELEASE_PUBLISH_TOKEN`。
 
 桌面产物（单机交叉打包，详见 desktop-cross-build.md）：mac 双架构 zip、
@@ -78,7 +83,7 @@ Windows setup.exe + 便携 zip、Linux deb + tar.gz、四目标 payload.zip。
 安装目录（只读，极少更新）              用户目录（更新器唯一写入区）
 TeamTalk.app/Contents/                 ~/.teamtalk-client/<appId>/versions/
 ├─ runtime/          JBR 21            ├─ current.properties   指针（原子切换）
-├─ app/bootstrap.jar 零依赖引导器       ├─ <build>/payload.properties + 文件树
+├─ app/bootstrap.jar 零依赖引导器       ├─ <内容摘要>/payload.properties + 文件树
 └─ app/seed-payload.zip 首装种子        └─ .staging-*（更新暂存，崩溃残留可清理）
 ```
 
@@ -88,6 +93,8 @@ TeamTalk.app/Contents/                 ~/.teamtalk-client/<appId>/versions/
   → **只下载变化文件** → 全量 sha256 校验（失败整体回退）→ 暂存落位 →
   `current.properties` 临时文件+rename 原子切换 → 提示重启。任意旧版本直达最新，
   无增量链维护。
+- 重启复用应用正常退出入口，等待草稿与会话资源关闭；新壳等待旧 PID 退出后才启动，避免争抢单实例锁。
+- 新安装包的种子只在该种子首次出现时接管；后续启动保留应用内已更新的负载。相同构建号也不会删除运行目录。
 - 壳 ABI：bootstrap 带 `shellAbi`；负载 `minShellAbi` 更高时转 SHELL_UPDATE_REQUIRED
   （下载新首装包 = 全量升级）。
 - 入口：桌面「设置 → 通用 → 检查更新」（仅打包形态显示）。
@@ -98,25 +105,29 @@ TeamTalk.app/Contents/                 ~/.teamtalk-client/<appId>/versions/
 tt-agent upgrade [--channel stable|preview|snapshot] [--server-url <url>] [--prefix <dir>]
 ```
 
-check → 全量 bundle 下载（ETag=sha256 校验）→ 复用 `upgrade-bundle` 原子切换；
-systemd 场景重启服务后生效。`--server-url` 或 `TK_SERVER_URL` 必填之一。
+check → 全量 bundle 下载（核对内容地址 SHA-256 与包内 buildIdentity）→ 复用 `upgrade-bundle` 原子切换；
+默认跟随包内通道，`--channel` 可显式选择。systemd 场景重启服务后生效。`--server-url` 或 `TK_SERVER_URL` 必填之一。
+
+无头客户端默认从当前安装包读取通道。若将 snapshot/preview 包晋级后供 stable 更新，
+升级后的默认通道也会随包改变；需要固定订阅的脚本应每次显式传入 `--channel stable`。
 
 ## 7. 迁移说明（从 Conveyor）
 
 - 存量桌面客户端内嵌 Sparkle/AppInstaller/apt 更新器：旧站点目录冻结保留，
   检查更新静默重试不崩溃；**需手动全量下载新包一次**进入新体系。
-- 存量 Windows（MSIX）用户：新装后请在「设置→应用」卸载旧版。
+- 存量 Windows（MSIX）用户：先退出旧版并安装新包，核对原账号、资料与草稿后再卸载旧版；
+  既有受控包使用非虚拟化数据路径，更早虚拟化目录不得直接删除。
 - 存量 Android：`android.json` 契约未变，无感。
 - 服务端升级后注册中心为空：`android.json`/APK 自动回落旧收据目录；
-  首次 `release -PreleaseTargets=site` 后注册中心接管。
+  首次按对应发行模式上传后注册中心接管；之后停用不会重新暴露旧收据中的安装包。
 - 未做（边界）：字节级补丁（jar 已压缩，收益低）、manifest 数字签名
   （HTTPS+sha256 基线，ed25519 为后续加固项）、iOS（schema 预留）。
 
 ## 8. 验收要点
 
-- `check` 三态 + 通道禁用/回滚/降级指令（`ClientReleaseRegistryTest`）。
+- `check` 更新状态 + 通道禁用/回滚/降级指令（`ClientReleaseRegistryTest`）。
 - manifest/制品 Range 与 404 诚实性；android.json 兼容与兜底。
-- 管理端鉴权 + 审计；上传哈希；snapshot 覆盖；stable 不可变 409。
+- 管理端鉴权 + 审计；上传哈希；同号 snapshot 新身份与旧 manifest 保留；原字节重试；不同字节冲突 409。
 - 更新器增量语义（未变文件零下载）与损坏回退（`DesktopUpdaterTest`）。
 - 桌面壳冒烟：headless 启动到 Compose 阶段（种子提取/类加载全链路），
   GUI 窗口渲染需真机验收（见 deployment-acceptance.md 增补）。

@@ -27,7 +27,6 @@ jobs:
     env:
       RELEASE_TARGETS: ${{ inputs.targets || vars.TEAMTALK_RELEASE_TARGETS || 'github' }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      TEAMTALK_RELEASE_SSH_PASSPHRASE: ${{ secrets.RELEASE_SSH_PASSPHRASE }}
       TEAMTALK_CLIENT_RELEASE_TOKEN: ${{ secrets.CLIENT_RELEASE_PUBLISH_TOKEN }}
       TEAMTALK_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
       TEAMTALK_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -58,7 +57,7 @@ jobs:
           fi
       # Android tools are prepared above. Gradle owns Node. 桌面交叉打包需要 NSIS（Windows 安装器）。
       - name: Install NSIS for the Windows setup.exe
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nsis zip
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nsis
       - name: Provide Android signing identity
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}

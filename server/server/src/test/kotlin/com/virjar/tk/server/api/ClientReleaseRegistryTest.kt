@@ -8,6 +8,8 @@ import com.virjar.tk.server.infra.clientrelease.ClientReleaseUploadMetadata
 import com.virjar.tk.server.infra.db.DatabaseFactory
 import com.virjar.tk.server.infra.storage.ReleaseStore
 import com.virjar.tk.server.testing.PostgresSchemaLease
+import com.virjar.tk.server.runtime.HttpBlockingExecutor
+import com.virjar.tk.server.runtime.installHttpBlockingBoundary
 import io.ktor.client.request.get
 import io.ktor.client.request.head
 import io.ktor.client.request.header
@@ -17,6 +19,10 @@ import io.ktor.client.request.setBody
 import io.ktor.client.request.forms.MultiPartFormDataContent
 import io.ktor.client.request.forms.formData
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.content.OutgoingContent
+import io.ktor.utils.io.ByteWriteChannel
+import io.ktor.utils.io.writeFully
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
@@ -344,6 +350,108 @@ class ClientReleaseRegistryTest {
                         storeRoot.deleteRecursively()
                     }
                 }
+        }
+    }
+
+    @Test
+    fun `超过50MiB的真实上传可重试且跨通道晋级复用发布`() {
+        PostgresSchemaLease.open().use { lease ->
+            DatabaseFactory.create(jdbcUrl = lease.jdbcUrl, user = lease.user, password = lease.password, maxPoolSize = 4)
+                .use { database ->
+                    val root = Files.createTempDirectory("registry-large-upload-").toFile()
+                    val releaseService = service(database, File(root, "store"))
+                    val auth = testAdminSecurity()
+                    val meta = metadata("0.0.3", 7, "snapshot").copy(buildIdentity = "source-a")
+                    val large = File(root, "large.zip")
+                    ZipOutputStream(large.outputStream().buffered()).use { zip ->
+                        zip.setLevel(java.util.zip.Deflater.NO_COMPRESSION)
+                        zip.putNextEntry(ZipEntry("release.json"))
+                        zip.write(Json.encodeToString(ClientReleaseUploadMetadata.serializer(), meta).toByteArray())
+                        zip.closeEntry()
+                        zip.putNextEntry(ZipEntry("installers/${meta.installers.single().filename}"))
+                        val chunk = ByteArray(1024 * 1024) { (it % 251).toByte() }
+                        repeat(52) { zip.write(chunk) }
+                        zip.closeEntry()
+                    }
+                    assertTrue(large.length() > 50L * 1024 * 1024)
+                    val crossChannel = uploadZip(meta.copy(channel = "stable"), emptyMap(), "installer".toByteArray())
+                    val stable = uploadZip(metadata("0.0.4", 8, "stable").copy(buildIdentity = "source-b"), emptyMap(), "b".toByteArray())
+                    val changedStable = uploadZip(metadata("0.0.4", 8, "stable").copy(buildIdentity = "source-c"), emptyMap(), "c".toByteArray())
+                    val httpExecutor = HttpBlockingExecutor(workerCount = 2, queueCapacity = 4)
+                    try {
+                        testApplication {
+                            val token = auth.login("admin", "test-only-password")!!
+                            application {
+                                installHttpBlockingBoundary(httpExecutor)
+                                install(ContentNegotiation) { json() }
+                                routing {
+                                    clientUpdateRoutes(releaseService, auth, File(root, "staging"))
+                                    route("/api/admin") {
+                                        installAdminAuthorization(auth)
+                                        adminClientReleaseRoutes(releaseService)
+                                    }
+                                }
+                            }
+                            suspend fun upload(file: File) = client.post("/api/v1/client/releases") {
+                                header("X-Publish-Token", publishToken)
+                                setBody(streamingUpload(file))
+                            }
+                            val imported = upload(large)
+                            assertEquals(HttpStatusCode.OK, imported.status, imported.bodyAsText())
+                            val id = releaseService.listReleases("desktop", null, 10, 0).single().id
+                            val retry = upload(large)
+                            assertEquals(HttpStatusCode.OK, retry.status, retry.bodyAsText())
+                            assertEquals(1, releaseService.listReleases("desktop", null, 10, 0).size)
+                            val conflict = upload(crossChannel)
+                            assertEquals(HttpStatusCode.Conflict, conflict.status, conflict.bodyAsText())
+                            val promoted = client.put("/api/admin/client-channels/desktop/macos/aarch64/stable") {
+                                header(HttpHeaders.Authorization, "Bearer $token")
+                                contentType(ContentType.Application.Json)
+                                setBody("{\"releaseId\":$id}")
+                            }
+                            assertEquals(HttpStatusCode.OK, promoted.status, promoted.bodyAsText())
+                            val decision = Json.decodeFromString(ClientUpdateCheckResponse.serializer(), client.get(
+                                "/api/v1/client/updates/check?client=desktop&platform=macos&arch=aarch64&channel=stable",
+                            ).bodyAsText())
+                            assertEquals(id, decision.release?.id)
+                            assertEquals("stable", decision.release?.channel)
+                            val stableResponse = upload(stable)
+                            assertEquals(HttpStatusCode.OK, stableResponse.status, stableResponse.bodyAsText())
+                            val changedResponse = upload(changedStable)
+                            assertEquals(HttpStatusCode.Conflict, changedResponse.status, changedResponse.bodyAsText())
+                        }
+                    } finally {
+                        httpExecutor.close()
+                        crossChannel.delete()
+                        stable.delete()
+                        changedStable.delete()
+                        root.deleteRecursively()
+                    }
+                }
+        }
+    }
+
+    /** 按 HTTP multipart 语法逐块发送文件，测试自身也不把安装包读入堆内存。 */
+    private fun streamingUpload(file: File): OutgoingContent.WriteChannelContent {
+        val boundary = "teamtalk-release-stream"
+        val prefix = ("--$boundary\r\nContent-Disposition: form-data; name=\"release\"; filename=\"release.zip\"\r\n" +
+            "Content-Type: application/zip\r\n\r\n").toByteArray()
+        val suffix = "\r\n--$boundary--\r\n".toByteArray()
+        return object : OutgoingContent.WriteChannelContent() {
+            override val contentType = ContentType.MultiPart.FormData.withParameter("boundary", boundary)
+            override val contentLength = prefix.size + file.length() + suffix.size
+            override suspend fun writeTo(channel: ByteWriteChannel) {
+                channel.writeFully(prefix)
+                file.inputStream().buffered().use { input ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        channel.writeFully(buffer, 0, count)
+                    }
+                }
+                channel.writeFully(suffix)
+            }
         }
     }
 

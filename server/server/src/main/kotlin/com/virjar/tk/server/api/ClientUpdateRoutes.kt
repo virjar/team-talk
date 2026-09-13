@@ -49,20 +49,18 @@ internal fun Route.clientUpdateRoutes(
             val platform = q["platform"]?.takeIf { it.isNotBlank() } ?: ClientUpdateContracts.PLATFORM_ANY
             val arch = q["arch"]?.takeIf { it.isNotBlank() } ?: ClientUpdateContracts.ARCH_ANY
             val channel = q["channel"]?.takeIf { it.isNotBlank() } ?: AndroidReleaseManifest.CHANNEL_STABLE
-            val response = run {
-                service.check(
-                    ClientReleaseService.CheckQuery(
-                        clientType = clientType,
-                        platform = platform,
-                        arch = arch,
-                        channel = channel,
-                        version = q["version"]?.takeIf { it.isNotBlank() },
-                        build = q["build"]?.toLongOrNull(),
-                        shellAbi = q["shellAbi"]?.toIntOrNull(),
-                        buildIdentity = q["buildIdentity"]?.takeIf { it.isNotBlank() },
-                    ),
-                )
-            }
+            val response = service.check(
+                ClientReleaseService.CheckQuery(
+                    clientType = clientType,
+                    platform = platform,
+                    arch = arch,
+                    channel = channel,
+                    version = q["version"]?.takeIf { it.isNotBlank() },
+                    build = q["build"]?.toLongOrNull(),
+                    shellAbi = q["shellAbi"]?.toIntOrNull(),
+                    buildIdentity = q["buildIdentity"]?.takeIf { it.isNotBlank() },
+                ),
+            )
             call.response.headers.append("Cache-Control", "no-store")
             call.respond(response)
         }
@@ -70,7 +68,7 @@ internal fun Route.clientUpdateRoutes(
         get("/releases/{id}/manifest.json") {
             val id = call.parameters["id"]?.toLongOrNull()
                 ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid release id"))
-            val manifest = run { service.manifest(id) }
+            val manifest = service.manifest(id)
                 ?: return@get call.respond(HttpStatusCode.NotFound, mapOf("error" to "release not found"))
             call.response.headers.append("Cache-Control", "no-store")
             call.respondText(
@@ -82,7 +80,7 @@ internal fun Route.clientUpdateRoutes(
         get("/releases/{id}") {
             val id = call.parameters["id"]?.toLongOrNull()
                 ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid release id"))
-            val info = run { service.releaseInfo(id) }
+            val info = service.releaseInfo(id)
                 ?: return@get call.respond(HttpStatusCode.NotFound, mapOf("error" to "release not found"))
             call.respond(info)
         }
@@ -90,7 +88,7 @@ internal fun Route.clientUpdateRoutes(
         // 内容寻址制品：摘要即身份，可长期缓存；Range 供断点续传。
         get("/files/{sha256}") {
             val sha = call.parameters["sha256"] ?: return@get call.respond(HttpStatusCode.BadRequest)
-            val file = run { service.artifactFile(sha) }
+            val file = service.artifactFile(sha)
                 ?: return@get call.respond(HttpStatusCode.NotFound)
             call.response.headers.append("Cache-Control", "public, max-age=31536000, immutable")
             call.response.headers.append(HttpHeaders.ETag, "\"$sha\"")
@@ -118,25 +116,28 @@ internal fun Route.clientUpdateRoutes(
             try {
                 var sawFilePart = false
                 call.receiveMultipart(formFieldLimit = MAX_RELEASE_UPLOAD_BYTES + 64 * 1024).forEachPart { part ->
-                    if (part is PartData.FileItem && !sawFilePart && part.name == "release") {
-                        sawFilePart = true
-                        part.streamProvider().use { input ->
-                            staging.outputStream().buffered().use { output ->
-                                val buffer = ByteArray(64 * 1024)
-                                var written = 0L
-                                while (true) {
-                                    val read = input.read(buffer)
-                                    if (read < 0) break
-                                    output.write(buffer, 0, read)
-                                    written += read
-                                    if (written > MAX_RELEASE_UPLOAD_BYTES) {
-                                        throw ReleaseUploadTooLargeException()
+                    try {
+                        if (part is PartData.FileItem && !sawFilePart && part.name == "release") {
+                            sawFilePart = true
+                            part.streamProvider().use { input ->
+                                staging.outputStream().buffered().use { output ->
+                                    val buffer = ByteArray(64 * 1024)
+                                    var written = 0L
+                                    while (true) {
+                                        val read = input.read(buffer)
+                                        if (read < 0) break
+                                        output.write(buffer, 0, read)
+                                        written += read
+                                        if (written > MAX_RELEASE_UPLOAD_BYTES) {
+                                            throw ReleaseUploadTooLargeException()
+                                        }
                                     }
                                 }
                             }
                         }
+                    } finally {
+                        part.dispose()
                     }
-                    part.dispose()
                 }
                 if (!sawFilePart) {
                     return@post call.respond(
@@ -144,7 +145,7 @@ internal fun Route.clientUpdateRoutes(
                         mapOf("error" to "a 'release' file part is required"),
                     )
                 }
-                val releaseId = run { service.importRelease(actor, staging) }
+                val releaseId = service.importRelease(actor, staging)
                 call.respond(mapOf("releaseId" to releaseId))
             } catch (tooLarge: ReleaseUploadTooLargeException) {
                 call.respond(HttpStatusCode.PayloadTooLarge, mapOf("error" to "release upload exceeds 4 GiB"))
@@ -160,7 +161,7 @@ internal fun Route.clientUpdateRoutes(
 
     // 公开下载页数据源。
     get("/api/v1/public/downloads") {
-        val payload = run { service.publicDownloads() }
+        val payload = service.publicDownloads()
         call.response.headers.append("Cache-Control", "no-store")
         call.respondText(
             Json.encodeToString(ClientReleaseService.PublicDownloads.serializer(), payload),

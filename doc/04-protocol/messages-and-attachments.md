@@ -31,7 +31,7 @@ body fields（当 hasBody=1）
 
 当前协议分配 RICH_TEXT、IMAGE、VOICE、VIDEO、FILE、LOCATION、CARD、REPLY、FORWARD、
 MERGE_FORWARD、REVOKE、EDIT、STICKER、REACTION、TYPING、
-INTERACTIVE_CARD、OFFICE_REF，以及待发行 protocol 0.2 的 TASK_REF。是否有完整产品入口以[功能状态](../10-reference/feature-status.md)为准，
+INTERACTIVE_CARD、OFFICE_REF，以及 protocol 0.2 新增的 TASK_REF。是否有完整产品入口以[功能状态](../10-reference/feature-status.md)为准，
 枚举存在不等于所有客户端已经完成体验。
 
 MessageBodyRegistry 是 `MessageType → reader` 的唯一解码入口。发送前与服务端落库前都调用

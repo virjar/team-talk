@@ -39,7 +39,7 @@ internal object ClientReleases : Table("client_release") {
     /** 该发布配套的壳摘要（构建侧填），仅诊断展示用。 */
     val shellDigest = varchar("shell_digest", 128).nullable()
 
-    /** ACTIVE 可被通道指向；DISABLED 运维停用；SUPERSEDED 被同身份 snapshot 覆盖。 */
+    /** ACTIVE 可被通道指向；DISABLED 运维停用；SUPERSEDED 仅为历史状态保留。 */
     val status = varchar("status", 16)
 
     val fileCount = integer("file_count").default(0)

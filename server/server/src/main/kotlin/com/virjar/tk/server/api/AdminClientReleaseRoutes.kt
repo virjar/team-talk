@@ -22,20 +22,18 @@ internal fun Route.adminClientReleaseRoutes(service: ClientReleaseService) {
     route("/client-releases") {
         get {
             val q = call.request.queryParameters
-            val releases = run {
-                service.listReleases(
-                    clientType = q["client"]?.takeIf { it.isNotBlank() },
-                    status = q["status"]?.takeIf { it.isNotBlank() },
-                    limit = 100,
-                    offset = (q["offset"]?.toIntOrNull() ?: 0).coerceAtLeast(0),
-                )
-            }
+            val releases = service.listReleases(
+                clientType = q["client"]?.takeIf { it.isNotBlank() },
+                status = q["status"]?.takeIf { it.isNotBlank() },
+                limit = 100,
+                offset = (q["offset"]?.toIntOrNull() ?: 0).coerceAtLeast(0),
+            )
             call.respond(mapOf("releases" to releases))
         }
         get("/{id}") {
             val id = call.parameters["id"]?.toLongOrNull()
                 ?: return@get call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid release id"))
-            val info = run { service.releaseInfo(id) }
+            val info = service.releaseInfo(id)
                 ?: return@get call.respond(HttpStatusCode.NotFound, mapOf("error" to "release not found"))
             call.respond(info)
         }
@@ -62,7 +60,7 @@ internal fun Route.adminClientReleaseRoutes(service: ClientReleaseService) {
     route("/client-channels") {
         get {
             val client = call.request.queryParameters["client"]?.takeIf { it.isNotBlank() }
-            val channels = run { service.listChannels(client) }
+            val channels = service.listChannels(client)
             call.respond(mapOf("channels" to channels))
         }
         put("/{clientType}/{platform}/{arch}/{channel}") {
@@ -108,7 +106,7 @@ private suspend inline fun io.ktor.server.application.ApplicationCall.respondMut
     crossinline block: () -> Unit,
 ) {
     try {
-        run { block() }
+        block()
         respond(mapOf("ok" to true))
     } catch (validation: ClientReleaseValidationException) {
         respond(HttpStatusCode.BadRequest, mapOf("error" to (validation.message ?: "invalid request")))

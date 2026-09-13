@@ -18,7 +18,7 @@
 | 交付方式 | 版本与记录 | 目标 |
 |---|---|---|
 | 正式产品发行（默认模式） | 新展示版本、更高构建号、人工说明与 `releases/<version>/`；公开发行使用对应 tag | `local`、`site`、`github` |
-| 内测更新 `snapshot` | 根展示版本与构建号不变；Desktop revision 从完整 Git 历史推导，Android 保持当前 code 手动覆盖；本轮新增共用一个待发布协议号，不登记冻结契约 | 独立私有应用的 `local`、`site` |
+| 内测更新 `snapshot` | 根展示版本与构建号不变；Desktop revision 从完整 Git 历史推导，Android 保持当前 code 手动覆盖；本轮新增共用一个待发布协议号，不登记冻结契约 | 经授权的测试应用 `local`、`site` |
 | 首次私有分发 `private-first` | 新安装身份与空下载入口可保持当前展示版本和构建号 | 独立私有应用的 `local`、`site` |
 
 ## 发行由哪些事实组成
@@ -53,7 +53,7 @@ flowchart TD
     Verify --> Producers["Desktop 四目标产物 + Android APK + Server ZIP + Headless ZIP"]
     Producers --> Seal["密封目录：产物、说明、manifest、SHA256SUMS"]
     Seal --> Disk["local：保留本地目录"]
-    Seal --> Site["site：SFTP 发布双端下载入口"]
+    Seal --> Site["site：HTTP 注册桌面、Android 与无头更新"]
     Seal --> GitHub["仅正式发行：github 创建 tag 并发布预览 Release"]
     Seal -.-> Admin["管理员另行部署 Server；CI 不执行"]
 ```
@@ -83,8 +83,8 @@ flowchart TD
 客户端发行同时执行 `verifyRelease` 的源码/架构/wire 检查与 `verifyReleaseMetadata` 的发行元数据检查；
 手动服务端开发部署只需要前者，避免每次临时协议调试都占用一个已冻结的客户端发行号。
 
-当前发行是 `0.0.1 / protocol 0.1`，根构建号为 `1`。正式 tag、发行快照与密封产物不可覆盖。
-源码新增文档与内容搜索契约使用待发行 protocol 0.2；同号开发包仍按实际源码与协议清单哈希配套验证。
+当前发行是 `0.0.2 / protocol 0.2`，根构建号为 `2`。正式 tag、发行快照与密封产物不可覆盖。
+源码新增群头像、系统会话与文档提及候选使用待发行 protocol 0.3；同号开发包仍按实际源码与协议清单哈希配套验证。
 后续正式发行推进展示版本和根构建号；私有内测更新保持两者不变，按源码生成独立 Desktop revision。
 发布注册中心对相同版本与构建号的不可变保护不能通过清理缓存或删除收据绕过。正式发行提高根构建号
 使 Android 安装 code 增加；Desktop 比较完整版本，新展示版本的末位 revision 按根构建号映射，
@@ -100,8 +100,8 @@ flowchart TD
 `git rev-list --first-parent --count HEAD`，加上根构建号和 `1` 得到 `desktopRevision`，无需修改配置，
 也不依赖 tag。这个修订号用于 Desktop 安装元数据与站点记录，应用展示版本仍保持原值。
 
-内测快照在注册中心按 **snapshot 通道同身份覆盖**发布。应用内更新器做文件级增量：
-未变化的文件零下载，无跨修订增量链概念；覆盖发布的字节一致性由内容寻址对象仓天然保证。
+内测快照在注册中心按 **新源码身份新增不可变发布行**保存，snapshot 通道指向本次构建。
+同一身份只接受原字节重试。桌面更新器按文件摘要复用本地文件，无需维护跨修订增量链；旧 manifest 保留供飞行中的下载使用。
 
 ```bash
 # 新增契约开启下一 minor 后，同一发行周期共用该 minor 并登记开发清单。
@@ -114,13 +114,15 @@ flowchart TD
 
 `release` 只在手动调用时构建并交付，不修改或提交根版本。只保留本地产物时改为
 `-PreleaseTargets=local`；Windows 使用 `gradlew.bat`。GitHub CI 不自动生成或上传 snapshot。
-该模式拒绝公版默认配置、GitHub 目标和 `releaseBase`，不需要新的人工发行说明、产品 tag 或 `prepareProtocolRelease`，
+该模式拒绝 GitHub 目标和 `releaseBase`；公版测试环境也可在用户授权下使用，不能据此自动更新有真实用户的私有环境。
+不需要新的人工发行说明、产品 tag 或 `prepareProtocolRelease`，
 也不认领、改写旧正式发行快照。无论本轮第几次修改，都相对最近正式冻结基线执行 KSP、wire 与兼容检查，
 不运行 `prepareProtocolContract`；已发行协议保持冻结，新增契约共用下一待发布 minor，直到正式发行。
 同号内测构建以源码 SHA 和清单哈希区分，应按同批服务端/客户端验证，不为中间版本保留额外兼容分支。
 
 必须使用完整 clone。同一展示版本继续刷 snapshot 时，保留已分发源码及其历史，从其后代构建，不对该
-内测基线做 rebase、压缩或重写；浅克隆、旧源码和修订号倒退会使交付失败。尚未分发的工作提交可在交付前
+内测基线做 rebase、压缩或重写。工具拒绝浅克隆；是否从已分发源码后代构建须在交付前核对，
+注册中心允许显式回滚，不能代替历史与 revision 核对。尚未分发的工作提交可在交付前
 整理；下一次正式推进展示版本时可重新整理开发历史，但既有正式 tag 和冻结协议记录仍按原规则保护。
 
 密封目录为 `build/snapshots/<applicationId>/<version>/revision-<desktopRevision>/<完整源码SHA>/`，清单标记
@@ -149,13 +151,13 @@ tag 或 GitHub Release。独立安装身份的首次分发使用同一个 `relea
 协议与 snapshot 相同：当前开发清单必须登记、相对正式冻结基线兼容，但本次试用不冻结新的 minor。
 正式产品发行时再固定整批变动；已有历史冻结记录保持原样。
 
-站点的 Android/Desktop 下载入口必须为空；已有相同收据只允许原文件的幂等重试，不能借首次分发模式
-替换已有安装包。后续内测更新使用 `snapshot` 手动刷包，正式升级按正式产品发行准备。签名、源码身份、完整 Desktop 站点、APK
-验签、密封摘要、SFTP 上传校验和切换恢复沿用统一流程。
+`private-first` 面向新安装身份，发布到 preview 通道；注册中心按同一不可变身份规则处理，已有同身份只允许原字节重试。
+后续内测更新使用 `snapshot` 手动刷包，正式升级按正式产品发行准备。签名、源码身份、四目标 Desktop 制品、APK
+验签与密封摘要沿用统一流程。
 
 产物保存在 `build/private-distributions/<applicationId>/<version>/<源码SHA>/`。清单标记
 `distributionKind=private-first`、源码和协议契约摘要，不写产品 tag；随包说明列出实际应用身份、服务器、
-版本和安装方式，不复用公版旧版本的发布说明。站点 SSH 参数仍按下文配置。该操作只发布客户端入口，
+版本和安装方式，不复用公版旧版本的发布说明。站点令牌按下文配置。该操作只发布客户端入口，
 不升级服务端。
 
 ### 私有客户端的首次发行与后续升级
@@ -166,7 +168,7 @@ tag 或 GitHub Release。独立安装身份的首次分发使用同一个 `relea
 资料。用户看到的显示名称可调整，根 `gradle.properties` 仍是唯一版本来源，不为每个平台另设版本。
 
 默认公版保留各打包渠道原有的安装身份和数据路径。新私有版独立安装、独立登录；Android 安装包由
-自己的服务站点提供下载，Desktop Conveyor 更新源从自己的 `serverUrl` 推导。管理员须保留 Android
+自己的服务站点提供下载，Desktop 与无头更新注册中心从自己的 `serverUrl` 推导。管理员须保留 Android
 keystore 与服务端发布令牌（`CLIENT_RELEASE_PUBLISH_TOKEN`），构建机器更换时恢复原材料，避免后续安装包无法覆盖升级。
 签名与安装身份匹配只能证明安装前提，分发前仍要在参与
 平台检查与公版共存、分别重启以及普通升级后的资料保留；不能把交叉构建成功写成 Windows 实机验收。
@@ -179,7 +181,7 @@ keystore 与服务端发布令牌（`CLIENT_RELEASE_PUBLISH_TOKEN`），构建�
 
 构建机需要 Git、JDK 21 与 Android SDK；首次构建需要依赖仓库和工具下载可达。Gradle 管理 Node.js、
 JBR 运行时按 `gradle/jbr.properties` 固定下载与摘要校验，不要求手工安装全局 Node.js、`gh`、`rsync` 或
-`scp` 来发布客户端（NSIS/macOS 需 `brew install makensis zip`，CI 已内置 apt 步骤）。详见[Desktop 打包](desktop-cross-build.md)。
+`scp` 来发布客户端（NSIS/macOS 需 `brew install makensis`，CI 已内置 apt 步骤）。详见[Desktop 打包](desktop-cross-build.md)。
 APK 身份校验需要已有 Android SDK build-tools 中的 `aapt2`；SDK 通过 `local.properties` 的 `sdk.dir`、
 `ANDROID_HOME` 或 `ANDROID_SDK_ROOT` 定位。复用密封目录也需要此工具，校验阶段不自动安装它。
 
@@ -204,7 +206,7 @@ APK 身份校验需要已有 Android SDK build-tools 中的 `aapt2`；SDK 通过
 │   ├── <desktopName>-<version>-desktop-site.zip
 │   ├── TeamTalk-<version>-server.zip
 │   └── TeamTalk-<version>+<完整源码SHA>-headless.zip
-├── desktop/                  完整 Desktop 更新站点
+├── desktop/                  四目标安装器、便携包与 payload.zip
 ├── RELEASE_NOTES.md           已提交的人工说明
 ├── COMMITS.md                 提交记录附录
 ├── deployment-config.json     实际部署配置的规范化非敏感快照
@@ -222,12 +224,12 @@ Desktop 检查四目标壳产物、安装器与 payload 清单，Server ZIP 包�
 Headless ZIP 使用 `tt-headless/` 根目录，包含三种入口、完整运行依赖、LICENSE、
 `teamtalk-release.properties` 与逐文件 `SHA256SUMS`。封包核对无头分发的版本、源码身份、协议窗口、
 Java 要求、完整文件清单与摘要，拒绝缺失、额外文件或符号链接。
-密封清单记录源 commit、协议窗口、部署配置摘要、工具清单摘要、签名证书信息、
+密封清单记录源 commit、协议窗口、部署配置摘要、签名证书信息、
 文件大小与 SHA-256。同一路径已有密封目录时复核并复用，出现不同身份、文件增删或字节变化立即失败。
 部署摘要依据最终 `DeploymentConfig` 对象的规范化 JSON 计算，不依据配置源码；只改注释、变量名或
 等价函数拆分不会改变配置身份。密封的 `deployment-config.json` 用于交付溯源和复核，不接受手工修改。
 
-新密封清单使用 `format=2`，要求 APK 内嵌完整部署身份字段。既有 `format=1` 目录可按原字节复用，
+新密封清单使用 `format=3`，核对四目标 Desktop 负载的源码身份、最低壳 ABI 和逐文件摘要，并要求 APK 内嵌完整部署身份字段。既有 `format=1` 目录可按原字节复用，
 仍核对 APK 的源码身份及二进制包名、名称和版本；只有整组部署身份字段均缺失时才兼容旧 APK，
 其中任一字段存在就必须全部匹配。新增密封目录同时记录 `headlessArtifact`；既有未记录此字段的
 `format=1/2` 密封目录仍按原来的三个附件复用，不补造或改写旧清单及产物。
@@ -235,58 +237,37 @@ Java 要求、完整文件清单与摘要，拒绝缺失、额外文件或符号
 这个目录可以复制给没有 GitHub 的客户。解压 Desktop 站点 ZIP 时须保持完整目录；Server ZIP 是可供
 人工部署的分发文件，构建或下载它都不会自动改变运行实例。Headless ZIP 需要外部 Java 21，不附带 JDK；
 POSIX 支持 agent、CLI、MCP 与用户级便携安装，Windows 原生只支持 CLI。
-独立构建入口为 `:client:shared:headlessDist`、`:client:shared:verifyHeadlessDist` 与
-`:client:shared:headlessDistZip`；配置、安装和升级见[无头客户端](../05-clients/headless.md#3-构建与启动-agent)。
+独立构建入口为 `:client:headless:headlessDist`、`:client:headless:verifyHeadlessDist` 与
+`:client:headless:headlessDistZip`；配置、安装和升级见[无头客户端](../05-clients/headless.md#3-构建与启动-agent)。
 
 ## 发布到私有站点
 
-`site` 使用当前部署配置函数返回的 SSH 坐标，把双端产物发布到
-`<deployPath>/static/downloads/`。上传由 JVM 内的 SSH/SFTP 实现，Windows 本机不需要 Unix 上传工具。
-站点目标只上传 APK、Desktop 站点与对应发行元数据，不托管 Server 或 Headless ZIP。
-远端需要 Linux 的 SFTP 服务与 `flock`、`mv`、`rm`、`rmdir` 命令，账号须有该下载目录的写权限；
-不要求 SFTP 提供 POSIX rename 扩展。
-
-SSH 加密由 `SiteSshSecurity` 在每份 buildSrc 中初始化，显式使用该构建自己的 Bouncy Castle
-实例，并保留 JDK 的 AES/HMAC 优先级。公版与私有 clone 可共用 Gradle daemon；构建不会替换
-进程全局的加密 Provider，避免 Ed25519 密钥跨 classloader 类型冲突。隔离回归测试覆盖加密私钥、
-Ed25519 主机校验及真实 SFTP 上传，不需要在客户电脑上更改 SSH 密钥类型。
-
-| 参数 | 等价环境变量 | 内容 |
-|---|---|---|
-| `-PreleaseSshKey` | `TEAMTALK_RELEASE_SSH_KEY` | 已有私钥文件路径 |
-| `-PreleaseKnownHosts` | `TEAMTALK_RELEASE_KNOWN_HOSTS` | 已核验目标主机身份的 known_hosts 文件路径 |
-| 无命令行口令参数 | `TEAMTALK_RELEASE_SSH_PASSPHRASE` | 私钥有口令时提供 |
-
-路径参数可以指向仓库外文件；不要提交私钥，也不要将口令写入命令历史。准备好上述环境后：
+`site` 向部署配置中的 `serverUrl` 上传四个 Desktop 目标、Android 和 Headless，统一调用
+`POST /api/v1/client/releases`。服务端须先部署支持注册中心的版本，并配置至少 16 字符的
+`CLIENT_RELEASE_PUBLISH_TOKEN`；构建机通过环境变量 `TEAMTALK_CLIENT_RELEASE_TOKEN` 提供同一令牌。
+不要把令牌写入源码、发行归档或命令历史。客户端发布不再依赖 SSH/SFTP，也不自动部署服务端。
 
 ```bash
+# 已经准备并确认的正式发行
 ./gradlew release -PreleaseTargets=site
+# 经授权的测试环境快照
+./gradlew release -PreleaseMode=snapshot -PreleaseTargets=site
 ```
 
-每个发行的 `serverUrl` 对应站点通过 `/downloads/android.json` 提供当前 Android 包的显示名称、版本、
-文件名与相对下载 URL。首页下载按钮显示应用名称和版本，按钮与二维码使用
-`/downloads/<desktopName>-<version>-<APK SHA-256前12位>-android.apk`，下载文件名保持一致。
-服务端将站点收据、密封清单中的 APK 记录和实际文件的摘要与大小交叉核对，再返回下载身份与字节。
-校验和传输使用同一个已打开文件，避免发布切换时把另一份 APK 放到旧文件名下。
+发布器从已校验的密封目录流式生成和上传 ZIP。服务端校验文件清单、大小和摘要，将文件放入内容寻址
+对象仓，再在数据库事务中登记发布并切换通道。六个端点分别生效，不构成跨端原子发布；中途失败保留密封目录，
+重试同一批字节即可。已成功上传的原字节重试不会重置管理员后续的停用或回滚决定。
+同一身份不同字节返回冲突，不能借 snapshot 覆盖原记录。新 snapshot 使用新的源码身份；晋级、停用和回滚
+由管理台调整通道指针，详细接口与约束见[客户端发布与更新体系](client-releases.md)。
 
-`/downloads/TeamTalk-android.apk` 保留为兼容入口，`Content-Disposition` 指定同一个明确文件名；
-Android 元数据与 APK 响应均为 `Cache-Control: no-store`。仅当前包的身份 URL 可用，其他身份 URL 返回
-404；收据或清单与 APK 不一致时返回 503 和 `Retry-After: 1`。没有发行收据的手工下载目录仍可通过
-兼容入口下载，文件名使用 `Android-<APK SHA-256前12位>.apk`，首页显示通用名称，不声明未经核对的版本。
+中文下载页 `/downloads` 由注册中心生成，Android 的 `/downloads/android.json` 和旧固定 APK 下载入口
+继续兼容。某个 Android 通道已有注册记录后，即使停用或关闭，也不回落到磁盘上的历史静态包；仅尚未接入
+注册中心的旧部署保留旧目录读取。Desktop 更新使用随安装包确定的 `serverUrl`，不随登录业务服务器而改变；
+无头升级通过 `--server-url` 或 `TK_SERVER_URL` 显式指定注册中心。Android 仍由用户下载安装，协议兼容提示与客户端文件更新分别处理。
 
-客户端发布经注册中心 API（`/api/v1/client/releases`）上传；中文下载页 `/downloads` 由注册中心数据驱动。站点服务器地址由同一
-`serverUrl` 推导，不需要配置第二个更新源。Android 用户从站点下载安装包，当前应用不自动下载安装。
-上传先写独立暂存目录并校验摘要，
-最终 rename/remove 由持有 `flock` 的同一个远程进程顺序执行，SFTP 负责暂存上传与回读校验；
-Android 保持普通文件，Desktop 保持真实目录，符合现有 HTTP 静态服务路径校验。
-
-Desktop 整目录切换有短暂的 rename 窗口，Android 与 Desktop 也不构成同时可见的双端事务。
-发布日志与旧产物保留到切换完成；失败时恢复旧下载入口，中断后的下次调用先恢复未完成切换。
-不要在任务尚未成功时通知测试者更新。站点收据保留根构建号与 Desktop revision，旧收据继续参与升级判断。
-snapshot 允许 Android 使用相同 code 手动覆盖；同一展示版本的 Desktop revision 不得倒退，同一分发身份
-只能重试原字节。正式新展示版本继续提高根构建号，Desktop 末位 revision 可重新映射。自动回滚只恢复
-本次失败切换前的状态，不提供任意历史版本降级发布。
-此任务不上传 Server ZIP、不运行服务端部署，也不修改数据库。
+发布后检查每个平台的通道指针、下载链接和摘要，再通知测试者更新。切换到新工具链前的 Conveyor 安装包
+不会凭空获得应用内更新器；应按[迁移说明](client-releases.md#7-迁移说明从-conveyor)手动覆盖安装并验收数据保留。
+此任务不上传 Server ZIP，也不重启任何服务器进程。
 
 ## 发布到 GitHub
 
@@ -354,12 +335,9 @@ tag 触发必须与根版本一致。CI 不自行拼归档或执行服务器部�
 
 | GitHub 配置 | 何时需要 | 注入后的用途 |
 |---|---|---|
-| Secret `CONVEYOR_DEFAULTS_CONF` | 构建完整 Desktop 站点时 | 已有 `defaults.conf` 的完整内容，恢复到临时目录，通过 `TEAMTALK_CONVEYOR_CONFIG_DIR` 传入 |
 | Secret `ANDROID_KEYSTORE_BASE64` | 使用自有 Android 签名时 | 既有 keystore 文件的 Base64；恢复到临时文件，通过 `TEAMTALK_ANDROID_KEYSTORE` 传入 |
 | Secrets `ANDROID_STORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD` | 配置自有 Android keystore 时 | 对应 `TEAMTALK_ANDROID_STORE_PASSWORD`、`TEAMTALK_ANDROID_KEY_ALIAS`、`TEAMTALK_ANDROID_KEY_PASSWORD` |
-| Secret `RELEASE_SSH_KEY` | 目标包含 `site` 时 | 已有 SSH 私钥完整内容；恢复文件后通过 `TEAMTALK_RELEASE_SSH_KEY` 传入 |
-| Secret `RELEASE_KNOWN_HOSTS` | 目标包含 `site` 时 | 已核验主机身份的 known_hosts 内容；恢复文件后通过 `TEAMTALK_RELEASE_KNOWN_HOSTS` 传入 |
-| Secret `RELEASE_SSH_PASSPHRASE` | 站点私钥有口令时 | 通过同名带 `TEAMTALK_` 前缀环境变量传入 |
+| Secret `CLIENT_RELEASE_PUBLISH_TOKEN` | 目标包含 `site` 时 | 与目标服务器相同的发布令牌，通过 `TEAMTALK_CLIENT_RELEASE_TOKEN` 传入 |
 | 自动提供的 `GITHUB_TOKEN` | GitHub 发布 | workflow 声明 `contents: write`；无须把个人 token 写进源码 |
 | Variable `TEAMTALK_RELEASE_TARGETS` | 自动触发需要追加站点时 | 默认为 `github`，可配置为 `site,github`；它是目标选择，不含秘密 |
 

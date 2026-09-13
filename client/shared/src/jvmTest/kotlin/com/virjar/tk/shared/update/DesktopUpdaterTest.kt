@@ -130,7 +130,7 @@ class DesktopUpdaterTest {
     fun `下载内容损坏时整体回退且指针不变`() = runTest {
         val fixture = Fixture()
         try {
-            val corruptBytes = "corrupted-content".toByteArray()
+            val corruptBytes = "broken-v2".toByteArray()
             val declaredBytes = "shared-v2".toByteArray()
             val files = listOf(
                 ClientPayloadFile(
@@ -138,7 +138,7 @@ class DesktopUpdaterTest {
                     sha256(declaredBytes),
                     declaredBytes.size.toLong(),
                     null,
-                    "/api/v1/client/files/${sha256(corruptBytes)}",
+                    "/api/v1/client/files/${sha256(declaredBytes)}",
                 ),
             )
             val manifestJson = ClientUpdateContractsJson.encodeToString(
@@ -148,7 +148,7 @@ class DesktopUpdaterTest {
             val http = FakeHttp(
                 mapOf(
                     "$server/api/v1/client/releases/6/manifest.json" to manifestJson.toByteArray(),
-                    "$server/api/v1/client/files/${sha256(corruptBytes)}" to corruptBytes,
+                    "$server/api/v1/client/files/${sha256(declaredBytes)}" to corruptBytes,
                 ),
             )
             val updater = DesktopUpdater(fixture.context(), http)

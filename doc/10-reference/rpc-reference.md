@@ -12,8 +12,8 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 5. 注册、登录和 refresh 属于 TCP AUTH 握手，不属于下列 RPC。
 6. 普通消息发送使用 MESSAGE / MESSAGE_ACK，不通过 `message` RPC。
 
-当前表描述源码契约：0.0.1 已冻结 protocol 0.1，新增文档读取、评论、内容搜索、任务和完整聊天草稿使用待发行 protocol 0.2；正式事实以
-不可覆盖的发行快照为准。同一协议 major 内，已发行契约和编号不得修改或复用，同一待发行批次共用 minor 2；
+当前表描述源码契约：0.0.2 已冻结 protocol 0.2，新增群头像、系统会话与文档提及候选使用待发行 protocol 0.3；正式事实以
+不可覆盖的发行快照为准。同一协议 major 内，已发行契约和编号不得修改或复用，同一待发行批次共用 minor 3；
 只有明确的新协议 major 才能重整编号空间。私有 `snapshot` 与 `private-first` 不冻结待发布契约，
 正式产品发行才登记新的不可覆盖快照，流程见[统一发行](../07-operations/releasing.md)。
 
@@ -186,7 +186,7 @@ Conversation 字段只作冷启动快照；因此头像清除后不得复活旧�
 
 ## chatDraft
 
-`ChatDraftRpc` 属于待发行 protocol 0.2，服务名为 `chatDraft`。草稿仅属于当前认证 uid，调用方不能指定
+`ChatDraftRpc` 自 protocol 0.2 可用，服务名为 `chatDraft`。草稿仅属于当前认证 uid，调用方不能指定
 其他用户；读取和正文修改仍需当前聊天访问权限。已离开聊天的用户仍可对自己已有的草稿或会话记录
 提交无正文 CAS 清理，以释放私有引用。它与已发行的 `conversation.setDraft` 字符串方法分开。
 
@@ -223,7 +223,7 @@ revision 1。清空使用 `content = null` 并保留正 revision 墓碑，此后
 |---:|---|---|---|
 | 1 | `listDevices` | — | `List<Device>` |
 | 2 | `kickDevice` | `deviceId` | `Unit` |
-| 3 | `setOemPushRegistration` | `vendor, registrationId, packageName, deploymentFingerprint` | `Boolean`（待发行 minor 2） |
+| 3 | `setOemPushRegistration` | `vendor, registrationId, packageName, deploymentFingerprint` | `Boolean`（自 minor 2 可用） |
 
 踢出设备同时吊销该设备凭证并关闭活跃连接。厂商注册使用当前认证连接的 uid、deviceId 和凭据；不接受
 客户端指定其他账号。`vendor` 为设备厂商通道标识（xiaomi/huawei/honor/oppo/vivo/meizu），由客户端按
@@ -367,8 +367,8 @@ regrant、ban 或 archive 复活/删除权限。同 ID 改写 payload、或新 o
 
 ## contentSearch
 
-本服务与 `ContentSearchRequest` / `ContentSearchHit` / `ContentSearchPage` 属于待发行 protocol 0.2，
-产品展示版本仍为 0.0.1。
+本服务与 `ContentSearchRequest` / `ContentSearchHit` / `ContentSearchPage` 自 protocol 0.2 可用，
+已随产品 0.0.2 发行。
 
 | ID | 方法 | 参数 | 返回 |
 |---:|---|---|---|
@@ -393,7 +393,7 @@ hex，联合 `scopeId + serverSeq` 定位，每条消息内按 path 去重且不
 
 ## documentComment
 
-本服务及 `DocumentComment` / `DocumentCommentPage` 自待发行 protocol 0.2 可用。
+本服务及 `DocumentComment` / `DocumentCommentPage` 自 protocol 0.2 可用。
 
 | ID | 方法 | 参数 | 返回 |
 |---:|---|---|---|
@@ -413,7 +413,7 @@ hex，联合 `scopeId + serverSeq` 定位，每条消息内按 path 去重且不
 
 ## task
 
-任务契约属于待发行 protocol 0.2，与文档和内容搜索共用同一发行批次。
+任务契约自 protocol 0.2 可用，与文档和内容搜索共用 0.0.2 发行批次。
 
 | ID | 方法 | 参数 | 返回 |
 |---:|---|---|---|

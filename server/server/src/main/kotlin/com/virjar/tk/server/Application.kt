@@ -38,6 +38,7 @@ import com.virjar.tk.server.protocol.dispatcher.RpcDispatcher
 import com.virjar.tk.server.runtime.HttpBlockingExecutor
 import com.virjar.tk.server.runtime.HEALTH_CHECK_PATH
 import com.virjar.tk.server.runtime.MaintenanceRuntime
+import com.virjar.tk.server.runtime.SystemCommandRouter
 import com.virjar.tk.server.runtime.MaintenanceWorker
 import com.virjar.tk.server.runtime.RuntimeFailureCollector
 import com.virjar.tk.server.runtime.ServerResourceOwner
@@ -302,6 +303,13 @@ internal fun Application.module(
         // PostgreSQL commit may precede the process-local wake. Do not recover projections, open
         // TCP, or install health routes until the mandatory durable fallback scan has succeeded.
         runBlocking(Dispatchers.IO) { syncEventDispatcher.awaitStartupScan() }
+        // 回复晚于原消息提交，必须在 TCP 关闭后、同步/存储关闭前实际排空。
+        resources.ownDependencyBarrier(
+            name = "system command replies",
+            resource = koin.get<SystemCommandRouter>(),
+            close = SystemCommandRouter::close,
+            dependenciesMayClose = SystemCommandRouter::workersTerminated,
+        )
         val authService = koin.get<AuthService>()
         val rpcDispatcher = koin.get<RpcDispatcher>()
         val msgService = koin.get<MessageService>()

@@ -166,6 +166,7 @@ import com.virjar.tk.server.protocol.TcpServer
 import com.virjar.tk.server.protocol.TcpServerConfiguration
 import com.virjar.tk.server.protocol.dispatcher.*
 import com.virjar.tk.server.runtime.MaintenanceRuntime
+import com.virjar.tk.server.runtime.SystemCommandRouter
 import org.jetbrains.exposed.sql.Database
 import org.koin.dsl.module
 import java.io.File
@@ -478,11 +479,17 @@ internal fun createServerModule(
         )
     }
     single {
+        SystemCommandRouter(sendServiceReply = { chatId, clientMsgId, markdown ->
+            get<MessageService>().sendServiceReply(chatId, clientMsgId, markdown)
+        })
+    }
+    single {
         MessageService(
             messages = get(),
             chatStore = get(),
             access = get(),
             chatService = get<ChatService>(),
+            systemCommandHandler = get<SystemCommandRouter>(),
             projector = get(),
             unitOfWork = get(),
             search = get(),
@@ -493,12 +500,7 @@ internal fun createServerModule(
             taskRefs = com.virjar.tk.server.domain.message.TaskRefResolver(get()),
             managedChats = get(),
             attachmentLifecycle = get(),
-        ).apply {
-            // 服务号指令路由（内测反馈 T058）：回复经自身发送链路，避免构造期自引用
-            systemCommandHandler = com.virjar.tk.server.domain.message.SystemCommandRouter { chatId, clientMsgId, markdown ->
-                sendServiceReply(chatId, clientMsgId, markdown)
-            }
-        }
+        )
     }
     single {
         MessageReactionService(

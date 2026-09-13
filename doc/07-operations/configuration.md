@@ -120,10 +120,10 @@ flowchart TD
     Config --> Node["该发行自己的服务实例"]
     Android -->|"配置的 HTTP / TCP"| Node
     Desktop -->|"配置的 HTTP / TCP"| Node
-    Gradle -->|"site：按 SSH 坐标上传"| Downloads["该实例的 /downloads/"]
+    Gradle -->|"site：HTTP 发布注册中心"| Downloads["该实例的 /downloads/"]
     Node --- Downloads
     Downloads -->|"用户下载并安装 Android APK"| Android
-    Desktop -->|"Conveyor 更新源由 serverUrl 推导"| Downloads
+    Desktop -->|"更新注册中心由 serverUrl 推导"| Downloads
 ```
 
 首次分发前同时选定应用标识、Android 包名、英文安装名称和签名材料，后续普通升级保持它们稳定，只按根
@@ -141,14 +141,13 @@ flowchart TD
 桌面私有版目录由稳定的 `applicationId` 派生，服务器域名和显示名称都不参与目录命名；账号内仍按
 部署、dataset 和 uid 隔离，迁移服务器坐标时不能据此宣称旧会话资料会自动合并。
 
-每个私有发行使用自己的服务器。站点首页通过 `serverUrl` 对应根地址的 `/downloads/android.json`
-读取已发布 Android 包的显示名称、版本与下载链接。受发行收据管理的 APK 使用包含英文安装名称、版本和
-文件摘要的下载名，区分不同应用和不同字节的安装包；旧 `/downloads/TeamTalk-android.apk` 入口继续兼容，
-下载时也返回同一明确文件名。身份校验、缓存与无收据目录的行为见[站点发布](releasing.md#发布到私有站点)。
-用户下载后手动安装；当前 Android 只有协议升级提示与不兼容时的工作区准入限制，尚未实现客户端自动
-下载安装。Desktop 的下载入口为 `/downloads/desktop/download.html`，Conveyor
-更新源由 `serverUrl` 推导，更新元数据也发布在该 Desktop 目录。共享升级横幅只表达协议兼容状态，
-不是自动更新器；这些站点相对路径不需要另配第二个更新源。
+每个私有发行使用自己的服务器。中文下载页 `/downloads` 从发布注册中心读取各端的显示名称、版本与下载链接；
+`/downloads/android.json` 和旧固定 APK 入口继续兼容 Android 下载。用户手动下载安装 APK；
+协议升级提示与客户端文件更新分别处理，当前 Android 不自动安装更新。
+Desktop 使用安装包内 `serverUrl` 对应的注册中心检查更新，不随登录服务器变更更新来源；
+无头升级使用 `--server-url` 或 `TK_SERVER_URL` 显式指定注册中心。
+Desktop 按文件摘要准备完整负载并在重启时切换；无头客户端通过 `tt-agent upgrade` 安装更新。
+历史 Conveyor 包到新安装器的数据保留边界见[客户端发布与更新体系](client-releases.md)。
 服务器坐标、客户端身份及签名准备好后，继续使用[统一发行流程](releasing.md)；无需额外发布脚本。
 
 ### 大陆厂商官方推送

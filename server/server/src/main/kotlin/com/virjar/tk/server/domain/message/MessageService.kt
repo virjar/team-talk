@@ -11,7 +11,6 @@ import com.virjar.tk.protocol.body.buildRichTextBody
 import com.virjar.tk.server.domain.attachment.AttachmentService
 import com.virjar.tk.server.domain.attachment.AttachmentLifecycleGate
 import com.virjar.tk.server.domain.chat.ChatAccess
-import kotlinx.coroutines.launch
 import com.virjar.tk.server.domain.chat.ManagedChatPolicy
 import com.virjar.tk.server.domain.chat.MessageAdmission
 import com.virjar.tk.server.domain.chat.ChatService
@@ -20,7 +19,6 @@ import com.virjar.tk.server.domain.chat.UnmanagedChatPolicy
 import com.virjar.tk.server.domain.contact.ContactRepository
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
 import com.virjar.tk.server.domain.transaction.PgUnitOfWork
-import org.slf4j.LoggerFactory
 import com.virjar.tk.server.domain.user.SystemAccountUids
 import com.virjar.tk.server.domain.user.UserRepository
 import com.virjar.tk.protocol.model.Message
@@ -43,7 +41,7 @@ class MessageService(
     private val access: ChatAccess,
     private val chatService: ChatService,
     /** 服务号指令消费（内测反馈 T058）；未接线时发往 sys_service 的消息只投递不回复。 */
-    internal var systemCommandHandler: SystemCommandHandler? = null,
+    private val systemCommandHandler: SystemCommandHandler? = null,
     private val officeRefs: OfficeRefResolver,
     private val taskRefs: TaskRefResolver,
     private val projector: MessageProjector,
@@ -192,10 +190,7 @@ class MessageService(
                 com.virjar.tk.protocol.body.buildRichTextBody(body.content, body.assets).plainText
             else -> return
         }
-        commandScope.launch {
-            runCatching { handler.onServiceMessage(senderUid, chatId, message.clientMsgId, text) }
-                .onFailure { commandLogger.warn("服务号指令处理失败", it) }
-        }
+        handler.onServiceMessage(senderUid, chatId, message.clientMsgId, text)
     }
 
     suspend fun getHistory(uid: String, chatId: String, fromSeq: Long, limit: Int): List<Message> {
@@ -619,10 +614,4 @@ class MessageService(
 
         private val EDITABLE_MESSAGE_TYPES = setOf(MessageType.RICH_TEXT)
     }
-}    /** 指令回复的异步派发域；失败仅记日志，不影响发送方已提交的消息。 */
-    private val commandScope = kotlinx.coroutines.CoroutineScope(
-        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default,
-    )
-    private val commandLogger = LoggerFactory.getLogger(MessageService::class.java)
-
-
+}

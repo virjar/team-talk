@@ -5,9 +5,12 @@ import java.nio.file.Files
 import java.util.Properties
 import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPInputStream
+import java.util.jar.JarEntry
+import java.util.jar.JarOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import org.apache.commons.compress.archivers.ar.ArArchiveInputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
@@ -109,6 +112,10 @@ class DesktopShellPackagingTest {
             TarArchiveInputStream(gzip).use { tar ->
                 while (true) {
                     val entry = tar.nextEntry ?: error("control file missing")
+                    assertFalse(entry.name.substringAfterLast('/').startsWith("._"), "AppleDouble leaked into control archive")
+                    assertEquals(0L, entry.longUserId, entry.name)
+                    assertEquals(0L, entry.longGroupId, entry.name)
+                    assertTrue(entry.userName.isEmpty() && entry.groupName.isEmpty(), "Builder names leaked into ${entry.name}")
                     if (entry.name.removePrefix("./") == "control") {
                         val control = tar.readBytes().toString(Charsets.UTF_8)
                         assertTrue(control.contains("Package: teamtalkprivate\n"))
@@ -123,6 +130,9 @@ class DesktopShellPackagingTest {
             TarArchiveInputStream(xz).use { tar ->
                 while (true) {
                     val entry = tar.nextEntry ?: break
+                    assertEquals(0L, entry.longUserId, entry.name)
+                    assertEquals(0L, entry.longGroupId, entry.name)
+                    assertTrue(entry.userName.isEmpty() && entry.groupName.isEmpty(), "Builder names leaked into ${entry.name}")
                     paths += entry.name.removePrefix("./")
                     if (entry.name.removePrefix("./") == "usr/bin/teamtalkprivate") {
                         assertTrue(entry.mode and 0x49 != 0)
@@ -134,6 +144,7 @@ class DesktopShellPackagingTest {
         assertTrue("usr/bin/teamtalkprivate" in paths)
         assertTrue("opt/teamtalkprivate/bin/teamtalkprivate" in paths)
         assertFalse(paths.any { it.startsWith("opt/teamtalk/") })
+        assertFalse(paths.any { it.substringAfterLast('/').startsWith("._") }, "AppleDouble leaked into data archive")
     }
 
     @Test
@@ -178,7 +189,7 @@ class DesktopShellPackagingTest {
             buildIdentity.set("0.0.2+test-source")
             channel.set("snapshot")
             minShellAbi.set(1)
-            jarFiles.from(File(root, "app.jar").apply { writeText("payload fixture") })
+            jarFiles.from(jarFixture(root, "app.jar", "app/Main.class"))
             overlayPaths.set(emptyMap())
             payloadDir.set(File(root, "payload"))
             payloadZip.set(File(root, "payload.zip"))
@@ -187,6 +198,35 @@ class DesktopShellPackagingTest {
         val descriptor = Properties().apply { File(root, "payload/payload.properties").inputStream().use(::load) }
         assertEquals("0.0.2+test-source", descriptor.getProperty("buildIdentity"))
         assertEquals("snapshot", descriptor.getProperty("channel"))
+    }
+
+    @Test
+    fun `payload rejects two dependency versions defining the same runtime class`() = temporary { root ->
+        val project = ProjectBuilder.builder().withProjectDir(root).build()
+        val task = project.tasks.register("payload", AssembleDesktopPayloadTask::class.java).get().apply {
+            targetKey.set("linux-amd64")
+            version.set("0.0.2")
+            buildNumber.set(7)
+            buildIdentity.set("0.0.2+test-source")
+            channel.set("snapshot")
+            minShellAbi.set(1)
+            jarFiles.from(jarFixture(root, "runtime-1.jar", "example/Runtime.class"),
+                jarFixture(root, "runtime-2.jar", "example/Runtime.class"))
+            overlayPaths.set(emptyMap())
+            payloadDir.set(File(root, "payload"))
+            payloadZip.set(File(root, "payload.zip"))
+        }
+        val failure = assertFailsWith<IllegalStateException> { task.assemble() }
+        assertTrue(failure.message.orEmpty().contains("Duplicate payload class example/Runtime.class"))
+        assertFalse(File(root, "payload.zip").exists())
+    }
+
+    private fun jarFixture(root: File, name: String, entry: String): File = File(root, name).apply {
+        JarOutputStream(outputStream()).use { jar ->
+            jar.putNextEntry(JarEntry(entry))
+            jar.write(byteArrayOf(0))
+            jar.closeEntry()
+        }
     }
 
     private fun temporary(action: (File) -> Unit) {

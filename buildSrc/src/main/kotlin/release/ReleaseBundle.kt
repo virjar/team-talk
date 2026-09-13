@@ -261,7 +261,10 @@ object ReleaseBundle {
                     "Desktop payload for $key is stale: ${props.getProperty("version")}+" +
                         "${props.getProperty("build")} (expected ${identity.version.name}+${identity.desktopRevision})"
                 }
-                require(props.getProperty("minShellAbi")?.toIntOrNull() != null) {
+                require(props.getProperty("buildIdentity") == identity.buildIdentity) {
+                    "Desktop payload for $key belongs to a different source build"
+                }
+                require(props.getProperty("minShellAbi")?.toIntOrNull()?.let { it > 0 } == true) {
                     "Desktop payload for $key lacks minShellAbi"
                 }
             }

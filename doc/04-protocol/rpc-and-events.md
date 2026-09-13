@@ -211,7 +211,7 @@ method 18 `transferSpaceCustody` 的参数顺序固定为
 当前路径，不能从原请求补造。
 若目标父文档在移动期间消失，服务端返回层级冲突 409 并保留仍存在的移动节点；只有移动节点本体不存在才返回 404。
 
-待发行 protocol 0.2 追加 `document.getSpace(20)`，用于独立重新校验当前驻留空间，不消耗空间列表游标。
+Protocol 0.2 追加 `document.getSpace(20)`，用于独立重新校验当前驻留空间，不消耗空间列表游标。
 同版本的 `documentComment` 提供 list/create/update/delete，评论有稳定 UUID、同文档回复关系、独立
 revision 与无正文删除墓碑；创建重放和陈旧写入边界见[评论 RPC](../10-reference/rpc-reference.md#documentcomment)。
 评论不改变文档正文 revision，所有调用仍核对当前空间权限和文档活动状态。
@@ -252,7 +252,7 @@ organization revision，成员 cursor 还绑定根节点和 recursive 语义。
 
 ### 内容搜索
 
-待发行 protocol 0.2 的 `contentSearch.search(ContentSearchRequest)` 返回有界 `ContentSearchPage`，
+Protocol 0.2 的 `contentSearch.search(ContentSearchRequest)` 返回有界 `ContentSearchPage`，
 分别查询文档、群文件或聊天附件。每页最多 50 条，不返回全文、附件路径或命中总数；继续游标绑定
 当前账号和查询条件，空页携带游标时仍可继续读取。`ContentSearchHit` 只表达可见摘要，客户端必须
 重新调用领域读取再打开对象，不能从摘要创建授权或下载地址。聊天附件身份使用消息所在 chat、
@@ -263,7 +263,7 @@ serverSeq 与主附件 canonical path 的 SHA-256 组合，同一消息不重复
 
 ### 完整聊天草稿
 
-待发行 protocol 0.2 以独立 `chatDraft.get/mutate` 同步同账号的 READY 富资产草稿，不修改已发行的
+Protocol 0.2 以独立 `chatDraft.get/mutate` 同步同账号的 READY 富资产草稿，不修改更早发行的
 `Conversation.draft` 与 `ConversationRpc.setDraft` 字符串 wire。内容由 Markdown、canonical sidecar、
 模式和回复身份组成；本机未上传的源、任务及选区不上传为草稿内容。
 

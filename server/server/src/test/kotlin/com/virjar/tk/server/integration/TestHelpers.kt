@@ -440,6 +440,7 @@ class TestEnvironment : AutoCloseable {
         projectionRepository: MessageProjectionRepository = messageProjectionRepository,
         search: MessageSearch = searchIndex,
         managedChats: ManagedChatPolicy = koin.get(),
+        systemCommandHandler: com.virjar.tk.server.domain.message.SystemCommandHandler? = null,
     ): MessageService {
         val coldChatStore = ChatStore(koin.get(), koin.get(), koin.get())
         return MessageService(
@@ -447,6 +448,7 @@ class TestEnvironment : AutoCloseable {
             chatStore = coldChatStore,
             access = koin.get(),
             chatService = koin.get<ChatService>(),
+            systemCommandHandler = systemCommandHandler,
             officeRefs = OfficeRefResolver(koin.get(), koin.get()),
             taskRefs = com.virjar.tk.server.domain.message.TaskRefResolver(koin.get()),
             projector = freshMessageProjector(
@@ -562,6 +564,7 @@ class TestEnvironment : AutoCloseable {
         }
         if (::koin.isInitialized) {
             cleanUp { maintenance.close() }
+            cleanUp { koin.get<com.virjar.tk.server.runtime.SystemCommandRouter>().close() }
             cleanUp { koin.get<ConnectionTraceEventStore>().close() }
             cleanUp { koin.get<ClientTelemetryEventStore>().close() }
             cleanUp { koin.get<com.virjar.tk.server.infra.search.ContentAssetSearchIndex>().close() }

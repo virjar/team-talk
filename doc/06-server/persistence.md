@@ -595,10 +595,10 @@ MEMBER_REMOVED/CHAT_DELETED 之后收到一条更晚的旧 MESSAGE_RECV；剩余
 
 | 标记 | 当前基线 | 负责什么 |
 |---|---|---|
-| 发行字符串 | `0.0.1` | 用户看到的版本；客户端、SDK、服务端来自同一构建输入，不决定二进制兼容 |
-| 协议 major/minor | 源码待发行 `0.2`，最低 minor 为 `0`；正式 0.0.1 冻结 `0.1` | 每条 TCP 连接协商可使用的契约窗口，不改变已保存的消息和同步游标 |
+| 发行字符串 | `0.0.2` | 用户看到的版本；客户端、SDK、服务端来自同一构建输入，不决定二进制兼容 |
+| 协议 major/minor | 源码待发行 `0.3`，最低 minor 为 `0`；正式 0.0.2 冻结 `0.2` | 每条 TCP 连接协商可使用的契约窗口，不改变已保存的消息和同步游标 |
 | 服务端存储 epoch | **`1`** | 已存在的 PostgreSQL 和本地持久化布局；以 `ServerDataEpoch.CURRENT_EPOCH` 为事实源 |
-| PostgreSQL 迁移版本 | `6`（连续清单 `0..6`） | `schema_migrations` 的连续完成记录；在现有 epoch 内保留数据地推进 SQL 布局 |
+| PostgreSQL 迁移版本 | 已发行 0.0.2 为 `2`；源码后续增量以 `SchemaMigrations.kt` 的顺序清单为准 | `schema_migrations` 的连续完成记录；在现有 epoch 内保留数据地推进 SQL 布局 |
 | dataset ID | 每套数据原有的 canonical UUID | PostgreSQL 与本地存储共同拥有的身份，普通升级保留原值 |
 
 发行与协议版本的变化不改变存储 epoch 或 dataset。标记重编号本身不会迁移数据，反而会让

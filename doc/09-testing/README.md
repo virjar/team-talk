@@ -40,12 +40,16 @@ TeamTalk 是多客户端、长连接、异步同步的业务系统。测试优�
 PostgreSQL/TCP 集成、SDK SQLite 及保留的协议/客户端局部测试。管理后台使用 `:server:admin:check`，
 和本地共用锁文件安装、TypeScript 检查与 Vite 构建链，无需 CI 单独配置 Node.js。
 
+发行工具 job 在 Linux、Windows 上运行 `buildSrc` 的发行集成测试。Linux job 安装 NSIS 后运行
+`:client:desktop:assembleDesktopShells`，生成四目标首装包并用 `dpkg-deb` 检查实际 deb。Windows job
+运行 `:client:desktop:packageWindowsPortableWindowsAmd64`，覆盖 JBR、bootstrap、Launch4j exe 和
+便携 ZIP 的实际发行路径。构建任务的私有安装路径、POSIX 启动脚本、NSIS 编译、压缩归档和符号链接由
+`DesktopShellPackagingTest` 验证，不能用旧 jpackage/ProGuard 任务代表新发行产物。
+
 独立的 Windows Desktop job 使用 JDK 21，在真实 Windows runner 执行
 `:client:desktop:desktopTest --tests '*WindowsDesktopStartupTest'`，检查当前用户身份、私有目录、
-marker/文本读写及再次打开目录；随后执行 `:client:desktop:createReleaseDistributable`，覆盖
-ProGuard、JNI 方法保留检查和 Windows app-image 的运行时/字体打包路径。日志与测试报告作为
-CI artifact 保留。此 job 不构建 MSI，不依赖 WiX，也不启动图形窗口；它没有验证安装器、原生库
-实际加载、托盘中文、窗口显示或聊天操作。这些仍须在目标 Windows 用户桌面上验收，发行产物不开放测试 HTTP 服务。
+marker/文本读写及再次打开目录，随后生成上述便携包并保留诊断。该 job 不进行交互式安装，不验证窗口、
+托盘中文和媒体实际播放；这些仍需在目标 Windows 用户桌面验收。发行产物不开放开发测试 HTTP 服务。
 
 `acceptance.yml` 是手动触发的远程验收；`release.yml` 只构建发行归档并发布客户端，服务器由管理员
 通过 Gradle 手动部署并执行验收。Desktop 与 Android 的真实 UI 验收仍需按平台操作流程单独运行；不能把一次人工或任务内 UI

@@ -39,7 +39,7 @@ internal fun Route.clientDownloadRoutes(
 
         get("/android.json") {
             // 注册中心已发布时它是唯一权威；否则回落到旧收据语义。
-            val registryManifest = run { clientReleases?.androidLegacyManifest() }
+            val registryManifest = clientReleases?.androidLegacyManifest()
             if (registryManifest != null) {
                 call.response.headers.append(io.ktor.http.HttpHeaders.CacheControl, "no-store")
                 call.respondText(Json.encodeToString(registryManifest), ContentType.Application.Json)
@@ -117,12 +117,10 @@ private suspend fun ApplicationCall.respondAndroidDownload(
     head: Boolean,
 ) {
     // 注册中心的 APK：文件句柄来自内容寻址仓，身份来自发布行，无需逐请求重算哈希。
-    val registryInstaller = run {
-        when {
-            clientReleases == null -> null
-            filename == ANDROID_DOWNLOAD_ALIAS -> clientReleases.findAndroidInstaller(null)
-            else -> clientReleases.findAndroidInstaller(filename)
-        }
+    val registryInstaller = when {
+        clientReleases == null -> null
+        filename == ANDROID_DOWNLOAD_ALIAS -> clientReleases.findAndroidInstaller(null)
+        else -> clientReleases.findAndroidInstaller(filename)
     }
     if (registryInstaller != null) {
         response.headers.append(
@@ -174,7 +172,7 @@ private suspend fun ApplicationCall.respondAndroidDownload(
 private suspend fun ApplicationCall.withAndroidDownload(
     downloads: File,
     block: suspend (AndroidDownloadSnapshot) -> Unit,
-) = run {
+) {
     response.headers.append(io.ktor.http.HttpHeaders.CacheControl, "no-store")
     val snapshot = try {
         openAndroidDownload(downloads)
@@ -195,7 +193,7 @@ private suspend fun ApplicationCall.withAndroidDownload(
                 HttpStatusCode.NotFound
             },
         )
-        return@run
+        return
     }
     snapshot.use { block(it) }
 }

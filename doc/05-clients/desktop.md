@@ -352,7 +352,7 @@ Windows 的 `LOCALAPPDATA` 缺失时使用 `~/AppData/Local`；Linux 的 `XDG_DA
 主题偏好同样按发行隔离；单实例锁跟随数据目录，因此再次打开同一发行会唤醒它自己的窗口，公版与
 私有版不互相抢占。每个目录中的账号、草稿、可靠发件箱和媒体缓存继续遵循现有本地所有权规则。
 
-Conveyor 的 Windows MSIX 从 Windows 10 1903 起支持安装，清单显式声明
+0.0.2 及以前的 Conveyor Windows MSIX 从 Windows 10 1903 起支持安装，清单显式声明
 `unvirtualizedResources` 并关闭 AppData 文件写入虚拟化，使默认目录与 ZIP/MSI 使用同一真实位置。
 `runFullTrust` 本身不会关闭虚拟化；机制见
 [微软清单说明](https://learn.microsoft.com/en-us/uwp/schemas/appxpackage/uapmanifestschema/element-desktop6-filesystemwritevirtualization)。
@@ -371,8 +371,9 @@ MSIX 旧目录探测。检查不替代迁移：发现旧资料后仍需处理，
 草稿应单独验收，不能以普通 Windows JVM 测试或成功出包代替。
 
 `-Dteamtalk.data.dir=<absolute-path>` 只用于显式开发/诊断 profile：路径必须绝对、父目录已存在，父链不能
-经过符号链接或由其他普通用户修改。Gradle `:client:desktop:run` 与安装包使用相同的平台默认路径，不再隐式
-回退到仓库 `data/desktop`。需要隔离开发数据时必须显式传入已准备的私有目录。
+经过符号链接或由其他普通用户修改。Gradle `:client:desktop:run` 默认使用
+`~/.teamtalk/desktop-development/<applicationId>/<checkoutHash>`，与安装包及其他 checkout 隔离；
+显式覆盖优先，同一 checkout 启动第二个测试实例时须另设私有目录。见[桌面自动化](../09-testing/desktop-automation.md)。
 该持久 data root 必须位于平台默认或经验证的本机文件系统；这是配置与验收前置条件，启动代码不声称能
 可靠识别所有 mount/provider。账号数据库与凭据依赖本机锁和原子替换；跨 namespace 遥测回收还要求
 安全目录句柄、稳定 file key 和目录 force。受支持的 Windows 本地 profile 缺少后者时只跳过跨 namespace

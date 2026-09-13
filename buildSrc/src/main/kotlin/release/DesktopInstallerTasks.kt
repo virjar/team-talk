@@ -274,7 +274,8 @@ abstract class BuildLinuxDebTask : DefaultTask() {
             Version: ${version.get()}-${buildNumber.get()}
             Architecture: ${arch.get()}
             Maintainer: TeamTalk <teamtalk@virjar.im>
-            Depends: libc6, libstdc++6, libx11-6, libxext6, libxi6, libxrender1, libxtst6, libasound2, libfreetype6, fontconfig
+            Depends: libc6, libstdc++6, libx11-6, libxext6, libxi6, libxrender1, libxtst6, libasound2, libfreetype6, fontconfig,
+             libgstreamer1.0-0, libgstreamer-plugins-base1.0-0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-libav
             Section: net
             Priority: optional
             Description: TeamTalk desktop client
@@ -310,6 +311,9 @@ abstract class BuildLinuxDebTask : DefaultTask() {
         // 末尾显式 "."：macOS bsdtar 不像 GNU tar 那样默认打包当前目录。
         val command = buildList {
             add("tar")
+            add("--no-xattrs")
+            // Linux 安装文件属于 root，不能继承 macOS 构建者的 UID/GID 或用户名。
+            addAll(listOf("--owner=0", "--group=0", "--numeric-owner"))
             // macOS bsdtar 不识别 gnu 格式名；dpkg 对归档格式无要求，条目以 ./ 开头即可。
             if (System.getProperty("os.name").lowercase().contains("linux")) add("--format=$format")
             if (xz) add("--xz") else add("-z")
@@ -319,7 +323,7 @@ abstract class BuildLinuxDebTask : DefaultTask() {
             add(source.absolutePath)
             add(".")
         }
-        runCommand(source, command)
+        runCommand(source, command, mapOf("COPYFILE_DISABLE" to "1"))
     }
 }
 
@@ -363,9 +367,11 @@ abstract class ZipDirectoryTask : DefaultTask() {
 }
 
 /** 进程外命令（zip/tar/ar/makensis）：不参与增量缓存语义，输出文件本身是任务输出。 */
-internal fun runCommand(workingDir: File, command: List<String>): Int = runCheckedProcess(
-    ProcessSpec(command.first(), command, timeoutMillis = LONG_PROCESS_TIMEOUT_MILLIS, workingDirectory = workingDir),
-).exitCode
+internal fun runCommand(workingDir: File, command: List<String>, environment: Map<String, String> = emptyMap()): Int =
+    runCheckedProcess(
+        ProcessSpec(command.first(), command, timeoutMillis = LONG_PROCESS_TIMEOUT_MILLIS,
+            workingDirectory = workingDir, environment = environment),
+    ).exitCode
 
 /** 直接重建 ZIP，保留链接及执行位；跨宿主使用同一归档实现，重试不残留已删除的文件。 */
 internal fun archiveDirectoryZip(source: File, destination: File, entries: List<String>) {
