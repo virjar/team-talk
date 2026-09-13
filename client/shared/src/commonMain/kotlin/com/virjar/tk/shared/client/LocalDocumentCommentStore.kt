@@ -54,27 +54,32 @@ internal class LocalDocumentCommentStore(
         }.also { check(it.size <= MAX_PENDING) { "本地评论队列超出上限，请保留资料并检查数据库" } }
     }
 
+    override fun pending(commentId: String): PendingDocumentComment? = locked { pendingLocked(commentId) }
+    private fun pendingLocked(commentId: String): PendingDocumentComment? =
+        queries.selectPendingDocumentComment(commentId).executeAsOneOrNull()?.let {
+            Json.decodeFromString<PendingDocumentComment>(it).requireValid()
+        }
+
     override fun prepare(command: PendingDocumentComment): PendingDocumentComment = locked {
         command.requireValid()
-        val pending = pending()
-        pending.firstOrNull { it.commentId == command.commentId }?.let {
+        pendingLocked(command.commentId)?.let {
             check(it == command) { "此评论还有一项变更等待确认" }
             return@locked it
         }
-        check(pending.size < MAX_PENDING) { "待发送评论数量已达上限" }
+        check(queries.countPendingDocumentComments().executeAsOne() < MAX_PENDING) { "待发送评论数量已达上限" }
         queries.insertPendingDocumentComment(command.commentId, Json.encodeToString(command))
         changed()
         command
     }
 
     override fun fail(commentId: String, reason: String) = locked {
-        val command = pending().firstOrNull { it.commentId == commentId } ?: return@locked
+        val command = pendingLocked(commentId) ?: return@locked
         queries.updatePendingDocumentComment(Json.encodeToString(command.copy(failure = reason.take(200))), commentId)
         changed()
     }
 
     override fun retry(commentId: String) = locked {
-        val command = pending().firstOrNull { it.commentId == commentId } ?: return@locked
+        val command = pendingLocked(commentId) ?: return@locked
         queries.updatePendingDocumentComment(Json.encodeToString(command.copy(failure = null)), commentId)
         changed()
     }

@@ -53,6 +53,7 @@ internal class FakeTasks : LocalTasks {
         if (removed) { generation++; changes.value++ }
     }
     override fun pending() = pending.values.toList()
+    override fun pending(taskId: String) = pending[taskId]
     override fun prepare(command: TaskCommand): PendingTaskCommand {
         pending[command.taskId]?.let { check(it.command == command); return it }
         check(pending.size < 256)

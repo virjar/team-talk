@@ -97,13 +97,15 @@ internal class LocalTaskStore(
     private fun pendingLocked(): List<PendingTaskCommand> = queries.selectPendingTasks().executeAsList()
         .map { Json.decodeFromString<PendingTaskCommand>(it) }
         .also { check(it.size <= MAX_PENDING) { "本地任务队列超出上限，请保留资料并检查数据库" } }
+    override fun pending(taskId: String): PendingTaskCommand? = locked { pendingLocked(taskId) }
+    private fun pendingLocked(taskId: String): PendingTaskCommand? =
+        queries.selectPendingTask(taskId).executeAsOneOrNull()?.let { Json.decodeFromString<PendingTaskCommand>(it) }
     override fun prepare(command: TaskCommand): PendingTaskCommand = locked {
-        val pending = pendingLocked()
-        pending.firstOrNull { it.command.taskId == command.taskId }?.let {
+        pendingLocked(command.taskId)?.let {
             check(it.command == command) { "此任务还有一项操作等待确认" }
             return@locked it
         }
-        check(pending.size < MAX_PENDING) { "待确认任务操作数量已达上限" }
+        check(queries.countPendingTasks().executeAsOne() < MAX_PENDING) { "待确认任务操作数量已达上限" }
         val record = PendingTaskCommand(command)
         queries.insertPendingTask(command.taskId, command.operationId, Json.encodeToString(record))
         changed()
@@ -112,14 +114,14 @@ internal class LocalTaskStore(
     override fun fail(taskId: String, reason: String) = updatePending(taskId) { it.copy(failure = reason.take(200)) }
     override fun retry(taskId: String) = updatePending(taskId) { it.copy(failure = null) }
     private fun updatePending(taskId: String, transform: (PendingTaskCommand) -> PendingTaskCommand) = locked {
-        pendingLocked().firstOrNull { it.command.taskId == taskId }?.let {
+        pendingLocked(taskId)?.let {
             queries.updatePendingTask(Json.encodeToString(transform(it)), taskId)
             changed()
         }
         Unit
     }
     override fun discard(taskId: String) = locked {
-        pendingLocked().firstOrNull { it.command.taskId == taskId }?.let {
+        pendingLocked(taskId)?.let {
             check(it.failure != null) { "任务操作尚未确认，不能丢弃未知结果" }
             queries.deletePendingTask(taskId, it.command.operationId)
             changed()
@@ -130,7 +132,7 @@ internal class LocalTaskStore(
         cacheUseGate.runIfOpen { synchronized(stateLock) {
             val confirmedTask = result.task
             require(confirmedTask == null || confirmedTask.taskId == command.taskId)
-            if (pendingLocked().none { it.command == command }) return@synchronized false
+            if (pendingLocked(command.taskId)?.command != command) return@synchronized false
             queries.transaction {
                 if (confirmedTask == null) revokeLocked(command.taskId)
                 else if (generation == currentGeneration) applyTaskLocked(confirmedTask, ownerUid)

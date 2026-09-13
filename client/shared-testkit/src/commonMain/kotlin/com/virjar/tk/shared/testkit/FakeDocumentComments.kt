@@ -26,6 +26,7 @@ internal class FakeDocumentComments : LocalDocumentComments {
         changes.value++
     }
     override fun pending() = pending.values.toList()
+    override fun pending(commentId: String) = pending[commentId]
     override fun prepare(command: PendingDocumentComment): PendingDocumentComment {
         command.requireValid()
         pending[command.commentId]?.let { check(it == command); return it }

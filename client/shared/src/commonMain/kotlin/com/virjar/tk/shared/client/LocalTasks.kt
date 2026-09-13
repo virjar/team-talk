@@ -34,6 +34,8 @@ interface LocalTasks {
     fun invalidate(change: TaskChangedPayload? = null)
     fun revoke(taskId: String)
     fun pending(): List<PendingTaskCommand>
+    /** 点查原始命令和本机失败状态，供发送前精确核对所选记录。 */
+    fun pending(taskId: String): PendingTaskCommand?
     fun prepare(command: TaskCommand): PendingTaskCommand
     fun fail(taskId: String, reason: String)
     fun retry(taskId: String)

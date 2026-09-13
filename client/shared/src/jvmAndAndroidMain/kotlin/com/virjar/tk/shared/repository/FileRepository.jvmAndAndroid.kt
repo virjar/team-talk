@@ -78,11 +78,7 @@ internal actual fun canonicalHttpServerBase(serverUrl: String): String {
         .trimEnd('/')
 }
 
-internal class UrlConnectionFileTransport(
-    private val connectionFactory: (String) -> HttpURLConnection = { url ->
-        URL(url).openConnection() as HttpURLConnection
-    },
-) : PlatformFileTransport {
+private class UrlConnectionFileTransport : PlatformFileTransport {
     private val operationGate = HttpConnectionOperationGate("File HTTP transport")
 
     override suspend fun upload(
@@ -157,7 +153,7 @@ internal class UrlConnectionFileTransport(
         operationGate.close()
     }
 
-    private fun open(url: String): HttpURLConnection = connectionFactory(url).apply {
+    private fun open(url: String): HttpURLConnection = (URL(url).openConnection() as HttpURLConnection).apply {
         instanceFollowRedirects = false
         useCaches = false
     }

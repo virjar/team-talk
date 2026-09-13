@@ -37,6 +37,8 @@ interface LocalDocumentComments {
     fun applyPage(key: DocumentCommentPageKey, page: DocumentCommentPage, generation: Long): Boolean
     fun invalidate(spaceId: String? = null, documentId: String? = null, purge: Boolean = false)
     fun pending(): List<PendingDocumentComment>
+    /** 点查完整原意图，不能只凭 commentId 存在就发送旧快照。 */
+    fun pending(commentId: String): PendingDocumentComment?
     fun prepare(command: PendingDocumentComment): PendingDocumentComment
     fun fail(commentId: String, reason: String)
     fun retry(commentId: String)

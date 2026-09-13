@@ -1688,6 +1688,12 @@ DELETE FROM document_comment_pages;
 selectPendingDocumentComments:
 SELECT payload FROM pending_document_comments ORDER BY comment_id;
 
+selectPendingDocumentComment:
+SELECT payload FROM pending_document_comments WHERE comment_id = ?;
+
+countPendingDocumentComments:
+SELECT count(*) FROM pending_document_comments;
+
 insertPendingDocumentComment:
 INSERT INTO pending_document_comments(comment_id, payload) VALUES (?, ?);
 
@@ -1750,6 +1756,10 @@ pruneTaskPages:
 DELETE FROM task_pages WHERE rowid NOT IN (SELECT rowid FROM task_pages ORDER BY touched_at DESC, rowid DESC LIMIT 16);
 selectPendingTasks:
 SELECT payload FROM pending_task_commands ORDER BY rowid;
+selectPendingTask:
+SELECT payload FROM pending_task_commands WHERE task_id = ?;
+countPendingTasks:
+SELECT count(*) FROM pending_task_commands;
 insertPendingTask:
 INSERT INTO pending_task_commands(task_id, operation_id, payload) VALUES (?, ?, ?);
 updatePendingTask:

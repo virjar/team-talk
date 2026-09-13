@@ -59,7 +59,7 @@ class DocumentCommentRepository(
 
     /** 只有确定拒绝的意图可丢弃；结果未知的在途评论保留原身份等待确认。 */
     suspend fun discardRejected(commentId: String) = requests.withLock {
-        val command = local.pending().firstOrNull { it.commentId == commentId } ?: return@withLock
+        val command = local.pending(commentId) ?: return@withLock
         check(command.failure != null) { "评论仍在等待服务端确认" }
         local.discard(commentId)
     }
@@ -67,7 +67,7 @@ class DocumentCommentRepository(
     internal suspend fun retryPending(): Outcome<Unit> = retryPendingMirrors(local.pending().filter { it.failure == null }) { command ->
         outcome {
             requests.withLock {
-                if (local.pending().none { it == command }) return@withLock
+                if (local.pending(command.commentId) != command) return@withLock
                 val generation = local.generation()
                 val response = try {
                     when (command.kind) {

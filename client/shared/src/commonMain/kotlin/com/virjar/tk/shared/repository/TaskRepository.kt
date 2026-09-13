@@ -93,7 +93,7 @@ class TaskRepository(
     private suspend fun retryCommands(): Outcome<Unit> = retryPendingMirrors(local.pending().filter { it.failure == null }) { record ->
         outcome {
             requests.withLock {
-                if (local.pending().none { it == record }) return@withLock
+                if (local.pending(record.command.taskId) != record) return@withLock
                 val command = record.command
                 val generation = local.generation()
                 val result = try { rpc.mutate(command) } catch (failure: Exception) {
