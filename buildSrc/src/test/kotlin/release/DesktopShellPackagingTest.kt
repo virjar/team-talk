@@ -36,9 +36,7 @@ class DesktopShellPackagingTest {
         val seed = File(root, "seed.zip").apply { writeText("seed fixture") }
         val icon = File(root, "icon.png").apply { writeText("icon fixture") }
         val task = project.tasks.create("shell", AssembleDesktopShellTask::class.java).apply {
-            platform.set("linux")
-            arch.set("amd64")
-            targetKey.set("linux-amd64")
+            target.set(DesktopTarget.LINUX_AMD64)
             version.set("0.0.2")
             buildNumber.set(7)
             displayName.set("内部协作")
@@ -175,11 +173,14 @@ class DesktopShellPackagingTest {
 
     @Test
     fun `JBR cache path follows pinned hash and payload descriptor keeps build identity and channel`() = temporary { root ->
+        val repository = generateSequence(File(System.getProperty("user.dir"))) { it.parentFile }
+            .first { File(it, "gradle/jbr.properties").isFile }
+        assertEquals(DesktopTarget.values().toSet(), JbrRuntimes.load(File(repository, "gradle/jbr.properties")).keys)
         val properties = File(root, "jbr.properties")
         properties.writeText("baseUrl=https://example.com\nlinux-amd64.archive=runtime.tar.gz\nlinux-amd64.sha256=aaa\n")
-        val first = JbrRuntimes.extractedRoot("linux-amd64", properties)
+        val first = JbrRuntimes.extractedRoot(DesktopTarget.LINUX_AMD64, properties)
         properties.writeText(properties.readText().replace("sha256=aaa", "sha256=bbb"))
-        val second = JbrRuntimes.extractedRoot("linux-amd64", properties)
+        val second = JbrRuntimes.extractedRoot(DesktopTarget.LINUX_AMD64, properties)
         assertFalse(first == second)
         val project = ProjectBuilder.builder().withProjectDir(root).build()
         val task = project.tasks.create("payload", AssembleDesktopPayloadTask::class.java).apply {

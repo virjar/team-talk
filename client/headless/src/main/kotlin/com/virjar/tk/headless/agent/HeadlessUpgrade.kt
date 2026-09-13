@@ -11,7 +11,6 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.file.Files
-import java.util.Properties
 import java.util.zip.ZipFile
 
 /**
@@ -58,23 +57,16 @@ internal object HeadlessUpgrade {
         val running = requireNotNull(currentBundle) {
             "run tt-agent upgrade from the current headless distribution (bin/tt-agent upgrade)"
         }
-        val manifest = File(running, "teamtalk-release.properties")
-        require(manifest.isFile) { "current distribution has no teamtalk-release.properties: $running" }
-        val props = Properties().apply { manifest.inputStream().use(::load) }
-        val version = requireNotNull(props.getProperty("version")) { "release manifest lacks version" }
-        val build = requireNotNull(props.getProperty("releaseBuildNumber")?.toLongOrNull()) {
-            "release manifest lacks releaseBuildNumber"
-        }
+        val current = HeadlessBundleInstaller.verifyBundle(running)
 
         val prefix = prefixArg?.let(::File)
             ?: HeadlessBundleInstaller.managedPrefix(running)
             ?: usage("no managed installation found; pass --prefix <directory>")
 
-        val identity = props.getProperty("buildIdentity")
-        val selectedChannel = channel ?: props.getProperty("channel") ?: "stable"
-        val release = checkForUpdate(server, selectedChannel, version, build, identity)
+        val selectedChannel = channel ?: current.channel
+        val release = checkForUpdate(server, selectedChannel, current)
         if (release == null) {
-            println("当前通道暂无更新（$version build $build，通道 $selectedChannel）。")
+            println("当前通道暂无更新（${current.version} build ${current.releaseBuildNumber}，通道 $selectedChannel）。")
             return
         }
         require(release.clientType == ClientUpdateContracts.CLIENT_HEADLESS &&
@@ -94,11 +86,7 @@ internal object HeadlessUpgrade {
                 (release.buildIdentity == null || incoming.buildIdentity == release.buildIdentity)) {
                 "downloaded bundle does not match the selected release"
             }
-            val result = HeadlessBundleInstaller.execute(
-                "upgrade-bundle",
-                listOf("--prefix", prefix.absolutePath),
-                extractedRoot,
-            )
+            val result = HeadlessBundleInstaller.upgrade(prefix, incoming)
             println("升级就绪：${result.prefix.absolutePath}（重启 tt-agent / systemd 服务后生效）")
         } finally {
             staging.deleteRecursively()
@@ -109,9 +97,7 @@ internal object HeadlessUpgrade {
     private fun checkForUpdate(
         server: String,
         channel: String,
-        version: String,
-        build: Long,
-        buildIdentity: String?,
+        current: HeadlessBundleInstaller.BundleFacts,
     ): ClientReleaseInfo? {
         val url = buildString {
             append(server).append("/api/v1/client/updates/check")
@@ -119,9 +105,9 @@ internal object HeadlessUpgrade {
             append("&platform=").append(ClientUpdateContracts.PLATFORM_ANY)
             append("&arch=").append(ClientUpdateContracts.ARCH_ANY)
             append("&channel=").append(channel)
-            append("&version=").append(URLEncoder.encode(version, "UTF-8"))
-            buildIdentity?.let { append("&buildIdentity=").append(URLEncoder.encode(it, "UTF-8")) }
-            append("&build=").append(build)
+            append("&version=").append(URLEncoder.encode(current.version, "UTF-8"))
+            append("&buildIdentity=").append(URLEncoder.encode(current.buildIdentity, "UTF-8"))
+            append("&build=").append(current.releaseBuildNumber)
         }
         val response = http.send(
             HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofMinutes(10)).GET().build(),

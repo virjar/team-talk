@@ -11,6 +11,126 @@ import kotlin.test.assertTrue
 
 class SchemaMigrationIntegrationTest {
     @Test
+    fun `fixed system projection migration is atomic and preserves human data on retry and reopen`() {
+        PostgresSchemaLease.open().use { lease ->
+            val datasetId = open(lease).use { it.datasetId }
+            val preserved = lease.openConnection().use { connection ->
+                seedLegacySystemProjections(connection)
+                connection.createStatement().use { statement ->
+                    statement.execute("DELETE FROM schema_migrations WHERE version = 6")
+                    statement.execute(
+                        "CREATE FUNCTION reject_system_projection_receipt() RETURNS trigger LANGUAGE plpgsql AS " +
+                            "'BEGIN IF NEW.version = 6 THEN RAISE EXCEPTION ''fixture receipt failure''; END IF; RETURN NEW; END;'",
+                    )
+                    statement.execute(
+                        "CREATE TRIGGER reject_system_receipt BEFORE INSERT ON schema_migrations " +
+                            "FOR EACH ROW EXECUTE FUNCTION reject_system_projection_receipt()",
+                    )
+                }
+                preservedSystemChatRows(connection)
+            }
+            assertFailsWith<Exception> { open(lease).close() }
+            lease.openConnection().use { connection ->
+                assertFixedSystemProjectionCount(connection, 2)
+                assertEquals(preserved, preservedSystemChatRows(connection))
+                connection.createStatement().use { statement ->
+                    statement.executeQuery("SELECT count(*) FROM schema_migrations WHERE version = 6").use { row ->
+                        assertTrue(row.next()); assertEquals(0, row.getInt(1))
+                    }
+                    statement.execute("DROP TRIGGER reject_system_receipt ON schema_migrations")
+                    statement.execute("DROP FUNCTION reject_system_projection_receipt()")
+                }
+            }
+            open(lease).use { assertEquals(datasetId, it.datasetId) }
+            val receipt = lease.openConnection().use { connection ->
+                assertFixedSystemProjectionCount(connection, 0)
+                assertEquals(preserved, preservedSystemChatRows(connection))
+                connection.createStatement().use { statement ->
+                    statement.executeQuery("SELECT name, applied_at FROM schema_migrations WHERE version = 6").use { row ->
+                        assertTrue(row.next())
+                        assertEquals("remove_fixed_system_conversation_projections", row.getString(1))
+                        row.getLong(2)
+                    }
+                }
+            }
+            open(lease).use { assertEquals(datasetId, it.datasetId) }
+            lease.openConnection().use { connection ->
+                assertFixedSystemProjectionCount(connection, 0)
+                assertEquals(preserved, preservedSystemChatRows(connection))
+                connection.createStatement().use { statement ->
+                    statement.executeQuery("SELECT applied_at FROM schema_migrations WHERE version = 6").use { row ->
+                        assertTrue(row.next()); assertEquals(receipt, row.getLong(1))
+                    }
+                }
+            }
+        }
+    }
+
+    /** 已有双方 Conversation 的系统私聊，以及不属于固定系统账号的服务身份。 */
+    private fun seedLegacySystemProjections(connection: Connection) {
+        connection.createStatement().use { statement ->
+            statement.execute("""
+                INSERT INTO users (uid, username, name, password_hash, role, created_at, updated_at) VALUES
+                ('kept-human', 'kept-human', 'kept human', 'fixture-only', 0, 11, 12),
+                ('sys_assistant', 'sys_assistant', 'assistant', 'fixture-only', 20, 11, 12),
+                ('sys_service', 'sys_service', 'service', 'fixture-only', 20, 11, 12),
+                ('kept-other-system', 'kept-other-system', 'other service', 'fixture-only', 20, 11, 12)
+            """.trimIndent())
+            statement.execute("""
+                INSERT INTO chats (chat_id, chat_type, max_seq, created_at, updated_at) VALUES
+                ('kept-assistant-chat', 1, 8, 11, 12), ('kept-service-chat', 1, 9, 11, 12),
+                ('kept-other-chat', 1, 1, 11, 12)
+            """.trimIndent())
+            statement.execute("""
+                INSERT INTO group_members (uid, chat_id, chat_type, joined_at) VALUES
+                ('kept-human', 'kept-assistant-chat', 1, 11), ('sys_assistant', 'kept-assistant-chat', 1, 11),
+                ('kept-human', 'kept-service-chat', 1, 11), ('sys_service', 'kept-service-chat', 1, 11),
+                ('kept-human', 'kept-other-chat', 1, 11), ('kept-other-system', 'kept-other-chat', 1, 11)
+            """.trimIndent())
+            statement.execute("""
+                INSERT INTO conversations (uid, chat_id, chat_type, last_msg_seq, draft, version, updated_at) VALUES
+                ('kept-human', 'kept-assistant-chat', 1, 8, 'kept draft', 17, 12),
+                ('kept-human', 'kept-service-chat', 1, 9, NULL, 18, 12),
+                ('kept-human', 'kept-other-chat', 1, 1, NULL, 1, 12),
+                ('sys_assistant', 'kept-assistant-chat', 1, 8, NULL, 17, 12),
+                ('sys_service', 'kept-service-chat', 1, 9, NULL, 18, 12),
+                ('kept-other-system', 'kept-other-chat', 1, 1, NULL, 1, 12)
+            """.trimIndent())
+            statement.execute("""
+                INSERT INTO conversation_usages (uid, conversation_count, draft_characters, updated_at) VALUES
+                ('kept-human', 3, 10, 12), ('sys_assistant', 1, 0, 12), ('sys_service', 1, 0, 12),
+                ('kept-other-system', 1, 0, 12)
+            """.trimIndent())
+            statement.execute("""
+                INSERT INTO chat_draft_assets (uid, chat_id, path)
+                VALUES ('kept-human', 'kept-assistant-chat', 'kept/attachment.txt')
+            """.trimIndent())
+        }
+    }
+
+    private fun assertFixedSystemProjectionCount(connection: Connection, expected: Int) {
+        listOf("conversations", "conversation_usages").forEach { table ->
+            connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT count(*) FROM $table WHERE uid IN ('sys_assistant', 'sys_service')").use { row ->
+                    assertTrue(row.next()); assertEquals(expected, row.getInt(1))
+                }
+            }
+        }
+    }
+
+    private fun preservedSystemChatRows(connection: Connection): Map<String, List<String>> =
+        listOf("users", "chats", "group_members", "chat_draft_assets", "conversations", "conversation_usages").associateWith { table ->
+            val filter = if (table == "conversations" || table == "conversation_usages") {
+                "WHERE uid NOT IN ('sys_assistant', 'sys_service')"
+            } else ""
+            connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT row_to_json(r)::text FROM $table r $filter ORDER BY row_to_json(r)::text").use { rows ->
+                    buildList { while (rows.next()) add(rows.getString(1)) }
+                }
+            }
+        }
+
+    @Test
     fun `v0_0_2 migration recreates dropped tables without changing the existing dataset or users`() {
         PostgresSchemaLease.open().use { lease ->
             val datasetId = open(lease).use { it.datasetId }

@@ -184,13 +184,15 @@ class ExposedChatRepository(
         systemUid: String,
     ): ChatCreation = inWriteTransaction(transaction) {
         require(systemUid in SystemAccountUids.ALL) { "未知的系统账号" }
-        // 锁人类行与系统行（系统行只查启用状态；role 由白名单约束，这里不重复检查）
+        // 双方身份与新聊天在同一事务内确认；固定系统身份不占用客户端会话容量。
         val rows = Users.selectAll().where { Users.uid inList listOf(uid, systemUid) }
             .orderBy(Users.uid, SortOrder.ASC)
             .forUpdate()
             .toList()
         require(rows.size == 2) { "用户不存在" }
         require(rows.all { it[Users.status] == 1 }) { "用户已停用" }
+        require(rows.single { it[Users.uid] == uid }[Users.role] == UserRole.HUMAN) { "只有人类用户可以创建系统私聊" }
+        check(rows.single { it[Users.uid] == systemUid }[Users.role] == UserRole.SYSTEM) { "固定系统账号身份异常" }
 
         val blocked = Friends.selectAll().where {
             (((Friends.uid eq uid) and (Friends.friendUid eq systemUid)) or
@@ -206,14 +208,14 @@ class ExposedChatRepository(
             return@inWriteTransaction ChatCreation(
                 chat = existing,
                 created = false,
-                recipientUids = listOf(uid, systemUid),
+                recipientUids = listOf(uid),
             )
         }
 
-        val usage = ConversationUsageLedger.lock(listOf(uid, systemUid))
+        val usage = ConversationUsageLedger.lock(listOf(uid))
         ConversationUsageLedger.apply(
             usage,
-            listOf(uid, systemUid).associateWith { conversationUsageDeltaForInsert() },
+            mapOf(uid to conversationUsageDeltaForInsert()),
         )
         val chatId = UUID.randomUUID().toString()
         val now = System.currentTimeMillis()
@@ -235,12 +237,12 @@ class ExposedChatRepository(
                 it[GroupMembers.status] = 1
                 it[GroupMembers.joinedAt] = now
             }
-            insertConversation(uid = memberUid, chatId = chatId, chatType = 1, now = now)
         }
+        insertConversation(uid = uid, chatId = chatId, chatType = 1, now = now)
         ChatCreation(
             chat = Chat(chatId = chatId, chatType = 1),
             created = true,
-            recipientUids = listOf(uid, systemUid),
+            recipientUids = listOf(uid),
         )
     }
 

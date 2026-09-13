@@ -3,6 +3,9 @@ package com.virjar.tk.shared.update
 import com.virjar.tk.protocol.http.ClientPayloadFile
 import com.virjar.tk.protocol.http.ClientReleaseInfo
 import com.virjar.tk.protocol.http.ClientReleaseManifest
+import com.virjar.tk.protocol.http.ClientUpdateCheckResponse
+import com.virjar.tk.protocol.http.ClientUpdateContracts
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import java.io.File
 import java.nio.file.Files
@@ -10,6 +13,7 @@ import java.security.MessageDigest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class DesktopUpdaterTest {
@@ -237,6 +241,83 @@ class DesktopUpdaterTest {
                 assertEquals("5", PayloadLayout.readCurrentPointer(fixture.root)!!.directory)
             }
         } finally { fixture.root.deleteRecursively() }
+    }
+
+    @Test
+    fun `会话仅安装用户确认的发布且保留当前通道检查`() = runTest {
+        val fixture = Fixture()
+        try {
+            val bytes = "app-v1".toByteArray()
+            val file = ClientPayloadFile("lib/app.jar", sha256(bytes), bytes.size.toLong(), null,
+                "/api/v1/client/files/${sha256(bytes)}")
+            val release = info("/manifest").copy(notes = "已确认的发行说明", totalBytes = 1_000_000)
+            val requests = mutableListOf<String>()
+            val http = object : UpdateHttpClient {
+                override suspend fun get(url: String): ByteArray {
+                    requests += url
+                    return when {
+                        url.startsWith("$server/api/v1/client/updates/check?") ->
+                            ClientUpdateContracts.json.encodeToString(ClientUpdateCheckResponse.serializer(),
+                                ClientUpdateCheckResponse(ClientUpdateContracts.STATUS_UPDATE_AVAILABLE, release)).toByteArray()
+                        url == "$server/manifest" ->
+                            ClientUpdateContracts.json.encodeToString(ClientReleaseManifest.serializer(),
+                                manifest(6, listOf(file))).toByteArray()
+                        else -> error("Unexpected download: $url")
+                    }
+                }
+            }
+            var applied = false
+            val session = DesktopUpdateSession(server, httpClient = http, context = fixture.context(), scope = this,
+                onUpdateApplied = { applied = true })
+            session.startCheck()
+            val offered = assertIs<DesktopUpdateUiState.Available>(session.state.first { it !is DesktopUpdateUiState.Checking })
+            assertEquals(release, offered.release)
+            session.startDownload()
+            // 尚未比对本地文件时，不把安装器大小当作增量下载大小。
+            assertEquals(DesktopUpdateUiState.Downloading(0, 0), session.state.value)
+            assertEquals(DesktopUpdateUiState.ReadyToRestart("0.0.3", 6),
+                session.state.first { it !is DesktopUpdateUiState.Downloading })
+            assertTrue(applied)
+            assertEquals(6, PayloadLayout.readCurrentPointer(fixture.root)!!.build)
+            assertEquals(2, requests.count { it.contains("/updates/check?") })
+            assertTrue(requests.filter { it.contains("/updates/check?") }.all { it.contains("channel=stable") })
+            assertEquals(3, requests.size, "本地已有相同 jar，无需再次下载")
+        } finally { fixture.root.deleteRecursively() }
+    }
+
+    @Test
+    fun `确认后发布切换或通道停用不下载也不切换指针`() = runTest {
+        val release = info("/manifest").copy(buildIdentity = "source-a")
+        val decisions = listOf(
+            ClientUpdateCheckResponse(ClientUpdateContracts.STATUS_UPDATE_AVAILABLE, release.copy(id = 7)),
+            ClientUpdateCheckResponse(ClientUpdateContracts.STATUS_UPDATE_AVAILABLE, release.copy(buildIdentity = "source-b")),
+            ClientUpdateCheckResponse(ClientUpdateContracts.STATUS_CHANNEL_DISABLED),
+            ClientUpdateCheckResponse(ClientUpdateContracts.STATUS_SHELL_UPDATE_REQUIRED, release),
+        )
+        for (nextDecision in decisions) {
+            val fixture = Fixture()
+            try {
+                var checks = 0
+                val http = object : UpdateHttpClient {
+                    override suspend fun get(url: String): ByteArray {
+                        check(url.startsWith("$server/api/v1/client/updates/check?")) { "Unexpected download: $url" }
+                        val decision = if (checks++ == 0)
+                            ClientUpdateCheckResponse(ClientUpdateContracts.STATUS_UPDATE_AVAILABLE, release)
+                        else nextDecision
+                        return ClientUpdateContracts.json.encodeToString(ClientUpdateCheckResponse.serializer(), decision).toByteArray()
+                    }
+                }
+                val session = DesktopUpdateSession(server, httpClient = http, context = fixture.context(), scope = this,
+                    onUpdateApplied = { error("必须保留当前安装") })
+                session.startCheck()
+                assertIs<DesktopUpdateUiState.Available>(session.state.first { it !is DesktopUpdateUiState.Checking })
+                session.startDownload()
+                val failure = assertIs<DesktopUpdateUiState.Failed>(session.state.first { it !is DesktopUpdateUiState.Downloading })
+                assertEquals("发布已变化，请重新检查更新", failure.message)
+                assertEquals(2, checks)
+                assertEquals("5", PayloadLayout.readCurrentPointer(fixture.root)!!.directory)
+            } finally { fixture.root.deleteRecursively() }
+        }
     }
 
     private fun assertFalseDir(file: File) {

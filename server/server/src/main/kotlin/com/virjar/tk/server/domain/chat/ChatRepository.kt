@@ -7,7 +7,7 @@ import com.virjar.tk.protocol.model.Member
 /**
  * 聊天元数据与管理型聊天查询的持久化端口。
  *
- * 聊天创建会原子地创建初始成员关系与会话行。调用方在本端口返回后绝不能重复这些投影。
+ * 聊天创建会原子地创建初始成员关系与客户端所有者的会话行。调用方在返回后绝不能重复这些投影。
  */
 interface ChatRepository {
     /**
@@ -22,8 +22,8 @@ interface ChatRepository {
 
     /**
      * 用户与固定系统账号（内测反馈 T058）的幂等私聊：uid 必须是人类，systemUid 必须在
-     * 白名单内（sys_assistant/sys_service）。锁定双方行（系统行只查 status 不查 role），
-     * 复用 personalChatKey 幂等身份与黑名单围栏。
+     * 白名单内（sys_assistant/sys_service）。锁定双方身份，复用 personalChatKey 幂等身份与
+     * 黑名单围栏。双方都是聊天成员；只有人类拥有 Conversation 和客户端同步事件。
      */
     fun getOrCreateSystemPersonalChat(
         transaction: PgWriteTransactionContext,

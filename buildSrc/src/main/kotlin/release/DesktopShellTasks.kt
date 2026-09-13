@@ -39,33 +39,29 @@ import kotlin.concurrent.withLock
  */
 object JbrRuntimes {
 
-    class Spec(val target: String, val url: String, val sha256: String)
+    class Spec(val url: String, val sha256: String)
 
-    fun load(propertiesFile: File): Map<String, Spec> {
+    fun load(propertiesFile: File): Map<DesktopTarget, Spec> {
         val props = Properties().apply {
             propertiesFile.inputStream().use { load(it) }
         }
         val base = props.getProperty("baseUrl").trimEnd('/')
-        return props.stringPropertyNames()
-            .filter { it.endsWith(".archive") }
-            .associate { key ->
-                val target = key.removeSuffix(".archive")
-                val archive = props.getProperty(key)
-                target to Spec(
-                    target = target,
-                    url = "$base/$archive",
-                    sha256 = props.getProperty("$target.sha256")
-                        ?: throw GradleException("jbr.properties misses sha256 for $target"),
-                )
-            }
+        return DesktopTarget.values().mapNotNull { target ->
+            val archive = props.getProperty("${target.key}.archive") ?: return@mapNotNull null
+            target to Spec(
+                url = "$base/$archive",
+                sha256 = props.getProperty("${target.key}.sha256")
+                    ?: throw GradleException("jbr.properties misses sha256 for ${target.key}"),
+            )
+        }.toMap()
     }
 
     fun toolRoot(): File = File(File(System.getProperty("user.home"), ".gradle"), "teamtalk-tools/jbr")
 
     /** 解压后的归档根（含 jbr/ 顶层目录）。 */
-    fun extractedRoot(target: String, propertiesFile: File): File {
+    fun extractedRoot(target: DesktopTarget, propertiesFile: File): File {
         val spec = load(propertiesFile).getValue(target)
-        return File(toolRoot(), "extracted/$target/${spec.sha256}")
+        return File(toolRoot(), "extracted/${target.key}/${spec.sha256}")
     }
 
     fun homeDir(extractedRoot: File): File {
@@ -89,19 +85,19 @@ object JbrRuntimes {
      * 幂等确保目标运行时可用：优先 TEAMTALK_JBR_DIR 离线目录（<dir>/<target>/ 即归档根），
      * 否则下载校验 sha256 后解压。返回归档根。
      */
-    fun ensure(target: String, propertiesFile: File, logger: Logger, offlineRoot: String? = null): File = downloadLock.withLock {
+    fun ensure(target: DesktopTarget, propertiesFile: File, logger: Logger, offlineRoot: String? = null): File = downloadLock.withLock {
         offlineRoot?.takeIf(String::isNotBlank)?.let {
-            val candidate = File(it, target)
-            val java = File(homeDir(candidate), if (target.startsWith("windows-")) "bin/java.exe" else "bin/java")
+            val candidate = File(it, target.key)
+            val java = File(homeDir(candidate), target.platform.javaExecutable)
             require(java.isFile) { "TEAMTALK_JBR_DIR is set but $candidate has no JBR java executable" }
             return candidate
         }
         val spec = load(propertiesFile)[target]
-            ?: throw GradleException("jbr.properties has no entry for target $target")
+            ?: throw GradleException("jbr.properties has no entry for target ${target.key}")
         val archives = File(toolRoot(), "archives").apply { mkdirs() }
         val archiveFile = File(archives, spec.url.substringAfterLast('/'))
         if (!archiveFile.isFile || sha256Hex(archiveFile) != spec.sha256) {
-            logger.lifecycle("Downloading JBR for {}: {}", target, spec.url)
+            logger.lifecycle("Downloading JBR for {}: {}", target.key, spec.url)
             val tmp = File(archives, archiveFile.name + ".tmp")
             try {
                 URI(spec.url).toURL().openConnection().apply {
@@ -112,7 +108,7 @@ object JbrRuntimes {
                 }
                 val actual = sha256Hex(tmp)
                 check(actual == spec.sha256) {
-                    "JBR archive checksum mismatch for $target: expected ${spec.sha256}, got $actual"
+                    "JBR archive checksum mismatch for ${target.key}: expected ${spec.sha256}, got $actual"
                 }
                 Files.move(tmp.toPath(), archiveFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
             } finally {
@@ -184,7 +180,7 @@ object JbrRuntimes {
 
 /** 下载并解压某个目标架构的 JBR 运行时（幂等，sha256 固定）。 */
 abstract class EnsureJbrTask : DefaultTask() {
-    @get:Input val target: Property<String> = project.objects.property(String::class.java)
+    @get:Input val target: Property<DesktopTarget> = project.objects.property(DesktopTarget::class.java)
 
     @get:InputFile val runtimeProperties: RegularFileProperty = project.objects.fileProperty()
     @get:Input @get:Optional val offlineRoot: Property<String> = project.objects.property(String::class.java)
@@ -308,9 +304,7 @@ abstract class AssembleDesktopPayloadTask : DefaultTask() {
  * - Linux：TeamTalk/{bin/teamtalk(脚本), runtime/, app/…, share/icons} → tar.gz（deb 独立任务）
  */
 abstract class AssembleDesktopShellTask : DefaultTask() {
-    @get:Input val platform: Property<String> = project.objects.property(String::class.java)
-    @get:Input val arch: Property<String> = project.objects.property(String::class.java)
-    @get:Input val targetKey: Property<String> = project.objects.property(String::class.java)
+    @get:Input val target: Property<DesktopTarget> = project.objects.property(DesktopTarget::class.java)
     @get:Input val version: Property<String> = project.objects.property(String::class.java)
     @get:Input val displayName: Property<String> = project.objects.property(String::class.java)
     @get:Input val appId: Property<String> = project.objects.property(String::class.java)
@@ -339,11 +333,10 @@ abstract class AssembleDesktopShellTask : DefaultTask() {
         // staging 保留为任务输出：NSIS/deb 安装器任务直接消费 staging/ 里的组装树。
         val staging = File(out, "staging")
         staging.mkdirs()
-        when (platform.get()) {
-            "macos" -> assembleMac(staging)
-            "windows" -> assembleWindows(staging)
-            "linux" -> assembleLinux(staging)
-            else -> throw GradleException("unknown platform ${platform.get()}")
+        when (target.get().platform) {
+            DesktopPlatform.MACOS -> assembleMac(staging)
+            DesktopPlatform.WINDOWS -> assembleWindows(staging)
+            DesktopPlatform.LINUX -> assembleLinux(staging)
         }
     }
 
@@ -372,7 +365,7 @@ abstract class AssembleDesktopShellTask : DefaultTask() {
         writePosixLauncher(File(app, "MacOS/$name"), "../runtime/Contents/Home/bin/java", "../app/bootstrap.jar",
             serverJvmOptions.get() + "-Xdock:name=${displayName.get()}")
         File(app, "Info.plist").writeText(macInfoPlist())
-        archiveZip(staging, "TeamTalk-${version.get()}-mac-${arch.get()}.zip", "$name.app")
+        archiveZip(staging, target.get().portableArchiveName(version.get()), "$name.app")
     }
 
     private fun assembleWindows(staging: File) {
@@ -406,7 +399,7 @@ abstract class AssembleDesktopShellTask : DefaultTask() {
             Categories=Network;InstantMessaging;
             """.trimIndent() + "\n",
         )
-        archiveTarGz(staging, "TeamTalk-${version.get()}-linux-${arch.get()}.tar.gz", name)
+        archiveTarGz(staging, target.get().portableArchiveName(version.get()), name)
     }
 
     private fun macInfoPlist(): String = """

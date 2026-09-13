@@ -93,6 +93,8 @@ TeamTalk.app/Contents/                 ~/.teamtalk-client/<appId>/versions/
   → **只下载变化文件** → 全量 sha256 校验（失败整体回退）→ 暂存落位 →
   `current.properties` 临时文件+rename 原子切换 → 提示重启。任意旧版本直达最新，
   无增量链维护。
+- 更新会话保留展示给用户的完整发布。点击更新时再次检查通道；目标已切换、被停用或改为需要新壳时，
+  要求重新检查，不会静默安装另一个发布。增量大小由本地文件比对得出，不使用包含安装器的发布总大小。
 - 重启复用应用正常退出入口，等待草稿与会话资源关闭；新壳等待旧 PID 退出后才启动，避免争抢单实例锁。
 - 新安装包的种子只在该种子首次出现时接管；后续启动保留应用内已更新的负载。相同构建号也不会删除运行目录。
 - 壳 ABI：bootstrap 带 `shellAbi`；负载 `minShellAbi` 更高时转 SHELL_UPDATE_REQUIRED
@@ -105,8 +107,10 @@ TeamTalk.app/Contents/                 ~/.teamtalk-client/<appId>/versions/
 tt-agent upgrade [--channel stable|preview|snapshot] [--server-url <url>] [--prefix <dir>]
 ```
 
-check → 全量 bundle 下载（核对内容地址 SHA-256 与包内 buildIdentity）→ 复用 `upgrade-bundle` 原子切换；
+当前包校验 → check → 全量 bundle 下载（核对内容地址 SHA-256 与包内 buildIdentity）→ 复用 `upgrade-bundle` 原子切换；
 默认跟随包内通道，`--channel` 可显式选择。systemd 场景重启服务后生效。`--server-url` 或 `TK_SERVER_URL` 必填之一。
+在线升级、离线安装和 doctor 使用同一 `BundleFacts` 清单解析；安装过程仍在复制后完整校验，
+复制得到的文件与首次校验事实不符时，保留原 `current`。旧包未记录通道时默认 `stable`。
 
 无头客户端默认从当前安装包读取通道。若将 snapshot/preview 包晋级后供 stable 更新，
 升级后的默认通道也会随包改变；需要固定订阅的脚本应每次显式传入 `--channel stable`。

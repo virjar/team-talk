@@ -30,19 +30,15 @@ class ReleasePipelineIntegrationTest {
         try {
             val shells = File(root, "shells")
             val payloads = File(root, "payloads")
-            ReleaseBundle.DESKTOP_TARGETS.forEach { key ->
+            DesktopTarget.values().forEach { target ->
+                val key = target.key
                 zip(File(payloads, "$key/payload.zip"), mapOf(
                     "payload.properties" to "version=0.0.2\nbuild=42\nminShellAbi=1\nbuildIdentity=${identity.buildIdentity}\n",
                     "lib/app.jar" to "application bytes for $key",
                 ))
-                val extension = if (key.startsWith("linux")) "tar.gz" else "zip"
+                val extension = if (target.platform == DesktopPlatform.LINUX) "tar.gz" else "zip"
                 File(shells, "$key/TeamTalk-$key.$extension").apply { parentFile.mkdirs(); writeText("shell") }
-                val installerExtension = when {
-                    key.startsWith("windows") -> "exe"
-                    key.startsWith("linux") -> "deb"
-                    else -> null
-                }
-                installerExtension?.let {
+                target.platform.installerExtension?.let {
                     File(shells, "$key/installer/TeamTalk-$key.$it").apply { parentFile.mkdirs(); writeText("installer") }
                     File(shells, "$key/installer/build-script.nsi").writeText("build input, not an installer")
                 }
@@ -119,6 +115,10 @@ class ReleasePipelineIntegrationTest {
             assertEquals(6, uploads.size)
             assertEquals(listOf("desktop", "desktop", "desktop", "desktop", "android", "headless"),
                 uploads.map { it.getValue("clientType").jsonPrimitive.content })
+            assertEquals(listOf("macos" to "aarch64", "macos" to "amd64", "windows" to "amd64", "linux" to "amd64"),
+                uploads.take(4).map {
+                    it.getValue("platform").jsonPrimitive.content to it.getValue("arch").jsonPrimitive.content
+                })
         } finally {
             server.stop(0)
             root.deleteRecursively()

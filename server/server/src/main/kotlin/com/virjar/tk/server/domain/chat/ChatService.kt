@@ -54,10 +54,9 @@ class ChatService(
         }
     }
 
-    /** 幂等取回当前用户的"保存的消息"私有会话；仅首次创建时向本人发 CHAT_CREATED。 */
     /**
      * 幂等取回（必要时创建）登录者与固定系统账号的私聊（内测反馈 T058）。
-     * 创建成功时向双方发出 CHAT_CREATED；系统账号不接受加好友/拉黑等人类关系动作。
+     * 创建成功时只向人类发出 CHAT_CREATED；固定系统账号没有客户端会话投影。
      */
     suspend fun getOrCreateSystemChat(uid: String, systemUid: String): Chat {
         require(systemUid in com.virjar.tk.server.domain.user.SystemAccountUids.ALL) {
@@ -74,6 +73,7 @@ class ChatService(
         }
     }
 
+    /** 幂等取回当前用户的"保存的消息"私有会话；仅首次创建时向本人发 CHAT_CREATED。 */
     suspend fun getOrCreateSavedChat(uid: String): Chat = unitOfWork.write {
         val creation = chatStore.getOrCreateSavedChat(transaction, uid)
         if (creation.created) {

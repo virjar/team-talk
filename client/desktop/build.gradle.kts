@@ -1,6 +1,8 @@
 import java.util.Base64
 import org.gradle.internal.os.OperatingSystem
 import deployment.DeploymentConfig
+import release.DesktopPlatform
+import release.DesktopTarget
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
@@ -259,17 +261,12 @@ kotlin {
 // 四个交叉目标只决定平台工件；共同依赖版本以实际应用 runtime 的解析结果为准。
 // 独立解析后直接拼接会同时带入多个 coroutines / serialization 版本。
 val desktopRuntime = configurations.getByName("desktopRuntimeClasspath")
-listOf("linuxAmd64", "macAmd64", "macAarch64", "windowsAmd64").forEach { name ->
-    configurations.maybeCreate(name).apply {
+DesktopTarget.values().forEach { target ->
+    configurations.maybeCreate(target.configurationName).apply {
         isCanBeConsumed = false
         shouldResolveConsistentlyWith(desktopRuntime)
     }
-}
-dependencies {
-    add("linuxAmd64", "org.jetbrains.compose.desktop:desktop-jvm-linux-x64:${libs.versions.compose.asProvider().get()}")
-    add("macAmd64", "org.jetbrains.compose.desktop:desktop-jvm-macos-x64:${libs.versions.compose.asProvider().get()}")
-    add("macAarch64", "org.jetbrains.compose.desktop:desktop-jvm-macos-arm64:${libs.versions.compose.asProvider().get()}")
-    add("windowsAmd64", "org.jetbrains.compose.desktop:desktop-jvm-windows-x64:${libs.versions.compose.asProvider().get()}")
+    dependencies.add(target.configurationName, target.composeDependency(libs.versions.compose.asProvider().get()))
 }
 
 // Keep ordinary Desktop builds and cross-platform packaging on the audited resource set.
@@ -417,28 +414,10 @@ val desktopHostOsConfiguration = configurations.detachedConfiguration(
     shouldResolveConsistentlyWith(desktopRuntime)
 }
 
-data class DesktopShellTarget(
-    val key: String,
-    val platform: String,
-    val arch: String,
-    val configurationName: String,
-)
-
-val desktopShellTargets = listOf(
-    DesktopShellTarget("macos-aarch64", "macos", "aarch64", "macAarch64"),
-    DesktopShellTarget("macos-amd64", "macos", "amd64", "macAmd64"),
-    DesktopShellTarget("windows-amd64", "windows", "amd64", "windowsAmd64"),
-    DesktopShellTarget("linux-amd64", "linux", "amd64", "linuxAmd64"),
-)
-
 // 以 detachedConfiguration 惰性引用 bootstrap 产物，避免跨项目任务过早解析。
 val bootstrapJarConfiguration = configurations.detachedConfiguration(
     dependencies.create(project(":client:desktop-bootstrap")),
 )
-
-fun camelCase(text: String): String =
-    text.split('-', '_', ' ').filter(String::isNotBlank)
-        .joinToString("") { it.replaceFirstChar { char -> char.uppercase() } }
 
 // 部署身份烧进首装包 JVM 参数（原 jpackage nativeDistributions.jvmArgs 的等价物；
 // 运行时 ServerConfig.defaultServerConfig() 读这些系统属性）。
@@ -457,27 +436,28 @@ val pruneDesktopIcons = tasks.register<release.PruneDesktopMaterialIconsTask>("p
     group = "distribution"
     description = "Rewrite material-icons-extended into the referenced-classes subset"
     payloadJars.from(tasks.named("desktopJar"), desktopPayloadBase)
-    payloadJars.from(configurations.named("macAarch64"), configurations.named("macAmd64"),
-        configurations.named("windowsAmd64"), configurations.named("linuxAmd64"))
+    payloadJars.from(DesktopTarget.values().map { configurations.named(it.configurationName) })
     subsetDirectory.set(layout.buildDirectory.dir("desktop-payload/icons-subset"))
 }
 
-desktopShellTargets.forEach { target ->
-    val suffix = camelCase(target.key)
+val desktopShellArtifacts = mutableListOf<TaskProvider<out Task>>()
+val desktopWindowsInstallers = mutableListOf<TaskProvider<out Task>>()
+DesktopTarget.values().forEach { desktopTarget ->
+    val suffix = desktopTarget.taskSuffix
     // lambda 接收者会遮蔽脚本级同名 val；先取局部别名避免任务属性自引用。
     val shellBuildIdentity = buildIdentity
     val ensureJbr = tasks.register<release.EnsureJbrTask>("ensureJbr$suffix") {
         group = "distribution"
-        description = "Download and extract the pinned JBR runtime for ${target.key}"
-        this.target.set(target.key)
+        description = "Download and extract the pinned JBR runtime for ${desktopTarget.key}"
+        target.set(desktopTarget)
         val jbrProperties = rootProject.layout.projectDirectory.file("gradle/jbr.properties")
         runtimeProperties.set(jbrProperties)
         offlineRoot.set(providers.environmentVariable("TEAMTALK_JBR_DIR").filter(String::isNotBlank))
         // 缓存解压根与离线根路径一致（离线时直接采用）；任务内校验最终一致。
         extractedRoot.set(
             project.layout.dir(
-                offlineRoot.map { File(it, target.key) }.orElse(
-                    providers.provider { release.JbrRuntimes.extractedRoot(target.key, jbrProperties.asFile) },
+                offlineRoot.map { File(it, desktopTarget.key) }.orElse(
+                    providers.provider { release.JbrRuntimes.extractedRoot(desktopTarget, jbrProperties.asFile) },
                 ),
             ),
         )
@@ -485,8 +465,8 @@ desktopShellTargets.forEach { target ->
 
     val payloadTask = tasks.register<release.AssembleDesktopPayloadTask>("assembleDesktopPayload$suffix") {
         group = "distribution"
-        description = "Assemble the file-level payload manifest and seed zip for ${target.key}"
-        targetKey.set(target.key)
+        description = "Assemble the file-level payload manifest and seed zip for ${desktopTarget.key}"
+        targetKey.set(desktopTarget.key)
         version.set(releaseVersion)
         buildNumber.set(desktopShellBuildNumber)
         this.buildIdentity.set(shellBuildIdentity)
@@ -495,9 +475,9 @@ desktopShellTargets.forEach { target ->
         jarFiles.from(tasks.named("desktopJar"))
         jarFiles.from(desktopPayloadBase.minus(desktopIconsOriginal))
         jarFiles.from(pruneDesktopIcons.flatMap { it.subsetDirectory.file("material-icons-extended-desktop.jar") })
-        jarFiles.from(configurations.named(target.configurationName))
-        if (target.platform == "macos") {
-            val resource = if (target.arch == "aarch64") {
+        jarFiles.from(configurations.named(desktopTarget.configurationName))
+        if (desktopTarget.platform == DesktopPlatform.MACOS) {
+            val resource = if (desktopTarget.arch == "aarch64") {
                 "darwin-aarch64/libNativeVideoPlayer.dylib"
             } else {
                 "darwin-x86-64/libNativeVideoPlayer.dylib"
@@ -506,17 +486,15 @@ desktopShellTargets.forEach { target ->
             overlayFiles.from(override)
             overlayPaths.put(override.name, "composemediaplayer/native/$resource")
         }
-        payloadDir.set(layout.buildDirectory.dir("desktop-payload/${target.key}/payload"))
-        payloadZip.set(layout.buildDirectory.file("desktop-payload/${target.key}/payload.zip"))
+        payloadDir.set(layout.buildDirectory.dir("desktop-payload/${desktopTarget.key}/payload"))
+        payloadZip.set(layout.buildDirectory.file("desktop-payload/${desktopTarget.key}/payload.zip"))
         dependsOn(tasks.named("desktopJar"))
     }
 
     val shellTask = tasks.register<release.AssembleDesktopShellTask>("assembleDesktopShell$suffix") {
         group = "distribution"
-        description = "Assemble the ${target.key} desktop shell (JBR + launcher + bootstrap + seed payload)"
-        platform.set(target.platform)
-        arch.set(target.arch)
-        targetKey.set(target.key)
+        description = "Assemble the ${desktopTarget.key} desktop shell (JBR + launcher + bootstrap + seed payload)"
+        target.set(desktopTarget)
         version.set(releaseVersion)
         displayName.set(clientIdentity.displayName)
         installationName.set(clientIdentity.desktopName)
@@ -526,22 +504,17 @@ desktopShellTargets.forEach { target ->
         jbrExtractedRoot.set(ensureJbr.flatMap { it.extractedRoot })
         bootstrapJar.from(bootstrapJarConfiguration)
         seedPayloadZip.set(payloadTask.flatMap { it.payloadZip })
-        iconFile.set(
-            when (target.platform) {
-                "macos" -> desktopIconDir.file("TeamTalk.icns")
-                "windows" -> desktopIconDir.file("TeamTalk.ico")
-                else -> desktopIconDir.file("TeamTalk-256.png")
-            },
-        )
-        outputDir.set(layout.buildDirectory.dir("desktop-shell/${target.key}"))
+        iconFile.set(desktopIconDir.file(desktopTarget.platform.iconName))
+        outputDir.set(layout.buildDirectory.dir("desktop-shell/${desktopTarget.key}"))
         dependsOn(ensureJbr, payloadTask, bootstrapJarConfiguration)
     }
 
-    if (target.platform == "windows") {
+    desktopShellArtifacts += shellTask
+    if (desktopTarget.platform == DesktopPlatform.WINDOWS) {
         // exe：launch4j 把 bootstrap jar 包裹进 GUI exe（jar 已带 Main-Class 清单）。
         val createExe = tasks.register<release.BuildWindowsExeTask>("wrapWindowsBootstrap$suffix") {
             group = "distribution"
-            description = "Wrap the bootstrap jar into TeamTalk.exe for ${target.key}"
+            description = "Wrap the bootstrap jar into TeamTalk.exe for ${desktopTarget.key}"
             dependsOn(shellTask, bootstrapJarConfiguration)
             bootstrapJar.from(bootstrapJarConfiguration)
             iconFile.set(desktopIconDir.file("TeamTalk.ico"))
@@ -551,36 +524,36 @@ desktopShellTargets.forEach { target ->
             jvmOptions.set(desktopDeploymentJvmOptions)
             exeFile.set(shellTask.flatMap { it.outputDir.file("staging/${clientIdentity.desktopName}/${clientIdentity.desktopName}.exe") })
         }
-        tasks.register<release.ZipDirectoryTask>("packageWindowsPortable$suffix") {
+        desktopShellArtifacts += tasks.register<release.ZipDirectoryTask>("packageWindowsPortable$suffix") {
             group = "distribution"
-            description = "Archive the ${target.key} portable directory into a zip"
+            description = "Archive the ${desktopTarget.key} portable directory into a zip"
             dependsOn(createExe)
-            archiveName.set("TeamTalk-${releaseVersion}-windows-${target.arch}-portable.zip")
+            archiveName.set(desktopTarget.portableArchiveName(releaseVersion))
             contentRoot.set(shellTask.flatMap { it.outputDir.dir("staging") })
             entryName.set(clientIdentity.desktopName)
-            archiveFile.set(layout.buildDirectory.file("desktop-shell/${target.key}/TeamTalk-${releaseVersion}-windows-${target.arch}-portable.zip"))
+            archiveFile.set(layout.buildDirectory.file("desktop-shell/${desktopTarget.key}/${desktopTarget.portableArchiveName(releaseVersion)}"))
         }
-        tasks.register<release.BuildWindowsInstallerTask>("buildWindowsInstaller$suffix") {
+        desktopWindowsInstallers += tasks.register<release.BuildWindowsInstallerTask>("buildWindowsInstaller$suffix") {
             group = "distribution"
-            description = "Build the NSIS setup.exe for ${target.key} (requires makensis on PATH)"
+            description = "Build the NSIS setup.exe for ${desktopTarget.key} (requires makensis on PATH)"
             version.set(releaseVersion)
             displayName.set(clientIdentity.displayName)
             installationName.set(clientIdentity.desktopName)
             stagingRoot.set(shellTask.flatMap { it.outputDir.dir("staging") })
-            outputDir.set(layout.buildDirectory.dir("desktop-shell/${target.key}/installer"))
+            outputDir.set(layout.buildDirectory.dir("desktop-shell/${desktopTarget.key}/installer"))
             dependsOn(createExe)
         }
     }
-    if (target.platform == "linux") {
-        tasks.register<release.BuildLinuxDebTask>("buildLinuxDeb$suffix") {
+    if (desktopTarget.platform == DesktopPlatform.LINUX) {
+        desktopShellArtifacts += tasks.register<release.BuildLinuxDebTask>("buildLinuxDeb$suffix") {
             group = "distribution"
-            description = "Build the .deb package for ${target.key}"
+            description = "Build the .deb package for ${desktopTarget.key}"
             version.set(releaseVersion)
-            arch.set(target.arch)
+            arch.set(desktopTarget.arch)
             installationName.set(clientIdentity.desktopName)
             buildNumber.set(desktopShellBuildNumber)
             stagingRoot.set(shellTask.flatMap { it.outputDir.dir("staging") })
-            outputDir.set(layout.buildDirectory.dir("desktop-shell/${target.key}/installer"))
+            outputDir.set(layout.buildDirectory.dir("desktop-shell/${desktopTarget.key}/installer"))
             dependsOn(shellTask)
         }
     }
@@ -593,14 +566,8 @@ tasks.register("assembleDesktopShells") {
     group = "distribution"
     description = "Assemble every desktop shell artifact for all platform/arch targets"
     val skipInstaller = providers.gradleProperty("teamtalk.skipWindowsInstaller").map(String::toBoolean).orElse(false)
-    dependsOn(
-        "assembleDesktopShellMacosAarch64", "assembleDesktopShellMacosAmd64",
-        "assembleDesktopShellWindowsAmd64", "assembleDesktopShellLinuxAmd64",
-        "packageWindowsPortableWindowsAmd64", "buildLinuxDebLinuxAmd64",
-        "assembleDesktopPayloadMacosAarch64", "assembleDesktopPayloadMacosAmd64",
-        "assembleDesktopPayloadWindowsAmd64", "assembleDesktopPayloadLinuxAmd64",
-    )
+    dependsOn(desktopShellArtifacts)
     if (!skipInstaller.get()) {
-        dependsOn("buildWindowsInstallerWindowsAmd64")
+        dependsOn(desktopWindowsInstallers)
     }
 }

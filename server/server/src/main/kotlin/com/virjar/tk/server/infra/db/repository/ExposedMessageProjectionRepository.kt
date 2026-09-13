@@ -6,6 +6,7 @@ import com.virjar.tk.server.domain.message.MessageProjectionOperation
 import com.virjar.tk.server.domain.message.MessageProjectionRecipient
 import com.virjar.tk.server.domain.message.MessageProjectionRepository
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
+import com.virjar.tk.server.domain.user.SystemAccountUids
 import com.virjar.tk.protocol.model.MentionPolicy
 import com.virjar.tk.server.infra.db.Chats
 import com.virjar.tk.server.infra.db.Conversations
@@ -75,10 +76,12 @@ class ExposedMessageProjectionRepository : MessageProjectionRepository {
 
         val requestedRecipients = operation.target.recipientUids
         require(requestedRecipients.isNotEmpty()) { "Message projection recipient snapshot is empty" }
+        // 固定系统账号保留成员与消息身份，但没有客户端投影或同步消费者。
+        // 原 Rocks 快照与回执哈希保持不变，升级前挂起的操作也按此所有权恢复。
         val activeRecipients = lockActiveRecipients(
             exposedTransaction,
             operation.message.chatId,
-            requestedRecipients,
+            requestedRecipients.filterNot { it in SystemAccountUids.ALL },
         )
         val conversationEventUids = when (operation.operation) {
             MessageOperationType.CREATE -> {

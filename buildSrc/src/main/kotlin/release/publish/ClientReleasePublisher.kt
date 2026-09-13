@@ -2,6 +2,7 @@ package release.publish
 
 import kotlinx.serialization.json.put
 import release.BundleIdentity
+import release.DesktopTarget
 import release.HeadlessDistribution
 import release.ReleaseBundle
 import java.io.File
@@ -45,13 +46,15 @@ class ClientReleasePublisher(
         val uploaded = mutableListOf<String>()
         try {
             // ── 桌面四目标 ──
-            ReleaseBundle.DESKTOP_TARGETS.forEach { key ->
-                val (platform, arch) = key.split("-")
+            DesktopTarget.values().forEach { target ->
+                val key = target.key
+                val platform = target.platform.id
+                val arch = target.arch
                 val desktopDir = File(bundle, "desktop/$key")
                 val payloadZip = File(desktopDir, "payload.zip")
                 val minShellAbi = payloadMinShellAbi(payloadZip)
                 val installers = ReleaseBundle.desktopInstallers(desktopDir)
-                    .map { it.name to installerLabel(platform, arch, it.name) }
+                    .map { it.name to installerLabel(target, it.name) }
                 val upload = File(staging, "$key.zip")
                 buildUploadZip(upload) { writer ->
                     writer.entry("release.json", metadataJson(channel, identity, UploadTarget(
@@ -181,12 +184,11 @@ class ClientReleasePublisher(
         }
     }
 
-    private fun installerLabel(platform: String, arch: String, filename: String): String = when {
-        platform == "macos" -> if (arch == "aarch64") "macOS（Apple 芯片）" else "macOS（Intel 芯片）"
-        platform == "windows" && filename.endsWith("-setup.exe") -> "Windows 安装器（64 位）"
-        platform == "windows" -> "Windows 便携版"
-        platform == "linux" && filename.endsWith(".deb") -> "Linux 安装包（deb）"
-        else -> "Linux 便携版（tar.gz）"
+    private fun installerLabel(target: DesktopTarget, filename: String): String = when (target) {
+        DesktopTarget.MACOS_AARCH64 -> "macOS（Apple 芯片）"
+        DesktopTarget.MACOS_AMD64 -> "macOS（Intel 芯片）"
+        DesktopTarget.WINDOWS_AMD64 -> if (filename.endsWith("-setup.exe")) "Windows 安装器（64 位）" else "Windows 便携版"
+        DesktopTarget.LINUX_AMD64 -> if (filename.endsWith(".deb")) "Linux 安装包（deb）" else "Linux 便携版（tar.gz）"
     }
 
     private fun upload(uploadZip: File, label: String): String {

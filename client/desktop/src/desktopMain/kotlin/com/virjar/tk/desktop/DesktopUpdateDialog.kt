@@ -69,10 +69,10 @@ internal fun DesktopUpdateDialog(
 
                     is DesktopUpdateUiState.Available -> {
                         Text(
-                            "发现新版本 v${s.version}（build ${s.build}）",
+                            "发现新版本 v${s.release.version}（build ${s.release.build}）",
                             style = MaterialTheme.typography.titleSmall,
                         )
-                        val updateNotes = s.notes
+                        val updateNotes = s.release.notes
                         if (!updateNotes.isNullOrBlank()) {
                             Spacer(Modifier.height(8.dp))
                             Text(

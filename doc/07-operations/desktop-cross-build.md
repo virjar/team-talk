@@ -16,6 +16,8 @@ Desktop 由仓库内的 Gradle 任务组装 JBR、bootstrap 和应用负载，�
 
 每个目标另外生成一个 `payload.zip`，供 bootstrap 首次安装及发布注册中心的文件级更新使用。
 首装包包含运行时、启动器与种子负载；单独下载 `payload.zip` 不能替代首装包。
+目标定义集中在 `buildSrc` 的 `release.DesktopTarget`：Gradle 配置、Compose 平台工件、JBR 查询、
+壳组装、密封校验和上传使用同一目标，不再分别维护字符串列表或从目录名反推平台。
 
 ```mermaid
 flowchart TD

@@ -63,6 +63,12 @@ private val schemaMigrations = listOf(
         exec("DROP INDEX IF EXISTS uq_client_release_identity")
         exec("CREATE UNIQUE INDEX uq_client_release_identity ON client_release (client_type, platform, arch, version, build, build_identity)")
     },
+    SchemaMigration("remove_fixed_system_conversation_projections") {
+        // 固定系统身份只参与聊天和消息，不拥有客户端列表。只清理这两名所有者的派生行，
+        // 保留人类 Conversation、成员、消息、附件和既有同步记录；与迁移收据原子提交。
+        exec("DELETE FROM conversations WHERE uid IN ('sys_assistant', 'sys_service')")
+        exec("DELETE FROM conversation_usages WHERE uid IN ('sys_assistant', 'sys_service')")
+    },
 )
 
 /** Caller owns the schema_metadata lock; DDL and its completion receipt commit in the same transaction. */

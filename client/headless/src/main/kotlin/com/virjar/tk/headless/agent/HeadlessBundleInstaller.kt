@@ -25,12 +25,12 @@ object HeadlessBundleInstaller {
         val protocolMinor: Int,
         val minimumJavaVersion: Int,
         val checksumSha256: String,
+        val channel: String = "stable",
     )
     data class Result(val command: String, val prefix: File, val bundle: BundleFacts?)
 
     fun execute(command: String, args: List<String>, currentBundle: File?): Result {
         require(command in setOf("install-bundle", "upgrade-bundle", "uninstall-bundle")) { "Unknown bundle command" }
-        require(!System.getProperty("os.name").startsWith("Windows", true)) { "Bundle installation requires a POSIX system" }
         require(args.size == 2 && args[0] == "--prefix" && args[1].isNotBlank()) { "Usage: $command --prefix <dedicated-directory>" }
         val prefix = installPrefix(File(args[1]).toPath())
         val source = if (command == "uninstall-bundle") null else verifyBundle(requireNotNull(currentBundle) {
@@ -41,6 +41,14 @@ object HeadlessBundleInstaller {
                 "Run uninstall-bundle from an external extracted distribution; this process is using the installation"
             }
         }
+        return manageInstallation(command, prefix, source)
+    }
+
+    /** Online upgrades already verified the downloaded bundle and matched it to the selected release. */
+    internal fun upgrade(prefix: File, source: BundleFacts): Result =
+        manageInstallation("upgrade-bundle", installPrefix(prefix.toPath()), source)
+
+    private fun manageInstallation(command: String, prefix: Path, source: BundleFacts?): Result {
         if (!Files.exists(prefix, NOFOLLOW_LINKS)) {
             require(command == "install-bundle") { "No headless installation exists at this prefix" }
             Files.createDirectory(prefix, PosixFilePermissions.asFileAttribute(PRIVATE_DIRECTORY))
@@ -113,7 +121,8 @@ object HeadlessBundleInstaller {
         val major = property("protocolMajor").toIntOrNull()?.takeIf { it >= 0 } ?: error("Invalid protocol major")
         val minor = property("protocolMinor").toIntOrNull()?.takeIf { it >= 0 } ?: error("Invalid protocol minor")
         val java = property("minimumJavaVersion").toIntOrNull()?.takeIf { it >= 21 } ?: error("Invalid minimum Java version")
-        return BundleFacts(root.toRealPath().toFile(), version, identity, build, major, minor, java, digest(checksums))
+        return BundleFacts(root.toRealPath().toFile(), version, identity, build, major, minor, java, digest(checksums),
+            properties.getProperty("channel") ?: "stable")
     }
 
     /** Resolves a verified managed installation for a stable service launcher; unpacked bundles return null. */
@@ -243,6 +252,7 @@ object HeadlessBundleInstaller {
     }
 
     private fun installPrefix(requested: Path): Path {
+        require(!System.getProperty("os.name").startsWith("Windows", true)) { "Bundle installation requires a POSIX system" }
         val absolute = requested.toAbsolutePath().normalize()
         val parent = requireNotNull(absolute.parent) { "Filesystem root cannot be an installation prefix" }
         require(Files.isDirectory(parent)) { "Installation parent directory must already exist" }

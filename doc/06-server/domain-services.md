@@ -448,48 +448,50 @@ STARTED，结束后补结果与固定失败分类。详细边界及恢复配置�
 不扩展已冻结的 `OfficeRefBody`。低版本 RPC 消息读取转换为保留消息坐标的富文本占位，完整规则见
 [消息与附件](../04-protocol/messages-and-attachments.md)。
 
-## 14. 系统账号（T039 设计稿，未实施）
-
-目标：把"保存的消息 / 文件传输助手 / 服务号"统一成 **SYSTEM 身份的对端实体**，让它们拥有固定
-uid、用户主页与真实会话，而不是散落客户端的特判 UI。本节是设计稿，实施前需产品确认范围。
+## 14. 系统账号
 
 ### 账号模型
 
-UserService 引导时幂等 upsert 三个固定 uid 的 `UserRole.SYSTEM` 账号：
+`SystemAccountUids` 定义两个固定账号。服务器启动时由 `UserService.ensureSystemAccounts` 幂等创建
+缺失的账号，写入 `UserRole.SYSTEM`、不可登录凭据标记和展示名；已存在的账号原样保留。
 
 | uid | 展示名 | 用途 |
 |---|---|---|
-| `sys_saved` | 保存的消息 | 已由 `ChatType.SAVED` 承载，不动 |
-| `sys_assistant` | 文件传输助手 | 跨设备中转：手机发到电脑继续编辑 |
-| `sys_service` | 服务号 | 文本指令快捷操作（`/help` 起步，指令表可扩展） |
+| `sys_assistant` | 文件传输助手 | 同一用户跨设备传递消息和文件 |
+| `sys_service` | 服务号 | 处理文本指令并回复帮助 |
 
-与 BOT 同一安全基线：不可登录 credential marker、登录策略已拒绝 SYSTEM（见第 1 节）、不进通讯录、
-不可被搜索、不参与组织树、无隐藏额度差异。展示名与图标由客户端按 uid 白名单内置，服务端不存
-样式。
+“保存的消息”继续使用既有 `ChatType.SAVED` 私有会话，由 `getOrCreateSavedChat` 管理，没有
+`sys_saved` 账号。系统账号不作为人类好友申请对象，也不进入人类用户搜索。
 
-### 会话模型
+### 成员身份与会话投影
 
-`sys_assistant` / `sys_service` 与每个用户的会话复用 **PERSONAL 会话**（对端是 SYSTEM 账号），
-不新增 ChatType：消息链路、会话投影、草稿、已读、搜索全部零改造；对端 role 可从用户投影直接
-读到。创建时机是注册后惰性（首次登录或首次使用触发），随 Conversation 同步自然下发，存量用户
-无需迁移。客户端对 SYSTEM 对端的特判只有展示层：资料卡显示系统标识与能力说明，禁止好友删除/
-拉黑/举报等人类关系动作。
+`ChatService.getOrCreateSystemChat` 接受固定 uid 白名单，在同一 PostgreSQL 事务中确认当前人类
+用户与系统账号的状态，幂等取回或创建双方的 `PERSONAL` 聊天。双方保留真实成员身份，系统账号可
+作为消息对端和服务号回复的发送者。图形客户端在登录后调用该入口拉起系统聊天，已存在时不重复发出
+`CHAT_CREATED`。
 
-### 服务号指令路由
+`Conversation` 是供用户客户端列表与同步使用的投影，不等同于聊天成员。固定系统账号没有客户端
+消费者，因此创建系统聊天时只为人类用户建立 Conversation、计入其会话用量并发送创建事件；消息
+投影同样排除这两个系统 uid，避免重建系统账号的 Conversation 和用量。消息操作中已记录的成员与
+收件人快照保持原样，不改写既有消息操作身份。
 
-sys_service 收到消息后由服务端内联处理器消费（窄端口依赖 ChatService/MessageService，同 Bot
-第 10 节的模式，不持有完整领域服务）。指令是普通文本消息以 `/` 开头；未识别指令回退帮助文本。
-指令处理器与消息发送同事务边界外的异步路径，回复消息走正常发送链路（幂等 clientMsgId 由
-`指令消息 clientMsgId + 指令名` 派生）。
+启动迁移 `remove_fixed_system_conversation_projections` 只删除 `sys_assistant`、`sys_service`
+所属的 `conversations` 与 `conversation_usages` 派生行，并与迁移收据原子提交。人类会话、聊天成员、
+消息、附件和既有同步记录均保留；升级前尚未完成的消息投影恢复也遵循同一投影归属规则。
 
-### 协议与兼容
+### 服务号指令与运行时
 
-无 wire 变更：`UserRole.SYSTEM` 已存在，会话是普通 PERSONAL。协议 minor 不推进。客户端旧版本
-看到的是"一个叫文件传输助手的普通用户"，功能退化但不报错。
+`MessageService` 在原消息提交后经 `SystemCommandHandler` 派发服务号文本消息。
+`SystemCommandRouter` 处理 `/help`，未知指令和普通文本返回帮助；回复以 `sys_service` 身份走正常
+消息发送链路。Router 的协程 scope 由 Application 运行时持有，关闭时取消并等待回复任务退出，
+不由领域服务另建后台任务。回复身份和关闭顺序见[服务端运行时](../03-architecture/server-runtime.md#2-启动顺序)。
 
-### 验收场景
+原消息成功 ACK 不等待服务号回复。回复自身使用稳定消息 ID，但进程退出或回复失败后没有持久恢复
+与重试保证，不能将原消息 ACK 解释为回复已完成。
 
-1. 新账号注册后出现 sys_assistant/sys_service 会话，头像/名/资料卡带系统标识。
-2. 手机发送文件到文件传输助手，桌面端同账号可下载。
-3. 向服务号发送 `/help` 收到指令列表；未识别指令得到回退帮助。
-4. 通讯录搜索不出现系统账号；对系统会话无删除好友入口。
+### 协议边界
+
+系统对端复用 `UserRole.SYSTEM` 和 `PERSONAL` 聊天类型，但创建入口
+`chat.getOrCreateSystemChat` 是待发行 minor 3 的 RPC。其可调用性遵循协议协商，不能以复用既有
+类型推导旧客户端或旧服务端已支持完整系统会话流程；契约以[协议版本规则](../04-protocol/versioning.md)和
+当前 `ChatRpc` 定义为准。

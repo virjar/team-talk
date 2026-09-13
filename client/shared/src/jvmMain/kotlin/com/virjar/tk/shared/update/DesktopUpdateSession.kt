@@ -1,6 +1,6 @@
 package com.virjar.tk.shared.update
 
-import com.virjar.tk.protocol.http.ClientUpdateContracts
+import com.virjar.tk.protocol.http.ClientReleaseInfo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -20,14 +20,8 @@ sealed class DesktopUpdateUiState {
     data object UpToDate : DesktopUpdateUiState()
     data object NotManaged : DesktopUpdateUiState()
     data class Available(
-        val version: String,
-        val build: Long,
-        val notes: String?,
-        val forced: Boolean,
-        val fileCount: Int,
-        val totalBytes: Long,
+        val release: ClientReleaseInfo,
         val shellUpdateRequired: Boolean,
-        val installerUrl: String?,
     ) : DesktopUpdateUiState()
 
     data class Downloading(val completedBytes: Long, val totalBytes: Long) : DesktopUpdateUiState()
@@ -37,7 +31,7 @@ sealed class DesktopUpdateUiState {
 
 class DesktopUpdateSession(
     private val serverBaseUrl: String,
-    private val channel: String? = null,
+    channel: String? = null,
     private val onUpdateApplied: () -> Unit = {},
     private val onExitForRestart: (() -> Unit)? = null,
     httpClient: UpdateHttpClient = JdkUpdateHttpClient,
@@ -62,8 +56,10 @@ class DesktopUpdateSession(
                 when (val outcome = updater.check(serverBaseUrl, updateChannel)) {
                     DesktopUpdater.CheckOutcome.UpToDate -> _state.value = DesktopUpdateUiState.UpToDate
                     DesktopUpdater.CheckOutcome.ChannelDisabled -> _state.value = DesktopUpdateUiState.UpToDate
-                    is DesktopUpdater.CheckOutcome.ShellUpdateRequired -> _state.value = available(outcome.release, true)
-                    is DesktopUpdater.CheckOutcome.UpdateAvailable -> _state.value = available(outcome.release, false)
+                    is DesktopUpdater.CheckOutcome.ShellUpdateRequired ->
+                        _state.value = DesktopUpdateUiState.Available(outcome.release, true)
+                    is DesktopUpdater.CheckOutcome.UpdateAvailable ->
+                        _state.value = DesktopUpdateUiState.Available(outcome.release, false)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -74,17 +70,21 @@ class DesktopUpdateSession(
     }
 
     fun startDownload() {
-        val current = _state.value
-        val availableState = current as? DesktopUpdateUiState.Available ?: return
+        val availableState = _state.value as? DesktopUpdateUiState.Available ?: return
         if (updater == null || availableState.shellUpdateRequired) return
         job?.cancel()
-        _state.value = DesktopUpdateUiState.Downloading(0, availableState.totalBytes)
+        // 增量大小由清单与本地文件 diff 得出，发布的 totalBytes 还包含全量安装器。
+        _state.value = DesktopUpdateUiState.Downloading(0, 0)
         job = scope.launch {
             try {
-                // Available 状态里只带摘要；重新 check 拿完整 release（含 manifestUrl）。
+                // 下载前重查通道停用/切换，但只能安装用户刚确认的不可变发布。
                 val outcome = updater.check(serverBaseUrl, updateChannel)
-                val release = (outcome as? DesktopUpdater.CheckOutcome.UpdateAvailable)?.release
-                    ?: throw DesktopUpdateException("发布已变化，请重新检查更新")
+                val currentRelease = (outcome as? DesktopUpdater.CheckOutcome.UpdateAvailable)?.release
+                val release = availableState.release
+                if (currentRelease == null || currentRelease.id != release.id ||
+                    currentRelease.buildIdentity != release.buildIdentity) {
+                    throw DesktopUpdateException("发布已变化，请重新检查更新")
+                }
                 val result = updater.downloadAndApply(serverBaseUrl, release) { progress ->
                     _state.value = DesktopUpdateUiState.Downloading(progress.completedBytes, progress.totalBytes)
                 }
@@ -111,20 +111,6 @@ class DesktopUpdateSession(
         job?.cancel()
         _state.value = DesktopUpdateUiState.Idle
     }
-
-    private fun available(
-        release: com.virjar.tk.protocol.http.ClientReleaseInfo,
-        shellUpdateRequired: Boolean,
-    ) = DesktopUpdateUiState.Available(
-        version = release.version,
-        build = release.build,
-        notes = release.notes,
-        forced = release.forced,
-        fileCount = release.fileCount,
-        totalBytes = release.totalBytes,
-        shellUpdateRequired = shellUpdateRequired,
-        installerUrl = release.installers.firstOrNull()?.let { serverBaseUrl.trimEnd('/') + it.url },
-    )
 }
 
 /** 供 shell/bootstrap 侧诊断：当前指针与目录是否一致。 */

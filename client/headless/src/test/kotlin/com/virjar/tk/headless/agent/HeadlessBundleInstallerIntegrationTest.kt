@@ -34,7 +34,12 @@ class HeadlessBundleInstallerIntegrationTest {
         assertEquals('a'.toString(), File(oldBundle, "lib/sdk.jar").readText())
         assertLauncher(prefix, root, 'a')
         HeadlessBundleInstaller.acquireRuntimeLease(oldBundle).use {
-            val upgraded = execute("upgrade-bundle", prefix, second)
+            val incoming = HeadlessBundleInstaller.verifyBundle(second.toFile())
+            Files.writeString(second.resolve("lib/sdk.jar"), "changed after verification")
+            assertFails { HeadlessBundleInstaller.upgrade(prefix.toFile(), incoming) }
+            assertEquals(oldBundle, prefix.resolve("current").toRealPath().toFile())
+            Files.writeString(second.resolve("lib/sdk.jar"), "b")
+            val upgraded = HeadlessBundleInstaller.upgrade(prefix.toFile(), incoming)
             assertNotEquals(oldBundle, upgraded.bundle?.directory)
             assertEquals("a", File(oldBundle, "lib/sdk.jar").readText(), "a live JVM keeps its immutable classpath")
             assertLauncher(prefix, root, 'b')
@@ -217,6 +222,26 @@ class HeadlessBundleInstallerIntegrationTest {
         assertEquals(1, Files.list(prefix.resolve("versions")).use { it.count().toInt() })
     }
 
+    @Test
+    fun `online upgrade reads legacy channel default and rejects a valid bundle for another release`() = workspace { root ->
+        val first = distribution(root.resolve("first"), 'a', channel = null)
+        val differentRelease = distribution(root.resolve("different-release"), 'c')
+        val prefix = root.resolve("installed")
+        val old = assertNotNull(execute("install-bundle", prefix, first).bundle).directory
+        val archive = archive(differentRelease, root.resolve("incoming.zip"))
+        val requests = CopyOnWriteArrayList<String>()
+        updateServer(archive, hash(archive), requests) { server ->
+            val failure = assertFailsWith<IllegalArgumentException> {
+                HeadlessUpgrade.execute(listOf("--server-url", server), old)
+            }
+            assertEquals("downloaded bundle does not match the selected release", failure.message)
+        }
+        assertTrue(requests.single { it.startsWith("/api/v1/client/updates/check") }.contains("channel=stable"))
+        assertLauncher(prefix, root, 'a')
+        assertEquals(old, prefix.resolve("current").toRealPath().toFile())
+        assertEquals(1, Files.list(prefix.resolve("versions")).use { it.count().toInt() })
+    }
+
     private fun archive(source: Path, output: Path): ByteArray {
         ZipOutputStream(Files.newOutputStream(output)).use { zip ->
             Files.walk(source).use { paths ->
@@ -252,7 +277,7 @@ class HeadlessBundleInstallerIntegrationTest {
         HeadlessBundleLeaseProbe::class.java, HeadlessBundleInstaller::class.java, kotlin.Unit::class.java,
     ).map { File(it.protectionDomain.codeSource.location.toURI()).absolutePath }.distinct().joinToString(File.pathSeparator)
 
-    private fun distribution(path: Path, identity: Char): Path {
+    private fun distribution(path: Path, identity: Char, channel: String? = "snapshot"): Path {
         Files.createDirectories(path.resolve("bin"))
         Files.createDirectories(path.resolve("lib"))
         Files.writeString(path.resolve("LICENSE"), "test license")
@@ -260,7 +285,7 @@ class HeadlessBundleInstallerIntegrationTest {
         Files.writeString(path.resolve("teamtalk-release.properties"), """
             artifactType=headless-distribution
             version=0.0.1
-            channel=snapshot
+            ${channel?.let { "channel=$it" } ?: ""}
             buildIdentity=0.0.1+${identity.toString().repeat(40)}
             releaseBuildNumber=1
             protocolMajor=0

@@ -47,9 +47,6 @@ object ReleaseBundle {
     const val CHECKSUMS = "SHA256SUMS"
     const val DEPLOYMENT_CONFIG = "deployment-config.json"
 
-    /** 桌面四目标的产物目录名（与 client/desktop 交叉打包任务的 key 一致）。 */
-    val DESKTOP_TARGETS = listOf("macos-aarch64", "macos-amd64", "windows-amd64", "linux-amd64")
-
     fun assemble(
         destination: File,
         identity: BundleIdentity,
@@ -83,7 +80,8 @@ object ReleaseBundle {
         require(temporary.mkdir()) { "Cannot create release staging directory" }
         try {
             val desktopDir = File(temporary, "desktop").apply { mkdirs() }
-            DESKTOP_TARGETS.forEach { key ->
+            DesktopTarget.values().forEach { desktopTarget ->
+                val key = desktopTarget.key
                 val shell = File(desktopShellRoot, key)
                 val target = File(desktopDir, key).apply { mkdirs() }
                 desktopInstallers(shell).forEach { it.copyTo(File(target, it.name)) }
@@ -244,7 +242,8 @@ object ReleaseBundle {
      * 快照=提交历史推导值，保证更新通道内单调）。
      */
     internal fun verifyDesktopArtifacts(shellRoot: File, payloadRoot: File, identity: BundleIdentity) {
-        DESKTOP_TARGETS.forEach { key ->
+        DesktopTarget.values().forEach { target ->
+            val key = target.key
             val shell = File(shellRoot, key)
             val payloadZip = if (payloadRoot == shellRoot) {
                 File(shell, "payload.zip")
@@ -270,14 +269,9 @@ object ReleaseBundle {
             }
             val archives = desktopInstallers(shell)
             require(archives.isNotEmpty()) { "Desktop target $key lacks shell archives" }
-            if (key == "windows-amd64") {
-                require(archives.any { it.extension == "exe" }) {
-                    "Windows target lacks the NSIS setup.exe (run with makensis on PATH)"
-                }
-            }
-            if (key == "linux-amd64") {
-                require(archives.any { it.extension == "deb" }) {
-                    "Linux target lacks the .deb package"
+            target.platform.installerExtension?.let { extension ->
+                require(archives.any { it.extension == extension }) {
+                    "Desktop target $key lacks the .$extension installer"
                 }
             }
         }
@@ -285,7 +279,7 @@ object ReleaseBundle {
 
     /** GitHub/站点发布用的桌面产物清单。 */
     fun desktopArtifacts(directory: File): List<File> =
-        DESKTOP_TARGETS.flatMap { key -> desktopInstallers(File(directory, "desktop/$key")) }
+        DesktopTarget.values().flatMap { target -> desktopInstallers(File(directory, "desktop/${target.key}")) }
             .sortedBy(File::getName)
 
     /** Producers keep installers in a child directory; sealed bundles flatten only distributable files. */
