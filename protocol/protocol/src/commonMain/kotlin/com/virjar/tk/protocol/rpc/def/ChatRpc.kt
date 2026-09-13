@@ -2,8 +2,7 @@ package com.virjar.tk.protocol.rpc.def
 
 import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.protocol.model.Chat
-import com.virjar.tk.protocol.model.GroupAvatarEntry
-import com.virjar.tk.protocol.model.GroupAvatarPatch
+import com.virjar.tk.protocol.model.GroupAvatar
 import com.virjar.tk.protocol.model.InviteLink
 import com.virjar.tk.protocol.model.Member
 import com.virjar.tk.protocol.rpc.RpcMethod
@@ -68,15 +67,15 @@ interface ChatRpc {
     suspend fun getOrCreateSavedChat(): Chat
 
     /**
-     * 群头像（内测反馈 T053）：patch.attachment 为 null 表示清除。附件必须是操作者本人的
+     * 群头像（内测反馈 T053）：avatar.attachment 为 null 表示清除。附件必须是操作者本人的
      * staging 上传；服务端校验 canonical 元数据、群管理员权限与受管部门群围栏。
      */
     @com.virjar.tk.protocol.SinceProtocol(3)
     @RpcMethod(22)
-    suspend fun setGroupAvatar(chatId: String, patch: GroupAvatarPatch)
+    suspend fun setGroupAvatar(avatar: GroupAvatar)
 
     /** 批量取回群当前头像（冷启动/会话列表懒加载）；只返回请求范围内实际存在的群。 */
     @com.virjar.tk.protocol.SinceProtocol(3)
     @RpcMethod(23)
-    suspend fun getGroupAvatars(chatIds: List<String>): List<GroupAvatarEntry>
+    suspend fun getGroupAvatars(chatIds: List<String>): List<GroupAvatar>
 }

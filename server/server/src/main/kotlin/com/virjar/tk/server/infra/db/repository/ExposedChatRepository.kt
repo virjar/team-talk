@@ -24,7 +24,7 @@ import com.virjar.tk.server.infra.db.Users
 import com.virjar.tk.server.infra.db.requireExposedTransaction
 import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.protocol.model.Chat
-import com.virjar.tk.protocol.model.GroupAvatarEntry
+import com.virjar.tk.protocol.model.GroupAvatar
 import com.virjar.tk.protocol.model.GroupPolicy
 import com.virjar.tk.protocol.model.Member
 import com.virjar.tk.protocol.model.UserAvatarPolicy
@@ -459,7 +459,7 @@ class ExposedChatRepository(
         )
     }
 
-    override fun getGroupAvatarEntries(chatIds: List<String>): List<GroupAvatarEntry> {
+    override fun getGroupAvatars(chatIds: List<String>): List<GroupAvatar> {
         if (chatIds.isEmpty()) return emptyList()
         return transaction(database) {
             GroupChats.selectAll()
@@ -476,7 +476,7 @@ class ExposedChatRepository(
                             ),
                         )
                     }
-                    GroupAvatarEntry(chatId = row[GroupChats.chatId], attachment = attachment)
+                    GroupAvatar(chatId = row[GroupChats.chatId], attachment = attachment)
                 }
         }
     }

@@ -1,8 +1,7 @@
 package com.virjar.tk.protocol
 
 import com.virjar.tk.protocol.model.Chat
-import com.virjar.tk.protocol.model.GroupAvatarEntry
-import com.virjar.tk.protocol.model.GroupAvatarPatch
+import com.virjar.tk.protocol.model.GroupAvatar
 import com.virjar.tk.protocol.model.Document
 import com.virjar.tk.protocol.model.InviteLink
 import com.virjar.tk.protocol.model.Member
@@ -123,8 +122,8 @@ class RpcCollectionBoundsTest {
         }
 
         override suspend fun createPersonal(targetUid: String): Chat = unexpected()
-        override suspend fun setGroupAvatar(chatId: String, patch: GroupAvatarPatch) = unexpected()
-        override suspend fun getGroupAvatars(chatIds: List<String>): List<GroupAvatarEntry> = unexpected()
+        override suspend fun setGroupAvatar(avatar: GroupAvatar) = unexpected()
+        override suspend fun getGroupAvatars(chatIds: List<String>): List<GroupAvatar> = unexpected()
         override suspend fun getOrCreateSavedChat(): Chat = unexpected()
         override suspend fun createGroup(
             operationId: String,

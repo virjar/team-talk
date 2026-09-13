@@ -220,8 +220,8 @@ class ChatStore(
         authorize,
     )
 
-    internal fun getGroupAvatarEntries(chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatarEntry> =
-        repo.getGroupAvatarEntries(chatIds)
+    internal fun getGroupAvatars(chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatar> =
+        repo.getGroupAvatars(chatIds)
 
     internal fun lockForDeactivation(
         transaction: PgWriteTransactionContext,

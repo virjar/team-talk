@@ -75,7 +75,7 @@ interface ChatRepository {
     ): GroupAvatarMutation
 
     /** 批量读取群当前头像（仅返回请求中真实存在的群；未设置的群 attachment=null）。 */
-    fun getGroupAvatarEntries(chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatarEntry>
+    fun getGroupAvatars(chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatar>
 
     /**
      * 先锁定 Chat，再锁定可选的人类操作者，并重新读取成员关系权威。成员行在此刻意不

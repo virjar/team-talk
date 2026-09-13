@@ -1,8 +1,7 @@
 package com.virjar.tk.server.integration
 
-import com.virjar.tk.protocol.GroupAvatarSyncPayload
 import com.virjar.tk.protocol.NotifyType
-import com.virjar.tk.protocol.model.GroupAvatarPatch
+import com.virjar.tk.protocol.model.GroupAvatar
 import com.virjar.tk.protocol.model.MentionPolicy
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -38,7 +37,7 @@ class GroupAvatarIntegrationTest {
         val chat = ctx.chatService.createGroup(id(), "头像群", null, alice, listOf(bob))
 
         val avatar = stagingAvatar(alice, "one")
-        ctx.chatService.setGroupAvatar(alice, chat.chatId, GroupAvatarPatch(attachment = avatar))
+        ctx.chatService.setGroupAvatar(alice, GroupAvatar(chatId = chat.chatId, attachment = avatar))
 
         assertEquals(listOf(avatar.path), ctx.chatService.getGroupAvatars(alice, listOf(chat.chatId))
             .map { it.attachment?.path })
@@ -55,14 +54,14 @@ class GroupAvatarIntegrationTest {
             val events = avatarEvents(uid)
             assertEquals(1, events.size, "$uid 应收到一条群头像事件")
             val payload = com.virjar.tk.protocol.ProtoCodec.decode(
-                GroupAvatarSyncPayload, requireNotNull(events.single().payload),
+                GroupAvatar, requireNotNull(events.single().payload),
             )
             assertEquals(chat.chatId, payload.chatId)
             assertEquals(avatar.path, payload.attachment?.path)
         }
 
         // 清除：成员事件 payload attachment=null，本地条目回 null。
-        ctx.chatService.setGroupAvatar(alice, chat.chatId, GroupAvatarPatch(attachment = null))
+        ctx.chatService.setGroupAvatar(alice, GroupAvatar(chatId = chat.chatId, attachment = null))
         assertNull(ctx.chatService.getGroupAvatars(bob, listOf(chat.chatId)).single().attachment)
         assertEquals(2, avatarEvents(bob).size)
     }
@@ -75,13 +74,13 @@ class GroupAvatarIntegrationTest {
 
         val bobAvatar = stagingAvatar(bob, "bob-upload")
         assertFailsWith<IllegalArgumentException> {
-            ctx.chatService.setGroupAvatar(bob, chat.chatId, GroupAvatarPatch(attachment = bobAvatar))
+            ctx.chatService.setGroupAvatar(bob, GroupAvatar(chatId = chat.chatId, attachment = bobAvatar))
         }
 
         // 非本人上传：owner 也不能绑定别人的 staging。
         val foreign = stagingAvatar(bob, "foreign")
         assertFailsWith<IllegalArgumentException> {
-            ctx.chatService.setGroupAvatar(alice, chat.chatId, GroupAvatarPatch(attachment = foreign))
+            ctx.chatService.setGroupAvatar(alice, GroupAvatar(chatId = chat.chatId, attachment = foreign))
         }
     }
 

@@ -142,7 +142,7 @@ private class CountingChatRepository : ImmediateChatRepository() {
         authorize: (GroupCommandFacts) -> Unit,
     ): GroupAvatarMutation = GroupAvatarMutation(emptyList(), null)
 
-    override fun getGroupAvatarEntries(chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatarEntry> = emptyList()
+    override fun getGroupAvatars(chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatar> = emptyList()
 
     private val loads = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger>()
 
@@ -164,7 +164,7 @@ private open class ImmediateChatRepository : ChatRepository {
         authorize: (GroupCommandFacts) -> Unit,
     ): GroupAvatarMutation = GroupAvatarMutation(emptyList(), null)
 
-    override fun getGroupAvatarEntries(chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatarEntry> = emptyList()
+    override fun getGroupAvatars(chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatar> = emptyList()
 
     @Volatile
     protected var active = true
@@ -231,7 +231,7 @@ private class BlockingChatRepository : ImmediateChatRepository() {
         authorize: (GroupCommandFacts) -> Unit,
     ): GroupAvatarMutation = GroupAvatarMutation(emptyList(), null)
 
-    override fun getGroupAvatarEntries(chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatarEntry> = emptyList()
+    override fun getGroupAvatars(chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatar> = emptyList()
 
     val loadStarted = CountDownLatch(1)
     val releaseLoad = CountDownLatch(1)

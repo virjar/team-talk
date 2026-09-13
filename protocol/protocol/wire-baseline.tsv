@@ -87,8 +87,8 @@ rpc	chat/19	0	-	active	getInviteInfo(token:kotlin.String):com.virjar.tk.protocol
 rpc	chat/2	0	-	active	createGroup(operationId:kotlin.String,name:kotlin.String,avatar:kotlin.String?,memberUids:kotlin.collections.List):com.virjar.tk.protocol.model.Chat
 rpc	chat/20	0	-	active	leaveGroup(chatId:kotlin.String):kotlin.Unit
 rpc	chat/21	0	-	active	getOrCreateSavedChat():com.virjar.tk.protocol.model.Chat
-rpc	chat/22	3	-	active	setGroupAvatar(chatId:kotlin.String,patch:com.virjar.tk.protocol.model.GroupAvatarPatch):kotlin.Unit
-rpc	chat/23	3	-	active	getGroupAvatars(chatIds:kotlin.collections.List):List<com.virjar.tk.protocol.model.GroupAvatarEntry>
+rpc	chat/22	3	-	active	setGroupAvatar(avatar:com.virjar.tk.protocol.model.GroupAvatar):kotlin.Unit
+rpc	chat/23	3	-	active	getGroupAvatars(chatIds:kotlin.collections.List):List<com.virjar.tk.protocol.model.GroupAvatar>
 rpc	chat/3	0	-	active	get(chatId:kotlin.String):com.virjar.tk.protocol.model.Chat
 rpc	chat/4	0	-	active	update(chatId:kotlin.String,name:kotlin.String?,avatar:kotlin.String?,notice:kotlin.String?):kotlin.Unit
 rpc	chat/5	0	-	active	delete(chatId:kotlin.String):kotlin.Unit
@@ -179,7 +179,6 @@ rpc	user/3	0	-	active	search(keyword:kotlin.String):List<com.virjar.tk.protocol.
 type	com.virjar.tk.protocol.ChatDraftChangedPayload	2	-	active	CLASS(chatId:kotlin.String,revision:kotlin.Long)
 type	com.virjar.tk.protocol.DisconnectSignal	0	-	active	OBJECT()
 type	com.virjar.tk.protocol.DocumentChangedPayload	2	-	active	CLASS(spaceId:kotlin.String,nodeId:kotlin.String?,kind:kotlin.Int,revision:kotlin.Long,policyRevision:kotlin.Long)
-type	com.virjar.tk.protocol.GroupAvatarSyncPayload	3	-	active	CLASS(chatId:kotlin.String,attachment:com.virjar.tk.protocol.model.Attachment?)
 type	com.virjar.tk.protocol.GroupFileChangedPayload	0	-	active	CLASS(chatId:kotlin.String,operation:kotlin.Int,entry:com.virjar.tk.protocol.model.GroupFileEntry?,deletedEntryId:kotlin.String,deletedRevision:kotlin.Long)
 type	com.virjar.tk.protocol.IProto	0	-	active	INTERFACE()
 type	com.virjar.tk.protocol.MentionSyncPayload	2	-	active	CLASS(chatId:kotlin.String,mentioned:kotlin.Boolean)
@@ -254,8 +253,7 @@ type	com.virjar.tk.protocol.model.DocumentSpacePage	0	-	active	CLASS(snapshotVer
 type	com.virjar.tk.protocol.model.DocumentSpacePageRequest	0	-	active	CLASS(cursor:kotlin.String?,limit:kotlin.Int)
 type	com.virjar.tk.protocol.model.EmbeddedAsset	0	-	active	CLASS(assetId:kotlin.String,attachment:com.virjar.tk.protocol.model.Attachment,thumbnail:com.virjar.tk.protocol.model.Attachment?,width:kotlin.Int,height:kotlin.Int)
 type	com.virjar.tk.protocol.model.FriendPresenceSnapshot	0	-	active	CLASS(serverEpoch:kotlin.String,revision:kotlin.Long,friendUids:kotlin.collections.Collection<kotlin.String>,onlineFriendUids:kotlin.collections.Collection<kotlin.String>)
-type	com.virjar.tk.protocol.model.GroupAvatarEntry	3	-	active	CLASS(chatId:kotlin.String,attachment:com.virjar.tk.protocol.model.Attachment?)
-type	com.virjar.tk.protocol.model.GroupAvatarPatch	3	-	active	CLASS(attachment:com.virjar.tk.protocol.model.Attachment?)
+type	com.virjar.tk.protocol.model.GroupAvatar	3	-	active	CLASS(chatId:kotlin.String,attachment:com.virjar.tk.protocol.model.Attachment?)
 type	com.virjar.tk.protocol.model.GroupFileEntry	0	-	active	CLASS(entryId:kotlin.String,chatId:kotlin.String,parentId:kotlin.String?,kind:kotlin.Int,name:kotlin.String,attachment:com.virjar.tk.protocol.model.Attachment?,revision:kotlin.Long,contentVersion:kotlin.Long,createdBy:kotlin.String,createdAt:kotlin.Long,updatedBy:kotlin.String,updatedAt:kotlin.Long)
 type	com.virjar.tk.protocol.model.GroupFileVersion	0	-	active	CLASS(entryId:kotlin.String,version:kotlin.Long,attachment:com.virjar.tk.protocol.model.Attachment,createdBy:kotlin.String,createdAt:kotlin.Long)
 type	com.virjar.tk.protocol.model.InviteLink	0	-	active	CLASS(token:kotlin.String,chatId:kotlin.String,name:kotlin.String,maxUses:kotlin.Int,useCount:kotlin.Int,expiresAt:kotlin.Long,revokedAt:kotlin.Long)

@@ -131,7 +131,7 @@ class NotifyContractTest {
         NotifyType.TASK_CHANGED -> TaskChangedPayload("00000000-0000-4000-8000-000000000001", 1, TaskChangedPayload.UPDATED)
         NotifyType.TASK_DUE -> TaskDuePayload("00000000-0000-4000-8000-000000000001", 1, 1)
         NotifyType.MENTION_SYNC -> MentionSyncPayload(chatId = "c1", mentioned = true)
-        NotifyType.GROUP_AVATAR_SYNC -> GroupAvatarSyncPayload(chatId = "c1", attachment = null)
+        NotifyType.GROUP_AVATAR_SYNC -> com.virjar.tk.protocol.model.GroupAvatar(chatId = "c1", attachment = null)
         NotifyType.ORGANIZATION_CHANGED -> OrganizationChangedPayload(revision = 7L)
         NotifyType.PRESENCE -> com.virjar.tk.protocol.PresencePayload(
             uid = "u1",

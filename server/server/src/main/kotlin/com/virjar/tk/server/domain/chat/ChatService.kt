@@ -162,14 +162,15 @@ class ChatService(
      * 群头像设置（内测反馈 T053）：镜像个人头像的引用变更语义——串行化同群与两条路径、
      * 只接受操作者本人的 staging 上传、提交后晋升 business-bound；attachment=null 清除。
      */
-    suspend fun setGroupAvatar(operatorUid: String, chatId: String, patch: com.virjar.tk.protocol.model.GroupAvatarPatch) {
+    suspend fun setGroupAvatar(operatorUid: String, avatar: com.virjar.tk.protocol.model.GroupAvatar) {
+        val chatId = avatar.chatId
+        val requested = avatar.attachment
         val catalog = attachments ?: throw IllegalStateException("附件目录未接线")
         val lifecycle = attachmentLifecycle ?: throw IllegalStateException("附件生命周期未接线")
         lifecycleGate.withChat(chatId) {
             while (true) {
-                val currentPath = chatStore.getGroupAvatarEntries(listOf(chatId))
+                val currentPath = chatStore.getGroupAvatars(listOf(chatId))
                     .firstOrNull()?.attachment?.path
-                val requested = patch.attachment
                 val lockedPaths = buildSet {
                     add("$GROUP_AVATAR_MUTATION_KEY_PREFIX$chatId")
                     currentPath?.let(::add)
@@ -178,7 +179,7 @@ class ChatService(
                 var retryWithCurrentPath = false
                 var publicationFailure: Throwable? = null
                 lifecycle.withReferenceMutation(lockedPaths) {
-                    val fresh = chatStore.getGroupAvatarEntries(listOf(chatId))
+                    val fresh = chatStore.getGroupAvatars(listOf(chatId))
                         .firstOrNull()?.attachment
                     if (fresh?.path != currentPath) {
                         retryWithCurrentPath = true
@@ -191,7 +192,7 @@ class ChatService(
                     }
                     // 清除/替换前，把仍停留在 staging 的当前引用先晋升为已绑定（上次发布失败修复）。
                     currentPath?.let { path ->
-                        val currentDescriptor = chatStore.getGroupAvatarEntries(listOf(chatId))
+                        val currentDescriptor = chatStore.getGroupAvatars(listOf(chatId))
                             .firstOrNull()?.attachment
                         if (currentDescriptor != null) {
                             publicationFailure = promoteStagingGroupAvatar(catalog, currentDescriptor)
@@ -219,7 +220,7 @@ class ChatService(
                             appendEvent(
                                 recipient,
                                 NotifyType.GROUP_AVATAR_SYNC,
-                                com.virjar.tk.protocol.GroupAvatarSyncPayload(chatId, requested),
+                                avatar,
                             )
                         }
                         afterCommit { chatStore.invalidateCommittedCommand(chatId) }
@@ -254,11 +255,11 @@ class ChatService(
     }
 
     /** 批量取回群当前头像；只返回调用人是当前成员的群（内测反馈 T053）。 */
-    suspend fun getGroupAvatars(uid: String, chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatarEntry> {
+    suspend fun getGroupAvatars(uid: String, chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatar> {
         val requested = chatIds.map(String::trim).filter(String::isNotEmpty).distinct()
         if (requested.isEmpty()) return emptyList()
         val allowed = access.readAccessibleChatIds(uid) { it }
-        return chatStore.getGroupAvatarEntries(requested.filter { it in allowed })
+        return chatStore.getGroupAvatars(requested.filter { it in allowed })
     }
 
     private suspend fun updateGroupInternal(
