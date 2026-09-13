@@ -58,7 +58,7 @@ internal fun runMcpManagement(cli: Cli, arguments: List<String>, flags: Map<Stri
             val id = arguments[1]
             if (!id.matches(Regex("[A-Za-z0-9_-]{1,64}"))) throw CliException("Grant ID must contain 1–64 letters, digits, underscores or hyphens")
             val tools = flags["tools"]?.split(',')?.map(String::trim)?.toSet().orEmpty()
-            if (tools.isEmpty() || !AgentMcpAccess.TOOLS.containsAll(tools)) throw CliException("--tools must explicitly list supported MCP tools")
+            if (tools.isEmpty() || !AgentMcpTool.names.containsAll(tools)) throw CliException("--tools must explicitly list supported MCP tools")
             val allChats = flags["all-chats"] == "true"
             val chats = flags["chats"]?.split(',')?.map(String::trim)?.toSet().orEmpty()
             if (allChats == flags.containsKey("chats")) throw CliException("Specify either --chats <id,...> or --all-chats")

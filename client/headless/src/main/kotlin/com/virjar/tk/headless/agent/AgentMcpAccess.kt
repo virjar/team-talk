@@ -75,13 +75,14 @@ internal class AgentMcpAccess(
         val id = fields["id"]?.takeIf { ID.matches(it) } ?: denied(400, "invalid grant id")
         val token = fields["token"]?.takeIf { TOKEN.matches(it) } ?: denied(400, "invalid grant token")
         if (MessageDigest.isEqual(token.toByteArray(), masterToken.toByteArray())) denied(400, "grant token must be independent")
-        val tools = csv(fields["tools"], 14)
-        if (tools.isEmpty() || !TOOLS.containsAll(tools)) denied(400, "invalid grant tools")
+        val tools = csv(fields["tools"], AgentMcpTool.names.size)
+        if (tools.isEmpty() || !AgentMcpTool.names.containsAll(tools)) denied(400, "invalid grant tools")
         val chats = csv(fields["chatIds"], 128)
         chats.forEach(::requireAgentChatId)
         val all = when (fields["allChats"]) { "true" -> true; "false", null -> false; else -> denied(400, "invalid allChats") }
         if (all && chats.isNotEmpty()) denied(400, "allChats cannot include chatIds")
-        if (!all && "chat_with" in tools) denied(400, "chat_with requires allChats")
+        if (!all) tools.map { AgentMcpTool.byName.getValue(it) }.firstOrNull { it.scope == McpToolScope.ALL_CHATS }
+            ?.let { denied(400, "${it.wireName} requires allChats") }
         val candidate = AgentMcpGrant(id, digest(token), owner, tools, chats, all, clock())
         grants[id]?.let { existing ->
             if (existing.revokedAt != null || existing.copy(createdAt = candidate.createdAt) != candidate) denied(409, "grant id is already used")
@@ -118,7 +119,8 @@ internal class AgentMcpAccess(
         requireOpen()
         if (principal == AgentApiPrincipal.Administrator) return null
         val grant = requireCurrent((principal as AgentApiPrincipal.Scoped).grant.id)
-        val tool = ROUTES[path] ?: "unavailable"
+        val definition = AgentMcpTool.byPath[path]
+        val tool = definition?.wireName ?: "unavailable"
         val requestId = UUID.randomUUID().toString()
         val chatId = fields["chatId"]?.let(::requireAgentChatId)
         val window = limits.getOrPut(grant.id) { Window(clock()) }
@@ -130,12 +132,13 @@ internal class AgentMcpAccess(
         }
         if (window.requests++ >= 120) reject(429, "MCP request rate exceeded")
         if (tool !in grant.tools) reject(403, "MCP tool is not allowed")
-        if (tool in CHAT_TOOLS) {
-            if (chatId == null && (tool !in OPTIONAL_CHAT_TOOLS || !grant.allChats)) reject(403, "MCP requires an allowed chatId")
+        val scope = definition?.scope
+        if (scope == McpToolScope.REQUIRED_CHAT || scope == McpToolScope.OPTIONAL_CHAT) {
+            if (chatId == null && (scope != McpToolScope.OPTIONAL_CHAT || !grant.allChats)) reject(403, "MCP requires an allowed chatId")
             if (chatId != null && !grant.allChats && chatId !in grant.chatIds) reject(403, "MCP chat is not allowed")
         }
-        if (tool == "chat_with" && !grant.allChats) reject(403, "MCP chat creation is not allowed")
-        val waiting = tool == "recv"
+        if (definition?.scope == McpToolScope.ALL_CHATS && !grant.allChats) reject(403, "MCP chat creation is not allowed")
+        val waiting = definition == AgentMcpTool.RECV
         if (waiting && (window.waiters >= 2 || receiveWaiters >= 8)) reject(429, "MCP receive concurrency exceeded")
         auditAdmission(grant.id, tool, chatId, requestId)
         if (waiting) { window.waiters++; receiveWaiters++ }
@@ -210,10 +213,10 @@ internal class AgentMcpAccess(
                 set("tools"), set("chatIds"), value.getValue("allChats").jsonPrimitive.boolean,
                 value.getValue("createdAt").jsonPrimitive.long, value["revokedAt"]?.takeUnless { it == JsonNull }?.jsonPrimitive?.long)
             require(ID.matches(grant.id) && grant.tokenDigest.matches(Regex("[0-9a-f]{64}")))
-            require(grant.tools.isNotEmpty() && TOOLS.containsAll(grant.tools) && grant.chatIds.size <= 128)
+            require(grant.tools.isNotEmpty() && AgentMcpTool.names.containsAll(grant.tools) && grant.chatIds.size <= 128)
             grant.chatIds.forEach(::requireAgentChatId)
             require(!grant.allChats || grant.chatIds.isEmpty())
-            require(grant.allChats || "chat_with" !in grant.tools)
+            require(grant.allChats || grant.tools.none { AgentMcpTool.byName.getValue(it).scope == McpToolScope.ALL_CHATS })
             require(result.put(grant.id, grant) == null) { "Duplicate MCP grant" }
         }
         return result
@@ -225,14 +228,6 @@ internal class AgentMcpAccess(
         private const val MAX_GRANT_FILE_BYTES = 1024 * 1024
         private val ID = Regex("[A-Za-z0-9_-]{1,64}")
         private val TOKEN = Regex("[A-Za-z0-9_-]{32,128}")
-        val ROUTES = mapOf("/v1/status" to "status", "/v1/conversations" to "conversations", "/v1/friends" to "friends",
-            "/v1/send-text" to "send_text", "/v1/send-rich" to "send_markdown", "/v1/send-file" to "send_file",
-            "/v1/outgoing" to "outgoing_status", "/v1/recv-wait" to "recv", "/v1/messages" to "messages",
-            "/v1/history" to "history", "/v1/users-search" to "search_users", "/v1/chat-personal" to "chat_with",
-            "/v1/mark-read" to "mark_read", "/v1/revoke" to "revoke")
-        val TOOLS = ROUTES.values.toSet()
-        private val OPTIONAL_CHAT_TOOLS = setOf("recv", "messages")
-        private val CHAT_TOOLS = OPTIONAL_CHAT_TOOLS + setOf("send_text", "send_markdown", "send_file", "outgoing_status", "history", "mark_read", "revoke")
         private fun digest(token: String) = MessageDigest.getInstance("SHA-256").digest(token.toByteArray()).joinToString("") { "%02x".format(it) }
         private fun csv(value: String?, maximum: Int): Set<String> {
             if (value.isNullOrBlank()) return emptySet()

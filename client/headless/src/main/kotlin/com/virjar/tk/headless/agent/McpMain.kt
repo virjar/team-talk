@@ -121,7 +121,7 @@ class McpServer(api: String, token: String) {
 
     private fun allowedTools(data: JsonObject): Set<String> =
         data.getValue("tools").jsonArray.map { it.jsonPrimitive.content }.toSet().also {
-            if (it.isEmpty() || !AgentMcpAccess.TOOLS.containsAll(it)) throw CliException("invalid MCP access description")
+            if (it.isEmpty() || !AgentMcpTool.names.containsAll(it)) throw CliException("invalid MCP access description")
         }
 
     fun handle(req: JsonObject): JsonObject? {
@@ -170,11 +170,11 @@ class McpServer(api: String, token: String) {
         val chatIds = access["chatIds"]?.jsonArray ?: kotlinx.serialization.json.JsonArray(emptyList())
         return buildJsonObject {
             put("tools", buildJsonArray {
-                TOOLS.filter { it.def.getValue("name").jsonPrimitive.content in allowed }.forEach { tool ->
-                    val schema = tool.def.getValue("inputSchema").jsonObject
+                AgentMcpTool.entries.filter { it.wireName in allowed }.forEach { tool ->
+                    val schema = tool.inputSchema
                     val properties = schema.getValue("properties").jsonObject
                     if (allChats || "chatId" !in properties) {
-                        add(tool.def)
+                        add(tool.definition)
                     } else {
                         val chat = JsonObject(properties.getValue("chatId").jsonObject + mapOf(
                             "enum" to chatIds,
@@ -187,7 +187,7 @@ class McpServer(api: String, token: String) {
                             "properties" to JsonObject(properties + ("chatId" to chat)),
                             "required" to kotlinx.serialization.json.JsonArray(required),
                         ))
-                        add(JsonObject(tool.def + ("inputSchema" to scoped)))
+                        add(JsonObject(tool.definition + ("inputSchema" to scoped)))
                     }
                 }
             })
@@ -201,49 +201,30 @@ class McpServer(api: String, token: String) {
         val str = { k: String -> args[k]?.jsonPrimitive?.content }
         return try {
             verifyAccess()
-            val raw: String = when (name) {
-                "status" -> cli.get("/v1/status")
-                "conversations" -> cli.get("/v1/conversations")
-                "friends" -> cli.get("/v1/friends")
-                "send_text" -> cli.post("/v1/send-text", mapOf(
-                    "chatId" to str("chatId"),
-                    "clientMsgId" to str("clientMsgId"),
-                    "text" to str("text"),
-                ))
-                "send_markdown" -> cli.post("/v1/send-rich", mapOf(
-                    "chatId" to str("chatId"),
-                    "clientMsgId" to str("clientMsgId"),
-                    "markdown" to str("markdown"),
-                ))
-                "send_file" -> cli.post("/v1/send-file", mapOf(
-                    "chatId" to str("chatId"),
-                    "clientMsgId" to str("clientMsgId"),
-                    "path" to str("path"),
-                ))
-                "outgoing_status" -> cli.get(
-                    "/v1/outgoing?chatId=${urlEncode(str("chatId"))}" +
-                        "&clientMsgId=${urlEncode(str("clientMsgId"))}",
-                )
-                "recv" -> cli.get(
-                    "/v1/recv-wait?timeout=${urlEncode(str("timeout") ?: "10")}" +
-                        (str("chatId")?.let { "&chatId=${urlEncode(it)}" } ?: "") +
-                        (str("afterEventId")?.let { "&afterEventId=${urlEncode(it)}" } ?: ""),
-                )
-                "messages" -> cli.get(
-                    "/v1/messages?limit=${urlEncode(str("limit") ?: "20")}" +
-                        (str("chatId")?.let { "&chatId=${urlEncode(it)}" } ?: "") +
-                        (str("afterEventId")?.let { "&afterEventId=${urlEncode(it)}" } ?: ""),
-                )
-                "history" -> cli.post("/v1/history", mapOf(
-                    "chatId" to str("chatId"),
-                    "fromSeq" to (str("fromSeq") ?: "0"),
-                    "limit" to (str("limit") ?: Message.MAX_QUERY_PAGE_SIZE.toString()),
-                ))
-                "search_users" -> cli.post("/v1/users-search", mapOf("keyword" to str("keyword")))
-                "chat_with" -> cli.post("/v1/chat-personal", mapOf("targetUid" to str("targetUid")))
-                "mark_read" -> cli.post("/v1/mark-read", mapOf("chatId" to str("chatId"), "readSeq" to str("readSeq")))
-                "revoke" -> cli.post("/v1/revoke", mapOf("chatId" to str("chatId"), "serverSeq" to str("serverSeq")))
-                else -> throw McpRequestException(-32602, "unknown tool: $name")
+            val tool = AgentMcpTool.byName[name] ?: throw McpRequestException(-32602, "unknown tool: $name")
+            // Argument defaults and omission are transport behavior, not inferred from JSON schema.
+            val fields = when (tool) {
+                AgentMcpTool.STATUS, AgentMcpTool.CONVERSATIONS, AgentMcpTool.FRIENDS -> emptyMap()
+                AgentMcpTool.SEND_TEXT -> mapOf("chatId" to str("chatId"), "clientMsgId" to str("clientMsgId"), "text" to str("text"))
+                AgentMcpTool.SEND_MARKDOWN -> mapOf("chatId" to str("chatId"), "clientMsgId" to str("clientMsgId"), "markdown" to str("markdown"))
+                AgentMcpTool.SEND_FILE -> mapOf("chatId" to str("chatId"), "clientMsgId" to str("clientMsgId"), "path" to str("path"))
+                AgentMcpTool.OUTGOING_STATUS -> mapOf("chatId" to str("chatId").orEmpty(), "clientMsgId" to str("clientMsgId").orEmpty())
+                AgentMcpTool.RECV -> mapOf("timeout" to (str("timeout") ?: "10"), "chatId" to str("chatId"), "afterEventId" to str("afterEventId"))
+                AgentMcpTool.MESSAGES -> mapOf("limit" to (str("limit") ?: "20"), "chatId" to str("chatId"), "afterEventId" to str("afterEventId"))
+                AgentMcpTool.HISTORY -> mapOf("chatId" to str("chatId"), "fromSeq" to (str("fromSeq") ?: "0"),
+                    "limit" to (str("limit") ?: Message.MAX_QUERY_PAGE_SIZE.toString()))
+                AgentMcpTool.SEARCH_USERS -> mapOf("keyword" to str("keyword"))
+                AgentMcpTool.CHAT_WITH -> mapOf("targetUid" to str("targetUid"))
+                AgentMcpTool.MARK_READ -> mapOf("chatId" to str("chatId"), "readSeq" to str("readSeq"))
+                AgentMcpTool.REVOKE -> mapOf("chatId" to str("chatId"), "serverSeq" to str("serverSeq"))
+            }
+            val raw = when (tool.method) {
+                McpToolMethod.GET -> {
+                    val query = fields.entries.filter { it.value != null }
+                        .joinToString("&") { "${urlEncode(it.key)}=${urlEncode(it.value)}" }
+                    cli.get(tool.path + if (query.isEmpty()) "" else "?$query")
+                }
+                McpToolMethod.POST -> cli.post(tool.path, fields)
             }
             buildJsonObject {
                 put("content", buildJsonArray {
@@ -264,104 +245,6 @@ class McpServer(api: String, token: String) {
     private fun error(id: kotlinx.serialization.json.JsonElement?, code: Int, msg: String) = buildJsonObject {
         put("jsonrpc", "2.0"); put("id", id ?: JsonNull)
         put("error", buildJsonObject { put("code", code); put("message", msg) })
-    }
-
-    companion object {
-        private fun tool(
-            name: String,
-            desc: String,
-            vararg props: Pair<String, String>,
-            required: List<String>? = null,
-        ) = ToolDef(
-            buildJsonObject {
-                put("name", name)
-                put("description", desc)
-                put("inputSchema", buildJsonObject {
-                    put("type", "object")
-                    put("properties", buildJsonObject {
-                        props.forEach { (k, d) -> put(k, buildJsonObject { put("type", "string"); put("description", d) }) }
-                    })
-                    val requiredProperties = required ?: props.take(1).map { it.first }
-                    if (requiredProperties.isNotEmpty()) {
-                        put("required", buildJsonArray {
-                            requiredProperties.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) }
-                        })
-                    }
-                })
-            },
-        )
-
-        private val TOOLS = listOf(
-            tool("status", "获取 IM 连接状态与当前账号", ),
-            tool("conversations", "列出获准会话（含未读数/最后一条消息）"),
-            tool("friends", "列出好友"),
-            tool(
-                "send_text",
-                "发送纯文本消息",
-                "chatId" to "目标会话 ID（可从 conversations 获取）",
-                "text" to "消息文本",
-                "clientMsgId" to "调用方生成并在重试时复用的稳定消息 ID",
-                required = listOf("chatId", "text", "clientMsgId"),
-            ),
-            tool(
-                "send_markdown",
-                "发送 markdown 富文本消息",
-                "chatId" to "目标会话 ID",
-                "markdown" to "markdown 内容",
-                "clientMsgId" to "调用方生成并在重试时复用的稳定消息 ID",
-                required = listOf("chatId", "markdown", "clientMsgId"),
-            ),
-            tool(
-                "send_file",
-                "上传并持久排队发送文件",
-                "chatId" to "目标会话 ID",
-                "path" to "agent outgoing 目录内的文件路径",
-                "clientMsgId" to "调用方生成并在重试时复用的稳定消息 ID",
-                required = listOf("chatId", "path", "clientMsgId"),
-            ),
-            tool(
-                "outgoing_status",
-                "查询持久发送回执",
-                "chatId" to "目标会话 ID",
-                "clientMsgId" to "发送时使用的稳定消息 ID",
-                required = listOf("chatId", "clientMsgId"),
-            ),
-            tool(
-                "recv",
-                "按全局事件游标等待新消息（长轮询）",
-                "chatId" to "可选，只等该会话",
-                "timeout" to "等待秒数默认 10",
-                "afterEventId" to "可选，全局事件游标",
-                required = emptyList(),
-            ),
-            tool(
-                "messages",
-                "按全局事件游标读取持久消息",
-                "limit" to "条数默认 20",
-                "chatId" to "可选，会话过滤",
-                "afterEventId" to "可选，全局事件游标",
-                required = emptyList(),
-            ),
-            tool("history", "拉取服务端历史消息", "chatId" to "会话 ID", "fromSeq" to "起始 seq（0 为最新）", "limit" to "条数"),
-            tool("search_users", "按关键词搜索用户", "keyword" to "用户名/昵称关键词"),
-            tool("chat_with", "与用户建立私聊会话，返回 chatId", "targetUid" to "目标用户 uid"),
-            tool(
-                "mark_read",
-                "标记会话已读",
-                "chatId" to "会话 ID",
-                "readSeq" to "已读水位",
-                required = listOf("chatId", "readSeq"),
-            ),
-            tool(
-                "revoke",
-                "撤回自己发的消息",
-                "chatId" to "会话 ID",
-                "serverSeq" to "消息 seq",
-                required = listOf("chatId", "serverSeq"),
-            ),
-        )
-
-        private data class ToolDef(val def: JsonObject)
     }
 
     private class McpRequestException(

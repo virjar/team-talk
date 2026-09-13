@@ -76,12 +76,46 @@ class AgentMcpHttpTest {
         assertTrue(mcp.handle(Json.parseToJsonElement("""{"jsonrpc":"2.0","id":3,"method":"tools/list"}""").jsonObject)!!.containsKey("error"))
     }
 
-    private fun fixture(block: (Fixture) -> Unit) {
-        val root = createAgentSecurityTestRoot("mcp-http-")
-        try { Fixture(File(root, "data")).use(block) } finally { root.deleteRecursively() }
+    @Test fun `all tool catalog preserves wire identities and optional global reads dispatch through MCP`() = fixture(
+        AgentMcpAccessTest.fields() + mapOf(
+            "tools" to "status,conversations,friends,send_text,send_markdown,send_file,outgoing_status,recv,messages,history,search_users,chat_with,mark_read,revoke",
+            "allChats" to "true", "chatIds" to "",
+        ),
+    ) { f ->
+        f.publish(1, "chat-a", "first body")
+        f.publish(2, "chat-b", "second body")
+        val mcp = McpServer(f.endpoint, AgentMcpAccessTest.TOKEN)
+        val listed = mcp.handle(Json.parseToJsonElement("""{"id":1,"method":"tools/list"}""").jsonObject)!!
+            .getValue("result").jsonObject.getValue("tools").jsonArray.map { it.jsonObject }
+        assertEquals(
+            setOf("status", "conversations", "friends", "send_text", "send_markdown", "send_file", "outgoing_status",
+                "recv", "messages", "history", "search_users", "chat_with", "mark_read", "revoke"),
+            listed.map { it.getValue("name").jsonPrimitive.content }.toSet(),
+        )
+        for (name in listOf("messages", "recv")) {
+            val schema = listed.single { it.getValue("name").jsonPrimitive.content == name }.getValue("inputSchema").jsonObject
+            assertTrue(schema["required"]?.jsonArray.orEmpty().none { it.jsonPrimitive.content == "chatId" })
+            assertFalse(schema.getValue("properties").jsonObject.getValue("chatId").jsonObject.containsKey("enum"))
+        }
+        fun call(name: String, arguments: String = "{}") = mcp.handle(Json.parseToJsonElement(
+            """{"id":2,"method":"tools/call","params":{"name":"$name","arguments":$arguments}}""",
+        ).jsonObject)!!
+        val global = call("messages").getValue("result").jsonObject.toString()
+        assertTrue(global.contains("first body")); assertTrue(global.contains("second body"))
+        val filtered = call("messages", """{"chatId":"chat-b","afterEventId":"1","limit":"1"}""")
+            .getValue("result").jsonObject.toString()
+        assertFalse(filtered.contains("first body")); assertTrue(filtered.contains("second body"))
+        val missingDestination = call("send_text", """{"text":"not sent","clientMsgId":"stable"}""")
+        assertTrue(missingDestination.getValue("result").jsonObject.getValue("isError").jsonPrimitive.boolean)
+        assertEquals(-32602, call("unknown_tool").getValue("error").jsonObject.getValue("code").jsonPrimitive.int)
     }
 
-    private class Fixture(dataDir: File) : AutoCloseable {
+    private fun fixture(fields: Map<String, String> = AgentMcpAccessTest.fields(), block: (Fixture) -> Unit) {
+        val root = createAgentSecurityTestRoot("mcp-http-")
+        try { Fixture(File(root, "data"), fields).use(block) } finally { root.deleteRecursively() }
+    }
+
+    private class Fixture(dataDir: File, fields: Map<String, String>) : AutoCloseable {
         val access = AgentMcpAccess(dataDir, AgentMcpAccessTest.OWNER, AgentMcpAccessTest.MASTER)
         val cache = FakeLocalCache()
         val inbox = ImBotMessageInbox().also { it.bind(cache) }
@@ -90,7 +124,7 @@ class AgentMcpHttpTest {
         val executor = Executors.newFixedThreadPool(4)
         val endpoint get() = "127.0.0.1:${server.address.port}"
         init {
-            access.create(AgentMcpAccessTest.ADMIN, AgentMcpAccessTest.fields())
+            access.create(AgentMcpAccessTest.ADMIN, fields)
             val api = AgentApi(runtime, access)
             for (path in listOf("/v1/messages", "/v1/recv-wait", "/v1/send-text", "/v1/upload", "/v1/mcp/access", "/v1/mcp/grants", "/v1/mcp/revoke", "/v1/mcp/audit")) {
                 server.createContext(path) { api.handle(it, path) }

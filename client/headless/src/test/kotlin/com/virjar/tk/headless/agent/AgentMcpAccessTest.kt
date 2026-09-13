@@ -75,6 +75,30 @@ class AgentMcpAccessTest {
         }
     }
 
+    @Test fun `all chat grants may omit read filters but still require destinations for chat commands`() = directory { data ->
+        val all = fields() + mapOf(
+            "tools" to "status,messages,recv,send_text,history,chat_with", "allChats" to "true", "chatIds" to "",
+        )
+        AgentMcpAccess(data, OWNER, MASTER).use { access ->
+            failure(400) { access.create(ADMIN, all + mapOf("allChats" to "false", "chatIds" to "chat-a")) }
+            access.create(ADMIN, all)
+        }
+        // Existing grant files persist wire strings, never enum names or ordinals.
+        AgentMcpAccess(data, OWNER, MASTER).use { access ->
+            val principal = access.authenticate("Bearer $TOKEN")
+            for (path in listOf("/v1/status", "/v1/messages", "/v1/recv-wait", "/v1/chat-personal")) {
+                val call = access.begin(principal, path, emptyMap())
+                access.recheck(call)
+                access.finish(call, 200)
+            }
+            for (path in listOf("/v1/send-text", "/v1/history")) {
+                failure(403) { access.begin(principal, path, emptyMap()) }
+                val call = access.begin(principal, path, mapOf("chatId" to "chat-b"))
+                access.finish(call, 200)
+            }
+        }
+    }
+
     @Test fun `unwritable private audit rejects new effects but keeps grants and prior records`() = directory { data ->
         AgentMcpAccess(data, OWNER, MASTER).use { access ->
             access.create(ADMIN, fields())
