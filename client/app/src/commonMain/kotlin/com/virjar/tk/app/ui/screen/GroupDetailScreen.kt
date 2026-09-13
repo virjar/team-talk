@@ -263,11 +263,26 @@ private fun GroupSummary(
     groupAvatar: com.virjar.tk.protocol.model.Attachment? = null,
     onEditAvatar: (() -> Unit)? = null,
 ) {
+    // 点击群头像查看大图（内测反馈）：仅已设置头像时可看
+    var avatarViewerShown by remember { mutableStateOf(false) }
+    if (avatarViewerShown && groupAvatar != null) {
+        com.virjar.tk.app.ui.component.AvatarViewerDialog(
+            title = chat.name ?: "群聊",
+            attachment = groupAvatar,
+            onDismiss = { avatarViewerShown = false },
+        )
+    }
     Row(
         modifier = Modifier.fillMaxWidth().padding(Tk.spacing.md),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box {
+        Box(
+            modifier = Modifier.then(
+                if (groupAvatar != null) Modifier.clickable { avatarViewerShown = true }
+                else Modifier
+            ).testTag("group.avatar.view"),
+        ) {
         ChatAvatar(
             chatType = ChatType.GROUP.code,
             chatName = chat.name ?: chat.chatId,
@@ -275,6 +290,7 @@ private fun GroupSummary(
             groupMembers = groupAvatarCellUsers(members),
             groupAvatar = groupAvatar,
         )
+        }
         if (onEditAvatar != null) {
             Box(
                 modifier = Modifier

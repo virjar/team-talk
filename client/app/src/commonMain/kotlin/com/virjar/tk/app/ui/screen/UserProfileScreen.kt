@@ -1,5 +1,6 @@
 package com.virjar.tk.app.ui.screen
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -180,10 +181,27 @@ fun UserProfileContent(
     }
 
     if (user != null) {
+        // 点击头像查看大图（内测反馈：头像常被缩小，profile 查看原图是常规需求）
+        var avatarViewerShown by remember { mutableStateOf(false) }
+        if (avatarViewerShown) {
+            com.virjar.tk.app.ui.component.AvatarViewerDialog(
+                title = contactDisplayName(user, remark, user.uid),
+                attachment = user.avatar,
+                onDismiss = { avatarViewerShown = false },
+            )
+        }
         Column(modifier = modifier) {
             when (presentation) {
-                UserProfilePresentation.FullPage -> FullPageProfileHero(user, remark)
-                UserProfilePresentation.CompactDialog -> CompactProfileHero(user, remark)
+                UserProfilePresentation.FullPage -> FullPageProfileHero(
+                    user, remark,
+                    avatarClickable = user.avatar != null,
+                    onAvatarClick = { avatarViewerShown = true },
+                )
+                UserProfilePresentation.CompactDialog -> CompactProfileHero(
+                    user, remark,
+                    avatarClickable = user.avatar != null,
+                    onAvatarClick = { avatarViewerShown = true },
+                )
             }
 
             // 员工组织归属与公司路径是组织目录事实的展示（T008）；数据由服务端按
@@ -356,12 +374,25 @@ private fun ProfileOrganizationSection(
 }
 
 @Composable
-private fun FullPageProfileHero(user: User, remark: String?) {
+private fun FullPageProfileHero(
+    user: User,
+    remark: String?,
+    avatarClickable: Boolean = false,
+    onAvatarClick: (() -> Unit)? = null,
+) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        AvatarPlaceholder(name = user.name, avatar = user.avatar, size = 80)
+        AvatarPlaceholder(
+            name = user.name,
+            avatar = user.avatar,
+            size = 80,
+            modifier = Modifier.then(
+                if (avatarClickable && onAvatarClick != null) Modifier.clickable(onClick = onAvatarClick)
+                else Modifier
+            ).testTag("profile.avatar.view"),
+        )
         Spacer(Modifier.height(16.dp))
         Text(contactDisplayName(user, remark, user.uid), style = MaterialTheme.typography.headlineSmall)
         if (!remark.isNullOrBlank()) Text("显示名：${user.name}", style = MaterialTheme.typography.bodyMedium)
@@ -381,12 +412,25 @@ private fun FullPageProfileHero(user: User, remark: String?) {
 }
 
 @Composable
-private fun CompactProfileHero(user: User, remark: String?) {
+private fun CompactProfileHero(
+    user: User,
+    remark: String?,
+    avatarClickable: Boolean = false,
+    onAvatarClick: (() -> Unit)? = null,
+) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AvatarPlaceholder(name = user.name, avatar = user.avatar, size = 64)
+        AvatarPlaceholder(
+            name = user.name,
+            avatar = user.avatar,
+            size = 64,
+            modifier = Modifier.then(
+                if (avatarClickable && onAvatarClick != null) Modifier.clickable(onClick = onAvatarClick)
+                else Modifier
+            ).testTag("profile.avatar.view"),
+        )
         Spacer(Modifier.width(16.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
