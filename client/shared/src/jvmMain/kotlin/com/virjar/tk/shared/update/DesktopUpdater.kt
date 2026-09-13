@@ -17,66 +17,7 @@ import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.net.URLEncoder
 import java.io.File
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.MessageDigest
-
-/** 更新器的 HTTP 出口；生产用 JDK 实现，测试注入内存实现。 */
-interface UpdateHttpClient {
-    /** 返回响应体字节；非 2xx 抛 [UpdateHttpException]。 */
-    suspend fun get(url: String): ByteArray
-
-    suspend fun download(url: String, target: File, expectedSize: Long) {
-        val bytes = get(url)
-        require(bytes.size.toLong() == expectedSize) { "下载文件大小不符" }
-        target.writeBytes(bytes)
-    }
-}
-
-class UpdateHttpException(val statusCode: Int, message: String) : IOException(message)
-
-internal object JdkUpdateHttpClient : UpdateHttpClient {
-    override suspend fun get(url: String): ByteArray = withContext(Dispatchers.IO) {
-        connection(url) { input ->
-            val bytes = input.readNBytes(4 * 1024 * 1024 + 1)
-            require(bytes.size <= 4 * 1024 * 1024) { "更新清单过大" }
-            bytes
-        }
-    }
-
-    override suspend fun download(url: String, target: File, expectedSize: Long) = withContext(Dispatchers.IO) {
-        val jobContext = currentCoroutineContext()
-        connection(url) { input ->
-            target.outputStream().buffered().use { output ->
-                val buffer = ByteArray(64 * 1024)
-                var written = 0L
-                while (true) {
-                    jobContext.ensureActive()
-                    val read = input.read(buffer)
-                    if (read < 0) break
-                    written += read
-                    require(written <= expectedSize) { "下载文件超过声明大小" }
-                    output.write(buffer, 0, read)
-                }
-                require(written == expectedSize) { "下载文件大小不符" }
-            }
-        }
-    }
-
-    private fun <T> connection(url: String, read: (java.io.InputStream) -> T): T {
-        val connection = URL(url).openConnection() as HttpURLConnection
-        try {
-            connection.connectTimeout = 10_000
-            connection.readTimeout = 60_000
-            connection.instanceFollowRedirects = false
-            val code = connection.responseCode
-            if (code != 200) throw UpdateHttpException(code, "HTTP $code for $url")
-            return connection.inputStream.buffered().use(read)
-        } finally {
-            connection.disconnect()
-        }
-    }
-}
 
 class DesktopUpdateException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
@@ -175,6 +116,8 @@ class DesktopUpdater(
         }.map { it.path }.toSet()
         val totalBytes = manifest.files.filterNot { it.path in reusable }.sumOf { it.size }
         var doneBytes = 0L
+        var lastProgressAt = System.nanoTime() - PROGRESS_INTERVAL_NANOS
+        progress(DownloadProgress(0, totalBytes))
         context.versionsRoot.mkdirs()
         FileChannel.open(File(context.versionsRoot, ".update.lock").toPath(), CREATE, WRITE).use { channel ->
             val lock = channel.tryLock() ?: throw DesktopUpdateException("另一个进程正在更新，请稍后重试")
@@ -188,9 +131,18 @@ class DesktopUpdater(
                         if (file.path in reusable) {
                             File(context.currentDir, file.path).copyTo(target)
                         } else {
-                            httpClient.download(serverBaseUrl.trimEnd('/') + file.url, target, file.size)
+                            val jobContext = currentCoroutineContext()
+                            httpClient.download(serverBaseUrl.trimEnd('/') + file.url, target, file.size) { fileBytes ->
+                                jobContext.ensureActive()
+                                val now = System.nanoTime()
+                                if (now - lastProgressAt >= PROGRESS_INTERVAL_NANOS) {
+                                    progress(DownloadProgress(doneBytes + fileBytes, totalBytes))
+                                    lastProgressAt = now
+                                }
+                            }
                             doneBytes += file.size
                             progress(DownloadProgress(doneBytes, totalBytes))
+                            lastProgressAt = System.nanoTime()
                         }
                     }
                     verifyStaging(staging, manifest)
@@ -264,6 +216,8 @@ class DesktopUpdater(
     }
 
     companion object {
+        private const val PROGRESS_INTERVAL_NANOS = 100_000_000L
+
         internal fun sha256Hex(file: File): String {
             val digest = MessageDigest.getInstance("SHA-256")
             file.inputStream().buffered().use { input ->

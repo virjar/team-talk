@@ -598,7 +598,7 @@ MEMBER_REMOVED/CHAT_DELETED 之后收到一条更晚的旧 MESSAGE_RECV；剩余
 | 发行字符串 | `0.0.2` | 用户看到的版本；客户端、SDK、服务端来自同一构建输入，不决定二进制兼容 |
 | 协议 major/minor | 源码待发行 `0.3`，最低 minor 为 `0`；正式 0.0.2 冻结 `0.2` | 每条 TCP 连接协商可使用的契约窗口，不改变已保存的消息和同步游标 |
 | 服务端存储 epoch | **`1`** | 已存在的 PostgreSQL 和本地持久化布局；以 `ServerDataEpoch.CURRENT_EPOCH` 为事实源 |
-| PostgreSQL 迁移版本 | 已发行 0.0.2 为 `2`；源码后续增量以 `SchemaMigrations.kt` 的顺序清单为准 | `schema_migrations` 的连续完成记录；在现有 epoch 内保留数据地推进 SQL 布局 |
+| PostgreSQL 迁移版本 | 已发行 0.0.2 为 `2`，当前源码为 `6`；以 `SchemaMigrations.kt` 的顺序清单为准 | `schema_migrations` 的连续完成记录；在现有 epoch 内保留数据地推进 SQL 布局 |
 | dataset ID | 每套数据原有的 canonical UUID | PostgreSQL 与本地存储共同拥有的身份，普通升级保留原值 |
 
 发行与协议版本的变化不改变存储 epoch 或 dataset。标记重编号本身不会迁移数据，反而会让
@@ -622,6 +622,10 @@ dataset ID 和迁移完成记录，只执行尚未完成的已知迁移。不会
 | `0` | `expand_client_telemetry_protocol_id` | 把已有 `client_telemetry_devices.protocol_version` CHECK 从 `0..255` 放宽为非负 PostgreSQL INTEGER；保留每行内容、主键、时间和 dataset |
 | `1` | `create_banned_credential_tombstones` | 追加已封禁账号的 refresh token 摘要墓碑表，保留现有凭据及业务资料 |
 | `2` | `create_v0_0_2_tables` | v0.0.2 发布批次的单条增量：追加管理员凭据/审计、文档评论、内容搜索待投影、任务三表、聊天草稿三表、多厂商推送注册表与管理功能开关表，并为 `conversations` 补 `mentioned` 列；全部为新增对象与 `IF NOT EXISTS` 列追加，保留既有数据与 dataset |
+| `3` | `add_group_avatar_columns` | 为 `group_chats` 追加可空的头像路径、名称、媒体类型和大小四列；保留既有群与头像缺省状态 |
+| `4` | `create_client_release_registry` | 追加客户端发行、发行文件和通道指针三张表；保留既有业务数据 |
+| `5` | `client_release_build_identity` | 为发行记录追加构建身份和上传摘要；原记录的构建身份缺省为空字符串，上传摘要可空；发行唯一索引扩展到 `(client_type, platform, arch, version, build, build_identity)` |
+| `6` | `remove_fixed_system_conversation_projections` | 仅删除 `sys_assistant` / `sys_service` 拥有的 `conversations` 与 `conversation_usages` 派生行；保留人类会话、聊天成员、消息、草稿、附件、同步记录及 dataset |
 
 `DatabaseFactory` 在建立业务容器前完成这一步。已有库的启动事务先锁定 `schema_metadata`，再校验
 布局和读取迁移记录；事务使用 `READ_COMMITTED`，等待另一启动事务结束后能看到它刚提交的记录。
@@ -629,9 +633,15 @@ dataset ID 和迁移完成记录，只执行尚未完成的已知迁移。不会
 但迁移未记账”的半状态；重启只检查已完成前缀，不重复执行 SQL。高于当前清单、编号缺口或名称不符
 的记录会阻止启动，不能忽略它们去运行旧服务端。
 
-这是现有 epoch 内的具体迁移入口，没有自动降级 SQL。当前 0 号迁移只扩大允许值，升级前的旧行保持
-有效；恢复旧发行前仍须检查它是否能读取升级后产生的数据。RocksDB key/正文和其他未列出的历史
-布局没有因此获得自动转换能力，仍须为实际变更补充专门的迁移和恢复验收。
+这是现有 epoch 内的具体迁移入口，没有自动降级 SQL。v0.0.2 只识别迁移 `0..2`，当前源码完成迁移
+`3..6` 后，该旧二进制会因较新的迁移账本拒绝启动，即使 epoch 和 dataset 未变也不能直接回退。
+数据库启动事务在账号引导等后续步骤前已经提交；后续启动失败不会撤销已完成的迁移，也不能由此
+推断旧版仍能启动。恢复应使用能识别当前账本与数据的兼容构建，或经验证地恢复升级前同一时点的
+PostgreSQL 与完整 data 目录备份；不能只换回旧 JAR、删迁移记录或改 marker 来绕过检查。
+
+迁移 `0` 只扩大允许值，升级前的旧行保持有效；其他历史布局仍须按实际数据检查读取兼容性。
+RocksDB key/正文和其他未列出的布局没有因此获得自动转换能力，仍须为实际变更补充专门的迁移
+和恢复验收。
 
 ### 数据集绑定与恢复
 

@@ -4,8 +4,10 @@ import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.body.FileBody
 import com.virjar.tk.protocol.body.buildRichTextBody
+import com.virjar.tk.protocol.model.AuthRules
 import com.virjar.tk.protocol.model.ConversationCapacityPolicy
 import com.virjar.tk.protocol.model.Message
+import com.virjar.tk.protocol.model.UserRole
 import com.virjar.tk.server.domain.message.MessageProjectionHooks
 import com.virjar.tk.server.domain.message.MessageProjectionStage
 import com.virjar.tk.server.domain.user.SystemAccountUids
@@ -37,6 +39,55 @@ class SystemAccountIntegrationTest {
     }
 
     private val ctx get() = ext.env
+
+    @Test
+    fun `legacy human usernames do not block fixed system account bootstrap`() = runTest {
+        TestEnvironment().use { legacy ->
+            val humans = listOf("sys-assistant", "sys-service").associateWith { username ->
+                legacy.registerUser(username, "password123")
+            }
+            val before = humans.mapValues { (_, uid) -> legacy.userService.getProfile(uid) }
+
+            legacy.userService.ensureSystemAccounts()
+            legacy.userService.ensureSystemAccounts()
+
+            humans.forEach { (username, uid) ->
+                assertEquals(before.getValue(username), legacy.userService.getProfile(uid))
+                assertEquals(uid, legacy.userService.login(username, "password123").uid)
+            }
+            SystemAccountUids.ALL.forEach { uid ->
+                val account = legacy.userService.getProfile(uid)
+                assertEquals(UserRole.SYSTEM, account.role)
+                assertEquals(SystemAccountUids.USERNAMES.getValue(uid), account.username)
+                assertNotNull(AuthRules.validateUsername(account.username), "系统保留用户名不能成为合法人类注册输入")
+            }
+            transaction(legacy.database) {
+                assertEquals(2L, Users.selectAll().where { Users.uid inList SystemAccountUids.ALL }.count())
+            }
+        }
+    }
+
+    @Test
+    fun `existing fixed system identities preserve their old usernames and account state`() = runTest {
+        TestEnvironment().use { legacy ->
+            transaction(legacy.database) {
+                Users.batchInsert(SystemAccountUids.DISPLAY_NAMES.entries) { (uid, name) ->
+                    this[Users.uid] = uid
+                    this[Users.username] = uid.replace('_', '-')
+                    this[Users.name] = name
+                    this[Users.role] = UserRole.SYSTEM
+                    this[Users.status] = 2
+                    this[Users.passwordHash] = "!service-account:v1:fixture-only"
+                    this[Users.createdAt] = 11L
+                    this[Users.updatedAt] = 12L
+                }
+            }
+            val before = SystemAccountUids.ALL.associateWith(legacy.userService::getProfile)
+            legacy.userService.ensureSystemAccounts()
+            legacy.userService.ensureSystemAccounts()
+            assertEquals(before, SystemAccountUids.ALL.associateWith(legacy.userService::getProfile))
+        }
+    }
 
     @Test
     fun `boot bootstraps fixed system accounts idempotently`() = runTest {

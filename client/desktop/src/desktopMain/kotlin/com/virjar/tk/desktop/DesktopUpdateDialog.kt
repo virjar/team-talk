@@ -69,7 +69,7 @@ internal fun DesktopUpdateDialog(
 
                     is DesktopUpdateUiState.Available -> {
                         Text(
-                            "发现新版本 v${s.release.version}（build ${s.release.build}）",
+                            "可更新至 v${s.release.version}（build ${s.release.build}）",
                             style = MaterialTheme.typography.titleSmall,
                         )
                         val updateNotes = s.release.notes
@@ -146,7 +146,7 @@ internal fun DesktopUpdateDialog(
             }
         },
         dismissButton = {
-            // 下载中不允许关闭：半成品永远只在暂存目录，关闭不会破坏状态，但进度会被取消。
+            // 下载中由确认按钮提供关闭入口；退出对话框会取消下载并清理暂存目录。
             if (state !is DesktopUpdateUiState.Downloading) {
                 TextButton(onClick = onDismiss) {
                     Text(

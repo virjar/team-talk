@@ -43,10 +43,6 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: .\gradlew.bat -p buildSrc test --tests 'release.*'
-      - name: Assemble the Windows desktop shell on Windows (cross-build sanity)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: .\gradlew.bat :client:desktop:packageWindowsPortableWindowsAmd64
       - name: Exercise cross-platform shell and installer production
         if: runner.os != 'Windows'
         run: |
@@ -96,7 +92,7 @@ jobs:
         run: ./gradlew :client:android:compileDebugKotlin
 
   windows-desktop:
-    name: Windows Desktop storage and release build
+    name: Windows Desktop storage and packaged launcher
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -122,12 +118,27 @@ jobs:
             Tee-Object -FilePath "$env:RUNNER_TEMP/teamtalk-windows-desktop-tests.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # Exercise the shipped launch4j bootstrap and portable archive. GUI still needs desktop acceptance.
+      # Build once here; release-tools covers cross-host production on Linux.
       - name: Build the Windows desktop portable package
         shell: pwsh
         run: |
           .\gradlew.bat :client:desktop:packageWindowsPortableWindowsAmd64 --stacktrace 2>&1 |
             Tee-Object -FilePath "$env:RUNNER_TEMP/teamtalk-windows-desktop-package.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Run the packaged EXE and bundled JBR with an isolated non-GUI payload
+        shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+        run: |
+          $archives = @(Get-ChildItem 'client/desktop/build/desktop-shell/windows-amd64/TeamTalk-*-portable.zip' -File)
+          if ($archives.Count -ne 1) { throw 'Expected exactly one Windows portable archive' }
+          python scripts/ci/windows_shell_smoke.py $archives[0].FullName 2>&1 |
+            Tee-Object -FilePath "$env:RUNNER_TEMP/teamtalk-windows-desktop-smoke.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Preserve Windows Desktop diagnostics
@@ -227,4 +238,4 @@ jobs:
         run: ./gradlew :client:richeditor:desktopTest :client:app:desktopTest
 
       - name: Run platform shell tests
-        run: ./gradlew :client:desktop:desktopTest :client:android:testDebugUnitTest
+        run: ./gradlew :client:desktop-bootstrap:test :client:desktop:desktopTest :client:android:testDebugUnitTest

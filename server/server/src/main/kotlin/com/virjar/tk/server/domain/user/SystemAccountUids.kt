@@ -17,5 +17,14 @@ object SystemAccountUids {
         SERVICE to "服务号",
     )
 
+    /**
+     * 仅新建固定系统身份使用。人类注册最短三字符，现有机器人使用 bot- 前缀；
+     * 两字符用户名不会占用合法历史人类账号的名字。已存在的系统身份保留原用户名。
+     */
+    val USERNAMES: Map<String, String> = mapOf(
+        ASSISTANT to "~a",
+        SERVICE to "~s",
+    )
+
     val ALL: Set<String> = DISPLAY_NAMES.keys
 }

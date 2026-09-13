@@ -5,11 +5,26 @@ import com.virjar.tk.protocol.http.ClientReleaseInfo
 import com.virjar.tk.protocol.http.ClientReleaseManifest
 import com.virjar.tk.protocol.http.ClientUpdateCheckResponse
 import com.virjar.tk.protocol.http.ClientUpdateContracts
+import com.sun.net.httpserver.HttpExchange
+import com.sun.net.httpserver.HttpServer
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import java.io.File
+import java.io.IOException
+import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.security.MessageDigest
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -317,6 +332,140 @@ class DesktopUpdaterTest {
                 assertEquals(2, checks)
                 assertEquals("5", PayloadLayout.readCurrentPointer(fixture.root)!!.directory)
             } finally { fixture.root.deleteRecursively() }
+        }
+    }
+
+    @Test
+    fun `真实慢速下载报告文件中途进度且取消后立即释放暂存与锁`() = runBlocking {
+        val fixture = Fixture()
+        val releaseFirstDownload = CountDownLatch(1)
+        try {
+            val bytes = ByteArray(256 * 1024) { (it % 251).toByte() }
+            val file = ClientPayloadFile("lib/app.jar", sha256(bytes), bytes.size.toLong(), null,
+                "/api/v1/client/files/${sha256(bytes)}")
+            val manifestBytes = ClientUpdateContracts.json.encodeToString(ClientReleaseManifest.serializer(),
+                manifest(6, listOf(file))).toByteArray()
+            val downloads = AtomicInteger()
+            withHttpServer({ exchange ->
+                if (exchange.requestURI.path == "/manifest") {
+                    exchange.sendResponseHeaders(200, manifestBytes.size.toLong())
+                    exchange.responseBody.write(manifestBytes)
+                } else {
+                    check(exchange.requestURI.path == file.url)
+                    exchange.sendResponseHeaders(200, bytes.size.toLong())
+                    if (downloads.incrementAndGet() == 1) {
+                        exchange.responseBody.write(bytes, 0, 64 * 1024)
+                        exchange.responseBody.flush()
+                        check(releaseFirstDownload.await(10, TimeUnit.SECONDS))
+                        exchange.responseBody.write(bytes, 64 * 1024, bytes.size - 64 * 1024)
+                    } else exchange.responseBody.write(bytes)
+                }
+            }) { serverUrl ->
+                val updater = DesktopUpdater(fixture.context())
+                val progress = CopyOnWriteArrayList<DesktopUpdater.DownloadProgress>()
+                val partial = CompletableDeferred<Unit>()
+                val download = async(Dispatchers.IO) {
+                    updater.downloadAndApply(serverUrl, info("/manifest")) {
+                        progress += it
+                        if (it.completedBytes in 1 until it.totalBytes) partial.complete(Unit)
+                    }
+                }
+                try {
+                    withTimeout(5_000) { partial.await() }
+                    assertEquals(DesktopUpdater.DownloadProgress(0, bytes.size.toLong()), progress.first())
+                    withTimeout(2_000) { download.cancelAndJoin() }
+                    assertEquals(1, releaseFirstDownload.count, "取消不需要等待服务器继续发送")
+                    assertEquals("5", PayloadLayout.readCurrentPointer(fixture.root)!!.directory)
+                    assertTrue(fixture.root.listFiles()!!.none { it.name.startsWith(PayloadLayout.STAGING_PREFIX) })
+
+                    // 首次请求仍停在服务端，新的下载必须能够立即拿锁并独立完成。
+                    progress.clear()
+                    val result = withTimeout(5_000) {
+                        updater.downloadAndApply(serverUrl, info("/manifest")) { progress += it }
+                    }
+                    assertEquals(bytes.size.toLong(), result.downloadedBytes)
+                    assertEquals(DesktopUpdater.DownloadProgress(bytes.size.toLong(), bytes.size.toLong()), progress.last())
+                    assertTrue(progress.zipWithNext().all { (before, after) -> before.completedBytes <= after.completedBytes })
+                    assertEquals(2, downloads.get())
+                    assertEquals(6, PayloadLayout.readCurrentPointer(fixture.root)!!.build)
+                } finally {
+                    releaseFirstDownload.countDown()
+                    download.cancelAndJoin()
+                }
+            }
+        } finally {
+            releaseFirstDownload.countDown()
+            fixture.root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `等待真实响应头时也可取消`() = runBlocking {
+        val arrived = CompletableDeferred<Unit>()
+        val releaseResponse = CountDownLatch(1)
+        withHttpServer({ exchange ->
+            arrived.complete(Unit)
+            check(releaseResponse.await(10, TimeUnit.SECONDS))
+            exchange.sendResponseHeaders(200, 1)
+            exchange.responseBody.write(1)
+        }) { serverUrl ->
+            val request = async(Dispatchers.IO) { JdkUpdateHttpClient.get(serverUrl) }
+            try {
+                withTimeout(5_000) { arrived.await() }
+                withTimeout(2_000) { request.cancelAndJoin() }
+                assertEquals(1, releaseResponse.count, "取消不需要等到响应头返回")
+            } finally {
+                releaseResponse.countDown()
+                request.cancelAndJoin()
+            }
+        }
+    }
+
+    @Test
+    fun `真实HTTP保留状态码禁止重定向与响应大小校验`() = runBlocking {
+        val target = Files.createTempFile("update-http-", ".part").toFile()
+        val followedRedirects = AtomicInteger()
+        try {
+            withHttpServer({ exchange ->
+                val bytes = when (exchange.requestURI.path) {
+                    "/redirect" -> {
+                        exchange.responseHeaders.add("Location", "/unexpected")
+                        exchange.sendResponseHeaders(302, -1)
+                        null
+                    }
+                    "/unexpected" -> { followedRedirects.incrementAndGet(); byteArrayOf(1) }
+                    "/manifest" -> ByteArray(4 * 1024 * 1024 + 1)
+                    "/short" -> byteArrayOf(1, 2, 3)
+                    else -> byteArrayOf(1, 2, 3, 4, 5)
+                }
+                if (bytes != null) {
+                    exchange.sendResponseHeaders(200, bytes.size.toLong())
+                    exchange.responseBody.write(bytes)
+                }
+            }) { serverUrl ->
+                assertEquals(302, assertFailsWith<UpdateHttpException> { JdkUpdateHttpClient.get("$serverUrl/redirect") }.statusCode)
+                assertEquals(0, followedRedirects.get())
+                assertFailsWith<IllegalArgumentException> { JdkUpdateHttpClient.get("$serverUrl/manifest") }
+                assertFailsWith<IllegalArgumentException> { JdkUpdateHttpClient.download("$serverUrl/short", target, 4) }
+                assertFailsWith<IllegalArgumentException> { JdkUpdateHttpClient.download("$serverUrl/long", target, 4) }
+            }
+        } finally { target.delete() }
+    }
+
+    private suspend fun withHttpServer(handler: (HttpExchange) -> Unit, block: suspend (String) -> Unit) {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val workers = Executors.newFixedThreadPool(2)
+        server.executor = workers
+        server.createContext("/") { exchange ->
+            try { handler(exchange) } catch (_: IOException) {
+                // 被测客户端下载取消或拒绝超大响应时会主动关闭连接。
+            } finally { exchange.close() }
+        }
+        server.start()
+        try { block("http://127.0.0.1:${server.address.port}") } finally {
+            server.stop(0)
+            workers.shutdownNow()
+            check(workers.awaitTermination(5, TimeUnit.SECONDS)) { "HTTP fixture workers did not stop" }
         }
     }
 

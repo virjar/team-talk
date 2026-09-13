@@ -113,12 +113,12 @@ class UserService(
      */
     suspend fun ensureSystemAccounts() {
         unitOfWork.write {
-            com.virjar.tk.server.domain.user.SystemAccountUids.DISPLAY_NAMES.forEach { (uid, name) ->
+            SystemAccountUids.DISPLAY_NAMES.forEach { (uid, name) ->
                 if (users.findByUid(uid) == null) {
                     users.createServiceAccount(
                         transaction = transaction,
                         uid = uid,
-                        username = uid.replace('_', '-'),
+                        username = SystemAccountUids.USERNAMES.getValue(uid),
                         name = name,
                         role = UserRole.SYSTEM,
                     )
