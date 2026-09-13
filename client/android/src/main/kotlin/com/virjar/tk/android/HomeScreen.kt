@@ -193,7 +193,7 @@ internal fun HomeScreen(
                                 .map { it.chatId },
                         )
                     }
-                    val chatAvatars by dataState.chat.chatAvatars.collectAsState()
+                    val chatAvatars by dataState.chat.chatAvatars.collectAsState(emptyMap())
                     ConversationListScreen(
                         conversations = conversations,
                         mentionedChatIds = mentionedChatIds,

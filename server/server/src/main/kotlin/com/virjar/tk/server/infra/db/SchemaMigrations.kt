@@ -52,6 +52,17 @@ private val schemaMigrations = listOf(
         exec("ALTER TABLE group_chats ADD COLUMN IF NOT EXISTS avatar_content_type varchar(100)")
         exec("ALTER TABLE group_chats ADD COLUMN IF NOT EXISTS avatar_size bigint")
     },
+    SchemaMigration("create_client_release_registry") {
+        // 统一客户端发布与更新体系：发布注册中心三张表。
+        SchemaUtils.create(ClientReleases, ClientReleaseFiles, ClientChannels)
+    },
+    SchemaMigration("client_release_build_identity") {
+        exec("ALTER TABLE client_release ADD COLUMN IF NOT EXISTS build_identity varchar(128) NOT NULL DEFAULT ''")
+        exec("ALTER TABLE client_release ADD COLUMN IF NOT EXISTS upload_sha256 varchar(64)")
+        exec("ALTER TABLE client_release DROP CONSTRAINT IF EXISTS uq_client_release_identity")
+        exec("DROP INDEX IF EXISTS uq_client_release_identity")
+        exec("CREATE UNIQUE INDEX uq_client_release_identity ON client_release (client_type, platform, arch, version, build, build_identity)")
+    },
 )
 
 /** Caller owns the schema_metadata lock; DDL and its completion receipt commit in the same transaction. */

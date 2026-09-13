@@ -2,7 +2,6 @@ package com.virjar.tk.shared.client
 
 import app.cash.sqldelight.db.SqlDriver
 import com.virjar.tk.shared.database.AppDatabase
-import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.protocol.model.Chat
 import com.virjar.tk.protocol.model.Contact
@@ -22,10 +21,6 @@ import com.virjar.tk.protocol.model.User
 import com.virjar.tk.protocol.MessageReactionEventPayload
 import com.virjar.tk.protocol.payload.MessageAckPayload
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.asFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.map
 
 /** 原子转移 driver ownership：构造失败绝不能泄漏已打开的句柄。 */
 internal fun createLocalCacheWithOwnedDriver(
@@ -82,9 +77,6 @@ class LocalCacheImpl internal constructor(
     private val stateLock = Any()
     private val cacheUseGate = CacheUseGate()
 
-    /** 群头像流的"尚未解析"哨兵（区别于已确认无头像的 null）。 */
-    private val UnresolvedChatAvatar = Any()
-
     override fun compactStorage(): LocalCacheStorageCompactionReport = cacheUseGate.use {
         synchronized(stateLock) {
             val maintenance = storageMaintenance
@@ -94,6 +86,7 @@ class LocalCacheImpl internal constructor(
     }
 
     private val entities: LocalEntityProjectionStore
+    private val chatAvatars = LocalChatAvatarProjectionStore(queries, cacheUseGate, stateLock)
     private val conversations = LocalConversationProjectionStore(
         queries = queries,
         cacheUseGate = cacheUseGate,
@@ -249,47 +242,9 @@ class LocalCacheImpl internal constructor(
     override fun getUser(uid: String): User? = entities.getUser(uid)
     override fun observeUser(uid: String): Flow<User?> = entities.observeUser(uid)
 
-    // ── 群头像（内测反馈 T053）：Attachment proto 字节落库；内存 StateFlow 驱动 UI 刷新。
-    // UnresolvedChatAvatar 哨兵区分"尚未解析"与"已确认无头像"。──
-    private val chatAvatarFlows = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.flow.MutableStateFlow<Any?>>()
-
-    override fun observeChatAvatar(chatId: String): Flow<Attachment?> = kotlinx.coroutines.flow.flow {
-        val state = chatAvatarFlows.getOrPut(chatId) { kotlinx.coroutines.flow.MutableStateFlow(UnresolvedChatAvatar) }
-        if (state.value === UnresolvedChatAvatar) {
-            val fromDb = cacheUseGate.use {
-                queries.selectChatAvatar(chatId).executeAsOneOrNull()?.let { bytes ->
-                    runCatching { ProtoCodec.decode(Attachment, bytes) }.getOrNull()
-                }
-            }
-            state.compareAndSet(UnresolvedChatAvatar, fromDb)
-        }
-        emit(state.value as? Attachment)
-        state.collect { value -> emit(value as? Attachment) }
-    }.distinctUntilChanged()
-
-    override fun isChatAvatarResolved(chatId: String): Boolean =
-        chatAvatarFlows[chatId]?.let { it.value !== UnresolvedChatAvatar } == true
-
-    override val chatAvatarEvents = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 64)
-
-    override fun getChatAvatar(chatId: String): Attachment? = cacheUseGate.use {
-        queries.selectChatAvatar(chatId).executeAsOneOrNull()?.let { bytes ->
-            runCatching { ProtoCodec.decode(Attachment, bytes) }.getOrNull()
-        }
-    }
-
-    override fun upsertChatAvatar(chatId: String, attachment: Attachment?) {
-        val state = chatAvatarFlows.getOrPut(chatId) { kotlinx.coroutines.flow.MutableStateFlow(UnresolvedChatAvatar) }
-        cacheUseGate.use {
-            if (attachment == null) {
-                queries.deleteChatAvatar(chatId)
-            } else {
-                queries.upsertChatAvatar(chatId, ProtoCodec.encode(attachment), System.currentTimeMillis())
-            }
-        }
-        state.value = attachment
-        chatAvatarEvents.tryEmit(chatId)
-    }
+    override fun observeChatAvatars(): Flow<Map<String, Attachment>> = chatAvatars.observe()
+    override fun isChatAvatarResolved(chatId: String): Boolean = chatAvatars.isResolved(chatId)
+    override fun upsertChatAvatar(chatId: String, attachment: Attachment?) = chatAvatars.upsert(chatId, attachment)
     override fun upsertUser(user: User) = entities.upsertUser(user)
     override fun upsertTransientUserIfRelevant(user: User): Boolean =
         entities.upsertTransientUserIfRelevant(user)
@@ -318,6 +273,7 @@ class LocalCacheImpl internal constructor(
         cacheUseGate.use {
             synchronized(stateLock) {
                 queries.transaction {
+                    queries.deleteChatAvatar(chatId)
                     queries.deleteChatDraftSync(chatId)
                     queries.deleteChatComposerDraft(chatId)
                     queries.deleteOutgoingChatAssetsByChat(chatId)
@@ -333,6 +289,7 @@ class LocalCacheImpl internal constructor(
                     queries.deleteChat(chatId)
                 }
                 chatDraftStore.changed()
+                chatAvatars.removeChatLocked(chatId)
                 messages.invalidateChatHistoryLocked(chatId)
                 entities.invalidateChatAndRemoveChatLocked(chatId)
                 conversations.removeChatProjectionLocked(chatId)
@@ -882,6 +839,7 @@ class LocalCacheImpl internal constructor(
                 queries.deleteAllConversations()
                 queries.deleteAllContacts()
                 queries.deleteAllChats()
+                queries.deleteAllChatAvatars()
                 queries.deleteAllUsers()
                 messageProjectionReset.rebuildOutgoingProjection()
                 residentMessages = messages.snapshotResidentWindowsForResetLocked()
@@ -897,6 +855,7 @@ class LocalCacheImpl internal constructor(
             tasks.resetProjection()
             chatDraftSyncStore.invalidateAll()
             conversations.clearServerProjectionLocked()
+            chatAvatars.clearLocked()
             reactions.publishServerProjectionResetLocked()
             groupFileEntries.clearAllLocked()
             messages.resetResidentWindowsLocked(residentMessages)
@@ -951,6 +910,7 @@ class LocalCacheImpl internal constructor(
                 organization.closeResidentsLocked()
                 documents.resetSnapshotGatesLocked()
                 conversations.closeResidentLocked()
+                chatAvatars.closeLocked()
                 reactions.closeResidentsLocked()
                 groupFileEntries.closeObserversLocked()
             }

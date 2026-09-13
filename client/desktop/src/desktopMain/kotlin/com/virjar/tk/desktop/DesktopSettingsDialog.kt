@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -103,12 +104,14 @@ internal fun DesktopSettingsDialog(
     resources: DesktopSessionResources,
     buildInfoText: String,
     onLogout: () -> Unit,
+    onExitForRestart: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     if (!presentationGate.isOpen || !nav.acceptsRendering) return
 
     var view by remember { mutableStateOf(SettingsView.Menu) }
     var showLogoutConfirm by remember { mutableStateOf(false) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
 
     // 子视图需要的数据与任务窗口时代一致：进入前预载同一 ScreenDataKey。
     LaunchedEffect(view) {
@@ -182,6 +185,8 @@ internal fun DesktopSettingsDialog(
                         SettingsView.Menu -> SettingsMenuView(
                             nav = nav,
                             buildInfoText = buildInfoText,
+                            selfUpdateAvailable = com.virjar.tk.shared.update.DesktopUpdateContext.fromSystem() != null,
+                            onCheckUpdate = presentationGate.guard { showUpdateDialog = true },
                             onOpenView = presentationGate.guard { target: SettingsView -> view = target },
                             onLogoutRequest = presentationGate.guard { showLogoutConfirm = true },
                             onClose = presentationGate.guard(onDismiss),
@@ -229,6 +234,14 @@ internal fun DesktopSettingsDialog(
         }
     }
 
+    if (showUpdateDialog) {
+        DesktopUpdateDialog(
+            serverBaseUrl = desktopDefaultServerConfig().serverUrl,
+            onExitForRestart = onExitForRestart,
+            onDismiss = presentationGate.guard { showUpdateDialog = false },
+        )
+    }
+
     if (showLogoutConfirm) {
         AlertDialog(
             onDismissRequest = presentationGate.guard { showLogoutConfirm = false },
@@ -269,6 +282,8 @@ private fun SettingsView.dialogHeightModifier() = when (this) {
 private fun SettingsMenuView(
     nav: DesktopNav,
     buildInfoText: String,
+    selfUpdateAvailable: Boolean,
+    onCheckUpdate: () -> Unit,
     onOpenView: (SettingsView) -> Unit,
     onLogoutRequest: () -> Unit,
     onClose: () -> Unit,
@@ -365,6 +380,15 @@ private fun SettingsMenuView(
                 }
                 Spacer(Modifier.weight(1f))
                 ThemeSegmentedSelector(modifier = Modifier.width(248.dp))
+            }
+            if (selfUpdateAvailable) {
+                SettingsEntryRow(
+                    icon = Icons.Filled.SystemUpdate,
+                    title = "检查更新",
+                    description = "检测新版本并增量升级",
+                    onClick = onCheckUpdate,
+                    tag = "settings.检查更新",
+                )
             }
         }
 

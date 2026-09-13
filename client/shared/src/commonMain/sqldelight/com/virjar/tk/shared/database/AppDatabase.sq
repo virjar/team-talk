@@ -1876,13 +1876,13 @@ CREATE TABLE IF NOT EXISTS chat_avatar (
     payload BLOB NOT NULL,
     touched_at INTEGER NOT NULL
 );
-selectChatAvatar:
-SELECT payload FROM chat_avatar WHERE chat_id = ?;
+selectAllChatAvatars:
+SELECT chat_id, payload FROM chat_avatar ORDER BY touched_at DESC, rowid DESC;
 upsertChatAvatar:
 INSERT OR REPLACE INTO chat_avatar(chat_id, payload, touched_at) VALUES (?, ?, ?);
 deleteChatAvatar:
 DELETE FROM chat_avatar WHERE chat_id = ?;
-selectChatAvatarCapacity:
-SELECT count(*) AS entries, coalesce(sum(length(payload)), 0) AS bytes FROM chat_avatar;
+deleteAllChatAvatars:
+DELETE FROM chat_avatar;
 deleteChatAvatarLru:
 DELETE FROM chat_avatar WHERE rowid NOT IN (SELECT rowid FROM chat_avatar ORDER BY touched_at DESC, rowid DESC LIMIT 512);

@@ -42,7 +42,7 @@ class ChatRepository(
 
     /**
      * 群头像设置（内测反馈 T053）：本地投影即时更新；权威事件随后回推全量成员。
-     * 失败时本地投影回滚到 null（重试可再设置）。
+     * RPC 失败保留已有本地头像，供离线显示与原操作重试。
      */
     suspend fun setGroupAvatar(chatId: String, attachment: Attachment?): Outcome<Unit> = outcome {
         rpc.setGroupAvatar(GroupAvatar(chatId = chatId, attachment = attachment))

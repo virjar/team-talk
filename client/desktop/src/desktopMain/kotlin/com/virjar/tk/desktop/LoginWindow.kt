@@ -521,6 +521,7 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                                     mainWindowState.placement = nextTitleBarPlacement(mainWindowState.placement)
                                 },
                                 onLogout = { sessionUiActions.requestLogout() },
+                                onExitForRestart = { applicationExitActions.requestExit() },
                             )
                         }
                         resourceResult is DesktopSessionResourcesInstallationResult.Failed -> {

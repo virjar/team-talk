@@ -47,24 +47,25 @@ object ReleaseBundle {
     const val CHECKSUMS = "SHA256SUMS"
     const val DEPLOYMENT_CONFIG = "deployment-config.json"
 
+    /** 桌面四目标的产物目录名（与 client/desktop 交叉打包任务的 key 一致）。 */
+    val DESKTOP_TARGETS = listOf("macos-aarch64", "macos-amd64", "windows-amd64", "linux-amd64")
+
     fun assemble(
         destination: File,
         identity: BundleIdentity,
-        desktopSite: File,
+        desktopShellRoot: File,
+        desktopPayloadRoot: File,
         androidOutputs: File,
         serverZip: File,
         notes: String,
         commits: String,
-        toolLock: File,
-        toolDescriptor: File,
         headlessZip: File,
     ): File {
         if (destination.exists()) {
             verify(destination, identity, notes)
             return destination
         }
-        requireReleaseArtifact(desktopSite, "desktop-site", identity.version.name, identity.buildIdentity)
-        verifyDesktop(desktopSite, identity.version, identity.client, identity.desktopRevision)
+        verifyDesktopArtifacts(desktopShellRoot, desktopPayloadRoot, identity)
         val apk = requireAndroidApk(androidOutputs, identity)
         val apkVerification = ApkVerifier.Builder(apk).build().verify()
         require(apkVerification.isVerified) { "Android APK signature verification failed: ${apkVerification.errors}" }
@@ -81,7 +82,14 @@ object ReleaseBundle {
         val temporary = File(destination.parentFile, ".${destination.name}-${UUID.randomUUID()}.tmp")
         require(temporary.mkdir()) { "Cannot create release staging directory" }
         try {
-            copyTree(desktopSite, File(temporary, "desktop"))
+            val desktopDir = File(temporary, "desktop").apply { mkdirs() }
+            DESKTOP_TARGETS.forEach { key ->
+                val shell = File(desktopShellRoot, key)
+                val target = File(desktopDir, key).apply { mkdirs() }
+                desktopInstallers(shell).forEach { it.copyTo(File(target, it.name)) }
+                val payloadZip = File(File(desktopPayloadRoot, key), "payload.zip")
+                payloadZip.copyTo(File(target, "payload.zip"))
+            }
             val assets = File(temporary, "assets").apply { mkdirs() }
             apk.copyTo(File(assets, "${identity.client.desktopName}-${identity.version.name}-android.apk"))
             serverZip.copyTo(File(assets, "TeamTalk-${identity.version.name}-server.zip"))
@@ -92,7 +100,7 @@ object ReleaseBundle {
             File(temporary, "COMMITS.md").writeText(commits)
             File(temporary, DEPLOYMENT_CONFIG).writeText(identity.deployment.toCanonicalJson(), Charsets.UTF_8)
             val manifest = buildJsonObject {
-                put("format", 2)
+                put("format", 3)
                 put("version", identity.version.name)
                 put("buildNumber", identity.version.buildNumber)
                 put("protocolMajor", identity.version.protocolMajor)
@@ -111,18 +119,9 @@ object ReleaseBundle {
                 put("deploymentSha256", identity.deploymentSha256)
                 put("client", clientManifest(identity.client))
                 put("notesSha256", sha256(File(temporary, "RELEASE_NOTES.md")))
-                put("conveyorToolsSha256", sha256(toolLock))
-                val tool = Properties().apply { toolDescriptor.reader().use(::load) }
-                putJsonObject("conveyor") {
-                    put("version", tool.getProperty("version"))
-                    put("archiveSha256", tool.getProperty("archiveSha256"))
-                }
                 put("buildJavaVersion", System.getProperty("java.version"))
                 putJsonArray("androidSigningCertificatesSha256") {
                     apkVerification.signerCertificates.forEach { add(sha256(it.encoded)) }
-                }
-                File(desktopSite, "${identity.client.desktopFsName}.crt").takeIf(File::isFile)?.let {
-                    put("desktopCertificateFileSha256", sha256(it))
                 }
                 putJsonArray("files") {
                     regularFiles(temporary).forEach { file ->
@@ -151,7 +150,8 @@ object ReleaseBundle {
         require(Files.isRegularFile(manifestFile.toPath(), NOFOLLOW_LINKS)) { "Release bundle manifest is missing" }
         val manifest = Json.parseToJsonElement(manifestFile.readText()).jsonObject
         fun field(name: String): String = manifest.getValue(name).jsonPrimitive.content
-        require(field("format") in setOf("1", "2") && field("version") == identity.version.name &&
+        val format = field("format")
+        require(format in setOf("1", "2", "3") && field("version") == identity.version.name &&
             field("buildNumber") == identity.version.buildNumber.toString() &&
             field("protocolMajor") == identity.version.protocolMajor.toString() &&
             field("protocolMinor") == identity.version.protocolMinor.toString() &&
@@ -197,15 +197,22 @@ object ReleaseBundle {
         require(File(directory, CHECKSUMS).readText() == checksumText(directory)) { "SHA256SUMS does not match the bundle" }
         // Existing sealed format 1/2 bundles predate Headless; retries preserve those exact three assets.
         val headlessArtifact = manifest["headlessArtifact"]?.jsonPrimitive?.content
-        require(File(directory, "desktop/download.html").isFile &&
-            assets(directory).size == (if (headlessArtifact == null) 3 else 4)) { "Incomplete release bundle" }
-        if (headlessArtifact != null) {
+        if (format == "3") {
+            require(assets(directory).size == 4) { "Incomplete release bundle" }
+            requireNotNull(headlessArtifact) { "Format 3 bundles always seal the Headless artifact" }
             require(headlessArtifact == "assets/${HeadlessDistribution.archiveName(identity.buildIdentity)}") {
                 "Unexpected Headless release artifact path"
             }
             HeadlessDistribution.verifyArchive(File(directory, headlessArtifact), identity.version, identity.buildIdentity)
+            verifyDesktopArtifacts(File(directory, "desktop"), File(directory, "desktop"), identity)
+        } else {
+            // 历史 Conveyor 布局的密封目录：字节完整性已由上方 files 清单校验保证。
+            require(File(directory, "desktop/download.html").isFile &&
+                assets(directory).size == (if (headlessArtifact == null) 3 else 4)) { "Incomplete release bundle" }
+            if (headlessArtifact != null) {
+                HeadlessDistribution.verifyArchive(File(directory, headlessArtifact), identity.version, identity.buildIdentity)
+            }
         }
-        verifyDesktop(File(directory, "desktop"), identity.version, identity.client, identity.desktopRevision)
         verifyAndroidApkIdentity(
             assets(directory).single { it.extension == "apk" }, identity,
             allowLegacyProducer = field("format") == "1",
@@ -231,32 +238,58 @@ object ReleaseBundle {
         return apk
     }
 
-    internal fun verifyDesktop(
-        site: File,
-        version: ReleaseVersion,
-        client: ClientDistributionIdentity,
-        desktopRevision: Int = version.buildNumber + 1,
-    ) {
-        val metadata = Properties().apply { File(site, "metadata.properties").reader().use(::load) }
-        require(metadata.getProperty("app.version") == version.name &&
-            metadata.getProperty("app.revision") == desktopRevision.toString()) { "Stale Conveyor version metadata" }
-        listOf("download.html", "${client.desktopFsName}.appinstaller", "${client.desktopFsName}.exe", "appcast-amd64.rss", "appcast-aarch64.rss").forEach {
-            require(File(site, it).isFile && File(site, it).length() > 0) { "Missing Desktop site component: $it" }
+    /**
+     * 校验桌面四目标产物：壳归档 + 安装器 + payload.zip（其内 payload.properties 的
+     * version/build 必须与发行身份一致——build 取 desktopRevision，正式=buildNumber+1，
+     * 快照=提交历史推导值，保证更新通道内单调）。
+     */
+    internal fun verifyDesktopArtifacts(shellRoot: File, payloadRoot: File, identity: BundleIdentity) {
+        DESKTOP_TARGETS.forEach { key ->
+            val shell = File(shellRoot, key)
+            val payloadZip = if (payloadRoot == shellRoot) {
+                File(shell, "payload.zip")
+            } else {
+                File(File(payloadRoot, key), "payload.zip")
+            }
+            require(payloadZip.isFile && payloadZip.length() > 0) { "Desktop target $key lacks payload.zip" }
+            java.util.zip.ZipFile(payloadZip).use { zip ->
+                val entry = zip.getEntry("payload.properties")
+                    ?: error("payload.zip for $key has no payload.properties")
+                val props = Properties().apply { zip.getInputStream(entry).reader().use(::load) }
+                require(props.getProperty("version") == identity.version.name &&
+                    props.getProperty("build") == identity.desktopRevision.toString()) {
+                    "Desktop payload for $key is stale: ${props.getProperty("version")}+" +
+                        "${props.getProperty("build")} (expected ${identity.version.name}+${identity.desktopRevision})"
+                }
+                require(props.getProperty("minShellAbi")?.toIntOrNull() != null) {
+                    "Desktop payload for $key lacks minShellAbi"
+                }
+            }
+            val archives = desktopInstallers(shell)
+            require(archives.isNotEmpty()) { "Desktop target $key lacks shell archives" }
+            if (key == "windows-amd64") {
+                require(archives.any { it.extension == "exe" }) {
+                    "Windows target lacks the NSIS setup.exe (run with makensis on PATH)"
+                }
+            }
+            if (key == "linux-amd64") {
+                require(archives.any { it.extension == "deb" }) {
+                    "Linux target lacks the .deb package"
+                }
+            }
         }
-        val packagePrefix = "${client.desktopFsName}-${version.name}-$desktopRevision"
-        val requiredPackages = listOf(
-            "$packagePrefix-mac-amd64.zip", "$packagePrefix-mac-aarch64.zip",
-            "$packagePrefix-windows-amd64.zip", "$packagePrefix.x64.msix", "$packagePrefix-linux-amd64.tar.gz",
-            "${client.desktopFsName}_${version.name}-${desktopRevision}_amd64.deb",
-        )
-        val files = regularFiles(site).associateBy(File::getName)
-        // A snapshot can keep the readable version. Suffix-only checks would accept the previous build's packages.
-        requiredPackages.forEach { name ->
-            require(files[name]?.length()?.let { it > 0 } == true) { "Desktop site lacks the current platform package: $name" }
-        }
-        verifyMsixDataDirectoryPolicy(files.getValue("$packagePrefix.x64.msix"))
-        requiredPackages.forEach { verifySkikoNativePackage(files.getValue(it)) }
     }
+
+    /** GitHub/站点发布用的桌面产物清单。 */
+    fun desktopArtifacts(directory: File): List<File> =
+        DESKTOP_TARGETS.flatMap { key -> desktopInstallers(File(directory, "desktop/$key")) }
+            .sortedBy(File::getName)
+
+    /** Producers keep installers in a child directory; sealed bundles flatten only distributable files. */
+    internal fun desktopInstallers(directory: File): List<File> =
+        listOf(directory, File(directory, "installer")).flatMap { it.listFiles().orEmpty().toList() }
+            .filter { it.isFile && it.name != "payload.zip" && it.extension in setOf("zip", "gz", "exe", "deb") }
+            .sortedBy(File::getName)
 
     private fun clientManifest(client: ClientDistributionIdentity): JsonObject = buildJsonObject {
         put("applicationId", client.applicationId)

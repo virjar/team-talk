@@ -672,7 +672,7 @@ private fun NavGraphBuilder.groupAdminDestination(
             .firstOrNull { it.uid == dataState.userSession.uid }
             ?.role ?: -1
         val currentUserIsOwner = currentRole == 2
-        val groupAvatarMap by dataState.chat.chatAvatars.collectAsState()
+        val groupAvatarMap by dataState.chat.chatAvatars.collectAsState(emptyMap())
 
         // 群头像修改（内测反馈 T053）：相册选图 → 方形裁剪 → staging 上传 → setGroupAvatar。
         val avatarEditContext = androidx.compose.ui.platform.LocalContext.current

@@ -251,6 +251,21 @@ internal fun createServerModule(
     single<com.virjar.tk.server.domain.document.DocumentExportObjectSource> { get<FileStore>() }
     single { com.virjar.tk.server.infra.db.AdminFeatureSettingsStore(get()) }
     single<com.virjar.tk.server.domain.document.DocumentExportGate> { get<com.virjar.tk.server.infra.db.AdminFeatureSettingsStore>() }
+    // 客户端发布注册中心：发布物内容寻址仓 + 通道/停用/回滚管理。
+    single {
+        com.virjar.tk.server.infra.storage.ReleaseStore(
+            java.io.File(com.virjar.tk.server.env.Environment.dataRoot, "release-store"),
+        )
+    }
+    single {
+        com.virjar.tk.server.infra.clientrelease.ClientReleaseService(
+            database = get(),
+            store = get(),
+            audit = ClientReleaseAuditAdapter(get()),
+            publishTokenSha256 = com.virjar.tk.server.infra.clientrelease.ClientReleaseService
+                .publishTokenSha256FromEnvironment(),
+        )
+    }
     single<MessageSearch> { get<SearchIndex>() }
     single<ClientTelemetryControlRepository> { ExposedClientTelemetryControlRepository(database = get()) }
     single<ClientTelemetryAdminAuditRepository> {
@@ -414,6 +429,7 @@ internal fun createServerModule(
         val groupFiles = get<GroupFileRepository>()
         val documents = get<DocumentAttachmentReferences>()
         val userAvatars = get<UserAvatarReferences>()
+        val groupAvatars = get<GroupAvatarReferences>()
         val drafts = get<com.virjar.tk.server.domain.attachment.ChatDraftAttachmentReferences>()
         object : AttachmentReferences {
             override fun getChatIds(path: String): Set<String> =
@@ -427,7 +443,8 @@ internal fun createServerModule(
                 messages.getReferencedAttachmentPaths(paths) +
                     groupFiles.getReferencedAttachmentPaths(paths) +
                     documents.getReferencedPaths(paths) +
-                    userAvatars.getReferencedPaths(paths) + drafts.getReferencedPaths(paths)
+                    userAvatars.getReferencedPaths(paths) +
+                    groupAvatars.getReferencedPaths(paths) + drafts.getReferencedPaths(paths)
         }
     }
     single<AttachmentAccess> {
@@ -609,4 +626,14 @@ private fun sharedParentOrRoots(first: File, second: File): List<java.nio.file.P
     val secondPath = second.toPath().toAbsolutePath().normalize()
     val commonParent = firstPath.parent?.takeIf { it == secondPath.parent }
     return commonParent?.let(::listOf) ?: listOf(firstPath, secondPath)
+}
+
+/** 发布管理动作 → 管理审计台账（begin/complete 立即闭环，状态码即成败）。 */
+private class ClientReleaseAuditAdapter(
+    private val security: com.virjar.tk.server.application.admin.AdminSecurityService,
+) : com.virjar.tk.server.infra.clientrelease.ClientReleaseAudit {
+    override fun record(actor: String, action: String, target: String, status: Int) {
+        val auditId = security.beginAudit(actor, action, target)
+        security.completeAudit(auditId, status)
+    }
 }

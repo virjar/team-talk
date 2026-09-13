@@ -180,7 +180,7 @@ class HeadlessDistributionTest {
             }
         """.trimIndent()) }
         val mains = listOf("AgentMainKt", "CliMainKt", "McpMainKt").map { name -> File(sources, "$name.java").apply {
-            writeText("package com.virjar.tk.shared.agent; public class $name { public static void main(String[] args) { fixture.Probe.run(args); } }")
+            writeText("package com.virjar.tk.headless.agent; public class $name { public static void main(String[] args) { fixture.Probe.run(args); } }")
         } }
         val classes = File(root, "fixture classes").apply { mkdirs() }
         assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null, null, null,
@@ -212,7 +212,7 @@ internal fun writeHeadlessDistributionFixture(directory: File, version: ReleaseV
     File(directory, "LICENSE").writeText("fixture license\n")
     JarOutputStream(File(directory, "lib/sdk.jar").outputStream()).use { jar ->
         listOf("AgentMainKt", "CliMainKt", "McpMainKt").forEach {
-            jar.putNextEntry(JarEntry("com/virjar/tk/shared/agent/$it.class"))
+            jar.putNextEntry(JarEntry("com/virjar/tk/headless/agent/$it.class"))
             jar.write(byteArrayOf(0))
             jar.closeEntry()
         }

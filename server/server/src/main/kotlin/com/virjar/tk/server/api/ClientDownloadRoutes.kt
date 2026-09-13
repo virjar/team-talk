@@ -1,14 +1,13 @@
 package com.virjar.tk.server.api
 
-import io.ktor.http.ContentType
-import io.ktor.http.HttpHeaders
-import io.ktor.http.HttpStatusCode
 import com.virjar.tk.protocol.http.AndroidReleaseManifest
-import io.ktor.http.content.OutgoingContent
+import com.virjar.tk.server.infra.clientrelease.ClientReleaseService
+import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.defaultForFile
-import io.ktor.http.headersOf
-import io.ktor.server.application.install
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.call
+import io.ktor.server.application.install
 import io.ktor.server.http.content.LocalFileContent
 import io.ktor.server.http.content.staticFiles
 import io.ktor.server.plugins.partialcontent.PartialContent
@@ -21,20 +20,32 @@ import io.ktor.server.routing.route
 import io.ktor.utils.io.ByteReadChannel
 import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writer
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import java.io.File
-import java.nio.ByteBuffer
 
-/** 安装器和更新客户端读取公开制品；Range 插件不进入另有鉴权与 Range 策略的业务附件路由。 */
-internal fun Route.clientDownloadRoutes(downloadsDir: File) {
+/**
+ * 客户端下载入口（/downloads）。
+ *
+ * Android 走发布注册中心优先、旧收据目录兜底（服务端升级但尚未重新发布时的
+ * 过渡期兼容）；桌面目录是冻结的 Conveyor 遗留站点，只读保留给存量客户端。
+ */
+internal fun Route.clientDownloadRoutes(
+    downloadsDir: File,
+    clientReleases: ClientReleaseService? = null,
+) {
     route("/downloads") {
         install(PartialContent)
 
         get("/android.json") {
+            // 注册中心已发布时它是唯一权威；否则回落到旧收据语义。
+            val registryManifest = run { clientReleases?.androidLegacyManifest() }
+            if (registryManifest != null) {
+                call.response.headers.append(io.ktor.http.HttpHeaders.CacheControl, "no-store")
+                call.respondText(Json.encodeToString(registryManifest), ContentType.Application.Json)
+                return@get
+            }
+            if (clientReleases?.managesAndroidDownloads() == true) return@get call.respond(HttpStatusCode.NotFound)
             call.withAndroidDownload(downloadsDir) { download ->
                 // 发布通道标记（T030）：stable/preview/snapshot；无收据的历史目录不声明通道。
                 val manifest = AndroidReleaseManifest(
@@ -51,7 +62,7 @@ internal fun Route.clientDownloadRoutes(downloadsDir: File) {
         get("/{filename}") {
             val filename = call.parameters["filename"] ?: return@get call.respond(HttpStatusCode.BadRequest)
             if (filename == ANDROID_DOWNLOAD_ALIAS || filename.endsWith("-android.apk")) {
-                return@get call.respondAndroidDownload(downloadsDir, filename, head = false)
+                return@get call.respondAndroidDownload(downloadsDir, clientReleases, filename, head = false)
             }
             val file = resolveDirectDownload(downloadsDir, filename)
                 ?: return@get call.respond(HttpStatusCode.NotFound)
@@ -60,12 +71,22 @@ internal fun Route.clientDownloadRoutes(downloadsDir: File) {
         head("/{filename}") {
             val filename = call.parameters["filename"] ?: return@head call.respond(HttpStatusCode.BadRequest)
             if (filename == ANDROID_DOWNLOAD_ALIAS || filename.endsWith("-android.apk")) {
-                return@head call.respondAndroidDownload(downloadsDir, filename, head = true)
+                return@head call.respondAndroidDownload(downloadsDir, clientReleases, filename, head = true)
             }
             val file = resolveDirectDownload(downloadsDir, filename)
                 ?: return@head call.respond(HttpStatusCode.NotFound)
             // 直链保留同一文件准入；HEAD 返回 GET 的元数据，不打开并传输整个 APK。
             call.respond(file.downloadHeadResponse())
+        }
+
+        // 中文「下载与更新」页：注册中心数据 + 首页同款风格（classpath 资源懒加载缓存）。
+        for (path in listOf("", "/")) {
+            get(path) {
+                val page = downloadsPageHtml()
+                    ?: return@get call.respond(HttpStatusCode.NotFound)
+                call.response.headers.append(io.ktor.http.HttpHeaders.CacheControl, "no-store")
+                call.respondText(page, ContentType.Text.Html)
+            }
         }
 
         val desktopDir = File(downloadsDir, "desktop")
@@ -89,57 +110,105 @@ internal fun Route.clientDownloadRoutes(downloadsDir: File) {
     }
 }
 
-private suspend fun ApplicationCall.withAndroidDownload(
+private suspend fun ApplicationCall.respondAndroidDownload(
     downloads: File,
-    block: suspend (AndroidDownloadSnapshot) -> Unit,
-) = withContext(Dispatchers.IO) {
-    response.headers.append(HttpHeaders.CacheControl, "no-store")
-    val snapshot = try {
-        openAndroidDownload(downloads)
-    } catch (_: java.io.IOException) {
-        null.also { response.headers.append(HttpHeaders.RetryAfter, "1") }
-    } catch (_: IllegalArgumentException) {
-        null.also { response.headers.append(HttpHeaders.RetryAfter, "1") }
-    } catch (_: IllegalStateException) {
-        null.also { response.headers.append(HttpHeaders.RetryAfter, "1") }
-    } catch (_: NoSuchElementException) {
-        null.also { response.headers.append(HttpHeaders.RetryAfter, "1") }
+    clientReleases: ClientReleaseService?,
+    filename: String,
+    head: Boolean,
+) {
+    // 注册中心的 APK：文件句柄来自内容寻址仓，身份来自发布行，无需逐请求重算哈希。
+    val registryInstaller = run {
+        when {
+            clientReleases == null -> null
+            filename == ANDROID_DOWNLOAD_ALIAS -> clientReleases.findAndroidInstaller(null)
+            else -> clientReleases.findAndroidInstaller(filename)
+        }
     }
-    if (snapshot == null) {
-        respond(if (response.headers[HttpHeaders.RetryAfter] != null) HttpStatusCode.ServiceUnavailable else HttpStatusCode.NotFound)
-        return@withContext
+    if (registryInstaller != null) {
+        response.headers.append(
+            io.ktor.http.HttpHeaders.ContentDisposition,
+            "attachment; filename=\"${registryInstaller.filename}\"",
+        )
+        if (head) {
+            respond(
+                object : io.ktor.http.content.OutgoingContent.NoContent() {
+                    override val contentLength = registryInstaller.size
+                    override val contentType = ContentType("application", "vnd.android.package-archive")
+                    override val headers = io.ktor.http.headersOf(io.ktor.http.HttpHeaders.AcceptRanges, "bytes")
+                },
+            )
+        } else {
+            respond(
+                LocalFileContent(
+                    registryInstaller.file,
+                    ContentType("application", "vnd.android.package-archive"),
+                ),
+            )
+        }
+        return
     }
-    snapshot.use { block(it) }
-}
-
-private suspend fun ApplicationCall.respondAndroidDownload(downloads: File, filename: String, head: Boolean) {
+    if (clientReleases?.managesAndroidDownloads() == true) return respond(HttpStatusCode.NotFound)
     withAndroidDownload(downloads) { snapshot ->
         if (filename != ANDROID_DOWNLOAD_ALIAS && (!snapshot.managed || filename != snapshot.filename)) {
             respond(HttpStatusCode.NotFound)
             return@withAndroidDownload
         }
-        response.headers.append(HttpHeaders.ContentDisposition, "attachment; filename=\"${snapshot.filename}\"")
+        response.headers.append(
+            io.ktor.http.HttpHeaders.ContentDisposition,
+            "attachment; filename=\"${snapshot.filename}\"",
+        )
         if (head) {
-            respond(object : OutgoingContent.NoContent() {
-                override val contentLength = snapshot.size
-                override val contentType = ContentType("application", "vnd.android.package-archive")
-                override val headers = headersOf(HttpHeaders.AcceptRanges, "bytes")
-            })
+            respond(
+                object : io.ktor.http.content.OutgoingContent.NoContent() {
+                    override val contentLength = snapshot.size
+                    override val contentType = ContentType("application", "vnd.android.package-archive")
+                    override val headers = io.ktor.http.headersOf(io.ktor.http.HttpHeaders.AcceptRanges, "bytes")
+                },
+            )
         } else coroutineScope {
             respond(AndroidDownloadContent(snapshot, this))
         }
     }
 }
 
+private suspend fun ApplicationCall.withAndroidDownload(
+    downloads: File,
+    block: suspend (AndroidDownloadSnapshot) -> Unit,
+) = run {
+    response.headers.append(io.ktor.http.HttpHeaders.CacheControl, "no-store")
+    val snapshot = try {
+        openAndroidDownload(downloads)
+    } catch (_: java.io.IOException) {
+        null.also { response.headers.append(io.ktor.http.HttpHeaders.RetryAfter, "1") }
+    } catch (_: IllegalArgumentException) {
+        null.also { response.headers.append(io.ktor.http.HttpHeaders.RetryAfter, "1") }
+    } catch (_: IllegalStateException) {
+        null.also { response.headers.append(io.ktor.http.HttpHeaders.RetryAfter, "1") }
+    } catch (_: NoSuchElementException) {
+        null.also { response.headers.append(io.ktor.http.HttpHeaders.RetryAfter, "1") }
+    }
+    if (snapshot == null) {
+        respond(
+            if (response.headers[io.ktor.http.HttpHeaders.RetryAfter] != null) {
+                HttpStatusCode.ServiceUnavailable
+            } else {
+                HttpStatusCode.NotFound
+            },
+        )
+        return@run
+    }
+    snapshot.use { block(it) }
+}
+
 private class AndroidDownloadContent(
     private val snapshot: AndroidDownloadSnapshot,
-    private val scope: CoroutineScope,
-) : OutgoingContent.ReadChannelContent() {
+    private val scope: kotlinx.coroutines.CoroutineScope,
+) : io.ktor.http.content.OutgoingContent.ReadChannelContent() {
     override val contentLength = snapshot.size
     override val contentType = ContentType("application", "vnd.android.package-archive")
     override fun readFrom(): ByteReadChannel = readFrom(0 until snapshot.size)
-    override fun readFrom(range: LongRange): ByteReadChannel = scope.writer(Dispatchers.IO) {
-        val buffer = ByteBuffer.allocate(64 * 1024)
+    override fun readFrom(range: LongRange): ByteReadChannel = scope.writer() {
+        val buffer = java.nio.ByteBuffer.allocate(64 * 1024)
         var offset = range.first
         while (offset <= range.last) {
             buffer.clear().limit(minOf(buffer.capacity().toLong(), range.last - offset + 1).toInt())
@@ -151,11 +220,12 @@ private class AndroidDownloadContent(
     }.channel
 }
 
-private fun File.downloadHeadResponse(): OutgoingContent.NoContent = object : OutgoingContent.NoContent() {
-    override val contentLength = length()
-    override val contentType = clientDownloadContentType(this@downloadHeadResponse)
-    override val headers = headersOf(HttpHeaders.AcceptRanges, "bytes")
-}
+private fun File.downloadHeadResponse(): io.ktor.http.content.OutgoingContent.NoContent =
+    object : io.ktor.http.content.OutgoingContent.NoContent() {
+        override val contentLength = length()
+        override val contentType = clientDownloadContentType(this@downloadHeadResponse)
+        override val headers = io.ktor.http.headersOf(io.ktor.http.HttpHeaders.AcceptRanges, "bytes")
+    }
 
 /** Windows App Installer 要求正确的制品类型，不能全部退回 application/octet-stream。 */
 private fun clientDownloadContentType(file: File): ContentType = when (file.extension.lowercase()) {
@@ -187,3 +257,15 @@ internal fun resolveDirectDownload(downloadsDir: File, filename: String): File? 
         null
     }
 }
+
+private const val DOWNLOADS_PAGE_RESOURCE = "static/downloads/index.html"
+
+private object DownloadsPageResource {
+    val html: String? by lazy {
+        DownloadsPageResource::class.java.classLoader
+            .getResourceAsStream(DOWNLOADS_PAGE_RESOURCE)
+            ?.use { it.readBytes().toString(Charsets.UTF_8) }
+    }
+}
+
+internal fun downloadsPageHtml(): String? = DownloadsPageResource.html

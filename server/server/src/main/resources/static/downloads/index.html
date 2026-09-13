@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>下载与更新 - TeamTalk</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --bg: #ffffff;
+            --bg-alt: #f8fafc;
+            --text: #0f172a;
+            --text-secondary: #64748b;
+            --border: #e2e8f0;
+            --radius: 12px;
+            --shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --primary: #60a5fa;
+                --primary-hover: #93bbfd;
+                --bg: #0f172a;
+                --bg-alt: #1e293b;
+                --text: #f1f5f9;
+                --text-secondary: #94a3b8;
+                --border: #334155;
+                --shadow: 0 1px 3px rgba(0,0,0,0.3);
+            }
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+        }
+        a { color: var(--primary); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+
+        nav { border-bottom: 1px solid var(--border); padding: 16px 0; }
+        nav .container { display: flex; align-items: center; justify-content: space-between; }
+        .logo { font-size: 22px; font-weight: 700; color: var(--primary); letter-spacing: -0.5px; }
+        .nav-links a { color: var(--text-secondary); margin-left: 24px; font-size: 15px; }
+        .nav-links a:hover { color: var(--primary); text-decoration: none; }
+
+        .page-head { padding: 48px 0 8px; text-align: center; }
+        .page-head h1 { font-size: 32px; font-weight: 800; letter-spacing: -1px; margin-bottom: 10px; }
+        .page-head .sub { color: var(--text-secondary); font-size: 16px; }
+
+        .section { padding: 40px 0 8px; }
+        .section h2 { font-size: 22px; font-weight: 700; margin-bottom: 20px; }
+        .section h2 .anchor-hint { font-size: 13px; font-weight: 400; color: var(--text-secondary); margin-left: 8px; }
+        .section .note { color: var(--text-secondary); font-size: 14px; margin-top: 14px; }
+
+        .dl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; }
+        .dl-card {
+            border: 1px solid var(--border); border-radius: var(--radius); padding: 22px;
+            background: var(--bg); box-shadow: var(--shadow);
+            display: flex; flex-direction: column; gap: 10px;
+        }
+        .dl-card .row1 { display: flex; align-items: center; gap: 12px; }
+        .dl-card .plat-icon { font-size: 32px; }
+        .dl-card .plat-name { font-weight: 600; font-size: 16px; }
+        .dl-card .plat-desc { font-size: 13px; color: var(--text-secondary); }
+        .badge {
+            display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 10px;
+            border: 1px solid var(--border); color: var(--text-secondary); margin-left: 8px; vertical-align: 2px;
+        }
+        .badge.stable { color: #16a34a; border-color: #16a34a55; }
+        .badge.preview { color: #d97706; border-color: #d9770655; }
+        .badge.snapshot { color: #7c3aed; border-color: #7c3aed55; }
+        .dl-btn {
+            display: block; text-align: center; background: var(--primary); color: #fff;
+            padding: 9px 16px; border-radius: 8px; font-weight: 600; font-size: 14px;
+        }
+        .dl-btn:hover { background: var(--primary-hover); text-decoration: none; }
+        .dl-btn.secondary { background: transparent; color: var(--primary); border: 1px solid var(--border); }
+        .file-meta { font-size: 12px; color: var(--text-secondary); word-break: break-all; }
+
+        .qr-box { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 0 4px; }
+        .qr-box img { width: 170px; height: 170px; border-radius: 8px; }
+
+        pre.cmd {
+            background: var(--bg-alt); border: 1px solid var(--border); border-radius: 8px;
+            padding: 12px 14px; font-size: 13px; overflow-x: auto; margin-top: 10px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        }
+
+        details.guide { border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin-top: 12px; font-size: 14px; }
+        details.guide summary { cursor: pointer; color: var(--text-secondary); }
+        details.guide ol { margin: 10px 0 4px 20px; }
+        details.guide li { margin-bottom: 4px; }
+        details.guide code, pre.cmd code {
+            background: var(--bg-alt); border-radius: 4px; padding: 1px 6px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px;
+        }
+
+        table.history { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
+        table.history th, table.history td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); }
+        table.history th { color: var(--text-secondary); font-weight: 600; }
+        .status-tag { font-size: 12px; }
+        .status-tag.ACTIVE { color: #16a34a; }
+        .status-tag.DISABLED { color: #dc2626; }
+        .status-tag.SUPERSEDED { color: var(--text-secondary); }
+
+        .empty { padding: 40px 0; text-align: center; color: var(--text-secondary); }
+
+        footer { border-top: 1px solid var(--border); padding: 24px 0; margin-top: 48px; text-align: center; }
+        footer p { color: var(--text-secondary); font-size: 13px; }
+
+        @media (max-width: 640px) {
+            .page-head h1 { font-size: 26px; }
+            .dl-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+<nav>
+    <div class="container">
+        <div class="logo">TeamTalk</div>
+        <div class="nav-links">
+            <a href="/">首页</a>
+            <a href="#win">Windows</a>
+            <a href="#mac">macOS</a>
+            <a href="#linux">Linux</a>
+            <a href="#android">Android</a>
+            <a href="#headless">无头 / CLI</a>
+            <a href="https://github.com/virjar/team-talk" target="_blank">GitHub</a>
+        </div>
+    </div>
+</nav>
+
+<div class="container">
+    <section class="page-head">
+        <h1>下载与更新</h1>
+        <p class="sub">全部平台客户端的当前发布与历史版本 · 桌面端内置自动更新</p>
+    </section>
+
+    <div id="content"><div class="empty">正在加载发布信息……</div></div>
+
+    <section class="section" id="history">
+        <h2>历史版本</h2>
+        <div id="history-body"></div>
+    </section>
+</div>
+
+<footer>
+    <div class="container">
+        <p>&copy; 2026 TeamTalk. Powered by Kotlin Multiplatform. | <a href="https://github.com/virjar/team-talk" target="_blank">GitHub</a></p>
+    </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+<script>
+(function() {
+    var CHANNEL_LABEL = { stable: '正式版', preview: '预览版', snapshot: '内测快照' };
+    var CLIENT_LABEL = { desktop: '桌面端', android: 'Android', headless: '无头 / CLI' };
+
+    function fmtSize(bytes) {
+        if (!bytes && bytes !== 0) return '';
+        if (bytes >= 1024 * 1024 * 1024) return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+        if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+        return Math.max(1, Math.round(bytes / 1024)) + ' KB';
+    }
+
+    function fmtDate(millis) {
+        if (!millis) return '';
+        var d = new Date(millis);
+        var pad = function(n) { return n < 10 ? '0' + n : n; };
+        return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    }
+
+    function channelBadge(channel) {
+        var label = CHANNEL_LABEL[channel] || channel;
+        return '<span class="badge ' + channel + '">' + label + '</span>';
+    }
+
+    function installerCard(platformIcon, platformName, platformDesc, installer, release, channel) {
+        var buttons = '<a class="dl-btn" href="' + installer.url + '" download="' + installer.filename + '">下载 ' +
+            (fmtSize(installer.size) ? '(' + fmtSize(installer.size) + ')' : '') + '</a>';
+        return '<div class="dl-card">' +
+            '<div class="row1"><div class="plat-icon">' + platformIcon + '</div>' +
+            '<div><div class="plat-name">' + platformName + channelBadge(channel) + '</div>' +
+            '<div class="plat-desc">' + platformDesc + ' · v' + release.version + ' (build ' + release.build + ')</div></div></div>' +
+            buttons +
+            '<div class="file-meta">' + installer.filename + ' · SHA-256 ' + installer.sha256.substring(0, 16) + '…</div>' +
+            '</div>';
+    }
+
+    function releaseInstallers(state) {
+        if (!state.release || !state.enabled) return [];
+        return state.release.installers.map(function(installer) {
+            return { installer: installer, release: state.release, channel: state.channel };
+        });
+    }
+
+    function desktopSection(anchor, icon, title, desc, cards, extraHtml) {
+        return '<section class="section" id="' + anchor + '">' +
+            '<h2>' + icon + ' ' + title + '<span class="anchor-hint">#' + anchor + '</span></h2>' +
+            '<div class="dl-grid">' + cards + '</div>' + (extraHtml || '') + '</section>';
+    }
+
+    function render(data) {
+        var content = document.getElementById('content');
+        var sections = [];
+
+        var targets = data.targets || [];
+        var byClient = {};
+        targets.forEach(function(t) {
+            (byClient[t.clientType] = byClient[t.clientType] || []).push(t);
+        });
+
+        // 桌面：按平台分节，stable 优先展示，其他通道跟随。
+        var desktopTargets = byClient.desktop || [];
+        var platformOrder = [
+            { key: 'windows', anchor: 'win', icon: '&#128187;', title: 'Windows', desc: 'Windows 10 及以上' },
+            { key: 'macos', anchor: 'mac', icon: '&#63743;', title: 'macOS', desc: 'macOS 14 及以上' },
+            { key: 'linux', anchor: 'linux', icon: '&#128039;', title: 'Linux', desc: 'Ubuntu / Debian 等 x64 发行版' },
+        ];
+        platformOrder.forEach(function(p) {
+            var cards = '';
+            var platformTargets = desktopTargets.filter(function(t) { return t.platform === p.key; });
+            var channelsSorted = [];
+            platformTargets.forEach(function(t) {
+                var states = t.channels.filter(function(c) { return releaseInstallers(c).length > 0; });
+                channelsSorted.push.apply(channelsSorted, states);
+            });
+            channelsSorted.sort(function(a, b) {
+                var rank = { stable: 0, preview: 1, snapshot: 2 };
+                var archRank = { any: 0, aarch64: 1, amd64: 2 };
+                var byChannel = (rank[a.channel] ?? 9) - (rank[b.channel] ?? 9);
+                if (byChannel !== 0) return byChannel;
+                return (archRank[a.release && a.release.arch] ?? 9) - (archRank[b.release && b.release.arch] ?? 9);
+            });
+            channelsSorted.forEach(function(state) {
+                releaseInstallers(state).forEach(function(entry) {
+                    var archSuffix = state.release.arch && state.release.arch !== 'any'
+                        ? ' · ' + (state.release.arch === 'aarch64' ? 'Apple Silicon / ARM64' : 'Intel / x64') : '';
+                    cards += installerCard(
+                        p.icon,
+                        p.title + (state.release.arch && state.release.arch !== 'any' && p.key === 'macos'
+                            ? (state.release.arch === 'aarch64' ? '（Apple 芯片）' : '（Intel 芯片）') : ''),
+                        p.desc + archSuffix,
+                        entry.installer, entry.release, state.channel,
+                    );
+                });
+            });
+            var guides = '';
+            if (p.key === 'windows') {
+                guides = '<details class="guide"><summary>安装时 Windows 提示“已保护你的电脑”？</summary>' +
+                    '<ol><li>点击弹窗中的<b>“更多信息”</b>；</li><li>再点击<b>“仍要运行”</b>即可继续安装。</li></ol>' +
+                    '<p>当前安装包未购买商业代码签名证书，首次运行会出现该提示，属正常现象；后续版本更新在应用内自动完成，不再弹出。</p></details>';
+            }
+            if (p.key === 'macos') {
+                guides = '<details class="guide"><summary>macOS 提示“无法验证开发者”？</summary>' +
+                    '<ol><li>解压 zip 得到 TeamTalk.app，拖入“应用程序”文件夹；</li>' +
+                    '<li>在 Finder 中<b>右键点击</b> TeamTalk.app，选择<b>“打开”</b>，再点“打开”确认；</li>' +
+                    '<li>之后可从启动台正常打开，或使用终端命令：<code>xattr -cr /Applications/TeamTalk.app</code>。</li></ol>' +
+                    '<p>当前应用未做 Apple 公证，首次打开需要上述确认；后续版本更新在应用内自动完成。</p></details>';
+            }
+            sections.push(desktopSection(p.anchor, p.icon, p.title, p.desc,
+                cards,
+                (cards ? '' : '<div class="empty">该平台暂无发布，请稍后再来。</div>') + guides));
+        });
+        if (!desktopTargets.length) {
+            sections.push('<section class="section"><div class="empty">桌面端暂无发布。</div></section>');
+        }
+
+        // Android：安装包 + 二维码。
+        var androidHtml = '<section class="section" id="android"><h2>&#128241; Android<span class="anchor-hint">#android</span></h2>';
+        var androidStates = [];
+        (byClient.android || []).forEach(function(t) {
+            t.channels.forEach(function(c) { if (releaseInstallers(c).length) androidStates.push(c); });
+        });
+        if (androidStates.length) {
+            androidStates.sort(function(a, b) {
+                var rank = { stable: 0, preview: 1, snapshot: 2 };
+                return (rank[a.channel] ?? 9) - (rank[b.channel] ?? 9);
+            });
+            var primary = androidStates[0];
+            var apk = releaseInstallers(primary)[0];
+            androidHtml += '<div class="dl-grid"><div class="dl-card">' +
+                '<div class="row1"><div class="plat-icon">&#129482;</div>' +
+                '<div><div class="plat-name">Android 安装包' + channelBadge(primary.channel) + '</div>' +
+                '<div class="plat-desc">Android 8.0+ · v' + primary.release.version + ' (build ' + primary.release.build + ')</div></div></div>' +
+                '<a class="dl-btn" href="' + apk.installer.url + '" download="' + apk.installer.filename + '">下载 APK (' + fmtSize(apk.installer.size) + ')</a>' +
+                '<div class="file-meta">' + apk.installer.filename + '</div>' +
+                '<div class="qr-box" id="android-qr"></div>' +
+                '</div></div>' +
+                '<p class="note">手机浏览器打开本页可直接下载；应用内“我的 → 检查更新”可检测新版本。</p>';
+        } else {
+            androidHtml += '<div class="empty">Android 暂无发布。</div>';
+        }
+        androidHtml += '</section>';
+        sections.push(androidHtml);
+
+        // 无头 / CLI。
+        var headlessHtml = '<section class="section" id="headless"><h2>&#9000; 无头客户端 / CLI / MCP<span class="anchor-hint">#headless</span></h2>';
+        var headlessStates = [];
+        (byClient.headless || []).forEach(function(t) {
+            t.channels.forEach(function(c) {
+                if (c.release && c.enabled && (c.release.bundleUrl || c.release.installers.length)) headlessStates.push(c);
+            });
+        });
+        if (headlessStates.length) {
+            var hl = headlessStates[0];
+            var url = hl.release.bundleUrl || hl.release.installers[0].url;
+            var filename = 'TeamTalk-headless.zip';
+            headlessHtml += '<div class="dl-card" style="max-width:560px">' +
+                '<div class="row1"><div class="plat-icon">&#129302;</div>' +
+                '<div><div class="plat-name">tt-agent / tt / tt-mcp' + channelBadge(hl.channel) + '</div>' +
+                '<div class="plat-desc">需 Java 21+ · v' + hl.release.version + ' (build ' + hl.release.build + ')</div></div></div>' +
+                '<a class="dl-btn" href="' + url + '" download="' + filename + '">下载完整包 (' + fmtSize(hl.release.totalBytes) + ')</a>' +
+                '</div>' +
+                '<pre class="cmd"><code># 解压后安装为 systemd 服务（或直接运行 bin/tt、bin/tt-mcp）\n' +
+                'unzip TeamTalk-headless.zip -d teamtalk-agent\ncd teamtalk-agent\nbin/tt-agent install-bundle --prefix ~/.teamtalk</code></pre>' +
+                '<p class="note">已安装的 tt-agent 可用 <code>tt-agent upgrade</code> 在线升级。</p>';
+        } else {
+            headlessHtml += '<div class="empty">无头客户端暂无发布。</div>';
+        }
+        headlessHtml += '</section>';
+        sections.push(headlessHtml);
+
+        content.innerHTML = sections.join('');
+
+        // Android 二维码（在 DOM 就位后渲染）。
+        var qrHost = document.getElementById('android-qr');
+        if (qrHost) {
+            var apkUrl = window.location.origin + (function() {
+                var states = [];
+                (byClient.android || []).forEach(function(t) {
+                    t.channels.forEach(function(c) { if (releaseInstallers(c).length) states.push(c); });
+                });
+                states.sort(function(a, b) {
+                    var rank = { stable: 0, preview: 1, snapshot: 2 };
+                    return (rank[a.channel] ?? 9) - (rank[b.channel] ?? 9);
+                });
+                return states.length ? releaseInstallers(states[0])[0].installer.url : '';
+            })();
+            if (apkUrl && typeof qrcode === 'function') {
+                var qr = qrcode(0, 'M');
+                qr.addData(apkUrl);
+                qr.make();
+                qrHost.innerHTML = qr.createImgTag(4, 8);
+            }
+        }
+
+        // 历史版本表。
+        var historyBody = document.getElementById('history-body');
+        var history = data.history || [];
+        if (!history.length) {
+            historyBody.innerHTML = '<div class="empty">暂无历史记录。</div>';
+        } else {
+            var rows = history.map(function(h) {
+                return '<tr><td>' + (CLIENT_LABEL[h.clientType] || h.clientType) + '</td>' +
+                    '<td>' + (h.platform === 'any' ? '—' : h.platform + (h.arch && h.arch !== 'any' ? '/' + h.arch : '')) + '</td>' +
+                    '<td>v' + h.version + ' (' + h.build + ')</td>' +
+                    '<td>' + channelBadge(h.channel) + '</td>' +
+                    '<td><span class="status-tag ' + h.status + '">' + h.status + '</span></td>' +
+                    '<td>' + fmtDate(h.createdAt) + '</td></tr>';
+            }).join('');
+            historyBody.innerHTML = '<table class="history"><thead><tr>' +
+                '<th>端</th><th>平台</th><th>版本</th><th>通道</th><th>状态</th><th>发布时间</th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table>';
+        }
+    }
+
+    fetch('/api/v1/public/downloads', { cache: 'no-store' }).then(function(r) {
+        if (!r.ok) throw new Error('downloads api unavailable');
+        return r.json();
+    }).then(render).catch(function() {
+        document.getElementById('content').innerHTML =
+            '<div class="empty">发布信息暂时不可用，请稍后刷新重试。</div>';
+        document.getElementById('history-body').innerHTML =
+            '<div class="empty">发布信息暂时不可用。</div>';
+    });
+})();
+</script>
+
+</body>
+</html>

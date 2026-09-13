@@ -1,13 +1,9 @@
 package deployment
 
-import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
-import release.ReleaseBundle
-import release.ReleaseVersion
-import release.writeSkikoPackageFixture
 
 class ClientDistributionIntegrationTest {
     private fun config(
@@ -57,35 +53,5 @@ class ClientDistributionIntegrationTest {
             { ClientDistributionIdentity("com.example.internal", "Internal\nApp", "TeamTalkInternal") },
         )
         invalidIdentities.forEach { invalid -> assertFailsWith<IllegalArgumentException> { config(invalid()) } }
-    }
-
-    @Test
-    fun `release and snapshot consume private Conveyor outputs with their own installation revision`() {
-        val site = Files.createTempDirectory("teamtalk-private-release-").toFile()
-        try {
-            val version = ReleaseVersion("0.0.0", 0, 0, 0, 0)
-            val client = ClientDistributionIdentity("com.example.internal", "内部版", "TeamTalkInternal")
-            listOf(1, 8).forEach { revision ->
-                site.resolve("metadata.properties").writeText("app.version=0.0.0\napp.revision=$revision\n")
-                listOf(
-                    "download.html", "teamtalkinternal.appinstaller", "teamtalkinternal.exe",
-                    "appcast-amd64.rss", "appcast-aarch64.rss", "teamtalkinternal-0.0.0-$revision-mac-amd64.zip",
-                    "teamtalkinternal-0.0.0-$revision-mac-aarch64.zip", "teamtalkinternal-0.0.0-$revision-windows-amd64.zip",
-                    "teamtalkinternal-0.0.0-$revision.x64.msix", "teamtalkinternal-0.0.0-$revision-linux-amd64.tar.gz",
-                    "teamtalkinternal_0.0.0-${revision}_amd64.deb",
-                ).forEach {
-                    val file = site.resolve(it)
-                    if (file.extension in setOf("zip", "msix", "deb") || it.endsWith(".tar.gz")) {
-                        writeSkikoPackageFixture(file)
-                    } else file.writeText("fixture")
-                }
-                ReleaseBundle.verifyDesktop(site, version, client, revision)
-                if (revision == 1) ReleaseBundle.verifyDesktop(site, version, client)
-                else assertFailsWith<IllegalArgumentException> { ReleaseBundle.verifyDesktop(site, version, client) }
-                assertFailsWith<IllegalArgumentException> { ReleaseBundle.verifyDesktop(site, version, ClientDistributionIdentity(), revision) }
-            }
-        } finally {
-            site.deleteRecursively()
-        }
     }
 }

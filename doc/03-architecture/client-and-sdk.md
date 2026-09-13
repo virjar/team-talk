@@ -857,6 +857,12 @@ chat 的回收，最后一个 pager 关闭后再扫尾。因此 GC 不会拆断�
 
 ### 6.4 用户、联系人和群成员投影
 
+群头像通过 `LocalCache.observeChatAvatars` 发布一份有界持久投影：缓存打开时从 SQLite 恢复，
+`GROUP_AVATAR_SYNC` 与懒加载 RPC 写入同一存储并发布完整快照。UI 在 `UiLocalDataBoundary` 上订阅，
+不维护第二份可变头像表或依赖无重放事件预热；离线冷启动可直接显示已有头像。旧缓存不视为本次会话
+已完成权威刷新，服务端确认无头像后才抑制重复懒加载。头像表最多保留最近更新的 512 条，删除聊天、
+重置服务端投影和关闭缓存分别清理对应条目、全部投影和收集器。
+
 实体投影不把账号可见的全部 User、Chat 和群成员复制进内存。LocalCache 打开时只把当前产品需要
 立即展示的活动联系人列表作为显式全量 resident 投影，并用一次 `contact LEFT JOIN user` 构造展示
 摘要；不会先加载整张 User 表。`getUser`、`getChat` 走主键短读，`getMembers` 只对一个 chat 执行

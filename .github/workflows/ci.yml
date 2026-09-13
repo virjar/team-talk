@@ -33,6 +33,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: sdkmanager.bat --install 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Install cross-platform installer tools
+        if: runner.os != 'Windows'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nsis
       - name: Exercise release metadata, protocol policy, archives and JVM publishers
         if: runner.os != 'Windows'
         run: ./gradlew -p buildSrc test --tests 'release.*'
@@ -40,10 +43,16 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: .\gradlew.bat -p buildSrc test --tests 'release.*'
-      - name: Download and launch the native Conveyor CLI on Windows
+      - name: Assemble the Windows desktop shell on Windows (cross-build sanity)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: .\gradlew.bat :client:desktop:prepareConveyor
+        run: .\gradlew.bat :client:desktop:packageWindowsPortableWindowsAmd64
+      - name: Exercise cross-platform shell and installer production
+        if: runner.os != 'Windows'
+        run: |
+          ./gradlew :client:desktop:assembleDesktopShells
+          dpkg-deb --info client/desktop/build/desktop-shell/linux-amd64/installer/*.deb
+          dpkg-deb --contents client/desktop/build/desktop-shell/linux-amd64/installer/*.deb
       - name: Verify actual release edits before merge
         if: runner.os != 'Windows'
         env:
@@ -113,12 +122,11 @@ jobs:
             Tee-Object -FilePath "$env:RUNNER_TEMP/teamtalk-windows-desktop-tests.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # App-image exercises shrinking, JNI symbol checks and runtime/font packaging.
-      # No MSI/WiX or interactive desktop is required; GUI and tray behavior remain platform acceptance.
-      - name: Build the Windows release app-image
+      # Exercise the shipped launch4j bootstrap and portable archive. GUI still needs desktop acceptance.
+      - name: Build the Windows desktop portable package
         shell: pwsh
         run: |
-          .\gradlew.bat :client:desktop:createReleaseDistributable --stacktrace 2>&1 |
+          .\gradlew.bat :client:desktop:packageWindowsPortableWindowsAmd64 --stacktrace 2>&1 |
             Tee-Object -FilePath "$env:RUNNER_TEMP/teamtalk-windows-desktop-package.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -131,7 +139,7 @@ jobs:
             ${{ runner.temp }}/teamtalk-windows-desktop-*.log
             client/desktop/build/test-results/desktopTest/
             client/desktop/build/reports/tests/desktopTest/
-            client/desktop/build/compose/logs/
+            client/desktop/build/desktop-shell/windows-amd64/TeamTalk-*-portable.zip
           if-no-files-found: ignore
           retention-days: 14
 

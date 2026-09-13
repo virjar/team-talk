@@ -42,6 +42,7 @@ object DatabaseFactory {
         ChatDrafts, ChatDraftAssets, ChatDraftCommands, OemPushRegistrations,
         ClientTelemetryDevices, ClientTelemetryPolicies, ClientTelemetryPolicyAudits,
         ClientTelemetryAdminAudits, AdminFeatureSettings,
+        ClientReleases, ClientReleaseFiles, ClientChannels,
     )
 
     /**

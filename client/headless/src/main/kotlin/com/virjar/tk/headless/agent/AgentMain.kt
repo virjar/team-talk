@@ -53,6 +53,8 @@ fun main(args: Array<String>) {
                 println("${result.command}: ${result.prefix.absolutePath}")
                 result.bundle?.let { println("${it.buildIdentity} protocol ${it.protocolMajor}.${it.protocolMinor}") }
             }
+            // 在线升级：统一发布注册中心 check → 全量 bundle → 原子切换。
+            "upgrade" -> HeadlessUpgrade.execute(args.drop(1), HeadlessRuntime.currentBundle())
             else -> HeadlessBundleInstaller.acquireRuntimeLease(HeadlessRuntime.currentBundle()).use {
                 if (command in setOf("configure", "export-cli-token", "doctor", "compact-cache")) {
                     HeadlessConfiguration.execute(requireNotNull(command), args.drop(1))
@@ -308,6 +310,8 @@ tt-agent — TeamTalk headless client (Java 21+)
                                        Offline VACUUM of one current JVM account database; close its clients first
   install-bundle --prefix <new-dir>     Install the extracted distribution (POSIX)
   upgrade-bundle --prefix <dir>         Atomically switch binaries; retain account data
+  upgrade [--channel ...] [--server-url <url>] [--prefix <dir>]
+                                        Online upgrade via the release registry
   uninstall-bundle --prefix <dir>       Run from an external bundle after stopping installed processes
   install / uninstall / prepare-service-data  Linux systemd integration
   --version / --help

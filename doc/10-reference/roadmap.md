@@ -1,6 +1,6 @@
 # 路线图
 
-TeamTalk 当前发行是 [0.0.1 开发者预览](../07-operations/releases/0.0.1.md)。产品功能与支撑它的基础设施
+TeamTalk 当前发行是 [0.0.2 开发者预览](../07-operations/releases/0.0.2.md)，当前源码新增契约属于待发行协议 0.3。产品功能与支撑它的基础设施
 按真实使用需求同步演进，长期治理不是新增产品能力的前置条件。
 本页记录尚未完成的结果和各自边界，现有能力与证据统一见[功能状态](feature-status.md)。
 工作包 ID 仅用于交接，不是 wire、RPC、数据库编号，也不因调整分类而重新编号。
@@ -15,7 +15,7 @@ TeamTalk 当前发行是 [0.0.1 开发者预览](../07-operations/releases/0.0.1
 | 内测更新与正式发行分开 | 用户发起的私有 snapshot 沿用统一 Gradle 流程；正式版本由用户确认，旧发行事实保持不变 | 实际邀请的平台安装或覆盖升级并确认资料保留，统一记录于 REL-05 |
 | 文档能交给下一位维护者 | 已完成实现移入功能状态和稳定设计文档；任务保留具体缺口、入口、边界和验收条件 | 文档与代码一致，链接可追踪，不把历史中间状态继续列作待开发 |
 
-统一 Gradle 发行、Android 签名 APK、Conveyor 三平台安装包与更新站点、私有客户端独立身份、
+统一 Gradle 发行、Android 签名 APK、单机交叉三平台首装包、发布注册中心（通道/停用/回滚）、私有客户端独立身份、
 Kotlin 部署 DSL 和 IP + 自签 TCP TLS 已有实现，见[发行流程](../07-operations/releasing.md)与
 [部署配置](../07-operations/configuration.md)。这些能力不再作为“预览前尚未实现”的任务。
 交叉出包与每种系统的实机验收仍是两件事，未覆盖的平台范围须在交付说明中明确。
@@ -33,7 +33,7 @@ Kotlin 部署 DSL 和 IP + 自签 TCP TLS 已有实现，见[发行流程](../07
 ### REL-05 · 发布物晋级门禁
 
 本项集中承接已实现功能的发行前复验，避免每个架构工作包都因缺一轮完整制品验收长期挂起。
-现有 `release` 已支持同一构建的身份、校验和、APK 验签、Conveyor 完整站点、Server/Headless ZIP、SFTP 与
+现有 `release` 已支持同一构建的身份、校验和、APK 验签、四目标桌面产物、Server/Headless ZIP、注册中心 API 上传与
 GitHub 交付，以及原字节重试；实现入口为 `ReleaseTasks`、`ReleaseBundle` 和各 publisher。
 不再把工具链、下载站点或签名身份校验列为待开发。
 
@@ -94,84 +94,19 @@ flowchart TD
 
 按实际实例需要选择备份与维护工作；长期容量、历史回执治理和多角色权限不一起压到当前内测。工具必须在保留既有数据、低版本客户端及安装身份的前提下推进。
 
-### CODE-01 · 功能冻结期的代码结构收敛
+### CODE-01 · 代码结构与所有权收敛
 
-v0.0.1 后的功能快速演进沉淀了一批结构性负债；第一轮清理已删除 Bot 适配层、统一活动用户判定
-词汇、下沉两端壳重复的遥测映射/媒体失败分类/任务提醒过滤，并修复了自第一条 .sqm 迁移起就未随
-功能更新的过期测试（细节见相应提交）。本轮明确遗留、按收益排序：
+按真实调用链收敛职责，不按文件长度拆类。已落地的 SDK 投影、可靠命令与资源生命周期见
+[客户端与 SDK](../03-architecture/client-and-sdk.md)和[服务端运行时](../03-architecture/server-runtime.md)，
+架构正文承载现行设计，提交记录承载实施过程。
 
-- ~~Chat 域 feature 化~~：已完成。`ChatFeature` 持有编辑器热上下文、草稿生命周期、附件导入
-  worker 与 chat ViewModel 管理；composer/编辑会话模型迁入 `navigation/feature/chat`，
-  消除 navigation→ui.screen 反向依赖。
-- ~~双草稿管道合并~~：已完成。CAS 接管的会话普通输入只写本地预览，不再进入 legacy
-  setDraft 镜像 outbox；服务端兼容投影由 ChatDraftService 从 CAS 提交派生，接管时采纳
-  并退役既有 legacy 待发行行；wire 契约不变。
-- ~~五份可靠命令 outbox store~~：已完成。Healthy/Poisoned 骨架收敛为共享 PendingCommandSlot，
-  各族保留类型化 SQL 与冲突规则。
-- ~~服务端 reliable-command 回执~~：已完成。容量检查收敛为 ReliableCommandReceiptWindows
-  统一语义（先清理过期再按族窗口拒绝，归一 off-by-one），维护循环收敛为 TableSweep 驱动
-  + 两个按主键形态的泛型批次助手；表结构不变。
-- ~~ClientRegistry 职责~~：评估后不再动。通用 trace 控制助手已在 ConnectionTraceControl.kt，
-  registry 内剩余的是必须持有其连接索引与 Looper 的最小协调胶水；再抽协作者只是参数搬运。
-- **telemetry/connection-trace 两套 Lucene 引擎**：已评估。openRuntime/closeRuntime 生命周期
-  ~90% 结构相同，正确的第一步是抽共享 LuceneIndexRuntime（四件套字段 + 开/关级联 + 回滚次序，
-  约省 120 行×2）；但两引擎存在真实并发不对称（telemetry 有 searchMutationGate、trace 手动
-  删文件重置），完整合一为一个引擎不划算，需要专门一轮仔细阅读生命周期后实施。
-- ~~归档/隔离 CLI~~：已按产品决策整体移除。服务器是唯一可靠信息源，未发送本地事实不值得专门
-  工程化：损坏缓存改为自动重建并删除损坏族，v1/v2 归档、校验与显式放弃命令（export/discard/
-  verify 五条）及三重校验/凭据引用检查机制全部删除，压缩不再被隔离副本阻塞。
+| 剩余问题 | 修改边界 | 完成条件 |
+|---|---|---|
+| 服务号回复缺少生命周期与恢复所有者 | `MessageService` 当前使用文件级 `commandScope`，不随 Application 关闭；原消息幂等命中直接返回，回复失败后不会随重试补齐。先明确回复与原消息 ACK 的关系，再收掉无所有者任务和可变自引用装配；回复 ID 不能截断合法原 ID 而产生碰撞 | 同一命令只回复一次；原消息已提交、回复未完成时可恢复；取消/关闭无后台写入已关闭存储；两个前缀相同的最大长度 ID 可分别回复 |
+| 固定系统账号承担了人类会话投影容量 | `getOrCreateSystemPersonalChat` 同时为人类与全局 `sys_assistant/sys_service` 创建 Conversation，每个系统账号会在 1,000 个会话后阻止新用户使用。区分聊天成员与客户端投影所有者，联动创建和消息投影；已有系统投影必须通过可重放迁移整理，保留人类会话、消息和附件 | 超过 1,000 个用户可独立使用系统私聊；重复创建与消息重放不重新积累系统 Conversation；普通用户容量约束及既有历史保持有效 |
 
-第二轮清理已落地：DocumentService 测试包装删除、遥测入口限流骨架合一、android.json 契约入
-protocol、下载状态发布器下沉 app 层（顺带修复 Desktop 压力驱逐缺陷）、视频/语音发送编排统一
-（Android 视频获得上传占位）、custody 目标校验合一、遥测基线策略下沉 domain 与编解码器入
-infra、9 处 Compose 判空强解修复。剩余按收益排序：
-
-- ~~AuthController 封禁清理编排~~：已完成。AuthBannedAccountCleaner 收纳 begin 标记守卫与
-  不可取消删除序列（begin 失败保留凭据、删除失败保留标记），带真实 AccountDataCleanup 的
-  单元测试覆盖四条路径；AuthController 主体与三条退役 drain 保留原位——它们是真实不同的
-  owner 序列，表格化是伪收敛。
-- **ChatScreen 1013 行 / ChatViewModel 847 行**：发送事务（performSend 96 行）经第二语料
-  评估后不再拆：该 lambda 捕获约 25 个组合局部状态（编辑会话、草稿屏障、发送提交、UI 交接），
-  提为顶层函数需穿 15-25 个参数，正是参数搬运；当前闭包的可读性来自局部性。消息聚焦状态机与
-  失败码探测同此（前者依赖 10+ 内部状态；后者与发送遥测共享同一次探测遍历）。三个巨型
-  Composable 的真正解法是架构级状态提升，属新功能轮次而非债务清理。
-- ~~DocumentDraftPersistence 双内核~~：经全文比对（Android 604 行 vs Desktop 720 行）评估
-  不合一。两者是刻意不同的并发设计而非重复实现：Android=有界队列+饱和交接+队列失败替换
-  （多 Activity 共享进程级存储）；Desktop=进程级租约栅栏+单写者+retire/seal 生命周期
-  （多窗口/实例互相 fencing）。真正重复的 generation/latest-wins/按代结算核心每侧仅约
-  80 行且已与饱和策略、租约权威、终态失败分类深度咬合；共享协调器需 6-8 个语义互异钩子，
-  概念数超过任一文件。原扫描"可收敛"判断在未读全两文件时做出，予以修正。
-- **DocumentRepository 43 方法端口**按消费者切 Read/Write/CommandReceipt 三片。
-- **AdminRoutes 48 端点单文件** + AdminService 17 依赖拆用例类。
-- ~~headless 独立 client/headless 模块~~：已按方案 B 完成。ImBot bot 运行时（认证准入/事件
-  缓冲/收件箱/outgoing）与 agent/CLI/MCP/运维面整体外迁至 `client/headless`（包名
-  `com.virjar.tk.headless.*`，27 主文件+18 测试文件），shared 回归纯 SDK；headlessDist 分发任务
-  与 buildSrc 主类标识随迁，服务端 e2e 改依赖新模块。shared 中被跨模块真实使用的最小工具集
-  升为公开 SDK API（生命周期失败合并/会话认证协调器及其租约类型/EventProcessor 低层
-  processNotify·processBatch/私有原子文件存储/JVM 缓存工厂/部署身份工厂等）；LocalCache 的
-  bot 收件箱 API 本就公开、存储与 schema 保留在 shared。
-- ~~双 Lucene 引擎~~：生命周期与队列预算已合一——openLuceneIndexRuntime/closeLucene
-  IndexRuntime 收纳四件套装配次序、失败回滚级联与固定释放次序（searchers→writer
-  rollback/close→directory→analyzer），两引擎的四个 @Volatile 字段收敛为单一 runtime
-  持有者，reset 提交块与 commit 校验块由引擎注入；TraceQueueBudget 删除共享
-  TelemetryQueueBudget。唯一遗留的写循环统一（Channel vs 裸 Thread）收益有限且风险高，
-  不再排期：两种并发风格各有其稳定性历史，强统一属为对称而对称。
-
-第三批清理（CODE-01 收官后）：GlobalSearch 世代门（消息/用户搜索接入 LatestSearchRequestGate，
-迟到响应不可发布）与激活副作用移出 associateWith lambda（显式 key 循环）；Desktop 全屏画廊
-覆盖层请求随会话组合销毁清空，后继会话不再可能渲染已退役会话资源；LocalChatDrafts 混装接口
-拆分为草稿（3 方法）与 LocalChatAssetUploads 上传引擎（14 方法）两个视图，上传协调器/桥/
-会话恢复全部改依赖上传视图，接口不再强迫消费者看见不相关的 14 个上传方法。
-
-发布前计数器收敛（2026-09-12，v0.0.2 冻结前）：在确认 im.virjar.com 无真实用户、可清库重建后，
-把开发期多次增长的两处计数器收敛为单步——客户端 SQLDelight 1–5.sqm 合并为单条 `1.sqm`
-（schema 1→2；v0.0.1 stored=1 与私有机无标记旧库两条真实升级路径不受影响，迁移重放幂等契约
-由改写后的恢复测试守护），服务端 `schema_migrations` 台账 2–11 合并为单条 `create_v0_0_2_tables`
-（小米单厂商表与 OEM 改名中间态删除）。wire 侧经核对本来就只增长一次（新增条目全部 minor 2、
-编号紧接冻结带位、无墓碑），无需改动。
-
-最小验证：每项独立提交，相关模块编译 + 既有定向测试；Chat/Auth 域拆分需 Android/Desktop
-短路径真机复验。
+每项按独立变更验证真实 PostgreSQL/消息投影与失败恢复；涉及客户端可见结果时追加 Android/Desktop
+短路径验收。不为修补这两个具体问题引入通用任务平台，也不通过放大全局容量掩盖投影所有权错误。
 
 ### REL-01 · 数据发布基线、备份与恢复
 

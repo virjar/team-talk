@@ -43,5 +43,19 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:1.85.2")
     // Match the Android Gradle plugin: verify the actual signed APK before sealing a release.
     implementation("com.android.tools.build:apksig:8.13.2")
+    // launch4j：把 bootstrap jar 包裹成 Windows GUI exe（core + 按宿主 OS 的 workdir 分类器，
+    // 均来自 Maven Central；mac 产物为 x64 二进制，Apple Silicon 经 Rosetta 运行）。
+    val hostWorkdirClassifier = when {
+        org.gradle.internal.os.OperatingSystem.current().isMacOsX() -> "workdir-mac"
+        org.gradle.internal.os.OperatingSystem.current().isLinux -> "workdir-linux64"
+        else -> "workdir-win32"
+    }
+    implementation("net.sf.launch4j:launch4j:3.50:core")
+    implementation("net.sf.launch4j:launch4j:3.50:${hostWorkdirClassifier}")
     testImplementation(kotlin("test"))
+}
+
+// Gradle ProjectBuilder exercises the real packaging tasks in isolated temporary directories.
+tasks.test {
+    jvmArgs("--add-opens=java.base/java.lang=ALL-UNNAMED")
 }

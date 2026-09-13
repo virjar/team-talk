@@ -458,25 +458,25 @@ class FakeLocalCache(
     override fun observeUser(uid: String) = cacheUseGate.use { people.observeUser(uid) }
     override fun upsertUser(user: User) = cacheUseGate.use { people.upsertUser(user) }
 
-    // ── 群头像（内测反馈 T053）：Fake 用内存表模拟，事件流同步发射。──
-    private val chatAvatarsById = linkedMapOf<String, Attachment?>()
-    private val chatAvatarEventsFlow = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 64)
-    override val chatAvatarEvents: kotlinx.coroutines.flow.MutableSharedFlow<String> = chatAvatarEventsFlow
+    // ── 群头像：与 SQL 实现一样发布可重放的完整投影。──
+    private val chatAvatarsFlow = MutableStateFlow<Map<String, Attachment>>(emptyMap())
+    private val resolvedChatAvatarIds = linkedSetOf<String>()
 
-    override fun observeChatAvatar(chatId: String): Flow<Attachment?> =
-        cacheUseGate.use { chatAvatarsById[chatId] }
-            .let { initial -> kotlinx.coroutines.flow.flow { emit(initial) } }
+    override fun observeChatAvatars(): Flow<Map<String, Attachment>> = cacheUseGate.use { chatAvatarsFlow }
 
     override fun upsertChatAvatar(chatId: String, attachment: Attachment?) {
         cacheUseGate.use {
-            if (attachment == null) chatAvatarsById.remove(chatId) else chatAvatarsById[chatId] = attachment
+            synchronized(resolvedChatAvatarIds) {
+                resolvedChatAvatarIds.add(chatId)
+                chatAvatarsFlow.value = if (attachment == null) chatAvatarsFlow.value - chatId
+                    else chatAvatarsFlow.value + (chatId to attachment)
+            }
         }
-        chatAvatarEventsFlow.tryEmit(chatId)
     }
 
-    override fun isChatAvatarResolved(chatId: String): Boolean = chatAvatarsById.containsKey(chatId)
-
-    override fun getChatAvatar(chatId: String): Attachment? = cacheUseGate.use { chatAvatarsById[chatId] }
+    override fun isChatAvatarResolved(chatId: String): Boolean = cacheUseGate.use {
+        synchronized(resolvedChatAvatarIds) { chatId in resolvedChatAvatarIds }
+    }
     override fun beginUserSnapshot(uid: String) = cacheUseGate.use { people.beginUserSnapshot(uid) }
 
     override fun applyUserSnapshot(
@@ -546,6 +546,10 @@ class FakeLocalCache(
                         chatsFlow.value = chatsFlow.value.filter { it.chatId != chatId }
                         conversationProjection.deleteForChatTombstoneLocked(chatId)
                         people.removeChat(chatId)
+                        synchronized(resolvedChatAvatarIds) {
+                            resolvedChatAvatarIds.remove(chatId)
+                            chatAvatarsFlow.value = chatAvatarsFlow.value - chatId
+                        }
                         messagesMap.remove(chatId)
                         optimisticMessageEdits.supersedeChat(chatId)
                         messagesFlows[chatId]?.value = emptyList()
@@ -862,6 +866,10 @@ class FakeLocalCache(
                                 chatsFlow.value = emptyList()
                                 resetPeopleProjection()
                                 organization.resetServerProjection()
+                                synchronized(resolvedChatAvatarIds) {
+                                    resolvedChatAvatarIds.clear()
+                                    chatAvatarsFlow.value = emptyMap()
+                                }
                                 documents.resetProjection()
                                 optimisticMessageEdits.supersedeAll()
                                 val outgoingProjection = outgoing.projectionAfterReset()

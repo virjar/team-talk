@@ -161,7 +161,7 @@ internal fun SubScreenContent(
             val detailReady = data.groups.detailTargetChatId == screen.chatId
             val detailChat = data.groups.detailChat?.takeIf { detailReady && it.chatId == screen.chatId }
             val detailMembers = data.groups.members.takeIf { detailReady }.orEmpty()
-            val groupAvatars by data.chat.chatAvatars.collectAsState()
+            val groupAvatars by data.chat.chatAvatars.collectAsState(emptyMap())
             // 群头像修改（内测反馈 T053）：选图 → 方形裁剪 → staging 上传 → setGroupAvatar。
             var avatarEditBusy by remember { mutableStateOf(false) }
             val avatarEditScope = rememberCoroutineScope()

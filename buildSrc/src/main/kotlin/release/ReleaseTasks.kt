@@ -5,9 +5,6 @@ import deployment.ClientDistributionIdentity
 import org.gradle.api.Project
 import release.publish.GitHubPublication
 import release.publish.GitHubPublisher
-import release.publish.SiteConnection
-import release.publish.SitePublication
-import release.publish.SitePublisher
 import java.io.File
 import java.util.Properties
 
@@ -27,6 +24,11 @@ fun registerReleaseTasks(
     require(mode in setOf("version", "private-first", "snapshot")) { "releaseMode must be version, private-first or snapshot" }
     val privateFirst = mode == "private-first"
     val snapshot = mode == "snapshot"
+    project.extensions.extraProperties.set("clientReleaseChannel", when (mode) {
+        "snapshot" -> "snapshot"
+        "private-first" -> "preview"
+        else -> "stable"
+    })
     val privateDistribution = privateFirst || snapshot
     val baseRevision = option("releaseBase")
     val shouldRelease = baseRevision == null || metadata.releaseChangedSince(baseRevision)
@@ -79,7 +81,7 @@ fun registerReleaseTasks(
             metadata.verify(version, sourceCommit)
             ProtocolReleasePolicy.verify(root, version.name, version.buildNumber,
                 version.protocolMajor, version.protocolMinor, version.minimumProtocolMinor)
-            require(version.buildNumber in 0..65534) { "Conveyor installation revision exceeds its supported range" }
+            require(version.buildNumber in 0..65534) { "Desktop installation revision exceeds its supported range" }
             val refType = project.providers.environmentVariable("GITHUB_REF_TYPE").orNull
             val refName = project.providers.environmentVariable("GITHUB_REF_NAME").orNull
             require(refType != "tag" || refName == version.tag) { "Git tag must be ${version.tag}, as defined by gradle.properties" }
@@ -96,7 +98,7 @@ fun registerReleaseTasks(
             require(identity.protocolContractSha256 == sha256(checked.wireBaseline)) {
                 "Development protocol changed during packaging"
             }
-            require(version.buildNumber in 0..65534) { "Conveyor installation revision exceeds its supported range" }
+            require(version.buildNumber in 0..65534) { "Desktop installation revision exceeds its supported range" }
         }
     }
     project.tasks.register("verifyReleaseChange") {
@@ -129,17 +131,13 @@ fun registerReleaseTasks(
                 require(!project.providers.environmentVariable("GITHUB_TOKEN").orNull.isNullOrBlank()) { "Set GITHUB_TOKEN for GitHub publication" }
             }
             if ("site" in targets) {
-                require(project.file(option("releaseSshKey", "TEAMTALK_RELEASE_SSH_KEY")
-                    ?: error("Set releaseSshKey or TEAMTALK_RELEASE_SSH_KEY to the existing private key file")).isFile)
-                require(project.file(option("releaseKnownHosts", "TEAMTALK_RELEASE_KNOWN_HOSTS")
-                    ?: error("Set releaseKnownHosts or TEAMTALK_RELEASE_KNOWN_HOSTS to the verified known_hosts file")).isFile)
+                // 客户端发布走管理 API（服务端注册中心是唯一写入方）；服务端自身部署仍用 SFTP。
+                require(!option("clientReleaseToken", "TEAMTALK_CLIENT_RELEASE_TOKEN").isNullOrBlank()) {
+                    "Set clientReleaseToken or TEAMTALK_CLIENT_RELEASE_TOKEN to the server publish token"
+                }
             }
             if (reuseBundle) {
                 ReleaseBundle.verify(bundle, identity, notes())
-            } else {
-                val signingDirectory = option("conveyorConfigDir", "TEAMTALK_CONVEYOR_CONFIG_DIR")
-                    ?.let(project::file) ?: defaultConveyorConfigDirectory()
-                requireConveyorSigningConfiguration(signingDirectory)
             }
         }
     }
@@ -147,33 +145,19 @@ fun registerReleaseTasks(
         val task = this
         task.group = "release build"
         task.dependsOn(preflight)
-        if (!reuseBundle) task.dependsOn(":client:desktop:buildConveyorSite", ":client:android:assembleRelease",
+        if (!reuseBundle) task.dependsOn(":client:desktop:assembleDesktopShells", ":client:android:assembleRelease",
             ":server:server:distZip", ":client:headless:headlessDistZip")
         task.doLast {
             val notes = notes()
             if (reuseBundle) ReleaseBundle.verify(bundle, identity, notes) else ReleaseBundle.assemble(
-                bundle, identity, File(root, "client/desktop/output"),
+                bundle, identity,
+                File(root, "client/desktop/build/desktop-shell"),
+                File(root, "client/desktop/build/desktop-payload"),
                 File(root, "client/android/build/outputs/apk/release"),
                 File(root, "server/server/build/distributions/teamtalk-server-${version.name}.zip"),
-                notes, metadata.commitAppendix(version, snapshot), File(root, "gradle/conveyor-tools.properties"),
-                File(root, "client/desktop/build/conveyor/tool.properties"),
+                notes, metadata.commitAppendix(version, snapshot),
                 File(root, "client/headless/build/distributions/${HeadlessDistribution.archiveName(identity.buildIdentity)}"),
             )
-            // 快照覆盖发布只发全量包：增量更新（macOS Sparkle delta 等）属于正式发行
-            // 与私有化内部预览的规范版本机制，内测覆盖刷包不维护跨修订的增量链。
-            if (snapshot) {
-                val desktopDirectory = File(bundle, "desktop")
-                val deltaPackages = desktopDirectory.walkTopDown()
-                    .filter { it.isFile && it.extension == "delta" }.map { it.name }.toList()
-                require(deltaPackages.isEmpty()) {
-                    "Snapshot distributions ship full packages only; found incremental packages: $deltaPackages"
-                }
-                desktopDirectory.listFiles { file -> file.name.startsWith("appcast") }?.forEach { appcast ->
-                    require(".delta" !in appcast.readText()) {
-                        "Snapshot update feed ${appcast.name} must not reference incremental packages"
-                    }
-                }
-            }
             project.logger.lifecycle("Sealed release bundle: ${bundle.absolutePath}")
         }
     }
@@ -200,35 +184,20 @@ fun registerReleaseTasks(
                 val notes = notes()
                 ReleaseBundle.verify(bundle, identity, notes)
                 if ("site" in targets) {
-                    val result = SitePublisher().publish(
-                        SitePublication(
-                            desktopDirectory = File(bundle, "desktop"),
-                            androidApk = ReleaseBundle.assets(bundle).single { it.extension == "apk" },
-                            version = version.name, releaseBuildNumber = version.buildNumber,
-                            manifest = File(bundle, ReleaseBundle.MANIFEST),
-                            metadataFiles = listOf(
-                                "RELEASE_NOTES.md", "COMMITS.md", ReleaseBundle.CHECKSUMS, ReleaseBundle.DEPLOYMENT_CONFIG,
-                            ).map { File(bundle, it) },
-                            firstPublicationOnly = privateFirst,
-                            distributionKind = identity.distributionKind,
-                            desktopRevision = identity.desktopRevision,
-                        ),
-                        SiteConnection(
-                            host = config.deployHost, port = config.deployPort, user = config.deployUser,
-                            downloadsPath = "${config.deployPath}/static/downloads",
-                            privateKey = project.file(option("releaseSshKey", "TEAMTALK_RELEASE_SSH_KEY")!!),
-                            knownHosts = project.file(option("releaseKnownHosts", "TEAMTALK_RELEASE_KNOWN_HOSTS")!!),
-                            privateKeyPassphrase = project.providers.environmentVariable("TEAMTALK_RELEASE_SSH_PASSPHRASE").orNull,
-                        ),
+                    val token = option("clientReleaseToken", "TEAMTALK_CLIENT_RELEASE_TOKEN")!!
+                    val result = release.publish.ClientReleasePublisher(config.serverUrl, token)
+                        .publish(bundle, identity)
+                    project.logger.lifecycle(
+                        "Client release registry publication ({} targets): {}",
+                        result.uploaded.size, result.uploaded.joinToString(),
                     )
-                    project.logger.lifecycle("Site publication: $result")
                 }
                 if ("github" in targets) {
                     val result = GitHubPublisher().publish(
                         GitHubPublication(
                             repository = option("releaseRepository", "GITHUB_REPOSITORY")!!,
                             version = version.name, sourceCommit = sourceCommit, notes = notes,
-                            assets = ReleaseBundle.assets(bundle) + listOf(
+                            assets = ReleaseBundle.assets(bundle) + ReleaseBundle.desktopArtifacts(bundle) + listOf(
                                 ReleaseBundle.MANIFEST, ReleaseBundle.CHECKSUMS, "RELEASE_NOTES.md", "COMMITS.md",
                                 ReleaseBundle.DEPLOYMENT_CONFIG,
                             ).map { File(bundle, it) },
@@ -258,7 +227,7 @@ private fun snapshotNotes(identity: BundleIdentity): String = """
     - 本次协议清单 SHA-256：${identity.protocolContractSha256}
 
     管理员手动通知本次内测更新；从本私有站点下载安装包，覆盖升级原私有应用；保留应用身份、签名和资料目录，无需先卸载。
-    Android 下载入口为 `/downloads/TeamTalk-android.apk`，Desktop 更新入口为 `/downloads/desktop/download.html`。
+    Android 下载入口为 `/downloads/TeamTalk-android.apk`，全部平台下载与更新入口为 `/downloads`。
     当前仍为开发者预览，不保证长期兼容；普通升级保留已有资料，具体变更见本构建的提交记录。
 """.trimIndent() + "\n"
 
@@ -277,7 +246,7 @@ private fun privateInstallationNotes(identity: BundleIdentity): String = """
     - 本次协议清单 SHA-256：${identity.protocolContractSha256}
 
     Android 安装包入口为 `/downloads/TeamTalk-android.apk`；Desktop 安装说明和更新入口为
-    `/downloads/desktop/download.html`，均相对上述服务器地址。
+    `/downloads`，均相对上述服务器地址。
     安装身份与公版独立，首次安装后登录自己的私有节点；后续保留同一应用身份、签名和资料目录。
     同一构建只允许按原文件重试；后续内测更新使用 snapshot，保持根版本配置，由工具计算 Desktop 修订号。
 

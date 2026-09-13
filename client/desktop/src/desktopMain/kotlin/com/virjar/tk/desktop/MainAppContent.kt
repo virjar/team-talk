@@ -74,6 +74,7 @@ internal fun WindowScope.MainAppContent(
     connectionState: ConnectionState,
     protocolCompatibility: com.virjar.tk.shared.client.ProtocolCompatibility?,
     onToggleWindowZoom: () -> Unit,
+    onExitForRestart: () -> Unit,
     onLogout: () -> Unit,
 ) {
     // AuthController 同步地退役 Desktop owner，但连接流程的失效通知仍可能为这个已分离的子树
@@ -365,7 +366,7 @@ internal fun WindowScope.MainAppContent(
         }
         }
 
-        MainOverlayLayers(nav, mainWindow, presentationGate, resources, onLogout)
+        MainOverlayLayers(nav, mainWindow, presentationGate, resources, onLogout, onExitForRestart)
             // 主窗口原生全屏时的画廊覆盖层（内测 T020）：必须最后声明以处于最顶层。
         DesktopGalleryOverlay()
         // 覆盖层请求持有本会话的 presentationGate/resources；会话组合销毁时一并清空，
@@ -418,7 +419,7 @@ private fun MainListPane(
                         ConversationListScreen(
                             conversations = conversations,
                             mentionedChatIds = mentionedChatIds,
-                            groupAvatars = nav.chat.chatAvatars.collectAsState().value,
+                            groupAvatars = nav.chat.chatAvatars.collectAsState(emptyMap()).value,
                             selectedChatId = nav.chatId,
                             onConversationClick = { chatId ->
                                 presentationGate.runIfOpen {
@@ -641,6 +642,7 @@ private fun BoxScope.MainOverlayLayers(
     presentationGate: DesktopSessionPresentationGate,
     resources: DesktopSessionResources,
     onLogout: () -> Unit,
+    onExitForRestart: () -> Unit,
 ) {
     if (nav.settingsOpen) {
         key(Unit) {
@@ -660,6 +662,7 @@ private fun BoxScope.MainOverlayLayers(
                     )
                     onLogout()
                 },
+                onExitForRestart = onExitForRestart,
                 onDismiss = presentationGate.guard(nav::closeSettings),
             )
         }

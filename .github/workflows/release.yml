@@ -28,6 +28,7 @@ jobs:
       RELEASE_TARGETS: ${{ inputs.targets || vars.TEAMTALK_RELEASE_TARGETS || 'github' }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TEAMTALK_RELEASE_SSH_PASSPHRASE: ${{ secrets.RELEASE_SSH_PASSPHRASE }}
+      TEAMTALK_CLIENT_RELEASE_TOKEN: ${{ secrets.CLIENT_RELEASE_PUBLISH_TOKEN }}
       TEAMTALK_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
       TEAMTALK_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       TEAMTALK_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -55,37 +56,22 @@ jobs:
           if [ -n "$RELEASE_BASE" ]; then
             echo "ORG_GRADLE_PROJECT_releaseBase=$RELEASE_BASE" >> "$GITHUB_ENV"
           fi
-      # Android tools are prepared above. Gradle owns Node and Conveyor.
-      - name: Provide existing signing identities and optional site credentials
+      # Android tools are prepared above. Gradle owns Node. 桌面交叉打包需要 NSIS（Windows 安装器）。
+      - name: Install NSIS for the Windows setup.exe
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nsis zip
+      - name: Provide Android signing identity
         env:
-          TEAMTALK_CONVEYOR_CONFIG_DIR: ${{ runner.temp }}/teamtalk-conveyor-signing
-          TEAMTALK_RELEASE_SSH_KEY: ${{ runner.temp }}/teamtalk-release-ssh
-          TEAMTALK_RELEASE_KNOWN_HOSTS: ${{ runner.temp }}/teamtalk-known-hosts
-          CONVEYOR_DEFAULTS_CONF: ${{ secrets.CONVEYOR_DEFAULTS_CONF }}
-          RELEASE_SSH_KEY: ${{ secrets.RELEASE_SSH_KEY }}
-          RELEASE_KNOWN_HOSTS: ${{ secrets.RELEASE_KNOWN_HOSTS }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           python3 - <<'PY'
           import base64, os
           from pathlib import Path
-          def write_private(path, data):
-              path.parent.mkdir(parents=True, exist_ok=True)
-              path.write_bytes(data)
-              path.chmod(0o600)
-          for secret, destination in (
-              ('CONVEYOR_DEFAULTS_CONF', Path(os.environ['TEAMTALK_CONVEYOR_CONFIG_DIR']) / 'defaults.conf'),
-              ('RELEASE_SSH_KEY', Path(os.environ['TEAMTALK_RELEASE_SSH_KEY'])),
-              ('RELEASE_KNOWN_HOSTS', Path(os.environ['TEAMTALK_RELEASE_KNOWN_HOSTS'])),
-          ):
-              if os.environ.get(secret):
-                  write_private(destination, os.environ[secret].replace('\r\n', '\n').encode())
           with open(os.environ['GITHUB_ENV'], 'a') as output:
-              for key in ('TEAMTALK_CONVEYOR_CONFIG_DIR', 'TEAMTALK_RELEASE_SSH_KEY', 'TEAMTALK_RELEASE_KNOWN_HOSTS'):
-                  output.write(f'{key}={os.environ[key]}\n')
               if os.environ.get('ANDROID_KEYSTORE_BASE64'):
                   keystore = Path(os.environ['RUNNER_TEMP']) / 'teamtalk-android.jks'
-                  write_private(keystore, base64.b64decode(os.environ['ANDROID_KEYSTORE_BASE64'], validate=True))
+                  keystore.parent.mkdir(parents=True, exist_ok=True)
+                  keystore.write_bytes(base64.b64decode(os.environ['ANDROID_KEYSTORE_BASE64'], validate=True))
+                  keystore.chmod(0o600)
                   output.write(f'TEAMTALK_ANDROID_KEYSTORE={keystore}\n')
           PY
       - name: Reuse this run's sealed bundle after an interrupted publication
@@ -110,10 +96,9 @@ jobs:
         if: always()
         run: |
           python3 - <<'PY'
-          import os, shutil
+          import os
           from pathlib import Path
-          shutil.rmtree(Path(os.environ['RUNNER_TEMP']) / 'teamtalk-conveyor-signing', ignore_errors=True)
-          for key in ('TEAMTALK_RELEASE_SSH_KEY', 'TEAMTALK_RELEASE_KNOWN_HOSTS', 'TEAMTALK_ANDROID_KEYSTORE'):
+          for key in ('TEAMTALK_ANDROID_KEYSTORE',):
               value = os.environ.get(key)
               if value:
                   Path(value).unlink(missing_ok=True)

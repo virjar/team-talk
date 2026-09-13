@@ -36,10 +36,12 @@ tasks.named<org.gradle.jvm.tasks.Jar>("jar") {
     manifest { attributes["Main-Class"] = "com.virjar.tk.headless.agent.AgentMainKt" }
 }
 val headlessVersion = release.ReleaseVersion.read(rootDir)
+val headlessChannel = rootProject.extra["clientReleaseChannel"] as String
 val headlessDirectory = layout.buildDirectory.dir("headless")
 val headlessDist by tasks.registering(org.gradle.api.tasks.Sync::class) {
     group = "distribution"
     description = "Build the portable Headless SDK directory, launchers, identity and SHA256SUMS (requires JDK 21)"
+    inputs.property("channel", headlessChannel)
     inputs.property("releaseVersion", sdkReleaseVersion)
     inputs.property("buildIdentity", sdkBuildIdentity)
     inputs.property("releaseBuildNumber", sdkReleaseBuildNumber)
@@ -53,7 +55,7 @@ val headlessDist by tasks.registering(org.gradle.api.tasks.Sync::class) {
         from(configurations.runtimeClasspath)
     }
     doLast {
-        release.HeadlessDistribution.seal(headlessDirectory.get().asFile, headlessVersion, sdkBuildIdentity)
+        release.HeadlessDistribution.seal(headlessDirectory.get().asFile, headlessVersion, sdkBuildIdentity, headlessChannel)
     }
 }
 tasks.register("verifyHeadlessDist") {

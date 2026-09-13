@@ -27,7 +27,7 @@
 
 ## 2. ImBot
 
-`ImBot` 位于 `shared`，直接复用 ClientSession。登录/注册支持显式注入 `ImBotCacheOwner`；
+`ImBot` 位于 `:client:headless`（自 shared 拆出），直接复用 ClientSession。登录/注册支持显式注入 `ImBotCacheOwner`；
 `tt-agent` 固定使用 `PersistentImBotCacheOwner(dataDir)`，认证成功取得 uid 后才打开
 `dataDir/deployments/<fingerprint>/datasets/<datasetId>/users/<uid>/`，因此进程重启会从同一
 TCP+HTTP 部署、同一服务端 dataset、同一账号已提交的 cursor 继续。登录/注册不再提供隐式

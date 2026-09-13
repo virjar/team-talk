@@ -67,6 +67,24 @@ class GroupAvatarIntegrationTest {
     }
 
     @Test
+    fun `retention preserves a current group avatar and reclaims it after clearing`() = runTest {
+        val owner = ctx.registerUser(uniqueUsername("gav-gc-owner"))
+        val member = ctx.registerUser(uniqueUsername("gav-gc-member"))
+        val chat = ctx.chatService.createGroup(id(), "头像保留群", null, owner, listOf(member))
+        val avatar = stagingAvatar(owner, "retained")
+        ctx.chatService.setGroupAvatar(owner, GroupAvatar(chat.chatId, avatar))
+
+        // 使用真实 FileStore 和生产 DI 总引用图；文件足够旧也必须由群引用保留。
+        ctx.cleanupExpiredAttachments(Long.MAX_VALUE / 4)
+        assertEquals(avatar, ctx.fileStore.getAttachment(avatar.path))
+        assertTrue(ctx.attachmentAccess.canRead(member, avatar.path))
+
+        ctx.chatService.setGroupAvatar(owner, GroupAvatar(chat.chatId, null))
+        ctx.cleanupExpiredAttachments(Long.MAX_VALUE / 4)
+        assertNull(ctx.fileStore.getAttachment(avatar.path))
+    }
+
+    @Test
     fun `non admin member and managed group are rejected`() = runTest {
         val alice = ctx.registerUser(uniqueUsername("gav2-alice"))
         val bob = ctx.registerUser(uniqueUsername("gav2-bob"))

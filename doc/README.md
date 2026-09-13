@@ -93,7 +93,7 @@
 - [运维总览](07-operations/README.md)
 - [运行配置](07-operations/configuration.md)
 - [部署与升级](07-operations/deployment.md)
-- [统一发行流程](07-operations/releasing.md)
+- [统一发行流程](07-operations/releasing.md) · [客户端发布与更新体系](07-operations/client-releases.md)
 - [Desktop 交叉打包与签名](07-operations/desktop-cross-build.md)
 - [可观测性](07-operations/observability.md)
 - [故障排查](07-operations/troubleshooting.md)

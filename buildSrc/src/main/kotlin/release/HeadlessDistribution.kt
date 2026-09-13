@@ -28,7 +28,8 @@ object HeadlessDistribution {
     }
 
     /** Called after Sync has copied the current JVM jar, complete runtime classpath and license. */
-    fun seal(directory: File, version: ReleaseVersion, buildIdentity: String) {
+    fun seal(directory: File, version: ReleaseVersion, buildIdentity: String, channel: String = "stable") {
+        require(channel in setOf("stable", "preview", "snapshot")) { "Invalid headless update channel" }
         requirePayload(directory)
         entryPoints.forEach { (name, mainClass) ->
             File(directory, "bin/$name").apply {
@@ -41,6 +42,7 @@ object HeadlessDistribution {
         writeReleaseArtifactManifest(directory, ARTIFACT_TYPE, version.name, buildIdentity)
         File(directory, RELEASE_ARTIFACT_MANIFEST_FILE).appendText(buildString {
             extraProperties(version).forEach { (key, value) -> appendLine("$key=$value") }
+            appendLine("channel=$channel")
         })
         File(directory, CHECKSUMS).writeText(checksumText(directory))
         verify(directory, version, buildIdentity)

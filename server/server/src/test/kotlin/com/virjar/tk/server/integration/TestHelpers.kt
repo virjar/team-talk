@@ -392,6 +392,14 @@ class TestEnvironment : AutoCloseable {
     val healthChecker: com.virjar.tk.server.infra.health.HealthChecker get() = koin.get()
     internal val maintenance: com.virjar.tk.server.runtime.MaintenanceRuntime get() = koin.get()
     val fileStore: com.virjar.tk.server.infra.storage.FileStore get() = koin.get()
+    /** 使用生产引用图与生命周期锁，仅推进附件保留扫描的时钟。 */
+    suspend fun cleanupExpiredAttachments(nowMillis: Long): Int =
+        com.virjar.tk.server.domain.attachment.AttachmentRetentionService(
+            files = fileStore,
+            references = koin.get(),
+            lifecycle = koin.get(),
+            wallClockMillis = { nowMillis },
+        ).cleanupExpiredUnreferenced()
     val database: Database get() = postgresDatabase.database
     val clientTelemetryControl: ClientTelemetryControlRepository get() = koin.get()
     val clientTelemetryEvents: ClientTelemetryEventStore get() = koin.get()

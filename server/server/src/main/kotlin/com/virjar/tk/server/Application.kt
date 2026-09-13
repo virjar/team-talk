@@ -2,6 +2,7 @@ package com.virjar.tk.server
 
 import com.virjar.tk.server.api.clientTelemetryRoutes
 import com.virjar.tk.server.api.clientDownloadRoutes
+import com.virjar.tk.server.api.clientUpdateRoutes
 import com.virjar.tk.server.api.adminRoutes
 import com.virjar.tk.server.api.AttachmentUploadAdmission
 import com.virjar.tk.server.api.documentExportRoutes
@@ -576,7 +577,7 @@ internal fun Application.module(
                 exportPolicy = koin.get(),
                 accessTokens = accessTokens,
             )
-            adminRoutes(koin.get(), koin.get(), koin.get(), koin.get(), koin.get())
+            adminRoutes(koin.get(), koin.get(), koin.get(), koin.get(), koin.get(), koin.get())
             clientTelemetryRoutes(
                 control = koin.get(),
                 events = clientTelemetryEvents,
@@ -595,7 +596,12 @@ internal fun Application.module(
                 }
             }
 
-            clientDownloadRoutes(downloadsDir)
+            clientDownloadRoutes(downloadsDir, koin.get())
+            clientUpdateRoutes(
+                service = koin.get(),
+                adminAuth = koin.get(),
+                stagingDir = java.io.File(com.virjar.tk.server.env.Environment.dataRoot, "tmp"),
+            )
         }
 
         // 9. Graceful shutdown. ResourceOwner enforces maintenance -> TCP/connections ->

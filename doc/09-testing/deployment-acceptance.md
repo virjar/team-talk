@@ -65,6 +65,41 @@ Windows 的引导器和自动更新服务依赖静态下载契约。对实际部
 
 下载路由回归入口为 `ClientDownloadRoutesTest`，它与业务附件的鉴权和 Range 链路分别验证。
 
+
+## 客户端发布注册中心与更新闭环（新）
+
+### HTTP 端点
+
+- `GET /downloads`：中文下载页 200，`no-store`；JS 拉取 `/api/v1/public/downloads` 渲染各端卡片。
+- `GET /api/v1/client/updates/check`：无该端点发布时 CHANNEL_DISABLED（或无通道记录）；
+  发布后返回 UPDATE_AVAILABLE + manifestUrl/installers。
+- `GET /api/v1/client/files/<sha256>`：200 + `ETag="<sha>"` + immutable 缓存头；
+  `Range: bytes=0-15` → 206；未知 sha → 404 不兜底。
+- 兼容层：注册中心为空且旧收据存在时 `/downloads/android.json` 仍可用（version=null 兜底）；
+  首次 `release -PreleaseTargets=site` 后返回注册中心身份。
+
+### 管理面
+
+- 未携带管理会话访问 `/api/admin/client-releases*` → 401。
+- 上传（X-Publish-Token 或管理会话）→ 200 releaseId；stable 同身份重复 → 409；
+  snapshot 同身份覆盖 → 200 且 manifest 反映新内容。
+- 通道回滚/停用/kill-switch 立即反映到 check 结果；操作进审计台账。
+
+### 桌面更新闭环（真机）
+
+1. 安装首装包（mac zip / Windows setup.exe 或便携 zip / Linux deb）。
+2. 服务端发布仅改动少量 jar 的新 build。
+3. 客户端「设置 → 通用 → 检查更新」：显示新版本与增量体积；确认下载 → 进度 →
+   「重启后生效」；重启后 `~/.teamtalk-client/<appId>/versions/current.properties`
+   指向新 build，`设置` 内版本号一致。
+4. 网络摘除后取消下载：客户端回 Idle，无残留 `.staging-*`。
+5. dev/裸 JVM 运行（`./gradlew :client:desktop:run`）：设置面板不显示检查更新入口。
+
+### 无头在线升级
+
+- `bin/tt-agent upgrade --server-url <url>`：已是最新 → 提示退出；有新版 → 下载、
+  校验、原子切换；再次执行提示已是最新。systemd 场景重启后 `--version` 反映新身份。
+
 ## 多设备与精确服务重启
 
 多设备收敛使用同一 uid 的两个不同 deviceId 连接和一个对端连接。单设备断线场景只关闭该客户端当前

@@ -50,7 +50,7 @@ flowchart TD
     Local --> Verify["校验版本、协议和签名输入"]
     CI --> Verify
     SnapshotTask --> Verify
-    Verify --> Producers["Android APK + Conveyor 完整站点 + Server ZIP"]
+    Verify --> Producers["Desktop 四目标产物 + Android APK + Server ZIP + Headless ZIP"]
     Producers --> Seal["密封目录：产物、说明、manifest、SHA256SUMS"]
     Seal --> Disk["local：保留本地目录"]
     Seal --> Site["site：SFTP 发布双端下载入口"]
@@ -64,7 +64,7 @@ flowchart TD
 这些源码变更：
 
 1. 增加根配置的 `teamtalk.releaseVersion` 与 `teamtalk.releaseBuildNumber`。展示版本使用数字
-   `x.y.z`；安装序号递增，当前 Conveyor 映射要求不超过 `65534`。纯 UI 修复不增加协议版本。
+   `x.y.z`；安装序号递增（desktopRevision = buildNumber+1，快照由提交历史推导）。纯 UI 修复不增加协议版本。
 2. 编写同名人工发布说明，描述用户可见变化、升级与数据影响、已知限制。此文档随版本配置一起提交。
 3. 按[协议发行规则](../04-protocol/versioning.md#开发编号与发行契约分开管理)确认本轮唯一待发布 minor，
    校对生命周期注解、兼容分支和迁移，再登记开发清单与发行快照。
@@ -86,7 +86,7 @@ flowchart TD
 当前发行是 `0.0.1 / protocol 0.1`，根构建号为 `1`。正式 tag、发行快照与密封产物不可覆盖。
 源码新增文档与内容搜索契约使用待发行 protocol 0.2；同号开发包仍按实际源码与协议清单哈希配套验证。
 后续正式发行推进展示版本和根构建号；私有内测更新保持两者不变，按源码生成独立 Desktop revision。
-Conveyor 对相同版本与修订号的字节一致性保护不能通过清理缓存或删除收据绕过。正式发行提高根构建号
+发布注册中心对相同版本与构建号的不可变保护不能通过清理缓存或删除收据绕过。正式发行提高根构建号
 使 Android 安装 code 增加；Desktop 比较完整版本，新展示版本的末位 revision 按根构建号映射，
 不必追赶上一展示版本的内测计数。
 
@@ -96,14 +96,12 @@ Conveyor 对相同版本与修订号的字节一致性保护不能通过清理�
 修改根文件。例如展示版本为 `0.0.1`、根构建号为 `1`，Android `versionCode` 保持 `2`，用户下载后
 手动覆盖安装。应用身份、签名、数据目录和更新源保持原值；既有正式产物不被改写。
 
-Conveyor 要求同一展示版本的不同包具有不同 revision。工具从完整 Git 历史执行
+同一展示版本的快照覆盖需要单调递增的 desktopRevision。工具从完整 Git 历史执行
 `git rev-list --first-parent --count HEAD`，加上根构建号和 `1` 得到 `desktopRevision`，无需修改配置，
 也不依赖 tag。这个修订号用于 Desktop 安装元数据与站点记录，应用展示版本仍保持原值。
 
-内测快照站点只发**全量包**，不生成也不引用增量更新（构建以 `app.mac.deltas = 0` 关闭 Sparkle
-增量，并在密封快照包时拒绝任何 `.delta` 产物或更新源引用）。跨修订的增量链只属于正式发行与
-私有化内部预览的规范版本机制；快照覆盖发布按"每次都是完整包"理解，避免维护中间修订间的增量
-兼容负担。老用户升级经更新源下载新全量包，安装结果与增量路径一致。
+内测快照在注册中心按 **snapshot 通道同身份覆盖**发布。应用内更新器做文件级增量：
+未变化的文件零下载，无跨修订增量链概念；覆盖发布的字节一致性由内容寻址对象仓天然保证。
 
 ```bash
 # 新增契约开启下一 minor 后，同一发行周期共用该 minor 并登记开发清单。
@@ -169,7 +167,7 @@ tag 或 GitHub Release。独立安装身份的首次分发使用同一个 `relea
 
 默认公版保留各打包渠道原有的安装身份和数据路径。新私有版独立安装、独立登录；Android 安装包由
 自己的服务站点提供下载，Desktop Conveyor 更新源从自己的 `serverUrl` 推导。管理员须保留 Android
-keystore 与 Conveyor 签名材料，构建机器更换时恢复原材料，避免后续安装包无法覆盖升级。
+keystore 与服务端发布令牌（`CLIENT_RELEASE_PUBLISH_TOKEN`），构建机器更换时恢复原材料，避免后续安装包无法覆盖升级。
 签名与安装身份匹配只能证明安装前提，分发前仍要在参与
 平台检查与公版共存、分别重启以及普通升级后的资料保留；不能把交叉构建成功写成 Windows 实机验收。
 
@@ -180,8 +178,8 @@ keystore 与 Conveyor 签名材料，构建机器更换时恢复原材料，避�
 ## 本机构建与交付
 
 构建机需要 Git、JDK 21 与 Android SDK；首次构建需要依赖仓库和工具下载可达。Gradle 管理 Node.js、
-Conveyor 的固定版本下载、摘要校验与缓存，不要求手工安装全局 Node.js、Conveyor、`gh`、`rsync` 或
-`scp` 来发布客户端。Conveyor 的持续签名配置仍需准备，详见[Desktop 打包](desktop-cross-build.md)。
+JBR 运行时按 `gradle/jbr.properties` 固定下载与摘要校验，不要求手工安装全局 Node.js、`gh`、`rsync` 或
+`scp` 来发布客户端（NSIS/macOS 需 `brew install makensis zip`，CI 已内置 apt 步骤）。详见[Desktop 打包](desktop-cross-build.md)。
 APK 身份校验需要已有 Android SDK build-tools 中的 `aapt2`；SDK 通过 `local.properties` 的 `sdk.dir`、
 `ANDROID_HOME` 或 `ANDROID_SDK_ROOT` 定位。复用密封目录也需要此工具，校验阶段不自动安装它。
 
@@ -220,7 +218,7 @@ APK 身份校验需要已有 Android SDK build-tools 中的 `aapt2`；SDK 通过
 新生成 APK 的 `assets/teamtalk-build.properties` 内嵌源码身份、完整非敏感部署配置的摘要，以及应用标识、
 显示名称、英文安装名称和 HTTP/TCP 地址。封包时逐项匹配实际配置，使用 `aapt2` 从 APK 二进制清单与资源
 核对包名、安装版本、默认及各语言的应用名称、非空启动入口名称，并验证 APK 签名。
-Desktop 检查三平台必需文件和 Conveyor 元数据，Server ZIP 包含自身分发身份。
+Desktop 检查四目标壳产物、安装器与 payload 清单，Server ZIP 包含自身分发身份。
 Headless ZIP 使用 `tt-headless/` 根目录，包含三种入口、完整运行依赖、LICENSE、
 `teamtalk-release.properties` 与逐文件 `SHA256SUMS`。封包核对无头分发的版本、源码身份、协议窗口、
 Java 要求、完整文件清单与摘要，拒绝缺失、额外文件或符号链接。
@@ -276,7 +274,7 @@ Android 元数据与 APK 响应均为 `Cache-Control: no-store`。仅当前包�
 404；收据或清单与 APK 不一致时返回 503 和 `Retry-After: 1`。没有发行收据的手工下载目录仍可通过
 兼容入口下载，文件名使用 `Android-<APK SHA-256前12位>.apk`，首页显示通用名称，不声明未经核对的版本。
 
-Desktop 为 `/downloads/desktop/download.html` 及同目录的安装包、更新元数据。Conveyor 更新源由同一
+客户端发布经注册中心 API（`/api/v1/client/releases`）上传；中文下载页 `/downloads` 由注册中心数据驱动。站点服务器地址由同一
 `serverUrl` 推导，不需要配置第二个更新源。Android 用户从站点下载安装包，当前应用不自动下载安装。
 上传先写独立暂存目录并校验摘要，
 最终 rename/remove 由持有 `flock` 的同一个远程进程顺序执行，SFTP 负责暂存上传与回读校验；
@@ -352,7 +350,7 @@ CI 与发行工作流共用 `scripts/ci/release_history.py` 解析比较基点�
 
 CI 准备 JDK、Android SDK、缓存和私密输入，再调用同一个 `release`。默认目标为 GitHub；仓库变量
 `TEAMTALK_RELEASE_TARGETS` 可设为 `site,github`，人工触发时的 `targets` 选择优先于该变量。
-tag 触发必须与根版本一致。CI 不自行拼归档、调用 Conveyor 命令或执行服务器部署。
+tag 触发必须与根版本一致。CI 不自行拼归档或执行服务器部署。
 
 | GitHub 配置 | 何时需要 | 注入后的用途 |
 |---|---|---|
@@ -366,7 +364,7 @@ tag 触发必须与根版本一致。CI 不自行拼归档、调用 Conveyor 命
 | Variable `TEAMTALK_RELEASE_TARGETS` | 自动触发需要追加站点时 | 默认为 `github`，可配置为 `site,github`；它是目标选择，不含秘密 |
 
 未提供自有 Android keystore 时使用固定公开预览证书，其他 Android 密码 Secret 不会改变这个选择。
-Conveyor 签名配置缺失会使实际打包失败，CI 不生成替代密钥。私密文件放在 runner 临时目录，步骤完成后
+Android 签名缺失会使实际打包失败，CI 不生成替代密钥。私密文件放在 runner 临时目录，步骤完成后
 清理；发行附件只包含公开制品和身份摘要。
 
 CI 使用 `release-bundle-<源码SHA>` artifact 保留完整密封目录 14 天。重跑同一次 workflow 时先尝试恢复
