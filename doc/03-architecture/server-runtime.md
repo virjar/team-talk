@@ -56,6 +56,11 @@ PostgreSQL 所有权以 `PostgresDatabase` 为边界。`DatabaseFactory.create` 
 后台任务、连接与本地存储，最后注销该 Database 并关闭它自己的连接池。两个嵌入式 Application 或
 `TestEnvironment` 可以同时存在，关闭其中一个不会替换、关闭或重定向另一个的数据库。
 
+OEM 出站推送由每个 Application 的 `OemPushSender` 持有 HTTP client 与厂商 token 缓存，六家厂商
+实现只处理各自协议；不再使用跨实例的全局传输或 token。它在推送 maintenance 之前获取，因此关闭时
+先停止推送 worker，再取消在途 HTTP 请求并在共享的 5 秒截止时间内等待 client 终止。关闭一个实例
+不会释放另一个实例的连接或令牌；厂商 HTTP fixture 验证这一隔离，不替代厂商真机送达验收。
+
 Application 的资源 owner 按获取顺序的逆序释放，并在某个 closer 失败后继续清理其余资源；全部
 释放完成后会聚合并上抛普通关闭错误。closer 或诊断回调抛出的取消与 VM fatal error 只延迟到 drain
 完成，随后以原对象传播，其他关闭错误作为 suppressed cause 保留。并发和重复 `close` 等待同一次

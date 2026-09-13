@@ -127,7 +127,10 @@ STARTED，不能据此断言业务未执行。凭据初始化、恢复、轮换�
 指纹，`POST /api/admin/users/{uid}/document-custody-transfer` 携带该指纹与稳定 operationId 执行。当前
 不接受省略目标后猜测父部门或 leader；缺失目标返回 400，计划或 operation 冲突返回 409。
 
-`AdminService` 只编排行政查询、领域服务和诊断端口，不直接读取 Exposed 表或文件系统。全局用户与
+组织、通知机器人和文档资产交接的管理路由直接调用对应领域服务，仍处于同一管理员认证与审计区域内，
+资产交接操作者仍来自经验证的管理 principal。`AdminService` 保留管理详情、搜索、凭据操作和诊断聚合，
+不再为上述领域复制纯转发方法。`AdminOverviewAssembler` 直接组合现有用户目录、群目录、在线会话与
+诊断端口，不为三个计数再定义一层接口和适配器。管理 application 层不直接读取 Exposed 表或文件系统。全局用户与
 群聊分页、管理统计分别由 PostgreSQL 管理目录适配器实现，不借用聊天聚合 Repository 承载管理读
 模型；日志与存储容量由文件诊断适配器实现并在 `ServerModule` 组装。这样 application 层不会持有
 `Database`、Exposed schema 或本地目录身份，聊天领域也不依赖后台分页概念。

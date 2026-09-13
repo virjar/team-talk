@@ -38,7 +38,12 @@ reconcile 完成且所有一次性 native option 成功关闭后，才以 `db` �
 
 ## 3. 上传
 
-`POST /api/v1/files/upload` 使用 multipart 和 access token。服务端流程：
+`POST /api/v1/files/upload` 使用 multipart 和 access token。路由保留认证、解析和 HTTP 响应，
+`AttachmentUploadRequest` 统一持有本次新上传/重放 attempt、暂存与缩略图文件、首份响应的 delivery pin。
+整个实际 `respondText` 都在 owner 的作用域内；最终清理尝试排空已取得的资源并保留原异常树，只有
+attempt、pin 和文件退休均确认成功且没有未知残留时才释放本次准入名额。
+
+服务端流程：
 
 1. 校验 Bearer、`Idempotency-Key` canonical UUID、`X-TeamTalk-Command-Issued-At` canonical epoch
    millisecond，以及严格 multipart envelope。

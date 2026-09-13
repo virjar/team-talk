@@ -7,7 +7,7 @@
 |---|---|
 | 为什么断网还能进入工作区 | [启动的两条路径](#22-冷启动与首次登录) |
 | 登录、UI 和 SDK 谁负责关闭谁 | [会话所有权](#21-会话所有权) → [关闭与资源回收](#26-关闭与资源回收) |
-| 文档导航、保存和草稿为何分别有状态 | [文档工作台的四个所有者](#23-文档工作台的四个所有者) |
+| 文档导航、保存和草稿为何分别有状态 | [文档工作台的状态与用例所有者](#23-文档工作台的状态与用例所有者) |
 | 消息为何先入本地队列，再等待服务器确认 | [发送与恢复](#28-发送与恢复) |
 | 事件落库失败后会不会漏消息 | [EventProcessor](#5-eventprocessor) |
 | 缓存里哪些数据可以重建 | [LocalCache](#6-localcache) |
@@ -116,14 +116,15 @@ sequenceDiagram
     A->>U: 发布可用工作区
 ```
 
-### 2.3 文档工作台的四个所有者
+### 2.3 文档工作台的状态与用例所有者
 
 文档标签切换与工作区数据恢复是两件事。切到另一篇文档应淘汰旧正文请求，但保存成功后的目录、首页
 收敛仍需完成。草稿又比一次页面或请求活得更久，因此不归导航请求所有。
 
 ```mermaid
 flowchart TB
-    F["DocumentWorkspaceFeature<br/>标签、选择、用例组装"] --> N["navigationActions<br/>导航、树与正文请求"]
+    F["DocumentWorkspaceFeature<br/>用例组装"] --> Tabs["DocumentWorkspaceTabs<br/>驻留标签与活动选择"]
+    F --> N["navigationActions<br/>导航、树与正文请求"]
     F --> W["workspaceRequests<br/>空间、首页、待办恢复"]
     F --> S["saveCoordinator<br/>每标签保存与结果收尾"]
     F --> D["draftCollaboration<br/>草稿恢复与持久化"]
@@ -139,6 +140,15 @@ flowchart TB
 | [workspaceRequests / refreshWorkspace](../../client/app/src/commonMain/kotlin/com/virjar/tk/app/navigation/feature/document/DocumentWorkspaceRefreshWorkflow.kt) | 新工作区刷新淘汰旧刷新；普通标签切换不终止恢复 | 重连、空间分页、首页收敛 |
 | [saveCoordinator](../../client/app/src/commonMain/kotlin/com/virjar/tk/app/navigation/feature/document/DocumentWorkspaceSaveCoordinator.kt) | 校验精确标签实例、请求和编辑代次 | 保存、修订恢复、远端成功后的本地收尾 |
 | [draftCollaboration](../../client/app/src/commonMain/kotlin/com/virjar/tk/app/navigation/feature/document/DocumentWorkspaceDraftCollaboration.kt) | deployment + dataset + uid 固定草稿归属 | 跨页面草稿恢复、落盘屏障和标签实例分配 |
+
+`DocumentWorkspaceTabs` 用同一 Compose 状态保存驻留标签列表与活动选择。新建、激活和移除标签时
+一次发布相互关联的状态，仍按恢复条数与正文预算限制驻留集。导航和变更工作流持有这一具体对象，
+不再分别接收列表/选择的读写回调；空间树、保存准入和草稿持久化继续由下述用例边界负责。
+
+`DocumentEditorSession` 持有一个确切标签基线的标题、正文、资产清单、导入队列和保存校验，向标签
+所有者发布带原实例与修订身份的草稿。Composable 负责挂载块编辑器、焦点、平台展示和生命周期注册。
+块编辑器卸载时只移交一次最后正文，之后由会话继续累积附件；切入预览时若旧画布尚未解绑，导入帧
+先排队，等正文移交后再重放。保存和退出共用最终捕获，避免重复读取旧帧覆盖新增内容。
 
 导航调用直接写成 `navigationActions.selectSpaceNow(...)` 或 `navigationActions.isCurrent(...)`，
 源码从调用处即可看见所有者。`refreshHomeProjection()` 另有工作区首页请求的归属判断，保存、移动和
@@ -644,11 +654,15 @@ Repository 内的 single-flight mutex 使前台提交与后台 worker 不会并�
 `ACKNOWLEDGED` / `REJECTED` completion。拒绝会提示用户并重拉当前同 chat 页；
 ACK 仅在 chat/parent/精确 entry 匹配时刷新，并在恢复的重命名或删除命中已打开目录时更新面包屑或退回父级。
 群文件已经有 [LocalGroupFileEntryStore](../../client/shared/src/commonMain/kotlin/com/virjar/tk/shared/client/LocalGroupFileEntryStore.kt)
-行级本地目录投影与持久 `GROUP_FILE_CHANGED` 事件。目录快照和 UPSERT/DELETE 增量共同更新
-SQLite，按 `(chatId, parentId)` 观察目录；revision 与删除记录吸收重复、迟到事件。
+行级本地目录投影与持久 `GROUP_FILE_CHANGED` 事件。目录请求发出前取得快照租约；增量、清空、
+reset 或同目录的新请求使旧租约失效。只有身份一致且仍有效的完整目录页可以原子替换 SQLite、清走
+删除记录；失效后最多重新请求一次，连续失效返回 503，不能把局部事件缓存作为完整目录成功返回。
+revision 与删除记录继续吸收重复、迟到事件，首帧读取与 observer 登记在同一锁内完成。
 [GroupFilesFeature](../../client/app/src/commonMain/kotlin/com/virjar/tk/app/navigation/feature/GroupFilesFeature.kt)
-先展示可用的本地列表，再由权威目录页和实时事件收敛。打开、手动刷新、重连和命令 completion
-仍是主动对账入口；离线文档投影不承担搜索结果缓存，搜索由独立的远程查询入口提供。
+始终观察当前 `(chatId, parentId)`，目录内容由观察流发布，成功刷新只更新 loading/stale，防止迟到 RPC
+返回值覆盖已观察的新事件。进入子目录或返回父级都切换到对应缓存，网络失败保留该目录的离线副本并
+标记 stale。打开、手动刷新、重连和命令 completion 仍是主动对账入口；目录投影不承担搜索结果缓存，
+搜索由独立的远程查询入口提供。
 
 ### 4.5 内容搜索：远程摘要与权威打开
 
@@ -1132,9 +1146,18 @@ LocalCache、如何从事件恢复、如何在重启后存在。
 和状态操作最多保留 256 条待确认意图，每个 taskId 只接纳一个在途操作，超限明确拒绝新意图，不驱逐
 尚未确认的事实。SQLite schema 3 的追加迁移保留已有账号、文档评论及其他 pending。
 
+任务和文档评论恢复先读取一次候选列表，逐条进入提交临界区后按 taskId/commentId 主键点查并比较完整
+待确认记录；prepare 的容量检查只计数，不反复解码整队列。待确认记录的定位、失败、重试和 ACK 清理按主键处理；UI 的
+changes 通知与观察者读取保持原语义，队列内容和 SQLite schema 不变。
+
 提交先持久保存完整 `TaskCommand`，复用会话唯一的 `SessionPendingMirrorRecovery` worker。网络
 未知结果重放原 operationId、issuedAt、expectedRevision 和载荷；确定拒绝保留原意图供显式处理，
 不自动换号覆盖冲突。服务端精确 ACK 即使不携带当前任务也可以清除原命令，不能把 ACK 当作读权限。
+
+任务和评论的 list/get/audit 仍在各自读取锁内保持顺序；可靠变更 RPC 与明确拒绝后的丢弃使用独立
+命令锁，不等待页面读取的网络往返。ACK 推进已有投影 generation，使更早发出的页失效；多个恢复调用
+仍不能同时发送同一命令。任务审计因 generation 变化而失效时返回普通读取失败，不取消调用协程。
+任务恢复末尾的提醒回读仍沿读取通道执行，这并不保证整个会话恢复 worker 从不等待查询。
 
 TASK_CHANGED 先使页面及旧请求失效，TASK_DUE 先保存提醒提示，再提交事件游标。恢复 worker 和
 当前页面通过 get/list 回读确认任务、执行人、活动状态及 remindedAt；旧提示不能直接弹通知。
@@ -1151,6 +1174,9 @@ TASK_CHANGED 先使页面及旧请求失效，TASK_DUE 先保存提醒提示，�
 - Android NavHost、Activity、权限、通知和 Media3。
 - Desktop Window、弹窗/抽屉/任务窗口、系统托盘、文件选择和桌面媒体。
 - token store、SQLite driver、文件下载目录等平台实现。
+
+Android 与 JVM 的 `FileRepository` 在 `jvmAndAndroidMain` 共用同一 `HttpURLConnection` 传输实现，
+认证头、严格长度、流式上传和取消/关闭规则只有一份；平台文件、凭据与缓存工厂仍按各自环境装配。
 
 Android 与 Desktop 媒体目录都按 canonical TCP+HTTP deployment 指纹、datasetId 与 uid 隔离；
 图片、视频、语音、普通附件、文本预览和群文件必须走同一会话缓存与传输入口，不能仅用

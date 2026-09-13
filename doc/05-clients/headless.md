@@ -478,6 +478,10 @@ search_users, chat_with,
 mark_read, revoke
 ```
 
+`AgentMcpTool` 是这 14 个工具名称、REST 路径、HTTP 方法、会话范围及输入 schema 的唯一描述表，
+供 stdio 目录、调用映射和授权配置共用。参数默认值与编码仍由明确的分派代码处理，业务权限、会话过滤、
+配额和返回前复验仍在 agent HTTP 入口执行，不能把工具描述表当成服务端授权检查的替代。
+
 本地管理员通过 CLI 创建具名授权，同时显式指定工具集合和会话范围：
 
 ```bash
