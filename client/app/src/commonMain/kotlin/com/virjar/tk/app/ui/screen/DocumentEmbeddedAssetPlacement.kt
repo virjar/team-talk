@@ -108,13 +108,21 @@ internal fun shouldDeferDocumentImportEvent(
     previewMode: Boolean,
     visualActionsBound: Boolean,
     hasDeferredPredecessor: Boolean,
-): Boolean = hasDeferredPredecessor || (
-    !sourceMode && !previewMode && event.markdownPlacementOrNull() != null && !visualActionsBound
-)
+): Boolean = hasDeferredPredecessor || when {
+    sourceMode -> false
+    // 预览网关可以先于旧视觉画布解绑完成绑定。等最后一帧移交后再追加，
+    // 否则随后到达的 clear(retainedMarkdown) 会覆盖已经放进预览正文的引用。
+    previewMode -> visualActionsBound
+    else -> event.markdownPlacementOrNull() != null && !visualActionsBound
+}
 
 internal fun canDrainDocumentImportReplay(
     sourceMode: Boolean,
     previewMode: Boolean,
     visualActionsBound: Boolean,
     hasPendingEvents: Boolean,
-): Boolean = hasPendingEvents && (sourceMode || previewMode || visualActionsBound)
+): Boolean = hasPendingEvents && when {
+    sourceMode -> true
+    previewMode -> !visualActionsBound
+    else -> visualActionsBound
+}

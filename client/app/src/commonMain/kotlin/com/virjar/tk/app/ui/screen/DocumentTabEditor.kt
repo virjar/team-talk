@@ -63,15 +63,12 @@ import androidx.compose.ui.unit.dp
 import com.virjar.tk.protocol.model.DocumentRevision
 import com.virjar.tk.protocol.model.DocumentRevisionSummary
 import com.virjar.tk.protocol.model.EmbeddedAsset
-import com.virjar.tk.app.navigation.feature.document.DocumentDraftCaptureOwner
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftLifecycleBridge
 import com.virjar.tk.app.ui.platform.TkBackHandler
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftUpdate
 import com.virjar.tk.app.navigation.feature.document.DocumentTabState
 import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
-import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportEvent
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportEventSink
-import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportSnapshot
 import com.virjar.tk.app.ui.bridge.LocalEmbeddedAssetImportGateway
 import com.virjar.tk.app.ui.bridge.LocalEmbeddedAssetMediaConfig
 import com.virjar.tk.app.ui.bridge.consumeEmbeddedAssetPasteShortcut
@@ -81,75 +78,10 @@ import com.virjar.tk.app.ui.component.rich.DocumentBlockEditor
 import com.virjar.tk.app.ui.component.rich.DocumentBlockFormattingToolbar
 import com.virjar.tk.app.ui.component.rich.DocumentToolbarAction
 import com.virjar.tk.app.ui.component.rich.DocumentMarkdownPreview
-import com.virjar.tk.app.ui.component.rich.EmbeddedAssetCommitBlocker
 import com.virjar.tk.app.ui.component.rich.EmbeddedAssetMarkdownContent
-import com.virjar.tk.app.ui.component.rich.PendingAssetJob
-import com.virjar.tk.app.ui.component.rich.admitEmbeddedAssetCommit
-import com.virjar.tk.app.ui.component.rich.embeddedAssetMarkdownReferences
-import com.virjar.tk.app.ui.component.rich.projectEmbeddedAssetManifest
 import com.virjar.tk.app.ui.component.rich.referencedPendingAssetJobs
 import com.virjar.tk.app.ui.component.rich.normalizeRichTextLink
 import com.virjar.tk.app.ui.component.rich.rememberDocumentBlockEditorController
-
-internal data class DocumentEditorDraftSnapshot(
-    val title: String,
-    val markdown: String,
-    val dirty: Boolean,
-    val assets: List<EmbeddedAsset> = emptyList(),
-)
-
-/**
- * 提交错误有不同的生命周期。上传等待是暂时的，可以被后续的导入帧调和；畸形的
- * Markdown/sidecar 必须保持可见，直到新的保存再次校验编辑后的内容。
- */
-internal enum class DocumentEmbeddedAssetCommitError(val message: String) {
-    UPLOAD_PENDING("附件仍在上传，请等待完成后再保存"),
-    RETRY_UNAVAILABLE("本地附件已不可用于重试，请移除后重新选择"),
-    INVALID_CONTENT("文档中的内嵌资产引用与清单不一致"),
-}
-
-internal fun admitDocumentEmbeddedAssetCommit(
-    markdown: String,
-    availableAssets: List<EmbeddedAsset>,
-    pendingJobs: List<PendingAssetJob>,
-) = run {
-    val assets = runCatching { projectEmbeddedAssetManifest(markdown, availableAssets) }
-        .getOrDefault(emptyList())
-    val referencedIds = runCatching {
-        embeddedAssetMarkdownReferences(markdown).mapNotNull { it.assetId }.toSet()
-    }.getOrDefault(emptySet())
-    admitEmbeddedAssetCommit(
-        markdown = markdown,
-        manifestAssetIds = assets.map(EmbeddedAsset::assetId),
-        pendingJobs = pendingJobs.filter { it.assetId in referencedIds },
-    )
-}
-
-/** 只有暂时性的保存屏障才有资格自动调和。 */
-internal fun reconcileDocumentEmbeddedAssetCommitError(
-    currentError: DocumentEmbeddedAssetCommitError?,
-    markdown: String,
-    availableAssets: List<EmbeddedAsset>,
-    pendingJobs: List<PendingAssetJob>,
-): DocumentEmbeddedAssetCommitError? {
-    if (
-        currentError != DocumentEmbeddedAssetCommitError.UPLOAD_PENDING &&
-        currentError != DocumentEmbeddedAssetCommitError.RETRY_UNAVAILABLE
-    ) return currentError
-    val admission = admitDocumentEmbeddedAssetCommit(markdown, availableAssets, pendingJobs)
-    return when {
-        EmbeddedAssetCommitBlocker.JOB_NOT_READY in admission.blockers -> currentError
-        admission.canCommit -> null
-        else -> DocumentEmbeddedAssetCommitError.INVALID_CONTENT
-    }
-}
-
-/** 每个编辑器实例的稳定句柄；旧标签页绝不能读取新标签页的捕获 lambda。 */
-internal class DocumentDraftCaptureHandle(
-    var action: () -> DocumentEditorDraftSnapshot,
-) {
-    fun capture(): DocumentEditorDraftSnapshot = action()
-}
 
 /**
  * 移动端单文档导航主要是阅读面：已有文档以预览打开，而新建草稿必须立即可编辑。
@@ -222,12 +154,15 @@ internal fun DocumentTabEditor(
     val editorKey = "${tab.instanceId}:${tab.recoveryId}:${tab.tabId}:${tab.revision ?: 0}"
     var showSharePicker by remember(editorKey) { mutableStateOf(false) }
     var shareNotice by remember(editorKey) { mutableStateOf<String?>(null) }
-    val embeddedAssetOwnerKey = "document:${tab.instanceId}:${tab.recoveryId}"
     val blockController = rememberDocumentBlockEditorController(editorKey)
-    val baselineTitle = remember(editorKey) { tab.savedTitle }
-    var title by remember(editorKey) { mutableStateOf(tab.draftTitle) }
-    val baselineMarkdown = remember(editorKey) { tab.savedMarkdown }
-    val baselineAssets = remember(editorKey) { tab.savedAssets }
+    val session = remember(editorKey) { DocumentEditorSession(tab, blockController, onUpdateDraft) }
+    SideEffect { session.updateDraftPublisher(onUpdateDraft) }
+    val title = session.title
+    val blockMarkdown = session.blockMarkdown
+    val sourceMarkdown = session.sourceMarkdown
+    val sourceMode = session.sourceMode
+    val currentMarkdown = session.currentMarkdown
+    val dirty = session.dirty
     val embeddedAssetImports = LocalEmbeddedAssetImportGateway.current
     val embeddedAssetMedia = LocalEmbeddedAssetMediaConfig.current
     val embeddedAssetContent: EmbeddedAssetMarkdownContent? = embeddedAssetMedia?.let { media ->
@@ -246,20 +181,6 @@ internal fun DocumentTabEditor(
             }
         }
     }
-    var embeddedAssetSnapshot by remember(editorKey) {
-        mutableStateOf(EmbeddedAssetImportSnapshot(assets = tab.draftAssets))
-    }
-    var deferredEmbeddedAssetEvents by remember(editorKey) {
-        mutableStateOf<List<EmbeddedAssetImportEvent>>(emptyList())
-    }
-    var embeddedAssetError by remember(editorKey) {
-        mutableStateOf<DocumentEmbeddedAssetCommitError?>(null)
-    }
-    var blockMarkdown by remember(editorKey) { mutableStateOf(tab.draftMarkdown) }
-    var sourceMarkdown by remember(editorKey) { mutableStateOf(tab.draftMarkdown) }
-    var sourceMode by remember(editorKey) { mutableStateOf(false) }
-    var editorReady by remember(editorKey) { mutableStateOf(false) }
-    var dirty by remember(editorKey) { mutableStateOf(tab.dirty || tab.creating) }
     var previewMode by remember(editorKey, canEdit, mobileSingleDocumentMode, tab.creating) {
         mutableStateOf(
             shouldStartDocumentInPreview(
@@ -280,148 +201,19 @@ internal fun DocumentTabEditor(
     var deleteDialog by remember(editorKey) { mutableStateOf(false) }
     var documentMenu by remember(editorKey) { mutableStateOf(false) }
 
-    LaunchedEffect(editorKey) {
-        editorReady = false
-        blockMarkdown = tab.draftMarkdown
-        sourceMarkdown = tab.draftMarkdown
-        sourceMode = false
-        // Block codec 会原样保留所有未编辑源码。等待画布挂载后再开始同步草稿，
-        // 避免初始化期间的子编辑器状态被误判为用户输入。
+    LaunchedEffect(session) {
+        session.beginInitialization()
+        // 等待块画布挂载，避免把初始化期间的子编辑器状态误判为用户输入。
         withFrameNanos { }
         withFrameNanos { }
-        editorReady = true
+        session.finishInitialization()
     }
-    val currentMarkdown = if (editorReady) {
-        if (sourceMode) sourceMarkdown else blockMarkdown
-    } else tab.draftMarkdown
-    fun currentAssetManifest(markdown: String): List<EmbeddedAsset> = runCatching {
-        projectEmbeddedAssetManifest(markdown, embeddedAssetSnapshot.assets)
-    }.getOrDefault(emptyList())
-
-    LaunchedEffect(editorReady, title, currentMarkdown, sourceMode, embeddedAssetSnapshot.assets) {
-        if (!editorReady) return@LaunchedEffect
-        val assets = currentAssetManifest(currentMarkdown)
-        dirty = tab.creating || title != baselineTitle || currentMarkdown != baselineMarkdown ||
-            assets != baselineAssets
-        onUpdateDraft(
-            DocumentDraftUpdate(
-                tab.tabId,
-                tab.instanceId,
-                tab.revision,
-                title,
-                currentMarkdown,
-                assets,
-            ),
-        )
+    LaunchedEffect(
+        session.editorReady, title, currentMarkdown, sourceMode, session.embeddedAssetSnapshot.assets,
+    ) {
+        session.publishCurrentDraftIfReady()
     }
 
-    fun latestVisualMarkdown(): String = blockController.snapshotMarkdown(blockMarkdown)
-    fun publishDraft(markdown: String): DocumentEditorDraftSnapshot {
-        blockMarkdown = markdown
-        val assets = currentAssetManifest(markdown)
-        dirty = tab.creating || title != baselineTitle || markdown != baselineMarkdown ||
-            assets != baselineAssets
-        onUpdateDraft(
-            DocumentDraftUpdate(tab.tabId, tab.instanceId, tab.revision, title, markdown, assets),
-        )
-        return DocumentEditorDraftSnapshot(title, markdown, dirty, assets)
-    }
-    fun captureLatestDraft(): DocumentEditorDraftSnapshot = publishDraft(
-        if (sourceMode) sourceMarkdown else latestVisualMarkdown()
-    )
-    fun discardPendingAsset(job: PendingAssetJob) = discardDocumentPendingAsset(
-        job = job,
-        markdown = if (sourceMode) sourceMarkdown else latestVisualMarkdown(),
-        updateEditor = { updated ->
-            sourceMarkdown = updated
-            sourceMode = true
-        },
-        publishDraft = { publishDraft(it) },
-        reconcileError = { updated ->
-            embeddedAssetError = reconcileDocumentEmbeddedAssetCommitError(
-                embeddedAssetError, updated, embeddedAssetSnapshot.assets, embeddedAssetSnapshot.jobs,
-            )
-        },
-        cancelUpload = { embeddedAssetImports?.cancel(it) },
-        reportInvalidContent = { embeddedAssetError = DocumentEmbeddedAssetCommitError.INVALID_CONTENT },
-    )
-    fun retryPendingAsset(job: PendingAssetJob) {
-        if (embeddedAssetImports?.retry(job.jobId) == true) {
-            if (embeddedAssetError == DocumentEmbeddedAssetCommitError.RETRY_UNAVAILABLE) {
-                embeddedAssetError = null
-            }
-        } else {
-            embeddedAssetError = DocumentEmbeddedAssetCommitError.RETRY_UNAVAILABLE
-        }
-    }
-    fun placeEmbeddedAssetReference(
-        event: EmbeddedAssetImportEvent,
-        forceBlockBoundary: Boolean = false,
-    ): Boolean {
-        val markdown = if (sourceMode) sourceMarkdown else latestVisualMarkdown()
-        when (
-            val placement = placeDocumentEmbeddedAssetReference(
-                event = event,
-                currentMarkdown = markdown,
-                sourceMode = sourceMode,
-                previewMode = previewMode,
-                forceBlockBoundary = forceBlockBoundary,
-            )
-                ?: return true
-        ) {
-            is DocumentEmbeddedAssetPlacement.VisualSelection -> {
-                if (!blockController.insertEmbeddedAsset(placement.assetId, placement.syntax)) return false
-                publishDraft(latestVisualMarkdown())
-            }
-            is DocumentEmbeddedAssetPlacement.BoundaryAppend -> {
-                if (placement.resultingSourceMode) sourceMarkdown = placement.markdown
-                sourceMode = placement.resultingSourceMode
-                publishDraft(placement.markdown)
-            }
-        }
-        return true
-    }
-    fun applyEmbeddedAssetImportEvent(
-        event: EmbeddedAssetImportEvent,
-        forceBlockBoundary: Boolean = false,
-    ): Boolean {
-        // READY 会改变 assets 的 remember-key 并重建块列表。当视觉编辑器确实已挂载时，
-        // 同步物化它，使替换列表不会从仍在 250ms 合并窗口里等待的 projection 开始。
-        // 预览与边界兜底已经拥有权威的 blockMarkdown，绝不能读取过期的 UI。
-        val updatedSnapshot = captureVisualDraftThenReduceDocumentImport(
-            event = event,
-            sourceMode = sourceMode,
-            previewMode = previewMode,
-            forceBlockBoundary = forceBlockBoundary,
-            visualActionsBound = blockController.embeddedAssetActionsBound,
-            snapshot = embeddedAssetSnapshot,
-            captureVisualDraft = { publishDraft(latestVisualMarkdown()) },
-        )
-        embeddedAssetSnapshot = updatedSnapshot
-        if (!placeEmbeddedAssetReference(event, forceBlockBoundary)) return false
-        val markdown = if (sourceMode) sourceMarkdown else blockMarkdown
-        // 进度帧可能非常频繁，且不能让被阻塞的提交变为有效。
-        // 只在 READY 描述符进入 sidecar 快照之后才调和。
-        if (event is EmbeddedAssetImportEvent.Ready) {
-            embeddedAssetError = reconcileDocumentEmbeddedAssetCommitError(
-                currentError = embeddedAssetError,
-                markdown = markdown,
-                availableAssets = updatedSnapshot.assets,
-                pendingJobs = updatedSnapshot.jobs,
-            )
-        }
-        onUpdateDraft(
-            DocumentDraftUpdate(
-                tab.tabId,
-                tab.instanceId,
-                tab.revision,
-                title,
-                markdown,
-                currentAssetManifest(markdown),
-            ),
-        )
-        return true
-    }
     val embeddedAssetImportEnabled = documentEmbeddedAssetImportEnabled(canEdit, previewMode)
     val onPasteEmbeddedAsset = embeddedAssetMedia?.onPasteEmbeddedAsset
     fun Modifier.withEmbeddedAssetPasteShortcut(): Modifier = onPreviewKeyEvent { event ->
@@ -433,66 +225,32 @@ internal fun DocumentTabEditor(
         )
     }
     LaunchedEffect(
-        editorKey,
+        session,
         sourceMode,
         previewMode,
         blockController.embeddedAssetActionsBound,
-        deferredEmbeddedAssetEvents,
+        session.deferredEmbeddedAssetEvents,
     ) {
-        if (!canDrainDocumentImportReplay(
-                sourceMode = sourceMode,
-                previewMode = previewMode,
-                visualActionsBound = blockController.embeddedAssetActionsBound,
-                hasPendingEvents = deferredEmbeddedAssetEvents.isNotEmpty(),
-            )
-        ) {
-            return@LaunchedEffect
-        }
-        val pending = deferredEmbeddedAssetEvents
-        val remaining = drainDocumentImportReplayInOrder(pending, ::applyEmbeddedAssetImportEvent)
-        if (remaining.size != pending.size) deferredEmbeddedAssetEvents = remaining
+        session.drainEmbeddedAssetImports(previewMode)
     }
-    DisposableEffect(editorKey, embeddedAssetImports, embeddedAssetImportEnabled) {
-        // 预览仍拥有它在可编辑期间启动的上传，因此 READY 可以解析 sidecar 与暂时性的
-        // 保存错误。网关独立拒绝新的导入。
+    DisposableEffect(session, embeddedAssetImports, embeddedAssetImportEnabled) {
+        // 预览仍接收由本编辑器启动的上传完成帧，只拒绝新的导入。
         val registration = embeddedAssetImports?.bind(
-            ownerKey = embeddedAssetOwnerKey,
+            ownerKey = session.embeddedAssetOwnerKey,
             sink = EmbeddedAssetImportEventSink { event ->
-                if (shouldDeferDocumentImportEvent(
-                        event = event,
-                        sourceMode = sourceMode,
-                        previewMode = previewMode,
-                        visualActionsBound = blockController.embeddedAssetActionsBound,
-                        hasDeferredPredecessor = deferredEmbeddedAssetEvents.isNotEmpty(),
-                    )
-                ) {
-                    deferredEmbeddedAssetEvents = deferredEmbeddedAssetEvents + event
-                } else if (!applyEmbeddedAssetImportEvent(event)) {
-                    deferredEmbeddedAssetEvents = deferredEmbeddedAssetEvents + event
-                }
+                session.acceptEmbeddedAssetImport(event, previewMode)
             },
             acceptNewImports = embeddedAssetImportEnabled,
         )
         onDispose {
             registration?.close()
-            // 网关已把这些帧交给该 owner。在预览切换或标签页退役丢弃编辑器本地
-            // 光标队列之前物化它们。
-            val pending = deferredEmbeddedAssetEvents
-            deferredEmbeddedAssetEvents = drainDocumentImportReplayInOrder(pending) { event ->
-                applyEmbeddedAssetImportEvent(event, forceBlockBoundary = true)
-            }
+            // 已移交的帧留在 session：模式切换由上方 effect 重放，退出由最终草稿捕获排空。
         }
     }
-    val draftCaptureHandle = remember(editorKey) {
-        DocumentDraftCaptureHandle { captureLatestDraft() }
-    }
-    SideEffect { draftCaptureHandle.action = { captureLatestDraft() } }
-    val stableDraftCapture = remember(editorKey) {
-        { draftCaptureHandle.capture() }
-    }
-    DisposableEffect(editorKey, draftLifecycleBridge) {
+    val stableDraftCapture = remember(session) { session::captureLatestDraft }
+    DisposableEffect(session, draftLifecycleBridge) {
         val lifecycleRegistration = draftLifecycleBridge.register(
-            owner = DocumentDraftCaptureOwner.capture(tab),
+            owner = session.owner,
             captureAndPublish = { stableDraftCapture() },
         )
         onRegisterDraftSnapshot(stableDraftCapture)
@@ -545,22 +303,9 @@ internal fun DocumentTabEditor(
         )
     }
 
-    val toggleSourceMode = {
-        if (sourceMode) {
-            blockMarkdown = sourceMarkdown
-            sourceMode = false
-        } else {
-            val latest = latestVisualMarkdown()
-            publishDraft(latest)
-            sourceMarkdown = latest
-            sourceMode = true
-        }
-    }
+    val toggleSourceMode = session::toggleSourceMode
     val togglePreviewMode = {
-        if (!previewMode) {
-            val latest = if (sourceMode) sourceMarkdown else latestVisualMarkdown()
-            if (!sourceMode) publishDraft(latest)
-        }
+        if (!previewMode) session.prepareForPreview()
         previewMode = !previewMode
     }
     // 两级导航（内测反馈）：移动端编辑态是独立全屏页，系统返回/手势先退回预览页；
@@ -568,27 +313,11 @@ internal fun DocumentTabEditor(
     if (mobileSingleDocumentMode && canEdit && !previewMode) {
         TkBackHandler { togglePreviewMode() }
     }
-    val saveDocument: () -> Unit = saveDocument@{
-        val latest = if (sourceMode) sourceMarkdown else latestVisualMarkdown()
-        val admission = admitDocumentEmbeddedAssetCommit(
-            markdown = latest,
-            availableAssets = embeddedAssetSnapshot.assets,
-            pendingJobs = embeddedAssetSnapshot.jobs,
-        )
-        if (!admission.canCommit) {
-            embeddedAssetError = if (EmbeddedAssetCommitBlocker.JOB_NOT_READY in admission.blockers) {
-                DocumentEmbeddedAssetCommitError.UPLOAD_PENDING
-            } else {
-                DocumentEmbeddedAssetCommitError.INVALID_CONTENT
-            }
-            return@saveDocument
-        }
-        embeddedAssetError = null
-        publishDraft(latest)
-        onSave()
+    val saveDocument: () -> Unit = {
+        if (session.prepareSave()) onSave()
     }
     val requestMove = {
-        val latest = captureLatestDraft()
+        val latest = session.captureLatestDraft()
         if (!latest.dirty && !tab.creating && !saving && !moving) onRequestMove(tab.instanceId)
     }
     val moveDisabledMessage = when {
@@ -597,8 +326,8 @@ internal fun DocumentTabEditor(
         moving -> "位置或名称变更等待确认"
         else -> null
     }
-    val referencedAssetJobs = remember(currentMarkdown, embeddedAssetSnapshot.jobs) {
-        referencedPendingAssetJobs(currentMarkdown, embeddedAssetSnapshot.jobs)
+    val referencedAssetJobs = remember(currentMarkdown, session.embeddedAssetSnapshot.jobs) {
+        referencedPendingAssetJobs(currentMarkdown, session.embeddedAssetSnapshot.jobs)
     }
 
     Box(modifier) {
@@ -624,7 +353,7 @@ internal fun DocumentTabEditor(
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             DocumentTitleBlock(
                                 title = title,
-                                onTitleChange = { title = it },
+                                onTitleChange = { session.title = it },
                                 canEdit = canEdit,
                                 creating = tab.creating,
                                 remoteMissing = tab.remoteMissing,
@@ -690,7 +419,7 @@ internal fun DocumentTabEditor(
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     DocumentTitleBlock(
                         title = title,
-                        onTitleChange = { title = it },
+                        onTitleChange = { session.title = it },
                         canEdit = canEdit,
                         creating = tab.creating,
                         remoteMissing = tab.remoteMissing,
@@ -852,10 +581,10 @@ internal fun DocumentTabEditor(
         PendingAssetRows(
             jobs = referencedAssetJobs,
             testTagPrefix = "documents",
-            onRetry = ::retryPendingAsset,
-            onDiscard = ::discardPendingAsset,
+            onRetry = { session.retryPendingAsset(it, embeddedAssetImports) },
+            onDiscard = { session.discardPendingAsset(it, embeddedAssetImports) },
         )
-        embeddedAssetError?.let { error ->
+        session.embeddedAssetError?.let { error ->
             Text(
                 error.message,
                 color = MaterialTheme.colorScheme.error,
@@ -875,7 +604,7 @@ internal fun DocumentTabEditor(
                 } else {
                     DocumentMarkdownPreview(
                         markdown = currentMarkdown,
-                        assets = currentAssetManifest(currentMarkdown),
+                        assets = session.currentAssetManifest(currentMarkdown),
                         modifier = Modifier.fillMaxSize(),
                         onUrlClick = { url -> normalizeRichTextLink(url)?.let { runCatching { uriHandler.openUri(it) } } },
                         onMentionClick = { uid ->
@@ -888,7 +617,7 @@ internal fun DocumentTabEditor(
                 Box(Modifier.fillMaxSize()) {
                     BasicTextField(
                         value = sourceMarkdown,
-                        onValueChange = { sourceMarkdown = it },
+                        onValueChange = { session.sourceMarkdown = it },
                         modifier = Modifier.fillMaxSize()
                             .withEmbeddedAssetPasteShortcut()
                             .testTag("documents.editor.source.body")
@@ -910,8 +639,8 @@ internal fun DocumentTabEditor(
                     documentKey = editorKey,
                     initialMarkdown = blockMarkdown,
                     controller = blockController,
-                    onMarkdownChange = { blockMarkdown = it },
-                    assets = currentAssetManifest(blockMarkdown),
+                    onMarkdownChange = { session.blockMarkdown = it },
+                    assets = session.currentAssetManifest(blockMarkdown),
                     embeddedAssetContent = embeddedAssetContent,
                     modifier = Modifier.fillMaxSize()
                         .withEmbeddedAssetPasteShortcut()

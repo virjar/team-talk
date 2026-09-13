@@ -69,6 +69,7 @@ internal class DocumentBlockEditorController {
     private var appendAction: (DocumentBlockInsertKind) -> Unit = {}
     private var insertEmbeddedAssetAction: (String, String, String?) -> Boolean = { _, _, _ -> false }
     private var snapshotAction: (String) -> String = { it }
+    private var retiredMarkdown: String? = null
     private var lastVisualAssetId: String? = null
 
     fun requestRichTextFocus() = focusAction()
@@ -85,7 +86,10 @@ internal class DocumentBlockEditorController {
         if (inserted) lastVisualAssetId = assetId
         return inserted
     }
-    fun snapshotMarkdown(fallback: String): String = snapshotAction(fallback)
+    fun snapshotMarkdown(fallback: String): String = retiredMarkdown ?: snapshotAction(fallback)
+
+    /** 子编辑器退出后把最后一帧交还给文档会话，后续边界追加由会话正文继续累积。 */
+    internal fun takeRetiredMarkdown(): String? = retiredMarkdown.also { retiredMarkdown = null }
 
     internal fun activate(
         blockKey: String,
@@ -149,6 +153,7 @@ internal class DocumentBlockEditorController {
         appendAction = append
         insertEmbeddedAssetAction = insertEmbeddedAsset
         snapshotAction = snapshot
+        retiredMarkdown = null
         embeddedAssetActionsBound = true
     }
 
@@ -165,7 +170,8 @@ internal class DocumentBlockEditorController {
         embeddedAssetActionsBound = false
         // 退役中的子组件可能在其父级捕获最终草稿之前离开组合。调用方必须先物化该值，
         // 在整个源码或预览模式下只保留一个 String，而不是完整的块/会话对象图。
-        snapshotAction = { retainedMarkdown }
+        this.retiredMarkdown = retainedMarkdown
+        snapshotAction = { it }
     }
 }
 
