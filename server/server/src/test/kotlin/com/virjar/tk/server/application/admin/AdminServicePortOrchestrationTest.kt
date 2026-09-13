@@ -1,6 +1,8 @@
 package com.virjar.tk.server.application.admin
 
+import com.virjar.tk.protocol.model.Chat
 import com.virjar.tk.protocol.model.User
+import com.virjar.tk.server.domain.session.OnlineSessions
 import kotlinx.coroutines.test.runTest
 import java.time.Clock
 import java.time.Instant
@@ -19,13 +21,35 @@ class AdminServicePortOrchestrationTest {
 
             override fun countUsers(): Long = 41L
         }
-        val counters = object : AdminOverviewCounters {
-            override suspend fun onlineCount(): Int = 7
-            override fun groupCount(): Long = 5L
-            override fun eventCountSince(sinceMillis: Long): Long {
+        val chats = object : AdminChatDirectory {
+            override fun listGroups(query: String?, pagination: AdminPageRequest): AdminPage<Chat> =
+                error("not used by overview")
+
+            override fun findGroup(chatId: String): Chat? = error("not used by overview")
+            override fun countGroups(): Long = 5L
+            override fun countEventsSince(sinceMillis: Long): Long {
                 requestedEventStart = sinceMillis
                 return 11L
             }
+        }
+        val onlineSessions = object : OnlineSessions {
+            override suspend fun onlineCount(): Int = 7
+            override suspend fun isOnline(uid: String): Boolean = error("not used by overview")
+            override suspend fun kickUser(uid: String): Unit = error("not used by overview")
+            override suspend fun invalidateUserCredentials(uid: String, minimumEpoch: Long): Unit =
+                error("not used by overview")
+
+            override suspend fun invalidateUserCredentialsExceptSession(
+                uid: String, minimumEpoch: Long, sessionId: String,
+            ): Unit = error("not used by overview")
+
+            override suspend fun invalidateDeviceCredentials(
+                uid: String, deviceId: String, minimumEpoch: Long,
+            ): Unit = error("not used by overview")
+
+            override suspend fun invalidateDeviceCredentialsExceptSession(
+                uid: String, deviceId: String, minimumEpoch: Long, sessionId: String,
+            ): Unit = error("not used by overview")
         }
         val diagnostics = object : AdminDiagnostics {
             override fun storageUsage() = AdminStorageUsage(rocksdbBytes = 101L, fileStoreBytes = 202L, truncated = true)
@@ -37,7 +61,7 @@ class AdminServicePortOrchestrationTest {
             ZoneId.of("Asia/Shanghai"),
         )
 
-        val overview = AdminOverviewAssembler(users, counters, diagnostics, clock = clock).load()
+        val overview = AdminOverviewAssembler(users, chats, onlineSessions, diagnostics, clock = clock).load()
 
         assertEquals(7, overview.onlineCount)
         assertEquals(41L, overview.userCount)

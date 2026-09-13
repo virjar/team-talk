@@ -179,8 +179,8 @@ class ProtocolE2eTest {
         val first = registerUser("org-a-${UUID.randomUUID().toString().take(12)}")
         val second = registerUser("org-b-${UUID.randomUUID().toString().take(12)}")
         try {
-            val existingRoot = env.adminService.listOrganizationUnits().singleOrNull { it.parentId == null }
-            env.adminService.createOrganizationUnit(
+            val existingRoot = env.organizationService.listUnits().singleOrNull { it.parentId == null }
+            env.organizationService.createUnit(
                 parentId = existingRoot?.unitId,
                 name = "Organization notify ${UUID.randomUUID()}",
                 leaderUid = null,

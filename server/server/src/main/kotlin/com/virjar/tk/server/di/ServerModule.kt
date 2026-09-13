@@ -4,7 +4,6 @@ import com.virjar.tk.server.protocol.dispatcher.RpcDispatcher
 import com.virjar.tk.server.application.admin.AdminDiagnostics
 import com.virjar.tk.server.application.admin.AdminChatDirectory
 import com.virjar.tk.server.application.admin.AdminOverviewAssembler
-import com.virjar.tk.server.application.admin.AdminOverviewCounters
 import com.virjar.tk.server.application.admin.AdminCredentialCommands
 import com.virjar.tk.server.application.admin.AdminSecurityService
 import com.virjar.tk.server.application.admin.AdminSecurityStore
@@ -12,7 +11,6 @@ import com.virjar.tk.server.infra.db.repository.ExposedAdminSecurityStore
 import com.virjar.tk.server.application.admin.AdminService
 import com.virjar.tk.server.application.admin.AdminUserDirectory
 import com.virjar.tk.server.application.admin.ClientTelemetryAdminService
-import com.virjar.tk.server.application.admin.DomainAdminOverviewCounters
 import com.virjar.tk.server.application.PresenceCoordinator
 import com.virjar.tk.server.domain.attachment.AttachmentCatalog
 import com.virjar.tk.server.domain.attachment.AttachmentAccess
@@ -519,13 +517,14 @@ internal fun createServerModule(
     single { BotService(get(), get(), get(), get(), get(), get(), get<PgUnitOfWork>()) }
     single { PresenceService(get(), get()) }
     single { PresenceCoordinator(get(), get()) }
-    single<AdminOverviewCounters> {
-        DomainAdminOverviewCounters(
+    single {
+        AdminOverviewAssembler(
+            users = get(),
+            chats = get(),
             onlineSessions = get(),
-            chats = get<AdminChatDirectory>(),
+            diagnostics = get(),
         )
     }
-    single { AdminOverviewAssembler(get(), get(), get()) }
     single { AdminCredentialCommands(get(), get(), get()) }
     single<AdminSecurityStore> { ExposedAdminSecurityStore(get()) }
     single { AdminSecurityService(get(), get(), get()) }
@@ -615,9 +614,6 @@ internal fun createServerModule(
             search = get(),
             credentialCommands = get(),
             onlineSessions = get(),
-            organizationService = get(),
-            botService = get(),
-            documentCustodyAdministration = get(),
         )
     }
 

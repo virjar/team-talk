@@ -8,6 +8,7 @@ import com.virjar.tk.server.domain.auth.AuthenticationAttemptGuard
 import com.virjar.tk.server.domain.auth.AuthenticationAttemptGuardConfig
 import com.virjar.tk.server.domain.auth.AuthenticationOperation
 import com.virjar.tk.server.domain.auth.AuthenticationOperationLimits
+import com.virjar.tk.server.domain.organization.OrganizationService
 import com.virjar.tk.server.domain.telemetry.ConnectionTraceEventStore
 import com.virjar.tk.server.domain.telemetry.ClientTelemetryControlRepository
 import com.virjar.tk.server.domain.telemetry.ClientTelemetryEventStore
@@ -75,6 +76,7 @@ class TcpE2eEnvironment(
     val tcpPort: Int
     val syncDatasetId: String get() = postgresDatabase.datasetId
     val adminService: AdminService get() = koin.get()
+    val organizationService: OrganizationService get() = koin.get()
     val clientTelemetryAdminService: ClientTelemetryAdminService get() = koin.get()
     val accessTokenValidator: AccessTokenValidator get() = koin.get()
 

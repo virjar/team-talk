@@ -4,8 +4,11 @@ import com.virjar.tk.server.application.admin.AdminSecurityService
 import com.virjar.tk.server.application.admin.AdminService
 import com.virjar.tk.server.application.admin.AdminPageRequest
 import com.virjar.tk.server.application.admin.ClientTelemetryAdminService
+import com.virjar.tk.server.domain.bot.BotService
 import com.virjar.tk.server.domain.command.ReliableCommandConflictException
+import com.virjar.tk.server.domain.document.DocumentCustodyAdministrationService
 import com.virjar.tk.server.domain.document.DocumentCustodyPlanConflictException
+import com.virjar.tk.server.domain.organization.OrganizationService
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.application.hooks.CallFailed
@@ -53,6 +56,9 @@ data class BotGrantRequest(val chatId: String)
 internal fun Route.adminRoutes(
     adminService: AdminService,
     auth: AdminSecurityService,
+    organization: OrganizationService,
+    bots: BotService,
+    documentCustody: DocumentCustodyAdministrationService,
     clientTelemetry: ClientTelemetryAdminService? = null,
     documentExport: com.virjar.tk.server.domain.document.DocumentSpaceExportService? = null,
     documentExportPolicy: com.virjar.tk.server.infra.db.AdminFeatureSettingsStore? = null,
@@ -70,7 +76,7 @@ internal fun Route.adminRoutes(
 
         installAdminAuthorization(auth)
         adminSecurityRoutes(auth)
-        adminOrganizationRoutes(adminService)
+        adminOrganizationRoutes(organization)
         clientTelemetry?.let(::adminTelemetryRoutes)
         clientReleases?.let(::adminClientReleaseRoutes)
 
@@ -134,7 +140,7 @@ internal fun Route.adminRoutes(
         get("/users/{uid}/document-custody-plan") {
             call.respondDocumentCustody {
                 val query = call.request.queryParameters
-                adminService.planDocumentCustody(
+                documentCustody.plan(
                     sourceUid = call.parameters["uid"] ?: throw IllegalArgumentException("uid required"),
                     targetOwnerPrincipalType = query["targetOwnerPrincipalType"]?.toIntOrNull()
                         ?: throw IllegalArgumentException("targetOwnerPrincipalType required"),
@@ -148,7 +154,7 @@ internal fun Route.adminRoutes(
         post("/users/{uid}/document-custody-transfer") {
             val request = call.receiveBoundedJsonOrRespond<DocumentCustodyTransferRequest>() ?: return@post
             call.respondDocumentCustody {
-                adminService.transferDocumentCustody(
+                documentCustody.transfer(
                     adminPrincipal = call.requireAdminPrincipal(),
                     sourceUid = call.parameters["uid"] ?: throw IllegalArgumentException("uid required"),
                     operationId = request.operationId,
@@ -165,25 +171,25 @@ internal fun Route.adminRoutes(
 
         // ── 通知机器人 ──
         get("/bots") {
-            call.respond(adminService.listBots())
+            call.respond(bots.list())
         }
         post("/bots") {
             val req = call.receiveBoundedJsonOrRespond<CreateBotRequest>() ?: return@post
-            call.respond(adminService.createBot(req.name))
+            call.respond(bots.create(req.name))
         }
         post("/bots/{botId}/rotate-token") {
-            call.respond(adminService.rotateBotToken(call.parameters["botId"]!!))
+            call.respond(bots.rotateToken(call.parameters["botId"]!!))
         }
         post("/bots/{botId}/disable") {
-            adminService.disableBot(call.parameters["botId"]!!)
+            bots.disable(call.parameters["botId"]!!)
             call.respond(mapOf("ok" to true))
         }
         post("/bots/{botId}/grants") {
             val req = call.receiveBoundedJsonOrRespond<BotGrantRequest>() ?: return@post
-            call.respond(adminService.grantBot(call.parameters["botId"]!!, req.chatId))
+            call.respond(bots.grant(call.parameters["botId"]!!, req.chatId))
         }
         delete("/bots/{botId}/grants/{chatId}") {
-            call.respond(adminService.revokeBotGrant(call.parameters["botId"]!!, call.parameters["chatId"]!!))
+            call.respond(bots.revokeGrant(call.parameters["botId"]!!, call.parameters["chatId"]!!))
         }
 
         // ── 消息 ──

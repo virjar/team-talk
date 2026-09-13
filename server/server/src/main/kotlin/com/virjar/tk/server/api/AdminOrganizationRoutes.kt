@@ -1,6 +1,6 @@
 package com.virjar.tk.server.api
 
-import com.virjar.tk.server.application.admin.AdminService
+import com.virjar.tk.server.domain.organization.OrganizationService
 import com.virjar.tk.server.domain.organization.OrganizationMemberRemovalConflictException
 import com.virjar.tk.server.domain.organization.OrganizationUnitArchiveConflictException
 import io.ktor.http.*
@@ -32,25 +32,25 @@ internal data class OrganizationReconcileResponse(
 )
 
 /** 管理台的组织架构端点：部门树维护、成员分配与部门群对账。 */
-internal fun Route.adminOrganizationRoutes(adminService: AdminService) {
+internal fun Route.adminOrganizationRoutes(organization: OrganizationService) {
     get("/organization/units") {
-        call.respond(adminService.listOrganizationUnits())
+        call.respond(organization.listUnits())
     }
     post("/organization/units") {
         val req = call.receiveBoundedJsonOrRespond<OrganizationUnitRequest>() ?: return@post
-        call.respond(adminService.createOrganizationUnit(
+        call.respond(organization.createUnit(
             req.parentId, req.name, req.leaderUid, req.sortOrder, req.enableGroup,
         ))
     }
     put("/organization/units/{unitId}") {
         val req = call.receiveBoundedJsonOrRespond<OrganizationUnitRequest>() ?: return@put
-        call.respond(adminService.updateOrganizationUnit(
+        call.respond(organization.updateUnit(
             call.parameters["unitId"]!!, req.parentId, req.name, req.leaderUid, req.sortOrder,
         ))
     }
     delete("/organization/units/{unitId}") {
         try {
-            adminService.archiveOrganizationUnit(call.parameters["unitId"]!!)
+            organization.archiveUnit(call.parameters["unitId"]!!)
             call.respond(mapOf("ok" to true))
         } catch (_: OrganizationUnitArchiveConflictException) {
             call.respond(
@@ -61,17 +61,17 @@ internal fun Route.adminOrganizationRoutes(adminService: AdminService) {
     }
     get("/organization/units/{unitId}/members") {
         val recursive = call.request.queryParameters["recursive"]?.toBooleanStrictOrNull() ?: false
-        call.respond(adminService.listOrganizationMembers(call.parameters["unitId"]!!, recursive))
+        call.respond(organization.listMembers(call.parameters["unitId"]!!, recursive))
     }
     post("/organization/units/{unitId}/members") {
         val req = call.receiveBoundedJsonOrRespond<OrganizationMemberRequest>() ?: return@post
-        call.respond(adminService.assignOrganizationMember(
+        call.respond(organization.assignMember(
             call.parameters["unitId"]!!, req.uid, req.title, req.primary,
         ))
     }
     delete("/organization/units/{unitId}/members/{uid}") {
         try {
-            adminService.removeOrganizationMember(call.parameters["unitId"]!!, call.parameters["uid"]!!)
+            organization.removeMember(call.parameters["unitId"]!!, call.parameters["uid"]!!)
             call.respond(mapOf("ok" to true))
         } catch (_: OrganizationMemberRemovalConflictException) {
             call.respond(
@@ -81,13 +81,13 @@ internal fun Route.adminOrganizationRoutes(adminService: AdminService) {
         }
     }
     post("/organization/units/{unitId}/group/enable") {
-        call.respond(adminService.enableDepartmentGroup(call.parameters["unitId"]!!))
+        call.respond(organization.enableDepartmentGroup(call.parameters["unitId"]!!))
     }
     post("/organization/units/{unitId}/group/disable") {
-        call.respond(adminService.disableDepartmentGroup(call.parameters["unitId"]!!))
+        call.respond(organization.disableDepartmentGroup(call.parameters["unitId"]!!))
     }
     post("/organization/reconcile") {
-        val failures = adminService.reconcileDepartmentGroups()
+        val failures = organization.reconcileAllManagedGroups()
         call.respond(OrganizationReconcileResponse(failures.isEmpty(), failures))
     }
 }

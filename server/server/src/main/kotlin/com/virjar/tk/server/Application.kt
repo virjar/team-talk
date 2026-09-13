@@ -588,7 +588,17 @@ internal fun Application.module(
                 exportPolicy = koin.get(),
                 accessTokens = accessTokens,
             )
-            adminRoutes(koin.get(), koin.get(), koin.get(), koin.get(), koin.get(), koin.get())
+            adminRoutes(
+                adminService = koin.get(),
+                auth = koin.get(),
+                organization = koin.get(),
+                bots = koin.get(),
+                documentCustody = koin.get(),
+                clientTelemetry = koin.get(),
+                documentExport = koin.get(),
+                documentExportPolicy = koin.get(),
+                clientReleases = koin.get(),
+            )
             clientTelemetryRoutes(
                 control = koin.get(),
                 events = clientTelemetryEvents,

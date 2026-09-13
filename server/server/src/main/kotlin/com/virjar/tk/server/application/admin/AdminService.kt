@@ -1,15 +1,12 @@
 package com.virjar.tk.server.application.admin
 
-import com.virjar.tk.server.domain.bot.BotService
 import com.virjar.tk.server.domain.chat.ChatRepository
 import com.virjar.tk.server.domain.chat.ChatService
 import com.virjar.tk.server.domain.contact.ContactRepository
 import com.virjar.tk.server.domain.auth.DeviceRepository
-import com.virjar.tk.server.domain.document.DocumentCustodyAdministrationService
 import com.virjar.tk.server.domain.message.MessageService
 import com.virjar.tk.server.domain.message.MessageRepository
 import com.virjar.tk.server.domain.message.MessageSearch
-import com.virjar.tk.server.domain.organization.OrganizationService
 import com.virjar.tk.server.domain.session.OnlineSessions
 import com.virjar.tk.server.domain.user.UserRepository
 import com.virjar.tk.protocol.model.Chat
@@ -38,88 +35,7 @@ class AdminService internal constructor(
     private val search: MessageSearch,
     private val credentialCommands: AdminCredentialCommands,
     private val onlineSessions: OnlineSessions,
-    private val organizationService: OrganizationService,
-    private val botService: BotService,
-    private val documentCustodyAdministration: DocumentCustodyAdministrationService,
 ) {
-
-    // ── Document 资产责任交接 ──
-
-    suspend fun planDocumentCustody(
-        sourceUid: String,
-        targetOwnerPrincipalType: Int,
-        targetOwnerPrincipalId: String,
-        targetStewardUid: String,
-    ) = documentCustodyAdministration.plan(
-        sourceUid,
-        targetOwnerPrincipalType,
-        targetOwnerPrincipalId,
-        targetStewardUid,
-    )
-
-    suspend fun transferDocumentCustody(
-        adminPrincipal: String,
-        sourceUid: String,
-        operationId: String,
-        expectedPlanFingerprint: String,
-        targetOwnerPrincipalType: Int,
-        targetOwnerPrincipalId: String,
-        targetStewardUid: String,
-    ) = documentCustodyAdministration.transfer(
-        adminPrincipal,
-        sourceUid,
-        operationId,
-        expectedPlanFingerprint,
-        targetOwnerPrincipalType,
-        targetOwnerPrincipalId,
-        targetStewardUid,
-    )
-
-    // ── 组织架构 ──
-
-    fun listOrganizationUnits() = organizationService.listUnits()
-
-    fun listOrganizationMembers(unitId: String, recursive: Boolean) =
-        organizationService.listMembers(unitId, recursive)
-
-    suspend fun createOrganizationUnit(
-        parentId: String?,
-        name: String,
-        leaderUid: String?,
-        sortOrder: Int,
-        enableGroup: Boolean,
-    ) = organizationService.createUnit(parentId, name, leaderUid, sortOrder, enableGroup)
-
-    suspend fun updateOrganizationUnit(
-        unitId: String,
-        parentId: String?,
-        name: String,
-        leaderUid: String?,
-        sortOrder: Int,
-    ) = organizationService.updateUnit(unitId, parentId, name, leaderUid, sortOrder)
-
-    suspend fun archiveOrganizationUnit(unitId: String) = organizationService.archiveUnit(unitId)
-
-    suspend fun assignOrganizationMember(unitId: String, uid: String, title: String?, primary: Boolean) =
-        organizationService.assignMember(unitId, uid, title, primary)
-
-    suspend fun removeOrganizationMember(unitId: String, uid: String) =
-        organizationService.removeMember(unitId, uid)
-
-    suspend fun enableDepartmentGroup(unitId: String) = organizationService.enableDepartmentGroup(unitId)
-
-    suspend fun disableDepartmentGroup(unitId: String) = organizationService.disableDepartmentGroup(unitId)
-
-    suspend fun reconcileDepartmentGroups() = organizationService.reconcileAllManagedGroups()
-
-    // ── 通知机器人 ──
-
-    fun listBots() = botService.list()
-    suspend fun createBot(name: String) = botService.create(name)
-    suspend fun rotateBotToken(botId: String) = botService.rotateToken(botId)
-    suspend fun disableBot(botId: String) = botService.disable(botId)
-    suspend fun grantBot(botId: String, chatId: String) = botService.grant(botId, chatId)
-    suspend fun revokeBotGrant(botId: String, chatId: String) = botService.revokeGrant(botId, chatId)
 
     // ── 用户 ──
 

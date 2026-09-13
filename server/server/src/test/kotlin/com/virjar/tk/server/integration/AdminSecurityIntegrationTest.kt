@@ -70,7 +70,15 @@ class AdminSecurityIntegrationTest {
         install(StatusPages) { exception<Throwable> { call, _ ->
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "internal error"))
         } }
-        routing { adminRoutes(ctx.adminService, auth) }
+        routing {
+            adminRoutes(
+                adminService = ctx.adminService,
+                auth = auth,
+                organization = ctx.organizationService,
+                bots = ctx.botService,
+                documentCustody = ctx.documentCustodyAdministration,
+            )
+        }
     }
 
     private suspend fun ApplicationTestBuilder.login(password: String = "bootstrap-password"): String {

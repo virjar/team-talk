@@ -52,6 +52,9 @@ class OrganizationAdminHttpIntegrationTest {
                 adminRoutes(
                     ctx.adminService,
                     auth = adminAuth,
+                    organization = ctx.organizationService,
+                    bots = ctx.botService,
+                    documentCustody = ctx.documentCustodyAdministration,
                 )
             }
         }

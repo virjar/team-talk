@@ -57,13 +57,6 @@ interface AdminChatDirectory {
     fun countEventsSince(sinceMillis: Long): Long
 }
 
-/** 概览用例使用的窄运行时计数器。 */
-interface AdminOverviewCounters {
-    suspend fun onlineCount(): Int
-    fun groupCount(): Long
-    fun eventCountSince(sinceMillis: Long): Long
-}
-
 @Serializable
 data class AdminLogFileInfo(
     val name: String,
