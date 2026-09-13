@@ -1,5 +1,6 @@
 package com.virjar.tk.server.domain.chat
 
+import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
 import com.virjar.tk.protocol.model.Chat
 import com.virjar.tk.protocol.model.Member
 import java.util.concurrent.CountDownLatch
@@ -132,6 +133,17 @@ class ChatStoreCacheConcurrencyTest {
 }
 
 private class CountingChatRepository : ImmediateChatRepository() {
+
+    override fun updateGroupAvatar(
+        transaction: PgWriteTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        attachment: com.virjar.tk.protocol.model.Attachment?,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): GroupAvatarMutation = GroupAvatarMutation(emptyList(), null)
+
+    override fun getGroupAvatarEntries(chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatarEntry> = emptyList()
+
     private val loads = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicInteger>()
 
     override fun getChat(chatId: String): Chat {
@@ -143,6 +155,17 @@ private class CountingChatRepository : ImmediateChatRepository() {
 }
 
 private open class ImmediateChatRepository : ChatRepository {
+
+    override fun updateGroupAvatar(
+        transaction: PgWriteTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        attachment: com.virjar.tk.protocol.model.Attachment?,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): GroupAvatarMutation = GroupAvatarMutation(emptyList(), null)
+
+    override fun getGroupAvatarEntries(chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatarEntry> = emptyList()
+
     @Volatile
     protected var active = true
 
@@ -199,6 +222,17 @@ private open class ImmediateChatRepository : ChatRepository {
 }
 
 private class BlockingChatRepository : ImmediateChatRepository() {
+
+    override fun updateGroupAvatar(
+        transaction: PgWriteTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        attachment: com.virjar.tk.protocol.model.Attachment?,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): GroupAvatarMutation = GroupAvatarMutation(emptyList(), null)
+
+    override fun getGroupAvatarEntries(chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatarEntry> = emptyList()
+
     val loadStarted = CountDownLatch(1)
     val releaseLoad = CountDownLatch(1)
     private val blockFirstLoad = AtomicBoolean(true)

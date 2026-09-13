@@ -4,6 +4,7 @@ import com.virjar.tk.server.domain.chat.ChatRepository
 import com.virjar.tk.server.domain.chat.ChatDeactivation
 import com.virjar.tk.server.domain.chat.ChatCreation
 import com.virjar.tk.server.domain.chat.ChatMutation
+import com.virjar.tk.server.domain.chat.GroupAvatarMutation
 import com.virjar.tk.server.domain.chat.GroupCommandFacts
 import com.virjar.tk.server.domain.chat.GroupCreationCommand
 import com.virjar.tk.server.domain.chat.GroupCreationConflictException
@@ -21,9 +22,12 @@ import com.virjar.tk.server.infra.db.GroupMemberMutes
 import com.virjar.tk.server.infra.db.GroupMembers
 import com.virjar.tk.server.infra.db.Users
 import com.virjar.tk.server.infra.db.requireExposedTransaction
+import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.protocol.model.Chat
+import com.virjar.tk.protocol.model.GroupAvatarEntry
 import com.virjar.tk.protocol.model.GroupPolicy
 import com.virjar.tk.protocol.model.Member
+import com.virjar.tk.protocol.model.UserAvatarPolicy
 import com.virjar.tk.protocol.model.UserRole
 import org.jetbrains.exposed.sql.*
 import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
@@ -417,6 +421,64 @@ class ExposedChatRepository(
             chat = buildChatFromRow(chatRow),
             recipientUids = members.map(Member::uid),
         )
+    }
+
+    override fun updateGroupAvatar(
+        transaction: PgWriteTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        attachment: Attachment?,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): GroupAvatarMutation = inWriteTransaction(transaction) {
+        val chatRow = lockActiveChat(chatId)
+        require(chatRow[Chats.chatType] == 2) { "群聊不存在" }
+        lockRequiredHumanUsers(listOf(operatorUid))
+        val members = lockActiveMembers(chatId)
+        authorize(
+            GroupCommandFacts(
+                chat = buildChatFromRow(chatRow),
+                operator = members.firstOrNull { it.uid == operatorUid },
+                activeMemberUids = members.map(Member::uid),
+            ),
+        )
+        val previousPath = GroupChats.selectAll()
+            .where { GroupChats.chatId eq chatId }
+            .singleOrNull()?.get(GroupChats.avatarPath)
+        val now = System.currentTimeMillis()
+        GroupChats.update({ GroupChats.chatId eq chatId }) { row ->
+            row[avatarPath] = attachment?.path
+            row[avatarName] = attachment?.name
+            row[avatarContentType] = attachment?.contentType
+            row[avatarSize] = attachment?.size
+            row[updatedAt] = now
+        }
+        Chats.update({ Chats.chatId eq chatId }) { it[Chats.updatedAt] = now }
+        GroupAvatarMutation(
+            recipientUids = members.map(Member::uid),
+            previousPath = previousPath,
+        )
+    }
+
+    override fun getGroupAvatarEntries(chatIds: List<String>): List<GroupAvatarEntry> {
+        if (chatIds.isEmpty()) return emptyList()
+        return transaction(database) {
+            GroupChats.selectAll()
+                .where { GroupChats.chatId inList chatIds.sorted() }
+                .orderBy(GroupChats.chatId, SortOrder.ASC)
+                .map { row ->
+                    val attachment = row[GroupChats.avatarPath]?.let { path ->
+                        UserAvatarPolicy.requireCanonical(
+                            Attachment(
+                                path = path,
+                                name = checkNotNull(row[GroupChats.avatarName]) { "群头像名称缺失" },
+                                contentType = checkNotNull(row[GroupChats.avatarContentType]) { "群头像类型缺失" },
+                                size = checkNotNull(row[GroupChats.avatarSize]) { "群头像大小缺失" },
+                            ),
+                        )
+                    }
+                    GroupAvatarEntry(chatId = row[GroupChats.chatId], attachment = attachment)
+                }
+        }
     }
 
     override fun lockForDeactivation(

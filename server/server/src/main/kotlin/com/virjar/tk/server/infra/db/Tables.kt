@@ -159,6 +159,12 @@ object GroupChats : Table("group_chats") {
     val mutedAll = bool("muted_all").default(false)
     val updatedAt = long("updated_at")
 
+    // 群头像（内测反馈 T053）：与 users 头像四列同构的全有或全无 canonical 描述符。
+    val avatarPath = varchar("avatar_path", 500).nullable()
+    val avatarName = varchar("avatar_name", 200).nullable()
+    val avatarContentType = varchar("avatar_content_type", 100).nullable()
+    val avatarSize = long("avatar_size").nullable()
+
     override val primaryKey = PrimaryKey(chatId)
 }
 

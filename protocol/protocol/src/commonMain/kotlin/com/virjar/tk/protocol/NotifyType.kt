@@ -57,6 +57,9 @@ enum class NotifyType(val code: Int) {
 
     @SinceProtocol(2)
     MENTION_SYNC(63),
+    /** 群头像变更（内测反馈 T053）：全量成员持久事件，attachment=null 表示清除。 */
+    @SinceProtocol(3)
+    GROUP_AVATAR_SYNC(64),
     /** 连接降级投影保留原 eventId 的无 payload 标记；禁止把它持久化为新业务事件。 */
     EVENT_CURSOR_ADVANCED(62);
 

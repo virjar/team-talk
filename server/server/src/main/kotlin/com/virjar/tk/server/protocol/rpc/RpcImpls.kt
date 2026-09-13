@@ -119,6 +119,9 @@ class ChatRpcImpl(uid: String, private val service: ChatService) : ChatRpcStub(u
     override suspend fun getInviteInfo(token: String) = service.getInviteInfo(token).inviteLinkToModel()
     override suspend fun leaveGroup(chatId: String) = service.leaveGroup(uid, chatId)
     override suspend fun getOrCreateSavedChat() = service.getOrCreateSavedChat(uid)
+    override suspend fun setGroupAvatar(chatId: String, patch: com.virjar.tk.protocol.model.GroupAvatarPatch) =
+        service.setGroupAvatar(uid, chatId, patch)
+    override suspend fun getGroupAvatars(chatIds: List<String>) = service.getGroupAvatars(uid, chatIds)
 }
 
 class MessageRpcImpl(

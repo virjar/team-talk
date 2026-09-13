@@ -63,6 +63,21 @@ interface ChatRepository {
     ): ChatMutation
 
     /**
+     * 群头像全有或全无替换（内测反馈 T053）。授权后原子更新头像四列；返回事件接收者与
+     * 被替换的旧路径（供调用方做引用图迁移）。attachment 为 null 表示清除。
+     */
+    fun updateGroupAvatar(
+        transaction: PgWriteTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        attachment: com.virjar.tk.protocol.model.Attachment?,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): GroupAvatarMutation
+
+    /** 批量读取群当前头像（仅返回请求中真实存在的群；未设置的群 attachment=null）。 */
+    fun getGroupAvatarEntries(chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatarEntry>
+
+    /**
      * 先锁定 Chat，再锁定可选的人类操作者，并重新读取成员关系权威。成员行在此刻意不
      * 锁定：解散必须在 Invite/Member/Mute/Conversation 投影之前锁定必需的 User/Bot/grant
      * 事实。持有 Chat 锁可以把正确的写入者挡在外面。
@@ -124,6 +139,12 @@ data class ChatMutation(
     val chat: Chat,
     val recipientUids: List<String>,
     val changed: Boolean = true,
+)
+
+/** 群头像替换的已提交事实（内测反馈 T053）。 */
+data class GroupAvatarMutation(
+    val recipientUids: List<String>,
+    val previousPath: String?,
 )
 
 data class InviteJoinResult(

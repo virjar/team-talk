@@ -33,6 +33,17 @@ fun interface UserAvatarReferences {
     fun isCurrentAvatar(path: String): Boolean = path in getReferencedPaths(setOf(path))
 }
 
+/**
+ * 当前群头像对保留决策与成员读取的贡献（内测反馈 T053）。
+ * 读取规则与个人头像不同：仅对该群当前成员可见，成员资格由调用方经 ChatAccess 求交。
+ */
+fun interface GroupAvatarReferences {
+    fun getReferencedPaths(paths: Set<String>): Set<String>
+
+    /** 返回以该路径为当前头像的 chatId；一个路径至多是一个群的当前头像。 */
+    fun getCurrentAvatarChatId(path: String): String? = null
+}
+
 /** Unsent ready assets belong to one account, never all members of the draft's chat. */
 interface ChatDraftAttachmentReferences {
     fun getReferencedPaths(paths: Set<String>): Set<String>

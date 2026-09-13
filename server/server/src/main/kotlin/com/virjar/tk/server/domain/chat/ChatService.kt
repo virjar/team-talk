@@ -20,6 +20,7 @@ import java.util.UUID
 private const val MAX_GROUP_AVATAR_LENGTH = 500
 private const val MAX_INVITE_LINK_NAME_LENGTH = 200
 private const val UUID_TEXT_LENGTH = 36
+private const val GROUP_AVATAR_MUTATION_KEY_PREFIX = "group-avatar-mutation:"
 
 class ChatService(
     private val chatStore: ChatStore,
@@ -30,6 +31,8 @@ class ChatService(
     private val requiredParticipants: RequiredChatParticipants,
     private val lifecycleGate: ChatLifecycleGate,
     private val unitOfWork: PgUnitOfWork,
+    private val attachments: com.virjar.tk.server.domain.attachment.AttachmentCatalog? = null,
+    private val attachmentLifecycle: com.virjar.tk.server.domain.attachment.AttachmentLifecycleGate? = null,
 ) {
 
     // ── 创建聊天 ──
@@ -154,6 +157,109 @@ class ChatService(
 
     suspend fun updateGroup(operatorUid: String, chatId: String, name: String? = null, avatar: String? = null, notice: String? = null) =
         lifecycleGate.withChat(chatId) { updateGroupInternal(operatorUid, chatId, name, avatar, notice) }
+
+    /**
+     * 群头像设置（内测反馈 T053）：镜像个人头像的引用变更语义——串行化同群与两条路径、
+     * 只接受操作者本人的 staging 上传、提交后晋升 business-bound；attachment=null 清除。
+     */
+    suspend fun setGroupAvatar(operatorUid: String, chatId: String, patch: com.virjar.tk.protocol.model.GroupAvatarPatch) {
+        val catalog = attachments ?: throw IllegalStateException("附件目录未接线")
+        val lifecycle = attachmentLifecycle ?: throw IllegalStateException("附件生命周期未接线")
+        lifecycleGate.withChat(chatId) {
+            while (true) {
+                val currentPath = chatStore.getGroupAvatarEntries(listOf(chatId))
+                    .firstOrNull()?.attachment?.path
+                val requested = patch.attachment
+                val lockedPaths = buildSet {
+                    add("$GROUP_AVATAR_MUTATION_KEY_PREFIX$chatId")
+                    currentPath?.let(::add)
+                    requested?.path?.let(::add)
+                }
+                var retryWithCurrentPath = false
+                var publicationFailure: Throwable? = null
+                lifecycle.withReferenceMutation(lockedPaths) {
+                    val fresh = chatStore.getGroupAvatarEntries(listOf(chatId))
+                        .firstOrNull()?.attachment
+                    if (fresh?.path != currentPath) {
+                        retryWithCurrentPath = true
+                        return@withReferenceMutation
+                    }
+                    if (requested != null && requested.path == currentPath) {
+                        // PostgreSQL 可能已提交而 FileStore 发布失败；先补发布，本次幂等无副作用。
+                        publicationFailure = promoteStagingGroupAvatar(catalog, requested)
+                        return@withReferenceMutation
+                    }
+                    // 清除/替换前，把仍停留在 staging 的当前引用先晋升为已绑定（上次发布失败修复）。
+                    currentPath?.let { path ->
+                        val currentDescriptor = chatStore.getGroupAvatarEntries(listOf(chatId))
+                            .firstOrNull()?.attachment
+                        if (currentDescriptor != null) {
+                            publicationFailure = promoteStagingGroupAvatar(catalog, currentDescriptor)
+                        }
+                    }
+                    if (requested != null) {
+                        val authoritative = catalog.getAttachment(requested.path)
+                        require(authoritative == requested) { "群头像附件与 FileStore 权威元数据不一致" }
+                        require(catalog.getOwnerUid(requested.path) == operatorUid) { "只能使用本人上传的群头像" }
+                        require(catalog.isStaging(requested.path)) { "群头像附件已绑定到其他业务引用" }
+                    }
+                    unitOfWork.write {
+                        val mutation = chatStore.updateGroupAvatar(
+                            transaction, chatId, operatorUid, requested,
+                        ) { facts ->
+                            require(facts.chat.chatType == 2) { "单聊没有群头像" }
+                            if (managedChats.lockAuthority(transaction, listOf(chatId))
+                                    .getValue(chatId).managed
+                            ) {
+                                throw IllegalArgumentException("受管部门群头像由组织架构维护")
+                            }
+                            requireAdmin(facts.operator)
+                        }
+                        mutation.recipientUids.forEach { recipient ->
+                            appendEvent(
+                                recipient,
+                                NotifyType.GROUP_AVATAR_SYNC,
+                                com.virjar.tk.protocol.GroupAvatarSyncPayload(chatId, requested),
+                            )
+                        }
+                        afterCommit { chatStore.invalidateCommittedCommand(chatId) }
+                    }
+                    // PostgreSQL 引用已提交；发布失败由精确重试或在任何后续替换/清除之前修复。
+                    requested?.let { item ->
+                        publicationFailure = try {
+                            catalog.markBusinessBound(listOf(item.path))
+                            null
+                        } catch (failure: Exception) {
+                            failure
+                        }
+                    }
+                }
+                if (!retryWithCurrentPath) {
+                    publicationFailure?.let { throw it }
+                    return@withChat
+                }
+            }
+        }
+    }
+
+    /** 当前引用若仍停留在 staging（上次发布失败），先晋升为已绑定；返回失败供调用方上抛。 */
+    private fun promoteStagingGroupAvatar(
+        catalog: com.virjar.tk.server.domain.attachment.AttachmentCatalog,
+        descriptor: com.virjar.tk.protocol.model.Attachment,
+    ): Throwable? = try {
+        if (catalog.isStaging(descriptor.path)) catalog.markBusinessBound(listOf(descriptor.path))
+        null
+    } catch (failure: Exception) {
+        failure
+    }
+
+    /** 批量取回群当前头像；只返回调用人是当前成员的群（内测反馈 T053）。 */
+    suspend fun getGroupAvatars(uid: String, chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatarEntry> {
+        val requested = chatIds.map(String::trim).filter(String::isNotEmpty).distinct()
+        if (requested.isEmpty()) return emptyList()
+        val allowed = access.readAccessibleChatIds(uid) { it }
+        return chatStore.getGroupAvatarEntries(requested.filter { it in allowed })
+    }
 
     private suspend fun updateGroupInternal(
         operatorUid: String,

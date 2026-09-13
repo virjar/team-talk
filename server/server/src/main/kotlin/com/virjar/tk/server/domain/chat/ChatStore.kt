@@ -205,6 +205,24 @@ class ChatStore(
         authorize,
     )
 
+    /** 群头像全有或全无替换（内测反馈 T053）。 */
+    internal fun updateGroupAvatar(
+        transaction: PgWriteTransactionContext,
+        chatId: String,
+        operatorUid: String,
+        attachment: com.virjar.tk.protocol.model.Attachment?,
+        authorize: (GroupCommandFacts) -> Unit,
+    ): GroupAvatarMutation = repo.updateGroupAvatar(
+        transaction,
+        chatId,
+        operatorUid,
+        attachment,
+        authorize,
+    )
+
+    internal fun getGroupAvatarEntries(chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatarEntry> =
+        repo.getGroupAvatarEntries(chatIds)
+
     internal fun lockForDeactivation(
         transaction: PgWriteTransactionContext,
         chatId: String,

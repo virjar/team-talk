@@ -58,6 +58,7 @@ object NotifyContracts {
         // 多端同步
         NotifyType.READ_SYNC to ReadSyncPayload,
         NotifyType.MENTION_SYNC to com.virjar.tk.protocol.MentionSyncPayload,
+        NotifyType.GROUP_AVATAR_SYNC to GroupAvatarSyncPayload,
 
         // 用户
         NotifyType.USER_UPDATED to User,

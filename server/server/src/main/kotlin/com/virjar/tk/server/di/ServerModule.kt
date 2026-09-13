@@ -24,6 +24,7 @@ import com.virjar.tk.server.domain.attachment.AttachmentRetentionService
 import com.virjar.tk.server.domain.attachment.AttachmentRetirementStore
 import com.virjar.tk.server.domain.attachment.DocumentAttachmentAccess
 import com.virjar.tk.server.domain.attachment.DocumentAttachmentReferences
+import com.virjar.tk.server.domain.attachment.GroupAvatarReferences
 import com.virjar.tk.server.domain.attachment.UserAvatarReferences
 import com.virjar.tk.server.domain.auth.AuthService
 import com.virjar.tk.server.domain.auth.AccessTokenValidator
@@ -145,6 +146,7 @@ import com.virjar.tk.server.infra.db.repository.ExposedOrganizationRepository
 import com.virjar.tk.server.infra.db.repository.ExposedOrganizationManagedChatProjectionStore
 import com.virjar.tk.server.infra.db.repository.ExposedGroupFileRepository
 import com.virjar.tk.server.infra.db.repository.ExposedUserRepository
+import com.virjar.tk.server.infra.db.repository.ExposedGroupAvatarReferences
 import com.virjar.tk.server.infra.db.repository.ExposedUserAvatarReferences
 import com.virjar.tk.server.infra.db.repository.ExposedClientTelemetryControlRepository
 import com.virjar.tk.server.infra.db.repository.ExposedClientTelemetryAdminAuditRepository
@@ -295,6 +297,7 @@ internal fun createServerModule(
     single<DocumentRepository> { ExposedDocumentRepository() }
     single<DocumentAttachmentReferences> { ExposedDocumentAttachmentReferences(get()) }
     single<UserAvatarReferences> { ExposedUserAvatarReferences(get()) }
+    single<GroupAvatarReferences> { ExposedGroupAvatarReferences(get()) }
     single<DocumentCustodyAdministrationRepository> {
         ExposedDocumentCustodyAdministrationRepository()
     }
@@ -340,7 +343,20 @@ internal fun createServerModule(
     single { RegistrationService(get(), get<PgUnitOfWork>(), get(), get()) }
     single { AuthService(get(), get(), get(), get(), get()) }
     single { ContactService(get<ContactRepository>(), get<PgUnitOfWork>(), get<UserRepository>()) }
-    single { ChatService(get(), get(), get(), get(), get(), get(), get(), get()) }
+    single<ChatService> {
+        ChatService(
+            chatStore = get(),
+            access = get(),
+            users = get(),
+            managedChats = get(),
+            contacts = get(),
+            requiredParticipants = get(),
+            lifecycleGate = get(),
+            unitOfWork = get(),
+            attachments = get(),
+            attachmentLifecycle = get(),
+        )
+    }
     single { OrganizationManagedChatProjector(get(), get(), get(), get<ChatStore>()) }
     single { OrganizationProjectionReadiness(get()) }
     single { OrganizationService(get(), get(), get(), get(), get()) }
@@ -412,7 +428,13 @@ internal fun createServerModule(
                     userAvatars.getReferencedPaths(paths) + drafts.getReferencedPaths(paths)
         }
     }
-    single<AttachmentAccess> { AttachmentAccessService(get(), get(), get(), get(), get(), get()) }
+    single<AttachmentAccess> {
+        AttachmentAccessService(
+            get(), get(), get(), get(), get(),
+            groupAvatars = get(),
+            drafts = get(),
+        )
+    }
     single {
         AttachmentRetentionService(
             files = get(),

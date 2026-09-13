@@ -45,6 +45,13 @@ private val schemaMigrations = listOf(
         )
         exec("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS mentioned boolean NOT NULL DEFAULT FALSE")
     },
+    SchemaMigration("add_group_avatar_columns") {
+        // T053：群头像 canonical 描述符四列，全有或全无；既有行为不受影响。
+        exec("ALTER TABLE group_chats ADD COLUMN IF NOT EXISTS avatar_path varchar(500)")
+        exec("ALTER TABLE group_chats ADD COLUMN IF NOT EXISTS avatar_name varchar(200)")
+        exec("ALTER TABLE group_chats ADD COLUMN IF NOT EXISTS avatar_content_type varchar(100)")
+        exec("ALTER TABLE group_chats ADD COLUMN IF NOT EXISTS avatar_size bigint")
+    },
 )
 
 /** Caller owns the schema_metadata lock; DDL and its completion receipt commit in the same transaction. */

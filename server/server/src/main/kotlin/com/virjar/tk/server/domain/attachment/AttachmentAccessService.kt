@@ -24,6 +24,7 @@ class AttachmentAccessService(
     private val chats: ChatAccess,
     private val documents: DocumentAttachmentAccess = DocumentAttachmentAccess { _, _ -> false },
     private val userAvatars: UserAvatarReferences = UserAvatarReferences { emptySet() },
+    private val groupAvatars: GroupAvatarReferences = GroupAvatarReferences { emptySet() },
     private val drafts: ChatDraftAttachmentReferences? = null,
 ) : AttachmentAccess {
     override suspend fun canRead(uid: String, path: String): Boolean =
@@ -43,6 +44,13 @@ class AttachmentAccessService(
         // 当前的个人头像对任何已认证的 TeamTalk 用户都可见。HTTP 适配器在进入本服务之前
         // 先认证 uid；一旦个人资料行被替换或清空，旧头像快照就会立即失去这项授权。
         if (userAvatars.isCurrentAvatar(canonicalPath)) return@withContext block(canonicalPath)
+        // 当前群头像（内测反馈 T053）只对该群的当前成员可见；群行替换或清空后旧快照立即失权。
+        val groupAvatarChatId = groupAvatars.getCurrentAvatarChatId(canonicalPath)
+        if (groupAvatarChatId != null) {
+            return@withContext chats.readAccessibleChatIds(uid) { allowedChatIds ->
+                if (groupAvatarChatId in allowedChatIds) block(canonicalPath) else null
+            }
+        }
         // 上传者只拥有暂存窗口期。一旦任何持久化业务对象绑定了此路径，该对象的实时 ACL
         // 就成为了权威，之后的撤回必须生效。
         val isReferenced = references.isReferenced(canonicalPath)
