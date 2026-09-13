@@ -210,7 +210,7 @@ open class AppDataState(
             release("conversation ViewModel", conversationViewModel::destroy)
             release("contact ViewModel", contactViewModel::destroy)
             release("global search user ViewModel", globalSearchUserViewModel::destroy)
-            chat.destroyViewModel()
+            release("chat ViewModel", chat::destroyViewModel)
             release("active chat binding", chat::clearActiveChat)
             if (clearComposerContexts) {
                 release("chat composer contexts", chat::clearComposerContexts)

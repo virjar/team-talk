@@ -1609,6 +1609,7 @@ class AndroidMediaSafetyTest {
             )
             val downloads = mediaCacheDirectory(root, namespace, "downloads")
             val attachments = mediaCacheDirectory(root, namespace, "attachments")
+            val captures = mediaCacheDirectory(root, namespace, "captured")
 
             assertTrue(downloads.toPath().startsWith(File(root, "teamtalk-media").toPath()))
             assertTrue(
@@ -1622,6 +1623,16 @@ class AndroidMediaSafetyTest {
             assertNotEquals(File(root, "media").canonicalFile, downloads.canonicalFile)
             assertFalse(downloads.absolutePath.contains("token-a"))
             assertFalse(downloads.absolutePath.contains("uid-a"))
+            assertEquals(
+                "teamtalk-media/captured/${sha256Hex(namespace).take(32)}",
+                captures.relativeTo(root).invariantSeparatorsPath,
+            )
+            assertNotEquals(
+                captures,
+                mediaCacheDirectory(root, mediaCacheNamespace(
+                    deployment("https://server.example"), TEST_MEDIA_DATASET_ID, "uid-b",
+                ), "captured"),
+            )
         } finally {
             root.deleteRecursively()
         }

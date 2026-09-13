@@ -189,8 +189,8 @@ internal class DocumentWorkspaceTreeNavigation(
             .filterTo(linkedSetOf(), nextTree::containsKey)
         port.setExpandedNodeIds(port.expandedNodeIds() - removedIds)
 
-        val currentTabs = port.tabs()
-        val activeBefore = currentTabs.firstOrNull { it.tabId == port.activeTabId() }
+        val currentTabs = port.tabs.items
+        val activeBefore = port.tabs.activeTab
         var orphanRetained = false
         val nextTabs = currentTabs.mapNotNull { tab ->
             if (tab.spaceId != spaceId) return@mapNotNull tab
@@ -205,12 +205,11 @@ internal class DocumentWorkspaceTreeNavigation(
                 else -> tab
             }
         }
-        if (nextTabs != currentTabs) port.setTabs(nextTabs)
         val activeAfter = activeBefore?.let { captured ->
             nextTabs.firstOrNull { it.instanceId == captured.instanceId }
         } ?: nextTabs.lastOrNull { it.spaceId == spaceId }
         if (activeBefore?.documentId in removedIds) {
-            port.setActiveTabId(activeAfter?.tabId)
+            port.tabs.publish(nextTabs, activeAfter?.tabId)
             port.setSelectedParentNodeId(activeAfter?.resolvedParentIdForNavigation())
             port.closeHistory()
             projectionState.document = if (activeAfter == null) {
@@ -218,10 +217,11 @@ internal class DocumentWorkspaceTreeNavigation(
             } else {
                 DocumentWorkspaceProjectionStatus.CACHED
             }
-        } else if (port.selectedSpaceId() == spaceId &&
-            port.selectedParentNodeId() in removedIds
-        ) {
-            port.setSelectedParentNodeId(null)
+        } else {
+            if (nextTabs != currentTabs) port.tabs.replace(nextTabs)
+            if (port.selectedSpaceId() == spaceId && port.selectedParentNodeId() in removedIds) {
+                port.setSelectedParentNodeId(null)
+            }
         }
         port.persistDrafts()
         reportError(
@@ -369,7 +369,7 @@ internal class DocumentWorkspaceTreeNavigation(
         intent: DocumentTabNavigationIntent,
         documentId: String,
     ): Boolean {
-        val captured = intent.resolve(port.tabs(), isCurrentNavigation)
+        val captured = intent.resolve(port.tabs.items, isCurrentNavigation)
             ?.takeIf { it.documentId == documentId }
             ?: return false
         val minimumRevision = captured.revision ?: return false
@@ -379,7 +379,7 @@ internal class DocumentWorkspaceTreeNavigation(
             failure.rethrowIfDocumentWorkspaceCancelled()
             return false
         } ?: return false
-        val current = intent.resolve(port.tabs(), isCurrentNavigation)
+        val current = intent.resolve(port.tabs.items, isCurrentNavigation)
             ?.takeIf { it.documentId == documentId }
             ?: return false
         if (spine.spaceId != intent.spaceId || spine.targetNodeId != documentId ||
@@ -392,7 +392,7 @@ internal class DocumentWorkspaceTreeNavigation(
             partialBranchParentIds = partialBranchParentIds,
             spine = spine,
         )
-        if (intent.resolve(port.tabs(), isCurrentNavigation)?.documentId != documentId) return false
+        if (intent.resolve(port.tabs.items, isCurrentNavigation)?.documentId != documentId) return false
         spine.nodes.forEach { node ->
             branchRequestGate.invalidate(intent.spaceId, node.parentId)
         }
@@ -484,8 +484,8 @@ internal class DocumentWorkspaceTreeNavigation(
         if (!isCurrentNavigation(generation, stamp.spaceId) ||
             port.selectedSpaceId() != stamp.spaceId
         ) return false
-        val tab = port.tabs().firstOrNull { it.instanceId == stamp.instanceId } ?: return false
-        return tab.tabId == port.activeTabId() && stamp.targets(tab)
+        val tab = port.tabs.items.firstOrNull { it.instanceId == stamp.instanceId } ?: return false
+        return tab.tabId == port.tabs.activeTabId && stamp.targets(tab)
     }
 
     private fun DocumentPathSpine.matches(stamp: DocumentPathStamp): Boolean =
@@ -494,12 +494,12 @@ internal class DocumentWorkspaceTreeNavigation(
             nodes.last().parentId == stamp.parentId
 
     private fun invalidatePath(stamp: DocumentPathStamp) {
-        val currentTabs = port.tabs()
+        val currentTabs = port.tabs.items
         val invalidated = invalidateDocumentPathStamp(currentTabs, stamp)
         if (invalidated === currentTabs) return
-        port.setTabs(invalidated)
+        port.tabs.replace(invalidated)
         val active = invalidated.firstOrNull { it.instanceId == stamp.instanceId }
-        if (active?.tabId == port.activeTabId()) port.setSelectedParentNodeId(null)
+        if (active?.tabId == port.tabs.activeTabId) port.setSelectedParentNodeId(null)
         port.persistDrafts()
     }
 
@@ -527,19 +527,18 @@ internal class DocumentWorkspaceTreeNavigation(
         stamp: DocumentPathStamp,
         failure: AppError.Business,
     ) {
-        val current = port.tabs().firstOrNull(stamp::targets) ?: return
-        if (current.tabId != port.activeTabId()) return
+        val current = port.tabs.items.firstOrNull(stamp::targets) ?: return
+        if (current.tabId != port.tabs.activeTabId) return
         val captured = port.captureLatestActiveDraft(current) ?: return
         if (!stamp.targets(captured)) return
 
         forgetDocumentIdentity(stamp.spaceId, stamp.documentId)
         val reconciliation = reconcileMissingActiveDocumentRefresh(
-            tabs = port.tabs(),
+            tabs = port.tabs.items,
             missingInstanceId = captured.instanceId,
-            activeTabId = port.activeTabId(),
+            activeTabId = port.tabs.activeTabId,
         ) ?: return
-        port.setTabs(reconciliation.tabs)
-        port.setActiveTabId(reconciliation.activeTabId)
+        port.tabs.publish(reconciliation.tabs, reconciliation.activeTabId)
         port.setSelectedParentNodeId(reconciliation.selectedParentNodeId)
         port.persistDrafts()
         projectionState.document = if (reconciliation.activeTab == null) {

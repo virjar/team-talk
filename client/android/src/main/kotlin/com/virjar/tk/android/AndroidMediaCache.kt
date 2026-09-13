@@ -69,10 +69,10 @@ internal fun mediaCacheDirectory(
 ): File {
     require(category.matches(Regex("[a-z0-9-]+"))) { "invalid media cache category" }
     val opaqueScope = sha256Hex(cacheNamespace).take(32)
-    if (category == "attachments") {
-        // FileProvider XML 无法表达 teamtalk-media/<动态 scope>/attachments 通配路径。
+    if (category == "attachments" || category == "captured") {
+        // FileProvider XML 无法表达 teamtalk-media/<动态 scope>/<类别> 通配路径。
         // 把可分享文件集中到固定的窄前缀，避免授权整个 teamtalk-media 或 cacheDir。
-        return File(cacheRoot, "$FILE_PROVIDER_ATTACHMENTS_PATH$opaqueScope")
+        return File(cacheRoot, "teamtalk-media/$category/$opaqueScope")
     }
     return File(cacheRoot, "teamtalk-media/$opaqueScope/$category")
 }

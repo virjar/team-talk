@@ -39,6 +39,7 @@ internal fun androidAccountDataCleanup(context: Context): AccountDataCleanup {
             ))
             add(AccountDataCleanupTarget.tree(app.cacheDir, "teamtalk-media", mediaScope))
             add(AccountDataCleanupTarget.tree(app.cacheDir, "teamtalk-media", "attachments", mediaScope))
+            add(AccountDataCleanupTarget.tree(app.cacheDir, "teamtalk-media", "captured", mediaScope))
             addAll(accountDiagnosticCleanupTargets(app.filesDir, owner))
             // 未捕获异常处理器使用 getDir("teamtalk")，正常遥测则使用 filesDir。
             addAll(accountDiagnosticCleanupTargets(app.getDir("teamtalk", Context.MODE_PRIVATE), owner))

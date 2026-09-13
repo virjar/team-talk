@@ -48,7 +48,7 @@ internal class DocumentWorkspaceMoveActions(
     private val pathRefreshes = DocumentPathRefreshCoordinator()
 
     fun isMoving(instanceId: Long): Boolean {
-        val nodeId = state.tabs().firstOrNull { it.instanceId == instanceId }?.documentId
+        val nodeId = state.tabs.items.firstOrNull { it.instanceId == instanceId }?.documentId
         return instanceId in movingInstances ||
             nodeId != null && nodeId in pendingDocumentMoves.values
     }
@@ -68,7 +68,7 @@ internal class DocumentWorkspaceMoveActions(
     }
 
     fun move(instanceId: Long, targetParentId: String?) {
-        val initial = state.tabs().firstOrNull { it.instanceId == instanceId } ?: return
+        val initial = state.tabs.items.firstOrNull { it.instanceId == instanceId } ?: return
         val tab = state.captureActiveDraft(initial) ?: return
         val descendants = tab.documentId?.let {
             knownDocumentDescendantIds(it, port.treeChildren())
@@ -220,7 +220,7 @@ internal class DocumentWorkspaceMoveActions(
     private fun requestForRecoveredCommand(
         command: PendingDocumentMoveCommand,
     ): DocumentMoveRequest? {
-        val tab = state.tabs().firstOrNull {
+        val tab = state.tabs.items.firstOrNull {
             it.spaceId == command.spaceId && it.documentId == command.nodeId &&
                 it.revision == command.expectedRevision && it.parentId == command.oldParentId
         } ?: return null
@@ -243,9 +243,9 @@ internal class DocumentWorkspaceMoveActions(
         request: DocumentMoveRequest,
         moved: DocumentMoveResult,
     ): ProjectionPublication {
-        val captureAccepted = state.tabs().firstOrNull(request::targets)
+        val captureAccepted = state.tabs.items.firstOrNull(request::targets)
             ?.let(state.captureActiveDraft) != null
-        val currentTabs = state.tabs()
+        val currentTabs = state.tabs.items
         val responseAccepted = moved.matchesDocumentMoveRequest(request)
         if (responseAccepted) {
             port.prepareNodeBranches(
@@ -262,9 +262,9 @@ internal class DocumentWorkspaceMoveActions(
         }
         val publication = if (merged != null) {
             if (state.persistTabs(merged)) {
-                state.replaceTabs(merged)
+                state.tabs.replace(merged)
                 merged.firstOrNull { it.instanceId == request.instanceId }
-                    ?.takeIf { state.activeTabId() == it.tabId }
+                    ?.takeIf { state.tabs.activeTabId == it.tabId }
                     ?.let(state.updateActiveLocation)
                 request.targetParentId?.let(state.expandParent)
                 ProjectionPublication.Accepted
@@ -275,14 +275,14 @@ internal class DocumentWorkspaceMoveActions(
                     currentTabs,
                     request,
                 )
-                if (invalidated !== currentTabs) state.replaceTabs(invalidated)
+                if (invalidated !== currentTabs) state.tabs.replace(invalidated)
                 ProjectionPublication.LocalPersistenceRejected
             }
         } else {
             val invalidated = invalidateOpenDocumentPathsAfterUnmergedMove(currentTabs, request)
             if (invalidated !== currentTabs) {
                 state.persistTabs(invalidated)
-                state.replaceTabs(invalidated)
+                state.tabs.replace(invalidated)
             }
             ProjectionPublication.Superseded
         }
@@ -356,7 +356,7 @@ internal class DocumentWorkspaceMoveActions(
         pathRefreshes.refresh(
             spaceId = spaceId,
             currentTargets = {
-                unresolvedDocumentPathRefreshTargets(state.tabs(), spaceId)
+                unresolvedDocumentPathRefreshTargets(state.tabs.items, spaceId)
             },
             fetch = { key ->
                 repository.call(
@@ -366,7 +366,7 @@ internal class DocumentWorkspaceMoveActions(
                 }
             },
             publish = { current ->
-                val currentTabs = state.tabs()
+                val currentTabs = state.tabs.items
                 acceptedDocumentPathRefreshes(currentTabs, current).forEach { path ->
                     state.prepareDocumentBranches(
                         path.document,
@@ -375,7 +375,7 @@ internal class DocumentWorkspaceMoveActions(
                 }
                 val refreshedTabs = mergeDocumentPathRefreshBatch(currentTabs, current)
                 if (refreshedTabs !== currentTabs && state.persistTabs(refreshedTabs)) {
-                    state.replaceTabs(refreshedTabs)
+                    state.tabs.replace(refreshedTabs)
                 }
             },
         )

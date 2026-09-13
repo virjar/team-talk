@@ -34,7 +34,6 @@ import com.virjar.tk.shared.client.SessionHttpCredentials
 import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.User
-import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.app.ui.UiActionAdmission
 import com.virjar.tk.app.navigation.feature.OfficeReferenceKind
 import com.virjar.tk.app.ui.component.GalleryItem
@@ -45,7 +44,6 @@ import com.virjar.tk.app.ui.component.rememberEmbeddedMediaClickHandler
 import com.virjar.tk.app.ui.component.rememberMediaClickHandler
 import com.virjar.tk.app.ui.screen.ChatPanel
 import com.virjar.tk.app.navigation.feature.chat.OutgoingMediaSender
-import com.virjar.tk.app.navigation.feature.chat.UploadedVideoMedia
 import com.virjar.tk.app.navigation.feature.chat.ChatComposerContextStore
 import com.virjar.tk.app.navigation.feature.chat.ChatDraftLifecycleBridge
 import com.virjar.tk.app.telemetry.ClientUiPage
@@ -63,13 +61,7 @@ import com.virjar.tk.app.telemetry.recordingFeedbackCode
 import com.virjar.tk.app.telemetry.uploadFeedbackCode
 import com.virjar.tk.app.viewmodel.ChatViewModel
 import com.virjar.tk.app.viewmodel.MessageFocusTarget
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.withContext
 import java.io.File
-import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -341,86 +333,64 @@ internal fun AndroidChatScreen(
 
     // ── 视频选择器 / 相机直录（内测 T022）──
 
-    fun sendVideoFromUri(uri: Uri) {
-        launchAdmittedAction {
-            var selected: PreparedMedia? = null
+    fun sendVideoFromUri(ownedFile: File? = null, sourceUri: () -> Uri) {
+        launchWithOwnedMediaSource(ownedFile, launchAdmittedAction) {
             OutgoingMediaSender(telemetry).sendVideo(
                 chatId = chatId,
                 myUid = myUid,
                 viewModel = viewModel,
                 onUploadingChanged = { value -> actionAdmission.runIfOpen { isUploading = value } },
                 classifyFailure = ::classifyAndroidMediaFailure,
-                reportFailure = { error, _ ->
-                    reportMediaFailure(ClientMediaKind.VIDEO, MediaOperation.UPLOAD, error)
+                reportFailure = { _, reason ->
+                    queueMediaFeedback(reason.uploadFeedbackCode, ClientUiAction.UPLOAD_MEDIA)
                 },
             ) {
-                selected = MediaHelper.prepareSelectedMedia(context, uri, mediaSession = mediaSession)
-                val prepared = selected ?: error("视频源准备失败")
-                // 服务端生成缩略图和元数据；字段缺失时再回退本地 MediaMetadataRetriever。
-                val up = MediaHelper.uploadWithMeta(
-                    prepared.file,
-                    prepared.fileName,
-                    prepared.contentType,
-                    mediaSession,
-                )
-                var w = up.width
-                var h = up.height
-                var duration = up.durationSec ?: 0
-                var thumbnail = up.thumbnail
-                if (w == 0 || thumbnail == null) {
-                    val local = withContext(Dispatchers.IO) { MediaHelper.getVideoMetadata(context, uri) }
-                    duration = local?.first ?: duration
-                    w = local?.second ?: w
-                    h = local?.third ?: h
-                    if (thumbnail == null) {
-                        withContext(Dispatchers.IO) {
-                            MediaHelper.extractVideoThumbnail(context, prepared.file, mediaSession = mediaSession)
-                        }?.let { thumbnailFile ->
-                            try {
-                                thumbnail = MediaHelper.uploadFile(
-                                    thumbnailFile,
-                                    "thumb.jpg",
-                                    "image/jpeg",
-                                    mediaSession,
-                                )
-                            } finally {
-                                thumbnailFile.delete()
-                            }
-                        }
-                    }
-                }
-                UploadedVideoMedia(up.file, duration, w, h, thumbnail)
+                uploadAndroidVideo(context, sourceUri(), mediaSession)
             }
-            selected?.delete()
         }
     }
     val videoPicker = rememberAndroidVisualMediaPicker(ActivityResultContracts.PickVisualMedia.VideoOnly) { uri ->
-        if (uri != null) sendVideoFromUri(uri)
+        if (uri != null) sendVideoFromUri { uri }
     }
 
     /** 相机直录：录制的视频写入应用缓存，不落入系统相册，直接发送。 */
-    var pendingCaptureFile by remember { mutableStateOf<java.io.File?>(null) }
+    var pendingCaptureFile by remember(mediaSession) { mutableStateOf<File?>(null) }
     val videoCaptureLauncher = rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.CaptureVideo(),
     ) { recorded ->
         val target = pendingCaptureFile
         pendingCaptureFile = null
         if (recorded && target != null && target.length() > 0L) {
-            sendVideoFromUri(androidx.core.content.FileProvider.getUriForFile(
-                context, "${context.packageName}.fileprovider", target,
-            ))
+            sendVideoFromUri(ownedFile = target) {
+                androidx.core.content.FileProvider.getUriForFile(
+                    context, "${context.packageName}.fileprovider", target,
+                )
+            }
         } else {
             target?.delete()
         }
     }
+    DisposableEffect(mediaSession) {
+        onDispose {
+            pendingCaptureFile?.delete()
+            pendingCaptureFile = null
+        }
+    }
 
     fun startVideoCapture() {
-        val directory = java.io.File(context.cacheDir, "teamtalk-media/captured").apply { mkdirs() }
-        val target = java.io.File(directory, "capture-${System.currentTimeMillis()}.mp4")
+        if (pendingCaptureFile != null || !mediaSession.isCurrentOwner()) return
+        val directory = mediaCacheDirectory(context.cacheDir, mediaCacheScope, "captured").apply { mkdirs() }
+        val target = File.createTempFile("capture-", ".mp4", directory)
         pendingCaptureFile = target
-        videoCaptureLauncher.launch(
-            androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", target),
-        )
+        try {
+            videoCaptureLauncher.launch(
+                androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", target),
+            )
+        } catch (failure: Throwable) {
+            pendingCaptureFile = null
+            target.delete()
+            throw failure
+        }
     }
 
     fun startVoiceRecording() {
@@ -578,7 +548,7 @@ internal fun AndroidChatScreen(
             ClientActionOutcome.SUCCEEDED,
         )
         val duration = (durationMillis / 1_000L).toInt().coerceAtLeast(1)
-        launchAdmittedAction {
+        launchWithOwnedMediaSource(file, launchAdmittedAction) {
             OutgoingMediaSender(telemetry).sendVoice(
                 chatId = chatId,
                 myUid = myUid,
@@ -586,17 +556,12 @@ internal fun AndroidChatScreen(
                 durationSeconds = duration,
                 onUploadingChanged = { value -> actionAdmission.runIfOpen { isUploading = value } },
                 classifyFailure = ::classifyAndroidMediaFailure,
-                reportFailure = { error, _ ->
-                    reportMediaFailure(ClientMediaKind.AUDIO, MediaOperation.UPLOAD, error)
+                reportFailure = { _, reason ->
+                    queueMediaFeedback(reason.uploadFeedbackCode, ClientUiAction.UPLOAD_MEDIA)
                 },
             ) {
                 if (file.length() > MAX_SELECTED_MEDIA_BYTES) throw SelectedMediaTooLargeException(MAX_SELECTED_MEDIA_BYTES)
                 MediaHelper.uploadFile(file, file.name, "audio/aac", mediaSession)
-            }
-            try {
-                deleteVoiceRecordingFile(file)
-            } catch (error: Exception) {
-                Log.w("Chat", "Voice recording temporary file cleanup failed", error)
             }
         }
     }

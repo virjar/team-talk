@@ -29,10 +29,7 @@ internal class DocumentWorkspaceNavigationPort(
     val setExpandedNodeIds: (Set<String>) -> Unit,
     val selectedParentNodeId: () -> String?,
     val setSelectedParentNodeId: (String?) -> Unit,
-    val tabs: () -> List<DocumentTabState>,
-    val setTabs: (List<DocumentTabState>) -> Unit,
-    val activeTabId: () -> String?,
-    val setActiveTabId: (String?) -> Unit,
+    val tabs: DocumentWorkspaceTabs,
     val clearGrants: () -> Unit,
     val closeHistory: () -> Unit,
     val persistDrafts: () -> Unit,
@@ -285,7 +282,7 @@ internal class DocumentWorkspaceNavigationActions(
         }
         val spaceChanged = port.selectedSpaceId() != spaceId
         port.setSelectedSpaceId(spaceId)
-        port.setActiveTabId(null)
+        port.tabs.activate(null)
         port.closeHistory()
         port.setSelectedParentNodeId(null)
         if (spaceChanged) treeNavigation.clearVisibleProjection()
@@ -305,10 +302,10 @@ internal class DocumentWorkspaceNavigationActions(
         treeNavigation.clearVisibleProjection()
         port.setSelectedParentNodeId(null)
         port.clearGrants()
-        val localTab = port.tabs().lastOrNull { tab ->
+        val localTab = port.tabs.items.lastOrNull { tab ->
             tab.spaceId == spaceId && (tab.dirty || tab.creating)
         }
-        port.setActiveTabId(localTab?.tabId)
+        port.tabs.activate(localTab?.tabId)
         projectionState.tree = DocumentWorkspaceProjectionStatus.LOCAL_ORPHAN
         projectionState.document = DocumentWorkspaceProjectionStatus.LOCAL_ORPHAN
         port.persistDrafts()

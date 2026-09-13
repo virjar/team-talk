@@ -267,8 +267,7 @@ private fun DocumentWorkspaceFeature.applyMissingActiveDocumentRefresh(
         missingInstanceId = captured.instanceId,
         activeTabId = activeTabId,
     ) ?: return MissingActiveRefreshOutcome(handled = false, settledTab = original)
-    tabs = reconciliation.tabs
-    activeTabId = reconciliation.activeTabId
+    residentTabs.publish(reconciliation.tabs, reconciliation.activeTabId)
     selectedParentNodeId = reconciliation.selectedParentNodeId
     closeHistory()
     revisionConflictActions.dismissStaleConflict()

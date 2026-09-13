@@ -38,8 +38,8 @@ internal class DocumentRevisionConflictActions(
         val documentId = request.documentId ?: return false
         // UI 只暴露一个冲突决策槽位。后台 tab A 的迟到 409 绝不能
         // 覆盖活动 tab B 的 modal 状态，也不能被报告为已处理而没有任何选择。
-        if (state.activeTabId() != request.tabId) return false
-        if (state.tabs().none(request::targetsUnchanged)) return true
+        if (state.tabs.activeTabId != request.tabId) return false
+        if (state.tabs.items.none(request::targetsUnchanged)) return true
         revisionConflict = DocumentRevisionConflictState.Loading(request)
         val token = conflictGate.begin(request)
         scope.launch {
@@ -118,7 +118,7 @@ internal class DocumentRevisionConflictActions(
     fun dismissStaleConflict() {
         if (revisionConflict is DocumentRevisionConflictState.Adopting) return
         val current = revisionConflict ?: return
-        if (state.tabs().none(current.request::targetsUnchanged)) clearConflict()
+        if (state.tabs.items.none(current.request::targetsUnchanged)) clearConflict()
     }
 
     fun clearConflict() {
@@ -138,10 +138,10 @@ internal class DocumentRevisionConflictActions(
         merge: (List<DocumentTabState>, DocumentRevisionConflictState.Ready) -> List<DocumentTabState>?,
     ): Boolean {
         if (revisionConflict != expectedState) return false
-        val current = state.tabs().firstOrNull(ready.request::targets) ?: return false
+        val current = state.tabs.items.firstOrNull(ready.request::targets) ?: return false
         if (state.captureActiveDraft(current) == null) return false
-        val oldParentId = state.tabs().firstOrNull(ready.request::targets)?.parentId
-        val merged = merge(state.tabs(), ready) ?: run {
+        val oldParentId = state.tabs.items.firstOrNull(ready.request::targets)?.parentId
+        val merged = merge(state.tabs.items, ready) ?: run {
             finishConflict()
             return false
         }
@@ -152,8 +152,8 @@ internal class DocumentRevisionConflictActions(
             }
         val persisted = state.persistTabs(merged)
         if (!persisted && requireDurableDraftProjection) return false
-        state.replaceTabs(merged)
-        resolved.takeIf { state.activeTabId() == it.tabId }?.let(state.updateActiveLocation)
+        state.tabs.replace(merged)
+        resolved.takeIf { state.tabs.activeTabId == it.tabId }?.let(state.updateActiveLocation)
         resolved.parentId?.let(state.expandParent)
         finishConflict()
         state.prepareDocumentBranches(ready.remote, setOf(oldParentId))
@@ -174,8 +174,8 @@ internal class DocumentRevisionConflictActions(
 
     private fun acceptConflict(token: LatestRequestGate.Token<DocumentTabRequest>): Boolean =
         conflictGate.isCurrent(token) && revisionConflict?.request == token.target &&
-            state.activeTabId() == token.target.tabId &&
-            state.tabs().any(token.target::targetsUnchanged)
+            state.tabs.activeTabId == token.target.tabId &&
+            state.tabs.items.any(token.target::targetsUnchanged)
 
     private fun clearAbandonedLoading(token: LatestRequestGate.Token<DocumentTabRequest>) {
         val loading = revisionConflict as? DocumentRevisionConflictState.Loading ?: return

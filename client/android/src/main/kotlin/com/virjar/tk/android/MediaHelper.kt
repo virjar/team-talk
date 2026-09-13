@@ -53,10 +53,12 @@ internal data class PreparedMedia(
     val fileName: String,
     val contentType: String,
     val size: Long,
-) {
+) : AutoCloseable {
     fun delete() {
         if (file.exists()) file.delete()
     }
+
+    override fun close() = delete()
 }
 
 /**
@@ -110,7 +112,7 @@ object MediaHelper {
         uri: Uri,
         mediaSession: AndroidMediaSession,
         maxBytes: Long = MAX_SELECTED_MEDIA_BYTES,
-    ): PreparedMedia = withContext(Dispatchers.IO) {
+    ): PreparedMedia = withCloseableContext(Dispatchers.IO) {
         mediaSession.accessTokenForRequest()
         val operationContext = currentCoroutineContext()
         require(maxBytes > 0) { "maxBytes must be positive" }

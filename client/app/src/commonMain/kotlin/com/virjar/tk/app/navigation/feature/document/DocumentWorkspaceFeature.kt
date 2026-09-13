@@ -115,25 +115,14 @@ class DocumentWorkspaceFeature internal constructor(
     internal val moveBlockedNodeIds: Set<String>
         get() = moveBlockedNodesProjection.descendants(activeTab?.documentId, treeChildren)
 
-    private var residentTabs by mutableStateOf(emptyList<DocumentTabState>())
+    internal val residentTabs = DocumentWorkspaceTabs()
     var tabs: List<DocumentTabState>
-        get() = residentTabs
-        internal set(value) {
-            // 所有普通生产者都针对更小的运行目标做规划。这个 setter 是
-            // 最终的全进程不变量：任何直接 merge/restoration 路径都不得绕过
-            // 由持久化推导的绝对正文上限。
-            check(value.size <= MAX_RECOVERED_DOCUMENT_TABS) {
-                "Document resident tabs exceeded the absolute recovery ceiling"
-            }
-            check(reservedDocumentBodyChars(value, activeInstanceId = null) <=
-                MAX_RECOVERED_DOCUMENT_BODY_CHARS) {
-                "Document resident bodies exceeded the absolute recovery ceiling"
-            }
-            residentTabs = value
-        }
-    var activeTabId by mutableStateOf<String?>(null)
-        internal set
-    val activeTab get() = tabs.firstOrNull { it.tabId == activeTabId }
+        get() = residentTabs.items
+        internal set(value) = residentTabs.replace(value)
+    var activeTabId: String?
+        get() = residentTabs.activeTabId
+        internal set(value) = residentTabs.activate(value)
+    val activeTab get() = residentTabs.activeTab
     val activeTabDestructiveOperationPending: Boolean
         get() = activeTab?.let(::isTerminallyReadOnly) == true
 
@@ -206,8 +195,8 @@ class DocumentWorkspaceFeature internal constructor(
             expandedNodeIds = { expandedNodeIds }, setExpandedNodeIds = { expandedNodeIds = it },
             selectedParentNodeId = { selectedParentNodeId },
             setSelectedParentNodeId = { selectedParentNodeId = it },
-            tabs = { tabs }, setTabs = { tabs = it }, activeTabId = { activeTabId },
-            setActiveTabId = { activeTabId = it }, clearGrants = { grants = emptyList() },
+            tabs = residentTabs,
+            clearGrants = { grants = emptyList() },
             closeHistory = ::closeHistory, persistDrafts = { persistDraftSnapshot() },
             captureLatestActiveDraft = ::captureLatestActiveDraft,
             nextTabInstanceId = { draftCollaboration.nextTabInstanceId() },
@@ -245,8 +234,8 @@ class DocumentWorkspaceFeature internal constructor(
         get() = revisionConflictActions.revisionConflict
 
     private val mutationStatePort = DocumentWorkspaceMutationStatePort(
-        tabs = { tabs }, replaceTabs = { tabs = it },
-        selectedSpaceId = { selectedSpaceId }, activeTabId = { activeTabId },
+        tabs = residentTabs,
+        selectedSpaceId = { selectedSpaceId },
         captureActiveDraft = ::captureLatestActiveDraft,
         updateActiveLocation = {
             selectedParentNodeId = it.parentId
@@ -523,8 +512,7 @@ class DocumentWorkspaceFeature internal constructor(
         // 只有本地准入的草稿才会成为导航事实。一次容量/存储拒绝
         // 绝不能取消用户先前的文档加载或冲突决策。
         navigationActions.beginNavigation()
-        tabs = bodyPlan.tabs
-        activeTabId = tabId
+        residentTabs.publish(bodyPlan.tabs, tabId)
         selectedParentNodeId = location.parentId
         location.parentId?.let { expandedNodeIds = expandedNodeIds + it }
         closeHistory()
@@ -638,8 +626,7 @@ class DocumentWorkspaceFeature internal constructor(
             )
         ) return
         navigationActions.beginNavigation()
-        tabs = nextTabs
-        activeTabId = replacement.tabId
+        residentTabs.publish(nextTabs, replacement.tabId)
         selectedParentNodeId = location.parentId
         closeHistory()
         saveCoordinator.saveActive()

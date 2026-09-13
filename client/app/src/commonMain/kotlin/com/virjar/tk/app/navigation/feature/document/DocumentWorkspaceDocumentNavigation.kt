@@ -56,7 +56,7 @@ internal class DocumentWorkspaceDocumentNavigation(
 
     private fun openTarget(spaceId: String, documentId: String) {
         val target = DocumentTabTarget(spaceId, documentId)
-        val admission = decideDocumentTabOpen(port.tabs(), target)
+        val admission = decideDocumentTabOpen(port.tabs.items, target)
         if (admission is DocumentTabOpenDecision.RejectAtCapacity) {
             reportTabCapacityReached(admission)
             return
@@ -85,7 +85,7 @@ internal class DocumentWorkspaceDocumentNavigation(
     }
 
     fun selectTab(tabId: String) {
-        val tab = port.tabs().firstOrNull { it.tabId == tabId } ?: return
+        val tab = port.tabs.items.firstOrNull { it.tabId == tabId } ?: return
         val generation = beginNavigation()
         port.closeHistory()
         val activation = activateResidentTab(tab, generation) ?: return
@@ -103,7 +103,7 @@ internal class DocumentWorkspaceDocumentNavigation(
 
     /** 在一个干净的 tab 成为驱逐候选之前，捕获唯一挂载的编辑器。 */
     private fun captureCurrentActiveBeforeResidentChange(): Boolean {
-        val current = port.tabs().firstOrNull { it.tabId == port.activeTabId() } ?: return true
+        val current = port.tabs.activeTab ?: return true
         return port.captureLatestActiveDraft(current) != null
     }
 
@@ -114,7 +114,7 @@ internal class DocumentWorkspaceDocumentNavigation(
     ): ResidentDocumentActivation? {
         if (!isCurrentNavigation(generation, null)) return null
         if (!captureCurrentActiveBeforeResidentChange()) return null
-        val current = port.tabs().firstOrNull {
+        val current = port.tabs.items.firstOrNull {
             it.instanceId == captured.instanceId && it.spaceId == captured.spaceId
         } ?: return null
         if (port.spaces().none { it.spaceId == current.spaceId }) {
@@ -125,7 +125,7 @@ internal class DocumentWorkspaceDocumentNavigation(
             return null
         }
         val bodyPlan = when (val plan = planDocumentResidentBodies(
-            tabs = port.tabs(),
+            tabs = port.tabs.items,
             activeInstanceId = current.instanceId,
             // 重新激活一个已恢复的 dirty 身份，绝不能仅仅因为它高于今天的运行目标就销毁它。
             // 这条路径不会准入任何新身份。
@@ -146,11 +146,9 @@ internal class DocumentWorkspaceDocumentNavigation(
             port.clearGrants()
         }
         if (!isCurrentNavigation(generation, current.spaceId)) return null
-        // 在传入的 tab 仍然驻留时转移编辑器所有权；只有那时才退役干净的非活动正文。
-        // 因此 Compose 绝不会观察到被驱逐的旧 tab 作为活动 tab。
-        port.setActiveTabId(current.tabId)
+        // 活动选择与驻留正文同时转移，旧编辑器不会继续拥有被驱逐的正文。
+        port.tabs.publish(bodyPlan.tabs, current.tabId)
         projectionState.document = DocumentWorkspaceProjectionStatus.CACHED
-        if (bodyPlan.tabs != port.tabs()) port.setTabs(bodyPlan.tabs)
         port.setSelectedParentNodeId(current.resolvedParentIdForNavigation())
         port.persistDrafts()
         return ResidentDocumentActivation(
@@ -174,7 +172,7 @@ internal class DocumentWorkspaceDocumentNavigation(
 
     private suspend fun refreshResidentTab(activation: ResidentDocumentActivation) {
         val intent = activation.intent
-        fun current(): DocumentTabState? = intent.resolve(port.tabs(), isCurrentNavigation)
+        fun current(): DocumentTabState? = intent.resolve(port.tabs.items, isCurrentNavigation)
 
         val captured = current() ?: return
         val documentId = captured.documentId
@@ -212,7 +210,7 @@ internal class DocumentWorkspaceDocumentNavigation(
                 if (port.captureLatestActiveDraft(latest) == null) return
                 treeNavigation.forgetDocumentIdentity(captured.spaceId, documentId)
                 reconcileMissingResidentTab(intent, failure)
-                projectionState.document = if (port.tabs().any { it.tabId == port.activeTabId() }) {
+                projectionState.document = if (port.tabs.activeTab != null) {
                     DocumentWorkspaceProjectionStatus.CACHED
                 } else {
                     DocumentWorkspaceProjectionStatus.NOT_LOADED
@@ -252,7 +250,7 @@ internal class DocumentWorkspaceDocumentNavigation(
         cachedPathStamp: DocumentPathStamp? = null,
     ) {
         val intent = activation.intent
-        fun current(): DocumentTabState? = intent.resolve(port.tabs(), isCurrentNavigation)
+        fun current(): DocumentTabState? = intent.resolve(port.tabs.items, isCurrentNavigation)
 
         val latestBeforeCapture = current() ?: return
         val latest = port.captureLatestActiveDraft(latestBeforeCapture) ?: return
@@ -277,12 +275,12 @@ internal class DocumentWorkspaceDocumentNavigation(
             )
         }
         if (refreshed != latest) {
-            port.setTabs(port.tabs().map { tab ->
+            port.tabs.replace(port.tabs.items.map { tab ->
                 if (tab.instanceId == refreshed.instanceId) refreshed else tab
             })
         }
         if (current() == null) return
-        port.setActiveTabId(refreshed.tabId)
+        port.tabs.activate(refreshed.tabId)
         port.setSelectedParentNodeId(refreshed.resolvedParentIdForNavigation())
         port.persistDrafts()
 
@@ -315,14 +313,13 @@ internal class DocumentWorkspaceDocumentNavigation(
         intent: DocumentTabNavigationIntent,
         failure: AppError.Business,
     ) {
-        val current = intent.resolve(port.tabs(), isCurrentNavigation) ?: return
+        val current = intent.resolve(port.tabs.items, isCurrentNavigation) ?: return
         val reconciliation = reconcileMissingActiveDocumentRefresh(
-            tabs = port.tabs(),
+            tabs = port.tabs.items,
             missingInstanceId = current.instanceId,
-            activeTabId = port.activeTabId(),
+            activeTabId = port.tabs.activeTabId,
         ) ?: return
-        port.setTabs(reconciliation.tabs)
-        port.setActiveTabId(reconciliation.activeTabId)
+        port.tabs.publish(reconciliation.tabs, reconciliation.activeTabId)
         port.setSelectedParentNodeId(reconciliation.selectedParentNodeId)
         port.persistDrafts()
         reportError(
@@ -343,7 +340,7 @@ internal class DocumentWorkspaceDocumentNavigation(
         if (port.isSpaceLocalOnly(activation.intent.spaceId)) return
         try {
             if (!treeNavigation.loadRoot(activation.intent.generation)) return
-            val current = activation.intent.resolve(port.tabs(), isCurrentNavigation) ?: return
+            val current = activation.intent.resolve(port.tabs.items, isCurrentNavigation) ?: return
             if (current.documentId == null && current.pathResolved &&
                 current.ancestorIds.isNotEmpty()
             ) {
@@ -351,7 +348,7 @@ internal class DocumentWorkspaceDocumentNavigation(
             }
         } catch (failure: Exception) {
             failure.rethrowIfDocumentWorkspaceCancelled()
-            val stillCurrent = activation.intent.resolve(port.tabs(), isCurrentNavigation)
+            val stillCurrent = activation.intent.resolve(port.tabs.items, isCurrentNavigation)
             if (stillCurrent != null) {
                 reportError(failure, "当前无网络，已打开本地文档，目录将在联网后刷新")
             }
@@ -361,7 +358,7 @@ internal class DocumentWorkspaceDocumentNavigation(
     suspend fun openDocumentNow(spaceId: String, documentId: String, generation: Long) {
         if (!isCurrentNavigation(generation, spaceId)) return
         val target = DocumentTabTarget(spaceId, documentId)
-        when (val admission = decideDocumentTabOpen(port.tabs(), target)) {
+        when (val admission = decideDocumentTabOpen(port.tabs.items, target)) {
             is DocumentTabOpenDecision.ReuseResident -> {
                 val activation = activateResidentTab(admission.tab, generation) ?: return
                 refreshResidentTab(activation)
@@ -441,7 +438,7 @@ internal class DocumentWorkspaceDocumentNavigation(
             !isCurrentNavigation(generation, target.spaceId)
         ) return null
         if (!captureCurrentActiveBeforeResidentChange()) return null
-        when (val publication = decideDocumentTabOpen(port.tabs(), target)) {
+        when (val publication = decideDocumentTabOpen(port.tabs.items, target)) {
             is DocumentTabOpenDecision.RejectAtCapacity -> {
                 reportTabCapacityReached(publication)
                 return null
@@ -452,7 +449,7 @@ internal class DocumentWorkspaceDocumentNavigation(
         }
         val tab = DocumentTabState.from(document, instanceId = port.nextTabInstanceId())
         val bodyPlan = when (val plan = planDocumentResidentBodies(
-            tabs = port.tabs() + tab,
+            tabs = port.tabs.items + tab,
             activeInstanceId = tab.instanceId,
             allowRecoveryDebt = false,
         )) {
@@ -462,8 +459,7 @@ internal class DocumentWorkspaceDocumentNavigation(
                 return null
             }
         }
-        port.setTabs(bodyPlan.tabs)
-        port.setActiveTabId(tab.tabId)
+        port.tabs.publish(bodyPlan.tabs, tab.tabId)
         port.setSelectedParentNodeId(tab.parentId)
         port.persistDrafts()
         return ResidentDocumentActivation(
