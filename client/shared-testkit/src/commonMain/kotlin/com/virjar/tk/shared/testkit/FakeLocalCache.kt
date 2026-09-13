@@ -457,6 +457,26 @@ class FakeLocalCache(
     override fun getUser(uid: String) = cacheUseGate.use { people.getUser(uid) }
     override fun observeUser(uid: String) = cacheUseGate.use { people.observeUser(uid) }
     override fun upsertUser(user: User) = cacheUseGate.use { people.upsertUser(user) }
+
+    // ── 群头像（内测反馈 T053）：Fake 用内存表模拟，事件流同步发射。──
+    private val chatAvatarsById = linkedMapOf<String, Attachment?>()
+    private val chatAvatarEventsFlow = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 64)
+    override val chatAvatarEvents: kotlinx.coroutines.flow.MutableSharedFlow<String> = chatAvatarEventsFlow
+
+    override fun observeChatAvatar(chatId: String): Flow<Attachment?> =
+        cacheUseGate.use { chatAvatarsById[chatId] }
+            .let { initial -> kotlinx.coroutines.flow.flow { emit(initial) } }
+
+    override fun upsertChatAvatar(chatId: String, attachment: Attachment?) {
+        cacheUseGate.use {
+            if (attachment == null) chatAvatarsById.remove(chatId) else chatAvatarsById[chatId] = attachment
+        }
+        chatAvatarEventsFlow.tryEmit(chatId)
+    }
+
+    override fun isChatAvatarResolved(chatId: String): Boolean = chatAvatarsById.containsKey(chatId)
+
+    override fun getChatAvatar(chatId: String): Attachment? = cacheUseGate.use { chatAvatarsById[chatId] }
     override fun beginUserSnapshot(uid: String) = cacheUseGate.use { people.beginUserSnapshot(uid) }
 
     override fun applyUserSnapshot(

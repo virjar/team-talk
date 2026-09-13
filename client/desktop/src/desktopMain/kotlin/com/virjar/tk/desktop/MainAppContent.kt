@@ -404,11 +404,19 @@ private fun MainListPane(
         ) {
             when (MainTab.entries[nav.selectedTab]) {
                 MainTab.CONVERSATIONS -> {
+                    // 群头像懒加载（内测反馈 T053）：对本轮可见的群补齐解析。
+                    LaunchedEffect(conversations) {
+                        nav.chat.ensureGroupAvatars(
+                            conversations.filter { it.chatType == com.virjar.tk.protocol.model.ChatType.GROUP.code }
+                                .map { it.chatId },
+                        )
+                    }
                     Column {
                         ListHeader(title = "会话")
                         ConversationListScreen(
                             conversations = conversations,
                             mentionedChatIds = mentionedChatIds,
+                            groupAvatars = nav.chat.chatAvatars.collectAsState().value,
                             selectedChatId = nav.chatId,
                             onConversationClick = { chatId ->
                                 presentationGate.runIfOpen {

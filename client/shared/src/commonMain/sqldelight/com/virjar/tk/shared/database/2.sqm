@@ -1,0 +1,7 @@
+-- v0.0.3 开发期单步迁移（内测反馈 T053）：群头像本地投影。
+-- 全程 IF NOT EXISTS，v0.0.2 库认领重放与新库直建互不冲突。
+CREATE TABLE IF NOT EXISTS chat_avatar (
+    chat_id TEXT NOT NULL PRIMARY KEY,
+    payload BLOB NOT NULL,
+    touched_at INTEGER NOT NULL
+);

@@ -33,6 +33,8 @@ fun ChatAvatar(
     size: Int = 48,
     avatar: Attachment? = null,
     groupMembers: List<User> = emptyList(),
+    /** 群当前头像（内测反馈 T053）；非 null 时替代成员拼图。 */
+    groupAvatar: Attachment? = null,
 ) {
     val type = ChatType.fromCode(chatType)
     val badge = when (type) {
@@ -42,7 +44,13 @@ fun ChatAvatar(
     }
 
     Box(modifier = modifier.size(size.dp)) {
-        if (type == ChatType.GROUP && groupMembers.isNotEmpty()) {
+        if (type == ChatType.GROUP && groupAvatar != null) {
+            AvatarPlaceholder(
+                name = chatName,
+                avatar = groupAvatar,
+                size = size,
+            )
+        } else if (type == ChatType.GROUP && groupMembers.isNotEmpty()) {
             GroupAvatarCollage(
                 chatName = chatName,
                 members = groupMembers,

@@ -2,15 +2,18 @@ package com.virjar.tk.app.ui.screen
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CornerSize
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Link
@@ -77,6 +80,10 @@ fun GroupDetailScreen(
     onUnmuteMember: ((memberUid: String) -> Unit)? = null,
     onRemoveMember: ((memberUid: String) -> Unit)? = null,
     onClose: (() -> Unit)? = null,
+    /** 群当前头像（内测反馈 T053）。 */
+    groupAvatar: com.virjar.tk.protocol.model.Attachment? = null,
+    /** 修改群头像（仅 owner/管理员可见）。 */
+    onEditGroupAvatar: (() -> Unit)? = null,
 ) {
     var showNoticeEdit by remember(chat?.chatId) { mutableStateOf(false) }
     var noticeText by remember(chat?.chatId, chat?.notice) { mutableStateOf(chat?.notice ?: "") }
@@ -115,7 +122,7 @@ fun GroupDetailScreen(
             ) {
                 item(key = "overview") {
                     SettingsGroupCard(modifier = Modifier.padding(bottom = Tk.spacing.lg)) {
-                        GroupSummary(chat, members)
+                        GroupSummary(chat, members, groupAvatar = groupAvatar, onEditAvatar = onEditGroupAvatar)
                         HorizontalDivider(color = Tk.colors.divider, modifier = Modifier.padding(horizontal = Tk.spacing.md))
                         NoticeSection(
                             notice = chat.notice,
@@ -250,17 +257,44 @@ fun GroupDetailScreen(
 }
 
 @Composable
-private fun GroupSummary(chat: Chat, members: List<Member>) {
+private fun GroupSummary(
+    chat: Chat,
+    members: List<Member>,
+    groupAvatar: com.virjar.tk.protocol.model.Attachment? = null,
+    onEditAvatar: (() -> Unit)? = null,
+) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(Tk.spacing.md),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        Box {
         ChatAvatar(
             chatType = ChatType.GROUP.code,
             chatName = chat.name ?: chat.chatId,
             size = Tk.dimens.listAvatar.value.toInt(),
             groupMembers = groupAvatarCellUsers(members),
+            groupAvatar = groupAvatar,
         )
+        if (onEditAvatar != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(20.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary)
+                    .clickable(onClick = onEditAvatar)
+                    .testTag("group.avatar.edit"),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.Edit,
+                    contentDescription = "修改群头像",
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(12.dp),
+                )
+            }
+        }
+        }
         Spacer(Modifier.width(Tk.spacing.md))
         Column(modifier = Modifier.weight(1f)) {
             Text(

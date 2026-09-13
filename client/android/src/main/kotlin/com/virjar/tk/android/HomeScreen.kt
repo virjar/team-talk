@@ -183,9 +183,19 @@ internal fun HomeScreen(
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             when (MainTab.entries[selectedTab]) {
-                MainTab.CONVERSATIONS -> ConversationListScreen(
-                    conversations = conversations,
-                    mentionedChatIds = mentionedChatIds,
+                MainTab.CONVERSATIONS -> {
+                    // 群头像懒加载（内测反馈 T053）
+                    LaunchedEffect(conversations) {
+                        dataState.chat.ensureGroupAvatars(
+                            conversations.filter { it.chatType == com.virjar.tk.protocol.model.ChatType.GROUP.code }
+                                .map { it.chatId },
+                        )
+                    }
+                    val chatAvatars by dataState.chat.chatAvatars.collectAsState()
+                    ConversationListScreen(
+                        conversations = conversations,
+                        mentionedChatIds = mentionedChatIds,
+                        groupAvatars = chatAvatars,
                     onConversationClick = actionAdmission.guard(onConversationClick),
                     onPinClick = actionAdmission.guard(dataState.conversationViewModel::setPinned),
                     onMuteClick = actionAdmission.guard(dataState.conversationViewModel::setMuted),
@@ -194,9 +204,10 @@ internal fun HomeScreen(
                     },
                     peerUsers = conversationPeerUsers,
                     peerRemarks = remember(contacts) { com.virjar.tk.app.ui.screen.contactRemarks(contacts) },
-                    groupMembers = groupAvatarMembers,
-                    loadMessagePreview = dataState.conversationViewModel::messagePreview,
-                )
+                        groupMembers = groupAvatarMembers,
+                        loadMessagePreview = dataState.conversationViewModel::messagePreview,
+                    )
+                }
                 MainTab.CONTACTS -> Column(modifier = Modifier.fillMaxSize()) {
                     DirectoryScreen(
                         contacts = contacts,

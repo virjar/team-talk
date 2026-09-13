@@ -94,6 +94,8 @@ fun ConversationListScreen(
     loadMessagePreview: (suspend (Conversation) -> String?)? = null,
     /** 存在未读 @我 提示的会话集合（MENTION_SYNC 进程内投影）。 */
     mentionedChatIds: Set<String> = emptySet(),
+    /** 群当前头像（内测反馈 T053）：chatId → 已解析描述符。 */
+    groupAvatars: Map<String, Attachment> = emptyMap(),
 ) {
     // 首次收藏前不占用会话列表；收藏后与普通会话一起排序，置顶仅由用户决定。
     val sorted = conversations
@@ -125,6 +127,7 @@ fun ConversationListScreen(
                 peerUser = peerUser,
                 remark = conv.peerUid?.let(peerRemarks::get),
                 groupMembers = groupMembers[conv.chatId].orEmpty(),
+                groupAvatar = groupAvatars[conv.chatId],
                 loadMessagePreview = loadMessagePreview,
                 selected = conv.chatId == selectedChatId,
                 onClick = { onConversationClick(conv.chatId) },
@@ -148,6 +151,7 @@ private fun ConversationItem(
     peerUser: User?,
     remark: String?,
     groupMembers: List<User> = emptyList(),
+    groupAvatar: Attachment? = null,
     loadMessagePreview: (suspend (Conversation) -> String?)?,
     selected: Boolean,
     onClick: () -> Unit,
@@ -208,6 +212,7 @@ private fun ConversationItem(
                 avatar = identity.avatar,
                 size = Tk.dimens.listAvatar.value.toInt(),
                 groupMembers = groupMembers,
+                groupAvatar = groupAvatar,
             )
 
             Spacer(Modifier.width(Tk.spacing.md))

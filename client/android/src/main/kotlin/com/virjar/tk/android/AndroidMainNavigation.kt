@@ -668,10 +668,12 @@ private fun NavGraphBuilder.groupAdminDestination(
             .firstOrNull { it.uid == dataState.userSession.uid }
             ?.role ?: -1
         val currentUserIsOwner = currentRole == 2
+        val groupAvatar by dataState.chat.chatAvatars.collectAsState()
         GroupDetailScreen(
             chat = detailChat,
             members = detailMembers,
             isOwner = currentUserIsOwner,
+            groupAvatar = detailChat?.chatId?.let { chatId -> groupAvatar[chatId] },
             myUid = dataState.userSession.uid,
             onMemberClick = actionAdmission.guard { uid: String ->
                 navController.navigate(Routes.userProfile(uid))

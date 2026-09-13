@@ -532,6 +532,14 @@ class EventProcessor(
                     if (sync.mentioned) current + sync.chatId else current - sync.chatId
                 }
             }
+
+            NotifyType.GROUP_AVATAR_SYNC -> {
+                // 群头像（内测反馈 T053）：权威描述符直接进本地投影；附件本体经认证端点按需下载。
+                val sync = decodePayload<com.virjar.tk.protocol.GroupAvatarSyncPayload>(notifyType, payload)
+                publicationGate.use(publicationLease) {
+                    localCache.upsertChatAvatar(sync.chatId, sync.attachment)
+                }
+            }
             NotifyType.CHAT_DRAFT_CHANGED -> {
                 val change = decodePayload<com.virjar.tk.protocol.ChatDraftChangedPayload>(notifyType, payload)
                 publicationGate.use(publicationLease) {

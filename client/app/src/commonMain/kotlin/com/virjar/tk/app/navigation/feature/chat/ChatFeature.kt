@@ -122,6 +122,56 @@ class ChatFeature(
         }
     }
 
+    /** 群头像本地投影（内测反馈 T053）。 */
+    fun observeChatAvatar(chatId: String) = session.localCache.observeChatAvatar(chatId)
+
+    /** 会话列表聚合的群头像快照；事件驱动更新，懒加载写入后同样经事件刷新。 */
+    val chatAvatars = kotlinx.coroutines.flow.MutableStateFlow<Map<String, com.virjar.tk.protocol.model.Attachment>>(emptyMap())
+
+    fun refreshChatAvatars(chatIds: List<String>) {
+        if (chatIds.isEmpty()) return
+        val updated = chatIds.mapNotNull { id -> session.localCache.getChatAvatar(id)?.let { id to it } }.toMap()
+        _mergeChatAvatars(updated)
+    }
+
+    private fun _mergeChatAvatars(patch: Map<String, com.virjar.tk.protocol.model.Attachment>) {
+        if (patch.isNotEmpty()) chatAvatars.value = chatAvatars.value + patch
+    }
+
+    init {
+        scope.launch {
+            session.localCache.chatAvatarEvents.collect { chatId ->
+                session.localCache.getChatAvatar(chatId)?.let { attachment ->
+                    chatAvatars.value = chatAvatars.value + (chatId to attachment)
+                } ?: run { chatAvatars.value = chatAvatars.value - chatId }
+            }
+        }
+    }
+
+    /** 群头像设置：owner/管理员经既认证 staging 上传后调用；本地投影即时更新。 */
+    fun setGroupAvatar(chatId: String, attachment: com.virjar.tk.protocol.model.Attachment?) {
+        destroyGate.runIfOpen {
+            scope.launch {
+                try {
+                    session.chatRepo.setGroupAvatar(chatId, attachment).getOrThrow()
+                } catch (failure: Throwable) {
+                    if (failure is kotlinx.coroutines.CancellationException) throw failure
+                    reportError(failure, "设置群头像失败")
+                }
+            }
+        }
+    }
+
+    /** 懒加载会话列表可见群的当前头像。 */
+    fun ensureGroupAvatars(chatIds: List<String>) {
+        destroyGate.runIfOpen {
+            scope.launch {
+                runCatching { session.chatRepo.ensureGroupAvatars(chatIds) }
+                    .onFailure { if (it !is kotlinx.coroutines.CancellationException) reportError(it, "加载群头像失败") }
+            }
+        }
+    }
+
     /** 在每一台设备上持久化显式的会话列表"标记已读"动作。 */
     fun markConversationRead(chatId: String, readSeq: Long) {
         if (readSeq <= 0L) return

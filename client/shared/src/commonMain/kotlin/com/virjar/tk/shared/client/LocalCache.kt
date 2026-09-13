@@ -251,6 +251,19 @@ interface LocalCache : LocalDocumentProjection {
     fun observeUser(uid: String): Flow<User?>
     fun upsertUser(user: User)
 
+    // ── 群头像（内测反馈 T053）──
+    /** GROUP_AVATAR_SYNC 与懒加载 RPC 写入；attachment=null 表示已确认无头像。 */
+    fun observeChatAvatar(chatId: String): Flow<Attachment?>
+    fun upsertChatAvatar(chatId: String, attachment: Attachment?)
+    /** 该群头像是否已解析（收到过事件或懒加载结果）；未解析的群由懒加载补齐。 */
+    fun isChatAvatarResolved(chatId: String): Boolean
+
+    /** 一次性读取（懒加载/列表聚合用）。 */
+    fun getChatAvatar(chatId: String): Attachment?
+
+    /** 头像变更信号：值为被更新的 chatId（含删除事件）。 */
+    val chatAvatarEvents: kotlinx.coroutines.flow.MutableSharedFlow<String>
+
     /**
      * 当一次临时 USER_UPDATED 有产品关系且可以物化时返回 true。SQL 支撑的缓存只可以在有界的、
      * best-effort 会话内存桥中保留未知用户；持久事件仍然无条件调用 [upsertUser]。

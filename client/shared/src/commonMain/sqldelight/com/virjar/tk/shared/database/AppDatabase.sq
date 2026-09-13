@@ -1870,3 +1870,19 @@ upsertChatDraftSync:
 INSERT OR REPLACE INTO chat_draft_sync(chat_id, payload) VALUES (?, ?);
 deleteChatDraftSync:
 DELETE FROM chat_draft_sync WHERE chat_id = ?;
+
+CREATE TABLE IF NOT EXISTS chat_avatar (
+    chat_id TEXT NOT NULL PRIMARY KEY,
+    payload BLOB NOT NULL,
+    touched_at INTEGER NOT NULL
+);
+selectChatAvatar:
+SELECT payload FROM chat_avatar WHERE chat_id = ?;
+upsertChatAvatar:
+INSERT OR REPLACE INTO chat_avatar(chat_id, payload, touched_at) VALUES (?, ?, ?);
+deleteChatAvatar:
+DELETE FROM chat_avatar WHERE chat_id = ?;
+selectChatAvatarCapacity:
+SELECT count(*) AS entries, coalesce(sum(length(payload)), 0) AS bytes FROM chat_avatar;
+deleteChatAvatarLru:
+DELETE FROM chat_avatar WHERE rowid NOT IN (SELECT rowid FROM chat_avatar ORDER BY touched_at DESC, rowid DESC LIMIT 512);

@@ -5,7 +5,9 @@ import com.virjar.tk.shared.client.LocalCache
 import com.virjar.tk.shared.client.PendingGroupCreationCommand
 import com.virjar.tk.shared.client.PendingInviteLinkCreation
 import com.virjar.tk.protocol.rpc.RpcInvoker
+import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.protocol.model.Chat
+import com.virjar.tk.protocol.model.GroupAvatarPatch
 import com.virjar.tk.protocol.model.InviteLink
 import com.virjar.tk.protocol.model.Member
 import com.virjar.tk.shared.outcome
@@ -31,6 +33,25 @@ class ChatRepository(
     /** 幂等取回（必要时创建）当前用户的"保存的消息"私有会话。 */
     suspend fun getOrCreateSavedChat(): Outcome<Chat> = outcome {
         rpc.getOrCreateSavedChat().also(localCache::upsertChat)
+    }
+
+    /**
+     * 群头像设置（内测反馈 T053）：本地投影即时更新；权威事件随后回推全量成员。
+     * 失败时本地投影回滚到 null（重试可再设置）。
+     */
+    suspend fun setGroupAvatar(chatId: String, attachment: Attachment?): Outcome<Unit> = outcome {
+        rpc.setGroupAvatar(chatId, GroupAvatarPatch(attachment))
+        localCache.upsertChatAvatar(chatId, attachment)
+    }
+
+    /** 懒加载群当前头像（冷启动/会话列表）：只请求本地尚无解析结果的群。 */
+    suspend fun ensureGroupAvatars(chatIds: List<String>): Outcome<Unit> = outcome {
+        val missing = chatIds.filterNot(localCache::isChatAvatarResolved)
+        if (missing.isEmpty()) return@outcome
+        val entries = rpc.getGroupAvatars(missing)
+        entries.forEach { entry ->
+            localCache.upsertChatAvatar(entry.chatId, entry.attachment)
+        }
     }
 
     suspend fun createGroup(

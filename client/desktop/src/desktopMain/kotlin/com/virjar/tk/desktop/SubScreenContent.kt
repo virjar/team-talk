@@ -161,10 +161,12 @@ internal fun SubScreenContent(
             val detailReady = data.groups.detailTargetChatId == screen.chatId
             val detailChat = data.groups.detailChat?.takeIf { detailReady && it.chatId == screen.chatId }
             val detailMembers = data.groups.members.takeIf { detailReady }.orEmpty()
+            val groupAvatars by data.chat.chatAvatars.collectAsState()
             GroupDetailScreen(
                 chat = detailChat,
                 members = detailMembers,
                 isOwner = detailMembers.any { it.uid == data.userSession.uid && it.role == 2 },
+                groupAvatar = detailChat?.chatId?.let { chatId -> groupAvatars[chatId] },
                 myUid = data.userSession.uid,
                 onMemberClick = openProfileIfOpen,
                 onInviteMembers = presentationGate.guard {
