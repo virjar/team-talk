@@ -162,6 +162,17 @@ internal class DocumentRichEditorSession(
     var ready by mutableStateOf(false)
     var normalizedBaseline by mutableStateOf("")
     var lastReportedMarkdown by mutableStateOf("")
+
+    fun snapshotRichRun(block: DocumentMarkdownBlock): DocumentMarkdownBlock {
+        val current = block as? DocumentRichRun ?: originalBlock as DocumentRichRun
+        if (!ready) return current
+        val markdown = state.toMarkdown()
+        return if (markdown == normalizedBaseline) {
+            originalBlock.withDocumentLayout(current.leadingMarkdown, current.trailingMarkdown)
+        } else {
+            current.copy(markdown = markdownWithMentionLinks(markdown), dirty = true)
+        }
+    }
 }
 
 /**
@@ -308,21 +319,7 @@ internal fun DocumentRichRunEditor(
         }
     }
     SideEffect {
-        onSnapshot { currentBlock ->
-            val current = currentBlock as? DocumentRichRun ?: block
-            val markdown = if (session.ready) state.toMarkdown() else null
-            when {
-                !session.ready -> current
-                markdown == session.normalizedBaseline -> initialBlock.withDocumentLayout(
-                    leadingMarkdown = current.leadingMarkdown,
-                    trailingMarkdown = current.trailingMarkdown,
-                )
-                else -> current.copy(
-                    markdown = markdownWithMentionLinks(requireNotNull(markdown)),
-                    dirty = true,
-                )
-            }
-        }
+        onSnapshot(session::snapshotRichRun)
     }
     DocumentRichMarkdownProjection(session, state.annotatedString) { markdown ->
         onChange(

@@ -212,6 +212,43 @@ internal fun insertDocumentEmbeddedAssetAtRichSelection(
 internal fun rememberDocumentBlockEditorController(documentKey: String): DocumentBlockEditorController =
     remember(documentKey) { DocumentBlockEditorController() }
 
+/** READY 会把内联引用拆成独立资产块；快照和富文本会话必须与这次解析出的块共同退役。 */
+internal class DocumentBlockEditorFrame(markdown: String, assets: List<EmbeddedAsset>) {
+    val blocks = mutableStateListOf<DocumentMarkdownBlock>().apply {
+        addAll(DocumentMarkdownBlockCodec.parse(markdown, assets))
+    }
+    val richSnapshots = mutableMapOf<String, (DocumentMarkdownBlock) -> DocumentMarkdownBlock>()
+    val richSessions = mutableMapOf<String, DocumentRichEditorSession>()
+
+    fun reconcileActiveEditor(controller: DocumentBlockEditorController) {
+        val activeKey = controller.activeBlockKey ?: return
+        val activeState = controller.activeRichState
+        if (blocks.none { it.key == activeKey }) {
+            // 手动插入的块在重新解析后会换 key，不能保留无人能消费的挂载请求。
+            controller.deactivate(activeKey)
+        } else if (activeState != null && richSessions[activeKey]?.state !== activeState) {
+            // 同 key 也必须等新富文本会话完成初始化，不再把工具栏连接到旧状态。
+            controller.requestRichActivation(activeKey, requestFocus = false)
+        }
+    }
+
+    fun snapshotBlock(block: DocumentMarkdownBlock): DocumentMarkdownBlock {
+        if (block is DocumentQuoteBlock &&
+            RichEditorMarkdownCapability.inspect(block.innerMarkdown).requiresSourceMode
+        ) return block
+        return richSnapshots[block.key]?.invoke(block) ?: block
+    }
+
+    fun snapshotMarkdown(fallback: String): String =
+        if (blocks.isEmpty()) fallback else DocumentMarkdownBlockCodec.encode(blocks.map(::snapshotBlock))
+
+    fun materializeRichSnapshots() {
+        blocks.map(::snapshotBlock).forEachIndexed { index, block ->
+            if (blocks[index] != block) blocks[index] = block
+        }
+    }
+}
+
 @Composable
 internal fun DocumentBlockEditor(
     documentKey: String,
@@ -224,18 +261,11 @@ internal fun DocumentBlockEditor(
 ) {
     // @ 提及候选由平台宿主通过 CompositionLocal 注入；未注入时补全层静默关闭。
     val mentionCandidates = com.virjar.tk.app.ui.bridge.LocalDocumentMentionSupport.current.candidates
-    val blocks = remember(documentKey, assets) {
-        mutableStateListOf<DocumentMarkdownBlock>().apply {
-            addAll(DocumentMarkdownBlockCodec.parse(initialMarkdown, assets))
-        }
-    }
-    val richSnapshots = remember(documentKey) {
-        mutableMapOf<String, (DocumentMarkdownBlock) -> DocumentMarkdownBlock>()
-    }
-    val richSessions = remember(documentKey) {
-        mutableMapOf<String, DocumentRichEditorSession>()
-    }
-    val initialActiveKey = remember(documentKey) {
+    val frame = remember(documentKey, assets) { DocumentBlockEditorFrame(initialMarkdown, assets) }
+    val blocks = frame.blocks
+    val richSnapshots = frame.richSnapshots
+    val richSessions = frame.richSessions
+    val initialActiveKey = remember(frame) {
         blocks.firstOrNull { block ->
             block is DocumentRichRun ||
                 (block is DocumentQuoteBlock &&
@@ -244,23 +274,6 @@ internal fun DocumentBlockEditor(
     }
     var nextKey by remember(documentKey) { mutableStateOf(blocks.size + 1L) }
     fun nextBlockKey(type: String): String = "document-insert-$documentKey-$type-${nextKey++}"
-
-    fun snapshotBlock(block: DocumentMarkdownBlock): DocumentMarkdownBlock {
-        if (
-            block is DocumentQuoteBlock &&
-            RichEditorMarkdownCapability.inspect(block.innerMarkdown).requiresSourceMode
-        ) {
-            return block
-        }
-        return richSnapshots[block.key]?.invoke(block) ?: block
-    }
-
-    fun materializeRichSnapshots() {
-        val latest = blocks.map(::snapshotBlock)
-        latest.forEachIndexed { index, block ->
-            if (blocks[index] != block) blocks[index] = block
-        }
-    }
 
     fun newRichRun(leadingMarkdown: String = ""): DocumentRichRun = DocumentRichRun(
         key = nextBlockKey("rich"),
@@ -330,7 +343,7 @@ internal fun DocumentBlockEditor(
     }
 
     fun insertBlock(kind: DocumentBlockInsertKind, appendToEnd: Boolean = false) {
-        materializeRichSnapshots()
+        frame.materializeRichSnapshots()
         val activeIndex = blocks.indexOfFirst { it.key == controller.activeBlockKey }
             .takeIf { it >= 0 } ?: blocks.lastIndex
         val active = blocks.getOrNull(activeIndex)
@@ -343,7 +356,7 @@ internal fun DocumentBlockEditor(
             !appendToEnd && kind != DocumentBlockInsertKind.RICH &&
             active is DocumentRichRun && activeState != null
         ) {
-            val latest = snapshotBlock(active) as DocumentRichRun
+            val latest = frame.snapshotBlock(active) as DocumentRichRun
             val selection = activeState.selection
             val textLength = activeState.annotatedString.text.length
             val insertionOffset = selection.max
@@ -403,7 +416,7 @@ internal fun DocumentBlockEditor(
         syntax: String,
         lastVisualAssetId: String?,
     ): Boolean {
-        materializeRichSnapshots()
+        frame.materializeRichSnapshots()
         val activeIndex = blocks.indexOfFirst { it.key == controller.activeBlockKey }
         val active = blocks.getOrNull(activeIndex)
         val activeState = controller.activeRichState
@@ -452,7 +465,7 @@ internal fun DocumentBlockEditor(
 
     fun deleteBlock(index: Int) {
         if (index !in blocks.indices) return
-        materializeRichSnapshots()
+        frame.materializeRichSnapshots()
         val finalTrailing = blocks.firstNotNullOfOrNull { block ->
             block.trailingMarkdown.takeIf(String::isNotEmpty)
         }.orEmpty()
@@ -465,7 +478,7 @@ internal fun DocumentBlockEditor(
     }
 
     fun moveBlock(index: Int, delta: Int) {
-        materializeRichSnapshots()
+        frame.materializeRichSnapshots()
         val destination = index + delta
         if (index !in blocks.indices || destination !in blocks.indices) return
         val finalTrailing = blocks.firstNotNullOfOrNull { candidate ->
@@ -477,15 +490,12 @@ internal fun DocumentBlockEditor(
     }
 
     SideEffect {
+        frame.reconcileActiveEditor(controller)
         controller.bindActions(
             insert = { insertBlock(it, appendToEnd = false) },
             append = { insertBlock(it, appendToEnd = true) },
             insertEmbeddedAsset = ::insertEmbeddedAsset,
-            snapshot = { fallback ->
-                if (blocks.isEmpty()) fallback else DocumentMarkdownBlockCodec.encode(
-                    blocks.map(::snapshotBlock)
-                )
-            },
+            snapshot = frame::snapshotMarkdown,
         )
     }
     DisposableEffect(documentKey) {
@@ -497,18 +507,20 @@ internal fun DocumentBlockEditor(
 
     // RichTextState 更新会在每次击键时重组活动块。从派生状态编码可让可能高达 1 MB 的
     // 文档 projection 与实际的块列表发布绑定，而不是与每次无关的编辑器重组绑定。
-    val currentMarkdown by remember(documentKey, assets) {
+    val currentMarkdown by remember(frame) {
         derivedStateOf { DocumentMarkdownBlockCodec.encode(blocks) }
     }
     LaunchedEffect(currentMarkdown) { onMarkdownChange(currentMarkdown) }
 
-    val displayGroups = remember(documentKey, blocks.size) {
+    val displayGroups = remember(frame) {
         derivedStateOf { blocks.toDocumentDisplayGroups() }
     }
     // 文档全部图片的画廊条目：点击图片按平台形态打开画廊（窗口/全屏），定位到所点项。
-    val galleryItems = remember(blocks.size) {
-        blocks.filterIsInstance<DocumentEmbeddedImageBlock>().map { block ->
-            GalleryItem(attachment = block.asset.attachment, type = GalleryMediaType.IMAGE, sourceAssetId = block.asset.assetId)
+    val galleryItems by remember(frame) {
+        derivedStateOf {
+            blocks.filterIsInstance<DocumentEmbeddedImageBlock>().map { block ->
+                GalleryItem(attachment = block.asset.attachment, type = GalleryMediaType.IMAGE, sourceAssetId = block.asset.assetId)
+            }
         }
     }
 

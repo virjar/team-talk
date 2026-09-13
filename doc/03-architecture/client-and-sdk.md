@@ -149,6 +149,8 @@ flowchart TB
 所有者发布带原实例与修订身份的草稿。Composable 负责挂载块编辑器、焦点、平台展示和生命周期注册。
 块编辑器卸载时只移交一次最后正文，之后由会话继续累积附件；切入预览时若旧画布尚未解绑，导入帧
 先排队，等正文移交后再重放。保存和退出共用最终捕获，避免重复读取旧帧覆盖新增内容。
+资产就绪后可能将内联引用拆成独立块；`DocumentBlockEditorFrame` 使这次解析的块、富文本会话和
+快照共同更换，不能仅因文本前缀的块 key 相同就沿用包含旧引用的快照。用户主动重复引用仍原样保留。
 
 导航调用直接写成 `navigationActions.selectSpaceNow(...)` 或 `navigationActions.isCurrent(...)`，
 源码从调用处即可看见所有者。`refreshHomeProjection()` 另有工作区首页请求的归属判断，保存、移动和

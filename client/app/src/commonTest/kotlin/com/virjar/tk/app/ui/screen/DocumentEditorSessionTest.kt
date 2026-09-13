@@ -1,5 +1,7 @@
 package com.virjar.tk.app.ui.screen
 
+import androidx.compose.ui.text.TextRange
+import com.mohamedrejeb.richeditor.model.RichTextState
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftLifecycleBridge
 import com.virjar.tk.app.navigation.feature.document.DocumentTabState
 import com.virjar.tk.app.navigation.feature.document.DocumentWorkspaceTabs
@@ -9,8 +11,16 @@ import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportEvent
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportEventSink
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportPlacement
 import com.virjar.tk.app.ui.component.rich.DocumentBlockEditorController
+import com.virjar.tk.app.ui.component.rich.DocumentBlockEditorFrame
+import com.virjar.tk.app.ui.component.rich.DocumentEmbeddedFileBlock
+import com.virjar.tk.app.ui.component.rich.DocumentMarkdownBlockCodec
+import com.virjar.tk.app.ui.component.rich.DocumentRichEditorSession
+import com.virjar.tk.app.ui.component.rich.DocumentRichRun
 import com.virjar.tk.app.ui.component.rich.PendingAssetJob
 import com.virjar.tk.app.ui.component.rich.PendingAssetJobState
+import com.virjar.tk.app.ui.component.rich.embeddedAssetMarkdown
+import com.virjar.tk.app.ui.component.rich.embeddedAssetMarkdownReferences
+import com.virjar.tk.app.ui.component.rich.insertDocumentEmbeddedAssetAtRichSelection
 import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
 import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.protocol.model.EmbeddedAsset
@@ -23,6 +33,113 @@ import kotlin.test.assertTrue
 
 /** 会话规则通过实际导入路由、块 controller 和草稿投影协作；不启动平台选择器或 Compose 窗口。 */
 class DocumentEditorSessionTest {
+    @Test
+    fun `ready splits the visual asset without retaining its old inline rich snapshot on save`() {
+        val initial = tab("document-a", 1).copy(
+            savedMarkdown = "正文最后输入。", draftMarkdown = "正文最后输入。",
+        )
+        val tabs = DocumentWorkspaceTabs().apply { publish(listOf(initial), initial.tabId) }
+        val controller = DocumentBlockEditorController()
+        val session = DocumentEditorSession(initial, controller) { update ->
+            tabs.replace(updateDocumentDraftTabs(tabs.items, update))
+        }
+        session.finishInitialization()
+
+        fun mountRichEditor(frame: DocumentBlockEditorFrame): DocumentRichRun {
+            val block = frame.blocks.filterIsInstance<DocumentRichRun>().single()
+            val state = RichTextState().setMarkdown(block.markdown)
+            val rich = DocumentRichEditorSession(state, block).apply {
+                normalizedBaseline = state.toMarkdown()
+                lastReportedMarkdown = normalizedBaseline
+                ready = true
+            }
+            frame.richSessions[block.key] = rich
+            frame.richSnapshots[block.key] = rich::snapshotRichRun
+            state.selection = TextRange(state.annotatedString.length)
+            if (!controller.consumePendingRichActivation(block.key, state, requestFocus = {})) {
+                controller.activate(block.key, state)
+            }
+            controller.bindActions(
+                insert = {}, append = {},
+                insertEmbeddedAsset = { _, syntax, _ ->
+                    frame.materializeRichSnapshots()
+                    val active = frame.blocks.single { it.key == controller.activeBlockKey }
+                    insertDocumentEmbeddedAssetAtRichSelection(
+                        active, controller.activeRichState, frame.richSessions[active.key]?.state, syntax,
+                    )
+                },
+                snapshot = frame::snapshotMarkdown,
+            )
+            return block
+        }
+
+        val beforeReady = DocumentBlockEditorFrame(initial.draftMarkdown, emptyList())
+        val originalRich = mountRichEditor(beforeReady)
+        val router = EmbeddedAssetImportBindingRouter()
+        router.bind(session.embeddedAssetOwnerKey, EmbeddedAssetImportEventSink { event ->
+            session.acceptEmbeddedAssetImport(event, previewMode = false)
+        })
+        val binding = assertNotNull(router.captureForImport())
+        val job = job(1)
+        val placement = EmbeddedAssetImportPlacement("refactor-attachment.txt", EmbeddedAssetPresentation.FILE)
+        val asset = EmbeddedAsset(job.assetId, Attachment("files/fixture.txt", placement.label, "text/plain", 64))
+        val expected = initial.draftMarkdown + embeddedAssetMarkdown(asset, placement.presentation, placement.label)
+        router.publish(binding, EmbeddedAssetImportEvent.StateChanged(job, placement))
+        assertEquals(expected, controller.snapshotMarkdown(""))
+        router.publish(binding, EmbeddedAssetImportEvent.Ready(ready(job), asset, placement))
+        assertEquals(expected, session.blockMarkdown)
+
+        // READY 在同一 documentKey 下把引用拆为卡片；前缀恰好复用 LOCAL 插入之前的块 key。
+        val afterReady = DocumentBlockEditorFrame(session.blockMarkdown, session.embeddedAssetSnapshot.assets)
+        afterReady.reconcileActiveEditor(controller)
+        assertNull(controller.activeRichState)
+        assertEquals(originalRich.key, controller.pendingActivationKey)
+        val newRich = mountRichEditor(afterReady)
+        assertNull(controller.pendingActivationKey)
+        assertEquals(originalRich.key, newRich.key)
+        assertEquals(1, afterReady.blocks.filterIsInstance<DocumentEmbeddedFileBlock>().size)
+        assertEquals(expected, afterReady.snapshotMarkdown(""))
+        val lifecycle = DocumentDraftLifecycleBridge()
+        val registration = lifecycle.register(session.owner) { session.captureLatestDraft() }
+        assertTrue(session.prepareSave())
+        assertTrue(lifecycle.captureAndUnregister(registration))
+        assertEquals(expected, tabs.activeTab?.draftMarkdown)
+        assertEquals(listOf(job.assetId), embeddedAssetMarkdownReferences(session.blockMarkdown).map { it.assetId })
+
+        // 修复只淘汰旧画布状态，同一资产被用户显式引用两次仍须原样保存。
+        val repeated = expected + embeddedAssetMarkdown(asset, placement.presentation, placement.label)
+        val repeatedFrame = DocumentBlockEditorFrame(repeated, listOf(asset))
+        mountRichEditor(repeatedFrame)
+        assertEquals(repeated, repeatedFrame.snapshotMarkdown(""))
+        assertEquals(2, repeatedFrame.blocks.filterIsInstance<DocumentEmbeddedFileBlock>().size)
+        router.close()
+    }
+
+    @Test
+    fun `reparsed frame drops missing manually inserted active and pending block keys`() {
+        val controller = DocumentBlockEditorController()
+        val frame = DocumentBlockEditorFrame("原文", emptyList())
+        val inserted = DocumentRichRun(
+            key = "document-insert-fixture-rich-9", markdown = "新插入正文", leadingMarkdown = "\n\n",
+        )
+        frame.blocks += inserted
+        val reparsed = DocumentBlockEditorFrame(DocumentMarkdownBlockCodec.encode(frame.blocks), emptyList())
+        assertTrue(reparsed.blocks.none { it.key == inserted.key })
+
+        controller.activate(inserted.key, RichTextState().setMarkdown(inserted.markdown))
+        reparsed.reconcileActiveEditor(controller)
+        assertNull(controller.activeBlockKey)
+        assertNull(controller.activeRichState)
+        assertNull(controller.pendingActivationKey)
+
+        controller.requestRichActivation(inserted.key)
+        reparsed.reconcileActiveEditor(controller)
+        assertNull(controller.activeBlockKey)
+        assertNull(controller.pendingActivationKey)
+        assertNull(controller.pendingFocusKey)
+        assertEquals("原文\n\n新插入正文", reparsed.snapshotMarkdown(""))
+    }
+
     @Test
     fun `ready materializes the pending visual frame before publishing its asset manifest`() {
         val initial = tab("document-a", 1)
