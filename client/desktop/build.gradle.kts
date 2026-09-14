@@ -248,6 +248,9 @@ kotlin {
                 implementation(libs.compose.media.player)
                 // Desktop 直接调用 Windows 包身份和 KnownFolder API，不能依赖 SDK 的 implementation 泄漏。
                 implementation(libs.jna.platform)
+                // 原生壳的 DesktopNativeBridge 编译期可见；运行时由壳内 bootstrap jar 提供，
+                // dev/裸 JVM 无此类，调用点用 runCatching 回退 osascript。
+                compileOnly(project(":client:desktop-bootstrap"))
             }
         }
         val desktopTest by getting {

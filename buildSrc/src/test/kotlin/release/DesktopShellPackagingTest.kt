@@ -26,6 +26,156 @@ import org.tukaani.xz.XZInputStream
 /** Exercise the produced launchers and package bytes; no UI or service fixtures are required. */
 class DesktopShellPackagingTest {
     @Test
+    fun `macOS packages carry a universal native launcher, JVM signature and architecture rejection`() = temporary { root ->
+        assumeTrue(!System.getProperty("os.name").startsWith("Windows"))
+        val project = ProjectBuilder.builder().withProjectDir(root).build()
+        val runtime = File(root, "runtime/jbr/Contents/Home/lib/server").apply { mkdirs() }
+        val bootstrap = File(root, "desktop-bootstrap.jar").apply { writeText("launcher fixture") }
+        val seed = File(root, "seed.zip").apply { writeText("seed fixture") }
+        val icon = File(root, "icon.icns").apply { writeText("icon fixture") }
+        val name = "TeamTalk 'Private"
+        val displayName = "内部 '协作'"
+        val url = "https://private.example.test/teamtalk/"
+        fun machHeader(cpuType: Int) = byteArrayOf(
+            0xcf.toByte(), 0xfa.toByte(), 0xed.toByte(), 0xfe.toByte(), // MH_MAGIC_64 little-endian
+            cpuType.toByte(), (cpuType ushr 8).toByte(), (cpuType ushr 16).toByte(), (cpuType ushr 24).toByte(), // cputype 小端
+            0, 0, 0, 0,
+        )
+        val arm64Header = machHeader(0x0100000C)
+        val x86Header = machHeader(0x01000007)
+        // 架构检查读取 runtime 的 libjvm Mach-O 头；宿主匹配头通过检查后停在 dlopen（125）。
+        val hostHeader = if (System.getProperty("os.arch") == "aarch64" ||
+            System.getProperty("os.name").lowercase().contains("aarch64")) arm64Header else x86Header
+        val hostArchName = if (hostHeader === arm64Header) "Apple 芯片" else "Intel 芯片"
+        val oppositeHeader = if (hostHeader === arm64Header) x86Header else arm64Header
+
+        for (target in listOf(DesktopTarget.MACOS_AARCH64, DesktopTarget.MACOS_AMD64)) {
+            val runtimeHeader = if (target == DesktopTarget.MACOS_AARCH64) arm64Header else x86Header
+            File(runtime, "libjvm.dylib").writeBytes(runtimeHeader)
+            val output = File(root, "output/${target.key}")
+            project.tasks.create(target.taskSuffix, AssembleDesktopShellTask::class.java).apply {
+                this.target.set(target)
+                version.set("0.0.3")
+                buildNumber.set(9)
+                this.displayName.set(displayName)
+                installationName.set(name)
+                appId.set("com.example.private")
+                serverJvmOptions.set(listOf("-Dteamtalk.server.url=$url", "-Dname=$displayName"))
+                jbrExtractedRoot.set(File(root, "runtime"))
+                bootstrapJar.from(bootstrap)
+                seedPayloadZip.set(seed)
+                iconFile.set(icon)
+                outputDir.set(output)
+                assemble()
+            }
+            val contents = File(output, "staging/$name.app/Contents")
+            val launcher = File(contents, "MacOS/$name")
+            assertTrue(launcher.canExecute())
+            // 原生启动器：universal fat（x86_64 + arm64），非脚本。
+            val launcherBytes = launcher.readBytes()
+            assertEquals(0xca.toByte(), launcherBytes[0], "fat magic (big-endian) expected")
+            assertEquals(0xfe.toByte(), launcherBytes[1])
+            assertEquals(0xba.toByte(), launcherBytes[2])
+            assertEquals(0xbe.toByte(), launcherBytes[3])
+            assertEquals(2, ByteBuffer.wrap(launcherBytes, 4, 4).order(ByteOrder.BIG_ENDIAN).int, "two architectures")
+
+            // Info.plist：启动器读取的配置与 JVM 选项由打包写入。
+            val document = DocumentBuilderFactory.newInstance().apply {
+                setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+            }.newDocumentBuilder().parse(File(contents, "Info.plist"))
+            val keys = document.getElementsByTagName("key")
+            fun value(key: String): org.w3c.dom.Node {
+                val element = (0 until keys.length).map(keys::item).single { it.textContent == key }
+                return generateSequence(element.nextSibling) { it.nextSibling }.first { it.nodeType == org.w3c.dom.Node.ELEMENT_NODE }
+            }
+            assertEquals("com.example.private", value("CFBundleIdentifier").textContent)
+            assertEquals(name, value("CFBundleExecutable").textContent)
+            assertEquals("0.0.3.9", value("CFBundleVersion").textContent)
+            assertEquals(if (target == DesktopTarget.MACOS_AARCH64) "arm64" else "x86_64", value("LSArchitecturePriority").textContent)
+            assertEquals("com.virjar.tk.desktop.shell.BootstrapMain", value("TeamTalkMainClass").textContent)
+            assertEquals(url, value("TeamTalkDownloadBaseURL").textContent)
+            val jvmOptions = value("TeamTalkJVMOptions").childNodes
+            val options = (0 until jvmOptions.length).filter { jvmOptions.item(it).nodeType == org.w3c.dom.Node.ELEMENT_NODE }
+                .map { jvmOptions.item(it).textContent }
+            assertTrue("-Dteamtalk.server.url=$url" in options)
+            assertTrue("-Dname=$displayName" in options)
+
+            // 纯 JVM ad-hoc 签名：bundle seal 与主可执行的嵌入签名都存在。
+            assertTrue(File(contents, "_CodeSignature/CodeResources").isFile)
+            assertTrue(String(File(contents, "_CodeSignature/CodeResources").readBytes()).contains("<key>files2</key>"))
+            assertTrue(containsEmbeddedSignature(launcherBytes), "launcher carries LC_CODE_SIGNATURE")
+
+            ZipFile.Builder().setFile(File(output, target.portableArchiveName("0.0.3"))).get().use { archive ->
+                val entry = archive.getEntry("$name.app/Contents/MacOS/$name")
+                assertTrue(entry.unixMode and 0x49 != 0)
+                assertContentEquals(launcherBytes, archive.getInputStream(entry).use { it.readBytes() })
+                assertContentEquals(icon.readBytes(), archive.getInputStream(archive.getEntry("$name.app/Contents/Resources/$name.icns")).use { it.readBytes() })
+            }
+
+            // 行为验证（仅 macOS 宿主）：错架构在加载 JVM 前拒绝；匹配架构走到 dlopen 失败。
+            // launcher 读取的是包内副本，头必须写入产物 runtime。
+            if (!System.getProperty("os.name").startsWith("Mac")) continue
+            val bundledLibjvm = File(contents, "runtime/Contents/Home/lib/server/libjvm.dylib")
+            fun runWithHeader(header: ByteArray): Pair<Int, String> {
+                bundledLibjvm.writeBytes(header)
+                val error = File(root, "stderr.txt")
+                val process = ProcessBuilder(launcher.absolutePath).redirectError(error).start()
+                assertTrue(process.waitFor(15, TimeUnit.SECONDS))
+                return process.exitValue() to error.readText()
+            }
+            if (runtimeHeader != hostHeader) {
+                val (exit, stderr) = runWithHeader(runtimeHeader)
+                assertEquals(126, exit, stderr)
+                // 拒绝消息标注安装包自身的架构并给出下载页。
+                val runtimeArchName = if (runtimeHeader === arm64Header) "Apple 芯片" else "Intel 芯片"
+                assertTrue(stderr.contains(runtimeArchName), stderr)
+                assertTrue(stderr.contains("${url}#download"), stderr)
+            } else {
+                val (exit, stderr) = runWithHeader(oppositeHeader)
+                assertEquals(126, exit, stderr)
+                val (okExit, okStderr) = runWithHeader(hostHeader)
+                assertEquals(125, okExit, okStderr)
+                assertTrue(okStderr.contains("cannot load JVM"), okStderr)
+            }
+            File(runtime, "libjvm.dylib").writeBytes(runtimeHeader)
+        }
+    }
+
+    /** 主可执行应携带嵌入签名；手写字节读取避免 ByteBuffer 绝对/相对读歧义。 */
+    private fun containsEmbeddedSignature(bytes: ByteArray): Boolean {
+        fun le32(offset: Int): Int =
+            (bytes[offset].toInt() and 0xFF) or ((bytes[offset + 1].toInt() and 0xFF) shl 8) or
+                ((bytes[offset + 2].toInt() and 0xFF) shl 16) or ((bytes[offset + 3].toInt() and 0xFF) shl 24)
+
+        fun be32(offset: Int): Int =
+            ((bytes[offset].toInt() and 0xFF) shl 24) or ((bytes[offset + 1].toInt() and 0xFF) shl 16) or
+                ((bytes[offset + 2].toInt() and 0xFF) shl 8) or (bytes[offset + 3].toInt() and 0xFF)
+
+        fun sliceHasSignature(offset: Int): Boolean {
+            if ((le32(offset).toLong() and 0xFFFFFFFFL) != 0xfeedfacfL) return false // MH_MAGIC_64
+            var cursor = offset + 32
+            repeat(le32(offset + 16)) {
+                if (le32(cursor) == 0x1d) return true // LC_CODE_SIGNATURE
+                cursor += le32(cursor + 4)
+            }
+            return false
+        }
+
+        if (bytes.size < 12) return false
+        if (bytes[0] == 0xca.toByte() && bytes[1] == 0xfe.toByte()) {
+            for (i in 0 until be32(4)) {
+                val entry = 8 + i * 20
+                val cpuType = be32(entry)
+                if (cpuType == 0x01000007 || cpuType == 0x0100000C) {
+                    if (sliceHasSignature(be32(entry + 8))) return true
+                }
+            }
+            return false
+        }
+        return sliceHasSignature(0)
+    }
+
+    @Test
     fun `Windows launcher embeds UTF-8 process manifest and removes temporary input on success and failure`() = temporary { root ->
         val project = ProjectBuilder.builder().withProjectDir(root).build()
         val repository = generateSequence(File(System.getProperty("user.dir"))) { it.parentFile }

@@ -9,8 +9,8 @@ Desktop 由仓库内的 Gradle 任务组装 JBR、bootstrap 和应用负载，�
 
 | 目标 key | 首装包 | 包内启动入口 |
 |---|---|---|
-| `macos-aarch64` | Apple Silicon `.app` ZIP | `<desktopName>.app/Contents/MacOS/<desktopName>` |
-| `macos-amd64` | Intel `.app` ZIP | 同上，随包 JBR 和 Skiko 为 x64 |
+| `macos-aarch64` | Apple Silicon `.app` ZIP | `<desktopName>.app/Contents/MacOS/<desktopName>`（原生 JNI 启动器） |
+| `macos-amd64` | Intel `.app` ZIP | 同上，随包运行时和 Skiko 为 x64 |
 | `windows-amd64` | NSIS `setup.exe`、便携 ZIP | `<desktopName>/<desktopName>.exe` |
 | `linux-amd64` | `.deb`、`.tar.gz` | `<desktopName>/bin/<desktopFsName>` |
 
@@ -43,8 +43,8 @@ Desktop 发行链没有整应用 ProGuard/R8 混淆，不应照搬旧 jpackage �
 
 ## 工具与本机构建
 
-构建机需要 JDK 21。Gradle 管理 Maven 依赖、Launch4j 和固定版本的 JBR；完整交叉安装器构建还需要
-系统 `tar`（含 gzip/xz 支持）及 NSIS 的 `makensis`：
+构建机需要 JDK 21。Gradle 管理 Maven 依赖、Launch4j 和固定版本的目标运行时；完整交叉安装器构建
+还需要系统 `tar`（含 gzip/xz 支持）及 NSIS 的 `makensis`：
 
 ```bash
 # macOS
@@ -80,20 +80,47 @@ Windows 用 `.\gradlew.bat` 调用同名任务。`assembleDesktopShellWindowsAmd
 
 ### JBR 固定版本与离线输入
 
-`gradle/jbr.properties` 固定各目标归档地址及 SHA-256。归档缓存位于
-`~/.gradle/teamtalk-tools/jbr/archives/`，解压缓存按目标和摘要分目录；更新 pin 后使用新目录，
-不能仅凭旧 `.complete` 文件继续使用旧 JBR。该配置文件是 Gradle 任务输入。
+`gradle/jbr.properties` 固定各目标归档地址及 SHA-256，当前使用 Temurin JRE 21.0.12.1+1（此前
+JBR 21.0.10 的 `TrayIcon` 在 macOS 26 上创建成功但不渲染，JBR 21 修复版尚未发布，详见下文
+macOS 启动器一节）。归档缓存位于 `~/.gradle/teamtalk-tools/jbr/archives/`，解压缓存按目标和
+摘要分目录；更新 pin 后使用新目录，不能仅凭旧 `.complete` 文件继续使用旧运行时。该配置文件是
+Gradle 任务输入。
 
 离线构建可设置 `TEAMTALK_JBR_DIR`，布局为 `<目录>/<target>/<归档顶层目录>/…`。
 macOS 归档顶层包含 `Contents/Home/bin/java`，Linux 包含 `bin/java`，Windows 包含 `bin/java.exe`。
 离线目录由维护者准备，任务检查实际 Java 入口并直接消费所选目录；它不代替管理员对离线运行时来源的确认。
-其他 Gradle/Maven、Node/npm、Android SDK 依赖仍需预热，提供 JBR 不表示整个工程可以首次离线构建。
+其他 Gradle/Maven、Node/npm、Android SDK 依赖仍需预热，提供离线运行时不表示整个工程可以首次离线构建。
 
 Linux tar/deb 统一记录数字所有者 `0:0`，不带构建机的扩展属性、AppleDouble 或用户名称。
-运行时复制与 ZIP 归档保留符号链接和执行权限。特别是 macOS JBR 的签名资源包含链接，不能展开成
+运行时复制与 ZIP 归档保留符号链接和执行权限。特别是 macOS 归档的签名资源包含链接，不能展开成
 普通文件后宣称签名仍然有效。ZIP 使用 JVM 写入器重建，避免更新旧 ZIP 时残留已经删除的文件。
 
-Windows 的 Launch4j 父进程与随包 `javaw.exe` 子进程都声明 UTF-8 代码页。JBR 21 的
+### macOS 原生 JNI 启动器
+
+macOS 首装包的 `Contents/MacOS/<desktopName>` 是预编译的 universal（x86_64 + arm64）原生启动器，
+不是 shell 脚本。它在自身进程内以 JNI 启动 JVM：主线程运行 AppKit 事件循环（AWT 依赖），
+Java main 在专用线程执行，`Info.plist` 中的 `TeamTalkMainClass`/`TeamTalkJVMOptions` 提供启动配置。
+
+macOS 26 (Tahoe) 要求菜单栏 NSStatusItem 与系统通知身份归属应用主进程，`exec` 替换成 java 的
+shell 模型会被系统静默拒绝渲染托盘；因此启动器还内建：读取 runtime 的 libjvm Mach-O 头做架构
+检查（错架构包弹中文指引并退出 126，Rosetta 翻译路径已随其淘汰一并拒绝）、以应用身份投递
+UNUserNotificationCenter 通知（被拒时回退 osascript）、Dock 点击/通知点击/应用激活回调 Java
+唤起主窗口。JDK 9+ 的 JNI 启动不解析 `-Djava.class.path`，启动器用 URLClassLoader 挂载
+bootstrap.jar 后反射调用主类。
+
+启动器源码与预编译二进制随源码树分发（`buildSrc/src/main/resources/macos-launcher/`，
+二进制附 SHA-256 清单），保证任何平台都能组装 mac 包；修改 `.m` 源码后必须在 macOS 上调用
+`rebuildMacLauncherBinary` 重新编译并提交二进制与清单，否则组装时校验失败。二进制需在 mac 上
+预先 `codesign -f -s - -i <applicationId>` 一次以预留 `LC_CODE_SIGNATURE` 空间。
+
+macOS 包组装时由纯 JVM 实现的 ad-hoc 签名器（`MacCodeSigner`/`MacAppBundleSigner`）对产物做
+`codesign -f -s -` 等价签名：生成 `_CodeSignature/CodeResources` 资源封条并对主可执行嵌入
+CodeDirectory/SuperBlob，所有构建平台产物一致，不依赖 macOS 工具。runtime 内的厂商签名原样保留。
+ad-hoc 签名是为了解锁系统通知授权（未签名应用的通知请求会被静默拒绝），不提供身份担保；正式对外
+分发仍需 Developer ID 签名与公证的决策。`MacCodeSignerManualTest` 在 macOS 上以系统
+`codesign --verify` 交叉验证签名格式。
+
+Windows 的 Launch4j 父进程与随包 `javaw.exe` 子进程都声明 UTF-8 代码页。OpenJDK 21 的
 [启动器源码](https://github.com/JetBrains/JetBrainsRuntime/blob/jbr-release-21.0.10b1163.110/src/java.base/share/native/launcher/main.c#L114)
 会把 Unicode 命令行转换为 `CP_ACP`；只有父进程声明 UTF-8 时，子进程仍可能把中文转换为问号并当作
 通配符展开。该路径要求 Windows 10 1903 或更新版本的

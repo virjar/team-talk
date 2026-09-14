@@ -8,6 +8,7 @@ import androidx.compose.runtime.snapshotFlow
 import com.virjar.tk.app.navigation.feature.task.forEachTaskReminder
 import com.virjar.tk.desktop.tray.AppTray
 import com.virjar.tk.shared.client.ConnectionState
+import com.virjar.tk.shared.log.AppLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
@@ -30,6 +31,7 @@ internal fun DesktopTaskNotifications(
                 forEachTaskReminder(repo, nav.userSession.uid, stillEligible = {
                     presentationGate.isOpen && !presentation.first && presentation.second == ConnectionState.AUTHENTICATED
                 }) { task, remindedAt ->
+                    AppLog.trace("Notification", "posting tray notification taskId=${task.taskId}")
                     AppTray.showNotification("待办提醒", task.title)
                     withContext(Dispatchers.IO) { repo.local.markReminderNotified(task.taskId, remindedAt) }
                 }

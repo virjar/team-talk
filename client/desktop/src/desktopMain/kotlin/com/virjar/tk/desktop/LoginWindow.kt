@@ -463,7 +463,18 @@ internal fun teamTalkApplication(dataDir: File, locker: FileLocker) = applicatio
                             }
                         }
                     }
-                    onDispose { activation.close() }
+                    // 原生壳（macOS JNI 启动）的 Dock/通知点击回调走同一条唤起路径；
+                    // AWT 的 reopen 桥接在 JNI 嵌入下不可用。dev/裸 JVM 无此类，静默跳过。
+                    val registerShellActivation: ((() -> Unit)?) -> Unit = { handler ->
+                        runCatching {
+                            com.virjar.tk.desktop.shell.DesktopNativeBridge.setMacActivationHandler(handler)
+                        }
+                    }
+                    registerShellActivation(showMainWindow)
+                    onDispose {
+                        registerShellActivation(null)
+                        activation.close()
+                    }
                 }
                 if (readyPresentation != null) {
                     DisposableEffect(window, sessionUiActions) {

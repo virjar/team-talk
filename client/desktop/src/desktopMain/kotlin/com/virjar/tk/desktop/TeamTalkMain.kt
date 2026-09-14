@@ -20,7 +20,7 @@ import com.virjar.tk.shared.log.AppLog
  */
 fun main() {
     // dev/裸 JVM 启动时 macOS 菜单栏默认显示 "java"；必须在 AWT 初始化前声明应用名。
-    // 打包产物由 Conveyor 写入的 Info.plist CFBundleName 决定，此属性不生效也无副作用。
+    // 安装包同时通过 Info.plist 和启动器声明名称，负载仍按最终部署身份初始化 AWT。
     System.setProperty("apple.awt.application.name", ClientIdentity.DISPLAY_NAME)
 
     // ── 1. 数据目录初始化（必须在 logback 初始化前） ──

@@ -1,6 +1,7 @@
 package com.virjar.tk.desktop.tray
 
 import com.virjar.tk.protocol.model.Conversation
+import com.virjar.tk.shared.log.AppLog
 
 /**
  * 桌面端新消息通知管理器。
@@ -33,8 +34,17 @@ object DesktopNotificationManager {
         // 即使托盘正在启动或不可用，也要让基线保持最新。否则稍后的第一条消息
         // 会把仅仅来自 LocalCache 的所有未读项重新通知一遍。
         val notifications = tracker.onConversationsChanged(conversations, isWindowFocused)
-        if (!enabled || !AppTray.isActive) return
+        if (!enabled || !AppTray.isActive) {
+            if (notifications.isNotEmpty()) {
+                AppLog.trace(
+                    "Notification",
+                    "suppressed ${notifications.size} notification(s): enabled=$enabled trayActive=${AppTray.isActive}",
+                )
+            }
+            return
+        }
         notifications.forEach { notification ->
+            AppLog.trace("Notification", "posting tray notification chatId=${notification.chatId} body=${notification.body}")
             AppTray.showNotification(notification.title, notification.body)
         }
     }
@@ -65,6 +75,18 @@ internal class DesktopUnreadNotificationTracker {
         for (conversation in conversations) {
             val previous = lastUnread[conversation.chatId] ?: 0
             val current = conversation.unreadCount
+            if (current > previous) {
+                // 只记 chatId 与计数：通知正文可能包含会话名，不进日志。
+                val reason = when {
+                    conversation.isMuted -> "muted"
+                    isWindowFocused -> "window-focused"
+                    else -> "notify"
+                }
+                AppLog.trace(
+                    "Notification",
+                    "unread ${previous}->${current} chatId=${conversation.chatId} decision=$reason",
+                )
+            }
             if (!conversation.isMuted && current > previous && !isWindowFocused) {
                 val increment = current - previous
                 add(

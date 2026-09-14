@@ -362,9 +362,9 @@ abstract class AssembleDesktopShellTask : DefaultTask() {
         copyDirectory(jbrRoot(), File(app, "runtime"))
         copyAppPayload(File(app, "app"), includeBootstrapJar = true)
         iconFile.get().asFile.copyTo(File(app, "Resources/$name.icns"), overwrite = true)
-        writePosixLauncher(File(app, "MacOS/$name"), "../runtime/Contents/Home/bin/java", "../app/bootstrap.jar",
-            serverJvmOptions.get() + "-Xdock:name=${displayName.get()}")
+        installMacLauncher(File(app, "MacOS/$name"))
         File(app, "Info.plist").writeText(macInfoPlist())
+        signMacAppForLocalTrust(File(staging, "$name.app"))
         archiveZip(staging, target.get().portableArchiveName(version.get()), "$name.app")
     }
 
@@ -414,7 +414,10 @@ abstract class AssembleDesktopShellTask : DefaultTask() {
         archiveTarGz(staging, target.get().portableArchiveName(version.get()), name)
     }
 
-    private fun macInfoPlist(): String = """
+    private fun macInfoPlist(): String {
+        val serverUrl = serverJvmOptions.get().single { it.startsWith("-Dteamtalk.server.url=") }.substringAfter('=')
+        val jvmOptions = serverJvmOptions.get().joinToString("") { "            <string>${xmlText(it)}</string>\n" }
+        return """
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
         <plist version="1.0">
@@ -430,11 +433,49 @@ abstract class AssembleDesktopShellTask : DefaultTask() {
           <key>CFBundleShortVersionString</key><string>${version.get()}</string>
           <key>CFBundleVersion</key><string>${version.get()}.${buildNumber.get()}</string>
           <key>LSMinimumSystemVersion</key><string>14.0</string>
+          <key>LSArchitecturePriority</key><array><string>${if (target.get() == DesktopTarget.MACOS_AARCH64) "arm64" else "x86_64"}</string></array>
           <key>NSHighResolutionCapable</key><true/>
           <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+          <key>TeamTalkMainClass</key><string>com.virjar.tk.desktop.shell.BootstrapMain</string>
+          <key>TeamTalkDownloadBaseURL</key><string>${xmlText(serverUrl)}</string>
+          <key>TeamTalkJVMOptions</key>
+          <array>
+$jvmOptions          </array>
         </dict>
         </plist>
     """.trimIndent() + "\n"
+    }
+
+    /**
+     * 安装 macOS 原生 JNI 启动器（universal x86_64 + arm64）。
+     * macOS 二进制必须链接 Cocoa SDK，无法在 Windows/Linux 构建机上现场编译；
+     * 单机交叉打包要求所有平台都能产出全部目标，因此预编译二进制随源码树分发
+     * （源码 [macLauncherSource] 与 sha256 清单同目录），组装时校验后复制。
+     * 更新源码后须在 macOS 上运行 [rebuildMacLauncherBinary] 重编并提交新二进制。
+     */
+    private fun installMacLauncher(output: File) {
+        val name = "macos-launcher/TeamTalkLauncher"
+        val binary = macLauncherResource(name)
+        val expected = macLauncherResource("$name.sha256").readText().trim()
+        val actual = JbrRuntimes.sha256Hex(binary)
+        check(actual == expected) {
+            "macOS launcher binary mismatch: expected $expected, got $actual; rebuild via rebuildMacLauncherBinary"
+        }
+        binary.copyTo(output, overwrite = true)
+        check(output.setExecutable(true, false)) { "Cannot make launcher executable: $output" }
+    }
+
+    /**
+     * macOS 的现代通知 API 要求应用至少有 ad-hoc 代码签名，否则授权请求被系统静默
+     * 拒绝（不弹窗、不注册）。签名由纯 JVM 实现（[MacAppBundleSigner]）完成，任何
+     * 构建平台行为一致，交叉打包不依赖 macOS 工具；等价 `codesign -f -s -`（不 deep），
+     * runtime 保持厂商原签名。ad-hoc 不提供身份担保，正式分发仍需 Developer ID
+     * 签名与公证（另行决策）。
+     */
+    private fun signMacAppForLocalTrust(app: File) {
+        MacAppBundleSigner.sign(File(app, "Contents"), appId.get())
+        logger.lifecycle("ad-hoc signed (JVM signer) {}", app)
+    }
 
     private fun archiveZip(staging: File, name: String, vararg entries: String) {
         val zipFile = File(outputDir.get().asFile, name)
@@ -453,7 +494,10 @@ abstract class AssembleDesktopShellTask : DefaultTask() {
 
 }
 
-/** 两个平台共享一份可直接 exec 的启动脚本；参数作为 POSIX 字面量写入，安装位置运行时解析。 */
+/**
+ * Linux 启动脚本；参数作为 POSIX 字面量写入，安装位置运行时解析。
+ * macOS 使用原生 JNI 启动器（[macLauncherSource]），不再生成脚本。
+ */
 internal fun writePosixLauncher(file: File, javaPath: String, bootstrapPath: String, options: List<String>) {
     val arguments = options.joinToString(" ") { posixLiteral(it) }
     file.writeText(
@@ -471,3 +515,52 @@ internal fun writePosixLauncher(file: File, javaPath: String, bootstrapPath: Str
 
 private fun posixLiteral(value: String): String = "'" + value.replace("'", "'\"'\"'") + "'"
 private fun xmlText(value: String): String = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+/** 从 buildSrc 资源提取 macOS 原生启动器文件；二进制与源码同入库，不提交构建期产物。 */
+internal fun macLauncherResource(name: String): File {
+    val resource = JbrRuntimes::class.java.classLoader.getResourceAsStream(name)
+        ?: throw GradleException("Missing bundled launcher resource: $name")
+    val extension = name.substringAfterLast('/', "").substringAfterLast('.', "")
+    val target = File.createTempFile("teamtalk-mac-launcher", if (extension.isEmpty()) "" else ".$extension")
+    target.deleteOnExit()
+    resource.use { input -> target.outputStream().use { output -> input.copyTo(output) } }
+    return target
+}
+
+/** 兼容旧引用：启动器 Objective-C 源码。 */
+internal fun macLauncherSource(): File = macLauncherResource("macos-launcher/TeamTalkLauncher.m")
+
+/**
+ * 在 macOS 上重编 universal 启动器并更新源码树里的二进制与 sha256 清单。
+ * 仅限 mac 开发流程使用；普通组装（任何平台）走 [macLauncherResource] 的预编译产物。
+ */
+internal fun rebuildMacLauncherBinary(resourcesDir: File) {
+    val source = File(resourcesDir, "macos-launcher/TeamTalkLauncher.m")
+    val binary = File(resourcesDir, "macos-launcher/TeamTalkLauncher")
+    val javaHome = File(System.getProperty("java.home"))
+    val jniInclude = File(javaHome, "include")
+    check(jniInclude.isDirectory) {
+        "重编启动器需要 JDK 头文件，当前 Gradle JVM ($javaHome) 缺少 include/jni.h"
+    }
+    val code = runCommand(
+        resourcesDir,
+        listOf(
+            "xcrun", "clang", "-x", "objective-c",
+            "-arch", "x86_64", "-arch", "arm64",
+            "-mmacosx-version-min=14.0",
+            "-fobjc-arc",
+            "-I", jniInclude.absolutePath,
+            "-I", File(jniInclude, "darwin").absolutePath,
+            "-framework", "Cocoa",
+            "-framework", "UserNotifications",
+            "-ldl",
+            "-O2",
+            "-o", binary.absolutePath,
+            source.absolutePath,
+        ),
+        emptyMap(),
+    )
+    check(code == 0 && binary.isFile) { "clang failed with exit $code" }
+    File(resourcesDir, "macos-launcher/TeamTalkLauncher.sha256").writeText(JbrRuntimes.sha256Hex(binary) + "\n")
+    check(binary.setExecutable(true, false))
+}

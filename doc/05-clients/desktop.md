@@ -63,7 +63,10 @@ flowchart LR
 “Compose 先保留，AuthController 后明确注销则升级为删除”的既有顺序。未成功挂载不等于主动注销。
 绑定登记与责任移交使用同一安装器锁；认证线程即使立刻认领退役，也必须等交接完成后才能关闭媒体。
 
-Dock 使用 JDK `AppReopenedListener` 接收系统事件，监听器归属当前主窗口，窗口销毁时移除。
+Dock 恢复入口按启动形态区分：开发/裸 JVM 使用 JDK `AppReopenedListener`；macOS 安装包是
+原生 JNI 启动器进程，AWT 的事件桥接在该形态下不完整，恢复由启动器经
+[DesktopNativeBridge](../../client/desktop-bootstrap/src/main/kotlin/com/virjar/tk/desktop/shell/DesktopNativeBridge.kt)
+回调，Dock 点击、通知点击与应用重新激活共用同一唤起路径。监听器归属当前主窗口，窗口销毁时移除。
 恢复动作通过既有会话 UI 调度入口更新 Compose 状态；隐藏窗口须等 AWT `componentShown` 确认显示后
 再请求焦点，不能把修改 `visible` 当成窗口已经显示。普通消息通知不会调用这个前台恢复入口。
 
@@ -75,6 +78,11 @@ Dock 使用 JDK `AppReopenedListener` 接收系统事件，监听器归属当前
 Windows 承载窗口必须位于工作区内，不能落在任务栏区域；已失去原生窗口的锚点会重建。
 锚点显示后，菜单在 EDT 下一拍打开，避免主窗口隐藏后的托盘回调内同步弹出失败。
 收起或登出会取消尚未显示的菜单请求，延迟回调不能重新打开已关闭的菜单；失败使用 `AppLog` 记录。
+
+macOS 26 起系统移除了 AWT `TrayIcon.displayMessage` 依赖的旧通知接口，调用不再有任何可见效果。
+系统通知改为启动器内建通道：优先以应用身份使用 UNUserNotificationCenter（图标与身份跟随应用），
+未授权或被拒时回退 `osascript`；点击通知与 Dock 点击共用上述唤起路径。未读消息是否产生通知仍由
+窗口焦点、免打扰与托盘可用性门禁决定，决策与投递记录写入 `Notification`/`AppTray` 日志。
 
 ### 任务工作台与提醒
 
@@ -89,8 +97,9 @@ Windows 承载窗口必须位于工作区内，不能落在任务栏区域；已
 
 主窗口非活动、连接已认证且托盘可用时，客户端为尚未展示且未读的有效到期提醒显示系统通知，展示前
 重验当前执行人与任务状态。应用内可打开提醒或标记已读；系统已展示与应用内已读分别持久保存，
-同一次提醒在本地收据保留期间不重复展示。Desktop 系统提示使用托盘通知，不提供指定任务的点击
-跳转，也不在进程退出后自行唤醒。两端工作流按[任务验收场景](../09-testing/scenario-catalog.md#i-任务协作)验证。
+同一次提醒在本地收据保留期间不重复展示。Desktop 系统提示走上述 macOS 启动器通道（其他平台为
+托盘通知），不提供指定任务的点击跳转，也不在进程退出后自行唤醒。两端工作流按
+[任务验收场景](../09-testing/scenario-catalog.md#i-任务协作)验证。
 
 ## 2. 全局搜索
 
