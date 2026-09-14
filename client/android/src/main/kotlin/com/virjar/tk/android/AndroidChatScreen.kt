@@ -79,6 +79,7 @@ internal fun AndroidChatScreen(
     actionAdmission: UiActionAdmission,
     launchAdmittedAction: (suspend () -> Unit) -> Boolean,
     onForward: (Message) -> Unit,
+    onUrlClick: (String) -> Unit,
     onSaveMessage: ((Message) -> Unit)? = null,
     /** 类型化引用打开：读取由 MessageActionsFeature 完成，平台只做导航与降级提示。 */
     onOpenOfficeRef: ((com.virjar.tk.protocol.body.OfficeRefBody, onDenied: (String) -> Unit) -> Unit)? = null,
@@ -679,7 +680,7 @@ internal fun AndroidChatScreen(
                     onVoiceRecord = { if (it) startVoice() else stopVoice() },
                     onVoiceRecordCancel = { cancelVoiceRecording() },
                     onMentionClick = onMentionClick,
-                    onUrlClick = { url -> openSafeExternalLink(context, url) },
+                    onUrlClick = onUrlClick,
                     imageContent = { attachment, mod ->
                         rememberAsyncThumb(
                             attachment = attachment,

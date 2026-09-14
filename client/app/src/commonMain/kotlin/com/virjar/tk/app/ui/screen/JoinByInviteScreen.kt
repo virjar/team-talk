@@ -23,15 +23,36 @@ fun JoinByInviteScreen(
     onPreview: suspend (String) -> InvitePreview,
     onJoin: suspend (String) -> Unit,
     onBack: (() -> Unit)? = null,
+    initialInput: String = "",
 ) {
-    var input by rememberSaveable { mutableStateOf("") }
-    var preview by remember { mutableStateOf<InvitePreview?>(null) }
-    var previewInput by remember { mutableStateOf("") }
-    var loading by remember { mutableStateOf(false) }
-    var joining by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var input by rememberSaveable(initialInput) { mutableStateOf(initialInput) }
+    var preview by remember(initialInput) { mutableStateOf<InvitePreview?>(null) }
+    var previewInput by remember(initialInput) { mutableStateOf("") }
+    var loading by remember(initialInput) { mutableStateOf(false) }
+    var joining by remember(initialInput) { mutableStateOf(false) }
+    var error by remember(initialInput) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val busy = loading || joining
+
+    suspend fun loadPreview(requestedInput: String) {
+        loading = true
+        error = null
+        preview = null
+        try {
+            preview = onPreview(requestedInput)
+            previewInput = requestedInput
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            error = failure.message?.takeIf(String::isNotBlank) ?: "查看邀请失败，请重试"
+        } finally {
+            loading = false
+        }
+    }
+
+    LaunchedEffect(initialInput) {
+        if (initialInput.isNotBlank() && input.isNotBlank()) loadPreview(input)
+    }
 
     Column(Modifier.fillMaxSize().testTag("invite.join")) {
         ScreenHeader(title = "通过邀请加入群聊", onBack = onBack)
@@ -64,20 +85,7 @@ fun JoinByInviteScreen(
                     if (!loading && !joining && input.isNotBlank()) {
                         val requestedInput = input
                         loading = true
-                        error = null
-                        preview = null
-                        scope.launch {
-                            try {
-                                preview = onPreview(requestedInput)
-                                previewInput = requestedInput
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (failure: Exception) {
-                                error = failure.message?.takeIf(String::isNotBlank) ?: "查看邀请失败，请重试"
-                            } finally {
-                                loading = false
-                            }
-                        }
+                        scope.launch { loadPreview(requestedInput) }
                     }
                 },
                 enabled = !busy && input.isNotBlank(),

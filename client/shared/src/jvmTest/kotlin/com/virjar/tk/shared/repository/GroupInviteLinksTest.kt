@@ -23,6 +23,34 @@ import kotlin.test.assertTrue
 
 class GroupInviteLinksTest {
     @Test
+    fun `shared text and legacy clipboard codes identify a single invitation`() {
+        val link = "$BASE/invite#$TOKEN"
+        listOf(link, "请加入群聊：$link。", "[$link]", "邀请：<$link>", "$link\n$link").forEach {
+            assertEquals(link, GroupInviteLinks.find(it), it)
+        }
+        assertEquals(TOKEN, GroupInviteLinks.find(" \n${TOKEN.uppercase()}\t"))
+        assertEquals(link, GroupInviteLinks.find("HTTPS://IM.EXAMPLE.TEST:443/invite#${TOKEN.uppercase()}"))
+        assertEquals("$BASE/team-talk/invite#$TOKEN", GroupInviteLinks.find("$BASE/team-talk/invite#$TOKEN"))
+    }
+
+    @Test
+    fun `clipboard recognition ignores unrelated and ambiguous text without guessing a UUID`() {
+        listOf(
+            "", "普通文字", "https://example.test/article", "taskId=$TOKEN", "$BASE/files/$TOKEN",
+            "$BASE/invite#bad", "$BASE/invite?token=$TOKEN", "$BASE/invite#${TOKEN}extra",
+            "https://user@im.example.test/invite#$TOKEN", "$BASE/invite#$TOKEN\nhttps://other.test/invite#$TOKEN",
+            "x".repeat(16_385) + "$BASE/invite#$TOKEN",
+        ).forEach { assertNull(GroupInviteLinks.find(it), it) }
+    }
+
+    @Test
+    fun `recognized foreign invitation keeps its origin for the preview deployment check`() {
+        val foreign = "https://other.test/invite#$TOKEN"
+        assertEquals(foreign, GroupInviteLinks.find("请加入：$foreign。"))
+        assertFailsWith<IllegalArgumentException> { GroupInviteLinks.parse(GroupInviteLinks.find(foreign)!!, BASE) }
+    }
+
+    @Test
     fun `complete URL contains the canonical deployment and full token`() {
         val url = GroupInviteLinks.create(" HTTPS://IM.EXAMPLE.TEST:443/ ", TOKEN.uppercase())
         assertEquals("https://im.example.test/invite#$TOKEN", url)

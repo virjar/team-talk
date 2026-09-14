@@ -29,8 +29,8 @@
   <p>请在此部署的客户端中确认群信息并加入。</p>
   <ol>
     <li>复制下方完整邀请链接。</li>
-    <li>打开客户端，在「会话」或「通讯录」中选择「加入群」，进入「通过邀请加入群聊」。</li>
-    <li>粘贴链接，查看群信息并确认加入。</li>
+    <li>回到已登录的客户端，应用会识别剪贴板邀请并进入「通过邀请加入群聊」。聊天中的邀请链接也可以直接点击。</li>
+    <li>查看群信息，确认无误后加入。</li>
   </ol>
   <input id="invite-link" aria-label="完整邀请链接" readonly>
   <button id="copy-link" disabled>复制邀请链接</button>
@@ -50,7 +50,7 @@
   button.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(field.value);
-      status.textContent = '已复制，请打开客户端粘贴。';
+      status.textContent = '已复制，请回到客户端查看群聊并确认加入。';
     } catch (_) {
       field.focus();
       field.select();

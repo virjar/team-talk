@@ -20,6 +20,8 @@ class DiscoveryFeature internal constructor(
 ) {
     val contentSearchChanges get() = session.contentSearchRepo.changes
 
+    fun inviteFromText(input: String): String? = GroupInviteLinks.find(input)
+
     suspend fun searchContent(request: ContentSearchRequest): ContentSearchPage =
         localData.run { session.contentSearchRepo.search(request).getOrThrow() }
 

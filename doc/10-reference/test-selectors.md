@@ -207,7 +207,6 @@
 | `group.detail.editNotice` | 有编辑权限时显示的群公告编辑入口 |
 | `group.detail.invite` | 邀请成员 |
 | `group.detail.inviteLinks` | 邀请链接 |
-| `action.joinByInvite` | 会话/通讯录标题旁的“加入群”入口 |
 | `invite.links.create` | 创建邀请链接 |
 | `invite.link.<token>.url/copy/status/usage/expires/revoke` | 单条完整链接、复制、状态、次数、有效期与撤销 |
 | `invite.join.input/preview/error/status/confirm` | 邀请输入、查看群聊、失败原因、状态与确认加入/打开群聊 |

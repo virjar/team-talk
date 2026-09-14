@@ -129,7 +129,7 @@ internal fun SubScreenContent(
             onBack = onBack,
         )
 
-        SubScreen.JoinByInvite -> JoinByInviteScreen(
+        is SubScreen.JoinByInvite -> JoinByInviteScreen(
             onPreview = { input ->
                 admittedSuspend(onClosed = { throw CancellationException("会话已关闭") }) {
                     data.discovery.previewInvite(input)
@@ -142,6 +142,7 @@ internal fun SubScreenContent(
                 openChatIfOpen(chatId)
             },
             onBack = onBack,
+            initialInput = screen.input,
         )
 
         is SubScreen.CreateGroup -> CreateGroupScreen(

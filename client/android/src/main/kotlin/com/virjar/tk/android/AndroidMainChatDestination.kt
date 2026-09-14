@@ -23,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraphBuilder
@@ -85,6 +86,7 @@ internal fun NavGraphBuilder.chatDestination(
             },
         ),
     ) { entry ->
+        val context = LocalContext.current
         val chatId = entry.arguments?.getString("chatId") ?: return@composable
         val messageFocusTarget = entry.arguments?.getLong("targetSeq")
             ?.takeIf { seq -> seq > 0L }
@@ -177,6 +179,11 @@ internal fun NavGraphBuilder.chatDestination(
                     safeMentionProfileRouteOrNull(uid)?.let { route ->
                         navController.navigate(route)
                     }
+                },
+                onUrlClick = actionAdmission.guard { url: String ->
+                    val invite = dataState.discovery.inviteFromText(url)
+                    if (invite != null) navController.openGroupInvite(invite)
+                    else openSafeExternalLink(context, url)
                 },
                 // null 表示会话尚未加载；已知没有草稿以空字符串交给编辑器。
                 cachedDraft = currentConversation?.let { it.draft.orEmpty() },

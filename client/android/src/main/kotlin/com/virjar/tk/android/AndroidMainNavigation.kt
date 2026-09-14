@@ -28,6 +28,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -39,6 +41,7 @@ import androidx.navigation.navArgument
 import com.virjar.tk.shared.client.ConnectionState
 import com.virjar.tk.shared.client.ProtocolCompatibility
 import com.virjar.tk.app.ui.component.ProtocolUpgradeBanner
+import com.virjar.tk.app.ui.component.GroupInviteEntryEffect
 import com.virjar.tk.app.navigation.AppDataState
 import com.virjar.tk.app.navigation.ScreenDataKey
 import com.virjar.tk.app.navigation.MainTab
@@ -91,6 +94,7 @@ internal fun AndroidMainAppContent(
     val requestedDocument = remember { MutableStateFlow<OfficeRefBody?>(null) }
     val requestedTask = remember { MutableStateFlow<String?>(null) }
     val currentBackStackEntry by navController.currentBackStackEntryAsState()
+    val activityLifecycle by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     var homeTelemetryPage by remember { mutableStateOf(ClientUiPage.CONVERSATIONS) }
     val currentTelemetryPage = if (currentBackStackEntry?.destination?.route == Routes.HOME) {
         homeTelemetryPage
@@ -259,6 +263,24 @@ internal fun AndroidMainAppContent(
                 .testTag("main.error.snackbar"),
         )
     }
+    // 等待认证、Activity 回到前台且 NavHost 已就绪后再消费剪贴板，保留原页面返回栈。
+    GroupInviteEntryEffect(
+        discovery = dataState.discovery,
+        active = connectionState == ConnectionState.AUTHENTICATED &&
+            activityLifecycle.isAtLeast(Lifecycle.State.RESUMED) && currentBackStackEntry != null,
+        onInvite = actionAdmission.guard { input: String -> navController.openGroupInvite(input) },
+    )
+}
+
+/** 剪贴板和聊天链接共用一个确认页；切换邀请时替换当前确认页，不叠加返回栈。 */
+internal fun NavHostController.openGroupInvite(input: String) {
+    val currentEntry = currentBackStackEntry
+    val alreadyPreviewing = currentEntry?.destination?.route == Routes.JOIN_BY_INVITE
+    if (alreadyPreviewing && currentEntry?.arguments?.getString("inviteInput") == input) return
+    navigate(Routes.joinByInvite(input)) {
+        if (alreadyPreviewing) popUpTo(Routes.JOIN_BY_INVITE) { inclusive = true }
+        launchSingleTop = true
+    }
 }
 
 /** 主页路由：多标签外壳、首页遥测页签与各入口导航。 */
@@ -301,9 +323,6 @@ private fun NavGraphBuilder.homeDestination(
             },
             onGlobalSearch = actionAdmission.guard {
                 navController.navigate(Routes.SEARCH_MESSAGES)
-            },
-            onJoinByInvite = actionAdmission.guard {
-                navController.navigate(Routes.JOIN_BY_INVITE)
             },
             onFriendApplies = actionAdmission.guard {
                 navController.navigate(Routes.FRIEND_APPLIES)
@@ -418,7 +437,13 @@ private fun NavGraphBuilder.searchDestination(
             onBack = actionAdmission.guard { navController.popBackStack() },
         )
     }
-    composable(Routes.JOIN_BY_INVITE) {
+    composable(
+        Routes.JOIN_BY_INVITE,
+        arguments = listOf(navArgument("inviteInput") {
+            type = NavType.StringType
+            defaultValue = ""
+        }),
+    ) { entry ->
         JoinByInviteScreen(
             onPreview = { input ->
                 admittedAction(onClosed = { throw kotlinx.coroutines.CancellationException("会话已关闭") }) {
@@ -431,13 +456,22 @@ private fun NavGraphBuilder.searchDestination(
                 }
                 actionAdmission.runIfOpen {
                     if (dataState.chat.prepareChat(chatId)) {
-                        navController.navigate(Routes.chat(chatId)) {
-                            popUpTo(Routes.JOIN_BY_INVITE) { inclusive = true }
+                        val previousEntry = navController.previousBackStackEntry
+                        if (previousEntry?.destination?.route == Routes.CHAT &&
+                            previousEntry.arguments?.getString("chatId") == chatId
+                        ) {
+                            navController.popBackStack()
+                        } else {
+                            navController.navigate(Routes.chat(Uri.encode(chatId))) {
+                                popUpTo(Routes.JOIN_BY_INVITE) { inclusive = true }
+                                launchSingleTop = true
+                            }
                         }
                     }
                 }
             },
             onBack = actionAdmission.guard { navController.popBackStack() },
+            initialInput = entry.arguments?.getString("inviteInput").orEmpty(),
         )
     }
     composable(Routes.SEARCH_USERS) {

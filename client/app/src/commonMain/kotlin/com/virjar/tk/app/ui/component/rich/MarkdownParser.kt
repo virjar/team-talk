@@ -506,6 +506,12 @@ internal object MdParser {
                     val url = node.getTextInNode(src).toString().trim('<', '>')
                     out += MdSpan.Link(label = url, url = url)
                 }
+                GFMTokenTypes.GFM_AUTOLINK -> {
+                    // GFM 已识别裸 URL；不能在投影时退回普通文本，否则复制来的邀请无法点击。
+                    val label = node.getTextInNode(src).toString()
+                    val url = if (label.startsWith("www.", ignoreCase = true)) "https://$label" else label
+                    out += MdSpan.Link(label = label, url = url)
+                }
                 MarkdownElementTypes.IMAGE -> {
                     val destination = node.embeddedAssetLinkDestination(src)
                     val internalAssetId = destination?.let(::embeddedAssetIdOrNull)

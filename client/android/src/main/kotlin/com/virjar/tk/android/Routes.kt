@@ -1,5 +1,6 @@
 package com.virjar.tk.android
 
+import android.net.Uri
 import com.virjar.tk.protocol.model.Attachment
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -21,7 +22,8 @@ object Routes {
     }
     const val SEARCH_MESSAGES = "search_messages"
     const val SEARCH_USERS = "search_users"
-    const val JOIN_BY_INVITE = "join_by_invite"
+    const val JOIN_BY_INVITE = "join_by_invite?inviteInput={inviteInput}"
+    fun joinByInvite(input: String) = "join_by_invite?inviteInput=${Uri.encode(input)}"
     const val CREATE_GROUP = "create_group?seedUid={seedUid}"
     fun createGroup(seedUid: String? = null) = if (seedUid.isNullOrBlank()) {
         "create_group"

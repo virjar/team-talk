@@ -74,7 +74,7 @@ fun InviteLinksScreen(
             },
         )
         Text(
-            "复制完整链接发给对方，对方可在“通过邀请加入群聊”中粘贴并确认加入。撤销后链接立即失效。",
+            "复制链接发给对方，对方点击聊天中的链接，或复制后回到应用，即可查看群聊并确认加入。撤销后链接立即失效。",
             modifier = Modifier.padding(16.dp),
             style = MaterialTheme.typography.bodyMedium,
             color = Tk.colors.secondaryText,

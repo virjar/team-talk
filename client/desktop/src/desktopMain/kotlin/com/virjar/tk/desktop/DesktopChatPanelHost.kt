@@ -78,6 +78,8 @@ internal fun ChatPanelWrapper(
     resolveSender: ((uid: String) -> User?)? = null,
     voicePlayback: VoicePlaybackController,
     onMentionClick: ((uid: String) -> Unit)? = null,
+    /** 返回 true 表示已打开邀请预览；false 继续普通外链路径。调用前仍检查会话准入。 */
+    onOpenInviteLink: (String) -> Boolean,
     /** null 表示该会话不启用 @ 候选（如保存的消息，内测 T038）。 */
     mentionCandidates: List<User>? = emptyList(),
     chatForegroundActive: Boolean,
@@ -295,9 +297,13 @@ internal fun ChatPanelWrapper(
                 },
                 onMentionClick = onMentionClick,
                 onUrlClick = { rawUrl ->
-                    safeDesktopExternalLinkOrNull(rawUrl)?.let { url ->
-                        previewScope.launch(Dispatchers.IO) {
-                            try { java.awt.Desktop.getDesktop().browse(java.net.URI(url)) } catch (_: Exception) {}
+                    presentationGate.runIfOpen {
+                        if (!onOpenInviteLink(rawUrl)) {
+                            safeDesktopExternalLinkOrNull(rawUrl)?.let { url ->
+                                previewScope.launch(Dispatchers.IO) {
+                                    try { java.awt.Desktop.getDesktop().browse(java.net.URI(url)) } catch (_: Exception) {}
+                                }
+                            }
                         }
                     }
                 },

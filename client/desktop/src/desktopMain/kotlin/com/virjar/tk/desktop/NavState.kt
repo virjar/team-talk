@@ -27,7 +27,7 @@ sealed class SubScreen {
     // ── 独立子窗口类 ──
     data object FriendApplies : SubScreen()
     data object SearchUsers : SubScreen()
-    data object JoinByInvite : SubScreen()
+    data class JoinByInvite(val input: String) : SubScreen()
     data class CreateGroup(val preselectedUids: Set<String> = emptySet()) : SubScreen()
     data object SearchMessages : SubScreen()
     data class Forward(val message: Message) : SubScreen()

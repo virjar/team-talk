@@ -18,3 +18,5 @@ internal fun rememberClipboardTextWriter(): (String) -> Unit {
 }
 
 internal expect suspend fun Clipboard.setPlainText(text: String)
+
+internal expect suspend fun Clipboard.readPlainText(): String?

@@ -48,6 +48,7 @@ import com.virjar.tk.app.telemetry.ClientSystemEvent
 import com.virjar.tk.app.telemetry.ClientSystemState
 import com.virjar.tk.app.telemetry.PageDwellTracker
 import com.virjar.tk.app.ui.component.AvatarPlaceholder
+import com.virjar.tk.app.ui.component.GroupInviteEntryEffect
 import com.virjar.tk.app.ui.screen.DirectoryScreen
 import com.virjar.tk.app.ui.screen.ConversationListScreen
 import com.virjar.tk.app.ui.screen.conversationIdentityPresentation
@@ -81,6 +82,12 @@ internal fun WindowScope.MainAppContent(
     // 安排最后一次重组。绝不能让那次过期渲染在 AppDataState.destroy 越过准入边界之后
     // 再借用任何业务资源。
     if (!presentationGate.isOpen || !nav.acceptsRendering) return
+
+    GroupInviteEntryEffect(
+        discovery = nav.discovery,
+        active = mainWindowReadActive && connectionState == ConnectionState.AUTHENTICATED,
+        onInvite = presentationGate.guard { input -> nav.openScreen(SubScreen.JoinByInvite(input)) },
+    )
 
     val documentAssetUiScope = rememberCoroutineScope()
     val documentEmbeddedAssetImports = remember(resources, presentationGate, documentAssetUiScope) {
@@ -432,12 +439,7 @@ private fun MainListPane(
                         )
                     }
                     Column {
-                        ListHeader(title = "会话", actions = {
-                            TextButton(
-                                onClick = presentationGate.guard { nav.openScreen(SubScreen.JoinByInvite) },
-                                modifier = Modifier.testTag("action.joinByInvite"),
-                            ) { Text("加入群") }
-                        })
+                        ListHeader(title = "会话")
                         ConversationListScreen(
                             conversations = conversations,
                             mentionedChatIds = mentionedChatIds,
@@ -465,12 +467,7 @@ private fun MainListPane(
 
                 MainTab.CONTACTS -> {
                     Column {
-                        ListHeader(title = "通讯录", actions = {
-                            TextButton(
-                                onClick = presentationGate.guard { nav.openScreen(SubScreen.JoinByInvite) },
-                                modifier = Modifier.testTag("action.joinByInvite"),
-                            ) { Text("加入群") }
-                        })
+                        ListHeader(title = "通讯录")
                         // 桌面使用搜索 + 鼠标滚动；移动端字母索引条不占用中栏右侧空间。
                         DirectoryScreen(
                             contacts = contacts,
@@ -614,6 +611,11 @@ private fun RowScope.MainContentPane(
                             },
                             voicePlayback = voicePlayback,
                             onMentionClick = presentationGate.guard(nav::openProfile),
+                            onOpenInviteLink = { rawUrl ->
+                                val input = nav.discovery.inviteFromText(rawUrl)
+                                if (input != null) nav.openScreen(SubScreen.JoinByInvite(input))
+                                input != null
+                            },
                             mentionCandidates = mentionCandidates,
                             chatForegroundActive = mainWindowReadActive,
                             mainWindowFullscreen = mainWindowFullscreen,
@@ -896,7 +898,7 @@ internal fun desktopMainWindowTelemetryPage(
 internal fun desktopTelemetryPage(screen: SubScreen): ClientUiPage = when (screen) {
     SubScreen.FriendApplies -> ClientUiPage.FRIEND_APPLIES
     SubScreen.SearchUsers -> ClientUiPage.SEARCH_USERS
-    SubScreen.JoinByInvite -> ClientUiPage.JOIN_BY_INVITE
+    is SubScreen.JoinByInvite -> ClientUiPage.JOIN_BY_INVITE
     is SubScreen.CreateGroup -> ClientUiPage.CREATE_GROUP
     SubScreen.SearchMessages,
     SubScreen.GlobalSearch,
