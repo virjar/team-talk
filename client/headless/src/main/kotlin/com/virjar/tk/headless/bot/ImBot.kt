@@ -255,8 +255,9 @@ class ImBot private constructor(
     suspend fun forward(srcChatId: String, srcSeq: Long, targetChatId: String): Message =
         session.messageRepo.forwardMessage(srcChatId, srcSeq, targetChatId).getOrThrow()
     suspend fun markRead(chatId: String, readSeq: Long) = session.messageRepo.markRead(chatId, readSeq).getOrThrow()
+    /** 独立服务器查询，不创建 UI 历史窗口，也不预热本地消息缓存。 */
     suspend fun getHistory(chatId: String, fromSeq: Long = 0, limit: Int = 10): List<Message> =
-        session.messageRepo.getHistory(chatId, fromSeq, limit).getOrThrow()
+        session.messageRepo.queryHistory(chatId, fromSeq, limit).getOrThrow()
 
     // ── 群组 ──
 

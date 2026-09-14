@@ -841,7 +841,13 @@ SQL，不逐 outbox 行点查 message，也不读取或解码 SUCCESS payload；
 
 ### 6.3 消息历史与驻留窗口
 
-历史消息 RPC 必须在发请求前从 LocalCache 取得 `MessageHistoryLease`，并且只能通过该
+`MessageRepository.queryHistory` 是独立的服务端分页查询，供无头客户端使用；可直接从明确序号读取，
+无需先打开聊天窗口或请求最新页。它只返回经过校验的当前响应，不写 SQLite、不改变驻留窗口、
+Bot 投递记录或已读水位，也不承诺多次请求共享快照。查询结果不构成新增的本地已读证据；
+`markRead` 仍依据会话与已确认消息投影准入，查询不能绕过该约束。
+
+写入本地消息投影与驻留窗口的 `MessageRepository.getHistory` 必须在发请求前从 LocalCache 取得
+`MessageHistoryLease`，并且只能通过该
 lease 提交整页结果。lease 绑定缓存实例、全局投影代次、chat 生命周期、请求代次和
 当前历史链。newest-page 的 begin 只预留 pending 新链并使更早的 newest 请求失效；
 完整页成功提交后它才取代 committed anchor。older-page 只绑定 begin 当时已提交的

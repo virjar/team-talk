@@ -40,6 +40,29 @@ class MessageRepository internal constructor(
         page.singleOrNull()?.takeIf { it.chatId == chatId && it.serverSeq == serverSeq }
     }
 
+    /**
+     * 独立查询服务器的倒序历史页；[fromSeq] 包含起点，0 表示最新页。
+     *
+     * 不依赖或创建 UI 分页器，不写本地缓存、常驻窗口或已读证明。每页可使用自己的明确游标；
+     * 查询期间的实时编辑、撤回和新打开窗口保持其本地状态。需要填充 UI 历史窗口时使用 [getHistory]。
+     */
+    suspend fun queryHistory(chatId: String, fromSeq: Long = 0, limit: Int = 10): Outcome<List<Message>> = outcome {
+        require(chatId.isNotBlank()) { "消息历史 chatId 不能为空" }
+        require(fromSeq >= 0L) { "消息历史起始序号不能为负数" }
+        requireMessageQueryPageLimit(limit)
+        val page = rpc.getHistory(chatId, fromSeq, limit)
+        currentCoroutineContext().ensureActive()
+        check(page.size <= limit) { "消息历史响应超过请求上限 $limit" }
+        check(page.all { it.chatId == chatId && it.serverSeq > 0 && (fromSeq == 0L || it.serverSeq <= fromSeq) }) {
+            "消息历史响应包含窗口外消息"
+        }
+        check(page.zipWithNext().all { (newer, older) -> newer.serverSeq > older.serverSeq } &&
+            page.all { it.clientMsgId.isNotBlank() } && page.map { it.clientMsgId }.distinct().size == page.size) {
+            "消息历史响应顺序或身份无效"
+        }
+        page
+    }
+
     /** 拉取历史并写入本地缓存（本地优先）。 */
     suspend fun getHistory(chatId: String, fromSeq: Long = 0, limit: Int = 10): Outcome<List<Message>> = outcome {
         require(chatId.isNotBlank()) { "消息历史 chatId 不能为空" }

@@ -398,6 +398,12 @@ HttpServer dispatcher 同步执行下一项，从接收端施加背压；不会�
 `Message.MAX_QUERY_PAGE_SIZE` 一致；CLI、MCP 与 REST 共用这一预算，非法或越界 limit 返回 HTTP 400。
 它与按全局事件游标读取本地投递记录的 `messages` 是两个入口，分页上限不能混用。
 
+`fromSeq > 0` 时包含该序号并向更旧消息读取；下一页使用本页最小序号减一，到序号 1 或空页时停止，
+不能把末尾的 0 当作下一页游标。CLI 的 `history --after` 对应这个 `fromSeq`，不是投递事件游标。
+该入口使用 SDK 的只读 `queryHistory`，无需聊天窗口，不预热本地消息缓存或改变已读水位。
+持续接收与离线投递记录仍由 `recv` / `messages` 管理；已读是单独的 `mark-read` 操作，
+准入依据见[消息历史与驻留窗口](../03-architecture/client-and-sdk.md#63-消息历史与驻留窗口)。
+
 三个发送端点都要求调用方生成稳定 `clientMsgId`，并在超时或 HTTP 响应丢失后原样复用。请求先把
 最终规范 wire payload 提交到账号 SQLite，随即返回 `queued/sending/failed/sent` 回执，HTTP 生命周期不等待 ACK。
 同 `(chatId, clientMsgId)` 且相同请求返回已有回执；不同不可变 payload 返回 409，绝不产生第二条消息。
