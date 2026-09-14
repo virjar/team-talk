@@ -60,7 +60,7 @@ KSP 生成：
 直接报编译错误，声明顺序不参与编号。修改契约时同时更新 `RpcMethodIdGoldenTest`。客户端和
 服务端不得手写另一套 service/method 枚举。
 
-待发行协议 0.3 增加 `chat/25 previewInvite(token): InvitePreview`，返回邀请状态及允许展示的群概况，
+协议 0.3 提供 `chat/25 previewInvite(token): InvitePreview`，返回邀请状态及允许展示的群概况，
 已发行的 `chat/15–19` 邀请创建、列表、撤销、加入和原始信息契约保持不变。预览成功不是入群授权回执，
 确认仍调用 `joinByInvite` 并以服务端当时的事实为准。
 
@@ -258,7 +258,7 @@ organization revision，成员 cursor 还绑定根节点和 recursive 语义。
 ### 待办任务
 
 已发行 minor 2 的 `task.list/get/audit/mutate`（method 1–4）、`WorkTask`、`TaskCommand` 与
-`TaskRefBody` 保持布局。待发行 minor 3 追加 method 5 `details`、6 `query`、7 `modify`、8 `history`、
+`TaskRefBody` 保持布局。minor 3 追加 method 5 `details`、6 `query`、7 `modify`、8 `history`、
 9 `modifySeries`，不重编旧编号。
 
 `TaskDetails` 组合旧 WorkTask 与 TaskOptions、TaskMetrics、startRemindedAt、系列信息和期次日期。

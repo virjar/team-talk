@@ -507,6 +507,6 @@ nextOccurrenceAt 与每期独立 taskId；系列锚点锁和同一事务中的�
 ### 协议边界
 
 系统对端复用 `UserRole.SYSTEM` 和 `PERSONAL` 聊天类型，但创建入口
-`chat.getOrCreateSystemChat` 是待发行 minor 3 的 RPC。其可调用性遵循协议协商，不能以复用既有
+`chat.getOrCreateSystemChat` 自 minor 3 可用。其可调用性遵循协议协商，不能以复用既有
 类型推导旧客户端或旧服务端已支持完整系统会话流程；契约以[协议版本规则](../04-protocol/versioning.md)和
 当前 `ChatRpc` 定义为准。

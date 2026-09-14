@@ -68,9 +68,9 @@
   `doc/07-operations/releases/<releaseVersion>.md`，GitHub tag 与生成摘要不能代替这份说明。
 - **正式产品发行由用户明确确认。** 展示版本、构建号、人工发行说明、`prepareProtocolRelease`、tag 和
   GitHub 发布都属于正式发行。开发、服务器部署、Agent 本机验收不自动授权客户端交付。
-- **协议按发行批次演进，不按功能或提交递增。** 当前发行 `0.0.2 / protocol 0.2`；协议 0.0、
-  0.1 与 0.2 均受正式快照保护。当前发行周期的新增契约共用待发行 minor 3 与 `@SinceProtocol(3)`，
-  同一发行周期不再按功能累加 minor；纯实现或 UI 修复不增加协议号。
+- **协议按发行批次演进，不按功能或提交递增。** 当前发行 `0.0.3 / protocol 0.3`；协议 0.0、
+  0.1、0.2 与 0.3 均受正式快照保护。后续首次新增契约才开启下一 minor，同一发行周期的新增契约
+  共用该 minor 与对应 `@SinceProtocol`；纯实现或 UI 修复不增加协议号。
 - 开发清单 `protocol/protocol/wire-baseline.tsv` 只记录当前源码，不冻结兼容历史。修改待发布新增契约后
   仍需审阅并运行 `writeProtocolBaseline`；兼容校验只针对 `releases/` 中的正式快照和已有的明确冻结契约。
   已发行 RPC/wire 编号、字段和墓碑保持不变；同批尚未发行的新增契约可以直接修订，无须再造 V2/V3。

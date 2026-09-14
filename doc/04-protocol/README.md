@@ -20,8 +20,8 @@ TLS 位于 Packet 外层，不通过 PacketType 协商。远程 TCP 使用 TLS�
 见[传输配置](../07-operations/configuration.md#传输配置边界)。TLS 就绪后先协商，再发 AUTH；
 协议协商不携带密码，也不通过降级明文绕过传输失败。
 
-当前发行协议为 `0.2`，数字 ID `2`，独立于展示版本 `0.0.2`；最低支持协议为 `0.0`。
-协议 0.0、0.1 与 0.2 都受正式快照保护；当前源码新增契约使用待发行 0.3，同一发行周期共用 minor 3，
+当前发行协议为 `0.3`，数字 ID `3`，独立于展示版本 `0.0.3`；最低支持协议为 `0.0`。
+协议 0.0、0.1、0.2 与 0.3 都受正式快照保护；后续新增契约在同一发行周期共用下一 minor，
 纯实现修复不增加协议号。版本、兼容窗口和数据迁移规则见[版本机制](versioning.md)。
 `ProtocolLimits.AUTH_PREAMBLE_MARKER` 只保留 AUTH 的固定 bootstrap 字节标识；业务版本使用
 `ProtocolVersions` 与 `ProtocolVersion`。Netty 的 `PacketCodec.PROTOCOL_VERSION` 是当前数字 ID 的兼容别名。

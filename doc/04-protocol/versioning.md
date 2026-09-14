@@ -1,16 +1,16 @@
 # 版本、兼容窗口与数据演进
 
-TeamTalk 处于开发者预览阶段，**不对使用者保证版本兼容，未来仍可能有破坏性变更**。这不等于内部开发可以
-随意破坏已有资料：从开发者预览零号基线开始，普通升级保留数据，同一协议大版本采用追加契约与明确迁移。
+TeamTalk 处于开发者预览阶段，兼容评审以正式 tag 为基线，不承诺同号开发快照彼此兼容。
+普通升级保留数据，同一协议大版本采用追加契约与明确迁移；未来破坏性变更必须说明迁移与影响。
 本章是协议生命周期和内部兼容规则的权威说明。
 
 ## 先分清版本与安装数字
 
 | 身份 | 当前值与来源 | 用途 | 递增时机 |
 |---|---|---|---|
-| 统一展示版本 | `teamtalk.releaseVersion=0.0.2` | Server、SDK、Android、Desktop、MCP 使用同一字符串，配合 commit 排查构建范围 | 用户明确确认正式产品发行后推进；内测 snapshot 保持它不变，不从它推导协议能力 |
-| 协议数字版本 | 当前发行 `0.2`（ID 2），源码待发行 `0.3`（ID 3），最低支持 `0.0`（ID 0）；`id=(major << 16) \| minor` | 连接协商、协议注解、支持窗口与升级提示 | 同一正式发行周期共用一个待发布 minor；已冻结 minor 2，当前新增契约共用 minor 3；新 major 从 minor 0 开始 |
-| 正式构建计数 | 根 `teamtalk.releaseBuildNumber=2` | Android `versionCode=buildNumber+1`；正式 Desktop revision 同样映射为 `buildNumber+1` | 正式发行时由用户确认推进；内测 snapshot 不修改它，Android 保持当前 code 手动覆盖 |
+| 统一展示版本 | `teamtalk.releaseVersion=0.0.3` | Server、SDK、Android、Desktop、MCP 使用同一字符串，配合 commit 排查构建范围 | 用户明确确认正式产品发行后推进；内测 snapshot 保持它不变，不从它推导协议能力 |
+| 协议数字版本 | 当前发行 `0.3`（ID 3），最低支持 `0.0`（ID 0）；`id=(major << 16) \| minor` | 连接协商、协议注解、支持窗口与升级提示 | 后续首次新增契约开启下一 minor，同一发行周期共用它；新 major 从 minor 0 开始 |
+| 正式构建计数 | 根 `teamtalk.releaseBuildNumber=3` | Android `versionCode=buildNumber+1`；正式 Desktop revision 同样映射为 `buildNumber+1` | 正式发行时由用户确认推进；内测 snapshot 不修改它，Android 保持当前 code 手动覆盖 |
 | 内测 Desktop 修订号 | `desktopRevision=完整 Git first-parent 提交数+根构建号+1` | 区分同一展示版本的不同 Desktop 安装包，记录在内测清单与安装元数据中 | 手动 snapshot 交付时自动计算，不写回配置、不依赖 tag；同展示版本的后续 snapshot 从已分发源码的后代构建，原字节重试复用原号 |
 
 人工版本配置均来自根 `gradle.properties`；内测 Desktop revision 另外依据完整 Git 历史推导。
@@ -31,8 +31,8 @@ SDK 或平台壳里另外硬编码一个发行字符串。`major` 范围 `0..327
 ## 开发编号与发行契约分开管理
 
 协议版本表示两次正式发行之间的整体契约差异，不表示功能数、提交数或 AI 调试次数。
-当前正式基线是 `0.0.2 / protocol 0.2`。`0.0.0`、`0.0.1`、`0.0.2` 的正式快照均不可修改。
-当前新增契约使用待发行 minor 3，同一发行周期继续共用它；仅修复实现时保留当前协议号。
+当前正式基线是 `0.0.3 / protocol 0.3`。`0.0.0` 至 `0.0.3` 的正式快照均不可修改。
+后续首次新增契约开启下一 minor，同一发行周期继续共用它；仅修复实现时保留当前协议号。
 
 | 阶段 | 协议动作 | 兼容对象 |
 |---|---|---|
@@ -43,7 +43,7 @@ SDK 或平台壳里另外硬编码一个发行字符串。`major` 范围 `0..327
 
 ```mermaid
 flowchart LR
-    Frozen["当前发行：协议 0.2 冻结"] --> New{"是否新增契约"}
+    Frozen["当前发行：协议 0.3 冻结"] --> New{"是否新增契约"}
     New -->|否| Fix["实现修复：保留协议号"]
     New -->|是| Pending["开启下一 minor，同批共用"]
     Pending --> QA["开发与内测：源码 SHA + schema 哈希"]
@@ -232,8 +232,8 @@ flowchart TD
 
 ## 安装版本与升级边界
 
-普通升级保留同一安装的资料、身份与签名。当前展示版本为 `0.0.2`、根构建号为 `2`，
-Android `versionCode` 与正式 Desktop revision 均为 `3`。snapshot 保持展示版本与 Android code，
+普通升级保留同一安装的资料、身份与签名材料。当前展示版本为 `0.0.3`、根构建号为 `3`，
+Android `versionCode` 与正式 Desktop revision 均为 `4`。snapshot 保持展示版本与 Android code，
 Desktop revision 按完整 first-parent 提交数加根构建号再加一计算。不同私有应用沿用自己的安装身份，
 不能通过改包名或资料目录实现升级。
 

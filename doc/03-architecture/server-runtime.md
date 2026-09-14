@@ -30,7 +30,7 @@ resolve Environment/dataRoot
   → expose health status
 ```
 
-当前发行版本为 `0.0.2`、冻结协议 `0.2`，源码的待发行协议窗口为 `0.0` 至 `0.3`；服务端存储 epoch 是 **1**，普通升级保留
+当前发行版本为 `0.0.3`、冻结协议 `0.3`，支持协议窗口为 `0.0` 至 `0.3`；服务端存储 epoch 是 **1**，普通升级保留
 原 dataset ID。连接协商不能代替存储迁移；不支持的 schema、epoch、dataset 或迁移记录会阻止启动，普通
 升级不清空业务数据。PostgreSQL 按源码清单依次迁移，覆盖遥测协议 ID、封禁凭据墓碑、办公协作与客户端发布注册等布局；DDL 与
 `schema_migrations` 收据处于同一启动事务，失败共同回滚，完成后重启不重复执行。具体顺序和后续
@@ -161,7 +161,7 @@ minor 从构建的 `ProtocolVersions.MINIMUM_MINOR` 向上提高，且不能超�
 产物，领域服务不直接持有连接。普通 MESSAGE 另在业务处理前检查正文类型的可用窗口。
 
 同 major 的扩展只能追加契约，minor 按正式发行批次递增，既有方法、模型字段和编号不能原地改义。
-`0.0.2` 已冻结协议 `0.2`；当前新增契约统一使用待发行 minor 3。注解负责可用
+`0.0.3` 已冻结协议 `0.3`；后续新增契约按发行批次使用下一 minor。注解负责可用
 范围，业务作者仍须保留窗口内各版本的行为；方法可调用并不证明所有返回模型都能被旧端解码。
 实现入口是 [ImAgent](../../server/server/src/main/kotlin/com/virjar/tk/server/protocol/connection/ImAgent.kt)、
 [RpcDispatcher](../../server/server/src/main/kotlin/com/virjar/tk/server/protocol/dispatcher/RpcDispatcher.kt)
