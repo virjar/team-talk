@@ -12,6 +12,7 @@ import com.virjar.tk.protocol.PacketBuffer
  * （DocumentRpc.getDocument / GroupFileRpc.getEntry），删除、归档或撤权后安全降级。
  * 转发只复制引用与冻结预览，不复制权威对象或扩大权限。
  */
+@kotlinx.serialization.Serializable
 data class OfficeRefBody(
     /** 1=Document（spaceId=空间 id，targetId=documentId）；2=群共享文件（spaceId=群 chatId，targetId=entryId）。 */
     val refType: Int,

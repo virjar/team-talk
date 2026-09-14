@@ -379,9 +379,11 @@ internal fun Application.module(
                 MaintenanceWorker("task-due-reminders") {
                     while (isActive) {
                         val delayMillis = try {
+                            val generated = tasks.generateWeekly()
+                            val started = tasks.remindStarted()
                             val reminded = tasks.remindDue()
                             tasks.cleanupReceipts()
-                            if (reminded == 100) 1_000L else 30_000L
+                            if (generated == 100 || started == 100 || reminded == 100) 1_000L else 30_000L
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (failure: Exception) {

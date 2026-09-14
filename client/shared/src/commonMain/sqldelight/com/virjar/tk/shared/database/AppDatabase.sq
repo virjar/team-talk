@@ -1729,9 +1729,54 @@ CREATE TABLE IF NOT EXISTS task_reminders (
     notified INTEGER NOT NULL DEFAULT 0,
     confirmed INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS task_details (
+    task_id TEXT NOT NULL PRIMARY KEY,
+    revision INTEGER NOT NULL,
+    options_payload BLOB NOT NULL,
+    metrics_payload BLOB NOT NULL,
+    start_reminded_at INTEGER,
+    series_payload BLOB,
+    occurrence_date TEXT
+);
+CREATE TABLE IF NOT EXISTS task_query_pages (
+    query_key TEXT NOT NULL PRIMARY KEY,
+    group_id TEXT,
+    payload BLOB NOT NULL,
+    stale INTEGER NOT NULL DEFAULT 0,
+    touched_at INTEGER NOT NULL
+);
+
+selectTaskDetails:
+SELECT * FROM task_details WHERE task_id = ?;
+upsertTaskDetails:
+INSERT OR REPLACE INTO task_details(task_id, revision, options_payload, metrics_payload, start_reminded_at, series_payload, occurrence_date) VALUES (?, ?, ?, ?, ?, ?, ?);
+deleteTaskDetails:
+DELETE FROM task_details WHERE task_id = ?;
+deleteAllTaskDetails:
+DELETE FROM task_details;
+pruneTaskDetails:
+DELETE FROM task_details WHERE task_id NOT IN (SELECT task_id FROM task_projection);
+selectTaskQueryPage:
+SELECT * FROM task_query_pages WHERE query_key = ?;
+selectTaskQueryPages:
+SELECT * FROM task_query_pages;
+upsertTaskQueryPage:
+INSERT OR REPLACE INTO task_query_pages(query_key, group_id, payload, stale, touched_at) VALUES (?, ?, ?, 0, ?);
+deleteTaskQueryPage:
+DELETE FROM task_query_pages WHERE query_key = ?;
+deleteTaskGroupQueryPages:
+DELETE FROM task_query_pages WHERE group_id = ?;
+staleTaskQueryPages:
+UPDATE task_query_pages SET stale = 1;
+deleteAllTaskQueryPages:
+DELETE FROM task_query_pages;
+pruneTaskQueryPages:
+DELETE FROM task_query_pages WHERE rowid NOT IN (SELECT rowid FROM task_query_pages ORDER BY touched_at DESC, rowid DESC LIMIT 16);
 
 selectTask:
 SELECT payload FROM task_projection WHERE task_id = ?;
+selectTasks:
+SELECT payload FROM task_projection;
 upsertTask:
 INSERT OR REPLACE INTO task_projection(task_id, payload, touched_at) VALUES (?, ?, ?);
 deleteTask:

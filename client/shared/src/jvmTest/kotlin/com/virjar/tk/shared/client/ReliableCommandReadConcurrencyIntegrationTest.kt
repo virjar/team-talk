@@ -34,7 +34,7 @@ class ReliableCommandReadConcurrencyIntegrationTest {
             val held = HeldRpcResponse(responses, TaskRpcContract.M_LIST)
             val repository = TaskRepository(held, cache.tasks, OWNER)
             repository.edit(before, draft(accepted.title)).getOrThrow()
-            val command = cache.tasks.pending().single().command
+            val command = requireNotNull(cache.tasks.pending().single().command)
 
             val oldRead = async(start = CoroutineStart.UNDISPATCHED) { repository.refresh(TASK_KEY) }
             held.started.await()
@@ -194,7 +194,7 @@ class ReliableCommandReadConcurrencyIntegrationTest {
             assertNull(cache.tasks.task(ID))
             assertNull(cache.tasks.page(TASK_KEY))
             assertEquals(original, cache.tasks.pending(ID))
-            assertContentEquals(TaskRpcContract.encodeMutate(original.command), responses.calls.last().third)
+            assertContentEquals(TaskRpcContract.encodeMutate(requireNotNull(original.command)), responses.calls.last().third)
         }
     }
 

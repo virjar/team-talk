@@ -8,6 +8,33 @@ import kotlin.test.*
 
 class TaskModelTest {
     @Test
+    fun detailsPagesKeepReleasedTaskBoundariesAndRoundTripAllExtensionFacts() {
+        val draft = TaskDraft("每周报告", "# 报告\n- 内容", "assignee", dueAt = 500)
+        val task = WorkTask(ID, "creator", "assignee", draft.title, draft.description, TaskPolicy.TODO, 0, "", 500, null, 1, 1, 1)
+        val options = TaskOptions(TaskOptions.MARKDOWN, 100, documentRefs = listOf(com.virjar.tk.protocol.body.OfficeRefBody(1, ID, ID, "材料")),
+            attachments = listOf(Attachment("files/report.txt", "报告.txt", "text/plain", 20)))
+        val rule = TaskWeeklyRule(1, "09:00", "17:00", "Asia/Shanghai")
+        val series = TaskSeries(ID, "creator", 1, true, rule, 1000)
+        val details = TaskDetails(task, options, TaskMetrics(400, 1, 50, 100, null, true), 101, series, "2026-09-14")
+        val page = TaskQueryPage(listOf(details, details.copy(task = task.copy(taskId = SECOND_ID))), "next", TaskSummary(3, 3, 1, 500, 0, null))
+        assertEquals(page, ProtoCodec.decode(TaskQueryPage, ProtoCodec.encode(page)))
+        val command = TaskDetailsCommand(ID, 10, ID, 0, TaskDetailsCommand.CREATE, draft, options, weeklyRule = rule)
+        assertEquals(command, ProtoCodec.decode(TaskDetailsCommand, ProtoCodec.encode(command)))
+        val deferred = TaskDetailsCommand(ID, 10, ID, 1, TaskDetailsCommand.DEFER, deferDueAt = 900, reason = "等待审核")
+        assertEquals(deferred, ProtoCodec.decode(TaskDetailsCommand, ProtoCodec.encode(deferred)))
+        val control = TaskSeriesCommand(ID, 10, ID, 1, false)
+        assertEquals(control, ProtoCodec.decode(TaskSeriesCommand, ProtoCodec.encode(control)))
+        val query = TaskQuery(TaskQuery.GROUP, ID, true, true)
+        assertEquals(query, ProtoCodec.decode(TaskQuery, ProtoCodec.encode(query)))
+        val started = TaskStartedPayload(ID, 1, 100)
+        assertEquals(started, ProtoCodec.decode(TaskStartedPayload, ProtoCodec.encode(started)))
+        // Start reminders precede due and must never be folded into the released remindedAt field.
+        assertFailsWith<IllegalArgumentException> { task.copy(remindedAt = 100) }
+        assertEquals(TaskOptions(), ProtoCodec.decode(TaskOptions, ProtoCodec.encode(TaskOptions())))
+        assertFailsWith<IllegalArgumentException> { TaskWeeklyRule(1, "18:00", "09:00", "Asia/Shanghai") }
+        assertFailsWith<IllegalArgumentException> { options.copy(attachments = List(21) { options.attachments.single() }) }
+    }
+    @Test
     fun taskCommandAuditAndReminderRoundTrip() {
         val draft = TaskDraft("整理计划", "第一行\n第二行", "assignee", TaskPolicy.CONTEXT_GROUP, ID, 500)
         val task = WorkTask(ID, "creator", draft.assigneeUid, draft.title, draft.description,
@@ -54,5 +81,8 @@ class TaskModelTest {
         assertFails { ProtoCodec.decode(TaskCommand, bytes.copyOf(bytes.size - 1)) }
         assertFails { ProtoCodec.decode(TaskCommand, bytes + byteArrayOf(0)) }
     }
-    companion object { private const val ID = "00000000-0000-4000-8000-000000000001" }
+    companion object {
+        private const val ID = "00000000-0000-4000-8000-000000000001"
+        private const val SECOND_ID = "00000000-0000-4000-8000-000000000002"
+    }
 }

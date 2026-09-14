@@ -1,0 +1,18 @@
+-- TODO-01 扩展投影；原任务 wire、待确认命令和提醒收据保持原表原字节。
+-- 旧未标版本数据库会重放迁移，所有新增对象必须可以重复创建。
+CREATE TABLE IF NOT EXISTS task_details (
+    task_id TEXT NOT NULL PRIMARY KEY,
+    revision INTEGER NOT NULL,
+    options_payload BLOB NOT NULL,
+    metrics_payload BLOB NOT NULL,
+    start_reminded_at INTEGER,
+    series_payload BLOB,
+    occurrence_date TEXT
+);
+CREATE TABLE IF NOT EXISTS task_query_pages (
+    query_key TEXT NOT NULL PRIMARY KEY,
+    group_id TEXT,
+    payload BLOB NOT NULL,
+    stale INTEGER NOT NULL DEFAULT 0,
+    touched_at INTEGER NOT NULL
+);

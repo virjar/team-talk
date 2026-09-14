@@ -32,8 +32,8 @@ class ReliableCommandLookupIntegrationTest {
             assertEquals(0, driver.wholeQueueReads, "prepare only checks its task and the capacity count")
             val selected = cache.tasks.pending()
             selected.forEach { record ->
-                val draft = requireNotNull(record.command.draft)
-                val task = WorkTask(record.command.taskId, OWNER, OWNER, draft.title, draft.description,
+                val draft = requireNotNull(record.draft)
+                val task = WorkTask(record.taskId, OWNER, OWNER, draft.title, draft.description,
                     TaskPolicy.TODO, TaskPolicy.CONTEXT_NONE, "", null, null, 1, 1, 1)
                 rpc.enqueueOk(ProtoCodec.encode(TaskCommandResult(task)))
             }

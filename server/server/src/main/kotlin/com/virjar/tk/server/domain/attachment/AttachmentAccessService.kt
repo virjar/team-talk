@@ -26,6 +26,7 @@ class AttachmentAccessService(
     private val userAvatars: UserAvatarReferences = UserAvatarReferences { emptySet() },
     private val groupAvatars: GroupAvatarReferences = GroupAvatarReferences { emptySet() },
     private val drafts: ChatDraftAttachmentReferences? = null,
+    private val tasks: TaskAttachmentReferences? = null,
 ) : AttachmentAccess {
     override suspend fun canRead(uid: String, path: String): Boolean =
         readAuthorized(uid, path) { true } == true
@@ -63,6 +64,7 @@ class AttachmentAccessService(
         }
         if (documents.canRead(uid, canonicalPath)) return@withContext block(canonicalPath)
         if (drafts?.canRead(uid, canonicalPath) == true) return@withContext block(canonicalPath)
+        if (tasks?.canRead(uid, canonicalPath) == true) return@withContext block(canonicalPath)
         chats.readAccessibleChatIds(uid) { allowedChatIds ->
             if (references.isReferencedByAny(canonicalPath, allowedChatIds)) {
                 block(canonicalPath)

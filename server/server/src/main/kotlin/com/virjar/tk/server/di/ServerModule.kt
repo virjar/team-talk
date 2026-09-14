@@ -380,7 +380,10 @@ internal fun createServerModule(
     single<com.virjar.tk.server.domain.document.DocumentCommentRepository> { com.virjar.tk.server.infra.db.repository.ExposedDocumentCommentRepository() }
     single { com.virjar.tk.server.domain.document.DocumentCommentService(get(), get(), get()) }
     single<com.virjar.tk.server.domain.task.TaskRepository> { com.virjar.tk.server.infra.db.repository.ExposedTaskRepository() }
-    single { com.virjar.tk.server.domain.task.TaskService(get(), get()) }
+    single { com.virjar.tk.server.domain.task.TaskService(get(), get(), attachments = get(), attachmentLifecycle = get(), officeRefs = OfficeRefResolver(get(), get())) }
+    single<com.virjar.tk.server.domain.attachment.TaskAttachmentReferences> {
+        com.virjar.tk.server.infra.db.repository.ExposedTaskAttachmentReferences(get(), get())
+    }
     single {
         DocumentService(
             repository = get(),
@@ -432,6 +435,7 @@ internal fun createServerModule(
         val userAvatars = get<UserAvatarReferences>()
         val groupAvatars = get<GroupAvatarReferences>()
         val drafts = get<com.virjar.tk.server.domain.attachment.ChatDraftAttachmentReferences>()
+        val tasks = get<com.virjar.tk.server.domain.attachment.TaskAttachmentReferences>()
         object : AttachmentReferences {
             override fun getChatIds(path: String): Set<String> =
                 messages.getAttachmentChatIds(path) + groupFiles.getAttachmentChatIds(path)
@@ -445,7 +449,7 @@ internal fun createServerModule(
                     groupFiles.getReferencedAttachmentPaths(paths) +
                     documents.getReferencedPaths(paths) +
                     userAvatars.getReferencedPaths(paths) +
-                    groupAvatars.getReferencedPaths(paths) + drafts.getReferencedPaths(paths)
+                    groupAvatars.getReferencedPaths(paths) + drafts.getReferencedPaths(paths) + tasks.getReferencedPaths(paths)
         }
     }
     single<AttachmentAccess> {
@@ -453,6 +457,7 @@ internal fun createServerModule(
             get(), get(), get(), get(), get(),
             groupAvatars = get(),
             drafts = get(),
+            tasks = get(),
         )
     }
     single {

@@ -49,6 +49,7 @@ object NotifyContracts {
         NotifyType.DOCUMENT_CHANGED to DocumentChangedPayload,
         NotifyType.TASK_CHANGED to TaskChangedPayload,
         NotifyType.TASK_DUE to TaskDuePayload,
+        NotifyType.TASK_STARTED to TaskStartedPayload,
 
         // 会话
         NotifyType.CONVERSATION_UPDATED to Conversation,

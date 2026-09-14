@@ -33,18 +33,18 @@ class TaskRecoveryIntegrationTest {
                 assertEquals(Outcome.Failure(AppError.Network), repo.retryPending())
                 bytes = checkNotNull(rpc.calls.single().third)
                 assertEquals(TaskRpcContract.M_MUTATE, rpc.calls.single().second)
-                assertFailsWith<IllegalStateException> { repo.discardRejected(record.command.taskId) }
+                assertFailsWith<IllegalStateException> { repo.discardRejected(record.taskId) }
             }
             cache(file) { cache ->
                 assertEquals(record, cache.tasks.pending().single())
-                val task = task(record.command.taskId)
+                val task = task(record.taskId)
                 val rpc = FakeRpcInvoker().apply { enqueueOk(ProtoCodec.encode(TaskCommandResult(task))) }
                 TaskRepository(rpc, cache.tasks, OWNER).retryPending().getOrThrow()
                 assertContentEquals(bytes, rpc.calls.single().third)
                 assertTrue(cache.tasks.pending().isEmpty())
                 assertEquals(task, cache.tasks.task(task.taskId))
             }
-            cache(file) { assertTrue(it.tasks.pending().isEmpty()); assertEquals(record.command.taskId, it.tasks.task(record.command.taskId)?.taskId) }
+            cache(file) { assertTrue(it.tasks.pending().isEmpty()); assertEquals(record.taskId, it.tasks.task(record.taskId)?.taskId) }
         }
     }
 
@@ -60,7 +60,7 @@ class TaskRecoveryIntegrationTest {
                 repo.setStatus(task(id(3)), TaskPolicy.DONE).getOrThrow()
                 assertIs<Outcome.Failure>(repo.retryPending())
                 saved = cache.tasks.pending()
-                assertEquals(setOf(TaskCommand.CREATE, TaskCommand.EDIT, TaskCommand.STATUS), saved.map { it.command.kind }.toSet())
+                assertEquals(setOf(TaskCommand.CREATE, TaskCommand.EDIT, TaskCommand.STATUS), saved.map { it.kind }.toSet())
                 assertTrue(saved.all { it.failure != null })
                 repo.retryPending().getOrThrow()
                 assertEquals(3, rpc.calls.size)
@@ -69,10 +69,10 @@ class TaskRecoveryIntegrationTest {
                 val repo = TaskRepository(FakeRpcInvoker(), cache.tasks, OWNER)
                 assertEquals(saved, cache.tasks.pending())
                 val rejected = saved.first()
-                repo.retry(rejected.command.taskId)
+                repo.retry(rejected.taskId)
                 assertEquals(rejected.command, cache.tasks.pending().first().command)
                 assertNull(cache.tasks.pending().first().failure)
-                saved.drop(1).forEach { repo.discardRejected(it.command.taskId) }
+                saved.drop(1).forEach { repo.discardRejected(it.taskId) }
                 assertEquals(1, cache.tasks.pending().size)
             }
         }
@@ -94,7 +94,7 @@ class TaskRecoveryIntegrationTest {
             local.revoke(task.taskId)
             assertEquals(revokedGeneration, local.generation(), "Repeated denied reads must not trigger a refresh loop")
             assertFalse(local.applyTask(task, oldGeneration, OWNER))
-            assertEquals("保留本机修改", local.pending().single().command.draft?.title)
+            assertEquals("保留本机修改", local.pending().single().draft?.title)
             cache.resetServerProjection(DATASET)
             assertEquals(1, local.pending().size)
         }
@@ -130,14 +130,14 @@ class TaskRecoveryIntegrationTest {
                 val ep = EventProcessor(ImClient("127.0.0.1", 1), cache, ownerUid = OWNER, onTaskReminderDirty = { wakes++ })
                 ep.processNotify(NotifyPayload(1, NotifyType.TASK_DUE.code, ProtoCodec.encode(TaskDuePayload(ID, 1, 200))))
                 assertEquals(1L, cache.getSyncState()?.cursor)
-                assertEquals(listOf(TaskDuePayload(ID, 1, 200)), cache.tasks.reminderHints())
+                assertEquals(listOf(TaskReminder(ID, 1, 200)), cache.tasks.reminderHints())
                 assertTrue(cache.tasks.reminders().isEmpty())
                 assertEquals(1, wakes)
             }
             cache(file) { cache ->
-                val rpc = FakeRpcInvoker().apply { enqueueOk(ProtoCodec.encode(task().copy(dueAt = 100, remindedAt = 200))) }
+                val rpc = FakeRpcInvoker().apply { enqueueOk(ProtoCodec.encode(TaskDetails(task().copy(dueAt = 100, remindedAt = 200)))) }
                 TaskRepository(rpc, cache.tasks, OWNER).retryPending().getOrThrow()
-                assertEquals(TaskRpcContract.M_GET, rpc.calls.single().second)
+                assertEquals(TaskRpcContract.M_DETAILS, rpc.calls.single().second)
                 assertEquals(TaskReminder(ID, 1, 200), cache.tasks.reminders().single())
                 cache.tasks.markReminderNotified(ID, 200)
                 assertFalse(cache.tasks.reminders().single().seen)
@@ -168,7 +168,7 @@ class TaskRecoveryIntegrationTest {
             val local = cache.tasks
             local.due(TaskDuePayload(ID, 1, 200))
             val responses = FakeRpcInvoker().apply {
-                repeat(3) { enqueueOk(ProtoCodec.encode(task().copy(dueAt = 100, remindedAt = 200))) }
+                repeat(3) { enqueueOk(ProtoCodec.encode(TaskDetails(task().copy(dueAt = 100, remindedAt = 200)))) }
             }
             var invalidateReads = true
             val rpc = object : RpcInvoker {

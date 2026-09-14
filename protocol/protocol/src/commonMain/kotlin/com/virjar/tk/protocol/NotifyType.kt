@@ -35,6 +35,8 @@ enum class NotifyType(val code: Int) {
     TASK_CHANGED(24),
     @SinceProtocol(2)
     TASK_DUE(25),
+    @SinceProtocol(3)
+    TASK_STARTED(26),
 
     // 会话
     CONVERSATION_UPDATED(30),

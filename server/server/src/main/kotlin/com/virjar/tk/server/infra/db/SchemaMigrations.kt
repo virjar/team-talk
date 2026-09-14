@@ -69,11 +69,18 @@ private val schemaMigrations = listOf(
         exec("DELETE FROM conversations WHERE uid IN ('sys_assistant', 'sys_service')")
         exec("DELETE FROM conversation_usages WHERE uid IN ('sys_assistant', 'sys_service')")
     },
+    SchemaMigration("create_task_details_and_weekly_series") {
+        // Missing extension rows deliberately mean private/plain-text/unknown historical metrics.
+        // SchemaUtils.create commits internally; these DDL statements must share the receipt transaction.
+        SchemaUtils.createStatements(TaskExtensions, TaskAttachmentPaths, TaskDeferrals, TaskSeriesTemplates, TaskSeriesAttachmentPaths)
+            .forEach { exec(it) }
+    },
 )
 
-/** Caller owns the schema_metadata lock; DDL and its completion receipt commit in the same transaction. */
+/** Caller owns the schema_metadata lock; new migrations must not commit before their completion receipt. */
 internal fun Transaction.applySchemaMigrations() {
-    SchemaUtils.create(SchemaMigrations)
+    // Preserve the caller's schema_metadata lock, even when the ledger already exists.
+    SchemaUtils.createStatements(SchemaMigrations).forEach { exec(it) }
     val applied = SchemaMigrations.selectAll().orderBy(SchemaMigrations.version)
         .limit(schemaMigrations.size + 1).toList()
     check(applied.size <= schemaMigrations.size) {

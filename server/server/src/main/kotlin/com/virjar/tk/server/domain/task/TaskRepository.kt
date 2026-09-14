@@ -1,7 +1,6 @@
 package com.virjar.tk.server.domain.task
 
-import com.virjar.tk.protocol.model.TaskAudit
-import com.virjar.tk.protocol.model.WorkTask
+import com.virjar.tk.protocol.model.*
 import com.virjar.tk.server.domain.transaction.PgReadTransactionContext
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
 
@@ -24,7 +23,26 @@ interface TaskRepository {
     /** Caller holds the task lock. The returned delivery timestamp is unique across reminder resets. */
     fun markReminded(transaction: PgWriteTransactionContext, taskId: String, now: Long): Long
     fun cleanupReceipts(transaction: PgWriteTransactionContext, now: Long, limit: Int): Int
+    fun extension(transaction: PgReadTransactionContext, taskId: String): TaskExtension
+    fun saveExtension(transaction: PgWriteTransactionContext, taskId: String, extension: TaskExtension)
+    fun query(transaction: PgReadTransactionContext, uid: String, query: TaskQuery, now: Long, before: TaskPageAnchor?, limit: Int): List<WorkTask>
+    fun summary(transaction: PgReadTransactionContext, uid: String, query: TaskQuery, now: Long): TaskSummary
+    fun groupAudience(transaction: PgReadTransactionContext, groupId: String): Set<String>
+    fun appendDeferral(transaction: PgWriteTransactionContext, deferral: TaskDeferral)
+    fun deferrals(transaction: PgReadTransactionContext, taskId: String, revisions: List<Long>): Map<Long, TaskDeferral>
+    fun startCandidates(transaction: PgReadTransactionContext, now: Long, limit: Int): List<String>
+    fun markStarted(transaction: PgWriteTransactionContext, taskId: String, now: Long): Long
+    fun series(transaction: PgReadTransactionContext, seriesId: String): TaskSeriesTemplate?
+    fun saveSeries(transaction: PgWriteTransactionContext, series: TaskSeriesTemplate)
+    fun seriesCandidates(transaction: PgReadTransactionContext, now: Long, limit: Int): List<TaskSeriesTemplate>
+    fun attachmentTasks(transaction: PgReadTransactionContext, path: String): List<String>
 }
+
+data class TaskExtension(val options: TaskOptions = TaskOptions(), val metrics: TaskMetrics = TaskMetrics(),
+    val startRemindedAt: Long? = null, val seriesId: String? = null, val occurrenceDate: String? = null)
+
+@kotlinx.serialization.Serializable
+data class TaskSeriesTemplate(val info: TaskSeries, val draft: TaskDraft, val options: TaskOptions)
 
 data class TaskPageAnchor(val createdAt: Long, val taskId: String)
 data class TaskCommandReceipt(val actorUid: String, val operationId: String, val taskId: String,

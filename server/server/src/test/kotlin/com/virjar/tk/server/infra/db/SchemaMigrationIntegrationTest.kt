@@ -11,13 +11,47 @@ import kotlin.test.assertTrue
 
 class SchemaMigrationIntegrationTest {
     @Test
+    fun `task extension migration preserves existing tasks and dataset across failure and reopen`() {
+        PostgresSchemaLease.open().use { lease ->
+            val datasetId = open(lease).use { it.datasetId }
+            lease.openConnection().use { connection -> connection.createStatement().use { statement ->
+                statement.execute("DROP TABLE task_extensions, task_attachment_paths, task_deferrals, task_series_attachment_paths, task_series")
+                statement.execute("DELETE FROM schema_migrations WHERE version >= 7")
+                statement.execute("INSERT INTO users (uid, username, name, password_hash, created_at, updated_at) " +
+                    "VALUES ('legacy-task-owner', 'legacy-task-owner', 'kept', 'fixture-only', 11, 12)")
+                statement.execute("INSERT INTO work_tasks (task_id, creator_uid, assignee_uid, title, description, status, context_kind, context_id, due_at, revision, created_at, updated_at) " +
+                    "VALUES ('00000000-0000-4000-8000-000000000007', 'legacy-task-owner', 'legacy-task-owner', '旧标题', '*旧纯文本*', 1, 0, '', 100, 5, 11, 12)")
+                statement.execute("CREATE FUNCTION reject_task_extension_receipt() RETURNS trigger LANGUAGE plpgsql AS " +
+                    "'BEGIN IF NEW.version = 7 THEN RAISE EXCEPTION ''fixture receipt failure''; END IF; RETURN NEW; END;'")
+                statement.execute("CREATE TRIGGER reject_task_extension BEFORE INSERT ON schema_migrations FOR EACH ROW EXECUTE FUNCTION reject_task_extension_receipt()")
+            } }
+            assertFailsWith<Exception> { open(lease).close() }
+            lease.openConnection().use { connection -> connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT to_regclass('task_extensions') IS NULL").use { assertTrue(it.next()); assertTrue(it.getBoolean(1)) }
+                statement.execute("DROP TRIGGER reject_task_extension ON schema_migrations")
+                statement.execute("DROP FUNCTION reject_task_extension_receipt()")
+            } }
+            repeat(2) {
+                open(lease).use { database -> assertEquals(datasetId, database.datasetId) }
+                lease.openConnection().use { connection -> connection.createStatement().use { statement ->
+                    statement.executeQuery("SELECT title, description, due_at, revision FROM work_tasks WHERE creator_uid = 'legacy-task-owner'").use {
+                        assertTrue(it.next()); assertEquals("旧标题", it.getString(1)); assertEquals("*旧纯文本*", it.getString(2)); assertEquals(100L, it.getLong(3)); assertEquals(5L, it.getLong(4))
+                    }
+                    statement.executeQuery("SELECT count(*) FROM task_extensions").use { assertTrue(it.next()); assertEquals(0L, it.getLong(1)) }
+                    statement.executeQuery("SELECT name FROM schema_migrations WHERE version = 7").use { assertTrue(it.next()); assertEquals("create_task_details_and_weekly_series", it.getString(1)) }
+                } }
+            }
+        }
+    }
+
+    @Test
     fun `fixed system projection migration is atomic and preserves human data on retry and reopen`() {
         PostgresSchemaLease.open().use { lease ->
             val datasetId = open(lease).use { it.datasetId }
             val preserved = lease.openConnection().use { connection ->
                 seedLegacySystemProjections(connection)
                 connection.createStatement().use { statement ->
-                    statement.execute("DELETE FROM schema_migrations WHERE version = 6")
+                    statement.execute("DELETE FROM schema_migrations WHERE version >= 6")
                     statement.execute(
                         "CREATE FUNCTION reject_system_projection_receipt() RETURNS trigger LANGUAGE plpgsql AS " +
                             "'BEGIN IF NEW.version = 6 THEN RAISE EXCEPTION ''fixture receipt failure''; END IF; RETURN NEW; END;'",
@@ -138,7 +172,8 @@ class SchemaMigrationIntegrationTest {
                 // This isolated fixture emulates the immediately preceding schema, never a live instance.
                 statement.execute(
                     "DROP TABLE admin_security_audits, admin_security_credentials, document_comments, " +
-                        "content_search_pending, task_commands, task_audits, work_tasks, " +
+                        "content_search_pending, task_commands, task_audits, task_extensions, task_attachment_paths, " +
+                        "task_deferrals, task_series_attachment_paths, task_series, work_tasks, " +
                         "chat_draft_commands, chat_draft_assets, chat_drafts, " +
                         "oem_push_registrations, admin_feature_settings",
                 )

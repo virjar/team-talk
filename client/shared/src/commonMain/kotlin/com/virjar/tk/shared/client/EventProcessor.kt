@@ -489,6 +489,7 @@ class EventProcessor(
                 publicationGate.use(publicationLease) {
                     val tombstone = { localCache.deleteChat(chat.chatId) }
                     durableChatTombstoneSink?.invoke(chat.chatId, tombstone) ?: tombstone()
+                    ownerUid?.let { localCache.tasks.invalidateGroup(chat.chatId, it) }
                     _chatEvents.tryEmit(notifyType to chat)
                     invalidateContentSearch(ContentSearchRequest.KIND_GROUP_FILE, ContentSearchRequest.KIND_CHAT_ATTACHMENT)
                 }
@@ -502,6 +503,7 @@ class EventProcessor(
                 val chat = decodePayload<Chat>(notifyType, payload)
                 publicationGate.use(publicationLease) {
                     localCache.upsertChat(chat)
+                    ownerUid?.let { localCache.tasks.invalidateGroup(chat.chatId, it) }
                     _chatEvents.tryEmit(notifyType to chat)
                     invalidateContentSearch(ContentSearchRequest.KIND_GROUP_FILE, ContentSearchRequest.KIND_CHAT_ATTACHMENT)
                 }
@@ -625,6 +627,13 @@ class EventProcessor(
                 val change = decodePayload<com.virjar.tk.protocol.TaskDuePayload>(notifyType, payload)
                 publicationGate.use(publicationLease) {
                     localCache.tasks.due(change)
+                    onTaskReminderDirty?.invoke()
+                }
+            }
+            NotifyType.TASK_STARTED -> {
+                val change = decodePayload<com.virjar.tk.protocol.TaskStartedPayload>(notifyType, payload)
+                publicationGate.use(publicationLease) {
+                    localCache.tasks.started(change)
                     onTaskReminderDirty?.invoke()
                 }
             }
