@@ -70,11 +70,32 @@ object Launch4jRunner {
             override fun clear() = Unit
             override fun append(message: String?) = logger.lifecycle("launch4j: {}", message)
         }
-        // launch4j 3.50 经单例取配置；basedir 影响 jar/icon 等相对路径解析，传 exe 所在目录。
-        net.sf.launch4j.config.ConfigPersister.getInstance().setAntConfig(config, exe.parentFile)
-        val produced = net.sf.launch4j.Builder(log).build()
-        check(produced.absolutePath == exe.absolutePath && exe.isFile) {
-            "launch4j did not produce ${exe.absolutePath}"
+        // Launch4j 的 WinMain/CreateProcess 使用 ANSI API；Win10 1903+ 需进程 UTF-8 code page 保留中文参数。
+        // Config.manifest 经 windres 嵌入 PE 的 RT_MANIFEST/1，不在安装目录留下外置 manifest。
+        val manifest = Files.createTempFile("teamtalk-windows-launcher-", ".manifest").toFile()
+        try {
+            val assemblyName = exe.nameWithoutExtension
+                .replace("&", "&amp;").replace("\"", "&quot;").replace("<", "&lt;")
+            manifest.writeText("""
+                <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+                <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+                  <assemblyIdentity type="win32" name="$assemblyName" version="${config.versionInfo.fileVersion}"/>
+                  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+                    <windowsSettings>
+                      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+                    </windowsSettings>
+                  </application>
+                </assembly>
+            """.trimIndent() + "\n", Charsets.UTF_8)
+            config.manifest = manifest
+            // launch4j 3.50 经单例取配置；basedir 影响 jar/icon 等相对路径解析，传 exe 所在目录。
+            net.sf.launch4j.config.ConfigPersister.getInstance().setAntConfig(config, exe.parentFile)
+            val produced = net.sf.launch4j.Builder(log).build()
+            check(produced.absolutePath == exe.absolutePath && exe.isFile) {
+                "launch4j did not produce ${exe.absolutePath}"
+            }
+        } finally {
+            Files.deleteIfExists(manifest.toPath())
         }
     }
 

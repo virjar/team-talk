@@ -15,6 +15,7 @@ jobs:
     name: Release tooling (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
@@ -64,6 +65,17 @@ jobs:
           else
             ./gradlew verifyReleaseMetadata
           fi
+
+      - name: Preserve release tooling test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-tools-${{ runner.os }}-${{ github.run_attempt }}
+          path: |
+            buildSrc/build/test-results/test/
+            buildSrc/build/reports/tests/test/
+          if-no-files-found: ignore
+          retention-days: 14
 
   compile:
     name: Compile Check
@@ -232,8 +244,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libasound2t64 libpulse0 libva-drm2 libva2 libxcb1 libxcb-shm0
 
-      - name: Run server tests
-        run: ./gradlew :server:server:test
+      # Compile remote-only suites here; running their load still requires an explicit test deployment.
+      - name: Run server tests and compile remote capacity suites
+        run: ./gradlew :server:server:compileCapacityTestKotlin :server:server:test
 
       - name: Preserve failed server test reports
         if: failure()
@@ -246,8 +259,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Run protocol and shared SDK tests
-        run: ./gradlew :protocol:protocol:jvmTest :protocol:protocol-netty:jvmTest :client:shared:jvmTest :client:shared-testkit:compileKotlinJvm
+      - name: Run protocol, shared SDK and Headless tests
+        run: ./gradlew :protocol:protocol:jvmTest :protocol:protocol-netty:jvmTest :client:shared:jvmTest :client:shared-testkit:compileKotlinJvm :client:headless:test
 
       - name: Run shared UI and rich editor tests
         run: ./gradlew :client:richeditor:desktopTest :client:app:desktopTest

@@ -3,6 +3,7 @@ package release
 import deployment.RELEASE_ARTIFACT_MANIFEST_FILE
 import deployment.requireReleaseArtifact
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import java.util.Properties
 import java.util.concurrent.TimeUnit
@@ -113,11 +114,11 @@ class HeadlessDistributionTest {
         val caller = File(root, "empty caller").apply { mkdirs() }
         listOf("tt-agent", "tt", "tt-mcp").forEach { name ->
             val result = runLauncher(directory, name, caller, listOf("--version"), File(root, "missing JDK"))
-            assertEquals(0, result.first, result.second)
-            assertTrue(result.second.contains("buildIdentity=$buildIdentity"))
-            assertTrue(result.second.contains("minimumJavaVersion=21"))
-            assertTrue(result.second.contains("distributionDirectory="))
-            assertTrue(result.second.contains(directory.canonicalPath))
+            assertEquals(0, result.exitCode, result.diagnostics)
+            assertTrue(result.output.contains("buildIdentity=$buildIdentity"), result.diagnostics)
+            assertTrue(result.output.contains("minimumJavaVersion=21"), result.diagnostics)
+            assertTrue(result.output.contains("distributionDirectory="), result.diagnostics)
+            assertTrue(result.output.contains(directory.canonicalPath), result.diagnostics)
         }
         assertFalse(caller.listFiles().orEmpty().isNotEmpty())
     }
@@ -133,37 +134,60 @@ class HeadlessDistributionTest {
         listOf("tt", "tt-mcp", "tt-agent").forEach { name ->
             val result = runLauncher(directory, name, caller, args, File(System.getProperty("java.home")))
             if (isWindows() && name != "tt") {
-                assertEquals(1, result.first)
-                assertTrue(result.second.contains("POSIX filesystem"))
+                assertEquals(1, result.exitCode, result.diagnostics)
+                assertTrue(result.output.contains("POSIX filesystem"), result.diagnostics)
             } else {
-                assertEquals(0, result.first, result.second)
-                assertTrue(result.second.contains("cwd=${caller.canonicalPath}"), result.second)
-                assertTrue(result.second.contains("bundle=${directory.canonicalPath}"), result.second)
-                assertTrue(result.second.contains("ipv4=${name == "tt-mcp"}"), result.second)
-                args.forEach { assertTrue(result.second.contains("arg=$it"), result.second) }
+                assertEquals(0, result.exitCode, result.diagnostics)
+                assertTrue(result.output.contains("cwd=${caller.canonicalPath}"), result.diagnostics)
+                assertTrue(result.output.contains("bundle=${directory.canonicalPath}"), result.diagnostics)
+                assertTrue(result.output.contains("ipv4=${name == "tt-mcp"}"), result.diagnostics)
+                args.forEach { assertTrue(result.output.contains("arg=$it"), result.diagnostics) }
             }
         }
     }
 
-    private fun runLauncher(directory: File, name: String, caller: File, args: List<String>, javaHome: File): Pair<Int, String> {
+    private data class LauncherResult(val exitCode: Int, val output: String, val diagnostics: String)
+
+    private fun runLauncher(directory: File, name: String, caller: File, args: List<String>, javaHome: File): LauncherResult {
         val launcher = File(directory, "bin/$name${if (isWindows()) ".bat" else ""}")
         val command = if (isWindows()) listOf("cmd.exe", "/d", "/s", "/c",
             "\"\"${launcher.absolutePath}\" ${args.joinToString(" ") { "\"$it\"" }}\"")
         else listOf(launcher.absolutePath) + args
         val log = File.createTempFile("launcher-", ".log", caller.parentFile)
-        val process = ProcessBuilder(command).directory(caller).apply {
-            environment()["JAVA_HOME"] = javaHome.absolutePath
-            environment().remove("CLASSPATH")
-            environment().remove("JAVA_TOOL_OPTIONS")
-            environment().remove("JDK_JAVA_OPTIONS")
-            redirectErrorStream(true)
-            redirectOutput(log)
-        }.start()
+        val context = buildString {
+            appendLine("launcher=${launcher.absolutePath}")
+            appendLine("command=$command")
+            appendLine("distribution.absolute=${directory.absolutePath}")
+            appendLine("distribution.canonical=${directory.canonicalPath}")
+            appendLine("caller.absolute=${caller.absolutePath}")
+            appendLine("caller.canonical=${caller.canonicalPath}")
+            appendLine("javaHome.absolute=${javaHome.absolutePath}")
+            appendLine("javaHome.canonical=${javaHome.canonicalPath}")
+            appendLine("os.name=${System.getProperty("os.name")}")
+            appendLine("file.encoding=${System.getProperty("file.encoding")}")
+            appendLine("native.encoding=${System.getProperty("native.encoding")}")
+        }
+        val process = try {
+            ProcessBuilder(command).directory(caller).apply {
+                environment()["JAVA_HOME"] = javaHome.absolutePath
+                environment().remove("CLASSPATH")
+                environment().remove("JAVA_TOOL_OPTIONS")
+                environment().remove("JDK_JAVA_OPTIONS")
+                redirectErrorStream(true)
+                redirectOutput(log)
+            }.start()
+        } catch (failure: IOException) {
+            throw IllegalStateException("${context}exit=<not started>\nstdout/stderr:\n${log.readText()}", failure)
+        }
         if (!process.waitFor(15, TimeUnit.SECONDS)) {
             process.destroyForcibly()
-            error("Headless launcher timed out")
+            process.waitFor(5, TimeUnit.SECONDS)
+            error("${context}exit=<timeout>\nstdout/stderr:\n${log.readText()}")
         }
-        return process.exitValue() to log.readText()
+        val output = log.readText()
+        val diagnostics = "${context}exit=${process.exitValue()}\nstdout/stderr:\n$output"
+        println(diagnostics) // JUnit captures every launcher; assertions still inspect only its raw output.
+        return LauncherResult(process.exitValue(), output, diagnostics)
     }
 
     private fun writeRunnableFixture(root: File, distribution: File) {

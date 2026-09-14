@@ -1,12 +1,15 @@
 package release
 
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.nio.file.Files
 import java.util.Properties
 import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPInputStream
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
+import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -21,6 +24,44 @@ import org.tukaani.xz.XZInputStream
 
 /** Exercise the produced launchers and package bytes; no UI or service fixtures are required. */
 class DesktopShellPackagingTest {
+    @Test
+    fun `Windows launcher embeds UTF-8 process manifest and removes temporary input on success and failure`() = temporary { root ->
+        val project = ProjectBuilder.builder().withProjectDir(root).build()
+        val repository = generateSequence(File(System.getProperty("user.dir"))) { it.parentFile }
+            .first { File(it, "client/desktop/packaging/icons/TeamTalk.ico").isFile }
+        val icon = File(repository, "client/desktop/packaging/icons/TeamTalk.ico")
+        val bootstrap = jarFixture(root, "desktop-bootstrap.jar", "fixture/Probe.class")
+        val installed = File(root, "package with spaces").apply { mkdirs() }
+        val exe = File(installed, "TeamTalkPrivate.exe")
+        val task = project.tasks.create("windowsExe", BuildWindowsExeTask::class.java).apply {
+            displayName.set("内部协作")
+            installationName.set("TeamTalkPrivate")
+            version.set("0.0.2")
+            jvmOptions.set(listOf("-Dteamtalk.server.url=https://example.com"))
+            bootstrapJar.from(bootstrap)
+            iconFile.set(icon)
+            exeFile.set(exe)
+        }
+        task.build()
+        val document = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+            .newDocumentBuilder().parse(readWindowsManifest(exe).inputStream())
+        val identity = document.getElementsByTagNameNS("urn:schemas-microsoft-com:asm.v1", "assemblyIdentity").item(0)
+        assertEquals("TeamTalkPrivate", identity.attributes.getNamedItem("name").nodeValue)
+        assertEquals("0.0.2.0", identity.attributes.getNamedItem("version").nodeValue)
+        assertEquals(1, document.getElementsByTagNameNS("urn:schemas-microsoft-com:asm.v3", "application").length)
+        assertEquals("UTF-8", document.getElementsByTagNameNS(
+            "http://schemas.microsoft.com/SMI/2019/WindowsSettings", "activeCodePage").item(0).textContent)
+        assertEquals(listOf(exe.name), installed.listFiles().orEmpty().map { it.name })
+        assertFalse(net.sf.launch4j.config.ConfigPersister.getInstance().config.manifest.exists())
+
+        assertFailsWith<net.sf.launch4j.BuilderException> {
+            Launch4jRunner.build(File(installed, "Invalid.exe"), File(root, "missing.jar"), icon,
+                "内部协作", "0.0.2", emptyList(), project.logger)
+        }
+        assertFalse(net.sf.launch4j.config.ConfigPersister.getInstance().config.manifest.exists())
+        assertEquals(listOf(exe.name), installed.listFiles().orEmpty().map { it.name })
+    }
+
     @Test
     fun `POSIX shell and portable ZIP preserve private identity arguments and runtime links`() = temporary { root ->
         assumeTrue(!System.getProperty("os.name").startsWith("Windows"))
@@ -220,6 +261,45 @@ class DesktopShellPackagingTest {
         val failure = assertFailsWith<IllegalStateException> { task.assemble() }
         assertTrue(failure.message.orEmpty().contains("Duplicate payload class example/Runtime.class"))
         assertFalse(File(root, "payload.zip").exists())
+    }
+
+    /** Read the actual PE resource tree (RT_MANIFEST=24, CREATEPROCESS_MANIFEST_RESOURCE_ID=1). */
+    private fun readWindowsManifest(exe: File): ByteArray {
+        val bytes = exe.readBytes()
+        val pe = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        fun word(offset: Int) = pe.getShort(offset).toInt() and 0xFFFF
+        val header = pe.getInt(0x3C)
+        assertEquals(0x00004550, pe.getInt(header), "PE signature")
+        val optional = header + 24
+        assertEquals(0x10B, word(optional), "Launch4j uses a PE32 wrapper for the bundled 64-bit JBR")
+        val sections = optional + word(header + 20)
+        fun fileOffset(rva: Int): Int {
+            for (index in 0 until word(header + 6)) {
+                val section = sections + index * 40
+                val virtualAddress = pe.getInt(section + 12)
+                val size = maxOf(pe.getInt(section + 8), pe.getInt(section + 16))
+                if (rva >= virtualAddress && rva - virtualAddress < size) {
+                    return pe.getInt(section + 20) + rva - virtualAddress
+                }
+            }
+            error("PE RVA not mapped: $rva")
+        }
+        val resources = fileOffset(pe.getInt(optional + 112))
+        fun entry(directory: Int, id: Int?): Int {
+            val count = word(directory + 12) + word(directory + 14)
+            val offset = (0 until count).map { directory + 16 + it * 8 }
+                .firstOrNull { id == null || pe.getInt(it) == id }
+                ?: error("PE resource missing: $id")
+            return pe.getInt(offset + 4)
+        }
+        val type = entry(resources, 24)
+        assertTrue(type < 0, "Manifest resource type must point to a directory")
+        val name = entry(resources + (type and Int.MAX_VALUE), 1)
+        assertTrue(name < 0, "Manifest resource id must point to a language directory")
+        val data = entry(resources + (name and Int.MAX_VALUE), null)
+        assertTrue(data >= 0, "Manifest language must point to resource data")
+        val offset = fileOffset(pe.getInt(resources + data))
+        return bytes.copyOfRange(offset, offset + pe.getInt(resources + data + 4))
     }
 
     private fun jarFixture(root: File, name: String, entry: String): File = File(root, name).apply {

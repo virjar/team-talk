@@ -158,7 +158,7 @@ bearer 被 HTTP 401 明确拒绝时，ImBot 会在与 AUTH 结果安装相同的
 源码构建入口：
 
 ```bash
-./gradlew :client:shared:headlessDist :client:shared:verifyHeadlessDist :client:shared:headlessDistZip
+./gradlew :client:headless:headlessDist :client:headless:verifyHeadlessDist :client:headless:headlessDistZip
 ```
 
 解包后的 `tt-headless/` 或构建输出 `client/headless/build/headless/` 是可整体移动的分发目录，包含 `bin/`、

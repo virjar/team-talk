@@ -17,7 +17,7 @@ import kotlin.test.assertTrue
 
 /**
  * CLI 路径 e2e（doc/05-clients/headless.md）：A（内嵌）↔ B（常驻 agent CLI）。
- * 前置：本机/CI 起 tt-agent（-Dcli.api/-Dcli.token 指向它）。
+ * Gradle 提供当前 headlessDist；测试自行启动 agent，不依赖工作区遗留安装。
  */
 class CliPeerE2eTest {
 
@@ -37,7 +37,9 @@ class CliPeerE2eTest {
             Files.setPosixFilePermissions(dataParent, PosixFilePermissions.fromString("rwx------"))
             val dataDir = dataParent.resolve("tt-cli-peer-${UUID.randomUUID()}").toFile()
             check(!Files.exists(dataDir.toPath(), LinkOption.NOFOLLOW_LINKS))
-            val agentHome = File(System.getProperty("cli.agentHome") ?: "../../client/shared/build/headless")
+            val agentHome = File(requireNotNull(System.getProperty("cli.agentHome")) {
+                "Run this test through :server:server:test so Gradle supplies the current headlessDist"
+            })
             val agent = ProcessBuilder(
                 "${agentHome}/bin/tt-agent",
                 "--host", "127.0.0.1", "--port", env.tcpPort.toString(),
@@ -80,6 +82,8 @@ class CliPeerE2eTest {
                 val cli = CliPeer(api = "127.0.0.1:$agentPort", token = token)
                 val status = cli.status()
                 check(status["connected"] == "true") { "agent 未连接: $status" }
+                assertEquals(com.virjar.tk.shared.TeamTalkBuild.BUILD_IDENTITY, status["buildIdentity"],
+                    "agent must run the Headless distribution from this build")
                 val bUid = status["uid"]!!
 
                 // A 注册并私聊 B（agent 账号）

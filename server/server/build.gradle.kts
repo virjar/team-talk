@@ -216,6 +216,8 @@ tasks.test {
     // through java.class.path, so provide the real test runtime path explicitly to child helpers.
     doFirst {
         systemProperty("teamtalk.thumbnail.helper.classpath", sourceSets["test"].runtimeClasspath.asPath)
+        val headlessDist = project(":client:headless").tasks.named<org.gradle.api.tasks.Sync>("headlessDist").get()
+        systemProperty("cli.agentHome", headlessDist.destinationDir.absolutePath)
     }
 
     // 远程 E2E 开关透传：默认关闭，仅 -Dtk.e2e.remote=true 时启用远程测试。

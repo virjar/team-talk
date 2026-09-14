@@ -37,6 +37,7 @@ class CliPeer(
             "connected" to d["connected"]!!.jsonPrimitive.content,
             "uid" to d["uid"]!!.jsonPrimitive.content,
             "username" to d["username"]!!.jsonPrimitive.content,
+            "buildIdentity" to d["buildIdentity"]!!.jsonPrimitive.content,
         )
     }
 

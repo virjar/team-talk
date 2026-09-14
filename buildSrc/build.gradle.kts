@@ -58,4 +58,5 @@ dependencies {
 // Gradle ProjectBuilder exercises the real packaging tasks in isolated temporary directories.
 tasks.test {
     jvmArgs("--add-opens=java.base/java.lang=ALL-UNNAMED")
+    testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
 }
