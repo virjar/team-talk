@@ -14,35 +14,36 @@ import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 class ClientDownloadRoutesTest {
     @Test
-    fun `homepage download card probes reach the current download page with GET metadata and no HEAD body`() {
+    fun `removed download page URLs stay not found even with stale deployed files`() {
         val downloads = Files.createTempDirectory("teamtalk-download-page-").toFile()
         try {
-            val homepage = checkNotNull(javaClass.getResource("/static/index.html")).readText()
-            val cardUrls = Regex("""<a class="dl-card" href="([^"]+)"""")
-                .findAll(homepage).map { it.groupValues[1] }
-                .filter { it.startsWith("/downloads#") }.toList()
-            assertTrue(cardUrls.isNotEmpty(), "Homepage must link to the current download page")
-
+            // 升级后的部署目录可能仍有旧页，不能从包文件通配入口重新公开。
+            downloads.resolve("index.html").writeText("old download page")
+            downloads.resolve("TeamTalk-linux-amd64.tar.gz").writeText("package bytes")
             testApplication {
-                application { routing { clientDownloadRoutes(downloads) } }
-                for (url in (cardUrls.map { it.substringBefore('#') } + "/downloads/").distinct()) {
-                    val response = client.get(url)
-                    assertEquals(HttpStatusCode.OK, response.status, url)
-                    val page = response.bodyAsText()
-                    assertTrue(page.contains("/api/v1/public/downloads"), url)
-                    val head = client.head(url)
-                    assertEquals(HttpStatusCode.OK, head.status, url)
-                    assertEquals("", head.bodyAsText(), url)
-                    assertEquals(page.toByteArray(Charsets.UTF_8).size.toString(), head.headers[HttpHeaders.ContentLength], url)
-                    for (header in listOf(HttpHeaders.ContentType, HttpHeaders.ContentLength, HttpHeaders.CacheControl)) {
-                        assertEquals(response.headers[header], head.headers[header], "$url $header")
+                application {
+                    routing {
+                        publicSiteRoutes(downloads.parentFile)
+                        clientDownloadRoutes(downloads)
                     }
-                    assertEquals("no-store", head.headers[HttpHeaders.CacheControl], url)
                 }
+                val directClient = createClient { followRedirects = false }
+                for (url in listOf("/downloads", "/downloads/", "/downloads/index.html")) {
+                    val response = directClient.get(url)
+                    assertEquals(HttpStatusCode.NotFound, response.status, url)
+                    assertNull(response.headers[HttpHeaders.Location], url)
+                    val head = directClient.head(url)
+                    assertEquals(HttpStatusCode.NotFound, head.status, url)
+                    assertNull(head.headers[HttpHeaders.Location], url)
+                    assertEquals("", head.bodyAsText(), url)
+                }
+                val archive = directClient.get("/downloads/TeamTalk-linux-amd64.tar.gz")
+                assertEquals(HttpStatusCode.OK, archive.status)
+                assertEquals("package bytes", archive.bodyAsText())
+                assertNull(archive.headers[HttpHeaders.Location])
             }
         } finally {
             downloads.deleteRecursively()

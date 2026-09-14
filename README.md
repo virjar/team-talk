@@ -8,6 +8,8 @@ Multiplatform 与 Compose Multiplatform 构建 Android、Desktop 和无头 SDK �
 > 官网：[im.virjar.com](https://im.virjar.com) ·
 > 仓库：[github.com/virjar/team-talk](https://github.com/virjar/team-talk)
 
+社区交流：[TeamTalk QQ 群](https://qm.qq.com/q/cY2VP3O5OM)（群号 **964624703**），用于内测交流、问题反馈与技术讨论。
+
 ## 项目边界
 
 产品面向中国大陆用户，客户端使用中文，当前不做国际化。Android 系统推送按国内手机厂商的官方服务
@@ -31,7 +33,8 @@ TeamTalk 选择的是“可理解、可部署、可演进”的单体架构，�
 - 回复、转发、编辑、撤回、已读水位和多设备会话同步。
 - 联系人、好友申请、群成员、邀请链接、设备与在线状态管理。
 - 消息与文档全文搜索、群文件与聊天附件文件名搜索，以及客户端全局搜索入口。
-- 独立任务工作台，支持单执行人分配、状态与截止时间、到期提醒、操作记录和聊天任务引用。
+- 文档空间、Markdown 编辑、评论与版本历史，支持空间权限、文档树和桌面多标签。
+- 待办工作台、群固定卡片与执行人提醒，支持每 N 周/月重复、关联文档和附件、延期理由与处理指标。
 - 内嵌文件服务；附件始终由 TeamTalk 服务端管理，不依赖第三方对象存储。
 - Android、macOS、Windows、Linux Desktop 客户端，以及可用于自动化和 AI 接入的无头 SDK。
 - 可配置的私有化部署、管理后台、健康检查、客户端日志和真实部署验收。

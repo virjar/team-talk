@@ -36,10 +36,16 @@
 | `GET /api/v1/client/updates/check?client=&platform=&arch=&channel=&version=&build=&shellAbi=&buildIdentity=` | 更新检查；返回 UP_TO_DATE / UPDATE_AVAILABLE / SHELL_UPDATE_REQUIRED / CHANNEL_DISABLED + 发布信息 |
 | `GET /api/v1/client/releases/{id}/manifest.json` | 负载文件清单（path/sha256/size） |
 | `GET /api/v1/client/files/{sha256}` | 内容寻址制品（Range 断点续传、immutable 缓存） |
-| `GET /api/v1/public/downloads` | 中文下载页数据源 |
-| `GET /downloads` | 中文「下载与更新」页（注册中心数据，风格与首页一致） |
+| `GET /api/v1/public/downloads` | 首页下载区的数据源：当前通道制品与最近版本记录 |
+| `GET /`（`#download` 区域） | 首页直接展示六个目标的真实下载按钮；优先选择有可下载制品的 stable、preview、snapshot，可切换通道；支持 HEAD |
+| `GET /css/home.css`、`GET /js/downloads.js` | 首页固定资源，支持 HEAD；由 Ktor 直接提供，不依赖反向代理静态映射 |
 | `GET /downloads/android.json`、`/downloads/TeamTalk-android.apk` | **兼容层**：注册中心接管前兼容旧收据；接管后停用/缺文件返回 404 |
 | `/downloads/desktop/**` | 冻结的 Conveyor 遗留站点（只读保留，存量桌面客户端链接不断） |
+
+独立下载页 `/downloads`、`/downloads/`、`/downloads/index.html` 已移除，GET/HEAD 均返回 404；
+目录中遗留的旧 HTML 不会重新公开，安装包、Android 收据和 Conveyor 更新路径不受影响。
+首页及 CSS/JS 优先使用安装根目录 `static/` 中的对应文件，缺失时读取包内 `static/` 资源。
+三个固定资源均声明 UTF-8 与 `Cache-Control: no-cache`；未知路径不会回退到首页。
 
 更新检查不比较语义化版本：服务端下发目标（version+build+buildIdentity），客户端服从指令——
 **回滚=把通道指针切回旧版**，客户端会按指令降级。

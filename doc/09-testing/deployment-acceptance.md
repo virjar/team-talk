@@ -70,7 +70,10 @@ TeamTalk 的主业务验收连接当前选中部署配置函数的目标。它�
 
 ### HTTP 端点
 
-- `GET /downloads`：中文下载页 200，`no-store`；JS 拉取 `/api/v1/public/downloads` 渲染各端卡片。
+- `GET /`、`/css/home.css`、`/js/downloads.js`：200、UTF-8、`no-cache`；HEAD 返回同元数据且无正文。
+  首页下载区只请求一次 `/api/v1/public/downloads`，按通道展示真实制品直链、大小、版本与源码身份；
+  空通道、停用目标及加载失败均不提供假下载按钮，失败后可重试。桌面和手机尺寸验证卡片与社区入口。
+- 已移除的 `/downloads`、`/downloads/`、`/downloads/index.html`：GET/HEAD 均为 404，无兼容跳转。
 - `GET /api/v1/client/updates/check`：无该端点发布时 CHANNEL_DISABLED（或无通道记录）；
   发布后返回 UPDATE_AVAILABLE + manifestUrl/installers。
 - `GET /api/v1/client/files/<sha256>`：200 + `ETag="<sha>"` + immutable 缓存头；

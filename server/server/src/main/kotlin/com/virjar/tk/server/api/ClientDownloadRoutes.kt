@@ -5,7 +5,6 @@ import com.virjar.tk.server.infra.clientrelease.ClientReleaseService
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.defaultForFile
-import io.ktor.http.withCharset
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
 import io.ktor.server.application.install
@@ -80,12 +79,6 @@ internal fun Route.clientDownloadRoutes(
             call.respond(file.downloadHeadResponse())
         }
 
-        // 中文「下载与更新」页：注册中心数据 + 首页同款风格（classpath 资源懒加载缓存）。
-        for (path in listOf("", "/")) {
-            get(path) { call.respondDownloadsPage(head = false) }
-            head(path) { call.respondDownloadsPage(head = true) }
-        }
-
         val desktopDir = File(downloadsDir, "desktop")
         val downloadPage = File(desktopDir, "download.html")
         // staticFiles 的 tailcard 优先级低于上面的直链参数；目录入口必须使用明确字面路由。
@@ -104,21 +97,6 @@ internal fun Route.clientDownloadRoutes(
             enableAutoHeadResponse()
             contentType(::clientDownloadContentType)
         }
-    }
-}
-
-private suspend fun ApplicationCall.respondDownloadsPage(head: Boolean) {
-    val page = downloadsPageHtml() ?: return respond(HttpStatusCode.NotFound)
-    val pageContentType = ContentType.Text.Html.withCharset(Charsets.UTF_8)
-    response.headers.append(io.ktor.http.HttpHeaders.CacheControl, "no-store")
-    if (head) {
-        // 首页用 HEAD 探测下载卡片；长度与 GET 的 UTF-8 正文一致，不发送页面内容。
-        respond(object : io.ktor.http.content.OutgoingContent.NoContent() {
-            override val contentLength = page.toByteArray(Charsets.UTF_8).size.toLong()
-            override val contentType = pageContentType
-        })
-    } else {
-        respondText(page, pageContentType)
     }
 }
 
@@ -255,6 +233,8 @@ internal fun resolveDirectDownload(downloadsDir: File, filename: String): File? 
         filename.length !in 1..255 ||
         filename == "." ||
         filename == ".." ||
+        // 独立下载页已经移除，不能重新暴露旧部署目录中的残留文件。
+        filename == "index.html" ||
         filename.any { it == '/' || it == '\\' || it == '\u0000' }
     ) {
         return null
@@ -269,15 +249,3 @@ internal fun resolveDirectDownload(downloadsDir: File, filename: String): File? 
         null
     }
 }
-
-private const val DOWNLOADS_PAGE_RESOURCE = "static/downloads/index.html"
-
-private object DownloadsPageResource {
-    val html: String? by lazy {
-        DownloadsPageResource::class.java.classLoader
-            .getResourceAsStream(DOWNLOADS_PAGE_RESOURCE)
-            ?.use { it.readBytes().toString(Charsets.UTF_8) }
-    }
-}
-
-internal fun downloadsPageHtml(): String? = DownloadsPageResource.html

@@ -439,6 +439,7 @@ internal class ClientReleaseService(
         val totalBytes: Long,
         val createdAt: Long,
         val createdBy: String,
+        val buildIdentity: String? = null,
     )
 
     fun listReleases(clientType: String?, status: String?, limit: Int, offset: Int): List<ReleaseRow> = tx {
@@ -471,6 +472,7 @@ internal class ClientReleaseService(
                     totalBytes = it[ClientReleases.totalBytes],
                     createdAt = it[ClientReleases.createdAt],
                     createdBy = it[ClientReleases.createdBy],
+                    buildIdentity = it[ClientReleases.buildIdentity].ifBlank { null },
                 )
             }
     }
@@ -536,6 +538,7 @@ internal class ClientReleaseService(
                 channel = it.channel,
                 status = it.status,
                 createdAt = it.createdAt,
+                buildIdentity = it.buildIdentity,
             )
         }
         return PublicDownloads(targets, history)
@@ -573,6 +576,7 @@ internal class ClientReleaseService(
         val channel: String,
         val status: String,
         val createdAt: Long,
+        val buildIdentity: String? = null,
     )
 
     // ── CI 发布令牌 ─────────────────────────────────────────────────

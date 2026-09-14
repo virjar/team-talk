@@ -359,6 +359,12 @@ class ClientReleaseRegistryTest {
                         val query = ClientReleaseService.CheckQuery("desktop", "macos", "aarch64", "snapshot", "0.0.3", 7, 1, "source-a")
                         assertEquals("UPDATE_AVAILABLE", releaseService.check(query).status)
                         assertEquals("UP_TO_DATE", releaseService.check(query.copy(buildIdentity = "source-b")).status)
+                        val downloads = releaseService.publicDownloads()
+                        val current = downloads.targets.single().channels.single { it.channel == "snapshot" }.release!!
+                        val snapshots = downloads.history.filter { it.channel == "snapshot" }
+                        assertEquals(setOf("source-a", "source-b"), snapshots.map { it.buildIdentity }.toSet())
+                        assertEquals(current.buildIdentity, snapshots.single { it.buildIdentity == "source-b" }.buildIdentity)
+                        assertNull(downloads.history.single { it.channel == "stable" }.buildIdentity)
                         releaseService.setChannelEnabled("admin", "desktop", "macos", "aarch64", "snapshot", false)
                         assertEquals(b, releaseService.importRelease("ci", snapshotB))
                         assertEquals("CHANNEL_DISABLED", releaseService.check(query).status)

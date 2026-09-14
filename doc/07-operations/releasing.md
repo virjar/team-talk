@@ -260,7 +260,7 @@ POSIX 支持 agent、CLI、MCP 与用户级便携安装，Windows 原生只支�
 同一身份不同字节返回冲突，不能借 snapshot 覆盖原记录。新 snapshot 使用新的源码身份；晋级、停用和回滚
 由管理台调整通道指针，详细接口与约束见[客户端发布与更新体系](client-releases.md)。
 
-中文下载页 `/downloads` 由注册中心生成，Android 的 `/downloads/android.json` 和旧固定 APK 下载入口
+首页下载区 `/#download` 由注册中心驱动，Android 的 `/downloads/android.json` 和旧固定 APK 下载入口
 继续兼容。某个 Android 通道已有注册记录后，即使停用或关闭，也不回落到磁盘上的历史静态包；仅尚未接入
 注册中心的旧部署保留旧目录读取。Desktop 更新使用随安装包确定的 `serverUrl`，不随登录业务服务器而改变；
 无头升级通过 `--server-url` 或 `TK_SERVER_URL` 显式指定注册中心。Android 仍由用户下载安装，协议兼容提示与客户端文件更新分别处理。

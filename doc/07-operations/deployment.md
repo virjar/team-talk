@@ -29,7 +29,7 @@
 统一展示版本与安装构建计数的事实源是 `gradle.properties` 中的 `teamtalk.releaseVersion` 与
 `teamtalk.releaseBuildNumber`。Android `versionCode` 为构建计数加一，满足平台正整数约束，
 不再由展示字符串推导；tag release 必须使用精确的 `v<releaseVersion>`。Server、SDK、Android、
-Desktop Compose 与 Conveyor 使用同一展示版本。二进制协议另按 major/minor 递增；`verifyRelease`
+Desktop 与无头客户端使用同一展示版本。二进制协议另按 major/minor 递增；`verifyRelease`
 检查已提交的 wire 基线。零号切换、数据保留及后续发版步骤见[版本机制](../04-protocol/versioning.md)。
 
 Admin 的独立 Gradle 模块管理 Node.js、随包 npm 和锁文件安装，在 `server/admin/build/dist` 生成静态资源。
@@ -37,10 +37,12 @@ Server 的资源处理、分发与 `check` 通过任务依赖接入；生成资�
 `:server:server:buildAdmin` 保留为兼容入口。
 源码旁的 `server/admin/dist` 和 `node_modules` 不是分发输入，也不能提交；
 构建链见[依赖维护](../08-development/dependency-maintenance.md#管理后台的构建链)。
-Conveyor 的工具下载、配置生成与三平台站点制作均由 Gradle 管理，详情见[Desktop 打包](desktop-cross-build.md)。
-首页的 Windows、macOS、Linux 卡片统一进入相对路径 `/downloads/desktop/download.html`，分别使用
-`#win`、`#mac`、`#linux` 选择平台。安装包文件名由 Conveyor 根据客户端发行身份生成，首页不能写死
-公版的 `teamtalk.exe`，否则更名后的私有版会被误判为尚未提供下载。
+桌面四目标的壳、负载和安装器由统一 Gradle 发行工具生成，详情见[Desktop 打包](desktop-cross-build.md)。
+首页 `/#download` 直接读取 `/api/v1/public/downloads`，展示所选通道的真实制品、版本、大小与源码身份，
+不再提供独立下载页。按钮使用注册中心返回的安装包 URL，不写死公版文件名或部署域名。
+Windows 完整包、两种 macOS 架构、Linux、Android 和无头客户端共用该入口；空通道或停用目标不提供下载。
+静态首页与样式、脚本均随 Server 分发，Ktor 直接提供对应 GET/HEAD，无需另设 Nginx 静态目录。
+发布与历史记录的权威语义见[客户端发布与更新体系](client-releases.md)。
 
 ## 2. 首次部署
 

@@ -170,6 +170,6 @@ private fun formatBytes(bytes: Long): String = when {
 
 private fun openDownloadPage(serverBaseUrl: String) {
     runCatching {
-        java.awt.Desktop.getDesktop().browse(URI(serverBaseUrl.trimEnd('/') + "/downloads"))
+        java.awt.Desktop.getDesktop().browse(URI(serverBaseUrl.trimEnd('/') + "/#download"))
     }
 }

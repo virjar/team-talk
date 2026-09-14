@@ -1,264 +1,244 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TeamTalk - 即时通讯与办公协作</title>
-    <style>
-        :root {
-            --primary: #2563eb;
-            --primary-hover: #1d4ed8;
-            --bg: #ffffff;
-            --bg-alt: #f8fafc;
-            --text: #0f172a;
-            --text-secondary: #64748b;
-            --border: #e2e8f0;
-            --radius: 12px;
-            --shadow: 0 1px 3px rgba(0,0,0,0.08);
-        }
-        @media (prefers-color-scheme: dark) {
-            :root {
-                --primary: #60a5fa;
-                --primary-hover: #93bbfd;
-                --bg: #0f172a;
-                --bg-alt: #1e293b;
-                --text: #f1f5f9;
-                --text-secondary: #94a3b8;
-                --border: #334155;
-                --shadow: 0 1px 3px rgba(0,0,0,0.3);
-            }
-        }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            line-height: 1.6;
-        }
-        a { color: var(--primary); text-decoration: none; }
-        a:hover { text-decoration: underline; }
-        .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
-
-        /* Nav */
-        nav { border-bottom: 1px solid var(--border); padding: 16px 0; }
-        nav .container { display: flex; align-items: center; justify-content: space-between; }
-        .logo { font-size: 22px; font-weight: 700; color: var(--primary); letter-spacing: -0.5px; }
-        .nav-links a { color: var(--text-secondary); margin-left: 24px; font-size: 15px; }
-        .nav-links a:hover { color: var(--primary); text-decoration: none; }
-
-        /* Hero */
-        .hero { padding: 72px 0 48px; text-align: center; }
-        .hero h1 { font-size: 44px; font-weight: 800; letter-spacing: -1px; margin-bottom: 16px; }
-        .hero .tagline { font-size: 18px; color: var(--text-secondary); max-width: 560px; margin: 0 auto 32px; }
-        .hero .cta { display: inline-block; background: var(--primary); color: #fff; padding: 12px 32px; border-radius: 8px; font-size: 16px; font-weight: 600; }
-        .hero .cta:hover { background: var(--primary-hover); text-decoration: none; }
-
-        /* Features */
-        .features { padding: 56px 0; background: var(--bg-alt); }
-        .features h2 { text-align: center; font-size: 28px; margin-bottom: 40px; font-weight: 700; }
-        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
-        .card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; box-shadow: var(--shadow); }
-        .card h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
-        .card p { font-size: 14px; color: var(--text-secondary); }
-        .card .icon { font-size: 28px; margin-bottom: 12px; }
-
-        /* Download */
-        .download { padding: 64px 0; }
-        .download h2 { text-align: center; font-size: 28px; margin-bottom: 12px; font-weight: 700; }
-        .download .sub { text-align: center; color: var(--text-secondary); margin-bottom: 40px; font-size: 16px; }
-        .dl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 20px; max-width: 800px; margin: 0 auto 32px; }
-        .dl-card {
-            display: flex; flex-direction: column; align-items: center;
-            border: 1px solid var(--border); border-radius: var(--radius); padding: 24px 16px;
-            text-decoration: none; color: var(--text); transition: border-color .2s, box-shadow .2s;
-        }
-        .dl-card:hover { border-color: var(--primary); box-shadow: var(--shadow); text-decoration: none; }
-        .dl-card.unavailable { opacity: .4; pointer-events: none; }
-        .dl-card .plat-icon { font-size: 40px; margin-bottom: 10px; }
-        .dl-card .plat-name { font-weight: 600; margin-bottom: 4px; }
-        .dl-card .plat-desc { font-size: 12px; color: var(--text-secondary); }
-
-        /* Android QR */
-        .android-qr { text-align: center; padding: 16px 0 32px; }
-        .android-qr .qr-label { color: var(--text-secondary); font-size: 14px; margin-bottom: 12px; }
-        #android-qrcode img { width: 180px; height: 180px; border-radius: 8px; }
-        .android-qr .apk-link { margin-top: 10px; font-size: 14px; }
-        .android-qr.unavailable { opacity: .4; pointer-events: none; }
-
-        /* Footer */
-        footer { border-top: 1px solid var(--border); padding: 24px 0; text-align: center; }
-        footer p { color: var(--text-secondary); font-size: 13px; }
-
-        @media (max-width: 640px) {
-            .hero h1 { font-size: 30px; }
-            .hero .tagline { font-size: 15px; }
-            .grid-3 { grid-template-columns: 1fr; }
-            .dl-grid { grid-template-columns: repeat(2, 1fr); }
-        }
-    </style>
-</head>
-<body>
-
-<nav>
-    <div class="container">
-        <div class="logo">TeamTalk</div>
-        <div class="nav-links">
-            <a href="#features">功能</a>
-            <a href="#download">下载</a>
-            <a href="https://github.com/virjar/team-talk" target="_blank">GitHub</a>
-        </div>
-    </div>
-</nav>
-
-<section class="hero">
-    <div class="container">
-        <h1>TeamTalk</h1>
-        <p class="tagline">轻量、安全的即时通讯与办公协作平台<br>自托管部署，数据完全自主掌控</p>
-        <a href="#download" class="cta">立即下载</a>
-    </div>
-</section>
-
-<section class="features" id="features">
-    <div class="container">
-        <h2>功能亮点</h2>
-        <div class="grid-3">
-            <div class="card">
-                <div class="icon">&#127760;</div>
-                <h3>全平台覆盖</h3>
-                <p>Android、Windows、macOS、Linux 全平台客户端，一套代码跨端运行</p>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#f6f8fc">
+        <meta name="description" content="TeamTalk 是面向中小型团队的开源协作工具。把聊天、文档与待办放在一起，支持 Android、macOS、Windows、Linux 和无头客户端，可部署在自己的服务器上。">
+        <title>TeamTalk · 让讨论有下文</title>
+        <link rel="stylesheet" href="./css/home.css">
+        <script src="./js/downloads.js" defer></script>
+    </head>
+    <body>
+        <a class="skip-link" href="#main">跳到主要内容</a>
+        <header class="site-header">
+            <div class="container header-inner">
+                <a class="brand" href="#" aria-label="TeamTalk 首页">
+                    <svg viewBox="200 240 620 550" aria-hidden="true">
+                        <g fill="currentColor" stroke="currentColor" stroke-width="22" stroke-linecap="round">
+                            <path d="M316 372H708M512 372V708"/>
+                            <circle cx="316" cy="372" r="58"/>
+                            <circle cx="708" cy="372" r="58"/>
+                            <circle cx="512" cy="708" r="58"/>
+                            <circle cx="512" cy="372" r="76"/>
+                        </g>
+                    </svg>
+                    <span>TeamTalk</span>
+                </a>
+                <nav aria-label="主导航">
+                    <a href="#features">产品功能</a>
+                    <a href="#download">下载</a>
+                    <a href="#deploy">私有部署</a>
+                    <a class="nav-source" href="#community">加入社区</a>
+                </nav>
             </div>
-            <div class="card">
-                <div class="icon">&#128274;</div>
-                <h3>自托管部署</h3>
-                <p>一键部署到自有服务器，数据不经过第三方，完全自主可控</p>
+        </header>
+        <main id="main">
+            <section class="hero container" aria-labelledby="hero-title">
+                <div class="hero-copy">
+                    <a class="preview-label" href="https://github.com/virjar/team-talk/blob/main/doc/10-reference/feature-status.md"><span></span> 开源协作 · 开发者预览 <span aria-hidden="true">↗</span></a>
+                    <h1 id="hero-title">让讨论<span class="accent">有下文。</span></h1>
+                    <p class="hero-subtitle">聊天、文档与待办，<br>在一个工作空间。</p>
+                    <p class="hero-description">为中小型团队打造。把日常沟通、团队资料和后续工作连接起来，部署在自己的服务器上。</p>
+                    <div class="hero-actions">
+                        <a class="button button-primary" href="#download">下载客户端 <span aria-hidden="true">↓</span></a>
+                        <a class="button button-outline" href="https://github.com/virjar/team-talk/blob/main/doc/01-getting-started/private-deployment.md">开始私有部署 <span aria-hidden="true">↗</span></a>
+                    </div>
+                    <p class="hero-platforms">Android <span>·</span> macOS <span>·</span> Windows <span>·</span> Linux</p>
+                </div>
+                <figure class="workflow" aria-labelledby="workflow-caption">
+                    <div class="workflow-top">
+                        <span class="workflow-brand">TK <span>/ 工作空间</span></span>
+                        <span class="workflow-dot"></span>
+                    </div>
+                    <div class="workflow-title">
+                        <span class="eyebrow">从沟通到完成</span>
+                        <strong>每一步，都带着上下文。</strong>
+                    </div>
+                    <ol class="workflow-steps">
+                        <li class="workflow-step step-chat">
+                            <span class="step-number">01</span>
+                            <div>
+                                <h2>在群里讨论</h2>
+                                <p>消息、文件与回复，留在同一个会话。</p>
+                                <div class="flow-tags">
+                                    <span># 项目协作</span>
+                                    <span>沟通有记录</span>
+                                </div>
+                            </div>
+                            <span class="step-mark" aria-hidden="true">↗</span>
+                        </li>
+                        <li class="workflow-step step-doc">
+                            <span class="step-number">02</span>
+                            <div>
+                                <h2>用文档沉淀</h2>
+                                <p>将资料归入空间，让团队随时查找。</p>
+                                <div class="flow-tags">
+                                    <span>Markdown</span>
+                                    <span>版本历史</span>
+                                </div>
+                            </div>
+                            <span class="step-mark" aria-hidden="true">↗</span>
+                        </li>
+                        <li class="workflow-step step-task">
+                            <span class="step-number">03</span>
+                            <div>
+                                <h2>用待办跟进</h2>
+                                <p>明确执行人与截止时间，关联所需材料。</p>
+                                <div class="flow-tags">
+                                    <span>群待办卡片</span>
+                                    <span>周期任务</span>
+                                </div>
+                            </div>
+                            <span class="step-mark" aria-hidden="true">✓</span>
+                        </li>
+                    </ol>
+                    <figcaption id="workflow-caption">协作流程示意</figcaption>
+                </figure>
+            </section>
+            <section id="features" class="features section" aria-labelledby="features-title">
+                <div class="container">
+                    <div class="section-heading">
+                        <div>
+                            <span class="eyebrow">团队的日常工作</span>
+                            <h2 id="features-title">消息之外，工作也能接着往下走。</h2>
+                        </div>
+                        <a class="text-link" href="https://github.com/virjar/team-talk/blob/main/doc/10-reference/feature-status.md">查看完整功能状态 <span aria-hidden="true">↗</span></a>
+                    </div>
+                    <div class="feature-grid">
+                        <article class="feature feature-chat">
+                            <div class="feature-number">01 / 沟通</div>
+                            <h3>把事情说明白</h3>
+                            <p>私聊与群聊支持富文本、图片、语音、视频和文件。回复、转发、编辑与撤回，让沟通保持连贯。</p>
+                            <ul>
+                                <li>群成员与角色管理</li>
+                                <li>邀请链接与剪贴板入群入口</li>
+                                <li>消息搜索与多设备同步</li>
+                            </ul>
+                        </article>
+                        <article class="feature feature-doc">
+                            <div class="feature-number">02 / 资料</div>
+                            <h3>让知识有归处</h3>
+                            <p>按空间组织团队文档，用 Markdown 编写正文。文档树、全文搜索与评论，让资料易于维护和查找。</p>
+                            <ul>
+                                <li>空间权限与文档分享</li>
+                                <li>版本历史与恢复</li>
+                                <li>桌面多标签与独立窗口</li>
+                            </ul>
+                        </article>
+                        <article class="feature feature-task">
+                            <div class="feature-number">03 / 跟进</div>
+                            <h3>让待办看得见</h3>
+                            <p>在群里显示未完成的共享待办，为执行人保留提醒横幅。描述、文档和附件一起交代清楚任务。</p>
+                            <ul>
+                                <li>每周、双周或每 N 月重复</li>
+                                <li>开始时间、截止时间与提醒</li>
+                                <li>延期理由、次数与处理耗时</li>
+                            </ul>
+                        </article>
+                    </div>
+                    <div class="capability-strip">
+                        <div>
+                            <strong>本地优先</strong>
+                            <p>已缓存内容离线可读，待发送操作在网络恢复后继续。</p>
+                        </div>
+                        <div>
+                            <strong>桌面与移动协作</strong>
+                            <p>同一套账户与会话，在电脑和 Android 之间接续工作。</p>
+                        </div>
+                        <div>
+                            <strong>自动化也能参与</strong>
+                            <p>通过 SDK、无头客户端与 MCP，将消息能力接入自己的工具。</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            <section id="download" class="downloads section container" aria-labelledby="download-title">
+                <div class="section-heading download-heading">
+                    <div>
+                        <span class="eyebrow">从这里开始</span>
+                        <h2 id="download-title">选好平台，直接下载。</h2>
+                        <p>安装包、版本通道与发布记录，都在这一页。</p>
+                    </div>
+                    <label class="channel-control" for="download-channel"><span>版本通道</span><select id="download-channel" aria-label="版本通道" disabled><option>正在加载…</option></select></label>
+                </div>
+                <p id="download-status" role="status">正在读取发布信息…</p>
+                <div id="download-catalog" class="download-grid" aria-live="polite" aria-busy="true"></div>
+                <noscript><p class="download-empty">请启用 JavaScript 以查看本部署当前的安装包、版本与下载链接。</p></noscript>
+                <div class="download-footer">
+                    <p>桌面客户端支持应用内更新。请按设备选择芯片架构；内测快照用于体验开发中的功能。</p>
+                    <a class="text-link" href="https://github.com/virjar/team-talk/blob/main/doc/07-operations/client-releases.md">安装与更新说明 <span aria-hidden="true">↗</span></a>
+                </div>
+                <details id="release-history">
+                    <summary>版本记录<span aria-hidden="true">＋</span></summary>
+                    <div id="download-history"></div>
+                </details>
+            </section>
+            <section id="deploy" class="deploy section" aria-labelledby="deploy-title">
+                <div class="container deploy-grid">
+                    <div class="deploy-copy">
+                        <span class="eyebrow">部署在自己的服务器上</span>
+                        <h2 id="deploy-title">你的团队，<br>你的工作空间。</h2>
+                        <p>TeamTalk 将客户端、服务端、协议和部署工具放在同一个开源仓库。面向单组织与中小型团队，便于私有部署、维护和二次开发。</p>
+                        <a class="button button-light" href="https://github.com/virjar/team-talk/blob/main/doc/01-getting-started/private-deployment.md">阅读部署指南 <span aria-hidden="true">↗</span></a>
+                    </div>
+                    <div class="deploy-links">
+                        <a href="https://github.com/virjar/team-talk/blob/main/doc/01-getting-started/private-deployment.md">
+                            <span class="deploy-link-number">01</span>
+                            <div>
+                                <h3>建立自己的实例</h3>
+                                <p>配置服务器、独立客户端身份与安装站点。</p>
+                            </div>
+                            <span aria-hidden="true">↗</span>
+                        </a>
+                        <a href="https://github.com/virjar/team-talk/blob/main/doc/05-clients/headless.md">
+                            <span class="deploy-link-number">02</span>
+                            <div>
+                                <h3>接入现有工作流</h3>
+                                <p>使用 CLI、Agent、MCP 与 SDK 集成。</p>
+                            </div>
+                            <span aria-hidden="true">↗</span>
+                        </a>
+                        <a href="https://github.com/virjar/team-talk/blob/main/doc/README.md">
+                            <span class="deploy-link-number">03</span>
+                            <div>
+                                <h3>了解架构与扩展</h3>
+                                <p>从产品边界、开发环境到运维手册。</p>
+                            </div>
+                            <span aria-hidden="true">↗</span>
+                        </a>
+                    </div>
+                </div>
+            </section>
+            <section id="community" class="community section container" aria-labelledby="community-title">
+                <div class="community-copy">
+                    <span class="eyebrow">一起把 TeamTalk 做得更好</span>
+                    <h2 id="community-title">加入社区，一起参与内测。</h2>
+                    <p>分享使用体验、反馈遇到的问题，或交流私有部署与二次开发。欢迎来 QQ 群和我们聊聊。</p>
+                </div>
+                <div class="community-contact">
+                    <span class="community-name">TeamTalk · QQ 交流群</span>
+                    <p class="community-number">群号 <strong>964624703</strong></p>
+                    <a class="button button-primary" href="https://qm.qq.com/q/cY2VP3O5OM">加入 QQ 交流群 <span aria-hidden="true">↗</span></a>
+                    <a class="text-link" href="https://github.com/virjar/team-talk/issues">在 GitHub 提交问题 <span aria-hidden="true">↗</span></a>
+                </div>
+            </section>
+            <aside class="preview-note container">
+                <span class="preview-note-mark" aria-hidden="true">i</span>
+                <p><strong>当前处于开发者预览阶段。</strong>适合开发、测试和私有化评估；正式使用前，请结合<a href="https://github.com/virjar/team-talk/blob/main/doc/10-reference/feature-status.md">功能状态</a>与<a href="https://github.com/virjar/team-talk/blob/main/doc/01-getting-started/developer-preview.md">预览版指南</a>评估实际需求。</p>
+            </aside>
+        </main>
+        <footer class="site-footer">
+            <div class="container footer-inner">
+                <a class="brand" href="#">TeamTalk</a>
+                <span>开源协作，自主部署。</span>
+                <nav aria-label="页脚导航">
+                    <a href="https://qm.qq.com/q/cY2VP3O5OM">QQ 交流群</a>
+                    <a href="https://github.com/virjar/team-talk">源代码</a>
+                    <a href="https://github.com/virjar/team-talk/blob/main/doc/README.md">文档</a>
+                    <a href="https://github.com/virjar/team-talk/blob/main/LICENSE">Apache 2.0</a>
+                </nav>
             </div>
-            <div class="card">
-                <div class="icon">&#9889;</div>
-                <h3>实时通讯</h3>
-                <p>自定义二进制 TCP 协议，低延迟消息推送，支持文本/图片/语音/视频/文件</p>
-            </div>
-            <div class="card">
-                <div class="icon">&#128101;</div>
-                <h3>群组协作</h3>
-                <p>创建群组频道，支持禁言、角色管理、邀请链接等完整群组功能</p>
-            </div>
-            <div class="card">
-                <div class="icon">&#128269;</div>
-                <h3>全文搜索</h3>
-                <p>内置 Lucene 中文分词引擎，消息记录毫秒级搜索</p>
-            </div>
-            <div class="card">
-                <div class="icon">&#128241;</div>
-                <h3>多设备同步</h3>
-                <p>多设备同时在线，消息实时同步，跨设备无缝切换</p>
-            </div>
-        </div>
-    </div>
-</section>
-
-<section class="download" id="download">
-    <div class="container">
-        <h2>下载客户端</h2>
-        <p class="sub">选择您的平台，开始使用 TeamTalk</p>
-        <div class="dl-grid">
-            <a class="dl-card" href="/downloads#win">
-                <div class="plat-icon">&#128187;</div>
-                <div class="plat-name">Windows</div>
-                <div class="plat-desc">Win10+，安装器 / 便携包</div>
-            </a>
-            <a class="dl-card" href="/downloads#mac">
-                <div class="plat-icon">&#63743;</div>
-                <div class="plat-name">macOS</div>
-                <div class="plat-desc">Apple/Intel，macOS 14+ (.zip)</div>
-            </a>
-            <a class="dl-card" href="/downloads#linux">
-                <div class="plat-icon">&#128039;</div>
-                <div class="plat-name">Linux</div>
-                <div class="plat-desc">Ubuntu/Debian (.deb)</div>
-            </a>
-        </div>
-        <p class="sub" style="margin-top:8px">
-            桌面端支持应用内自动更新；全部平台、通道与历史版本见
-            <a href="/downloads">下载与更新页</a>。
-        </p>
-
-        <div class="android-qr">
-            <p class="qr-label">扫描二维码下载 Android 版本</p>
-            <div id="android-qrcode"></div>
-            <p class="apk-link"><a href="/downloads/TeamTalk-android.apk">直接下载 APK</a></p>
-            <p id="android-package-name" class="plat-desc"></p>
-        </div>
-    </div>
-</section>
-
-<footer>
-    <div class="container">
-        <p>&copy; 2026 TeamTalk. Powered by Kotlin Multiplatform. | <a href="https://github.com/virjar/team-talk" target="_blank">GitHub</a></p>
-    </div>
-</footer>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
-<script>
-(function() {
-    function markUnavailable(card) {
-        card.classList.add('unavailable');
-        var desc = card.querySelector('.plat-desc');
-        if (desc) desc.textContent = '即将上线';
-    }
-
-    document.querySelectorAll('.dl-card').forEach(function(card) {
-        var href = card.getAttribute('href');
-        if (!href) return;
-        fetch(href, { method: 'HEAD' }).then(function(r) {
-            if (!r.ok) markUnavailable(card);
-        }).catch(function() {
-            markUnavailable(card);
-        });
-    });
-
-    var apkLink = window.location.origin + '/downloads/TeamTalk-android.apk';
-    var apkAvailable = false;
-    fetch('/downloads/android.json', { cache: 'no-store' }).then(function(r) {
-        if (!r.ok) throw new Error('Android download unavailable');
-        return r.json();
-    }).then(function(info) {
-        apkLink = window.location.origin + info.url;
-        apkAvailable = true;
-        var link = document.querySelector('.android-qr .apk-link a');
-        link.href = info.url;
-        link.setAttribute('download', info.filename);
-        document.getElementById('android-package-name').textContent =
-            info.version ? info.displayName + ' ' + info.version + ' · Android' : 'Android 安装包';
-        updateAndroidSection();
-    }).catch(function() {
-        updateAndroidSection();
-    });
-
-    function updateAndroidSection() {
-        var section = document.querySelector('.android-qr');
-        if (!section) return;
-        if (apkAvailable) {
-            if (typeof qrcode === 'function') {
-                var qr = qrcode(0, 'M');
-                qr.addData(apkLink);
-                qr.make();
-                document.getElementById('android-qrcode').innerHTML = qr.createImgTag(4, 8);
-            } else {
-                section.querySelector('.qr-label').textContent = '直接下载 Android 安装包';
-                document.getElementById('android-qrcode').style.display = 'none';
-            }
-        } else {
-            section.classList.add('unavailable');
-            var label = section.querySelector('.qr-label');
-            if (label) label.textContent = 'Android 安装包暂不可用，请稍后重试';
-            var link = section.querySelector('.apk-link');
-            if (link) link.style.display = 'none';
-            var qrcodeEl = document.getElementById('android-qrcode');
-            if (qrcodeEl) qrcodeEl.style.display = 'none';
-        }
-    }
-})();
-</script>
-
-</body>
+        </footer>
+    </body>
 </html>

@@ -2,6 +2,7 @@ package com.virjar.tk.server
 
 import com.virjar.tk.server.api.clientTelemetryRoutes
 import com.virjar.tk.server.api.clientDownloadRoutes
+import com.virjar.tk.server.api.publicSiteRoutes
 import com.virjar.tk.server.api.inviteLandingRoutes
 import com.virjar.tk.server.api.clientUpdateRoutes
 import com.virjar.tk.server.api.adminRoutes
@@ -608,18 +609,9 @@ internal fun Application.module(
                 accessTokens = accessTokens,
             )
 
-            // 首页
             val staticDir = resolveStaticDir()
             val downloadsDir = java.io.File(staticDir, "downloads")
-            get("/") {
-                val indexFile = java.io.File(staticDir, "index.html")
-                if (indexFile.exists()) {
-                    call.respondFile(indexFile)
-                } else {
-                    call.respondText("TeamTalk Server", ContentType.Text.Plain)
-                }
-            }
-
+            publicSiteRoutes(staticDir)
             clientDownloadRoutes(downloadsDir, koin.get())
             inviteLandingRoutes()
             clientUpdateRoutes(

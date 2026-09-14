@@ -120,7 +120,7 @@ flowchart TD
     Config --> Node["该发行自己的服务实例"]
     Android -->|"配置的 HTTP / TCP"| Node
     Desktop -->|"配置的 HTTP / TCP"| Node
-    Gradle -->|"site：HTTP 发布注册中心"| Downloads["该实例的 /downloads/"]
+    Gradle -->|"site：HTTP 发布注册中心"| Downloads["该实例的首页下载区"]
     Node --- Downloads
     Downloads -->|"用户下载并安装 Android APK"| Android
     Desktop -->|"更新注册中心由 serverUrl 推导"| Downloads
@@ -141,7 +141,7 @@ flowchart TD
 桌面私有版目录由稳定的 `applicationId` 派生，服务器域名和显示名称都不参与目录命名；账号内仍按
 部署、dataset 和 uid 隔离，迁移服务器坐标时不能据此宣称旧会话资料会自动合并。
 
-每个私有发行使用自己的服务器。中文下载页 `/downloads` 从发布注册中心读取各端的显示名称、版本与下载链接；
+每个私有发行使用自己的服务器。首页下载区 `/#download` 从发布注册中心读取各端制品的版本与下载链接；
 `/downloads/android.json` 和旧固定 APK 入口继续兼容 Android 下载。用户手动下载安装 APK；
 协议升级提示与客户端文件更新分别处理，当前 Android 不自动安装更新。
 Desktop 使用安装包内 `serverUrl` 对应的注册中心检查更新，不随登录服务器变更更新来源；
