@@ -440,4 +440,9 @@ private class PassiveInviteRepository : InviteLinkRepository {
         authorize: (GroupCommandFacts) -> Unit,
     ): InviteLinkRecord = error("unused")
     override fun getInviteLink(token: String): InviteLinkRecord? = null
+    override fun readPreview(
+        transaction: com.virjar.tk.server.domain.transaction.PgReadTransactionContext,
+        uid: String,
+        token: String,
+    ): InvitePreviewFacts? = null
 }

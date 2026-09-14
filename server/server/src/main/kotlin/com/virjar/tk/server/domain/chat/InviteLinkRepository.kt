@@ -1,6 +1,7 @@
 package com.virjar.tk.server.domain.chat
 
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
+import com.virjar.tk.server.domain.transaction.PgReadTransactionContext
 import com.virjar.tk.protocol.model.InviteLink
 
 /** 群邀请链接的持久化端口。 */
@@ -22,7 +23,18 @@ interface InviteLinkRepository {
     ): InviteLinkRecord
 
     fun getInviteLink(token: String): InviteLinkRecord?
+
+    /** 邀请、群状态与当前成员资格均来自同一读事务，绕过聊天缓存。 */
+    fun readPreview(transaction: PgReadTransactionContext, uid: String, token: String): InvitePreviewFacts?
 }
+
+data class InvitePreviewFacts(
+    val invite: InviteLinkRecord,
+    /** 群已停用或资料不完整时为 null。 */
+    val groupName: String?,
+    val memberCount: Int = 0,
+    val alreadyJoined: Boolean = false,
+)
 
 /** 一个有界的聚合预算，防止邀请历史变成无分页的 RPC/表扫描。 */
 object InviteLinkPolicy {

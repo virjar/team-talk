@@ -1,6 +1,7 @@
 package com.virjar.tk.server.infra.db.repository
 
 import com.virjar.tk.server.domain.chat.InviteLinkRecord
+import com.virjar.tk.server.domain.chat.InvitePreviewFacts
 import com.virjar.tk.server.domain.chat.InviteLinkRepository
 import com.virjar.tk.server.domain.chat.InviteLinkPolicy
 import com.virjar.tk.server.domain.chat.InviteLinkCreationCommand
@@ -9,6 +10,7 @@ import com.virjar.tk.server.domain.command.ReliableCommandConflictException
 import com.virjar.tk.server.domain.command.ReliableCommandCapacityException
 import com.virjar.tk.server.domain.command.ReliableCommandPolicy
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
+import com.virjar.tk.server.domain.transaction.PgReadTransactionContext
 import com.virjar.tk.server.infra.db.Chats
 import com.virjar.tk.server.infra.db.ReliableCommandReceiptWindows
 import com.virjar.tk.server.infra.db.GroupChats
@@ -17,6 +19,7 @@ import com.virjar.tk.server.infra.db.InviteLinkCreationReceipts
 import com.virjar.tk.server.infra.db.GroupMembers
 import com.virjar.tk.server.infra.db.Users
 import com.virjar.tk.server.infra.db.requireExposedTransaction
+import com.virjar.tk.server.infra.db.requireExposedReadTransaction
 import com.virjar.tk.protocol.model.Chat
 import com.virjar.tk.protocol.model.Member
 import com.virjar.tk.protocol.model.UserRole
@@ -260,6 +263,29 @@ class ExposedInviteLinkRepository internal constructor(
             GroupInviteLinks.selectAll().where { GroupInviteLinks.token eq token }
                 .map { it.toInviteLinkRecord() }.singleOrNull()
         }
+    }
+
+    override fun readPreview(
+        transaction: PgReadTransactionContext,
+        uid: String,
+        token: String,
+    ): InvitePreviewFacts? {
+        check(transaction.requireExposedReadTransaction().db === database)
+        val invite = GroupInviteLinks.selectAll().where { GroupInviteLinks.token eq token }
+            .singleOrNull()?.toInviteLinkRecord() ?: return null
+        val chat = Chats.selectAll().where {
+            (Chats.chatId eq invite.chatId) and (Chats.status eq 1) and (Chats.chatType eq 2)
+        }.singleOrNull() ?: return InvitePreviewFacts(invite, groupName = null)
+        val group = GroupChats.selectAll().where { GroupChats.chatId eq chat[Chats.chatId] }
+            .singleOrNull() ?: return InvitePreviewFacts(invite, groupName = null)
+        val memberCount = GroupMembers.selectAll().where {
+            (GroupMembers.chatId eq invite.chatId) and (GroupMembers.status eq 1)
+        }.count()
+        check(memberCount <= com.virjar.tk.protocol.model.GroupPolicy.MAX_MEMBERS)
+        val alreadyJoined = GroupMembers.selectAll().where {
+            (GroupMembers.chatId eq invite.chatId) and (GroupMembers.uid eq uid) and (GroupMembers.status eq 1)
+        }.any()
+        return InvitePreviewFacts(invite, group[GroupChats.name], memberCount.toInt(), alreadyJoined)
     }
 
     private fun lockActiveGroup(chatId: String): ResultRow {

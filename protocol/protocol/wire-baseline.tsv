@@ -91,6 +91,7 @@ rpc	chat/21	0	-	active	getOrCreateSavedChat():com.virjar.tk.protocol.model.Chat
 rpc	chat/22	3	-	active	setGroupAvatar(avatar:com.virjar.tk.protocol.model.GroupAvatar):kotlin.Unit
 rpc	chat/23	3	-	active	getGroupAvatars(chatIds:kotlin.collections.List):List<com.virjar.tk.protocol.model.GroupAvatar>
 rpc	chat/24	3	-	active	getOrCreateSystemChat(systemUid:kotlin.String):com.virjar.tk.protocol.model.Chat
+rpc	chat/25	3	-	active	previewInvite(token:kotlin.String):com.virjar.tk.protocol.model.InvitePreview
 rpc	chat/3	0	-	active	get(chatId:kotlin.String):com.virjar.tk.protocol.model.Chat
 rpc	chat/4	0	-	active	update(chatId:kotlin.String,name:kotlin.String?,avatar:kotlin.String?,notice:kotlin.String?):kotlin.Unit
 rpc	chat/5	0	-	active	delete(chatId:kotlin.String):kotlin.Unit
@@ -266,6 +267,7 @@ type	com.virjar.tk.protocol.model.GroupAvatar	3	-	active	CLASS(chatId:kotlin.Str
 type	com.virjar.tk.protocol.model.GroupFileEntry	0	-	active	CLASS(entryId:kotlin.String,chatId:kotlin.String,parentId:kotlin.String?,kind:kotlin.Int,name:kotlin.String,attachment:com.virjar.tk.protocol.model.Attachment?,revision:kotlin.Long,contentVersion:kotlin.Long,createdBy:kotlin.String,createdAt:kotlin.Long,updatedBy:kotlin.String,updatedAt:kotlin.Long)
 type	com.virjar.tk.protocol.model.GroupFileVersion	0	-	active	CLASS(entryId:kotlin.String,version:kotlin.Long,attachment:com.virjar.tk.protocol.model.Attachment,createdBy:kotlin.String,createdAt:kotlin.Long)
 type	com.virjar.tk.protocol.model.InviteLink	0	-	active	CLASS(token:kotlin.String,chatId:kotlin.String,name:kotlin.String,maxUses:kotlin.Int,useCount:kotlin.Int,expiresAt:kotlin.Long,revokedAt:kotlin.Long)
+type	com.virjar.tk.protocol.model.InvitePreview	3	-	active	CLASS(status:kotlin.Int,chatId:kotlin.String?,name:kotlin.String?,memberCount:kotlin.Int,alreadyJoined:kotlin.Boolean)
 type	com.virjar.tk.protocol.model.Member	0	-	active	CLASS(uid:kotlin.String,chatId:kotlin.String,role:kotlin.Int,nickname:kotlin.String?,joinedAt:kotlin.Long,user:com.virjar.tk.protocol.model.User?)
 type	com.virjar.tk.protocol.model.Message	0	-	active	CLASS(chatId:kotlin.String,clientMsgId:kotlin.String,serverSeq:kotlin.Long,senderUid:kotlin.String,messageType:kotlin.Int,timestamp:kotlin.Long,flags:kotlin.Int,body:com.virjar.tk.protocol.body.MessageBody?)
 type	com.virjar.tk.protocol.model.MessageReactionGroup	0	-	active	CLASS(emoji:kotlin.String,reactorUids:kotlin.collections.List<kotlin.String>)

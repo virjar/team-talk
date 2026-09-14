@@ -129,6 +129,21 @@ internal fun SubScreenContent(
             onBack = onBack,
         )
 
+        SubScreen.JoinByInvite -> JoinByInviteScreen(
+            onPreview = { input ->
+                admittedSuspend(onClosed = { throw CancellationException("会话已关闭") }) {
+                    data.discovery.previewInvite(input)
+                }
+            },
+            onJoin = { input ->
+                val chatId = admittedSuspend(onClosed = { throw CancellationException("会话已关闭") }) {
+                    data.discovery.joinByInvite(input)
+                }
+                openChatIfOpen(chatId)
+            },
+            onBack = onBack,
+        )
+
         is SubScreen.CreateGroup -> CreateGroupScreen(
             contacts = contacts,
             pendingGroupCreation = data.groups.pendingGroupCreation,
@@ -261,7 +276,8 @@ internal fun SubScreenContent(
         )
 
         is SubScreen.InviteLinks -> InviteLinksScreen(
-            links = data.groups.inviteLinks.map { InviteLink(it.token, it.maxUses, it.useCount, it.revokedAt > 0) },
+            links = data.groups.inviteLinks.takeIf { data.groups.inviteLinksTargetChatId == screen.chatId }.orEmpty(),
+            serverBaseUrl = data.deploymentIdentity.httpBaseUrl,
             onCreateLink = {
                 admittedSuspend(onClosed = { null }) {
                     data.groups.createInviteLink(screen.chatId)

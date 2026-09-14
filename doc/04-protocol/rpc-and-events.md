@@ -60,6 +60,11 @@ KSP 生成：
 直接报编译错误，声明顺序不参与编号。修改契约时同时更新 `RpcMethodIdGoldenTest`。客户端和
 服务端不得手写另一套 service/method 枚举。
 
+待发行协议 0.3 增加 `chat/25 previewInvite(token): InvitePreview`，返回邀请状态及允许展示的群概况，
+已发行的 `chat/15–19` 邀请创建、列表、撤销、加入和原始信息契约保持不变。预览成功不是入群授权回执，
+确认仍调用 `joinByInvite` 并以服务端当时的事实为准。
+
+
 `@RpcService(name)` 是全局唯一的 wire 路由身份；接口简单名也必须全局唯一，因为所有
 `Contract/Stub/Proxy` 位于同一生成包。处理器在生成文件前拒绝两种冲突，并列出冲突接口的完整名称，
 避免新服务被注册表的同名 key 静默覆盖。入口见

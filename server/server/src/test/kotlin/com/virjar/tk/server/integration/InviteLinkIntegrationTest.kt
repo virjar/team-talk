@@ -2,12 +2,26 @@ package com.virjar.tk.server.integration
 
 import com.virjar.tk.server.domain.chat.InviteLinkRecord
 import com.virjar.tk.server.domain.chat.InviteLinkPolicy
+import com.virjar.tk.protocol.model.InvitePreview
+import com.virjar.tk.server.domain.chat.ChatAccessDeniedException
+import com.virjar.tk.server.infra.db.Chats
+import com.virjar.tk.server.infra.db.GroupInviteLinks
+import com.virjar.tk.server.infra.db.GroupMembers
+import com.virjar.tk.server.infra.db.SyncEvents
+import com.virjar.tk.server.protocol.rpc.ChatRpcImpl
 import kotlinx.coroutines.test.runTest
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.and
+import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.transactions.transaction
+import org.jetbrains.exposed.sql.update
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class InviteLinkIntegrationTest {
@@ -19,6 +33,89 @@ class InviteLinkIntegrationTest {
     }
 
     private val ctx get() = ext.env
+
+    @Test
+    fun `non member previews only group summary without consuming invite or granting content access`() = runTest {
+        val (creator, chatId) = setupGroup()
+        val guest = ctx.registerUser()
+        val token = ctx.chatService.createInviteLink(creator, chatId, "工作群邀请", 1, 0)
+        val eventsBefore = transaction(ctx.database) { SyncEvents.selectAll().count() }
+        val rpc = ChatRpcImpl(guest, ctx.chatService)
+        repeat(2) {
+            assertEquals(InvitePreview(InvitePreview.VALID, chatId, "TestGroup", 2), rpc.previewInvite(token))
+        }
+        assertEquals(0, ctx.chatService.getInviteInfo(token).useCount)
+        assertEquals(eventsBefore, transaction(ctx.database) { SyncEvents.selectAll().count() })
+        assertFailsWith<ChatAccessDeniedException> { ctx.chatService.getChatFor(guest, chatId) }
+        assertFailsWith<ChatAccessDeniedException> { ctx.chatService.getMembersFor(guest, chatId) }
+        assertTrue(ctx.chatService.getGroupAvatars(guest, listOf(chatId)).isEmpty())
+        assertEquals(InvitePreview(InvitePreview.NOT_FOUND), rpc.previewInvite("invalid"))
+        assertEquals(InvitePreview(InvitePreview.NOT_FOUND), rpc.previewInvite(java.util.UUID.randomUUID().toString()))
+
+        // 预览不是加入授权：确认前撤销后，重读和实际加入都立即看到当前事实。
+        ctx.chatService.revokeInviteLink(creator, token)
+        assertEquals(InvitePreview(InvitePreview.REVOKED), rpc.previewInvite(token))
+        assertFailsWith<IllegalArgumentException> { rpc.joinByInvite(token) }
+    }
+
+    @Test
+    fun `joined member can open and retry after invite is exhausted revoked or expired`() = runTest {
+        val (creator, chatId) = setupGroup()
+        val guest = ctx.registerUser()
+        val outsider = ctx.registerUser()
+        val token = ctx.chatService.createInviteLink(creator, chatId, "一次邀请", 1, 0)
+        assertEquals(chatId, ctx.chatService.joinByInvite(guest, token).chatId)
+        assertEquals(1, ctx.chatService.getInviteInfo(token).useCount)
+        val joined = ctx.chatService.previewInvite(guest, token)
+        assertEquals(InvitePreview.EXHAUSTED, joined.status)
+        assertTrue(joined.alreadyJoined)
+        assertEquals(chatId, joined.chatId)
+        assertEquals(3, joined.memberCount)
+        assertEquals(InvitePreview(InvitePreview.EXHAUSTED), ctx.chatService.previewInvite(outsider, token))
+        val eventsAfterJoin = transaction(ctx.database) { SyncEvents.selectAll().count() }
+        assertEquals(chatId, ctx.chatService.joinByInvite(guest, token).chatId)
+        transaction(ctx.database) {
+            GroupInviteLinks.update({ GroupInviteLinks.token eq token }) { it[expiresAt] = 1L }
+        }
+        assertEquals(InvitePreview.EXPIRED, ctx.chatService.previewInvite(guest, token).status)
+        assertEquals(InvitePreview(InvitePreview.EXPIRED), ctx.chatService.previewInvite(outsider, token))
+        assertEquals(chatId, ctx.chatService.joinByInvite(guest, token).chatId)
+        ctx.chatService.revokeInviteLink(creator, token)
+        assertEquals(InvitePreview.REVOKED, ctx.chatService.previewInvite(guest, token).status)
+        assertEquals(chatId, ctx.chatService.joinByInvite(guest, token).chatId)
+        assertEquals(1, ctx.chatService.getInviteInfo(token).useCount)
+        assertEquals(eventsAfterJoin, transaction(ctx.database) { SyncEvents.selectAll().count() })
+
+        val expired = ctx.chatService.createInviteLink(creator, chatId, "过期邀请", 0, 1L)
+        assertEquals(InvitePreview(InvitePreview.EXPIRED), ctx.chatService.previewInvite(outsider, expired))
+        assertEquals(InvitePreview.EXPIRED, ctx.chatService.previewInvite(guest, expired).status)
+        assertEquals(chatId, ctx.chatService.joinByInvite(guest, expired).chatId)
+    }
+
+    @Test
+    fun `preview reads membership from current database and hides unavailable group`() = runTest {
+        val (creator, chatId) = setupGroup()
+        val guest = ctx.registerUser()
+        val token = ctx.chatService.createInviteLink(creator, chatId, "最新状态", 0, 0)
+        ctx.chatService.joinByInvite(guest, token)
+        assertTrue(ctx.chatStore.getMembers(chatId).any { it.uid == guest })
+        // 模拟另一个进程的已提交成员撤销，不发布本进程缓存失效。
+        transaction(ctx.database) {
+            GroupMembers.update({ (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq guest) }) {
+                it[status] = 0
+            }
+        }
+        val preview = ctx.chatService.previewInvite(guest, token)
+        assertFalse(preview.alreadyJoined)
+        assertEquals(2, preview.memberCount)
+        transaction(ctx.database) {
+            Chats.update({ Chats.chatId eq chatId }) { it[status] = 0 }
+        }
+        val unavailable = ctx.chatService.previewInvite(guest, token)
+        assertEquals(InvitePreview.GROUP_UNAVAILABLE, unavailable.status)
+        assertNull(unavailable.chatId)
+        assertFailsWith<IllegalArgumentException> { ctx.chatService.joinByInvite(guest, token) }
+    }
 
     @Test
     fun `invite aggregate is bounded and a revoked slot is retired before reuse`() = runTest {

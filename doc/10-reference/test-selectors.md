@@ -207,6 +207,11 @@
 | `group.detail.editNotice` | 有编辑权限时显示的群公告编辑入口 |
 | `group.detail.invite` | 邀请成员 |
 | `group.detail.inviteLinks` | 邀请链接 |
+| `action.joinByInvite` | 会话/通讯录标题旁的“加入群”入口 |
+| `invite.links.create` | 创建邀请链接 |
+| `invite.link.<token>.url/copy/status/usage/expires/revoke` | 单条完整链接、复制、状态、次数、有效期与撤销 |
+| `invite.join.input/preview/error/status/confirm` | 邀请输入、查看群聊、失败原因、状态与确认加入/打开群聊 |
+| `invite.join.group.name/group.memberCount/alreadyJoined` | 当前预览的群名、人数与已加入提示 |
 | `invite.search` / `invite.submit` | 邀请成员搜索与提交；提交按钮在无人可选或请求进行中禁用 |
 | `invite.candidate.{uid前8}` / `invite.selected.{uid前8}` | 可邀请候选和已选人选；成员关系变化后同步排除已入群的人选 |
 | `invite.hint.idle` / `invite.hint.empty` | 未搜索提示与无匹配/无可邀请好友的空状态 |

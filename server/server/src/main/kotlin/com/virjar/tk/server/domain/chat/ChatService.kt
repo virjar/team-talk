@@ -1,6 +1,8 @@
 package com.virjar.tk.server.domain.chat
 
 import com.virjar.tk.server.domain.command.canonicalOperationId
+import com.virjar.tk.protocol.model.InvitePreview
+import com.virjar.tk.protocol.model.isActiveHuman
 import com.virjar.tk.server.domain.command.reliableCommandFingerprint
 import com.virjar.tk.server.domain.command.ReliableCommandPolicy
 import com.virjar.tk.server.domain.contact.ContactRepository
@@ -677,6 +679,30 @@ class ChatService(
 
     fun getInviteInfo(token: String): InviteLinkRecord {
         return chatStore.getInviteLink(token) ?: throw IllegalArgumentException("邀请链接不存在")
+    }
+
+    /** 仅返回确认入群所需概况；预览不消耗次数，也不代表稍后的加入一定成功。 */
+    suspend fun previewInvite(uid: String, token: String): InvitePreview = unitOfWork.read {
+        require(users.findByUid(uid)?.isActiveHuman == true) { "用户不存在或已停用" }
+        if (token.length != UUID_TEXT_LENGTH || runCatching { UUID.fromString(token).toString() }.getOrNull() != token) {
+            return@read InvitePreview(InvitePreview.NOT_FOUND)
+        }
+        val facts = chatStore.readInvitePreview(transaction, uid, token)
+            ?: return@read InvitePreview(InvitePreview.NOT_FOUND)
+        val authority = managedChats.authority(facts.invite.chatId)
+        if (facts.groupName == null || authority.managed || !authority.ready) {
+            return@read InvitePreview(InvitePreview.GROUP_UNAVAILABLE)
+        }
+        val invite = facts.invite
+        val status = when {
+            invite.revokedAt != 0L -> InvitePreview.REVOKED
+            invite.expiresAt > 0L && invite.expiresAt < System.currentTimeMillis() -> InvitePreview.EXPIRED
+            invite.maxUses > 0 && invite.useCount >= invite.maxUses -> InvitePreview.EXHAUSTED
+            else -> InvitePreview.VALID
+        }
+        // 已加入者保留“打开群聊”，包括第一次成功入群却丢失响应后的重试。
+        if (status != InvitePreview.VALID && !facts.alreadyJoined) return@read InvitePreview(status)
+        InvitePreview(status, invite.chatId, facts.groupName, facts.memberCount, facts.alreadyJoined)
     }
 
     // ── 管理端操作（免权限检查，广播链路复用）──

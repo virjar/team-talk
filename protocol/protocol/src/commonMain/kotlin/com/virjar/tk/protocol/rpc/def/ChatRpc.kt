@@ -4,6 +4,7 @@ import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.protocol.model.Chat
 import com.virjar.tk.protocol.model.GroupAvatar
 import com.virjar.tk.protocol.model.InviteLink
+import com.virjar.tk.protocol.model.InvitePreview
 import com.virjar.tk.protocol.model.Member
 import com.virjar.tk.protocol.rpc.RpcMethod
 import com.virjar.tk.protocol.rpc.RpcService
@@ -86,4 +87,9 @@ interface ChatRpc {
     @com.virjar.tk.protocol.SinceProtocol(3)
     @RpcMethod(24)
     suspend fun getOrCreateSystemChat(systemUid: String): Chat
+
+    /** 受邀确认页的即时快照；加入时仍由 joinByInvite 重新校验。 */
+    @com.virjar.tk.protocol.SinceProtocol(3)
+    @RpcMethod(25)
+    suspend fun previewInvite(token: String): InvitePreview
 }

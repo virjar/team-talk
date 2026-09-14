@@ -7,6 +7,8 @@ import com.virjar.tk.protocol.model.User
 import com.virjar.tk.protocol.model.ContentSearchHit
 import com.virjar.tk.protocol.model.ContentSearchPage
 import com.virjar.tk.protocol.model.ContentSearchRequest
+import com.virjar.tk.protocol.model.InvitePreview
+import com.virjar.tk.shared.repository.GroupInviteLinks
 import com.virjar.tk.shared.repository.ResolvedContentSearchHit
 import com.virjar.tk.app.navigation.UiLocalDataBoundary
 
@@ -23,6 +25,16 @@ class DiscoveryFeature internal constructor(
 
     suspend fun resolveContent(hit: ContentSearchHit): ResolvedContentSearchHit =
         localData.run { session.contentSearchRepo.resolve(hit).getOrThrow() }
+
+    suspend fun previewInvite(input: String): InvitePreview {
+        val token = GroupInviteLinks.parse(input, session.deploymentIdentity.httpBaseUrl)
+        return localData.run { session.chatRepo.previewInvite(token).getOrThrow() }
+    }
+
+    suspend fun joinByInvite(input: String): String {
+        val token = GroupInviteLinks.parse(input, session.deploymentIdentity.httpBaseUrl)
+        return localData.run { session.chatRepo.joinByInvite(token).getOrThrow().chatId }
+    }
 
     suspend fun startPersonalChat(uid: String): String? = try {
         localData.run { session.chatRepo.createPersonalChat(uid).getOrThrow().chatId }

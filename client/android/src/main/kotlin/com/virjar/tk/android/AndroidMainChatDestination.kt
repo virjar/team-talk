@@ -50,7 +50,6 @@ import com.virjar.tk.app.ui.screen.FriendAppliesScreen
 import com.virjar.tk.app.ui.screen.GlobalSearchScreen
 import com.virjar.tk.app.ui.screen.GroupBotsScreen
 import com.virjar.tk.app.ui.screen.GroupDetailScreen
-import com.virjar.tk.app.ui.screen.InviteLink
 import com.virjar.tk.app.ui.screen.InviteLinksScreen
 import com.virjar.tk.app.ui.screen.InviteMembersScreen
 import com.virjar.tk.app.ui.screen.SearchUsersScreen

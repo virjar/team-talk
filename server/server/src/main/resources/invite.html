@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>群邀请 · TeamTalk</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f3f5f8; color: #172033; }
+    main { width: min(440px, calc(100% - 64px)); padding: 32px; border-radius: 20px; background: white; box-shadow: 0 12px 48px #17203312; }
+    h1 { margin: 0 0 16px; font-size: 28px; }
+    p, li { line-height: 1.7; }
+    ol { padding-left: 24px; }
+    input, button { box-sizing: border-box; width: 100%; font: inherit; border-radius: 10px; }
+    input { padding: 12px; border: 1px solid #cbd2df; background: #f8fafc; color: inherit; }
+    button { margin-top: 12px; padding: 12px; border: 0; background: #315bdf; color: white; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: default; }
+    a { color: #315bdf; }
+    #status { min-height: 1.7em; color: #536178; font-size: 14px; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #111827; color: #e5eaf3; } main { background: #1d2738; }
+      input { background: #162031; border-color: #43506a; } #status { color: #aebbd1; } a { color: #94b0ff; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>你收到了一份群邀请</h1>
+  <p>请在此部署的客户端中确认群信息并加入。</p>
+  <ol>
+    <li>复制下方完整邀请链接。</li>
+    <li>打开客户端，在「会话」或「通讯录」中选择「加入群」，进入「通过邀请加入群聊」。</li>
+    <li>粘贴链接，查看群信息并确认加入。</li>
+  </ol>
+  <input id="invite-link" aria-label="完整邀请链接" readonly>
+  <button id="copy-link" disabled>复制邀请链接</button>
+  <p id="status" role="status"></p>
+  <a href="downloads">下载此部署的客户端</a>
+</main>
+<script>
+  const field = document.getElementById('invite-link');
+  const button = document.getElementById('copy-link');
+  const status = document.getElementById('status');
+  function refreshLink() {
+    const valid = /^#[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(location.hash);
+    field.value = valid ? location.href : '';
+    button.disabled = !valid;
+    status.textContent = valid ? '邀请是否有效，将在客户端中确认。' : '邀请链接不完整，请向邀请人重新获取。';
+  }
+  button.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(field.value);
+      status.textContent = '已复制，请打开客户端粘贴。';
+    } catch (_) {
+      field.focus();
+      field.select();
+      status.textContent = '请长按或使用系统复制操作，复制已选中的链接。';
+    }
+  });
+  window.addEventListener('hashchange', refreshLink);
+  refreshLink();
+</script>
+</body>
+</html>

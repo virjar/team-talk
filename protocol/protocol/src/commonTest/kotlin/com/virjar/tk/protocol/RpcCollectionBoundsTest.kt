@@ -157,6 +157,7 @@ class RpcCollectionBoundsTest {
         override suspend fun revokeInviteLink(token: String) = unexpected()
         override suspend fun joinByInvite(token: String): Chat = unexpected()
         override suspend fun getInviteInfo(token: String): InviteLink = unexpected()
+        override suspend fun previewInvite(token: String): com.virjar.tk.protocol.model.InvitePreview = unexpected()
         override suspend fun leaveGroup(chatId: String) = unexpected()
     }
 }

@@ -432,7 +432,12 @@ private fun MainListPane(
                         )
                     }
                     Column {
-                        ListHeader(title = "会话")
+                        ListHeader(title = "会话", actions = {
+                            TextButton(
+                                onClick = presentationGate.guard { nav.openScreen(SubScreen.JoinByInvite) },
+                                modifier = Modifier.testTag("action.joinByInvite"),
+                            ) { Text("加入群") }
+                        })
                         ConversationListScreen(
                             conversations = conversations,
                             mentionedChatIds = mentionedChatIds,
@@ -460,7 +465,12 @@ private fun MainListPane(
 
                 MainTab.CONTACTS -> {
                     Column {
-                        ListHeader(title = "通讯录")
+                        ListHeader(title = "通讯录", actions = {
+                            TextButton(
+                                onClick = presentationGate.guard { nav.openScreen(SubScreen.JoinByInvite) },
+                                modifier = Modifier.testTag("action.joinByInvite"),
+                            ) { Text("加入群") }
+                        })
                         // 桌面使用搜索 + 鼠标滚动；移动端字母索引条不占用中栏右侧空间。
                         DirectoryScreen(
                             contacts = contacts,
@@ -886,6 +896,7 @@ internal fun desktopMainWindowTelemetryPage(
 internal fun desktopTelemetryPage(screen: SubScreen): ClientUiPage = when (screen) {
     SubScreen.FriendApplies -> ClientUiPage.FRIEND_APPLIES
     SubScreen.SearchUsers -> ClientUiPage.SEARCH_USERS
+    SubScreen.JoinByInvite -> ClientUiPage.JOIN_BY_INVITE
     is SubScreen.CreateGroup -> ClientUiPage.CREATE_GROUP
     SubScreen.SearchMessages,
     SubScreen.GlobalSearch,

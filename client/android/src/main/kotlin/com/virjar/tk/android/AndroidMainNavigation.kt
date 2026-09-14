@@ -55,8 +55,8 @@ import com.virjar.tk.app.ui.screen.FriendAppliesScreen
 import com.virjar.tk.app.ui.screen.GlobalSearchScreen
 import com.virjar.tk.app.ui.screen.GroupBotsScreen
 import com.virjar.tk.app.ui.screen.GroupDetailScreen
-import com.virjar.tk.app.ui.screen.InviteLink
 import com.virjar.tk.app.ui.screen.InviteLinksScreen
+import com.virjar.tk.app.ui.screen.JoinByInviteScreen
 import com.virjar.tk.app.ui.screen.InviteMembersScreen
 import com.virjar.tk.app.ui.screen.SearchUsersScreen
 import com.virjar.tk.app.ui.screen.UserProfileScreen
@@ -302,6 +302,9 @@ private fun NavGraphBuilder.homeDestination(
             onGlobalSearch = actionAdmission.guard {
                 navController.navigate(Routes.SEARCH_MESSAGES)
             },
+            onJoinByInvite = actionAdmission.guard {
+                navController.navigate(Routes.JOIN_BY_INVITE)
+            },
             onFriendApplies = actionAdmission.guard {
                 navController.navigate(Routes.FRIEND_APPLIES)
             },
@@ -412,6 +415,28 @@ private fun NavGraphBuilder.searchDestination(
                 navController.navigate(Routes.userProfile(user.uid))
             },
             excludedUserUid = dataState.userSession.uid,
+            onBack = actionAdmission.guard { navController.popBackStack() },
+        )
+    }
+    composable(Routes.JOIN_BY_INVITE) {
+        JoinByInviteScreen(
+            onPreview = { input ->
+                admittedAction(onClosed = { throw kotlinx.coroutines.CancellationException("会话已关闭") }) {
+                    dataState.discovery.previewInvite(input)
+                }
+            },
+            onJoin = { input ->
+                val chatId = admittedAction(onClosed = { throw kotlinx.coroutines.CancellationException("会话已关闭") }) {
+                    dataState.discovery.joinByInvite(input)
+                }
+                actionAdmission.runIfOpen {
+                    if (dataState.chat.prepareChat(chatId)) {
+                        navController.navigate(Routes.chat(chatId)) {
+                            popUpTo(Routes.JOIN_BY_INVITE) { inclusive = true }
+                        }
+                    }
+                }
+            },
             onBack = actionAdmission.guard { navController.popBackStack() },
         )
     }
@@ -891,9 +916,8 @@ private fun NavGraphBuilder.inviteDestination(
             .takeIf { dataState.groups.inviteLinksTargetChatId == chatId }
             .orEmpty()
         InviteLinksScreen(
-            links = links.map {
-                InviteLink(it.token, it.maxUses, it.useCount, it.revokedAt > 0)
-            },
+            links = links,
+            serverBaseUrl = dataState.deploymentIdentity.httpBaseUrl,
             onCreateLink = {
                 admittedAction(onClosed = { null }) {
                     dataState.groups.createInviteLink(chatId)

@@ -409,6 +409,9 @@ class ChatStore(
 
     fun getInviteLink(token: String) = inviteRepo.getInviteLink(token)
 
+    internal fun readInvitePreview(transaction: PgReadTransactionContext, uid: String, token: String) =
+        inviteRepo.readPreview(transaction, uid, token)
+
     /** 在任何已提交的聚合命令之后不发布过期的聊天/成员状态。 */
     internal fun invalidateCommittedCommand(chatId: String) {
         withCacheGate(chatId) { invalidateChat(chatId) }

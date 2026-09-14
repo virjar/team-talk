@@ -21,6 +21,7 @@ object Routes {
     }
     const val SEARCH_MESSAGES = "search_messages"
     const val SEARCH_USERS = "search_users"
+    const val JOIN_BY_INVITE = "join_by_invite"
     const val CREATE_GROUP = "create_group?seedUid={seedUid}"
     fun createGroup(seedUid: String? = null) = if (seedUid.isNullOrBlank()) {
         "create_group"

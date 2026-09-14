@@ -2,6 +2,7 @@ package com.virjar.tk.server
 
 import com.virjar.tk.server.api.clientTelemetryRoutes
 import com.virjar.tk.server.api.clientDownloadRoutes
+import com.virjar.tk.server.api.inviteLandingRoutes
 import com.virjar.tk.server.api.clientUpdateRoutes
 import com.virjar.tk.server.api.adminRoutes
 import com.virjar.tk.server.api.AttachmentUploadAdmission
@@ -620,6 +621,7 @@ internal fun Application.module(
             }
 
             clientDownloadRoutes(downloadsDir, koin.get())
+            inviteLandingRoutes()
             clientUpdateRoutes(
                 service = koin.get(),
                 adminAuth = koin.get(),

@@ -172,6 +172,11 @@ CHAT_CREATED。用户建群以客户端 operationId 和规范化请求指纹作�
 重复加入只补齐 Conversation，不重复计数或发事件；即使首次提交已耗尽额度，丢失响应后的同成员重试仍按
 已提交事实成功返回。缓存仅在上述事务提交后失效。
 
+`chat.previewInvite` 为持有邀请的已登录人类用户返回确认页概况。同一只读事务读取邀请、活跃群和成员事实，
+不建立成员、不消费次数，也不授予消息、成员列表或头像下载权限。无效邀请对非成员只返回失效原因；
+已加入者仍可打开其活跃群。实际加入继续由原 `joinByInvite` 事务权威裁决。公开 `/invite` 只返回固定
+操作说明页，token 放在浏览器 fragment，群资料通过认证后的预览 RPC 读取。
+
 普通成员添加、受管群补员与服务成员授权共用 transaction-bound addition：锁定 Chat/成员快照后
 重新校验权限，在一个 PgUnitOfWork 内建立或重新激活 Member、创建 Conversation，并按同一提交写入
 新成员 CHAT_CREATED 与全部现有成员 MEMBER_ADDED。重复命令没有事实变化时不重复产生事件。

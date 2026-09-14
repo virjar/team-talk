@@ -90,6 +90,7 @@ internal fun androidTelemetryPage(route: String?): ClientUiPage = when (route) {
     Routes.CHAT -> ClientUiPage.CHAT
     Routes.SEARCH_MESSAGES -> ClientUiPage.SEARCH_MESSAGES
     Routes.SEARCH_USERS -> ClientUiPage.SEARCH_USERS
+    Routes.JOIN_BY_INVITE -> ClientUiPage.JOIN_BY_INVITE
     Routes.CREATE_GROUP -> ClientUiPage.CREATE_GROUP
     Routes.FRIEND_APPLIES -> ClientUiPage.FRIEND_APPLIES
     Routes.USER_PROFILE -> ClientUiPage.USER_PROFILE

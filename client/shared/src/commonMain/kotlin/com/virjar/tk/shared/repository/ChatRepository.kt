@@ -9,6 +9,7 @@ import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.protocol.model.Chat
 import com.virjar.tk.protocol.model.GroupAvatar
 import com.virjar.tk.protocol.model.InviteLink
+import com.virjar.tk.protocol.model.InvitePreview
 import com.virjar.tk.protocol.model.Member
 import com.virjar.tk.shared.outcome
 import com.virjar.tk.protocol.rpc.gen.ChatRpcProxy
@@ -217,6 +218,22 @@ class ChatRepository(
 
     suspend fun listInviteLinks(chatId: String): Outcome<List<InviteLink>> = outcome { rpc.listInviteLinks(chatId) }
     suspend fun revokeInviteLink(token: String): Outcome<Unit> = outcome { rpc.revokeInviteLink(token) }
+
+    suspend fun previewInvite(token: String): Outcome<InvitePreview> = outcome {
+        try {
+            rpc.previewInvite(token)
+        } catch (_: com.virjar.tk.protocol.rpc.RpcProtocolUnavailableException) {
+            throw com.virjar.tk.shared.AppError.Business(426, "服务器版本过低，请联系管理员升级后使用邀请预览")
+        }
+    }
+
+    /** 服务端对已加入成员幂等返回；未知结果可使用同一邀请重试。 */
+    suspend fun joinByInvite(token: String): Outcome<Chat> = outcome {
+        val joined = rpc.joinByInvite(token)
+        // 加入响应可能晚于移除成员通知；回读沿现有快照准入，不把旧 ACK 重新写成当前群投影。
+        getChat(joined.chatId).getOrThrow()
+            ?: throw com.virjar.tk.shared.AppError.Business(503, "群聊信息已更新，请重新查看邀请")
+    }
 
     suspend fun updateGroup(chatId: String, name: String? = null, avatar: String? = null, notice: String? = null): Outcome<Unit> = outcome {
         rpc.update(chatId, name, avatar, notice)

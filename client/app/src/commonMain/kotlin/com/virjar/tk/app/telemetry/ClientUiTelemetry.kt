@@ -34,6 +34,7 @@ enum class ClientUiPage(val code: String) {
     GROUP_BOTS("group_bots"),
     INVITE_MEMBERS("invite_members"),
     INVITE_LINKS("invite_links"),
+    JOIN_BY_INVITE("join_by_invite"),
     FORWARD("forward"),
     TEXT_ATTACHMENT_PREVIEW("text_attachment_preview"),
     DOCUMENT_WINDOW("document_window"),

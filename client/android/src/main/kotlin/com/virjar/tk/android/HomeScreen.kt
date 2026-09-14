@@ -35,6 +35,7 @@ internal fun HomeScreen(
     onLogout: () -> Unit,
     onConversationClick: (String) -> Unit,
     onGlobalSearch: () -> Unit,
+    onJoinByInvite: () -> Unit,
     onFriendApplies: () -> Unit,
     onUserProfile: (String) -> Unit,
     onEditProfile: () -> Unit,
@@ -139,6 +140,12 @@ internal fun HomeScreen(
                 TopAppBar(
                     title = { Text(tabIcons[selectedTab].label) },
                     actions = {
+                        if (MainTab.entries[selectedTab] in setOf(MainTab.CONVERSATIONS, MainTab.CONTACTS)) {
+                            TextButton(
+                                onClick = actionAdmission.guard(onJoinByInvite),
+                                modifier = Modifier.testTag("action.joinByInvite"),
+                            ) { Text("加入群") }
+                        }
                         IconButton(
                             onClick = actionAdmission.guard(onGlobalSearch),
                             modifier = Modifier.testTag("action.search"),
