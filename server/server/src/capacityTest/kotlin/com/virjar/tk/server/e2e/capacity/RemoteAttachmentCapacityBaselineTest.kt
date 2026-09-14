@@ -378,7 +378,7 @@ class RemoteAttachmentCapacityBaselineTest {
         return AttachmentFixture(
             sessions = sessions.toList(),
             fileRepositories = fileRepositories.toList(),
-            groupFiles = sessions.map { session -> GroupFileRepository(session.rpc) },
+            groupFiles = sessions.map { session -> GroupFileRepository(session.rpc, localCache = null) },
             chat = chat,
             tempDirectory = tempDirectory,
         )

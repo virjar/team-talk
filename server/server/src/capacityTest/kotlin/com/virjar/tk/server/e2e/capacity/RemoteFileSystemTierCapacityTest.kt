@@ -151,9 +151,9 @@ class RemoteFileSystemTierCapacityTest {
                 peer.uid,
                 peer.userSession::httpCredentialsSnapshot,
             ).also(fileRepositories::add)
-            val ownerGroup = GroupFileRepository(owner.rpc)
+            val ownerGroup = GroupFileRepository(owner.rpc, localCache = null)
             ownerGroupFiles = ownerGroup
-            val peerGroupFiles = GroupFileRepository(peer.rpc)
+            val peerGroupFiles = GroupFileRepository(peer.rpc, localCache = null)
             val sampler = RemoteFileSystemTierSampler()
 
             enterPhase("filesystem-baseline")
