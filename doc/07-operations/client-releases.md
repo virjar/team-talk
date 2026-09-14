@@ -46,6 +46,10 @@
 目录中遗留的旧 HTML 不会重新公开，安装包、Android 收据和 Conveyor 更新路径不受影响。
 首页及 CSS/JS 优先使用安装根目录 `static/` 中的对应文件，缺失时读取包内 `static/` 资源。
 三个固定资源均声明 UTF-8 与 `Cache-Control: no-cache`；未知路径不会回退到首页。
+Windows/macOS 卡片长期保留默认折叠的“安装被拦截？”说明，提示当前未签名/未公证状态，并链接
+[微软安装说明](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/publish-first-app#step-6-handle-smartscreen-for-new-apps)与
+[Apple 指南](https://support.apple.com/zh-cn/102445)。说明针对单次安装，不要求关闭系统整体防护；
+组织策略阻止、恶意软件或损坏提示需分别处理，不能把所有阻止都当作可跳过的来源提示。
 
 更新检查不比较语义化版本：服务端下发目标（version+build+buildIdentity），客户端服从指令——
 **回滚=把通道指针切回旧版**，客户端会按指令降级。
