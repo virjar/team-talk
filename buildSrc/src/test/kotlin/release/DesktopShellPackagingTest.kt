@@ -11,6 +11,7 @@ import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
 import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
@@ -60,6 +61,82 @@ class DesktopShellPackagingTest {
         }
         assertFalse(net.sf.launch4j.config.ConfigPersister.getInstance().config.manifest.exists())
         assertEquals(listOf(exe.name), installed.listFiles().orEmpty().map { it.name })
+    }
+
+    @Test
+    fun `Windows staging patches only the manifest and invalid signature while preserving the runtime source`() = temporary { root ->
+        val project = ProjectBuilder.builder().withProjectDir(root).build()
+        val javaw = legacyWindowsLauncher(root)
+        val layout = windowsManifest(javaw)
+        // 测试证书目录与尾记录的删除，不冒充可验证的 Authenticode 签名。
+        val certificateOffset = (javaw.length().toInt() + 7) and -8
+        val signed = javaw.readBytes().copyOf(certificateOffset + 16)
+        ByteBuffer.wrap(signed).order(ByteOrder.LITTLE_ENDIAN).apply {
+            putInt(layout.securityDirectory, certificateOffset)
+            putInt(layout.securityDirectory + 4, 16)
+            putInt(certificateOffset, 16)
+            putShort(certificateOffset + 4, 0x200.toShort())
+            putShort(certificateOffset + 6, 2.toShort())
+        }
+        javaw.writeBytes(signed)
+        val seed = File(root, "seed.zip").apply { writeText("seed fixture") }
+        val task = project.tasks.create("windowsShell", AssembleDesktopShellTask::class.java).apply {
+            target.set(DesktopTarget.WINDOWS_AMD64)
+            version.set("0.0.2")
+            installationName.set("TeamTalkPrivate")
+            jbrExtractedRoot.set(File(root, "runtime"))
+            seedPayloadZip.set(seed)
+            iconFile.set(windowsIcon())
+            outputDir.set(File(root, "output"))
+        }
+        task.assemble()
+        val staging = File(root, "output/staging")
+        val installed = File(staging, "TeamTalkPrivate/runtime")
+        val patched = File(installed, "bin/javaw.exe")
+        val bytes = patched.readBytes()
+        assertContentEquals(signed, javaw.readBytes(), "The input runtime is shared by builds and must stay untouched")
+        assertEquals(certificateOffset, bytes.size)
+        assertEquals(0L, ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).getLong(layout.securityDirectory))
+        assertTrue(ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).getInt(layout.checksumOffset) != 0)
+        val allowed = listOf(layout.offset until layout.offset + layout.size,
+            layout.securityDirectory until layout.securityDirectory + 8, layout.checksumOffset until layout.checksumOffset + 4)
+        assertTrue(bytes.indices.all { index -> allowed.any { index in it } || signed[index] == bytes[index] },
+            "Native code, other resources and the appended JAR must keep their exact bytes")
+        val factory = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+        val before = factory.newDocumentBuilder().parse(signed.copyOfRange(layout.offset, layout.offset + layout.size).inputStream())
+        val after = factory.newDocumentBuilder().parse(readWindowsManifest(patched).inputStream())
+        val codePages = after.getElementsByTagNameNS("http://schemas.microsoft.com/SMI/2019/WindowsSettings", "activeCodePage")
+        assertEquals(1, codePages.length)
+        assertEquals("UTF-8", codePages.item(0).textContent)
+        codePages.item(0).parentNode.removeChild(codePages.item(0))
+        assertTrue(before.isEqualNode(after), "DPI, privilege, dependencies and compatibility settings must survive")
+        val notice = File(installed, "TEAMTALK-MODIFICATIONS.txt").readText()
+        assertTrue(notice.contains(JbrRuntimes.sha256Hex(javaw)))
+        assertTrue(notice.contains(JbrRuntimes.sha256Hex(patched)))
+        assertTrue(notice.contains("unsigned"))
+        assertFalse(WindowsRuntimeManifest.enableUtf8(patched))
+        assertContentEquals(bytes, patched.readBytes(), "A UTF-8 launcher is already complete")
+        val zip = File(root, "portable.zip")
+        archiveDirectoryZip(staging, zip, listOf("TeamTalkPrivate"))
+        ZipFile.Builder().setFile(zip).get().use { archive ->
+            assertContentEquals(bytes, archive.getInputStream(archive.getEntry("TeamTalkPrivate/runtime/bin/javaw.exe")).use { it.readBytes() })
+            assertTrue(archive.getEntry("TeamTalkPrivate/runtime/TEAMTALK-MODIFICATIONS.txt") != null)
+        }
+    }
+
+    @Test
+    fun `Windows runtime rejects a manifest that cannot fit without rewriting PE sections`() = temporary { root ->
+        val javaw = legacyWindowsLauncher(root)
+        val layout = windowsManifest(javaw)
+        val compact = readWindowsManifest(javaw).toString(Charsets.UTF_8)
+            .replace(Regex("<([\\w:]+)([^<>]*)></\\1>"), "<$1$2/>").toByteArray(Charsets.UTF_8)
+        val source = javaw.readBytes()
+        compact.copyInto(source, layout.offset)
+        ByteBuffer.wrap(source).order(ByteOrder.LITTLE_ENDIAN).putInt(layout.descriptor + 4, compact.size)
+        javaw.writeBytes(source)
+        val failure = assertFailsWith<IllegalArgumentException> { WindowsRuntimeManifest.enableUtf8(javaw) }
+        assertTrue(failure.message.orEmpty().contains("original slot"), failure.message)
+        assertContentEquals(source, javaw.readBytes(), "An unsupported JBR must fail before any mutation")
     }
 
     @Test
@@ -263,8 +340,16 @@ class DesktopShellPackagingTest {
         assertFalse(File(root, "payload.zip").exists())
     }
 
-    /** Read the actual PE resource tree (RT_MANIFEST=24, CREATEPROCESS_MANIFEST_RESOURCE_ID=1). */
+    private data class WindowsManifest(val offset: Int, val size: Int, val descriptor: Int,
+        val checksumOffset: Int, val securityDirectory: Int)
+
     private fun readWindowsManifest(exe: File): ByteArray {
+        val layout = windowsManifest(exe)
+        return exe.readBytes().copyOfRange(layout.offset, layout.offset + layout.size)
+    }
+
+    /** Read the actual PE resource tree (RT_MANIFEST=24, CREATEPROCESS_MANIFEST_RESOURCE_ID=1). */
+    private fun windowsManifest(exe: File): WindowsManifest {
         val bytes = exe.readBytes()
         val pe = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
         fun word(offset: Int) = pe.getShort(offset).toInt() and 0xFFFF
@@ -299,7 +384,39 @@ class DesktopShellPackagingTest {
         val data = entry(resources + (name and Int.MAX_VALUE), null)
         assertTrue(data >= 0, "Manifest language must point to resource data")
         val offset = fileOffset(pe.getInt(resources + data))
-        return bytes.copyOfRange(offset, offset + pe.getInt(resources + data + 4))
+        return WindowsManifest(offset, pe.getInt(resources + data + 4), resources + data, optional + 64, optional + 128)
+    }
+
+    private fun windowsIcon(): File = generateSequence(File(System.getProperty("user.dir"))) { it.parentFile }
+        .first { File(it, "client/desktop/packaging/icons/TeamTalk.ico").isFile }
+        .resolve("client/desktop/packaging/icons/TeamTalk.ico")
+
+    /** 真实链接的 PE，使用 Java 启动器同类的旧清单；不依赖网络下载 JBR，也不伪造可执行文件头。 */
+    private fun legacyWindowsLauncher(root: File): File {
+        val project = ProjectBuilder.builder().withProjectDir(root).build()
+        val exe = File(root, "runtime/jbr/bin/javaw.exe").apply { parentFile.mkdirs() }
+        Launch4jRunner.build(exe, jarFixture(root, "desktop-bootstrap.jar", "fixture/Probe.class"),
+            windowsIcon(), "TeamTalk fixture", "0.0.2", emptyList(), project.logger)
+        val manifest = File(root, "legacy.manifest")
+        val supportedSystems = listOf("e2011457-1546-43c5-a5fe-008deee3d3f0", "35138b9a-5d96-4fbd-8e2d-a2440225f93a",
+            "4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38", "1f676c76-80e1-4239-95bb-83d0f6d0da78", "8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a")
+        manifest.writeText("""
+            <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
+            <assemblyIdentity name="javaw.exe" version="21.0.10.0" type="win32"></assemblyIdentity>
+            <dependency><dependentAssembly><assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"></assemblyIdentity></dependentAssembly></dependency>
+            <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3"><security><requestedPrivileges><requestedExecutionLevel level="asInvoker" uiAccess="false"></requestedExecutionLevel></requestedPrivileges></security></trustInfo>
+            <asmv3:application><asmv3:windowsSettings><dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/PM</dpiAware></asmv3:windowsSettings></asmv3:application>
+            <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1"><application>${supportedSystems.joinToString("") { "<supportedOS Id=\"{$it}\"></supportedOS>" }}</application></compatibility>
+            </assembly>
+        """.trimIndent())
+        try {
+            net.sf.launch4j.config.ConfigPersister.getInstance().config.manifest = manifest
+            net.sf.launch4j.Builder(object : net.sf.launch4j.Log() {
+                override fun clear() = Unit
+                override fun append(message: String?) = project.logger.lifecycle("launch4j fixture: {}", message)
+            }).build()
+        } finally { manifest.delete() }
+        return exe
     }
 
     private fun jarFixture(root: File, name: String, entry: String): File = File(root, name).apply {

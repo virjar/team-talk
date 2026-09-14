@@ -372,6 +372,18 @@ abstract class AssembleDesktopShellTask : DefaultTask() {
         val name = installationName.get()
         val root = File(staging, name).apply { mkdirs() }
         copyDirectory(jbrRoot(), File(root, "runtime"))
+        val javaw = File(root, "runtime/bin/javaw.exe")
+        val originalSha256 = JbrRuntimes.sha256Hex(javaw)
+        if (WindowsRuntimeManifest.enableUtf8(javaw)) {
+            // 原始下载缓存保持厂商字节；安装副本的修改必须明示，不能继续冒充原厂商签名。
+            File(root, "runtime/TEAMTALK-MODIFICATIONS.txt").writeText(
+                "TeamTalk sets javaw.exe activeCodePage to UTF-8 in its embedded process manifest.\n" +
+                    "Any original vendor Authenticode certificate is removed; this copy is unsigned.\n" +
+                    "Native code and all other resources are unchanged.\n" +
+                    "Original javaw.exe SHA-256: $originalSha256\n" +
+                    "Modified javaw.exe SHA-256: ${JbrRuntimes.sha256Hex(javaw)}\n",
+            )
+        }
         copyAppPayload(File(root, "app"), includeBootstrapJar = false)
         iconFile.get().asFile.copyTo(File(root, "$name.ico"), overwrite = true)
     }

@@ -93,6 +93,20 @@ Linux tar/deb 统一记录数字所有者 `0:0`，不带构建机的扩展属性
 运行时复制与 ZIP 归档保留符号链接和执行权限。特别是 macOS JBR 的签名资源包含链接，不能展开成
 普通文件后宣称签名仍然有效。ZIP 使用 JVM 写入器重建，避免更新旧 ZIP 时残留已经删除的文件。
 
+Windows 的 Launch4j 父进程与随包 `javaw.exe` 子进程都声明 UTF-8 代码页。JBR 21 的
+[启动器源码](https://github.com/JetBrains/JetBrainsRuntime/blob/jbr-release-21.0.10b1163.110/src/java.base/share/native/launcher/main.c#L114)
+会把 Unicode 命令行转换为 `CP_ACP`；只有父进程声明 UTF-8 时，子进程仍可能把中文转换为问号并当作
+通配符展开。该路径要求 Windows 10 1903 或更新版本的
+[进程代码页支持](https://learn.microsoft.com/en-us/windows/apps/design/globalizing/use-utf8-code-page)，无需改变系统全局语言设置。
+
+`assembleDesktopShellWindowsAmd64` 仅在自己复制的 staging 中修改 `runtime/bin/javaw.exe`：等价压缩
+空 XML 元素，在原 `RT_MANIFEST/1` 空间内加入代码页设置，保留代码、其他资源、DPI 和权限声明。
+修改使原 Authenticode 签名失效，因此移除尾部厂商证书并重算 PE 校验和；当前产物中的这个副本**未签名**。
+`runtime/TEAMTALK-MODIFICATIONS.txt` 记录修改原因与前后 SHA-256。固定归档及解压缓存保持原字节；
+正式密封校验最终安装包。该步骤使用 JVM 文件处理，macOS、Linux 与 Windows 构建路径相同。
+若新 JBR 已声明 UTF-8，直接保留原字节；若资源空间不足或 PE/证书布局未知，构建失败并要求复核运行时，
+不自动重建节或扩大修改范围。
+
 ## 安装身份、签名与升级边界
 
 安装身份来自最终 `DeploymentConfig.client`：`applicationId` 隔离客户端及负载数据，`desktopName`
@@ -109,12 +123,18 @@ Linux deb 的包名和 `/opt/` 目录使用 `desktopFsName`，提供 `/usr/bin/<
 携带 `buildIdentity`，不能用同一展示版本掩盖不同源码。
 
 当前首装包没有接入完整的 macOS Developer ID 签名、公证或 Windows Authenticode 签名流水线。
-保留 JBR 原签名不等于整个应用获得系统信任；对外扩大分发前须在实际目标系统确认安装提示及正式签名
-流程。旧 Conveyor `defaults.conf` 不再是新打包任务输入，但应保留既有发行记录和签名材料。
+macOS 保留 JBR 原签名，Windows 的上述 `javaw.exe` 修改副本未签名；其余原厂商文件保持原字节。
+这些均不等于整个应用获得系统信任。接入正式 Windows 签名时，须在清单修改之后签署修改副本和应用启动器，
+再打包与密封。对外扩大分发前须在实际目标系统确认安装提示及正式签名流程。旧 Conveyor `defaults.conf`
+不再是新打包任务输入，但应保留既有发行记录和签名材料。
 
 新桌面安装器与便携包均经 bootstrap 加载用户目录中的应用负载，应用内更新只替换负载；JBR、启动器
 或壳 ABI 变化需要新首装包。旧 Sparkle、AppInstaller/MSIX、apt 更新链不会自动转换为新体系：首次迁移
 需要手动安装新包，旧下载目录保留；具体用户迁移边界见[从 Conveyor 迁移](client-releases.md#7-迁移说明从-conveyor)。
+
+本次 Windows `javaw.exe` 中文参数修复也需要用新的完整安装器覆盖安装，或替换便携包；应用内负载
+更新不会修改已有 JBR。新应用负载仍兼容 ABI 1，因此保持该 ABI，已有可运行安装可以继续接收应用
+修复；不能把负载更新成功当作旧 Windows 启动器已获得 UTF-8 修复。
 
 ## 原生库与目标平台验收
 
@@ -129,8 +149,9 @@ GStreamer 核心、base/good 插件和 libav 解码器。tar.gz 使用者需要�
 字体、音频和媒体能力仍需在目标发行版验证；不能用容器中成功解压替代桌面会话验收。
 
 `buildSrc` 的 `DesktopShellPackagingTest` 执行生成的 POSIX 启动脚本、编译 NSIS、读取实际 deb 的
-压缩成员，并验证私有路径、执行位和符号链接。Linux CI 生成全部首装包并运行 `dpkg-deb` 检查；Windows
-CI 生成 Launch4j 便携包并运行当前用户身份与私有存储测试。
+压缩成员，并验证私有路径、执行位和符号链接。Windows 回归读取真实链接 PE 的清单，核对修改边界、
+输入缓存保留、尾证书处理及空间不足时拒绝写入。Linux CI 生成全部首装包并运行 `dpkg-deb` 检查；Windows
+CI 从实际便携包启动 EXE/JBR，验证中文参数、隔离数据目录、bootstrap 上下文和真实 JVM 退出码。
 
 交付前仍需从要交付的原文件完成安装、启动、登录、中文字体、托盘、本地图片/音视频、检查更新及更新后
 重启，覆盖旧版本账号、草稿和发件箱保留。三平台交叉构建成功不代表三平台真实客户端都已经验收。
