@@ -13,12 +13,12 @@ class TaskModelTest {
         val task = WorkTask(ID, "creator", "assignee", draft.title, draft.description, TaskPolicy.TODO, 0, "", 500, null, 1, 1, 1)
         val options = TaskOptions(TaskOptions.MARKDOWN, 100, documentRefs = listOf(com.virjar.tk.protocol.body.OfficeRefBody(1, ID, ID, "材料")),
             attachments = listOf(Attachment("files/report.txt", "报告.txt", "text/plain", 20)))
-        val rule = TaskWeeklyRule(1, "09:00", "17:00", "Asia/Shanghai")
+        val rule = TaskRecurrenceRule(TaskRecurrenceRule.WEEKLY, 2, "2026-09-14", "09:00", "17:00", "Asia/Shanghai")
         val series = TaskSeries(ID, "creator", 1, true, rule, 1000)
         val details = TaskDetails(task, options, TaskMetrics(400, 1, 50, 100, null, true), 101, series, "2026-09-14")
         val page = TaskQueryPage(listOf(details, details.copy(task = task.copy(taskId = SECOND_ID))), "next", TaskSummary(3, 3, 1, 500, 0, null))
         assertEquals(page, ProtoCodec.decode(TaskQueryPage, ProtoCodec.encode(page)))
-        val command = TaskDetailsCommand(ID, 10, ID, 0, TaskDetailsCommand.CREATE, draft, options, weeklyRule = rule)
+        val command = TaskDetailsCommand(ID, 10, ID, 0, TaskDetailsCommand.CREATE, draft, options, recurrenceRule = rule)
         assertEquals(command, ProtoCodec.decode(TaskDetailsCommand, ProtoCodec.encode(command)))
         val deferred = TaskDetailsCommand(ID, 10, ID, 1, TaskDetailsCommand.DEFER, deferDueAt = 900, reason = "等待审核")
         assertEquals(deferred, ProtoCodec.decode(TaskDetailsCommand, ProtoCodec.encode(deferred)))
@@ -31,8 +31,20 @@ class TaskModelTest {
         // Start reminders precede due and must never be folded into the released remindedAt field.
         assertFailsWith<IllegalArgumentException> { task.copy(remindedAt = 100) }
         assertEquals(TaskOptions(), ProtoCodec.decode(TaskOptions, ProtoCodec.encode(TaskOptions())))
-        assertFailsWith<IllegalArgumentException> { TaskWeeklyRule(1, "18:00", "09:00", "Asia/Shanghai") }
+        assertFailsWith<IllegalArgumentException> { rule.copy(startLocalTime = "18:00", dueLocalTime = "09:00") }
         assertFailsWith<IllegalArgumentException> { options.copy(attachments = List(21) { options.attachments.single() }) }
+    }
+
+    @Test
+    fun calendarRecurrenceRoundTripsItsAnchorAndRejectsInvalidDatesAndIntervals() {
+        val rule = TaskRecurrenceRule(TaskRecurrenceRule.MONTHLY, 3, "2024-01-31", "09:00", "18:00", "Asia/Shanghai")
+        assertEquals(rule, ProtoCodec.decode(TaskRecurrenceRule, ProtoCodec.encode(rule)))
+        for (date in listOf("2025-02-29", "2024-04-31", "2026-13-01", "2026-00-01", "2026-01-00", "0000-01-01", "2026-9-1")) {
+            assertFailsWith<IllegalArgumentException>(date) { rule.copy(firstDate = date) }
+        }
+        assertEquals("2024-02-29", rule.copy(firstDate = "2024-02-29").firstDate)
+        for (interval in listOf(0, 13)) assertFailsWith<IllegalArgumentException> { rule.copy(interval = interval) }
+        assertFailsWith<IllegalArgumentException> { rule.copy(frequency = 3) }
     }
     @Test
     fun taskCommandAuditAndReminderRoundTrip() {

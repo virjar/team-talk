@@ -379,7 +379,7 @@ internal fun Application.module(
                 MaintenanceWorker("task-due-reminders") {
                     while (isActive) {
                         val delayMillis = try {
-                            val generated = tasks.generateWeekly()
+                            val generated = tasks.generateRecurring()
                             val started = tasks.remindStarted()
                             val reminded = tasks.remindDue()
                             tasks.cleanupReceipts()

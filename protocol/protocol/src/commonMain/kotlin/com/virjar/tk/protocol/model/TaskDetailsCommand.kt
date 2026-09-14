@@ -10,20 +10,20 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class TaskDetailsCommand(val operationId: String, val issuedAt: Long, val taskId: String, val expectedRevision: Long,
     val kind: Int, val draft: TaskDraft? = null, val options: TaskOptions? = null,
-    val deferDueAt: Long? = null, val reason: String? = null, val weeklyRule: TaskWeeklyRule? = null) : IProto {
+    val deferDueAt: Long? = null, val reason: String? = null, val recurrenceRule: TaskRecurrenceRule? = null) : IProto {
     init {
         TaskPolicy.requireId(operationId); TaskPolicy.requireId(taskId); require(issuedAt >= 0 && kind in CREATE..DEFER)
         require(if (kind == CREATE) expectedRevision == 0L else expectedRevision in 1 until Long.MAX_VALUE)
         require(if (kind == DEFER) draft == null && options == null && deferDueAt != null && reason != null
             else draft != null && options != null && deferDueAt == null && reason == null)
-        require(weeklyRule == null || kind == CREATE)
+        require(recurrenceRule == null || kind == CREATE)
         require(deferDueAt == null || deferDueAt >= 0)
         require(reason == null || (reason.isNotBlank() && reason.length <= MAX_REASON && '\u0000' !in reason))
     }
     override fun writeTo(buf: PacketBuffer) {
         buf.writeString(operationId); buf.writeVarLong(issuedAt); buf.writeString(taskId); buf.writeVarLong(expectedRevision); buf.writeVarInt(kind)
         buf.writeBoolean(draft != null); draft?.writeTo(buf); buf.writeBoolean(options != null); options?.writeTo(buf)
-        buf.writeTaskLong(deferDueAt); buf.writeString(reason); buf.writeBoolean(weeklyRule != null); weeklyRule?.writeTo(buf)
+        buf.writeTaskLong(deferDueAt); buf.writeString(reason); buf.writeBoolean(recurrenceRule != null); recurrenceRule?.writeTo(buf)
     }
     companion object : IProtoReader<TaskDetailsCommand> {
         const val CREATE = 1
@@ -31,7 +31,7 @@ data class TaskDetailsCommand(val operationId: String, val issuedAt: Long, val t
         const val DEFER = 3
         const val MAX_REASON = 1000
         override fun readFrom(buf: PacketBuffer) = TaskDetailsCommand(buf.readRequiredString(36), buf.readVarLong(), buf.readRequiredString(36), buf.readVarLong(), buf.readVarInt(),
-            if (buf.readBoolean()) TaskDraft.readFrom(buf) else null, if (buf.readBoolean()) TaskOptions.readFrom(buf) else null, buf.readTaskLong(), buf.readString(MAX_REASON * 4), if (buf.readBoolean()) TaskWeeklyRule.readFrom(buf) else null)
+            if (buf.readBoolean()) TaskDraft.readFrom(buf) else null, if (buf.readBoolean()) TaskOptions.readFrom(buf) else null, buf.readTaskLong(), buf.readString(MAX_REASON * 4), if (buf.readBoolean()) TaskRecurrenceRule.readFrom(buf) else null)
     }
 }
 

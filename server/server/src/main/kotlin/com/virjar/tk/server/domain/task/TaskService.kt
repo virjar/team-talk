@@ -197,8 +197,9 @@ class TaskService(
             val previous = repository.extension(transaction, command.taskId)
             val now = maxOf(clock(), before?.updatedAt ?: 0L)
             ReliableCommandPolicy.requireActiveIssuedAt(command.issuedAt, now, "任务操作")
-            val schedule = command.weeklyRule?.let(::TaskWeeklySchedule)
-            val occurrence = schedule?.next(now)
+            val schedule = command.recurrenceRule?.let(::TaskRecurrenceSchedule)
+            // 正在进行的本期立即创建；已结束的历史期次不补建。
+            val occurrence = schedule?.let { it.latest(now)?.takeIf { current -> current.dueAt >= now } ?: it.next(now) }
             val options = resolvedOptions?.let { if (occurrence != null) it.copy(startsAt = occurrence.startsAt) else it } ?: previous.options
             val after = when (command.kind) {
                 TaskDetailsCommand.CREATE -> {
@@ -244,7 +245,7 @@ class TaskService(
             if (command.kind == TaskDetailsCommand.DEFER) repository.appendDeferral(transaction,
                 TaskDeferral(after.taskId, after.revision, uid, now, before?.dueAt, requireNotNull(after.dueAt), requireNotNull(command.reason)))
             if (schedule != null && occurrence != null) repository.saveSeries(transaction,
-                TaskSeriesTemplate(TaskSeries(after.taskId, uid, 1, true, requireNotNull(command.weeklyRule), schedule.following(occurrence).startsAt),
+                TaskSeriesTemplate(TaskSeries(after.taskId, uid, 1, true, requireNotNull(command.recurrenceRule), schedule.following(occurrence).startsAt),
                     requireNotNull(command.draft).copy(dueAt = null), options.copy(startsAt = null)))
             repository.appendReceipt(transaction, TaskCommandReceipt(uid, command.operationId, command.taskId, fingerprint,
                 command.issuedAt, ReliableCommandPolicy.expiresAt(command.issuedAt)))
@@ -266,10 +267,10 @@ class TaskService(
         val before = repository.series(transaction, command.seriesId) ?: throw TaskNotFoundException()
         if (uid != before.info.creatorUid) throw TaskAccessDeniedException()
         if (before.info.revision != command.expectedRevision) throw TaskRevisionConflictException()
-        // Resuming starts with the next occurrence; disabled weeks are intentionally never backfilled.
+        // 恢复只安排尚未开始的锚定期次，不补建停用期间的任务。
         val after = before.copy(info = before.info.copy(enabled = command.enabled, revision = before.info.revision + 1,
             nextOccurrenceAt = if (command.enabled && !before.info.enabled)
-                maxOf(before.info.nextOccurrenceAt, TaskWeeklySchedule(before.info.weeklyRule).next(clock()).startsAt)
+                maxOf(before.info.nextOccurrenceAt, TaskRecurrenceSchedule(before.info.recurrenceRule).next(clock()).startsAt)
                 else before.info.nextOccurrenceAt))
         repository.saveSeries(transaction, after)
         repository.appendReceipt(transaction, TaskCommandReceipt(uid, command.operationId, command.seriesId, fingerprint,
@@ -279,7 +280,7 @@ class TaskService(
     }
 
     /** The anchor lock and atomic next-date advance create at most one latest missed occurrence. */
-    suspend fun generateWeekly(limit: Int = 100): Int {
+    suspend fun generateRecurring(limit: Int = 100): Int {
         require(limit in 1..100)
         val candidates = unitOfWork.read { repository.seriesCandidates(transaction, clock(), limit) }
         var generated = 0
@@ -296,8 +297,8 @@ class TaskService(
                     notifyChange(this, anchor, anchor, repository.extension(transaction, anchor.taskId), repository.extension(transaction, anchor.taskId))
                     return@write false
                 }
-                val schedule = TaskWeeklySchedule(series.info.weeklyRule)
-                val occurrence = schedule.latest(now)
+                val schedule = TaskRecurrenceSchedule(series.info.recurrenceRule)
+                val occurrence = schedule.latest(now) ?: return@write false
                 if (occurrence.startsAt < series.info.nextOccurrenceAt) return@write false
                 val id = UUID.randomUUID().toString()
                 val draft = series.draft

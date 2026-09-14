@@ -38,9 +38,9 @@ class TaskDetailsIntegrationTest {
     private fun id() = UUID.randomUUID().toString()
     private suspend fun user() = ctx.registerUser(uniqueUsername("task-details"))
     private fun create(assignee: String, options: TaskOptions = TaskOptions(), group: String? = null, dueAt: Long? = null,
-        weekly: TaskWeeklyRule? = null) = TaskDetailsCommand(id(), now.get(), id(), 0, TaskDetailsCommand.CREATE,
+        recurrence: TaskRecurrenceRule? = null) = TaskDetailsCommand(id(), now.get(), id(), 0, TaskDetailsCommand.CREATE,
         TaskDraft("待办计划", "# 完整说明\n\n- 材料与任务同时关联", assignee,
-            if (group == null) TaskPolicy.CONTEXT_NONE else TaskPolicy.CONTEXT_GROUP, group.orEmpty(), dueAt), options, weeklyRule = weekly)
+            if (group == null) TaskPolicy.CONTEXT_NONE else TaskPolicy.CONTEXT_GROUP, group.orEmpty(), dueAt), options, recurrenceRule = recurrence)
     private suspend fun create(uid: String, command: TaskDetailsCommand) = assertNotNull(service().modify(uid, command).task)
     private fun edit(details: TaskDetails, options: TaskOptions = details.options, assignee: String = details.task.assigneeUid) =
         with(details.task) { TaskDetailsCommand(id(), now.get(), taskId, revision, TaskDetailsCommand.EDIT,
@@ -150,14 +150,14 @@ class TaskDetailsIntegrationTest {
     @Test fun `weekly occurrences are independent latest missed only and enable receipts use the task namespace`() = runTest {
         val owner = user(); val assignee = user()
         now.set(Instant.parse("2026-09-14T00:00:00Z").toEpochMilli())
-        val first = create(owner, create(assignee, weekly = TaskWeeklyRule(1, "09:00", "17:00", "Asia/Shanghai")))
+        val first = create(owner, create(assignee, recurrence = TaskRecurrenceRule(TaskRecurrenceRule.WEEKLY, 1, "2026-09-14", "09:00", "17:00", "Asia/Shanghai")))
         assertEquals("2026-09-14", first.occurrenceDate)
         assertEquals(Instant.parse("2026-09-14T01:00:00Z").toEpochMilli(), first.options.startsAt)
         val initialSeries = assertNotNull(first.series)
         val pausedBeforeStart = service().modifySeries(owner, TaskSeriesCommand(id(), now.get(), initialSeries.seriesId, initialSeries.revision, false))
         val resumedBeforeStart = service().modifySeries(owner, TaskSeriesCommand(id(), now.get(), initialSeries.seriesId, pausedBeforeStart.revision, true))
         assertEquals(initialSeries.nextOccurrenceAt, resumedBeforeStart.nextOccurrenceAt)
-        now.set(Instant.parse("2026-09-14T02:00:00Z").toEpochMilli()); service().generateWeekly()
+        now.set(Instant.parse("2026-09-14T02:00:00Z").toEpochMilli()); service().generateRecurring()
         assertEquals(1L, service().query(assignee, TaskQuery(), null, 20).summary.totalCount)
         // An unrelated user can claim client-selected UUIDs, including the old predictable occurrence
         // formula. Generation is governed by the series lock/date, not that public ID namespace.
@@ -165,7 +165,7 @@ class TaskDetailsIntegrationTest {
         val predicted = UUID.nameUUIDFromBytes("task-weekly:${initialSeries.seriesId}:2026-10-05".toByteArray(Charsets.UTF_8)).toString()
         create(outsider, create(outsider).copy(taskId = predicted))
         now.set(Instant.parse("2026-10-05T02:00:00Z").toEpochMilli())
-        assertTrue(service().generateWeekly() >= 1); service().generateWeekly()
+        assertTrue(service().generateRecurring() >= 1); service().generateRecurring()
         val page = service().query(assignee, TaskQuery(), null, 20)
         assertEquals(2, page.items.size)
         val latest = page.items.first { it.task.taskId != first.task.taskId }
@@ -178,7 +178,7 @@ class TaskDetailsIntegrationTest {
         assertFalse(stopped.enabled); assertEquals(stopped, service().modifySeries(owner, disable))
         assertNotNull(ctx.pgUnitOfWork.read { repository.findReceipt(transaction, owner, disable.operationId) })
         assertFailsWith<TaskAccessDeniedException> { service().modifySeries(assignee, disable.copy(operationId = id(), expectedRevision = stopped.revision, enabled = true)) }
-        now.addAndGet(8L * 24 * 60 * 60 * 1000); service().generateWeekly()
+        now.addAndGet(8L * 24 * 60 * 60 * 1000); service().generateRecurring()
         assertEquals(2L, service().query(owner, TaskQuery(TaskQuery.CREATED), null, 20).summary.totalCount)
     }
 
@@ -195,6 +195,63 @@ class TaskDetailsIntegrationTest {
         assertEquals(3L, summary.completedCount)
         assertEquals(500L, summary.averageProcessingMillis)
         assertEquals(0L, service().details(assignee, early.task.taskId).metrics.processingMillis)
+    }
+
+    @Test fun `creating a recurring task includes the current unfinished period but skips expired history`() = runTest {
+        val owner = user(); val assignee = user()
+        val rule = TaskRecurrenceRule(TaskRecurrenceRule.WEEKLY, 1, "2026-09-14", "09:00", "18:00", "Asia/Shanghai")
+        now.set(Instant.parse("2026-09-14T03:00:00Z").toEpochMilli()) // 周一 11:00，本期尚未截止。
+        val current = create(owner, create(assignee, recurrence = rule))
+        assertEquals("2026-09-14", current.occurrenceDate)
+        assertEquals(Instant.parse("2026-09-14T01:00:00Z").toEpochMilli(), current.options.startsAt)
+        assertEquals(Instant.parse("2026-09-14T10:00:00Z").toEpochMilli(), current.task.dueAt)
+        assertTrue(service().remindStarted() >= 1)
+        service().remindStarted()
+        assertEquals(1, events(assignee, NotifyType.TASK_STARTED).size)
+        assertTrue(events(assignee, NotifyType.TASK_DUE).isEmpty())
+
+        now.set(Instant.parse("2026-09-14T11:00:00Z").toEpochMilli()) // 周一 19:00，历史本期已结束。
+        val next = create(owner, create(assignee, recurrence = rule))
+        assertEquals("2026-09-21", next.occurrenceDate)
+        assertEquals(Instant.parse("2026-09-21T01:00:00Z").toEpochMilli(), next.options.startsAt)
+        assertEquals(Instant.parse("2026-09-21T10:00:00Z").toEpochMilli(), next.task.dueAt)
+        assertEquals(rule, assertNotNull(next.series).recurrenceRule)
+        val future = create(owner, create(assignee, recurrence = rule.copy(firstDate = "2026-09-28")))
+        assertEquals("2026-09-28", future.occurrenceDate)
+    }
+
+    @Test fun `monthly anchor survives database reread pause resume and latest missed generation without day drift`() = runTest {
+        val owner = user(); val assignee = user()
+        now.set(Instant.parse("2024-01-31T00:00:00Z").toEpochMilli())
+        val rule = TaskRecurrenceRule(TaskRecurrenceRule.MONTHLY, 1, "2024-01-31", "09:00", "17:00", "Asia/Shanghai")
+        val first = create(owner, create(assignee, recurrence = rule))
+        val seriesId = assertNotNull(first.series).seriesId
+        assertEquals(Instant.parse("2024-02-29T01:00:00Z").toEpochMilli(), first.series?.nextOccurrenceAt)
+        val reopened = service(ExposedPgUnitOfWork(ctx.database, onEventsCommitted = {}))
+        now.set(Instant.parse("2024-02-29T02:00:00Z").toEpochMilli())
+        assertTrue(reopened.generateRecurring() >= 1)
+        service().generateRecurring()
+        val february = reopened.query(assignee, TaskQuery(), null, 20)
+        assertEquals(setOf("2024-01-31", "2024-02-29"), february.items.map { it.occurrenceDate }.toSet())
+        val afterFebruary = assertNotNull(reopened.details(owner, first.task.taskId).series)
+        assertEquals(Instant.parse("2024-03-31T01:00:00Z").toEpochMilli(), afterFebruary.nextOccurrenceAt)
+        val disabled = reopened.modifySeries(owner, TaskSeriesCommand(id(), now.get(), seriesId, afterFebruary.revision, false))
+        now.set(Instant.parse("2024-04-15T00:00:00Z").toEpochMilli())
+        val resumed = service().modifySeries(owner, TaskSeriesCommand(id(), now.get(), seriesId, disabled.revision, true))
+        assertEquals(rule, resumed.recurrenceRule)
+        assertEquals(Instant.parse("2024-04-30T01:00:00Z").toEpochMilli(), resumed.nextOccurrenceAt)
+        now.set(Instant.parse("2024-04-30T02:00:00Z").toEpochMilli())
+        service().generateRecurring()
+        val april = reopened.query(assignee, TaskQuery(), null, 20)
+        assertEquals(setOf("2024-01-31", "2024-02-29", "2024-04-30"), april.items.map { it.occurrenceDate }.toSet())
+        assertEquals(Instant.parse("2024-05-31T01:00:00Z").toEpochMilli(), reopened.details(owner, first.task.taskId).series?.nextOccurrenceAt)
+
+        now.set(Instant.parse("2024-08-31T02:00:00Z").toEpochMilli())
+        service().generateRecurring(); reopened.generateRecurring()
+        val latest = reopened.query(assignee, TaskQuery(), null, 20)
+        assertEquals(4L, latest.summary.totalCount)
+        assertEquals(setOf("2024-01-31", "2024-02-29", "2024-04-30", "2024-08-31"), latest.items.map { it.occurrenceDate }.toSet())
+        assertEquals(Instant.parse("2024-09-30T01:00:00Z").toEpochMilli(), reopened.details(owner, first.task.taskId).series?.nextOccurrenceAt)
     }
 
     @Test fun `materials retain independent document permission and task attachment read and GC ownership`() = runTest {
@@ -248,12 +305,12 @@ class TaskDetailsIntegrationTest {
         now.set(Instant.parse("2026-09-14T00:00:00Z").toEpochMilli())
         val path = ctx.fileStore.store(owner, "weekly.txt", "text/plain", "周模板".byteInputStream())
         val options = TaskOptions(attachments = listOf(assertNotNull(ctx.fileStore.getAttachment(path))))
-        val first = create(owner, create(assignee, options, weekly = TaskWeeklyRule(1, "09:00", "17:00", "Asia/Shanghai")))
+        val first = create(owner, create(assignee, options, recurrence = TaskRecurrenceRule(TaskRecurrenceRule.WEEKLY, 1, "2026-09-14", "09:00", "17:00", "Asia/Shanghai")))
         create(owner, edit(first, options.copy(attachments = emptyList())))
         assertFalse(ctx.attachmentAccess.canRead(assignee, path))
         ctx.cleanupExpiredAttachments(System.currentTimeMillis() + 40L * 24 * 60 * 60 * 1000)
         assertNotNull(ctx.fileStore.getAttachment(path))
-        now.set(Instant.parse("2026-09-21T02:00:00Z").toEpochMilli()); service().generateWeekly()
+        now.set(Instant.parse("2026-09-21T02:00:00Z").toEpochMilli()); service().generateRecurring()
         val second = service().query(assignee, TaskQuery(), null, 20).items.first { it.task.taskId != first.task.taskId }
         assertEquals(path, second.options.attachments.single().path)
         assertTrue(ctx.attachmentAccess.canRead(assignee, path))

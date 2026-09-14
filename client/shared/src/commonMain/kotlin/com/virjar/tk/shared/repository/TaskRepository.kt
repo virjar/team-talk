@@ -144,8 +144,8 @@ class TaskRepository(
     suspend fun setStatus(task: WorkTask, status: Int): Outcome<String> = enqueue(TaskCommand(
         id(), System.currentTimeMillis(), task.taskId, task.revision, TaskCommand.STATUS, status = status,
     ))
-    suspend fun create(draft: TaskDraft, options: TaskOptions, weeklyRule: TaskWeeklyRule? = null): Outcome<String> = enqueue(
-        TaskDetailsCommand(id(), System.currentTimeMillis(), id(), 0L, TaskDetailsCommand.CREATE, draft, options, weeklyRule = weeklyRule),
+    suspend fun create(draft: TaskDraft, options: TaskOptions, recurrenceRule: TaskRecurrenceRule? = null): Outcome<String> = enqueue(
+        TaskDetailsCommand(id(), System.currentTimeMillis(), id(), 0L, TaskDetailsCommand.CREATE, draft, options, recurrenceRule = recurrenceRule),
     )
     suspend fun edit(details: TaskDetails, draft: TaskDraft, options: TaskOptions): Outcome<String> = enqueue(
         TaskDetailsCommand(id(), System.currentTimeMillis(), details.task.taskId, details.task.revision, TaskDetailsCommand.EDIT, draft, options),

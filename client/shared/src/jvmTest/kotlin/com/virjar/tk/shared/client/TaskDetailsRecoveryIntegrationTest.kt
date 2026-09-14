@@ -60,7 +60,7 @@ class TaskDetailsRecoveryIntegrationTest {
                 OfficeRefBody(OfficeRefBody.REF_TYPE_DOCUMENT, id(40), id(41), "操作文档", "文档"),
             ), attachments = listOf(Attachment("docs/instructions.txt", "说明.txt", "text/plain", 12))),
                 TaskMetrics(1_000, 2, 100, 10, null, true), startRemindedAt = 20,
-                series = series(id(70)), occurrenceDate = "2026-09-14")
+                series = series(id(70)).copy(recurrenceRule = monthlyRule()), occurrenceDate = "2026-09-30")
             val page = TaskQueryPage(listOf(details), null, TaskSummary(41, 40, 3, 1_000, 1, 500))
             cache(file, true) { cache ->
                 val rpc = FakeRpcInvoker().apply { enqueueOk(ProtoCodec.encode(page)) }
@@ -87,7 +87,7 @@ class TaskDetailsRecoveryIntegrationTest {
                 val repo = TaskRepository(rpc, cache.tasks, OWNER)
                 repo.enqueue(TaskCommand(id(90), 100, id(1), 0, TaskCommand.CREATE, draft())).getOrThrow()
                 repo.enqueue(TaskDetailsCommand(id(91), 100, id(2), 0, TaskDetailsCommand.CREATE, draft(),
-                    TaskOptions(TaskOptions.MARKDOWN), weeklyRule = rule())).getOrThrow()
+                    TaskOptions(TaskOptions.MARKDOWN), recurrenceRule = rule())).getOrThrow()
                 repo.enqueue(TaskDetailsCommand(id(92), 100, id(3), 1, TaskDetailsCommand.EDIT, draft(), TaskOptions())).getOrThrow()
                 repo.enqueue(TaskDetailsCommand(id(93), 100, id(4), 1, TaskDetailsCommand.DEFER, deferDueAt = 2_000, reason = "等待材料")).getOrThrow()
                 repo.enqueue(TaskSeriesCommand(id(94), 100, id(5), 1, false)).getOrThrow()
@@ -324,7 +324,8 @@ class TaskDetailsRecoveryIntegrationTest {
     private fun draft() = TaskDraft("待办", "原始描述", OWNER, dueAt = 1_000)
     private fun task(taskId: String = ID) = WorkTask(taskId, OWNER, OWNER, "待办", "原始描述", TaskPolicy.TODO,
         TaskPolicy.CONTEXT_NONE, "", 1_000, null, 1, 1, 1)
-    private fun rule() = TaskWeeklyRule(1, "09:00", "18:00", "Asia/Shanghai")
+    private fun rule() = TaskRecurrenceRule(TaskRecurrenceRule.WEEKLY, 2, "2026-09-14", "09:00", "18:00", "Asia/Shanghai")
+    private fun monthlyRule() = TaskRecurrenceRule(TaskRecurrenceRule.MONTHLY, 1, "2026-01-31", "09:00", "18:00", "Asia/Shanghai")
     private fun series(seriesId: String) = TaskSeries(seriesId, OWNER, 1, true, rule(), 2_000)
     private suspend fun database(block: suspend (File) -> Unit) {
         val dir = Files.createTempDirectory("teamtalk-task-details-").toFile()
