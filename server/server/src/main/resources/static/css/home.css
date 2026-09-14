@@ -101,6 +101,9 @@ h1 { font-size: clamp(40px, 3.85vw, 52px); line-height: 1.3; letter-spacing: -2p
 .download-version { font-size: 12px; font-weight: 550; margin-top: 20px; }
 .download-meta { color: #69768a; font-size: 11px; margin-top: 4px; }
 .download-actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; margin-top: 19px; width: 100%; }
+.download-qr { margin: 18px 0 0; text-align: center; }
+.download-qr svg { display: block; width: 160px; height: 160px; max-width: 100%; background: #fff; }
+.download-qr figcaption { margin-top: 6px; color: var(--muted); font-size: 11px; }
 .download-button { display: inline-flex; justify-content: center; border-radius: 6px; background: #ecf2ff; border: 1px solid #dbe5fb; padding: 9px 12px; color: #244fae; font-size: 12px; font-weight: 650; }
 .download-button:hover { background: #dfeaff; color: #173d8e; }
 .download-button-secondary { background: #fff; color: #4c6080; border-color: var(--line); }

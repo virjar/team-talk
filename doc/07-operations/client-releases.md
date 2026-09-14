@@ -38,18 +38,23 @@
 | `GET /api/v1/client/files/{sha256}` | 内容寻址制品（Range 断点续传、immutable 缓存） |
 | `GET /api/v1/public/downloads` | 首页下载区的数据源：当前通道制品与最近版本记录 |
 | `GET /`（`#download` 区域） | 首页直接展示六个目标的真实下载按钮；优先选择有可下载制品的 stable、preview、snapshot，可切换通道；支持 HEAD |
-| `GET /css/home.css`、`GET /js/downloads.js` | 首页固定资源，支持 HEAD；由 Ktor 直接提供，不依赖反向代理静态映射 |
+| `GET /css/home.css`、`GET /js/downloads.js`、`GET /js/qrcode.min.js` | 首页固定资源，支持 HEAD；由 Ktor 直接提供，不依赖反向代理静态映射 |
 | `GET /downloads/android.json`、`/downloads/TeamTalk-android.apk` | **兼容层**：注册中心接管前兼容旧收据；接管后停用/缺文件返回 404 |
 | `/downloads/desktop/**` | 冻结的 Conveyor 遗留站点（只读保留，存量桌面客户端链接不断） |
 
 独立下载页 `/downloads`、`/downloads/`、`/downloads/index.html` 已移除，GET/HEAD 均返回 404；
 目录中遗留的旧 HTML 不会重新公开，安装包、Android 收据和 Conveyor 更新路径不受影响。
 首页及 CSS/JS 优先使用安装根目录 `static/` 中的对应文件，缺失时读取包内 `static/` 资源。
-三个固定资源均声明 UTF-8 与 `Cache-Control: no-cache`；未知路径不会回退到首页。
+固定资源均声明 UTF-8 与 `Cache-Control: no-cache`；未知路径不会回退到首页。
+Android 卡片本地生成二维码，内容与所选通道的 APK 下载按钮地址一致；没有可下载安装包时不显示二维码。
+二维码不调用外部服务，生成库的来源、许可与重建命令见[二维码资源说明](../../scripts/vendor/home-qrcode.md)。
 Windows/macOS 卡片长期保留默认折叠的“安装被拦截？”说明，提示当前未签名/未公证状态，并链接
 [微软安装说明](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/publish-first-app#step-6-handle-smartscreen-for-new-apps)与
 [Apple 指南](https://support.apple.com/zh-cn/102445)。说明针对单次安装，不要求关闭系统整体防护；
 组织策略阻止、恶意软件或损坏提示需分别处理，不能把所有阻止都当作可跳过的来源提示。
+macOS 另提供终端方式：确认来源后，对已放入“应用程序”的公版应用运行
+`xattr -dr com.apple.quarantine "/Applications/TeamTalk.app"`，清除该应用的下载隔离属性后再打开。
+自定义安装名称或位置时替换路径；这不会补上签名或公证，不需要进入恢复模式、关闭 SIP 或全局禁用 Gatekeeper。
 
 更新检查不比较语义化版本：服务端下发目标（version+build+buildIdentity），客户端服从指令——
 **回滚=把通道指针切回旧版**，客户端会按指令降级。

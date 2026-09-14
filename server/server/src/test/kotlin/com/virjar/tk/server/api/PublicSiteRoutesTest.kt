@@ -28,6 +28,7 @@ class PublicSiteRoutesTest {
                     "/" to ("index.html" to "text/html; charset=UTF-8"),
                     "/css/home.css" to ("css/home.css" to "text/css; charset=UTF-8"),
                     "/js/downloads.js" to ("js/downloads.js" to "application/javascript; charset=UTF-8"),
+                    "/js/qrcode.min.js" to ("js/qrcode.min.js" to "application/javascript; charset=UTF-8"),
                 )
                 for ((url, resource) in resources) {
                     val expected = checkNotNull(javaClass.getResource("/static/${resource.first}"))
@@ -51,6 +52,7 @@ class PublicSiteRoutesTest {
                     .map { URI("http://localhost/").resolve(it.groupValues[1]).path }.toSet()
                 assertTrue("/css/home.css" in linkedPaths)
                 assertTrue("/js/downloads.js" in linkedPaths)
+                assertTrue("/js/qrcode.min.js" in linkedPaths)
             }
         } finally {
             staticDir.deleteRecursively()
@@ -65,6 +67,7 @@ class PublicSiteRoutesTest {
                 "index.html" to "<html>部署首页</html>",
                 "css/home.css" to "/* 部署样式 */ body { color: black; }",
                 "js/downloads.js" to "// 部署脚本\nconst message = '你好';",
+                "js/qrcode.min.js" to "// 部署二维码算法",
             )
             contents.forEach { (path, content) ->
                 staticDir.resolve(path).apply { parentFile.mkdirs(); writeText(content, Charsets.UTF_8) }

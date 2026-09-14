@@ -24,7 +24,7 @@
             note: 'DEB 声明系统依赖；使用 TAR.GZ 时需自行安装图形库和 GStreamer 媒体依赖。' },
         { id: 'android', client: 'android', platform: 'android', arch: 'any', name: 'Android',
             requirement: 'Android 8.0+', primary: /\.apk$/i, label: '下载 APK',
-            note: '用手机浏览器打开本页即可下载。覆盖安装时请保持相同应用身份与签名。' },
+            note: '电脑上扫码，手机上可直接下载 APK。覆盖安装时请保持相同应用身份与签名。' },
         { id: 'headless', client: 'headless', platform: 'any', arch: 'any', name: '无头客户端',
             requirement: 'Java 21+ · CLI / Agent / MCP', primary: /\.zip$/i, label: '下载完整 ZIP',
             note: 'Linux / macOS 支持 Agent、CLI 与 MCP；Windows 提供 tt CLI。' },
@@ -121,12 +121,52 @@
         ];
         const list = element('ol');
         steps.forEach(step => list.append(element('li', '', step)));
+        if (!windows) {
+            guide.append(element('p', '', '终端方式：确认来源后，将应用放入“应用程序”，执行下面一行，再打开应用：'));
+            const pre = element('pre');
+            pre.append(element('code', '', 'xattr -dr com.apple.quarantine "/Applications/TeamTalk.app"'));
+            guide.append(pre, element('p', '', '这会清除该应用的下载隔离标记。应用名称或位置不同时，请替换引号内路径；也可将应用拖入终端填写路径。无需进入恢复模式或关闭 SIP。'));
+            guide.append(element('p', '', '也可以通过系统设置允许打开：'));
+        }
         guide.append(list, element('p', '', '若系统明确提示恶意软件或应用损坏，请先停止安装并反馈完整提示。无需关闭系统整体防护。'));
         const official = element('a', 'text-link', windows ? '微软安装说明 ↗' : 'Apple 打开应用说明 ↗');
         official.href = windows ? 'https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/publish-first-app#step-6-handle-smartscreen-for-new-apps' :
             'https://support.apple.com/zh-cn/102445';
         guide.append(official);
         return guide;
+    }
+
+    function androidDownloadQr(file) {
+        const url = artifactUrl(file.url);
+        if (!url || !window.TeamTalkQr) return null;
+        let qr;
+        try { qr = window.TeamTalkQr.encode(url); } catch (_) { return null; }
+        const size = qr.size + 8; // 四模块 quiet zone，白底不依赖页面主题。
+        const namespace = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(namespace, 'svg');
+        svg.setAttribute('viewBox', '0 0 ' + size + ' ' + size);
+        svg.setAttribute('width', '160');
+        svg.setAttribute('height', '160');
+        svg.setAttribute('role', 'img');
+        svg.setAttribute('aria-label', '扫码下载当前 Android APK');
+        svg.setAttribute('shape-rendering', 'crispEdges');
+        const background = document.createElementNS(namespace, 'rect');
+        background.setAttribute('width', '100%');
+        background.setAttribute('height', '100%');
+        background.setAttribute('fill', '#fff');
+        let modules = '';
+        for (let y = 0; y < qr.size; y++) {
+            for (let x = 0; x < qr.size; x++) {
+                if (qr.getModule(x, y)) modules += 'M' + (x + 4) + ',' + (y + 4) + 'h1v1h-1z';
+            }
+        }
+        const path = document.createElementNS(namespace, 'path');
+        path.setAttribute('d', modules);
+        path.setAttribute('fill', '#000');
+        svg.append(background, path);
+        const figure = element('figure', 'download-qr');
+        figure.append(svg, element('figcaption', '', '手机扫码下载'));
+        return figure;
     }
 
     function renderCard(target, channel) {
@@ -149,6 +189,10 @@
             const actions = element('div', 'download-actions');
             files.forEach((file, index) => actions.append(downloadButton(file, index > 0)));
             card.append(actions);
+            if (target.client === 'android') {
+                const qr = androidDownloadQr(files[0]);
+                if (qr) card.append(qr);
+            }
         } else {
             const message = state && state.enabled === false ? '此平台的当前通道已停用' : '此通道暂无可下载的安装包';
             card.append(element('p', 'download-empty', message));

@@ -15,11 +15,12 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.head
 import java.io.File
 
-/** 首页只公开这三个资源，不为未知地址、API 或下载目录提供 SPA fallback。 */
+/** 首页只公开下列固定资源，不为未知地址、API 或下载目录提供 SPA fallback。 */
 internal fun Route.publicSiteRoutes(staticDir: File) {
     publicSiteResource("/", staticDir, "index.html", ContentType.Text.Html)
     publicSiteResource("/css/home.css", staticDir, "css/home.css", ContentType.Text.CSS)
     publicSiteResource("/js/downloads.js", staticDir, "js/downloads.js", ContentType.Application.JavaScript)
+    publicSiteResource("/js/qrcode.min.js", staticDir, "js/qrcode.min.js", ContentType.Application.JavaScript)
 }
 
 private fun Route.publicSiteResource(path: String, staticDir: File, resource: String, type: ContentType) {
