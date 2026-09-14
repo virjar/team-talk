@@ -25,7 +25,7 @@ Linux 服务器处理视频缩略图时，还需安装 FFmpeg JNI 所依赖的�
 [Linux 媒体测试环境](../09-testing/local-tests.md#linux-媒体测试环境)，运行媒体验收的 Linux 机器也需准备。
 
 服务端安装和运维仍由管理员本机的 SSH、rsync、OpenSSL 完成。Windows 支持统一产物构建与客户端
-SFTP 发布，不代表这些 Linux 服务端运维任务也已移除 Unix 工具依赖。
+HTTP 注册中心发布，不代表这些 Linux 服务端运维任务也已移除 Unix 工具依赖。
 
 低门槛路径采用 HTTP 站点与自签 TLS/TCP：Gradle 生成 TCP 证书，客户端内嵌公共证书并校验服务器 IP，
 无需先准备域名或购买 HTTPS 证书。已有域名和受信任证书时也可以使用 HTTPS + TLS/TCP，组合规则见

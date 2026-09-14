@@ -150,7 +150,8 @@ Android 安装包与 Desktop 更新源，具体见[客户端发行身份](doc/07
 首次 TLS/TCP 部署需要成对证书参数，升级可同时省略以保留现有证书；HTTP 与 TCP TLS 独立配置。
 已有受信任证书时也支持 HTTPS + TLS/TCP，具体见[传输配置边界](doc/07-operations/configuration.md#传输配置边界)。
 配置字段、安全边界、首次安装与升级流程见[私有化部署](doc/01-getting-started/private-deployment.md)。
-`./gradlew release` 默认只产生密封本地目录；站点上传需要已有 SSH 私钥和已核验的 known_hosts。
+`./gradlew release` 默认只产生密封本地目录；站点上传通过 HTTP 注册中心，需要配置
+`TEAMTALK_CLIENT_RELEASE_TOKEN` 发布令牌。服务端部署仍需要 SSH 私钥和已核验的 known_hosts。
 本地与站点发布支持本机配置覆写；GitHub 发布拒绝 local 覆写，发行目录保留最终非敏感 JSON 快照，
 JSON 不作为下一次构建的配置输入。
 客户端构建与发布在 Windows 使用 `.\gradlew.bat` 同名任务，参数和 CI 一致，见[统一发行流程](doc/07-operations/releasing.md)。
