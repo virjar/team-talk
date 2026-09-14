@@ -117,8 +117,7 @@ class HeadlessDistributionTest {
             assertEquals(0, result.exitCode, result.diagnostics)
             assertTrue(result.output.contains("buildIdentity=$buildIdentity"), result.diagnostics)
             assertTrue(result.output.contains("minimumJavaVersion=21"), result.diagnostics)
-            assertTrue(result.output.contains("distributionDirectory="), result.diagnostics)
-            assertTrue(result.output.contains(directory.canonicalPath), result.diagnostics)
+            assertDirectoryField(result, "distributionDirectory", directory)
         }
         assertFalse(caller.listFiles().orEmpty().isNotEmpty())
     }
@@ -138,8 +137,8 @@ class HeadlessDistributionTest {
                 assertTrue(result.output.contains("POSIX filesystem"), result.diagnostics)
             } else {
                 assertEquals(0, result.exitCode, result.diagnostics)
-                assertTrue(result.output.contains("cwd=${caller.canonicalPath}"), result.diagnostics)
-                assertTrue(result.output.contains("bundle=${directory.canonicalPath}"), result.diagnostics)
+                assertDirectoryField(result, "cwd", caller)
+                assertDirectoryField(result, "bundle", directory)
                 assertTrue(result.output.contains("ipv4=${name == "tt-mcp"}"), result.diagnostics)
                 args.forEach { assertTrue(result.output.contains("arg=$it"), result.diagnostics) }
             }
@@ -147,6 +146,18 @@ class HeadlessDistributionTest {
     }
 
     private data class LauncherResult(val exitCode: Int, val output: String, val diagnostics: String)
+
+    private fun assertDirectoryField(result: LauncherResult, field: String, expected: File) {
+        val values = result.output.lineSequence()
+            .filter { it.startsWith("$field=") }
+            .map { it.substringAfter('=').removeSurrounding("\"") }
+            .toList()
+        assertEquals(1, values.size, "Expected exactly one $field field.\n${result.diagnostics}")
+        val actual = File(values.single())
+        assertTrue(actual.isAbsolute, result.diagnostics)
+        // Windows 的 RUNNER~1 与 runneradmin 可以指向同一目录；比较实体路径而非别名文本。
+        assertEquals(expected.canonicalFile, actual.canonicalFile, result.diagnostics)
+    }
 
     private fun runLauncher(directory: File, name: String, caller: File, args: List<String>, javaHome: File): LauncherResult {
         val launcher = File(directory, "bin/$name${if (isWindows()) ".bat" else ""}")
