@@ -23,6 +23,7 @@ import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
+import io.ktor.server.routing.head
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 import kotlinx.serialization.json.Json
@@ -86,14 +87,8 @@ internal fun Route.clientUpdateRoutes(
         }
 
         // 内容寻址制品：摘要即身份，可长期缓存；Range 供断点续传。
-        get("/files/{sha256}") {
-            val sha = call.parameters["sha256"] ?: return@get call.respond(HttpStatusCode.BadRequest)
-            val file = service.artifactFile(sha)
-                ?: return@get call.respond(HttpStatusCode.NotFound)
-            call.response.headers.append("Cache-Control", "public, max-age=31536000, immutable")
-            call.response.headers.append(HttpHeaders.ETag, "\"$sha\"")
-            call.respond(LocalFileContent(file, ContentType.Application.OctetStream))
-        }
+        get("/files/{sha256}") { call.respondClientReleaseArtifact(service, head = false) }
+        head("/files/{sha256}") { call.respondClientReleaseArtifact(service, head = true) }
 
         // CI/管理台发布上传。与附件路由的严格分部解析不同，这里用 Ktor 标准
         // multipart：上游是受信的构建器或管理员，单分部 + 流式落盘 + 大小上限足够。
@@ -173,6 +168,17 @@ internal fun Route.clientUpdateRoutes(
 private class ReleaseUploadTooLargeException : RuntimeException()
 
 private const val MAX_RELEASE_UPLOAD_BYTES = 4L * 1024 * 1024 * 1024
+
+private suspend fun ApplicationCall.respondClientReleaseArtifact(service: ClientReleaseService, head: Boolean) {
+    val sha = parameters["sha256"] ?: return respond(HttpStatusCode.BadRequest)
+    val file = service.artifactFile(sha) ?: return respond(HttpStatusCode.NotFound)
+    response.headers.append(HttpHeaders.CacheControl, "public, max-age=31536000, immutable")
+    response.headers.append(HttpHeaders.ETag, "\"$sha\"")
+    respond(
+        if (head) file.downloadHeadResponse(ContentType.Application.OctetStream)
+        else LocalFileContent(file, ContentType.Application.OctetStream),
+    )
+}
 
 /** 管理会话优先；否则接受 X-Publish-Token / Bearer 形式的 CI 发布令牌。 */
 private suspend fun ApplicationCall.resolveUploadPrincipal(

@@ -316,7 +316,7 @@
                 '<a class="dl-btn" href="' + url + '" download="' + filename + '">下载完整包 (' + fmtSize(hl.release.totalBytes) + ')</a>' +
                 '</div>' +
                 '<pre class="cmd"><code># 解压后安装为 systemd 服务（或直接运行 bin/tt、bin/tt-mcp）\n' +
-                'unzip TeamTalk-headless.zip -d teamtalk-agent\ncd teamtalk-agent\nbin/tt-agent install-bundle --prefix ~/.teamtalk</code></pre>' +
+                'unzip TeamTalk-headless.zip -d teamtalk-agent\ncd teamtalk-agent/tt-headless\nbin/tt-agent install-bundle --prefix ~/.teamtalk</code></pre>' +
                 '<p class="note">已安装的 tt-agent 可用 <code>tt-agent upgrade</code> 在线升级。</p>';
         } else {
             headlessHtml += '<div class="empty">无头客户端暂无发布。</div>';

@@ -14,8 +14,41 @@ import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ClientDownloadRoutesTest {
+    @Test
+    fun `homepage download card probes reach the current download page with GET metadata and no HEAD body`() {
+        val downloads = Files.createTempDirectory("teamtalk-download-page-").toFile()
+        try {
+            val homepage = checkNotNull(javaClass.getResource("/static/index.html")).readText()
+            val cardUrls = Regex("""<a class="dl-card" href="([^"]+)"""")
+                .findAll(homepage).map { it.groupValues[1] }
+                .filter { it.startsWith("/downloads#") }.toList()
+            assertTrue(cardUrls.isNotEmpty(), "Homepage must link to the current download page")
+
+            testApplication {
+                application { routing { clientDownloadRoutes(downloads) } }
+                for (url in (cardUrls.map { it.substringBefore('#') } + "/downloads/").distinct()) {
+                    val response = client.get(url)
+                    assertEquals(HttpStatusCode.OK, response.status, url)
+                    val page = response.bodyAsText()
+                    assertTrue(page.contains("/api/v1/public/downloads"), url)
+                    val head = client.head(url)
+                    assertEquals(HttpStatusCode.OK, head.status, url)
+                    assertEquals("", head.bodyAsText(), url)
+                    assertEquals(page.toByteArray(Charsets.UTF_8).size.toString(), head.headers[HttpHeaders.ContentLength], url)
+                    for (header in listOf(HttpHeaders.ContentType, HttpHeaders.ContentLength, HttpHeaders.CacheControl)) {
+                        assertEquals(response.headers[header], head.headers[header], "$url $header")
+                    }
+                    assertEquals("no-store", head.headers[HttpHeaders.CacheControl], url)
+                }
+            }
+        } finally {
+            downloads.deleteRecursively()
+        }
+    }
+
     @Test
     fun `installer GET and HEAD retain content type length and range support`() {
         val downloads = Files.createTempDirectory("teamtalk-download-routes-").toFile()

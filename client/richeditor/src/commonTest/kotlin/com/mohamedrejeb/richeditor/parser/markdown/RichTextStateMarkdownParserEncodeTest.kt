@@ -242,11 +242,6 @@ class RichTextStateMarkdownParserEncodeTest {
             World!
         """.trimIndent()
 
-        assertEquals(
-            expected = 5,
-            actual = RichTextStateMarkdownParser.encode(markdown1).richParagraphList.size,
-        )
-
         val markdown2 = """
             Hello
             
@@ -257,11 +252,6 @@ class RichTextStateMarkdownParserEncodeTest {
             
             World!
         """.trimIndent()
-
-        assertEquals(
-            expected = 7,
-            actual = RichTextStateMarkdownParser.encode(markdown2).richParagraphList.size,
-        )
 
         val markdown3 = """
             Hello
@@ -274,10 +264,21 @@ class RichTextStateMarkdownParserEncodeTest {
             World!
         """.trimIndent()
 
-        assertEquals(
-            expected = 7,
-            actual = RichTextStateMarkdownParser.encode(markdown3).richParagraphList.size,
+        val cases = listOf(
+            markdown1 to listOf("Hello", "", "", "q", "", "World!"),
+            markdown2 to listOf("Hello", "", "", "q", "", "", "World!"),
+            markdown3 to listOf("Hello", "", "", "q", "", "", "World!"),
         )
+        cases.forEach { (markdown, expectedParagraphs) ->
+            val state = RichTextStateMarkdownParser.encode(markdown)
+            // Counting empty paragraphs alone misses text discarded between HTML line breaks.
+            assertEquals(expectedParagraphs.size, state.richParagraphList.size, markdown)
+            assertEquals(expectedParagraphs, state.toText().lines(), markdown)
+
+            val roundTrip = RichTextStateMarkdownParser.encode(RichTextStateMarkdownParser.decode(state))
+            assertEquals(expectedParagraphs.size, roundTrip.richParagraphList.size, markdown)
+            assertEquals(expectedParagraphs, roundTrip.toText().lines(), markdown)
+        }
     }
 
     @Test

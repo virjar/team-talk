@@ -5,6 +5,7 @@ import com.virjar.tk.server.infra.clientrelease.ClientReleaseService
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.defaultForFile
+import io.ktor.http.withCharset
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
 import io.ktor.server.application.install
@@ -81,12 +82,8 @@ internal fun Route.clientDownloadRoutes(
 
         // 中文「下载与更新」页：注册中心数据 + 首页同款风格（classpath 资源懒加载缓存）。
         for (path in listOf("", "/")) {
-            get(path) {
-                val page = downloadsPageHtml()
-                    ?: return@get call.respond(HttpStatusCode.NotFound)
-                call.response.headers.append(io.ktor.http.HttpHeaders.CacheControl, "no-store")
-                call.respondText(page, ContentType.Text.Html)
-            }
+            get(path) { call.respondDownloadsPage(head = false) }
+            head(path) { call.respondDownloadsPage(head = true) }
         }
 
         val desktopDir = File(downloadsDir, "desktop")
@@ -107,6 +104,21 @@ internal fun Route.clientDownloadRoutes(
             enableAutoHeadResponse()
             contentType(::clientDownloadContentType)
         }
+    }
+}
+
+private suspend fun ApplicationCall.respondDownloadsPage(head: Boolean) {
+    val page = downloadsPageHtml() ?: return respond(HttpStatusCode.NotFound)
+    val pageContentType = ContentType.Text.Html.withCharset(Charsets.UTF_8)
+    response.headers.append(io.ktor.http.HttpHeaders.CacheControl, "no-store")
+    if (head) {
+        // 首页用 HEAD 探测下载卡片；长度与 GET 的 UTF-8 正文一致，不发送页面内容。
+        respond(object : io.ktor.http.content.OutgoingContent.NoContent() {
+            override val contentLength = page.toByteArray(Charsets.UTF_8).size.toLong()
+            override val contentType = pageContentType
+        })
+    } else {
+        respondText(page, pageContentType)
     }
 }
 
@@ -218,10 +230,12 @@ private class AndroidDownloadContent(
     }.channel
 }
 
-private fun File.downloadHeadResponse(): io.ktor.http.content.OutgoingContent.NoContent =
+internal fun File.downloadHeadResponse(
+    downloadContentType: ContentType = clientDownloadContentType(this),
+): io.ktor.http.content.OutgoingContent.NoContent =
     object : io.ktor.http.content.OutgoingContent.NoContent() {
         override val contentLength = length()
-        override val contentType = clientDownloadContentType(this@downloadHeadResponse)
+        override val contentType = downloadContentType
         override val headers = io.ktor.http.headersOf(io.ktor.http.HttpHeaders.AcceptRanges, "bytes")
     }
 

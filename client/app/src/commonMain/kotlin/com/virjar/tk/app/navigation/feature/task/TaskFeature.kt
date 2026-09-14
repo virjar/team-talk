@@ -29,7 +29,8 @@ class TaskFeature internal constructor(
     internal val conversations: ConversationViewModel,
 ) {
     internal val repo get() = session.taskRepo
-    val supportsTaskDetails: Boolean get() = repo.supportsTaskDetails
+    var supportsTaskDetails by mutableStateOf(repo.supportsTaskDetails)
+        private set
     val attention = TaskAttentionState(repo, scope, localData)
     val myUid: String get() = session.ownerUid
     internal var opened = false
@@ -130,6 +131,8 @@ class TaskFeature internal constructor(
         scope.launch {
             var previous = session.connectionState.value
             session.connectionState.collect { state ->
+                // 恢复表单可能先于协议协商完成；能力变化必须让材料和周期组件重新组合。
+                supportsTaskDetails = repo.supportsTaskDetails
                 val reconnected = state == ConnectionState.AUTHENTICATED && state != previous
                 previous = state
                 if (reconnected) attention.refresh()

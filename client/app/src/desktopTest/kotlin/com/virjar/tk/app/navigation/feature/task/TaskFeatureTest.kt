@@ -1,5 +1,7 @@
 package com.virjar.tk.app.navigation.feature.task
 
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.snapshots.Snapshot
 import com.virjar.tk.app.navigation.UiLocalDataBoundary
 import com.virjar.tk.app.viewmodel.ConversationViewModel
 import com.virjar.tk.protocol.ProtocolVersion
@@ -16,6 +18,8 @@ import com.virjar.tk.shared.testkit.FakeLocalCache
 import java.nio.file.Files
 import kotlinx.coroutines.*
 import kotlinx.coroutines.test.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlin.test.*
@@ -300,6 +304,42 @@ class TaskFeatureTest {
     }
 
     @Test
+    fun `restored editor observes negotiated capabilities without changing its input`() = runTest {
+        withFixture(minor = 3, protocolAvailable = false) { f ->
+            val captured = TaskEditorState.create(OWNER).copy(
+                title = "选择文件前的任务", description = "**尚未保存**",
+                options = TaskOptions(descriptionFormat = TaskOptions.MARKDOWN,
+                    attachments = listOf(Attachment("tasks/material.txt", "材料.txt", "text/plain", 5))),
+                recurrenceInput = TaskRecurrenceInput(true, TaskRecurrenceRule.WEEKLY, "2", "2026-09-14",
+                    "09:00", "18:00", "Asia/Shanghai"),
+            )
+            f.feature.editor = captured
+            val restored = f.newFeature()
+            f.scope.async { restored.restoreEditorSnapshot(assertNotNull(f.feature.saveEditorSnapshot())) }
+                .also { advanceUntilIdle(); it.await() }
+            val observed = mutableListOf<Boolean>()
+            val observer = f.scope.launch { snapshotFlow { restored.supportsTaskDetails }.collect(observed::add) }
+            advanceUntilIdle()
+            assertEquals(listOf(false), observed)
+
+            f.rpc.protocolAvailable = true
+            f.connectionState.value = ConnectionState.AUTHENTICATED
+            advanceUntilIdle()
+            Snapshot.sendApplyNotifications()
+            advanceUntilIdle()
+            assertEquals(listOf(false, true), observed, "协商完成要主动刷新已恢复的 Compose 表单")
+            assertEquals(captured, restored.editor, "刷新能力不能重置输入、已上传材料或周期锚点")
+            assertTrue(f.cache.tasks.pending().isEmpty(), "恢复和认证均不得代替用户保存")
+
+            f.rpc.protocolAvailable = false
+            f.connectionState.value = ConnectionState.DISCONNECTED
+            advanceUntilIdle()
+            assertTrue(restored.supportsTaskDetails, "短暂断线沿用本会话已确认能力")
+            observer.cancel()
+        }
+    }
+
+    @Test
     fun `old saved create opens its pending or confirmed task without replaying the form`() = runTest {
         withFixture(minor = 3) { f ->
             val captured = TaskEditorState.create(OWNER).copy(title = "选择文件前的任务", description = "原始输入")
@@ -344,7 +384,7 @@ class TaskFeatureTest {
         else -> error("Unexpected task RPC $method")
     })
 
-    private suspend fun TestScope.withFixture(minor: Int = 2, block: suspend (Fixture) -> Unit) {
+    private suspend fun TestScope.withFixture(minor: Int = 2, protocolAvailable: Boolean = true, block: suspend (Fixture) -> Unit) {
         val dispatcher = StandardTestDispatcher(testScheduler)
         val scope = CoroutineScope(dispatcher + SupervisorJob())
         val client = ImClient()
@@ -362,7 +402,9 @@ class TaskFeatureTest {
                 createCache = { _, _, _ -> cache }, deviceId = "task-feature-device", logUploadEnabled = false,
                 telemetrySpoolRoot = spool)
             session = active
-            val rpc = RecordingRpc(minor)
+            val offlineRpc = ClientSession::class.java.getDeclaredField("ownedRpcClient")
+                .apply { isAccessible = true }.get(active) as RpcInvoker
+            val rpc = RecordingRpc(minor, offlineRpc).apply { this.protocolAvailable = protocolAvailable }
             val repository = TaskRepository(rpc, cache.tasks, OWNER)
             ClientSession::class.java.getDeclaredField("ownedTaskRepo").apply { isAccessible = true }.set(active, repository)
             val boundary = UiLocalDataBoundary(dispatcher)
@@ -371,7 +413,11 @@ class TaskFeatureTest {
             conversations = conversationOwner
             val feature = TaskFeature(active, scope, boundary, conversationOwner)
             advanceUntilIdle()
-            block(Fixture(cache, rpc, feature, scope))
+            val transport = ImClient::class.java.getDeclaredField("transport").apply { isAccessible = true }.get(client)
+            @Suppress("UNCHECKED_CAST")
+            val connectionState = transport.javaClass.getDeclaredField("_state").apply { isAccessible = true }
+                .get(transport) as MutableStateFlow<ConnectionState>
+            block(Fixture(cache, rpc, feature, scope, connectionState))
         } finally {
             scope.cancel()
             conversations?.destroy()
@@ -381,8 +427,11 @@ class TaskFeatureTest {
         }
     }
 
-    private class RecordingRpc(minor: Int) : RpcInvoker {
-        override val negotiatedProtocolVersion = ProtocolVersion(0, minor)
+    private class RecordingRpc(minor: Int, private val offlineRpc: RpcInvoker) : RpcInvoker {
+        private val version = ProtocolVersion(0, minor)
+        var protocolAvailable = true
+        override val negotiatedProtocolVersion: ProtocolVersion
+            get() = if (protocolAvailable) version else offlineRpc.negotiatedProtocolVersion
         val calls = mutableListOf<Int>()
         var respond: suspend (Int) -> ResponsePayload = { throw AppError.Network }
         override suspend fun invoke(service: String, methodId: Int, payload: ByteArray?): ResponsePayload {
@@ -390,7 +439,8 @@ class TaskFeatureTest {
             return respond(methodId)
         }
     }
-    private data class Fixture(val cache: FakeLocalCache, val rpc: RecordingRpc, val feature: TaskFeature, val scope: CoroutineScope)
+    private data class Fixture(val cache: FakeLocalCache, val rpc: RecordingRpc, val feature: TaskFeature, val scope: CoroutineScope,
+        val connectionState: MutableStateFlow<ConnectionState>)
     private fun response(method: Int, task: WorkTask): ResponsePayload = ResponsePayload(1, 0, when (method) {
         TaskRpcContract.M_LIST -> ProtoCodec.encode(TaskPage(emptyList(), null))
         TaskRpcContract.M_GET -> ProtoCodec.encode(task)

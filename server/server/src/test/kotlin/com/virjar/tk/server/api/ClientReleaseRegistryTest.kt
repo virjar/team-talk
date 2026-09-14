@@ -193,6 +193,26 @@ class ClientReleaseRegistryTest {
                         val artifact = client.get(appJar.url)
                         assertEquals(HttpStatusCode.OK, artifact.status)
                         assertEquals("app-jar-bytes", artifact.bodyAsText())
+                        // 下载探测必须和真实 GET 使用同一 CAS 文件，且 HEAD 不返回正文。
+                        for (url in listOf(appJar.url, info.installers.single().url)) {
+                            val downloaded = client.get(url)
+                            val head = client.head(url) { header(HttpHeaders.Range, "bytes=0-2") }
+                            assertEquals(HttpStatusCode.OK, head.status, url)
+                            assertEquals("", head.bodyAsText(), url)
+                            for (header in listOf(
+                                HttpHeaders.ContentLength, HttpHeaders.ContentType, HttpHeaders.ETag,
+                                HttpHeaders.CacheControl, HttpHeaders.AcceptRanges,
+                            )) {
+                                assertNotNull(downloaded.headers[header], "$url $header")
+                                assertEquals(downloaded.headers[header], head.headers[header], "$url $header")
+                            }
+                            assertNull(head.headers[HttpHeaders.ContentRange], url)
+                        }
+                        for (sha in listOf("0".repeat(64), "not-a-digest")) {
+                            val url = "/api/v1/client/files/$sha"
+                            assertEquals(HttpStatusCode.NotFound, client.get(url).status, url)
+                            assertEquals(HttpStatusCode.NotFound, client.head(url).status, url)
+                        }
                         val ranged = client.get(appJar.url) { header(HttpHeaders.Range, "bytes=0-2") }
                         assertEquals(HttpStatusCode.PartialContent, ranged.status)
                         assertEquals("app", ranged.bodyAsText())
