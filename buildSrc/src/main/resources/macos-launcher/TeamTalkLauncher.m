@@ -173,7 +173,14 @@ static void spawnOsascriptNotification(NSString *title, NSString *body) {
     task.arguments = @[ @"-e", script ];
     task.standardOutput = [NSPipe pipe];
     task.standardError = [NSPipe pipe];
-    @try { [task launch]; } @catch (NSException *e) {
+    @try {
+        [task launch];
+        // 有界执行：5 秒未退出即终止，卡死的 osascript 不能残留进程。
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC),
+            dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                if (task.isRunning) [task terminate];
+            });
+    } @catch (NSException *e) {
         fprintf(stderr, "TeamTalk launcher: osascript fallback failed (%s)\n", e.reason.UTF8String);
     }
 }

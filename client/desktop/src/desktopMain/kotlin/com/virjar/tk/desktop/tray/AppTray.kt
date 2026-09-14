@@ -114,8 +114,16 @@ object AppTray {
             try {
                 val script = "display notification \"${appleScriptText(message)}\" " +
                     "with title \"${appleScriptText(title)}\" sound name \"default\""
-                val process = ProcessBuilder("/usr/bin/osascript", "-e", script).start()
-                process.waitFor()
+                val process = ProcessBuilder("/usr/bin/osascript", "-e", script)
+                    .redirectOutput(java.lang.ProcessBuilder.Redirect.DISCARD)
+                    .redirectError(java.lang.ProcessBuilder.Redirect.DISCARD)
+                    .start()
+                // 有界执行：超时强杀，卡死的 osascript 不能阻塞通知线程。
+                if (!process.waitFor(OSASCRIPT_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)) {
+                    process.destroyForcibly()
+                    AppLog.fault("AppTray", "osascript notification timed out")
+                    return@Thread
+                }
                 if (process.exitValue() != 0) {
                     AppLog.fault("AppTray", "osascript notification exited with ${process.exitValue()}")
                 }
@@ -124,6 +132,8 @@ object AppTray {
             }
         }, "mac-notification").apply { isDaemon = true }.start()
     }
+
+    private const val OSASCRIPT_TIMEOUT_SECONDS = 5L
 
     private fun appleScriptText(value: String): String =
         value.replace("\\", "\\\\").replace("\"", "\\\"")
