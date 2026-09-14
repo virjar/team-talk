@@ -296,7 +296,10 @@ sender 映射只覆盖当前 100 条消息窗口，重组只能查内存。草�
 Boolean admission。
 
 会话 quiesce 先和 wire admission 一起关闭本地 mutation admission，再 drain 所有已接收命令；之后
-才取消本地镜像唤醒、关闭 SendQueue/EventProcessor 和 LocalCache。因此最终草稿/已读水位和已准入
+才取消并等待本地镜像 worker 全部退出，再关闭 SendQueue/EventProcessor 和 LocalCache。仅调用
+`cancel()` 不能保证同步缓存访问已经结束；构造失败回滚也遵循这一排空顺序。恢复 worker 的认证
+失效通知先捕获精确 bearer，再交给 scope 外的短通知，由既有 router 与平台 owner 检查退役状态，
+避免同步关闭会话时等待 worker 自身。因此最终草稿/已读水位和已准入
 outgoing 不会写入已关闭 driver，也不会跨登录写到下一账号。单项 drain 即使抛错仍走 best-effort
 资源释放，LocalCache 的终态 close 会兜底回收未能单独关闭的 pager/内存编辑 lease。聊天 ViewModel
 先退休内存 token 并取消/join pager collectors，再按 FIFO 提交 rollback 与 pager close，避免 close
@@ -793,10 +796,17 @@ LocalCache 的共享接口提供：
 
 - 用户、联系人、会话和消息的观察流。
 - 消息插入、更新与按会话窗口读取。
-- 会话合并，确保 serverSeq、readSeq 等单调字段不倒退。
+- 会话合并保留已确认序号与合法已读水位的单调性。
 - 完整持久化会话预览元组（正文、类型、时间戳），无网冷启动的会话列表不显示空摘要。
 - 已读操作先原子推进本地投影与持久 read outbox；RPC 仅负责跨设备镜像。网络失败保留单调水位，
-  初次认证和每次重连继续补发，旧 RPC 应答不能确认并发产生的更高水位。
+  初次认证和每次重连继续补发，旧 RPC 应答不能确认并发产生的更高水位。请求不能超过同一聊天的
+  会话摘要或本地已确认消息序号；消息先于会话事件到达仍可离线标读。认证后的完整会话对账修复
+  旧客户端留下的越界已读水位。原 read outbox 的附属 `conversation_read_validation` 只保存最高
+  已验证读意图，同事务推进与删除；检查点、reset 和消息回收不丢这份依据。旧行缺少依据且水位
+  越界时，沿现有快照代次用同聊天 `getHistory(0, 1)` 核对 RocksDB 消息头；PostgreSQL 会话页可能
+  滞后，单凭页内 `lastSeq` 不能删除读意图。查证失败保留等待重连；确认错误后恢复服务器已读位置，
+  并保留之后已验证的较低本地水位继续镜像，不截成“全部已读”。请求期间的新本地读仍使旧快照
+  整体失效。附属表以可重放迁移新增，不改原队列身份或保留消息正文。
 - 外部 `LocalCache` 实现所需的不透明 lease capability；测试替身位于独立 `shared-testkit`，
   不进入 SDK 发布物。
 

@@ -1,5 +1,8 @@
 package com.virjar.tk.shared.client
 
+import kotlinx.coroutines.Dispatchers
+import kotlin.coroutines.EmptyCoroutineContext
+
 /**
  * 会话拥有的桥，从共享 HTTP 仓库连接到当前应用 owner。
  *
@@ -39,6 +42,14 @@ internal class SessionHttpAuthExpiredRouter : AutoCloseable {
             }
         }
         current?.invoke(rejectedAccessToken)
+    }
+
+    /**
+     * 恢复 worker 只交出已捕获的 bearer，不在自己的 Job 内同步关闭会话。否则关闭边界等待
+     * worker 排空时会等待自身。此短通知不访问缓存；并发退役后的投递由 [report] 拒收。
+     */
+    fun reportFromRecovery(rejectedAccessToken: String) {
+        Dispatchers.IO.dispatch(EmptyCoroutineContext, Runnable { report(rejectedAccessToken) })
     }
 
     private fun activate(bindingGeneration: Long) {

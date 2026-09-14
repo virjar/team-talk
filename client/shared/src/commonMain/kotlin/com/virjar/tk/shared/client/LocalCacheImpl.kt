@@ -280,6 +280,7 @@ class LocalCacheImpl internal constructor(
                     queries.deleteChatAssetUploadsByChat(chatId)
                     queries.deleteConversationDraftOutbox(chatId)
                     queries.deleteConversationReadOutbox(chatId)
+                    queries.deleteConversationReadValidation(chatId)
                     queries.deleteBotMessagesByChat(chatId)
                     queries.deleteOutgoingMessagesByChat(chatId)
                     queries.deleteMessagesByChat(chatId)
@@ -739,7 +740,11 @@ class LocalCacheImpl internal constructor(
     override fun applyConversationSnapshot(
         snapshotGeneration: Long,
         conversations: List<Conversation>,
-    ): Boolean = this.conversations.applyConversationSnapshot(snapshotGeneration, conversations)
+        authoritativeMessageHeads: Map<String, Long>,
+    ): Boolean = this.conversations.applyConversationSnapshot(snapshotGeneration, conversations, authoritativeMessageHeads)
+
+    override fun conversationReadValidationCandidates(conversations: List<Conversation>): List<String> =
+        this.conversations.conversationReadValidationCandidates(conversations)
 
     override fun enqueueConversationRead(chatId: String, readSeq: Long): Long =
         conversations.enqueueConversationRead(chatId, readSeq)

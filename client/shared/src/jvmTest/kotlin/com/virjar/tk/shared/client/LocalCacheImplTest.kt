@@ -1358,8 +1358,8 @@ class LocalCacheImplTest {
         cache.upsertMember(Member(chatId = "c1", uid = "u1", role = 0))
         cache.upsertConversation(conv("c1"))
         cache.setConversationDraft("c1", "pending")
-        cache.enqueueConversationRead("c1", 1L)
         cache.insertMessage(message)
+        cache.enqueueConversationRead("c1", 1L)
         cache.enqueueBotMessage(9L, message)
         cache.advanceSyncCursor(TEST_SYNC_DATASET_ID, 9L)
         val residentPager = cache.pager("c1")
@@ -1406,8 +1406,10 @@ class LocalCacheImplTest {
         cache.upsertMember(Member(uid = "stale-user", chatId = "stale-chat", role = 0))
         cache.upsertConversation(conv("checkpoint-chat", readSeq = 1L, draft = "stale remote"))
         val draftGeneration = cache.setConversationDraft("checkpoint-chat", "local draft")
+        cache.insertMessage(Message("checkpoint-chat", "read-proof", 7L, "peer", 1, 1L))
         cache.enqueueConversationRead("checkpoint-chat", 7L)
         cache.setConversationDraft("orphan-chat", "orphan draft")
+        cache.insertMessage(Message("orphan-chat", "read-proof", 3L, "peer", 1, 1L))
         cache.enqueueConversationRead("orphan-chat", 3L)
 
         val authoritativeMessage = Message(
@@ -2019,6 +2021,7 @@ class LocalCacheImplTest {
         val cache = newCache()
         val staleGeneration = cache.beginConversationSnapshot()
 
+        cache.insertMessage(Message("opened-before-conversation-sync", "read-proof", 7L, "peer", 1, 1L))
         cache.enqueueConversationRead("opened-before-conversation-sync", 7L)
 
         assertFalse(cache.applyConversationSnapshot(staleGeneration, emptyList()))

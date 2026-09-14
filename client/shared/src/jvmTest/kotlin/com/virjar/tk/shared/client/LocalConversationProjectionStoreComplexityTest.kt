@@ -8,6 +8,7 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.virjar.tk.shared.database.AppDatabase
 import com.virjar.tk.protocol.model.Chat
 import com.virjar.tk.protocol.model.Conversation
+import com.virjar.tk.protocol.model.Message
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -33,11 +34,15 @@ class LocalConversationProjectionStoreComplexityTest {
                 )
             }
             remote.take(PENDING_READ_COUNT).forEachIndexed { index, conversation ->
+                cache.insertMessage(Message(conversation.chatId, "confirmed-$index", index.toLong() + 1L, "peer", 1, 1L))
                 cache.enqueueConversationRead(conversation.chatId, index.toLong() + 1L)
             }
             val generation = cache.beginConversationSnapshot()
+            val messageSeqQueriesBeforeSnapshot = driver.messageSeqSelectCount
 
             assertTrue(cache.applyConversationSnapshot(generation, remote))
+            assertEquals(messageSeqQueriesBeforeSnapshot, driver.messageSeqSelectCount,
+                "a valid read within conversation.lastSeq needs no message lookup")
 
             assertEquals(
                 1,
@@ -209,7 +214,7 @@ class LocalConversationProjectionStoreComplexityTest {
             assertFailsWith<InjectedSqlFailure> {
                 cache.applyConversationSnapshot(
                     snapshotGeneration,
-                    listOf(Conversation(chatId = "replacement", chatType = 1)),
+                    listOf(Conversation(chatId = "replacement", chatType = 1, lastSeq = 3L)),
                 )
             }
             assertEquals(listOf(stable), cache.getConversations())
@@ -218,7 +223,7 @@ class LocalConversationProjectionStoreComplexityTest {
             assertTrue(
                 cache.applyConversationSnapshot(
                     snapshotGeneration,
-                    listOf(Conversation(chatId = "replacement", chatType = 1)),
+                    listOf(Conversation(chatId = "replacement", chatType = 1, lastSeq = 3L)),
                 ),
             )
 
@@ -276,6 +281,8 @@ class LocalConversationProjectionStoreComplexityTest {
             assertEquals("abcd", cache.getPendingConversationDraft("draft-1")?.draft)
             assertEquals(2L, cache.setConversationDraft("draft-1", "a"))
 
+            cache.insertMessage(Message("read-1", "confirmed-3", 3L, "peer", 1, 1L))
+            cache.insertMessage(Message("read-2", "confirmed-1", 1L, "peer", 1, 1L))
             assertEquals(1L, cache.enqueueConversationRead("read-1", 1L))
             val readFailure = assertFailsWith<LocalOutboxCapacityExceededException> {
                 cache.enqueueConversationRead("read-2", 1L)
@@ -329,6 +336,8 @@ class LocalConversationProjectionStoreComplexityTest {
     ) : SqlDriver by delegate {
         var conversationReadOutboxSelectCount = 0
             private set
+        var messageSeqSelectCount = 0
+            private set
         var failExecuteContaining: String? = null
 
         override fun <R> executeQuery(
@@ -338,6 +347,7 @@ class LocalConversationProjectionStoreComplexityTest {
             parameters: Int,
             binders: (SqlPreparedStatement.() -> Unit)?,
         ): QueryResult<R> {
+            if (sql.contains("MAX(server_seq)")) messageSeqSelectCount += 1
             if (sql.contains("FROM conversation_read_outbox")) {
                 conversationReadOutboxSelectCount += 1
             }

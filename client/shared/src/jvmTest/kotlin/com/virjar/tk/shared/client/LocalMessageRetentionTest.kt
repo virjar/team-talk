@@ -88,7 +88,7 @@ class LocalMessageRetentionTest {
                 localMessage("protected", "seq-zero").copy(sendStatus = Message.SEND_STATUS_FAILED),
             )
             first.insertMessage(message("other", 1L, "other-message"))
-            first.enqueueConversationRead("protected", 7L)
+            first.enqueueConversationRead("protected", 5L)
             first.close()
 
             JdbcSqliteDriver("jdbc:sqlite:${databaseFile.absolutePath}").let { raw ->
@@ -128,7 +128,7 @@ class LocalMessageRetentionTest {
                 )?.state)
                 assertEquals(pending.localOrdinal, cache.getOutgoingMessage("protected", "pending")?.localOrdinal)
                 assertEquals(listOf("other-message"), cache.getMessages("other", 10).map(Message::clientMsgId))
-                assertEquals(7L, cache.getPendingConversationRead("protected")?.readSeq)
+                assertEquals(5L, cache.getPendingConversationRead("protected")?.readSeq)
                 cache.close()
             }
         } finally {

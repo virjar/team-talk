@@ -7,9 +7,9 @@ import com.virjar.tk.shared.repository.*
 import com.virjar.tk.protocol.model.Message
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -98,7 +98,7 @@ class ClientSession internal constructor(
             ownedChatAssetUploads ?: run {
                 val repository = FileRepository(deploymentIdentity.httpBaseUrl, ownerUid,
                     ::httpCredentialsSnapshot) { rejectedToken ->
-                        localMirrorRecoveryScope.launch(Dispatchers.IO) { ownedHttpAuthExpiredRouter.report(rejectedToken) }
+                        ownedHttpAuthExpiredRouter.reportFromRecovery(rejectedToken)
                     }
                 try {
                     ChatAssetUploadCoordinator(ownedLocalCache.chatAssetUploads, repository, spool, connectionState)
@@ -276,7 +276,7 @@ class ClientSession internal constructor(
                 // 都还存活时排空每一个已接受的本地命令。
                 "chat asset uploads" to { synchronized(chatAssetLock) { ownedChatAssetUploads }?.close() },
                 "local UI mutations" to ownedLocalMutations::closeAndDrain,
-                "local mirror recovery" to { localMirrorRecoveryScope.cancel() },
+                "local mirror recovery" to { localMirrorRecoveryScope.cancelAndDrainSessionMirrors() },
                 // 该仓库拥有在途 HTTP 工作与一个 LocalCache 支撑的凭据槽，因此要先于其 auth
                 // router 或 cache 依赖关闭之前退役它。
                 "group-bot HTTP" to ownedGroupBotManagementRepo::close,
@@ -412,6 +412,24 @@ class ClientSession internal constructor(
     }
 }
 
+/** 取消只是请求停止；等所有恢复任务退出后，关闭边界才能释放它们仍在使用的缓存。 */
+private fun CoroutineScope.cancelAndDrainSessionMirrors() {
+    val owner = checkNotNull(coroutineContext[Job])
+    owner.cancel()
+    var interrupted: InterruptedException? = null
+    while (!owner.isCompleted) {
+        try {
+            runBlocking { owner.join() }
+        } catch (failure: InterruptedException) {
+            if (interrupted == null) interrupted = failure else interrupted.addSuppressed(failure)
+        }
+    }
+    interrupted?.let {
+        Thread.currentThread().interrupt()
+        throw it
+    }
+}
+
 /**
  * 创建完整会话。在持久账号身份恢复或在线认证成功后调用；网络认证可在后台继续。
  * @param deploymentIdentity cache 与 HTTP 资源共享的规范 TCP+HTTP 部署
@@ -529,7 +547,7 @@ fun createSession(
     val faultBuffer = LogBuffer(capacity = 500)
 
     val localMirrorRecoveryScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-    construction.own("local mirror recovery", localMirrorRecoveryScope::cancel)
+    construction.own("local mirror recovery", localMirrorRecoveryScope::cancelAndDrainSessionMirrors)
     cache.chatDrafts.changes.onEach { pendingMirrorWake.pendingCommitted() }.launchIn(localMirrorRecoveryScope)
     cache.chatDraftSync.changes.onEach { pendingMirrorWake.pendingCommitted() }.launchIn(localMirrorRecoveryScope)
     sendQueue.queueSnapshots.onEach { pendingMirrorWake.pendingCommitted() }.launchIn(localMirrorRecoveryScope)
@@ -714,7 +732,7 @@ fun createSession(
         onAuthExpired = {
             val credentials = userSession.httpCredentialsSnapshot()
             if (credentials.uid == sessionOwnerUid) {
-                credentials.accessToken?.let(httpAuthExpiredRouter::report)
+                credentials.accessToken?.let(httpAuthExpiredRouter::reportFromRecovery)
             }
         },
     )

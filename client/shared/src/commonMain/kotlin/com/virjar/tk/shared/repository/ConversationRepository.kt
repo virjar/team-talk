@@ -9,6 +9,9 @@ import com.virjar.tk.protocol.model.ConversationPage
 import com.virjar.tk.protocol.model.ConversationPageRequest
 import com.virjar.tk.shared.outcome
 import com.virjar.tk.protocol.rpc.gen.ConversationRpcProxy
+import com.virjar.tk.protocol.rpc.gen.MessageRpcProxy
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -26,6 +29,7 @@ class ConversationRepository internal constructor(
     )
 
     private val rpc = ConversationRpcProxy(rpcClient)
+    private val messageRpc = MessageRpcProxy(rpcClient)
     /**
      * LocalCache 的快照代次是独占的，因此同一会话的两次全量刷新
      * 不能让它们的 begin/collect/apply 窗口重叠。这个互斥锁刻意只覆盖
@@ -47,7 +51,10 @@ class ConversationRepository internal constructor(
                 // 无法与旧响应区分。
                 val snapshotGeneration = localCache.beginConversationSnapshot()
                 val remote = collectSnapshotPages()
-                if (localCache.applyConversationSnapshot(snapshotGeneration, remote)) {
+                val messageHeads = validateLegacyReadRanges(remote)
+                if (localCache.applyConversationSnapshot(snapshotGeneration, remote, messageHeads)) {
+                    // A previously rejected high cursor may now retain a lower valid intent.
+                    if (messageHeads.isNotEmpty()) onPendingMirrorCommitted()
                     // 调用方必须看到收敛后的本地投影，不能把原始 RPC 响应直接渲染出去。
                     return@outcome localCache.getConversations()
                 }
@@ -56,6 +63,22 @@ class ConversationRepository internal constructor(
                 "Conversation snapshot stayed conflicted after $MAX_SNAPSHOT_ATTEMPTS attempts",
             )
         }
+    }
+
+    /** Only legacy reads without local proof need this extra lookup; the same snapshot owns it. */
+    private suspend fun validateLegacyReadRanges(remote: List<Conversation>): Map<String, Long> {
+        val heads = linkedMapOf<String, Long>()
+        for (chatId in localCache.conversationReadValidationCandidates(remote)) {
+            currentCoroutineContext().ensureActive()
+            // History reads the message store directly; a PG conversation page can lag behind it.
+            val page = messageRpc.getHistory(chatId, 0L, 1)
+            currentCoroutineContext().ensureActive()
+            check(page.size <= 1 && page.all { it.chatId == chatId && it.serverSeq > 0L }) {
+                "Message head response does not belong to the requested chat"
+            }
+            heads[chatId] = page.singleOrNull()?.serverSeq ?: 0L
+        }
+        return heads
     }
 
     /**

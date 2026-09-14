@@ -3,7 +3,6 @@ package com.virjar.tk.app.ui.screen
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -121,7 +120,9 @@ fun ChatPanel(
     telemetry: ClientUiTelemetrySink = NoopClientUiTelemetrySink,
     /** 当前群的固定待办区域，不随消息列表滚动。 */
     pendingTasksContent: (@Composable () -> Unit)? = null,
-) {
+): Unit = key(chatId, viewModel) {
+    // Desktop 切会话时复用面板位置。整个组合归当前聊天所有，否则 collectAsState
+    // 会短暂保留上一聊天的值，已读 effect 就可能把 A 的消息序号写进 B。
     val uiResultScope = rememberCoroutineScope()
     val uiResultHandoff = remember(uiResultScope) { UiResultHandoff(uiResultScope) }
     val admittedMedia = rememberAdmittedChatMedia(media, actionAdmission)
@@ -165,12 +166,9 @@ fun ChatPanel(
     val error by viewModel.error.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val feedbackReporter = remember(telemetry) { UserFeedbackReporter(telemetry) }
-    // Desktop 在 A -> B 切换时复用此组合槽位。给状态设置 key 可防止另一个会话的位置
-    // 成为本聊天的初始锚点。saveable 版本让 Android 推入附件预览等子页面后返回时
-    // 恢复原视口（反向布局 index 0 是最新边界；内测反馈 T049：预览返回不得重置到最新）。
-    val messageListState = key(chatId) {
-        rememberSaveable(key = chatId, saver = LazyListState.Saver) { LazyListState() }
-    }
+    // 会话身份由外层组合绑定；保留 saveable 使 Android 从附件预览返回时恢复原视口，
+    // 不使用绕过组合位置的自定义保存 key（反向布局 index 0 是最新边界；内测反馈 T049）。
+    val messageListState = rememberSaveable(saver = LazyListState.Saver) { LazyListState() }
     // 从 SavedState 恢复在历史位置（非 0/0）说明用户此前正在翻历史：抑制最新锚定，
     // 让恢复的位置保持原样；最新消息跟随也会因不在边界而自然停用。
     val restoredMidHistory = messageListState.firstVisibleItemIndex > 0 ||

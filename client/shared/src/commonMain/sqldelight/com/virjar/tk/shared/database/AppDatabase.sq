@@ -436,6 +436,13 @@ CREATE TABLE IF NOT EXISTS conversation_read_outbox (
     read_seq INTEGER NOT NULL CHECK(read_seq > 0)
 );
 
+-- Same read outbox owner: positive evidence survives disposable message projection resets.
+-- Absence means a legacy request whose range has not yet been checked.
+CREATE TABLE IF NOT EXISTS conversation_read_validation (
+    chat_id TEXT PRIMARY KEY NOT NULL,
+    read_seq INTEGER NOT NULL CHECK(read_seq > 0)
+);
+
 -- 当前账号的服务端投影检查点。dataset identity 与 cursor 必须同一行、同一事务提交；
 -- 旧连接只能在 dataset_id 仍匹配时推进 cursor。
 CREATE TABLE IF NOT EXISTS sync_state (
@@ -925,6 +932,10 @@ WHERE chat_id = ? AND server_seq > 0
 ORDER BY server_seq DESC
 LIMIT ?;
 
+-- Scalar lookup through idx_message_chat_seq; message delivery may lead its conversation event.
+selectLatestConfirmedMessageSeq:
+SELECT COALESCE(MAX(server_seq), 0) AS latest_seq FROM message WHERE chat_id = ? AND server_seq > 0;
+
 -- Retention counts only re-fetchable server projections. A non-success outgoing row or stable
 -- local failure code is a recovery fact and pins its projection regardless of the normal budget.
 selectAuthoritativeMessageRetentionCandidates:
@@ -1408,7 +1419,10 @@ deleteConversationDraftOutbox:
 DELETE FROM conversation_draft_outbox WHERE chat_id = ?;
 
 selectAllConversationReadOutbox:
-SELECT * FROM conversation_read_outbox ORDER BY chat_id;
+SELECT r.chat_id, r.read_seq, COALESCE(v.read_seq, 0) AS validated_read_seq
+FROM conversation_read_outbox r
+LEFT JOIN conversation_read_validation v ON v.chat_id = r.chat_id
+ORDER BY r.chat_id;
 
 ensureConversationReadOutbox:
 INSERT OR IGNORE INTO conversation_read_outbox(chat_id, read_seq)
@@ -1418,6 +1432,15 @@ advanceConversationReadOutbox:
 UPDATE conversation_read_outbox
 SET read_seq = MAX(read_seq, :readSeq)
 WHERE chat_id = :chatId;
+
+replaceConversationReadOutbox:
+UPDATE conversation_read_outbox SET read_seq = :readSeq WHERE chat_id = :chatId;
+
+upsertConversationReadValidation:
+INSERT OR REPLACE INTO conversation_read_validation(chat_id, read_seq) VALUES (?, ?);
+
+deleteConversationReadValidation:
+DELETE FROM conversation_read_validation WHERE chat_id = ?;
 
 ackConversationReadOutbox:
 DELETE FROM conversation_read_outbox

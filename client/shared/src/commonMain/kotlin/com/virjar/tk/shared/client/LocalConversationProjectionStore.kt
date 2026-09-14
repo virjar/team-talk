@@ -9,6 +9,7 @@ internal data class ServerCheckpointConversationPlan(
     val conversations: LinkedHashMap<String, Conversation>,
     val draftOverrides: LinkedHashMap<String, LocalDraftOverride>,
     val clearedDraftChatIds: Set<String>,
+    val reads: Map<String, LocalConversationRead?>,
 )
 
 /**
@@ -30,7 +31,7 @@ internal class LocalConversationProjectionStore(
 
     /** 存在一个 key 且值为 null 表示一次显式本地清空。 */
     private val localDraftOverrides = LinkedHashMap<String, LocalDraftOverride>()
-    private val pendingReadsByChatId = LinkedHashMap<String, Long>()
+    private val pendingReadsByChatId = LinkedHashMap<String, LocalConversationRead>()
     private var draftCharacterCount = 0L
     private var draftUtf8ByteCount = 0L
     /** 会话级唯一性隔断迟到的 ACK，而不为每个访问过的 chat 保留一个计数器。 */
@@ -51,7 +52,7 @@ internal class LocalConversationProjectionStore(
             },
         )
         queries.selectAllConversationReadOutbox().executeAsList().forEach { row ->
-            pendingReadsByChatId[row.chat_id] = row.read_seq
+            pendingReadsByChatId[row.chat_id] = LocalConversationRead(row.read_seq, row.validated_read_seq)
         }
         check(localDraftOverrides.size <= outboxLimits.draftCount) {
             "Persisted conversation draft outbox exceeds its entry budget"
@@ -90,7 +91,7 @@ internal class LocalConversationProjectionStore(
                 local = conversationsById[conversation.chatId],
                 remote = conversation,
                 draftOverride = localDraftOverrides[conversation.chatId],
-                pendingReadSeq = pendingReadsByChatId[conversation.chatId],
+                pendingRead = pendingReadsByChatId[conversation.chatId],
             )
             // 首次加载的临时对端必须先于其更旧的 conversation 身份持久化。
             // 如果 user 持久化失败，conversation 行与常驻列表都不会推进。
@@ -99,6 +100,7 @@ internal class LocalConversationProjectionStore(
                 if (plan.clearDraftOverride) {
                     queries.deleteConversationDraftOutbox(conversation.chatId)
                 }
+                persistReadPlanLocked(conversation.chatId, plan.pendingRead)
                 // 同时持久化合并后的草稿；重启绝不能短暂复活一个更旧的事件。
                 persistConversation(plan.conversation)
             }
@@ -108,6 +110,7 @@ internal class LocalConversationProjectionStore(
                 replaceDraftOverrideLocked(conversation.chatId, plan.draftOverride)
             }
             conversationsById[conversation.chatId] = plan.conversation
+            publishReadPlanLocked(conversation.chatId, plan.pendingRead)
             publishConversations()
             markConversationMutatedLocked(conversation.chatId)
         }
@@ -120,8 +123,10 @@ internal class LocalConversationProjectionStore(
     fun applyConversationSnapshot(
         snapshotGeneration: Long,
         conversations: List<Conversation>,
+        authoritativeMessageHeads: Map<String, Long>,
     ): Boolean = cacheUseGate.use {
         require(snapshotGeneration > 0L) { "snapshotGeneration must be positive" }
+        require(authoritativeMessageHeads.values.all { it >= 0L }) { "Message heads must be non-negative" }
         val snapshotById = LinkedHashMap<String, Conversation>(conversations.size)
         conversations.forEach { conversation -> snapshotById[conversation.chatId] = conversation }
         synchronized(stateLock) {
@@ -139,7 +144,9 @@ internal class LocalConversationProjectionStore(
                     local = projectedConversations[remote.chatId],
                     remote = remote,
                     draftOverride = projectedOverrides[remote.chatId],
-                    pendingReadSeq = pendingReadsByChatId[remote.chatId],
+                    pendingRead = pendingReadsByChatId[remote.chatId],
+                    confirmedMessageSeq = confirmedReadEvidenceLocked(remote),
+                    authoritativeMessageHead = authoritativeMessageHeads[remote.chatId],
                 )
                 mergePlans += plan
                 projectedConversations[remote.chatId] = plan.conversation
@@ -168,11 +175,13 @@ internal class LocalConversationProjectionStore(
                     if (plan.clearDraftOverride) {
                         queries.deleteConversationDraftOutbox(plan.conversation.chatId)
                     }
+                    persistReadPlanLocked(plan.conversation.chatId, plan.pendingRead)
                     persistConversation(plan.conversation)
                 }
                 removableIds.forEach { chatId ->
                     queries.deleteConversationDraftOutbox(chatId)
                     queries.deleteConversationReadOutbox(chatId)
+                    queries.deleteConversationReadValidation(chatId)
                     queries.deleteConversation(chatId)
                 }
             }
@@ -183,6 +192,9 @@ internal class LocalConversationProjectionStore(
                 projectedConversations.remove(chatId)
                 projectedOverrides.remove(chatId)
                 pendingReadsByChatId.remove(chatId)
+            }
+            mergePlans.forEach { plan ->
+                publishReadPlanLocked(plan.conversation.chatId, plan.pendingRead)
             }
             conversationsById.clear()
             conversationsById.putAll(projectedConversations)
@@ -198,6 +210,7 @@ internal class LocalConversationProjectionStore(
             queries.transaction {
                 queries.deleteConversationDraftOutbox(chatId)
                 queries.deleteConversationReadOutbox(chatId)
+                queries.deleteConversationReadValidation(chatId)
                 queries.deleteConversation(chatId)
             }
             replaceDraftOverrideLocked(chatId, null)
@@ -210,8 +223,16 @@ internal class LocalConversationProjectionStore(
     }
 
     fun enqueueConversationRead(chatId: String, readSeq: Long): Long = cacheUseGate.use {
+        require(chatId.isNotBlank()) { "chatId must not be blank" }
         require(readSeq > 0L) { "readSeq must be positive" }
         synchronized(stateLock) {
+            val confirmedSeq = maxOf(conversationsById[chatId]?.lastSeq ?: 0L,
+                pendingReadsByChatId[chatId]?.validatedReadSeq ?: 0L)
+            // Do not substitute another chat's cursor, or turn an invalid request into "read all".
+            // Reading history before the conversation event arrives is still a valid offline read.
+            require(readSeq <= confirmedSeq || readSeq <= latestConfirmedMessageSeqLocked(chatId)) {
+                "readSeq exceeds confirmed messages for chat $chatId"
+            }
             if (
                 chatId !in pendingReadsByChatId &&
                 pendingReadsByChatId.size >= outboxLimits.readCount
@@ -222,13 +243,16 @@ internal class LocalConversationProjectionStore(
                     outboxLimits.readCount.toLong(),
                 )
             }
-            val mergedReadSeq = maxOf(pendingReadsByChatId[chatId] ?: 0L, readSeq)
+            val current = pendingReadsByChatId[chatId]
+            val next = LocalConversationRead(maxOf(current?.readSeq ?: 0L, readSeq),
+                maxOf(current?.validatedReadSeq ?: 0L, readSeq))
             queries.transaction {
                 queries.ensureConversationReadOutbox(chatId, readSeq)
                 queries.advanceConversationReadOutbox(readSeq, chatId)
+                queries.upsertConversationReadValidation(chatId, next.validatedReadSeq)
                 queries.markConversationRead(readSeq, chatId)
             }
-            pendingReadsByChatId[chatId] = mergedReadSeq
+            pendingReadsByChatId[chatId] = next
             conversationsById[chatId]?.let { conversation ->
                 conversationsById[chatId] = applyConversationRead(conversation, readSeq)
                 publishConversations()
@@ -236,7 +260,7 @@ internal class LocalConversationProjectionStore(
             // 即使服务器投影行尚不存在，持久可靠发件箱本身也是一次本地变更。隔断一个过期的
             // 空快照，防止其删除该孤儿事实。
             markConversationMutatedLocked(chatId)
-            mergedReadSeq
+            next.readSeq
         }
     }
 
@@ -244,24 +268,25 @@ internal class LocalConversationProjectionStore(
         synchronized(stateLock) {
             pendingReadsByChatId.entries
                 .sortedBy { it.key }
-                .map { (chatId, readSeq) -> PendingConversationRead(chatId, readSeq) }
+                .map { (chatId, read) -> PendingConversationRead(chatId, read.readSeq) }
         }
     }
 
     fun getPendingConversationRead(chatId: String): PendingConversationRead? = cacheUseGate.use {
         synchronized(stateLock) {
-            pendingReadsByChatId[chatId]?.let { readSeq -> PendingConversationRead(chatId, readSeq) }
+            pendingReadsByChatId[chatId]?.let { read -> PendingConversationRead(chatId, read.readSeq) }
         }
     }
 
     fun markConversationReadMirrored(chatId: String, readSeq: Long) = cacheUseGate.use {
         require(readSeq > 0L) { "readSeq must be positive" }
         synchronized(stateLock) {
-            queries.ackConversationReadOutbox(chatId, readSeq)
-            val pendingReadSeq = pendingReadsByChatId[chatId]
-            if (pendingReadSeq != null && pendingReadSeq <= readSeq) {
-                pendingReadsByChatId.remove(chatId)
+            val current = pendingReadsByChatId[chatId]
+            queries.transaction {
+                queries.ackConversationReadOutbox(chatId, readSeq)
+                if (current != null && current.readSeq <= readSeq) queries.deleteConversationReadValidation(chatId)
             }
+            if (current != null && current.readSeq <= readSeq) pendingReadsByChatId.remove(chatId)
             Unit
         }
     }
@@ -396,6 +421,7 @@ internal class LocalConversationProjectionStore(
         val projected = LinkedHashMap<String, Conversation>(remoteConversations.size)
         val projectedOverrides = LinkedHashMap(localDraftOverrides)
         val clearedDraftChatIds = linkedSetOf<String>()
+        val projectedReads = linkedMapOf<String, LocalConversationRead?>()
         remoteConversations.forEach { remote ->
             val checkpointConversation = preserveNewerConversationIdentity(
                 local = conversationsById[remote.chatId],
@@ -405,9 +431,11 @@ internal class LocalConversationProjectionStore(
                 local = null,
                 remote = checkpointConversation,
                 draftOverride = projectedOverrides[remote.chatId],
-                pendingReadSeq = pendingReadsByChatId[remote.chatId],
+                pendingRead = pendingReadsByChatId[remote.chatId],
+                confirmedMessageSeq = confirmedReadEvidenceLocked(remote),
             )
             projected[remote.chatId] = plan.conversation
+            projectedReads[remote.chatId] = plan.pendingRead
             if (plan.clearDraftOverride) {
                 projectedOverrides.remove(remote.chatId)
                 clearedDraftChatIds += remote.chatId
@@ -419,6 +447,7 @@ internal class LocalConversationProjectionStore(
             conversations = projected,
             draftOverrides = projectedOverrides,
             clearedDraftChatIds = clearedDraftChatIds,
+            reads = projectedReads,
         )
     }
 
@@ -426,6 +455,7 @@ internal class LocalConversationProjectionStore(
     fun persistServerCheckpointLocked(plan: ServerCheckpointConversationPlan) {
         queries.deleteAllConversations()
         plan.clearedDraftChatIds.forEach(queries::deleteConversationDraftOutbox)
+        plan.reads.forEach { (chatId, read) -> persistReadPlanLocked(chatId, read) }
         plan.conversations.values.forEach(::persistConversation)
     }
 
@@ -434,6 +464,7 @@ internal class LocalConversationProjectionStore(
         conversationsById.clear()
         conversationsById.putAll(plan.conversations)
         replaceAllDraftOverridesLocked(plan.draftOverrides)
+        plan.reads.forEach { (chatId, read) -> publishReadPlanLocked(chatId, read) }
         snapshotFence.resetServerProjection()
         publishConversations()
     }
@@ -464,6 +495,45 @@ internal class LocalConversationProjectionStore(
     /** 调用方必须持有 [stateLock]。 */
     fun markConversationMutatedLocked(@Suppress("UNUSED_PARAMETER") chatId: String) {
         snapshotFence.markMutation()
+    }
+
+    /** Positive local proof only: missing projection rows never disprove a read. */
+    private fun confirmedReadEvidenceLocked(remote: Conversation): Long {
+        val local = conversationsById[remote.chatId]
+        val pending = pendingReadsByChatId[remote.chatId]
+        val known = maxOf(local?.lastSeq ?: 0L, remote.lastSeq, pending?.validatedReadSeq ?: 0L)
+        val requested = maxOf(local?.readSeq ?: 0L, pending?.readSeq ?: 0L)
+        return if (requested <= known) known else maxOf(known, latestConfirmedMessageSeqLocked(remote.chatId))
+    }
+
+    fun conversationReadValidationCandidates(remote: List<Conversation>): List<String> = cacheUseGate.use {
+        synchronized(stateLock) {
+            remote.mapNotNull { conversation ->
+                val requested = maxOf(conversationsById[conversation.chatId]?.readSeq ?: 0L,
+                    pendingReadsByChatId[conversation.chatId]?.readSeq ?: 0L)
+                conversation.chatId.takeIf { requested > confirmedReadEvidenceLocked(conversation) }
+            }
+        }
+    }
+
+    private fun latestConfirmedMessageSeqLocked(chatId: String): Long =
+        queries.selectLatestConfirmedMessageSeq(chatId).executeAsOne()
+
+    /** Part of the caller's transaction; publish the replacement only after all SQL succeeds. */
+    private fun persistReadPlanLocked(chatId: String, read: LocalConversationRead?) {
+        val current = pendingReadsByChatId[chatId]
+        if (read == current) return
+        if (read == null) {
+            queries.deleteConversationReadOutbox(chatId)
+            queries.deleteConversationReadValidation(chatId)
+        } else {
+            if (read.readSeq != current?.readSeq) queries.replaceConversationReadOutbox(read.readSeq, chatId)
+            if (read.validatedReadSeq > 0L) queries.upsertConversationReadValidation(chatId, read.validatedReadSeq)
+        }
+    }
+
+    private fun publishReadPlanLocked(chatId: String, read: LocalConversationRead?) {
+        if (read == null) pendingReadsByChatId.remove(chatId) else pendingReadsByChatId[chatId] = read
     }
 
     private fun persistConversation(conversation: Conversation) {

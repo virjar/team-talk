@@ -1,0 +1,6 @@
+-- A read intent keeps its validated portion across checkpoint/reset without retaining messages.
+-- Replaying this migration leaves both legacy outbox bytes and existing evidence unchanged.
+CREATE TABLE IF NOT EXISTS conversation_read_validation (
+    chat_id TEXT PRIMARY KEY NOT NULL,
+    read_seq INTEGER NOT NULL CHECK(read_seq > 0)
+);

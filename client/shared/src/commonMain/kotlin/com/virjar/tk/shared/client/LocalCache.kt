@@ -605,19 +605,25 @@ interface LocalCache : LocalDocumentProjection {
      *
      * @return true 表示该快照没有遇到更新代次；false 表示它已整体过期，
      * 或部分 chat 因请求期间发生变化而被安全跳过。
+     * [authoritativeMessageHeads] 只接收本次代次内、按 chat 精确核对的消息历史头；缺项不证明水位越界。
      */
     fun applyConversationSnapshot(
         snapshotGeneration: Long,
         conversations: List<Conversation>,
+        authoritativeMessageHeads: Map<String, Long> = emptyMap(),
     ): Boolean
+
+    /** Legacy reads that lack same-chat evidence. Fetch message heads within the same snapshot lease. */
+    fun conversationReadValidationCandidates(conversations: List<Conversation>): List<String> = emptyList()
 
     /**
      * 原子推进本地已读投影并把合并后的最大水位写入持久 outbox。
      * 进入聊天页或显式标记时立即调用，不等待网络或通知回环。
+     * 水位不得超过同一 chat 的会话摘要或本地已确认消息；越界请求在任何写入前拒绝。
      */
     fun enqueueConversationRead(chatId: String, readSeq: Long): Long
 
-    /** 返回待镜像水位；同一 chat 永远至多一条且只增不减。 */
+    /** 返回待镜像水位；同一 chat 至多一条，合法意图只增不减。遗留越界部分须查证后修复。 */
     fun getPendingConversationReads(): List<PendingConversationRead>
 
     /** 精确读取一个 chat 的待镜像水位；热路径不扫描完整 outbox。 */

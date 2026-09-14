@@ -16,10 +16,14 @@ internal data class LocalDraftOverride(
 /** 区分“没有观察到事件”与权威的 null 草稿。 */
 internal data class AuthoritativeDraftObservation(val draft: String?)
 
+/** Highest requested read and the independently confirmed part of that same local intent. */
+internal data class LocalConversationRead(val readSeq: Long, val validatedReadSeq: Long = 0L)
+
 internal data class ConversationMergePlan(
     val conversation: Conversation,
     val draftOverride: LocalDraftOverride?,
     val clearDraftOverride: Boolean,
+    val pendingRead: LocalConversationRead?,
 )
 
 /**
@@ -72,7 +76,9 @@ internal fun prepareConversationMerge(
     local: Conversation?,
     remote: Conversation,
     draftOverride: LocalDraftOverride?,
-    pendingReadSeq: Long?,
+    pendingRead: LocalConversationRead?,
+    confirmedMessageSeq: Long = 0L,
+    authoritativeMessageHead: Long? = null,
 ): ConversationMergePlan {
     // 记录在当前本地代际创建之后观察到的最新权威。
     val observedOverride = draftOverride?.let { override ->
@@ -90,16 +96,27 @@ internal fun prepareConversationMerge(
     val incoming = remote.copy(
         draft = if (effectiveOverride != null) effectiveOverride.draft else remote.draft,
     )
-    val merged = if (local == null) {
-        incoming
-    } else {
-        mergeConversation(local, incoming, effectiveOverride)
+    // PG conversation snapshots can lag RocksDB history even after a checkpoint. Local evidence
+    // proves a read possible; only the exact chat's newly fetched message head disproves old data.
+    val confirmedLastSeq = maxOf(local?.lastSeq ?: 0L, remote.lastSeq, confirmedMessageSeq,
+        pendingRead?.validatedReadSeq ?: 0L)
+    val upperBound = authoritativeMessageHead?.let { maxOf(it, confirmedLastSeq) }
+    val invalidLocalRead = upperBound != null && local != null && local.readSeq > upperBound
+    val invalidPendingRead = upperBound != null && pendingRead != null && pendingRead.readSeq > upperBound
+    val pendingSeq = if (invalidPendingRead) pendingRead?.validatedReadSeq?.takeIf { it > 0L }
+        else pendingRead?.readSeq
+    val nextPendingRead = pendingSeq?.let { seq ->
+        LocalConversationRead(seq, if (seq <= (upperBound ?: confirmedLastSeq)) seq
+            else pendingRead?.validatedReadSeq ?: 0L)
     }
-    val withPendingRead = pendingReadSeq?.let { applyConversationRead(merged, it) } ?: merged
+    val validLocal = if (invalidLocalRead) local?.copy(readSeq = remote.readSeq) else local
+    val merged = if (validLocal == null) incoming else mergeConversation(validLocal, incoming, effectiveOverride)
+    val withPendingRead = nextPendingRead?.let { applyConversationRead(merged, it.readSeq) } ?: merged
     return ConversationMergePlan(
         conversation = withPendingRead,
         draftOverride = effectiveOverride,
         clearDraftOverride = clearAcknowledgedOverride,
+        pendingRead = nextPendingRead,
     )
 }
 

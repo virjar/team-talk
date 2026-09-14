@@ -134,6 +134,7 @@ class MessageRepository internal constructor(
     /**
      * 在任何网络挂起之前推进本地投影与持久 outbox。
      * 返回的水位对本会话单调递增，且可能高于 [readSeq]。
+     * [readSeq] 必须属于该 chat 已知的确认消息范围；越界不会截成全部已读。
      */
     fun markReadLocal(chatId: String, readSeq: Long): Long {
         val watermark = localCache.enqueueConversationRead(chatId, readSeq)

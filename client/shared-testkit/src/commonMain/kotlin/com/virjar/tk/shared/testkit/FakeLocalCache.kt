@@ -800,6 +800,7 @@ class FakeLocalCache(
     override fun applyConversationSnapshot(
         snapshotGeneration: Long,
         conversations: List<Conversation>,
+        authoritativeMessageHeads: Map<String, Long>,
     ) = cacheUseGate.use { conversationProjection.applySnapshot(snapshotGeneration, conversations) }
     override fun setConversationDraft(chatId: String, draft: String?) =
         cacheUseGate.use { conversationProjection.setDraft(chatId, draft) }
