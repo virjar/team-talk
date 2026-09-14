@@ -85,6 +85,7 @@ internal fun ChatPanelWrapper(
     mainWindowFullscreen: Boolean,
     messageFocusTarget: MessageFocusTarget? = null,
     messageFocusRequestId: Long = 0L,
+    pendingTasksContent: (@Composable () -> Unit)? = null,
 ) {
     val messagesState = viewModel.messages.collectAsState()
     val previewScope = rememberCoroutineScope()
@@ -276,6 +277,7 @@ internal fun ChatPanelWrapper(
             messageFocusTarget = messageFocusTarget,
             messageFocusRequestId = messageFocusRequestId,
             telemetry = telemetry,
+            pendingTasksContent = pendingTasksContent,
             onDraftChange = { draft ->
                 saveDraft(chatId, draft)
             },

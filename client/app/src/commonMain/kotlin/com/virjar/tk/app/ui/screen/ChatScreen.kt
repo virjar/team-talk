@@ -119,6 +119,8 @@ fun ChatPanel(
     /** 区分重复导航到同一条消息的情况，而不改变其身份。 */
     messageFocusRequestId: Long = 0L,
     telemetry: ClientUiTelemetrySink = NoopClientUiTelemetrySink,
+    /** 当前群的固定待办区域，不随消息列表滚动。 */
+    pendingTasksContent: (@Composable () -> Unit)? = null,
 ) {
     val uiResultScope = rememberCoroutineScope()
     val uiResultHandoff = remember(uiResultScope) { UiResultHandoff(uiResultScope) }
@@ -952,6 +954,7 @@ fun ChatPanel(
             )
 
             ChatTypingIndicator(visibleTypingUid, resolveSender)
+            pendingTasksContent?.invoke()
 
             if (composerReady && (sharedDraftState.conflict || sharedDraftState.failure != null)) {
                 Column(Modifier.fillMaxWidth().testTag("chat.draft.conflict")) {

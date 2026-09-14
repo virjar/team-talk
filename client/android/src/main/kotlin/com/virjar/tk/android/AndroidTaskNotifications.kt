@@ -5,7 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
-import com.virjar.tk.app.navigation.feature.task.forEachDueTaskReminder
+import com.virjar.tk.app.navigation.feature.task.forEachTaskReminder
 import com.virjar.tk.shared.client.ClientSession
 import com.virjar.tk.shared.client.ConnectionState
 import kotlinx.coroutines.CoroutineScope
@@ -39,16 +39,16 @@ internal class AndroidTaskNotifications(
     private val prefix = "task:${session.deploymentIdentity.fingerprint}:${session.datasetId}:${session.ownerUid}:"
 
     init {
-        manager.createNotificationChannel(NotificationChannel(TASK_CHANNEL, "任务提醒", NotificationManager.IMPORTANCE_DEFAULT))
+        manager.createNotificationChannel(NotificationChannel(TASK_CHANNEL, "待办提醒", NotificationManager.IMPORTANCE_DEFAULT))
         scope.launch {
             val local = session.taskRepo.local
             combine(local.changes, session.connectionState, foreground) { _, connection, active -> connection to active }
                 .collect { (connection, active) ->
                     val reminders = withContext(Dispatchers.IO) { local.reminders() }
                     val eligible = reminders.filterNot { it.seen }.mapTo(mutableSetOf()) { it.taskId }
-                    posted.toList().filter { active || it !in eligible }.forEach(::cancel)
+                    posted.toList().filter { active || it !in eligible }.forEach(::cancelNotification)
                     if (connection != ConnectionState.AUTHENTICATED || active || !manager.areNotificationsEnabled()) return@collect
-                    forEachDueTaskReminder(session.taskRepo, session.ownerUid, stillEligible = {
+                    forEachTaskReminder(session.taskRepo, session.ownerUid, stillEligible = {
                         !closed && !foreground.value && session.connectionState.value == ConnectionState.AUTHENTICATED
                     }) { task, remindedAt ->
                         val target = AndroidNotificationTarget(session.deploymentIdentity.fingerprint, session.datasetId,
@@ -57,7 +57,7 @@ internal class AndroidTaskNotifications(
                             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
                         val notification = Notification.Builder(context, TASK_CHANNEL)
                             .setSmallIcon(R.drawable.ic_notification)
-                            .setContentTitle("任务已到截止时间")
+                            .setContentTitle("待办提醒")
                             .setContentText(task.title)
                             .setCategory(Notification.CATEGORY_REMINDER)
                             .setVisibility(Notification.VISIBILITY_PRIVATE)
@@ -74,7 +74,8 @@ internal class AndroidTaskNotifications(
         }
     }
 
-    private fun cancel(taskId: String) {
+    // 不与 CoroutineScope.cancel(String) 同名，避免 launch 接收者误取消整个通知监听。
+    private fun cancelNotification(taskId: String) {
         manager.cancel(prefix + taskId, 0)
         posted -= taskId
     }

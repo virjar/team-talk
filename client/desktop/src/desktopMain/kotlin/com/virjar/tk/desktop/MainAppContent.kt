@@ -321,6 +321,11 @@ internal fun WindowScope.MainAppContent(
         else -> contacts.mapNotNull { it.user }
     }
 
+    com.virjar.tk.app.ui.component.TaskAttentionRefresh(nav.tasks.attention, mainWindowReadActive)
+    LaunchedEffect(nav.chatId, activeChatType) {
+        nav.tasks.attention.watchGroup(nav.chatId?.takeIf { activeChatType == ChatType.GROUP.code })
+    }
+
     // ── 应用壳层 + 三栏常驻布局 ──
     Box(modifier = Modifier.fillMaxSize().testTag("main.home")) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -338,6 +343,18 @@ internal fun WindowScope.MainAppContent(
                 onToggleWindowZoom = presentationGate.guard(onToggleWindowZoom),
             )
             com.virjar.tk.app.ui.component.ProtocolUpgradeBanner(protocolCompatibility)
+            nav.tasks.attention.assigned?.let { summary ->
+                com.virjar.tk.app.ui.component.TaskAttentionBanner(
+                    total = summary.openCount, overdue = summary.overdueCount,
+                    stale = nav.tasks.attention.assignedStale,
+                    onOpen = presentationGate.guard {
+                        nav.tasks.openAssignedTodos()
+                        nav.selectedTab = MainTab.TASKS.ordinal
+                        nav.closeInspector()
+                        nav.closeMainPane()
+                    },
+                )
+            }
             Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
             // ── 左栏：细导航栏（56dp 图标式，规格 §1.5）──
             SlimNavRail(
@@ -542,10 +559,7 @@ private fun RowScope.MainContentPane(
                 },
             )
         } else if (MainTab.entries[nav.selectedTab] == MainTab.TASKS) {
-            com.virjar.tk.app.ui.screen.TaskWorkspaceScreen(
-                feature = nav.tasks,
-                actionAdmission = presentationGate,
-            )
+            DesktopTaskWorkspaceHost(nav, presentationGate, resources)
         } else if (MainTab.entries[nav.selectedTab] == MainTab.DOCUMENTS) {
             if (nav.documentWindowVisible) {
                 DocumentDetachedPlaceholder(
@@ -603,6 +617,20 @@ private fun RowScope.MainContentPane(
                                 nav.messageActions.save(msg.chatId, msg.serverSeq)
                             },
                             officeRefHost = nav,
+                            pendingTasksContent = {
+                                if (nav.tasks.attention.groupId == activeChatId) nav.tasks.attention.group?.let { summary ->
+                                    com.virjar.tk.app.ui.component.TaskAttentionBanner(
+                                        total = summary.openCount, overdue = summary.overdueCount, group = true,
+                                        stale = nav.tasks.attention.groupStale,
+                                        onOpen = presentationGate.guard {
+                                            nav.tasks.openGroupTodos(activeChatId)
+                                            nav.selectedTab = MainTab.TASKS.ordinal
+                                            nav.closeInspector()
+                                            nav.closeMainPane()
+                                        },
+                                    )
+                                }
+                            },
                             onOpenTaskRef = presentationGate.guard { _, body, onDenied ->
                                 nav.messageActions.openTaskReference(body, { nav.openTask(body.taskId) }, onDenied)
                             },

@@ -2,28 +2,28 @@ package com.virjar.tk.android
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Chat
-import androidx.compose.material.icons.automirrored.outlined.Chat
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.virjar.tk.app.navigation.AppDataState
 import com.virjar.tk.app.navigation.MainTab
+import com.virjar.tk.app.ui.component.TaskAttentionBanner
+import com.virjar.tk.app.ui.component.TaskAttentionRefresh
+import com.virjar.tk.app.ui.component.TkNavIcons
+import com.virjar.tk.app.ui.screen.ConversationListScreen
+import com.virjar.tk.app.ui.screen.DirectoryScreen
+import com.virjar.tk.app.ui.screen.MeScreen
+import com.virjar.tk.app.ui.screen.MobileDocumentExitCoordinator
 import com.virjar.tk.protocol.body.OfficeRefBody
 import kotlinx.coroutines.flow.MutableStateFlow
-import com.virjar.tk.app.ui.component.TkNavIcons
-import com.virjar.tk.app.ui.screen.DirectoryScreen
-import com.virjar.tk.app.ui.screen.ConversationListScreen
-import com.virjar.tk.app.ui.screen.DocumentWorkspaceHost
-import com.virjar.tk.app.ui.screen.MobileDocumentExitCoordinator
-import com.virjar.tk.app.ui.screen.MeScreen
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,12 +56,17 @@ internal fun HomeScreen(
         AndroidUpgradeDialog(serverBaseUrl = BuildConfig.SERVER_BASE_URL) { showAppUpgrade = false }
     }
     val actionAdmission = dataState.uiActionAdmission
+    val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
+    TaskAttentionRefresh(
+        dataState.tasks.attention,
+        lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
+    )
     var homeTab by rememberSaveable { mutableIntStateOf(0) }
     val documentReference by requestedDocument.collectAsState()
     val taskReference by requestedTask.collectAsState()
     // 从聊天返回首页时，引用目标优先于上次保存的栏目。消费后仍留在文档，不触发第二次初始化。
     val selectedTab = when {
-        taskReference != null -> MainTab.TASKS.ordinal
+        taskReference != null || dataState.tasks.workspaceRequested -> MainTab.TASKS.ordinal
         documentReference != null -> MainTab.DOCUMENTS.ordinal
         else -> homeTab
     }
@@ -75,7 +80,7 @@ internal fun HomeScreen(
     val documentExitCoordinator = remember { MobileDocumentExitCoordinator() }
 
     // 切换标签时刷新待处理申请数
-    LaunchedEffect(selectedTab, taskReference) {
+    LaunchedEffect(selectedTab, taskReference, dataState.tasks.workspaceRequested) {
         onSelectedTabChanged(MainTab.entries[selectedTab])
         dataState.runAdmittedUiAction(actionAdmission, onClosed = {}) {
             when (MainTab.entries[selectedTab]) {
@@ -94,6 +99,7 @@ internal fun HomeScreen(
                     }
                 }
                 MainTab.TASKS -> {
+                    homeTab = MainTab.TASKS.ordinal
                     dataState.tasks.open()
                     requestedTask.value?.let { taskId ->
                         dataState.tasks.openTask(taskId)
@@ -181,101 +187,114 @@ internal fun HomeScreen(
             }
         },
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-            when (MainTab.entries[selectedTab]) {
-                MainTab.CONVERSATIONS -> {
-                    // 固定系统账号会话拉起（内测反馈 T058）：幂等，失败静默重试下次登录。
-                    LaunchedEffect(Unit) { dataState.chat.ensureSystemChats() }
-                    // 群头像懒加载（内测反馈 T053）
-                    LaunchedEffect(conversations) {
-                        dataState.chat.ensureGroupAvatars(
-                            conversations.filter { it.chatType == com.virjar.tk.protocol.model.ChatType.GROUP.code }
-                                .map { it.chatId },
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            if (!documentEditingActive.value) dataState.tasks.attention.assigned?.let { summary ->
+                TaskAttentionBanner(
+                    total = summary.openCount,
+                    overdue = summary.overdueCount,
+                    stale = dataState.tasks.attention.assignedStale,
+                    onOpen = actionAdmission.guard {
+                        dataState.tasks.openAssignedTodos()
+                        homeTab = MainTab.TASKS.ordinal
+                    },
+                )
+            }
+            Box(Modifier.fillMaxWidth().weight(1f)) {
+                when (MainTab.entries[selectedTab]) {
+                    MainTab.CONVERSATIONS -> {
+                        // 固定系统账号会话拉起（内测反馈 T058）：幂等，失败静默重试下次登录。
+                        LaunchedEffect(Unit) { dataState.chat.ensureSystemChats() }
+                        // 群头像懒加载（内测反馈 T053）
+                        LaunchedEffect(conversations) {
+                            dataState.chat.ensureGroupAvatars(
+                                conversations.filter { it.chatType == com.virjar.tk.protocol.model.ChatType.GROUP.code }
+                                    .map { it.chatId },
+                            )
+                        }
+                        val chatAvatars by dataState.chat.chatAvatars.collectAsState(emptyMap())
+                        ConversationListScreen(
+                            conversations = conversations,
+                            mentionedChatIds = mentionedChatIds,
+                            groupAvatars = chatAvatars,
+                            onConversationClick = actionAdmission.guard(onConversationClick),
+                            onPinClick = actionAdmission.guard(dataState.conversationViewModel::setPinned),
+                            onMuteClick = actionAdmission.guard(dataState.conversationViewModel::setMuted),
+                            onMarkRead = actionAdmission.guard { chatId: String, lastSeq: Long ->
+                                dataState.chat.markConversationRead(chatId, lastSeq)
+                            },
+                            peerUsers = conversationPeerUsers,
+                            peerRemarks = remember(contacts) { com.virjar.tk.app.ui.screen.contactRemarks(contacts) },
+                            groupMembers = groupAvatarMembers,
+                            loadMessagePreview = dataState.conversationViewModel::messagePreview,
                         )
                     }
-                    val chatAvatars by dataState.chat.chatAvatars.collectAsState(emptyMap())
-                    ConversationListScreen(
-                        conversations = conversations,
-                        mentionedChatIds = mentionedChatIds,
-                        groupAvatars = chatAvatars,
-                    onConversationClick = actionAdmission.guard(onConversationClick),
-                    onPinClick = actionAdmission.guard(dataState.conversationViewModel::setPinned),
-                    onMuteClick = actionAdmission.guard(dataState.conversationViewModel::setMuted),
-                    onMarkRead = actionAdmission.guard { chatId: String, lastSeq: Long ->
-                        dataState.chat.markConversationRead(chatId, lastSeq)
-                    },
-                    peerUsers = conversationPeerUsers,
-                    peerRemarks = remember(contacts) { com.virjar.tk.app.ui.screen.contactRemarks(contacts) },
-                        groupMembers = groupAvatarMembers,
-                        loadMessagePreview = dataState.conversationViewModel::messagePreview,
-                    )
-                }
-                MainTab.CONTACTS -> Column(modifier = Modifier.fillMaxSize()) {
-                    DirectoryScreen(
-                        contacts = contacts,
-                        friendPresenceByUid = friendPresenceByUid,
-                        units = dataState.organization.units,
-                        members = dataState.organization.members,
-                        selectedUnitId = dataState.organization.selectedUnitId,
-                        organizationInitialized = dataState.organization.initialized,
-                        organizationUnitSnapshotKnown = dataState.organization.unitSnapshotKnown,
-                        organizationLoading = dataState.organization.loading,
-                        organizationMemberSnapshotKnown = dataState.organization.memberSnapshotKnown,
-                        organizationMembersLoading = dataState.organization.membersLoading,
-                        organizationAccessRevoked = dataState.organization.accessRevoked,
-                        onUnitClick = { unitId ->
-                            dataState.launchAdmittedUiAction {
-                                dataState.organization.selectUnit(unitId)
-                            }
-                        },
-                        onGroupClick = actionAdmission.guard { chatId, _ ->
-                            onConversationClick(chatId)
-                        },
-                        onUserClick = actionAdmission.guard(onUserProfile),
-                        modifier = Modifier.weight(1f),
-                        pendingApplyCount = pendingApplyCount,
-                        onFriendApplies = actionAdmission.guard(onFriendApplies),
-                    )
-                }
-                MainTab.DOCUMENTS -> AndroidDocumentWorkspaceHost(
-                    onEditingActive = { documentEditingActive.value = it },
-                    dataState = dataState,
-                    resourceOwner = resourceOwner,
-                    launchAdmittedAction = launchAdmittedAction,
-                    mobileExitCoordinator = documentExitCoordinator,
-                    // 文档首页再返回时回到应用一级会话页，不直接退出 Activity。
-                    onExitDocuments = actionAdmission.guard {
-                        homeTab = MainTab.CONVERSATIONS.ordinal
-                    },
-                )
-                MainTab.TASKS -> {
-                    androidx.activity.compose.BackHandler {
-                        actionAdmission.runIfOpen {
-                            if (!dataState.tasks.handleBack()) homeTab = MainTab.CONVERSATIONS.ordinal
-                        }
+                    MainTab.CONTACTS -> Column(modifier = Modifier.fillMaxSize()) {
+                        DirectoryScreen(
+                            contacts = contacts,
+                            friendPresenceByUid = friendPresenceByUid,
+                            units = dataState.organization.units,
+                            members = dataState.organization.members,
+                            selectedUnitId = dataState.organization.selectedUnitId,
+                            organizationInitialized = dataState.organization.initialized,
+                            organizationUnitSnapshotKnown = dataState.organization.unitSnapshotKnown,
+                            organizationLoading = dataState.organization.loading,
+                            organizationMemberSnapshotKnown = dataState.organization.memberSnapshotKnown,
+                            organizationMembersLoading = dataState.organization.membersLoading,
+                            organizationAccessRevoked = dataState.organization.accessRevoked,
+                            onUnitClick = { unitId ->
+                                dataState.launchAdmittedUiAction {
+                                    dataState.organization.selectUnit(unitId)
+                                }
+                            },
+                            onGroupClick = actionAdmission.guard { chatId, _ ->
+                                onConversationClick(chatId)
+                            },
+                            onUserClick = actionAdmission.guard(onUserProfile),
+                            modifier = Modifier.weight(1f),
+                            pendingApplyCount = pendingApplyCount,
+                            onFriendApplies = actionAdmission.guard(onFriendApplies),
+                        )
                     }
-                    com.virjar.tk.app.ui.screen.TaskWorkspaceScreen(
-                        feature = dataState.tasks,
-                        actionAdmission = actionAdmission,
-                        compactMode = true,
+                    MainTab.DOCUMENTS -> AndroidDocumentWorkspaceHost(
+                        onEditingActive = { documentEditingActive.value = it },
+                        dataState = dataState,
+                        resourceOwner = resourceOwner,
+                        launchAdmittedAction = launchAdmittedAction,
+                        mobileExitCoordinator = documentExitCoordinator,
+                        // 文档首页再返回时回到应用一级会话页，不直接退出 Activity。
+                        onExitDocuments = actionAdmission.guard {
+                            homeTab = MainTab.CONVERSATIONS.ordinal
+                        },
+                    )
+                    MainTab.TASKS -> {
+                        androidx.activity.compose.BackHandler {
+                            actionAdmission.runIfOpen {
+                                if (!dataState.tasks.handleBack()) homeTab = MainTab.CONVERSATIONS.ordinal
+                            }
+                        }
+                        AndroidTaskWorkspaceHost(dataState, resourceOwner, launchAdmittedAction,
+                            onOpenDocument = { reference ->
+                                requestedDocument.value = reference
+                                homeTab = MainTab.DOCUMENTS.ordinal
+                            })
+                    }
+                    MainTab.SETTINGS -> MeScreen(
+                        currentUser = dataState.account.currentUser,
+                        onLogout = actionAdmission.guard(onLogout),
+                        onEditProfile = actionAdmission.guard(onEditProfile),
+                        onChangePassword = actionAdmission.guard(onChangePassword),
+                        onDeviceManagement = actionAdmission.guard(onDevices),
+                        onBlacklist = actionAdmission.guard(onBlacklist),
+                        onLocalStorage = actionAdmission.guard(onLocalStorage),
+                        onCheckAppUpgrade = { showAppUpgrade = true },
+                        onNotificationSettings = if (pushSettings.available) {
+                            actionAdmission.guard { showNotifications = true }
+                        } else null,
+                        buildInfoText = "Git: ${com.virjar.tk.android.BuildConfig.BUILD_IDENTITY.substringAfter('+').take(8)}" +
+                            "${if (com.virjar.tk.android.BuildConfig.BUILD_IDENTITY.endsWith(".dirty")) "-dirty" else ""}" +
+                            "  |  Build: ${com.virjar.tk.android.BuildConfig.BUILD_TIME}",
                     )
                 }
-                MainTab.SETTINGS -> MeScreen(
-                    currentUser = dataState.account.currentUser,
-                    onLogout = actionAdmission.guard(onLogout),
-                    onEditProfile = actionAdmission.guard(onEditProfile),
-                    onChangePassword = actionAdmission.guard(onChangePassword),
-                    onDeviceManagement = actionAdmission.guard(onDevices),
-                    onBlacklist = actionAdmission.guard(onBlacklist),
-                    onLocalStorage = actionAdmission.guard(onLocalStorage),
-                    onCheckAppUpgrade = { showAppUpgrade = true },
-                    onNotificationSettings = if (pushSettings.available) {
-                        actionAdmission.guard { showNotifications = true }
-                    } else null,
-                    buildInfoText = "Git: ${com.virjar.tk.android.BuildConfig.BUILD_IDENTITY.substringAfter('+').take(8)}" +
-                        "${if (com.virjar.tk.android.BuildConfig.BUILD_IDENTITY.endsWith(".dirty")) "-dirty" else ""}" +
-                        "  |  Build: ${com.virjar.tk.android.BuildConfig.BUILD_TIME}",
-                )
             }
         }
     }

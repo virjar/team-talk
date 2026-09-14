@@ -250,6 +250,33 @@ organization revision，成员 cursor 还绑定根节点和 recursive 语义。
 `ORGANIZATION_CHANGED(61, revision)`；它只携带 revision，不携带行，终端必须继续用上述分页 RPC
 取得权威快照。
 
+### 待办任务
+
+已发行 minor 2 的 `task.list/get/audit/mutate`（method 1–4）、`WorkTask`、`TaskCommand` 与
+`TaskRefBody` 保持布局。待发行 minor 3 追加 method 5 `details`、6 `query`、7 `modify`、8 `history`、
+9 `modifySeries`，不重编旧编号。
+
+`TaskDetails` 组合旧 WorkTask 与 TaskOptions、TaskMetrics、startRemindedAt、系列信息和期次日期。
+格式缺省 TEXT、群共享缺省 false、旧历史缺省未知；TaskOptions 分别容纳最多 20 个文档引用和附件，
+OfficeRefBody 的文档身份与 Attachment 的受管路径继续使用原类型。系列公开规则与启停状态，固定模板
+只存服务端，不随详情下发。`TaskRecurrenceRule` 明确携带 frequency（WEEKLY=1/MONTHLY=2）、
+interval（1–12）、firstDate（有效 YYYY-MM-DD）、startLocalTime、dueLocalTime 与 timeZone；
+`TaskSeries` 和创建用 `TaskDetailsCommand` 都使用 recurrenceRule。首次日期是固定日历锚点，
+周/月推进及月底不足规则见领域模型，不按上一期实际开始时间递推。
+
+`TaskQuery` 指定 ASSIGNED/CREATED/GROUP、可选 groupId 及 openOnly/startedOnly，`TaskQueryPage`
+携带有界详情页和覆盖整个授权条件的 TaskSummary。cursor 绑定账号和查询，摘要不由页长推算。
+`TaskHistoryPage` 在原审计上附带同 revision 的延期记录。
+
+`TaskDetailsCommand` 只含 CREATE/EDIT/DEFER 中一种完整意图；延期携带新截止和原因，系列启停使用
+独立 `TaskSeriesCommand`。三种任务命令共用既有 operationId、issuedAt、revision 和收据规则，
+不得将新 DEFER 的整数值当成旧 STATUS。`TASK_STARTED(26)` 单独携带开始提醒提示，旧 TASK_DUE
+仍表示截止；通知先触发详情确认，不改写旧 WorkTask.remindedAt 的语义。
+
+SDK 按生成方法版本窗选择能力。旧服务器仍可使用原任务读写；详情与历史只能包装旧返回值，高级查询
+与扩展命令明确要求升级，不能虚构总数或缺失历史。产品权限、周期及统计口径见
+[待办领域模型](../02-product/domain-model.md#11-待办任务)。
+
 ### 内容搜索
 
 Protocol 0.2 的 `contentSearch.search(ContentSearchRequest)` 返回有界 `ContentSearchPage`，

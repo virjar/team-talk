@@ -105,7 +105,7 @@ class MessageActionsFeature internal constructor(
     fun openTaskReference(reference: TaskRefBody, onOpen: () -> Unit, onDenied: (String) -> Unit) {
         val launched = launchAction {
             try {
-                localData.run { session.taskRepo.get(reference.taskId).getOrThrow() }
+                localData.run { session.taskRepo.getDetails(reference.taskId).getOrThrow() }
                 onOpen()
             } catch (failure: Throwable) {
                 if (failure is CancellationException) throw failure

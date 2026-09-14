@@ -8,6 +8,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 /** 编辑器显示本地日期/时间；协议只接收明确的 UTC 时间点。 */
+@kotlinx.serialization.Serializable
 internal data class TaskDeadlineInput(val date: String = "", val time: String = "") {
     fun epochMillis(zone: ZoneId = ZoneId.systemDefault()): Long? {
         if (date.isBlank() && time.isBlank()) return null

@@ -100,6 +100,8 @@ internal fun AndroidChatScreen(
     onMentionClick: ((uid: String) -> Unit)? = null,
     onTextAttachmentPreview: ((Attachment) -> Unit)? = null,
     messageFocusTarget: MessageFocusTarget? = null,
+    pendingTasksContent: (@Composable () -> Unit)? = null,
+    taskBanner: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findComponentActivity() }
@@ -635,6 +637,7 @@ internal fun AndroidChatScreen(
                         onBack = actionAdmission.guard(onBack),
                         onGroupDetail = actionAdmission.guard(onGroupDetail),
                     )
+                    taskBanner?.invoke()
                     if (isUploading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
             },
@@ -655,6 +658,7 @@ internal fun AndroidChatScreen(
                 mentionCandidates = mentionCandidates,
                 chatForegroundActive = chatRouteResumed,
                 messageFocusTarget = messageFocusTarget,
+                pendingTasksContent = pendingTasksContent,
                 telemetry = telemetry,
                 media = com.virjar.tk.app.ui.bridge.ChatMediaConfig(
                     fileDownloads = fileDownloads,

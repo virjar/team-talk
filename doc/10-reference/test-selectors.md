@@ -313,11 +313,37 @@
 | `task.audit.{revision}` / `task.audit.more` | 审计记录及继续分页 |
 | `task.pending.{taskId}` / `task.pending.{retry\|discard\|intent}.{taskId}` | 待发送状态、重试、放弃入口和原内容查看 |
 | `task.pending.intent.content` / `task.pending.discard.confirm` | 可选择复制的原意图与显式放弃确认 |
-| `task.reminder.{taskId}` / `task.reminder.{open\|seen}.{taskId}` | 到期提醒、打开任务和标记已读 |
+| `task.reminder.{taskId}` / `task.reminder.{open\|seen}.{taskId}` | 已确认的开始/截止提醒、打开任务和标记已读 |
 | `task.share` / `task.share.query` / `task.share.chat.{chatId}` / `task.share.error` | 从详情分享到会话、筛选、目标和失败 |
 | `chat.attach.task` / `task.reference.picker` / `task.reference.view.{1\|2}` / `task.reference.more` | 聊天附件入口、引用选择器、分配/创建列表和分页 |
 | `chat.taskref.pick.{taskId前12}` / `chat.taskref.{taskId前12}` | 候选选择和消息中的任务引用卡片 |
 | `task.notice` | 本机保存或分享进入发送队列后的反馈，不代表服务端已确认 |
+
+扩展待办使用以下稳定标签；控件是否出现仍取决于协议能力、当前权限和表单模式。
+
+| 分组 | testTag | 作用 |
+|---|---|---|
+| 固定摘要 | `task.attention.{group\|assigned}` / `task.attention.{group\|assigned}.open` | 群固定卡片、执行人横幅及各自打开入口；未完成数为零时不存在 |
+| 查询 | `task.filter.open` / `task.summary` / `task.summary.processing` | 未完成筛选、完整条件计数、已完成数量与平均耗时 |
+| 描述 | `task.editor.format.{markdown\|text}` / `task.editor.description.{preview\|rendered}` | 格式选择、编辑/预览切换及预览正文 |
+| 开始时间 | `task.editor.start.{date\|time\|clear}` / `task.startsAt` | 单次开始时间输入/清除与详情显示；原截止仍使用 `task.editor.{date\|time}` |
+| 日历重复 | `task.editor.recurrence.{enabled\|interval\|biweekly\|firstDate\|start\|due\|zone\|summary}` / `task.editor.recurrence.frequency.{1\|2}` | 开关、间隔、双周快捷项、首次日期、同日时刻、时区及规则摘要；frequency 1 为周、2 为月 |
+| 首次日期 | `task.editor.recurrence.calendar` / `task.editor.recurrence.calendar.confirm` | 日历选择器入口与日期确认，保留首次日期作为重复锚点 |
+| 群共享 | `task.editor.shareToGroup` | 当前群成员只读开关，编辑旧任务时观察其原设置 |
+| 材料入口 | `task.materials.editor` / `task.materials` / `task.materials.{addDocument\|addFile}` / `task.materials.error` | 材料编辑、展示容器、添加入口及打开失败 |
+| 文档选择 | `task.materials.documents` / `task.materials.documents.retry` / `task.materials.pickDocument.{documentId}` | 最近文档候选、加载失败重试与选择 |
+| 已有材料 | `task.materials.{document\|removeDocument}.{documentId}` / `task.materials.{file\|removeFile}.{path}` | 打开文档、文件下载卡片及表单移除入口 |
+| 上传 | `task.materials.{upload\|retry\|cancel}.{jobId}` | 当前上传行、失败重试与移除；使用现场 jobId，不枚举或持久保存生成值 |
+| 延期 | `task.defer` / `task.defer.{date\|time\|reason\|error\|submit}` / `task.deferral.{revision}` | 延期入口、表单、错误、提交与审计中的理由 |
+| 系列与指标 | `task.series.{rule\|next\|toggle}` / `task.originalDeadline` / `task.deferralCount` / `task.lastDeferredAt` / `task.processingTime` | 固定规则、下期/停用状态、启停，以及原承诺、次数、最近延期和处理耗时 |
+
+真实连续输入回归使用 [`scripts/e2e/task_editor_calendar_check.py`](../../scripts/e2e/task_editor_calendar_check.py)：
+先在指定 Desktop 验收实例打开空白新任务表单，再运行 `python3 scripts/e2e/task_editor_calendar_check.py --port <验收端口>`。
+脚本连续切换周/月并填写日期、间隔和时间，核对整组字段及摘要，再核对单次开始/截止；结束保留未保存表单，
+不创建服务端任务。不能用动作间等待重组掩盖前后字段相互覆盖。
+
+系列启停的 pending 以 seriesId（首期 taskId）定位。材料的 documentId/path 使用完整业务身份；上传 jobId
+只在当前编辑会话内定位，文件卡片里的下载动作沿用通用文件组件标签。不要从显示标题推导动态 ID。
 
 任务工作台使用完整业务 ID；聊天任务卡片沿用消息组件的 12 字符前缀。同一任务的 pending 可能同时
 出现在 Desktop 左侧列表和右侧详情，操作前限定到对应容器。惰性列表需先滚动到目标，不以屏外节点

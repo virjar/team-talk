@@ -140,6 +140,21 @@ internal fun NavGraphBuilder.chatDestination(
         } else {
             chatContacts.mapNotNull { it.user }
         }
+        val taskLifecycle by androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
+        com.virjar.tk.app.ui.component.TaskAttentionRefresh(dataState.tasks.attention,
+            taskLifecycle.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED))
+        LaunchedEffect(chatId, chatType) {
+            dataState.tasks.attention.watchGroup(chatId.takeIf { chatType == com.virjar.tk.protocol.model.ChatType.GROUP.code })
+        }
+        DisposableEffect(chatId) {
+            onDispose { dataState.tasks.attention.clearGroup(chatId) }
+        }
+        fun showTaskWorkspace() {
+            navController.navigate(Routes.HOME) {
+                popUpTo(Routes.HOME) { inclusive = false }
+                launchSingleTop = true
+            }
+        }
         if (viewModel != null) {
             AndroidChatScreen(
                 chatId,
@@ -182,6 +197,30 @@ internal fun NavGraphBuilder.chatDestination(
                     dataState.messageActions.save(message.chatId, message.serverSeq)
                 },
                 officeRefHost = dataState,
+                taskBanner = {
+                    dataState.tasks.attention.assigned?.let { summary ->
+                        com.virjar.tk.app.ui.component.TaskAttentionBanner(
+                            total = summary.openCount, overdue = summary.overdueCount,
+                            stale = dataState.tasks.attention.assignedStale,
+                            onOpen = actionAdmission.guard {
+                                dataState.tasks.openAssignedTodos()
+                                showTaskWorkspace()
+                            },
+                        )
+                    }
+                },
+                pendingTasksContent = {
+                    if (dataState.tasks.attention.groupId == chatId) dataState.tasks.attention.group?.let { summary ->
+                        com.virjar.tk.app.ui.component.TaskAttentionBanner(
+                            total = summary.openCount, overdue = summary.overdueCount, group = true,
+                            stale = dataState.tasks.attention.groupStale,
+                            onOpen = actionAdmission.guard {
+                                dataState.tasks.openGroupTodos(chatId)
+                                showTaskWorkspace()
+                            },
+                        )
+                    }
+                },
                 onOpenTaskRef = actionAdmission.guard { body: com.virjar.tk.protocol.body.TaskRefBody, onDenied ->
                     dataState.messageActions.openTaskReference(
                         body,

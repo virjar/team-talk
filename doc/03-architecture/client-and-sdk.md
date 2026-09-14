@@ -1079,7 +1079,7 @@ SQL driver，不替换数据库，也不清理聊天记录、草稿、待发消�
 附件源。调用方须在存储线程执行，并避免在主线程同步关闭正在整理的缓存。
 
 [LocalCacheStorageMaintenance](../../client/shared/src/commonMain/kotlin/com/virjar/tk/shared/client/LocalCacheStorageMaintenance.kt)
-要求当前 schema（现为 6）和完整性检查通过，当前账号有未处理隔离副本时拒绝。
+要求当前 schema（以 `AppDatabase.Schema.version` 为准）和完整性检查通过，当前账号有未处理隔离副本时拒绝。
 Android 的数据库族与逻辑库各最多 64 MiB，超限在 `VACUUM` 前明确拒绝；JVM 各最多 512 MiB。
 Android 的较低上限用于限制原生 `VACUUM` 临时数据库的内存占用，当前 LocalCache 与独立维护入口使用
 同一限制。[AOSP SQLite 构建](https://android.googlesource.com/platform/external/sqlite/+/d11514d85b96ef33b1a78080246df7df2cf5d9ea/dist/Android.bp)
@@ -1143,31 +1143,43 @@ LocalCache、如何从事件恢复、如何在重启后存在。
 
 ### 6.8 任务投影、可靠操作与提醒
 
-`ClientSession.taskRepo` 通过 `LocalTasks` 保存任务与列表投影、待确认命令和提醒。任务详情最多驻留
-256 项，分页最多 16 页、每页 20 项，提醒工作集最多 512 项；它们都可从领域 RPC 重建。创建、编辑
-和状态操作最多保留 256 条待确认意图，每个 taskId 只接纳一个在途操作，超限明确拒绝新意图，不驱逐
-尚未确认的事实。SQLite schema 3 的追加迁移保留已有账号、文档评论及其他 pending。
+`ClientSession.taskRepo` 通过 `LocalTasks` 持有任务、分页、待确认命令和提醒。原 `WorkTask` 继续保存在
+任务投影；`TaskDetails` 的格式、材料、指标、开始提醒及系列信息单独保存，并按同一业务 revision 组装。
+`TaskRecurrenceRule` 的频率、间隔和首次日期随完整命令及系列元数据保存；SDK 不计算下期或维护本机调度器。
+SQLite 追加可重放迁移，不改已发行旧任务载荷、命令 JSON 或提醒收据；版本以生成的 `AppDatabase.Schema.version` 为准。
+详情最多驻留 256 项，旧列表与条件查询各最多 16 页、每页 20 项，提醒工作集最多 512 项。
 
-任务和文档评论恢复先读取一次候选列表，逐条进入提交临界区后按 taskId/commentId 主键点查并比较完整
-待确认记录；prepare 的容量检查只计数，不反复解码整队列。待确认记录的定位、失败、重试和 ACK 清理按主键处理；UI 的
-changes 通知与观察者读取保持原语义，队列内容和 SQLite schema 不变。
+`TaskQueryKey` 绑定 ASSIGNED/CREATED/GROUP、groupId、openOnly、startedOnly 与 cursor，页缓存保存
+完整详情及服务端的完整条件摘要。计数不从页长推算，也不合并不同查询的页；`TaskFeature` 观察本地投影，
+首页关注当前执行人已开始的未完成项，聊天另关注当前群显式共享的未完成项。事件、重连和前台 30 秒核对
+驱动刷新，时间条件不另造本机任务事实。
 
-提交先持久保存完整 `TaskCommand`，复用会话唯一的 `SessionPendingMirrorRecovery` worker。网络
-未知结果重放原 operationId、issuedAt、expectedRevision 和载荷；确定拒绝保留原意图供显式处理，
-不自动换号覆盖冲突。服务端精确 ACK 即使不携带当前任务也可以清除原命令，不能把 ACK 当作读权限。
+旧 `TaskCommand`、新 `TaskDetailsCommand` 和 `TaskSeriesCommand` 共用一张 pending 表与会话唯一的
+`SessionPendingMirrorRecovery` worker。每个 taskId/seriesId 一个槽、合计最多 256 条；超限拒绝新意图，
+不驱逐旧意图。记录恰含一种完整原命令，DEFER 与旧 STATUS 的整数值不作为跨类型身份。网络未知结果
+重放原 operationId、issuedAt、expectedRevision 和全部载荷，确定拒绝保留原意图供显式处理；精确 ACK
+可以清除已提交命令，但不授予读取权或复活已撤销投影。
 
-任务和评论的 list/get/audit 仍在各自读取锁内保持顺序；可靠变更 RPC 与明确拒绝后的丢弃使用独立
-命令锁，不等待页面读取的网络往返。ACK 推进已有投影 generation，使更早发出的页失效；多个恢复调用
-仍不能同时发送同一命令。任务审计因 generation 变化而失效时返回普通读取失败，不取消调用协程。
-任务恢复末尾的提醒回读仍沿读取通道执行，这并不保证整个会话恢复 worker 从不等待查询。
+任务和评论恢复先读取候选列表，再按 taskId/commentId 点查并比较完整记录；容量检查只计数，
+不反复解码整队列。UI 的 changes 发布仍按原方式读取待确认列表。任务读取之间保持顺序，可靠命令
+与丢弃使用独立命令锁；ACK 推进已有 generation，使早于 ACK 的页失效，重复恢复不能同时发送同一命令。
+读取失效是普通错误，不取消协程；恢复末尾的提醒回读仍可能等待读取通道。
 
-TASK_CHANGED 先使页面及旧请求失效，TASK_DUE 先保存提醒提示，再提交事件游标。恢复 worker 和
-当前页面通过 get/list 回读确认任务、执行人、活动状态及 remindedAt；旧提示不能直接弹通知。
-本地只对相同 taskId/remindedAt 保留已读和已展示标记，系统展示不等于用户已读。权限撤销清理干净
-投影，已提交命令独立保留；普通断线允许阅读已缓存任务，未缓存详情仍需连接。
+TASK_CHANGED 先失效页面与在途读取，TASK_DUE/TASK_STARTED 先保存提示再推进事件游标。恢复通过
+`getDetails` 确认当前执行人、活动状态及开始/截止标记，提示本身不直接弹通知。相同 taskId/remindedAt
+保留已读和已展示标记，系统展示不等于已读。成员变化清理群页与仅群授权的详情，个人参与任务和待确认
+意图保留；重复 403/404 只在实际删除缓存时发布，避免观察者反复刷新被拒绝的群。
 
-共享 `TaskFeature` 拥有分页、当前详情、表单、审计和分享流程。两端壳只负责主栏目、返回导航、
-任务引用及系统通知。打开任务引用先调用领域读取，不从聊天冻结预览还原权威对象。
+`supportsTaskDetails` 读取已协商方法版本，短暂断线沿用本会话最后确认的能力，首次未协商时不猜版本。
+旧服务器保留 list/get/audit/mutate；`getDetails/history` 仅包装旧读取，完整查询与新命令明确要求升级，
+不虚构摘要或旧历史。普通断线可读现有缓存；未缓存对象与文档引用打开仍需服务端确认。
+
+共享 `TaskFeature` 拥有分页、详情、表单、审计和分享；平台只持有导航、材料传输与系统通知资源。
+任务引用打开读取当前详情，不从聊天预览还原对象。Android 的 SavedState 只保存现有 owner 的当前表单，
+恢复核对 deployment/dataset/uid 与已提交状态，先还原 editorKey 再接回文件选择；不建立第二套草稿或
+上传队列，也不恢复未完成上传。原始日期和周期输入按表单保存，不要求先解析为有效规则；恢复不会自动
+重放已入队或已确认任务。系统选择器返回的后台进程回收恢复已有模拟器实测，不能据此承诺任意重启恢复。产品与材料边界见
+[待办领域模型](../02-product/domain-model.md#11-待办任务)和[客户端使用说明](../05-clients/README.md#任务操作与材料)。
 
 ## 7. 平台边界
 

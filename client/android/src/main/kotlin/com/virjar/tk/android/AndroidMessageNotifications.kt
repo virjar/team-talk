@@ -142,7 +142,7 @@ internal class AndroidMessageNotifications(
                             val currentlyForeground = foreground.value
                             val eligible = items.filter { !it.isMuted && it.unreadCount > 0 }
                                 .mapTo(mutableSetOf(), Conversation::chatId)
-                            posted.toList().filter { currentlyForeground || vendor || it !in eligible }.forEach(::cancel)
+                            posted.toList().filter { currentlyForeground || vendor || it !in eligible }.forEach(::cancelNotification)
                             if (!vendorNotifications.value && !currentlyForeground && connectionState.value == ConnectionState.AUTHENTICATED &&
                                 manager.areNotificationsEnabled()
                             ) additions.forEach(::show)
@@ -177,7 +177,8 @@ internal class AndroidMessageNotifications(
         }
     }
 
-    private fun cancel(chatId: String) {
+    // 不与 CoroutineScope.cancel(String) 同名，避免 launch 接收者误取消整个通知监听。
+    private fun cancelNotification(chatId: String) {
         manager.cancel(tag(chatId), 0)
         posted -= chatId
     }
@@ -186,7 +187,7 @@ internal class AndroidMessageNotifications(
         if (closed) return@synchronized
         closed = true
         scope.cancel()
-        posted.toList().forEach(::cancel)
+        posted.toList().forEach(::cancelNotification)
         navigation.clearFor(deploymentFingerprint, datasetId, uid)
     }
 }
