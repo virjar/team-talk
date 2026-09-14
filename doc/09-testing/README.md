@@ -47,7 +47,9 @@ HTTP 夹具控制列表、详情和写入响应的完成顺序，覆盖搜索重
 直接运行浏览器测试。CI 自动安装浏览器并保留 `server/admin/build/reports/browser-tests/` 的截图和
 失败 trace。这些用例验证前端查询生命周期，不替代管理 HTTP 服务的鉴权与数据库集成测试。
 
-发行工具 job 在 Linux、Windows 上运行 `buildSrc` 的发行集成测试。Linux job 安装 NSIS 后运行
+发行工具 job 在 Linux、Windows 上运行 `buildSrc` 的发行集成测试。两端显式准备 Android 36 platform
+与 Build Tools 36.0.0；从 runner 的 `ANDROID_HOME/cmdline-tools/latest/bin` 调用 `sdkmanager`
+（Windows 为 `sdkmanager.bat`），不依赖 PATH；发行 workflow 使用同一方式。Linux job 安装 NSIS 后运行
 `:client:desktop:assembleDesktopShells`，生成四目标首装包并用 `dpkg-deb` 检查实际 deb。Windows job
 运行 `:client:desktop:packageWindowsPortableWindowsAmd64`，覆盖 JBR、bootstrap、Launch4j exe 和
 便携 ZIP 的实际发行路径。构建任务的私有安装路径、POSIX 启动脚本、NSIS 编译、压缩归档和符号链接由

@@ -99,11 +99,21 @@ def fixture_environment(root, token):
         path.mkdir(parents=True, exist_ok=True)
         environment[key] = str(path)
     environment.update({
-        "JAVA_TOOL_OPTIONS": f'-Djava.awt.headless=true -Duser.home="{root / "home"}"',
+        "Launch4j": "debug-all",
         "TEAMTALK_SMOKE_ROOT": str(root), "TEAMTALK_SMOKE_TOKEN": token,
         "TEAMTALK_SMOKE_STARTED": str(int(time.time() * 1000)),
     })
     return environment
+
+
+def prepare_launcher_options(root, executable):
+    # Launch4j 3.50 reads the first quoted field from java -version. Injecting a
+    # quoted user.home through JAVA_TOOL_OPTIONS makes it parse that path as the
+    # version and overflow its native buffer. The sidecar is read after probing
+    # the JRE, and exists only beside the EXE in this disposable installation.
+    executable.with_suffix(".l4j.ini").write_text(
+        f'-Djava.awt.headless=true\n-Duser.home="{root / "home"}"\n', encoding="utf-8",
+    )
 
 
 def validate_report(report, root, installation, executable, arguments):
@@ -153,7 +163,10 @@ def run_probe(root, installation, executable, environment):
             if process.poll() is None:
                 process.terminate()
                 process.wait(timeout=10)
-            print(log.read_text(encoding="utf-8", errors="replace"), end="", flush=True)
+            for diagnostic in (log, installation / "launch4j.log"):
+                if diagnostic.is_file():
+                    print(f"--- {diagnostic.name} ---", flush=True)
+                    print(diagnostic.read_text(encoding="utf-8", errors="replace"), end="", flush=True)
 
 
 def main():
@@ -180,6 +193,7 @@ def main():
             if not executable.is_file():
                 raise AssertionError("Portable archive is missing its native launcher")
             prepare_payload(root, installation, javac, environment["TEAMTALK_SMOKE_TOKEN"])
+            prepare_launcher_options(root, executable)
             run_probe(root, installation, executable, environment)
         finally:
             control_processes(environment, "kill")
