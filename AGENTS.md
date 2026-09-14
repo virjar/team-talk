@@ -69,20 +69,20 @@
 - **正式产品发行由用户明确确认。** 展示版本、构建号、人工发行说明、`prepareProtocolRelease`、tag 和
   GitHub 发布都属于正式发行。开发、服务器部署、Agent 本机验收不自动授权客户端交付。
 - **协议按发行批次演进，不按功能或提交递增。** 当前发行 `0.0.2 / protocol 0.2`；协议 0.0、
-  0.1 与 0.2 均受正式快照保护。当前待发行群头像、系统会话与文档提及候选契约共用 minor 3 与 `@SinceProtocol(3)`，
+  0.1 与 0.2 均受正式快照保护。当前发行周期的新增契约共用待发行 minor 3 与 `@SinceProtocol(3)`，
   同一发行周期不再按功能累加 minor；纯实现或 UI 修复不增加协议号。
 - 开发清单 `protocol/protocol/wire-baseline.tsv` 只记录当前源码，不冻结兼容历史。修改待发布新增契约后
   仍需审阅并运行 `writeProtocolBaseline`；兼容校验只针对 `releases/` 中的正式快照和已有的明确冻结契约。
   已发行 RPC/wire 编号、字段和墓碑保持不变；同批尚未发行的新增契约可以直接修订，无须再造 V2/V3。
   临时版本测试使用测试夹具，不把试验计数和兼容分支留在产品源码。
-- 用户要求**更新内测安装包**，即授权手动 snapshot 分发。审阅并提交源码后，在完整的独立私有 clone
-  运行 `release -PreleaseMode=snapshot -PreleaseTargets=local` 或 `site`；不修改展示版本和根构建号，
+- 用户要求**更新内测安装包**，即授权该目标的手动 snapshot 分发。审阅并提交源码后，公版在主仓库、
+  私有安装在完整的独立私有 clone 运行 `release -PreleaseMode=snapshot -PreleaseTargets=local` 或 `site`；不修改展示版本和根构建号，
   不运行 `prepareProtocolRelease` 或 `prepareProtocolContract`，不打 tag。snapshot 相对已发行协议校验，
   同一待发布 minor 内继续演进；用源码 SHA 与实际协议清单哈希区分构建，内测服务端和客户端应成套更新，
   不承诺同号中间开发包彼此兼容。现有用户数据仍须保留，不因此清库或修改安装身份。
 - Android snapshot 保持 `versionCode=根构建号+1`，由用户手动覆盖；Desktop 的
   `desktopRevision=完整 Git first-parent 提交数+根构建号+1` 在打包时计算，不写回配置、不依赖 tag。
-  snapshot 只允许独立私有应用的 local/site，不允许 GitHub；同展示版本的后续 snapshot 保留已分发源码
+  snapshot 支持公版或独立私有应用的 local/site，不允许 GitHub；同展示版本的后续 snapshot 保留已分发源码
   历史并从其后代构建，禁止浅克隆或安装修订号倒退。原字节重试复用原密封目录。
 - 新私有应用首次测试交付使用 `releaseMode=private-first`，同样不冻结待发布 minor；只允许新的独立
   安装身份与空下载入口，或原字节幂等重试。后续更新走 snapshot，正式升级走用户确认的发行流程。
@@ -90,8 +90,8 @@
   和历史上明确冻结的 `contracts/` 不删除、不改写；单独的 `prepareProtocolContract` 只保留给明确要求
   冻结独立稳定协议的交付，普通开发与内测不得运行。编号重整只发生在明确的新 major，不用于小修复。
 - 文件消息只保存 TeamTalk FileStore 相对路径。服务器必须在分配序号和成功 ACK 前确认附件及
-  元数据真实存在；下载必须携带 access token，并由上传者或当前会话成员权限放行；ImBot 和图形
-  客户端不得绕过同一校验链。
+  元数据真实存在；下载必须携带 access token，未认领暂存文件按上传者放行，已认领文件按引用所属
+  领域的实时权限放行；ImBot 和图形客户端不得绕过同一校验链。
 - 接收媒体遵循本地优先：认证下载完整文件、校验并原子发布到有界账号缓存后，播放器只读取本地文件；
   服务端 Range 可作为下载能力，但不得默认演化成双端在线播放链路。
 - Desktop 与 Android 共享产品语义和设计令牌，不强行共享导航、窗口和平台交互。

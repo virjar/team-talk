@@ -85,15 +85,16 @@ HTTP 空闲约束可用 `./gradlew :server:server:test --tests '*ProtectedHttpId
 
 ```bash
 ./gradlew :protocol:protocol:jvmTest --tests '*TaskModelTest'
-./gradlew :server:server:test --tests '*TaskIntegrationTest'
-./gradlew :client:shared:jvmTest --tests '*TaskRecoveryIntegrationTest'
+./gradlew :server:server:test --tests '*TaskIntegrationTest' --tests '*TaskDetailsIntegrationTest' --tests '*TaskRecurrenceScheduleTest'
+./gradlew :client:shared:jvmTest --tests '*TaskRecoveryIntegrationTest' --tests '*TaskDetailsRecoveryIntegrationTest'
 ./gradlew :client:app:desktopTest --tests '*TaskFeatureTest' --tests '*TaskEditorTest'
 ```
 
 协议回归验证任务、命令、审计、提醒和独立 TaskRef 的往返与有界解码。服务端使用随机 PostgreSQL
 schema 验证参与者权限、上下文关联、CAS、稳定身份重放、并发提交，以及任务、审计、回执和事件的
-原子性；截止扫描覆盖重启、重新设定提醒与完成竞态。SQLite 回归验证已保存命令的跨进程恢复、拒绝
-保留、投影失效、提醒已读/已展示以及迁移保留已有评论意图。
+原子性；详情与日历回归覆盖群共享、完整摘要、延期和材料、每N周/月锚点、月末、开始/截止提醒与启停。
+SQLite 回归验证两套任务协议的命令共用可靠队列、跨进程恢复、拒绝保留、投影失效、提醒收据、
+旧任务命令与既有评论意图的迁移保留。
 
 App 回归通过真实 TaskRepository 与可控 RPC 检查外部引用冷启动、创建未确认不误读 404、撤权不循环
 刷新、脏表单保留与失败处理、分页恢复和迟到读取；日期输入覆盖时区、夏令时缺失时刻与原截止精度。
@@ -103,14 +104,15 @@ App 回归通过真实 TaskRepository 与可控 RPC 检查外部引用冷启动�
 ### 无头分发与 MCP 的定向回归
 
 ```bash
-./gradlew :client:shared:jvmTest --tests '*HeadlessBundleInstallerIntegrationTest' --tests '*HeadlessConfigurationIntegrationTest'
+./gradlew :client:headless:test --tests '*HeadlessBundleInstallerIntegrationTest' --tests '*HeadlessConfigurationIntegrationTest'
 ./gradlew :client:headless:test --tests '*AgentMcpAccessTest' --tests '*AgentMcpHttpTest' --tests '*CliMainTest' --tests '*AgentApiTest'
 ./gradlew -p buildSrc test --tests '*HeadlessDistributionTest'
 ./gradlew :client:headless:verifyHeadlessDist :client:headless:headlessDistZip
 ```
 
 安装器回归使用临时分发目录、真实文件锁、子进程和 shell launcher，检查移动路径、调用工作目录、
-不可变版本升级、同时运行的进程租约、损坏/未知文件拒绝、暂存恢复与外部数据保留。配置回归使用专用
+不可变版本升级、同时运行的进程租约、损坏/未知文件拒绝、暂存恢复与外部数据保留；本地HTTP夹具还
+覆盖同版本不同源码的在线升级与包身份校验。它不代表公开站点的实际下载与升级验收。配置回归使用专用
 私有目录，验证保存端点、重启读取、错实例拒绝、离线 doctor 和 token 导出，不能操作已有用户 dataDir。
 分发回归检查 ZIP、manifest、逐文件摘要和离开源码的 launcher；`--version` 不依赖 Java 或在线 agent。
 
@@ -146,14 +148,18 @@ JavaCV 会缓存首次加载异常，后续 `tryLoad()` 可能只是重抛；补
   :protocol:protocol-netty:jvmTest :protocol:protocol:verifyProtocolBaseline
 ./gradlew :client:shared:jvmTest --tests '*ImClientProtocolVersionTest' \
   --tests '*ClientDataVersionTest' --tests '*JvmLocalCacheMigrationTest' \
-  --tests '*LocalCacheSchemaEpochTest' --tests '*JvmLocalCacheRecoveryTest'
+  --tests '*LocalCacheSchemaEpochTest' --tests '*JvmLocalCacheRecoveryTest' \
+  --tests '*TaskDetailsRecoveryIntegrationTest' --tests '*ChatDraftSyncRecoveryIntegrationTest' \
+  --tests '*ConversationReadRecoveryIntegrationTest'
 ./gradlew :server:server:test --tests '*ServerProtocolNegotiationTest' \
   --tests '*ServerProtocolConfigurationTest' --tests '*ProtocolEventProjectionTest' \
-  --tests '*RpcDispatcherConflictTest'
+  --tests '*RpcDispatcherConflictTest' --tests '*SchemaMigrationIntegrationTest'
 ```
 
 这些检查分别覆盖：协商先于凭据、兼容窗口与强制拒绝、协议墓碑、新旧事件投影、旧库首次认领、
-小版本迁移失败回滚、大版本重置与降级保留。磁盘 JDBC 的连接生命周期与内存库不同，迁移回归必须
+小版本迁移、持久命令/草稿保留、已读水位恢复、大版本重置与降级拒绝。服务端迁移回归区分各迁移的
+真实提交边界，不能把局部回滚测试扩写成所有历史DDL都原子，见[有序迁移](../06-server/persistence.md#postgresql-有序迁移)。
+磁盘 JDBC 的连接生命周期与内存库不同，迁移回归必须
 包含真实临时文件。界面仍需在实际客户端核对升级横幅、强制弹窗和工作区拦截；不要求为版本改动跑完整 UI 场景库。
 
 ## 应优先放在本地的测试

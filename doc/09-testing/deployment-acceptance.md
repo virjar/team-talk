@@ -8,7 +8,8 @@ TeamTalk 的主业务验收连接当前选中部署配置函数的目标。它�
 
 1. 当前选中的部署配置函数已填写目标服务器参数；传输组合与证书要求见
    [传输配置边界](../07-operations/configuration.md#传输配置边界)。
-2. 配置的 HTTP(S) 健康检查可达，`tcpAddress` 端口与运行时 `TCP_PORT` 一致，公网 IM TCP 可完成 TLS handshake。
+2. 配置的 HTTP(S) 健康检查可达，`tcpAddress` 端口与运行时 `TCP_PORT` 一致；IM连接按部署配置完成
+   TLS握手或明文协议协商，不能用HTTP健康代替TCP验证。
 3. 如果服务端代码、数据库结构或静态资源有变化，先部署新版本。
 4. 测试环境允许创建带独立前缀的临时账户和业务数据。
 5. 组织资产归属验收还需要运行机上的 owner-only `gradle/deployment.secrets`，或同时设置
@@ -47,7 +48,8 @@ TeamTalk 的主业务验收连接当前选中部署配置函数的目标。它�
 
 ## 客户端安装站点的 HTTP 验收
 
-历史 Conveyor Windows 包的引导器和自动更新服务依赖静态下载契约。对仍保留的 `.appinstaller` 和它引用的 MSIX
+当前首装包与应用内更新按下一节的注册中心验证；Conveyor只用于核对仍被保留的旧版交付契约。
+历史Windows引导器和自动更新服务依赖静态下载契约。对确实保留的 `.appinstaller` 和它引用的 MSIX
 执行以下检查，不能只凭文件存在、浏览器下载或服务端 `/health` 为 UP 就宣布可安装：
 
 | 请求 | 预期 |
@@ -74,8 +76,9 @@ TeamTalk 的主业务验收连接当前选中部署配置函数的目标。它�
   首页下载区只请求一次 `/api/v1/public/downloads`，按通道展示真实制品直链、大小、版本与源码身份；
   空通道、停用目标及加载失败均不提供假下载按钮，失败后可重试。桌面和手机尺寸验证卡片与社区入口。
 - 已移除的 `/downloads`、`/downloads/`、`/downloads/index.html`：GET/HEAD 均为 404，无兼容跳转。
-- `GET /api/v1/client/updates/check`：无该端点发布时 CHANNEL_DISABLED（或无通道记录）；
-  发布后返回 UPDATE_AVAILABLE + manifestUrl/installers。
+- `GET /api/v1/client/updates/check`：带目标、通道、当前版本/构建与源码身份请求；无发布或通道停用时
+  返回 CHANNEL_DISABLED，相同身份返回 UP_TO_DATE，有可用更新时返回 UPDATE_AVAILABLE；
+  旧壳低于minShellAbi时应要求下载完整安装包，不把所有成功响应都记为可增量更新。
 - `GET /api/v1/client/files/<sha256>`：200 + `ETag="<sha>"` + immutable 缓存头；
   `Range: bytes=0-15` → 206；未知 sha → 404 不兜底。
 - 兼容层：Android 通道尚未接入时 `/downloads/android.json` 仍可读旧收据；只有无收据的历史静态包不声明版本。
@@ -106,8 +109,11 @@ TeamTalk 的主业务验收连接当前选中部署配置函数的目标。它�
 
 ### 无头在线升级
 
-- `bin/tt-agent upgrade --server-url <url>`：已是最新 → 提示退出；有新版 → 下载、
-  校验、原子切换；再次执行提示已是最新。systemd 场景重启后 `--version` 反映新身份。
+从已有受管安装执行 `<安装前缀>/bin/tt-agent upgrade --server-url <url> --channel <通道>`：已是最新时
+提示退出；有新版时下载、校验所选发布与包内身份并原子切换，随后从安装入口再次检查应为最新。
+保留原数据目录、凭据与已有运行进程；正在运行的agent/systemd服务需显式重启才加载新包，不由upgrade自动重启。
+省略channel会采用当前包的通道，跨通道验收每次都应显式传入。离线安装与完整操作见
+[无头客户端](../05-clients/headless.md)。
 
 ## 多设备与精确服务重启
 

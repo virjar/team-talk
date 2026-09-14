@@ -65,7 +65,7 @@
 | MSG-10 | P2 | 超长或非法消息体 | 在契约边界被明确拒绝，连接保持可用 |
 | MSG-11 | P1 | 可视/源码/预览编辑复杂 Markdown | 源码无损，表格、引用、代码与未知块在预览和气泡中一致 |
 | MSG-12 | P1 | 保存的消息发现与排序 | 新用户无固定入口且空态明确；首次收藏后显示副本与预览，按普通会话时间排序；用户主动置顶/取消、双端状态与重启后一致，不重复显示 |
-| SYNC-01 | P0 | 游标落后服务端保留 floor | 收到 RESET 后用当前 v22 `SyncRpc` 收齐 User/Contact/Chat/Conversation，单事务 CAS 安装并从 `baseEventId` 拉 tail，不从 0 重放 |
+| SYNC-01 | P0 | 游标落后服务端保留 floor | 收到 RESET 后用 `SyncRpc` 收齐 User/Contact/Chat/Conversation，单事务 CAS 安装并从 `baseEventId` 拉 tail，不从 0 重放 |
 | SYNC-02 | P0 | 回收与 replay/checkpoint 并发 | 只删已完成进程内推送尝试且过期的连续前缀，lease/gate 保护在用游标，delete + floor 原子且重启后仍有效 |
 | SYNC-03 | P1 | Bot 超长离线越过事件窗 | 恢复当前权威投影与可查消息历史；不补造已压缩的历史 delivery/编辑/撤回回调 |
 

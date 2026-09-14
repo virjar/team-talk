@@ -97,29 +97,38 @@ Android 应用内从[设置 → 本地存储](../05-clients/android.md#本地存
 - size/contentType 是否与权威元数据一致。
 - access token、成员权限和服务端附件校验日志。
 - 客户端下载时是否用当前 serverUrl 解析 path。
-- 远程 serverUrl 是否为 HTTPS；文件传输不跟随重定向，3xx 不能作为成功或协议切换使用。
+- `serverUrl` 是否与部署选择的 HTTP(S) 地址一致；文件传输不跟随重定向，3xx 不能作为成功或协议切换使用。
+  HTTP 配置允许远程地址，但不改变 非本地 TCP 必须使用 TLS 的规则，见[传输配置边界](configuration.md#传输配置边界)。
 
 ## 6. 搜索无结果
 
 先区分业务无结果与索引不可用：确认消息权威存储存在，再查 Lucene 文档和 plainText 派生。编辑、
 撤回后结果异常通常是索引更新问题；大范围缺失可以重建索引。
 
-## 7. 未读或已读倒退
+## 7. 未读或已读异常
 
-- Conversation 是否在加群时预创建。
-- lastSeq/readSeq 是否按 max 合并。
-- markRead 是否更新服务端并推送自己其他设备。
-- 乱序 CONVERSATION_UPDATED 是否覆盖了更新水位。
-- 本地缓存合并是否把旧快照当成全量替换。
+先记录当前会话的 latest/read 水位、消息最大序号及所属 chatId，再区分：
+
+- 收到新消息没有红点：检查 readSeq 是否异常领先，以及切换高序号会话后是否用旧消息列表给新会话标读。
+  已读动作必须属于同一 ChatViewModel/会话；Desktop 当前会话失焦时不应自动标读。
+- 水位倒退：检查 markRead 同步、乱序 CONVERSATION_UPDATED 与本地快照合并。
+- PG 会话摘要可能落后于权威消息，不能只因 readSeq 大于摘要就手工清零。SDK 按持久已读证明和权威消息
+  核验处理历史错误水位；保留诊断证据，不直接改库或删除 outbox 绕过恢复。
+
+恢复后分别验证未选中会话收信、当前会话失焦收信及进入阅读后的清零。
 
 ## 8. Desktop 自动化操作无效
 
-- 确认内置服务监听 `127.0.0.1:18080`。
+- 仅开发构建有内置测试服务；正式安装包不包含它。确认实际配置的 loopback 端口（默认18080），
+  用 `/ping` 的 PID/实例令牌识别本任务进程，不能把旧端口响应当成新版本。
 - 查询 `/semantics`，不要猜坐标。
 - 图标优先 testTag/contentDescription。
 - 独立任务窗口必须传 `window=sub-*`。
 - Retina 下语义 bounds 与 AWT Robot 坐标密度可能不同；优先语义 action。
 - ESC 使用窗口级按键接口，不依赖输入框焦点。
+
+构建与测试期间冻结运行依赖或停止客户端，避免新 JAR 覆盖运行中加载的旧类。完整流程见
+[Desktop 自动化](../09-testing/desktop-automation.md)；该服务的语义截图不替代正式包的原生启动验收。
 
 ## 9. Gradle 无法启动或 Desktop 重复实例
 

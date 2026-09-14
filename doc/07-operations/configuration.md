@@ -351,7 +351,7 @@ HTTP scheme 与 TCP TLS 分别配置。HTTP 站点可以配合自签 TCP 证书�
 | 层 | HTTP | IM TCP 与证书 | 代码入口 |
 |---|---|---|---|
 | 服务运行时 | 未启用 HTTPS connector 时，HTTP 监听 `0.0.0.0:KTOR_PORT`；同时配置 HTTPS 端口与可加载 keystore 时只开 HTTPS，关闭 HTTP | 默认 `0.0.0.0:5100`；配置 `SSL_KEYSTORE` 后使用 TLS 1.2/1.3，否则为明文。监听地址本身不强制 TLS | [Application](../../server/server/src/main/kotlin/com/virjar/tk/server/Application.kt)、[ServerTransportConfiguration](../../server/server/src/main/kotlin/com/virjar/tk/server/ServerTransportConfiguration.kt) |
-| 当前 Android/Desktop/无头 SDK | `serverUrl` 显式选择 HTTP 或 HTTPS，允许非本地 HTTP；文件、机器人和遥测共用地址规则，不跟随认证请求重定向。Android debug/release 清单均允许明文 HTTP | 非本地地址强制 TLS；默认平台 WebPKI，配置 `tcpTlsCertificatePem` 时使用只包含该证书的专用 TrustStore。始终校验主机名/IP，握手失败不回退明文。未配置证书时仅 `localhost`、`::1` 和合法四段 `127.*` 字面地址可用明文 | [ClientTransportTls](../../client/shared/src/commonMain/kotlin/com/virjar/tk/shared/client/ClientTransportTls.kt)、[Android HTTP](../../client/shared/src/androidMain/kotlin/com/virjar/tk/shared/repository/FileRepository.android.kt)、[JVM HTTP](../../client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/repository/FileRepository.desktop.kt) |
+| 当前 Android/Desktop/无头 SDK | `serverUrl` 显式选择 HTTP 或 HTTPS，允许非本地 HTTP；文件、机器人和遥测共用地址规则，不跟随认证请求重定向。Android debug/release 清单均允许明文 HTTP | 非本地地址强制 TLS；默认平台 WebPKI，配置 `tcpTlsCertificatePem` 时使用只包含该证书的专用 TrustStore。始终校验主机名/IP，握手失败不回退明文。未配置证书时仅 `localhost`、`::1` 和合法四段 `127.*` 字面地址可用明文 | [ClientTransportTls](../../client/shared/src/commonMain/kotlin/com/virjar/tk/shared/client/ClientTransportTls.kt)、[Android/JVM 文件 HTTP](../../client/shared/src/jvmAndAndroidMain/kotlin/com/virjar/tk/shared/repository/FileRepository.jvmAndAndroid.kt) |
 | 当前 Gradle 部署工具 | `serverUrl` 选择 HTTP 或 HTTPS connector；HTTP 配置 `tcpTlsCertificatePem` 后允许成对 PEM 参数 | HTTPS 或显式公共 TCP 证书启用 TLS，生成 `TCP_HOST=0.0.0.0` 与 `SSL_KEYSTORE`；HTTPS 另外设置 `KTOR_SSL_PORT`，HTTP 不设置它。无 TLS 的本地开发保留 loopback TCP | [DeploymentConfig](../../buildSrc/src/main/kotlin/deployment/DeploymentConfig.kt)、[EnvSh](../../buildSrc/src/main/kotlin/deployment/EnvSh.kt)、[TLS 预检](../../buildSrc/src/main/kotlin/deployment/TlsDeploymentPreflight.kt) |
 
 HTTP 的平台与 SDK 限制已统一；没有额外明文开关，配置 `http://` 就是明确选择，不在 HTTPS 失败时降级。
@@ -390,7 +390,7 @@ HTTP 部署只传 `-PsslCert/-PsslKey` 而未配置 `tcpTlsCertificatePem` 会�
 | `DATABASE_PASSWORD` | 必填部署值 | PostgreSQL 用户密码 |
 | `FILE_MAX_SIZE_BYTES` | 157286400 | HTTP 单文件上限 |
 | `TEAMTALK_FILE_STORE_QUOTA_BYTES` | 10737418240 | 普通附件 FileStore 全局持久容量硬上限；系统属性 `teamtalk.fileStore.quotaBytes` 优先 |
-| `TEAMTALK_UNREFERENCED_ATTACHMENT_TTL_HOURS` | 168 | 上传成功但没有当前用户头像、消息、活动群文件或活动文档修订引用的对象租约；必须为 1–8760 的整数，过期后由小时级有界扫描回收 |
+| `TEAMTALK_UNREFERENCED_ATTACHMENT_TTL_HOURS` | 168 | 上传成功但未被用户/群头像、消息、群文件、文档、待办或周期模板等有效业务引用的对象租约；必须为 1–8760 的整数，过期后由小时级有界扫描回收 |
 | `TEAMTALK_GROUP_FILE_QUOTA_BYTES` | 1073741824 | 每个群共享文件空间配额；系统属性 `teamtalk.groupFile.quotaBytes` 优先 |
 | `ADMIN_USER` | 无 | 管理员首次初始化或显式恢复的用户名；与密码成对配置，已有持久凭据时不自动覆盖 |
 | `ADMIN_PASSWORD` | 无 | 管理员首次初始化或显式恢复的密码；不是每次启动的密码权威 |
@@ -403,6 +403,7 @@ HTTP 部署只传 `-PsslCert/-PsslKey` 而未配置 `tcpTlsCertificatePem` 会�
 | `TEAMTALK_AUTH_GUARD_MAX_ACCOUNTS` | 16384 | 驻留的账号指纹/认证操作计数桶上限；必须为 1–1000000 的整数 |
 | `TEAMTALK_SYNC_EVENT_RETENTION_DAYS` | 30 | 持久同步事件保留天数；必须为 1–3650 的整数，超期后只压缩已完成进程内推送尝试的连续前缀 |
 | `LOG_DIR` | 平台默认 | logback 输出目录 |
+| `CLIENT_RELEASE_PUBLISH_TOKEN` | 未配置 | 至少 16 字符；未配置时关闭构建机上传通道，管理台鉴权上传独立保留。持久配置见[站点发布令牌](releasing.md#站点发布令牌) |
 
 在 `conf/env.sh` 中配置最低版本时，使用单独一行 `MINIMUM_PROTOCOL_MINOR=数字`，例如
 `MINIMUM_PROTOCOL_MINOR=0`；不使用引号、`export`、前导零或行尾注释。首次部署省略该项，使用构建
@@ -478,24 +479,17 @@ data/
 ├── file-store/rocksdb/      文件元数据、小对象与 uploads 上传事务日志
 ├── file-store/files/        大对象
 ├── file-store/tmp/          临时上传
+├── release-store/           客户端发布的内容寻址制品（与 PG 发布记录成套备份）
 └── logs/                    服务端日志
 ```
 
 `credentials` 与用户、设备一起属于 PostgreSQL 备份边界；不要再创建、挂载或恢复历史
 `data/tokenstore`。客户端遥测设备资料、诊断策略和审计属于 PostgreSQL；事件与幂等收据只存在
 `client-telemetry-index`；服务端连接轨迹独立位于 `connection-trace-index`。两者损坏时允许清空但无法恢复。
-当前 schema/data epoch 以 `ServerDataEpoch.CURRENT_EPOCH` 为事实源，保留现有值，不随协议零号基线重编号。
-存储基线包含：表情回应的 `message_reactions` 行级权威表（`(chat_id, server_seq, emoji, uid)`
-主键，聚合计数由服务端派生，消息撤回在同一投影事务清空该消息全部回应）；Document move/rename
-的有限 `document_node_move_commands` 收据表；Users
-`avatar_path/avatar_name/avatar_content_type/avatar_size` 完整头像四元组、全空或全非空约束和 path 索引，
-对外 User 事实的正数单调 `revision`，以及 FileStore RocksDB 的 `uploads` column family；文件 metadata
-记录可空的 upload transaction key、attempt token 和对象序号，
-使主文件与可选缩略图归属同一次上传。`uploads` 以 `(uid, canonical uploadId)` 为身份持久
-`STARTED` / `COMPLETED` 记录，完成态保存可精确重放的完整上传收据。`ReplyBody.assets` 使用
-内嵌资产清单，未知的旧无清单格式不能直接解码。普通升级保留数据；PostgreSQL 在当前 epoch 内通过
-`schema_migrations` 执行有序迁移，零号迁移放宽遥测协议 ID 约束。其他历史布局必须提供明确迁移或
-恢复方案，不能把旧数据库或局部存储目录拼接到新实例，也不能默认清空它们。
+服务端 schema/data epoch 由 `ServerDataEpoch.CURRENT_EPOCH` 声明，与协议展示版本分开。普通升级保留
+既有资料，在同一 epoch 内由 `schema_migrations` 顺序迁移；当前表结构、权威数据与派生存储边界见
+[持久化规则](../06-server/persistence.md)。旧数据库、消息与文件目录不能任意拼接，恢复须成套核对
+PostgreSQL 和 `data/dataset-id`；未知布局先提供迁移或恢复方案，不默认清空。
 
 修改路径前必须评估备份、systemd 工作目录、容器 volume 和应用 Environment 的共同影响。
 

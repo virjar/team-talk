@@ -39,7 +39,7 @@ flowchart TD
 图标裁剪只删除 `material-icons-extended` 中没有被负载字节码引用的图标类，保留被引用类的闭包、
 原始 class 字节和非 class 资源。输出位于 `client/desktop/build/desktop-payload/icons-subset/`，报告位于
 相邻的 `icons-report/`。正常使用 `Icons.*` 无须维护人工清单；动态拼接图标类名不属于支持的引用方式。
-当前发行链没有整应用 ProGuard/R8 混淆，不应照搬旧 jpackage 路径的裁剪规则。
+Desktop 发行链没有整应用 ProGuard/R8 混淆，不应照搬旧 jpackage 路径的裁剪规则。
 
 ## 工具与本机构建
 
@@ -124,7 +124,8 @@ Linux deb 的包名和 `/opt/` 目录使用 `desktopFsName`，提供 `/usr/bin/<
 
 当前首装包没有接入完整的 macOS Developer ID 签名、公证或 Windows Authenticode 签名流水线。
 macOS 保留 JBR 原签名，Windows 的上述 `javaw.exe` 修改副本未签名；其余原厂商文件保持原字节。
-这些均不等于整个应用获得系统信任。接入正式 Windows 签名时，须在清单修改之后签署修改副本和应用启动器，
+这些均不等于整个应用获得系统信任；旧 Conveyor 自签配置也不会自动传入新壳，首次迁移须重新核对
+系统信任与权限提示。接入正式 Windows 签名时，须在清单修改之后签署修改副本和应用启动器，
 再打包与密封。对外扩大分发前须在实际目标系统确认安装提示及正式签名流程。旧 Conveyor `defaults.conf`
 不再是新打包任务输入，但应保留既有发行记录和签名材料。
 
@@ -132,7 +133,7 @@ macOS 保留 JBR 原签名，Windows 的上述 `javaw.exe` 修改副本未签名
 或壳 ABI 变化需要新首装包。旧 Sparkle、AppInstaller/MSIX、apt 更新链不会自动转换为新体系：首次迁移
 需要手动安装新包，旧下载目录保留；具体用户迁移边界见[从 Conveyor 迁移](client-releases.md#7-迁移说明从-conveyor)。
 
-本次 Windows `javaw.exe` 中文参数修复也需要用新的完整安装器覆盖安装，或替换便携包；应用内负载
+Windows `javaw.exe` 的 UTF-8 设置需要用新的完整安装器覆盖安装，或替换便携包；应用内负载
 更新不会修改已有 JBR。新应用负载仍兼容 ABI 1，因此保持该 ABI，已有可运行安装可以继续接收应用
 修复；不能把负载更新成功当作旧 Windows 启动器已获得 UTF-8 修复。
 
@@ -165,7 +166,8 @@ Android 签名由 [AndroidSigningResolver](../../buildSrc/src/main/kotlin/deploy
 
 1. 部署 DSL 的 `client { androidSigning { storeFile = …; keyAlias = … } }` 优先；密码从秘密入口读取。
 2. 未配置 DSL 时使用环境变量或 `local.properties` 的既有签名字段。
-3. 均未配置时使用仓库的公开预览证书 `client/android/teamtalk-dev.jks`，不用于组织正式私有签名。
+3. 均未配置时使用仓库的公开预览证书 `client/android/teamtalk-dev.jks`。新组织发行应在首次交付前选定
+   自有证书；已经用预览证书分发的安装不能直接换签，否则无法覆盖原包。
 
 | 环境变量 | `local.properties` |
 |---|---|

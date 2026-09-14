@@ -57,7 +57,9 @@ HTTP 夹具控制列表、详情和写入响应的完成顺序，覆盖搜索重
 
 独立的 Windows Desktop job 使用 JDK 21，在真实 Windows runner 执行
 `:client:desktop:desktopTest --tests '*WindowsDesktopStartupTest'`，检查当前用户身份、私有目录、
-marker/文本读写及再次打开目录，随后生成上述便携包并保留诊断。该 job 不进行交互式安装，不验证窗口、
+marker/文本读写及再次打开目录，随后生成上述便携包，用 `scripts/ci/windows_shell_smoke.py` 启动包内
+原EXE/JBR/Bootstrap与隔离的非GUI负载，核对含空格和中文的原参数、实际Java路径、版本指针与退出码。
+该 job 不进行交互式安装，不验证窗口、
 托盘中文和媒体实际播放；这些仍需在目标 Windows 用户桌面验收。发行产物不开放开发测试 HTTP 服务。
 
 `acceptance.yml` 是手动触发的远程验收；`release.yml` 只构建发行归档并发布客户端，服务器由管理员

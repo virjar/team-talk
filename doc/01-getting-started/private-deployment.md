@@ -176,17 +176,20 @@ socket 可连接。客户端另行使用系统 WebPKI 或配置的单证书 Trus
 ./gradlew release -PreleaseTargets=site
 ```
 
-第一条命令只密封本地发行目录；第二条复用该目录并通过 JVM SFTP 发布两端下载入口，需提前提供
-`TEAMTALK_RELEASE_SSH_KEY` 与 `TEAMTALK_RELEASE_KNOWN_HOSTS` 文件路径。Windows 使用 `.\gradlew.bat`
-同名任务，本机不需要 rsync/scp。站点任务不会部署 Server ZIP 或重启实例。
+第一条命令只密封本地发行目录；第二条复用该目录，通过 HTTP 发布注册中心上传各平台客户端。
+服务端需要配置 `CLIENT_RELEASE_PUBLISH_TOKEN`，构建机通过 `TEAMTALK_CLIENT_RELEASE_TOKEN` 提供同一令牌。
+Windows 使用 `.\gradlew.bat` 同名任务，客户端发布不需要 SSH、rsync 或 scp。
+站点任务不会部署 Server ZIP 或重启实例，详见[客户端发布与更新](../07-operations/client-releases.md)。
 这两类交付都允许 local 覆写；GitHub 发布会拒绝存在 local 覆写的构建。源码、版本、协议快照和人工
 发布说明仍须匹配并已提交，不能把 Git 忽略的部署配置当作跳过发行校验的入口。
 
-客户端内嵌构建时的服务坐标和完整 build identity。Gradle 管理 Conveyor 工具，在单个构建机生成三平台
-Desktop 站点，同时构建 Android APK 与 Server ZIP。签名与平台边界见
+客户端内嵌构建时的服务坐标和完整 build identity。Gradle 在单个构建机生成 macOS 双架构、Windows 与
+Linux 的桌面壳、负载和安装包，同时构建 Android APK、Server 与 Headless ZIP。签名与平台边界见
 [Desktop 制品构建](../07-operations/desktop-cross-build.md)；交叉构建成功不能替代目标平台安装检查。
-私有版从自己的服务站点提供 Android APK 下载，Desktop Conveyor 更新源从同一 `serverUrl` 推导，
-不再维护单独的更新站点配置。Android 当前提示协议升级，由用户从站点下载安装包。
+私有版的首页下载区、Android APK 与 Desktop 更新注册中心均来自配置的 `serverUrl`，
+无需单独配置更新站点。Desktop 使用应用内文件级更新；Android 检查更新后由用户下载安装 APK。
+从旧 Conveyor 客户端升级需手动安装新完整包一次，原身份与资料保留边界见
+[客户端迁移](../07-operations/client-releases.md#7-迁移说明从-conveyor)。
 首次交付至少检查公版与私有版同时安装、分别登录、重启后资料保留、通知与附件打开正确应用；
 已有私有版升级时再检查安装身份和签名连续、升级后资料保留。Windows 安装与更新须在 Windows 实际验证。
 少量内测可按[开发者预览版指南](developer-preview.md)先收敛目标平台与短路径验收。

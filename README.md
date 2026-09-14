@@ -58,7 +58,8 @@ team-talk/
 │   ├── richeditor/           Compose 富文本编辑器 fork
 │   ├── app/                  Compose 共享 UI、ViewModel
 │   ├── android/              Android 应用壳
-│   └── desktop/              Desktop 窗口与系统集成
+│   ├── desktop/              Desktop 窗口与系统集成
+│   └── desktop-bootstrap/    桌面壳中的负载启动与更新切换
 ├── server/                   服务端
 │   ├── server/               Ktor + Netty 单体服务端
 │   └── admin/                管理后台前端

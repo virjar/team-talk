@@ -53,13 +53,15 @@ docker compose up -d
 
 ### 部署自己的实例
 
-阅读[私有化部署](private-deployment.md)。部署完成后必须运行：
+阅读[私有化部署](private-deployment.md)。在独立测试实例部署后运行：
 
 ```bash
 ./gradlew :server:server:acceptanceTest
 ```
 
+该任务会创建验收账号与业务资料；真人使用的实例先核对健康与下载，再复验约定的用户流程。
 健康检查只能证明组件可用，真实验收负责验证注册、认证、好友、私聊、群聊、文件等业务链路。
+实例与资料范围见[测试数据归属](../09-testing/deployment-acceptance.md#测试数据归属与真人内测实例)。
 
 ## 下一步
 

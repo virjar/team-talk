@@ -28,7 +28,7 @@
 
 `LENGTH < 0`、超过当前上限或未知 TYPE 都属于损坏/跨版本帧，服务端应关闭连接。
 
-`:protocol` 只处理有界 `ByteArray` payload；`:protocol-netty` 独占 ByteBuf、帧累积和连接方向校验，
+`:protocol:protocol` 只处理有界 `ByteArray` payload；`:protocol:protocol-netty` 独占 ByteBuf、帧累积和连接方向校验，
 在传输边界复制一次 payload。引用计数对象不会进入契约、领域或缓存代码。
 
 ## 3. PacketType
@@ -56,8 +56,8 @@
 | 30 | NOTIFY | S→C | NotifyPayload |
 | 31 | CONNECTION_TRACE_CONTEXT | S→C | ConnectionTraceContextPayload（瞬时连接诊断启停） |
 
-顶层类型集合与 MessageType 都随协议版本固定。未知类型没有可证明的 body 长度和语义，必须
-拒绝整帧并断开连接，不能静默跳过或猜测降级。
+顶层类型集合与 MessageType 都受协议版本约束。Frame 虽有长度，未知 TYPE 仍没有受支持的处理语义，
+必须拒绝整帧并断开连接；Message body 没有独立长度，更不能跳过未知类型或猜测降级。
 
 STREAM_ITEM/STREAM_END 目前只锁定编号和 codec，不具备发送、聚合、背压、取消与超时状态机。它们
 不是当前大列表同步方案；事件同步使用 SYNC_REQUEST 的有界批次，历史消息使用 RPC 分页。

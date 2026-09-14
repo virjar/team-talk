@@ -236,4 +236,7 @@ bounds，不能自行再乘除缩放倍率。完整选择器见[测试选择器�
 
 ## Android 对应方式
 
-Android 使用 `uiautomator2` / adb 操作真实 Debug APK，继续复用共享组件的 `testTag` 作为 resource id。系统输入法、文件选择器、媒体权限和后台恢复属于 Android 独有边界，应在真机上验证；Desktop 的内置服务不能替代这些场景。
+Android 使用 `uiautomator2` / adb 操作实际APK，共享组件的 `testTag` 映射为 resource id。需要开发夹具时使用
+Debug构建；发行验收则使用同包名、同签名的实际release制品，核对设备读回身份和覆盖安装后的资料保留。
+系统输入法、文件选择器、媒体权限和后台恢复属于Android边界；模拟器结果须注明系统镜像、进程与权限条件，
+不能替代真机/OEM后台验证。Desktop内置服务同样不能证明这些场景。

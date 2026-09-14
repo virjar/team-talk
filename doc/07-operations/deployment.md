@@ -16,21 +16,22 @@
 | `deployServer` | clean 工作树本地构建并部署服务端 |
 | `deployStagedServer -PSERVER_DIST_DIR=...` | 人工部署已经解压并匹配源码身份的服务端分发，不重新构建 |
 | `deployServerResetData -Pteamtalk.resetDeployConfirm=<host>:<deployPath>` | **破坏性**：在精确确认的既有完整安装上，以空服务端数据部署 |
-| `release` / `buildRelease` | 默认构建并密封本地目录：Android、完整 Desktop 站点、Server ZIP 与发行说明 |
-| `release -PreleaseTargets=site` | 同一流程通过 JVM SFTP 发布双端下载入口，不部署服务端 |
+| `release` / `buildRelease` | 默认构建并密封本地目录：Android、Desktop 四目标、Server/Headless ZIP 与发行说明 |
+| `release -PreleaseTargets=site` | 通过 HTTP 发布注册中心上传 Desktop 四目标、Android 与 Headless，不部署服务端 |
 | `release -PreleaseTargets=github` | 同一流程向 GitHub 发布预览 Release、归档和人工说明 |
 | `release -PreleaseBundle=...` | 复核并复用密封目录，按指定 targets 交付，不重新构建产物 |
 
 客户端只有 `release` 一个发布入口；完整准备、签名、Windows 参数和重试步骤见
 [统一发行流程](releasing.md)。GitHub CI 可以构建 Server ZIP 作为附件，但不会执行本页的服务端部署任务。
 `deployServer` 与 `deployStagedServer` 当前仍依赖管理员本机的 SSH、rsync 和 OpenSSL。
-客户端 `release` 同时执行两类校验；服务端开发调试无需为了运行未发行的协议 minor 而提前冻结下一次客户端发行。
+正式客户端发行执行源码与发行元数据两类校验；snapshot/private-first 校验开发契约，不提前冻结待发行 minor。
+服务端开发调试无需为了运行该 minor 而提前准备下一次正式客户端发行。
 
 统一展示版本与安装构建计数的事实源是 `gradle.properties` 中的 `teamtalk.releaseVersion` 与
 `teamtalk.releaseBuildNumber`。Android `versionCode` 为构建计数加一，满足平台正整数约束，
 不再由展示字符串推导；tag release 必须使用精确的 `v<releaseVersion>`。Server、SDK、Android、
 Desktop 与无头客户端使用同一展示版本。二进制协议另按 major/minor 递增；`verifyRelease`
-检查已提交的 wire 基线。零号切换、数据保留及后续发版步骤见[版本机制](../04-protocol/versioning.md)。
+检查已提交的 wire 基线。数据保留与发版步骤见[版本机制](../04-protocol/versioning.md)。
 
 Admin 的独立 Gradle 模块管理 Node.js、随包 npm 和锁文件安装，在 `server/admin/build/dist` 生成静态资源。
 Server 的资源处理、分发与 `check` 通过任务依赖接入；生成资源复制进类路径与分发包的 `static/admin`。
@@ -140,8 +141,8 @@ rsync 的远端入口在 READY 前原子发布为本代唯一、仅 owner 可读
 
 ### 破坏性空数据部署
 
-默认 `im.virjar.com` 的无条件清空授权已撤销。下面的命令是独立的破坏性维护入口，不是处理升级失败的
-默认办法；必须先取得本次针对确切实例和资料范围的明确授权，并记录备份/恢复或有意放弃数据的决定。
+下面的命令是独立的破坏性维护入口，不是处理升级失败的默认办法；必须先取得针对确切实例和资料范围
+的明确授权，并记录备份/恢复或有意放弃数据的决定。普通部署始终保留资料。
 
 预发布 epoch 或持久化格式不兼容时，不要手工先删除 PostgreSQL 或 `data/` 再运行 `deployServer`：手工
 删除一侧会形成必须拒绝的半安装，删除两侧 marker 也会丢失“这是哪个完整安装”的安全证据。只对已明确
@@ -188,7 +189,7 @@ store 打开前原子写入 `data/dataset-id`。启动与升级预检都要求�
 客户端据此拒绝把旧数字游标和本地可靠操作拼入新事实源。
 
 空实例按当前定义建库；已有 epoch 内的 PostgreSQL 变化通过 `schema_migrations` 顺序迁移。
-零号迁移仅扩大遥测协议 ID 约束，保留现有记录与 dataset；执行和回滚边界见
+每条迁移须保留现有记录与 dataset，并核对旧二进制的回退读取能力；执行边界见
 [持久化规则](../06-server/persistence.md#postgresql-有序迁移)。版本下限另从目标服务端产物清单核对，
 升级保留远端显式 `MINIMUM_PROTOCOL_MINOR`，越界在停服前拒绝。
 

@@ -272,6 +272,8 @@ follower 必须等 drain 完整结束并重放同一终态 Throwable；清理钩
 `createSession` 按资源逐项登记失败回收动作：cache、worker、HTTP transport、AppLog、RpcClient 与事件 binding
 每取得一个 owner 就登记逆序释放，只有完整构造后才移交给 `ClientSession`；构造失败由组合根
 继续清空内存身份并断开不属于 construction stack 的 `ImClient`。
+本地命令镜像恢复 worker 在缓存关闭前取消并等待退出；仅发出取消信号不能保证同步数据库访问已经结束。
+worker 的终态认证通知交给所属恢复 scope 外的投递路径，避免会话关闭等待当前 worker 自己退出。
 
 业务 RPC、消息/typing、ACK 注册和事件同步控制各持有不可复活的 session admission。quiesce 在发布
 `QUIESCED` 前同步退休业务 wire 与 sync wire；EventLoop 在 admission 锁内完成“校验 owner generation

@@ -63,7 +63,9 @@
 - 需要离线保留的业务状态复用既有 LocalCache 与恢复链；瞬时查询按使用期持有，不为每种新数据
   预建持久化、事件或归档导入机制。
 - 服务端写操作大多通过 NOTIFY 收敛客户端。
-- readSeq、serverSeq、version 等单调字段用 max 合并。
+- 已确认的 serverSeq、version 与合法 readSeq 保持单调合并。已读意图不得超过同会话可证明的消息水位；
+  历史非法水位的查证与恢复复用 SDK [会话合并规则](../03-architecture/client-and-sdk.md#61-命名空间与数据分类)，
+  不能只凭滞后的会话快照截断离线意图，也不能无条件用 max 永久保留错误值。
 - EventProcessor 成功后才推进游标。
 
 ## 4. 服务端
@@ -153,7 +155,7 @@
   集成/E2E，简单内部实现不配套单元测试；仅为复杂易错规则、必要 wire 契约和难以稳定触发的故障
   保留最小确定性回归，不在多层重复穷举。
 - 跨模块 SDK 测试替身放入 `shared-testkit`，只能从 test 配置依赖；产品源集不得引入
-  `com.virjar.tk.testing`。
+  `com.virjar.tk.shared.testkit`。
 - 跨服务/跨客户端业务加入真实部署验收。
 - UI 改动启动真实客户端并截图。
 - 不为单元测试暴露仅测试使用的生产 API。

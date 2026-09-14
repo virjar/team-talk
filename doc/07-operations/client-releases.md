@@ -35,7 +35,7 @@
 |---|---|
 | `GET /api/v1/client/updates/check?client=&platform=&arch=&channel=&version=&build=&shellAbi=&buildIdentity=` | 更新检查；返回 UP_TO_DATE / UPDATE_AVAILABLE / SHELL_UPDATE_REQUIRED / CHANNEL_DISABLED + 发布信息 |
 | `GET /api/v1/client/releases/{id}/manifest.json` | 负载文件清单（path/sha256/size） |
-| `GET /api/v1/client/files/{sha256}` | 内容寻址制品（Range 断点续传、immutable 缓存） |
+| `GET/HEAD /api/v1/client/files/{sha256}` | 内容寻址制品；GET 支持 Range，HEAD 返回全长且无正文，immutable 缓存 |
 | `GET /api/v1/public/downloads` | 首页下载区的数据源：当前通道制品与最近版本记录 |
 | `GET /`（`#download` 区域） | 首页直接展示六个目标的真实下载按钮；优先选择有可下载制品的 stable、preview、snapshot，可切换通道；支持 HEAD |
 | `GET /css/home.css`、`GET /js/downloads.js`、`GET /js/qrcode.min.js` | 首页固定资源，支持 HEAD；由 Ktor 直接提供，不依赖反向代理静态映射 |
@@ -76,21 +76,11 @@ macOS 另提供终端方式：确认来源后，对已放入“应用程序”�
 Desktop 客户端继续跟随自己查询的通道；把 preview 发布晋级到 stable 不会把已有 stable 桌面客户端改订 preview。
 显式切换通道可以选择已有发布，不会将 snapshot 的上传身份改写为正式发行。
 
-## 4. 发布流程（构建侧）
+## 4. 构建与发布入口
 
-```
-./gradlew release -PreleaseTargets=site          # 需 TEAMTALK_CLIENT_RELEASE_TOKEN
-./gradlew buildRelease -PreleaseMode=snapshot     # 开发期仅本地密封目录（不冻结协议）
-./gradlew release -PreleaseMode=snapshot -PreleaseTargets=site   # 内测快照
-```
-
-`site` 目标现在经 HTTP API 上传（`ClientReleasePublisher`），不再 SFTP 直写下载目录；
-服务端自身部署仍使用 SSH/rsync（`deployServer`，见 deployment.md）。发布令牌在服务端
-`CLIENT_RELEASE_PUBLISH_TOKEN` 环境变量配置（≥16 字符，进程内仅持有用于校验的摘要），CI 走
-Secret `CLIENT_RELEASE_PUBLISH_TOKEN`。
-
-桌面产物（单机交叉打包，详见 desktop-cross-build.md）：mac 双架构 zip、
-Windows setup.exe + 便携 zip、Linux deb + tar.gz、四目标 payload.zip。
+构建、密封、重试、GitHub 触发和站点令牌只按[统一发行流程](releasing.md)执行；桌面目标与工具输入见
+[交叉打包](desktop-cross-build.md)。`site` 通过 HTTP API 上传六个目标，不直接改静态目录，也不部署服务端。
+服务端先具备注册中心与[发布令牌](releasing.md#站点发布令牌)，构建机才可上传。
 
 ## 5. 桌面更新模型（壳/负载分离）
 
@@ -130,17 +120,30 @@ tt-agent upgrade [--channel stable|preview|snapshot] [--server-url <url>] [--pre
 无头客户端默认从当前安装包读取通道。若将 snapshot/preview 包晋级后供 stable 更新，
 升级后的默认通道也会随包改变；需要固定订阅的脚本应每次显式传入 `--channel stable`。
 
+不支持 `upgrade` 的旧 Headless 包先下载新 ZIP，从新解压目录执行
+`bin/tt-agent upgrade-bundle --prefix <原受管安装目录>`，再重启原服务。非受管解压安装改用新目录启动，
+继续指定原 `--data-dir` 与已保存端点；不要覆盖运行中的 JAR。安装、租约和平台支持边界见
+[无头客户端](../05-clients/headless.md#3-构建与启动-agent)。
+
 ## 7. 迁移说明（从 Conveyor）
 
-- 存量桌面客户端内嵌 Sparkle/AppInstaller/apt 更新器：旧站点目录冻结保留，
-  检查更新静默重试不崩溃；**需手动全量下载新包一次**进入新体系。
-- 存量 Windows（MSIX）用户：先退出旧版并安装新包，核对原账号、资料与草稿后再卸载旧版；
-  既有受控包使用非虚拟化数据路径，更早虚拟化目录不得直接删除。
-- 存量 Android：`android.json` 契约未变，无感。
-- 服务端升级后注册中心为空：`android.json`/APK 自动回落旧收据目录；
-  首次按对应发行模式上传后注册中心接管；之后停用不会重新暴露旧收据中的安装包。
-- 未做（边界）：字节级补丁（jar 已压缩，收益低）、manifest 数字签名
-  （HTTPS+sha256 基线，ed25519 为后续加固项）、iOS（schema 预留）。
+旧 Sparkle/AppInstaller/apt 更新链不会自动转换为新注册中心；旧站点目录冻结保留，
+**用户需从本发行站点手动下载完整桌面包一次**。`payload.zip` 不能完成这次迁移。先退出原客户端并备份
+本安装数据，保留 `applicationId`、`desktopName`、业务服务器坐标和既有签名材料，再按平台处理：
+
+| 平台 | 首次迁移 |
+|---|---|
+| macOS | 以新 `.app` 替换原安装，保持原 Bundle ID 和安装名；业务数据仍在原 app-data 目录。新壳不自动消费旧 Conveyor 自签配置，系统信任与权限须单独核对，见[签名边界](desktop-cross-build.md#安装身份签名与升级边界) |
+| Windows | 退出旧 MSIX 后安装新 NSIS/便携包。核对原账号、资料与草稿后才卸载旧 MSIX；既有受控包使用非虚拟化目录，更早的 LocalCache 虚拟化资料不得直接删除 |
+| Linux | 使用保持原包名的新 deb 安装；tar 用户替换程序目录并沿用原数据目录。旧 apt 源不会自动切到新发布注册中心 |
+| Android | 原 `android.json` 契约保留；用户下载同包名、同证书且安装序号不降低的 APK 覆盖安装，不能卸载清数据代替升级 |
+
+服务端升级后注册中心为空时，`android.json`/APK 回落旧收据目录；首次上传后由注册中心接管，
+之后停用不会重新暴露旧收据中的安装包。新壳的负载目录 `~/.teamtalk-client/<appId>/versions` 与业务资料
+目录分开，不要求搬迁账号、草稿或可靠发件箱。普通升级不能修改数据集身份或复制另一发行的缓存。
+
+当前不提供字节级补丁、manifest 数字签名或 iOS 交付。内容摘要用于完整性核对，不代替制品来源认证；
+HTTP(S) 地址按部署配置使用，选择 HTTP 不具备 HTTPS 的传输保护。
 
 ## 8. 验收要点
 
@@ -148,5 +151,5 @@ tt-agent upgrade [--channel stable|preview|snapshot] [--server-url <url>] [--pre
 - manifest/制品 Range 与 404 诚实性；android.json 兼容与兜底。
 - 管理端鉴权 + 审计；上传哈希；同号 snapshot 新身份与旧 manifest 保留；原字节重试；不同字节冲突 409。
 - 更新器增量语义（未变文件零下载）与损坏回退（`DesktopUpdaterTest`）。
-- 桌面壳冒烟：headless 启动到 Compose 阶段（种子提取/类加载全链路），
-  GUI 窗口渲染需真机验收（见 deployment-acceptance.md 增补）。
+- 首装包启动需核对随包 JBR、bootstrap、种子与实际构建身份。无 GUI 的启动探测不证明界面可用；
+  GUI、登录、中文输入、媒体和旧资料保留按[部署验收](../09-testing/deployment-acceptance.md)从交付原文件验证。

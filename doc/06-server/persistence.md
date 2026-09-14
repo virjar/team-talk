@@ -4,7 +4,7 @@
 
 | 数据 | 存储 | 原因 |
 |---|---|---|
-| 用户、设备、凭据哈希、管理员凭据/审计、组织、机器人授权、好友、群、成员、会话、申请、邀请、同步事件、群文件、文档/修订/评论 | PostgreSQL | 关系、约束、事务和查询 |
+| 用户、设备、凭据哈希、管理员凭据/审计、组织、机器人授权、好友、群、成员、会话、申请、邀请、同步事件、群文件、文档/修订/评论、任务/周期/命令收据 | PostgreSQL | 关系、约束、事务和查询 |
 | 消息序号高水位、正文、幂等索引与投影 outbox | RocksDB | 按 chat/seq 顺序读写、单批原子 KV |
 | 文件小对象、元数据与上传事务收据 | RocksDB | 本地嵌入、低运维成本、对象与精确上传结果共同恢复 |
 | 大文件 | 文件系统 | 避免 KV 大 blob 放大 |
@@ -140,8 +140,8 @@ verifier 变更的成功审计则与凭据同事务。保留最多 10,000 条、
 
 ### chats / group_chats / group_members
 
-chats 保存共同身份与类型；group_chats 保存群扩展；group_members 保存成员角色和加入状态。禁言
-可以使用成员字段或独立表，但权限查询必须得到单一结果。
+chats 保存共同身份与类型；group_chats 保存群扩展；group_members 保存成员角色和加入状态。
+成员禁言保存在独立的 group_member_mutes，按 `(chat_id, uid)` 唯一。
 `group_creation_commands` 以 `(creator_uid, operation_id)` 为主键保存不可变请求指纹与结果 chatId，
 结果 chatId 也全局唯一。适配器先识别精确重放，再进入用户锁和 Conversation 容量准入；首次创建时
 收据、Chat/Member/Conversation、容量台账与收件人事件在同一 UoW 提交。收据存在但指纹不同固定冲突，
@@ -151,10 +151,9 @@ chats 保存共同身份与类型；group_chats 保存群扩展；group_members 
 
 friends 以有向双行表达双方视角，备注属于各自记录。friend_applies 保存申请方向、token、状态和创建/
 更新时间；收到与发出记录由当前 uid 对应 `to_uid` 或 `from_uid` 得出。创建申请时按固定顺序锁定双方
-users 行，使同方向 pending 的查询与插入原子复用；token 仍保存在关系事实中，但读取投影只向待处理
-申请的收件人返回。
+users 行，使同方向 pending 的查询与插入原子复用；token 仅在 pending 时存在，并只向待处理申请的收件人返回；转为终态时清空。
 
-Contact 是首个完整迁入 `PgUnitOfWork` 的关系聚合。apply、accept、reject、delete、blacklist、解除拉黑、
+Contact 的关系写入由 `PgUnitOfWork` 统一提交。apply、accept、reject、delete、blacklist、解除拉黑、
 直接 add/remove 和备注更新都必须携带 outer UoW 提供的不透明事务句柄；Exposed 适配器不能自行开启或
 提交写事务。所有双人 mutation 依 uid 排序锁定双方 users 行，accept 同一事务内生成双方 Contact
 视角，随后 durable event intents 才按 uid 排序取得 stream 锁并提交。这样故障只会得到“关系事实和
@@ -441,7 +440,7 @@ document_content_revisions 在创建以及标题或 Markdown 实际变化时追�
 不连续，不能把缺失的聚合版本解释为数据丢失。更新在锁定 document_nodes 当前行的同一事务内先执行
 expectedRevision 校验，再决定 no-op、节点条件写和修订插入，避免内容保存与结构移动基于同一版本时都
 成功。`updateDocument` 不接收 title，内容修订使用锁内当前名称；名称变更必须通过上述可靠结构命令。
-完整快照简化恢复与验收，但会增加存储；增量压缩、保留期和管理员审计属于生产化后续设计。
+完整快照用于历史读取和恢复；当前没有修订增量压缩或自动保留期。
 
 document_user_recents 以 `(uid, documentId)` 为主键保存最后访问时间，每个 uid 最多保留
 1,000 行。更新先锁定 Users 行作为跨进程容量围栏，然后 upsert 当前文档，并按
@@ -478,16 +477,23 @@ Document 的节点、空间、授权和归属写入也在原事务追加 `DOCUME
 ### work_tasks / task_audits / task_commands
 
 `work_tasks` 拥有独立任务身份、创建人、当前执行人、内容、状态、可选上下文及截止时间。列表使用
-不可变 createdAt/taskId 键分页；编辑不把任务移出正在续查的位置。任务读权由创建人或当前执行人
-裁决，群和部门关联不能扩大参与者集合。
+不可变 createdAt/taskId 键分页；编辑不把任务移出正在续查的位置。创建人和当前执行人拥有参与者读权；
+关联本身不授权，只有 task_extensions 中显式群共享才允许该群当前成员只读。
 
 创建、编辑与状态修改在同一 PostgreSQL 事务保存任务、以 taskId/revision 唯一的审计、命令指纹
 收据和接收者事件。收据遵循可靠命令的有限重放窗口；过期身份拒绝执行，清理不会把迟到命令变成新
-操作。改派为旧执行人发撤权提示，为新执行人和创建人发更新提示；审计不保存描述副本。
+操作。事件按变更前后读者集合发送，只有失去最后读权的旧读者才收到撤权提示；审计不保存描述副本。
 
 到期任务由带条件索引的有界扫描选择，重新加任务锁后校验状态与截止时间，再把提醒标记与当前
 执行人的 TASK_DUE 一起提交。提醒不推进业务 revision，服务重启可以补发未处理到期项；没有每任务
 内存定时器。客户端 SQLite 不承担服务端调度，也不能作为任务共享事实源。
+
+`task_extensions` 以 taskId 关联格式、开始时间、共享选项、文档引用、指标和期次归属；旧任务没有扩展行时，
+默认私有、TEXT，历史指标未知。`task_deferrals` 以 taskId/revision 保存逐次延期原因和截止变化。
+`task_series` 保存服务端固定模板、启停状态与下次时间，首期 taskId 同时作为系列身份和命令收据锚点。
+`task_attachment_paths` 与 `task_series_attachment_paths` 分别保存当前任务和固定模板的附件保留引用；
+模板保留引用不单独授予下载权。创建、修改与系列生成在既有事务中维护这些表，未增加第二套命令收据。
+产品规则见[待办任务](../02-product/tasks.md)，附件权限见[文件下载](file-storage.md#5-下载)。
 
 ## 3. MessageStore
 
@@ -540,7 +546,7 @@ Conversation 和事件的同一事务推进派生 `Chat.maxSeq`；精确 receipt
 顺序分批锁当前仍活跃的 member 与每用户
 `conversation_usages` 容量行；缺失 Conversation 的容量增量经过同一批量 CAS 更新后，CREATE 使用
 `INSERT .. ON CONFLICT DO UPDATE` 集合推进 last/read/version/hidden，EDIT/REVOKE 只集合更新当前
-last_msg_seq 命中的行。可见 Conversation 随后分批读取，群名只读一次且当前 v22 仍不投影群头像，私聊 peer 元数据也只做
+last_msg_seq 命中的行。可见 Conversation 随后分批读取，群名只读一次，群头像通过独立投影读取，私聊 peer 元数据也只做
 一次成员集和用户集读取。关系投影、容量台账、receipt 和后续批量事件仍处于同一 UoW，任一批次失败
 会整体回滚；1,000 人容量验收同时限制完整 CREATE + 两类事件的 SQL statement 数，防止逐行路径回归。
 
@@ -630,9 +636,11 @@ dataset ID 和迁移完成记录，只执行尚未完成的已知迁移。不会
 
 `DatabaseFactory` 在建立业务容器前完成这一步。已有库的启动事务先锁定 `schema_metadata`，再校验
 布局和读取迁移记录；事务使用 `READ_COMMITTED`，等待另一启动事务结束后能看到它刚提交的记录。
-空库的建表与首次迁移也在同一个事务内完成。DDL 和迁移收据共同提交或回滚，失败不会留下“约束已改
-但迁移未记账”的半状态；重启只检查已完成前缀，不重复执行 SQL。高于当前清单、编号缺口或名称不符
-的记录会阻止启动，不能忽略它们去运行旧服务端。
+显式 SQL 及 `createStatements` 与相应迁移收据在事务中提交；迁移6、7的失败回滚由真实PG回归保护。
+历史迁移1、2、4及空库初建仍调用 Exposed `SchemaUtils.create`，该API会内部提交：不能把所有建表和
+收据都描述为同一个原子步骤。若建表成功而收据尚未写入，重新启动会再次检查该迁移，并按已存在表
+跳过创建；空库初建在metadata写入前失败则需先核实结构，不能直接当作完整初始化。
+重启只继续未完成的已知迁移。高于当前清单、编号缺口或名称不符的记录会阻止启动，不能忽略它们运行旧服务端。
 
 这是现有 epoch 内的具体迁移入口，没有自动降级 SQL。v0.0.2 只识别迁移 `0..2`，当前源码完成迁移
 `3..7` 后，该旧二进制会因较新的迁移账本拒绝启动，即使 epoch 和 dataset 未变也不能直接回退。
@@ -689,12 +697,5 @@ documentId、revision、title、contentLength、editedBy、editedAt，并按 rev
 未知类型的独立长度边界，新类型必须配套按协商版本生成旧端可解码结果的业务 adapter，或提高最低
 minor 后才启用。`since` 门禁不会替开发者生成历史数据或 RPC 返回值适配器。
 
-持久化格式发生下一次变化前需要追加并验收对应迁移，长期生命周期还需补齐：
-
-- 后续 PostgreSQL 向前迁移及回退/恢复演练；
-- RocksDB key/version 迁移策略；
-- 孤儿文件与其他长期保留策略；
-- 备份、恢复和一致性校验工具。
-
-这些未完成项集中维护在[功能状态](../10-reference/feature-status.md)和
-[路线图](../10-reference/roadmap.md)，不混入当前 schema 描述。
+持久化格式变化必须随代码提供适用迁移和恢复验证。长期保留、归档与运维工具的能力边界统一见
+[功能状态](../10-reference/feature-status.md)，未实现工作集中在[路线图](../10-reference/roadmap.md)。

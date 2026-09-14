@@ -55,9 +55,10 @@ readiness 结果，因此状态变化后的下一次请求不会读到过期 UP/
 
 健康检查不执行注册或发送消息，不能作为发布验收。
 
-任务截止提醒由 `maintenance` 下的 `task-due-reminders` 持有：每批最多处理 100 个到期任务，满批
-后间隔 1 秒继续，其余情况间隔 30 秒。提醒标记与事件在数据库中提交，停服期间到期的任务会在恢复
-运行后补发；这不是精确到秒的闹钟，也不提供 Android 进程被回收后的外部 Push 唤醒。
+`maintenance` 下的 `task-due-reminders` 顺序生成到期的周期任务、发送开始提醒和截止提醒，并清理命令收据。
+每类一次最多处理 100 项，任一满批后间隔 1 秒继续，其余情况间隔 30 秒。提醒标记与事件在数据库中
+提交，停服期间到期的提醒在恢复后补发；这不是精确到秒的闹钟。任务提醒依赖客户端会话同步，不能
+据此承诺 Android 进程被回收后仍能立即收到通知；平台边界见[Android 通知](../05-clients/android.md#消息通知的当前范围)。
 
 ## 3. 服务端日志
 
@@ -163,8 +164,9 @@ metadata 或任何客户端自由文本。pending 与 retry-wait 各自受界并
 进程全局 AppLog 仍只有一个固定 owner 快照；buffer、遥测 recorder、fault 触发器与 crash owner 原子
 轮换并以 identity CAS 释放。旧会话的迟到任务不能借用新账号的 token 或 recorder。认证前连接树和
 禁用上传的 headless 会话只写平台诊断。未捕获异常的同步崩溃边界仅原子持久化一个不含异常正文/堆栈的
-固定 marker；同一 owner 下次启动时再转换为结构化 fatal。远程上传基址必须是 HTTPS，且不跟随重定向；
-明文 HTTP 仅允许严格字面量 loopback 测试地址。
+固定 marker；同一 owner 下次启动时再转换为结构化 fatal。上传基址使用部署明确选择的 HTTP(S)，
+不跟随重定向，也不会在 HTTPS 失败时回退 HTTP。
+TCP 信任与 HTTP scheme 分开，见[传输配置边界](configuration.md#传输配置边界)。
 
 服务端 `POST /api/client-telemetry` 只接受有界 GZIP JSON：压缩体最多 1 MiB、解压后最多 8 MiB，严格
 UTF-8/结构校验、时间窗校验、身份与入口速率门禁后进入单一有界 Lucene writer。writer 在短窗口内合并

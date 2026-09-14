@@ -41,7 +41,7 @@ PostgreSQL `text/varchar` 无法表示的 U+0000；其他数据库可表示的 U
 
 token 是服务端签发的随机值，不是 JWT：
 
-- access token 用于当前连接和 HTTP 上传认证。
+- access token 属于当前认证会话，用于 HTTP 上传、下载等接口的 Bearer 认证。
 - refresh token 是用于重建认证的设备级稳定 bearer，首次签发后保持固定 90 天绝对期限。成功使用后
   只轮换 access、推进设备 credential epoch，并回传同一个 refresh token；旧 access 与旧连接立即失效。
   因此服务端提交后丢失 AUTH 响应时，客户端仍可用原 refresh 安全重试，期限不会滑动延长。
@@ -116,7 +116,9 @@ code 5；无效密码与未知用户名仍返回相同 code 1，不能用容量�
   冷启动的 refresh 只能在本地会话发布后开始，因此立即返回的可重试 AUTH 失败也必须观察到该本地 owner。
 - 服务端明确拒绝 refresh credential、设备被封禁、HTTP 401 或主动登出：销毁 ClientSession；前
   三者属于权威认证撤销，主动登出属于用户指令，均结束当前身份并回到登录流程。
-- 只有结构有效的 TeamTalk AUTH 序言携带了不支持的版本号时，服务端才返回 code 2；坏 magic、截断帧、连接超时和普通断网不能提升为强制升级。
+- 未协商就直接发送有效 AUTH 的旧客户端收到 code 2，提示先升级以支持 NEGOTIATE；正常版本不兼容
+  由 NEGOTIATE_RESP 表达。AUTH 固定序言不携带业务版本；坏 magic、截断帧、连接超时和普通断网
+  不能提升为强制升级。
 
 SDK 的 `send()` 和 RPC 在未认证状态必须失败，不能在身份未知时静默排队。
 

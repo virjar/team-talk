@@ -10,7 +10,7 @@
 `prepareProtocolRelease`、打 tag 与发布 GitHub Release。用户要求“更新内测安装包”则已授权本次
 手动 snapshot 分发，Agent 提交工作源码后即可刷包，不修改根版本配置，也不要求用户指定安装数字。
 
-正式发行冻结协议；内测交付相对已发行基线检查本轮待发布协议，保持同一个 minor，记录实际 schema 哈希。
+正式发行冻结协议；内测交付相对已发行基线检查当前待发布协议，保持同一个 minor，记录实际 schema 哈希。
 两种交付都要求源码可追溯，并保留已安装应用的数据。纯开发、发布工具改造、
 服务器部署和 Agent 本机验收不自动授权交付；不能为满足工具校验擅自发包。确认范围后按该范围完成流程，
 不为每条命令重复询问。Android 的 `Release` 构建类型只表示打包方式，不代表正式产品发行。
@@ -18,7 +18,7 @@
 | 交付方式 | 版本与记录 | 目标 |
 |---|---|---|
 | 正式产品发行（默认模式） | 新展示版本、更高构建号、人工说明与 `releases/<version>/`；公开发行使用对应 tag | `local`、`site`、`github` |
-| 内测更新 `snapshot` | 根展示版本与构建号不变；Desktop revision 从完整 Git 历史推导，Android 保持当前 code 手动覆盖；本轮新增共用一个待发布协议号，不登记冻结契约 | 经授权的测试应用 `local`、`site` |
+| 内测更新 `snapshot` | 根展示版本与构建号不变；Desktop revision 从完整 Git 历史推导，Android 保持当前 code 手动覆盖；同一发行批次新增共用一个待发布协议号，不登记冻结契约 | 经授权的测试应用 `local`、`site` |
 | 首次私有分发 `private-first` | 新安装身份与空下载入口可保持当前展示版本和构建号 | 独立私有应用的 `local`、`site` |
 
 ## 发行由哪些事实组成
@@ -42,9 +42,9 @@ tag 之间的提交记录另存为 `COMMITS.md`，没有历史 tag 时记录当�
 flowchart TD
     Approval["用户确认正式产品发行"] --> Root
     Root["展示版本与构建号 + 人工说明 + 协议发行快照"] --> Commit["审阅并提交：固定源码身份"]
-    TestApproval["用户要求更新内测安装包"] --> Snapshot["本轮共用待发布协议；只登记开发清单"]
+    TestApproval["用户要求更新内测安装包"] --> Snapshot["同一发行批次共用待发布协议；只登记开发清单"]
     Snapshot --> SnapshotCommit["提交工作源码，保留完整 Git 历史"]
-    SnapshotCommit --> SnapshotTask["私有 clone 手动 release snapshot：自动算 Desktop revision"]
+    SnapshotCommit --> SnapshotTask["目标仓库手动 release snapshot：自动算 Desktop revision"]
     Commit --> Local["客户本机 ./gradlew release"]
     Commit --> CI["GitHub Actions 调用同一 release"]
     Local --> Verify["校验版本、协议和签名输入"]
@@ -66,7 +66,7 @@ flowchart TD
 1. 增加根配置的 `teamtalk.releaseVersion` 与 `teamtalk.releaseBuildNumber`。展示版本使用数字
    `x.y.z`；安装序号递增（desktopRevision = buildNumber+1，快照由提交历史推导）。纯 UI 修复不增加协议版本。
 2. 编写同名人工发布说明，描述用户可见变化、升级与数据影响、已知限制。此文档随版本配置一起提交。
-3. 按[协议发行规则](../04-protocol/versioning.md#开发编号与发行契约分开管理)确认本轮唯一待发布 minor，
+3. 按[协议发行规则](../04-protocol/versioning.md#开发编号与发行契约分开管理)确认当前唯一待发布 minor，
    校对生命周期注解、兼容分支和迁移，再登记开发清单与发行快照。
 
 ```bash
@@ -116,7 +116,7 @@ flowchart TD
 `-PreleaseTargets=local`；Windows 使用 `gradlew.bat`。GitHub CI 不自动生成或上传 snapshot。
 该模式拒绝 GitHub 目标和 `releaseBase`；公版测试环境也可在用户授权下使用，不能据此自动更新有真实用户的私有环境。
 不需要新的人工发行说明、产品 tag 或 `prepareProtocolRelease`，
-也不认领、改写旧正式发行快照。无论本轮第几次修改，都相对最近正式冻结基线执行 KSP、wire 与兼容检查，
+也不认领、改写旧正式发行快照。无论该发行批次内第几次修改，都相对最近正式冻结基线执行 KSP、wire 与兼容检查，
 不运行 `prepareProtocolContract`；已发行协议保持冻结，新增契约共用下一待发布 minor，直到正式发行。
 同号内测构建以源码 SHA 和清单哈希区分，应按同批服务端/客户端验证，不为中间版本保留额外兼容分支。
 
@@ -139,7 +139,7 @@ flowchart TD
 tag 或 GitHub Release。独立安装身份的首次分发使用同一个 `release` 任务的 `private-first` 模式：
 
 ```bash
-# 协议有变更时，仅登记本轮开发清单，不为首次测试安装冻结新协议。
+# 协议有变更时，仅登记当前开发清单，不为首次测试安装冻结新协议。
 ./gradlew :protocol:protocol:writeProtocolBaseline
 # 审阅并提交源码和开发清单后，同步到私有 clone。
 
@@ -168,7 +168,7 @@ tag 或 GitHub Release。独立安装身份的首次分发使用同一个 `relea
 资料。用户看到的显示名称可调整，根 `gradle.properties` 仍是唯一版本来源，不为每个平台另设版本。
 
 默认公版保留各打包渠道原有的安装身份和数据路径。新私有版独立安装、独立登录；Android 安装包由
-自己的服务站点提供下载，Desktop 与无头更新注册中心从自己的 `serverUrl` 推导。管理员须保留 Android
+自己的服务站点提供下载，Desktop 从包内 `serverUrl` 选择注册中心，无头升级显式传入同一站点。管理员须保留 Android
 keystore 与服务端发布令牌（`CLIENT_RELEASE_PUBLISH_TOKEN`），构建机器更换时恢复原材料，避免后续安装包无法覆盖升级。
 签名与安装身份匹配只能证明安装前提，分发前仍要在参与
 平台检查与公版共存、分别重启以及普通升级后的资料保留；不能把交叉构建成功写成 Windows 实机验收。
@@ -179,9 +179,10 @@ keystore 与服务端发布令牌（`CLIENT_RELEASE_PUBLISH_TOKEN`），构建�
 
 ## 本机构建与交付
 
-构建机需要 Git、JDK 21 与 Android SDK；首次构建需要依赖仓库和工具下载可达。Gradle 管理 Node.js、
-JBR 运行时按 `gradle/jbr.properties` 固定下载与摘要校验，不要求手工安装全局 Node.js、`gh`、`rsync` 或
-`scp` 来发布客户端（NSIS/macOS 需 `brew install makensis`，CI 已内置 apt 步骤）。详见[Desktop 打包](desktop-cross-build.md)。
+构建机需要 Git、JDK 21 与 Android SDK；首次构建需要依赖仓库和工具下载可达。Node/npm 由 Gradle
+管理，目标 JBR 按 `gradle/jbr.properties` 下载并校验摘要。完整交叉安装器还需要系统 tar 和 NSIS；
+各宿主的准备命令见[Desktop 打包](desktop-cross-build.md#工具与本机构建)。客户端发布本身不依赖
+全局 Node.js、`gh`、SSH、`rsync` 或 `scp`，服务端部署的工具要求另见[部署与升级](deployment.md)。
 APK 身份校验需要已有 Android SDK build-tools 中的 `aapt2`；SDK 通过 `local.properties` 的 `sdk.dir`、
 `ANDROID_HOME` 或 `ANDROID_SDK_ROOT` 定位。复用密封目录也需要此工具，校验阶段不自动安装它。
 
@@ -240,7 +241,7 @@ POSIX 支持 agent、CLI、MCP 与用户级便携安装，Windows 原生只支�
 独立构建入口为 `:client:headless:headlessDist`、`:client:headless:verifyHeadlessDist` 与
 `:client:headless:headlessDistZip`；配置、安装和升级见[无头客户端](../05-clients/headless.md#3-构建与启动-agent)。
 
-## 发布到私有站点
+## 发布到站点
 
 `site` 向部署配置中的 `serverUrl` 上传四个 Desktop 目标、Android 和 Headless，统一调用
 `POST /api/v1/client/releases`。服务端须先部署支持注册中心的版本，并配置至少 16 字符的
@@ -268,6 +269,23 @@ POSIX 支持 agent、CLI、MCP 与用户级便携安装，Windows 原生只支�
 发布后检查每个平台的通道指针、下载链接和摘要，再通知测试者更新。切换到新工具链前的 Conveyor 安装包
 不会凭空获得应用内更新器；应按[迁移说明](client-releases.md#7-迁移说明从-conveyor)手动覆盖安装并验收数据保留。
 此任务不上传 Server ZIP，也不重启任何服务器进程。
+
+### 站点发布令牌
+
+服务端读取进程环境中的 `CLIENT_RELEASE_PUBLISH_TOKEN`，未配置时不接受构建机上传。普通部署会重新生成
+`conf/env.sh`，该文件不是额外发布令牌的持久配置入口。使用本实例的 systemd drop-in 引用独立的
+owner-only 环境文件，例如 `/etc/teamtalk/client-release.env`：
+
+```ini
+# /etc/systemd/system/teamtalk.service.d/client-release.conf
+[Service]
+EnvironmentFile=/etc/teamtalk/client-release.env
+```
+
+环境文件以 `CLIENT_RELEASE_PUBLISH_TOKEN=<受控秘密>` 赋值，权限设为 `0600`；通过受控输入写入，
+不把真实值放入 shell 历史或报告。首次配置或轮换后重载 systemd 并重启已授权的实例；普通部署保留该
+drop-in，启动脚本继承其环境。构建机使用相同值的 `TEAMTALK_CLIENT_RELEASE_TOKEN`。令牌设置不等于
+客户端已发布：仍须执行授权范围内的 `release ... -PreleaseTargets=site` 并核对六个目标。
 
 ## 发布到 GitHub
 
@@ -355,8 +373,8 @@ CI 使用 `release-bundle-<源码SHA>` artifact 保留完整密封目录 14 天�
 
 ## 交付前的简单验收
 
-核对密封清单的版本、源 commit 与目标地址；站点发布完成后检查 Android 文件、Desktop 下载页及更新元数据
-可读取。对本轮实际邀请的平台，从交付文件安装或覆盖升级，完成启动、登录和一条消息/附件短路径；记录
+核对密封清单的版本、源 commit 与目标地址；站点发布完成后检查首页 `/#download`、六个目标的安装包
+链接与更新元数据。对实际交付的平台，从原文件安装或覆盖升级，完成启动、登录和一条消息/附件短路径；记录
 版本、签名与 SHA-256。构建通过不等于所有操作系统都经过安装验收，也不证明用户设备已经完成更新。
 
 发行实现入口为 `buildSrc/src/main/kotlin/release/ReleaseTasks.kt`、`ReleaseMetadata.kt`、`ReleaseBundle.kt`

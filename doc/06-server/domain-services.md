@@ -261,14 +261,14 @@ revision、容量或审计。这个收据确认是一个很窄的丢响应恢复
 写入复杂度不会退化为 O(历史版本数)。当前没有移动群文件条目的 RPC；若以后增加，跨 parent 移动
 必须在同一群行锁内占用目标同级槽，同 parent 操作不得重复计费。
 
-AttachmentAccess 汇总 MessageStore 和 GroupFileRepository 两类引用，再与实时群成员资格求交集，
-HTTP 文件端点不感知具体业务域。
+群文件与消息的附件引用都通过实时群成员资格授权。头像、文档、草稿和任务各自提供对应引用与读权，
+由 AttachmentAccess 汇总；HTTP 文件端点不复制业务权限规则，见[文件下载](file-storage.md#5-下载)。
 
 ## 8. Authorization
 
 当前只有 Document 需要资产角色到操作能力的映射，因此矩阵直接归 Document 域所有，不提前维护通用
-授权内核。Document 能力分为 READ、COMMENT、EDIT_CONTENT、MANAGE_SPACE、MANAGE_POLICY、ARCHIVE_SPACE 和
-TRANSFER_CUSTODY；未知角色没有能力。实时所有权、grant 和组织成员事实仍在 Document 的读快照或写
+授权内核。Document 能力分为 READ、COMMENT、EDIT_CONTENT、MANAGE_SPACE、MANAGE_POLICY、ARCHIVE_SPACE、
+TRANSFER_CUSTODY 和 EXPORT_SPACE；未知角色没有能力。实时所有权、grant 和组织成员事实仍在 Document 的读快照或写
 事务中读取和裁决。其他资产、搜索和管理控制面必须各自完成真实领域闭环，不能复用一个类型名就宣称
 已完成授权。
 
@@ -449,14 +449,12 @@ STARTED，结束后补结果与固定失败分类。详细边界及恢复配置�
 `query` 按当前账号、群及 openOnly/startedOnly 筛选，游标绑定同一条件，列表按不可变创建时间和 ID
 分页；摘要统计整个条件集合，不受当前页影响。`history` 按 revision 合并审计和逐次延期。
 延期只允许当前执行人操作已有截止的未完成任务，新截止须晚于原截止与当前时间；原因、旧/新截止和
-操作者按次持久保存，原承诺不变。旧任务缺失历史不回填，耗时与重开口径见[领域模型](../02-product/domain-model.md#待办任务扩展)。
+操作者按次持久保存，原承诺不变。旧任务缺失历史不回填，耗时与重开口径见[延期与处理指标](../02-product/tasks.md#延期与处理指标)。
 
-既有维护循环顺序处理日历期次生成、开始提醒和截止提醒。TaskRecurrenceRule 只表达每 N 周或每 N 月、
-首次日期、IANA 时区和同日开始/更晚截止，N 为 1–12。周规则从首次日期按固定周数推进；月规则按原
-日号推进，短月收敛到月末但不移动原锚点。创建时选择最近已开始且尚未截止的本期，否则选下一期，
-不补建已结束历史。模板保留在服务端且不可编辑；此后逐次生成独立 taskId，系列锚点锁与
-nextOccurrenceAt 的事务推进防止重复；停机只生成最近漏过的一期，旧未完成项继续存在。
-启停仅改变未来，重新启用不补停用期间的期次；模板创建人、执行人失效或上下文不可访问时自动停用。
+维护循环顺序处理日历期次生成、开始提醒和截止提醒。服务端持久保存不可编辑的系列模板、
+nextOccurrenceAt 与每期独立 taskId；系列锚点锁和同一事务中的期次/游标推进防止重复创建。
+模板创建人、执行人失效或上下文不可访问时自动停用。日历锚点、月末、首次生成、停机与启停语义统一见
+[日历式重复](../02-product/tasks.md#日历式重复)。
 
 开始和截止扫描各自按任务锁复核活动状态，标记与向当前执行人的 TASK_STARTED/TASK_DUE 原子提交。
 完成/取消、改派、重开及对应时间修改使旧计划失效，仅改标题保留提醒身份。两类标记共享时间高水位，

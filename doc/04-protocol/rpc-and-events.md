@@ -34,7 +34,7 @@ requestId、status、presence 和 length。RESPONSE 与保留的 STREAM codec �
 
 所有业务 RPC 使用明确的服务和方法编号；同一 major 保留旧签名，新增签名分配新方法 ID。
 `@SinceProtocol` / `@RemovedInProtocol`、生成版本窗和已登记清单共同约束可用范围，见
-[版本机制](versioning.md)。零号基线已移除未实现的通用 RPC 逃生入口。
+[版本机制](versioning.md)。不提供绕过强类型契约的通用 RPC 入口。
 
 ## 2. IDL 代码生成
 
@@ -267,7 +267,7 @@ OfficeRefBody 的文档身份与 Attachment 的受管路径继续使用原类型
 只存服务端，不随详情下发。`TaskRecurrenceRule` 明确携带 frequency（WEEKLY=1/MONTHLY=2）、
 interval（1–12）、firstDate（有效 YYYY-MM-DD）、startLocalTime、dueLocalTime 与 timeZone；
 `TaskSeries` 和创建用 `TaskDetailsCommand` 都使用 recurrenceRule。首次日期是固定日历锚点，
-周/月推进及月底不足规则见领域模型，不按上一期实际开始时间递推。
+周/月推进及月底不足规则见[待办任务](../02-product/tasks.md)，不按上一期实际开始时间递推。
 
 `TaskQuery` 指定 ASSIGNED/CREATED/GROUP、可选 groupId 及 openOnly/startedOnly，`TaskQueryPage`
 携带有界详情页和覆盖整个授权条件的 TaskSummary。cursor 绑定账号和查询，摘要不由页长推算。
@@ -280,7 +280,7 @@ interval（1–12）、firstDate（有效 YYYY-MM-DD）、startLocalTime、dueLo
 
 SDK 按生成方法版本窗选择能力。旧服务器仍可使用原任务读写；详情与历史只能包装旧返回值，高级查询
 与扩展命令明确要求升级，不能虚构总数或缺失历史。产品权限、周期及统计口径见
-[待办领域模型](../02-product/domain-model.md#11-待办任务)。
+[待办任务](../02-product/tasks.md)。
 
 ### 内容搜索
 

@@ -40,6 +40,7 @@
 - [领域模型](02-product/domain-model.md)
 - [能力模型](02-product/capabilities.md)
 - [企业文档](02-product/documents.md)
+- [待办任务](02-product/tasks.md)
 
 ### 03 · 系统架构
 
