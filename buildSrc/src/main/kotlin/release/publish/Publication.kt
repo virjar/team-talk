@@ -34,7 +34,7 @@ internal fun requireAsset(file: File) {
     require(file.isFile && file.length() > 0 && !java.nio.file.Files.isSymbolicLink(file.toPath())) {
         "Release asset must be a non-empty regular file: $file"
     }
-    require(file.name.matches(Regex("[A-Za-z0-9][A-Za-z0-9._-]*"))) {
-        "Release asset name must contain only letters, numbers, dots, underscores and hyphens: ${file.name}"
+    require(file.name.matches(Regex("[A-Za-z0-9][A-Za-z0-9._+-]*"))) {
+        "Release asset name must contain only letters, numbers, dots, underscores, plus signs and hyphens: ${file.name}"
     }
 }

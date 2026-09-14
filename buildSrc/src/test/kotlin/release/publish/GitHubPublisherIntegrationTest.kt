@@ -18,7 +18,9 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import release.HeadlessDistribution
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
@@ -26,6 +28,31 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class GitHubPublisherIntegrationTest {
+    @Test
+    fun `headless build identity keeps its plus filename and bytes across upload and retries`() {
+        GitHubFixture().use { github ->
+            val original = github.publication()
+            val headless = File(github.directory, HeadlessDistribution.archiveName(
+                "${original.version}+${original.sourceCommit}",
+            )).apply { writeText("sealed headless archive") }
+            val request = original.copy(assets = listOf(original.assets.first(), headless, original.assets.last()))
+            github.failNextAsset = original.assets.last().name
+            assertFailsWith<IllegalArgumentException> { github.publisher.publish(request, "fixture-token") }
+            assertTrue(github.release!!.getValue("draft").jsonPrimitive.boolean)
+            assertContentEquals(headless.readBytes(), github.assets.values.single { it.name == headless.name }.bytes)
+            assertTrue("name=TeamTalk-${original.version}%2B${original.sourceCommit}-headless.zip" in github.uploadQueries)
+
+            assertFalse(github.publisher.publish(request, "fixture-token").alreadyPublished)
+            assertTrue(github.publisher.publish(request, "fixture-token").alreadyPublished)
+            assertEquals(1, github.successfulUploads.getValue(headless.name))
+            assertEquals(request.assets.map { it.name }.toSet(), github.assets.values.map { it.name }.toSet())
+            assertContentEquals(headless.readBytes(), github.assets.values.single { it.name == headless.name }.bytes)
+            headless.appendText(" changed")
+            assertFailsWith<IllegalArgumentException> { github.publisher.publish(request, "fixture-token") }
+            assertEquals(1, github.successfulUploads.getValue(headless.name))
+        }
+    }
+
     @Test
     fun `interrupted draft resumes identical assets and publishes exact checked in notes`() {
         GitHubFixture().use { github ->
@@ -113,6 +140,7 @@ private class GitHubFixture : AutoCloseable {
     val starters = mutableSetOf<Int>()
     val assets = linkedMapOf<Int, Asset>()
     val successfulUploads = mutableMapOf<String, Int>()
+    val uploadQueries = mutableListOf<String>()
     private val nextAsset = AtomicInteger(1)
 
     init {
@@ -172,6 +200,7 @@ private class GitHubFixture : AutoCloseable {
             }
             path == "/releases/42/assets" && method == "GET" -> exchange.respond(200, JsonArray(assets.values.map(::describe)))
             path == "/releases/42/assets" && method == "POST" -> {
+                uploadQueries += exchange.requestURI.rawQuery
                 val name = URLDecoder.decode(exchange.requestURI.rawQuery.substringAfter("name="), Charsets.UTF_8)
                 if (name == failNextAsset) {
                     failNextAsset = null
