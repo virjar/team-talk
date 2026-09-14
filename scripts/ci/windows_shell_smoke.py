@@ -15,6 +15,10 @@ import uuid
 import zipfile
 
 
+class ArgumentQuotingError(AssertionError):
+    pass
+
+
 # GetProcessById holds the OS process handle before waiting/killing. Recheck the
 # CIM creation time so PID reuse cannot turn cleanup into a different process.
 PROCESS_CONTROL = r"""
@@ -130,7 +134,7 @@ def validate_report(report, root, installation, executable, arguments):
     if (report["version"], report["build"], report["shellAbi"]) != ("0.0.0-ci-smoke", "1", "1"):
         raise AssertionError(f"Bootstrap payload context differs: {report}")
     if report["args"] != arguments:
-        raise AssertionError(f"Argument quoting failed: {report['args']}")
+        raise ArgumentQuotingError(f"Argument quoting failed: {report['args']}")
     if not (root / "versions/current.properties").is_file():
         raise AssertionError("Bootstrap did not seed its current pointer")
 
@@ -169,6 +173,88 @@ def run_probe(root, installation, executable, environment):
                     print(diagnostic.read_text(encoding="utf-8", errors="replace"), end="", flush=True)
 
 
+def diagnose_utf8_child(root, installation):
+    """Test a second disposable copy; its success never replaces the shipped-EXE result."""
+    import ctypes
+    from ctypes import wintypes
+
+    diagnostic_root = root / "utf8-child-diagnostic"
+    diagnostic_root.mkdir()
+    copied = diagnostic_root / "package" / installation.name
+    shutil.copytree(installation, copied)
+    executable = copied / f"{copied.name}.exe"
+    javaw = copied / "runtime/bin/javaw.exe"
+    original_hash = hashlib.sha256(javaw.read_bytes()).hexdigest()
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    signatures = {
+        "LoadLibraryExW": ([wintypes.LPCWSTR, wintypes.HANDLE, wintypes.DWORD], wintypes.HMODULE),
+        "FreeLibrary": ([wintypes.HMODULE], wintypes.BOOL),
+        "FindResourceW": ([wintypes.HMODULE, ctypes.c_void_p, ctypes.c_void_p], wintypes.HANDLE),
+        "SizeofResource": ([wintypes.HMODULE, wintypes.HANDLE], wintypes.DWORD),
+        "LoadResource": ([wintypes.HMODULE, wintypes.HANDLE], wintypes.HANDLE),
+        "LockResource": ([wintypes.HANDLE], ctypes.c_void_p),
+        "BeginUpdateResourceW": ([wintypes.LPCWSTR, wintypes.BOOL], wintypes.HANDLE),
+        "UpdateResourceW": ([wintypes.HANDLE, ctypes.c_void_p, ctypes.c_void_p,
+                             wintypes.WORD, ctypes.c_void_p, wintypes.DWORD], wintypes.BOOL),
+        "EndUpdateResourceW": ([wintypes.HANDLE, wintypes.BOOL], wintypes.BOOL),
+    }
+    for name, (arguments, result) in signatures.items():
+        function = getattr(kernel, name)
+        function.argtypes, function.restype = arguments, result
+
+    def checked(value):
+        if not value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        return value
+
+    # Read the actual RT_MANIFEST/1 language, without loading JVM code or DLL dependencies.
+    module = checked(kernel.LoadLibraryExW(str(javaw), None, 2))  # LOAD_LIBRARY_AS_DATAFILE
+    languages = []
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HMODULE, ctypes.c_void_p,
+                                     ctypes.c_void_p, wintypes.WORD, ctypes.c_ssize_t)
+    callback = callback_type(lambda module, kind, name, language, parameter: languages.append(language) or True)
+    kernel.EnumResourceLanguagesW.argtypes = [wintypes.HMODULE, ctypes.c_void_p, ctypes.c_void_p,
+                                             callback_type, ctypes.c_ssize_t]
+    kernel.EnumResourceLanguagesW.restype = wintypes.BOOL
+    try:
+        checked(kernel.EnumResourceLanguagesW(module, 24, 1, callback, 0))
+        if len(languages) != 1:
+            raise AssertionError(f"Expected one bundled javaw manifest language: {languages}")
+        resource = checked(kernel.FindResourceW(module, 1, 24))
+        size = checked(kernel.SizeofResource(module, resource))
+        address = checked(kernel.LockResource(checked(kernel.LoadResource(module, resource))))
+        manifest = ctypes.string_at(address, size).decode("utf-8")
+    finally:
+        checked(kernel.FreeLibrary(module))
+    closing = "</asmv3:windowsSettings>"
+    if manifest.count(closing) != 1 or "activeCodePage" in manifest:
+        raise AssertionError("Bundled javaw manifest differs from the diagnosed JBR layout")
+    manifest = manifest.replace(closing,
+        '<activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>' + closing)
+    encoded = manifest.encode("utf-8")
+    update = checked(kernel.BeginUpdateResourceW(str(javaw), False))
+    try:
+        checked(kernel.UpdateResourceW(update, 24, 1, languages[0],
+                                       ctypes.create_string_buffer(encoded), len(encoded)))
+    except BaseException:
+        kernel.EndUpdateResourceW(update, True)
+        raise
+    checked(kernel.EndUpdateResourceW(update, False))
+    modified_hash = hashlib.sha256(javaw.read_bytes()).hexdigest()
+    if original_hash == modified_hash:
+        raise AssertionError("Diagnostic manifest update did not change javaw.exe")
+    print(json.dumps({"diagnosticOnly": True, "javawOriginalSha256": original_hash,
+                      "javawModifiedSha256": modified_hash,
+                      "vendorSignaturePreserved": False}), flush=True)
+    environment = fixture_environment(diagnostic_root, uuid.uuid4().hex)
+    prepare_launcher_options(diagnostic_root, executable)
+    try:
+        run_probe(diagnostic_root, copied, executable, environment)
+        print("UTF-8 child diagnostic PASS; original shipped-EXE failure remains", flush=True)
+    finally:
+        control_processes(environment, "kill")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
@@ -194,7 +280,17 @@ def main():
                 raise AssertionError("Portable archive is missing its native launcher")
             prepare_payload(root, installation, javac, environment["TEAMTALK_SMOKE_TOKEN"])
             prepare_launcher_options(root, executable)
-            run_probe(root, installation, executable, environment)
+            try:
+                run_probe(root, installation, executable, environment)
+            except ArgumentQuotingError:
+                # Stop the first exact JVM before copying its installation. The next run
+                # changes a temporary vendor binary and cannot certify the shipped package.
+                control_processes(environment, "kill")
+                try:
+                    diagnose_utf8_child(root, installation)
+                except Exception as failure:
+                    print(f"UTF-8 child diagnostic FAILED: {type(failure).__name__}: {failure}", flush=True)
+                raise
         finally:
             control_processes(environment, "kill")
 
