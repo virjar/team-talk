@@ -5,13 +5,6 @@ on:
     branches: [main]
     paths: [gradle.properties]
     tags: ['v*']
-  workflow_dispatch:
-    inputs:
-      targets:
-        description: Client publication destinations (server deployment is always manual)
-        type: choice
-        default: github
-        options: [github, 'site,github']
 
 permissions:
   contents: write
@@ -25,9 +18,9 @@ jobs:
     name: Build and publish the committed release
     runs-on: ubuntu-latest
     env:
-      RELEASE_TARGETS: ${{ inputs.targets || vars.TEAMTALK_RELEASE_TARGETS || 'github' }}
+      # CI 只负责 GitHub 归档发布；官网注册中心由维护者本机用同一密封包上传
+      # （./gradlew release -PreleaseBundle=<密封目录> -PreleaseTargets=site）。
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      TEAMTALK_CLIENT_RELEASE_TOKEN: ${{ secrets.CLIENT_RELEASE_PUBLISH_TOKEN }}
       TEAMTALK_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
       TEAMTALK_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       TEAMTALK_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -81,7 +74,7 @@ jobs:
           name: release-bundle-${{ github.sha }}
           path: build/releases
       - name: Release through the same Gradle entry point as private workstations
-        run: ./gradlew release -PreleaseTargets="$RELEASE_TARGETS"
+        run: ./gradlew release -PreleaseTargets=github
       - name: Retain the exact bundle for inspection and publication retries
         if: always()
         uses: actions/upload-artifact@v7.0.1

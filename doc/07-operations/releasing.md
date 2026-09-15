@@ -330,8 +330,7 @@ Windows 将命令前缀换成 `.\gradlew.bat`；路径含空格时为整个 `-P�
 
 ## GitHub Actions 的触发边界
 
-[release.yml](../../.github/workflows/release.yml) 监听 main 上根 `gradle.properties` 的变动、`v*` tag
-和人工触发。普通 main 变动将本次 push 前的 commit 交给 `-PreleaseBase=<before>`，由 Gradle 比较展示版本；
+[release.yml](../../.github/workflows/release.yml) 监听 main 上根 `gradle.properties` 的变动与 `v*` tag。普通 main 变动将本次 push 前的 commit 交给 `-PreleaseBase=<before>`，由 Gradle 比较展示版本；
 改变 JVM 参数或开发协议 minor 不触发正式发行。根展示版本变化时须同时提高构建号；只改构建号不构成
 合法正式发行，也不是内测刷包入口。人工说明和冻结
 快照不匹配会在构建前失败。
@@ -347,17 +346,20 @@ CI 与发行工作流共用 `scripts/ci/release_history.py` 解析比较基点�
 从 origin 获取，无法确定共同祖先则失败。所有 `v<数字版本>` tag 中的冻结记录都必须保留原样，包括不在
 当前祖先链上的 tag；使用共同祖先不能绕过已发行协议保护。tag 和人工触发没有比较基点，仍执行 tag 历史检查。
 
-CI 准备 JDK、Android SDK、缓存和私密输入，再调用同一个 `release`。默认目标为 GitHub；仓库变量
-`TEAMTALK_RELEASE_TARGETS` 可设为 `site,github`，人工触发时的 `targets` 选择优先于该变量。
-tag 触发必须与根版本一致。CI 不自行拼归档或执行服务器部署。
+CI 准备 JDK、Android SDK、缓存和私密输入，再调用同一个 `release -PreleaseTargets=github`。
+**CI 只负责构建并发布 GitHub 归档**；官网注册中心（`site`）由维护者在构建机用同一密封包上传，
+CI 不持有也不注入站点发布令牌。tag 触发必须与根版本一致。CI 不自行拼归档或执行服务器部署。
+
+官网上传的标准路径：CI 的 `release-bundle-<源码SHA>` artifact（保留 14 天）下载解压后，在与密封
+源码一致的干净 checkout 中执行
+`./gradlew release "-PreleaseBundle=<密封目录>" -PreleaseTargets=site`；本地构建的密封目录同样可用。
+复用原文件，不重新打包同一版本，也不移动已有 tag。
 
 | GitHub 配置 | 何时需要 | 注入后的用途 |
 |---|---|---|
 | Secret `ANDROID_KEYSTORE_BASE64` | 使用自有 Android 签名时 | 既有 keystore 文件的 Base64；恢复到临时文件，通过 `TEAMTALK_ANDROID_KEYSTORE` 传入 |
 | Secrets `ANDROID_STORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD` | 配置自有 Android keystore 时 | 对应 `TEAMTALK_ANDROID_STORE_PASSWORD`、`TEAMTALK_ANDROID_KEY_ALIAS`、`TEAMTALK_ANDROID_KEY_PASSWORD` |
-| Secret `CLIENT_RELEASE_PUBLISH_TOKEN` | 目标包含 `site` 时 | 与目标服务器相同的发布令牌，通过 `TEAMTALK_CLIENT_RELEASE_TOKEN` 传入 |
 | 自动提供的 `GITHUB_TOKEN` | GitHub 发布 | workflow 声明 `contents: write`；无须把个人 token 写进源码 |
-| Variable `TEAMTALK_RELEASE_TARGETS` | 自动触发需要追加站点时 | 默认为 `github`，可配置为 `site,github`；它是目标选择，不含秘密 |
 
 未提供自有 Android keystore 时使用固定公开预览证书，其他 Android 密码 Secret 不会改变这个选择。
 Android 签名缺失会使实际打包失败，CI 不生成替代密钥。私密文件放在 runner 临时目录，步骤完成后
