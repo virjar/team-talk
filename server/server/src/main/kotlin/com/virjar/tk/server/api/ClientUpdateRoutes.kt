@@ -174,6 +174,12 @@ private suspend fun ApplicationCall.respondClientReleaseArtifact(service: Client
     val file = service.artifactFile(sha) ?: return respond(HttpStatusCode.NotFound)
     response.headers.append(HttpHeaders.CacheControl, "public, max-age=31536000, immutable")
     response.headers.append(HttpHeaders.ETag, "\"$sha\"")
+    // 安装器直链按发布文件名落盘；否则浏览器把 URL 里的内容哈希当文件名保存，
+    // Android 得到无 .apk 后缀的文件无法安装。payload 文件不设（更新器按哈希消费）。
+    service.installerFilename(sha)?.let { filename ->
+        val safe = filename.replace(Regex("[\"\\r\\n]"), "_")
+        response.headers.append(HttpHeaders.ContentDisposition, "attachment; filename=\"$safe\"")
+    }
     respond(
         if (head) file.downloadHeadResponse(ContentType.Application.OctetStream)
         else LocalFileContent(file, ContentType.Application.OctetStream),

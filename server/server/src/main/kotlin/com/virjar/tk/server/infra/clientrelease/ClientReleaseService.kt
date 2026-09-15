@@ -113,6 +113,22 @@ internal class ClientReleaseService(
     /** 内容寻址制品的文件句柄（路由下载用）。 */
     fun artifactFile(sha256: String): File? = store.resolve(sha256)
 
+    /**
+     * 安装器制品的发布文件名（如 `TeamTalk-0.0.4-android.apk`）。
+     * `/files/{sha256}` 据此设置下载 Content-Disposition；payload/bundle 文件
+     * 没有面向用户的文件名（应用内更新器按哈希消费），返回 null。
+     */
+    fun installerFilename(sha256: String): String? = tx {
+        ClientReleaseFiles.selectAll()
+            .where {
+                (ClientReleaseFiles.sha256 eq sha256) and
+                    (ClientReleaseFiles.kind eq ClientUpdateContracts.KIND_INSTALLER)
+            }
+            .limit(1)
+            .firstOrNull()
+            ?.get(ClientReleaseFiles.path)
+    }
+
     fun releaseInfo(releaseId: Long): ClientReleaseInfo? = tx {
         val row = releaseById(releaseId) ?: return@tx null
         val artifacts = artifactRows(releaseId, null)

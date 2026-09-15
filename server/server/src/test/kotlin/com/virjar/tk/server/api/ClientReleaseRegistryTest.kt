@@ -208,6 +208,16 @@ class ClientReleaseRegistryTest {
                             }
                             assertNull(head.headers[HttpHeaders.ContentRange], url)
                         }
+                        // 安装器直链带发布文件名的 Content-Disposition（浏览器默认把 URL 哈希当文件名，
+                        // Android 会得到无 .apk 后缀的文件）；payload 文件不设置。
+                        val installerDisposition = client.get(info.installers.single().url)
+                            .headers[HttpHeaders.ContentDisposition]
+                        assertNotNull(installerDisposition)
+                        assertEquals(
+                            "attachment; filename=\"${info.installers.single().filename}\"",
+                            installerDisposition,
+                        )
+                        assertNull(client.get(appJar.url).headers[HttpHeaders.ContentDisposition])
                         for (sha in listOf("0".repeat(64), "not-a-digest")) {
                             val url = "/api/v1/client/files/$sha"
                             assertEquals(HttpStatusCode.NotFound, client.get(url).status, url)
