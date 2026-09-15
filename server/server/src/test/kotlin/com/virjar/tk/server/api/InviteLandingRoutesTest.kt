@@ -19,7 +19,7 @@ class InviteLandingRoutesTest {
         assertEquals("no-referrer", page.headers["Referrer-Policy"])
         val html = page.bodyAsText()
         assertTrue(html.contains("通过邀请加入群聊"))
-        assertTrue(html.contains("href=\"downloads\""))
+        assertTrue(html.contains("href=\"/#download\""))
         assertTrue(html.contains("location.hash"))
         assertTrue(html.contains("location.href"))
         assertTrue(html.contains("navigator.clipboard.writeText(field.value)"))
