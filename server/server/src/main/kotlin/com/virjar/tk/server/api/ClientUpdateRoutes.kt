@@ -89,6 +89,10 @@ internal fun Route.clientUpdateRoutes(
         // 内容寻址制品：摘要即身份，可长期缓存；Range 供断点续传。
         get("/files/{sha256}") { call.respondClientReleaseArtifact(service, head = false) }
         head("/files/{sha256}") { call.respondClientReleaseArtifact(service, head = true) }
+        // 安装器友好形态：URL 末段是发布文件名，浏览器保存时天然落在正确名称上，
+        // 也让修复响应头之前的旧缓存自然失效；文件名不参与寻址，仍按摘要取文件。
+        get("/files/{sha256}/{filename}") { call.respondClientReleaseArtifact(service, head = false) }
+        head("/files/{sha256}/{filename}") { call.respondClientReleaseArtifact(service, head = true) }
 
         // CI/管理台发布上传。与附件路由的严格分部解析不同，这里用 Ktor 标准
         // multipart：上游是受信的构建器或管理员，单分部 + 流式落盘 + 大小上限足够。

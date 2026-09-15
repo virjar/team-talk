@@ -158,7 +158,9 @@ internal class ClientReleaseService(
                     ClientInstallerInfo(
                         label = it[ClientReleaseFiles.label] ?: it[ClientReleaseFiles.path],
                         filename = it[ClientReleaseFiles.path],
-                        url = fileUrl(it[ClientReleaseFiles.sha256]),
+                        // URL 携带发布文件名：浏览器保存时即使缺 Content-Disposition 也落在正确
+                        // 文件名上，且形态升级让旧缓存自然失效。
+                        url = fileUrl(it[ClientReleaseFiles.sha256], it[ClientReleaseFiles.path]),
                         size = it[ClientReleaseFiles.size],
                         sha256 = it[ClientReleaseFiles.sha256],
                     )
@@ -683,7 +685,9 @@ internal class ClientReleaseService(
         }
     }
 
-    private fun fileUrl(sha256: String): String = "/api/v1/client/files/$sha256"
+    private fun fileUrl(sha256: String, filename: String? = null): String =
+        if (filename == null) "/api/v1/client/files/$sha256"
+        else "/api/v1/client/files/$sha256/${filename.replace(Regex("[^A-Za-z0-9._+-]"), "_")}"
 
     private fun releaseIdentity(metadata: ClientReleaseUploadMetadata) =
         "${metadata.clientType}/${metadata.platform}/${metadata.arch} ${metadata.version}+${metadata.build}"
