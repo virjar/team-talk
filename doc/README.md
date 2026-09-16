@@ -107,6 +107,7 @@
 - [仓库导览](08-development/repository-guide.md)
 - [工程约束](08-development/engineering-rules.md)
 - [变更指南](08-development/change-guides.md)
+- [离线推送投递（厂商通道）](08-development/push-delivery.md)
 - [依赖维护与工具链升级](08-development/dependency-maintenance.md)
 
 ### 09 · 测试与验收
