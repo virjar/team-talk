@@ -9,6 +9,7 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.filled.PushPin
@@ -115,7 +116,20 @@ fun ConversationListScreen(
         }
         return
     }
+    // 内测 T060：列表按最新消息重排时，keyed 锚定会把旧首位行留在视口，新到会话行被顶出
+    // 可视区上方，用户必须手动下拉才看到红点。用户正贴在顶部（关注最新消息）时，快照
+    // 一变化就重锚回顶部；正在滚动浏览历史时不打断其位置，滚回顶部后恢复跟随。
+    val listState = rememberLazyListState()
+    var stickToTop by remember { mutableStateOf(true) }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.firstVisibleItemIndex == 0 && !listState.isScrollInProgress }
+            .collect { stickToTop = it }
+    }
+    LaunchedEffect(sorted) {
+        if (stickToTop) listState.requestScrollToItem(0)
+    }
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = Tk.spacing.xs),
     ) {
