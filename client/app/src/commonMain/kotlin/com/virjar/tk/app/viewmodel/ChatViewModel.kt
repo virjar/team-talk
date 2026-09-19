@@ -86,9 +86,13 @@ class ChatViewModel(
         .stateIn(scope, SharingStarted.Eagerly, chatId in eventProcessor.mentionedChatIds.value)
 
     init {
+        // 同步投影快照必须先于任何 markRead 落定：markRead 只会在首帧渲染之后发生，
+        // 而本读取与 pager 加载在同一 VM 队列里更早执行，保证拿到的是进入前的水位。
         scope.launch {
-            val snapshot = localCache.observeConversation(chatId).first()
-            _entryReadSeq.value = snapshot?.readSeq ?: 0L
+            val snapshot = localCache.getConversations()
+                .firstOrNull { conversation -> conversation.chatId == chatId }
+                ?.readSeq ?: 0L
+            _entryReadSeq.value = snapshot
         }
     }
 

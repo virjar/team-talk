@@ -118,8 +118,13 @@ internal fun ChatMessageList(
                 jumpHighlightSeq = null
             }
         }
-        val viewportOldestIndex by remember(state) {
-            derivedStateOf { state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+        // 视口最旧可见 index：布局信息只能在协程里读取（produceState），在组合期读
+        // layoutInfo 会与 LazyColumn 的测量/锚定互相失效，冷开大未读时把消息整段
+        // 挤出可视区（内测 T063 面板空白的直接原因）。
+        val viewportOldestIndex by androidx.compose.runtime.produceState(-1, state) {
+            androidx.compose.runtime.snapshotFlow {
+                state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            }.collect { value = it }
         }
         val unreadJumpIndex = unreadAnchorServerSeq
             ?.let { seq -> messages.indexOfFirst { it.serverSeq == seq } }
@@ -289,9 +294,10 @@ internal fun ChatMessageList(
                 }
             }
         }
-        }
         // 悬浮胶囊统一渲染（互不遮挡时纵向堆叠）：跳至未读 / 有人@我 / 有新消息。
-        // 胶囊 overlay 悬浮在气泡区，不参与消息列表布局（T063 需求约束）。
+        // 必须作为消息列表 Box 的 matchParentSize 覆盖层；绝不能作为聊天 Column 的
+        // 直接子项——fillMaxSize 会在 weight(1f) 测量前吃光整列高度，把消息列表压成
+        // 零高（T063「面板空白」根因，即用户原文「不应该影响聊天页面本身布局」）。
         val jumpPills = buildList {
             if (showUnreadJumpPill && unreadJumpIndex != null && unreadAnchorServerSeq != null) {
                 add(
@@ -321,7 +327,7 @@ internal fun ChatMessageList(
         }
         if (jumpPills.isNotEmpty()) {
             Box(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.matchParentSize(),
                 contentAlignment = Alignment.BottomCenter,
             ) {
                 Column(
@@ -347,6 +353,7 @@ internal fun ChatMessageList(
                     }
                 }
             }
+        }
         }
         }
     }
