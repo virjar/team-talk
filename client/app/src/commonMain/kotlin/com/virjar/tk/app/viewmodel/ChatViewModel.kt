@@ -26,6 +26,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -37,7 +38,7 @@ class ChatViewModel(
     private val chatId: String,
     private val localCache: LocalCache,
     private val messageRepo: MessageRepository,
-    eventProcessor: EventProcessor,
+    private val eventProcessor: EventProcessor,
     typingEvents: Flow<Pair<String, String>> = eventProcessor.typingEvents,
     val connectionState: StateFlow<ConnectionState>,
     private val myUid: String = "",
@@ -70,6 +71,26 @@ class ChatViewModel(
     val chatPeerUid: StateFlow<String?> = localCache.observeConversation(chatId)
         .map { conversation -> conversation?.takeIf { it.chatType == 1 }?.peerUid }
         .stateIn(scope, SharingStarted.Eagerly, null)
+
+    /**
+     * 打开会话那一刻的本地已读水位（内测 T063）。进入会话后已读 effect 会很快推进
+     * 实时水位，「跳至未读」锚点必须用进入前的快照，否则永远算不出未读起点。
+     * 只取第一条投影快照并锁定；null 表示快照尚未到达。
+     */
+    private val _entryReadSeq = MutableStateFlow<Long?>(null)
+    val entryReadSeq: StateFlow<Long?> = _entryReadSeq.asStateFlow()
+
+    /** 是否存在未消费的 @我（MENTION_SYNC 投影）；「有人@我」跳转胶囊以此判存活（内测 T065）。 */
+    val mentioned: StateFlow<Boolean> = eventProcessor.mentionedChatIds
+        .map { chatId in it }
+        .stateIn(scope, SharingStarted.Eagerly, chatId in eventProcessor.mentionedChatIds.value)
+
+    init {
+        scope.launch {
+            val snapshot = localCache.observeConversation(chatId).first()
+            _entryReadSeq.value = snapshot?.readSeq ?: 0L
+        }
+    }
 
     /** 当前存在于驻留窗口中的失败乐观行的安全、稳定原因。 */
     private val _outgoingFailureCodes = MutableStateFlow<Map<String, OutgoingFailureCode>>(emptyMap())
@@ -412,6 +433,33 @@ class ChatViewModel(
             reason = reason,
         )
         setError(reason.userMessage())
+    }
+
+    /**
+     * 有界向前翻页，直到已加载窗口覆盖 [oldestTargetSeq]（含）或历史耗尽。
+     * 供未读/被@ 悬浮跳转揭载锚点所在页（内测 T063/T065）；返回窗口是否已覆盖。
+     */
+    suspend fun revealHistoryCovering(oldestTargetSeq: Long, maxPages: Int = 30): Boolean {
+        if (oldestTargetSeq <= 0L) return false
+        repeat(maxPages) {
+            val current = _messages.value
+            val oldestLoaded = current.lastOrNull()?.serverSeq ?: 0L
+            if (current.isNotEmpty() && oldestLoaded <= oldestTargetSeq) return true
+            if (!_localHasMore.value && !_remoteHasMore.value) return false
+            val sizeBefore = current.size
+            loadOlder()
+            // loadOlder 是发起即返的；轮询等待这一页落定（窗口增长）或翻页能力耗尽。
+            var waited = 0
+            while (_messages.value.size == sizeBefore && waited < 50) {
+                delay(40)
+                waited++
+            }
+            val after = _messages.value.size
+            val exhausted = !_localHasMore.value && !_remoteHasMore.value
+            if (after == sizeBefore && exhausted) return false
+        }
+        val oldestLoaded = _messages.value.lastOrNull()?.serverSeq ?: 0L
+        return _messages.value.isNotEmpty() && oldestLoaded <= oldestTargetSeq
     }
 
     /**

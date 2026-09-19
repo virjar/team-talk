@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -51,6 +52,10 @@ internal fun ChatMessageList(
     hasMore: Boolean,
     loadingOlder: Boolean,
     highlightedServerSeq: Long? = null,
+    /** 「跳至未读」锚点（内测 T063）：打开会话时水位之后最早一条的 serverSeq。 */
+    unreadAnchorServerSeq: Long? = null,
+    /** 「有人@我」锚点（内测 T065）：窗口内最新一条提到我的他人消息 serverSeq。 */
+    mentionAnchorServerSeq: Long? = null,
     outgoingFailureCodes: Map<String, OutgoingFailureCode> = emptyMap(),
     reactions: Map<Long, List<MessageReactionGroup>> = emptyMap(),
     onToggleReaction: (serverSeq: Long, emoji: String) -> Unit = { _, _ -> },
@@ -102,6 +107,39 @@ internal fun ChatMessageList(
         }
         val seen = seenNewestSeq
         val showNewPill = !loading && seen != null && newestSeq > seen && !atLatest
+        // 内测 T063/T065：未读/被@ 悬浮跳转。目标行在视口上方（被淹没）时显示胶囊；
+        // 点击定位并短暂高亮，目标自然可见或已点击即消费，本次打开不再出现。
+        var consumedUnreadJump by remember { mutableStateOf(false) }
+        var consumedMentionJump by remember { mutableStateOf(false) }
+        var jumpHighlightSeq by remember { mutableStateOf<Long?>(null) }
+        LaunchedEffect(jumpHighlightSeq) {
+            if (jumpHighlightSeq != null) {
+                delay(2_500)
+                jumpHighlightSeq = null
+            }
+        }
+        val viewportOldestIndex by remember(state) {
+            derivedStateOf { state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+        }
+        val unreadJumpIndex = unreadAnchorServerSeq
+            ?.let { seq -> messages.indexOfFirst { it.serverSeq == seq } }
+            ?.takeIf { it >= 0 }
+        val mentionJumpIndex = mentionAnchorServerSeq
+            ?.let { seq -> messages.indexOfFirst { it.serverSeq == seq } }
+            ?.takeIf { it >= 0 }
+        // 目标自然进入视口即视为已展示（「至少一屏未读」由此自然成立：不满一屏时
+        // 打开即命中消费，胶囊永不出现）。
+        LaunchedEffect(unreadJumpIndex, viewportOldestIndex) {
+            if (unreadJumpIndex != null && unreadJumpIndex <= viewportOldestIndex) consumedUnreadJump = true
+        }
+        LaunchedEffect(mentionJumpIndex, viewportOldestIndex) {
+            if (mentionJumpIndex != null && mentionJumpIndex <= viewportOldestIndex) consumedMentionJump = true
+        }
+        val showUnreadJumpPill = !consumedUnreadJump && unreadJumpIndex != null &&
+            unreadJumpIndex > viewportOldestIndex && !loading
+        val showMentionJumpPill = !consumedMentionJump && mentionJumpIndex != null &&
+            mentionJumpIndex > viewportOldestIndex && !loading
+        val listScope = rememberCoroutineScope()
         Box(modifier) {
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(horizontal = Tk.spacing.md),
@@ -117,7 +155,9 @@ internal fun ChatMessageList(
             ) { index ->
                 val msg = messages[index]
                 val isMe = msg.senderUid == myUid
-                val focusModifier = if (msg.serverSeq == highlightedServerSeq) {
+                // 跳转高亮优先于搜索/定位高亮（T065：点击胶囊后短暂标出目标行）。
+                val effectiveHighlightSeq = jumpHighlightSeq ?: highlightedServerSeq
+                val focusModifier = if (msg.serverSeq == effectiveHighlightSeq) {
                     Modifier
                         .testTag("chat.message.focused.${msg.serverSeq}")
                         .background(
@@ -250,27 +290,62 @@ internal fun ChatMessageList(
             }
         }
         }
-        if (showNewPill) {
-            val listScope = rememberCoroutineScope()
+        // 悬浮胶囊统一渲染（互不遮挡时纵向堆叠）：跳至未读 / 有人@我 / 有新消息。
+        // 胶囊 overlay 悬浮在气泡区，不参与消息列表布局（T063 需求约束）。
+        val jumpPills = buildList {
+            if (showUnreadJumpPill && unreadJumpIndex != null && unreadAnchorServerSeq != null) {
+                add(
+                    Triple<String, String, () -> Unit>("跳至未读", "chat.jumpUnreadPill") {
+                        consumedUnreadJump = true
+                        jumpHighlightSeq = unreadAnchorServerSeq
+                        listScope.launch { state.scrollToItem(unreadJumpIndex) }
+                    },
+                )
+            }
+            if (showMentionJumpPill && mentionJumpIndex != null && mentionAnchorServerSeq != null) {
+                add(
+                    Triple<String, String, () -> Unit>("有人@我", "chat.jumpMentionPill") {
+                        consumedMentionJump = true
+                        jumpHighlightSeq = mentionAnchorServerSeq
+                        listScope.launch { state.scrollToItem(mentionJumpIndex) }
+                    },
+                )
+            }
+            if (showNewPill) {
+                add(
+                    Triple<String, String, () -> Unit>("有新消息", "chat.newMessagesPill") {
+                        listScope.launch { state.animateScrollToItem(0) }
+                    },
+                )
+            }
+        }
+        if (jumpPills.isNotEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.BottomCenter,
             ) {
-            Row(
-                modifier = Modifier
-                    .padding(bottom = Tk.spacing.sm)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer)
-                    .clickable { listScope.launch { state.animateScrollToItem(0) } }
-                    .padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.xs)
-                    .testTag("chat.newMessagesPill"),
-            ) {
-                Text(
-                    "有新消息",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
-            }
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(Tk.spacing.xs),
+                    modifier = Modifier.padding(bottom = Tk.spacing.sm),
+                ) {
+                    jumpPills.forEach { (label, tag, onClick) ->
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(MaterialTheme.colorScheme.primaryContainer)
+                                .clickable(onClick = onClick)
+                                .padding(horizontal = Tk.spacing.md, vertical = Tk.spacing.xs)
+                                .testTag(tag),
+                        ) {
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
+                    }
+                }
             }
         }
         }

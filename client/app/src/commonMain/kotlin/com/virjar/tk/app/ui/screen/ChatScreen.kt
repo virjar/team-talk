@@ -174,6 +174,37 @@ fun ChatPanel(
     val restoredMidHistory = messageListState.firstVisibleItemIndex > 0 ||
         messageListState.firstVisibleItemScrollOffset > 0
 
+    // 悬浮跳转锚点（内测 T063/T065）：只在正常打开（无搜索定位、未恢复历史视口）时提供。
+    // 未读锚点=打开会话时水位+1（第一条未读）；@锚点=窗口内最新一条提到我的他人消息。
+    // 锚点尚未落在已加载窗口时由下方 effect 有界向前翻页揭载（胶囊随后出现）。
+    val entryReadSeq by viewModel.entryReadSeq.collectAsState()
+    val mentioned by viewModel.mentioned.collectAsState()
+    val jumpAnchorEligible = messageFocusTarget == null && !restoredMidHistory
+    val unreadAnchorServerSeq = if (jumpAnchorEligible) {
+        val newestLoadedSeq = messages.firstOrNull()?.serverSeq ?: 0L
+        entryReadSeq?.takeIf { it > 0L && it < newestLoadedSeq }?.plus(1L)
+    } else {
+        null
+    }
+    val mentionAnchorServerSeq = if (jumpAnchorEligible && mentioned) {
+        messages.firstOrNull { message ->
+            message.serverSeq > 0L && message.senderUid != myUid &&
+                message.mentionsParticipant(myUid)
+        }?.serverSeq
+    } else {
+        null
+    }
+    // 揭载最旧的跳转锚点：未读起点或被@消息不在窗口时向前翻页（有界 30 页）。
+    val revealTarget = listOfNotNull(
+        unreadAnchorServerSeq?.takeIf { seq -> messages.none { it.serverSeq == seq } },
+        mentionAnchorServerSeq?.takeIf { seq -> messages.none { it.serverSeq == seq } },
+    ).minOrNull()
+    LaunchedEffect(revealTarget) {
+        if (revealTarget != null) {
+            viewModel.revealHistoryCovering(revealTarget)
+        }
+    }
+
     val visibleTypingUid = chatTypingPresentationUid(chatId, viewModel, chatForegroundActive)
 
     val highlightedServerSeq = rememberMessageFocus(
@@ -909,6 +940,8 @@ fun ChatPanel(
                 hasMore = hasMore,
                 loadingOlder = loadingOlder,
                 highlightedServerSeq = highlightedServerSeq,
+                unreadAnchorServerSeq = unreadAnchorServerSeq,
+                mentionAnchorServerSeq = mentionAnchorServerSeq,
                 outgoingFailureCodes = outgoingFailureCodes,
                 reactions = viewModel.reactions.collectAsState().value,
                 onToggleReaction = actionAdmission.guard(viewModel::toggleReaction),

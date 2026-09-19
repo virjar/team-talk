@@ -29,6 +29,16 @@ internal fun visibleChatReadTarget(
     latestVisibleServerSeq: Long,
 ): Long? = latestVisibleServerSeq.takeIf { readReceiptsEnabled && it > 0L }
 
+/**
+ * 消息提及语义（内测 T065）：mentions sidecar 含本人 uid 或 @全体 保留身份。
+ * 发送者本人不在此判断范围，调用方需自行排除自己的消息。
+ */
+internal fun Message.mentionsParticipant(uid: String): Boolean =
+    uid.isNotEmpty() &&
+        (body as? com.virjar.tk.protocol.body.RichTextBody)
+            ?.mentions
+            ?.any { it.uid == uid || it.uid == com.virjar.tk.protocol.model.MentionPolicy.ALL } == true
+
 /** 清理聊天正文时同步丢弃撤销/重做历史，避免撤销恢复已发送或已取消的内容。 */
 internal fun resetChatComposerState(state: RichTextState) {
     state.clear()
