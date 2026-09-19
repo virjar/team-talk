@@ -13,6 +13,10 @@ import com.virjar.tk.server.infra.db.USERS_PHONE_UNIQUE_INDEX
 import com.virjar.tk.server.infra.db.USERS_UID_UNIQUE_INDEX
 import com.virjar.tk.server.infra.db.USERS_USERNAME_UNIQUE_INDEX
 import com.virjar.tk.server.infra.db.Users
+import com.virjar.tk.server.infra.db.Friends
+import com.virjar.tk.server.infra.db.OrganizationMemberships
+import com.virjar.tk.server.infra.db.derivePinyinFull
+import com.virjar.tk.server.infra.db.derivePinyinInitials
 import com.virjar.tk.server.infra.db.requireExposedTransaction
 import com.virjar.tk.server.infra.db.toUserAvatar
 import com.virjar.tk.protocol.model.MainlandPhoneNumber
@@ -189,7 +193,11 @@ class ExposedUserRepository internal constructor(
 
         try {
             Users.update({ Users.uid eq uid }) {
-                if (patch.name.isPresent && after.name != before.name) it[Users.name] = after.name
+                if (patch.name.isPresent && after.name != before.name) {
+                    it[Users.name] = after.name
+                    it[Users.namePinyinFull] = derivePinyinFull(after.name)
+                    it[Users.namePinyinInitials] = derivePinyinInitials(after.name)
+                }
                 if (patch.avatar.isPresent && after.avatar != before.avatar) {
                     it[Users.avatarPath] = after.avatar?.path
                     it[Users.avatarName] = after.avatar?.name
@@ -212,16 +220,33 @@ class ExposedUserRepository internal constructor(
         return UserProfileMutation(user = after, changed = true)
     }
 
-    override fun searchPublicDirectory(keyword: String, limit: Int): List<User> {
+    override fun searchPublicDirectory(callerUid: String, keyword: String, limit: Int): List<User> {
         return transaction(database) {
             val literalPattern = "%${escapePostgresLikeLiteral(keyword)}%"
+            // T062：纯字母查询额外匹配姓名拼音键；首拼（≤2 字母）命中范围限定
+            // 「组织成员 ∪ 调用者好友」，访客对首拼不可见，防短键枚举组织关系。
+            val isAsciiLetterQuery = keyword.isNotEmpty() && keyword.all { ch -> ch in 'a'..'z' || ch in 'A'..'Z' }
+            val keywordLower = keyword.lowercase()
+            val lowerPattern = "%${escapePostgresLikeLiteral(keywordLower)}%"
             val query = Users.selectAll().where {
+                val orgUids = OrganizationMemberships.select(OrganizationMemberships.uid)
+                val friendUids = Friends.select(Friends.friendUid)
+                    .where { (Friends.uid eq callerUid) and (Friends.status eq 1) }
                 (Users.status eq STATUS_ACTIVE) and
                     (Users.role eq UserRole.HUMAN) and
                     (
                         (Users.username like literalPattern) or
                             (Users.name like literalPattern) or
-                            (Users.shortNo eq keyword)
+                            (Users.shortNo eq keyword) or
+                            (
+                                if (isAsciiLetterQuery) {
+                                    (Users.namePinyinFull like lowerPattern) or
+                                        ((Users.namePinyinInitials like lowerPattern) and
+                                            ((Users.uid inSubQuery orgUids) or (Users.uid inSubQuery friendUids)))
+                                } else {
+                                    Op.FALSE
+                                }
+                                )
                         )
             }.orderBy(
                 Users.name to SortOrder.ASC,
@@ -247,6 +272,8 @@ class ExposedUserRepository internal constructor(
             it[Users.uid] = uid
             it[Users.username] = username
             it[Users.name] = name
+            it[Users.namePinyinFull] = derivePinyinFull(name)
+            it[Users.namePinyinInitials] = derivePinyinInitials(name)
             it[Users.passwordHash] = passwordHash
             it[Users.phone] = phone
             it[Users.role] = role
@@ -254,6 +281,19 @@ class ExposedUserRepository internal constructor(
             it[Users.updatedAt] = now
         }
         return User(uid = uid, username = username, name = name, phone = phone, role = role)
+    }
+
+    /** T062：短首拼放行 = 调用者加入了组织，或已有任一正常好友关系。 */
+    override fun canSearchPinyinInitials(callerUid: String): Boolean = transaction(database) {
+        val orgMember = OrganizationMemberships.selectAll()
+            .where { OrganizationMemberships.uid eq callerUid }
+            .limit(1)
+            .count() > 0
+        if (orgMember) return@transaction true
+        Friends.selectAll()
+            .where { (Friends.uid eq callerUid) and (Friends.status eq 1) }
+            .limit(1)
+            .count() > 0
     }
 
     private fun ResultRow.toUser() = User(

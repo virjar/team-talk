@@ -31,6 +31,10 @@ object Users : LongIdTable("users") {
     val uid = varchar("uid", 36).uniqueIndex(USERS_UID_UNIQUE_INDEX)
     val username = varchar("username", 50).uniqueIndex(USERS_USERNAME_UNIQUE_INDEX)
     val name = varchar("name", 100)
+    /** 姓名全拼小写搜索键（T062）；非中文字符原样保留小写。空串=尚未派生。 */
+    val namePinyinFull = varchar("name_pinyin_full", 300).default("")
+    /** 姓名拼音首拼小写搜索键（T062）。空串=尚未派生。 */
+    val namePinyinInitials = varchar("name_pinyin_initials", 100).default("")
     val phone = varchar("phone", 20).nullable().uniqueIndex(USERS_PHONE_UNIQUE_INDEX)
     val zone = varchar("zone", 10).default("+86")
     val passwordHash = varchar("password_hash", 100)

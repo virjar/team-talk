@@ -103,6 +103,19 @@ internal class ExposedOrganizationRepository(
                 .count() > 0
             if (!isMember) return@transaction emptyList()
             val pattern = "%${escapePostgresLikeLiteral(query.trim())}%"
+            val trimmed = query.trim()
+            // T062：组织内调用者已通过 isMember 门槛，字母查询额外匹配姓名拼音键
+            //（全拼 + 首拼），与全局用户搜索保持一致。
+            val isAsciiLetterQuery = trimmed.isNotEmpty() &&
+                trimmed.all { ch -> ch in 'a'..'z' || ch in 'A'..'Z' }
+            val pinyinMatch = if (isAsciiLetterQuery) {
+                val lowerPattern = "%${escapePostgresLikeLiteral(trimmed.lowercase())}%"
+                with(SqlExpressionBuilder) {
+                    (Users.namePinyinFull like lowerPattern) or (Users.namePinyinInitials like lowerPattern)
+                }
+            } else {
+                Op.FALSE
+            }
             Users
                 .join(OrganizationMemberships, JoinType.INNER, additionalConstraint = {
                     Users.uid eq OrganizationMemberships.uid
@@ -112,7 +125,7 @@ internal class ExposedOrganizationRepository(
                     val nameMatch = if (query.isBlank()) {
                         Op.TRUE
                     } else {
-                        (Users.name like pattern) or (Users.username like pattern)
+                        (Users.name like pattern) or (Users.username like pattern) or pinyinMatch
                     }
                     nameMatch
                 }

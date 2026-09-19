@@ -3,6 +3,9 @@ package com.virjar.tk.server.infra.db
 import com.virjar.tk.server.testing.PostgresSchemaLease
 import java.sql.Connection
 import java.sql.SQLException
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -159,10 +162,24 @@ class SchemaMigrationIntegrationTest {
             } else ""
             connection.createStatement().use { statement ->
                 statement.executeQuery("SELECT row_to_json(r)::text FROM $table r $filter ORDER BY row_to_json(r)::text").use { rows ->
-                    buildList { while (rows.next()) add(rows.getString(1)) }
+                    buildList {
+                        while (rows.next()) add(
+                            if (table == "users") stripDerivedPinyinKeys(rows.getString(1)) else rows.getString(1),
+                        )
+                    }
                 }
             }
         }
+
+    /**
+     * 拼音搜索键（T062）是迁移派生的可重建数据，不是迁移必须保全的业务事实；
+     * 重放迁移时会合法地被回填，快照比较需要剥离。
+     */
+    private fun stripDerivedPinyinKeys(row: String): String {
+        if ("name_pinyin_full" !in row) return row
+        val element = Json.parseToJsonElement(row).jsonObject
+        return Json.encodeToString(JsonObject(element.filterKeys { key -> key !in setOf("name_pinyin_full", "name_pinyin_initials") }))
+    }
 
     @Test
     fun `v0_0_2 migration recreates dropped tables without changing the existing dataset or users`() {

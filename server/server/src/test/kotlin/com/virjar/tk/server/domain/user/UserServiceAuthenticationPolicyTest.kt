@@ -117,7 +117,7 @@ class UserServiceAuthenticationPolicyTest {
             )
         }
 
-        val results = service(repository, RecordingPasswordHasher()).search("alpha")
+        val results = service(repository, RecordingPasswordHasher()).search("caller", "alpha")
 
         assertEquals(listOf("uid-a", "uid-b", "uid-c"), results.map(User::uid))
     }
@@ -132,7 +132,7 @@ class UserServiceAuthenticationPolicyTest {
         ).forEach { hiddenIdentity ->
             repository.publicDirectoryResults = listOf(hiddenIdentity)
 
-            assertFailsWith<IllegalStateException> { service.search("search") }
+            assertFailsWith<IllegalStateException> { service.search("caller", "search") }
         }
     }
 
@@ -176,6 +176,7 @@ class UserServiceAuthenticationPolicyTest {
     private class FakeUserRepository : UserRepository {
         val internals = mutableMapOf<String, UserInternal>()
         var publicDirectoryResults = emptyList<User>()
+        var pinyinInitialsAllowed = true
         var identityPreReads = 0
         var serviceAccountCreates = 0
 
@@ -222,7 +223,10 @@ class UserServiceAuthenticationPolicyTest {
             patch: ProfilePatch,
         ): UserProfileMutation = error("not used")
 
-        override fun searchPublicDirectory(keyword: String, limit: Int): List<User> = publicDirectoryResults
+        override fun searchPublicDirectory(callerUid: String, keyword: String, limit: Int): List<User> =
+            publicDirectoryResults
+
+        override fun canSearchPinyinInitials(callerUid: String): Boolean = pinyinInitialsAllowed
     }
 
     private object TestTransaction : PgWriteTransactionContext

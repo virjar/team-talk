@@ -123,6 +123,8 @@ dependencies {
     implementation(platform(libs.ktor.bom))
     // 媒体缩略图：图片纯 Java2D；视频 javacv JNI（native 内嵌 jar，平台裁剪：服务器 linux + 开发 mac 双架构）
     implementation(libs.javacv)
+    // 拼音搜索键派生（T062）：pinyin4j，Apache-2.0，Maven Central 正式发布
+    implementation(libs.pinyin4j)
     // 平台 classifier 依赖（version catalog 不支持 classifier，全坐标直写）
     implementation("org.bytedeco:ffmpeg:${libs.versions.ffmpeg.natives.get()}")
     implementation("org.bytedeco:ffmpeg:${libs.versions.ffmpeg.natives.get()}:linux-x86_64")

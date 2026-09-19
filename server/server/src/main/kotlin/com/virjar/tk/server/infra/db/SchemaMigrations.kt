@@ -5,6 +5,7 @@ import org.jetbrains.exposed.sql.Table
 import org.jetbrains.exposed.sql.Transaction
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.selectAll
+import org.jetbrains.exposed.sql.update
 
 /** Ordered, data-preserving changes within the existing storage epoch; version numbering starts at 0. */
 internal object SchemaMigrations : Table("schema_migrations") {
@@ -74,6 +75,21 @@ private val schemaMigrations = listOf(
         // SchemaUtils.create commits internally; these DDL statements must share the receipt transaction.
         SchemaUtils.createStatements(TaskExtensions, TaskAttachmentPaths, TaskDeferrals, TaskSeriesTemplates, TaskSeriesAttachmentPaths)
             .forEach { exec(it) }
+    },
+    SchemaMigration("add_user_pinyin_search_columns") {
+        // T062：姓名拼音搜索键两列 + 存量全量回填。派生是纯函数（TinyPinyin 常见读音），
+        // 回填与账目收据同事务提交；空串列是幂等回填的游标。
+        exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS name_pinyin_full varchar(300) NOT NULL DEFAULT ''")
+        exec("ALTER TABLE users ADD COLUMN IF NOT EXISTS name_pinyin_initials varchar(100) NOT NULL DEFAULT ''")
+        val pending = Users.selectAll()
+            .where { Users.namePinyinFull eq "" }
+            .map { it[Users.uid] to it[Users.name] }
+        pending.forEach { (uid, name) ->
+            Users.update({ Users.uid eq uid }) {
+                it[Users.namePinyinFull] = derivePinyinFull(name)
+                it[Users.namePinyinInitials] = derivePinyinInitials(name)
+            }
+        }
     },
 )
 

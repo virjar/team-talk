@@ -37,7 +37,7 @@ import com.virjar.tk.protocol.rpc.gen.SyncRpcStub
 class UserRpcImpl(uid: String, private val service: UserService) : UserRpcStub(uid) {
     override suspend fun getProfile(targetUid: String?): User = service.getProfile(targetUid?.takeIf { it.isNotBlank() } ?: uid)
     override suspend fun updateProfile(patch: ProfilePatch) = service.updateProfile(uid, patch)
-    override suspend fun search(keyword: String) = service.search(keyword)
+    override suspend fun search(keyword: String) = service.search(uid, keyword)
 }
 
 class AuthRpcImpl(

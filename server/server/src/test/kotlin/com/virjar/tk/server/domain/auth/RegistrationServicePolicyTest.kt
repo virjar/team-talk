@@ -170,7 +170,10 @@ class RegistrationServicePolicyTest {
             patch: ProfilePatch,
         ): UserProfileMutation = error("not used")
 
-        override fun searchPublicDirectory(keyword: String, limit: Int): List<User> = error("not used")
+        override fun searchPublicDirectory(callerUid: String, keyword: String, limit: Int): List<User> =
+            error("not used")
+
+        override fun canSearchPinyinInitials(callerUid: String): Boolean = false
     }
 
     private object TestTransaction : PgWriteTransactionContext

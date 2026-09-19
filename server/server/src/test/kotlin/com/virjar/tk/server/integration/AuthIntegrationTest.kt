@@ -308,7 +308,7 @@ class AuthIntegrationTest {
     fun `search users`() = runTest {
         val username = uniqueUsername("searchable")
         ctx.registerHuman(username, "password123", "SearchMe")
-        val results = ctx.userService.search(username)
+        val results = ctx.userService.search("integration-caller", username)
         assertTrue(results.any { it.username == username })
     }
 
@@ -326,13 +326,13 @@ class AuthIntegrationTest {
         )
         ctx.registerHuman(uniqueUsername("search-control"), "password123", "LiteralXNeedle")
 
-        assertEquals(setOf(percent.uid), ctx.userService.search("%Needle").map { it.uid }.toSet())
-        assertEquals(setOf(underscore.uid), ctx.userService.search("_Needle").map { it.uid }.toSet())
+        assertEquals(setOf(percent.uid), ctx.userService.search("integration-caller", "%Needle").map { it.uid }.toSet())
+        assertEquals(setOf(underscore.uid), ctx.userService.search("integration-caller", "_Needle").map { it.uid }.toSet())
         listOf("%%%", "%a%", "_a_", "__").forEach { keyword ->
-            assertFailsWith<IllegalArgumentException> { ctx.userService.search(keyword) }
+            assertFailsWith<IllegalArgumentException> { ctx.userService.search("integration-caller", keyword) }
         }
-        assertFailsWith<IllegalArgumentException> { ctx.userService.search("a".repeat(101)) }
-        assertFailsWith<IllegalArgumentException> { ctx.userService.search("literal", limit = 21) }
+        assertFailsWith<IllegalArgumentException> { ctx.userService.search("integration-caller", "a".repeat(101)) }
+        assertFailsWith<IllegalArgumentException> { ctx.userService.search("integration-caller", "literal", limit = 21) }
     }
 
     @Test

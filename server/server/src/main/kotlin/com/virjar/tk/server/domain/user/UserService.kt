@@ -255,7 +255,7 @@ class UserService(
         }
     }
 
-    fun search(keyword: String, limit: Int = 20): List<User> {
+    fun search(callerUid: String, keyword: String, limit: Int = 20): List<User> {
         // 防注册用户枚举：短关键词几乎等价于全表遍历（26 字母 + 数千常用汉字
         // 即可穷举召回所有注册用户）。只计算字母/数字等字面搜索字符，
         // SQL LIKE 元字符不能用来伪造最小搜索熕。
@@ -264,15 +264,23 @@ class UserService(
         require(limit in 1..MAX_SEARCH_RESULTS) { "搜索结果数量必须在 1..$MAX_SEARCH_RESULTS 之间" }
         val literalCharacters = trimmed.filter(Char::isLetterOrDigit)
         val cjkCount = literalCharacters.count { it.code in CJK_RANGE }
-        val minAllowed = if (cjkCount == literalCharacters.length && cjkCount > 0) {
-            MIN_CJK_CHARS
+        val isCjkQuery = cjkCount == literalCharacters.length && cjkCount > 0
+        val isAsciiLetterQuery = literalCharacters.isNotEmpty() && cjkCount == 0 &&
+            trimmed.all { ch -> ch in 'a'..'z' || ch in 'A'..'Z' }
+        // T062（边界经用户确认）：1–2 字母的拼音首拼查询，只放行「加入组织或已有好友」
+        // 的调用者；纯访客必须使用全拼。首拼命中范围在仓储层进一步限定为组织∪好友。
+        val isShortInitialsQuery = isAsciiLetterQuery && trimmed.length < MIN_SEARCH_CHARS
+        val minAllowed = if (isCjkQuery) MIN_CJK_CHARS else MIN_SEARCH_CHARS
+        if (isShortInitialsQuery) {
+            require(users.canSearchPinyinInitials(callerUid)) {
+                "搜索关键词太短：字母/数字至少 ${MIN_SEARCH_CHARS} 个字符"
+            }
         } else {
-            MIN_SEARCH_CHARS
+            require(literalCharacters.length >= minAllowed) {
+                "搜索关键词太短：汉字至少 ${MIN_CJK_CHARS} 个字，字母/数字至少 ${MIN_SEARCH_CHARS} 个字符"
+            }
         }
-        require(literalCharacters.length >= minAllowed) {
-            "搜索关键词太短：汉字至少 ${MIN_CJK_CHARS} 个字，字母/数字至少 ${MIN_SEARCH_CHARS} 个字符"
-        }
-        val results = users.searchPublicDirectory(trimmed, limit)
+        val results = users.searchPublicDirectory(callerUid, trimmed, limit)
         // 在这里过滤会让一个无效适配器在被排除行移除之前就消耗掉有界结果槽位。
         // 改为默认拒绝（fail closed）；持久化端口承诺在排序与 LIMIT 之前应用可见性谓词。
         check(results.size <= limit && results.all { isPublicDirectoryUser(it) }) {

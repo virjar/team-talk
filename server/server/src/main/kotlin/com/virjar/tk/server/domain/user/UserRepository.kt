@@ -50,8 +50,16 @@ interface UserRepository {
      * 结果只包含活跃的 [UserRole.HUMAN] 身份。适配器必须在 [limit] 之前应用该可见性谓词
      * 与确定性的 `(name, username, uid)` 顺序，使隐藏的服务/禁用行永远无法消耗调用方的
      * 结果槽位。全身份管理查询属于独立的管理目录端口。
+     *
+     * T062：纯字母关键词额外匹配姓名全拼；拼音首拼命中范围限定「组织成员 ∪ 调用者好友」。
      */
-    fun searchPublicDirectory(keyword: String, limit: Int = 20): List<User>
+    fun searchPublicDirectory(callerUid: String, keyword: String, limit: Int = 20): List<User>
+
+    /**
+     * 调用者能否使用拼音首拼短查询（T062 用户确认边界）：加入了组织或已有好友关系的
+     * 调用者放行；纯访客（无组织归属、无好友）必须使用全拼，防短键枚举组织关系。
+     */
+    fun canSearchPinyinInitials(callerUid: String): Boolean
 }
 
 class HumanRegistrationCommand(
