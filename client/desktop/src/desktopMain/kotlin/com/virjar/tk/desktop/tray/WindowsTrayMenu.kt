@@ -6,6 +6,7 @@ import java.awt.EventQueue
 import java.awt.GraphicsConfiguration
 import java.awt.GraphicsEnvironment
 import java.awt.KeyboardFocusManager
+import java.awt.MouseInfo
 import java.awt.Point
 import java.awt.Rectangle
 import java.awt.Toolkit
@@ -53,15 +54,19 @@ internal class WindowsTrayMenu(
         override fun mousePressed(event: MouseEvent) = maybeShow(event)
         override fun mouseReleased(event: MouseEvent) = maybeShow(event)
 
-        private fun maybeShow(event: MouseEvent) {
-            if (!event.isPopupTrigger || closed) return
-            try {
-                showAt(event.locationOnScreen)
-            } catch (failure: Exception) {
-                AppLog.fault("WindowsTrayMenu", "Cannot prepare the tray menu", failure)
-                dismiss()
-            }
+    private fun maybeShow(event: MouseEvent) {
+        if (!event.isPopupTrigger || closed) return
+        try {
+            // 内测 T061：图标被 Windows 收进任务栏溢出区（隐藏图标 ^）后，TrayIcon 事件
+            // 自带的坐标与溢出区里图标的实际位置不符，菜单会落在离图标很远的地方。
+            // 右键瞬间指针必在图标上，改用实时指针位置锚定菜单，图标在哪里菜单跟到哪里。
+            val pointer = MouseInfo.getPointerInfo()?.location ?: event.locationOnScreen
+            showAt(pointer)
+        } catch (failure: Exception) {
+            AppLog.fault("WindowsTrayMenu", "Cannot prepare the tray menu", failure)
+            dismiss()
         }
+    }
     }
 
     init {
