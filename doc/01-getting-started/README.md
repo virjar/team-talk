@@ -26,6 +26,8 @@ Android 或 Desktop 客户端
 HTTP scheme 与 TCP TLS 独立配置，具体按[传输配置边界](../07-operations/configuration.md#传输配置边界)核对。
 
 开发者预览版的体验范围、已知限制与最小分发检查见[小范围内测指南](developer-preview.md)。
+不会写代码但有 AI 助手（如 WorkBuddy）的部署者，从[AI 辅助部署](ai-assisted-deployment.md)进入；
+测试站点交给真实用户前的加固（正式证书/签名/推送/备份）按[从试用到生产](trial-to-production.md)逐项进行。
 
 ## 选择你的路径
 

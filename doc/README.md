@@ -12,6 +12,8 @@
 | 组织少量开发者内测 | [预览版范围与最小验收](01-getting-started/developer-preview.md) |
 | 先把项目运行起来 | [快速上手](01-getting-started/README.md) → [开发环境](01-getting-started/development.md) |
 | 独立 clone 后部署自己的服务器 | [私有化部署](01-getting-started/private-deployment.md) → [运行配置](07-operations/configuration.md) → [部署与升级](07-operations/deployment.md) |
+| 让 AI 助手（WorkBuddy 等）替我部署 | [AI 辅助部署](01-getting-started/ai-assisted-deployment.md) |
+| 测试站点转正式运营的加固清单 | [从试用到生产](01-getting-started/trial-to-production.md) |
 | 判断项目是否适合业务 | [产品定位](02-product/README.md) → [为什么是 TeamTalk](02-product/why-teamtalk.md) → [能力模型](02-product/capabilities.md) → [功能状态](10-reference/feature-status.md) |
 | 接手项目、按源码掌握状态与恢复 | [架构入门与阅读练习](03-architecture/architecture-primer.md) → [客户端所有权图](03-architecture/client-and-sdk.md) → [后续工作边界](10-reference/roadmap.md) |
 | 理解一次消息如何流转 | [系统架构](03-architecture/README.md) → [数据与同步](03-architecture/data-and-sync.md) → [消息与附件](04-protocol/messages-and-attachments.md) |
