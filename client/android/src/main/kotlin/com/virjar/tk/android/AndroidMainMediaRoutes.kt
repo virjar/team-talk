@@ -294,6 +294,11 @@ internal fun NavGraphBuilder.androidGroupFilesRoute(
             },
             onRename = actionAdmission.guard(dataState.groupFiles::rename),
             onDelete = actionAdmission.guard(dataState.groupFiles::delete),
+            canMove = dataState.groupFiles.supportsMove,
+            onMove = actionAdmission.guard { entry: GroupFileEntry, target: String? ->
+                dataState.groupFiles.move(entry, target)
+            },
+            onListFolders = { parentId -> dataState.groupFiles.listFoldersForPicker(parentId) },
             onBack = actionAdmission.guard { navController.popBackStack() },
         )
     }

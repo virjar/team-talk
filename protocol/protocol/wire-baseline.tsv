@@ -1,6 +1,6 @@
 # TeamTalk wire schema v1
 major=0
-minor=3
+minor=4
 enum	com.virjar.tk.protocol.MessageType/1	0	-	active	RICH_TEXT
 enum	com.virjar.tk.protocol.MessageType/10	0	-	active	MERGE_FORWARD
 enum	com.virjar.tk.protocol.MessageType/11	0	-	active	REVOKE
@@ -156,6 +156,7 @@ rpc	groupFile/5	0	-	active	listVersions(chatId:kotlin.String,entryId:kotlin.Stri
 rpc	groupFile/6	0	-	active	rename(commandId:kotlin.String,chatId:kotlin.String,entryId:kotlin.String,name:kotlin.String,expectedRevision:kotlin.Long):kotlin.Unit
 rpc	groupFile/7	0	-	active	delete(commandId:kotlin.String,chatId:kotlin.String,entryId:kotlin.String,expectedRevision:kotlin.Long):kotlin.Unit
 rpc	groupFile/8	0	-	active	getEntry(chatId:kotlin.String,entryId:kotlin.String):com.virjar.tk.protocol.model.GroupFileEntry
+rpc	groupFile/9	4	-	active	move(commandId:kotlin.String,chatId:kotlin.String,entryId:kotlin.String,targetParentId:kotlin.String?,expectedRevision:kotlin.Long):kotlin.Unit
 rpc	message/1	0	-	active	getHistory(chatId:kotlin.String,fromSeq:kotlin.Long,limit:kotlin.Int):List<com.virjar.tk.protocol.model.Message>
 rpc	message/10	0	-	active	saveMessage(srcChatId:kotlin.String,srcSeq:kotlin.Long,operationId:kotlin.String):com.virjar.tk.protocol.model.Message
 rpc	message/2	0	-	active	search(chatId:kotlin.String,keyword:kotlin.String,limit:kotlin.Int):List<com.virjar.tk.protocol.model.Message>

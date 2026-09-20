@@ -131,9 +131,9 @@ GroupFileVersion 携带不可变 Attachment 快照。文件二进制不进入 TC
 createFolder/createFile 由客户端同时提供稳定 `entryId` 与 `commandId`，addVersion、rename 和
 delete 提供稳定 `commandId`；这些值都是规范 UUID，未知结果重试必须复用原值。服务端把
 认证 uid、命令种类、规范化名称/父级、Attachment 和 expectedRevision 等不可变 payload 做指纹并
-持久化收据：五类变更的相同命令精确重放不产生第二条事实，不同 payload 复用同一命令则
+持久化收据：六类变更（含移动）的相同命令精确重放不产生第二条事实，不同 payload 复用同一命令则
 失败关闭。当前 rename/delete 都返回 Unit；精确收据是 ACK，不重复修改条目、容量或审计。
-客户端在首个 RPC 前把五类命令的完整不可变载荷写入有界 outbox；
+客户端在首个 RPC 前把六类命令（含移动）的完整不可变载荷写入有界 outbox；
 `PENDING / ACKNOWLEDGED / REJECTED` 只描述该本地提交与后台恢复状态，不是 RPC 返回类型。
 
 文档使用独立 `document` 服务，按空间、授权、文档树、修订和首页索引分组：list/create/update/

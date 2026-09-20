@@ -9,6 +9,7 @@ import com.virjar.tk.server.domain.groupfile.GroupFileDeleteCommand
 import com.virjar.tk.server.domain.groupfile.GroupFileEntryWriteResult
 import com.virjar.tk.server.domain.groupfile.GroupFileRepository
 import com.virjar.tk.server.domain.groupfile.GroupFileUserAssetUsage
+import com.virjar.tk.server.domain.groupfile.GroupFileMoveCommand
 import com.virjar.tk.server.domain.groupfile.GroupFileRenameCommand
 import com.virjar.tk.server.domain.groupfile.GroupFileService
 import com.virjar.tk.server.domain.chat.ManagedChatPolicy
@@ -227,6 +228,78 @@ class ExposedGroupFileRepository(
         audit(current.chatId, command.entryId, command.actorUid, "ADD_VERSION", "v$nextVersion")
         markContentSearchDirty(transaction, 2, command.entryId, Math.addExact(command.expectedRevision, 1L))
         GroupFileEntryWriteResult(requireActiveEntry(command.entryId), changed = true)
+    }
+
+    override fun move(
+        transaction: PgWriteTransactionContext,
+        command: GroupFileMoveCommand,
+    ): GroupFileEntry? = inWriteTransaction(transaction) {
+        requireValidCommandIdentity(command.commandId, command.fingerprint)
+        requireCanonicalUuid(command.entryId, "群文件条目标识")
+        command.targetParentId?.let { requireCanonicalUuid(it, "群文件目标父目录标识") }
+        if (
+            findExactMutationRetryAroundWriteAdmission(
+                commandId = command.commandId,
+                chatId = command.chatId,
+                entryId = command.entryId,
+                actorUid = command.actorUid,
+                kind = COMMAND_MOVE,
+                fingerprint = command.fingerprint,
+            )
+        ) return@inWriteTransaction null
+        val current = requireActiveEntry(command.entryId)
+        require(current.chatId == command.chatId) { "文件条目不属于当前群" }
+        require(current.revision == command.expectedRevision) { "文件已被其他成员修改，请刷新后重试" }
+        require(current.parentId != command.targetParentId) { "条目已在目标目录" }
+        if (command.targetParentId != null) {
+            val target = requireActiveEntry(command.targetParentId)
+            require(target.chatId == command.chatId) { "目标父目录不属于当前群" }
+            require(target.kind == GroupFileEntry.KIND_FOLDER) { "父级不是目录" }
+            requireTargetNotDescendant(command.entryId, command.targetParentId)
+        }
+        capacityPolicy.requireDirectChildSlot(activeDirectChildCount(command.chatId, command.targetParentId))
+        requireAvailableName(command.chatId, command.targetParentId, current.name, excludingEntryId = command.entryId)
+        val updated = GroupFileEntries.update({
+            (GroupFileEntries.entryId eq command.entryId) and
+                (GroupFileEntries.status eq STATUS_ACTIVE) and
+                (GroupFileEntries.revision eq command.expectedRevision)
+        }) {
+            it[parentId] = command.targetParentId
+            it[parentKey] = command.targetParentId.orEmpty()
+            it[revision] = Math.addExact(command.expectedRevision, 1L)
+            it[updatedBy] = command.actorUid
+            it[updatedAt] = command.updatedAt
+        }
+        require(updated == 1) { "文件已被其他成员修改，请刷新后重试" }
+        insertCommandReceipt(
+            commandId = command.commandId,
+            chatId = command.chatId,
+            entryId = command.entryId,
+            actorUid = command.actorUid,
+            kind = COMMAND_MOVE,
+            fingerprint = command.fingerprint,
+            resultVersion = null,
+            createdAt = command.updatedAt,
+        )
+        audit(
+            command.chatId,
+            command.entryId,
+            command.actorUid,
+            "MOVE",
+            "${current.parentId ?: "root"} -> ${command.targetParentId ?: "root"}",
+        )
+        requireActiveEntry(command.entryId)
+    }
+
+    /** 目标父目录不能是移动条目自身或其子孙目录；向上走祖先链即可判定。 */
+    private fun requireTargetNotDescendant(movingEntryId: String, targetParentId: String) {
+        var cursor: String? = targetParentId
+        var hops = 0
+        while (cursor != null) {
+            check(++hops <= MAX_ANCESTOR_WALK) { "群文件目录层级异常" }
+            require(cursor != movingEntryId) { "不能移动到自身或其子目录" }
+            cursor = requireActiveEntryRow(cursor)[GroupFileEntries.parentId]
+        }
     }
 
     override fun rename(
@@ -659,7 +732,7 @@ class ExposedGroupFileRepository(
                 (GroupFileEntries.nameKey eq GroupFileService.nameKey(name)) and
                 (GroupFileEntries.status eq STATUS_ACTIVE)
         }.singleOrNull()
-        require(found == null || found[GroupFileEntries.entryId] == excludingEntryId) { "同一目录下已存在同名条目" }
+        require(found == null || found[GroupFileEntries.entryId] == excludingEntryId) { GroupFileService.SIBLING_NAME_CONFLICT_MESSAGE }
     }
 
     private fun requireActiveParent(chatId: String, parentId: String?) {
@@ -766,6 +839,8 @@ class ExposedGroupFileRepository(
         private const val COMMAND_ADD_VERSION = 3
         private const val COMMAND_RENAME = 4
         private const val COMMAND_DELETE = 5
+        private const val COMMAND_MOVE = 6
+        private const val MAX_ANCESTOR_WALK = 10_000
     }
 }
 

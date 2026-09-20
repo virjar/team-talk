@@ -223,6 +223,46 @@ class GroupFileService(
         }
     }
 
+    /** 目标父目录为 null 表示移到群空间根目录；返回 null 表示命中原命令回执的幂等重试。 */
+    suspend fun move(
+        actorUid: String,
+        commandId: String,
+        chatId: String,
+        entryId: String,
+        targetParentId: String?,
+        expectedRevision: Long,
+    ): GroupFileEntry? = onIo {
+        requireMember(actorUid, chatId)
+        val canonicalCommandId = validateResourceId(commandId, "群文件移动命令标识")
+        val canonicalEntryId = validateResourceId(entryId, "群文件条目标识")
+        val canonicalTargetParentId = targetParentId?.let { validateResourceId(it, "群文件目标父目录标识") }
+        unitOfWork.write {
+            val moved = repository.move(
+                transaction,
+                GroupFileMoveCommand(
+                    commandId = canonicalCommandId,
+                    chatId = chatId,
+                    entryId = canonicalEntryId,
+                    targetParentId = canonicalTargetParentId,
+                    expectedRevision = expectedRevision,
+                    actorUid = actorUid,
+                    fingerprint = reliableCommandFingerprint(
+                        "MOVE",
+                        actorUid,
+                        canonicalCommandId,
+                        chatId,
+                        canonicalEntryId,
+                        canonicalTargetParentId ?: "root",
+                        expectedRevision.toString(),
+                    ),
+                    updatedAt = System.currentTimeMillis(),
+                ),
+            )
+            moved?.let { broadcastUpsert(it) }
+            moved
+        }
+    }
+
     suspend fun rename(
         actorUid: String,
         commandId: String,
@@ -375,6 +415,8 @@ class GroupFileService(
     }
 
     companion object {
+        const val SIBLING_NAME_CONFLICT_MESSAGE = "同一目录下已存在同名条目"
+
         fun nameKey(name: String): String = name.trim().lowercase(Locale.ROOT)
     }
 }

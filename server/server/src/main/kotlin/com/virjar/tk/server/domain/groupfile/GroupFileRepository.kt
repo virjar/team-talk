@@ -30,6 +30,18 @@ data class GroupFileCreateCommand(
     val fingerprint: String,
 )
 
+/** 目标父目录为 null 表示移到群空间根目录。 */
+data class GroupFileMoveCommand(
+    val commandId: String,
+    val chatId: String,
+    val entryId: String,
+    val targetParentId: String?,
+    val expectedRevision: Long,
+    val actorUid: String,
+    val fingerprint: String,
+    val updatedAt: Long,
+)
+
 /** 版本号由已锁定聚合分配，绝不由事务前的读取分配。 */
 data class GroupFileAppendVersionCommand(
     val entryId: String,
@@ -84,6 +96,11 @@ interface GroupFileRepository {
     /**
      * @return 变更后的条目快照；精确回执命中（无状态变化的重放）返回 null，调用方不广播事件。
      */
+    fun move(
+        transaction: PgWriteTransactionContext,
+        command: GroupFileMoveCommand,
+    ): GroupFileEntry?
+
     fun rename(
         transaction: PgWriteTransactionContext,
         command: GroupFileRenameCommand,

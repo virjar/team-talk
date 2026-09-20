@@ -830,6 +830,68 @@ class GroupFileIntegrationTest {
         assertEquals(0L, refreshed.single().activeVersionBytes)
     }
 
+    @Test
+    fun `move relocates entries with cycle conflict and same-parent rejections with idempotent replay`() = runTest {
+        val owner = ctx.registerUser(uniqueUsername("move-owner"))
+        val member = ctx.registerUser(uniqueUsername("move-member"))
+        val chat = ctx.chatService.createGroup("移动群", null, owner, listOf(member))
+
+        val rootFolder = createFolder(ctx.groupFileService, owner, chat.chatId, null, "资料")
+        val nested = createFolder(ctx.groupFileService, owner, chat.chatId, rootFolder.entryId, "嵌套")
+        val filePath = ctx.fileStore.store(
+            owner,
+            "doc.md",
+            "text/markdown",
+            ByteArrayInputStream("# doc".encodeToByteArray()),
+        )
+        val attachment = requireNotNull(ctx.fileStore.getAttachment(filePath))
+        val file = createFile(ctx.groupFileService, owner, chat.chatId, null, "doc.md", attachment)
+
+        // 移动到子目录：revision +1，父级切换。
+        val commandId = UUID.randomUUID().toString()
+        val moved = checkNotNull(
+            ctx.groupFileService.move(owner, commandId, chat.chatId, file.entryId, nested.entryId, file.revision),
+        )
+        assertEquals(nested.entryId, moved.parentId)
+        assertEquals(file.revision + 1, moved.revision)
+
+        // 同 commandId 幂等重试：命中回执返回 null，不重复递增 revision。
+        assertEquals(
+            null,
+            ctx.groupFileService.move(owner, commandId, chat.chatId, file.entryId, nested.entryId, file.revision),
+        )
+
+        // 目标目录已有同名条目：拒绝。
+        val duplicate = createFile(ctx.groupFileService, owner, chat.chatId, null, "doc.md", attachment)
+        assertFailsWith<IllegalArgumentException> {
+            ctx.groupFileService.move(
+                owner, UUID.randomUUID().toString(), chat.chatId, duplicate.entryId, nested.entryId, duplicate.revision,
+            )
+        }.also { assertTrue(it.message!!.contains("同名")) }
+
+        // 环检查：父目录不能移进自己的子孙目录。
+        assertFailsWith<IllegalArgumentException> {
+            ctx.groupFileService.move(
+                owner, UUID.randomUUID().toString(), chat.chatId, rootFolder.entryId, nested.entryId, rootFolder.revision,
+            )
+        }.also { assertTrue(it.message!!.contains("子目录")) }
+
+        // 目标与当前父目录相同：拒绝。
+        assertFailsWith<IllegalArgumentException> {
+            ctx.groupFileService.move(
+                owner, UUID.randomUUID().toString(), chat.chatId, moved.entryId, nested.entryId, moved.revision,
+            )
+        }.also { assertTrue(it.message!!.contains("已在目标目录")) }
+
+        // 移入另一个目录（根上已有重名的 duplicate，正好验证排除自身后的重名约束仍然有效）。
+        val back = checkNotNull(
+            ctx.groupFileService.move(
+                owner, UUID.randomUUID().toString(), chat.chatId, moved.entryId, rootFolder.entryId, moved.revision,
+            ),
+        )
+        assertEquals(rootFolder.entryId, back.parentId)
+    }
+
     private suspend fun createFolder(
         service: GroupFileService,
         actorUid: String,

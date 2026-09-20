@@ -261,6 +261,15 @@ class GroupFileRpcImpl(uid: String, private val service: GroupFileService) : Gro
     override suspend fun delete(commandId: String, chatId: String, entryId: String, expectedRevision: Long) {
         service.delete(uid, commandId, chatId, entryId, expectedRevision)
     }
+    override suspend fun move(
+        commandId: String,
+        chatId: String,
+        entryId: String,
+        targetParentId: String?,
+        expectedRevision: Long,
+    ) {
+        service.move(uid, commandId, chatId, entryId, targetParentId, expectedRevision)
+    }
 }
 
 class DocumentRpcImpl(uid: String, private val service: DocumentService) : DocumentRpcStub(uid) {

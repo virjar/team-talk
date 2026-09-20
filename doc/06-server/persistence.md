@@ -309,7 +309,7 @@ group_file_entries 保存群文件目录树、逻辑名称、当前 Attachment�
 commandId、不可变 payload 指纹及该活动条目全部版本的字节合计。
 
 group_file_versions 只追加不可变 Attachment 快照，`(entryId, version)` 和版本 commandId 分别唯一。
-group_file_commands 以全局唯一 commandId 保存 createFolder、createFile、addVersion、rename、delete 五类
+group_file_commands 以全局唯一 commandId 保存 createFolder、createFile、addVersion、rename、move、delete 六类
 命令的 chat、entry、认证操作者、规范化 payload 指纹及可空结果版本；精确重试必须同时匹配资源、操作者、
 命令种类和指纹。createFile/addVersion 保存实际 `resultVersion`，rename/delete 的 `Unit` 结果明确保存
 `resultVersion = null`，精确重放只确认收据而不再次修改条目。group_file_chat_usages 为每个使用过群文件写入的群
@@ -319,7 +319,7 @@ group_file_commands 以全局唯一 commandId 保存 createFolder、createFile�
 所有未命中精确收据的新写入先锁定对应的活动群行并复验操作者的活动成员行；服务层事务外的 ACL 预检
 不能替代这一安全边界。锁内对活动行执行四项容量检查：每群最多 10,000 个活动条目、同一 `parentKey` 最多 512 个
 活动直接子条目、每个活动文件最多 128 个版本，以及当前活动条目版本总字节不超过部署配额。创建和
-追加版本的精确持久化重试在计数前返回原事实，不能重复占槽。五类命令的收据与对应条目、版本、usage
+追加版本的精确持久化重试在计数前返回原事实，不能重复占槽。六类命令的收据与对应条目、版本、usage
 和审计变更原子提交；任一步失败都整体回滚。rename/delete 的精确 `Unit` 重放在首次收据检查、群行写
 准入等待后检查，以及写准入明确失败后的最后一次检查中识别并直接 ACK。这是为了覆盖并发首发已经提交
 但调用方丢响应的窄例外，不允许不同 actor、kind、资源或 payload 冒领，也不允许新命令绕过当前成员

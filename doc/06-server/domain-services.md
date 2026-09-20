@@ -248,7 +248,7 @@ GroupFileService 通过统一 `ChatAccess` 只接受当前群成员访问，并�
 条目的历史版本参与配额。`GroupFileCapacityPolicy` 固定每群 10,000 个活动条目、每个 parent 512 个
 直接子条目和每个活动文件 128 个版本，字节配额默认 1 GiB 且可配置；零字节文件仍占前三类槽。
 Repository 在群行锁内先识别完全相同的资源/版本重试，再执行容量准入，避免重放重复占槽；
-createFolder、createFile、addVersion、rename 和 delete 五类命令的事实变更、容量台账、不可变命令收据
+createFolder、createFile、addVersion、rename、move 和 delete 六类命令的事实变更、容量台账、不可变命令收据
 与审计必须位于同一事务。createFolder/createFile 的稳定 entryId 和 commandId，以及其余三类操作的
 稳定 commandId 均由客户端提供；领域服务只对规范化后的不可变 payload 计算 SHA-256 指纹，同一 ID
 改写 payload 必须拒绝。rename/delete 的 RPC 结果是 `Unit`，对应收据 `resultVersion = null`；收到完全
@@ -258,7 +258,7 @@ revision、容量或审计。这个收据确认是一个很窄的丢响应恢复
 
 每群活动条目数与活动版本字节数由群级 usage 行
 维护，每条活动文件另存自身版本字节合计，追加和删除的容量更新不扫描历史版本，因此合法上限下的
-写入复杂度不会退化为 O(历史版本数)。当前没有移动群文件条目的 RPC；若以后增加，跨 parent 移动
+写入复杂度不会退化为 O(历史版本数)。跨 parent 移动（move，协议 minor 4）只改父级归属与 revision：
 必须在同一群行锁内占用目标同级槽，同 parent 操作不得重复计费。
 
 群文件与消息的附件引用都通过实时群成员资格授权。头像、文档、草稿和任务各自提供对应引用与读权，

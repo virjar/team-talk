@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
@@ -46,6 +47,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -82,12 +84,16 @@ fun GroupFilesScreen(
     onUploadVersion: (GroupFileEntry) -> Unit,
     onRename: (GroupFileEntry, String) -> Unit,
     onDelete: (GroupFileEntry) -> Unit,
+    canMove: Boolean = false,
+    onMove: (GroupFileEntry, String?) -> Unit = { _, _ -> },
+    onListFolders: suspend (String?) -> List<GroupFileEntry> = { emptyList() },
     onBack: (() -> Unit)? = null,
     onClose: (() -> Unit)? = null,
 ) {
     var showCreateFolder by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<GroupFileEntry?>(null) }
     var deleteTarget by remember { mutableStateOf<GroupFileEntry?>(null) }
+    var moveTarget by remember { mutableStateOf<GroupFileEntry?>(null) }
 
     if (showCreateFolder) {
         NameDialog(
@@ -128,6 +134,17 @@ fun GroupFilesScreen(
                     onClick = { deleteTarget = null },
                     modifier = Modifier.testTag("group.files.delete.cancel"),
                 ) { Text("取消") }
+            },
+        )
+    }
+    moveTarget?.let { target ->
+        MoveDialog(
+            entry = target,
+            onListFolders = onListFolders,
+            onDismiss = { moveTarget = null },
+            onConfirm = { destination ->
+                moveTarget = null
+                onMove(target, destination)
             },
         )
     }
@@ -236,6 +253,8 @@ fun GroupFilesScreen(
                             onUploadVersion = { onUploadVersion(entry) },
                             onRename = { renameTarget = entry },
                             onDelete = { deleteTarget = entry },
+                            canMove = canMove,
+                            onMove = { moveTarget = entry },
                         )
                         HorizontalDivider(Modifier.padding(start = 56.dp))
                     }
@@ -253,6 +272,8 @@ private fun GroupFileRow(
     onUploadVersion: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    canMove: Boolean,
+    onMove: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     ListItem(
@@ -292,6 +313,14 @@ private fun GroupFileRow(
                             onClick = { menuOpen = false; onUploadVersion() },
                         )
                     }
+                    if (canMove) {
+                        DropdownMenuItem(
+                            text = { Text("移动到…") },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.DriveFileMove, null) },
+                            onClick = { menuOpen = false; onMove() },
+                            modifier = Modifier.testTag("group.files.entry.${entry.entryId.take(8)}.move"),
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("重命名") },
                         leadingIcon = { Icon(Icons.Filled.DriveFileRenameOutline, null) },
@@ -304,6 +333,97 @@ private fun GroupFileRow(
                     )
                 }
             }
+        },
+    )
+}
+
+/** 移动目标选择：浏览目录树（排除被移动条目自身），确认后以目标父目录执行移动。 */
+@Composable
+private fun MoveDialog(
+    entry: GroupFileEntry,
+    onListFolders: suspend (String?) -> List<GroupFileEntry>,
+    onDismiss: () -> Unit,
+    onConfirm: (String?) -> Unit,
+) {
+    var directoryId by remember(entry.entryId) { mutableStateOf<String?>(null) }
+    var breadcrumb by remember(entry.entryId) { mutableStateOf<List<GroupFileEntry>>(emptyList()) }
+    var folders by remember(entry.entryId, directoryId) { mutableStateOf<List<GroupFileEntry>?>(null) }
+    var failed by remember(entry.entryId, directoryId) { mutableStateOf(false) }
+
+    LaunchedEffect(entry.entryId, directoryId) {
+        failed = false
+        try {
+            folders = onListFolders(directoryId).filter { it.entryId != entry.entryId }
+        } catch (_: Exception) {
+            failed = true
+            folders = emptyList()
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag("group.files.move.dialog"),
+        title = { Text("移动“${entry.name}”") },
+        text = {
+            Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    TextButton(
+                        enabled = breadcrumb.isNotEmpty(),
+                        onClick = {
+                            breadcrumb = breadcrumb.dropLast(1)
+                            directoryId = breadcrumb.lastOrNull()?.entryId
+                        },
+                    ) { Text("上一级") }
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        if (breadcrumb.isEmpty()) "根目录" else breadcrumb.joinToString(" / ") { it.name },
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                when {
+                    failed -> Text("目录加载失败，请重试", color = MaterialTheme.colorScheme.error)
+                    folders == null -> Box(
+                        Modifier.fillMaxWidth().height(120.dp),
+                        contentAlignment = Alignment.Center,
+                    ) { CircularProgressIndicator() }
+
+                    folders!!.isEmpty() -> Box(
+                        Modifier.fillMaxWidth().height(120.dp),
+                        contentAlignment = Alignment.Center,
+                    ) { Text("这里没有子文件夹", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+
+                    else -> LazyColumn(Modifier.fillMaxWidth().height(220.dp)) {
+                        items(folders!!, key = { it.entryId }) { folder ->
+                            ListItem(
+                                modifier = Modifier
+                                    .clickable {
+                                        breadcrumb = breadcrumb + folder
+                                        directoryId = folder.entryId
+                                    }
+                                    .testTag("group.files.move.folder.${folder.entryId.take(8)}"),
+                                leadingContent = { Icon(Icons.Filled.Folder, null, tint = MaterialTheme.colorScheme.primary) },
+                                headlineContent = { Text(folder.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = directoryId != entry.parentId,
+                onClick = { onConfirm(directoryId) },
+                modifier = Modifier.testTag("group.files.move.confirm"),
+            ) { Text("移到这里") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, modifier = Modifier.testTag("group.files.move.cancel")) { Text("取消") }
         },
     )
 }

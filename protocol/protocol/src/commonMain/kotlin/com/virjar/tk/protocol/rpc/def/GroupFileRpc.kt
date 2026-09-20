@@ -57,4 +57,14 @@ interface GroupFileRpc {
     /** 类型化引用的打开校验：按当前群成员身份读取单个条目。 */
     @RpcMethod(8)
     suspend fun getEntry(chatId: String, entryId: String): GroupFileEntry
+    /** [commandId] 是一个 canonical UUID，在收到未知结果响应后复用；目标父目录为 null 表示根目录。 */
+    @com.virjar.tk.protocol.SinceProtocol(4)
+    @RpcMethod(9)
+    suspend fun move(
+        commandId: String,
+        chatId: String,
+        entryId: String,
+        targetParentId: String?,
+        expectedRevision: Long,
+    )
 }

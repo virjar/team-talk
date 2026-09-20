@@ -299,7 +299,7 @@ retirement 并发时 discard 单调胜出，以及导航、平台资源和 sessi
 
 群文件可靠命令以协议、临时 SQLite 和 PostgreSQL 进程内集成测试形成确定性门禁：
 
-- createFolder、createFile、addVersion、rename、delete 五类命令都必须先持久化稳定 identity，再做第一次
+- createFolder、createFile、addVersion、rename、move、delete 六类命令都必须先持久化稳定 identity，再做第一次
   RPC；网络、超时、408、429、5xx 和截断成功响应保留原 generation，重启后仍以相同 entryId/commandId
   重放，不能分配第二个身份；
 - 前台提交与后台恢复共用单一发送 mutex；前台在等待已在发送的 worker 前就固定持久
@@ -310,7 +310,7 @@ retirement 并发时 discard 单调胜出，以及导航、平台资源和 sessi
   后台拒绝再显示明确失败；目录进入、返回、祖先改名和删除恢复不能短暂复用上一层陈旧列表；
 - session 反馈 FIFO 覆盖等值连续通知、PENDING/REJECTED 交错、多宿主互斥租用和取消后接续；
   旧租约的迟到 complete 不得删除已经转交给新宿主的事件；
-- 服务端五类命令均断言收据、条目/版本、usage 与审计同事务提交。rename/delete 还要覆盖重启重放、
+- 服务端六类命令均断言收据、条目/版本、usage 与审计同事务提交。move 与 rename/delete 还要覆盖重启重放、
   多路并发精确投递、冲突 payload，以及首次提交后操作者离群时只有原 `Unit` 收据仍可确认；新命令继续
   按当前成员事实拒绝。
 

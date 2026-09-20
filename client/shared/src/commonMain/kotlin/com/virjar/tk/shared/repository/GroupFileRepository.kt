@@ -36,7 +36,7 @@ enum class GroupFileCommandSubmission {
 
 /** 群共享文件 SDK；上传仍由 [FileRepository] 完成，发布后才成为群文件版本。 */
 class GroupFileRepository internal constructor(
-    rpcClient: RpcInvoker,
+    private val rpcClient: RpcInvoker,
     private val localCache: LocalCache?,
     private val newEntryId: () -> String = { UUID.randomUUID().toString() },
     private val newCommandId: () -> String = { UUID.randomUUID().toString() },
@@ -258,6 +258,14 @@ class GroupFileRepository internal constructor(
                     pending.entryId,
                     requireNotNull(pending.expectedRevision),
                 )
+
+                PendingGroupFileCommandKind.MOVE -> rpc.move(
+                    pending.commandId,
+                    pending.chatId,
+                    pending.entryId,
+                    pending.parentId,
+                    requireNotNull(pending.expectedRevision),
+                )
             }
         } catch (failure: Exception) {
             if (failure.isDefinitiveReliableCommandRejection()) {
@@ -359,6 +367,35 @@ class GroupFileRepository internal constructor(
         entryId: String,
         expectedRevision: Long,
     ): Outcome<Unit> = outcome { rpc.delete(commandId, chatId, entryId, expectedRevision) }
+
+    /** 短暂断线沿用本会话已确认的能力；尚未协商时不猜测服务端版本。 */
+    val supportsMove: Boolean get() = try {
+        com.virjar.tk.protocol.rpc.gen.GroupFileRpcContract.METHOD_VERSIONS
+            .getValue(com.virjar.tk.protocol.rpc.gen.GroupFileRpcContract.M_MOVE)
+            .supports(rpcClient.negotiatedProtocolVersion)
+    } catch (_: com.virjar.tk.shared.client.TransportUnavailableException) {
+        false
+    }
+
+    /** App 边界：移动条目（目标父目录 null=根目录）在 RPC 之前持久化完整不可变命令。 */
+    suspend fun moveRecoverable(
+        chatId: String,
+        entryId: String,
+        targetParentId: String?,
+        expectedRevision: Long,
+    ): Outcome<GroupFileCommandSubmission> = withOutbox { cache ->
+        require(supportsMove) { "当前服务端尚未支持群文件移动" }
+        prepareAndSubmit(cache) {
+            PendingGroupFileCommand.move(
+                commandId = newCommandId(),
+                chatId = chatId,
+                targetParentId = targetParentId,
+                entryId = entryId,
+                expectedRevision = expectedRevision,
+                createdAt = nowMillis(),
+            )
+        }
+    }
 
     suspend fun deleteRecoverable(
         chatId: String,

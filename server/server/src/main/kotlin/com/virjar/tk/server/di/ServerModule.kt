@@ -499,6 +499,7 @@ internal fun createServerModule(
             pendingServiceReplies = { limit -> get<MessageRepository>().pendingServiceReplies(limit) },
         )
     }
+    single { com.virjar.tk.server.domain.groupfile.ChatFileAutoArchive(get<GroupFileService>()) }
     single {
         ServiceAccountMessages(
             messages = get(),
@@ -531,6 +532,7 @@ internal fun createServerModule(
             taskRefs = com.virjar.tk.server.domain.message.TaskRefResolver(get()),
             managedChats = get(),
             attachmentLifecycle = get(),
+            chatFileAutoArchive = get(),
         )
     }
     single {

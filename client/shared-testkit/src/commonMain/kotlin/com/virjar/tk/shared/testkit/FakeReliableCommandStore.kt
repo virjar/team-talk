@@ -274,6 +274,15 @@ internal class FakeReliableCommandStore(
                 checkNotNull(command.expectedRevision),
                 command.createdAt,
             )
+
+            PendingGroupFileCommandKind.MOVE -> PendingGroupFileCommand.move(
+                command.commandId,
+                command.chatId,
+                command.parentId,
+                command.entryId,
+                checkNotNull(command.expectedRevision),
+                command.createdAt,
+            )
         }
         check(canonical == command) { "Pending group-file command is not canonical" }
         return canonical

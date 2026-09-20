@@ -268,6 +268,35 @@ class GroupFilesFeature internal constructor(
         }
     }
 
+    val supportsMove: Boolean get() = session.groupFileRepo.supportsMove
+
+    /** 移动到目标文件夹（null=根目录）。可靠命令：断网时进入本地待发队列。 */
+    fun move(entry: GroupFileEntry, targetParentId: String?) {
+        val location = currentLocation() ?: return
+        if (entry.chatId != location.chatId) return
+        if (targetParentId == entry.parentId) return
+        scope.launch {
+            if (currentLocation() != location) return@launch
+            mutate(location, "移动失败") { target ->
+                localData.run {
+                    session.groupFileRepo.moveRecoverable(
+                        chatId = target.chatId,
+                        entryId = entry.entryId,
+                        targetParentId = targetParentId,
+                        expectedRevision = entry.revision,
+                    ).getOrThrow()
+                }
+            }
+        }
+    }
+
+    /** 移动对话框的目标目录浏览：只读权威页中的子文件夹列表。 */
+    suspend fun listFoldersForPicker(parentId: String?): List<GroupFileEntry> {
+        val chatId = chatId ?: return emptyList()
+        return localData.run { session.groupFileRepo.list(chatId, parentId).getOrThrow() }
+            .filter { it.kind == GroupFileEntry.KIND_FOLDER }
+    }
+
     fun rename(entry: GroupFileEntry, name: String) {
         val location = currentLocation() ?: return
         if (entry.chatId != location.chatId || entry.parentId != location.parentId) return
@@ -476,7 +505,10 @@ internal fun recoveredGroupFilePathConvergence(
     }
     return when (completion.kind) {
         PendingGroupFileCommandKind.RENAME -> RecoveredGroupFilePathConvergence.REFRESH_RENAMED_ENTRY
-        PendingGroupFileCommandKind.DELETE -> RecoveredGroupFilePathConvergence.LEAVE_DELETED_BRANCH
+        PendingGroupFileCommandKind.DELETE,
+        // 被移走的文件夹不再位于面包屑路径所指的位置：退出该分支并刷新。
+        PendingGroupFileCommandKind.MOVE,
+        -> RecoveredGroupFilePathConvergence.LEAVE_DELETED_BRANCH
         PendingGroupFileCommandKind.CREATE_FOLDER,
         PendingGroupFileCommandKind.CREATE_FILE,
         PendingGroupFileCommandKind.ADD_VERSION,
@@ -498,6 +530,10 @@ internal fun shouldConvergeRecoveredGroupFileCommand(
         PendingGroupFileCommandKind.RENAME,
         PendingGroupFileCommandKind.DELETE,
         -> completion.parentId == location.parentId
+
+        // MOVE 的 parentId 载荷是目标目录：目标目录或条目仍可见的来源目录都需刷新。
+        PendingGroupFileCommandKind.MOVE ->
+            completion.parentId == location.parentId || completion.entryId in visibleEntryIds
 
         PendingGroupFileCommandKind.ADD_VERSION ->
             selectedEntryId == completion.entryId || completion.entryId in visibleEntryIds

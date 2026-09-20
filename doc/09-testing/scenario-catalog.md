@@ -96,7 +96,7 @@
 | GFILE-03 | P1 | 上传新版本与查看历史 | 历史版本不可变，当前版本递增且均可打开 |
 | GFILE-04 | P1 | 并发修改与删除 | 陈旧 revision 被拒绝，非空目录不能删除，删除后引用 ACL 收回 |
 | GFILE-05 | P1 | Desktop / Android 入口 | 从群详情进入正确平台容器，上传、返回和刷新可完成 |
-| GFILE-06 | P0 | 五类可靠命令丢响应与精确重放 | createFolder/createFile/addVersion/rename/delete 在首次 RPC 前持久化稳定 identity；断网、超时、408/429/5xx、客户端重启和服务重启后复用原命令且只产生一份事实、收据、usage 变化和审计。rename/delete 的 `Unit` 收据为 `resultVersion = null`；精确重放可在条目后来变化或 actor 离群后确认原提交，不放行任何新命令或改写 payload |
+| GFILE-06 | P0 | 六类可靠命令丢响应与精确重放 | createFolder/createFile/addVersion/rename/move/delete 在首次 RPC 前持久化稳定 identity；断网、超时、408/429/5xx、客户端重启和服务重启后复用原命令且只产生一份事实、收据、usage 变化和审计。move/rename/delete 的 `Unit` 收据为 `resultVersion = null`；精确重放可在条目后来变化或 actor 离群后确认原提交，不放行任何新命令或改写 payload |
 | GFILE-07 | P0 | 双端离线页面与恢复反馈 | Desktop 仅隔离 TeamTalk 服务端点、Android 仅开本机飞行模式；离线仍显示本地群与目录，排队操作显示“操作已保存，稍后将自动重试”，发布/追加版本另断言 `ACTION=QUEUED`，进入/返回不闪现上一层条目；强停重开后恢复网络，重命名收敛、删除条目消失、待处理 outbox 清空，宿主机网络始终保持可用 |
 | DOC-01 | P0 | 父文档正文与子文档树 | 每个节点都有稳定文档身份；父文档可同时打开正文和展开子文档，列表只载摘要，Markdown 正文按需读取 |
 | DOC-02 | P0 | 文档空间个人/部门 ACL | 当前 steward、个人授权和实时部门归属正确合并；组织持有本身不授权，撤权或调离后立即拒绝，群成员资格不参与文档裁决 |

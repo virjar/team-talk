@@ -64,6 +64,11 @@ data class PendingGroupFileCommand(
                 canonicalName == null && canonicalAttachment == null &&
                     expectedRevision != null && expectedRevision > 0L,
             ) { "Pending group-file deletion shape is invalid" }
+
+            PendingGroupFileCommandKind.MOVE -> check(
+                canonicalName == null && canonicalAttachment == null &&
+                    expectedRevision != null && expectedRevision > 0L,
+            ) { "Pending group-file move shape is invalid" }
         }
         check(name == canonicalName && attachment == canonicalAttachment) {
             "Pending group-file payload is not canonical"
@@ -167,6 +172,25 @@ data class PendingGroupFileCommand(
             createdAt = createdAt,
         )
 
+        fun move(
+            commandId: String,
+            chatId: String,
+            targetParentId: String?,
+            entryId: String,
+            expectedRevision: Long,
+            createdAt: Long,
+        ): PendingGroupFileCommand = create(
+            commandId = commandId,
+            kind = PendingGroupFileCommandKind.MOVE,
+            entryId = entryId,
+            chatId = chatId,
+            parentId = targetParentId,
+            name = null,
+            attachment = null,
+            expectedRevision = expectedRevision,
+            createdAt = createdAt,
+        )
+
         fun delete(
             commandId: String,
             chatId: String,
@@ -256,6 +280,7 @@ enum class PendingGroupFileCommandKind(val code: Long) {
     ADD_VERSION(3),
     RENAME(4),
     DELETE(5),
+    MOVE(6),
     ;
 
     companion object {
@@ -292,6 +317,8 @@ private fun groupFileIntentKey(
     PendingGroupFileCommandKind.ADD_VERSION,
     PendingGroupFileCommandKind.RENAME,
     PendingGroupFileCommandKind.DELETE,
+    // MOVE 的 parentId 载荷是目标父目录；同一 entry 的变更仍互斥。
+    PendingGroupFileCommandKind.MOVE,
     -> "mutation|$chatId|$entryId"
 }
 

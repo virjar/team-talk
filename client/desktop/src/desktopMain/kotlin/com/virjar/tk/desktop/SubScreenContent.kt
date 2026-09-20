@@ -404,6 +404,11 @@ internal fun SubScreenContent(
                 onUploadVersion = ::chooseAndUpload,
                 onRename = presentationGate.guard(data.groupFiles::rename),
                 onDelete = presentationGate.guard(data.groupFiles::delete),
+                canMove = data.groupFiles.supportsMove,
+                onMove = presentationGate.guard { entry: com.virjar.tk.protocol.model.GroupFileEntry, target: String? ->
+                    data.groupFiles.move(entry, target)
+                },
+                onListFolders = { parentId -> data.groupFiles.listFoldersForPicker(parentId) },
                 onBack = onBack,
                 onClose = closeIfOpen,
             )

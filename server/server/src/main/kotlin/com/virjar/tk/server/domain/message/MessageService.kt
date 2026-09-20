@@ -52,7 +52,11 @@ class MessageService(
     private val contacts: ContactRepository,
     private val managedChats: ManagedChatPolicy = UnmanagedChatPolicy,
     private val attachmentLifecycle: AttachmentLifecycleGate = AttachmentLifecycleGate(),
+    /** 群聊文件自动归档（原始需求）；未接线时不归档，消息行为不变。 */
+    private val chatFileAutoArchive: com.virjar.tk.server.domain.groupfile.ChatFileAutoArchive? = null,
 ) {
+    private val logger = org.slf4j.LoggerFactory.getLogger(MessageService::class.java)
+
     private val attachmentSearch = MessageAttachmentSearchService(messages, search, access) { chatId ->
         chatStore.getChat(chatId)?.name.orEmpty()
     }
@@ -75,6 +79,30 @@ class MessageService(
             body = com.virjar.tk.protocol.body.buildRichTextBody(markdown),
         )
         return sendMessage(senderUid = com.virjar.tk.server.domain.user.SystemAccountUids.SERVICE, message = reply)
+    }
+
+    /**
+     * 群聊文件自动归档：ACK 前同步完成，非图片附件进入群空间固定文件夹；
+     * 条目与消息共享同一物理附件（引用独立计数，删除互不影响）。best-effort：
+     * 任何失败只记日志，绝不影响消息发送结果。
+     */
+    private suspend fun captureGroupChatFiles(
+        chatId: String,
+        senderUid: String,
+        committedMessage: Message,
+        messageChatType: Int,
+    ) {
+        val archive = chatFileAutoArchive ?: return
+        if (messageChatType != com.virjar.tk.protocol.model.ChatType.GROUP.code) return
+        val attachments = AttachmentPolicy.attachments(committedMessage)
+        if (attachments.isEmpty()) return
+        try {
+            archive.capture(chatId, senderUid, committedMessage.serverSeq, attachments)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            logger.warn("群文件自动归档失败：chatId={}, seq={}", chatId, committedMessage.serverSeq, failure)
+        }
     }
 
     /** 机器人可附加凭据校验；回调在聊天锁内同步执行，普通用户传 null。 */
@@ -142,6 +170,7 @@ class MessageService(
         // 不存在三方文件服务；完整 http URL 只是客户端/外部 SDK 对接形态）。
         // 断链消息在服务端拒绝，不能等对端点击才发现打不开。
         var pendingServiceReply: PendingServiceReply? = null
+        var messageChatType = 0
         val committedMessage = withAttachmentReferenceMutation(declaredMessage) {
             val canonicalMessage = attachmentService.resolve(declaredMessage, senderUid)
             attachmentService.markReferenced(canonicalMessage)
@@ -154,6 +183,7 @@ class MessageService(
 
             // 服务号指令（CODE-01）：记录与消息在同一持久化批次写入，原消息已提交而回复
             // 未完成时可按记录恢复。回复身份与正文在此冻结；未接线指令运行时不欠回复。
+            messageChatType = admission.chatType
             if (systemCommandHandler != null && senderUid != SystemAccountUids.SERVICE &&
                 SystemAccountUids.SERVICE in admission.recipientUids
             ) {
@@ -186,6 +216,7 @@ class MessageService(
             )
         }
         projector.drainPendingForMessageLocked(chatId, committedMessage.serverSeq)
+        captureGroupChatFiles(chatId, senderUid, committedMessage, messageChatType)
         val handler = systemCommandHandler
         if (handler != null) pendingServiceReply?.let(handler::dispatchServiceReply)
 
