@@ -2,6 +2,7 @@ package com.virjar.tk.server.infra.storage
 
 import com.virjar.tk.server.domain.message.MessageArchiveCursor
 import com.virjar.tk.server.domain.message.MessageOperationType
+import com.virjar.tk.server.domain.message.PendingServiceReply
 import com.virjar.tk.server.domain.message.MessageProjectionOperation
 import com.virjar.tk.server.domain.message.MessageProjectionTarget
 import com.virjar.tk.protocol.model.Message
@@ -72,6 +73,55 @@ internal object MessageStorePersistenceCodec {
             serverSeq = decodeSeq(value.copyOfRange(seqOffset, seqOffset + SEQ_BYTES)),
             clientContentHash = value.copyOfRange(seqOffset + SEQ_BYTES, value.size),
         )
+    }
+
+    fun buildPendingServiceReplyKey(chatId: String, clientMsgId: String): ByteArray =
+        PENDING_SERVICE_REPLY_PREFIX +
+            encodeKeyPart(chatId, MAX_CHAT_ID_BYTES, "chatId") +
+            encodeKeyPart(clientMsgId, MAX_CLIENT_MESSAGE_ID_BYTES, "clientMsgId")
+
+    fun encodePendingServiceReply(replyClientMsgId: String, markdown: String): ByteArray {
+        require(markdown.encodeToByteArray().size <= MAX_PENDING_SERVICE_REPLY_BYTES) {
+            "Pending service reply markdown is too large"
+        }
+        return ByteArrayOutputStream().use { bytes ->
+            DataOutputStream(bytes).use { output ->
+                output.writeInt(PENDING_SERVICE_REPLY_FORMAT_VERSION)
+                output.writeSizedString(replyClientMsgId, MAX_CLIENT_MESSAGE_ID_BYTES, "service reply clientMsgId")
+                output.writeSizedString(markdown, MAX_PENDING_SERVICE_REPLY_BYTES, "service reply markdown")
+            }
+            bytes.toByteArray()
+        }
+    }
+
+    fun decodePendingServiceReplyEntry(key: ByteArray, value: ByteArray): PendingServiceReply {
+        require(key.size > PENDING_SERVICE_REPLY_PREFIX.size) { "服务号回复记录键损坏" }
+        var offset = PENDING_SERVICE_REPLY_PREFIX.size
+        val chatLength = decodeKeyPartLength(key, offset)
+        require(chatLength in 1..MAX_CHAT_ID_BYTES) { "服务号回复记录 chatId 编码长度非法" }
+        val chatStart = offset + KEY_PART_HEADER_LENGTH
+        val clientMsgIdStart = Math.addExact(chatStart, chatLength)
+        require(clientMsgIdStart < key.size) { "服务号回复记录键损坏" }
+        val clientMsgIdLength = decodeKeyPartLength(key, clientMsgIdStart)
+        require(clientMsgIdLength in 1..MAX_CLIENT_MESSAGE_ID_BYTES) { "服务号回复记录 clientMsgId 编码长度非法" }
+        val clientMsgIdStartData = clientMsgIdStart + KEY_PART_HEADER_LENGTH
+        require(clientMsgIdStartData + clientMsgIdLength == key.size) { "服务号回复记录键损坏" }
+        val chatId = key.copyOfRange(chatStart, clientMsgIdStart).decodeToString(throwOnInvalidSequence = true)
+        val clientMsgId = key.copyOfRange(clientMsgIdStartData, key.size)
+            .decodeToString(throwOnInvalidSequence = true)
+        val reply = DataInputStream(ByteArrayInputStream(value)).use { input ->
+            require(input.readInt() == PENDING_SERVICE_REPLY_FORMAT_VERSION) {
+                "服务号回复记录格式版本损坏"
+            }
+            val replyClientMsgId = input.readSizedString(MAX_CLIENT_MESSAGE_ID_BYTES)
+            val markdown = input.readSizedString(MAX_PENDING_SERVICE_REPLY_BYTES)
+            require(input.read() == -1) { "服务号回复记录存在多余字节" }
+            PendingServiceReply(chatId, clientMsgId, replyClientMsgId, markdown)
+        }
+        require(key.contentEquals(buildPendingServiceReplyKey(chatId, clientMsgId))) {
+            "服务号回复记录键/值身份不一致"
+        }
+        return reply
     }
 
     fun buildRevisionKey(chatId: String, seq: Long): ByteArray =
@@ -310,6 +360,7 @@ internal object MessageStorePersistenceCodec {
     private val REVISION_PREFIX = byteArrayOf(0x06)
     val MESSAGE_PREFIX: ByteArray = byteArrayOf(0x07)
     private val CHAT_SEQUENCE_PREFIX = byteArrayOf(0x08)
+    val PENDING_SERVICE_REPLY_PREFIX: ByteArray = byteArrayOf(0x09)
     const val KEY_SEPARATOR_SIZE = 1
     const val KEY_SEPARATOR_BYTE: Byte = 0
     private val KEY_SEPARATOR = byteArrayOf(KEY_SEPARATOR_BYTE)
@@ -324,6 +375,9 @@ internal object MessageStorePersistenceCodec {
     private const val MAX_ATTACHMENT_PATH_BYTES = 16_384
     const val MAX_MESSAGE_BYTES = 16 * 1024 * 1024
     private const val MAX_OPERATION_BYTES = 32 * 1024 * 1024
+    private const val PENDING_SERVICE_REPLY_FORMAT_VERSION = 1
+    // 回复正文 = 原消息正文 + 固定帮助文本，远小于消息体预算；上限只拦异常编码。
+    private const val MAX_PENDING_SERVICE_REPLY_BYTES = 1024 * 1024
     private const val KEY_PART_HEADER_LENGTH = 4
     const val SEQ_BYTES = 8
     private const val SHA_256_LENGTH = 32

@@ -497,12 +497,18 @@ nextOccurrenceAt 与每期独立 taskId；系列锚点锁和同一事务中的�
 ### 服务号指令与运行时
 
 `MessageService` 在原消息提交后经 `SystemCommandHandler` 派发服务号文本消息。
-`SystemCommandRouter` 处理 `/help`，未知指令和普通文本返回帮助；回复以 `sys_service` 身份走正常
-消息发送链路。Router 的协程 scope 由 Application 运行时持有，关闭时取消并等待回复任务退出，
-不由领域服务另建后台任务。回复身份和关闭顺序见[服务端运行时](../03-architecture/server-runtime.md#2-启动顺序)。
+`ServiceCommandReplies` 持有指令解析（`/help` 显示帮助，未知指令和普通文本回退帮助）与回复身份
+派生的纯函数；回复以 `sys_service` 身份走正常消息发送链路。Router 的协程 scope 由 Application
+运行时持有，关闭时取消并等待回复任务退出，不由领域服务另建后台任务。回复身份和关闭顺序见
+[服务端运行时](../03-architecture/server-runtime.md#2-启动顺序)。
 
-原消息成功 ACK 不等待服务号回复。回复自身使用稳定消息 ID，但进程退出或回复失败后没有持久恢复
-与重试保证，不能将原消息 ACK 解释为回复已完成。
+原消息成功 ACK 不等待服务号回复，也不能把 ACK 解释为回复已完成；但回复不再依赖进程存活：
+`MessageStore` 在与原消息相同的持久化批次写入一条 `PendingServiceReply`（回复 clientMsgId 与
+正文在提交时冻结）。即时派发成功、或发送链以成员资格/正文预算等参数校验类拒绝终态放弃时，
+记录随发送结算删除；其他失败保留记录。幂等重放发现记录仍未结算时按冻结身份补派发一次；启动
+恢复在投影恢复之后、TCP 之前同步排空剩余记录。回复发送链本身按冻结 clientMsgId 幂等，因此任何
+时点的补发——重放补派发、启动恢复或两者竞争——都至多产生一条回复消息；发送者此后离群或被禁用
+只影响回复能否送达，原消息的幂等 ACK 始终返回原 serverSeq。
 
 ### 协议边界
 

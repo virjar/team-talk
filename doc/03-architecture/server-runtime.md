@@ -25,6 +25,7 @@ resolve Environment/dataRoot
   → audit/rebuild Lucene from the bounded authoritative MessageStore cursor, then open the index
   → start durable sync dispatcher and await its first successful PostgreSQL scan
   → recover pending message projections
+  → drain pending service command replies
   → start TCP server
   → start HTTP(S) server
   → expose health status
@@ -76,9 +77,10 @@ stopped”。唯一例外是显式 dependency-quiescence barrier：普通 closer
 已提交的文本消息。Router 拥有回复协程，保留取消语义；关闭先撤销后续派发，再沿有界关闭规则等待全部
 回复退出。它在 TCP 之后、同步分发与消息存储之前释放，并以实际 worker 终止状态保护底层资源。
 回复仍使用普通消息发送链：短原消息 ID 沿用 `svc-` 身份，超长 ID 使用独立前缀与完整 SHA-256 摘要。
-原消息成功 ACK 不等待回复，普通回复失败只记日志；进程死亡或回复失败后的持久重试尚未实现，不能将
-原消息幂等 ACK 理解为回复也一定完成。恢复语义的后续边界见[CODE-01](../10-reference/roadmap.md#code-01--代码结构与所有权收敛)。
-固定系统身份与人类会话投影的归属，以及旧投影的启动迁移，见[系统账号](../06-server/domain-services.md#14-系统账号)。
+原消息成功 ACK 不等待回复，也不能把 ACK 理解为回复已完成；回复与原消息在同一持久化批次留下冻结的
+待回复记录，启动时在投影恢复之后、TCP 之前同步排空，命令幂等重放在记录未结算时补派发一次，
+成功或终态拒绝即结算删除，暂态失败保留到下一次启动。恢复语义详见
+[系统账号](../06-server/domain-services.md#14-系统账号)。
 
 后台 maintenance 由一个 Application-owned 运行时一次性安装固定上限内的 worker，启动后不能动态追加。
 Application 资源 owner 与健康检查共用容器中的同一个实例；尚未启动、意外 worker 终止或开始关闭时，

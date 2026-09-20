@@ -484,9 +484,15 @@ internal fun createServerModule(
         )
     }
     single {
-        SystemCommandRouter(sendServiceReply = { chatId, clientMsgId, markdown ->
-            get<MessageService>().sendServiceReply(chatId, clientMsgId, markdown)
-        })
+        SystemCommandRouter(
+            sendServiceReply = { chatId, clientMsgId, markdown ->
+                get<MessageService>().sendServiceReply(chatId, clientMsgId, markdown)
+            },
+            settleServiceReply = { pending ->
+                get<MessageRepository>().markServiceReplySettled(pending.chatId, pending.clientMsgId)
+            },
+            pendingServiceReplies = { limit -> get<MessageRepository>().pendingServiceReplies(limit) },
+        )
     }
     single {
         MessageService(

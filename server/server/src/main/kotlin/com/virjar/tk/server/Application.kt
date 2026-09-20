@@ -308,10 +308,11 @@ internal fun Application.module(
         // PostgreSQL commit may precede the process-local wake. Do not recover projections, open
         // TCP, or install health routes until the mandatory durable fallback scan has succeeded.
         runBlocking(Dispatchers.IO) { syncEventDispatcher.awaitStartupScan() }
+        val systemCommandRouter = koin.get<SystemCommandRouter>()
         // 回复晚于原消息提交，必须在 TCP 关闭后、同步/存储关闭前实际排空。
         resources.ownDependencyBarrier(
             name = "system command replies",
-            resource = koin.get<SystemCommandRouter>(),
+            resource = systemCommandRouter,
             close = SystemCommandRouter::close,
             dependenciesMayClose = SystemCommandRouter::workersTerminated,
         )
@@ -328,6 +329,14 @@ internal fun Application.module(
         }
         if (recoveredProjections > 0) {
             logger.info("Recovered {} pending message projections", recoveredProjections)
+        }
+        // 服务号回复发件箱在投影恢复之后、TCP 之前同步排空：原消息已提交而回复
+        // 未完成的记录在这里按冻结身份补发；暂态失败留待下一次启动。
+        val recoveredServiceReplies = runBlocking(Dispatchers.IO) {
+            systemCommandRouter.recoverPendingServiceReplies()
+        }
+        if (recoveredServiceReplies > 0) {
+            logger.info("Attempted {} pending service command replies", recoveredServiceReplies)
         }
 
         val presenceCoordinator = resources.own(

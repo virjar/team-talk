@@ -121,6 +121,11 @@ class MessageService(
                 authorizeIdempotentBotRetry(chatId, authorizeAfterChatLock)
             }
             projector.drainPendingForMessageLocked(chatId, existing.serverSeq)
+            // 幂等重放不重新追加消息，也不改变原 ACK；若回复记录仍未结算
+            // （此前派发中断或失败），按记录冻结的身份与正文补派发一次。
+            systemCommandHandler?.let { handler ->
+                messages.findPendingServiceReply(chatId, existing.clientMsgId)?.let(handler::dispatchServiceReply)
+            }
             return existing.serverSeq
         }
 
@@ -136,7 +141,7 @@ class MessageService(
         // 消息契约：发送成功 = 引用的附件真实存在（文件只走本服务端文件存储，
         // 不存在三方文件服务；完整 http URL 只是客户端/外部 SDK 对接形态）。
         // 断链消息在服务端拒绝，不能等对端点击才发现打不开。
-        var targetedService = false
+        var pendingServiceReply: PendingServiceReply? = null
         val committedMessage = withAttachmentReferenceMutation(declaredMessage) {
             val canonicalMessage = attachmentService.resolve(declaredMessage, senderUid)
             attachmentService.markReferenced(canonicalMessage)
@@ -146,7 +151,21 @@ class MessageService(
                 canonicalMessage,
                 authorizeAfterChatLock,
             )
-            targetedService = SystemAccountUids.SERVICE in admission.recipientUids
+
+            // 服务号指令（CODE-01）：记录与消息在同一持久化批次写入，原消息已提交而回复
+            // 未完成时可按记录恢复。回复身份与正文在此冻结；未接线指令运行时不欠回复。
+            if (systemCommandHandler != null && senderUid != SystemAccountUids.SERVICE &&
+                SystemAccountUids.SERVICE in admission.recipientUids
+            ) {
+                pendingServiceReply = ServiceCommandReplies.commandText(declaredMessage.body)?.let { text ->
+                    PendingServiceReply(
+                        chatId = chatId,
+                        clientMsgId = declaredMessage.clientMsgId,
+                        replyClientMsgId = ServiceCommandReplies.replyId(declaredMessage.clientMsgId),
+                        markdown = ServiceCommandReplies.replyFor(text),
+                    )
+                }
+            }
 
             // 客户端只声明 chatId/clientMsgId/type/body；消息身份、时间和状态位全部由服务端重建。
             val candidate = canonicalMessage.copy(
@@ -163,34 +182,14 @@ class MessageService(
                 candidate,
                 clientDeclaredMessage,
                 MessageProjectionTarget(admission.chatType, admission.recipientUids),
+                pendingServiceReply,
             )
         }
         projector.drainPendingForMessageLocked(chatId, committedMessage.serverSeq)
-        maybeDispatchSystemCommand(senderUid, chatId, message, targetedService)
+        val handler = systemCommandHandler
+        if (handler != null) pendingServiceReply?.let(handler::dispatchServiceReply)
 
         return committedMessage.serverSeq
-    }
-
-    /**
-     * 服务号指令路由（内测反馈 T058）：发往 sys_service 的消息在其投影提交后进入异步
-     * 指令处理，回复以 sys_service 身份走正常发送链路；回复 clientMsgId 由原消息
-     * clientMsgId 派生，幂等重放不会产生重复回复。
-     */
-    private fun maybeDispatchSystemCommand(
-        senderUid: String,
-        chatId: String,
-        message: Message,
-        targetedService: Boolean,
-    ) {
-        val handler = systemCommandHandler ?: return
-        if (!targetedService || senderUid == SystemAccountUids.SERVICE) return
-        val text = when (val body = message.body) {
-            is com.virjar.tk.protocol.body.RichTextBody -> body.plainText
-            is com.virjar.tk.protocol.body.ReplyBody ->
-                com.virjar.tk.protocol.body.buildRichTextBody(body.content, body.assets).plainText
-            else -> return
-        }
-        handler.onServiceMessage(senderUid, chatId, message.clientMsgId, text)
     }
 
     suspend fun getHistory(uid: String, chatId: String, fromSeq: Long, limit: Int): List<Message> {

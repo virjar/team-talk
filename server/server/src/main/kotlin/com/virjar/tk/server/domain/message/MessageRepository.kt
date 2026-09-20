@@ -12,11 +12,14 @@ interface MessageRepository {
      * 幂等身份和投影可靠发件箱相同的持久化批次中分配下一个聊天本地序号。
      *
      * 一次精确的 `chatId + clientMsgId` 重放返回原始存储的消息，而不消耗另一个序号。
+     * `pendingServiceReply` 非空时，同一持久化批次还写下一份待回复的服务号指令记录：
+     * 原消息与“欠一条回复”要么同时可见，要么都不存在。
      */
     fun appendMessage(
         message: Message,
         idempotencyCandidate: Message,
         projectionTarget: MessageProjectionTarget,
+        pendingServiceReply: PendingServiceReply? = null,
     ): Message
     fun getMessage(chatId: String, seq: Long): Message?
     /**
@@ -45,6 +48,15 @@ interface MessageRepository {
     ): List<MessageProjectionOperation>
     fun isProjectionPending(operation: MessageProjectionOperation): Boolean
     fun markProjectionComplete(operation: MessageProjectionOperation)
+
+    /** 精确取回一条仍未结算的服务号回复记录；回复已完成或被终态放弃后不存在。 */
+    fun findPendingServiceReply(chatId: String, clientMsgId: String): PendingServiceReply? = null
+
+    /** 按扫描顺序列出仍未结算的服务号回复，供启动恢复排空。 */
+    fun pendingServiceReplies(limit: Int = 100): List<PendingServiceReply> = emptyList()
+
+    /** 结算一条服务号回复记录（成功送达或终态放弃），删除“欠回复”事实。 */
+    fun markServiceReplySettled(chatId: String, clientMsgId: String) {}
 
     fun getAttachmentChatIds(path: String): Set<String>
 

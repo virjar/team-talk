@@ -9,6 +9,7 @@ import com.virjar.tk.server.domain.message.MAX_MESSAGE_ARCHIVE_PAGE_SIZE
 import com.virjar.tk.server.domain.message.MessageOperationType
 import com.virjar.tk.server.domain.message.MessageProjectionOperation
 import com.virjar.tk.server.domain.message.MessageProjectionTarget
+import com.virjar.tk.server.domain.message.PendingServiceReply
 import com.virjar.tk.server.domain.message.MessageRepository
 import com.virjar.tk.protocol.model.Message
 import org.rocksdb.*
@@ -39,6 +40,7 @@ private val directMessageStoreDatabaseCloser = MessageStoreDatabaseCloser(::clos
  * - messageRevision: [0x06][chatId part][8B seq] → 最新操作 revision
  * - attachmentChatIndex: [0x03][path][0x00][chatId][0x00][8B seq] → 空值
  * - chatSequence: [0x08][chatId part] → 最新已分配的持久消息 seq
+ * - pendingServiceReply: [0x09][chatId part][clientMsgId part] → 回复身份与冻结正文；回复结算后删除
  *
  * seq high-water 与新消息、幂等索引和 CREATE outbox 同批写入；PostgreSQL Chat.maxSeq 是投影。
  */
@@ -108,6 +110,7 @@ class MessageStore(
         message: Message,
         idempotencyCandidate: Message,
         projectionTarget: MessageProjectionTarget,
+        pendingServiceReply: PendingServiceReply?,
     ): Message = withDatabase { database ->
         require(message.serverSeq == 0L) { "新消息的 serverSeq 必须由 MessageStore 分配" }
         require(message.flags and Message.FLAG_REVOKED == 0) {
@@ -129,6 +132,7 @@ class MessageStore(
             clientContentHash = clientContentHash,
             sequenceKey = sequenceKey,
             sequenceHighWater = stored.serverSeq,
+            pendingServiceReply = pendingServiceReply,
         )
         stored
     }
@@ -173,6 +177,7 @@ class MessageStore(
         clientContentHash: ByteArray,
         sequenceKey: ByteArray,
         sequenceHighWater: Long,
+        pendingServiceReply: PendingServiceReply? = null,
     ) {
         val seq = message.serverSeq
 
@@ -200,6 +205,12 @@ class MessageStore(
                 records.buildRevisionKey(message.chatId, seq),
                 records.encodeSeq(records.INITIAL_REVISION),
             )
+            pendingServiceReply?.let { reply ->
+                batch.put(
+                    records.buildPendingServiceReplyKey(reply.chatId, reply.clientMsgId),
+                    records.encodePendingServiceReply(reply.replyClientMsgId, reply.markdown),
+                )
+            }
             batch.put(records.buildOperationKey(operation), records.encodeProjectionOperation(operation))
             AttachmentPolicy.attachments(message).forEach { attachment ->
                 batch.put(records.buildAttachmentIndexKey(attachment.path, message.chatId, seq), records.EMPTY_VALUE)
@@ -460,6 +471,38 @@ class MessageStore(
             iterator.status()
         }
         return pending
+    }
+
+    override fun findPendingServiceReply(chatId: String, clientMsgId: String): PendingServiceReply? =
+        withDatabaseOrNull { database ->
+            val key = records.buildPendingServiceReplyKey(chatId, clientMsgId)
+            val value = database.get(key) ?: return@withDatabaseOrNull null
+            records.decodePendingServiceReplyEntry(key, value)
+        }
+
+    override fun pendingServiceReplies(limit: Int): List<PendingServiceReply> {
+        require(limit > 0) { "Service reply page size must be positive" }
+        return withDatabaseOrNull { database ->
+            val pending = mutableListOf<PendingServiceReply>()
+            database.newIterator().use { iterator ->
+                iterator.seek(records.PENDING_SERVICE_REPLY_PREFIX)
+                while (iterator.isValid && pending.size < limit &&
+                    iterator.key().startsWith(records.PENDING_SERVICE_REPLY_PREFIX)
+                ) {
+                    pending += records.decodePendingServiceReplyEntry(iterator.key(), iterator.value())
+                    iterator.next()
+                }
+                iterator.status()
+            }
+            pending
+        }.orEmpty()
+    }
+
+    @Synchronized
+    override fun markServiceReplySettled(chatId: String, clientMsgId: String) {
+        withDatabase { database ->
+            database.delete(records.buildPendingServiceReplyKey(chatId, clientMsgId))
+        }
     }
 
     @Synchronized

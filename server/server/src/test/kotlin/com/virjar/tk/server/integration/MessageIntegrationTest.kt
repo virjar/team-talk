@@ -13,6 +13,7 @@ import com.virjar.tk.protocol.body.buildMentionMarkdown
 import com.virjar.tk.protocol.body.buildRichTextBody
 import com.virjar.tk.server.domain.message.MessageProjectionOperation
 import com.virjar.tk.server.domain.message.MessageProjectionTarget
+import com.virjar.tk.server.domain.message.PendingServiceReply
 import com.virjar.tk.server.domain.message.MessageRepository
 import com.virjar.tk.server.domain.message.MAX_MESSAGE_SEARCH_QUERY_CHARS
 import com.virjar.tk.server.domain.message.MessageSearch
@@ -954,12 +955,13 @@ private class FailFirstMessageAppend(
         message: Message,
         idempotencyCandidate: Message,
         projectionTarget: MessageProjectionTarget,
+        pendingServiceReply: PendingServiceReply?,
     ): Message {
         if (!failed) {
             failed = true
             throw InjectedMessageArchiveFailure()
         }
-        return delegate.appendMessage(message, idempotencyCandidate, projectionTarget)
+        return delegate.appendMessage(message, idempotencyCandidate, projectionTarget, pendingServiceReply)
     }
 }
 
