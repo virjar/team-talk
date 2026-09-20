@@ -1,0 +1,7 @@
+-- v0.0.4 开发期单步迁移：会话级本地标记（本机「标为未读」与本机清空聊天记录水位）。
+-- 纯新增对象，全程 IF NOT EXISTS，旧库认领重放与新库直建互不冲突。
+CREATE TABLE IF NOT EXISTS conversation_local_flag (
+    chat_id TEXT PRIMARY KEY NOT NULL,
+    manual_unread INTEGER NOT NULL DEFAULT 0,
+    cleared_before_seq INTEGER NOT NULL DEFAULT 0
+);

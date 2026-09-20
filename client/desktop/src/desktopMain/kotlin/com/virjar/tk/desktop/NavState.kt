@@ -32,6 +32,17 @@ sealed class SubScreen {
     data object SearchMessages : SubScreen()
     data class Forward(val message: Message) : SubScreen()
 
+    /**
+     * 会话工具窗口：聊天头部「···」进入，承载发起群聊、清空聊天记录等会话级操作。
+     * 只携带稳定身份与展示名；业务状态仍从 LocalCache 投影读取。
+     */
+    data class ChatTools(
+        val chatId: String,
+        val chatName: String,
+        val chatType: Int,
+        val peerUid: String? = null,
+    ) : SubScreen()
+
     // ── 聊天右侧检查器 ──
     data class GroupDetail(val chatId: String) : SubScreen()
     data class InviteMembers(val chatId: String) : SubScreen()
@@ -59,6 +70,7 @@ sealed class SubScreen {
             is CreateGroup -> 560.dp
             SearchMessages -> 560.dp
             is Forward -> 500.dp
+            is ChatTools -> 360.dp
             GlobalSearch -> 560.dp
             else -> 500.dp
         }

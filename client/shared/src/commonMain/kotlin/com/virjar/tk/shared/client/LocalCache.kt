@@ -589,6 +589,19 @@ interface LocalCache : LocalDocumentProjection {
     fun deleteConversation(chatId: String)
 
     /**
+     * 本机「标为未读」：叠加在派生未读之上的持久显示事实（无未读时徽标显示 1），
+     * 不向服务端镜像。任何本机读取推进（进入会话、标记已读）都会自动清除。
+     */
+    fun setConversationMarkedUnread(chatId: String, marked: Boolean)
+
+    /**
+     * 清空单个会话的本机聊天记录：删除已确认消息、回应与已结算外发回执，
+     * 并持久化清空水位，使后续历史拉取与事件重放不再把水位之前的消息落库。
+     * 只影响本机：不通知其他设备，不改写会话身份与已读水位语义；进行中的发送不受影响。
+     */
+    fun clearChatHistory(chatId: String)
+
+    /**
      * 为一次服务端会话全量请求分配唯一代次。必须在发起 RPC 之前调用。
      *
      * 代次同时为请求期间到达的 CHAT / CONVERSATION 实时事件建立边界，

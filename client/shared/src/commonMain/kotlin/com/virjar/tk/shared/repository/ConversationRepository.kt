@@ -135,6 +135,11 @@ class ConversationRepository internal constructor(
         localCache.deleteConversation(chatId)
     }
 
+    /** 标为未读是纯本地显示事实：没有 RPC，也不参与协议契约。 */
+    suspend fun setMarkedUnread(chatId: String, marked: Boolean): Outcome<Unit> = outcome {
+        localCache.setConversationMarkedUnread(chatId, marked)
+    }
+
     /**
      * 收集一份逻辑权威快照，且不发布部分页面。调用方建立的 LocalCache
      * 代次会把与任何分页请求重叠的事件都挡在栅栏外。

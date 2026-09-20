@@ -443,6 +443,16 @@ CREATE TABLE IF NOT EXISTS conversation_read_validation (
     read_seq INTEGER NOT NULL CHECK(read_seq > 0)
 );
 
+-- 会话级本地标记，独立于服务端投影（协议 Conversation 模型不含这些字段）：
+-- manual_unread 是本机「标为未读」显示意图，读取推进后清除；
+-- cleared_before_seq 是本机清空聊天记录水位，server_seq <= 水位的服务端权威消息
+-- 不再落库或展示，新消息（seq > 水位）不受影响。行随 conversation 生命周期删除。
+CREATE TABLE IF NOT EXISTS conversation_local_flag (
+    chat_id TEXT PRIMARY KEY NOT NULL,
+    manual_unread INTEGER NOT NULL DEFAULT 0,
+    cleared_before_seq INTEGER NOT NULL DEFAULT 0
+);
+
 -- 当前账号的服务端投影检查点。dataset identity 与 cursor 必须同一行、同一事务提交；
 -- 旧连接只能在 dataset_id 仍匹配时推进 cursor。
 CREATE TABLE IF NOT EXISTS sync_state (
@@ -1355,6 +1365,11 @@ DELETE FROM outgoing_message WHERE local_ordinal = ?;
 deleteOutgoingMessagesByChat:
 DELETE FROM outgoing_message WHERE chat_id = ?;
 
+-- 清空聊天记录：只回收已结算（成功回执 / 终态失败）的外发行；active 状态是发送恢复事实，
+-- 与可靠发件箱语义一致，绝不清空。
+deleteSettledOutgoingMessagesByChat:
+DELETE FROM outgoing_message WHERE chat_id = ? AND state IN (3, 4);
+
 updateMessageSeqStatus:
 UPDATE message SET server_seq = ?, send_status = 0, outgoing_failure_code = NULL
 WHERE chat_id = ? AND client_msg_id = ? AND server_seq = 0;
@@ -1380,6 +1395,12 @@ WHERE chat_id = ? AND client_msg_id = ? AND sender_uid = ? AND server_seq = 0 AN
 
 deleteMessagesByChat:
 DELETE FROM message WHERE chat_id = ?;
+
+-- 清空聊天记录：删除权威历史与终态失败的乐观投影（失败气泡不复活）；
+-- 进行中的乐观发送（send_status 0/1）保持不动，其 ACK 会以 seq > 清空水位的新消息落地。
+clearChatMessagesByChat:
+DELETE FROM message
+WHERE chat_id = ? AND (server_seq > 0 OR (server_seq = 0 AND send_status = 2));
 
 selectAllConversations:
 SELECT * FROM conversation ORDER BY is_pinned DESC, last_msg_timestamp DESC;
@@ -1451,6 +1472,19 @@ DELETE FROM conversation_read_outbox WHERE chat_id = ?;
 
 updatePeerReadSeq:
 UPDATE conversation SET peer_read_seq = ? WHERE chat_id = ?;
+
+selectAllConversationLocalFlags:
+SELECT * FROM conversation_local_flag ORDER BY chat_id;
+
+upsertConversationLocalFlag:
+INSERT OR REPLACE INTO conversation_local_flag(chat_id, manual_unread, cleared_before_seq)
+VALUES (?, ?, ?);
+
+selectClearedBeforeSeq:
+SELECT cleared_before_seq FROM conversation_local_flag WHERE chat_id = ?;
+
+deleteConversationLocalFlag:
+DELETE FROM conversation_local_flag WHERE chat_id = ?;
 
 selectSyncState:
 SELECT dataset_id, cursor FROM sync_state WHERE singleton_id = 1;

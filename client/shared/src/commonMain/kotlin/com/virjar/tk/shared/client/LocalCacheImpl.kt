@@ -281,6 +281,7 @@ class LocalCacheImpl internal constructor(
                     queries.deleteConversationDraftOutbox(chatId)
                     queries.deleteConversationReadOutbox(chatId)
                     queries.deleteConversationReadValidation(chatId)
+                    queries.deleteConversationLocalFlag(chatId)
                     queries.deleteBotMessagesByChat(chatId)
                     queries.deleteOutgoingMessagesByChat(chatId)
                     queries.deleteMessagesByChat(chatId)
@@ -736,6 +737,34 @@ class LocalCacheImpl internal constructor(
     override fun observeConversation(chatId: String): Flow<Conversation?> = conversations.observeConversation(chatId)
     override fun upsertConversation(conv: Conversation) = conversations.upsertConversation(conv)
     override fun deleteConversation(chatId: String) = conversations.deleteConversation(chatId)
+
+    override fun setConversationMarkedUnread(chatId: String, marked: Boolean) =
+        conversations.setManualUnread(chatId, marked)
+
+    override fun clearChatHistory(chatId: String) {
+        require(chatId.isNotBlank()) { "chatId must not be blank" }
+        cacheUseGate.use {
+            synchronized(stateLock) {
+                // 会话事件可能领先消息行（撤回等空档 seq）；水位取两个来源的最大值，
+                // 保证清空后 published 摘要一定被抑制。
+                val clearedBeforeSeq = maxOf(
+                    conversations.lastKnownConversationHeadLocked(chatId),
+                    queries.selectLatestConfirmedMessageSeq(chatId).executeAsOne(),
+                )
+                queries.transaction {
+                    queries.clearChatMessagesByChat(chatId)
+                    queries.deleteAllMessageReactionsForChat(chatId)
+                    queries.deleteSettledOutgoingMessagesByChat(chatId)
+                    conversations.setClearedBeforeSeqLocked(chatId, clearedBeforeSeq)
+                }
+                messages.invalidateChatHistoryLocked(chatId)
+                conversations.publishLocalFlagOverlayLocked()
+                messages.resetResidentChatLocked(chatId)
+                reactions.refreshResidentAfterPrune(chatId)
+            }
+        }
+    }
+
     override fun beginConversationSnapshot(): Long = conversations.beginConversationSnapshot()
     override fun applyConversationSnapshot(
         snapshotGeneration: Long,

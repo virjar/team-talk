@@ -32,6 +32,10 @@ internal class LocalConversationProjectionStore(
     /** 存在一个 key 且值为 null 表示一次显式本地清空。 */
     private val localDraftOverrides = LinkedHashMap<String, LocalDraftOverride>()
     private val pendingReadsByChatId = LinkedHashMap<String, LocalConversationRead>()
+    /** 本机「标为未读」：叠加在派生未读之上的持久显示事实，读取推进后清除。 */
+    private val manualUnreadByChatId = LinkedHashMap<String, Boolean>()
+    /** 本机清空聊天记录水位：seq <= 水位的权威消息不落库、不作为会话摘要展示。 */
+    private val clearedBeforeSeqByChatId = LinkedHashMap<String, Long>()
     private var draftCharacterCount = 0L
     private var draftUtf8ByteCount = 0L
     /** 会话级唯一性隔断迟到的 ACK，而不为每个访问过的 chat 保留一个计数器。 */
@@ -41,6 +45,10 @@ internal class LocalConversationProjectionStore(
         queries.selectAllConversations().executeAsList().forEach { row ->
             val conversation = row.toLocalModel()
             conversationsById[conversation.chatId] = conversation
+        }
+        queries.selectAllConversationLocalFlags().executeAsList().forEach { row ->
+            if (row.manual_unread != 0L) manualUnreadByChatId[row.chat_id] = true
+            if (row.cleared_before_seq > 0L) clearedBeforeSeqByChatId[row.chat_id] = row.cleared_before_seq
         }
         replaceAllDraftOverridesLocked(
             queries.selectAllConversationDraftOutbox().executeAsList().associate { row ->
@@ -182,6 +190,7 @@ internal class LocalConversationProjectionStore(
                     queries.deleteConversationDraftOutbox(chatId)
                     queries.deleteConversationReadOutbox(chatId)
                     queries.deleteConversationReadValidation(chatId)
+                    queries.deleteConversationLocalFlag(chatId)
                     queries.deleteConversation(chatId)
                 }
             }
@@ -192,6 +201,8 @@ internal class LocalConversationProjectionStore(
                 projectedConversations.remove(chatId)
                 projectedOverrides.remove(chatId)
                 pendingReadsByChatId.remove(chatId)
+                manualUnreadByChatId.remove(chatId)
+                clearedBeforeSeqByChatId.remove(chatId)
             }
             mergePlans.forEach { plan ->
                 publishReadPlanLocked(plan.conversation.chatId, plan.pendingRead)
@@ -211,14 +222,60 @@ internal class LocalConversationProjectionStore(
                 queries.deleteConversationDraftOutbox(chatId)
                 queries.deleteConversationReadOutbox(chatId)
                 queries.deleteConversationReadValidation(chatId)
+                queries.deleteConversationLocalFlag(chatId)
                 queries.deleteConversation(chatId)
             }
             replaceDraftOverrideLocked(chatId, null)
             pendingReadsByChatId.remove(chatId)
+            removeLocalFlagsLocked(chatId)
             conversationsById.remove(chatId)
             publishConversations()
             // 通过常量空间代际隔断保留删除，即使不存在任何行。
             markConversationMutatedLocked(chatId)
+        }
+    }
+
+    /**
+     * 本机「标为未读」：纯显示事实，不向服务端镜像。叠加规则见 [applyLocalOverlay]；
+     * 任何本机读取推进（[enqueueConversationRead]）都会清除该标记。
+     */
+    fun setManualUnread(chatId: String, marked: Boolean) = cacheUseGate.use {
+        require(chatId.isNotBlank()) { "chatId must not be blank" }
+        synchronized(stateLock) {
+            if ((manualUnreadByChatId[chatId] == true) == marked) return@synchronized
+            if (marked) manualUnreadByChatId[chatId] = true else manualUnreadByChatId.remove(chatId)
+            persistLocalFlagLocked(chatId)
+            publishConversations()
+            markConversationMutatedLocked(chatId)
+        }
+    }
+
+    /** 调用方持有 [stateLock] 并处于外层清空事务中：只写 SQL 与内存水位，不发布。 */
+    fun setClearedBeforeSeqLocked(chatId: String, clearedBeforeSeq: Long) {
+        if (clearedBeforeSeq > 0L) clearedBeforeSeqByChatId[chatId] = clearedBeforeSeq
+        else clearedBeforeSeqByChatId.remove(chatId)
+        persistLocalFlagLocked(chatId)
+    }
+
+    /** 调用方持有 [stateLock]；清空事务已提交后用抑制后的摘要重新发布。 */
+    fun publishLocalFlagOverlayLocked() {
+        publishConversations()
+    }
+
+    /** 调用方持有 [stateLock]。 */
+    private fun removeLocalFlagsLocked(chatId: String) {
+        manualUnreadByChatId.remove(chatId)
+        clearedBeforeSeqByChatId.remove(chatId)
+    }
+
+    /** 调用方持有 [stateLock]。两个标记都回到默认值时删除整行，表只保留有事实的会话。 */
+    private fun persistLocalFlagLocked(chatId: String) {
+        val manualUnread = manualUnreadByChatId[chatId] == true
+        val cleared = clearedBeforeSeqByChatId[chatId] ?: 0L
+        if (!manualUnread && cleared <= 0L) {
+            queries.deleteConversationLocalFlag(chatId)
+        } else {
+            queries.upsertConversationLocalFlag(chatId, if (manualUnread) 1L else 0L, cleared)
         }
     }
 
@@ -253,6 +310,8 @@ internal class LocalConversationProjectionStore(
                 queries.markConversationRead(readSeq, chatId)
             }
             pendingReadsByChatId[chatId] = next
+            // 本机读取意图一旦推进，「标为未读」就失去意义：打开会话与列表「标记已读」都经过这里。
+            if (manualUnreadByChatId.remove(chatId) == true) persistLocalFlagLocked(chatId)
             conversationsById[chatId]?.let { conversation ->
                 conversationsById[chatId] = applyConversationRead(conversation, readSeq)
                 publishConversations()
@@ -407,6 +466,7 @@ internal class LocalConversationProjectionStore(
     fun removeChatProjectionLocked(chatId: String) {
         replaceDraftOverrideLocked(chatId, null)
         pendingReadsByChatId.remove(chatId)
+        removeLocalFlagsLocked(chatId)
         conversationsById.remove(chatId)
         publishConversations()
     }
@@ -519,6 +579,10 @@ internal class LocalConversationProjectionStore(
     private fun latestConfirmedMessageSeqLocked(chatId: String): Long =
         queries.selectLatestConfirmedMessageSeq(chatId).executeAsOne()
 
+    /** 调用方持有 [stateLock]。会话事件可能领先消息行；清空水位取两者最大值。 */
+    fun lastKnownConversationHeadLocked(chatId: String): Long =
+        conversationsById[chatId]?.lastSeq ?: 0L
+
     /** Part of the caller's transaction; publish the replacement only after all SQL succeeds. */
     private fun persistReadPlanLocked(chatId: String, read: LocalConversationRead?) {
         val current = pendingReadsByChatId[chatId]
@@ -621,7 +685,23 @@ internal class LocalConversationProjectionStore(
     }
 
     private fun publishConversations() {
-        conversationsFlow.value = sortConversations(conversationsById.values)
+        conversationsFlow.value = sortConversations(conversationsById.values.map(::applyLocalOverlay))
+    }
+
+    /**
+     * 发布前的本地叠加层：conversationsById 保持纯服务端投影 + 读取/草稿合成，
+     * 手动未读与清空水位只改写对外快照，因此任何合并路径都不需要感知它们。
+     */
+    private fun applyLocalOverlay(conversation: Conversation): Conversation {
+        var result = conversation
+        val cleared = clearedBeforeSeqByChatId[conversation.chatId] ?: 0L
+        if (cleared > 0L && conversation.lastSeq <= cleared) {
+            result = result.copy(lastMessage = null, lastMessageType = null)
+        }
+        if (manualUnreadByChatId[conversation.chatId] == true && result.unreadCount <= 0) {
+            result = result.copy(unreadCount = 1)
+        }
+        return result
     }
 }
 

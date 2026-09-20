@@ -183,6 +183,22 @@ class ChatFeature(
         }
     }
 
+    /**
+     * 清空单个会话的本机聊天记录（不影响其他设备，也不改变会话与已读水位）。
+     * 返回 null 表示成功，否则为可展示的失败原因（由调用页面就地呈现）。
+     */
+    suspend fun clearChatHistory(chatId: String): String? {
+        if (!destroyGate.acceptsWork) return "会话已关闭"
+        return try {
+            localData.run { session.localCache.clearChatHistory(chatId) }
+            null
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (failure: Throwable) {
+            "清空聊天记录失败：${failure.message ?: "未知错误"}"
+        }
+    }
+
     private fun reportLocalMutationFailure(failure: Throwable, fallback: String) {
         if (failure is CancellationException) throw failure
         scope.launch { reportError(failure, fallback) }

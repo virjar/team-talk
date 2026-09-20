@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -75,6 +76,8 @@ internal fun ChatPanelWrapper(
     /** 提供引用候选；null 时附件面板不显示文档/群文件入口。 */
     officeRefHost: com.virjar.tk.app.navigation.AppDataState? = null,
     onGroupSettings: () -> Unit,
+    /** 打开会话工具窗口（发起群聊、清空聊天记录等会话级操作）。 */
+    onOpenChatTools: () -> Unit,
     resolveSender: ((uid: String) -> User?)? = null,
     voicePlayback: VoicePlaybackController,
     onMentionClick: ((uid: String) -> Unit)? = null,
@@ -242,7 +245,7 @@ internal fun ChatPanelWrapper(
                 },
             ),
     ) {
-        // 群名称保持纯标题；设置使用明确的齿轮入口，打开聊天右侧检查器。
+        // 群名称保持纯标题；群设置走齿轮检查器，「···」对所有会话类型打开会话工具窗口。
         val isGroup = ChatType.fromCode(chatType) == ChatType.GROUP
         ListHeader(
             title = chatName.ifEmpty { chatId.take(16) },
@@ -259,6 +262,17 @@ internal fun ChatPanelWrapper(
                             modifier = Modifier.size(Tk.dimens.iconSize),
                         )
                     }
+                }
+                IconButton(
+                    onClick = presentationGate.guard(onOpenChatTools),
+                    modifier = Modifier.size(40.dp).testTag("chat.tools"),
+                ) {
+                    Icon(
+                        Icons.Filled.MoreHoriz,
+                        contentDescription = "会话设置",
+                        tint = Tk.colors.secondaryText,
+                        modifier = Modifier.size(Tk.dimens.iconSize),
+                    )
                 }
             },
         )

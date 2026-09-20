@@ -139,6 +139,15 @@ class ConversationViewModel(
             }
         }
     }
+
+    /** 本机「标为未读」：本地立即生效；进入会话或标记已读后由 SDK 自动清除。 */
+    fun setMarkedUnread(chatId: String, marked: Boolean) {
+        scope.launch {
+            runViewModelAction("标为未读失败") {
+                localData.run { conversationRepo.setMarkedUnread(chatId, marked).getOrThrow() }
+            }
+        }
+    }
 }
 
 /** 避免用在途乐观消息或比会话快照更新的正文覆盖这一行的已确认摘要。 */

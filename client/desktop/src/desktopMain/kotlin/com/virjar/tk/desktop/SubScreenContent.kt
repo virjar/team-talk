@@ -173,6 +173,24 @@ internal fun SubScreenContent(
             initialSelectedUids = screen.preselectedUids,
         )
 
+        is SubScreen.ChatTools -> ChatToolsScreen(
+            chatName = screen.chatName,
+            isGroup = com.virjar.tk.protocol.model.ChatType.fromCode(screen.chatType) ==
+                com.virjar.tk.protocol.model.ChatType.GROUP,
+            onCreateGroup = {
+                navigateIfOpen(
+                    SubScreen.CreateGroup(screen.peerUid?.let { uid -> setOf(uid) } ?: emptySet()),
+                )
+            },
+            onClearHistory = {
+                admittedSuspend(onClosed = { "会话已关闭" }) {
+                    data.chat.clearChatHistory(screen.chatId)
+                }
+            },
+            onFinished = backIfOpen,
+            onBack = onBack,
+        )
+
         is SubScreen.GroupDetail -> {
             val detailReady = data.groups.detailTargetChatId == screen.chatId
             val detailChat = data.groups.detailChat?.takeIf { detailReady && it.chatId == screen.chatId }

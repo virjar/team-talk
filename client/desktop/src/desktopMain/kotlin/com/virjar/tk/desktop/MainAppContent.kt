@@ -457,6 +457,9 @@ private fun MainListPane(
                                     nav.chat.markConversationRead(chatId, lastSeq)
                                 }
                             },
+                            onMarkUnread = presentationGate.guard { chatId: String ->
+                                nav.conversationViewModel.setMarkedUnread(chatId, true)
+                            },
                             peerUsers = conversationPeerUsers,
                             peerRemarks = peerRemarks,
                             groupMembers = groupMembers,
@@ -661,6 +664,18 @@ private fun RowScope.MainContentPane(
                             },
                             onGroupSettings = presentationGate.guard {
                                 nav.chatId?.let { nav.openScreen(SubScreen.GroupDetail(it)) }
+                            },
+                            onOpenChatTools = presentationGate.guard {
+                                nav.chatId?.let { chatId ->
+                                    nav.openScreen(
+                                        SubScreen.ChatTools(
+                                            chatId = chatId,
+                                            chatName = activeChatName,
+                                            chatType = activeChatType,
+                                            peerUid = activeConversation?.peerUid,
+                                        ),
+                                    )
+                                }
                             },
                         )
                     }
@@ -900,6 +915,7 @@ internal fun desktopTelemetryPage(screen: SubScreen): ClientUiPage = when (scree
     SubScreen.SearchUsers -> ClientUiPage.SEARCH_USERS
     is SubScreen.JoinByInvite -> ClientUiPage.JOIN_BY_INVITE
     is SubScreen.CreateGroup -> ClientUiPage.CREATE_GROUP
+    is SubScreen.ChatTools -> ClientUiPage.CHAT_TOOLS
     SubScreen.SearchMessages,
     SubScreen.GlobalSearch,
     -> ClientUiPage.SEARCH_MESSAGES

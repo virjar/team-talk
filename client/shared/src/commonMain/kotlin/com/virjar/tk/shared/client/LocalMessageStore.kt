@@ -98,6 +98,9 @@ internal class LocalMessageStore(
             require(projection.chatId.isNotBlank()) { "message chatId must not be blank" }
             require(projection.clientMsgId.isNotBlank()) { "message clientMsgId must not be blank" }
             synchronized(stateLock) {
+                // 清空水位：迟到的历史事件不能把本机已清空的消息复活；新消息（seq > 水位）
+                // 与进行中的乐观投影（seq = 0）不受影响。
+                if (!admitsClearedHistoryLocked(projection)) return@synchronized
                 queries.transaction {
                     projectionPersistence.persist(projection)
                     promoteOutgoingFromAuthoritativeProjection(projection, System.currentTimeMillis())
@@ -469,6 +472,7 @@ internal class LocalMessageStore(
                     "history page cannot contain more than ${Message.MAX_QUERY_PAGE_SIZE} messages"
                 }
                 val page = messages.map(Message::asAuthoritativeProjection)
+                    .filter(::admitsClearedHistoryLocked)
                 val clientMsgIds = HashSet<String>(page.size)
                 val serverSeqs = HashSet<Long>(page.size)
                 page.forEach { message ->
@@ -591,6 +595,13 @@ internal class LocalMessageStore(
     /** 调用方持有 [stateLock]；SQL 删除由 [LocalCacheImpl] 拥有。 */
     fun invalidateChatHistoryLocked(chatId: String) {
         historyLeases.invalidate(chatId)
+    }
+
+    /** 调用方持有 [stateLock]：清空水位之内（且已确认）的消息不再进入本机投影。 */
+    private fun admitsClearedHistoryLocked(message: Message): Boolean {
+        if (message.serverSeq <= 0L) return true
+        val cleared = queries.selectClearedBeforeSeq(message.chatId).executeAsOneOrNull() ?: return true
+        return message.serverSeq > cleared
     }
 
     /** 调用方持有 [stateLock]；保持在墓碑发布顺序中的最后。 */

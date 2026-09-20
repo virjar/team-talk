@@ -222,6 +222,9 @@ internal fun HomeScreen(
                             onMarkRead = actionAdmission.guard { chatId: String, lastSeq: Long ->
                                 dataState.chat.markConversationRead(chatId, lastSeq)
                             },
+                            onMarkUnread = actionAdmission.guard { chatId: String ->
+                                dataState.conversationViewModel.setMarkedUnread(chatId, true)
+                            },
                             peerUsers = conversationPeerUsers,
                             peerRemarks = remember(contacts) { com.virjar.tk.app.ui.screen.contactRemarks(contacts) },
                             groupMembers = groupAvatarMembers,

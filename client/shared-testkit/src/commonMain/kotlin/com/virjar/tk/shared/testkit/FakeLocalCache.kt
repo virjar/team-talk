@@ -812,6 +812,20 @@ class FakeLocalCache(
         cacheUseGate.use { conversationProjection.markDraftMirrored(chatId, generation) }
     override fun deleteConversation(chatId: String) =
         cacheUseGate.use { conversationProjection.delete(chatId) }
+
+    override fun setConversationMarkedUnread(chatId: String, marked: Boolean) = cacheUseGate.use {
+        val current = conversationProjection.get().firstOrNull { it.chatId == chatId } ?: return@use
+        if (marked && current.unreadCount <= 0) {
+            conversationProjection.upsert(current.copy(unreadCount = 1))
+        }
+    }
+
+    override fun clearChatHistory(chatId: String) = cacheUseGate.use {
+        synchronized(messagesMap) {
+            if (messagesMap.remove(chatId) != null) syncFlow(chatId)
+        }
+        reactionProjection.deleteChat(chatId)
+    }
     override fun updatePeerReadSeq(chatId: String, peerReadSeq: Long) =
         cacheUseGate.use { conversationProjection.updatePeerReadSeq(chatId, peerReadSeq) }
     override fun getSyncState() = cacheUseGate.use { syncState.get() }

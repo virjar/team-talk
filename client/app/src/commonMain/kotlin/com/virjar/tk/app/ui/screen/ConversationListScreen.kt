@@ -80,6 +80,7 @@ fun conversationIdentityPresentation(
  * @param selectedChatId 当前打开的会话（选中态高亮）
  * @param onMuteClick 右键或长按菜单「开启/关闭免打扰」（chatId, muted）
  * @param onMarkRead 右键菜单「标记已读」：本地水位线置顶（chatId, lastSeq）
+ * @param onMarkUnread 右键菜单「标为未读」：本机未读标记，进会话或标记已读后自动清除（chatId）
  */
 @Composable
 fun ConversationListScreen(
@@ -89,6 +90,7 @@ fun ConversationListScreen(
     onMuteClick: ((String, Boolean) -> Unit)? = null,
     selectedChatId: String? = null,
     onMarkRead: ((String, Long) -> Unit)? = null,
+    onMarkUnread: ((String) -> Unit)? = null,
     peerUsers: Map<String, User> = emptyMap(),
     peerRemarks: Map<String, String> = emptyMap(),
     groupMembers: Map<String, List<User>> = emptyMap(),
@@ -152,6 +154,9 @@ fun ConversationListScreen(
                 onMarkRead = if (conv.unreadCount > 0 && onMarkRead != null) {
                     { onMarkRead(conv.chatId, conv.lastSeq) }
                 } else null,
+                onMarkUnread = if (conv.unreadCount <= 0 && onMarkUnread != null) {
+                    { onMarkUnread(conv.chatId) }
+                } else null,
             )
         }
     }
@@ -172,6 +177,7 @@ private fun ConversationItem(
     onPinToggle: (() -> Unit)?,
     onMuteToggle: ((Boolean) -> Unit)?,
     onMarkRead: (() -> Unit)?,
+    onMarkUnread: (() -> Unit)? = null,
 ) {
     // 桌面 hover 态（触屏设备不触发，API 兼容）
     val hoverInteraction = remember { MutableInteractionSource() }
@@ -332,6 +338,13 @@ private fun ConversationItem(
                         menuExpanded = false
                     },
                     modifier = Modifier.testTag(muteMenu.testTag),
+                )
+            }
+            if (onMarkUnread != null) {
+                DropdownMenuItem(
+                    text = { Text("标为未读") },
+                    onClick = { onMarkUnread(); menuExpanded = false },
+                    modifier = Modifier.testTag("conv.markUnread.${conversation.chatId.take(12)}"),
                 )
             }
             if (onMarkRead != null) {
