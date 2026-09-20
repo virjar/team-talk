@@ -8,6 +8,12 @@ import com.virjar.tk.protocol.model.UserRole
 /** 用户领域拥有的持久化端口。 */
 interface UserRepository {
     fun findByUid(uid: String): User?
+
+    /** 按 uid 升序枚举人类账号（服务号全员广播的分页输入）；afterUid 为空从头开始。 */
+    fun listHumanUidPage(afterUid: String?, limit: Int): List<String> = emptyList()
+
+    /** 当前人类账号总数（广播进度基数）。 */
+    fun countHumans(): Long = 0L
     /**
      * 解析一个有界的身份集合，而不把目录调用方拖入 N+1 查询循环。小的内存/测试适配器
      * 可以依赖这个默认实现；数据库适配器应该用一次集合查询覆盖它。未知身份不出现在

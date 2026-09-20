@@ -56,6 +56,19 @@ class ExposedUserRepository internal constructor(
 ) : UserRepository {
     private val logger = LoggerFactory.getLogger(ExposedUserRepository::class.java)
 
+    override fun listHumanUidPage(afterUid: String?, limit: Int): List<String> {
+        require(limit > 0) { "Human uid page size must be positive" }
+        return transaction(database) {
+            val base = Users.selectAll().where { Users.role eq UserRole.HUMAN }
+            val scoped = if (afterUid == null) base else base.andWhere { Users.uid greater afterUid }
+            scoped.orderBy(Users.uid).limit(limit).map { it[Users.uid] }
+        }
+    }
+
+    override fun countHumans(): Long = transaction(database) {
+        Users.selectAll().where { Users.role eq UserRole.HUMAN }.count()
+    }
+
     override fun findByUid(uid: String): User? {
         return transaction(database) {
             Users.selectAll().where { Users.uid eq uid }.map { it.toUser() }.singleOrNull()

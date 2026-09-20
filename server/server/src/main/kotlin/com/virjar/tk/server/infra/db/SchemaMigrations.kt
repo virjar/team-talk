@@ -91,6 +91,10 @@ private val schemaMigrations = listOf(
             }
         }
     },
+    SchemaMigration("create_service_account_tables") {
+        // 服务号官方触达：欢迎语模板 + 管理员全员广播台账（T058 扩展需求）。
+        SchemaUtils.createStatements(ServiceContents, ServiceBroadcasts).forEach { exec(it) }
+    },
 )
 
 /** Caller owns the schema_metadata lock; new migrations must not commit before their completion receipt. */

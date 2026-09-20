@@ -58,6 +58,15 @@ interface MessageRepository {
     /** 结算一条服务号回复记录（成功送达或终态放弃），删除“欠回复”事实。 */
     fun markServiceReplySettled(chatId: String, clientMsgId: String) {}
 
+    /**
+     * 独立写入一条待回复记录（服务号官方触达：管理员广播等没有原消息的场景）。
+     * 键已存在时保持首次冻结内容，不覆盖；随后经指令运行时派发与恢复。
+     */
+    fun appendPendingServiceReply(pending: PendingServiceReply) {}
+
+    /** `chatId + clientMsgId` 的已提交消息查询；不存在返回 null。 */
+    fun findCommittedMessage(chatId: String, clientMsgId: String): Message? = null
+
     fun getAttachmentChatIds(path: String): Set<String>
 
     fun isAttachmentReferencedByAny(path: String, chatIds: Set<String>): Boolean =

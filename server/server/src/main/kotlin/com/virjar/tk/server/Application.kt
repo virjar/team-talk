@@ -41,6 +41,8 @@ import com.virjar.tk.server.runtime.HttpBlockingExecutor
 import com.virjar.tk.server.runtime.HEALTH_CHECK_PATH
 import com.virjar.tk.server.runtime.MaintenanceRuntime
 import com.virjar.tk.server.runtime.SystemCommandRouter
+import com.virjar.tk.server.runtime.ServiceBroadcastRuntime
+import com.virjar.tk.server.domain.message.ServiceAccountMessages
 import com.virjar.tk.server.runtime.MaintenanceWorker
 import com.virjar.tk.server.runtime.RuntimeFailureCollector
 import com.virjar.tk.server.runtime.ServerResourceOwner
@@ -316,6 +318,13 @@ internal fun Application.module(
             close = SystemCommandRouter::close,
             dependenciesMayClose = SystemCommandRouter::workersTerminated,
         )
+        // 服务号广播同理：执行中断的尾部留待启动续跑，已写记录由回复恢复排空。
+        resources.ownDependencyBarrier(
+            name = "service broadcasts",
+            resource = koin.get<ServiceBroadcastRuntime>(),
+            close = ServiceBroadcastRuntime::close,
+            dependenciesMayClose = ServiceBroadcastRuntime::workersTerminated,
+        )
         val authService = koin.get<AuthService>()
         val rpcDispatcher = koin.get<RpcDispatcher>()
         val msgService = koin.get<MessageService>()
@@ -337,6 +346,13 @@ internal fun Application.module(
         }
         if (recoveredServiceReplies > 0) {
             logger.info("Attempted {} pending service command replies", recoveredServiceReplies)
+        }
+        // 上次进程关闭时未完成的广播重新执行；已送达用户按稳定身份幂等跳过。
+        val serviceBroadcastRuntime = koin.get<ServiceBroadcastRuntime>()
+        val resumedBroadcasts = koin.get<ServiceAccountMessages>()
+            .resumeUnfinishedBroadcasts(serviceBroadcastRuntime::launch)
+        if (resumedBroadcasts.isNotEmpty()) {
+            logger.info("Resumed {} unfinished service broadcasts", resumedBroadcasts.size)
         }
 
         val presenceCoordinator = resources.own(
@@ -611,6 +627,8 @@ internal fun Application.module(
                 documentExport = koin.get(),
                 documentExportPolicy = koin.get(),
                 clientReleases = koin.get(),
+                serviceAccount = koin.get(),
+                serviceBroadcastRuntime = koin.get(),
             )
             clientTelemetryRoutes(
                 control = koin.get(),

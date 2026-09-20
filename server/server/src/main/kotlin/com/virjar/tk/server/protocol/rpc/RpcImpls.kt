@@ -87,7 +87,11 @@ internal suspend fun authoritativeFriendPresenceSnapshot(
     snapshots: FriendPresenceSnapshotReader,
 ) = snapshots.snapshot(contacts.listFriendUids(authenticatedUid))
 
-class ChatRpcImpl(uid: String, private val service: ChatService) : ChatRpcStub(uid) {
+class ChatRpcImpl(
+    uid: String,
+    private val service: ChatService,
+    private val serviceAccountMessages: com.virjar.tk.server.domain.message.ServiceAccountMessages? = null,
+) : ChatRpcStub(uid) {
     override suspend fun createPersonal(targetUid: String) = service.createPersonalChat(uid, targetUid)
     override suspend fun createGroup(operationId: String, name: String, avatar: String?, memberUids: List<String>) =
         service.createGroup(operationId, name, avatar, uid, memberUids)
@@ -123,7 +127,15 @@ class ChatRpcImpl(uid: String, private val service: ChatService) : ChatRpcStub(u
     override suspend fun setGroupAvatar(avatar: com.virjar.tk.protocol.model.GroupAvatar) =
         service.setGroupAvatar(uid, avatar)
     override suspend fun getGroupAvatars(chatIds: List<String>) = service.getGroupAvatars(uid, chatIds)
-    override suspend fun getOrCreateSystemChat(systemUid: String) = service.getOrCreateSystemChat(uid, systemUid)
+    override suspend fun getOrCreateSystemChat(systemUid: String): com.virjar.tk.protocol.model.Chat {
+        val chat = service.getOrCreateSystemChat(uid, systemUid)
+        // 客户端拉起服务号会话时幂等补发欢迎语（服务号官方触达）；触发点在协议适配层，
+        // 业务与测试直接调用领域入口不受影响。失败不改变会话拉起结果。
+        if (systemUid == com.virjar.tk.server.domain.user.SystemAccountUids.SERVICE) {
+            serviceAccountMessages?.ensureWelcome(uid, chat.chatId)
+        }
+        return chat
+    }
 }
 
 class MessageRpcImpl(

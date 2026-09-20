@@ -64,6 +64,7 @@ import com.virjar.tk.server.domain.message.OfficeRefResolver
 import com.virjar.tk.server.domain.message.MessageReactionRepository
 import com.virjar.tk.server.domain.message.MessageReactionService
 import com.virjar.tk.server.domain.message.MessageRepository
+import com.virjar.tk.server.domain.message.ServiceAccountMessages
 import com.virjar.tk.server.domain.message.MessageArchiveReader
 import com.virjar.tk.server.domain.message.MessageProjectionHooks
 import com.virjar.tk.server.domain.message.MessageProjectionReadiness
@@ -165,6 +166,7 @@ import com.virjar.tk.server.protocol.TcpServerConfiguration
 import com.virjar.tk.server.protocol.dispatcher.*
 import com.virjar.tk.server.runtime.MaintenanceRuntime
 import com.virjar.tk.server.runtime.SystemCommandRouter
+import com.virjar.tk.server.runtime.ServiceBroadcastRuntime
 import org.jetbrains.exposed.sql.Database
 import org.koin.dsl.module
 import java.io.File
@@ -251,6 +253,9 @@ internal fun createServerModule(
     single<AttachmentRetirementStore> { get<FileStore>() }
     single<com.virjar.tk.server.domain.document.DocumentExportObjectSource> { get<FileStore>() }
     single { com.virjar.tk.server.infra.db.AdminFeatureSettingsStore(get()) }
+    single<com.virjar.tk.server.domain.message.ServiceAccountDirectory> {
+        com.virjar.tk.server.infra.db.ServiceAccountStore(get())
+    }
     single<com.virjar.tk.server.domain.document.DocumentExportGate> { get<com.virjar.tk.server.infra.db.AdminFeatureSettingsStore>() }
     // 客户端发布注册中心：发布物内容寻址仓 + 通道/停用/回滚管理。
     single {
@@ -495,6 +500,21 @@ internal fun createServerModule(
         )
     }
     single {
+        ServiceAccountMessages(
+            messages = get(),
+            messageService = get(),
+            chats = get(),
+            users = get(),
+            store = get(),
+            handler = get<SystemCommandRouter>(),
+        )
+    }
+    single {
+        ServiceBroadcastRuntime(runBroadcast = { broadcastId ->
+            get<ServiceAccountMessages>().runBroadcast(broadcastId)
+        })
+    }
+    single {
         MessageService(
             messages = get(),
             chatStore = get(),
@@ -582,7 +602,7 @@ internal fun createServerModule(
             register(ContactRpcContract.SERVICE) { session ->
                 ContactRpcImpl(session.uid, get(), get(), get())
             }
-            register(ChatRpcContract.SERVICE) { session -> ChatRpcImpl(session.uid, get()) }
+            register(ChatRpcContract.SERVICE) { session -> ChatRpcImpl(session.uid, get(), get()) }
             register(MessageRpcContract.SERVICE) { session -> MessageRpcImpl(session.uid, get(), get(), get(), session.protocolVersion) }
             register(com.virjar.tk.protocol.rpc.gen.TaskRpcContract.SERVICE) { session ->
                 com.virjar.tk.server.protocol.rpc.TaskRpcImpl(session.uid, get())

@@ -357,6 +357,7 @@ class TestEnvironment : AutoCloseable {
     val contentSearchService: com.virjar.tk.server.domain.search.ContentSearchService get() = koin.get()
     val contentAssetIndex: com.virjar.tk.server.infra.search.ContentAssetSearchIndex get() = koin.get()
     val messageService: MessageService get() = koin.get()
+    val serviceAccountMessages: com.virjar.tk.server.domain.message.ServiceAccountMessages get() = koin.get()
     val messageProjector: MessageProjector get() = koin.get()
     val messageStore: MessageStore get() = koin.get()
     val conversationService: ConversationService get() = koin.get()

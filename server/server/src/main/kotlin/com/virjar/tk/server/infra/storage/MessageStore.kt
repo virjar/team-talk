@@ -231,7 +231,7 @@ class MessageStore(
     }
 
     /** Read-only accepted identity lookup for draft consumption and reply targeting. */
-    fun findCommittedMessage(chatId: String, clientMsgId: String): Message? = withDatabaseOrNull { database ->
+    override fun findCommittedMessage(chatId: String, clientMsgId: String): Message? = withDatabaseOrNull { database ->
         val index = database.get(records.buildClientMsgIdKey(chatId, clientMsgId)) ?: return@withDatabaseOrNull null
         val identity = records.decodeIdempotencyValue(index)
         val message = checkNotNull(getMessageFrom(database, chatId, identity.serverSeq)) { "消息幂等索引缺少权威消息" }
@@ -502,6 +502,18 @@ class MessageStore(
     override fun markServiceReplySettled(chatId: String, clientMsgId: String) {
         withDatabase { database ->
             database.delete(records.buildPendingServiceReplyKey(chatId, clientMsgId))
+        }
+    }
+
+    @Synchronized
+    override fun appendPendingServiceReply(pending: PendingServiceReply) {
+        withDatabase { database ->
+            val key = records.buildPendingServiceReplyKey(pending.chatId, pending.clientMsgId)
+            // 与消息幂等语义一致：已存在的记录保持首次冻结内容，重复编排不覆盖。
+            if (database.get(key) != null) return@withDatabase
+            authoritativeRocksWriteOptions().use { options ->
+                database.put(options, key, records.encodePendingServiceReply(pending.replyClientMsgId, pending.markdown))
+            }
         }
     }
 

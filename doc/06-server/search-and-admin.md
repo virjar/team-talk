@@ -89,6 +89,7 @@ Lucene 的 analyzer、directory、writer 和 searcher manager 先在局部启动
 - Document 资产责任盘点与已封禁 steward 的受审计批量交接。
 - 单组织树、成员归属和受管部门群。
 - 通知机器人的创建、凭据轮换、停用与群授权。
+- 服务号官方触达：欢迎语模板维护与全员广播（台账、进度与幂等重推）。
 - 基础运行指标和版本信息。
 - 客户端遥测全文检索、设备运行信息，以及按 uid/deviceId/phone 启停限时诊断采集。
 

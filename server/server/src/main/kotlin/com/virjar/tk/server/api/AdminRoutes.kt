@@ -63,6 +63,8 @@ internal fun Route.adminRoutes(
     documentExport: com.virjar.tk.server.domain.document.DocumentSpaceExportService? = null,
     documentExportPolicy: com.virjar.tk.server.infra.db.AdminFeatureSettingsStore? = null,
     clientReleases: com.virjar.tk.server.infra.clientrelease.ClientReleaseService? = null,
+    serviceAccount: com.virjar.tk.server.domain.message.ServiceAccountMessages? = null,
+    serviceBroadcastRuntime: com.virjar.tk.server.runtime.ServiceBroadcastRuntime? = null,
 ) {
     route("/api/admin") {
         post("/login") {
@@ -79,6 +81,9 @@ internal fun Route.adminRoutes(
         adminOrganizationRoutes(organization)
         clientTelemetry?.let(::adminTelemetryRoutes)
         clientReleases?.let(::adminClientReleaseRoutes)
+        if (serviceAccount != null && serviceBroadcastRuntime != null) {
+            adminServiceAccountRoutes(serviceAccount, serviceBroadcastRuntime)
+        }
 
         get("/overview") {
             call.respond(adminService.overview())
