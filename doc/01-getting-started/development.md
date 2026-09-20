@@ -23,12 +23,13 @@ Gradle 与 Node.js 分发站点，以及 npm 包仓库。
 [运行配置](../07-operations/configuration.md)。
 
 私有构建和部署使用独立 clone，在其中创建 `buildSrc/deployment-local/Deployment.kt`，整个 local 目录
-被 Git 忽略。`buildSrc` 的配置源目录只纳入选中的一套：有 local 就完整采用 local，否则采用默认；
+被 Git 忽略，并且是部署状态唯一根目录（凭据、TLS 材料与 vendor SDK 同在其中）。`buildSrc` 的配置源
+目录只纳入选中的一套：local 目录存在 `Deployment.kt` 就完整采用 local，否则采用默认；
 没有配置叠加或 `-P` 选择参数。独立目录用来整套选择配置与辅助文件，不改变普通 Kotlin 源码语义；
 新增或切换 local 目录后重新同步 Gradle，让 IDE 更新源码目录。
 源码更新保留本机部署文件，产品改动仍回到主仓库完成，不需要维护私有源码分支。
 部署口令、数据库密码和 SSH 私钥不能写入任一配置源码，因为最终配置会进入非敏感发行快照；秘密继续
-通过本地 `gradle/deployment.secrets` 或 CI Secret 提供。
+通过本地 `buildSrc/deployment-local/deployment.secrets` 或 CI Secret 提供。
 
 ## 3. 开发回路
 

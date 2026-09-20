@@ -5,7 +5,9 @@ import java.io.File
 /**
  * 公版默认配置，作为 buildSrc 源码参与编译，支持 IDE 检查、补全和跳转。
  * 私有 clone 创建 buildSrc/deployment-local/Deployment.kt 完整替换本目录；同目录可拆分其他 Kotlin 文件。
- * rootDir 是仓库根目录，私版可在 server.tcp.tls 中用 certificateFile 指向公共证书。
+ * deployment-local 是唯一的部署本机状态目录：deployment.secrets、tcp-tls 证书材料与 vendor SDK
+ * 也在其中，交接部署时整体拷贝该目录即可。rootDir 是仓库根目录，私版可用
+ * tcpTlsCertificateFile(rootDir) 引用公共证书。
  * 配置只包含非敏感值；密码和私钥不能写在这里。
  */
 @Suppress("UNUSED_PARAMETER")

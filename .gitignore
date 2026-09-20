@@ -19,7 +19,6 @@ server/server/src/main/resources/static/admin/
 
 client/desktop/output/
 
-# 独立私有 clone 的完整配置覆写与持久 TCP TLS 密钥材料。
+# 唯一的部署本机状态目录：私有配置覆写、deployment.secrets、tcp-tls 密钥材料与 vendor SDK。
+# 公版与私有 clone 共用该目录；交接部署时整体拷贝它即可。
 /buildSrc/deployment-local/
-/gradle/tcp-tls/
-/gradle/.tcp-tls-*/

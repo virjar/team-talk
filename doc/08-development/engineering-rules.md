@@ -130,7 +130,8 @@
 - 默认不增加布尔开关、profile、flavor 或运行时服务器选择。
 - 部署坐标与客户端发行身份共用 `deploymentConfiguration(rootDir)` 返回的 `DeploymentConfig`。主仓库默认
   `buildSrc/deployment/Deployment.kt` 保持公版地址；私有独立 clone 使用 Git 忽略的
-  `buildSrc/deployment-local/` 完整替换默认配置目录。配置源码只纳入选中的一套，不叠加、不通过
+  `buildSrc/deployment-local/`（存在 `Deployment.kt` 时）完整替换默认配置目录，部署凭据、TLS 材料与
+  vendor SDK 也只放在该目录。配置源码只纳入选中的一套，不叠加、不通过
   `-P` 选配置。配置使用 `server`、`deploy`、`client` DSL 章节，默认主机与 HTTPS 端口在章节完成后
   从 HTTP URL 推导；`@DslMarker` 限定作用域，最终对象由构造器统一校验。JSON 只用于最终配置快照
   输出，不增加第二个加载入口，见[运行配置](../07-operations/configuration.md)。

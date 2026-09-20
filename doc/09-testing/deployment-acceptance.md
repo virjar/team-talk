@@ -12,7 +12,7 @@ TeamTalk 的主业务验收连接当前选中部署配置函数的目标。它�
    TLS握手或明文协议协商，不能用HTTP健康代替TCP验证。
 3. 如果服务端代码、数据库结构或静态资源有变化，先部署新版本。
 4. 测试环境允许创建带独立前缀的临时账户和业务数据。
-5. 组织资产归属验收还需要运行机上的 owner-only `gradle/deployment.secrets`，或同时设置
+5. 组织资产归属验收还需要运行机上的 owner-only `buildSrc/deployment-local/deployment.secrets`，或同时设置
    `TK_E2E_ADMIN_USER` / `TK_E2E_ADMIN_PASSWORD`；`acceptanceTest` 是显式的完整验收入口，缺少管理 fixture
    会带配置提示明确失败，不允许跳过组织治理用例后产生假通过。
    管理 API 与文件请求使用同一 `serverUrl`，支持配置的 HTTP 或 HTTPS；TCP TLS 验证独立，管理请求不跟随重定向。

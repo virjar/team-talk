@@ -149,8 +149,8 @@
 
 代码与文档冲突时：协议字段和 ID 以 `protocol` 中的枚举、模型和生成 Contract 为准；构建任务以
 Gradle 为准；运行配置以 `buildSrc`、选中的部署 Kotlin 源码和服务端环境读取代码为准。
-默认配置为 `buildSrc/deployment/Deployment.kt`，本机 `buildSrc/deployment-local/` 存在时完整替换默认配置目录，
-详见[运行配置](07-operations/configuration.md)。
+默认配置为 `buildSrc/deployment/Deployment.kt`，本机 `buildSrc/deployment-local/Deployment.kt` 存在时完整替换默认
+配置目录；该目录同时是部署凭据与 TLS 材料的唯一本机存放处，详见[运行配置](07-operations/configuration.md)。
 发现冲突必须同时修正文档，不能用“以后再更新”作为长期状态。
 
 ## 文档写作规则

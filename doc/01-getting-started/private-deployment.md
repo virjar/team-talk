@@ -49,12 +49,23 @@ mkdir -p buildSrc/deployment-local
 cp buildSrc/deployment/Deployment.kt buildSrc/deployment-local/Deployment.kt
 ```
 
+`buildSrc/deployment-local/` 是唯一的部署本机状态目录：私有配置 `Deployment.kt`、部署凭据
+`deployment.secrets`、TCP TLS 材料 `tcp-tls/` 与 OEM 推送 `vendor/` SDK 都在其中。不同团队对仓库的
+唯一差异就是该目录的内容，交接或备份部署时整体拷贝这一个目录即可。
+
 先生成证书，再编写引用它的 local 配置，避免 Gradle 配置阶段读取尚不存在的文件。证书位于被 Git
-忽略的 `gradle/tcp-tls/certificate.pem`，私钥位于同目录 `private-key.pem`；重复运行任务只校验并保留
-已有材料，不自动换证或覆盖密钥。也可以使用管理员已有且 SAN 匹配 TCP 主机/IP 的证书和私钥。
+忽略的 `buildSrc/deployment-local/tcp-tls/certificate.pem`，私钥位于同目录 `private-key.pem`；重复运行
+任务只校验并保留已有材料，不自动换证或覆盖密钥。也可以使用管理员已有且 SAN 匹配 TCP 主机/IP
+的证书和私钥，放入同一目录。
+
+从旧布局迁移：已有私有 clone 若把材料放在 `gradle/tcp-tls/` 与 `gradle/deployment.secrets`，同步本
+版本后把两者移动到 `buildSrc/deployment-local/` 下的同名位置，并在自己的 `Deployment.kt` 中改用
+`tcpTlsCertificateFile(rootDir)`。升级部署以远端 `env.sh` 为权威回写凭据，本地旧 secrets 文件缺失
+不会重置任何密码。
 
 随后编辑 `buildSrc/deployment-local/Deployment.kt`，把公版坐标和身份换成自己的值。整个 local 目录
-被 Git 忽略，不用建私有分支或提交；更新源码时保留本地配置与签名材料。`buildSrc` 只编译这一套配置，
+被 Git 忽略，不用建私有分支或提交；更新源码时保留本地配置与签名材料。目录里没有 `Deployment.kt`
+时仍按公版配置编译，因此公版 clone 存放生成的凭据或证书不影响公版构建。`buildSrc` 只编译这一套配置，
 根构建调用 `deploymentConfiguration(rootDir)` 获取对象；语法、类型或构造器校验失败会停止构建。
 配置按 `deployment { server { ... }; deploy { ... }; client { ... } }` 分章节，可用同目录 Kotlin
 辅助函数拆分。创建 local 目录后重新同步 Gradle，让 IDE 更新源码目录。完整示例见
@@ -65,8 +76,8 @@ cp buildSrc/deployment/Deployment.kt buildSrc/deployment-local/Deployment.kt
 - `deploy.ssh`：`host` 默认跟随 HTTP URL 主机，`port` 默认 22，`user` 默认 `root`；SSH 入口不同再单独设置。
 - `deploy.directory`：远端安装根目录，默认 `/opt/teamtalk`。必须是已经规范化的非根 POSIX 绝对路径；
   每个路径段都必须是普通安全名称，`.`、`..`、重复分隔符和尾随 `/` 会在任何远端操作前被拒绝。
-- `server.tcp.tls.certificateFile`：指向公共 `certificate.pem` 的 `File`，不要指向私钥；构建时读取并验证，
-  文件不存在或不可读时直接失败。
+- `server.tcp.tls.certificateFile`：指向公共 `certificate.pem` 的 `File`，推荐用 `tcpTlsCertificateFile(rootDir)`
+  引用 local 目录内的证书，不要指向私钥；构建时读取并验证，文件不存在或不可读时直接失败。
 - `client.identity`：私有客户端的稳定应用标识、最终 Android 包名、显示名称和英文安装名称；与公版共存时一起配置，
   完整示例和派生规则见[客户端发行身份](../07-operations/configuration.md#客户端发行身份)。
 
@@ -88,7 +99,8 @@ TCP TrustStore，不把自签证书装进操作系统全局信任。部署会从
 
 ## 3. 提供 Secret
 
-服务端运行凭据放在不提交的 `gradle/deployment.secrets` 中；服务器部署不交给发行 CI。至少包括：
+服务端运行凭据放在不提交的 `buildSrc/deployment-local/deployment.secrets` 中，与私有配置同目录；
+服务器部署不交给发行 CI。至少包括：
 
 - SSH 私钥或等价认证材料
 - PostgreSQL 口令
@@ -112,8 +124,8 @@ PKCS12 同时加载 keystore 和私钥。如果手工管理 `deployment.secrets`
 
 ```bash
 ./gradlew deployServer \
-  -PsslCert=gradle/tcp-tls/certificate.pem \
-  -PsslKey=gradle/tcp-tls/private-key.pem
+  -PsslCert=buildSrc/deployment-local/tcp-tls/certificate.pem \
+  -PsslKey=buildSrc/deployment-local/tcp-tls/private-key.pem
 ```
 
 两个路径可以是仓库根目录下的相对路径，也可以是仓库外的绝对路径；不要使用未展开的 `~`。

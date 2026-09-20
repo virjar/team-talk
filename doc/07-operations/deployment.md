@@ -12,7 +12,7 @@
 | `:server:admin:check` / `:server:admin:build` | 按锁文件安装前端依赖、检查 TypeScript 并生成 Admin 静态资源 |
 | `:server:server:buildServerDist` / `:server:server:installDist` | 构建 Admin 后生成带 identity manifest 的服务端分发 |
 | `writeDeploymentConfig` | 将部署配置函数返回的对象写入 `build/deployment/deployment-config.json` 非敏感快照 |
-| `generateTcpTlsCertificate -PtcpCertificateHost=<IP或主机名>` | 在 `gradle/tcp-tls/` 生成或校验并复用 TCP 公共证书与私钥 |
+| `generateTcpTlsCertificate -PtcpCertificateHost=<IP或主机名>` | 在 `buildSrc/deployment-local/tcp-tls/` 生成或校验并复用 TCP 公共证书与私钥 |
 | `deployServer` | clean 工作树本地构建并部署服务端 |
 | `deployStagedServer -PSERVER_DIST_DIR=...` | 人工部署已经解压并匹配源码身份的服务端分发，不重新构建 |
 | `deployServerResetData -Pteamtalk.resetDeployConfirm=<host>:<deployPath>` | **破坏性**：在精确确认的既有完整安装上，以空服务端数据部署 |
@@ -59,7 +59,7 @@ Windows 完整包、两种 macOS 架构、Linux、Android 和无头客户端共�
 启动新版本，也不作为升级预检的依据。路径应按目标机器的发行版和 CPU 架构确定。
 
 部署采用编译后的配置函数返回的 `DeploymentConfig`。主仓库默认公版，私有操作在独立 clone 使用
-Git 忽略的 `buildSrc/deployment-local/` 配置源码。HTTP scheme 与 TCP TLS 分别配置：HTTP 站点可以只给 TCP 配置 keystore，
+Git 忽略的 `buildSrc/deployment-local/Deployment.kt` 配置源码；凭据与 TLS 材料同在该目录。HTTP scheme 与 TCP TLS 分别配置：HTTP 站点可以只给 TCP 配置 keystore，
 HTTPS 安装则同时让 HTTP connector 使用它；客户端信任规则见[传输配置边界](configuration.md#传输配置边界)。
 使用 IP 与自签 TCP 证书的准备顺序见[私有化部署](../01-getting-started/private-deployment.md)。
 

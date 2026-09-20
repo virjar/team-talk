@@ -53,11 +53,18 @@ extra.apply {
 }
 
 // ── 单一部署配置 ──
+// buildSrc/deployment-local 是唯一的部署本机状态目录：私有配置、deployment.secrets 与 tcp-tls
+// 材料都在其中；存在 Deployment.kt 才视为私有配置，仅存放生成状态的公版 clone 仍编译公版配置。
 
-val localDeploymentDirectory = rootProject.file("buildSrc/deployment-local")
-val usingLocalDeploymentConfig = Files.exists(localDeploymentDirectory.toPath(), NOFOLLOW_LINKS)
-val deploymentConfigFile = if (usingLocalDeploymentConfig) localDeploymentDirectory.resolve("Deployment.kt")
-    else rootProject.file("buildSrc/deployment/Deployment.kt")
+val usingLocalDeploymentConfig = Files.exists(
+    deployment.deploymentLocalConfigurationFile(rootDir).toPath(),
+    NOFOLLOW_LINKS,
+)
+val deploymentConfigFile = if (usingLocalDeploymentConfig) {
+    deployment.deploymentLocalConfigurationFile(rootDir)
+} else {
+    rootProject.file("buildSrc/deployment/Deployment.kt")
+}
 val deploymentConfig = deploymentConfiguration(rootDir)
 extra["deploymentConfig"] = deploymentConfig
 
@@ -82,8 +89,12 @@ tasks.register("generateTcpTlsCertificate") {
     doLast {
         val host = findProperty("tcpCertificateHost")?.toString()?.takeIf(String::isNotBlank)
             ?: throw GradleException("Set -PtcpCertificateHost=<server IP or hostname>")
-        deployment.generateTcpTlsCertificate(file("gradle/tcp-tls"), host)
-        logger.lifecycle("TCP TLS certificate ready: gradle/tcp-tls/certificate.pem (existing keys are preserved)")
+        val certificateDirectory = deployment.tcpTlsCertificateDirectory(rootDir)
+        deployment.generateTcpTlsCertificate(certificateDirectory, host)
+        logger.lifecycle(
+            "TCP TLS certificate ready: {} (existing keys are preserved)",
+            certificateDirectory.resolve("certificate.pem").relativeTo(rootDir),
+        )
     }
 }
 

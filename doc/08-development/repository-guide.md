@@ -29,8 +29,9 @@ server/admin             React/Vite 管理后台（构建产物由 server 分发
 `com.virjar.tk.protocol.rpc.gen`。受控 fork 的富文本编辑器保留其原包名与来源说明。
 
 根 `build.gradle.kts` 调用 `buildSrc` 中普通 Kotlin 配置函数、注入构建信息并注册 release/deploy 任务。
-默认配置为 `buildSrc/deployment/Deployment.kt`；Git 忽略的 `buildSrc/deployment-local/` 存在时完整
-替换默认目录，`buildSrc` main 只编译选中的一套配置及辅助文件，与标准源码使用相同的 Kotlin 编译。
+默认配置为 `buildSrc/deployment/Deployment.kt`；Git 忽略的 `buildSrc/deployment-local/` 存在
+`Deployment.kt` 时完整替换默认目录，该目录同时是部署凭据、TLS 材料与 vendor SDK 的唯一本机存放处，
+`buildSrc` main 只编译选中的一套配置及辅助文件，与标准源码使用相同的 Kotlin 编译。
 层级 DSL 定义在 `buildSrc/src/main/kotlin/deployment/DeploymentDsl.kt`，按 `server`、`deploy`、`client`
 构造最终不可变 `DeploymentConfig`；所有任务共用这个经校验的对象，JSON 仅输出机器快照。
 目录选择与辅助函数示例见[运行配置](../07-operations/configuration.md)。

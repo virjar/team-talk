@@ -2931,13 +2931,13 @@ class RemoteAcceptanceTest {
         val secretsFile = generateSequence(File(System.getProperty("user.dir")).absoluteFile) {
             it.parentFile
         }.map { directory ->
-            File(directory, "gradle/deployment.secrets")
+            File(directory, "buildSrc/deployment-local/deployment.secrets")
         }.firstOrNull { candidate ->
             Files.exists(candidate.toPath(), NOFOLLOW_LINKS)
         } ?: throw AssertionError(
             "Remote organization ACL/custody acceptance requires admin credentials. " +
-                "Create owner-only gradle/deployment.secrets with ADMIN_USER and ADMIN_PASSWORD, " +
-                "or set TK_E2E_ADMIN_USER and TK_E2E_ADMIN_PASSWORD together.",
+                "Create owner-only buildSrc/deployment-local/deployment.secrets with ADMIN_USER and " +
+                "ADMIN_PASSWORD, or set TK_E2E_ADMIN_USER and TK_E2E_ADMIN_PASSWORD together.",
         )
         require(!Files.isSymbolicLink(secretsFile.toPath()) &&
             Files.isRegularFile(secretsFile.toPath(), NOFOLLOW_LINKS)
@@ -2948,7 +2948,8 @@ class RemoteAcceptanceTest {
         val username = properties.getProperty("ADMIN_USER")
         val password = properties.getProperty("ADMIN_PASSWORD")
         require(!username.isNullOrBlank() && !password.isNullOrBlank()) {
-            "ADMIN_USER and ADMIN_PASSWORD are required in gradle/deployment.secrets for " +
+            "ADMIN_USER and ADMIN_PASSWORD are required in buildSrc/deployment-local/deployment.secrets " +
+                "for " +
                 "remote organization ACL/custody acceptance"
         }
         return RemoteAdminCredentials(username, password)

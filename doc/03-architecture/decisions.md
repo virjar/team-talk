@@ -96,8 +96,9 @@ MVCC snapshot，并发变化由锚定的 tail 最终收敛。这保证当前权�
 
 **决定**：客户端默认值、部署和真实验收共用普通 Kotlin 函数返回的 `DeploymentConfig`。主仓库提交
 `buildSrc/deployment/Deployment.kt`，保持公版地址；私有发行在独立 clone 维护 Git 忽略的
-`buildSrc/deployment-local/`。`buildSrc` 的配置源目录只纳入选中的一套，存在 local 时完整替换默认目录，
-不叠加，也不通过 `-P` 选配置。选中目录与标准 `src/main/kotlin` 进入同一源码集，使用相同的编译和
+`buildSrc/deployment-local/`。`buildSrc` 的配置源目录只纳入选中的一套，存在 local `Deployment.kt` 时
+完整替换默认目录，不叠加，也不通过 `-P` 选配置。该目录同时是部署状态唯一根目录：凭据、TLS 材料
+与 vendor SDK 都放在其中，不同团队对仓库的唯一差异就是该目录内容，交接部署只需整体拷贝它。选中目录与标准 `src/main/kotlin` 进入同一源码集，使用相同的编译和
 类型检查；目录边界用于选择配置及其辅助文件，新增或切换目录后重新同步 Gradle。
 根构建调用 `deploymentConfiguration(rootDir)`，其内部 `deployment` DSL 按 `server`、`deploy`、`client`
 组织。所有章节完成后，从 HTTP URL 推导未指定的 TCP/SSH 主机及 HTTPS 端口；跨章节隐式调用由

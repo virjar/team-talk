@@ -83,7 +83,7 @@ fun deployServer(
             preflightServerJavaRuntime(host, user, deployPort, isFirstDeploy)
             requireTlsPemFilesForDeployment(tcpTlsEnabled, isFirstDeploy, localTlsPemFiles)
 
-            val secretsFile = File(rootDir, "gradle/deployment.secrets")
+            val secretsFile = deploymentSecretsFile(rootDir)
             val secrets = if (isFirstDeploy) {
                 loadOrGenerateFirstDeploymentSecrets(secretsFile)
             } else {
@@ -209,7 +209,7 @@ fun deployServerResetData(
             requireTlsPemFilesForDeployment(tcpTlsEnabled, false, localTlsPemFiles)
 
             val secrets = loadRequiredUpgradeSecretsFromRemote(
-                File(rootDir, "gradle/deployment.secrets"),
+                deploymentSecretsFile(rootDir),
                 host,
                 user,
                 deployPort,

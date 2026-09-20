@@ -129,9 +129,10 @@ docker compose up -d
 私有出包和部署使用独立 clone，在其中创建不入库的 `buildSrc/deployment-local/Deployment.kt`，用
 `server`、`deploy`、`client` 三个 DSL 章节描述自己的配置；TCP/SSH 主机默认跟随 HTTP URL，HTTPS 端口也从 URL 推导。
 `buildSrc` 只编译选中的一套配置，普通 Kotlin 函数返回统一校验的对象；新增或切换 local 目录后重新
-同步 Gradle。双端分别保存资料，私有站点提供
+同步 Gradle。该目录同时存放不入库的 `deployment.secrets`、`tcp-tls/` 证书材料与 OEM 推送 SDK，
+是一个团队部署差异的全部内容，交接部署时整体拷贝这一个目录即可。双端分别保存资料，私有站点提供
 Android 安装包与 Desktop 更新源，具体见[客户端发行身份](doc/07-operations/configuration.md#客户端发行身份)。
-管理员本机提供不入库的 `gradle/deployment.secrets`。服务端由人工部署，CI 只构建发行归档和
+服务端由人工部署，CI 只构建发行归档和
 发布客户端。可以用服务器 IP、HTTP 站点与本机生成的 TCP TLS 证书部署，无需先申请域名或购买 HTTPS
 证书。完成[私有配置与证书准备](doc/01-getting-started/private-deployment.md)及
 [版本与签名准备](doc/07-operations/releasing.md)后的标准流程为：
@@ -139,8 +140,8 @@ Android 安装包与 Desktop 更新源，具体见[客户端发行身份](doc/07
 ```bash
 ./gradlew verifyRelease
 ./gradlew deployServer \
-  -PsslCert=gradle/tcp-tls/certificate.pem \
-  -PsslKey=gradle/tcp-tls/private-key.pem
+  -PsslCert=buildSrc/deployment-local/tcp-tls/certificate.pem \
+  -PsslKey=buildSrc/deployment-local/tcp-tls/private-key.pem
 ./gradlew release -PreleaseTargets=site
 ```
 

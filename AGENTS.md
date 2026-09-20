@@ -98,7 +98,9 @@
 - 私有化部署参数必须可配置；秘密不得提交，临时需求不得演化为大量 profile、flavor 或开关。
 - 主仓库 `team-talk/` 只做公版产品开发，提交的 `buildSrc/deployment/Deployment.kt` 始终保持 `im.virjar.com`。
   私有出包和部署在同级独立 clone `team-talk-private/` 完成，整个 `buildSrc/deployment-local/` 被 Git 忽略，
-  不建私有分支、不提交本机坐标。`buildSrc` main 只编译选中的配置目录，local 存在时完整替换默认目录。
+  不建私有分支、不提交本机坐标。`buildSrc` main 只编译选中的配置目录，local 存在 `Deployment.kt` 时
+  完整替换默认目录。该目录同时是部署状态唯一根目录：`deployment.secrets`、`tcp-tls/` 材料与 OEM
+  vendor SDK 都只放在这里，团队交接部署时整体拷贝该目录。
   配置入口是普通 Kotlin 函数 `deployment.deploymentConfiguration(rootDir: File): DeploymentConfig`，
   用 `deployment { server { ... }; deploy { ... }; client { ... } }` 按职责组织；选中目录与标准源码
   使用同一 Kotlin 编译和类型检查，新增或切换目录后重新同步 Gradle。TCP/SSH 主机默认跟随最终 HTTP

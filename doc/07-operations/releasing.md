@@ -291,7 +291,7 @@ drop-in，启动脚本继承其环境。构建机使用相同值的 `TEAMTALK_CL
 
 向 GitHub 发布额外提供 `GITHUB_TOKEN`，以及 `-PreleaseRepository=owner/repo` 或环境变量
 `GITHUB_REPOSITORY`。Token 需要对应仓库的 Release 与 tag 写权限。源 commit 必须已经存在于目标仓库。
-存在 `buildSrc/deployment-local/` 时拒绝 GitHub 发布，须在使用已提交默认配置的公版仓库执行。
+存在 `buildSrc/deployment-local/Deployment.kt` 时拒绝 GitHub 发布，须在使用已提交默认配置的公版仓库执行。
 
 ```bash
 ./gradlew release -PreleaseTargets=github -PreleaseRepository=example/team-talk
