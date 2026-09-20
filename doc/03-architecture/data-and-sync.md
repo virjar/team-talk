@@ -85,8 +85,10 @@ dispatcher 的进程内 uid 邮箱只是提交后的有界提示，不是可靠�
 保护。语义是 at-least-once：可能重复，不能丢失；完整快照通过 upsert 或稳定键删除收敛。
 
 `lastEventId` 是“该账号已经持久投影完成的事件凭证”，不是跨账号全局序号。除初始值
-`0` 只在持久 floor 仍为 0 时有效；低于 `compactedThrough`、损坏或越过本账号 `lastSeq` 的游标
-触发显式 `SYNC_RESET`，不能通过一次空查询直接进入实时态并永久跳过后续事件。
+`0` 只在持久 floor 仍为 0、或该连接已发布 checkpoint 锚点 0 时有效；此外流非空账号的游标 `0`
+（全新安装）与低于 `compactedThrough`、损坏或越过本账号 `lastSeq` 的游标同样触发显式 `SYNC_RESET`，
+不能通过一次空查询直接进入实时态并永久跳过后续事件。全新安装由此直接走 checkpoint 引导：快照已含
+当前投影，消息正文按需分页加载，不再从 seq 0 整段回放积压事件（内测反馈 T067）。
 
 RESET 不再回到 eventId 0。客户端保持 `SYNCHRONIZING`，在同一认证连接通过二进制
 `SyncRpc` 先取得 current User 和 `baseEventId`，再分别收齐 Contact、可访问 Chat 和 Conversation

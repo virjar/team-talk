@@ -654,7 +654,7 @@ RPC 与消息 ACK 在未就绪、发送窗口断线或等待回包时断线，�
 ### 4.4 群文件：可靠命令与增量投影
 
 `GroupFileRepository` 是这条通用路径中的可靠命令边界。面向 app 的创建目录、发布文件、追加版本、重命名和删除
-五类可恢复入口在首个 RPC 前都把完整规范 payload 写入 deployment + dataset + uid 隔离的 LocalCache outbox。创建以
+六类可恢复入口（含移动）在首个 RPC 前都把完整规范 payload 写入 deployment + dataset + uid 隔离的 LocalCache outbox。创建以
 `chat + parent + 规范名称`、追加版本/重命名/删除以 `chat + entry` 占用 per-entry 单槽；队列最多 256 条、
 单条最多 24 KiB、合计最多 3 MiB，不为新操作驱逐未知结果。
 
@@ -1029,7 +1029,7 @@ dirty 标签存在新版本，保留原正文和 CAS 基线，交给保存冲突
 
 当前 epoch 承载全部本地持久事实：
 outgoing/Bot delivery log、已读镜像 outbox、会话预览元组、组织单元/直属成员/文档空间/首页/分支/正文
-有界投影、GUI 建群/好友/邀请链接/群机器人凭据/群文件五类可靠命令的持久 outbox（各自有界）、
+有界投影、GUI 建群/好友/邀请链接/群机器人凭据/群文件六类可靠命令的持久 outbox（各自有界）、
 dataset + cursor 绑定的 sync state、完整认证 Attachment 描述符与 personal peer uid、
 revision CAS、带 canonical 内嵌资产 sidecar 的 ReplyBody 消息字节、表情回应的行级服务端投影、
 不可变 `(createdAt, nodeId)` 同级顺序、文档 move/rename durable outbox、评论分页与待发送意图，以及

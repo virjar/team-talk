@@ -249,11 +249,11 @@ GroupFileService 通过统一 `ChatAccess` 只接受当前群成员访问，并�
 直接子条目和每个活动文件 128 个版本，字节配额默认 1 GiB 且可配置；零字节文件仍占前三类槽。
 Repository 在群行锁内先识别完全相同的资源/版本重试，再执行容量准入，避免重放重复占槽；
 createFolder、createFile、addVersion、rename、move 和 delete 六类命令的事实变更、容量台账、不可变命令收据
-与审计必须位于同一事务。createFolder/createFile 的稳定 entryId 和 commandId，以及其余三类操作的
+与审计必须位于同一事务。createFolder/createFile 的稳定 entryId 和 commandId，以及其余四类操作的
 稳定 commandId 均由客户端提供；领域服务只对规范化后的不可变 payload 计算 SHA-256 指纹，同一 ID
-改写 payload 必须拒绝。rename/delete 的 RPC 结果是 `Unit`，对应收据 `resultVersion = null`；收到完全
+改写 payload 必须拒绝。rename/move/delete 的 RPC 结果是 `Unit`，对应收据 `resultVersion = null`；收到完全
 一致的 `commandId + chatId + entryId + actorUid + kind + fingerprint` 时只确认已经提交，不再次推进
-revision、容量或审计。这个收据确认是一个很窄的丢响应恢复例外：只有 rename/delete 的精确重放可以在
+revision、容量或审计。这个收据确认是一个很窄的丢响应恢复例外：只有 rename/move/delete 的精确重放可以在
 条目后来改名、删除或操作者后来离群后继续得到 ACK；任何新命令仍按当前群和成员事实裁决。
 
 每群活动条目数与活动版本字节数由群级 usage 行

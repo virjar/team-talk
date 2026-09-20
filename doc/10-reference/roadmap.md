@@ -135,7 +135,7 @@ RocksDB、FileStore 的一致备份、恢复和演练流程，明确 Lucene 从�
 ### CONTENT-03 · 群文件历史容量与保留治理
 
 只治理仍会增长的 `group_file_versions`、`group_file_audits`、`group_file_commands` 历史，补用量、
-保留、归档和查询。五类命令的稳定 identity、outbox/receipt、rename/delete 丢响应恢复已完成；
+保留、归档和查询。六类命令（含移动）的稳定 identity、outbox/receipt、rename/move/delete 丢响应恢复已完成；
 变更投影与文件名搜索已有实现，见[功能状态](feature-status.md#客户端体验)，不重复列作本项。
 
 先统一“原命令已成功”和“当前对象仍可读取”的结果语义，覆盖 ACK 丢失后删除、退群、附件回收与

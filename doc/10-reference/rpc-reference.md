@@ -264,13 +264,16 @@ revision 1。清空使用 `content = null` 并保留正 revision 墓碑，此后
 | 6 | `rename` | `commandId`, `chatId`, `entryId`, `name`, `expectedRevision` | `Unit` |
 | 7 | `delete` | `commandId`, `chatId`, `entryId`, `expectedRevision` | `Unit` |
 | 8 | `getEntry` | `chatId`, `entryId` | `GroupFileEntry` |
+| 9 | `move` | `commandId`, `chatId`, `entryId`, `targetParentId?`, `expectedRevision` | `Unit`（自 minor 4 可用） |
 
 读取与新变更的首次交付都按认证 uid 实时校验群成员。createFile/addVersion 只接受调用者自己上传且与
 FileStore 元数据完全匹配的 Attachment；expectedRevision 是条目级乐观锁，不能用 contentVersion 代替。
-createFolder/createFile 的 `entryId`、五类变更的 `commandId` 都必须是客户端生成的规范 UUID，
+createFolder/createFile 的 `entryId`、六类变更的 `commandId` 都必须是客户端生成的规范 UUID，
 并在未知结果重试时原样复用；相同命令与规范化不可变 payload 的精确重放只返回已提交事实，
-不再占用条目、同级或版本容量，相同 ID 搭配不同 payload 则拒绝。已提交 rename/delete 的精确 Unit 收据
-在操作者后来被移出群后仍可返回 ACK；它不返回当前条目、资产或秘密，也不授予新的读写能力。
+不再占用条目、同级或版本容量，相同 ID 搭配不同 payload 则拒绝。已提交 rename/move/delete 的精确 Unit 收据
+在操作者后来被移出群后仍可返回 ACK；它不返回当前条目、资产或秘密，也不授予新的读写能力。move 的
+`targetParentId` 为 null 表示移到根目录；目标不能是条目自身或其子孙目录，目标目录已有同名活动条目
+或与当前父目录相同时拒绝。
 `PENDING / ACKNOWLEDGED / REJECTED` 是客户端可靠 outbox 的本地状态，不是本表中的 wire 返回值。
 
 ## document

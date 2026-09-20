@@ -71,7 +71,7 @@ SDK 协商与 MCP `initialize.serverInfo.version` 使用生成的 `TeamTalkBuild
 
 `ClientSession` 同时持有群文件 Repository，其创建目录、发布文件、追加版本、重命名和删除的可恢复入口
 都先把完整命令写入 deployment + dataset + uid 隔离的 SQLite outbox。创建共享
-`chat + parent + 规范名称` 意图槽，追加版本/重命名/删除共享 `chat + entry` mutation 槽；队列上限为
+`chat + parent + 规范名称` 意图槽，追加版本/重命名/移动/删除共享 `chat + entry` mutation 槽；队列上限为
 256 条、单条 24 KiB、合计 3 MiB，超限不驱逐旧事实。前台与恢复 worker 由 Repository single-flight，
 transport/超时/408/429/5xx 保留原命令并返回 `PENDING`；确定业务 4xx 清除本 generation，401/403/codec 保留但报错。
 会话向上发布后台终结的 `ACKNOWLEDGED` / `REJECTED` completion，图形客户端用它驱动匹配页面和已打开路径收敛。

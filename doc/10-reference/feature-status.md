@@ -93,7 +93,7 @@ PostgreSQL 的 `Chat.maxSeq` 只在 receipt/Conversation/事件事务中连续�
 <details>
 <summary>断线队列、重连和离线事件补偿：实现边界与验收入口</summary>
 
-本地缓存当前 epoch 持久化有界 outgoing/命令 outbox、草稿/已读、组织与文档投影、完整 User/个人会话头像描述符、personal peer uid、User/peer revision 及 Reply 资产 sidecar；群文件五类变更以及文档 move/rename 使用持久命令 outbox；文档节点按不可变创建坐标排序。已建立本地关系或精确观察的用户投影与 checkpoint 身份元组按 revision CAS，迟到 RPC、durable/transient 事件或组织嵌入快照不能回退姓名/头像。尚无关系的瞬时 User 提示只用 256 项 session LRU 桥接首次加载，溢出可丢，后续关系 RPC、资料查询或重连刷新负责恢复。当前协议在游标低于服务端保留 floor 时，继续使用 `SyncRpc` 收齐 User/Contact/Chat/Conversation checkpoint，按 expected dataset + cursor CAS 一次 SQLite 安装并从 `baseEventId` 拉 tail；各 section 页不共享跨 RPC MVCC snapshot。Bot inbox 不回收未 ACK 行，但 at-least-once 只覆盖仍在服务端保留窗内或已进本地 inbox 的事件；超长离线只恢复当前投影/可查消息历史，不补已压缩的历史 delivery/编辑/撤回回调
+本地缓存当前 epoch 持久化有界 outgoing/命令 outbox、草稿/已读、组织与文档投影、完整 User/个人会话头像描述符、personal peer uid、User/peer revision 及 Reply 资产 sidecar；群文件六类变更（含移动）以及文档 move/rename 使用持久命令 outbox；文档节点按不可变创建坐标排序。已建立本地关系或精确观察的用户投影与 checkpoint 身份元组按 revision CAS，迟到 RPC、durable/transient 事件或组织嵌入快照不能回退姓名/头像。尚无关系的瞬时 User 提示只用 256 项 session LRU 桥接首次加载，溢出可丢，后续关系 RPC、资料查询或重连刷新负责恢复。当前协议在游标低于服务端保留 floor 时，继续使用 `SyncRpc` 收齐 User/Contact/Chat/Conversation checkpoint，按 expected dataset + cursor CAS 一次 SQLite 安装并从 `baseEventId` 拉 tail；各 section 页不共享跨 RPC MVCC snapshot。Bot inbox 不回收未 ACK 行，但 at-least-once 只覆盖仍在服务端保留窗内或已进本地 inbox 的事件；超长离线只恢复当前投影/可查消息历史，不补已压缩的历史 delivery/编辑/撤回回调
 
 </details>
 
@@ -354,9 +354,9 @@ MessageStore 原子拥有 chat 消息序号与权威消息，PostgreSQL 保存�
 <details>
 <summary>群共享文件空间：实现边界与验收入口</summary>
 
-五类命令精确重放不会追加新的 GROUP_FILE_CHANGED；rename/delete 只确认原 Unit 收据，条目删除或成员退出后仍可确认原命令。创建与追加版本仍需读取当前条目，完整撤权/删除后的确认与收据回收语义继续归 CONTENT-03。
+六类命令精确重放不会追加新的 GROUP_FILE_CHANGED；rename/move/delete 只确认原 Unit 收据，条目删除或成员退出后仍可确认原命令。创建与追加版本仍需读取当前条目，完整撤权/删除后的确认与收据回收语义继续归 CONTENT-03。
 
-独立目录、不可变版本、成员 ACL、乐观锁、1 GiB 默认字节配额，以及每群 10,000 个活动条目、每 parent 512 个直接子条目、每文件 128 个活动版本的事务级硬边界、O(1) 容量台账、五类变更的稳定命令收据、客户端跨进程有界 mutation outbox、基础审计、引用安全回收和双端入口已完成；rename/delete 的丢响应恢复会复用精确 commandId，五类命令的客户端可重试失败均显示 PENDING，发布/追加版本的高价值 ACTION 另记录 QUEUED，后台 ACK 刷新相关目录、版本或面包屑，后台 REJECTED 给出明确提示并刷新当前页。文件名搜索使用当前群权限和活动文件条目；历史行/字节总预算和管理查询尚未完成。`GROUP_FILE_CHANGED` 驱动行级实时投影与离线 stale 展示，双端完整断网恢复按 REL-05 的交付范围验收
+独立目录、不可变版本、成员 ACL、乐观锁、1 GiB 默认字节配额，以及每群 10,000 个活动条目、每 parent 512 个直接子条目、每文件 128 个活动版本的事务级硬边界、O(1) 容量台账、六类变更（含移动）的稳定命令收据、客户端跨进程有界 mutation outbox、基础审计、引用安全回收和双端入口已完成；rename/move/delete 的丢响应恢复会复用精确 commandId，六类命令的客户端可重试失败均显示 PENDING，发布/追加版本的高价值 ACTION 另记录 QUEUED，后台 ACK 刷新相关目录、版本或面包屑，后台 REJECTED 给出明确提示并刷新当前页。文件名搜索使用当前群权限和活动文件条目；历史行/字节总预算和管理查询尚未完成。`GROUP_FILE_CHANGED` 驱动行级实时投影与离线 stale 展示，双端完整断网恢复按 REL-05 的交付范围验收
 
 </details>
 
