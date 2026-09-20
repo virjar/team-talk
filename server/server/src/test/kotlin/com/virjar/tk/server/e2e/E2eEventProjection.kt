@@ -2,7 +2,9 @@ package com.virjar.tk.server.e2e
 
 import com.virjar.tk.shared.client.EventProcessor
 import com.virjar.tk.shared.client.ImClient
+import com.virjar.tk.shared.client.EventSyncCheckpointBootstrap
 import com.virjar.tk.shared.client.LocalCache
+import com.virjar.tk.shared.client.eventSyncCheckpointBootstrap
 import com.virjar.tk.protocol.model.Conversation
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.payload.SyncDatasetIdPolicy
@@ -30,7 +32,9 @@ internal class E2eEventProjection(
      * 对同一 dataset 的重连 AUTH 是幂等的；dataset 变化时必须像生产环境
      * 替换其 dataset 作用域的缓存图一样，替换整个测试会话。
      */
-    fun bindDataset(datasetId: String) {
+    fun bind(datasetId: String, ownerUid: String? = null) = bindDataset(datasetId, ownerUid)
+
+    fun bindDataset(datasetId: String, ownerUid: String? = null) {
         SyncDatasetIdPolicy.requireValid(datasetId)
         synchronized(lock) {
             check(!closed) { "E2E event projection is closed" }
@@ -46,9 +50,14 @@ internal class E2eEventProjection(
             check(syncState.datasetId == datasetId && syncState.cursor == 0L) {
                 "E2E event projection did not bind a fresh authoritative dataset"
             }
+            // 与生产 ClientSession 相同的 checkpoint 引导能力：全新安装（游标 0 撞上
+            // 积压流）会被服务端要求 checkpoint，夹具必须能完成同一条恢复路径。
+            val checkpointBootstrap = client.eventSyncCheckpointBootstrap()
             val processor = EventProcessor(
                 imClient = client,
                 localCache = cache,
+                ownerUid = ownerUid,
+                checkpointLoader = checkpointBootstrap.loader,
                 // 与 ImClient.packets 不同，这个边界还会观察到 SYNC_BATCH 内携带的消息。
                 // 它运行在缓存插入之后、cursor 提交之前，因此即使缓存 upsert 是幂等的，
                 // 重放的重复消息仍然可见。
@@ -59,11 +68,12 @@ internal class E2eEventProjection(
                 },
             )
             try {
+                checkpointBootstrap.bind(processor)
                 processor.start()
             } catch (failure: Throwable) {
-                releaseAfterFailedBind(processor, cache, failure)
+                releaseAfterFailedBind(processor, cache, failure, checkpointBootstrap)
             }
-            bound = BoundProjection(datasetId, processor, cache)
+            bound = BoundProjection(datasetId, processor, cache, checkpointBootstrap)
         }
     }
 
@@ -105,6 +115,9 @@ internal class E2eEventProjection(
         } catch (stopFailure: Throwable) {
             failure = stopFailure
         }
+        runCatching { projection.checkpointBootstrap.close() }.exceptionOrNull()?.let { retireFailure ->
+            failure?.addSuppressed(retireFailure) ?: run { failure = retireFailure }
+        }
         try {
             projection.cache.close()
         } catch (cacheFailure: Throwable) {
@@ -118,6 +131,7 @@ internal class E2eEventProjection(
         val datasetId: String,
         val processor: EventProcessor,
         val cache: FakeLocalCache,
+        val checkpointBootstrap: EventSyncCheckpointBootstrap,
     )
 
     private fun <T> readCache(block: (FakeLocalCache) -> T): T = synchronized(lock) {
@@ -129,9 +143,11 @@ internal class E2eEventProjection(
         processor: EventProcessor,
         cache: FakeLocalCache,
         failure: Throwable,
+        checkpointBootstrap: EventSyncCheckpointBootstrap,
     ): Nothing {
         runCatching(processor::stop).exceptionOrNull()?.let(failure::addSuppressed)
         runCatching(cache::close).exceptionOrNull()?.let(failure::addSuppressed)
+        runCatching(checkpointBootstrap::close).exceptionOrNull()?.let(failure::addSuppressed)
         throw failure
     }
 }

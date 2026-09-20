@@ -82,7 +82,28 @@ class SyncReplayIntegrationTest {
             }
         }
 
-        var cursor = 0L
+        // 全新安装（游标 0）撞上积压流：服务端要求 checkpoint 引导，锚点覆盖全部积压。
+        assertIs<SyncBatchResult.InvalidCursor>(
+            ctx.syncEventReader.nextBatchOrActivate(uid, "pagination-session", ctx.syncEventReader.datasetId, 0L, 64) { true },
+        )
+        val header = ctx.syncCheckpointService.beginCheckpoint(
+            uid = uid,
+            sessionId = "pagination-session",
+            claimedDatasetId = ctx.syncEventReader.datasetId,
+        )
+        assertTrue(header.baseEventId >= 150L, "checkpoint 锚点应覆盖引导前的全部积压事件")
+
+        // 引导后到达的持久事件仍按有界确认页正常续尾。
+        ctx.pgUnitOfWork.write {
+            repeat(150) { index ->
+                appendEvent(
+                    uid,
+                    NotifyType.USER_UPDATED,
+                    User(uid = uid, username = "tail-$index", name = "Tail $index"),
+                )
+            }
+        }
+        var cursor = header.baseEventId
         val replayed = mutableListOf<Long>()
         var activated = false
         while (!activated) {
@@ -109,6 +130,22 @@ class SyncReplayIntegrationTest {
 
         assertEquals(150, replayed.size)
         assertEquals(replayed.distinct(), replayed)
+    }
+
+    @Test
+    fun `fresh zero cursor on a stream with history is rejected to checkpoint bootstrap`() = runTest {
+        val uid = ctx.registerUser(uniqueUsername("sync-fresh-zero"))
+        ctx.pgUnitOfWork.write {
+            appendEvent(uid, NotifyType.USER_UPDATED, User(uid = uid, username = "fresh", name = "Fresh"))
+        }
+        // 无锚点会话不得从 0 回放积压；空流账户的首扫不受影响。
+        assertIs<SyncBatchResult.InvalidCursor>(
+            ctx.syncEventReader.nextBatchOrActivate(uid, "fresh-zero-session", ctx.syncEventReader.datasetId, 0L, 64) { true },
+        )
+        val empty = ctx.registerUser(uniqueUsername("sync-fresh-empty"))
+        assertIs<SyncBatchResult.Activated>(
+            ctx.syncEventReader.nextBatchOrActivate(empty, "fresh-empty-session", ctx.syncEventReader.datasetId, 0L, 64) { true },
+        )
     }
 
     @Test
@@ -149,15 +186,32 @@ class SyncReplayIntegrationTest {
         live.await()
         assertEquals(listOf("ready", "live"), order)
 
-        val replay = ctx.syncEventReader.nextBatchOrActivate(
-            uid,
-            "race-replay-session",
-            ctx.syncEventReader.datasetId,
-            0L,
-            64,
-        ) { false }
-        assertIs<SyncBatchResult.Events>(replay)
-        assertEquals(1, replay.events.size)
+        // 引导后的会话：checkpoint 锚点已含该事件，从锚点续尾没有新事件即激活；
+        // 未引导的全新会话仍不得从 0 回放积压。
+        val header = ctx.syncCheckpointService.beginCheckpoint(
+            uid = uid,
+            sessionId = "race-replay-session",
+            claimedDatasetId = ctx.syncEventReader.datasetId,
+        )
+        assertEquals(1L, header.baseEventId)
+        assertIs<SyncBatchResult.Activated>(
+            ctx.syncEventReader.nextBatchOrActivate(
+                uid,
+                "race-replay-session",
+                ctx.syncEventReader.datasetId,
+                header.baseEventId,
+                64,
+            ) { true },
+        )
+        assertIs<SyncBatchResult.InvalidCursor>(
+            ctx.syncEventReader.nextBatchOrActivate(
+                uid,
+                "race-fresh-session",
+                ctx.syncEventReader.datasetId,
+                0L,
+                64,
+            ) { false },
+        )
     }
 
     @Test

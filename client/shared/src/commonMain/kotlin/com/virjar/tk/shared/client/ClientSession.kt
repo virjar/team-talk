@@ -465,11 +465,10 @@ fun createSession(
     check(sessionTransportOwnerGeneration > 0L) { "Cannot create session without a transport owner" }
     val lifecycle = SessionLifecycleGate()
     val businessRpcClient = SessionBusinessRpcInvoker(rpcClient, lifecycle, outboundLease)
-    val checkpointAdmission = SessionOutboundLease()
-    construction.own("checkpoint admission", checkpointAdmission::retire)
-    val checkpointLoader = SyncCheckpointLoader(
-        SyncRpcProxy(SynchronizationRpcInvoker(rpcClient, checkpointAdmission)),
-    )
+    val checkpointBootstrap = imClient.eventSyncCheckpointBootstrap()
+    construction.own("checkpoint admission", checkpointBootstrap::close)
+    val checkpointAdmission = checkpointBootstrap
+    val checkpointLoader = checkpointBootstrap.loader
     val httpAuthExpiredRouter = SessionHttpAuthExpiredRouter()
     construction.own("HTTP auth expiry router", httpAuthExpiredRouter::close)
     val pendingMirrorWake = SessionPendingMirrorWake()
@@ -505,7 +504,7 @@ fun createSession(
         onTaskReminderDirty = pendingMirrorWake::pendingCommitted,
         onChatDraftDirty = pendingMirrorWake::pendingCommitted,
     )
-    ep.bindSyncWireAdmission(checkpointAdmission)
+    checkpointBootstrap.bind(ep)
     construction.own("event processor", ep::stop)
     val messageSender = MessageSender { msg ->
         lifecycle.requireBusinessActive()

@@ -25,10 +25,16 @@ class SendQueueE2eTest {
     fun `断线发送排队重连后送达`() {
         TcpE2eEnvironment().use { env ->
             runBlocking {
-                // B 在线（队列发送方）
+                // B 在线（队列发送方）；认证回调内绑定投影（游标 0 积压重连会要求 checkpoint）。
                 var bUid: String? = null
-                val b = ImClient(onAuthResult = { ok, uid, _, _, _, _, _, _ -> if (ok) bUid = uid })
-                val bEvents = b.installE2eEventProjection(env.syncDatasetId)
+                var bEvents: E2eEventProjection? = null
+                val b = ImClient(onAuthResult = { ok, uid, _, _, _, _, _, _ ->
+                    if (ok) {
+                        bUid = uid
+                        bEvents?.bind(env.syncDatasetId, uid)
+                    }
+                })
+                bEvents = b.installE2eEventProjection()
                 b.register("sq-b-${System.nanoTime()}", "password123", "B", "dev-b", "Test", "127.0.0.1", env.tcpPort)
                 withTimeout(10_000) { b.state.first { it == ConnectionState.AUTHENTICATED } }
 
@@ -80,10 +86,10 @@ class SendQueueE2eTest {
                     assertEquals("断线排队的消息", (received.body as RichTextBody).markdown)
 
                     queue.close(); queueScope.cancel()
-                    a.shutdown(); bEvents.close(); b.destroy()
+                    a.shutdown(); bEvents?.close(); b.destroy()
                 } finally {
                     runCatching { a.shutdown() }
-                    runCatching { bEvents.close() }
+                    runCatching { bEvents?.close() }
                     runCatching { b.destroy() }
                 }
             }

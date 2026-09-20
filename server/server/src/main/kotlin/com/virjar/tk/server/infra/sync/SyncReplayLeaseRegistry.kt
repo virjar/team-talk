@@ -88,6 +88,13 @@ class SyncReplayLeaseRegistry {
         leases.remove(SessionKey(uid, sessionId))
     }
 
+    /** 该会话是否已发布 checkpoint 锚点（锚点 0 的空流会话允许从 0 续尾）。 */
+    @Synchronized
+    fun hasPublishedAnchor(uid: String, sessionId: String): Boolean {
+        val lease = leases[SessionKey(uid, sessionId)] ?: return false
+        return lease.checkpointId != null && lease.protectedCursor != null
+    }
+
     /** 压缩器对此用户绝不能越过的最低已确认游标。 */
     @Synchronized
     fun minimumProtectedCursor(uid: String): Long? = leases.asSequence()

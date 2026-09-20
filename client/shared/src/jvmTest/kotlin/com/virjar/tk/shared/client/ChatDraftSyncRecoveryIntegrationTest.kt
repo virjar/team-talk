@@ -10,6 +10,7 @@ import com.virjar.tk.protocol.model.ChatDraftContent
 import com.virjar.tk.protocol.model.ChatDraftMutationResult
 import com.virjar.tk.protocol.model.ChatDraftSnapshot as SharedChatDraftSnapshot
 import com.virjar.tk.protocol.model.EmbeddedAsset
+import com.virjar.tk.protocol.model.Conversation
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.payload.NotifyPayload
@@ -338,6 +339,38 @@ class ChatDraftSyncRecoveryIntegrationTest {
                 assertEquals(listOf(asset()), cache.chatAssetUploads.outgoingAssets(CHAT, "pending").mapNotNull { it.asset })
                 assertNull(cache.chatDraftSync.state(CHAT).remote)
             }
+        }
+    }
+
+    @Test
+    fun `server synced legacy scalar is not adopted as a local edit on fresh devices`() = runBlocking {
+        cache { cache ->
+            // 新设备：会话表带着服务端同步下来的 legacy 草稿残留（CONVERSATION_UPDATED 会写它）。
+            cache.upsertConversation(
+                Conversation(chatId = CHAT, chatType = 1, peerUid = "peer", lastMessage = "hi", draft = "服务端残留文本"),
+            )
+
+            // CONVERSATION_UPDATED 路径触发 ensure（revision 0），随后权威 CAS 快照到达。
+            cache.chatDraftSync.invalidate(CHAT, 0)
+            assertTrue(cache.chatDraftSync.applyRemote(remote(5, "权威草稿")))
+
+            val state = cache.chatDraftSync.state(CHAT)
+            assertFalse(state.conflict, "服务端同步的 scalar 残留不得与权威草稿假冲突")
+            assertEquals("权威草稿", cache.chatDrafts.get(CHAT)?.markdown)
+            assertEquals(5L, state.remote?.revision)
+        }
+    }
+
+    @Test
+    fun `legacy outbox row is still adopted as an unpushed local edit`() = runBlocking {
+        cache { cache ->
+            // 旧版本遗留的未推送 outbox 行仍是确定的本机编辑，收养为 dirty 并推送。
+            cache.chatDrafts.save(ChatDraftSnapshot(CHAT, cache.reserveChatDraftRevision(), "旧版本未推送草稿"))
+            // save 会写 legacy 镜像 outbox（未托管会话）。
+            cache.chatDraftSync.ensure(CHAT)
+            val state = cache.chatDraftSync.state(CHAT)
+            assertTrue(state.pending, "outbox 收养后应视为有本机未确认工作")
+            assertEquals("旧版本未推送草稿", cache.chatDrafts.get(CHAT)?.markdown)
         }
     }
 

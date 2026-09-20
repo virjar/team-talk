@@ -372,7 +372,10 @@ debounce 或 `onDispose` 在 CLOSED 后只能无害失败，不能穿过已 quie
 64 MiB。容量紧张时可回收远端已清空、且没有本机非空稿、待处理操作、消费记录、冲突或失败的纯投影，
 之后按需重新读取；本机可靠事实不参与回收。已经由完整草稿同步接管的 chat，普通输入只更新本地
 列表预览，不再进入 legacy setDraft 镜像 outbox；服务端的 `Conversation.draft` 兼容投影由
-ChatDraftService 从 CAS 提交统一派生。首次接管时既有的待发行 legacy 行被采纳进 CAS 记录并随之
+ChatDraftService 从 CAS 提交统一派生。首次接管时只有 legacy outbox 中确定未推送的本机编辑被
+采纳进 CAS 记录并随之推送；服务端同步下来的 `Conversation.draft` scalar 只是镜像/历史残留，
+不得当作本机编辑收养（内测反馈：全新设备登录后大量“本地/远程草稿冲突”误报即源于此），权威
+内容一律由 CAS 快照安装，scalar 仅作列表预览。
 退役，重连和失效提示通过同一持久 owner 收敛。
 
 `ClientSession.createChatAssetUploads` 拥有专用 HTTP repository 和单一上传 worker。Android 的

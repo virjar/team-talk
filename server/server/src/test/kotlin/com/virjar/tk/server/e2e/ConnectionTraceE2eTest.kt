@@ -22,12 +22,16 @@ class ConnectionTraceE2eTest {
         TcpE2eEnvironment().use { env ->
             runBlocking {
                 var authenticatedUid: String? = null
+                var projection: E2eEventProjection? = null
                 val client = ImClient(
                     onAuthResult = { success, uid, _, _, _, _, _, _ ->
-                        if (success) authenticatedUid = uid
+                        if (success) {
+                            authenticatedUid = uid
+                            projection?.bind(env.syncDatasetId, uid)
+                        }
                     },
                 )
-                val projection = client.installE2eEventProjection(env.syncDatasetId)
+                projection = client.installE2eEventProjection()
                 try {
                     val deviceId = "trace-e2e-device"
                     client.register(
@@ -67,7 +71,7 @@ class ConnectionTraceE2eTest {
                         "BASELINE terminal must stop the already-ready connection immediately",
                     )
                 } finally {
-                    projection.close()
+                    projection?.close()
                     client.destroy()
                 }
             }
@@ -82,15 +86,17 @@ class ConnectionTraceE2eTest {
                 val username = "trace-corr-${UUID.randomUUID().toString().take(12)}"
                 var authenticatedUid: String? = null
                 var durableRefreshToken: String? = null
+                var firstProjection: E2eEventProjection? = null
                 val firstClient = ImClient(
                     onAuthResult = { success, uid, _, _, refreshToken, _, _, _ ->
                         if (success) {
                             authenticatedUid = uid
                             durableRefreshToken = refreshToken
+                            firstProjection?.bind(env.syncDatasetId, uid)
                         }
                     },
                 )
-                val firstProjection = firstClient.installE2eEventProjection(env.syncDatasetId)
+                firstProjection = firstClient.installE2eEventProjection()
                 val firstContext: com.virjar.tk.protocol.telemetry.ConnectionTraceContext
                 val firstEventRecordId: Long
                 try {
@@ -127,7 +133,7 @@ class ConnectionTraceE2eTest {
                         eventName = "connection.trace.first",
                     )
                 } finally {
-                    firstProjection.close()
+                    firstProjection?.close()
                     firstClient.disconnect()
                     withTimeoutOrNull(5_000) {
                         firstClient.state.first { it == ConnectionState.DISCONNECTED }
@@ -138,12 +144,16 @@ class ConnectionTraceE2eTest {
                 val uid = assertNotNull(authenticatedUid)
                 val refreshToken = assertNotNull(durableRefreshToken)
                 var reauthenticatedUid: String? = null
+                var secondProjection: E2eEventProjection? = null
                 val secondClient = ImClient(
                     onAuthResult = { success, responseUid, _, _, _, _, _, _ ->
-                        if (success) reauthenticatedUid = responseUid
+                        if (success) {
+                            reauthenticatedUid = responseUid
+                            secondProjection?.bind(env.syncDatasetId, responseUid)
+                        }
                     },
                 )
-                val secondProjection = secondClient.installE2eEventProjection(env.syncDatasetId)
+                secondProjection = secondClient.installE2eEventProjection()
                 try {
                     val traceCountBeforeReconnect = env.connectionTraceSnapshot().documentCount
                     secondClient.authenticate(
@@ -209,7 +219,7 @@ class ConnectionTraceE2eTest {
                         "old and reconnected server trace result sets must not overlap",
                     )
                 } finally {
-                    secondProjection.close()
+                    secondProjection?.close()
                     secondClient.disconnect()
                     withTimeoutOrNull(5_000) {
                         secondClient.state.first { it == ConnectionState.DISCONNECTED }

@@ -28,13 +28,17 @@ class LargePayloadE2eTest {
                 // B 用裸 ImClient：需要控制断线/观测连接状态（uid 从认证回调捕获）
                 var bUid: String? = null
                 var bRefreshToken: String? = null
+                // 认证回调内绑定（进入 SYNCHRONIZING 前完成 dataset+owner 装配）：
+                // 本用例在游标 0 积压后重连，服务端将要求 checkpoint 引导，夹具必须带 owner。
+                var bEvents: E2eEventProjection? = null
                 val b = ImClient(onAuthResult = { ok, uid, _, _, refreshToken, _, _, _ ->
                     if (ok) {
                         bUid = uid
                         bRefreshToken = refreshToken
+                        bEvents?.bind(env.syncDatasetId, uid ?: error("auth ok without uid"))
                     }
                 })
-                val bEvents = b.installE2eEventProjection(env.syncDatasetId)
+                bEvents = b.installE2eEventProjection()
                 b.register("large-b-${System.nanoTime()}", "password123", "B", "dev-b", "Test", "127.0.0.1", env.tcpPort)
                 withTimeout(10_000) { b.state.first { it == ConnectionState.AUTHENTICATED } }
 
@@ -63,7 +67,7 @@ class LargePayloadE2eTest {
                     assertEquals(ConnectionState.AUTHENTICATED, b.state.value, "补发大包不应导致断连")
                 } finally {
                     a.shutdown()
-                    bEvents.close()
+                    bEvents?.close()
                     b.destroy()
                 }
             }

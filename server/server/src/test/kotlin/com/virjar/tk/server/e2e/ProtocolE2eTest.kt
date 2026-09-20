@@ -89,7 +89,7 @@ class ProtocolE2eTest {
         fun close() {
             collectJob?.cancel()
             rpc.stop()
-            eventProjection.close()
+            eventProjection?.close()
             // E2E 测试会话是一次性的，彻底销毁线程资源
             imClient.destroy()
         }
@@ -97,6 +97,7 @@ class ProtocolE2eTest {
 
     private suspend fun createSession(): E2eSession {
         val userSession = com.virjar.tk.shared.client.UserSession()
+        var eventProjection: E2eEventProjection? = null
         val imClient = ImClient(onAuthResult = {
                 success, uid, username, name, refreshToken, accessToken, datasetId, failureReason ->
             if (success) {
@@ -109,10 +110,11 @@ class ProtocolE2eTest {
                 userSession.onAuthSuccess(
                     uid ?: "", username, name, refreshToken, accessToken, authoritativeDatasetId,
                 )
+                eventProjection?.bind(authoritativeDatasetId, uid)
             }
             else userSession.onAuthFailed(failureReason)
         })
-        val eventProjection = imClient.installE2eEventProjection(env.syncDatasetId)
+        eventProjection = imClient.installE2eEventProjection()
         imClient.connect("127.0.0.1", env.tcpPort)
         withTimeout(5000) { imClient.state.first { it == ConnectionState.CONNECTED } }
 

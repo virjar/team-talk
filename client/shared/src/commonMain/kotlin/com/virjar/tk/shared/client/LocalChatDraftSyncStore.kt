@@ -77,14 +77,14 @@ internal class LocalChatDraftSyncStore(
     override fun ensure(chatId: String) = use {
         if (read(chatId) == null) {
             var draft = drafts.get(chatId)
+            // 只有旧 outbox 行才是确定的本机未推送编辑。conversations.draft scalar 是服务端
+            // 同步下来的镜像/历史残留（新设备首次登录也带值），把它收养为本地编辑会与权威
+            // CAS 草稿假冲突（内测反馈：新机器登录后大量“本地/远程草稿冲突”提示）。
+            // 权威内容一律由 applyRemote 安装；scalar 仅作为列表预览展示。
             val legacyPending = queries.selectAllConversationDraftOutbox().executeAsList().firstOrNull { it.chat_id == chatId }
-            if (draft == null) {
-                val legacy = if (legacyPending != null) legacyPending.draft else
-                    queries.selectAllConversations().executeAsList().firstOrNull { it.chat_id == chatId }?.draft
-                if (legacy != null || legacyPending != null) {
-                    drafts.installRemoteLocked(ChatDraftSnapshot(chatId, markdown = legacy.orEmpty()))
-                    draft = drafts.get(chatId)
-                }
+            if (draft == null && legacyPending != null) {
+                drafts.installRemoteLocked(ChatDraftSnapshot(chatId, markdown = legacyPending.draft.orEmpty()))
+                draft = drafts.get(chatId)
             }
             write(StoredChatDraftSyncRecord(chatId, localRevision = draft?.revision ?: 0,
                 dirty = legacyPending != null || (draft != null && !empty(draft))))

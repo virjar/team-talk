@@ -132,7 +132,8 @@ class SyncEventService(
     override fun getEventsAfter(uid: String, afterEventId: Long, limit: Int): List<NotifyPayload> {
         require(afterEventId >= 0L) { "afterEventId must be non-negative" }
         require(limit > 0) { "limit must be positive" }
-        val page = readOwnedPage(uid, afterEventId, limit)
+        // 诊断/测试读入口没有会话锚点语义，不受全新安装引导护栏约束。
+        val page = readOwnedPage(uid, afterEventId, limit, allowZeroCursor = true)
         require(page != null) { "同步游标已失效" }
         return page
     }
@@ -164,7 +165,7 @@ class SyncEventService(
         // 的窄窗口内推进 floor。
         return dispatcher.withDeliveryGate(uid) {
             leases.reserveReplay(uid, sessionId)
-            val first = readOwnedPage(uid, afterEventId, limit)
+            val first = readOwnedPage(uid, afterEventId, limit, leases.hasPublishedAnchor(uid, sessionId))
             if (first == null) {
                 leases.release(uid, sessionId)
                 return@withDeliveryGate SyncBatchResult.InvalidCursor
@@ -176,7 +177,7 @@ class SyncEventService(
                 return@withDeliveryGate SyncBatchResult.Events(wireBoundedPage(first))
             }
             readHooks.afterFirstEmpty(uid, afterEventId)
-            val second = readOwnedPage(uid, afterEventId, limit)
+            val second = readOwnedPage(uid, afterEventId, limit, allowZeroCursor = true)
             when {
                 second == null -> {
                     leases.release(uid, sessionId)
@@ -202,7 +203,12 @@ class SyncEventService(
     }
 
     /** Null 表示游标低于压缩 floor，或超出此用户的流头部。 */
-    private fun readOwnedPage(uid: String, afterEventId: Long, limit: Int): List<NotifyPayload>? {
+    private fun readOwnedPage(
+        uid: String,
+        afterEventId: Long,
+        limit: Int,
+        allowZeroCursor: Boolean = false,
+    ): List<NotifyPayload>? {
         if (afterEventId < 0L) return null
         return transaction(
             transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ,
@@ -219,6 +225,13 @@ class SyncEventService(
             val compactedThrough = stream[SyncStreams.compactedThrough]
             val lastSeq = stream[SyncStreams.lastSeq]
             if (afterEventId < compactedThrough || afterEventId > lastSeq) {
+                return@transaction null
+            }
+            // 游标 0 = 全新安装：持久事件从 seq 0 整段回放既慢又冗余（checkpoint 快照
+            // 已含当前投影，消息正文按需分页加载）。无锚点会话直接判无效游标，让客户端
+            // 走 checkpoint 引导后在流头部续尾。空流（lastSeq==0）首扫与锚点为 0 的已
+            // 引导会话仍从 0 合法续尾（第二次读取窗口内的并发持久化照常返回）。
+            if (afterEventId == 0L && lastSeq > 0L && !allowZeroCursor) {
                 return@transaction null
             }
             SyncEvents.selectAll()

@@ -5,6 +5,7 @@ import com.virjar.tk.protocol.model.Contact
 import com.virjar.tk.protocol.model.Conversation
 import com.virjar.tk.protocol.model.ConversationCapacityPolicy
 import com.virjar.tk.protocol.model.SyncCheckpointPageRequest
+import com.virjar.tk.protocol.rpc.gen.SyncRpcProxy
 import com.virjar.tk.protocol.rpc.def.SyncRpc
 
 /** 收集一个完整权威服务器检查点的可测试边界。 */
@@ -148,4 +149,36 @@ internal class SyncCheckpointLoader(
         /** 镜像服务器硬性 Contact 聚合预算。 */
         const val MAX_CHECKPOINT_CONTACTS = 4_000
     }
+}
+
+
+/**
+ * Checkpoint 引导能力的共享组合入口：ClientSession 与 E2E 夹具经同一入口获得
+ * 与事件同步共用的 wire admission 与 loader，避免外部复刻内部装配。
+ */
+class EventSyncCheckpointBootstrap internal constructor(
+    private val rpcClient: RpcClient,
+    private val admission: SessionOutboundLease,
+    val loader: ServerCheckpointLoader,
+) {
+    /** 必须在 EventProcessor.start 之前绑定同一 admission；随后启动 checkpoint RPC 通道。 */
+    fun bind(processor: EventProcessor) {
+        processor.bindSyncWireAdmission(admission)
+        rpcClient.start()
+    }
+
+    fun close() {
+        runCatching(rpcClient::stop)
+        admission.retire()
+    }
+}
+
+fun ImClient.eventSyncCheckpointBootstrap(): EventSyncCheckpointBootstrap {
+    val admission = SessionOutboundLease()
+    val rpcClient = RpcClient(this)
+    return EventSyncCheckpointBootstrap(
+        rpcClient = rpcClient,
+        admission = admission,
+        loader = SyncCheckpointLoader(SyncRpcProxy(SynchronizationRpcInvoker(rpcClient, admission))),
+    )
 }

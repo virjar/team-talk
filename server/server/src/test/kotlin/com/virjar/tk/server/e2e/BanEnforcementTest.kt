@@ -72,11 +72,14 @@ class BanEnforcementTest {
                 }
 
                 // 密码证明是解封后唯一的恢复路径。
-                val c3 = ImClient()
-                val c3Events = c3.installE2eEventProjection(env.syncDatasetId)
+                var c3Events: E2eEventProjection? = null
+                val c3 = ImClient(onAuthResult = { ok, uid, _, _, _, _, _, _ ->
+                    if (ok) c3Events?.bind(env.syncDatasetId, uid)
+                })
+                c3Events = c3.installE2eEventProjection()
                 c3.login(username, "password123", "d1", "T", "127.0.0.1", env.tcpPort)
                 withTimeout(10_000) { c3.state.first { it == ConnectionState.AUTHENTICATED } }
-                c3Events.close()
+                c3Events?.close()
                 c3.destroy()
             }
         }

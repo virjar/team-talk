@@ -255,7 +255,7 @@ object RemoteAcceptanceSupport {
                     )
                     // AUTH 回调是凭据/dataset 准入屏障。这里绑定是同步的，
                     // 因此在 ImClient 首次做出 SYNC_REQUEST 决策前已经就位。
-                    eventProjection.bindDataset(authoritativeDatasetId)
+                    eventProjection.bindDataset(authoritativeDatasetId, uid)
                     successfulAuthentications.incrementAndGet()
                 } else {
                     userSession.onAuthFailed(failureReason)
