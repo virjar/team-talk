@@ -4,12 +4,8 @@ import com.virjar.tk.server.domain.message.PendingServiceReply
 import com.virjar.tk.server.domain.message.ServiceCommandReplies
 import com.virjar.tk.server.domain.message.SystemCommandHandler
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
-import java.util.concurrent.CountDownLatch
 
 /**
  * 服务号指令路由（内测反馈 T058，恢复语义 CODE-01）：sys_service 收到的文本消息解析为指令，
@@ -29,18 +25,8 @@ internal class SystemCommandRouter(
     private val settleServiceReply: (PendingServiceReply) -> Unit,
     private val pendingServiceReplies: (limit: Int) -> List<PendingServiceReply>,
     shutdownTimeoutMillis: Long = 5_000L,
-) : SystemCommandHandler, AutoCloseable {
+) : SystemCommandHandler, CoroutineWorkerRuntime("SystemCommandRouter", shutdownTimeoutMillis) {
     private val logger = LoggerFactory.getLogger(SystemCommandRouter::class.java)
-    private val lifecycle = SupervisorJob()
-    private val scope = CoroutineScope(lifecycle + Dispatchers.IO)
-    private val finished = CountDownLatch(1)
-    private val closeGate = BoundedCloseGate("SystemCommandRouter", shutdownTimeoutMillis, onTerminal = {})
-
-    val workersTerminated: Boolean get() = finished.count == 0L
-
-    init {
-        lifecycle.invokeOnCompletion { finished.countDown() }
-    }
 
     override fun dispatchServiceReply(pending: PendingServiceReply) {
         scope.launch { attempt(pending) }
@@ -83,18 +69,5 @@ internal class SystemCommandRouter(
         } catch (failure: Exception) {
             logger.warn("服务号回复暂未完成，留待启动恢复：chatId={}", pending.chatId, failure)
         }
-    }
-
-    override fun close() {
-        val failure = when (val attempt = closeGate.begin()) {
-            is BoundedCloseGate.Attempt.Owner -> {
-                lifecycle.cancel(CancellationException("SystemCommandRouter is closing"))
-                val completed = attempt.deadline.awaitBlocking(finished) { closeGate.recordFailure(it) }
-                if (completed) closeGate.complete(attempt) else closeGate.expire(attempt.deadline)
-            }
-            is BoundedCloseGate.Attempt.Follower -> closeGate.awaitFollowerBlocking(attempt)
-            is BoundedCloseGate.Attempt.Terminal -> attempt.failure
-        }
-        failure?.let { throw it }
     }
 }

@@ -358,6 +358,19 @@ class TestEnvironment : AutoCloseable {
     val contentAssetIndex: com.virjar.tk.server.infra.search.ContentAssetSearchIndex get() = koin.get()
     val messageService: MessageService get() = koin.get()
     val serviceAccountMessages: com.virjar.tk.server.domain.message.ServiceAccountMessages get() = koin.get()
+
+    /** 真实接线的指令路由：结算与恢复扫描挂到本环境消息存储，发送链可注入替换。 */
+    internal fun serviceCommandRouter(
+        sendServiceReply: suspend (chatId: String, clientMsgId: String, markdown: String) -> Long =
+            { chatId, clientMsgId, markdown -> messageService.sendServiceReply(chatId, clientMsgId, markdown) },
+    ): com.virjar.tk.server.runtime.SystemCommandRouter =
+        com.virjar.tk.server.runtime.SystemCommandRouter(
+            sendServiceReply = sendServiceReply,
+            settleServiceReply = { pending ->
+                messageStore.markServiceReplySettled(pending.chatId, pending.clientMsgId)
+            },
+            pendingServiceReplies = { limit -> messageStore.pendingServiceReplies(limit) },
+        )
     val messageProjector: MessageProjector get() = koin.get()
     val messageStore: MessageStore get() = koin.get()
     val conversationService: ConversationService get() = koin.get()

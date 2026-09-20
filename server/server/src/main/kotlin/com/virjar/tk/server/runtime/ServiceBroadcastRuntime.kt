@@ -2,13 +2,9 @@ package com.virjar.tk.server.runtime
 
 import com.virjar.tk.server.domain.message.ServiceAccountMessages
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CountDownLatch
 
 /**
  * 服务号广播运行时：持有全员广播的执行协程。与 [SystemCommandRouter] 相同的关闭纪律——
@@ -18,19 +14,9 @@ import java.util.concurrent.CountDownLatch
 internal class ServiceBroadcastRuntime(
     private val runBroadcast: suspend (String) -> Unit,
     shutdownTimeoutMillis: Long = 5_000L,
-) : AutoCloseable {
+) : CoroutineWorkerRuntime("ServiceBroadcastRuntime", shutdownTimeoutMillis) {
     private val logger = LoggerFactory.getLogger(ServiceBroadcastRuntime::class.java)
-    private val lifecycle = SupervisorJob()
-    private val scope = CoroutineScope(lifecycle + Dispatchers.IO)
-    private val finished = CountDownLatch(1)
     private val active = ConcurrentHashMap.newKeySet<String>()
-    private val closeGate = BoundedCloseGate("ServiceBroadcastRuntime", shutdownTimeoutMillis, onTerminal = {})
-
-    val workersTerminated: Boolean get() = finished.count == 0L
-
-    init {
-        lifecycle.invokeOnCompletion { finished.countDown() }
-    }
 
     fun isRunning(broadcastId: String): Boolean = broadcastId in active
 
@@ -48,18 +34,5 @@ internal class ServiceBroadcastRuntime(
                 active.remove(broadcastId)
             }
         }
-    }
-
-    override fun close() {
-        val failure = when (val attempt = closeGate.begin()) {
-            is BoundedCloseGate.Attempt.Owner -> {
-                lifecycle.cancel(CancellationException("ServiceBroadcastRuntime is closing"))
-                val completed = attempt.deadline.awaitBlocking(finished) { closeGate.recordFailure(it) }
-                if (completed) closeGate.complete(attempt) else closeGate.expire(attempt.deadline)
-            }
-            is BoundedCloseGate.Attempt.Follower -> closeGate.awaitFollowerBlocking(attempt)
-            is BoundedCloseGate.Attempt.Terminal -> attempt.failure
-        }
-        failure?.let { throw it }
     }
 }

@@ -115,15 +115,11 @@ class SystemCommandRouterIntegrationTest {
         val alice = ctx.registerUser(uniqueUsername("svc-failure"))
         val chat = systemChatFor(alice)
         val attempted = CompletableDeferred<Unit>()
-        val router = SystemCommandRouter(
+        val router = ctx.serviceCommandRouter(
             sendServiceReply = { _, _, _ ->
                 attempted.complete(Unit)
                 throw IOException("injected reply failure")
             },
-            settleServiceReply = { pending ->
-                ctx.messageStore.markServiceReplySettled(pending.chatId, pending.clientMsgId)
-            },
-            pendingServiceReplies = { limit -> ctx.messageStore.pendingServiceReplies(limit) },
         )
         router.use {
             val service = ctx.freshMessageService(systemCommandHandler = router)
@@ -171,15 +167,11 @@ class SystemCommandRouterIntegrationTest {
         val attempted = CompletableDeferred<Unit>()
 
         // 第一阶段：回复派发中断（模拟进程死亡后仅剩持久记录），命令已提交。
-        val failing = SystemCommandRouter(
+        val failing = ctx.serviceCommandRouter(
             sendServiceReply = { _, _, _ ->
                 attempted.complete(Unit)
                 throw IOException("injected reply failure")
             },
-            settleServiceReply = { pending ->
-                ctx.messageStore.markServiceReplySettled(pending.chatId, pending.clientMsgId)
-            },
-            pendingServiceReplies = { limit -> ctx.messageStore.pendingServiceReplies(limit) },
         )
         val originalId = UUID.randomUUID().toString()
         failing.use { router ->
@@ -201,15 +193,7 @@ class SystemCommandRouterIntegrationTest {
         checkNotNull(stranded)
 
         // 第二阶段：启动恢复——真实发送链接管，按冻结身份补发一次并结算。
-        val recovering = SystemCommandRouter(
-            sendServiceReply = { chatId, clientMsgId, markdown ->
-                ctx.messageService.sendServiceReply(chatId, clientMsgId, markdown)
-            },
-            settleServiceReply = { pending ->
-                ctx.messageStore.markServiceReplySettled(pending.chatId, pending.clientMsgId)
-            },
-            pendingServiceReplies = { limit -> ctx.messageStore.pendingServiceReplies(limit) },
-        )
+        val recovering = ctx.serviceCommandRouter()
         recovering.use { router ->
             // 共享测试环境里可能还有其他用例滞留的记录；本用例只关心自己的记录被推进。
             assertTrue(router.recoverPendingServiceReplies() >= 1)
@@ -220,15 +204,7 @@ class SystemCommandRouterIntegrationTest {
 
         // 恢复后的重放幂等：同命令再发送不产生新消息与新回复。
         val historyBefore = ctx.messageService.getHistory(alice, chat.chatId, 0L, 10).size
-        val recoveringAgain = SystemCommandRouter(
-            sendServiceReply = { chatId, clientMsgId, markdown ->
-                ctx.messageService.sendServiceReply(chatId, clientMsgId, markdown)
-            },
-            settleServiceReply = { pending ->
-                ctx.messageStore.markServiceReplySettled(pending.chatId, pending.clientMsgId)
-            },
-            pendingServiceReplies = { limit -> ctx.messageStore.pendingServiceReplies(limit) },
-        )
+        val recoveringAgain = ctx.serviceCommandRouter()
         recoveringAgain.use { router ->
             router.recoverPendingServiceReplies()
         }

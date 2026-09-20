@@ -5,9 +5,7 @@ import com.virjar.tk.server.application.admin.AdminService
 import com.virjar.tk.server.application.admin.AdminPageRequest
 import com.virjar.tk.server.application.admin.ClientTelemetryAdminService
 import com.virjar.tk.server.domain.bot.BotService
-import com.virjar.tk.server.domain.command.ReliableCommandConflictException
 import com.virjar.tk.server.domain.document.DocumentCustodyAdministrationService
-import com.virjar.tk.server.domain.document.DocumentCustodyPlanConflictException
 import com.virjar.tk.server.domain.organization.OrganizationService
 import io.ktor.http.*
 import io.ktor.server.application.*
@@ -34,15 +32,6 @@ data class AdminTokenResponse(val token: String, val expiresInSeconds: Long)
 
 @Serializable
 data class AdminMessageRequest(val password: String? = null)
-
-@Serializable
-data class DocumentCustodyTransferRequest(
-    val operationId: String,
-    val expectedPlanFingerprint: String,
-    val targetOwnerPrincipalType: Int? = null,
-    val targetOwnerPrincipalId: String? = null,
-    val targetStewardUid: String? = null,
-)
 
 @Serializable
 data class ExportSettingRequest(val enabled: Boolean)
@@ -143,55 +132,9 @@ internal fun Route.adminRoutes(
                 call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid password reset request"))
             }
         }
-        // CONTENT-07：离职盘点的群文件侧（只读）；群文件属于群资产，不随文档交接转移。
-        if (groupFiles != null) {
-            get("/users/{uid}/group-file-inventory") {
-                val inventory = groupFiles!!
-                val uid = call.parameters["uid"] ?: throw IllegalArgumentException("uid required")
-                try {
-                    val usage = inventory.userOffboardingInventory(uid)
-                call.respond(
-                    mapOf(
-                        "chats" to usage,
-                        "totalEntries" to usage.sumOf { it.activeEntries },
-                        "totalBytes" to usage.sumOf { it.activeVersionBytes },
-                    ),
-                )
-                } catch (_: IllegalArgumentException) {
-                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid uid"))
-                }
-            }
-        }
-        get("/users/{uid}/document-custody-plan") {
-            call.respondDocumentCustody {
-                val query = call.request.queryParameters
-                documentCustody.plan(
-                    sourceUid = call.parameters["uid"] ?: throw IllegalArgumentException("uid required"),
-                    targetOwnerPrincipalType = query["targetOwnerPrincipalType"]?.toIntOrNull()
-                        ?: throw IllegalArgumentException("targetOwnerPrincipalType required"),
-                    targetOwnerPrincipalId = query["targetOwnerPrincipalId"]
-                        ?: throw IllegalArgumentException("targetOwnerPrincipalId required"),
-                    targetStewardUid = query["targetStewardUid"]
-                        ?: throw IllegalArgumentException("targetStewardUid required"),
-                )
-            }
-        }
-        post("/users/{uid}/document-custody-transfer") {
-            val request = call.receiveBoundedJsonOrRespond<DocumentCustodyTransferRequest>() ?: return@post
-            call.respondDocumentCustody {
-                documentCustody.transfer(
-                    adminPrincipal = call.requireAdminPrincipal(),
-                    sourceUid = call.parameters["uid"] ?: throw IllegalArgumentException("uid required"),
-                    operationId = request.operationId,
-                    expectedPlanFingerprint = request.expectedPlanFingerprint,
-                    targetOwnerPrincipalType = request.targetOwnerPrincipalType
-                        ?: throw IllegalArgumentException("targetOwnerPrincipalType required"),
-                    targetOwnerPrincipalId = request.targetOwnerPrincipalId
-                        ?: throw IllegalArgumentException("targetOwnerPrincipalId required"),
-                    targetStewardUid = request.targetStewardUid
-                        ?: throw IllegalArgumentException("targetStewardUid required"),
-                )
-            }
+        // 用户资产域（CONTENT-07）：文档交接与群文件只读盘点。
+        if (documentCustody != null && groupFiles != null) {
+            adminUserAssetRoutes(documentCustody, groupFiles)
         }
 
         // ── 通知机器人 ──
@@ -337,24 +280,6 @@ internal fun ApplicationCall.adminBearerToken(): String =
 internal fun ApplicationCall.requireAdminPrincipal(): String =
     attributes.getOrNull(ADMIN_PRINCIPAL_KEY)
         ?: error("Authenticated admin principal is missing")
-
-private suspend inline fun <reified T : Any> ApplicationCall.respondDocumentCustody(
-    block: suspend () -> T,
-) {
-    val result = try {
-        block()
-    } catch (_: DocumentCustodyPlanConflictException) {
-        respond(HttpStatusCode.Conflict, mapOf("error" to "document custody plan changed"))
-        return
-    } catch (_: ReliableCommandConflictException) {
-        respond(HttpStatusCode.Conflict, mapOf("error" to "document custody operation conflict"))
-        return
-    } catch (_: IllegalArgumentException) {
-        respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid document custody request"))
-        return
-    }
-    respond(result)
-}
 
 internal fun parseAdminPageRequest(
     pageValue: String?,

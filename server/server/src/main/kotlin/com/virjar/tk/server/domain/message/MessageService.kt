@@ -82,6 +82,27 @@ class MessageService(
     }
 
     /**
+     * 服务号指令意图（CODE-01）：发往 sys_service 的人类消息构造冻结回复记录；
+     * 未接线指令运行时或非服务号目标返回 null（不欠回复）。
+     */
+    private fun buildServiceReplyIntent(
+        senderUid: String,
+        chatId: String,
+        declaredMessage: Message,
+        recipientUids: List<String>,
+    ): PendingServiceReply? {
+        if (systemCommandHandler == null || senderUid == SystemAccountUids.SERVICE) return null
+        if (SystemAccountUids.SERVICE !in recipientUids) return null
+        val text = ServiceCommandReplies.commandText(declaredMessage.body) ?: return null
+        return PendingServiceReply(
+            chatId = chatId,
+            clientMsgId = declaredMessage.clientMsgId,
+            replyClientMsgId = ServiceCommandReplies.replyId(declaredMessage.clientMsgId),
+            markdown = ServiceCommandReplies.replyFor(text),
+        )
+    }
+
+    /**
      * 群聊文件自动归档：ACK 前同步完成，非图片附件进入群空间固定文件夹；
      * 条目与消息共享同一物理附件（引用独立计数，删除互不影响）。best-effort：
      * 任何失败只记日志，绝不影响消息发送结果。
@@ -184,18 +205,12 @@ class MessageService(
             // 服务号指令（CODE-01）：记录与消息在同一持久化批次写入，原消息已提交而回复
             // 未完成时可按记录恢复。回复身份与正文在此冻结；未接线指令运行时不欠回复。
             messageChatType = admission.chatType
-            if (systemCommandHandler != null && senderUid != SystemAccountUids.SERVICE &&
-                SystemAccountUids.SERVICE in admission.recipientUids
-            ) {
-                pendingServiceReply = ServiceCommandReplies.commandText(declaredMessage.body)?.let { text ->
-                    PendingServiceReply(
-                        chatId = chatId,
-                        clientMsgId = declaredMessage.clientMsgId,
-                        replyClientMsgId = ServiceCommandReplies.replyId(declaredMessage.clientMsgId),
-                        markdown = ServiceCommandReplies.replyFor(text),
-                    )
-                }
-            }
+            pendingServiceReply = buildServiceReplyIntent(
+                senderUid = senderUid,
+                chatId = chatId,
+                declaredMessage = declaredMessage,
+                recipientUids = admission.recipientUids,
+            )
 
             // 客户端只声明 chatId/clientMsgId/type/body；消息身份、时间和状态位全部由服务端重建。
             val candidate = canonicalMessage.copy(

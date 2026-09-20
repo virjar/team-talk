@@ -25,6 +25,19 @@ class ServiceAccountMessagesIntegrationTest {
     private suspend fun serviceChatFor(uid: String) =
         ctx.chatService.getOrCreateSystemChat(uid, SystemAccountUids.SERVICE)
 
+    /** 广播经指令路由异步派发；轮询等待送达而不是立即断言（全量并发下的时序鲁棒性）。 */
+    private suspend fun awaitBroadcastDelivered(
+        users: List<String>,
+        deadlineMillis: Long = 5_000,
+        expectedCount: suspend (String) -> Int,
+    ) {
+        val deadline = System.currentTimeMillis() + deadlineMillis
+        while (System.currentTimeMillis() < deadline) {
+            if (users.all { uid -> expectedCount(uid) > 0 }) return
+            kotlinx.coroutines.delay(100)
+        }
+    }
+
     private suspend fun welcomeMessages(uid: String, chatId: String): List<Message> =
         ctx.messageService.getHistory(uid, chatId, 0L, 10)
             .filter { it.senderUid == SystemAccountUids.SERVICE && it.clientMsgId == ServiceAccountMessages.WELCOME_MESSAGE_ID }
@@ -95,6 +108,10 @@ class ServiceAccountMessagesIntegrationTest {
         assertEquals(0, finished.failedUsers)
         checkNotNull(finished.finishedAt)
 
+        awaitBroadcastDelivered(users) { uid ->
+            val chat = serviceChatFor(uid)
+            broadcastMessages(uid, chat.chatId, record.broadcastId).size
+        }
         for (uid in users) {
             val chat = serviceChatFor(uid)
             assertEquals(1, broadcastMessages(uid, chat.chatId, record.broadcastId).size, "每用户恰好一条广播")
@@ -104,6 +121,10 @@ class ServiceAccountMessagesIntegrationTest {
 
         // 重新执行（reissue 语义）：已送达用户幂等跳过，不产生第二条。
         ctx.serviceAccountMessages.runBroadcast(record.broadcastId)
+        awaitBroadcastDelivered(users) { uid ->
+            val chat = serviceChatFor(uid)
+            ctx.messageService.getHistory(uid, chat.chatId, 0L, 10).count { it.senderUid == SystemAccountUids.SERVICE }
+        }
         for (uid in users) {
             val chat = serviceChatFor(uid)
             assertEquals(1, broadcastMessages(uid, chat.chatId, record.broadcastId).size)
@@ -129,6 +150,10 @@ class ServiceAccountMessagesIntegrationTest {
         assertTrue(record.broadcastId in resumed, "未完成广播必须进入启动续跑清单")
         ctx.serviceAccountMessages.runBroadcast(record.broadcastId)
 
+        awaitBroadcastDelivered(listOf(alice)) { uid ->
+            val chat = serviceChatFor(uid)
+            broadcastMessages(uid, chat.chatId, record.broadcastId).size
+        }
         val chat = serviceChatFor(alice)
         assertEquals(1, broadcastMessages(alice, chat.chatId, record.broadcastId).size)
         checkNotNull(ctx.serviceAccountMessages.getBroadcast(record.broadcastId)).let {

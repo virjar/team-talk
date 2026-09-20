@@ -21,8 +21,9 @@ import java.util.UUID
 /**
  * 群共享文件领域服务。
  *
- * 群成员资格在读取与新写入时实时判断。创建/追加版本的重放返回当前可读条目；重命名/删除
- * 只确认既有回执，不要求原条目仍然可读。五类命令都只在首次变更时追加事件。
+ * 群成员资格在读取时实时判断；全部六类写命令的成员准入由仓储层（requireWritableGroup，
+ * 群行锁内）统一执法。创建/追加版本的重放返回当前可读条目；重命名/移动/删除
+ * 只确认既有回执，不要求原条目仍然可读。六类命令都只在首次变更时追加事件。
  * 上传者只能把自己刚上传且元数据完全匹配的附件发布到文件空间。历史版本不可变且计入配额，
  * 避免“替换文件”成为绕过容量限制的入口。
  */
@@ -58,7 +59,6 @@ class GroupFileService(
         parentId: String?,
         name: String,
     ): GroupFileEntry = onIo {
-        requireMember(actorUid, chatId)
         requireParent(chatId, parentId)
         val canonicalEntryId = validateResourceId(entryId, "群文件条目标识")
         val canonicalCommandId = validateResourceId(commandId, "群文件创建命令标识")
@@ -107,7 +107,6 @@ class GroupFileService(
         name: String,
         declared: Attachment,
     ): GroupFileEntry = onIo {
-        requireMember(actorUid, chatId)
         requireParent(chatId, parentId)
         val canonicalEntryId = validateResourceId(entryId, "群文件条目标识")
         val canonicalCommandId = validateResourceId(commandId, "群文件创建命令标识")
@@ -166,7 +165,6 @@ class GroupFileService(
         declared: Attachment,
         expectedRevision: Long,
     ): GroupFileEntry = onIo {
-        requireMember(actorUid, chatId)
         val entry = requireEntry(chatId, entryId)
         require(entry.kind == GroupFileEntry.KIND_FILE) { "目录不能添加文件版本" }
         val canonicalCommandId = validateResourceId(commandId, "群文件版本命令标识")
@@ -232,7 +230,6 @@ class GroupFileService(
         targetParentId: String?,
         expectedRevision: Long,
     ): GroupFileEntry? = onIo {
-        requireMember(actorUid, chatId)
         val canonicalCommandId = validateResourceId(commandId, "群文件移动命令标识")
         val canonicalEntryId = validateResourceId(entryId, "群文件条目标识")
         val canonicalTargetParentId = targetParentId?.let { validateResourceId(it, "群文件目标父目录标识") }
@@ -371,10 +368,6 @@ class GroupFileService(
     }
 
     private suspend fun <T> onIo(block: suspend () -> T): T = withContext(Dispatchers.IO) { block() }
-
-    private suspend fun requireMember(uid: String, chatId: String) {
-        access.requireGroupMember(uid, chatId, "你不是当前群成员")
-    }
 
     private fun requireParent(chatId: String, parentId: String?) {
         if (parentId == null) return

@@ -5,7 +5,10 @@ import { api, errMsg } from '../api/client'
 import { useRemoteQuery } from '../api/useRemoteQuery'
 
 interface U { uid: string; username: string; name: string; phone?: string; status: number; createdAt?: number }
-interface Detail { user: U; devices: any[]; friends: any[]; groups: any[]; online: boolean }
+interface DeviceInfo { deviceId: string; deviceName: string; lastLogin?: string }
+interface FriendInfo { friendUid: string; remark?: string }
+interface GroupInfo { chatId: string; name: string }
+interface Detail { user: U; devices: DeviceInfo[]; friends: FriendInfo[]; groups: GroupInfo[]; online: boolean }
 
 export default function Users() {
   const [search, setSearch] = useState({ query: '', page: 1 })
@@ -52,7 +55,7 @@ export default function Users() {
           { title: '手机', dataIndex: 'phone' },
           { title: '状态', dataIndex: 'status', width: 80, render: (s: number) =>
             s === 2 ? <Tag color="red">封禁</Tag> : <Tag color="green">正常</Tag> },
-          { title: '操作', width: 320, render: (_: any, u: U) => (
+          { title: '操作', width: 320, render: (_: unknown, u: U) => (
             <Space>
               <Button size="small" onClick={() => selectDetail({ uid: u.uid })}>详情</Button>
               {u.status === 2
@@ -88,7 +91,7 @@ export default function Users() {
                 dataSource={detail.groups} />) },
             { key: 'custody', label: '离职资产', children: (
               <CustodyPanel uid={detail.user.uid}
-                groupNames={Object.fromEntries(detail.groups.map((g: any) => [g.chatId, g.name]))} />) },
+                groupNames={Object.fromEntries(detail.groups.map((g) => [g.chatId, g.name]))} />) },
           ]} />
         )}
       </Drawer>
