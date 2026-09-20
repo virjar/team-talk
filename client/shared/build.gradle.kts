@@ -96,6 +96,12 @@ kotlin {
                 implementation(libs.sqldelight.android.driver)
             }
         }
+        val jvmTest by getting {
+            dependencies {
+                // 仅测试：锁定壳端 PayloadStore 与更新器 PayloadLayout 的磁盘格式契约。
+                implementation(project(":client:desktop-bootstrap"))
+            }
+        }
     }
 }
 

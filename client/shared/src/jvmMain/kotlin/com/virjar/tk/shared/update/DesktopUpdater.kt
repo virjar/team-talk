@@ -84,9 +84,45 @@ class DesktopUpdater(
         release: ClientReleaseInfo,
         progress: (DownloadProgress) -> Unit = {},
     ): ApplyResult = withContext(Dispatchers.IO) {
+        val manifest = fetchManifest(serverBaseUrl, release)
+        validateManifest(release, manifest)
+        val descriptor = descriptorOf(manifest, release)
+        val staging = stagingPlan(manifest)
+
+        progress(DownloadProgress(0, staging.totalBytes))
+        context.versionsRoot.mkdirs()
+        FileChannel.open(File(context.versionsRoot, ".update.lock").toPath(), CREATE, WRITE).use { channel ->
+            val lock = channel.tryLock() ?: throw DesktopUpdateException("另一个进程正在更新，请稍后重试")
+            lock.use {
+                val stagingDir = Files.createTempDirectory(
+                    context.versionsRoot.toPath(), PayloadLayout.STAGING_PREFIX,
+                ).toFile()
+                try {
+                    assembleStaging(stagingDir, manifest, staging, serverBaseUrl, progress)
+                    verifyStaging(stagingDir, manifest)
+                    currentCoroutineContext().ensureActive()
+                    PayloadLayout.writeDescriptor(stagingDir, descriptor)
+                    val directory = publishStagedVersion(stagingDir, manifest, descriptor)
+                    ApplyResult(manifest.version, manifest.build, staging.totalBytes)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    if (failure is DesktopUpdateException) throw failure
+                    throw DesktopUpdateException("应用更新失败：${failure.message}", failure)
+                } finally {
+                    stagingDir.deleteRecursively()
+                }
+            }
+        }
+    }
+
+    private suspend fun fetchManifest(
+        serverBaseUrl: String,
+        release: ClientReleaseInfo,
+    ): ClientReleaseManifest {
         val manifestUrl = release.manifestUrl
             ?: throw DesktopUpdateException("该发布没有负载清单，无法增量更新")
-        val manifest = try {
+        return try {
             ClientUpdateContracts.json.decodeFromString(
                 ClientReleaseManifest.serializer(),
                 httpClient.get(serverBaseUrl.trimEnd('/') + manifestUrl).decodeToString(),
@@ -98,83 +134,88 @@ class DesktopUpdater(
         } catch (failure: Exception) {
             throw DesktopUpdateException("更新清单格式异常", failure)
         }
+    }
 
-        validateManifest(release, manifest)
-        val descriptor = PayloadLayout.PayloadDescriptor(
-            version = manifest.version,
-            build = manifest.build,
-            minShellAbi = manifest.minShellAbi,
-            files = manifest.files.map { PayloadLayout.PayloadFile(it.path, it.sha256, it.size) },
-            buildIdentity = manifest.buildIdentity,
-            channel = release.channel,
-        )
+    private fun descriptorOf(
+        manifest: ClientReleaseManifest,
+        release: ClientReleaseInfo,
+    ): PayloadLayout.PayloadDescriptor = PayloadLayout.PayloadDescriptor(
+        version = manifest.version,
+        build = manifest.build,
+        minShellAbi = manifest.minShellAbi,
+        files = manifest.files.map { PayloadLayout.PayloadFile(it.path, it.sha256, it.size) },
+        buildIdentity = manifest.buildIdentity,
+        channel = release.channel,
+    )
+
+    private class StagingPlan(val reusable: Set<String>, val totalBytes: Long)
+
+    /** 与本地负载按内容摘要比对：未变化文件本地复用，变化文件才计入下载预算。 */
+    private fun stagingPlan(manifest: ClientReleaseManifest): StagingPlan {
         val local = context.descriptor.files.associateBy { it.path }
         val reusable = manifest.files.filter { file ->
             val source = File(context.currentDir, file.path)
             local[file.path]?.sha256 == file.sha256 && source.isFile &&
                 source.length() == file.size && sha256Hex(source) == file.sha256
         }.map { it.path }.toSet()
-        val totalBytes = manifest.files.filterNot { it.path in reusable }.sumOf { it.size }
+        return StagingPlan(reusable, manifest.files.filterNot { it.path in reusable }.sumOf { it.size })
+    }
+
+    private suspend fun assembleStaging(
+        stagingDir: File,
+        manifest: ClientReleaseManifest,
+        plan: StagingPlan,
+        serverBaseUrl: String,
+        progress: (DownloadProgress) -> Unit,
+    ) {
         var doneBytes = 0L
         var lastProgressAt = System.nanoTime() - PROGRESS_INTERVAL_NANOS
-        progress(DownloadProgress(0, totalBytes))
-        context.versionsRoot.mkdirs()
-        FileChannel.open(File(context.versionsRoot, ".update.lock").toPath(), CREATE, WRITE).use { channel ->
-            val lock = channel.tryLock() ?: throw DesktopUpdateException("另一个进程正在更新，请稍后重试")
-            lock.use {
-                val staging = Files.createTempDirectory(context.versionsRoot.toPath(), PayloadLayout.STAGING_PREFIX).toFile()
-                try {
-                    for (file in manifest.files) {
-                        currentCoroutineContext().ensureActive()
-                        val target = File(staging, file.path)
-                        target.parentFile.mkdirs()
-                        if (file.path in reusable) {
-                            File(context.currentDir, file.path).copyTo(target)
-                        } else {
-                            val jobContext = currentCoroutineContext()
-                            httpClient.download(serverBaseUrl.trimEnd('/') + file.url, target, file.size) { fileBytes ->
-                                jobContext.ensureActive()
-                                val now = System.nanoTime()
-                                if (now - lastProgressAt >= PROGRESS_INTERVAL_NANOS) {
-                                    progress(DownloadProgress(doneBytes + fileBytes, totalBytes))
-                                    lastProgressAt = now
-                                }
-                            }
-                            doneBytes += file.size
-                            progress(DownloadProgress(doneBytes, totalBytes))
-                            lastProgressAt = System.nanoTime()
-                        }
+        for (file in manifest.files) {
+            currentCoroutineContext().ensureActive()
+            val target = File(stagingDir, file.path)
+            target.parentFile.mkdirs()
+            if (file.path in plan.reusable) {
+                File(context.currentDir, file.path).copyTo(target)
+            } else {
+                val jobContext = currentCoroutineContext()
+                httpClient.download(serverBaseUrl.trimEnd('/') + file.url, target, file.size) { fileBytes ->
+                    jobContext.ensureActive()
+                    val now = System.nanoTime()
+                    if (now - lastProgressAt >= PROGRESS_INTERVAL_NANOS) {
+                        progress(DownloadProgress(doneBytes + fileBytes, plan.totalBytes))
+                        lastProgressAt = now
                     }
-                    verifyStaging(staging, manifest)
-                    currentCoroutineContext().ensureActive()
-                    PayloadLayout.writeDescriptor(staging, descriptor)
-                    var directory = PayloadLayout.directoryName(descriptor)
-                    var finalDir = File(context.versionsRoot, directory)
-                    if (finalDir.exists()) {
-                        // 已发布版本只验证并复用，绝不删除当前进程或回滚版本正在使用的文件。
-                        if (runCatching { verifyStaging(finalDir, manifest) }.isFailure) {
-                            // 损坏目录可能仍被旧进程持有；恢复副本使用新路径，不原地覆盖。
-                            directory += "-" + java.util.UUID.randomUUID()
-                            finalDir = File(context.versionsRoot, directory)
-                        }
-                    }
-                    if (!finalDir.exists()) Files.move(staging.toPath(), finalDir.toPath(), ATOMIC_MOVE)
-                    val seedId = PayloadLayout.readCurrentPointer(context.versionsRoot)?.seedId
-                    PayloadLayout.writeCurrentPointer(
-                        context.versionsRoot,
-                        PayloadLayout.CurrentPointer(manifest.version, manifest.build, directory, seedId),
-                    )
-                    ApplyResult(manifest.version, manifest.build, totalBytes)
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (failure: Exception) {
-                    if (failure is DesktopUpdateException) throw failure
-                    throw DesktopUpdateException("应用更新失败：${failure.message}", failure)
-                } finally {
-                    staging.deleteRecursively()
                 }
+                doneBytes += file.size
+                progress(DownloadProgress(doneBytes, plan.totalBytes))
+                lastProgressAt = System.nanoTime()
             }
         }
+    }
+
+    /** 落位已验证的暂存目录并原子切换指针；返回发布目录名。 */
+    private fun publishStagedVersion(
+        stagingDir: File,
+        manifest: ClientReleaseManifest,
+        descriptor: PayloadLayout.PayloadDescriptor,
+    ): String {
+        var directory = PayloadLayout.directoryName(descriptor)
+        var finalDir = File(context.versionsRoot, directory)
+        if (finalDir.exists()) {
+            // 已发布版本只验证并复用，绝不删除当前进程或回滚版本正在使用的文件。
+            if (runCatching { verifyStaging(finalDir, manifest) }.isFailure) {
+                // 损坏目录可能仍被旧进程持有；恢复副本使用新路径，不原地覆盖。
+                directory += "-" + java.util.UUID.randomUUID()
+                finalDir = File(context.versionsRoot, directory)
+            }
+        }
+        if (!finalDir.exists()) Files.move(stagingDir.toPath(), finalDir.toPath(), ATOMIC_MOVE)
+        val seedId = PayloadLayout.readCurrentPointer(context.versionsRoot)?.seedId
+        PayloadLayout.writeCurrentPointer(
+            context.versionsRoot,
+            PayloadLayout.CurrentPointer(manifest.version, manifest.build, directory, seedId),
+        )
+        return directory
     }
 
     private fun validateManifest(release: ClientReleaseInfo, manifest: ClientReleaseManifest) {

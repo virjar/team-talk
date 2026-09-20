@@ -16,7 +16,11 @@ import java.util.zip.ZipFile
  * 壳端只依赖 JDK。文件字段和 directoryName 摘要顺序与 shared/update/PayloadLayout 相同。
  * 内容目录一旦发布就不再改写；指针中的 seedId 记录用户最后安装的种子，避免每次启动退回首装版本。
  */
-internal object PayloadStore {
+/**
+ * 壳端负载/指针的磁盘格式实现。public 仅供跨模块契约测试引用（client/shared jvmTest），
+ * 运行时仍只有 bootstrap 消费；字段与摘要顺序必须与 shared/update/PayloadLayout 保持一致。
+ */
+object PayloadStore {
     class PayloadFile(val path: String, val sha256: String, val size: Long)
     class Descriptor(
         val version: String,
