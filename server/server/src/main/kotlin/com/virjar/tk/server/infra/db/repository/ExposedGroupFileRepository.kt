@@ -8,6 +8,7 @@ import com.virjar.tk.server.domain.groupfile.GroupFileCreateCommand
 import com.virjar.tk.server.domain.groupfile.GroupFileDeleteCommand
 import com.virjar.tk.server.domain.groupfile.GroupFileEntryWriteResult
 import com.virjar.tk.server.domain.groupfile.GroupFileRepository
+import com.virjar.tk.server.domain.groupfile.GroupFileUserAssetUsage
 import com.virjar.tk.server.domain.groupfile.GroupFileRenameCommand
 import com.virjar.tk.server.domain.groupfile.GroupFileService
 import com.virjar.tk.server.domain.chat.ManagedChatPolicy
@@ -369,6 +370,25 @@ class ExposedGroupFileRepository(
         }
     }
 
+
+    override fun userActiveAssetUsage(uid: String): List<GroupFileUserAssetUsage> {
+        require(uid.isNotBlank()) { "uid 不能为空" }
+        // 离职盘点只覆盖单个用户创建的活跃条目，行数有界；取出后在内存聚合。
+        val rows = transaction(database) {
+            GroupFileEntries.selectAll()
+                .where { (GroupFileEntries.createdBy eq uid) and (GroupFileEntries.status eq STATUS_ACTIVE) }
+                .map { row ->
+                    row[GroupFileEntries.chatId] to (row[GroupFileEntries.activeVersionBytes] ?: 0L)
+                }
+        }
+        return rows.groupBy({ it.first }, { it.second }).toSortedMap().map { (chatId, sizes) ->
+            GroupFileUserAssetUsage(
+                chatId = chatId,
+                activeEntries = sizes.size.toLong(),
+                activeVersionBytes = sizes.sum(),
+            )
+        }
+    }
     override fun getAttachmentChatIds(path: String): Set<String> = transaction(database) {
         versionEntryJoin().select(GroupFileEntries.chatId).where {
             (GroupFileVersions.attachmentPath eq path) and

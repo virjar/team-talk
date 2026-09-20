@@ -787,6 +787,49 @@ class GroupFileIntegrationTest {
         deletedAt = System.currentTimeMillis(),
     )
 
+    @Test
+    fun `offboarding inventory aggregates active group files per chat by creator`() = runTest {
+        val owner = ctx.registerUser(uniqueUsername("inventory-owner"))
+        val member = ctx.registerUser(uniqueUsername("inventory-member"))
+        val chatA = ctx.chatService.createGroup("盘点群A", null, owner, listOf(member))
+        val chatB = ctx.chatService.createGroup("盘点群B", null, owner, listOf(member))
+
+        val folder = createFolder(ctx.groupFileService, owner, chatA.chatId, null, "资料")
+        val ownerPath = ctx.fileStore.store(
+            owner,
+            "spec.md",
+            "text/markdown",
+            ByteArrayInputStream("# v1".encodeToByteArray()),
+        )
+        val ownerAttachment = requireNotNull(ctx.fileStore.getAttachment(ownerPath))
+        val specFile = createFile(ctx.groupFileService, owner, chatA.chatId, folder.entryId, "spec.md", ownerAttachment)
+
+        val memberPath = ctx.fileStore.store(
+            member,
+            "notes.txt",
+            "text/plain",
+            ByteArrayInputStream("notes".encodeToByteArray()),
+        )
+        val memberAttachment = requireNotNull(ctx.fileStore.getAttachment(memberPath))
+        createFile(ctx.groupFileService, member, chatB.chatId, null, "notes.txt", memberAttachment)
+
+        // 盘点只统计创建者本人的活跃条目（文件夹与文件都计），按群聚合版本字节。
+        val ownerUsage = ctx.groupFileService.userOffboardingInventory(owner)
+        assertEquals(listOf(chatA.chatId), ownerUsage.map { it.chatId })
+        assertEquals(2L, ownerUsage.single().activeEntries, "文件夹与文件都计入盘点")
+        assertEquals(ownerAttachment.size, ownerUsage.single().activeVersionBytes)
+
+        val memberUsage = ctx.groupFileService.userOffboardingInventory(member)
+        assertEquals(listOf(chatB.chatId), memberUsage.map { it.chatId })
+        assertEquals(memberAttachment.size, memberUsage.single().activeVersionBytes)
+
+        // 删除后盘点同步收敛：先删文件再删文件夹。
+        ctx.groupFileService.delete(owner, newId(), chatA.chatId, specFile.entryId, specFile.revision)
+        val refreshed = ctx.groupFileService.userOffboardingInventory(owner)
+        assertEquals(listOf(1L), refreshed.map { it.activeEntries })
+        assertEquals(0L, refreshed.single().activeVersionBytes)
+    }
+
     private suspend fun createFolder(
         service: GroupFileService,
         actorUid: String,

@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import { CustodyPanel } from '../components/CustodyPanel'
 import { Button, Drawer, Descriptions, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, message } from 'antd'
 import { api, errMsg } from '../api/client'
 import { useRemoteQuery } from '../api/useRemoteQuery'
@@ -85,6 +86,9 @@ export default function Users() {
               <Table rowKey="chatId" size="small" pagination={false}
                 columns={[{ title: '群名', dataIndex: 'name' }, { title: 'chatId', dataIndex: 'chatId' }]}
                 dataSource={detail.groups} />) },
+            { key: 'custody', label: '离职资产', children: (
+              <CustodyPanel uid={detail.user.uid}
+                groupNames={Object.fromEntries(detail.groups.map((g: any) => [g.chatId, g.name]))} />) },
           ]} />
         )}
       </Drawer>

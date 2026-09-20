@@ -629,6 +629,7 @@ internal fun Application.module(
                 clientReleases = koin.get(),
                 serviceAccount = koin.get(),
                 serviceBroadcastRuntime = koin.get(),
+                groupFiles = koin.get(),
             )
             clientTelemetryRoutes(
                 control = koin.get(),

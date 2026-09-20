@@ -34,6 +34,15 @@ class GroupFileService(
     private val chatStore: ChatStore,
     private val attachmentLifecycle: AttachmentLifecycleGate = AttachmentLifecycleGate(),
 ) {
+
+    /**
+     * 离职资产盘点（只读，CONTENT-07）：按群聚合该用户创建且仍活跃的群文件用量。
+     * 群文件属于群资产，不随文档交接转移；此处仅供管理员在交接前了解资产分布。
+     */
+    fun userOffboardingInventory(uid: String): List<GroupFileUserAssetUsage> {
+        require(uid.isNotBlank() && uid.length <= 36) { "uid 非法" }
+        return repository.userActiveAssetUsage(uid)
+    }
     suspend fun list(actorUid: String, chatId: String, parentId: String?): List<GroupFileEntry> = onIo {
         access.readAsGroupMember(actorUid, chatId, "你不是当前群成员") { _, _ ->
             requireParent(chatId, parentId)

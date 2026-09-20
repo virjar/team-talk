@@ -11,6 +11,13 @@ import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
  * 精确重放仍返回当前条目供 RPC 响应使用，但不能再次产生变更事件；条目本身的 revision
  * 无法区分“刚刚提交”和“此前已提交”，因此该事实由持有命令回执的仓储一并返回。
  */
+/** 离职盘点中一个群内的用户资产聚合；群文件属于群资产，盘点不改变归属。 */
+data class GroupFileUserAssetUsage(
+    val chatId: String,
+    val activeEntries: Long,
+    val activeVersionBytes: Long,
+)
+
 data class GroupFileEntryWriteResult(
     val entry: GroupFileEntry,
     val changed: Boolean,
@@ -93,6 +100,9 @@ interface GroupFileRepository {
     fun listVersions(entryId: String): List<GroupFileVersion>
     /** 所属条目在 [chatId] 中仍活跃的不可变版本字节之和。 */
     fun totalVersionBytes(chatId: String): Long
+
+    /** 离职盘点（只读）：按群聚合某用户创建且仍活跃的条目数与活跃版本字节。 */
+    fun userActiveAssetUsage(uid: String): List<GroupFileUserAssetUsage> = emptyList()
     fun getAttachmentChatIds(path: String): Set<String>
 
     fun isAttachmentReferencedByAny(path: String, chatIds: Set<String>): Boolean =

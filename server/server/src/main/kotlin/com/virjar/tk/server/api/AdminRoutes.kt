@@ -65,6 +65,7 @@ internal fun Route.adminRoutes(
     clientReleases: com.virjar.tk.server.infra.clientrelease.ClientReleaseService? = null,
     serviceAccount: com.virjar.tk.server.domain.message.ServiceAccountMessages? = null,
     serviceBroadcastRuntime: com.virjar.tk.server.runtime.ServiceBroadcastRuntime? = null,
+    groupFiles: com.virjar.tk.server.domain.groupfile.GroupFileService? = null,
 ) {
     route("/api/admin") {
         post("/login") {
@@ -140,6 +141,25 @@ internal fun Route.adminRoutes(
                 call.respond(mapOf("ok" to true))
             } catch (_: IllegalArgumentException) {
                 call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid password reset request"))
+            }
+        }
+        // CONTENT-07：离职盘点的群文件侧（只读）；群文件属于群资产，不随文档交接转移。
+        if (groupFiles != null) {
+            get("/users/{uid}/group-file-inventory") {
+                val inventory = groupFiles!!
+                val uid = call.parameters["uid"] ?: throw IllegalArgumentException("uid required")
+                try {
+                    val usage = inventory.userOffboardingInventory(uid)
+                call.respond(
+                    mapOf(
+                        "chats" to usage,
+                        "totalEntries" to usage.sumOf { it.activeEntries },
+                        "totalBytes" to usage.sumOf { it.activeVersionBytes },
+                    ),
+                )
+                } catch (_: IllegalArgumentException) {
+                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "invalid uid"))
+                }
             }
         }
         get("/users/{uid}/document-custody-plan") {
