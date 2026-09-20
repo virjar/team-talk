@@ -7,7 +7,6 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -17,7 +16,7 @@ class ChatStoreCacheConcurrencyTest {
     @Test
     fun `committed deactivation cannot be followed by an old chat load refilling cache`() {
         val repo = BlockingChatRepository()
-        val store = ChatStore(repo, PassiveMemberRepository(), PassiveInviteRepository())
+        val store = ChatStore(repo, PassiveMemberRepository())
         val pool = Executors.newFixedThreadPool(2)
         try {
             val read = pool.submit<Chat?> { store.getChat(CHAT_ID) }
@@ -26,7 +25,7 @@ class ChatStoreCacheConcurrencyTest {
             repo.commitDeactivation()
             val invalidate = pool.submit {
                 writerAttempted.countDown()
-                store.invalidateCommittedDeactivation(CHAT_ID)
+                store.invalidate(CHAT_ID)
             }
             writerAttempted.await()
 
@@ -47,7 +46,7 @@ class ChatStoreCacheConcurrencyTest {
     fun `member removal cannot be undone by an old member snapshot`() {
         val repo = ImmediateChatRepository()
         val members = BlockingMemberRepository()
-        val store = ChatStore(repo, members, PassiveInviteRepository())
+        val store = ChatStore(repo, members)
         val pool = Executors.newFixedThreadPool(2)
         try {
             val read = pool.submit<List<Member>> { store.getMembers(CHAT_ID) }
@@ -56,7 +55,7 @@ class ChatStoreCacheConcurrencyTest {
             members.commitRemoval()
             val invalidate = pool.submit {
                 writerAttempted.countDown()
-                store.invalidateCommittedMembershipChange(CHAT_ID)
+                store.invalidate(CHAT_ID)
             }
             writerAttempted.await()
 
@@ -65,21 +64,10 @@ class ChatStoreCacheConcurrencyTest {
 
             assertEquals(listOf(MEMBER_UID), read.get(1, TimeUnit.SECONDS).map(Member::uid))
             invalidate.get(1, TimeUnit.SECONDS)
-            assertFalse(store.isMember(CHAT_ID, MEMBER_UID))
+            assertEquals(emptyList(), store.getMembers(CHAT_ID))
         } finally {
             pool.shutdownNow()
         }
-    }
-
-    @Test
-    fun `member mute is reevaluated after its expiry`() {
-        val clock = AtomicLong(100)
-        val members = ExpiringMuteMemberRepository(clock, expiresAt = 101)
-        val store = ChatStore(ImmediateChatRepository(), members, PassiveInviteRepository())
-
-        assertEquals(true, store.isMuted(CHAT_ID, MEMBER_UID))
-        clock.set(102)
-        assertFalse(store.isMuted(CHAT_ID, MEMBER_UID))
     }
 
     @Test
@@ -88,7 +76,6 @@ class ChatStoreCacheConcurrencyTest {
         val store = ChatStore(
             repo = repo,
             memberRepo = PassiveMemberRepository(),
-            inviteRepo = PassiveInviteRepository(),
             cacheStripeCount = 1,
             cacheEntriesPerStripe = 2,
         )
@@ -111,7 +98,6 @@ class ChatStoreCacheConcurrencyTest {
         val store = ChatStore(
             repo = ImmediateChatRepository(),
             memberRepo = members,
-            inviteRepo = PassiveInviteRepository(),
             cacheStripeCount = 1,
             cacheEntriesPerStripe = 1,
             maxCachedMemberRolesPerChat = 2,
@@ -120,9 +106,8 @@ class ChatStoreCacheConcurrencyTest {
         assertEquals(3, store.getMembers(CHAT_ID).size)
         assertEquals(0, store.cachedMemberRoleCountForTest())
 
-        assertEquals("member-2", store.getMember(CHAT_ID, "member-2")?.uid)
-        assertEquals(1, members.memberListLoads, "point lookup must not reload the oversized list")
-        assertEquals(1, members.memberPointLoads)
+        assertEquals(3, store.getMembers(CHAT_ID).size)
+        assertEquals(2, members.memberListLoads, "oversized snapshots must reload instead of being retained")
         assertEquals(0, store.cachedMemberRoleCountForTest())
     }
 
@@ -212,7 +197,6 @@ private open class ImmediateChatRepository : ChatRepository {
         command: GroupCreationCommand,
     ): ChatCreation = error("unused")
 
-    override fun getMemberUids(chatId: String): List<String> = emptyList()
     override fun listUserChats(uid: String): List<Chat> = emptyList()
     override fun joinByInvite(
         transaction: com.virjar.tk.server.domain.transaction.PgWriteTransactionContext,
@@ -279,8 +263,6 @@ private class BlockingChatRepository : ImmediateChatRepository() {
 
 private open class PassiveMemberRepository : ChatMemberRepository {
     override fun getMembers(chatId: String): List<Member> = emptyList()
-    override fun getMember(chatId: String, uid: String): Member? = null
-    override fun getMemberUids(chatId: String): List<String> = emptyList()
     override fun getActiveChatIds(uid: String): Set<String> = emptySet()
     override fun getActiveChatIds(
         transaction: com.virjar.tk.server.domain.transaction.PgReadTransactionContext,
@@ -291,7 +273,6 @@ private open class PassiveMemberRepository : ChatMemberRepository {
         transaction: com.virjar.tk.server.domain.transaction.PgReadTransactionContext,
         uid: String,
     ): Set<String> = emptySet()
-    override fun isMember(chatId: String, uid: String): Boolean = false
     override fun getActiveMemberUids(
         transaction: com.virjar.tk.server.domain.transaction.PgReadTransactionContext,
         chatId: String,
@@ -366,7 +347,6 @@ private open class PassiveMemberRepository : ChatMemberRepository {
         expiresAt: Long?,
         authorize: (GroupCommandFacts) -> Unit,
     ): ChatMutation = error("unused")
-    override fun isMuted(chatId: String, uid: String): Boolean = false
     override fun setMuteAll(
         transaction: com.virjar.tk.server.domain.transaction.PgWriteTransactionContext,
         chatId: String,
@@ -397,19 +377,10 @@ private class BlockingMemberRepository : PassiveMemberRepository() {
     }
 }
 
-private class ExpiringMuteMemberRepository(
-    private val clock: AtomicLong,
-    private val expiresAt: Long,
-) : PassiveMemberRepository() {
-    override fun isMuted(chatId: String, uid: String): Boolean = clock.get() < expiresAt
-}
-
 private class CountingLargeMemberRepository(
     private val memberCount: Int,
 ) : PassiveMemberRepository() {
     var memberListLoads = 0
-        private set
-    var memberPointLoads = 0
         private set
 
     override fun getMembers(chatId: String): List<Member> {
@@ -417,32 +388,5 @@ private class CountingLargeMemberRepository(
         return List(memberCount) { index -> Member("member-$index", chatId, role = 0) }
     }
 
-    override fun getMember(chatId: String, uid: String): Member? {
-        memberPointLoads += 1
-        val index = uid.removePrefix("member-").toIntOrNull() ?: return null
-        return if (index in 0 until memberCount) Member(uid, chatId, role = 0) else null
-    }
-}
 
-private class PassiveInviteRepository : InviteLinkRepository {
-    override fun createInviteLink(
-        transaction: com.virjar.tk.server.domain.transaction.PgWriteTransactionContext,
-        command: InviteLinkCreationCommand,
-        authorize: (GroupCommandFacts) -> Unit,
-    ): String = error("unused")
-    override fun listInviteLinks(chatId: String): List<InviteLinkRecord> = emptyList()
-    override fun revokeInviteLink(
-        transaction: com.virjar.tk.server.domain.transaction.PgWriteTransactionContext,
-        expectedChatId: String,
-        operatorUid: String,
-        token: String,
-        nowMillis: Long,
-        authorize: (GroupCommandFacts) -> Unit,
-    ): InviteLinkRecord = error("unused")
-    override fun getInviteLink(token: String): InviteLinkRecord? = null
-    override fun readPreview(
-        transaction: com.virjar.tk.server.domain.transaction.PgReadTransactionContext,
-        uid: String,
-        token: String,
-    ): InvitePreviewFacts? = null
 }

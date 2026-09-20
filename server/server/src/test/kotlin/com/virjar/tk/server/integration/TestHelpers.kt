@@ -353,6 +353,7 @@ class TestEnvironment : AutoCloseable {
     fun contactService(uid: String): ContactRpcImpl = ContactRpcImpl(uid, koin.get(), koin.get(), koin.get())
     val chatService: ChatService get() = koin.get()
     val chatStore: ChatStore get() = koin.get()
+    val chatMemberRepository: com.virjar.tk.server.domain.chat.ChatMemberRepository get() = koin.get()
     val chatAccess: ChatAccess get() = koin.get()
     val contentSearchService: com.virjar.tk.server.domain.search.ContentSearchService get() = koin.get()
     val contentAssetIndex: com.virjar.tk.server.infra.search.ContentAssetSearchIndex get() = koin.get()
@@ -436,7 +437,10 @@ class TestEnvironment : AutoCloseable {
         unitOfWork: PgUnitOfWork,
         chatRepository: ChatRepository? = null,
     ): ChatService = ChatService(
-        chatStore = chatRepository?.let { ChatStore(it, koin.get(), koin.get()) } ?: koin.get(),
+        chatStore = chatRepository?.let { ChatStore(it, koin.get()) } ?: koin.get(),
+        chats = chatRepository ?: koin.get(),
+        members = koin.get(),
+        invites = koin.get(),
         access = koin.get(),
         users = koin.get(),
         managedChats = koin.get(),
@@ -456,10 +460,11 @@ class TestEnvironment : AutoCloseable {
         managedChats: ManagedChatPolicy = koin.get(),
         systemCommandHandler: com.virjar.tk.server.domain.message.SystemCommandHandler? = null,
     ): MessageService {
-        val coldChatStore = ChatStore(koin.get(), koin.get(), koin.get())
+        val coldChatStore = ChatStore(koin.get(), koin.get())
         return MessageService(
             messages = messages,
             chatStore = coldChatStore,
+            members = koin.get(),
             access = koin.get(),
             chatService = koin.get<ChatService>(),
             systemCommandHandler = systemCommandHandler,

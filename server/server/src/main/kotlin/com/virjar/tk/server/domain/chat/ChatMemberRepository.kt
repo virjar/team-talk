@@ -61,15 +61,12 @@ data class MessageAdmission(
 /** 成员关系、角色与禁言状态的持久化端口。 */
 interface ChatMemberRepository {
     fun getMembers(chatId: String): List<Member>
-    fun getMember(chatId: String, uid: String): Member?
-    fun getMemberUids(chatId: String): List<String>
     fun getActiveChatIds(uid: String): Set<String>
     /** 在机器人行被锁定之后，加入所属聚合事务的同一次读取。 */
     fun getActiveChatIds(transaction: PgReadTransactionContext, uid: String): Set<String>
     /** 成员关系（活跃或非活跃）、Conversation 与禁言投影的并集，用于恢复。 */
     fun getProjectedChatIds(uid: String): Set<String>
     fun getProjectedChatIds(transaction: PgReadTransactionContext, uid: String): Set<String>
-    fun isMember(chatId: String, uid: String): Boolean
     /**
      * 按 id 字典序锁定聊天行，而不触碰成员关系。机器人命令把它作为第一道数据库锁，
      * 使每个进程都遵循 chat -> user -> bot/grant -> membership 的顺序。
@@ -179,7 +176,6 @@ interface ChatMemberRepository {
         authorize: (GroupCommandFacts) -> Unit,
     ): ChatMutation
 
-    fun isMuted(chatId: String, uid: String): Boolean
     fun setMuteAll(
         transaction: PgWriteTransactionContext,
         chatId: String,

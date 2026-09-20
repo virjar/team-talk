@@ -83,7 +83,7 @@ class AuthoritativeChatAccessIntegrationTest {
             }
         }
         assertEquals(1, revokedRows, "the simulated peer must commit exactly one revocation")
-        assertNotNull(ctx.chatStore.getMember(group.chatId, member), "fixture must retain the stale process cache")
+        assertNotNull(ctx.chatStore.getMembers(group.chatId).find { it.uid == member }, "fixture must retain the stale process cache")
 
         assertFailsWith<ChatAccessDeniedException> { ctx.chatService.getChatFor(member, group.chatId) }
         assertFailsWith<ChatAccessDeniedException> { ctx.chatService.getMembersFor(member, group.chatId) }

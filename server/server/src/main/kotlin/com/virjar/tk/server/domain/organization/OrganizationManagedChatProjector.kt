@@ -1,7 +1,7 @@
 package com.virjar.tk.server.domain.organization
 
 import com.virjar.tk.server.domain.chat.ChatLifecycleGate
-import com.virjar.tk.server.domain.chat.ManagedChatProjectionCache
+import com.virjar.tk.server.domain.chat.ChatStore
 import com.virjar.tk.server.domain.transaction.PgUnitOfWork
 import com.virjar.tk.protocol.NotifyType
 import kotlinx.coroutines.CancellationException
@@ -31,7 +31,7 @@ class OrganizationManagedChatProjector(
     private val store: OrganizationManagedChatProjectionStore,
     private val lifecycleGate: ChatLifecycleGate,
     private val unitOfWork: PgUnitOfWork,
-    private val cache: ManagedChatProjectionCache,
+    private val cache: ChatStore,
     private val hooks: OrganizationProjectionHooks = OrganizationProjectionHooks.None,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
@@ -59,7 +59,7 @@ class OrganizationManagedChatProjector(
                     }
                 }
                 hooks.hit(OrganizationProjectionStage.AFTER_APPLY_BEFORE_EVENT_FLUSH, task)
-                afterCommit { cache.invalidateManagedChat(task.chatId) }
+                afterCommit { cache.invalidate(task.chatId) }
             }
             true
         } catch (cancelled: CancellationException) {

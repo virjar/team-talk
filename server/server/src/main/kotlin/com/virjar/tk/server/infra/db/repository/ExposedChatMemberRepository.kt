@@ -64,22 +64,6 @@ class ExposedChatMemberRepository internal constructor(
         }
     }
 
-    override fun getMember(chatId: String, uid: String): Member? {
-        return transaction(database) {
-            GroupMembers.selectAll()
-                .where { (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid) and (GroupMembers.status eq 1) }
-                .map { it.toMember() }.singleOrNull()
-        }
-    }
-
-    override fun getMemberUids(chatId: String): List<String> {
-        return transaction(database) {
-            GroupMembers.selectAll()
-                .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1) }
-                .map { it[GroupMembers.uid] }
-        }
-    }
-
     override fun getActiveChatIds(uid: String): Set<String> = transaction(database) {
         GroupMembers.selectAll()
             .where { (GroupMembers.uid eq uid) and (GroupMembers.status eq 1) }
@@ -175,14 +159,6 @@ class ExposedChatMemberRepository internal constructor(
             ),
         )
         MessageAdmission(chat.chatType, members.map(Member::uid))
-    }
-
-    override fun isMember(chatId: String, uid: String): Boolean {
-        return transaction(database) {
-            GroupMembers.selectAll()
-                .where { (GroupMembers.chatId eq chatId) and (GroupMembers.uid eq uid) and (GroupMembers.status eq 1) }
-                .count() > 0
-        }
     }
 
     // ── 成员变更 ──
@@ -583,15 +559,6 @@ class ExposedChatMemberRepository internal constructor(
             }
         }
         ChatMutation(before, members.map(Member::uid))
-    }
-
-    override fun isMuted(chatId: String, uid: String): Boolean {
-        return transaction(database) {
-            val now = System.currentTimeMillis()
-            GroupMemberMutes.selectAll()
-                .where { (GroupMemberMutes.chatId eq chatId) and (GroupMemberMutes.uid eq uid) and (GroupMemberMutes.expiresAt greater now) }
-                .count() > 0
-        }
     }
 
     override fun setMuteAll(

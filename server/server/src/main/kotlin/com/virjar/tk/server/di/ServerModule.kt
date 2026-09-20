@@ -331,7 +331,7 @@ internal fun createServerModule(
         val contacts = get<ContactRepository>()
         UserProfileAudience(contacts::listFriendUids)
     }
-    single { ChatStore(get(), get(), get()) }
+    single { ChatStore(get(), get()) }
     single { ChatAccess(get()) }
     single { ChatLifecycleGate() }
     single { MessageProjectionReadiness() }
@@ -367,6 +367,9 @@ internal fun createServerModule(
     single<ChatService> {
         ChatService(
             chatStore = get(),
+            chats = get(),
+            members = get(),
+            invites = get(),
             access = get(),
             users = get(),
             managedChats = get(),
@@ -519,6 +522,7 @@ internal fun createServerModule(
         MessageService(
             messages = get(),
             chatStore = get(),
+            members = get(),
             access = get(),
             chatService = get<ChatService>(),
             systemCommandHandler = get<SystemCommandRouter>(),
@@ -538,7 +542,7 @@ internal fun createServerModule(
     single {
         MessageReactionService(
             messages = get(),
-            chatStore = get(),
+            members = get(),
             access = get(),
             reactions = get(),
             unitOfWork = get(),

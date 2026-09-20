@@ -149,7 +149,6 @@ class MessageServiceLifecycleTest {
         val chatRepository = interfaceStub<ChatRepository> { method, args ->
             when (method) {
                 "getChat", "getChatById" -> chats[args[0] as String]
-                "getMemberUids" -> membersByChat[args[0] as String].orEmpty().map(Member::uid)
                 "updateMaxSeq" -> Unit
                 else -> UnhandledCall
             }
@@ -157,8 +156,6 @@ class MessageServiceLifecycleTest {
         val memberRepository = interfaceStub<ChatMemberRepository> { method, args ->
             when (method) {
                 "getMembers" -> membersByChat[args[0] as String].orEmpty()
-                "getMemberUids" -> membersByChat[args[0] as String].orEmpty().map(Member::uid)
-                "isMuted", "isMember" -> false
                 "admitMessage" -> {
                     val chatId = args[1] as String
                     val senderUid = args[2] as String
@@ -187,7 +184,6 @@ class MessageServiceLifecycleTest {
         val chatStore = ChatStore(
             repo = chatRepository,
             memberRepo = memberRepository,
-            inviteRepo = interfaceStub<InviteLinkRepository>(),
         )
         var storedMessage: Message? = null
         var pendingOperation: MessageProjectionOperation? = null
@@ -256,6 +252,7 @@ class MessageServiceLifecycleTest {
                 interfaceStub<com.virjar.tk.server.domain.task.TaskRepository>(), ImmediatePgUnitOfWork)),
             messages = messages,
             chatStore = chatStore,
+            members = memberRepository,
             access = access,
             officeRefs = OfficeRefResolver(
                 documents = DocumentService(interfaceStub<DocumentRepository>(), ImmediatePgUnitOfWork),
@@ -264,7 +261,7 @@ class MessageServiceLifecycleTest {
                     access = access,
                     attachments = interfaceStub<AttachmentCatalog>(),
                     unitOfWork = ImmediatePgUnitOfWork,
-                    chatStore = chatStore,
+                    members = memberRepository,
                 ),
             ),
             projector = projector,
@@ -278,6 +275,9 @@ class MessageServiceLifecycleTest {
             contacts = contacts,
             chatService = ChatService(
                 chatStore = chatStore,
+                chats = chatRepository,
+                members = memberRepository,
+                invites = interfaceStub<InviteLinkRepository>(),
                 access = access,
                 users = users,
                 managedChats = UnmanagedChatPolicy,

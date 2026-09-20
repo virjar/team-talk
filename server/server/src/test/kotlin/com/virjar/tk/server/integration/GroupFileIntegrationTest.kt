@@ -147,7 +147,7 @@ class GroupFileIntegrationTest {
         assertEquals(GroupFileUsageSnapshot(activeEntries = 1L, activeVersionBytes = 0L), usage(chat.chatId))
 
         val restartedRepository = ExposedGroupFileRepository(ctx.database)
-        val restartedService = GroupFileService(restartedRepository, ctx.chatAccess, ctx.fileStore, ctx.pgUnitOfWork, ctx.chatStore)
+        val restartedService = GroupFileService(restartedRepository, ctx.chatAccess, ctx.fileStore, ctx.pgUnitOfWork, ctx.chatMemberRepository)
         restartedService.rename(
             owner,
             renameCommandId,
@@ -206,7 +206,7 @@ class GroupFileIntegrationTest {
             ctx.chatAccess,
             ctx.fileStore,
             ctx.pgUnitOfWork,
-            ctx.chatStore,
+            ctx.chatMemberRepository,
         )
         afterDeleteRestart.delete(owner, deleteCommandId, chat.chatId, latest.entryId, latest.revision)
         assertFailsWith<ReliableCommandConflictException> {
@@ -241,7 +241,7 @@ class GroupFileIntegrationTest {
             ctx.chatAccess,
             ctx.fileStore,
             ctx.pgUnitOfWork,
-            ctx.chatStore,
+            ctx.chatMemberRepository,
         )
         restartedService.rename(
             member,
@@ -325,7 +325,7 @@ class GroupFileIntegrationTest {
             database = ctx.database,
             capacityPolicy = GroupFileCapacityPolicy(maxTotalVersionBytesPerChat = 5),
         )
-        val service = GroupFileService(repository, ctx.chatAccess, ctx.fileStore, ctx.pgUnitOfWork, ctx.chatStore)
+        val service = GroupFileService(repository, ctx.chatAccess, ctx.fileStore, ctx.pgUnitOfWork, ctx.chatMemberRepository)
         val attachments = (1..2).map { index ->
             val path = ctx.fileStore.store(
                 owner,
@@ -366,7 +366,7 @@ class GroupFileIntegrationTest {
                 maxDirectChildrenPerParent = 1,
             ),
         )
-        val service = GroupFileService(repository, ctx.chatAccess, ctx.fileStore, ctx.pgUnitOfWork, ctx.chatStore)
+        val service = GroupFileService(repository, ctx.chatAccess, ctx.fileStore, ctx.pgUnitOfWork, ctx.chatMemberRepository)
         val candidates = listOf(
             CreateFolderRequest(newId(), newId(), "候选一"),
             CreateFolderRequest(newId(), newId(), "候选二"),
@@ -430,7 +430,7 @@ class GroupFileIntegrationTest {
             maxActiveVersionsPerFile = 2,
         )
         val firstRepository = ExposedGroupFileRepository(ctx.database, capacityPolicy = policy)
-        val firstService = GroupFileService(firstRepository, ctx.chatAccess, ctx.fileStore, ctx.pgUnitOfWork, ctx.chatStore)
+        val firstService = GroupFileService(firstRepository, ctx.chatAccess, ctx.fileStore, ctx.pgUnitOfWork, ctx.chatMemberRepository)
         val initialAttachment = storeAttachment(owner, "zero-v1.bin", ByteArray(0))
         val entryId = newId()
         val createCommandId = newId()
@@ -485,7 +485,7 @@ class GroupFileIntegrationTest {
         assertEquals(GroupFileUsageSnapshot(activeEntries = 1L, activeVersionBytes = 0L), usage(chat.chatId))
 
         val restartedRepository = ExposedGroupFileRepository(ctx.database, capacityPolicy = policy)
-        val restartedService = GroupFileService(restartedRepository, ctx.chatAccess, ctx.fileStore, ctx.pgUnitOfWork, ctx.chatStore)
+        val restartedService = GroupFileService(restartedRepository, ctx.chatAccess, ctx.fileStore, ctx.pgUnitOfWork, ctx.chatMemberRepository)
         val acceptedRequest = competingVersions[results.indexOfFirst { it.isSuccess }]
         val current = requireNotNull(restartedRepository.find(file.entryId))
         assertEquals(
@@ -553,7 +553,7 @@ class GroupFileIntegrationTest {
             maxActiveVersionsPerFile = 2,
         )
         val writerRepository = ExposedGroupFileRepository(ctx.database, capacityPolicy = permissivePolicy)
-        val writerService = GroupFileService(writerRepository, ctx.chatAccess, ctx.fileStore, ctx.pgUnitOfWork, ctx.chatStore)
+        val writerService = GroupFileService(writerRepository, ctx.chatAccess, ctx.fileStore, ctx.pgUnitOfWork, ctx.chatMemberRepository)
         createFolder(writerService, owner, treeChat.chatId, null, "目录一")
         createFolder(writerService, owner, treeChat.chatId, null, "目录二")
 
@@ -581,7 +581,7 @@ class GroupFileIntegrationTest {
         val owner = ctx.registerUser(uniqueUsername("missing-ledger-owner"))
         val chat = ctx.chatService.createGroup("容量台账缺失", null, owner, emptyList())
         val repository = ExposedGroupFileRepository(ctx.database)
-        val service = GroupFileService(repository, ctx.chatAccess, ctx.fileStore, ctx.pgUnitOfWork, ctx.chatStore)
+        val service = GroupFileService(repository, ctx.chatAccess, ctx.fileStore, ctx.pgUnitOfWork, ctx.chatMemberRepository)
         val firstAttachment = storeAttachment(owner, "ledger-v1.bin", byteArrayOf(1, 2, 3))
         val entryId = newId()
         val commandId = newId()

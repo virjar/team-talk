@@ -52,7 +52,7 @@ interface ChatRepository {
     ): ChatCreation
     /**
      * 原子地校验并消耗一个邀请，激活成员关系并建立用户的会话投影。返回的快照包含已
-     * 提交的接收者；ChatStore 只能在方法返回后使旧缓存状态失效。容量检查在锁定 Chat
+     * 事务内的接收者；调用方只在整个事务提交后使 ChatStore 失效。容量检查在锁定 Chat
      * 聚合之后、消耗链接配额或变更投影之前进行。
      */
     fun joinByInvite(
@@ -104,7 +104,6 @@ interface ChatRepository {
      * 停用前的接收者，用于持久化墓碑。
      */
     fun deactivateChat(transaction: PgWriteTransactionContext, chatId: String): ChatDeactivation
-    fun getMemberUids(chatId: String): List<String>
     fun listUserChats(uid: String): List<Chat>
 }
 

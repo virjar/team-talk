@@ -100,7 +100,8 @@ ACK 表示服务端已接受消息并完成上述投影，**不表示所有设�
 
 - `protocol/`、`api/`：TCP/RPC 与 HTTP 入口。不要在这里找消息保存规则。
 - `domain/message/`、`domain/chat/`、`domain/conversation/`：按业务分组，服务与其所需端口放在一起。
-  读消息规则先留在 `domain/message/`，需要知道如何落库时才跳到外层。
+  读消息规则先留在 `domain/message/`，需要知道如何落库时才跳到外层。聊天命令与事务读取直接调用
+  相应 Repository；`ChatStore` 只管理有界热缓存，并在原事务提交后通过一个失效入口收敛。
 - `infra/storage/`、`infra/db/repository/`、`infra/search/`：分别实现本地文件/RocksDB、PostgreSQL、Lucene。
   数据库行只在持久化层内部流转，不作为新的领域模型传出。
 - `infra/sync/`：用户事件读取与投递、在线设备连接管理。

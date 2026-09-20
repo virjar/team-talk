@@ -36,7 +36,3 @@ object UnmanagedChatPolicy : ManagedChatPolicy {
         chatIds: Collection<String>,
     ): Map<String, ManagedChatAuthority> = chatIds.distinct().associateWith(::authority)
 }
-
-fun interface ManagedChatProjectionCache {
-    fun invalidateManagedChat(chatId: String)
-}

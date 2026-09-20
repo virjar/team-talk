@@ -16,7 +16,6 @@ import com.virjar.tk.protocol.model.UserRole
 import com.virjar.tk.protocol.NotifyType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.security.MessageDigest
 import java.util.UUID
 
 private const val MAX_GROUP_AVATAR_LENGTH = 500
@@ -26,6 +25,9 @@ private const val GROUP_AVATAR_MUTATION_KEY_PREFIX = "group-avatar-mutation:"
 
 class ChatService(
     private val chatStore: ChatStore,
+    private val chats: ChatRepository,
+    private val members: ChatMemberRepository,
+    private val invites: InviteLinkRepository,
     private val access: ChatAccess,
     private val users: UserRepository,
     private val managedChats: ManagedChatPolicy,
@@ -45,12 +47,12 @@ class ChatService(
         // 使并发的拉黑写入无法与实际的创建竞争。
         require(!contacts.isBlockedEither(uid, targetUid)) { "黑名单关系下不能创建私聊" }
         return unitOfWork.write {
-            val creation = chatStore.createPersonalChat(transaction, uid, targetUid)
+            val creation = chats.createPersonalChat(transaction, uid, targetUid)
             if (creation.created) {
                 creation.recipientUids.forEach { recipient ->
                     appendEvent(recipient, NotifyType.CHAT_CREATED, creation.chat)
                 }
-                afterCommit { chatStore.invalidateCommittedCommand(creation.chat.chatId) }
+                afterCommit { chatStore.invalidate(creation.chat.chatId) }
             }
             creation.chat
         }
@@ -65,7 +67,7 @@ class ChatService(
             "未知的系统账号"
         }
         return unitOfWork.write {
-            val creation = chatStore.getOrCreateSystemPersonalChat(transaction, uid, systemUid)
+            val creation = chats.getOrCreateSystemPersonalChat(transaction, uid, systemUid)
             if (creation.created) {
                 creation.recipientUids.forEach { recipient ->
                     appendEvent(recipient, NotifyType.CHAT_CREATED, creation.chat)
@@ -77,10 +79,10 @@ class ChatService(
 
     /** 幂等取回当前用户的"保存的消息"私有会话；仅首次创建时向本人发 CHAT_CREATED。 */
     suspend fun getOrCreateSavedChat(uid: String): Chat = unitOfWork.write {
-        val creation = chatStore.getOrCreateSavedChat(transaction, uid)
+        val creation = chats.getOrCreateSavedChat(transaction, uid)
         if (creation.created) {
             appendEvent(uid, NotifyType.CHAT_CREATED, creation.chat)
-            afterCommit { chatStore.invalidateCommittedCommand(creation.chat.chatId) }
+            afterCommit { chatStore.invalidate(creation.chat.chatId) }
         }
         creation.chat
     }
@@ -94,12 +96,12 @@ class ChatService(
     ): Chat {
         val command = canonicalGroupCreationCommand(operationId, name, avatar, creatorUid, memberUids)
         return unitOfWork.write {
-            val creation = chatStore.createGroupChat(transaction, command)
+            val creation = chats.createGroupChat(transaction, command)
             if (creation.created) {
                 creation.recipientUids.forEach { recipient ->
                     appendEvent(recipient, NotifyType.CHAT_CREATED, creation.chat)
                 }
-                afterCommit { chatStore.invalidateCommittedCommand(creation.chat.chatId) }
+                afterCommit { chatStore.invalidate(creation.chat.chatId) }
             }
             creation.chat
         }
@@ -112,10 +114,7 @@ class ChatService(
         creatorUid: String,
         memberUids: List<String>,
     ): GroupCreationCommand {
-        val canonicalOperationId = operationId.takeIf { it.length == 36 }
-            ?.let { runCatching { UUID.fromString(it).toString() }.getOrNull() }
-            ?.takeIf { it == operationId }
-        require(canonicalOperationId != null) { "建群操作标识非法" }
+        val canonicalOperationId = canonicalOperationId(operationId, "建群")
 
         require(name.length <= ConversationWirePolicy.MAX_CHAT_NAME_LENGTH) {
             "群名不能超过 ${ConversationWirePolicy.MAX_CHAT_NAME_LENGTH} 个字符"
@@ -133,7 +132,7 @@ class ChatService(
         }
 
         val canonicalMembers = GroupPolicy.canonicalInitialMemberUids(creatorUid, memberUids)
-        val fingerprint = groupCreationFingerprint(
+        val fingerprint = reliableCommandFingerprint(
             "group-create-v1",
             creatorUid,
             canonicalName,
@@ -148,26 +147,6 @@ class ChatService(
             memberUids = canonicalMembers,
             requestFingerprint = fingerprint,
         )
-    }
-
-    private fun groupCreationFingerprint(vararg fields: String?): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        fields.forEach { field ->
-            if (field == null) {
-                digest.update(0.toByte())
-            } else {
-                digest.update(1.toByte())
-                val bytes = field.encodeToByteArray()
-                digest.update((bytes.size ushr 24).toByte())
-                digest.update((bytes.size ushr 16).toByte())
-                digest.update((bytes.size ushr 8).toByte())
-                digest.update(bytes.size.toByte())
-                digest.update(bytes)
-            }
-        }
-        return digest.digest().joinToString(separator = "") { byte ->
-            (byte.toInt() and 0xff).toString(16).padStart(2, '0')
-        }
     }
 
     fun getChat(chatId: String): Chat? = chatStore.getChat(chatId)
@@ -190,7 +169,7 @@ class ChatService(
         val lifecycle = attachmentLifecycle ?: throw IllegalStateException("附件生命周期未接线")
         lifecycleGate.withChat(chatId) {
             while (true) {
-                val currentPath = chatStore.getGroupAvatars(listOf(chatId))
+                val currentPath = chats.getGroupAvatars(listOf(chatId))
                     .firstOrNull()?.attachment?.path
                 val lockedPaths = buildSet {
                     add("$GROUP_AVATAR_MUTATION_KEY_PREFIX$chatId")
@@ -200,7 +179,7 @@ class ChatService(
                 var retryWithCurrentPath = false
                 var publicationFailure: Throwable? = null
                 lifecycle.withReferenceMutation(lockedPaths) {
-                    val fresh = chatStore.getGroupAvatars(listOf(chatId))
+                    val fresh = chats.getGroupAvatars(listOf(chatId))
                         .firstOrNull()?.attachment
                     if (fresh?.path != currentPath) {
                         retryWithCurrentPath = true
@@ -213,7 +192,7 @@ class ChatService(
                     }
                     // 清除/替换前，把仍停留在 staging 的当前引用先晋升为已绑定（上次发布失败修复）。
                     currentPath?.let { path ->
-                        val currentDescriptor = chatStore.getGroupAvatars(listOf(chatId))
+                        val currentDescriptor = chats.getGroupAvatars(listOf(chatId))
                             .firstOrNull()?.attachment
                         if (currentDescriptor != null) {
                             publicationFailure = promoteStagingGroupAvatar(catalog, currentDescriptor)
@@ -226,7 +205,7 @@ class ChatService(
                         require(catalog.isStaging(requested.path)) { "群头像附件已绑定到其他业务引用" }
                     }
                     unitOfWork.write {
-                        val mutation = chatStore.updateGroupAvatar(
+                        val mutation = chats.updateGroupAvatar(
                             transaction, chatId, operatorUid, requested,
                         ) { facts ->
                             require(facts.chat.chatType == 2) { "单聊没有群头像" }
@@ -244,7 +223,7 @@ class ChatService(
                                 avatar,
                             )
                         }
-                        afterCommit { chatStore.invalidateCommittedCommand(chatId) }
+                        afterCommit { chatStore.invalidate(chatId) }
                     }
                     // PostgreSQL 引用已提交；发布失败由精确重试或在任何后续替换/清除之前修复。
                     requested?.let { item ->
@@ -280,7 +259,7 @@ class ChatService(
         val requested = chatIds.map(String::trim).filter(String::isNotEmpty).distinct()
         if (requested.isEmpty()) return emptyList()
         val allowed = access.readAccessibleChatIds(uid) { it }
-        return chatStore.getGroupAvatars(requested.filter { it in allowed })
+        return chats.getGroupAvatars(requested.filter { it in allowed })
     }
 
     private suspend fun updateGroupInternal(
@@ -295,7 +274,7 @@ class ChatService(
             if ((name != null || avatar != null) && authority.managed) {
                 throw IllegalArgumentException("受管部门群名称和头像由组织架构维护")
             }
-            val mutation = chatStore.updateGroup(
+            val mutation = chats.updateGroup(
                 transaction,
                 chatId,
                 operatorUid,
@@ -306,7 +285,7 @@ class ChatService(
             mutation.recipientUids.forEach { uid ->
                 appendEvent(uid, NotifyType.CHAT_UPDATED, mutation.chat)
             }
-            afterCommit { chatStore.invalidateCommittedCommand(chatId) }
+            afterCommit { chatStore.invalidate(chatId) }
         }
     }
 
@@ -371,7 +350,7 @@ class ChatService(
     ) {
         unitOfWork.write {
             requireUserWritableAuthority(transaction, chatId)
-            val addition = chatStore.addMembers(
+            val addition = members.addMembers(
                 transaction = transaction,
                 chatId = chatId,
                 operatorUid = operatorUid,
@@ -385,7 +364,7 @@ class ChatService(
                 addedUids = addition.addedUids,
                 activeMemberUids = addition.activeMemberUids,
             )
-            afterCommit { chatStore.invalidateCommittedMembershipChange(chatId) }
+            afterCommit { chatStore.invalidate(chatId) }
         }
     }
 
@@ -431,7 +410,7 @@ class ChatService(
     ) {
         unitOfWork.write {
             requireUserWritableAuthority(transaction, chatId)
-            val removal = chatStore.removeMember(
+            val removal = members.removeMember(
                 transaction = transaction,
                 chatId = chatId,
                 operatorUid = operatorUid,
@@ -446,7 +425,7 @@ class ChatService(
             removal.remainingMemberUids.forEach { uid ->
                 appendEvent(uid, NotifyType.MEMBER_REMOVED, removal.chat)
             }
-            afterCommit { chatStore.invalidateCommittedMembershipChange(chatId) }
+            afterCommit { chatStore.invalidate(chatId) }
         }
     }
 
@@ -460,7 +439,7 @@ class ChatService(
         access.requireGroupMember(newOwnerUid, chatId, "目标不是群成员")
         unitOfWork.write {
             requireUserWritableAuthority(transaction, chatId)
-            val mutation = chatStore.transferOwner(
+            val mutation = members.transferOwner(
                 transaction,
                 chatId,
                 operatorUid,
@@ -474,7 +453,7 @@ class ChatService(
             mutation.recipientUids.forEach { uid ->
                 appendEvent(uid, NotifyType.MEMBER_ROLE_CHANGED, mutation.chat)
             }
-            afterCommit { chatStore.invalidateCommittedCommand(chatId) }
+            afterCommit { chatStore.invalidate(chatId) }
         }
     }
 
@@ -491,7 +470,7 @@ class ChatService(
         require(target.role != 2) { "不能直接修改群主角色，请使用转让群主" }
         unitOfWork.write {
             requireUserWritableAuthority(transaction, chatId)
-            val mutation = chatStore.setRole(
+            val mutation = members.setRole(
                 transaction,
                 chatId,
                 operatorUid,
@@ -506,7 +485,7 @@ class ChatService(
             mutation.recipientUids.forEach { uid ->
                 appendEvent(uid, NotifyType.MEMBER_ROLE_CHANGED, mutation.chat)
             }
-            afterCommit { chatStore.invalidateCommittedCommand(chatId) }
+            afterCommit { chatStore.invalidate(chatId) }
         }
     }
 
@@ -569,7 +548,7 @@ class ChatService(
             // 精确重放可以绕过变更/配额，但绝不能绕过当前授权。否则在首次提交之后
             // 被移除或降级的操作者就可能取回秘密令牌。
             requireUserWritableAuthority(transaction, chatId)
-            chatStore.createInviteLink(
+            invites.createInviteLink(
                 transaction = transaction,
                 command = command,
             ) { facts -> requireAdmin(facts.operator) }
@@ -622,19 +601,19 @@ class ChatService(
 
     suspend fun listInviteLinks(operatorUid: String, chatId: String): List<InviteLinkRecord> =
         withContext(Dispatchers.IO) {
-            access.readAsAdmin(operatorUid, chatId) { _, _ -> chatStore.listInviteLinks(chatId) }
+            access.readAsAdmin(operatorUid, chatId) { _, _ -> invites.listInviteLinks(chatId) }
         }
 
     suspend fun revokeInviteLink(operatorUid: String, token: String) {
-        val link = chatStore.getInviteLink(token) ?: throw IllegalArgumentException("邀请链接不存在")
+        val link = invites.getInviteLink(token) ?: throw IllegalArgumentException("邀请链接不存在")
         lifecycleGate.withChat(link.chatId) {
-            val current = chatStore.getInviteLink(token)
+            val current = invites.getInviteLink(token)
                 ?: throw IllegalArgumentException("邀请链接不存在")
             requireUserManaged(current.chatId)
             access.requireAdmin(operatorUid, current.chatId)
             unitOfWork.write {
                 requireUserWritableAuthority(transaction, link.chatId)
-                chatStore.revokeInviteLink(
+                invites.revokeInviteLink(
                     transaction,
                     expectedChatId = link.chatId,
                     operatorUid = operatorUid,
@@ -648,17 +627,17 @@ class ChatService(
     suspend fun joinByInvite(uid: String, token: String): Chat {
         // 受管聊天所有权是一个独立的领域策略。仓库会在其聚合事务内重复所有可变的
         // 邀请/聊天/成员校验。
-        val chatId = chatStore.getInviteLink(token)?.chatId
+        val chatId = invites.getInviteLink(token)?.chatId
             ?: throw IllegalArgumentException("邀请链接不存在")
         return lifecycleGate.withChat(chatId) {
             // 进入闸门后重新获取策略与所有可变的聊天/成员事实。
-            val currentChatId = chatStore.getInviteLink(token)?.chatId
+            val currentChatId = invites.getInviteLink(token)?.chatId
                 ?: throw IllegalArgumentException("邀请链接不存在")
             require(currentChatId == chatId) { "邀请链接归属已变更" }
             requireUserManaged(chatId)
             unitOfWork.write {
                 requireUserWritableAuthority(transaction, chatId)
-                val result = chatStore.joinByInvite(
+                val result = chats.joinByInvite(
                     transaction = transaction,
                     uid = uid,
                     token = token,
@@ -670,7 +649,7 @@ class ChatService(
                         addedUids = listOf(uid),
                         activeMemberUids = result.members.map(Member::uid),
                     )
-                    afterCommit { chatStore.invalidateCommittedInviteJoin(chatId) }
+                    afterCommit { chatStore.invalidate(chatId) }
                 }
                 result.chat
             }
@@ -678,7 +657,7 @@ class ChatService(
     }
 
     fun getInviteInfo(token: String): InviteLinkRecord {
-        return chatStore.getInviteLink(token) ?: throw IllegalArgumentException("邀请链接不存在")
+        return invites.getInviteLink(token) ?: throw IllegalArgumentException("邀请链接不存在")
     }
 
     /** 仅返回确认入群所需概况；预览不消耗次数，也不代表稍后的加入一定成功。 */
@@ -687,7 +666,7 @@ class ChatService(
         if (token.length != UUID_TEXT_LENGTH || runCatching { UUID.fromString(token).toString() }.getOrNull() != token) {
             return@read InvitePreview(InvitePreview.NOT_FOUND)
         }
-        val facts = chatStore.readInvitePreview(transaction, uid, token)
+        val facts = invites.readPreview(transaction, uid, token)
             ?: return@read InvitePreview(InvitePreview.NOT_FOUND)
         val authority = managedChats.authority(facts.invite.chatId)
         if (facts.groupName == null || authority.managed || !authority.ready) {
@@ -721,13 +700,13 @@ class ChatService(
     ) {
         unitOfWork.write {
             requireUserWritableAuthority(transaction, chatId)
-            chatStore.lockForDeactivation(transaction, chatId, operatorUid, authorize)
+            chats.lockForDeactivation(transaction, chatId, operatorUid, authorize)
             requiredParticipants.deactivateForChat(transaction, chatId)
-            val deactivation = chatStore.deactivateChat(transaction, chatId)
+            val deactivation = chats.deactivateChat(transaction, chatId)
             deactivation.memberUids.forEach { uid ->
                 appendEvent(uid, NotifyType.CHAT_DELETED, deactivation.chat)
             }
-            afterCommit { chatStore.invalidateCommittedDeactivation(chatId) }
+            afterCommit { chatStore.invalidate(chatId) }
         }
     }
 
@@ -741,20 +720,20 @@ class ChatService(
 
     /** 仅用于对账服务领域投影的读侧。 */
     internal fun activeChatIds(uid: String): Set<String> =
-        chatStore.getActiveChatIds(uid)
+        members.getActiveChatIds(uid)
 
     internal fun activeChatIds(
         transaction: com.virjar.tk.server.domain.transaction.PgReadTransactionContext,
         uid: String,
-    ): Set<String> = chatStore.getActiveChatIds(transaction, uid)
+    ): Set<String> = members.getActiveChatIds(transaction, uid)
 
     internal fun projectedChatIds(uid: String): Set<String> =
-        chatStore.getProjectedChatIds(uid)
+        members.getProjectedChatIds(uid)
 
     internal fun projectedChatIds(
         transaction: com.virjar.tk.server.domain.transaction.PgReadTransactionContext,
         uid: String,
-    ): Set<String> = chatStore.getProjectedChatIds(transaction, uid)
+    ): Set<String> = members.getProjectedChatIds(transaction, uid)
 
     internal fun lockChats(
         transaction: com.virjar.tk.server.domain.transaction.PgWriteTransactionContext,
@@ -769,14 +748,14 @@ class ChatService(
         // 已有聊天的机器人命令与所有其他受管聊天写入者共享全局的 投影 -> Chat 顺序。
         // 清理调用方可以查看一个已非活跃的 Chat，但任何调用方都不能跨越一个挂起中的
         // 组织修订，然后变更 Bot/grant/member 投影。
-        return chatStore.lockChats(transaction, orderedChatIds, requireActive)
+        return members.lockChats(transaction, orderedChatIds, requireActive)
     }
 
     internal fun getActiveMember(
         transaction: com.virjar.tk.server.domain.transaction.PgReadTransactionContext,
         chatId: String,
         uid: String,
-    ): Member? = chatStore.getActiveMember(transaction, chatId, uid)
+    ): Member? = members.getActiveMember(transaction, chatId, uid)
 
     /**
      * 事务绑定的服务成员变更。外部领域拥有事件意图与提交后失效，以便原子地纳入其
@@ -788,7 +767,7 @@ class ChatService(
         operatorUid: String,
         uid: String,
         authorize: (GroupMemberAdditionFacts) -> Unit,
-    ): GroupMemberAddition = chatStore.addMembers(
+    ): GroupMemberAddition = members.addMembers(
         transaction = transaction,
         chatId = chatId,
         operatorUid = operatorUid,
@@ -804,7 +783,7 @@ class ChatService(
         uid: String,
         requireActiveChat: Boolean = true,
         authorize: (GroupMemberRemovalFacts) -> Unit,
-    ): GroupMemberRemoval? = chatStore.removeMemberIfPresent(
+    ): GroupMemberRemoval? = members.removeMemberIfPresent(
         transaction = transaction,
         chatId = chatId,
         operatorUid = operatorUid,
@@ -818,7 +797,7 @@ class ChatService(
         chatId: String,
         uid: String,
         lockedChat: LockedChat?,
-    ): ServiceMemberProjectionCleanup? = chatStore.cleanupServiceMemberProjection(
+    ): ServiceMemberProjectionCleanup? = members.cleanupServiceMemberProjection(
         transaction,
         chatId,
         uid,
@@ -826,7 +805,7 @@ class ChatService(
     )
 
     internal fun invalidateCommittedMembershipChange(chatId: String) {
-        chatStore.invalidateCommittedMembershipChange(chatId)
+        chatStore.invalidate(chatId)
     }
 
     private suspend fun mutateMemberMute(
@@ -838,7 +817,7 @@ class ChatService(
     ) {
         unitOfWork.write {
             lockReadyAuthority(transaction, chatId)
-            val mutation = chatStore.setMemberMute(
+            val mutation = members.setMemberMute(
                 transaction,
                 chatId,
                 operatorUid,
@@ -849,14 +828,14 @@ class ChatService(
                 requireCanManageLocked(facts.operator, facts.target)
             }
             mutation.recipientUids.forEach { uid -> appendEvent(uid, notifyType, mutation.chat) }
-            afterCommit { chatStore.invalidateCommittedCommand(chatId) }
+            afterCommit { chatStore.invalidate(chatId) }
         }
     }
 
     private suspend fun mutateMuteAll(operatorUid: String?, chatId: String, mutedAll: Boolean) {
         unitOfWork.write {
             lockReadyAuthority(transaction, chatId)
-            val mutation = chatStore.setMuteAll(
+            val mutation = members.setMuteAll(
                 transaction,
                 chatId,
                 operatorUid,
@@ -868,7 +847,7 @@ class ChatService(
             mutation.recipientUids.forEach { uid ->
                 appendEvent(uid, NotifyType.CHAT_UPDATED, mutation.chat)
             }
-            afterCommit { chatStore.invalidateCommittedCommand(chatId) }
+            afterCommit { chatStore.invalidate(chatId) }
         }
     }
 

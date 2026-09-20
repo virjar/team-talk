@@ -31,7 +31,7 @@ resolve Environment/dataRoot
   → expose health status
 ```
 
-当前发行版本为 `0.0.3`、冻结协议 `0.3`，支持协议窗口为 `0.0` 至 `0.3`；服务端存储 epoch 是 **1**，普通升级保留
+发行与源码的协议窗口见[版本机制](../04-protocol/versioning.md#先分清版本与安装数字)；服务端存储 epoch 是 **1**，普通升级保留
 原 dataset ID。连接协商不能代替存储迁移；不支持的 schema、epoch、dataset 或迁移记录会阻止启动，普通
 升级不清空业务数据。PostgreSQL 按源码清单依次迁移，覆盖遥测协议 ID、封禁凭据墓碑、办公协作与客户端发布注册等布局；DDL 与
 `schema_migrations` 收据处于同一启动事务，失败共同回滚，完成后重启不重复执行。具体顺序和后续
@@ -151,7 +151,7 @@ major 且有交集的窗口，选择双方 `currentMinor` 的较小值作为本�
 `ServerProtocolConfiguration` 在打开存储前读取 `MINIMUM_PROTOCOL_MINOR`。运营配置只能把最低
 minor 从构建的 `ProtocolVersions.MINIMUM_MINOR` 向上提高，且不能超过当前 minor；非法配置阻止
 启动。部署工具另在停服前按目标产物清单检查并保留远端的显式最低 minor，配置格式与升级行为见
-[服务端环境变量](../07-operations/configuration.md#3-服务端环境变量)。当前构建最低 minor 为 0、最高 minor 为 1。
+[服务端环境变量](../07-operations/configuration.md#3-服务端环境变量)。构建窗口来自根 `gradle.properties`，运行下限不能低于构建下限。
 外部仍不承诺跨发行兼容，兼容窗口表达的是服务端实际保留并
 允许访问的实现。未协商而直接 AUTH 的客户端收到原格式
 `AUTH_RESP / CODE_VERSION_UNSUPPORTED` 和升级原因，之后断连，不会因旧版号相同而被默许进入。
@@ -163,7 +163,7 @@ minor 从构建的 `ProtocolVersions.MINIMUM_MINOR` 向上提高，且不能超�
 产物，领域服务不直接持有连接。普通 MESSAGE 另在业务处理前检查正文类型的可用窗口。
 
 同 major 的扩展只能追加契约，minor 按正式发行批次递增，既有方法、模型字段和编号不能原地改义。
-`0.0.3` 已冻结协议 `0.3`；后续新增契约按发行批次使用下一 minor。注解负责可用
+正式快照保护已发行协议；新增契约按发行批次共用下一 minor。注解负责可用
 范围，业务作者仍须保留窗口内各版本的行为；方法可调用并不证明所有返回模型都能被旧端解码。
 实现入口是 [ImAgent](../../server/server/src/main/kotlin/com/virjar/tk/server/protocol/connection/ImAgent.kt)、
 [RpcDispatcher](../../server/server/src/main/kotlin/com/virjar/tk/server/protocol/dispatcher/RpcDispatcher.kt)
@@ -271,8 +271,10 @@ owner 等待该线程完成终结后 `stop` 才返回。
 `ChatStore` 只是 PostgreSQL 的 read-through 热缓存，不是第二事实源。每个 chat 的基础信息与可选
 成员角色快照保存在同一个聚合 entry 中，256 个固定分片各自最多保留 16 个 LRU entry；因此访问过
 的 chat 数量不能让堆永久增长。每个 entry 最多驻留 64 个成员角色；更大的群仍可读取完整成员列表，
-但列表不会挂在热缓存上，单成员判断直接查询对应成员行。写事务只在 commit 后按 chatId 失效同一
-聚合 entry，cache miss 与失效在同一分片锁内线性化；容量淘汰只影响命中率，不改变授权事实。
+但列表不会挂在热缓存上。成员权限判断始终通过 `ChatAccess` 或事务仓储读取权威事实。聊天命令直接调用 `ChatRepository`、`ChatMemberRepository` 或 `InviteLinkRepository`；
+事务授权与接收者查询也直接使用仓储，不经过热缓存转发。原工作单元的 `afterCommit` 回调统一调用
+`ChatStore.invalidate(chatId)`，使同一聚合 entry 失效；cache miss 与失效在同一分片锁内线性化。
+容量淘汰只影响命中率，不改变授权事实。
 
 ## 6. 线程与协程规则
 

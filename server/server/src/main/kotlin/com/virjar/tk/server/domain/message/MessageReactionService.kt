@@ -3,7 +3,7 @@ package com.virjar.tk.server.domain.message
 import com.virjar.tk.protocol.body.MessageBodyPolicy
 import com.virjar.tk.server.domain.chat.ChatAccess
 import com.virjar.tk.server.domain.chat.ChatLifecycleGate
-import com.virjar.tk.server.domain.chat.ChatStore
+import com.virjar.tk.server.domain.chat.ChatMemberRepository
 import com.virjar.tk.server.domain.chat.ManagedChatPolicy
 import com.virjar.tk.server.domain.chat.UnmanagedChatPolicy
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
@@ -24,7 +24,7 @@ import com.virjar.tk.protocol.NotifyType
  */
 class MessageReactionService(
     private val messages: MessageRepository,
-    private val chatStore: ChatStore,
+    private val members: ChatMemberRepository,
     private val access: ChatAccess,
     private val reactions: MessageReactionRepository,
     private val unitOfWork: PgUnitOfWork,
@@ -56,8 +56,8 @@ class MessageReactionService(
             unitOfWork.write {
                 val authority = managedChats.lockAuthority(transaction, listOf(chatId)).getValue(chatId)
                 require(authority.ready) { "受管群投影尚未收敛" }
-                chatStore.lockChats(transaction, listOf(chatId), requireActive = true)
-                chatStore.getActiveMember(transaction, chatId, uid)
+                members.lockChats(transaction, listOf(chatId), requireActive = true)
+                members.getActiveMember(transaction, chatId, uid)
                     ?: throw IllegalArgumentException("不是聊天成员")
 
                 val changed = if (add) {
@@ -73,7 +73,7 @@ class MessageReactionService(
                         actorUid = uid,
                         action = if (add) ACTION_ADD else ACTION_REMOVE,
                     )
-                    chatStore.getActiveMemberUids(transaction, chatId).forEach { memberUid ->
+                    members.getActiveMemberUids(transaction, chatId).forEach { memberUid ->
                         appendEvent(memberUid, NotifyType.MESSAGE_REACTION, payload)
                     }
                 }

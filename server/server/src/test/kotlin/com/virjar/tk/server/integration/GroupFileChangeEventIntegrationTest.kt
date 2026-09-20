@@ -201,7 +201,7 @@ class GroupFileChangeEventIntegrationTest {
 
         // 重新装配服务与仓储，确认去重来自 PostgreSQL 回执，而不是服务实例内的状态。
         val restarted = GroupFileService(
-            ExposedGroupFileRepository(ctx.database), ctx.chatAccess, ctx.fileStore, ctx.pgUnitOfWork, ctx.chatStore,
+            ExposedGroupFileRepository(ctx.database), ctx.chatAccess, ctx.fileStore, ctx.pgUnitOfWork, ctx.chatMemberRepository,
         )
         assertEquals(folder, restarted.createFolder(owner, folderId, folderCommandId, group.chatId, null, "资料"))
         assertEquals(renamed, restarted.createFile(
@@ -247,7 +247,7 @@ class GroupFileChangeEventIntegrationTest {
         ctx.groupFileService.delete(owner, UUID.randomUUID().toString(), group.chatId, folder.entryId, renamed.revision)
         val afterDelete = latestSeq(owner)
         val restarted = GroupFileService(
-            ExposedGroupFileRepository(ctx.database), ctx.chatAccess, ctx.fileStore, ctx.pgUnitOfWork, ctx.chatStore,
+            ExposedGroupFileRepository(ctx.database), ctx.chatAccess, ctx.fileStore, ctx.pgUnitOfWork, ctx.chatMemberRepository,
         )
         assertNull(restarted.rename(member, commandId, group.chatId, folder.entryId, "已提交名称", folder.revision))
         assertEquals(0, eventsAfter(owner, afterDelete).size, "条目已删除不影响已提交命令的成功确认")

@@ -15,6 +15,7 @@ import com.virjar.tk.server.domain.chat.ManagedChatPolicy
 import com.virjar.tk.server.domain.chat.MessageAdmission
 import com.virjar.tk.server.domain.chat.ChatService
 import com.virjar.tk.server.domain.chat.ChatStore
+import com.virjar.tk.server.domain.chat.ChatMemberRepository
 import com.virjar.tk.server.domain.chat.UnmanagedChatPolicy
 import com.virjar.tk.server.domain.contact.ContactRepository
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
@@ -38,6 +39,7 @@ import com.virjar.tk.protocol.ProtoCodec
 class MessageService(
     private val messages: MessageRepository,
     private val chatStore: ChatStore,
+    private val members: ChatMemberRepository,
     private val access: ChatAccess,
     private val chatService: ChatService,
     /** 服务号指令消费（内测反馈 T058）；未接线时发往 sys_service 的消息只投递不回复。 */
@@ -468,7 +470,7 @@ class MessageService(
         unitOfWork.write {
             val authority = managedChats.lockAuthority(transaction, listOf(chatId)).getValue(chatId)
             require(authority.ready) { "受管群投影尚未收敛" }
-            val admission = chatStore.admitMessage(
+            val admission = members.admitMessage(
                 transaction,
                 chatId,
                 senderUid,
@@ -500,7 +502,7 @@ class MessageService(
         unitOfWork.write {
             val authority = managedChats.lockAuthority(transaction, listOf(chatId)).getValue(chatId)
             require(authority.ready) { "受管群投影尚未收敛" }
-            chatStore.lockChats(transaction, listOf(chatId), requireActive = true)
+            members.lockChats(transaction, listOf(chatId), requireActive = true)
             authorizeAfterChatLock(transaction)
         }
     }

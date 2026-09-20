@@ -203,7 +203,7 @@ class MessageProjector(
                         }
                     }
                     if (operation.operation == MessageOperationType.CREATE) {
-                        afterCommit { chatStore.invalidateManagedChat(message.chatId) }
+                        afterCommit { chatStore.invalidate(message.chatId) }
                     }
                 }
                 projectionHooks.hit(MessageProjectionStage.AFTER_POSTGRES_BEFORE_OUTBOX_DELETE, operation)

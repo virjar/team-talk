@@ -637,14 +637,6 @@ class ExposedChatRepository(
         return ChatDeactivation(chat, memberUids)
     }
 
-    override fun getMemberUids(chatId: String): List<String> {
-        return transaction(database) {
-            GroupMembers.selectAll()
-                .where { (GroupMembers.chatId eq chatId) and (GroupMembers.status eq 1) }
-                .map { it[GroupMembers.uid] }
-        }
-    }
-
     // ── 查询 ──
 
     override fun listUserChats(uid: String): List<Chat> {

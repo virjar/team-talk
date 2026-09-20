@@ -6,7 +6,7 @@ import com.virjar.tk.protocol.NotifyType
 import com.virjar.tk.server.domain.attachment.AttachmentCatalog
 import com.virjar.tk.server.domain.attachment.AttachmentLifecycleGate
 import com.virjar.tk.server.domain.chat.ChatAccess
-import com.virjar.tk.server.domain.chat.ChatStore
+import com.virjar.tk.server.domain.chat.ChatMemberRepository
 import com.virjar.tk.server.domain.command.reliableCommandFingerprint
 import com.virjar.tk.server.domain.transaction.PgUnitOfWork
 import com.virjar.tk.server.domain.transaction.PgWriteScope
@@ -32,7 +32,7 @@ class GroupFileService(
     private val access: ChatAccess,
     private val attachments: AttachmentCatalog,
     private val unitOfWork: PgUnitOfWork,
-    private val chatStore: ChatStore,
+    private val members: ChatMemberRepository,
     private val attachmentLifecycle: AttachmentLifecycleGate = AttachmentLifecycleGate(),
 ) {
 
@@ -345,7 +345,7 @@ class GroupFileService(
             deletedEntryId = "",
             deletedRevision = 0L,
         )
-        chatStore.getActiveMemberUids(transaction, entry.chatId).forEach { memberUid ->
+        members.getActiveMemberUids(transaction, entry.chatId).forEach { memberUid ->
             appendEvent(memberUid, NotifyType.GROUP_FILE_CHANGED, payload)
         }
     }
@@ -362,7 +362,7 @@ class GroupFileService(
             deletedEntryId = entryId,
             deletedRevision = tombstoneRevision,
         )
-        chatStore.getActiveMemberUids(transaction, chatId).forEach { memberUid ->
+        members.getActiveMemberUids(transaction, chatId).forEach { memberUid ->
             appendEvent(memberUid, NotifyType.GROUP_FILE_CHANGED, payload)
         }
     }
