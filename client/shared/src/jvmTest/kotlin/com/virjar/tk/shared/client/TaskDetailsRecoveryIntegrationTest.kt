@@ -40,8 +40,6 @@ class TaskDetailsRecoveryIntegrationTest {
 
             val migrated = JdbcSqliteDriver("jdbc:sqlite:${file.path}")
             migrateJvmLocalCache(migrated)
-            // 未标版本库认领可能重放新增对象；迁移不能改变可靠命令。
-            AppDatabase.Schema.migrate(migrated, 3, AppDatabase.Schema.version)
             val cache = LocalCacheImpl(migrated)
             try {
                 assertEquals(task(), cache.tasks.task(ID))

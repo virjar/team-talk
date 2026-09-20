@@ -17,6 +17,7 @@ import com.virjar.tk.app.navigation.feature.chat.ChatComposerContextStore
 import com.virjar.tk.app.navigation.feature.chat.toDraftSnapshot
 import com.virjar.tk.app.navigation.feature.chat.toComposerContext
 import com.virjar.tk.app.navigation.feature.chat.ChatComposerContext
+import com.virjar.tk.app.navigation.feature.chat.RetainedTextSlot
 import com.virjar.tk.app.navigation.feature.chat.SavedChatReplyTarget
 import com.virjar.tk.app.navigation.feature.chat.SavedChatEditingSession
 
@@ -208,6 +209,35 @@ class ChatComposerPersistenceTest {
         assertTrue(retryRevision > failedRevision, "failed admission must not poison identical-frame deduplication")
         writer.runNext()
         assertEquals("保存失败仍有原文", cache.chatDrafts.get(CHAT)?.markdown)
+    }
+
+    @Test
+    fun `evicting a chat removes its complete hot state while an active send still fences recovery`() = runTest {
+        val cache = FakeLocalCache()
+        val writer = ControlledWriter(cache)
+        val store = newStore(cache, writer)
+        store.hydrate(CHAT)
+        val revision = assertNotNull(store.save(CHAT, ChatComposerContext(markdown = "等待提交")))
+        writer.runNext()
+        val textToken = store.retainText(CHAT, RetainedTextSlot.SOURCE_INPUT, "不会进入 Bundle 的正文")
+        val submission = store.beginSend(CHAT, revision)
+        repeat(64) { index ->
+            store.retainText("other-$index", RetainedTextSlot.SOURCE_INPUT, "其他会话")
+        }
+        assertNull(store.restore(CHAT))
+        assertNull(store.restoreText(CHAT, RetainedTextSlot.SOURCE_INPUT, textToken))
+        assertEquals(0L, store.revision(CHAT))
+
+        val reopening = async { store.hydrate(CHAT) }
+        runCurrent()
+        assertFalse(reopening.isCompleted, "eviction must retain the in-flight send barrier")
+        cache.enqueueFromComposer(message("等待提交"), revision, 1)
+        submission.completion.complete(true)
+        assertEquals("", assertNotNull(reopening.await()).markdown)
+        val replacementToken = store.retainText(CHAT, RetainedTextSlot.SOURCE_INPUT, "新输入")
+        assertNotEquals(textToken, replacementToken)
+        assertNull(store.restoreText(CHAT, RetainedTextSlot.SOURCE_INPUT, textToken))
+        assertEquals("新输入", store.restoreText(CHAT, RetainedTextSlot.SOURCE_INPUT, replacementToken))
     }
 
     private fun TestScope.newStore(

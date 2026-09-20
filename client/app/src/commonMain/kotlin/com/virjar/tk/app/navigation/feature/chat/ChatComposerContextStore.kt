@@ -115,17 +115,28 @@ private fun mergeChatDraftCaptureFailures(primary: Throwable?, additional: Throw
  * Android 大文本 Saver token 仅留在此实例。SQLite 恢复与本地发送提交屏障不依赖 Compose 存活。
  */
 class ChatComposerContextStore {
-    private val contexts = mutableMapOf<String, ChatComposerContext>()
+    /** 一个聊天的热帧、持久提交和发送屏障始终由同一条目拥有。 */
+    private class ChatState {
+        var context: ChatComposerContext? = null
+        var hydrated = false
+        var durableSnapshot: ChatDraftSnapshot? = null
+        var failedWrite: java.util.concurrent.atomic.AtomicBoolean? = null
+        var submission: ChatComposerSubmission? = null
+        var commit: Pair<Long, CompletableDeferred<Long>>? = null
+        val retainedTexts = mutableMapOf<RetainedTextSlot, RetainedText>()
+        val isEmpty: Boolean
+            get() = context == null && !hydrated && durableSnapshot == null && failedWrite == null &&
+                submission == null && commit == null && retainedTexts.isEmpty()
+    }
+
+    private data class RetainedText(val token: String, val text: String)
+
+    private val chats = mutableMapOf<String, ChatState>()
     private val recency = mutableListOf<String>()
-    private val retainedTextTokens = mutableMapOf<RetainedTextKey, String>()
-    private val retainedTexts = mutableMapOf<String, String>()
     private var nextRetainedTextId = 1L
     private var persistence: Persistence? = null
-    private val hydrated = mutableSetOf<String>()
-    private val durableSnapshots = mutableMapOf<String, ChatDraftSnapshot>()
-    private val failedWrites = mutableMapOf<String, java.util.concurrent.atomic.AtomicBoolean>()
-    private val sending = mutableMapOf<String, ChatComposerSubmission>()
-    private val commits = mutableMapOf<String, Pair<Long, CompletableDeferred<Long>>>()
+
+    private fun state(chatId: String): ChatState = chats.getOrPut(chatId, ::ChatState)
 
     internal val hasPersistence: Boolean get() = persistence != null
 
@@ -137,15 +148,15 @@ class ChatComposerContextStore {
         onFailure: (Throwable) -> Unit,
     ) {
         persistence = Persistence(localCache, localMutations, localData, onFailure)
-        hydrated.clear()
+        chats.values.forEach { it.hydrated = false }
     }
 
     /** Called before the editor accepts input or imports, so an empty first frame cannot overwrite recovery. */
     internal suspend fun hydrate(chatId: String): ChatComposerContext? {
         val owner = persistence ?: return restore(chatId)
-        val submission = sending[chatId]
+        val submission = chats[chatId]?.submission
         val consumed = submission?.completion?.await() == true
-        if (chatId in hydrated && submission == null) return restore(chatId)
+        if (chats[chatId]?.hydrated == true && submission == null) return restore(chatId)
         val (snapshot, ordinaryMirror) = owner.localData.run {
             val saved = owner.localCache.chatDrafts.get(chatId)
             // The conversation projection already merges unacknowledged local mirror writes with
@@ -156,17 +167,18 @@ class ChatComposerContextStore {
             saved to mirror
         }
         check(persistence === owner) { "Chat draft session changed during recovery" }
-        if (submission != null && sending[chatId] === submission) {
-            sending.remove(chatId)
-            if (consumed && durableSnapshots[chatId]?.revision == submission.revision) contexts.remove(chatId)
+        val state = state(chatId)
+        if (submission != null && state.submission === submission) {
+            state.submission = null
+            if (consumed && state.durableSnapshot?.revision == submission.revision) state.context = null
         }
         if (snapshot != null) {
-            val hot = contexts[chatId]
-            if (hot != null && durableSnapshots[chatId] != null) {
-                hydrated += chatId
+            val hot = state.context
+            if (hot != null && state.durableSnapshot != null) {
+                state.hydrated = true
                 mergePersisted(chatId, snapshot, hot)
             } else {
-                if (snapshot.revision >= (durableSnapshots[chatId]?.revision ?: 0L)) durableSnapshots[chatId] = snapshot
+                if (snapshot.revision >= (state.durableSnapshot?.revision ?: 0L)) state.durableSnapshot = snapshot
                 // Before the structured contract takes ownership, a plain composer follows its legacy mirror.
                 // Keep the raw baseline so alignment still receives a fresh local revision on save.
                 if (hot == null) {
@@ -182,24 +194,24 @@ class ChatComposerContextStore {
                 }
             }
         }
-        hydrated += chatId
+        state.hydrated = true
         markRecent(chatId)
         return restore(chatId)
     }
 
     internal fun restore(chatId: String): ChatComposerContext? {
-        val context = contexts[chatId] ?: return null
+        val context = chats[chatId]?.context ?: return null
         markRecent(chatId)
         return context
     }
 
-    internal fun revision(chatId: String): Long = durableSnapshots[chatId]?.revision ?: 0L
+    internal fun revision(chatId: String): Long = chats[chatId]?.durableSnapshot?.revision ?: 0L
 
-    internal fun sharedRevision(chatId: String): Long? = durableSnapshots[chatId]?.sharedRevision
+    internal fun sharedRevision(chatId: String): Long? = chats[chatId]?.durableSnapshot?.sharedRevision
 
     internal fun commitBarrier(chatId: String, revision: Long): CompletableDeferred<Long> {
-        check(durableSnapshots[chatId]?.revision == revision) { "草稿已更新，请重新发送" }
-        return commits[chatId]?.takeIf { it.first == revision }?.second ?: CompletableDeferred(revision)
+        check(chats[chatId]?.durableSnapshot?.revision == revision) { "草稿已更新，请重新发送" }
+        return chats[chatId]?.commit?.takeIf { it.first == revision }?.second ?: CompletableDeferred(revision)
     }
 
     internal suspend fun awaitSaved(chatId: String, revision: Long): Long = commitBarrier(chatId, revision).await()
@@ -208,18 +220,19 @@ class ChatComposerContextStore {
     internal suspend fun receivePersisted(chatId: String, captureCurrent: () -> ChatComposerContext): ChatComposerContext? {
         val owner = persistence ?: return null
         val incoming = owner.localData.run { owner.localCache.chatDrafts.get(chatId) } ?: return null
-        if (persistence !== owner || chatId !in hydrated || sending[chatId] != null) return null
+        if (persistence !== owner || chats[chatId]?.hydrated != true || chats[chatId]?.submission != null) return null
         return mergePersisted(chatId, incoming, captureCurrent())
     }
 
     private fun mergePersisted(chatId: String, incoming: ChatDraftSnapshot, current: ChatComposerContext): ChatComposerContext? {
-        val previous = durableSnapshots[chatId]
+        val state = state(chatId)
+        val previous = state.durableSnapshot
         if (incoming.revision < (previous?.revision ?: 0L) || incoming == previous) return null
         val frame = current.toDraftSnapshot(chatId)
         fun ChatDraftSnapshot.contentOnly() = copy(revision = 0L, sharedRevision = null, selectionStart = 0, selectionEnd = 0)
         if (previous != null && incoming.contentOnly() == previous.contentOnly()) {
             // Our own ACK changes the shared base without moving the caret or replacing unsaved typing.
-            durableSnapshots[chatId] = incoming
+            state.durableSnapshot = incoming
             retain(chatId, current.copy(draftRevision = incoming.revision, sharedRevision = incoming.sharedRevision))
             return null
         }
@@ -228,8 +241,8 @@ class ChatComposerContextStore {
             save(chatId, current)
             return null
         }
-        durableSnapshots[chatId] = incoming
-        failedWrites.remove(chatId)
+        state.durableSnapshot = incoming
+        state.failedWrite = null
         val recovered = incoming.toComposerContext()
         val installed = if (current.editingSession.editingClientMsgId.isNotEmpty()) {
             current.copy(
@@ -248,12 +261,17 @@ class ChatComposerContextStore {
     }
 
     internal fun beginSend(chatId: String, revision: Long): ChatComposerSubmission {
-        sending.entries.removeAll { it.key !in contexts && it.value.completion.isCompleted }
-        return ChatComposerSubmission(revision).also { sending[chatId] = it }
+        chats.entries.removeAll { (_, state) ->
+            if (state.context == null && state.submission?.completion?.isCompleted == true) state.submission = null
+            state.isEmpty
+        }
+        return ChatComposerSubmission(revision).also { state(chatId).submission = it }
     }
 
     internal fun finishSend(chatId: String, submission: ChatComposerSubmission) {
-        if (sending[chatId] === submission) sending.remove(chatId)
+        val state = chats[chatId]?.takeIf { it.submission === submission } ?: return
+        state.submission = null
+        if (state.isEmpty) chats.remove(chatId)
     }
 
     internal fun save(chatId: String, context: ChatComposerContext): Long? {
@@ -261,10 +279,11 @@ class ChatComposerContextStore {
         val normalized = context.normalized()
         retain(chatId, normalized)
         val owner = persistence ?: return 0L
-        if (chatId !in hydrated) return null
+        val state = state(chatId)
+        if (!state.hydrated) return null
         val snapshot = normalized.toDraftSnapshot(chatId)
-        durableSnapshots[chatId]?.takeIf {
-            failedWrites[chatId]?.get() != true && it.copy(revision = 0L) == snapshot
+        state.durableSnapshot?.takeIf {
+            state.failedWrite?.get() != true && it.copy(revision = 0L) == snapshot
         }?.let { retain(chatId, normalized.copy(draftRevision = it.revision)); return it.revision }
         val failed = java.util.concurrent.atomic.AtomicBoolean(false)
         val committed = CompletableDeferred<Long>()
@@ -273,22 +292,24 @@ class ChatComposerContextStore {
             committed.completeExceptionally(it)
             owner.onFailure(it)
         }) ?: return null
-        commits[chatId] = revision to committed
-        durableSnapshots[chatId] = snapshot.copy(revision = revision)
-        failedWrites[chatId] = failed
+        state.commit = revision to committed
+        state.durableSnapshot = snapshot.copy(revision = revision)
+        state.failedWrite = failed
         retain(chatId, normalized.copy(draftRevision = revision))
         return revision
     }
 
     /** Only the exact committed send consumes its hot frame; a newer draft remains available. */
     internal fun acceptSent(chatId: String, expectedRevision: Long): Boolean {
-        val previous = durableSnapshots[chatId]
+        val existing = chats[chatId]
+        val previous = existing?.durableSnapshot
         if (persistence != null && previous?.revision != expectedRevision) return false
-        sending[chatId]?.takeIf { it.revision == expectedRevision }?.let { sending.remove(chatId) }
+        val state = existing ?: state(chatId)
+        if (state.submission?.revision == expectedRevision) state.submission = null
         val cleared = ChatDraftSnapshot(chatId = chatId, revision = expectedRevision, markdown = "", sharedRevision = previous?.sharedRevision)
-        durableSnapshots[chatId] = cleared
-        failedWrites.remove(chatId)
-        val observed = contexts[chatId]?.previousCachedDraft
+        state.durableSnapshot = cleared
+        state.failedWrite = null
+        val observed = state.context?.previousCachedDraft
         retain(chatId, cleared.toComposerContext().copy(previousCachedDraft = observed))
         return true
     }
@@ -298,7 +319,7 @@ class ChatComposerContextStore {
             remove(chatId)
             return
         }
-        contexts[chatId] = normalized
+        state(chatId).context = normalized
         markRecent(chatId)
     }
 
@@ -308,40 +329,35 @@ class ChatComposerContextStore {
      */
     internal fun retainText(chatId: String, slot: RetainedTextSlot, text: String): String {
         if (chatId.isBlank()) return ""
-        val key = RetainedTextKey(chatId, slot)
-        val token = retainedTextTokens.getOrPut(key) { "composer-text-${nextRetainedTextId++}" }
-        retainedTexts[token] = text
+        val texts = state(chatId).retainedTexts
+        val token = texts[slot]?.token ?: "composer-text-${nextRetainedTextId++}"
+        texts[slot] = RetainedText(token, text)
         markRecent(chatId)
         return token
     }
 
     internal fun restoreText(chatId: String, slot: RetainedTextSlot, token: String): String? {
-        val key = RetainedTextKey(chatId, slot)
-        if (retainedTextTokens[key] != token) return null
+        val retained = chats[chatId]?.retainedTexts?.get(slot)?.takeIf { it.token == token } ?: return null
         markRecent(chatId)
-        return retainedTexts[token]
+        return retained.text
     }
 
     internal fun discardText(chatId: String, slot: RetainedTextSlot) {
-        retainedTextTokens.remove(RetainedTextKey(chatId, slot))?.let(retainedTexts::remove)
+        chats[chatId]?.retainedTexts?.remove(slot)
     }
 
     internal fun remove(chatId: String) {
-        contexts.remove(chatId)
+        chats[chatId]?.let { state ->
+            state.context = null
+            state.retainedTexts.clear()
+            if (state.isEmpty) chats.remove(chatId)
+        }
         recency.remove(chatId)
-        removeRetainedTexts(chatId)
     }
 
     internal fun clear() {
-        contexts.clear()
+        chats.clear()
         recency.clear()
-        retainedTextTokens.clear()
-        retainedTexts.clear()
-        hydrated.clear()
-        durableSnapshots.clear()
-        failedWrites.clear()
-        sending.clear()
-        commits.clear()
     }
 
     private fun markRecent(chatId: String) {
@@ -349,20 +365,12 @@ class ChatComposerContextStore {
         recency += chatId
         while (recency.size > MAX_RETAINED_CHATS) {
             val oldest = recency.removeAt(0)
-            contexts.remove(oldest)
-            hydrated.remove(oldest)
-            durableSnapshots.remove(oldest)
-            failedWrites.remove(oldest)
-            commits.remove(oldest)
-            if (sending[oldest]?.completion?.isCompleted == true) sending.remove(oldest)
-            removeRetainedTexts(oldest)
+            val evicted = chats.remove(oldest) ?: continue
+            // 发送可能仍在等待 SDK 的持久提交；只保留其屏障，不保留正文与热缓存。
+            evicted.submission?.takeUnless { it.completion.isCompleted }?.let { submission ->
+                chats[oldest] = ChatState().also { it.submission = submission }
+            }
         }
-    }
-
-    private fun removeRetainedTexts(chatId: String) {
-        retainedTextTokens.keys
-            .filter { key -> key.chatId == chatId }
-            .forEach { key -> retainedTextTokens.remove(key)?.let(retainedTexts::remove) }
     }
 
     private companion object {
@@ -388,8 +396,6 @@ internal enum class RetainedTextSlot {
     SUSPENDED_DRAFT,
     SUSPENDED_ASSETS,
 }
-
-private data class RetainedTextKey(val chatId: String, val slot: RetainedTextSlot)
 
 /** 不可变快照；绝不保留 Message、RichTextState 或其他平台对象。 */
 internal data class ChatComposerContext(

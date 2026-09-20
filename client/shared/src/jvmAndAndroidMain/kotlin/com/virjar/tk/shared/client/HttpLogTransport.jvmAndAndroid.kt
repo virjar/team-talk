@@ -8,9 +8,9 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 internal actual fun createPlatformTelemetryHttpTransport(): PlatformTelemetryHttpTransport =
-    DesktopTelemetryHttpTransport()
+    UrlConnectionTelemetryHttpTransport()
 
-private class DesktopTelemetryHttpTransport : PlatformTelemetryHttpTransport {
+private class UrlConnectionTelemetryHttpTransport : PlatformTelemetryHttpTransport {
     private val operationGate = HttpConnectionOperationGate("Telemetry HTTP transport")
 
     override fun postGzipJson(

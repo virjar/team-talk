@@ -357,8 +357,10 @@ Compose 或原生平台回调不直接持有 session 业务 owner。同步动作
 CLOSING，同步捕获最后一帧并注销 capture handle，然后才销毁 feature/repository；迟到的
 debounce 或 `onDispose` 在 CLOSED 后只能无害失败，不能穿过已 quiesce 的 session。
 
-聊天完整草稿由 `LocalChatDrafts` 和账号 SQLite 持有；`ChatComposerContextStore` 只保留 UI 热帧，
-通过 `SessionLocalMutationWriter` 有序保存 Markdown、sidecar、选区、模式和回复目标。恢复经
+聊天完整草稿由 `LocalChatDrafts` 和账号 SQLite 持有；`ChatComposerContextStore` 按 chat 持有一个热状态条目，
+集中管理编辑帧、恢复状态、提交屏障和 Android 大文本 token。超过 64 个热聊天时整体驱逐条目，正在发送的
+聊天仅保留发送完成屏障，防止重开时复活已消费的正文；屏障完成后回收空条目。
+热帧通过 `SessionLocalMutationWriter` 有序保存 Markdown、sidecar、选区、模式和回复目标。恢复经
 `UiLocalDataBoundary` 在 IO 读取，完成前阻止输入/导入，避免空首帧覆盖已有资料。已 READY 的完整内容
 通过独立 `ChatDraftRpc` 同步到同账号其他设备；服务端快照包含 Markdown、canonical sidecar、模式和
 回复身份，选区及未上传源继续由本安装持有。旧会话字符串 wire 保持兼容，不借它传递缺失 sidecar 的内容。
@@ -1059,14 +1061,16 @@ headless JVM 的账号库与 GUI 使用同一恢复路径：确认损坏时移�
 字节与条目预算、一组并发 reservation 和一张按规范化绝对路径计数的 consumer pin 表。容量扫描只识别平台生产者的固定目录深度和
 内容寻址文件名，再跨身份目录按 mtime 回收零租约的最旧可回拉媒体。录音源文件、上传 spool、未知文件、子目录和符号链接
 不是该 LRU 的数据；正在下载的最终文件在网络前预留空间。播放、图片解码、预览和附件打开等消费路径在原子发布后于同一容量锁内完成租约交接，不留可被另一账号驱逐的裸文件窗口；普通只下载缓存完成后立即释放租约，文件可继续参与 LRU。
+Desktop 导出由同一个挂起流程持有文件租约，覆盖目标选择和实际复制；取消选择、会话关闭、复制失败及成功
+都会释放租约。会话关闭同时取消仍打开的系统保存选择器，不能先释放源文件再异步复制。
 
 移出的损坏族在替换库验证健康后随即删除；删除失败只记录，残留的 `.corrupt-*` 目录由下一次恢复
 在移出新副本前尽力清扫，不阻塞重建。新替代库中的服务端投影由快照、事件和各领域 RPC 重新收敛，
 上传协调器按替代库的引用事实正常执行孤儿源扫描删除。
 
-Desktop/JVM 在完整性检查后读取 `PRAGMA user_version`。新库在单一事务内创建；未标记但已存在的
-旧库先用幂等 create 补齐缺失的基线对象（基线建表与 .sqm 均为 `IF NOT EXISTS`，迁移不得直接
-ALTER 既有表），再认领为 schema 1 执行连续迁移，成功才写新版本，失败同时回滚 DDL/数据/版本。
+Desktop/JVM 在完整性检查后读取 `PRAGMA user_version`。空库在单一事务内创建；正式 tag 保存的
+schema 1 及后续版本按 `.sqm` 连续迁移，成功才写新版本，失败同时回滚 DDL/数据/版本。
+发行前未标版本的既有库拒绝打开并保留原资料，不猜测其格式、不自动补表或当成损坏库重建。
 AndroidSqliteDriver 使用同一 SQLDelight schema 的升级回调；同 major 的应用更新不清账号、草稿与发件箱。
 排查不兼容时先核对版本和精确 namespace，不套用历史构建的删库指令。
 
@@ -1210,8 +1214,9 @@ TASK_CHANGED 先失效页面与在途读取，TASK_DUE/TASK_STARTED 先保存提
 - Desktop Window、弹窗/抽屉/任务窗口、系统托盘、文件选择和桌面媒体。
 - token store、SQLite driver、文件下载目录等平台实现。
 
-Android 与 JVM 的 `FileRepository` 在 `jvmAndAndroidMain` 共用同一 `HttpURLConnection` 传输实现，
-认证头、严格长度、流式上传和取消/关闭规则只有一份；平台文件、凭据与缓存工厂仍按各自环境装配。
+Android 与 JVM 的文件上传、群机器人管理和遥测 HTTP 传输在 `jvmAndAndroidMain` 共用实现，
+各自的认证头、请求/响应边界和取消/关闭规则只有一份；deployment 的 TCP 主机归一化与 SHA-256
+指纹计算也由该源集提供。平台文件、凭据与缓存工厂仍按各自环境装配。
 
 Android 与 Desktop 媒体目录都按 canonical TCP+HTTP deployment 指纹、datasetId 与 uid 隔离；
 图片、视频、语音、普通附件、文本预览和群文件必须走同一会话缓存与传输入口，不能仅用

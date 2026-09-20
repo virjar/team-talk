@@ -2,7 +2,6 @@ package com.virjar.tk.desktop
 
 import com.virjar.tk.shared.AppError
 import androidx.compose.runtime.MutableState
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import com.virjar.tk.desktop.media.DesktopMediaDownloadSizeException
 import com.virjar.tk.desktop.media.DesktopMediaCacheQuotaException
@@ -35,12 +34,7 @@ import com.virjar.tk.app.ui.UiActionAdmission
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.CoroutineName
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -48,14 +42,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.awt.EventQueue
 import java.io.File
-import java.io.IOException
-import java.net.ConnectException
-import java.net.NoRouteToHostException
-import java.net.SocketException
-import java.net.SocketTimeoutException
-import java.net.UnknownHostException
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.coroutines.ContinuationInterceptor
 
 internal const val DESKTOP_ATTACHMENT_EXTERNAL_OPEN_FAILURE_MESSAGE =
     "无法打开文件，请检查是否安装了可处理此格式的应用"
@@ -153,53 +140,33 @@ internal class DesktopFileDownloadController(
      */
     override fun exportToUserLocation(attachment: Attachment): Boolean {
         if (closed.get()) return false
-        val cached = exactCachedLease(attachment)
-        if (cached != null) {
-            publishState(attachment.path, FileDownloadState.Done)
-            try {
+        scope.launch {
+            // 在协程开始后取得租约；尚未调度就取消的导出不会遗留已认领的缓存文件。
+            val cached = exactCachedLease(attachment)
+            if (cached != null) {
+                publishState(attachment.path, FileDownloadState.Done)
                 exportCachedFile(cached, attachment)
-            } finally {
-                cached.close()
+            } else {
+                downloadInternal(attachment, PendingOpenMode.EXPORT)
             }
-            return true
         }
-        scope.launch { downloadInternal(attachment, PendingOpenMode.EXPORT) }
         return true
     }
 
-    /** 校验缓存完整性后在用户选择的本地路径写出完整副本；文件名冲突由对话框内解决。 */
-    private fun exportCachedFile(lease: DesktopMediaFileLease, attachment: Attachment) {
-        if (!lease.file.isFile || lease.file.length() != attachment.size) {
-            throw DesktopMediaDownloadSizeException("缓存文件大小与附件声明不一致")
-        }
-        val source = lease.file
-        java.awt.EventQueue.invokeLater {
-            val chooser = javax.swing.JFileChooser().apply {
-                dialogTitle = "保存到设备"
-                selectedFile = java.io.File(attachment.name)
-            }
-            val chosen = chooser.showSaveDialog(null)
-            if (chosen != javax.swing.JFileChooser.APPROVE_OPTION) return@invokeLater
-            val target = chooser.selectedFile
-            scope.launch {
-                try {
-                    java.nio.file.Files.copy(
-                        source.toPath(),
-                        target.toPath(),
-                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                    )
-                } catch (e: Exception) {
-                    if (!closed.get() && resources.canDeliverUiResult()) {
-                        javax.swing.JOptionPane.showMessageDialog(
-                            null,
-                            "保存失败：${e.message ?: "无法写入所选位置"}",
-                            "保存到设备",
-                            javax.swing.JOptionPane.ERROR_MESSAGE,
-                        )
-                    }
+    private suspend fun exportCachedFile(lease: DesktopMediaFileLease, attachment: Attachment) {
+        exportDesktopAttachment(
+            lease = lease,
+            attachment = attachment,
+            ensureOpen = {
+                resources.ensureOpen()
+                check(!closed.get() && resources.canDeliverUiResult()) { "Attachment export owner is closed" }
+            },
+            onFailure = { failure ->
+                showDesktopAttachmentExportFailure(failure) {
+                    !closed.get() && resources.canDeliverUiResult()
                 }
-            }
-        }
+            },
+        )
     }
 
     override fun close() {

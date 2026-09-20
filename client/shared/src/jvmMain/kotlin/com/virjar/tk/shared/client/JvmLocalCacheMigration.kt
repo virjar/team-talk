@@ -8,9 +8,8 @@ import com.virjar.tk.shared.database.AppDatabase
 
 /**
  * 与 AndroidSqliteDriver 相同，使用 SQLDelight schema version 和 .sqm 迁移。
- * 零号预览前的 JVM 库没有 user_version，但已经采用完整 schema 1；认领时先用幂等 create
- * 补齐早期未事务化创建可能缺失的基线表，再从 1 起执行增量 .sqm，两种情况都保留既有数据。
- * 该路径依赖 .sqm 可重放：新增对象一律 IF NOT EXISTS / INSERT OR IGNORE，不得直接 ALTER 既有表。
+ * 正式 tag 从 schema 1 起记录 user_version；空库创建，已标版本的库按 .sqm 升级。
+ * 发行前未标版本的既有库不推测格式、不自动补表，拒绝打开并保留原资料。
  */
 internal fun migrateJvmLocalCache(
     driver: SqlDriver,
@@ -24,14 +23,14 @@ internal fun migrateJvmLocalCache(
     val existingDatabase = readSqliteLong(
         driver, "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
     ) > 0
+    check(stored != 0L || !existingDatabase) {
+        "Unversioned local database predates supported releases; data was retained"
+    }
     // JdbcSqliteDriver 的磁盘模式会在非事务语句结束后关闭连接，必须让驱动持有事务，
     // 不能用裸 BEGIN/COMMIT 假定多条语句始终使用同一连接。
     object : TransacterImpl(driver) {}.transaction(noEnclosing = true) {
         if (!existingDatabase) {
             schema.create(driver).value
-        } else if (stored == 0L) {
-            schema.create(driver).value
-            schema.migrate(driver, 1L, schema.version).value
         } else {
             schema.migrate(driver, stored, schema.version).value
         }

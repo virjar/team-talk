@@ -72,24 +72,4 @@ private fun Int.isDefinitiveReliableCommandRejectionStatus(): Boolean =
 /** 一个失败的有界命令族不能饿死无关的可靠 outbox。 */
 internal suspend fun retryIndependentPendingFamilies(
     vararg retry: suspend () -> Outcome<Unit>,
-): Outcome<Unit> {
-    var firstRetryableFailure: Outcome.Failure? = null
-    var firstTerminalFailure: Outcome.Failure? = null
-    for (family in retry) {
-        when (val result = family()) {
-            is Outcome.Success -> Unit
-            is Outcome.Failure -> {
-                when (RemoteFailureClassifier.classify(result.error)) {
-                    RemoteFailureClassification.AUTH_EXPIRED -> return result
-                    RemoteFailureClassification.RETRYABLE -> {
-                        if (firstRetryableFailure == null) firstRetryableFailure = result
-                    }
-                    RemoteFailureClassification.TERMINAL -> {
-                        if (firstTerminalFailure == null) firstTerminalFailure = result
-                    }
-                }
-            }
-        }
-    }
-    return firstRetryableFailure ?: firstTerminalFailure ?: Outcome.Success(Unit)
-}
+): Outcome<Unit> = retryPendingMirrors(retry.asList()) { it() }

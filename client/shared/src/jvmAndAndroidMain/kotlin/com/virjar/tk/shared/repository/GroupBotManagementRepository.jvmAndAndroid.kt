@@ -10,9 +10,9 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 internal actual fun createPlatformGroupBotHttpTransport(): PlatformGroupBotHttpTransport =
-    DesktopGroupBotHttpTransport()
+    UrlConnectionGroupBotHttpTransport()
 
-private class DesktopGroupBotHttpTransport : PlatformGroupBotHttpTransport {
+private class UrlConnectionGroupBotHttpTransport : PlatformGroupBotHttpTransport {
     private val operationGate = HttpConnectionOperationGate("Group bot HTTP transport")
 
     override suspend fun request(

@@ -213,7 +213,7 @@ class LocalCacheSchemaEpochTest {
     }
 
     @Test
-    fun `unversioned partial baseline schema is completed once during adoption`() {
+    fun `unversioned existing database is rejected without rebuilding or changing its data`() {
         val dataDir = Files.createTempDirectory("tk-cache-partial-schema-").toFile()
         try {
             val privateData = JvmPrivateDataDirectory.openExisting(dataDir)
@@ -238,20 +238,33 @@ class LocalCacheSchemaEpochTest {
                         "revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0))",
                     0,
                 )
+                driver.execute(null, "INSERT INTO user(uid, username, name) VALUES ('retained', 'owner', 'Original')", 0)
             }
             assertTrue(databaseFile.length() > 0L)
 
-            val cache = createDesktopLocalCache(
-                deploymentIdentity,
-                TEST_SYNC_DATASET_ID,
-                "partial-user",
-                dataDir,
-            )
-            cache.upsertUser(User(uid = "recovered", username = "recovered", name = "Recovered"))
-            assertNotNull(cache.getUser("recovered"))
-            assertTrue(cache.getConversations().isEmpty())
-            assertTrue(cache.recoverOutgoingMessages(now = 1L).isEmpty())
-            cache.close()
+            val originalBytes = databaseFile.readBytes()
+            val failure = assertFailsWith<IllegalStateException> {
+                createDesktopLocalCache(deploymentIdentity, TEST_SYNC_DATASET_ID, "partial-user", dataDir)
+            }
+            assertTrue(failure.message.orEmpty().contains("Unversioned local database"))
+            kotlin.test.assertContentEquals(originalBytes, databaseFile.readBytes())
+            assertEquals(listOf("partial-user"), databaseFile.parentFile.parentFile.list()?.toList())
+            DriverManager.getConnection("jdbc:sqlite:${databaseFile.absolutePath}").use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.executeQuery("SELECT name FROM user WHERE uid = 'retained'").use { result ->
+                        assertTrue(result.next())
+                        assertEquals("Original", result.getString(1))
+                    }
+                    statement.executeQuery("PRAGMA user_version").use { result ->
+                        assertTrue(result.next())
+                        assertEquals(0, result.getInt(1))
+                    }
+                    statement.executeQuery("SELECT count(*) FROM sqlite_master WHERE type = 'table'").use { result ->
+                        assertTrue(result.next())
+                        assertEquals(1, result.getInt(1))
+                    }
+                }
+            }
         } finally {
             dataDir.deleteRecursively()
         }
