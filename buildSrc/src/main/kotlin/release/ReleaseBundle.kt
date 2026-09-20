@@ -3,7 +3,6 @@ package release
 import com.android.apksig.ApkVerifier
 import deployment.ClientDistributionIdentity
 import deployment.DeploymentConfig
-import deployment.requireReleaseArtifact
 import kotlinx.serialization.json.*
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry
 import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream
@@ -305,14 +304,6 @@ object ReleaseBundle {
         values["client"] = JsonObject(values.getValue("client").jsonObject - "androidApplicationId")
         val legacy = Json { prettyPrint = true }.encodeToString(JsonObject.serializer(), JsonObject(values)) + "\n"
         return snapshot == legacy
-    }
-
-    private fun copyTree(source: File, destination: File) {
-        regularFiles(source).forEach { file ->
-            val target = File(destination, file.relativeTo(source).invariantSeparatorsPath)
-            target.parentFile.mkdirs()
-            file.copyTo(target)
-        }
     }
 
     private fun zipDirectory(source: File, destination: File) {

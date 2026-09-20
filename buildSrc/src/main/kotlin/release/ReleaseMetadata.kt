@@ -85,7 +85,7 @@ class ReleaseMetadata(private val root: File) {
         val commits = git("rev-list", "--count", "--first-parent", sourceCommit).toLong()
         val revision = version.buildNumber.toLong() + 1 + commits
         require(commits > 0 && revision in 1..65535) {
-            "Snapshot Desktop revision exceeds Conveyor's supported range"
+            "Snapshot Desktop installation revision exceeds the supported range"
         }
         return revision.toInt()
     }

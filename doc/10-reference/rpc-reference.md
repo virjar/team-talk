@@ -12,7 +12,7 @@ TeamTalk 使用 Kotlin interface 作为 IDL。`@RpcService("name")` 定义字符
 5. 注册、登录和 refresh 属于 TCP AUTH 握手，不属于下列 RPC。
 6. 普通消息发送使用 MESSAGE / MESSAGE_ACK，不通过 `message` RPC。
 
-当前表描述源码契约：0.0.3 已冻结 protocol 0.3；正式事实以
+当前表描述源码契约：0.0.4 发行使用冻结的 protocol 0.3，源码包含待发布的 protocol 0.4；正式事实以
 不可覆盖的发行快照为准。同一协议 major 内，已发行契约和编号不得修改或复用，同一待发行批次共用下一 minor；
 只有明确的新协议 major 才能重整编号空间。私有 `snapshot` 与 `private-first` 不冻结待发布契约，
 正式产品发行才登记新的不可覆盖快照，流程见[统一发行](../07-operations/releasing.md)。

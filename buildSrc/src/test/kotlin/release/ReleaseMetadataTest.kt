@@ -108,7 +108,7 @@ class ReleaseMetadataTest {
     }
 
     @Test
-    fun `snapshot revisions reject shallow history and exhausted Conveyor numbers`() = repository { repo ->
+    fun `snapshot revisions reject shallow history and exhausted installation numbers`() = repository { repo ->
         repo.writeVersion("0.0.0", 65534)
         val revision = repo.commit("Last supported formal revision")
         val metadata = ReleaseMetadata(repo.root)

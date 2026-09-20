@@ -50,9 +50,6 @@ dependencies {
     // Keep a compatible JSON runtime here; product modules use the newer serialization release.
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
     implementation("org.apache.commons:commons-compress:1.28.0")
-    // Conveyor 的 Debian 包使用 data.tar.xz；制品检查在各宿主直接读取，无需系统 tar/ar。
-    implementation("org.tukaani:xz:1.10")
-    implementation("com.typesafe:config:1.4.3")
     // Read references without changing bytecode when selecting Desktop's Material icon subset.
     implementation("org.ow2.asm:asm-commons:9.8")
     implementation("org.apache.sshd:sshd-sftp:2.19.0")
@@ -70,6 +67,8 @@ dependencies {
     implementation("net.sf.launch4j:launch4j:3.50:core")
     implementation("net.sf.launch4j:launch4j:3.50:${hostWorkdirClassifier}")
     testImplementation(kotlin("test"))
+    // Debian 归档测试直接读取 data.tar.xz；生产打包通过统一进程执行器调用 tar。
+    testImplementation("org.tukaani:xz:1.10")
 }
 
 // Gradle ProjectBuilder exercises the real packaging tasks in isolated temporary directories.
