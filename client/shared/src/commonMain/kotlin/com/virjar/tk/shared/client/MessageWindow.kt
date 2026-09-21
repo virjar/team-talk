@@ -57,15 +57,22 @@ internal class MessageWindow(
     private val toModelFn = toModel
 
     init {
-        loadInitialWindow()
+        reloadLatest()
     }
 
-    private fun loadInitialWindow() = cacheUseGate.use {
+    /** Caller also owns the cache state lock, keeping the SQL read and window replacement atomic. */
+    fun reloadLatest() = cacheUseGate.use {
         synchronized(stateLock) {
-            val msgs = loadBoundedInitialMessages(queries, chatId, windowSize, toModelFn)
-            publishMessages(msgs)
+            val resident = _messages.value.associateBy(Message::clientMsgId)
+            val msgs = loadBoundedInitialMessages(queries, chatId, windowSize, toModelFn).map { stored ->
+                // Keep a resident optimistic edit until its existing commit/rollback owner settles.
+                resident[stored.clientMsgId]?.takeIf { it.serverSeq == stored.serverSeq } ?: stored
+            }
+            serverPageAnchored = false
+            remoteRefetchBeforeSeq = null
             historyCursor = oldestServerSeq(msgs)
-            refreshHasMore(msgs)
+            publishMessages(msgs)
+            refreshHasMore(_messages.value)
         }
     }
 

@@ -211,6 +211,20 @@ internal object MdParser {
         return when (type) {
             MarkdownElementTypes.UNORDERED_LIST, MarkdownElementTypes.ORDERED_LIST ->
                 toListBlocks(src, listDepth, quoteDepth, budget)
+            MarkdownElementTypes.HTML_BLOCK -> {
+                // CommonMark 把独占一行的 <br>（以及后续未空行分隔的文字）归为 HTML 块。
+                // 仅消费块头的换行标签；其余内容继续走 Markdown，代码与其他 HTML 保持原语义。
+                val raw = getTextInNode(src).toString()
+                budget.consumeSourceWork(raw.length)
+                val prefix = RichEditorMarkdownCapability.lineBreakHtmlPrefix(raw) { budget.consumeNodes() }
+                if (prefix.count == 0) listOfNotNull(toBlock(src, quoteDepth, budget))
+                else {
+                    budget.consumeBlock()
+                    listOf(MdBlock.Paragraph(listOf(MdSpan.Text("\n".repeat(prefix.count))))) +
+                        if (prefix.endOffset == raw.length) emptyList()
+                        else parse(raw.substring(prefix.endOffset), quoteDepth, budget)
+                }
+            }
             else -> listOfNotNull(toBlock(src, quoteDepth, budget))
         }
     }
@@ -547,8 +561,10 @@ internal object MdParser {
                                 if (node.type == MarkdownElementTypes.HTML_BLOCK ||
                                     node.type == MarkdownTokenTypes.HTML_TAG
                                 ) {
-                                    if (RichEditorMarkdownCapability.isLineBreakOnlyHtml(text)) {
-                                        out += MdSpan.Text("\n")
+                                    budget.consumeSourceWork(text.length)
+                                    val prefix = RichEditorMarkdownCapability.lineBreakHtmlPrefix(text) { budget.consumeNodes() }
+                                    if (prefix.count > 0 && prefix.endOffset == text.length) {
+                                        out += MdSpan.Text("\n".repeat(prefix.count))
                                         return
                                     }
                                 }

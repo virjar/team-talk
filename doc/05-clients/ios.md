@@ -199,7 +199,7 @@ spool 分块与租约退役、遥测目录分页回收、HTTP 工作准入与关
 
 Intel 主机使用 Xcode 26.3 / iPhoneOS 26.2 SDK，已通过 iPhone arm64 Debug framework 链接、
 Swift 壳的 typecheck 和无签名 iPhone 应用整包构建；在 iOS 18.1 x86_64 runtime 上，
-协议 221 项和 SDK 154 项 Native 测试全部通过。
+协议 221 项和 SDK 153 项 Native 测试全部通过。
 本轮新增的 iOS 草稿文件持久化测试已通过 ARM64 测试源码编译，并纳入 Apple Silicon CI 的
 `:client:ios:iosSimulatorArm64Test`；它们未在这台 Intel 主机执行。
 默认关闭、本地启用、命令行覆盖和 CI 环境变量启用均已验证；关闭时 Android/Desktop 编译、

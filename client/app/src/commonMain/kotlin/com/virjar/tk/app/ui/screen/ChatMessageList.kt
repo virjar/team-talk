@@ -91,6 +91,7 @@ internal fun ChatMessageList(
     /** 长按/右键头像把该成员以 mention 插入输入框（T026）；非 null 时仅对他人消息生效。 */
     onAvatarMention: ((uid: String) -> Unit)? = null,
     onLoadOlder: () -> Unit,
+    onJumpToLatest: (onLocalWindowReady: () -> Unit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     androidx.compose.runtime.LaunchedEffect(messages) { onWindowReactionsConverge() }
@@ -126,6 +127,13 @@ internal fun ChatMessageList(
         val viewportOldestIndex by androidx.compose.runtime.produceState(-1, state) {
             androidx.compose.runtime.snapshotFlow {
                 state.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            }.collect { value = it }
+        }
+        val farFromLatest by androidx.compose.runtime.produceState(false, state, messages.size) {
+            androidx.compose.runtime.snapshotFlow {
+                val visible = state.layoutInfo.visibleItemsInfo.filter { it.index < messages.size }
+                // 至少 8 条且约两屏；两三条长气泡或一屏短消息不需要捷径。
+                visible.isNotEmpty() && state.firstVisibleItemIndex >= maxOf(8, visible.size * 2)
             }.collect { value = it }
         }
         val unreadJumpIndex = unreadAnchorServerSeq
@@ -322,9 +330,19 @@ internal fun ChatMessageList(
             if (showNewPill) {
                 add(
                     Triple<String, String, () -> Unit>("有新消息", "chat.newMessagesPill") {
-                        listScope.launch { state.animateScrollToItem(0) }
+                        onJumpToLatest {
+                            jumpHighlightSeq = null
+                            listScope.launch { state.scrollToItem(0) }
+                        }
                     },
                 )
+            } else if (!loading && farFromLatest) {
+                add(Triple<String, String, () -> Unit>("回到最新", "chat.jumpLatestPill") {
+                    onJumpToLatest {
+                        jumpHighlightSeq = null
+                        listScope.launch { state.scrollToItem(0) }
+                    }
+                })
             }
         }
         if (jumpPills.isNotEmpty()) {

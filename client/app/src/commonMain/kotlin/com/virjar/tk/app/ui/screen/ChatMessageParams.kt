@@ -42,5 +42,6 @@ class MessageContentContext(
     val onUrlClick: ((String) -> Unit)? = null,
     val onMediaClick: ((Message) -> Unit)? = null,
     val onEmbeddedMediaClick: ((Message, EmbeddedAsset) -> Unit)? = null,
+    val onOpenFullMessage: ((Message) -> Unit)? = null,
     val imageContent: @Composable (Attachment, Modifier) -> Unit,
 )

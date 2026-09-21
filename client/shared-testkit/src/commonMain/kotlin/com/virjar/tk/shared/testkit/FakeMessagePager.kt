@@ -32,6 +32,8 @@ internal class SimpleMessagePager(
     cache: FakeLocalCache,
     private val cacheUseGate: FakeCacheUseGate,
     private val windowSize: Int,
+    private val historyLock: PlatformLock,
+    private val reload: () -> Unit,
     onClose: (SimpleMessagePager) -> Unit,
 ) : MessagePager {
     private val ownerLock = PlatformLock()
@@ -73,6 +75,15 @@ internal class SimpleMessagePager(
                 "pageSize must be between 1 and ${MessagePager.MAX_PAGE_SIZE}"
             }
             MessagePageLoadResult.Exhausted
+        }
+    }
+
+    override fun reloadLatest() = cacheUseGate.use {
+        synchronized(historyLock) {
+            synchronized(ownerLock) {
+                check(open) { "MessagePager is closed" }
+                reload()
+            }
         }
     }
 

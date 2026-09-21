@@ -65,7 +65,7 @@ fun rememberMediaClickHandler(
                     // clientMsgId 只在单个聊天内唯一。平台宿主从 A 切换到 B 时，collectAsState
                     // 可能把其持有者再保留一帧，因此画廊范围必须由被点击的消息定义，
                     // 而不能信任当前列表。
-                    val mediaList = buildMediaList(messages.value.filter { it.chatId == msg.chatId })
+                    val mediaList = mediaGalleryForMessage(messages.value, msg)
                     // 转发/重发后附件 path 完全可能重复。初始页由被点击消息的身份选取，
                     // 而不是其 blob path。
                     val index = mediaList.indexOfFirst {
@@ -92,10 +92,19 @@ fun rememberEmbeddedMediaClickHandler(
     actions: PlatformMediaActions,
 ): (Message, EmbeddedAsset) -> Unit = remember(messages, actions) {
     { message, asset ->
-        val mediaList = buildMediaList(messages.value.filter { it.chatId == message.chatId })
+        val mediaList = mediaGalleryForMessage(messages.value, message)
         val index = mediaList.indexOfFirst {
             it.sourceMessageId == message.clientMsgId && it.sourceAssetId == asset.assetId
         }
         if (index >= 0) actions.showGallery(mediaList, index)
     }
+}
+
+/** The details page can outlive its pager row; its current message remains a valid media source. */
+internal fun mediaGalleryForMessage(messages: List<Message>, clicked: Message): List<GalleryItem> {
+    val scoped = messages.filter { it.chatId == clicked.chatId }.distinctBy(Message::clientMsgId)
+    // Prefer a resident edit/revoke over a delayed click snapshot. Only an absent identity needs
+    // the details page's independently observed row; a missing asset must not revive old content.
+    val sources = if (scoped.any { it.clientMsgId == clicked.clientMsgId }) scoped else scoped + clicked
+    return buildMediaList(sources)
 }

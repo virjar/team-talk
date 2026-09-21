@@ -47,7 +47,24 @@ fun MessageBodyRenderer(
     onMentionClick: ((uid: String) -> Unit)? = null,
     onUrlClick: ((String) -> Unit)? = null,
     resolveSender: ((uid: String) -> User?)? = null,
+    onOpenFullMessage: ((Message) -> Unit)? = null,
 ) {
+    val preview = androidx.compose.runtime.remember(message.body, onOpenFullMessage != null) {
+        if (onOpenFullMessage != null) collapsedMessagePreview(message.body) else null
+    }
+    if (preview != null && onOpenFullMessage != null) {
+        Column {
+            (message.body as? ReplyBody)?.let { ReplyQuote(it, resolveSender) }
+            Text(preview, maxLines = 6, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.testTag("chat.message.collapsed.${message.clientMsgId}"))
+            TextButton(onClick = { onOpenFullMessage(message) },
+                modifier = Modifier.testTag("chat.message.expand.${message.clientMsgId}")) {
+                Text("查看全文")
+            }
+        }
+        return
+    }
     val mediaKind = when (message.body) {
         is FileBody -> ChatMessageMediaKind.FILE
         is ImageBody -> ChatMessageMediaKind.IMAGE
@@ -301,38 +318,7 @@ private fun ReplyView(
     imageContent: @Composable (Attachment, Modifier) -> Unit,
 ) {
     Column {
-        // 引用块：3dp 主色竖线 + 引用者 + 截断内容
-        Row(
-            modifier = Modifier.widthIn(max = 260.dp).padding(vertical = 1.dp),
-        ) {
-            Box(
-                Modifier
-                    .width(3.dp)
-                    .height(IntrinsicSize.Min)
-                    .clip(MaterialTheme.shapes.extraSmall)
-                    .background(LocalContentColor.current.copy(alpha = 0.4f)),
-            )
-            Spacer(Modifier.width(Tk.spacing.sm))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    resolveReplySenderName(body, resolveSender),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = LocalContentColor.current,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                body.replySnippet?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = LocalContentColor.current.copy(alpha = 0.65f),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
+        ReplyQuote(body, resolveSender)
         // 回复正文
         if (body.content.isNotBlank()) {
             Spacer(Modifier.height(Tk.spacing.xs))
@@ -457,6 +443,42 @@ private fun ObjectReferenceCard(
                     color = Tk.colors.metaText,
                     maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReplyQuote(body: ReplyBody, resolveSender: ((String) -> User?)?) {
+    // 引用块：3dp 主色竖线 + 引用者 + 截断内容
+    Row(
+        modifier = Modifier.widthIn(max = 260.dp).padding(vertical = 1.dp),
+    ) {
+        Box(
+            Modifier
+                .width(3.dp)
+                .height(IntrinsicSize.Min)
+                .clip(MaterialTheme.shapes.extraSmall)
+                .background(LocalContentColor.current.copy(alpha = 0.4f)),
+        )
+        Spacer(Modifier.width(Tk.spacing.sm))
+        Column(Modifier.weight(1f)) {
+            Text(
+                resolveReplySenderName(body, resolveSender),
+                style = MaterialTheme.typography.labelSmall,
+                color = LocalContentColor.current,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            body.replySnippet?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = LocalContentColor.current.copy(alpha = 0.65f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }

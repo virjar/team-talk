@@ -326,7 +326,8 @@ internal fun rememberMessageContentContext(
     resolveSender: ((uid: String) -> User?)?,
     admittedVoicePlayback: VoicePlaybackController,
     admittedMedia: ChatMediaConfig,
-): MessageContentContext = remember(resolveSender, admittedVoicePlayback, admittedMedia) {
+    onOpenFullMessage: ((Message) -> Unit)? = null,
+): MessageContentContext = remember(resolveSender, admittedVoicePlayback, admittedMedia, onOpenFullMessage) {
     MessageContentContext(
         resolveSender = resolveSender,
         voicePlayback = admittedVoicePlayback,
@@ -335,5 +336,6 @@ internal fun rememberMessageContentContext(
         onMediaClick = admittedMedia.onMediaClick,
         onEmbeddedMediaClick = admittedMedia.onEmbeddedMediaClick,
         imageContent = admittedMedia.imageContent,
+        onOpenFullMessage = onOpenFullMessage,
     )
 }

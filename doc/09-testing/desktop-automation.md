@@ -180,6 +180,11 @@ bounds，不能自行再乘除缩放倍率。完整选择器见[测试选择器�
   屏幕截图中只能看到主窗口的一组 macOS 红黄绿按钮，资料卡只有一个业务标题和一个 X。点击卡片本身
   不关闭，点击遮罩、X 或按 ESC 后模态消失且焦点返回原任务；
 - 输入多行 Markdown 后可读回完整文本，Enter 与换行快捷键符合平台约定；
+- 历史距最新仅两三条时没有 `chat.jumpLatestPill`；至少两屏且 8 条后出现。越过常驻窗口上限继续翻页，
+  点击后应看到连续的最新消息，不能只剩最新锚点和很早的旧页；关闭网络目标端点时仍可回到本地最新窗口；
+- 长富文本气泡只展示有界预览，通过 `chat.message.expand.{clientMsgId}` 打开全文后，末行仍完整可见且可复制。
+  Desktop 标题栏左侧为标题、右上角为 `chat.message.details.close`，无移动端返回箭头；关闭和 ESC 均恢复原历史位置。
+  普通 `<br>` 显示换行，行内代码、缩进代码及转义的 `<br>` 保持字面量；
 - 文件发送时出现上传或下载状态，完成后状态收敛；Chat/Document 的待处理列表必须保持有界并可滚动，
   上传中分别通过 `chat.asset.cancel.{assetId}` / `documents.asset.cancel.{assetId}` 取消，失败时分别通过
   `chat.asset.retry.{assetId}` / `documents.asset.retry.{assetId}` 就地重试，同时保留

@@ -6,6 +6,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.Modifier
 import com.virjar.tk.app.navigation.MainTab
 import com.virjar.tk.app.navigation.feature.OfficeReferenceKind
@@ -45,6 +46,8 @@ internal fun IosChatScreen(route: IosRoute, ui: IosSessionUi) {
     TaskAttentionRefresh(data.tasks.attention, foreground)
     val viewModel = data.chat.chatViewModelFor(chatId) ?: return
     val messages = viewModel.messages.collectAsState()
+    val messageDetails = com.virjar.tk.app.ui.screen.rememberMessageDetails(viewModel)
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val candidates = when (chatType) {
         ChatType.SAVED.code -> null
         ChatType.GROUP.code -> data.groups.mentionUsers.takeIf { data.groups.mentionTargetChatId == chatId }.orEmpty()
@@ -111,44 +114,52 @@ internal fun IosChatScreen(route: IosRoute, ui: IosSessionUi) {
             if (invite != null) ui.navigation.open(IosRoute(IosPage.JOIN_BY_INVITE, invite)) else openIosUrl(url)
         },
     )
-    Column(Modifier.fillMaxSize().imePadding()) {
-        TopAppBar(title = { Text(chatName, maxLines = 1) }, navigationIcon = {
-            IconButton(onClick = ui.navigation::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
-        }, actions = {
-            Box {
-                IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Filled.MoreVert, "会话菜单") }
-                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                    if (chatType != ChatType.SAVED.code) DropdownMenuItem(
-                        text = { Text(if (chatType == ChatType.GROUP.code) "群资料" else "联系人资料") },
-                        onClick = data.uiActionAdmission.guard {
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().imePadding().then(if (messageDetails.isOpen) Modifier.clearAndSetSemantics {} else Modifier)) {
+            TopAppBar(title = { Text(chatName, maxLines = 1) }, navigationIcon = {
+                IconButton(onClick = ui.navigation::back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+            }, actions = {
+                Box {
+                    IconButton(onClick = { menuExpanded = true }) { Icon(Icons.Filled.MoreVert, "会话菜单") }
+                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                        if (chatType != ChatType.SAVED.code) DropdownMenuItem(
+                            text = { Text(if (chatType == ChatType.GROUP.code) "群资料" else "联系人资料") },
+                            onClick = data.uiActionAdmission.guard {
+                                menuExpanded = false
+                                if (chatType == ChatType.GROUP.code) ui.navigation.open(IosRoute(IosPage.GROUP_DETAIL, chatId))
+                                else conversation?.peerUid?.let(ui.navigation::profile)
+                            },
+                        )
+                        DropdownMenuItem(text = { Text("会话设置") }, onClick = data.uiActionAdmission.guard {
                             menuExpanded = false
-                            if (chatType == ChatType.GROUP.code) ui.navigation.open(IosRoute(IosPage.GROUP_DETAIL, chatId))
-                            else conversation?.peerUid?.let(ui.navigation::profile)
-                        },
-                    )
-                    DropdownMenuItem(text = { Text("会话设置") }, onClick = data.uiActionAdmission.guard {
-                        menuExpanded = false
-                        ui.navigation.open(IosRoute(IosPage.CHAT_TOOLS, chatId))
-                    })
-                }
-            }
-        })
-        ChatPanel(chatId, chatName, viewModel, data.userSession.uid,
-            modifier = Modifier.weight(1f), chatType = chatType,
-            resolveSender = { uid -> candidates?.firstOrNull { it.uid == uid } ?: data.chat.residentChatUser(uid) },
-            onForward = { ui.navigation.open(IosRoute(IosPage.FORWARD, it.chatId, it.serverSeq)) },
-            onSaveMessage = { data.messageActions.save(it.chatId, it.serverSeq) },
-            cachedDraft = conversation?.draft?.let { it } ?: conversation?.let { "" },
-            onDraftChange = { data.chat.saveDraft(chatId, it) }, draftLifecycleBridge = data.chat.draftLifecycle,
-            actionAdmission = data.uiActionAdmission, composerContextStore = data.chat.composerContexts,
-            media = media, voicePlayback = ui.voice, mentionCandidates = candidates, chatForegroundActive = foreground,
-            messageFocusTarget = route.sequence.takeIf { it > 0 }?.let { MessageFocusTarget(chatId, it) }, telemetry = data.telemetry,
-            pendingTasksContent = {
-                data.tasks.attention.group?.takeIf { data.tasks.attention.groupId == chatId }?.let { summary ->
-                    TaskAttentionBanner(summary.openCount, summary.overdueCount, stale = data.tasks.attention.groupStale, group = true,
-                        onOpen = { data.tasks.openGroupTodos(chatId); ui.navigation.home(MainTab.TASKS) })
+                            ui.navigation.open(IosRoute(IosPage.CHAT_TOOLS, chatId))
+                        })
+                    }
                 }
             })
+            ChatPanel(chatId, chatName, viewModel, data.userSession.uid,
+                modifier = Modifier.weight(1f), chatType = chatType,
+                resolveSender = { uid -> candidates?.firstOrNull { it.uid == uid } ?: data.chat.residentChatUser(uid) },
+                onOpenFullMessage = { focusManager.clearFocus(); messageDetails.open(it) },
+                onForward = { ui.navigation.open(IosRoute(IosPage.FORWARD, it.chatId, it.serverSeq)) },
+                onSaveMessage = { data.messageActions.save(it.chatId, it.serverSeq) },
+                cachedDraft = conversation?.draft?.let { it } ?: conversation?.let { "" },
+                onDraftChange = { data.chat.saveDraft(chatId, it) }, draftLifecycleBridge = data.chat.draftLifecycle,
+                actionAdmission = data.uiActionAdmission, composerContextStore = data.chat.composerContexts,
+                media = media, voicePlayback = ui.voice, mentionCandidates = candidates, chatForegroundActive = foreground && !messageDetails.isOpen,
+                messageFocusTarget = route.sequence.takeIf { it > 0 }?.let { MessageFocusTarget(chatId, it) }, telemetry = data.telemetry,
+                pendingTasksContent = {
+                    data.tasks.attention.group?.takeIf { data.tasks.attention.groupId == chatId }?.let { summary ->
+                        TaskAttentionBanner(summary.openCount, summary.overdueCount, stale = data.tasks.attention.groupStale, group = true,
+                            onOpen = { data.tasks.openGroupTodos(chatId); ui.navigation.home(MainTab.TASKS) })
+                    }
+                })
+        }
+        if (messageDetails.isOpen) {
+            MessageDetailsScreen(messageDetails.message, media, ui.voice, data.uiActionAdmission,
+                resolveSender = { uid -> candidates?.firstOrNull { it.uid == uid } ?: data.chat.residentChatUser(uid) },
+                onBack = messageDetails::close, loading = messageDetails.loading)
+        }
     }
     officePicker?.let { kind -> OfficeRefPickerDialog(kind, chatId, data.userSession.uid, data.messageActions,
         onSend = viewModel::sendMessage, onDismiss = { officePicker = null }) }

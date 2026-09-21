@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
@@ -626,9 +627,42 @@ internal fun AndroidChatScreen(
         showGallery = false
     }
 
+    val chatMedia = com.virjar.tk.app.ui.bridge.ChatMediaConfig(
+        fileDownloads = fileDownloads,
+        embeddedAssetImports = embeddedAssetImports,
+        onPasteEmbeddedAsset = {
+            importAndroidClipboardAsset(context, embeddedAssetImports)
+        },
+        onPickDocument = officeRefHost?.let { { officePickerKind = OfficeReferenceKind.DOCUMENT } },
+        onPickTask = officeRefHost?.let { { taskPickerVisible = true } },
+        onPickGroupFile = if (officeRefHost != null && chatType == 2) {
+            { officePickerKind = OfficeReferenceKind.GROUP_FILE }
+        } else {
+            null
+        },
+        onPickVideo = videoPicker,
+        onCaptureVideo = { startVideoCapture() },
+        onVoiceModeEntered = { prepareVoiceMode() },
+        onVoiceRecord = { if (it) startVoice() else stopVoice() },
+        onVoiceRecordCancel = { cancelVoiceRecording() },
+        onMentionClick = onMentionClick,
+        onUrlClick = onUrlClick,
+        imageContent = { attachment, mod ->
+            rememberAsyncThumb(
+                attachment = attachment,
+                mediaSession = mediaSession,
+                modifier = mod,
+                placeholderColor = android.graphics.Color.LTGRAY,
+            )
+        },
+        onMediaClick = onMediaClick,
+        onEmbeddedMediaClick = onEmbeddedMediaClick,
+    )
+    val voicePlayback = rememberAndroidVoicePlayback(context, mediaSession, telemetry)
+    val messageDetails = com.virjar.tk.app.ui.screen.rememberMessageDetails(viewModel)
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
-            modifier = Modifier.imePadding(),
+            modifier = Modifier.imePadding().then(if (messageDetails.isOpen) Modifier.clearAndSetSemantics {} else Modifier),
             snackbarHost = { SnackbarHost(mediaSnackbar) },
             topBar = {
                 Column {
@@ -647,53 +681,25 @@ internal fun AndroidChatScreen(
                 chatId = chatId, chatName = chatName, viewModel = viewModel, myUid = myUid,
                 chatType = chatType, resolveSender = resolveSender,
                 onForward = onForward, onSaveMessage = onSaveMessage,
+                onOpenFullMessage = { focusManager.clearFocus(); messageDetails.open(it) },
                 cachedDraft = cachedDraft, onDraftChange = onDraftChange,
                 draftLifecycleBridge = draftLifecycleBridge,
                 actionAdmission = actionAdmission,
                 composerContextStore = composerContextStore,
-                voicePlayback = rememberAndroidVoicePlayback(
-                    context = context,
-                    mediaSession = mediaSession,
-                    telemetry = telemetry,
-                ),
+                voicePlayback = voicePlayback,
                 mentionCandidates = mentionCandidates,
-                chatForegroundActive = chatRouteResumed,
+                chatForegroundActive = chatRouteResumed && !messageDetails.isOpen,
                 messageFocusTarget = messageFocusTarget,
                 pendingTasksContent = pendingTasksContent,
                 telemetry = telemetry,
-                media = com.virjar.tk.app.ui.bridge.ChatMediaConfig(
-                    fileDownloads = fileDownloads,
-                    embeddedAssetImports = embeddedAssetImports,
-                    onPasteEmbeddedAsset = {
-                        importAndroidClipboardAsset(context, embeddedAssetImports)
-                    },
-                    onPickDocument = officeRefHost?.let { { officePickerKind = OfficeReferenceKind.DOCUMENT } },
-                    onPickTask = officeRefHost?.let { { taskPickerVisible = true } },
-                    onPickGroupFile = if (officeRefHost != null && chatType == 2) {
-                        { officePickerKind = OfficeReferenceKind.GROUP_FILE }
-                    } else {
-                        null
-                    },
-                    onPickVideo = videoPicker,
-                    onCaptureVideo = { startVideoCapture() },
-                    onVoiceModeEntered = { prepareVoiceMode() },
-                    onVoiceRecord = { if (it) startVoice() else stopVoice() },
-                    onVoiceRecordCancel = { cancelVoiceRecording() },
-                    onMentionClick = onMentionClick,
-                    onUrlClick = onUrlClick,
-                    imageContent = { attachment, mod ->
-                        rememberAsyncThumb(
-                            attachment = attachment,
-                            mediaSession = mediaSession,
-                            modifier = mod,
-                            placeholderColor = android.graphics.Color.LTGRAY,
-                        )
-                    },
-                    onMediaClick = onMediaClick,
-                    onEmbeddedMediaClick = onEmbeddedMediaClick,
-                ),
+                media = chatMedia,
                 modifier = Modifier.padding(padding),
             )
+        }
+
+        if (messageDetails.isOpen) {
+            com.virjar.tk.app.ui.screen.MessageDetailsScreen(messageDetails.message, chatMedia, voicePlayback,
+                actionAdmission, resolveSender, onBack = messageDetails::close, loading = messageDetails.loading)
         }
 
         // 独立 Dialog 窗口不继承聊天页 IME padding，并位于 NavHost 转场与原生视频 surface 之上。

@@ -172,6 +172,7 @@ internal fun MessageBubble(
                                 onMentionClick = content.onMentionClick,
                                 onUrlClick = content.onUrlClick,
                                 resolveSender = content.resolveSender,
+                                onOpenFullMessage = content.onOpenFullMessage,
                             )
                         }
                     }

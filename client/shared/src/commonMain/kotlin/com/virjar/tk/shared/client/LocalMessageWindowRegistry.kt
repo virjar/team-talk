@@ -80,8 +80,17 @@ internal class LocalMessageWindowRegistry(
                 val leaseState = entry.window.acquireLease(leaseId)
                 val pager = LocalMessagePagerLease(
                     cacheUseGate = cacheUseGate,
+                    cacheStateLock = stateLock,
                     window = entry.window,
                     leaseState = leaseState,
+                    reloadLatest = {
+                        synchronized(registryLock) {
+                            check(windows[chatId] === entry) { "MessagePager window was replaced" }
+                            historyLeases.invalidate(chatId)
+                            historyLeases.retain(chatId)
+                            entry.window.reloadLatest()
+                        }
+                    },
                     release = {
                         releaseWindowLease(
                             chatId = chatId,
@@ -240,14 +249,17 @@ private class ResidentMessageWindow(
 /** 每次获取代理：close 是精确的，不能退役另一个租约或后继条目。 */
 private class LocalMessagePagerLease(
     private val cacheUseGate: CacheUseGate,
+    private val cacheStateLock: PlatformLock,
     window: MessageWindow,
     leaseState: MessageWindowLeaseState,
+    reloadLatest: () -> Unit,
     release: () -> Unit,
 ) : MessagePager {
     private val ownerLock = PlatformLock()
     private var open = true
     private var windowOwner: MessageWindow? = window
     private var releaseOwner: (() -> Unit)? = release
+    private var reloadLatestOwner: (() -> Unit)? = reloadLatest
 
     override val messages = leaseState.messages
     override val hasMore = leaseState.hasMore
@@ -262,11 +274,22 @@ private class LocalMessagePagerLease(
         }
     }
 
+    override fun reloadLatest() = cacheUseGate.use {
+        // Match cache retirement's lock order; never acquire the cache lock while holding ownerLock.
+        synchronized(cacheStateLock) {
+            synchronized(ownerLock) {
+                check(open) { "MessagePager is closed" }
+                checkNotNull(reloadLatestOwner).invoke()
+            }
+        }
+    }
+
     override fun close() {
         val release = synchronized(ownerLock) {
             if (!open) null else {
                 open = false
                 windowOwner = null
+                reloadLatestOwner = null
                 releaseOwner.also { releaseOwner = null }
             }
         }
@@ -278,6 +301,7 @@ private class LocalMessagePagerLease(
         if (!open) return@synchronized
         open = false
         windowOwner = null
+        reloadLatestOwner = null
         releaseOwner = null
     }
 }

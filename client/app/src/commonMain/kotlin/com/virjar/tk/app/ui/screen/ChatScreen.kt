@@ -96,6 +96,7 @@ fun ChatPanel(
     chatType: Int = ChatType.PERSONAL.code,
     resolveSender: ((uid: String) -> User?)? = null,
     onForward: ((Message) -> Unit)? = null,
+    onOpenFullMessage: (Message) -> Unit,
     onSaveMessage: ((Message) -> Unit)? = null,
     /** LocalCache 的普通草稿；null 为会话未加载，空字符串为已知清空。 */
     cachedDraft: String? = null,
@@ -158,6 +159,7 @@ fun ChatPanel(
         resolveSender = resolveSender,
         admittedVoicePlayback = admittedVoicePlayback,
         admittedMedia = mentionSafeMedia,
+        onOpenFullMessage = actionAdmission.guard(onOpenFullMessage),
     )
     val messages by viewModel.messages.collectAsState()
     val loading by viewModel.loading.collectAsState()
@@ -209,9 +211,10 @@ fun ChatPanel(
 
     val visibleTypingUid = chatTypingPresentationUid(chatId, viewModel, chatForegroundActive)
 
+    var returnedToLatest by rememberSaveable(messageFocusTarget, messageFocusRequestId) { mutableStateOf(false) }
     val highlightedServerSeq = rememberMessageFocus(
         viewModel = viewModel,
-        target = messageFocusTarget?.takeIf { target -> target.chatId == chatId },
+        target = messageFocusTarget?.takeIf { target -> target.chatId == chatId && !returnedToLatest },
         requestId = messageFocusRequestId,
         state = messageFocusState,
         messages = messages,
@@ -224,7 +227,7 @@ fun ChatPanel(
         messages = messages,
         messageListState = messageListState,
         suppressInitialAnchor = messageFocusTarget != null || restoredMidHistory,
-        suppressLatestFollow = messageFocusTarget != null &&
+        suppressLatestFollow = messageFocusTarget != null && !returnedToLatest &&
             (messageFocusState == MessageFocusState.Idle ||
                 messageFocusState.isLoadingOrAwaitingPosition()),
     )
@@ -649,8 +652,8 @@ fun ChatPanel(
     val slashQuery = if (!voiceMode && !showEmoji && !showAttach && mentionQuery == null) detectSlashQuery(inputView) else null
 
     // 切回键盘或切换编辑模式后，等目标编辑器挂载再恢复焦点。
-    LaunchedEffect(voiceMode, composerMode, restoreComposerFocus) {
-        if (!voiceMode && restoreComposerFocus) {
+    LaunchedEffect(voiceMode, composerMode, restoreComposerFocus, chatForegroundActive) {
+        if (chatForegroundActive && !voiceMode && restoreComposerFocus) {
             withFrameNanos { }
             when (composerMode) {
                 ChatComposerMode.VISUAL -> inputFocus.requestFocus()
@@ -983,6 +986,15 @@ fun ChatPanel(
                     { uid -> insertMention(uid) }
                 } else null,
                 onLoadOlder = actionAdmission.guard(viewModel::loadOlder),
+                onJumpToLatest = actionAdmission.guard { onLocalWindowReady: () -> Unit ->
+                    returnedToLatest = true
+                    viewModel.returnToLatest {
+                        uiResultHandoff.deliver(Unit, actionAdmission) {
+                            // A newer search intent may have arrived while this UI handoff waited.
+                            if (viewModel.messageFocusState.value == MessageFocusState.Idle) onLocalWindowReady()
+                        }
+                    }
+                },
                 modifier = Modifier.weight(1f).fillMaxWidth(),
             )
 

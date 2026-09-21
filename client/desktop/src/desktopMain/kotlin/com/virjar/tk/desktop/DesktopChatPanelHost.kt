@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -52,6 +53,7 @@ import com.virjar.tk.app.viewmodel.MessageFocusTarget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun ChatPanelWrapper(
     chatId: String,
@@ -93,6 +95,8 @@ internal fun ChatPanelWrapper(
     pendingTasksContent: (@Composable () -> Unit)? = null,
 ) {
     val messagesState = viewModel.messages.collectAsState()
+    val messageDetails = com.virjar.tk.app.ui.screen.rememberMessageDetails(viewModel)
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val previewScope = rememberCoroutineScope()
     val textPreviewEventState = remember(chatId) {
         mutableStateOf<DesktopTextAttachmentPreviewEvent?>(null)
@@ -220,7 +224,45 @@ internal fun ChatPanelWrapper(
     val onMediaClick = rememberMediaClickHandler(messagesState, mediaActions)
     val onEmbeddedMediaClick = rememberEmbeddedMediaClickHandler(messagesState, mediaActions)
 
-    @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+    val chatMedia = com.virjar.tk.app.ui.bridge.ChatMediaConfig(
+        fileDownloads = fileDownloads,
+        embeddedAssetImports = embeddedAssetImports,
+        onPasteEmbeddedAsset = { importDesktopClipboardAsset(embeddedAssetImports) },
+        onPickVideo = { resources.videoSender.pickAndSendVideo(chatId, myUid, viewModel) },
+        onPickDocument = officeRefHost?.let { { officePickerKind = OfficeReferenceKind.DOCUMENT } },
+        onPickTask = officeRefHost?.let { { taskPickerVisible = true } },
+        onPickGroupFile = if (officeRefHost != null && chatType == 2) {
+            { officePickerKind = OfficeReferenceKind.GROUP_FILE }
+        } else {
+            null
+        },
+        onMentionClick = onMentionClick,
+        onUrlClick = { rawUrl ->
+            presentationGate.runIfOpen {
+                if (!onOpenInviteLink(rawUrl)) {
+                    safeDesktopExternalLinkOrNull(rawUrl)?.let { url ->
+                        previewScope.launch(Dispatchers.IO) {
+                            try { java.awt.Desktop.getDesktop().browse(java.net.URI(url)) } catch (_: Exception) {}
+                        }
+                    }
+                }
+            }
+        },
+        onVoiceRecord = { start ->
+            if (start) resources.voiceRecorder.start()
+            else resources.voiceRecorder.stopAndSend(chatId, myUid, viewModel)
+        },
+        imageContent = { attachment, modifier ->
+            com.virjar.tk.desktop.media.CachedImageContent(
+                attachment = attachment,
+                resources = resources,
+                actionAdmission = presentationGate,
+                modifier = modifier,
+            )
+        },
+        onMediaClick = onMediaClick,
+        onEmbeddedMediaClick = onEmbeddedMediaClick,
+    )
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -281,6 +323,7 @@ internal fun ChatPanelWrapper(
             chatType = chatType,
             resolveSender = resolveSender,
             onForward = onForward,
+            onOpenFullMessage = { focusManager.clearFocus(); messageDetails.open(it) },
             onSaveMessage = onSaveMessage,
             cachedDraft = cachedDraft,
             draftLifecycleBridge = draftLifecycleBridge,
@@ -289,7 +332,7 @@ internal fun ChatPanelWrapper(
             voicePlayback = voicePlayback,
             mentionCandidates = mentionCandidates,
             selectableText = true,
-            chatForegroundActive = chatForegroundActive,
+            chatForegroundActive = chatForegroundActive && !messageDetails.isOpen,
             messageFocusTarget = messageFocusTarget,
             messageFocusRequestId = messageFocusRequestId,
             telemetry = telemetry,
@@ -297,46 +340,33 @@ internal fun ChatPanelWrapper(
             onDraftChange = { draft ->
                 saveDraft(chatId, draft)
             },
-            media = com.virjar.tk.app.ui.bridge.ChatMediaConfig(
-                fileDownloads = fileDownloads,
-                embeddedAssetImports = embeddedAssetImports,
-                onPasteEmbeddedAsset = { importDesktopClipboardAsset(embeddedAssetImports) },
-                onPickVideo = { resources.videoSender.pickAndSendVideo(chatId, myUid, viewModel) },
-                onPickDocument = officeRefHost?.let { { officePickerKind = OfficeReferenceKind.DOCUMENT } },
-                onPickTask = officeRefHost?.let { { taskPickerVisible = true } },
-                onPickGroupFile = if (officeRefHost != null && chatType == 2) {
-                    { officePickerKind = OfficeReferenceKind.GROUP_FILE }
-                } else {
-                    null
-                },
-                onMentionClick = onMentionClick,
-                onUrlClick = { rawUrl ->
-                    presentationGate.runIfOpen {
-                        if (!onOpenInviteLink(rawUrl)) {
-                            safeDesktopExternalLinkOrNull(rawUrl)?.let { url ->
-                                previewScope.launch(Dispatchers.IO) {
-                                    try { java.awt.Desktop.getDesktop().browse(java.net.URI(url)) } catch (_: Exception) {}
-                                }
-                            }
-                        }
-                    }
-                },
-                onVoiceRecord = { start ->
-                    if (start) resources.voiceRecorder.start()
-                    else resources.voiceRecorder.stopAndSend(chatId, myUid, viewModel)
-                },
-                imageContent = { attachment, modifier ->
-                    com.virjar.tk.desktop.media.CachedImageContent(
-                        attachment = attachment,
-                        resources = resources,
-                        actionAdmission = presentationGate,
-                        modifier = modifier,
-                    )
-                },
-                onMediaClick = onMediaClick,
-                onEmbeddedMediaClick = onEmbeddedMediaClick,
-            ),
+            media = chatMedia,
         )
+    }
+
+    if (messageDetails.isOpen) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { messageDetails.close() }) {
+            androidx.compose.material3.Surface(
+                modifier = Modifier.size(width = 760.dp, height = 680.dp),
+                shape = androidx.compose.material3.MaterialTheme.shapes.large,
+            ) {
+                com.virjar.tk.app.ui.screen.MessageDetailsScreen(messageDetails.message, chatMedia, voicePlayback,
+                    presentationGate, resolveSender, onBack = messageDetails::close, loading = messageDetails.loading,
+                    header = {
+                        com.virjar.tk.app.ui.component.ScreenHeader("消息全文", trailing = {
+                            androidx.compose.material3.IconButton(
+                                onClick = messageDetails::close,
+                                modifier = Modifier.testTag("chat.message.details.close"),
+                            ) {
+                                androidx.compose.material3.Icon(
+                                    androidx.compose.material.icons.Icons.Default.Close,
+                                    contentDescription = "关闭全文",
+                                )
+                            }
+                        })
+                    })
+            }
+        }
     }
 
     // 全屏媒体画廊（独立窗口）；主窗口全屏期间由 DesktopGalleryOverlay 承接

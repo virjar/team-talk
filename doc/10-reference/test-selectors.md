@@ -148,6 +148,10 @@
 | `chat.preview` | 与最终消息气泡同源的预览 |
 | `chat.message.seq.{serverSeq}` / `chat.message.seq.{serverSeq}.body` | 已 ACK 消息及其正文 |
 | `chat.message.focused.{serverSeq}` | 搜索结果定位完成后的短时高亮消息行；撤回目标同样使用该标签 |
+| `chat.jumpLatestPill` | 距离最新足够远时的“回到最新”入口；已有新消息入口时不重复显示 |
+| `chat.message.collapsed.{clientMsgId}` / `chat.message.expand.{clientMsgId}` | 长消息的有界预览与“查看全文”按钮 |
+| `chat.message.details` / `chat.message.details.content` | 全文页面及其可滚动正文；Desktop 弹窗仍属于 `main` |
+| `chat.message.details.close` | Desktop 全文弹窗右上角关闭；移动端沿用 `screen.header.back` 返回 |
 | `chat.message.seq.{serverSeq}.media.{file|image|voice|video}` | 已 ACK 文件、图片、语音或视频内容；标签直接挂在可操作媒体卡上 |
 | `chat.message.client.{clientMsgId前12}.media.{file|image|voice|video}` | 尚未取得服务端序号的上传、排队或失败媒体内容 |
 | `chat.message.failed.{clientMsgId前12}` | 客户端发送失败且仍保留在消息流中的状态提示 |

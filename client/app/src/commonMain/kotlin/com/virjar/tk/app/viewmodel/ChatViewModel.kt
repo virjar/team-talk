@@ -66,6 +66,11 @@ class ChatViewModel(
     private val _messages = MutableStateFlow<List<Message>>(emptyList())
     val messages: StateFlow<List<Message>> = _messages.asStateFlow()
 
+    /** 全文页只订阅一个身份；窗口裁剪不等于消息删除，持久事件也覆盖窗口外的编辑/撤回。 */
+    internal fun observeMessageDetails(clientMsgId: String): Flow<Message?> = messageDetailsProjection(
+        chatId, clientMsgId, messages, eventProcessor.lastEventId, localData,
+    ) { localCache.findMessage(chatId, clientMsgId) }
+
     /** 对方已读水位：READ_SYNC 推进、全量投影校正；私聊送达/已读勾的唯一事实来源。 */
     val peerReadSeq: StateFlow<Long> = localCache.observeConversation(chatId)
         .map { it?.peerReadSeq ?: 0L }
@@ -121,6 +126,7 @@ class ChatViewModel(
     val messageFocusState: StateFlow<MessageFocusState> = _messageFocusState.asStateFlow()
     private val messageFocusGate = MessageFocusGenerationGate()
     private var messageFocusJob: Job? = null
+    private var latestWindowJob: Job? = null
 
     /** 最新、更旧和随机访问历史共享一条已提交的请求车道。 */
     private val historyRequestMutex = Mutex()
@@ -309,9 +315,47 @@ class ChatViewModel(
         return latest
     }
 
+    /** Restore a contiguous newest window before the UI scrolls; a retained index-0 anchor is not a page. */
+    fun returnToLatest(onLocalWindowReady: () -> Unit) {
+        clearMessageFocus()
+        // Clearing the old route's focus effect must not cancel this new jump intent.
+        latestWindowJob?.cancel()
+        latestWindowJob = scope.launch {
+            pagerOwner.awaitReady()
+            val pager = pagerOwner.current() ?: return@launch
+            historyRequestMutex.withLock {
+                try {
+                    _loading.value = true
+                    // Invalidate before crossing IO: prompt cancellation may discard the return
+                    // after the pager has already invalidated its former server history chain.
+                    latestHistoryChainReady.value = false
+                    latestHistoryPage = emptyList()
+                    _remoteHasMore.value = true
+                    localData.run { pager.reloadLatest() }
+                    onLocalWindowReady()
+                    if (connectionState.value == ConnectionState.AUTHENTICATED) fetchLatestHistoryLocked()
+                } catch (_: AppError.AuthExpired) {
+                    handleAuthExpired()
+                } catch (_: AppError.Network) {
+                    // The newest local snapshot is already visible; reconnect establishes authority.
+                } catch (_: AppError.Timeout) {
+                    // Retain that same local snapshot when the network times out.
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    setError("加载最新消息失败: ${failure.message}")
+                } finally {
+                    _loading.value = false
+                }
+            }
+        }
+    }
+
     /** 用 newest 加上至多一个有界包含式目标页来解析一个搜索身份。 */
     fun focusMessage(target: MessageFocusTarget): Long {
         require(target.chatId == chatId) { "message focus target belongs to another chat" }
+        latestWindowJob?.cancel()
+        latestWindowJob = null
         val token = messageFocusGate.begin(target)
         launchMessageFocus(token)
         return token.generation
@@ -486,38 +530,47 @@ class ChatViewModel(
         scope.launch {
             _loadingOlder.value = true
             try {
-                var remoteCursor: Long? = null
-                if (pager.hasMore.value) {
-                    when (val localResult = localData.run { pager.loadMore(HISTORY_PAGE_SIZE) }) {
-                        MessagePageLoadResult.LocalLoaded -> return@launch
-                        MessagePageLoadResult.Exhausted -> Unit
-                        is MessagePageLoadResult.RemoteRequired -> {
-                            remoteCursor = localResult.beforeServerSeq
-                            // 这个请求修复从有界权威窗口刻意裁剪掉的历史，
-                            // 即使先前的 RPC 已经到达末尾。
-                            _remoteHasMore.value = true
+                historyRequestMutex.withLock {
+                    if (
+                        _loading.value ||
+                        _messageFocusState.value is MessageFocusState.Loading ||
+                        _messageFocusState.value is MessageFocusState.Resolved
+                    ) return@withLock
+                    if (connectionState.value == ConnectionState.AUTHENTICATED && !latestHistoryChainReady.value) {
+                        fetchLatestHistoryLocked()
+                        return@withLock
+                    }
+                    var remoteCursor: Long? = null
+                    if (pager.hasMore.value) {
+                        when (val localResult = localData.run { pager.loadMore(HISTORY_PAGE_SIZE) }) {
+                            MessagePageLoadResult.LocalLoaded -> return@launch
+                            MessagePageLoadResult.Exhausted -> Unit
+                            is MessagePageLoadResult.RemoteRequired -> {
+                                remoteCursor = localResult.beforeServerSeq
+                                // 这个请求修复从有界权威窗口刻意裁剪掉的历史，
+                                // 即使先前的 RPC 已经到达末尾。
+                                _remoteHasMore.value = true
+                            }
                         }
                     }
-                }
-                if (!_remoteHasMore.value) return@launch
-                if (connectionState.value != ConnectionState.AUTHENTICATED) {
-                    // 本地翻页已保留；服务端游标保持开放，用户可在恢复后继续上滑。
-                    return@launch
-                }
-                // MessageWindow 原子地把可见列表锚定到最新的服务器页，因此
-                // 它的最小值就是那条已证明响应链的底。同步前的过期本地尾部
-                // 刻意不出现在这里；页内的合法序列空洞会出现。
-                val oldestSeq = remoteCursor ?: _messages.value.asSequence()
-                    .map(Message::serverSeq)
-                    .filter { it > 0L }
-                    .minOrNull()
-                    ?: 0L
-                if (oldestSeq <= 1L) {
-                    _remoteHasMore.value = false
-                    return@launch
-                }
-                val older = historyRequestMutex.withLock {
-                    localData.run {
+                    if (!_remoteHasMore.value) return@launch
+                    if (connectionState.value != ConnectionState.AUTHENTICATED) {
+                        // 本地翻页已保留；服务端游标保持开放，用户可在恢复后继续上滑。
+                        return@launch
+                    }
+                    // MessageWindow 原子地把可见列表锚定到最新的服务器页，因此
+                    // 它的最小值就是那条已证明响应链的底。同步前的过期本地尾部
+                    // 刻意不出现在这里；页内的合法序列空洞会出现。
+                    val oldestSeq = remoteCursor ?: localData.run { pager.messages.first() }.asSequence()
+                        .map(Message::serverSeq)
+                        .filter { it > 0L }
+                        .minOrNull()
+                        ?: 0L
+                    if (oldestSeq <= 1L) {
+                        _remoteHasMore.value = false
+                        return@launch
+                    }
+                    val older = localData.run {
                         messageRepo.getHistory(
                             chatId = chatId,
                             // RocksDB 的后向游标是包含式的；向左步进一次，
@@ -526,10 +579,10 @@ class ChatViewModel(
                             limit = HISTORY_PAGE_SIZE,
                         ).getOrThrow()
                     }
+                    _remoteHasMore.value = older.size == HISTORY_PAGE_SIZE
+                    // MessageRepository 把权威响应作为一个原子页应用到 MessageWindow，
+                    // 包括合法空洞，因此不需要二次 SQLite 追加。
                 }
-                _remoteHasMore.value = older.size == HISTORY_PAGE_SIZE
-                // MessageRepository 把权威响应作为一个原子页应用到 MessageWindow，
-                // 包括合法空洞，因此不需要二次 SQLite 追加。
             } catch (e: AppError.AuthExpired) {
                 handleAuthExpired()
             } catch (_: AppError.Network) {
@@ -906,3 +959,25 @@ class ChatViewModel(
         const val HISTORY_PAGE_SIZE = 10
     }
 }
+
+/** Cold projection: only an open details page reads outside the resident message window. */
+internal fun messageDetailsProjection(
+    chatId: String,
+    clientMsgId: String,
+    window: Flow<List<Message>>,
+    committedEventId: Flow<Long>,
+    localData: UiLocalDataBoundary,
+    readLocal: suspend () -> Message?,
+): Flow<Message?> = combine(window, committedEventId) { messages, _ ->
+    // Preserve optimistic edits while resident. A MESSAGE_RECV commits to SQLite before its
+    // event cursor advances, so an edit/revoke outside this bounded window still refreshes.
+    messages.firstOrNull { it.chatId == chatId && it.clientMsgId == clientMsgId }
+        ?: try {
+            localData.run(readLocal)?.takeIf { it.chatId == chatId && it.clientMsgId == clientMsgId }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            com.virjar.tk.shared.log.AppLog.trace("ChatViewModel", "message details unavailable: ${failure::class.simpleName}")
+            null
+        }
+}.distinctUntilChanged()

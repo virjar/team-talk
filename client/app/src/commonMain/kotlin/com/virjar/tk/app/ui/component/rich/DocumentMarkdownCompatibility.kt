@@ -49,13 +49,50 @@ internal data class RichEditorMarkdownCapability(
         /** `<br>`、`<br/>`、`<br />`（大小写不敏感）。 */
         internal val LINE_BREAK_TAG = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
 
-        /**
-         * 文本是否只由换行标签组成（渲染为换行，不按 HTML 处理）。按行切分——标签内部的
-         * 空格属于 `<br />` 语法，不能当分隔符；空串不是换行。
-         */
+        /** 文本是否只由换行标签组成；缩进代码中的字面标签必须保留源码模式。 */
         internal fun isLineBreakOnlyHtml(text: String): Boolean {
-            val lines = text.split(Regex("\\r?\\n")).map { it.trim() }.filter { it.isNotEmpty() }
-            return lines.isNotEmpty() && lines.all { LINE_BREAK_TAG.matches(it) }
+            val prefix = lineBreakHtmlPrefix(text)
+            return prefix.count > 0 && prefix.endOffset == text.length
+        }
+
+        internal data class LineBreakHtmlPrefix(val count: Int, val endOffset: Int)
+
+        /**
+         * 只移动偏移量，不逐标签复制后缀。换行后的缩进属于下一行 Markdown：四列缩进即
+         * 代码，不能被 trimStart 擦掉。同一行标签间的空白不引入代码块。
+         * [onBreak] 让渲染器把每个生成的换行计入与普通 AST 节点共享的预算。
+         */
+        internal fun lineBreakHtmlPrefix(text: String, onBreak: () -> Unit = {}): LineBreakHtmlPrefix {
+            var offset = 0
+            var count = 0
+            var lineStart = true
+            while (offset < text.length) {
+                var tagStart = offset
+                var indentation = 0
+                while (tagStart < text.length && (text[tagStart] == ' ' || text[tagStart] == '\t')) {
+                    indentation += if (text[tagStart] == '\t') 4 - indentation % 4 else 1
+                    tagStart++
+                }
+                if (tagStart == text.length) {
+                    offset = tagStart
+                    break
+                }
+                if (text[tagStart] == '\n' || text[tagStart] == '\r') {
+                    offset = tagStart + 1
+                    if (text[tagStart] == '\r' && text.getOrNull(offset) == '\n') offset++
+                    lineStart = true
+                    continue
+                }
+                if (lineStart && indentation >= 4) break
+                // Spaces following a tag on the same line are inline spacing, not code indentation.
+                if (!lineStart) offset = tagStart
+                val tag = LINE_BREAK_TAG.matchAt(text, tagStart) ?: break
+                onBreak()
+                count++
+                offset = tag.range.last + 1
+                lineStart = false
+            }
+            return LineBreakHtmlPrefix(count, offset)
         }
 
         fun inspect(markdown: String, allowCanonicalAssetImages: Boolean = false): RichEditorMarkdownCapability {

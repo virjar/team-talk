@@ -418,6 +418,7 @@ class SessionLocalMutationQueueTest {
         override val messages = flowOf(emptyList<Message>())
         override val hasMore = MutableStateFlow(false)
         override fun loadMore(pageSize: Int) = MessagePageLoadResult.Exhausted
+        override fun reloadLatest() = Unit
         override fun close() = Unit
     }
 

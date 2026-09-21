@@ -1062,7 +1062,7 @@ class LocalCacheImplTest {
     }
 
     @Test
-    fun `local paging advances past the two-window cap without repeating its cursor`() = runBlocking {
+    fun `local paging advances past the two-window cap without repeating its cursor`(): Unit = runBlocking {
         val cache = newCache()
         (1L..12L).forEach { seq ->
             cache.insertMessage(
@@ -1085,6 +1085,44 @@ class LocalCacheImplTest {
         val resident = pager.messages.first()
         assertTrue(resident.size <= 6)
         assertTrue(resident.any { it.serverSeq == 1L }, "the cursor must progress into the oldest page")
+        assertFalse(resident.any { it.serverSeq == 11L }, "deep paging has evicted the newer page")
+
+        pager.reloadLatest()
+        assertEquals(listOf(12L, 11L, 10L), pager.messages.first().map { it.serverSeq })
+        assertTrue(pager.hasMore.value)
+        assertEquals(MessagePageLoadResult.LocalLoaded, pager.loadMore(3))
+        assertEquals((7L..12L).reversed().toList(), pager.messages.first().map { it.serverSeq })
+        pager.close()
+        assertFailsWith<IllegalStateException> { pager.reloadLatest() }
+    }
+
+    @Test
+    fun `returning to latest replaces a deep server window and rejects its in flight older page`() = runBlocking {
+        val cache = newCache()
+        val chatId = "return-latest"
+        val pager = cache.pager(chatId, windowSize = 3)
+        fun page(vararg seqs: Long) = seqs.map { seq ->
+            Message(chatId = chatId, clientMsgId = "m$seq", serverSeq = seq,
+                senderUid = "peer", messageType = MessageType.RICH_TEXT.code, timestamp = seq)
+        }
+        fun apply(reset: Boolean, messages: List<Message>) {
+            assertTrue(cache.applyMessageHistoryPage(cache.beginMessageHistoryLease(chatId, reset), messages))
+        }
+        apply(true, page(12, 11, 10))
+        apply(false, page(9, 8, 7))
+        apply(false, page(6, 5, 4))
+        apply(false, page(3, 2, 1))
+        assertFalse(pager.messages.first().any { it.serverSeq == 11L })
+        val lateOlder = cache.beginMessageHistoryLease(chatId, resetResidentWindow = false)
+
+        pager.reloadLatest()
+        assertEquals(listOf(12L, 11L, 10L), pager.messages.first().map { it.serverSeq },
+            "the local newest page is complete before an online request finishes")
+        assertFalse(cache.applyMessageHistoryPage(lateOlder, page(3, 2, 1)))
+        apply(true, page(13, 12, 11))
+        assertEquals(listOf(13L, 12L, 11L), pager.messages.first().map { it.serverSeq })
+        apply(false, page(10, 9, 8))
+        assertEquals(listOf(13L, 12L, 11L, 10L, 9L, 8L), pager.messages.first().map { it.serverSeq })
         pager.close()
     }
 

@@ -774,6 +774,13 @@ interface MessagePager {
      */
     fun loadMore(pageSize: Int = DEFAULT_PAGE_SIZE): MessagePageLoadResult
 
+    /**
+     * Rebuild this resident window from the newest bounded local snapshot and invalidate its old
+     * server history chain. Online callers then establish authority with getHistory(fromSeq = 0).
+     * This synchronous operation publishes [messages]; it does not create another pager lease.
+     */
+    fun reloadLatest()
+
     /** 精确释放这一个 pager 租约；重复关闭是无害的。 */
     fun close()
 

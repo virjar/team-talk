@@ -448,7 +448,9 @@ class FakeLocalCache(
 
     override fun pager(chatId: String, windowSize: Int): MessagePager = cacheUseGate.use {
         lateinit var pager: SimpleMessagePager
-        pager = SimpleMessagePager(chatId, this, cacheUseGate, windowSize) { closed ->
+        pager = SimpleMessagePager(chatId, this, cacheUseGate, windowSize, messageHistoryLock, reload = {
+            synchronized(messageHistoryLock) { messageHistoryGate.invalidate(chatId) }
+        }) { closed ->
             cacheUseGate.runIfOpen {
                 synchronized(pagerLock) {
                     if (activePagers.remove(closed)) {
