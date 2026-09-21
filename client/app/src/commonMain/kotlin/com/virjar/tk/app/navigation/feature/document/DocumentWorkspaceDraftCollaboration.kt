@@ -54,7 +54,7 @@ internal class DocumentWorkspaceDraftCollaboration(
 
     fun captureLatest(): Boolean = lifecycleBridge.captureLatest()
 
-    suspend fun flush(): Boolean = withContext(Dispatchers.Default) { draftStore.flush() }
+    suspend fun flush(): Boolean = draftStore.awaitDurability()
 
     suspend fun tombstone(recoveryKeys: Set<String>): Boolean = withContext(Dispatchers.Default) {
         draftStore.tombstone(ownerKey, recoveryKeys)

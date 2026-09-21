@@ -50,6 +50,40 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalCoroutinesApi::class)
 class GroupFilesFeatureStateRegressionTest {
     @Test
+    fun `uploads retain the selected directory and version after navigating elsewhere`() = runTest {
+        val existing = file(CHILD_FILE_ID, FOLDER_ID, "原版本").copy(revision = 7)
+        val rpc = ControlledRpcInvoker().apply { enqueueOk(entriesPayload(folder())) }
+        val harness = createHarness(rpc)
+        try {
+            harness.feature.open(CHAT_ID)
+            rpc.enqueueOk(entriesPayload(existing))
+            harness.feature.enter(folder())
+            advanceUntilIdle()
+            val create = requireNotNull(harness.feature.captureUploadTarget(CHAT_ID))
+            val version = requireNotNull(harness.feature.captureUploadTarget(CHAT_ID, existing))
+
+            rpc.enqueueOk(entriesPayload())
+            harness.feature.open("another-chat")
+            assertNull(harness.feature.captureUploadTarget(CHAT_ID))
+            repeat(2) { rpc.enqueueDeferred(CompletableDeferred(rpcError(503, "稍后重试"))) }
+            val attachment = requireNotNull(existing.attachment)
+            assertTrue(harness.feature.completeUpload(create, "新文件", attachment))
+            assertTrue(harness.feature.completeUpload(version, "新版本", attachment))
+
+            val commands = harness.session.localCache.getPendingGroupFileCommands()
+            val newFile = commands.single { it.kind == PendingGroupFileCommandKind.CREATE_FILE }
+            assertEquals(CHAT_ID, newFile.chatId)
+            assertEquals(FOLDER_ID, newFile.parentId)
+            val newVersion = commands.single { it.kind == PendingGroupFileCommandKind.ADD_VERSION }
+            assertEquals(CHAT_ID, newVersion.chatId)
+            assertEquals(CHILD_FILE_ID, newVersion.entryId)
+            assertEquals(7L, newVersion.expectedRevision)
+            assertEquals("another-chat", harness.feature.chatId)
+            assertTrue(harness.feature.entries.isEmpty())
+        } finally { harness.close() }
+    }
+
+    @Test
     fun `accepted list returning after a newer observed delta cannot overwrite the page`() = runTest {
         val original = folder()
         val updated = original.copy(name = "较新的事件", revision = 2)

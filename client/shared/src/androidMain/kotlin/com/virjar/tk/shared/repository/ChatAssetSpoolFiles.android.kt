@@ -9,7 +9,7 @@ import java.nio.file.StandardOpenOption.READ
 import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.PosixFilePermissions
 
-internal actual fun chatAssetSpoolFiles(dataDir: File, directories: List<String>): ChatAssetSpoolFiles {
+internal actual fun nioChatAssetSpoolFiles(dataDir: File, directories: List<String>): NioChatAssetSpoolFiles {
     val root = dataDir.toPath().toAbsolutePath().normalize()
     val rootAttributes = Files.readAttributes(root, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
     require(rootAttributes.isDirectory && !rootAttributes.isSymbolicLink) { "Private attachment root is not a directory" }
@@ -39,7 +39,7 @@ internal actual fun chatAssetSpoolFiles(dataDir: File, directories: List<String>
         return current
     }
     val path = namespace()
-    return object : ChatAssetSpoolFiles {
+    return object : NioChatAssetSpoolFiles {
         override val directory: Path = path
 
         override fun createFile(name: String): Path {

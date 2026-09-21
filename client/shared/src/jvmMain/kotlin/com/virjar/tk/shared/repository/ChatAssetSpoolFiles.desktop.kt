@@ -7,11 +7,11 @@ import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.nio.file.attribute.BasicFileAttributes
 
-internal actual fun chatAssetSpoolFiles(dataDir: File, directories: List<String>): ChatAssetSpoolFiles {
+internal actual fun nioChatAssetSpoolFiles(dataDir: File, directories: List<String>): NioChatAssetSpoolFiles {
     val root = JvmPrivateDataDirectory.openExisting(dataDir)
     val namespace = root.ensureDirectory(*directories.toTypedArray()).toPath()
     val security = root.security()
-    return object : ChatAssetSpoolFiles {
+    return object : NioChatAssetSpoolFiles {
         override val directory: Path = namespace
 
         override fun createFile(name: String): Path {

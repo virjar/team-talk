@@ -131,7 +131,7 @@ jobs:
           xcrun simctl list devices available
       - name: Exercise real Native storage, HTTP ownership and wire contracts
         run: |
-          ./gradlew :protocol:protocol:iosSimulatorArm64Test :client:shared:iosSimulatorArm64Test :client:app:iosSimulatorArm64Test :client:ios:generateXcodeConfiguration --stacktrace
+          ./gradlew :protocol:protocol:iosSimulatorArm64Test :client:shared:iosSimulatorArm64Test :client:app:iosSimulatorArm64Test :client:ios:iosSimulatorArm64Test :client:ios:generateXcodeConfiguration --stacktrace
       - name: Build Swift host and Compose framework without distribution signing
         run: |
           set -o pipefail
@@ -150,6 +150,7 @@ jobs:
             protocol/protocol/build/test-results/iosSimulatorArm64Test/
             client/shared/build/test-results/iosSimulatorArm64Test/
             client/app/build/test-results/iosSimulatorArm64Test/
+            client/ios/build/test-results/iosSimulatorArm64Test/
           if-no-files-found: ignore
           retention-days: 14
 

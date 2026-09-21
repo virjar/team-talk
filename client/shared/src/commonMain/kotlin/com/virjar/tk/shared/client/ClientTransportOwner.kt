@@ -31,7 +31,7 @@ internal interface ClientTransportOwner : MessageSendTransport {
     fun resumeReconnectAfterSimulatedDrop()
 }
 
-internal expect fun createClientTransportOwner(
+internal fun createClientTransportOwner(
     initialHost: String,
     initialPort: Int,
     beginProtocolNegotiation: (Long) -> Boolean,
@@ -42,4 +42,9 @@ internal expect fun createClientTransportOwner(
     routePacket: (Long, IProto) -> Unit,
     onTransportDisconnected: () -> Unit,
     tcpTlsCertificatePem: String?,
-): ClientTransportOwner
+): ClientTransportOwner = TransportConnectionOwner(
+    initialHost, initialPort, beginProtocolNegotiation, currentAuthenticationAttempt,
+    onAuthenticationTransportAttemptEnded, onAuthenticationTransportRetired,
+    authenticationTerminal, routePacket, onTransportDisconnected,
+    createClientTransportBackend(tcpTlsCertificatePem),
+)

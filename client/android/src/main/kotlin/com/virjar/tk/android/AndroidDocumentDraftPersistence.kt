@@ -2,6 +2,8 @@ package com.virjar.tk.android
 
 import android.content.Context
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftPersistence
+import com.virjar.tk.app.navigation.feature.document.DocumentDraftPendingWrites
+import com.virjar.tk.app.navigation.feature.document.DocumentDraftPendingWrites.Write as PendingWrite
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftOwnerKey
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftPayload
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftReadRetryableException
@@ -30,8 +32,7 @@ internal class AndroidDocumentDraftPersistence internal constructor(
     private val admissionLock = Any()
     private val stateLock = Any()
     private val ioLock = Any()
-    private val pendingWrites = mutableMapOf<DocumentDraftOwnerKey, PendingWrite>()
-    private val ownerGenerations = mutableMapOf<DocumentDraftOwnerKey, Long>()
+    private val pendingWrites = DocumentDraftPendingWrites(MAX_TRACKED_PENDING_OWNERS)
     private val retryableReadOwners = mutableSetOf<DocumentDraftOwnerKey>()
     private var nextGeneration = 0L
     private var drainEpoch = 0L
@@ -60,8 +61,8 @@ internal class AndroidDocumentDraftPersistence internal constructor(
             throw retryable
         }
         synchronized(stateLock) {
-            if (scheduledDrainEpoch == null && pendingWrites.isEmpty()) {
-                ownerGenerations.keys.retainAll(setOf(ownerKey))
+            if (scheduledDrainEpoch == null && pendingWrites.isEmpty) {
+                pendingWrites.forgetIdleOwnersExcept(ownerKey)
                 retryableReadOwners.retainAll(setOf(ownerKey))
             }
             if (status == DocumentDraftReadStatus.RETRYABLE) retryableReadOwners += ownerKey
@@ -79,16 +80,12 @@ internal class AndroidDocumentDraftPersistence internal constructor(
             if (closed || ownerKey in retryableReadOwners) {
                 return@state false
             }
-            if (scheduledDrainEpoch == null && pendingWrites.isEmpty()) ownerGenerations.clear()
-            if (ownerKey !in ownerGenerations &&
-                ownerGenerations.size >= MAX_TRACKED_PENDING_OWNERS
-            ) return@state false
+            if (scheduledDrainEpoch == null && pendingWrites.isEmpty) pendingWrites.forgetIdleOwnersExcept()
+            if (!pendingWrites.canAccept(ownerKey)) return@state false
             val generation = nextWriteGenerationLocked(
                 preserveHandoffBarrier = pendingDrainHandoff != null,
             )
-            ownerGenerations[ownerKey] = generation
-            val pending = PendingWrite(ownerKey, generation, payload)
-            pendingWrites[ownerKey] = pending
+            pendingWrites.put(ownerKey, generation, payload)
             handoffToArm = scheduleDrainLocked()
             true
         }
@@ -121,8 +118,7 @@ internal class AndroidDocumentDraftPersistence internal constructor(
         var controlEpoch = 0L
         val accepted = synchronized(stateLock) state@ {
             if (closed) return@state false
-            ownerGenerations[ownerKey] = nextWriteGenerationLocked()
-            pendingWrites.remove(ownerKey)
+            pendingWrites.invalidate(ownerKey, nextWriteGenerationLocked())
             retryableReadOwners.remove(ownerKey)
             controlEpoch = reserveControlDrainLocked()
             taskQueue.execute {
@@ -147,7 +143,6 @@ internal class AndroidDocumentDraftPersistence internal constructor(
         val accepted = synchronized(stateLock) state@ {
             if (closed) return@state false
             nextWriteGenerationLocked()
-            ownerGenerations.clear()
             pendingWrites.clear()
             retryableReadOwners.clear()
             controlEpoch = reserveControlDrainLocked()
@@ -242,7 +237,7 @@ internal class AndroidDocumentDraftPersistence internal constructor(
      * 待处理值，并且会在该交接完成之前被取走。
      */
     private fun scheduleDrainLocked(): DrainHandoff? {
-        if (pendingWrites.isEmpty() || scheduledDrainEpoch != null) return null
+        if (pendingWrites.isEmpty || scheduledDrainEpoch != null) return null
         if (pendingDrainHandoff != null) return null
         val epoch = drainEpoch
         scheduledDrainEpoch = epoch
@@ -333,7 +328,7 @@ internal class AndroidDocumentDraftPersistence internal constructor(
                     completionFailure,
                 )
             }
-            if (pendingWrites.isNotEmpty() && scheduledDrainEpoch == null) {
+            if (!pendingWrites.isEmpty && scheduledDrainEpoch == null) {
                 continuationRequired = true
                 // 缓存的外部屏障可能依赖此交接的完成。续接流程必须构建全新的下游屏障，
                 // 而不是等待它自己。
@@ -389,13 +384,12 @@ internal class AndroidDocumentDraftPersistence internal constructor(
                     if (scheduledDrainEpoch == epoch) scheduledDrainEpoch = null
                     null
                 } else {
-                    val entry = pendingWrites.entries.firstOrNull()
+                    val entry = pendingWrites.take()
                     if (entry == null) {
                         if (scheduledDrainEpoch == epoch) scheduledDrainEpoch = null
                         null
                     } else {
-                        pendingWrites.remove(entry.key)
-                        entry.value
+                        entry
                     }
                 }
             } ?: break
@@ -406,7 +400,7 @@ internal class AndroidDocumentDraftPersistence internal constructor(
                 firstFailure = combineFailures(firstFailure, failure)
             }
             val finished = synchronized(stateLock) {
-                (epoch != drainEpoch || pendingWrites.isEmpty()).also { shouldStop ->
+                (epoch != drainEpoch || pendingWrites.isEmpty).also { shouldStop ->
                     if (shouldStop && scheduledDrainEpoch == epoch) scheduledDrainEpoch = null
                 }
             }
@@ -442,11 +436,7 @@ internal class AndroidDocumentDraftPersistence internal constructor(
     }
 
     private fun completeWriteGeneration(pending: PendingWrite) = synchronized(stateLock) {
-        if (ownerGenerations[pending.ownerKey] == pending.generation &&
-            pendingWrites[pending.ownerKey]?.generation != pending.generation
-        ) {
-            ownerGenerations.remove(pending.ownerKey)
-        }
+        pendingWrites.complete(pending)
     }
 
     private fun failedWriteIsCurrent(pending: PendingWrite): Boolean =
@@ -458,7 +448,7 @@ internal class AndroidDocumentDraftPersistence internal constructor(
         }
 
     private fun isCurrentWrite(pending: PendingWrite): Boolean = synchronized(stateLock) {
-        ownerGenerations[pending.ownerKey] == pending.generation
+        pendingWrites.isCurrent(pending)
     }
 
     private fun runControlAndDrain(epoch: Long, operation: String, control: () -> Boolean) {
@@ -557,12 +547,6 @@ internal class AndroidDocumentDraftPersistence internal constructor(
         if (failure == null) completion.complete(true)
         else completion.completeExceptionally(failure)
     }
-
-    private data class PendingWrite(
-        val ownerKey: DocumentDraftOwnerKey,
-        val generation: Long,
-        val payload: () -> DocumentDraftPayload,
-    )
 
     private class DrainHandoff(
         val epoch: Long,

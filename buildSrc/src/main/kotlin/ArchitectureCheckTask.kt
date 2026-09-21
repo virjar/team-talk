@@ -23,7 +23,8 @@ abstract class ArchitectureCheckTask : DefaultTask() {
         val rules = listOf(
             Rule(
                 name = "protocol contract purity",
-                relativeRoot = "protocol/protocol/src/commonMain",
+                relativeRoot = "protocol/protocol/src",
+                allMainSourceSets = true,
                 forbiddenImports = listOf(
                     "com.virjar.tk.shared.client.",
                     "com.virjar.tk.shared.repository.",
@@ -37,7 +38,8 @@ abstract class ArchitectureCheckTask : DefaultTask() {
             ),
             Rule(
                 name = "shared SDK has no UI or server dependency",
-                relativeRoot = "client/shared/src/commonMain",
+                relativeRoot = "client/shared/src",
+                allMainSourceSets = true,
                 forbiddenImports = listOf(
                     "androidx.compose.",
                     "org.jetbrains.compose.",
@@ -50,7 +52,8 @@ abstract class ArchitectureCheckTask : DefaultTask() {
             ),
             Rule(
                 name = "shared UI has no server or transport implementation dependency",
-                relativeRoot = "client/app/src/commonMain",
+                relativeRoot = "client/app/src",
+                allMainSourceSets = true,
                 forbiddenImports = listOf(
                     "com.virjar.tk.server.domain.",
                     "com.virjar.tk.server.infra.",
@@ -110,28 +113,15 @@ abstract class ArchitectureCheckTask : DefaultTask() {
             ),
         )
 
-        val productMainSourceRoots = listOf(
-            "protocol/protocol/src/commonMain",
-            "protocol/protocol-netty/src/commonMain",
-            "client/shared/src/commonMain",
-            "client/shared/src/jvmAndAndroidMain",
-            "client/shared/src/androidMain",
-            "client/shared/src/jvmMain",
-            "client/shared/src/iosMain",
-            "client/richeditor/src/commonMain",
-            "client/richeditor/src/androidMain",
-            "client/richeditor/src/desktopMain",
-            "client/richeditor/src/iosMain",
-            "client/app/src/commonMain",
-            "client/app/src/androidMain",
-            "client/app/src/desktopMain",
-            "client/app/src/iosMain",
-            "client/android/src/main",
-            "client/desktop/src/desktopMain",
-            "client/ios/src/iosMain",
-            "server/server/src/main",
-            "protocol/rpc-processor/src/main",
+        // Source ownership exists even when a platform target (notably iOS) is disabled in Gradle.
+        // Keep one module inventory; discover every checked-in main source set, never test sources.
+        val productModules = listOf(
+            "protocol/protocol", "protocol/protocol-netty", "protocol/rpc-processor",
+            "client/shared", "client/richeditor", "client/app", "client/android",
+            "client/desktop", "client/ios", "client/headless", "client/desktop-bootstrap", "server/server",
         )
+        val productMainSourceRoots = architectureMainSourceRoots(root, productModules)
+
 
         val sourcePatternRules = listOf(
             SourcePatternRule(
@@ -164,13 +154,9 @@ abstract class ArchitectureCheckTask : DefaultTask() {
             ),
             SourcePatternRule(
                 name = "client credentials have no process-global session singleton",
-                relativeRoots = listOf(
-                    "client/shared/src/commonMain",
-                    "client/app/src/commonMain",
-                    "client/android/src/main",
-                    "client/desktop/src/desktopMain",
-                    "client/ios/src/iosMain",
-                ),
+                relativeRoots = architectureMainSourceRoots(root, listOf(
+                    "client/shared", "client/app", "client/android", "client/desktop", "client/ios",
+                )),
                 forbiddenPatterns = listOf(
                     Regex("\\bSessionContext\\b") to
                         "bearer credentials must be provided by an authenticated session owner",
@@ -249,6 +235,7 @@ abstract class ArchitectureCheckTask : DefaultTask() {
         val attachmentTransferFiles = listOf(
             "client/shared/src/commonMain/kotlin/com/virjar/tk/shared/repository/FileRepository.kt",
             "client/shared/src/jvmAndAndroidMain/kotlin/com/virjar/tk/shared/repository/FileRepository.jvmAndAndroid.kt",
+            "client/shared/src/iosMain/kotlin/com/virjar/tk/shared/repository/FileRepository.ios.kt",
             "client/headless/src/main/kotlin/com/virjar/tk/headless/bot/ImBot.kt",
             "client/headless/src/main/kotlin/com/virjar/tk/headless/agent/AgentApi.kt",
             "client/desktop/src/desktopMain/kotlin/com/virjar/tk/desktop/DesktopMediaServices.kt",
@@ -260,21 +247,9 @@ abstract class ArchitectureCheckTask : DefaultTask() {
             "server/server/src/main/kotlin/com/virjar/tk/server/infra/storage/FileStoreObjectStorage.kt",
         )
 
-        val productionSourceRoots = listOf(
-            "protocol/protocol/src/commonMain",
-            "protocol/protocol-netty/src/commonMain",
-            "client/shared/src/commonMain",
-            "client/shared/src/jvmAndAndroidMain",
-            "client/shared/src/androidMain",
-            "client/shared/src/jvmMain",
-            "client/shared/src/iosMain",
-            "client/app/src/commonMain",
-            "client/app/src/iosMain",
-            "client/android/src/main",
-            "client/desktop/src/desktopMain",
-            "client/ios/src/iosMain",
-            "server/server/src/main",
-        )
+        val productionSourceRoots = architectureMainSourceRoots(root, productModules.filterNot {
+            it == "client/richeditor" || it == "protocol/rpc-processor"
+        })
         // 受控的 richeditor 源码 fork 仍参与上面的依赖、执行器和传输模式检查。其上游文件
         // 拓扑被有意保留，以便可审计地 rebase（见 richeditor/FORK.md），因此本地的 800 行
         // 阅读热点提示只作用于 TeamTalk 自有的生产源码，不强制 fork 拆分。
@@ -421,6 +396,11 @@ abstract class ArchitectureCheckTask : DefaultTask() {
                 ruleSourceRoot.walkTopDown()
                     .filter { it.isFile && it.extension == "kt" }
                     .filter { file ->
+                        !rule.allMainSourceSets || isArchitectureMainSourceSet(
+                            file.relativeTo(ruleSourceRoot).invariantSeparatorsPath.substringBefore('/'),
+                        )
+                    }
+                    .filter { file ->
                         rule.exemptFiles.none { exempt ->
                             file.relativeTo(root).invariantSeparatorsPath == exempt
                         }
@@ -542,6 +522,7 @@ abstract class ArchitectureCheckTask : DefaultTask() {
         val name: String,
         val relativeRoot: String,
         val forbiddenImports: List<String>,
+        val allMainSourceSets: Boolean = false,
         val exemptFiles: List<String> = emptyList(),
     )
 

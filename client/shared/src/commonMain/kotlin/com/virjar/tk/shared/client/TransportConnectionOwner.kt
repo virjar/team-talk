@@ -1,49 +1,20 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
+import kotlin.concurrent.Volatile
 import com.virjar.tk.shared.log.PlatformOnlyTkLogger
 import com.virjar.tk.protocol.IProto
-import com.virjar.tk.protocol.netty.PacketCodec
-import com.virjar.tk.protocol.netty.PacketInboundRole
 import com.virjar.tk.protocol.PingSignal
 import com.virjar.tk.protocol.PongSignal
 import com.virjar.tk.protocol.payload.AuthRequestPayload
 import com.virjar.tk.protocol.payload.InvokePayload
 import com.virjar.tk.protocol.payload.SyncRequestPayload
 import com.virjar.tk.protocol.rpc.gen.SyncRpcContract
-import io.netty.bootstrap.Bootstrap
-import io.netty.channel.Channel
-import io.netty.channel.ChannelFuture
-import io.netty.channel.ChannelHandlerContext
-import io.netty.channel.ChannelInboundHandlerAdapter
-import io.netty.channel.ChannelInitializer
-import io.netty.channel.ChannelOption
-import io.netty.channel.EventLoop
-import io.netty.channel.socket.SocketChannel
-import io.netty.channel.socket.nio.NioSocketChannel
-import io.netty.handler.ssl.SslHandler
-import io.netty.handler.timeout.IdleState
-import io.netty.handler.timeout.IdleStateEvent
-import io.netty.handler.timeout.IdleStateHandler
-import io.netty.util.concurrent.ScheduledFuture
-import java.util.concurrent.RejectedExecutionException
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
-import kotlinx.coroutines.CoroutineExceptionHandler
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-/**
- * Netty 资源与 TCP 尝试生命周期的唯一 owner。
- *
- * 连接/通道/重试/代际状态只在 [eventLoop] 上变更。[destroy] 是终态的；应用拆除后的新登录必须创建
- * 新的 [ImClient]，而普通登出使用 owner 资格的拆除。被拒绝的任务绝不在任意调用方线程上内联运行。
- * 上层只有在代际与通道身份都被校验之后才收到包。
- */
 internal class TransportConnectionOwner(
     initialHost: String,
     initialPort: Int,
@@ -54,24 +25,21 @@ internal class TransportConnectionOwner(
     private val authenticationTerminal: () -> Boolean,
     private val routePacket: (connectionGeneration: Long, IProto) -> Unit,
     private val onTransportDisconnected: () -> Unit,
-    private val transportTls: ClientTransportTls = ClientTransportTls(),
-    private val openConnection: (Bootstrap, String, Int) -> ChannelFuture =
-        { bootstrap, host, port -> bootstrap.connect(host, port) },
+    private val backend: ClientTransportBackend,
 ) : ClientTransportOwner {
     private val logger = PlatformOnlyTkLogger("TransportConnectionOwner")
 
-    private val workerGroup = createClientTransportEventLoopGroup()
-    private val eventLoop: EventLoop = workerGroup.next()
-    private val terminallyDestroyed = AtomicBoolean(false)
+    private val eventLoop = backend
+    private val terminallyDestroyed = PlatformAtomicBoolean(false)
 
     // EventLoop 拥有的尝试状态。
-    private var channel: Channel? = null
-    private var connectingChannel: Channel? = null
+    private var channel: ClientTransportChannel? = null
+    private var connectingChannel: ClientTransportChannel? = null
     private val connectionGeneration = ConnectionGeneration()
     private var retryCount = 0
     private var reconnectJitterSeed = 0u
     private var destroyed = false
-    private var reconnectFuture: ScheduledFuture<*>? = null
+    private var reconnectFuture: ClientTransportTimer? = null
     /** 被进程本地网络丢失测试接缝暂停的精确逻辑 owner。 */
     private var pausedReconnectOwnerForTest: Long? = null
     /** 该逻辑 transport 跨自动重连拥有的精确 AUTH 能力。 */
@@ -125,7 +93,7 @@ internal class TransportConnectionOwner(
                 startInvoked = true
                 // 过期安装者是真正的 no-op：它绝不能清除之后 disconnect 的 destroyed 标记，
                 // 也不能取消该 owner 的重连。所有生命周期变更留在被准入的启动边内部。
-                reconnectFuture?.cancel(false)
+                reconnectFuture?.cancel()
                 reconnectFuture = null
                 pausedReconnectOwnerForTest = null
                 destroyed = false
@@ -332,6 +300,7 @@ internal class TransportConnectionOwner(
     override fun onAuthenticationAccepted() {
         requireEventLoop()
         retryCount = 0
+        channel?.onAuthenticationAccepted()
     }
 
     override fun closeForRecoveryNow(reason: String, cause: Throwable?) {
@@ -380,16 +349,16 @@ internal class TransportConnectionOwner(
         }
     }
 
-    /** 幂等地拆除连接，然后释放 EventLoopGroup。 */
+    /** 幂等地拆除连接，然后释放平台串行调度器。 */
     override fun destroy() {
         if (!terminallyDestroyed.compareAndSet(false, true)) return
         if (!executeOn(eventLoop) {
             disconnectCurrentTransport()
-            workerGroup.shutdownGracefully(0, 2, TimeUnit.SECONDS)
+            backend.shutdown()
         }) {
             // 拒绝意味着 owner 循环已经在停止；关闭是幂等的，且不在调用方线程上运行任何
             // 连接状态变更。
-            workerGroup.shutdownGracefully(0, 2, TimeUnit.SECONDS)
+            backend.shutdown()
         }
     }
 
@@ -448,7 +417,7 @@ internal class TransportConnectionOwner(
         advanceOwnerGeneration()
         // 在 close() 可以把其 channelInactive 回调入队之前使 handler 失效。
         connectionGeneration.invalidate()
-        reconnectFuture?.cancel(false)
+        reconnectFuture?.cancel()
         reconnectFuture = null
         val active = channel
         val connecting = connectingChannel
@@ -497,123 +466,24 @@ internal class TransportConnectionOwner(
         val attemptPort = targetPort
         logger.trace("Connecting to $attemptHost:$attemptPort (generation=$generation)")
 
-        val bootstrap = Bootstrap()
-        bootstrap.group(eventLoop)
-            .channel(NioSocketChannel::class.java)
-            .option(ChannelOption.TCP_NODELAY, true)
-            .option(ChannelOption.SO_KEEPALIVE, true)
-            .handler(object : ChannelInitializer<SocketChannel>() {
-                override fun initChannel(ch: SocketChannel) {
-                    val pipeline = ch.pipeline()
-                    transportTls.newHandler(ch, attemptHost, attemptPort)?.let { sslHandler ->
-                        // 入站 TLS 记录必须在分帧之前解密；出站协议帧必须在 SslHandler 加密之前编码。
-                        pipeline.addLast(TLS_HANDLER_NAME, sslHandler)
-                    }
-                    pipeline
-                        .addLast(
-                            IdleStateHandler(
-                                PacketCodec.READ_IDLE_TIMEOUT_SECONDS,
-                                PacketCodec.PING_INTERVAL_SECONDS,
-                                0,
-                                TimeUnit.SECONDS,
-                            ),
-                        )
-                        .addLast(PacketCodec(inboundRole = PacketInboundRole.CLIENT))
-                        .addLast(PacketHandler(generation))
+        val connection = backend.createChannel(attemptHost, attemptPort, object : ClientTransportEvents {
+            override fun ready(source: ClientTransportChannel) = onTransportReady(source, generation)
+            override fun packet(source: ClientTransportChannel, packet: IProto) {
+                if (connectionGeneration.matches(generation) && (channel === source || connectingChannel === source)) {
+                    routePacket(generation, packet)
                 }
-            })
-
-        val connectFuture = openConnection(bootstrap, attemptHost, attemptPort)
-        connectingChannel = connectFuture.channel()
-        connectFuture.addListener { future ->
-            val completed = future as ChannelFuture
-            // 完成的 future 可能从 bootstrap.connect() 内联通知其监听器。逻辑 owner 那时仍在
-            // 其 AUTH 租约下被安装，因此内联失败不能退役同一租约。总是跨越一次 EventLoop 队列边。
-            val scheduled = enqueueOn(eventLoop) {
-                handleConnectCompletion(
-                    future = completed,
-                    generation = generation,
-                    peerHost = attemptHost,
-                    peerPort = attemptPort,
-                )
             }
-            if (!scheduled) {
-                completed.channel().close()
+            override fun closed(source: ClientTransportChannel, failure: Throwable?) =
+                onChannelClosed(source, generation, failure)
+            override fun writeIdle(source: ClientTransportChannel) {
+                if (connectionGeneration.matches(generation) && channel === source) sendNow(PingSignal)
             }
-        }
+        })
+        connectingChannel = connection
+        connection.start()
     }
 
-    private fun handleConnectCompletion(
-        future: ChannelFuture,
-        generation: Long,
-        peerHost: String,
-        peerPort: Int,
-    ) {
-        requireEventLoop()
-        val connectedChannel = future.channel()
-        if (!connectionGeneration.matches(generation) || destroyed) {
-            logger.trace(
-                "Ignoring stale connect completion " +
-                    "(generation=$generation, current=${connectionGeneration.current})",
-            )
-            connectedChannel.close()
-            return
-        }
-        if (!future.isSuccess) {
-            if (connectingChannel === connectedChannel) connectingChannel = null
-            logger.trace("Connect failed: ${future.cause()?.message}")
-            _state.value = ConnectionState.DISCONNECTED
-            val shouldReconnect = onAuthenticationTransportAttemptEnded(
-                logicalAuthenticationAttempt,
-            )
-            if (!shouldReconnect) logicalAuthenticationAttempt = null
-            if (!destroyed && shouldReconnect) scheduleReconnect()
-            return
-        }
-
-        val sslHandler = connectedChannel.pipeline().get(SslHandler::class.java)
-        if (sslHandler == null) {
-            onTransportReady(connectedChannel, generation)
-        } else {
-            awaitTlsHandshake(
-                connectedChannel = connectedChannel,
-                sslHandler = sslHandler,
-                generation = generation,
-                peerHost = peerHost,
-                peerPort = peerPort,
-            )
-        }
-    }
-
-    private fun awaitTlsHandshake(
-        connectedChannel: Channel,
-        sslHandler: SslHandler,
-        generation: Long,
-        peerHost: String,
-        peerPort: Int,
-    ) {
-        requireEventLoop()
-        sslHandler.handshakeFuture().addListener { handshake ->
-            if (!connectionGeneration.matches(generation) || destroyed) {
-                logger.trace("Ignoring stale TLS handshake completion generation=$generation")
-                connectedChannel.close()
-                return@addListener
-            }
-            if (!handshake.isSuccess) {
-                // 把凭据保留在 AuthSyncCoordinator 内。关闭通道复用现有 channelInactive 分类
-                // 与有界重连生命周期。
-                logger.trace(
-                    "TLS handshake failed for $peerHost:$peerPort: " +
-                        "${handshake.cause()?.javaClass?.simpleName}",
-                )
-                connectedChannel.close()
-                return@addListener
-            }
-            onTransportReady(connectedChannel, generation)
-        }
-    }
-
-    private fun onTransportReady(connectedChannel: Channel, generation: Long) {
+    private fun onTransportReady(connectedChannel: ClientTransportChannel, generation: Long) {
         requireEventLoop()
         if (!connectionGeneration.matches(generation) || destroyed || !connectedChannel.isActive) {
             connectedChannel.close()
@@ -622,7 +492,7 @@ internal class TransportConnectionOwner(
         if (connectingChannel === connectedChannel) connectingChannel = null
         channel = connectedChannel
         activeScope = CoroutineScope(
-            eventLoop.asCoroutineDispatcher() +
+            eventLoop.dispatcher +
                 SupervisorJob() +
                 CoroutineExceptionHandler { _, throwable ->
                     logger.fault("ImClient connection scope unhandled exception", throwable)
@@ -646,18 +516,11 @@ internal class TransportConnectionOwner(
         retryCount += 1
         val disconnectedGeneration = connectionGeneration.current
         logger.trace("Schedule reconnect in ${delay}ms (retry=$retryCount)")
-        reconnectFuture = eventLoop.schedule({
+        reconnectFuture = backend.schedule(delay) {
             reconnectFuture = null
-            if (
-                !destroyed &&
-                !terminallyDestroyed.get() &&
-                !authenticationTerminal() &&
-                connectionGeneration.matches(disconnectedGeneration)
-            ) {
-                // 自动重连保持同一 ClientSession transport 租约。
-                createAndConnect()
-            }
-        }, delay, TimeUnit.MILLISECONDS)
+            if (!destroyed && !terminallyDestroyed.get() && !authenticationTerminal() &&
+                connectionGeneration.matches(disconnectedGeneration)) createAndConnect()
+        }
     }
 
     private fun advanceOwnerGeneration() {
@@ -666,106 +529,27 @@ internal class TransportConnectionOwner(
         _ownerGeneration.value = ownerGeneration
     }
 
-    private fun executeOn(loop: EventLoop, task: () -> Unit): Boolean {
-        if (loop.inEventLoop()) {
-            task()
-            return true
-        }
-        return enqueueOn(loop, task)
-    }
+    private fun executeOn(loop: ClientTransportBackend, task: () -> Unit): Boolean = if (loop.inEventLoop()) { task(); true } else loop.enqueue(task)
+    private fun enqueueOn(loop: ClientTransportBackend, task: () -> Unit): Boolean = loop.enqueue(task)
+    private fun requireEventLoop() { check(eventLoop.inEventLoop()) { "Transport state must be mutated on its serial queue" } }
 
-    private fun enqueueOn(loop: EventLoop, task: () -> Unit): Boolean {
-        return try {
-            loop.execute(task)
-            true
-        } catch (rejected: RejectedExecutionException) {
-            logger.trace(
-                "EventLoop rejected task after shutdown: ${rejected::class.simpleName}",
-            )
-            false
+    private fun onChannelClosed(source: ClientTransportChannel, generation: Long, failure: Throwable?) {
+        requireEventLoop()
+        if (destroyed || !connectionGeneration.matches(generation) || (channel !== source && connectingChannel !== source)) return
+        failure?.let { logger.trace("Connection ended: ${it::class.simpleName}") }
+        val terminalAuthentication = authenticationTerminal()
+        _state.value = if (terminalAuthentication) ConnectionState.AUTH_FAILED else ConnectionState.DISCONNECTED
+        onTransportDisconnected()
+        activeScope?.cancel()
+        activeScope = null
+        if (channel === source) channel = null
+        if (connectingChannel === source) connectingChannel = null
+        val shouldReconnect = onAuthenticationTransportAttemptEnded(logicalAuthenticationAttempt)
+        if (!shouldReconnect) logicalAuthenticationAttempt = null
+        if (terminalAuthentication || !shouldReconnect) {
+            if (pausedReconnectOwnerForTest == ownerGeneration) pausedReconnectOwnerForTest = null
+            return
         }
-    }
-
-    private fun requireEventLoop() {
-        check(eventLoop.inEventLoop()) {
-            "Transport connection state must be mutated on its EventLoop"
-        }
-    }
-
-    /** Netty handler 只拥有 transport 有效性/空闲/失活；协议含义留在 router。 */
-    private inner class PacketHandler(
-        private val generation: Long,
-    ) : ChannelInboundHandlerAdapter() {
-        private fun isCurrent(ctx: ChannelHandlerContext): Boolean =
-            connectionGeneration.matches(generation) &&
-                (channel === ctx.channel() || connectingChannel === ctx.channel())
-
-        override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
-            if (!isCurrent(ctx)) {
-                logger.trace("Ignoring packet from stale channel generation=$generation")
-                return
-            }
-            if (msg is IProto) routePacket(generation, msg)
-        }
-
-        override fun userEventTriggered(ctx: ChannelHandlerContext, evt: Any) {
-            if (!isCurrent(ctx)) {
-                ctx.close()
-                return
-            }
-            if (evt !is IdleStateEvent) {
-                super.userEventTriggered(ctx, evt)
-                return
-            }
-            when (evt.state()) {
-                IdleState.WRITER_IDLE -> {
-                    logger.trace("Writer idle, sending PING")
-                    sendNow(PingSignal)
-                }
-                IdleState.READER_IDLE -> {
-                    logger.trace(
-                        "No data received for ${PacketCodec.READ_IDLE_TIMEOUT_SECONDS}s, closing connection",
-                    )
-                    ctx.close()
-                }
-                else -> Unit
-            }
-        }
-
-        override fun channelInactive(ctx: ChannelHandlerContext) {
-            if (destroyed || !isCurrent(ctx)) {
-                logger.trace("Ignoring channelInactive from stale generation=$generation")
-                return
-            }
-            val terminalAuthentication = authenticationTerminal()
-            _state.value = if (terminalAuthentication) {
-                ConnectionState.AUTH_FAILED
-            } else {
-                ConnectionState.DISCONNECTED
-            }
-            onTransportDisconnected()
-            activeScope?.cancel()
-            activeScope = null
-            if (channel === ctx.channel()) channel = null
-            if (connectingChannel === ctx.channel()) connectingChannel = null
-            val shouldReconnect = onAuthenticationTransportAttemptEnded(
-                logicalAuthenticationAttempt,
-            )
-            if (!shouldReconnect) logicalAuthenticationAttempt = null
-            if (terminalAuthentication || !shouldReconnect) {
-                if (pausedReconnectOwnerForTest == ownerGeneration) {
-                    pausedReconnectOwnerForTest = null
-                }
-                return
-            }
-            scheduleReconnect()
-        }
-
-        override fun exceptionCaught(ctx: ChannelHandlerContext, cause: Throwable) {
-            logger.fault("Connection error", cause)
-            ctx.close()
-        }
+        scheduleReconnect()
     }
 }
-
-private const val TLS_HANDLER_NAME = "tls"

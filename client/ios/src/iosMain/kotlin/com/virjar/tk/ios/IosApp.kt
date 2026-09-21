@@ -37,6 +37,8 @@ object IosApplicationRuntime {
     internal val notification = MutableStateFlow<IosNotificationTarget?>(null)
     internal var sessionUi: IosSessionUi? = null
     internal val draftPersistence = IosDocumentDraftPersistence()
+    private val lifecycleScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var backgroundDraftFlush: Job? = null
 
     fun didBecomeActive() { foreground.value = true }
     fun didEnterBackground() {
@@ -46,6 +48,38 @@ object IosApplicationRuntime {
             ui.voice.close()
             try { ui.captureDrafts() }
             catch (failure: Throwable) { logUnhandledError("IosBackgroundDraft", failure) }
+        }
+        // Capture stays synchronous with the editor frame. Persistence owns no UIKit/SDK objects
+        // and may finish during the finite background interval without blocking this callback.
+        backgroundDraftFlush?.cancel()
+        val completion = draftPersistence.requestFlush()
+        val application = UIApplication.sharedApplication
+        var task = UIBackgroundTaskInvalid
+        var observer: Job? = null
+        fun finish() {
+            val current = task
+            task = UIBackgroundTaskInvalid
+            if (current != UIBackgroundTaskInvalid) application.endBackgroundTask(current)
+        }
+        task = application.beginBackgroundTaskWithName("Document drafts") {
+            observer?.cancel()
+            finish()
+        }
+        observer = lifecycleScope.launch {
+            try { check(completion.await()) { "Document draft persistence failed" } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Throwable) { logUnhandledError("IosBackgroundDraft", failure) }
+            finally { finish() }
+        }
+        backgroundDraftFlush = observer
+    }
+
+    internal fun observeDraftFlush(tag: String) {
+        val completion = draftPersistence.requestFlush()
+        lifecycleScope.launch {
+            try { check(completion.await()) { "Document draft persistence failed" } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Throwable) { logUnhandledError(tag, failure) }
         }
     }
     fun registerPushToken(token: String, environment: String) {
@@ -111,6 +145,10 @@ private fun IosAppRoot() {
         deviceId = deviceId, deviceName = "iOS", deviceModel = UIDevice.currentDevice.model,
         deviceFlag = 3, createCache = { deployment, dataset, uid -> createIosLocalCache(deployment, dataset, uid) },
         beforeSessionRetirement = IosApplicationRuntime::retire,
+        beforeAccountDataCleanup = {
+            // Account cleanup must never race an already admitted process-owned disk write.
+            check(IosApplicationRuntime.draftPersistence.awaitQuiescence()) { "Document drafts have not settled" }
+        },
         runtimeInfo = remember { iosRuntimeInfo() }, accountDataCleanup = cleanup,
     )
     val connection by auth.connectionState.collectAsState()

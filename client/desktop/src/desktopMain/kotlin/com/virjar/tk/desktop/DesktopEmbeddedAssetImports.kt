@@ -1,31 +1,21 @@
 package com.virjar.tk.desktop
 
 import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
-import com.virjar.tk.protocol.http.AttachmentUploadIdentity
 import com.virjar.tk.desktop.media.DesktopSessionResources
-import com.virjar.tk.protocol.model.EmbeddedAsset
-import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportBinding
 import com.virjar.tk.app.ui.bridge.ChatAssetImportDelegate
-import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportBindingRouter
-import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportEvent
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportEventSink
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportGateway
+import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportCoordinator
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportRegistration
-import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportRetryStore
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportSource
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetLocalSelection
-import com.virjar.tk.app.ui.component.rich.PendingAssetJob
-import com.virjar.tk.app.ui.component.rich.PendingAssetJobState
 import com.virjar.tk.shared.repository.asUploadSource
 import java.awt.Toolkit
 import java.awt.datatransfer.DataFlavor
 import java.awt.image.BufferedImage
 import java.io.Closeable
 import java.io.File
-import java.util.UUID
 import javax.imageio.ImageIO
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
@@ -136,248 +126,40 @@ internal fun importDesktopClipboardAsset(gateway: EmbeddedAssetImportGateway): B
     true
 }.getOrDefault(false)
 
-/** 共享认证上传传输的 Desktop picker/drop/clipboard 适配器。 */
+/** Swing picker/drop/clipboard adapt sources; app owns the shared import lifecycle. */
 internal class DesktopEmbeddedAssetImportGateway(
-    private val resources: DesktopSessionResources,
-    private val transfer: DesktopFileTransfer,
-    private val publishOnUi: (() -> Unit) -> Unit,
-    private val durableImports: ChatAssetImportDelegate? = null,
+    resources: DesktopSessionResources,
+    transfer: DesktopFileTransfer,
+    publishOnUi: (() -> Unit) -> Unit,
+    durableImports: ChatAssetImportDelegate? = null,
 ) : EmbeddedAssetImportGateway, Closeable {
     private val scope = resources.childScope("embedded-asset-import")
-    private val bindings = EmbeddedAssetImportBindingRouter()
-    private val retryStore = EmbeddedAssetImportRetryStore<Unit>(
+    private val imports = EmbeddedAssetImportCoordinator<File>(
+        launch = { action -> scope.launch { action() } },
+        publishOnUi = { action -> publishOnUi { if (resources.canDeliverUiResult()) action() } },
+        ensureOpen = resources::ensureOpen,
+        prepare = { selection -> File(selection.localReference).also {
+            require(it.isFile) { "文件不存在: ${selection.displayName}" }
+        } },
+        source = { it.asUploadSource() },
+        upload = { file, selection, identity, progress ->
+            transfer.uploadWithMeta(file, selection.contentType, identity, selection.displayName, progress)
+        },
         releaseSelection = ::releaseDesktopEmbeddedAssetSelection,
+        durableImports = durableImports,
     )
-
-    override fun bind(
-        ownerKey: String,
-        sink: EmbeddedAssetImportEventSink,
-        acceptNewImports: Boolean,
-    ): EmbeddedAssetImportRegistration {
-        val registration = bindings.bind(ownerKey, sink, acceptNewImports)
-        val binding = checkNotNull(bindings.capture())
-        val durableRegistration = durableImports?.takeIf { it.handles(ownerKey) }?.bind(
-            ownerKey,
-            EmbeddedAssetImportEventSink { event -> publishTerminal(binding, event) },
-        )
-        retryStore.replay(ownerKey).forEach { job ->
-            sink.publish(EmbeddedAssetImportEvent.StateChanged(job = job, placement = null))
-        }
-        return EmbeddedAssetImportRegistration {
-            durableRegistration?.close()
-            registration.close()
-        }
-    }
-
+    override fun bind(ownerKey: String, sink: EmbeddedAssetImportEventSink, acceptNewImports: Boolean) =
+        imports.bind(ownerKey, sink, acceptNewImports)
     override fun select(presentation: EmbeddedAssetPresentation) {
-        val binding = bindings.captureForImport() ?: return
+        val binding = imports.captureForImport() ?: return
         val file = when (presentation) {
             EmbeddedAssetPresentation.IMAGE -> DesktopFilePicker.chooseImage()
             EmbeddedAssetPresentation.FILE -> DesktopFilePicker.chooseFile("插入文件")
         } ?: return
-        import(
-            desktopEmbeddedAssetSelection(
-                file = file,
-                presentation = presentation,
-                source = EmbeddedAssetImportSource.DESKTOP_PICKER,
-            ),
-            binding,
-        )
+        imports.import(desktopEmbeddedAssetSelection(file, presentation, EmbeddedAssetImportSource.DESKTOP_PICKER), binding)
     }
-
-    override fun import(selection: EmbeddedAssetLocalSelection) {
-        val binding = bindings.captureForImport() ?: run {
-            releaseDesktopEmbeddedAssetSelection(selection)
-            return
-        }
-        import(selection, binding)
-    }
-
-    override fun cancel(jobId: String): Boolean {
-        val cancelled = retryStore.cancel(jobId) ?: return durableImports?.cancel(jobId) == true
-        publishTerminal(
-            cancelled.binding,
-            EmbeddedAssetImportEvent.StateChanged(cancelled.job, placement = null),
-        )
-        return true
-    }
-
-    override fun retry(jobId: String): Boolean {
-        if (retryStore.state(jobId) == null) return durableImports?.retry(jobId) == true
-        val attempt = retryStore.retry(jobId) ?: return when (retryStore.state(jobId)) {
-            PendingAssetJobState.PREPARING,
-            PendingAssetJobState.UPLOADING,
-            -> true
-            else -> false
-        }
-        publishCurrent(attempt, EmbeddedAssetImportEvent.StateChanged(attempt.job, placement = null))
-        launchAttempt(attempt)
-        return true
-    }
-
-    private fun import(
-        selection: EmbeddedAssetLocalSelection,
-        binding: EmbeddedAssetImportBinding,
-    ) {
-        durableImports?.takeIf { it.handles(binding.ownerKey) }?.let { durable ->
-            beginDurableImport(binding, selection, durable)
-            return
-        }
-        val assetId = UUID.randomUUID().toString()
-        val job = PendingAssetJob(jobId = UUID.randomUUID().toString(), assetId = assetId)
-        val placement = com.virjar.tk.app.ui.bridge.EmbeddedAssetImportPlacement(
-            label = selection.displayName,
-            presentation = selection.presentation,
-        )
-        val attempt = retryStore.create(
-            binding = binding,
-            selection = selection,
-            placement = placement,
-            job = job,
-            identity = AttachmentUploadIdentity(
-                uploadId = UUID.randomUUID().toString(),
-                issuedAt = System.currentTimeMillis(),
-            ),
-        ) ?: run {
-            releaseDesktopEmbeddedAssetSelection(selection)
-            return
-        }
-        publishInitial(binding, EmbeddedAssetImportEvent.StateChanged(job, placement))
-        launchAttempt(attempt)
-    }
-
-    private fun beginDurableImport(
-        binding: EmbeddedAssetImportBinding,
-        selection: EmbeddedAssetLocalSelection,
-        durable: ChatAssetImportDelegate,
-    ) {
-        val assetId = UUID.randomUUID().toString()
-        val preparation = scope.launch {
-            try {
-                resources.ensureOpen()
-                // Freeze once. All HTTP retries use the private spool, never this mutable user path.
-                durable.prepare(
-                    binding.ownerKey, assetId, File(selection.localReference).asUploadSource(), selection,
-                )
-                publishInitial(
-                    binding,
-                    EmbeddedAssetImportEvent.StateChanged(
-                        PendingAssetJob(assetId, assetId),
-                        com.virjar.tk.app.ui.bridge.EmbeddedAssetImportPlacement(
-                            selection.displayName, selection.presentation,
-                        ),
-                    ),
-                )
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                publishOnUi {
-                    if (resources.canDeliverUiResult()) durable.preparationFailed(binding.ownerKey)
-                }
-            }
-        }
-        // Also runs if session shutdown cancels this job before its first instruction.
-        preparation.invokeOnCompletion { releaseDesktopEmbeddedAssetSelection(selection) }
-    }
-
-    private fun launchAttempt(attempt: EmbeddedAssetImportRetryStore.Attempt<Unit>) {
-        val file = File(attempt.selection.localReference)
-        val uploadTask = scope.launch(start = CoroutineStart.LAZY) {
-            try {
-                var job = attempt.job
-                if (job.state == PendingAssetJobState.LOCAL) {
-                    job = retryStore.transition(attempt, PendingAssetJob::beginPreparing)
-                        ?: return@launch
-                    publishCurrent(attempt, EmbeddedAssetImportEvent.StateChanged(job))
-                }
-                resources.ensureOpen()
-                require(file.isFile) { "文件不存在: ${attempt.selection.displayName}" }
-                job = retryStore.transition(attempt, PendingAssetJob::beginUploading)
-                    ?: return@launch
-                publishCurrent(attempt, EmbeddedAssetImportEvent.StateChanged(job))
-                var latestProgress = 0f
-                val metadata = transfer.uploadWithMeta(
-                    file = file,
-                    contentType = attempt.selection.contentType,
-                    identity = attempt.identity,
-                    displayName = attempt.selection.displayName,
-                ) { progress ->
-                    val monotonic = progress.coerceIn(latestProgress, 1f)
-                    latestProgress = monotonic
-                    val progressed = retryStore.transition(attempt) { current ->
-                        current.updateUploadProgress(monotonic)
-                    } ?: return@uploadWithMeta
-                    job = progressed
-                    publishCurrent(attempt, EmbeddedAssetImportEvent.StateChanged(progressed))
-                }
-                resources.ensureOpen()
-                job = retryStore.completeReady(attempt) ?: return@launch
-                publishTerminal(
-                    attempt.binding,
-                    EmbeddedAssetImportEvent.Ready(
-                        job = job,
-                        asset = EmbeddedAsset(
-                            assetId = attempt.assetId,
-                            attachment = metadata.file,
-                            thumbnail = metadata.thumbnail,
-                            width = metadata.width,
-                            height = metadata.height,
-                        ),
-                        placement = attempt.placement,
-                    ),
-                )
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Exception) {
-                val reason = failure.message?.takeIf(String::isNotBlank) ?: "上传失败"
-                retryStore.fail(attempt, reason)?.let { failed ->
-                    publishCurrent(attempt, EmbeddedAssetImportEvent.StateChanged(failed))
-                }
-            }
-        }
-        if (retryStore.attach(attempt, uploadTask)) {
-            uploadTask.start()
-        } else {
-            uploadTask.cancel()
-        }
-    }
-
-    /** Placement 是一次性的，并且总是先于 Desktop UI 队列上的每次 attempt 帧发布。 */
-    private fun publishInitial(
-        binding: EmbeddedAssetImportBinding,
-        event: EmbeddedAssetImportEvent,
-    ) {
-        publishOnUi {
-            if (resources.canDeliverUiResult()) bindings.publish(binding, event)
-        }
-    }
-
-    private fun publishCurrent(
-        attempt: EmbeddedAssetImportRetryStore.Attempt<Unit>,
-        event: EmbeddedAssetImportEvent.StateChanged,
-    ) {
-        publishOnUi {
-            if (
-                resources.canDeliverUiResult() &&
-                retryStore.isCurrent(attempt, event.job)
-            ) {
-                bindings.publish(attempt.binding, event)
-            }
-        }
-    }
-
-    private fun publishTerminal(
-        binding: EmbeddedAssetImportBinding,
-        event: EmbeddedAssetImportEvent,
-    ) {
-        publishOnUi {
-            if (resources.canDeliverUiResult()) bindings.publish(binding, event)
-        }
-    }
-
-    override fun close() {
-        bindings.close()
-        retryStore.close()
-        scope.cancel()
-    }
+    override fun import(selection: EmbeddedAssetLocalSelection) = imports.import(selection)
+    override fun cancel(jobId: String) = imports.cancel(jobId)
+    override fun retry(jobId: String) = imports.retry(jobId)
+    override fun close() { imports.close(); scope.cancel() }
 }

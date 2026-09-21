@@ -5,33 +5,19 @@ import android.content.Context
 import android.net.Uri
 import androidx.compose.runtime.saveable.Saver
 import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
-import com.virjar.tk.protocol.http.AttachmentUploadIdentity
-import com.virjar.tk.protocol.model.EmbeddedAsset
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportBinding
 import com.virjar.tk.app.ui.bridge.ChatAssetImportDelegate
-import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportBindingRouter
-import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportEvent
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportEventSink
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportGateway
-import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportPlacement
+import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportCoordinator
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportRegistration
-import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportRetryStore
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportSource
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetLocalSelection
-import com.virjar.tk.app.ui.component.rich.PendingAssetJob
-import com.virjar.tk.app.ui.component.rich.PendingAssetJobState
 import com.virjar.tk.shared.repository.asUploadSource
 import java.io.Closeable
-import java.util.UUID
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 
 /** Activity 结果启动器归 Compose 所有；这个稳定持有者让网关可以选择其一。 */
 internal class AndroidEmbeddedAssetSelector {
@@ -177,40 +163,30 @@ internal class AndroidEmbeddedAssetImportGateway(
     private val deliverIfOpen: (() -> Unit) -> Boolean,
     private val durableImports: ChatAssetImportDelegate? = null,
 ) : EmbeddedAssetImportGateway, Closeable {
-    private val bindings = EmbeddedAssetImportBindingRouter()
     private val pickerLock = Any()
     private var pendingPicker: PendingPicker? = null
-    private val retryStore = EmbeddedAssetImportRetryStore<PreparedMedia>(
-        releaseSource = PreparedMedia::delete,
-    )
     private val returnedPickerSelections = AndroidEmbeddedAssetReturnedPickerSelections()
-    // A URI with unknown length needs one temporary snapshot before the shared durable stage.
-    // Only one such cache copy may exist per chat importer; durable sources have their own quota.
-    private val durablePreparation = Semaphore(1)
+    private val imports = EmbeddedAssetImportCoordinator<PreparedMedia>(
+        launch = launchCancellableAdmittedAction,
+        publishOnUi = { action -> deliverIfOpen(action); Unit },
+        ensureOpen = mediaSession::ensureOpen,
+        prepare = { selection -> MediaHelper.prepareSelectedMedia(context, Uri.parse(selection.localReference), mediaSession) },
+        source = { prepared -> withContext(Dispatchers.IO) { prepared.file.asUploadSource() } },
+        upload = { prepared, _, identity, _ ->
+            MediaHelper.uploadWithMeta(prepared.file, prepared.fileName, prepared.contentType, mediaSession, identity)
+        },
+        releaseSource = PreparedMedia::delete,
+        durableImports = durableImports,
+    )
 
-    override fun bind(
-        ownerKey: String,
-        sink: EmbeddedAssetImportEventSink,
-        acceptNewImports: Boolean,
-    ): EmbeddedAssetImportRegistration {
-        val registration = bindings.bind(ownerKey, sink, acceptNewImports)
-        val binding = checkNotNull(bindings.capture())
-        val durableRegistration = durableImports?.takeIf { it.handles(ownerKey) }?.bind(
-            ownerKey,
-            EmbeddedAssetImportEventSink { event -> publish(binding, event) },
-        )
-        retryStore.replay(ownerKey).forEach { job ->
-            sink.publish(EmbeddedAssetImportEvent.StateChanged(job = job, placement = null))
-        }
+    override fun bind(ownerKey: String, sink: EmbeddedAssetImportEventSink, acceptNewImports: Boolean): EmbeddedAssetImportRegistration {
+        val registration = imports.bind(ownerKey, sink, acceptNewImports)
         drainReturnedPickerSelection()
-        return EmbeddedAssetImportRegistration {
-            durableRegistration?.close()
-            registration.close()
-        }
+        return registration
     }
 
     override fun select(presentation: EmbeddedAssetPresentation) {
-        val binding = bindings.captureForImport() ?: return
+        val binding = imports.captureForImport() ?: return
         val token = pickerContinuation.begin(binding.ownerKey, presentation) ?: return
         val picker = PendingPicker(
             binding = binding,
@@ -228,29 +204,9 @@ internal class AndroidEmbeddedAssetImportGateway(
         }
     }
 
-    override fun import(selection: EmbeddedAssetLocalSelection) {
-        val binding = bindings.captureForImport() ?: return
-        beginImport(binding, selection)
-    }
-
-    override fun cancel(jobId: String): Boolean {
-        val cancelled = retryStore.cancel(jobId) ?: return durableImports?.cancel(jobId) == true
-        publishTerminal(cancelled.binding, EmbeddedAssetImportEvent.StateChanged(cancelled.job))
-        return true
-    }
-
-    override fun retry(jobId: String): Boolean {
-        if (retryStore.state(jobId) == null) return durableImports?.retry(jobId) == true
-        val attempt = retryStore.retry(jobId) ?: return when (retryStore.state(jobId)) {
-            PendingAssetJobState.PREPARING,
-            PendingAssetJobState.UPLOADING,
-            -> true
-            else -> false
-        }
-        publishCurrent(attempt, EmbeddedAssetImportEvent.StateChanged(attempt.job))
-        launchAttempt(attempt)
-        return true
-    }
+    override fun import(selection: EmbeddedAssetLocalSelection) = imports.import(selection)
+    override fun cancel(jobId: String) = imports.cancel(jobId)
+    override fun retry(jobId: String) = imports.retry(jobId)
 
     /** 完成成功与取消两种结局，且恰好消费一次已保存的 owner 令牌。 */
     fun completePicker(presentation: EmbeddedAssetPresentation, uri: Uri?) {
@@ -284,7 +240,7 @@ internal class AndroidEmbeddedAssetImportGateway(
     }
 
     private fun drainReturnedPickerSelection() {
-        val binding = bindings.capture() ?: return
+        val binding = imports.capture() ?: return
         val returned = returnedPickerSelections.takeFor(binding.ownerKey) ?: return
         if (pickerContinuation.take(returned.token.presentation) != returned.token) return
         scheduleUriImport(
@@ -301,7 +257,7 @@ internal class AndroidEmbeddedAssetImportGateway(
         presentation: EmbeddedAssetPresentation?,
         source: EmbeddedAssetImportSource,
     ): Boolean {
-        val binding = bindings.captureForImport() ?: return false
+        val binding = imports.captureForImport() ?: return false
         return scheduleUriImport(binding, uri, presentation, source)
     }
 
@@ -317,173 +273,7 @@ internal class AndroidEmbeddedAssetImportGateway(
             presentation = presentation,
             source = source,
         )
-        beginImport(binding, selection)
-    }
-
-    private fun beginImport(
-        binding: EmbeddedAssetImportBinding,
-        selection: EmbeddedAssetLocalSelection,
-    ) {
-        durableImports?.takeIf { it.handles(binding.ownerKey) }?.let { durable ->
-            beginDurableImport(binding, selection, durable)
-            return
-        }
-        val assetId = UUID.randomUUID().toString()
-        val job = PendingAssetJob(UUID.randomUUID().toString(), assetId)
-        val placement = EmbeddedAssetImportPlacement(selection.displayName, selection.presentation)
-        val attempt = retryStore.create(
-            binding = binding,
-            selection = selection,
-            placement = placement,
-            identity = AttachmentUploadIdentity(UUID.randomUUID().toString(), System.currentTimeMillis()),
-            job = job,
-        ) ?: return
-        // 在准备/上传开始之前先发布位置信息。平台手势已经冻结了 [binding]，
-        // 因此元数据解析或路由变化都无法重定向后续的帧。
-        if (!publish(binding, EmbeddedAssetImportEvent.StateChanged(job, placement))) {
-            retryStore.cancel(job.jobId)
-            return
-        }
-        launchAttempt(attempt)
-    }
-
-    /** The picker grant is consumed now; only an immutable private source survives this call. */
-    private fun beginDurableImport(
-        binding: EmbeddedAssetImportBinding,
-        selection: EmbeddedAssetLocalSelection,
-        durable: ChatAssetImportDelegate,
-    ) {
-        val assetId = UUID.randomUUID().toString()
-        val admitted = launchCancellableAdmittedAction {
-            durablePreparation.withPermit {
-                var prepared: PreparedMedia? = null
-                try {
-                    val candidate = MediaHelper.prepareSelectedMedia(
-                        context, Uri.parse(selection.localReference), mediaSession,
-                    )
-                    prepared = candidate
-                    val source = withContext(Dispatchers.IO) { candidate.file.asUploadSource() }
-                    durable.prepare(binding.ownerKey, assetId, source, selection)
-                    publish(
-                        binding,
-                        EmbeddedAssetImportEvent.StateChanged(
-                            PendingAssetJob(assetId, assetId),
-                            EmbeddedAssetImportPlacement(selection.displayName, selection.presentation),
-                        ),
-                    )
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
-                    deliverIfOpen { durable.preparationFailed(binding.ownerKey) }
-                } finally {
-                    // This cache copy is ours. The durable queue has its own committed spool copy.
-                    prepared?.delete()
-                }
-            }
-        }
-        if (admitted == null) durable.preparationFailed(binding.ownerKey)
-    }
-
-    /**
-     * 首次准备会把提供者的字节冻结成一个缓存文件。失败的 HTTP 尝试会保留该确切的快照和身份；
-     * 重试绝不会重新读取可变的 content URI。
-     */
-    private fun launchAttempt(attempt: EmbeddedAssetImportRetryStore.Attempt<PreparedMedia>) {
-        val startGate = CompletableDeferred<Unit>()
-        val uploadTask = launchCancellableAdmittedAction {
-            // Android 的会话启动器以 UNDISPATCHED 方式启动。先挂起工作，直到返回的 Job 挂接到
-            // 存储上，这样在读取字节之前 cancel/close 总能找到任务所有者。
-            startGate.await()
-            try {
-                var job = attempt.job
-                if (job.state == PendingAssetJobState.LOCAL) {
-                    job = retryStore.transition(attempt, PendingAssetJob::beginPreparing)
-                        ?: return@launchCancellableAdmittedAction
-                    publishCurrent(attempt, EmbeddedAssetImportEvent.StateChanged(job))
-                }
-                var prepared = attempt.source ?: retryStore.source(attempt)
-                if (prepared == null) {
-                    val candidate = MediaHelper.prepareSelectedMedia(
-                        context = context,
-                        uri = Uri.parse(attempt.selection.localReference),
-                        mediaSession = mediaSession,
-                    )
-                    if (!retryStore.attachSource(attempt, candidate)) {
-                        candidate.delete()
-                        return@launchCancellableAdmittedAction
-                    }
-                    prepared = candidate
-                }
-                currentCoroutineContext().ensureActive()
-                job = retryStore.transition(attempt, PendingAssetJob::beginUploading)
-                    ?: return@launchCancellableAdmittedAction
-                publishCurrent(attempt, EmbeddedAssetImportEvent.StateChanged(job))
-                val uploaded = MediaHelper.uploadWithMeta(
-                    file = prepared.file,
-                    fileName = prepared.fileName,
-                    contentType = prepared.contentType,
-                    mediaSession = mediaSession,
-                    identity = attempt.identity,
-                )
-                currentCoroutineContext().ensureActive()
-                job = retryStore.completeReady(attempt) ?: return@launchCancellableAdmittedAction
-                publishTerminal(
-                    attempt.binding,
-                    EmbeddedAssetImportEvent.Ready(
-                        job = job,
-                        asset = EmbeddedAsset(
-                            assetId = attempt.assetId,
-                            attachment = uploaded.file,
-                            thumbnail = uploaded.thumbnail,
-                            width = uploaded.width,
-                            height = uploaded.height,
-                        ),
-                        placement = attempt.placement,
-                    ),
-                )
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Exception) {
-                val reason = failure.message?.takeIf(String::isNotBlank) ?: "上传失败"
-                retryStore.fail(attempt, reason)?.let { failed ->
-                    publishCurrent(attempt, EmbeddedAssetImportEvent.StateChanged(failed))
-                }
-            }
-        }
-        if (uploadTask == null) {
-            retryStore.cancel(attempt.jobId)?.let { cancelled ->
-                publishTerminal(cancelled.binding, EmbeddedAssetImportEvent.StateChanged(cancelled.job))
-            }
-        } else if (retryStore.attach(attempt, uploadTask)) {
-            startGate.complete(Unit)
-        } else {
-            uploadTask.cancel()
-        }
-    }
-
-    private fun publishCurrent(
-        attempt: EmbeddedAssetImportRetryStore.Attempt<PreparedMedia>,
-        event: EmbeddedAssetImportEvent.StateChanged,
-    ) {
-        if (retryStore.isCurrent(attempt, event.job)) publish(attempt.binding, event)
-    }
-
-    private fun publishTerminal(
-        binding: EmbeddedAssetImportBinding,
-        event: EmbeddedAssetImportEvent,
-    ) {
-        publish(binding, event)
-    }
-
-    private fun publish(
-        binding: EmbeddedAssetImportBinding,
-        event: EmbeddedAssetImportEvent,
-    ): Boolean {
-        var delivered = false
-        val admitted = deliverIfOpen {
-            delivered = bindings.publish(binding, event)
-        }
-        return admitted && delivered
+        imports.import(selection, binding)
     }
 
     override fun close() {
@@ -491,8 +281,7 @@ internal class AndroidEmbeddedAssetImportGateway(
         returnedPickerSelections.clear()
         // 可保存的延续对象有意在 Activity 重建后存活。它的组合所有者会随账户/数据集切换而更换，
         // 因此 close 绝不能擦除一个正在进行中的结果。
-        bindings.close()
-        retryStore.close()
+        imports.close()
     }
 
     private data class PendingPicker(

@@ -138,7 +138,7 @@ flowchart TB
     Editor[活动编辑器] -->|同步捕获最后一帧| Bridge[DraftLifecycleBridge]
     Bridge -->|发布最新草稿| F
     D --> Store[DocumentDraftStore]
-    Store --> Writer["平台单写者<br/>Desktop 会话 / Android 进程"]
+    Store --> Writer["平台单写者<br/>Desktop 会话 / Android 进程 / iOS 后台"]
 ```
 
 | 所有者与源码 | 失效边界 | 扩展时从这里进入 |
@@ -165,7 +165,10 @@ flowchart TB
 
 关闭前先捕获“编辑器最终帧 → Feature 草稿快照 → 平台 writer”，然后才能释放依赖 SDK 缓存的 UI。
 文档 writer 独立拥有已经接收的写入。Desktop 退役会同步确认草稿屏障；Android 安排非阻塞屏障并
-观察其完成，不阻塞 Activity。入队成功不代表已经落盘，具体差异见
+观察其完成，不阻塞 Activity。iOS 把编码、摘要与文件提交交给后台单写者，通过挂起的
+`awaitDurability` 确认落盘；转入后台时在 UIKit 有限后台任务内等待，账号资料清理前先等待 writer 退出。
+Android/iOS 共用 `DocumentDraftPendingWrites` 的合并与删除代次规则，平台保留各自文件提交和会话交接。
+入队成功不代表已经落盘，具体差异见
 [草稿与平台生命周期](#210-草稿与平台生命周期)。
 
 ### 2.4 身份与认证的详细边界
@@ -537,7 +540,9 @@ stateDiagram-v2
   新 access 与身份；即使 refresh bearer 值未变化，也不能绕过 owner generation/CAS。持久化失败时旧
   身份保持完整且认证不能进入同步。logout/timeout 会先退休 callback gate，
   等待已准入 commit 后再清凭据和内存身份，迟到 AUTH 不能重新保存 token 或复活会话。
-- 连接状态由平台串行 owner 修改：JVM/Android 是 Netty 4.2 EventLoop，iOS 是 GCD 串行队列。
+- 连接状态由 shared common 的 `TransportConnectionOwner` 统一管理：离线预备、连接代次、发送准入、
+  认证退役和重连只实现一次。`ClientTransportBackend` 只提供平台通道、串行执行与定时；
+  JVM/Android 使用 Netty 4.2 EventLoop，iOS 使用 GCD 串行队列。
   iOS 通过 Network.framework 建立 TCP/TLS，按共享 `PacketFrames` 校验方向与长度，再分块接收 payload；
   JVM/Android 的 Netty codec 也消费相同帧规则。当前心跳写空闲 15 秒、读空闲超时 45 秒。
   非 loopback 始终使用 TLS；显式分发证书时 loopback 也启用 TLS，仅信任该证书并校验端点主机名。
@@ -664,6 +669,10 @@ RPC 与消息 ACK 在未就绪、发送窗口断线或等待回包时断线，�
 吞掉。
 
 ### 4.4 群文件：可靠命令与增量投影
+
+选择群文件前，`GroupFilesFeature.captureUploadTarget` 固定群、父目录以及追加版本的 entry/revision。
+三端上传完成都用 `completeUpload` 提交这个目标；期间切群或切目录不会改变文件归属，也不会把旧结果
+填入新目录。
 
 `GroupFileRepository` 是这条通用路径中的可靠命令边界。面向 app 的创建目录、发布文件、追加版本、重命名和删除
 六类可恢复入口（含移动）在首个 RPC 前都把完整规范 payload 写入 deployment + dataset + uid 隔离的 LocalCache outbox。创建以
@@ -1063,8 +1072,9 @@ iOS 在 SQLDelight Native driver 打开前只读检查 SQLite 版本与完整性
 关闭 driver 后才释放；崩溃中断的移动与重建由下次同账号打开继续。Keychain 保存完整登录记录，
 保留 deployment、dataset、owner generation 与协议拒绝事实，不把 refresh bearer 写入数据库或普通文件。
 
-[iOS 附件 spool](../../client/shared/src/iosMain/kotlin/com/virjar/tk/shared/repository/ChatAssetSpool.ios.kt)
-与其他平台使用相同账号目录和不可变 sourceId/digest 文件名。导入按 64 KiB 块写入，fsync 后原子改名；
+[附件 spool](../../client/shared/src/commonMain/kotlin/com/virjar/tk/shared/repository/DurableChatAssetSpool.kt)
+由三端共用同一份容量预留、发布、校验和读租约规则；平台只适配私有文件 IO 与流式摘要。
+沿用已发行账号目录和不可变 sourceId/digest 文件名。导入按 64 KiB 块写入，fsync 后原子改名；
 重新打开的源在发送任何字节前先分块校验摘要。删除被正在读取的源时等待读租约结束，未完成导入只清理
 没有活跃 reservation 的 partial。封禁清理覆盖数据库、chat-assets、文档草稿、媒体和账号诊断范围。
 Native 恢复与附件集成测试位于 `shared/src/iosTest`；它们不代替真机 TCP/TLS、APNs 与 UI 验收。
@@ -1080,6 +1090,9 @@ Desktop GUI 每次打开都先执行 `PRAGMA quick_check`，对已存在的数�
 当前 deployment + dataset + uid 的私有账号 namespace，并创建干净替代库；其他账号和 deployment 不受影响。
 headless JVM 的账号库与 GUI 使用同一恢复路径：确认损坏时移出旧库并重建。
 
+三端媒体缓存共用 app 的 `MediaCacheBudget`，统一字节、4,096 条目、并发预留和 consumer pin；
+`MediaCacheTargetCoordinator` 只让同一文件等待已有下载，缓存命中和其他文件不排在全局网络锁后面。
+目录枚举、文件校验、认证下载和原子改名仍由平台适配器负责，已发行缓存格式保持不变。
 媒体缓存使用与 SQLite 不同的生命周期：deployment + dataset + uid 仍决定命中目录，但同一物理媒体根只有一份
 字节与条目预算、一组并发 reservation 和一张按规范化绝对路径计数的 consumer pin 表。容量扫描只识别平台生产者的固定目录深度和
 内容寻址文件名，再跨身份目录按 mtime 回收零租约的最旧可回拉媒体。录音源文件、上传 spool、未知文件、子目录和符号链接

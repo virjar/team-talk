@@ -260,7 +260,7 @@ private fun IosGroupFilesScreen(chatId: String, actions: IosFeatureActions) {
     var uploading by remember { mutableStateOf(false) }
     fun pick(version: GroupFileEntry?) {
         if (uploading || files.chatId != chatId) return
-        val parentId = files.parentId
+        val target = files.captureUploadTarget(chatId, version) ?: return
         ui.native.select(EmbeddedAssetPresentation.FILE) { selection ->
             actions.selected(selection) {
                 uploading = true
@@ -269,8 +269,7 @@ private fun IosGroupFilesScreen(chatId: String, actions: IosFeatureActions) {
                         selection.displayName, selection.contentType).getOrThrow().file
                     currentCoroutineContext().ensureActive()
                     admission.runIfOpen {}.also { check(it) { "页面已关闭" } }
-                    check(files.chatId == chatId && files.parentId == parentId) { "目录已切换，请返回原目录后重新上传" }
-                    if (version == null) files.publish(selection.displayName, attachment) else files.addVersion(version, attachment)
+                    files.completeUpload(target, selection.displayName, attachment)
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: Exception) { admission.runIfOpen { files.reportUploadError(failure) } }
                 finally { admission.runIfOpen { uploading = false } }

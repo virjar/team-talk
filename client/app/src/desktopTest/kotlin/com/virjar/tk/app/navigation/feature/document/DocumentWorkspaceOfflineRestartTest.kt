@@ -39,6 +39,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -55,6 +56,66 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DocumentWorkspaceOfflineRestartTest {
+    @Test
+    fun `preserving session retirement fences restore rewrites and late callbacks before account cleanup`() = runTest {
+        val owner = DocumentDraftOwnerKey("a".repeat(64), DATASET_ID, OWNER_UID)
+        val retained = DocumentTabState(
+            tabId = DOCUMENT_ID, instanceId = 1L, recoveryId = DOCUMENT_ID,
+            documentId = null, spaceId = SPACE_ID, parentId = null, ancestorIds = emptyList(), pathResolved = false,
+            savedTitle = "", savedMarkdown = "", draftTitle = "保留草稿", draftMarkdown = "未发送正文",
+            revision = null, dirty = true, creating = true, editGeneration = 1L,
+        )
+        val discarded = retained.copy(tabId = LOCAL_DOCUMENT_ID, instanceId = 2L, recoveryId = LOCAL_DOCUMENT_ID)
+        val disk = MemoryDocumentDraftPersistence()
+        assertTrue(DocumentDraftStore(disk).save(owner, listOf(retained, discarded), DOCUMENT_ID, SPACE_ID))
+        assertTrue(disk.tombstone(owner, setOf(discarded.draftRecoveryKey())))
+
+        val reading = CompletableDeferred<Unit>()
+        val continueRead = CompletableDeferred<Unit>()
+        var rewriteCount = 0
+        val persistence = object : DocumentDraftPersistence by disk {
+            override fun read(ownerKey: DocumentDraftOwnerKey, consume: (DocumentDraftRecordSource) -> Unit): DocumentDraftReadStatus =
+                disk.read(ownerKey) { source ->
+                    reading.complete(Unit)
+                    runBlocking { continueRead.await() }
+                    consume(source)
+                }
+
+            override fun write(ownerKey: DocumentDraftOwnerKey, payload: () -> DocumentDraftPayload): Boolean {
+                rewriteCount++
+                return disk.write(ownerKey, payload)
+            }
+        }
+        val oldSession = DocumentDraftStore(persistence)
+        val restoring = async(Dispatchers.Default) { oldSession.restore(owner) }
+        try {
+            reading.await()
+            val retirementEntered = CompletableDeferred<Unit>()
+            val retiring = async(Dispatchers.Default) {
+                retirementEntered.complete(Unit)
+                oldSession.retire(owner)
+            }
+            retirementEntered.await()
+            assertFalse(retiring.isCompleted, "Retirement must join the restore that can still admit a rewrite")
+            continueRead.complete(Unit)
+            assertEquals(listOf(retained), restoring.await()?.tabs)
+            retiring.await()
+            assertTrue(oldSession.awaitDurability())
+            assertEquals(1, rewriteCount, "Recovery compacts the tombstoned tab before retirement completes")
+            assertEquals(listOf(retained), DocumentDraftStore(disk).restore(owner)?.tabs)
+
+            assertTrue(disk.delete(owner)) // The account cleanup barrier now permits deleting its directory.
+            assertNull(oldSession.restore(owner))
+            assertFalse(oldSession.save(owner, listOf(retained), DOCUMENT_ID, SPACE_ID))
+            assertFalse(oldSession.tombstone(owner, setOf(retained.draftRecoveryKey())))
+            assertEquals(DocumentDraftReadStatus.ABSENT, disk.read(owner) { error("Retired session recreated its drafts") })
+            assertTrue(DocumentDraftStore(disk).save(owner, listOf(retained), DOCUMENT_ID, SPACE_ID))
+        } finally {
+            continueRead.complete(Unit)
+            restoring.join()
+        }
+    }
+
     @Test
     fun `nested create recovery waits for durable parent acknowledgements and preserves later drafts across restart`() = runTest {
         verifyNestedCreateRecovery(parentReceiptOnly = false)
@@ -263,7 +324,7 @@ class DocumentWorkspaceOfflineRestartTest {
                 val beforeRestart = DocumentDraftStore(persistence)
                 assertTrue(beforeRestart.save(owner, listOf(successor, ordinary), DOCUMENT_ID, SPACE_ID,
                     pendingSpaceCreates = listOf(spaceCommand), pendingDocumentCreates = listOf(command)))
-                assertTrue(beforeRestart.flush())
+                assertTrue(beforeRestart.awaitDurability())
 
                 val spaceRequested = CompletableDeferred<Unit>()
                 val spaceAcknowledgement = CompletableDeferred<ResponsePayload>()
@@ -420,7 +481,7 @@ class DocumentWorkspaceOfflineRestartTest {
                 selectedSpaceId = SPACE_ID,
                 pendingDocumentCreates = listOf(command),
             ))
-            assertTrue(beforeRestart.flush())
+            assertTrue(beforeRestart.awaitDurability())
 
             val committed = document().copy(title = command.title, markdown = command.markdown, revision = 1L)
             fixture.rpc.respond = { method ->
@@ -655,7 +716,7 @@ class DocumentWorkspaceOfflineRestartTest {
                     selectedSpaceId = SPACE_ID,
                 ),
             )
-            assertTrue(previousProcessStore.flush())
+            assertTrue(previousProcessStore.awaitDurability())
 
             // 一个全新的 store 和 feature 代表正常的 Desktop 进程重启边界。
             val feature = DocumentWorkspaceFeature(
@@ -736,7 +797,7 @@ class DocumentWorkspaceOfflineRestartTest {
                         selectedSpaceId = SPACE_ID,
                     ),
                 )
-                assertTrue(previousProcessStore.flush())
+                assertTrue(previousProcessStore.awaitDurability())
 
                 val feature = DocumentWorkspaceFeature(
                     session = fixture.session,
@@ -809,7 +870,7 @@ class DocumentWorkspaceOfflineRestartTest {
                     selectedSpaceId = SPACE_ID,
                 ),
             )
-            assertTrue(previousProcessStore.flush())
+            assertTrue(previousProcessStore.awaitDurability())
 
             val feature = DocumentWorkspaceFeature(
                 session = fixture.session,
@@ -872,7 +933,7 @@ class DocumentWorkspaceOfflineRestartTest {
                     selectedSpaceId = SPACE_ID,
                 ),
             )
-            assertTrue(previousProcessStore.flush())
+            assertTrue(previousProcessStore.awaitDurability())
 
             val feature = DocumentWorkspaceFeature(
                 session = fixture.session,

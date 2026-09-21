@@ -20,6 +20,7 @@ import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.protocol.model.GroupFileEntry
 import com.virjar.tk.app.navigation.AppDataState
 import com.virjar.tk.app.navigation.ScreenDataKey
+import com.virjar.tk.app.navigation.feature.GroupFileUploadTarget
 import com.virjar.tk.app.ui.component.textAttachmentPreviewKind
 import com.virjar.tk.app.ui.screen.GroupFilesScreen
 import com.virjar.tk.app.telemetry.ClientUiPage
@@ -196,7 +197,7 @@ internal fun NavGraphBuilder.androidGroupFilesRoute(
         val mediaSession = mediaResources.mediaSession
         val downloads = requireNotNull(mediaResources.fileDownloads)
         var uploading by remember { mutableStateOf(false) }
-        var versionTarget by remember { mutableStateOf<GroupFileEntry?>(null) }
+        var uploadTarget by remember { mutableStateOf<GroupFileUploadTarget?>(null) }
         LaunchedEffect(chatId) {
             dataState.runAdmittedUiAction(actionAdmission, onClosed = {}) {
                 dataState.loadScreenDataByKey(ScreenDataKey.GroupFiles(chatId))
@@ -206,7 +207,9 @@ internal fun NavGraphBuilder.androidGroupFilesRoute(
         val picker = rememberLauncherForActivityResult(
             ActivityResultContracts.OpenDocument(),
         ) { uri ->
-            if (uri != null) {
+            val target = uploadTarget
+            uploadTarget = null
+            if (uri != null && target != null) {
                 dataState.launchAdmittedUiAction(actionAdmission) {
                     uploading = true
                     var selected: PreparedMedia? = null
@@ -230,17 +233,7 @@ internal fun NavGraphBuilder.androidGroupFilesRoute(
                             mediaSession,
                         )
                         currentCoroutineContext().ensureActive()
-                        // 文件选择器返回时路由可能已切到另一群；此时取消发布，绝不能借用 B 的当前目录。
-                        if (dataState.groupFiles.chatId != chatId) {
-                            uploadAttempt.cancel()
-                            return@launchAdmittedUiAction
-                        }
-                        val target = versionTarget
-                        if (target == null) {
-                            dataState.groupFiles.publish(name, attachment)
-                        } else {
-                            dataState.groupFiles.addVersion(target, attachment)
-                        }
+                        dataState.groupFiles.completeUpload(target, name, attachment)
                         // UPLOAD 描述已完成的 FileStore 传输。该功能会单独记录 PUBLISH_GROUP_FILE，
                         // 因此上传可能准确成功，而被拒绝的目录发布则会记录其自身的 FAILED 终态。
                         uploadAttempt.succeed()
@@ -257,13 +250,10 @@ internal fun NavGraphBuilder.androidGroupFilesRoute(
                     } finally {
                         selected?.delete()
                         actionAdmission.runIfOpen {
-                            versionTarget = null
                             uploading = false
                         }
                     }
                 }
-            } else {
-                actionAdmission.runIfOpen { versionTarget = null }
             }
         }
 
@@ -283,14 +273,18 @@ internal fun NavGraphBuilder.androidGroupFilesRoute(
             onUp = actionAdmission.guard(dataState.groupFiles::up),
             onCreateFolder = actionAdmission.guard(dataState.groupFiles::createFolder),
             onUpload = actionAdmission.guard {
-                versionTarget = null
-                picker.launch(arrayOf("*/*"))
+                dataState.groupFiles.captureUploadTarget(chatId)?.let {
+                    uploadTarget = it
+                    picker.launch(arrayOf("*/*"))
+                }
             },
             onOpenFile = actionAdmission.guard(downloads::openOrDownload),
             onShowVersions = actionAdmission.guard(dataState.groupFiles::showVersions),
             onUploadVersion = actionAdmission.guard { target: GroupFileEntry ->
-                versionTarget = target
-                picker.launch(arrayOf("*/*"))
+                dataState.groupFiles.captureUploadTarget(chatId, target)?.let {
+                    uploadTarget = it
+                    picker.launch(arrayOf("*/*"))
+                }
             },
             onRename = actionAdmission.guard(dataState.groupFiles::rename),
             onDelete = actionAdmission.guard(dataState.groupFiles::delete),

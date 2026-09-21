@@ -370,6 +370,7 @@ internal fun SubScreenContent(
 
             fun chooseAndUpload(versionTarget: com.virjar.tk.protocol.model.GroupFileEntry?) {
                 if (!presentationGate.runIfOpen {}) return
+                val target = data.groupFiles.captureUploadTarget(screen.chatId, versionTarget) ?: return
                 val file = DesktopFilePicker.chooseFile("选择群文件") ?: return
                 actionScope.launch {
                     if (!presentationGate.runIfOpen { uploading = true }) return@launch
@@ -378,8 +379,7 @@ internal fun SubScreenContent(
                             resources.fileTransfer.upload(file)
                         } ?: return@launch
                         admittedSuspend(onClosed = {}) {
-                            if (versionTarget == null) data.groupFiles.publish(file.name, attachment)
-                            else data.groupFiles.addVersion(versionTarget, attachment)
+                            data.groupFiles.completeUpload(target, file.name, attachment)
                         }
                     } catch (cancelled: CancellationException) {
                         throw cancelled

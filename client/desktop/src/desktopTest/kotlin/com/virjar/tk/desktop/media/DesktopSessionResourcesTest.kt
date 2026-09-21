@@ -475,6 +475,61 @@ class DesktopSessionResourcesTest {
     }
 
     @Test
+    fun `retirement during request admission or auth failure releases partial and root capacity`() = runBlocking {
+        for (retireDuringAuthResponse in listOf(false, true)) {
+            withTempDirectory { dataDir ->
+                val credentials = AtomicReference(SessionHttpCredentials("owner", "owner-token"))
+                val replacement = SessionHttpCredentials("replacement", "replacement-token")
+                val mediaDirectory = AtomicReference<File?>()
+                val httpCalls = AtomicInteger()
+                val original = DesktopSessionResources(
+                    ownerUid = "owner",
+                    datasetId = TEST_MEDIA_DATASET_ID,
+                    deploymentIdentity = deployment("https://chat.example"),
+                    credentialProvider = {
+                        if (!retireDuringAuthResponse && mediaDirectory.get()?.listFiles().orEmpty()
+                                .any { it.name.endsWith(".part") }) {
+                            // First checks pass. The identity changes only after the reservation
+                            // and its temporary file exist, immediately before HTTP admission.
+                            credentials.set(replacement)
+                        }
+                        credentials.get()
+                    },
+                    dataDir = dataDir,
+                    diagnosticLogger = NoopLogger,
+                    quotaBytes = 4L,
+                    downloader = downloader { _, partial ->
+                        httpCalls.incrementAndGet()
+                        partial.writeText("part")
+                        credentials.set(replacement)
+                        throw com.virjar.tk.shared.AppError.AuthExpired
+                    },
+                )
+                mediaDirectory.set(original.mediaDirectory)
+                try {
+                    assertFailsWith<DesktopSessionUnavailableException> {
+                        original.mediaCache.ensureDownloaded("owner/file.bin", expectedBytes = 4L)
+                    }
+                    assertEquals(if (retireDuringAuthResponse) 1 else 0, httpCalls.get())
+                    assertTrue(original.mediaDirectory.listFiles().orEmpty().none(File::isFile))
+                } finally {
+                    original.close()
+                }
+
+                // A different login uses the same process-wide root budget. It must be able to
+                // reserve the entire quota, proving the failed owner's reservation was returned.
+                val next = resources(dataDir, uid = "replacement", quotaBytes = 4L,
+                    downloader = downloader { _, partial -> partial.writeText("next") })
+                try {
+                    assertEquals("next", next.mediaCache.ensureDownloaded("replacement/file.bin", expectedBytes = 4L).readText())
+                } finally {
+                    next.close()
+                }
+            }
+        }
+    }
+
+    @Test
     fun `closing session cancels transfer and closes credential gate idempotently`() = runBlocking {
         withTempDirectory { dataDir ->
             val started = CompletableDeferred<Unit>()

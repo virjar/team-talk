@@ -26,6 +26,13 @@ import kotlinx.coroutines.launch
 
 internal data class GroupFileLocation(val chatId: String, val parentId: String?)
 
+/** Captured before opening a platform picker; navigation cannot retarget an accepted upload. */
+class GroupFileUploadTarget internal constructor(
+    val chatId: String,
+    val parentId: String?,
+    internal val version: GroupFileEntry?,
+)
+
 /** 群文件页面观察当前目录的本地投影；刷新完整目录，事件与可靠命令确认使其收敛。 */
 class GroupFilesFeature internal constructor(
     private val session: ClientSession,
@@ -203,59 +210,32 @@ class GroupFilesFeature internal constructor(
         }
     }
 
-    suspend fun publish(name: String, attachment: Attachment): Boolean {
-        val location = currentLocation() ?: return false
+    fun captureUploadTarget(expectedChatId: String, version: GroupFileEntry? = null): GroupFileUploadTarget? {
+        val location = currentLocation()?.takeIf { it.chatId == expectedChatId } ?: return null
+        if (version != null && (version.chatId != location.chatId || version.parentId != location.parentId ||
+                version.kind != GroupFileEntry.KIND_FILE)) return null
+        return GroupFileUploadTarget(location.chatId, location.parentId, version)
+    }
+
+    suspend fun completeUpload(target: GroupFileUploadTarget, name: String, attachment: Attachment): Boolean {
+        val location = GroupFileLocation(target.chatId, target.parentId)
+        val version = target.version
         val attempt = telemetry.startActionAttempt(
             ClientUiPage.GROUP_FILES,
             ClientUiAction.PUBLISH_GROUP_FILE,
         )
         return try {
             val submission = localData.run {
-                session.groupFileRepo.createRecoverableFile(
-                    location.chatId,
-                    location.parentId,
-                    name,
-                    attachment,
-                ).getOrThrow()
+                if (version == null) {
+                    session.groupFileRepo.createRecoverableFile(location.chatId, location.parentId, name, attachment)
+                } else {
+                    session.groupFileRepo.addRecoverableVersion(location.chatId, version.entryId, attachment, version.revision)
+                }.getOrThrow()
             }
             if (submission == GroupFileCommandSubmission.PENDING) attempt.queue() else attempt.succeed()
             convergeForegroundSubmission(submission, location)
-            true
-        } catch (cancelled: CancellationException) {
-            attempt.cancel()
-            throw cancelled
-        } catch (e: Exception) {
-            attempt.fail()
-            if (currentLocation() == location) reportError(e, "发布群文件失败")
-            false
-        }
-    }
-
-    suspend fun addVersion(entry: GroupFileEntry, attachment: Attachment): Boolean {
-        val location = currentLocation() ?: return false
-        if (entry.chatId != location.chatId) return false
-        val attempt = telemetry.startActionAttempt(
-            ClientUiPage.GROUP_FILES,
-            ClientUiAction.PUBLISH_GROUP_FILE,
-        )
-        return try {
-            val submission = localData.run {
-                session.groupFileRepo.addRecoverableVersion(
-                    location.chatId,
-                    entry.entryId,
-                    attachment,
-                    entry.revision,
-                ).getOrThrow()
-            }
-            if (submission == GroupFileCommandSubmission.PENDING) {
-                attempt.queue()
-                reportPendingSubmission()
-            } else if (currentLocation() == location) {
-                attempt.succeed()
-                refresh(location)
-                showCurrentVersions(location, entry.entryId)
-            } else {
-                attempt.succeed()
+            if (version != null && submission != GroupFileCommandSubmission.PENDING && currentLocation() == location) {
+                showCurrentVersions(location, version.entryId)
             }
             true
         } catch (cancelled: CancellationException) {
@@ -263,7 +243,7 @@ class GroupFilesFeature internal constructor(
             throw cancelled
         } catch (e: Exception) {
             attempt.fail()
-            if (currentLocation() == location) reportError(e, "上传新版本失败")
+            if (currentLocation() == location) reportError(e, if (version == null) "发布群文件失败" else "上传新版本失败")
             false
         }
     }

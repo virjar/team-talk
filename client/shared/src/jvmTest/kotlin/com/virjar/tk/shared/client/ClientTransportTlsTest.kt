@@ -482,7 +482,7 @@ class ClientTransportTlsTest {
             authenticationTerminal = { false },
             routePacket = { _, _ -> },
             onTransportDisconnected = {},
-            transportTls = transportTls,
+            backend = NettyClientTransportBackend(transportTls),
         )
         return TransportHarness(owner, authInvocations, endedAttempts)
     }

@@ -7,6 +7,8 @@ import com.virjar.tk.shared.platform.synchronized
 
 import com.virjar.tk.protocol.payload.SyncDatasetIdPolicy
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 
 enum class DocumentDraftReadStatus { ABSENT, AVAILABLE, RETRYABLE }
@@ -70,6 +72,8 @@ interface DocumentDraftPersistence {
     fun write(ownerKey: DocumentDraftOwnerKey, payload: () -> DocumentDraftPayload): Boolean
     /** 等待本次调用之前的每一个已接受的修改都持久化或终止性失败。 */
     fun flush(): Boolean
+    /** UI workflows await durability without selecting a platform worker or blocking Main. */
+    suspend fun awaitDurability(): Boolean = withContext(Dispatchers.Default) { flush() }
     /**
      * 恰好当每一个被请求的身份都被持久地退役时返回 true。在那个不可逆点之后，
      * 发布一份无关热快照的失败必须由 [flush] 暴露，而不是把这个结果改回 false。
@@ -191,8 +195,8 @@ class DocumentDraftStore(
         pendingDocumentCreates: List<PendingDocumentCreateCommand> = emptyList(),
         pendingDestructiveIntents: List<DocumentDestructiveIntent> = emptyList(),
     ): Boolean = synchronized(lock) {
-        // 显式注销在旧 Compose 树销毁之前就退役了这个 store 实例。迟到的编辑器回调
-        // 可能仍然到达它旧的 DocumentWorkspaceFeature，但它绝不能复活注销已经删除的草稿。
+        // 会话在旧 Compose 树销毁之前就退役了这个 store 实例。迟到的编辑器回调
+        // 可能仍然到达它旧的 DocumentWorkspaceFeature，但它绝不能复活已经清理的草稿。
         // 之后的登录会收到一个新的 store。
         if (retiredOwnerKey == key) return@synchronized false
         val draftTabs = tabs
@@ -262,8 +266,20 @@ class DocumentDraftStore(
         }
     }
 
-    /** 阻塞式持久化屏障；调用方必须在 UI/event-loop 线程之外调用它。 */
-    internal fun flush(): Boolean = safely(persistence::flush) == true
+    internal suspend fun awaitDurability(): Boolean = safely { persistence.awaitDurability() } == true
+
+    /**
+     * 封闭旧会话的存储实例，保留已准入的磁盘资料。与 restore/save 使用同一把锁，
+     * 返回前也会等待正在恢复的快照完成其规范化写入；调用方随后等待平台落盘屏障即可清理账号。
+     * 仅在不再复用本实例时调用，同账号的新会话使用新的 store。
+     */
+    fun retire(key: DocumentDraftOwnerKey) = synchronized(lock) {
+        retiredOwnerKey = key
+        if (ownerKey == key) {
+            ownerKey = null
+            snapshot = null
+        }
+    }
 
     /** 在这个 session 拥有的 store 上，永久拒绝之后针对 [key] 的写入。 */
     internal fun clearAndRetire(key: DocumentDraftOwnerKey) = synchronized(lock) {

@@ -1,11 +1,13 @@
 package com.virjar.tk.android
 
 import com.virjar.tk.protocol.body.AttachmentPolicy
+import com.virjar.tk.app.media.MediaCacheBudget
+import com.virjar.tk.app.media.MediaCacheEntry
+import com.virjar.tk.app.media.MediaCacheTargetCoordinator
+import com.virjar.tk.shared.platform.withLock
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -15,15 +17,12 @@ import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.withLock
 import kotlin.coroutines.CoroutineContext
 
 /** 一个 Android 缓存根目录下的所有已下载媒体共享这个有界预算。 */
 internal const val DEFAULT_ANDROID_MEDIA_CACHE_QUOTA_BYTES: Long = AttachmentPolicy.MAX_UPLOAD_BYTES
-internal const val DEFAULT_ANDROID_MEDIA_CACHE_MAX_ENTRIES: Int = 4096
+internal const val DEFAULT_ANDROID_MEDIA_CACHE_MAX_ENTRIES: Int = MediaCacheBudget.DEFAULT_MAX_ENTRIES
 private const val ANDROID_MEDIA_CACHE_PART_PREFIX = ".teamtalk-part-"
 private const val ANDROID_MEDIA_CACHE_PART_SUFFIX = ".part"
 private val ANDROID_MEDIA_CACHE_SCOPE_NAME = Regex("[0-9a-f]{32}")
@@ -101,18 +100,10 @@ internal fun ensureManagedMediaCacheDirectory(
 internal const val FILE_PROVIDER_ATTACHMENTS_PATH = "teamtalk-media/attachments/"
 
 /**
- * 同一缓存目标只允许一个写入者。固定数量的分片锁避免 URL 数量增长时积累锁对象。
+ * 同一缓存目标只允许一个写入者。共享协调器在最后一个等待者退出时移除锁对象。
  * 后到的缩略图/画廊请求在获锁后会直接命中首个请求已经落盘的文件。
  */
-private object MediaCacheWriteCoordinator {
-    private val locks = Array(64) { Mutex() }
-
-    suspend fun <T> withTarget(target: File, action: suspend () -> T): T {
-        val index = Math.floorMod(target.absolutePath.hashCode(), locks.size)
-        return locks[index].withLock { action() }
-    }
-
-}
+private val mediaCacheWrites = MediaCacheTargetCoordinator()
 
 /**
  * 一个 Android 缓存根目录的进程级容量所有者。
@@ -130,11 +121,9 @@ internal object AndroidMediaCacheCapacityRegistry {
         val quotaBytes: Long,
         val maxEntries: Int,
     ) {
-        val lock = ReentrantLock()
-        var reservedBytes: Long = 0L
-        var reservedEntries: Int = 0
+        val budget = MediaCacheBudget(quotaBytes, maxEntries) { MediaCacheQuotaException(quotaBytes, maxEntries) }
+        val lock = budget.lock
         var initialized: Boolean = false
-        val pinnedFiles = mutableMapOf<String, Int>()
     }
 
     private val states = mutableMapOf<Key, State>()
@@ -164,54 +153,14 @@ internal object AndroidMediaCacheCapacityRegistry {
                     state.initialized = true
                 }
 
-                val finalFiles = finalCacheFiles(cacheRoot)
-                var residentBytes = finalFiles.sumOf(File::length)
-                var residentEntries = finalFiles.size
-                val availableForResidentBytes = quotaBytes - state.reservedBytes - expectedBytes
-                val availableForResidentEntries = maxEntries - state.reservedEntries - 1
-                finalFiles.asSequence()
-                    .filterNot { it.normalizedPath() == target.normalizedPath() }
-                    .filterNot { state.pinnedFiles.containsKey(it.normalizedPath()) }
-                    .sortedWith(compareBy<File>(File::lastModified).thenBy(File::normalizedPath))
-                    .forEach { file ->
-                        if (
-                            residentBytes <= availableForResidentBytes &&
-                            residentEntries <= availableForResidentEntries
-                        ) {
-                            return@forEach
-                        }
-                        val length = file.length()
-                        if (file.delete()) {
-                            residentBytes -= length
-                            residentEntries -= 1
-                        }
+                val reserved = state.budget.reserve(expectedBytes, target.normalizedPath(),
+                    finalCacheFiles(cacheRoot).map { it.cacheEntry() }, File::delete)
+                AndroidMediaCacheReservation(reserved) { installed ->
+                    require(installed.isPlainFile() && installed.length() == expectedBytes) {
+                        "只能租用完整发布的媒体缓存"
                     }
-                if (
-                    availableForResidentBytes < 0L ||
-                    availableForResidentEntries < 0 ||
-                    residentBytes > availableForResidentBytes ||
-                    residentEntries > availableForResidentEntries
-                ) {
-                    throw MediaCacheQuotaException(quotaBytes, maxEntries)
+                    acquireLeaseLocked(state, installed)
                 }
-                state.reservedBytes += expectedBytes
-                state.reservedEntries += 1
-                AndroidMediaCacheReservation(
-                    lock = state.lock,
-                    releaseReservationLocked = {
-                        check(state.reservedBytes >= expectedBytes && state.reservedEntries > 0) {
-                            "媒体缓存预留记账损坏"
-                        }
-                        state.reservedBytes -= expectedBytes
-                        state.reservedEntries -= 1
-                    },
-                    acquireLeaseLocked = { installed ->
-                        require(installed.isPlainFile() && installed.length() == expectedBytes) {
-                            "只能租用完整发布的媒体缓存"
-                        }
-                        acquireLeaseLocked(state, installed)
-                    },
-                )
             }
             if (reservation != null) return reservation
         }
@@ -250,7 +199,7 @@ internal object AndroidMediaCacheCapacityRegistry {
                 val exists = file.existsNoFollow()
                 val validFinal = file.isPlainFile() && file.length() == expectedBytes
                 if (forceRefresh || exists && !validFinal) {
-                    if (state.pinnedFiles.containsKey(path) || !file.delete() && file.existsNoFollow()) {
+                    if (state.budget.isPinned(path) || !file.delete() && file.existsNoFollow()) {
                         throw MediaCacheQuotaException(quotaBytes, maxEntries)
                     }
                     return@withLock null
@@ -273,9 +222,7 @@ internal object AndroidMediaCacheCapacityRegistry {
                     if (states[key] !== state) {
                         false
                     } else if (
-                        state.reservedBytes == 0L &&
-                        state.reservedEntries == 0 &&
-                        state.pinnedFiles.isEmpty()
+                        state.budget.isIdle
                     ) {
                         states.remove(key, state)
                         true
@@ -290,17 +237,17 @@ internal object AndroidMediaCacheCapacityRegistry {
 
     internal fun reservedBytesForTest(cacheRoot: File): Long {
         val state = synchronized(this) { states[key(cacheRoot)] } ?: return 0L
-        return state.lock.withLock { state.reservedBytes }
+        return state.lock.withLock { state.budget.reservedBytes }
     }
 
     internal fun reservedEntriesForTest(cacheRoot: File): Int {
         val state = synchronized(this) { states[key(cacheRoot)] } ?: return 0
-        return state.lock.withLock { state.reservedEntries }
+        return state.lock.withLock { state.budget.reservedEntries }
     }
 
     internal fun pinnedFilesForTest(cacheRoot: File): Int {
         val state = synchronized(this) { states[key(cacheRoot)] } ?: return 0
-        return state.lock.withLock { state.pinnedFiles.size }
+        return state.lock.withLock { state.budget.pinnedFileCount }
     }
 
     internal fun stateCountForTest(): Int = synchronized(this) { states.size }
@@ -358,12 +305,7 @@ internal object AndroidMediaCacheCapacityRegistry {
     /** 调用方持有 [State.lock]。 */
     private fun acquireLeaseLocked(state: State, file: File): AndroidMediaCacheFileLease {
         require(file.isPlainFile()) { "只能租用普通媒体缓存文件" }
-        val path = file.normalizedPath()
-        state.pinnedFiles[path] = state.pinnedFiles.getOrDefault(path, 0) + 1
-        return AndroidMediaCacheFileLease(file, state.lock) {
-            val owners = checkNotNull(state.pinnedFiles[path]) { "媒体缓存固定记账损坏" }
-            if (owners == 1) state.pinnedFiles.remove(path) else state.pinnedFiles[path] = owners - 1
-        }
+        return AndroidMediaCacheFileLease(file, state.budget.pin(file.normalizedPath()))
     }
 
     private data class CacheDirectory(
@@ -373,6 +315,7 @@ internal object AndroidMediaCacheCapacityRegistry {
 }
 
 private fun File.normalizedPath(): String = absoluteFile.normalize().path
+private fun File.cacheEntry() = MediaCacheEntry(normalizedPath(), this, length(), lastModified())
 
 private fun File.existsNoFollow(): Boolean = Files.exists(toPath(), LinkOption.NOFOLLOW_LINKS)
 
@@ -427,57 +370,22 @@ private fun File.isAndroidMediaCachePartial(): Boolean =
     name.startsWith(ANDROID_MEDIA_CACHE_PART_PREFIX) && name.endsWith(ANDROID_MEDIA_CACHE_PART_SUFFIX)
 
 internal class AndroidMediaCacheReservation internal constructor(
-    private val lock: ReentrantLock,
-    private val releaseReservationLocked: () -> Unit,
+    private val reservation: MediaCacheBudget.Reservation,
     private val acquireLeaseLocked: (File) -> AndroidMediaCacheFileLease,
 ) : AutoCloseable {
-    private val active = AtomicBoolean(true)
-
-    internal fun commit(install: () -> Unit) {
-        lock.withLock {
-            check(active.get()) { "媒体缓存容量预留已经释放" }
-            try {
-                install()
-            } finally {
-                releaseLocked()
-            }
-        }
+    internal fun commit(install: () -> Unit) = reservation.commit(install)
+    internal fun commitAsLease(file: File, install: () -> Unit): AndroidMediaCacheFileLease = reservation.commit {
+        install()
+        acquireLeaseLocked(file)
     }
-
-    /** 安装文件并把预留转换为消费者租约，中间不存在逐出窗口。 */
-    internal fun commitAsLease(file: File, install: () -> Unit): AndroidMediaCacheFileLease =
-        lock.withLock {
-            check(active.get()) { "媒体缓存容量预留已经释放" }
-            try {
-                install()
-                acquireLeaseLocked(file)
-            } finally {
-                releaseLocked()
-            }
-        }
-
-    override fun close() {
-        lock.withLock { releaseLocked() }
-    }
-
-    private fun releaseLocked() {
-        if (!active.compareAndSet(true, false)) return
-        releaseReservationLocked()
-    }
+    override fun close() = reservation.close()
 }
 
 internal class AndroidMediaCacheFileLease internal constructor(
     val file: File,
-    private val lock: ReentrantLock,
-    private val releasePinLocked: () -> Unit,
+    private val pin: AutoCloseable,
 ) : AutoCloseable {
-    private val active = AtomicBoolean(true)
-
-    override fun close() {
-        lock.withLock {
-            if (active.compareAndSet(true, false)) releasePinLocked()
-        }
-    }
+    override fun close() = pin.close()
 }
 
 /**
@@ -531,7 +439,7 @@ internal suspend fun materializePinnedMediaCacheFile(
         }
     },
     writePartial: suspend (File) -> Unit,
-): AndroidMediaCacheFileLease = MediaCacheWriteCoordinator.withTarget(target) {
+): AndroidMediaCacheFileLease = mediaCacheWrites.withTarget(target.normalizedPath()) {
     currentCoroutineContext().ensureActive()
     acquireCachedLease()?.let { return@withTarget it }
 
@@ -586,7 +494,7 @@ internal suspend fun materializeMediaCacheFile(
         }
     },
     writePartial: suspend (File) -> Unit,
-): File = MediaCacheWriteCoordinator.withTarget(target) {
+): File = mediaCacheWrites.withTarget(target.normalizedPath()) {
     currentCoroutineContext().ensureActive()
     if (target.isFile && (expectedBytes == null || target.length() == expectedBytes)) {
         target.setLastModified(System.currentTimeMillis())

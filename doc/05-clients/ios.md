@@ -22,6 +22,9 @@ ClientSession、SQLite、同步与可靠发送。Swift 仅提供启动入口、�
 iOS 的 Network.framework 只负责各自的传输。iOS 不另建 HTTP 业务 API，不另存一套消息状态。
 账号数据按 deployment/dataset/uid 隔离；认证凭据和设备 ID 使用本安装 bundle 身份下的 Keychain。
 数据库先判断版本和物理完整性，未知/更高版本保留原文件并报错；确认损坏才走可恢复的替换流程。
+连接生命周期和附件 spool 策略位于 shared common；媒体预算与导入协调位于 app common。
+iOS 只适配 Network.framework、文件/摘要、UIKit 选择和媒体能力。文档草稿的编码与持久提交在后台单写者执行，
+后台切换及账号清理通过明确的持久化屏障衔接。
 详细所有权见[客户端与 SDK](../03-architecture/client-and-sdk.md)。
 
 媒体继续完整认证下载到私有缓存后播放；图片/音视频只使用本地路径。系统选择结果复制到账号暂存区，
@@ -34,6 +37,10 @@ iOS 的 Network.framework 只负责各自的传输。iOS 不另建 HTTP 业务 A
 清空水位、未读标记与消息投影由同一 SDK 管理，旧历史消息不会在补拉后重新出现；这些入口仍需设备交互验收。
 
 ## 开发与构建
+
+Xcode 配置生成由 buildSrc 的 `GenerateIosXcodeConfiguration` 任务负责，仍通过
+`:client:ios:generateXcodeConfiguration` 生成既有 xcconfig、Info.plist 和图标路径。
+架构检查扫描所有模块的 main 源集，关闭 iOS 构建也不会跳过 iOS 源码边界。
 
 `enableIos` 默认是 `false`：Gradle 不包含 `:client:ios`，协议、SDK、测试夹具、共享 UI 和编辑器也不注册
 iOS Native target。Android/Desktop、SDK 和服务端的常用构建与测试照常使用，不要求 Apple 工具链。
@@ -149,14 +156,16 @@ HTTP 遥测沿用既有 UNKNOWN 枚举并以 `osName=iOS`、`distribution=ios` �
 ```bash
 ./gradlew --max-workers=2 :client:ios:compileKotlinIosArm64 \
   :protocol:protocol:compileTestKotlinIosArm64 \
-  :client:shared:compileTestKotlinIosArm64 :client:app:compileTestKotlinIosArm64
+  :client:shared:compileTestKotlinIosArm64 :client:app:compileTestKotlinIosArm64 \
+  :client:ios:compileTestKotlinIosArm64
 ```
 
 在完整 Apple Silicon/Xcode 环境运行 Native 测试：
 
 ```bash
 ./gradlew --max-workers=2 :protocol:protocol:iosSimulatorArm64Test \
-  :client:shared:iosSimulatorArm64Test :client:app:iosSimulatorArm64Test
+  :client:shared:iosSimulatorArm64Test :client:app:iosSimulatorArm64Test \
+  :client:ios:iosSimulatorArm64Test
 ```
 
 Intel 主机可在支持 x86_64 的已安装 iOS runtime 上执行协议和 SDK 测试：
@@ -190,7 +199,9 @@ spool 分块与租约退役、遥测目录分页回收、HTTP 工作准入与关
 
 Intel 主机使用 Xcode 26.3 / iPhoneOS 26.2 SDK，已通过 iPhone arm64 Debug framework 链接、
 Swift 壳的 typecheck 和无签名 iPhone 应用整包构建；在 iOS 18.1 x86_64 runtime 上，
-协议 221 项和 SDK 150 项 Native 测试全部通过。
+协议 221 项和 SDK 154 项 Native 测试全部通过。
+本轮新增的 iOS 草稿文件持久化测试已通过 ARM64 测试源码编译，并纳入 Apple Silicon CI 的
+`:client:ios:iosSimulatorArm64Test`；它们未在这台 Intel 主机执行。
 默认关闭、本地启用、命令行覆盖和 CI 环境变量启用均已验证；关闭时 Android/Desktop 编译、
 JVM 回归、架构和协议基线检查通过。共享 UI 的模拟器运行、签名与 APNs 真机验收尚未完成；
 当前不把 iOS 标为已发布或已通过设备验收。

@@ -1,6 +1,10 @@
 package com.virjar.tk.desktop.media
 
 import com.virjar.tk.shared.AppError
+import com.virjar.tk.app.media.MediaCacheBudget
+import com.virjar.tk.app.media.MediaCacheEntry
+import com.virjar.tk.app.media.MediaCacheTargetCoordinator
+import com.virjar.tk.shared.platform.synchronized as withMediaCacheLock
 import com.virjar.tk.protocol.body.AttachmentPolicy
 import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.shared.repository.FileOps
@@ -23,7 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.coroutineContext
 
 internal const val DEFAULT_DESKTOP_MEDIA_QUOTA_BYTES: Long = AttachmentPolicy.MAX_UPLOAD_BYTES
-internal const val DEFAULT_DESKTOP_MEDIA_CACHE_MAX_ENTRIES: Int = 4096
+internal const val DEFAULT_DESKTOP_MEDIA_CACHE_MAX_ENTRIES: Int = MediaCacheBudget.DEFAULT_MAX_ENTRIES
 
 private val DESKTOP_MEDIA_SCOPE_NAME = Regex("[0-9a-f]{64}")
 private val DESKTOP_MEDIA_FINAL_FILE_NAME = Regex("[0-9a-f]{64}\\.[a-z0-9]{1,10}")
@@ -36,10 +40,9 @@ private class DesktopMediaRootCapacity(
     val quotaBytes: Long,
     val maxEntries: Int,
 ) {
-    val lock = Any()
-    var reservedBytes: Long = 0L
-    var reservedEntries: Int = 0
-    val consumerPins = mutableMapOf<String, Int>()
+    val budget = MediaCacheBudget(quotaBytes, maxEntries) { DesktopMediaCacheQuotaException(quotaBytes, maxEntries) }
+    val lock = budget.lock
+    val writes = MediaCacheTargetCoordinator()
     var initialized: Boolean = false
 
     fun scopeDirectories(): Sequence<File> {
@@ -94,6 +97,7 @@ private fun isDesktopMediaPartialFile(file: File): Boolean =
         file.name.endsWith(DESKTOP_MEDIA_PART_SUFFIX)
 
 private fun File.desktopMediaCapacityKey(): String = absoluteFile.normalize().path
+private fun File.cacheEntry() = MediaCacheEntry(desktopMediaCapacityKey(), this, length(), lastModified())
 
 private fun File.existsNoFollow(): Boolean = Files.exists(toPath(), LinkOption.NOFOLLOW_LINKS)
 
@@ -215,9 +219,9 @@ internal class DesktopMediaCache(
         credentialGate.ensureOwner()
         validateDesktopMediaDownloadSize(expectedBytes, quotaBytes, maxEntries)
         val target = targetFile(reference, suggestedFileName)
-        return synchronized(rootCapacity.lock) {
+        return withMediaCacheLock(rootCapacity.lock) {
             if (!target.isPlainDesktopMediaFile() || target.length() != expectedBytes) {
-                return@synchronized null
+                return@withMediaCacheLock null
             }
             target.setLastModified(System.currentTimeMillis())
             target
@@ -232,16 +236,16 @@ internal class DesktopMediaCache(
         credentialGate.ensureOwner()
         validateDesktopMediaDownloadSize(attachment.size, quotaBytes, maxEntries)
         val target = targetFile(attachment.path, attachment.name)
-        return synchronized(rootCapacity.lock) {
+        return withMediaCacheLock(rootCapacity.lock) {
             val exists = target.existsNoFollow()
             val validFinal = target.isPlainDesktopMediaFile() && target.length() == attachment.size
             if (forceRefresh || exists && !validFinal) {
                 if (isPinnedLocked(target) || !target.delete() && target.existsNoFollow()) {
                     throw DesktopMediaCacheQuotaException(quotaBytes, maxEntries)
                 }
-                return@synchronized null
+                return@withMediaCacheLock null
             }
-            if (!validFinal) return@synchronized null
+            if (!validFinal) return@withMediaCacheLock null
             target.setLastModified(System.currentTimeMillis())
             pinLocked(target)
         }
@@ -257,7 +261,7 @@ internal class DesktopMediaCache(
         // 在缓存命中或完成的下载被观测到之前，先保护目标路径。
         // 最终消费者 pin 在同一把根锁下获取，先于该交接 pin 释放，
         // 因此另一个 namespace 绝不可能在发布与播放持有之间把文件逐出。
-        val handoffPin = synchronized(rootCapacity.lock) {
+        val handoffPin = withMediaCacheLock(rootCapacity.lock) {
             if (
                 target.existsNoFollow() &&
                 (!target.isPlainDesktopMediaFile() || target.length() != attachment.size)
@@ -272,7 +276,7 @@ internal class DesktopMediaCache(
             while (true) {
                 val file = ensureDownloaded(attachment, onProgress)
                 coroutineContext.ensureActive()
-                val lease = synchronized(rootCapacity.lock) {
+                val lease = withMediaCacheLock(rootCapacity.lock) {
                     if (!file.isPlainDesktopMediaFile() || file.length() != attachment.size) {
                         null
                     } else {
@@ -318,7 +322,7 @@ internal class DesktopMediaCache(
         val flight = synchronized(callbackGate) {
             ensureOpen()
             synchronized(flightsLock) {
-                val cachedTarget = synchronized(rootCapacity.lock) {
+                val cachedTarget = withMediaCacheLock(rootCapacity.lock) {
                     if (target.isPlainDesktopMediaFile() && target.length() == expectedBytes) {
                         target.setLastModified(System.currentTimeMillis())
                         target
@@ -369,37 +373,9 @@ internal class DesktopMediaCache(
     }
 
     /** 测试与会话启动使用的显式配额整理。 */
-    fun evictToQuota() = synchronized(rootCapacity.lock) {
+    fun evictToQuota() = withMediaCacheLock(rootCapacity.lock) {
         requireActiveDirectoryShape()
-        val files = rootCapacity.finalFiles()
-        var residentBytes = files.sumOf(File::length)
-        var residentEntries = files.size
-        val availableBytes = (quotaBytes - rootCapacity.reservedBytes).coerceAtLeast(0L)
-        val availableEntries = maxEntries - rootCapacity.reservedEntries
-        if (residentBytes <= availableBytes && residentEntries <= availableEntries) {
-            return@synchronized
-        }
-
-        // 字节压力保持现有的 80% 滞后；条目压力只恢复到上限。
-        val targetBytes = if (residentBytes > availableBytes) {
-            minOf(availableBytes, quotaBytes * 8 / 10)
-        } else {
-            availableBytes
-        }
-        files.asSequence()
-            .filterNot(::isPinnedLocked)
-            .sortedWith(compareBy(File::lastModified).thenBy(File::getPath))
-            .forEach { file ->
-                if (residentBytes <= targetBytes && residentEntries <= availableEntries) return@forEach
-                val length = file.length()
-                if (file.delete()) {
-                    residentBytes -= length
-                    residentEntries -= 1
-                }
-            }
-        if (residentBytes > availableBytes || residentEntries > availableEntries) {
-            throw DesktopMediaCacheQuotaException(quotaBytes, maxEntries)
-        }
+        rootCapacity.budget.trim(rootCapacity.finalFiles().map { it.cacheEntry() }, File::delete, byteHysteresis = 0.8)
     }
 
     override fun close() {
@@ -417,11 +393,11 @@ internal class DesktopMediaCache(
         suggestedFileName: String?,
         expectedBytes: Long,
         onProgress: (Float) -> Unit,
-    ): File {
+    ): File = rootCapacity.writes.withTarget(targetFile(reference, suggestedFileName).absolutePath) {
         ensureOpen()
         coroutineContext.ensureActive()
         val target = targetFile(reference, suggestedFileName)
-        cachedFile(reference, suggestedFileName, expectedBytes)?.let { return it }
+        cachedFile(reference, suggestedFileName, expectedBytes)?.let { return@withTarget it }
         val reservation = reserveCapacity(target, expectedBytes)
         val partial = try {
             Files.createTempFile(
@@ -434,14 +410,22 @@ internal class DesktopMediaCache(
             throw error
         }
 
-        val request = DesktopMediaDownloadRequest(
-            resolvedUrl = FileOps.resolveUrl(serverBaseUrl, reference),
-            authorizationToken = credentialGate.requireAccessToken(),
-            expectedBytes = expectedBytes,
-        )
         try {
+            // Credential admission can fail after the file and reservation already exist.
+            // Keep it inside their cleanup boundary, including a retirement during 401 handling.
+            val request = DesktopMediaDownloadRequest(
+                resolvedUrl = FileOps.resolveUrl(serverBaseUrl, reference),
+                authorizationToken = credentialGate.requireAccessToken(),
+                expectedBytes = expectedBytes,
+            )
             val operationContext = coroutineContext
-            val downloadedBytes = downloader.download(request, partial, onProgress)
+            val downloadedBytes = try {
+                downloader.download(request, partial, onProgress)
+            } catch (error: AppError.AuthExpired) {
+                val authoritative = credentialGate.authoritativeFailure(request.authorizationToken, error)
+                if (authoritative is AppError.AuthExpired) onAuthExpired(request.authorizationToken)
+                throw authoritative
+            }
             operationContext.ensureActive()
             require(partial.isPlainDesktopMediaFile()) { "媒体下载没有生成临时文件" }
             if (downloadedBytes != expectedBytes || partial.length() != expectedBytes) {
@@ -456,30 +440,22 @@ internal class DesktopMediaCache(
                 isolateOrdinaryProgressFailure { onProgress(1f) }
                 diagnostics.record(DesktopSessionDiagnosticEvent.MEDIA_CACHE_STORED)
             }
-            return target
+            target
         } catch (error: Throwable) {
-            var shouldReportAuthExpired = false
-            var terminalFailure = if (error is AppError.AuthExpired) {
-                credentialGate.authoritativeFailure(request.authorizationToken, error).also { authoritative ->
-                    shouldReportAuthExpired = authoritative is AppError.AuthExpired
-                }
-            } else {
-                error
-            }
+            var terminalFailure = error
             try {
                 Files.deleteIfExists(partial.toPath())
             } catch (cleanupFailure: Throwable) {
                 terminalFailure = mergeDesktopMediaCacheFailures(terminalFailure, cleanupFailure)
             }
-            if (shouldReportAuthExpired) onAuthExpired(request.authorizationToken)
             throw terminalFailure
         } finally {
             reservation.close()
         }
     }
 
-    private fun reserveCapacity(target: File, expectedBytes: Long): DesktopMediaCapacityReservation =
-        synchronized(rootCapacity.lock) {
+    private fun reserveCapacity(target: File, expectedBytes: Long): MediaCacheBudget.Reservation =
+        withMediaCacheLock(rootCapacity.lock) {
             validateDesktopMediaDownloadSize(expectedBytes, quotaBytes, maxEntries)
             if (
                 target.existsNoFollow() &&
@@ -489,84 +465,16 @@ internal class DesktopMediaCache(
                     throw DesktopMediaCacheQuotaException(quotaBytes, maxEntries)
                 }
             }
-            val files = rootCapacity.finalFiles()
-            var residentBytes = files.sumOf(File::length)
-            var residentEntries = files.size
-            val availableForResidentBytes = quotaBytes - rootCapacity.reservedBytes - expectedBytes
-            val availableForResidentEntries = maxEntries - rootCapacity.reservedEntries - 1
-            files.asSequence()
-                .filterNot { it == target }
-                .filterNot(::isPinnedLocked)
-                .sortedWith(compareBy(File::lastModified).thenBy(File::getPath))
-                .forEach { file ->
-                    if (
-                        residentBytes <= availableForResidentBytes &&
-                        residentEntries <= availableForResidentEntries
-                    ) {
-                        return@forEach
-                    }
-                    val length = file.length()
-                    if (file.delete()) {
-                        residentBytes -= length
-                        residentEntries -= 1
-                    }
-                }
-            if (
-                availableForResidentBytes < 0L ||
-                availableForResidentEntries < 0 ||
-                residentBytes > availableForResidentBytes ||
-                residentEntries > availableForResidentEntries
-            ) {
-                throw DesktopMediaCacheQuotaException(quotaBytes, maxEntries)
-            }
-            rootCapacity.reservedBytes += expectedBytes
-            rootCapacity.reservedEntries += 1
-            DesktopMediaCapacityReservation(expectedBytes)
+            rootCapacity.budget.reserve(expectedBytes, target.desktopMediaCapacityKey(),
+                rootCapacity.finalFiles().map { it.cacheEntry() }, File::delete)
         }
-
-    private inner class DesktopMediaCapacityReservation(
-        private val bytes: Long,
-    ) : Closeable {
-        private val active = AtomicBoolean(true)
-
-        fun commit(install: () -> Unit) = synchronized(rootCapacity.lock) {
-            check(active.get()) { "媒体缓存容量预留已经释放" }
-            try {
-                install()
-            } finally {
-                releaseLocked()
-            }
-        }
-
-        override fun close() = synchronized(rootCapacity.lock) { releaseLocked() }
-
-        private fun releaseLocked() {
-            if (!active.compareAndSet(true, false)) return
-            check(rootCapacity.reservedBytes >= bytes && rootCapacity.reservedEntries > 0) {
-                "媒体缓存预留记账损坏"
-            }
-            rootCapacity.reservedBytes -= bytes
-            rootCapacity.reservedEntries -= 1
-        }
-    }
 
     private fun pinLocked(file: File): DesktopMediaFileLease {
-        val key = file.desktopMediaCapacityKey()
-        rootCapacity.consumerPins[key] = rootCapacity.consumerPins.getOrDefault(key, 0) + 1
-        return DesktopMediaFileLease(file) {
-            synchronized(rootCapacity.lock) {
-                val current = rootCapacity.consumerPins[key] ?: return@synchronized
-                if (current == 1) {
-                    rootCapacity.consumerPins.remove(key)
-                } else {
-                    rootCapacity.consumerPins[key] = current - 1
-                }
-            }
-        }
+        val pin = rootCapacity.budget.pin(file.desktopMediaCapacityKey())
+        return DesktopMediaFileLease(file, pin::close)
     }
 
-    private fun isPinnedLocked(file: File): Boolean =
-        rootCapacity.consumerPins.getOrDefault(file.desktopMediaCapacityKey(), 0) > 0
+    private fun isPinnedLocked(file: File): Boolean = rootCapacity.budget.isPinned(file.desktopMediaCapacityKey())
 
     private fun targetFile(reference: String, suggestedFileName: String?): File {
         requireActiveDirectoryShape()
@@ -672,8 +580,8 @@ internal class DesktopMediaCache(
     }
 
     /** 在本进程完成根的第一次扫描之前，任何预留都不能持有 .part 临时文件。 */
-    private fun initializeRoot() = synchronized(rootCapacity.lock) {
-        if (rootCapacity.initialized) return@synchronized
+    private fun initializeRoot() = withMediaCacheLock(rootCapacity.lock) {
+        if (rootCapacity.initialized) return@withMediaCacheLock
         rootCapacity.scopeDirectories().forEach { directory ->
             directory.listFiles()
                 .orEmpty()

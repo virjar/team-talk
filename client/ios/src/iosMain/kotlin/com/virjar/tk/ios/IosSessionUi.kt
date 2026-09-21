@@ -44,7 +44,6 @@ internal class IosSessionUi(
         val actions = listOf<() -> Unit>(
             { data.chat.draftLifecycle.captureLatest() },
             { check(data.documents.captureDrafts()) { "Document draft capture failed" } },
-            { check(draftPersistence.flush()) { "Document draft persistence failed" } },
         )
         var failure: Throwable? = null
         actions.forEach { capture ->
@@ -63,7 +62,12 @@ internal class IosSessionUi(
         release { recorder.close() }; release { voice.close() }; release { native.close() }
         release { imports.close() }; release { files.close() }; release { media.close() }
         release { data.destroy(clearComposerContexts = true, clearDocumentDrafts = reason == SessionEndReason.USER_LOGOUT) }
-        release { check(draftPersistence.flush()) { "Draft storage did not flush" } }
+        // Capture first, then close this session's store even when preserving drafts. A restore
+        // already reading on Default must finish admitting its rewrite before account cleanup.
+        release { data.documentDrafts.retire(data.documentDraftOwnerKey) }
+        // The process writer owns these immutable snapshots, not the retiring SDK/cache. Explicit
+        // logout deletion above is durable; preserving a draft must not wait for fsync on Main.
+        release { IosApplicationRuntime.observeDraftFlush("IosSessionDraft") }
         failures.firstOrNull()?.let { primary -> failures.drop(1).forEach(primary::addSuppressed); throw primary }
     }
 }

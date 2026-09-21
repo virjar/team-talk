@@ -21,7 +21,7 @@ interface ChatAssetSpool {
     fun list(): List<StagedChatAsset>
 }
 
-/** Android supplies noBackupFilesDir; Desktop supplies its already claimed private installation root. */
+/** The host supplies its private installation root; account ownership and the on-disk format are shared. */
 expect fun createChatAssetSpool(
     dataDir: File,
     owner: AccountDataOwner,
