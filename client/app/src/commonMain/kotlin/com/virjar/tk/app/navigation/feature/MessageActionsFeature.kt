@@ -1,5 +1,9 @@
 package com.virjar.tk.app.navigation.feature
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.platformRandomUuid
+import com.virjar.tk.shared.platform.synchronized
+
 import com.virjar.tk.protocol.body.OfficeRefBody
 import com.virjar.tk.protocol.body.TaskRefBody
 import com.virjar.tk.protocol.model.GroupFileEntry
@@ -8,7 +12,6 @@ import com.virjar.tk.shared.client.TaskPageKey
 import com.virjar.tk.app.navigation.UiLocalDataBoundary
 import com.virjar.tk.shared.client.ClientSession
 import com.virjar.tk.shared.log.AppLog
-import java.util.UUID
 import kotlinx.coroutines.CancellationException
 
 enum class OfficeReferenceKind { DOCUMENT, GROUP_FILE }
@@ -25,17 +28,18 @@ class MessageActionsFeature internal constructor(
     private val launchAction: (suspend () -> Unit) -> Boolean,
 ) {
     // 同一源消息失败后重试复用 operationId，成功后才移除；切换聊天不丢失待确认命令。
+    private val pendingSavesLock = PlatformLock()
     private val pendingSaves = mutableMapOf<Pair<String, Long>, String>()
 
     fun save(srcChatId: String, srcSeq: Long, onResult: (Boolean) -> Unit = {}) {
         val launched = launchAction {
             try {
                 val key = srcChatId to srcSeq
-                val operationId = synchronized(pendingSaves) {
-                    pendingSaves.getOrPut(key) { UUID.randomUUID().toString() }
+                val operationId = synchronized(pendingSavesLock) {
+                    pendingSaves.getOrPut(key) { platformRandomUuid() }
                 }
                 session.messageRepo.saveMessage(srcChatId, srcSeq, operationId).getOrThrow()
-                synchronized(pendingSaves) { pendingSaves.remove(key) }
+                synchronized(pendingSavesLock) { pendingSaves.remove(key) }
                 onResult(true)
             } catch (failure: Throwable) {
                 if (failure is CancellationException) throw failure

@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.database.AppDatabaseQueries
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.ProtoCodec
@@ -36,7 +37,7 @@ private val DEFAULT_BOT_DELIVERY_LOG_LIMITS = BotDeliveryLogLimits()
 internal class LocalDeliveryLogStore(
     private val queries: AppDatabaseQueries,
     private val cacheUseGate: CacheUseGate,
-    private val stateLock: Any,
+    private val stateLock: PlatformLock,
     private val limits: BotDeliveryLogLimits = DEFAULT_BOT_DELIVERY_LOG_LIMITS,
 ) {
     init {
@@ -106,7 +107,7 @@ internal class LocalDeliveryLogStore(
                             message.chatId,
                             message.serverSeq,
                             ProtoCodec.encode(message),
-                            System.currentTimeMillis(),
+                            platformCurrentTimeMillis(),
                         )
                     }
                 }

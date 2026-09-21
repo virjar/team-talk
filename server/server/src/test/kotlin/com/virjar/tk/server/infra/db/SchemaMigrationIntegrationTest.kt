@@ -14,6 +14,39 @@ import kotlin.test.assertTrue
 
 class SchemaMigrationIntegrationTest {
     @Test
+    fun `APNs timestamp migration keeps existing Android registrations and dataset`() {
+        PostgresSchemaLease.open().use { lease ->
+            val datasetId = open(lease).use { it.datasetId }
+            lease.openConnection().use { connection -> connection.createStatement().use { statement ->
+                statement.execute("ALTER TABLE oem_push_registrations DROP COLUMN registered_at")
+                statement.execute("DELETE FROM schema_migrations WHERE name = 'add_push_registration_timestamp'")
+                statement.execute("INSERT INTO users (uid, username, name, password_hash, created_at, updated_at) " +
+                    "VALUES ('apns-kept-user', 'apns-kept-user', 'kept', 'fixture-only', 11, 12)")
+                statement.execute("INSERT INTO credentials (token_hash, token_type, uid, device_id, device_flag, " +
+                    "user_credential_epoch, device_credential_epoch, created_at, expires_at) " +
+                    "VALUES ('apns-fixture-refresh', 2, 'apns-kept-user', 'device', 1, 1, 1, 11, 99)")
+                statement.execute("INSERT INTO oem_push_registrations (refresh_token_hash, vendor, registration_id, " +
+                    "registration_hash, generation, package_name, deployment_fingerprint, pending_event_id, pending_chats) " +
+                    "VALUES ('apns-fixture-refresh', 'xiaomi', 'kept-token', 'kept-hash', 'kept-generation', " +
+                    "'com.example.app', '${"a".repeat(64)}', 7, '{\"kept-chat\":4}')")
+            } }
+            repeat(2) {
+                open(lease).use { assertEquals(datasetId, it.datasetId) }
+                lease.openConnection().use { connection -> connection.createStatement().use { statement ->
+                    statement.executeQuery("SELECT vendor, registration_id, generation, pending_event_id, pending_chats, " +
+                        "registered_at FROM oem_push_registrations WHERE refresh_token_hash = 'apns-fixture-refresh'").use { row ->
+                        assertTrue(row.next())
+                        assertEquals("xiaomi", row.getString(1)); assertEquals("kept-token", row.getString(2))
+                        assertEquals("kept-generation", row.getString(3)); assertEquals(7L, row.getLong(4))
+                        assertEquals("{\"kept-chat\":4}", row.getString(5)); assertEquals(0L, row.getLong(6))
+                        assertFalse(row.next())
+                    }
+                } }
+            }
+        }
+    }
+
+    @Test
     fun `task extension migration preserves existing tasks and dataset across failure and reopen`() {
         PostgresSchemaLease.open().use { lease ->
             val datasetId = open(lease).use { it.datasetId }

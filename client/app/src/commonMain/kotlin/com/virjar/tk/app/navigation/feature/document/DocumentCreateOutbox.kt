@@ -1,9 +1,14 @@
 package com.virjar.tk.app.navigation.feature.document
 
+import com.virjar.tk.shared.platform.platformCanonicalUuid
+
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.platformRandomUuid
+import com.virjar.tk.shared.platform.synchronized
+
 import com.virjar.tk.protocol.model.DocumentPolicy
 import com.virjar.tk.protocol.model.EmbeddedAsset
 import com.virjar.tk.protocol.body.MarkdownAssetPolicy
-import java.util.UUID
 
 /**
  * 保留到服务器确认稳定客户端资源 ID 为止的不可变创建载荷。
@@ -73,9 +78,9 @@ internal data class PendingDocumentCreateReplay(
  * 不同空间/文档的创建可以并发进行；相同的意图复用一个稳定 ID。
  */
 internal class DocumentDurableCreateOutbox(
-    private val newSpaceId: () -> String = { UUID.randomUUID().toString() },
+    private val newSpaceId: () -> String = { platformRandomUuid() },
 ) {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private val spacesByIntent = linkedMapOf<DocumentSpaceCreateIntent, DocumentSpaceCreateRequest>()
     private val documentsById = linkedMapOf<String, PendingDocumentCreateCommand>()
 
@@ -152,10 +157,10 @@ internal class DocumentDurableCreateOutbox(
         documents: List<PendingDocumentCreateCommand>,
     ) = synchronized(lock) {
         spaces.take(MAX_PENDING_CREATES).forEach { request ->
-            request.normalized()?.let { spacesByIntent.putIfAbsent(it.intent, it) }
+            request.normalized()?.let { spacesByIntent.getOrPut(it.intent) { it } }
         }
         documents.take(MAX_PENDING_CREATES).forEach { command ->
-            command.normalized()?.let { documentsById.putIfAbsent(it.documentId, it) }
+            command.normalized()?.let { documentsById.getOrPut(it.documentId) { it } }
         }
     }
 
@@ -203,7 +208,7 @@ internal class DocumentDurableCreateOutbox(
 }
 
 private fun String.canonicalUuidOrNull(): String? = try {
-    UUID.fromString(this).toString().takeIf { it == this }
+    platformCanonicalUuid(this).takeIf { it == this }
 } catch (_: IllegalArgumentException) {
     null
 }

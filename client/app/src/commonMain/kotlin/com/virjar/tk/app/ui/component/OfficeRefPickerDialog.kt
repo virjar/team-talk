@@ -1,5 +1,8 @@
 package com.virjar.tk.app.ui.component
 
+import com.virjar.tk.shared.platform.platformCurrentTimeMillis
+import com.virjar.tk.shared.platform.platformRandomUuid
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,7 +32,6 @@ import com.virjar.tk.app.navigation.feature.OfficeReferenceKind
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.body.OfficeRefBody
 import com.virjar.tk.protocol.model.Message
-import java.util.UUID
 
 /**
  * 类型化办公对象引用选择器（CONTENT-08）：列出当前用户可引用的对象，点击即发送引用消息。
@@ -73,10 +75,10 @@ fun OfficeRefPickerDialog(
                                     onSend(
                                         Message(
                                             chatId = chatId,
-                                            clientMsgId = UUID.randomUUID().toString(),
+                                            clientMsgId = platformRandomUuid(),
                                             senderUid = myUid,
                                             messageType = MessageType.OFFICE_REF.code,
-                                            timestamp = System.currentTimeMillis(),
+                                            timestamp = platformCurrentTimeMillis(),
                                             body = candidate,
                                         ),
                                     )

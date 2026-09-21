@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.model.Contact
 import com.virjar.tk.protocol.model.User
 import kotlinx.coroutines.flow.Flow
@@ -13,7 +14,7 @@ import kotlinx.coroutines.flow.Flow
 internal class LocalContactProjectionStore(
     private val dao: LocalEntityProjectionDao,
     private val cacheUseGate: CacheUseGate,
-    private val stateLock: Any,
+    private val stateLock: PlatformLock,
     private val mergeUserLocked: (User) -> UserProjectionMerge,
     private val publishUserMergeLocked: (UserProjectionMerge) -> Unit,
     private val refreshEmbeddedUsersLocked: (Set<String>) -> Unit,

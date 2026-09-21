@@ -48,20 +48,6 @@ internal class ClientTransportTls(
  * 在不解析 [host] 的情况下返回 true。loopback 的 DNS 别名刻意不会削弱 transport：只有下面这些
  * 显式的字面形式才可以选择明文。
  */
-internal fun requiresClientTransportTls(host: String): Boolean = !isLexicalLoopbackHost(host)
-
-internal fun isLexicalLoopbackHost(host: String): Boolean {
-    if (host.equals("localhost", ignoreCase = true) || host == "::1") return true
-
-    val octets = host.split('.')
-    if (octets.size != IPV4_OCTET_COUNT || octets.first() != IPV4_LOOPBACK_PREFIX) return false
-    return octets.all { octet ->
-        octet.isNotEmpty() &&
-            octet.all { character -> character in '0'..'9' } &&
-            octet.toIntOrNull() in IPV4_OCTET_RANGE
-    }
-}
-
 /** 使用平台根存储，不更改 JVM 或操作系统的全局信任配置。 */
 internal fun createSystemWebPkiClientSslContext(): SslContext = createClientSslContext(null)
 
@@ -104,6 +90,3 @@ private const val HOSTNAME_VERIFICATION_ALGORITHM = "HTTPS"
 private const val TLS_V1_3 = "TLSv1.3"
 private const val TLS_V1_2 = "TLSv1.2"
 private val MODERN_TLS_PROTOCOLS = listOf(TLS_V1_3, TLS_V1_2)
-private const val IPV4_OCTET_COUNT = 4
-private const val IPV4_LOOPBACK_PREFIX = "127"
-private val IPV4_OCTET_RANGE = 0..255

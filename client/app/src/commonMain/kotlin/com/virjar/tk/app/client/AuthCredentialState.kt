@@ -1,5 +1,8 @@
 package com.virjar.tk.app.client
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
+
 import com.virjar.tk.shared.client.SessionEndReason
 import com.virjar.tk.shared.client.AuthenticationFailure
 import com.virjar.tk.shared.client.AuthenticationFailureKind
@@ -20,7 +23,7 @@ internal class AuthCredentialSnapshotHolder(
     private val ownerGeneration: Long,
     initial: StoredLogin?,
 ) {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var value: StoredLogin? = initial?.also(::requireOwned)
 
     fun publish(next: StoredLogin) = synchronized(lock) {

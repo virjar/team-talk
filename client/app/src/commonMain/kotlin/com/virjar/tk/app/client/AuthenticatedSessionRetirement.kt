@@ -1,5 +1,8 @@
 package com.virjar.tk.app.client
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
+
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
@@ -51,7 +54,7 @@ internal fun CoroutineScope.launchRetirementWithFallback(
 }
 
 private class AuthenticatedRetirementFallbackGate {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var completed = false
 
     fun run(fallback: () -> Unit) = synchronized(lock) {

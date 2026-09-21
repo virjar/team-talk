@@ -1,6 +1,7 @@
 package com.virjar.tk.shared.client
 
-import kotlinx.coroutines.Dispatchers
+import com.virjar.tk.shared.platform.*
+import kotlinx.coroutines.*
 import kotlin.coroutines.EmptyCoroutineContext
 
 /**
@@ -10,7 +11,7 @@ import kotlin.coroutines.EmptyCoroutineContext
  * 拆离更新的 owner。handler 在 monitor 之外调用；每个应用 handler 仍必须强制其自己的退役门禁。
  */
 internal class SessionHttpAuthExpiredRouter : AutoCloseable {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var closed = false
     private var generation = 0L
     private var handler: ((String) -> Unit)? = null

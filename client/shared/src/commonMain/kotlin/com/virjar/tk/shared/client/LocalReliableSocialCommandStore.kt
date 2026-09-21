@@ -1,12 +1,13 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.database.AppDatabaseQueries
 
 /** 一个 deployment/account LocalCache 拥有的有界持久命令可靠发件箱。 */
 internal class LocalReliableSocialCommandStore(
     private val queries: AppDatabaseQueries,
     private val cacheUseGate: CacheUseGate,
-    private val stateLock: Any,
+    private val stateLock: PlatformLock,
 ) {
     private val contactSlot =
         PendingCommandSlot(load = ::loadContacts, corrupt = { CorruptReliableSocialCommandException("好友申请处理", it) })

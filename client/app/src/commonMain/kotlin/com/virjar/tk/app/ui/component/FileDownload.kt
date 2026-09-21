@@ -1,5 +1,8 @@
 package com.virjar.tk.app.ui.component
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
+
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import com.virjar.tk.protocol.model.Attachment
@@ -75,7 +78,7 @@ interface FileDownloadController {
 class AutomaticFileDownloadLedger(
     private val maxEntries: Int = DEFAULT_MAX_ENTRIES,
 ) {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private val claimedPaths = mutableSetOf<String>()
 
     init {

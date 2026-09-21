@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.telemetry.ClientTelemetryLimits
 import com.virjar.tk.protocol.telemetry.TelemetryPolicy
 import com.virjar.tk.protocol.telemetry.TelemetryPolicyMode
@@ -14,7 +15,7 @@ internal class OutgoingQueueTelemetryBridge(
     private val recorder: ClientTelemetryRecorder,
     private val currentSnapshot: () -> OutgoingQueueSnapshot,
 ) {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var lastRecorded: RecordedOutgoingQueueTelemetry? = null
 
     fun recordIfCurrent(snapshot: OutgoingQueueSnapshot): Boolean = synchronized(lock) {

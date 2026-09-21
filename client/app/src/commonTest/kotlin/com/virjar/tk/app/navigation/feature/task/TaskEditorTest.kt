@@ -11,22 +11,24 @@ import com.virjar.tk.protocol.model.TaskOptions
 import com.virjar.tk.protocol.model.TaskPolicy
 import com.virjar.tk.protocol.model.TaskRecurrenceRule
 import com.virjar.tk.protocol.model.WorkTask
-import java.time.Instant
-import java.time.ZoneId
+import kotlin.time.Instant
+import kotlinx.datetime.TimeZone
 import kotlin.test.*
 
 class TaskEditorTest {
     @Test
     fun `deadline uses local calendar time and rejects missing or nonexistent times`() {
-        val zone = ZoneId.of("Asia/Shanghai")
+        val zone = TimeZone.of("Asia/Shanghai")
         val input = TaskDeadlineInput("2026-09-08", "18:30")
-        assertEquals(Instant.parse("2026-09-08T10:30:00Z").toEpochMilli(), input.epochMillis(zone))
+        assertEquals(Instant.parse("2026-09-08T10:30:00Z").toEpochMilliseconds(), input.epochMillis(zone))
         assertEquals(input, TaskDeadlineInput.from(input.epochMillis(zone), zone))
+        assertEquals(Instant.parse("2026-11-01T05:30:00Z").toEpochMilliseconds(),
+            TaskDeadlineInput("2026-11-01", "01:30").epochMillis(TimeZone.of("America/New_York")))
         assertNull(TaskDeadlineInput().epochMillis(zone))
         assertFailsWith<IllegalArgumentException> { TaskDeadlineInput("2026-02-30", "12:00").epochMillis(zone) }
         assertFailsWith<IllegalArgumentException> { TaskDeadlineInput("2026-09-08", "").epochMillis(zone) }
         assertFailsWith<IllegalArgumentException> {
-            TaskDeadlineInput("2026-03-08", "02:30").epochMillis(ZoneId.of("America/New_York"))
+            TaskDeadlineInput("2026-03-08", "02:30").epochMillis(TimeZone.of("America/New_York"))
         }
     }
 

@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.database.AppDatabaseQueries
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.payload.MessageAckPayload
@@ -13,7 +14,7 @@ import com.virjar.tk.protocol.payload.MessageAckPayload
 internal class LocalMessageStore(
     private val queries: AppDatabaseQueries,
     private val cacheUseGate: CacheUseGate,
-    private val stateLock: Any,
+    private val stateLock: PlatformLock,
     private val outboxLimits: LocalOutboxLimits,
     private val retentionLimits: LocalMessageRetentionLimits,
     refreshReactionsAfterPrune: (chatId: String) -> Unit = {},
@@ -103,7 +104,7 @@ internal class LocalMessageStore(
                 if (!admitsClearedHistoryLocked(projection)) return@synchronized
                 queries.transaction {
                     projectionPersistence.persist(projection)
-                    promoteOutgoingFromAuthoritativeProjection(projection, System.currentTimeMillis())
+                    promoteOutgoingFromAuthoritativeProjection(projection, platformCurrentTimeMillis())
                 }
                 if (projection.serverSeq > 0L) {
                     historyLeases.recordLiveAuthoritativeMutation(projection.chatId, projection.clientMsgId)
@@ -502,7 +503,7 @@ internal class LocalMessageStore(
                         page.forEach { message ->
                             if (message.clientMsgId !in protectedInPage) {
                                 projectionPersistence.persist(message)
-                                promoteOutgoingFromAuthoritativeProjection(message, System.currentTimeMillis())
+                                promoteOutgoingFromAuthoritativeProjection(message, platformCurrentTimeMillis())
                             }
                         }
                         protectedInPage.forEach { clientMsgId ->
@@ -688,8 +689,8 @@ internal class LocalMessageStore(
 
     /** 调用方持有 [stateLock]。 */
     private fun removeOptimisticEditLocked(pending: PendingOptimisticMessageEdit) {
-        optimisticEdits.remove(pending.lease.tokenId, pending)
-        optimisticEditByMessage.remove(pending.key, pending.lease.tokenId)
+        if (optimisticEdits[pending.lease.tokenId] === pending) optimisticEdits.remove(pending.lease.tokenId)
+        if (optimisticEditByMessage[pending.key] == pending.lease.tokenId) optimisticEditByMessage.remove(pending.key)
     }
 
     /** 调用方持有 [stateLock] 与外层事务。 */

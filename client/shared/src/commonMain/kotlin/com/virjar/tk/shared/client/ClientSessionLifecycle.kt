@@ -1,5 +1,7 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
+import kotlin.concurrent.Volatile
 import com.virjar.tk.shared.Outcome
 import com.virjar.tk.protocol.payload.ResponsePayload
 import com.virjar.tk.protocol.rpc.RpcInvoker
@@ -29,7 +31,7 @@ enum class SessionLifecyclePhase { ACTIVE, QUIESCED, CLOSED }
 
 /** 在 quiesce 时永久退役，并跨 EventLoop 的实际通道写入被持有。 */
 class SessionOutboundLease : WireSendAdmission {
-    private val lock = Any()
+    private val lock = PlatformLock()
     val ackOwner: Any = Any()
     @Volatile
     private var active = true
@@ -47,7 +49,7 @@ class SessionOutboundLease : WireSendAdmission {
 
 /** 仓库访问器与门禁 RPC 适配器共享的小型线性化点。 */
 internal class SessionLifecycleGate {
-    private val lock = Any()
+    private val lock = PlatformLock()
 
     @Volatile
     var phase: SessionLifecyclePhase = SessionLifecyclePhase.ACTIVE
@@ -104,7 +106,7 @@ internal class UserLogoutRetirementCapability(
     private val logoutRpc: suspend () -> Outcome<Unit>,
     private val closeSession: (Boolean) -> Unit,
 ) {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var completed = false
 
     suspend fun complete(disconnectTransport: () -> Boolean): Outcome<Unit> {
@@ -166,7 +168,7 @@ internal class SessionBusinessRpcInvoker(
  * 的同时确实观察到 [draining]，那必然是同一线程的重入；它必须立即失败，而不是等待自己的清理回调。
  */
 internal class ClientSessionTerminalLifecycle {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var draining = false
     private var terminalFailure: Throwable? = null
 
@@ -293,7 +295,7 @@ internal fun installAppLogOwnershipIfEnabled(
     faultHandler: (() -> Unit)?,
     crashDumper: CrashDumper? = null,
     telemetrySink: ((String, String, String, Throwable?) -> Unit)? = null,
-    crashSink: ((java.io.File, String) -> Unit)? = null,
+    crashSink: ((com.virjar.tk.shared.platform.PlatformFile, String) -> Unit)? = null,
     previousOwnerSink: ((AppLogOwner?) -> Unit)? = null,
 ): AppLogOwner? {
     if (!enabled) return null

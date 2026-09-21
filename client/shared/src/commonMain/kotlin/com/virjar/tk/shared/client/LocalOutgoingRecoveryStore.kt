@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.database.AppDatabaseQueries
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.ProtoCodec
@@ -13,7 +14,7 @@ import com.virjar.tk.protocol.ProtoCodec
 internal class LocalOutgoingRecoveryStore(
     private val queries: AppDatabaseQueries,
     private val cacheUseGate: CacheUseGate,
-    private val stateLock: Any,
+    private val stateLock: PlatformLock,
     private val admitActive: (payloadBytes: Long, fingerprintBytes: Long) -> Unit,
     private val persistMessage: (Message) -> Unit,
     private val supersedeOptimisticEdit: (chatId: String, clientMsgId: String) -> Unit,

@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.telemetry.ClientRuntimeInfo
 import com.virjar.tk.protocol.telemetry.ClientTelemetryLimits
 import com.virjar.tk.protocol.telemetry.ClientTelemetryValidation
@@ -27,8 +28,6 @@ import com.virjar.tk.protocol.telemetry.TelemetryUserNoticePayload
 import com.virjar.tk.protocol.telemetry.TELEMETRY_OUTGOING_QUEUE_EVENT_NAME
 import com.virjar.tk.protocol.telemetry.ConnectionTraceContext
 import kotlinx.serialization.encodeToString
-import java.util.ArrayDeque
-import java.util.UUID
 import kotlin.text.CharCategory
 
 data class ClientTelemetryRecorderStats(
@@ -45,18 +44,18 @@ private data class InMemoryTelemetryBatch(
 class ClientTelemetryPolicyState(
     initialPolicy: TelemetryPolicy = TelemetryPolicy.baseline(),
 ) {
+    private val methodLock = PlatformLock()
     private var current = initialPolicy.also(ClientTelemetryValidation::requireValid)
 
-    @Synchronized
-    fun snapshot(nowEpochMs: Long = System.currentTimeMillis()): TelemetryPolicy =
+    fun snapshot(nowEpochMs: Long = platformCurrentTimeMillis()): TelemetryPolicy = synchronized(methodLock) {
         if (current.mode == TelemetryPolicyMode.DIAGNOSTIC && nowEpochMs >= current.expiresAtEpochMs) {
             TelemetryPolicy.baseline()
         } else {
             current
         }
+    }
 
-    @Synchronized
-    fun apply(policy: TelemetryPolicy): Boolean {
+    fun apply(policy: TelemetryPolicy): Boolean = synchronized(methodLock) {
         ClientTelemetryValidation.requireValid(policy)
         if (policy.issuedAtEpochMs < current.issuedAtEpochMs || policy == current) return false
         current = policy
@@ -72,10 +71,11 @@ class ClientTelemetryRecorder internal constructor(
     val runtimeInfo: ClientRuntimeInfo,
     private val spool: ClientTelemetrySpool,
     internal val policyState: ClientTelemetryPolicyState = ClientTelemetryPolicyState(),
-    private val clock: () -> Long = System::currentTimeMillis,
-    private val newId: () -> String = { UUID.randomUUID().toString() },
+    private val clock: () -> Long = ::platformCurrentTimeMillis,
+    private val newId: () -> String = { platformRandomUuid() },
     private val connectionTraceContextProvider: () -> ConnectionTraceContext? = { null },
 ) {
+    private val methodLock = PlatformLock()
     private val runId = newId()
     private var nextSequence = 0L
     private var pendingBatchId: String? = null
@@ -85,7 +85,7 @@ class ClientTelemetryRecorder internal constructor(
     private var pendingEventBytes = 0L
     private val readyBatches = ArrayDeque<InMemoryTelemetryBatch>()
     private var inFlightBatch: InMemoryTelemetryBatch? = null
-    private val flushLock = Any()
+    private val flushLock = PlatformLock()
     private val admittedEventTimes = ArrayDeque<Long>()
     private var byteBudgetDay = Long.MIN_VALUE
     private var admittedBytesToday = 0L
@@ -235,10 +235,8 @@ class ClientTelemetryRecorder internal constructor(
                     summary = sanitizeTelemetryText(message),
                     faultCode = "legacy.app_log",
                     origin = "app_log",
-                    exceptionClass = throwable?.javaClass?.name?.let { stableTelemetryName(it, "Throwable") },
-                    stackFrames = throwable?.stackTrace.orEmpty()
-                        .take(ClientTelemetryLimits.MAX_STACK_FRAMES)
-                        .map(::safeStackFrame),
+                    exceptionClass = throwable?.let(::platformExceptionClassName)?.let { stableTelemetryName(it, "Throwable") },
+                    stackFrames = throwable?.let { platformTelemetryStackFrames(it, ClientTelemetryLimits.MAX_STACK_FRAMES) }.orEmpty(),
                     fatal = false,
                 ),
                 flushImmediately = true,
@@ -264,10 +262,10 @@ class ClientTelemetryRecorder internal constructor(
     fun flush(): Boolean = synchronized(flushLock) {
         var complete = false
         while (!complete) {
-            val batch = synchronized(this) {
+            val batch = synchronized(methodLock) {
                 inFlightBatch ?: run {
                     if (readyBatches.isEmpty() && pendingEvents.isNotEmpty()) sealPendingLocked()
-                    readyBatches.pollFirst()?.also { inFlightBatch = it }
+                    readyBatches.removeFirstOrNull()?.also { inFlightBatch = it }
                 }
             }
             if (batch == null) {
@@ -279,7 +277,7 @@ class ClientTelemetryRecorder internal constructor(
                 highPriority = batch.batch.events.any(::isHighPriorityEvent),
             )
             if (!accepted) return@synchronized false
-            synchronized(this) {
+            synchronized(methodLock) {
                 check(inFlightBatch == batch) { "Telemetry flush ownership changed" }
                 inFlightBatch = null
             }
@@ -287,16 +285,15 @@ class ClientTelemetryRecorder internal constructor(
         true
     }
 
-    @Synchronized
-    fun stats(): ClientTelemetryRecorderStats = ClientTelemetryRecorderStats(
+    fun stats(): ClientTelemetryRecorderStats = synchronized(methodLock) { ClientTelemetryRecorderStats(
         pendingEvents = pendingEvents.size +
             readyBatches.sumOf { it.batch.events.size } +
             inFlightBatch?.batch?.events.orEmpty().size,
         droppedEvents = rejectedEventCount + spool.evictedEvents(),
     )
+    }
 
-    @Synchronized
-    internal fun heartbeatBatch(): TelemetryBatch {
+    internal fun heartbeatBatch(): TelemetryBatch = synchronized(methodLock) {
         val now = positiveNow()
         return TelemetryBatch(
             batchId = checkedNewId(),
@@ -310,17 +307,16 @@ class ClientTelemetryRecorder internal constructor(
     internal fun applyPolicy(policy: TelemetryPolicy) = policyState.apply(policy)
 
     /** 用于对诊断队列快照去重的精确生效代际。 */
-    @Synchronized
-    internal fun outgoingQueuePolicySnapshot(): TelemetryPolicy =
+    internal fun outgoingQueuePolicySnapshot(): TelemetryPolicy = synchronized(methodLock) {
         policyState.snapshot(positiveNow())
+    }
 
-    @Synchronized
     private fun record(
         eventName: String,
         kind: TelemetryEventKind,
         payload: com.virjar.tk.protocol.telemetry.TelemetryEventPayload,
         flushImmediately: Boolean = false,
-    ): Boolean {
+    ): Boolean = synchronized(methodLock) {
         val now = positiveNow()
         val policy = policyState.snapshot(now)
         val event = TelemetryEvent(
@@ -456,15 +452,7 @@ private fun isHighPriorityEvent(event: TelemetryEvent): Boolean = ClientTelemetr
     event.occurredAtEpochMs,
 )
 
-private fun safeStackFrame(frame: StackTraceElement): TelemetryStackFrame = TelemetryStackFrame(
-    className = frame.className.take(ClientTelemetryLimits.MAX_STACK_FIELD_CHARS),
-    methodName = frame.methodName.take(ClientTelemetryLimits.MAX_STACK_FIELD_CHARS),
-    fileName = frame.fileName
-        ?.substringAfterLast('/')
-        ?.substringAfterLast('\\')
-        ?.take(ClientTelemetryLimits.MAX_STACK_FIELD_CHARS),
-    lineNumber = frame.lineNumber,
-)
+
 
 /** 面向遗留 AppLog 文本的保守单行桥接。 */
 internal fun sanitizeTelemetryText(raw: String): String {
@@ -568,3 +556,6 @@ private fun requireSafeGeneratedId(id: String) {
         "Generated telemetry id contains invalid characters"
     }
 }
+
+internal expect fun platformExceptionClassName(failure: Throwable): String
+internal expect fun platformTelemetryStackFrames(failure: Throwable, limit: Int): List<TelemetryStackFrame>

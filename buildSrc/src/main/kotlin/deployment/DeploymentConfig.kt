@@ -34,6 +34,7 @@ data class DeploymentConfig(
     val tcpTlsCertificatePem: String? = null,
     /** 厂商推送部署（按厂商键控）；空表示该安装包不带任何厂商通道。 */
     val oemPush: Map<String, OemPushVendorDeployment> = emptyMap(),
+    val apnsPush: ApnsPushDeployment? = null,
 ) {
     val serverUri: URI = URI(serverUrl)
     val sslEnabled: Boolean get() = serverUri.scheme.equals("https", ignoreCase = true)
@@ -89,8 +90,17 @@ data class DeploymentConfig(
                 putJsonObject("client") {
                     put("applicationId", client.applicationId)
                     put("androidApplicationId", client.androidApplicationId)
+                    put("iosBundleId", client.iosBundleId)
                     put("displayName", client.displayName)
                     put("desktopName", client.desktopName)
+                    apnsPush?.let { push ->
+                        putJsonObject("apnsPush") {
+                            put("teamId", push.teamId)
+                            put("keyId", push.keyId)
+                            put("privateKeyFile", push.privateKeyFile.path)
+                            put("environments", push.environments.sorted().joinToString(","))
+                        }
+                    }
                     if (oemPush.isNotEmpty()) {
                         putJsonObject("oemPush") {
                             for (vendor in OemPushVendors.ALL) {

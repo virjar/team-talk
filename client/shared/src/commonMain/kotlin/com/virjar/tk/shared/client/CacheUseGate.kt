@@ -1,5 +1,7 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
+import kotlin.concurrent.Volatile
 /**
  * LocalCache 与所有借用其 SQL driver 的 MessageWindow 的同步 owner 门禁。
  *
@@ -8,7 +10,7 @@ package com.virjar.tk.shared.client
  * 已被准入的 driver 工作完成，并在任何后续使用触及 SQL 之前就拒绝它。
  */
 internal class CacheUseGate {
-    private val ownerLock = Any()
+    private val ownerLock = PlatformLock()
     @Volatile
     private var open = true
     /** 仅当该 monitor 当前的重入 owner 位于 [use] 内部时才非零。 */

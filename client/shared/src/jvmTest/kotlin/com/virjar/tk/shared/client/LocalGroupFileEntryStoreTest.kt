@@ -1,5 +1,7 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.PlatformLock
+
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.virjar.tk.shared.database.AppDatabase
 import com.virjar.tk.protocol.model.GroupFileEntry
@@ -25,7 +27,7 @@ class LocalGroupFileEntryStoreTest {
         AppDatabase.Schema.create(driver)
         val queries = AppDatabase(driver).appDatabaseQueries
         val gate = CacheUseGate()
-        val lock = Any()
+        val lock = PlatformLock()
         return LocalGroupFileEntryStore(queries, gate, lock, maxRowsPerChat = maxRows)
     }
 

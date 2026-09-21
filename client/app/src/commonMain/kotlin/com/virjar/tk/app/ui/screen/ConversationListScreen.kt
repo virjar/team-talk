@@ -1,5 +1,10 @@
 package com.virjar.tk.app.ui.screen
 
+import com.virjar.tk.app.ui.platform.localUiDateTime
+import com.virjar.tk.app.ui.platform.hourMinute
+import com.virjar.tk.app.ui.platform.monthDay
+import com.virjar.tk.shared.platform.platformCurrentTimeMillis
+import kotlinx.datetime.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -31,10 +36,6 @@ import com.virjar.tk.app.ui.component.UnreadBadge
 import com.virjar.tk.app.ui.platform.primaryClickWithContextLongPress
 import com.virjar.tk.app.ui.platform.secondaryClick
 import com.virjar.tk.app.ui.theme.Tk
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 
 internal data class ConversationMuteMenuPresentation(
     val targetMuted: Boolean,
@@ -385,26 +386,16 @@ private val legacyClipboardImagePreview = Regex("teamtalk-clipboard-[0-9]{6,20}\
  * 会话列表时间格式：今天 HH:mm；昨天「昨天」；7 天内「周X」；跨年 yyyy/MM/dd；其余 MM/dd。
  */
 internal fun formatListTime(timestamp: Long): String {
-    val now = Calendar.getInstance()
-    val msg = Calendar.getInstance().apply { timeInMillis = timestamp }
-
-    val sameDay = now.get(Calendar.YEAR) == msg.get(Calendar.YEAR) &&
-        now.get(Calendar.DAY_OF_YEAR) == msg.get(Calendar.DAY_OF_YEAR)
-    if (sameDay) return SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(timestamp))
-
-    // 昨天判定：now 减一天后同日
-    val yesterday = (now.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, -1) }
-    val isYesterday = yesterday.get(Calendar.YEAR) == msg.get(Calendar.YEAR) &&
-        yesterday.get(Calendar.DAY_OF_YEAR) == msg.get(Calendar.DAY_OF_YEAR)
-    if (isYesterday) return "昨天"
-
-    if (now.get(Calendar.YEAR) == msg.get(Calendar.YEAR)) {
-        val diffDays = (now.timeInMillis - msg.timeInMillis) / (24 * 3600 * 1000L)
-        if (diffDays < 7) {
-            val weekdays = arrayOf("周日", "周一", "周二", "周三", "周四", "周五", "周六")
-            return weekdays[msg.get(Calendar.DAY_OF_WEEK) - Calendar.SUNDAY]
+    val nowMillis = platformCurrentTimeMillis()
+    val now = localUiDateTime(nowMillis)
+    val messageTime = localUiDateTime(timestamp)
+    if (now.date == messageTime.date) return messageTime.hourMinute()
+    if (now.date.minus(1, DateTimeUnit.DAY) == messageTime.date) return "昨天"
+    if (now.year == messageTime.year) {
+        if ((nowMillis - timestamp) / (24 * 3600 * 1000L) < 7) {
+            return listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")[messageTime.dayOfWeek.isoDayNumber - 1]
         }
-        return SimpleDateFormat("MM/dd", Locale.getDefault()).format(Date(timestamp))
+        return messageTime.monthDay('/')
     }
-    return SimpleDateFormat("yyyy/MM/dd", Locale.getDefault()).format(Date(timestamp))
+    return "${messageTime.year}/${messageTime.monthDay('/')}"
 }

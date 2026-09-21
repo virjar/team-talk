@@ -46,6 +46,7 @@ class DeploymentBuilder internal constructor() {
                 ?.build(),
             tcpTlsCertificatePem = tcp.tlsConfiguration.certificateFile?.readText(Charsets.UTF_8),
             oemPush = clientConfiguration.oemPushConfigurations,
+            apnsPush = clientConfiguration.apnsPushConfiguration,
         )
     }
 }
@@ -103,6 +104,12 @@ class ClientDeploymentBuilder internal constructor() {
     internal val identityConfiguration = ClientIdentityDeploymentBuilder()
     internal val androidSigningConfiguration = AndroidSigningDeploymentBuilder()
     internal val oemPushConfigurations = linkedMapOf<String, OemPushVendorDeployment>()
+    internal var apnsPushConfiguration: ApnsPushDeployment? = null
+
+    /** Optional Apple notification provider; the .p8 key is read only by server deployment. */
+    fun apnsPush(configure: ApnsPushDeploymentBuilder.() -> Unit) {
+        apnsPushConfiguration = ApnsPushDeploymentBuilder().apply(configure).build()
+    }
 
     /** 可选；未配置任何厂商的 APK 不包含厂商 SDK，服务端也不调用外部推送。 */
     fun xiaomiPush(configure: XiaomiPushDeploymentBuilder.() -> Unit) {
@@ -159,10 +166,12 @@ class ClientIdentityDeploymentBuilder internal constructor() {
     var applicationId: String = defaults.applicationId
     /** Set the final package registered with Android distribution/push services; null preserves older profiles. */
     var androidApplicationId: String? = null
+    var iosBundleId: String? = null
     var displayName: String = defaults.displayName
     var desktopName: String = defaults.desktopName
 
     internal fun build(): ClientDistributionIdentity = ClientDistributionIdentity(
         applicationId, displayName, desktopName, androidApplicationId ?: "$applicationId.android",
+        iosBundleId ?: "$applicationId.ios",
     )
 }

@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.testkit
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.client.*
 import com.virjar.tk.shared.client.MAX_TERMINAL_OUTGOING_RECEIPTS
 import com.virjar.tk.shared.client.LocalCache
@@ -137,14 +138,15 @@ class FakeLocalCache(
     override val tasks: com.virjar.tk.shared.client.LocalTasks = FakeTasks()
     override val documentComments: com.virjar.tk.shared.client.LocalDocumentComments = FakeDocumentComments()
     // 消息存储：chatId → 按时间倒序的消息列表（最新在前）
+    private val messagesLock = PlatformLock()
     private val messagesMap = mutableMapOf<String, MutableList<Message>>()
     private val messagesFlows = mutableMapOf<String, MutableStateFlow<List<Message>>>()
-    private val messageHistoryLock = Any()
+    private val messageHistoryLock = PlatformLock()
     private val messageHistoryGate = MessageHistoryLeaseGate("fake message history")
     private val cacheUseGate = FakeCacheUseGate()
-    private val pagerLock = Any()
+    private val pagerLock = PlatformLock()
     private val activePagers = linkedSetOf<SimpleMessagePager>()
-    private val optimisticMessageEdits = FakeOptimisticMessageEditStore(messagesMap, ::syncFlow)
+    private val optimisticMessageEdits = FakeOptimisticMessageEditStore(messagesLock, messagesMap, ::syncFlow)
 
     // 其他实体存储
     private val people = FakePeopleProjectionStore()
@@ -153,26 +155,27 @@ class FakeLocalCache(
     private val chatSnapshotLeases = mutableMapOf<String, ProjectionSnapshotLease>()
     private val organization = FakeOrganizationProjectionStore(cacheUseGate)
     private val documents = FakeDocumentProjectionStore()
-    private val conversationLock = Any()
+    private val conversationLock = PlatformLock()
     private val conversationProjection = FakeConversationProjectionStore(conversationLock)
     private val syncState = FakeSyncStateStore(initialDatasetId)
     private val botMessageLog = FakeBotMessageLog()
     private val reliableCommands = FakeReliableCommandStore(cacheUseGate)
     private val outgoingStore = FakeOutgoingMessageStore(
-        lock = messagesMap,
-        upsertProjection = { upsertFakeMessageProjection(messagesMap, it, ::syncFlow) },
+        lock = messagesLock,
+        upsertProjection = { upsertFakeMessageProjection(messagesLock, messagesMap, it, ::syncFlow) },
         updateProjectionStatus = { message, status ->
-            updateFakeMessageProjectionStatus(messagesMap, message, status, ::syncFlow)
+            updateFakeMessageProjectionStatus(messagesLock, messagesMap, message, status, ::syncFlow)
         },
         completeProjection = { message, serverSeq ->
-            completeFakeMessageProjection(messagesMap, message, serverSeq, ::syncFlow)
+            completeFakeMessageProjection(messagesLock, messagesMap, message, serverSeq, ::syncFlow)
         },
         markAuthoritativeProjectionSent = {
-            markFakeAuthoritativeMessageSent(messagesMap, it, ::syncFlow)
+            markFakeAuthoritativeMessageSent(messagesLock, messagesMap, it, ::syncFlow)
         },
         terminalReceiptLimit = terminalReceiptLimit,
     )
     private val outgoing = FakeOutgoingCacheSupport(
+        messagesLock = messagesLock,
         cacheUseGate = cacheUseGate,
         messagesMap = messagesMap,
         outgoingStore = outgoingStore,
@@ -186,11 +189,11 @@ class FakeLocalCache(
     var pagerCloseOverlapCountForTest: Int = 0
         private set
 
-    private fun messagesFlow(chatId: String): MutableStateFlow<List<Message>> = synchronized(messagesMap) {
+    private fun messagesFlow(chatId: String): MutableStateFlow<List<Message>> = synchronized(messagesLock) {
         messagesFlows.getOrPut(chatId) { MutableStateFlow(messagesMap[chatId]?.toList() ?: emptyList()) }
     }
 
-    /** 调用方需持有 messagesMap 锁。 */
+    /** 调用方需持有 messagesLock 锁。 */
     private fun syncFlow(chatId: String) {
         messagesFlow(chatId).value = messagesMap[chatId]?.toList() ?: emptyList()
     }
@@ -220,9 +223,9 @@ class FakeLocalCache(
         require(limit in 1..LocalCache.MAX_MESSAGE_READ_LIMIT) {
             "limit must be between 1 and ${LocalCache.MAX_MESSAGE_READ_LIMIT}"
         }
-        synchronized(messagesMap) { fakeInitialMessages(messagesMap[chatId] ?: emptyList(), limit) }
+        synchronized(messagesLock) { fakeInitialMessages(messagesMap[chatId] ?: emptyList(), limit) }
     }
-    override fun findMessage(chatId: String, clientMsgId: String): Message? = synchronized(messagesMap) { messagesMap[chatId]?.firstOrNull { it.clientMsgId == clientMsgId } }
+    override fun findMessage(chatId: String, clientMsgId: String): Message? = synchronized(messagesLock) { messagesMap[chatId]?.firstOrNull { it.clientMsgId == clientMsgId } }
 
     internal fun messageFlowForPager(chatId: String): Flow<List<Message>> = messagesFlow(chatId)
 
@@ -230,7 +233,7 @@ class FakeLocalCache(
         require(message.chatId.isNotBlank()) { "message chatId must not be blank" }
         require(message.clientMsgId.isNotBlank()) { "message clientMsgId must not be blank" }
         synchronized(messageHistoryLock) {
-            synchronized(messagesMap) {
+            synchronized(messagesLock) {
                 if (message.serverSeq > 0L) {
                     messageHistoryGate.recordAuthoritativeMutation(
                         message.chatId,
@@ -239,7 +242,7 @@ class FakeLocalCache(
                     )
                 }
                 optimisticMessageEdits.supersede(message.chatId, message.clientMsgId)
-                upsertFakeInboundMessage(messagesMap, outgoingStore, message, ::syncFlow)
+                upsertFakeInboundMessage(messagesLock, messagesMap, outgoingStore, message, ::syncFlow)
             }
         }
     }
@@ -345,6 +348,7 @@ class FakeLocalCache(
                     }
                 }
                 applyFakeHistoryProjection(
+                    messagesLock,
                     messagesMap,
                     outgoingStore,
                     chatId,
@@ -364,7 +368,7 @@ class FakeLocalCache(
         }
 
     override fun updateMessage(chatId: String, clientMsgId: String, serverSeq: Long) = cacheUseGate.use {
-        synchronized(messagesMap) messages@{
+        synchronized(messagesLock) messages@{
             val list = messagesMap[chatId] ?: return@messages
             val idx = list.indexOfFirst { it.clientMsgId == clientMsgId }
             if (idx >= 0 && list[idx].serverSeq == 0L) {
@@ -375,7 +379,7 @@ class FakeLocalCache(
     }
 
     override fun updateMessageStatus(chatId: String, clientMsgId: String, sendStatus: Int) = cacheUseGate.use {
-        synchronized(messagesMap) messages@{
+        synchronized(messagesLock) messages@{
             val list = messagesMap[chatId] ?: return@messages
             val idx = list.indexOfFirst { it.clientMsgId == clientMsgId }
             if (idx >= 0 && list[idx].serverSeq == 0L) {
@@ -468,13 +472,14 @@ class FakeLocalCache(
 
     // ── 群头像：与 SQL 实现一样发布可重放的完整投影。──
     private val chatAvatarsFlow = MutableStateFlow<Map<String, Attachment>>(emptyMap())
+    private val chatAvatarLock = PlatformLock()
     private val resolvedChatAvatarIds = linkedSetOf<String>()
 
     override fun observeChatAvatars(): Flow<Map<String, Attachment>> = cacheUseGate.use { chatAvatarsFlow }
 
     override fun upsertChatAvatar(chatId: String, attachment: Attachment?) {
         cacheUseGate.use {
-            synchronized(resolvedChatAvatarIds) {
+            synchronized(chatAvatarLock) {
                 resolvedChatAvatarIds.add(chatId)
                 chatAvatarsFlow.value = if (attachment == null) chatAvatarsFlow.value - chatId
                     else chatAvatarsFlow.value + (chatId to attachment)
@@ -483,7 +488,7 @@ class FakeLocalCache(
     }
 
     override fun isChatAvatarResolved(chatId: String): Boolean = cacheUseGate.use {
-        synchronized(resolvedChatAvatarIds) { chatId in resolvedChatAvatarIds }
+        synchronized(chatAvatarLock) { chatId in resolvedChatAvatarIds }
     }
     override fun beginUserSnapshot(uid: String) = cacheUseGate.use { people.beginUserSnapshot(uid) }
 
@@ -547,14 +552,14 @@ class FakeLocalCache(
     override fun deleteChat(chatId: String) = cacheUseGate.use {
         synchronized(messageHistoryLock) {
             synchronized(conversationLock) {
-                synchronized(messagesMap) {
-                    synchronized(botMessageLog) {
+                synchronized(messagesLock) {
+                    synchronized(botMessageLog.lock) {
                         chatSnapshots.invalidate(chatId)
                         chatSnapshotLeases.remove(chatId)
                         chatsFlow.value = chatsFlow.value.filter { it.chatId != chatId }
                         conversationProjection.deleteForChatTombstoneLocked(chatId)
                         people.removeChat(chatId)
-                        synchronized(resolvedChatAvatarIds) {
+                        synchronized(chatAvatarLock) {
                             resolvedChatAvatarIds.remove(chatId)
                             chatAvatarsFlow.value = chatAvatarsFlow.value - chatId
                         }
@@ -821,7 +826,7 @@ class FakeLocalCache(
     }
 
     override fun clearChatHistory(chatId: String) = cacheUseGate.use {
-        synchronized(messagesMap) {
+        synchronized(messagesLock) {
             if (messagesMap.remove(chatId) != null) syncFlow(chatId)
         }
         reactionProjection.deleteChat(chatId)
@@ -847,7 +852,7 @@ class FakeLocalCache(
                 contacts = checkpoint.contacts,
             ) { applyPeopleProjection ->
                 synchronized(conversationLock) {
-                    synchronized(messagesMap) {
+                    synchronized(messagesLock) {
                         syncState.applyCheckpoint(
                             expectedDatasetId = expectedDatasetId,
                             expectedCursor = expectedCursor,
@@ -882,15 +887,15 @@ class FakeLocalCache(
         synchronized(messageHistoryLock) {
             people.withProjectionReset { resetPeopleProjection ->
                 synchronized(conversationLock) {
-                    synchronized(messagesMap) {
+                    synchronized(messagesLock) {
                         syncState.resetProjection(datasetId) {
-                            synchronized(botMessageLog) {
+                            synchronized(botMessageLog.lock) {
                                 chatSnapshots.reset()
                                 chatSnapshotLeases.clear()
                                 chatsFlow.value = emptyList()
                                 resetPeopleProjection()
                                 organization.resetServerProjection()
-                                synchronized(resolvedChatAvatarIds) {
+                                synchronized(chatAvatarLock) {
                                     resolvedChatAvatarIds.clear()
                                     chatAvatarsFlow.value = emptyMap()
                                 }
@@ -959,7 +964,7 @@ class FakeLocalCache(
         clientMsgId: String,
         transform: (Message) -> Message,
     ) = cacheUseGate.use {
-        synchronized(messagesMap) {
+        synchronized(messagesLock) {
             val list = messagesMap[chatId] ?: return@synchronized
             val index = list.indexOfFirst { it.clientMsgId == clientMsgId }
             if (index < 0) return@synchronized

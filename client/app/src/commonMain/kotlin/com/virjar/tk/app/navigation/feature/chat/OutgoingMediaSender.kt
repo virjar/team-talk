@@ -1,5 +1,8 @@
 package com.virjar.tk.app.navigation.feature.chat
 
+import com.virjar.tk.shared.platform.platformCurrentTimeMillis
+import com.virjar.tk.shared.platform.platformRandomUuid
+
 import com.virjar.tk.app.telemetry.ClientActionOutcome
 import com.virjar.tk.app.telemetry.ClientMediaKind
 import com.virjar.tk.app.telemetry.ClientUiPage
@@ -13,7 +16,6 @@ import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.body.VideoBody
 import com.virjar.tk.protocol.body.VoiceBody
-import java.util.UUID
 import kotlinx.coroutines.CancellationException
 
 /** 视频上传结果：平台上传实现给出已上传附件与最终元数据。 */
@@ -47,14 +49,14 @@ class OutgoingMediaSender(
         reportFailure: ((error: Exception, reason: MediaFailureReason) -> Unit)? = null,
         upload: suspend (onProgress: (Float) -> Unit) -> UploadedVideoMedia,
     ) {
-        val clientMsgId = UUID.randomUUID().toString()
+        val clientMsgId = platformRandomUuid()
         val placeholder = Message(
             chatId = chatId,
             clientMsgId = clientMsgId,
             serverSeq = 0L,
             senderUid = myUid,
             messageType = MessageType.VIDEO.code,
-            timestamp = System.currentTimeMillis(),
+            timestamp = platformCurrentTimeMillis(),
             body = VideoBody(attachment = Attachment("", "", "", 0L)),
             sendStatus = Message.SEND_STATUS_UPLOADING,
         )
@@ -99,11 +101,11 @@ class OutgoingMediaSender(
             viewModel.sendMessage(
                 Message(
                     chatId = chatId,
-                    clientMsgId = UUID.randomUUID().toString(),
+                    clientMsgId = platformRandomUuid(),
                     serverSeq = 0L,
                     senderUid = myUid,
                     messageType = MessageType.VOICE.code,
-                    timestamp = System.currentTimeMillis(),
+                    timestamp = platformCurrentTimeMillis(),
                     body = VoiceBody(attachment, duration = durationSeconds),
                 ),
             )

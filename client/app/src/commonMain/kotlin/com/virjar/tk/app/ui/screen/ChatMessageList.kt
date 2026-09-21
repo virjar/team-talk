@@ -1,5 +1,7 @@
 package com.virjar.tk.app.ui.screen
 
+import com.virjar.tk.shared.platform.platformCurrentTimeMillis
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -442,7 +444,7 @@ private fun messageMenuItems(
     }
     // 撤回时限是防扰动的私聊/群聊 UI 规则；"保存的消息"是自有副本，随时可删除。
     val canRevoke = isMe && msg.serverSeq > 0L &&
-        (isSavedChat || System.currentTimeMillis() - msg.timestamp < 2 * 60 * 1000)
+        (isSavedChat || platformCurrentTimeMillis() - msg.timestamp < 2 * 60 * 1000)
     // "收藏"进入保存的消息；与"保存到设备"（导出文件）是两个动作，文案必须区分（T007）。
     if (onSaveMessage != null && msg.serverSeq > 0L) {
         DropdownMenuItem(

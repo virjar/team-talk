@@ -1,5 +1,9 @@
 package com.virjar.tk.app.viewmodel
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.platformMonotonicNanos
+import com.virjar.tk.shared.platform.synchronized
+
 import com.virjar.tk.shared.AppError
 import com.virjar.tk.shared.client.ConnectionState
 import com.virjar.tk.shared.client.EventProcessor
@@ -46,7 +50,7 @@ class ChatViewModel(
     private val localMutations: SessionLocalMutationWriter,
     /** 最大努力式的确切 session TYPING 准入；拒绝刻意保持静默。 */
     private val trySendTyping: (chatId: String) -> Boolean = { false },
-    private val monotonicNowMillis: () -> Long = { System.nanoTime() / 1_000_000L },
+    private val monotonicNowMillis: () -> Long = { platformMonotonicNanos() / 1_000_000L },
     private val localData: UiLocalDataBoundary = UiLocalDataBoundary(),
     private val telemetry: ClientUiTelemetrySink = NoopClientUiTelemetrySink,
     private val prepareFailedMessageReplacement: suspend (String, Message) -> Message = { _, message -> message },
@@ -99,7 +103,7 @@ class ChatViewModel(
     /** 当前存在于驻留窗口中的失败乐观行的安全、稳定原因。 */
     private val _outgoingFailureCodes = MutableStateFlow<Map<String, OutgoingFailureCode>>(emptyMap())
     val outgoingFailureCodes: StateFlow<Map<String, OutgoingFailureCode>> = _outgoingFailureCodes.asStateFlow()
-    private val failureCodeProbeLock = Any()
+    private val failureCodeProbeLock = PlatformLock()
     private val pendingFailureCodeProbes = mutableSetOf<String>()
 
     private val senderProjections = ChatSenderProjections(scope) { uid ->

@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.database.AppDatabaseQueries
 import com.virjar.tk.protocol.model.Chat
 import com.virjar.tk.protocol.model.Contact
@@ -24,7 +25,7 @@ internal data class ServerCheckpointUserPlan(
 internal class LocalEntityProjectionStore(
     queries: AppDatabaseQueries,
     private val cacheUseGate: CacheUseGate,
-    private val stateLock: Any,
+    private val stateLock: PlatformLock,
     private val markConversationMutatedLocked: (String) -> Unit,
     private val persistExternalUserProjectionLocked: (User) -> Unit = {},
     private val publishExternalUserProjectionLocked: (User) -> Unit = {},

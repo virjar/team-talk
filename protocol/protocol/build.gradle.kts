@@ -95,6 +95,12 @@ tasks.register("verifyProtocolBaseline") {
  * 客户端连接、缓存、Repository、平台实现和服务端基础设施都不得进入本模块。
  */
 kotlin {
+    if (gradle.extra["enableIos"] as Boolean) {
+        iosArm64()
+        iosSimulatorArm64()
+        // The protocol/SDK can still be tested on Intel simulators; Compose UI targets arm64 only.
+        iosX64()
+    }
     // T011：Gradle 运行 JDK 21；JVM 产物显式钉 21，Android 字节码保持 17（设备兼容基线）。
     jvm() {
         compilerOptions {
@@ -137,6 +143,9 @@ dependencies {
 }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    dependsOn("kspCommonMainKotlinMetadata")
+}
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinNativeCompile>().configureEach {
     dependsOn("kspCommonMainKotlinMetadata")
 }
 // KSP 2 uses its own task type. Platform processors also read the generated common sources.

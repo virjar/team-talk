@@ -25,7 +25,7 @@ class MessageReactionGroup(
             "reaction.reactorUids exceeds $MAX_REACTORS_PER_GROUP entries"
         }
         reactorUids.forEach { requireUid(it) }
-        val canonical = reactorUids.toSortedSet().toList()
+        val canonical = reactorUids.distinct().sorted()
         require(canonical.size == reactorUids.size) { "reaction.reactorUids must be duplicate-free" }
         this.reactorUids = canonical
     }

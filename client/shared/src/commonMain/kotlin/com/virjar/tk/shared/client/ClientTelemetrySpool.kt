@@ -1,12 +1,13 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.payload.SyncDatasetIdPolicy
 import com.virjar.tk.protocol.telemetry.ClientTelemetryValidation
 import com.virjar.tk.protocol.telemetry.TelemetryBatch
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import java.io.File
+import com.virjar.tk.shared.platform.PlatformFile as File
 
 internal data class QueuedTelemetryBatch(
     val batch: TelemetryBatch,
@@ -23,9 +24,10 @@ class ClientTelemetrySpool internal constructor(
     private val maxFiles: Int = DEFAULT_MAX_FILES,
     private val maxBytes: Long = DEFAULT_MAX_BYTES,
     private val retentionMillis: Long = DEFAULT_RETENTION_MILLIS,
-    private val clock: () -> Long = System::currentTimeMillis,
+    private val clock: () -> Long = ::platformCurrentTimeMillis,
     private val json: Json = TELEMETRY_JSON,
 ) {
+    private val methodLock = PlatformLock()
     private var evictedEventCount = 0L
     private var rootMaintenanceNotBeforeEpochMs = 0L
 
@@ -57,8 +59,7 @@ class ClientTelemetrySpool internal constructor(
      * 当活跃的保留假脱机已满时返回 false；任何保留段都不会被覆盖。这个阻塞边界在 uploader 的 IO
      * worker 上从 [ClientTelemetryRecorder.flush] 到达。record 与 UI 调用路径绝不进入段或根目录维护。
      */
-    @Synchronized
-    fun append(batch: TelemetryBatch, highPriority: Boolean = false): Boolean {
+    fun append(batch: TelemetryBatch, highPriority: Boolean = false): Boolean = synchronized(methodLock) {
         ClientTelemetryValidation.requireValid(batch)
         require(!batch.heartbeat && batch.events.isNotEmpty()) { "Heartbeat batches are not spooled" }
         val encoded = json.encodeToString(batch)
@@ -89,8 +90,7 @@ class ClientTelemetrySpool internal constructor(
         return true
     }
 
-    @Synchronized
-    internal fun oldest(): QueuedTelemetryBatch? {
+    internal fun oldest(): QueuedTelemetryBatch? = synchronized(methodLock) {
         pruneExpiredLocked(clock())
         return retainedFilesLocked()
             .map(::decodeStoredBatch)
@@ -98,8 +98,7 @@ class ClientTelemetrySpool internal constructor(
     }
 
     /** 只删除通过其精确最终 sequence 确认的、完全相同的不可变批。 */
-    @Synchronized
-    fun acknowledge(batchId: String, acceptedThroughSequence: Long): Boolean {
+    fun acknowledge(batchId: String, acceptedThroughSequence: Long): Boolean = synchronized(methodLock) {
         val queued = retainedFilesLocked()
             .asSequence()
             .map(::decodeStoredBatch)
@@ -117,8 +116,7 @@ class ClientTelemetrySpool internal constructor(
      * 只丢弃服务器权威判定为超出当前遥测策略的那个完全相同的不可变批。身份或内容漂移会按失败关闭
      * 处理，并且什么都不删。
      */
-    @Synchronized
-    internal fun discardRejectedExact(batchId: String, encodedJson: String): Boolean {
+    internal fun discardRejectedExact(batchId: String, encodedJson: String): Boolean = synchronized(methodLock) {
         val queued = retainedFilesLocked()
             .asSequence()
             .map(::decodeStoredBatch)
@@ -133,8 +131,7 @@ class ClientTelemetrySpool internal constructor(
     }
 
     /** 阻塞的诊断/测试边界；生产调用方使用 uploader IO worker。 */
-    @Synchronized
-    fun retainedBatchIds(): List<String> {
+    fun retainedBatchIds(): List<String> = synchronized(methodLock) {
         pruneExpiredLocked(clock())
         return retainedFilesLocked()
             .map(::decodeStoredBatch)
@@ -142,8 +139,8 @@ class ClientTelemetrySpool internal constructor(
             .map { it.batch.batchId }
     }
 
-    @Synchronized
-    internal fun evictedEvents(): Long = evictedEventCount
+    internal fun evictedEvents(): Long = synchronized(methodLock) { evictedEventCount
+    }
 
     private fun pruneExpiredLocked(nowEpochMs: Long): Int {
         require(nowEpochMs >= 0L) { "Telemetry clock must be a non-negative epoch" }

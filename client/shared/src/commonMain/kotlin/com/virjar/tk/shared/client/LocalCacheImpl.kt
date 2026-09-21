@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import app.cash.sqldelight.db.SqlDriver
 import com.virjar.tk.shared.database.AppDatabase
 import com.virjar.tk.protocol.model.Attachment
@@ -74,7 +75,7 @@ class LocalCacheImpl internal constructor(
 
     private val database = AppDatabase(driver)
     private val queries = database.appDatabaseQueries
-    private val stateLock = Any()
+    private val stateLock = PlatformLock()
     private val cacheUseGate = CacheUseGate()
 
     override fun compactStorage(): LocalCacheStorageCompactionReport = cacheUseGate.use {

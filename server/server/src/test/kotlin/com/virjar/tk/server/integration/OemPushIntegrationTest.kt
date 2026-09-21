@@ -13,6 +13,7 @@ import com.virjar.tk.server.infra.push.*
 import com.virjar.tk.server.infra.sync.LiveEventSink
 import com.virjar.tk.server.infra.sync.SyncEventDispatcher
 import com.virjar.tk.server.protocol.dispatcher.RpcDispatcher
+import com.virjar.tk.server.protocol.rpc.AuthRpcImpl
 import com.virjar.tk.server.protocol.rpc.DeviceRpcImpl
 import com.virjar.tk.server.protocol.rpc.RpcStubRegistry
 import kotlinx.coroutines.test.runTest
@@ -301,10 +302,106 @@ class OemPushIntegrationTest {
         assertTrue(rows().isEmpty())
     }
 
+    @Test fun `APNs RPC requires current protocol iOS identity and retains token through refresh until current logout`() = runTest {
+        val ios = user(deviceFlag = 3)
+        val android = user()
+        val service = apnsService()
+        val registry = RpcStubRegistry().apply {
+            register(DeviceRpcContract.SERVICE) { session ->
+                DeviceRpcImpl(session.uid, ctx.deviceRepo, ctx.authService,
+                    session.deviceId, session.deviceCredentialEpoch, service)
+            }
+        }
+        val dispatcher = RpcDispatcher(registry)
+        suspend fun registerApns(principal: TokenInfo = ios.principal, minor: Int = 4) = dispatcher.dispatch(
+            principal.uid, principal.deviceId, principal.deviceCredentialEpoch, "apns-fixture",
+            InvokePayload(1, DeviceRpcContract.SERVICE, DeviceRpcContract.M_SET_APNS_PUSH_REGISTRATION,
+                DeviceRpcContract.encodeSetApnsPushRegistration("AB".repeat(32), PACKAGE, "sandbox", FP)),
+            ProtocolVersion(0, minor),
+        )
+        assertNotEquals(0, registerApns(minor = 3).status)
+        assertTrue(rows().isEmpty())
+        assertFalse(ProtoCodec.withPayload(registerApns(android.principal).payload) { readBoolean() })
+        assertTrue(ProtoCodec.withPayload(registerApns().payload) { readBoolean() })
+        assertEquals("ab".repeat(32), rows().single()[OemPushRegistrations.registrationId])
+        assertEquals("apns-sandbox", rows().single()[OemPushRegistrations.vendor])
+        assertFalse(register(service, ios), "Android RPC cannot register an iOS device")
+        val refresh = ctx.authService.handleAuth(AuthRequestPayload(authType = 2, refreshToken = ios.login.refreshToken,
+            deviceId = ios.principal.deviceId, deviceFlag = 3, correlationId = id(), connectionGeneration = 2))
+        assertEquals(0, refresh.code)
+        val next = assertNotNull(ctx.accessTokenValidator.validateAccessToken(assertNotNull(refresh.accessToken)))
+        assertFalse(ProtoCodec.withPayload(registerApns().payload) { readBoolean() })
+        assertTrue(ProtoCodec.withPayload(registerApns(next).payload) { readBoolean() })
+        AuthRpcImpl(ios.principal.uid, ios.principal.deviceId, ios.principal.deviceCredentialEpoch,
+            "old-ios-session", ctx.authService).logout()
+        assertEquals(1, rows().size, "a delayed logout from the prior credential epoch cannot revoke the current APNs binding")
+        AuthRpcImpl(next.uid, next.deviceId, next.deviceCredentialEpoch, "current-ios-session", ctx.authService).logout()
+        assertTrue(rows().isEmpty())
+        assertFalse(ProtoCodec.withPayload(registerApns(next).payload) { readBoolean() }, "logged-out credentials cannot restore APNs delivery")
+    }
+
+    @Test fun `APNs environment isolation replacement unread retry and stale invalidation share durable queue`() = runTest {
+        val first = user(deviceFlag = 3); val second = user(deviceFlag = 3)
+        val third = user(deviceFlag = 3); val sender = ctx.registerUser()
+        lateinit var service: OemPushNotifications
+        var attempts = 0
+        val delivered = mutableListOf<OemPushNotification>()
+        fun register(user: Login, environment: String = "production", token: String = "ab".repeat(32)): Boolean =
+            service.registerApns(user.principal.uid, user.principal.deviceId, user.principal.deviceCredentialEpoch,
+                token, PACKAGE, environment, FP)
+        service = apnsService { notification ->
+            delivered += notification
+            when (++attempts) {
+                1 -> OemPushDeliveryResult(false, "HTTP_RATE_LIMITED")
+                2 -> {
+                    now++
+                    assertTrue(register(third))
+                    OemPushDeliveryResult(false, "APNS_UNREGISTERED", invalidRegistration = true)
+                }
+                else -> OemPushDeliveryResult(true)
+            }
+        }
+        assertTrue(register(first, "sandbox"))
+        assertTrue(register(second))
+        assertEquals(2, rows().size, "identical token bytes in different environments are distinct identities")
+        assertTrue(register(third))
+        assertEquals(2, rows().size, "account switching replaces only the exact topic and environment token")
+        assertFalse(register(first, "sandbox", ""))
+        assertEquals(1, rows().size)
+        val chat = ctx.chatService.createPersonalChat(sender, third.principal.uid)
+        val seq = send(sender, chat.chatId)
+        dispatch(service, third.principal.uid)
+        assertEquals(1, service.drainDue())
+        assertEquals(0, service.drainDue())
+        now += 5_000
+        assertEquals(1, service.drainDue())
+        assertEquals(1, rows().size, "an old HTTP response cannot invalidate a newer registration")
+        assertEquals(1, service.drainDue())
+        assertEquals(3, delivered.size)
+        assertEquals(delivered[0].jobKey, delivered[1].jobKey)
+        assertEquals(chat.chatId, delivered.last().chatId)
+        assertEquals("apns-production", delivered.last().vendor)
+        assertEquals(0, service.drainDue())
+        send(sender, chat.chatId)
+        dispatch(service, third.principal.uid)
+        ctx.conversationService.setMute(third.principal.uid, chat.chatId, true)
+        assertEquals(1, service.drainDue())
+        assertEquals(3, delivered.size, "iOS hints use the same current unread/mute authority")
+        ctx.conversationService.markRead(third.principal.uid, chat.chatId, seq)
+        assertFalse(service.registerApns(third.principal.uid, third.principal.deviceId,
+            third.principal.deviceCredentialEpoch, "ab".repeat(32), "com.other.app", "production", FP))
+        assertTrue(rows().isEmpty())
+    }
+
+    private fun apnsService(sendApns: suspend (OemPushNotification) -> OemPushDeliveryResult = { OemPushDeliveryResult(true) }) =
+        OemPushNotifications(ctx.database, OemPushConfiguration(apns = apnsFixtureConfiguration(PACKAGE)),
+            "fixture-dataset", ctx.messageStore, { now }, sendApns = sendApns,
+            send = { _, _ -> error("APNs must not route through an Android provider") })
+
     private fun service(
         send: suspend (OemPushVendorConfiguration, OemPushNotification) -> OemPushDeliveryResult =
             { _, _ -> OemPushDeliveryResult(true) },
-    ) = OemPushNotifications(ctx.database, configuration, "fixture-dataset", ctx.messageStore, { now }, send)
+    ) = OemPushNotifications(ctx.database, configuration, "fixture-dataset", ctx.messageStore, { now }, send = send)
     private fun register(service: OemPushNotifications, user: Login, token: String = "registration-one",
         vendor: String = OemPushVendors.XIAOMI) =
         service.register(user.principal.uid, user.principal.deviceId, user.principal.deviceCredentialEpoch, vendor, token, PACKAGE, FP)

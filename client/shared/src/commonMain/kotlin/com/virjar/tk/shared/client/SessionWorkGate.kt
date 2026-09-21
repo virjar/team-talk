@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 /**
  * 会话拥有 worker 的同步发布边界。
  *
@@ -8,7 +9,7 @@ package com.virjar.tk.shared.client
  * 用同一租约重新进入。
  */
 internal class SessionWorkGate(private val ownerName: String) {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private val owner = Any()
     private var generation = 1L
     private var open = true

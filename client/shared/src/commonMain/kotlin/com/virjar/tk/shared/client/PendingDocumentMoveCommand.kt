@@ -1,8 +1,8 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.model.DocumentPolicy
 import com.virjar.tk.protocol.ReliableCommandContract
-import java.util.UUID
 
 /** 一个不可变文档 move/rename，保留直到其精确服务器结果已知。 */
 data class PendingDocumentMoveCommand(
@@ -46,7 +46,7 @@ data class PendingDocumentMoveCommand(
 
     companion object {
         fun create(
-            operationId: String = UUID.randomUUID().toString(),
+            operationId: String = platformRandomUuid(),
             spaceId: String,
             nodeId: String,
             oldParentId: String?,

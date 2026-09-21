@@ -36,6 +36,14 @@ TeamTalk 是多客户端、长连接、异步同步的业务系统。测试优�
 
 ## CI 的实际覆盖
 
+iOS 默认不参与 Gradle 配置；仅 macOS 的 `ios` job 显式设置 `ORG_GRADLE_PROJECT_enableIos=true`。
+其他 CI job 保留 Android/Desktop、SDK 和服务端的编译与测试。`ios` job 使用 Apple Silicon、Xcode 26.0，
+运行协议、SDK 和共享 UI 的 Native 测试，
+再构建无分发签名的模拟器应用（同时检查 Swift 入口与 Kotlin framework）。
+本地开关与资源建议见 [iOS 开发与构建](../05-clients/ios.md#开发与构建)，
+测试命令及真机场景见 [iOS 验证](../05-clients/ios.md#验证与交付边界)。
+该 job 不代表 APNs 已送达、真实选择器/录音/键盘已验收，也不负责 TestFlight 发布。
+
 `ci.yml` 在 push/PR 时通过 Gradle 运行管理后台生产构建、客户端编译、架构检查、服务端真实
 PostgreSQL/TCP 集成、SDK SQLite 及保留的协议/客户端局部测试。管理后台使用 `:server:admin:check`，
 和本地共用锁文件安装、TypeScript 检查与 Vite 构建链，无需 CI 单独配置 Node.js。

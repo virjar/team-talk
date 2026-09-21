@@ -1,7 +1,9 @@
 package com.virjar.tk.shared.log
 
+import com.virjar.tk.shared.platform.*
+import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CancellationException
-import java.io.File
+import com.virjar.tk.shared.platform.PlatformFile as File
 
 /**
  * 一份不可变的进程日志所有权快照。缓冲区、fault 回调与崩溃归属一起
@@ -15,7 +17,7 @@ internal class AppLogOwner(
     private val crashSink: ((File, String) -> Unit)?,
     private val telemetrySink: ((String, String, String, Throwable?) -> Unit)? = null,
 ) {
-    private val lifecycleLock = Any()
+    private val lifecycleLock = PlatformLock()
 
     /** 退场是终局性的：普通固定 logger 不能再追加内容或安排上传。 */
     @Volatile
@@ -103,15 +105,16 @@ class PlatformOnlyTkLogger(private val name: String) : TkLogger {
  * 处理器或崩溃命名空间组合在一起。
  */
 object AppLog {
+    private val methodLock = PlatformLock()
     @Volatile
     private var owner: AppLogOwner? = null
 
-    internal fun install(newOwner: AppLogOwner) = synchronized(this) {
+    internal fun install(newOwner: AppLogOwner) = synchronized(methodLock) {
         check(newOwner.isRestorable()) { "Retired AppLog owner cannot be installed" }
         owner = newOwner
     }
 
-    internal fun installReturningPrevious(newOwner: AppLogOwner): AppLogOwner? = synchronized(this) {
+    internal fun installReturningPrevious(newOwner: AppLogOwner): AppLogOwner? = synchronized(methodLock) {
         check(newOwner.isRestorable()) { "Retired AppLog owner cannot be installed" }
         val previous = owner
         owner = newOwner
@@ -126,7 +129,7 @@ object AppLog {
         // 让 owner 生命周期 → 全局槽位成为唯一嵌套的加锁顺序。fault 回调
         // 在 owner 锁下被准入，并可能同步发起会话退场。
         failedOwner.markRetired()
-        return synchronized(this) {
+        return synchronized(methodLock) {
             if (owner !== failedOwner) return@synchronized false
             owner = previousOwner?.takeIf { it.isRestorable() }
             true
@@ -138,7 +141,7 @@ object AppLog {
         // 隐藏的 owner 仍然永久退场。后续的构造回滚绝不能复活一个
         // 其会话已经在另一个 owner 占据槽位期间越过 quiesce 的上传器。
         expectedOwner.markRetired()
-        return synchronized(this) {
+        return synchronized(methodLock) {
             if (owner !== expectedOwner) return@synchronized false
             owner = null
             true

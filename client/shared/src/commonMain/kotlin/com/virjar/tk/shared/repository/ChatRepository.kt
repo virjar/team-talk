@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.repository
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.Outcome
 import com.virjar.tk.shared.client.LocalCache
 import com.virjar.tk.shared.client.PendingGroupCreationCommand
@@ -13,14 +14,13 @@ import com.virjar.tk.protocol.model.InvitePreview
 import com.virjar.tk.protocol.model.Member
 import com.virjar.tk.shared.outcome
 import com.virjar.tk.protocol.rpc.gen.ChatRpcProxy
-import java.util.UUID
 
 class ChatRepository(
     rpcClient: RpcInvoker,
     private val localCache: LocalCache,
-    private val newGroupOperationId: () -> String = { UUID.randomUUID().toString() },
-    private val newInviteOperationId: () -> String = { UUID.randomUUID().toString() },
-    private val nowMillis: () -> Long = System::currentTimeMillis,
+    private val newGroupOperationId: () -> String = { platformRandomUuid() },
+    private val newInviteOperationId: () -> String = { platformRandomUuid() },
+    private val nowMillis: () -> Long = ::platformCurrentTimeMillis,
     private val ownerUid: String? = null,
     private val onPendingReliableCommandCommitted: () -> Unit = {},
     private val onPendingInviteLinkCreationRecovered: (chatId: String) -> Unit = {},

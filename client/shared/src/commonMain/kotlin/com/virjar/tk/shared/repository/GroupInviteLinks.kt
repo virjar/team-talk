@@ -1,7 +1,7 @@
 package com.virjar.tk.shared.repository
 
-import java.net.URI
-import java.util.UUID
+import com.virjar.tk.shared.platform.*
+
 
 /** 可分享地址只携带邀请凭据；不会改变客户端连接的部署。 */
 object GroupInviteLinks {
@@ -17,8 +17,8 @@ object GroupInviteLinks {
         val links = pastedUrls.findAll(text).mapNotNull { match ->
             val candidate = match.value.trimEnd('。', '，', '；', '、', '.', ',', ';', '!', '！', ')', '）', ']', '】', '}')
             runCatching {
-                val uri = URI(candidate)
-                create(inviteBase(uri), canonicalToken(uri.rawFragment.orEmpty()))
+                val (base, token) = inviteParts(candidate)
+                create(base, canonicalToken(token))
             }.getOrNull()
         }.distinct().take(2).toList()
         // 多个不同邀请不猜测用户想加入哪个群；点击具体链接后再进入。
@@ -30,31 +30,26 @@ object GroupInviteLinks {
         val value = input.trim()
         require(value.isNotEmpty() && value.length <= 2048) { "请粘贴完整邀请链接或邀请码" }
         if (value.length == 36 && ':' !in value && '/' !in value) return canonicalToken(value)
-        val uri = try {
-            URI(value)
-        } catch (_: Exception) {
-            throw IllegalArgumentException("邀请链接格式不正确")
-        }
-        val linkedBase = inviteBase(uri)
+        val (linkedBase, token) = inviteParts(value)
         require(canonicalHttpServerBase(linkedBase) == canonicalHttpServerBase(serverBaseUrl)) {
             "此邀请属于其他服务器，请使用对应服务器的客户端"
         }
-        return canonicalToken(uri.rawFragment.orEmpty())
+        return canonicalToken(token)
     }
 
-    private fun inviteBase(uri: URI): String {
-        require(uri.scheme?.lowercase() in setOf("http", "https") && uri.host != null &&
-            uri.rawUserInfo == null && uri.rawQuery == null && uri.rawPath.orEmpty().endsWith("/invite")) {
-            "请粘贴完整邀请链接或邀请码"
-        }
-        return URI(uri.scheme, null, uri.host, uri.port, uri.path.removeSuffix("/invite"), null, null).toASCIIString()
+    private fun inviteParts(value: String): Pair<String, String> {
+        val hash = value.indexOf('#')
+        require(hash > 0 && hash == value.lastIndexOf('#')) { "邀请链接格式不正确" }
+        val location = value.substring(0, hash)
+        require(location.endsWith("/invite") && '?' !in location) { "请粘贴完整邀请链接或邀请码" }
+        return canonicalHttpServerBase(location.removeSuffix("/invite")) to value.substring(hash + 1)
     }
 
     private val pastedUrls = Regex("https?://[^\\s<>\\\"“”]+", RegexOption.IGNORE_CASE)
 
     private fun canonicalToken(value: String): String {
         val token = value.takeIf { it.length == 36 }
-            ?.let { runCatching { UUID.fromString(it).toString() }.getOrNull() }
+            ?.let { runCatching { platformCanonicalUuid(it) }.getOrNull() }
         require(token != null && token == value.lowercase()) { "邀请码格式不正确，请复制完整链接或邀请码" }
         return token
     }

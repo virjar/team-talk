@@ -1,5 +1,9 @@
 package com.virjar.tk.app.navigation.feature.chat
 
+import com.virjar.tk.shared.platform.PlatformAtomicBoolean
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
+
 import com.virjar.tk.protocol.model.EmbeddedAsset
 import com.virjar.tk.app.ui.component.rich.ChatComposerMode
 import com.virjar.tk.app.ui.component.rich.ChatVisualMarkdownBaseline
@@ -25,7 +29,7 @@ class ChatDraftLifecycleBridge {
         val captureAndPublish: () -> Unit,
     )
 
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var nextRegistrationId = 0L
     private var phase = ChatDraftLifecyclePhase.OPEN
     private val entries = linkedMapOf<Long, Entry>()
@@ -60,6 +64,17 @@ class ChatDraftLifecycleBridge {
         // 能进入这里。并发的延迟防抖会等待，然后观察到 CLOSED。
         action()
         true
+    }
+
+    /** Suspend/background boundaries capture the latest frame without retiring the editor. */
+    fun captureLatest() = synchronized(lock) {
+        if (phase != ChatDraftLifecyclePhase.OPEN) return@synchronized
+        var failure: Throwable? = null
+        entries.values.toList().forEach { entry ->
+            try { entry.captureAndPublish() }
+            catch (next: Throwable) { failure = mergeChatDraftCaptureFailures(failure, next) }
+        }
+        failure?.let { throw it }
     }
 
     /** 会话退役一次性认领所有挂接的编辑器，并拒绝此后的一切销毁。 */
@@ -120,7 +135,7 @@ class ChatComposerContextStore {
         var context: ChatComposerContext? = null
         var hydrated = false
         var durableSnapshot: ChatDraftSnapshot? = null
-        var failedWrite: java.util.concurrent.atomic.AtomicBoolean? = null
+        var failedWrite: PlatformAtomicBoolean? = null
         var submission: ChatComposerSubmission? = null
         var commit: Pair<Long, CompletableDeferred<Long>>? = null
         val retainedTexts = mutableMapOf<RetainedTextSlot, RetainedText>()
@@ -285,7 +300,7 @@ class ChatComposerContextStore {
         state.durableSnapshot?.takeIf {
             state.failedWrite?.get() != true && it.copy(revision = 0L) == snapshot
         }?.let { retain(chatId, normalized.copy(draftRevision = it.revision)); return it.revision }
-        val failed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val failed = PlatformAtomicBoolean(false)
         val committed = CompletableDeferred<Long>()
         val revision = owner.localMutations.saveChatDraft(snapshot, onCommitted = { committed.complete(it.revision) }, onFailure = {
             failed.set(true)

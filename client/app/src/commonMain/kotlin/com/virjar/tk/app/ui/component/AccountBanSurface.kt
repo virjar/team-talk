@@ -20,7 +20,7 @@ import com.virjar.tk.app.client.AccountBanState
 
 /** 双端共享的封禁终结界面；清理未完成时不暴露登录或工作区操作。 */
 @Composable
-fun AccountBanSurface(state: AccountBanState, onReturnToLogin: () -> Unit, onExit: () -> Unit) {
+fun AccountBanSurface(state: AccountBanState, onReturnToLogin: () -> Unit, onExit: () -> Unit, exitActionLabel: String = "退出应用") {
     Surface(Modifier.fillMaxSize().testTag("auth.account-banned")) {
         Column(
             Modifier.fillMaxSize().padding(28.dp),
@@ -45,7 +45,7 @@ fun AccountBanSurface(state: AccountBanState, onReturnToLogin: () -> Unit, onExi
                     Text("返回登录")
                 }
                 AccountBanState.CLEANUP_FAILED -> Button(onExit, Modifier.testTag("auth.account-banned.exit")) {
-                    Text("退出应用")
+                    Text(exitActionLabel)
                 }
             }
         }

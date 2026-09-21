@@ -110,6 +110,7 @@ fun deploymentConfiguration(rootDir: File): DeploymentConfig = deployment {
 |---|---|---|
 | `applicationId` | `com.virjar.tk` | 稳定的反向域名应用标识；Desktop Bundle ID 与私有版数据目录据此生成 |
 | `androidApplicationId` | 未填写时为 `applicationId + ".android"` | 最终 Android 安装包名，可显式填写不带后缀的包名；公版固定为 `com.virjar.tk.android`，新私有部署建议明确填写并与渠道登记包名一致 |
+| `iosBundleId` | 未填写时为 `applicationId + ".ios"` | 最终 Apple Bundle ID 与 APNs topic；公版为 `com.virjar.tk.ios`，私有应用需要自己的 ID，首次安装后保持稳定 |
 | `displayName` | `TeamTalk` | 用户看到的应用名称，可包含中文；用于启动入口、登录界面、窗口、托盘和升级提示 |
 | `desktopName` | `TeamTalk` | 稳定的英文安装名称；只用 ASCII 字母和数字，首字符为字母；用于 `.app` 名称、桌面安装与产物命名 |
 
@@ -312,6 +313,41 @@ Android 登录后由用户选择是否启用本机厂商推送，授权前不初
 实际状态见[功能状态](../10-reference/feature-status.md)，发送与点击行为见
 [Android 通知边界](../05-clients/android.md#消息通知的当前范围)。
 
+### iOS APNs 通知
+
+Apple 推送与 Android 厂商配置独立；在选中的部署 Kotlin 配置 `client` 章节中设置：
+
+```kotlin
+identity {
+    // 私有应用应与 Apple Developer 中登记、Xcode 签名使用的 Bundle ID 一致。
+    iosBundleId = "com.example.teamtalk.internal.ios"
+}
+apnsPush {
+    teamId = "ABCDEFGHIJ" // Apple Team ID（示例）
+    keyId = "KLMNOPQRST"  // APNs Key ID（示例）
+    privateKeyFile = File(rootDir, "buildSrc/deployment-local/apns/AuthKey.p8")
+    environments = setOf("production", "sandbox")
+}
+```
+
+默认只启用 `production`；开发设备需要 `sandbox`，客户端注册环境取自签名的 `aps-environment`。
+同一个 token 的 sandbox 与 production 身份相互独立；配置的密钥必须有对应 topic 与环境的发送权限。
+Bundle ID、Team ID、Key ID 和密钥文件路径可以进入配置快照，`.p8` 内容不得进入 Git 或客户端产物。
+部署在修改远程状态前验证 PKCS#8/P-256 密钥，再写入权限 `0600` 的服务端 `env.sh`；禁用配置会显式关闭通道。
+
+服务端变量为 `APNS_PUSH_ENABLED / _TEAM_ID / _KEY_ID / _BUNDLE_ID / _TITLE / _ENVIRONMENTS`，
+以及二选一的 `APNS_PUSH_PRIVATE_KEY_FILE`（服务端本地路径）或 `APNS_PUSH_PRIVATE_KEY_BASE64`
+（部署任务生成的单行秘密）。未开启时不读取密钥。HTTP/2 provider 请求使用 ES256 JWT，缓存 50 分钟，
+向固定 Apple 端点发送通用未读提示，不上传消息正文。APNs 410 与坏 token 清理注册；鉴权、限流及暂时失败
+走现有持久重试。新 token 注册时间与 generation 防止旧请求的失效响应删除更新后的注册。
+
+iOS 设备类型为 3，需要支持 protocol 0.4 的服务端；所有已发布到 `v0.0.4` 的旧服务端都拒绝此设备类型。
+`device/4 setApnsPushRegistration` 独立于已发布的 Android `device/3`，空 token 注销。
+APNs 是提醒入口；前台恢复和重新连接继续走持久同步，不能依赖后台通知保证消息完整性。
+实现依据 [Apple provider 请求](https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns)
+与 [Token 鉴权](https://developer.apple.com/documentation/usernotifications/establishing-a-token-based-connection-to-apns)。
+本地签名/HTTP fixture 不替代 Apple 凭据、真机锁屏和通知点击验收。
+
 ### 用辅助函数拆分配置
 
 DSL 是普通 Kotlin，可以在选中目录内新增同包文件，例如 `PrivateEndpoint.kt`，按章节拆分：
@@ -358,7 +394,7 @@ HTTP scheme 与 TCP TLS 分别配置。HTTP 站点可以配合自签 TCP 证书�
 | 层 | HTTP | IM TCP 与证书 | 代码入口 |
 |---|---|---|---|
 | 服务运行时 | 未启用 HTTPS connector 时，HTTP 监听 `0.0.0.0:KTOR_PORT`；同时配置 HTTPS 端口与可加载 keystore 时只开 HTTPS，关闭 HTTP | 默认 `0.0.0.0:5100`；配置 `SSL_KEYSTORE` 后使用 TLS 1.2/1.3，否则为明文。监听地址本身不强制 TLS | [Application](../../server/server/src/main/kotlin/com/virjar/tk/server/Application.kt)、[ServerTransportConfiguration](../../server/server/src/main/kotlin/com/virjar/tk/server/ServerTransportConfiguration.kt) |
-| 当前 Android/Desktop/无头 SDK | `serverUrl` 显式选择 HTTP 或 HTTPS，允许非本地 HTTP；文件、机器人和遥测共用地址规则，不跟随认证请求重定向。Android debug/release 清单均允许明文 HTTP | 非本地地址强制 TLS；默认平台 WebPKI，配置 `tcpTlsCertificatePem` 时使用只包含该证书的专用 TrustStore。始终校验主机名/IP，握手失败不回退明文。未配置证书时仅 `localhost`、`::1` 和合法四段 `127.*` 字面地址可用明文 | [ClientTransportTls](../../client/shared/src/commonMain/kotlin/com/virjar/tk/shared/client/ClientTransportTls.kt)、[Android/JVM 文件 HTTP](../../client/shared/src/jvmAndAndroidMain/kotlin/com/virjar/tk/shared/repository/FileRepository.jvmAndAndroid.kt) |
+| 当前 Android/Desktop/无头 SDK | `serverUrl` 显式选择 HTTP 或 HTTPS，允许非本地 HTTP；文件、机器人和遥测共用地址规则，不跟随认证请求重定向。Android debug/release 清单均允许明文 HTTP | 非本地地址强制 TLS；默认平台 WebPKI，配置 `tcpTlsCertificatePem` 时使用只包含该证书的专用 TrustStore。始终校验主机名/IP，握手失败不回退明文。未配置证书时仅 `localhost`、`::1` 和合法四段 `127.*` 字面地址可用明文 | [ClientTransportTls](../../client/shared/src/jvmAndAndroidMain/kotlin/com/virjar/tk/shared/client/ClientTransportTls.kt)、[Android/JVM 文件 HTTP](../../client/shared/src/jvmAndAndroidMain/kotlin/com/virjar/tk/shared/repository/FileRepository.jvmAndAndroid.kt) |
 | 当前 Gradle 部署工具 | `serverUrl` 选择 HTTP 或 HTTPS connector；HTTP 配置 `tcpTlsCertificatePem` 后允许成对 PEM 参数 | HTTPS 或显式公共 TCP 证书启用 TLS，生成 `TCP_HOST=0.0.0.0` 与 `SSL_KEYSTORE`；HTTPS 另外设置 `KTOR_SSL_PORT`，HTTP 不设置它。无 TLS 的本地开发保留 loopback TCP | [DeploymentConfig](../../buildSrc/src/main/kotlin/deployment/DeploymentConfig.kt)、[EnvSh](../../buildSrc/src/main/kotlin/deployment/EnvSh.kt)、[TLS 预检](../../buildSrc/src/main/kotlin/deployment/TlsDeploymentPreflight.kt) |
 
 HTTP 的平台与 SDK 限制已统一；没有额外明文开关，配置 `http://` 就是明确选择，不在 HTTPS 失败时降级。

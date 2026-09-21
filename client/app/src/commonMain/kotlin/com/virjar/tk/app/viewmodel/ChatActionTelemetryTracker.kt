@@ -1,5 +1,8 @@
 package com.virjar.tk.app.viewmodel
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
+
 import com.virjar.tk.shared.client.OutgoingMessageState
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.app.telemetry.ClientActionOutcome
@@ -17,7 +20,7 @@ import com.virjar.tk.app.telemetry.ClientUiTelemetrySink
 internal class ChatActionTelemetryTracker(
     private val sink: ClientUiTelemetrySink,
 ) {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private val pendingSendIds = mutableSetOf<String>()
     private val sendProbesInFlight = mutableSetOf<String>()
     private var pendingReadSeq: Long? = null

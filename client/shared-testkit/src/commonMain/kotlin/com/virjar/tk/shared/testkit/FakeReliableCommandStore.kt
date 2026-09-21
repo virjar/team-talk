@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.testkit
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.client.MAX_PENDING_GROUP_FILE_COMMANDS
 import com.virjar.tk.shared.client.MAX_PENDING_DOCUMENT_MOVE_COMMANDS
 import com.virjar.tk.shared.client.PendingContactDecision
@@ -18,9 +19,9 @@ import com.virjar.tk.shared.client.PendingReliableCommandConflictException
 internal class FakeReliableCommandStore(
     private val cacheUseGate: FakeCacheUseGate,
 ) {
-    private val groupCreationLock = Any()
+    private val groupCreationLock = PlatformLock()
     private var groupCreation: PendingGroupCreationCommand? = null
-    private val reliableCommandLock = Any()
+    private val reliableCommandLock = PlatformLock()
     private val contactDecisions = linkedMapOf<String, PendingContactDecision>()
     private val inviteCreations = linkedMapOf<String, PendingInviteLinkCreation>()
     private var groupBotCredentialCommand: PendingGroupBotCredentialCommand? = null

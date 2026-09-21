@@ -1,10 +1,12 @@
 package com.virjar.tk.app.navigation.feature.task
 
+import com.virjar.tk.shared.platform.platformCurrentTimeMillis
+import com.virjar.tk.shared.platform.platformRandomUuid
+
 import com.virjar.tk.app.ui.screen.conversationIdentityPresentation
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.protocol.body.TaskRefBody
 import com.virjar.tk.protocol.model.*
-import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -110,8 +112,8 @@ internal fun TaskFeature.share(task: WorkTask, chatId: String) {
         return
     }
     val message = failedShareMessages.getOrPut(key) {
-        Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(), senderUid = myUid,
-            messageType = MessageType.TASK_REF.code, timestamp = System.currentTimeMillis(),
+        Message(chatId = chatId, clientMsgId = platformRandomUuid(), senderUid = myUid,
+            messageType = MessageType.TASK_REF.code, timestamp = platformCurrentTimeMillis(),
             body = TaskRefBody(task.taskId, task.title, taskStatusLabel(task.status)))
     }
     sharingTo = chatId

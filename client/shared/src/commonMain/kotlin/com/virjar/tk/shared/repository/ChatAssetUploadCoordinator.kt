@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.repository
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.ReliableCommandContract
 import com.virjar.tk.protocol.http.AttachmentUploadIdentity
 import com.virjar.tk.protocol.model.Message
@@ -13,7 +14,6 @@ import com.virjar.tk.shared.client.ChatAssetUpload
 import com.virjar.tk.shared.client.ChatAssetUploadState
 import com.virjar.tk.shared.client.ConnectionState
 import com.virjar.tk.shared.client.LocalChatAssetUploads
-import java.util.UUID
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
@@ -51,9 +51,9 @@ class ChatAssetUploadCoordinator internal constructor(
             local.recoverUploads()
             while (isActive) {
                 sourceMutation.withLock { cleanupSources() }
-                local.expireUploads(System.currentTimeMillis())
+                local.expireUploads(platformCurrentTimeMillis())
                 val selected = if (connectionState.value == ConnectionState.AUTHENTICATED) {
-                    local.claimNext(System.currentTimeMillis())
+                    local.claimNext(platformCurrentTimeMillis())
                 } else null
                 if (selected != null) {
                     val task = sourceMutation.withLock {
@@ -67,7 +67,7 @@ class ChatAssetUploadCoordinator internal constructor(
                 }
                 val retryAt = local.nextUploadWakeAt(connectionState.value == ConnectionState.AUTHENTICATED)
                 if (retryAt != null) {
-                    withTimeoutOrNull((retryAt - System.currentTimeMillis()).coerceAtLeast(1_000)) { wake.receive() }
+                    withTimeoutOrNull((retryAt - platformCurrentTimeMillis()).coerceAtLeast(1_000)) { wake.receive() }
                 } else wake.receive()
             }
         }
@@ -86,7 +86,7 @@ class ChatAssetUploadCoordinator internal constructor(
             try {
                 val result = local.register(ChatAssetUpload(
                     assetId, chatId, staged.sourceId, staged.length, staged.sha256,
-                    fileName, contentType, isImage, UUID.randomUUID().toString(), System.currentTimeMillis(),
+                    fileName, contentType, isImage, platformRandomUuid(), platformCurrentTimeMillis(),
                 ))
                 if (result.sourceId != staged.sourceId) spool.delete(staged.sourceId)
                 result
@@ -141,7 +141,7 @@ class ChatAssetUploadCoordinator internal constructor(
     private suspend fun upload(job: ChatAssetUpload) {
         try {
             val identity = AttachmentUploadIdentity(job.uploadId, job.issuedAt)
-            identity.requireActiveAt(System.currentTimeMillis())
+            identity.requireActiveAt(platformCurrentTimeMillis())
             when (val result = fileRepository.uploadWithMeta(spool.open(job.sourceId), job.fileName, job.contentType, identity)) {
                 is Outcome.Success -> {
                     val uploaded = result.value
@@ -155,7 +155,7 @@ class ChatAssetUploadCoordinator internal constructor(
                     val expired = result.error is AppError.Business && result.error.code == 410
                     local.fail(job.assetId, job.attempt,
                         if (expired) "上传凭据已过期，请重试以重新上传保留的源文件" else result.error.message.orEmpty(),
-                        if (retryable) System.currentTimeMillis() + retryDelay(job.attempt) else 0)
+                        if (retryable) platformCurrentTimeMillis() + retryDelay(job.attempt) else 0)
                 }
             }
         } catch (cancelled: CancellationException) {
@@ -181,7 +181,7 @@ class ChatAssetUploadCoordinator internal constructor(
     /** 只等待自有 IO 工作，没有 Main 回调；必须早于 LocalCache 和专用 HTTP transport 关闭。 */
     override fun close() {
         owner.cancel()
-        try { fileRepository.close() } finally { runBlocking { owner.join() } }
+        try { fileRepository.close() } finally { platformDrainJob(owner) }
     }
 
     private fun retryDelay(attempt: Long): Long = 1_000L shl attempt.coerceIn(0, 6).toInt()

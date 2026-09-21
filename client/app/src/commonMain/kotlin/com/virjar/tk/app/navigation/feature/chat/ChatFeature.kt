@@ -1,5 +1,7 @@
 package com.virjar.tk.app.navigation.feature.chat
 
+import kotlinx.coroutines.*
+
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -12,11 +14,6 @@ import com.virjar.tk.app.viewmodel.ChatViewModel
 import com.virjar.tk.shared.AppError
 import com.virjar.tk.shared.client.ClientSession
 import com.virjar.tk.shared.repository.ChatAssetSpool
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.launch
 
 /**
  * 会话作用域的聊天域控制器：编辑器热上下文、跨设备草稿生命周期、附件导入 worker、

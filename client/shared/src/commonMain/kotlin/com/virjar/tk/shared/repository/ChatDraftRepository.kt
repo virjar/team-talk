@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.repository
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.model.ChatDraftSnapshot as SharedChatDraftSnapshot
 import com.virjar.tk.protocol.rpc.RpcInvoker
 import com.virjar.tk.protocol.rpc.RpcStatusException
@@ -9,10 +10,9 @@ import com.virjar.tk.shared.Outcome
 import com.virjar.tk.shared.client.LocalCache
 import com.virjar.tk.shared.client.LocalChatDraftSync
 import com.virjar.tk.shared.outcome
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 
 /** 完整草稿的 CAS 同步。SQLite 拥有未确认操作，页面和重连只唤醒同一个恢复通道。 */
 class ChatDraftRepository(
@@ -76,7 +76,7 @@ class ChatDraftRepository(
         requests.withLock {
             // own ACK 后最多推进一个后继，更多输入交给合并唤醒，避免某一会话独占 worker。
             repeat(2) {
-                val pending = local.nextCommand(chatId, System.currentTimeMillis()) ?: return@withLock
+                val pending = local.nextCommand(chatId, platformCurrentTimeMillis()) ?: return@withLock
                 val result = try { rpc.mutate(pending.command) } catch (failure: Exception) {
                     val code = status(failure)
                     if (code == 403 || (failure.isDefinitiveReliableCommandRejection() &&

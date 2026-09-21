@@ -18,7 +18,7 @@ import com.virjar.tk.app.ui.component.rich.MarkdownText
 import com.virjar.tk.app.ui.theme.Tk
 import com.virjar.tk.protocol.model.TaskPolicy
 import com.virjar.tk.protocol.model.TaskOptions
-import java.time.ZoneId
+import kotlinx.datetime.TimeZone
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -182,7 +182,7 @@ private fun TaskDateTimeFields(
             modifier = Modifier.weight(1f).testTag("$tag.time"))
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("本地时区：${ZoneId.systemDefault().id}", style = MaterialTheme.typography.labelSmall,
+        Text("本地时区：${TimeZone.currentSystemDefault().id}", style = MaterialTheme.typography.labelSmall,
             color = Tk.colors.metaText, modifier = Modifier.weight(1f))
         TextButton(onClick = { onChange { TaskDeadlineInput() } }, enabled = enabled,
             modifier = Modifier.testTag(clearTag)) { Text(clearLabel) }

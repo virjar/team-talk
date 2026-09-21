@@ -1,5 +1,8 @@
 package com.virjar.tk.app.navigation.feature.task
 
+import com.virjar.tk.shared.platform.platformCurrentTimeMillis
+import com.virjar.tk.shared.platform.platformRandomUuid
+
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -508,13 +511,13 @@ class TaskFeature internal constructor(
                     // 即使旧 Activity 快照对应的 ACK 投影已淘汰，CREATE 也沿用原身份，避免重复创建。
                     if (supportsTaskDetails) {
                         if (captured.original == null) repo.enqueue(TaskDetailsCommand(
-                            java.util.UUID.randomUUID().toString(), System.currentTimeMillis(), captured.editorKey,
+                            platformRandomUuid(), platformCurrentTimeMillis(), captured.editorKey,
                             0, TaskDetailsCommand.CREATE, draft, options, recurrenceRule = recurrenceRule,
                         )).getOrThrow()
                         else repo.edit(requireNotNull(captured.originalDetails), draft, options).getOrThrow()
                     } else {
                         if (captured.original == null) repo.enqueue(TaskCommand(
-                            java.util.UUID.randomUUID().toString(), System.currentTimeMillis(), captured.editorKey,
+                            platformRandomUuid(), platformCurrentTimeMillis(), captured.editorKey,
                             0, TaskCommand.CREATE, draft,
                         )).getOrThrow()
                         else repo.edit(captured.original, draft).getOrThrow()

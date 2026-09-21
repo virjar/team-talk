@@ -164,7 +164,10 @@ object ReleaseBundle {
         require(if (identity.distributionKind == "snapshot") {
             manifest["desktopRevision"]?.jsonPrimitive?.intOrNull == identity.desktopRevision
         } else "desktopRevision" !in manifest) { "Bundle Desktop installation revision differs" }
-        require(manifest["client"] == clientManifest(identity.client)) {
+        val currentClient = clientManifest(identity.client)
+        val legacyClient = JsonObject(currentClient - "iosBundleId")
+        require(manifest["client"] == currentClient ||
+            (identity.client.iosBundleId == "${identity.client.applicationId}.ios" && manifest["client"] == legacyClient)) {
             "Bundle client identity differs from the effective deployment configuration"
         }
         val deploymentSnapshot = File(directory, DEPLOYMENT_CONFIG)
@@ -290,6 +293,7 @@ object ReleaseBundle {
     private fun clientManifest(client: ClientDistributionIdentity): JsonObject = buildJsonObject {
         put("applicationId", client.applicationId)
         put("androidApplicationId", client.androidApplicationId)
+        put("iosBundleId", client.iosBundleId)
         put("displayName", client.displayName)
         put("desktopName", client.desktopName)
     }
@@ -297,13 +301,20 @@ object ReleaseBundle {
     private fun matchesDeploymentSnapshot(snapshot: String, deployment: DeploymentConfig): Boolean {
         val current = deployment.toCanonicalJson()
         if (snapshot == current) return true
-        // Existing seals omitted the final Android ID. Only the historical derivation is compatible;
-        // preserve their exact canonical bytes and hashes instead of rewriting the sealed directory.
-        if (deployment.client.androidApplicationId != "${deployment.client.applicationId}.android") return false
+        // Released seals omitted iOS, and older seals also omitted Android. Only historical defaults
+        // may be omitted; preserve exact sealed bytes instead of rewriting distributed directories.
         val values = Json.parseToJsonElement(current).jsonObject.toMutableMap()
-        values["client"] = JsonObject(values.getValue("client").jsonObject - "androidApplicationId")
-        val legacy = Json { prettyPrint = true }.encodeToString(JsonObject.serializer(), JsonObject(values)) + "\n"
-        return snapshot == legacy
+        val client = values.getValue("client").jsonObject.toMutableMap()
+        if (deployment.client.iosBundleId != "${deployment.client.applicationId}.ios" || deployment.apnsPush != null) return false
+        client.remove("iosBundleId")
+        fun legacySnapshot(): String {
+            values["client"] = JsonObject(client.toMap())
+            return Json { prettyPrint = true }.encodeToString(JsonObject.serializer(), JsonObject(values)) + "\n"
+        }
+        if (snapshot == legacySnapshot()) return true
+        if (deployment.client.androidApplicationId != "${deployment.client.applicationId}.android") return false
+        client.remove("androidApplicationId")
+        return snapshot == legacySnapshot()
     }
 
     private fun zipDirectory(source: File, destination: File) {

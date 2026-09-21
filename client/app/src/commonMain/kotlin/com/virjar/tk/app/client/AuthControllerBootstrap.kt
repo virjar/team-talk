@@ -1,5 +1,7 @@
 package com.virjar.tk.app.client
 
+import kotlinx.coroutines.*
+
 import com.virjar.tk.shared.client.SessionEndReason
 import com.virjar.tk.shared.client.TokenStore
 import com.virjar.tk.shared.client.AuthenticationAttemptAdmission
@@ -17,9 +19,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.virjar.tk.protocol.telemetry.ClientRuntimeInfo
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
-import java.io.File
+import com.virjar.tk.shared.platform.PlatformFile as File
 
 private val authCredentialOwnerClaims = AuthCredentialOwnerClaimCoordinator()
 

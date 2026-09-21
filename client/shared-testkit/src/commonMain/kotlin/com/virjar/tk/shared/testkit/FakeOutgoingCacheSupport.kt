@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.testkit
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.client.OutgoingFailureCode
 import com.virjar.tk.shared.client.OutgoingMessage
 import com.virjar.tk.shared.client.OutgoingMessageConflictException
@@ -8,8 +9,9 @@ import com.virjar.tk.shared.client.canonicalizeOutboundMessage
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.payload.MessageAckPayload
 
-/** [FakeLocalCache] 的可靠发件箱/恢复切片，共享其完全一致的消息 map 监视器锁。 */
+/** [FakeLocalCache] 的可靠发件箱/恢复切片，共享其完全一致的消息投影锁。 */
 internal class FakeOutgoingCacheSupport(
+    private val messagesLock: PlatformLock,
     private val cacheUseGate: FakeCacheUseGate,
     private val messagesMap: MutableMap<String, MutableList<Message>>,
     private val outgoingStore: FakeOutgoingMessageStore,
@@ -21,7 +23,7 @@ internal class FakeOutgoingCacheSupport(
         now: Long,
         requestFingerprint: ByteArray?,
     ): OutgoingMessage = cacheUseGate.use {
-        enqueueFakeOutgoingMessage(messagesMap, outgoingStore, message, now, requestFingerprint)
+        enqueueFakeOutgoingMessage(messagesLock, messagesMap, outgoingStore, message, now, requestFingerprint)
     }
 
     fun get(chatId: String, clientMsgId: String, requestFingerprint: ByteArray?): OutgoingMessage? =
@@ -34,7 +36,7 @@ internal class FakeOutgoingCacheSupport(
 
     fun discard(ownerUid: String, chatId: String, clientMsgId: String): Boolean = cacheUseGate.use {
         requireRecoveryIdentity(ownerUid, chatId, clientMsgId)
-        synchronized(messagesMap) {
+        synchronized(messagesLock) {
             val messages = messagesMap[chatId] ?: return@synchronized false
             val source = messages.firstOrNull { it.clientMsgId == clientMsgId }
                 ?: return@synchronized false
@@ -66,7 +68,7 @@ internal class FakeOutgoingCacheSupport(
         require(canonical.chatId == chatId) { "replacement must stay in the failed message chat" }
         require(canonical.senderUid == ownerUid) { "replacement owner must match the session owner" }
         require(canonical.clientMsgId != clientMsgId) { "replacement must use a fresh clientMsgId" }
-        synchronized(messagesMap) {
+        synchronized(messagesLock) {
             val messages = messagesMap[chatId] ?: return@synchronized null
             val source = messages.firstOrNull { it.clientMsgId == clientMsgId }
                 ?: return@synchronized null
@@ -103,14 +105,14 @@ internal class FakeOutgoingCacheSupport(
     }
 
     fun recoverMessages(now: Long): List<OutgoingMessage> = cacheUseGate.use {
-        synchronized(messagesMap) {
+        synchronized(messagesLock) {
             repairProjection(now)
             outgoingStore.recover(now)
         }
     }
 
     fun recoverState(now: Long) = cacheUseGate.use {
-        synchronized(messagesMap) {
+        synchronized(messagesLock) {
             repairProjection(now)
             outgoingStore.recoverState(now)
         }
@@ -148,7 +150,7 @@ internal class FakeOutgoingCacheSupport(
 
     /** 镜像真实的基于集合的重置：原地保留被回执 GC 回收的失败投影。 */
     fun projectionAfterReset(): List<Message> = cacheUseGate.use {
-        synchronized(messagesMap) {
+        synchronized(messagesLock) {
             val outboxKeys = outgoingStore.projectionKeys()
             val retained = linkedMapOf<Pair<String, String>, Message>()
             messagesMap.values.asSequence().flatten()
@@ -165,10 +167,10 @@ internal class FakeOutgoingCacheSupport(
         }
     }
 
-    /** 调用方持有 [messagesMap] 锁。 */
+    /** 调用方持有 [messagesLock] 锁。 */
     private fun repairProjection(now: Long) {
         failFakeOrphanedMessages(messagesMap, outgoingStore.projectionKeys(), onChatChanged)
-        reconcileFakeAuthoritativeOutgoing(messagesMap, outgoingStore, now)
+        reconcileFakeAuthoritativeOutgoing(messagesLock, messagesMap, outgoingStore, now)
     }
 
     private fun requireRecoveryIdentity(ownerUid: String, chatId: String, clientMsgId: String) {

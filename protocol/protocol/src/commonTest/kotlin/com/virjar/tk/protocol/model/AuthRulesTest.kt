@@ -125,8 +125,9 @@ class AuthRulesTest {
                 AuthRules.DEVICE_FLAG_DESKTOP,
             )
         }
+        AuthRules.validateDevice("ios-device-1", "iPhone", null, AuthRules.DEVICE_FLAG_IOS)
         assertFailsWith<IllegalArgumentException> {
-            AuthRules.validateDevice("device-1", null, null, 3)
+            AuthRules.validateDevice("device-1", null, null, 4)
         }
     }
 

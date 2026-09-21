@@ -1,6 +1,7 @@
 package com.virjar.tk.shared.client
 
-import java.io.File
+import com.virjar.tk.shared.platform.*
+import com.virjar.tk.shared.platform.PlatformFile as File
 
 internal data class StoredTelemetrySegmentFile(
     val fileName: String,

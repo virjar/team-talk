@@ -1,5 +1,8 @@
 package com.virjar.tk.app.ui.component
 
+import com.virjar.tk.shared.platform.platformCurrentTimeMillis
+import com.virjar.tk.shared.platform.platformRandomUuid
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -17,7 +20,6 @@ import com.virjar.tk.protocol.body.TaskRefBody
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.TaskPolicy
 import com.virjar.tk.protocol.model.WorkTask
-import java.util.UUID
 import kotlinx.coroutines.CancellationException
 
 /** 只选择现有任务；发送接入聊天的持久发件箱，引用本身不增加接收方权限。 */
@@ -72,8 +74,8 @@ fun TaskRefPickerDialog(
                     items(tasks, key = WorkTask::taskId) { task ->
                         Column(Modifier.fillMaxWidth().testTag("chat.taskref.pick.${task.taskId.take(12)}")
                             .clickable {
-                                onSend(Message(chatId = chatId, clientMsgId = UUID.randomUUID().toString(), senderUid = myUid,
-                                    messageType = MessageType.TASK_REF.code, timestamp = System.currentTimeMillis(),
+                                onSend(Message(chatId = chatId, clientMsgId = platformRandomUuid(), senderUid = myUid,
+                                    messageType = MessageType.TASK_REF.code, timestamp = platformCurrentTimeMillis(),
                                     body = TaskRefBody(task.taskId, task.title, taskStatusLabel(task.status))))
                                 onDismiss()
                             }.padding(vertical = Tk.spacing.sm)) {

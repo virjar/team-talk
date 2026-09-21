@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.testkit
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.client.MessagePager
 import com.virjar.tk.shared.client.MessagePageLoadResult
 import com.virjar.tk.protocol.model.Message
@@ -33,7 +34,7 @@ internal class SimpleMessagePager(
     private val windowSize: Int,
     onClose: (SimpleMessagePager) -> Unit,
 ) : MessagePager {
-    private val ownerLock = Any()
+    private val ownerLock = PlatformLock()
     private val retired = MutableStateFlow(false)
     private var open = true
     private var closeCallback: ((SimpleMessagePager) -> Unit)? = onClose

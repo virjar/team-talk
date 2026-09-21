@@ -210,6 +210,14 @@ internal class DeviceRpcImpl(
         deploymentFingerprint: String,
     ): Boolean = oemPush.register(uid, deviceId, deviceCredentialEpoch,
         vendor, registrationId, packageName, deploymentFingerprint)
+
+    override suspend fun setApnsPushRegistration(
+        deviceToken: String,
+        bundleId: String,
+        environment: String,
+        deploymentFingerprint: String,
+    ): Boolean = oemPush.registerApns(uid, deviceId, deviceCredentialEpoch,
+        deviceToken, bundleId, environment, deploymentFingerprint)
 }
 
 class OrganizationRpcImpl(uid: String, private val service: OrganizationService) : OrganizationRpcStub(uid) {

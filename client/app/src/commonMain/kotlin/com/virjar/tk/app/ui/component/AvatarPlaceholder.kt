@@ -95,26 +95,27 @@ internal fun acceptedAvatarAttachmentOrNull(attachment: Attachment?): Attachment
 
 internal fun avatarFallbackStyle(name: String?, darkTheme: Boolean): AvatarFallbackStyle {
     val palette = if (darkTheme) DarkAvatarFallbackStyles else LightAvatarFallbackStyles
-    val colorIndex = Math.floorMod(name?.hashCode() ?: 0, palette.size)
+    val colorIndex = (name?.hashCode() ?: 0).mod(palette.size)
     return palette[colorIndex]
 }
 
 /**
  * 从名称中提取第一个适合头像展示的字符。
  *
- * 跳过 emoji（surrogate pair）和不可见字符，优先取字母/数字/中文。
+ * 跳过 emoji 和不可见字符，优先取字母/数字/中文。
  * 全是 emoji/符号时返回 "?"。
  */
 internal fun firstDisplayChar(name: String?): String {
     if (name.isNullOrBlank()) return "?"
-    // 遍历 Unicode 码点（codePointAt 正确处理 surrogate pair）
+    // 以完整 Unicode 码点前进，不把补充平面文字拆成半个代理项。
     var i = 0
     while (i < name.length) {
-        val cp = name.codePointAt(i)
-        val charCount = Character.charCount(cp)
-        // 字母、数字、中文（CJK）、其他常用文字字母
-        if (Character.isLetterOrDigit(cp) || isCjkCodePoint(cp)) {
-            return String(Character.toChars(cp))
+        val first = name[i]
+        val paired = first.isHighSurrogate() && i + 1 < name.length && name[i + 1].isLowSurrogate()
+        val charCount = if (paired) 2 else 1
+        val cp = if (paired) 0x10000 + ((first.code - 0xD800) shl 10) + (name[i + 1].code - 0xDC00) else first.code
+        if (isDisplayLetterOrDigit(cp) || isCjkCodePoint(cp)) {
+            return name.substring(i, i + charCount)
         }
         i += charCount
     }
@@ -126,3 +127,6 @@ private fun isCjkCodePoint(cp: Int): Boolean =
     cp in 0x4E00..0x9FFF ||   // CJK 统一表意文字
         cp in 0x3400..0x4DBF ||  // CJK 扩展 A
         cp in 0x3000..0x303F     // CJK 符号和标点（含「」等）
+
+/** Character classification for complete Unicode scalars, including supplementary CJK. */
+internal expect fun isDisplayLetterOrDigit(codePoint: Int): Boolean

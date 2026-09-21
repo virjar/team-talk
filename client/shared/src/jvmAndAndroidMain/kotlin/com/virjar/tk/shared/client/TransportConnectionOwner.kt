@@ -57,7 +57,7 @@ internal class TransportConnectionOwner(
     private val transportTls: ClientTransportTls = ClientTransportTls(),
     private val openConnection: (Bootstrap, String, Int) -> ChannelFuture =
         { bootstrap, host, port -> bootstrap.connect(host, port) },
-) : MessageSendTransport {
+) : ClientTransportOwner {
     private val logger = PlatformOnlyTkLogger("TransportConnectionOwner")
 
     private val workerGroup = createClientTransportEventLoopGroup()
@@ -83,7 +83,7 @@ internal class TransportConnectionOwner(
     private var ownerGeneration = 0L
 
     private val _ownerGeneration = MutableStateFlow(0L)
-    val ownerGenerationState: StateFlow<Long> = _ownerGeneration.asStateFlow()
+    override val ownerGenerationState: StateFlow<Long> = _ownerGeneration.asStateFlow()
 
     @Volatile
     private var activeScope: CoroutineScope? = null
@@ -95,24 +95,24 @@ internal class TransportConnectionOwner(
     private var targetPort: Int = initialPort
 
     private val _state = MutableStateFlow(ConnectionState.DISCONNECTED)
-    val state: StateFlow<ConnectionState> = _state.asStateFlow()
+    override val state: StateFlow<ConnectionState> = _state.asStateFlow()
 
     override val currentOwnerGeneration: Long get() = ownerGeneration
     override val currentConnectionGeneration: Long get() = connectionGeneration.current
     override val coroutineScope: CoroutineScope? get() = activeScope
-    val connectHost: String get() = targetHost
-    val connectPort: Int get() = targetPort
+    override val connectHost: String get() = targetHost
+    override val connectPort: Int get() = targetPort
 
     /**
      * 启动新的逻辑 transport 租约。[admitAndStart] 在选定 EventLoop 上运行，并且可以在调用提供的
      * 启动边时持有调用方侧能力。把准入保持到 owner/代际推进完成，防止 disconnect 在 A 的 transport
      * owner 仍然当前时观察到已准备的 B。false 让延迟任务成为完全 no-op。
      */
-    fun connect(
+    override fun connect(
         host: String,
         port: Int,
-        jitterSeed: UInt? = null,
-        admitAndStart: ((start: () -> Unit) -> Boolean)? = null,
+        jitterSeed: UInt?,
+        admitAndStart: ((start: () -> Unit) -> Boolean)?,
     ) {
         if (terminallyDestroyed.get()) {
             logger.trace("connect ignored: transport owner is permanently destroyed")
@@ -163,10 +163,10 @@ internal class TransportConnectionOwner(
      * 保持密封在 EventLoop 上，直到 [startPreparedInitialConnect] 被准入。该操作刻意仅限全新 owner；
      * 替代登录继续使用 [connect]，因此绝不在延迟替代者背后留下存活旧通道。
      */
-    fun prepareInitialConnect(
+    override fun prepareInitialConnect(
         host: String,
         port: Int,
-        jitterSeed: UInt = 0u,
+        jitterSeed: UInt,
         admitAndPrepare: (prepare: () -> Unit) -> Boolean,
     ) {
         if (terminallyDestroyed.get()) {
@@ -210,7 +210,7 @@ internal class TransportConnectionOwner(
     }
 
     /** 恰好启动一次 [prepareInitialConnect] 安装的全新逻辑 owner。 */
-    fun startPreparedInitialConnect(
+    override fun startPreparedInitialConnect(
         admitAndStart: (start: () -> Unit) -> Boolean,
     ) {
         if (terminallyDestroyed.get()) return
@@ -239,10 +239,10 @@ internal class TransportConnectionOwner(
     }
 
     /** 调度连接拥有的工作。destroy 之后的拒绝是安全 no-op，绝不内联。 */
-    fun execute(task: () -> Unit): Boolean =
+    override fun execute(task: () -> Unit): Boolean =
         !terminallyDestroyed.get() && executeOn(eventLoop, task)
 
-    fun send(proto: IProto) {
+    override fun send(proto: IProto) {
         execute { sendNow(proto) }
     }
 
@@ -254,7 +254,7 @@ internal class TransportConnectionOwner(
      * [sendAdmission] 由请求/会话拥有，并在取消或会话 stop 时永久变 false。[onResult] 在 EventLoop
      * 上运行并报告载荷是否交给通道；任务拒绝改为通过 Boolean 返回值报告 false。
      */
-    fun sendIfOwned(
+    override fun sendIfOwned(
         expectedOwnerGeneration: Long,
         expectedConnectionGeneration: Long,
         sendAdmission: WireSendAdmission,
@@ -288,7 +288,7 @@ internal class TransportConnectionOwner(
     }
 
     /** AUTH/SYNC/PING 控制路径使用的、仅 EventLoop 的协议写入。 */
-    fun writeProtocolNow(proto: IProto): Boolean {
+    override fun writeProtocolNow(proto: IProto): Boolean {
         requireEventLoop()
         val active = channel
         if (active == null || !active.isActive) {
@@ -300,7 +300,7 @@ internal class TransportConnectionOwner(
     }
 
     /** 仅 EventLoop 的公开发送门禁。 */
-    fun sendNow(proto: IProto): Boolean {
+    override fun sendNow(proto: IProto): Boolean {
         requireEventLoop()
         val currentState = _state.value
         if (
@@ -324,47 +324,47 @@ internal class TransportConnectionOwner(
         return writeProtocolNow(proto)
     }
 
-    fun transitionTo(state: ConnectionState) {
+    override fun transitionTo(state: ConnectionState) {
         requireEventLoop()
         _state.value = state
     }
 
-    fun onAuthenticationAccepted() {
+    override fun onAuthenticationAccepted() {
         requireEventLoop()
         retryCount = 0
     }
 
-    fun closeForRecoveryNow(reason: String, cause: Throwable? = null) {
+    override fun closeForRecoveryNow(reason: String, cause: Throwable?) {
         requireEventLoop()
         if (cause == null) logger.fault(reason) else logger.fault(reason, cause)
         (channel ?: connectingChannel)?.close()
     }
 
     /** 预期服务器背压：进入正常重连退避，而不产生 fault 级噪音。 */
-    fun retryAuthenticationNow(reason: String) {
+    override fun retryAuthenticationNow(reason: String) {
         requireEventLoop()
         logger.trace(reason)
         (channel ?: connectingChannel)?.close()
     }
 
     /** 过期 AUTH 响应只能退役投递它的那个连接代际。 */
-    fun retryAuthenticationIfCurrent(expectedConnectionGeneration: Long, reason: String) {
+    override fun retryAuthenticationIfCurrent(expectedConnectionGeneration: Long, reason: String) {
         requireEventLoop()
         if (!connectionGeneration.matches(expectedConnectionGeneration)) return
         retryAuthenticationNow(reason)
     }
 
-    fun closeForRecoveryIfCurrent(
+    override fun closeForRecoveryIfCurrent(
         expectedConnectionGeneration: Long,
         reason: String,
-        cause: Throwable? = null,
+        cause: Throwable?,
     ) {
         requireEventLoop()
         if (!connectionGeneration.matches(expectedConnectionGeneration)) return
         closeForRecoveryNow(reason, cause)
     }
 
-    fun disconnectIfOwned(expectedOwnerGeneration: Long) {
+    override fun disconnectIfOwned(expectedOwnerGeneration: Long) {
         execute { disconnectIfOwnedNow(expectedOwnerGeneration) }
     }
 
@@ -372,7 +372,7 @@ internal class TransportConnectionOwner(
      * 总是入队，包括从 EventLoop 本身。因此公开登出可以在 B 推进其 owner 时被重入调用，
      * 而不会拆掉 B 安装的一半。
      */
-    fun scheduleDisconnectIfOwned(expectedOwnerGeneration: Long) {
+    override fun scheduleDisconnectIfOwned(expectedOwnerGeneration: Long) {
         if (terminallyDestroyed.get()) return
         val scheduled = enqueueOn(eventLoop) { disconnectIfOwnedNow(expectedOwnerGeneration) }
         check(scheduled || terminallyDestroyed.get()) {
@@ -381,7 +381,7 @@ internal class TransportConnectionOwner(
     }
 
     /** 幂等地拆除连接，然后释放 EventLoopGroup。 */
-    fun destroy() {
+    override fun destroy() {
         if (!terminallyDestroyed.compareAndSet(false, true)) return
         if (!executeOn(eventLoop) {
             disconnectCurrentTransport()
@@ -394,7 +394,7 @@ internal class TransportConnectionOwner(
     }
 
     /** 测试钩子：网络丢失保留逻辑 owner，并走重连路径。 */
-    fun simulateNetworkDrop() {
+    override fun simulateNetworkDrop() {
         execute { (channel ?: connectingChannel)?.close() }
     }
 
@@ -404,7 +404,7 @@ internal class TransportConnectionOwner(
      * 只有该 transport owner 受影响：当前通道被正常关闭，但其自动重连保持到
      * [resumeReconnectAfterSimulatedDrop]。主机网络与每个其他 client 保持不动。
      */
-    fun simulateNetworkDropAndPauseReconnect() {
+    override fun simulateNetworkDropAndPauseReconnect() {
         execute {
             val active = channel ?: connectingChannel ?: return@execute
             pausedReconnectOwnerForTest = ownerGeneration
@@ -413,7 +413,7 @@ internal class TransportConnectionOwner(
     }
 
     /** 恢复被 [simulateNetworkDropAndPauseReconnect] 暂停的精确逻辑 owner。 */
-    fun resumeReconnectAfterSimulatedDrop() {
+    override fun resumeReconnectAfterSimulatedDrop() {
         execute {
             if (pausedReconnectOwnerForTest != ownerGeneration) return@execute
             pausedReconnectOwnerForTest = null

@@ -1,11 +1,12 @@
 package com.virjar.tk.shared.testkit
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.client.ServerProjectionSyncState
 import com.virjar.tk.protocol.payload.SyncDatasetIdPolicy
 
 /** 不可分割的数据集标识与持久化事件游标这一测试事实的内存所有者。 */
 internal class FakeSyncStateStore(initialDatasetId: String?) {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var state: ServerProjectionSyncState? = initialDatasetId?.let {
         ServerProjectionSyncState(it, 0L)
     }

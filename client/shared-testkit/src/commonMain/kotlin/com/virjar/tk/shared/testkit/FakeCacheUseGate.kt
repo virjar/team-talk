@@ -1,8 +1,10 @@
 package com.virjar.tk.shared.testkit
 
+import com.virjar.tk.shared.platform.*
+import kotlin.concurrent.Volatile
 /** [FakeLocalCache] 拥有的同步关闭/准入边界。 */
 internal class FakeCacheUseGate {
-    private val ownerLock = Any()
+    private val ownerLock = PlatformLock()
 
     @Volatile
     private var open = true

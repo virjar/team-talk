@@ -1,0 +1,5 @@
+Config/Signing.local.xcconfig
+xcuserdata/
+*.xcarchive/
+*.ipa
+DerivedData/

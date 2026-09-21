@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.testkit
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.client.PendingConversationDraft
 import com.virjar.tk.shared.client.PendingConversationRead
 import com.virjar.tk.shared.client.LocalOutboxCapacityDimension
@@ -20,7 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
  * 草稿/已读可靠发件箱在服务器投影重置后依然保留，与生产缓存的本地可靠事实契约保持一致。
  */
 internal class FakeConversationProjectionStore(
-    private val lock: Any,
+    private val lock: PlatformLock,
 ) {
     private val projection = MutableStateFlow<List<Conversation>>(emptyList())
     private var projectionGeneration = 0L

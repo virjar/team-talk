@@ -4,8 +4,8 @@ import org.jetbrains.exposed.sql.ReferenceOption
 import org.jetbrains.exposed.sql.Table
 
 /**
- * 每个已认证 Android 安装一条合并唤醒记录；refresh 保留此 FK。
- * vendor 是设备厂商通道标识（xiaomi/huawei/honor/oppo/vivo/meizu），由客户端按制造商注册。
+ * 每个已认证移动安装一条合并提醒记录；refresh 保留此 FK。
+ * vendor 是 Android 厂商通道或 apns-sandbox/apns-production。保留既有表名与列。
  */
 internal object OemPushRegistrations : Table("oem_push_registrations") {
     val refreshTokenHash = varchar("refresh_token_hash", 64)
@@ -14,6 +14,8 @@ internal object OemPushRegistrations : Table("oem_push_registrations") {
     val registrationId = varchar("registration_id", 4096)
     val registrationHash = varchar("registration_hash", 64).uniqueIndex()
     val generation = varchar("generation", 36)
+    /** APNs 410 timestamp only invalidates token registrations no newer than that timestamp. */
+    val registeredAt = long("registered_at").default(0)
     val packageName = varchar("package_name", 255)
     val deploymentFingerprint = varchar("deployment_fingerprint", 64)
     val pendingEventId = long("pending_event_id").default(0)

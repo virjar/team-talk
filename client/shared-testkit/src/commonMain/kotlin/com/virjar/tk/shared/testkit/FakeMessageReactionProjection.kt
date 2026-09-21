@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.testkit
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.model.MessageReactionGroup
 import com.virjar.tk.protocol.model.MessageReactionSummary
 import com.virjar.tk.protocol.MessageReactionEventPayload
@@ -17,7 +18,7 @@ import kotlinx.coroutines.flow.flow
 internal class FakeMessageReactionProjection {
     private val rowsByChat = LinkedHashMap<String, MutableSet<Triple<Long, String, String>>>()
     private val flows = LinkedHashMap<MutableStateFlow<Map<Long, List<MessageReactionGroup>>>, String>()
-    private val lock = Any()
+    private val lock = PlatformLock()
     private val snapshots = KeyedProjectionSnapshotGate("fake message reactions")
 
     fun applyDelta(payload: MessageReactionEventPayload) {

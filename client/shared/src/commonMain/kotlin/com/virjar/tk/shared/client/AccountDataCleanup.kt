@@ -1,13 +1,7 @@
 package com.virjar.tk.shared.client
 
-import java.io.File
-import java.nio.file.FileVisitResult
-import java.nio.file.Files
-import java.nio.file.LinkOption.NOFOLLOW_LINKS
-import java.nio.file.Path
-import java.nio.file.SimpleFileVisitor
-import java.nio.file.attribute.BasicFileAttributes
-import java.security.MessageDigest
+import com.virjar.tk.shared.platform.*
+import com.virjar.tk.shared.platform.PlatformFile as File
 
 /** 封禁清理的不可变账号归属；不携带凭据，不从用户名或当前登录状态猜测。 */
 data class AccountDataOwner(
@@ -39,26 +33,19 @@ class AccountDataCleanupTarget private constructor(
     }
 
     internal fun delete() {
-        var target = root.toPath().toAbsolutePath().normalize()
-        if (!Files.exists(target, NOFOLLOW_LINKS)) return
-        require(Files.isDirectory(target, NOFOLLOW_LINKS)) { "Account cleanup root is not a directory" }
+        var target = root.absoluteFile
+        if (!target.exists()) return
+        require(target.isDirectory && !target.isSymbolicLink()) { "Account cleanup root is not a directory" }
         components.forEachIndexed { index, component ->
-            target = target.resolve(component)
-            if (!Files.exists(target, NOFOLLOW_LINKS)) return
-            // A leaf link may itself be removed. Ancestor links must never be traversed.
+            target = File(target, component)
+            if (!target.exists()) return
             if (index < components.lastIndex || childNames != null) {
-                require(Files.isDirectory(target, NOFOLLOW_LINKS)) {
-                    "Account cleanup ancestor is not a directory"
-                }
+                require(target.isDirectory && !target.isSymbolicLink()) { "Account cleanup ancestor is not a directory" }
             }
         }
-        if (childNames == null) {
-            deleteAccountTree(target)
-        } else {
-            Files.newDirectoryStream(target).use { entries ->
-                entries.filter { childNames.matches(it.fileName.toString()) }.forEach(::deleteAccountTree)
-            }
-        }
+        if (childNames == null) deleteAccountTree(target)
+        else checkNotNull(target.listFiles()) { "Cannot read account cleanup directory" }
+            .filter { childNames.matches(it.name) }.forEach(::deleteAccountTree)
     }
 
     companion object {
@@ -81,21 +68,20 @@ class AccountDataCleanup(
     private val markerDataDir: File,
     private val targets: (AccountDataOwner) -> List<AccountDataCleanupTarget>,
 ) {
-    @Synchronized
-    fun begin(owner: AccountDataOwner) {
+    private val methodLock = PlatformLock()
+    fun begin(owner: AccountDataOwner): Unit = synchronized(methodLock) {
         marker(owner).replaceText(encode(owner), MAX_MARKER_BYTES)
     }
 
-    @Synchronized
-    fun pendingOwners(): List<AccountDataOwner> {
-        val root = markerDataDir.toPath().toAbsolutePath().normalize()
-        require(Files.isDirectory(root, NOFOLLOW_LINKS)) { "Account cleanup data root is not a directory" }
-        val directory = root.resolve(MARKER_DIRECTORY)
-        if (!Files.exists(directory, NOFOLLOW_LINKS)) return emptyList()
-        require(Files.isDirectory(directory, NOFOLLOW_LINKS)) { "Account cleanup marker directory is not a directory" }
-        return Files.newDirectoryStream(directory).use { entries ->
-            entries.filter { it.fileName.toString().endsWith(MARKER_SUFFIX) }.map { path ->
-                val name = path.fileName.toString()
+    fun pendingOwners(): List<AccountDataOwner> = synchronized(methodLock) {
+        val root = markerDataDir.absoluteFile
+        require(root.isDirectory && !root.isSymbolicLink()) { "Account cleanup data root is not a directory" }
+        val directory = File(root, MARKER_DIRECTORY)
+        if (!directory.exists()) return emptyList()
+        require(directory.isDirectory && !directory.isSymbolicLink()) { "Account cleanup marker directory is not a directory" }
+        return checkNotNull(directory.listFiles()) { "Cannot read account cleanup markers" }
+            .filter { it.name.endsWith(MARKER_SUFFIX) }.map { path ->
+                val name = path.name
                 require(MARKER_NAME.matches(name)) { "Invalid account cleanup marker name" }
                 val content = checkNotNull(markerNamed(name).readText(MAX_MARKER_BYTES)) {
                     "Account cleanup marker disappeared"
@@ -104,11 +90,9 @@ class AccountDataCleanup(
                 require(markerName(owner) == name) { "Account cleanup marker owner does not match its name" }
                 owner
             }.sortedWith(compareBy({ it.deploymentFingerprint }, { it.datasetId }, { it.uid }))
-        }
     }
 
-    @Synchronized
-    fun deleteOwnedData(owner: AccountDataOwner) {
+    fun deleteOwnedData(owner: AccountDataOwner): Unit = synchronized(methodLock) {
         check(marker(owner).readText(MAX_MARKER_BYTES) == encode(owner)) {
             "Account data must be marked before deletion"
         }
@@ -116,8 +100,7 @@ class AccountDataCleanup(
     }
 
     /** 调用方已确认账号资源、持久内容和相同 scope 的凭据清理成功；不可放在 finally 中调用。 */
-    @Synchronized
-    fun complete(owner: AccountDataOwner) {
+    fun complete(owner: AccountDataOwner): Unit = synchronized(methodLock) {
         marker(owner).delete()
     }
 
@@ -129,8 +112,7 @@ class AccountDataCleanup(
     )
 
     private fun markerName(owner: AccountDataOwner): String =
-        MessageDigest.getInstance("SHA-256").digest(encode(owner).encodeToByteArray())
-            .joinToString("") { "%02x".format(it.toInt() and 0xff) } + MARKER_SUFFIX
+        platformSha256Hex(encode(owner).encodeToByteArray()) + MARKER_SUFFIX
 
     private fun encode(owner: AccountDataOwner): String =
         "account-ban-v1\n${owner.deploymentFingerprint}\n${owner.datasetId}\n${owner.uid}\n"
@@ -175,17 +157,9 @@ fun accountAndroidDatabaseCleanupTarget(databaseDirectory: File, owner: AccountD
     )
 }
 
-private fun deleteAccountTree(root: Path) {
-    Files.walkFileTree(root, object : SimpleFileVisitor<Path>() {
-        override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
-            Files.delete(file)
-            return FileVisitResult.CONTINUE
-        }
-
-        override fun postVisitDirectory(dir: Path, error: java.io.IOException?): FileVisitResult {
-            if (error != null) throw error
-            Files.delete(dir)
-            return FileVisitResult.CONTINUE
-        }
-    })
+private fun deleteAccountTree(root: File) {
+    if (root.isDirectory && !root.isSymbolicLink()) {
+        checkNotNull(root.listFiles()) { "Cannot read account data directory" }.forEach(::deleteAccountTree)
+    }
+    check(root.delete()) { "Cannot delete account data entry" }
 }

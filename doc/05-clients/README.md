@@ -1,7 +1,7 @@
 # 客户端
 
 TeamTalk 客户端共享业务能力和视觉语言，但不追求像素或导航一致。Desktop 是多窗格生产力应用，
-Android 是单屏触控应用；把其中一端的页面结构直接复制到另一端会产生错误的交互层级。
+Android 与 iOS 是单屏触控应用；平台壳负责各自的导航、权限和生命周期。
 
 ## 1. 代码边界
 
@@ -12,6 +12,7 @@ Android 是单屏触控应用；把其中一端的页面结构直接复制到另
 | `app/commonMain` | 可复用 Screen/Component、ViewModel、主题、富文本与消息渲染 |
 | `desktop` | Window、三栏壳、弹窗/抽屉/任务窗口、托盘、桌面媒体、测试服务 |
 | `android` | Activity、NavHost、权限、系统返回、通知和 Android 媒体 |
+| `ios` | Compose UIViewController、Swift 生命周期、页面栈、APNs、系统选择器与本地媒体 |
 
 共享 Composable 不应该决定自己是全屏、弹窗还是抽屉。平台壳提供容器与导航回调，业务组件提供内容
 和动作。
@@ -158,6 +159,7 @@ minor 升级走 schema 迁移，保留草稿、待发消息和其他可靠事实
 
 - [Desktop](desktop.md)：三栏、窗口和上下文容器。
 - [Android](android.md)：页面栈、触控和平台能力。
+- [iOS](ios.md)：Apple 平台实现、Xcode 构建、后台边界与验收。
 - [通知机器人](notification-bots.md)：群内创建、一次性凭据与外部系统入站通知。
 - [无头客户端](headless.md)：ImBot、tt-agent、CLI 与 MCP 接入。
 - [设计系统](design-system.md)：颜色、字阶、间距、组件与状态。

@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.testkit
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.client.DocumentHomeCollection
 import com.virjar.tk.shared.client.KeyedProjectionSnapshotGate
 import com.virjar.tk.shared.client.LocalDocumentProjectionLimits
@@ -15,7 +16,7 @@ import com.virjar.tk.protocol.model.DOCUMENT_NODE_SIBLING_ORDER
 
 /** SQL 文档投影的确定性内存版对应实现。 */
 internal class FakeDocumentProjectionStore {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private val spaceSnapshots = KeyedProjectionSnapshotGate("fake document spaces snapshot")
     private val spaceDetailsSnapshots = KeyedProjectionSnapshotGate("fake document space details snapshot")
     private val spaceMutationSnapshots = KeyedProjectionSnapshotGate("fake document space mutation commit")

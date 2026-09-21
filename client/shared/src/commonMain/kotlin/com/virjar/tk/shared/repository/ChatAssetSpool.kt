@@ -1,8 +1,9 @@
 package com.virjar.tk.shared.repository
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.body.AttachmentPolicy
 import com.virjar.tk.shared.client.AccountDataOwner
-import java.io.File
+import com.virjar.tk.shared.platform.PlatformFile as File
 
 /** An immutable, account-owned source. Its identifier never exposes a picker URI or user path. */
 data class StagedChatAsset(val sourceId: String, val length: Long, val sha256: String)

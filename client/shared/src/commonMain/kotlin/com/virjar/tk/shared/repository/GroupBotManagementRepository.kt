@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.repository
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.AppError
 import com.virjar.tk.shared.Outcome
 import com.virjar.tk.shared.client.GroupBotCredentialCommandKind
@@ -204,7 +205,7 @@ internal class GroupBotCredentialGate(
     private val ownerUid: String,
     private val credentialsProvider: () -> SessionHttpCredentials,
 ) {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var closed = false
     private val ownerIdentityEpoch: Long
 

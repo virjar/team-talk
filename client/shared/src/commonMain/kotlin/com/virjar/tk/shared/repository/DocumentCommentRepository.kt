@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.repository
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.model.DocumentComment
 import com.virjar.tk.protocol.model.DocumentCommentPage
 import com.virjar.tk.protocol.rpc.RpcInvoker
@@ -12,7 +13,6 @@ import com.virjar.tk.shared.client.PendingDocumentComment
 import com.virjar.tk.shared.outcome
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.util.UUID
 
 /** RPC 与后台恢复共用一个评论命令 owner；UI 观察持久分页和发送队列。 */
 class DocumentCommentRepository(
@@ -39,7 +39,7 @@ class DocumentCommentRepository(
     }
 
     suspend fun create(spaceId: String, documentId: String, body: String, replyToId: String? = null): Outcome<String> =
-        enqueue(PendingDocumentComment(UUID.randomUUID().toString(), spaceId, documentId, PendingDocumentComment.CREATE, body, replyToId))
+        enqueue(PendingDocumentComment(platformRandomUuid(), spaceId, documentId, PendingDocumentComment.CREATE, body, replyToId))
 
     suspend fun update(comment: DocumentComment, body: String): Outcome<String> = enqueue(
         PendingDocumentComment(comment.commentId, comment.spaceId, comment.documentId, PendingDocumentComment.UPDATE,

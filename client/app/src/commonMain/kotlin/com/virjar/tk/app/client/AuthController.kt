@@ -26,7 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import com.virjar.tk.shared.client.AccountDataCleanup
 import com.virjar.tk.shared.client.AccountDataOwner
-import java.io.File
+import com.virjar.tk.shared.platform.PlatformFile as File
 
 /** 控制器主体只有在阻塞式的持久 owner 认领在 UI 之外完成后才会进入。 */
 @Composable

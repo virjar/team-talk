@@ -1,5 +1,7 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.PlatformLock
+
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlCursor
 import app.cash.sqldelight.db.SqlDriver
@@ -27,7 +29,7 @@ class LocalDeliveryLogStoreTest {
         val store = LocalDeliveryLogStore(
             queries = AppDatabase(driver).appDatabaseQueries,
             cacheUseGate = CacheUseGate(),
-            stateLock = Any(),
+            stateLock = PlatformLock(),
             limits = BotDeliveryLogLimits(historyPageSize = 3),
         )
         try {
@@ -55,7 +57,7 @@ class LocalDeliveryLogStoreTest {
             val store = LocalDeliveryLogStore(
                 queries = queries,
                 cacheUseGate = CacheUseGate(),
-                stateLock = Any(),
+                stateLock = PlatformLock(),
                 limits = BotDeliveryLogLimits(ackedHistoryCount = 2),
             )
 
@@ -97,7 +99,7 @@ class LocalDeliveryLogStoreTest {
             val store = LocalDeliveryLogStore(
                 queries = queries,
                 cacheUseGate = CacheUseGate(),
-                stateLock = Any(),
+                stateLock = PlatformLock(),
                 limits = BotDeliveryLogLimits(ackedHistoryCount = 2),
             )
 
@@ -136,7 +138,7 @@ class LocalDeliveryLogStoreTest {
             val store = LocalDeliveryLogStore(
                 queries = queries,
                 cacheUseGate = CacheUseGate(),
-                stateLock = Any(),
+                stateLock = PlatformLock(),
                 limits = BotDeliveryLogLimits(
                     ackedHistoryCount = 10,
                     ackedHistoryPayloadBytes = newestPairBytes,
@@ -167,7 +169,7 @@ class LocalDeliveryLogStoreTest {
             val store = LocalDeliveryLogStore(
                 queries = queries,
                 cacheUseGate = CacheUseGate(),
-                stateLock = Any(),
+                stateLock = PlatformLock(),
                 limits = BotDeliveryLogLimits(ackedHistoryPayloadBytes = 1L),
             )
             store.enqueueBotMessage(7L, message(7L))
@@ -191,7 +193,7 @@ class LocalDeliveryLogStoreTest {
                 val first = LocalDeliveryLogStore(
                     queries = AppDatabase(firstDriver).appDatabaseQueries,
                     cacheUseGate = CacheUseGate(),
-                    stateLock = Any(),
+                    stateLock = PlatformLock(),
                     limits = BotDeliveryLogLimits(ackedHistoryCount = 1),
                 )
                 assertEquals(
@@ -216,7 +218,7 @@ class LocalDeliveryLogStoreTest {
                 val restarted = LocalDeliveryLogStore(
                     queries = AppDatabase(restartedDriver).appDatabaseQueries,
                     cacheUseGate = CacheUseGate(),
-                    stateLock = Any(),
+                    stateLock = PlatformLock(),
                     limits = BotDeliveryLogLimits(ackedHistoryCount = 1),
                 )
 

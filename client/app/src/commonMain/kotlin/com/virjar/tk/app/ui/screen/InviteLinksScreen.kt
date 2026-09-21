@@ -1,5 +1,8 @@
 package com.virjar.tk.app.ui.screen
 
+import com.virjar.tk.shared.platform.platformCurrentTimeMillis
+
+import com.virjar.tk.app.ui.platform.formatUiDateTime
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,9 +21,6 @@ import com.virjar.tk.shared.repository.GroupInviteLinks
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 @Composable
 fun InviteLinksScreen(
@@ -32,12 +32,12 @@ fun InviteLinksScreen(
 ) {
     var creating by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var now by remember { mutableLongStateOf(platformCurrentTimeMillis()) }
     val scope = rememberCoroutineScope()
     val copyText = rememberClipboardTextWriter()
     LaunchedEffect(links) {
         while (true) {
-            now = System.currentTimeMillis()
+            now = platformCurrentTimeMillis()
             delay(60_000)
         }
     }
@@ -148,6 +148,4 @@ fun InviteLinksScreen(
 }
 
 private fun inviteExpiryLabel(timestamp: Long): String =
-    Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).format(INVITE_EXPIRY_FORMAT)
-
-private val INVITE_EXPIRY_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+    formatUiDateTime(timestamp)

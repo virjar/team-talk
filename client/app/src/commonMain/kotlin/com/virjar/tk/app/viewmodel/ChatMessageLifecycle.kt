@@ -1,5 +1,8 @@
 package com.virjar.tk.app.viewmodel
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
+
 import com.virjar.tk.shared.client.MessagePager
 import com.virjar.tk.shared.client.OptimisticMessageEditLease
 import com.virjar.tk.protocol.model.Message
@@ -7,7 +10,7 @@ import kotlinx.coroutines.CompletableDeferred
 
 /** 至多发布一个异步获取的 pager，并使退役幂等。 */
 internal class AsyncMessagePagerOwner {
-    private val lock = Any()
+    private val lock = PlatformLock()
     /** 只有在 pager 的同步 SQLite 快照到达 ViewModel 状态之后才完成。 */
     private val ready = CompletableDeferred<Unit>()
     private var open = true
@@ -88,7 +91,7 @@ internal class OptimisticMessageEditRetirement(
 ) {
     internal class Token internal constructor(internal val id: Long)
 
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var open = true
     private var nextId = 0L
     private val pending = linkedMapOf<Long, OptimisticMessageEditLease>()

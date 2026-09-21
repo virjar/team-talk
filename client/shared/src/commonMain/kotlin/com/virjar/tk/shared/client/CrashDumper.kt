@@ -1,7 +1,8 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.log.AppLog
-import java.io.File
+import com.virjar.tk.shared.platform.PlatformFile as File
 
 private data class CrashOwnerIdentity(
     val deploymentFingerprint: String,
@@ -21,6 +22,7 @@ internal class CrashDumper private constructor(
     dataDir: File,
     private val owner: CrashOwnerIdentity?,
 ) {
+    private val methodLock = PlatformLock()
     constructor(dataDir: File) : this(dataDir, null)
 
     constructor(
@@ -47,17 +49,17 @@ internal class CrashDumper private constructor(
     )
 
     /** 该精确身份是否有待处理的崩溃。 */
-    fun hasPending(): Boolean = synchronized(this) {
+    fun hasPending(): Boolean = synchronized(methodLock) {
         runCatching(pendingStore::existsNonEmpty).getOrDefault(false)
     }
 
     /** 固定 owner 的 uploader 输入；从构造上就不可能读取其他命名空间。 */
-    internal fun pendingContent(): String? = synchronized(this) {
+    internal fun pendingContent(): String? = synchronized(methodLock) {
         runCatching(pendingStore::readText).getOrNull()?.takeIf(String::isNotEmpty)
     }
 
     /** 只删除已上传的精确载荷；在途写入的较新崩溃必须存活。 */
-    internal fun markPendingUploaded(expectedContent: String) = synchronized(this) {
+    internal fun markPendingUploaded(expectedContent: String) = synchronized(methodLock) {
         if (runCatching(pendingStore::readText).getOrNull() == expectedContent) {
             runCatching(pendingStore::delete)
         }
@@ -65,7 +67,7 @@ internal class CrashDumper private constructor(
 
     /** 原子的 best-effort 持久化。失败绝不会掩盖原始崩溃。 */
     fun flushPending(content: String) {
-        synchronized(this) {
+        synchronized(methodLock) {
             try {
                 pendingStore.replaceText(content)
             } catch (_: Throwable) {

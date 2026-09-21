@@ -13,7 +13,7 @@ import com.virjar.tk.shared.AppError
 import com.virjar.tk.shared.Outcome
 import com.virjar.tk.shared.client.ContentSearchInvalidation
 import com.virjar.tk.shared.outcome
-import java.security.MessageDigest
+import com.virjar.tk.shared.platform.platformSha256Hex
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.StateFlow
 
@@ -76,8 +76,7 @@ class ContentSearchRepository(
                         ?: throw unavailable()
                     if (ContentSearchAttachments.attachments(message).none { attachment ->
                             val path = ContentSearchAttachments.canonicalPath(attachment)
-                            MessageDigest.getInstance("SHA-256").digest(path.toByteArray(Charsets.UTF_8))
-                                .joinToString("") { "%02x".format(it.toInt() and 0xff) } == hit.targetId
+                            platformSha256Hex(path.encodeToByteArray()) == hit.targetId
                         }
                     ) throw unavailable()
                     ResolvedContentSearchHit.ChatMessage(message)

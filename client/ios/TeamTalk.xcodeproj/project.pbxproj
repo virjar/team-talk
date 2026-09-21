@@ -1,0 +1,274 @@
+// !$*UTF8*$!
+{
+	"archiveVersion" = 1;
+	"classes" = {
+	};
+	"objectVersion" = 56;
+	"objects" = {
+		"FFD29E0FD36301DFFECF36B2" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "AppleApp/TeamTalkApp.swift";
+			"sourceTree" = "<group>";
+		};
+		"4B94B1D9760C4B9EE6CB8C9B" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "text.xcconfig";
+			"path" = "Config/Base.xcconfig";
+			"sourceTree" = "<group>";
+		};
+		"B61BF4D165DAD77953B51ABD" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "folder.assetcatalog";
+			"path" = "build/generated/Assets.xcassets";
+			"sourceTree" = "<group>";
+		};
+		"F1F4C7736D9F02A437B028B8" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "text.xml";
+			"path" = "AppleApp/PrivacyInfo.xcprivacy";
+			"sourceTree" = "<group>";
+		};
+		"77BE5D57E2FAE5F320791563" = {
+			"isa" = "PBXFileReference";
+			"explicitFileType" = "wrapper.application";
+			"includeInIndex" = 0;
+			"path" = "TeamTalk.app";
+			"sourceTree" = "BUILT_PRODUCTS_DIR";
+		};
+		"F0358B13FB28466FB608AC4D" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "FFD29E0FD36301DFFECF36B2";
+		};
+		"B815E5509DFE6DA611F71AAB" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "B61BF4D165DAD77953B51ABD";
+		};
+		"184361E0141CEAC4FD201814" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "F1F4C7736D9F02A437B028B8";
+		};
+		"62409F1082FC8FCC7E918154" = {
+			"isa" = "PBXGroup";
+			"children" = (
+				"77BE5D57E2FAE5F320791563",
+			);
+			"name" = "Products";
+			"sourceTree" = "<group>";
+		};
+		"26D5A530B526407E9526097A" = {
+			"isa" = "PBXGroup";
+			"children" = (
+				"FFD29E0FD36301DFFECF36B2",
+				"B61BF4D165DAD77953B51ABD",
+				"F1F4C7736D9F02A437B028B8",
+				"4B94B1D9760C4B9EE6CB8C9B",
+				"62409F1082FC8FCC7E918154",
+			);
+			"sourceTree" = "<group>";
+		};
+		"37403A1EF0A363D60224DDF9" = {
+			"isa" = "PBXShellScriptBuildPhase";
+			"buildActionMask" = 2147483647;
+			"files" = (
+			);
+			"inputPaths" = (
+			);
+			"name" = "Build Kotlin framework";
+			"outputPaths" = (
+			);
+			"runOnlyForDeploymentPostprocessing" = 0;
+			"shellPath" = "/bin/sh";
+			"shellScript" = "/bin/sh \"$SRCROOT/scripts/build-framework.sh\"\n";
+			"alwaysOutOfDate" = 1;
+		};
+		"EE02F0EA24916E830586537D" = {
+			"isa" = "PBXSourcesBuildPhase";
+			"buildActionMask" = 2147483647;
+			"files" = (
+				"F0358B13FB28466FB608AC4D",
+			);
+			"runOnlyForDeploymentPostprocessing" = 0;
+		};
+		"969EF2CCD6E567BEDC4B243F" = {
+			"isa" = "PBXFrameworksBuildPhase";
+			"buildActionMask" = 2147483647;
+			"files" = (
+			);
+			"runOnlyForDeploymentPostprocessing" = 0;
+		};
+		"0272A1F0E5F293FCBBC82950" = {
+			"isa" = "PBXResourcesBuildPhase";
+			"buildActionMask" = 2147483647;
+			"files" = (
+				"B815E5509DFE6DA611F71AAB",
+				"184361E0141CEAC4FD201814",
+			);
+			"runOnlyForDeploymentPostprocessing" = 0;
+		};
+		"F737B5945F6E03BBF695E53C" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"buildSettings" = {
+				"CLANG_ENABLE_MODULES" = "YES";
+				"SWIFT_VERSION" = "5.0";
+				"IPHONEOS_DEPLOYMENT_TARGET" = "16.0";
+				"SDKROOT" = "iphoneos";
+				"SUPPORTED_PLATFORMS" = "iphoneos iphonesimulator";
+				"ENABLE_USER_SCRIPT_SANDBOXING" = "NO";
+				"DEBUG_INFORMATION_FORMAT" = "dwarf";
+				"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "DEBUG";
+				"ONLY_ACTIVE_ARCH" = "YES";
+			};
+		};
+		"20C19783167DAF73C165B68C" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"baseConfigurationReference" = "4B94B1D9760C4B9EE6CB8C9B";
+			"buildSettings" = {
+				"PRODUCT_NAME" = "TeamTalk";
+				"PRODUCT_MODULE_NAME" = "TeamTalkHost";
+				"TARGETED_DEVICE_FAMILY" = "1,2";
+				"GENERATE_INFOPLIST_FILE" = "NO";
+				"INFOPLIST_FILE" = "build/generated/TeamTalk-Info.plist";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"CODE_SIGN_ENTITLEMENTS" = "AppleApp/TeamTalk.entitlements";
+				"APNS_ENVIRONMENT" = "development";
+				"ASSETCATALOG_COMPILER_APPICON_NAME" = "AppIcon";
+				"FRAMEWORK_SEARCH_PATHS" = (
+					"$(inherited)",
+					"$(SRCROOT)/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)",
+				);
+				"OTHER_LDFLAGS" = (
+					"$(inherited)",
+					"-framework",
+					"TeamTalk",
+					"-lsqlite3",
+					"-lz",
+				);
+				"LD_RUNPATH_SEARCH_PATHS" = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"ENABLE_BITCODE" = "NO";
+			};
+		};
+		"E513ACD4C1F851279AB51410" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"buildSettings" = {
+				"CLANG_ENABLE_MODULES" = "YES";
+				"SWIFT_VERSION" = "5.0";
+				"IPHONEOS_DEPLOYMENT_TARGET" = "16.0";
+				"SDKROOT" = "iphoneos";
+				"SUPPORTED_PLATFORMS" = "iphoneos iphonesimulator";
+				"ENABLE_USER_SCRIPT_SANDBOXING" = "NO";
+				"DEBUG_INFORMATION_FORMAT" = "dwarf-with-dsym";
+				"SWIFT_OPTIMIZATION_LEVEL" = "-O";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS" = "";
+				"ONLY_ACTIVE_ARCH" = "NO";
+			};
+		};
+		"CF3E0FDEDFE3D144F8FCA447" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"baseConfigurationReference" = "4B94B1D9760C4B9EE6CB8C9B";
+			"buildSettings" = {
+				"PRODUCT_NAME" = "TeamTalk";
+				"PRODUCT_MODULE_NAME" = "TeamTalkHost";
+				"TARGETED_DEVICE_FAMILY" = "1,2";
+				"GENERATE_INFOPLIST_FILE" = "NO";
+				"INFOPLIST_FILE" = "build/generated/TeamTalk-Info.plist";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"CODE_SIGN_ENTITLEMENTS" = "AppleApp/TeamTalk.entitlements";
+				"APNS_ENVIRONMENT" = "production";
+				"ASSETCATALOG_COMPILER_APPICON_NAME" = "AppIcon";
+				"FRAMEWORK_SEARCH_PATHS" = (
+					"$(inherited)",
+					"$(SRCROOT)/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)",
+				);
+				"OTHER_LDFLAGS" = (
+					"$(inherited)",
+					"-framework",
+					"TeamTalk",
+					"-lsqlite3",
+					"-lz",
+				);
+				"LD_RUNPATH_SEARCH_PATHS" = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"ENABLE_BITCODE" = "NO";
+			};
+		};
+		"9A0AAD251FC24DD247DA4F47" = {
+			"isa" = "XCConfigurationList";
+			"buildConfigurations" = (
+				"F737B5945F6E03BBF695E53C",
+				"E513ACD4C1F851279AB51410",
+			);
+			"defaultConfigurationIsVisible" = 0;
+			"defaultConfigurationName" = "Release";
+		};
+		"1F385F64F68D7B79FCDDAB5B" = {
+			"isa" = "XCConfigurationList";
+			"buildConfigurations" = (
+				"20C19783167DAF73C165B68C",
+				"CF3E0FDEDFE3D144F8FCA447",
+			);
+			"defaultConfigurationIsVisible" = 0;
+			"defaultConfigurationName" = "Release";
+		};
+		"2CEF3D5EAF9E4AE013E11493" = {
+			"isa" = "PBXNativeTarget";
+			"buildConfigurationList" = "1F385F64F68D7B79FCDDAB5B";
+			"buildPhases" = (
+				"37403A1EF0A363D60224DDF9",
+				"EE02F0EA24916E830586537D",
+				"969EF2CCD6E567BEDC4B243F",
+				"0272A1F0E5F293FCBBC82950",
+			);
+			"buildRules" = (
+			);
+			"dependencies" = (
+			);
+			"name" = "TeamTalk";
+			"productName" = "TeamTalk";
+			"productReference" = "77BE5D57E2FAE5F320791563";
+			"productType" = "com.apple.product-type.application";
+		};
+		"9984321F9A54D72233F82E07" = {
+			"isa" = "PBXProject";
+			"attributes" = {
+				"LastUpgradeCheck" = "2600";
+				"TargetAttributes" = {
+					"2CEF3D5EAF9E4AE013E11493" = {
+						"CreatedOnToolsVersion" = "26.0";
+						"SystemCapabilities" = {
+							"com.apple.Push" = {
+								"enabled" = 1;
+							};
+						};
+					};
+				};
+			};
+			"buildConfigurationList" = "9A0AAD251FC24DD247DA4F47";
+			"compatibilityVersion" = "Xcode 14.0";
+			"developmentRegion" = "zh-Hans";
+			"hasScannedForEncodings" = 0;
+			"knownRegions" = (
+				"zh-Hans",
+				"Base",
+			);
+			"mainGroup" = "26D5A530B526407E9526097A";
+			"productRefGroup" = "62409F1082FC8FCC7E918154";
+			"projectDirPath" = "";
+			"projectRoot" = "";
+			"targets" = (
+				"2CEF3D5EAF9E4AE013E11493",
+			);
+		};
+	};
+	"rootObject" = "9984321F9A54D72233F82E07";
+}

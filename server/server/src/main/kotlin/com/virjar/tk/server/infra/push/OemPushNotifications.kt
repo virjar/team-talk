@@ -23,13 +23,14 @@ import org.jetbrains.exposed.sql.transactions.transaction
 import java.security.MessageDigest
 import java.util.UUID
 
-/** OEM hints share the durable sync dispatch transaction; only the HTTP attempt happens outside it. */
+/** Mobile hints share the durable sync dispatch transaction; only the HTTP attempt happens outside it. */
 internal class OemPushNotifications(
     private val database: Database,
     private val configuration: OemPushConfiguration,
     private val datasetId: String,
     private val messages: MessageRepository,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val sendApns: suspend (OemPushNotification) -> OemPushDeliveryResult = { pushRejected("APNS_UNAVAILABLE") },
     private val send: suspend (OemPushVendorConfiguration, OemPushNotification) -> OemPushDeliveryResult,
 ) {
     private val conversations = ExposedConversationRepository(database)
@@ -45,13 +46,43 @@ internal class OemPushNotifications(
         deploymentFingerprint: String,
     ): Boolean {
         if (vendor !in OemPushVendors.ALL) return false
+        return registerChannel(uid, deviceId, deviceCredentialEpoch, vendor, registrationId,
+            packageName, deploymentFingerprint, AuthRules.DEVICE_FLAG_ANDROID)
+    }
+
+    fun registerApns(
+        uid: String,
+        deviceId: String,
+        deviceCredentialEpoch: Long,
+        deviceToken: String,
+        bundleId: String,
+        environment: String,
+        deploymentFingerprint: String,
+    ): Boolean {
+        val target = requireNotNull(ApnsEnvironment.fromWire(environment)) { "Invalid APNs environment" }
+        require(deviceToken.isEmpty() || (deviceToken.length % 2 == 0 &&
+            deviceToken.matches(Regex("[0-9a-fA-F]{2,512}")))) { "Invalid APNs device token" }
+        return registerChannel(uid, deviceId, deviceCredentialEpoch, target.channel, deviceToken.lowercase(),
+            bundleId, deploymentFingerprint, AuthRules.DEVICE_FLAG_IOS)
+    }
+
+    private fun registerChannel(
+        uid: String,
+        deviceId: String,
+        deviceCredentialEpoch: Long,
+        vendor: String,
+        registrationId: String,
+        packageName: String,
+        deploymentFingerprint: String,
+        deviceFlag: Int,
+    ): Boolean {
         require(registrationId.length <= 4096 && registrationId.none { it.isWhitespace() || it.isISOControl() }) {
             "Invalid OEM push registration"
         }
         require(packageName.length <= 255 && deploymentFingerprint.matches(Regex("[0-9a-f]{64}"))) {
             "Invalid OEM push registration identity"
         }
-        val vendorConfiguration = configuration[vendor]
+        val configuredPackage = configuration.packageName(vendor)
         return transaction(database) {
             // Same lock order as credential refresh/revocation. The epoch comes from authenticated RPC context.
             val user = Users.selectAll().where { Users.uid eq uid }.forUpdate().singleOrNull()
@@ -61,7 +92,7 @@ internal class OemPushNotifications(
             }.forUpdate().singleOrNull() ?: return@transaction false
             if (user[Users.status] != 1 || device[Devices.status] != 1 ||
                 device[Devices.credentialEpoch] != deviceCredentialEpoch ||
-                device[Devices.deviceFlag] != AuthRules.DEVICE_FLAG_ANDROID
+                device[Devices.deviceFlag] != deviceFlag
             ) return@transaction false
             val credential = Credentials.selectAll().where {
                 (Credentials.uid eq uid) and (Credentials.deviceId eq deviceId) and
@@ -71,8 +102,8 @@ internal class OemPushNotifications(
                     (Credentials.expiresAt greater clock())
             }.forUpdate().singleOrNull() ?: return@transaction false
             val refreshHash = credential[Credentials.tokenHash]
-            if (registrationId.isEmpty() || vendorConfiguration == null ||
-                packageName != vendorConfiguration.packageName
+            if (registrationId.isEmpty() || configuredPackage == null ||
+                packageName != configuredPackage
             ) {
                 OemPushRegistrations.deleteWhere { refreshTokenHash eq refreshHash }
                 return@transaction false
@@ -84,9 +115,21 @@ internal class OemPushNotifications(
                 existing[OemPushRegistrations.registrationId] == registrationId &&
                 existing[OemPushRegistrations.packageName] == packageName &&
                 existing[OemPushRegistrations.deploymentFingerprint] == deploymentFingerprint
-            ) return@transaction true
+            ) {
+                if (deviceFlag == AuthRules.DEVICE_FLAG_IOS) {
+                    // APNs may reissue the same bytes after restoring validity. Keep pending work,
+                    // but an older in-flight 410 must not delete this fresh registration.
+                    OemPushRegistrations.update({ OemPushRegistrations.refreshTokenHash eq refreshHash }) {
+                        it[generation] = UUID.randomUUID().toString()
+                        it[registeredAt] = clock()
+                    }
+                }
+                return@transaction true
+            }
 
-            val registrationHash = digest(registrationId)
+            val registrationHash = digest(if (deviceFlag == AuthRules.DEVICE_FLAG_IOS) {
+                "$vendor:$packageName:$registrationId"
+            } else registrationId)
             // An installation changing accounts must stop targeting its previous login.
             OemPushRegistrations.deleteWhere {
                 (refreshTokenHash eq refreshHash) or (OemPushRegistrations.registrationHash eq registrationHash)
@@ -97,6 +140,7 @@ internal class OemPushNotifications(
                 it[OemPushRegistrations.registrationId] = registrationId
                 it[OemPushRegistrations.registrationHash] = registrationHash
                 it[generation] = UUID.randomUUID().toString()
+                it[registeredAt] = clock()
                 it[OemPushRegistrations.packageName] = packageName
                 it[OemPushRegistrations.deploymentFingerprint] = deploymentFingerprint
             }
@@ -106,7 +150,7 @@ internal class OemPushNotifications(
 
     /** Called inside SyncEventDispatcher's mark-dispatched transaction, never from the TCP event loop. */
     fun recordDispatchedEvent(uid: String, eventId: Long, notifyType: Int, payload: ByteArray) {
-        if (configuration.vendors.isEmpty() || notifyType != NotifyType.MESSAGE_RECV.code) return
+        if (configuration.channels.isEmpty() || notifyType != NotifyType.MESSAGE_RECV.code) return
         val message = ProtoCodec.decode(Message, payload)
         if (message.senderUid == uid || message.serverSeq <= 0 ||
             message.flags and (Message.FLAG_REVOKED or Message.FLAG_EDITED) != 0
@@ -116,7 +160,7 @@ internal class OemPushNotifications(
             (Credentials.uid eq uid) and (Credentials.tokenType eq REFRESH_TOKEN_TYPE) and
                 (Credentials.expiresAt greater clock())
         }
-        val enabledVendors = configuration.vendors.keys.toList()
+        val enabledVendors = configuration.channels.toList()
         val registrations = OemPushRegistrations.selectAll().where {
             (OemPushRegistrations.refreshTokenHash inSubQuery credentials) and
                 (OemPushRegistrations.vendor inList enabledVendors) and
@@ -125,7 +169,7 @@ internal class OemPushNotifications(
         var readableChatIds: Set<String>? = null
         for (row in registrations) {
             if (row[OemPushRegistrations.packageName] !=
-                configuration[row[OemPushRegistrations.vendor]]?.packageName
+                configuration.packageName(row[OemPushRegistrations.vendor])
             ) continue
             val chats = pendingChats(row).toMutableMap()
             chats[message.chatId] = maxOf(chats[message.chatId] ?: 0, message.serverSeq)
@@ -149,23 +193,24 @@ internal class OemPushNotifications(
     }
 
     suspend fun drainDue(): Int = deliveryGate.withLock {
-        if (configuration.vendors.isEmpty()) return@withLock 0
+        if (configuration.channels.isEmpty()) return@withLock 0
         val due = transaction(database) {
             OemPushRegistrations.selectAll().where {
                 (OemPushRegistrations.pendingEventId greater OemPushRegistrations.deliveredEventId) and
                     (OemPushRegistrations.nextAttemptAt lessEq clock()) and
-                    (OemPushRegistrations.vendor inList configuration.vendors.keys.toList())
+                    (OemPushRegistrations.vendor inList configuration.channels.toList())
             }.orderBy(OemPushRegistrations.nextAttemptAt, SortOrder.ASC)
                 .limit(MAX_PER_PASS).toList()
         }
         for (row in due) {
             val notification = transaction(database) { currentNotification(row) }
             val vendorConfiguration = notification?.let { configuration[it.vendor] }
-            val result = if (notification == null || vendorConfiguration == null) {
+            val result = if (notification == null) {
                 OemPushDeliveryResult(accepted = true)
             } else {
                 try {
-                    send(vendorConfiguration, notification)
+                    if (ApnsEnvironment.fromChannel(notification.vendor) != null) sendApns(notification)
+                    else send(checkNotNull(vendorConfiguration), notification)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
@@ -179,6 +224,9 @@ internal class OemPushNotifications(
 
     private fun currentNotification(row: ResultRow): OemPushNotification? {
         val refreshHash = row[OemPushRegistrations.refreshTokenHash]
+        val vendor = row[OemPushRegistrations.vendor]
+        val deviceFlag = if (ApnsEnvironment.fromChannel(vendor) != null) AuthRules.DEVICE_FLAG_IOS
+            else AuthRules.DEVICE_FLAG_ANDROID
         val credential = Credentials.join(Users, JoinType.INNER, Credentials.uid, Users.uid)
             .join(Devices, JoinType.INNER, Credentials.uid, Devices.uid).selectAll().where {
             (Credentials.tokenHash eq refreshHash) and (Credentials.tokenType eq REFRESH_TOKEN_TYPE) and
@@ -186,12 +234,10 @@ internal class OemPushNotifications(
                 (Users.credentialEpoch eq Credentials.userCredentialEpoch) and
                 (Devices.deviceId eq Credentials.deviceId) and (Devices.status eq 1) and
                 (Devices.credentialEpoch eq Credentials.deviceCredentialEpoch) and
-                (Devices.deviceFlag eq AuthRules.DEVICE_FLAG_ANDROID)
+                (Devices.deviceFlag eq deviceFlag)
         }.singleOrNull() ?: return null
         val uid = credential[Credentials.uid]
-        val vendor = row[OemPushRegistrations.vendor]
-        val vendorConfiguration = configuration[vendor] ?: return null
-        if (row[OemPushRegistrations.packageName] != vendorConfiguration.packageName) return null
+        if (row[OemPushRegistrations.packageName] != configuration.packageName(vendor)) return null
         // Re-registration/revocation and newer queue entries may have happened after the bounded scan.
         if (!OemPushRegistrations.selectAll().where { sameAttempt(row) }.any()) return null
         val pending = pendingChats(row)
@@ -212,6 +258,7 @@ internal class OemPushNotifications(
             datasetId, uid, chatId,
             // Retry of one pending event retains the OEM dedup key, including across server restarts.
             digest("${row[OemPushRegistrations.generation]}:${row[OemPushRegistrations.pendingEventId]}").take(20),
+            row[OemPushRegistrations.registeredAt],
         )
     }
 

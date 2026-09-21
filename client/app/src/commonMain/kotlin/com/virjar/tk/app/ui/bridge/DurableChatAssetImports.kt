@@ -1,5 +1,7 @@
 package com.virjar.tk.app.ui.bridge
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
 import com.virjar.tk.app.navigation.UiLocalDataBoundary
 import com.virjar.tk.app.ui.component.rich.PendingAssetJob
 import com.virjar.tk.app.ui.component.rich.PendingAssetJobState
@@ -28,7 +30,8 @@ internal class DurableChatAssetImports(
     // These imports receive their initial placement from the live platform picker. A cold process
     // has no such delivery and can recover a command persisted just before its editor frame.
     private data class LiveImport(val chatId: String, val preparing: Boolean)
-    private val liveImports = java.util.concurrent.ConcurrentHashMap<String, LiveImport>()
+    private val liveImportLock = PlatformLock()
+    private val liveImports = mutableMapOf<String, LiveImport>()
 
     override fun handles(ownerKey: String): Boolean = chatId(ownerKey) != null
 
@@ -44,21 +47,21 @@ internal class DurableChatAssetImports(
                         MarkdownAssetPolicy.recoveryReferences(draft?.markdown.orEmpty()).mapNotNull { it.assetId }.toSet()
                     }.getOrDefault(emptySet())
                     val jobIds = jobs.mapTo(hashSetOf()) { it.assetId }
-                    liveImports.forEach { (assetId, live) ->
+                    synchronized(liveImportLock) { liveImports.toMap() }.forEach { (assetId, live) ->
                         if (live.chatId == id && (assetId in references || (assetId !in jobIds && !live.preparing))) {
-                            liveImports.remove(assetId, live)
+                            synchronized(liveImportLock) { if (liveImports[assetId] == live) liveImports.remove(assetId) }
                         }
                     }
                     delivered.keys.retainAll(jobIds)
                     for (upload in jobs) {
-                        if (liveImports.containsKey(upload.assetId) && upload.assetId !in references) continue
+                        if (synchronized(liveImportLock) { liveImports.containsKey(upload.assetId) } && upload.assetId !in references) continue
                         val previous = delivered.put(upload.assetId, upload)
                         if (previous == upload) continue
                         val placement = upload.placement()
-                        if (previous == null && upload.assetId !in references && !liveImports.containsKey(upload.assetId)) {
+                        if (previous == null && upload.assetId !in references && !synchronized(liveImportLock) { liveImports.containsKey(upload.assetId) }) {
                             // A rapid rebind may precede persistence of the recovered placement. Track
                             // that delivery just like a live picker so a second binding cannot duplicate it.
-                            liveImports[upload.assetId] = LiveImport(id, preparing = false)
+                            synchronized(liveImportLock) { liveImports[upload.assetId] = LiveImport(id, preparing = false) }
                             sink.publish(EmbeddedAssetImportEvent.StateChanged(
                                 PendingAssetJob(upload.assetId, upload.assetId), placement,
                             ))
@@ -88,7 +91,7 @@ internal class DurableChatAssetImports(
         selection: EmbeddedAssetLocalSelection,
     ) {
         val id = requireNotNull(chatId(ownerKey))
-        liveImports[assetId] = LiveImport(id, preparing = true)
+        synchronized(liveImportLock) { liveImports[assetId] = LiveImport(id, preparing = true) }
         try {
             coordinator.await().registerPrepared(
                 chatId = id,
@@ -99,10 +102,10 @@ internal class DurableChatAssetImports(
                 isImage = selection.presentation == EmbeddedAssetPresentation.IMAGE,
             )
         } catch (failure: Throwable) {
-            liveImports.remove(assetId)
+            synchronized(liveImportLock) { liveImports.remove(assetId) }
             throw failure
         } finally {
-            liveImports.computeIfPresent(assetId) { _, live -> live.copy(preparing = false) }
+            synchronized(liveImportLock) { liveImports[assetId]?.let { liveImports[assetId] = it.copy(preparing = false) } }
         }
     }
 

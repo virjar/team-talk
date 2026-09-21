@@ -1,5 +1,7 @@
 package com.virjar.tk.shared.client
 
+import kotlin.concurrent.Volatile
+
 import com.virjar.tk.shared.AppError
 import com.virjar.tk.shared.Outcome
 import com.virjar.tk.shared.outcome

@@ -1,5 +1,8 @@
 package com.virjar.tk.app.ui.bridge
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
+
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
 import com.virjar.tk.protocol.model.EmbeddedAsset
@@ -12,6 +15,8 @@ enum class EmbeddedAssetImportSource {
     DESKTOP_CLIPBOARD,
     ANDROID_PICKER,
     ANDROID_CLIPBOARD,
+    IOS_PICKER,
+    IOS_CLIPBOARD,
 }
 
 /**
@@ -118,7 +123,7 @@ class EmbeddedAssetImportBinding internal constructor(
  * 也不会让旧标签页永久缺失 READY 描述符。
  */
 class EmbeddedAssetImportBindingRouter {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var nextGeneration = 0L
     private var current: EmbeddedAssetImportBinding? = null
     private var closed = false

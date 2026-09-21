@@ -722,6 +722,30 @@ class ImClientStateOwnersTest {
         }
     }
 
+    @Test
+    fun `iOS authentication uses published server flags and restores its identity after upgrade`() = runTest {
+        val harness = AuthSyncHarness(this)
+        harness.coordinator.prepareAuthentication(authRequest().copy(
+            deviceFlag = com.virjar.tk.protocol.model.AuthRules.DEVICE_FLAG_IOS,
+        ))
+        for (minor in 0..4) {
+            harness.connectionGeneration = minor.toLong() + 1
+            harness.coordinator.onTransportDisconnected()
+            harness.coordinator.beginProtocolNegotiation(harness.connectionGeneration)
+            harness.coordinator.handleProtocolNegotiationResponse(
+                harness.connectionGeneration,
+                com.virjar.tk.protocol.ProtocolNegotiation.negotiate(
+                    com.virjar.tk.protocol.ProtocolVersions.SUPPORTED,
+                    com.virjar.tk.protocol.ProtocolRange(0, 0, minor),
+                ),
+            )
+            val auth = harness.writes.filterIsInstance<AuthRequestPayload>().last()
+            assertEquals(if (minor < 4) 0 else 3, auth.deviceFlag)
+            assertEquals("device", auth.deviceId)
+            assertEquals("password", auth.password)
+        }
+    }
+
     private class AuthSyncHarness(
         scope: CoroutineScope,
         onFailureObserved: ((AuthenticationFailure) -> Unit)? = null,

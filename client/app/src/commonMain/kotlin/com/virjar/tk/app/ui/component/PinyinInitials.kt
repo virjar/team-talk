@@ -4,7 +4,7 @@ package com.virjar.tk.app.ui.component
  * 名称 → 拼音首字母（通讯录字母分组）。
  *
  * GB2312 一级汉字（3755 个）按拼音序排列，按 GBK 编码分区映射首字母——
- * 纯 JVM 实现（Charset GBK 双平台可用），无需引入 pinyin 库。多音字取
+ * 平台只负责 GBK 编码，分区规则由共享实现持有，无需引入 pinyin 库。多音字取
  * 常用读音（分区表的固有近似，通讯录分组可接受）。
  */
 object PinyinInitials {
@@ -36,9 +36,7 @@ object PinyinInitials {
         if (ch in '0'..'9') return '#'
         if (ch.code < 0x3400) return null  // 符号/emoji 等跳过
         return try {
-            val bytes = ch.toString().toByteArray(charset("GBK"))
-            if (bytes.size != 2) return null  // 不可编码（替换为 '?' 单字节）
-            val code = ((bytes[0].toInt() and 0xFF) shl 8) or (bytes[1].toInt() and 0xFF)
+            val code = gbkDoubleByteCode(ch) ?: return null
             if (code > GBK_MAX) null
             else sections.firstOrNull { code >= it.first }?.second
         } catch (_: Exception) {
@@ -46,3 +44,5 @@ object PinyinInitials {
         }
     }
 }
+
+internal expect fun gbkDoubleByteCode(ch: Char): Int?

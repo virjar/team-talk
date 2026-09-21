@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.TaskChangedPayload
 import com.virjar.tk.protocol.TaskDuePayload
@@ -13,7 +14,7 @@ import kotlinx.serialization.json.Json
 internal class LocalTaskStore(
     private val queries: AppDatabaseQueries,
     private val cacheUseGate: CacheUseGate,
-    private val stateLock: Any,
+    private val stateLock: PlatformLock,
 ) : LocalTasks {
     override val changes = MutableStateFlow(0L)
     private var currentGeneration = 0L
@@ -62,7 +63,7 @@ internal class LocalTaskStore(
         if (generation != currentGeneration) return@synchronized false
         queries.transaction {
             page.items.forEach { applyTaskLocked(it.task, ownerUid, it) }
-            queries.upsertTaskQueryPage(key.storageKey, key.groupId, ProtoCodec.encode(page), System.currentTimeMillis())
+            queries.upsertTaskQueryPage(key.storageKey, key.groupId, ProtoCodec.encode(page), platformCurrentTimeMillis())
             queries.pruneTaskQueryPages()
         }
         changed()
@@ -81,7 +82,7 @@ internal class LocalTaskStore(
         if (generation != currentGeneration) return@synchronized false
         queries.transaction {
             page.items.forEach { applyTaskLocked(it, ownerUid) }
-            queries.upsertTaskPage(key.view.toLong(), key.cursor.orEmpty(), ProtoCodec.encode(page), System.currentTimeMillis())
+            queries.upsertTaskPage(key.view.toLong(), key.cursor.orEmpty(), ProtoCodec.encode(page), platformCurrentTimeMillis())
             queries.pruneTaskPages()
         }
         changed()
@@ -93,7 +94,7 @@ internal class LocalTaskStore(
             (details?.options?.shareToGroup == true && task.contextKind == TaskPolicy.CONTEXT_GROUP)) { "Task escaped its account" }
         if ((taskLocked(task.taskId)?.revision ?: 0L) > task.revision) return
         val full = details ?: detailsLocked(task.taskId)?.takeIf { it.task.revision == task.revision }
-        queries.upsertTask(task.taskId, ProtoCodec.encode(task), System.currentTimeMillis())
+        queries.upsertTask(task.taskId, ProtoCodec.encode(task), platformCurrentTimeMillis())
         if (full == null) queries.deleteTaskDetails(task.taskId) else writeDetailsLocked(full)
         queries.pruneTasks()
         queries.pruneTaskDetails()

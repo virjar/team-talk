@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.database.AppDatabaseQueries
 import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.shared.database.Group_file_entry
@@ -20,7 +21,7 @@ import kotlinx.coroutines.flow.flow
 internal class LocalGroupFileEntryStore(
     private val queries: AppDatabaseQueries,
     private val cacheUseGate: CacheUseGate,
-    private val stateLock: Any,
+    private val stateLock: PlatformLock,
     private val maxRowsPerChat: Int = MAX_ROWS_PER_CHAT,
 ) {
     private class DirectoryObserver(

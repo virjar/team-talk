@@ -1,5 +1,8 @@
 package com.virjar.tk.app.ui.screen
 
+import com.virjar.tk.app.ui.platform.localUiDateTime
+import com.virjar.tk.app.ui.platform.hourMinute
+import com.virjar.tk.app.ui.platform.monthDay
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
@@ -12,9 +15,6 @@ import com.virjar.tk.protocol.model.User
 import com.virjar.tk.app.ui.component.rich.ChatComposerMode
 import com.virjar.tk.app.ui.component.rich.PendingAssetJob
 import com.virjar.tk.app.ui.component.rich.PendingAssetJobState
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import com.virjar.tk.app.navigation.feature.chat.SavedChatEditingSession
@@ -249,15 +249,9 @@ private val ChatEmbeddedAssetSaverJson = Json {
  * 格式化聊天时间：当天显示 HH:mm，非当天显示 MM-dd HH:mm。
  */
 internal fun formatChatTime(timestamp: Long): String {
-    val now = Date()
-    val msg = Date(timestamp)
-    val dayFmt = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-    val isToday = dayFmt.format(now) == dayFmt.format(msg)
-    return if (isToday) {
-        SimpleDateFormat("HH:mm", Locale.getDefault()).format(msg)
-    } else {
-        SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(msg)
-    }
+    val messageTime = localUiDateTime(timestamp)
+    return if (localUiDateTime().date == messageTime.date) messageTime.hourMinute()
+    else "${messageTime.monthDay()} ${messageTime.hourMinute()}"
 }
 
 /**

@@ -62,7 +62,7 @@ fun ContactsListScreen(
             contact to displayName
         }
             .groupBy { (_, name) -> PinyinInitials.initialOf(name) }
-            .toSortedMap(compareBy({ it == '#' }, { it }))
+            .toList().sortedWith(compareBy({ it.first == '#' }, { it.first })).toMap()
     }
 
     // 分组 sticky 头在 LazyColumn 中的全局索引：索引条跳转用

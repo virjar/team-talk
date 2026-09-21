@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.Outcome
 import com.virjar.tk.shared.RemoteFailureClassification
 import com.virjar.tk.shared.RemoteFailureClassifier
@@ -66,7 +67,7 @@ internal class SessionPendingMirrorWake : AutoCloseable {
         val reliableExpiryGeneration: Long,
     )
 
-    private val lock = Any()
+    private val lock = PlatformLock()
     private val signal = Channel<Unit>(Channel.CONFLATED)
     private var closed = false
     private var commitEpoch = 0L
@@ -154,7 +155,7 @@ internal class SessionPendingMirrorRecovery(
     private val nextReliableCommandExpiryAt: () -> Long? = { null },
     parentScope: CoroutineScope,
     private val retryPolicy: PendingMirrorRetryPolicy = PendingMirrorRetryPolicy(),
-    private val nowMillis: () -> Long = System::currentTimeMillis,
+    private val nowMillis: () -> Long = ::platformCurrentTimeMillis,
     private val onAuthExpired: () -> Unit = {},
 ) : AutoCloseable {
     private val ownerJob = SupervisorJob(parentScope.coroutineContext[Job])

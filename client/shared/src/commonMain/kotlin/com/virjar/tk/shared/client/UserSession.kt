@@ -1,5 +1,7 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
+import kotlin.concurrent.Volatile
 const val LOCAL_CREDENTIAL_COMMIT_FAILURE_REASON = "本地登录状态保存失败"
 
 /** 会话拥有的平台适配器使用的原子 HTTP 身份。 */
@@ -35,7 +37,7 @@ interface UserSessionView {
  * @see ImClient 连接层（不持有用户身份，认证结果通过回调回传本类）
  */
 class UserSession : UserSessionView {
-    private val identityLock = Any()
+    private val identityLock = PlatformLock()
     private var identityEpoch = 1L
     /** 当前登录用户 uid。认证成功后填充，权威撤销/登出时清空。 */
     @Volatile

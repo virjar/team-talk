@@ -1,12 +1,14 @@
 package com.virjar.tk.app.navigation.feature.document
 
+import com.virjar.tk.shared.platform.platformCurrentTimeMillis
+import com.virjar.tk.shared.platform.platformRandomUuid
+
 import androidx.compose.runtime.Stable
 import com.virjar.tk.protocol.body.OfficeRefBody
 import com.virjar.tk.protocol.model.Conversation
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.shared.client.ClientSession
-import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -25,10 +27,10 @@ internal class DocumentShareToChatAction(private val session: ClientSession) {
     fun send(chatId: String, ref: OfficeRefBody): Boolean {
         val message = Message(
             chatId = chatId,
-            clientMsgId = UUID.randomUUID().toString(),
+            clientMsgId = platformRandomUuid(),
             senderUid = session.userSession.uid,
             messageType = MessageType.OFFICE_REF.code,
-            timestamp = System.currentTimeMillis(),
+            timestamp = platformCurrentTimeMillis(),
             body = ref,
         ).copy(sendStatus = Message.SEND_STATUS_SENDING)
         return session.localMutations.enqueueOutgoing(message) {

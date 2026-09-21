@@ -1,7 +1,6 @@
 package com.virjar.tk.shared.log
 
-import java.text.SimpleDateFormat
-import java.util.*
+import com.virjar.tk.shared.platform.*
 
 /**
  * 环形日志缓冲区。定量（500 条）或定时触发上传。
@@ -11,11 +10,10 @@ class LogBuffer(
     private val capacity: Int = 500,
 ) {
     private val buffer = ArrayDeque<String>(capacity + 16)
-    private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
+    private val methodLock = PlatformLock()
 
-    @Synchronized
-    fun append(level: String, tag: String, msg: String, throwable: Throwable? = null) {
-        val timestamp = dateFormat.format(Date())
+    fun append(level: String, tag: String, msg: String, throwable: Throwable? = null): Unit = synchronized(methodLock) {
+        val timestamp = platformLogTimestamp()
         val line = if (throwable != null) {
             "$timestamp|$level|$tag|${msg.replace("\n", " ")}\n${throwable.stackTraceToString()}"
         } else {
@@ -27,14 +25,12 @@ class LogBuffer(
         buffer.addLast(line)
     }
 
-    @Synchronized
-    fun drain(): String? {
+    fun drain(): String? = synchronized(methodLock) {
         if (buffer.isEmpty()) return null
         val text = buffer.joinToString("\n")
         buffer.clear()
         return text
     }
 
-    @Synchronized
-    fun size(): Int = buffer.size
+    fun size(): Int = synchronized(methodLock) { buffer.size }
 }

@@ -1,11 +1,9 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.http.GROUP_BOT_NAME_MAX_LENGTH
 import com.virjar.tk.protocol.http.GROUP_BOT_WEBHOOK_TOKEN_LENGTH
 import com.virjar.tk.protocol.http.GROUP_BOT_WEBHOOK_TOKEN_PREFIX
-import java.security.SecureRandom
-import java.util.Base64
-import java.util.UUID
 
 enum class GroupBotCredentialCommandKind(val code: Long) {
     CREATE(1),
@@ -48,7 +46,7 @@ data class PendingGroupBotCredentialCommand(
             "kind=$kind, chatId=$chatId, botId=$botId, name=$name, webhookToken=<redacted>)"
 
     private fun normalizedOrNull(): PendingGroupBotCredentialCommand? = runCatching {
-        val canonicalOperationId = UUID.fromString(operationId).toString()
+        val canonicalOperationId = platformCanonicalUuid(operationId)
             .takeIf { operationId.length == UUID_TEXT_LENGTH && it == operationId }
             ?: return null
         requireSafeId(ownerUid, "ownerUid")
@@ -74,10 +72,9 @@ data class PendingGroupBotCredentialCommand(
         private const val UUID_TEXT_LENGTH = 36
         private const val TOKEN_BYTES = 32
         private const val MAX_SAFE_ID_LENGTH = 64
-        private val random = SecureRandom()
 
         fun create(
-            operationId: String = UUID.randomUUID().toString(),
+            operationId: String = platformRandomUuid(),
             ownerUid: String,
             chatId: String,
             name: String,
@@ -95,7 +92,7 @@ data class PendingGroupBotCredentialCommand(
         ) { "群机器人创建命令参数无效" }
 
         fun rotate(
-            operationId: String = UUID.randomUUID().toString(),
+            operationId: String = platformRandomUuid(),
             ownerUid: String,
             chatId: String,
             botId: String,
@@ -137,16 +134,16 @@ data class PendingGroupBotCredentialCommand(
         }
 
         private fun newWebhookToken(): String = GROUP_BOT_WEBHOOK_TOKEN_PREFIX +
-            Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(TOKEN_BYTES).also(random::nextBytes))
+            platformBase64Url(platformSecureRandomBytes(TOKEN_BYTES))
 
         private fun isCanonicalWebhookToken(token: String): Boolean {
             if (token.length != GROUP_BOT_WEBHOOK_TOKEN_LENGTH ||
                 !token.startsWith(GROUP_BOT_WEBHOOK_TOKEN_PREFIX)
             ) return false
             val encoded = token.removePrefix(GROUP_BOT_WEBHOOK_TOKEN_PREFIX)
-            val decoded = runCatching { Base64.getUrlDecoder().decode(encoded) }.getOrNull() ?: return false
+            val decoded = runCatching { platformBase64UrlDecode(encoded) }.getOrNull() ?: return false
             return decoded.size == TOKEN_BYTES &&
-                Base64.getUrlEncoder().withoutPadding().encodeToString(decoded) == encoded
+                platformBase64Url(decoded) == encoded
         }
 
         private fun normalizeName(name: String): String {

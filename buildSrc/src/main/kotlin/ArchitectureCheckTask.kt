@@ -117,14 +117,18 @@ abstract class ArchitectureCheckTask : DefaultTask() {
             "client/shared/src/jvmAndAndroidMain",
             "client/shared/src/androidMain",
             "client/shared/src/jvmMain",
+            "client/shared/src/iosMain",
             "client/richeditor/src/commonMain",
             "client/richeditor/src/androidMain",
             "client/richeditor/src/desktopMain",
+            "client/richeditor/src/iosMain",
             "client/app/src/commonMain",
             "client/app/src/androidMain",
             "client/app/src/desktopMain",
+            "client/app/src/iosMain",
             "client/android/src/main",
             "client/desktop/src/desktopMain",
+            "client/ios/src/iosMain",
             "server/server/src/main",
             "protocol/rpc-processor/src/main",
         )
@@ -165,6 +169,7 @@ abstract class ArchitectureCheckTask : DefaultTask() {
                     "client/app/src/commonMain",
                     "client/android/src/main",
                     "client/desktop/src/desktopMain",
+                    "client/ios/src/iosMain",
                 ),
                 forbiddenPatterns = listOf(
                     Regex("\\bSessionContext\\b") to
@@ -262,9 +267,12 @@ abstract class ArchitectureCheckTask : DefaultTask() {
             "client/shared/src/jvmAndAndroidMain",
             "client/shared/src/androidMain",
             "client/shared/src/jvmMain",
+            "client/shared/src/iosMain",
             "client/app/src/commonMain",
+            "client/app/src/iosMain",
             "client/android/src/main",
             "client/desktop/src/desktopMain",
+            "client/ios/src/iosMain",
             "server/server/src/main",
         )
         // 受控的 richeditor 源码 fork 仍参与上面的依赖、执行器和传输模式检查。其上游文件

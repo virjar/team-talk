@@ -58,7 +58,11 @@ fun File.asUploadSource(): UploadSource {
 internal actual fun createPlatformFileTransport(): PlatformFileTransport = UrlConnectionFileTransport()
 
 internal actual fun canonicalHttpServerBase(serverUrl: String): String {
-    val parsed = URI(serverUrl.trim())
+    val parsed = try {
+        URI(serverUrl.trim())
+    } catch (failure: java.net.URISyntaxException) {
+        throw IllegalArgumentException("文件服务器地址格式不正确", failure)
+    }
     val scheme = parsed.scheme?.lowercase()
     require(scheme == "http" || scheme == "https") { "文件服务器必须使用 HTTP(S)" }
     require(parsed.host != null) { "文件服务器地址缺少主机" }

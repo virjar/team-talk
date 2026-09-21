@@ -1,5 +1,7 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
+import kotlin.concurrent.Volatile
 import com.virjar.tk.shared.log.TkLogger
 import com.virjar.tk.shared.log.PlatformOnlyTkLogger
 import com.virjar.tk.protocol.payload.InvokePayload
@@ -74,7 +76,7 @@ private class ImClientRpcRequestTransport(
 private class RpcSessionLease(
     val transportOwnerGeneration: Long,
 ) : WireSendAdmission {
-    private val lock = Any()
+    private val lock = PlatformLock()
     @Volatile
     private var active = true
 
@@ -92,7 +94,7 @@ private class RpcRequestLease(
     val connectionGeneration: Long,
     private val requestAdmission: SessionOutboundLease?,
 ) : WireSendAdmission {
-    private val lock = Any()
+    private val lock = PlatformLock()
     @Volatile
     private var active = true
 
@@ -141,7 +143,7 @@ class RpcClient internal constructor(
 
     @Volatile
     private var logger: TkLogger = PlatformOnlyTkLogger("RpcClient")
-    private val pendingLock = Any()
+    private val pendingLock = PlatformLock()
     private val pendingRequests = mutableMapOf<Int, PendingRequest>()
     private var nextRequestId = 1
     private val lifecycleScope = CoroutineScope(

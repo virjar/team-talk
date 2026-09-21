@@ -1,10 +1,12 @@
 package com.virjar.tk.shared.testkit
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.client.OptimisticMessageEditLease
 import com.virjar.tk.protocol.model.Message
 
 /** 内存版 LocalCache 测试替身所共用的精确乐观编辑租约行为。 */
 internal class FakeOptimisticMessageEditStore(
+    private val messagesLock: PlatformLock,
     private val messages: MutableMap<String, MutableList<Message>>,
     private val publishFlow: (String) -> Unit,
 ) {
@@ -13,7 +15,7 @@ internal class FakeOptimisticMessageEditStore(
     private val pendingByToken = linkedMapOf<Long, PendingEdit>()
     private val tokenByMessage = mutableMapOf<Pair<String, String>, Long>()
 
-    fun reserve(message: Message): OptimisticMessageEditLease? = synchronized(messages) {
+    fun reserve(message: Message): OptimisticMessageEditLease? = synchronized(messagesLock) {
         require(message.chatId.isNotBlank()) { "optimistic edit chatId must not be blank" }
         require(message.clientMsgId.isNotBlank()) { "optimistic edit clientMsgId must not be blank" }
         require(message.serverSeq > 0L) { "only confirmed messages can be edited" }
@@ -51,7 +53,7 @@ internal class FakeOptimisticMessageEditStore(
         lease
     }
 
-    fun publish(lease: OptimisticMessageEditLease): Boolean = synchronized(messages) {
+    fun publish(lease: OptimisticMessageEditLease): Boolean = synchronized(messagesLock) {
         val pending = current(lease) ?: return@synchronized false
         if (pending.published || pending.superseded) return@synchronized false
         val list = messages[pending.key.first] ?: return@synchronized false
@@ -67,13 +69,13 @@ internal class FakeOptimisticMessageEditStore(
         current(lease) === pending && !pending.superseded
     }
 
-    fun commit(lease: OptimisticMessageEditLease): Boolean = synchronized(messages) {
+    fun commit(lease: OptimisticMessageEditLease): Boolean = synchronized(messagesLock) {
         val pending = current(lease) ?: return@synchronized false
         remove(pending)
         true
     }
 
-    fun rollback(lease: OptimisticMessageEditLease): Boolean = synchronized(messages) {
+    fun rollback(lease: OptimisticMessageEditLease): Boolean = synchronized(messagesLock) {
         val pending = current(lease) ?: return@synchronized false
         remove(pending)
         if (pending.published && !pending.superseded) {
@@ -88,37 +90,37 @@ internal class FakeOptimisticMessageEditStore(
         true
     }
 
-    fun supersede(chatId: String, clientMsgId: String) = synchronized(messages) {
+    fun supersede(chatId: String, clientMsgId: String) = synchronized(messagesLock) {
         val token = tokenByMessage[chatId to clientMsgId] ?: return@synchronized
         pendingByToken[token]?.superseded = true
     }
 
-    fun supersedeChat(chatId: String) = synchronized(messages) {
+    fun supersedeChat(chatId: String) = synchronized(messagesLock) {
         pendingByToken.values.forEach { pending ->
             if (pending.key.first == chatId) pending.superseded = true
         }
     }
 
-    fun supersedeAll() = synchronized(messages) {
+    fun supersedeAll() = synchronized(messagesLock) {
         pendingByToken.values.forEach { it.superseded = true }
     }
 
-    fun close() = synchronized(messages) {
+    fun close() = synchronized(messagesLock) {
         pendingByToken.clear()
         tokenByMessage.clear()
     }
 
-    /** 调用方持有 [messages] 锁。 */
+    /** 调用方持有 [messagesLock] 锁。 */
     private fun current(lease: OptimisticMessageEditLease): PendingEdit? {
         val owned = lease as? Lease ?: return null
         if (owned.owner !== owner) return null
         return pendingByToken[owned.tokenId]?.takeIf { it.lease === owned }
     }
 
-    /** 调用方持有 [messages] 锁。 */
+    /** 调用方持有 [messagesLock] 锁。 */
     private fun remove(pending: PendingEdit) {
-        pendingByToken.remove(pending.lease.tokenId, pending)
-        tokenByMessage.remove(pending.key, pending.lease.tokenId)
+        if (pendingByToken[pending.lease.tokenId] === pending) pendingByToken.remove(pending.lease.tokenId)
+        if (tokenByMessage[pending.key] == pending.lease.tokenId) tokenByMessage.remove(pending.key)
     }
 
     private data class PendingEdit(

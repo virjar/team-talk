@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.repository
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.Outcome
 import com.virjar.tk.shared.client.LocalCache
 import com.virjar.tk.shared.client.PendingGroupFileCommand
@@ -10,7 +11,6 @@ import com.virjar.tk.protocol.model.GroupFileVersion
 import com.virjar.tk.shared.outcome
 import com.virjar.tk.protocol.rpc.RpcInvoker
 import com.virjar.tk.protocol.rpc.gen.GroupFileRpcProxy
-import java.util.UUID
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -38,9 +38,9 @@ enum class GroupFileCommandSubmission {
 class GroupFileRepository internal constructor(
     private val rpcClient: RpcInvoker,
     private val localCache: LocalCache?,
-    private val newEntryId: () -> String = { UUID.randomUUID().toString() },
-    private val newCommandId: () -> String = { UUID.randomUUID().toString() },
-    private val nowMillis: () -> Long = System::currentTimeMillis,
+    private val newEntryId: () -> String = { platformRandomUuid() },
+    private val newCommandId: () -> String = { platformRandomUuid() },
+    private val nowMillis: () -> Long = ::platformCurrentTimeMillis,
     private val onPendingReliableCommandCommitted: () -> Unit = {},
     private val onPendingGroupFileCommandCompleted: (GroupFileCommandCompletion) -> Unit = {},
 ) {
@@ -48,9 +48,9 @@ class GroupFileRepository internal constructor(
     constructor(rpcClient: RpcInvoker, localCache: LocalCache?) : this(
         rpcClient = rpcClient,
         localCache = localCache,
-        newEntryId = { UUID.randomUUID().toString() },
-        newCommandId = { UUID.randomUUID().toString() },
-        nowMillis = System::currentTimeMillis,
+        newEntryId = { platformRandomUuid() },
+        newCommandId = { platformRandomUuid() },
+        nowMillis = ::platformCurrentTimeMillis,
         onPendingReliableCommandCommitted = {},
         onPendingGroupFileCommandCompleted = {},
     )

@@ -1,5 +1,7 @@
 package com.virjar.tk.app.ui.screen
 
+import com.virjar.tk.shared.platform.platformCurrentTimeMillis
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -80,7 +82,7 @@ data class DeviceInfo(
 
 private fun formatTime(timestamp: Long): String {
     if (timestamp <= 0) return ""
-    val diff = System.currentTimeMillis() - timestamp
+    val diff = platformCurrentTimeMillis() - timestamp
     return when {
         diff < 60_000 -> "刚刚"
         diff < 3600_000 -> "${diff / 60_000}分钟前"

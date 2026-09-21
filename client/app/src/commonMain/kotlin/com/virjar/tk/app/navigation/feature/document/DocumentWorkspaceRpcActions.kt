@@ -1,5 +1,10 @@
 package com.virjar.tk.app.navigation.feature.document
 
+import com.virjar.tk.shared.platform.platformCanonicalUuid
+
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
+
 import com.virjar.tk.app.navigation.feature.LatestRequestGate
 
 import com.virjar.tk.shared.AppError
@@ -13,7 +18,6 @@ import com.virjar.tk.protocol.model.OrganizationUnit
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.protocol.model.UserRole
 import com.virjar.tk.app.navigation.UiLocalDataBoundary
-import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
@@ -71,7 +75,7 @@ internal fun DocumentSpaceCreateRequest.normalized(): DocumentSpaceCreateRequest
     if (descriptionResult.isFailure) return null
     val normalizedDescription = descriptionResult.getOrNull()
     val canonicalSpaceId = try {
-        UUID.fromString(spaceId).toString().takeIf { it == spaceId }
+        platformCanonicalUuid(spaceId).takeIf { it == spaceId }
     } catch (_: IllegalArgumentException) {
         null
     } ?: return null
@@ -107,7 +111,7 @@ internal class DocumentWorkspaceSpaceActions(
     private val onPendingCreatesChanged: () -> Unit,
     private val onCreatedSpacePublished: (DocumentSpace) -> Unit,
 ) {
-    private val createOperationLock = Any()
+    private val createOperationLock = PlatformLock()
     private val createOperations = mutableMapOf<String, DocumentSpaceCreateOperation>()
 
     fun create(name: String, description: String?): Job {

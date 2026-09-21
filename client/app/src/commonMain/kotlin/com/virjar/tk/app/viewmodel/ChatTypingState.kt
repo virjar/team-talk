@@ -1,5 +1,8 @@
 package com.virjar.tk.app.viewmodel
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
+
 import com.virjar.tk.shared.client.ConnectionState
 import com.virjar.tk.protocol.model.Message
 import kotlinx.coroutines.CoroutineScope
@@ -22,7 +25,7 @@ internal class ChatTypingState(
     private val _typingUid = MutableStateFlow<String?>(null)
     val typingUid: StateFlow<String?> = _typingUid.asStateFlow()
 
-    private val lock = Any()
+    private val lock = PlatformLock()
     private val throttle = TypingLeadingThrottle()
     private var generation = 0L
     private var expiryJob: Job? = null

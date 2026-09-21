@@ -153,11 +153,13 @@ internal class ClientReleaseUploadReader(private val store: ReleaseStore) {
         val clientOk = metadata.clientType in setOf(
             ClientUpdateContracts.CLIENT_DESKTOP, ClientUpdateContracts.CLIENT_ANDROID,
             ClientUpdateContracts.CLIENT_HEADLESS,
+            ClientUpdateContracts.CLIENT_IOS,
         )
         val platformOk = metadata.platform in setOf(
             ClientUpdateContracts.PLATFORM_MACOS, ClientUpdateContracts.PLATFORM_WINDOWS,
             ClientUpdateContracts.PLATFORM_LINUX, ClientUpdateContracts.PLATFORM_ANDROID,
             ClientUpdateContracts.PLATFORM_ANY,
+            ClientUpdateContracts.PLATFORM_IOS,
         )
         val archOk = metadata.arch in setOf(
             ClientUpdateContracts.ARCH_AMD64, ClientUpdateContracts.ARCH_AARCH64, ClientUpdateContracts.ARCH_ANY,

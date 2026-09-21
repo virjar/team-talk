@@ -57,8 +57,10 @@ PostgreSQL 所有权以 `PostgresDatabase` 为边界。`DatabaseFactory.create` 
 后台任务、连接与本地存储，最后注销该 Database 并关闭它自己的连接池。两个嵌入式 Application 或
 `TestEnvironment` 可以同时存在，关闭其中一个不会替换、关闭或重定向另一个的数据库。
 
-OEM 出站推送由每个 Application 的 `OemPushSender` 持有 HTTP client 与厂商 token 缓存，六家厂商
-实现只处理各自协议；不再使用跨实例的全局传输或 token。它在推送 maintenance 之前获取，因此关闭时
+移动端出站推送由每个 Application 的 `OemPushSender` 持有 HTTP client 与厂商 token 缓存，六家 Android
+厂商与 APNs 实现只处理各自协议；APNs 使用 HTTP/2、ES256 provider JWT 与明确的 topic/环境。
+两端共享持久未读提示队列、当前权限/静音过滤与凭据撤销；APNs 注册保留时间戳和 generation，避免旧 410
+响应删除新注册。它在推送 maintenance 之前获取，因此关闭时
 先停止推送 worker，再取消在途 HTTP 请求并在共享的 5 秒截止时间内等待 client 终止。关闭一个实例
 不会释放另一个实例的连接或令牌；厂商 HTTP fixture 验证这一隔离，不替代厂商真机送达验收。
 

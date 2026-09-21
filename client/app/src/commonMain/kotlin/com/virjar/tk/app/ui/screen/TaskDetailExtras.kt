@@ -1,5 +1,7 @@
 package com.virjar.tk.app.ui.screen
 
+import com.virjar.tk.shared.platform.platformCurrentTimeMillis
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -14,7 +16,7 @@ import com.virjar.tk.app.ui.theme.Tk
 import com.virjar.tk.protocol.model.TaskDetails
 import com.virjar.tk.protocol.model.TaskDetailsCommand
 import com.virjar.tk.protocol.model.TaskPolicy
-import java.time.ZoneId
+import kotlinx.datetime.TimeZone
 
 @Composable
 internal fun TaskDetailExtras(feature: TaskFeature, admission: UiActionAdmission) {
@@ -44,7 +46,7 @@ internal fun TaskDetailExtras(feature: TaskFeature, admission: UiActionAdmission
             Text("${taskRecurrenceLabel(rule)} ${rule.startLocalTime} 开始 · ${rule.dueLocalTime} 截止（${rule.timeZone}）",
                 style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("task.series.rule"))
             Text("首次日期：${rule.firstDate}", style = MaterialTheme.typography.bodySmall)
-            Text(if (series.enabled) "下期开始：${taskDateTimeLabel(series.nextOccurrenceAt, ZoneId.of(rule.timeZone))}" else "重复计划已停用",
+            Text(if (series.enabled) "下期开始：${taskDateTimeLabel(series.nextOccurrenceAt, TimeZone.of(rule.timeZone))}" else "重复计划已停用",
                 style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("task.series.next"))
             Text("每期使用固定模板；修改本期不影响后续期次。停用计划不取消已生成任务。",
                 style = MaterialTheme.typography.bodySmall, color = Tk.colors.metaText)
@@ -74,7 +76,7 @@ private fun TaskDeferralDialog(original: TaskDetails, feature: TaskFeature, admi
             OutlinedTextField(deadline.time, { deadline = deadline.copy(time = it) }, enabled = !submitting,
                 singleLine = true, label = { Text("时间") }, placeholder = { Text("18:00") },
                 modifier = Modifier.fillMaxWidth().testTag("task.defer.time"))
-            Text("本地时区：${ZoneId.systemDefault().id}", style = MaterialTheme.typography.labelSmall, color = Tk.colors.metaText)
+            Text("本地时区：${TimeZone.currentSystemDefault().id}", style = MaterialTheme.typography.labelSmall, color = Tk.colors.metaText)
             OutlinedTextField(reason, { reason = it }, enabled = !submitting, minLines = 2, maxLines = 5,
                 label = { Text("延期原因（必填）") },
                 supportingText = { Text("${reason.length}/${TaskDetailsCommand.MAX_REASON}") },
@@ -101,7 +103,7 @@ internal fun taskDeferralDueAt(
     deadline: TaskDeadlineInput,
     reason: String,
     previousDueAt: Long?,
-    now: Long = System.currentTimeMillis(),
+    now: Long = platformCurrentTimeMillis(),
 ): Long {
     requireNotNull(previousDueAt) { "未设置截止时间的待办不能延期" }
     require(reason.isNotBlank()) { "请填写延期原因" }

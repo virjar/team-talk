@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.database.AppDatabaseQueries
 import com.virjar.tk.protocol.model.Attachment
 
@@ -7,7 +8,7 @@ import com.virjar.tk.protocol.model.Attachment
 internal class LocalGroupFileCommandStore(
     private val queries: AppDatabaseQueries,
     private val cacheUseGate: CacheUseGate,
-    private val stateLock: Any,
+    private val stateLock: PlatformLock,
     private val limits: LocalOutboxLimits,
 ) {
     private val slot =

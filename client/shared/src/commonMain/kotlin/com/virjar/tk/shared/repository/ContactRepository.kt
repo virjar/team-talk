@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.repository
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.Outcome
 import com.virjar.tk.shared.client.LocalCache
 import com.virjar.tk.shared.client.PendingContactDecision
@@ -10,7 +11,6 @@ import com.virjar.tk.protocol.model.ContactApply
 import com.virjar.tk.protocol.model.ContactApplyRecord
 import com.virjar.tk.shared.outcome
 import com.virjar.tk.protocol.rpc.gen.ContactRpcProxy
-import java.util.UUID
 
 /** 脱敏的 ACK 后提示，用于在后台精确回放之后收敛 UI 投影。 */
 data class RecoveredContactDecision(
@@ -21,8 +21,8 @@ data class RecoveredContactDecision(
 class ContactRepository(
     rpcClient: RpcInvoker,
     private val localCache: LocalCache,
-    private val newDecisionOperationId: () -> String = { UUID.randomUUID().toString() },
-    private val nowMillis: () -> Long = System::currentTimeMillis,
+    private val newDecisionOperationId: () -> String = { platformRandomUuid() },
+    private val nowMillis: () -> Long = ::platformCurrentTimeMillis,
     private val onPendingReliableCommandCommitted: () -> Unit = {},
     private val onPendingContactDecisionRecovered: (RecoveredContactDecision) -> Unit = {},
 ) {

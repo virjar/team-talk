@@ -1,9 +1,12 @@
 package com.virjar.tk.app.ui.component
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
+
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import com.virjar.tk.app.ui.component.FileDownloadState
-import java.util.concurrent.atomic.AtomicBoolean
+import com.virjar.tk.shared.platform.PlatformAtomicBoolean as AtomicBoolean
 import kotlin.coroutines.ContinuationInterceptor
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineName
@@ -63,7 +66,7 @@ class FileDownloadStatePublisher(
     private val publicationScope = CoroutineScope(
         ownerContext.minusKey(Job) + publicationJob + CoroutineName("file-download-state"),
     )
-    private val lock = Any()
+    private val lock = PlatformLock()
     private val pending = linkedMapOf<String, PendingPublication>()
     private val residentOrder = linkedSetOf<String>()
     private var drainScheduled = false

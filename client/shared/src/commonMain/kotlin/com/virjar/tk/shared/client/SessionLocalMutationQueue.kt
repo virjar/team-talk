@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.model.Message
 import kotlinx.coroutines.CancellationException
 
@@ -106,7 +107,7 @@ class SessionLocalMutationQueue internal constructor(
 ) : SessionLocalMutationWriter {
     private var chatDraftRevision = initialChatDraftRevision
     private val committedDraftRevisions = linkedMapOf<Long, Long>()
-    private val lock = Any()
+    private val lock = PlatformLock()
     private val pending = ArrayDeque<LocalMutationCommand>()
     private val coalesced = linkedMapOf<LocalMutationKey, LocalMutationCommand>()
     private var phase = LocalMutationQueuePhase.OPEN

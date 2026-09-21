@@ -1,9 +1,12 @@
 package com.virjar.tk.app.navigation.feature.document
 
+import com.virjar.tk.shared.platform.platformCanonicalUuid
+
+import com.virjar.tk.shared.platform.platformRandomUuid
+
 import com.virjar.tk.protocol.model.Document
 import com.virjar.tk.protocol.model.EmbeddedAsset
 import com.virjar.tk.protocol.body.MarkdownAssetPolicy
-import java.util.UUID
 
 internal const val MAX_OPEN_DOCUMENT_TABS = 24
 
@@ -77,7 +80,7 @@ data class DocumentTabState(
      * 这个 tab 的一个可恢复纪元的稳定身份。持久墓碑永久退役该纪元，
      * 因此一个仍然打开的干净 tab 在它可能再次变 dirty 之前会收到一个新值。
      */
-    val recoveryId: String = UUID.randomUUID().toString(),
+    val recoveryId: String = platformRandomUuid(),
     val documentId: String?,
     val spaceId: String,
     val parentId: String?,
@@ -109,7 +112,7 @@ data class DocumentTabState(
             document: Document,
             instanceId: Long,
             editGeneration: Long = 0,
-            recoveryId: String = UUID.randomUUID().toString(),
+            recoveryId: String = platformRandomUuid(),
         ): DocumentTabState {
             require(document.hasValidDocumentPath()) { "服务器返回了非法文档路径" }
             return DocumentTabState(
@@ -164,7 +167,7 @@ internal fun prepareRemoteMissingDocumentCreate(
     if (!tab.remoteMissing || tab.creating || tab.documentId == null || tab.revision == null ||
         !tab.dirty
     ) return null
-    val canonicalId = runCatching { UUID.fromString(newDocumentId).toString() }.getOrNull()
+    val canonicalId = runCatching { platformCanonicalUuid(newDocumentId) }.getOrNull()
         ?: return null
     if (canonicalId != newDocumentId) return null
     return tab.copy(

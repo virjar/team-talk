@@ -1,10 +1,10 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.body.MessageBodyPolicy
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.MessageType
 import kotlinx.coroutines.CancellationException
-import java.util.UUID
 
 /**
  * 对一个已认证会话拥有的正在输入信号执行 best-effort 准入。
@@ -30,10 +30,10 @@ internal fun trySendSessionTyping(
     }
     val message = Message(
         chatId = chatId,
-        clientMsgId = UUID.randomUUID().toString(),
+        clientMsgId = platformRandomUuid(),
         senderUid = ownerUid,
         messageType = MessageType.TYPING.code,
-        timestamp = System.currentTimeMillis(),
+        timestamp = platformCurrentTimeMillis(),
     )
     var enteredBusinessBlock = false
     return try {

@@ -17,17 +17,24 @@
 
 ```mermaid
 flowchart LR
-    Platforms[Android / Desktop 平台壳] --> App[app：共享 UI 与用例编排]
+    Platforms[Android / Desktop / iOS 平台壳] --> App[app：共享 UI 与用例编排]
     App --> Shared[shared：完整 IM SDK]
     Platforms --> Shared
     Headless[ImBot / tt-agent] --> Shared
-    Shared --> Netty[protocol-netty：帧适配]
-    Netty --> Protocol[protocol：模型与契约]
+    Shared --> Netty[JVM/Android：Netty]
+    Shared --> Native[iOS：Network.framework]
+    Netty --> Protocol[protocol：模型、契约、PacketFrames]
+    Native --> Protocol
 ```
 
 平台壳拥有导航、窗口、权限和系统集成。`app` 观察 SDK 的本地数据并编排页面动作；`shared`
 不依赖 Compose，连接、可靠队列、事件同步和数据库都能在无头客户端中独立工作。
 平台壳显式依赖 `shared` 来装配驱动和会话，不能绕过 Repository 直接修改业务投影。
+
+`commonMain` 的锁、时钟、UUID、摘要与文件通过 `shared.platform` 提供；同步锁必须可重入，
+不得用不能重入的协程 Mutex 替换缓存与会话门禁。JVM 的 `PlatformFile` 是 `java.io.File` 的
+actual typealias，保留既有平台调用；iOS 使用 Foundation/POSIX 实现。SQLDelight 模型、同步、
+Repository 与可靠命令保留在 common，Netty 和 Java HTTP 仅存在于 JVM/Android source set。
 
 | 源码入口 | 主要职责 | 不负责什么 |
 |---|---|---|
@@ -530,8 +537,11 @@ stateDiagram-v2
   新 access 与身份；即使 refresh bearer 值未变化，也不能绕过 owner generation/CAS。持久化失败时旧
   身份保持完整且认证不能进入同步。logout/timeout 会先退休 callback gate，
   等待已准入 commit 后再清凭据和内存身份，迟到 AUTH 不能重新保存 token 或复活会话。
-- 连接状态在单线程 Netty 4.2 `MultiThreadIoEventLoopGroup + NioIoHandler` 中修改；SDK 终态销毁时
-  仍由连接 owner 对该 group 执行 `shutdownGracefully`。
+- 连接状态由平台串行 owner 修改：JVM/Android 是 Netty 4.2 EventLoop，iOS 是 GCD 串行队列。
+  iOS 通过 Network.framework 建立 TCP/TLS，按共享 `PacketFrames` 校验方向与长度，再分块接收 payload；
+  JVM/Android 的 Netty codec 也消费相同帧规则。当前心跳写空闲 15 秒、读空闲超时 45 秒。
+  非 loopback 始终使用 TLS；显式分发证书时 loopback 也启用 TLS，仅信任该证书并校验端点主机名。
+  终态销毁取消 scope、连接和定时任务，旧连接的迟到回调不能恢复已经退休的 owner。
 - `CONNECTED` 仅表示 TCP 与所需 TLS handshake 已就绪，尚不表示认证成功；pending handshake 被
   destroy 或新 endpoint 替换后，其迟到回调没有发布状态或发送 AUTH 的权限。
 - durable refresh 和不带认证的普通连接使用 1/2/4/8/16/30 秒封顶的指数退避，并以稳定 deviceId
@@ -1024,6 +1034,7 @@ dirty 标签存在新版本，保留原正文和 CAS 基线，交给保存冲突
 |---|---|
 | [Desktop/JVM 工厂](../../client/shared/src/jvmMain/kotlin/com/virjar/tk/shared/client/LocalCacheFactory.desktop.kt) | `deployments/<fingerprint>/datasets/<datasetId>/users/<uid>/cache_e0.db` |
 | [Android 工厂](../../client/shared/src/androidMain/kotlin/com/virjar/tk/shared/client/AndroidLocalCache.kt) | 应用私有 databases 中的 `cache_e0_<fingerprint>_<datasetId>_<uid>.db` |
+| [iOS 工厂](../../client/shared/src/iosMain/kotlin/com/virjar/tk/shared/client/LocalCacheFactory.ios.kt) | Application Support/TeamTalk 中的 `deployments/<fingerprint>/datasets/<datasetId>/users/<uid>/cache_e0.db` |
 
 客户端不按 epoch 自动删除旧数据库族。损坏库族在替换库验证健康后立即删除（见下文），
 服务器是唯一可靠信息源，不承诺恢复损坏瞬间的未发送本地事实。当前能力与维护边界见
@@ -1045,6 +1056,18 @@ Document 客户端权限状态机与撤权墓碑已删除，干净投影从服�
 确认保存、服务端证明候选 token 已终止，或用户二次风险确认后显式放弃才清理；
 可靠事实不得再按普通可重建投影随意清除。正式
 发布前必须重新评审保留与迁移策略。
+
+iOS 在 SQLDelight Native driver 打开前只读检查 SQLite 版本与完整性；发行前未标记的非空库、
+更高 schema 以及普通 IO 失败都拒绝打开并保留资料。确认物理损坏后才写 `.cache-recovery` 两阶段
+日志，先移出完整数据库族，再创建并验证替换库，成功后清理隔离副本。账号数据库持有独占文件锁，
+关闭 driver 后才释放；崩溃中断的移动与重建由下次同账号打开继续。Keychain 保存完整登录记录，
+保留 deployment、dataset、owner generation 与协议拒绝事实，不把 refresh bearer 写入数据库或普通文件。
+
+[iOS 附件 spool](../../client/shared/src/iosMain/kotlin/com/virjar/tk/shared/repository/ChatAssetSpool.ios.kt)
+与其他平台使用相同账号目录和不可变 sourceId/digest 文件名。导入按 64 KiB 块写入，fsync 后原子改名；
+重新打开的源在发送任何字节前先分块校验摘要。删除被正在读取的源时等待读租约结束，未完成导入只清理
+没有活跃 reservation 的 partial。封禁清理覆盖数据库、chat-assets、文档草稿、媒体和账号诊断范围。
+Native 恢复与附件集成测试位于 `shared/src/iosTest`；它们不代替真机 TCP/TLS、APNs 与 UI 验收。
 
 Android 打开账号 SQLite 时使用不删库的 corruption callback。首次打开、上次未正常关闭、已记录损坏或
 距上次检查超过 7 天时执行 `PRAGMA quick_check`，其余打开只做轻量 schema 可读检查。确认损坏后先关闭

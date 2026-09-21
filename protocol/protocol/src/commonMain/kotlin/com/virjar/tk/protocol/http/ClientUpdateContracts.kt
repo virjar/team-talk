@@ -13,12 +13,14 @@ import kotlinx.serialization.json.Json
 object ClientUpdateContracts {
     const val CLIENT_DESKTOP = "desktop"
     const val CLIENT_ANDROID = "android"
+    const val CLIENT_IOS = "ios"
     const val CLIENT_HEADLESS = "headless"
 
     const val PLATFORM_MACOS = "macos"
     const val PLATFORM_WINDOWS = "windows"
     const val PLATFORM_LINUX = "linux"
     const val PLATFORM_ANDROID = "android"
+    const val PLATFORM_IOS = "ios"
     const val PLATFORM_ANY = "any"
 
     const val ARCH_AMD64 = "amd64"

@@ -1,7 +1,7 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.ReliableCommandContract
-import java.util.UUID
 import com.virjar.tk.protocol.body.MarkdownAssetPolicy
 import com.virjar.tk.protocol.body.MessageBodyPolicy
 import com.virjar.tk.protocol.http.AttachmentUploadIdentity
@@ -16,7 +16,7 @@ import kotlinx.serialization.json.Json
 internal class LocalChatDraftStore(
     private val queries: AppDatabaseQueries,
     private val gate: CacheUseGate,
-    private val lock: Any,
+    private val lock: PlatformLock,
     private val writeMirror: (String, String?) -> PendingConversationDraft,
     private val publishMirror: (PendingConversationDraft) -> Unit,
     private val needsMirror: (String, String?) -> Boolean,
@@ -25,7 +25,7 @@ internal class LocalChatDraftStore(
     override val changes = version.asStateFlow()
     private val json = Json { encodeDefaults = true }
     internal var sharedSync: LocalChatDraftSyncStore? = null
-    private val revisionClock = java.util.concurrent.atomic.AtomicLong(queries.selectMaxChatComposerRevision().executeAsOne())
+    private val revisionClock = PlatformAtomicLong(queries.selectMaxChatComposerRevision().executeAsOne())
     internal fun reserveRevision(): Long = revisionClock.updateAndGet { check(it < Long.MAX_VALUE); it + 1 }
 
     override fun maxRevision(): Long = use { queries.selectMaxChatComposerRevision().executeAsOne() }
@@ -153,7 +153,7 @@ internal class LocalChatDraftStore(
             (receipt.sender_uid == ownerUid && receipt.state == OutgoingMessageState.TERMINAL_FAILED.code && receipt.failure_code == projection.outgoing_failure_code))) {
             "消息结果仍不确定，不能用新身份重发"
         }
-        val now = System.currentTimeMillis()
+        val now = platformCurrentTimeMillis()
         queries.transaction {
             rows.forEach { row ->
                 val job = decodeJob(row.payload)
@@ -161,7 +161,7 @@ internal class LocalChatDraftStore(
                 if (newIdentity || job.state == ChatAssetUploadState.FAILED) {
                     writeJobLocked(job.copy(
                         repairForClientMsgId = clientMsgId, state = ChatAssetUploadState.QUEUED, failure = null, nextAttemptAt = 0,
-                        uploadId = if (newIdentity) UUID.randomUUID().toString() else job.uploadId,
+                        uploadId = if (newIdentity) platformRandomUuid() else job.uploadId,
                         issuedAt = if (newIdentity) now else job.issuedAt,
                         asset = if (newIdentity) null else job.asset,
                     ), row.referenced)
@@ -259,11 +259,11 @@ internal class LocalChatDraftStore(
     override fun retry(assetId: String) = use {
         val row = queries.selectChatAssetUpload(assetId).executeAsOneOrNull() ?: return@use
         val job = decodeJob(row.payload)
-        val expired = expired(job, System.currentTimeMillis()) || job.failure == EXPIRED_FAILURE
+        val expired = expired(job, platformCurrentTimeMillis()) || job.failure == EXPIRED_FAILURE
         if (job.state == ChatAssetUploadState.FAILED || (job.state == ChatAssetUploadState.READY && expired)) {
             writeJobLocked(job.copy(state = ChatAssetUploadState.QUEUED, nextAttemptAt = 0, failure = null,
-                uploadId = if (expired) UUID.randomUUID().toString() else job.uploadId,
-                issuedAt = if (expired) System.currentTimeMillis() else job.issuedAt,
+                uploadId = if (expired) platformRandomUuid() else job.uploadId,
+                issuedAt = if (expired) platformCurrentTimeMillis() else job.issuedAt,
                 asset = if (expired) null else job.asset), row.referenced)
             changed()
         }

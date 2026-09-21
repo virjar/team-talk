@@ -13,7 +13,7 @@ import org.jetbrains.exposed.sql.Table
 internal object ClientReleases : Table("client_release") {
     val id = long("id").autoIncrement()
 
-    /** desktop | android | headless（预留 ios / server）。 */
+    /** desktop | android | ios | headless。 */
     val clientType = varchar("client_type", 16)
 
     /** macos | windows | linux | android | any。 */

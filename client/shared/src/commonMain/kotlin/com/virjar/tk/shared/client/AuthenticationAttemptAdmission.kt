@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 /**
  * 将显式认证尝试在调用方线程与 transport EventLoop 之间线性化。
  *
@@ -8,7 +9,7 @@ package com.virjar.tk.shared.client
  * 延迟的 EventLoop 任务携带其精确租约，因此在销毁或出现更新的尝试之后无法重新激活自己。
  */
 class AuthenticationAttemptAdmission {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var nextGeneration = 0L
     private var activeGeneration = 0L
     /** 否则 monitor 重入会让替代尝试从其自身被准入的操作中返回。 */

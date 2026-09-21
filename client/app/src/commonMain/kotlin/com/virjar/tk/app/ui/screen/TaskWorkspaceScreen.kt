@@ -1,5 +1,7 @@
 package com.virjar.tk.app.ui.screen
 
+import com.virjar.tk.shared.platform.platformCurrentTimeMillis
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
@@ -37,8 +39,8 @@ fun TaskWorkspaceScreen(
     compactMode: Boolean = false,
     materials: TaskMaterialsUi? = null,
 ) {
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(feature) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
+    var now by remember { mutableLongStateOf(platformCurrentTimeMillis()) }
+    LaunchedEffect(feature) { while (true) { delay(30_000); now = platformCurrentTimeMillis() } }
     Column(modifier.fillMaxSize().testTag("task.workspace")) {
         Row(Modifier.fillMaxWidth().padding(horizontal = Tk.spacing.lg, vertical = Tk.spacing.sm),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Tk.spacing.sm)) {

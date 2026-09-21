@@ -1,5 +1,8 @@
 package com.virjar.tk.app.navigation
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
+
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -355,7 +358,7 @@ class UiEventLease<T : Any> internal constructor(
  * 这使交接保持轻量，同时避免一个应用级的事件框架。
  */
 internal class UiEventMailbox<T : Any> {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private val queued = ArrayDeque<QueuedEvent<T>>()
     private var revision by mutableStateOf(0L)
     private var nextEventId = 1L
@@ -428,7 +431,7 @@ internal class UiEventMailbox<T : Any> {
  * 而不是使自己死锁。
  */
 class AppDataStateDestroyGate {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var phase = AppDataStateDestroyPhase.OPEN
     private var terminalFailures = emptyList<Pair<String, Throwable>>()
     private var terminalFatalFailure: Throwable? = null

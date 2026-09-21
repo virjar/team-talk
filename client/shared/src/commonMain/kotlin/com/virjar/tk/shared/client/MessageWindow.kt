@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.database.AppDatabaseQueries
 import com.virjar.tk.protocol.model.Message
 import kotlinx.coroutines.flow.Flow
@@ -25,7 +26,7 @@ internal class MessageWindow(
     private val windowSize: Int,
     toModel: (com.virjar.tk.shared.database.Message) -> Message,
 ) {
-    private val stateLock = Any()
+    private val stateLock = PlatformLock()
     private val _messages = MutableStateFlow<List<Message>>(emptyList())
     private val leasePublications = linkedMapOf<Long, RetirableProjectionState<List<Message>>>()
     /** 当收集者同步执行一次更新变更时，隔断外层发布。 */
@@ -416,7 +417,7 @@ internal class MessageWindow(
         }
         // 常驻游标之下的实时事件可能只存在于 SQLite 中。一旦该历史页证明该 key 属于这里，
         // 加入这个持久赢家，而不替换基于它的更新仅常驻乐观覆盖层。
-        preservedDurableMessages.forEach { message -> merged.putIfAbsent(message.clientMsgId, message) }
+        preservedDurableMessages.forEach { message -> merged.getOrPut(message.clientMsgId) { message } }
         return merged.values.sortedWith(messageDisplayOrder)
     }
 }

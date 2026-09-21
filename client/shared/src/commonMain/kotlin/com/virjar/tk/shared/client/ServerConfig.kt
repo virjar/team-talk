@@ -1,7 +1,7 @@
 package com.virjar.tk.shared.client
 
 import com.virjar.tk.shared.repository.canonicalHttpServerBase
-import java.util.Base64
+import com.virjar.tk.shared.platform.*
 
 /**
  * 服务端连接配置。
@@ -105,11 +105,11 @@ internal expect fun deploymentSha256Hex(value: String): String
 
 fun defaultServerConfig(): ServerConfig {
     return ServerConfig(
-        serverUrl = System.getProperty("teamtalk.server.url") ?: "https://im.virjar.com",
-        tcpHost = System.getProperty("teamtalk.tcp.host") ?: "im.virjar.com",
-        tcpPort = (System.getProperty("teamtalk.tcp.port") ?: "5100").toInt(),
+        serverUrl = platformSystemProperty("teamtalk.server.url") ?: "https://im.virjar.com",
+        tcpHost = platformSystemProperty("teamtalk.tcp.host") ?: "im.virjar.com",
+        tcpPort = (platformSystemProperty("teamtalk.tcp.port") ?: "5100").toInt(),
         tcpTlsCertificatePem = decodeTcpTlsCertificateBase64(
-            System.getProperty("teamtalk.tcp.certificate.base64"),
+            platformSystemProperty("teamtalk.tcp.certificate.base64"),
         ),
     )
 }
@@ -117,5 +117,5 @@ fun defaultServerConfig(): ServerConfig {
 /** 构建参数使用单行 Base64 传递公开证书，避免多行 PEM 被启动器拆开。 */
 fun decodeTcpTlsCertificateBase64(encoded: String?): String? =
     encoded?.takeIf(String::isNotEmpty)?.let {
-        Base64.getDecoder().decode(it).toString(Charsets.UTF_8)
+        platformBase64Decode(it).decodeToString()
     }

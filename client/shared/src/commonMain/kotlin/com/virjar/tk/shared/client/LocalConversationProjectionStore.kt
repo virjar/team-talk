@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.database.AppDatabaseQueries
 import com.virjar.tk.protocol.model.Conversation
 import kotlinx.coroutines.flow.Flow
@@ -21,7 +22,7 @@ internal data class ServerCheckpointConversationPlan(
 internal class LocalConversationProjectionStore(
     private val queries: AppDatabaseQueries,
     private val cacheUseGate: CacheUseGate,
-    private val stateLock: Any,
+    private val stateLock: PlatformLock,
     private val outboxLimits: LocalOutboxLimits,
     private val materializeTransientPeerUsersLocked: (Set<String>) -> Unit = {},
 ) {

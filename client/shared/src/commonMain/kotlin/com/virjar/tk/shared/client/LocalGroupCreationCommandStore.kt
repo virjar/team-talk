@@ -1,12 +1,13 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.database.AppDatabaseQueries
 
 /** 一个 deployment/account LocalCache 拥有的单槽持久 GUI 命令存储。 */
 internal class LocalGroupCreationCommandStore(
     private val queries: AppDatabaseQueries,
     private val cacheUseGate: CacheUseGate,
-    private val stateLock: Any,
+    private val stateLock: PlatformLock,
 ) {
     // SQL/打开失败仍然使 LocalCache 构造失败。只有结构可读但不规范的命令才被隔离：因为一个可靠
     // 槽损坏而丢失每个离线投影会违反缓存的可用性边界。

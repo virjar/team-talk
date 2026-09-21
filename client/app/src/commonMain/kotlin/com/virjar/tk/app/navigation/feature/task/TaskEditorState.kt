@@ -1,13 +1,15 @@
 package com.virjar.tk.app.navigation.feature.task
 
+import com.virjar.tk.shared.platform.platformRandomUuid
+
 import com.virjar.tk.protocol.model.TaskDraft
 import com.virjar.tk.protocol.model.TaskDetails
 import com.virjar.tk.protocol.model.TaskOptions
 import com.virjar.tk.protocol.model.TaskPolicy
 import com.virjar.tk.protocol.model.TaskRecurrenceRule
 import com.virjar.tk.protocol.model.WorkTask
-import java.time.LocalDate
-import java.time.ZoneId
+import kotlinx.datetime.*
+import com.virjar.tk.app.ui.platform.localUiDateTime
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 
@@ -20,7 +22,7 @@ internal data class TaskEditorState(
     val contextKind: Int = TaskPolicy.CONTEXT_NONE,
     val contextId: String = "",
     val deadline: TaskDeadlineInput = TaskDeadlineInput(),
-    val editorKey: String = java.util.UUID.randomUUID().toString(),
+    val editorKey: String = platformRandomUuid(),
     @Transient val uploading: Boolean = false,
     val originalDetails: TaskDetails? = null,
     val options: TaskOptions = TaskOptions(),
@@ -76,10 +78,10 @@ internal data class TaskRecurrenceInput(
     val enabled: Boolean = false,
     val frequency: Int = TaskRecurrenceRule.WEEKLY,
     val interval: String = "1",
-    val firstDate: String = LocalDate.now().toString(),
+    val firstDate: String = localUiDateTime().date.toString(),
     val startLocalTime: String = "09:00",
     val dueLocalTime: String = "18:00",
-    val timeZone: String = ZoneId.systemDefault().id,
+    val timeZone: String = TimeZone.currentSystemDefault().id,
 ) {
     fun rule(): TaskRecurrenceRule {
         require(frequency in setOf(TaskRecurrenceRule.WEEKLY, TaskRecurrenceRule.MONTHLY)) { "请选择按周或按月重复" }
@@ -92,7 +94,7 @@ internal data class TaskRecurrenceInput(
         val time = Regex("(?:[01][0-9]|2[0-3]):[0-5][0-9]")
         require(startLocalTime.matches(time) && dueLocalTime.matches(time)) { "请填写开始和截止时间，例如 09:00、18:00" }
         require(dueLocalTime > startLocalTime) { "每期截止时间必须晚于当天开始时间" }
-        val zone = try { ZoneId.of(timeZone.trim()) } catch (_: Exception) {
+        val zone = try { TimeZone.of(timeZone.trim()) } catch (_: Exception) {
             throw IllegalArgumentException("时区无效，例如 Asia/Shanghai")
         }
         return TaskRecurrenceRule(frequency, step, date.toString(), startLocalTime, dueLocalTime, zone.id)
@@ -102,9 +104,9 @@ internal data class TaskRecurrenceInput(
 internal fun taskRecurrenceLabel(rule: TaskRecurrenceRule): String {
     val date = LocalDate.parse(rule.firstDate)
     return if (rule.frequency == TaskRecurrenceRule.WEEKLY) {
-        val day = listOf("一", "二", "三", "四", "五", "六", "日")[date.dayOfWeek.value - 1]
+        val day = listOf("一", "二", "三", "四", "五", "六", "日")[date.dayOfWeek.isoDayNumber - 1]
         if (rule.interval == 1) "每周$day" else "每 ${rule.interval} 周的周$day"
-    } else if (rule.interval == 1) "每月 ${date.dayOfMonth} 日" else "每 ${rule.interval} 个月的 ${date.dayOfMonth} 日"
+    } else if (rule.interval == 1) "每月 ${date.day} 日" else "每 ${rule.interval} 个月的 ${date.day} 日"
 }
 
 /** Android SavedState 只保存一张表单，不拥有第二个编辑器或待发送命令。 */

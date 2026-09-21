@@ -80,7 +80,7 @@ class AuthIntegrationTest {
             AuthRequestPayload(
                 authType = 1,
                 deviceId = "registration-device",
-                deviceFlag = AuthRules.DEVICE_FLAG_DESKTOP + 1,
+                deviceFlag = AuthRules.DEVICE_FLAG_IOS + 1,
                 correlationId = "auth-invalid-device-0004",
                 connectionGeneration = 4L,
             ),

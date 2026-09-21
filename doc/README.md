@@ -18,7 +18,7 @@
 | 接手项目、按源码掌握状态与恢复 | [架构入门与阅读练习](03-architecture/architecture-primer.md) → [客户端所有权图](03-architecture/client-and-sdk.md) → [后续工作边界](10-reference/roadmap.md) |
 | 理解一次消息如何流转 | [系统架构](03-architecture/README.md) → [数据与同步](03-architecture/data-and-sync.md) → [消息与附件](04-protocol/messages-and-attachments.md) |
 | 编写另一个客户端或 SDK | [协议总览](04-protocol/README.md) → [Wire Format](04-protocol/wire-format.md) → [RPC 与事件](04-protocol/rpc-and-events.md) |
-| 修改 Desktop 或 Android | [客户端架构](05-clients/README.md) → 对应平台文档 → [设计系统](05-clients/design-system.md) |
+| 修改 Desktop、Android 或 iOS | [客户端架构](05-clients/README.md) → 对应平台文档 → [设计系统](05-clients/design-system.md) |
 | 增加一个业务能力 | [仓库导览](08-development/repository-guide.md) → [变更指南](08-development/change-guides.md) → [测试策略](09-testing/README.md) |
 | 排查线上问题 | [可观测性](07-operations/observability.md) → [故障排查](07-operations/troubleshooting.md) |
 
@@ -74,6 +74,7 @@
 - [客户端总览](05-clients/README.md)
 - [Desktop](05-clients/desktop.md)
 - [Android](05-clients/android.md)
+- [iOS](05-clients/ios.md)
 - [无头客户端](05-clients/headless.md)
 - [受控通知机器人](05-clients/notification-bots.md)
 - [设计系统](05-clients/design-system.md)

@@ -86,8 +86,14 @@ internal class OemPushVendorConfiguration(
 }
 
 /** 未配置的厂商不出现在映射中；每个安装只会注册自己制造商对应的通道。 */
-internal class OemPushConfiguration(val vendors: Map<String, OemPushVendorConfiguration> = emptyMap()) {
+internal class OemPushConfiguration(
+    val vendors: Map<String, OemPushVendorConfiguration> = emptyMap(),
+    val apns: ApnsPushConfiguration? = null,
+) {
     operator fun get(vendor: String): OemPushVendorConfiguration? = vendors[vendor]
+    val channels: Set<String> = vendors.keys + apns?.environments.orEmpty().map { it.channel }
+    fun packageName(channel: String): String? = vendors[channel]?.packageName
+        ?: apns?.takeIf { ApnsEnvironment.fromChannel(channel) in it.environments }?.bundleId
 
     companion object {
         fun fromEnvironment(environment: (String) -> String? = System::getenv): OemPushConfiguration {
@@ -110,7 +116,7 @@ internal class OemPushConfiguration(val vendors: Map<String, OemPushVendorConfig
                     else -> error("${prefix}_ENABLED must be true or false")
                 }
             }
-            return OemPushConfiguration(vendors)
+            return OemPushConfiguration(vendors, ApnsPushConfiguration.fromEnvironment(environment))
         }
     }
 }
@@ -123,6 +129,7 @@ internal class OemPushNotification(
     val uid: String,
     val chatId: String,
     val jobKey: String,
+    val registeredAt: Long = 0,
 )
 
 internal data class OemPushDeliveryResult(

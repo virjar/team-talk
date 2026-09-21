@@ -17,8 +17,8 @@
 
 ## 相对上游的裁剪（非功能性，同步时忽略）
 
-- 目标平台裁剪：仅保留 `commonMain` / `androidMain` / `desktopMain` + `commonTest`；
-  删除 `iosMain` / `jsMain` / `wasmJsMain` 及对应 target 注册。
+- 目标平台裁剪：保留 `commonMain` / `androidMain` / `desktopMain` / `iosMain` + `commonTest`；
+  `iosMain` 于 iOS 接入时从同一基线提交完整恢复；仍裁剪 `jsMain` / `wasmJsMain`。
 - 构建：去除 `explicitApi()`、binary-compatibility-validator、`module.publication` 发布配置、
   convention-plugins；build.gradle.kts 重写为主项目风格（对齐 app/shared 模块写法）。
 - ksoup（HTML 解析）保留为依赖（版本对齐上游 0.6.0）。
@@ -44,11 +44,12 @@
 | 2026-09-06 | ui/BasicRichTextEditor.kt、ImageEditorVisualTransformation.kt | + 可选单字符 `imagePlaceholder` 可视投影，不改变原始原子图片节点和 offset | BasicTextField 不支持 inlineContent；配合应用提供的认证缩略图卡片，避免图片在输入框显示未知替换字形 |
 | 2026-09-06 | parser/html/RichTextStateHtmlParser.kt | 直接实现 HTML handler 回调，去除 Ksoup Builder 的多层委托链；补齐图片 alt 保存和图片两侧空格边界 | 修复 Android release 返回聊天时 Saver 恢复空指针，并保留恢复草稿中的图片名称与相邻文字 |
 | 2026-09-10 | ui/BasicRichTextEditor.kt | + 可选 `onLinkClick` 回调：经字段 interactionSource 观察按压位置（与光标指示偏移同通道），命中 Token/链接 span 后回调；+ Token/链接悬停光标处理（Token 呈箭头、链接呈手型、正文呈文本光标） | 文档编辑器中 @ 提及是查看实体：点击打开用户资料卡、悬停可点击暗示；上游编辑器无任何链接/Token 点击与悬停处理，仅只读视图有且走 Main pass 会被文本框选中逻辑消费 |
+| 2026-09-21 | iosMain/clipboard/IosRichTextClipboardManager.kt | 无 HTML 时复用 `synthesizedLinkHtmlIfBareUrl`，并刷新待粘贴 HTML | 保持 Android/Desktop 的纯文本裸网址自动成链，避免旧剪贴板 HTML 残留 |
 
 ## 上游同步策略
 
 1. 上游仓库单独 clone（`~/git/tk/compose-rich-editor`），需要同步时 fetch 最新；
 2. `git diff <基线commit> <目标commit> -- richeditor-compose/src/commonMain` 审查上游变更；
 3. 上游变更按文件 cherry-pick / 手工合并到本模块；本模块改动以 `// [TT]` 注释 + 登记表为合并冲突的裁决依据；
-4. 裁剪掉的源集（ios/js/wasm）的对应上游变更直接忽略；
+4. 裁剪掉的源集（js/wasm）的对应上游变更直接忽略；
 5. 大版本升级（Kotlin/CMP 线变更）时重新评估：更新基线 commit 并重放登记表中的定制项。

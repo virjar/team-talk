@@ -1,7 +1,9 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.log.PlatformOnlyTkLogger
 import com.virjar.tk.protocol.IProto
+import com.virjar.tk.protocol.model.AuthRules
 import com.virjar.tk.protocol.PacketType
 import com.virjar.tk.protocol.ProtocolWireRegistry
 import com.virjar.tk.protocol.ProtocolNegotiation
@@ -17,7 +19,6 @@ import com.virjar.tk.protocol.payload.SyncBatchPayload
 import com.virjar.tk.protocol.payload.SyncResetPayload
 import com.virjar.tk.protocol.telemetry.ConnectionTraceContext
 import com.virjar.tk.protocol.telemetry.ConnectionTraceContextPolicy
-import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -46,7 +47,7 @@ class AuthSyncCoordinator(
     private val onAuthenticationSending: (connectionGeneration: Long, correlationId: String) -> Unit = { _, _ -> },
     private val onAuthenticationContext: (connectionGeneration: Long, context: ConnectionTraceContext) -> Boolean =
         { _, _ -> false },
-    private val newCorrelationId: () -> String = { UUID.randomUUID().toString() },
+    private val newCorrelationId: () -> String = { platformRandomUuid() },
     private val supportedProtocol: ProtocolRange = ProtocolVersions.SUPPORTED,
 ) {
     private val logger = PlatformOnlyTkLogger("AuthSyncCoordinator")
@@ -255,7 +256,14 @@ class AuthSyncCoordinator(
         pending.attempt.runIfActive {
             val correlationId = newCorrelationId()
             ConnectionTraceContextPolicy.requireToken(correlationId, "auth.correlationId")
-            val auth = pending.credentials.toWirePayload(correlationId, connectionGeneration)
+            val source = pending.credentials.toWirePayload(correlationId, connectionGeneration)
+            val negotiated = _protocolCompatibility.value?.negotiated
+            // Published 0.0–0.3 servers accept only UNKNOWN/ANDROID/DESKTOP. Keep the sealed
+            // local identity as IOS so a reconnect to an upgraded server advertises it again.
+            val auth = if (source.deviceFlag == AuthRules.DEVICE_FLAG_IOS &&
+                negotiatedConnectionGeneration == connectionGeneration &&
+                negotiated?.major == 0 && negotiated.minor < 4
+            ) source.copy(deviceFlag = AuthRules.DEVICE_FLAG_UNKNOWN) else source
             onAuthenticationSending(connectionGeneration, correlationId)
             sent = write(auth)
         }

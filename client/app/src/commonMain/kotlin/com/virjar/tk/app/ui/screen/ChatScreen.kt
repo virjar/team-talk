@@ -1,5 +1,8 @@
 package com.virjar.tk.app.ui.screen
 
+import com.virjar.tk.shared.platform.platformCurrentTimeMillis
+import com.virjar.tk.shared.platform.platformRandomUuid
+
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyListState
@@ -51,7 +54,6 @@ import com.virjar.tk.app.viewmodel.MessageFocusTarget
 import com.virjar.tk.app.telemetry.ClientUiTelemetrySink
 import com.virjar.tk.app.telemetry.NoopClientUiTelemetrySink
 import com.virjar.tk.app.telemetry.UserFeedbackReporter
-import java.util.UUID
 import kotlinx.coroutines.delay
 import com.virjar.tk.app.navigation.feature.chat.ChatComposerContextStore
 import com.virjar.tk.app.navigation.feature.chat.ChatDraftLifecycleBridge
@@ -417,7 +419,7 @@ fun ChatPanel(
         return SavedChatEditingSession(
             editingClientMsgId = editingClientMsgId,
             targetLoaded = false,
-            assetImportOwnerId = UUID.randomUUID().toString(),
+            assetImportOwnerId = platformRandomUuid(),
             suspendedMarkdown = composerMarkdownSnapshot(),
             suspendedAssets = runCatching {
                 projectEmbeddedAssetManifest(composerMarkdownSnapshot(), embeddedAssetSnapshot.assets)
@@ -821,9 +823,9 @@ fun ChatPanel(
                 if (editingFailedMessage != null) {
                     val replacement = validatedMessageOrReport(
                         edited.copy(
-                            clientMsgId = UUID.randomUUID().toString(),
+                            clientMsgId = platformRandomUuid(),
                             serverSeq = 0L,
-                            timestamp = System.currentTimeMillis(),
+                            timestamp = platformCurrentTimeMillis(),
                             sendStatus = Message.SEND_STATUS_SENDING,
                             uploadProgress = 0f,
                         ),

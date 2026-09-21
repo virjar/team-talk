@@ -14,13 +14,23 @@ internal class OemPushSender(
     shutdownTimeoutMillis: Long = 5_000L,
 ) : AutoCloseable {
     private val configurations = configuration.vendors.toMap()
+    internal val apnsConfiguration = configuration.apns
+    private val apnsToken = configuration.apns?.let(::ApnsProviderToken)
     private val tokenCaches = configurations.mapValues { OemPushTokenCache() }
     private val closing = AtomicBoolean(false)
     private val closeGate = BoundedCloseGate("OEM push sender", shutdownTimeoutMillis, onTerminal = {})
     private val httpClient = HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(5))
+        .version(HttpClient.Version.HTTP_2)
         .followRedirects(HttpClient.Redirect.NEVER)
         .build()
+
+    suspend fun sendApns(notification: OemPushNotification): OemPushDeliveryResult = sendApnsPush(notification)
+
+    internal fun apnsProviderToken(): ApnsProviderToken {
+        check(!closing.get()) { "Push sender is closed" }
+        return checkNotNull(apnsToken) { "APNs is not configured" }
+    }
 
     suspend fun send(
         configuration: OemPushVendorConfiguration,

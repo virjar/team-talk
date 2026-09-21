@@ -1,14 +1,11 @@
 package com.virjar.tk.app.telemetry
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
+
 import com.virjar.tk.protocol.telemetry.TelemetryFeedbackCode
 import com.virjar.tk.shared.AppError
 import com.virjar.tk.shared.client.ConnectionState
-import java.io.IOException
-import java.net.UnknownHostException
-import java.net.SocketTimeoutException
-import java.net.SocketException
-import java.net.NoRouteToHostException
-import java.net.ConnectException
 
 /** 图形客户端共享的、稳定的、无参数的页面身份。 */
 enum class ClientUiPage(val code: String) {
@@ -133,16 +130,9 @@ fun classifyMediaFailure(
         else -> MediaFailureReason.HTTP_STATUS
     }
     is AppError.Network,
-    is AppError.Timeout,
-    is ConnectException,
-    is NoRouteToHostException,
-    is SocketTimeoutException,
-    is UnknownHostException,
-    is SocketException,
-    -> MediaFailureReason.NETWORK
-    is IOException -> MediaFailureReason.IO
+    is AppError.Timeout -> MediaFailureReason.NETWORK
     is AppError.Unknown -> classifyMediaFailure(failure.cause, platformReason)
-    else -> MediaFailureReason.UNKNOWN
+    else -> platformMediaFailureReason(failure) ?: MediaFailureReason.UNKNOWN
 }
 
 
@@ -315,7 +305,7 @@ internal class ClientActionAttempt private constructor(
     private val page: ClientUiPage,
     private val action: ClientUiAction,
 ) {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var active = true
 
     fun succeed() = finish(ClientActionOutcome.SUCCEEDED)
@@ -437,3 +427,5 @@ class MediaOperationAttemptTracker(
         report(outcome, reason)
     }
 }
+
+internal expect fun platformMediaFailureReason(failure: Throwable): MediaFailureReason?

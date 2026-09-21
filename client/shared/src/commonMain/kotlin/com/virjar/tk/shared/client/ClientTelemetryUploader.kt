@@ -1,5 +1,7 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
+import kotlin.concurrent.Volatile
 import com.virjar.tk.protocol.telemetry.CLIENT_TELEMETRY_ENDPOINT
 import com.virjar.tk.protocol.telemetry.ClientTelemetryValidation
 import com.virjar.tk.protocol.telemetry.TelemetryBatch
@@ -20,8 +22,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import com.virjar.tk.protocol.telemetry.TelemetryPolicyMode
-import java.io.ByteArrayOutputStream
-import java.util.zip.GZIPOutputStream
 
 /** 用于不可变结构化遥测批与策略心跳的会话拥有的 uploader。 */
 internal class ClientTelemetryUploader(
@@ -63,8 +63,8 @@ internal class ClientTelemetryUploader(
     )
 
     private val uploadUrl = canonicalHttpServerBase(serverUrl) + CLIENT_TELEMETRY_ENDPOINT
-    private val lifecycleLock = Any()
-    private val stopLock = Any()
+    private val lifecycleLock = PlatformLock()
+    private val stopLock = PlatformLock()
     private val workGate = SessionWorkGate("ClientTelemetryUploader")
     private val workLease = workGate.lease()
     private val lifecycleJob = SupervisorJob()
@@ -363,11 +363,7 @@ internal class ClientTelemetryUploader(
         }
     }
 
-    private fun gzip(text: String): ByteArray {
-        val output = ByteArrayOutputStream()
-        GZIPOutputStream(output).use { it.write(text.encodeToByteArray()) }
-        return output.toByteArray()
-    }
+    private fun gzip(text: String): ByteArray = platformGzip(text.encodeToByteArray())
 
     private companion object {
         const val FAULT_UPLOAD_DEBOUNCE_MILLIS = 3_000L

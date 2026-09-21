@@ -1,15 +1,13 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
+import kotlin.concurrent.Volatile
 import com.virjar.tk.shared.Outcome
 import com.virjar.tk.shared.log.TkLogger
 import com.virjar.tk.shared.outcome
 import com.virjar.tk.shared.repository.*
 import com.virjar.tk.protocol.model.Message
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -23,7 +21,7 @@ import com.virjar.tk.protocol.rpc.gen.ContactRpcProxy
 import com.virjar.tk.protocol.rpc.gen.SyncRpcProxy
 import com.virjar.tk.protocol.telemetry.ClientRuntimeInfo
 import com.virjar.tk.protocol.telemetry.TelemetryLogLevel
-import java.io.File
+import com.virjar.tk.shared.platform.PlatformFile as File
 
 /**
  * 已认证会话的共享依赖容器。
@@ -85,11 +83,11 @@ class ClientSession internal constructor(
     @Volatile
     var resourceRetirementFailure: Throwable? = null
         private set
-    private val retirementLock = Any()
+    private val retirementLock = PlatformLock()
     private var retirementIssued = false
     private val rawLogoutRpc = AuthRpcProxy(ownedRpcClient)
 
-    private val chatAssetLock = Any()
+    private val chatAssetLock = PlatformLock()
     private var ownedChatAssetUploads: ChatAssetUploadCoordinator? = null
 
     /** 会话拥有专用 HTTP transport；页面切换不退役持久上传 worker。 */
@@ -415,19 +413,7 @@ class ClientSession internal constructor(
 /** 取消只是请求停止；等所有恢复任务退出后，关闭边界才能释放它们仍在使用的缓存。 */
 private fun CoroutineScope.cancelAndDrainSessionMirrors() {
     val owner = checkNotNull(coroutineContext[Job])
-    owner.cancel()
-    var interrupted: InterruptedException? = null
-    while (!owner.isCompleted) {
-        try {
-            runBlocking { owner.join() }
-        } catch (failure: InterruptedException) {
-            if (interrupted == null) interrupted = failure else interrupted.addSuppressed(failure)
-        }
-    }
-    interrupted?.let {
-        Thread.currentThread().interrupt()
-        throw it
-    }
+    platformDrainJob(owner)
 }
 
 /**

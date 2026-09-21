@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.repository
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.AppError
 import com.virjar.tk.shared.Outcome
 import com.virjar.tk.protocol.body.MarkdownAssetPolicy
@@ -28,7 +29,6 @@ import com.virjar.tk.shared.outcome
 import com.virjar.tk.protocol.rpc.RpcInvoker
 import com.virjar.tk.protocol.rpc.RpcStatusException
 import com.virjar.tk.protocol.rpc.gen.DocumentRpcProxy
-import java.util.UUID
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -44,8 +44,8 @@ import kotlinx.coroutines.sync.withLock
 class DocumentRepository(
     rpcClient: RpcInvoker,
     private val localCache: LocalCache,
-    newMoveOperationId: () -> String = { UUID.randomUUID().toString() },
-    nowMillis: () -> Long = System::currentTimeMillis,
+    newMoveOperationId: () -> String = { platformRandomUuid() },
+    nowMillis: () -> Long = ::platformCurrentTimeMillis,
     onPendingReliableCommandCommitted: () -> Unit = {},
     onPendingMoveCommandCompleted: (DocumentMoveCommandCompletion) -> Unit = {},
 ) {

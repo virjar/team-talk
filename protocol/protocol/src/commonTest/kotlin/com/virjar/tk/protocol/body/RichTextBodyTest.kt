@@ -78,6 +78,49 @@ class RichTextBodyTest {
     }
 
     @Test
+    fun `plainText 链接跳过受限前字符但继续查找候选内部的合法链接`() {
+        val cases = listOf(
+            "[label](target)" to "label",
+            """\[label](target)""" to "[label](target)",
+            """\\[label](target)""" to """\[label](target)""",
+            """\[[inner](target)](outer)""" to "[inner](outer)",
+            """\[\[[deep](target)](outer)](last)""" to "[[deep](outer)](last)",
+            "[[inner](target)](outer)" to "[inner](outer)",
+            """\[literal](target) [visible](target)""" to "[literal](target) visible",
+        )
+        cases.forEach { (markdown, expected) ->
+            assertEquals(expected, buildRichTextBody(markdown).plainText, markdown)
+            assertEquals(expected, richTextDisplayText(markdown), markdown)
+        }
+    }
+
+    @Test
+    fun `plainText 斜体拒绝候选后仍可从其结束标记找到合法匹配`() {
+        val cases = listOf(
+            "**outer*inner*" to "**outerinner",
+            "__outer_inner_" to "__outerinner",
+            "**outer*inner* *later*" to "**outerinner later",
+            "__outer_inner_ _later_" to "__outerinner later",
+            "a*b*c a_b_c" to "abc abc",
+            "*left**right*" to "*left**right*",
+            "_left__right_" to "_left__right_",
+            "*line\nbreak* _line\nbreak_" to "*line\nbreak* _line\nbreak_",
+            "***mixed*** ___mixed___" to "mixed mixed",
+        )
+        cases.forEach { (markdown, expected) ->
+            assertEquals(expected, buildRichTextBody(markdown).plainText, markdown)
+            assertEquals(expected, richTextDisplayText(markdown), markdown)
+        }
+    }
+
+    @Test
+    fun `正文长度上限的纯文本逐字保留`() {
+        val markdown = "a".repeat(MessageBodyPolicy.MAX_MARKDOWN_LENGTH)
+        assertEquals(markdown, buildRichTextBody(markdown).plainText)
+        assertEquals(markdown, richTextDisplayText(markdown))
+    }
+
+    @Test
     fun `CommonMark 标点转义在派生字段中解码且非标点转义保留`() {
         val markdown = """字面 \* \[文本\] \\ \q @[研发\]组](mention://uid-1) [文档 \[v2\]](https://im.virjar.com/a\(b\))"""
         val body = buildRichTextBody(markdown)

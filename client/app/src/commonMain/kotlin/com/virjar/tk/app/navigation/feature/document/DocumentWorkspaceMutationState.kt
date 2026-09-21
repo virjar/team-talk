@@ -1,12 +1,13 @@
 package com.virjar.tk.app.navigation.feature.document
 
+import com.virjar.tk.shared.platform.platformRandomUuid
+
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.virjar.tk.protocol.model.Document
 import com.virjar.tk.protocol.model.DocumentMoveResult
 import com.virjar.tk.protocol.model.DocumentPolicy
-import java.util.UUID
 
 internal const val DOCUMENT_REVISION_CONFLICT_STATUS = 409
 internal const val DOCUMENT_INITIAL_REVISION = 1L
@@ -266,7 +267,7 @@ internal fun mergeDocumentMutationAfterDurableCleanup(
     merge: DocumentTabMerge,
     deferredUpdate: DocumentDraftUpdate?,
     rotateRecoveryIdentity: Boolean,
-    freshRecoveryId: String = UUID.randomUUID().toString(),
+    freshRecoveryId: String = platformRandomUuid(),
 ): DocumentTabMerge? {
     val index = latestTabs.indexOfFirst(merge.request::targets)
     if (index < 0) return null
@@ -312,7 +313,7 @@ internal fun rotateDocumentTabRecoveryIdentity(
     tabs: List<DocumentTabState>,
     request: DocumentTabRequest,
     retiredRecoveryId: String,
-    freshRecoveryId: String = UUID.randomUUID().toString(),
+    freshRecoveryId: String = platformRandomUuid(),
 ): List<DocumentTabState> {
     val index = tabs.indexOfFirst { request.targets(it) && it.recoveryId == retiredRecoveryId }
     if (index < 0) return tabs
@@ -369,7 +370,7 @@ internal fun rebaseCommittedDocumentCreateBinding(
 internal fun bindCommittedDocumentCreateIdentity(
     tabs: List<DocumentTabState>,
     command: PendingDocumentCreateCommand,
-    freshRecoveryId: String = UUID.randomUUID().toString(),
+    freshRecoveryId: String = platformRandomUuid(),
 ): CommittedDocumentCreateBinding? {
     val index = tabs.indexOfFirst(command::matches)
     if (index < 0) return null

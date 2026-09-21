@@ -1,13 +1,10 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.db.SqlDriver
 import com.virjar.tk.shared.database.AppDatabase
-import java.io.File
-import java.nio.file.Files
-import java.nio.file.LinkOption.NOFOLLOW_LINKS
-import java.nio.file.attribute.BasicFileAttributes
-import java.sql.SQLException
+import com.virjar.tk.shared.platform.PlatformFile as File
 
 data class LocalCacheStorageCompactionReport(
     val bytesBefore: Long,
@@ -48,7 +45,7 @@ internal class LocalCacheStorageMaintenance(
         val pagesBefore = driver.longPragma("page_count")
         val freePagesBefore = driver.longPragma("freelist_count")
         val pageSize = driver.longPragma("page_size")
-        val logicalBytes = Math.multiplyExact(pagesBefore, pageSize)
+        val logicalBytes = checkedPageBytes(pagesBefore, pageSize)
         if (logicalBytes > maxDatabaseBytes) fail(LocalCacheStorageCompactionFailure.DATABASE_SIZE_LIMIT)
         val requiredBytes = 2 * maxOf(bytesBefore, logicalBytes) + SPACE_RESERVE_BYTES
         if (databaseFile.usableSpace < requiredBytes) fail(LocalCacheStorageCompactionFailure.INSUFFICIENT_FREE_SPACE)
@@ -68,25 +65,28 @@ internal class LocalCacheStorageMaintenance(
         if (isFatalSessionLifecycleFailure(failure)) throw failure
         val causes = generateSequence<Throwable>(failure) { it.cause }.take(8).toList()
         causes.filterIsInstance<LocalCacheStorageCompactionException>().firstOrNull()?.let { throw it }
-        if (causes.any { it.javaClass.simpleName == "SQLiteDatabaseCorruptException" }) {
+        if (causes.any { it::class.simpleName == "SQLiteDatabaseCorruptException" }) {
             fail(LocalCacheStorageCompactionFailure.INTEGRITY_CHECK_FAILED)
         }
-        val busy = (failure is SQLException && failure.errorCode and 0xff in setOf(5, 6)) ||
-            failure.javaClass.simpleName in setOf("SQLiteDatabaseLockedException", "SQLiteTableLockedException")
+        val busy = platformSqliteBusy(failure) ||
+            failure::class.simpleName in setOf("SQLiteDatabaseLockedException", "SQLiteTableLockedException")
         fail(if (busy) LocalCacheStorageCompactionFailure.DATABASE_IN_USE else LocalCacheStorageCompactionFailure.STORAGE_IO_FAILED)
     }
 
     private fun familyBytes(): Long {
-        val main = databaseFile.toPath()
-        if (!Files.isRegularFile(main, NOFOLLOW_LINKS)) fail(LocalCacheStorageCompactionFailure.STORAGE_IO_FAILED)
+        if (!databaseFile.isFile || databaseFile.isSymbolicLink()) fail(LocalCacheStorageCompactionFailure.STORAGE_IO_FAILED)
         return (listOf(databaseFile.name) + localCacheDatabaseSidecars(databaseFile.name)).sumOf { name ->
-            val path = main.resolveSibling(name)
-            if (!Files.exists(path, NOFOLLOW_LINKS)) 0L else {
-                val attributes = Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
-                if (!attributes.isRegularFile || attributes.isSymbolicLink) fail(LocalCacheStorageCompactionFailure.STORAGE_IO_FAILED)
-                attributes.size()
+            val file = File(databaseFile.parentFile, name)
+            if (!file.exists()) 0L else {
+                if (!file.isFile || file.isSymbolicLink()) fail(LocalCacheStorageCompactionFailure.STORAGE_IO_FAILED)
+                file.length()
             }
         }
+    }
+
+    private fun checkedPageBytes(pages: Long, size: Long): Long {
+        check(pages >= 0 && size > 0 && pages <= Long.MAX_VALUE / size) { "Invalid SQLite page size" }
+        return pages * size
     }
 
     private fun SqlDriver.longPragma(name: String): Long = executeQuery(null, "PRAGMA $name", { cursor ->
@@ -108,3 +108,5 @@ internal class LocalCacheStorageMaintenance(
         const val SPACE_RESERVE_BYTES = 16L * 1024 * 1024
     }
 }
+
+internal expect fun platformSqliteBusy(failure: Throwable): Boolean

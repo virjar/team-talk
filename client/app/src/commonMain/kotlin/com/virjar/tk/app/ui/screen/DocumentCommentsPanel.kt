@@ -1,5 +1,6 @@
 package com.virjar.tk.app.ui.screen
 
+import com.virjar.tk.app.ui.platform.formatUiMonthDayTime
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -36,9 +37,6 @@ import com.virjar.tk.app.ui.platform.testTagResourceIds
 import com.virjar.tk.protocol.model.DocumentComment
 import com.virjar.tk.protocol.model.DocumentSpace
 import com.virjar.tk.shared.client.PendingDocumentComment
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /** 评论覆盖层保留底下的正文编辑器；手机和桌面共用讨论语义。 */
 @Composable
@@ -83,7 +81,7 @@ internal fun DocumentCommentsPanel(
                         Column(Modifier.fillMaxWidth().testTag("documents.comment.${comment.commentId}")) {
                             Text(comment.authorName, style = MaterialTheme.typography.titleSmall)
                             val time = remember(comment.createdAt) {
-                                SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(comment.createdAt))
+                                formatUiMonthDayTime(comment.createdAt)
                             }
                             Text(time + if (comment.revision > 1 && !comment.deleted) " · 已编辑" else "",
                                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

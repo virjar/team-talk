@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.testkit
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.client.KeyedProjectionSnapshotGate
 import com.virjar.tk.shared.client.OrganizationMemberProjection
 import com.virjar.tk.shared.client.OrganizationUnitProjection
@@ -22,7 +23,7 @@ import kotlinx.coroutines.flow.flow
 internal class FakeOrganizationProjectionStore(
     private val cacheUseGate: FakeCacheUseGate,
 ) {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private val unitsFlow = MutableStateFlow(OrganizationUnitProjection.Unfetched)
     private var requiredRevision = 0L
     private val unitSnapshots = KeyedProjectionSnapshotGate("fake organization unit snapshot")

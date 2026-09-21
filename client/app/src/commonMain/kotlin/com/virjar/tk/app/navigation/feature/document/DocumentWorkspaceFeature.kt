@@ -1,5 +1,7 @@
 package com.virjar.tk.app.navigation.feature.document
 
+import com.virjar.tk.shared.platform.platformRandomUuid
+
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -18,7 +20,6 @@ import com.virjar.tk.app.navigation.UiLocalDataBoundary
 import com.virjar.tk.shared.repository.DocumentMoveCommandCompletion
 import com.virjar.tk.app.telemetry.ClientUiTelemetrySink
 import com.virjar.tk.app.telemetry.NoopClientUiTelemetrySink
-import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.collect
@@ -483,7 +484,7 @@ class DocumentWorkspaceFeature internal constructor(
         }
         val location = documentCreationLocation(spaceId, parentId, treeChildren) ?: return
         // 这个 UUID 既是稳定的本地 tab 资源 ID，也是幂等的创建 ID。
-        val tabId = UUID.randomUUID().toString()
+        val tabId = platformRandomUuid()
         val tab = newDocumentDraftTab(
             tabId = tabId,
             instanceId = nextTabInstanceId(),
@@ -615,7 +616,7 @@ class DocumentWorkspaceFeature internal constructor(
         }
         val replacement = prepareRemoteMissingDocumentCreate(
             tab = current,
-            newDocumentId = UUID.randomUUID().toString(),
+            newDocumentId = platformRandomUuid(),
             location = location,
         ) ?: return
         val nextTabs = tabs.map { if (it.instanceId == current.instanceId) replacement else it }

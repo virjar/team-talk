@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.repository
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.client.ProjectionSnapshotLease
 import com.virjar.tk.protocol.model.DocumentDirectorySnapshotVersion
 import com.virjar.tk.protocol.model.DocumentSpacePage
@@ -19,7 +20,7 @@ class DocumentSpaceRefreshCycle internal constructor(
     internal val owner: Any,
     private val abandonProjection: (ProjectionSnapshotLease) -> Boolean,
 ) {
-    internal val lock = Any()
+    internal val lock = PlatformLock()
     internal var projectionLease: ProjectionSnapshotLease? = null
     internal var expectedCursor: String? = null
     internal var inFlight = false

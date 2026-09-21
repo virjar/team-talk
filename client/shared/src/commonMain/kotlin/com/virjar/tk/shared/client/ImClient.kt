@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.model.AuthRules
 import com.virjar.tk.shared.log.PlatformOnlyTkLogger
 import com.virjar.tk.protocol.IProto
@@ -41,7 +42,7 @@ internal interface MessageSendTransport {
 class PreparedAuthentication internal constructor(
     private val startPrepared: () -> Unit,
 ) {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var started = false
 
     /** 只对消费该能力的那次调用返回 true。 */
@@ -56,14 +57,11 @@ class PreparedAuthentication internal constructor(
 /**
  * SDK TCP facade。传输、认证同步、入站路由和 ACK 等待分别由单一 owner 管理。
  *
- * 线程模型：
- * - 单线程 Netty 4.2 EventLoop（MultiThreadIoEventLoopGroup + NioIoHandler），所有状态操作串行
- * - Pipeline 事件驱动：channelRead / channelInactive / userEventTriggered
- * - scope dispatcher = eventLoop，协程也在同一线程执行
+ * 连接 owner 串行拥有状态与 scope dispatcher：JVM/Android 使用 Netty EventLoop，iOS 使用
+ * GCD 串行队列与 Network.framework。两种传输都在完整校验 owner/connection lease 后交付帧。
  *
- * 心跳：IdleStateHandler(writerIdle=30s, readerIdle=90s)
- * - 写空闲 30s → 自动发 PingSignal
- * - 读空闲 90s → 关闭连接 → channelInactive → 自动重连
+ * 心跳间隔与读取超时统一由 PacketFrames 定义（当前写空闲 15 秒、读空闲 45 秒）。
+ * 写空闲发送 PingSignal；读空闲关闭精确连接，进入同 owner 的正常重连路径。
  *
  * 重连：普通连接与 durable refresh 自动重连，使用 1s→2s→4s→8s→16s→30s 上限内的指数抖动退避。
  * 登录/注册口令只允许一个传输尝试；连接失败或响应前断线后释放口令并由用户重试。
@@ -88,7 +86,7 @@ class ImClient(
 
     private val standaloneAckOwner = Any()
     private val logger = PlatformOnlyTkLogger("ImClient")
-    private val transport: TransportConnectionOwner
+    private val transport: ClientTransportOwner
     private var messageTransportOverride: MessageSendTransport? = null
     private val messageTransport: MessageSendTransport
         get() = messageTransportOverride ?: transport
@@ -129,8 +127,8 @@ class ImClient(
             closeTransport = { reason -> transport.closeForRecoveryNow(reason) },
             handleConnectionTraceContext = connectionTraceContextOwner::acceptUpdate,
         )
-        transport = TransportConnectionOwner(
-            transportTls = ClientTransportTls(tcpTlsCertificatePem = tcpTlsCertificatePem),
+        transport = createClientTransportOwner(
+            tcpTlsCertificatePem = tcpTlsCertificatePem,
             initialHost = host,
             initialPort = port,
             beginProtocolNegotiation = authSync::beginProtocolNegotiation,
@@ -172,7 +170,7 @@ class ImClient(
 
     /** 断开或过期之后返回 null，而不暴露任何可变的 trace owner 状态。 */
     fun connectionTraceContextSnapshot(
-        nowEpochMs: Long = System.currentTimeMillis(),
+        nowEpochMs: Long = platformCurrentTimeMillis(),
     ): ConnectionTraceContext? = connectionTraceContextOwner.snapshot(nowEpochMs)
 
     val packets: Flow<IProto>

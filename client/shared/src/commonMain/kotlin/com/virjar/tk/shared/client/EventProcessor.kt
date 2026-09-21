@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import kotlin.concurrent.Volatile
 import com.virjar.tk.protocol.model.*
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.IProtoReader

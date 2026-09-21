@@ -1,5 +1,8 @@
 package com.virjar.tk.app.client
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
+
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -16,7 +19,7 @@ import kotlinx.coroutines.withContext
  * 就不会把仍然挂载的根滞留在一个它从未发布的 generation 后面。
  */
 internal class AuthCredentialOwnerClaimCoordinator {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private val namespaces = mutableMapOf<String, NamespaceClaims>()
     private var nextReservationId = 0L
 
@@ -90,7 +93,7 @@ internal class AuthCredentialOwnerClaimCoordinator {
             claims.reservations.isEmpty() &&
             !claims.claimMutex.isLocked
         ) {
-            namespaces.remove(lease.namespace, claims)
+            namespaces.remove(lease.namespace)
         }
     }
 
@@ -101,7 +104,7 @@ internal class AuthCredentialOwnerClaimCoordinator {
         claims.reservations.remove(lease)
         claims.changes.value += 1L
         if (claims.reservations.isEmpty() && !claims.claimMutex.isLocked) {
-            namespaces.remove(lease.namespace, claims)
+            namespaces.remove(lease.namespace)
         }
     }
 }

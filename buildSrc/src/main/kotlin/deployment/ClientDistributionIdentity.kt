@@ -10,6 +10,8 @@ data class ClientDistributionIdentity(
     val desktopName: String = "TeamTalk",
     /** Final Android installation ID; omitted values preserve the established deployment convention. */
     val androidApplicationId: String = "$applicationId.android",
+    /** Final Apple bundle ID; this also determines the APNs topic. */
+    val iosBundleId: String = "$applicationId.ios",
 ) {
     init {
         require(applicationId.length <= 128 && applicationId.split('.').all { it.length <= 63 } &&
@@ -23,6 +25,12 @@ data class ClientDistributionIdentity(
         require(androidApplicationId.length <= 256 && androidApplicationId.split('.').all { it.length <= 63 } &&
             androidApplicationId.matches(Regex("[a-z][a-z0-9]*(?:\\.[a-z][a-z0-9]*)+"))) {
             "client.androidApplicationId must be a lower-case reverse-DNS Android installation identifier"
+        }
+        require(iosBundleId.length <= 255 && iosBundleId.matches(Regex("[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+"))) {
+            "client.iosBundleId must be a reverse-DNS Apple bundle identifier"
+        }
+        require((applicationId == "com.virjar.tk") == (iosBundleId == "com.virjar.tk.ios")) {
+            "Keep com.virjar.tk.ios reserved for the public installation; private clients need their own iOS ID"
         }
         require(desktopName.matches(Regex("[A-Za-z][A-Za-z0-9]{0,47}")) &&
             !desktopName.matches(Regex("(?i:con|prn|aux|nul|com[0-9]|lpt[0-9])"))) {

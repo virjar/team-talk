@@ -1,5 +1,8 @@
 package com.virjar.tk.app.viewmodel
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
+
 import com.virjar.tk.shared.client.ConnectionState
 import com.virjar.tk.protocol.model.Message
 import kotlinx.coroutines.CoroutineScope
@@ -29,7 +32,7 @@ internal class ChatTypingPresentationOwner(
     )
     val typingUid: StateFlow<String?> = state.typingUid
 
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var eventsJob: Job? = null
     private var open = true
     private var presentationActive = false

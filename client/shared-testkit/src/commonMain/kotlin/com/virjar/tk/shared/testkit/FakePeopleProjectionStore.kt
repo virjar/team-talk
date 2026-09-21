@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.testkit
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.client.KeyedProjectionSnapshotGate
 import com.virjar.tk.shared.client.ProjectionSnapshotLease
 import com.virjar.tk.protocol.model.Contact
@@ -13,12 +14,12 @@ import kotlinx.coroutines.flow.map
 
 /** 用户、联系人与聊天成员投影共享内嵌 User 的装配与快照门禁。 */
 internal class FakePeopleProjectionStore {
-    private val userMemberLock = Any()
+    private val userMemberLock = PlatformLock()
     private val usersFlow = MutableStateFlow<List<User>>(emptyList())
     private val userSnapshots = KeyedProjectionSnapshotGate("fake user snapshot")
     private val userSnapshotLeases = mutableMapOf<String, ProjectionSnapshotLease>()
     private val contactsFlow = MutableStateFlow<List<Contact>>(emptyList())
-    private val contactLock = Any()
+    private val contactLock = PlatformLock()
     private var contactProjectionGeneration = 0L
     private var lastFullContactSnapshotGeneration = 0L
     private val contactMutationGenerations = mutableMapOf<String, Long>()

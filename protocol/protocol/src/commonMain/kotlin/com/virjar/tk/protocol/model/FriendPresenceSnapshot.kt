@@ -29,8 +29,8 @@ class FriendPresenceSnapshot(
         friendUids.forEach { PresenceContractPolicy.requireUid(it, "presence.friendUids[]") }
         onlineFriendUids.forEach { PresenceContractPolicy.requireUid(it, "presence.onlineFriendUids[]") }
 
-        this.friendUids = friendUids.toSortedSet().toList()
-        this.onlineFriendUids = onlineFriendUids.toSortedSet().toList()
+        this.friendUids = friendUids.distinct().sorted()
+        this.onlineFriendUids = onlineFriendUids.distinct().sorted()
         val friendSet = this.friendUids.toHashSet()
         require(this.onlineFriendUids.all(friendSet::contains)) {
             "onlineFriendUids must be a subset of friendUids"

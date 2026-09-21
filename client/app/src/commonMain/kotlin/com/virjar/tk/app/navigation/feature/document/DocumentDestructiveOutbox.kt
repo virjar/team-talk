@@ -1,6 +1,11 @@
 package com.virjar.tk.app.navigation.feature.document
 
-import java.util.UUID
+import com.virjar.tk.shared.platform.platformCanonicalUuid
+
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.platformRandomUuid
+import com.virjar.tk.shared.platform.synchronized
+
 
 internal const val MAX_DOCUMENT_DESTRUCTIVE_INTENTS = 512
 
@@ -73,9 +78,9 @@ internal fun DocumentDestructiveIntent.normalized(): DocumentDestructiveIntent? 
  * 在 [complete] 或 [cancel] 之前，持久地给该意图的 [draftRecoveryKey] 立墓碑。
  */
 internal class DocumentDestructiveOutbox(
-    private val newOperationId: () -> String = { UUID.randomUUID().toString() },
+    private val newOperationId: () -> String = { platformRandomUuid() },
 ) {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private val intentsByOperationId = linkedMapOf<String, DocumentDestructiveIntent>()
     private val operationIdsByTarget = mutableMapOf<DocumentDestructiveTarget, String>()
 
@@ -277,7 +282,7 @@ private fun requireCanonicalDestructiveUuid(value: String, label: String): Strin
     requireNotNull(value.canonicalDestructiveUuidOrNull()) { "${label}必须是规范 UUID" }
 
 private fun String.canonicalDestructiveUuidOrNull(): String? = try {
-    UUID.fromString(this).toString().takeIf { it == this }
+    platformCanonicalUuid(this).takeIf { it == this }
 } catch (_: IllegalArgumentException) {
     null
 }

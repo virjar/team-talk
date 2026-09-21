@@ -201,7 +201,8 @@ internal fun createServerModule(
     single { ExposedCredentialRepository(database = get()) }
     single { ClientRegistry(get(), get()) }
     single { OemPushSender(oemPushConfiguration) }
-    single { OemPushNotifications(get(), oemPushConfiguration, syncDatasetId, get(), send = get<OemPushSender>()::send) }
+    single { OemPushNotifications(get(), oemPushConfiguration, syncDatasetId, get(),
+        sendApns = get<OemPushSender>()::sendApns, send = get<OemPushSender>()::send) }
     single {
         com.virjar.tk.server.domain.document.DocumentSpaceExportService(
             repository = get(),

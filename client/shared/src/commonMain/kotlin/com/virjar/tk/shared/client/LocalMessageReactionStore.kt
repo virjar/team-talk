@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.database.AppDatabaseQueries
 import com.virjar.tk.protocol.model.MessageReactionGroup
 import com.virjar.tk.protocol.model.MessageReactionSummary
@@ -21,7 +22,7 @@ import kotlinx.coroutines.flow.flow
 internal class LocalMessageReactionStore(
     private val queries: AppDatabaseQueries,
     private val cacheUseGate: CacheUseGate,
-    private val stateLock: Any,
+    private val stateLock: PlatformLock,
     private val maxActiveChats: Int = LocalCache.MAX_ACTIVE_CHATS,
 ) {
     private val residents = LinkedHashMap<String, ReactionResident>()
@@ -225,7 +226,7 @@ internal class LocalMessageReactionStore(
         Map<Long, List<MessageReactionGroup>> =
         entries.associate { (seq, groups) ->
             seq to groups.entries
-                .map { (emoji, uids) -> MessageReactionGroup(emoji, uids.toSortedSet().toList()) }
+                .map { (emoji, uids) -> MessageReactionGroup(emoji, uids.distinct().sorted()) }
                 .sortedBy(MessageReactionGroup::emoji)
         }
 }

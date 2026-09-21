@@ -1,5 +1,8 @@
 package com.virjar.tk.app.ui.bridge
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
+
 import com.virjar.tk.protocol.http.AttachmentUploadIdentity
 import com.virjar.tk.app.ui.component.rich.PendingAssetJob
 import com.virjar.tk.app.ui.component.rich.PendingAssetJobState
@@ -17,7 +20,7 @@ class EmbeddedAssetImportRetryStore<R : Any>(
     private val releaseSelection: (EmbeddedAssetLocalSelection) -> Unit = {},
     private val releaseSource: (R) -> Unit = {},
 ) : AutoCloseable {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private val entries = linkedMapOf<String, Entry>()
     private var closed = false
 

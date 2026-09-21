@@ -139,7 +139,7 @@ private fun String.escapeCommonMarkLinkDestination(): String = buildString(lengt
 
 // `\\.` 作为一个原子跨过转义标点，避免 `\\]` / `\\)` 被误判为 label/destination 边界。
 private val MENTION_SYNTAX = Regex("""@\[((?:\\.|[^\]\\])*)\]\(mention://((?:\\.|[^)\\\s])+)\)""")
-private val LINK_SYNTAX = Regex("""(?<![!\\])\[((?:\\.|[^\]\\])*)\]\(((?:\\.|[^)\\\s])+)\)""")
+private val LINK_SYNTAX = Regex("""\[((?:\\.|[^\]\\])*)\]\(((?:\\.|[^)\\\s])+)\)""")
 private val IMAGE_SYNTAX = Regex("""!\[((?:\\.|[^\]\\])*)\]\(((?:\\.|[^)\\\s])+)\)""")
 
 private data class ProtectedMarkdownEscapes(
@@ -234,13 +234,13 @@ private fun stripMarkdownForPlainText(markdown: String): String {
     // 剥离顺序：先图片（含 ! 前缀，先于普通链接）、再 mention/链接、后行内标记
     text = text.replace(IMAGE_SYNTAX) { "[图片]" }
     text = text.replace(MENTION_SYNTAX) { "@${it.groupValues[1]}" }
-    text = text.replace(LINK_SYNTAX) { it.groupValues[1] }
+    text = text.replaceUnlessPrecededBy(LINK_SYNTAX, "!\\") { it.groupValues[1] }
     val protectedEscapes = protectCommonMarkPunctuationEscapes(text)
     text = protectedEscapes.text
     // 行内标记：先处理双字符标记，再处理单字符斜体，避免把 ** 拆成两组 *。
     text = text.replace(Regex("""(\*\*|__|~~|`)(.+?)\1""")) { it.groupValues[2] }
-    text = text.replace(Regex("""(?<!\*)\*([^*\n]+)\*(?!\*)""")) { it.groupValues[1] }
-    text = text.replace(Regex("""(?<!_)_([^_\n]+)_(?!_)""")) { it.groupValues[1] }
+    text = text.replaceUnlessPrecededBy(Regex("""\*([^*\n]+)\*(?!\*)"""), "*") { it.groupValues[1] }
+    text = text.replaceUnlessPrecededBy(Regex("""_([^_\n]+)_(?!_)"""), "_") { it.groupValues[1] }
     // 块级：代码块栅栏/标题井号/引用符/列表标记（行首）
     text = text.replace(Regex("""^#{1,6}\s+""", RegexOption.MULTILINE), "")
     text = text.replace(Regex("""^>\s?""", RegexOption.MULTILINE), "")
@@ -250,6 +250,35 @@ private fun stripMarkdownForPlainText(markdown: String): String {
     // 代码内容最后还原：字面量内部的链接/图片/转义语法必须保持字面，
     // 绝不能变成资源标签或外部图片占位符。
     return protectedCode.restore(protectedEscapes.restore(text))
+}
+
+/**
+ * Kotlin/Native 的前置负向后顾会在长正文上反复向前扫描；这里仅检查候选紧邻的前字符。
+ * 拒绝候选后从起点的下一字符继续搜索，不能跳过整个候选：其内部或结束标记仍可能开启合法匹配。
+ * 接受后才越过完整匹配，保持已发行 plainText 的替换顺序和不递归替换语义。
+ */
+private inline fun String.replaceUnlessPrecededBy(
+    pattern: Regex,
+    forbiddenCharacters: String,
+    replacement: (MatchResult) -> String,
+): String {
+    val result = StringBuilder(length)
+    var copyFrom = 0
+    var searchFrom = 0
+    while (searchFrom < length) {
+        val match = pattern.find(this, searchFrom) ?: break
+        val start = match.range.first
+        if (start > 0 && this[start - 1] in forbiddenCharacters) {
+            searchFrom = start + 1
+            continue
+        }
+        result.append(this, copyFrom, start)
+        result.append(replacement(match))
+        searchFrom = match.range.last + 1
+        copyFrom = searchFrom
+    }
+    if (copyFrom == 0) return this
+    return result.append(this, copyFrom, length).toString()
 }
 
 private data class ProtectedMarkdownCode(

@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.testkit
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.model.GroupFileEntry
 import com.virjar.tk.shared.client.KeyedProjectionSnapshotGate
 import com.virjar.tk.shared.client.ProjectionSnapshotLease
@@ -25,7 +26,7 @@ internal class FakeGroupFileProjection {
     )
 
     private val observers = ArrayList<Observer>()
-    private val lock = Any()
+    private val lock = PlatformLock()
 
     private fun directoryKey(chatId: String, parentId: String?) = "${chatId.length}:$chatId:${parentId.orEmpty()}"
 

@@ -1,8 +1,8 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.model.ConversationWirePolicy
 import com.virjar.tk.protocol.model.GroupPolicy
-import java.util.UUID
 
 /**
  * 可能已在服务器上权威化的、冻结的唯一 GUI 建群命令。
@@ -35,7 +35,7 @@ data class PendingGroupCreationCommand(
     internal fun encodedMemberUids(): String = memberUids.joinToString(MEMBER_SEPARATOR)
 
     private fun normalizedOrNull(): PendingGroupCreationCommand? = runCatching {
-        val canonicalOperationId = UUID.fromString(operationId).toString()
+        val canonicalOperationId = platformCanonicalUuid(operationId)
             .takeIf { operationId.length == UUID_TEXT_LENGTH && it == operationId }
             ?: return null
         require(name.length <= ConversationWirePolicy.MAX_CHAT_NAME_LENGTH)

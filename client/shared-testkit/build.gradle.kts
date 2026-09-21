@@ -33,6 +33,12 @@ kotlin {
         }
     }
 
+    if (gradle.extra["enableIos"] as Boolean) {
+        iosArm64()
+        iosSimulatorArm64()
+        iosX64()
+    }
+
     sourceSets {
         commonMain.dependencies {
             api(project(":client:shared"))

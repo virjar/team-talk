@@ -1,5 +1,8 @@
 package com.virjar.tk.app.viewmodel
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
+
 /** 在其 chat 内揭示一条权威消息的稳定导航身份。 */
 data class MessageFocusTarget(
     val chatId: String,
@@ -73,7 +76,7 @@ internal class MessageFocusGenerationGate {
         val generation: Long,
     )
 
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var nextGeneration = 0L
     private var current: Token? = null
 

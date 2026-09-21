@@ -1,5 +1,7 @@
 package com.virjar.tk.shared.repository
 
+import com.virjar.tk.shared.platform.*
+import kotlin.concurrent.Volatile
 import com.virjar.tk.protocol.ReliableCommandContract
 import com.virjar.tk.protocol.model.*
 import com.virjar.tk.protocol.rpc.RpcInvoker
@@ -15,7 +17,6 @@ import com.virjar.tk.shared.client.TransportUnavailableException
 import com.virjar.tk.shared.outcome
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.util.UUID
 
 /** 页面与会话恢复共用一个可靠命令 owner；入队成功不等于服务端已提交。 */
 class TaskRepository(
@@ -136,26 +137,26 @@ class TaskRepository(
     }
 
     suspend fun create(draft: TaskDraft): Outcome<String> = enqueue(TaskCommand(
-        id(), System.currentTimeMillis(), id(), 0L, TaskCommand.CREATE, draft,
+        id(), platformCurrentTimeMillis(), id(), 0L, TaskCommand.CREATE, draft,
     ))
     suspend fun edit(task: WorkTask, draft: TaskDraft): Outcome<String> = enqueue(TaskCommand(
-        id(), System.currentTimeMillis(), task.taskId, task.revision, TaskCommand.EDIT, draft,
+        id(), platformCurrentTimeMillis(), task.taskId, task.revision, TaskCommand.EDIT, draft,
     ))
     suspend fun setStatus(task: WorkTask, status: Int): Outcome<String> = enqueue(TaskCommand(
-        id(), System.currentTimeMillis(), task.taskId, task.revision, TaskCommand.STATUS, status = status,
+        id(), platformCurrentTimeMillis(), task.taskId, task.revision, TaskCommand.STATUS, status = status,
     ))
     suspend fun create(draft: TaskDraft, options: TaskOptions, recurrenceRule: TaskRecurrenceRule? = null): Outcome<String> = enqueue(
-        TaskDetailsCommand(id(), System.currentTimeMillis(), id(), 0L, TaskDetailsCommand.CREATE, draft, options, recurrenceRule = recurrenceRule),
+        TaskDetailsCommand(id(), platformCurrentTimeMillis(), id(), 0L, TaskDetailsCommand.CREATE, draft, options, recurrenceRule = recurrenceRule),
     )
     suspend fun edit(details: TaskDetails, draft: TaskDraft, options: TaskOptions): Outcome<String> = enqueue(
-        TaskDetailsCommand(id(), System.currentTimeMillis(), details.task.taskId, details.task.revision, TaskDetailsCommand.EDIT, draft, options),
+        TaskDetailsCommand(id(), platformCurrentTimeMillis(), details.task.taskId, details.task.revision, TaskDetailsCommand.EDIT, draft, options),
     )
     suspend fun defer(details: TaskDetails, newDueAt: Long, reason: String): Outcome<String> = enqueue(
-        TaskDetailsCommand(id(), System.currentTimeMillis(), details.task.taskId, details.task.revision,
+        TaskDetailsCommand(id(), platformCurrentTimeMillis(), details.task.taskId, details.task.revision,
             TaskDetailsCommand.DEFER, deferDueAt = newDueAt, reason = reason),
     )
     suspend fun setSeriesEnabled(series: TaskSeries, enabled: Boolean): Outcome<String> = enqueue(
-        TaskSeriesCommand(id(), System.currentTimeMillis(), series.seriesId, series.revision, enabled),
+        TaskSeriesCommand(id(), platformCurrentTimeMillis(), series.seriesId, series.revision, enabled),
     )
     /** 无头调用者可持有原 command，响应未知时复用全部字段。 */
     suspend fun enqueue(command: TaskCommand): Outcome<String> = outcome {
@@ -246,7 +247,7 @@ class TaskRepository(
         is AppError.Business -> failure.code
         else -> null
     }
-    private fun id() = UUID.randomUUID().toString()
+    private fun id() = platformRandomUuid()
 }
 
 /** 数据变化是一次读取失败，不是持久恢复 worker 的协程取消。 */

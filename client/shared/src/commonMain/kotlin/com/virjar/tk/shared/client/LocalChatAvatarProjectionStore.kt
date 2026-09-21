@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.protocol.model.ConversationCapacityPolicy
@@ -13,7 +14,7 @@ import kotlinx.coroutines.flow.Flow
 internal class LocalChatAvatarProjectionStore(
     private val queries: AppDatabaseQueries,
     private val cacheUseGate: CacheUseGate,
-    private val stateLock: Any,
+    private val stateLock: PlatformLock,
 ) {
     private val resolvedChatIds = linkedSetOf<String>()
     private val projection: RetirableProjectionState<Map<String, Attachment>>
@@ -33,7 +34,7 @@ internal class LocalChatAvatarProjectionStore(
         synchronized(stateLock) {
             queries.transaction {
                 if (attachment == null) queries.deleteChatAvatar(chatId)
-                else queries.upsertChatAvatar(chatId, ProtoCodec.encode(attachment), System.currentTimeMillis())
+                else queries.upsertChatAvatar(chatId, ProtoCodec.encode(attachment), platformCurrentTimeMillis())
                 queries.deleteChatAvatarLru()
             }
             resolvedChatIds.remove(chatId)

@@ -37,7 +37,7 @@ interface ChannelRow {
   updatedAt: number
 }
 
-const CLIENT_LABEL: Record<string, string> = { desktop: '桌面端', android: 'Android', headless: '无头/CLI' }
+const CLIENT_LABEL: Record<string, string> = { desktop: '桌面端', android: 'Android', ios: 'iOS', headless: '无头/CLI' }
 const CHANNEL_LABEL: Record<string, string> = { stable: '正式', preview: '预览', snapshot: '内测快照' }
 const STATUS_COLOR: Record<string, 'success' | 'error' | 'default'> = {
   ACTIVE: 'success',

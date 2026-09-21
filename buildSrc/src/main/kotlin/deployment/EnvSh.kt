@@ -85,7 +85,7 @@ fun generateEnvShContent(
     )
     lines.add("")
 
-    for (vendor in OemPushVendors.ALL) {
+    for (vendor in OemPushVendors.ALL + "apns") {
         val prefix = "${vendor.uppercase()}_PUSH"
         val enabled = secrets.getProperty("${prefix}_ENABLED") == "true"
         lines.add("# ── ${OemPushVendors.display(vendor)}官方推送 ──")

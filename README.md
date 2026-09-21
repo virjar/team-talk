@@ -1,7 +1,7 @@
 # TeamTalk
 
 TeamTalk 是一个面向中小型组织、可私有化并可深度定制的即时通讯与办公协作系统。项目使用 Kotlin
-Multiplatform 与 Compose Multiplatform 构建 Android、Desktop 和无头 SDK 客户端，服务端
+Multiplatform 与 Compose Multiplatform 构建 Android、Desktop、iOS 和无头 SDK 客户端，服务端
 采用 Kotlin、Ktor 与 Netty。客户端、服务端、协议和部署工具位于同一个仓库，适合私有化部署和
 二次开发。
 
@@ -41,6 +41,10 @@ TeamTalk 选择的是“可理解、可部署、可演进”的单体架构，�
 
 能力的实现状态与已知缺口见[功能状态](doc/10-reference/feature-status.md)。
 
+iOS 源码与 Xcode 工程已接入，尚待 Apple 设备完整验收，不属于 0.0.4 已发布制品；
+默认构建不启用 iOS。在具备完整 Apple 工具链的 Mac 上通过本地开关启用，
+配置、构建、签名、APNs 和验证入口见 [iOS](doc/05-clients/ios.md)。
+
 ## 五分钟了解仓库
 
 模块按架构语义分三个顶层组，Gradle 任务使用对应层级路径，例如 `:client:shared:jvmTest`：
@@ -58,6 +62,7 @@ team-talk/
 │   ├── richeditor/           Compose 富文本编辑器 fork
 │   ├── app/                  Compose 共享 UI、ViewModel
 │   ├── android/              Android 应用壳
+│   ├── ios/                  iOS Compose 壳、Swift 入口与 Xcode 工程
 │   ├── desktop/              Desktop 窗口与系统集成
 │   └── desktop-bootstrap/    桌面壳中的负载启动与更新切换
 ├── server/                   服务端
@@ -74,7 +79,8 @@ richeditor 是上游 compose-rich-editor 的受控 fork，注释不翻译以最�
 依赖方向保持单向：
 
 ```text
-android / desktop ──▶ app ──▶ shared ──▶ protocol-netty ──▶ protocol
+android / desktop / ios ──▶ app ──▶ shared ──▶ protocol
+                       shared(JVM/Android) ──▶ protocol-netty ──▶ protocol
                          server ─────────▶ protocol-netty ──▶ protocol
                     rpc-processor ──▶ 为 protocol 生成 RPC 代码
 ```

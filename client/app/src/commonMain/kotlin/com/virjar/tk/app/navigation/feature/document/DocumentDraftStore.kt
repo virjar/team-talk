@@ -1,7 +1,11 @@
 package com.virjar.tk.app.navigation.feature.document
 
+import com.virjar.tk.shared.platform.platformCanonicalUuid
+
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
+
 import com.virjar.tk.protocol.payload.SyncDatasetIdPolicy
-import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.decodeFromString
 
@@ -122,7 +126,7 @@ data class DocumentDraftOwnerKey(
 class DocumentDraftStore(
     private val persistence: DocumentDraftPersistence,
 ) {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var ownerKey: DocumentDraftOwnerKey? = null
     private var snapshot: DocumentWorkspaceDraftSnapshot? = null
     /** 观察到 ABSENT 或已成功删除；绝不只从内存快照推断。 */
@@ -579,7 +583,7 @@ private fun retainUnambiguousDocumentCreateCommands(
 }
 
 private fun String.isCanonicalUuid(): Boolean = try {
-    UUID.fromString(this).toString() == this
+    platformCanonicalUuid(this) == this
 } catch (_: IllegalArgumentException) {
     false
 }

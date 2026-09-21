@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.database.AppDatabaseQueries
 import com.virjar.tk.protocol.model.Document
 import com.virjar.tk.protocol.model.DocumentHomeItem
@@ -12,7 +13,7 @@ import com.virjar.tk.protocol.model.DocumentSpace
 internal class LocalDocumentProjectionStore(
     private val queries: AppDatabaseQueries,
     private val cacheUseGate: CacheUseGate,
-    private val stateLock: Any,
+    private val stateLock: PlatformLock,
 ) {
     private val spaceSnapshots = KeyedProjectionSnapshotGate("document spaces snapshot")
     private val spaceDetailsSnapshots = KeyedProjectionSnapshotGate("document space details snapshot")

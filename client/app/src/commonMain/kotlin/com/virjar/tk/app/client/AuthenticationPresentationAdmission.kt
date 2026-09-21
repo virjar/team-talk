@@ -1,4 +1,7 @@
 package com.virjar.tk.app.client
+
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
 import com.virjar.tk.shared.client.ClientSession
 
 /** 校验并原子地消费一个已渲染认证界面的结果。 */
@@ -22,7 +25,7 @@ internal class AuthenticationPresentationAdmission(
 ) {
     private enum class Phase { OPEN, IN_FLIGHT, CLOSED }
 
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var generation = 1L
     private var phase = if (initiallyShowingLogin) Phase.OPEN else Phase.CLOSED
 

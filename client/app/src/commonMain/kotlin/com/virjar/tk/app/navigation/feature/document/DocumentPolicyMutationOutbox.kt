@@ -1,8 +1,12 @@
 package com.virjar.tk.app.navigation.feature.document
 
+import com.virjar.tk.shared.platform.platformCanonicalUuid
+import com.virjar.tk.shared.platform.platformCurrentTimeMillis
+
+import com.virjar.tk.shared.platform.platformRandomUuid
+
 import com.virjar.tk.protocol.model.DocumentSpaceGrant
 import com.virjar.tk.protocol.ReliableCommandContract
-import java.util.UUID
 
 /** 一个显式文档权限意图的进程生命周期可靠身份。 */
 internal data class DocumentPolicyMutationIntent(
@@ -43,8 +47,8 @@ internal data class DocumentPolicyMutationIntent(
  * 有界映射绝不可能把一个未知身份驱逐成第二条命令。
  */
 internal class DocumentPolicyMutationOutbox(
-    private val nextOperationId: () -> String = { UUID.randomUUID().toString() },
-    private val nowMillis: () -> Long = System::currentTimeMillis,
+    private val nextOperationId: () -> String = { platformRandomUuid() },
+    private val nowMillis: () -> Long = ::platformCurrentTimeMillis,
     private val capacity: Int = MAX_PENDING,
 ) {
     private val pendingByKey = linkedMapOf<DocumentPolicyMutationIntent.Key, DocumentPolicyMutationIntent>()
@@ -86,8 +90,12 @@ internal class DocumentPolicyMutationOutbox(
         includeDescendants = false,
     )
 
-    fun complete(intent: DocumentPolicyMutationIntent): Boolean =
-        pendingByKey.remove(intent.key(), intent)
+    fun complete(intent: DocumentPolicyMutationIntent): Boolean {
+        val key = intent.key()
+        if (pendingByKey[key] != intent) return false
+        pendingByKey.remove(key)
+        return true
+    }
 
     fun contains(intent: DocumentPolicyMutationIntent): Boolean = pendingByKey[intent.key()] == intent
 
@@ -122,7 +130,7 @@ internal class DocumentPolicyMutationOutbox(
         }
         require(pendingByKey.size < capacity) { "待确认的文档权限操作过多，请先重试已有操作" }
         val operationId = nextOperationId()
-        require(runCatching { UUID.fromString(operationId).toString() }.getOrNull() == operationId) {
+        require(runCatching { platformCanonicalUuid(operationId) }.getOrNull() == operationId) {
             "document policy operation id must be a canonical UUID"
         }
         val issuedAt = nowMillis()

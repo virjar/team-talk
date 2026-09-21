@@ -26,6 +26,11 @@ buildConfig {
  * 不持有任何 SDK 内部实现（连接/缓存/协议细节）。
  */
 kotlin {
+    applyDefaultHierarchyTemplate()
+    if (gradle.extra["enableIos"] as Boolean) {
+        iosArm64()
+        iosSimulatorArm64()
+    }
     // T011：Gradle 运行 JDK 21；JVM 产物显式钉 21，Android 字节码保持 17（设备兼容基线）。
     jvm("desktop") {
         compilerOptions {
@@ -48,6 +53,7 @@ kotlin {
             api(libs.jetbrains.compose.material3)
             api(libs.jetbrains.compose.material.icons.extended)
             api(libs.jetbrains.compose.components.resources)
+            implementation(libs.kotlinx.datetime)
             api(libs.jetbrains.markdown)
             api(project(":client:richeditor"))
         }
@@ -56,7 +62,11 @@ kotlin {
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.turbine)
             implementation(project(":client:shared-testkit"))
+
         }
+        val jvmAndAndroidTest by creating { dependsOn(commonTest.get()) }
+        val desktopTest by getting { dependsOn(jvmAndAndroidTest) }
+        val androidUnitTest by getting { dependsOn(jvmAndAndroidTest) }
         val androidMain by getting {
             dependencies {
                 implementation(libs.activity.compose)

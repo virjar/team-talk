@@ -1,5 +1,9 @@
 package com.virjar.tk.app.navigation.feature.document
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.platformCurrentThreadId
+import com.virjar.tk.shared.platform.synchronized
+
 import kotlinx.coroutines.CancellationException
 
 /**
@@ -44,11 +48,11 @@ class DocumentDraftLifecycleBridge {
         val captureAndPublish: () -> Unit,
     )
 
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var nextRegistrationId = 0L
     private var active: Entry? = null
     private var phase = DocumentDraftCapturePhase.OPEN
-    private var retirementLeader: Thread? = null
+    private var retirementLeader: Long? = null
     private var terminalCaptureSucceeded = true
 
     internal fun register(captureAndPublish: () -> Unit): Registration =
@@ -79,7 +83,7 @@ class DocumentDraftLifecycleBridge {
     /** 普通的编辑器发布；终止捕获可以在持有桥接锁的同时重入。 */
     internal fun publishIfOpen(action: () -> Unit): Boolean = synchronized(lock) {
         val admitted = phase == DocumentDraftCapturePhase.OPEN ||
-            (phase == DocumentDraftCapturePhase.CLOSING && retirementLeader === Thread.currentThread())
+            (phase == DocumentDraftCapturePhase.CLOSING && retirementLeader == platformCurrentThreadId())
         if (!admitted) return@synchronized false
         action()
         true
@@ -89,7 +93,7 @@ class DocumentDraftLifecycleBridge {
     internal fun captureLatest(): Boolean = synchronized(lock) {
         if (phase == DocumentDraftCapturePhase.CLOSED) return@synchronized terminalCaptureSucceeded
         if (phase == DocumentDraftCapturePhase.CLOSING) {
-            return@synchronized retirementLeader === Thread.currentThread() && captureActiveLocked()
+            return@synchronized retirementLeader == platformCurrentThreadId() && captureActiveLocked()
         }
         captureActiveLocked()
     }
@@ -107,7 +111,7 @@ class DocumentDraftLifecycleBridge {
             }
         }
         if (phase == DocumentDraftCapturePhase.CLOSING &&
-            retirementLeader !== Thread.currentThread()
+            retirementLeader != platformCurrentThreadId()
         ) {
             return@synchronized DocumentDraftCaptureOutcome.Failed(active?.owner)
         }
@@ -138,14 +142,14 @@ class DocumentDraftLifecycleBridge {
         when (phase) {
             DocumentDraftCapturePhase.CLOSED -> return@synchronized terminalCaptureSucceeded
             DocumentDraftCapturePhase.CLOSING -> {
-                check(retirementLeader === Thread.currentThread()) {
+                check(retirementLeader == platformCurrentThreadId()) {
                     "Document draft retirement cannot expose CLOSING outside its leader"
                 }
                 return@synchronized terminalCaptureSucceeded
             }
             DocumentDraftCapturePhase.OPEN -> {
                 phase = DocumentDraftCapturePhase.CLOSING
-                retirementLeader = Thread.currentThread()
+                retirementLeader = platformCurrentThreadId()
             }
         }
         try {

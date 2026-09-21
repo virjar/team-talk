@@ -31,6 +31,7 @@ object AuthRules {
     const val DEVICE_FLAG_UNKNOWN = 0
     const val DEVICE_FLAG_ANDROID = 1
     const val DEVICE_FLAG_DESKTOP = 2
+    const val DEVICE_FLAG_IOS = 3
 
     /**
      * 校验用户名。返回 null 表示合法，否则返回错误原因（中文，可直接展示给用户）。
@@ -98,9 +99,9 @@ object AuthRules {
         else -> null
     }
 
-    /** 0=未知/SDK，1=Android，2=Desktop。 */
+    /** 0=未知/SDK，1=Android，2=Desktop，3=iOS（需要 protocol 0.4 服务端）。 */
     fun validateDeviceFlag(deviceFlag: Int): String? = when (deviceFlag) {
-        DEVICE_FLAG_UNKNOWN, DEVICE_FLAG_ANDROID, DEVICE_FLAG_DESKTOP -> null
+        DEVICE_FLAG_UNKNOWN, DEVICE_FLAG_ANDROID, DEVICE_FLAG_DESKTOP, DEVICE_FLAG_IOS -> null
         else -> "设备类型不合法"
     }
 

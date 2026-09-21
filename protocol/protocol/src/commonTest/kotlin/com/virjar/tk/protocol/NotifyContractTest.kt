@@ -75,21 +75,8 @@ class NotifyContractTest {
         }
     }
 
-    @Test
-    fun `companion类名解析 - 契约表 reader 去后缀后等于样例类名`() {
-        // 服务器 assertContract 用同一规则比对 emit payload 类型
-        for ((type, reader) in NotifyContracts.payloads) {
-            val expected = NotifyContracts.expectedPayloadClassName(type, reader::class.java.name)
-            val actual = sampleOf(type)::class.java.name
-            assertEquals(
-                expected, actual,
-                "契约 $type 的 reader($expected) 与样例类名($actual)不一致——检查登记的 companion 是否正确",
-            )
-        }
-    }
-
     /** 每个契约类型的最小合法样例（新增契约时同步补充）。 */
-    private fun sampleOf(type: NotifyType): IProto = when (type) {
+    internal fun sampleOf(type: NotifyType): IProto = when (type) {
         NotifyType.CONTACT_APPLY -> ContactApply(
             id = 1, fromUid = "u1", toUid = "u2", token = "tk", remark = "hi",
             status = 0, createdAt = 100L, fromUser = sampleUser,

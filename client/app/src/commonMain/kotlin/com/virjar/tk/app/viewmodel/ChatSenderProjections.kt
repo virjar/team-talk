@@ -1,5 +1,8 @@
 package com.virjar.tk.app.viewmodel
 
+import com.virjar.tk.shared.platform.PlatformLock
+import com.virjar.tk.shared.platform.synchronized
+
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.shared.client.LocalCache
@@ -24,7 +27,7 @@ internal class ChatSenderProjections(
     private val scope: CoroutineScope,
     private val observeUser: (String) -> Flow<User?>,
 ) {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var open = true
     private val subscriptions = linkedMapOf<String, Job>()
     private val residentUsers = MutableStateFlow<Map<String, User>>(emptyMap())

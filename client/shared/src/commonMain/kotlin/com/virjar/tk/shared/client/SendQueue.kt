@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.payload.MessageAckPayload
 import kotlinx.coroutines.CancellationException
@@ -71,7 +72,7 @@ class SendQueue(
     private val onQueued: (Message) -> Unit = {},
     private val onSent: (Message, MessageAckPayload) -> Unit = { _, _ -> },
     private val onFailed: (Message, OutgoingFailureCode) -> Unit = { _, _ -> },
-    private val clock: () -> Long = { System.currentTimeMillis() },
+    private val clock: () -> Long = { platformCurrentTimeMillis() },
     private val ackTimeoutMs: Long = 30_000L,
 ) {
     private val wake = Channel<Unit>(Channel.CONFLATED)

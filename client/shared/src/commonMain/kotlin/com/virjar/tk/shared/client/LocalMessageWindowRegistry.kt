@@ -1,8 +1,9 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.database.AppDatabaseQueries
 import com.virjar.tk.protocol.model.Message
-import java.util.concurrent.ConcurrentHashMap
+
 
 /**
  * 拥有常驻消息窗口身份、有界 LRU 准入与精确 pager 租约。持久状态留在 [LocalMessageStore]；
@@ -11,15 +12,15 @@ import java.util.concurrent.ConcurrentHashMap
 internal class LocalMessageWindowRegistry(
     private val queries: AppDatabaseQueries,
     private val cacheUseGate: CacheUseGate,
-    private val stateLock: Any,
+    private val stateLock: PlatformLock,
     private val historyLeases: MessageHistoryLeaseGate,
     private val pruneIdleWindowTail: (String) -> Boolean,
 ) {
     // 写者发布进一个已经常驻的窗口，而不持有 registryLock。条目准入/移除与每个可变租约/LRU
     // 字段仍归 registryLock 所有。
-    private val windows = ConcurrentHashMap<String, ResidentMessageWindow>()
-    private val lru = LinkedHashMap<String, Long>(LocalCache.MAX_ACTIVE_CHATS, 0.75f, true)
-    private val registryLock = Any()
+    private val windows = PlatformConcurrentMap<String, ResidentMessageWindow>()
+    private val lru = LinkedHashMap<String, Long>()
+    private val registryLock = PlatformLock()
     private var nextWindowGeneration = 0L
     private var nextWindowLeaseId = 0L
 
@@ -72,7 +73,8 @@ internal class LocalMessageWindowRegistry(
                     ).also { created -> windows[chatId] = created }
                 }
                 historyLeases.retain(chatId)
-                lru[chatId] = System.currentTimeMillis()
+                lru.remove(chatId)
+                lru[chatId] = platformCurrentTimeMillis()
                 nextWindowLeaseId = nextCounter(nextWindowLeaseId, "message window lease id")
                 val leaseId = nextWindowLeaseId
                 val leaseState = entry.window.acquireLease(leaseId)
@@ -174,7 +176,8 @@ internal class LocalMessageWindowRegistry(
                     val current = windows[chatId]
                     if (current === entry && current.generation == entryGeneration && wasActive) {
                         // 定义闲置 LRU 顺序的是最后一次真实使用，而不是构造。
-                        lru[chatId] = System.currentTimeMillis()
+                        lru.remove(chatId)
+                        lru[chatId] = platformCurrentTimeMillis()
                         if (entry.activeLeases.isEmpty()) retireIdleWindowAfterRetention(chatId)
                     }
                 }
@@ -241,7 +244,7 @@ private class LocalMessagePagerLease(
     leaseState: MessageWindowLeaseState,
     release: () -> Unit,
 ) : MessagePager {
-    private val ownerLock = Any()
+    private val ownerLock = PlatformLock()
     private var open = true
     private var windowOwner: MessageWindow? = window
     private var releaseOwner: (() -> Unit)? = release

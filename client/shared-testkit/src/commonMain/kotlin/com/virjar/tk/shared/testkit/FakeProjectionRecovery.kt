@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.testkit
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.client.OutgoingMessage
 import com.virjar.tk.shared.client.OutgoingMessageConflictException
 import com.virjar.tk.protocol.model.Message
@@ -12,11 +13,12 @@ internal fun Message.asFakeAuthoritativeProjection(): Message =
     }
 
 internal fun upsertFakeInboundMessage(
+    messagesLock: PlatformLock,
     messagesByChat: MutableMap<String, MutableList<Message>>,
     outgoingStore: FakeOutgoingMessageStore,
     message: Message,
     onChatChanged: (String) -> Unit,
-) = synchronized(messagesByChat) {
+) = synchronized(messagesLock) {
     val projection = message.asFakeAuthoritativeProjection()
     val messages = messagesByChat.getOrPut(projection.chatId) { mutableListOf() }
     val index = messages.indexOfFirst { it.clientMsgId == projection.clientMsgId }
@@ -27,17 +29,18 @@ internal fun upsertFakeInboundMessage(
     }
     if (index >= 0) messages[index] = projection else messages.add(projection)
     messages.sortWith(fakeMessageOrder)
-    outgoingStore.promoteFromAuthority(projection, System.currentTimeMillis())
+    outgoingStore.promoteFromAuthority(projection, platformCurrentTimeMillis())
     onChatChanged(projection.chatId)
 }
 
 internal fun enqueueFakeOutgoingMessage(
+    messagesLock: PlatformLock,
     messagesByChat: MutableMap<String, MutableList<Message>>,
     outgoingStore: FakeOutgoingMessageStore,
     message: Message,
     now: Long,
     requestFingerprint: ByteArray?,
-): OutgoingMessage = synchronized(messagesByChat) {
+): OutgoingMessage = synchronized(messagesLock) {
     val retained = outgoingStore.get(message.chatId, message.clientMsgId, null)
     val authority = messagesByChat[message.chatId]
         ?.firstOrNull { it.clientMsgId == message.clientMsgId && it.serverSeq > 0L }
@@ -50,6 +53,7 @@ internal fun enqueueFakeOutgoingMessage(
 }
 
 internal fun applyFakeHistoryProjection(
+    messagesLock: PlatformLock,
     messagesByChat: MutableMap<String, MutableList<Message>>,
     outgoingStore: FakeOutgoingMessageStore,
     chatId: String,
@@ -61,7 +65,7 @@ internal fun applyFakeHistoryProjection(
 ) {
     val page = messages.map { it.asFakeAuthoritativeProjection() }
     page.forEach { require(it.chatId == chatId) { "history page contains another chat: ${it.chatId}" } }
-    synchronized(messagesByChat) {
+    synchronized(messagesLock) {
         val current = messagesByChat[chatId]?.toList() ?: emptyList()
         val pageMaxSeq = page.asSequence().map(Message::serverSeq).filter { it > 0L }.maxOrNull()
         val base = if (resetResidentWindow) {
@@ -80,7 +84,7 @@ internal fun applyFakeHistoryProjection(
             if (message.clientMsgId !in preserveClientMsgIds) merged[message.clientMsgId] = message
         }
         messagesByChat[chatId] = merged.values.sortedWith(fakeMessageOrder).toMutableList()
-        val now = System.currentTimeMillis()
+        val now = platformCurrentTimeMillis()
         page.filter { it.clientMsgId !in preserveClientMsgIds }
             .forEach { outgoingStore.promoteFromAuthority(it, now) }
         onChatChanged(chatId)
@@ -88,10 +92,11 @@ internal fun applyFakeHistoryProjection(
 }
 
 internal fun reconcileFakeAuthoritativeOutgoing(
+    messagesLock: PlatformLock,
     messagesByChat: MutableMap<String, MutableList<Message>>,
     outgoingStore: FakeOutgoingMessageStore,
     now: Long,
-) = synchronized(messagesByChat) {
+) = synchronized(messagesLock) {
     messagesByChat.values.asSequence().flatten().filter { it.serverSeq > 0L }.forEach {
         outgoingStore.promoteFromAuthority(it.asFakeAuthoritativeProjection(), now)
     }

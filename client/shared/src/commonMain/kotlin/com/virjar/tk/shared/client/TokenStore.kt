@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
  * 各平台提供 actual 实现：
  * - Android: SharedPreferences（[com.virjar.tk.android.TokenStore]）
  * - Desktop: Properties 文件（[com.virjar.tk.desktop.DesktopTokenStore]）
+ * - iOS: Keychain 整记录原子替换（IosTokenStore），设备绑定且不经 iCloud 同步
  */
 interface TokenStore {
     /** 本存储实例接受的规范 TCP+HTTP 部署。 */

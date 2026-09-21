@@ -56,12 +56,18 @@ kotlin {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
         }
     }
+    if (gradle.extra["enableIos"] as Boolean) {
+        iosArm64()
+        iosSimulatorArm64()
+        iosX64()
+    }
     applyHierarchyTemplate {
         sourceSetTrees(
             org.jetbrains.kotlin.gradle.plugin.KotlinSourceSetTree.main,
             org.jetbrains.kotlin.gradle.plugin.KotlinSourceSetTree.test,
         )
         common {
+            group("ios") { withIos() }
             group("jvmAndAndroid") {
                 withJvm()
                 withAndroidTarget()
@@ -73,10 +79,8 @@ kotlin {
         val commonMain by getting { kotlin.srcDir(sdkBuildSourceDirectory) }
         commonMain.dependencies {
             api(project(":protocol:protocol"))
-            implementation(project(":protocol:protocol-netty"))
             api(libs.kotlinx.serialization.json)
             api(libs.kotlinx.coroutines.core)
-            implementation(libs.netty.handler)
         }
         val commonTest by getting
         commonTest.dependencies {
@@ -84,6 +88,17 @@ kotlin {
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.turbine)
             implementation(project(":client:shared-testkit"))
+        }
+        val jvmAndAndroidMain by getting {
+            dependencies {
+                implementation(project(":protocol:protocol-netty"))
+                implementation(libs.netty.handler)
+            }
+        }
+        if (gradle.extra["enableIos"] as Boolean) {
+            val iosMain by getting {
+                dependencies { implementation(libs.sqldelight.native.driver) }
+            }
         }
         val jvmMain by getting {
             dependencies {

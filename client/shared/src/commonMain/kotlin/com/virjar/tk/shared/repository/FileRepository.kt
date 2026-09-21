@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.repository
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.AppError
 import com.virjar.tk.shared.Outcome
 import com.virjar.tk.protocol.body.AttachmentPolicy
@@ -12,7 +13,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.json.Json
-import java.util.UUID
 import kotlin.random.Random
 
 /** 显式内存上传便捷 API 可接受的最大 payload。 */
@@ -350,7 +350,7 @@ internal class FileCredentialGate(
     private val ownerUid: String,
     private val credentialsProvider: () -> SessionHttpCredentials,
 ) {
-    private val lock = Any()
+    private val lock = PlatformLock()
     private var closed = false
     private val ownerIdentityEpoch: Long
 
@@ -616,6 +616,6 @@ internal expect fun createPlatformFileTransport(): PlatformFileTransport
 internal expect fun canonicalHttpServerBase(serverUrl: String): String
 
 private fun createAttachmentUploadIdentity(): AttachmentUploadIdentity = AttachmentUploadIdentity(
-    uploadId = UUID.randomUUID().toString(),
-    issuedAt = System.currentTimeMillis(),
+    uploadId = platformRandomUuid(),
+    issuedAt = platformCurrentTimeMillis(),
 )

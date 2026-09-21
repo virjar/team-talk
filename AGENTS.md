@@ -53,7 +53,7 @@
   治理为产品前置。复杂度超过实际收益时，优先删除或收窄实现，不扩成更多待办。
 - 同一权限事实只在服务端权威入口裁决。客户端负责身份隔离、结果收敛和清理失效投影，不为每个 UI、
   播放器、缓存或异步 lane 复制一套授权状态机；新增 gate/epoch/receipt 前必须先给出可复现的失败缝隙。
-- 依赖保持单向：`android / desktop → app → shared → protocol`，`server → protocol`。
+- 依赖保持单向：`android / desktop / ios → app → shared → protocol`，`server → protocol`。
 - `shared` 是完整 IM SDK，不依赖 Compose；SDK 缺陷在 SDK 层闭环，不能由 UI 绕过。
 - `protocol` 只放跨端契约和纯规则，不得依赖客户端 SDK、UI 或服务端基础设施。
 - 服务端 `domain` 只依赖领域端口和 `protocol` 契约；PostgreSQL、RocksDB、Lucene、连接注册表和
@@ -94,7 +94,8 @@
   领域的实时权限放行；ImBot 和图形客户端不得绕过同一校验链。
 - 接收媒体遵循本地优先：认证下载完整文件、校验并原子发布到有界账号缓存后，播放器只读取本地文件；
   服务端 Range 可作为下载能力，但不得默认演化成双端在线播放链路。
-- Desktop 与 Android 共享产品语义和设计令牌，不强行共享导航、窗口和平台交互。
+- Desktop、Android 与 iOS 共享产品语义和设计令牌，不强行共享导航、窗口和平台交互。
+  iOS 构建与平台验收见 `doc/05-clients/ios.md`；Native 编译不等于 Swift 链接或设备验收。
 - 私有化部署参数必须可配置；秘密不得提交，临时需求不得演化为大量 profile、flavor 或开关。
 - 主仓库 `team-talk/` 只做公版产品开发，提交的 `buildSrc/deployment/Deployment.kt` 始终保持 `im.virjar.com`。
   私有出包和部署在同级独立 clone `team-talk-private/` 完成，整个 `buildSrc/deployment-local/` 被 Git 忽略，

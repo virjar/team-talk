@@ -8,6 +8,7 @@ import java.io.IOException
 import java.net.URI
 import java.net.URLEncoder
 import java.net.http.HttpRequest
+import java.net.http.HttpClient
 import java.net.http.HttpResponse
 import java.nio.ByteBuffer
 import java.util.concurrent.CompletableFuture
@@ -22,7 +23,11 @@ internal const val OEM_PUSH_MAX_RESPONSE_BYTES = 16 * 1024
 internal const val OEM_PUSH_CONTENT = "你有新的未读消息，点击查看"
 
 internal sealed interface OemPushHttpExchange {
-    data class Responded(val status: Int, val body: ByteArray) : OemPushHttpExchange
+    data class Responded(
+        val status: Int,
+        val body: ByteArray,
+        val version: HttpClient.Version = HttpClient.Version.HTTP_1_1,
+    ) : OemPushHttpExchange
     data class Failed(val reason: String) : OemPushHttpExchange
 }
 
@@ -38,7 +43,7 @@ internal suspend fun OemPushSender.oemPushExchange(request: HttpRequest, timeout
                     else continuation.resumeWithException(error)
                 }
             }
-        }?.let { OemPushHttpExchange.Responded(it.statusCode(), it.body()) }
+        }?.let { OemPushHttpExchange.Responded(it.statusCode(), it.body(), it.version()) }
             ?: OemPushHttpExchange.Failed("HTTP_TIMEOUT")
     } catch (cancelled: CancellationException) {
         throw cancelled

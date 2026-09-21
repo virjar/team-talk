@@ -1,12 +1,13 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.database.AppDatabaseQueries
 
 /** 文档 move/rename 命令的小型持久单槽存储。 */
 internal class LocalDocumentMoveCommandStore(
     private val queries: AppDatabaseQueries,
     private val cacheUseGate: CacheUseGate,
-    private val stateLock: Any,
+    private val stateLock: PlatformLock,
 ) {
     private val slot =
         PendingCommandSlot(load = ::loadSlot, corrupt = ::CorruptDocumentMoveCommandOutboxException)

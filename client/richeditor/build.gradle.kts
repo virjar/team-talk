@@ -18,6 +18,10 @@ plugins {
  * 且 IM 的 mention span/markdown 序列化需要源码级定制。
  */
 kotlin {
+    if (gradle.extra["enableIos"] as Boolean) {
+        iosArm64()
+        iosSimulatorArm64()
+    }
     jvm("desktop")
     androidTarget()
 

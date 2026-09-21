@@ -20,4 +20,12 @@ class DeviceRepository(rpcClient: RpcInvoker) {
     ): Outcome<Boolean> = outcome {
         rpc.setOemPushRegistration(vendor, registrationId, packageName, deploymentFingerprint)
     }
+    suspend fun setApnsPushRegistration(
+        deviceToken: String,
+        bundleId: String,
+        environment: String,
+        deploymentFingerprint: String,
+    ): Outcome<Boolean> = outcome {
+        rpc.setApnsPushRegistration(deviceToken, bundleId, environment, deploymentFingerprint)
+    }
 }

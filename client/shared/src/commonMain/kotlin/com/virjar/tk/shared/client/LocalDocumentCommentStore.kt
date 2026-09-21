@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.ProtoCodec
 import com.virjar.tk.protocol.model.DocumentComment
 import com.virjar.tk.protocol.model.DocumentCommentPage
@@ -11,7 +12,7 @@ import kotlinx.serialization.json.Json
 internal class LocalDocumentCommentStore(
     private val queries: AppDatabaseQueries,
     private val cacheUseGate: CacheUseGate,
-    private val stateLock: Any,
+    private val stateLock: PlatformLock,
 ) : LocalDocumentComments {
     override val changes = MutableStateFlow(0L)
     private var currentGeneration = 0L
@@ -29,7 +30,7 @@ internal class LocalDocumentCommentStore(
         require(page.items.all { it.spaceId == key.spaceId && it.documentId == key.documentId })
         if (generation != currentGeneration) return@synchronized false
         queries.transaction {
-            queries.upsertDocumentCommentPage(key.spaceId, key.documentId, key.beforeSequence, ProtoCodec.encode(page), System.currentTimeMillis())
+            queries.upsertDocumentCommentPage(key.spaceId, key.documentId, key.beforeSequence, ProtoCodec.encode(page), platformCurrentTimeMillis())
             queries.pruneDocumentCommentPages()
         }
         changed()
@@ -104,7 +105,7 @@ internal class LocalDocumentCommentStore(
                                 .sortedByDescending { it.sequence }.take(DocumentCommentPage.MAX_PAGE_SIZE)
                             val next = if (replacement.size < old.items.size + (if (found) 0 else 1)) replacement.last().sequence else old.nextBeforeSequence
                             queries.upsertDocumentCommentPage(row.space_id, row.document_id, row.before_sequence,
-                                ProtoCodec.encode(DocumentCommentPage(replacement, next)), System.currentTimeMillis())
+                                ProtoCodec.encode(DocumentCommentPage(replacement, next)), platformCurrentTimeMillis())
                         }
                     }
             }

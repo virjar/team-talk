@@ -1,12 +1,13 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.database.AppDatabaseQueries
 
 /** 单槽持久存储；第二个未知的凭据变更绝不能覆盖它。 */
 internal class LocalGroupBotCredentialCommandStore(
     private val queries: AppDatabaseQueries,
     private val cacheUseGate: CacheUseGate,
-    private val stateLock: Any,
+    private val stateLock: PlatformLock,
 ) {
     private val slot =
         PendingCommandSlot(

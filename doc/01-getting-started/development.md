@@ -15,6 +15,10 @@ Gradle 与 Node.js 分发站点，以及 npm 包仓库。
 
 ## 2. 仓库配置
 
+iOS 构建默认关闭，Android/Desktop、SDK 和服务端的常用任务保持可用。需要开发 iOS 时，在仓库根目录
+不入 Git 的 `local.properties` 中设置 `enableIos=true`，再重新同步 Gradle；工具链、临时覆盖与资源建议
+见 [iOS 开发与构建](../05-clients/ios.md#开发与构建)。
+
 `buildSrc/deployment/Deployment.kt` 是提交到仓库的非敏感 Kotlin 配置，主仓库保持连接公版 `im.virjar.com`。
 配置入口是普通 Kotlin 函数 `deploymentConfiguration(rootDir: File): DeploymentConfig`，用
 `deployment { server { ... }; deploy { ... }; client { ... } }` 按职责分章节；TCP/SSH 主机默认跟随

@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.testkit
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.shared.client.LocalOutboxCapacityDimension
 import com.virjar.tk.shared.client.LocalOutboxCapacityExceededException
 import com.virjar.tk.shared.client.LocalOutboxKind
@@ -21,14 +22,15 @@ import com.virjar.tk.protocol.payload.MessageAckPayload
 /** [FakeLocalCache] 的持久化可靠发件箱语义，隔离出来以保持通用测试替身有界。 */
 internal class FakeOutgoingMessageStore(
     /** 与测试替身消息投影共享，使每次组合状态转移只有一种加锁顺序。 */
-    private val lock: Any,
+    private val lock: PlatformLock,
     private val upsertProjection: (Message) -> Unit,
     private val updateProjectionStatus: (Message, Int) -> Unit,
     private val completeProjection: (Message, Long) -> Unit,
     private val markAuthoritativeProjectionSent: (Message) -> Unit = {},
     private val terminalReceiptLimit: Int = MAX_TERMINAL_OUTGOING_RECEIPTS,
 ) {
-    private val rows = sortedMapOf<Long, OutgoingMessage>()
+    // Ordinals only increase; replacing an existing value preserves insertion/dispatch order.
+    private val rows = linkedMapOf<Long, OutgoingMessage>()
     private val requestFingerprints = mutableMapOf<Long, ByteArray?>()
     private val storedBytes = mutableMapOf<Long, Long>()
     /** 稳定的失败投影权威信息在终态回执被 GC 后依然保留；原始诊断信息从不保留。 */
@@ -320,9 +322,11 @@ internal class FakeOutgoingMessageStore(
                     entry.value.message.senderUid == ownerUid &&
                         entry.value.state == OutgoingMessageState.TERMINAL_FAILED,
                 ) { "outgoing receipt is not a recoverable terminal failure" }
-                rows.remove(entry.key)
-                requestFingerprints.remove(entry.key)
-                storedBytes.remove(entry.key)
+                // Native Map.Entry becomes invalid when its backing map is structurally changed.
+                val ordinal = entry.key
+                rows.remove(ordinal)
+                requestFingerprints.remove(ordinal)
+                storedBytes.remove(ordinal)
             }
             projectionFailureCodes.remove(chatId to clientMsgId)
         }

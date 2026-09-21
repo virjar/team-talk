@@ -1,12 +1,14 @@
 package com.virjar.tk.shared.client
 
-import java.io.File
+import com.virjar.tk.shared.platform.*
+import com.virjar.tk.shared.platform.PlatformFile as File
 
 /**
  * 平台数据目录。各平台通过 actual 实现提供。
  *
  * - Android: app 私有目录 (context.getDir)
  * - Desktop: ~/.teamtalk/
+ * - iOS: Application Support/TeamTalk，使用应用沙箱与系统文件保护
  */
 expect fun platformDataDir(): File
 
@@ -15,7 +17,7 @@ expect fun platformDataDir(): File
  * 用于 CoroutineExceptionHandler 和 UncaughtExceptionHandler。
  */
 fun logUnhandledError(tag: String, throwable: Throwable) {
-    System.err.println("[Unhandled:$tag] ${throwable.stackTraceToString()}")
+    com.virjar.tk.shared.log.platformLog("error", tag, "Unhandled exception", throwable)
     try {
         flushPendingCrash(platformDataDir(), "Unhandled $tag: ${throwable.stackTraceToString()}")
     } catch (_: Exception) {

@@ -1,5 +1,6 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.ReliableCommandContract
 import com.virjar.tk.protocol.body.MarkdownAssetPolicy
 import com.virjar.tk.protocol.model.ChatDraftCommand
@@ -11,7 +12,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import java.util.UUID
 
 @Serializable
 private data class StoredChatDraftConsumption(val clientMsgId: String?, val expectedRevision: Long, val afterOperationId: String? = null)
@@ -36,7 +36,7 @@ private data class StoredChatDraftSyncRecord(
 internal class LocalChatDraftSyncStore(
     private val queries: AppDatabaseQueries,
     private val gate: CacheUseGate,
-    private val lock: Any,
+    private val lock: PlatformLock,
     private val drafts: LocalChatDraftStore,
     private val publishPreview: (String, String?) -> Unit,
 ) : LocalChatDraftSync {
@@ -322,5 +322,5 @@ internal class LocalChatDraftSyncStore(
     private fun empty(snapshot: ChatDraftSnapshot) = snapshot.markdown.isEmpty() && snapshot.replyToClientMsgId == null
     private fun sameContent(a: ChatDraftSnapshot, b: ChatDraftSnapshot) = a.markdown == b.markdown && a.assets == b.assets &&
         a.pendingAssetIds == b.pendingAssetIds && a.mode == b.mode && a.replyToClientMsgId == b.replyToClientMsgId && a.replyToServerSeq == b.replyToServerSeq
-    private fun id() = UUID.randomUUID().toString()
+    private fun id() = platformRandomUuid()
 }

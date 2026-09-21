@@ -1,5 +1,7 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
+import kotlin.concurrent.Volatile
 import com.virjar.tk.shared.log.TkLogger
 import com.virjar.tk.protocol.model.FriendPresenceSnapshot
 import com.virjar.tk.protocol.PresencePayload
@@ -34,7 +36,7 @@ internal class FriendPresenceRepository(
     private val loadSnapshot: suspend () -> FriendPresenceSnapshot,
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
-    private val stateLock = Any()
+    private val stateLock = PlatformLock()
     private var reducer = FriendPresenceReducerState()
     private var authenticated = false
     private var refreshGeneration = 0L

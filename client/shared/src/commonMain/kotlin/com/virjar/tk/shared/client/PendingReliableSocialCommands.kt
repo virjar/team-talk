@@ -1,7 +1,7 @@
 package com.virjar.tk.shared.client
 
+import com.virjar.tk.shared.platform.*
 import com.virjar.tk.protocol.ReliableCommandContract
-import java.util.UUID
 
 enum class PendingContactDecisionType(val code: Long) {
     ACCEPT(1),
@@ -77,7 +77,7 @@ internal fun nextReliableSocialCommandExpiryAt(
 }
 
 internal fun String.isCanonicalUuid(): Boolean =
-    length == UUID_TEXT_LENGTH && runCatching { UUID.fromString(this).toString() == this }.getOrDefault(false)
+    length == UUID_TEXT_LENGTH && runCatching { platformCanonicalUuid(this) == this }.getOrDefault(false)
 
 internal const val MAX_PENDING_CONTACT_DECISIONS = 128
 internal const val MAX_PENDING_INVITE_LINK_CREATIONS = 128

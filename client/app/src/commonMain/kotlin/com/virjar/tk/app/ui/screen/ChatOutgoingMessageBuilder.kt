@@ -1,5 +1,8 @@
 package com.virjar.tk.app.ui.screen
 
+import com.virjar.tk.shared.platform.platformCurrentTimeMillis
+import com.virjar.tk.shared.platform.platformRandomUuid
+
 import com.virjar.tk.protocol.body.ReplyBody
 import com.virjar.tk.protocol.body.RichTextBody
 import com.virjar.tk.protocol.model.EmbeddedAsset
@@ -7,7 +10,6 @@ import com.virjar.tk.protocol.model.Message
 import com.virjar.tk.protocol.model.User
 import com.virjar.tk.protocol.MessageType
 import com.virjar.tk.app.ui.component.MessagePreview
-import java.util.UUID
 
 /** 构建普通发送与回复发送共享的那条未校验的本地发出消息行。 */
 internal fun buildOutgoingChatMessageOrReport(
@@ -26,10 +28,10 @@ internal fun buildOutgoingChatMessageOrReport(
     if (replyingTo == null) {
         return Message(
             chatId = chatId,
-            clientMsgId = UUID.randomUUID().toString(),
+            clientMsgId = platformRandomUuid(),
             senderUid = myUid,
             messageType = MessageType.RICH_TEXT.code,
-            timestamp = System.currentTimeMillis(),
+            timestamp = platformCurrentTimeMillis(),
             body = richBody,
         )
     }
@@ -39,10 +41,10 @@ internal fun buildOutgoingChatMessageOrReport(
     }
     return Message(
         chatId = chatId,
-        clientMsgId = UUID.randomUUID().toString(),
+        clientMsgId = platformRandomUuid(),
         senderUid = myUid,
         messageType = MessageType.REPLY.code,
-        timestamp = System.currentTimeMillis(),
+        timestamp = platformCurrentTimeMillis(),
         body = ReplyBody(
             replyToMsgId = replyToMsgId,
             replyToSenderUid = replyingTo.senderUid,
