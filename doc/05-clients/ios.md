@@ -202,6 +202,16 @@ Swift 壳的 typecheck 和无签名 iPhone 应用整包构建；在 iOS 18.1 x86
 协议 221 项和 SDK 153 项 Native 测试全部通过。
 本轮新增的 iOS 草稿文件持久化测试已通过 ARM64 测试源码编译，并纳入 Apple Silicon CI 的
 `:client:ios:iosSimulatorArm64Test`；它们未在这台 Intel 主机执行。
+
+Apple Silicon 主机（Xcode 27.0 / iOS 27.0 模拟器）已完成首轮真实模拟器验收：协议 221、
+SDK 154、共享 UI 168、iOS 壳 5 项 Native 测试全部通过；默认 ad-hoc 签名的模拟器应用可安装、
+启动，Keychain 设备标识与 SQLite 初始化正常，Compose 登录界面正确渲染，重启进程后设备标识保留。
+验收修复了两处缺陷：Keychain 查询字典的布尔值必须使用 `kCFBooleanFalse`/`kCFBooleanTrue`
+（Kotlin Boolean 经 CFBridgingRetain 不是 CFBoolean，securityd 以 -50 拒绝整个查询，
+应用停在「本地数据准备失败」）；`build-framework.sh` 现于链接前删除旧的应用链接产物，
+因为 Xcode 增量构建不跟踪经 OTHER_LDFLAGS 链接的静态框架，否则改动 Kotlin 后会静默运行旧代码。
+注意 `CODE_SIGNING_ALLOWED=NO` 的模拟器整包只用于编译校验：无签名二进制没有 entitlement，
+Keychain 以 -34018 失败、无法进入登录页；真实验收使用默认 ad-hoc 签名构建。
 默认关闭、本地启用、命令行覆盖和 CI 环境变量启用均已验证；关闭时 Android/Desktop 编译、
-JVM 回归、架构和协议基线检查通过。共享 UI 的模拟器运行、签名与 APNs 真机验收尚未完成；
-当前不把 iOS 标为已发布或已通过设备验收。
+JVM 回归、架构和协议基线检查通过。真实账号登录、离线与媒体交互，以及签名与 APNs 真机验收
+尚未完成；当前不把 iOS 标为已发布或已通过设备验收。

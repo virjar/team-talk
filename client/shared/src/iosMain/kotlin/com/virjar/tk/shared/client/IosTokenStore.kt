@@ -101,7 +101,9 @@ private fun keychainQuery(account: String): Map<CFStringRef?, Any?> = mapOf(
     kSecClass to kSecClassGenericPassword,
     kSecAttrService to KEYCHAIN_SERVICE,
     kSecAttrAccount to account,
-    kSecAttrSynchronizable to false,
+    // SecItem 字典值必须是 CFBoolean：Kotlin Boolean 经 CFBridgingRetain 会成为
+    // Kotlin 运行时对象而非 CFBoolean，securityd 以 errSecParam(-50) 拒绝整个查询。
+    kSecAttrSynchronizable to kCFBooleanFalse,
 )
 private inline fun <T> withDictionary(value: Map<CFStringRef?, Any?>, block: (CFDictionaryRef) -> T): T {
     val dictionary = checkNotNull(CFDictionaryCreateMutable(kCFAllocatorDefault, 0, kCFTypeDictionaryKeyCallBacks.ptr, kCFTypeDictionaryValueCallBacks.ptr))
@@ -117,7 +119,7 @@ private inline fun <T> withDictionary(value: Map<CFStringRef?, Any?>, block: (CF
 }
 private fun keychainRead(account: String): String? = memScoped {
     val result = alloc<CFTypeRefVar>()
-    val status = withDictionary(keychainQuery(account) + mapOf(kSecReturnData to true, kSecMatchLimit to kSecMatchLimitOne)) {
+    val status = withDictionary(keychainQuery(account) + mapOf(kSecReturnData to kCFBooleanTrue, kSecMatchLimit to kSecMatchLimitOne)) {
         SecItemCopyMatching(it, result.ptr)
     }
     if (status == errSecItemNotFound) return@memScoped null
