@@ -1,10 +1,10 @@
 package com.virjar.tk.server.domain.document
 
+import com.virjar.tk.server.domain.canonicalUuidOrNull
 import com.virjar.tk.protocol.model.DocumentSpacePagePolicy
 import com.virjar.tk.protocol.model.DocumentDirectorySnapshotVersion
 import com.virjar.tk.protocol.PacketBuffer
 import java.util.Base64
-import java.util.UUID
 
 /** 服务端持有的游标编解码器；客户端逐字节保留这个值，绝不检查它。 */
 internal object DocumentSpacePageCursorCodec {
@@ -51,9 +51,6 @@ internal object DocumentSpacePageCursorCodec {
     }
 
     private fun requireCanonicalSpaceId(spaceId: String) {
-        require(
-            spaceId.length == CANONICAL_UUID_LENGTH &&
-                runCatching { UUID.fromString(spaceId).toString() }.getOrNull() == spaceId,
-        ) { INVALID_CURSOR }
+        require(canonicalUuidOrNull(spaceId) != null) { INVALID_CURSOR }
     }
 }

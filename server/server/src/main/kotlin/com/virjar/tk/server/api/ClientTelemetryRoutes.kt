@@ -92,11 +92,7 @@ internal fun Route.clientTelemetryRoutes(
 ) {
     require(bodyTimeoutMillis > 0L) { "telemetry body timeout must be positive" }
     post(CLIENT_TELEMETRY_ENDPOINT) {
-        val bearer = call.request.header(HttpHeaders.Authorization)
-            ?.takeIf { it.startsWith(BEARER_PREFIX) }
-            ?.removePrefix(BEARER_PREFIX)
-            ?.takeIf(String::isNotBlank)
-        val principal = bearer?.let { accessTokens.validateAccessToken(it) }
+        val principal = call.bearerAuthorizationToken()?.let { accessTokens.validateAccessToken(it) }
             ?: return@post call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "invalid token"))
         val requestStartedAt = clock()
         if (!ingressAdmission.tryAdmitRequest(principal.uid, principal.deviceId, requestStartedAt)) {
@@ -493,7 +489,6 @@ private fun String.safeBuildFact(pattern: Regex, maxChars: Int): String =
 internal const val CLIENT_TELEMETRY_MAX_COMPRESSED_BYTES = 1024 * 1024
 internal const val CLIENT_TELEMETRY_MAX_DECOMPRESSED_BYTES = 8 * 1024 * 1024
 internal const val CLIENT_TELEMETRY_BODY_TIMEOUT_MILLIS = 15_000L
-private const val BEARER_PREFIX = "Bearer "
 private const val UNKNOWN_BASELINE_NOTICE = "客户端展示了未识别提示"
 private val TELEMETRY_APP_VERSION_PATTERN = Regex("(?:unknown|(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*))")
 private val TELEMETRY_BUILD_NUMBER_PATTERN = Regex("(?:unknown|0|[1-9]\\d*)")

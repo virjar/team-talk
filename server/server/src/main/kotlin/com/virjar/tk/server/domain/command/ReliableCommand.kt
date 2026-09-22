@@ -1,14 +1,12 @@
 package com.virjar.tk.server.domain.command
 
+import com.virjar.tk.server.domain.canonicalUuidOrNull
 import com.virjar.tk.protocol.ReliableCommandContract
 import java.security.MessageDigest
-import java.util.UUID
 
 /** 响应可能丢失的命令的、归一化的客户端持有身份。 */
 fun canonicalOperationId(operationId: String, label: String): String {
-    val canonical = operationId.takeIf { it.length == UUID_TEXT_LENGTH }
-        ?.let { runCatching { UUID.fromString(it).toString() }.getOrNull() }
-        ?.takeIf { it == operationId }
+    val canonical = canonicalUuidOrNull(operationId)
     require(canonical != null) { "${label}操作标识非法" }
     return canonical
 }

@@ -1,5 +1,6 @@
 package com.virjar.tk.server.infra.db.repository
 
+import com.virjar.tk.server.domain.canonicalUuidOrNull
 import com.virjar.tk.server.domain.document.DocumentAccessDeniedException
 import com.virjar.tk.server.domain.document.DocumentCustodyConflictException
 import com.virjar.tk.server.domain.document.DocumentNotFoundException
@@ -34,7 +35,6 @@ import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.insertIgnore
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.update
-import java.util.UUID
 
 /**
  * 文档聚合的命令侧持久化。
@@ -691,7 +691,7 @@ internal class ExposedDocumentWriteStore(
     }
 
     private fun requireCanonicalOperationId(value: String) {
-        require(value.length == 36 && runCatching { UUID.fromString(value).toString() }.getOrNull() == value) {
+        require(canonicalUuidOrNull(value) != null) {
             "文档破坏性操作标识非法"
         }
     }

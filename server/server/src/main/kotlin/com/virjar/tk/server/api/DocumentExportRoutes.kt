@@ -50,8 +50,7 @@ internal fun Route.documentExportRoutes(
     accessTokens: AccessTokenValidator,
 ) {
     get("/api/v1/documents/spaces/{spaceId}/export") {
-        val token = call.request.headers[HttpHeaders.Authorization]?.removePrefix("Bearer ")
-        val info = token?.let { accessTokens.validateAccessToken(it) }
+        val info = call.bearerAuthorizationToken()?.let { accessTokens.validateAccessToken(it) }
             ?: return@get call.respond(HttpStatusCode.Unauthorized, "invalid or missing token")
         val spaceId = call.parameters["spaceId"] ?: return@get call.respond(HttpStatusCode.NotFound)
         if (!exportPolicy.isEnabled()) {

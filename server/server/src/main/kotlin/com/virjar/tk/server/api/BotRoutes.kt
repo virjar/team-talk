@@ -50,7 +50,7 @@ internal fun Route.targetBoundBotMessageRoutes(
             val idempotencyKey = call.request.headers[BOT_IDEMPOTENCY_KEY_HEADER] ?: newIdempotencyKey()
             service.deliver(
                 botId = botId,
-                token = call.botBearerToken(),
+                token = call.bearerAuthorizationToken(),
                 chatId = chatId,
                 markdown = request.markdown,
                 idempotencyKey = idempotencyKey,
@@ -61,11 +61,6 @@ internal fun Route.targetBoundBotMessageRoutes(
         }
     }
 }
-
-private fun ApplicationCall.botBearerToken(): String? =
-    request.headers[HttpHeaders.Authorization]
-        ?.removePrefix("Bearer ")
-        ?.takeIf(String::isNotBlank)
 
 private suspend fun ApplicationCall.respondBotDeliveryError(error: IllegalArgumentException) {
     when (error) {
@@ -172,9 +167,7 @@ internal fun Route.groupBotRoutes(service: GroupBotManagement, accessTokens: Acc
 private suspend fun io.ktor.server.application.ApplicationCall.groupBotActorUid(
     accessTokens: AccessTokenValidator,
 ): String? {
-    val token = request.headers[HttpHeaders.Authorization]
-        ?.removePrefix("Bearer ")
-        ?.takeIf(String::isNotBlank)
+    val token = bearerAuthorizationToken()
     val uid = token?.let { accessTokens.validateAccessToken(it) }?.uid
     if (uid == null) respond(HttpStatusCode.Unauthorized, mapOf("error" to "invalid or missing token"))
     return uid

@@ -197,8 +197,8 @@ private suspend fun ApplicationCall.resolveUploadPrincipal(
 ): String? {
     val publishToken = request.headers["X-Publish-Token"]
     if (publishToken != null && service.verifyPublishToken(publishToken)) return "ci-publish"
-    val bearer = request.headers[HttpHeaders.Authorization]?.removePrefix("Bearer ")?.trim()
-    if (!bearer.isNullOrEmpty()) {
+    val bearer = bearerAuthorizationToken()
+    if (bearer != null) {
         if (service.verifyPublishToken(bearer)) return "ci-publish"
         adminAuth.principal(bearer)?.let { return it }
     }

@@ -65,7 +65,7 @@ fun Route.fileRoutes(
     route("/api/v1/files") {
         get("/{path...}") {
             val path = call.parameters.getAll("path")?.joinToString("/") ?: return@get call.respond(HttpStatusCode.NotFound)
-            val token = call.bearerToken()
+            val token = call.bearerAuthorizationToken()
             val info = token?.let { accessTokens.validateAccessToken(it) }
                 ?: return@get call.respond(HttpStatusCode.Unauthorized, "invalid or missing token")
             val meta = attachmentAccess.readAuthorized(info.uid, path) { canonicalPath ->
@@ -116,7 +116,7 @@ fun Route.fileRoutes(
 
         post("/upload") {
             // 鉴权：Bearer accessToken（TCP 认证时下发，PG epoch 校验）。上传必须已认证。
-            val token = call.bearerToken()
+            val token = call.bearerAuthorizationToken()
             val info = token?.let { accessTokens.validateAccessToken(it) }
             if (info == null) return@post call.respond(HttpStatusCode.Unauthorized, "invalid or missing token")
             val uid = info.uid
@@ -398,11 +398,6 @@ private fun resolveHttpByteRange(
 
 private fun String.toUnsignedLongOrNull(): Long? =
     takeIf { it.isNotEmpty() && it.all { char -> char in '0'..'9' } }?.toLongOrNull()
-
-private fun io.ktor.server.application.ApplicationCall.bearerToken(): String? =
-    request.header(HttpHeaders.Authorization)
-        ?.removePrefix("Bearer ")
-        ?.takeIf { it.isNotBlank() }
 
 private fun Headers.singleValueOrNull(name: String): String? = getAll(name)?.singleOrNull()
 

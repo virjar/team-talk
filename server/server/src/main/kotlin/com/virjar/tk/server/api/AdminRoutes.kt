@@ -239,8 +239,7 @@ private val AdminAuthorizationPlugin = createRouteScopedPlugin(
     val auth = pluginConfig.auth
     onCall { call ->
         if (call.request.path() == ADMIN_LOGIN_PATH) return@onCall
-        val token = call.request.header("Authorization")?.removePrefix("Bearer ")
-        val principal = auth.principal(token)
+        val principal = auth.principal(call.bearerAuthorizationToken())
         if (principal == null) {
             call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "unauthorized"))
         } else {
@@ -275,7 +274,7 @@ private val AdminAuthorizationPlugin = createRouteScopedPlugin(
 private val ADMIN_AUDIT_KEY = AttributeKey<Long>("admin-audit")
 
 internal fun ApplicationCall.adminBearerToken(): String =
-    request.header(HttpHeaders.Authorization)?.removePrefix("Bearer ") ?: error("Missing admin session")
+    bearerAuthorizationToken() ?: error("Missing admin session")
 
 internal fun ApplicationCall.requireAdminPrincipal(): String =
     attributes.getOrNull(ADMIN_PRINCIPAL_KEY)

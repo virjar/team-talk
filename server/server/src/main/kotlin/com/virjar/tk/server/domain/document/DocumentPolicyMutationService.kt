@@ -1,5 +1,6 @@
 package com.virjar.tk.server.domain.document
 
+import com.virjar.tk.server.domain.canonicalUuidOrNull
 import com.virjar.tk.server.domain.command.ReliableCommandConflictException
 import com.virjar.tk.server.domain.command.ReliableCommandPolicy
 import com.virjar.tk.server.domain.command.canonicalOperationId
@@ -11,7 +12,6 @@ import com.virjar.tk.protocol.model.DocumentSpace
 import com.virjar.tk.protocol.model.DocumentSpaceGrant
 import com.virjar.tk.protocol.model.UserRole
 import com.virjar.tk.protocol.model.isActiveHuman
-import java.util.UUID
 
 /** 显式 Document ACL 变更的、可靠的、按操作者限定作用域的命令边界。 */
 internal class DocumentPolicyMutationService(
@@ -436,7 +436,7 @@ internal class DocumentPolicyMutationService(
     ).effectiveRole
 
     private fun validateResourceId(value: String, label: String): String {
-        require(value.length == UUID_TEXT_LENGTH && runCatching { UUID.fromString(value).toString() }.getOrNull() == value) {
+        require(canonicalUuidOrNull(value) != null) {
             "$label 非法"
         }
         return value

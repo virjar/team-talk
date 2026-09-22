@@ -1,5 +1,6 @@
 package com.virjar.tk.server.domain.document
 
+import com.virjar.tk.server.domain.canonicalUuidOrNull
 import com.virjar.tk.server.domain.command.ReliableCommandConflictException
 import com.virjar.tk.protocol.DocumentChangedPayload
 import com.virjar.tk.server.domain.command.reliableCommandFingerprint
@@ -29,7 +30,6 @@ import com.virjar.tk.protocol.model.isActiveHuman
 import com.virjar.tk.protocol.model.EmbeddedAsset
 import kotlinx.coroutines.CancellationException
 import org.slf4j.LoggerFactory
-import java.util.UUID
 
 /**
  * 企业文档空间领域服务。
@@ -645,7 +645,7 @@ class DocumentService(
     }
 
     private fun validateResourceId(value: String, label: String): String {
-        require(value.length == 36 && runCatching { UUID.fromString(value).toString() }.getOrNull() == value) {
+        require(canonicalUuidOrNull(value) != null) {
             "$label 非法"
         }
         return value

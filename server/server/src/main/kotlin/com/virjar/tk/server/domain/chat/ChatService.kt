@@ -1,5 +1,6 @@
 package com.virjar.tk.server.domain.chat
 
+import com.virjar.tk.server.domain.canonicalUuidOrNull
 import com.virjar.tk.server.domain.command.canonicalOperationId
 import com.virjar.tk.protocol.model.InvitePreview
 import com.virjar.tk.protocol.model.isActiveHuman
@@ -663,7 +664,7 @@ class ChatService(
     /** 仅返回确认入群所需概况；预览不消耗次数，也不代表稍后的加入一定成功。 */
     suspend fun previewInvite(uid: String, token: String): InvitePreview = unitOfWork.read {
         require(users.findByUid(uid)?.isActiveHuman == true) { "用户不存在或已停用" }
-        if (token.length != UUID_TEXT_LENGTH || runCatching { UUID.fromString(token).toString() }.getOrNull() != token) {
+        if (canonicalUuidOrNull(token) == null) {
             return@read InvitePreview(InvitePreview.NOT_FOUND)
         }
         val facts = invites.readPreview(transaction, uid, token)

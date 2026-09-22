@@ -3,6 +3,7 @@ package com.virjar.tk.server.domain.groupfile
 import com.virjar.tk.protocol.body.AttachmentPolicy
 import com.virjar.tk.protocol.GroupFileChangedPayload
 import com.virjar.tk.protocol.NotifyType
+import com.virjar.tk.server.domain.canonicalUuidOrNull
 import com.virjar.tk.server.domain.attachment.AttachmentCatalog
 import com.virjar.tk.server.domain.attachment.AttachmentLifecycleGate
 import com.virjar.tk.server.domain.chat.ChatAccess
@@ -16,7 +17,6 @@ import com.virjar.tk.protocol.model.GroupFileVersion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Locale
-import java.util.UUID
 
 /**
  * 群共享文件领域服务。
@@ -401,7 +401,7 @@ class GroupFileService(
     }
 
     private fun validateResourceId(value: String, label: String): String {
-        require(value.length == 36 && runCatching { UUID.fromString(value).toString() }.getOrNull() == value) {
+        require(canonicalUuidOrNull(value) != null) {
             "$label 非法"
         }
         return value

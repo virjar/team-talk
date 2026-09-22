@@ -2,6 +2,7 @@ package com.virjar.tk.server.infra.db.repository
 
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
 import com.virjar.tk.server.infra.db.requireExposedTransaction
+import com.virjar.tk.server.domain.canonicalUuidOrNull
 import com.virjar.tk.server.domain.groupfile.GroupFileCapacityPolicy
 import com.virjar.tk.server.domain.groupfile.GroupFileAppendVersionCommand
 import com.virjar.tk.server.domain.groupfile.GroupFileCreateCommand
@@ -38,7 +39,6 @@ import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.transactions.TransactionManager
 import org.jetbrains.exposed.sql.update
-import java.util.UUID
 
 class ExposedGroupFileRepository(
     private val database: Database,
@@ -691,7 +691,7 @@ class ExposedGroupFileRepository(
     }
 
     private fun requireCanonicalUuid(value: String, label: String) {
-        require(value.length == 36 && runCatching { UUID.fromString(value).toString() }.getOrNull() == value) {
+        require(canonicalUuidOrNull(value) != null) {
             "$label 非法"
         }
     }
