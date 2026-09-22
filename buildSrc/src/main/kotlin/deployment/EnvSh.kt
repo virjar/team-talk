@@ -69,6 +69,13 @@ fun generateEnvShContent(
     lines.add("ADMIN_PASSWORD=${posixShellQuote(requiredSecret(secrets, "ADMIN_PASSWORD"))}")
     lines.add("")
 
+    lines.add("# ── 客户端发布注册（/api/v1/client/releases 的 X-Publish-Token）──")
+    secrets.getProperty("CLIENT_RELEASE_PUBLISH_TOKEN")?.let { token ->
+        require(token.length >= 16) { "CLIENT_RELEASE_PUBLISH_TOKEN must be at least 16 characters" }
+        lines.add("CLIENT_RELEASE_PUBLISH_TOKEN=${posixShellQuote(token)}")
+    }
+    lines.add("")
+
     lines.add("# ── SSL ──")
     if (sslEnabled) {
         lines.add("KTOR_SSL_PORT=$sslPort")
