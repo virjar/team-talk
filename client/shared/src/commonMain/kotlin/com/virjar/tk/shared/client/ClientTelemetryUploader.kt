@@ -168,7 +168,7 @@ internal class ClientTelemetryUploader(
             val fixedCrash = checkNotNull(pendingCrash)
             if (recordedEmergencyContent != fixedCrash) {
                 var recorded = false
-                if (!workGate.runIfActive(workLease) { recorded = recorder.recordFatalCrash() } || !recorded) return
+                if (!workGate.runIfActive(workLease) { recorded = recorder.recordFatalCrash(fixedCrash) } || !recorded) return
                 recordedEmergencyContent = fixedCrash
             }
         }

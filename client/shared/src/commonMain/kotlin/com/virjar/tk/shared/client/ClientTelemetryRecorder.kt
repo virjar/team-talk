@@ -244,19 +244,28 @@ class ClientTelemetryRecorder internal constructor(
         }
     }
 
-    /** 崩溃处理器刻意不转发其原始的多行崩溃文本。 */
-    internal fun recordFatalCrash(): Boolean = record(
-        eventName = "fault.uncaught",
-        kind = TelemetryEventKind.FAULT,
-        payload = TelemetryFaultPayload(
-            logger = "UncaughtException",
-            summary = "Process terminated by an uncaught exception",
-            faultCode = "process.uncaught_exception",
-            origin = "platform",
-            fatal = true,
-        ),
-        flushImmediately = true,
-    )
+    /**
+     * 崩溃事件携带从持久化崩溃文本解析出的异常类与栈帧；解析失败时退回固定摘要。
+     * 只保留首行摘要与主异常的前 [ClientTelemetryLimits.MAX_STACK_FRAMES] 帧，
+     * Caused-by 段不进入事件。
+     */
+    internal fun recordFatalCrash(persistedCrashText: String? = null): Boolean {
+        val parsed = persistedCrashText?.let(::parsePersistedCrashText)
+        return record(
+            eventName = "fault.uncaught",
+            kind = TelemetryEventKind.FAULT,
+            payload = TelemetryFaultPayload(
+                logger = "UncaughtException",
+                summary = parsed?.summary ?: "Process terminated by an uncaught exception",
+                faultCode = "process.uncaught_exception",
+                origin = "platform",
+                exceptionClass = parsed?.exceptionClass,
+                stackFrames = parsed?.stackFrames.orEmpty(),
+                fatal = true,
+            ),
+            flushImmediately = true,
+        )
+    }
 
     /** 只由 uploader 的阻塞 IO worker 调用；record 路径绝不进入此边界。 */
     fun flush(): Boolean = synchronized(flushLock) {
@@ -559,3 +568,54 @@ private fun requireSafeGeneratedId(id: String) {
 
 internal expect fun platformExceptionClassName(failure: Throwable): String
 internal expect fun platformTelemetryStackFrames(failure: Throwable, limit: Int): List<TelemetryStackFrame>
+
+
+/** 持久化崩溃文本的结构化解析：线程、异常类、首行摘要与主异常栈帧。 */
+internal fun parsePersistedCrashText(text: String): PersistedCrashSummary {
+    val lines = text.lines().filter(String::isNotBlank)
+    val first = lines.firstOrNull() ?: return PersistedCrashSummary(null, "", emptyList())
+
+    // 首行形如 "Crash in main: java.lang.SecurityException: vibrate: ..."。
+    val afterThreadPrefix = first.substringAfter(": ", first)
+    val head = afterThreadPrefix.ifBlank { first }
+    val summary = sanitizeTelemetryText(head)
+    val exceptionClass = EXCEPTION_CLASS_HEAD.find(head)?.value
+
+    val frames = lines.asSequence()
+        .map(String::trim)
+        .filter { it.startsWith("at ") }
+        .take(ClientTelemetryLimits.MAX_STACK_FRAMES)
+        .mapNotNull(::parsePersistedCrashFrame)
+        .toList()
+    return PersistedCrashSummary(exceptionClass, summary, frames)
+}
+
+/** 逗号/空格分隔前的异常类限定名，如 `java.lang.SecurityException`。 */
+private val EXCEPTION_CLASS_HEAD = Regex("([A-Za-z_][A-Za-z0-9_]*\\.)+[A-Za-z_][A-Za-z0-9_$]*")
+
+/** 解析单帧 `com.foo.Bar.method(File.kt:12)`；无法解析返回 null。 */
+private fun parsePersistedCrashFrame(line: String): TelemetryStackFrame? {
+    val body = line.removePrefix("at ").trim()
+    val open = body.indexOfLast { it == '(' }
+    if (open <= 0) return null
+    val qualifier = body.substring(0, open)
+    val location = body.substring(open + 1, (body.indexOf(')', open)).takeIf { it > open } ?: body.length)
+    val className = qualifier.substringBeforeLast('.', "").ifBlank { return null }
+    val methodName = qualifier.substringAfterLast('.', "")
+    if (methodName.isBlank()) return null
+    val fileName = location.substringBefore(':').substringAfterLast('/').substringAfterLast('\\')
+        .takeIf(String::isNotBlank)
+    val lineNumber = location.substringAfter(':', "").toIntOrNull()
+    return TelemetryStackFrame(
+        className = className.take(ClientTelemetryLimits.MAX_STACK_FIELD_CHARS),
+        methodName = methodName.take(ClientTelemetryLimits.MAX_STACK_FIELD_CHARS),
+        fileName = fileName?.take(ClientTelemetryLimits.MAX_STACK_FIELD_CHARS),
+        lineNumber = lineNumber,
+    )
+}
+
+internal class PersistedCrashSummary(
+    val exceptionClass: String?,
+    val summary: String,
+    val stackFrames: List<TelemetryStackFrame>,
+)
