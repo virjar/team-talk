@@ -19,6 +19,10 @@ server/server/src/main/resources/static/admin/
 
 client/desktop/output/
 
-# 唯一的部署本机状态目录：私有配置覆写、deployment.secrets、tcp-tls 密钥材料与 vendor SDK。
+# 私有部署状态目录：私有配置覆写、deployment.secrets、tcp-tls 密钥材料与 vendor SDK。
 # 公版与私有 clone 共用该目录；交接部署时整体拷贝它即可。
 /buildSrc/deployment-local/
+
+# 公共部署的生成状态与部署目录同侧；仅配置入口 Deployment.kt 进入版本库。
+/buildSrc/deployment/*
+!/buildSrc/deployment/Deployment.kt

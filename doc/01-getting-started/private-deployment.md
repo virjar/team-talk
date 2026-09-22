@@ -63,9 +63,11 @@ mkdir -p buildSrc/deployment-local
 cp buildSrc/deployment/Deployment.kt buildSrc/deployment-local/Deployment.kt
 ```
 
-`buildSrc/deployment-local/` 是唯一的部署本机状态目录：私有配置 `Deployment.kt`、部署凭据
+`buildSrc/deployment-local/` 是私有部署的本机状态目录：私有配置 `Deployment.kt`、部署凭据
 `deployment.secrets`、TCP TLS 材料 `tcp-tls/` 与 OEM 推送 `vendor/` SDK 都在其中。不同团队对仓库的
-唯一差异就是该目录的内容，交接或备份部署时整体拷贝这一个目录即可。
+唯一差异就是该目录的内容，交接或备份部署时整体拷贝这一个目录即可。公版 clone 的生成状态
+（凭据、TLS 材料）不落在这里，而是与公版配置同放在 `buildSrc/deployment/` 下（除
+`Deployment.kt` 外全部被 Git 忽略）。
 
 先生成证书，再编写引用它的 local 配置，避免 Gradle 配置阶段读取尚不存在的文件。证书位于被 Git
 忽略的 `buildSrc/deployment-local/tcp-tls/certificate.pem`，私钥位于同目录 `private-key.pem`；重复运行
@@ -79,7 +81,12 @@ cp buildSrc/deployment/Deployment.kt buildSrc/deployment-local/Deployment.kt
 
 随后编辑 `buildSrc/deployment-local/Deployment.kt`，把公版坐标和身份换成自己的值。整个 local 目录
 被 Git 忽略，不用建私有分支或提交；更新源码时保留本地配置与签名材料。目录里没有 `Deployment.kt`
-时仍按公版配置编译，因此公版 clone 存放生成的凭据或证书不影响公版构建。`buildSrc` 只编译这一套配置，
+时仍按公版配置编译，公版 clone 的生成状态（凭据、TLS 材料）放在 `buildSrc/deployment/` 下，
+不会误切私有配置。
+
+从旧布局迁移（公版 clone）：曾按旧约定把 `deployment.secrets` / `tcp-tls/` 存放在
+`buildSrc/deployment-local/` 的公版 clone，把它们移动到 `buildSrc/deployment/` 下的同名位置并删除
+空的 deployment-local 目录；升级部署以远端 `env.sh` 为权威回写凭据，移动文件不重置任何密码。`buildSrc` 只编译这一套配置，
 根构建调用 `deploymentConfiguration(rootDir)` 获取对象；语法、类型或构造器校验失败会停止构建。
 配置按 `deployment { server { ... }; deploy { ... }; client { ... } }` 分章节，可用同目录 Kotlin
 辅助函数拆分。创建 local 目录后重新同步 Gradle，让 IDE 更新源码目录。完整示例见

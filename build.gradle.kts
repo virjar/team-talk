@@ -53,8 +53,8 @@ extra.apply {
 }
 
 // ── 单一部署配置 ──
-// buildSrc/deployment-local 是唯一的部署本机状态目录：私有配置、deployment.secrets 与 tcp-tls
-// 材料都在其中；存在 Deployment.kt 才视为私有配置，仅存放生成状态的公版 clone 仍编译公版配置。
+// 私有配置以 buildSrc/deployment-local/Deployment.kt 存在为准，整个 local 目录被 Git 忽略；
+// 公版的生成状态（deployment.secrets、tcp-tls）放在 buildSrc/deployment/ 下，除 Deployment.kt 外全部忽略。
 
 val usingLocalDeploymentConfig = Files.exists(
     deployment.deploymentLocalConfigurationFile(rootDir).toPath(),

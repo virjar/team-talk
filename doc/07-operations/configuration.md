@@ -6,8 +6,8 @@
 |---|---|---|---|
 | 公版默认部署配置 | `buildSrc/deployment/Deployment.kt` | 公版 HTTP、TCP、SSH、安装路径、客户端发行身份 | 是 |
 | 本机部署配置 | `buildSrc/deployment-local/Deployment.kt` | 存在时整个 local 目录完整替换默认配置目录；私有发行在独立 clone 中维护 | 否 |
-| 部署 secret | `buildSrc/deployment-local/deployment.secrets` | 数据库、TLS 等密码；与私有配置同目录 | 否 |
-| TCP TLS 材料 | `buildSrc/deployment-local/tcp-tls/` | 公共证书与私钥；生成或管理员自有证书 | 否 |
+| 公版部署状态 | `buildSrc/deployment/deployment.secrets`、`buildSrc/deployment/tcp-tls/` | 公版 clone 的生成凭据与 TLS 材料，与公版配置同目录 | 否 |
+| 私有部署状态 | `buildSrc/deployment-local/deployment.secrets`、`buildSrc/deployment-local/tcp-tls/` | 数据库、TLS 等密码与证书；与私有配置同目录 | 否 |
 | 实例环境 | `/opt/teamtalk/conf/env.sh` | systemd/JVM 环境变量 | 否 |
 | 服务默认值 | `server/.../application.conf` | HTTP、数据库、文件上限 | 是 |
 | 客户端默认值 | 生成配置 / ServerConfig | 应用身份与名称、serverUrl、TCP host/port | 构建产物 |
@@ -25,9 +25,11 @@ Kotlin 配置源码，按 `server`、`deploy`、`client` 章节描述配置，�
 Kotlin 源文件却缺少 `Deployment.kt` 入口，或配置类型、语法有误时构建失败，不回退公版；目录里只存放
 生成的部署状态（凭据、TLS 材料、vendor SDK）时不影响公版配置。
 
-`buildSrc/deployment-local/` 是部署本机状态的唯一根目录：私有配置、`deployment.secrets`、`tcp-tls/`
-证书材料与 OEM 推送 `vendor/` SDK 全部在其中。不同团队对仓库的唯一差异就是该目录的内容，交接或
-备份部署时整体拷贝这一个目录即可；公版 clone 首次部署生成的凭据也落在同一位置。部署代码中的路径
+部署状态与所选配置严格同侧：公版 clone 的生成状态（`deployment.secrets`、`tcp-tls/`）放在
+`buildSrc/deployment/` 下，除 `Deployment.kt` 外全部被 Git 忽略；私有 clone 的私有配置、
+`deployment.secrets`、`tcp-tls/` 证书材料与 OEM 推送 `vendor/` SDK 全部收在
+`buildSrc/deployment-local/`（整目录忽略）。不同团队对私有仓库的唯一差异就是 deployment-local
+目录的内容，交接或备份部署时整体拷贝这一个目录即可。部署代码中的路径
 统一由 `buildSrc/src/main/kotlin/deployment/DeploymentLayout.kt` 定义。
 
 配置入口仍是 `package deployment` 下的普通 Kotlin 函数
