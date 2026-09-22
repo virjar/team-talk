@@ -147,7 +147,7 @@ internal fun IosFeatureScreen(route: IosRoute, ui: IosSessionUi) = key(ui, route
             onSendMessage = { actions.launch { data.discovery.startPersonalChat(route.id)?.let { actions.chat(it) } } },
             onCreateGroup = if (data.account.isFriend) admission.guard { ui.navigation.open(IosRoute(IosPage.CREATE_GROUP, route.id)) } else null,
             onBlockUser = if (route.id != data.userSession.uid) admission.guard { data.account.blockContact(route.id, actions.back) } else null,
-            onDeleteFriend = admission.guard { data.contactViewModel.deleteFriend(route.id); ui.navigation.back() },
+            onDeleteFriend = admission.guard { data.account.deleteFriend(route.id); ui.navigation.back() },
             onBack = actions.back,
         )
         IosPage.EDIT_PROFILE -> IosEditProfileScreen(actions)

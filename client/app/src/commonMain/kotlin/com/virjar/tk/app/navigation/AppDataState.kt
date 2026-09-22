@@ -91,6 +91,10 @@ open class AppDataState(
      * 是由 [destroy] 退役的可取消 session owner。资源准入 gate 将任何取消清理
      * 与之后的 ClientSession close 线性化。调用方只等待一个结果，因此不可能把工作
      * 附着到过时的 Window/route scope 上。
+     *
+     * [onClosed] 是 admission 已关闭（会话退役）时返回的替代结果。既有调用方约定
+     * 把它合成为 `Outcome.Failure(AppError.AuthExpired)`——当前退役即认证终结；
+     * 若未来出现非认证原因的关闭路径，需先重新评估该假设再沿用此约定。
      */
     suspend fun <T> runAdmittedUiAction(
         admission: UiActionAdmission,

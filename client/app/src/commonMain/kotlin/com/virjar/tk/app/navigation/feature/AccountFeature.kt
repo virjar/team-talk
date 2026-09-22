@@ -464,6 +464,19 @@ class AccountFeature internal constructor(
         }
     }
 
+    /**
+     * 删除好友。服务端向双方发送 CONTACT_DELETED 事件，本地联系人投影由 Notify 收敛；
+     * 失败保留当前资料页与好友状态。
+     */
+    fun deleteFriend(uid: String) = scope.launch {
+        if (uid.isBlank() || uid == session.userSession.uid) return@launch
+        try {
+            session.contactRepo.deleteFriend(uid).getOrThrow()
+        } catch (e: AppError) {
+            reportError(e, "删除好友失败")
+        }
+    }
+
     private fun updateFriendApplyState(uid: String, state: ProfileFriendApplyState) {
         friendApplyStateByUid = if (state == ProfileFriendApplyState.NONE) {
             friendApplyStateByUid - uid

@@ -167,7 +167,7 @@ internal fun DesktopUserProfileDialog(
                                     }
                                 } else null,
                                 onDeleteFriend = presentationGate.guard {
-                                    nav.contactViewModel.deleteFriend(uid)
+                                    nav.account.deleteFriend(uid)
                                     onDismiss()
                                 },
                                 onBlockUser = if (uid != nav.userSession.uid) {

@@ -124,24 +124,8 @@ private fun restorePreviousReleaseCommand(deployPath: String, rollbackPath: Stri
         "cp -f $rollbackPath/teamtalk.service /etc/systemd/system/teamtalk.service"
 }
 
-private fun quiesceTeamTalkForResetRecovery(
-    host: String,
-    user: String,
-    port: Int,
-) {
-    remoteChecked(
-        "quiesce failed TeamTalk release before reset recovery",
-        host,
-        user,
-        "systemctl stop teamtalk 2>/dev/null || true; " +
-            "systemctl kill --kill-who=all --signal=TERM teamtalk 2>/dev/null || true; " +
-            "test \"\$(systemctl show teamtalk -p MainPID --value)\" = '0' && " +
-            "! systemctl is-active --quiet teamtalk",
-        port,
-        timeoutMillis = 300_000L,
-        outputMode = ProcessOutputMode.DISCARD,
-    )
-}
+private fun quiesceTeamTalkForResetRecovery(host: String, user: String, port: Int) =
+    stopTeamTalkUnitExactly(host, user, port, label = "quiesce failed TeamTalk release before reset recovery")
 
 private fun restorePreviousReleaseAndVerify(
     host: String,
@@ -280,8 +264,8 @@ internal fun deployResetUpgrade(
     val previousBuildIdentity = readRemoteServerBuildIdentity(host, user, deployPort, deployPath)
     val previousHealthEndpoint = readRemoteHealthEndpoint(host, user, deployPort, deployPath)
     val transactionId = UUID.randomUUID().toString()
-    val stagedPath = "$deployPath/.release-$transactionId"
-    val rollbackPath = "$deployPath/.rollback-$transactionId"
+    val stagedPath = requireCanonicalDeployPath("$deployPath/.release-$transactionId")
+    val rollbackPath = requireCanonicalDeployPath("$deployPath/.rollback-$transactionId")
     var rollbackArmed = false
     var dataResetStarted = false
     var committed = false

@@ -629,7 +629,7 @@ private fun NavGraphBuilder.contactsDestination(
                 null
             },
             onDeleteFriend = actionAdmission.guard {
-                dataState.contactViewModel.deleteFriend(uid)
+                dataState.account.deleteFriend(uid)
                 navController.popBackStack()
             },
             onBack = actionAdmission.guard { navController.popBackStack() },

@@ -263,8 +263,8 @@ fun deployUpgrade(
         secrets, sslEnabled, sslPort, deployPath, httpPort, tcpPort, minimumProtocolMinor, tcpTlsEnabled,
     )
     val transactionId = UUID.randomUUID().toString()
-    val stagedPath = "$deployPath/.release-$transactionId"
-    val rollbackPath = "$deployPath/.rollback-$transactionId"
+    val stagedPath = requireCanonicalDeployPath("$deployPath/.release-$transactionId")
+    val rollbackPath = requireCanonicalDeployPath("$deployPath/.rollback-$transactionId")
     var rollbackArmed = false
     var committed = false
 
@@ -453,6 +453,7 @@ internal fun requireRemoteStagedRelease(
     require(expectedBuildIdentity.matches(Regex("[A-Za-z0-9][A-Za-z0-9._+-]{0,199}"))) {
         "Expected build identity is unsafe for remote validation"
     }
+    requireCanonicalDeployPath(stagedPath)
     remoteChecked(
         "validate staged TeamTalk release",
         host,
@@ -465,10 +466,15 @@ internal fun requireRemoteStagedRelease(
     )
 }
 
-internal fun stopTeamTalkUnitExactly(host: String, user: String, port: Int) {
+internal fun stopTeamTalkUnitExactly(
+    host: String,
+    user: String,
+    port: Int,
+    label: String = "stop TeamTalk systemd unit and verify its cgroup is quiescent",
+) {
     println("  Stopping TeamTalk Server ...")
     remoteChecked(
-        "stop TeamTalk systemd unit and verify its cgroup is quiescent",
+        label,
         host,
         user,
         "systemctl stop teamtalk && " +
@@ -492,18 +498,7 @@ private fun rollbackUpgrade(
     previousBuildIdentity: String,
 ) {
     println("  Upgrade failed; restoring the previous TeamTalk release ...")
-    remoteChecked(
-        "stop failed TeamTalk release before rollback",
-        host,
-        user,
-        "systemctl stop teamtalk 2>/dev/null || true; " +
-            "systemctl kill --kill-who=all --signal=TERM teamtalk 2>/dev/null || true; " +
-            "test \"\$(systemctl show teamtalk -p MainPID --value)\" = '0' && " +
-            "! systemctl is-active --quiet teamtalk",
-        port,
-        timeoutMillis = 300_000L,
-        outputMode = ProcessOutputMode.DISCARD,
-    )
+    stopTeamTalkUnitExactly(host, user, port, label = "stop failed TeamTalk release before rollback")
     remoteChecked(
         "restore previous TeamTalk release and configuration",
         host,

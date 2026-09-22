@@ -91,22 +91,6 @@ class ContactViewModel(
         }
     }
 
-    fun apply(toUid: String, remark: String? = null) {
-        scope.launch {
-            runViewModelAction("申请好友失败") {
-                localData.run { contactRepo.apply(toUid, remark).getOrThrow() }
-            }
-        }
-    }
-
-    fun deleteFriend(friendUid: String) {
-        scope.launch {
-            runViewModelAction("删除好友失败") {
-                localData.run { contactRepo.deleteFriend(friendUid).getOrThrow() }
-            }
-        }
-    }
-
     override fun destroy() {
         pendingApplyRefreshRequests.close()
         super.destroy()
