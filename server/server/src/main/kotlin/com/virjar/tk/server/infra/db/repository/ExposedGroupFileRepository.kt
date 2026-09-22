@@ -4,6 +4,7 @@ import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
 import com.virjar.tk.server.infra.db.requireExposedTransaction
 import com.virjar.tk.server.domain.canonicalUuidOrNull
 import com.virjar.tk.server.domain.groupfile.GroupFileCapacityPolicy
+import com.virjar.tk.server.domain.groupfile.SiblingNameConflictException
 import com.virjar.tk.server.domain.groupfile.GroupFileAppendVersionCommand
 import com.virjar.tk.server.domain.groupfile.GroupFileCreateCommand
 import com.virjar.tk.server.domain.groupfile.GroupFileDeleteCommand
@@ -732,7 +733,7 @@ class ExposedGroupFileRepository(
                 (GroupFileEntries.nameKey eq GroupFileService.nameKey(name)) and
                 (GroupFileEntries.status eq STATUS_ACTIVE)
         }.singleOrNull()
-        require(found == null || found[GroupFileEntries.entryId] == excludingEntryId) { GroupFileService.SIBLING_NAME_CONFLICT_MESSAGE }
+        if (found != null && found[GroupFileEntries.entryId] != excludingEntryId) throw SiblingNameConflictException()
     }
 
     private fun requireActiveParent(chatId: String, parentId: String?) {

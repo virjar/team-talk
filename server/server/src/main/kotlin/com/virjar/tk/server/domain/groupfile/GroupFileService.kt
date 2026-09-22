@@ -408,8 +408,15 @@ class GroupFileService(
     }
 
     companion object {
-        const val SIBLING_NAME_CONFLICT_MESSAGE = "同一目录下已存在同名条目"
+        const val SIBLING_NAME_CONFLICT_MESSAGE = SiblingNameConflictException.MESSAGE
 
         fun nameKey(name: String): String = name.trim().lowercase(Locale.ROOT)
+    }
+}
+
+/** 同一目录下同名条目冲突；自动归档据此换名重试，其余调用方按普通参数错误处理。 */
+class SiblingNameConflictException : IllegalArgumentException(MESSAGE) {
+    companion object {
+        const val MESSAGE = "同一目录下已存在同名条目"
     }
 }

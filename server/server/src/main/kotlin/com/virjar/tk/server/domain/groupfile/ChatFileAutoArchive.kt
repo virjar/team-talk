@@ -74,9 +74,8 @@ class ChatFileAutoArchive(
                         declared = attachment,
                     )
                     return
-                } catch (conflict: IllegalArgumentException) {
+                } catch (conflict: SiblingNameConflictException) {
                     // 只有同名冲突才换名重试；其余（配额、成员资格等）按跳过处理由上层记录。
-                    if (conflict.message != GroupFileService.SIBLING_NAME_CONFLICT_MESSAGE) throw conflict
                 }
             }
             attempt += 1

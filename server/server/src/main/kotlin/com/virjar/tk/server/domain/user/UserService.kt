@@ -4,6 +4,7 @@ import com.virjar.tk.protocol.model.MainlandPhoneNumber
 import com.virjar.tk.protocol.model.AuthRules
 import com.virjar.tk.server.domain.auth.PasswordHasher
 import com.virjar.tk.server.domain.attachment.AttachmentCatalog
+import com.virjar.tk.server.domain.attachment.markBusinessBoundDeferred
 import com.virjar.tk.server.domain.attachment.AttachmentLifecycleGate
 import com.virjar.tk.server.domain.contact.ContactPolicy
 import com.virjar.tk.server.domain.transaction.PgWriteTransactionContext
@@ -201,12 +202,7 @@ class UserService(
         // PostgreSQL 引用是可恢复的事实。在这个微小的暂存窗口期内，当前头像仍是已认证
         // 读取。失败的发布由精确重试或在任何后续替换/清除之前修复。
         val committed = persistProfilePatch(uid, patch)
-        val publicationFailure = try {
-            attachmentCatalog.markBusinessBound(listOf(requestedAvatar.path))
-            null
-        } catch (failure: Exception) {
-            failure
-        }
+        val publicationFailure = attachmentCatalog.markBusinessBoundDeferred(requestedAvatar.path)
         return ProfileMutationOutcome(committed, publicationFailure)
     }
 

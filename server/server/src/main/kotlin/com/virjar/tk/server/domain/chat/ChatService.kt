@@ -1,5 +1,7 @@
 package com.virjar.tk.server.domain.chat
 
+import com.virjar.tk.server.domain.attachment.markBusinessBoundDeferred
+import com.virjar.tk.server.domain.attachment.promoteStagingReference
 import com.virjar.tk.server.domain.canonicalUuidOrNull
 import com.virjar.tk.server.domain.command.canonicalOperationId
 import com.virjar.tk.protocol.model.InvitePreview
@@ -188,7 +190,7 @@ class ChatService(
                     }
                     if (requested != null && requested.path == currentPath) {
                         // PostgreSQL 可能已提交而 FileStore 发布失败；先补发布，本次幂等无副作用。
-                        publicationFailure = promoteStagingGroupAvatar(catalog, requested)
+                        publicationFailure = catalog.promoteStagingReference(requested.path)
                         return@withReferenceMutation
                     }
                     // 清除/替换前，把仍停留在 staging 的当前引用先晋升为已绑定（上次发布失败修复）。
@@ -196,7 +198,7 @@ class ChatService(
                         val currentDescriptor = chats.getGroupAvatars(listOf(chatId))
                             .firstOrNull()?.attachment
                         if (currentDescriptor != null) {
-                            publicationFailure = promoteStagingGroupAvatar(catalog, currentDescriptor)
+                            publicationFailure = catalog.promoteStagingReference(currentDescriptor.path)
                         }
                     }
                     if (requested != null) {
@@ -228,12 +230,7 @@ class ChatService(
                     }
                     // PostgreSQL 引用已提交；发布失败由精确重试或在任何后续替换/清除之前修复。
                     requested?.let { item ->
-                        publicationFailure = try {
-                            catalog.markBusinessBound(listOf(item.path))
-                            null
-                        } catch (failure: Exception) {
-                            failure
-                        }
+                        publicationFailure = catalog.markBusinessBoundDeferred(item.path)
                     }
                 }
                 if (!retryWithCurrentPath) {
@@ -244,16 +241,6 @@ class ChatService(
         }
     }
 
-    /** 当前引用若仍停留在 staging（上次发布失败），先晋升为已绑定；返回失败供调用方上抛。 */
-    private fun promoteStagingGroupAvatar(
-        catalog: com.virjar.tk.server.domain.attachment.AttachmentCatalog,
-        descriptor: com.virjar.tk.protocol.model.Attachment,
-    ): Throwable? = try {
-        if (catalog.isStaging(descriptor.path)) catalog.markBusinessBound(listOf(descriptor.path))
-        null
-    } catch (failure: Exception) {
-        failure
-    }
 
     /** 批量取回群当前头像；只返回调用人是当前成员的群（内测反馈 T053）。 */
     suspend fun getGroupAvatars(uid: String, chatIds: List<String>): List<com.virjar.tk.protocol.model.GroupAvatar> {
