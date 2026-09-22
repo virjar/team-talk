@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.GroupAdd
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -38,10 +39,11 @@ import kotlinx.coroutines.launch
 /**
  * 会话工具页（聊天头部「···」进入的独立窗口根页）。
  *
- * 当前承载发起群聊与清空聊天记录；后续会话级操作（如查找消息、设置）在此追加。
+ * 当前承载聊天记录搜索、发起群聊与清空聊天记录；后续会话级操作在此追加。
  * 清空聊天记录只影响本机：SDK 在删除本地投影的同时记录清空水位，防止历史拉取
  * 把已清空消息重新落库；对端与其他设备不受影响。
  *
+ * @param onOpenHistorySearch 进入聊天记录搜索（搜索全部内容 + 分类浏览）
  * @param onClearHistory 执行清空；返回 null 表示成功，否则为可展示的失败原因
  * @param onFinished 清空成功后的收尾（宿主通常关闭窗口）
  */
@@ -49,6 +51,7 @@ import kotlinx.coroutines.launch
 fun ChatToolsScreen(
     chatName: String,
     isGroup: Boolean,
+    onOpenHistorySearch: () -> Unit,
     onCreateGroup: () -> Unit,
     onClearHistory: suspend () -> String?,
     onBack: (() -> Unit)? = null,
@@ -74,6 +77,14 @@ fun ChatToolsScreen(
                 .testTag("chatTools.context"),
         )
 
+        ChatToolsActionRow(
+            icon = Icons.Filled.Search,
+            title = "搜索聊天记录",
+            subtitle = "按关键词、类型、发送人和时间查找",
+            testTag = "chatTools.historySearch",
+            onClick = onOpenHistorySearch,
+        )
+        HorizontalDivider(color = Tk.colors.divider)
         ChatToolsActionRow(
             icon = Icons.Filled.GroupAdd,
             title = "发起群聊",

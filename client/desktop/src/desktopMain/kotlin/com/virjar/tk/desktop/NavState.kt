@@ -9,6 +9,7 @@ import com.virjar.tk.app.navigation.AppDataState
 import com.virjar.tk.app.navigation.MainTab
 import com.virjar.tk.app.navigation.ScreenDataKey
 import com.virjar.tk.app.navigation.feature.document.DocumentDraftStore
+import com.virjar.tk.app.viewmodel.ChatHistoryCategory
 import com.virjar.tk.app.viewmodel.MessageFocusTarget
 
 /**
@@ -43,6 +44,20 @@ sealed class SubScreen {
         val peerUid: String? = null,
     ) : SubScreen()
 
+    /** 会话搜索中心页：搜索全部内容 + 分类入口，在会话工具窗口内导航。 */
+    data class ChatHistorySearch(
+        val chatId: String,
+        val chatName: String,
+    ) : SubScreen()
+
+    /** 聊天记录分类浏览页：关键词 + 发送人/时间筛选，在会话工具窗口内导航。 */
+    data class ChatHistoryBrowser(
+        val chatId: String,
+        val chatName: String,
+        val category: ChatHistoryCategory,
+        val initialKeyword: String = "",
+    ) : SubScreen()
+
     // ── 聊天右侧检查器 ──
     data class GroupDetail(val chatId: String) : SubScreen()
     data class InviteMembers(val chatId: String) : SubScreen()
@@ -70,7 +85,9 @@ sealed class SubScreen {
             is CreateGroup -> 560.dp
             SearchMessages -> 560.dp
             is Forward -> 500.dp
-            is ChatTools -> 360.dp
+            is ChatTools -> 420.dp
+            is ChatHistorySearch -> 480.dp
+            is ChatHistoryBrowser -> 620.dp
             GlobalSearch -> 560.dp
             else -> 500.dp
         }

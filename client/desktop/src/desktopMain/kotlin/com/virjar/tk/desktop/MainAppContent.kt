@@ -916,6 +916,8 @@ internal fun desktopTelemetryPage(screen: SubScreen): ClientUiPage = when (scree
     is SubScreen.JoinByInvite -> ClientUiPage.JOIN_BY_INVITE
     is SubScreen.CreateGroup -> ClientUiPage.CREATE_GROUP
     is SubScreen.ChatTools -> ClientUiPage.CHAT_TOOLS
+    is SubScreen.ChatHistorySearch -> ClientUiPage.CHAT_HISTORY_SEARCH
+    is SubScreen.ChatHistoryBrowser -> ClientUiPage.CHAT_HISTORY_BROWSER
     SubScreen.SearchMessages,
     SubScreen.GlobalSearch,
     -> ClientUiPage.SEARCH_MESSAGES

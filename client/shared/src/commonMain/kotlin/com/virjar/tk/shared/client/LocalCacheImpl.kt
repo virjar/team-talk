@@ -742,6 +742,8 @@ class LocalCacheImpl internal constructor(
     override fun setConversationMarkedUnread(chatId: String, marked: Boolean) =
         conversations.setManualUnread(chatId, marked)
 
+    override fun clearedChatHistoryBefore(chatId: String): Long = conversations.clearedBeforeSeq(chatId)
+
     override fun clearChatHistory(chatId: String) {
         require(chatId.isNotBlank()) { "chatId must not be blank" }
         cacheUseGate.use {

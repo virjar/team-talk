@@ -263,6 +263,11 @@ internal class LocalConversationProjectionStore(
         publishConversations()
     }
 
+    /** 清空水位只读查询；内存映射在构造期从持久化标记加载，始终是权威。 */
+    fun clearedBeforeSeq(chatId: String): Long = cacheUseGate.use {
+        synchronized(stateLock) { clearedBeforeSeqByChatId[chatId] ?: 0L }
+    }
+
     /** 调用方持有 [stateLock]。 */
     private fun removeLocalFlagsLocked(chatId: String) {
         manualUnreadByChatId.remove(chatId)
