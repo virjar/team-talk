@@ -7,7 +7,7 @@ internal actual fun platformLog(level: String, tag: String, msg: String, throwab
     // 使其保留正常的进程语义。
     try {
         when (level) {
-            "trace" -> android.util.Log.i(tag, msg)
+            "trace", "info" -> android.util.Log.i(tag, msg)
             "fault" -> {
                 if (throwable != null) android.util.Log.e(tag, msg, throwable)
                 else android.util.Log.e(tag, msg)

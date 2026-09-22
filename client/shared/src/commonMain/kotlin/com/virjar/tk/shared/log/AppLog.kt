@@ -31,7 +31,13 @@ internal class AppLogOwner(
 
     fun trace(tag: String, msg: String) {
         platformLog("trace", tag, msg, null)
-        appendTrace(tag, msg)
+        appendDiagnostic("trace", tag, msg)
+    }
+
+    /** 用户旅程（info 级）：与 trace 共享本地缓冲，但以 INFO 级进入遥测、默认上报。 */
+    fun info(tag: String, msg: String) {
+        platformLog("info", tag, msg, null)
+        appendDiagnostic("info", tag, msg)
     }
 
     fun fault(tag: String, msg: String, throwable: Throwable? = null) {
@@ -39,10 +45,10 @@ internal class AppLogOwner(
         appendFault(tag, msg, throwable)
     }
 
-    internal fun appendTrace(tag: String, msg: String) = synchronized(lifecycleLock) {
+    private fun appendDiagnostic(level: String, tag: String, msg: String) = synchronized(lifecycleLock) {
         if (!restorable) return@synchronized
-        traceBuffer.append("trace", tag, msg)
-        invokeTelemetrySink("trace", tag, msg, null)
+        traceBuffer.append(level, tag, msg)
+        invokeTelemetrySink(level, tag, msg, null)
     }
 
     internal fun appendFault(tag: String, msg: String, throwable: Throwable? = null) = synchronized(lifecycleLock) {
@@ -150,10 +156,16 @@ object AppLog {
 
     internal fun ownerSnapshot(): AppLogOwner? = owner
 
-    /** 业务流程日志。开发构建自动上传，发布构建仅保存在本地。 */
+    /** 组件内部流程（trace 级）：本地保留，遥测仅在定向诊断开全量时上报。 */
     fun trace(tag: String, msg: String) {
         platformLog("trace", tag, msg, null)
-        owner?.appendTrace(tag, msg)
+        owner?.trace(tag, msg)
+    }
+
+    /** 用户旅程（info 级）：页面切换、关键动作等运维可读事件，遥测默认上报。 */
+    fun info(tag: String, msg: String) {
+        platformLog("info", tag, msg, null)
+        owner?.info(tag, msg)
     }
 
     /** 故障/异常日志。始终触发上传。 */

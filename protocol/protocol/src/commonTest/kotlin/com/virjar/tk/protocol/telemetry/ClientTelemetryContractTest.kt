@@ -124,6 +124,31 @@ class ClientTelemetryContractTest {
         assertTrue(ClientTelemetryValidation.allows(baseline, criticalSystem, 10))
         assertTrue(ClientTelemetryValidation.allows(baseline, failedMedia, 10))
         assertFalse(ClientTelemetryValidation.allows(baseline, outgoingQueue, 10))
+        // 用户旅程（info 级）默认放行：页面停留、用户动作与 INFO 日志。
+        val dwell = event(5, "page.dwell", TelemetryEventKind.PAGE_DWELL, TelemetryPageDwellPayload(
+            "chat",
+            1_000,
+            TelemetryPageExitReason.NAVIGATION,
+        ))
+        val action = event(6, "send_message", TelemetryEventKind.ACTION, TelemetryActionPayload(
+            "chat",
+            "send_message",
+            TelemetryActionOutcome.SUCCEEDED,
+        ))
+        val info = event(7, "log.info", TelemetryEventKind.LOG, TelemetryLogPayload(
+            TelemetryLogLevel.INFO,
+            "ChatMedia",
+            "camera onResult: Photo",
+        ))
+        val debug = event(8, "log.debug", TelemetryEventKind.LOG, TelemetryLogPayload(
+            TelemetryLogLevel.DEBUG,
+            "ChatMedia",
+            "internal",
+        ))
+        assertTrue(ClientTelemetryValidation.allows(baseline, dwell, 10))
+        assertTrue(ClientTelemetryValidation.allows(baseline, action, 10))
+        assertTrue(ClientTelemetryValidation.allows(baseline, info, 10))
+        assertFalse(ClientTelemetryValidation.allows(baseline, debug, 10))
 
         val diagnostic = baseline.copy(
             revision = "diag-1",

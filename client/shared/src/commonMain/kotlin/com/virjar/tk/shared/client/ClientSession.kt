@@ -653,7 +653,11 @@ fun createSession(
         telemetrySink = telemetryRecorder?.let { recorder ->
             { level, tag, message, throwable ->
                 recorder.recordAppLog(
-                    level = if (level == "fault") TelemetryLogLevel.ERROR else TelemetryLogLevel.TRACE,
+                    level = when (level) {
+                        "fault" -> TelemetryLogLevel.ERROR
+                        "info" -> TelemetryLogLevel.INFO
+                        else -> TelemetryLogLevel.TRACE
+                    },
                     logger = tag,
                     message = message,
                     throwable = throwable,

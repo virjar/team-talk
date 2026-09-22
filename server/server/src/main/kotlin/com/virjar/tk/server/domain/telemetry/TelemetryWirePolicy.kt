@@ -1,5 +1,6 @@
 package com.virjar.tk.server.domain.telemetry
 
+import com.virjar.tk.protocol.telemetry.TelemetryLogLevel
 import com.virjar.tk.protocol.telemetry.ClientTelemetryValidation
 import com.virjar.tk.protocol.telemetry.TelemetryActionOutcome
 import com.virjar.tk.protocol.telemetry.TelemetryActionPayload
@@ -70,6 +71,9 @@ private val BASELINE_PAGE_CODES = setOf(
     "conversations",
     "contacts",
     "documents",
+    "tasks",
+    "chat_tools",
+    "join_by_invite",
     "settings",
     "chat",
     "search_messages",
@@ -91,6 +95,14 @@ private val BASELINE_PAGE_CODES = setOf(
     "document_window",
     "media_gallery",
 )
+private val BASELINE_LOG_LOGGER_CODES = setOf(
+    "ChatMedia",
+    "UncaughtException",
+    "Telemetry",
+    "Sync",
+    "Auth",
+)
+
 private val BASELINE_ACTION_CODES = setOf(
     "show_feedback",
     "open_page",
@@ -153,10 +165,17 @@ internal fun TelemetryEvent.isApprovedBaselineEvent(): Boolean = when (val body 
             body.reasonCode.isNullOrIn(BASELINE_MEDIA_REASON_CODES) &&
             eventName == body.baselineEventName()
     is TelemetryOutgoingQueuePayload -> false
-    is TelemetryLogPayload,
-    is TelemetryPageDwellPayload,
-    is TelemetryActionPayload,
-    -> false
+    // 用户旅程（info 级）默认放行：页面停留、用户动作、INFO+ 日志。
+    is TelemetryPageDwellPayload ->
+        body.page in BASELINE_PAGE_CODES && eventName == "page.dwell"
+    is TelemetryActionPayload ->
+        body.action in BASELINE_ACTION_CODES &&
+            body.page.isNullOrIn(BASELINE_PAGE_CODES) &&
+            eventName == body.action
+    is TelemetryLogPayload ->
+        body.level >= TelemetryLogLevel.INFO &&
+            body.logger in BASELINE_LOG_LOGGER_CODES &&
+            eventName == "log." + body.level.name.lowercase()
 }
 
 internal fun TelemetryEvent.baselineEventName(): String? = when (val body = payload) {
@@ -165,10 +184,9 @@ is TelemetryFaultPayload -> body.baselineEventName()
     is TelemetrySystemPayload -> body.name
     is TelemetryMediaPayload -> body.baselineEventName()
     is TelemetryOutgoingQueuePayload -> null
-    is TelemetryLogPayload,
-    is TelemetryPageDwellPayload,
-    is TelemetryActionPayload,
-    -> null
+    is TelemetryPageDwellPayload -> "page.dwell"
+    is TelemetryActionPayload -> body.action
+    is TelemetryLogPayload -> "log." + body.level.name.lowercase()
 }
 
 private fun TelemetryFaultPayload.baselineEventName(): String? = when (faultCode) {

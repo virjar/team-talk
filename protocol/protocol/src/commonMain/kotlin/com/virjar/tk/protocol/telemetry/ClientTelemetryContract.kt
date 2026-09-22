@@ -566,6 +566,9 @@ object ClientTelemetryValidation {
         requireValid(event)
         val diagnostic = policy.mode == TelemetryPolicyMode.DIAGNOSTIC && nowEpochMs < policy.expiresAtEpochMs
         if (diagnostic) return true
+        // 用户旅程（info 级）默认上报：页面停留、用户动作与 INFO+ 日志，
+        // 让运维在用户反馈缺陷时还原其大致操作路径；组件内部的 TRACE/DEBUG
+        // 日志与出站队列指标仍只在定向诊断（开全量）时上报。
         return when (event.kind) {
             TelemetryEventKind.FAULT,
             TelemetryEventKind.USER_NOTICE,
@@ -573,11 +576,11 @@ object ClientTelemetryValidation {
             TelemetryEventKind.SYSTEM -> (event.payload as TelemetrySystemPayload).critical
             TelemetryEventKind.MEDIA ->
                 (event.payload as TelemetryMediaPayload).outcome == TelemetryActionOutcome.FAILED
-            TelemetryEventKind.LOG,
+            TelemetryEventKind.LOG -> (event.payload as TelemetryLogPayload).level >= TelemetryLogLevel.INFO
             TelemetryEventKind.PAGE_DWELL,
             TelemetryEventKind.ACTION,
-            TelemetryEventKind.OUTGOING_QUEUE,
-            -> false
+            -> true
+            TelemetryEventKind.OUTGOING_QUEUE -> false
         }
     }
 
