@@ -37,7 +37,9 @@ internal suspend fun uploadAndroidVideo(
     context: Context,
     uri: Uri,
     mediaSession: AndroidMediaSession,
-): UploadedVideoMedia = MediaHelper.prepareSelectedMedia(context, uri, mediaSession).use { prepared ->
+): UploadedVideoMedia {
+    android.util.Log.i("ChatMedia", "uploadAndroidVideo entry uri=$uri")
+    return MediaHelper.prepareSelectedMedia(context, uri, mediaSession).use { prepared ->
     val uploaded = MediaHelper.uploadWithMeta(
         prepared.file, prepared.fileName, prepared.contentType, mediaSession,
     )
@@ -67,4 +69,5 @@ internal suspend fun uploadAndroidVideo(
         }
     }
     UploadedVideoMedia(uploaded.file, duration, width, height, thumbnail)
+    }
 }

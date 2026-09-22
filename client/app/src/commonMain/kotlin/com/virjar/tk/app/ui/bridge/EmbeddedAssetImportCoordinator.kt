@@ -45,7 +45,14 @@ class EmbeddedAssetImportCoordinator<S : Any>(
     }
 
     fun import(selection: EmbeddedAssetLocalSelection, binding: EmbeddedAssetImportBinding? = captureForImport()) {
-        if (binding == null || closed.get()) { releaseSelection(selection); return }
+        com.virjar.tk.shared.log.AppLog.trace(
+            "ChatMedia",
+            "asset import: name=${selection.displayName} type=${selection.contentType} size=${selection.size} ref=${selection.localReference} binding=${binding != null}",
+        )
+        if (binding == null || closed.get()) {
+            com.virjar.tk.shared.log.AppLog.fault("ChatMedia", "asset import dropped: no binding or closed")
+            releaseSelection(selection); return
+        }
         durableImports?.takeIf { it.handles(binding.ownerKey) }?.let {
             beginDurableImport(binding, selection, it)
             return
@@ -54,7 +61,10 @@ class EmbeddedAssetImportCoordinator<S : Any>(
         val placement = EmbeddedAssetImportPlacement(selection.displayName, selection.presentation)
         val attempt = retryStore.create(binding, selection, placement, job,
             AttachmentUploadIdentity(platformRandomUuid(), platformCurrentTimeMillis()))
-        if (attempt == null) { releaseSelection(selection); return }
+        if (attempt == null) {
+            com.virjar.tk.shared.log.AppLog.fault("ChatMedia", "asset import attempt rejected by retry store")
+            releaseSelection(selection); return
+        }
         publish(binding, EmbeddedAssetImportEvent.StateChanged(job, placement))
         launchAttempt(attempt)
     }

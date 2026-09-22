@@ -131,11 +131,15 @@ internal fun AndroidChatCameraDialog(
         var pressJob by remember { mutableStateOf<Job?>(null) }
 
         val vibrator = remember { context.getSystemService(Vibrator::class.java) }
+        // 震动是拍摄的手感增强，不是关键路径：任何系统层拒绝都不允许让拍摄崩溃。
         fun vibrate(effect: Int) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                vibrator.vibrate(VibrationEffect.createPredefined(effect))
-            } else {
-                vibrator.vibrate(40)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    vibrator.vibrate(VibrationEffect.createPredefined(effect))
+                } else {
+                    vibrator.vibrate(40)
+                }
+            } catch (_: Exception) {
             }
         }
 
@@ -202,9 +206,9 @@ internal fun AndroidChatCameraDialog(
         }
 
         @SuppressLint("MissingPermission")
-        fun startRecording() {
-            val provider = providerReady ?: return
-            if (recording != null) return
+        fun startRecording(): Boolean {
+            val provider = providerReady ?: return false
+            if (recording != null) return false
             vibrate(VibrationEffect.EFFECT_HEAVY_CLICK)
             val file = File(cacheDirectory, "video-${platformRandomUuid()}.mp4")
             val pending = videoCapture.output.prepareRecording(
@@ -220,11 +224,21 @@ internal fun AndroidChatCameraDialog(
                     is VideoRecordEvent.Finalize -> {
                         recording = null
                         recordingStartAt = null
-                        if (event.hasError()) file.delete() else confirmed = ChatCameraResult.Video(file)
+                        if (event.hasError()) {
+                            android.util.Log.w(
+                                "ChatMedia",
+                                "video finalize error: ${event.cause}",
+                            )
+                            file.delete()
+                        } else {
+                            android.util.Log.i("ChatMedia", "video captured: ${file.length()}B ${file.path}")
+                            confirmed = ChatCameraResult.Video(file)
+                        }
                     }
                     else -> Unit
                 }
             }
+            return recording != null
         }
 
         fun takePhoto() {
@@ -235,10 +249,12 @@ internal fun AndroidChatCameraDialog(
                 mainExecutor,
                 object : ImageCapture.OnImageSavedCallback {
                     override fun onImageSaved(results: ImageCapture.OutputFileResults) {
+                        android.util.Log.i("ChatMedia", "photo captured: ${file.length()}B ${file.path}")
                         confirmed = ChatCameraResult.Photo(file)
                     }
 
                     override fun onError(exception: ImageCaptureException) {
+                        android.util.Log.w("ChatMedia", "photo capture error", exception)
                         file.delete()
                     }
                 },
@@ -308,12 +324,17 @@ internal fun AndroidChatCameraDialog(
                                 CircleShape,
                             )
                             .pointerInput(providerReady) {
+                                // 未注册 onLongPress 时，detectTapGestures 对任意时长的
+                                // 抬起都会触发 onTap：长按录像松手后必须抑制拍照，
+                                // 否则慢一拍的 Photo 会覆盖已 Finalize 的 Video。
+                                var pressStartedRecording = false
                                 detectTapGestures(
-                                    onTap = { takePhoto() },
+                                    onTap = { if (!pressStartedRecording) takePhoto() },
                                     onPress = {
+                                        pressStartedRecording = false
                                         pressJob = scope.launch {
                                             delay(CHAT_CAMERA_RECORD_START_DELAY_MILLIS)
-                                            startRecording()
+                                            pressStartedRecording = startRecording()
                                         }
                                         try {
                                             awaitRelease()

@@ -171,7 +171,7 @@ internal fun AndroidChatScreen(
         error: Throwable,
     ) {
         val reason = classifyAndroidMediaFailure(error)
-        Log.w("Chat", "媒体操作失败: ${operation.code}/${reason.code}")
+        Log.w("Chat", "媒体操作失败: ${operation.code}/${reason.code}", error)
         telemetry.recordMedia(
             ClientUiPage.CHAT,
             mediaKind,
@@ -342,6 +342,10 @@ internal fun AndroidChatScreen(
     // ── 视频选择器 / 相机直录（内测 T022）──
 
     fun sendVideoFromUri(ownedFile: File? = null, sourceUri: () -> Uri) {
+        Log.i(
+            "ChatMedia",
+            "sendVideoFromUri: owned=${ownedFile?.absolutePath} exists=${ownedFile?.isFile} size=${ownedFile?.length()}",
+        )
         launchWithOwnedMediaSource(ownedFile, launchAdmittedAction) {
             OutgoingMediaSender(telemetry).sendVideo(
                 chatId = chatId,
@@ -563,11 +567,18 @@ internal fun AndroidChatScreen(
             AndroidChatCameraDialog(
                 cacheDirectory = mediaCacheDirectory(context.cacheDir, mediaCacheScope, "captured").apply { mkdirs() },
                 onResult = { result ->
+                    android.util.Log.i("ChatMedia", "camera onResult: ${result::class.simpleName}")
                     chatCameraVisible = false
                     when (result) {
                         is ChatCameraResult.Photo -> embeddedAssetImports.import(
                             EmbeddedAssetLocalSelection(
-                                localReference = result.file.path,
+                                // 与相册选图同构：导入网关经 ContentResolver 读取，
+                                // 裸文件路径无法通过 Uri.parse 打开（无 scheme）。
+                                localReference = androidx.core.content.FileProvider.getUriForFile(
+                                    context,
+                                    "${context.packageName}.fileprovider",
+                                    result.file,
+                                ).toString(),
                                 displayName = "拍摄照片.jpg",
                                 contentType = "image/jpeg",
                                 size = result.file.length(),
