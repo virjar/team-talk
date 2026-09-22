@@ -73,6 +73,14 @@ final class IosChatCameraController: UIViewController {
         session.beginConfiguration()
         session.sessionPreset = .high
         addVideoInput(position: .back)
+        // 模拟器/无摄像头设备没有视频输入：capturePhoto 会直接抛异常，必须提前拦截。
+        guard videoInput != nil else {
+            session.commitConfiguration()
+            DispatchQueue.main.async { [weak self] in
+                self?.failWithAlert("此设备没有可用的摄像头")
+            }
+            return
+        }
         if let microphone = AVCaptureDevice.default(for: .audio),
             let input = try? AVCaptureDeviceInput(device: microphone),
             session.canAddInput(input) {
@@ -139,6 +147,11 @@ final class IosChatCameraController: UIViewController {
 
     private func takePhoto() {
         guard !confirming, !movieOutput.isRecording else { return }
+        // 无视频连接（无摄像头设备）时 capturePhoto 会抛 ObjC 异常。
+        guard photoOutput.connection(with: .video) != nil else {
+            failWithAlert("此设备没有可用的摄像头")
+            return
+        }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         applyOrientation()
         photoOutput.capturePhoto(
@@ -148,6 +161,10 @@ final class IosChatCameraController: UIViewController {
 
     private func startRecording() {
         guard !confirming, !movieOutput.isRecording else { return }
+        guard movieOutput.connection(with: .video) != nil else {
+            failWithAlert("此设备没有可用的摄像头")
+            return
+        }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         applyOrientation()
         let url = FileManager.default.temporaryDirectory
