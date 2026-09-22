@@ -86,6 +86,12 @@ outcome 为 `STARTED / SUCCEEDED / REJECTED / FAILED / DROPPED / CLOSED`。BASEL
 `USER_NOTICE`，不能只把底层异常留在 UI。附件事件只记录类型、动作、结果、字节数/耗时和稳定原因码，
 不记录文件名、路径、URL、消息正文或底层异常文案。
 
+采集按事件级别分两档：**用户旅程（info 级）默认上报**——`PAGE_DWELL`（页面停留）、`ACTION`
+（关键动作）与 `LOG` 的 INFO 及以上级别（如 `ChatMedia` 关键节点），用于在用户反馈缺陷时还原其
+大致操作路径（在什么页面、做过什么）；**组件内部（trace 级）默认不上报**——`LOG` 的 TRACE/DEBUG
+与 `OUTGOING_QUEUE` 仅在设备开启定向诊断（开全量）时上传。服务端按封闭的页码/动作码/logger
+白名单复核基线事件；页码或动作码缺失会导致整批被拒，新增页面或动作须同步白名单。
+
 关键办公动作由业务状态机向 typed sink 提交 `STARTED`；当前协议的 `ACTION` 结果集合为
 `QUEUED / SUCCEEDED / FAILED / CANCELLED`。同一交互尝试恰好提交其中一个结果，不能把按钮点击当成
 成功。`QUEUED` 表示可靠命令已写入本地持久 outbox、当前交互可以结束，但服务端业务结果尚未确认；它
