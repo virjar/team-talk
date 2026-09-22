@@ -33,6 +33,10 @@ enum class FileDownloadPendingAction { PREVIEW, OPEN, EXPORT }
  * 待处理动作消费、AuthExpired 终态降级与遥测/反馈发布。机制提炼自 Android 已验证
  * 实现；平台差异（缓存租约、打开/导出动作、会话门禁、线程归属）全部经
  * [FileDownloadCoreAdapter] 注入。
+ *
+ * AndroidFileDownloadController 暂保留同机制的原始实现（本核心的原型，由
+ * AndroidMediaSafetyTest 保护）：其导出流程与会话注册语义深度耦合，强迁移等于
+ * 重写已验证并发代码且无功能收益。下次需要演进下载机制时顺带完成迁移。
  */
 class FileDownloadCore<L>(
     private val adapter: FileDownloadCoreAdapter<L>,

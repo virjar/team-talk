@@ -44,7 +44,11 @@ import java.net.UnknownHostException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
-/** Android 文件附件下载控制器：会话隔离缓存 + 气泡进度动画数据源。 */
+/**
+ * Android 文件附件下载控制器：会话隔离缓存 + 气泡进度动画数据源。
+ * 编排机制与 app 层 FileDownloadCore 同源（核心自此提取，iOS/Desktop 已迁移）；
+ * 本实现由 AndroidMediaSafetyTest 保护，导出流程与会话注册语义深度耦合，暂保留。
+ */
 class AndroidFileDownloadController private constructor(
     cacheRootProvider: () -> File,
     private val mediaSession: AndroidMediaSession,
