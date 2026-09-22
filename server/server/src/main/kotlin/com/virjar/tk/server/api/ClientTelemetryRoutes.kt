@@ -284,7 +284,9 @@ private fun TelemetryBatch.toDraft(
                 "[${payload.level.name}] $safeLogger: $safeMessage" to
                     "${payload.level.name} $safeLogger $safeMessage"
             }
-            is TelemetryFaultPayload -> if (!diagnostic) {
+            // 致命崩溃始终完整渲染（含异常类与栈帧）：它们稀少且是崩溃管线的全部意义；
+            // 非 fatal 故障仍按设备定向诊断策略决定是否携带诊断详情。
+            is TelemetryFaultPayload -> if (!diagnostic && !payload.fatal) {
                 val context = listOfNotNull(
                     payload.faultCode,
                     payload.page,

@@ -108,10 +108,22 @@ private fun stableCrashNamespace(value: String): String {
     return "${value.length}-${first.toString(36)}-${second.toString(36)}"
 }
 
-/** 进程未捕获异常处理器的入口；原始崩溃文本被刻意忽略。 */
-fun flushPendingCrash(dataDir: File, @Suppress("UNUSED_PARAMETER") content: String) {
+/**
+ * 进程未捕获异常处理器的入口：持久化有界的原始崩溃文本（首行摘要 + 主异常
+ * 栈帧），下次启动由 uploader 解析为带异常类与栈帧的致命事件。病态深栈按
+ * 字符截断；存量标记文件仍按无可解析内容退回固定摘要。
+ */
+fun flushPendingCrash(dataDir: File, content: String) {
     val fixedOwner = AppLog.ownerSnapshot()
-    if (fixedOwner?.flushCrash(dataDir, CLIENT_TELEMETRY_FATAL_MARKER) != true) {
-        CrashDumper(dataDir).flushPending(CLIENT_TELEMETRY_FATAL_MARKER)
+    if (fixedOwner?.flushCrash(dataDir, boundedCrashContent(content)) != true) {
+        CrashDumper(dataDir).flushPending(boundedCrashContent(content))
     }
 }
+
+/** 超过 64 KiB 的病态深栈丢弃尾部；解析只需首行与主异常前 48 帧。 */
+internal fun boundedCrashContent(content: String): String {
+    if (content.length <= MAX_PENDING_CRASH_CHARS) return content
+    return content.take(MAX_PENDING_CRASH_CHARS)
+}
+
+private const val MAX_PENDING_CRASH_CHARS = 64 * 1024

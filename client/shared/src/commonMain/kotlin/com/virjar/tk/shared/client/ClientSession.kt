@@ -661,10 +661,10 @@ fun createSession(
             }
         },
         crashSink = crashDumper?.let { dumper ->
-            { _, _ ->
-                // 未捕获异常处理器是唯一的同步持久化例外。固定标记不包含原始 message/stack/body，
-                // 并在下次启动时被转移。
-                dumper.flushPending(CLIENT_TELEMETRY_FATAL_MARKER)
+            { _, content ->
+                // 未捕获异常处理器是唯一的同步持久化例外。有界崩溃文本（首行+主异常栈帧）
+                // 在下次启动时被解析为带栈致命事件。
+                dumper.flushPending(boundedCrashContent(content))
             }
         },
         previousOwnerSink = { previousLogOwner = it },
