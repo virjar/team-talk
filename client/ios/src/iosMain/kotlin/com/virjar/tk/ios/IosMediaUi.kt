@@ -1,16 +1,24 @@
 @file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
 package com.virjar.tk.ios
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.viewinterop.UIKitView
 import androidx.compose.ui.viewinterop.UIKitViewController
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import org.jetbrains.skia.Bitmap
+import org.jetbrains.skia.ColorAlphaType
+import org.jetbrains.skia.Image
+import org.jetbrains.skia.ImageInfo
 import com.virjar.tk.app.ui.component.*
 import com.virjar.tk.protocol.model.Attachment
 import com.virjar.tk.shared.platform.PlatformFile
@@ -70,34 +78,77 @@ internal fun IosAttachmentImage(attachment: Attachment, resources: IosMediaResou
         // Decode to the visible viewport, with at most 16 MiB of RGBA pixels per image.
         // The authenticated original remains untouched for sharing and export.
         val maximumPixels = maxOf(constraints.maxWidth, constraints.maxHeight).coerceIn(1, 2048)
+        var imageBitmap by remember(attachment, resources, maximumPixels) { mutableStateOf<ImageBitmap?>(null) }
         var image by remember(attachment, resources, maximumPixels) { mutableStateOf<UIImage?>(null) }
         var failed by remember(attachment, resources, maximumPixels) { mutableStateOf(false) }
         LaunchedEffect(attachment, resources, maximumPixels) {
             try {
                 val lease = resources.acquire(attachment)
                 val effectJob = currentCoroutineContext().job
-                val display = resources.retainDisplay { effectJob.cancel(); image = null; lease.close() }
+                val display = resources.retainDisplay { effectJob.cancel(); imageBitmap = null; image = null; lease.close() }
                 try {
+                    // 纯 Compose 渲染优先：互操作原生视图会拦截触摸，导致聊天内嵌图
+                    // 点击（打开画廊）失效。经 ImageIO 解码（EXIF 正确、上限降采样）后
+                    // 拷贝像素为 ImageBitmap；拷贝失败才回落互操作渲染（无点击）。
+                    imageBitmap = withContext(Dispatchers.IO) {
+                        runCatching { uiImageToImageBitmap(loadIosDisplayImage(lease.file, maximumPixels)) }.getOrNull()
+                    }
+                    if (imageBitmap != null) awaitCancellation()
                     image = withContext(Dispatchers.IO) { loadIosDisplayImage(lease.file, maximumPixels) }
                     awaitCancellation()
-                } finally { display.close(); image = null; lease.close() }
+                } finally { display.close(); imageBitmap = null; image = null; lease.close() }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { failed = true }
         }
-        if (image != null) UIKitView(
-            factory = {
-                UIImageView().apply {
-                    contentMode = UIViewContentMode.UIViewContentModeScaleAspectFit
-                    clipsToBounds = true
-                    // 原生视图会拦截触摸，导致外层 Compose 的点击（打开画廊）失效；
-                    // 本视图只负责显示，交互全部交还 Compose。
-                    setUserInteractionEnabled(false)
-                }
-            },
-            update = { it.image = image },
-            onRelease = { it.image = null },
-            modifier = Modifier.fillMaxSize(),
-        ) else if (failed) Text("图片加载失败") else CircularProgressIndicator()
+        val bitmap = imageBitmap
+        when {
+            bitmap != null -> Image(
+                bitmap = bitmap,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize(),
+            )
+            image != null -> UIKitView(
+                factory = {
+                    UIImageView().apply {
+                        contentMode = UIViewContentMode.UIViewContentModeScaleAspectFit
+                        clipsToBounds = true
+                        // 原生视图会拦截触摸，导致外层 Compose 的点击（打开画廊）失效；
+                        // 本视图只负责显示，交互全部交还 Compose。
+                        setUserInteractionEnabled(false)
+                    }
+                },
+                update = { it.image = image },
+                onRelease = { it.image = null },
+                modifier = Modifier.fillMaxSize(),
+            )
+            failed -> Text("图片加载失败")
+            else -> CircularProgressIndicator()
+        }
+    }
+}
+
+/** UIImage → 纯 Compose 位图：像素拷贝进 skia，令聊天内嵌图可被 Compose 点击（打开画廊）。 */
+private fun uiImageToImageBitmap(image: UIImage): ImageBitmap {
+    @Suppress("CAST_NEVER_SUCCEEDS")
+    val cgImage = image.CGImage as platform.CoreGraphics.CGImageRef
+        ?: error("图片缺少 CGImage")
+    val width = CGImageGetWidth(cgImage).toInt()
+    val height = CGImageGetHeight(cgImage).toInt()
+    val bytesPerRow = width * 4
+    val buffer = ByteArray(bytesPerRow * height)
+    buffer.usePinned { pinned ->
+        val colorSpace = CGColorSpaceCreateDeviceRGB()
+        val context = CGBitmapContextCreate(
+            pinned.addressOf(0), width.toULong(), height.toULong(), 8u, bytesPerRow.toULong(),
+            colorSpace,
+            CGImageAlphaInfo.kCGImageAlphaPremultipliedFirst.value or kCGBitmapByteOrder32Little,
+        ) ?: error("无法创建图片位图上下文")
+        CGContextDrawImage(context, CGRectMake(0.0, 0.0, width.toDouble(), height.toDouble()), cgImage)
+        val info = ImageInfo.makeN32(width, height, ColorAlphaType.PREMUL)
+        val skiaBitmap = Bitmap().apply { allocPixels(info) }
+        skiaBitmap.installPixels(info, buffer, bytesPerRow)
+        return Image.makeFromBitmap(skiaBitmap).toComposeImageBitmap()
     }
 }
 

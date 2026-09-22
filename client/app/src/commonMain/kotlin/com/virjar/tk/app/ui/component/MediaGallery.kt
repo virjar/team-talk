@@ -13,6 +13,8 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.layout.layout
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
@@ -20,6 +22,7 @@ import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material3.Icon
@@ -137,6 +140,9 @@ private fun MediaGalleryContent(
         initialPage = initialIndex.coerceIn(0, items.size - 1),
     ) { items.size }
     val scope = rememberCoroutineScope()
+    // 当前页图片的手动旋转（0/90/180/270，仅图片；切页复位）。
+    var imageRotation by remember { mutableIntStateOf(0) }
+    LaunchedEffect(pagerState.currentPage) { imageRotation = 0 }
 
     Box(
         modifier = Modifier
@@ -178,6 +184,7 @@ private fun MediaGalleryContent(
                         else -> ZoomableImagePage(
                             attachment = item.attachment,
                             imageRenderer = imageRenderer,
+                            rotationDegrees = imageRotation,
                             onSingleTap = onDismiss,
                             modifier = Modifier
                                 .fillMaxSize()
@@ -238,6 +245,19 @@ private fun MediaGalleryContent(
                     .clip(RoundedCornerShape(24.dp))
                     .background(Color.Black.copy(alpha = 0.45f)),
             ) {
+                // 图片页提供手动旋转；视频自带方向元数据，不提供查看期旋转。
+                if (items[pagerState.currentPage].type == GalleryMediaType.IMAGE) {
+                    IconButton(
+                        onClick = { imageRotation = (imageRotation + 90) % 360 },
+                        modifier = Modifier.testTag("media.gallery.rotate"),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Refresh,
+                            contentDescription = "旋转图片（每次 90°）",
+                            tint = Color.White,
+                        )
+                    }
+                }
                 if (onSaveCurrent != null) {
                     IconButton(
                         onClick = { onSaveCurrent(items[pagerState.currentPage].attachment) },
@@ -316,6 +336,7 @@ private fun GalleryPageButton(
 private fun ZoomableImagePage(
     attachment: Attachment,
     imageRenderer: @Composable (Attachment, Modifier) -> Unit,
+    rotationDegrees: Int,
     onSingleTap: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -379,7 +400,30 @@ private fun ZoomableImagePage(
                 }
                 .graphicsLayer {
                     scaleX = scale; scaleY = scale
+                    rotationZ = rotationDegrees.toFloat()
                     translationX = offset.x; translationY = offset.y
+                }
+                // 旋转 90/270 时用宽高互换的约束测量渲染盒：渲染器在其中按内容比例
+                // 最大化铺满，盒体旋转后正好完整覆盖视口（内测反馈：旋转应尽力铺满）。
+                .layout { measurable, constraints ->
+                    val rotated = rotationDegrees % 180 != 0 &&
+                        constraints.hasBoundedWidth && constraints.hasBoundedHeight
+                    val placeable = measurable.measure(
+                        if (rotated) {
+                            Constraints(
+                                maxWidth = constraints.maxHeight,
+                                maxHeight = constraints.maxWidth,
+                            )
+                        } else {
+                            constraints
+                        },
+                    )
+                    layout(constraints.maxWidth, constraints.maxHeight) {
+                        placeable.placeRelative(
+                            (constraints.maxWidth - placeable.width) / 2,
+                            (constraints.maxHeight - placeable.height) / 2,
+                        )
+                    }
                 },
             contentAlignment = Alignment.Center,
         ) {
