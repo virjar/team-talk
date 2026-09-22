@@ -30,4 +30,19 @@ class LineBreakHtmlCapabilityTest {
         val withRealHtml = RichEditorMarkdownCapability.inspect("第一行\n<div>x</div>")
         assertTrue(withRealHtml.requiresSourceMode)
     }
+
+    @Test
+    fun lineBreakHeadedBlockWithPlainTextRendersAsMarkdown() {
+        // 块首 <br> 后跟普通文本行：CommonMark 把整块归为 HTML 块，但编辑器与预览都按
+        // 换行 + Markdown 渲染，不必打回未建模源码块（内测文档「<br>\nhaode，half俄\n好的」）。
+        assertTrue(RichEditorMarkdownCapability.isLineBreakHeadedBlock("<br>\nhaode，half俄\n好的"))
+        assertFalse(RichEditorMarkdownCapability.isLineBreakHeadedBlock("haode，half俄\n好的"))
+        assertFalse(RichEditorMarkdownCapability.isLineBreakHeadedBlock("<br>\n<span>仍是真的 HTML</span>"))
+
+        val capability = RichEditorMarkdownCapability.inspect("<br>\nhaode，half俄\n好的")
+        assertFalse(capability.requiresSourceMode)
+
+        val withRealHtml = RichEditorMarkdownCapability.inspect("<br>\n<span>x</span>")
+        assertTrue(withRealHtml.requiresSourceMode)
+    }
 }

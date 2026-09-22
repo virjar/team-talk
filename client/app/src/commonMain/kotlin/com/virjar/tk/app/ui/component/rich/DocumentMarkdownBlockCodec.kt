@@ -207,7 +207,15 @@ internal object DocumentMarkdownBlockCodec {
         } else {
             BlockKind.RICH
         }
-        else -> BlockKind.OPAQUE
+        else -> if (
+            node.type == MarkdownElementTypes.HTML_BLOCK &&
+            // 块首 <br> 混普通文本行的 HTML 块渲染为换行 + Markdown，不落入未建模源码块（T052）。
+            RichEditorMarkdownCapability.isLineBreakHeadedBlock(body)
+        ) {
+            BlockKind.RICH
+        } else {
+            BlockKind.OPAQUE
+        }
     }
 
     private fun parseCodeBlock(

@@ -49,10 +49,24 @@ internal data class RichEditorMarkdownCapability(
         /** `<br>`、`<br/>`、`<br />`（大小写不敏感）。 */
         internal val LINE_BREAK_TAG = Regex("<br\\s*/?>", RegexOption.IGNORE_CASE)
 
+        /** 除换行标签外的真实 HTML 标签（开或闭，跨行内）。 */
+        private val OTHER_HTML_TAG = Regex("</?[A-Za-z][^>]*>")
+
         /** 文本是否只由换行标签组成；缩进代码中的字面标签必须保留源码模式。 */
         internal fun isLineBreakOnlyHtml(text: String): Boolean {
             val prefix = lineBreakHtmlPrefix(text)
             return prefix.count > 0 && prefix.endOffset == text.length
+        }
+
+        /**
+         * 块首换行标签后跟普通文本的 HTML 块：CommonMark 把「`<br>` 独占一行 + 后续未空行
+         * 分隔的文字」整体归为 HTML 块。只要剩余部分不含其他 HTML 标签，编辑器与预览都
+         * 按换行 + Markdown 渲染，不必打回源码块；剩余部分还有真实标签则仍留在源码。
+         */
+        internal fun isLineBreakHeadedBlock(text: String): Boolean {
+            val prefix = lineBreakHtmlPrefix(text)
+            if (prefix.count == 0) return false
+            return !OTHER_HTML_TAG.containsMatchIn(text.substring(prefix.endOffset))
         }
 
         internal data class LineBreakHtmlPrefix(val count: Int, val endOffset: Int)
@@ -152,10 +166,10 @@ internal data class RichEditorMarkdownCapability(
                 }
 
                 MarkdownElementTypes.HTML_BLOCK, MarkdownTokenTypes.HTML_TAG -> {
-                    // 纯换行标签（<br>/<br/>/<br />）放行：编辑器与气泡渲染都把它处理为
-                    // 换行（内测反馈 T052）；其余 HTML 仍视为未建模结构留在源码。
+                    // 换行标签放行（内测反馈 T052）：纯 <br> 序列，或块首 <br> 混普通文本行
+                    // （渲染为换行 + Markdown）；其余 HTML 仍视为未建模结构留在源码。
                     val text = getTextInNode(markdown).toString()
-                    if (!isLineBreakOnlyHtml(text)) {
+                    if (!isLineBreakOnlyHtml(text) && !isLineBreakHeadedBlock(text)) {
                         unsupported += RichEditorUnsupportedMarkdownFeature.RAW_HTML
                     }
                 }

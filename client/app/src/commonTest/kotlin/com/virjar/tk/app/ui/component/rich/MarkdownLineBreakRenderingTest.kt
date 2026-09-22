@@ -57,6 +57,13 @@ class MarkdownLineBreakRenderingTest {
         assertTrue(MdParser.parse("first<br class=\"x\">last").joinToString("", transform = ::text).contains("<br"))
     }
 
+    @Test fun brHeadedBlockWithPlainTextStaysARichDocumentBlock() {
+        // 块首 <br> + 普通文本行曾被 classify 直接判为未建模源码块（T052 回归场景）。
+        val blocks = DocumentMarkdownBlockCodec.parse("<br>\nhaode，half俄\n好的")
+        assertEquals(1, blocks.size)
+        assertIs<DocumentRichRun>(blocks.single())
+    }
+
     private fun text(block: MdBlock): String = when (block) {
         is MdBlock.Paragraph -> block.spans.joinToString("") { when (it) {
             is MdSpan.Text -> it.text
