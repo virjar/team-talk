@@ -2,6 +2,7 @@ package com.virjar.tk.android
 
 import com.virjar.tk.shared.AppError
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
@@ -402,17 +403,43 @@ object MediaHelper {
 
     /**
      * 用系统应用打开文件。
+     *
+     * APK 特殊处理：发送安装包的意图就是安装。无论发送端记录的 contentType 是什么
+     * （跨端常为 application/octet-stream），都按安装包 MIME 打开包安装管理器，
+     * 而不是落到浏览器/文本查看器；系统未授予安装权限时由安装器自身引导授权。
      */
     fun openFile(context: Context, file: File, mimeType: String) {
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val effectiveMime = if (
+            file.name.endsWith(".apk", ignoreCase = true) ||
+            mimeType.equals("application/vnd.android.package-archive", ignoreCase = true)
+        ) {
+            "application/vnd.android.package-archive"
+        } else {
+            mimeType
+        }
         val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, mimeType)
+            setDataAndType(uri, effectiveMime)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             if (fileOpenRequiresNewTask(context.containsActivity())) {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
         }
-        context.startActivity(intent)
+        try {
+            context.startActivity(intent)
+        } catch (_: ActivityNotFoundException) {
+            // 没有任何应用能处理该类型（罕见）：用系统分享面板兜底，让用户自选去处。
+            val share = Intent.createChooser(
+                Intent(Intent.ACTION_SEND).apply {
+                    setType(effectiveMime)
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                },
+                "没有可打开 ${file.name} 的应用",
+            )
+            if (fileOpenRequiresNewTask(context.containsActivity())) share.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            runCatching { context.startActivity(share) }
+        }
     }
 
 }

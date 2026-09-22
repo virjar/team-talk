@@ -102,6 +102,7 @@ internal fun desktopContentType(fileName: String): String = when (fileName.exten
     "bmp" -> "image/bmp"
     "pdf" -> "application/pdf"
     "zip" -> "application/zip"
+    "apk" -> "application/vnd.android.package-archive"
     "mp4" -> "video/mp4"
     "mov" -> "video/quicktime"
     "avi" -> "video/x-msvideo"

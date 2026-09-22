@@ -85,7 +85,15 @@ internal fun IosAttachmentImage(attachment: Attachment, resources: IosMediaResou
             catch (_: Exception) { failed = true }
         }
         if (image != null) UIKitView(
-            factory = { UIImageView().apply { contentMode = UIViewContentMode.UIViewContentModeScaleAspectFit; clipsToBounds = true } },
+            factory = {
+                UIImageView().apply {
+                    contentMode = UIViewContentMode.UIViewContentModeScaleAspectFit
+                    clipsToBounds = true
+                    // 原生视图会拦截触摸，导致外层 Compose 的点击（打开画廊）失效；
+                    // 本视图只负责显示，交互全部交还 Compose。
+                    setUserInteractionEnabled(false)
+                }
+            },
             update = { it.image = image },
             onRelease = { it.image = null },
             modifier = Modifier.fillMaxSize(),
@@ -139,7 +147,12 @@ private fun IosAttachmentVideo(attachment: Attachment, active: Boolean, resource
     LaunchedEffect(player, active) { if (active) player?.play() else player?.pause() }
     Box(modifier, contentAlignment = Alignment.Center) {
         if (player != null) UIKitViewController(
-            factory = { AVPlayerViewController() },
+            factory = {
+                AVPlayerViewController().apply {
+                    // 显示-only：禁用原生交互（自带控制条与触摸吞噬），播放控制走 Compose。
+                    view.setUserInteractionEnabled(false)
+                }
+            },
             update = { it.player = player },
             onRelease = { it.player?.pause(); it.player = null },
             modifier = Modifier.fillMaxSize(),

@@ -332,6 +332,7 @@ internal fun iosContentType(name: String): String = when (name.substringAfterLas
     "heic", "heif" -> "image/heic"; "mov" -> "video/quicktime"; "mp4", "m4v" -> "video/mp4"
     "m4a", "aac" -> "audio/mp4"; "mp3" -> "audio/mpeg"; "wav" -> "audio/wav"
     "pdf" -> "application/pdf"; "txt", "md", "log" -> "text/plain"; "json" -> "application/json"
+    "apk" -> "application/vnd.android.package-archive"
     else -> "application/octet-stream"
 }
 internal fun iosPresenter(): UIViewController {
