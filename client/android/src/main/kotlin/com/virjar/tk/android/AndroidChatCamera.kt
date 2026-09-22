@@ -225,13 +225,14 @@ internal fun AndroidChatCameraDialog(
                         recording = null
                         recordingStartAt = null
                         if (event.hasError()) {
-                            android.util.Log.w(
+                            com.virjar.tk.shared.log.AppLog.fault(
                                 "ChatMedia",
-                                "video finalize error: ${event.cause}",
+                                "video finalize error",
+                                event.cause,
                             )
                             file.delete()
                         } else {
-                            android.util.Log.i("ChatMedia", "video captured: ${file.length()}B ${file.path}")
+                            com.virjar.tk.shared.log.AppLog.trace("ChatMedia", "video captured: ${file.length()}B ${file.path}")
                             confirmed = ChatCameraResult.Video(file)
                         }
                     }
@@ -249,12 +250,12 @@ internal fun AndroidChatCameraDialog(
                 mainExecutor,
                 object : ImageCapture.OnImageSavedCallback {
                     override fun onImageSaved(results: ImageCapture.OutputFileResults) {
-                        android.util.Log.i("ChatMedia", "photo captured: ${file.length()}B ${file.path}")
+                        com.virjar.tk.shared.log.AppLog.trace("ChatMedia", "photo captured: ${file.length()}B ${file.path}")
                         confirmed = ChatCameraResult.Photo(file)
                     }
 
                     override fun onError(exception: ImageCaptureException) {
-                        android.util.Log.w("ChatMedia", "photo capture error", exception)
+                        com.virjar.tk.shared.log.AppLog.fault("ChatMedia", "photo capture error", exception)
                         file.delete()
                     }
                 },

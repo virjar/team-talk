@@ -38,7 +38,7 @@ internal suspend fun uploadAndroidVideo(
     uri: Uri,
     mediaSession: AndroidMediaSession,
 ): UploadedVideoMedia {
-    android.util.Log.i("ChatMedia", "uploadAndroidVideo entry uri=$uri")
+    com.virjar.tk.shared.log.AppLog.trace("ChatMedia", "uploadAndroidVideo entry uri=$uri")
     return MediaHelper.prepareSelectedMedia(context, uri, mediaSession).use { prepared ->
     val uploaded = MediaHelper.uploadWithMeta(
         prepared.file, prepared.fileName, prepared.contentType, mediaSession,

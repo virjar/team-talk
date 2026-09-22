@@ -171,7 +171,11 @@ internal fun AndroidChatScreen(
         error: Throwable,
     ) {
         val reason = classifyAndroidMediaFailure(error)
-        Log.w("Chat", "媒体操作失败: ${operation.code}/${reason.code}", error)
+        com.virjar.tk.shared.log.AppLog.fault(
+            "ChatMedia",
+            "媒体操作失败: ${operation.code}/${reason.code}",
+            error,
+        )
         telemetry.recordMedia(
             ClientUiPage.CHAT,
             mediaKind,
@@ -342,7 +346,7 @@ internal fun AndroidChatScreen(
     // ── 视频选择器 / 相机直录（内测 T022）──
 
     fun sendVideoFromUri(ownedFile: File? = null, sourceUri: () -> Uri) {
-        Log.i(
+        com.virjar.tk.shared.log.AppLog.trace(
             "ChatMedia",
             "sendVideoFromUri: owned=${ownedFile?.absolutePath} exists=${ownedFile?.isFile} size=${ownedFile?.length()}",
         )
@@ -567,7 +571,7 @@ internal fun AndroidChatScreen(
             AndroidChatCameraDialog(
                 cacheDirectory = mediaCacheDirectory(context.cacheDir, mediaCacheScope, "captured").apply { mkdirs() },
                 onResult = { result ->
-                    android.util.Log.i("ChatMedia", "camera onResult: ${result::class.simpleName}")
+                    com.virjar.tk.shared.log.AppLog.trace("ChatMedia", "camera onResult: ${result::class.simpleName}")
                     chatCameraVisible = false
                     when (result) {
                         is ChatCameraResult.Photo -> embeddedAssetImports.import(
