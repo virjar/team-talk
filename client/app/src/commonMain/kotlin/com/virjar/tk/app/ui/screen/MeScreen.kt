@@ -155,7 +155,9 @@ fun MeScreen(
                     SettingsEntryRow(
                         icon = Icons.Filled.Notifications,
                         title = "消息通知",
-                        description = "系统通知权限与小米推送",
+                        // Android 仅在检测到厂商通道（小米/华为/荣耀/OPPO/vivo）时显示本行，
+                        // iOS 走 APNs；副标题用全平台一致的离线推送描述，不写死单一厂商。
+                        description = "系统通知权限与离线推送",
                         onClick = onNotificationSettings,
                         tag = "settings.notifications",
                     )
