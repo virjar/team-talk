@@ -5,6 +5,7 @@ package com.virjar.tk.shared.client
 import com.virjar.tk.protocol.IProto
 import com.virjar.tk.protocol.PacketFrames
 import com.virjar.tk.protocol.PingSignal
+import com.virjar.tk.protocol.payload.AuthResponsePayload
 import com.virjar.tk.protocol.payload.ResponsePayload
 import com.virjar.tk.shared.platform.PlatformAtomicLong
 import kotlinx.cinterop.*
@@ -16,6 +17,102 @@ import kotlin.test.*
 
 /** Runs on an iOS simulator/device, with only an ephemeral 127.0.0.1 listener. */
 class IosTcpChannelIntegrationTest {
+    // 回归：真实应用在登录后事件同步帧（>4 KiB）因 AUTH_RESP 后上限未放宽被
+    // validateHeader 拒绝，连接循环 ProtocolCorruptionException 断开而停在离线。
+    // 这里按真实时序：不预设 authenticated，对端先发 AUTH_RESP(CODE_OK) 再紧跟大帧。
+    @Test
+    fun authedLimitIsRaisedOnTheDecodedAuthResponseFrame(): Unit = runBlocking {
+        val server = BsdLoopbackServer()
+        val executor = IosSerialExecutor("teamtalk.limit.tcp")
+        val ready = CompletableDeferred<Unit>()
+        val closed = CompletableDeferred<Throwable?>()
+        val packets = Channel<IProto>(4)
+        var peer: BsdLoopbackPeer? = null
+        val channel = IosTcpChannel(
+            executor = executor,
+            host = "127.0.0.1",
+            port = server.port,
+            certificatePem = null,
+            onReady = { ready.complete(Unit) },
+            onPacket = { source, packet ->
+                check(packets.trySend(packet).isSuccess)
+                if ((packet as? ResponsePayload)?.requestId == 2) source.close()
+            },
+            onClosed = { _, failure -> closed.complete(failure) },
+            onWriteIdle = {},
+        )
+        try {
+            withTimeout(10_000) {
+                withContext(executor) { channel.start() }
+                peer = server.acceptPeer()
+                ready.await()
+                val auth = PacketFrames.encode(
+                    AuthResponsePayload(
+                        code = AuthResponsePayload.CODE_OK,
+                        uid = "uid-limit",
+                        username = "limit",
+                        refreshToken = "refresh-limit",
+                        datasetId = "00000000-0000-4000-8000-000000000001",
+                    )
+                )
+                // 未认证上限是 4096；第二个帧必须在其被拒绝的尺寸区间内。
+                val oversize = PacketFrames.encode(ResponsePayload(2, 0, ByteArray(5000) { (it % 251).toByte() }))
+                check(oversize.size > PacketFrames.UNAUTHED_LIMIT + PacketFrames.HEADER_SIZE)
+                peer!!.write(auth + oversize)
+                val first = assertIs<AuthResponsePayload>(packets.receive())
+                assertEquals(AuthResponsePayload.CODE_OK, first.code)
+                val second = assertIs<ResponsePayload>(packets.receive())
+                assertEquals(2, second.requestId)
+                assertNull(closed.await(), "The widened bound must accept the first sync-sized frame")
+                peer!!.close()
+            }
+        } finally {
+            withContext(NonCancellable + executor) { channel.close() }
+            executor.closeAndDrain()
+            peer?.close()
+            server.close()
+            packets.close()
+        }
+    }
+
+    @Test
+    fun activeChannelSendDeliversTheExactFrame(): Unit = runBlocking {
+        val server = BsdLoopbackServer()
+        val executor = IosSerialExecutor("teamtalk.send.tcp")
+        val ready = CompletableDeferred<Unit>()
+        val closed = CompletableDeferred<Throwable?>()
+        var peer: BsdLoopbackPeer? = null
+        val channel = IosTcpChannel(
+            executor = executor,
+            host = "127.0.0.1",
+            port = server.port,
+            certificatePem = null,
+            onReady = { source -> source.authenticated = true; ready.complete(Unit) },
+            // 与既有回环夹具相同：在接收回调内部关闭，取消时不存在挂起的接收。
+            onPacket = { source, _ -> source.close() },
+            onClosed = { _, failure -> closed.complete(failure) },
+            onWriteIdle = {},
+        )
+        try {
+            withTimeout(10_000) {
+                withContext(executor) { channel.start() }
+                peer = server.acceptPeer()
+                ready.await()
+                val expected = PacketFrames.encode(PingSignal)
+                withContext(executor) { channel.writeAndFlush(PingSignal) }
+                assertContentEquals(expected, peer!!.readExactly(expected.size))
+                peer!!.write(PacketFrames.encode(ResponsePayload(1, 0, byteArrayOf(1))))
+                assertNull(closed.await(), "An orderly in-callback close must not report a transport failure")
+                peer!!.close()
+            }
+        } finally {
+            withContext(NonCancellable + executor) { channel.close() }
+            executor.closeAndDrain()
+            peer?.close()
+            server.close()
+        }
+    }
+
     @Test
     fun fragmentedAndCoalescedFramesStopAtTheExactChannelCloseBoundary(): Unit = runBlocking {
         val server = BsdLoopbackServer()
@@ -176,6 +273,20 @@ private class BsdLoopbackPeer(private val descriptor: Int) {
             check(count < 0 && (failure == EAGAIN || failure == EWOULDBLOCK || failure == EINTR)) { "Loopback send failed: $failure" }
             delay(5)
         }
+    }
+
+    suspend fun readExactly(count: Int): ByteArray {
+        val bytes = ByteArray(count)
+        var offset = 0
+        while (offset < count) {
+            currentCoroutineContext().ensureActive()
+            val read = bytes.usePinned { recv(descriptor, it.addressOf(offset), (count - offset).toULong(), 0) }
+            if (read > 0) { offset += read.toInt(); continue }
+            val failure = errno
+            check(read < 0 && (failure == EAGAIN || failure == EWOULDBLOCK || failure == EINTR)) { "Loopback receive failed: $failure" }
+            delay(5)
+        }
+        return bytes
     }
 
     suspend fun awaitDisconnect() {

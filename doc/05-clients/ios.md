@@ -204,14 +204,19 @@ Swift 壳的 typecheck 和无签名 iPhone 应用整包构建；在 iOS 18.1 x86
 `:client:ios:iosSimulatorArm64Test`；它们未在这台 Intel 主机执行。
 
 Apple Silicon 主机（Xcode 27.0 / iOS 27.0 模拟器）已完成首轮真实模拟器验收：协议 221、
-SDK 154、共享 UI 168、iOS 壳 5 项 Native 测试全部通过；默认 ad-hoc 签名的模拟器应用可安装、
-启动，Keychain 设备标识与 SQLite 初始化正常，Compose 登录界面正确渲染，重启进程后设备标识保留。
-验收修复了两处缺陷：Keychain 查询字典的布尔值必须使用 `kCFBooleanFalse`/`kCFBooleanTrue`
-（Kotlin Boolean 经 CFBridgingRetain 不是 CFBoolean，securityd 以 -50 拒绝整个查询，
-应用停在「本地数据准备失败」）；`build-framework.sh` 现于链接前删除旧的应用链接产物，
-因为 Xcode 增量构建不跟踪经 OTHER_LDFLAGS 链接的静态框架，否则改动 Kotlin 后会静默运行旧代码。
+SDK 155、共享 UI 168、iOS 壳 5 项 Native 测试全部通过；默认 ad-hoc 签名的模拟器应用可安装、
+启动，Keychain 设备标识与 SQLite 初始化正常，真实账号完成登录认证、事件同步与心跳保活，
+离线横幅消失后主界面在线。验收修复了三处只在真实运行中暴露的缺陷：Keychain 查询字典的布尔值
+必须使用 `kCFBooleanFalse`/`kCFBooleanTrue`（Kotlin Boolean 经 CFBridgingRetain 不是 CFBoolean，
+securityd 以 -50 拒绝整个查询，应用停在「本地数据准备失败」）；`NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT`
+的 Kotlin 绑定在运行时按“void 返回 block 转 Kotlin Any”抛 NSGenericException，首次发送即闪退，
+改为每条连接用 `nw_content_context_create` 自建消息上下文；iOS 通道现与 Netty `PacketCodec`
+同构地在解码出 `AUTH_RESP(CODE_OK)` 当帧放宽帧上限，否则首个超过未认证上限（4 KiB）的事件
+同步帧被 `validateHeader` 拒绝，连接循环 `ProtocolCorruptionException` 断开而停在离线。
+`build-framework.sh` 亦于链接前删除旧的应用链接产物，因为 Xcode 增量构建不跟踪经
+OTHER_LDFLAGS 链接的静态框架，否则改动 Kotlin 后会静默运行旧代码。
 注意 `CODE_SIGNING_ALLOWED=NO` 的模拟器整包只用于编译校验：无签名二进制没有 entitlement，
 Keychain 以 -34018 失败、无法进入登录页；真实验收使用默认 ad-hoc 签名构建。
 默认关闭、本地启用、命令行覆盖和 CI 环境变量启用均已验证；关闭时 Android/Desktop 编译、
-JVM 回归、架构和协议基线检查通过。真实账号登录、离线与媒体交互，以及签名与 APNs 真机验收
+JVM 回归、架构和协议基线检查通过。会话交互、离线与媒体行为，以及签名与 APNs 真机验收
 尚未完成；当前不把 iOS 标为已发布或已通过设备验收。

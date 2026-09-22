@@ -2,6 +2,7 @@
 package com.virjar.tk.shared.client
 
 import com.virjar.tk.protocol.*
+import com.virjar.tk.protocol.payload.AuthResponsePayload
 import com.virjar.tk.shared.platform.*
 import kotlinx.cinterop.*
 import kotlinx.coroutines.*
@@ -22,8 +23,13 @@ internal class IosTcpChannel(
     private val onClosed: (IosTcpChannel, Throwable?) -> Unit,
     private val onWriteIdle: (IosTcpChannel) -> Unit,
 ) {
+    private val logger = com.virjar.tk.shared.log.PlatformOnlyTkLogger("IosTcpChannel")
     private val scope = CoroutineScope(executor + SupervisorJob())
     private var connection: nw_connection_t = null
+    // NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT 在 Kotlin 绑定里是 NSObject? getter，运行时
+    // 会按“返回 void 的 ObjC block 转 Kotlin Any”拒绝并抛 NSGenericException；改为自建
+    // 一条连接级消息上下文，语义等价于默认消息上下文且可安全复用。
+    private var messageContext: NSObject? = null
     private var closed = false
     private var ready = false
     private var connectTimeout: Job? = null
@@ -63,8 +69,10 @@ internal class IosTcpChannel(
         }
         val created = checkNotNull(nw_connection_create(nw_endpoint_create_host(host, port.toString()), parameters)) { "Cannot create TCP connection" }
         connection = created
+        messageContext = nw_content_context_create("TeamTalk")
         nw_connection_set_queue(created, executor.queue)
         nw_connection_set_state_changed_handler(created) { state, error ->
+            logger.trace("state=$state error=${error != null}")
             executor.execute {
                 if (closed) return@execute
                 when (state) {
@@ -92,7 +100,7 @@ internal class IosTcpChannel(
         val bytes = PacketFrames.encode(proto)
         val data = bytes.usePinned { dispatch_data_create(it.addressOf(0), bytes.size.toULong(), null, null) }
         lastWrite = platformMonotonicNanos()
-        nw_connection_send(connection, data, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT, true) { error ->
+        nw_connection_send(connection, data, messageContext, true) { error ->
             if (error != null) executor.execute { close(IosTcpException(nw_error_get_error_code(error))) }
         }
     }
@@ -101,6 +109,8 @@ internal class IosTcpChannel(
         if (closed) return
         closed = true
         ready = false
+        if (failure != null) logger.fault("transport closed with failure", failure)
+        else logger.trace("transport closed")
         scope.cancel()
         connection?.let { active ->
             nw_connection_set_state_changed_handler(active, null)
@@ -131,7 +141,12 @@ internal class IosTcpChannel(
         // The bound and direction are checked before allocating a peer-controlled payload.
         PacketFrames.validateHeader(typeCode, length, PacketInboundRole.CLIENT, limit)
         readExactly(length) { payload ->
-            onPacket(this, PacketFrames.decode(typeCode, payload, PacketInboundRole.CLIENT, limit))
+            val packet = PacketFrames.decode(typeCode, payload, PacketInboundRole.CLIENT, limit)
+            // 与 Netty PacketCodec 同构：AUTH_RESP(CODE_OK) 解码当帧即放宽上限。
+            // 首个事件同步帧可超过未认证上限并与 AUTH_RESP 同时到达；等待
+            // onAuthenticationAccepted 的 SYNC_READY 语义在此之前无法放行大帧。
+            if (packet is AuthResponsePayload && packet.code == AuthResponsePayload.CODE_OK) authenticated = true
+            onPacket(this, packet)
             if (isActive) readHeader()
         }
     }
