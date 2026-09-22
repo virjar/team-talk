@@ -107,15 +107,15 @@ internal fun IosHomeScreen(ui: IosSessionUi, onLogout: () -> Unit) {
 
     Scaffold(
         modifier = Modifier.testTag("main.home"),
-        // 顶部 inset 取状态栏与挖孔/灵动岛的最大值：全屏编辑页等内容首行必须避开
-        // 屏上相机；底部与水平方向维持默认（底部导航与输入法各自处理）。
-        contentWindowInsets = ScaffoldDefaults.contentWindowInsets
-            .only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)
-            .union(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
+        // IosMainContent 的宿主 Box 已统一应用一次 safeDrawingPadding；本页 Scaffold、
+        // TopAppBar 与 NavigationBar 若按默认 windowInsets 再叠加，标题上下与底部导航
+        // 会出现双倍留白，因此这里全部按零 inset 处理，与聊天等其余页面一致。
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             // 文档拥有自己的首页/空间标题栏；叠加通用 TopAppBar 会形成两个页面标题。
             if (MainTab.entries[selectedTab] !in setOf(MainTab.DOCUMENTS, MainTab.TASKS)) {
                 TopAppBar(
+                    windowInsets = WindowInsets(0, 0, 0, 0),
                     title = { Text(tabIcons[selectedTab].label) },
                     actions = {
                         IconButton(
@@ -130,7 +130,7 @@ internal fun IosHomeScreen(ui: IosSessionUi, onLogout: () -> Unit) {
         },
         bottomBar = {
             if (documentEditingActive.value) return@Scaffold
-            NavigationBar {
+            NavigationBar(windowInsets = WindowInsets(0, 0, 0, 0)) {
                 tabIcons.forEachIndexed { index, tab ->
                     val selected = selectedTab == index
                     NavigationBarItem(

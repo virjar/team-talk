@@ -10,7 +10,9 @@ struct TeamTalkApp: App {
 
     var body: some Scene {
         WindowGroup {
-            TeamTalkView().ignoresSafeArea(.keyboard)
+            // Compose 自行消费 safeDrawing insets（含键盘）；SwiftUI 若默认按安全区收缩
+            // 承载视图，状态栏与底部手势条会被避让两次，页面标题出现双倍留白。
+            TeamTalkView().ignoresSafeArea()
                 .onAppear {
                     if scenePhase == .active { appDelegate.resumeForeground() }
                 }
