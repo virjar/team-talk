@@ -68,6 +68,11 @@ internal object DesktopFilePicker {
         name.substringAfterLast('.', "").lowercase() in videoExtensions
     }
 
+    fun chooseMedia(): File? = choose("选择图片或视频") { _, name ->
+        val extension = name.substringAfterLast('.', "").lowercase()
+        extension in imageExtensions || extension in videoExtensions
+    }
+
     fun chooseFile(title: String = "选择文件"): File? = choose(title, null)
 
     private fun choose(title: String, filter: FilenameFilter?): File? {
@@ -202,8 +207,7 @@ internal class DesktopVideoSender(
     private val scope: CoroutineScope = resources.childScope("media-send")
     private val mediaSender = OutgoingMediaSender(resources.telemetry)
 
-    fun pickAndSendVideo(chatId: String, myUid: String, viewModel: ChatViewModel) {
-        val file = DesktopFilePicker.chooseVideo() ?: return
+    fun sendVideoFile(file: File, chatId: String, myUid: String, viewModel: ChatViewModel) {
         check(myUid == resources.ownerUid) { "媒体发送账号与认证会话不一致" }
         scope.launch {
             resources.ensureOpen()

@@ -86,6 +86,56 @@ internal class IosNativeMedia(private val resources: IosMediaResources) : AutoCl
         }
     }
 
+    /**
+     * 相册混选：图片与视频一次可选，按系统返回的媒体类型分流——图片走嵌入资产导入，
+     * 视频按文件发送。
+     */
+    fun selectAlbumMedia(selected: (EmbeddedAssetLocalSelection) -> Unit) {
+        if (!canPresent()) return
+        val source = UIImagePickerControllerSourceType.UIImagePickerControllerSourceTypePhotoLibrary
+        if (!UIImagePickerController.isSourceTypeAvailable(source)) {
+            showIosError("此设备没有可用的相册")
+            return
+        }
+        val picker = UIImagePickerController()
+        picker.sourceType = source
+        picker.mediaTypes = listOf("public.image", "public.movie")
+        picker.videoQuality = UIImagePickerControllerQualityTypeHigh
+        val delegate = object : NSObject(), UIImagePickerControllerDelegateProtocol, UINavigationControllerDelegateProtocol {
+            override fun imagePickerController(picker: UIImagePickerController, didFinishPickingMediaWithInfo: Map<Any?, *>) {
+                val mediaType = didFinishPickingMediaWithInfo[UIImagePickerControllerMediaType] as? String
+                picker.dismissViewControllerAnimated(true, completion = null)
+                finishPicker()
+                if (mediaType == "public.movie") {
+                    val url = didFinishPickingMediaWithInfo[UIImagePickerControllerMediaURL] as? NSURL
+                    if (url != null) deliver(url, EmbeddedAssetPresentation.FILE, selected)
+                    else showIosError("无法读取所选视频")
+                } else {
+                    val url = didFinishPickingMediaWithInfo[UIImagePickerControllerImageURL] as? NSURL
+                    if (url != null) {
+                        deliver(url, EmbeddedAssetPresentation.IMAGE, selected)
+                    } else {
+                        val image = didFinishPickingMediaWithInfo[UIImagePickerControllerOriginalImage] as? UIImage
+                        val data = image?.let { UIImageJPEGRepresentation(it, 0.95) }
+                        if (data != null) {
+                            val file = temporary.resolve("${platformRandomUuid()}.jpg")
+                            if (data.writeToFile(file.path, atomically = true)) {
+                                deliverOwned(file, "图片.jpg", EmbeddedAssetPresentation.IMAGE, selected)
+                            } else showIosError("无法读取所选图片")
+                        } else showIosError("无法读取所选媒体")
+                    }
+                }
+            }
+            override fun imagePickerControllerDidCancel(picker: UIImagePickerController) {
+                picker.dismissViewControllerAnimated(true, completion = null)
+                finishPicker()
+            }
+        }
+        pickerDelegate = delegate
+        picker.delegate = delegate
+        show(picker)
+    }
+
     fun selectVisual(video: Boolean, camera: Boolean, selected: (EmbeddedAssetLocalSelection) -> Unit) {
         if (!canPresent()) return
         val source = if (camera) UIImagePickerControllerSourceType.UIImagePickerControllerSourceTypeCamera

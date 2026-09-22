@@ -86,12 +86,6 @@ internal fun IosChatScreen(route: IosRoute, ui: IosSessionUi) {
         else job.invokeOnCompletion { releaseIosEmbeddedAssetSelection(selection) }
     }
 
-    fun selectVideo() {
-        ui.native.selectVisual(video = true, camera = false) { selection ->
-            sendVideoSelection(selection)
-        }
-    }
-
     /** 应用内相机产物：照片与相册选图同链路导入正文，视频复用既有发送管线。 */
     fun captureFromCamera() {
         ui.native.capture { selection ->
@@ -102,11 +96,22 @@ internal fun IosChatScreen(route: IosRoute, ui: IosSessionUi) {
             }
         }
     }
+    /** 相册混选产物：图片与相册选图同链路导入正文，视频复用既有发送管线。 */
+    fun pickFromAlbum() {
+        ui.native.selectAlbumMedia { selection ->
+            if (selection.presentation == EmbeddedAssetPresentation.IMAGE) {
+                ui.imports.import(selection)
+            } else {
+                sendVideoSelection(selection)
+            }
+        }
+    }
+
     val media = ChatMediaConfig(
         fileDownloads = ui.files,
         imageContent = { attachment, modifier -> IosAttachmentImage(attachment, ui.media, modifier) },
         embeddedAssetImports = ui.imports, onPasteEmbeddedAsset = { ui.native.importClipboard(ui.imports) },
-        onPickVideo = { selectVideo() }, onCapture = { captureFromCamera() },
+        onPickMedia = { pickFromAlbum() },
         onPickDocument = { officePicker = OfficeReferenceKind.DOCUMENT },
         onPickGroupFile = if (chatType == ChatType.GROUP.code) { { officePicker = OfficeReferenceKind.GROUP_FILE } } else null,
         onPickTask = { taskPicker = true },

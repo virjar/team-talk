@@ -81,9 +81,6 @@ internal fun ChatComposer(
     onMentionClick: ((uid: String) -> Unit)?,
     onUrlClick: ((String) -> Unit)?,
 ) {
-    val effectivePickImage = media.embeddedAssetImports?.let { imports ->
-        { imports.select(EmbeddedAssetPresentation.IMAGE) }
-    }
     val effectivePickFile = media.embeddedAssetImports?.let { imports ->
         { imports.select(EmbeddedAssetPresentation.FILE) }
     }
@@ -245,12 +242,11 @@ internal fun ChatComposer(
             }
         }
 
-        val effectivePickVideo = media.onPickVideo
+        val effectivePickMedia = media.onPickMedia
         val effectiveCapture = media.onCapture
         // 编辑已发消息只允许修改文本 body，不制造“附件会并入原消息”的错觉。
         val hasAttachment = !editingSessionActive &&
-            (effectivePickImage != null || effectivePickFile != null || effectivePickVideo != null ||
-                effectiveCapture != null)
+            (effectivePickFile != null || effectivePickMedia != null || effectiveCapture != null)
         if (layout == ChatComposerLayout.WIDE) {
             WideComposerToolbar(
                 voiceMode = voiceMode,
@@ -271,8 +267,8 @@ internal fun ChatComposer(
                 showAttach = showAttach,
                 onToggleAttach = ::toggleAttachmentPanel,
                 onDismissAttach = { onShowAttachChange(false) },
-                onPickImage = effectivePickImage,
-                onPickVideo = effectivePickVideo,
+                onPickMedia = effectivePickMedia,
+                
                 onCapture = effectiveCapture,
                 onPickFile = effectivePickFile,
                 onPickDocument = media.onPickDocument,
@@ -344,8 +340,8 @@ internal fun ChatComposer(
                 showAttach = showAttach,
                 onToggleAttach = ::toggleAttachmentPanel,
                 onDismissAttach = { onShowAttachChange(false) },
-                onPickImage = effectivePickImage,
-                onPickVideo = effectivePickVideo,
+                onPickMedia = effectivePickMedia,
+                
                 onCapture = effectiveCapture,
                 onPickFile = effectivePickFile,
                 onPickDocument = media.onPickDocument,

@@ -356,8 +356,25 @@ internal fun AndroidChatScreen(
             }
         }
     }
-    val videoPicker = rememberAndroidVisualMediaPicker(ActivityResultContracts.PickVisualMedia.VideoOnly) { uri ->
-        if (uri != null) sendVideoFromUri { uri }
+    // ── 相册（图片+视频混选，按实际类型分流）/ 应用内相机 ──
+    val albumPicker = rememberAndroidVisualMediaPicker(ActivityResultContracts.PickVisualMedia.ImageAndVideo) { uri ->
+        if (uri != null) {
+            val mime = MediaHelper.getMimeType(context, uri)
+            if (mime.startsWith("video/")) {
+                sendVideoFromUri { uri }
+            } else {
+                embeddedAssetImports.import(
+                    EmbeddedAssetLocalSelection(
+                        localReference = uri.toString(),
+                        displayName = MediaHelper.getFileName(context, uri),
+                        contentType = mime.ifBlank { "image/jpeg" },
+                        size = MediaHelper.getFileSize(context, uri),
+                        presentation = EmbeddedAssetPresentation.IMAGE,
+                        source = EmbeddedAssetImportSource.ANDROID_PICKER,
+                    ),
+                )
+            }
+        }
     }
 
     /** 相机直录：录制的视频写入应用缓存，不落入系统相册，直接发送。 */
@@ -667,7 +684,7 @@ internal fun AndroidChatScreen(
         } else {
             null
         },
-        onPickVideo = videoPicker,
+        onPickMedia = albumPicker,
         onCapture = { startChatCamera() },
         onVoiceModeEntered = { prepareVoiceMode() },
         onVoiceRecord = { if (it) startVoice() else stopVoice() },

@@ -23,8 +23,8 @@ data class ChatMediaConfig(
     val embeddedAssetImports: EmbeddedAssetImportGateway? = null,
     /** 仅当剪贴板包含二进制/文件资源且已消费粘贴时返回 true。 */
     val onPasteEmbeddedAsset: (() -> Boolean)? = null,
-    /** 选择视频发送。null=附件面板不显示视频项。 */
-    val onPickVideo: (() -> Unit)? = null,
+    /** 相册：图片与视频混选，按选中内容的实际类型自动分流。null=不显示相册项。 */
+    val onPickMedia: (() -> Unit)? = null,
     /** 应用内相机拍摄（点按拍照/长按录像，内测 T022/T06x）；不支持的平台为 null。 */
     val onCapture: (() -> Unit)? = null,
     /** 打开文档引用选择器（类型化办公对象引用）。null=不显示文档项。 */

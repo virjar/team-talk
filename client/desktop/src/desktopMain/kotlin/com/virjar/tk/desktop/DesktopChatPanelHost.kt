@@ -37,6 +37,9 @@ import com.virjar.tk.app.telemetry.ClientUiTelemetrySink
 import com.virjar.tk.app.telemetry.MediaOperation
 import com.virjar.tk.app.navigation.feature.OfficeReferenceKind
 import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportGateway
+import com.virjar.tk.app.ui.bridge.EmbeddedAssetImportSource
+import com.virjar.tk.app.ui.bridge.EmbeddedAssetLocalSelection
+import com.virjar.tk.protocol.body.EmbeddedAssetPresentation
 import com.virjar.tk.app.ui.component.GalleryItem
 import com.virjar.tk.app.ui.component.GalleryMediaType
 import com.virjar.tk.app.ui.component.OfficeRefPickerDialog
@@ -228,7 +231,21 @@ internal fun ChatPanelWrapper(
         fileDownloads = fileDownloads,
         embeddedAssetImports = embeddedAssetImports,
         onPasteEmbeddedAsset = { importDesktopClipboardAsset(embeddedAssetImports) },
-        onPickVideo = { resources.videoSender.pickAndSendVideo(chatId, myUid, viewModel) },
+        onPickMedia = {
+            DesktopFilePicker.chooseMedia()?.let { file ->
+                if (desktopContentType(file.name).startsWith("video/", ignoreCase = true)) {
+                    resources.videoSender.sendVideoFile(file, chatId, myUid, viewModel)
+                } else {
+                    embeddedAssetImports.import(
+                        desktopEmbeddedAssetSelection(
+                            file = file,
+                            presentation = EmbeddedAssetPresentation.IMAGE,
+                            source = EmbeddedAssetImportSource.DESKTOP_PICKER,
+                        ),
+                    )
+                }
+            }
+        },
         onPickDocument = officeRefHost?.let { { officePickerKind = OfficeReferenceKind.DOCUMENT } },
         onPickTask = officeRefHost?.let { { taskPickerVisible = true } },
         onPickGroupFile = if (officeRefHost != null && chatType == 2) {

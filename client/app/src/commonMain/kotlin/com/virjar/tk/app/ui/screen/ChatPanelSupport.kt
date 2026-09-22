@@ -51,7 +51,7 @@ internal fun rememberAdmittedChatMedia(
     actionAdmission: UiActionAdmission,
 ): ChatMediaConfig = remember(media, actionAdmission) {
     media.copy(
-        onPickVideo = media.onPickVideo?.let { actionAdmission.guard(it) },
+        onPickMedia = media.onPickMedia?.let { actionAdmission.guard(it) },
         onVoiceRecord = media.onVoiceRecord?.let { actionAdmission.guard(it) },
         onVoiceModeEntered = media.onVoiceModeEntered?.let { actionAdmission.guard(it) },
         onVoiceRecordCancel = media.onVoiceRecordCancel?.let { actionAdmission.guard(it) },

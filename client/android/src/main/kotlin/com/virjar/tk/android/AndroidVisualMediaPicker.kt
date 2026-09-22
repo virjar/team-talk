@@ -25,9 +25,11 @@ internal fun rememberAndroidVisualMediaPicker(
     var unavailable by remember { mutableStateOf(false) }
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { currentResult(it) }
     val documentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { currentResult(it) }
-    val mimeType = when (mediaType) {
-        ActivityResultContracts.PickVisualMedia.VideoOnly -> "video/*"
-        else -> "image/*"
+    // 相册混选同时接受图片与视频；Photo Picker 原生混选，OpenDocument 回退用双 MIME。
+    val documentMimeTypes = when (mediaType) {
+        ActivityResultContracts.PickVisualMedia.VideoOnly -> arrayOf("video/*")
+        ActivityResultContracts.PickVisualMedia.ImageAndVideo -> arrayOf("image/*", "video/*")
+        else -> arrayOf("image/*")
     }
 
     if (unavailable) {
@@ -48,7 +50,7 @@ internal fun rememberAndroidVisualMediaPicker(
             photoPicker.launch(PickVisualMediaRequest.Builder().setMediaType(mediaType).build())
         } catch (_: ActivityNotFoundException) {
             try {
-                documentPicker.launch(arrayOf(mimeType))
+                documentPicker.launch(documentMimeTypes)
             } catch (_: ActivityNotFoundException) {
                 currentResult(null)
                 unavailable = true

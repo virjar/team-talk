@@ -39,12 +39,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.virjar.tk.app.ui.component.CHAT_ATTACHMENT_ALBUM_TEST_TAG
 import com.virjar.tk.app.ui.component.CHAT_ATTACHMENT_FILE_TEST_TAG
 import com.virjar.tk.app.ui.platform.testTagResourceIds
-import com.virjar.tk.app.ui.component.CHAT_ATTACHMENT_IMAGE_TEST_TAG
 import com.virjar.tk.app.ui.component.CHAT_ATTACHMENT_PANEL_TEST_TAG
 import com.virjar.tk.app.ui.component.CHAT_ATTACHMENT_PASTE_TEST_TAG
-import com.virjar.tk.app.ui.component.CHAT_ATTACHMENT_VIDEO_TEST_TAG
 import com.virjar.tk.app.ui.theme.Tk
 
 /**
@@ -137,11 +136,10 @@ private fun EmojiCell(
     }
 }
 
-/** 附件面板（＋弹层）：图片/视频/文件 宫格（飞书范式，替代 AlertDialog 文字列表）。 */
+/** 附件面板（＋弹层）：相册/拍摄/文件 宫格（飞书范式，替代 AlertDialog 文字列表）。 */
 @Composable
 fun AttachmentPanel(
-    onPickImage: () -> Unit,
-    onPickVideo: (() -> Unit)?,
+    onPickMedia: () -> Unit,
     onCapture: (() -> Unit)? = null,
     onPickFile: () -> Unit,
     onPasteAsset: (() -> Unit)?,
@@ -152,10 +150,7 @@ fun AttachmentPanel(
     onPickTask: (() -> Unit)? = null,
 ) {
     val actions = buildList {
-        add(AttachmentPanelAction(Icons.Filled.Image, "图片", CHAT_ATTACHMENT_IMAGE_TEST_TAG, onPickImage))
-        onPickVideo?.let {
-            add(AttachmentPanelAction(Icons.Filled.OndemandVideo, "视频", CHAT_ATTACHMENT_VIDEO_TEST_TAG, it))
-        }
+        add(AttachmentPanelAction(Icons.Filled.Image, "相册", CHAT_ATTACHMENT_ALBUM_TEST_TAG, onPickMedia))
         onCapture?.let {
             add(AttachmentPanelAction(Icons.Filled.PhotoCamera, "拍摄", "chat.attach.capture", it))
         }

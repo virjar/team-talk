@@ -305,8 +305,7 @@ internal fun ComposerAttachmentAction(
     showAttach: Boolean,
     onToggle: () -> Unit,
     onDismiss: () -> Unit,
-    onPickImage: (() -> Unit)?,
-    onPickVideo: (() -> Unit)?,
+    onPickMedia: (() -> Unit)?,
     onCapture: (() -> Unit)? = null,
     onPickFile: (() -> Unit)?,
     onPasteAsset: (() -> Boolean)?,
@@ -328,15 +327,9 @@ internal fun ComposerAttachmentAction(
         }
         if (showAttach) {
             AttachmentPanel(
-                onPickImage = {
+                onPickMedia = {
                     onDismiss()
-                    onPickImage?.invoke()
-                },
-                onPickVideo = onPickVideo?.let { pick ->
-                    {
-                        onDismiss()
-                        pick()
-                    }
+                    onPickMedia?.invoke()
                 },
                 onCapture = onCapture?.let { capture ->
                     {

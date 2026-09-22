@@ -1,8 +1,7 @@
 package com.virjar.tk.app.ui.component
 
 internal const val CHAT_ATTACHMENT_PANEL_TEST_TAG = "chat.attach.panel"
-internal const val CHAT_ATTACHMENT_IMAGE_TEST_TAG = "chat.attach.image"
-internal const val CHAT_ATTACHMENT_VIDEO_TEST_TAG = "chat.attach.video"
+internal const val CHAT_ATTACHMENT_ALBUM_TEST_TAG = "chat.attach.album"
 internal const val CHAT_ATTACHMENT_FILE_TEST_TAG = "chat.attach.file"
 internal const val CHAT_ATTACHMENT_PASTE_TEST_TAG = "chat.attach.paste"
 internal const val CHAT_VOICE_MODE_TEST_TAG = "chat.voiceMode"
