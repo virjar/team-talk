@@ -74,6 +74,8 @@ class ClientTelemetryAdminService(
         val runId: String,
         val sequence: Long,
         val message: String?,
+        /** 入库时生成的脱敏详情：故障事件含异常类与栈帧，日志事件含脱敏消息。 */
+        val detail: String?,
         val outgoingQueue: OutgoingQueueItem?,
         val connectionTraceContext: ConnectionTraceContextItem?,
         val highlight: TextHighlightItem?,
@@ -436,6 +438,7 @@ class ClientTelemetryAdminService(
         runId = event.runId,
         sequence = event.sequence,
         message = event.message,
+        detail = event.searchText,
         outgoingQueue = event.outgoingQueue?.let { queue ->
             OutgoingQueueItem(
                 pendingCount = queue.pendingCount,

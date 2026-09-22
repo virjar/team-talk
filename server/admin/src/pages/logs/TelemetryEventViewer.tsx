@@ -226,6 +226,17 @@ export function TelemetryEventViewer() {
                   <Typography.Text>构建：{row.buildNumber || '—'} / {row.distribution || '—'} / <Typography.Text copyable>{row.gitCommit || '—'}</Typography.Text></Typography.Text>
                   <Typography.Text>build identity：<Typography.Text copyable>{row.buildIdentity || '—'}</Typography.Text> · {row.buildTime || '—'}</Typography.Text>
                   {row.message && <Typography.Paragraph copyable>{row.message}</Typography.Paragraph>}
+                  {(row as { detail?: string | null }).detail && (
+                    <>
+                      <Typography.Text type="secondary">脱敏详情（故障事件含异常类与栈帧）：</Typography.Text>
+                      <Typography.Paragraph
+                        copyable
+                        style={{ whiteSpace: 'pre-wrap', marginBottom: 0, fontFamily: 'monospace', fontSize: 12 }}
+                      >
+                        {(row as { detail?: string | null }).detail}
+                      </Typography.Paragraph>
+                    </>
+                  )}
                 </Space>
 
                 <Space align="center" style={{ marginTop: 8 }}>
